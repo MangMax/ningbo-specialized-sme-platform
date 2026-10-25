@@ -46,7 +46,7 @@ defineRouteMeta({
                     "uncaptured": {"type": "string", "enum": ["unknown_legacy"]},
                     "availability": {"enum": ["available", "unknown_legacy", "empty_page", "captured_rows"], "type": "string"},
                     "row": {
-                      "type": "object",
+                      "type": ["object", "null"],
                       "description": "Captured values, never filled from record/current file. currentOwner is independent of captured origin.",
                       "properties": {
                         "evidenceId": {"type": "integer", "minimum": 1, "maximum": 9007199254740991},
@@ -54,33 +54,31 @@ defineRouteMeta({
                         "revision": {"type": "integer", "minimum": 1, "maximum": 9007199254740991},
                         "capturedRecordId": {"type": "integer", "minimum": 1, "maximum": 9007199254740991},
                         "capturedEnterpriseId": {"type": "integer", "minimum": 1, "maximum": 9007199254740991},
-                        "nameRaw": {"type": "string", "nullable": true, "description": "Maximum 4000 JavaScript UTF-16 code units; values are not trimmed."},
-                        "usccRaw": {"type": "string", "nullable": true, "description": "Maximum 4000 JavaScript UTF-16 code units; values are not trimmed."},
-                        "districtRaw": {"type": "string", "nullable": true, "description": "Maximum 4000 JavaScript UTF-16 code units; values are not trimmed."},
-                        "path": {"type": "string", "nullable": true, "description": "Maximum 4000 JavaScript UTF-16 code units; values are not trimmed."},
-                        "sha256": {"type": "string", "nullable": true, "description": "Maximum 4000 JavaScript UTF-16 code units; values are not trimmed."},
-                        "attachment": {"type": "string", "nullable": true, "description": "Maximum 4000 JavaScript UTF-16 code units; values are not trimmed."},
-                        "sectionKey": {"type": "string", "nullable": true, "description": "Maximum 4000 JavaScript UTF-16 code units; values are not trimmed."},
-                        "sourceDocumentId": {"type": "integer", "minimum": 1, "maximum": 9007199254740991, "nullable": true},
-                        "storedFileId": {"type": "integer", "minimum": 1, "maximum": 9007199254740991, "nullable": true},
-                        "listNo": {"type": "integer", "minimum": 1, "maximum": 9007199254740991, "nullable": true},
-                        "page": {"type": "integer", "minimum": 1, "maximum": 9007199254740991, "nullable": true},
-                        "bytes": {"type": "integer", "minimum": 0, "nullable": true},
+                        "nameRaw": {"type": ["string", "null"], "description": "Maximum 4000 JavaScript UTF-16 code units; values are not trimmed."},
+                        "usccRaw": {"type": ["string", "null"], "description": "Maximum 4000 JavaScript UTF-16 code units; values are not trimmed."},
+                        "districtRaw": {"type": ["string", "null"], "description": "Maximum 4000 JavaScript UTF-16 code units; values are not trimmed."},
+                        "path": {"type": ["string", "null"], "description": "Maximum 4000 JavaScript UTF-16 code units; values are not trimmed."},
+                        "sha256": {"type": ["string", "null"], "description": "Maximum 4000 JavaScript UTF-16 code units; values are not trimmed."},
+                        "attachment": {"type": ["string", "null"], "description": "Maximum 4000 JavaScript UTF-16 code units; values are not trimmed."},
+                        "sectionKey": {"type": ["string", "null"], "description": "Maximum 4000 JavaScript UTF-16 code units; values are not trimmed."},
+                        "sourceDocumentId": {"type": ["integer", "null"], "minimum": 1, "maximum": 9007199254740991},
+                        "storedFileId": {"type": ["integer", "null"], "minimum": 1, "maximum": 9007199254740991},
+                        "listNo": {"type": ["integer", "null"], "minimum": 1, "maximum": 9007199254740991},
+                        "page": {"type": ["integer", "null"], "minimum": 1, "maximum": 9007199254740991},
+                        "bytes": {"type": ["integer", "null"], "minimum": 0},
                         "sourceBindingKnown": {"type": "boolean"},
                         "actor": {"type": "object", "properties": {"type": {"enum": ["user", "agent"], "type": "string"}, "id": {"type": "string"}}},
                         "basis": {"type": "string"},
                         "command": {"type": "object", "description": "Original typed import/correction reference"},
                         "createdAt": {"type": "string"},
                         "currentOwner": {
-                          "type": "object",
+                          "type": ["object", "null"],
                           "properties": {
                             "recordId": {"type": "integer", "minimum": 1, "maximum": 9007199254740991},
                             "enterpriseId": {"type": "integer", "minimum": 1, "maximum": 9007199254740991}
-                          },
-                          "nullable": true
+                          }
                         }
-                      },
-                      "nullable": true
+                      }
                     },
                     "rows": {
                       "type": "array",
@@ -94,36 +92,35 @@ defineRouteMeta({
                           "revision": {"type": "integer", "minimum": 1, "maximum": 9007199254740991},
                           "capturedRecordId": {"type": "integer", "minimum": 1, "maximum": 9007199254740991},
                           "capturedEnterpriseId": {"type": "integer", "minimum": 1, "maximum": 9007199254740991},
-                          "nameRaw": {"type": "string", "nullable": true, "description": "Maximum 4000 JavaScript UTF-16 code units; values are not trimmed."},
-                          "usccRaw": {"type": "string", "nullable": true, "description": "Maximum 4000 JavaScript UTF-16 code units; values are not trimmed."},
-                          "districtRaw": {"type": "string", "nullable": true, "description": "Maximum 4000 JavaScript UTF-16 code units; values are not trimmed."},
-                          "path": {"type": "string", "nullable": true, "description": "Maximum 4000 JavaScript UTF-16 code units; values are not trimmed."},
-                          "sha256": {"type": "string", "nullable": true, "description": "Maximum 4000 JavaScript UTF-16 code units; values are not trimmed."},
-                          "attachment": {"type": "string", "nullable": true, "description": "Maximum 4000 JavaScript UTF-16 code units; values are not trimmed."},
-                          "sectionKey": {"type": "string", "nullable": true, "description": "Maximum 4000 JavaScript UTF-16 code units; values are not trimmed."},
-                          "sourceDocumentId": {"type": "integer", "minimum": 1, "maximum": 9007199254740991, "nullable": true},
-                          "storedFileId": {"type": "integer", "minimum": 1, "maximum": 9007199254740991, "nullable": true},
-                          "listNo": {"type": "integer", "minimum": 1, "maximum": 9007199254740991, "nullable": true},
-                          "page": {"type": "integer", "minimum": 1, "maximum": 9007199254740991, "nullable": true},
-                          "bytes": {"type": "integer", "minimum": 0, "nullable": true},
+                          "nameRaw": {"type": ["string", "null"], "description": "Maximum 4000 JavaScript UTF-16 code units; values are not trimmed."},
+                          "usccRaw": {"type": ["string", "null"], "description": "Maximum 4000 JavaScript UTF-16 code units; values are not trimmed."},
+                          "districtRaw": {"type": ["string", "null"], "description": "Maximum 4000 JavaScript UTF-16 code units; values are not trimmed."},
+                          "path": {"type": ["string", "null"], "description": "Maximum 4000 JavaScript UTF-16 code units; values are not trimmed."},
+                          "sha256": {"type": ["string", "null"], "description": "Maximum 4000 JavaScript UTF-16 code units; values are not trimmed."},
+                          "attachment": {"type": ["string", "null"], "description": "Maximum 4000 JavaScript UTF-16 code units; values are not trimmed."},
+                          "sectionKey": {"type": ["string", "null"], "description": "Maximum 4000 JavaScript UTF-16 code units; values are not trimmed."},
+                          "sourceDocumentId": {"type": ["integer", "null"], "minimum": 1, "maximum": 9007199254740991},
+                          "storedFileId": {"type": ["integer", "null"], "minimum": 1, "maximum": 9007199254740991},
+                          "listNo": {"type": ["integer", "null"], "minimum": 1, "maximum": 9007199254740991},
+                          "page": {"type": ["integer", "null"], "minimum": 1, "maximum": 9007199254740991},
+                          "bytes": {"type": ["integer", "null"], "minimum": 0},
                           "sourceBindingKnown": {"type": "boolean"},
                           "actor": {"type": "object", "properties": {"type": {"enum": ["user", "agent"], "type": "string"}, "id": {"type": "string"}}},
                           "basis": {"type": "string"},
                           "command": {"type": "object", "description": "Original typed import/correction reference"},
                           "createdAt": {"type": "string"},
                           "currentOwner": {
-                            "type": "object",
+                            "type": ["object", "null"],
                             "properties": {
                               "recordId": {"type": "integer", "minimum": 1, "maximum": 9007199254740991},
                               "enterpriseId": {"type": "integer", "minimum": 1, "maximum": 9007199254740991}
-                            },
-                            "nullable": true
+                            }
                           }
                         }
                       }
                     },
-                    "nextBeforeRevision": {"type": "integer", "minimum": 1, "maximum": 9007199254740991, "nullable": true},
-                    "nextAfterEvidenceId": {"type": "integer", "minimum": 1, "maximum": 9007199254740991, "nullable": true}
+                    "nextBeforeRevision": {"type": ["integer", "null"], "minimum": 1, "maximum": 9007199254740991},
+                    "nextAfterEvidenceId": {"type": ["integer", "null"], "minimum": 1, "maximum": 9007199254740991}
                   }
                 }
               }

@@ -36,7 +36,7 @@ defineRouteMeta({
                   "type": "object",
                   "properties": {
                     "batchId": {"type": "integer", "minimum": 1},
-                    "receiptId": {"type": "integer", "nullable": true},
+                    "receiptId": {"type": ["integer", "null"]},
                     "status": {"type": "string"},
                     "page": {"type": "integer", "minimum": 1},
                     "pageSize": {"type": "integer", "minimum": 1},
@@ -51,8 +51,8 @@ defineRouteMeta({
                           "ok": {"type": "boolean"},
                           "kind": {"type": "string"},
                           "ref": {"type": "string"},
-                          "errorCode": {"type": "string", "nullable": true},
-                          "errorField": {"type": "string", "nullable": true}
+                          "errorCode": {"type": ["string", "null"]},
+                          "errorField": {"type": ["string", "null"]}
                         }
                       }
                     }
@@ -69,7 +69,7 @@ defineRouteMeta({
                     "formatVersion": {"type": "integer", "enum": [1]},
                     "source": {"enum": ["private_batch", "redacted_receipt"], "type": "string"},
                     "batchId": {"type": "integer", "minimum": 1, "maximum": 9007199254740991},
-                    "receiptId": {"type": "integer", "minimum": 1, "maximum": 9007199254740991, "nullable": true},
+                    "receiptId": {"type": ["integer", "null"], "minimum": 1, "maximum": 9007199254740991},
                     "itemIndex": {"type": "integer", "minimum": 0},
                     "oldRecordId": {"type": "integer", "minimum": 1, "maximum": 9007199254740991},
                     "storedRedacted": {"type": "boolean"},
@@ -83,10 +83,10 @@ defineRouteMeta({
                         "enterpriseId": {"type": "integer", "minimum": 1, "maximum": 9007199254740991},
                         "titleCode": {"type": "string", "description": "Maximum 4000 JavaScript UTF-16 code units; values are not trimmed."},
                         "source": {"type": "string", "description": "Maximum 4000 JavaScript UTF-16 code units; values are not trimmed."},
-                        "nameRaw": {"type": "string", "nullable": true, "description": "Maximum 4000 JavaScript UTF-16 code units; values are not trimmed."},
-                        "usccRaw": {"type": "string", "nullable": true, "description": "Maximum 4000 JavaScript UTF-16 code units; values are not trimmed."},
-                        "district": {"type": "string", "nullable": true, "description": "Maximum 4000 JavaScript UTF-16 code units; values are not trimmed."},
-                        "qualityFlags": {"type": "array", "items": {"type": "string", "description": "Maximum 4000 JavaScript UTF-16 code units; values are not trimmed."}, "nullable": true}
+                        "nameRaw": {"type": ["string", "null"], "description": "Maximum 4000 JavaScript UTF-16 code units; values are not trimmed."},
+                        "usccRaw": {"type": ["string", "null"], "description": "Maximum 4000 JavaScript UTF-16 code units; values are not trimmed."},
+                        "district": {"type": ["string", "null"], "description": "Maximum 4000 JavaScript UTF-16 code units; values are not trimmed."},
+                        "qualityFlags": {"type": ["array", "null"], "items": {"type": "string", "description": "Maximum 4000 JavaScript UTF-16 code units; values are not trimmed."}}
                       },
                       "required": ["id", "enterpriseId", "titleCode", "source", "nameRaw", "usccRaw", "district", "qualityFlags"]
                     },
@@ -110,7 +110,7 @@ defineRouteMeta({
                     "formatVersion": {"type": "integer", "enum": [1]},
                     "source": {"enum": ["private_batch", "redacted_receipt"], "type": "string"},
                     "batchId": {"type": "integer", "minimum": 1, "maximum": 9007199254740991},
-                    "receiptId": {"type": "integer", "minimum": 1, "maximum": 9007199254740991, "nullable": true},
+                    "receiptId": {"type": ["integer", "null"], "minimum": 1, "maximum": 9007199254740991},
                     "itemIndex": {"type": "integer", "minimum": 0},
                     "oldRecordId": {"type": "integer", "minimum": 1, "maximum": 9007199254740991},
                     "storedRedacted": {"type": "boolean"},
@@ -127,14 +127,14 @@ defineRouteMeta({
                     "formatVersion": {"type": "integer", "enum": [1]},
                     "source": {"enum": ["private_batch", "redacted_receipt"], "type": "string"},
                     "batchId": {"type": "integer", "minimum": 1, "maximum": 9007199254740991},
-                    "receiptId": {"type": "integer", "minimum": 1, "maximum": 9007199254740991, "nullable": true},
+                    "receiptId": {"type": ["integer", "null"], "minimum": 1, "maximum": 9007199254740991},
                     "itemIndex": {"type": "integer", "minimum": 0},
                     "oldRecordId": {"type": "integer", "minimum": 1, "maximum": 9007199254740991},
                     "storedRedacted": {"type": "boolean"},
                     "responseRedacted": {"type": "boolean", "enum": [true]},
                     "availability": {"type": "string", "enum": ["available"]},
                     "eventIds": {"type": "array", "maxItems": 50, "items": {"type": "integer", "minimum": 1, "maximum": 9007199254740991}},
-                    "nextCursor": {"type": "string", "nullable": true, "description": "Maximum 512 JavaScript UTF-16 code units; values are not trimmed."}
+                    "nextCursor": {"type": ["string", "null"], "description": "Maximum 512 JavaScript UTF-16 code units; values are not trimmed."}
                   }
                 }
               ],
