@@ -21,7 +21,7 @@ const payload = { platformQueries: [recognizedResultToImport(originalResult)] }
 - `interface:"recognized_list"`，有原条件 `uscc` 时 `queryKey` 等于该代码；否则有 `name` 时为 `name:<原查询名>`，名称命中只是候选。无主体条件的已采集归档须由提交方提供非空、稳定的归档键；纯转换函数生成 `scope:queryBusList:<称号范围>:<规范化条件>`。该键只用于存储定位，不声称原查询带有主体条件。
 - `rdjb` 是原 `titleScope.rdjb` 按原顺序用逗号连接，例如 `"1,2,3"` 或 `"3"`；单称号 `titleCode` 必须对应其称号，多称号留 null。1 创新型、2 专精特新中小企业、3 小巨人。
 - `queriedAt` 必须与原结果一致，`collectionEvidence` 必填，保存完整原 `PlatformLiveQueryResult`：`source`、实际条件、称号范围、原查询和完成时间、页状态/计数/末页、可靠总数或 null、完整性、fullRange、unfinished、原始行及限制。
-- `relations` 与 `collectionEvidence.rows` 按顺序一一对应，`sequenceNo` 从 1 连续编号；`relationKey`/`usccRaw`/`nameRaw` 分别取原行 `id`/`tyshxydm`/`qymc`，没有就 null；`rawFields` 原样保留。相同平台 id 或代码出现多次仍逐条落库。
+- `relations` 与所选原行（有 `rawData.version=1` 时为 `rawData.rows`，否则为旧 `rows`）按顺序一一对应，`sequenceNo` 从 1 连续编号；`relationKey`/`usccRaw`/`nameRaw` 分别取原行 `id`/`tyshxydm`/`qymc`，没有就 null；`rawFields` 原样保留。相同平台 id 或代码出现多次仍逐条落库。
 - 不把 `whpcyear`/`whpc`、认定日期、有效年份/日期、平台属地塞进旧接口含义不同的年份/批次列。新来源原字段从 `rawFields` 读取（旧含义的标准化字段若非空则拒绝）；软件不生成称号事件、快照、别名或差异结论，不更新企业名称或属地。
 
 有可靠代码时关系只按现有企业的精确代码匹配；无法匹配留空待核。显式 `enterpriseId` 必须对应原行代码，不能凭名称确认主体。独立身份归并、曾用名确认仍走原有证据工作流，新来源不扩展其自动权限。
@@ -75,6 +75,10 @@ partial/失败/未查询必须保留每个未完成称号的实际 next/failed p
 
 `rawDataVersion:1` 采集结果/每个批量分段可原样交给 `recognizedResultToImport`，再走既有公开 preflight/commit/读回。`collectionEvidence.rawData.version=1`、typed rows 和实际接受页原文被完整保存；校验页位置、解析形式、分页计数、typed 行及旧字符串投影是否一致，任何冲突拒绝，不用另一套字段补齐。旧无 rawData 的证据继续原格式读取/转存，原始类型未知，不补算历史哈希。
 
-**#326 尚未切换关系与哈希。** 当前转换器和统一导入器仍要求 `relations[].rawFields === collectionEvidence.rows[]`（旧字符串投影）。封套 rawData 保真不等于原行已成为 relation.rawFields 或业务内容版本输入。#327 在 #326 审定后负责唯一的显式格式选择、typed 关系输入及版本贯通；#300 的重放校验属于另一个职责。本片不更改统一导入器、版本 identity、ID、已有 hash 或业务决定。
+**#327 的 typed 选择。** `collectionEvidence.rawData.version=1` 显式选择 `rawData.rows` 作为 `relations[].rawFields` 与业务内容版本输入；`rows` 仍只用于旧字符串投影和既有身份字段映射。version 非1、null、缺页/缺行、页位置/数量/来源、响应解析、投影或关系不相符均整批拒绝，不能静默回退。无 rawData 的旧认定归档仍要求 `rawFields === rows`；旧申报/关联请求不带封套时按原契约接受。历史类型未知，不重算旧hash、ID、观察或决定；同观察改typed原文明确冲突。不同接口的业务身份独立。
+
+`platformResultToImport` 同时支持 `queryList → apply_list`、`businessList → business_list`、`queryBusList → recognized_list` 的 v1 封套。三来源共享原页/typed行/旧投影/关系与查询身份配对；条件、网格名、称号范围仍按各来源验证。申报/关联的标准字段继续走既有 normalization；认定来源不借用其字段。认定的精确 USCC 主体、称号、确认护栏保持。每个批量 segment 独立转存，保留原时点与 fullRange/unfinished，不能把续页拼成伪造完整查询。
+
+`null/""`、数字/同文字符串、布尔/同文字符串、对象/JSON字符串、缺键/null 保留不同内容版本；对象键重排仍复用相同版本，数组顺序保留。预检只写账本；提交沿用同一业务事务和既有哈希算法，哈希命中异文拒绝并回滚本批。#300 的查询元数据/导出重放校验不在本片；#298 由父组合验收后收口，这不表示生产或全部消费者完成 typed 迁移。
 
 现存传输边界：H3 的严格 JSON body 解析会拒绝 `__proto__`/`constructor` 键，因此这类行的 HTTP 归档请求返回400；原文字符串没有被改写。本片保留该边界并用真实 HTTP 断言拒绝且不写业务；真实 MCP 工具的 typed 封套归档和精确读回已覆盖这些自有键。不要绕过 HTTP 解析器或删除原字段以伪称完成；后续如需统一此能力，应单独审定共享请求解析接缝。

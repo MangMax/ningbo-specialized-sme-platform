@@ -3,7 +3,7 @@ import { managedDecision102 } from './decision-lifecycle-102'
 import { assertPlatformObservationReplay, ensurePlatformObservation, planPlatformObservation, platformObservationPayload, PlatformProjectionError, projectionPreview, readPlatformObservationPlan } from './platform-business-record'
 import type { PlatformProjectionResult, PlatformProjectionSummary } from '../../lib/platform/business-record'
 import { isDeepStrictEqual } from 'node:util'
-import { recognizedEvidenceError, recognizedStoredStatus, RDJB_TITLE_CODES, sourcePositionForSequence } from '../../lib/platform/recognized-evidence'
+import { archiveQueryKey, platformEvidenceError, PLATFORM_PERSISTED_SOURCE, recognizedEvidenceError, recognizedStoredStatus, RDJB_TITLE_CODES, sourcePositionForSequence } from '../../lib/platform/recognized-evidence'
 import { normalizePlatformRelation } from '../../lib/platform/normalization'
 /**
  * 名录统一导入的**核心实现**（RL-11）—— 预检与单批事务提交（契约 §8）。
@@ -2729,19 +2729,20 @@ function planPlatformQuery(
   }
   if (query.interface === 'recognized_list' || query.collectionEvidence != null) {
     const evidence = query.collectionEvidence
-    let message = recognizedEvidenceError(evidence)
-    if (query.interface !== 'recognized_list') message = 'collectionEvidence=queryBusList cannot be relabeled as a legacy source'
+    let message = query.interface === 'recognized_list' ? recognizedEvidenceError(evidence) : platformEvidenceError(evidence)
     if (!message && evidence) {
+      if (query.interface !== PLATFORM_PERSISTED_SOURCE[evidence.source]) message = 'Collection source must match persisted interface'
       const key = evidence.effectiveConditions.uscc ?? (evidence.effectiveConditions.name ? `name:${evidence.effectiveConditions.name}` : null)
       const expectedTitle = evidence.titleScope.rdjb.length === 1 ? RDJB_TITLE_CODES[evidence.titleScope.rdjb[0]!] : null
-      if ((key !== null && query.queryKey !== key) || query.queriedAt !== evidence.queriedAt || (query.rdjb ?? '') !== evidence.titleScope.rdjb.join(',') || (query.titleCode ?? null) !== expectedTitle || query.status !== recognizedStoredStatus(evidence)) message = 'Query identity/status/title must match original collectionEvidence'
+      if ((key !== null && query.queryKey !== key) || (evidence.rawData && query.queryKey !== archiveQueryKey(evidence)) || query.queriedAt !== evidence.queriedAt || (query.rdjb ?? '') !== evidence.titleScope.rdjb.join(',') || (query.titleCode ?? null) !== expectedTitle || query.status !== recognizedStoredStatus(evidence)) message = 'Query identity/status/title must match original collectionEvidence'
       const relations = Array.isArray(query.relations) ? query.relations : []
       if (query.relations != null && !Array.isArray(query.relations)) message = 'relations must be an array preserving original rows'
       if (relations.length !== evidence.rows.length) message = 'Every original source row must have exactly one relation'
       for (const [i, relation] of relations.entries()) {
         const raw = evidence.rows[i]
-        if (['aliasNameRaw', 'province', 'status', 'batch', 'declareKind', 'appliedAt', 'awardBatchLabel', 'year'].some(field => relation[field as keyof typeof relation] != null)) message = 'Recognized maintenance/recognition/region fields must retain their original meanings in rawFields, not legacy normalized columns'
-        if (!raw || relation.sequenceNo !== i + 1 || !isDeepStrictEqual(relation.rawFields, raw) || (relation.relationKey ?? null) !== (raw.id ?? null) || (relation.nameRaw ?? null) !== (raw.qymc ?? null) || (relation.usccRaw ?? null) !== (raw.tyshxydm ?? null)) message = 'Relation sequence/raw fields/identity must match original page row'
+        const selectedRaw = evidence.rawData ? evidence.rawData.rows[i] : raw
+        if (query.interface === 'recognized_list' && ['aliasNameRaw', 'province', 'status', 'batch', 'declareKind', 'appliedAt', 'awardBatchLabel', 'year'].some(field => relation?.[field as keyof typeof relation] != null)) message = 'Recognized maintenance/recognition/region fields must retain their original meanings in rawFields, not legacy normalized columns'
+        if (!relation || !raw || relation.sequenceNo !== i + 1 || !isDeepStrictEqual(relation.rawFields, selectedRaw) || (relation.relationKey ?? null) !== (raw.id ?? null) || (relation.nameRaw ?? null) !== (raw.qymc ?? null) || (relation.usccRaw ?? null) !== (raw.tyshxydm ?? null)) { message = 'Relation sequence/raw fields/identity must match original page row'; continue }
         if (relation.enterpriseId != null) {
           const owner = findEnterpriseById(db, relation.enterpriseId)
           if (!owner || !usccOrNull(raw?.tyshxydm) || owner.usccNorm !== usccOrNull(raw?.tyshxydm)) message = 'Explicit enterprise must match the original row USCC; names alone cannot confirm identity'

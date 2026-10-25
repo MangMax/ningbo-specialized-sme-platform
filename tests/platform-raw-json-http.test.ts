@@ -114,7 +114,7 @@ it.each([0, 1, 2])('real HTTP or MCP archive roundtrip preserves versioned raw e
   expect(history.rows).toHaveLength(1)
   const archived = history.rows[0]
   expect(archived.query.collectionEvidence).toEqual(result)
-  expect(archived.relations.map((relation: any) => relation.rawFields)).toEqual(result.rows)
+  expect(archived.relations.map((relation: any) => relation.rawFields)).toEqual(result.rawData.rows)
   expect(archived.relations.map((relation: any) => relation.id)).toEqual(saved.items.find((item: any) => item.kind === 'platform_query').detail.relations)
   const reused = { ...request, idempotencyKey: `${request.idempotencyKey}-reuse` }
   const reuse: any = index === 0 ? await (await post('/api/roster/import/commit', reused)).json() : await call('save_roster_batch', reused)

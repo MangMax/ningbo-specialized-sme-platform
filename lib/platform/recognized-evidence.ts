@@ -1,8 +1,8 @@
 /** Explicit archival conversion only: never fetches, invents timestamps or infers identity. */
 import { z } from 'zod'
-import { platformQueryInputShape, platformQueryResultShape, recognizedConditionShape, validRecognizedConditionPairing, type PlatformLiveQueryResult } from './live-query'
+import { platformQueryInputSchema, platformQueryInputShape, platformQueryResultShape, recognizedConditionShape, validRecognizedConditionPairing, type PlatformLiveQueryResult } from './live-query'
 import type { RosterImportPlatformQuery } from '../roster-import-client'
-import { parsePlatformPage, type PlatformRawRow, type PlatformRow } from './adapter'
+import { APPLY_GRID, BUSINESS_GRID, RECOGNIZED_GRID, parsePlatformPage, type PlatformRawRow, type PlatformRow } from './adapter'
 
 export const RDJB_TITLE_CODES: Record<string, string> = { '1': 'innovative_sme', '2': 'specialized_sme', '3': 'little_giant' }
 export const TITLE_RDJB_CODES: Record<string, string> = Object.fromEntries(Object.entries(RDJB_TITLE_CODES).map(([rdjb, title]) => [title, rdjb]))
@@ -19,7 +19,7 @@ const archivedConditionsSchema = z.strictObject({
 function subjectQueryKey(result: PlatformLiveQueryResult): string | null {
   return result.effectiveConditions.uscc ?? (result.effectiveConditions.name ? `name:${result.effectiveConditions.name}` : null)
 }
-function archiveQueryKey(result: PlatformLiveQueryResult): string {
+export function archiveQueryKey(result: PlatformLiveQueryResult): string {
   const subject = subjectQueryKey(result)
   if (subject !== null) return subject
   const filters = Object.entries(result.effectiveConditions)
@@ -44,13 +44,20 @@ export function sourcePositionForSequence(result: PlatformLiveQueryResult | null
   return { sourceRdjb: null, sourcePage: null }
 }
 export function recognizedEvidenceError(value: unknown): string | null {
+  const error = platformEvidenceError(value)
+  if (error) return error
+  return (value as PlatformLiveQueryResult).source === 'queryBusList' ? null : 'recognized_list only accepts source=queryBusList'
+}
+/** Validate the observed envelope, never reconstruct typed rows from its legacy projection. */
+export function platformEvidenceError(value: unknown): string | null {
   const parsed = resultSchema.safeParse(value)
   if (!parsed.success) return 'collectionEvidence requires the original query result, including times, conditions, pages, rows and unfinished positions'
   const r = parsed.data as PlatformLiveQueryResult
   // Validate against the original value: schema validation must not rewrite own
   // prototype-named JSON keys, nor infer types from old string-only evidence.
   const original = value as PlatformLiveQueryResult
-  if (original.rawData) {
+  if (Object.hasOwn(original, 'rawData')) {
+    if (!original.rawData) return 'Raw observation requires explicit version 1'
     const successful = original.pages.filter(page => page.status === 'success')
     if (original.rawData.pages.length !== successful.length || original.rawData.rows.length !== original.rows.length) return 'Raw observation pages/rows must cover every accepted page'
     const rawRows: PlatformRawRow[] = [], legacyRows: PlatformRow[] = []
@@ -58,7 +65,8 @@ export function recognizedEvidenceError(value: unknown): string | null {
       const expected = successful[index]!
       if (page.source !== expected.source || page.rdjb !== expected.rdjb || page.page !== expected.page) return 'Raw observation source/title/page mismatch'
       try {
-        const parsedPage = parsePlatformPage(page.body, 'businessGrid')
+        const grid = original.source === 'queryList' ? APPLY_GRID : original.source === 'businessList' ? BUSINESS_GRID : RECOGNIZED_GRID
+        const parsedPage = parsePlatformPage(page.body, grid)
         if (parsedPage.source !== page.format || parsedPage.rows.length !== expected.fetchedCount
           || (parsedPage.responsePage !== null && parsedPage.responsePage !== expected.page)
           || (parsedPage.responsePageSize !== null && parsedPage.responsePageSize !== original.limits.pageSize)
@@ -66,22 +74,30 @@ export function recognizedEvidenceError(value: unknown): string | null {
           || (expected.maxPage != null && parsedPage.responseMaxPage !== expected.maxPage)) return 'Raw response format/count/pagination mismatch'
         rawRows.push(...parsedPage.rawRows)
         legacyRows.push(...parsedPage.rows)
-      } catch { return 'Raw response cannot be parsed as original recognized evidence' }
+      } catch { return 'Raw response cannot be parsed as original platform evidence' }
     }
     if (JSON.stringify(rawRows) !== JSON.stringify(original.rawData.rows) || JSON.stringify(legacyRows) !== JSON.stringify(original.rows)) return 'Raw observations and legacy projection must match original responses'
   }
-  if (r.source !== 'queryBusList') return 'recognized_list only accepts source=queryBusList'
   if (![r.queriedAt, r.completedAt].every(t => z.iso.datetime({ offset: true }).safeParse(t).success) || Date.parse(r.completedAt) < Date.parse(r.queriedAt)) return 'Original queriedAt/completedAt are required in order'
   const { combination, ...conditions } = r.effectiveConditions
-  if (combination !== 'and' || !archivedConditionsSchema.safeParse({ source: r.source, ...conditions, rdjb: r.titleScope.rdjb }).success ||
-    !validRecognizedConditionPairing(conditions)) return 'Invalid original source conditions or title scope'
-  if (r.titleScope.mode !== 'selected') return 'queryBusList requires selected title scope'
+  if (r.source === 'queryBusList') {
+    if (combination !== 'and' || !archivedConditionsSchema.safeParse({ source: r.source, ...conditions, rdjb: r.titleScope.rdjb }).success ||
+      !validRecognizedConditionPairing(conditions)) return 'Invalid original source conditions or title scope'
+    if (r.titleScope.mode !== 'selected') return 'queryBusList requires selected title scope'
+  } else {
+    // Historical process imports without collectionEvidence retain their old contract.
+    // New envelopes must describe actual source-specific public query conditions.
+    if (!original.rawData) return 'Process collectionEvidence requires rawData version 1'
+    const rdjb = r.titleScope.rdjb.length === 1 ? r.titleScope.rdjb[0] : r.titleScope.rdjb.join(',') === '1,2,3' ? 'all' : undefined
+    if (combination !== 'and' || !platformQueryInputSchema.safeParse({ source: r.source, ...conditions, ...(r.source === 'businessList' ? { rdjb } : {}), ...r.limits }).success
+      || (r.source === 'queryList' ? r.titleScope.mode !== 'source_default' || r.titleScope.rdjb.length !== 0 : r.titleScope.mode !== 'selected')) return 'Invalid original process conditions or title scope'
+  }
   if (!Number.isInteger(r.limits.pageSize) || r.limits.pageSize < 1 || r.limits.pageSize > 50) return 'Invalid original page size'
-  const titleSet = new Set(r.titleScope.rdjb)
-  const last = new Map<string, number>()
+  const titleSet = new Set<string | null>(r.source === 'queryList' ? [null] : r.titleScope.rdjb)
+  const last = new Map<string | null, number>()
   let fetched = 0
   for (const p of r.pages) {
-    if (p.source !== r.source || !p.rdjb || !titleSet.has(p.rdjb)) return 'Page source/title mismatch'
+    if (p.source !== r.source || !titleSet.has(p.rdjb)) return 'Page source/title mismatch'
     const previous = last.get(p.rdjb)
     if ((previous == null && r.fullRange && p.page !== 1) || (previous != null && p.page !== previous + 1)) return 'Pages must preserve contiguous original title/page positions'
     if (p.fetchedCount > r.limits.pageSize || (p.status !== 'success' && p.fetchedCount !== 0)) return 'Invalid page row count'
@@ -90,7 +106,7 @@ export function recognizedEvidenceError(value: unknown): string | null {
   }
   if (fetched !== r.fetchedCount || fetched !== r.rows.length) return 'Page row counts must correspond exactly to original rows'
   if (r.declaredTotal != null && r.declaredTotal < fetched) return 'Declared total is smaller than fetched rows'
-  for (const p of r.unfinished) if (p.source !== r.source || !p.rdjb || !titleSet.has(p.rdjb)) return 'Unfinished source/title mismatch'
+  for (const p of r.unfinished) if (p.source !== r.source || !titleSet.has(p.rdjb)) return 'Unfinished source/title mismatch'
   for (const rdjb of titleSet) {
     const pages = r.pages.filter(p => p.rdjb === rdjb)
     const lastPage = pages.at(-1)
@@ -128,16 +144,25 @@ export function recognizedEvidenceError(value: unknown): string | null {
 export function recognizedResultToImport(result: PlatformLiveQueryResult): RosterImportPlatformQuery {
   const error = recognizedEvidenceError(result)
   if (error) throw new Error(error)
+  return resultToImport(result)
+}
+/** All three sources use the same explicit v1 selection; process legacy imports stay separate. */
+export function platformResultToImport(result: PlatformLiveQueryResult): RosterImportPlatformQuery {
+  const error = platformEvidenceError(result)
+  if (error) throw new Error(error)
+  return resultToImport(result)
+}
+function resultToImport(result: PlatformLiveQueryResult): RosterImportPlatformQuery {
   return {
-    interface: PLATFORM_PERSISTED_SOURCE.queryBusList,
+    interface: PLATFORM_PERSISTED_SOURCE[result.source],
     queryKey: archiveQueryKey(result),
     rdjb: result.titleScope.rdjb.join(','),
     titleCode: result.titleScope.rdjb.length === 1 ? RDJB_TITLE_CODES[result.titleScope.rdjb[0]!] : null,
     queriedAt: result.queriedAt, status: recognizedStoredStatus(result),
     failureReason: result.error?.message ?? null, collectionEvidence: result,
-    relations: result.rows.map((rawFields, index) => ({
-      sequenceNo: index + 1, relationKey: rawFields.id ?? null, usccRaw: rawFields.tyshxydm ?? null,
-      nameRaw: rawFields.qymc ?? null, rawFields,
+    relations: result.rows.map((row, index) => ({
+      sequenceNo: index + 1, relationKey: row.id ?? null, usccRaw: row.tyshxydm ?? null,
+      nameRaw: row.qymc ?? null, rawFields: result.rawData ? result.rawData.rows[index] : row,
     })),
   }
 }
