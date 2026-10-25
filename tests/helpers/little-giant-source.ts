@@ -36,13 +36,13 @@ export const hasRealSource = existsSync(littleGiantSourcePath)
  * 除那一对之外用的是明显的样例名与样例码(不给真实企业配假代码)。
  */
 export const SYNTHETIC_LITTLE_GIANT_ROWS: readonly FixtureRow[] = [
-  { seq: 1, district: '鄞州区', name: '样例企业一号有限公司', uscc: '91330212MA2AB00001', batch: '第1批' },
+  { seq: 1, district: '鄞州区', name: '样例企业一号有限公司', uscc: '91330212MA2AB00009', batch: '第1批' },
   { seq: 14, district: '镇海区', name: '宁波昌扬机械工业有限公司', uscc: '91330211316904639T', batch: '第2批' },
-  { seq: 30, district: '北仑区', name: '样例企业二号有限公司', uscc: '91330206MA2AB00002', batch: '第3批' },
-  { seq: 41, district: '慈溪市', name: '样例企业三号有限公司', uscc: '91330282MA2AB00003', batch: '第4批' },
-  { seq: 52, district: '余姚市', name: '样例企业四号有限公司', uscc: '91330281MA2AB00004', batch: '第5批' },
+  { seq: 30, district: '北仑区', name: '样例企业二号有限公司', uscc: '91330206MA2AB0000K', batch: '第3批' },
+  { seq: 41, district: '慈溪市', name: '样例企业三号有限公司', uscc: '91330282MA2AB0000M', batch: '第4批' },
+  { seq: 52, district: '余姚市', name: '样例企业四号有限公司', uscc: '91330281MA2AB00007', batch: '第5批' },
   { seq: 366, district: '镇海区', name: '宁波昌扬机械工业有限公司', uscc: '91330211316904639T', batch: '第6批' },
-  { seq: 500, district: '海曙区', name: '样例企业五号有限公司', uscc: '91330203MA2AB00005', batch: '第7批' },
+  { seq: 500, district: '海曙区', name: '样例企业五号有限公司', uscc: '91330203MA2AB00008', batch: '第7批' },
 ]
 
 /** 合成夹具里那个跨批次重复的信用代码(与真件里唯一重复的那一个相同)。 */

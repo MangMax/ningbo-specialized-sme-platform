@@ -206,7 +206,7 @@ describe('RL-02 工作簿解析:每条源行都要有交代', () => {
 
   it('属地不在宁波 12 区县/2 管理区内 → 只警示(不丢行);正常属地不产生任何 issue', async () => {
     const buffer = await buildLittleGiantWorkbookBuffer([
-      { seq: 1, district: '鄞州区', name: '正常公司', uscc: '91330212MA2AB00001', batch: '第1批' },
+      { seq: 1, district: '鄞州区', name: '正常公司', uscc: '91330212MA2AB00009', batch: '第1批' },
       { seq: 2, district: '杭州市余杭区', name: '外地公司', uscc: '91330212MA2AB00002', batch: '第1批' },
       { seq: 3, district: '大榭', name: '管理区公司', uscc: '91330212MA2AB00003', batch: '第1批' },
       { seq: 4, district: '', name: '缺属地公司', uscc: '91330212MA2AB00004', batch: '第1批' },
