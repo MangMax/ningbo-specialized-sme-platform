@@ -2,6 +2,7 @@ import { requestLogContext } from '../../lib/logging'
 
 const FILE_WRITE_TOOLS = new Set([
   'save_ocr_result', 'delete_ocr_result', 'save_parse_result', 'set_file_category',
+  'commit_file_parse_result',
   'update_file', 'remove_file', 'restore_file',
 ])
 

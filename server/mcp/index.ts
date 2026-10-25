@@ -90,7 +90,7 @@ export default defineMcpHandler({
     '2. `get_file` / `list_file_parts` 看它的元数据与**段**(一份公布文件常含多年份、多事件);',
     '3. `list_page_images` 拿 PDF 每页的 PNG(已渲染时直接给 URL,未渲染时 `rendered: 0`);',
     '4. 识别之后用 `save_ocr_result` **按页**写回结果、`set_file_category` 回写分类、',
-    '   `get_file_parse_result` 先读version,再用 `save_parse_result` 带expectedVersion/幂等键/actor/reason写回段或状态;审计用 `get_file_parse_history`。识别结果用 `get_ocr_result`;',
+    '   当前解析先读文件/`get_ocr_result`实际采用页版本,用`preflight_file_parse_result`冻结输入,再`commit_file_parse_result`带原inputRef/独立expectedVersion/幂等键/actor/reason提交全部段。输入冲突必须重读,不得改用兼容口绕过。`save_parse_result`保留旧载荷和状态更正;缺血缘的兼容解析写记unknown。审计用`get_file_parse_history`;',
     '   OCR 单页重做:读页图→save_ocr_result {fileId,page,markdown,expectedVersion};delete_ocr_result 只删一页派生结果,保留来源与台账。',
     '   expectedVersion 取 get_ocr_result {includeVersion:true} 的 results[].version;冲突409须重新读。代理 REST 对等入口 /api/files/{id}/ocr-pages/{page},写入用独立 API token。见 docs/maintenance-106.md。',
     '5. 名单纠偏完成后,用 `preflight_roster_batch` **先预检**(只算影响、不写业务数据),',

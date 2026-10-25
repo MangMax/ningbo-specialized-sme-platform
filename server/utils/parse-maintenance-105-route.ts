@@ -1,12 +1,12 @@
 import { requestLogContext } from '../../lib/logging'
 import { useDb } from '@db'
-import { getParse105, historyParse105, saveParse105, ParseMaintenanceError } from './parse-maintenance-105'
+import { getParse105, historyParse105, saveParse105, preflightParse310, commitParse310, ParseMaintenanceError } from './parse-maintenance-105'
 import { requireApiToken } from './api-guard'
 
-export function parseRoute105(action: 'read' | 'replace' | 'status' | 'history') {
+export function parseRoute105(action: 'read' | 'replace' | 'status' | 'history' | 'preflight' | 'commit') {
   return defineEventHandler(async event => {
     setHeader(event, 'cache-control', 'no-store')
-    if (action === 'replace' || action === 'status') requireApiToken(event)
+    if (action !== 'read' && action !== 'history') requireApiToken(event)
     const rawId = getRouterParam(event, 'id') ?? ''
     if (!/^[1-9]\d*$/.test(rawId) || !Number.isSafeInteger(Number(rawId))) throw createError({ statusCode: 400, message: '文件 ID 非法' })
     const fileId = Number(rawId)
@@ -25,7 +25,10 @@ export function parseRoute105(action: 'read' | 'replace' | 'status' | 'history')
         }
         return historyParse105(db, input)
       }
-      return saveParse105(db, fileId, await readBody(event).catch(() => null), action, requestLogContext(event))
+      const body = await readBody(event).catch(() => null)
+      if (action === 'preflight') return preflightParse310(db, fileId, body, useRuntimeConfig().filesDir)
+      if (action === 'commit') return commitParse310(db, fileId, body, useRuntimeConfig().filesDir, requestLogContext(event))
+      return saveParse105(db, fileId, body, action, requestLogContext(event), useRuntimeConfig().filesDir)
     } catch (error) {
       if (error instanceof ParseMaintenanceError) throw createError({ statusCode: error.statusCode, message: error.message })
       throw error
