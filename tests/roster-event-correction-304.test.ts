@@ -7,9 +7,9 @@ import { createApp, createRouter, defineEventHandler, toNodeListener } from 'h3'
 import { expect, it, vi } from 'vitest'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
-import type { McpToolDefinition } from '@nuxtjs/mcp-toolkit/server'
 import { schema, useDb } from '../db/client'
 import type { EventCorrectionRequest } from '../server/utils/roster-event-correction'
+import { dispatchEventCorrectionMcp, isEventCorrectionMcpResult } from '../server/utils/mcp-event-correction'
 
 // Replace only Nuxt registration discovery. Exported tool schemas/handlers,
 // MCP SDK HTTP transport, the domain command and SQLite are real.
@@ -48,7 +48,7 @@ async function fixture() {
   router.use('/api/roster/correspondences/commit', correspondenceRoute('commit'))
   router.use('/api/roster/correspondences/:id', correspondenceRoute('get', { id: true }))
   app.use(router)
-  const definitions = await Promise.all([
+  const [{ default: preflight }, { default: commit }, { default: get }, { default: auditTool }] = await Promise.all([
     import('../server/mcp/tools/preflight_event_corrections'),
     import('../server/mcp/tools/commit_event_corrections'),
     import('../server/mcp/tools/get_official_event'),
@@ -58,10 +58,10 @@ async function fixture() {
   const serveMcp = async (req: Parameters<typeof listener>[0], res: Parameters<typeof listener>[1]) => {
     // The SDK requires a fresh stateless transport for every HTTP request.
     const mcp = new McpServer({ name: 'issue304-isolated', version: '1' }); sessions.push(mcp)
-    for (const { default: definition } of definitions) {
-      const tool = definition as McpToolDefinition
-      mcp.registerTool(tool.name!, { inputSchema: tool.inputSchema }, async (args, extra) => ({ content: [{ type: 'text', text: JSON.stringify(await tool.handler(args, extra)) }] }))
-    }
+    mcp.registerTool(preflight.name!, { inputSchema: preflight.inputSchema }, async (args, extra) => ({ content: [{ type: 'text', text: JSON.stringify(await preflight.handler(args, extra)) }] }))
+    mcp.registerTool(commit.name!, { inputSchema: commit.inputSchema }, async (args, extra) => ({ content: [{ type: 'text', text: JSON.stringify(await commit.handler(args, extra)) }] }))
+    mcp.registerTool(get.name!, { inputSchema: get.inputSchema }, async (args, extra) => ({ content: [{ type: 'text', text: JSON.stringify(await get.handler(args, extra)) }] }))
+    mcp.registerTool(auditTool.name!, { inputSchema: auditTool.inputSchema }, async (args, extra) => ({ content: [{ type: 'text', text: JSON.stringify(await auditTool.handler(args, extra)) }] }))
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true })
     await mcp.connect(transport)
     await transport.handleRequest(req, res)
@@ -93,7 +93,7 @@ async function fixture() {
     expect(result.isError).not.toBe(true)
     return JSON.parse(result.content[0].text)
   }
-  return { db, dbPath, enterprise, record, seed, first, second, request, op, http, post, read, audit, rpc, call, close: async () => {
+  return { db, dbPath, base, enterprise, record, seed, first, second, request, op, http, post, read, audit, rpc, call, close: async () => {
     await new Promise<void>(resolve => server.close(() => resolve()))
     await Promise.all(sessions.map(session => session.close()))
     db.$client.close()
@@ -198,6 +198,93 @@ it.each([
     expect(await f.post('preflight', request)).toMatchObject({ status: 409, body: { error: { code: 'natural_key_conflict' } } })
     expect(await Promise.all([f.read(f.first.event.id), f.read(f.second.event.id)])).toEqual(before)
     expect((await f.audit(f.first.event.id)).body.total).toBe(0)
+  } finally { await f.close() }
+})
+
+it('rejects an invalid committed MCP receipt as an internal error without swallowing business errors or appending audit', async () => {
+  const f = await fixture()
+  try {
+    const request = f.request('invalid-mcp-receipt', [f.op(f.first.event.id, { reviewOutcome: 'passed' })])
+    const plan = await f.call('preflight_event_corrections', request)
+    const args = { request, planHash: plan.planHash }
+    const receipt = await f.call('commit_event_corrections', args)
+    const before = await f.read(f.first.event.id), auditBefore = await f.audit(f.first.event.id)
+    const stale = f.request('stale-before-result-guard', [f.op(f.first.event.id, { reviewOutcome: 'failed' })])
+    expect(() => dispatchEventCorrectionMcp('preflight', stale, { db: f.db, authorized: true })).toThrowError(expect.objectContaining({ code: 'stale_revision', statusCode: 409 }))
+    expect(() => dispatchEventCorrectionMcp('preflight', stale, { db: f.db })).toThrowError(expect.objectContaining({ code: 'unauthorized', statusCode: 401 }))
+    // A malformed historical receipt is not a new business decision or a reason to rewrite it.
+    f.db.$client.prepare('UPDATE import_batch SET summary = NULL WHERE id = ?').run(receipt.batchId)
+    expect(() => dispatchEventCorrectionMcp('commit', args, { db: f.db, authorized: true })).toThrowError(expect.objectContaining({ code: 'internal_error', statusCode: 500, message: 'Invalid event correction MCP result' }))
+    const rejected = await f.rpc('commit_event_corrections', args)
+    expect(rejected).toEqual({ isError: true, content: [{ type: 'text', text: 'Invalid event correction MCP result' }] })
+    expect(await f.read(f.first.event.id)).toEqual(before)
+    expect(await f.audit(f.first.event.id)).toEqual(auditBefore)
+  } finally { await f.close() }
+})
+
+it.each([
+  { name: 'empty-string', value: '' },
+  { name: 'zero', value: 0 },
+  { name: 'false', value: false },
+  { name: 'empty-array', value: [] },
+  { name: 'empty-record', value: {} },
+  { name: 'array-with-json-omissions', value: [1, 'result', null, undefined] },
+  { name: 'nested-record', value: { result: { rows: [1, 2], missing: undefined, unknown: null } } },
+  { name: 'null-prototype-record', value: { __proto__: null, result: 'safe' } },
+  { name: 'sdk-tool-result', value: { content: [{ type: 'text', text: 'result' }], isError: false, structuredContent: { total: 0 } } },
+])('accepts a transport-safe SDK result without changing its bytes: $name', ({ value }) => {
+  const before = JSON.stringify(value)
+  expect(isEventCorrectionMcpResult(value)).toBe(true)
+  expect(JSON.stringify(value)).toBe(before)
+})
+
+it.each([
+  { name: 'null-root', value: null },
+  { name: 'undefined-root', value: undefined },
+  { name: 'function', value: () => 'not a result' },
+  { name: 'symbol', value: Symbol('not a result') },
+  { name: 'bigint', value: 1n },
+  { name: 'non-record-object', value: new Date('2026-10-25T00:00:00Z') },
+  { name: 'nested-non-record', value: { result: new Map([['key', 'value']]) } },
+  { name: 'symbol-property', value: { [Symbol('hidden')]: 'not a JSON field' } },
+])('rejects an unsupported SDK result: $name', ({ value }) => {
+  expect(isEventCorrectionMcpResult(value)).toBe(false)
+})
+
+it('rejects object code and cycles without executing accessors proxies or toJSON and permits shared references', () => {
+  let executed = false
+  const accessor = { get value() { executed = true; return 'unsafe' } }
+  const proxy = new Proxy({}, { getPrototypeOf() { executed = true; throw new Error('unsafe proxy') } })
+  const customJson = { toJSON() { executed = true; return 'unsafe' } }
+  const cyclic: { self?: unknown } = {}; cyclic.self = cyclic
+  for (const value of [accessor, proxy, { nested: customJson }, cyclic]) expect(isEventCorrectionMcpResult(value)).toBe(false)
+  expect(executed).toBe(false)
+  const shared = { value: 'safe' }, result = { first: shared, second: shared }
+  expect(isEventCorrectionMcpResult(result)).toBe(true)
+  expect(JSON.stringify(result)).toBe('{"first":{"value":"safe"},"second":{"value":"safe"}}')
+})
+
+it('preserves exact REST and MCP result bytes for preflight commit replay event and audit', async () => {
+  const f = await fixture()
+  try {
+    const request = f.request('mcp-result-bytes', [f.op(f.first.event.id, { reviewOutcome: 'passed' })])
+    const compare = async (path: string, name: string, args: Record<string, unknown>, body?: unknown) => {
+      const response = await fetch(f.base + path, { method: body === undefined ? 'GET' : 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer issue304-synthetic' }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) })
+      expect(response.status).toBe(200)
+      const bytes = await response.text(), wire = await f.rpc(name, args)
+      expect(wire.isError).not.toBe(true)
+      expect(wire.content[0].text).toBe(bytes)
+      return JSON.parse(bytes)
+    }
+    const plan = await compare('/api/roster/events/corrections/preflight', 'preflight_event_corrections', request, request)
+    const args = { request, planHash: plan.planHash }
+    const receipt = await compare('/api/roster/events/corrections/commit', 'commit_event_corrections', args, args)
+    expect(receipt.eventIds).toEqual([f.first.event.id])
+    expect(await compare('/api/roster/events/corrections/commit', 'commit_event_corrections', args, args)).toEqual(receipt)
+    const read = await compare(`/api/roster/events/${f.first.event.id}`, 'get_official_event', { eventId: f.first.event.id })
+    expect(read).toMatchObject({ event: { id: f.first.event.id, revision: 2 }, evidence: [f.first.evidence] })
+    const audit = await compare(`/api/roster/events/${f.first.event.id}/audit`, 'get_event_correction_audit', { eventId: f.first.event.id })
+    expect(audit).toMatchObject({ total: 1, rows: [{ eventId: f.first.event.id, before: { revision: 1 }, after: { revision: 2 } }] })
   } finally { await f.close() }
 })
 
