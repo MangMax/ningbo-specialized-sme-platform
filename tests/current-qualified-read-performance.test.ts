@@ -3,9 +3,39 @@ import { afterAll, expect, it, vi } from 'vitest'
 import { currentExport118Fixture, year } from './helpers/current-export-118'
 import { listCurrentQualified } from '../lib/roster/current-qualified-query'
 import { schema as s } from '../db/client'
+import { currentCandidateBindings, currentCandidateSql } from '../lib/roster/current-candidates'
+import { prepareCurrentReader } from '../lib/roster/current-qualification'
 
 const f = currentExport118Fixture()
 afterAll(() => f.close())
+
+it('retains complete options, witnesses and page ordering before request filters', () => {
+  f.resetBusiness()
+  const alpha=f.candidate('Alpha complete', [{eventType:'award',year,batchSeq:1}])
+  const beta=f.candidate('Beta complete', [{eventType:'award',year:year-1,batchSeq:1}])
+  const gamma=f.candidate('Gamma complete', [{eventType:'award',year:year-2,batchSeq:1}])
+  const pending=f.candidate('Platform only', [], 'little_giant')
+  const queryKey=alpha.enterprise.usccNorm
+  if (typeof queryKey !== 'string' || queryKey.length === 0) throw new Error('Synthetic Alpha query key must be a nonempty string')
+  const query=f.db.insert(s.platformQuery).values({interface:'business_list',queryKey,rdjb:'1,2,3',status:'failed',queriedAt:'2026-01-01T00:00:00Z',collectionEvidence:{pages:[
+    {rdjb:'2',status:'success',fetchedCount:1},
+    {rdjb:'1',status:'failed',fetchedCount:100},
+    {rdjb:'2',status:'success',fetchedCount:1},
+  ]} as unknown as NonNullable<typeof s.platformQuery.$inferInsert.collectionEvidence>}).returning().get()
+  const relations=[alpha,pending].map((candidate,index)=>f.db.insert(s.platformRelation).values({queryId:query.id,enterpriseId:candidate.enterprise.id,sequenceNo:index+1,verificationStatus:'pending'}).returning().get())
+  prepareCurrentReader(f.db.$client)
+  const count=f.db.$client.prepare(`select count(*) as n from (${currentCandidateSql})`).get(currentCandidateBindings('specialized_sme'))
+  expect(count).toEqual({n:4}) // Pending platform facts remain in the complete union.
+  const page=listCurrentQualified(f.db.$client,{titleCode:'specialized_sme',sort:'name_desc',page:2,pageSize:1})
+  expect(page).toMatchObject({total:3,uncertainTotal:0,options:{recognitionYears:[year-2,year-1,year]},rows:[{enterpriseId:beta.enterprise.id,recognition:{precision:'year',year:year-1},qualificationWitnesses:[{cycle:{originYear:year-1,batchSeq:1},matchedValidYear:null,matchedMaintenance:null}]}]})
+  const filtered=listCurrentQualified(f.db.$client,{titleCode:'specialized_sme',q:'Alpha',recognitionFrom:`${year}-01-01`,recognitionTo:`${year}-12-31`})
+  expect(filtered).toMatchObject({total:1,options:{recognitionYears:[year-2,year-1,year]},rows:[{enterpriseId:alpha.enterprise.id,group:'eligible',firstYear:year,publication:'已见本称号宁波公布记录'}]})
+  expect(filtered.rows[0]!.basis).toContain(`award ${year}/1`)
+  expect(filtered.rows[0]!.references).toContain(`platform-relation:${relations[0]!.id} query:${query.id}`)
+  const overlap=listCurrentQualified(f.db.$client,{titleCode:'specialized_sme',q:'Beta',recognitionFrom:`${year-1}-02-01`,recognitionTo:`${year-1}-12-31`})
+  expect(overlap).toMatchObject({total:0,uncertainTotal:1,rows:[]})
+  expect(gamma.enterprise.id).not.toBe(beta.enterprise.id)
+})
 
 it('bounds repeated preparation and display reference reads while counting every candidate', () => {
   f.resetBusiness()
