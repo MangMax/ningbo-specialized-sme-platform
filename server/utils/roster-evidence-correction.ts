@@ -11,6 +11,8 @@ import { evidencePreviewHref, isPageCapable } from '../../lib/roster/evidence-pa
 import { readPdfPageCount, resolveWithinRoot } from './pdf-pages'
 import { advanceOfficialEventRevision } from './roster-event-version'
 import { refreshDerivedFileParts } from './file-parts'
+import { officialPublishedRowSchema, planOfficialEvidenceChanges, writeOfficialPublishedRow, OfficialFactError, type OfficialClaimChange } from './official-evidence-plan'
+import { OfficialEvidenceError } from './official-evidence'
 
 type Db = BetterSQLite3Database<typeof schema>
 type Tx = Parameters<Parameters<Db['transaction']>[0]>[0]
@@ -18,11 +20,12 @@ type Executor = Db | Tx
 const positive = z.number().int().positive().max(Number.MAX_SAFE_INTEGER)
 const filled = z.string().trim().min(1).max(4000)
 export const evidenceCoordinateSchema = z.strictObject({ sourceFile: filled, attachment: filled.nullable(), listNo: positive.nullable(), page: positive.nullable() })
+export const evidenceCorrectionOperationSchema = z.strictObject({ evidenceId: positive, eventId: positive, recordId: positive, enterpriseId: positive, expectedVersion: z.string().regex(/^[a-f0-9]{64}$/), coordinate: evidenceCoordinateSchema, publishedRow: officialPublishedRowSchema.optional(), expectedRowRevision: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER - 1).optional() }).refine(op => op.publishedRow ? op.expectedRowRevision !== undefined : op.expectedRowRevision === undefined, 'publishedRow and expectedRowRevision must be supplied together')
 export const evidenceCorrectionRequestSchema = z.strictObject({
   idempotencyKey: z.string().trim().min(1).max(200),
   actor: z.strictObject({ type: z.enum(['user', 'agent']), id: filled }),
   basis: filled,
-  operations: z.array(z.strictObject({ evidenceId: positive, eventId: positive, recordId: positive, enterpriseId: positive, expectedVersion: z.string().regex(/^[a-f0-9]{64}$/), coordinate: evidenceCoordinateSchema })).min(1).max(100),
+  operations: z.array(evidenceCorrectionOperationSchema).min(1).max(100),
 })
 export type EvidenceCorrectionRequest = z.infer<typeof evidenceCorrectionRequestSchema>
 export type EvidenceCoordinate = z.infer<typeof evidenceCoordinateSchema>
@@ -87,18 +90,19 @@ function validateDestination(db: Executor, row: ReturnType<typeof readExactEvide
   }
   return { ...file, ...inspection }
 }
-function buildPlan(db: Executor, request: EvidenceCorrectionRequest, inspected: Map<string, Inspection>) {
+export function planEvidenceCorrectionTargets(db: Executor, request: EvidenceCorrectionRequest, inspected: Map<string, Inspection>, typed = request.operations.some(op => op.publishedRow !== undefined)) {
   const seen = new Set<number>()
   const targets = request.operations.map(op => {
     if (seen.has(op.evidenceId)) fail('ambiguous_target', 'Duplicate evidence ID in batch')
     seen.add(op.evidenceId)
     const row = readExactEvidence(db, op.evidenceId)
     if (row.source !== 'jxj' || row.eventId !== op.eventId || row.recordId !== op.recordId || row.enterpriseId !== op.enterpriseId) fail('target_mismatch', 'Evidence, event and ownership IDs must match')
+    if (typed && !db.select({ id: schema.enterprise.id }).from(schema.enterprise).where(eq(schema.enterprise.id, row.enterpriseId)).get()) fail('target_mismatch', 'Current real enterprise is required', 409)
     if (row.version !== op.expectedVersion) fail('stale_version', 'Evidence or source version changed', 409)
     const after = { ...op.coordinate, attachment: normalizeAttachment(op.coordinate.attachment) }
     const file = validateDestination(db, row, after, inspected.get(after.sourceFile)!, true)
     // List numbers restart per event segment. Do not use them as a target locator.
-    if (after.listNo !== null) {
+    if (!typed && after.listNo !== null) {
       const collisions = db.select({ id: schema.recordEvidence.id, attachment: schema.recordEvidence.attachment, event: schema.recordEvent }).from(schema.recordEvidence).innerJoin(schema.recordEvent, eq(schema.recordEvent.id, schema.recordEvidence.recordEventId))
         .where(and(eq(schema.recordEvidence.sourceFile, after.sourceFile), eq(schema.recordEvidence.listNo, after.listNo), ne(schema.recordEvidence.id, row.evidenceId))).limit(101).all()
       if (collisions.length > 100) fail('ambiguous_target', 'Too many existing coordinate claims; resolve source ambiguity first')
@@ -109,15 +113,23 @@ function buildPlan(db: Executor, request: EvidenceCorrectionRequest, inspected: 
       }
     }
     const correspondenceCount = db.select({ n: count() }).from(schema.recordCorrespondence).where(or(eq(schema.recordCorrespondence.eventId, row.eventId), eq(schema.recordCorrespondence.predecessorEventId, row.eventId))).get()!.n
-    return { evidenceId: row.evidenceId, eventId: row.eventId, recordId: row.recordId, enterpriseId: row.enterpriseId, expectedVersion: row.version, before: row.coordinate, beforeFile: row.file, event: row.event, after, file, relatedCorrespondences: correspondenceCount }
+    const rowChange: OfficialClaimChange | undefined = op.publishedRow ? { ref: `correction:${op.evidenceId}`, evidenceId: op.evidenceId, eventId: op.eventId, owner: `enterprise:${op.enterpriseId}`, titleCode: row.titleCode, coordinate: after, publishedRow: op.publishedRow, expectedRowRevision: op.expectedRowRevision! } : undefined
+    if (typed && !rowChange) fail('ambiguity', 'A mixed typed correction batch requires explicit publishedRow for every target')
+    return { evidenceId: row.evidenceId, eventId: row.eventId, recordId: row.recordId, enterpriseId: row.enterpriseId, expectedVersion: row.version, before: row.coordinate, beforeFile: row.file, event: row.event, after, file, relatedCorrespondences: correspondenceCount, rowChange }
   })
   for (let i = 0; i < targets.length; i++) for (let j = i + 1; j < targets.length; j++) {
     const a = targets[i]!, b = targets[j]!
     const ae = a.event, be = b.event
-    if (a.after.listNo !== null && a.after.sourceFile === b.after.sourceFile && a.after.attachment === b.after.attachment && a.after.listNo === b.after.listNo && ae.eventType === be.eventType && ae.year === be.year && ae.batchSeq === be.batchSeq) fail('coordinate_conflict', 'Two batch operations claim the same coordinate')
+    if (!typed && a.after.listNo !== null && a.after.sourceFile === b.after.sourceFile && a.after.attachment === b.after.attachment && a.after.listNo === b.after.listNo && ae.eventType === be.eventType && ae.year === be.year && ae.batchSeq === be.batchSeq) fail('coordinate_conflict', 'Two batch operations claim the same coordinate')
   }
-  const impact = { updated: targets.filter(t => hash(t.before) !== hash(t.after)).length, audit: targets.filter(t => hash(t.before) !== hash(t.after)).length, correspondencePolicy: 'dynamic_source_fingerprint_revalidation' }
-  return { status: 'preflight', targets, impact, planHash: hash({ request, targets, impact }) }
+  return targets
+}
+function buildPlan(db: Executor, request: EvidenceCorrectionRequest, inspected: Map<string, Inspection>, filesDir?: string) {
+  const targets = planEvidenceCorrectionTargets(db, request, inspected)
+  const changes = targets.flatMap(target => target.rowChange ? [target.rowChange] : [])
+  const facts = changes.length ? planOfficialEvidenceChanges(db, changes, filesDir) : null
+  const impact = { updated: targets.filter(t => hash(t.before) !== hash(t.after) || t.rowChange?.changed).length, audit: targets.filter(t => hash(t.before) !== hash(t.after) || t.rowChange?.changed).length, correspondencePolicy: 'dynamic_source_fingerprint_revalidation' }
+  return { status: 'preflight', targets, impact, planHash: hash({ request, targets, impact, facts: facts?.planHash }) }
 }
 async function inspectRequest(request: EvidenceCorrectionRequest, filesDir?: string) {
   const inspections = new Map<string, Inspection>()
@@ -135,17 +147,27 @@ async function inspectRequest(request: EvidenceCorrectionRequest, filesDir?: str
 }
 export async function preflightEvidenceCorrection(db: Db, request: EvidenceCorrectionRequest, filesDir?: string) {
   const inspected = await inspectRequest(request, filesDir)
-  return db.transaction(tx => buildPlan(tx, request, inspected))
+  const plan = translateOfficialErrors(() => db.transaction(tx => buildPlan(tx, request, inspected, filesDir), { behavior: 'immediate' }))
+  return { ...plan, targets: plan.targets.map(({ rowChange, ...target }) => ({ ...target, ...(rowChange ? { beforeRowRevision: rowChange.before?.revision ?? 0, afterRowRevision: rowChange.expectedRowRevision + Number(rowChange.changed) } : {}) })) }
+}
+function translateOfficialErrors<T>(run: () => T): T {
+  try { return run() } catch (error) {
+    if (error instanceof OfficialFactError) throw new EvidenceCorrectionError(error.code, error.message, error.statusCode)
+    if (error instanceof OfficialEvidenceError) throw new EvidenceCorrectionError(error.code, error.message, error.statusCode)
+    throw error
+  }
 }
 
 /** The only coordinate writer for exact corrections and the compatibility adapter. */
-function writeEvidenceCoordinate(db: Executor, row: ReturnType<typeof readExactEvidence>, coordinate: EvidenceCoordinate, audit: { actor: { type: 'user' | 'agent' | 'legacy'; id: string }; basis: string; entryPoint: 'correction' | 'legacy_pages'; batchKey: string | null }, file: unknown, advanceRevision = true) {
-  if (hash(row.coordinate) === hash(coordinate)) return false
+function writeEvidenceCoordinate(db: Executor, row: ReturnType<typeof readExactEvidence>, coordinate: EvidenceCoordinate, audit: { actor: { type: 'user' | 'agent' | 'legacy'; id: string }; basis: string; entryPoint: 'correction' | 'legacy_pages'; batchKey: string | null }, file: unknown, advanceRevision = true, facts?: { change: OfficialClaimChange; command: import('./official-evidence').OfficialEvidenceCommand; declarations: Map<string, number> }) {
+  if (hash(row.coordinate) === hash(coordinate) && !facts?.change.changed) return false
   const current = readExactEvidence(db, row.evidenceId)
   if (current.version !== row.version) fail('stale_version', 'Evidence changed before write', 409)
   db.update(schema.recordEvidence).set(coordinate).where(eq(schema.recordEvidence.id, row.evidenceId)).run()
+  const rowRevision = facts?.change.changed ? writeOfficialPublishedRow(db, facts.change.publishedRow, row.evidenceId, facts.change.expectedRowRevision, facts.command, facts.declarations).revision : undefined
   if (advanceRevision) advanceOfficialEventRevision(db, row.eventId, row.event.revision)
-  db.insert(schema.evidenceCorrectionAudit).values({ evidenceId: row.evidenceId, eventId: row.eventId, ...audit, before: { coordinate: row.coordinate, file: row.file, version: row.version, eventRevision: row.event.revision }, after: { coordinate, file, eventRevision: row.event.revision + 1 }, createdAt: new Date().toISOString() }).run()
+  const importRef = facts?.command.kind === 'import' ? { importBatchId: facts.command.batchId } : {}
+  db.insert(schema.evidenceCorrectionAudit).values({ evidenceId: row.evidenceId, eventId: row.eventId, ...audit, before: { coordinate: row.coordinate, file: row.file, version: row.version, eventRevision: row.event.revision, ...(facts ? { row: facts.change.before ?? null } : {}), ...importRef }, after: { coordinate, file, eventRevision: row.event.revision + 1, ...(rowRevision !== undefined ? { rowRevision, publishedRow: facts!.change.publishedRow } : {}), ...importRef }, createdAt: new Date().toISOString() }).run()
   return true
 }
 function replay(db: Executor, request: EvidenceCorrectionRequest, planHash: string) {
@@ -158,17 +180,18 @@ export async function commitEvidenceCorrection(db: Db, request: EvidenceCorrecti
   const previous = replay(db, request, planHash)
   if (previous) return previous
   const inspected = await inspectRequest(request, filesDir)
-  return db.transaction(tx => {
+  return translateOfficialErrors(() => db.transaction(tx => {
     const raced = replay(tx, request, planHash)
     if (raced) return raced
-    const plan = buildPlan(tx, request, inspected)
+    const plan = buildPlan(tx, request, inspected, filesDir)
     if (plan.planHash !== planHash) fail('plan_mismatch', 'Preflight impact or source changed; preflight again', 409)
     const receipt = { status: 'committed', idempotencyKey: request.idempotencyKey, planHash, impact: plan.impact, evidenceIds: plan.targets.map(t => t.evidenceId), committedAt: new Date().toISOString() }
     tx.insert(schema.evidenceCorrectionBatch).values({ idempotencyKey: request.idempotencyKey, requestHash: hash(request), planHash, receipt, createdAt: receipt.committedAt }).run()
     const changedEvents = new Map<number, number>()
     const changedFiles = new Set<string>()
+    const declarations = new Map<string, number>()
     for (const target of plan.targets) {
-      const changed = writeEvidenceCoordinate(tx, readExactEvidence(tx, target.evidenceId), target.after, { actor: request.actor, basis: request.basis, entryPoint: 'correction', batchKey: request.idempotencyKey }, target.file, false)
+      const changed = writeEvidenceCoordinate(tx, readExactEvidence(tx, target.evidenceId), target.after, { actor: request.actor, basis: request.basis, entryPoint: 'correction', batchKey: request.idempotencyKey }, target.file, false, target.rowChange ? { change: target.rowChange, command: { kind: 'evidence_correction', batchKey: request.idempotencyKey }, declarations } : undefined)
       if (changed) {
         changedEvents.set(target.eventId, target.event.revision)
         changedFiles.add(target.before.sourceFile)
@@ -178,7 +201,12 @@ export async function commitEvidenceCorrection(db: Db, request: EvidenceCorrecti
     for (const [eventId, revision] of changedEvents) advanceOfficialEventRevision(tx, eventId, revision)
     refreshDerivedFileParts(tx, changedFiles)
     return receipt
-  }, { behavior: 'immediate' })
+  }, { behavior: 'immediate' }))
+}
+
+/** Import has already validated all original versions and the common final set under IMMEDIATE. */
+export function writeImportedEvidenceCorrection(db: Executor, target: ReturnType<typeof planEvidenceCorrectionTargets>[number], request: Pick<EvidenceCorrectionRequest, 'actor' | 'basis'>, batchId: number, declarations: Map<string, number>) {
+  return writeEvidenceCoordinate(db, readExactEvidence(db, target.evidenceId), target.after, { actor: request.actor, basis: request.basis, entryPoint: 'correction', batchKey: null }, target.file, false, target.rowChange ? { change: target.rowChange, command: { kind: 'import', batchId }, declarations } : undefined)
 }
 export function readEvidenceCorrectionBatch(db: Executor, key: string) {
   return db.select({ receipt: schema.evidenceCorrectionBatch.receipt }).from(schema.evidenceCorrectionBatch).where(eq(schema.evidenceCorrectionBatch.idempotencyKey, key)).get()?.receipt ?? null

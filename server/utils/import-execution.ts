@@ -15,7 +15,7 @@ import { logImportFailure } from './roster-import-logging'
 type Db = BetterSQLite3Database<typeof schema>
 type Action = 'preflight' | 'commit'
 type Result = ReturnType<typeof preflightRosterImport> | ReturnType<typeof commitRosterImport>
-export interface ImportExecutionMessage { identity: { dev: number; ino: number; schemaVersion: number; migration: { hash: string; created_at: number } | undefined }; id: number; dbPath: string; readonly: boolean; action: Action; payload: Buffer; pageCountErrors: readonly RosterImportItemResult[]; logContext?: LogContext }
+export interface ImportExecutionMessage { identity: { dev: number; ino: number; schemaVersion: number; migration: { hash: string; created_at: number } | undefined }; id: number; dbPath: string; readonly: boolean; action: Action; payload: Buffer; pageCountErrors: readonly RosterImportItemResult[]; logContext?: LogContext; filesDir?: string }
 type Worker = ReturnType<typeof createImportExecutionWorker>
 type Job = { onResult?: (result: Result) => void; message: ImportExecutionMessage; resolve(value: Result): void; reject(error: Error): void }
 const unavailable = (code: string, message: string) => new ImportReceiptError(503, code, message)
@@ -84,13 +84,13 @@ export function createImportExecutor(options: { createWorker?: () => Worker; max
     try { worker.postMessage(active.message) } catch { const owned = worker; worker = undefined; ready = false; const job = active; active = undefined; settle(job, unavailable('import_outcome_unknown', 'Import outcome unknown; read its receipt and retry with the same idempotency key')); stopping = owned.terminate().finally(() => { stopping = undefined; pump() }) }
   }
   return {
-    execute(db: Db, action: Action, request: RosterImportRequest, pageCountErrors: readonly RosterImportItemResult[] = [], context: LogContext = {}): Promise<Result> {
+    execute(db: Db, action: Action, request: RosterImportRequest, pageCountErrors: readonly RosterImportItemResult[] = [], context: LogContext = {}, source: { filesDir?: string } = {}): Promise<Result> {
       if (action === 'commit' && request.payload.platformQueries?.length) ensureJobRunnerReady(db)
       const rejectAdmission = (error: ImportReceiptError) => { logImportFailure('import.admission', error, context); return Promise.reject(error) }
       if (closed) return rejectAdmission(unavailable('import_executor_closed', 'Import execution unavailable'))
       const client = (db as Db & { $client: Database.Database }).$client
       // Private/in-memory callers cannot share a native connection across processes.
-      if (!client.name || client.name === ':memory:' || client.inTransaction) return Promise.resolve(action === 'preflight' ? preflightRosterImport(db, request, pageCountErrors, context) : commitRosterImport(db, request, pageCountErrors, context))
+      if (!client.name || client.name === ':memory:' || client.inTransaction) return Promise.resolve(action === 'preflight' ? preflightRosterImport(db, request, pageCountErrors, { ...context, filesDir: source.filesDir }) : commitRosterImport(db, request, pageCountErrors, { ...context, filesDir: source.filesDir }))
       const pending = queue.length + Number(!!active)
       if (pending >= maxPending || (pending > 0 && retainedBytes >= maxBytes)) return rejectAdmission(unavailable('import_busy', 'Import execution busy'))
       const payload = serialize(request)
@@ -103,7 +103,7 @@ export function createImportExecutor(options: { createWorker?: () => Worker; max
       retainedBytes += payload.byteLength
       return new Promise((resolve, reject) => {
         appLog({ source: 'import', operation: 'import.admission', outcome: 'started' }, context)
-        queue.push({ onResult: result => { if ('candidateTaskIds' in result) activateCandidateDiscoveryTasks(db,result.candidateTaskIds,'',context) }, message: { identity, id: ++nextId, dbPath: path, readonly: client.readonly, action, payload, pageCountErrors, logContext: context }, resolve, reject }); pump()
+        queue.push({ onResult: result => { if ('candidateTaskIds' in result) activateCandidateDiscoveryTasks(db,result.candidateTaskIds,'',context) }, message: { identity, id: ++nextId, dbPath: path, readonly: client.readonly, action, payload, pageCountErrors, logContext: context, filesDir: source.filesDir }, resolve, reject }); pump()
       })
     },
     close() {
