@@ -329,22 +329,25 @@ describe('writeOcrResult / listOcrResults', () => {
       fileId,
       pages: [{ page: 1, markdown: '甲', raw: { rec_texts: ['甲'] } }],
       channel: 'api',
+      engine: 'engine A', model: 'model A',
     })
-    expect(rawOf(db, fileId, 1)).toEqual({ rec_texts: ['甲'] })
+    expect((rawOf(db, fileId, 1) as { captures: Array<{raw: unknown}> }).captures.at(-1)!.raw).toEqual({ rec_texts: ['甲'] })
 
     // 通路 b 重传同一页(没有 raw)—— markdown 与 channel 覆盖,raw **保留**。
-    writeOcrResult(db, { fileId, pages: [{ page: 1, markdown: '甲(修)' }], channel: 'upload' })
+    writeOcrResult(db, { fileId, pages: [{ page: 1, markdown: '甲(修)' }], channel: 'upload', engine: 'engine B', model: 'model B' })
     expect(listOcrResults(db, fileId)[0]!.markdown).toBe('甲(修)')
     expect(listOcrResults(db, fileId)[0]!.channel).toBe('upload')
-    expect(rawOf(db, fileId, 1)).toEqual({ rec_texts: ['甲'] })
+    expect((rawOf(db, fileId, 1) as { captures: Array<{raw: unknown}> }).captures.at(-1)!.raw).toEqual({ rec_texts: ['甲'] })
 
-    // 显式给了 raw 时才覆盖(那才是「最后写者胜」的本意)。
+    // 新采集追加并保留旧采集,不让文本修订冒领旧 raw。
     writeOcrResult(db, {
       fileId,
       pages: [{ page: 1, markdown: '甲(再修)', raw: { rec_texts: ['甲(再修)'] } }],
       channel: 'api',
+      engine: 'engine C', model: 'model C',
     })
-    expect(rawOf(db, fileId, 1)).toEqual({ rec_texts: ['甲(再修)'] })
+    expect((rawOf(db, fileId, 1) as { captures: Array<{raw: unknown}> }).captures.at(-1)!.raw).toEqual({ rec_texts: ['甲(再修)'] })
+    expect(rawOf(db, fileId, 1)).toMatchObject({ format: 'ocr-provenance-v1', captures: [{ raw: { rec_texts: ['甲'] }, source: { channel: 'api', engine: 'engine A', model: 'model A' } }, { raw: { rec_texts: ['甲(再修)'] }, source: { channel: 'api', engine: 'engine C', model: 'model C' } }], revisions: [{ markdown: '甲', channel: 'api', capture: 0 }, { markdown: '甲(修)', channel: 'upload', engine: 'engine B', model: 'model B', capture: 0 }, { markdown: '甲(再修)', channel: 'api', capture: 1 }] })
   })
 
   it('页号非法/重复、空数组 → 报错(不写半截)', () => {

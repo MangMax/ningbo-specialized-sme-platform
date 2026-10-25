@@ -197,6 +197,15 @@ export interface OcrImageOut {
 
 /** 跑一次识别需要的输入。 */
 export interface OcrApiOptions {
+  /** Versioned publisher freezes the exact uploaded PNG bytes, including ABA
+   * replacement between hashing and the asynchronous multipart request. */
+  expectedImageSha256?: string
+  /** Durable OCR owner may resume polling an accepted job without another POST. */
+  resumeJobId?: string
+  onSubmissionStarted?: () => void
+  onSubmitted?: (jobId: string) => void
+  onSubmissionRejected?: () => void
+  onRemoteFailed?: () => void
   token: string
   /** 要识别的 PNG 页图的**绝对路径**。 */
   filePath: string
@@ -398,55 +407,67 @@ async function ocrImageFileAttempt(options: OcrApiOptions): Promise<OcrImageOut>
   //
   // **流式上传**,不把页图 `readFile` 成 Buffer 后再复制一份;`openAsBlob`(Node 20+)
   // 让 undici 直接从磁盘流式读。多 PDF/多页并发由共享信号量限制为最多 8 个远端 job。
-  let blob: Blob
-  try {
-    // `stat` 走 promises 版(`node:fs` 上那个是回调式,promise 化会在运行时才炸);
-    // `openAsBlob` 只在 `node:fs` 上有(`node:fs/promises` 里没有这个导出)。
-    const { stat } = await import('node:fs/promises')
-    const { openAsBlob } = await import('node:fs')
-    // 先 stat 一次:不存在/不是文件时给一句人话,而不是让 undici 抛 ENOENT。
-    const info = await stat(options.filePath)
-    if (!info.isFile()) throw new Error('不是文件')
-    blob = await openAsBlob(options.filePath, { type: 'image/png' })
-  } catch (error) {
-    throw new OcrApiError(`读不到要识别的文件:${(error as Error).message}`, 404)
-  }
-  const fileName = options.fileName ?? options.filePath.split('/').pop() ?? 'input.png'
-  if (!fileName.toLowerCase().endsWith('.png')) {
-    throw new OcrApiError(`OCR 只接受 PNG 页图:${fileName}`, 400)
-  }
+  let jobId = options.resumeJobId
+  if (!jobId) {
+    let blob: Blob
+    try {
+      // `stat` 走 promises 版(`node:fs` 上那个是回调式,promise 化会在运行时才炸);
+      // `openAsBlob` 只在 `node:fs` 上有(`node:fs/promises` 里没有这个导出)。
+      const { stat, readFile } = await import('node:fs/promises')
+      const { openAsBlob } = await import('node:fs')
+      // 先 stat 一次:不存在/不是文件时给一句人话,而不是让 undici 抛 ENOENT。
+      const info = await stat(options.filePath)
+      if (!info.isFile()) throw new Error('不是文件')
+      if (options.expectedImageSha256) {
+        const { createHash } = await import('node:crypto')
+        const bytes = await readFile(options.filePath)
+        if (createHash('sha256').update(bytes).digest('hex') !== options.expectedImageSha256) throw new Error('OCR 输入页图内容冲突')
+        blob = new Blob([Uint8Array.from(bytes)], { type: 'image/png' })
+      } else blob = await openAsBlob(options.filePath, { type: 'image/png' })
+    } catch (error) {
+      throw new OcrApiError(`读不到要识别的文件:${(error as Error).message}`, 404)
+    }
+    const fileName = options.fileName ?? options.filePath.split('/').pop() ?? 'input.png'
+    if (!fileName.toLowerCase().endsWith('.png')) {
+      throw new OcrApiError(`OCR 只接受 PNG 页图:${fileName}`, 400)
+    }
 
-  const makeForm = () => {
-    const form = new FormData()
-    form.append('file', blob, fileName)
-    form.append('model', model)
-    // 与官方 SDK 一致:`optionalPayload` 是**字符串**化的 JSON。
-    form.append('optionalPayload', JSON.stringify(DEFAULT_OCR_OPTIONAL_PAYLOAD))
-    return form
-  }
+    const makeForm = () => {
+      const form = new FormData()
+      form.append('file', blob, fileName)
+      form.append('model', model)
+      // 与官方 SDK 一致:`optionalPayload` 是**字符串**化的 JSON。
+      form.append('optionalPayload', JSON.stringify(DEFAULT_OCR_OPTIONAL_PAYLOAD))
+      return form
+    }
 
-  if (options.isCancelled?.()) {
-    throw new OcrApiError('识别已按取消请求停止(尚未提交页图)。', 499)
-  }
+    if (options.isCancelled?.()) {
+      throw new OcrApiError('识别已按取消请求停止(尚未提交页图)。', 499)
+    }
 
-  const submitRes = await fetchWithTimeout(
-    impl,
-    jobsUrl,
-    { method: 'POST', headers: auth, body: makeForm() },
-    requestTimeout,
-    '提交单张 PNG OCR 任务',
-  )
-  if (!submitRes.ok) {
-    const detail = await readErrorText(submitRes, token)
-    throw new OcrApiError(
-      `提交 OCR 任务被拒(HTTP ${submitRes.status}):${detail}`,
-      submitRes.status === 401 || submitRes.status === 403 ? 401 : 502,
-      submitRes.status,
+    options.onSubmissionStarted?.()
+    const submitRes = await fetchWithTimeout(
+      impl,
+      jobsUrl,
+      { method: 'POST', headers: auth, body: makeForm() },
+      requestTimeout,
+      '提交单张 PNG OCR 任务',
     )
+    if (!submitRes.ok) {
+      if (submitRes.status >= 400 && submitRes.status < 500 && submitRes.status !== 408) options.onSubmissionRejected?.()
+      const detail = await readErrorText(submitRes, token)
+      throw new OcrApiError(
+        `提交 OCR 任务被拒(HTTP ${submitRes.status}):${detail}`,
+        submitRes.status === 401 || submitRes.status === 403 ? 401 : 502,
+        submitRes.status,
+      )
+    }
+    const submitted = unwrap(await safeJson(submitRes, '提交响应'), '提交 OCR 任务')
+    jobId = submitted.jobId as string
+    if (typeof jobId !== 'string' || !jobId) throw new OcrApiError('提交响应里没有 jobId')
+    if (options.onSubmitted && ocrTokenRedactor(token)(jobId) !== jobId) throw new OcrApiError('远端任务 ID 不可安全保存;提交结果保持未知')
+    options.onSubmitted?.(jobId)
   }
-  const submitted = unwrap(await safeJson(submitRes, '提交响应'), '提交 OCR 任务')
-  const jobId = submitted.jobId
-  if (typeof jobId !== 'string' || !jobId) throw new OcrApiError('提交响应里没有 jobId')
 
   // ---- 2. 轮询 ----------------------------------------------------------------
   const deadline = Date.now() + pollTimeout
@@ -454,7 +475,7 @@ async function ocrImageFileAttempt(options: OcrApiOptions): Promise<OcrImageOut>
   let jsonUrl: string | null = null
   for (;;) {
     if (options.isCancelled?.()) {
-      throw new OcrApiError(`识别已按取消请求停止(服务端任务 ${jobId} 仍在跑,结果丢弃)。`, 499)
+      throw new OcrApiError(`识别已按取消请求停止(服务端任务 ${jobId} 可凭原回执继续查询)。`, 499)
     }
     const statusRes = await fetchWithTimeout(
       impl,
@@ -496,6 +517,7 @@ async function ocrImageFileAttempt(options: OcrApiOptions): Promise<OcrImageOut>
       break
     }
     if (state === 'failed') {
+      options.onRemoteFailed?.()
       const why = typeof data.errorMsg === 'string' && data.errorMsg ? data.errorMsg : '(无 errorMsg)'
       const statusMatch = /(?:HTTP\s*|状态码\s*)(\d{3})/i.exec(why)
       const remoteStatus = statusMatch ? Number(statusMatch[1]) : null
@@ -548,7 +570,9 @@ async function ocrImageFileWithRetries(options: OcrApiOptions): Promise<OcrImage
     } catch (error) {
       const remoteStatus = error instanceof OcrApiError ? error.remoteStatus : null
       const retryable = remoteStatus !== null && remoteStatus >= 500 && remoteStatus <= 599
-      if (!retryable) throw error
+      // A durable owner retains unknown submissions/accepted IDs. Retrying the
+      // whole POST here would hide a second paid job behind the same receipt.
+      if (!retryable || options.onSubmissionStarted || options.resumeJobId) throw error
       if (attempt === MAX_IMAGE_ATTEMPTS) {
         const original = error as OcrApiError
         throw new OcrApiError(

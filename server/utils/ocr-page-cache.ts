@@ -67,6 +67,7 @@ export interface OcrPageCacheHit {
   model: string
   markdown: string
   raw: unknown
+  createdAt: string | null
 }
 
 /** 一份 PDF 的中转缓存目录(绝对路径;解析后必须仍在文件库根内)。 */
@@ -132,6 +133,7 @@ export async function readOcrPageCache(
     model: typeof parsed.model === 'string' ? parsed.model : '',
     markdown: parsed.markdown,
     raw: parsed.raw,
+    createdAt: typeof parsed.createdAt === 'string' ? parsed.createdAt : null,
   }
 }
 
