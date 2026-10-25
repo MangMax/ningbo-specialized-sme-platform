@@ -97,3 +97,23 @@ it('已采集第三来源无需差异原因即可打开，摘要按实际来源�
  expect(document.querySelectorAll('[data-record-kind="recognized_list"] [data-testid="platform-relation"]')).toHaveLength(2)
  expect(document.querySelector('[data-record-kind="recognized_list"]')?.textContent).toContain('部分结果')
 })
+
+it('旧比对展开区分已提供、冲突与缺值，未知状态保留原值', async () => {
+  const states = [
+    { status: '终审通过', normalizationConflicts: [] },
+    { status: null, normalizationConflicts: [{ field: 'status' as const, storedValue: '已退回', rawValue: '终审通过' }] },
+    { status: null, normalizationConflicts: [] },
+    { status: '上游新状态-X9', normalizationConflicts: [] },
+  ]
+  const relations = states.map((state, index) => ({ id: index + 1, queryId: 1, sequenceNo: index + 1, relationKey: null, usccRaw: null, nameRaw: `状态${index}`, aliasNameRaw: null, province: null, batch: null, declareKind: null, appliedAt: null, awardBatchLabel: null, year: null, matchBasis: 'uscc', verificationStatus: 'confirmed', ...state }))
+  const wrapper = mountEvidence({ aliases: [], disposition: disposition(), relationCount: 4, queries: [{ id: 1, interface: 'business_list', queryKey: 'synthetic', rdjb: '2', queriedAt: '2026-10-01', status: 'success', failureReason: null, relationCount: 4, relations }] })
+  await wrapper.get('[data-testid="platform-evidence-details-toggle"]').trigger('click')
+  const rows = [...document.querySelectorAll('[data-testid="platform-relation"]')]
+  expect(rows).toHaveLength(4)
+  expect(rows[0]!.textContent).toContain('终审通过')
+  expect(rows[1]!.textContent).toContain('字段冲突，待核')
+  expect(rows[1]!.textContent).not.toContain('终审通过')
+  expect(rows[2]!.textContent).toContain('未提供')
+  expect(rows[2]!.textContent).not.toContain('字段冲突')
+  expect(rows[3]!.textContent).toContain('上游新状态-X9')
+})

@@ -103,7 +103,7 @@ const completeRaw = computed(() => JSON.stringify(props.relation?.rawFields ?? n
         <dt class="text-muted-foreground">企业原名</dt><dd>{{ exportRow.nameRaw ?? '未提供' }}</dd>
         <dt class="text-muted-foreground">信用代码原值</dt><dd>{{ exportRow.usccRaw ?? '未提供' }}</dd>
         <dt class="text-muted-foreground">属地原值</dt><dd>{{ exportRow.district ?? '未提供' }}</dd>
-        <dt class="text-muted-foreground">登记状态原值</dt><dd>{{ exportRow.regStatus ?? '未提供' }}</dd>
+        <dt class="text-muted-foreground">平台审核状态原值</dt><dd>{{ exportRow.regStatus ?? '未提供' }}</dd>
         <dt class="text-muted-foreground">版本</dt><dd>{{ exportRow.batch.year }} 年 · {{ exportRow.batch.collectedOn }} 采集 · {{ exportRow.batch.originalFilename }}</dd>
         <dt class="text-muted-foreground">文件指纹</dt><dd class="font-mono text-xs break-all">{{ exportRow.batch.sha256 }}</dd>
         <template v-for="field in fields" :key="field.key"><dt class="text-muted-foreground">{{ field.label }}（{{ field.key }}）</dt><dd>{{ field.value }}</dd></template>

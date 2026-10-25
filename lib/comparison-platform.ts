@@ -1,4 +1,5 @@
 import { sourcePositionForSequence } from './platform/recognized-evidence'
+import { normalizePlatformRelation, type PlatformNormalizationConflict } from './platform/normalization'
 /**
  * 比对行 × 平台证据的**接缝**(RL-03 交付物 3;RL-15 收口为**以库内为准**)。
  *
@@ -63,6 +64,7 @@ export interface ComparisonDisposition {
 
 /** 一条**平台原始关系**(`platform_relation`)—— 可展开的接口证据原文。 */
 export interface ComparisonRelation {
+  normalizationConflicts?: PlatformNormalizationConflict[]
   enterpriseId?: number | null
   rawFields?: Record<string, unknown> | null
   sourceRdjb?: string | null
@@ -223,27 +225,33 @@ export function attachPlatformEvidence<T extends RowKey>(
     else aliasesByEnterprise.set(alias.enterpriseId, [item])
   }
 
-  const toRelation = (row: typeof schema.platformRelation.$inferSelect): ComparisonRelation => ({
-    ...(queries.find(q => q.id === row.queryId)?.interface === 'recognized_list' ? { enterpriseId: row.enterpriseId } : {}),
-    id: row.id,
-    queryId: row.queryId,
-    sequenceNo: row.sequenceNo,
-    relationKey: row.relationKey,
-    rawFields: row.rawFields,
-    ...sourcePositionForSequence(queries.find(q => q.id === row.queryId)?.collectionEvidence, row.sequenceNo),
-    usccRaw: row.usccRaw,
-    nameRaw: row.nameRaw,
-    aliasNameRaw: row.aliasNameRaw,
-    province: row.province,
-    status: row.status,
-    batch: row.batch,
-    declareKind: row.declareKind,
-    appliedAt: row.appliedAt,
-    awardBatchLabel: row.awardBatchLabel,
-    year: row.year,
-    matchBasis: row.matchBasis,
-    verificationStatus: row.verificationStatus,
-  })
+  const queryById = new Map(queries.map(query => [query.id, query]))
+  const toRelation = (archived: typeof schema.platformRelation.$inferSelect): ComparisonRelation => {
+    const query = queryById.get(archived.queryId)
+    const row = normalizePlatformRelation(query?.interface ?? '', archived)
+    return {
+      ...(query?.interface === 'recognized_list' ? { enterpriseId: row.enterpriseId } : {}),
+      normalizationConflicts: row.normalizationConflicts,
+      id: row.id,
+      queryId: row.queryId,
+      sequenceNo: row.sequenceNo,
+      relationKey: row.relationKey,
+      rawFields: row.rawFields,
+      ...sourcePositionForSequence(query?.collectionEvidence, row.sequenceNo),
+      usccRaw: row.usccRaw,
+      nameRaw: row.nameRaw,
+      aliasNameRaw: row.aliasNameRaw,
+      province: row.province,
+      status: row.status,
+      batch: row.batch,
+      declareKind: row.declareKind,
+      appliedAt: row.appliedAt,
+      awardBatchLabel: row.awardBatchLabel,
+      year: row.year,
+      matchBasis: row.matchBasis,
+      verificationStatus: row.verificationStatus,
+    }
+  }
 
   const relationsByQuery = new Map<number, ComparisonRelation[]>()
   /** 查询 → 有关系归到它的企业集合(用于把查询摘要挂到每个相关企业上)。 */
