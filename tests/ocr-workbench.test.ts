@@ -15,6 +15,7 @@ import {
   workbenchCounts,
 } from '../lib/ocr-workbench'
 import { decodeOcrImport } from '../server/utils/ocr-import'
+import type { OcrProvenance } from '../server/utils/ocr-provenance'
 import { listOcrResults, ocrPageNumbers, removeOcrPage, writeOcrResult } from '../server/utils/ocr-result'
 
 /**
@@ -504,26 +505,106 @@ describe('逐页增删改查', () => {
 
   it('★ JSONL 导入把原始响应落进 raw;之后再走 markdown 通路不会把它抹掉', () => {
     const fileId = seedFile(relPath)
-    const item = { markdown: { text: '第 1 页' }, layoutBox: { page: 1 } }
+    const expectedOriginalRaw = { markdown: { text: '第 1 页' }, layoutBox: { page: 1 } }
     const decoded = decodeOcrImport({
-      jsonl: JSON.stringify({ result: { layoutParsingResults: [item] } }),
+      jsonl: JSON.stringify({ result: { layoutParsingResults: [expectedOriginalRaw] } }),
     })
     expect(decoded.ok).toBe(true)
     if (!decoded.ok) return
+    expect(decoded.source).toBe('jsonl')
+    expect(decoded.pages).toHaveLength(1)
+    expect(decoded.pages[0]).toStrictEqual({
+      page: 1,
+      markdown: '第 1 页',
+      raw: expectedOriginalRaw,
+    })
 
-    writeOcrResult(db, { fileId, pages: decoded.pages, channel: 'upload', sourceRelPath: relPath })
-    expect(rawOf(db, fileId, 1)).toEqual(item)
+    expect(
+      writeOcrResult(db, {
+        fileId,
+        pages: decoded.pages,
+        channel: 'upload',
+        sourceRelPath: relPath,
+      }),
+    ).toStrictEqual({ ok: true, written: 1, pages: [1] })
+    const initialRows = listOcrResults(db, fileId)
+    expect(initialRows).toHaveLength(1)
+    const initialRow = initialRows[0]!
+    expect(initialRow).toMatchObject({
+      page: 1,
+      markdown: '第 1 页',
+      channel: 'upload',
+      engine: 'paddleocr',
+      model: null,
+    })
+    expect(new Date(initialRow.createdAt).toISOString()).toBe(initialRow.createdAt)
+
+    const expectedInitialCapture = {
+      raw: expectedOriginalRaw,
+      markdown: '第 1 页',
+      source: {
+        channel: 'upload',
+        engine: 'paddleocr',
+        model: null,
+        createdAt: initialRow.createdAt,
+      },
+    }
+    const expectedInitialRevision = {
+      markdown: '第 1 页',
+      channel: 'upload',
+      engine: 'paddleocr',
+      model: null,
+      createdAt: initialRow.createdAt,
+      capture: 0,
+    }
+    const initialRaw = rawOf(db, fileId, 1) as OcrProvenance
+    expect(initialRaw).toStrictEqual({
+      format: 'ocr-provenance-v1',
+      captures: [expectedInitialCapture],
+      revisions: [expectedInitialRevision],
+    })
+    const retainedCaptures = structuredClone(initialRaw.captures)
+    const retainedRevisions = structuredClone(initialRaw.revisions)
 
     // 通路 b(markdown,没有原始响应)重传同一页:文本换掉,`raw` **保留** ——
     // 这正是 `writeOcrResult` 那条「本次没给就留着上一次」的语义,补上 raw 之后依然成立。
-    writeOcrResult(db, {
-      fileId,
-      pages: [{ page: 1, markdown: '第 1 页(人工改过)' }],
+    expect(
+      writeOcrResult(db, {
+        fileId,
+        pages: [{ page: 1, markdown: '第 1 页(人工改过)' }],
+        channel: 'upload',
+        sourceRelPath: relPath,
+      }),
+    ).toStrictEqual({ ok: true, written: 1, pages: [1] })
+    const revisedRows = listOcrResults(db, fileId)
+    expect(revisedRows).toHaveLength(1)
+    const revisedRow = revisedRows[0]!
+    expect(revisedRow).toMatchObject({
+      page: 1,
+      markdown: '第 1 页(人工改过)',
       channel: 'upload',
-      sourceRelPath: relPath,
+      engine: 'paddleocr',
+      model: null,
     })
-    expect(listOcrResults(db, fileId)[0]!.markdown).toBe('第 1 页(人工改过)')
-    expect(rawOf(db, fileId, 1)).toEqual(item)
+    expect(new Date(revisedRow.createdAt).toISOString()).toBe(revisedRow.createdAt)
+
+    const expectedTextRevision = {
+      markdown: '第 1 页(人工改过)',
+      channel: 'upload',
+      engine: 'paddleocr',
+      model: null,
+      createdAt: revisedRow.createdAt,
+      capture: 0,
+    }
+    const revisedRaw = rawOf(db, fileId, 1) as OcrProvenance
+    expect(revisedRaw.captures[0]!.raw).toStrictEqual(expectedOriginalRaw)
+    expect(revisedRaw.captures).toStrictEqual(retainedCaptures)
+    expect(revisedRaw.revisions[0]).toStrictEqual(retainedRevisions[0])
+    expect(revisedRaw).toStrictEqual({
+      format: 'ocr-provenance-v1',
+      captures: [expectedInitialCapture],
+      revisions: [expectedInitialRevision, expectedTextRevision],
+    })
   })
 
   it('删一页不会误伤同文件之外的其它页(边界:只按 (file_id, page_no) 删)', () => {
