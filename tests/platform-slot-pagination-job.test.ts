@@ -8,6 +8,7 @@ import { afterAll, afterEach, beforeAll, expect, it, vi } from 'vitest'
 import { schema, useDb } from '../db'
 import { clearJobSpecs, whenIdle } from '../server/utils/job-runner'
 import { updateCredential } from '../server/utils/credential-state'
+import type { TaskList, TaskSummary } from '../lib/task-center'
 
 const dir = mkdtempSync(join(tmpdir(), 'issue299-pagination-'))
 const db = useDb({ dbPath: join(dir, 'tasks.db') })
@@ -322,4 +323,78 @@ it('malformed historical collection scalars stay unknown without transporting ne
   expect(detail.outcome).toMatchObject({ complete: 1, partial: 1, unfinished: null })
   expect(JSON.stringify(detail)).not.toContain('PRIVATE_')
   expect(JSON.stringify(detail).length).toBeLessThan(12000)
+})
+
+const originalCollection = { complete: 4, partial: 0, failed: 0, unknown: 0 }
+const pendingRange = { source: 'businessList', rdjb: '3', page: 2 }
+const emptySlots = Array.from({ length: 4 }, () => ({ unfinished: [] }))
+const unknownCollection = { complete: null, partial: null, failed: null, unknown: null, unfinished: null, positions: [], positionsTruncated: false }
+
+async function publicSummaryPair(id: string) {
+  const [detailResponse, listResponse] = await Promise.all([
+    nativeFetch(`${baseUrl}/api/task-center/${id}`), nativeFetch(`${baseUrl}/api/task-center?tab=platform`),
+  ])
+  expect([detailResponse.status, listResponse.status]).toEqual([200, 200])
+  const detail = await detailResponse.json() as TaskSummary
+  const list = await listResponse.json() as TaskList
+  expect(list.rows.find(row => row.id === id)?.reconcileCollection).toEqual(detail.reconcileCollection)
+  return detail
+}
+
+const invalidHistoricalCollections: { name: string; collection: unknown }[] = [
+  ...[undefined, null, 'x', 1, []].map((collection, index) => ({ name: `collection ${['missing', 'null', 'text', 'number', 'array'][index]}`, collection })),
+  ...[undefined, 'x', null, {}, 1, true, ['x'], [null], [1], [[]], [{}]].map((positions, index) => ({ name: `positions ${['missing', 'text', 'null', 'object', 'number', 'boolean', 'text slot', 'null slot', 'number slot', 'array slot', 'slot missing unfinished'][index]}`, collection: { ...originalCollection, positions } })),
+  ...[undefined, null, 'x', {}, 1, true, ['x'], [null], [1], [[]], [pendingRange, 'x']].map((unfinished, index) => ({ name: `unfinished ${['missing', 'null', 'text', 'object', 'number', 'boolean', 'text range', 'null range', 'number range', 'array range', 'mixed range'][index]}`, collection: { ...originalCollection, positions: [{ unfinished }, ...emptySlots.slice(1)] } })),
+  ...[
+    {}, { ...pendingRange, source: 'queryBusList' }, { ...pendingRange, source: null },
+    { ...pendingRange, rdjb: '4' }, { ...pendingRange, rdjb: 3 }, { ...pendingRange, rdjb: null },
+    { source: 'businessList', page: 2 }, { ...pendingRange, source: 'queryList' },
+    { ...pendingRange, page: undefined }, { ...pendingRange, page: null }, { ...pendingRange, page: '2' },
+    { ...pendingRange, page: 0 }, { ...pendingRange, page: -1 }, { ...pendingRange, page: 1.5 },
+    { ...pendingRange, page: true }, { ...pendingRange, page: Number.MAX_SAFE_INTEGER + 1 },
+    { ...pendingRange, rdjb: '3x' }, { ...pendingRange, source: 'queryList', rdjb: undefined },
+  ].map((position, index) => ({ name: `range ${['missing fields', 'unsupported source', 'null source', 'unknown rdjb', 'numeric rdjb', 'null business rdjb', 'missing rdjb', 'queryList with rdjb', 'missing page', 'null page', 'text page', 'zero page', 'negative page', 'fractional page', 'boolean page', 'unsafe integer page', 'rdjb suffix', 'missing queryList rdjb'][index]}`, collection: { ...originalCollection, positions: [{ unfinished: [position] }, ...emptySlots.slice(1)] } })),
+  { name: 'missing slot coverage', collection: { ...originalCollection, positions: emptySlots.slice(1) } },
+  { name: 'missing count', collection: { ...originalCollection, complete: undefined, positions: emptySlots } },
+  { name: 'negative count', collection: { ...originalCollection, partial: -1, positions: emptySlots } },
+  { name: 'invalid slot beyond preview', collection: { complete: 0, partial: 0, failed: 52, unknown: 0, positions: [...Array.from({ length: 51 }, () => ({ unfinished: [pendingRange] })), {}] } },
+  { name: 'invalid range beyond preview', collection: { complete: 0, partial: 1, failed: 0, unknown: 0, positions: [{ unfinished: [...Array.from({ length: 51 }, () => pendingRange), 'x'] }] } },
+]
+
+it.each(invalidHistoricalCollections)('historical $name stays unknown through public list and detail without filtering bad entries into completion', async ({ collection }) => {
+  upstream()
+  const job = await submit(), done = await finish(job.jobId)
+  db.update(schema.job).set({ result: { ...done.result, collection } }).where(eq(schema.job.id, job.jobId)).run()
+  const before = db.select({ result: schema.job.result }).from(schema.job).where(eq(schema.job.id, job.jobId)).get()?.result
+  const detail = await publicSummaryPair(job.jobId)
+  expect(detail.reconcileCollection).toEqual(unknownCollection)
+  expect(detail.outcome).toMatchObject({ complete: 1, partial: 1, unfinished: null })
+  expect(db.select({ result: schema.job.result }).from(schema.job).where(eq(schema.job.id, job.jobId)).get()?.result).toEqual(before)
+})
+
+it.each([
+  { name: 'empty positions', collection: { complete: 0, partial: 0, failed: 0, unknown: 0, positions: [] } },
+  { name: 'four complete slots', collection: { ...originalCollection, positions: emptySlots } },
+])('only validated $name report zero unfinished ranges through public list and detail', async ({ collection }) => {
+  upstream()
+  const job = await submit(), done = await finish(job.jobId)
+  db.update(schema.job).set({ result: { ...done.result, collection } }).where(eq(schema.job.id, job.jobId)).run()
+  const detail = await publicSummaryPair(job.jobId)
+  const { positions: _positions, ...counts } = collection
+  expect(detail.reconcileCollection).toEqual({ ...counts, unfinished: 0, positions: [], positionsTruncated: false })
+  expect(detail.outcome).toMatchObject({ complete: 1, partial: 1, unfinished: 0 })
+})
+
+it.each([50, 51])('validated %i ranges preserve the full count and at most 50 scopes through public list and detail', async count => {
+  upstream()
+  const job = await submit(), done = await finish(job.jobId)
+  db.update(schema.job).set({ result: { ...done.result, collection: {
+    complete: 0, partial: 1, failed: 0, unknown: 0,
+    positions: [{ unfinished: Array.from({ length: count }, (_, index) => ({ ...pendingRange, page: index + 1 })) }],
+  } } }).where(eq(schema.job.id, job.jobId)).run()
+  const detail = await publicSummaryPair(job.jobId)
+  expect(detail.reconcileCollection).toMatchObject({ complete: 0, partial: 1, unfinished: count, positionsTruncated: count > 50 })
+  expect(detail.reconcileCollection?.positions).toHaveLength(50)
+  expect(detail.reconcileCollection?.positions[49]).toEqual({ ...pendingRange, page: 50 })
+  expect(detail.outcome).toMatchObject({ complete: 1, partial: 1, unfinished: count })
 })

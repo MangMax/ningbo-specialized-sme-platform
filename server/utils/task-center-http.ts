@@ -17,6 +17,37 @@ type Request = { method: string; path: string; query?: Record<string, unknown>; 
 const error = (status: number, message: string) => ({ status, headers: { 'cache-control': 'no-store' }, body: { message } })
 const positive = (raw: unknown, fallback: number, max: number) => typeof raw !== 'object' && Number.isInteger(Number(raw)) && Number(raw) > 0 ? Math.min(Number(raw), max) : fallback
 const j = schema.job
+// Reconcile historical coverage is unknown unless every nested container and
+// range is valid. CASE keeps SQL text/scalars from becoming JSON function input.
+const reconcilePositions = sql`case when json_type(${j.result},'$.collection.positions') = 'array'
+  then json_extract(${j.result},'$.collection.positions') else '[]' end`
+const reconcileSlot = sql`case when p.type = 'object' then p.value else '{}' end`
+const reconcileUnfinished = sql`case when json_type(${reconcileSlot},'$.unfinished') = 'array'
+  then json_extract(${reconcileSlot},'$.unfinished') else '[]' end`
+const reconcileRange = sql`case when u.type = 'object' then u.value else '{}' end`
+const validReconcileRange = sql`case when u.type = 'object'
+  and json_type(${reconcileRange},'$.source') = 'text'
+  and json_type(${reconcileRange},'$.page') = 'integer'
+  and json_extract(${reconcileRange},'$.page') between 1 and 9007199254740991
+  and ((json_extract(${reconcileRange},'$.source') = 'businessList'
+    and json_type(${reconcileRange},'$.rdjb') = 'text'
+    and json_extract(${reconcileRange},'$.rdjb') in ('1','2','3'))
+    or (json_extract(${reconcileRange},'$.source') = 'queryList'
+      and json_type(${reconcileRange},'$.rdjb') = 'null')) then 1 else 0 end`
+const validReconcileCoverage = sql`case when json_type(${j.result},'$.collection') = 'object'
+  and json_type(${j.result},'$.collection.positions') = 'array'
+  and ${sql.join(['complete', 'partial', 'failed', 'unknown'].map(key => sql`case
+    when json_type(${j.result}, ${'$.collection.' + key}) = 'integer'
+      and json_extract(${j.result}, ${'$.collection.' + key}) between 0 and 9007199254740991
+    then 1 else 0 end = 1`), sql` and `)}
+  and (json_extract(${j.result},'$.collection.complete') + json_extract(${j.result},'$.collection.partial')
+    + json_extract(${j.result},'$.collection.failed') + json_extract(${j.result},'$.collection.unknown'))
+    = json_array_length(${reconcilePositions})
+  and not exists (select 1 from json_each(${reconcilePositions}) p where case
+    when p.type = 'object' and json_type(${reconcileSlot},'$.unfinished') = 'array'
+      and not exists (select 1 from json_each(${reconcileUnfinished}) u where ${validReconcileRange} = 0)
+    then 0 else 1 end = 1)
+  then 1 else 0 end`
 // SQLite projects only scalar fields and bounded ID/status arrays. Raw params,
 // OCR markdown and platform segment/page/row payloads never enter JS list memory.
 const projection = {
@@ -31,21 +62,19 @@ const projection = {
   discoveryMeta: sql<string>`case when ${j.kind} = 'event-archive-candidates' then json_object('ruleVersion', substr(json_extract(${j.result},'$.ruleVersion'),1,80), 'attempt', json_extract(${j.result},'$.attempt'), 'titleCode',substr(json_extract(${j.params},'$.titleCode'),1,40),'queryId',json_extract(${j.params},'$.queryId'),'eventCount',json_array_length(${j.params},'$.eventIds'),'counts',json_extract(${j.result},'$.counts'),'throughEventId',json_extract(${j.result},'$.throughEventId'),'nextAfterEventId',json_extract(${j.result},'$.nextAfterEventId'),'continuationJobId',substr(json_extract(${j.result},'$.continuationJobId'),1,26),'items',json((select json_group_array(json_object('eventId',json_extract(value,'$.eventId'),'enterpriseId',json_extract(value,'$.enterpriseId'),'status',substr(json_extract(value,'$.status'),1,20),'created',json_extract(value,'$.created'),'existing',json_extract(value,'$.existing'),'errorCode',substr(json_extract(value,'$.errorCode'),1,50))) from (select value from json_each(${j.result},'$.items') limit 200)))) else '{}' end`,
   files: sql<string>`case when ${j.kind} = 'ocr' then (select json_group_array(json_object('id',json_extract(value,'$.fileId'),'path',(select rel_path from stored_file where id = json_extract(value,'$.fileId')))) from (select value from json_each(${j.result}, '$.files') where json_extract(value,'$.ok') = 1 limit 50)) else '[]' end`,
   counts: sql<string>`case when ${j.kind} = 'reconcile' then json_object('failed',json_extract(${j.result},'$.counts.queryFailed'),'notQueried',json_extract(${j.result},'$.counts.notQueried'),'complete',json_extract(${j.result},'$.counts.total'),'partial',json_extract(${j.result},'$.counts.needsReview')) else '{}' end`,
-  // Reconcile coverage is projected as scalars and at most 50 locations in SQL.
-  // Per-page raw responses, conditions and relation payloads never enter JS here.
-  reconcileCollection: sql<string>`case when ${j.kind} = 'reconcile' then json_object(
-    'complete',case when json_type(${j.result},'$.collection.complete') = 'integer' then json_extract(${j.result},'$.collection.complete') else null end,
-    'partial',case when json_type(${j.result},'$.collection.partial') = 'integer' then json_extract(${j.result},'$.collection.partial') else null end,
-    'failed',case when json_type(${j.result},'$.collection.failed') = 'integer' then json_extract(${j.result},'$.collection.failed') else null end,
-    'unknown',case when json_type(${j.result},'$.collection.unknown') = 'integer' then json_extract(${j.result},'$.collection.unknown') else null end,
-    'unfinished',case when json_type(${j.result},'$.collection.positions') = 'array' then
-      (select coalesce(sum(json_array_length(value,'$.unfinished')),0) from json_each(${j.result},'$.collection.positions')) else null end,
+  // Validate the entire collection before counting or taking a bounded preview.
+  // Unknown shapes produce no coverage claims; raw/page payloads stay in SQLite.
+  reconcileCollection: sql<string>`case when ${j.kind} = 'reconcile' then case when ${validReconcileCoverage} = 1 then json_object(
+    'complete',json_extract(${j.result},'$.collection.complete'),
+    'partial',json_extract(${j.result},'$.collection.partial'),
+    'failed',json_extract(${j.result},'$.collection.failed'),
+    'unknown',json_extract(${j.result},'$.collection.unknown'),
+    'unfinished',(select coalesce(sum(json_array_length(${reconcileUnfinished})),0) from json_each(${reconcilePositions}) p),
     'positions',json((select json_group_array(json_object('source',source,'rdjb',rdjb,'page',page)) from
-      (select substr(json_extract(u.value,'$.source'),1,20) as source,
-        substr(json_extract(u.value,'$.rdjb'),1,2) as rdjb,
-        case when json_type(u.value,'$.page') = 'integer' then json_extract(u.value,'$.page') else null end as page
-       from json_each(${j.result},'$.collection.positions') p, json_each(p.value,'$.unfinished') u limit 50)))
-  ) else '{}' end`,
+      (select json_extract(${reconcileRange},'$.source') as source,
+        json_extract(${reconcileRange},'$.rdjb') as rdjb,json_extract(${reconcileRange},'$.page') as page
+       from json_each(${reconcilePositions}) p, json_each(${reconcileUnfinished}) u limit 50)))
+  ) else '{}' end else '{}' end`,
 }
 function readTasks(db: Db, where: SQL | undefined, limit: number, offset = 0) {
   return db.select(projection).from(j).where(where).orderBy(desc(j.createdAt), desc(j.id)).limit(limit).offset(offset).all()
