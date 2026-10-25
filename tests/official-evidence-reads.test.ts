@@ -8,6 +8,7 @@ import { drizzle, type BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import { migrate } from 'drizzle-orm/better-sqlite3/migrator'
 import { afterAll, afterEach, beforeAll, expect, it, vi } from 'vitest'
 import { z } from 'zod'
+import { AjvJsonSchemaValidator } from '@modelcontextprotocol/sdk/validation/ajv'
 import * as schema from '../db/schema'
 import type { OfficialPublishedRow, RosterImportPayload, RosterImportRequest, RosterImportRecord } from '../lib/roster-import-client'
 import { minimalPdf } from './helpers/minimal-pdf'
@@ -22,6 +23,7 @@ const closes: (() => void | Promise<void>)[] = []
 afterEach(async () => { for (const close of closes.splice(0).reverse()) await close() })
 afterAll(() => vi.unstubAllGlobals())
 const router = createRouter()
+let itemsMetadata: unknown
 beforeAll(async () => {
   vi.stubGlobal('defineEventHandler', defineEventHandler)
   vi.stubGlobal('useRuntimeConfig', () => ({ apiToken: 'synthetic-c-api', mcpToken: 'synthetic-c-mcp', filesDir: current.filesDir }))
@@ -31,6 +33,7 @@ beforeAll(async () => {
   router.post('/api/roster/evidence/corrections/commit', (await import('../server/api/roster/evidence/corrections/commit.post')).default)
   router.get('/api/roster/evidence/:id', (await import('../server/api/roster/evidence/[id].get')).default)
   router.get('/api/roster/events/:id', (await import('../server/api/roster/events/[id].get')).default)
+  vi.stubGlobal('defineRouteMeta', (meta: unknown) => { itemsMetadata = meta; return meta })
   router.get('/api/roster/import/receipts/items', (await import('../server/api/roster/import/receipts/items.get')).default)
 })
 const resultSchema = z.object({ status: z.string().optional(), batchId: z.number().optional(), items: z.array(z.object({ kind: z.string(), detail: z.unknown() }).passthrough()).optional(), preflight: z.object({ conflicts: z.array(z.unknown()), officialEvidencePlanHash: z.string().optional() }).optional() }).passthrough()
@@ -403,4 +406,40 @@ it('applies the official event redactor once and enforces its final UTF8 envelop
     const small=await f.http(url+'&maxBytes='+(required-1),undefined,'REDACTED')
     expect(official).toMatchObject({rows:[{nameRaw:'[REDACTED]'}]});expect(small.status).toBe(413);expect(small.body).toMatchObject({error:{code:'response_limit'}})
   } finally {vi.stubGlobal('useRuntimeConfig',()=>({apiToken:'synthetic-c-api',mcpToken:'synthetic-c-mcp',filesDir:current.filesDir}))}
+})
+
+// Compile the route's actual literal metadata with the installed SDK's Ajv 8 provider.
+// It supports the nullable extension retained by Nitro's OpenAPI 3.1 metadata.
+function itemsResponseValidator() {
+  const meta = z.object({ openAPI: z.object({ responses: z.object({ '200': z.object({ content: z.object({ 'application/json': z.object({ schema: z.record(z.string(), z.unknown()) }) }) }) }) }) }).parse(itemsMetadata)
+  return new AjvJsonSchemaValidator().getValidator(meta.openAPI.responses['200'].content['application/json'].schema)
+}
+it.each(['legacy list', 'private snapshot', 'receipt not retained', 'event IDs'] as const)('items response schema accepts real reader %s and rejects missing required fields', async kind => {
+  const f = await fixture(), s = await f.seedMerge(), validate = itemsResponseValidator()
+  const query = kind === 'legacy list' ? `batchId=${s.batchId}` : kind === 'receipt not retained'
+    ? `projection=snapshot&source=redacted_receipt&receiptId=${s.receiptId}&itemIndex=${s.index}&oldRecordId=${s.origin.recordId}`
+    : `projection=${kind === 'private snapshot' ? 'snapshot' : 'eventIds'}&${s.selector}`
+  const result = await f.http('/api/roster/import/receipts/items?' + query)
+  expect(result.status).toBe(200)
+  const valid = validate(result.body)
+  expect(valid.valid, valid.errorMessage).toBe(true)
+  const body = z.record(z.string(), z.unknown()).parse(result.body)
+  const required = kind === 'legacy list' ? 'rows' : kind === 'private snapshot' ? 'snapshot' : kind === 'receipt not retained' ? 'availability' : 'eventIds'
+  const malformed = { ...body }; delete malformed[required]
+  expect(validate(malformed).valid).toBe(false)
+  expect(validate({}).valid).toBe(false)
+  if (kind === 'private snapshot') {
+    expect(body.receiptId).toBeNull() // Actual private-source null, not a hand-built schema example.
+    expect(validate({ ...body, rows: [], page: 1, pageSize: 20, total: 0 }).valid).toBe(false)
+    expect(validate({ ...body, snapshot: { id: s.origin.recordId } }).valid).toBe(false)
+  }
+  if (kind === 'receipt not retained') {
+    expect(body.availability).toBe('not_retained')
+    expect(validate({ ...body, snapshot: {} }).valid).toBe(false)
+  }
+  if (kind === 'event IDs') {
+    expect(body.nextCursor).toBeNull()
+    const noCursor = { ...body }; delete noCursor.nextCursor
+    expect(validate(noCursor).valid).toBe(false)
+  }
 })

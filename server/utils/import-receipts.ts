@@ -45,8 +45,9 @@ interface ReceiptRow {
 export function readImportReceipt(db: Db, action: ImportReceiptAction, args: Record<string, unknown>) {
   if(action==='items' && args.projection!==undefined) {
     const parsed=importItemsReadSchema.safeParse(officialReadQuery(args))
-    if(!parsed.success) invalid('Invalid exact merge snapshot selector')
-    try { return db.transaction(()=>readMergeSnapshotProjection(db,parsed.data)) }
+    if(!parsed.success) return invalid('Invalid exact merge snapshot selector')
+    const selector = parsed.data
+    try { return db.transaction(()=>readMergeSnapshotProjection(db,selector)) }
     catch(error) {if(error instanceof ImportReceiptError) throw error; throw new ImportReceiptError(500,'internal_error','Exact snapshot read failed')}
   }
   const redact = importReceiptRedactor(db)

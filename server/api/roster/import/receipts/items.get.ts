@@ -12,15 +12,15 @@ defineRouteMeta({
       {"name": "receiptId", "in": "query", "schema": {"type": "integer", "minimum": 1}},
       {"name": "page", "in": "query", "schema": {"type": "integer", "minimum": 1, "maximum": 1000000, "default": 1}},
       {"name": "pageSize", "in": "query", "schema": {"type": "integer", "minimum": 1, "maximum": 50, "default": 20}},
-      {"name": "projection", "in": "query", "required": false, "schema": {"enum": ["snapshot", "eventIds"]}},
-      {"name": "source", "in": "query", "required": false, "schema": {"enum": ["private_batch", "redacted_receipt"]}},
+      {"name": "projection", "in": "query", "required": false, "schema": {"enum": ["snapshot", "eventIds"], "type": "string"}},
+      {"name": "source", "in": "query", "required": false, "schema": {"enum": ["private_batch", "redacted_receipt"], "type": "string"}},
       {"name": "itemIndex", "in": "query", "required": false, "schema": {"type": "integer", "minimum": 0, "maximum": 9007199254740990}},
       {"name": "oldRecordId", "in": "query", "required": false, "schema": {"type": "integer", "minimum": 1, "maximum": 9007199254740991}},
       {
         "name": "cursor",
         "in": "query",
         "required": false,
-        "schema": {"type": "string", "maxLength": 512},
+        "schema": {"type": "string", "description": "Maximum 512 JavaScript UTF-16 code units; values are not trimmed."},
         "description": "eventIds only; immutable source/id/item/oldRecord/index binding"
       },
       {"name": "maxBytes", "in": "query", "required": false, "schema": {"type": "integer", "minimum": 1, "maximum": 65536, "default": 16384}}
@@ -37,6 +37,7 @@ defineRouteMeta({
                   "properties": {
                     "batchId": {"type": "integer", "minimum": 1},
                     "receiptId": {"type": "integer", "nullable": true},
+                    "status": {"type": "string"},
                     "page": {"type": "integer", "minimum": 1},
                     "pageSize": {"type": "integer", "minimum": 1},
                     "total": {"type": "integer"},
@@ -55,33 +56,39 @@ defineRouteMeta({
                         }
                       }
                     }
-                  }
+                  },
+                  "required": ["batchId", "receiptId", "status", "page", "pageSize", "total", "rows"],
+                  "additionalProperties": false
                 },
                 {
                   "type": "object",
+                  "description": "Retained exact snapshot; no embedded event IDs",
+                  "additionalProperties": false,
+                  "required": ["formatVersion", "source", "batchId", "receiptId", "itemIndex", "oldRecordId", "storedRedacted", "responseRedacted", "availability", "snapshot", "origin"],
                   "properties": {
-                    "formatVersion": {"const": 1},
-                    "source": {"enum": ["private_batch", "redacted_receipt"]},
+                    "formatVersion": {"type": "integer", "enum": [1]},
+                    "source": {"enum": ["private_batch", "redacted_receipt"], "type": "string"},
                     "batchId": {"type": "integer", "minimum": 1, "maximum": 9007199254740991},
                     "receiptId": {"type": "integer", "minimum": 1, "maximum": 9007199254740991, "nullable": true},
                     "itemIndex": {"type": "integer", "minimum": 0},
                     "oldRecordId": {"type": "integer", "minimum": 1, "maximum": 9007199254740991},
                     "storedRedacted": {"type": "boolean"},
-                    "responseRedacted": {"const": true},
-                    "availability": {"enum": ["available", "not_retained"]},
+                    "responseRedacted": {"type": "boolean", "enum": [true]},
+                    "availability": {"type": "string", "enum": ["available"]},
                     "snapshot": {
                       "type": "object",
                       "additionalProperties": false,
                       "properties": {
                         "id": {"type": "integer", "minimum": 1, "maximum": 9007199254740991},
                         "enterpriseId": {"type": "integer", "minimum": 1, "maximum": 9007199254740991},
-                        "titleCode": {"type": "string", "maxLength": 4000},
-                        "source": {"type": "string", "maxLength": 4000},
-                        "nameRaw": {"type": "string", "maxLength": 4000, "nullable": true},
-                        "usccRaw": {"type": "string", "maxLength": 4000, "nullable": true},
-                        "district": {"type": "string", "maxLength": 4000, "nullable": true},
-                        "qualityFlags": {"type": "array", "items": {"type": "string", "maxLength": 4000}, "nullable": true}
-                      }
+                        "titleCode": {"type": "string", "description": "Maximum 4000 JavaScript UTF-16 code units; values are not trimmed."},
+                        "source": {"type": "string", "description": "Maximum 4000 JavaScript UTF-16 code units; values are not trimmed."},
+                        "nameRaw": {"type": "string", "nullable": true, "description": "Maximum 4000 JavaScript UTF-16 code units; values are not trimmed."},
+                        "usccRaw": {"type": "string", "nullable": true, "description": "Maximum 4000 JavaScript UTF-16 code units; values are not trimmed."},
+                        "district": {"type": "string", "nullable": true, "description": "Maximum 4000 JavaScript UTF-16 code units; values are not trimmed."},
+                        "qualityFlags": {"type": "array", "items": {"type": "string", "description": "Maximum 4000 JavaScript UTF-16 code units; values are not trimmed."}, "nullable": true}
+                      },
+                      "required": ["id", "enterpriseId", "titleCode", "source", "nameRaw", "usccRaw", "district", "qualityFlags"]
                     },
                     "origin": {
                       "type": "object",
@@ -89,13 +96,49 @@ defineRouteMeta({
                         "fromEnterpriseId": {"type": "integer", "minimum": 1, "maximum": 9007199254740991},
                         "intoEnterpriseId": {"type": "integer", "minimum": 1, "maximum": 9007199254740991},
                         "intoRecordId": {"type": "integer", "minimum": 1, "maximum": 9007199254740991}
-                      }
-                    },
+                      },
+                      "required": ["fromEnterpriseId", "intoEnterpriseId", "intoRecordId"]
+                    }
+                  }
+                },
+                {
+                  "type": "object",
+                  "description": "Exact selected source did not retain this projection",
+                  "additionalProperties": false,
+                  "required": ["formatVersion", "source", "batchId", "receiptId", "itemIndex", "oldRecordId", "storedRedacted", "responseRedacted", "availability"],
+                  "properties": {
+                    "formatVersion": {"type": "integer", "enum": [1]},
+                    "source": {"enum": ["private_batch", "redacted_receipt"], "type": "string"},
+                    "batchId": {"type": "integer", "minimum": 1, "maximum": 9007199254740991},
+                    "receiptId": {"type": "integer", "minimum": 1, "maximum": 9007199254740991, "nullable": true},
+                    "itemIndex": {"type": "integer", "minimum": 0},
+                    "oldRecordId": {"type": "integer", "minimum": 1, "maximum": 9007199254740991},
+                    "storedRedacted": {"type": "boolean"},
+                    "responseRedacted": {"type": "boolean", "enum": [true]},
+                    "availability": {"type": "string", "enum": ["not_retained"]}
+                  }
+                },
+                {
+                  "type": "object",
+                  "description": "Independent bounded event ID page; no snapshot",
+                  "additionalProperties": false,
+                  "required": ["formatVersion", "source", "batchId", "receiptId", "itemIndex", "oldRecordId", "storedRedacted", "responseRedacted", "availability", "eventIds", "nextCursor"],
+                  "properties": {
+                    "formatVersion": {"type": "integer", "enum": [1]},
+                    "source": {"enum": ["private_batch", "redacted_receipt"], "type": "string"},
+                    "batchId": {"type": "integer", "minimum": 1, "maximum": 9007199254740991},
+                    "receiptId": {"type": "integer", "minimum": 1, "maximum": 9007199254740991, "nullable": true},
+                    "itemIndex": {"type": "integer", "minimum": 0},
+                    "oldRecordId": {"type": "integer", "minimum": 1, "maximum": 9007199254740991},
+                    "storedRedacted": {"type": "boolean"},
+                    "responseRedacted": {"type": "boolean", "enum": [true]},
+                    "availability": {"type": "string", "enum": ["available"]},
                     "eventIds": {"type": "array", "maxItems": 50, "items": {"type": "integer", "minimum": 1, "maximum": 9007199254740991}},
-                    "nextCursor": {"type": "string", "maxLength": 512, "nullable": true}
+                    "nextCursor": {"type": "string", "nullable": true, "description": "Maximum 512 JavaScript UTF-16 code units; values are not trimmed."}
                   }
                 }
-              ]
+              ],
+              "type": "object"
             }
           }
         }

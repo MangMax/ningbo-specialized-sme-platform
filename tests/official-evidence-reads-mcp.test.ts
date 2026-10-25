@@ -8,6 +8,7 @@ import { afterAll, beforeAll, expect, it } from 'vitest'
 import { z } from 'zod'
 import * as schema from '../db/schema'
 import type { OfficialPublishedRow, RosterImportPayload, RosterImportRecord } from '../lib/roster-import-client'
+import { usccFormatVerdict } from '../lib/roster/uscc-research'
 import { spawnOwnedChild, reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../scripts/lib/isolated-local-services.mjs'
 
 // Actual Nuxt routes/toolkit/middleware/JSON-RPC and real import process. Execute only
@@ -23,7 +24,10 @@ const db=drizzle(sqlite,{schema});migrate(db,{migrationsFolder:resolve('db/migra
 sqlite.exec("INSERT INTO title(code,name_zh,level,rank) VALUES('specialized_sme','Synthetic','municipal',2)")
 sqlite.prepare("INSERT INTO stored_file(id,rel_path,filename,ext,source,kind,title_code,bytes,sha256,created_at) VALUES(1,'notice.txt','notice.txt','txt','jxj','announcement','specialized_sme',?,?,'synthetic')").run(Buffer.byteLength(text),sha256)
 const apiToken='synthetic-c-api',mcpToken='synthetic-c-mcp',trace:unknown[]=[]
-let base='',child:ReturnType<typeof spawnOwnedChild>|undefined,sequence=0
+let base='',child:ReturnType<typeof spawnOwnedChild>|undefined,sequence=0,seedSequence=0
+// Synthetic identities with independently precomputed valid check digits, not registered entities.
+const seedUsccs=['913302110000001015','913302110000001028','91330211000000103B','91330211000000104E','91330211000000105H','91330211000000106L'] as const
+const usedSeedUsccs=new Set<string>()
 beforeAll(async()=>{
   const cwd=resolve(import.meta.dirname,'..'),port=await reserveLoopbackPort()
   const env:Record<string,string>={}
@@ -67,13 +71,19 @@ async function commit(payload:RosterImportPayload,key:string,transport:'http'|'m
 }
 const exact=z.object({evidenceId:z.number(),eventId:z.number(),recordId:z.number(),enterpriseId:z.number()})
 async function seed(merge=false,transport:'http'|'mcp'='http') {
-  const marker='source-'+(++sequence),row=(nameRaw:string,listNo:number):OfficialPublishedRow=>({nameRaw,usccRaw:null,districtRaw:'原属地',declaration:{kind:'independent',sourceDocument:{source:'jxj',title:marker,docNumber:null,issueDate:null,path:'notice.txt'},basis:'Explicit separate publication verified'},storedFileId:1,path:'notice.txt',sha256,bytes:Buffer.byteLength(text),attachment:null,sectionKey:'名单',listNo,page:null,sourceBindingKnown:true,actor:{type:'agent',id:'synthetic-c'},basis:'Verified exact source row'})
-  const records:RosterImportRecord[]=[{enterprise:{name:marker+'旧名'},titleCode:'specialized_sme',events:[{eventType:'award',year:2021,evidence:[{sourceFile:'notice.txt',attachment:null,listNo:1,page:null,publishedRow:row('2021旧名',1)}]}]},{enterprise:{name:marker+'现名',uscc:'91330211255994457P'},titleCode:'specialized_sme',events:[{eventType:'award',year:2024,evidence:[{sourceFile:'notice.txt',attachment:null,listNo:2,page:null,publishedRow:row('2024新名',2)}]}]}]
-  await commit({announcement:{sourceDocument:{source:'jxj',title:marker},records}},marker,transport)
-  const captured=z.object({evidence_id:z.number()}).parse(sqlite.prepare("SELECT evidence_id FROM official_evidence_row_revision WHERE name_raw='2021旧名' ORDER BY id DESC LIMIT 1").get())
+  const ordinal=++seedSequence,targetUscc=seedUsccs[ordinal-1]
+  if(!targetUscc) throw new Error('Synthetic seed identity exhausted')
+  expect(usccFormatVerdict(targetUscc)).toBe('ok');expect(usedSeedUsccs.has(targetUscc)).toBe(false);usedSeedUsccs.add(targetUscc)
+  const marker='source-'+ordinal,row=(nameRaw:string,listNo:number):OfficialPublishedRow=>({nameRaw,usccRaw:null,districtRaw:'原属地',declaration:{kind:'independent',sourceDocument:{source:'jxj',title:marker,docNumber:null,issueDate:null,path:'notice.txt'},basis:'Explicit separate publication verified'},storedFileId:1,path:'notice.txt',sha256,bytes:Buffer.byteLength(text),attachment:null,sectionKey:'名单',listNo,page:null,sourceBindingKnown:true,actor:{type:'agent',id:'synthetic-c'},basis:'Verified exact source row'})
+  const records:RosterImportRecord[]=[{enterprise:{name:marker+'旧名'},titleCode:'specialized_sme',events:[{eventType:'award',year:2021,evidence:[{sourceFile:'notice.txt',attachment:null,listNo:1,page:null,publishedRow:row('2021旧名',1)}]}]},{enterprise:{name:marker+'现名',uscc:targetUscc},titleCode:'specialized_sme',events:[{eventType:'award',year:2024,evidence:[{sourceFile:'notice.txt',attachment:null,listNo:2,page:null,publishedRow:row('2024新名',2)}]}]}]
+  const initial=await commit({announcement:{sourceDocument:{source:'jxj',title:marker},records}},marker,transport)
+  const captures=z.array(z.object({evidence_id:z.number(),event_id:z.number(),captured_record_id:z.number(),captured_enterprise_id:z.number()})).parse(sqlite.prepare("SELECT evidence_id,event_id,captured_record_id,captured_enterprise_id FROM official_evidence_row_revision WHERE import_batch_id=? AND command_kind='import' AND name_raw=? AND list_no=? AND revision=1 LIMIT 2").all(initial.saved.batchId,'2021旧名',1))
+  expect(captures).toHaveLength(1)
+  const captured=captures[0]!
   const old=exact.parse((await http('/api/roster/evidence/'+captured.evidence_id)).body)
+  expect(old).toEqual({evidenceId:captured.evidence_id,eventId:captured.event_id,recordId:captured.captured_record_id,enterpriseId:captured.captured_enterprise_id})
   if(!merge) return {old,oldName:marker+'旧名'}
-  const saved=await commit({merges:[{fromEnterpriseId:old.enterpriseId,intoUscc:'91330211255994457P',note:'Verified same legal enterprise'}]},marker+'-merge',transport)
+  const saved=await commit({merges:[{fromEnterpriseId:old.enterpriseId,intoUscc:targetUscc,note:'Verified same legal enterprise'}]},marker+'-merge',transport)
   const itemIndex=saved.saved.items.findIndex(item=>item.kind==='merge'),batchId=saved.saved.batchId
   const receipt=z.object({id:z.number()}).parse(sqlite.prepare('SELECT id FROM import_receipt WHERE batch_id=? ORDER BY id DESC LIMIT 1').get(batchId))
   return {old,oldName:marker+'旧名',merged:{...saved,batchId,itemIndex,receiptId:receipt.id,oldRecordId:old.recordId}}
