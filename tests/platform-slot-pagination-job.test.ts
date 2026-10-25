@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createServer, type Server } from 'node:http'
 import * as h3 from 'h3'
+import { eq } from 'drizzle-orm'
 import { afterAll, afterEach, beforeAll, expect, it, vi } from 'vitest'
 import { schema, useDb } from '../db'
 import { clearJobSpecs, whenIdle } from '../server/utils/job-runner'
@@ -15,6 +16,7 @@ const nativeFetch = globalThis.fetch
 let server: Server, baseUrl: string
 const calls: { source: string; rdjb: string; page: number; cookie: string }[] = []
 let reply: (source: string, rdjb: string, page: number) => Promise<string> | string
+let upstreamStatus = 200
 
 function page(source: string, number: number, total = 51, overrides: Record<string, unknown> = {}) {
   const count = Math.min(50, Math.max(0, total - (number - 1) * 50))
@@ -44,11 +46,12 @@ beforeAll(async () => {
   for (const key of ['defineEventHandler', 'readBody', 'createError', 'setResponseStatus', 'setHeader', 'getRouterParam', 'getQuery', 'getRequestURL', 'getHeader'] as const) vi.stubGlobal(key, h3[key])
   vi.doMock('@db', () => ({ useDb: () => db }))
   const routes = await Promise.all([
-    import('../server/api/jobs/index.post'), import('../server/api/jobs/[id].get'), import('../server/api/jobs/[id].delete'), import('../server/api/platform/queries.get'), import('../server/api/task-center/[id].get'),
+    import('../server/api/jobs/index.post'), import('../server/api/jobs/[id].get'), import('../server/api/jobs/[id].delete'), import('../server/api/platform/queries.get'), import('../server/api/task-center/[id].get'), import('../server/api/task-center/index.get'),
   ])
   const router = h3.createRouter()
   router.post('/api/jobs', routes[0].default).get('/api/jobs/:id', routes[1].default).delete('/api/jobs/:id', routes[2].default).get('/api/platform/queries', routes[3].default)
   router.get('/api/task-center/:id', routes[4].default)
+  router.get('/api/task-center', routes[5].default)
   server = createServer(h3.toNodeListener(h3.createApp().use(router)))
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
   baseUrl = `http://127.0.0.1:${(server.address() as { port: number }).port}`
@@ -68,12 +71,17 @@ afterAll(async () => {
 })
 function upstream() {
   reply = normalReply
+  upstreamStatus = 200
   updateCredential('miitCookie', 'session=issue299-original', { db, env: {} })
   vi.stubGlobal('fetch', async (url: string, init: { body: string; headers: Record<string, string> }) => {
     const body = new URLSearchParams(init.body), source = url.includes('/businessList') ? 'businessList' : 'queryList'
     const rdjb = body.get('rdjb') ?? '', n = Number(body.get('pageNum'))
-    calls.push({ source, rdjb, page: n, cookie: init.headers.Cookie })
-    return { ok: true, status: 200, text: async () => reply(source, rdjb, n) }
+    const cookie = init.headers.Cookie
+    if (typeof cookie !== 'string' || cookie.length === 0) {
+      throw new Error('合成上游请求缺少非空 Cookie')
+    }
+    calls.push({ source, rdjb, page: n, cookie })
+    return { ok: upstreamStatus < 400, status: upstreamStatus, text: async () => reply(source, rdjb, n) }
   })
 }
 
@@ -101,6 +109,9 @@ it('public job retains both sources’ unique row 51 and exact page evidence; co
   expect(summary).toMatchObject({ kind: 'reconcile', state: 'done' })
   const task = await api(`/api/task-center/${job.jobId}`)
   expect(task).toMatchObject({ kind: 'reconcile', state: 'done', outcome: { complete: 1, partial: 1, failed: 0 }, capabilities: { retry: false } })
+  expect(task.reconcileCollection).toMatchObject({ complete: 4, partial: 0, failed: 0, unknown: 0, unfinished: 0, positions: [], positionsTruncated: false })
+  expect((await api('/api/task-center?tab=platform')).rows.find((t: { id: string }) => t.id === job.jobId).reconcileCollection).toEqual(task.reconcileCollection)
+  expect((await api(`/api/task-center/${second.id}`)).reconcileCollection).toEqual(task.reconcileCollection)
 })
 
 it('later-page inconsistency keeps first-page rows, original total, unfinished page and retries only incomplete slots', async () => {
@@ -113,6 +124,7 @@ it('later-page inconsistency keeps first-page rows, original total, unfinished p
   expect(JSON.parse(partial.query.rawResponse)).toMatchObject({ completeness: 'partial', declaredTotal: 51, unfinished: [{ page: 2 }] })
   expect(done.result.collection).toMatchObject({ complete: 3, partial: 1, failed: 0, unknown: 0 })
   expect(await api(`/api/task-center/${job.jobId}`)).toMatchObject({ outcome: { partial: 1 }, capabilities: { retry: false } })
+  expect(await api(`/api/task-center/${job.jobId}`)).toMatchObject({ outcome: { complete: 1, partial: 1, unfinished: 1 }, reconcileCollection: { complete: 3, partial: 1, failed: 0, unknown: 0, unfinished: 1, positions: [{ source: 'businessList', rdjb: '3', page: 2 }] } })
   const oldId = partial.query.id
   reply = normalReply
   const retry = await finish((await submit()).jobId)
@@ -135,6 +147,7 @@ it('cancel between pages stops requests, returns unfinished position and atomica
   release()
   const cancelled = await finish(job.jobId)
   expect(cancelled.state).toBe('cancelled')
+  expect(await api(`/api/task-center/${job.jobId}`)).toMatchObject({ outcome: { complete: 1, unfinished: 2 }, reconcileCollection: { complete: 2, partial: 1, failed: 0, unknown: 1, unfinished: 2, positions: [{ source: 'businessList', rdjb: '3', page: 2 }, { source: 'queryList', rdjb: null, page: 1 }] } })
   expect(cancelled.result.collection.positions).toEqual(expect.arrayContaining([expect.objectContaining({ interface: 'business_list', rdjb: '3', unfinished: [{ source: 'businessList', rdjb: '3', page: 2 }] })]))
   expect(calls.some(c => c.page === 2)).toBe(false)
   expect(await archives()).toHaveLength(0)
@@ -251,4 +264,62 @@ it('cache verifies archived page bytes against ordered relations, rejecting a fo
   const after = await archives()
   expect(after.find(e => e.query.id === original.query.id).query.rawResponse).toBe(JSON.stringify(corrupted))
   expect(after.filter(e => e.query.rdjb === '3')).toHaveLength(2)
+})
+
+it('four failed slots remain four failed collection slots through public task list and detail, while report targets stay one', async () => {
+  upstream(); upstreamStatus = 400; reply = () => 'synthetic upstream failure'
+  const job = await submit(), done = await finish(job.jobId)
+  expect(done.result.collection).toMatchObject({ complete: 0, partial: 0, failed: 4, unknown: 0 })
+  const detail = await api(`/api/task-center/${job.jobId}`)
+  expect(detail.outcome).toMatchObject({ complete: 1, partial: 0, failed: 1, unfinished: 4 })
+  expect(detail.reconcileCollection).toEqual({ complete: 0, partial: 0, failed: 4, unknown: 0, unfinished: 4, positions: [
+    { source: 'businessList', rdjb: '1', page: 1 }, { source: 'businessList', rdjb: '2', page: 1 },
+    { source: 'businessList', rdjb: '3', page: 1 }, { source: 'queryList', rdjb: null, page: 1 },
+  ], positionsTruncated: false })
+  const list = await api('/api/task-center?tab=platform')
+  expect(list.rows.find((t: { id: string }) => t.id === job.jobId).reconcileCollection).toEqual(detail.reconcileCollection)
+  expect(calls).toHaveLength(4)
+})
+
+it('historical task reports without collection stay explicitly unknown through public list and detail', async () => {
+  upstream()
+  const job = await submit(), done = await finish(job.jobId)
+  const { collection: _collection, ...historicalReport } = done.result
+  db.update(schema.job).set({ result: historicalReport }).where(eq(schema.job.id, job.jobId)).run()
+  const detail = await api(`/api/task-center/${job.jobId}`)
+  expect(detail.outcome).toMatchObject({ complete: 1, partial: 1, unfinished: null })
+  expect(detail.reconcileCollection).toEqual({ complete: null, partial: null, failed: null, unknown: null, unfinished: null, positions: [], positionsTruncated: false })
+  expect((await api('/api/task-center?tab=platform')).rows.find((t: { id: string }) => t.id === job.jobId).reconcileCollection).toEqual(detail.reconcileCollection)
+})
+
+it('task summary bounds locations to 50 while retaining the actual unfinished total and excludes page raw', async () => {
+  upstream()
+  const job = await submit(), done = await finish(job.jobId)
+  db.update(schema.job).set({ result: { ...done.result, raw: 'PRIVATE_RAW'.repeat(100000), collection: {
+    complete: 0, partial: 0, failed: 61, unknown: 0,
+    positions: Array.from({ length: 61 }, (_, index) => ({ unfinished: [{ source: 'businessList', rdjb: '3', page: index + 1 }], pages: [{ raw: 'PRIVATE_PAGE_RAW' }] })),
+  } } }).where(eq(schema.job.id, job.jobId)).run()
+  const detail = await api(`/api/task-center/${job.jobId}`)
+  expect(detail.outcome).toMatchObject({ complete: 1, partial: 1, unfinished: 61 })
+  expect(detail.reconcileCollection).toMatchObject({ complete: 0, failed: 61, unfinished: 61, positionsTruncated: true })
+  expect(detail.reconcileCollection.positions).toHaveLength(50)
+  expect(detail.reconcileCollection.positions[0]).toEqual({ source: 'businessList', rdjb: '3', page: 1 })
+  expect(detail.reconcileCollection.positions[49]).toEqual({ source: 'businessList', rdjb: '3', page: 50 })
+  expect(JSON.stringify(detail)).not.toContain('PRIVATE_')
+  expect(JSON.stringify(detail).length).toBeLessThan(12000)
+  expect((await api('/api/task-center?tab=platform')).rows.find((t: { id: string }) => t.id === job.jobId).reconcileCollection).toEqual(detail.reconcileCollection)
+})
+
+it('malformed historical collection scalars stay unknown without transporting nested raw objects', async () => {
+  upstream()
+  const job = await submit(), done = await finish(job.jobId)
+  db.update(schema.job).set({ result: { ...done.result, collection: {
+    complete: { raw: 'PRIVATE_NESTED_RAW'.repeat(100000) }, partial: 0, failed: 0, unknown: 0,
+    positions: [{ unfinished: [{ source: 'queryList', rdjb: null, page: { raw: 'PRIVATE_PAGE_RAW'.repeat(100000) } }] }],
+  } } }).where(eq(schema.job.id, job.jobId)).run()
+  const detail = await api(`/api/task-center/${job.jobId}`)
+  expect(detail.reconcileCollection).toEqual({ complete: null, partial: null, failed: null, unknown: null, unfinished: null, positions: [], positionsTruncated: false })
+  expect(detail.outcome).toMatchObject({ complete: 1, partial: 1, unfinished: null })
+  expect(JSON.stringify(detail)).not.toContain('PRIVATE_')
+  expect(JSON.stringify(detail).length).toBeLessThan(12000)
 })

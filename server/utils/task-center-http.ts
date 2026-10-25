@@ -31,6 +31,21 @@ const projection = {
   discoveryMeta: sql<string>`case when ${j.kind} = 'event-archive-candidates' then json_object('ruleVersion', substr(json_extract(${j.result},'$.ruleVersion'),1,80), 'attempt', json_extract(${j.result},'$.attempt'), 'titleCode',substr(json_extract(${j.params},'$.titleCode'),1,40),'queryId',json_extract(${j.params},'$.queryId'),'eventCount',json_array_length(${j.params},'$.eventIds'),'counts',json_extract(${j.result},'$.counts'),'throughEventId',json_extract(${j.result},'$.throughEventId'),'nextAfterEventId',json_extract(${j.result},'$.nextAfterEventId'),'continuationJobId',substr(json_extract(${j.result},'$.continuationJobId'),1,26),'items',json((select json_group_array(json_object('eventId',json_extract(value,'$.eventId'),'enterpriseId',json_extract(value,'$.enterpriseId'),'status',substr(json_extract(value,'$.status'),1,20),'created',json_extract(value,'$.created'),'existing',json_extract(value,'$.existing'),'errorCode',substr(json_extract(value,'$.errorCode'),1,50))) from (select value from json_each(${j.result},'$.items') limit 200)))) else '{}' end`,
   files: sql<string>`case when ${j.kind} = 'ocr' then (select json_group_array(json_object('id',json_extract(value,'$.fileId'),'path',(select rel_path from stored_file where id = json_extract(value,'$.fileId')))) from (select value from json_each(${j.result}, '$.files') where json_extract(value,'$.ok') = 1 limit 50)) else '[]' end`,
   counts: sql<string>`case when ${j.kind} = 'reconcile' then json_object('failed',json_extract(${j.result},'$.counts.queryFailed'),'notQueried',json_extract(${j.result},'$.counts.notQueried'),'complete',json_extract(${j.result},'$.counts.total'),'partial',json_extract(${j.result},'$.counts.needsReview')) else '{}' end`,
+  // Reconcile coverage is projected as scalars and at most 50 locations in SQL.
+  // Per-page raw responses, conditions and relation payloads never enter JS here.
+  reconcileCollection: sql<string>`case when ${j.kind} = 'reconcile' then json_object(
+    'complete',case when json_type(${j.result},'$.collection.complete') = 'integer' then json_extract(${j.result},'$.collection.complete') else null end,
+    'partial',case when json_type(${j.result},'$.collection.partial') = 'integer' then json_extract(${j.result},'$.collection.partial') else null end,
+    'failed',case when json_type(${j.result},'$.collection.failed') = 'integer' then json_extract(${j.result},'$.collection.failed') else null end,
+    'unknown',case when json_type(${j.result},'$.collection.unknown') = 'integer' then json_extract(${j.result},'$.collection.unknown') else null end,
+    'unfinished',case when json_type(${j.result},'$.collection.positions') = 'array' then
+      (select coalesce(sum(json_array_length(value,'$.unfinished')),0) from json_each(${j.result},'$.collection.positions')) else null end,
+    'positions',json((select json_group_array(json_object('source',source,'rdjb',rdjb,'page',page)) from
+      (select substr(json_extract(u.value,'$.source'),1,20) as source,
+        substr(json_extract(u.value,'$.rdjb'),1,2) as rdjb,
+        case when json_type(u.value,'$.page') = 'integer' then json_extract(u.value,'$.page') else null end as page
+       from json_each(${j.result},'$.collection.positions') p, json_each(p.value,'$.unfinished') u limit 50)))
+  ) else '{}' end`,
 }
 function readTasks(db: Db, where: SQL | undefined, limit: number, offset = 0) {
   return db.select(projection).from(j).where(where).orderBy(desc(j.createdAt), desc(j.id)).limit(limit).offset(offset).all()
@@ -45,13 +60,37 @@ async function summarize(row: ProjectedTask, authorized: boolean, db: Db, detail
   const discoveryRetry = !!discovery && ['failed','cancelled'].includes(row.state) && (discovery.attempt ?? 0) < 10 && (!discovery.ruleVersion || discovery.ruleVersion === EVENT_ARCHIVE_RULE_VERSION)
   const retry = discoveryRetry || row.kind === 'platform-query-batch' && !active && row.attempt < MAX_BATCH_ATTEMPTS && retryItemIds.length > 0
   const counts = JSON.parse(row.counts || '{}')
+  let reconcileCollection: TaskSummary['reconcileCollection']
+  if (row.kind === 'reconcile') {
+    const coverage = JSON.parse(row.reconcileCollection || '{}') as Record<string, unknown>
+    const count = (value: unknown): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
+    const known = ['complete', 'partial', 'failed', 'unknown', 'unfinished'].every(key => count(coverage[key]))
+    const positions: NonNullable<TaskSummary['reconcileCollection']>['positions'] = []
+    if (known && Array.isArray(coverage.positions)) {
+      for (const candidate of coverage.positions as unknown[]) {
+        if (!candidate || typeof candidate !== 'object') continue
+        const position = candidate as Record<string, unknown>
+        if (position && (position.source === 'businessList' || position.source === 'queryList')
+          && (position.rdjb === null || (typeof position.rdjb === 'string' && ['1', '2', '3'].includes(position.rdjb)))
+          && typeof position.page === 'number' && Number.isSafeInteger(position.page) && position.page > 0) {
+          positions.push({ source: position.source, rdjb: position.rdjb, page: position.page })
+        }
+      }
+    }
+    reconcileCollection = {
+      complete: known ? coverage.complete as number : null, partial: known ? coverage.partial as number : null,
+      failed: known ? coverage.failed as number : null, unknown: known ? coverage.unknown as number : null,
+      unfinished: known ? coverage.unfinished as number : null, positions,
+      positionsTruncated: known && (coverage.unfinished as number) > positions.length,
+    }
+  }
   const outcome = row.kind === 'platform-query-batch' ? {
     complete: items.filter(i => i.completeness === 'complete').length,
     partial: items.filter(i => i.completeness === 'partial').length,
     failed: items.filter(i => ['failed', 'auth_failed'].includes(i.status)).length,
     notQueried: items.length ? items.filter(i => i.status === 'not_queried').length : row.itemCount ?? 0,
     unfinished: items.reduce((n, i) => n + i.unfinished, 0), attempt: row.attempt || 0,
-  } : row.kind === 'reconcile' ? { complete: counts.complete ?? 0, partial: counts.partial ?? 0, failed: counts.failed ?? 0, notQueried: counts.notQueried ?? 0, unfinished: 0, attempt: 0 } : null
+  } : row.kind === 'reconcile' ? { complete: counts.complete ?? 0, partial: counts.partial ?? 0, failed: counts.failed ?? 0, notQueried: counts.notQueried ?? 0, unfinished: reconcileCollection?.unfinished ?? null, attempt: 0 } : null
   const links: TaskSummary['links'] = []
   if (group === 'ocr') {
     for (const file of JSON.parse(row.files || '[]')) if (Number.isSafeInteger(file.id) && typeof file.path === 'string' && !file.path.startsWith('/') && !file.path.includes('..') && !file.path.includes('\\')) links.push({ label: `识别结果 #${file.id}`, to: `/ocr?file=${encodeURIComponent(file.path)}` })
@@ -86,6 +125,7 @@ async function summarize(row: ProjectedTask, authorized: boolean, db: Db, detail
   }
   return {
     ...(exported ? { export: exported } : {}),
+    ...(reconcileCollection ? { reconcileCollection } : {}),
     ...(discovery ? {discovery:{ruleVersion:discovery.ruleVersion === EVENT_ARCHIVE_RULE_VERSION ? discovery.ruleVersion : null,titleCode:TASK_EXPORTS.some(t=>t.titleCode===discovery.titleCode)?discovery.titleCode:null,throughEventId:discovery.throughEventId??null,scope:discovery.queryId?`归档查询 #${discovery.queryId} 受影响事件`:discovery.titleCode?`称号 ${TASK_EXPORTS.find(t=>t.titleCode===discovery.titleCode)?.label ?? discovery.titleCode}（每片最多200条）`:`指定 ${discovery.eventCount ?? 0} 条事件`,attempt:discovery.attempt??0,counts:discovery.counts??{succeeded:0,needsReview:0,failed:0,created:0,existing:0},nextAfterEventId:discovery.nextAfterEventId??null,continuationJobId:isJobId(discovery.continuationJobId)?discovery.continuationJobId:null,items:detail?discoveryItems:[]}} : {}),
     id: row.id, kind: String(row.kind).slice(0, 100), label: exported?.titleCode ? `${TASK_EXPORTS.find(t => t.titleCode === exported.titleCode)!.label}导出` : TASK_LABELS[row.kind] ?? String(row.kind).slice(0, 100), group, state: row.state,
     createdAt: row.createdAt, startedAt: row.startedAt, finishedAt: row.finishedAt,

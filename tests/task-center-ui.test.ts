@@ -798,6 +798,58 @@ describe('平台结果完整性与业务待核分开表述', () => {
     expect(outcome).toContain('待核实3')
     expect(outcome).not.toContain('部分')
   })
+
+  it.each([
+    { name: '全槽失败', complete: 0, partial: 0, failed: 4, unknown: 0, unfinished: 4 },
+    { name: '后页部分', complete: 3, partial: 1, failed: 0, unknown: 0, unfinished: 1 },
+    { name: '取消未知', complete: 2, partial: 1, failed: 0, unknown: 1, unfinished: 2 },
+    { name: '完整缓存', complete: 4, partial: 0, failed: 0, unknown: 0, unfinished: 0 },
+  ])('核查采集$name单独使用槽位与范围单位，报告目标与待核实保持原义', async collection => {
+    state.detail = platformTask({ kind: 'reconcile', label: '平台核查',
+      outcome: { complete: 2, partial: 3, failed: 0, notQueried: 0, unfinished: collection.unfinished, attempt: 1 },
+      reconcileCollection: { ...collection, positions: [], positionsTruncated: false },
+    })
+    installFetch(({ url }) => url.startsWith('/api/task-center/') ? json(state.detail) : json(listOf(state.list.rows, true)))
+    state.query = { job: jobId('PLT') }
+    await mountPage({ attach: true })
+    const dialog = await waitForSheet()
+    const outcome = dialog.querySelector('[data-testid="task-outcome"]')!.textContent!.replace(/\s+/g, '')
+    expect(outcome).toContain('报告目标2')
+    expect(outcome).toContain('待核实3')
+    const collected = dialog.querySelector('[aria-label="平台采集完整性"]')?.textContent?.replace(/\s+/g, '')
+    expect(collected).toContain(`完整${collection.complete}槽位`)
+    expect(collected).toContain(`部分${collection.partial}槽位`)
+    expect(collected).toContain(`失败${collection.failed}槽位`)
+    expect(collected).toContain(`未知${collection.unknown}槽位`)
+    expect(collected).toContain(`未完成${collection.unfinished}范围`)
+  })
+
+  it('核查详情按原来源、认定级别和页号定位未完成范围', async () => {
+    state.detail = platformTask({ kind: 'reconcile', label: '平台核查',
+      reconcileCollection: { complete: 2, partial: 1, failed: 0, unknown: 1, unfinished: 2, positionsTruncated: false,
+        positions: [{ source: 'businessList', rdjb: '3', page: 2 }, { source: 'queryList', rdjb: null, page: 1 }] },
+    })
+    installFetch(({ url }) => url.startsWith('/api/task-center/') ? json(state.detail) : json(listOf(state.list.rows, true)))
+    state.query = { job: jobId('PLT') }
+    await mountPage({ attach: true })
+    const dialog = await waitForSheet()
+    const ranges = dialog.querySelector('[aria-label="未完成采集范围"]')?.textContent?.replace(/\s+/g, '')
+    expect(ranges).toContain('businessList/rdjb=3/第2页')
+    expect(ranges).toContain('queryList/不分认定级别/第1页')
+    expect(ranges).not.toContain('全部称号')
+  })
+
+  it('核查旧报告缺采集信息明确未知，不补零或冒充完整', async () => {
+    state.detail = platformTask({ kind: 'reconcile', label: '平台核查', items: [], outcome: { complete: 2, partial: 3, failed: 0, notQueried: 0, unfinished: null, attempt: 1 } })
+    installFetch(({ url }) => url.startsWith('/api/task-center/') ? json(state.detail) : json(listOf(state.list.rows, true)))
+    state.query = { job: jobId('PLT') }
+    await mountPage({ attach: true })
+    const dialog = await waitForSheet()
+    const collection = dialog.querySelector('[aria-label="平台采集完整性"]')?.textContent
+    expect(collection).toContain('采集完整性未知')
+    expect(collection).toContain('未完成范围未知')
+    expect(collection).not.toMatch(/完整\s*0|未完成\s*0/)
+  })
 })
 
 describe('分页', () => {
