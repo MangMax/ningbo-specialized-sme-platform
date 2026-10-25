@@ -47,7 +47,7 @@ export interface OfficialEvidenceAppend {
   eventId: number; recordId: number; enterpriseId: number
   /** Existing public event.revision. */
   expectedVersion: number
-  evidence: RosterImportEvidence & { publishedRow: OfficialPublishedRow }
+  evidence: { sourceFile: string; attachment: string | null; listNo: number | null; page: number | null; publishedRow: OfficialPublishedRow }
 }
 
 // ---------------------------------------------------------------------------

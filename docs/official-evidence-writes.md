@@ -41,7 +41,8 @@ path/附件/行/页与外层显式值矛盾即拒绝，不能静默选一层。`
 ```ts
 { eventId: number; recordId: number; enterpriseId: number;
   expectedVersion: number; // 既有公开 event.revision，不新造第二版本协议
-  evidence: RosterImportEvidence & { publishedRow: OfficialPublishedRow } }[]
+  evidence: { sourceFile: string; attachment: string | null; listNo: number | null;
+    page: number | null; publishedRow: OfficialPublishedRow } }[]
 ```
 
 新事件在原 announcement evidence 下提供 publishedRow；已有 event 不借普通公告重复
