@@ -79,19 +79,23 @@ afterAll(async () => {
 async function request(path: string, method = 'GET', body?: unknown) {
   return fetch(base + path, { method, headers: { authorization: 'Bearer issue309-api', 'content-type': 'application/json' }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) })
 }
-async function setup(pages = 1, fixture: Partial<ModelApiFixture> = {}) {
-  await api?.close()
+async function seed(pages = 1) {
   const file = `synthetic-${++sequence}.pdf`
   writeFileSync(join(filesDir, file), minimalPdf({ pages }))
   const row = db.insert(schema.storedFile).values({ relPath: file, filename: file, ext: 'pdf', bytes: 1, sha256: createHash('sha256').update(readFileSync(join(filesDir, file))).digest('hex') }).returning().get()
   await renderPdfPages(filesDir, file, { dpi: DEFAULT_DPI })
+  return { file, row, pagePath: `/api/files/${row.id}/ocr-pages/1` }
+}
+async function setup(pages = 1, fixture: Partial<ModelApiFixture> = {}) {
+  await api?.close()
+  const seeded = await seed(pages)
   const wait = new Promise<void>(resolve => { gate = resolve })
   api = await startMiniOcrApi({ pages: ['paid original'], waitForPoll: () => wait, ...fixture })
   vi.stubEnv('NUXT_OCR_BASE_URL', api.origin)
-  return { file, row, pagePath: `/api/files/${row.id}/ocr-pages/1` }
+  return seeded
 }
-async function submit(file: string, resumeJobId?: string) {
-  const response = await request('/api/jobs', 'POST', { kind: 'ocr', params: { files: [file], ...(resumeJobId ? { resumeJobId } : {}) } })
+async function submit(file: string, resumeJobId?: string, extra: Record<string, unknown> = {}) {
+  const response = await request('/api/jobs', 'POST', { kind: 'ocr', params: { files: [file], ...(resumeJobId ? { resumeJobId } : {}), ...extra } })
   expect(response.status).toBe(202)
   return (await response.json()).jobId as string
 }
@@ -179,7 +183,12 @@ it('partial rejection retains successful raw in the task and explicit retry only
   expect((await status(retry)).state).toBe('done')
   expect(api!.stats.submits).toBe(3)
   expect((await (await request(pagePath)).json()).markdown).toContain('paid original')
-  expect((await status(id)).result).toEqual(failed.result)
+  const { ocrRecovery, ...originalResult } = (await status(id)).result
+  expect(originalResult).toEqual(failed.result)
+  expect(ocrRecovery.version).toBe(1)
+  const { result: _oldResult, ...oldState } = failed
+  const { result: _newResult, ...newState } = await status(id)
+  expect(newState).toEqual(oldState)
 })
 
 it('legacy raw ownership stays unknown and new source text does not acquire the retained paid capture', async () => {
@@ -193,8 +202,8 @@ it('legacy raw ownership stays unknown and new source text does not acquire the 
   expect(api!.stats.submits).toBe(0)
 })
 
-async function childHost() {
-  const child = spawn(process.execPath, ['tests/helpers/issue309-ocr-child.mjs'], { cwd: process.cwd(), env: { ...process.env, NUXT_DB_PATH: dbPath, NUXT_FILES_DIR: filesDir, NUXT_API_TOKEN: 'issue309-api', NUXT_OCR_TOKEN: 'issue309-synthetic-ocr', NUXT_OCR_BASE_URL: api!.origin, MIIT_COOKIE: '', MIIT_COOKIE_FILE: '' }, stdio: ['ignore', 'pipe', 'pipe'] })
+async function childHost(extraEnv: Record<string, string> = {}) {
+  const child = spawn(process.execPath, ['tests/helpers/issue309-ocr-child.mjs'], { cwd: process.cwd(), env: { ...process.env, NUXT_DB_PATH: dbPath, NUXT_FILES_DIR: filesDir, NUXT_API_TOKEN: 'issue309-api', NUXT_OCR_TOKEN: 'issue309-synthetic-ocr', NUXT_OCR_BASE_URL: api!.origin, MIIT_COOKIE: '', MIIT_COOKIE_FILE: '', ...extraEnv }, stdio: ['ignore', 'pipe', 'pipe'] })
   children.push(child)
   let output = '', errors = ''
   child.stdout!.on('data', chunk => { output += chunk })
@@ -310,4 +319,378 @@ it('a rolled-back multi-page publication retains both paid pages and can resume 
   expect((await status(retry)).state).toBe('done')
   expect(api!.stats.submits).toBe(2)
   expect((await (await request(pagePath)).json()).markdown).toContain('paid original')
+})
+
+it('R1 same rejected parent concurrent resumes share one paid attempt', async () => {
+  const { file } = await setup(1, { submitStatuses: [429] })
+  const parent = await submit(file)
+  await whenIdle()
+  expect((await status(parent)).state).toBe('failed')
+  const [a, b] = await Promise.all([submit(file, parent), submit(file, parent)])
+  try {
+    await vi.waitFor(async () => {
+      const rows = await Promise.all([status(a), status(b)])
+      expect(rows.every(row => row.state === 'failed' || row.result?.publication.files[0].requests['1']?.state === 'accepted')).toBe(true)
+    })
+    expect(api!.stats.submits).toBe(2)
+  } finally { gate!(); await whenIdle() }
+})
+
+it('R1 unknown recovery cannot be bypassed by resuming the old rejected parent', async () => {
+  const { file } = await setup(1, { submitStatuses: [429, 503] })
+  gate!()
+  const parent = await submit(file)
+  await whenIdle()
+  const a = await submit(file, parent)
+  await whenIdle()
+  expect((await status(a)).result.publication.files[0].requests['1'].state).toBe('unknown')
+  const b = await submit(file, parent)
+  await whenIdle()
+  expect(api!.stats.submits).toBe(2)
+  expect((await status(b)).state).toBe('failed')
+  expect((await status(b)).result.publication.files[0].captures).toHaveLength(0)
+})
+
+it('R1 completed recovery is replayed when resuming its old rejected parent', async () => {
+  const { file, pagePath } = await setup(1, { submitStatuses: [429] })
+  gate!()
+  const parent = await submit(file)
+  await whenIdle()
+  const a = await submit(file, parent)
+  await whenIdle()
+  expect((await status(a)).state).toBe('done')
+  const published = await (await request(pagePath)).json()
+  const b = await submit(file, parent)
+  await whenIdle()
+  expect(api!.stats.submits).toBe(2)
+  expect((await status(b)).result).toMatchObject({ pages: 0, files: [{ replayed: true }] })
+  expect(await (await request(pagePath)).json()).toEqual(published)
+})
+
+it('R1 rejected receipts replay, aliases and caller keys cannot retry, only the terminal attempt owner is a new anchor', async () => {
+  const { file } = await setup(1, { submitStatuses: [429, 429] })
+  gate!()
+  const parent = await submit(file)
+  await whenIdle()
+  const initial = await status(parent)
+  const a = await submit(file, parent)
+  await whenIdle()
+  expect((await status(a)).state).toBe('failed')
+  const b = await submit(file, parent, { clientRequestId: 'new caller key', recovery: { sourceJobId: 'invented' }, anchorJobId: 'invented' })
+  await whenIdle()
+  const alias = await submit(file, b)
+  await whenIdle()
+  expect(api!.stats.submits).toBe(2)
+  expect((await status(b)).result.publication.files[0].claims['1']).toMatchObject({ ownerTaskId: a, state: 'rejected' })
+  expect((await status(alias)).state).toBe('failed')
+  const retry = await submit(file, a)
+  await whenIdle()
+  expect((await status(retry)).state).toBe('done')
+  expect(api!.stats.submits).toBe(3)
+  const old = await submit(file, parent)
+  await whenIdle()
+  expect((await status(old)).result.pages).toBe(0)
+  expect(api!.stats.submits).toBe(3)
+  const final = await status(parent)
+  const { ocrRecovery, ...historical } = final.result
+  expect(historical).toEqual(initial.result)
+  expect(final.state).toBe(initial.state)
+  expect(final.error).toBe(initial.error)
+  const page = Object.values(ocrRecovery.pages)[0] as { attempts: Array<{ state: string; ownerTaskId: string }> }
+  expect(page.attempts.map(a => a.state)).toEqual(['rejected', 'rejected', 'complete'])
+  expect(page.attempts.map(a => a.ownerTaskId)).toEqual([parent, a, retry])
+})
+
+it('R1 unknown attempt remains blocked through child aliases and different caller keys', async () => {
+  const { file } = await setup(1, { submitStatuses: [429, 503] })
+  gate!()
+  const parent = await submit(file)
+  await whenIdle()
+  const a = await submit(file, parent)
+  await whenIdle()
+  const b = await submit(file, a, { clientRequestId: 'another-key' })
+  await whenIdle()
+  const c = await submit(file, b)
+  await whenIdle()
+  const d = await submit(file, parent)
+  await whenIdle()
+  for (const id of [a, b, c, d]) {
+    const result = await status(id)
+    expect(result.state).toBe('failed')
+    expect(result.result.publication.files[0].captures).toHaveLength(0)
+    expect(result.result.publication.files[0].requests['1'].state).toBe('unknown')
+  }
+  expect(api!.stats.submits).toBe(2)
+})
+
+it('R1 confirmed remote failure needs its actual terminal owner as the next retry anchor', async () => {
+  const { file } = await setup(1, { submitStatuses: [429], failOnSubmit: { submit: 1, message: 'known remote terminal failure' } })
+  gate!()
+  const parent = await submit(file)
+  await whenIdle()
+  const a = await submit(file, parent)
+  await whenIdle()
+  expect((await status(a)).result.publication.files[0].requests['1']).toMatchObject({ state: 'failed', jobId: 'JOB-2' })
+  const old = await submit(file, parent)
+  await whenIdle()
+  expect((await status(old)).state).toBe('failed')
+  expect(api!.stats.submits).toBe(2)
+  const retry = await submit(file, a)
+  await whenIdle()
+  expect((await status(retry)).state).toBe('done')
+  expect(api!.stats.submits).toBe(3)
+})
+
+it('R1 concurrent accepted followers use the first durable capture and one publication', async () => {
+  const { file } = await setup()
+  const original = await childHost()
+  try {
+    const response = await at(original.base, '/api/jobs', 'POST', { kind: 'ocr', params: { files: [file] } })
+    expect(response.status).toBe(202)
+    const parent = (await response.json()).jobId as string
+    await vi.waitFor(async () => expect((await status(parent)).result?.publication.files[0].requests['1'].state).toBe('accepted'))
+    await stopChild(original.child)
+    const { reconcileInterruptedJobs } = await import('../server/utils/job-store')
+    expect(reconcileInterruptedJobs(db)).toBe(1)
+    const [a, b] = await Promise.all([submit(file, parent), submit(file, parent)])
+    await vi.waitFor(async () => {
+      for (const id of [a, b]) {
+        const row = await status(id)
+        expect(row.result?.publication.files[0].claims['1'].state).toBe('accepted')
+        expect(row.result.publication.files[0].captures).toHaveLength(0)
+      }
+    })
+    gate!(); await whenIdle()
+    expect(api!.stats.submits).toBe(1)
+    const canonical = (Object.values((await status(parent)).result.ocrRecovery.pages)[0] as any).attempts.at(-1).capture
+    for (const id of [a, b]) expect((await status(id)).result.publication.files[0].captures).toEqual([canonical])
+    const rows = await Promise.all([status(a), status(b)])
+    expect(rows.every(row => row.state === 'done')).toBe(true)
+    expect(rows.filter(row => row.result.files[0].replayed)).toHaveLength(1)
+  } finally { gate!(); await stopChild(original.child) }
+})
+
+it('R1 terminal source claim metadata survives stale checkpoints, finishes, reconciliation and enqueue', async () => {
+  const { file } = await setup(1, { submitStatuses: [429, 503] })
+  gate!()
+  const parent = await submit(file)
+  await whenIdle()
+  await submit(file, parent)
+  await whenIdle()
+  const before = await status(parent)
+  const { setJobResult, setJobProgress, markJobRunning, finishJob, reconcileInterruptedJobs } = await import('../server/utils/job-store')
+  const { enqueuePersistedJob } = await import('../server/utils/job-runner')
+  setJobResult(db, parent, { publication: 'stale whole result' })
+  setJobProgress(db, parent, { done: 0, total: 99 })
+  expect(markJobRunning(db, parent)).toBe(null)
+  finishJob(db, parent, { state: 'done', result: { stale: true } })
+  expect(reconcileInterruptedJobs(db)).toBe(0)
+  expect(enqueuePersistedJob(db, parent, filesDir)).toBe(false)
+  expect(await status(parent)).toEqual(before)
+  const old = await submit(file, parent)
+  await whenIdle()
+  expect((await status(old)).state).toBe('failed')
+  expect(api!.stats.submits).toBe(2)
+})
+
+it('R1 late capture after descendant restart reconciliation preserves the shared claim and original history', async () => {
+  const { file, pagePath } = await setup(1, { submitStatuses: [429] })
+  const parent = await submit(file)
+  await whenIdle()
+  const initial = await status(parent)
+  const a = await submit(file, parent)
+  await vi.waitFor(async () => expect((await status(a)).result?.publication.files[0].requests['1'].state).toBe('accepted'))
+  const { reconcileInterruptedJobs } = await import('../server/utils/job-store')
+  expect(reconcileInterruptedJobs(db)).toBe(1)
+  const interrupted = await status(a)
+  expect(interrupted.state).toBe('failed')
+  const b = await submit(file, parent)
+  await vi.waitFor(async () => expect((await status(b)).result?.publication.files[0].claims['1']).toMatchObject({ state: 'accepted', ownerTaskId: a }))
+  gate!(); await whenIdle()
+  expect(api!.stats.submits).toBe(2)
+  expect(await status(a)).toEqual(interrupted)
+  expect((await status(b)).state).toBe('done')
+  expect((await (await request(pagePath)).json()).markdown).toContain('paid original')
+  const { ocrRecovery, ...historic } = (await status(parent)).result
+  expect(historic).toEqual(initial.result)
+  expect((Object.values(ocrRecovery.pages)[0] as any).attempts.at(-1)).toMatchObject({ state: 'complete', ownerTaskId: a, capture: { taskId: a, jobId: 'JOB-2', raw: { markdown: { text: 'paid original' } } } })
+})
+
+it.each(['accepted-without-id', 'complete-without-capture'] as const)('R1 malformed %s shared receipt fails closed without a paid POST', async malformed => {
+  const { file, pagePath } = await setup(1, { submitStatuses: [429, 429] })
+  gate!()
+  const parent = await submit(file)
+  await whenIdle()
+  await submit(file, parent)
+  await whenIdle()
+  const before = await status(parent)
+  const result = structuredClone(before.result)
+  const claim = (Object.values(result.ocrRecovery.pages)[0] as any).attempts.at(-1)
+  claim.state = malformed === 'accepted-without-id' ? 'accepted' : 'complete'
+  db.update(schema.job).set({ result }).where(eq(schema.job.id, parent)).run()
+  const old = await submit(file, parent)
+  await whenIdle()
+  const failed = await status(old)
+  expect(failed.state).toBe('failed')
+  expect(failed.result.files[0].error).toContain('共享认领回执不完整')
+  expect((await status(parent)).result).toEqual(result)
+  expect((await request(pagePath)).status).toBe(404)
+  expect(api!.stats.submits).toBe(2)
+})
+
+it('R1 claims isolate actual pages, file content and model and preserve sibling claim metadata', async () => {
+  const { file } = await setup(2, { submitStatuses: [429, 429, 429, 429, 429] })
+  const other = await seed(1)
+  gate!()
+  const p = await submit(file)
+  await whenIdle()
+  const q = await submit(other.file)
+  await whenIdle()
+  const r = await submit(file, undefined, { model: 'another-model' })
+  await whenIdle()
+  expect(api!.stats.submits).toBe(5)
+  const changedModel = await request('/api/jobs', 'POST', { kind: 'ocr', params: { files: [file], resumeJobId: p, model: 'another-model' } })
+  expect(changedModel.status).toBe(409)
+  const [a, b, c] = await Promise.all([submit(file, p), submit(other.file, q), submit(file, r, { model: 'another-model' })])
+  await whenIdle()
+  expect(api!.stats.submits).toBe(10)
+  for (const [source, child, count, model] of [[p, a, 2, 'PaddleOCR-VL-1.6'], [q, b, 1, 'PaddleOCR-VL-1.6'], [r, c, 2, 'another-model']] as const) {
+    const root = await status(source)
+    const pages = Object.values(root.result.ocrRecovery.pages) as Array<{ attempts: Array<{ state: string; capture?: { model: string } }> }>
+    expect(pages).toHaveLength(count)
+    expect(pages.every(page => page.attempts.at(-1)!.state === 'complete' && page.attempts.at(-1)!.capture!.model === model)).toBe(true)
+    expect((await status(child)).result.publication.files[0].captures).toHaveLength(count)
+  }
+  expect(Object.keys((await status(p)).result.ocrRecovery.pages)).not.toEqual(Object.keys((await status(r)).result.ocrRecovery.pages))
+})
+
+async function at(host: string, path: string, method = 'GET', body?: unknown) {
+  return fetch(host + path, { method, headers: { authorization: 'Bearer issue309-api', 'content-type': 'application/json' }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) })
+}
+async function submitAt(host: string, file: string, resumeJobId: string) {
+  const response = await at(host, '/api/jobs', 'POST', { kind: 'ocr', params: { files: [file], resumeJobId } })
+  expect(response.status).toBe(202)
+  return (await response.json()).jobId as string
+}
+async function stopChild(child: ChildProcess) {
+  if (child.exitCode === null && child.signalCode === null) { child.kill('SIGKILL'); await once(child, 'exit') }
+}
+
+it('R1 independent HTTP processes share SQLite claims and old parent results after one publication', async () => {
+  const { file } = await setup(2, { submitStatuses: [429, 429] })
+  const parent = await submit(file)
+  await whenIdle()
+  const initial = await status(parent)
+  const [one, two] = await Promise.all([childHost(), childHost()])
+  try {
+    // Both startup reconciliations finish before either child is submitted.
+    expect((await at(one.base, `/api/jobs/${parent}`)).status).toBe(200)
+    expect((await at(two.base, `/api/jobs/${parent}`)).status).toBe(200)
+    const [a, b] = await Promise.all([submitAt(one.base, file, parent), submitAt(two.base, file, parent)])
+    await vi.waitFor(async () => {
+      const rows = await Promise.all([at(one.base, `/api/jobs/${a}`).then(r => r.json()), at(two.base, `/api/jobs/${b}`).then(r => r.json())])
+      expect(rows.every(row => row.state === 'failed' || Object.values(row.result?.publication.files[0].requests ?? {}).every((r: any) => r.state === 'accepted'))).toBe(true)
+      expect(api!.stats.submits).toBe(4)
+    })
+    gate!()
+    await vi.waitFor(async () => {
+      const rows = await Promise.all([at(one.base, `/api/jobs/${a}`).then(r => r.json()), at(two.base, `/api/jobs/${b}`).then(r => r.json())])
+      expect(rows.every(row => ['done', 'failed'].includes(row.state))).toBe(true)
+      expect(rows.some(row => row.state === 'done')).toBe(true)
+    })
+    const old = await submitAt(two.base, file, parent)
+    await vi.waitFor(async () => expect((await (await at(two.base, `/api/jobs/${old}`)).json()).state).toBe('done'))
+    expect(api!.stats.submits).toBe(4)
+    const final = await status(parent)
+    const { ocrRecovery, ...historic } = final.result
+    expect(historic).toEqual(initial.result)
+    expect(Object.values(ocrRecovery.pages)).toHaveLength(2)
+    expect((Object.values(ocrRecovery.pages) as any[]).every(page => page.attempts.length === 2 && page.attempts.at(-1).state === 'complete')).toBe(true)
+  } finally { gate!(); await stopChild(one.child); await stopChild(two.child) }
+})
+
+it.each(['claimed', 'complete'] as const)('R1 SIGKILL after committed %s claim never repeats POST and preserves the original receipt', async phase => {
+  const { file, pagePath } = await setup(1, { submitStatuses: [429] })
+  gate!()
+  const parent = await submit(file)
+  await whenIdle()
+  const initial = await status(parent)
+  const stopped = join(dir, `issue309-${parent}-${phase}.json`)
+  const one = await childHost({ ISSUE309_STOP_CLAIM_SOURCE: parent, ISSUE309_STOP_CLAIM_STATE: phase, ISSUE309_STOP_FILE: stopped })
+  expect((await at(one.base, `/api/jobs/${parent}`)).status).toBe(200)
+  const pending = submitAt(one.base, file, parent).catch(() => null)
+  let two: Awaited<ReturnType<typeof childHost>> | undefined
+  try {
+    await vi.waitFor(() => expect(() => JSON.parse(readFileSync(stopped, 'utf8'))).not.toThrow())
+    const root = await status(parent)
+    const claim = (Object.values(root.result.ocrRecovery.pages)[0] as any).attempts.at(-1)
+    expect(claim.state).toBe(phase)
+    expect(api!.stats.submits).toBe(phase === 'claimed' ? 1 : 2)
+    await stopChild(one.child); await pending
+    const { ocrPageCacheDirAbs } = await import('../server/utils/ocr-page-cache')
+    rmSync(ocrPageCacheDirAbs(filesDir, file), { recursive: true, force: true })
+    two = await childHost()
+    expect((await at(two.base, `/api/jobs/${parent}`)).status).toBe(200)
+    const retry = await submitAt(two.base, file, parent)
+    await vi.waitFor(async () => expect((await (await at(two!.base, `/api/jobs/${retry}`)).json()).state).toBe(phase === 'claimed' ? 'failed' : 'done'))
+    if (phase === 'claimed') {
+      const throughOwner = await submitAt(two.base, file, claim.ownerTaskId)
+      await vi.waitFor(async () => expect((await (await at(two!.base, `/api/jobs/${throughOwner}`)).json()).state).toBe('failed'))
+      expect((await request(pagePath)).status).toBe(404)
+    } else {
+      expect(claim.capture.raw).toEqual({ markdown: { text: 'paid original' } })
+      expect((await (await request(pagePath)).json()).markdown).toContain('paid original')
+    }
+    expect(api!.stats.submits).toBe(phase === 'claimed' ? 1 : 2)
+    const { ocrRecovery: _metadata, ...historical } = (await status(parent)).result
+    expect(historical).toEqual(initial.result)
+  } finally { gate!(); await stopChild(one.child); await pending; if (two) await stopChild(two.child) }
+})
+
+it('R1 SIGKILL after provider accepts but before ID receipt leaves shared unknown across processes', async () => {
+  let release!: () => void
+  const accepted = new Promise<void>(resolve => { release = resolve })
+  const { file, pagePath } = await setup(1, { submitStatuses: [429], waitForSubmitResponse: n => n === 2 ? accepted : Promise.resolve() })
+  const parent = await submit(file)
+  await whenIdle()
+  const one = await childHost()
+  expect((await at(one.base, `/api/jobs/${parent}`)).status).toBe(200)
+  const a = await submitAt(one.base, file, parent)
+  let two: Awaited<ReturnType<typeof childHost>> | undefined
+  try {
+    await vi.waitFor(() => expect(api!.stats.submits).toBe(2))
+    expect((Object.values((await status(parent)).result.ocrRecovery.pages)[0] as any).attempts.at(-1)).toMatchObject({ state: 'unknown', ownerTaskId: a })
+    await stopChild(one.child)
+    release()
+    two = await childHost()
+    expect((await at(two.base, `/api/jobs/${parent}`)).status).toBe(200)
+    const b = await submitAt(two.base, file, parent)
+    await vi.waitFor(async () => expect((await (await at(two!.base, `/api/jobs/${b}`)).json()).state).toBe('failed'))
+    expect((await request(pagePath)).status).toBe(404)
+    expect(api!.stats.submits).toBe(2)
+    expect((Object.values((await status(parent)).result.ocrRecovery.pages)[0] as any).attempts.at(-1)).toMatchObject({ state: 'unknown', ownerTaskId: a })
+  } finally { release(); gate!(); await stopChild(one.child); if (two) await stopChild(two.child) }
+})
+
+it('R1 SIGKILL after accepted recovery lets an old parent resume the same remote ID across processes', async () => {
+  const { file, pagePath } = await setup(1, { submitStatuses: [429] })
+  const parent = await submit(file)
+  await whenIdle()
+  const one = await childHost()
+  expect((await at(one.base, `/api/jobs/${parent}`)).status).toBe(200)
+  const a = await submitAt(one.base, file, parent)
+  let two: Awaited<ReturnType<typeof childHost>> | undefined
+  try {
+    await vi.waitFor(async () => expect((Object.values((await status(parent)).result.ocrRecovery.pages)[0] as any).attempts.at(-1)).toMatchObject({ state: 'accepted', ownerTaskId: a, jobId: 'JOB-2' }))
+    await stopChild(one.child)
+    two = await childHost()
+    expect((await at(two.base, `/api/jobs/${parent}`)).status).toBe(200)
+    const b = await submitAt(two.base, file, parent)
+    gate!()
+    await vi.waitFor(async () => expect((await (await at(two!.base, `/api/jobs/${b}`)).json()).state).toBe('done'))
+    expect((await (await request(pagePath)).json()).markdown).toContain('paid original')
+    expect(api!.stats.submits).toBe(2)
+    const claim = (Object.values((await status(parent)).result.ocrRecovery.pages)[0] as any).attempts.at(-1)
+    expect(claim.capture).toMatchObject({ taskId: a, jobId: 'JOB-2', raw: { markdown: { text: 'paid original' } } })
+  } finally { gate!(); await stopChild(one.child); if (two) await stopChild(two.child) }
 })
