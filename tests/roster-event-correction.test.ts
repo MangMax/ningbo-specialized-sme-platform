@@ -90,15 +90,21 @@ it('corrects review origin and conclusion independently without guessing its bat
       return (await f.read(`/api/roster/events/${review.id}`)).body
     }
     const corrected = await correct('review-verified', 1, { year: 2022, decidedYear: 2025, reviewOutcome: 'passed', batchSeq: null })
-    expect(corrected).toMatchObject({ event: { id: review.id, year: 2022, decidedYear: 2025, reviewOutcome: 'passed', batchSeq: null, revision: 2 }, lifecycle: { firstRecognitionYear: 2022, anchorYear: 2025, dueYear: 2028 } })
+    expect(corrected).toMatchObject({ event: { id: review.id, recordId: f.record.id, year: 2022, decidedYear: 2025, reviewOutcome: 'passed', batchSeq: null, revision: 2 }, lifecycle: { firstRecognitionYear: 2022, firstRecognitionEventId: f.event.id, state: 'none', needsReview: true, anchorYear: 2022, dueYear: null } })
     expect(corrected.evidence).toEqual(before.evidence)
+    expect(corrected.files).toEqual(before.files)
     expect(candidate()).toMatchObject({ group: 'pending', notes: expect.arrayContaining([expect.stringContaining(`event:${review.id}`)]) })
     // An independently evidenced batch permits eligibility; no code infers it.
-    await correct('review-batch-verified', 2, { batchSeq: 1 })
+    const verified = await correct('review-batch-verified', 2, { batchSeq: 1 })
+    expect(verified).toMatchObject({ event: { id: review.id, recordId: f.record.id, year: 2022, decidedYear: 2025, batchSeq: 1, reviewOutcome: 'passed', revision: 3 }, lifecycle: { firstRecognitionYear: 2022, firstRecognitionEventId: f.event.id, state: 'active', needsReview: false, anchorYear: 2025, dueYear: 2028 } })
+    expect(verified.evidence).toEqual(before.evidence)
+    expect(verified.files).toEqual(before.files)
     expect(candidate().group).toBe('eligible')
-    await correct('review-outcome-unknown', 3, { reviewOutcome: null })
+    const unknown = await correct('review-outcome-unknown', 3, { reviewOutcome: null })
+    expect(unknown.lifecycle).toMatchObject({ firstRecognitionYear: 2022, state: 'none', needsReview: true, dueYear: null })
     expect(candidate().group).toBe('pending')
-    await correct('review-explicit-failure', 4, { reviewOutcome: 'failed' })
+    const failed = await correct('review-explicit-failure', 4, { reviewOutcome: 'failed' })
+    expect(failed.lifecycle).toMatchObject({ firstRecognitionYear: 2022, state: 'terminated', needsReview: false, dueYear: null })
     expect(candidate().group).toBe('excluded')
     expect((await f.read(`/api/roster/events/${f.event.id}`)).body.event).toMatchObject({ id: f.event.id, year: 2022, revision: 1 })
     expect((await f.read(`/api/roster/events/${otherReview.id}`)).body).toEqual(otherBefore)
@@ -317,21 +323,83 @@ it('marks direct and predecessor confirmations stale after correction and after 
   } finally { await f.close() }
 })
 
-it('terminates an existing award lifecycle when a passed review is corrected to failed and recovers only after a new decision', async () => {
+it.each([
+  { id: 'verified-batch', batchSeq: 1, initial: { state: 'active', needsReview: false, dueYear: 2027 }, failed: { state: 'terminated', needsReview: false, dueYear: null }, group: 'eligible', failedGroup: 'excluded' },
+  { id: 'unknown-batch', batchSeq: null, initial: { state: 'none', needsReview: true, dueYear: null }, failed: { state: 'none', needsReview: true, dueYear: null }, group: 'pending', failedGroup: 'pending' },
+])('corrects the same review passed to failed and back in place with $id', async ({ batchSeq, initial, failed, group, failedGroup }) => {
   const f = await fixture()
   try {
-    const review = f.db.insert(schema.recordEvent).values({ recordId: f.record.id, eventType: 'review', year: 2021, decidedYear: 2024, reviewOutcome: 'passed' }).returning().get()
+    // A source-scoped batch is explicit fixture evidence, never inferred from
+    // the award. The null control preserves the original legacy review shape.
+    const review = f.db.insert(schema.recordEvent).values({ recordId: f.record.id, eventType: 'review', year: 2021, decidedYear: 2024, batchSeq, reviewOutcome: 'passed' }).returning().get()
     f.db.insert(schema.recordEvidence).values({ recordEventId: review.id, sourceFile: 'synthetic/review.pdf' }).run()
-    expect((await f.read()).body.lifecycle).toMatchObject({ firstRecognitionYear: 2021, state: 'active', dueYear: 2027 })
+    const before = (await f.read(`/api/roster/events/${review.id}`)).body
+    const awardBefore = (await f.read()).body
+    const candidate = () => readCurrentCandidate(f.db.$client, f.enterprise.id, 'specialized_sme', 2026)
+    expect(before).toMatchObject({ event: { id: review.id, batchSeq, revision: 1, reviewOutcome: 'passed' }, lifecycle: { firstRecognitionYear: 2021, ...initial } })
+    expect(candidate().group).toBe(group)
     const request = f.request('review-failed', { reviewOutcome: 'failed' }); request.operations[0]!.eventId = review.id
     const pre = await f.post('preflight', request)
-    expect((await f.post('commit', { request, planHash: pre.body.planHash })).status).toBe(200)
-    expect((await f.read()).body.lifecycle).toMatchObject({ firstRecognitionYear: 2021, state: 'terminated', dueYear: null })
-    expect((await f.read()).body.event).toMatchObject({ id: f.event.id, eventType: 'award', year: 2021, revision: 1 })
+    expect(pre.status).toBe(200)
+    expect((await f.read(`/api/roster/events/${review.id}`)).body).toEqual(before)
+    const receipt = await f.post('commit', { request, planHash: pre.body.planHash })
+    expect(receipt.status).toBe(200)
+    expect(receipt.body.eventIds).toEqual([review.id])
+    expect((await f.post('commit', { request, planHash: pre.body.planHash })).body).toEqual(receipt.body)
+    const afterFailure = (await f.read(`/api/roster/events/${review.id}`)).body
+    expect(afterFailure).toMatchObject({ event: { id: review.id, recordId: f.record.id, year: 2021, decidedYear: 2024, batchSeq, reviewOutcome: 'failed', revision: 2 }, lifecycle: { firstRecognitionYear: 2021, ...failed } })
+    expect(afterFailure.evidence).toEqual(before.evidence)
+    expect(afterFailure.files).toEqual(before.files)
+    expect(candidate().group).toBe(failedGroup)
     const recover = f.request('review-reconfirmed', { reviewOutcome: 'passed' }); recover.operations[0]!.eventId = review.id; recover.operations[0]!.expectedRevision = 2
     const next = await f.post('preflight', recover)
-    expect((await f.post('commit', { request: recover, planHash: next.body.planHash })).status).toBe(200)
-    expect((await f.read()).body.lifecycle).toMatchObject({ firstRecognitionYear: 2021, state: 'active', dueYear: 2027 })
+    expect(next.status).toBe(200)
+    const restored = await f.post('commit', { request: recover, planHash: next.body.planHash })
+    expect(restored.status).toBe(200)
+    expect((await f.post('commit', { request: recover, planHash: next.body.planHash })).body).toEqual(restored.body)
+    const after = (await f.read(`/api/roster/events/${review.id}`)).body
+    expect(after).toMatchObject({ event: { id: review.id, recordId: f.record.id, year: 2021, decidedYear: 2024, batchSeq, reviewOutcome: 'passed', revision: 3 }, lifecycle: { firstRecognitionYear: 2021, ...initial } })
+    expect(after.evidence).toEqual(before.evidence)
+    expect(after.files).toEqual(before.files)
+    expect(candidate().group).toBe(group)
+    const awardAfter = (await f.read()).body
+    expect(awardAfter.event).toEqual(awardBefore.event)
+    expect(awardAfter.evidence).toEqual(awardBefore.evidence)
+    expect((await f.read(`/api/roster/events/${review.id}/audit`)).body).toMatchObject({ total: 2, rows: [
+      { before: { id: review.id, revision: 1, reviewOutcome: 'passed' }, after: { id: review.id, revision: 2, reviewOutcome: 'failed' }, evidence: before.evidence },
+      { before: { id: review.id, revision: 2, reviewOutcome: 'failed' }, after: { id: review.id, revision: 3, reviewOutcome: 'passed' }, evidence: before.evidence },
+    ] })
+    expect(f.db.$client.prepare('SELECT id FROM record_event ORDER BY id').all()).toEqual([{ id: f.event.id }, { id: review.id }])
+  } finally { await f.close() }
+})
+
+it('keeps a real failed review when a later passed review is added and restores only after a new award', async () => {
+  const f = await fixture(2020)
+  try {
+    const failed = f.db.insert(schema.recordEvent).values({ recordId: f.record.id, eventType: 'review', year: 2020, decidedYear: 2023, batchSeq: 1, reviewOutcome: 'failed' }).returning().get()
+    f.db.insert(schema.recordEvidence).values({ recordEventId: failed.id, sourceFile: 'synthetic/failed-review.pdf', page: 1 }).run()
+    const failureBefore = (await f.read(`/api/roster/events/${failed.id}`)).body
+    const candidate = () => readCurrentCandidate(f.db.$client, f.enterprise.id, 'specialized_sme', 2026)
+    expect(failureBefore.lifecycle).toMatchObject({ firstRecognitionYear: 2020, state: 'terminated', needsReview: false, dueYear: null })
+    expect(candidate().group).toBe('excluded')
+    const passed = f.db.insert(schema.recordEvent).values({ recordId: f.record.id, eventType: 'review', year: 2020, decidedYear: 2024, batchSeq: 1, reviewOutcome: 'passed' }).returning().get()
+    f.db.insert(schema.recordEvidence).values({ recordEventId: passed.id, sourceFile: 'synthetic/later-passed-review.pdf', page: 1 }).run()
+    expect((await f.read()).body.lifecycle).toMatchObject({ firstRecognitionYear: 2020, state: 'none', needsReview: true, dueYear: null })
+    expect(candidate().group).toBe('pending')
+    const retainedFailure = (await f.read(`/api/roster/events/${failed.id}`)).body
+    expect(retainedFailure.event).toEqual(failureBefore.event)
+    expect(retainedFailure.evidence).toEqual(failureBefore.evidence)
+    expect((await f.read(`/api/roster/events/${passed.id}`)).body.event).toMatchObject({ id: passed.id, year: 2020, decidedYear: 2024, reviewOutcome: 'passed', revision: 1 })
+    const reaward = f.db.insert(schema.recordEvent).values({ recordId: f.record.id, eventType: 'award', year: 2025, decidedYear: 2025, batchSeq: 1 }).returning().get()
+    f.db.insert(schema.recordEvidence).values({ recordEventId: reaward.id, sourceFile: 'synthetic/new-award.pdf', page: 1 }).run()
+    expect((await f.read()).body.lifecycle).toMatchObject({ firstRecognitionYear: 2020, firstRecognitionEventId: f.event.id, state: 'active', needsReview: false, anchorYear: 2025, dueYear: 2028 })
+    expect(candidate().group).toBe('eligible')
+    const failureAfter = (await f.read(`/api/roster/events/${failed.id}`)).body
+    expect(failureAfter.event).toEqual(failureBefore.event)
+    expect(failureAfter.evidence).toEqual(failureBefore.evidence)
+    expect(failureAfter.files).toEqual(failureBefore.files)
+    expect((await f.read(`/api/roster/events/${failed.id}/audit`)).body).toMatchObject({ total: 0, rows: [] })
+    expect(f.db.$client.prepare('SELECT id FROM record_event ORDER BY id').all()).toEqual([{ id: f.event.id }, { id: failed.id }, { id: passed.id }, { id: reaward.id }])
   } finally { await f.close() }
 })
 

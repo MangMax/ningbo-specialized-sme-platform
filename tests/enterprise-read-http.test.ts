@@ -14,9 +14,12 @@ const owner = db.insert(schema.enterprise).values({ name: '合成双称号企业
 const unrelated = db.insert(schema.enterprise).values({ name: '无关企业', nameNorm: '无关企业' }).returning().get().id
 for (const [titleCode, year] of [['specialized_sme', 2022], ['little_giant', 2024]] as const) {
   const recordId = db.insert(schema.record).values({ enterpriseId: owner, titleCode, source: 'jxj' }).returning().get().id
-  const eventId = db.insert(schema.recordEvent).values({ recordId, eventType: 'award', year, decidedYear: year }).returning().get().id
+  const eventId = db.insert(schema.recordEvent).values({ recordId, eventType: 'award', year, decidedYear: year, batchSeq: 1 }).returning().get().id
   db.insert(schema.recordEvidence).values({ recordEventId: eventId, sourceFile: 'synthetic.pdf', page: 3 }).run()
-  db.insert(schema.recordEvent).values({ recordId, eventType: 'review', year: 2025, decidedYear: 2025, reviewOutcome: 'passed' }).run()
+  // Each synthetic source explicitly confirms batch 1 of its own originating
+  // award; the 2025 publication is the conclusion year, not a new origin.
+  const reviewId = db.insert(schema.recordEvent).values({ recordId, eventType: 'review', year, decidedYear: 2025, batchSeq: 1, reviewOutcome: 'passed' }).returning().get().id
+  db.insert(schema.recordEvidence).values({ recordEventId: reviewId, sourceFile: `synthetic-review-${titleCode}.pdf`, page: 1 }).run()
 }
 for (const [name, verificationStatus] of [['已确认旧名', 'confirmed'], ['待核旧名', 'pending']] as const) db.insert(schema.enterpriseAlias).values({ enterpriseId: owner, name, nameNorm: name, sourceKind: 'manual', sourceRefId: 0, verificationStatus }).run()
 const recognized = db.insert(schema.platformQuery).values({ interface: 'recognized_list', queryKey: ' synthetic84 ', queriedAt: '2026-10-19', status: 'partial', collectionEvidence: { titleScope: { rdjb: ['2'] }, pages: [{ rdjb: '2', page: 4, fetchedCount: 2, status: 'success' }] } as never }).returning().get().id
@@ -63,9 +66,43 @@ afterAll(async () => { if (server) await new Promise<void>(resolve => server.clo
 it('HTTP list keeps filters, same-title recognition, counts, stable deep pages and confirmed alias search without decoding unrelated archives', async () => {
   const response = await fetch(`${base}/api/roster/enterprises?q=已确认旧名&pageSize=1`)
   expect(response.status).toBe(200)
-  expect(await response.json()).toMatchObject({ counts: { total: 1, titlePairs: 2, recognitionPairs: 2, differences: 2 }, rows: [{ enterpriseId: owner, titles: ['little_giant', 'specialized_sme'], aliasNames: ['已确认旧名'], nextReviewYear: 2028 }] })
+  expect(await response.json()).toMatchObject({ counts: { total: 1, titlePairs: 2, recognitionPairs: 2, differences: 2 }, rows: [{ enterpriseId: owner, titles: ['little_giant', 'specialized_sme'], aliasNames: ['已确认旧名'], nextReviewYear: 2028, anchorNeedsReview: false, firstRecognition: [{ titleCode: 'little_giant', year: 2024 }, { titleCode: 'specialized_sme', year: 2022 }] }] })
   for (const query of ['q=待核旧名', 'title=little_giant&firstYear=2022', 'source=jxj&eventType=award&year=2025']) expect(await (await fetch(`${base}/api/roster/enterprises?${query}`)).json()).toMatchObject({ counts: { total: 0 }, rows: [] })
   expect(await (await fetch(`${base}/api/roster/enterprises?q=合成&sort=name&page=2&pageSize=1`)).json()).toMatchObject({ counts: { total: 1 }, page: 2, rows: [] })
+})
+it.each([
+  { id: 'legacy-origin-and-batch', legacy: true, patch: {} },
+  { id: 'missing-review-origin', legacy: false, patch: { year: null } },
+  { id: 'missing-review-batch', legacy: false, patch: { batchSeq: null } },
+  { id: 'missing-review-conclusion-year', legacy: false, patch: { decidedYear: null } },
+  { id: 'missing-review-outcome', legacy: false, patch: { reviewOutcome: null } },
+])('HTTP list retains both titles and their histories with no definite due for $id', async ({ id, legacy, patch }) => {
+  const name = `issue337-${id}`
+  const enterprise = db.insert(schema.enterprise).values({ name, nameNorm: name }).returning().get()
+  const events = []
+  const evidence = []
+  try {
+    for (const [titleCode, year] of [['specialized_sme', 2022], ['little_giant', 2024]] as const) {
+      const record = db.insert(schema.record).values({ enterpriseId: enterprise.id, titleCode, source: 'jxj', nameRaw: name }).returning().get()
+      const award = db.insert(schema.recordEvent).values({ recordId: record.id, eventType: 'award', year, decidedYear: year, batchSeq: legacy ? null : 1 }).returning().get()
+      const review = db.insert(schema.recordEvent).values({ recordId: record.id, eventType: 'review', year: legacy ? 2025 : year, decidedYear: 2025, batchSeq: legacy ? null : 1, reviewOutcome: 'passed', ...patch }).returning().get()
+      events.push(award, review)
+      for (const event of legacy ? [award] : [award, review]) evidence.push(db.insert(schema.recordEvidence).values({ recordEventId: event.id, sourceFile: `issue337/${id}-${titleCode}.pdf`, page: 1 }).returning().get())
+    }
+    const response = await fetch(`${base}/api/roster/enterprises?q=${name}&pageSize=1`)
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({ counts: { total: 1, titlePairs: 2, recognitionPairs: 2, differences: 2 }, rows: [{ enterpriseId: enterprise.id, titles: ['little_giant', 'specialized_sme'], nextReviewYear: null, anchorNeedsReview: true, firstRecognition: [{ titleCode: 'little_giant', year: 2024 }, { titleCode: 'specialized_sme', year: 2022 }] }] })
+    const detailResponse = await fetch(`${base}/api/roster/enterprises/${enterprise.id}`)
+    expect(detailResponse.status).toBe(200)
+    const detail = await detailResponse.json()
+    expect(detail.events).toEqual(events.map(({ id, recordId, eventType, year, batchSeq, decidedYear, reviewOutcome }) => ({ id, recordId, eventType, year, batchSeq, decidedYear, reviewOutcome })))
+    expect(detail.evidence).toEqual(evidence.map(({ recordEventId, sourceFile, attachment, listNo, page }) => ({ eventId: recordEventId, sourceFile, attachment, listNo, page })))
+    expect(detail.records).toHaveLength(2)
+    for (const record of detail.records) expect(record.lifecycle).toMatchObject({ state: 'none', needsReview: true, dueYear: null })
+  } finally {
+    db.$client.prepare('DELETE FROM record WHERE enterprise_id = ?').run(enterprise.id)
+    db.$client.prepare('DELETE FROM enterprise WHERE id = ?').run(enterprise.id)
+  }
 })
 it('HTTP detail preserves legacy Unicode keys without allocating normalization callbacks for unrelated plain keys', async () => {
   const ids: number[] = []
