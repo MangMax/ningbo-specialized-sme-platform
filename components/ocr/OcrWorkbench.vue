@@ -118,6 +118,7 @@ const {
   imageVersion,
   pendingPage,
   rowFailure,
+  needsRead,
   justSaved,
   savePage,
   removePage,
@@ -389,6 +390,11 @@ function saveDraft() {
  */
 async function retry() {
   const failure = rowFailure.value
+  if (failure?.action === 'conflict') {
+    // 读取最新正文/版本,草稿仍由本组件持有,不当成保存成功也不自动提交。
+    if (selectedPath.value) await loadDetail(selectedPath.value)
+    return
+  }
   if (failure?.action === 'read') {
     if (!selectedPath.value) return
     await loadDetail(selectedPath.value)
@@ -1013,7 +1019,7 @@ const fileSheetBlockedReason = computed(() =>
                 :pending="pendingPage === currentRow.page"
                 :failure="rowFailureMessage"
                 :failure-action="rowFailureAction"
-                :disabled="detailLoading || !!detailError"
+                :disabled="detailLoading || !!detailError || needsRead"
                 :highlight="justSaved === currentRow.page"
                 :view="view"
                 class="h-full"
@@ -1036,7 +1042,7 @@ const fileSheetBlockedReason = computed(() =>
         :editing="editing"
         :dirty="dirty"
         :pending="pendingPage !== null"
-        :disabled="writeBusy || !ready || !!detailError"
+        :disabled="writeBusy || !ready || !!detailError || needsRead"
         :can-edit="canEdit"
         :edit-label="editLabel"
         @navigate="navigate"

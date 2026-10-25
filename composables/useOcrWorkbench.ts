@@ -41,6 +41,7 @@ export function useOcrWorkbench() {
     channels: string[]
     pages: Array<{
       page: number
+      version?: string
       engine: string
       model: string | null
       channel: string
@@ -267,7 +268,7 @@ export function useOcrWorkbench() {
 
   async function fetchResults(relPath: string): Promise<ResultsRead> {
     const meta = await api<OcrListResponse>('/api/ocr-results', {
-      query: { file: relPath, markdown: '1' },
+      query: { file: relPath, markdown: '1', includeVersion: '1' },
     })
     if (meta.count === 0) return { ok: true, rows: [] }
 
@@ -279,10 +280,19 @@ export function useOcrWorkbench() {
       }
     }
 
+    const unversioned = meta.pages.find((p) => typeof p.version !== 'string' || !p.version)
+    if (unversioned) {
+      return {
+        ok: false,
+        message: `这份文件的页版本没读回来(第 ${unversioned.page} 页)。为避免覆盖其他窗口的校对,请重试读取后再编辑。`,
+      }
+    }
+
     return {
       ok: true,
       rows: meta.pages.map((p) => ({
         page: p.page,
+        version: p.version,
         markdown: p.markdown as string,
         pageRelPath: p.pageRelPath,
         engine: p.engine,
@@ -389,18 +399,34 @@ export function useOcrWorkbench() {
   /**
    * 哪一行正在飞(保存 / 删除),以及这次失败**该由哪个动作来重试**。
    *
-   * 失败行内只有一个「重试」入口,但三种失败的重试语义完全不同:
+   * 失败行内只有一个恢复入口,各类失败的恢复语义不同:
    *  - `save`  : POST 没提交,重试就是重新提交当前草稿;
    *  - `delete`: DELETE 没提交,重试必须先重新确认删除,不能静默再删;
    *  - `read`  : 写入/删除**已经提交**,只是读回失败,重试只能 GET ——
    *    再发一次 POST/DELETE 会把「读回缺失」误当成「没写成」。
+   *  - `conflict`: 版本冲突或读回不一致,先重新读取,保留草稿由用户核对。
    * 不记录来源,`retry()` 就只能靠猜(旧实现正是这样把读回失败变成了死按钮)。
    */
   const rowFailure = ref<{
     page: number
     message: string
-    action: 'save' | 'delete' | 'read'
+    action: 'save' | 'delete' | 'read' | 'conflict'
   } | null>(null)
+
+  /** 冲突与提交后读回失败都必须先读取,不能由保存按钮重放写入。 */
+  const needsRead = computed(() =>
+    rowFailure.value?.page === currentPage.value &&
+    (rowFailure.value.action === 'read' || rowFailure.value.action === 'conflict'),
+  )
+
+  function versionConflict(error: unknown): boolean {
+    const response = error as { status?: number; statusCode?: number; response?: { status?: number } } | null
+    return (response?.statusCode ?? response?.status ?? response?.response?.status) === 409
+  }
+
+  function conflictFailure(page: number, message = '这一页已被其他窗口修改或删除,版本冲突。编辑稿已保留;请重新读取最新结果,核对后再保存或删除。') {
+    return { page, action: 'conflict' as const, message }
+  }
 
   /**
    * 一次写该写到**哪一份文件**上。
@@ -423,8 +449,12 @@ export function useOcrWorkbench() {
 
   async function savePage(page: number, markdown: string) {
     const relPath = writeTarget()
-    if (!relPath || pendingPage.value !== null || page !== currentPage.value)
+    if (!relPath || pendingPage.value !== null || page !== currentPage.value || needsRead.value)
       return
+    const result = results.value.find((row) => row.page === page)
+    // 完整成功的读取中没有这一页才代表预期不存在;已有结果缺版本不能盲写。
+    const expectedVersion = result ? result.version : null
+    if (expectedVersion === undefined) return
     pendingPage.value = page
     rowFailure.value = null
     justSaved.value = null
@@ -434,7 +464,7 @@ export function useOcrWorkbench() {
       await api<WriteResponse>('/api/ocr-results', {
         method: 'POST',
         // 单页写入:显式给 `page`,所以正文里**不要**带页标记(服务端会拒两种语义打架)。
-        body: { file: relPath, markdown, page },
+        body: { file: relPath, markdown, page, expectedVersion, mode: 'versioned' },
       })
       committed = true
       const next = await reloadResults(relPath)
@@ -459,14 +489,15 @@ export function useOcrWorkbench() {
         dirty.value = false
         flashSaved(page)
       } else
-        rowFailure.value = {
-          page,
-          action: 'save',
-          message: check.message,
-        }
+        rowFailure.value = conflictFailure(page,
+          '写入已提交,但读回结果与编辑稿不一致(可能已被其他窗口修改或删除)。编辑稿已保留;请重新读取后核对。')
     } catch (error) {
       if (relPath !== selectedPath.value) return
-      // 写失败与**读回**失败分开说:读回失败时写入其实已经提交(再点一次是幂等覆盖),
+      if (!committed && versionConflict(error)) {
+        rowFailure.value = conflictFailure(page)
+        return
+      }
+      // 写失败与**读回**失败分开说:读回失败时写入其实已经提交,
       // 报成「保存失败」会让人以为白写了一遍。重试动作也随之不同:读回失败只许 GET。
       rowFailure.value = {
         page,
@@ -485,8 +516,12 @@ export function useOcrWorkbench() {
 
   async function removePage(page: number) {
     const relPath = writeTarget()
-    if (!relPath || pendingPage.value !== null || page !== currentPage.value)
+    if (!relPath || pendingPage.value !== null || page !== currentPage.value || needsRead.value)
       return
+    const result = results.value.find((row) => row.page === page)
+    // 删除入口只属于已有结果;已知不存在时无需构造查询字符串的空版本。
+    const expectedVersion = result?.version
+    if (!expectedVersion) return
     pendingPage.value = page
     rowFailure.value = null
     justSaved.value = null
@@ -495,7 +530,7 @@ export function useOcrWorkbench() {
     try {
       const out = await api<DeleteResponse>('/api/ocr-results', {
         method: 'DELETE',
-        query: { file: relPath, page },
+        query: { file: relPath, page, expectedVersion, mode: 'versioned' },
       })
       committed = true
       if ((await reloadResults(relPath)) === null) {
@@ -518,6 +553,10 @@ export function useOcrWorkbench() {
       // 只看待校对时删掉一行,那一行会从列表里消失 —— 把弹窗 / 对照收掉,别停在已不在的页上。
       if (previewPage.value === page) previewPage.value = null
     } catch (error) {
+      if (relPath === selectedPath.value && !committed && versionConflict(error)) {
+        rowFailure.value = conflictFailure(page)
+        return
+      }
       if (relPath === selectedPath.value)
         rowFailure.value = {
           page,
@@ -601,7 +640,8 @@ export function useOcrWorkbench() {
       dirty.value = false
       flashSaved(page)
     } else {
-      rowFailure.value = { page, action: 'save', message: check.message }
+      rowFailure.value = conflictFailure(page,
+        '写入已提交,但读回结果与编辑稿不一致(可能已被其他窗口修改或删除)。编辑稿已保留;请重新读取后核对。')
     }
     return check.ok
   }
@@ -753,6 +793,7 @@ export function useOcrWorkbench() {
     imageVersion,
     pendingPage,
     rowFailure,
+    needsRead,
     justSaved,
     savePage,
     removePage,

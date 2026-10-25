@@ -57,9 +57,9 @@ const props = defineProps<{
   failure?: string
   /**
    * 这次失败该由哪种动作重试：`save` 重新提交、`read` 只重读、
-   * `delete` 先重新确认删除。空串表示没有失败。
+   * `delete` 先重新确认删除、`conflict` 重新读取并保留编辑稿。空串表示没有失败。
    */
-  failureAction?: 'save' | 'delete' | 'read' | ''
+  failureAction?: 'save' | 'delete' | 'read' | 'conflict' | ''
   /** 刷新/错误快照仍可读，但不能写。 */
   disabled?: boolean
   /** 写入成功读回后的一次高亮。 */
@@ -87,6 +87,7 @@ function retryFailure() {
 }
 
 function failureRetryLabel() {
+  if (props.failureAction === 'conflict') return '重新读取'
   if (props.failureAction === 'delete') return '重试删除'
   if (props.failureAction === 'read') return '重试读取'
   if (props.failureAction === 'save') return '重试保存'
