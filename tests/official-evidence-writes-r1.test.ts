@@ -186,3 +186,154 @@ for (const reverse of [false, true]) it(`R1 F2 typed and legacy duplicate normal
   expect((await f.post('commit', input)).status).toBe('failed')
   expect(f.sqlite.prepare('SELECT count(*) n FROM official_evidence_row_revision').get()).toEqual({ n: 0 })
 })
+
+type OfficialFixture = Awaited<ReturnType<typeof fixture>>
+function seedRepoint(f: OfficialFixture, from = 'other.txt', known?: 'section' | 'declaration') {
+  f.sqlite.prepare("INSERT INTO stored_file(id,rel_path,filename,ext,source,kind,title_code,bytes,sha256,created_at) VALUES(2,'other.txt','other.txt','txt','jxj','announcement','specialized_sme',?,?,'synthetic')").run(Buffer.byteLength(text), digest(text))
+  f.sqlite.prepare('INSERT INTO record_evidence(id,record_event_id,source_file,list_no) VALUES(2,2,?,10)').run(from)
+  if (known) {
+    f.sqlite.exec("INSERT INTO import_batch(id,idempotency_key,source_kind,source_identity,created_at) VALUES(1,'seed','announcement','synthetic','synthetic')")
+    if (known === 'declaration') f.sqlite.exec("INSERT INTO source_document(id,source,title,path) VALUES(2,'jxj','Explicit distinct publication','other.txt')")
+    const { declaration: _declaration, ...row } = f.row({ nameRaw: 'Published Beta', path: from, storedFileId: 2, sectionKey: known === 'section' ? 'other-section' : 'awards' })
+    appendOfficialEvidenceRevision(f.db, { ...row, sourceDocumentId: known === 'declaration' ? 2 : 1, evidenceId: 2, eventId: 2, capturedRecordId: 2, capturedEnterpriseId: 2, command: { kind: 'import', batchId: 1 } }, 0)
+  }
+}
+const repointCount = (body: unknown) => z.object({ summary: z.object({ evidenceRepointed: z.number().int() }) }).parse(body).summary.evidenceRepointed
+const businessSnapshot = (f: OfficialFixture) => Object.fromEntries(['enterprise', 'record', 'record_event', 'record_evidence', 'official_evidence_row_revision', 'evidence_correction_audit'].map(table => [table, f.sqlite.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all()]))
+function legacyRepoint(f: OfficialFixture, to: string) { return f.announcement([f.record('Beta', { ...f.evidence(), sourceFile: to }, 2024)]) }
+function typedOperation(f: OfficialFixture, kind: 'capture' | 'append' | 'correction'): RosterImportPayload {
+  return kind === 'capture' ? f.announcement([f.record('Alpha', f.evidence(f.row()))]) : kind === 'append' ? { officialEvidenceAppends: [f.append()] } : { officialEvidenceCorrections: f.correction() }
+}
+function mixedRepoint(f: OfficialFixture, kind: 'capture' | 'append' | 'correction', to: string): RosterImportPayload {
+  const typed = typedOperation(f, kind), legacy = legacyRepoint(f, to)
+  if (kind !== 'capture') return { ...legacy, ...typed }
+  return { announcement: { sourceDocument: { source: 'jxj', title: 'Declared publication' }, records: [...(legacy.announcement?.records ?? []), ...(typed.announcement?.records ?? [])] } }
+}
+async function submitRepoint(f: OfficialFixture, input: RosterImportRequest) {
+  const plan = await f.post('preflight', input), bound = { ...input, payload: { ...input.payload, ...(plan.preflight?.officialEvidencePlanHash ? { officialEvidencePlanHash: plan.preflight.officialEvidencePlanHash } : {}) } }
+  return { plan, saved: await f.post('commit', bound) }
+}
+for (const kind of ['capture', 'append', 'correction'] as const) {
+  it(`R2 S1 incoming frozen legacy repoint with ${kind} rejects atomically`, async () => {
+    const f = await fixture(); seedRepoint(f); const before = businessSnapshot(f)
+    const { plan, saved } = await submitRepoint(f, f.request(mixedRepoint(f, kind, 'notice.txt')))
+    expect(plan.preflight?.conflicts).toMatchObject([{ error: { code: 'ambiguity' } }])
+    expect(saved.status).toBe('failed'); expect(repointCount(saved)).toBe(0)
+    expect(businessSnapshot(f)).toEqual(before)
+  })
+  it(`R2 S1 sequential incoming legacy repoint then ${kind} has matching ambiguity`, async () => {
+    const f = await fixture(); seedRepoint(f)
+    expect(repointCount(await f.commit(f.request(legacyRepoint(f, 'notice.txt'), 'legacy-first')))).toBe(1)
+    const { plan, saved } = await submitRepoint(f, f.request(typedOperation(f, kind), 'typed-after'))
+    expect(plan.preflight?.conflicts).toMatchObject([{ error: { code: 'ambiguity' } }]); expect(saved.status).toBe('failed')
+    expect(f.sqlite.prepare('SELECT source_file FROM record_evidence WHERE id=2').get()).toEqual({ source_file: 'notice.txt' })
+    expect(f.sqlite.prepare('SELECT count(*) n FROM official_evidence_row_revision').get()).toEqual({ n: 0 })
+  })
+  it(`R2 S1 outgoing frozen legacy repoint vacates coordinate for ${kind}`, async () => {
+    const f = await fixture(); seedRepoint(f, 'notice.txt')
+    const saved = await f.commit(f.request(mixedRepoint(f, kind, 'other.txt')))
+    expect(repointCount(saved)).toBe(1)
+    expect(f.sqlite.prepare('SELECT id,record_event_id,source_file,list_no FROM record_evidence WHERE id=2').get()).toEqual({ id: 2, record_event_id: 2, source_file: 'other.txt', list_no: 10 })
+    expect(f.sqlite.prepare('SELECT count(*) n FROM official_evidence_row_revision').get()).toEqual({ n: 1 })
+  })
+  it(`R2 S1 outgoing repoint with residual unknown still rejects ${kind}`, async () => {
+    const f = await fixture(); seedRepoint(f, 'notice.txt')
+    f.sqlite.exec("INSERT INTO record_event(id,record_id,event_type,year) VALUES(3,2,'award',2023); INSERT INTO record_evidence(id,record_event_id,source_file,list_no) VALUES(3,3,'notice.txt',10)")
+    const before = businessSnapshot(f), { plan, saved } = await submitRepoint(f, f.request(mixedRepoint(f, kind, 'other.txt')))
+    expect(plan.preflight?.conflicts).toMatchObject([{ error: { code: 'ambiguity' } }]); expect(saved.status).toBe('failed')
+    expect(businessSnapshot(f)).toEqual(before)
+  })
+}
+it('R2 S1 sequential outgoing convergence then append permits the same final state', async () => {
+  const f = await fixture(); seedRepoint(f, 'notice.txt')
+  expect(repointCount(await f.commit(f.request(legacyRepoint(f, 'other.txt'), 'vacate-first')))).toBe(1)
+  await f.commit(f.request({ officialEvidenceAppends: [f.append()] }, 'typed-after'))
+  expect(f.sqlite.prepare('SELECT source_file FROM record_evidence WHERE id=2').get()).toEqual({ source_file: 'other.txt' })
+})
+for (const reverse of [false, true]) it(`R2 S1 two frozen repoints swap final locators in ${reverse ? 'reverse' : 'forward'} order`, async () => {
+  const f = await fixture(); seedRepoint(f)
+  f.sqlite.exec("UPDATE record_evidence SET source_file='notice.txt',list_no=10 WHERE id=1")
+  const records = [f.record('Alpha', { ...f.evidence(), sourceFile: 'other.txt' }, 2021), f.record('Beta', f.evidence(), 2024)]
+  const saved = await f.commit(f.request({ ...f.announcement(reverse ? records.reverse() : records), officialEvidenceAppends: [f.append(f.row({ listNo: 30 }))] }))
+  expect(repointCount(saved)).toBe(2)
+  expect(f.sqlite.prepare('SELECT id,source_file,list_no FROM record_evidence ORDER BY id').all()).toEqual([{ id: 1, source_file: 'other.txt', list_no: 10 }, { id: 2, source_file: 'notice.txt', list_no: 10 }, { id: 3, source_file: 'notice.txt', list_no: 30 }])
+  expect(f.sqlite.prepare('SELECT id,revision FROM record_event ORDER BY id').all()).toEqual([{ id: 1, revision: 2 }, { id: 2, revision: 1 }])
+})
+it('R2 S1 repeated identical repoint uses the one original frozen target', async () => {
+  const f = await fixture(); seedRepoint(f)
+  const record = f.record('Beta', f.evidence(), 2024)
+  const saved = await f.commit(f.request({ ...f.announcement([record, structuredClone(record)]), officialEvidenceAppends: [f.append(f.row({ listNo: 30 }))] }))
+  expect(repointCount(saved)).toBe(1)
+  expect(f.sqlite.prepare('SELECT count(*) n FROM record_evidence').get()).toEqual({ n: 3 })
+  expect(f.sqlite.prepare('SELECT revision FROM record_event WHERE id=2').get()).toEqual({ revision: 1 })
+})
+function betaCorrection(f: OfficialFixture) {
+  const before = readExactEvidence(f.db, 2), publishedRow = f.row({ nameRaw: 'Published Beta' })
+  return { actor: { type: 'agent' as const, id: 'synthetic' }, basis: 'Verified exact row', operations: [{ evidenceId: 2, eventId: 2, recordId: 2, enterpriseId: 2, expectedVersion: before.version, expectedRowRevision: 0, coordinate: { sourceFile: 'notice.txt', attachment: null, listNo: 10, page: null }, publishedRow }] }
+}
+it('R2 S1 actual repoint and typed correction cannot change the same evidence twice', async () => {
+  const f = await fixture(); seedRepoint(f); const before = businessSnapshot(f)
+  const { plan, saved } = await submitRepoint(f, f.request({ ...legacyRepoint(f, 'notice.txt'), officialEvidenceCorrections: betaCorrection(f) }))
+  expect(plan.preflight?.conflicts).toMatchObject([{ error: { code: 'ambiguous_target' } }]); expect(saved.status).toBe('failed')
+  expect(businessSnapshot(f)).toEqual(before)
+})
+it('R2 S1 same-path legacy noop does not falsely duplicate an exact correction target', async () => {
+  const f = await fixture(); seedRepoint(f)
+  const saved = await f.commit(f.request({ ...legacyRepoint(f, 'other.txt'), officialEvidenceCorrections: betaCorrection(f) }))
+  expect(repointCount(saved)).toBe(0)
+  expect(f.sqlite.prepare('SELECT revision FROM record_event WHERE id=2').get()).toEqual({ revision: 2 })
+})
+for (const known of ['section', 'declaration'] as const) it(`R2 S1 repoint preserves known latest with an explicit different ${known}`, async () => {
+  const f = await fixture(); seedRepoint(f, 'other.txt', known)
+  const before = f.sqlite.prepare('SELECT * FROM official_evidence_row_revision WHERE evidence_id=2').all()
+  expect(repointCount(await f.commit(f.request(mixedRepoint(f, 'append', 'notice.txt'))))).toBe(1)
+  expect(f.sqlite.prepare('SELECT * FROM official_evidence_row_revision WHERE evidence_id=2').all()).toEqual(before)
+  expect(f.sqlite.prepare('SELECT source_file FROM record_evidence WHERE id=2').get()).toEqual({ source_file: 'notice.txt' })
+})
+it('R2 S1 legal final merge cannot excuse an incoming unknown repoint', async () => {
+  const f = await fixture(); seedRepoint(f)
+  const { plan, saved } = await submitRepoint(f, f.request({ ...mixedRepoint(f, 'append', 'notice.txt'), merges: [{ fromEnterpriseId: 1, intoUscc: '91330211255994457P', note: 'Verified legal identity merge' }] }))
+  expect(plan.preflight?.conflicts).toMatchObject([{ error: { code: 'ambiguity' } }]); expect(saved.status).toBe('failed')
+  expect(f.sqlite.prepare('SELECT count(*) n FROM enterprise').get()).toEqual({ n: 2 })
+})
+it('R2 S1 current same owner cannot excuse an incoming unknown repoint', async () => {
+  const f = await fixture(); seedRepoint(f)
+  f.sqlite.exec('UPDATE record_evidence SET list_no=10 WHERE id=1')
+  const { plan, saved } = await submitRepoint(f, f.request({ ...f.announcement([f.record('Alpha', f.evidence(), 2021)]), officialEvidenceAppends: [f.append()] }))
+  expect(plan.preflight?.conflicts).toMatchObject([{ error: { code: 'ambiguity' } }]); expect(saved.status).toBe('failed')
+})
+it('R2 S1 repoint locator drift after preflight invalidates the common locked plan hash', async () => {
+  const f = await fixture(); seedRepoint(f)
+  const input = f.request({ ...legacyRepoint(f, 'notice.txt'), officialEvidenceAppends: [f.append(f.row({ listNo: 30 }))] })
+  const plan = await f.post('preflight', input); expect(plan.preflight?.conflicts).toEqual([])
+  writeFileSync(join(f.filesDir, 'third.txt'), text)
+  f.sqlite.prepare("INSERT INTO stored_file(id,rel_path,filename,ext,source,kind,title_code,bytes,sha256,created_at) VALUES(3,'third.txt','third.txt','txt','jxj','announcement','specialized_sme',?,?,'synthetic')").run(Buffer.byteLength(text), digest(text))
+  f.sqlite.exec("UPDATE record_evidence SET source_file='third.txt' WHERE id=2")
+  const saved = await f.post('commit', { ...input, payload: { ...input.payload, officialEvidencePlanHash: plan.preflight?.officialEvidencePlanHash } })
+  expect(saved.status).toBe('failed')
+  expect(saved).toMatchObject({ items: expect.arrayContaining([expect.objectContaining({ error: expect.objectContaining({ code: 'plan_mismatch' }) })]) })
+  expect(f.sqlite.prepare('SELECT source_file FROM record_evidence WHERE id=2').get()).toEqual({ source_file: 'third.txt' })
+  expect(f.sqlite.prepare('SELECT count(*) n FROM official_evidence_row_revision').get()).toEqual({ n: 0 })
+})
+it('R2 S1 later SQLite failure rolls back an already executed legacy repoint', async () => {
+  const f = await fixture(); seedRepoint(f); const before = businessSnapshot(f)
+  const input = f.request({ ...legacyRepoint(f, 'notice.txt'), officialEvidenceAppends: [f.append(f.row({ listNo: 30 }))] })
+  const plan = await f.post('preflight', input); expect(plan.preflight?.conflicts).toEqual([])
+  f.sqlite.exec("CREATE TRIGGER synthetic_failure BEFORE INSERT ON official_evidence_row_revision BEGIN SELECT RAISE(ABORT,'synthetic repoint rollback'); END")
+  const saved = await f.post('commit', { ...input, payload: { ...input.payload, officialEvidencePlanHash: plan.preflight?.officialEvidencePlanHash } })
+  expect(saved.status).toBe('failed'); expect(businessSnapshot(f)).toEqual(before)
+})
+it('R2 S1 historical known capture hash stays intact during a live equal-content locator move', async () => {
+  const f = await fixture(); seedRepoint(f, 'other.txt', 'section')
+  const before = f.sqlite.prepare('SELECT * FROM official_evidence_row_revision WHERE evidence_id=2').all()
+  // Historical capture is immutable even when the live catalog now has other
+  // bytes. This fixture exercises no replacement API or replacement protocol.
+  const currentBytes = 'current equal-content files'
+  for (const path of ['notice.txt', 'other.txt']) writeFileSync(join(f.filesDir, path), currentBytes)
+  f.sqlite.prepare('UPDATE stored_file SET sha256=?,bytes=? WHERE id IN(1,2)').run(digest(currentBytes), Buffer.byteLength(currentBytes))
+  const published = f.row({ sha256: digest(currentBytes), bytes: Buffer.byteLength(currentBytes) })
+  const saved = await f.commit(f.request({ ...legacyRepoint(f, 'notice.txt'), officialEvidenceAppends: [f.append(published)] }))
+  expect(repointCount(saved)).toBe(1)
+  expect(f.sqlite.prepare('SELECT * FROM official_evidence_row_revision WHERE evidence_id=2').all()).toEqual(before)
+  expect(f.sqlite.prepare('SELECT source_file FROM record_evidence WHERE id=2').get()).toEqual({ source_file: 'notice.txt' })
+})

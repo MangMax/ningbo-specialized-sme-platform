@@ -88,6 +88,12 @@ merge 的最终映射解释。先跨 event 核 K，再判 event 关联；已知 
 opt-in 混批的最终集合还包含实际拟新增 legacy 出处（先沿用原计划的事件归组、跳过既有
 事件）；它们仍为 unknown，不伪造 sidecar/已知绑定。与 capture/append/correction
 最终坐标发生未知重叠时，跨 event/owner 同样返回 ambiguity；纯 legacy 请求保持原义。
+既有事件虽跳过插入，仍可能执行原计划冻结的 repointTargets；它们以原 evidenceId
+撤旧 locator、加入实际最终 locator，和上述三条事实路径共用最终集合，不能从 payload
+另猜收敛。等内容收敛不改真实 latest 的已知/未知及其 K/raw，也不造 sidecar；
+unknown 不因同 SHA/同 owner/合法 merge 获豁免。实际 repoint 与 typed correction
+不得同批改同一 evidence；同路径 noop、重复同目标沿用原冻结计划的既定规则。
+opt-in planHash 包含 repoint 原 locator/事件版本/latest/实核文件，IMMEDIATE 内重读。
 新增操作合计100、每 evidence 一次、旧新 K 最多200；每 K 源候选/最终 scope 100，N+1
 溢出拒绝，event 原300限保持。raw-only 也修订/审计/CAS113，每改变事件每批一次。
 

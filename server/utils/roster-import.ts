@@ -927,6 +927,8 @@ interface PlannedItem {
    * 「提交真改的」逐行可比对，就靠这一项**在计划期**就算准。
    */
   repoints?: number
+  /** The exact targets also held by this item's execution closure. */
+  evidenceRepointTargets?: readonly EvidenceRepointTarget[]
   mergePlan?: MergePlan
   /** 确实要执行时才有的写入闭包（提交阶段调用）。 */
   run?: (tx: Executor) => RosterImportItemResult
@@ -1269,7 +1271,8 @@ function prepareOfficialImport(db: Executor, request: RosterImportRequest, items
     while (owner !== null && ownerMap.has(owner)) { if (seen.has(owner)) return fail('ambiguity', 'Cyclic merge ownership'); seen.add(owner); owner = ownerMap.get(owner)! }
     return owner
   }
-  const facts = planOfficialEvidenceChanges(db, changes, filesDir, finalOwner, newUnknownClaims)
+  const locatorMoves = items.flatMap(item => item.evidenceRepointTargets ?? [])
+  const facts = planOfficialEvidenceChanges(db, changes, filesDir, finalOwner, newUnknownClaims, locatorMoves)
   for (const target of appendTargets) {
     const additions = appendTargets.filter(other => other.op.eventId === target.op.eventId && other.change.noOpEvidenceId === undefined).length
     if (target.scope + additions > 300) throw new OfficialFactError('source_limit', 'Final event evidence exceeds 300', 413)
@@ -1753,6 +1756,7 @@ function planAnnouncementRecord(
       action: repoints > 0 ? 'update' : 'skip',
       review: false,
       repoints,
+      evidenceRepointTargets: repointTargets,
       run:
         repoints > 0 && recordId != null
           ? (tx) => {
@@ -1792,6 +1796,7 @@ function planAnnouncementRecord(
     action: !reused ? 'add' : repoints > 0 ? 'update' : 'skip',
     review: !requestedUscc,
     repoints,
+    evidenceRepointTargets: repointTargets,
     run: (tx) => {
       const result = writeAnnouncementRecord(
         tx,

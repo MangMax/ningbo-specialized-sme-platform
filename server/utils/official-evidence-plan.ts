@@ -41,6 +41,14 @@ export function officialPlanJson(value: unknown): string {
 }
 export const officialPlanDigest = (value: unknown) => createHash('sha256').update(officialPlanJson(value)).digest('hex')
 export type OfficialCoordinate = { sourceFile: string; attachment: string | null; listNo: number | null; page: number | null }
+/** Importer's already frozen equal-content pointer move, never re-guessed here. */
+export interface OfficialEvidenceLocatorMove {
+  id: number
+  recordId: number
+  recordEventId: number
+  fromSourceFile: string
+  sourceFile: string
+}
 export interface OfficialClaimChange {
   ref: string
   evidenceId: number | string
@@ -95,9 +103,9 @@ export function sameOfficialRow(before: OfficialEvidenceRow | null, row: Officia
 }
 
 /** One narrowly scoped final-set check shared by import and exact corrections. No SQL for A's table lives here. */
-export function planOfficialEvidenceChanges(db: Executor, changes: OfficialClaimChange[], filesDir: string | undefined, finalOwner: (owner: string | null) => string | null = value => value, newUnknownClaims: readonly { ref: string; coordinate: OfficialCoordinate }[] = []) {
+export function planOfficialEvidenceChanges(db: Executor, changes: OfficialClaimChange[], filesDir: string | undefined, finalOwner: (owner: string | null) => string | null = value => value, newUnknownClaims: readonly { ref: string; coordinate: OfficialCoordinate }[] = [], locatorMoves: readonly OfficialEvidenceLocatorMove[] = []) {
   if (changes.length > 100) officialFactFailure('input_limit', 'At most 100 new official fact operations', 400)
-  for (const eventId of new Set(changes.map(change => change.eventId).filter((id): id is number => typeof id === 'number'))) {
+  for (const eventId of new Set([...changes.map(change => change.eventId).filter((id): id is number => typeof id === 'number'), ...locatorMoves.map(move => move.recordEventId)])) {
     if (db.select({ id: schema.recordEvidence.id }).from(schema.recordEvidence).where(eq(schema.recordEvidence.recordEventId, eventId)).limit(301).all().length > 300) officialFactFailure('source_limit', 'Event evidence exceeds 300', 413)
   }
   const seen = new Set<number | string>(), keys = new Map<string, { key: OfficialEvidenceSourceKey; sourceId: number | string }>()
@@ -132,6 +140,24 @@ export function planOfficialEvidenceChanges(db: Executor, changes: OfficialClaim
       keys.set(officialPlanJson(key), { key, sourceId: source.id })
     }
   }
+  const movedIds = new Set<number>()
+  const moves = locatorMoves.map(target => {
+    if (seen.has(target.id) || movedIds.has(target.id)) officialFactFailure('ambiguous_target', 'Each evidence may be changed only once per batch')
+    movedIds.add(target.id)
+    const reference = db.select({ evidence: schema.recordEvidence, event: schema.recordEvent, recordId: schema.record.id, enterpriseId: schema.enterprise.id }).from(schema.recordEvidence)
+      .innerJoin(schema.recordEvent, eq(schema.recordEvent.id, schema.recordEvidence.recordEventId)).innerJoin(schema.record, eq(schema.record.id, schema.recordEvent.recordId))
+      .leftJoin(schema.enterprise, eq(schema.enterprise.id, schema.record.enterpriseId)).where(eq(schema.recordEvidence.id, target.id)).get()
+    if (!reference || reference.event.id !== target.recordEventId || reference.recordId !== target.recordId || reference.evidence.sourceFile !== target.fromSourceFile) officialFactFailure('stale_version', 'Frozen evidence repoint target changed', 409)
+    const latest = readLatestOfficialEvidence(db, target.id, { maxBytes: 65536 }).row
+    const fromFile = readOfficialFile(filesDir, target.fromSourceFile), toFile = readOfficialFile(filesDir, target.sourceFile)
+    if (fromFile.sha256 !== toFile.sha256 || fromFile.bytes !== toFile.bytes) officialFactFailure('file_changed', 'Frozen equal-content repoint differs from actual source bytes', 409)
+    const before: OfficialCoordinate = { sourceFile: reference.evidence.sourceFile, attachment: reference.evidence.attachment, listNo: reference.evidence.listNo, page: reference.evidence.page }
+    const coordinate: OfficialCoordinate = { ...before, sourceFile: target.sourceFile, page: isPageCapable(target.sourceFile) ? before.page : null }
+    const sourceKey = latest ? keyOf(latest) : null
+    if (sourceKey) keys.set(officialPlanJson(sourceKey), { key: sourceKey, sourceId: sourceKey.sourceDocumentId })
+    sourceStates.push({ target, before, event: reference.event, owner: finalOwner(reference.enterpriseId === null ? null : `enterprise:${reference.enterpriseId}`), latest: officialPlanDigest(latest), fromFile, toFile })
+    return { target, before, coordinate, latest }
+  })
   const overlapsCoordinate = (a: OfficialCoordinate, b: OfficialCoordinate) => a.listNo !== null && a.sourceFile === b.sourceFile && a.attachment === b.attachment && a.listNo === b.listNo
   for (let i = 0; i < changes.length; i++) for (let j = i + 1; j < changes.length; j++) {
     const a = changes[i]!, b = changes[j]!, ac = a.coordinate, bc = b.coordinate
@@ -175,9 +201,9 @@ export function planOfficialEvidenceChanges(db: Executor, changes: OfficialClaim
     }
     receipts.push({ key: token, candidates: officialPlanDigest(original), final: officialPlanDigest(final) })
   }
-  // The final view also contains newly planned legacy rows, although they have
-  // no A sidecar. Treat them exactly like persisted unknown claims, across all
-  // events/owners, after removing every replaced claim from the old scope.
+  // Live locators and captured facts are distinct: an equal-content repoint
+  // leaves the real latest K/raw intact, but replaces its old physical locator.
+  // Every coordinate writer contributes to this one remove-all/add-all view.
   const affectedCoordinates = new Map<string, OfficialCoordinate>()
   for (const change of changes) {
     affectedCoordinates.set(officialPlanJson(change.coordinate), change.coordinate)
@@ -187,20 +213,19 @@ export function planOfficialEvidenceChanges(db: Executor, changes: OfficialClaim
       affectedCoordinates.set(officialPlanJson(old), old)
     }
   }
+  for (const claim of newUnknownClaims) affectedCoordinates.set(officialPlanJson(claim.coordinate), claim.coordinate)
+  for (const move of moves) for (const c of [move.before, move.coordinate]) affectedCoordinates.set(officialPlanJson(c), c)
   for (const c of affectedCoordinates.values()) {
     if (c.listNo === null) continue
     const overlaps = db.select({ evidence: schema.recordEvidence }).from(schema.recordEvidence).where(and(eq(schema.recordEvidence.sourceFile, c.sourceFile), eq(schema.recordEvidence.listNo, c.listNo), c.attachment === null ? isNull(schema.recordEvidence.attachment) : eq(schema.recordEvidence.attachment, c.attachment))).limit(101).all()
     if (overlaps.length > 100) officialFactFailure('source_limit', 'Coordinate source scope exceeds 100 claims', 413)
-    const remaining = overlaps.filter(overlap => !seen.has(overlap.evidence.id))
+    const remaining = overlaps.filter(overlap => !seen.has(overlap.evidence.id) && !movedIds.has(overlap.evidence.id))
     const incoming = newUnknownClaims.filter(claim => overlapsCoordinate(c, claim.coordinate))
-    const proposed = changes.filter(claim => overlapsCoordinate(c, claim.coordinate))
-    if (incoming.length && remaining.length + incoming.length + proposed.length > 100) officialFactFailure('source_limit', 'Final coordinate source scope exceeds 100 claims', 413)
-    if (incoming.length && remaining.length + proposed.length > 0) officialFactFailure('ambiguity', 'Overlapping legacy source claim has unknown declaration or binding', 409)
-    if (!proposed.length) continue
-    for (const overlap of remaining) {
-      const latest = readLatestOfficialEvidence(db, overlap.evidence.id, { maxBytes: 65536 }).row
-      if (!latest?.sourceBindingKnown || proposed.some(change => !change.publishedRow.sourceBindingKnown)) officialFactFailure('ambiguity', 'Overlapping legacy source claim has unknown declaration or binding', 409)
-    }
+    const proposed = changes.filter(claim => claim.noOpEvidenceId === undefined && overlapsCoordinate(c, claim.coordinate))
+    const relocated = moves.filter(move => overlapsCoordinate(c, move.coordinate))
+    if (remaining.length + incoming.length + proposed.length + relocated.length > 100) officialFactFailure('source_limit', 'Final coordinate source scope exceeds 100 claims', 413)
+    const bindings = [...remaining.map(overlap => readLatestOfficialEvidence(db, overlap.evidence.id, { maxBytes: 65536 }).row?.sourceBindingKnown === true), ...incoming.map(() => false), ...proposed.map(claim => claim.publishedRow.sourceBindingKnown), ...relocated.map(move => move.latest?.sourceBindingKnown === true)]
+    if (bindings.length > 1 && bindings.some(known => !known)) officialFactFailure('ambiguity', 'Overlapping legacy source claim has unknown declaration or binding', 409)
   }
   return { changes, planHash: officialPlanDigest({ changes: changes.map(({ before, ...change }) => change), newUnknownClaims, sourceStates, receipts }) }
 }
