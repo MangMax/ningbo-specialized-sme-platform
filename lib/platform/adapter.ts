@@ -43,6 +43,9 @@ export type PlatformRdjb = (typeof RDJB_VALUES)[number]
 
 /** 平台一行(字段名沿用接口的 `id`,如 `qymc` / `tyshxydm` / `szsfmc`)。值一律字符串化。 */
 export type PlatformRow = Record<string, string>
+/** JSON observations; never derive these from legacy string rows. */
+export type PlatformJsonValue = string | number | boolean | null | PlatformJsonValue[] | { [key: string]: PlatformJsonValue }
+export type PlatformRawRow = Record<string, PlatformJsonValue>
 
 export interface PlatformListResult {
   grid: string
@@ -198,7 +201,7 @@ function num(value: unknown, fallback: number): number {
  * 真实样本为零 —— 它的作用是「平台改行为时别静默 0 行」。**一行都没有时返回 `null`**,
  * 交给调用方报 `failed`,绝不把「表体空」当成「没有记录」。
  */
-function rowsFromTable(html: string, gridName: string): PlatformListResult | null {
+function rowsFromTable(html: string, gridName: string, rawRows?: PlatformRawRow[]): PlatformListResult | null {
   const tableRe = new RegExp(
     `<table[^>]*\\bname\\s*=\\s*["']${gridName}["'][^>]*>([\\s\\S]*?)</table>`,
     'i',
@@ -223,6 +226,12 @@ function rowsFromTable(html: string, gridName: string): PlatformListResult | nul
       const key = headers[index]
       if (key) row[key] = value
     })
+    // Build observations from actual cells, not the legacy assignment projection:
+    // Object.fromEntries defines __proto__ as an own data property safely.
+    if (rawRows) rawRows.push(Object.fromEntries(cells.flatMap((value, index): [string, string][] => {
+      const key = headers[index]
+      return key ? [[key, value]] : []
+    })))
     rows.push(row)
   }
   if (rows.length === 0) return null
@@ -356,5 +365,9 @@ export function parsePlatformPage(raw: string, gridName: string) {
   // the live caller's consistency checks, never become a valid page/count via coercion.
   const metadataInteger = (value: unknown) => value == null ? null : integer(value) ?? NaN
   const declaredTotal = integer(grid?.maxCount)
-  return { ...parsed, declaredTotal, responsePage: metadataInteger(grid?.page), responseMaxPage: metadataInteger(grid?.maxPage), responsePageSize: metadataInteger(grid?.pageSize) }
+  // Parsing the original envelope preserves null/missing, nested types and own
+  // prototype-named keys. Table fallback only observes rendered cell strings.
+  const rawRows: PlatformRawRow[] = grid ? grid.pageSet as PlatformRawRow[] : []
+  if (!grid) rowsFromTable(text, gridName, rawRows)
+  return { ...parsed, rawRows, declaredTotal, responsePage: metadataInteger(grid?.page), responseMaxPage: metadataInteger(grid?.maxPage), responsePageSize: metadataInteger(grid?.pageSize) }
 }

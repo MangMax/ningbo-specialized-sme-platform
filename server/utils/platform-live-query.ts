@@ -19,6 +19,57 @@ export interface PlatformLiveQueryContext {
   transport?: Pick<PlatformQueryOptions, 'fetchImpl' | 'baseUrl' | 'timeoutMs'>
 }
 const error = (code: PlatformQueryError['code'], message: string): PlatformQueryError => ({ code, message })
+const sensitiveKey = /cookie|token|session|password|authorization|account|username/i
+function hasSensitiveKey(value: unknown): boolean {
+  return !!value && typeof value === 'object' && Object.entries(value).some(([key, item]) => sensitiveKey.test(key) || hasSensitiveKey(item))
+}
+/** Raw HTML is never executed. Only one JSON data island or an empty legacy
+ * data wrapper can be verified; any other script makes the whole page inadmissible. */
+function originalHtmlData(raw: string): { envelope: unknown; markup: string } | null {
+  const scripts = /<script\b([^>]*)>([\s\S]*?)<\/script\s*>/gi
+  const script = scripts.exec(raw)
+  if (!script) return /<script\b/i.test(raw) ? null : { envelope: null, markup: raw }
+  if (scripts.exec(raw)) return null
+  const attributes = script[1]?.trim()
+  const content = script[2]
+  if (attributes === undefined || content === undefined) return null
+  const literal = /^type\s*=\s*(["'])application\/json\1$/i.test(attributes)
+    ? content
+    : attributes === '' ? /^\s*\(\s*function\s*\(\s*data\s*\)\s*\{\s*\}\s*\)\s*\(([\s\S]*)\)\s*;?\s*$/.exec(content)?.[1] : undefined
+  if (literal === undefined) return null
+  const markup = raw.slice(0, script.index) + raw.slice(script.index + script[0].length)
+  if (/<script\b/i.test(markup)) return null
+  try { return { envelope: JSON.parse(literal), markup } } catch { return null }
+}
+const inertTags = new Set(['html', 'head', 'title', 'body', 'div', 'span', 'p', 'br', 'table', 'thead', 'tbody', 'tr', 'th', 'td'])
+/** Admission only, never sanitization: unknown HTML, controls, attributes or
+ * encoded non-data text are refused with the original page left unpublished. */
+function verifiableMarkup(markup: string): boolean {
+  const text = markup.replace(/<!doctype html>/gi, '')
+  if (/[\\&%]/.test(text) || sensitiveKey.test(text)) return false
+  let valid = true
+  const remaining = text.replace(/<(\/?)([a-z][a-z0-9]*)([^<>]*)>/gi, (_tag, closing: string, name: string, attributes: string) => {
+    if (!inertTags.has(name.toLowerCase()) || (closing && attributes.trim())) valid = false
+    let rest = attributes.trim().replace(/\/$/, '').trim()
+    // At most the four known inert attributes; no arbitrary HTML grammar walk.
+    for (let count = 0; rest && count < 4; count++) {
+      const attr = /^([a-z][a-z0-9]*)\s*=\s*(?:"([^"]*)"|'([^']*)'|([a-z0-9_-]+))/i.exec(rest)
+      if (!attr) { valid = false; break }
+      const key = attr[1]?.toLowerCase()
+      if (key === undefined) { valid = false; break }
+      const value = attr[2] ?? attr[3] ?? attr[4] ?? ''
+      if (!['id', 'class'].includes(key)
+        && !(key === 'name' && name.toLowerCase() === 'table' && ['applyGrid', 'businessListGrid', 'businessGrid'].includes(value))
+        && !(['currentpage', 'numperpage'].includes(key) && name.toLowerCase() === 'div' && /^\d+$/.test(value))) valid = false
+      rest = rest.slice(attr[0].length)
+      if (rest && !/^\s/.test(rest)) valid = false
+      rest = rest.trimStart()
+    }
+    if (rest) valid = false
+    return ''
+  })
+  return valid && !/[<>]/.test(remaining)
+}
 export async function runPlatformLiveQuery(input: unknown, ctx: PlatformLiveQueryContext = {}): Promise<PlatformLiveQueryResult> {
   const parsed = platformQueryInputSchema.safeParse(input)
   // Fixed error text: never echo unknown input, upstream body or credential storage errors.
@@ -33,6 +84,7 @@ export async function runPlatformLiveQuery(input: unknown, ctx: PlatformLiveQuer
   const result: PlatformLiveQueryResult = {
     source: q.source, status: 'not_queried', effectiveConditions: { ...(q.name ? { name: q.name } : {}), ...(q.uscc ? { uscc: q.uscc } : {}), combination: 'and', ...Object.fromEntries(Object.keys(recognizedConditionShape).filter(key => q[key as keyof typeof q] !== undefined).map(key => [key, q[key as keyof typeof q]])) },
     titleScope: q.source !== 'queryList' ? { mode: 'selected', rdjb: titles as string[] } : { mode: 'source_default', rdjb: [] }, queriedAt: new Date(started).toISOString(), completedAt: '', rows: [], pages: [], fetchedCount: 0, declaredTotal: declaredTotal(),
+    ...(q.rawDataVersion === 1 ? { rawData: { version: 1 as const, rows: [], pages: [] } } : {}),
     completeness: 'not_queried', fullRange: q.startPage === 1, unfinished: [], error: null,
     limits: { maxRequests: q.maxRequests, maxRows: q.maxRows, maxDurationMs: q.maxDurationMs, pageSize: Math.min(q.pageSize, q.maxRows) },
   }
@@ -94,8 +146,24 @@ export async function runPlatformLiveQuery(input: unknown, ctx: PlatformLiveQuer
         })
         const parsedPage = parsePlatformPage(raw, q.source === 'businessList' ? BUSINESS_GRID : q.source === 'queryBusList' ? RECOGNIZED_GRID : APPLY_GRID)
         const serialized = JSON.stringify(parsedPage.rows)
-        if (JSON.stringify(sanitize(parsedPage.rows)) !== serialized || parsedPage.rows.some(row => Object.keys(row).some(key => /cookie|token|session|password|authorization|account|username/i.test(key)))) {
-          throw error('sensitive_response', '平台响应含敏感资料，已阻止返回。')
+        let sourceEnvelope: unknown = null
+        let unverifiableHtml = false
+        if (q.rawDataVersion === 1) {
+          if (parsedPage.source === 'json') sourceEnvelope = JSON.parse(raw)
+          else {
+            const html = originalHtmlData(raw)
+            unverifiableHtml = html === null || !verifiableMarkup(html.markup)
+            sourceEnvelope = html?.envelope ?? null
+          }
+        }
+        const sensitiveLegacyRows = JSON.stringify(sanitize(parsedPage.rows)) !== serialized || parsedPage.rows.some(row => Object.keys(row).some(key => sensitiveKey.test(key)))
+        const sensitiveOriginal = q.rawDataVersion === 1 && (unverifiableHtml || redactString(raw) !== raw
+          || /["'][^"']*(?:cookie|token|session|password|authorization|account|username)[^"']*["']\s*:/i.test(raw)
+          || hasSensitiveKey(sourceEnvelope) || hasSensitiveKey(parsedPage.rawRows)
+          || JSON.stringify(sanitize(sourceEnvelope)) !== JSON.stringify(sourceEnvelope)
+          || JSON.stringify(sanitize(parsedPage.rawRows)) !== JSON.stringify(parsedPage.rawRows))
+        if (sensitiveLegacyRows || sensitiveOriginal) {
+          throw error('sensitive_response', '平台响应含敏感资料或无法核实整页原文，已阻止返回。')
         }
         if ((parsedPage.responsePage !== null && parsedPage.responsePage !== page) || (parsedPage.declaredTotal !== null && parsedPage.rows.length > parsedPage.declaredTotal)) throw error('invalid_response', '平台分页信息不一致。')
         if (parsedPage.responsePageSize !== null && parsedPage.responsePageSize !== result.limits.pageSize) throw error('invalid_response', '平台分页大小与请求不一致。')
@@ -117,7 +185,9 @@ export async function runPlatformLiveQuery(input: unknown, ctx: PlatformLiveQuer
           }
           maxPageForTitle = maxPage
         }
-        if (result.rows.length + parsedPage.rows.length > q.maxRows || (ctx.maxResultBytes !== undefined && Buffer.byteLength(JSON.stringify({ ...result, rows: [...result.rows, ...parsedPage.rows] }), 'utf8') + 2048 > ctx.maxResultBytes)) {
+        const rawPage = { ...pos, format: parsedPage.source, body: raw }
+        const rawData = result.rawData ? { version: 1 as const, rows: [...result.rawData.rows, ...parsedPage.rawRows], pages: [...result.rawData.pages, rawPage] } : undefined
+        if (result.rows.length + parsedPage.rows.length > q.maxRows || Buffer.byteLength(JSON.stringify({ ...result, rows: [...result.rows, ...parsedPage.rows], ...(rawData ? { rawData } : {}) }), 'utf8') + 2048 > (ctx.maxResultBytes ?? (rawData ? 8388608 : Infinity))) {
           result.status = 'partial'; result.completeness = 'partial'
           result.error = error('safety_limit', '记录数量达到安全上限，此页未纳入结果。')
           recordPage({ ...pos, status: 'failed', fetchedCount: 0, declaredTotal: parsedPage.declaredTotal, error: result.error }, pageStarted)
@@ -131,6 +201,7 @@ export async function runPlatformLiveQuery(input: unknown, ctx: PlatformLiveQuer
         totals.set(title, total)
         result.declaredTotal = declaredTotal()
         result.rows.push(...parsedPage.rows)
+        if (rawData) result.rawData = rawData
         fetchedForTitle += parsedPage.rows.length
         const consumed = priorCoverage === null ? null : priorCoverage + fetchedForTitle
         const titleComplete = total !== null ? total === 0 || (consumed !== null && consumed >= total) : (q.source === 'queryBusList' && maxPageForTitle !== null ? page === maxPageForTitle : parsedPage.rows.length === 0)

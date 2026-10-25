@@ -10,7 +10,7 @@
  */
 import type { PlatformInterface } from '../labels'
 
-export type { PlatformRow, PlatformRdjb, PlatformListResult } from './adapter'
+export type { PlatformRow, PlatformRawRow, PlatformJsonValue, PlatformRdjb, PlatformListResult } from './adapter'
 
 /** 一次查询的身份:`哪个接口` × `查询键` × `rdjb`(契约 §1.3 的唯一键前缀)。 */
 export interface PlatformQueryMeta {

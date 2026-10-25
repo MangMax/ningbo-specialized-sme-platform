@@ -15,6 +15,7 @@ defineRouteMeta({
         { type: 'object', properties: { source: { type: 'string', enum: ['queryBusList'] }, rdjb: { type: 'array', minItems: 1, maxItems: 3, items: { type: 'string', enum: ['1', '2', '3'] } } }, anyOf: [{ type: 'object', required: ['name'] }, { type: 'object', required: ['uscc'] }] },
       ], properties: {
         source: { type: 'string', enum: ['queryList', 'businessList', 'queryBusList'], description: '三种来源均可用，各来源输入限制不同，见oneOf与capabilities。' },
+        rawDataVersion: { type: 'integer', enum: [1], description: '显式保真扩展：返回rawData.version=1的typed原行及成功页完整原文；rows继续为旧字符串投影。原文敏感或超预算则整页拒收。' },
         name: { type: 'string', description: '非空，最多200字符' }, uscc: { type: 'string', description: '18位大写字母/数字信用代码' },
         rdjb: { type: ['string', 'array'], oneOf: [{ type: 'string', enum: ['1', '2', '3', 'all'] }, { type: 'array', minItems: 1, maxItems: 3, items: { type: 'string', enum: ['1', '2', '3'] } }], description: 'businessList必须提供字符串1/2/3/all；queryBusList为不重复非空数组，缺省全三称号；queryList禁止。1创新型/2专精特新中小企业/3小巨人。' },
         sqsj: { type: 'string', description: '仅queryBusList；认定时间范围 YYYY/MM/DD - YYYY/MM/DD；真实日期且起始不晚于结束，边界是否包含及平台时区未验证。' },
@@ -48,6 +49,14 @@ defineRouteMeta({
     "limits"
   ],
   "properties": {
+    "rawData": { "type": "object", "required": ["version", "rows", "pages"], "properties": {
+      "version": { "type": "integer", "enum": [1] },
+      "rows": { "type": "array", "items": { "type": "object", "additionalProperties": {} } },
+      "pages": { "type": "array", "items": { "type": "object", "required": ["source", "rdjb", "page", "format", "body"], "properties": {
+        "source": { "type": "string", "enum": ["queryList", "businessList", "queryBusList"] }, "rdjb": { "type": "string", "nullable": true }, "page": { "type": "integer" },
+        "format": { "type": "string", "enum": ["json", "html-script", "html-table"] }, "body": { "type": "string" }
+      } } }
+    } },
     "source": {
       "type": "string",
       "enum": [

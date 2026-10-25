@@ -47,3 +47,7 @@
 存储支持 `business_list`、`apply_list` 和独立 `recognized_list`（仅 queryBusList）。用 `recognizedResultToImport` 将每个完整原结果/每个批量分段转换后，经统一预检/提交转存，保留原时间、条件、分页和原始行。元数据或结束证明不足继续待处理，不改标来源、不编完整性。通过 `GET /api/platform/queries` 或 `list_platform_queries` 读回历史，核对每个查询/行 ID。
 
 转存详见[归档转存契约](../../../../docs/platform-recognized-evidence.md)；公开补充及 `cross_source` 当前条件见[身份查证](./uscc-recovery.md)。无凭据示例和行为校验见[示例说明](../examples/README.md)；完整 API 见[批量查询文档](../../../../docs/platform-batch-query.md)。
+
+需要保留原 JSON 时，单查对象或批量 `items[].query` 显式加 `rawDataVersion:1`；先确认 capabilities v3 / tools/list 支持。原样保留 `rawData.version=1`、typed rows、实际接受页正文与页位置；旧 `rows` 只是字符串投影，缺少 rawData 的历史类型保持未知，不互相回退。原文敏感或超预算时，保留失败/unfinished 后补查，不裁剪正文。
+
+封套归档可继续用 `recognizedResultToImport`，但 #326 仅把 typed 原文保存在 collectionEvidence，旧 relation.rawFields/业务版本 hash 尚未切换（后续 #327）；不能报告 #298 全链路完成。原型同名键的现存 HTTP 拒绝边界及 MCP 读回能力见[归档接缝](../../../../docs/platform-recognized-evidence.md#原json封套扩展与后续接缝326327)。
