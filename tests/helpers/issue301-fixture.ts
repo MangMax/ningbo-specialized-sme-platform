@@ -1,5 +1,6 @@
 import type { useDb } from '../../db'
 import { schema } from '../../db'
+import type { PlatformInterface } from '../../lib/labels'
 
 /** Historical rows deliberately predate normalization; never use a live database. */
 export function seedIssue301(db: ReturnType<typeof useDb>) {
@@ -7,14 +8,14 @@ export function seedIssue301(db: ReturnType<typeof useDb>) {
   const record = db.insert(schema.record).values({ enterpriseId: enterprise.id, source: 'jxj', titleCode: 'specialized_sme', usccRaw: enterprise.usccNorm }).returning().get()
   const event = db.insert(schema.recordEvent).values({ recordId: record.id, eventType: 'award', year: 2025 }).returning().get()
   const rawResponse = '  {"原始响应":"🙂\\n保留空白与字节"}\n'
-  const cases = [
+  const cases = ([
     { label: 'apply-raw', source: 'apply_list', stored: null, raw: '终审通过', expected: '终审通过' },
     { label: 'business-raw', source: 'business_list', stored: null, raw: '终审通过', expected: '终审通过' },
     { label: 'status-conflict', source: 'business_list', stored: '已退回', raw: '终审通过', expected: null },
     { label: 'unknown', source: 'apply_list', stored: null, raw: '上游新状态-X9', expected: '上游新状态-X9' },
     { label: 'missing', source: 'business_list', stored: null, raw: null, expected: null },
     { label: 'recognized-is-not-process', source: 'recognized_list', stored: null, raw: '终审通过', expected: null },
-  ].map((item, index) => {
+  ] satisfies Array<{ label: string; source: PlatformInterface; stored: string | null; raw: string | null; expected: string | null }>).map((item, index) => {
     const query = db.insert(schema.platformQuery).values({ interface: item.source, queryKey: enterprise.usccNorm!, rdjb: '2', titleCode: 'specialized_sme', queriedAt: `2026-10-${String(index + 1).padStart(2, '0')}T00:00:00Z`, status: 'success', rawResponse }).returning().get()
     const rawFields = { qymc: item.label, cszt: item.raw, sblx: '申请', sqsj: '2025-01-02', year: '2025', whpc: '2025-2', nested: { value: [false, 0, null, '🙂'] } }
     const relation = db.insert(schema.platformRelation).values({ queryId: query.id, sequenceNo: 1, relationKey: `issue301-${item.label}`, enterpriseId: enterprise.id, nameRaw: item.label, usccRaw: enterprise.usccNorm, status: item.stored, rawFields, sourceText: `原行🙂 ${item.label}\n`, matchBasis: 'uscc', verificationStatus: 'confirmed' }).returning().get()
