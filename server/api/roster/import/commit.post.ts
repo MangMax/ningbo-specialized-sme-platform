@@ -70,6 +70,7 @@ defineRouteMeta({
           "queriedAt"
         ],
         "properties": {
+          "reuseExisting": { "type": "boolean", "enum": [true], "description": "仅引用已存在采集坐标；缺来源结构化失败。省略正文不清空，显式提供的不可变字段仍须相同；不得补序号。legacy无collectionEvidence且rawResponse省略/null仅为原引用哨兵，不等于正文字符串null。" },
           "interface": {
             "type": "string",
             "enum": [

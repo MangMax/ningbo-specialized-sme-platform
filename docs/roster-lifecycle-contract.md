@@ -1103,6 +1103,12 @@ REST 与 MCP `query_records` 共用同一参数解析和 `listRecords` 读模型
 
 ### 8.3 `payload` 形状(预检与提交共用)
 
+`platformQueries[].reuseExisting:true` 仅引用已存在的 `(interface, queryKey, rdjb, queriedAt)`；缺来源返回 `query_reuse_missing`，不创建查询、关系或投影。两种模式都核对客户端实际提供的不可变元数据/原行字段；省略 `status/titleCode` 不等于声明默认值。旧 business/apply 客户端无 `collectionEvidence` 且 `rawResponse` 省略/null 时，null 仍是省略响应哨兵，不是清空；正文字符串 `"null"` 与行内 typed JSON null 保持各自语义。
+
+普通合法既存重放明确提供完整且匹配的行 `rawFields` 时，沿用已审的 `ensurePlatformObservation`，可从既存原文增量建立缺失索引；不猜旧类型、不覆盖已有 hash/版本/原行。显式 `reuseExisting:true` 或省略行原文只读既有投影。新增 canonical 索引独立计入 `canonicalProjection`，`rowsWritten/summary.written` 仍为 0。显式历史 `platformRecordObservations` 命令保持原语义。
+
+同采集坐标异载荷、向既有采集补 `sequenceNo`，或同导出 `(titleCode, year, sha256)` 改已给源行字段/增减行集，均结构化冲突并整批不写。查询新时点、导出新 SHA 仍形成独立观察/版本；同文件再次采集/改文件名可复用原快照，原批元数据不覆盖，当前尝试留在导入回执。同幂等键仍返回原回执，不能借自然键复用改写原批。
+
 ```jsonc
 {
   "announcement": {

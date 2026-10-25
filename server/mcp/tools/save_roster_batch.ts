@@ -32,6 +32,7 @@ export default defineMcpTool({
   },
   enabled: writeGuard,
   description: [
+    'platformQueries[].reuseExisting:true 仅引用已存在采集坐标；缺来源结构化失败，显式不可变字段仍核对，省略正文不清空。旧无collectionEvidence且rawResponse省略/null只作原引用哨兵，正文字符串null/typed JSON null仍按原类型处理。同query/导出SHA源行异载荷或补序号整批冲突。',
     '三来源 typed 归档：collectionEvidence.rawData.version=1 显式选择 rawData.rows 为 relations.rawFields 和业务内容版本输入；原页/旧投影/行位/数量/来源/身份必须一致，冲突整批拒绝。无 rawData 的旧格式保持原字符串，不反推类型或重算旧hash。',
     'platformRecordObservations:[{relationId}]：sourceKind=platform_archive，每批1..100条，服务端读取原文建立业务身份/内容版本/观察映射；源缺失、漂移、同采集异原文整批失败。预检记录账本但不写业务，commit重核。',
     '差异原因 pending_review（待审核）须由代理/用户明确裁决：status=confirmed_reason、verificationStatus=confirmed、measureCode=follow_review；保留正式历史并跟进审核，区别于 needs_review 待核实。',
