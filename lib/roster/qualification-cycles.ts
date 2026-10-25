@@ -17,7 +17,7 @@ export interface CycleJudgment {
 }
 export const awardTime = (e: QualificationEvent) => e.decidedYear ?? e.year
 export const originTime = (e: QualificationEvent) => e.year ?? (e.eventType === 'award' ? awardTime(e) : null)
-const factTime = (e: QualificationEvent) => e.eventType === 'award' ? awardTime(e) : e.decidedYear
+export const factTime = (e: QualificationEvent) => e.eventType === 'award' ? awardTime(e) : e.decidedYear
 interface CycleFacts {
   awards: QualificationEvent[]
   passed: QualificationEvent[]
