@@ -77,7 +77,7 @@ SQL 固定数字投影 CAST INTEGER，避免 JSON 里的 0.0 与 JS 重序列化
 可缩页/提高 maxBytes；不通过重试水合大值来试探预算。snapshot 的 SQL 预算含全部新封套。
 
 之后复用 importReceiptRedactor，遮盖已配置凭据、敏感键/编码/Bearer 值；最终 JSON 字节再核，
-脱敏变长仍拒绝。field_limit/response_limit/source_limit 是413，不剪旧 response 冒充符合新预算。
+脱敏变长仍拒绝。event 旧字段照原流程脱敏，再附已独立校验的新投影，不二次处理新投影。field_limit/response_limit/source_limit 是413，不剪旧 response 冒充符合新预算。
 已知错误只回静态消息/码和必要字节数，未知数据库错误不向新读口公开 SQL/原文/凭据。
 原私有 batch、receipt、初次 commit/同key retry/outcome 纯投影规则不变。
 

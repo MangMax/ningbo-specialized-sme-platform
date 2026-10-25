@@ -46,11 +46,13 @@ export function handleEventCorrectionRequest(input: { action: EventCorrectionAct
         if (Object.keys(input.query ?? {}).length) {
           const parsed=eventReadSchema.safeParse(officialReadQuery({...input.query,eventId:id.data}))
           if(!parsed.success || !parsed.data.official) return fail(400,'invalid_request','Invalid bounded official event query')
-          result=context.db.transaction(()=>({...readOfficialEvent(context.db,id.data),official:readPublicOfficialEvidence(context.db,'event',parsed.data)}))
+          result=context.db.transaction(()=>({...sanitizeEvidence(readOfficialEvent(context.db,id.data),redactors) as object,official:readPublicOfficialEvidence(context.db,'event',parsed.data)}))
         } else result = readOfficialEvent(context.db, id.data)
       }
     }
-    return { status: 200, headers, body: sanitizeEvidence(result, redactors) }
+    // The opt-in branch already sanitizes legacy fields and independently budgets the
+    // redacted official envelope. A second pass can expand it after that final gate.
+    return { status: 200, headers, body: input.action==='get' && input.query && 'official' in input.query ? result : sanitizeEvidence(result, redactors) }
   } catch (error) {
     const known = error as { statusCode?: number; code?: string; message?: string }
     if (known.statusCode && known.code) return fail(known.statusCode, known.code, known.message ?? 'Correction rejected')

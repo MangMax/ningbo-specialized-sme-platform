@@ -392,3 +392,15 @@ it('projects only the fixed eight snapshot fields even when the selected histori
   expect(JSON.stringify(observer.results.filter(r=>r.sql.includes('WITH source_row')))).not.toContain('PRIVATE_EXTRA')
   expect(Buffer.byteLength(JSON.stringify(r.body))).toBeLessThan(1024)
 })
+
+it('applies the official event redactor once and enforces its final UTF8 envelope budget',async()=>{
+  const f=await fixture();await f.commit(f.announcement([f.record('Canonical',2021,f.row('REDACTED'))]),'redaction-once')
+  const eventId=f.evidenceIds()[0]!.record_event_id,url=`/api/roster/events/${eventId}?official=latest`
+  vi.stubGlobal('useRuntimeConfig',()=>({apiToken:'REDACTED',mcpToken:'synthetic-c-mcp',filesDir:current.filesDir}))
+  try {
+    const first=await f.http(url,undefined,'REDACTED');expect(first.status).toBe(200)
+    const official=z.object({official:z.unknown()}).parse(first.body).official,required=Buffer.byteLength(JSON.stringify(official))
+    const small=await f.http(url+'&maxBytes='+(required-1),undefined,'REDACTED')
+    expect(official).toMatchObject({rows:[{nameRaw:'[REDACTED]'}]});expect(small.status).toBe(413);expect(small.body).toMatchObject({error:{code:'response_limit'}})
+  } finally {vi.stubGlobal('useRuntimeConfig',()=>({apiToken:'synthetic-c-api',mcpToken:'synthetic-c-mcp',filesDir:current.filesDir}))}
+})
