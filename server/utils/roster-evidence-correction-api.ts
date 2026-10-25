@@ -1,4 +1,6 @@
 import { z } from 'zod'
+import { evidenceReadSchema, officialReadQuery, readPublicOfficialEvidence } from './official-evidence-read'
+import { OfficialEvidenceError } from './official-evidence'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../db/schema'
 import { authorizeRosterWrite } from './roster-import-http'
@@ -11,6 +13,7 @@ export async function handleEvidenceCorrectionRequest(input: { action: EvidenceC
   const write = ['preflight', 'commit', 'batch'].includes(input.action)
   if (input.method !== (['preflight', 'commit'].includes(input.action) ? 'POST' : 'GET')) return error(405, 'method_not_allowed', 'Method not allowed')
   if (write && !authorizeRosterWrite({ headers: input.headers ?? {} }, context.apiToken).ok) return error(401, 'unauthorized', 'Configured token required')
+  if (input.action==='get' && input.query && 'official' in input.query && !authorizeRosterWrite({headers:input.headers??{}},context.apiToken).ok) return error(401,'unauthorized','Configured token required')
   try {
     if (input.action === 'preflight') {
       const parsed = evidenceCorrectionRequestSchema.safeParse(input.body)
@@ -34,10 +37,17 @@ export async function handleEvidenceCorrectionRequest(input: { action: EvidenceC
       if (!paging.success) return error(400, 'invalid_request', 'Invalid audit pagination')
       return ok(context.db.transaction(tx => readEvidenceCorrectionAudit(tx, id.data, paging.data.page, paging.data.pageSize)))
     }
-    if (input.action === 'get') return ok(context.db.transaction(tx => readExactEvidence(tx, id.data)))
+    if (input.action === 'get') {
+      const query=input.query??{}
+      if (!('official' in query)) return ok(context.db.transaction(tx=>readExactEvidence(tx,id.data)))
+      const parsed=evidenceReadSchema.safeParse(officialReadQuery({...query,id:id.data}))
+      if(!parsed.success || !parsed.data.official) return error(400,'invalid_query','Invalid bounded official evidence query')
+      return ok(context.db.transaction(tx=>({...readExactEvidence(tx,id.data),official:readPublicOfficialEvidence(tx as typeof context.db,'evidence',parsed.data)})))
+    }
     return error(404, 'not_found', 'Operation unavailable')
   } catch (caught) {
     if (caught instanceof Error && (caught as { code?: string }).code === 'stale_revision') return error(409, 'stale_revision', 'Official event revision changed')
+    if (caught instanceof OfficialEvidenceError) return error(caught.statusCode,caught.code,caught.message)
     if (caught instanceof EvidenceCorrectionError) return error(caught.status, caught.code, caught.message)
     return error(500, 'internal_error', 'Evidence correction failed')
   }

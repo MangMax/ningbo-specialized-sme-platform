@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { eventReadSchema } from './official-evidence-read'
 import { isProxy } from 'node:util/types'
 import type { McpToolCallbackResult } from '@nuxtjs/mcp-toolkit/server'
 import { eventCorrectionRequestSchema } from './roster-event-correction'
@@ -29,8 +30,8 @@ export function isEventCorrectionMcpResult(value: unknown): value is McpToolCall
 /** Transport credentials are independent; MCP middleware/writeGuard establishes authorization. */
 export function dispatchEventCorrectionMcp(action: EventCorrectionAction, args: Record<string, unknown>, context: { db: BetterSQLite3Database<typeof schema>; authorized?: boolean }): McpToolCallbackResult {
   const write = action === 'preflight' || action === 'commit'
-  const output = handleEventCorrectionRequest({ action, method: write ? 'POST' : 'GET', id: args.eventId, query: action === 'audit' ? Object.fromEntries(Object.entries({ page: args.page, pageSize: args.pageSize }).filter(([,v]) => v !== undefined)) : undefined, body: args, headers: context.authorized ? { authorization: 'Bearer mcp-event-internal' } : undefined }, { db: context.db, apiToken: 'mcp-event-internal' })
-  if (output.status !== 200) { const error = output.body as { error: { code: string; message: string } }; throw Object.assign(new Error(error.error.message), { code: error.error.code, statusCode: output.status }) }
+  const output = handleEventCorrectionRequest({ action, method: write ? 'POST' : 'GET', id: args.eventId, query: action==='get' ? Object.fromEntries(Object.entries(args).filter(([key,v])=>key!=='eventId' && v!==undefined)) : action === 'audit' ? Object.fromEntries(Object.entries({ page: args.page, pageSize: args.pageSize }).filter(([,v]) => v !== undefined)) : undefined, body: args, headers: context.authorized ? { authorization: 'Bearer mcp-event-internal' } : undefined }, { db: context.db, apiToken: 'mcp-event-internal' })
+  if (output.status !== 200) { const error = output.body as { error: { code: string; message: string } }; throw Object.assign(new Error(action==='get' && args.official!==undefined?JSON.stringify(output.body):error.error.message), { code: error.error.code, statusCode: output.status }) }
   if (!isEventCorrectionMcpResult(output.body)) throw Object.assign(new Error('Invalid event correction MCP result'), { code: 'internal_error', statusCode: 500 })
   return output.body
 }
@@ -44,7 +45,7 @@ export function eventCorrectionRpcError(body: unknown): Response | null {
     const contracts = {
       preflight_event_corrections: eventCorrectionRequestSchema,
       commit_event_corrections: z.strictObject({ request: eventCorrectionRequestSchema, planHash: z.string().regex(/^[a-f0-9]{64}$/) }),
-      get_official_event: z.strictObject({ eventId: z.number().int().positive() }),
+      get_official_event: eventReadSchema,
       get_event_correction_audit: z.strictObject({ eventId: z.number().int().positive(), page: z.number().int().positive().optional(), pageSize: z.number().int().min(1).max(100).optional() }),
     }
     const name = rpc.params?.name ?? ''
