@@ -95,7 +95,7 @@ export function sameOfficialRow(before: OfficialEvidenceRow | null, row: Officia
 }
 
 /** One narrowly scoped final-set check shared by import and exact corrections. No SQL for A's table lives here. */
-export function planOfficialEvidenceChanges(db: Executor, changes: OfficialClaimChange[], filesDir: string | undefined, finalOwner: (owner: string | null) => string | null = value => value) {
+export function planOfficialEvidenceChanges(db: Executor, changes: OfficialClaimChange[], filesDir: string | undefined, finalOwner: (owner: string | null) => string | null = value => value, newUnknownClaims: readonly { ref: string; coordinate: OfficialCoordinate }[] = []) {
   if (changes.length > 100) officialFactFailure('input_limit', 'At most 100 new official fact operations', 400)
   for (const eventId of new Set(changes.map(change => change.eventId).filter((id): id is number => typeof id === 'number'))) {
     if (db.select({ id: schema.recordEvidence.id }).from(schema.recordEvidence).where(eq(schema.recordEvidence.recordEventId, eventId)).limit(301).all().length > 300) officialFactFailure('source_limit', 'Event evidence exceeds 300', 413)
@@ -132,9 +132,10 @@ export function planOfficialEvidenceChanges(db: Executor, changes: OfficialClaim
       keys.set(officialPlanJson(key), { key, sourceId: source.id })
     }
   }
+  const overlapsCoordinate = (a: OfficialCoordinate, b: OfficialCoordinate) => a.listNo !== null && a.sourceFile === b.sourceFile && a.attachment === b.attachment && a.listNo === b.listNo
   for (let i = 0; i < changes.length; i++) for (let j = i + 1; j < changes.length; j++) {
     const a = changes[i]!, b = changes[j]!, ac = a.coordinate, bc = b.coordinate
-    if (ac.listNo !== null && ac.sourceFile === bc.sourceFile && ac.attachment === bc.attachment && ac.listNo === bc.listNo && (!a.publishedRow.sourceBindingKnown || !b.publishedRow.sourceBindingKnown)) officialFactFailure('ambiguity', 'Overlapping final coordinates have unknown source-row binding', 409)
+    if (overlapsCoordinate(ac, bc) && (!a.publishedRow.sourceBindingKnown || !b.publishedRow.sourceBindingKnown)) officialFactFailure('ambiguity', 'Overlapping final coordinates have unknown source-row binding', 409)
   }
   if (keys.size > 200) officialFactFailure('input_limit', 'At most 200 affected source keys', 400)
   const receipts: unknown[] = []
@@ -174,19 +175,34 @@ export function planOfficialEvidenceChanges(db: Executor, changes: OfficialClaim
     }
     receipts.push({ key: token, candidates: officialPlanDigest(original), final: officialPlanDigest(final) })
   }
-  // A legacy/unknown overlap is a gap, never proof of an empty scope or of equality.
+  // The final view also contains newly planned legacy rows, although they have
+  // no A sidecar. Treat them exactly like persisted unknown claims, across all
+  // events/owners, after removing every replaced claim from the old scope.
+  const affectedCoordinates = new Map<string, OfficialCoordinate>()
   for (const change of changes) {
-    const c = change.coordinate
-    if (c.listNo === null) continue
-    const overlaps = db.select({ evidence: schema.recordEvidence, event: schema.recordEvent }).from(schema.recordEvidence).innerJoin(schema.recordEvent, eq(schema.recordEvent.id, schema.recordEvidence.recordEventId)).where(and(eq(schema.recordEvidence.sourceFile, c.sourceFile), eq(schema.recordEvidence.listNo, c.listNo), c.attachment === null ? isNull(schema.recordEvidence.attachment) : eq(schema.recordEvidence.attachment, c.attachment))).limit(101).all()
-    if (overlaps.length > 100) officialFactFailure('source_limit', 'Coordinate source scope exceeds 100 claims', 413)
-    for (const overlap of overlaps) {
-      if (seen.has(overlap.evidence.id) || overlap.evidence.attachment !== c.attachment) continue
-      const latest = readLatestOfficialEvidence(db, overlap.evidence.id, { maxBytes: 65536 }).row
-      if (!latest?.sourceBindingKnown || !change.publishedRow.sourceBindingKnown) officialFactFailure('ambiguity', 'Overlapping legacy source claim has unknown declaration or binding', 409)
+    affectedCoordinates.set(officialPlanJson(change.coordinate), change.coordinate)
+    const before = change.before
+    if (before?.path !== null && before?.path !== undefined) {
+      const old = { sourceFile: before.path, attachment: before.attachment, listNo: before.listNo, page: before.page }
+      affectedCoordinates.set(officialPlanJson(old), old)
     }
   }
-  return { changes, planHash: officialPlanDigest({ changes: changes.map(({ before, ...change }) => change), sourceStates, receipts }) }
+  for (const c of affectedCoordinates.values()) {
+    if (c.listNo === null) continue
+    const overlaps = db.select({ evidence: schema.recordEvidence }).from(schema.recordEvidence).where(and(eq(schema.recordEvidence.sourceFile, c.sourceFile), eq(schema.recordEvidence.listNo, c.listNo), c.attachment === null ? isNull(schema.recordEvidence.attachment) : eq(schema.recordEvidence.attachment, c.attachment))).limit(101).all()
+    if (overlaps.length > 100) officialFactFailure('source_limit', 'Coordinate source scope exceeds 100 claims', 413)
+    const remaining = overlaps.filter(overlap => !seen.has(overlap.evidence.id))
+    const incoming = newUnknownClaims.filter(claim => overlapsCoordinate(c, claim.coordinate))
+    const proposed = changes.filter(claim => overlapsCoordinate(c, claim.coordinate))
+    if (incoming.length && remaining.length + incoming.length + proposed.length > 100) officialFactFailure('source_limit', 'Final coordinate source scope exceeds 100 claims', 413)
+    if (incoming.length && remaining.length + proposed.length > 0) officialFactFailure('ambiguity', 'Overlapping legacy source claim has unknown declaration or binding', 409)
+    if (!proposed.length) continue
+    for (const overlap of remaining) {
+      const latest = readLatestOfficialEvidence(db, overlap.evidence.id, { maxBytes: 65536 }).row
+      if (!latest?.sourceBindingKnown || proposed.some(change => !change.publishedRow.sourceBindingKnown)) officialFactFailure('ambiguity', 'Overlapping legacy source claim has unknown declaration or binding', 409)
+    }
+  }
+  return { changes, planHash: officialPlanDigest({ changes: changes.map(({ before, ...change }) => change), newUnknownClaims, sourceStates, receipts }) }
 }
 
 /** Caller owns the transaction and one per-batch declaration cache; never a global registry. */

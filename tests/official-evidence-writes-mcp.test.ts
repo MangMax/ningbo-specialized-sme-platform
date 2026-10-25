@@ -7,6 +7,7 @@ import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { migrate } from 'drizzle-orm/better-sqlite3/migrator'
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from 'vitest'
+import { z } from 'zod'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
@@ -123,7 +124,7 @@ it('combines append and raw-only correction using one original event version and
   expect(readLatestOfficialEvidence(db, evidenceId).row).toMatchObject({ revision: 2, nameRaw: 'Explicit corrected raw' })
   expect(sqlite.prepare('SELECT revision FROM record_event WHERE id=1').get()).toEqual({ revision: originalVersion + 1 })
   const audit = db.select().from(schema.evidenceCorrectionAudit).all()[0]!
-  expect(audit.batchKey).toBeNull(); expect(audit.after.importBatchId).toBe(saved.batchId)
+  expect(audit.batchKey).toBeNull(); expect(z.object({ importBatchId: z.number().int().positive() }).passthrough().parse(audit.after).importBatchId).toBe(saved.batchId)
 })
 it('rechecks the actual configured file bytes inside the import process after MCP preflight', async () => {
   await seedPair()

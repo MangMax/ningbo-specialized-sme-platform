@@ -52,7 +52,7 @@ import type {
   RosterImportSummary,
   RosterImportUsccBackfill,
 } from '../../lib/roster-import-client'
-import { officialAppendSchema, officialPublishedRowSchema, planOfficialEvidenceChanges, resolveOfficialDeclaration, verifyOfficialDeclaration, writeOfficialPublishedRow, readOfficialFile, officialPlanDigest, OfficialFactError, type OfficialClaimChange } from './official-evidence-plan'
+import { officialAppendSchema, officialPublishedRowSchema, planOfficialEvidenceChanges, resolveOfficialDeclaration, verifyOfficialDeclaration, writeOfficialPublishedRow, readOfficialFile, officialPlanDigest, OfficialFactError, type OfficialClaimChange, type OfficialCoordinate } from './official-evidence-plan'
 import { OfficialEvidenceError } from './official-evidence'
 import { evidenceCorrectionRequestSchema, planEvidenceCorrectionTargets, writeImportedEvidenceCorrection } from './roster-evidence-correction'
 import { advanceOfficialEventRevision } from './roster-event-version'
@@ -126,6 +126,18 @@ function optionalString(value: unknown): string | null {
 function optionalInt(value: unknown): number | null {
   if (typeof value !== 'number' || !Number.isFinite(value)) return null
   return Math.trunc(value)
+}
+
+/** Typed coordinates are verbatim; the old legacy grouping/write rules stay local. */
+function announcementEvidenceCoordinate(evidence: { sourceFile: string; attachment?: unknown; listNo?: unknown; page?: unknown; publishedRow?: unknown }, grouped = false): OfficialCoordinate {
+  if (evidence.publishedRow !== undefined) return {
+    sourceFile: evidence.sourceFile,
+    attachment: typeof evidence.attachment === 'string' ? evidence.attachment : null,
+    listNo: typeof evidence.listNo === 'number' ? evidence.listNo : null,
+    page: typeof evidence.page === 'number' ? evidence.page : null,
+  }
+  const sourceFile = grouped ? optionalString(evidence.sourceFile) ?? evidence.sourceFile : evidence.sourceFile
+  return { sourceFile, attachment: optionalString(evidence.attachment), listNo: optionalInt(evidence.listNo), page: isPageCapable(sourceFile) ? optionalInt(evidence.page) : null }
 }
 
 /** 一条 item 级错误。 */
@@ -981,7 +993,7 @@ function planNewEventEvidence(
   announcement: RosterImportAnnouncement,
   records: readonly RosterImportAnnouncement['records'][number][],
   identityPlan: AnnouncementBatchIdentityPlan,
-): { eventsByRecord: Map<number, RosterImportEvent[]> } {
+): { eventsByRecord: Map<number, RosterImportEvent[]>; groupedOccurrences: Set<string> } {
   interface Occurrence {
     recordIndex: number
     eventIndex: number
@@ -989,6 +1001,7 @@ function planNewEventEvidence(
   }
 
   const planned = new Map<number, RosterImportEvent[]>()
+  const groupedOccurrences = new Set<string>()
   const groups = new Map<string, Occurrence[]>()
   for (const [recordIndex, record] of records.entries()) {
     const events = Array.isArray(record?.events) ? record.events : []
@@ -1091,17 +1104,13 @@ function planNewEventEvidence(
           invalidEvidence.push(rawEvidence)
           continue
         }
-        const sourceFile = optionalString(rawEvidence.sourceFile)
-        if (!sourceFile) {
+        if (typeof rawEvidence.sourceFile !== 'string' || !optionalString(rawEvidence.sourceFile)) {
           invalidEvidence.push(rawEvidence)
           continue
         }
         const normalized: RosterImportEvidence = {
           ...(rawEvidence.publishedRow !== undefined ? { publishedRow: rawEvidence.publishedRow as import('../../lib/roster-import-client').OfficialPublishedRow } : {}),
-          sourceFile,
-          attachment: optionalString(rawEvidence.attachment),
-          listNo: optionalInt(rawEvidence.listNo),
-          page: isPageCapable(sourceFile) ? optionalInt(rawEvidence.page) : null,
+          ...announcementEvidenceCoordinate({ ...rawEvidence, sourceFile: rawEvidence.sourceFile }, true),
         }
         const key = JSON.stringify([
           normalized.sourceFile,
@@ -1117,6 +1126,7 @@ function planNewEventEvidence(
       .map(([, evidence]) => evidence)
     mergedEvidence.push(...(invalidEvidence as RosterImportEvidence[]))
     const [firstOccurrence, ...duplicates] = occurrences
+    for (const occurrence of occurrences) groupedOccurrences.add(`${occurrence.recordIndex}:${occurrence.eventIndex}`)
     if (firstOccurrence) {
       const event = planned.get(firstOccurrence.recordIndex)?.[firstOccurrence.eventIndex]
       if (event) planned.get(firstOccurrence.recordIndex)![firstOccurrence.eventIndex] = { ...event, evidence: mergedEvidence }
@@ -1127,7 +1137,7 @@ function planNewEventEvidence(
     }
   }
 
-  return { eventsByRecord: planned }
+  return { eventsByRecord: planned, groupedOccurrences }
 }
 
 /** 对象键及集合数组顺序不影响公告载荷的快照指纹;重复项仍按重数保留。 */
@@ -1164,8 +1174,8 @@ export function hasOfficialFactInput(request: RosterImportRequest): boolean {
   const payload = request.payload
   return ['officialEvidenceAppends', 'officialEvidenceCorrections', 'officialEvidencePlanHash'].some(key => Object.hasOwn(payload, key)) || (Array.isArray(payload.announcement?.records) && payload.announcement.records.some(record => Array.isArray(record?.events) && record.events.some(event => Array.isArray(event?.evidence) && event.evidence.some(evidence => evidence && Object.hasOwn(evidence, 'publishedRow')))))
 }
-function prepareOfficialImport(db: Executor, request: RosterImportRequest, items: PlannedItem[], identities: AnnouncementBatchIdentityPlan, filesDir: string | undefined, state: OfficialImportState, plannedEvents: ReadonlyMap<number, RosterImportEvent[]>) {
-  const fail = (code: string, message: string): never => { throw new OfficialFactError(code, message, 409) }
+function prepareOfficialImport(db: Executor, request: RosterImportRequest, items: PlannedItem[], identities: AnnouncementBatchIdentityPlan, filesDir: string | undefined, state: OfficialImportState, plannedEvents: ReadonlyMap<number, RosterImportEvent[]>, groupedOccurrences: ReadonlySet<string>) {
+  function fail(code: string, message: string): never { throw new OfficialFactError(code, message, 409) }
   if (request.payload.announcement && !Array.isArray(request.payload.announcement.records)) fail('invalid_input', 'announcement.records must be an array')
   const captureCount = request.payload.announcement?.records?.reduce((n, record) => n + (record.events ?? []).reduce((m, event) => m + (event.evidence ?? []).filter(evidence => evidence.publishedRow !== undefined).length, 0), 0) ?? 0
   if (captureCount + (request.payload.officialEvidenceAppends?.length ?? 0) + (request.payload.officialEvidenceCorrections?.operations?.length ?? 0) > 100) throw new OfficialFactError('input_limit', 'At most 100 new official fact operations', 400)
@@ -1173,6 +1183,7 @@ function prepareOfficialImport(db: Executor, request: RosterImportRequest, items
   const correctionInput = request.payload.officialEvidenceCorrections
   const correction = correctionInput === undefined ? undefined : evidenceCorrectionRequestSchema.omit({ idempotencyKey: true }).parse(correctionInput)
   const changes: OfficialClaimChange[] = []
+  const newUnknownClaims: { ref: string; coordinate: OfficialCoordinate }[] = []
   const ownerForIdentity = (name: string, uscc: string | null) => {
     const existing = findEnterpriseByIdentity(db, { name, uscc })
     return existing ? `enterprise:${existing.id}` : `pending:${identityKeyOf({ name, uscc })}`
@@ -1188,7 +1199,7 @@ function prepareOfficialImport(db: Executor, request: RosterImportRequest, items
     record.events?.forEach((event, ei) => {
       const eventKey = `${ownerForIdentity(name, uscc)}:${record.titleCode}:${officialPlanDigest(eventCoordinates(0, event))}`
       for (const evidence of event.evidence ?? []) {
-        const key = officialPlanDigest({ eventKey, sourceFile: evidence.sourceFile, attachment: evidence.attachment ?? null, listNo: evidence.listNo ?? null, page: evidence.page ?? null })
+        const key = officialPlanDigest({ eventKey, ...announcementEvidenceCoordinate(evidence, groupedOccurrences.has(`${ri}:${ei}`)) })
         const typed = evidence.publishedRow !== undefined
         if (batchCoordinates.has(key) && (typed || batchCoordinates.get(key))) fail('ambiguous_target', 'Typed new capture coordinate must be stated once across the batch')
         batchCoordinates.set(key, typed)
@@ -1204,13 +1215,21 @@ function prepareOfficialImport(db: Executor, request: RosterImportRequest, items
         const parsed = officialPublishedRowSchema.safeParse(evidence.publishedRow)
         if (!parsed.success) fail('invalid_input', 'Full explicit publishedRow required')
         verifyOfficialDeclaration(db, evidence.publishedRow, request.payload.announcement!.sourceDocument)
-        const coordinate = { sourceFile: evidence.sourceFile, attachment: evidence.attachment ?? null, listNo: evidence.listNo ?? null, page: evidence.page ?? null }
+        const coordinate = announcementEvidenceCoordinate(evidence)
         const coordinateKey = officialPlanDigest(coordinate)
         if (coordinates.has(coordinateKey)) fail('ambiguous_target', 'Repeated new capture coordinate must be stated once')
         coordinates.add(coordinateKey)
         changes.push({ ref: `capture:${ri}:${ei}:${index}`, evidenceId: `capture:${ri}:${ei}:${index}`, eventId: `event:${ownerForIdentity(name, uscc)}:${record.titleCode}:${officialPlanDigest(eventCoordinates(0, event))}`, owner: ownerForIdentity(name, uscc), titleCode: record.titleCode, coordinate, publishedRow: evidence.publishedRow, expectedRowRevision: 0 })
       })
     })
+    // Consume the actual grouped write plan. Existing events skip insertion;
+    // duplicate occurrences have already moved all evidence to their first item.
+    for (const [ei, event] of (plannedEvents.get(ri) ?? []).entries()) {
+      if (storedRecord && findExistingEvent(db, eventCoordinates(storedRecord.id, event))) continue
+      for (const [index, evidence] of (event.evidence ?? []).entries()) if (evidence.publishedRow === undefined) {
+        newUnknownClaims.push({ ref: `legacy:${ri}:${ei}:${index}`, coordinate: announcementEvidenceCoordinate(evidence) })
+      }
+    }
   })
   const appendTargets = appends.map((op, index) => {
     const target = db.select({ event: schema.recordEvent, record: schema.record, enterpriseId: schema.enterprise.id }).from(schema.recordEvent).innerJoin(schema.record, eq(schema.record.id, schema.recordEvent.recordId)).innerJoin(schema.enterprise, eq(schema.enterprise.id, schema.record.enterpriseId)).where(eq(schema.recordEvent.id, op.eventId)).get()
@@ -1250,7 +1269,7 @@ function prepareOfficialImport(db: Executor, request: RosterImportRequest, items
     while (owner !== null && ownerMap.has(owner)) { if (seen.has(owner)) return fail('ambiguity', 'Cyclic merge ownership'); seen.add(owner); owner = ownerMap.get(owner)! }
     return owner
   }
-  const facts = planOfficialEvidenceChanges(db, changes, filesDir, finalOwner)
+  const facts = planOfficialEvidenceChanges(db, changes, filesDir, finalOwner, newUnknownClaims)
   for (const target of appendTargets) {
     const additions = appendTargets.filter(other => other.op.eventId === target.op.eventId && other.change.noOpEvidenceId === undefined).length
     if (target.scope + additions > 300) throw new OfficialFactError('source_limit', 'Final event evidence exceeds 300', 413)
@@ -1348,7 +1367,7 @@ export function planRosterImport(
   /** 新事件在首次写入前合并同坐标出处，避免重复项按遍历顺序覆盖来源。 */
   const newEventEvidencePlan = payload.announcement && mode === 'write'
     ? planNewEventEvidence(db, payload.announcement, announcementRecords, announcementIdentityPlan)
-    : { eventsByRecord: new Map<number, RosterImportEvent[]>() }
+    : { eventsByRecord: new Map<number, RosterImportEvent[]>(), groupedOccurrences: new Set<string>() }
   const plannedWriteEvents = newEventEvidencePlan.eventsByRecord
   /**
    * **整份计划**已认领的出处行 id。
@@ -1493,7 +1512,7 @@ export function planRosterImport(
   let officialEvidencePlanHash: string | undefined
   if (officialInput && !conflicts.length) {
     try {
-      const official = prepareOfficialImport(db, request, items, announcementIdentityPlan, context.filesDir, officialState, plannedWriteEvents)
+      const official = prepareOfficialImport(db, request, items, announcementIdentityPlan, context.filesDir, officialState, plannedWriteEvents, newEventEvidencePlan.groupedOccurrences)
       officialEvidencePlanHash = official.planHash
       const beforeMerges = items.findIndex(item => item.item.kind === 'merge')
       items.splice(beforeMerges < 0 ? items.length : beforeMerges, 0, official.item)
@@ -1885,10 +1904,7 @@ function writeAnnouncementRecord(
         .insert(schema.recordEvidence)
         .values({
           recordEventId: eventId,
-          sourceFile: evidence.sourceFile,
-          attachment: optionalString(evidence.attachment),
-          listNo: optionalInt(evidence.listNo),
-          page: isPageCapable(evidence.sourceFile) ? optionalInt(evidence.page) : null,
+          ...announcementEvidenceCoordinate(evidence),
         })
         .returning({ id: schema.recordEvidence.id })
         .get().id

@@ -5,6 +5,7 @@ import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { migrate } from 'drizzle-orm/better-sqlite3/migrator'
 import { afterEach, expect, it } from 'vitest'
+import { z } from 'zod'
 import * as schema from '../db/schema'
 import { appendOfficialEvidenceRevision, readLatestOfficialEvidence } from '../server/utils/official-evidence'
 import { preflightRosterImport, commitRosterImport, readImportBatchOutcome } from '../server/utils/roster-import'
@@ -15,12 +16,13 @@ import { startHttpFixture } from './helpers/http-fixture'
 import type { OfficialPublishedRow, RosterImportRequest } from '../lib/roster-import-client'
 
 const closes: (() => Promise<void> | void)[] = []
+const importAuditReference = z.object({ importBatchId: z.number().int().positive() }).passthrough()
 afterEach(async () => { for (const close of closes.splice(0).reverse()) await close() })
 async function fixture() {
   const dir = mkdtempSync('/tmp/issue350-sqlite-'), filesDir = join(dir, 'files'); mkdirSync(filesDir)
   const text = 'synthetic official source\n', sha256 = createHash('sha256').update(text).digest('hex')
   for (const path of ['notice.txt', 'other.txt']) writeFileSync(join(filesDir, path), text)
-  const sqlite = new Database(join(dir, 'synthetic.sqlite')); sqlite.pragma('foreign_keys=ON'); closes.push(() => sqlite.close())
+  const sqlite = new Database(join(dir, 'synthetic.sqlite')); sqlite.pragma('foreign_keys=ON'); closes.push(() => { sqlite.close() })
   const db = drizzle(sqlite, { schema }); migrate(db, { migrationsFolder: resolve('db/migrations') })
   sqlite.exec(`INSERT INTO title(code,name_zh,level,rank) VALUES('specialized_sme','Synthetic','municipal',2);
     INSERT INTO enterprise(id,name,name_norm,uscc_norm) VALUES(1,'Alpha','Alpha',NULL),(2,'Beta','Beta','91330211255994457P');
@@ -145,7 +147,7 @@ it('allows a final-set swap and writes explicit import audit references with no 
   expect((await f.post('commit', bound)).body).toEqual(result)
   const audits = f.db.select().from(schema.evidenceCorrectionAudit).all()
   expect(audits).toHaveLength(2)
-  expect(audits.every(row => row.batchKey === null && row.before.importBatchId === result.batchId && row.after.importBatchId === result.batchId)).toBe(true)
+  expect(audits.every(row => row.batchKey === null && importAuditReference.parse(row.before).importBatchId === result.batchId && importAuditReference.parse(row.after).importBatchId === result.batchId)).toBe(true)
   expect(f.sqlite.prepare('SELECT count(*) n FROM evidence_correction_batch').get()).toEqual({ n: 0 })
   expect(f.sqlite.pragma('foreign_key_check')).toEqual([])
 })
@@ -282,7 +284,7 @@ it('does not create a duplicate known association or treat unknown values as no-
 
 it('revalidates two SQLite handles competing for an initially empty K at public commit', async () => {
   const f = await fixture()
-  const second = new Database(join(f.dir, 'synthetic.sqlite')); second.pragma('foreign_keys=ON'); closes.push(() => second.close())
+  const second = new Database(join(f.dir, 'synthetic.sqlite')); second.pragma('foreign_keys=ON'); closes.push(() => { second.close() })
   const other = drizzle(second, { schema })
   const make = (id: number, key: string) => {
     const row = f.row({ listNo: 30 })

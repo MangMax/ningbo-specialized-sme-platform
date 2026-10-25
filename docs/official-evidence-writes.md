@@ -36,6 +36,11 @@ path/附件/行/页与外层显式值矛盾即拒绝，不能静默选一层。`
 要求真实声明、已核 sha256/bytes、非空 sectionKey 与正 listNo；attachment=null
 表示明确无附件。storedFileId/path 不进入 K；null raw 不证明相同或不同。
 
+typed 新事件的 sourceFile/path 与 attachment 保留逐字值，包括路径首尾空白和
+attachment=""（与 null 不同）；归组、已核文件、最终计划与落库坐标完全相同。
+纯 legacy 沿用原有归组/写入归一化。归组后与 typed 坐标重合的 legacy 重复项
+必须拒绝，不能通过覆盖 publishedRow 丢失已公布原文。
+
 `payload.officialEvidenceAppends` 为精确追加数组：
 
 ```ts
@@ -80,6 +85,9 @@ SHA256；不与 append 的 event revision 混用。
 同事务最终视图移除全部被替换声称，再加入全部拟写声称，owner 按当前归属与本批合法
 merge 的最终映射解释。先跨 event 核 K，再判 event 关联；已知 raw 逐字矛盾或确定主体
 不同为 source_row_conflict，无法证明 owner 相容为 ambiguity。多 event 相容关联允许。
+opt-in 混批的最终集合还包含实际拟新增 legacy 出处（先沿用原计划的事件归组、跳过既有
+事件）；它们仍为 unknown，不伪造 sidecar/已知绑定。与 capture/append/correction
+最终坐标发生未知重叠时，跨 event/owner 同样返回 ambiguity；纯 legacy 请求保持原义。
 新增操作合计100、每 evidence 一次、旧新 K 最多200；每 K 源候选/最终 scope 100，N+1
 溢出拒绝，event 原300限保持。raw-only 也修订/审计/CAS113，每改变事件每批一次。
 
