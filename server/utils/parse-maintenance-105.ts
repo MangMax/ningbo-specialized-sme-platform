@@ -1,6 +1,6 @@
 import { appLog, type LogContext } from '../../lib/logging'
 import { createHash, randomUUID } from 'node:crypto'
-import { closeSync, openSync, readSync, realpathSync } from 'node:fs'
+import { closeSync, fstatSync, openSync, readSync, realpathSync, statSync, type BigIntStats } from 'node:fs'
 import { resolve, sep } from 'node:path'
 import { and, desc, eq, gt } from 'drizzle-orm'
 import { z } from 'zod'
@@ -68,6 +68,8 @@ export class ParseMaintenanceError extends Error {
 }
 function fail(status: number, message: string): never { throw new ParseMaintenanceError(status, message) }
 const hash = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex')
+// Reading may update atime. It must not change source identity, contents or metadata.
+const inputFileStamp310 = (stat: BigIntStats) => [stat.dev, stat.ino, stat.mode, stat.size, stat.mtimeNs, stat.ctimeNs].join(':')
 
 /** Local to parse maintenance: inspect one real source, never scan/backfill the store. */
 function currentInput310(db: Db, fileId: number, selection: z.infer<typeof parsePreflight310>, filesDir: string): InputRef310 {
@@ -79,12 +81,28 @@ function currentInput310(db: Db, fileId: number, selection: z.infer<typeof parse
   try {
     const root = realpathSync(filesDir), path = realpathSync(resolve(root, file.relPath))
     if (!path.startsWith(root + sep)) return fail(409, '文件路径越界')
+    const before = statSync(path, { bigint: true })
+    if (!before.isFile()) return fail(409, '解析输入必须是普通文件')
     const fd = openSync(path, 'r')
     try {
+      const opened = fstatSync(fd, { bigint: true })
+      if (inputFileStamp310(opened) !== inputFileStamp310(before)) return fail(409, '解析输入在打开时已变化')
       const digest = createHash('sha256'), chunk = Buffer.allocUnsafe(64 * 1024)
       let n: number
       while ((n = readSync(fd, chunk)) > 0) digest.update(chunk.subarray(0, n))
       sha256 = digest.digest('hex')
+      // An open fd can still yield the old digest after rename/unlink, and an
+      // already-read prefix can be overwritten without changing that digest.
+      // Reconcile both the fd and the current canonical path after the full read.
+      const currentRoot = realpathSync(filesDir)
+      const currentPath = realpathSync(resolve(currentRoot, file.relPath))
+      const current = statSync(currentPath, { bigint: true })
+      const finished = fstatSync(fd, { bigint: true })
+      if (currentRoot !== root || currentPath !== path
+        || inputFileStamp310(finished) !== inputFileStamp310(opened)
+        || inputFileStamp310(current) !== inputFileStamp310(opened)) return fail(409, '解析输入在读取期间已变化')
+      // This is a read-consistency check, not a filesystem lock. External
+      // replacements after this final verification remain the #311 boundary.
     } finally { closeSync(fd) }
   } catch { return fail(409, '无法核实解析文件内容身份,请重新读取并核实文件') }
   if (sha256 !== file.sha256) return fail(409, '解析文件内容身份与登记不符,请重新读取并核实文件')
