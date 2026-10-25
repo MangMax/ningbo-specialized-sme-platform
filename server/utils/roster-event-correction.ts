@@ -81,9 +81,13 @@ function buildPlan(db: Executor, request: EventCorrectionRequest) {
     const conflict = siblings.some(stored => {
       if (stored.id === desired.id) return false
       const other = targets.find(t => t.eventId === stored.id)?.after ?? stored
-      return other.eventType === desired.eventType && other.year === desired.year && other.batchSeq === desired.batchSeq
+      if (other.eventType !== desired.eventType || other.year !== desired.year || other.batchSeq !== desired.batchSeq) return false
+      // Only fully identified review rounds may share the original award batch.
+      // Outcome never distinguishes a matter; unknown coordinates retain the conflict guard.
+      return desired.eventType !== 'review' || desired.year == null || desired.batchSeq == null
+        || desired.decidedYear == null || other.decidedYear == null || other.decidedYear === desired.decidedYear
     })
-    if (conflict) fail(409, 'natural_key_conflict', 'Another event occupies record/eventType/year/batchSeq; events are never merged by correction')
+    if (conflict) fail(409, 'natural_key_conflict', 'Another event occupies the official event scope; distinct review rounds require known origin, batch and decision years; events are never merged by correction')
   }
   const finalEvents = new Map(targets.map(target => [target.eventId, target.after]))
   const projected = targets.map(target => ({ ...target, lifecycleAfter: computeTitleLifecycle(titleEvents.get(`${target.enterpriseId}:${target.titleCode}`)!.map(event => finalEvents.get(event.id) ?? event)) }))
