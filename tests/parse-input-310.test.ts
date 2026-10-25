@@ -1,17 +1,24 @@
 import { createHash } from 'node:crypto'
-import { mkdtempSync, writeFileSync, rmSync, renameSync, unlinkSync, symlinkSync, statSync, fstatSync, openSync, writeSync, closeSync, readFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, renameSync, unlinkSync, symlinkSync, realpathSync, statSync, fstatSync, openSync, writeSync, closeSync, readFileSync } from 'node:fs'
+import { join, resolve } from 'node:path'
 import { afterAll, expect, it, vi } from 'vitest'
 import { eq } from 'drizzle-orm'
 import { useDb, schema } from '../db/client'
 import { getParse105, historyParse105, saveParse105, saveParseMcp105, preflightParse310, commitParse310 } from '../server/utils/parse-maintenance-105'
 
-// Only schedule a real filesystem mutation after a real read. The production
-// input checker, digest, database and all other filesystem calls remain real.
-const readBoundary = vi.hoisted(() => ({ afterRead: null as null | ((fd: number, bytes: number) => void) }))
+// Schedule physical mutations after real filesystem calls, without replacing
+// their results, the production input checker, digest or database.
+const readBoundary = vi.hoisted(() => ({
+  afterRead: null as null | ((fd: number, bytes: number) => void),
+  afterRealpath: null as null | ((path: string, resolved: string) => void),
+}))
 vi.mock('node:fs', async importOriginal => {
   const actual = await importOriginal<typeof import('node:fs')>()
-  return { ...actual, readSync: (...args: Parameters<typeof actual.readSync>) => {
+  return { ...actual, realpathSync: (...args: Parameters<typeof actual.realpathSync>) => {
+    const resolved = actual.realpathSync(...args)
+    if (typeof resolved === 'string') readBoundary.afterRealpath?.(String(args[0]), resolved)
+    return resolved
+  }, readSync: (...args: Parameters<typeof actual.readSync>) => {
     const bytes = actual.readSync(...args)
     if (bytes > 0) readBoundary.afterRead?.(args[0], bytes)
     return bytes
@@ -160,6 +167,103 @@ it('commits an unchanged multi-chunk source while retaining its selected OCR bas
   expect(getParse105(db, f.id)).toEqual(saved.state)
   expect(db.select().from(schema.ocrResult).where(eq(schema.ocrResult.id, p.id)).get()).toEqual(p)
   expect(historyParse105(db, { fileId: f.id }).rows).toHaveLength(1)
+})
+
+it.each(['file link at commit', 'root link at commit', 'file link at preflight'] as const)(
+  'rejects a late switch after final realpath for %s without partial parse or source writes', (scenario) => {
+    const original = Buffer.alloc(128 * 1024, 'A')
+    const { f, pages } = fixture(original)
+    const source = join(root, f.relPath), replacement = source + '.B'
+    const rootLink = source + '.root-link', otherRoot = source + '.root-B'
+    let configuredRoot = root
+    if (scenario === 'root link at commit') {
+      mkdirSync(otherRoot)
+      writeFileSync(join(otherRoot, f.relPath), original) // Same bytes, different identity.
+      symlinkSync(root, rootLink)
+      configuredRoot = rootLink
+    } else {
+      renameSync(source, source + '.A')
+      symlinkSync(source + '.A', source)
+      writeFileSync(replacement, Buffer.alloc(original.length, 'B'))
+    }
+    const e = db.insert(schema.enterprise).values({ name: f.relPath, nameNorm: f.relPath }).returning().get()
+    const r = db.insert(schema.record).values({ enterpriseId: e.id, source: 'jxj', titleCode: 'specialized_sme' }).returning().get()
+    const ev = db.insert(schema.recordEvent).values({ recordId: r.id, eventType: 'award', year: 2024 }).returning().get()
+    db.insert(schema.recordEvidence).values({ recordEventId: ev.id, sourceFile: f.relPath, page: 7, attachment: '已确认人工分节', listNo: 12 }).run()
+    const plan = preflightParse310(db, f.id, { kind: 'ocr', pages }, configuredRoot)
+    const body = command(plan.expectedVersion, `late-bound-${f.id}`, plan.inputRef)
+    const saved = commitParse310(db, f.id, body, configuredRoot)
+    const snapshot = () => ({
+      state: getParse105(db, f.id),
+      file: db.select().from(schema.storedFile).where(eq(schema.storedFile.id, f.id)).get(),
+      parts: db.select().from(schema.storedFilePart).where(eq(schema.storedFilePart.fileId, f.id)).all(),
+      audits: db.select().from(schema.fileParseAudit105).where(eq(schema.fileParseAudit105.fileId, f.id)).all(),
+      evidence: db.select().from(schema.recordEvidence).where(eq(schema.recordEvidence.recordEventId, ev.id)).all(),
+      event: db.select().from(schema.recordEvent).where(eq(schema.recordEvent.id, ev.id)).get(),
+      ocr: db.select().from(schema.ocrResult).where(eq(schema.ocrResult.fileId, f.id)).all(),
+    })
+    const before = snapshot()
+    expect(before.ocr[0]!.raw).toEqual({ syntheticCapture310: true, content: ['original nonempty response'] })
+    const observedPath = scenario === 'root link at commit' ? configuredRoot : resolve(realpathSync(root), f.relPath)
+    let calls = 0
+    let mutated = false
+    readBoundary.afterRealpath = path => {
+      if (path !== observedPath || ++calls !== 2) return
+      const link = scenario === 'root link at commit' ? rootLink : source
+      symlinkSync(scenario === 'root link at commit' ? otherRoot : replacement, link + '.next')
+      renameSync(link + '.next', link)
+      mutated = true
+    }
+    let failure: unknown
+    try {
+      if (scenario === 'file link at preflight') preflightParse310(db, f.id, { kind: 'ocr', pages }, configuredRoot)
+      else commitParse310(db, f.id, { ...command(before.state.version, `late-drift-${f.id}`, plan.inputRef), parts: [{ ...part, rowCount: 99 }], parseState: 'failed' }, configuredRoot)
+    } catch (error) { failure = error }
+    finally { readBoundary.afterRealpath = null }
+    expect(calls).toBe(2)
+    expect(mutated).toBe(true)
+    const changedSource = join(configuredRoot, f.relPath)
+    expect(statSync(changedSource).size).toBe(original.length)
+    if (scenario !== 'root link at commit') expect(createHash('sha256').update(readFileSync(changedSource)).digest('hex')).not.toBe(f.sha256)
+    expect(failure).toMatchObject({ statusCode: 409, message: expect.stringContaining('重新读取') })
+    expect(snapshot()).toEqual(before)
+    expect(commitParse310(db, f.id, body, configuredRoot)).toEqual({ ...saved, replayed: true })
+    expect(() => saveParseMcp105(db, { fileId: f.id, parts: [] })).toThrow('预检')
+  },
+)
+
+it.each(['file link', 'root link', 'root and file links'] as const)(
+  'accepts an unchanged 128KiB source through %s', scenario => {
+    const { f, pages } = fixture(Buffer.alloc(128 * 1024, 'A'))
+    const source = join(root, f.relPath), rootLink = source + '.stable-root-link'
+    if (scenario !== 'root link') { renameSync(source, source + '.A'); symlinkSync(source + '.A', source) }
+    if (scenario !== 'file link') symlinkSync(root, rootLink)
+    const configuredRoot = scenario === 'file link' ? root : rootLink
+    const plan = preflightParse310(db, f.id, { kind: 'ocr', pages }, configuredRoot)
+    const saved = commitParse310(db, f.id, command(plan.expectedVersion, `stable-links-${f.id}`, plan.inputRef), configuredRoot)
+    expect(saved.replayed).toBe(false)
+    expect(saved.state.inputLineage).toEqual({ status: 'bound', inputRef: plan.inputRef })
+    expect(saved.state.parts).toMatchObject([{ rowCount: 2 }])
+    expect(getParse105(db, f.id)).toEqual(saved.state)
+  },
+)
+
+it('rejects a file symlink escaping the configured root before publishing input or output', () => {
+  const outside = mkdtempSync('/tmp/issue310-outside-')
+  try {
+    const { f } = fixture(Buffer.alloc(128 * 1024, 'A'))
+    const source = join(root, f.relPath), other = join(outside, 'same-bytes.pdf')
+    writeFileSync(other, Buffer.alloc(128 * 1024, 'A'))
+    unlinkSync(source)
+    symlinkSync(other, source)
+    const before = getParse105(db, f.id)
+    let failure: unknown
+    try { preflightParse310(db, f.id, { kind: 'file' }, root) }
+    catch (error) { failure = error }
+    expect(failure).toMatchObject({ statusCode: 409, message: expect.stringContaining('重新读取') })
+    expect(getParse105(db, f.id)).toEqual(before)
+    expect(historyParse105(db, { fileId: f.id }).rows).toEqual([])
+  } finally { rmSync(outside, { recursive: true, force: true }) }
 })
 
 it('keeps runtime hash and OCR version validation strict independently of OpenAPI descriptions', () => {

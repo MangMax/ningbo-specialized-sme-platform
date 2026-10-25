@@ -93,10 +93,12 @@ function currentInput310(db: Db, fileId: number, selection: z.infer<typeof parse
       sha256 = digest.digest('hex')
       // An open fd can still yield the old digest after rename/unlink, and an
       // already-read prefix can be overwritten without changing that digest.
-      // Reconcile both the fd and the current canonical path after the full read.
+      // Reconcile the fd with the configured pathname after the full read.
       const currentRoot = realpathSync(filesDir)
       const currentPath = realpathSync(resolve(currentRoot, file.relPath))
-      const current = statSync(currentPath, { bigint: true })
+      // Canonical strings retain containment/identity checks, but sampling a
+      // cached canonical target would miss a link switched after realpath.
+      const current = statSync(resolve(filesDir, file.relPath), { bigint: true })
       const finished = fstatSync(fd, { bigint: true })
       if (currentRoot !== root || currentPath !== path
         || inputFileStamp310(finished) !== inputFileStamp310(opened)
