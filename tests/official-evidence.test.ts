@@ -277,3 +277,51 @@ it('applies read field and byte limits to each bounded projection without hydrat
   for (const revision of [-1, 0.5, '0', Number.MAX_SAFE_INTEGER])
     error(() => appendOfficialEvidenceRevision(db, capture(), revision as never), 400, 'invalid_input')
 })
+
+it('rejects a first capture with a missing actual enterprise while foreign keys are enabled', () => {
+  const { db, sqlite } = fixture()
+  // Synthetic legacy gap only; the production-domain call below always has FK enforcement ON.
+  sqlite.pragma('foreign_keys=OFF'); sqlite.exec('DELETE FROM enterprise WHERE id=1'); sqlite.pragma('foreign_keys=ON')
+  expect(sqlite.pragma('foreign_keys', { simple: true })).toBe(1)
+  expect(sqlite.pragma('foreign_key_check')).toEqual([{ table: 'record', rowid: 1, parent: 'enterprise', fkid: 1 }])
+  error(() => appendOfficialEvidenceRevision(db, capture(), 0), 409, 'reference_mismatch')
+  expect(readLatestOfficialEvidence(db, 1).row).toBeNull()
+  expect(sqlite.prepare('SELECT count(*) n FROM official_evidence_row_revision WHERE evidence_id=1').get()).toEqual({ n: 0 })
+})
+
+it.each([{ state: 'current', expectedRevision: 1 }, { state: 'stale', expectedRevision: 0 }])('rejects $state capture after enterprise loss without changing unknown-owner history', ({ expectedRevision }) => {
+  const { db, sqlite } = fixture()
+  appendOfficialEvidenceRevision(db, capture(), 0)
+  const originalStored = sqlite.prepare('SELECT * FROM official_evidence_row_revision WHERE evidence_id=1').get()
+  const { currentOwner: _owner, ...originalProjection } = readLatestOfficialEvidence(db, 1).row!
+  // Construct historical corruption in the fixture, then restore the normal production guard.
+  sqlite.pragma('foreign_keys=OFF'); sqlite.exec('DELETE FROM enterprise WHERE id=1'); sqlite.pragma('foreign_keys=ON')
+  expect(sqlite.pragma('foreign_keys', { simple: true })).toBe(1)
+  expect(readLatestOfficialEvidence(db, 1).row).toEqual({ ...originalProjection, currentOwner: null })
+  error(() => appendOfficialEvidenceRevision(db, capture({ nameRaw: 'must not be captured' }), expectedRevision), 409, 'reference_mismatch')
+  expect(sqlite.prepare('SELECT count(*) n FROM official_evidence_row_revision WHERE evidence_id=1').get()).toEqual({ n: 1 })
+  expect(sqlite.prepare('SELECT * FROM official_evidence_row_revision WHERE evidence_id=1').get()).toEqual(originalStored)
+  expect(readOfficialEvidenceHistory(db, 1).rows).toEqual([{ ...originalProjection, currentOwner: null }])
+  expect(readOfficialEvidenceCandidates(db, sourceKey()).candidates).toEqual([{
+    evidenceId: 1, eventId: 1, revision: 1, capturedRecordId: 1, capturedEnterpriseId: 1,
+    nameRaw: '  公布旧名🙂\u0000é  ', usccRaw: '', districtRaw: null, currentOwner: null,
+  }])
+})
+
+it('captures a real merged owner after deleting captured historical owners without rewriting history', () => {
+  const { db, sqlite } = fixture()
+  appendOfficialEvidenceRevision(db, capture(), 0)
+  const originalStored = sqlite.prepare('SELECT * FROM official_evidence_row_revision WHERE evidence_id=1 AND revision=1').get()
+  const { currentOwner: _owner, ...originalProjection } = readLatestOfficialEvidence(db, 1).row!
+  db.transaction(() => { sqlite.exec('UPDATE record_event SET record_id=2 WHERE id=1; DELETE FROM record WHERE id=1; DELETE FROM enterprise WHERE id=1;') })
+  expect(sqlite.pragma('foreign_keys', { simple: true })).toBe(1)
+  expect(sqlite.pragma('foreign_key_check')).toEqual([])
+  expect(sqlite.prepare('SELECT id FROM record WHERE id=1').get()).toBeUndefined()
+  expect(sqlite.prepare('SELECT id FROM enterprise WHERE id=1').get()).toBeUndefined()
+  expect(appendOfficialEvidenceRevision(db, capture({ capturedRecordId: 2, capturedEnterpriseId: 2, nameRaw: '归并后另次核实原名' }), 1)).toEqual({ formatVersion: 1, evidenceId: 1, eventId: 1, revision: 2 })
+  const history = readOfficialEvidenceHistory(db, 1)
+  expect(history.rows[0]).toMatchObject({ revision: 2, capturedRecordId: 2, capturedEnterpriseId: 2, currentOwner: { recordId: 2, enterpriseId: 2 }, nameRaw: '归并后另次核实原名' })
+  expect(history.rows[1]).toEqual({ ...originalProjection, currentOwner: { recordId: 2, enterpriseId: 2 } })
+  expect(sqlite.prepare('SELECT * FROM official_evidence_row_revision WHERE evidence_id=1 AND revision=1').get()).toEqual(originalStored)
+  expect(sqlite.pragma('foreign_key_check')).toEqual([])
+})

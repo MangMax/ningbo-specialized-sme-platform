@@ -112,7 +112,7 @@ export function appendOfficialEvidenceRevision(db: OfficialEvidenceExecutor, inp
       ${input.nameRaw},${input.usccRaw},${input.districtRaw},${input.sourceDocumentId},${input.storedFileId},${input.path},${input.sha256},${input.bytes},
       ${input.attachment},${input.sectionKey},${input.listNo},${input.page},${Number(input.sourceBindingKnown)},${JSON.stringify(input.actor)},${input.basis},
       ${input.command.kind},${input.command.kind === 'import' ? input.command.batchId : null},${input.command.kind === 'evidence_correction' ? input.command.batchKey : null},${createdAt}
-    FROM record_evidence ev JOIN record_event e ON e.id=ev.record_event_id JOIN record rec ON rec.id=e.record_id
+    FROM record_evidence ev JOIN record_event e ON e.id=ev.record_event_id JOIN record rec ON rec.id=e.record_id JOIN enterprise ent ON ent.id=rec.enterprise_id
     WHERE ev.id=${input.evidenceId} AND e.id=${input.eventId} AND rec.id=${input.capturedRecordId} AND rec.enterprise_id=${input.capturedEnterpriseId}
       AND (SELECT coalesce(max(revision),0) FROM official_evidence_row_revision WHERE evidence_id=${input.evidenceId})=${expectedRevision}`) }
   catch (error) {
@@ -123,7 +123,7 @@ export function appendOfficialEvidenceRevision(db: OfficialEvidenceExecutor, inp
     throw error
   }
   if (!result.changes) {
-    const reference = db.get(sql`SELECT ev.id FROM record_evidence ev JOIN record_event e ON e.id=ev.record_event_id JOIN record rec ON rec.id=e.record_id WHERE ev.id=${input.evidenceId} AND e.id=${input.eventId} AND rec.id=${input.capturedRecordId} AND rec.enterprise_id=${input.capturedEnterpriseId}`)
+    const reference = db.get(sql`SELECT ev.id FROM record_evidence ev JOIN record_event e ON e.id=ev.record_event_id JOIN record rec ON rec.id=e.record_id JOIN enterprise ent ON ent.id=rec.enterprise_id WHERE ev.id=${input.evidenceId} AND e.id=${input.eventId} AND rec.id=${input.capturedRecordId} AND rec.enterprise_id=${input.capturedEnterpriseId}`)
     throw new OfficialEvidenceError(409, reference ? 'revision_conflict' : 'reference_mismatch', reference ? 'Expected row revision is stale' : 'New capture does not match evidence/event/current owner')
   }
   return { formatVersion: 1 as const, evidenceId: input.evidenceId, eventId: input.eventId, revision }
