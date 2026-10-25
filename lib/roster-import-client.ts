@@ -161,6 +161,8 @@ export interface RosterImportRelation {
 
 /** 一次平台查询及其返回的全部关系。 */
 export interface RosterImportPlatformQuery {
+  /** 仅引用已存在采集坐标；省略正文不代表清空，显式给出的不可变值仍须相同。不得补行。 */
+  reuseExisting?: true
   interface: PlatformInterface
   /** 统一社会信用代码、`name:<nameNorm>`，或已认定无主体归档的稳定键。 */
   queryKey: string
