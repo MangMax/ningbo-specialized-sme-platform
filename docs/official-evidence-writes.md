@@ -101,6 +101,10 @@ opt-in planHash 包含 repoint 原 locator/事件版本/latest/实核文件，IM
 同 event/K 的多项更正比较完整拟写事实；仅未替换 stored 才读真实 latest。
 append 可复用完整最终事实相同的稳定 ID（stored 或显式 numeric correction）；
 后者仍执行更正，不读其已撤去的旧 latest，也不让全新 append 互相充当既有关联。
+已接受的未替换 stored/stored 对仍核真实 latest 的完整事实；确定相容则保留全部
+旧 ID，不要求本批另有 proposal，也不清理重复。unknown 不能证明完整相容。
+同一 K 先完成全部最终声称的已知 owner/raw 冲突检查，再判 unknown 与事件关联，
+确定 source_row_conflict 不被先遇到的 ambiguity 遮蔽；不同 K 的既有错误顺序不改。
 新增操作合计100、每 evidence 一次、旧新 K 最多200；每 K 源候选/最终 scope 100，N+1
 溢出拒绝，event 原300限保持。raw-only 也修订/审计/CAS113，每改变事件每批一次。
 

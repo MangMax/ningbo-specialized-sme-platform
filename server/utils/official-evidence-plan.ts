@@ -169,6 +169,11 @@ export function planOfficialEvidenceChanges(db: Executor, changes: OfficialClaim
   // Only one K's original candidates are retained at a time; the plan retains digests, not all raw scopes.
   for (const [token, { key, sourceId }] of [...keys].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)) {
     const original = typeof sourceId === 'number' ? readOfficialEvidenceCandidates(db, key, { maxBytes: 65536 }).candidates : []
+    const storedRows = new Map<number, OfficialEvidenceRow | null>()
+    const storedRow = (id: number) => {
+      if (!storedRows.has(id)) storedRows.set(id, readLatestOfficialEvidence(db, id, { maxBytes: 65536 }).row)
+      return storedRows.get(id) ?? null
+    }
     type Claim = { eventId: number | string; owner: string | null; nameRaw: string | null; usccRaw: string | null; districtRaw: string | null } & (
       { origin: 'stored'; evidenceId: number } | { origin: 'proposal'; evidenceId: number | string; change: OfficialClaimChange }
     )
@@ -181,7 +186,7 @@ export function planOfficialEvidenceChanges(db: Executor, changes: OfficialClaim
       const row = change.publishedRow
       const existing = final.find((claim): claim is Extract<Claim, { origin: 'stored' }> => claim.origin === 'stored' && claim.eventId === change.eventId)
       if (typeof change.evidenceId === 'string' && existing && existing.owner !== null && existing.owner === finalOwner(change.owner) && ['nameRaw', 'usccRaw', 'districtRaw'].every(field => row[field as 'nameRaw'] !== null && row[field as 'nameRaw'] === existing[field as 'nameRaw'])) {
-        const stored = readLatestOfficialEvidence(db, existing.evidenceId, { maxBytes: 65536 }).row
+        const stored = storedRow(existing.evidenceId)
         if (sameOfficialRow(stored, row, sourceId)) { change.noOpEvidenceId = existing.evidenceId; continue }
       }
       if (typeof change.evidenceId === 'string') {
@@ -193,21 +198,34 @@ export function planOfficialEvidenceChanges(db: Executor, changes: OfficialClaim
       final.push({ origin: 'proposal', change, evidenceId: change.evidenceId, eventId: change.eventId, owner: finalOwner(change.owner), nameRaw: row.nameRaw, usccRaw: row.usccRaw, districtRaw: row.districtRaw })
     }
     if (final.length > 100) officialFactFailure('source_limit', 'Final source row scope exceeds 100 claims', 413)
+    // Finish known source-fact conflicts for the whole K before any pair can
+    // return an ownership or event-association ambiguity.
     for (let i = 0; i < final.length; i++) for (let j = i + 1; j < final.length; j++) {
       const a = final[i]!, b = final[j]!
       if (a.owner !== null && b.owner !== null && a.owner !== b.owner || ['nameRaw', 'usccRaw', 'districtRaw'].some(field => {
         const k = field as 'nameRaw' | 'usccRaw' | 'districtRaw'; return a[k] !== null && b[k] !== null && a[k] !== b[k]
       })) officialFactFailure('source_row_conflict', 'Confirmed source row has incompatible owners or verbatim raw values', 409)
+    }
+    for (let i = 0; i < final.length; i++) for (let j = i + 1; j < final.length; j++) {
+      const a = final[i]!, b = final[j]!
       if (a.owner === null || b.owner === null) officialFactFailure('ambiguity', 'Current source-row ownership cannot be proven compatible', 409)
       if (a.eventId === b.eventId) {
+        if (['nameRaw', 'usccRaw', 'districtRaw'].some(field => a[field as 'nameRaw'] === null || b[field as 'nameRaw'] === null)) officialFactFailure('ambiguity', 'Duplicate event association requires exact known equivalence or explicit correction', 409)
+        if (a.origin === 'stored' && b.origin === 'stored') {
+          // These retained IDs were already accepted. Preserve them only after
+          // verifying their complete latest facts, not merely the shared K/raw.
+          const left = storedRow(a.evidenceId), right = storedRow(b.evidenceId)
+          if (!left || !right || left.sourceDocumentId !== sourceId || right.sourceDocumentId !== sourceId || !factFields.every(field => left[field] === right[field])) officialFactFailure('ambiguity', 'Existing event association differs; use exact correction', 409)
+          continue
+        }
         const proposed = b.origin === 'proposal' ? b : a.origin === 'proposal' ? a : null
-        if (!proposed || ['nameRaw', 'usccRaw', 'districtRaw'].some(field => a[field as 'nameRaw'] === null || b[field as 'nameRaw'] === null)) officialFactFailure('ambiguity', 'Duplicate event association requires exact known equivalence or explicit correction', 409)
+        if (!proposed) officialFactFailure('ambiguity', 'Duplicate event association requires exact known equivalence or explicit correction', 409)
         const other = proposed === b ? a : b
         if (other.origin === 'proposal' && typeof other.evidenceId === 'string' && typeof proposed.evidenceId === 'string') officialFactFailure('ambiguity', 'New append proposals require a stable existing association', 409)
         // Replaced numeric IDs are proposals too: compare their complete final
         // facts, never the old latest that this batch has already removed.
         const equivalent = other.origin === 'stored'
-          ? sameOfficialRow(readLatestOfficialEvidence(db, other.evidenceId, { maxBytes: 65536 }).row, proposed.change.publishedRow, sourceId)
+          ? sameOfficialRow(storedRow(other.evidenceId), proposed.change.publishedRow, sourceId)
           : sourceFor.get(other.change) === sourceFor.get(proposed.change) && factFields.every(field => other.change.publishedRow[field] === proposed.change.publishedRow[field])
         if (!equivalent) officialFactFailure('ambiguity', 'Existing event association differs; use exact correction', 409)
         // Numeric corrections still write their named evidence, even when another

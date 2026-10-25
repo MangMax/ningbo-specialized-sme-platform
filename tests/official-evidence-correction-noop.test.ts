@@ -295,3 +295,88 @@ it('R4 S1 two new append proposals cannot supply each other with a stable associ
   expect((await f.post('preflight', input)).preflight?.conflicts).toMatchObject([{ error: { code: 'ambiguity' } }])
   expect((await f.post('commit', input)).status).toBe('failed'); expect(f.snapshot()).toEqual(before)
 })
+
+function publishedFixtureRow(sourceDocumentId?: number): OfficialPublishedRow {
+  return { nameRaw: 'Alpha original', usccRaw: 'printed code', districtRaw: 'printed district', declaration: sourceDocumentId === undefined ? { kind: 'independent', sourceDocument: { source: 'jxj', title: 'Declared publication', docNumber: null, issueDate: null, path: 'notice.txt' }, basis: 'Explicit verified declaration' } : { kind: 'existing', sourceDocumentId, basis: 'Verified declaration' }, storedFileId: 1, path: 'notice.txt', sha256, bytes: Buffer.byteLength(text), attachment: null, sectionKey: 'awards', listNo: 10, page: null, sourceBindingKnown: true, actor: { type: 'agent', id: 'synthetic' }, basis: 'Verified row' }
+}
+function publicAnnouncement(name: 'Alpha' | 'Beta', year: number, evidence: NonNullable<RosterImportRecord['events']>[number]['evidence']): RosterImportPayload {
+  return { announcement: { sourceDocument: { source: 'jxj', title: 'Declared publication' }, records: [{ enterprise: { name, ...(name === 'Beta' ? { uscc: '91330211255994457P' } : {}) }, titleCode: 'specialized_sme', events: [{ eventType: 'award', year, evidence }] }] } }
+}
+const publicLocator = (sourceFile: string, listNo: number) => ({ sourceFile, attachment: null, listNo, page: null })
+async function acceptedStoredPair(reverse: boolean, onlyOne = false, cross = false) {
+  const f = await fixture(), initial = { ...publicLocator('notice.txt', 10), publishedRow: publishedFixtureRow() }, legacy = publicLocator('other.txt', 20)
+  await f.commit(f.request(publicAnnouncement('Alpha', 2022, cross ? [initial] : reverse ? [legacy, initial] : [initial, legacy]), 'pair-capture'))
+  if (cross) await f.commit(f.request(publicAnnouncement('Alpha', 2020, [legacy]), 'pair-other-event'))
+  const known = f.rows().find(row => row.list_no === 10), target = f.rows().find(row => row.list_no === 20)
+  if (!known || !target) throw new Error('Expected public-created pair')
+  const source = z.object({ source_document_id: z.number() }).parse(f.sqlite.prepare('SELECT source_document_id FROM official_evidence_row_revision WHERE evidence_id=?').get(known.id))
+  const row = publishedFixtureRow(source.source_document_id)
+  await submitFinalCorrections(f, 'import', [await finalOperation(f, target.id, row)], 'pair-compatible')
+  if (onlyOne) await submitFinalCorrections(f, 'import', [await finalOperation(f, target.id, { ...row, listNo: 40 })], 'pair-move-away')
+  return { f, row, knownId: known.id, targetId: target.id }
+}
+const publicKinds = ['append', 'capture', 'import-correction', 'standalone-correction'] as const
+async function commitStoredConsumer(f: PublicFixture, input: RosterImportRequest) {
+  const plan = await f.post('preflight', input)
+  const bound = plan.preflight?.officialEvidencePlanHash ? { ...input, payload: { ...input.payload, officialEvidencePlanHash: plan.preflight.officialEvidencePlanHash } } : input
+  const result = await f.post('commit', bound)
+  expect(plan.preflight?.conflicts).toEqual([]); expect(result.status, JSON.stringify(result)).toBe('committed')
+  expect(await f.post('commit', bound)).toEqual(result)
+  return { result, bound }
+}
+async function compatibleStoredConsumer(kind: typeof publicKinds[number], reverse: boolean, onlyOne: boolean) {
+  const { f, row, knownId, targetId } = await acceptedStoredPair(reverse, onlyOne), owner = await f.exact(knownId)
+  if (kind.endsWith('correction')) await f.commit(f.request(publicAnnouncement('Alpha', 2024, [publicLocator('other.txt', 30)]), 'third-legacy'))
+  const before = f.snapshot(), oldEvidence = f.sqlite.prepare('SELECT * FROM record_evidence ORDER BY id').all(), oldFacts = f.sqlite.prepare('SELECT * FROM official_evidence_row_revision ORDER BY evidence_id,revision').all()
+  if (kind === 'append') {
+    const { result } = await commitStoredConsumer(f, f.request({ officialEvidenceAppends: [{ eventId: owner.eventId, recordId: owner.recordId, enterpriseId: owner.enterpriseId, expectedVersion: owner.event.revision, evidence: { ...publicLocator('notice.txt', 10), publishedRow: row } }] }, 'pair-exact-append'))
+    const details = z.array(z.object({ kind: z.string(), detail: z.unknown().optional() }).passthrough()).parse(result.items)
+    const detail = details.find(item => item.kind === 'official_evidence'); if (!detail) throw new Error('Expected official receipt')
+    const receipt = z.object({ evidence: z.array(z.object({ evidenceId: z.number(), unchanged: z.literal(true) })) }).parse(detail.detail)
+    expect(receipt.evidence).toHaveLength(1); expect([knownId, targetId]).toContain(receipt.evidence[0]?.evidenceId)
+    expect(f.snapshot()).toEqual(before)
+  } else if (kind === 'capture') {
+    await commitStoredConsumer(f, f.request(publicAnnouncement('Alpha', 2024, [{ ...publicLocator('notice.txt', 10), publishedRow: row }]), 'pair-cross-capture'))
+    expect(f.rows()).toHaveLength(3)
+    expect(f.sqlite.prepare('SELECT * FROM record_evidence WHERE id IN (?,?) ORDER BY id').all(knownId, targetId)).toEqual(oldEvidence)
+    expect(f.sqlite.prepare('SELECT * FROM official_evidence_row_revision WHERE evidence_id IN (?,?) ORDER BY evidence_id,revision').all(knownId, targetId)).toEqual(oldFacts)
+  } else {
+    const target = f.rows().find(r => r.list_no === 30); if (!target) throw new Error('Expected public legacy target')
+    const exact = await f.exact(target.id), revisions = z.object({ n: z.number() }).parse(f.sqlite.prepare('SELECT count(*) n FROM evidence_revision_113').get()).n
+    await submitFinalCorrections(f, kind === 'import-correction' ? 'import' : 'standalone', [await finalOperation(f, target.id, row)], 'pair-cross-correction')
+    expect(await f.exact(target.id)).toMatchObject({ evidenceId: target.id, coordinate: { sourceFile: 'notice.txt', listNo: 10 }, event: { revision: exact.event.revision + 1 } })
+    expect(f.sqlite.prepare('SELECT count(*) n FROM evidence_revision_113').get()).toEqual({ n: revisions + 1 })
+    expect(f.sqlite.prepare('SELECT * FROM official_evidence_row_revision WHERE evidence_id IN (?,?) ORDER BY evidence_id,revision').all(knownId, targetId)).toEqual(oldFacts)
+  }
+}
+for (const kind of publicKinds) for (const reverse of [false, true]) it(`R5 S1 compatible ${kind} with two accepted stored IDs in ${reverse ? 'reverse' : 'forward'} order`, async () => { await compatibleStoredConsumer(kind, reverse, false) })
+for (const kind of publicKinds) it(`R5 S1 compatible ${kind} with only one stored claim control`, async () => { await compatibleStoredConsumer(kind, false, true) })
+for (const entry of ['import', 'standalone'] as const) for (const reverse of [false, true]) it(`R5 S1 ${entry} unchanged correction preserves accepted stored pair in ${reverse ? 'reverse' : 'forward'} order`, async () => {
+  const { f, row, knownId } = await acceptedStoredPair(reverse), before = f.snapshot()
+  await submitFinalCorrections(f, entry, [await finalOperation(f, knownId, row)], 'pair-unchanged'); expect(f.snapshot()).toEqual(before)
+})
+for (const entry of ['import', 'standalone'] as const) for (const variant of ['raw-conflict', 'unknown-raw', 'unknown-binding', 'different-full-fields'] as const) it(`R5 S1 ${entry} stored pair ${variant} stays rejected atomically`, async () => {
+  const { f, row, knownId } = await acceptedStoredPair(false)
+  const next = variant === 'raw-conflict' ? { ...row, nameRaw: 'Different printed name' } : variant === 'unknown-raw' ? { ...row, usccRaw: null } : variant === 'unknown-binding' ? { ...row, sourceBindingKnown: false } : { ...row, path: 'other.txt', storedFileId: 2 }
+  await submitFinalCorrections(f, entry, [await finalOperation(f, knownId, next)], 'pair-negative', variant === 'raw-conflict' ? 'source_row_conflict' : 'ambiguity')
+})
+it('R5 S1 compatible append also preserves two accepted stored IDs across distinct events', async () => {
+  const { f, row, knownId } = await acceptedStoredPair(false, false, true), owner = await f.exact(knownId), before = f.snapshot()
+  await f.commit(f.request({ officialEvidenceAppends: [{ eventId: owner.eventId, recordId: owner.recordId, enterpriseId: owner.enterpriseId, expectedVersion: owner.event.revision, evidence: { ...publicLocator('notice.txt', 10), publishedRow: row } }] }, 'cross-stored-noop'))
+  expect(f.snapshot()).toEqual(before)
+})
+
+const claimOrders = [[0, 1, 2], [0, 2, 1], [1, 0, 2], [1, 2, 0], [2, 0, 1], [2, 1, 0]] as const
+for (const entry of ['import', 'standalone'] as const) for (const variant of ['owner', 'raw', 'only-unknown'] as const) for (const order of claimOrders) it(`R5 S2 ${entry} ${variant} whole-K priority order ${order.join('')}`, async () => {
+  const f = await fixture()
+  const alpha = publicAnnouncement('Alpha', 2022, [publicLocator('other.txt', 20), publicLocator('other.txt', 30)]).announcement
+  const third = publicAnnouncement(variant === 'owner' ? 'Beta' : 'Alpha', 2025, [publicLocator('other.txt', 40)]).announcement
+  if (!alpha || !third) throw new Error('Expected explicit announcements')
+  await f.commit(f.request({ announcement: { sourceDocument: alpha.sourceDocument, records: [...alpha.records, ...third.records] } }, 'priority-legacy'))
+  const source = z.object({ id: z.number() }).parse(f.sqlite.prepare('SELECT id FROM source_document ORDER BY id LIMIT 1').get()), row = publishedFixtureRow(source.id)
+  const ids = [20, 30, 40].map(n => { const target = f.rows().find(r => r.list_no === n); if (!target) throw new Error('Expected public target'); return target.id })
+  const facts = [{ ...row, usccRaw: null }, row, variant === 'raw' ? { ...row, nameRaw: 'Conflicting confirmed raw' } : row]
+  const operations = await Promise.all(ids.map((id, i) => { const fact = facts[i]; if (!fact) throw new Error('Expected explicit fact'); return finalOperation(f, id, fact) }))
+  const selected = order.map(i => { const op = operations[i]; if (!op) throw new Error('Expected operation'); return op })
+  await submitFinalCorrections(f, entry, selected, 'whole-k-priority', variant === 'only-unknown' ? 'ambiguity' : 'source_row_conflict')
+})
