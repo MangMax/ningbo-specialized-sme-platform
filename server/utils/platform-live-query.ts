@@ -1,4 +1,4 @@
-import { APPLY_GRID, APPLY_LIST_PATH, BUSINESS_GRID, BUSINESS_LIST_PATH, RECOGNIZED_GRID, RECOGNIZED_LIST_PATH, PlatformSessionExpiredError, parsePlatformPage } from '../../lib/platform/adapter'
+import { APPLY_GRID, APPLY_LIST_PATH, BUSINESS_GRID, BUSINESS_LIST_PATH, RECOGNIZED_GRID, RECOGNIZED_LIST_PATH, PlatformSessionExpiredError, extractEmbeddedZrar, parsePlatformPage } from '../../lib/platform/adapter'
 import { cookieRedactor, PlatformHttpError, postPlatformRequest, type PlatformQueryOptions } from '../../lib/platform/client'
 import { platformQueryInputSchema, platformQueryTitles, recognizedConditionShape, type PlatformLiveQueryResult, type PlatformQueryPage, type PlatformQueryError } from '../../lib/platform/live-query'
 import { resolvePlatformCookie, type CredentialContext } from './credential-state'
@@ -19,6 +19,10 @@ export interface PlatformLiveQueryContext {
   transport?: Pick<PlatformQueryOptions, 'fetchImpl' | 'baseUrl' | 'timeoutMs'>
 }
 const error = (code: PlatformQueryError['code'], message: string): PlatformQueryError => ({ code, message })
+const sensitiveKey = /cookie|token|session|password|authorization|account|username/i
+function hasSensitiveKey(value: unknown): boolean {
+  return !!value && typeof value === 'object' && Object.entries(value).some(([key, item]) => sensitiveKey.test(key) || hasSensitiveKey(item))
+}
 export async function runPlatformLiveQuery(input: unknown, ctx: PlatformLiveQueryContext = {}): Promise<PlatformLiveQueryResult> {
   const parsed = platformQueryInputSchema.safeParse(input)
   // Fixed error text: never echo unknown input, upstream body or credential storage errors.
@@ -33,6 +37,7 @@ export async function runPlatformLiveQuery(input: unknown, ctx: PlatformLiveQuer
   const result: PlatformLiveQueryResult = {
     source: q.source, status: 'not_queried', effectiveConditions: { ...(q.name ? { name: q.name } : {}), ...(q.uscc ? { uscc: q.uscc } : {}), combination: 'and', ...Object.fromEntries(Object.keys(recognizedConditionShape).filter(key => q[key as keyof typeof q] !== undefined).map(key => [key, q[key as keyof typeof q]])) },
     titleScope: q.source !== 'queryList' ? { mode: 'selected', rdjb: titles as string[] } : { mode: 'source_default', rdjb: [] }, queriedAt: new Date(started).toISOString(), completedAt: '', rows: [], pages: [], fetchedCount: 0, declaredTotal: declaredTotal(),
+    ...(q.rawDataVersion === 1 ? { rawData: { version: 1 as const, rows: [], pages: [] } } : {}),
     completeness: 'not_queried', fullRange: q.startPage === 1, unfinished: [], error: null,
     limits: { maxRequests: q.maxRequests, maxRows: q.maxRows, maxDurationMs: q.maxDurationMs, pageSize: Math.min(q.pageSize, q.maxRows) },
   }
@@ -94,7 +99,17 @@ export async function runPlatformLiveQuery(input: unknown, ctx: PlatformLiveQuer
         })
         const parsedPage = parsePlatformPage(raw, q.source === 'businessList' ? BUSINESS_GRID : q.source === 'queryBusList' ? RECOGNIZED_GRID : APPLY_GRID)
         const serialized = JSON.stringify(parsedPage.rows)
-        if (JSON.stringify(sanitize(parsedPage.rows)) !== serialized || parsedPage.rows.some(row => Object.keys(row).some(key => /cookie|token|session|password|authorization|account|username/i.test(key)))) {
+        let sourceEnvelope: unknown = null
+        if (q.rawDataVersion === 1) {
+          try { sourceEnvelope = JSON.parse(raw) } catch { sourceEnvelope = extractEmbeddedZrar(raw) }
+        }
+        const sensitiveLegacyRows = JSON.stringify(sanitize(parsedPage.rows)) !== serialized || parsedPage.rows.some(row => Object.keys(row).some(key => sensitiveKey.test(key)))
+        const sensitiveOriginal = q.rawDataVersion === 1 && (redactString(raw) !== raw
+          || /["'][^"']*(?:cookie|token|session|password|authorization|account|username)[^"']*["']\s*:/i.test(raw)
+          || hasSensitiveKey(sourceEnvelope) || hasSensitiveKey(parsedPage.rawRows)
+          || JSON.stringify(sanitize(sourceEnvelope)) !== JSON.stringify(sourceEnvelope)
+          || JSON.stringify(sanitize(parsedPage.rawRows)) !== JSON.stringify(parsedPage.rawRows))
+        if (sensitiveLegacyRows || sensitiveOriginal) {
           throw error('sensitive_response', '平台响应含敏感资料，已阻止返回。')
         }
         if ((parsedPage.responsePage !== null && parsedPage.responsePage !== page) || (parsedPage.declaredTotal !== null && parsedPage.rows.length > parsedPage.declaredTotal)) throw error('invalid_response', '平台分页信息不一致。')
@@ -117,7 +132,9 @@ export async function runPlatformLiveQuery(input: unknown, ctx: PlatformLiveQuer
           }
           maxPageForTitle = maxPage
         }
-        if (result.rows.length + parsedPage.rows.length > q.maxRows || (ctx.maxResultBytes !== undefined && Buffer.byteLength(JSON.stringify({ ...result, rows: [...result.rows, ...parsedPage.rows] }), 'utf8') + 2048 > ctx.maxResultBytes)) {
+        const rawPage = { ...pos, format: parsedPage.source, body: raw }
+        const rawData = result.rawData ? { version: 1 as const, rows: [...result.rawData.rows, ...parsedPage.rawRows], pages: [...result.rawData.pages, rawPage] } : undefined
+        if (result.rows.length + parsedPage.rows.length > q.maxRows || Buffer.byteLength(JSON.stringify({ ...result, rows: [...result.rows, ...parsedPage.rows], ...(rawData ? { rawData } : {}) }), 'utf8') + 2048 > (ctx.maxResultBytes ?? (rawData ? 8388608 : Infinity))) {
           result.status = 'partial'; result.completeness = 'partial'
           result.error = error('safety_limit', '记录数量达到安全上限，此页未纳入结果。')
           recordPage({ ...pos, status: 'failed', fetchedCount: 0, declaredTotal: parsedPage.declaredTotal, error: result.error }, pageStarted)
@@ -131,6 +148,7 @@ export async function runPlatformLiveQuery(input: unknown, ctx: PlatformLiveQuer
         totals.set(title, total)
         result.declaredTotal = declaredTotal()
         result.rows.push(...parsedPage.rows)
+        if (rawData) result.rawData = rawData
         fetchedForTitle += parsedPage.rows.length
         const consumed = priorCoverage === null ? null : priorCoverage + fetchedForTitle
         const titleComplete = total !== null ? total === 0 || (consumed !== null && consumed >= total) : (q.source === 'queryBusList' && maxPageForTitle !== null ? page === maxPageForTitle : parsedPage.rows.length === 0)

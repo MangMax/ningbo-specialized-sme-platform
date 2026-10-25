@@ -1,6 +1,6 @@
 /** Public, source-specific live-query contract. No stored identity or business mutations. */
 import { z } from 'zod'
-import type { PlatformRow } from './adapter'
+import type { PlatformRow, PlatformRawRow, PlatformJsonValue } from './adapter'
 
 export const PLATFORM_QUERY_SOURCES = ['queryList', 'businessList', 'queryBusList'] as const
 export type PlatformQuerySource = typeof PLATFORM_QUERY_SOURCES[number]
@@ -23,6 +23,8 @@ export const recognizedConditionShape = {
 }
 export const platformQueryInputShape = {
   source: z.enum(PLATFORM_QUERY_SOURCES),
+  /** Explicit expand-compat opt-in; existing consumers retain their payload. */
+  rawDataVersion: z.literal(1).optional(),
   ...recognizedConditionShape,
   name: z.string().trim().min(1).max(200).optional(),
   uscc: z.string().trim().regex(/^[0-9A-Z]{18}$/).optional(),
@@ -60,6 +62,11 @@ export interface PlatformQueryError {
   message: string
 }
 export interface PlatformQueryPosition { source: PlatformQuerySource; rdjb: string | null; page: number }
+export interface PlatformRawData {
+  version: 1
+  rows: PlatformRawRow[]
+  pages: (PlatformQueryPosition & { format: 'json' | 'html-script' | 'html-table'; body: string })[]
+}
 export interface PlatformQueryPage extends PlatformQueryPosition {
   /** 原响应声明的末页；旧归档可缺省，未知留 null。 */
   maxPage?: number | null
@@ -76,6 +83,8 @@ export interface PlatformLiveQueryResult {
   queriedAt: string
   completedAt: string
   rows: PlatformRow[]
+  /** Additive raw observation v1. Absent on historical string-only results. */
+  rawData?: PlatformRawData
   pages: PlatformQueryPage[]
   fetchedCount: number
   declaredTotal: number | null
@@ -87,7 +96,8 @@ export interface PlatformLiveQueryResult {
   limits: { maxRequests: number; maxRows: number; maxDurationMs: number; pageSize: number }
 }
 export const platformQueryCapabilities = {
-  version: 2,
+  version: 3,
+  rawData: { request: { rawDataVersion: 1 }, version: 1, rows: 'typed_json', pages: 'unmodified_accepted_responses', legacyRows: 'string_projection', historicalAbsent: 'unknown', maxSingleResultBytes: 8388608, archiveRelationHash: 'legacy_rows_pending_327' },
   batch: { available: true, submit: '/api/platform/batches', status: '/api/platform/batches/{batchId}', item: '/api/platform/batches/{batchId}/items/{itemId}', retry: '/api/platform/batches/{batchId}/retry', maxItems: 50, maxAttempts: 10, maxRequests: 200, maxRows: 5000, maxDurationMs: 120000, maxResultBytes: 8388608, defaultResultBytes: 2097152, submissionAuth: 'task_token', restart: 'failed_no_auto_resume', cache: 'no-store' },
   sources: {
     queryList: { available: true, meaning: '申报记录', conditions: ['name', 'uscc'], combination: 'and', nameMatch: 'platform_keyword', titleSelection: false, defaultRestrictions: [], pagination: true },
@@ -104,12 +114,25 @@ const queryErrorSchema = z.object({
   message: z.string(),
 }).nullable()
 const positionShape = { source: z.enum(PLATFORM_QUERY_SOURCES), rdjb: z.string().nullable(), page: z.number().int().positive() }
+function isJsonValue(value: unknown): value is PlatformJsonValue {
+  if (value === null || typeof value === 'string' || typeof value === 'boolean') return true
+  if (typeof value === 'number') return Number.isFinite(value)
+  if (Array.isArray(value)) return Array.from(value).every(isJsonValue)
+  return typeof value === 'object' && value !== null
+    && [Object.prototype, null].includes(Object.getPrototypeOf(value))
+    && Object.values(value).every(isJsonValue)
+}
+// Zod record/json parsers rebuild objects and drop own __proto__ keys. Validate
+// JSON without replacing the observed object; metadata keeps tools/list explicit.
+const rawRowSchema = z.unknown().refine(value => value !== null && typeof value === 'object' && !Array.isArray(value) && isJsonValue(value))
+  .meta({ type: 'object', additionalProperties: {} }) as z.ZodType<PlatformRawRow>
 /** Toolkit output schema is discoverable in tools/list; REST mirrors this in static route metadata. */
 export const platformQueryResultShape = {
   source: z.enum(PLATFORM_QUERY_SOURCES), status: z.enum(['success', 'no_record', 'auth_failed', 'failed', 'partial', 'not_queried']),
   effectiveConditions: z.object({ name: z.string().optional(), uscc: z.string().optional(), combination: z.literal('and'), sqsj: z.string().optional(), rddqrq: z.string().optional(), whpcyear: z.string().optional(), whpc: z.string().optional(), szq: z.string().optional(), orderField: z.string().optional(), orderDirection: z.string().optional() }),
   titleScope: z.object({ mode: z.enum(['source_default', 'selected']), rdjb: z.array(z.string()) }),
   queriedAt: z.string(), completedAt: z.string(), rows: z.array(z.record(z.string(), z.string())),
+  rawData: z.strictObject({ version: z.literal(1), rows: z.array(rawRowSchema), pages: z.array(z.strictObject({ ...positionShape, format: z.enum(['json', 'html-script', 'html-table']), body: z.string() })) }).optional(),
   pages: z.array(z.object({ ...positionShape, maxPage: z.number().int().positive().nullable().optional(), status: z.enum(['success', 'auth_failed', 'failed']), fetchedCount: z.number().int().nonnegative(), declaredTotal: z.number().int().nonnegative().nullable(), error: queryErrorSchema })),
   fetchedCount: z.number().int().nonnegative(), declaredTotal: z.number().int().nonnegative().nullable(),
   completeness: z.enum(['complete', 'partial', 'not_queried']), fullRange: z.boolean(),

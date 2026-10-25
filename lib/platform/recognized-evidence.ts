@@ -2,6 +2,7 @@
 import { z } from 'zod'
 import { platformQueryInputShape, platformQueryResultShape, recognizedConditionShape, validRecognizedConditionPairing, type PlatformLiveQueryResult } from './live-query'
 import type { RosterImportPlatformQuery } from '../roster-import-client'
+import { parsePlatformPage, type PlatformRawRow, type PlatformRow } from './adapter'
 
 export const RDJB_TITLE_CODES: Record<string, string> = { '1': 'innovative_sme', '2': 'specialized_sme', '3': 'little_giant' }
 export const TITLE_RDJB_CODES: Record<string, string> = Object.fromEntries(Object.entries(RDJB_TITLE_CODES).map(([rdjb, title]) => [title, rdjb]))
@@ -46,6 +47,29 @@ export function recognizedEvidenceError(value: unknown): string | null {
   const parsed = resultSchema.safeParse(value)
   if (!parsed.success) return 'collectionEvidence requires the original query result, including times, conditions, pages, rows and unfinished positions'
   const r = parsed.data as PlatformLiveQueryResult
+  // Validate against the original value: schema validation must not rewrite own
+  // prototype-named JSON keys, nor infer types from old string-only evidence.
+  const original = value as PlatformLiveQueryResult
+  if (original.rawData) {
+    const successful = original.pages.filter(page => page.status === 'success')
+    if (original.rawData.pages.length !== successful.length || original.rawData.rows.length !== original.rows.length) return 'Raw observation pages/rows must cover every accepted page'
+    const rawRows: PlatformRawRow[] = [], legacyRows: PlatformRow[] = []
+    for (const [index, page] of original.rawData.pages.entries()) {
+      const expected = successful[index]!
+      if (page.source !== expected.source || page.rdjb !== expected.rdjb || page.page !== expected.page) return 'Raw observation source/title/page mismatch'
+      try {
+        const parsedPage = parsePlatformPage(page.body, 'businessGrid')
+        if (parsedPage.source !== page.format || parsedPage.rows.length !== expected.fetchedCount
+          || (parsedPage.responsePage !== null && parsedPage.responsePage !== expected.page)
+          || (parsedPage.responsePageSize !== null && parsedPage.responsePageSize !== original.limits.pageSize)
+          || parsedPage.declaredTotal !== expected.declaredTotal
+          || (expected.maxPage != null && parsedPage.responseMaxPage !== expected.maxPage)) return 'Raw response format/count/pagination mismatch'
+        rawRows.push(...parsedPage.rawRows)
+        legacyRows.push(...parsedPage.rows)
+      } catch { return 'Raw response cannot be parsed as original recognized evidence' }
+    }
+    if (JSON.stringify(rawRows) !== JSON.stringify(original.rawData.rows) || JSON.stringify(legacyRows) !== JSON.stringify(original.rows)) return 'Raw observations and legacy projection must match original responses'
+  }
   if (r.source !== 'queryBusList') return 'recognized_list only accepts source=queryBusList'
   if (![r.queriedAt, r.completedAt].every(t => z.iso.datetime({ offset: true }).safeParse(t).success) || Date.parse(r.completedAt) < Date.parse(r.queriedAt)) return 'Original queriedAt/completedAt are required in order'
   const { combination, ...conditions } = r.effectiveConditions

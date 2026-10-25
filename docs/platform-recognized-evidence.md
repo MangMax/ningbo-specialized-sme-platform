@@ -70,3 +70,11 @@ partial/失败/未查询必须保留每个未完成称号的实际 next/failed p
 证据链：Git 外 `spec153/returned-field-semantics-evidence.md` FOLLOW-UP、`review155-field-evidence-assessment.md`，原始观察会话 `01a14cde-e047-7ee3-9fd9-a20fb4282af8` 行209/214/221；安全配对摘录 SHA256 `9334e0f87893fcef1fbe2f7e0307e9a0402ff9232f128517dc94957b6c028ff8`。主体关联是精确统代×称号，不是 raw row-ID 证明。不得扩展到其他账号/格式、时区或精确到期语义。
 
 本投影仅由 `current-qualification.ts` 的 recognized-list 筛选调用使用。旧业务接口/平台导出的已清洗事件、正式公布认定年份和迁入资格契约仍按原有资格流程处理；它们不经此 parser，本次不收窄或删除这些独立事实来源。新 recognized-list 原始字段不得填入旧标准化字段的边界见上文。
+
+## 原JSON封套扩展与后续接缝（#326/#327）
+
+`rawDataVersion:1` 采集结果/每个批量分段可原样交给 `recognizedResultToImport`，再走既有公开 preflight/commit/读回。`collectionEvidence.rawData.version=1`、typed rows 和实际接受页原文被完整保存；校验页位置、解析形式、分页计数、typed 行及旧字符串投影是否一致，任何冲突拒绝，不用另一套字段补齐。旧无 rawData 的证据继续原格式读取/转存，原始类型未知，不补算历史哈希。
+
+**#326 尚未切换关系与哈希。** 当前转换器和统一导入器仍要求 `relations[].rawFields === collectionEvidence.rows[]`（旧字符串投影）。封套 rawData 保真不等于原行已成为 relation.rawFields 或业务内容版本输入。#327 在 #326 审定后负责唯一的显式格式选择、typed 关系输入及版本贯通；#300 的重放校验属于另一个职责。本片不更改统一导入器、版本 identity、ID、已有 hash 或业务决定。
+
+现存传输边界：H3 的严格 JSON body 解析会拒绝 `__proto__`/`constructor` 键，因此这类行的 HTTP 归档请求返回400；原文字符串没有被改写。本片保留该边界并用真实 HTTP 断言拒绝且不写业务；真实 MCP 工具的 typed 封套归档和精确读回已覆盖这些自有键。不要绕过 HTTP 解析器或删除原字段以伪称完成；后续如需统一此能力，应单独审定共享请求解析接缝。

@@ -141,3 +141,17 @@ investigation uses these app APIs/MCP and never needs a Cookie read/reveal.
 历史只存 rawFields 的关系在读取时补齐缺失标准字段，不回填数据库。新归档保存同一解析结果；已有非空标准字段与非空原值矛盾时，预检/提交返回 `platform_field_conflict`，不静默覆盖。旧冲突行的相关标准值返回 null，同时返回 `normalizationConflicts[{field,storedValue,rawValue}]`，页面明确待核，候选保留冲突。原始 rawFields 中的缺字段、null、空白、明确未知与未知枚举保持可区分；原响应文本不修剪。
 
 `recognized_list`（queryBusList）继续只在原字段中表达认定快照，不借用 `cszt/sfyx` 生成办理状态或流程类型。查询成功/失败状态与关系的办理状态各自独立。按字节分段取证端点返回持久化原档，历史空列仍为空；它与补齐标准字段的业务读模型不同，关系 ID 和原始证据保持不变。
+
+## 原 JSON 兼容扩展（#326，capabilities v3）
+
+需要原行时，在 REST `/api/platform/query`、MCP `query_platform` 或批量 `items[].query` 显式传 `rawDataVersion:1`。缺省继续返回旧字符串 `rows`；不从旧字符串反推 null、数字、布尔或对象。扩展结果新增：
+
+```json
+{"rawData":{"version":1,"rows":[{"id":"same","x":null,"n":1,"b":true,"o":{"a":1}}],"pages":[{"source":"queryBusList","rdjb":"2","page":1,"format":"json","body":"完整原响应"}]}}
+```
+
+`rawData.rows` 是原响应解析得到的 JSON 行，保留缺键、null、数组、未知字段和原型同名自有键；`rows` 仅供旧消费者读取字符串投影。两者各有含义，不能互相回退。`rawData.pages` 按实际接受的成功页顺序保存 source/rdjb/page、解析形式（json/html-script/html-table）与未经裁剪的正文，包括空白。HTML table 只能观察单元格字符串，不能推测上游 JSON 类型；原 HTML 仍保留。失败/拒收页不带原文，不冒充已接受页。
+
+扩展单查结果预算为8MiB；批量沿用原 `maxResultBytes`。原响应、typed 行、旧投影和已有结果一起计量，放不下就整页拒收、标 partial/safety_limit 并保留 unfinished，不截断原文。与已知服务端凭据匹配或含敏感键的原响应拒收，不能先脱敏再称完整原文。未选择扩展的旧消费者继续原有行为；批次原条件保留 rawDataVersion，分段和补查继续使用同一格式。
+
+认定归档详见[封套转存](platform-recognized-evidence.md#原json封套扩展与后续接缝326327)。本片只保证封套原文保留，旧 relation.rawFields/业务版本哈希尚未切换，不能视为 #298 完成。
