@@ -1178,6 +1178,41 @@ export const evidenceCorrectionBatch = sqliteTable('evidence_correction_batch', 
   receipt: text('receipt', { mode: 'json' }).$type<unknown>().notNull(),
   createdAt: text('created_at').notNull(),
 })
+
+/** #349: append-only published row captures. Captured owners are historical values, not live FKs. */
+export const officialEvidenceRowRevision = sqliteTable('official_evidence_row_revision', {
+  evidenceId: integer('evidence_id').notNull().references(() => recordEvidence.id),
+  revision: integer('revision').notNull(),
+  formatVersion: integer('format_version').notNull().default(1),
+  eventId: integer('event_id').notNull().references(() => recordEvent.id),
+  capturedRecordId: integer('captured_record_id').notNull(),
+  capturedEnterpriseId: integer('captured_enterprise_id').notNull(),
+  nameRaw: text('name_raw'), usccRaw: text('uscc_raw'), districtRaw: text('district_raw'),
+  sourceDocumentId: integer('source_document_id').references(() => sourceDocument.id),
+  storedFileId: integer('stored_file_id').references(() => storedFile.id),
+  path: text('path'), sha256: text('sha256'), bytes: integer('bytes'),
+  attachment: text('attachment'), sectionKey: text('section_key'), listNo: integer('list_no'), page: integer('page'),
+  sourceBindingKnown: integer('source_binding_known', { mode: 'boolean' }).notNull(),
+  actor: text('actor', { mode: 'json' }).$type<{ type: 'user' | 'agent'; id: string }>().notNull(),
+  basis: text('basis').notNull(),
+  commandKind: text('command_kind', { enum: ['import', 'evidence_correction'] }).notNull(),
+  importBatchId: integer('import_batch_id').references(() => importBatch.id),
+  correctionBatchKey: text('correction_batch_key').references(() => evidenceCorrectionBatch.idempotencyKey),
+  createdAt: text('created_at').notNull(),
+}, t => [
+  uniqueIndex('official_evidence_row_revision_uq').on(t.evidenceId, t.revision),
+  index('official_evidence_row_source_idx').on(t.sourceDocumentId, t.sha256, t.bytes, t.attachment, t.sectionKey, t.listNo, t.evidenceId, t.revision),
+  index('official_evidence_row_event_idx').on(t.eventId, t.evidenceId, t.revision),
+  check('official_evidence_row_version_ck', sql`${t.formatVersion} = 1 AND typeof(${t.revision}) = 'integer' AND ${t.revision} BETWEEN 1 AND 9007199254740991`),
+  check('official_evidence_row_ids_ck', sql.join([t.evidenceId, t.eventId, t.capturedRecordId, t.capturedEnterpriseId].map(c => sql`(typeof(${c}) = 'integer' AND ${c} BETWEEN 1 AND 9007199254740991)`), sql` AND `)),
+  check('official_evidence_row_optional_ids_ck', sql.join([t.sourceDocumentId, t.storedFileId, t.listNo, t.page, t.importBatchId].map(c => sql`(${c} IS NULL OR (typeof(${c}) = 'integer' AND ${c} BETWEEN 1 AND 9007199254740991))`), sql` AND `)),
+  check('official_evidence_row_text_ck', sql.join([t.nameRaw, t.usccRaw, t.districtRaw, t.path, t.sha256, t.attachment, t.sectionKey, t.correctionBatchKey].map(c => sql`(${c} IS NULL OR typeof(${c}) = 'text')`), sql` AND `)),
+  check('official_evidence_row_bytes_ck', sql`${t.bytes} IS NULL OR (typeof(${t.bytes}) = 'integer' AND ${t.bytes} BETWEEN 0 AND 9007199254740991)`),
+  check('official_evidence_row_binding_ck', sql`${t.sourceBindingKnown} IN (0,1) AND (${t.sourceBindingKnown} = 0 OR (${t.sourceDocumentId} IS NOT NULL AND ${t.sha256} IS NOT NULL AND length(${t.sha256}) = 64 AND ${t.sha256} NOT GLOB '*[^0-9a-f]*' AND ${t.bytes} IS NOT NULL AND ${t.sectionKey} IS NOT NULL AND length(CAST(${t.sectionKey} AS BLOB)) > 0 AND ${t.listNo} IS NOT NULL))`),
+  check('official_evidence_row_actor_ck', sql`CASE WHEN json_valid(${t.actor}) THEN coalesce(json_type(${t.actor}) = 'object' AND json_extract(${t.actor}, '$.type') IN ('user','agent') AND json_type(${t.actor}, '$.id') = 'text' AND length(CAST(json_extract(${t.actor}, '$.id') AS BLOB)) > 0, 0) ELSE 0 END`),
+  check('official_evidence_row_command_ck', sql`(${t.commandKind} = 'import' AND ${t.importBatchId} IS NOT NULL AND ${t.correctionBatchKey} IS NULL) OR (${t.commandKind} = 'evidence_correction' AND ${t.correctionBatchKey} IS NOT NULL AND ${t.importBatchId} IS NULL)`),
+])
+
 export const evidenceCorrectionAudit = sqliteTable('evidence_correction_audit', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   evidenceId: integer('evidence_id').notNull().references(() => recordEvidence.id),
