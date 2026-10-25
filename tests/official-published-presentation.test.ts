@@ -5,7 +5,7 @@ import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { migrate } from 'drizzle-orm/better-sqlite3/migrator'
 import ExcelJS from 'exceljs'
-import { afterEach, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import * as schema from '../db/schema'
 import { TITLE_SEED } from '../db/titles'
 import type { OfficialPublishedRow, RosterImportPayload, RosterImportRecord } from '../lib/roster-import-client'
@@ -21,6 +21,9 @@ import { assertOfficialPublishedBudget, readOfficialPublishedPresentation, Offic
 import { currentWorkbookValues } from '../lib/roster/current-workbook-presentation'
 
 const closes: Array<() => void | Promise<void>> = []
+const qualificationYear = 2026
+const executionTime = Date.parse('2026-10-25T08:00:00Z')
+beforeEach(() => { vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(executionTime) })
 afterEach(async () => { vi.restoreAllMocks(); vi.useRealTimers(); for (const close of closes.splice(0).reverse()) await close() })
 const sourceBytes = minimalPdf({ pages: 1 })
 const digest = createHash('sha256').update(sourceBytes).digest('hex')
@@ -82,7 +85,7 @@ it('pairs old and new published names with every independent event and file in t
   const result = await writeCurrentWorkbook(f.sqlite, 'specialized_sme', filename, () => {})
   const workbook = new ExcelJS.Workbook(); await workbook.xlsx.readFile(filename)
   const row = workbook.getWorksheet('有效企业')!.getRow(2)
-  expect(result.counts, JSON.stringify(readCurrentCandidate(f.sqlite, newer.enterpriseId, 'specialized_sme'))).toEqual({ eligible: 1, pending: 0, excluded: 0 })
+  expect(result.counts, JSON.stringify(readCurrentCandidate(f.sqlite, newer.enterpriseId, 'specialized_sme', qualificationYear, executionTime))).toEqual({ eligible: 1, pending: 0, excluded: 0 })
   expect(workbook.worksheets.map(s => s.name)).toEqual(['有效企业', '待确认', '排除明细', '口径说明'])
   expect(row.cellCount).toBe(12)
   expect(row.getCell(2).value).toBe('现用名')
@@ -125,7 +128,7 @@ it('distinguishes captured null empty whitespace binding unknown and mixed legac
   ])
   for (const item of ids.slice(0, 4)) expect((await f.exact(item.id)).official.row.nameRaw).toBe(facts.get(item.id)!.nameRaw)
   expect((await f.exact(ids[4]!.id)).official).toMatchObject({ availability: 'unknown_legacy', row: null })
-  const row = readCurrentCandidate(f.sqlite, 1, 'specialized_sme'), before = JSON.stringify(row)
+  const row = readCurrentCandidate(f.sqlite, 1, 'specialized_sme', qualificationYear, executionTime), before = JSON.stringify(row)
   const values = currentWorkbookValues('specialized_sme', row, 1, facts)
   expect(values[7]).toContain('已捕获出处，名称原值未知')
   expect(values[7]).toContain('公布名称：""')
@@ -155,7 +158,7 @@ it('labels every all-legacy source and an unknown review conclusion year explici
 
 it('removes only the inherited first-name rename sentence from Excel while preserving qualifier inputs', async () => {
   const f = await fixture(); await seed(f, ['独立出处原名'])
-  const row = readCurrentCandidate(f.sqlite, 1, 'specialized_sme')
+  const row = readCurrentCandidate(f.sqlite, 1, 'specialized_sme', qualificationYear, executionTime)
   // Formatter input representing the existing qualifier's legacy rename branch.
   // No sidecar/domain fixture is fabricated or written here.
   row.publishedNames = ['旧容器首名']
@@ -200,13 +203,14 @@ it('keeps captured origin facts after a public legal merge removes old live owne
 })
 
 it('isolates sidecar-only changes from enumerable qualification and dataVersion at a fixed time', async () => {
-  vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(new Date('2026-10-25T08:00:00Z'))
   const f = await fixture(); await seed(f, ['原捕获名'])
   const target = f.ids()[0]!, exact = await f.exact(target.id)
-  const before = readCurrentCandidate(f.sqlite, exact.enterpriseId, 'specialized_sme'), originalJson = JSON.stringify(before)
+  const before = readCurrentCandidate(f.sqlite, exact.enterpriseId, 'specialized_sme', qualificationYear, executionTime), originalJson = JSON.stringify(before)
+  expect(before.group).toBe('eligible')
   expect(Object.getOwnPropertyDescriptor(before, 'workbookFacts')?.enumerable).toBe(false)
   const firstFile = join(f.dir, 'before.xlsx'), secondFile = join(f.dir, 'after.xlsx')
   const first = await writeCurrentWorkbook(f.sqlite, 'specialized_sme', firstFile, () => {})
+  expect(first.generatedAt).toBe('2026-10-25T08:00:00.000Z')
   const row = f.published('更正后原名', 1, 1, { declaration: { kind: 'existing', sourceDocumentId: exact.official.row.sourceDocumentId, basis: '同一正式公布核实' } })
   await f.correct(target.id, row, 'raw-only')
   expect((await f.exact(target.id)).official.row).toMatchObject({ revision: 2, nameRaw: '更正后原名' })
@@ -214,8 +218,9 @@ it('isolates sidecar-only changes from enumerable qualification and dataVersion 
   // Pin that one legacy input back to baseline, leaving the normal public capture history intact.
   // This is an isolation control, never a suggested business write or capture shortcut.
   f.sqlite.prepare('UPDATE record_event SET revision=? WHERE id=?').run(exact.event.revision, target.recordEventId)
-  expect(JSON.stringify(readCurrentCandidate(f.sqlite, exact.enterpriseId, 'specialized_sme'))).toBe(originalJson)
+  expect(JSON.stringify(readCurrentCandidate(f.sqlite, exact.enterpriseId, 'specialized_sme', qualificationYear, executionTime))).toBe(originalJson)
   const second = await writeCurrentWorkbook(f.sqlite, 'specialized_sme', secondFile, () => {})
+  expect(second.generatedAt).toBe(first.generatedAt)
   expect(second.counts).toEqual(first.counts); expect(second.dataVersion).toBe(first.dataVersion); expect(second.ruleVersion).toBe(first.ruleVersion)
   expect(createHash('sha256').update(readFileSync(secondFile)).digest('hex')).not.toBe(createHash('sha256').update(readFileSync(firstFile)).digest('hex'))
   const workbook = new ExcelJS.Workbook(); await workbook.xlsx.readFile(secondFile)
@@ -223,12 +228,36 @@ it('isolates sidecar-only changes from enumerable qualification and dataVersion 
   expect(workbook.getWorksheet('有效企业')!.getCell('H2').value).not.toContain('原捕获名')
 })
 
+it('keeps a public 2021 award without review pending in the 2026 reader and workbook', async () => {
+  const f = await fixture()
+  await f.commit(f.announcement([f.record('specialized_sme', [
+    { eventType: 'award', year: 2021, batchSeq: 1, evidence: [f.evidence(f.published('2021独立公布名'))] },
+  ])]), '2021-pending-control')
+  const evidence = f.ids()[0]!, exact = await f.exact(evidence.id)
+  expect(exact.official.row.nameRaw).toBe('2021独立公布名')
+  const row = readCurrentCandidate(f.sqlite, exact.enterpriseId, 'specialized_sme', qualificationYear, executionTime)
+  expect(row.group).toBe('pending')
+  expect(row.firstYear).toBe(2021)
+  const filename = join(f.dir, '2021-pending-control.xlsx')
+  const result = await writeCurrentWorkbook(f.sqlite, 'specialized_sme', filename, () => {})
+  expect(result.generatedAt).toBe('2026-10-25T08:00:00.000Z')
+  expect(result.counts).toEqual({ eligible: 0, pending: 1, excluded: 0 })
+  const workbook = new ExcelJS.Workbook(); await workbook.xlsx.readFile(filename)
+  expect(workbook.getWorksheet('有效企业')!.rowCount).toBe(1)
+  expect(workbook.getWorksheet('排除明细')!.rowCount).toBe(1)
+  const pending = workbook.getWorksheet('待确认')!
+  expect(pending.rowCount).toBe(2)
+  expect(pending.getCell('B2').value).toBe('现用名')
+  expect(pending.getCell('F2').value).toBe('2021')
+  expect(pending.getCell('H2').value).toBe('2021年第1批认定，《2021公布.pdf》：公布名称："2021独立公布名"')
+})
+
 it('redacts only minimal display values and rejects unavailable facts instead of exporting them as legacy', async () => {
   const f = await fixture(); await seed(f, ['Bearer synthetic-private-value'])
   const facts = readOfficialPublishedPresentation(f.db, scope(f)), fact = [...facts.values()][0]!
   expect(fact.nameRaw).toBe('Bearer [REDACTED]')
   expect(Object.keys(fact).sort()).toEqual(['availability', 'eventId', 'evidenceId', 'nameRaw', 'revision', 'sourceBindingKnown'])
-  const row = readCurrentCandidate(f.sqlite, 1, 'specialized_sme')
+  const row = readCurrentCandidate(f.sqlite, 1, 'specialized_sme', qualificationYear, executionTime)
   expect(() => currentWorkbookValues('specialized_sme', row, 1, new Map())).toThrow(OfficialPublishedPresentationError)
   expect(() => currentWorkbookValues('specialized_sme', row, 1, new Map([[fact.evidenceId, { evidenceId: fact.evidenceId, eventId: fact.eventId, revision: null, availability: 'unavailable', nameRaw: null, sourceBindingKnown: null }]]))).toThrow(OfficialPublishedPresentationError)
   vi.spyOn(official, 'listEventOfficialEvidence').mockImplementation(() => { throw new Error('private SQL and Bearer secret') })
@@ -277,7 +306,7 @@ it('rejects cumulative formatted text even when the complete fact page fits its 
   const f = await fixture(); await seed(f, ['甲', '乙', '丙'].map(prefix => prefix + '名'.repeat(3000)))
   const facts = readOfficialPublishedPresentation(f.db, scope(f))
   expect(facts.size).toBe(3)
-  const row = readCurrentCandidate(f.sqlite, 1, 'specialized_sme')
+  const row = readCurrentCandidate(f.sqlite, 1, 'specialized_sme', qualificationYear, executionTime)
   expect(() => currentWorkbookValues('specialized_sme', row, 1, facts)).toThrow('response_limit')
   await expect(writeCurrentWorkbook(f.sqlite, 'specialized_sme', join(f.dir, 'text-limit.xlsx'), () => {})).rejects.toMatchObject({ code: 'response_limit' })
   expect(f.sqlite.inTransaction).toBe(false)
