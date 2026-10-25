@@ -1,12 +1,12 @@
-import { mkdtempSync, mkdirSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
 import { join, resolve } from 'node:path'
 
 import { afterAll, beforeAll, expect, it } from 'vitest'
 import { useDb, schema } from '../db/client'
 import { spawnOwnedChild as spawn, reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../scripts/lib/isolated-local-services.mjs'
 
-const dir = mkdtempSync(join(tmpdir(), 'parse-maintenance-105-'))
+const dir = mkdtempSync('/tmp/issue310-http-')
 const dbPath = join(dir, 'roster.db')
 const db = useDb({ dbPath })
 const token = 'synthetic-105-token'
@@ -45,7 +45,8 @@ async function startService() {
   const cwd = resolve(import.meta.dirname, '..')
   const port = await reserveLoopbackPort()
   mkdirSync(join(dir, 'files'), { recursive: true })
-  const child = spawn(process.execPath, [join(cwd, 'node_modules/nuxt/bin/nuxt.mjs'), 'dev', '--host', '127.0.0.1', '--port', String(port)], { cwd, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, NUXT_BUILD_DIR: join(dir, 'build'), NUXT_DB_PATH: dbPath, NUXT_FILES_DIR: join(dir, 'files'), NUXT_INCOMING_DIR: join(dir, 'incoming'), NUXT_API_TOKEN: token, NUXT_MCP_TOKEN: token } })
+  writeFileSync(join(dir, 'empty.env'), '')
+  const child = spawn(process.execPath, [join(cwd, 'node_modules/nuxt/bin/nuxt.mjs'), 'dev', '--host', '127.0.0.1', '--port', String(port), '--dotenv', join(dir, 'empty.env')], { cwd, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, NUXT_LOG_DIR: join(dir, 'logs'), NUXT_DB_PATH: dbPath, NUXT_FILES_DIR: join(dir, 'files'), NUXT_INCOMING_DIR: join(dir, 'incoming'), NUXT_API_TOKEN: token, NUXT_MCP_TOKEN: token } })
   let output = ''
   for (const stream of [child.stdout, child.stderr]) stream.on('data', chunk => { output = (output + chunk).slice(-8000) })
   service = { baseUrl: `http://127.0.0.1:${port}`, stop: () => stopOwnedChild(child) }
@@ -465,4 +466,145 @@ it('rejects legacy capacity overflow explicitly without truncation or adapter au
   expect(JSON.stringify(duplicate.body)).toContain('重复')
   expect(await state(f.id)).toEqual(before)
   expect(await call('get_file_parse_history', { fileId: f.id })).toEqual({ fileId: f.id, rows: [], nextAfterId: null })
+})
+
+// #310: real bytes and public OCR writes; these fixtures never use the checkout store.
+function inputFile310() {
+  serial++
+  const relPath = `input-310-${serial}.pdf`
+  const bytes = Buffer.from('synthetic parse source 310')
+  writeFileSync(join(dir, 'files', relPath), bytes)
+  return db.insert(schema.storedFile).values({ relPath, filename: relPath, ext: 'pdf', bytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') }).returning().get()
+}
+async function ocr310(id: number, text: string) {
+  const result = await call('save_ocr_result', { fileId: id, markdown: `<!-- page: 1 -->\n${text}` })
+  expect(result.written).toBe(1)
+  const read = await call('get_ocr_result', { fileId: id, includeVersion: true })
+  expect(read.markdown).toContain(text)
+  return read.results.map((p: any) => ({ page: p.page, version: p.version }))
+}
+
+it('310 freezes actual file and observed OCR inputs with HTTP MCP parity and preserves formal evidence on drift', async () => {
+  const f = inputFile310()
+  const pages = await ocr310(f.id, 'first OCR input')
+  const e = db.insert(schema.enterprise).values({ name: '人工确认310', nameNorm: '人工确认310' }).returning().get()
+  const r = db.insert(schema.record).values({ enterpriseId: e.id, source: 'jxj', titleCode: 'specialized_sme' }).returning().get()
+  const ev = db.insert(schema.recordEvent).values({ recordId: r.id, eventType: 'award', year: 2024 }).returning().get()
+  const evidence = db.insert(schema.recordEvidence).values({ recordEventId: ev.id, sourceFile: f.relPath, page: 7, attachment: '人工确认分节乙', listNo: 12 }).returning().get()
+  const before = await state(f.id)
+  const response = await http(f.id, 'POST', { kind: 'ocr', pages }, '/preflight')
+  expect(response.status).toBe(200)
+  expect(response.headers.get('cache-control')).toContain('no-store')
+  const plan = await response.json()
+  expect(plan).toEqual({ expectedVersion: before.version, inputRef: { format: 1, fileId: f.id, relPath: f.relPath, sha256: f.sha256, kind: 'ocr', pages } })
+  expect(await call('preflight_file_parse_result', { fileId: f.id, kind: 'ocr', pages })).toEqual(plan)
+  const newerPages = await ocr310(f.id, 'second OCR input')
+  expect(newerPages).not.toEqual(pages)
+  expect((await state(f.id)).version).toBe(before.version)
+  const body = { ...write(plan.expectedVersion, '310-stale-ocr', { parts: [part] }), inputRef: plan.inputRef }
+  const rejected = await http(f.id, 'POST', body, '/commit')
+  expect(rejected.status).toBe(409)
+  expect(await rejected.text()).toContain('重新读取并预检')
+  const mcp = await rpc('tools/call', { name: 'commit_file_parse_result', arguments: { fileId: f.id, ...body } })
+  expect(mcp.body.result.isError).toBe(true)
+  expect(JSON.stringify(mcp.body)).toContain('输入已变化')
+  expect((await http(f.id, 'POST', { kind: 'ocr', pages }, '/preflight')).status).toBe(409)
+  expect(await state(f.id)).toEqual(before)
+  expect((await call('get_file_parse_history', { fileId: f.id })).rows).toEqual([])
+  expect(db.select().from(schema.recordEvidence).all().find(row => row.id === evidence.id)).toEqual(evidence)
+  expect(db.select().from(schema.recordEvent).all().find(row => row.id === ev.id)).toEqual(ev)
+  const fresh = await call('preflight_file_parse_result', { fileId: f.id, kind: 'ocr', pages: newerPages })
+  const freshBody = { ...write(fresh.expectedVersion, '310-fresh-ocr', { parts: [part] }), inputRef: fresh.inputRef }
+  const accepted = await call('commit_file_parse_result', { fileId: f.id, ...freshBody })
+  expect(accepted.state.inputLineage).toEqual({ status: 'bound', inputRef: fresh.inputRef })
+  expect(await state(f.id)).toEqual(accepted.state)
+  expect(db.select().from(schema.recordEvidence).all().find(row => row.id === evidence.id)).toEqual(evidence)
+  expect(await call('get_file_parse_history', { fileId: f.id, receiptId: accepted.receiptId })).toMatchObject({ inputLineage: accepted.state.inputLineage, after: { inputLineage: accepted.state.inputLineage } })
+  await ocr310(f.id, 'third OCR input after bound result')
+  const audits = db.select().from(schema.fileParseAudit105).all().filter(row => row.fileId === f.id)
+  const ocrRows = db.select().from(schema.ocrResult).all().filter(row => row.fileId === f.id)
+  expect((await state(f.id)).version).toBe(accepted.state.version)
+  for (const version of [plan.expectedVersion, accepted.state.version]) {
+    const downgrade = write(version, `310-no-ref-${version}`, { parts: [] })
+    const denied = await http(f.id, 'PUT', downgrade)
+    expect(denied.status).toBe(409)
+    expect(await denied.text()).toContain('重新读取')
+    const modernMcp = await rpc('tools/call', { name: 'save_parse_result', arguments: { fileId: f.id, ...downgrade } })
+    expect(modernMcp.body.result.isError).toBe(true)
+  }
+  const legacyMcp = await rpc('tools/call', { name: 'save_parse_result', arguments: { relPath: f.relPath, parts: [] } })
+  expect(legacyMcp.body.result.isError).toBe(true)
+  expect(JSON.stringify(legacyMcp.body)).toContain('预检')
+  expect(await state(f.id)).toEqual(accepted.state)
+  expect(db.select().from(schema.fileParseAudit105).all().filter(row => row.fileId === f.id)).toEqual(audits)
+  expect(db.select().from(schema.ocrResult).all().filter(row => row.fileId === f.id)).toEqual(ocrRows)
+  expect(db.select().from(schema.recordEvidence).all().find(row => row.id === evidence.id)).toEqual(evidence)
+  const status = await http(f.id, 'PATCH', write(accepted.state.version, '310-bound-status', { parseState: 'failed' }))
+  expect(status.status).toBe(200)
+  const statusSaved = await status.json()
+  expect(statusSaved.state.inputLineage).toEqual(accepted.state.inputLineage)
+  expect(statusSaved.state.parts).toEqual(accepted.state.parts)
+  expect(await call('commit_file_parse_result', { fileId: f.id, ...freshBody })).toEqual({ ...accepted, replayed: true })
+  expect(await state(f.id)).toEqual(statusSaved.state)
+})
+
+it('310 keeps frozen receipts stable after disk drift and rolls back parse and audit on failure', async () => {
+  const f = inputFile310()
+  const plan = await call('preflight_file_parse_result', { fileId: f.id, kind: 'file' })
+  const before = await state(f.id)
+  const body = { ...write(plan.expectedVersion, '310-fault-retry', { parts: [part] }), inputRef: plan.inputRef }
+  db.$client.exec(`CREATE TRIGGER fail_parse310_http BEFORE INSERT ON file_parse_audit_105 WHEN NEW.file_id = ${f.id} BEGIN SELECT RAISE(ABORT, 'synthetic parse310 fault'); END`)
+  try {
+    expect((await http(f.id, 'POST', body, '/commit')).status).toBe(500)
+    expect(await state(f.id)).toEqual(before)
+    expect((await call('get_file_parse_history', { fileId: f.id })).rows).toEqual([])
+  } finally { db.$client.exec('DROP TRIGGER fail_parse310_http') }
+  const accepted = await http(f.id, 'POST', body, '/commit')
+  expect(accepted.status).toBe(200)
+  const saved = await accepted.json()
+  writeFileSync(join(dir, 'files', f.relPath), 'replacement bytes not in registry')
+  const retry = await call('commit_file_parse_result', { fileId: f.id, ...body })
+  expect(retry).toEqual({ ...saved, replayed: true })
+  expect((await http(f.id, 'PUT', write(saved.state.version, '310-disk-legacy-put', { parts: [] }))).status).toBe(409)
+  const legacy = await rpc('tools/call', { name: 'save_parse_result', arguments: { fileId: f.id, parts: [] } })
+  expect(legacy.body.result.isError).toBe(true)
+  expect(JSON.stringify(legacy.body)).toContain('预检')
+  expect((await http(f.id, 'POST', { ...body, idempotencyKey: '310-new-key-disk-drift', expectedVersion: saved.state.version }, '/commit')).status).toBe(409)
+  expect((await http(f.id, 'POST', { kind: 'file' }, '/preflight')).status).toBe(409)
+  expect(await state(f.id)).toEqual(saved.state)
+  expect((await call('get_file_parse_history', { fileId: f.id })).rows.map((r: any) => r.receiptId)).toEqual([saved.receiptId])
+  const wrongInput = { ...body, inputRef: { ...body.inputRef, sha256: 'a'.repeat(64) } }
+  expect((await http(f.id, 'POST', wrongInput, '/commit')).status).toBe(409)
+})
+
+it('310 exposes frozen contracts and cannot downgrade missing input while retaining explicit legacy unknown', async () => {
+  const f = inputFile310()
+  const before = await state(f.id)
+  const body = write(before.version, '310-no-input', { parts: [part] })
+  expect((await http(f.id, 'POST', body, '/commit')).status).toBe(400)
+  const rejected = await rpc('tools/call', { name: 'commit_file_parse_result', arguments: { fileId: f.id, ...body } })
+  expect(rejected.status).toBe(400)
+  expect(await state(f.id)).toEqual(before)
+  const plan = await call('preflight_file_parse_result', { fileId: f.id, kind: 'file' })
+  const missingParts = { ...write(before.version, '310-no-parts', { parseState: 'parsed' }), inputRef: plan.inputRef }
+  expect((await http(f.id, 'POST', missingParts, '/commit')).status).toBe(400)
+  expect((await rpc('tools/call', { name: 'commit_file_parse_result', arguments: { fileId: f.id, ...missingParts } })).status).toBe(400)
+  expect((await http(f.id, 'POST', { ...body, inputRef: plan.inputRef }, '/commit', false)).status).toBe(401)
+  expect((await http(f.id, 'POST', { kind: 'file' }, '/preflight', false)).status).toBe(401)
+  expect((await rpc('tools/call', { name: 'preflight_file_parse_result', arguments: { fileId: f.id, kind: 'file' } }, false)).status).toBe(401)
+  expect((await rpc('tools/call', { name: 'commit_file_parse_result', arguments: { fileId: f.id, ...body, inputRef: plan.inputRef } }, false)).status).toBe(401)
+  const tools = (await rpc('tools/list', {})).body.result.tools
+  const commit = tools.find((t: any) => t.name === 'commit_file_parse_result')
+  expect(commit.inputSchema.required).toEqual(expect.arrayContaining(['fileId','inputRef','parts','expectedVersion','idempotencyKey','actor','reason']))
+  expect(tools.find((t: any) => t.name === 'preflight_file_parse_result').annotations.readOnlyHint).toBe(true)
+  const anonymous = (await rpc('tools/list', {}, false)).body.result.tools
+  expect(anonymous.some((t: any) => ['preflight_file_parse_result','commit_file_parse_result'].includes(t.name))).toBe(false)
+  const spec = await (await fetch(`${service.baseUrl}/_openapi.json`)).json()
+  expect(spec.paths['/api/files/{id}/parse-result/commit'].post.requestBody.content['application/json'].schema.required).toContain('inputRef')
+  expect(spec.paths['/api/files/{id}/parse-result/preflight'].post).toBeTruthy()
+  // Old clients still work and cannot be mistaken for a frozen-input receipt.
+  const old = await call('save_parse_result', { fileId: f.id, ...body })
+  expect(old.state.inputLineage).toEqual({ status: 'unknown' })
+  const status = await call('save_parse_result', { fileId: f.id, ...write(old.state.version, '310-status-only', { parseState: 'failed' }) })
+  expect(status.state.inputLineage).toEqual({ status: 'unknown' })
 })

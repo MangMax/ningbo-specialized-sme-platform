@@ -53,6 +53,8 @@ export const MCP_WRITE_TOOLS = [
   'remove_file',
   'restore_file',
   'save_parse_result',
+  'preflight_file_parse_result',
+  'commit_file_parse_result',
   'save_roster_batch',
   'submit_platform_batch',
   'retry_platform_batch',
