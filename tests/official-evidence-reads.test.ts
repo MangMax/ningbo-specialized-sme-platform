@@ -112,6 +112,7 @@ it('keeps legacy anonymous reads unchanged and rejects sensitive opt-in before a
   for(const path of [`/api/roster/evidence/${id}?official=latest`,`/api/roster/events/1?official=latest`,'/api/roster/import/receipts/items?projection=snapshot&source=private_batch&batchId=1&itemIndex=0&oldRecordId=1']){const r=await f.http(path,undefined,null);expect(r.status).toBe(401);expect(r.body).toMatchObject({error:{code:'unauthorized'}})}
   expect(spy).not.toHaveBeenCalled();expect(get).not.toHaveBeenCalled();expect(all).not.toHaveBeenCalled();spy.mockRestore();get.mockRestore();all.mockRestore()
   const legacy=await f.http(`/api/roster/evidence/${id}?official=latest`);expect(latestSchema.parse(legacy.body).official).toMatchObject({availability:'unknown_legacy',row:null})
+  expect(eventSchema.parse((await f.http('/api/roster/events/1?official=latest')).body).official).toMatchObject({rows:[],uncaptured:'unknown_legacy'})
 })
 it('reads descending revision pages and never inherits raw on cross-content correction',async()=>{
   const f=await fixture();await f.commit(f.announcement([f.record('Canonical',2021,f.row('旧名'))]),'seed');const id=f.evidenceIds()[0]!.id
@@ -373,4 +374,21 @@ it('closes sensitive HTTP reads when the token is unconfigured without changing 
     observer.restore();expect(observer.results).toEqual([])
     expect((await f.http('/api/roster/evidence/1?legacyIgnored=1',undefined,null)).status).toBe(200)
   } finally {vi.stubGlobal('useRuntimeConfig',()=>({apiToken:'synthetic-c-api',mcpToken:'synthetic-c-mcp',filesDir:current.filesDir}))}
+})
+
+it('returns not retained for a missing event array despite the live moved events remaining available',async()=>{
+  const f=await fixture(),s=await f.seedMerge(),path=`$[${s.index}].detail.lineage.recordsFolded[0].eventIds`
+  f.sqlite.prepare('UPDATE import_batch SET item_results=json_remove(item_results,?) WHERE id=?').run(path,s.batchId)
+  expect(f.sqlite.prepare('SELECT id FROM record_event WHERE id=?').get(s.old.record_event_id)).toEqual({id:s.old.record_event_id})
+  const r=await f.http('/api/roster/import/receipts/items?projection=eventIds&'+s.selector);expect(r.status).toBe(200);expect(snapshotSchema.parse(r.body).availability).toBe('not_retained');expect(r.body).not.toHaveProperty('eventIds')
+})
+it('projects only the fixed eight snapshot fields even when the selected historical fold contains a giant extra blob',async()=>{
+  const f=await fixture(),s=await f.seedMerge(),path=`$[${s.index}].detail.lineage.recordsFolded[0].fromRecordSnapshot.privateExtra`
+  f.sqlite.prepare('UPDATE import_batch SET item_results=json_set(item_results,?,?) WHERE id=?').run(path,'PRIVATE_EXTRA'.repeat(200000),s.batchId)
+  const observer=observeDriver(f.sqlite),r=await f.http('/api/roster/import/receipts/items?projection=snapshot&'+s.selector);observer.restore()
+  expect(r.status).toBe(200)
+  const snapshot=z.object({snapshot:z.record(z.string(),z.unknown())}).parse(r.body).snapshot
+  expect(Object.keys(snapshot).sort()).toEqual(['district','enterpriseId','id','nameRaw','qualityFlags','source','titleCode','usccRaw'])
+  expect(JSON.stringify(observer.results.filter(r=>r.sql.includes('WITH source_row')))).not.toContain('PRIVATE_EXTRA')
+  expect(Buffer.byteLength(JSON.stringify(r.body))).toBeLessThan(1024)
 })

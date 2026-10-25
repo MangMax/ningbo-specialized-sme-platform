@@ -92,7 +92,7 @@ it('discovers bounded opt-in fields on actual OpenAPI and MCP schemas while keep
 it('reads exact fact evidence and event with HTTP and actual MCP JSON-RPC parity after public worker writes',async()=>{
   const s=await seed(false,'mcp')
   for(const [path,name,args] of [[`/api/roster/evidence/${s.old.evidenceId}?official=latest`,'get_roster_evidence',{id:s.old.evidenceId,official:'latest'}],[`/api/roster/events/${s.old.eventId}?official=latest`,'get_official_event',{eventId:s.old.eventId,official:'latest'}]] as const) {
-    const rest=await http(path);expect(rest.status).toBe(200);const mcp=rpcValue(await rpc(name,args));expect(mcp.isError).toBe(false);expect(mcp.body).toEqual(rest.body)
+    const rest=await http(path);expect(rest.status).toBe(200);expect(rest.body).toMatchObject(name==='get_roster_evidence'?{official:{row:{nameRaw:'2021旧名',path:'notice.txt',sha256,bytes:Buffer.byteLength(text)}}}:{official:{rows:[{nameRaw:'2021旧名'}]}});const mcp=rpcValue(await rpc(name,args));expect(mcp.isError).toBe(false);expect(mcp.body).toEqual(rest.body)
   }
   expect((await http(`/api/roster/evidence/${s.old.evidenceId}`,undefined,null)).status).toBe(200)
   expect(rpcValue(await rpc('get_roster_evidence',{id:s.old.evidenceId},null)).body).toEqual((await http(`/api/roster/evidence/${s.old.evidenceId}`,undefined,null)).body)
@@ -131,4 +131,23 @@ it('preserves structured budget errors and history pages across actual transport
   expect(rest.status).toBe(413);expect(rest.body).toMatchObject({error:{code:'response_limit'}})
   const denied=rpcValue(await rpc('get_roster_evidence',{id:s.old.evidenceId,official:'latest',maxBytes:1}));expect(denied.isError).toBe(true);expect(denied.body).toEqual(rest.body)
   const history=await http(path+'?official=history&pageSize=1');expect(history.status).toBe(200);expect(rpcValue(await rpc('get_roster_evidence',{id:s.old.evidenceId,official:'history',pageSize:1})).body).toEqual(history.body)
+})
+
+it('rejects out of range and mismatched event cursors with real transport error parity',async()=>{
+  const s=await seed(true),m=s.merged!,selector={projection:'eventIds',source:'private_batch',batchId:m.batchId,itemIndex:m.itemIndex,oldRecordId:m.oldRecordId}
+  const cursor=Buffer.from(JSON.stringify({source:'private_batch',sourceId:m.batchId,itemIndex:m.itemIndex,oldRecordId:m.oldRecordId,afterIndex:999999})).toString('base64url')
+  for(const value of ['invalid-cursor',cursor]) {
+    const args={...selector,cursor:value},rest=await http('/api/roster/import/receipts/items?'+query(args));expect(rest.status).toBe(400);expect(rest.body).toMatchObject({error:{code:'invalid_query'}})
+    const mcp=rpcValue(await rpc('list_roster_import_items',args));expect(mcp.isError).toBe(true);expect(mcp.body).toEqual(rest.body)
+  }
+})
+it('enforces the 300 and 301 event source boundary over real HTTP and MCP without cursor bypass',async()=>{
+  const s=await seed(),insert=sqlite.prepare("INSERT INTO record_evidence(record_event_id,source_file,list_no) VALUES(?,'notice.txt',?)")
+  // Explicit oversized historical fixture, after genuine public command setup.
+  for(let i=2;i<=300;i++) insert.run(s.old.eventId,10000+i)
+  const args={eventId:s.old.eventId,official:'latest',afterEvidenceId:999999},path=`/api/roster/events/${s.old.eventId}?official=latest&afterEvidenceId=999999`
+  const at=await http(path);expect(at.status).toBe(200);expect(at.body).toMatchObject({official:{rows:[]}});expect(rpcValue(await rpc('get_official_event',args)).body).toEqual(at.body)
+  insert.run(s.old.eventId,10301)
+  const over=await http(path);expect(over.status).toBe(413);expect(over.body).toMatchObject({error:{code:'source_limit'}})
+  const mcp=rpcValue(await rpc('get_official_event',args));expect(mcp.isError).toBe(true);expect(mcp.body).toEqual(over.body)
 })
