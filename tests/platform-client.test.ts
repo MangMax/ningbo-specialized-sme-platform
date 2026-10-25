@@ -7,6 +7,7 @@ import {
   APPLY_LIST_PATH,
   type PlatformFetch,
   queryAllRdjb,
+  queryPlatformSlots,
   hasPlatformCredential,
 } from '../lib/platform'
 
@@ -194,4 +195,52 @@ it.each(['c', 'sid=.'])('preserves unrelated field names with a short Cookie and
   expect(result[0]?.status).toBe('success')
   expect(result[0]?.rows).toHaveLength(6)
   expect(result[0]?.raw.includes(`<!--${cookie}-->`)).toBe(false)
+})
+
+function syntheticPage(n: number) {
+  return JSON.stringify({ zrarData: { grid: { applyGrid: { page: n, pageSize: 50, maxCount: 51,
+    pageSet: Array.from({ length: n === 1 ? 50 : 1 }, (_, i) => ({ id: `SQ${(n - 1) * 50 + i + 1}` })),
+  } } } })
+}
+
+it.each([{ maxRequests: 1 }, { maxRows: 50 }])('legacy page budget %j leaves page two unfinished without discarding accepted rows', async limit => {
+  const calls: number[] = []
+  const [result] = await queryPlatformSlots({ uscc: '91330211255994457P', cookie: 'synthetic', ...limit,
+    fetchImpl: async (_url, init) => {
+      const page = Number(new URLSearchParams(init.body).get('pageNum')); calls.push(page)
+      return { ok: true, status: 200, text: async () => syntheticPage(page) }
+    },
+  }, [{ interface: 'apply_list' }])
+  expect(calls).toEqual([1])
+  expect(result).toMatchObject({ status: 'partial', maxCount: 51, collection: { completeness: 'partial', declaredTotal: 51, requestCount: 1, unfinished: [{ page: 2 }] } })
+  expect(result!.rows).toHaveLength(50)
+})
+
+it('legacy timeout includes retry backoff in the operation deadline and makes no later request', async () => {
+  let time = 1000, calls = 0
+  const clock = vi.spyOn(Date, 'now').mockImplementation(() => time)
+  const sleeps: number[] = []
+  try {
+    const [result] = await queryPlatformSlots({ uscc: '91330211255994457P', cookie: 'synthetic', maxDurationMs: 20,
+      sleep: async ms => { sleeps.push(ms); time += ms },
+      fetchImpl: async (_url, init) => {
+        calls++
+        if (new URLSearchParams(init.body).get('pageNum') === '2') throw new Error('transient network failure')
+        return { ok: true, status: 200, text: async () => syntheticPage(1) }
+      },
+    }, [{ interface: 'apply_list' }])
+    expect(calls).toBe(2)
+    expect(sleeps).toEqual([20])
+    expect(result).toMatchObject({ status: 'partial', collection: { declaredTotal: 51, unfinished: [{ page: 2 }], pages: [expect.any(Object), expect.objectContaining({ error: { code: 'timeout', message: expect.any(String) } })] } })
+    expect(result!.rows).toHaveLength(50)
+  } finally { clock.mockRestore() }
+})
+
+it('legacy client does not retry an HTTP 4xx or classify it as empty', async () => {
+  let calls = 0
+  const [result] = await queryPlatformSlots({ uscc: '91330211255994457P', cookie: 'synthetic',
+    fetchImpl: async () => { calls++; return { ok: false, status: 400, text: async () => 'bad request' } },
+  }, [{ interface: 'apply_list' }])
+  expect(calls).toBe(1)
+  expect(result).toMatchObject({ status: 'failed', collection: { completeness: 'partial', requestCount: 1, unfinished: [{ page: 1 }] } })
 })

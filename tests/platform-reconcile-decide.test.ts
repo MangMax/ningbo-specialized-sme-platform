@@ -27,6 +27,8 @@ function evidenceFromFixture(
     rdjb: outcome.rdjb,
     queriedAt: outcome.queriedAt,
     status: outcome.status,
+    // Named fixtures explicitly declare their entire single-page total.
+    completeness: outcome.status === 'failed' ? 'partial' : 'complete',
     failureReason: outcome.failureReason,
     relations: outcome.rows.map((row, index) =>
       relationFromRow(row, { interface: outcome.interface, rdjb: outcome.rdjb, queryKey: USCC, sequenceNo: index + 1 }),
@@ -46,6 +48,7 @@ function evidence(
     rdjb,
     queriedAt: QUERIED_AT,
     status,
+    completeness: status === 'failed' || status === 'partial' ? 'partial' : 'complete',
     failureReason: null,
     relations: rows.map((row, index) =>
       relationFromRow(row, { interface: meta.interface, rdjb, queryKey: USCC, sequenceNo: index + 1 }),
@@ -103,6 +106,12 @@ describe('query processing only', () => {
     expect(decideDifference(target(), slots.slice(1)).status).toBe('query_failed')
     slots[0] = failedEvidence({ interface: 'business_list', rdjb: '1' }, 'expired session')
     expect(decideDifference(target(), slots).status).toBe('query_failed')
+  })
+
+  it('historical zero-row success without completeness proof cannot become no_record', () => {
+    const slots = [evidence({ interface: 'business_list', rdjb: '1' }, []), evidence({ interface: 'business_list', rdjb: '2' }, []), evidence({ interface: 'business_list', rdjb: '3' }, []), evidence({ interface: 'apply_list' }, [])]
+    for (const slot of slots) delete slot.completeness
+    expect(decideDifference(target(), slots)).toMatchObject({ status: 'query_failed', reasonCode: null })
   })
   it('failed queries do not turn into no_record or confirmed reasons', () => {
     const v = decideDifference(target(), [failedEvidence({ interface: 'apply_list' }, 'timeout')])
