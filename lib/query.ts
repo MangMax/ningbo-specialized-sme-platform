@@ -382,6 +382,7 @@ function buildRecordRows(
     const lifecycleEvents: LifecycleEvent[] = merged.map((e) => ({
       id: e.id,
       eventType: e.type,
+      batchSeq: e.batchSeq,
       year: e.year,
       decidedYear: e.decidedYear,
       reviewOutcome: e.reviewOutcome,
@@ -393,7 +394,7 @@ function buildRecordRows(
     if (hasQualifyingEvent && (calculated.anchorEventId == null || calculated.anchorYear == null)) {
       flags.add('no_anchor_year')
     }
-    if (calculated.needsReview) flags.add('decided_year_missing')
+    if (anchor?.decidedYear == null && anchor != null) flags.add('decided_year_missing')
     const anchorYear = calculated.anchorYear
     if (
       merged.some((e) => {
@@ -416,11 +417,13 @@ function buildRecordRows(
       ? 'not_applicable'
       : calculated.state === 'terminated'
         ? 'terminated'
-        : calculated.anchorEventId == null || calculated.dueYear == null
-          ? 'undatable'
-          : flags.size > 0
-            ? 'needs_review'
-            : 'active'
+        : calculated.needsReview
+          ? 'needs_review'
+          : calculated.anchorEventId == null || calculated.dueYear == null
+            ? 'undatable'
+            : flags.size > 0
+              ? 'needs_review'
+              : 'active'
 
     const district = minBy(recs.filter((r) => r.district), (r) => r.recordId)?.district ?? null
     return {

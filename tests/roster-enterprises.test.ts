@@ -366,15 +366,15 @@ beforeAll(async () => {
   // —— 生命周期:复核通过 ⇒ 锚点取结论年份;缺结论年份 ⇒ 标待核 ——
   const reviewed = enterprise('reviewed', '宁波复核通过企业', '91330211AAAAAAA020X')
   record(reviewed, 'specialized_sme', 'jxj', [
-    { eventType: 'award', year: 2021 },
-    { eventType: 'review', year: 2021, decidedYear: 2024, reviewOutcome: 'passed' },
+    { eventType: 'award', year: 2021, batchSeq: 1 },
+    { eventType: 'review', year: 2021, decidedYear: 2024, reviewOutcome: 'passed', batchSeq: 1 },
   ])
   const noDecided = enterprise('noDecided', '宁波缺结论年份企业', '91330211AAAAAAA021X')
   record(noDecided, 'specialized_sme', 'jxj', [{ eventType: 'award', year: 2020, decidedYear: null }])
   const failedReview = enterprise('failedReview', '宁波复核未通过企业', '91330211AAAAAAA022X')
   record(failedReview, 'specialized_sme', 'jxj', [
-    { eventType: 'award', year: 2021 },
-    { eventType: 'review', year: 2021, decidedYear: 2024, reviewOutcome: 'failed' },
+    { eventType: 'award', year: 2021, batchSeq: 1 },
+    { eventType: 'review', year: 2021, decidedYear: 2024, reviewOutcome: 'failed', batchSeq: 1 },
   ])
 
   // —— 缺统代企业:公布名单条目必须保留,并按名称可搜到 ——
