@@ -1,7 +1,11 @@
+import { resolve } from 'node:path'
+import { isJobId } from '../../../lib/job'
 import { appLog } from '../../../lib/logging'
 import { DEFAULT_DPI, isPdfPath } from '../../../lib/pdf-page'
 import type { JobCompletion, JobContext, JobParseResult, JobSpec } from '../job-runner'
-import { findFileIdByRelPath } from '../mcp-files'
+import { setJobResult } from '../job-store'
+import { acquireOcrAttempt, checkpointOriginalOcrAttempt, fenceOriginalOcrPublication, prepareOcrPublication, recordSharedOcrPublication, sharedOcrPublication, updateOcrAttempt, verifyOcrInput, type OcrAttemptUpdate, type OcrCapture, type OcrPublication } from '../ocr-publication'
+import { listOcrResults } from '../ocr-result'
 import {
   MAX_CONCURRENT_PADDLE_JOBS,
   OcrApiError,
@@ -15,37 +19,15 @@ import {
   ocrPageCacheDirAbs,
   ocrPageCacheKey,
   readOcrPageCache,
-  sha256OfFile,
   writeOcrPageCache,
 } from '../ocr-page-cache'
 import { writeOcrResult } from '../ocr-result'
 import { listPdfPages, resolveWithinRoot, type PageImageRef } from '../pdf-pages'
 
-/**
- * `ocr` —— **批量**把扫描 PDF 识别成文本(通路 a:在线 API)。
- *
- * 票 19 把 `ocr` 登记成 `todo` 时给的理由很具体:「结果无处可放」。票 14 把
- * `ocr_result` 表建起来之后,这里就是那句话的答案 —— **`todo` → `ready`**,
- * 注册表(`job-specs.ts`)与提交路由一行都不用改。
- *
- * OCR 前必须先完成票 13 的页图渲染(默认 300 DPI,旧的 400 DPI 页图也可用)。
- * 一份 PDF 的页图并发调用 Paddle,
- * 并把每次返回绑定到页图清单中的源页码;没有完整、最新的页图就拒绝提交。
- *
- * ── 取消检查 ───────────────────────────────────────────────────────────
- * 每张 PNG 轮询时都检查取消标记;取消后页池不再启动新请求,已完成的整份 PDF 才会保留。
- * 结果只在一份 PDF 的所有页成功后替换,因此取消或单页失败不会留下半份新结果。
- *
- * ── 成功页中转(断点续跑)──────────────────────────────────────────────
- * 每一页**一识别成功**就把结果写进该 PDF 自己的页结果缓存
- * (`ocr-page-cache.ts`,落在页图目录下的 `.ocr-cache/`),不等全份跑完。这样:
- *  - 一份里部分页失败(典型是 Paddle 的 HTTP 429,而 4xx **不自动重试**)时,跑成功
- *    的那些页不再随内存一起丢 —— 它们已经在缓存里,**重跑只补缺失/失败的那几页**;
- *  - `ocr_result` 的写法**一点没变**:仍是一份全成功才在单个事务里整份替换
- *    (`replaceExistingPages`),所以「部分成功」**不会**在正式结果里留下半份新数据
- *    —— 缓存只是中转,不是结果。
- * 命中判据是页图内容 sha256 + 模型 + 有效选项指纹(见 `ocr-page-cache.ts`),所以换了
- * 页图、换了模型、换了影响识别结果的选项,旧条目自然不再命中;坏条目当未命中重识别。
+/** Online OCR freezes input bytes and target page versions at submission.
+ * Paid page responses checkpoint in job.result before publication; the optional
+ * page cache remains an accelerator. Conflicts/cancellation never discard a
+ * response already received. Explicit resume reuses the original preconditions.
  */
 
 /** 一份文件的识别结果。`ok` 是判据。 */
@@ -57,6 +39,9 @@ export type OcrFileOutcome =
       fileId: number
       /** 识别出的页数(== 写入 `ocr_result` 的页数)。 */
       pages: number
+      /** A replay reports the known publication, but makes no new page writes. */
+      writtenPages?: number
+      replayed?: true
       /** 票 13 已渲染的页图数;没渲染过是 0。 */
       renderedPageImages: number
       /**
@@ -76,6 +61,7 @@ export type OcrFileOutcome =
 /** 任务的产出。 */
 export interface OcrJobResult {
   files: OcrFileOutcome[]
+  publication: OcrPublication
   total: number
   ok: number
   failed: number
@@ -94,6 +80,7 @@ const MAX_CONCURRENT_OCR_FILES_PER_JOB = 2
 interface OcrParams {
   files: string[]
   model: string | null
+  resumeJobId?: string
 }
 
 /**
@@ -143,35 +130,16 @@ export function parseOcrParams(raw: Record<string, unknown>): JobParseResult {
       }
     }
   }
+  if (raw.resumeJobId !== undefined && (typeof raw.resumeJobId !== 'string' || !isJobId(raw.resumeJobId))) return { ok: false, message: 'resumeJobId 必须是已结束 OCR 任务 ID' }
+  if (new Set(files).size !== files.length) return { ok: false, message: 'files 不得重复' }
   return {
     ok: true,
     params: {
       files,
+      ...(typeof raw.resumeJobId === 'string' ? { resumeJobId: raw.resumeJobId } : {}),
       model: typeof raw.model === 'string' && raw.model.trim() ? raw.model.trim() : null,
     },
   }
-}
-
-/** 把识别出的页写进 `ocr_result`。抽出来是为了让 run 的循环只讲编排。 */
-function persistPages(
-  ctx: JobContext,
-  fileId: number,
-  relPath: string,
-  pages: readonly OcrPageOut[],
-  model: string,
-): { written: number } {
-  const result = writeOcrResult(ctx.db, {
-    fileId,
-    pages: pages.map((p) => ({ page: p.page, markdown: p.markdown, raw: p.raw })),
-    replaceExistingPages: true,
-    channel: 'api',
-    engine: 'paddleocr',
-    model,
-    // 给了它,`page_rel_path` 才会按票 13 的规则(相对 PDF 路径 + 页号)算出来。
-    sourceRelPath: relPath,
-  })
-  if (!result.ok) throw new Error(`写入 OCR 结果失败:${result.message}`)
-  return { written: result.written }
 }
 
 /** 返回当前源 PDF 的完整最新页图;OCR 最低 300 DPI,已存在的 400 DPI 页图也可用。 */
@@ -201,24 +169,16 @@ async function currentPageImages(filesDir: string, relPath: string): Promise<Pag
   return state.pages
 }
 
-/**
- * 每次最多两份并行识别,每份 PDF 的页图也并行;全进程 Paddle 并发由 `ocrImageFile` 的共享信号量限制。
- *
- * **一份失败不停下整批**(与 `render-pages` 同一理由):批量任务的用处正是「一次交一堆」,
- * 因为第 2 份坏了就撂下第 3–7 份,等于把「哪几份坏了」换成「任务失败」。
- * 有任意一份失败 ⇒ 状态记 `failed`,明细仍在 `result.files[]` 里。
- *
- * **取消**走 `{ cancelled: true }` 并带已完成文件的产出。一份 PDF 的页结果在内存里攒齐,
- * 每页成功时**同时**中转进 `ocr-page-cache`;只有全页齐了才在单个事务里整份替换旧结果,
- * 所以中途失败或取消**不会**在正式结果里留下半份新 OCR,而**重跑只补缺失页**
- * (成功页从中转里拿,不再发给 Paddle)。
- */
+/** Two files at a time; failed/cancelled files keep individual page receipts. */
 export async function runOcr(
   ctx: JobContext,
   params: Record<string, unknown>,
   config = resolveOcrConfig(),
+  prepared?: OcrPublication,
 ): Promise<JobCompletion> {
-  const { files, model } = params as unknown as OcrParams
+  const { files, model, resumeJobId } = params as unknown as OcrParams
+  const effectiveModel = model ?? config.model
+  const publication = prepared ?? prepareOcrPublication(ctx.db, ctx.filesDir, files, effectiveModel, ocrRequestVariant(effectiveModel), config.baseUrl, resumeJobId)
   const logContext = { ...ctx.logContext, taskId: ctx.jobId }
   const startedAt = Date.now()
   appLog({ source: 'ocr', operation: 'ocr.recognize', outcome: 'started', counts: { total: files.length } }, logContext)
@@ -243,28 +203,44 @@ export async function runOcr(
     failed,
     pages: totalPages,
     channel: 'api',
+    publication,
   })
+  const checkpoint = () => setJobResult(ctx.db, ctx.jobId, snapshot())
+  checkpoint()
 
-  const processFile = async (file: string): Promise<OcrFileOutcome | null> => {
+  const processFile = async (file: string, fileIndex: number): Promise<OcrFileOutcome | null> => {
     if (ctx.cancelled()) return null
     const fileStarted = Date.now()
-    let fileId: number | null = null
+    const receipt = publication.files[fileIndex]!
+    const fileId: number | null = receipt.fileId
     let processedPages = 0
     let timedOutPages = 0
     let failedPages = 0
     let expectedPages: number | undefined
     try {
-      fileId = findFileIdByRelPath(ctx.db, file)
-      if (fileId === null) {
-        throw new Error(
-          `文件库里没有这个文件(先让 app 回填 stored_file:打开 /files 页,或调 list_files):${file}`,
-        )
-      }
+      if (receipt.error && !receipt.sourceSha256) throw new Error(receipt.error)
+      verifyOcrInput(ctx.db, ctx.filesDir, receipt)
+      if (fileId === null) throw new Error('文件库里没有这个文件')
       const images = await currentPageImages(ctx.filesDir, file)
+      if (images.length !== Object.keys(receipt.targets).length || images.some(image => receipt.images[image.page]?.relPath !== image.relPath)) throw new Error('OCR 输入页集合冲突')
       expectedPages = images.length
-      const effectiveModel = model ?? config.model
-      // 命中判据里除页图内容之外的那一半:模型 + 影响识别结果的有效选项。
-      const variant = ocrRequestVariant(effectiveModel)
+      const variant = publication.variant
+      // Publication and receipt are committed together. A resumed published file
+      // is a replay, never a new write, even if a human has since revised it.
+      const sharedPublication = sharedOcrPublication(ctx.db, publication, receipt)
+      if (sharedPublication) {
+        receipt.state = 'published'
+        receipt.publishedVersions = sharedPublication.versions
+        checkpoint()
+      }
+      if (receipt.state === 'published') return {
+        file, ok: true, fileId, pages: images.length, writtenPages: 0, replayed: true, renderedPageImages: images.length,
+        cachedPages: images.length, engine: 'paddleocr', model: effectiveModel,
+        apiJobIds: receipt.captures.map(c => c.jobId), elapsedMs: Date.now() - fileStarted,
+      }
+      receipt.state = 'pending'
+      delete receipt.error
+      checkpoint()
       const cacheDir = ocrPageCacheDirAbs(ctx.filesDir, file)
       const startedAt = Date.now()
       const pageResults: Array<OcrPageOut | undefined> = Array.from({ length: images.length })
@@ -283,20 +259,67 @@ export async function runOcr(
           const pageContext = { ...logContext, fileId: fileId!, page: image.page }
           try {
             const imagePath = resolveWithinRoot(ctx.filesDir, image.relPath)
-            const imageSha256 = await sha256OfFile(imagePath)
+            const imageSha256 = receipt.images[image.page]!.sha256
             const cacheKey = ocrPageCacheKey(imageSha256, variant)
+            const shared = publication.recovery ? acquireOcrAttempt(ctx.db, publication, receipt, image.page, ctx.jobId) : null
+            const persistAttempt = (update: OcrAttemptUpdate) => shared
+              ? updateOcrAttempt(ctx.db, publication, receipt, shared, update).capture
+              : checkpointOriginalOcrAttempt(ctx.db, publication, receipt, image.page, ctx.jobId, update, snapshot)
+            if (shared) {
+              receipt.claims ??= {}
+              receipt.claims[image.page] = { sourceJobId: shared.sourceJobId, fingerprint: shared.fingerprint, attemptId: shared.claim.attemptId, ownerTaskId: shared.claim.ownerTaskId, state: shared.claim.state }
+              if (shared.claim.state !== 'unsubmitted' && shared.claim.state !== 'complete') receipt.requests[image.page] = { state: shared.claim.state, taskId: shared.claim.ownerTaskId, ...(shared.claim.jobId ? { jobId: shared.claim.jobId } : {}) }
+              checkpoint()
+              if (shared.action === 'blocked') throw new Error(`OCR 共享认领 ${shared.claim.state === 'unknown' ? '提交结果未知' : shared.claim.state === 'claimed' ? '已认领,结果待核实' : '拒绝/失败回执重放'};原尝试任务 ${shared.claim.ownerTaskId},不得从旧锚点重复付费`)
+            }
             // 先问中转:这一页的页图 + 模型 + 选项都跟上次一样时,直接用上次那页的结果,
             // 不再花钱、也不再打一次容易被限流的提交。
-            const cached = await readOcrPageCache(cacheDir, cacheKey, { imageSha256, variant })
+            const retained = shared?.claim.capture ?? receipt.captures.find(c => c.page === image.page && c.imageSha256 === imageSha256 && c.variant === variant)
+            const remote = receipt.requests[image.page]
+            const candidate = retained ?? (shared || remote ? null : await readOcrPageCache(cacheDir, cacheKey, { imageSha256, variant }))
+            const cached = candidate?.model === effectiveModel ? candidate : null
             if (cached) {
               pageResults[index] = { page: image.page, markdown: cached.markdown, raw: cached.raw }
               apiJobIds[index] = cached.jobId
+              if (shared || !receipt.captures.some(c => c.page === image.page)) {
+                receipt.captures = receipt.captures.filter(c => c.page !== image.page)
+                receipt.captures.push(retained ?? { page: image.page, markdown: cached.markdown, raw: cached.raw, imageSha256, variant, jobId: cached.jobId, model: cached.model, createdAt: cached.createdAt, taskId: null, sourceSha256: null })
+                receipt.state = 'partial'
+                checkpoint()
+              }
               cachedPages += 1
               processedPages += 1
               appLog({ source: 'ocr', operation: 'ocr.page.cache', outcome: 'skipped', durationMs: Date.now() - pageStarted }, pageContext)
               continue
             }
+            if (remote?.state === 'unknown') throw new Error('远端提交结果未知;保留原回执,禁止自动重复付费提交')
             const out = await ocrImageFile({
+              resumeJobId: remote?.state === 'accepted' ? remote.jobId : undefined,
+              expectedImageSha256: imageSha256,
+              onSubmissionStarted: () => {
+                receipt.requests[image.page] = { state: 'unknown', taskId: ctx.jobId, ...(remote ? { previous: [...(remote.previous ?? []), { state: remote.state, ...(remote.jobId ? { jobId: remote.jobId } : {}), ...(remote.taskId ? { taskId: remote.taskId } : {}) }] } : {}) }
+                persistAttempt({ state: 'unknown' })
+                if (shared) receipt.claims![image.page]!.state = 'unknown'
+                checkpoint()
+              },
+              onSubmitted: jobId => {
+                Object.assign(receipt.requests[image.page]!, { state: 'accepted', jobId })
+                persistAttempt({ state: 'accepted', jobId })
+                if (shared) receipt.claims![image.page]!.state = 'accepted'
+                checkpoint()
+              },
+              onSubmissionRejected: () => {
+                receipt.requests[image.page]!.state = 'rejected'
+                persistAttempt({ state: 'rejected' })
+                if (shared) receipt.claims![image.page]!.state = 'rejected'
+                checkpoint()
+              },
+              onRemoteFailed: () => {
+                receipt.requests[image.page]!.state = 'failed'
+                persistAttempt({ state: 'failed' })
+                if (shared) receipt.claims![image.page]!.state = 'failed'
+                checkpoint()
+              },
               token: config.token,
               baseUrl: config.baseUrl,
               model: effectiveModel,
@@ -306,18 +329,34 @@ export async function runOcr(
               isCancelled: () => ctx.cancelled(),
             })
             // Paddle 没有源文档页码;这里由清单中的本地页号绑定,不从 OCR 文本猜页码。
-            pageResults[index] = { ...out.page, page: image.page }
-            apiJobIds[index] = out.jobId
-            // 成功即中转,不等全份:整份失败/取消时这一页也不会白识别。
-            await writeOcrPageCache(cacheDir, cacheKey, {
+            // Durable business receipt first; cache loss must not cause a second charge.
+            let capture: OcrCapture = { page: image.page, markdown: out.page.markdown, raw: out.page.raw, imageSha256, variant, jobId: out.jobId, model: out.model, createdAt: new Date().toISOString(), taskId: receipt.requests[image.page]?.taskId ?? null, sourceSha256: receipt.sourceSha256 }
+            // Include the paid response in the initial executor's active
+            // checkpoint; terminal originals append only to their shared ledger.
+            receipt.captures = receipt.captures.filter(c => c.page !== image.page)
+            receipt.captures.push(capture)
+            receipt.state = 'partial'
+            const durable = persistAttempt({ state: 'complete', capture })
+            if (!durable) throw new Error('OCR 原结果回执不完整;禁止丢弃原采集或重新提交')
+            capture = durable
+            if (shared) receipt.claims![image.page]!.state = 'complete'
+            pageResults[index] = { page: image.page, markdown: capture.markdown, raw: capture.raw }
+            apiJobIds[index] = capture.jobId
+            receipt.captures = receipt.captures.filter(c => c.page !== image.page)
+            receipt.captures.push(capture)
+            receipt.state = 'partial'
+            checkpoint()
+            // A legacy/retained timestamp may be unknown. Keep null in the
+            // durable capture and omit this optional cache write, never invent it.
+            if (typeof capture.createdAt === 'string') await writeOcrPageCache(cacheDir, cacheKey, {
               version: OCR_PAGE_CACHE_VERSION,
               imageSha256,
               variant,
-              jobId: out.jobId,
-              model: out.model,
-              markdown: out.page.markdown,
-              raw: out.page.raw,
-              createdAt: new Date().toISOString(),
+              jobId: capture.jobId,
+              model: capture.model,
+              markdown: capture.markdown,
+              raw: capture.raw,
+              createdAt: capture.createdAt,
             })
             processedPages += 1
             appLog({ source: 'ocr', operation: 'ocr.page', outcome: 'success', durationMs: Date.now() - pageStarted }, pageContext)
@@ -340,6 +379,8 @@ export async function runOcr(
       )
       if (ctx.cancelled()) {
         appLog({ source: 'ocr', operation: 'ocr.file', outcome: 'cancelled', fileId, counts: { done: processedPages, total: expectedPages, failed: failedPages }, durationMs: Date.now() - fileStarted }, logContext)
+        receipt.state = 'cancelled'
+        checkpoint()
         return null
       }
 
@@ -352,13 +393,38 @@ export async function runOcr(
       }
       if (ctx.cancelled()) return null
 
-      persistPages(ctx, fileId, file, completePages, effectiveModel)
+      let replayed = false
+      ctx.db.transaction(tx => {
+        fenceOriginalOcrPublication(tx, publication, ctx.jobId)
+        verifyOcrInput(tx, ctx.filesDir, receipt)
+        const committed = sharedOcrPublication(tx, publication, receipt)
+        if (committed) {
+          receipt.state = 'published'
+          receipt.publishedVersions = committed.versions
+          replayed = true
+          setJobResult(tx, ctx.jobId, snapshot())
+          return
+        }
+        const written = writeOcrResult(tx, {
+          fileId: fileId!, pages: completePages.map(page => {
+            const capture = receipt.captures.find(c => c.page === page.page)!
+            return { ...page, capture: { taskId: capture.taskId, sourceSha256: capture.sourceSha256, imageSha256: capture.imageSha256, variant: capture.variant, jobId: capture.jobId, createdAt: capture.createdAt } }
+          }), expectedVersions: receipt.targets,
+          channel: 'api', engine: 'paddleocr', model: effectiveModel, sourceRelPath: file,
+        })
+        if (!written.ok) throw new Error(written.message)
+        receipt.state = 'published'
+        receipt.publishedVersions = Object.fromEntries(listOcrResults(tx, fileId!).filter(r => r.page in receipt.targets).map(r => [r.page, r.version]))
+        recordSharedOcrPublication(tx, publication, receipt, ctx.jobId)
+        setJobResult(tx, ctx.jobId, snapshot())
+      }, { behavior: 'immediate' })
       appLog({ source: 'ocr', operation: 'ocr.file', outcome: 'success', fileId, counts: { done: completePages.length, total: expectedPages }, durationMs: Date.now() - fileStarted }, logContext)
       return {
         file,
         ok: true,
         fileId,
         pages: completePages.length,
+        ...(replayed ? { replayed: true as const, writtenPages: 0 } : {}),
         renderedPageImages: images.length,
         cachedPages,
         engine: 'paddleocr',
@@ -368,8 +434,13 @@ export async function runOcr(
       }
     } catch (error) {
       appLog({ source: 'ocr', operation: 'ocr.file', outcome: ctx.cancelled() ? 'cancelled' : processedPages > 0 ? 'partial' : timedOutPages === expectedPages ? 'timeout' : 'failure', level: ctx.cancelled() ? 'info' : 'error', ...(fileId === null ? {} : { fileId }), counts: { done: processedPages, total: expectedPages, failed: failedPages }, errorCode: ctx.cancelled() ? undefined : 'ocr_file_failed', durationMs: Date.now() - fileStarted }, logContext)
+      receipt.error = (error as Error).message ?? String(error)
+      if (Object.values(receipt.requests).some(request => request.state === 'unknown')) receipt.error += ';远端提交结果未知,禁止自动重复付费提交'
+      delete receipt.publishedVersions
+      receipt.state = ctx.cancelled() ? 'cancelled' : /冲突/.test(receipt.error) ? 'conflict' : 'failed'
+      checkpoint()
       if (ctx.cancelled()) return null
-      return { file, ok: false, error: (error as Error).message ?? String(error) }
+      return { file, ok: false, error: receipt.error }
     }
   }
 
@@ -379,12 +450,13 @@ export async function runOcr(
       const index = nextFile
       nextFile += 1
       if (index >= files.length) return
-      const outcome = await processFile(files[index]!)
+      const outcome = await processFile(files[index]!, index)
       if (!outcome) return
       outcomes[index] = outcome
-      if (outcome.ok) totalPages += outcome.pages
+      if (outcome.ok) totalPages += outcome.writtenPages ?? outcome.pages
       else failed += 1
       doneFiles += 1
+      checkpoint()
       ctx.progress(doneFiles, files.length)
     }
   }
@@ -410,15 +482,19 @@ export const ocrSpec: JobSpec = {
   status: 'ready',
   summary:
     '先渲染并增强 PDF 页图,并发提交单页 PNG 给 PaddleOCR,按源页码完整入库到 ocr_result;' +
-    '成功页中转缓存,部分失败后重跑只补缺失页',
+    '原付费结果保留在任务检查点,恢复以 resumeJobId 显式复用原输入/页版本',
   paramsHint:
-    '{ files: string[](相对文件库根的 PDF 路径,非空;须先生成完整且至少 300 DPI 页图), model?: string }',
+    '{ files: string[](相对文件库根的 PDF 路径,非空;须先生成完整且至少 300 DPI 页图), model?: string, resumeJobId?: string(已结束 OCR 任务,同文件/模型/选项) }',
   parse: parseOcrParams,
   // 分母提交时就知道 —— 轮询方一上来就能看到「一共 3 份」。
   total: (params) => (params.files as string[]).length,
-  prepare: () => {
+  prepare: (params, db) => {
     const config = resolveOcrConfig()
-    return (ctx, params) => runOcr(ctx, params, config)
+    const { files, model, resumeJobId } = params as unknown as OcrParams
+    const root = typeof useRuntimeConfig === 'function' ? useRuntimeConfig().filesDir : resolve(process.env.NUXT_FILES_DIR || 'files')
+    const effectiveModel = model ?? config.model
+    const prepared = prepareOcrPublication(db, root, files, effectiveModel, ocrRequestVariant(effectiveModel), config.baseUrl, resumeJobId)
+    return (ctx, input) => runOcr(ctx, input, config, prepared)
   },
   run: runOcr,
 }

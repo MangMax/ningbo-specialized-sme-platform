@@ -1,5 +1,6 @@
 import { mkdtempSync, rmSync } from 'node:fs'
-import { mkdir, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { createHash } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
@@ -45,6 +46,40 @@ async function runImage(waits: number[]) {
 }
 
 describe('ocrImageFile 单张 PNG 重试', () => {
+  it('#309 never sends an echoed credential to the durable remote-ID callback', async () => {
+    const saved: string[] = []
+    await expect(ocrImageFile({
+      token: 'synthetic-echo-secret', filePath: imagePath,
+      onSubmitted: id => { saved.push(id) },
+      fetchImpl: async () => new Response(JSON.stringify({ code: 0, data: { jobId: 'synthetic-echo-secret' } }), { headers: { 'content-type': 'application/json' } }),
+    })).rejects.toThrow('提交结果保持未知')
+    expect(saved).toEqual([])
+  })
+
+  it('#309 versioned upload freezes the hashed bytes before the asynchronous POST', async () => {
+    const original = await readFile(imagePath)
+    const hash = createHash('sha256').update(original).digest('hex')
+    api = await startMiniOcrApi({ pages: ['immutable upload'] })
+    try {
+      const out = await ocrImageFile({
+        token: 'test-token', baseUrl: api.origin, filePath: imagePath,
+        expectedImageSha256: hash,
+        fetchImpl: async (input, init) => {
+          if (init?.method === 'POST') {
+            await writeFile(imagePath, 'replaced after request construction')
+            const uploaded = (init.body as FormData).get('file') as Blob
+            expect(Buffer.from(await uploaded.arrayBuffer())).toEqual(original)
+          }
+          return fetch(input, init as RequestInit)
+        },
+      })
+      expect(out.page.markdown).toBe('immutable upload')
+      expect(api.stats.submits).toBe(1)
+      await expect(ocrImageFile({ token: 'test-token', baseUrl: api.origin, filePath: imagePath, expectedImageSha256: hash })).rejects.toThrow('输入页图内容冲突')
+      expect(api.stats.submits).toBe(1)
+    } finally { await writeFile(imagePath, original) }
+  })
+
   it('提交用户官网配置的 PaddleOCR-VL 参数', async () => {
     api = await startMiniOcrApi({ pages: ['按官网参数识别'] })
     await runImage([])

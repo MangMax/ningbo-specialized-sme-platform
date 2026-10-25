@@ -1,5 +1,5 @@
 import { appLog, type LogContext } from '../../lib/logging'
-import { and, asc, eq, sql } from 'drizzle-orm'
+import { and, asc, eq, inArray, sql } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../db/schema'
 import {
@@ -11,6 +11,7 @@ import {
   type OcrPage,
 } from '../../lib/ocr-markdown'
 import { pageImageRelPath, isPdfPath } from '../../lib/pdf-page'
+import { reviseOcrProvenance } from './ocr-provenance'
 
 type Db = BetterSQLite3Database<typeof schema>
 
@@ -32,6 +33,8 @@ export interface OcrPageWrite {
   markdown: string
   /** 原始响应(API 那一页的 JSON / 上传的原文)。 */
   raw?: unknown
+  /** Known online input/remote receipt; text revisions never invent one. */
+  capture?: { taskId: string | null; sourceSha256: string | null; imageSha256: string; variant: string; jobId: string; createdAt: string | null }
   /** 该页页图的相对路径;省略时按票 13 的规则从源 PDF 路径推(仅 PDF 推得出)。 */
   pageRelPath?: string | null
 }
@@ -44,6 +47,8 @@ export interface OcrWriteInput {
   /** 为完整 PDF OCR 使用:在同一事务内删旧页并完整替换,清掉旧结果的多余页。 */
   replaceExistingPages?: boolean
   expectedVersion?: string | null
+  /** Online publication: validate exactly the actual target pages before any write. */
+  expectedVersions?: Readonly<Record<number, string | null>>
   channel: OcrChannel
   engine?: string
   model?: string | null
@@ -158,11 +163,8 @@ export function pagesFromInput(
  * 没列出的页**不动**:某页识别坏了就只重跑那一页(通路 a 的逐页重试正是靠这个)。
  *
  * ── `raw` 的保留语义(与其他列不同)────────────────────────────────────
- * 其他列都是「最后写者胜」,`raw` 不是:这次**没给** `raw` 时保留上一次那份。
- * 写这条路的三方里,只有通路 a(在线 API)手里有原始响应;通路 b(人上传)与
- * c(代理写回)天然没有。而 `raw` 的用途之一恰恰是「日后换解析口径不必重跑付费的 API」——
- * 如果常规重传就把它抹成 null,这条用途在一次重传之后就不成立了。
- * 给了 `raw` 时仍然覆盖(那才是「最后写者胜」的本意)。
+ * raw JSON 内区分不可变采集与文本修订,保留旧载荷和修订历史。
+ * 旧 raw 的归属未知,不从可变行上的 channel/engine/model 倒填。
  */
 export function writeOcrResult(db: Db, input: OcrWriteInput): OcrWriteResult {
   if (!validOcrExpectedVersion(input.expectedVersion)) return { ok: false, statusCode: 400, message: 'expectedVersion 非法' }
@@ -174,22 +176,32 @@ export function writeOcrResult(db: Db, input: OcrWriteInput): OcrWriteResult {
   const createdAt = new Date().toISOString()
 
   return db.transaction((tx) => {
+    if (input.expectedVersions) {
+      if (input.expectedVersion !== undefined || input.replaceExistingPages || Object.keys(input.expectedVersions).length !== input.pages.length) return { ok: false as const, statusCode: 400, message: '批量页版本必须精确对应实际目标页' }
+      for (const page of input.pages) {
+        const expected = input.expectedVersions[page.page]
+        if (expected === undefined || !validOcrExpectedVersion(expected)) return { ok: false as const, statusCode: 400, message: '缺少目标页版本' }
+        const conflict = checkOcrPageVersion(tx, input.fileId, page.page, expected)
+        if (conflict) return conflict
+      }
+    }
     if (input.expectedVersion !== undefined) {
       if (input.pages.length !== 1 || input.replaceExistingPages) return { ok: false as const, statusCode: 400, message: 'expectedVersion 只用于显式单页写入' }
       const conflict = checkOcrPageVersion(tx, input.fileId, input.pages[0]!.page, input.expectedVersion)
       if (conflict) return conflict
     }
-    if (input.replaceExistingPages) {
-      tx.delete(schema.ocrResult).where(eq(schema.ocrResult.fileId, input.fileId)).run()
+    // Keep IDs and history of rewritten pages even for legacy replace callers.
+    const previous = tx.select().from(schema.ocrResult).where(and(eq(schema.ocrResult.fileId, input.fileId), inArray(schema.ocrResult.pageNo, checked.pages))).all()
+    if (input.replaceExistingPages) for (const row of tx.select({ id: schema.ocrResult.id, pageNo: schema.ocrResult.pageNo }).from(schema.ocrResult).where(eq(schema.ocrResult.fileId, input.fileId)).all()) {
+      if (!checked.pages.includes(row.pageNo)) tx.delete(schema.ocrResult).where(eq(schema.ocrResult.id, row.id)).run()
     }
     for (const p of input.pages) {
-      const hasRaw = p.raw !== undefined && p.raw !== null
       const values = {
         fileId: input.fileId,
         pageNo: p.page,
         pageRelPath: p.pageRelPath ?? pageRelPathOf(input.sourceRelPath, p.page),
         markdown: p.markdown,
-        raw: (p.raw ?? null) as unknown,
+        raw: reviseOcrProvenance(previous.find(row => row.pageNo === p.page), { ...p, channel: input.channel, engine, model, createdAt }),
         engine,
         model,
         channel: input.channel,
@@ -199,17 +211,11 @@ export function writeOcrResult(db: Db, input: OcrWriteInput): OcrWriteResult {
         .values(values)
         .onConflictDoUpdate({
           target: [schema.ocrResult.fileId, schema.ocrResult.pageNo],
-          // 覆盖的是**内容与来源**:同一页重跑(或换个通路重来)后,那一行必须
-          // 反映最后一次的结果,而不是两条并存让人猜哪条算数。
-          //
-          // `raw` 是**例外**:这次没给原始响应(通路 b/c 的调用方本来就没有它),
-          // 就**保留**上一次那份。理由写在这个函数的说明里 —— 常规重传会把
-          // 通路 a 花过钱的原始响应抹掉,而它的用途之一正是「不必再花一次」。
           set: {
             revision: sql`${schema.ocrResult.revision} + 1`,
             pageRelPath: values.pageRelPath,
             markdown: values.markdown,
-            ...(hasRaw ? { raw: values.raw } : {}),
+            raw: values.raw,
             engine: values.engine,
             model: values.model,
             channel: values.channel,

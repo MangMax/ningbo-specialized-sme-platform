@@ -16,6 +16,8 @@ import { DEFAULT_DPI } from '../lib/pdf-page'
 import { renderPdfPages } from '../server/utils/pdf-pages'
 import { minimalPdf } from './helpers/minimal-pdf'
 import { startMiniOcrApi, type MiniOcrApi } from './helpers/ocr-mini-api'
+import { createJob, markJobRunning } from '../server/utils/job-store'
+import { newJobId } from '../lib/job'
 
 /**
  * 票 14 通路 a —— **在线 PaddleOCR API**(异步、可批量)。
@@ -42,6 +44,7 @@ beforeAll(async () => {
   dir = mkdtempSync(join(tmpdir(), 'spztx-ocr-job-'))
   process.env.NUXT_DB_PATH = join(dir, 'test.db')
   filesDir = join(dir, 'files')
+  process.env.NUXT_FILES_DIR = filesDir
   await mkdir(filesDir, { recursive: true })
   const mod = await import('../db')
   db = mod.useDb()
@@ -50,10 +53,12 @@ beforeAll(async () => {
 
 afterAll(() => {
   rmSync(dir, { recursive: true, force: true })
+  delete process.env.NUXT_FILES_DIR
   delete process.env.NUXT_DB_PATH
 })
 
 beforeEach(async () => {
+  db.delete(schema.job).run()
   db.delete(schema.serviceCredential).run()
   db.delete(schema.ocrResult).run()
   db.delete(schema.storedFile).run()
@@ -99,10 +104,15 @@ async function seedPdf(relPath: string, pages = 3): Promise<number> {
 /** 跑一次 ocr 任务,附上 ctx。 */
 function ctxOf(overrides: { cancelled?: () => boolean; onProgress?: (done: number, total: number) => void } = {}) {
   const seen: Array<[number, number]> = []
+  // Paid submissions require a durable running task, just like the public
+  // runner. Retain every existing protocol/cache assertion with that real row.
+  const jobId = newJobId()
+  createJob(db, { id: jobId, kind: 'ocr', params: {} })
+  markJobRunning(db, jobId)
   return {
     seen,
     ctx: {
-      jobId: 'test-ocr',
+      jobId,
       filesDir,
       db,
       progress: (done: number, total: number) => { seen.push([done, total]); overrides.onProgress?.(done, total) },
@@ -295,8 +305,9 @@ describe('通路 a:批量 OCR(本地假服务,真走 HTTP)', () => {
       [idB, result.files[1]!],
     ] as const) {
       const rows = listOcrResults(db, fileId)
-      expect(rows.map((r) => r.page)).toEqual([1, 2, 3])
-      expect(rows.map((r) => r.markdown)).toEqual(pages)
+      expect(rows.map((r) => r.page)).toEqual(fileId === idA ? [1, 2, 3, 4] : [1, 2, 3])
+      expect(rows.filter(r => r.page <= 3).map((r) => r.markdown)).toEqual(pages)
+      if (fileId === idA) expect(rows[3]!.markdown).toBe('旧结果残页')
       expect(rows[0]!.channel).toBe('api')
       expect(rows[0]!.model).toBe('PaddleOCR-VL-1.6')
       expect(rows[1]!.pageRelPath).toContain('.pages/p002.png')
@@ -603,17 +614,18 @@ describe('成功页中转:部分失败后重跑只补失败页', () => {
       cachedPages: 2,
     })
 
-    // ③ 补齐之后是**整份原子写入**:页码 1..3、内容、模型、raw 都对,旧的第 5 页被清掉。
+    // #309 只发布实际目标页,未处理的第 5 页原样保留。
     const rows = db
       .select()
       .from(schema.ocrResult)
       .all()
       .sort((a, b) => a.pageNo - b.pageNo)
-    expect(rows.map((r) => r.pageNo)).toEqual([1, 2, 3])
-    expect(rows.map((r) => r.markdown)).toEqual(pages)
-    expect(rows.every((r) => r.model === 'PaddleOCR-VL-1.6')).toBe(true)
-    expect(rows.every((r) => r.channel === 'api')).toBe(true)
-    expect(rows.every((r) => r.raw !== null && r.raw !== undefined)).toBe(true)
+    expect(rows.map((r) => r.pageNo)).toEqual([1, 2, 3, 5])
+    expect(rows.filter(r => r.pageNo <= 3).map((r) => r.markdown)).toEqual(pages)
+    expect(rows[3]!.markdown).toBe('上一版残留页')
+    expect(rows.filter(r => r.pageNo <= 3).every((r) => r.model === 'PaddleOCR-VL-1.6')).toBe(true)
+    expect(rows.filter(r => r.pageNo <= 3).every((r) => r.channel === 'api')).toBe(true)
+    expect(rows.filter(r => r.pageNo <= 3).every((r) => r.raw !== null && r.raw !== undefined)).toBe(true)
   }, 60_000)
 
   it('★ 同一份再跑一次:全命中,零提交,结果照旧整份写入', async () => {

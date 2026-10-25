@@ -22,7 +22,9 @@ export interface ModelApiFixture {
   expectModel?: string
   onSubmit?: (fields: string[]) => void
   /** Deterministic backpressure gate for orchestration tests. */
-  waitForPoll?: () => Promise<void>
+  waitForPoll?: (jobId: string) => Promise<void>
+  /** Provider has accepted the job, but the client has not received its ID. */
+  waitForSubmitResponse?: (submit: number) => Promise<void>
 }
 
 export interface MiniOcrApi {
@@ -132,6 +134,7 @@ export async function startMiniOcrApi(fixture: ModelApiFixture): Promise<MiniOcr
       jobs.set(jobId, { pageNo, markdown, polls: 0, failure })
       stats.activeJobs += 1
       stats.maxActiveJobs = Math.max(stats.maxActiveJobs, stats.activeJobs)
+      await fixture.waitForSubmitResponse?.(stats.submits)
       return send(res, 200, { code: 0, data: { jobId } })
     }
 
@@ -139,7 +142,7 @@ export async function startMiniOcrApi(fixture: ModelApiFixture): Promise<MiniOcr
     if (req.method === 'GET' && jobMatch) {
       const job = jobs.get(jobMatch[1]!)
       if (!job) return send(res, 404, { code: 1, msg: 'unknown job' })
-      await fixture.waitForPoll?.()
+      await fixture.waitForPoll?.(jobMatch[1]!)
       const delayMs = fixture.pollDelayMsByPage?.[job.pageNo] ?? 0
       if (delayMs > 0) await new Promise((resolve) => setTimeout(resolve, delayMs))
       stats.polls += 1
