@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import { closeSync, openSync, readSync, readFileSync } from 'node:fs'
 import { and, eq, inArray, sql } from 'drizzle-orm'
 import type { JobContext } from './job-runner'
-import { getJob } from './job-store'
+import { getJob, setJobResult } from './job-store'
 import { isJobId } from '../../lib/job'
 import { pageDirRelPath, PAGES_MANIFEST_NAME } from '../../lib/pdf-page'
 import * as schema from '../../db/schema'
@@ -175,6 +175,43 @@ export interface SharedOcrAttempt {
   action: 'submit' | 'poll' | 'complete' | 'blocked'
 }
 
+export type OcrAttemptUpdate =
+  | { state: 'unknown' | 'rejected' | 'failed' }
+  | { state: 'accepted'; jobId: string }
+  | { state: 'complete'; capture: OcrCapture }
+
+/** Initial executors have no recovery lineage yet. The running check and the
+ * durable unknown receipt must be one write transaction BEFORE POST. If restart
+ * reconciliation wins first, this executor is fenced; if unknown wins first,
+ * every resume sees that uncertainty and cannot obtain another paid attempt.
+ * Later callbacks atomically choose the active checkpoint or the terminal
+ * source's shared ledger, so reconciliation cannot discard a paid response. */
+export function checkpointOriginalOcrAttempt(db: Db, publication: OcrPublication, file: OcrPublicationFile, page: number, taskId: string, update: OcrAttemptUpdate, snapshot: () => unknown): OcrCapture | undefined {
+  return db.transaction(tx => {
+    const row = getJob(tx, taskId)
+    if (!row || row.kind !== 'ocr' || publication.recovery || publication.resumedFrom) throw recoveryError('原 OCR 执行来源不可核实')
+    if (row.state === 'running') {
+      setJobResult(tx, taskId, snapshot())
+      return update.state === 'complete' ? update.capture : undefined
+    }
+    if (update.state === 'unknown') throw recoveryError('原 OCR 执行器已结束,禁止再次提交;请读取共享恢复回执')
+    const authority: OcrPublication = { ...publication, recovery: { sourceJobId: taskId, anchorJobId: taskId } }
+    const source = recoverySource(tx, authority, file)
+    const fingerprint = digest(pageIdentity(publication, file, page))
+    const record = source.metadata?.pages?.[fingerprint] ?? seedPage(source.id, source.originalFile, page)
+    const claim = record.attempts.find(c => c.attemptId === taskId && c.ownerTaskId === taskId)
+    if (!claim || claim.state === 'unsubmitted' || claim.state === 'claimed') throw recoveryError('原 OCR 提交权威不可核实,保留原回执')
+    if (!source.metadata?.pages?.[fingerprint]) writeRecoveryPath(tx, source.id, `$.ocrRecovery.pages."${fingerprint}"`, record)
+    return updateOcrAttempt(tx, authority, file, { sourceJobId: source.id, fingerprint, claim, action: 'blocked' }, update).capture
+  }, { behavior: 'immediate' })
+}
+
+/** The caller holds the same immediate transaction as the page CAS. A live
+ * stack whose original row became terminal may retain results, never publish. */
+export function fenceOriginalOcrPublication(db: Db, publication: OcrPublication, taskId: string): void {
+  if (!publication.recovery && getJob(db, taskId)?.state !== 'running') throw recoveryError('原 OCR 执行器已结束;原付费结果保留待显式恢复,禁止发布')
+}
+
 /** A stable input/page has one current attempt for the entire lineage. A new
  * paid attempt requires its actual terminal owner as the explicit retry anchor;
  * changing caller keys, alias children or returning to an old ancestor cannot
@@ -203,7 +240,7 @@ export function acquireOcrAttempt(db: Db, publication: OcrPublication, file: Ocr
   }, { behavior: 'immediate' })
 }
 
-export function updateOcrAttempt(db: Db, publication: OcrPublication, file: OcrPublicationFile, shared: SharedOcrAttempt, update: { state: Exclude<ClaimState, 'unsubmitted' | 'claimed'>; jobId?: string; capture?: OcrCapture }) {
+export function updateOcrAttempt(db: Db, publication: OcrPublication, file: OcrPublicationFile, shared: SharedOcrAttempt, update: OcrAttemptUpdate) {
   return db.transaction(tx => {
     const source = recoverySource(tx, publication, file)
     const record = structuredClone(source.metadata?.pages?.[shared.fingerprint])

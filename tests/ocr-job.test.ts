@@ -16,6 +16,8 @@ import { DEFAULT_DPI } from '../lib/pdf-page'
 import { renderPdfPages } from '../server/utils/pdf-pages'
 import { minimalPdf } from './helpers/minimal-pdf'
 import { startMiniOcrApi, type MiniOcrApi } from './helpers/ocr-mini-api'
+import { createJob, markJobRunning } from '../server/utils/job-store'
+import { newJobId } from '../lib/job'
 
 /**
  * 票 14 通路 a —— **在线 PaddleOCR API**(异步、可批量)。
@@ -56,6 +58,7 @@ afterAll(() => {
 })
 
 beforeEach(async () => {
+  db.delete(schema.job).run()
   db.delete(schema.serviceCredential).run()
   db.delete(schema.ocrResult).run()
   db.delete(schema.storedFile).run()
@@ -101,10 +104,15 @@ async function seedPdf(relPath: string, pages = 3): Promise<number> {
 /** 跑一次 ocr 任务,附上 ctx。 */
 function ctxOf(overrides: { cancelled?: () => boolean; onProgress?: (done: number, total: number) => void } = {}) {
   const seen: Array<[number, number]> = []
+  // Paid submissions require a durable running task, just like the public
+  // runner. Retain every existing protocol/cache assertion with that real row.
+  const jobId = newJobId()
+  createJob(db, { id: jobId, kind: 'ocr', params: {} })
+  markJobRunning(db, jobId)
   return {
     seen,
     ctx: {
-      jobId: 'test-ocr',
+      jobId,
       filesDir,
       db,
       progress: (done: number, total: number) => { seen.push([done, total]); overrides.onProgress?.(done, total) },

@@ -567,8 +567,8 @@ it('R1 claims isolate actual pages, file content and model and preserve sibling 
 async function at(host: string, path: string, method = 'GET', body?: unknown) {
   return fetch(host + path, { method, headers: { authorization: 'Bearer issue309-api', 'content-type': 'application/json' }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) })
 }
-async function submitAt(host: string, file: string, resumeJobId: string) {
-  const response = await at(host, '/api/jobs', 'POST', { kind: 'ocr', params: { files: [file], resumeJobId } })
+async function submitAt(host: string, file: string, resumeJobId?: string) {
+  const response = await at(host, '/api/jobs', 'POST', { kind: 'ocr', params: { files: [file], ...(resumeJobId ? { resumeJobId } : {}) } })
   expect(response.status).toBe(202)
   return (await response.json()).jobId as string
 }
@@ -693,4 +693,178 @@ it('R1 SIGKILL after accepted recovery lets an old parent resume the same remote
     const claim = (Object.values((await status(parent)).result.ocrRecovery.pages)[0] as any).attempts.at(-1)
     expect(claim.capture).toMatchObject({ taskId: a, jobId: 'JOB-2', raw: { markdown: { text: 'paid original' } } })
   } finally { gate!(); await stopChild(one.child); if (two) await stopChild(two.child) }
+})
+
+it.each(['accepted', 'published'] as const)('R2 original stale cache miss is fenced after reconciliation while recovery is %s', async phase => {
+  let releaseProvider!: () => void
+  const providerWait = new Promise<void>(resolve => { releaseProvider = resolve })
+  const { file, pagePath } = await setup(1, { waitForPoll: id => id === 'JOB-1' ? providerWait : Promise.resolve() })
+  // Prime only the test process. The second child must perform its own real
+  // first-request reconciliation while the first child's runner remains alive.
+  expect((await request('/api/jobs/00000000000000000000000000')).status).toBe(404)
+  const hit = join(dir, `issue309-cache-hit-${sequence}.json`)
+  const release = join(dir, `issue309-cache-release-${sequence}`)
+  const one = await childHost({ ISSUE309_CACHE_GATE_HIT: hit, ISSUE309_CACHE_GATE_RELEASE: release })
+  let two: Awaited<ReturnType<typeof childHost>> | undefined
+  try {
+    const parent = await submitAt(one.base, file)
+    await vi.waitFor(() => expect(JSON.parse(readFileSync(hit, 'utf8')).cacheMiss).toBe(true))
+    const running = await status(parent)
+    expect(running.state).toBe('running')
+    expect(running.result.publication.files[0].requests).toEqual({})
+    two = await childHost()
+    const interrupted = await (await at(two.base, `/api/jobs/${parent}`)).json()
+    expect(interrupted.state).toBe('failed')
+    const a = await submitAt(two.base, file, parent)
+    await vi.waitFor(async () => expect((await status(a)).result?.publication.files[0].requests['1']).toMatchObject({ state: 'accepted', jobId: 'JOB-1' }))
+    if (phase === 'published') {
+      releaseProvider()
+      await vi.waitFor(async () => expect((await status(a)).state).toBe('done'))
+    }
+    // Cache miss was frozen before A existed; no cache deletion is needed.
+    writeFileSync(release, 'release')
+    expect(await (await at(one.base, '/issue309/idle')).json()).toEqual({ idle: true })
+    expect(api!.stats.submits).toBe(1)
+    releaseProvider()
+    await vi.waitFor(async () => expect((await status(a)).state).toBe('done'))
+    expect((await (await request(pagePath)).json()).markdown).toContain('paid original')
+    const final = await status(parent)
+    const { ocrRecovery, ...historical } = final.result
+    expect(historical).toEqual(interrupted.result)
+    const { result: _before, ...originalState } = interrupted
+    const { result: _after, ...finalState } = final
+    expect(finalState).toEqual(originalState)
+    expect((Object.values(ocrRecovery.pages)[0] as any).attempts.at(-1)).toMatchObject({ state: 'complete', ownerTaskId: a, capture: { jobId: 'JOB-1', raw: { markdown: { text: 'paid original' } } } })
+  } finally {
+    writeFileSync(release, 'release'); releaseProvider(); gate!()
+    await stopChild(one.child); if (two) await stopChild(two.child)
+  }
+})
+
+it('R2 original POST unknown at reconciliation retains its late paid receipt and never grants a second POST', async () => {
+  let releaseId!: () => void
+  const idWait = new Promise<void>(resolve => { releaseId = resolve })
+  const { file, pagePath } = await setup(1, { waitForSubmitResponse: () => idWait })
+  expect((await request('/api/jobs/00000000000000000000000000')).status).toBe(404)
+  const one = await childHost()
+  let two: Awaited<ReturnType<typeof childHost>> | undefined
+  try {
+    const parent = await submitAt(one.base, file)
+    await vi.waitFor(() => expect(api!.stats.submits).toBe(1))
+    expect((await status(parent)).result.publication.files[0].requests['1'].state).toBe('unknown')
+    two = await childHost()
+    const interrupted = await (await at(two.base, `/api/jobs/${parent}`)).json()
+    expect(interrupted.state).toBe('failed')
+    const a = await submitAt(two.base, file, parent)
+    await vi.waitFor(async () => expect((await status(a)).state).toBe('failed'))
+    expect((await status(a)).result.files[0].error).toContain('提交结果未知')
+    expect(api!.stats.submits).toBe(1)
+    releaseId(); gate!()
+    expect(await (await at(one.base, '/issue309/idle')).json()).toEqual({ idle: true })
+    const root = await status(parent)
+    expect((Object.values(root.result.ocrRecovery.pages)[0] as any).attempts.at(-1)).toMatchObject({ state: 'complete', ownerTaskId: parent, capture: { jobId: 'JOB-1', taskId: parent, raw: { markdown: { text: 'paid original' } } } })
+    const { ocrRecovery: _metadata, ...historical } = root.result
+    expect(historical).toEqual(interrupted.result)
+    // A terminal original executor keeps the paid result for explicit recovery;
+    // its still-live stack does not publish pages behind the failed task row.
+    expect((await request(pagePath)).status).toBe(404)
+    const recovered = await submitAt(two.base, file, parent)
+    await vi.waitFor(async () => expect((await status(recovered)).state).toBe('done'))
+    expect((await (await request(pagePath)).json()).markdown).toContain('paid original')
+    expect(api!.stats.submits).toBe(1)
+  } finally { releaseId(); gate!(); await stopChild(one.child); if (two) await stopChild(two.child) }
+})
+
+it.each(['continue', 'SIGKILL'] as const)('R2 committed original unknown fences recovery before POST when original will %s', async disposition => {
+  const { file, pagePath } = await setup()
+  expect((await request('/api/jobs/00000000000000000000000000')).status).toBe(404)
+  const stopped = join(dir, `issue309-original-unknown-${sequence}.json`)
+  const one = await childHost({ ISSUE309_STOP_ORIGINAL_UNKNOWN: '1', ISSUE309_STOP_FILE: stopped })
+  const pending = submitAt(one.base, file).catch(() => null)
+  let two: Awaited<ReturnType<typeof childHost>> | undefined
+  try {
+    await vi.waitFor(() => expect(JSON.parse(readFileSync(stopped, 'utf8')).committedState).toBe('original-unknown'))
+    const parent = JSON.parse(readFileSync(stopped, 'utf8')).taskId as string
+    expect((await status(parent)).result.publication.files[0].requests['1']).toEqual({ state: 'unknown', taskId: parent })
+    expect(api!.stats.submits).toBe(0)
+    two = await childHost()
+    expect((await (await at(two.base, `/api/jobs/${parent}`)).json()).state).toBe('failed')
+    const a = await submitAt(two.base, file, parent)
+    await vi.waitFor(async () => expect((await status(a)).state).toBe('failed'))
+    expect((await status(a)).result.files[0].error).toContain('提交结果未知')
+    expect(api!.stats.submits).toBe(0)
+    if (disposition === 'SIGKILL') {
+      await stopChild(one.child); await pending
+      const b = await submitAt(two.base, file, parent)
+      await vi.waitFor(async () => expect((await status(b)).state).toBe('failed'))
+      expect((await request(pagePath)).status).toBe(404)
+      expect(api!.stats.submits).toBe(0)
+      expect((Object.values((await status(parent)).result.ocrRecovery.pages)[0] as any).attempts.at(-1)).toMatchObject({ state: 'unknown', ownerTaskId: parent })
+    } else {
+      one.child.kill('SIGCONT'); await pending; gate!()
+      expect(await (await at(one.base, '/issue309/idle')).json()).toEqual({ idle: true })
+      expect(api!.stats.submits).toBe(1)
+      const b = await submitAt(two.base, file, parent)
+      await vi.waitFor(async () => expect((await status(b)).state).toBe('done'))
+      expect((await (await request(pagePath)).json()).markdown).toContain('paid original')
+      expect(api!.stats.submits).toBe(1)
+    }
+  } finally { gate!(); await stopChild(one.child); await pending; if (two) await stopChild(two.child) }
+})
+
+it('R2 different original pages share durable authority after reconciliation without overwriting sibling receipts', async () => {
+  const { file, pagePath } = await setup(2)
+  expect((await request('/api/jobs/00000000000000000000000000')).status).toBe(404)
+  const hit = join(dir, `issue309-multi-hit-${sequence}.json`)
+  const release = join(dir, `issue309-multi-release-${sequence}`)
+  const one = await childHost({ ISSUE309_CACHE_GATE_HIT: hit, ISSUE309_CACHE_GATE_RELEASE: release })
+  let two: Awaited<ReturnType<typeof childHost>> | undefined
+  try {
+    const parent = await submitAt(one.base, file)
+    await vi.waitFor(() => expect(JSON.parse(readFileSync(hit, 'utf8')).cacheMiss).toBe(true))
+    await vi.waitFor(async () => expect((await status(parent)).result.publication.files[0].requests['2']).toMatchObject({ state: 'accepted', jobId: 'JOB-1' }))
+    two = await childHost()
+    const interrupted = await (await at(two.base, `/api/jobs/${parent}`)).json()
+    expect(interrupted.state).toBe('failed')
+    const a = await submitAt(two.base, file, parent)
+    await vi.waitFor(async () => {
+      const requests = (await status(a)).result.publication.files[0].requests
+      expect(requests['1']).toMatchObject({ state: 'accepted', jobId: 'JOB-2' })
+      expect(requests['2']).toMatchObject({ state: 'accepted', jobId: 'JOB-1' })
+    })
+    writeFileSync(release, 'release'); gate!()
+    expect(await (await at(one.base, '/issue309/idle')).json()).toEqual({ idle: true })
+    expect(await (await at(two.base, '/issue309/idle')).json()).toEqual({ idle: true })
+    expect((await status(a)).state).toBe('done')
+    expect(api!.stats.submits).toBe(2)
+    for (const page of [1, 2]) expect((await (await request(pagePath.replace(/1$/, String(page)))).json()).markdown).toContain('paid original')
+    const { ocrRecovery, ...historical } = (await status(parent)).result
+    expect(historical).toEqual(interrupted.result)
+    const claims = (Object.values(ocrRecovery.pages) as any[]).map(record => record.attempts.at(-1))
+    expect(claims).toHaveLength(2)
+    expect(claims.find(c => c.capture.page === 1)).toMatchObject({ state: 'complete', ownerTaskId: a, capture: { jobId: 'JOB-2', taskId: a } })
+    expect(claims.find(c => c.capture.page === 2)).toMatchObject({ state: 'complete', ownerTaskId: parent, capture: { jobId: 'JOB-1', taskId: parent } })
+  } finally { writeFileSync(release, 'release'); gate!(); await stopChild(one.child); if (two) await stopChild(two.child) }
+})
+
+it('R2 legacy cache with unknown capture time retains null provenance without inventing a timestamp or paying', async () => {
+  const { file, row, pagePath } = await setup()
+  const { ocrRequestVariant } = await import('../server/utils/ocr-api')
+  const { ocrPageCacheDirAbs, ocrPageCacheKey } = await import('../server/utils/ocr-page-cache')
+  const model = 'PaddleOCR-VL-1.6', variant = ocrRequestVariant(model)
+  const imageSha256 = createHash('sha256').update(readFileSync(join(filesDir, pageImageRelPath(file, 1)))).digest('hex')
+  const cache = ocrPageCacheDirAbs(filesDir, file)
+  mkdirSync(cache, { recursive: true })
+  const cachePath = join(cache, `${ocrPageCacheKey(imageSha256, variant)}.json`)
+  const legacy = { version: 1, imageSha256, variant, jobId: 'LEGACY-JOB', model, markdown: 'legacy cache text', raw: { original: 'legacy paid raw' } }
+  writeFileSync(cachePath, JSON.stringify(legacy))
+  const parent = await submit(file)
+  await whenIdle()
+  expect((await status(parent)).state).toBe('done')
+  expect((await status(parent)).result.publication.files[0].captures[0]).toMatchObject({ createdAt: null, taskId: null, sourceSha256: null, raw: legacy.raw })
+  expect((await (await request(pagePath)).json()).markdown).toContain('legacy cache text')
+  const raw = db.select({ raw: schema.ocrResult.raw }).from(schema.ocrResult).where(eq(schema.ocrResult.fileId, row.id)).get()!.raw
+  expect(raw).toMatchObject({ captures: [{ raw: legacy.raw, source: { createdAt: null }, input: { createdAt: null, taskId: null } }] })
+  expect(JSON.parse(readFileSync(cachePath, 'utf8'))).toEqual(legacy)
+  expect(api!.stats.submits).toBe(0)
 })
