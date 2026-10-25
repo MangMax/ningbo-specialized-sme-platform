@@ -1,4 +1,7 @@
 // @vitest-environment happy-dom
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
+import { parse } from 'vue/compiler-sfc'
 import { flushPromises, mount } from '@vue/test-utils'
 import { defineComponent, ref } from 'vue'
 import { createPinia } from 'pinia'
@@ -138,4 +141,15 @@ it('U09 leaves the mobile confirmed alias label absent when no confirmed alias e
   const wrapper = await renderCurrent([]), card = wrapper.get('[data-testid="current-enterprise-card"]')
   expect(card.text()).toContain('新名'); expect(card.text()).toContain('公布名称："公告名"')
   expect(card.text()).not.toContain('已确认曾用名'); expect(card.text()).not.toContain('待核别名')
+})
+
+it('U10 keeps the real enterprise page single-root for Nuxt out-in navigation from the source dialog to a file', () => {
+  // Vue Transition requires a component to have one element root:
+  // https://vuejs.org/guide/built-ins/transition.html#the-transition-component
+  // This page uses the Nuxt out-in transition; UI07 retains the actual SPA failure.
+  const filename = resolve(process.cwd(), 'pages/enterprises/[id].vue')
+  const { descriptor, errors } = parse(readFileSync(filename, 'utf8'), { filename })
+  expect(errors).toEqual([])
+  const roots = descriptor.template!.ast!.children.filter(node => node.type !== 3 && !(node.type === 2 && !node.content.trim()))
+  expect(roots.map(node => node.type === 1 ? node.tag : '#non-element')).toEqual(['div'])
 })

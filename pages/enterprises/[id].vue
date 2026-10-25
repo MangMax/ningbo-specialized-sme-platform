@@ -755,11 +755,11 @@ function openPreview(e: Evidence) {
         </DialogFooter>
       </DialogContent>
     </Dialog>
+    <Dialog :open="formalSourceEventId !== null" @update:open="!$event && (formalSourceEventId = null)">
+      <DialogContent class="max-h-[85dvh] min-w-0 overflow-y-auto sm:max-w-3xl">
+        <DialogHeader><DialogTitle>正式来源</DialogTitle><DialogDescription>逐出处公布名称与已登记文件位置。</DialogDescription></DialogHeader>
+        <SourceReader v-if="formalSourceEventId !== null" kind="event" :id="formalSourceEventId" :return-to="route.fullPath" read-only @event-navigate="formalSourceEventId = null; arriveAtEvent($event)" />
+      </DialogContent>
+    </Dialog>
   </div>
-  <Dialog :open="formalSourceEventId !== null" @update:open="!$event && (formalSourceEventId = null)">
-    <DialogContent class="max-h-[85dvh] min-w-0 overflow-y-auto sm:max-w-3xl">
-      <DialogHeader><DialogTitle>正式来源</DialogTitle><DialogDescription>逐出处公布名称与已登记文件位置。</DialogDescription></DialogHeader>
-      <SourceReader v-if="formalSourceEventId !== null" kind="event" :id="formalSourceEventId" :return-to="route.fullPath" read-only @event-navigate="formalSourceEventId = null; arriveAtEvent($event)" />
-    </DialogContent>
-  </Dialog>
 </template>
