@@ -37,6 +37,7 @@ async function post(path: string, body: unknown) {
 async function call(name: string, args: Record<string, unknown>) {
   const result = await client.callTool({ name, arguments: args })
   expect(result.isError).not.toBe(true)
+  if (result.structuredContent) expect(result.content).toContainEqual({ type: 'text', text: JSON.stringify(result.structuredContent) })
   return result.structuredContent ?? JSON.parse((result.content as any)[0].text)
 }
 beforeAll(async () => {
@@ -61,7 +62,7 @@ beforeAll(async () => {
     if (req.url !== '/mcp') { listener(req, res); return }
     const mcp = new McpServer({ name: 'issue298-public-tool-fixture', version: '1' })
     const mcpAuth = resolveMcpAuth({ given: readMcpToken({ authorization: req.headers.authorization }), configured: token })
-    for (const tool of tools.filter(tool => !tool.enabled || tool.enabled({ context: { mcpAuth } }))) mcp.registerTool(tool.name, { inputSchema: tool.inputSchema, ...(tool.outputSchema ? { outputSchema: tool.outputSchema } : {}) }, async args => {
+    for (const tool of tools.filter(tool => !tool.enabled || tool.enabled({ context: { mcpAuth } }))) mcp.registerTool(tool.name, { inputSchema: tool.inputSchema, ...(tool.outputSchema ? { outputSchema: tool.outputSchema } : {}) }, async (args: Record<string, unknown>) => {
       const value = await tool.handler(args)
       return value.content ? value : { content: [{ type: 'text', text: JSON.stringify(value) }] }
     })
@@ -121,7 +122,9 @@ it.each([0, 1, 2])('real HTTP or MCP archive roundtrip preserves versioned raw e
   expect(reuse.items.find((item: any) => item.kind === 'platform_query').ref).toBe(`query:${queryId}`)
   const changed = structuredClone(request)
   changed.idempotencyKey += '-conflict'
-  changed.payload.platformQueries[0].collectionEvidence.rawData.rows[0].n = 999
+  const changedRow = changed.payload.platformQueries[0]?.collectionEvidence?.rawData?.rows[0]
+  if (!changedRow) throw new Error('Expected the collected raw row for the conflict request')
+  changedRow.n = 999
   const conflict: any = index === 0 ? await (await post('/api/roster/import/commit', changed)).json() : await call('save_roster_batch', changed)
   expect(conflict.status).toBe('failed')
   const after: any = await call('list_platform_queries', { queryId })
@@ -200,4 +203,51 @@ it('new raw envelope counts against the public archive read budget and remains b
   }
   const hash = (value: string | Buffer) => createHash('sha256').update(value).digest('hex')
   expect(hash(Buffer.concat(chunks))).toBe(hash(JSON.stringify(result)))
+})
+
+const htmlReviewCases = [
+  ['spec_unicode_script', '<script>window.config={"other":"synthetic-raw-wire-\\u0073ecret"}</script>'],
+  ['hex_script', '<script>window.config={"other":"synthetic-raw-wire-\\x73ecret"}</script>'],
+  ['standards_csrf', '<input type="hidden" name="csrfToken" value="synthetic-review-other-token">'],
+  ['standards_username', '<INPUT NAME=username VALUE=synthetic-review-user>'],
+  ['entity_form', '<input name="csrf&#84;oken" value="synthetic-review-other-token">'],
+  ['single_quote_form', "<textarea name='username'>synthetic-review-user</textarea>"],
+  ['encoded_text', '<p>%73ynthetic-raw-wire-secret</p>'],
+  ['unknown_script', '<script src="synthetic-unknown.js"></script>'],
+]
+for (const transport of ['HTTP', 'MCP']) it.each(htmlReviewCases)(`real ${transport} refuses the entire sensitive HTML source case %s`, async (_label, prefix) => {
+  raw = `${prefix}<script>(function(data){})(${source({ id: 'safe' }).trim()});</script>`
+  const result = transport === 'HTTP' ? await (await post('/api/platform/query', input)).json() : await call('query_platform', input)
+  expect(result).toMatchObject({ status: 'failed', completeness: 'partial', fetchedCount: 0, error: { code: 'sensitive_response' }, rawData: { version: 1, rows: [], pages: [] }, pages: [{ status: 'failed', fetchedCount: 0 }], unfinished: [{ source: 'queryBusList', rdjb: '2', page: 1 }] })
+  expect(JSON.stringify(result)).not.toMatch(/synthetic-review-other-token|synthetic-review-user|synthetic-raw-wire-secret|window.config/)
+})
+
+it.each(['HTTP', 'MCP'])('real %s accepts verifiable HTML and retains its exact original source', async transport => {
+  raw = `<html><body><script type="application/json">${source({ id: 'safe-html', x: null, n: 1 }).trim()}</script></body></html>`
+  const result = transport === 'HTTP' ? await (await post('/api/platform/query', input)).json() : await call('query_platform', input)
+  expect(result).toMatchObject({ status: 'success', rawData: { version: 1, rows: [{ id: 'safe-html', x: null, n: 1 }], pages: [{ format: 'html-script', body: raw }] } })
+})
+
+it.each(['HTTP', 'MCP'])('real %s table raw observation keeps own prototype keys while the old string rows stay compatible', async transport => {
+  raw = '<table name="applyGrid"><th id="id">ID</th><th id="__proto__">raw</th><th id="constructor">ctor</th><tbody><tr><td>safe</td><td>original-cell</td><td>own</td></tr></tbody></table>'
+  const q = { source: 'queryList', name: '合成', rawDataVersion: 1, maxRequests: 1 }
+  const result = transport === 'HTTP' ? await (await post('/api/platform/query', q)).json() : await call('query_platform', q)
+  const expected = JSON.parse('{"id":"safe","__proto__":"original-cell","constructor":"own"}')
+  expect(result).toMatchObject({ status: 'partial', fetchedCount: 1, rows: [{ id: 'safe', constructor: 'own' }], rawData: { version: 1, rows: [expected], pages: [{ format: 'html-table', body: raw }] } })
+  expect(Object.hasOwn(result.rawData.rows[0], '__proto__')).toBe(true)
+})
+
+it('real MCP batch retains the first safe page but never accepts the second sensitive original', async () => {
+  const first = `<script>(function(data){})(${source({ id: 'safe-first', n: 1 }, 1, 2).trim()});</script>`
+  const second = `<input name="csrfToken" value="synthetic-review-later-token"><script>(function(data){})(${source({ id: 'unsafe-second' }, 2, 2).trim()});</script>`
+  pageBodies = new Map([[1, first], [2, second]])
+  try {
+    const receipt = await call('submit_platform_batch', { items: [{ query: input }] })
+    await whenIdle()
+    const item = await call('get_platform_batch_item', { batchId: receipt.batchId, itemId: receipt.itemIds[0] })
+    expect(item).toMatchObject({ status: 'partial', segments: [{ fetchedCount: 1, error: { code: 'sensitive_response' }, rawData: { rows: [{ id: 'safe-first', n: 1 }], pages: [{ page: 1, body: first }] } }], unfinished: [{ page: 2 }] })
+    expect(item.segments[0].rawData.pages).toHaveLength(1)
+    expect(item.segments[0].pages).toEqual([expect.objectContaining({ page: 1, status: 'success', fetchedCount: 1 }), expect.objectContaining({ page: 2, status: 'failed', fetchedCount: 0 })])
+    expect(JSON.stringify(item)).not.toContain('synthetic-review-later-token')
+  } finally { pageBodies = undefined }
 })

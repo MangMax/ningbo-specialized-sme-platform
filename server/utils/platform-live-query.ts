@@ -1,4 +1,4 @@
-import { APPLY_GRID, APPLY_LIST_PATH, BUSINESS_GRID, BUSINESS_LIST_PATH, RECOGNIZED_GRID, RECOGNIZED_LIST_PATH, PlatformSessionExpiredError, extractEmbeddedZrar, parsePlatformPage } from '../../lib/platform/adapter'
+import { APPLY_GRID, APPLY_LIST_PATH, BUSINESS_GRID, BUSINESS_LIST_PATH, RECOGNIZED_GRID, RECOGNIZED_LIST_PATH, PlatformSessionExpiredError, parsePlatformPage } from '../../lib/platform/adapter'
 import { cookieRedactor, PlatformHttpError, postPlatformRequest, type PlatformQueryOptions } from '../../lib/platform/client'
 import { platformQueryInputSchema, platformQueryTitles, recognizedConditionShape, type PlatformLiveQueryResult, type PlatformQueryPage, type PlatformQueryError } from '../../lib/platform/live-query'
 import { resolvePlatformCookie, type CredentialContext } from './credential-state'
@@ -22,6 +22,53 @@ const error = (code: PlatformQueryError['code'], message: string): PlatformQuery
 const sensitiveKey = /cookie|token|session|password|authorization|account|username/i
 function hasSensitiveKey(value: unknown): boolean {
   return !!value && typeof value === 'object' && Object.entries(value).some(([key, item]) => sensitiveKey.test(key) || hasSensitiveKey(item))
+}
+/** Raw HTML is never executed. Only one JSON data island or an empty legacy
+ * data wrapper can be verified; any other script makes the whole page inadmissible. */
+function originalHtmlData(raw: string): { envelope: unknown; markup: string } | null {
+  const scripts = /<script\b([^>]*)>([\s\S]*?)<\/script\s*>/gi
+  const script = scripts.exec(raw)
+  if (!script) return /<script\b/i.test(raw) ? null : { envelope: null, markup: raw }
+  if (scripts.exec(raw)) return null
+  const attributes = script[1]?.trim()
+  const content = script[2]
+  if (attributes === undefined || content === undefined) return null
+  const literal = /^type\s*=\s*(["'])application\/json\1$/i.test(attributes)
+    ? content
+    : attributes === '' ? /^\s*\(\s*function\s*\(\s*data\s*\)\s*\{\s*\}\s*\)\s*\(([\s\S]*)\)\s*;?\s*$/.exec(content)?.[1] : undefined
+  if (literal === undefined) return null
+  const markup = raw.slice(0, script.index) + raw.slice(script.index + script[0].length)
+  if (/<script\b/i.test(markup)) return null
+  try { return { envelope: JSON.parse(literal), markup } } catch { return null }
+}
+const inertTags = new Set(['html', 'head', 'title', 'body', 'div', 'span', 'p', 'br', 'table', 'thead', 'tbody', 'tr', 'th', 'td'])
+/** Admission only, never sanitization: unknown HTML, controls, attributes or
+ * encoded non-data text are refused with the original page left unpublished. */
+function verifiableMarkup(markup: string): boolean {
+  const text = markup.replace(/<!doctype html>/gi, '')
+  if (/[\\&%]/.test(text) || sensitiveKey.test(text)) return false
+  let valid = true
+  const remaining = text.replace(/<(\/?)([a-z][a-z0-9]*)([^<>]*)>/gi, (_tag, closing: string, name: string, attributes: string) => {
+    if (!inertTags.has(name.toLowerCase()) || (closing && attributes.trim())) valid = false
+    let rest = attributes.trim().replace(/\/$/, '').trim()
+    // At most the four known inert attributes; no arbitrary HTML grammar walk.
+    for (let count = 0; rest && count < 4; count++) {
+      const attr = /^([a-z][a-z0-9]*)\s*=\s*(?:"([^"]*)"|'([^']*)'|([a-z0-9_-]+))/i.exec(rest)
+      if (!attr) { valid = false; break }
+      const key = attr[1]?.toLowerCase()
+      if (key === undefined) { valid = false; break }
+      const value = attr[2] ?? attr[3] ?? attr[4] ?? ''
+      if (!['id', 'class'].includes(key)
+        && !(key === 'name' && name.toLowerCase() === 'table' && ['applyGrid', 'businessListGrid', 'businessGrid'].includes(value))
+        && !(['currentpage', 'numperpage'].includes(key) && name.toLowerCase() === 'div' && /^\d+$/.test(value))) valid = false
+      rest = rest.slice(attr[0].length)
+      if (rest && !/^\s/.test(rest)) valid = false
+      rest = rest.trimStart()
+    }
+    if (rest) valid = false
+    return ''
+  })
+  return valid && !/[<>]/.test(remaining)
 }
 export async function runPlatformLiveQuery(input: unknown, ctx: PlatformLiveQueryContext = {}): Promise<PlatformLiveQueryResult> {
   const parsed = platformQueryInputSchema.safeParse(input)
@@ -100,17 +147,23 @@ export async function runPlatformLiveQuery(input: unknown, ctx: PlatformLiveQuer
         const parsedPage = parsePlatformPage(raw, q.source === 'businessList' ? BUSINESS_GRID : q.source === 'queryBusList' ? RECOGNIZED_GRID : APPLY_GRID)
         const serialized = JSON.stringify(parsedPage.rows)
         let sourceEnvelope: unknown = null
+        let unverifiableHtml = false
         if (q.rawDataVersion === 1) {
-          try { sourceEnvelope = JSON.parse(raw) } catch { sourceEnvelope = extractEmbeddedZrar(raw) }
+          if (parsedPage.source === 'json') sourceEnvelope = JSON.parse(raw)
+          else {
+            const html = originalHtmlData(raw)
+            unverifiableHtml = html === null || !verifiableMarkup(html.markup)
+            sourceEnvelope = html?.envelope ?? null
+          }
         }
         const sensitiveLegacyRows = JSON.stringify(sanitize(parsedPage.rows)) !== serialized || parsedPage.rows.some(row => Object.keys(row).some(key => sensitiveKey.test(key)))
-        const sensitiveOriginal = q.rawDataVersion === 1 && (redactString(raw) !== raw
+        const sensitiveOriginal = q.rawDataVersion === 1 && (unverifiableHtml || redactString(raw) !== raw
           || /["'][^"']*(?:cookie|token|session|password|authorization|account|username)[^"']*["']\s*:/i.test(raw)
           || hasSensitiveKey(sourceEnvelope) || hasSensitiveKey(parsedPage.rawRows)
           || JSON.stringify(sanitize(sourceEnvelope)) !== JSON.stringify(sourceEnvelope)
           || JSON.stringify(sanitize(parsedPage.rawRows)) !== JSON.stringify(parsedPage.rawRows))
         if (sensitiveLegacyRows || sensitiveOriginal) {
-          throw error('sensitive_response', '平台响应含敏感资料，已阻止返回。')
+          throw error('sensitive_response', '平台响应含敏感资料或无法核实整页原文，已阻止返回。')
         }
         if ((parsedPage.responsePage !== null && parsedPage.responsePage !== page) || (parsedPage.declaredTotal !== null && parsedPage.rows.length > parsedPage.declaredTotal)) throw error('invalid_response', '平台分页信息不一致。')
         if (parsedPage.responsePageSize !== null && parsedPage.responsePageSize !== result.limits.pageSize) throw error('invalid_response', '平台分页大小与请求不一致。')

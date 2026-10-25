@@ -201,7 +201,7 @@ function num(value: unknown, fallback: number): number {
  * 真实样本为零 —— 它的作用是「平台改行为时别静默 0 行」。**一行都没有时返回 `null`**,
  * 交给调用方报 `failed`,绝不把「表体空」当成「没有记录」。
  */
-function rowsFromTable(html: string, gridName: string): PlatformListResult | null {
+function rowsFromTable(html: string, gridName: string, rawRows?: PlatformRawRow[]): PlatformListResult | null {
   const tableRe = new RegExp(
     `<table[^>]*\\bname\\s*=\\s*["']${gridName}["'][^>]*>([\\s\\S]*?)</table>`,
     'i',
@@ -226,6 +226,12 @@ function rowsFromTable(html: string, gridName: string): PlatformListResult | nul
       const key = headers[index]
       if (key) row[key] = value
     })
+    // Build observations from actual cells, not the legacy assignment projection:
+    // Object.fromEntries defines __proto__ as an own data property safely.
+    if (rawRows) rawRows.push(Object.fromEntries(cells.flatMap((value, index): [string, string][] => {
+      const key = headers[index]
+      return key ? [[key, value]] : []
+    })))
     rows.push(row)
   }
   if (rows.length === 0) return null
@@ -361,6 +367,7 @@ export function parsePlatformPage(raw: string, gridName: string) {
   const declaredTotal = integer(grid?.maxCount)
   // Parsing the original envelope preserves null/missing, nested types and own
   // prototype-named keys. Table fallback only observes rendered cell strings.
-  const rawRows: PlatformRawRow[] = grid ? grid.pageSet as PlatformRawRow[] : structuredClone(parsed.rows)
+  const rawRows: PlatformRawRow[] = grid ? grid.pageSet as PlatformRawRow[] : []
+  if (!grid) rowsFromTable(text, gridName, rawRows)
   return { ...parsed, rawRows, declaredTotal, responsePage: metadataInteger(grid?.page), responseMaxPage: metadataInteger(grid?.maxPage), responsePageSize: metadataInteger(grid?.pageSize) }
 }

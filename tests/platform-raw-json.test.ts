@@ -111,3 +111,90 @@ it.each([
   const result = await runPlatformLiveQuery(query, context(raw))
   expect(result).toMatchObject({ status: 'failed', error: { code: 'sensitive_response' }, rawData: { rows: [], pages: [] } })
 })
+
+it('Spec R1 P1 rejects escaped credentials in scripts outside the grid without accepting original pages', async () => {
+  const html = `<script>window.config={"other":"synthetic-raw-json-\\u0073ecret"};</script><script>(function(data){} )(${body([{ id: 'safe' }]).trim()});</script>`
+  const result = await runPlatformLiveQuery(query, context(html))
+  expect(result).toMatchObject({ status: 'failed', completeness: 'partial', fetchedCount: 0, error: { code: 'sensitive_response' }, rawData: { version: 1, rows: [], pages: [] }, pages: [{ status: 'failed', fetchedCount: 0 }], unfinished: [{ source: 'queryBusList', rdjb: '2', page: 1 }] })
+  expect(JSON.stringify(result)).not.toContain('window.config')
+})
+
+it.each([
+  ['double_quote', '<input type="hidden" name="csrfToken" value="synthetic-other-token">'],
+  ['single_quote', "<input name='username' value='synthetic-user'>"],
+  ['unquoted_case', '<INPUT NAME=csrfToken VALUE=synthetic-other-token>'],
+  ['entity_attribute', '<input name="csrf&#84;oken" value="synthetic-other-token">'],
+  ['percent_attribute', '<input name="%75sername" value="synthetic-user">'],
+  ['textarea', '<textarea name="username">synthetic-user</textarea>'],
+])('Standards R1 P1 rejects entire HTML form response case %s', async (_label, control) => {
+  const html = `${control}<script>(function(data){})(${body([{ id: 'safe' }]).trim()});</script>`
+  const result = await runPlatformLiveQuery(query, context(html))
+  expect(result).toMatchObject({ status: 'failed', completeness: 'partial', fetchedCount: 0, error: { code: 'sensitive_response' }, rawData: { version: 1, rows: [], pages: [] }, pages: [{ status: 'failed', fetchedCount: 0 }], unfinished: [{ source: 'queryBusList', rdjb: '2', page: 1 }] })
+  expect(JSON.stringify(result)).not.toContain('synthetic-other-token')
+  expect(JSON.stringify(result)).not.toContain('synthetic-user')
+})
+
+it('Spec R1 P2 table raw rows retain prototype-named own cells independently of the legacy projection', async () => {
+  const table = '<table name="applyGrid"><thead><tr><th id="id">ID</th><th id="__proto__">raw</th><th id="constructor">ctor</th></tr></thead><tbody><tr><td>safe</td><td>original-cell</td><td>own</td></tr></tbody></table>'
+  const parsed = parsePlatformPage(table, 'applyGrid')
+  const expected = JSON.parse('{"id":"safe","__proto__":"original-cell","constructor":"own"}')
+  expect(parsed.rawRows).toEqual([expected])
+  const rawRow = parsed.rawRows[0]
+  if (!rawRow) throw new Error('Expected a raw table observation')
+  expect(Object.hasOwn(rawRow, '__proto__')).toBe(true)
+  expect(Object.getPrototypeOf(rawRow)).toBe(Object.prototype)
+  expect(parsed.rows).toEqual([{ id: 'safe', constructor: 'own' }])
+  const result = await runPlatformLiveQuery({ source: 'queryList', name: '合成', rawDataVersion: 1, maxRequests: 1 }, context(table))
+  expect(result).toMatchObject({ status: 'partial', fetchedCount: 1, rawData: { version: 1, rows: [expected], pages: [{ format: 'html-table', body: table }] } })
+})
+
+it.each(['json', 'html_wrapper', 'html_json_island'])('safe JSON and verifiable HTML remain byte exact case %s', async format => {
+  const json = body([{ id: 'safe', missingNull: null, unknown: ['中文', 1, false] }])
+  const raw = format === 'json' ? json : format === 'html_json_island'
+    ? `<script type="application/json">${json}</script>`
+    : `<html><head><title>合成页</title></head><body><div class="result"><script>(function(data){})(${json});</script></div></body></html>`
+  const result = await runPlatformLiveQuery(query, context(raw))
+  expect(result).toMatchObject({ status: 'success', fetchedCount: 1, rawData: { version: 1, rows: [{ id: 'safe', missingNull: null, unknown: ['中文', 1, false] }], pages: [{ body: raw }] } })
+})
+
+it.each([
+  ['unicode_braces', '<script>window.config={other:"synthetic-raw-json-\\u{73}ecret"}</script>'],
+  ['hex_escape', '<script>window.config={other:"synthetic-raw-json-\\x73ecret"}</script>'],
+  ['concatenated_script', '<script>window.config={other:"synthetic-raw-json-"+"secret"}</script>'],
+  ['entity_text', '<p>&#115;ynthetic-raw-json-secret</p>'],
+  ['percent_text', '<p>%73ynthetic-raw-json-secret</p>'],
+  ['escaped_text', '<p>synthetic-raw-json-\\u0073ecret</p>'],
+  ['event_attribute', '<div onclick="window.config=1">合成页</div>'],
+  ['unknown_attribute', '<div data-private="opaque">合成页</div>'],
+])('unverifiable complete HTML is refused without decoding or executing it case %s', async (_label, prefix) => {
+  const raw = `${prefix}<script>(function(data){})(${body([{ id: 'safe' }]).trim()});</script>`
+  const result = await runPlatformLiveQuery(query, context(raw))
+  expect(result).toMatchObject({ status: 'failed', fetchedCount: 0, error: { code: 'sensitive_response' }, rawData: { rows: [], pages: [] }, unfinished: [{ page: 1 }] })
+})
+
+it('an executable grid wrapper is refused instead of running upstream JS or returning a legacy fallback', async () => {
+  const raw = `<script>(function(data){throw new Error('must not run')})(${body([{ id: 'safe' }]).trim()});</script>`
+  const result = await runPlatformLiveQuery(query, context(raw))
+  expect(result).toMatchObject({ status: 'failed', error: { code: 'sensitive_response' }, rawData: { rows: [], pages: [] } })
+  expect(result.rows).toEqual([])
+})
+
+it('safe HTML original bytes count in the complete result budget without silent truncation', async () => {
+  const raw = `<script>(function(data){})(${body([{ id: 'large-safe' }]).trim()});</script>` + ' '.repeat(70000)
+  const rejected = await runPlatformLiveQuery(query, context(raw, 65536))
+  expect(rejected).toMatchObject({ status: 'partial', error: { code: 'safety_limit' }, rawData: { rows: [], pages: [] }, unfinished: [{ page: 1 }] })
+  const accepted = await runPlatformLiveQuery(query, context(raw, 100000))
+  expect(accepted).toMatchObject({ status: 'success', rawData: { pages: [{ body: raw }] } })
+})
+
+it('legacy callers retain only their string projection and raw opt-in never silently falls back', async () => {
+  const raw = `<input name="csrfToken" value="synthetic-unpublished"><script>(function(data){})(${body([{ id: 'safe' }]).trim()});</script>`
+  const { rawDataVersion: _version, ...legacyQuery } = query
+  const legacy = await runPlatformLiveQuery(legacyQuery, context(raw))
+  expect(legacy.status).toBe('success')
+  expect(legacy.rows).toEqual([{ id: 'safe' }])
+  expect(Object.hasOwn(legacy, 'rawData')).toBe(false)
+  expect(JSON.stringify(legacy)).not.toContain('synthetic-unpublished')
+  const original = await runPlatformLiveQuery(query, context(raw))
+  expect(original).toMatchObject({ status: 'failed', rows: [], rawData: { rows: [], pages: [] }, error: { code: 'sensitive_response' } })
+})

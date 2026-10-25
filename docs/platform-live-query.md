@@ -154,4 +154,6 @@ investigation uses these app APIs/MCP and never needs a Cookie read/reveal.
 
 扩展单查结果预算为8MiB；批量沿用原 `maxResultBytes`。原响应、typed 行、旧投影和已有结果一起计量，放不下就整页拒收、标 partial/safety_limit 并保留 unfinished，不截断原文。与已知服务端凭据匹配或含敏感键的原响应拒收，不能先脱敏再称完整原文。未选择扩展的旧消费者继续原有行为；批次原条件保留 rawDataVersion，分段和补查继续使用同一格式。
 
+HTML 原文另有保守准入边界：仅接受一个 `type="application/json"` 数据脚本，或仅将 JSON 传入空 `function(data){}` 的既有包装；数据区按完整 JSON 检查，不只检查网格。数据脚本之外仅允许有限惰性标签（html/head/title/body/div/span/p/br/table/thead/tbody/tr/th/td）和 id/class、表格网格名、数字分页属性。额外或非空可执行脚本、表单控件、未知标签/属性以及非数据区的实体、百分号、反斜线编码均视为无法核实，整页以 sensitive_response 拒收；不执行上游 JS、不修改原页，也不退回旧投影冒充保真。失败页保持 unfinished，先前已接受的页仍原样保留。table typed 行直接从表头/单元格安全构造，自有原型同名列完整保留，旧字符串投影的行为不变。
+
 认定归档详见[封套转存](platform-recognized-evidence.md#原json封套扩展与后续接缝326327)。本片只保证封套原文保留，旧 relation.rawFields/业务版本哈希尚未切换，不能视为 #298 完成。
