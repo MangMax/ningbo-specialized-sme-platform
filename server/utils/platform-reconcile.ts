@@ -16,6 +16,8 @@ import {
   type PlatformQueryOutcome,
   resolveCookie,
   queryPlatformSlots,
+  readCompleteLegacySlot,
+  type LegacySlotCollection,
 } from '../../lib/platform/client'
 import type { PlatformRdjb, PlatformRow } from '../../lib/platform/adapter'
 import { type PlatformRelationRecord, relationFromRow } from '../../lib/platform/identity'
@@ -178,13 +180,17 @@ export interface ReconcileReport {
   /** 实际打开过平台连接的统一社会信用代码数。 */
   usccCount: number
   queries: {
-    /** 本次真正打出去的 HTTP 请求数。 */
+    /** 本次实查的槽位数；分页/重试次数见 collection.positions。 */
     network: number
     /** 复用「新鲜」既有查询、没再打平台的槽位数。 */
     reused: number
     byInterface: Record<string, number>
   }
   relations: number
+  collection: {
+    complete: number; partial: number; failed: number; unknown: number
+    positions: (Pick<LegacySlotCollection, 'interface' | 'rdjb' | 'queryKey' | 'queriedAt' | 'completedAt' | 'completeness' | 'declaredTotal' | 'unfinished' | 'failureReason' | 'requestCount'> & { pages: Omit<LegacySlotCollection['pages'][number], 'raw'>[] })[]
+  }
   counts: ReconcileReportCounts
   /** 无统代、平台查不了的差异(逐条列出,供人工接手)。 */
   unqueryable: Array<{ enterpriseId: number; name: string; titleCode: string; direction: string }>
@@ -271,33 +277,43 @@ function rawRowOf(row: typeof schema.platformRelation.$inferSelect): PlatformRow
  * 重跑就该再试一次。
  */
 function freshStoredSlots(db: Db, queryKey: string, cutoffIso: string): Map<string, StoredSlot> {
+  return db.transaction(tx => freshStoredSlotsSnapshot(tx, queryKey, cutoffIso))
+}
+
+function freshStoredSlotsSnapshot(db: Pick<Db, 'select'>, queryKey: string, cutoffIso: string): Map<string, StoredSlot> {
   const out = new Map<string, StoredSlot>()
   const queries = db
     .select()
     .from(schema.platformQuery)
     .where(eq(schema.platformQuery.queryKey, queryKey))
     .all()
+    .sort((a, b) => b.queriedAt.localeCompare(a.queriedAt) || b.id - a.id)
+  const seen = new Set<string>()
   for (const query of queries) {
+    const key = slotKey({ interface: query.interface, rdjb: query.rdjb })
+    if (seen.has(key)) continue
+    seen.add(key)
     if (query.status !== 'success' && query.status !== 'no_record') continue
     if (query.queriedAt < cutoffIso) continue
-    const key = slotKey({ interface: query.interface, rdjb: query.rdjb })
-    const previous = out.get(key)
-    // 同一槽位有多条新鲜查询时取最新那时点(重复查询各占一行,不覆盖)。
-    if (previous && previous.evidence.queriedAt >= query.queriedAt) continue
     const relations = db
       .select()
       .from(schema.platformRelation)
       .where(eq(schema.platformRelation.queryId, query.id))
       .all()
       .sort((a, b) => a.sequenceNo - b.sequenceNo)
+    const rawRows = relations.map(rawRowOf)
+    const collection = readCompleteLegacySlot(query.rawResponse, query, rawRows)
+    if (!collection || (query.status === 'no_record') !== (rawRows.length === 0)) continue
     out.set(key, {
-      rawRows: relations.map(rawRowOf),
+      collection,
+      rawRows,
       raw: '',
       evidence: {
         interface: query.interface,
         rdjb: query.rdjb,
         queriedAt: query.queriedAt,
         status: query.status,
+        completeness: collection.completeness,
         failureReason: query.failureReason,
         relations: relations.map(row => normalizePlatformRelation(query.interface, row)).map((row) => ({
           interface: query.interface,
@@ -325,6 +341,7 @@ function freshStoredSlots(db: Db, queryKey: string, cutoffIso: string): Map<stri
 
 /** 一个槽位的证据:查询状态分类用 `evidence`,载荷构造用 `rawRows`。 */
 interface StoredSlot {
+  collection?: LegacySlotCollection
   evidence: ReconcileQueryEvidence
   rawRows: PlatformRow[]
   /** 本次实查拿到的**原始响应原文**(落 `platform_query.raw_response`);复用时为空串。 */
@@ -439,6 +456,7 @@ function toEvidence(outcome: PlatformQueryOutcome): ReconcileQueryEvidence {
     rdjb: outcome.rdjb,
     queriedAt: outcome.queriedAt,
     status: outcome.status,
+    completeness: outcome.collection?.completeness,
     failureReason: outcome.failureReason,
     relations: outcome.rows.map((row, index) =>
       relationFromRow(row, {
@@ -476,7 +494,8 @@ function toQueryInput(slot: StoredSlot, queryKey: string): PlatformQueryInput {
       status: evidence.status,
       failureReason: evidence.failureReason ?? null,
       rows: slot.rawRows,
-      maxCount: slot.rawRows.length,
+      maxCount: slot.collection?.declaredTotal ?? 0,
+      collection: slot.collection,
       source: null,
       // 复用库里已有查询时不重传原文:写入侧按 `(interface, queryKey, rdjb, queriedAt)`
       // 唯一键判为已存在,不覆盖库里的原文(也免得把几 MB 的 HTML 再发一遍)。
@@ -502,7 +521,7 @@ export function reconcileIdempotencyKey(input: {
   const queries = [...input.queries]
     .map(
       (query) =>
-        `${query.interface}|${query.rdjb}|${query.queriedAt}|${query.status}|` +
+        `${query.interface}|${query.rdjb}|${query.queriedAt}|${query.status}|${query.completeness ?? 'unknown'}|` +
         query.relations
           .map((relation) => `${relation.sequenceNo}:${relation.relationKey ?? ''}:${relation.nameRaw ?? ''}`)
           .join(','),
@@ -519,7 +538,7 @@ export function reconcileIdempotencyKey(input: {
 }
 
 /** 已确认结论由代理维护；采集只复用处理状态，不用新查询覆盖确认。失败仍可重试。 */
-function hasFreshDecision(db: Db, target: ReconcileTarget, cutoffIso: string): boolean {
+function hasFreshDecision(db: Db, target: ReconcileTarget, cutoffIso: string, complete = true): boolean {
   const matching = db
     .select()
     .from(schema.differenceReason)
@@ -531,7 +550,7 @@ function hasFreshDecision(db: Db, target: ReconcileTarget, cutoffIso: string): b
 
   return (
     latest !== undefined &&
-    (latest.verificationStatus === 'confirmed' || latest.recordedAt >= cutoffIso) &&
+    (latest.verificationStatus === 'confirmed' || (complete && latest.recordedAt >= cutoffIso)) &&
     // A failed attempt is not a reusable conclusion. Checking only the latest row also prevents
     // an older successful explanation from hiding a newer failure for the same target.
     latest.status !== 'query_failed'
@@ -610,6 +629,7 @@ export async function runPlatformReconcile(options: ReconcileRunOptions): Promis
           fetchImpl: options.fetchImpl,
           cookie: () => cookie,
           retries: options.retries,
+          shouldCancel: options.shouldCancel,
           sleep: options.sleep,
           // `queried_at` 用**请求前的真实时点**(注入时钟时用注入的,便于固定断言)。
           ...(options.now ? { now: () => options.now!().toISOString() } : {}),
@@ -617,11 +637,14 @@ export async function runPlatformReconcile(options: ReconcileRunOptions): Promis
         entry.missing.map((slot) => ({ interface: slot.interface, rdjb: slot.rdjb as PlatformRdjb | undefined })),
       )
       for (const outcome of outcomes) {
-        networkCount += 1
-        networkByInterface[outcome.interface] = (networkByInterface[outcome.interface] ?? 0) + 1
-        slots.push({ evidence: toEvidence(outcome), rawRows: outcome.rows, raw: outcome.raw })
+        if (outcome.collection?.requestCount) {
+          networkCount += 1
+          networkByInterface[outcome.interface] = (networkByInterface[outcome.interface] ?? 0) + 1
+        }
+        slots.push({ evidence: toEvidence(outcome), rawRows: outcome.rows, raw: outcome.raw, collection: outcome.collection })
       }
     }
+    if (options.shouldCancel?.()) cancelled = true
     slots.sort((a, b) => slotOrder(a.evidence) - slotOrder(b.evidence))
     slotsByUscc.set(uscc, slots)
     options.onProgress?.(index + 1, total)
@@ -661,7 +684,7 @@ export async function runPlatformReconcile(options: ReconcileRunOptions): Promis
   for (const [uscc, targets] of collected.byUscc) {
     const evidence = (slotsByUscc.get(uscc) ?? []).map((slot) => slot.evidence)
     for (const target of targets) {
-      if (hasFreshDecision(db, target, cutoffIso)) {
+      if (hasFreshDecision(db, target, cutoffIso, evidence.length === SLOTS.length && evidence.every(q => q.completeness === 'complete'))) {
         counts.reusedFresh += 1
         continue
       }
@@ -671,6 +694,28 @@ export async function runPlatformReconcile(options: ReconcileRunOptions): Promis
     }
   }
 
+  const collection: ReconcileReport['collection'] = { complete: 0, partial: 0, failed: 0, unknown: 0, positions: [] }
+  // Workers skipped at the cancellation boundary have no executed pages, but
+  // their planned scope is still unfinished and must remain visible in the report.
+  for (const uscc of usccs.filter(key => !slotsByUscc.has(key))) {
+    for (const slot of SLOTS) {
+      collection.unknown++
+      collection.positions.push({ ...slot, queryKey: uscc, queriedAt: startedAt, completedAt: now().toISOString(),
+        completeness: 'not_queried', declaredTotal: null, unfinished: [{ source: slot.interface === 'business_list' ? 'businessList' : 'queryList', rdjb: slot.rdjb || null, page: 1 }],
+        failureReason: '任务已取消，该槽位尚未查询。', requestCount: 0, pages: [] })
+    }
+  }
+  for (const slot of [...slotsByUscc.values()].flat()) {
+    const c = slot.collection
+    if (!c || c.completeness === 'not_queried') collection.unknown++
+    else if (c.completeness === 'complete') collection.complete++
+    else if (slot.evidence.status === 'failed') collection.failed++
+    else collection.partial++
+    if (c) {
+      const { kind: _kind, pages, ...position } = c
+      collection.positions.push({ ...position, pages: pages.map(({ raw: _raw, ...page }) => page) })
+    }
+  }
   const report: ReconcileReport = {
     startedAt,
     finishedAt: now().toISOString(),
@@ -687,6 +732,7 @@ export async function runPlatformReconcile(options: ReconcileRunOptions): Promis
     usccCount: usccs.length,
     queries: { network: networkCount, reused: reusedCount, byInterface: networkByInterface },
     relations,
+    collection,
     counts,
     unqueryable: collected.unqueryable.map((target) => ({
       enterpriseId: target.enterpriseId,
@@ -700,6 +746,7 @@ export async function runPlatformReconcile(options: ReconcileRunOptions): Promis
     cancelled,
   }
 
+  if (options.shouldCancel?.()) { cancelled = true; report.cancelled = true }
   if (cancelled || options.write === false || (differenceDecisions.length === 0 && networkCount === 0)) {
     report.finishedAt = now().toISOString()
     return report
@@ -731,6 +778,7 @@ export async function runPlatformReconcile(options: ReconcileRunOptions): Promis
 
   const writer = options.writer ?? inProcessReconcileWriter(db)
   await writer.preflight(request)
+  if (options.shouldCancel?.()) { report.cancelled = true; return report }
   const committed = await writer.commit(request)
   report.write = {
     batchId: committed.batchId,

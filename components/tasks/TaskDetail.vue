@@ -78,6 +78,7 @@ const outcomeLabel = computed(() => {
     ? { complete: '报告目标', partial: '待核实' }
     : { complete: '完整', partial: '部分' }
 })
+const reconcileCollection = computed(() => data.value?.kind === 'reconcile' ? data.value.reconcileCollection : undefined)
 const itemStatus: Record<string, string> = { success: '查询成功', no_record: '完整查询无记录', auth_failed: '授权失败', failed: '查询失败', partial: '部分', not_queried: '未查询', complete: '完整' }
 const current = computed(() => data.value?.id === props.id && sourceKey.value === key.value && !failed.value)
 const links = computed(() => (data.value?.links ?? []).filter(link => !data.value?.discovery || !link.to.startsWith('/enterprises/')))
@@ -180,13 +181,28 @@ async function act(action: 'cancel' | 'retry') {
           <template v-if="data.outcome">
             <p class="text-sm" data-testid="task-outcome">
               {{ outcomeLabel?.complete }} {{ data.outcome.complete }} · {{ outcomeLabel?.partial }} {{ data.outcome.partial }} ·
-              查询失败 {{ data.outcome.failed }} · 未查询 {{ data.outcome.notQueried }} · 未完成范围 {{ data.outcome.unfinished }}
+              查询失败 {{ data.outcome.failed }} · 未查询 {{ data.outcome.notQueried }}
+              <template v-if="data.kind !== 'reconcile'"> · 未完成范围 {{ data.outcome.unfinished }}</template>
             </p>
             <p v-if="data.kind === 'platform-query-batch'" class="text-muted-foreground text-sm">
               以上是平台取回的<b>完整性</b>（执行 {{ data.outcome.attempt }} / 10 次），不是业务判断结论；取回事实仅保存在任务结果中，不代表正式入库。
             </p>
             <p v-else class="text-muted-foreground text-sm">查询完整性与核查结论分开核对；任务完成不代表所有差异已有业务结论。</p>
           </template>
+
+          <section v-if="data.kind === 'reconcile'" class="flex flex-col gap-2 text-sm" aria-label="平台采集完整性">
+            <template v-if="reconcileCollection && reconcileCollection.complete !== null">
+              <p>采集完整性：完整 {{ reconcileCollection.complete }} 槽位 · 部分 {{ reconcileCollection.partial }} 槽位 · 失败 {{ reconcileCollection.failed }} 槽位 · 未知 {{ reconcileCollection.unknown }} 槽位</p>
+              <p>未完成 {{ reconcileCollection.unfinished }} 范围</p>
+              <ul v-if="reconcileCollection.positions.length" class="flex flex-col gap-1" aria-label="未完成采集范围">
+                <li v-for="(position, index) in reconcileCollection.positions" :key="index">
+                  {{ position.source }} / {{ position.rdjb === null ? '不分认定级别' : `rdjb=${position.rdjb}` }} / 第 {{ position.page }} 页
+                </li>
+              </ul>
+              <p v-if="reconcileCollection.positionsTruncated" class="text-muted-foreground">仅展示前 {{ reconcileCollection.positions.length }} 个可定位范围；其余请查看原任务报告。</p>
+            </template>
+            <p v-else>采集完整性未知：本报告未记录采集完整性。未完成范围未知。</p>
+          </section>
 
           <ul v-if="data.items?.length" class="flex flex-col gap-3 text-sm" aria-label="平台逐项范围">
             <li v-for="item in data.items" :key="item.id" class="flex flex-col gap-1">

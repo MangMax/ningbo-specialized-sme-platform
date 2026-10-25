@@ -41,7 +41,8 @@ export interface ReconcileQueryEvidence {
   /** `business_list` 的 rdjb;`apply_list` 为空串。 */
   rdjb: string
   queriedAt: string
-  status: 'success' | 'no_record' | 'failed'
+  status: 'success' | 'no_record' | 'failed' | 'partial'
+  completeness?: 'complete' | 'partial' | 'not_queried'
   failureReason?: string | null
   /** 逐条关联关系(**不按 id 去重**)。
       平台没有独立「曾用名」列 —— 同一 `tyshxydm` 下 `qymc` 不同的历史行**本身**就是证据。 */
@@ -103,16 +104,16 @@ export function decideDifference(target: ReconcileTarget, queries: ReconcileQuer
     return result
   }
   if (!queries.length) return result
-  const successful = queries.filter(q => q.status === 'success' || q.status === 'no_record')
-  const failed = queries.filter(q => q.status === 'failed')
+  const successful = queries.filter(q => (q.status === 'success' || q.status === 'no_record') && q.completeness === 'complete')
+  const failed = queries.filter(q => !successful.includes(q))
   const covered = new Set(successful.map(q => `${q.interface}|${q.rdjb}`))
   const missing = REQUIRED_SLOTS.filter(slot => !covered.has(slot))
-  const rows = successful.flatMap(q => q.relations)
-  const anchor = successful.find(q => q.relations.length > 0) ?? queries[0]!
+  const rows = queries.flatMap(q => q.relations)
+  const anchor = successful.find(q => q.relations.length > 0) ?? queries.find(q => q.relations.length > 0) ?? queries[0]!
   result.evidenceQuery = {
     interface: anchor.interface, queryKey: target.uscc, rdjb: anchor.rdjb, queriedAt: anchor.queriedAt,
   }
-  if (!successful.length || (rows.length === 0 && (failed.length > 0 || missing.length > 0))) {
+  if (rows.length === 0 && (!successful.length || failed.length > 0 || missing.length > 0)) {
     result.status = 'query_failed'
     result.reasonNote = `查询失败或范围不完整，不能报告无记录；未完成槽位：${missing.join('、') || '见原始查询'}。` +
       failed.map(q => `${q.interface}${q.rdjb ? ` rdjb=${q.rdjb}` : ''}：${q.failureReason ?? '失败'}`).join('；')

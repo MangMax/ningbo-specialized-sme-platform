@@ -206,23 +206,9 @@ describe('凭据:拿不到就不发请求、不写半截结果', () => {
     const enterpriseId = seedTarget(db, '宁波新鲜科技有限公司', '91330211000000077W')
     const queries = db.select().from(schema.platformQuery).all()
     expect(queries).toHaveLength(0)
-    // 先手写四个「新鲜」查询(模拟上一次运行留下的证据)。
-    for (const slot of [
-      { interface: 'business_list' as const, rdjb: '1' },
-      { interface: 'business_list' as const, rdjb: '2' },
-      { interface: 'business_list' as const, rdjb: '3' },
-      { interface: 'apply_list' as const, rdjb: '' },
-    ]) {
-      db.insert(schema.platformQuery)
-        .values({
-          interface: slot.interface,
-          queryKey: '91330211000000077W',
-          rdjb: slot.rdjb,
-          queriedAt: '2026-10-16T01:00:00.000Z',
-          status: 'no_record',
-        })
-        .run()
-    }
+    // Reusable coverage must come from a real complete traversal, not a bare status.
+    await runPlatformReconcile({ db, fetchImpl: platformReplay(ok).fetchImpl,
+      cookie: 'synthetic', now: () => new Date('2026-10-16T01:00:00.000Z') })
     const platform = platformReplay(ok)
     const report = await runPlatformReconcile({
       db,
@@ -233,7 +219,9 @@ describe('凭据:拿不到就不发请求、不写半截结果', () => {
     expect(platform.calls).toHaveLength(0)
     expect(report.queries.network).toBe(0)
     expect(report.queries.reused).toBe(4)
-    expect(report.counts.noRecord).toBe(1)
+    expect(report.counts.noRecord).toBe(0)
+    expect(report.counts.reusedFresh).toBe(1)
+    expect(report.write).toBeNull()
     expect(enterpriseId).toBeGreaterThan(0)
   })
 })
@@ -319,7 +307,7 @@ describe('实测案例 `91330206793007818K`:旧名要真的落进 enterprise_ali
 
 describe('新鲜复用:库里的旧证据直接参与判定,不再打平台', () => {
 
-  it('rdjb=3 已有新鲜成功查询(含两个名字)⇒ 复用原始证据但不自动确认更名,只补另外三个槽位', async () => {
+  it('rdjb=3 历史成功缺完整性证明⇒ 保留原始证据并重新采集四个槽位', async () => {
     const db = freshDb()
     const USCC = '91330211000000088V'
     const enterpriseId = seedTarget(db, '宁波上航测绘股份有限公司', USCC)
@@ -372,15 +360,15 @@ describe('新鲜复用:库里的旧证据直接参与判定,不再打平台', ()
       now: () => new Date('2026-10-16T02:00:00.000Z'),
     })
 
-    // rdjb=3 复用(0 请求),另外三个槽位实查 —— 共 3 个请求。
-    expect(platform.calls).toHaveLength(3)
-    expect(platform.calls.some((call) => call.rdjb === '3' && call.interface === 'business_list')).toBe(false)
-    expect(report.queries.reused).toBe(1)
-    expect(report.queries.network).toBe(3)
+    // Historical success cannot prove all pages were collected.
+    expect(platform.calls).toHaveLength(4)
+    expect(platform.calls.some((call) => call.rdjb === '3' && call.interface === 'business_list')).toBe(true)
+    expect(report.queries.reused).toBe(0)
+    expect(report.queries.network).toBe(4)
 
-    // 复用关系仍可查，但不会自动产出更名结论。
+    // Historical rows stay readable; the new complete empty observation does not confirm renaming.
     const difference = db.select().from(schema.differenceReason).all()[0]!
-    expect(difference.status).toBe('needs_review')
+    expect(difference.status).toBe('no_record')
     expect(difference.reasonCode).toBeNull()
     expect(db.select().from(schema.enterpriseAlias).all()).toHaveLength(0)
     const relation = db.select().from(schema.platformRelation).all().find(row => row.relationKey === 'SQ-OLD')!

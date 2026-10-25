@@ -16,7 +16,15 @@ export interface TaskSummary {
   createdAt: string; startedAt: string | null; finishedAt: string | null
   progress: { done: number; total: number | null; unit: string; stage: string }
   error: string | null
-  outcome: { complete: number; partial: number; failed: number; notQueried: number; unfinished: number; attempt: number } | null
+  outcome: { complete: number; partial: number; failed: number; notQueried: number; unfinished: number | null; attempt: number } | null
+  /** Reconcile-only collection coverage, counted in slots/ranges, separate from target decisions.
+   * Historical reports without coverage retain null counts (unknown), never inferred completion. */
+  reconcileCollection?: {
+    complete: number | null; partial: number | null; failed: number | null; unknown: number | null
+    unfinished: number | null
+    positions: { source: 'businessList' | 'queryList'; rdjb: string | null; page: number }[]
+    positionsTruncated: boolean
+  }
   export?: {
     titleCode: TaskExportTitle | null; regenerateOf: string | null; phase: string
     generatedAt: string | null; snapshotStartedAt: string | null; ruleVersion: string | null; dataVersion: string | null

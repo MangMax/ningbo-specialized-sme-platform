@@ -25,8 +25,10 @@ import {
   type PlatformResponseOutcome,
   type PlatformRow,
   classifyPlatformResponse,
+  parsePlatformPage,
 } from './adapter'
 import type { PlatformInterface } from '../labels'
+import type { PlatformQueryError, PlatformQueryPage, PlatformQueryPosition } from './live-query'
 import { withPlatformRequestBudget } from './request-budget'
 import { appLog, newLogContext, type LogContext } from '../logging'
 import { logPlatformResult, platformOperation } from './logging'
@@ -47,7 +49,8 @@ export const COOKIE_ENV = 'MIIT_COOKIE'
 const USER_AGENT =
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36'
 
-export interface PlatformQueryOutcome extends PlatformResponseOutcome {
+export interface PlatformQueryOutcome extends Omit<PlatformResponseOutcome, 'status'> {
+  status: PlatformResponseOutcome['status'] | 'partial'
   interface: PlatformInterface
   /** `business_list` 的 rdjb;`apply_list` 记空串(该接口不用此参数)。 */
   rdjb: string
@@ -57,6 +60,23 @@ export interface PlatformQueryOutcome extends PlatformResponseOutcome {
   /** 原始响应原文,供 `platform_query.raw_response` 留证。 */
   raw: string
   rows: PlatformRow[]
+  /** Legacy traversal evidence lives in rawResponse, never recognized collectionEvidence. */
+  collection?: LegacySlotCollection
+}
+
+export interface LegacySlotCollection {
+  kind: 'legacy-slot-pages/v1'
+  interface: PlatformInterface
+  rdjb: string
+  queryKey: string
+  queriedAt: string
+  completedAt: string
+  completeness: 'complete' | 'partial' | 'not_queried'
+  declaredTotal: number | null
+  pages: (PlatformQueryPage & { queriedAt: string; raw: string })[]
+  unfinished: PlatformQueryPosition[]
+  requestCount: number
+  failureReason: string | null
 }
 
 export interface PlatformQueryOptions {
@@ -75,6 +95,10 @@ export interface PlatformQueryOptions {
   sleep?: (ms: number) => Promise<void>
   /** 查询时点取值;默认当前时间。测试注入以固定 `queried_at`。 */
   now?: () => string
+  shouldCancel?: () => boolean
+  maxRequests?: number
+  maxRows?: number
+  maxDurationMs?: number
 }
 
 /**
@@ -169,10 +193,12 @@ async function postWithoutBudget(
   let lastError: unknown = null
   for (let attempt = 0; attempt <= retries; attempt++) {
     if (attempt > 0) {
-      await sleep(1000 * 3 ** (attempt - 1))
+      await sleep(Math.min(1000 * 3 ** (attempt - 1), options.deadlineMs == null ? Infinity : Math.max(0, options.deadlineMs - Date.now())))
       if (source) appLog({ source: 'platform', operation: platformOperation(source, 'retry', body.rdjb ?? null), outcome: 'started', counts: { done: attempt },
         ...(Number.isSafeInteger(Number(body.pageNum)) && Number(body.pageNum) > 0 ? { page: Number(body.pageNum) } : {}) }, logContext)
     }
+    if (options.shouldCancel?.()) throw new Error('平台查询已取消。')
+    if (options.deadlineMs != null && Date.now() >= options.deadlineMs) throw new DOMException('平台查询超时。', 'TimeoutError')
     try {
       const response = await fetchImpl(new URL(path, base).toString(), {
         method: 'POST',
@@ -206,6 +232,7 @@ async function postWithoutBudget(
         error instanceof PlatformSessionExpiredError ||
         error instanceof PlatformCredentialMissingError ||
         error instanceof PlatformResponseError
+        || (error instanceof PlatformHttpError && error.status < 500)
       ) {
         throw error
       }
@@ -234,8 +261,45 @@ export interface PlatformSlot {
   rdjb?: PlatformRdjb
 }
 
+/** Same page partition checks are used on admission and cache readback. */
+function validateLegacyPage(parsed: ReturnType<typeof parsePlatformPage>, page: number, total: number | null): void {
+  const declared = parsed.declaredTotal ?? total
+  if (parsed.declaredTotal === null || parsed.responsePage !== page || parsed.responsePageSize !== 50 || parsed.rows.length > 50
+    || (total !== null && parsed.declaredTotal !== null && parsed.declaredTotal !== total)
+    || (declared !== null && (page > Math.max(1, Math.ceil(declared / 50))
+      || parsed.rows.length !== Math.min(50, Math.max(0, declared - (page - 1) * 50))))) {
+    throw new PlatformResponseError('平台分页信息不一致或缺少页号/分页大小/声明总数。')
+  }
+}
+
+/** Old success alone proves nothing. Revalidate the original per-page bytes and
+ * exact ordered archived rows before reusing a newly collected complete slot. */
+export function readCompleteLegacySlot(raw: string | null, meta: { interface: PlatformInterface; rdjb: string; queryKey: string; queriedAt: string }, rows: PlatformRow[]): LegacySlotCollection | null {
+  try {
+    const value = JSON.parse(raw ?? '') as LegacySlotCollection
+    if (value.kind !== 'legacy-slot-pages/v1' || value.completeness !== 'complete' || value.unfinished.length || value.failureReason
+      || (['interface', 'rdjb', 'queryKey', 'queriedAt'] as const).some(key => value[key] !== meta[key])
+      || !value.pages.length || value.pages.length > 100 || !Number.isSafeInteger(value.requestCount)
+      || value.requestCount < value.pages.length || value.requestCount > 100
+      || !Number.isFinite(Date.parse(value.completedAt)) || Date.parse(value.completedAt) < Date.parse(meta.queriedAt)) return null
+    const collected: PlatformRow[] = []
+    let total: number | null = null
+    for (const [index, page] of value.pages.entries()) {
+      if (page.status !== 'success' || page.error !== null || page.page !== index + 1
+        || page.source !== (meta.interface === 'business_list' ? 'businessList' : 'queryList') || page.rdjb !== (meta.rdjb || null)
+        || !Number.isFinite(Date.parse(page.queriedAt)) || (total !== null && collected.length === total)) return null
+      const parsed = parsePlatformPage(page.raw, meta.interface === 'business_list' ? BUSINESS_GRID : APPLY_GRID)
+      validateLegacyPage(parsed, index + 1, total)
+      if (parsed.declaredTotal !== page.declaredTotal || page.fetchedCount !== parsed.rows.length) return null
+      total ??= parsed.declaredTotal
+      collected.push(...parsed.rows)
+    }
+    return total !== null && total === value.declaredTotal && total === collected.length && JSON.stringify(collected) === JSON.stringify(rows) ? value : null
+  } catch { return null }
+}
+
 /**
- * 按**指定槽位**取数。每个槽位一次 POST,逐次归类(不合并、不互相覆盖)。
+ * 按**指定槽位**取数。每个槽位有界遍历所有页，逐槽归档(不合并、不互相覆盖)。
  *
  * 为什么要能只取一部分:全量核查里同一个 USCC 的四个槽位**各有各的新鲜度** ——
  * 24 小时内已经成功查过的槽位直接复用库里的证据,只补缺的那些。整组一起重查会把
@@ -262,43 +326,73 @@ export async function queryPlatformSlots(
   const outcomes: PlatformQueryOutcome[] = []
   for (const slot of slots) {
     const started = Date.now()
-    let errorCode: string | undefined
     const base = { interface: slot.interface, rdjb: slot.rdjb ?? '', queryKey: uscc }
-    // 时点在**请求发出前**取:它就是这次查询的时刻(`platform_query.queried_at`)。
+    const source = slot.interface === 'business_list' ? 'businessList' : 'queryList'
     const queriedAt = options.now?.() ?? new Date().toISOString()
-    try {
-      const path = slot.interface === 'business_list' ? BUSINESS_LIST_PATH : APPLY_LIST_PATH
-      const body = slot.interface === 'business_list' ? queryBody(uscc, { rdjb: slot.rdjb! }) : queryBody(uscc)
-      if (credentialError) throw new Error('平台凭据不可用，请检查凭据来源。')
-      const raw = await postPlatformRequest(fixed, path, body)
-      const outcome = classifyRawQuery(raw, { ...base, queriedAt })
-      const rows = sanitize(outcome.rows) as PlatformRow[]
-      // Never turn a redaction placeholder into an enterprise name, alias or relation.
-      const containsCredential = JSON.stringify(rows) !== JSON.stringify(outcome.rows)
-      if (containsCredential) errorCode = 'sensitive_response'
-      else if (outcome.status === 'failed') errorCode = 'invalid_response'
-      outcomes.push(containsCredential
-        ? { ...outcome, status: 'failed', maxCount: 0, rows: [], raw: redact(raw), failureReason: '平台业务响应含敏感凭据，已阻止作为业务证据使用。' }
-        : { ...outcome, raw: redact(raw), rows, failureReason: outcome.failureReason ? redact(outcome.failureReason) : outcome.failureReason })
-    } catch (error) {
-      errorCode = credentialError || !cookie ? 'credential_unavailable' : error instanceof PlatformSessionExpiredError || (error instanceof PlatformHttpError && [401, 403].includes(error.status)) ? 'auth_failed'
-        : error instanceof PlatformHttpError && error.status === 429 ? 'rate_limited' : error instanceof Error && /timeout|abort/i.test(error.name) ? 'timeout' : 'upstream_failed'
-      const reason = error instanceof Error ? error.message : String(error)
-      outcomes.push({
-        ...base,
-        queriedAt,
-        status: 'failed',
-        rows: [],
-        maxCount: 0,
-        source: null,
-        failureReason: redact(reason),
-        raw: '',
-      })
+    const collection: LegacySlotCollection = {
+      kind: 'legacy-slot-pages/v1', ...base, queriedAt, completedAt: '',
+      completeness: 'not_queried', declaredTotal: null, pages: [], unfinished: [], requestCount: 0, failureReason: null,
     }
-    const outcome = outcomes[outcomes.length - 1]!
-    logPlatformResult(platformOperation(slot.interface === 'business_list' ? 'businessList' : 'queryList', 'slot', slot.rdjb ?? null),
-      errorCode === 'credential_unavailable' ? 'not_queried' : errorCode === 'auth_failed' ? 'auth_failed' : outcome.status,
-      { ...logContext, page: 1 }, { done: outcome.rows.length }, Date.now() - started, errorCode)
+    const rows: PlatformRow[] = []
+    let responseSource: PlatformResponseOutcome['source'] = null
+    let errorCode: PlatformQueryError['code'] | undefined
+    const maxRequests = Math.max(1, Math.min(100, options.maxRequests ?? 100))
+    const maxRows = Math.max(1, Math.min(5000, options.maxRows ?? 5000))
+    const deadlineMs = Math.min(options.deadlineMs ?? Infinity, started + Math.max(1, Math.min(60000, options.maxDurationMs ?? 60000)))
+    const transport: PlatformQueryOptions = {
+      ...fixed, deadlineMs,
+      fetchImpl: async (url, init) => {
+        if (collection.requestCount >= maxRequests) throw new PlatformResponseError('平台查询达到请求安全上限。')
+        collection.requestCount++
+        return (options.fetchImpl ?? (globalThis.fetch as unknown as PlatformFetch))(url, init)
+      },
+    }
+    for (let page = 1; ; page++) {
+      const position = { source, rdjb: slot.rdjb || null, page } as PlatformQueryPosition
+      let raw = ''
+      let declaredTotal: number | null = null
+      const pageTime = options.now?.() ?? new Date().toISOString()
+      try {
+        if (credentialError) throw new Error('平台凭据不可用，请检查凭据来源。')
+        if (options.shouldCancel?.()) throw new Error('平台查询已取消。')
+        if (Date.now() >= deadlineMs) throw new DOMException('平台查询超时。', 'TimeoutError')
+        if (collection.requestCount >= maxRequests || rows.length >= maxRows) throw new PlatformResponseError('平台查询达到安全上限，仍有未完成页。')
+        const path = slot.interface === 'business_list' ? BUSINESS_LIST_PATH : APPLY_LIST_PATH
+        raw = await postPlatformRequest(transport, path, queryBody(uscc, { ...(slot.interface === 'business_list' ? { rdjb: slot.rdjb! } : {}), pageNum: String(page) }))
+        if (Date.now() >= deadlineMs) throw new DOMException('平台查询超时。', 'TimeoutError')
+        const parsed = parsePlatformPage(raw, slot.interface === 'business_list' ? BUSINESS_GRID : APPLY_GRID)
+        declaredTotal = parsed.declaredTotal
+        if (JSON.stringify(sanitize(parsed.rows)) !== JSON.stringify(parsed.rows)) throw new PlatformResponseError('平台业务响应含敏感凭据，已阻止作为业务证据使用。')
+        validateLegacyPage(parsed, page, collection.declaredTotal)
+        if (rows.length + parsed.rows.length > maxRows) throw new PlatformResponseError('平台查询达到记录安全上限，此页未纳入结果。')
+        collection.declaredTotal ??= declaredTotal
+        responseSource = parsed.source
+        rows.push(...parsed.rows)
+        collection.pages.push({ ...position, queriedAt: pageTime, raw: redact(raw), status: 'success', fetchedCount: parsed.rows.length, declaredTotal, error: null })
+        // Legacy queryList/businessList terminate only on their own exact declared
+        // page partition. queryBusList maxPage/nextPage rules do not apply here.
+        if (collection.declaredTotal !== null && rows.length === collection.declaredTotal) {
+          collection.completeness = 'complete'
+          break
+        }
+      } catch (caught) {
+        errorCode = credentialError || !cookie ? 'credential_unavailable' : caught instanceof PlatformSessionExpiredError || (caught instanceof PlatformHttpError && [401, 403].includes(caught.status)) ? 'auth_failed'
+          : caught instanceof PlatformHttpError && caught.status === 429 ? 'rate_limited' : caught instanceof Error && /timeout|abort/i.test(caught.name) ? 'timeout' : 'upstream_failed'
+        const reason = redact(caught instanceof Error ? caught.message : String(caught))
+        collection.failureReason = reason
+        collection.unfinished = [position]
+        collection.completeness = collection.requestCount ? 'partial' : 'not_queried'
+        collection.pages.push({ ...position, queriedAt: pageTime, raw: redact(raw), status: 'failed', fetchedCount: 0, declaredTotal, error: { code: errorCode, message: reason } })
+        break
+      }
+    }
+    collection.completedAt = options.now?.() ?? new Date().toISOString()
+    const status = collection.completeness === 'complete' ? rows.length ? 'success' : 'no_record'
+      : collection.pages.some(p => p.status === 'success') ? 'partial' : 'failed'
+    outcomes.push({ ...base, queriedAt, status, rows, maxCount: collection.declaredTotal ?? 0, source: responseSource,
+      failureReason: collection.failureReason, raw: JSON.stringify(collection), collection })
+    logPlatformResult(platformOperation(source, 'slot', slot.rdjb ?? null), status,
+      { ...logContext, page: collection.pages.at(-1)?.page ?? 1 }, { done: rows.length }, Date.now() - started, errorCode)
   }
   return outcomes
 }
