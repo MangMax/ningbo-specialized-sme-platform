@@ -105,6 +105,7 @@ function ocrList(file: string, text: string | undefined) {
     pages: [
       {
         page: 1,
+        version: '101:1',
         engine: 'paddleocr',
         model: null,
         channel: 'upload',
@@ -359,6 +360,115 @@ async function loadA(
 }
 
 let harness: Harness | null = null
+
+describe('#308 校对页版本保护', () => {
+  it('读取真实版本并用于保存，首次新增明确要求页不存在', async () => {
+    const { wrapper, fetchMock, ocr } = await loadA()
+    expect(fetchMock.mock.calls.find(([url]) => url === '/api/ocr-results')?.[1])
+      .toMatchObject({ query: { includeVersion: '1' } })
+    const original = fetchMock.getMockImplementation()! as (url: string, opts?: unknown) => Promise<unknown>
+    fetchMock.mockImplementation((url, opts) => opts?.method === 'POST'
+      ? Promise.resolve({}) : original(url, opts))
+    await button(wrapper, '编辑').trigger('click')
+    await wrapper.get('textarea').setValue('保存新正文')
+    await button(wrapper, '保存').trigger('click')
+    await flushPromises()
+    expect(fetchMock.mock.calls.find(([, opts]) => opts?.method === 'POST')?.[1])
+      .toMatchObject({ body: { expectedVersion: '101:1', mode: 'versioned' } })
+    ocr.get(FILE_A.relPath)!.resolve(ocrList(FILE_A.relPath, '保存新正文'))
+    await flushPromises()
+    await jumpTo(wrapper, '3')
+    await button(wrapper, '手工录入').trigger('click')
+    await wrapper.get('textarea').setValue('首次新增')
+    await button(wrapper, '保存').trigger('click')
+    await flushPromises()
+    expect(fetchMock.mock.calls.filter(([, opts]) => opts?.method === 'POST').at(-1)?.[1])
+      .toMatchObject({ body: { page: 3, expectedVersion: null, mode: 'versioned' } })
+    ocr.get(FILE_A.relPath)!.resolve(ocrList(FILE_A.relPath, '保存新正文'))
+    await flushPromises()
+  })
+
+  it('未返回页版本时关闭写入，不能降级为无条件覆盖', async () => {
+    harness = await mountPage()
+    await selectFile(harness.wrapper, 'A-慢')
+    const response = ocrList(FILE_A.relPath, '有正文无版本')
+    Reflect.deleteProperty(response.pages[0]!, 'version')
+    harness.ocr.get(FILE_A.relPath)!.resolve(response)
+    harness.pdf.get(FILE_A.relPath)!.resolve(pagesState(FILE_A.relPath))
+    await flushPromises()
+    expect(harness.wrapper.text()).toContain('页版本没读回来')
+    expect(harness.wrapper.find('textarea').exists()).toBe(false)
+    expect(harness.fetchMock.mock.calls.filter(([, opts]) => opts?.method === 'POST')).toHaveLength(0)
+  })
+
+  it('保存409保留草稿，只能先重新读取，新版本读回后仍保留编辑稿', async () => {
+    const { wrapper, fetchMock, ocr, pdf } = await loadA()
+    const original = fetchMock.getMockImplementation()! as (url: string, opts?: unknown) => Promise<unknown>
+    fetchMock.mockImplementation((url, opts) => opts?.method === 'POST'
+      ? Promise.reject({ statusCode: 409, data: { message: '版本冲突' } })
+      : original(url, opts))
+    await button(wrapper, '编辑').trigger('click')
+    await wrapper.get('textarea').setValue('A窗口编辑稿')
+    await button(wrapper, '保存').trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('编辑稿已保留')
+    expect(wrapper.get('textarea').element).toHaveProperty('value', 'A窗口编辑稿')
+    expect(button(wrapper, '保存').attributes('disabled')).toBeDefined()
+    await button(wrapper, '重新读取').trigger('click')
+    const newer = ocrList(FILE_A.relPath, 'B窗口已保存')
+    newer.pages[0]!.version = '101:2'
+    ocr.get(FILE_A.relPath)!.resolve(newer)
+    pdf.get(FILE_A.relPath)!.resolve(pagesState(FILE_A.relPath, 4))
+    await flushPromises()
+    expect(wrapper.get('textarea').element).toHaveProperty('value', 'A窗口编辑稿')
+    expect(button(wrapper, '保存').attributes('disabled')).toBeUndefined()
+    await button(wrapper, '保存').trigger('click')
+    await flushPromises()
+    expect(fetchMock.mock.calls.filter(([, opts]) => opts?.method === 'POST').at(-1)?.[1])
+      .toMatchObject({ body: { expectedVersion: '101:2', markdown: 'A窗口编辑稿' } })
+  })
+
+  it('删除409保留新结果，必须重新读取而非重试删除', async () => {
+    const { wrapper, fetchMock, ocr, pdf } = await loadA()
+    const original = fetchMock.getMockImplementation()! as (url: string, opts?: unknown) => Promise<unknown>
+    fetchMock.mockImplementation((url, opts) => opts?.method === 'DELETE'
+      ? Promise.reject({ status: 409 }) : original(url, opts))
+    await chooseMenu(await openRowMenu(wrapper), '删除本页结果')
+    await body().findAll('button').find((item) => item.text().trim() === '确认删除')!.trigger('click')
+    await flushPromises()
+    expect(fetchMock.mock.calls.find(([, opts]) => opts?.method === 'DELETE')?.[1])
+      .toMatchObject({ query: { expectedVersion: '101:1', mode: 'versioned' } })
+    expect(wrapper.text()).toContain('版本冲突')
+    expect(button(wrapper, '重试删除')).toBeUndefined()
+    await button(wrapper, '重新读取').trigger('click')
+    ocr.get(FILE_A.relPath)!.resolve(ocrList(FILE_A.relPath, 'B窗口的新结果'))
+    pdf.get(FILE_A.relPath)!.resolve(pagesState(FILE_A.relPath, 4))
+    await flushPromises()
+    expect(wrapper.text()).toContain('B窗口的新结果')
+    expect(fetchMock.mock.calls.filter(([, opts]) => opts?.method === 'DELETE')).toHaveLength(1)
+  })
+
+  it('已提交但读回内容缺失时禁止再次保存，重新读取保留草稿', async () => {
+    const { wrapper, fetchMock, ocr, pdf } = await loadA()
+    const original = fetchMock.getMockImplementation()! as (url: string, opts?: unknown) => Promise<unknown>
+    fetchMock.mockImplementation((url, opts) => opts?.method === 'POST'
+      ? Promise.resolve({}) : original(url, opts))
+    await button(wrapper, '编辑').trigger('click')
+    await wrapper.get('textarea').setValue('已经提交的稿')
+    await button(wrapper, '保存').trigger('click')
+    await flushPromises()
+    ocr.get(FILE_A.relPath)!.resolve({ count: 0, pages: [] })
+    await flushPromises()
+    expect(button(wrapper, '保存').attributes('disabled')).toBeDefined()
+    expect(button(wrapper, '重试保存')).toBeUndefined()
+    await button(wrapper, '重新读取').trigger('click')
+    ocr.get(FILE_A.relPath)!.resolve(ocrList(FILE_A.relPath, '另一窗口替换的稿'))
+    pdf.get(FILE_A.relPath)!.resolve(pagesState(FILE_A.relPath, 4))
+    await flushPromises()
+    expect(wrapper.get('textarea').element).toHaveProperty('value', '已经提交的稿')
+    expect(fetchMock.mock.calls.filter(([, opts]) => opts?.method === 'POST')).toHaveLength(1)
+  })
+})
 
 beforeEach(() => {
   vi.useRealTimers()
@@ -745,9 +855,10 @@ describe('草稿保护与动作', () => {
     expect(wrapper.get('textarea').element).toHaveProperty('value', '校对后正文')
 
     failRead = false
-    await button(wrapper, '保存').trigger('click')
+    await button(wrapper, '重试读取').trigger('click')
     await flushPromises()
     ocr.get(FILE_A.relPath)!.resolve(ocrList(FILE_A.relPath, '校对后正文'))
+    harness!.pdf.get(FILE_A.relPath)!.resolve(pagesState(FILE_A.relPath, 4))
     await flushPromises()
     expect(wrapper.find('textarea').exists()).toBe(false)
     expect(rows(wrapper)[0]!.text()).toContain('校对后正文')

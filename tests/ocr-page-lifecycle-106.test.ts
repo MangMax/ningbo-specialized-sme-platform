@@ -80,6 +80,26 @@ it('read versions reject stale overwrite and delete across transports and surviv
   expect((await call('get_ocr_result', { fileId: file.id, page: 1 })).markdown).toContain('recreated')
 })
 
+it('#308 workbench versioned commands reject stale HTTP save and delete after MCP updates', async () => {
+  const snapshot = await (await rest('GET', 1)).json()
+  const version = snapshot.pages[0].version
+  const mcpRead = await call('get_ocr_result', { fileId: file.id, page: 1 })
+  expect(version).toBe(mcpRead.results[0].version)
+  await call('save_ocr_result', { fileId: file.id, page: 1, markdown: 'B window new text', expectedVersion: version, mode: 'versioned' })
+  const stale = await rest('POST', undefined, { file: file.relPath, page: 1, markdown: 'A window draft', expectedVersion: version, mode: 'versioned' })
+  expect(stale.status).toBe(409)
+  const staleDelete = await fetch(`${app.baseUrl}/api/ocr-results?file=${encodeURIComponent(file.relPath)}&page=1&mode=versioned&expectedVersion=${encodeURIComponent(version)}`, { method: 'DELETE' })
+  expect(staleDelete.status).toBe(409)
+  expect((await call('get_ocr_result', { fileId: file.id, page: 1 })).markdown).toBe('<!-- page: 1 -->\n\nB window new text')
+  const created = await rest('POST', undefined, { file: file.relPath, page: 3, markdown: 'new page', expectedVersion: null, mode: 'versioned' })
+  expect(created.status).toBe(200)
+  expect((await rest('POST', undefined, { file: file.relPath, page: 3, markdown: 'create-only overwrite', expectedVersion: null, mode: 'versioned' })).status).toBe(409)
+  expect((await rest('POST', undefined, { file: file.relPath, page: 3, markdown: 'missing precondition', mode: 'versioned' })).status).toBe(400)
+  expect((await call('get_ocr_result', { fileId: file.id, page: 3 })).markdown).toBe('<!-- page: 3 -->\n\nnew page')
+  // Compatibility commands retain their existing policy for agents that did not opt in.
+  expect((await rest('POST', undefined, { file: file.relPath, page: 3, markdown: 'legacy agent' })).status).toBe(200)
+})
+
 async function pageRequest(method: string, page: number | string, body?: unknown, token: string | null = 'synthetic-api-106', fileId = file.id) {
   return fetch(`${app.baseUrl}/api/files/${fileId}/ocr-pages/${page}`, { method, headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) })
 }
