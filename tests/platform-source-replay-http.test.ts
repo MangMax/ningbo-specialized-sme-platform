@@ -51,7 +51,7 @@ beforeAll(async () => {
     if (req.url !== '/mcp') { listener(req, res); return }
     const mcp = new McpServer({ name: 'issue300-isolated', version: '1' })
     const mcpAuth = resolveMcpAuth({ given: readMcpToken({ authorization: req.headers.authorization }), configured: token })
-    for (const tool of tools.filter(tool => !tool.enabled || tool.enabled({ context: { mcpAuth } }))) mcp.registerTool(tool.name, { description: tool.description, inputSchema: tool.inputSchema }, async args => {
+    for (const tool of tools.filter(tool => !tool.enabled || tool.enabled({ context: { mcpAuth } }))) mcp.registerTool(tool.name, { description: tool.description, inputSchema: tool.inputSchema }, async (args: Record<string, unknown>) => {
       const value = await tool.handler(args)
       return value.content ? value : { ...value, content: [{ type: 'text', text: JSON.stringify(value.structuredContent ?? value) }] }
     })
@@ -297,7 +297,9 @@ it(`${protocol} pairs explicit reference, omitted row raw, complete legacy raw a
   const q = query()
   const old = db.insert(schema.platformQuery).values({ interface: q.interface, queryKey: q.queryKey, rdjb: q.rdjb, titleCode: q.titleCode, queriedAt: q.queriedAt, status: q.status, rawResponse: q.rawResponse }).returning().get()
   const original = q.relations![0]!
-  const rel = db.insert(schema.platformRelation).values({ queryId: old.id, ...original }).returning().get()
+  const { declareKind, ...sourceRow } = original
+  if (declareKind != null && declareKind !== 'apply' && declareKind !== 'update' && declareKind !== 'review') throw new Error('Synthetic source row has an unsupported declaration kind')
+  const rel = db.insert(schema.platformRelation).values({ queryId: old.id, ...sourceRow, declareKind }).returning().get()
   const before = { query: db.$client.prepare('SELECT * FROM platform_query WHERE id=?').get(old.id), relation: db.$client.prepare('SELECT * FROM platform_relation WHERE id=?').get(rel.id) }
   const counts = () => [
     (db.$client.prepare('SELECT count(*) n FROM platform_business_record WHERE platform_key=?').get(original.relationKey) as { n: number }).n,
@@ -337,4 +339,69 @@ it(`${protocol} accepts same-payload references that omit raw assertions and rej
   expect((await submit('commit', duplicateBody)).status).toBe('committed')
   const fresh = query(), changed = { ...fresh, relations: [{ ...fresh.relations![0]!, nameRaw: 'different' }] }
   await rejectAtomically(request({ platformQueries: [fresh, changed] }), 'relation_payload_conflict')
+})
+
+it.each([
+  { name: 'one-to-empty', first: [1], next: [], accepted: false },
+  { name: 'empty-to-one', first: [], next: [1], accepted: false },
+  { name: 'deleted-subset', first: [1, 2], next: [2], accepted: false },
+  { name: 'reordered-same-set', first: [1, 2], next: [2, 1], accepted: true },
+])(`${protocol} full row-set $name has the same preflight and commit outcome for staged and stored sources`, async ({ first, next, accepted }) => {
+  for (const stored of [false, true]) {
+    const original = query()
+    const rows = (sequences: number[]) => sequences.map(sequenceNo => ({ sequenceNo, relationKey: `${original.queryKey}-r${sequenceNo}`, rawFields: { id: `${original.queryKey}-r${sequenceNo}`, value: sequenceNo } }))
+    original.relations = rows(first)
+    if (stored) expect((await submit('commit', request({ platformQueries: [original] }))).status).toBe('committed')
+    const replay = { ...original, relations: rows(next) }
+    const body = request({ platformQueries: stored ? [replay] : [original, replay] })
+    if (!accepted) {
+      await rejectAtomically(body, 'query_relation_set_conflict')
+      continue
+    }
+    const before = state()
+    const plan = await submit('preflight', body)
+    expect(plan.preflight.conflicts).toEqual([])
+    expect(state()).toEqual(before)
+    const result = await submit('commit', body)
+    expect(result.status).toBe('committed')
+    expect(result.summary.written).toBe(stored ? 0 : 3)
+    const saved = db.select().from(schema.platformQuery).all().filter(row => row.queryKey === original.queryKey)
+    expect(saved).toHaveLength(1)
+    const read = await readQuery(saved[0]!.id)
+    expect(read.rows[0].query.rawResponse).toBe(original.rawResponse)
+    expect(read.rows[0].relations.map((row: { sequenceNo: number }) => row.sequenceNo)).toEqual([1, 2])
+    expect(read.rows[0].relations.map((row: { rawFields: unknown }) => row.rawFields)).toEqual(rows([1, 2]).map(row => row.rawFields))
+    if (stored) expect(state()).toEqual(before)
+  }
+})
+
+it.each(['explicit-reuse', 'legacy-response-omission'] as const)(`${protocol} %s permits row subsets without declaring a complete staged or stored source`, async mode => {
+  for (const stored of [false, true]) for (const subset of [[], [2]]) {
+    const original = query()
+    original.relations = [1, 2].map(sequenceNo => ({ sequenceNo, relationKey: `${original.queryKey}-r${sequenceNo}`, rawFields: { id: `${original.queryKey}-r${sequenceNo}`, value: sequenceNo } }))
+    if (stored) expect((await submit('commit', request({ platformQueries: [original] }))).status).toBe('committed')
+    const reference = {
+      ...original,
+      ...(mode === 'explicit-reuse' ? { reuseExisting: true as const } : { rawResponse: null }),
+      relations: subset.map(sequenceNo => ({ sequenceNo })),
+    }
+    const body = request({ platformQueries: stored ? [reference] : [original, reference] })
+    const before = state()
+    expect((await submit('preflight', body)).preflight.conflicts).toEqual([])
+    expect(state()).toEqual(before)
+    const result = await submit('commit', body)
+    expect(result.status).toBe('committed')
+    expect(result.summary.written).toBe(stored ? 0 : 3)
+    const replayItem = result.items[result.items.length - 1]
+    expect(replayItem.detail.rowsWritten).toBe(0)
+    expect(replayItem.detail.canonicalProjection).toHaveLength(subset.length)
+    expect(replayItem.detail.canonicalProjection.every((projection: { observationCreated: boolean }) => !projection.observationCreated)).toBe(true)
+    if (stored) expect(state()).toEqual(before)
+    const saved = db.select().from(schema.platformQuery).all().filter(row => row.queryKey === original.queryKey)
+    expect(saved).toHaveLength(1)
+    const read = await readQuery(saved[0]!.id)
+    expect(read.rows[0].query.rawResponse).toBe(original.rawResponse)
+    expect(read.rows[0].relations.map((row: { sequenceNo: number }) => row.sequenceNo)).toEqual([1, 2])
+    expect(read.rows[0].relations.map((row: { rawFields: unknown }) => row.rawFields)).toEqual(original.relations.map(row => row.rawFields))
+  }
 })

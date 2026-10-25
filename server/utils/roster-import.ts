@@ -1299,59 +1299,19 @@ export function planRosterImport(
   // **必须排在 aliases / differences / merges 之前**:那三项的自然键引用可能指向本批
   // 新建的查询/关系行,执行阶段要按「关系已插入」的顺序落真实 id（见本节顶部说明）。
   const queries = Array.isArray(payload.platformQueries) ? payload.platformQueries : []
-  const pendingObservations = new Map<string, RosterImportRelation>()
   const recognizedKeys = new Set<string>()
-  const pendingQueries = new Map<string, RosterImportPlatformQuery>()
+  const pendingQueries = new Map<string, PlatformQueryReplaySource>()
   queries.forEach((query, index) => {
     const queryIdentity = JSON.stringify([query?.interface, optionalString(query?.queryKey), optionalString(query?.rdjb) ?? '', optionalString(query?.queriedAt)])
-    const prior = pendingQueries.get(queryIdentity)
-    const archivedQuery = query && PLATFORM_INTERFACE_SET.has(query.interface) && optionalString(query.queryKey) && optionalString(query.queriedAt) ? findQueryRow(db, { interface: query.interface, queryKey: optionalString(query.queryKey) ?? '', rdjb: optionalString(query.rdjb) ?? '', queriedAt: optionalString(query.queriedAt) ?? '' }) : undefined
-    if (prior) {
-      const originalSequences = new Set((Array.isArray(prior.relations) ? prior.relations : []).map(row => row?.sequenceNo))
-      if (!archivedQuery && (Array.isArray(query.relations) ? query.relations : []).some(row => row && !originalSequences.has(row.sequenceNo))) {
-        push({ item: failure('platform_query', `query:${index}`, 'query_relation_set_conflict', 'One original collection cannot acquire new sequence numbers within a batch', 'relations'), action: 'skip', review: false })
-        return
-      }
-      for (const field of ['titleCode', 'status', 'failureReason', 'rawResponse', 'collectionEvidence'] as const) {
-        if (archivedQuery || !Object.hasOwn(query, field)) continue
-        if (field === 'rawResponse' && query.rawResponse == null && queryUsesReference(query)) continue
-        const firstValue = prior[field] ?? (field === 'status' ? 'not_queried' : null)
-        if (!isDeepStrictEqual(query[field] ?? null, firstValue)) {
-          push({ item: failure('platform_query', `query:${index}`, 'query_payload_conflict', `Same query identity has different ${field} in this batch`, field), action: 'skip', review: false })
-          return
-        }
-      }
-    } else pendingQueries.set(queryIdentity, query)
-    for (const relation of Array.isArray(query?.relations) ? query.relations : []) {
-      // Leave malformed rows to planPlatformQuery's item-level validation.
-      if (optionalInt(relation?.sequenceNo) == null) continue
-      const identity = JSON.stringify([query.interface, optionalString(query.queryKey), optionalString(query.rdjb) ?? '', optionalString(query.queriedAt), relation.sequenceNo])
-      const previous = pendingObservations.get(identity)
-      if (previous && !archivedQuery) {
-        const value = platformObservationPayload({ interface: query.interface,
-          relationKey: Object.hasOwn(relation, 'relationKey') ? optionalString(relation.relationKey) : optionalString(previous.relationKey),
-          rawFields: Object.hasOwn(relation, 'rawFields') ? relation.rawFields : previous.rawFields })
-        if (value !== platformObservationPayload({ interface: query.interface, relationKey: optionalString(previous.relationKey), rawFields: previous.rawFields })) {
-          push({ item: failure('platform_relation', `query:${index}`, 'observation_payload_conflict', 'Same collection row has different key/raw in this batch', 'platformQueries'), action: 'skip', review: false })
-          return
-        }
-        const field = relationSourceConflict(query.interface, previous, relation)
-        if (field) {
-          push({ item: failure('platform_relation', `query:${index}`, 'relation_payload_conflict', `Same source row has different ${field} in this batch`, `relations.${field}`), action: 'skip', review: false })
-          return
-        }
-      }
-      if (!previous) pendingObservations.set(identity, relation)
-    }
     if (query?.interface === 'recognized_list') {
-      const key = JSON.stringify([query.interface, query.queryKey, query.rdjb, query.queriedAt])
-      if (recognizedKeys.has(key)) {
+      if (recognizedKeys.has(queryIdentity)) {
         push({ item: failure('platform_query', `query:${index}`, 'query_identity_duplicate', 'One original query identity may appear only once per batch', 'platformQueries'), action: 'skip', review: false })
         return
       }
-      recognizedKeys.add(key)
+      recognizedKeys.add(queryIdentity)
     }
-    planPlatformQuery(db, query, index, push, context.batchId)
+    const source = planPlatformQuery(db, query, index, push, context.batchId, pendingQueries.get(queryIdentity))
+    if (source) pendingQueries.set(queryIdentity, source)
   })
 
   // Freeze only server-read source inputs. Never accept a caller-provided content hash.
@@ -2764,39 +2724,89 @@ function relationSourceConflict(source: PlatformInterface, original: RosterImpor
   return null
 }
 
-/** Compare client assertions against the original archive before any projection or reuse. */
-function queryReplayConflict(db: Executor, query: RosterImportPlatformQuery, queryId: number): RosterImportItemResult | null {
+type QueryReplayMetadata = Required<Pick<RosterImportPlatformQuery, 'titleCode' | 'status' | 'failureReason' | 'rawResponse' | 'collectionEvidence'>>
+interface QueryReplayRow {
+  values: RosterImportRelation
+  ref: string
+  id?: number
+  assertOriginal?: (input: { relationKey: string | null; rawFields: unknown }) => void
+}
+/** Only the source lifetime differs: the first staged insert or a persisted archive. */
+interface PlatformQueryReplaySource {
+  ref: string
+  metadata: QueryReplayMetadata
+  relationCount: number
+  relationAt(sequenceNo: number): QueryReplayRow | undefined
+}
+
+function platformQueryInsertMetadata(query: RosterImportPlatformQuery): QueryReplayMetadata {
+  return { titleCode: optionalString(query.titleCode), status: query.status ?? 'not_queried', failureReason: optionalString(query.failureReason), rawResponse: query.rawResponse ?? null, collectionEvidence: query.collectionEvidence ?? null }
+}
+
+function stagedPlatformQuerySource(query: RosterImportPlatformQuery, ref: string): PlatformQueryReplaySource {
+  const rows = new Map<number, QueryReplayRow>()
+  for (const relation of query.relations ?? []) {
+    if (!rows.has(relation.sequenceNo)) rows.set(relation.sequenceNo, { values: relation, ref: `${ref}/r${relation.sequenceNo}` })
+  }
+  return {
+    ref,
+    // These are the actual insert defaults, not assertions supplied by a replay.
+    metadata: platformQueryInsertMetadata(query),
+    relationCount: rows.size,
+    relationAt: sequenceNo => rows.get(sequenceNo),
+  }
+}
+
+function archivedPlatformQuerySource(db: Executor, queryId: number): PlatformQueryReplaySource {
   const original = db.select().from(schema.platformQuery).where(eq(schema.platformQuery.id, queryId)).get()!
-  const ref = `query:${queryId}`
+  return {
+    ref: `query:${queryId}`,
+    metadata: original,
+    relationCount: db.get<{ n: number }>(sql`SELECT count(*) n FROM platform_relation WHERE query_id=${queryId}`)!.n,
+    relationAt: sequenceNo => {
+      const relation = db.select().from(schema.platformRelation).where(and(eq(schema.platformRelation.queryId, queryId), eq(schema.platformRelation.sequenceNo, sequenceNo))).get()
+      return relation ? { values: relation, id: relation.id, ref: `relation:${relation.id}`, assertOriginal: input => assertPlatformObservationReplay(db, relation.id, { interface: original.interface, ...input }) } : undefined
+    },
+  }
+}
+
+/** One immutable comparison for staged planning, archive preflight and transaction rechecks. */
+function platformQuerySourceConflict(query: RosterImportPlatformQuery, source: PlatformQueryReplaySource): RosterImportItemResult | null {
   const seen = new Set<number>()
   for (const input of query.relations ?? []) {
-    const relation = db.select().from(schema.platformRelation).where(and(eq(schema.platformRelation.queryId, queryId), eq(schema.platformRelation.sequenceNo, input.sequenceNo))).get()
-    if (!relation) return failure('platform_query', ref, 'query_relation_set_conflict', 'An existing collection cannot acquire new sequence numbers', 'relations')
+    const row = source.relationAt(input.sequenceNo)
+    if (!row) return failure('platform_query', source.ref, 'query_relation_set_conflict', 'An existing collection cannot acquire new sequence numbers', 'relations')
     seen.add(input.sequenceNo)
+    const original = row.values
+    const claimed = { relationKey: Object.hasOwn(input, 'relationKey') ? optionalString(input.relationKey) : optionalString(original.relationKey), rawFields: Object.hasOwn(input, 'rawFields') ? input.rawFields : original.rawFields }
     try {
-      assertPlatformObservationReplay(db, relation.id, { interface: query.interface,
-        relationKey: Object.hasOwn(input, 'relationKey') ? optionalString(input.relationKey) : relation.relationKey,
-        rawFields: Object.hasOwn(input, 'rawFields') ? input.rawFields : relation.rawFields })
+      if (platformObservationPayload({ interface: query.interface, relationKey: optionalString(original.relationKey), rawFields: original.rawFields }) !== platformObservationPayload({ interface: query.interface, ...claimed })) {
+        throw new PlatformProjectionError('observation_payload_conflict', 'Collection row has a different key/raw payload')
+      }
+      row.assertOriginal?.(claimed)
     } catch (error) {
       if (!(error instanceof PlatformProjectionError)) throw error
-      return failure('platform_relation', `relation:${relation.id}`, error.code, error.message, 'relations')
+      return failure('platform_relation', row.ref, error.code, error.message, 'relations')
     }
-    const field = relationSourceConflict(query.interface, relation, input)
-    if (field) return failure('platform_relation', `relation:${relation.id}`, 'relation_payload_conflict', `Existing source row has different ${field}`, `relations.${field}`)
+    const field = relationSourceConflict(query.interface, original, input)
+    if (field) return failure('platform_relation', row.ref, 'relation_payload_conflict', `Existing source row has different ${field}`, `relations.${field}`)
   }
   for (const field of ['titleCode', 'status', 'failureReason', 'rawResponse', 'collectionEvidence'] as const) {
     if (!Object.hasOwn(query, field)) continue
-    if (field === 'rawResponse' && query.rawResponse == null && query.interface !== 'recognized_list' && query.collectionEvidence == null && original.collectionEvidence == null) continue
-    const value = field === 'collectionEvidence' ? query[field] ?? null : field === 'rawResponse' ? query[field] ?? null : optionalString(query[field])
-    if (!isDeepStrictEqual(original[field], value)) return failure('platform_query', ref,
+    if (field === 'rawResponse' && query.rawResponse == null && query.interface !== 'recognized_list' && query.collectionEvidence == null && source.metadata.collectionEvidence == null) continue
+    const value = field === 'collectionEvidence' || field === 'rawResponse' ? query[field] ?? null : optionalString(query[field])
+    if (!isDeepStrictEqual(source.metadata[field], value)) return failure('platform_query', source.ref,
       field === 'collectionEvidence' && query.interface === 'recognized_list' ? 'collection_evidence_conflict' : 'query_payload_conflict',
       `Existing query has different ${field}; use the actual new observation time`, field)
   }
-  if (Object.hasOwn(query, 'relations') && !queryUsesReference(query)) {
-    const count = db.get<{ n: number }>(sql`SELECT count(*) n FROM platform_relation WHERE query_id=${queryId}`)!.n
-    if (seen.size !== count) return failure('platform_query', ref, 'query_relation_set_conflict', 'Replay must retain the original collection row set', 'relations')
+  if (Object.hasOwn(query, 'relations') && !queryUsesReference(query) && seen.size !== source.relationCount) {
+    return failure('platform_query', source.ref, 'query_relation_set_conflict', 'Replay must retain the original collection row set', 'relations')
   }
   return null
+}
+
+function queryReplayConflict(db: Executor, query: RosterImportPlatformQuery, queryId: number): RosterImportItemResult | null {
+  return platformQuerySourceConflict(query, archivedPlatformQuerySource(db, queryId))
 }
 
 function reusedPlatformQuery(db: Executor, queryId: number, query: RosterImportPlatformQuery, batchId?: number): RosterImportItemResult {
@@ -2825,7 +2835,8 @@ function planPlatformQuery(
   index: number,
   push: (item: PlannedItem) => void,
   batchId?: number,
-): void {
+  stagedSource?: PlatformQueryReplaySource,
+): PlatformQueryReplaySource | undefined {
   const ref = `query:${index}`
   if (!PLATFORM_INTERFACE_SET.has(String(query?.interface))) {
     push({ item: failure('platform_query', ref, 'interface_unknown', `interface 必须是 business_list / apply_list / recognized_list`, 'interface'), action: 'skip', review: false })
@@ -2842,6 +2853,7 @@ function planPlatformQuery(
     return
   }
   const existing = findQueryRow(db, { interface: query.interface, queryKey, rdjb: optionalString(query.rdjb) ?? '', queriedAt })
+  const originalSource = existing ? archivedPlatformQuerySource(db, existing.id) : stagedSource
   if ((query.interface === 'recognized_list' && query.reuseExisting !== true) || query.collectionEvidence != null) {
     const evidence = query.collectionEvidence
     let message = query.interface === 'recognized_list' ? recognizedEvidenceError(evidence) : platformEvidenceError(evidence)
@@ -2849,10 +2861,10 @@ function planPlatformQuery(
       if (query.interface !== PLATFORM_PERSISTED_SOURCE[evidence.source]) message = 'Collection source must match persisted interface'
       const key = evidence.effectiveConditions.uscc ?? (evidence.effectiveConditions.name ? `name:${evidence.effectiveConditions.name}` : null)
       const expectedTitle = evidence.titleScope.rdjb.length === 1 ? RDJB_TITLE_CODES[evidence.titleScope.rdjb[0]!] : null
-      if ((key !== null && query.queryKey !== key) || (evidence.rawData && query.queryKey !== archiveQueryKey(evidence)) || query.queriedAt !== evidence.queriedAt || (query.rdjb ?? '') !== evidence.titleScope.rdjb.join(',') || ((!existing || Object.hasOwn(query, 'titleCode')) && (query.titleCode ?? null) !== expectedTitle) || ((!existing || Object.hasOwn(query, 'status')) && query.status !== recognizedStoredStatus(evidence))) message = 'Query identity/status/title must match original collectionEvidence'
+      if ((key !== null && query.queryKey !== key) || (evidence.rawData && query.queryKey !== archiveQueryKey(evidence)) || query.queriedAt !== evidence.queriedAt || (query.rdjb ?? '') !== evidence.titleScope.rdjb.join(',') || ((!originalSource || Object.hasOwn(query, 'titleCode')) && (query.titleCode ?? null) !== expectedTitle) || ((!originalSource || Object.hasOwn(query, 'status')) && query.status !== recognizedStoredStatus(evidence))) message = 'Query identity/status/title must match original collectionEvidence'
       const relations = Array.isArray(query.relations) ? query.relations : []
       if (query.relations != null && !Array.isArray(query.relations)) message = 'relations must be an array preserving original rows'
-      if ((!existing || Object.hasOwn(query, 'relations')) && relations.length !== evidence.rows.length) message = 'Every original source row must have exactly one relation'
+      if ((!originalSource || Object.hasOwn(query, 'relations')) && relations.length !== evidence.rows.length) message = 'Every original source row must have exactly one relation'
       for (const [i, relation] of relations.entries()) {
         const raw = evidence.rows[i]
         const selectedRaw = evidence.rawData ? evidence.rawData.rows[i] : raw
@@ -2901,29 +2913,29 @@ function planPlatformQuery(
     push({ item: failure('platform_query', ref, 'query_reuse_invalid', 'reuseExisting must be true when supplied', 'reuseExisting'), action: 'skip', review: false })
     return
   }
-  if (!existing && query.reuseExisting) {
+  if (!originalSource && query.reuseExisting) {
     push({ item: failure('platform_query', ref, 'query_reuse_missing', 'No original collection exists at these coordinates', 'reuseExisting'), action: 'skip', review: false })
     return
   }
-  if (existing) {
-    const conflict = queryReplayConflict(db, query, existing.id)
-    if (conflict) {
-      push({ item: conflict, action: 'skip', review: false })
-      return
-    }
+  const source = originalSource ?? stagedPlatformQuerySource(query, ref)
+  const conflict = platformQuerySourceConflict(query, source)
+  if (conflict) {
+    push({ item: conflict, action: 'skip', review: false })
+    return
   }
-  const newRelationCount = existing ? 0 : (query.relations ?? []).length
+  const newRelationCount = originalSource ? 0 : source.relationCount
 
   push({
     item: success('platform_query', existing ? `query:${existing.id}` : ref, { relationCount: newRelationCount, canonicalProjection: (query.relations ?? []).map(relation => {
-      const archived = existing ? findRelationRow(db, { queryId: existing.id, sequenceNo: relation.sequenceNo }) : undefined
-      const projection = archived ? readPlatformObservationPlan(db, archived.id) : planPlatformObservation({ interface: query.interface, relationKey: optionalString(relation.relationKey), rawFields: relation.rawFields })
+      const archived = source.relationAt(relation.sequenceNo)
+      const projection = archived?.id != null ? readPlatformObservationPlan(db, archived.id) : planPlatformObservation({ interface: query.interface, relationKey: optionalString(archived?.values.relationKey), rawFields: archived?.values.rawFields })
       return { relationId: archived?.id ?? null, identityState: projection.identityState, contentState: projection.contentState, keySource: projection.keySource }
     }) }),
-    action: existing ? 'note' : 'add',
+    action: originalSource ? 'note' : 'add',
     review: query.status === 'failed',
     run: (tx) => writePlatformQuery(tx, query, batchId),
   })
+  return source
 }
 
 function writePlatformQuery(
@@ -2942,9 +2954,7 @@ function writePlatformQuery(
   if (query.reuseExisting) return failure('platform_query', 'query:reuse', 'query_reuse_missing', 'No original collection exists at these coordinates', 'reuseExisting')
   const queryRow = { id: tx.insert(schema.platformQuery).values({
     interface: query.interface, queryKey: query.queryKey, rdjb,
-    titleCode: optionalString(query.titleCode), queriedAt: query.queriedAt,
-    status: query.status ?? 'not_queried', failureReason: optionalString(query.failureReason),
-    rawResponse: query.rawResponse ?? null, collectionEvidence: query.collectionEvidence ?? null,
+    queriedAt: query.queriedAt, ...platformQueryInsertMetadata(query),
   }).returning({ id: schema.platformQuery.id }).get().id, created: true }
   const queryId = queryRow.id
   const relations: number[] = []
