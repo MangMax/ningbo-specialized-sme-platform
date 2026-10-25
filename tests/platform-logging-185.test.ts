@@ -16,7 +16,7 @@ let rows = [{ qymc: 'PRIVATE185_RECORD', tyshxydm: '91330211255994457P' }]
 const upstream = createServer(async (req, res) => {
   for await (const _chunk of req) { /* consume the form without logging it */ }
   res.writeHead(status, { 'content-type': 'application/json' })
-  res.end(JSON.stringify({ zrarData: { grid: { applyGrid: { page: 1, pageSet: rows, maxCount: rows.length } } } }))
+  res.end(JSON.stringify({ zrarData: { grid: { applyGrid: { page: 1, pageSize: 50, pageSet: rows, maxCount: rows.length } } } }))
 })
 beforeAll(async () => {
   process.env.NUXT_LOG_DIR = join(root, 'logs')
