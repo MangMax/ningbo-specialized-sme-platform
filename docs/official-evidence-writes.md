@@ -94,6 +94,9 @@ opt-in 混批的最终集合还包含实际拟新增 legacy 出处（先沿用�
 unknown 不因同 SHA/同 owner/合法 merge 获豁免。实际 repoint 与 typed correction
 不得同批改同一 evidence；同路径 noop、重复同目标沿用原冻结计划的既定规则。
 opt-in planHash 包含 repoint 原 locator/事件版本/latest/实核文件，IMMEDIATE 内重读。
+同 event 的等价关联只让真正不写入的 append 复用原 evidence；精确 correction
+仍修改点名 evidence，其最终 locator 必须参与共同集合，不能因等价 K/raw 被排除。
+坐标及 publishedRow 均未变的 correction 保持零修订、零审计、零 CAS113。
 新增操作合计100、每 evidence 一次、旧新 K 最多200；每 K 源候选/最终 scope 100，N+1
 溢出拒绝，event 原300限保持。raw-only 也修订/审计/CAS113，每改变事件每批一次。
 

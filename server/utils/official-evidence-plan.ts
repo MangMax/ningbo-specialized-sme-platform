@@ -60,6 +60,7 @@ export interface OfficialClaimChange {
   publishedRow: OfficialPublishedRow
   expectedRowRevision: number
   before?: OfficialEvidenceRow | null
+  /** Only an append that reuses an association and performs no evidence write. */
   noOpEvidenceId?: number
   changed?: boolean
 }
@@ -196,7 +197,9 @@ export function planOfficialEvidenceChanges(db: Executor, changes: OfficialClaim
         if (!proposed || !stored || ['nameRaw', 'usccRaw', 'districtRaw'].some(field => a[field as 'nameRaw'] === null || b[field as 'nameRaw'] === null)) officialFactFailure('ambiguity', 'Duplicate event association requires exact known equivalence or explicit correction', 409)
         const existing = readLatestOfficialEvidence(db, stored.evidenceId as number, { maxBytes: 65536 }).row
         if (!sameOfficialRow(existing, proposed.publishedRow, sourceFor.get(proposed)!)) officialFactFailure('ambiguity', 'Existing event association differs; use exact correction', 409)
-        proposed.noOpEvidenceId = stored.evidenceId as number
+        // Numeric corrections still write their named evidence, even when another
+        // association has equivalent facts. Keep their final locator in the plan.
+        if (typeof proposed.evidenceId === 'string') proposed.noOpEvidenceId = stored.evidenceId as number
       }
     }
     receipts.push({ key: token, candidates: officialPlanDigest(original), final: officialPlanDigest(final) })
