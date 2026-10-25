@@ -171,3 +171,127 @@ for (const entry of ['import', 'standalone'] as const) it(`R3 S1 ${entry} genuin
   await apply(await state.correction('genuine-unchanged', 1))
   expect(f.snapshot()).toEqual(before); expect(await f.exact(state.targetId)).toEqual(exact)
 })
+
+type PublicFixture = Awaited<ReturnType<typeof fixture>>
+type CorrectionOperation = EvidenceCorrectionRequest['operations'][number]
+async function finalOperation(f: PublicFixture, id: number, publishedRow: OfficialPublishedRow): Promise<CorrectionOperation> {
+  const target = await f.exact(id)
+  const latest = f.sqlite.prepare('SELECT revision FROM official_evidence_row_revision WHERE evidence_id=? ORDER BY revision DESC LIMIT 1').get(id)
+  if (publishedRow.path === null) throw new Error('Explicit synthetic path required')
+  return { evidenceId: id, eventId: target.eventId, recordId: target.recordId, enterpriseId: target.enterpriseId, expectedVersion: target.version, expectedRowRevision: latest === undefined ? 0 : z.object({ revision: z.number() }).parse(latest).revision, coordinate: { sourceFile: publishedRow.path, attachment: publishedRow.attachment, listNo: publishedRow.listNo, page: publishedRow.page }, publishedRow }
+}
+async function submitFinalCorrections(f: PublicFixture, entry: 'import' | 'standalone', operations: CorrectionOperation[], key: string, rejected?: string) {
+  const command = { actor: { type: 'agent' as const, id: 'synthetic' }, basis: 'Explicit verified final corrections', operations }, before = f.snapshot()
+  if (entry === 'import') {
+    const input = f.request({ officialEvidenceCorrections: command }, key)
+    const plan = await f.post('preflight', input)
+    const bound = plan.preflight?.officialEvidencePlanHash ? { ...input, payload: { ...input.payload, officialEvidencePlanHash: plan.preflight.officialEvidencePlanHash } } : input
+    const result = await f.post('commit', bound)
+    if (!rejected) {
+      expect(plan.preflight?.conflicts).toEqual([]); expect(result.status, JSON.stringify(result)).toBe('committed')
+      expect(await f.post('commit', bound)).toEqual(result)
+      return result
+    }
+    expect(plan.preflight?.conflicts).toMatchObject([{ error: { code: rejected } }]); expect(result.status).toBe('failed')
+  } else {
+    const request = { idempotencyKey: key, ...command }, plan = await f.http('/api/roster/evidence/corrections/preflight', request)
+    const parsed = z.object({ planHash: z.string() }).safeParse(plan.body)
+    const bound = { request, planHash: parsed.success ? parsed.data.planHash : '0'.repeat(64) }
+    const result = await f.http('/api/roster/evidence/corrections/commit', bound)
+    if (!rejected) {
+      expect(plan.status, JSON.stringify(plan.body)).toBe(200)
+      expect(result.status).toBe(200)
+      expect(result.body).toMatchObject({ status: 'committed', evidenceIds: operations.map(op => op.evidenceId) })
+      expect(await f.http('/api/roster/evidence/corrections/commit', bound)).toEqual(result)
+      return result
+    }
+    expect(plan.status).toBe(409); expect(errorResult.parse(plan.body).error.code).toBe(rejected)
+    expect(result.status).toBe(409); expect(errorResult.parse(result.body).error.code).toBe(rejected)
+  }
+  expect(f.snapshot()).toEqual(before)
+}
+async function setupFinalClaims(entry: 'import' | 'standalone', secondKnown: boolean, sameEvent = true) {
+  const f = await fixture(), state = await f.setup(sameEvent, false)
+  if (secondKnown) await submitFinalCorrections(f, entry, [await finalOperation(f, state.targetId, state.publishedRow)], 'seed-second-known')
+  // Restore the known live locator through an exact public command. Both r1
+  // facts survive; the subsequent two-known request is genuinely raw-only.
+  await submitFinalCorrections(f, entry, [await finalOperation(f, state.knownId, state.publishedRow)], 'restore-known-live')
+  const next = { ...state.publishedRow, nameRaw: 'Alpha corrected' }
+  return { f, state, next, ids: [state.knownId, state.targetId] }
+}
+const finalAudit = z.object({ coordinate: z.object({ sourceFile: z.string(), listNo: z.number() }), row: z.object({ nameRaw: z.string() }).nullable().optional(), rowRevision: z.number().optional(), publishedRow: z.object({ nameRaw: z.string() }).optional(), importBatchId: z.number().optional() })
+for (const entry of ['import', 'standalone'] as const) for (const secondKnown of [true, false]) for (const reverse of [false, true]) it(`R4 S1 ${entry} ${secondKnown ? 'two-known raw-only' : 'known-plus-legacy'} final corrections commit in ${reverse ? 'reverse' : 'forward'} order`, async () => {
+  const { f, state, next, ids } = await setupFinalClaims(entry, secondKnown), before = f.snapshot()
+  const exactBefore = await Promise.all(ids.map(id => f.exact(id)))
+  if (secondKnown) for (const t of exactBefore) expect(t.coordinate).toEqual({ sourceFile: 'notice.txt', attachment: null, listNo: 10, page: null })
+  const auditsBefore = z.object({ n: z.number() }).parse(f.sqlite.prepare('SELECT count(*) n FROM evidence_correction_audit').get()).n
+  const revisionsBefore = z.object({ n: z.number() }).parse(f.sqlite.prepare('SELECT count(*) n FROM evidence_revision_113').get()).n
+  const history = ids.map(id => f.sqlite.prepare('SELECT * FROM official_evidence_row_revision WHERE evidence_id=? ORDER BY revision').all(id))
+  const operations = await Promise.all(ids.map(id => finalOperation(f, id, next)))
+  await submitFinalCorrections(f, entry, reverse ? operations.reverse() : operations, 'joint-final')
+  expect(f.rows().map(row => row.id)).toEqual(ids)
+  for (let i = 0; i < ids.length; i++) {
+    const id = ids[i], prior = exactBefore[i]; if (id === undefined || !prior) throw new Error('Expected exact target')
+    expect(await f.exact(id)).toMatchObject({ evidenceId: id, eventId: prior.eventId, coordinate: { sourceFile: 'notice.txt', listNo: 10 }, event: { revision: prior.event.revision + 1 } })
+    const facts = f.sqlite.prepare('SELECT * FROM official_evidence_row_revision WHERE evidence_id=? ORDER BY revision').all(id)
+    expect(facts.slice(0, -1)).toEqual(history[i])
+    expect(facts.at(-1)).toMatchObject({ revision: i === 0 || secondKnown ? 2 : 1, name_raw: 'Alpha corrected', uscc_raw: 'printed code', district_raw: 'printed district', path: 'notice.txt', list_no: 10 })
+  }
+  const audits = z.array(z.object({ evidence_id: z.number(), batch_key: z.string().nullable(), before: z.string(), after: z.string() })).parse(f.sqlite.prepare('SELECT * FROM evidence_correction_audit ORDER BY id').all()).slice(auditsBefore)
+  expect(audits.map(a => a.evidence_id).sort((a, b) => a - b)).toEqual(ids)
+  for (const a of audits) {
+    const prior = finalAudit.parse(JSON.parse(a.before)), after = finalAudit.parse(JSON.parse(a.after))
+    expect(prior.row?.nameRaw ?? null).toBe(a.evidence_id === state.knownId || secondKnown ? 'Alpha original' : null)
+    expect(after).toMatchObject({ coordinate: { sourceFile: 'notice.txt', listNo: 10 }, publishedRow: { nameRaw: 'Alpha corrected' } })
+    expect(a.batch_key).toBe(entry === 'import' ? null : 'joint-final')
+    if (entry === 'import') { expect(after.importBatchId).toBeTypeOf('number'); expect(after.importBatchId).toBe(prior.importBatchId) }
+  }
+  expect(f.sqlite.prepare('SELECT count(*) n FROM evidence_revision_113').get()).toEqual({ n: revisionsBefore + 1 })
+  const after = f.snapshot(); expect(after.record).toEqual(before.record); expect(after.enterprise).toEqual(before.enterprise)
+})
+
+for (const entry of ['import', 'standalone'] as const) it(`R4 S1 ${entry} known-plus-legacy sequential control reaches the same final raw`, async () => {
+  const { f, next, ids } = await setupFinalClaims(entry, false)
+  for (const id of ids) await submitFinalCorrections(f, entry, [await finalOperation(f, id, next)], `sequential-${id}`)
+  for (const id of ids) expect(f.sqlite.prepare('SELECT name_raw FROM official_evidence_row_revision WHERE evidence_id=? ORDER BY revision DESC LIMIT 1').get(id)).toEqual({ name_raw: 'Alpha corrected' })
+})
+for (const entry of ['import', 'standalone'] as const) it(`R4 S1 ${entry} cross-event compatible final corrections commit`, async () => {
+  const { f, next, ids } = await setupFinalClaims(entry, true, false), prior = await Promise.all(ids.map(id => f.exact(id)))
+  expect(new Set(prior.map(t => t.eventId)).size).toBe(2)
+  await submitFinalCorrections(f, entry, await Promise.all(ids.map(id => finalOperation(f, id, next))), 'cross-event-final')
+  for (let i = 0; i < ids.length; i++) { const id = ids[i], old = prior[i]; if (id === undefined || !old) throw new Error('Expected target'); expect(await f.exact(id)).toMatchObject({ event: { revision: old.event.revision + 1 } }) }
+})
+for (const entry of ['import', 'standalone'] as const) for (const variant of ['single-old-conflict', 'different-final-raw', 'unknown-final', 'different-full-row'] as const) it(`R4 S1 ${entry} ${variant} rejects without changing final state`, async () => {
+  const { f, next, ids } = await setupFinalClaims(entry, true), a = ids[0], b = ids[1]; if (a === undefined || b === undefined) throw new Error('Expected two targets')
+  const operations = [await finalOperation(f, a, next)]
+  if (variant !== 'single-old-conflict') operations.push(await finalOperation(f, b, variant === 'different-final-raw' ? { ...next, nameRaw: 'Contradictory raw' } : variant === 'unknown-final' ? { ...next, sourceBindingKnown: false } : { ...next, path: 'other.txt', storedFileId: 2 }))
+  await submitFinalCorrections(f, entry, operations, 'rejected-final', variant === 'single-old-conflict' || variant === 'different-final-raw' ? 'source_row_conflict' : 'ambiguity')
+})
+
+it('R4 S1 true stored append no-op survives multiple planned mutations in the same batch', async () => {
+  const { f, state, ids } = await setupFinalClaims('import', true), known = await f.exact(state.knownId)
+  const row20 = { ...state.publishedRow, listNo: 20 }, row30 = { ...state.publishedRow, listNo: 30 }
+  const mutation = await finalOperation(f, state.targetId, row20)
+  const append = (publishedRow: OfficialPublishedRow) => ({ eventId: known.eventId, recordId: known.recordId, enterpriseId: known.enterpriseId, expectedVersion: known.event.revision, evidence: { sourceFile: 'notice.txt', attachment: null, listNo: publishedRow.listNo, page: null, publishedRow } })
+  const original = f.sqlite.prepare('SELECT * FROM official_evidence_row_revision WHERE evidence_id=? ORDER BY revision').all(state.knownId)
+  const { result } = await f.commit(f.request({ officialEvidenceCorrections: { actor: { type: 'agent', id: 'synthetic' }, basis: 'Explicit mutation', operations: [mutation] }, officialEvidenceAppends: [append(row30), append(state.publishedRow)] }, 'stored-noop-with-mutations'))
+  expect(result.items).toEqual(expect.arrayContaining([expect.objectContaining({ detail: expect.objectContaining({ evidence: expect.arrayContaining([{ evidenceId: state.knownId, eventId: known.eventId, unchanged: true }]) }) })]))
+  expect(f.rows()).toHaveLength(ids.length + 1)
+  expect(f.sqlite.prepare('SELECT * FROM official_evidence_row_revision WHERE evidence_id=? ORDER BY revision').all(state.knownId)).toEqual(original)
+  expect(await f.exact(state.knownId)).toMatchObject({ coordinate: known.coordinate, event: { revision: known.event.revision + 1 } })
+})
+it('R4 S1 append reuses planned numeric final facts without reading old latest or swallowing correction', async () => {
+  const { f, next, ids, state } = await setupFinalClaims('import', true), known = await f.exact(state.knownId)
+  const operations = await Promise.all(ids.map(id => finalOperation(f, id, next)))
+  const { result } = await f.commit(f.request({ officialEvidenceCorrections: { actor: { type: 'agent', id: 'synthetic' }, basis: 'Explicit final corrections', operations }, officialEvidenceAppends: [{ eventId: known.eventId, recordId: known.recordId, enterpriseId: known.enterpriseId, expectedVersion: known.event.revision, evidence: { sourceFile: 'notice.txt', attachment: null, listNo: 10, page: null, publishedRow: next } }] }, 'planned-is-not-stored'))
+  expect(f.rows().map(row => row.id)).toEqual(ids)
+  expect(result.items).toEqual(expect.arrayContaining([expect.objectContaining({ detail: expect.objectContaining({ evidence: expect.arrayContaining([expect.objectContaining({ evidenceId: state.knownId, unchanged: true })]) }) })]))
+  for (const id of ids) expect(f.sqlite.prepare('SELECT revision,name_raw FROM official_evidence_row_revision WHERE evidence_id=? ORDER BY revision DESC LIMIT 1').get(id)).toEqual({ revision: 2, name_raw: 'Alpha corrected' })
+})
+it('R4 S1 two new append proposals cannot supply each other with a stable association', async () => {
+  const { f, state } = await setupFinalClaims('import', false), known = await f.exact(state.knownId), row = { ...state.publishedRow, listNo: 30 }
+  const append = { eventId: known.eventId, recordId: known.recordId, enterpriseId: known.enterpriseId, expectedVersion: known.event.revision, evidence: { sourceFile: 'notice.txt', attachment: null, listNo: 30, page: null, publishedRow: row } }
+  const before = f.snapshot(), input = f.request({ officialEvidenceAppends: [append, append] }, 'new-appends-are-not-stored')
+  expect((await f.post('preflight', input)).preflight?.conflicts).toMatchObject([{ error: { code: 'ambiguity' } }])
+  expect((await f.post('commit', input)).status).toBe('failed'); expect(f.snapshot()).toEqual(before)
+})
