@@ -35,30 +35,41 @@ function fail(status: number, code: string, message: string): CorrespondenceApiO
 function success(body: unknown): CorrespondenceApiOutput { return { status: 200, headers, body } }
 function ok(body: unknown, redactors: ReadonlyArray<(text: string) => string>): CorrespondenceApiOutput { return success(sanitizeEvidence(body, redactors)) }
 type PublishedEvent = NonNullable<ReturnType<typeof detail>['event']>
-function sanitizePublishedEvidence<T extends { publishedName?: unknown }>(key: 'evidence' | 'officialEvidence', items: T[], redactors: ReadonlyArray<(text: string) => string>) {
-  const legacy = items.map(({ publishedName: _name, ...item }) => item)
-  const safe = sanitizeEvidence({ [key]: legacy }, redactors) as Record<string, Array<Omit<T, 'publishedName'>>>
-  // Keep the sanitizer's actual key, including secret-driven renaming. Attach
-  // finalized DTOs to its values without sending them through redaction again.
-  return Object.fromEntries(Object.entries(safe).map(([safeKey, values]) => [safeKey,
-    values.map((value, i) => ({ ...value, ...(items[i]!.publishedName === undefined ? {} : { publishedName: items[i]!.publishedName }) })),
-  ]))
+/** Visit this already-hydrated object's own fields in their original order.
+ * Only a trusted event/evidence seam may identify its additive finalized slot. */
+function sanitizePublishedObject(value: object, redactors: ReadonlyArray<(text: string) => string>, visit: (key: string, item: unknown) => unknown, finalizedKey?: 'publishedPresentation' | 'publishedName') {
+  const entries: Array<[string, unknown]> = []
+  for (const [key, item] of Object.entries(value)) {
+    if (key === finalizedKey) {
+      entries.push([key, item])
+      continue
+    }
+    // Delegate both filtering and key redaction to the existing sanitizer.
+    // A filtered key has no entry and its value is not visited.
+    const safeKeys = Object.keys(sanitizeEvidence({ [key]: null }, redactors) as Record<string, null>)
+    for (const safeKey of safeKeys) entries.push([safeKey, visit(key, item)])
+  }
+  return Object.fromEntries(entries)
 }
-/** Only these typed event slots contain finalized new facts. Arbitrary raw
- * dictionaries (even with the same key names) still pass through the old sanitizer. */
+function sanitizePublishedEvidenceItem<T extends { publishedName?: unknown }>(item: T, redactors: ReadonlyArray<(text: string) => string>) {
+  return sanitizePublishedObject(item, redactors, (_key, value) => sanitizeEvidence(value, redactors), 'publishedName')
+}
+/** Typed child selection is explicit at reader-owned seams. Arbitrary raw
+ * dictionaries, including same-name or same-shape objects, stay generic. */
 function sanitizePublishedEvent(event: PublishedEvent | null, redactors: ReadonlyArray<(text: string) => string>) {
   if (!event) return null
-  const { publishedPresentation, evidence, officialEvidence, ...legacy } = event
-  return { ...sanitizeEvidence(legacy, redactors) as typeof legacy,
-    ...sanitizePublishedEvidence('evidence', evidence, redactors),
-    ...sanitizePublishedEvidence('officialEvidence', officialEvidence, redactors),
-    publishedPresentation,
-  }
+  return sanitizePublishedObject(event, redactors, (key, value) => {
+    if (key === 'evidence') return event.evidence.map(item => sanitizePublishedEvidenceItem(item, redactors))
+    if (key === 'officialEvidence') return event.officialEvidence.map(item => sanitizePublishedEvidenceItem(item, redactors))
+    return sanitizeEvidence(value, redactors)
+  }, 'publishedPresentation')
 }
 function sanitizePublishedDetail(row: ReturnType<typeof detail>, redactors: ReadonlyArray<(text: string) => string>) {
-  const { event, predecessorEvent, ...legacy } = row
-  return { ...sanitizeEvidence(legacy, redactors) as typeof legacy,
-    event: sanitizePublishedEvent(event, redactors), predecessorEvent: sanitizePublishedEvent(predecessorEvent, redactors) }
+  return sanitizePublishedObject(row, redactors, (key, value) => {
+    if (key === 'event') return sanitizePublishedEvent(row.event, redactors)
+    if (key === 'predecessorEvent') return sanitizePublishedEvent(row.predecessorEvent, redactors)
+    return sanitizeEvidence(value, redactors)
+  })
 }
 function int(value: unknown) { const n = typeof value === 'number' ? value : typeof value === 'string' && /^\d+$/.test(value) ? Number(value) : NaN; return Number.isSafeInteger(n) && n > 0 ? n : null }
 function page(query: Record<string, unknown>) { const p = query.page == null ? 1 : int(query.page); const s = query.pageSize == null ? 50 : int(query.pageSize); return p && s && s <= 200 ? { page: p, pageSize: s } : null }
@@ -95,16 +106,17 @@ function correspondenceSnapshot(input: CorrespondenceApiInput, context: { db: Db
       const filter = { ...numeric, ...(query.titleCode ? { titleCode: query.titleCode as string } : {}), ...(query.type ? { type: query.type as typeof types[number] } : {}), ...(query.status ? { status: query.status as typeof statuses[number] } : {}), ...(query.role ? { role: query.role as string } : {}), ...(query.ruleVersion ? { ruleVersion: query.ruleVersion as string } : {}) }
       const result = pageRecordCorrespondences(db, filter as CorrespondenceFilter, paging)
       if (query.view === 'summary') return ok({ ...result, rows: summaries(result.rows) }, redactors)
-      const { rows, ...pagingResult } = result
-      return success({ ...sanitizeEvidence(pagingResult, redactors) as typeof pagingResult, rows: details(db, rows, redact).map(row => sanitizePublishedDetail(row, redactors)) })
+      const body = { ...result, rows: details(db, result.rows, redact) }
+      return success(sanitizePublishedObject(body, redactors, (key, value) => key === 'rows'
+        ? body.rows.map(row => sanitizePublishedDetail(row, redactors)) : sanitizeEvidence(value, redactors)))
     }
     if (input.action === 'discover') {
       const parsed = z.strictObject({ eventId: positive, page: positive.default(1), pageSize: positive.max(200).default(50), queryPage: positive.default(1), queryPageSize: positive.max(200).default(25) }).safeParse(input.body)
       if (!parsed.success) return fail(400, 'invalid_request', 'Invalid event discovery request')
       const result = discoverEventArchives(db, parsed.data, redact)
       if (!result) return fail(404, 'not_found', 'Official award or review event not found')
-      const { event, ...legacy } = result
-      return success({ ...sanitizeEvidence(legacy, redactors) as typeof legacy, event: sanitizePublishedEvent(event, redactors) })
+      return success(sanitizePublishedObject(result, redactors, (key, value) => key === 'event'
+        ? sanitizePublishedEvent(result.event, redactors) : sanitizeEvidence(value, redactors)))
     }
     if (input.action === 'candidates') {
       const parsed = candidate.safeParse(input.body)
@@ -131,8 +143,13 @@ function correspondenceSnapshot(input: CorrespondenceApiInput, context: { db: Db
       const rows = listRecordCorrespondences(db, input.kind === 'event' ? { anyEventId: id } : input.kind === 'relation' ? { relationId: id } : { exportRowId: id })
       const reader = sourceReader(db, rows, { kind: input.kind as SourceKind, id }, redact)
       const source = reader.read(input.kind as SourceKind, id)
-      return source ? success({ source: input.kind === 'event' ? sanitizePublishedEvent(source as PublishedEvent, redactors) : sanitizeEvidence(source, redactors),
-        correspondences: rows.map(reader.detail).map(row => sanitizePublishedDetail(row, redactors)) }) : fail(404, 'not_found', 'Source row not found')
+      if (!source) return fail(404, 'not_found', 'Source row not found')
+      const body = { source, correspondences: rows.map(reader.detail) }
+      return success(sanitizePublishedObject(body, redactors, (key, value) => {
+        if (key === 'source' && input.kind === 'event') return sanitizePublishedEvent(source as PublishedEvent, redactors)
+        if (key === 'correspondences') return body.correspondences.map(row => sanitizePublishedDetail(row, redactors))
+        return sanitizeEvidence(value, redactors)
+      }))
     }
     if (input.action === 'get') {
       const row = getRecordCorrespondence(db, id)

@@ -157,3 +157,28 @@ callback 非文本返回无 partialMap。原 evidenceId=2 真 throw、非幂等 
 未导出的signal/aggregate unhandled继续UNKNOWN。新head的type/build、原40事件HTTP链、
 MCP SDK/default native、独立异步导出与full均UNRUN。本段文档在GREEN后补写，属于
 运行源码到提交映射的唯一文档例外，不冒充与测试运行时全文件字节相同。
+
+### 旧容器键与有序碰撞（#391 R13）
+
+API 按水合对象原有的 `Object.entries` 顺序处理旧字段。每个旧键通过既有
+`sanitizeEvidence({ [key]: null }, redactors)` 获取过滤或改名结果；保留的旧值继续原
+sanitize，可信 event/evidence 子对象才进入明确的 typed 接缝。最终使用
+`Object.fromEntries`，保留原同名覆盖的 last-entry-wins；不按兄弟字段拆组后重新附加。
+full list 仍先构造 `{ ...result, rows: details(...) }`，覆盖 rows 不改变原属性位置。
+旧 event/predecessorEvent/rows/source/correspondences 即使为空或 null 也继续改键；
+只有既有新增 publishedPresentation/publishedName 槽的最终 DTO 值隔离二次脱敏。
+任意 raw 同名/同形字典、敏感键过滤及 own __proto__/constructor 数据仍走旧 generic 规则。
+
+R12 新增60个独立 literal 分区，原118个 case 的完整字节区域保持；产品未改时一次 RED
+为8 PASS/52个预期行为 FAIL/118 skipped。R13 沿父独立核验直接应用精确 API 提案，
+同字节测试唯一 focused GREEN 为149 PASS/29 skipped、exit0，逐 assert failureMessages 为空。
+新分区覆盖三类来源旧键、空/非空/前驱 null、summary 对照、完整12字段反向对应、
+双秘密碰撞的最后赢家、原属性顺序及 raw/prototype 负控制。
+R12 记录器将 filtered 误记0的文书错误原件保留，不修改或重跑；R11 btoa 与R10临时根错误
+同样保留。R5/R7及全部更早 FAIL/UNKNOWN 继续按原对象归属，不因本次 GREEN 消失。
+
+9b91 的父 type/build 和原29 focused（含原40事件 HTTP strict<30）通过只归该旧 head；
+本次新候选仅有上述149个小合成通过，原29被过滤。直接 API 小测仍实测10 statements/
+28,853 driver bytes，不等同 compiled HTTP、MCP SDK/default native 或独立异步导出。
+新 head 的 type/build、真实 SDK/native/异步 artifact→XLSX、full 等仍 UNRUN，交父另授。
+本节为 GREEN 后授权文档补记，是本轮运行源码→提交映射的唯一文档差量。
