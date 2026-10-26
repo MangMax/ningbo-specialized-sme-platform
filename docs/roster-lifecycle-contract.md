@@ -1254,12 +1254,14 @@ Word / Excel 等非 PDF 出处若提供非 `null` 页码，报 `not_page_capable
 | 字段 | 含义 |
 |---|---|
 | `add` | 本次将**新增**的**计划项**数。⚠️ 计数单位是**计划项**(一个 `payload.records[]` 条目 = 1 项),**不是**「企业+记录+事件+出处」各算一行。实测:小巨人工作簿 511 行源数据 → `add: 510`(= 企业/记录数),而非 2000+。 |
-| `update` | 本次将**复用或更新**的既有计划项数(按唯一键命中:如同一 `(称号, 年度, sha256)` 的快照批)。**重放时若只有出处的 `source_file` 需要收敛(§8.9),该 `payload.records[]` 项也计入 `update`** —— 那一项确实改了既有行,不该报成 `skip`。 |
+| `update` | 本次将**实际更新**的既有计划项数；真实企业/记录更新仍按原口径计数。既存平台 query 的相同完整重放、显式 `reuseExisting:true` / legacy 只读引用，以及同一 `(称号, 年度, sha256)` 快照的相同完整重放，纯来源复用时 `add:0/update:0`。**重放时若只有出处的 `source_file` 需要收敛(§8.9),该 `payload.records[]` 项也计入 `update`** —— 那一项确实改了既有行,不该报成 `skip`。 |
 | `remove` | 归并会**删除**的被并企业行数(= 成功的 `merges` 项数)。 |
 | `review` | 落在**待核**状态的行数(`pending` / `needs_review`,以及未知枚举原样入库的行)。 |
 | `conflicts` | 逐项冲突(`{ ok:false, kind, ref, error }`),**不静默丢行**。 |
 | `evidenceRepoints` | **行**口径(RL-19 增量,§8.9.1):本次将改掉几行 `record_evidence.source_file`。它与 `update` **不是一个数** —— `update` 的单位是计划项,而一条记录可以带多条事件、每条各有出处(真数据实测 `update: 510` / `evidenceRepoints: 511`)。它跨项共享一个「已认领出处行」集合,故同坐标的重复载荷记录不会被数两遍。 |
 | `batchStatus` | 预检时该幂等键在库里的批次状态(RL-19 增量,§8.9.2)。为 `'committed'` 时上面所有计数一律为 0 —— 同键 `commit` 不会再写任何东西,别把它读成「无事可做」;要补收敛走 `POST …/replay`(§8.9.3)。 |
+
+**纯来源复用计数的新裁定（2026-10-26，#386，调查 #380）**：用户明确选择“明确采用 update=0，并修订旧契约及精确回归（推荐）”。这是本次新授权；#300 历史上是否曾明确批准该预检口径仍为 UNKNOWN，不追认旧批准。不同幂等键的上述合法复用，提交 `summary.written` / `rowsWritten` 仍为 0；新 query / 新 SHA 快照仍计 `add:1`。批次、回执元数据与 `canonicalProjection` 的增量索引独立记账，不能将这些业务计数解释成“物理零 SQL 写”。同键已提交预检全 0、提交原回执不变；不可变 raw、元数据或关系/源行集合不符仍整批拒绝（§8.3），不因计数改约而放宽。`evidenceRepoints` 继续按行独立计数。
 
 **`add` / `update` / `skip` 的判据 = 写入侧的**身份规则**(RL-14 修正)**:一条 `records[]` 是
 `add` 还是 `skip`,看它**会不会真的新建企业** —— 判据就是 `upsertEnterprise` 用的那套
