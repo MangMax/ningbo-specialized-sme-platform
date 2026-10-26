@@ -1,10 +1,10 @@
 # 逐出处名称展示与当前资格工作簿（#355 / #303 A）
 
-`lib/roster/official-published-presentation.ts` 只消费 A 的事件 latest reader，
+`lib/roster/official-published-presentation.ts` 只消费 A 的内部事件完整页 batch reader，
 不拥有侧表 SQL、写裁定、资格或 C 权限。输入为 caller 已选定且已核归属的
 `{eventId,evidenceId}[]`；事件与出处在本次调用内去重，返回以 evidenceId 为键的
-ReadonlyMap。重复来源引用复用这份 Map；没有跨事件批量 SQL、全局缓存或消除所有 N+1
-的保证。后续 #356 可复用该函数，本票不接匿名 API、MCP 或页面。
+ReadonlyMap。重复来源引用复用这份 Map；#391 按最多40个 distinct event 完整分片和活跃
+cursor 波次读取，没有全局缓存，也不宣称消除所有消费者的 N+1。
 
 每项只含 `evidenceId,eventId,revision,availability,nameRaw,sourceBindingKnown`。
 `captured` 保留本次真正 latest 的名称与绑定标记；`unknown_legacy` 只表示成功读完所有页后
@@ -19,7 +19,7 @@ ReadonlyMap。重复来源引用复用这份 Map；没有跨事件批量 SQL、�
 字段为 null，错误码放在展示状态封套；不能降为 unknown_legacy。完整原统代、原属地、
 捕获身份/hash/origin、actor/basis/command 仍仅走 C 已有鉴权封套。
 
-每个 distinct event 按 pageSize=50、maxBytes=65536 调 A，沿游标每页一次；
+每波按 pageSize=50、maxBytes=65536 调 A 的 `listEventsOfficialEvidencePages`；
 事件完整旧 scope 上限300、原字段4000 UTF16及 A 的 SQL 前置预算保留。
 50行不保证装进64KiB；超限直接失败，不缩页重试、不截原文。消费时只保留最小事实和
 当前页，复用 importReceiptRedactor 脱敏新增 DTO，最终 UTF8 再计预算。
@@ -93,3 +93,37 @@ R1 修正：current 的桌面表与移动卡片按既有 CSS 断点隐藏，两�
 预算分别计算一份 API DTO 和两份格式化名称文字，不把两份文字等同两份 DTO；
 source/detail 的原 copies/envelope/default 单份文字规则保持。移动卡片从原 row.aliases
 独立显示已确认曾用名；不消费待核别名，也不从公布名推断别名。
+
+## 内部批量消费与完整 context 一次脱敏（#391 / #381-B）
+
+事件按 scope 首次出现顺序切为最多40个一片，片内只续读仍活跃的 cursor。
+全部波次使用 caller 传入的同一连接/事务；不另开 snapshot、不缩页重试。
+A 仍校验完整300/301出处、完整页和非名称字段、true latest 与当前 owner；
+createdAt 仍沿 A 已批准的旧 SQL guard，精确 JS UTF16 字段集不扩大。
+SQL 完整页的数字表示/预算保持原义，不改成 JS 重序列化字节。
+
+每片仅保留脱敏后最小事实的有界 prefix、cursor 和错误位置，不累积原完整行/页。
+每事件 prefix 最多64KiB；整片成功读取后按 event-major/page-major 提交事实与预算检查。
+较晚 event 的首个错误不能遮盖较早 event 的后续页或前页累计超限；
+任何后片/回调/读取失败都不发布 partialMap。只有成功读完且无捕获的出处才公开 legacy。
+
+ReceiptRedactor 的秘密顺序为 additionalSecrets（API 的 context.apiToken）→runtime API/MCP
+→env API/MCP→已解析 miitCookie/ocrToken，沿原 truthy 过滤及 Set 去重，不排序或 trim。
+两凭据各解析一次；只读 knownRedactors 与 callable 使用同一闭包列表。
+API 在原鉴权/方法守卫后、敏感读取和写副作用前构造一次。
+list/get/source/discover 首次水合即透传同一 callback，包含 discover 事务闭包和 source 三个 alias；
+read/detail 闭包只复用已完成的 Map。无 context 的详情/current/workbook/job 仍走完整默认集合，
+非空水合工厂一次，空 scope 不创建 presentation 工厂，不引入跨请求缓存。
+
+每唯一 captured 六字段 DTO 只调用一次 callback；副本复用最终值。
+仅在已定义类型的 event.publishedPresentation、evidence/officialEvidence.publishedName
+槽位隔离旧 sanitize 后附回。任意旧 raw/candidate/audit 内的同名键仍照旧脱敏，
+没有修改全局 sanitizer 或公开 skip/alreadyRedacted 参数。
+最终 UTF8 继续计属性键、封套、重复 DTO、转义和格式化文字；current 为1DTO＋2texts。
+短秘密替换扩张也拒绝超限，不裁旧字段；工作簿继续沿原失败禁止发布路径。
+
+本片只授权两专属测试中的 `391` 小合成目标；实际 HTTP/MCP、原40事件 HTTP预算链、
+默认 native executor、独立异步导出→artifact→XLSX、type/build/full 由父另授，未跑均 UNRUN。
+原 full5058 PASS/34 FAIL/19 SKIP exit1、40事件51SQL strict<30 FAIL、#345/#346/stage03/errno48
+及 A/R1/R2 文书、环境、计量、预算的全部历史 FAIL/UNKNOWN 保留。10/15/21 为设计估算，
+不填作本次实际计量。小合成直接 API 的实测需与原 HTTP/SDK 链分别记录。

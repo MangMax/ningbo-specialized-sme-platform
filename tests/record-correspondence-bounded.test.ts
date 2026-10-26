@@ -1,11 +1,17 @@
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { useDb, schema } from '../db/client'
 import { handleRecordCorrespondenceRequest } from '../server/utils/record-correspondence-api'
 import { dispatchRecordCorrespondenceMcp } from '../server/utils/mcp-record-correspondence'
 import { startHttpFixture } from './helpers/http-fixture'
+import * as receiptRedaction391 from '../server/utils/import-receipt-redaction'
+import * as credentialState391 from '../server/utils/credential-state'
+import { sourceReader, readSource, eventSource, relationSource, exportRowSource, detail, details } from '../server/utils/record-correspondence-read'
+import { getRecordCorrespondence } from '../server/utils/record-correspondence'
+import { discoverEventArchives } from '../server/utils/event-archive-discovery'
+import * as official391 from '../server/utils/official-evidence'
 
 const cleanup: Array<() => void> = []
 function mcpErrorCode(result: unknown) {
@@ -369,4 +375,147 @@ it('automatically discovers a deep candidate page without materializing other ra
   meter.reset()
   expect(dispatchRecordCorrespondenceMcp('discover', body, { db: f.db })).toEqual(result.body)
   expect(meter.bytes).toBeLessThan(128 * 1024)
+})
+
+// Small process-local API/DAO controls. The existing real HTTP and worker cases
+// above stay intact and require the parent's separate heavy grant.
+afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.unstubAllEnvs() })
+const token391 = 'cx391-only-A7mN5p9Q'
+function contextFixture391(name = token391) {
+  const f = fixture(), event = f.addEvent(), id = f.addEdge(event.id, 391)
+  const batch = f.db.insert(schema.importBatch).values({ idempotencyKey: 'capture391', sourceKind: 'announcement', sourceIdentity: 'synthetic391', status: 'committed' }).returning().get()
+  const evidence = f.db.insert(schema.recordEvidence).values({ recordEventId: event.id, sourceFile: 'synthetic391.pdf', page: 1 }).returning().get()
+  f.db.insert(schema.officialEvidenceRowRevision).values({ evidenceId: evidence.id, eventId: event.id, revision: 1, capturedRecordId: f.record.id, capturedEnterpriseId: f.enterprise.id, nameRaw: name,
+    sourceBindingKnown: false, actor: { type: 'agent', id: 'synthetic391' }, basis: 'synthetic391', commandKind: 'import', importBatchId: batch.id, createdAt: 'synthetic391' }).run()
+  const exportBatch = f.db.insert(schema.platformExportBatch).values({ titleCode: 'specialized_sme', year: 2026, collectedOn: '2026-10-19', originalFilename: 'synthetic391.xlsx', sha256: 'synthetic391', importStatus: 'imported' }).returning().get()
+  const exportRow = f.db.insert(schema.platformExportRow).values({ batchId: exportBatch.id, sourceRowNo: 1, usccRaw: f.enterprise.usccNorm }).returning().get()
+  f.db.insert(schema.recordCorrespondence).values({ edgeKey: 'export391', type: 'event_export_context', role: 'current_snapshot_context', eventId: event.id, exportRowId: exportRow.id, enterpriseId: f.enterprise.id,
+    titleCode: 'specialized_sme', status: 'candidate', revision: 1, targetIdentity: {}, provenance: {}, sourceFingerprint: 'synthetic391', ruleId: 'manual', ruleVersion: '1', createdAt: 'synthetic391' }).run()
+  return { ...f, event, id, evidence, exportRow }
+}
+function instrumentRedactor391() {
+  const original = receiptRedaction391.importReceiptRedactor, callbacks: ReturnType<typeof vi.fn>[] = []
+  const factory = vi.spyOn(receiptRedaction391, 'importReceiptRedactor').mockImplementation((db, options) => {
+    const real = original(db, options), callback = vi.fn((value: unknown) => real(value)); callbacks.push(callback)
+    return Object.assign(callback, { knownRedactors: real.knownRedactors })
+  })
+  const credentials = vi.spyOn(credentialState391, 'resolveCredential')
+  return { factory, callbacks, credentials }
+}
+function fact391(f: ReturnType<typeof contextFixture391>, nameRaw: string | null = '[REDACTED]') {
+  return { evidenceId: f.evidence.id, eventId: f.event.id, revision: 1, availability: 'captured', nameRaw, sourceBindingKnown: false }
+}
+
+it.each(['list', 'get', 'source_event', 'source_relation', 'source_export', 'discover'] as const)('391 api_context propagates the first callback through %s', action => {
+  const f = contextFixture391(), trace = instrumentRedactor391()
+  const input = action === 'list' ? { action: 'list' as const, method: 'GET', query: { pageSize: 20 } }
+    : action === 'get' ? { action: 'get' as const, method: 'GET', id: f.id }
+      : action === 'discover' ? { action: 'discover' as const, method: 'POST', body: { eventId: f.event.id } }
+        : { action: 'source' as const, method: 'GET', kind: action === 'source_event' ? 'event' : action === 'source_relation' ? 'relation' : 'export_row', id: action === 'source_event' ? f.event.id : action === 'source_relation' ? f.relation.id : f.exportRow.id }
+  const result = handleRecordCorrespondenceRequest(input, { db: f.db, apiToken: token391 })
+  expect(result.status).toBe(200)
+  const body = result.body as any
+  const events = action === 'list' ? body.rows.map((row: any) => row.event) : action === 'get' ? [body.event]
+    : action === 'discover' ? [body.event] : [action === 'source_event' ? body.source : null, ...body.correspondences.map((row: any) => row.event)].filter(Boolean)
+  expect(events.length).toBeGreaterThan(0)
+  for (const event of events) {
+    expect(event.publishedPresentation).toEqual({ availability: 'available', error: null, facts: [fact391(f)] })
+    expect(event.evidence[0].publishedName).toEqual(fact391(f))
+    expect(event.officialEvidence[0].publishedName).toEqual(fact391(f))
+    expect(Object.keys(event.evidence[0].publishedName).sort()).toEqual(['availability', 'eventId', 'evidenceId', 'nameRaw', 'revision', 'sourceBindingKnown'])
+  }
+  expect(trace.factory).toHaveBeenCalledTimes(1)
+  expect(trace.factory.mock.calls[0]?.[1]).toEqual({ additionalSecrets: [token391] })
+  expect(trace.credentials.mock.calls.map(call => call[0])).toEqual(['miitCookie', 'ocrToken'])
+  expect(trace.callbacks[0]).toHaveBeenCalledTimes(1)
+  if (action === 'discover') {
+    expect(body).toMatchObject({ ruleVersion: 'event-archive-212-v1', total: 1, page: 1, pageSize: 50, coverage: { total: 1, page: 1, pageSize: 25, rows: [{ id: f.query.id, relationCount: 1, candidateCount: 1, status: 'partial' }] } })
+    expect(body.rows[0].edge).toEqual({ type: 'event_process', eventId: f.event.id, relationId: f.relation.id, role: 'context_only' })
+  }
+})
+
+it('391 api_no_double_redaction attaches final DTO once at all three typed positions', () => {
+  const f = contextFixture391('REDACTED'), trace = instrumentRedactor391()
+  const result = handleRecordCorrespondenceRequest({ action: 'source', method: 'GET', kind: 'event', id: f.event.id }, { db: f.db, apiToken: 'REDACTED' })
+  expect(result.status).toBe(200)
+  const body = result.body as any
+  for (const event of [body.source, ...body.correspondences.map((row: any) => row.event)]) {
+    expect(event.publishedPresentation.facts).toEqual([fact391(f)])
+    expect(event.evidence[0].publishedName).toEqual(fact391(f))
+    expect(event.officialEvidence[0].publishedName).toEqual(fact391(f))
+  }
+  expect(trace.callbacks[0]).toHaveBeenCalledTimes(1)
+})
+
+it('391 api_raw_names_are_not_slots retains old sanitization for arbitrary same-name raw keys', () => {
+  const f = contextFixture391('{"cx391-only-A7mN5p9Q":"cx391-only-A7mN5p9Q","nested":"{\\"name\\":\\"cx391-only-A7mN5p9Q\\"}","bearer":"Bearer unlisted"}')
+  f.db.$client.prepare('UPDATE platform_relation SET raw_fields=? WHERE id=?').run(JSON.stringify({ publishedPresentation: { nameRaw: token391, token: 'private' }, publishedName: token391, nested: { publishedName: token391 }, text: 'Bearer cx391-only-A7mN5p9Q' }), f.relation.id)
+  const result = handleRecordCorrespondenceRequest({ action: 'get', method: 'GET', id: f.id }, { db: f.db, apiToken: token391 })
+  expect(result.status).toBe(200)
+  const body = result.body as any
+  expect(body.event.publishedPresentation.facts[0].nameRaw).toBe('{"[REDACTED]":"[REDACTED]","nested":"{\\"name\\":\\"[REDACTED]\\"}","bearer":"Bearer [REDACTED]"}')
+  expect(body.relation.rawFields).toEqual({ publishedPresentation: { nameRaw: '[REDACTED]' }, publishedName: '[REDACTED]', nested: { publishedName: '[REDACTED]' }, text: 'Bearer [REDACTED]' })
+})
+
+it('391 direct_source_aliases reuse completed maps and pass callbacks across discovery transactions', () => {
+  const f = contextFixture391(), real = receiptRedaction391.importReceiptRedactor(f.db, { additionalSecrets: [token391] })
+  const callback = Object.assign(vi.fn((value: unknown) => real(value)), { knownRedactors: real.knownRedactors })
+  const trace = instrumentRedactor391(), row = getRecordCorrespondence(f.db, f.id)!
+  const assertEvent = (event: any) => expect(event.publishedPresentation.facts).toEqual([fact391(f)])
+  assertEvent(readSource(f.db, 'event', f.event.id, callback))
+  assertEvent(eventSource(f.db, f.event.id, callback))
+  const reader = sourceReader(f.db, [row], { kind: 'event', id: f.event.id }, callback)
+  assertEvent(reader.read('event', f.event.id)); assertEvent(reader.detail(row).event)
+  expect(reader.read('event', f.event.id)).toBe(reader.detail(row).event)
+  assertEvent(details(f.db, [row], callback)[0]!.event); assertEvent(detail(f.db, row, callback).event)
+  const input = { eventId: f.event.id, page: 1, pageSize: 50, queryPage: 1, queryPageSize: 25 }
+  assertEvent(discoverEventArchives(f.db, input, callback)!.event)
+  expect(relationSource(f.db, f.relation.id, callback)).toMatchObject({ id: f.relation.id })
+  expect(exportRowSource(f.db, f.exportRow.id, callback)).toMatchObject({ id: f.exportRow.id })
+  expect(callback).toHaveBeenCalledTimes(6)
+  expect(trace.factory).not.toHaveBeenCalled(); expect(trace.credentials).not.toHaveBeenCalled()
+  expect(f.db.$client.inTransaction).toBe(false)
+})
+
+it('391 api_auth_method_order resolves no secret before the existing guards', () => {
+  const f = contextFixture391(), trace = instrumentRedactor391()
+  expect(handleRecordCorrespondenceRequest({ action: 'preflight', method: 'POST', body: {} }, { db: f.db, apiToken: token391 }).status).toBe(401)
+  expect(handleRecordCorrespondenceRequest({ action: 'list', method: 'POST' }, { db: f.db, apiToken: token391 }).status).toBe(405)
+  expect(trace.factory).not.toHaveBeenCalled(); expect(trace.credentials).not.toHaveBeenCalled()
+})
+
+it('391 api_credential_failure_before_write preserves the decision ledger on secret failure', () => {
+  const f = contextFixture391(), before = f.db.select().from(schema.importBatch).all()
+  vi.spyOn(credentialState391, 'resolveCredential').mockImplementation(() => { throw new Error('synthetic391 credential read failed') })
+  expect(() => handleRecordCorrespondenceRequest({ action: 'preflight', method: 'POST', body: {}, headers: { authorization: 'Bearer ' + token391 } }, { db: f.db, apiToken: token391 })).toThrow('synthetic391 credential read failed')
+  expect(f.db.select().from(schema.importBatch).all()).toEqual(before)
+})
+
+it('391 api_forty_driver_budget keeps complete IDs sources raw and reverse links below thirty statements', () => {
+  const f = fixture(), expected: Array<{ id: number; eventId: number; relationId: number }> = []
+  for (let i = 0; i < 40; i++) {
+    const event = f.addEvent()
+    f.db.insert(schema.recordEvidence).values({ recordEventId: event.id, sourceFile: `synthetic/${i}.pdf`, page: i + 1 }).run()
+    const relation = i === 0 ? f.relation : f.db.insert(schema.platformRelation).values({ queryId: f.query.id, sequenceNo: i + 1, enterpriseId: f.enterprise.id, usccRaw: f.enterprise.usccNorm, rawFields: { original: `row-${i}` } }).returning().get()
+    const id = f.addEdge(event.id, i)
+    f.db.$client.prepare('UPDATE record_correspondence SET relation_id=? WHERE id=?').run(relation.id, id)
+    expected.push({ id, eventId: event.id, relationId: relation.id })
+  }
+  const meter = observeBytes(f.db), fingerprints: string[] = [], prepare = f.db.$client.prepare.bind(f.db.$client)
+  vi.spyOn(f.db.$client, 'prepare').mockImplementation((query: string) => { fingerprints.push(query.replace(/\s+/g, ' ').slice(0, 180)); return prepare(query) })
+  const all = f.db.all.bind(f.db), gateBytes: number[] = []
+  vi.spyOn(f.db, 'all').mockImplementation(((query: Parameters<typeof f.db.all>[0]) => {
+    const rows = all(query) as Array<{ gate_json?: string }>
+    for (const row of rows) if (row.gate_json) gateBytes.push(Buffer.byteLength(row.gate_json))
+    return rows
+  }) as typeof f.db.all)
+  const result = handleRecordCorrespondenceRequest({ action: 'list', method: 'GET', query: { pageSize: 40 } }, { db: f.db }).body as any
+  expect(result.total).toBe(40)
+  expect(result.rows.map((row: any) => ({ id: row.id, eventId: row.event.id, relationId: row.relation.id }))).toEqual(expected)
+  expect(result.rows[39]).toMatchObject({ event: { evidence: [{ page: 40 }], correspondences: [{ id: expected[39]!.id }] }, relation: { rawFields: { original: 'row-39' }, correspondences: [{ id: expected[39]!.id }] } })
+  expect(meter.statements).toBeLessThan(30)
+  expect(fingerprints.filter(query => query.includes('service_credential'))).toHaveLength(2)
+  expect(gateBytes).toHaveLength(40)
+  expect(gateBytes.every(bytes => bytes <= 66560)).toBe(true)
+  console.info('391 actual driver receipt', JSON.stringify({ statements: meter.statements, materializedBytes: meter.bytes, gateBytes, fingerprints }))
 })

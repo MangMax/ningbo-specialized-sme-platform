@@ -1,4 +1,5 @@
 import { readOfficialPublishedPresentation, OfficialPublishedPresentationError, type OfficialPublishedScope } from './official-published-presentation'
+import type { ReceiptRedactor } from '../../server/utils/import-receipt-redaction'
 import { publishedNameText, type PublishedPresentation } from './correspondence-view'
 import { readQueryAssessment, readQueryCoverage, type QueryAssessment } from './query-assessment'
 import { sourcePositionForSequence } from '../platform/recognized-evidence'
@@ -974,9 +975,9 @@ function differenceUniverse(db: Db, snap: Snapshot, derived: Array<{ enterpriseI
 
 /** Anonymous name sidecar only, after the caller has selected and verified ownership.
  * DTO copies and rendered text copies are budgeted separately; no request data is cached. */
-export function readPublicPublishedNames(db: Db, scope: readonly OfficialPublishedScope[], copies: readonly OfficialPublishedScope[] = scope, envelopeCount = 1, textCopies = 1): PublishedPresentation {
+export function readPublicPublishedNames(db: Db, scope: readonly OfficialPublishedScope[], copies: readonly OfficialPublishedScope[] = scope, envelopeCount = 1, textCopies = 1, redactor?: ReceiptRedactor): PublishedPresentation {
   try {
-    const facts = readOfficialPublishedPresentation(db, scope)
+    const facts = readOfficialPublishedPresentation(db, scope, redactor)
     const projected = copies.map(item => facts.get(item.evidenceId)!)
     const texts = projected.map(publishedNameText)
     // Include all serialized name copies, text escaping and scope envelopes.

@@ -19,6 +19,21 @@ import { minimalPdf } from './helpers/minimal-pdf'
 import * as official from '../server/utils/official-evidence'
 import { assertOfficialPublishedBudget, readOfficialPublishedPresentation, OfficialPublishedPresentationError, type OfficialPublishedFact } from '../lib/roster/official-published-presentation'
 import { currentWorkbookValues } from '../lib/roster/current-workbook-presentation'
+import * as receiptRedaction from '../server/utils/import-receipt-redaction'
+import * as credentialState from '../server/utils/credential-state'
+import { readPublicPublishedNames, getRosterEnterpriseDetail } from '../lib/roster/enterprise-roster'
+import { listCurrentQualified } from '../lib/roster/current-qualified-query'
+
+// Retain the original logical per-event page assertions while observing the new
+// batch seam. This records real requests and always executes the real reader.
+function observePublishedPages() {
+  const page = vi.fn(), read = official.listEventsOfficialEvidencePages
+  vi.spyOn(official, 'listEventsOfficialEvidencePages').mockImplementation((db, requests, options) => {
+    for (const request of requests) page(db, request.eventId, { ...options, ...(request.afterEvidenceId === undefined ? {} : { afterEvidenceId: request.afterEvidenceId }) })
+    return read(db, requests, options)
+  })
+  return page
+}
 
 const closes: Array<() => void | Promise<void>> = []
 const qualificationYear = 2026
@@ -177,7 +192,7 @@ it('deduplicates caller scope and reads each event page once without per-evidenc
   const f = await fixture(); await seed(f, Array.from({ length: 51 }, (_, i) => '独立名称' + (i + 1)))
   const other: RosterImportRecord = f.record('specialized_sme', [{ eventType: 'award', year: 2025, batchSeq: 1, evidence: [f.evidence(f.published('另事件名称', 2))] }])
   await f.commit(f.announcement([other]), 'other')
-  const selected = scope(f).slice(0, 51), page = vi.spyOn(official, 'listEventOfficialEvidence'), latest = vi.spyOn(official, 'readLatestOfficialEvidence')
+  const selected = scope(f).slice(0, 51), page = observePublishedPages(), latest = vi.spyOn(official, 'readLatestOfficialEvidence')
   const facts = readOfficialPublishedPresentation(f.db, [...selected, ...selected])
   expect(facts.size).toBe(51)
   expect([...facts.values()].map(fact => fact.nameRaw)).toEqual(Array.from({ length: 51 }, (_, i) => '独立名称' + (i + 1)))
@@ -260,7 +275,7 @@ it('redacts only minimal display values and rejects unavailable facts instead of
   const row = readCurrentCandidate(f.sqlite, 1, 'specialized_sme', qualificationYear, executionTime)
   expect(() => currentWorkbookValues('specialized_sme', row, 1, new Map())).toThrow(OfficialPublishedPresentationError)
   expect(() => currentWorkbookValues('specialized_sme', row, 1, new Map([[fact.evidenceId, { evidenceId: fact.evidenceId, eventId: fact.eventId, revision: null, availability: 'unavailable', nameRaw: null, sourceBindingKnown: null }]]))).toThrow(OfficialPublishedPresentationError)
-  vi.spyOn(official, 'listEventOfficialEvidence').mockImplementation(() => { throw new Error('private SQL and Bearer secret') })
+  vi.spyOn(official, 'listEventsOfficialEvidencePages').mockImplementation(() => { throw new Error('private SQL and Bearer secret') })
   try { readOfficialPublishedPresentation(f.db, scope(f)); expect.unreachable() } catch (error) {
     expect(error).toBeInstanceOf(OfficialPublishedPresentationError)
     expect(error).toMatchObject({ code: 'read_failed' }); expect(String(error)).not.toMatch(/private SQL|Bearer secret/)
@@ -278,7 +293,7 @@ it('enforces final UTF8 projection plus formatted-text bytes at and beyond 64KiB
 
 it('refuses an oversized event page without shrinking or retrying and rolls back the workbook', async () => {
   const f = await fixture(); await seed(f, Array.from({ length: 8 }, () => '名'.repeat(4000)))
-  const page = vi.spyOn(official, 'listEventOfficialEvidence')
+  const page = vi.spyOn(official, 'listEventsOfficialEvidencePages')
   expect(() => readOfficialPublishedPresentation(f.db, scope(f))).toThrow('response_limit')
   expect(page).toHaveBeenCalledTimes(1)
   await expect(writeCurrentWorkbook(f.sqlite, 'specialized_sme', join(f.dir, 'page-limit.xlsx'), () => {})).rejects.toMatchObject({ code: 'response_limit' })
@@ -319,7 +334,7 @@ it('hydrates only the matched sheet after hashing and never repeats deferred-row
     f.record('specialized_sme', [{ eventType: 'award', year: 2021, batchSeq: 1, evidence: [f.evidence(f.published('待核公布名', 2, 2))] }], '到期待核主体', null),
     f.record('specialized_sme', [{ eventType: 'nurture', year: 2021, batchSeq: 1, evidence: [{ sourceFile: '独立佐证.pdf', listNo: 3, page: 1 }] }], '仅培育主体', null),
   ]), 'groups')
-  const page = vi.spyOn(official, 'listEventOfficialEvidence'), filename = join(f.dir, 'groups.xlsx')
+  const page = observePublishedPages(), filename = join(f.dir, 'groups.xlsx')
   const result = await writeCurrentWorkbook(f.sqlite, 'specialized_sme', filename, () => {})
   expect(result.counts).toEqual({ eligible: 1, pending: 1, excluded: 1 })
   expect(page.mock.calls.map(call => call[1])).toEqual([f.ids()[0]!.recordEventId, f.ids()[1]!.recordEventId])
@@ -331,14 +346,14 @@ it('hydrates only the matched sheet after hashing and never repeats deferred-row
 
 it('fails a later event page without returning a partial or legacy map', async () => {
   const f = await fixture(); await seed(f, Array.from({ length: 51 }, (_, i) => '分页名称' + i))
-  const realRead = official.listEventOfficialEvidence
-  const page = vi.spyOn(official, 'listEventOfficialEvidence').mockImplementationOnce(realRead).mockImplementationOnce(() => { throw new Error('second page database failed') })
+  const realRead = official.listEventsOfficialEvidencePages
+  const page = vi.spyOn(official, 'listEventsOfficialEvidencePages').mockImplementationOnce(realRead).mockImplementationOnce(() => { throw new Error('second page database failed') })
   expect(() => readOfficialPublishedPresentation(f.db, scope(f))).toThrow('read_failed')
   expect(page).toHaveBeenCalledTimes(2)
 })
 
 it('rejects conflicting evidence scope and empty scope needs no event read', async () => {
-  const f = await fixture(), page = vi.spyOn(official, 'listEventOfficialEvidence')
+  const f = await fixture(), page = vi.spyOn(official, 'listEventsOfficialEvidencePages')
   expect(readOfficialPublishedPresentation(f.db, []).size).toBe(0)
   expect(() => readOfficialPublishedPresentation(f.db, [{ eventId: 1, evidenceId: 1 }, { eventId: 2, evidenceId: 1 }])).toThrow('invalid_scope')
   expect(page).not.toHaveBeenCalled()
@@ -352,4 +367,229 @@ it.each(['little_giant', 'specialized_sme', 'innovative_sme'] as const)('writes 
   for (const sheet of workbook.worksheets.slice(0, 3)) expect(sheet.getRow(1).cellCount).toBe(12)
   const cell = workbook.getWorksheet('有效企业')!.getCell('H2')
   expect(cell.type).toBe(ExcelJS.ValueType.String); expect(cell.value).toContain('公布名称："=1+1"')
+})
+
+// #391 bounded controls. These bypass no product reader: only their synthetic
+// storage setup is direct, and all expected public facts are independent literals.
+function fixture391(filename = ':memory:') {
+  const sqlite = new Database(filename); sqlite.pragma('foreign_keys=ON')
+  closes.push(() => sqlite.close())
+  const statements: string[] = []
+  const db = drizzle(sqlite, { schema, logger: { logQuery(query) { statements.push(query) } } })
+  migrate(db, { migrationsFolder: resolve('db/migrations') })
+  for (const title of TITLE_SEED) db.insert(schema.title).values(title).run()
+  db.insert(schema.importBatch).values({ id: 1, idempotencyKey: '391', sourceKind: 'announcement', sourceIdentity: 'synthetic391', status: 'committed' }).run()
+  const event = (id: number) => {
+    db.insert(schema.enterprise).values({ id, name: 'Container391', nameNorm: 'Container391-' + id }).run()
+    db.insert(schema.record).values({ id, enterpriseId: id, titleCode: 'specialized_sme', source: 'jxj', nameRaw: 'Container391' }).run()
+    db.insert(schema.recordEvent).values({ id, recordId: id, eventType: 'award', year: 2024, batchSeq: 1 }).run()
+  }
+  const evidence = (id: number, eventId = 1) => db.insert(schema.recordEvidence).values({ id, recordEventId: eventId, sourceFile: 'synthetic391.pdf', page: 1, listNo: id }).run()
+  const capture = (id: number, eventId = 1, nameRaw: string | null = 'Name391', revision = 1) => {
+    if (revision === 1) evidence(id, eventId)
+    db.insert(schema.officialEvidenceRowRevision).values({ evidenceId: id, eventId, revision, capturedRecordId: eventId, capturedEnterpriseId: eventId,
+      nameRaw, path: 'synthetic391.pdf', sourceBindingKnown: false, actor: { type: 'agent', id: 'synthetic391' }, basis: 'synthetic391', commandKind: 'import', importBatchId: 1, createdAt: 'synthetic391' }).run()
+  }
+  const selected = () => db.select().from(schema.recordEvidence).all().map(e => ({ evidenceId: e.id, eventId: e.recordEventId }))
+  return { sqlite, db, event, evidence, capture, selected, statements }
+}
+function literal391(evidenceId: number, eventId = 1, nameRaw: string | null = 'Name391', revision = 1): OfficialPublishedFact {
+  return { evidenceId, eventId, revision, availability: 'captured', nameRaw, sourceBindingKnown: false }
+}
+function redactor391(db: ReturnType<typeof fixture391>['db'], token = 'cx391-only-A7mN5p9Q') {
+  const real = receiptRedaction.importReceiptRedactor(db, { additionalSecrets: [token] })
+  return Object.assign(vi.fn((value: unknown) => real(value)), { knownRedactors: real.knownRedactors })
+}
+function secrets391(db: ReturnType<typeof fixture391>['db']) {
+  vi.stubGlobal('useRuntimeConfig', () => ({ apiToken: 'rt391-api-distinct', mcpToken: 'rt391-mcp-distinct' }))
+  vi.stubEnv('NUXT_API_TOKEN', 'env391-api-distinct'); vi.stubEnv('NUXT_MCP_TOKEN', 'env391-mcp-distinct')
+  db.insert(schema.serviceCredential).values([{ key: 'miitCookie', value: 'saved391-cookie-distinct', updatedAt: 'synthetic' }, { key: 'ocrToken', value: 'saved391-ocr-distinct', updatedAt: 'synthetic' }]).run()
+  closes.push(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs() })
+}
+
+it('391 factory_union_order preserves the complete context runtime env and credential set', () => {
+  const f = fixture391(); secrets391(f.db)
+  const credentials = vi.spyOn(credentialState, 'resolveCredential')
+  const redact = receiptRedaction.importReceiptRedactor(f.db, { additionalSecrets: ['cx391-only-A7mN5p9Q', null, '', 'cx391-only-A7mN5p9Q'] })
+  const actual = redact({ name: 'cx391-only-A7mN5p9Q rt391-api-distinct rt391-mcp-distinct env391-api-distinct env391-mcp-distinct saved391-cookie-distinct saved391-ocr-distinct',
+    'cx391-only-A7mN5p9Q': 'ok', nested: '{"name":"cx391-only-A7mN5p9Q","token":"arbitrary"}', bearer: 'Bearer arbitrary-value' })
+  expect(actual).toEqual({ name: '[REDACTED] [REDACTED] [REDACTED] [REDACTED] [REDACTED] [REDACTED] [REDACTED]', '[REDACTED]': 'ok', nested: '{"name":"[REDACTED]","token":"[REDACTED]"}', bearer: 'Bearer [REDACTED]' })
+  expect(credentials.mock.calls.map(call => call[0])).toEqual(['miitCookie', 'ocrToken'])
+  expect(redact).toHaveProperty('knownRedactors')
+  expect(redact.knownRedactors).toHaveLength(7)
+  expect(redact.knownRedactors.map(r => r('cx391-only-A7mN5p9Q rt391-api-distinct rt391-mcp-distinct env391-api-distinct env391-mcp-distinct saved391-cookie-distinct saved391-ocr-distinct'))).toEqual([
+    '[REDACTED] rt391-api-distinct rt391-mcp-distinct env391-api-distinct env391-mcp-distinct saved391-cookie-distinct saved391-ocr-distinct',
+    'cx391-only-A7mN5p9Q [REDACTED] rt391-mcp-distinct env391-api-distinct env391-mcp-distinct saved391-cookie-distinct saved391-ocr-distinct',
+    'cx391-only-A7mN5p9Q rt391-api-distinct [REDACTED] env391-api-distinct env391-mcp-distinct saved391-cookie-distinct saved391-ocr-distinct',
+    'cx391-only-A7mN5p9Q rt391-api-distinct rt391-mcp-distinct [REDACTED] env391-mcp-distinct saved391-cookie-distinct saved391-ocr-distinct',
+    'cx391-only-A7mN5p9Q rt391-api-distinct rt391-mcp-distinct env391-api-distinct [REDACTED] saved391-cookie-distinct saved391-ocr-distinct',
+    'cx391-only-A7mN5p9Q rt391-api-distinct rt391-mcp-distinct env391-api-distinct env391-mcp-distinct [REDACTED] saved391-ocr-distinct',
+    'cx391-only-A7mN5p9Q rt391-api-distinct rt391-mcp-distinct env391-api-distinct env391-mcp-distinct saved391-cookie-distinct [REDACTED]',
+  ])
+  expect(Object.isFrozen(redact.knownRedactors)).toBe(true)
+})
+
+it('391 factory_default_compatibility keeps omitted and empty options equivalent without request cache', () => {
+  const f = fixture391(); secrets391(f.db)
+  const input = { name: 'rt391-api-distinct saved391-cookie-distinct', raw: '{"password":"value","name":"env391-mcp-distinct"}' }
+  const expected = { name: '[REDACTED] [REDACTED]', raw: '{"password":"[REDACTED]","name":"[REDACTED]"}' }
+  expect(receiptRedaction.importReceiptRedactor(f.db)(input)).toEqual(expected)
+  expect(receiptRedaction.importReceiptRedactor(f.db, {})(input)).toEqual(expected)
+  expect(receiptRedaction.importReceiptRedactor(f.db, { additionalSecrets: ['first391-request'] })('first391-request second391-request')).toBe('[REDACTED] second391-request')
+  expect(receiptRedaction.importReceiptRedactor(f.db, { additionalSecrets: ['second391-request'] })('first391-request second391-request')).toBe('first391-request [REDACTED]')
+})
+
+it.each([1, 2])('391 factory_credential_fault fails closed on read %i', read => {
+  const f = fixture391(), original = credentialState.resolveCredential
+  let n = 0
+  vi.spyOn(credentialState, 'resolveCredential').mockImplementation((...args) => { if (++n === read) throw new Error('synthetic-private-storage'); return original(...args) })
+  expect(() => receiptRedaction.importReceiptRedactor(f.db, { additionalSecrets: ['context391'] })).toThrow('synthetic-private-storage')
+  expect(n).toBe(read)
+})
+
+it.each([0, 1, 40, 41, 81])('391 batch_distinct reads all %i events in bounded chunks', count => {
+  const f = fixture391()
+  for (let i = 1; i <= count; i++) { f.event(i); f.capture(i, i) }
+  const pages = vi.spyOn(official, 'listEventsOfficialEvidencePages'), old = vi.spyOn(official, 'listEventOfficialEvidence')
+  const factory = vi.spyOn(receiptRedaction, 'importReceiptRedactor')
+  const facts = readOfficialPublishedPresentation(f.db, [...f.selected(), ...f.selected()])
+  expect([...facts.values()]).toEqual(Array.from({ length: count }, (_, i) => literal391(i + 1, i + 1)))
+  expect(pages.mock.calls.map(call => call[1].length)).toEqual(Array.from({ length: Math.ceil(count / 40) }, (_, i) => Math.min(40, count - 40 * i)))
+  expect(old).not.toHaveBeenCalled(); expect(factory).toHaveBeenCalledTimes(count ? 1 : 0)
+  for (const call of pages.mock.calls) { expect(call[0]).toBe(f.db); expect(call[2]).toEqual({ pageSize: 50, maxBytes: 65536 }) }
+})
+
+it('391 active_cursor_waves shares one callback and only continues active events', () => {
+  const f = fixture391(); f.event(1); f.event(2)
+  for (let i = 1; i <= 51; i++) f.capture(i, 1, 'cx391-only-A7mN5p9Q')
+  f.capture(52, 2, null)
+  const redact = redactor391(f.db), pages = vi.spyOn(official, 'listEventsOfficialEvidencePages')
+  const facts = readOfficialPublishedPresentation(f.db, [...f.selected(), ...f.selected()], redact)
+  expect([...facts.values()]).toEqual([...Array.from({ length: 51 }, (_, i) => literal391(i + 1, 1, '[REDACTED]')), literal391(52, 2, null)])
+  expect(redact).toHaveBeenCalledTimes(52)
+  expect(pages.mock.calls.map(call => call[1])).toEqual([[{ eventId: 1 }, { eventId: 2 }], [{ eventId: 1, afterEvidenceId: 50 }]])
+})
+
+it('391 event_scope_300_301 checks all legacy evidence beyond selected captures', () => {
+  const f = fixture391(); f.event(1); f.capture(1)
+  for (let i = 2; i <= 300; i++) f.evidence(i)
+  expect([...readOfficialPublishedPresentation(f.db, [{ eventId: 1, evidenceId: 1 }]).values()]).toEqual([literal391(1)])
+  f.evidence(301)
+  expect(readPublicPublishedNames(f.db, [{ eventId: 1, evidenceId: 1 }])).toEqual({ availability: 'unavailable', error: 'source_limit', facts: [] })
+})
+
+it('391 latest_origin_owner retains latest raw-only values after owner links disappear', () => {
+  const f = fixture391(); f.event(1); f.capture(1, 1, 'K-old'); f.capture(1, 1, 'K-new', 2); f.capture(1, 1, null, 3)
+  f.sqlite.pragma('foreign_keys=OFF'); f.sqlite.prepare('DELETE FROM enterprise WHERE id=1').run()
+  expect([...readOfficialPublishedPresentation(f.db, f.selected()).values()]).toEqual([literal391(1, 1, null, 3)])
+  const raw = f.sqlite.prepare('SELECT captured_record_id,captured_enterprise_id FROM official_evidence_row_revision WHERE revision=3').get()
+  expect(raw).toEqual({ captured_record_id: 1, captured_enterprise_id: 1 })
+})
+
+it.each(['path', 'name_raw', 'actor'] as const)('391 unselected_full_field_gate checks %s at UTF16 boundaries', field => {
+  const f = fixture391(); f.event(1); f.capture(1); f.capture(2)
+  const put = (value: string) => f.sqlite.prepare('UPDATE official_evidence_row_revision SET ' + field + '=? WHERE evidence_id=2').run(field === 'actor' ? JSON.stringify({ type: 'agent', id: value }) : value)
+  put('🙂'.repeat(2000))
+  expect([...readOfficialPublishedPresentation(f.db, [{ eventId: 1, evidenceId: 1 }]).values()]).toEqual([literal391(1)])
+  put('🙂'.repeat(2000) + '\u0000')
+  expect(() => readOfficialPublishedPresentation(f.db, [{ eventId: 1, evidenceId: 1 }])).toThrow('field_limit')
+})
+
+it('391 earlier_later_error_order prefers an earlier second-page field error', () => {
+  const f = fixture391(); f.event(1); f.event(2)
+  for (let i = 1; i <= 51; i++) f.capture(i)
+  f.sqlite.prepare('UPDATE official_evidence_row_revision SET path=? WHERE evidence_id=51').run('x'.repeat(4001))
+  for (let i = 52; i <= 352; i++) f.evidence(i, 2)
+  const pages = vi.spyOn(official, 'listEventsOfficialEvidencePages')
+  expect(() => readOfficialPublishedPresentation(f.db, [{ evidenceId: 1, eventId: 1 }, { evidenceId: 52, eventId: 2 }])).toThrow('field_limit')
+  expect(pages.mock.calls.map(call => call[1])).toEqual([[{ eventId: 1 }, { eventId: 2 }], [{ eventId: 1, afterEvidenceId: 50 }]])
+})
+
+it('391 prefix_budget_error_order keeps earlier fact overflow ahead of a later page error', () => {
+  const f = fixture391(); f.event(1)
+  for (let i = 1; i <= 51; i++) f.capture(i, 1, i <= 50 ? 'Q7 '.repeat(120) : 'last')
+  f.sqlite.prepare('UPDATE official_evidence_row_revision SET path=? WHERE evidence_id=51').run('x'.repeat(4001))
+  const redact = redactor391(f.db, 'Q7')
+  expect(() => readOfficialPublishedPresentation(f.db, f.selected(), redact)).toThrow('response_limit')
+})
+
+it('391 late_batch_atomicity never publishes forty successful facts when event forty-one fails', () => {
+  const f = fixture391()
+  for (let i = 1; i <= 41; i++) { f.event(i); f.capture(i, i) }
+  f.sqlite.prepare('UPDATE official_evidence_row_revision SET path=? WHERE evidence_id=41').run('x'.repeat(4001))
+  const pages = vi.spyOn(official, 'listEventsOfficialEvidencePages')
+  expect(readPublicPublishedNames(f.db, f.selected())).toEqual({ availability: 'unavailable', error: 'field_limit', facts: [] })
+  expect(pages).toHaveBeenCalledTimes(2)
+})
+
+it('391 callback_failure_atomicity returns only a safe failure without partial facts', () => {
+  const f = fixture391(); f.event(1); f.capture(1); f.capture(2)
+  const real = receiptRedaction.importReceiptRedactor(f.db)
+  const callback = Object.assign(vi.fn((value: unknown) => { if ((value as { evidenceId: number }).evidenceId === 2) throw new Error('private SQL context391'); return real(value) }), { knownRedactors: real.knownRedactors })
+  expect(readPublicPublishedNames(f.db, f.selected(), f.selected(), 1, 1, callback)).toEqual({ availability: 'unavailable', error: 'read_failed', facts: [] })
+  expect(callback).toHaveBeenCalledTimes(2)
+})
+
+it('391 caller_snapshot retains one snapshot across cursor waves and an independent commit', () => {
+  const dir = mkdtempSync('/tmp/391-snapshot-'), f = fixture391(join(dir, 'own.sqlite'))
+  f.sqlite.pragma('journal_mode=WAL'); f.event(1)
+  for (let i = 1; i <= 51; i++) f.capture(i, 1, 'before')
+  const writer = new Database(join(dir, 'own.sqlite')); closes.push(() => writer.close())
+  const real = official.listEventsOfficialEvidencePages; let committed = false
+  vi.spyOn(official, 'listEventsOfficialEvidencePages').mockImplementation((...args) => {
+    const result = real(...args)
+    if (!committed) { committed = true; writer.prepare("UPDATE official_evidence_row_revision SET name_raw='after' WHERE evidence_id=51").run() }
+    return result
+  })
+  const first = f.db.transaction(() => readOfficialPublishedPresentation(f.db, f.selected()))
+  expect(first.get(51)).toEqual(literal391(51, 1, 'before'))
+  expect(readOfficialPublishedPresentation(f.db, f.selected()).get(51)).toEqual(literal391(51, 1, 'after'))
+  expect(f.sqlite.inTransaction).toBe(false)
+})
+
+// Independent final JSON contract, not a call to the production budget/formatter.
+function finalBytes391(names: string[]) {
+  const facts = names.map((name, i) => literal391(i + 1, 1, name))
+  const texts = names.map(name => '公布名称：' + JSON.stringify(name) + '（出处绑定未核实）')
+  return Buffer.byteLength(JSON.stringify(facts)) + 2 * Buffer.byteLength(JSON.stringify(texts))
+    + Buffer.byteLength('{"publishedPresentation":{"availability":"available","error":null,"facts":[]}}')
+    + names.length * Buffer.byteLength('{"publishedName":null}')
+}
+it.each([65535, 65536, 65537])('391 final_current_bytes gates %i after context expansion with one DTO and two texts', target => {
+  const f = fixture391(); f.event(1)
+  let names: string[] = [], raw: string[] = []
+  for (let quotes = 0; quotes < 3; quotes++) {
+    raw = ['Q7 '.repeat(600) + '"'.repeat(quotes), 'Q7 '.repeat(600), 'Q7 '.repeat(600)]
+    names = ['[REDACTED] '.repeat(600) + '"'.repeat(quotes), '[REDACTED] '.repeat(600), '[REDACTED] '.repeat(600)]
+    const delta = target - finalBytes391(names)
+    if (delta >= 0 && delta % 3 === 0) { raw[0] += 'x'.repeat(delta / 3); names[0] += 'x'.repeat(delta / 3); break }
+  }
+  expect(finalBytes391(names)).toBe(target)
+  expect(raw.every(name => name.length <= 4000)).toBe(true)
+  raw.forEach((name, i) => f.capture(i + 1, 1, name))
+  const redact = redactor391(f.db, 'Q7'), result = readPublicPublishedNames(f.db, f.selected(), f.selected(), 1, 2, redact)
+  expect(result).toEqual(target <= 65536 ? { availability: 'available', error: null, facts: names.map((name, i) => literal391(i + 1, 1, name)) } : { availability: 'unavailable', error: 'response_limit', facts: [] })
+  expect(redact).toHaveBeenCalledTimes(3)
+})
+
+it('391 dto_text_bytes uses exact final escaped text boundaries including sixteen KiB', () => {
+  const fact = literal391(1, 1, '"\u0000🙂')
+  const overhead = Buffer.byteLength(JSON.stringify([fact])) + 4
+  expect(() => assertOfficialPublishedBudget([fact], ['x'.repeat(16384 - overhead)])).not.toThrow()
+  expect(() => assertOfficialPublishedBudget([fact], ['x'.repeat(65536 - overhead)])).not.toThrow()
+  expect(() => assertOfficialPublishedBudget([fact], ['x'.repeat(65537 - overhead)])).toThrow('response_limit')
+})
+
+it('391 default_consumers preserve full secrets and qualifier inputs in detail current and workbook formatting', () => {
+  const f = fixture391(); secrets391(f.db); f.event(1)
+  f.capture(1, 1, 'rt391-api-distinct env391-api-distinct saved391-cookie-distinct saved391-ocr-distinct')
+  const before = JSON.stringify(readCurrentCandidate(f.sqlite, 1, 'specialized_sme', qualificationYear, executionTime))
+  const expected = literal391(1, 1, '[REDACTED] [REDACTED] [REDACTED] [REDACTED]')
+  expect(getRosterEnterpriseDetail(f.db, 1)?.publishedPresentation).toEqual({ availability: 'available', error: null, facts: [expected] })
+  const current = listCurrentQualified(f.sqlite, { titleCode: 'specialized_sme' })
+  expect(current.total).toBe(1); expect(current.rows[0]?.publishedPresentation).toEqual({ availability: 'available', error: null, facts: [expected] })
+  const candidate = readCurrentCandidate(f.sqlite, 1, 'specialized_sme', qualificationYear, executionTime)
+  const values = currentWorkbookValues('specialized_sme', candidate, 1, readOfficialPublishedPresentation(f.db, f.selected()))
+  expect(values[7]).toBe('2024年第1批认定，《synthetic391.pdf》：公布名称："[REDACTED] [REDACTED] [REDACTED] [REDACTED]"（出处绑定未核实）')
+  expect(JSON.stringify(readCurrentCandidate(f.sqlite, 1, 'specialized_sme', qualificationYear, executionTime))).toBe(before)
 })
