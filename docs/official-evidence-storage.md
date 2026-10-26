@@ -88,3 +88,57 @@ OfficialEvidenceError 的 statusCode/code 是 B/C 的错误接缝，底层其他
 Nuxt/worker/transport/typecheck/build/full/UI 未运行；本层没有 UI consumer 变化，桌面/390px 为 NA。
 #345/#346 原完整套件 FAIL/UNKNOWN 继承保留，窄测试通过不覆盖它们。原 R2 两轴 P1/P2 只在 R3
 设计层闭合的历史也保留，不把本票测试当双轴实现审查回执。
+
+## 内部完整页批读（#390 / #381-A）
+
+`listEventsOfficialEvidencePages(executor, requests, {pageSize?, maxBytes?})` 是内部领域接缝。
+requests 必须为至多 40 个 plain object，仅接受正 safe integer 的 eventId 和可选
+afterEvidenceId；event 不得重复。options 只接受 pageSize（默认 20，1–50）和 maxBytes
+（默认 16384，1–65536）。空 requests 仍验证 options，然后零查询返回 []；超过 40 拒绝，
+由后续消费者完整分片。原五个存取函数的签名、错误及公开协议保持兼容。
+
+返回值按 requests 顺序为 `{eventId,page}` 或 `{eventId,error}`，error 仅为
+source_limit / field_limit / response_limit。page 是原完整 event 页：formatVersion、eventId、
+rows（完整 OfficialEvidenceRow）及 nextAfterEvidenceId；没有新增匿名 DTO、RPC 或工具。
+空页仅表示本页无捕获行，不裁定 unknown_legacy；数据库等未知异常继续抛出，调用者沿原安全
+失败路径处理。后 event 的错误作为状态保留，让消费者先完成较早 event 的后续页再决定错误。
+不能以这些内部状态发布 partial Map；A 本身不读取秘密、不脱敏，也不改消费者。
+
+一次调用一个 statement：VALUES 的 ord/event/cursor 每项 3 个绑定，共享选项 2 个，最多
+122 binds；外层 LIMIT 40。每 event 独立按旧 record_evidence 全 scope 探测 301，包含 legacy
+及 cursor 后出处；selected 最多 pageSize+1（51），visible 最多 pageSize（50）。探针不投影。
+真正 latest 的更高 revision 反查不按 K/binding/owner 过滤；当前归属仍用 LEFT JOIN，缺链
+为 null，捕获的旧 origin 保留。页内顺序为 source_limit → SQL field_limit → SQL response_limit
+→ 完整可见页的精确 UTF16 校验，涵盖非名称及未被后续展示选择的出处。
+精确校验沿原 textFields、actor.id 和 correction command.batchKey；createdAt 沿原 SQL
+scalar/blob 闸门，不新增 UTF16 规则。
+
+SQL 完整 row shape / 原页封套通过字段和 UTF8 字节闸门后，才将 projection 嵌入 gate_json；
+拒绝时仅返回计数/长度/状态。每条 driver gate 的 projection 至多 65536 字节，固定状态开销
+小于 1024 字节，最多 40 条（字符串上界 2662400 字节）。这是传输物化上界，不能作为 JS
+parse/object 堆成本或 SQLite 扫描/CPU/IO 测量结论。调用者必须跨波次使用同一事务/连接
+snapshot；本函数不创建连接、事务或缓存，不承诺跨独立调用快照。
+
+专属回归命令为 `pnpm exec vitest run tests/official-evidence.test.ts tests/official-evidence-batch.test.ts --maxWorkers=1 --no-file-parallelism`。
+新增测试使用小型 `:memory:` SQLite、独立完整页 literal 与完整页字节边界，旧 reader 仅作辅助对照。
+B #391 尚未接线；原 40 events / 51 SQL / strict <30 的 FAIL 不由 A 修复。
+10/15/21 仍为设计静态估算；旧 full 5058 PASS / 34 FAIL / 19 SKIP、exit 1 及历史 UNKNOWN 保留。
+HTTP/MCP、Nuxt 服务、native worker、typecheck/build/full、真实数据和生产均不属本片小测验收。
+
+
+### #390 本次联合回归与预算兼容
+
+2026-10-26 UTC 的唯一联合小 SQLite 窗口执行上述两个精确测试文件，保留
+`--maxWorkers=1 --no-file-parallelism --reporter=default --reporter=json`：114/114 PASS
+（旧测试 19、新测试 95），exit 0、signal null；原 114 个 case 名称和顺序不变。
+运行前后 1799 个源码文件逐字节相同；本段文档是运行结束后的说明，未作为本次运行输入。
+R1 首轮 74 PASS / 40 FAIL 及后续诊断、环境/语法/元数据 FAIL 原件均保留，不由本次通过覆盖。
+
+页预算继续采用原 SQL JSON 封套的 UTF8 字节口径和旧 API guard。固定 eventId=1 的
+合成 fixture 中，SQL 顶层数字文本为 `1.0`，JS 完整页序列化为 `1`，相差两字节；不 CAST、
+不改数字绑定、不提高 maxBytes，也不把 SQL gate 改成 JS 口径。测试用独立固定 SQL 预算
+literal 补 ASCII padding，断言预算字节等于原 target、完整 JS expected 字节等于 target−2；
+保留 16384/16385/65535/65536/65537 的原正负结论及完整行断言，并增加旧/新口精确 gate 对照。
+计量只截取本次目标 executor.all 的 logger slice，历史 direct/get 查询仍保留在全 logger 中；
+一次 all、精确行数、122 binds 和 driver gate 预算均继续强制断言。这是测试 harness 修正，
+不代表发现并修复产品预算错误；B #391、全链 51 SQL、heavy/full/双轴仍待各自独立验收。
