@@ -139,11 +139,14 @@ for (const action of ['commit', 'preflight'] as const) it(`retains the parse-res
   // Invalid IDs are rejected before opening the business DB or reading a file.
   const fileId = 'issue375-invalid-file-853629741'
   const path = `/api/files/${fileId}/parse-result/${action}`
+  const requestURL = new URL(path, baseUrl).href
   const template = `/api/files/:id/parse-result/${action}`
   const dbHash = () => createHash('sha256').update(readFileSync(dbPath)).digest('hex')
   const before = dbHash()
   const response = await call(path, { method: 'POST', headers: { ...apiHeaders, 'content-type': 'application/json' }, body: '{}' })
   expect(response.status).toBe(400)
+  // Nitro echoes the submitted URL here; ID privacy covers protected log responses below.
+  expect(response.body.url).toBe(requestURL)
   expect(response.headers.get('cache-control')).toBe('no-store')
   expect(response.body.message).toBe('文件 ID 非法')
   expect(response.requestId).toBeTruthy()
