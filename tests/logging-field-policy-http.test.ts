@@ -93,6 +93,32 @@ it('denies REST and MCP before policy execution and reads no unauthorized body o
   expect((await call('/api/health')).status).toBe(200)
 })
 
+for (const action of ['commit', 'preflight'] as const) it(`retains the parse-result ${action} template on unauthorized POST without exposing the file id`, async () => {
+  const fileId = 'issue375-denied-file-942718630'
+  const path = `/api/files/${fileId}/parse-result/${action}`
+  const requestURL = new URL(path, baseUrl).href
+  const template = `/api/files/:id/parse-result/${action}`
+  const headerCases: Record<string, string>[] = [{}, { authorization: 'Bearer issue375-wrong-token' }]
+  for (const headers of headerCases) {
+    const response = await call(path, { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: '{}' })
+    expect(response.status).toBe(401)
+    // Nitro echoes the submitted URL here; ID privacy covers protected log responses below.
+    expect(response.body.url).toBe(requestURL)
+    expect(response.headers.get('cache-control')).toBe('no-store')
+    expect(response.headers.get('www-authenticate')).toBe('Bearer realm="agent-api"')
+    expect(response.requestId).toBeTruthy()
+    const rows = await logFor(response.requestId)
+    const event = rows.find(row => row.operation === 'http.request')
+    expect(event).toMatchObject({ source: 'http', httpMethod: 'POST', httpRoute: template, statusCode: 401 })
+    const detail = await call('/api/logs/' + event.id, { headers: api })
+    expect(detail.status).toBe(200); expect(detail.body).toEqual(event)
+    expect(JSON.stringify({ rows, detail: detail.body })).not.toContain(fileId)
+  }
+  expect(output).not.toContain(fileId)
+  expect(readFileSync(join(logDir, 'events.db')).toString()).not.toContain(fileId)
+  expect(hash(dbPath)).toBe(beforeDbHash)
+})
+
 it('returns protected HTTP catalog complete controls and increasing revision through REST', async () => {
   const initial = await getPolicy(); expect(initial.status).toBe(200); expect(initial.headers.get('cache-control')).toBe('no-store')
   expect(initial.body.catalog.profiles).toEqual(LOG_FIELD_PROFILES)
