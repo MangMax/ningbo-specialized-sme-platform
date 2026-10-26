@@ -51,6 +51,13 @@ beforeAll(async () => {
 afterAll(async () => { await stop?.(); db.$client.close(); rmSync(dir, { recursive: true, force: true }) })
 
 it('discovers a real export in both tabs and downloads the named workbook through its safe summary', async () => {
+  // Independent legacy seed in beforeAll has no batch, page or list number.
+  const expectedDisplay = Object.freeze({
+    8: `${new Date().getFullYear()}年认定，《synthetic.xlsx》：未逐出处核实`,
+    9: '合成旧名',
+    11: '逐出处公布名见公布名称列；现用名见企业名称列；已确认曾用名仅见该列',
+    12: `${new Date().getFullYear()}年认定：宁波经信来源资料\n《synthetic.xlsx》，附件：合成公布名单，未逐出处核实`,
+  })
   const id = await submit('first')
   const done = await terminal(id)
   expect(done).toMatchObject({ id, group: 'export', state: 'done', export: { titleCode: 'little_giant', ruleVersion: 'current-roster-116-v8', artifact: { id, availability: 'available', filename: 'current-little_giant.xlsx' } } })
@@ -68,9 +75,9 @@ it('discovers a real export in both tabs and downloads the named workbook throug
   const row = wb.getWorksheet('有效企业')!.getRow(2)
   expect(row.getCell(3).value).toBe('001234567890123456')
   expect(row.getCell(2).value).toBe('合成现名')
-  expect(row.getCell(8).value).toBe('合成旧名')
+  expect({ 8: row.getCell(8).value, 9: row.getCell(9).value, 11: row.getCell(11).value, 12: row.getCell(12).value }).toEqual(expectedDisplay)
   expect(row.getCell(9).value).toBe('合成旧名')
-  expect(row.getCell(11).value).toContain('更名')
+  expect(row.getCell(11).value).not.toContain('现已更名为')
 })
 
 it('rechecks artifact availability and permissions without leaking raw results or treating history as a downloadable file', async () => {

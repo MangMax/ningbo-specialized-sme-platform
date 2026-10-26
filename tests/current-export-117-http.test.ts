@@ -98,6 +98,8 @@ function decision(enterpriseId: number, reasonCode: 'moved_out'|'moved_in'|'dere
   return decision
 }
 it('迁入、更名与旧解释缺口', async () => {
+  // Historical case name retained. #379 follows the approved #355 display contract;
+  // record.nameRaw and confirmed aliases do not constitute a per-evidence capture.
   const renamed = candidate('迁入更名现名')
   db.update(s.record).set({nameRaw:'迁入更名旧名'}).where(eq(s.record.id,renamed.record.id)).run()
   db.insert(s.enterpriseAlias).values({enterpriseId:renamed.enterprise.id,name:'迁入更名旧名',nameNorm:'迁入更名旧名',sourceKind:'manual',verificationStatus:'confirmed'}).run()
@@ -112,11 +114,18 @@ it('迁入、更名与旧解释缺口', async () => {
   const review = candidate('更新待审核'); decision(review.enterprise.id,'pending_review',{measureCode:'follow_review'})
   const other = candidate('其他称号不冒充',[]); candidate('其他称号独立',[{eventType:'award',year:new Date().getFullYear()}],'specialized_sme')
   db.insert(s.record).values({enterpriseId:other.enterprise.id,source:'jxj',titleCode:'innovative_sme',nameRaw:'其他称号不冒充'}).run()
+  // Freeze from the independent seed before submitting: only year/list locator vary.
+  const expectedDisplay = Object.freeze({
+    8: `${new Date().getFullYear()}年第1批认定，《synthetic.xlsx》：未逐出处核实`,
+    9: '迁入更名旧名',
+    11: '已确认迁入宁波；逐出处公布名见公布名称列；现用名见企业名称列；已确认曾用名仅见该列；解释依据：适用；查询覆盖：尚未查询',
+    12: `${new Date().getFullYear()}年第1批认定：宁波经信来源资料\n《synthetic.xlsx》，附件：名单，名单序号${renamed.enterprise.id}，未逐出处核实`,
+  })
   const {wb} = await workbook('identity')
   const eligible = rows(wb,'有效企业'), pending = rows(wb,'待确认'), excluded = rows(wb,'排除明细')
   const rename = eligible.find(r => r[2] === '迁入更名现名')!
-  expect(rename[8]).toBe('迁入更名旧名'); expect(rename[9]).toBe('迁入更名旧名')
-  expect(rename[11]).toContain('迁入'); expect(rename[11]).toContain('现已更名'); expect(rename[11]).not.toContain('未见宁波')
+  expect({ 8: rename[8], 9: rename[9], 11: rename[11], 12: rename[12] }).toEqual(expectedDisplay); expect(rename[9]).toBe('迁入更名旧名')
+  expect(rename[11]).toContain('迁入'); expect(rename[11]).not.toContain('现已更名'); expect(rename[11]).not.toContain('未见宁波')
   expect(eligible.map(r => r[2])).toEqual(expect.arrayContaining(['迁出后迁回','更新待审核']))
   expect(excluded.map(r => r[2])).toEqual(expect.arrayContaining(['已确认外迁','已确认注销']))
   expect(pending.map(r => r[2])).toEqual(expect.arrayContaining(['旧缺码前提变化','未确认旧名链','迁入无资格依据','其他称号不冒充']))

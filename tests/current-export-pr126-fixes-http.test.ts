@@ -31,10 +31,19 @@ it('keeps sourced stable enterprises eligible without inventing missing publishe
   f.db.$client.prepare('update record set name_raw=null,uscc_raw=null where id in (?,?)').run(c.record.id,unknown.record.id)
   f.db.$client.prepare('update enterprise set uscc_norm=null where id=?').run(unknown.enterprise.id)
   f.db.$client.prepare('update record set name_raw=null,uscc_raw=? where id=?').run('OTHER-LEGAL-ENTITY',conflict.record.id)
+  // Deliberately null legacy fixture stays null: no capture and no current-name fallback.
+  const expectedDisplay = Object.freeze({
+    8: `${year}年第1批认定，《synthetic-118.xlsx》：未逐出处核实`,
+    9: null,
+    11: '公布名未留档；未将现名补作公布名；逐出处公布名见公布名称列；现用名见企业名称列；已确认曾用名仅见该列',
+    12: `${year}年第1批认定：宁波市经信局公布资料\n《synthetic-118.xlsx》，附件：专精特新中小企业名单，名单序号${c.enterprise.id}，未逐出处核实`,
+  })
   const {wb}=await f.workbook('pr126-null-name')
   expect(occurrences(wb,c.enterprise.id).map(x=>x.sheet)).toEqual(['有效企业'])
   const row=occurrences(wb,c.enterprise.id)[0]!.row
-  expect(row[8]??'').toBe('')
+  expect({ 8: row[8], 9: row[9] ?? null, 11: row[11], 12: row[12] }).toEqual(expectedDisplay)
+  expect(row[8]).not.toContain('Legacy unnamed official row')
+  expect(row[11]).not.toContain('现已更名为')
   expect(row[10]).toContain('已见本称号宁波公布')
   expect(row[11]).toContain('公布名未留档')
   expect(row[12]).toContain('synthetic-118.xlsx')
