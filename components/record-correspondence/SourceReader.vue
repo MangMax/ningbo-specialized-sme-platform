@@ -12,7 +12,7 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 
-const props = defineProps<{ kind: SourceKind; id: number; returnTo?: string | null; compact?: boolean; readOnly?: boolean; presentation?: 'source' | 'business' }>()
+const props = defineProps<{ kind: SourceKind; id: number; returnTo?: string | null; compact?: boolean; readOnly?: boolean; presentation?: 'source' | 'business'; eventReturnQuery?: { currentBack?: string; back?: string; returnTo?: string } }>()
 const emit = defineEmits<{ 'event-navigate': [eventId: number] }>()
 const { displayed, displayedKey, requestedKey, loading, error, retry } = useRecordSource(() => props.kind, () => props.id)
 const current = computed(() => displayedKey.value === requestedKey() ? displayed.value : null)
@@ -54,13 +54,13 @@ const eventSections = computed(() => {
         </ul>
         <section aria-label="本记录的平台来源">
           <h4 class="mb-2 text-sm font-medium">本记录的平台来源（含未确认）</h4>
-          <ul v-if="eventSections.sources.length" class="flex flex-col gap-2"><CorrespondenceItem v-for="edge in eventSections.sources" :key="edge.id" :edge="edge" :return-to="returnTo" @event-navigate="emit('event-navigate', $event)" /></ul>
+          <ul v-if="eventSections.sources.length" class="flex flex-col gap-2"><CorrespondenceItem v-for="edge in eventSections.sources" :key="edge.id" :edge="edge" :return-to="returnTo" :event-return-query="eventReturnQuery" :read-only="readOnly" @event-navigate="emit('event-navigate', $event)" /></ul>
           <p v-else class="text-muted-foreground text-[13px]">尚无匹配来源。候选需核验后才能作为本记录的出处。</p>
         </section>
         <section v-if="eventSections.current.length" aria-label="当前导出快照">
           <h4 class="mb-2 text-sm font-medium">当前导出快照（非历史出处）</h4>
           <p class="text-muted-foreground mb-2 text-[13px]">仅核对当前名称与代码，不作历史认定证据。</p>
-          <ul class="flex flex-col gap-2"><CorrespondenceItem v-for="edge in eventSections.current" :key="edge.id" :edge="edge" :return-to="returnTo" @event-navigate="emit('event-navigate', $event)" /></ul>
+          <ul class="flex flex-col gap-2"><CorrespondenceItem v-for="edge in eventSections.current" :key="edge.id" :edge="edge" :return-to="returnTo" :event-return-query="eventReturnQuery" :read-only="readOnly" @event-navigate="emit('event-navigate', $event)" /></ul>
         </section>
       </template>
       <template v-else>

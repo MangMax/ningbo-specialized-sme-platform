@@ -1,3 +1,5 @@
+import { readOfficialPublishedPresentation, OfficialPublishedPresentationError, type OfficialPublishedScope } from './official-published-presentation'
+import { publishedNameText, type PublishedPresentation } from './correspondence-view'
 import { readQueryAssessment, readQueryCoverage, type QueryAssessment } from './query-assessment'
 import { sourcePositionForSequence } from '../platform/recognized-evidence'
 import { normalizePlatformRelation, type PlatformNormalizationConflict } from '../platform/normalization'
@@ -745,6 +747,7 @@ export interface RosterEventRow {
 }
 
 export interface RosterEvidenceRow {
+  id: number
   eventId: number
   sourceFile: string
   attachment: string | null
@@ -831,6 +834,7 @@ export interface RosterPlatformRelationRow {
 }
 
 export interface RosterEnterpriseDetail {
+  publishedPresentation: PublishedPresentation
   enterprise: RosterEnterpriseRow
   aliases: RosterAliasRow[]
   records: RosterRecordRow[]
@@ -968,6 +972,24 @@ function differenceUniverse(db: Db, snap: Snapshot, derived: Array<{ enterpriseI
   return rows
 }
 
+/** Anonymous name sidecar only, after the caller has selected and verified ownership.
+ * DTO copies and rendered text copies are budgeted separately; no request data is cached. */
+export function readPublicPublishedNames(db: Db, scope: readonly OfficialPublishedScope[], copies: readonly OfficialPublishedScope[] = scope, envelopeCount = 1, textCopies = 1): PublishedPresentation {
+  try {
+    const facts = readOfficialPublishedPresentation(db, scope)
+    const projected = copies.map(item => facts.get(item.evidenceId)!)
+    const texts = projected.map(publishedNameText)
+    // Include all serialized name copies, text escaping and scope envelopes.
+    const bytes = Buffer.byteLength(JSON.stringify(projected)) + Buffer.byteLength(JSON.stringify(texts)) * textCopies
+      + envelopeCount * Buffer.byteLength(JSON.stringify({ publishedPresentation: { availability: 'available', error: null, facts: [] } }))
+      + projected.length * Buffer.byteLength(JSON.stringify({ publishedName: null }))
+    if (bytes > 65536) throw new OfficialPublishedPresentationError('response_limit')
+    return { availability: 'available', error: null, facts: [...facts.values()] }
+  } catch (error) {
+    return { availability: 'unavailable', error: error instanceof OfficialPublishedPresentationError ? error.code : 'read_failed', facts: [] }
+  }
+}
+
 export function getRosterEnterpriseDetail(db: Db, id: number): RosterEnterpriseDetail | null {
   return db.transaction(() => enterpriseDetail(db, id))
 }
@@ -1038,7 +1060,10 @@ function enterpriseDetail(db: Db, id: number): RosterEnterpriseDetail | null {
     return readQueryAssessment(db, scope, undefined, coverage)
   }
 
+  const selectedEvidence = snap.evidence.filter(v => eventIds.has(v.recordEventId))
+  const publishedPresentation = readPublicPublishedNames(db, selectedEvidence.map(v => ({ evidenceId: v.id, eventId: v.recordEventId })))
   return {
+    publishedPresentation,
     enterprise: row,
     aliases: snap.aliases
       .filter((a) => a.enterpriseId === id)
@@ -1078,6 +1103,7 @@ function enterpriseDetail(db: Db, id: number): RosterEnterpriseDetail | null {
       .filter((v) => eventIds.has(v.recordEventId))
       .sort((a, b) => a.recordEventId - b.recordEventId || a.id - b.id)
       .map((v): RosterEvidenceRow => ({
+        id: v.id,
         eventId: v.recordEventId,
         sourceFile: v.sourceFile,
         attachment: v.attachment,

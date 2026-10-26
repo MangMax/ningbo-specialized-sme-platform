@@ -12,8 +12,9 @@ import {
   officialTitlesLabel,
   titleLabel,
 } from '~~/lib/roster/review-display'
-import { sourceReturnTarget } from '~~/lib/roster/correspondence-view'
+import { sourceReturnTarget, type OfficialPublishedFact } from '~~/lib/roster/correspondence-view'
 import RecordEventRow from '@/components/record-correspondence/RecordEventRow.vue'
+import SourceReader from '@/components/record-correspondence/SourceReader.vue'
 import EventCorrespondenceReview from '@/components/record-correspondence/EventCorrespondenceReview.vue'
 import TableFailureState from '@/components/TableFailureState.vue'
 import AssessmentStatusBadge from '@/components/evidence-review/AssessmentStatusBadge.vue'
@@ -43,6 +44,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 definePageMeta({ scrollToTop: (to, from) => shouldNuxtScrollToTop(to.fullPath, from.path) })
 
 interface Evidence {
+  id?: number
+  publishedName?: OfficialPublishedFact
   sourceFile: string
   attachment: string | null
   listNo: number | null
@@ -114,6 +117,17 @@ const backTo = computed(() => {
   return { path: '/', query }
 })
 
+// Event links retain only the existing return context; file links still use the
+// complete detail URL so PDF navigation returns to this exact source page.
+const formalSourceEventReturnQuery = computed(() => {
+  const query: { currentBack?: string; back?: string; returnTo?: string } = {}
+  if (typeof route.query.currentBack === 'string') query.currentBack = route.query.currentBack
+  if (typeof route.query.back === 'string') query.back = route.query.back
+  const comparison = sourceReturnTarget(route.query.returnTo)
+  if (comparison) query.returnTo = comparison
+  return query
+})
+
 const explanationTitle = computed(() => typeof route.query.titleCode === 'string' ? route.query.titleCode : undefined)
 const explanationDirection = computed(() => typeof route.query.direction === 'string' ? route.query.direction : undefined)
 const impactId = computed(() => typeof route.query.impactId === 'string' && /^[1-9]\d*$/.test(route.query.impactId) && Number.isSafeInteger(Number(route.query.impactId)) ? Number(route.query.impactId) : undefined)
@@ -121,7 +135,11 @@ const impactId = computed(() => typeof route.query.impactId === 'string' && /^[1
 const apiGet = $fetch as unknown as <T>(url: string) => Promise<T>
 const { data, isLoading, error, refetch } = useQuery({
   key: () => ['roster-enterprise', id.value],
-  query: () => apiGet<RosterEnterpriseDetail>(`/api/roster/enterprises/${id.value}`),
+  query: async () => {
+    const result = await apiGet<RosterEnterpriseDetail>(`/api/roster/enterprises/${id.value}`)
+    if (result.publishedPresentation?.availability === 'unavailable') throw new Error('Official published names unavailable')
+    return result
+  },
 })
 
 /**
@@ -153,6 +171,7 @@ function onOpenScope(assessment: ReviewAssessment & ReviewScope) {
 const detail = computed<EnterpriseDetail | null>(() => {
   const source = data.value
   if (!source) return null
+  const publishedNames = new Map(source.publishedPresentation?.facts.map(fact => [fact.evidenceId, fact]) ?? [])
   return {
     id: source.enterprise.enterpriseId,
     name: source.enterprise.name,
@@ -179,11 +198,14 @@ const detail = computed<EnterpriseDetail | null>(() => {
         seq: event.batchSeq,
         decidedYear: event.decidedYear,
         reviewOutcome: event.reviewOutcome,
-        evidence: source.evidence.filter(item => item.eventId === event.id),
+        evidence: source.evidence.filter(item => item.eventId === event.id).map(item => ({ ...item, publishedName: publishedNames.get(item.id) })),
       })),
     })),
   }
 })
+
+const confirmedAliasNames = computed(() => data.value?.aliases.filter(alias => alias.verificationStatus === 'confirmed').map(alias => alias.name) ?? [])
+const formalSourceEventId = ref<number | null>(null)
 
 const EVENT_TYPE_ORDER: Record<string, number> = { award: 0, review: 1, maintain: 2, nurture: 3 }
 
@@ -526,6 +548,8 @@ function openPreview(e: Evidence) {
         </template>
       </PageHeader>
 
+      <p v-if="confirmedAliasNames.length" class="text-base leading-6">已确认曾用名：{{ confirmedAliasNames.join('、') }}</p>
+
       <Alert v-if="usccMissing" variant="destructive">
         <AlertTitle>缺统一社会信用代码,记录按企业名称归并</AlertTitle>
         <AlertDescription>
@@ -611,6 +635,9 @@ function openPreview(e: Evidence) {
                     @page-open="rememberPagePreviewReturn"
                     @retry-detail="loadEvent(event.id, true)"
                   />
+                  <div v-if="event.source === 'jxj' && ['award', 'review'].includes(event.type) && evidenceDisclosureOpen(evidenceDisclosureKey(event.id))" class="px-4 pb-3 sm:px-5">
+                    <Button variant="outline" size="sm" @click="formalSourceEventId = event.id">查看正式来源</Button>
+                  </div>
                 </li>
               </ul>
             </section>
@@ -737,6 +764,12 @@ function openPreview(e: Evidence) {
           <Button variant="outline" @click="pendingLeave = null">继续填写</Button>
           <Button @click="discardAndLeave">离开并丢弃</Button>
         </DialogFooter>
+      </DialogContent>
+    </Dialog>
+    <Dialog :open="formalSourceEventId !== null" @update:open="!$event && (formalSourceEventId = null)">
+      <DialogContent class="max-h-[85dvh] min-w-0 overflow-y-auto sm:max-w-3xl">
+        <DialogHeader><DialogTitle>正式来源</DialogTitle><DialogDescription>逐出处公布名称与已登记文件位置。</DialogDescription></DialogHeader>
+        <SourceReader v-if="formalSourceEventId !== null" kind="event" :id="formalSourceEventId" :return-to="route.fullPath" :event-return-query="formalSourceEventReturnQuery" read-only @event-navigate="formalSourceEventId = null; arriveAtEvent($event)" />
       </DialogContent>
     </Dialog>
   </div>

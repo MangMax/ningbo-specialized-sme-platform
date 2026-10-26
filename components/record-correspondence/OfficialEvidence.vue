@@ -2,10 +2,11 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { fileNameOf, fileUrl, isPreviewable } from '~~/lib/preview'
 import { evidencePageState, evidencePreviewHref } from '~~/lib/roster/evidence-page'
+import { publishedNameText, type OfficialPublishedFact } from '~~/lib/roster/correspondence-view'
 import { Button } from '@/components/ui/button'
 
 const props = defineProps<{
-  evidence: { sourceFile: string; attachment: string | null; listNo: number | null; page: number | null; inSelectedSource?: boolean }
+  evidence: { publishedName?: OfficialPublishedFact; sourceFile: string; attachment: string | null; listNo: number | null; page: number | null; inSelectedSource?: boolean }
   back: string
   previewInPlace?: boolean
 }>()
@@ -28,6 +29,7 @@ onMounted(() => watch(() => props.evidence.sourceFile, async (path, _previous, o
 
 <template>
   <div class="flex min-w-0 flex-col gap-1 text-[13px] leading-5" data-testid="official-evidence">
+    <p v-if="evidence.publishedName" class="break-words [overflow-wrap:anywhere]" data-testid="published-name">{{ publishedNameText(evidence.publishedName) }}</p>
     <p class="font-medium break-words [overflow-wrap:anywhere]">{{ fileNameOf(evidence.sourceFile) }}</p>
     <p class="text-muted-foreground break-words [overflow-wrap:anywhere]">原路径：{{ evidence.sourceFile }}</p>
     <p v-if="evidence.attachment" class="break-words [overflow-wrap:anywhere]">附件 / 名单段：{{ evidence.attachment }}</p>

@@ -1,3 +1,5 @@
+import { readPublicPublishedNames } from './enterprise-roster'
+import type { PublishedPresentation } from './correspondence-view'
 import type Database from 'better-sqlite3'
 import { normalizeName, normalizeUscc } from '../domain'
 import { CURRENT_RULE_VERSION, prepareCurrentReader, createCurrentCandidateReader, type CurrentRow, type CurrentTitle } from './current-qualification'
@@ -17,8 +19,9 @@ export interface CurrentQualifiedFilter {
   page?: number
   pageSize?: number
 }
+export type CurrentQualifiedRow = CurrentRow & { publishedPresentation: PublishedPresentation }
 export interface CurrentQualifiedResult {
-  rows: CurrentRow[]
+  rows: CurrentQualifiedRow[]
   total: number
   uncertainTotal: number
   options: { recognitionYears: number[]; validYears: number[]; maintenanceYears: number[]; maintenanceBatchesByYear: Record<string, number[]> }
@@ -96,8 +99,17 @@ export function listCurrentQualified(db: Database.Database, filter: CurrentQuali
       }
       total++
     }
+    // All qualification, count, filter and option decisions above are complete.
+    // Hydrate only the retained page, within the same SQLite read transaction.
+    const displayDb = prepareCurrentReader(db)
+    const hydrated: CurrentQualifiedRow[] = rows.map(row => {
+      const formalIds = new Set(row.workbookFacts?.events.filter(e => e.source === 'jxj' && ['award', 'review'].includes(e.eventType)).map(e => e.id))
+      const scope = (row.workbookFacts?.evidence ?? []).filter(e => formalIds.has(e.eventId)).map(e => ({ evidenceId: e.id, eventId: e.eventId }))
+      // Both CSS-responsive templates mount their text; the API still has one DTO.
+      return { ...row, publishedPresentation: readPublicPublishedNames(displayDb, scope, scope, 1, 2) }
+    })
     db.exec('COMMIT')
     const ascending = (values: Set<number>) => [...values].sort((a,b) => a-b)
-    return { rows, total, uncertainTotal, options: { recognitionYears: ascending(recognitionYears), validYears: ascending(validYears), maintenanceYears: ascending(maintenanceYears), maintenanceBatchesByYear: Object.fromEntries([...maintenanceBatchesByYear].map(([year,batches]) => [year,ascending(batches)])) }, page, pageSize, titleCode: filter.titleCode, ruleVersion: CURRENT_RULE_VERSION, snapshotStartedAt }
+    return { rows: hydrated, total, uncertainTotal, options: { recognitionYears: ascending(recognitionYears), validYears: ascending(validYears), maintenanceYears: ascending(maintenanceYears), maintenanceBatchesByYear: Object.fromEntries([...maintenanceBatchesByYear].map(([year,batches]) => [year,ascending(batches)])) }, page, pageSize, titleCode: filter.titleCode, ruleVersion: CURRENT_RULE_VERSION, snapshotStartedAt }
   } catch (error) { if (db.inTransaction) db.exec('ROLLBACK'); throw error }
 }

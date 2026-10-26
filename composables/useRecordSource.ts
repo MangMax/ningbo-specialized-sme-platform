@@ -1,6 +1,6 @@
 import { useCorrespondenceReadback } from './useCorrespondenceReadback'
 import { ref, watch, type MaybeRefOrGetter, toValue } from 'vue'
-import { correspondenceSourceUrl, type SourceKind, type SourceResponse } from '~~/lib/roster/correspondence-view'
+import { sourcePublishedNamesUnavailable, correspondenceSourceUrl, type SourceKind, type SourceResponse } from '~~/lib/roster/correspondence-view'
 
 /** Keeps the last successful source visible while a retry or target request fails. */
 export function useRecordSource(kind: MaybeRefOrGetter<SourceKind>, id: MaybeRefOrGetter<number>, active: MaybeRefOrGetter<boolean> = true) {
@@ -19,6 +19,7 @@ export function useRecordSource(kind: MaybeRefOrGetter<SourceKind>, id: MaybeRef
     try {
       const result = await $fetch<SourceResponse>(correspondenceSourceUrl(toValue(kind), toValue(id)))
       if (request !== serial) return
+      if (sourcePublishedNamesUnavailable(result)) throw new Error('Official published names unavailable')
       displayed.value = result
       displayedKey.value = key
     } catch {
