@@ -39,6 +39,16 @@ export interface OfficialEvidenceRow extends OfficialEvidenceCapture {
 export interface OfficialEvidenceReadOptions { maxBytes?: number }
 export interface OfficialEvidenceHistoryOptions extends OfficialEvidenceReadOptions { pageSize?: number; beforeRevision?: number }
 export interface OfficialEvidenceEventOptions extends OfficialEvidenceReadOptions { pageSize?: number; afterEvidenceId?: number }
+export interface OfficialEvidencePageRequest { eventId: number; afterEvidenceId?: number }
+export interface OfficialEvidencePagesOptions extends OfficialEvidenceReadOptions { pageSize?: number }
+export interface OfficialEvidenceEventPage {
+  formatVersion: 1; eventId: number; rows: OfficialEvidenceRow[]; nextAfterEvidenceId: number | null
+}
+export type OfficialEvidencePageLimit = 'source_limit' | 'field_limit' | 'response_limit'
+/** Internal domain values, not a public DTO. Consumers must retain event/page error order. */
+export type OfficialEvidencePageResult =
+  | { eventId: number; page: OfficialEvidenceEventPage; error?: never }
+  | { eventId: number; error: OfficialEvidencePageLimit; page?: never }
 export class OfficialEvidenceError extends Error {
   constructor(readonly statusCode: number, readonly code: 'invalid_input' | 'field_limit' | 'input_limit' | 'revision_conflict' | 'reference_mismatch' | 'source_limit' | 'response_limit', message: string, cause?: unknown) { super(message, { cause }) }
 }
@@ -152,6 +162,13 @@ function fieldGuard(candidate: boolean) {
   return sql.join((candidate ? rawSqlFields : allSqlFields).map(field => sql`(${sql.raw(field)} IS NULL OR (typeof(${sql.raw(field)})='text' AND length(${sql.raw(field)})<=4000 AND length(CAST(${sql.raw(field)} AS BLOB))<=16000))`), sql` AND `)
 }
 interface GuardedProjection { count: number; fieldLimit: number; requiredBytes: number; projection: string | null; scopeCount: number }
+function checkProjectedRows(rows: readonly Partial<OfficialEvidenceRow>[]) {
+  for (const row of rows) {
+    for (const field of textFields) if (field in row) text(row[field], field, field !== 'basis', 413)
+    if (row.actor) text(row.actor.id, 'actor.id', false, 413)
+    if (row.command?.kind === 'evidence_correction') text(row.command.batchKey, 'command.batchKey', false, 413)
+  }
+}
 /** This helper is private to this one table. SQL sends only status/length on rejection. */
 function project<T>(db: OfficialEvidenceExecutor, query: SQL, maxBytes: number, sourceMax: number): T {
   const result = db.get<GuardedProjection>(query)!
@@ -160,11 +177,7 @@ function project<T>(db: OfficialEvidenceExecutor, query: SQL, maxBytes: number, 
   if (result.requiredBytes > maxBytes || result.projection === null) throw new OfficialEvidenceError(413, 'response_limit', 'Projection exceeds maxBytes')
   const parsed = JSON.parse(result.projection)
   const rows = parsed.row ? [parsed.row] : parsed.rows ?? parsed.candidates ?? []
-  for (const row of rows) {
-    for (const field of textFields) if (field in row) text(row[field], field, field !== 'basis', 413)
-    if (row.actor) text(row.actor.id, 'actor.id', false, 413)
-    if (row.command?.kind === 'evidence_correction') text(row.command.batchKey, 'command.batchKey', false, 413)
-  }
+  checkProjectedRows(rows)
   return parsed as T
 }
 function guardedQuery(selection: SQL, shape: SQL, envelope: SQL, maxBytes: number, candidate = false, pageSize = 101, scopeCount: SQL = sql`0`) {
@@ -219,4 +232,68 @@ export function listEventOfficialEvidence(db: OfficialEvidenceExecutor, eventId:
   sql`json_object('formatVersion',1,'eventId',${eventId},'rows',json(${rowArray}),'nextAfterEvidenceId',CASE WHEN (SELECT count(*) FROM selected)>${pageSize} THEN (SELECT evidence_id FROM selected LIMIT 1 OFFSET ${pageSize - 1}) ELSE NULL END)`, maxBytes, false, pageSize,
   sql`(SELECT count(*) FROM (SELECT id FROM record_evidence WHERE record_event_id=${eventId} LIMIT 301))`)
   return project(db, query, maxBytes, pageSize + 1)
+}
+
+/** One bounded statement for one page of each requested event. No connection, transaction,
+ * redactor or cache is created here. The caller owns the snapshot across subsequent waves.
+ * A later event's limit is a value, so it cannot hide an earlier event's next-page error.
+ * Infrastructure and unexpected validation errors still throw for the caller's safe mapping.
+ */
+export function listEventsOfficialEvidencePages(db: OfficialEvidenceExecutor, requests: readonly OfficialEvidencePageRequest[], readOptions: OfficialEvidencePagesOptions = {}): OfficialEvidencePageResult[] {
+  if (!Array.isArray(requests) || requests.length > 40) invalid('Expected at most 40 event page requests')
+  const seen = new Set<number>(), values: SQL[] = []
+  for (const [ord, request] of requests.entries()) {
+    keys(request, ['eventId', 'afterEvidenceId'])
+    integer(request.eventId, 'eventId')
+    if (request.afterEvidenceId !== undefined) integer(request.afterEvidenceId, 'afterEvidenceId')
+    if (seen.has(request.eventId)) invalid('Duplicate event page request')
+    seen.add(request.eventId)
+    values.push(sql`(${ord},${request.eventId},${request.afterEvidenceId ?? null})`)
+  }
+  const maxBytes = options(readOptions, ['pageSize'])
+  const pageSize = integer(readOptions.pageSize === undefined ? 20 : readOptions.pageSize, 'pageSize', 1, 50)
+  if (!requests.length) return []
+  // Exactly three binds per event plus two shared options (at most 122). The correlated
+  // scope is independent of cursor/binding. Only visible rows enter the complete shape;
+  // the extra selected row supplies a cursor probe, never a raw driver projection.
+  const query = sql`WITH req(ord,event_id,after_id) AS (VALUES ${sql.join(values, sql`,`)}),
+    opts(ps,mb) AS (VALUES (${pageSize},${maxBytes}))
+    SELECT q.event_id AS eventId, (WITH scope_ids AS (
+      SELECT id FROM record_evidence WHERE record_event_id=q.event_id ORDER BY id LIMIT 301
+    ), selected AS MATERIALIZED (
+      SELECT r.* FROM official_evidence_row_revision r WHERE r.event_id=q.event_id
+        AND (q.after_id IS NULL OR r.evidence_id>q.after_id) AND ${latest}
+      ORDER BY r.evidence_id LIMIT (SELECT ps+1 FROM opts)
+    ), visible AS (
+      SELECT * FROM selected ORDER BY evidence_id LIMIT (SELECT ps FROM opts)
+    ), projected AS (
+      SELECT ${rowShape} AS body, CASE WHEN ${fieldGuard(false)} THEN 0 ELSE 1 END AS field_limit
+      FROM visible r ${owners}
+    ), response AS (
+      SELECT json_object('formatVersion',1,'eventId',q.event_id,'rows',json(${rowArray}),
+        'nextAfterEvidenceId',CASE WHEN (SELECT count(*) FROM selected)>(SELECT ps FROM opts)
+          THEN (SELECT evidence_id FROM selected ORDER BY evidence_id LIMIT 1 OFFSET (SELECT ps-1 FROM opts))
+          ELSE NULL END) AS body
+    ), stats AS (
+      SELECT (SELECT count(*) FROM scope_ids) AS sc, (SELECT count(*) FROM selected) AS n,
+        coalesce((SELECT max(field_limit) FROM projected),0) AS fl,
+        length(CAST(body AS BLOB)) AS rb,body FROM response
+    ) SELECT json_object('scopeCount',sc,'count',n,'fieldLimit',fl,'requiredBytes',rb,
+        'projection',json(CASE WHEN sc<=300 AND n<=(SELECT ps+1 FROM opts)
+          AND fl=0 AND rb<=(SELECT mb FROM opts) THEN body ELSE NULL END)) FROM stats
+    ) AS gate_json FROM req q CROSS JOIN opts ORDER BY q.ord LIMIT 40`
+  const gates = db.all<{ eventId: number; gate_json: string }>(query)
+  return gates.map(({ eventId, gate_json }): OfficialEvidencePageResult => {
+    const gate = JSON.parse(gate_json) as Omit<GuardedProjection, 'projection'> & { projection: OfficialEvidenceEventPage | null }
+    // Preserve the old reader's SQL gate order, including response bytes before exact UTF16.
+    if (gate.scopeCount > 300 || gate.count > pageSize + 1) return { eventId, error: 'source_limit' }
+    if (gate.fieldLimit) return { eventId, error: 'field_limit' }
+    if (gate.requiredBytes > maxBytes || gate.projection === null) return { eventId, error: 'response_limit' }
+    try { checkProjectedRows(gate.projection.rows) }
+    catch (error) {
+      if (error instanceof OfficialEvidenceError && error.code === 'field_limit') return { eventId, error: 'field_limit' }
+      throw error
+    }
+    return { eventId, page: gate.projection }
+  })
 }
