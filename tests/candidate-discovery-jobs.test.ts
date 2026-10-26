@@ -973,7 +973,9 @@ async function exerciseArchiveGeneration(
   const startedAt = Date.now()
   const f = fixture()
   const clock = archiveGenerationClock(f, startedAt)
-  archiveGenerationTeardown = () => clock.idle('afterEach.whenIdle')
+  archiveGenerationTeardown = async () => {
+    await clock.idle('afterEach.whenIdle')
+  }
   onFinished(() => clock.mark('afterEach.finished', { lane }, false))
   clock.mark('case.enter', { lane })
   try {
@@ -1061,7 +1063,7 @@ async function exerciseArchiveGeneration(
   const oldSource = originalSource()
   expect(oldSource.query).toEqual(f.query)
   expect(oldSource.relation).toEqual(f.relation)
-  const row2: RosterImportRelation = {
+  const row2: RosterImportRelation & { declareKind: 'apply' } = {
     sequenceNo: 2,
     enterpriseId: f.enterprise.id,
     usccRaw: f.enterprise.usccNorm,
