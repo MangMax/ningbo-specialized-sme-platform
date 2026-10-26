@@ -396,7 +396,7 @@ function contextFixture391(name = token391) {
 function instrumentRedactor391() {
   const original = receiptRedaction391.importReceiptRedactor, callbacks: ReturnType<typeof vi.fn>[] = []
   const factory = vi.spyOn(receiptRedaction391, 'importReceiptRedactor').mockImplementation((db, options) => {
-    const real = original(db, options), callback = vi.fn((value: unknown) => real(value)); callbacks.push(callback)
+    const real = original(db, options), callback = vi.fn((value: unknown, mode?: receiptRedaction391.ReceiptRedactionMode) => real(value, mode)); callbacks.push(callback)
     return Object.assign(callback, { knownRedactors: real.knownRedactors })
   })
   const credentials = vi.spyOn(credentialState391, 'resolveCredential')
@@ -459,7 +459,7 @@ it('391 api_raw_names_are_not_slots retains old sanitization for arbitrary same-
 
 it('391 direct_source_aliases reuse completed maps and pass callbacks across discovery transactions', () => {
   const f = contextFixture391(), real = receiptRedaction391.importReceiptRedactor(f.db, { additionalSecrets: [token391] })
-  const callback = Object.assign(vi.fn((value: unknown) => real(value)), { knownRedactors: real.knownRedactors })
+  const callback = Object.assign(vi.fn((value: unknown, mode?: receiptRedaction391.ReceiptRedactionMode) => real(value, mode)), { knownRedactors: real.knownRedactors })
   const trace = instrumentRedactor391(), row = getRecordCorrespondence(f.db, f.id)!
   const assertEvent = (event: any) => expect(event.publishedPresentation.facts).toEqual([fact391(f)])
   assertEvent(readSource(f.db, 'event', f.event.id, callback))
@@ -518,4 +518,70 @@ it('391 api_forty_driver_budget keeps complete IDs sources raw and reverse links
   expect(gateBytes).toHaveLength(40)
   expect(gateBytes.every(bytes => bytes <= 66560)).toBe(true)
   console.info('391 actual driver receipt', JSON.stringify({ statements: meter.statements, materializedBytes: meter.bytes, gateBytes, fingerprints }))
+})
+
+const collisionSecrets391 = [
+  { label: 'official', token: 'officialEvidence', evidenceKey: 'evidence', officialKey: '[REDACTED]', innerKey: 'evidence' },
+  { label: 'evidence', token: 'evidence', evidenceKey: '[REDACTED]', officialKey: 'officialEvidence', innerKey: '[REDACTED]' },
+  { label: 'normal', token: token391, evidenceKey: 'evidence', officialKey: 'officialEvidence', innerKey: 'evidence' },
+  { label: 'dual', token: 'officialEvidence', evidenceKey: '[REDACTED]', officialKey: '[REDACTED]', innerKey: '[REDACTED]' },
+] as const
+const collisionCases391 = collisionSecrets391.flatMap(secret => (['empty', 'captured'] as const).flatMap(state =>
+  (['list', 'get', 'source', 'discover'] as const).map(action => ({ ...secret, state, action }))))
+
+it.each(collisionCases391)('391 key_collision $label $state $action', ({ label, token, evidenceKey, officialKey, innerKey, state, action }) => {
+  const f = contextFixture391(token), trace = instrumentRedactor391()
+  if (label === 'dual') vi.stubEnv('NUXT_MCP_TOKEN', 'evidence')
+  if (state === 'empty') {
+    f.db.delete(schema.officialEvidenceRowRevision).run()
+    f.db.delete(schema.recordEvidence).run()
+  }
+  const input = action === 'list' ? { action, method: 'GET', query: { pageSize: 20 } }
+    : action === 'get' ? { action, method: 'GET', id: f.id }
+      : action === 'discover' ? { action, method: 'POST', body: { eventId: f.event.id } }
+        : { action, method: 'GET', kind: 'event', id: f.event.id }
+  const result = handleRecordCorrespondenceRequest(input, { db: f.db, apiToken: token })
+  expect(result.status).toBe(200)
+  const body = result.body as any
+  const events = action === 'list' ? body.rows.map((row: any) => row.event)
+    : action === 'source' ? [body.source, ...body.correspondences.map((row: any) => row.event)] : [body.event]
+  expect(events).toHaveLength(action === 'list' ? 2 : action === 'source' ? 3 : 1)
+  const fact = { evidenceId: f.evidence.id, eventId: f.event.id, revision: 1, availability: 'captured', nameRaw: '[REDACTED]', sourceBindingKnown: false }
+  for (const event of events) {
+    expect(event.id).toBe(f.event.id)
+    expect(event.publishedPresentation).toEqual({ availability: 'available', error: null, facts: state === 'empty' ? [] : [fact] })
+    if (evidenceKey !== 'evidence') expect(event).not.toHaveProperty('evidence')
+    if (officialKey !== 'officialEvidence') expect(event).not.toHaveProperty('officialEvidence')
+    expect(event[evidenceKey]).toHaveLength(state === 'empty' ? 0 : 1)
+    expect(event[officialKey]).toHaveLength(state === 'empty' ? 0 : 1)
+    if (state === 'captured') {
+      expect(event[evidenceKey][0].publishedName).toEqual(fact)
+      expect(event[officialKey][0].publishedName).toEqual(fact)
+      const original = { id: f.evidence.id, recordEventId: f.event.id, sourceFile: 'synthetic391.pdf', page: 1 }
+      // Both renamed keys may collide: the later officialEvidence entry must
+      // retain the legacy sanitizer's last-entry-wins behavior.
+      if (label !== 'dual') expect(event[evidenceKey][0]).toMatchObject(original)
+      expect(event[officialKey][0][innerKey]).toMatchObject(original)
+      expect(event[officialKey][0].storedFile).toBeNull()
+      if (innerKey !== 'evidence') expect(event[officialKey][0]).not.toHaveProperty('evidence')
+      expect(Object.keys(event[officialKey][0].publishedName).sort()).toEqual(['availability', 'eventId', 'evidenceId', 'nameRaw', 'revision', 'sourceBindingKnown'])
+    }
+  }
+  expect(trace.factory).toHaveBeenCalledTimes(1)
+  expect(trace.factory.mock.calls[0]?.[1]).toEqual({ additionalSecrets: [token] })
+  expect(trace.credentials.mock.calls.map(call => call[0])).toEqual(['miitCookie', 'ocrToken'])
+  expect(trace.callbacks[0]).toHaveBeenCalledTimes(state === 'empty' ? 0 : 1)
+})
+
+it.each(['officialEvidence', 'evidence'])('391 key_collision_raw %s keeps arbitrary raw dictionaries on the legacy sanitizer', token => {
+  const f = contextFixture391(token)
+  f.db.$client.prepare('UPDATE platform_relation SET raw_fields=? WHERE id=?').run(JSON.stringify({
+    evidence: { publishedName: token, cookie: 'private', officialEvidence: token },
+    officialEvidence: { publishedPresentation: token, token: 'private', evidence: token },
+  }), f.relation.id)
+  const result = handleRecordCorrespondenceRequest({ action: 'get', method: 'GET', id: f.id }, { db: f.db, apiToken: token })
+  expect(result.status).toBe(200)
+  expect((result.body as any).relation.rawFields).toEqual(token === 'officialEvidence'
+    ? { evidence: { publishedName: '[REDACTED]', '[REDACTED]': '[REDACTED]' }, '[REDACTED]': { publishedPresentation: '[REDACTED]', evidence: '[REDACTED]' } }
+    : { '[REDACTED]': { publishedName: '[REDACTED]', officialEvidence: '[REDACTED]' }, officialEvidence: { publishedPresentation: '[REDACTED]', '[REDACTED]': '[REDACTED]' } })
 })

@@ -35,18 +35,24 @@ function fail(status: number, code: string, message: string): CorrespondenceApiO
 function success(body: unknown): CorrespondenceApiOutput { return { status: 200, headers, body } }
 function ok(body: unknown, redactors: ReadonlyArray<(text: string) => string>): CorrespondenceApiOutput { return success(sanitizeEvidence(body, redactors)) }
 type PublishedEvent = NonNullable<ReturnType<typeof detail>['event']>
+function sanitizePublishedEvidence<T extends { publishedName?: unknown }>(key: 'evidence' | 'officialEvidence', items: T[], redactors: ReadonlyArray<(text: string) => string>) {
+  const legacy = items.map(({ publishedName: _name, ...item }) => item)
+  const safe = sanitizeEvidence({ [key]: legacy }, redactors) as Record<string, Array<Omit<T, 'publishedName'>>>
+  // Keep the sanitizer's actual key, including secret-driven renaming. Attach
+  // finalized DTOs to its values without sending them through redaction again.
+  return Object.fromEntries(Object.entries(safe).map(([safeKey, values]) => [safeKey,
+    values.map((value, i) => ({ ...value, ...(items[i]!.publishedName === undefined ? {} : { publishedName: items[i]!.publishedName }) })),
+  ]))
+}
 /** Only these typed event slots contain finalized new facts. Arbitrary raw
  * dictionaries (even with the same key names) still pass through the old sanitizer. */
 function sanitizePublishedEvent(event: PublishedEvent | null, redactors: ReadonlyArray<(text: string) => string>) {
   if (!event) return null
   const { publishedPresentation, evidence, officialEvidence, ...legacy } = event
-  const oldEvidence = evidence.map(({ publishedName: _name, ...item }) => item)
-  const oldOfficial = officialEvidence.map(({ publishedName: _name, ...item }) => item)
-  const old = { ...legacy, evidence: oldEvidence, officialEvidence: oldOfficial }
-  const safe = sanitizeEvidence(old, redactors) as typeof old
-  return { ...safe, publishedPresentation,
-    evidence: safe.evidence.map((item, i) => ({ ...item, ...(evidence[i]!.publishedName === undefined ? {} : { publishedName: evidence[i]!.publishedName }) })),
-    officialEvidence: safe.officialEvidence.map((item, i) => ({ ...item, ...(officialEvidence[i]!.publishedName === undefined ? {} : { publishedName: officialEvidence[i]!.publishedName }) })),
+  return { ...sanitizeEvidence(legacy, redactors) as typeof legacy,
+    ...sanitizePublishedEvidence('evidence', evidence, redactors),
+    ...sanitizePublishedEvidence('officialEvidence', officialEvidence, redactors),
+    publishedPresentation,
   }
 }
 function sanitizePublishedDetail(row: ReturnType<typeof detail>, redactors: ReadonlyArray<(text: string) => string>) {

@@ -125,5 +125,35 @@ read/detail 闭包只复用已完成的 Map。无 context 的详情/current/work
 本片只授权两专属测试中的 `391` 小合成目标；实际 HTTP/MCP、原40事件 HTTP预算链、
 默认 native executor、独立异步导出→artifact→XLSX、type/build/full 由父另授，未跑均 UNRUN。
 原 full5058 PASS/34 FAIL/19 SKIP exit1、40事件51SQL strict<30 FAIL、#345/#346/stage03/errno48
-及 A/R1/R2 文书、环境、计量、预算的全部历史 FAIL/UNKNOWN 保留。10/15/21 为设计估算，
-不填作本次实际计量。小合成直接 API 的实测需与原 HTTP/SDK 链分别记录。
+及 A/R1/R2 文书、环境、计量、预算的全部历史 FAIL/UNKNOWN 保留。15/21 仍为设计估算；
+小合成直接 API 的40事件控制实测10 statements（含两次凭据读取）、28,853 bytes driver物化，
+需与原 HTTP/SDK 链分别记录，不能抵销原51SQL失败。
+
+### 显式名称脱敏与稳定 typed 结构
+
+presentation 从已验证的存储行和 caller scope 构造完整 captured 输入，显式调用
+`redact(capturedFact, 'official_published_name')`。callback 仍收到含 evidenceId 的完整对象，
+每唯一 fact 一次；内部模式只返回脱敏后的 nameRaw（string/null），使用原请求同一秘密闭包。
+JSON 字符串、敏感 JSON 键、转义及 Bearer 继续原字符串规则；不额外解析凭据或重建工厂。
+presentation 拒绝其它返回类型并整体 read_failed，再由 verified storage 构造固定六字段。
+六个键、ID、revision、availability 和 sourceBindingKnown 不经过 generic 文本替换；
+nameRaw=null、空串与字符串各保原义，不用旧名称或 legacy 状态兜底。
+
+省略 mode 的公共 ReceiptRedactor 调用继续原 generic 函数体，不按字段名或对象形状识别 DTO。
+任意 raw 中同名、同六字段形状的字典及 JSON 内部键仍按旧策略过滤、改键和脱敏。
+API 的旧 evidence/officialEvidence 容器使用 sanitizer 返回的实际键附回 typed 值；
+不恢复被秘密改名的旧键。两键发生碰撞时保持原插入顺序的 last-entry-wins。
+该 mode 只属于内部调用能力，不进入 HTTP/MCP 参数或公开 skip/alreadyRedacted 协议。
+
+本次回归包含六个字段名和 captured 枚举作为合法 secret、Map 真实 key/size、同形 raw、
+null/empty/JSON/Bearer、完整 context/默认秘密集合、多次调用仍仅两次凭据读取、
+callback 非文本返回无 partialMap。原 evidenceId=2 真 throw、非幂等 REDACTED、
+40事件波次、预算膨胀与资格/hash 断言保持。binding=true 控制只在 fresh memory fixture
+补齐 source_document/FK/SHA/bytes/section/listNo 合成数据，不代表真实 capture 或文件核验。
+
+本轮冻结测试 RED 为27 PASS/25个产品行为 FAIL；随后唯一 GREEN 为89 PASS、29 filtered、exit0。
+原R5的8 PASS/26 FAIL及63 PASS/8 FAIL、R7的27 PASS/25 FAIL（其中7个fixture约束错误）
+原件分别保留；R7七项不计产品RED，本轮补齐合法fixture后才触达行为断言。
+未导出的signal/aggregate unhandled继续UNKNOWN。新head的type/build、原40事件HTTP链、
+MCP SDK/default native、独立异步导出与full均UNRUN。本段文档在GREEN后补写，属于
+运行源码到提交映射的唯一文档例外，不冒充与测试运行时全文件字节相同。

@@ -1,5 +1,5 @@
 import { listEventsOfficialEvidencePages, OfficialEvidenceError } from '../../server/utils/official-evidence'
-import { importReceiptRedactor, type ReceiptRedactor } from '../../server/utils/import-receipt-redaction'
+import { importReceiptRedactor, type OfficialPublishedNameInput, type ReceiptRedactor } from '../../server/utils/import-receipt-redaction'
 
 /** Minimal display facts only. Locators stay on the caller's existing evidence. */
 export type OfficialPublishedFact = {
@@ -55,7 +55,12 @@ export function readOfficialPublishedPresentation(db: Parameters<typeof importRe
             if (facts.get(row.evidenceId)?.eventId !== item.eventId) continue
             let fact: OfficialPublishedFact
             try {
-              fact = redact!({ evidenceId: row.evidenceId, eventId: item.eventId, revision: row.revision, availability: 'captured', nameRaw: row.nameRaw, sourceBindingKnown: row.sourceBindingKnown }) as OfficialPublishedFact
+              const captured: OfficialPublishedNameInput = { evidenceId: row.evidenceId, eventId: item.eventId, revision: row.revision, availability: 'captured', nameRaw: row.nameRaw, sourceBindingKnown: row.sourceBindingKnown }
+              const nameRaw = redact!(captured, 'official_published_name')
+              if (nameRaw !== null && typeof nameRaw !== 'string') throw new OfficialPublishedPresentationError('read_failed')
+              // Identity, discriminators and flags come from verified storage,
+              // while only the display name crosses the redaction capability.
+              fact = { ...captured, nameRaw }
             } catch {
               item.entries.push({ error: 'read_failed' }); item.done = true; break
             }

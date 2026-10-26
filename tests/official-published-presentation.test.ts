@@ -373,7 +373,7 @@ it.each(['little_giant', 'specialized_sme', 'innovative_sme'] as const)('writes 
 // storage setup is direct, and all expected public facts are independent literals.
 function fixture391(filename = ':memory:') {
   const sqlite = new Database(filename); sqlite.pragma('foreign_keys=ON')
-  closes.push(() => sqlite.close())
+  closes.push(() => { sqlite.close(); })
   const statements: string[] = []
   const db = drizzle(sqlite, { schema, logger: { logQuery(query) { statements.push(query) } } })
   migrate(db, { migrationsFolder: resolve('db/migrations') })
@@ -398,7 +398,7 @@ function literal391(evidenceId: number, eventId = 1, nameRaw: string | null = 'N
 }
 function redactor391(db: ReturnType<typeof fixture391>['db'], token = 'cx391-only-A7mN5p9Q') {
   const real = receiptRedaction.importReceiptRedactor(db, { additionalSecrets: [token] })
-  return Object.assign(vi.fn((value: unknown) => real(value)), { knownRedactors: real.knownRedactors })
+  return Object.assign(vi.fn((value: unknown, mode?: receiptRedaction.ReceiptRedactionMode) => real(value, mode)), { knownRedactors: real.knownRedactors })
 }
 function secrets391(db: ReturnType<typeof fixture391>['db']) {
   vi.stubGlobal('useRuntimeConfig', () => ({ apiToken: 'rt391-api-distinct', mcpToken: 'rt391-mcp-distinct' }))
@@ -525,7 +525,7 @@ it('391 late_batch_atomicity never publishes forty successful facts when event f
 it('391 callback_failure_atomicity returns only a safe failure without partial facts', () => {
   const f = fixture391(); f.event(1); f.capture(1); f.capture(2)
   const real = receiptRedaction.importReceiptRedactor(f.db)
-  const callback = Object.assign(vi.fn((value: unknown) => { if ((value as { evidenceId: number }).evidenceId === 2) throw new Error('private SQL context391'); return real(value) }), { knownRedactors: real.knownRedactors })
+  const callback = Object.assign(vi.fn((value: unknown, mode?: receiptRedaction.ReceiptRedactionMode) => { if ((value as { evidenceId: number }).evidenceId === 2) throw new Error('private SQL context391'); return real(value, mode) }), { knownRedactors: real.knownRedactors })
   expect(readPublicPublishedNames(f.db, f.selected(), f.selected(), 1, 1, callback)).toEqual({ availability: 'unavailable', error: 'read_failed', facts: [] })
   expect(callback).toHaveBeenCalledTimes(2)
 })
@@ -534,7 +534,7 @@ it('391 caller_snapshot retains one snapshot across cursor waves and an independ
   const dir = mkdtempSync('/tmp/391-snapshot-'), f = fixture391(join(dir, 'own.sqlite'))
   f.sqlite.pragma('journal_mode=WAL'); f.event(1)
   for (let i = 1; i <= 51; i++) f.capture(i, 1, 'before')
-  const writer = new Database(join(dir, 'own.sqlite')); closes.push(() => writer.close())
+  const writer = new Database(join(dir, 'own.sqlite')); closes.push(() => { writer.close(); })
   const real = official.listEventsOfficialEvidencePages; let committed = false
   vi.spyOn(official, 'listEventsOfficialEvidencePages').mockImplementation((...args) => {
     const result = real(...args)
@@ -592,4 +592,77 @@ it('391 default_consumers preserve full secrets and qualifier inputs in detail c
   const values = currentWorkbookValues('specialized_sme', candidate, 1, readOfficialPublishedPresentation(f.db, f.selected()))
   expect(values[7]).toBe('2024年第1批认定，《synthetic391.pdf》：公布名称："[REDACTED] [REDACTED] [REDACTED] [REDACTED]"（出处绑定未核实）')
   expect(JSON.stringify(readCurrentCandidate(f.sqlite, 1, 'specialized_sme', qualificationYear, executionTime))).toBe(before)
+})
+
+it.each(['evidenceId', 'eventId', 'nameRaw', 'revision', 'availability', 'sourceBindingKnown', 'captured'])('391 typed_fact_keys keeps %s out of verified DTO structure', token => {
+  const f = fixture391(); f.event(9)
+  f.capture(17, 9, token); f.capture(17, 9, token, 2); f.capture(17, 9, token, 3)
+  f.db.insert(schema.sourceDocument).values({ id: 391, source: 'jxj', title: 'synthetic391', path: 'synthetic391.pdf' }).run()
+  f.sqlite.prepare('UPDATE official_evidence_row_revision SET source_document_id=391, sha256=?, bytes=700, section_key=\'synthetic391\', list_no=17, source_binding_known=1 WHERE evidence_id=17 AND revision=3').run('a'.repeat(64))
+  const callback = redactor391(f.db, token)
+  const facts = readOfficialPublishedPresentation(f.db, [{ evidenceId: 17, eventId: 9 }], callback)
+  expect([...facts.keys()]).toEqual([17])
+  expect(facts.size).toBe(1)
+  expect([...facts.values()]).toEqual([{ evidenceId: 17, eventId: 9, revision: 3, availability: 'captured', nameRaw: '[REDACTED]', sourceBindingKnown: true }])
+  expect(callback).toHaveBeenCalledTimes(1)
+  expect(callback).toHaveBeenCalledWith({ evidenceId: 17, eventId: 9, revision: 3, availability: 'captured', nameRaw: token, sourceBindingKnown: true }, 'official_published_name')
+})
+
+it.each(['evidenceId', 'captured'])('391 typed_mode_explicit keeps %s raw shape and JSON generic', token => {
+  const f = fixture391(), redact = receiptRedaction.importReceiptRedactor(f.db, { additionalSecrets: [token] })
+  const input = { evidenceId: 17, eventId: 9, revision: 3, availability: 'captured', nameRaw: token, sourceBindingKnown: true }
+  expect(redact(input)).toEqual(token === 'evidenceId'
+    ? { '[REDACTED]': 17, eventId: 9, revision: 3, availability: 'captured', nameRaw: '[REDACTED]', sourceBindingKnown: true }
+    : { evidenceId: 17, eventId: 9, revision: 3, availability: '[REDACTED]', nameRaw: '[REDACTED]', sourceBindingKnown: true })
+  expect(redact(JSON.stringify(input))).toBe(token === 'evidenceId'
+    ? '{"[REDACTED]":17,"eventId":9,"revision":3,"availability":"captured","nameRaw":"[REDACTED]","sourceBindingKnown":true}'
+    : '{"evidenceId":17,"eventId":9,"revision":3,"availability":"[REDACTED]","nameRaw":"[REDACTED]","sourceBindingKnown":true}')
+  expect(redact(input, 'official_published_name')).toBe('[REDACTED]')
+})
+
+it.each([
+  { label: 'null', raw: null, expected: null },
+  { label: 'empty', raw: '', expected: '' },
+  { label: 'json', raw: '{"name":"cx391-only-A7mN5p9Q","token":"private"}', expected: '{"name":"[REDACTED]","token":"[REDACTED]"}' },
+  { label: 'bearer', raw: 'Bearer arbitrary-value', expected: 'Bearer [REDACTED]' },
+])('391 typed_name_literals keeps $label display semantics', ({ raw, expected }) => {
+  const f = fixture391(); f.event(9); f.capture(17, 9, raw)
+  const callback = redactor391(f.db)
+  expect([...readOfficialPublishedPresentation(f.db, [{ evidenceId: 17, eventId: 9 }], callback).values()]).toEqual([
+    { evidenceId: 17, eventId: 9, revision: 1, availability: 'captured', nameRaw: expected, sourceBindingKnown: false },
+  ])
+  expect(callback).toHaveBeenCalledTimes(1)
+  expect(callback).toHaveBeenCalledWith({ evidenceId: 17, eventId: 9, revision: 1, availability: 'captured', nameRaw: raw, sourceBindingKnown: false }, 'official_published_name')
+})
+
+it.each([true, false])('391 typed_name_union shares one closure with context %s', includeContext => {
+  const f = fixture391(); secrets391(f.db)
+  const credentials = vi.spyOn(credentialState, 'resolveCredential')
+  const redact = includeContext
+    ? receiptRedaction.importReceiptRedactor(f.db, { additionalSecrets: ['cx391-only-A7mN5p9Q', null, '', 'cx391-only-A7mN5p9Q'] })
+    : receiptRedaction.importReceiptRedactor(f.db)
+  const known = redact.knownRedactors
+  const nameRaw = includeContext
+    ? 'cx391-only-A7mN5p9Q rt391-api-distinct rt391-mcp-distinct env391-api-distinct env391-mcp-distinct saved391-cookie-distinct saved391-ocr-distinct'
+    : 'rt391-api-distinct rt391-mcp-distinct env391-api-distinct env391-mcp-distinct saved391-cookie-distinct saved391-ocr-distinct'
+  const expected = includeContext ? '[REDACTED] [REDACTED] [REDACTED] [REDACTED] [REDACTED] [REDACTED] [REDACTED]' : '[REDACTED] [REDACTED] [REDACTED] [REDACTED] [REDACTED] [REDACTED]'
+  const input = { evidenceId: 17, eventId: 9, revision: 3, availability: 'captured', nameRaw, sourceBindingKnown: true }
+  const typedFirst = redact(input, 'official_published_name'), genericFirst = redact({ name: nameRaw })
+  const typedSecond = redact(input, 'official_published_name'), genericSecond = redact(nameRaw)
+  expect(credentials.mock.calls.map(call => call[0])).toEqual(['miitCookie', 'ocrToken'])
+  expect(redact.knownRedactors).toBe(known)
+  expect(known).toHaveLength(includeContext ? 7 : 6)
+  expect(genericFirst).toEqual({ name: expected }); expect(genericSecond).toBe(expected)
+  expect(typedFirst).toBe(expected); expect(typedSecond).toBe(expected)
+})
+
+it.each(['undefined', 'object', 'number'] as const)('391 typed_name_result rejects %s atomically', kind => {
+  const f = fixture391(); f.event(1); f.capture(1); f.capture(2)
+  const real = receiptRedaction.importReceiptRedactor(f.db)
+  const callback = Object.assign(vi.fn((value: unknown, mode?: receiptRedaction.ReceiptRedactionMode) => {
+    if ((value as { evidenceId: number }).evidenceId === 2) return kind === 'undefined' ? undefined : kind === 'object' ? {} : 17
+    return real(value, mode)
+  }), { knownRedactors: real.knownRedactors })
+  expect(readPublicPublishedNames(f.db, f.selected(), f.selected(), 1, 1, callback)).toEqual({ availability: 'unavailable', error: 'read_failed', facts: [] })
+  expect(callback).toHaveBeenCalledTimes(2)
 })

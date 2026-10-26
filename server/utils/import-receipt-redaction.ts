@@ -6,7 +6,13 @@ import { sanitizeEvidence } from './record-correspondence-read'
 
 type Db = BetterSQLite3Database<typeof schema>
 const sensitive = /cookie|password|passwd|token|secret|credential|authorization|authentication|api.?key|session/i
-export type ReceiptRedactor = ((value: unknown) => unknown) & {
+/** Explicit trusted input for the internal name-only mode, never inferred from raw shape. */
+export type OfficialPublishedNameInput = Readonly<{
+  evidenceId: number; eventId: number; revision: number; availability: 'captured'
+  nameRaw: string | null; sourceBindingKnown: boolean
+}>
+export type ReceiptRedactionMode = 'official_published_name'
+export type ReceiptRedactor = ((value: unknown, mode?: ReceiptRedactionMode) => unknown) & {
   readonly knownRedactors: ReadonlyArray<(text: string) => string>
 }
 export type RedactionOptions = { additionalSecrets?: readonly (string | null | undefined)[] }
@@ -24,7 +30,16 @@ export function importReceiptRedactor(db: Db, options: RedactionOptions = {}): R
     }
     return value
   }
+  function redactValue(value: unknown, mode?: ReceiptRedactionMode): unknown {
+    if (mode === 'official_published_name') {
+      // Only the presentation's explicit call opts in. The full input remains
+      // visible to request callbacks; generic dictionaries get no shape exemption.
+      const { nameRaw } = value as OfficialPublishedNameInput
+      return nameRaw === null ? null : redact(nameRaw)
+    }
+    return redact(value)
+  }
   // The legacy sanitizer and new DTO callback share these exact closures. Never
   // resolve credentials again when the caller retrieves the list.
-  return Object.defineProperty(redact, 'knownRedactors', { value: redactors }) as ReceiptRedactor
+  return Object.defineProperty(redactValue, 'knownRedactors', { value: redactors }) as ReceiptRedactor
 }
