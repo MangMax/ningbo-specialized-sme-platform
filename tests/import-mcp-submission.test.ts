@@ -27,7 +27,7 @@ for (const [action, tool] of tools) {
   it(`${action} validates before lazy database acquisition and retains captured context`, async () => {
     const context = { requestId: 'mcp-180', traceId: 'trace-180' }
     await rosterImportMcpContext.run(context, () => tool.handler(input as never, {} as never))
-    expect(f.execute).toHaveBeenCalledExactlyOnceWith('db', action, { ...input, sourceSha256: null }, [], context)
+    expect(f.execute).toHaveBeenCalledExactlyOnceWith('db', action, { ...input, sourceSha256: null }, [], context, { filesDir: '/fixture' })
     expect(f.page.mock.invocationCallOrder[0]).toBeLessThan(f.db.mock.invocationCallOrder[0]!)
     expect(f.failure).not.toHaveBeenCalled()
   })
