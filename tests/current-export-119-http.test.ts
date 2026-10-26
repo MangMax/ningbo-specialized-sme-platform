@@ -162,6 +162,8 @@ function decision(enterpriseId: number, reasonCode: 'moved_out' | 'moved_in' | '
   return decision
 }
 it('创新型迁入更名双备注与主体排除不越过证据边界', async () => {
+  // Historical case name retained; #355/#379 display legacy unknown per source,
+  // preserve the confirmed alias, and remove the unsupported rename inference.
   const renamed = candidate('迁入现名')
   db.update(s.record).set({ nameRaw: '公布旧名' }).where(eq(s.record.id, renamed.record.id)).run()
   const alias = db.insert(s.enterpriseAlias).values({ enterpriseId: renamed.enterprise.id, name: '公布旧名', nameNorm: '公布旧名', sourceKind: 'manual', verificationStatus: 'confirmed' }).returning().get()
@@ -184,15 +186,21 @@ it('创新型迁入更名双备注与主体排除不越过证据边界', async (
   const staleDecision = decision(stale.enterprise.id, 'moved_out', { lifecycleAction: null, basis: null, reasonNote: '历史缺码无法查询' })
   const terminated = candidate('终止周期未结构化')
   decision(terminated.enterprise.id, 'other', { reasonNote: '正式取消/终止，但缺对应周期结构化依据' })
+  const expectedDisplay = Object.freeze({
+    8: `${year}年第1批认定，《innovative_sme-synthetic.xlsx》：未逐出处核实`,
+    9: '公布旧名',
+    11: '已确认迁入宁波；逐出处公布名见公布名称列；现用名见企业名称列；已确认曾用名仅见该列；解释依据：适用；查询覆盖：尚未查询',
+    12: `${year}年第1批认定：宁波市经信局公布资料\n《innovative_sme-synthetic.xlsx》，附件：合成名单，名单序号${renamed.events[0]!.id}，未逐出处核实`,
+  })
   const { wb, job } = await workbook('119-identity')
   expect(rows(wb, '有效企业').map(row => row[2])).toEqual(['迁入现名', '迁出后迁回'])
   expect(rows(wb, '排除明细').map(row => row[2])).toEqual(['外迁排除', '注销排除'])
   expect(rows(wb, '待确认').map(row => row[2])).toEqual(['迁入缺本称号资格', '未确认旧名', '缺正式出处', '统代冲突', '旧解释前提未知', '终止周期未结构化'])
   expect(job.result.counts).toEqual({ eligible: 2, pending: 6, excluded: 2 })
   const renameRow = rows(wb, '有效企业')[0]!
-  expect(renameRow[8]).toBe('公布旧名'); expect(renameRow[9]).toBe('公布旧名')
+  expect({ 8: renameRow[8], 9: renameRow[9], 11: renameRow[11], 12: renameRow[12] }).toEqual(expectedDisplay); expect(renameRow[9]).toBe('公布旧名')
   expect(renameRow[11]).toContain('已确认迁入宁波')
-  expect(renameRow[11]).toContain('已公布，公布名称为公布旧名；现已更名为迁入现名')
+  expect(renameRow[11]).not.toContain('现已更名为')
   expect(renameRow[11]).not.toContain('未见宁波')
   expect(renameRow[11]).not.toContain('原城市：')
   expect(renameRow[9]).toBe(alias.name)

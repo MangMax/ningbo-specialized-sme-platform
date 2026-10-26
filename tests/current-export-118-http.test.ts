@@ -61,6 +61,8 @@ it('本称号复核周期失败恢复及同年冲突准确分组', async () => {
 })
 
 it('迁入更名双备注及主体事实和公布缺口保留依据', async () => {
+  // Historical case name retained; #355/#379 keep migration notes and aliases,
+  // while legacy evidence has no captured published name or inferred rename.
   const renamed = f.candidate('迁入更名现名')
   f.db.update(s.record).set({nameRaw:'专精特新公布旧名'}).where(eq(s.record.id,renamed.record.id)).run()
   f.db.insert(s.enterpriseAlias).values({enterpriseId:renamed.enterprise.id,name:'专精特新公布旧名',nameNorm:'专精特新公布旧名',sourceKind:'manual',verificationStatus:'confirmed'}).run()
@@ -76,16 +78,22 @@ it('迁入更名双备注及主体事实和公布缺口保留依据', async () =
   const terminalGap = f.candidate('取消终止缺结构化周期'); f.decision(terminalGap.enterprise.id,'other',{reasonNote:'取消/撤销/终止，但对应资格周期未确认'})
   const otherPublication = f.candidate('只有他称号已公布',[]); f.addRecord(otherPublication.enterprise.id,'只有他称号已公布',undefined,'little_giant')
   const conflict = f.candidate('公布统代冲突'); f.db.update(s.record).set({usccRaw:'OTHER-LEGAL-ENTITY'}).where(eq(s.record.id,conflict.record.id)).run()
+  const expectedDisplay = Object.freeze({
+    8: `${y}年第1批认定，《synthetic-118.xlsx》：未逐出处核实`,
+    9: '专精特新公布旧名',
+    11: '已确认迁入宁波；逐出处公布名见公布名称列；现用名见企业名称列；已确认曾用名仅见该列；解释依据：适用；查询覆盖：尚未查询',
+    12: `${y}年第1批认定：宁波市经信局公布资料\n《synthetic-118.xlsx》，附件：专精特新中小企业名单，名单序号${renamed.enterprise.id}，未逐出处核实`,
+  })
   const {wb,job} = await f.workbook('118-identity')
   const eligible = rows(wb,'有效企业'), waiting = rows(wb,'待确认'), excluded = rows(wb,'排除明细')
   expect(eligible.map(row => businessIdentity(row))).toEqual([renamed,returned,pending].map(item => expectedBusinessIdentity(f.db,item.enterprise.id)))
   expect(excluded.map(row => businessIdentity(row))).toEqual([out,gone].map(item => expectedBusinessIdentity(f.db,item.enterprise.id)))
   expect(waiting.map(row => businessIdentity(row))).toEqual([stale,unknown,migrant,terminalGap,otherPublication,conflict].map(item => expectedBusinessIdentity(f.db,item.enterprise.id)))
   const rename = eligible.find(row => matchesBusinessIdentity(f.db, row, renamed.enterprise.id))!
-  expect(rename[8]).toBe('专精特新公布旧名'); expect(rename[9]).toBe('专精特新公布旧名')
+  expect({ 8: rename[8], 9: rename[9], 11: rename[11], 12: rename[12] }).toEqual(expectedDisplay); expect(rename[9]).toBe('专精特新公布旧名')
   expect(rename[10]).toBe('已见本称号宁波公布记录')
   expect(rename[11]).toContain('已确认迁入宁波')
-  expect(rename[11]).toContain('已公布，公布名称为专精特新公布旧名；现已更名为迁入更名现名')
+  expect(rename[11]).not.toContain('现已更名为')
   expect(rename[11]).not.toContain('未见宁波'); expect(rename[11]).not.toContain('原城市')
   expect(excluded.find(row => matchesBusinessIdentity(f.db, row, out.enterprise.id))![11]).toContain('已确认外迁')
   expect(waiting.find(row => matchesBusinessIdentity(f.db, row, stale.enterprise.id))![11]).toContain('重新核实')
