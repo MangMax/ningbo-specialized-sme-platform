@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -132,6 +133,29 @@ it('uses a dynamic route template without persisting the concrete id or query va
   expect(serialized).not.toContain(PRIVATE)
   expect(readFileSync(join(logDir, 'events.db')).toString()).not.toContain('987654321')
   expect(readFileSync(join(logDir, 'events.db')).toString()).not.toContain(PRIVATE)
+})
+
+for (const action of ['commit', 'preflight'] as const) it(`retains the parse-result ${action} template on authenticated invalid-id POST without business writes`, async () => {
+  // Invalid IDs are rejected before opening the business DB or reading a file.
+  const fileId = 'issue375-invalid-file-853629741'
+  const path = `/api/files/${fileId}/parse-result/${action}`
+  const template = `/api/files/:id/parse-result/${action}`
+  const dbHash = () => createHash('sha256').update(readFileSync(dbPath)).digest('hex')
+  const before = dbHash()
+  const response = await call(path, { method: 'POST', headers: { ...apiHeaders, 'content-type': 'application/json' }, body: '{}' })
+  expect(response.status).toBe(400)
+  expect(response.headers.get('cache-control')).toBe('no-store')
+  expect(response.body.message).toBe('文件 ID 非法')
+  expect(response.requestId).toBeTruthy()
+  const rows = await waitLog(response.requestId)
+  const event = rows.find(row => row.operation === 'http.request')
+  expect(event).toMatchObject({ source: 'http', httpMethod: 'POST', httpRoute: template, statusCode: 400 })
+  const stored = await detail(event.id)
+  expect(stored).toEqual(event)
+  expect(JSON.stringify({ rows, stored })).not.toContain(fileId)
+  expect(output).not.toContain(fileId)
+  expect(readFileSync(join(logDir, 'events.db')).toString()).not.toContain(fileId)
+  expect(dbHash()).toBe(before)
 })
 
 it('records the MCP transport template and exposes the same facts through MCP', async () => {
@@ -284,7 +308,8 @@ it('accepts exactly the built application route templates and no other spelling'
       .map(match => match[1]!)
       .filter(route => route === '/mcp' || route.startsWith('/api/')),
   )].sort()
-  expect(actual).toHaveLength(123)
+  // Frozen catalog: 123 routes plus the two #310 parse-result POST routes.
+  expect(actual).toHaveLength(125)
   expect([...APPLICATION_LOG_ROUTES].sort()).toEqual(actual)
 })
 
