@@ -5,7 +5,7 @@ import { createWriteStream } from 'node:fs'
 import { once } from 'node:events'
 import { finished } from 'node:stream/promises'
 import { CURRENT_RULE_VERSION, prepareCurrentReader, createCurrentCandidateReader, type CurrentTitle } from './current-qualification'
-import { currentCandidateBindings, currentCandidateSql } from './current-candidates'
+import { currentCandidateBindings, currentCandidateSqlFor } from './current-candidates'
 import { TITLES } from '../labels'
 import { readIdentityKeyVariants } from './current-identity-keys'
 import { CURRENT_COLUMNS, currentWorkbookValues } from './current-workbook-presentation'
@@ -69,6 +69,7 @@ export async function writeCurrentWorkbook(db: Database.Database, title: Current
     const displayReader = drizzle(db, { schema })
     const keys={queries:readIdentityKeyVariants(db,'queries'),relations:readIdentityKeyVariants(db,'unassignedRelations')}
     const bindings=currentCandidateBindings(title)
+    const currentCandidateSql=currentCandidateSqlFor(db)
     const total = (db.prepare(`select count(*) as n from (${currentCandidateSql})`).get(bindings) as {n:number}).n
     const snapshotStartedAt = new Date().toISOString()
     workbookStarted = true
