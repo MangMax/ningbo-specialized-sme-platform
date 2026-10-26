@@ -173,10 +173,11 @@ describe('#386 readonly source count contract', () => {
       expect(commit(db, replay)).toEqual(result)
       expect(commit(db, input)).toEqual(original)
       // A new key never authorizes changing immutable metadata or relation sets.
-      for (const [id, changed, code] of [
+      const queryConflicts: [string, typeof query, string][] = [
         ['raw', { ...query, rawResponse: 'changed' }, 'query_payload_conflict'],
         ['rows', { ...query, relations: [] }, 'query_relation_set_conflict'],
-      ] as const) {
+      ]
+      for (const [id, changed, code] of queryConflicts) {
         const conflict = { ...input, idempotencyKey: `count-zero/query/conflict-${id}`, payload: { platformQueries: [changed] } }
         expect(preflightRosterImport(db, conflict).preflight.conflicts.map(item => item.error?.code)).toEqual([code])
         const rejected = commit(db, conflict)
