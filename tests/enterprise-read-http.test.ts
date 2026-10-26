@@ -96,7 +96,7 @@ it.each([
     expect(detailResponse.status).toBe(200)
     const detail = await detailResponse.json()
     expect(detail.events).toEqual(events.map(({ id, recordId, eventType, year, batchSeq, decidedYear, reviewOutcome }) => ({ id, recordId, eventType, year, batchSeq, decidedYear, reviewOutcome })))
-    expect(detail.evidence).toEqual(evidence.map(({ recordEventId, sourceFile, attachment, listNo, page }) => ({ eventId: recordEventId, sourceFile, attachment, listNo, page })))
+    expect(detail.evidence).toEqual(evidence.map(({ id, recordEventId, sourceFile, attachment, listNo, page }) => ({ id, eventId: recordEventId, sourceFile, attachment, listNo, page })))
     expect(detail.records).toHaveLength(2)
     for (const record of detail.records) expect(record.lifecycle).toMatchObject({ state: 'none', needsReview: true, dueYear: null })
   } finally {

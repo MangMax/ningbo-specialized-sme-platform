@@ -220,6 +220,7 @@ describe('GET /api/roster/enterprises/:id(契约 §7.2)', () => {
       'events',
       'evidence',
       'platform',
+      'publishedPresentation',
       'recognitions',
       'records',
       'titleAssessments',
