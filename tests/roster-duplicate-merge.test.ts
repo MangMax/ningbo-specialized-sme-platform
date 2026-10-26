@@ -376,7 +376,22 @@ describe('C · 端到端：真实平台证据 ⇒ 两行合一，一条不丢', 
       canonicalName: OLD_NAME,
       rename: null,
     })
-    expect(lineage.recordsFolded).toEqual([{ fromRecordId: existingRecord, intoRecordId: records[0]!.id }])
+    expect(lineage.recordsFolded).toEqual([{
+      fromRecordId: existingRecord,
+      intoRecordId: records[0]!.id,
+      // 原公布侧 seed；不从 merge 后的规范记录或私有结果反推历史快照。
+      fromRecordSnapshot: {
+        id: existingRecord,
+        enterpriseId: existing,
+        titleCode: 'specialized_sme',
+        source: 'jxj',
+        nameRaw: null,
+        usccRaw: null,
+        district: '镇海区',
+        qualityFlags: [],
+      },
+      eventIds: [existingEvent],
+    }])
     expect(lineage.eventsMoved).toEqual([existingEvent])
     expect(lineage.evidenceMoved).toEqual([existingEvidence])
   })
