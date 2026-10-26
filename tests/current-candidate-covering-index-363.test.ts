@@ -53,7 +53,10 @@ it('C01 selects both covering indexes only when available', () => {
 function consumerFixture() {
   const dir = mkdtempSync(join(tmpdir(), 'cover363-consumer-'))
   const statements: string[] = []
-  const sqlite = new Database(join(dir, 'synthetic.sqlite'), { verbose: sql => statements.push(sql) })
+  const sqlite = new Database(join(dir, 'synthetic.sqlite'), { verbose: sql => {
+    if (typeof sql !== 'string') throw new TypeError('Expected SQL text in verbose callback')
+    statements.push(sql)
+  } })
   handles.push(sqlite); directories.push(dir)
   migrate(drizzle(sqlite), { migrationsFolder: resolve('db/migrations') })
   const db = drizzle(sqlite)
