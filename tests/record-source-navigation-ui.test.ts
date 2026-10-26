@@ -14,7 +14,7 @@ const relation = { id: 30, queryId: 20, enterpriseId: 91, sequenceNo: 1, nameRaw
 const record = { id: 1, enterpriseId: 91, titleCode: 'specialized_sme', source: 'jxj', district: null, nameRaw: '合成企业' }
 const event = { id: 10, recordId: 1, eventType: 'review', year: 2021, batchSeq: 1, decidedYear: 2024, reviewOutcome: 'failed', record, evidence: [], correspondences: [] }
 const edge = { id: 1, type: 'event_process', role: 'supports_review', status: 'confirmed', revision: 1, requiresRevalidation: false, eventId: 10, predecessorEventId: null, relationId: 30, exportRowId: null, enterpriseId: 91, titleCode: 'specialized_sme', ruleId: 'fixture', ruleVersion: '1', decidedAt: null, event, relation, exportRow: null }
-const detail = { enterprise: { enterpriseId: 91, name: '合成企业', uscc: null }, records: [record], events: [event, { ...event, id: 11 }], evidence: [], platform: { queries: [query], relations: [relation] } }
+const detail = { enterprise: { enterpriseId: 91, name: '合成企业', uscc: null }, aliases: [], records: [record], events: [event, { ...event, id: 11 }], evidence: [], platform: { queries: [query], relations: [relation] } }
 vi.mock('@pinia/colada', () => ({ useQuery: () => ({ data: ref(detail), isLoading: ref(false), error: ref(null) }) }))
 const returnTo = '/comparison?mode=record&queryIds=20&exportBatchIds=6&page=2'
 const startTo = (eventId: number, withReturn = true) => ({ path: '/enterprises/91', query: { eventId: String(eventId), ...(withReturn ? { returnTo } : {}) } })
