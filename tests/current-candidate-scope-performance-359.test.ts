@@ -174,3 +174,76 @@ it('retains malformed page-value errors instead of inventing an empty scope', ()
   f.relation(1, 1, 1)
   expect(() => f.ids('innovative_sme')).toThrow('malformed JSON')
 })
+
+const errorBoundaryRequests = titles.flatMap(title => (['list', 'count', 'join'] as const).map(wrapper => ({ title, wrapper })))
+type ErrorBoundaryWrapper = typeof errorBoundaryRequests[number]['wrapper']
+function readErrorBoundary(db: Database.Database, title: CurrentTitle, wrapper: ErrorBoundaryWrapper) {
+  const sql = wrapper === 'count' ? `select count(*) as n from (${currentCandidateSql})`
+    : wrapper === 'join' ? `select c.id from (${currentCandidateSql}) c join enterprise e on e.id=c.id order by c.id`
+      : `select id from (${currentCandidateSql}) order by id`
+  return db.prepare(sql).all(currentCandidateBindings(title))
+}
+function errorBoundaryFixture() {
+  const f = fixture()
+  // Existing production index shapes, confined to each tiny synthetic database.
+  f.db.exec(`create unique index enterprise_uscc_norm_uq on enterprise(uscc_norm);
+    create index record_title_idx on record(title_code);
+    create index difference_reason_impact_title_113_idx on difference_reason(title_code);
+    create index record_correspondence_enterprise_idx on record_correspondence(enterprise_id,title_code);
+    create unique index platform_relation_query_seq_uq on platform_relation(query_id,sequence_no);
+    create index platform_relation_enterprise_idx on platform_relation(enterprise_id);
+    create index platform_relation_uscc_query_idx on platform_relation(uscc_raw,query_id);
+    insert into record values (1,'specialized_sme');`)
+  f.enterprise(1, 'ABC')
+  return f
+}
+
+it.each(errorBoundaryRequests.flatMap(request => [
+  { owner: 'no-code', enterpriseId: null, uscc: null },
+  { owner: 'unmatched-code', enterpriseId: null, uscc: 'UNMATCHED' },
+  { owner: 'assigned', enterpriseId: 1, uscc: null },
+].map(owner => ({ ...request, ...owner }))))('F1 retains malformed-page error for $owner / $title / $wrapper', ({ title, wrapper, enterpriseId, uscc }) => {
+  const f = errorBoundaryFixture()
+  f.query(1, '1,2', null, '{"pages":["not-json"]}')
+  f.relation(1, enterpriseId, 1, uscc)
+  expect(() => readErrorBoundary(f.db, title, wrapper)).toThrowError(expect.objectContaining({ message: 'malformed JSON', code: 'SQLITE_ERROR' }))
+})
+
+it.each(errorBoundaryRequests)('F1 leaves an unreferenced malformed-page query unevaluated / $title / $wrapper', ({ title, wrapper }) => {
+  const f = errorBoundaryFixture()
+  f.query(1, '1,2', null, '{"pages":["not-json"]}')
+  const expected = title === 'specialized_sme' ? (wrapper === 'count' ? [{ n: 1 }] : [{ id: 1 }]) : (wrapper === 'count' ? [{ n: 0 }] : [])
+  expect(readErrorBoundary(f.db, title, wrapper)).toEqual(expected)
+})
+
+it.each(errorBoundaryRequests)('F1 preserves the single-rdjb page short circuit for unowned relations / $title / $wrapper', ({ title, wrapper }) => {
+  const f = errorBoundaryFixture()
+  f.query(1, '2', null, '{"pages":["not-json"]}')
+  f.relation(1, null, 1)
+  const expected = title === 'specialized_sme' ? (wrapper === 'count' ? [{ n: 1 }] : [{ id: 1 }]) : (wrapper === 'count' ? [{ n: 0 }] : [])
+  expect(readErrorBoundary(f.db, title, wrapper)).toEqual(expected)
+})
+
+it.each(errorBoundaryRequests)('F1 preserves invalid outer JSON fallback / $title / $wrapper', ({ title, wrapper }) => {
+  const f = errorBoundaryFixture()
+  f.query(1, '1,2', null, '{broken')
+  f.relation(1, 1, 1)
+  const expected = title === 'little_giant' ? (wrapper === 'count' ? [{ n: 0 }] : []) : (wrapper === 'count' ? [{ n: 1 }] : [{ id: 1 }])
+  expect(readErrorBoundary(f.db, title, wrapper)).toEqual(expected)
+})
+
+it.each(errorBoundaryRequests)('F1 keeps an unowned legacy upper overflow sum unevaluated / $title / $wrapper', ({ title, wrapper }) => {
+  const f = errorBoundaryFixture()
+  f.query(1, '1,2', null, '{"pages":[{"rdjb":"1","status":"success","fetchedCount":9223372036854775807},{"rdjb":"2","status":"success","fetchedCount":1}]}')
+  f.relation(1, null, 1)
+  const expected = title === 'specialized_sme' ? (wrapper === 'count' ? [{ n: 1 }] : [{ id: 1 }]) : (wrapper === 'count' ? [{ n: 0 }] : [])
+  expect(readErrorBoundary(f.db, title, wrapper)).toEqual(expected)
+})
+
+it.each(errorBoundaryRequests)('F1 keeps exact sequence positioning beyond JavaScript integer precision / $title / $wrapper', ({ title, wrapper }) => {
+  const f = errorBoundaryFixture()
+  f.query(1, '1,2', null, '{"pages":[{"rdjb":"1","status":"success","fetchedCount":9007199254740992},{"rdjb":"2","status":"success","fetchedCount":1}]}')
+  f.db.prepare('insert into platform_relation(query_id,enterprise_id,sequence_no) values (1,1,?)').run(9007199254740993n)
+  const expected = title === 'specialized_sme' ? (wrapper === 'count' ? [{ n: 1 }] : [{ id: 1 }]) : (wrapper === 'count' ? [{ n: 0 }] : [])
+  expect(readErrorBoundary(f.db, title, wrapper)).toEqual(expected)
+})

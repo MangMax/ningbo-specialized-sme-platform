@@ -11,7 +11,7 @@ export const relationTitleSql = `case when instr(q.rdjb,',')=0 then coalesce(q.t
   order by cast(p.key as integer) limit 1),q.title_code) end`
 export const relationScopeSql = `(${relationTitleSql}=@title or (${relationTitleSql} is null and instr(','||q.rdjb||',',','||@rdjb||',')>0))`
 
-/** Candidate-only, request-local projections; candidate_relations supplies owned coordinates.
+/** Candidate-only, request-local projections; candidate_relations supplies joined coordinates.
  * Integer array pages have unique ordered keys and exact sums. Keep every other
  * historical shape/type on relationTitleSql, including its SQLite coercion/errors.
  * Both array length and counts are bounded here so their product fits int64;
