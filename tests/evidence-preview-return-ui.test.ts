@@ -85,6 +85,7 @@ const row: EnterpriseRow = {
 
 const fullDetail = {
   enterprise: { enterpriseId: 91, name: '宁波开诚生态技术有限公司', uscc: null, district: '海曙区' },
+  aliases: [],
   records: [
     {
       id: 1,
