@@ -7,6 +7,8 @@ import { createApp, createRouter, defineEventHandler, toNodeListener } from 'h3'
 import { expect, it, vi } from 'vitest'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
+import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js'
+import type { McpToolCallbackResult } from '@nuxtjs/mcp-toolkit/server'
 import { schema, useDb } from '../db/client'
 import type { EventCorrectionRequest } from '../server/utils/roster-event-correction'
 import { dispatchEventCorrectionMcp, isEventCorrectionMcpResult } from '../server/utils/mcp-event-correction'
@@ -15,6 +17,84 @@ import { dispatchEventCorrectionMcp, isEventCorrectionMcpResult } from '../serve
 // MCP SDK HTTP transport, the domain command and SQLite are real.
 // This harness does not boot or claim coverage of Nuxt's full MCP middleware.
 vi.mock('@nuxtjs/mcp-toolkit/server', () => ({ defineMcpTool: (definition: unknown) => definition }))
+
+// Mirror @nuxtjs/mcp-toolkit 0.24.2 definitions/results.js, including its
+// pretty JSON for bare DTOs. Existing content must keep its original bytes.
+// #370 R2 keeps transport formatting separate from the complete business-JSON
+// byte comparison below; compact encoding here would hide toolkit behavior.
+function normalizeFixtureToolResult(result: McpToolCallbackResult): CallToolResult {
+  if (typeof result === 'string') return { content: [{ type: 'text', text: result }] }
+  if (typeof result === 'number' || typeof result === 'boolean') return { content: [{ type: 'text', text: String(result) }] }
+  if (typeof result === 'object' && result !== null
+    && !(('content' in result && Array.isArray(result.content)) || 'structuredContent' in result || 'isError' in result)) {
+    return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] }
+  }
+  const callResult = result as CallToolResult
+  if (callResult.isError && !callResult.content?.length) {
+    const text = callResult.structuredContent ? JSON.stringify(callResult.structuredContent) : 'Tool execution failed'
+    return { ...callResult, content: [{ type: 'text', text }] }
+  }
+  if (callResult.structuredContent && !callResult.content?.length) {
+    return { ...callResult, content: [{ type: 'text', text: JSON.stringify(callResult.structuredContent) }] }
+  }
+  return callResult
+}
+
+it.each<{
+  name: string
+  value: McpToolCallbackResult
+  expected: unknown
+  same?: boolean
+}>([
+  { name: 'string', value: '原文 "quoted"', expected: { content: [{ type: 'text', text: '原文 "quoted"' }] } },
+  { name: 'number', value: 0, expected: { content: [{ type: 'text', text: '0' }] } },
+  { name: 'boolean', value: false, expected: { content: [{ type: 'text', text: 'false' }] } },
+  {
+    name: 'bare-dto-pretty', value: { event: { revision: 2, decidedYear: null }, rows: ['复核', false] },
+    expected: { content: [{ type: 'text', text: '{\n  "event": {\n    "revision": 2,\n    "decidedYear": null\n  },\n  "rows": [\n    "复核",\n    false\n  ]\n}' }] },
+  },
+  { name: 'bare-array-pretty', value: [1, null], expected: { content: [{ type: 'text', text: '[\n  1,\n  null\n]' }] } },
+  {
+    name: 'compact-content-and-extra-fields', same: true,
+    value: { content: [{ type: 'text', text: '{"event":{"revision":2}}' }], structuredContent: { event: { revision: 2 } }, isError: false, _meta: { trace: 'synthetic' }, extra: 'retained' },
+    expected: { content: [{ type: 'text', text: '{"event":{"revision":2}}' }], structuredContent: { event: { revision: 2 } }, isError: false, _meta: { trace: 'synthetic' }, extra: 'retained' },
+  },
+  { name: 'empty-content-preserved', same: true, value: { content: [], extra: 'retained' }, expected: { content: [], extra: 'retained' } },
+  { name: 'false-error-marker-preserved', same: true, value: { isError: false, extra: 'retained' }, expected: { isError: false, extra: 'retained' } },
+  {
+    name: 'non-array-content-is-bare-dto', value: { content: 'business field' },
+    expected: { content: [{ type: 'text', text: '{\n  "content": "business field"\n}' }] },
+  },
+  {
+    name: 'structured-fallback', value: { structuredContent: { z: null, a: [false, '复核'] }, _meta: { trace: 'synthetic' }, extra: 'retained' },
+    expected: { structuredContent: { z: null, a: [false, '复核'] }, _meta: { trace: 'synthetic' }, extra: 'retained', content: [{ type: 'text', text: '{"z":null,"a":[false,"复核"]}' }] },
+  },
+  {
+    name: 'structured-empty-content-fallback', value: { structuredContent: {}, content: [], extra: 'retained' },
+    expected: { structuredContent: {}, content: [{ type: 'text', text: '{}' }], extra: 'retained' },
+  },
+  {
+    name: 'error-fallback', value: { isError: true, extra: 'retained' },
+    expected: { isError: true, extra: 'retained', content: [{ type: 'text', text: 'Tool execution failed' }] },
+  },
+  {
+    name: 'error-empty-content-fallback', value: { isError: true, content: [], _meta: { trace: 'synthetic' } },
+    expected: { isError: true, content: [{ type: 'text', text: 'Tool execution failed' }], _meta: { trace: 'synthetic' } },
+  },
+  {
+    name: 'error-structured-fallback', value: { isError: true, structuredContent: { error: { code: 'synthetic_conflict' } }, extra: 'retained' },
+    expected: { isError: true, structuredContent: { error: { code: 'synthetic_conflict' } }, extra: 'retained', content: [{ type: 'text', text: '{"error":{"code":"synthetic_conflict"}}' }] },
+  },
+  {
+    name: 'error-existing-content', same: true,
+    value: { isError: true, content: [{ type: 'text', text: 'original error' }], structuredContent: { error: { code: 'synthetic_conflict' } }, extra: 'retained' },
+    expected: { isError: true, content: [{ type: 'text', text: 'original error' }], structuredContent: { error: { code: 'synthetic_conflict' } }, extra: 'retained' },
+  },
+])('normalizer control preserves toolkit semantics: $name', ({ value, expected, same }) => {
+  const result = normalizeFixtureToolResult(value)
+  expect(result).toEqual(expected)
+  if (same) expect(result).toBe(value)
+})
 
 async function fixture() {
   const dir = mkdtempSync(join(tmpdir(), 'issue304-correction-'))
@@ -58,10 +138,10 @@ async function fixture() {
   const serveMcp = async (req: Parameters<typeof listener>[0], res: Parameters<typeof listener>[1]) => {
     // The SDK requires a fresh stateless transport for every HTTP request.
     const mcp = new McpServer({ name: 'issue304-isolated', version: '1' }); sessions.push(mcp)
-    mcp.registerTool(preflight.name!, { inputSchema: preflight.inputSchema }, async (args, extra) => ({ content: [{ type: 'text', text: JSON.stringify(await preflight.handler(args, extra)) }] }))
-    mcp.registerTool(commit.name!, { inputSchema: commit.inputSchema }, async (args, extra) => ({ content: [{ type: 'text', text: JSON.stringify(await commit.handler(args, extra)) }] }))
-    mcp.registerTool(get.name!, { inputSchema: get.inputSchema }, async (args, extra) => ({ content: [{ type: 'text', text: JSON.stringify(await get.handler(args, extra)) }] }))
-    mcp.registerTool(auditTool.name!, { inputSchema: auditTool.inputSchema }, async (args, extra) => ({ content: [{ type: 'text', text: JSON.stringify(await auditTool.handler(args, extra)) }] }))
+    mcp.registerTool(preflight.name!, { inputSchema: preflight.inputSchema }, async (args, extra) => normalizeFixtureToolResult(await preflight.handler(args, extra)))
+    mcp.registerTool(commit.name!, { inputSchema: commit.inputSchema }, async (args, extra) => normalizeFixtureToolResult(await commit.handler(args, extra)))
+    mcp.registerTool(get.name!, { inputSchema: get.inputSchema }, async (args, extra) => normalizeFixtureToolResult(await get.handler(args, extra)))
+    mcp.registerTool(auditTool.name!, { inputSchema: auditTool.inputSchema }, async (args, extra) => normalizeFixtureToolResult(await auditTool.handler(args, extra)))
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true })
     await mcp.connect(transport)
     await transport.handleRequest(req, res)
@@ -264,6 +344,11 @@ it('rejects object code and cycles without executing accessors proxies or toJSON
   expect(JSON.stringify(result)).toBe('{"first":{"value":"safe"},"second":{"value":"safe"}}')
 })
 
+// Historical case name retained. #370 R2 explicitly revises the old raw-wire
+// oracle: compare complete business JSON bytes after ONE MCP text parse and
+// compact serialization, preserving every value and object key sequence.
+// Toolkit pretty DTOs and get_official_event's compact content differ on wire;
+// assert their full envelopes/formats separately, never recursively unwrap.
 it('preserves exact REST and MCP result bytes for preflight commit replay event and audit', async () => {
   const f = await fixture()
   try {
@@ -273,7 +358,8 @@ it('preserves exact REST and MCP result bytes for preflight commit replay event 
       expect(response.status).toBe(200)
       const bytes = await response.text(), wire = await f.rpc(name, args)
       expect(wire.isError).not.toBe(true)
-      expect(wire.content[0].text).toBe(bytes)
+      expect(JSON.stringify(JSON.parse(wire.content[0].text))).toBe(bytes)
+      expect(wire).toEqual({ content: [{ type: 'text', text: name === 'get_official_event' ? bytes : JSON.stringify(JSON.parse(bytes), null, 2) }] })
       return JSON.parse(bytes)
     }
     const plan = await compare('/api/roster/events/corrections/preflight', 'preflight_event_corrections', request, request)
