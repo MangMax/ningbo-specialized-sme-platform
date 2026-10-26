@@ -10,7 +10,18 @@ MCP 使用 `submit_event_archive_candidate_task` / `get_event_archive_candidate_
 
 归档导入仍经既有领域事务。独立导入进程只在归档事务中写入一个按 queryId+末条原行ID+规则版本去重的 queued job；应用进程收到导入回执后接管同一任务队列。原进程中断不会丢失已提交的任务记录；启动对账后通过任务中心显式恢复。导入幂等回放补回同一任务入口，不另造候选账本，也不在归档事务里执行发现工作。
 
-自动续片在内部参数 `archiveGeneration` 中保留起始任务 ID；所有后续片以该代际、queryId、游标和冻结事件上界去重，取消、重启后显式重试沿用同一代际。同一查询追加原行会生成新的起始任务及整条续片链，不复用旧代际的已完成续片。导入收据的预留与执行两段写事务均在读取前取得写锁，避免自动候选并行提交使延迟事务的读快照无法升级为写入；不改变业务事务、指纹或审计内容。
+自动续片在内部参数 `archiveGeneration` 中保留起始任务 ID；所有后续片以该代际、queryId、游标和冻结事件上界去重，取消、重启后显式重试沿用同一代际。当前公开导入不允许同一采集坐标追加原行：预检与提交均拒绝 `query_relation_set_conflict`，提交零业务写入且不返回候选任务；合法新观察须使用实际新 `queriedAt`，产生新的 queryId。历史存储中同 queryId 的末条原行发生增长时，内部 staging 按末行 ID 生成新起始任务及整条续片链，不复用旧代际的已完成续片；这不是公开追加原档的许可。导入收据的预留与执行两段写事务均在读取前取得写锁，避免自动候选并行提交使延迟事务的读快照无法升级为写入；不改变业务事务、指纹或审计内容。
+
+#389 的回归分为两个独立场景（静态候选阶段均 UNRUN；2026-10-27 首次单次联合运行，两例 PASS，exit0）：
+
+- A：`rejects same-coordinate archive append and recovers a legal new observation with idempotent public replay` 保持原进程内 `commitRosterImport` 入口，先断言原同坐标 sequence2 被拒绝且旧来源、关系、投影、对应、审计与任务不变，再仅将第二观察时点改为 `2026-10-18T00:00:01Z`。旧引用和新 legacy 观察仍省略 raw/collectionEvidence/reuseExisting，已存原 raw 完整保留；同键回执及换键的相同请求重放保持任务与审计幂等。此场景的两个 queryId 不同，不声称检出同 queryId 的代际去重碰撞，也不声称 HTTP/native 传输覆盖。
+- B：原名 `processes appended archives across all continuation generations and deduplicates replay after checkpoint recovery` 专门覆盖历史同 queryId。父批准的 source-only 合成夹具例外仅在旧三片 DONE 后插入原 2022 字段的 sequence2，旧 query/raw/row1 不变；正式 `platformRecordObservations` 预检/提交建立其真实的 `missing_key/unverifiable` 投影，不伪造 canonical 行或 verified 身份，也不冒称自动 stage。随后只调用既有 `enqueueArchivedCandidates(..., true)`，在真实 immediate 事务提交后 `activateCandidateDiscoveryTasks`；年度仍由真实候选检查点事务自动 stage，不手动补片。第二代及重复 stage 是内部接缝回执，不是公开 append 成功回执。
+
+两场景都固定原 401 个事件；两代各三片 DONE、items `[200,200,1]`、through 为输入 `eventIds[400]`、after 为 `[0,eventIds[199],eventIds[399]]`，新链与旧链 ID 不交，children 的 `archiveGeneration` 等于新 root。新 child 必须存在、处于 running 且已持久化新候选后才取消；旧 child、缺 ID、异常终态或错过取消窗口立即失败。保留原一次显式 retry、attempt2、每事件两条关系、新 candidate 单条审计、旧尾 rejected 与旧审计全等；B 重复 stage、A 公开重放后都逐值比较完整任务和业务快照。原 60_000ms 不增加；所有新增等待共用 case 开始的 deadline（提前 250ms 留日志余量），记录 await 进入/离开、root/child 轻量检查点、取消终态及 afterEach 阶段，缺失元数据保留 null。既有共享 fixture/teardown 和其它 case 未改。
+
+阶段证据：grant `stage04-389-own-setup-two-targets-bail1-once-20261027-r4` 下只运行一次两个精确名称的联合 regex，single worker、bail1、default+JSON；结果 2 PASS / 20 filtered SKIP / 0 FAIL，进程自然 exit0、signal=null。B 原名场景 31,785.215ms，两代同 queryId=1；A 场景 29,479.454ms，合法第二观察 queryId 从1变为2，非法同坐标请求仍为预期拒绝。两例均实际观察到新 child running 且 durable created=1 后取消、cancelled、原一次显式 retry 后 attempt2，以及 local afterEach idle 进入/离开和最终 afterEach.finished；两例均在原60s内结束。没有执行 generation mutant，A 不作为同Q碰撞检错证据。完整原始日志、JSON、phase、源/原件保全与 immutable release 见 Git 外 `/tmp/stage04-389-two-once-14fa379a/`；1798 tracked 与74份原件在运行前后 hash 全等。原始 JSON 未提供显式 unhandled 计数，该字段仍 UNKNOWN；原始日志未见 unhandled 错误段，不推断全机 jobs/handles/listeners 为0。
+
+本段为运行后文档记录，不是执行输入：执行时测试源 SHA256 为 `8a3be1e5101f8caca900293853039173910941e847517890d4d9b104bb0ef41a`、文档为 `770e71254e7f3474189ed5ed9cca2158e6d249c046e07a56f204a51ae38f728b`；通过后只更新当前结果句，测试代码和其余运行输入字节未改、没有重跑。type、整文件/full、HTTP/MCP/native/browser/build 仍 UNRUN。原 full 固定 123c 的 5058 PASS / 34 FAIL / 19 SKIP / exit1、原本例 60000ms timeout 和注册栈 `STACK_TRACE_ERROR`、原 await/cancel/retry 到达情况 UNKNOWN 均保留，原两轮 connector404 与不存在路径 rg exit2 也保留；后续执行需另授 slot，任何 unexpected FAIL 保存原件后 STOP，不现场修复或重跑。
 
 候选复用 `discoverEventArchives` 的 event-archive-212-v1 规则。持久化只调用现有 preflight/commit，保存原始来源指纹、出处和追加审计。每行提交前，在同一 immediate 事务内再次检查该事件/原行的所有已有角色；candidate/confirmed/rejected/unlinked 和更正历史一律保留，不以新规则静默重新推荐。发现后发生的身份、来源、版本变化仍由领域预检/提交拒绝并报告失败。
 
