@@ -864,9 +864,10 @@ describe('归并与回填：血缘在 item_results 中可查询', () => {
     seedEvent(db, canonicalRecord, 'award', 2019, 2)
     const duplicate = seedEnterprise(db, { name: '同名冲突乙' })
     const dupRecord = seedRecord(db, duplicate, 'innovative_sme', 'jxj')
-    seedEvent(db, dupRecord, 'award', 2021, 1)
+    const dupEvent = seedEvent(db, dupRecord, 'award', 2021, 1)
 
-    const result = commitRosterImport(db, mergeRequest(duplicate, 'merge/conflict#sha256:m2', '91330206732109570E'))
+    const request = mergeRequest(duplicate, 'merge/conflict#sha256:m2', '91330206732109570E')
+    const result = commitRosterImport(db, request)
     expect(result.status).toBe('committed')
 
     const merged = db.select().from(schema.record).all().filter((r) => r.enterpriseId === canonical && r.titleCode === 'innovative_sme')
@@ -875,8 +876,67 @@ describe('归并与回填：血缘在 item_results 中可查询', () => {
     expect(events.map((e) => e.year).sort()).toEqual([2019, 2021])
 
     const lineage = readMergeLineage(db, 'merge/conflict#sha256:m2', duplicate)!
-    expect(lineage.recordsFolded).toEqual([{ fromRecordId: dupRecord, intoRecordId: canonicalRecord }])
+    expect(lineage.recordsFolded).toEqual([{
+      fromRecordId: dupRecord,
+      intoRecordId: canonicalRecord,
+      // seedRecord 的插入值及 schema 默认值，独立于实际 lineage。
+      fromRecordSnapshot: {
+        id: dupRecord,
+        enterpriseId: duplicate,
+        titleCode: 'innovative_sme',
+        source: 'jxj',
+        nameRaw: null,
+        usccRaw: null,
+        district: null,
+        qualityFlags: [],
+      },
+      eventIds: [dupEvent],
+    }])
     expect(lineage.eventsMoved).toHaveLength(1)
+
+    // 同一个合成 fold 的四个公开面：旧血缘逐字段保留，仅增加私有账本引用。
+    // 独立空库中此次 merge 建立第一条 alias；预期不复制实际公开/私有结果。
+    const publicItems = [{
+      ok: true,
+      kind: 'merge',
+      ref: `merge:${duplicate}->${canonical}`,
+      detail: {
+        rowsWritten: 1,
+        lineage: {
+          fromEnterpriseId: duplicate,
+          fromEnterpriseName: '同名冲突乙',
+          intoEnterpriseId: canonical,
+          intoUscc: '91330206732109570E',
+          canonicalName: '同名冲突甲',
+          rename: null,
+          aliasId: 1,
+          evidenceQueryId: null,
+          childRowsMoved: { aliases: 0, differences: 0, relations: 0, records: 1 },
+          recordsMoved: [],
+          recordsFolded: [{ fromRecordId: dupRecord, intoRecordId: canonicalRecord }],
+          eventsMoved: [dupEvent],
+          evidenceMoved: [],
+          snapshotRef: { source: 'private_batch', batchId: result.batchId, itemIndex: 0 },
+        },
+      },
+    }]
+    expect(result.items, 'first commit').toEqual(publicItems)
+    const beforeRetry = rosterRowCounts(db)
+    const retry = commitRosterImport(db, request)
+    expect(retry.status).toBe('committed')
+    expect(retry.items, 'same-key retry').toEqual(publicItems)
+    expect(rosterRowCounts(db)).toEqual(beforeRetry)
+    const outcome = readImportBatchOutcome(db, request.idempotencyKey)!
+    expect(outcome.status).toBe('committed')
+    expect(outcome.items, 'outcome').toEqual(publicItems)
+    const receipts = db.select().from(schema.importReceipt).where(eq(schema.importReceipt.batchId, result.batchId)).all()
+    expect(receipts).toHaveLength(1)
+    expect(receipts[0]!.status).toBe('committed')
+    expect(receipts[0]!.itemResults, 'receipt').toEqual(publicItems)
+    for (const output of [result, retry, outcome, receipts[0]]) {
+      expect(JSON.stringify(output)).not.toContain('fromRecordSnapshot')
+      expect(JSON.stringify(output)).not.toContain('eventIds')
+    }
   })
 
   it('目标 / 来源缺失逐项报错，且整批不落库', () => {
