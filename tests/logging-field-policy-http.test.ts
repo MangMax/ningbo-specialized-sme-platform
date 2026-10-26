@@ -98,7 +98,8 @@ for (const action of ['commit', 'preflight'] as const) it(`retains the parse-res
   const path = `/api/files/${fileId}/parse-result/${action}`
   const requestURL = new URL(path, baseUrl).href
   const template = `/api/files/:id/parse-result/${action}`
-  for (const headers of [{}, { authorization: 'Bearer issue375-wrong-token' }]) {
+  const headerCases: Record<string, string>[] = [{}, { authorization: 'Bearer issue375-wrong-token' }]
+  for (const headers of headerCases) {
     const response = await call(path, { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: '{}' })
     expect(response.status).toBe(401)
     // Nitro echoes the submitted URL here; ID privacy covers protected log responses below.
