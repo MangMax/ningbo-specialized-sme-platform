@@ -166,6 +166,12 @@ it('状态顺序与输入排列无关，每个状态独立呈现且来源空态�
 })
 
 it('历史按查询去重称号和错误，同时保留未完成位置与不相同的实际条件', async () => {
+ // 用独立 Intl oracle 按宿主本地时区展示原时点，不隐含固定 UTC+08。
+ const parts=new Intl.DateTimeFormat('en-GB',{
+  year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hourCycle:'h23',
+ }).formatToParts(new Date(evidence.completedAt))
+ const part=(type:Intl.DateTimeFormatPartTypes)=>parts.find(part=>part.type===type)!.value
+ const completedAt=`${part('year')}-${part('month')}-${part('day')} ${part('hour')}:${part('minute')}`
  const error={code:'timeout' as const,message:'timeout'}
  const failed={...query,status:'failed',failureReason:'timeout',relationCount:0,collectionEvidence:{...evidence,completeness:'partial' as const,fullRange:false,error,
  pages:[{source:'queryBusList' as const,rdjb:'3',page:4,status:'failed' as const,fetchedCount:0,declaredTotal:null,maxPage:null,error}],
@@ -177,7 +183,7 @@ it('历史按查询去重称号和错误，同时保留未完成位置与不相�
  for(const title of ['创新型中小企业','专精特新中小企业','专精特新“小巨人”']) expect(article.text().split(title)).toHaveLength(2)
  expect(article.text()).toContain('称号 3 · 第 4 页 · 失败 · 未完成')
  expect(article.text()).toContain('未完成：称号 2 · 第 5 页')
- for(const text of ['原查询时点','2025-02-03','完成时点','09:03','总数：未知','续页范围，非全范围','原查询名称','33020000','属地筛选代码（原值）']) expect(article.text()).toContain(text)
+ for(const text of ['原查询时点','2025-02-03','完成时点',`完成时点：${completedAt}`,'总数：未知','续页范围，非全范围','原查询名称','33020000','属地筛选代码（原值）']) expect(article.text()).toContain(text)
  expect(article.text()).not.toContain('条件同时满足')
  view.unmount()
 })
