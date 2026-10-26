@@ -94,6 +94,13 @@
  * ── PR126 修复的可选资格字段（2026-10-20）────────────────────────────
  * 0026 仅为原差异行追加 currentQualification:null；所有原字段、结果、行数及摘要不变。
  * 明确迁入资格的非空字段由 current-export-pr126-fixes-http.test.ts 通过公开API验证。
+ *
+ * ── #386 用户明确批准纯来源复用预检 update=0（2026-10-26）────────────────
+ * 新裁定来自 #380 后的 issue380-user-count-decision.json；#300 旧批准仍 UNKNOWN。
+ * 从旧规范 literal 独立复算 9e53e3ac40f484f6 命中后，仅 update:2→0 推导
+ * 662f7b4970a56441；只条件替换 batch2 在步骤2..7的六处 preflightResultSha。
+ * 非全量重生成；其余黄金字节、步骤、严格比较、原失败与历史批准说明均保留。
+ * 纯来源复用与真实更新/出处收敛分开；canonicalProjection、回执/批次另账，见契约§8.5。
  */
 
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
@@ -121,6 +128,101 @@ function makeDb() {
 
 afterAll(() => {
   for (const dir of dirs) rmSync(dir, { recursive: true, force: true })
+})
+
+describe('#386 readonly source count contract', () => {
+  // Literal API expectations; batch/receipt bookkeeping and canonicalProjection
+  // have separate ledgers. These fixtures never enter the original golden sequence.
+  const zero = { add: 0, update: 0, remove: 0, review: 0, conflicts: [], evidenceRepoints: 0 }
+  // Keep unrelated candidate jobs staged; no async consumer outlives this fixture.
+  const commit = (db: ReturnType<typeof makeDb>, input: RosterImportRequest) =>
+    commitRosterImport(db, input, [], { deferCandidateTasks: true })
+  const state = (db: ReturnType<typeof makeDb>) => Object.fromEntries([
+    'enterprise', 'record', 'record_event', 'record_evidence', 'enterprise_alias',
+    'source_document', 'platform_query', 'platform_relation', 'difference_reason',
+    'platform_export_batch', 'platform_export_row', 'platform_business_record',
+    'platform_business_record_version', 'platform_business_observation',
+  ].map(table => [table, db.$client.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all()]))
+
+  it.each(['complete', 'explicit', 'legacy'] as const)('query %s reuse counts zero and preserves sources, receipt and immutable conflicts', (mode) => {
+    const db = makeDb()
+    try {
+      const query: NonNullable<RosterImportRequest['payload']['platformQueries']>[number] = {
+        interface: 'business_list', queryKey: 'name:count-zero-synthetic', rdjb: '2',
+        titleCode: 'specialized_sme', queriedAt: '2026-10-01T00:00:00Z',
+        status: 'success', rawResponse: '{"original":true}',
+        relations: [{ sequenceNo: 1, relationKey: 'count-zero-row', nameRaw: '合成', rawFields: { id: 'count-zero-row', qymc: '合成', n: 1 } }],
+      }
+      const input: RosterImportRequest = { idempotencyKey: 'count-zero/query/new', sourceKind: 'platform_archive', sourceIdentity: 'synthetic/count-zero', payload: { platformQueries: [query] } }
+      expect(preflightRosterImport(db, input).preflight).toMatchObject({ ...zero, add: 1, batchStatus: 'preflight', duplicateCandidates: [] })
+      const original = commit(db, input)
+      expect(original).toMatchObject({ status: 'committed', summary: { written: 2, skipped: 0, failed: 0 }, items: [{ detail: { rowsWritten: 2 } }] })
+      const before = state(db)
+      const reusedQuery = mode === 'complete' ? query : {
+        ...query, rawResponse: null,
+        relations: [{ sequenceNo: 1, relationKey: 'count-zero-row', nameRaw: '合成' }],
+        ...(mode === 'explicit' ? { reuseExisting: true as const } : {}),
+      }
+      const replay = { ...input, idempotencyKey: 'count-zero/query/reuse', payload: { platformQueries: [reusedQuery] } }
+      expect(preflightRosterImport(db, replay).preflight).toMatchObject({ ...zero, batchStatus: 'preflight', duplicateCandidates: [] })
+      expect(state(db)).toEqual(before)
+      const result = commit(db, replay)
+      expect(result).toMatchObject({ status: 'committed', summary: { written: 0, skipped: 1, failed: 0, evidenceRepointed: 0 }, items: [{ detail: { rowsWritten: 0, relations: [], skipped: 1, reuseExisting: true } }] })
+      expect(state(db)).toEqual(before)
+      expect(preflightRosterImport(db, replay).preflight).toEqual({ ...zero, batchStatus: 'committed' })
+      expect(commit(db, replay)).toEqual(result)
+      expect(commit(db, input)).toEqual(original)
+      // A new key never authorizes changing immutable metadata or relation sets.
+      for (const [id, changed, code] of [
+        ['raw', { ...query, rawResponse: 'changed' }, 'query_payload_conflict'],
+        ['rows', { ...query, relations: [] }, 'query_relation_set_conflict'],
+      ] as const) {
+        const conflict = { ...input, idempotencyKey: `count-zero/query/conflict-${id}`, payload: { platformQueries: [changed] } }
+        expect(preflightRosterImport(db, conflict).preflight.conflicts.map(item => item.error?.code)).toEqual([code])
+        const rejected = commit(db, conflict)
+        expect(rejected.status).toBe('failed')
+        expect(rejected.summary).toEqual({ written: 0, skipped: 0, failed: 1, evidenceRepointed: 0 })
+        expect(rejected.items.map(item => item.error?.code)).toEqual([code])
+        expect(state(db)).toEqual(before)
+      }
+    } finally { db.$client.close() }
+  })
+
+  it('snapshot reuse counts zero and preserves sources, receipt and immutable conflicts', () => {
+    const db = makeDb()
+    try {
+      const input: RosterImportRequest = {
+        idempotencyKey: 'count-zero/snapshot/new', sourceKind: 'platform_export', sourceIdentity: 'synthetic/count-zero.xlsx',
+        payload: { exportSnapshot: { titleCode: 'specialized_sme', year: 2026, collectedOn: '2026-10-26', originalFilename: 'synthetic.xlsx', sha256: 'count-zero-synthetic-sha', rows: [{ sourceRowNo: 3, nameRaw: '合成', rawFields: { original: '  合成🙂\n', unknown: null } }] } },
+      }
+      expect(preflightRosterImport(db, input).preflight).toEqual({ ...zero, add: 1, duplicateCandidates: [], batchStatus: 'preflight' })
+      const original = commit(db, input)
+      expect(original).toMatchObject({ status: 'committed', summary: { written: 2, failed: 0 }, items: [{ detail: { rowsWritten: 2 } }] })
+      const before = state(db)
+      const replay = { ...input, idempotencyKey: 'count-zero/snapshot/reuse' }
+      expect(preflightRosterImport(db, replay).preflight).toEqual({ ...zero, duplicateCandidates: [], batchStatus: 'preflight' })
+      expect(state(db)).toEqual(before)
+      const result = commit(db, replay)
+      expect(result).toMatchObject({ status: 'committed', summary: { written: 0, skipped: 1, failed: 0, evidenceRepointed: 0 }, items: [{ detail: { rows: [], skipped: 1, rowsWritten: 0 } }] })
+      expect(preflightRosterImport(db, replay).preflight).toEqual({ ...zero, batchStatus: 'committed' })
+      expect(commit(db, replay)).toEqual(result)
+      expect(commit(db, input)).toEqual(original)
+      const snapshot = input.payload.exportSnapshot!
+      for (const [id, rows, code] of [
+        ['raw', [{ ...snapshot.rows[0]!, rawFields: { original: 'changed' } }], 'export_row_payload_conflict'],
+        ['rows', [], 'export_row_set_conflict'],
+      ] as const) {
+        const conflict = { ...input, idempotencyKey: `count-zero/snapshot/conflict-${id}`, payload: { exportSnapshot: { ...snapshot, rows: [...rows] } } }
+        expect(preflightRosterImport(db, conflict).preflight.conflicts.map(item => item.error?.code)).toEqual([code])
+        const rejected = commit(db, conflict)
+        expect(rejected.status).toBe('failed')
+        expect(rejected.summary).toEqual({ written: 0, skipped: 0, failed: 1, evidenceRepointed: 0 })
+        expect(rejected.items.map(item => item.error?.code)).toEqual([code])
+        expect(state(db)).toEqual(before)
+      }
+      expect(state(db)).toEqual(before)
+    } finally { db.$client.close() }
+  })
 })
 
 /** 一批写完「公布文件 + 查询/关系 + 别名/差异 + 归并」——形状照抄 RL-11 的验收用例。 */

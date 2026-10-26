@@ -89,7 +89,8 @@ it('snapshot HTTP import bounds encoded statements and preserves oversized raw i
     }
     expect(await server.post('commit', input)).toEqual(committed)
     const otherKey = { ...input, idempotencyKey: 'snapshot:other-key' }
-    expect((await server.post('preflight', otherKey)).preflight).toMatchObject({ add: 0, update: 1, conflicts: [] })
+    // #386 新用户裁定：同 SHA 完整来源只读复用，预检不计 update；回执/批次另账。
+    expect((await server.post('preflight', otherKey)).preflight).toMatchObject({ add: 0, update: 0, conflicts: [] })
     expect(await server.post('commit', otherKey)).toMatchObject({ status: 'committed', summary: { written: 0 }, items: [{ detail: { rows: [], skipped: 9, rowsWritten: 0 } }] })
   } finally { await server.close() }
 })
