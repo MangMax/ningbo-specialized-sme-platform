@@ -665,6 +665,7 @@ export const platformQuery = sqliteTable(
     // #87: narrow covering scans for counts and stable latest/deep pages.
     index('platform_query_status_time_idx').on(t.status, t.queriedAt, t.id),
     index('platform_query_time_idx').on(t.queriedAt, t.id),
+    index('platform_query_current_candidate_cover_idx').on(t.id, t.rdjb, t.titleCode, t.collectionEvidence),
   ],
 )
 
@@ -768,6 +769,7 @@ export const platformRelation = sqliteTable(
     index('platform_relation_relation_key_idx').on(t.relationKey),
     // #83 USCC filtering discovers query IDs without scanning original relation bodies.
     index('platform_relation_uscc_query_idx').on(t.usccRaw, t.queryId),
+    index('platform_relation_current_candidate_cover_idx').on(t.queryId, t.sequenceNo, t.enterpriseId, t.usccRaw),
   ],
 )
 

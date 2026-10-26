@@ -1,7 +1,7 @@
 import type Database from 'better-sqlite3'
 import { normalizeName, normalizeUscc } from '../domain'
 import { CURRENT_RULE_VERSION, prepareCurrentReader, createCurrentCandidateReader, type CurrentRow, type CurrentTitle } from './current-qualification'
-import { currentCandidateBindings, currentCandidateSql } from './current-candidates'
+import { currentCandidateBindings, currentCandidateSqlFor } from './current-candidates'
 import { readIdentityKeyVariants } from './current-identity-keys'
 
 export interface CurrentQualifiedFilter {
@@ -41,7 +41,7 @@ export function listCurrentQualified(db: Database.Database, filter: CurrentQuali
     const keys = { queries: readIdentityKeyVariants(db, 'queries'), relations: readIdentityKeyVariants(db, 'unassignedRelations') }
     const order = filter.sort === 'name_asc' ? 'e.name collate nocase asc, c.id asc'
       : filter.sort === 'name_desc' ? 'e.name collate nocase desc, c.id asc' : 'c.id asc'
-    const candidates = db.prepare(`select c.id from (${currentCandidateSql}) c join enterprise e on e.id=c.id order by ${order}`)
+    const candidates = db.prepare(`select c.id from (${currentCandidateSqlFor(db)}) c join enterprise e on e.id=c.id order by ${order}`)
     const qName = normalizeName(filter.q ?? ''), qUscc = normalizeUscc(filter.q ?? '')
     let total = 0
     let uncertainTotal = 0
