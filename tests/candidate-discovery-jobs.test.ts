@@ -840,50 +840,219 @@ it('continues large affected scopes in bounded tasks without admitting events cr
   expect((next.result as any).items[0].eventId).toBeLessThan(late.id)
   expect(f.read('list', { query: { eventId: late.id } }).total).toBe(0)
 }, 20_000)
-it('processes appended archives across all continuation generations and deduplicates replay after checkpoint recovery', async () => {
+// #389 helpers belong only to the two generation cases below. Earlier cases,
+// their fixture and their original teardown remain byte-for-byte unchanged.
+import type {
+  RosterImportRelation,
+  RosterImportPlatformQuery,
+  RosterImportRequest,
+  RosterImportCommitResponse,
+} from '../lib/roster-import-client'
+import type { CandidateJobResult } from '../server/utils/jobs/candidate-discovery'
+import { JOB_ID_RE } from '../lib/job'
+
+type ArchiveGenerationJob = NonNullable<ReturnType<typeof getJob>>
+let archiveGenerationTeardown: (() => Promise<void>) | undefined
+afterEach(async () => {
+  const teardown = archiveGenerationTeardown
+  archiveGenerationTeardown = undefined
+  if (teardown) await teardown()
+})
+
+function archiveGenerationClock(f: ReturnType<typeof fixture>, startedAt: number) {
+  const deadline = startedAt + 60_000
+  // Fail inside the existing budget, leaving time to print the last phase.
+  const stopAt = deadline - 250
+  const watched = new Set<string>()
+  const smallJob = (id: string) => {
+    const job = getJob(f.db, id)
+    const result = job?.result as CandidateJobResult | null | undefined
+    const tail = result?.items?.at(-1)
+    return {
+      id, exists: job !== null, kind: job?.kind ?? null,
+      state: job?.state ?? null, error: job?.error ?? null,
+      progress: job?.progress ?? null,
+      queryId: job?.params.queryId ?? null,
+      archiveGeneration: job?.params.archiveGeneration ?? null,
+      afterEventId: job?.params.afterEventId ?? null,
+      throughEventId: result?.throughEventId ?? job?.params.throughEventId ?? null,
+      attempt: result?.attempt ?? null, counts: result?.counts ?? null,
+      continuationJobId: result?.continuationJobId ?? null,
+      tail: tail ? { eventId: tail.eventId, status: tail.status, page: tail.page, rowIndex: tail.rowIndex } : null,
+    }
+  }
+  const mark = (phase: string, detail: Record<string, unknown> = {}, readJobs = true) => {
+    console.info('candidate-generation-phase', JSON.stringify({
+      phase, elapsedMs: Date.now() - startedAt, deadline,
+      remainingMs: deadline - Date.now(), ...detail,
+      jobs: readJobs ? [...watched].map(smallJob) : null,
+    }))
+  }
+  const time = (phase: string) => {
+    if (Date.now() >= stopAt) throw new Error(`#389 deadline before ${phase}`)
+  }
+  const job = (id: unknown): ArchiveGenerationJob => {
+    if (typeof id !== 'string' || !JOB_ID_RE.test(id))
+      throw new Error('#389 missing or invalid candidate job ID')
+    const row = getJob(f.db, id)
+    if (!row) throw new Error(`#389 candidate job missing: ${id}`)
+    expect(row.kind).toBe('event-archive-candidates')
+    return row
+  }
+  const wait = async <T>(phase: string, operation: () => Promise<T>): Promise<T> => {
+    time(`${phase}.enter`)
+    mark(`${phase}.enter`)
+    let timer: ReturnType<typeof setTimeout> | undefined
+    try {
+      const value = await Promise.race([
+        operation(),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(() => reject(new Error(`#389 deadline during ${phase}`)), stopAt - Date.now())
+        }),
+      ])
+      time(`${phase}.exit`)
+      mark(`${phase}.exit`)
+      return value
+    } catch (error) {
+      mark(`${phase}.failed`, { error: error instanceof Error ? error.message : String(error) })
+      throw error
+    } finally {
+      if (timer !== undefined) clearTimeout(timer)
+    }
+  }
+  const until = <T>(phase: string, inspect: () => T | undefined) => wait(phase, async () => {
+    for (;;) {
+      time(`${phase}.inspect`)
+      const value = inspect()
+      if (value !== undefined) return value
+      time(`${phase}.yield.enter`)
+      await new Promise<void>(resolve => setImmediate(resolve))
+      time(`${phase}.yield.exit`)
+    }
+  })
+  const idle = (phase: string, allowedCancelled: readonly string[] = []) => {
+    let settled = false
+    void whenIdle().then(() => { settled = true })
+    return until(phase, () => {
+      // Observe real persisted candidates, including descendants, so a failed
+      // root/child is reported immediately rather than consumed as a timeout.
+      for (const row of f.db.select().from(schema.job).all()) {
+        if (row.kind !== 'event-archive-candidates') continue
+        if (row.state === 'failed' || (row.state === 'cancelled' && !allowedCancelled.includes(row.id))) {
+          watched.add(row.id)
+          throw new Error(`#389 unexpected candidate terminal state: ${row.id}/${row.state}`)
+        }
+      }
+      return settled ? true : undefined
+    })
+  }
+  const watch = (id: unknown) => {
+    const row = job(id)
+    watched.add(row.id)
+    return row
+  }
+  const chain = (id: string) => {
+    const jobs: ArchiveGenerationJob[] = []
+    let next: string | undefined = id
+    while (next) {
+      if (jobs.some(row => row.id === next) || jobs.length >= 3)
+        throw new Error('#389 cyclic or oversized candidate chain')
+      const row = watch(next)
+      jobs.push(row)
+      next = (row.result as CandidateJobResult | null)?.continuationJobId
+    }
+    return jobs
+  }
+  return { mark, time, wait, until, idle, job, watch, chain }
+}
+
+async function exerciseArchiveGeneration(
+  lane: 'public-new-observation' | 'historical-same-query',
+  onFinished: (callback: () => void) => void,
+) {
+  const startedAt = Date.now()
   const f = fixture()
-  const { commitRosterImport } = await import('../server/utils/roster-import')
-  const { requestJobCancel } = await import('../server/utils/job-runner')
-  const { retryCandidateDiscovery } = await import('../server/utils/jobs/candidate-discovery')
+  const clock = archiveGenerationClock(f, startedAt)
+  archiveGenerationTeardown = async () => {
+    await clock.idle('afterEach.whenIdle')
+  }
+  onFinished(() => clock.mark('afterEach.finished', { lane }, false))
+  clock.mark('case.enter', { lane })
+  try {
+  const { commitRosterImport, preflightRosterImport } = await clock.wait('import.roster', () => import('../server/utils/roster-import'))
+  const { requestJobCancel } = await clock.wait('import.runner', () => import('../server/utils/job-runner'))
+  const { retryCandidateDiscovery, enqueueArchivedCandidates, activateCandidateDiscoveryTasks } =
+    await clock.wait('import.candidate', () => import('../server/utils/jobs/candidate-discovery'))
+  const { preflightRecordCorrespondences, commitRecordCorrespondences } =
+    await clock.wait('import.correspondence', () => import('../server/utils/record-correspondence'))
   const eventIds = [f.event.id]
   for (let i = 2; i <= 401; i++)
     eventIds.push(f.db.insert(schema.recordEvent).values({
       recordId: f.event.recordId, eventType: 'award', year: 2022, batchSeq: i,
     }).returning().get().id)
-  const chain = (id: string) => {
-    const jobs = [getJob(f.db, id)!]
-    while ((jobs.at(-1)!.result as any)?.continuationJobId)
-      jobs.push(getJob(f.db, (jobs.at(-1)!.result as any).continuationJobId)!)
-    return jobs
-  }
-  const query = {
+  expect(eventIds).toHaveLength(401)
+  const chain = clock.chain
+  const query: RosterImportPlatformQuery = {
     interface: 'business_list' as const,
     queryKey: f.enterprise.usccNorm!,
     rdjb: '2',
     titleCode: 'specialized_sme',
     queriedAt: f.query.queriedAt,
     status: 'success' as const,
-    relations: [] as any[],
+    // Original legacy reference: omission never clears the stored raw archive.
+    relations: [],
   }
-  const base = {
+  const base: Omit<RosterImportRequest, 'idempotencyKey'> = {
     sourceKind: 'platform_export' as const,
     sourceIdentity: 'synthetic/append',
     payload: { platformQueries: [query] },
   }
+  const receipt = (phase: string, result: RosterImportCommitResponse, queryId: number) => {
+    clock.time(phase)
+    clock.mark(phase, {
+      status: result.status, batchId: result.batchId, error: result.error ?? null,
+      summary: result.summary, candidateTaskIds: result.candidateTaskIds ?? null,
+      items: result.items.map(item => ({ ok: item.ok, ref: item.ref, error: item.error ?? null })),
+    })
+    expect(result).toMatchObject({ status: 'committed', error: null, summary: { failed: 0 } })
+    expect(result.items.every(item => item.ok)).toBe(true)
+    expect(result.candidateTaskIds).toHaveLength(1)
+    const root = clock.watch(result.candidateTaskIds![0])
+    expect(root.params.queryId).toBe(queryId)
+    return root.id
+  }
+  const originalSource = () => ({
+    query: f.db.select().from(schema.platformQuery).all().find(row => row.id === f.query.id),
+    relation: f.db.select().from(schema.platformRelation).all().find(row => row.id === f.relation.id),
+    projection: f.db.select().from(schema.platformBusinessObservation).all().filter(row => row.relationId === f.relation.id),
+  })
+  const business = () => ({
+    queries: f.db.select().from(schema.platformQuery).all(),
+    relations: f.db.select().from(schema.platformRelation).all(),
+    observations: f.db.select().from(schema.platformBusinessObservation).all(),
+    records: f.db.select().from(schema.platformBusinessRecord).all(),
+    versions: f.db.select().from(schema.platformBusinessRecordVersion).all(),
+    correspondences: f.db.select().from(schema.recordCorrespondence).all(),
+    audits: f.db.select().from(schema.recordCorrespondenceAudit).all(),
+  })
+  expect(preflightRosterImport(f.db, { ...base, idempotencyKey: 'archive-before-append' }).preflight.conflicts).toEqual([])
   const first = commitRosterImport(f.db, {
     ...base,
     idempotencyKey: 'archive-before-append',
   })
-  await whenIdle()
-  const oldJobs = chain(first.candidateTaskIds[0]!)
+  const oldRootId = receipt('first.commit.return', first, f.query.id)
+  await clock.idle('first.whenIdle')
+  const oldJobs = chain(oldRootId)
   expect(oldJobs.map(j => j.state)).toEqual(['done', 'done', 'done'])
   expect(oldJobs.map(j => (j.result as any).items.length)).toEqual([200, 200, 1])
+  expect(oldJobs.map(j => (j.result as CandidateJobResult).throughEventId)).toEqual(Array(3).fill(eventIds[400]))
+  expect(oldJobs.map(j => j.params.afterEventId)).toEqual([0, eventIds[199], eventIds[399]])
+  expect(oldJobs.every(j => j.params.queryId === f.query.id)).toBe(true)
   const oldRows = eventIds.map(eventId => {
     const list = f.read('list', { query: { eventId } })
     expect(list.total).toBe(1)
     return list.rows[0]
   })
-  const { preflightRecordCorrespondences, commitRecordCorrespondences } = await import('../server/utils/record-correspondence')
   const rejection = {
     idempotencyKey: 'append-tail-manual-reject', sourceIdentity: 'synthetic/manual',
     actor: { type: 'user' as const, id: 'synthetic-reviewer' }, basis: '合成尾片人工核对', ruleId: 'manual', ruleVersion: '1',
@@ -891,33 +1060,149 @@ it('processes appended archives across all continuation generations and deduplic
   }
   commitRecordCorrespondences(f.db, rejection, preflightRecordCorrespondences(f.db, rejection).planHash)
   const oldAudits = oldRows.map(row => f.read('audit', { id: row.id }))
-  query.relations.push({
+  const oldSource = originalSource()
+  expect(oldSource.query).toEqual(f.query)
+  expect(oldSource.relation).toEqual(f.relation)
+  const row2: RosterImportRelation & { declareKind: 'apply' } = {
     sequenceNo: 2,
     enterpriseId: f.enterprise.id,
     usccRaw: f.enterprise.usccNorm,
     year: 2022,
     declareKind: 'apply',
     verificationStatus: 'confirmed',
-  })
-  const next = commitRosterImport(f.db, {
-    ...base,
-    idempotencyKey: 'archive-after-append',
-  })
-  const rootId = next.candidateTaskIds[0]!
-  // Interrupt the first downstream slice after a durable row, then recover it.
-  let continuationId: string | undefined
-  while (!continuationId) {
-    continuationId = (getJob(f.db, rootId)?.result as any)?.continuationJobId
-    await new Promise(r => setImmediate(r))
   }
-  while (!(getJob(f.db, continuationId)?.result as any)?.counts.created)
-    await new Promise(r => setImmediate(r))
+  let rootId: string
+  let nextQueryId: number
+  let secondRequest: RosterImportRequest | undefined
+  let publicReceipt: RosterImportCommitResponse | undefined
+  let stagedIds: string[] | undefined
+  let relation2Id: number
+  if (lane === 'public-new-observation') {
+    // A: the original illegal append remains a public rejection regression.
+    const rejectedRequest: RosterImportRequest = {
+      ...base, idempotencyKey: 'archive-same-coordinate-rejected',
+      payload: { platformQueries: [{ ...query, relations: [row2] }] },
+    }
+    const before = business()
+    const beforeJobs = f.db.select().from(schema.job).all()
+    const rejectedPlan = preflightRosterImport(f.db, rejectedRequest)
+    expect(rejectedPlan.preflight.conflicts).toHaveLength(1)
+    expect(rejectedPlan.preflight.conflicts[0]).toMatchObject({
+      ok: false, error: { code: 'query_relation_set_conflict', field: 'relations' },
+    })
+    expect(business()).toEqual(before)
+    const rejected = commitRosterImport(f.db, rejectedRequest)
+    clock.mark('A.rejected.commit.return', { receipt: rejected })
+    expect(rejected).toMatchObject({
+      status: 'failed', summary: { written: 0, skipped: 0, failed: 1, evidenceRepointed: 0 }, candidateTaskIds: [],
+    })
+    expect(rejected.items.filter(item => !item.ok)).toHaveLength(1)
+    expect(rejected.items.find(item => !item.ok)?.error).toMatchObject({ code: 'query_relation_set_conflict', field: 'relations' })
+    expect(business()).toEqual(before)
+    expect(f.db.select().from(schema.job).all()).toEqual(beforeJobs)
+    // Only the second observation time changes beyond the original row2.
+    // Raw/collectionEvidence/reuseExisting remain omitted as in the R1 lane.
+    secondRequest = {
+      ...base, idempotencyKey: 'archive-after-append',
+      payload: { platformQueries: [{ ...query, queriedAt: '2026-10-18T00:00:01Z', relations: [row2] }] },
+    }
+    expect(preflightRosterImport(f.db, secondRequest).preflight).toMatchObject({ add: 1, update: 0, conflicts: [] })
+    publicReceipt = commitRosterImport(f.db, secondRequest)
+    expect(publicReceipt.summary).toMatchObject({ written: 2, failed: 0 })
+    const newQuery = f.db.select().from(schema.platformQuery).all().find(row =>
+      row.interface === query.interface && row.queryKey === query.queryKey &&
+      row.rdjb === query.rdjb && row.queriedAt === '2026-10-18T00:00:01Z')
+    expect(newQuery).toBeDefined()
+    nextQueryId = newQuery!.id
+    expect(nextQueryId).not.toBe(f.query.id)
+    rootId = receipt('A.second.commit.return', publicReceipt, nextQueryId)
+    const newRelation = f.db.select().from(schema.platformRelation).all().find(row => row.queryId === nextQueryId && row.sequenceNo === 2)
+    expect(newRelation).toBeDefined()
+    relation2Id = newRelation!.id
+  } else {
+    // B: explicitly approved historical source-only fixture exception. This
+    // storage insert is NOT a successful contemporary public append command.
+    // No job/result/checkpoint/correspondence/audit/canonical row is fabricated.
+    const historical = f.db.insert(schema.platformRelation).values({ ...row2, queryId: f.query.id }).returning().get()
+    relation2Id = historical.id
+    expect(historical).toMatchObject({
+      queryId: f.query.id, sequenceNo: 2, year: 2022, declareKind: 'apply',
+      verificationStatus: 'confirmed', relationKey: null, rawFields: null,
+    })
+    expect(relation2Id).toBeGreaterThan(f.relation.id)
+    // Formal projection writes its own mapping. The original missing key/raw
+    // stays unverifiable; this lane does not claim confirmed annual results.
+    const projection: RosterImportRequest = {
+      idempotencyKey: 'synthetic-legacy-214-projection-2', sourceKind: 'platform_archive',
+      sourceIdentity: 'synthetic/legacy-candidate-projection',
+      payload: { platformRecordObservations: [{ relationId: relation2Id }] },
+    }
+    expect(preflightRosterImport(f.db, projection).preflight.conflicts).toEqual([])
+    const projected = commitRosterImport(f.db, projection)
+    expect(projected).toMatchObject({ status: 'committed', error: null, summary: { written: 0, failed: 0 }, candidateTaskIds: [] })
+    expect(projected.items).toHaveLength(1)
+    expect(projected.items[0]).toMatchObject({ ok: true, detail: { canonicalProjection: [{
+      relationId: relation2Id, identityState: 'missing_key', contentState: 'unverifiable', recordId: null, versionId: null,
+    }] } })
+    expect(f.db.select().from(schema.job).all().filter(j => j.kind === 'event-archive-candidates')).toEqual(oldJobs)
+    // Existing internal seam, with real transaction ownership and activation
+    // strictly after commit. Annual work is left to real candidate checkpoints.
+    stagedIds = f.db.transaction(() => enqueueArchivedCandidates(f.db, [query], f.dir, true), { behavior: 'immediate' })
+    expect(stagedIds).toHaveLength(1)
+    const staged = clock.watch(stagedIds[0])
+    expect(staged).toMatchObject({ state: 'queued', params: { queryId: f.query.id, afterEventId: 0 } })
+    expect(staged.params.clientRequestId).toBe(`archive:${f.query.id}:${relation2Id}:event-archive-212-v1`)
+    rootId = staged.id
+    nextQueryId = f.query.id
+    expect(rootId).not.toBe(oldRootId)
+    clock.mark('B.stage.committed', { stagedIds })
+    activateCandidateDiscoveryTasks(f.db, stagedIds, f.dir)
+    clock.mark('B.activate.return')
+  }
+  expect(rootId).not.toBe(oldRootId)
+  expect(originalSource()).toEqual(oldSource)
+  expect(chain(oldRootId)).toEqual(oldJobs)
+  // Interrupt the first downstream slice after a durable row, then recover it.
+  const continuationId = await clock.until('second.await-continuation', () => {
+    const root = clock.job(rootId)
+    if (root.state === 'failed' || root.state === 'cancelled') throw new Error(`#389 root ended ${root.state}`)
+    const id = (root.result as CandidateJobResult | null)?.continuationJobId
+    if (!id) {
+      if (root.state === 'done') throw new Error('#389 root done without continuation')
+      return undefined
+    }
+    expect(oldJobs.some(old => old.id === id)).toBe(false)
+    const child = clock.watch(id)
+    expect(child.params).toMatchObject({ queryId: nextQueryId, afterEventId: eventIds[199], throughEventId: eventIds[400], archiveGeneration: rootId })
+    if (!['queued', 'running'].includes(child.state)) throw new Error(`#389 missed child cancellation window: ${child.state}`)
+    return id
+  })
+  await clock.until('second.await-child-durable-created', () => {
+    const child = clock.job(continuationId)
+    if (!['queued', 'running'].includes(child.state)) throw new Error(`#389 missed child cancellation window: ${child.state}`)
+    const result = child.result as CandidateJobResult | null
+    if (result && result.counts.failed > 0) throw new Error('#389 child has failed events')
+    if (result && result.counts.created > 0) {
+      expect(child.state).toBe('running')
+      expect(result.items.some(item => item.created > 0)).toBe(true)
+      const durable = f.read('list', { query: { eventId: eventIds[200] } })
+      expect(durable.rows.some((row: { relation: { id: number } }) => row.relation.id === relation2Id)).toBe(true)
+      return true
+    }
+    return undefined
+  })
+  clock.time('cancel')
+  clock.mark('cancel.before')
   expect(requestJobCancel(f.db, continuationId)).toMatchObject({ ok: true })
-  await whenIdle()
+  clock.mark('cancel.return')
+  await clock.idle('cancel.whenIdle', [continuationId])
   expect(getJob(f.db, continuationId)).toMatchObject({ state: 'cancelled' })
+  clock.mark('cancel.terminal')
   __resetJobRunner(); clearJobSpecs(); ensureJobRunnerReady(f.db)
+  clock.time('retry.before')
   retryCandidateDiscovery(f.db, continuationId, f.dir)
-  await whenIdle()
+  clock.mark('retry.return')
+  await clock.idle('retry.whenIdle')
   const newJobs = chain(rootId)
   expect(newJobs.map(j => j.state)).toEqual(['done', 'done', 'done'])
   expect(newJobs.map(j => (j.result as any).items.length)).toEqual([200, 200, 1])
@@ -926,9 +1211,13 @@ it('processes appended archives across all continuation generations and deduplic
   expect(newJobs.every(j => !oldJobs.some(old => old.id === j.id))).toBe(true)
   expect(newJobs.slice(1).map(j => j.params.archiveGeneration)).toEqual([rootId, rootId])
   expect((newJobs[1]!.result as any).attempt).toBe(2)
+  expect(newJobs.every(j => j.params.queryId === nextQueryId)).toBe(true)
+  if (lane === 'historical-same-query') expect(nextQueryId).toBe(f.query.id)
+  expect(chain(oldRootId)).toEqual(oldJobs)
   const audits = eventIds.map((eventId, index) => {
     const list = f.read('list', { query: { eventId } })
     expect(list.total).toBe(2)
+    expect(list.rows.map((row: { relation: { id: number } }) => row.relation.id).sort((a: number, b: number) => a - b)).toEqual([f.relation.id, relation2Id])
     expect(f.read('audit', { id: oldRows[index].id })).toEqual(oldAudits[index])
     return list.rows.map((row: any) => {
       if (row.id !== oldRows[index].id) {
@@ -939,12 +1228,43 @@ it('processes appended archives across all continuation generations and deduplic
     })
   })
   expect(f.read('get', { id: oldRows[400].id }).status).toBe('rejected')
-  const replay = commitRosterImport(f.db, { ...base, idempotencyKey: 'archive-same-generation-replay' })
-  expect(replay.candidateTaskIds).toEqual(next.candidateTaskIds)
-  await whenIdle()
+  const beforeReplay = business()
+  const beforeReplayJobs = f.db.select().from(schema.job).all()
+  if (lane === 'public-new-observation') {
+    // A owns public receipt replay; B below owns only internal staging dedup.
+    const next = publicReceipt!
+    const sameKey = commitRosterImport(f.db, secondRequest!)
+    expect(sameKey).toEqual(next)
+    receipt('A.same-key-replay.return', sameKey, nextQueryId)
+    const replay = commitRosterImport(f.db, { ...secondRequest!, idempotencyKey: 'archive-same-generation-replay' })
+    expect(replay.candidateTaskIds).toEqual(next.candidateTaskIds)
+    receipt('A.different-key-replay.return', replay, nextQueryId)
+    expect(replay.summary).toMatchObject({ written: 0, failed: 0 })
+  } else {
+    const replayIds = f.db.transaction(() => enqueueArchivedCandidates(f.db, [query], f.dir, true), { behavior: 'immediate' })
+    expect(replayIds).toEqual(stagedIds)
+    activateCandidateDiscoveryTasks(f.db, replayIds, f.dir)
+    clock.mark('B.repeat-stage.return', { replayIds })
+  }
+  await clock.idle('replay.whenIdle')
   expect(chain(rootId)).toEqual(newJobs)
+  expect(f.db.select().from(schema.job).all()).toEqual(beforeReplayJobs)
+  expect(business()).toEqual(beforeReplay)
+  expect(originalSource()).toEqual(oldSource)
   for (const [index, eventId] of eventIds.entries()) {
     expect(f.read('list', { query: { eventId } }).total).toBe(2)
     for (const row of audits[index]!) expect(f.read('audit', { id: row.id })).toEqual(row.audit)
   }
+  clock.mark('case.terminal', { lane, state: 'done' })
+  } finally {
+    clock.mark('case.exit', { lane })
+  }
+}
+
+it('processes appended archives across all continuation generations and deduplicates replay after checkpoint recovery', async ({ onTestFinished }) => {
+  await exerciseArchiveGeneration('historical-same-query', onTestFinished)
+}, 60_000)
+
+it('rejects same-coordinate archive append and recovers a legal new observation with idempotent public replay', async ({ onTestFinished }) => {
+  await exerciseArchiveGeneration('public-new-observation', onTestFinished)
 }, 60_000)
