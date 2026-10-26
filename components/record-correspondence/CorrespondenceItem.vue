@@ -13,12 +13,12 @@ import { Badge } from '@/components/ui/badge'
  * 只保留「对上了什么、现在是什么状态、去哪核对」三层；规则、审计时间与整份原行字段
  * 不再逐条铺开 —— 原行字段与查询条件在需要时从原行入口读取。
  */
-const props = defineProps<{ edge: CorrespondenceDetail; returnTo?: string | null; readOnly?: boolean }>()
+const props = defineProps<{ edge: CorrespondenceDetail; returnTo?: string | null; readOnly?: boolean; eventReturnQuery?: { currentBack?: string; back?: string; returnTo?: string } }>()
 const emit = defineEmits<{ 'event-navigate': [eventId: number] }>()
 
 const targetEvent = computed(() => props.edge.event ?? props.edge.predecessorEvent)
 const eventTo = computed(() => targetEvent.value
-  ? { path: `/enterprises/${targetEvent.value.record.enterpriseId}`, query: { eventId: String(targetEvent.value.id), ...(props.returnTo ? { returnTo: props.returnTo } : {}) } }
+  ? { path: `/enterprises/${targetEvent.value.record.enterpriseId}`, query: { eventId: String(targetEvent.value.id), ...(props.eventReturnQuery ?? (props.returnTo ? { returnTo: props.returnTo } : {})) } }
   : '/comparison')
 
 const locator = computed(() => {

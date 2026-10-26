@@ -117,6 +117,17 @@ const backTo = computed(() => {
   return { path: '/', query }
 })
 
+// Event links retain only the existing return context; file links still use the
+// complete detail URL so PDF navigation returns to this exact source page.
+const formalSourceEventReturnQuery = computed(() => {
+  const query: { currentBack?: string; back?: string; returnTo?: string } = {}
+  if (typeof route.query.currentBack === 'string') query.currentBack = route.query.currentBack
+  if (typeof route.query.back === 'string') query.back = route.query.back
+  const comparison = sourceReturnTarget(route.query.returnTo)
+  if (comparison) query.returnTo = comparison
+  return query
+})
+
 const explanationTitle = computed(() => typeof route.query.titleCode === 'string' ? route.query.titleCode : undefined)
 const explanationDirection = computed(() => typeof route.query.direction === 'string' ? route.query.direction : undefined)
 const impactId = computed(() => typeof route.query.impactId === 'string' && /^[1-9]\d*$/.test(route.query.impactId) && Number.isSafeInteger(Number(route.query.impactId)) ? Number(route.query.impactId) : undefined)
@@ -758,7 +769,7 @@ function openPreview(e: Evidence) {
     <Dialog :open="formalSourceEventId !== null" @update:open="!$event && (formalSourceEventId = null)">
       <DialogContent class="max-h-[85dvh] min-w-0 overflow-y-auto sm:max-w-3xl">
         <DialogHeader><DialogTitle>正式来源</DialogTitle><DialogDescription>逐出处公布名称与已登记文件位置。</DialogDescription></DialogHeader>
-        <SourceReader v-if="formalSourceEventId !== null" kind="event" :id="formalSourceEventId" :return-to="route.fullPath" read-only @event-navigate="formalSourceEventId = null; arriveAtEvent($event)" />
+        <SourceReader v-if="formalSourceEventId !== null" kind="event" :id="formalSourceEventId" :return-to="route.fullPath" :event-return-query="formalSourceEventReturnQuery" read-only @event-navigate="formalSourceEventId = null; arriveAtEvent($event)" />
       </DialogContent>
     </Dialog>
   </div>
