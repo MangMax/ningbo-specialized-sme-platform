@@ -5,6 +5,7 @@ import { normalizeUscc } from '../../lib/domain'
 import { generateCandidates } from './record-correspondence-candidates'
 import { CorrespondenceError } from './record-correspondence'
 import { eventSource, safeCollectionEvidence } from './record-correspondence-read'
+import type { ReceiptRedactor } from './import-receipt-redaction'
 
 export const EVENT_ARCHIVE_RULE_VERSION = 'event-archive-212-v1'
 export interface EventArchiveInput { eventId: number; page: number; pageSize: number; queryPage: number; queryPageSize: number }
@@ -30,11 +31,11 @@ function relationTitle() {
 /** Single-event read-only seam for REST, MCP and jobs. No network, persistence or automatic decisions.
  * Candidate and archive metadata pages are independent; only bounded selected relations are hydrated.
  */
-export function discoverEventArchives(db: Db, input: EventArchiveInput) {
+export function discoverEventArchives(db: Db, input: EventArchiveInput, redactor?: ReceiptRedactor) {
   if (![input.eventId, input.page, input.pageSize, input.queryPage, input.queryPageSize].every(value => Number.isSafeInteger(value) && value > 0) || input.pageSize > 200 || input.queryPageSize > 200) throw new CorrespondenceError('invalid_endpoint_type', 'Invalid discovery pagination')
-  return db.transaction(() => discoverSnapshot(db, input))
+  return db.transaction(() => discoverSnapshot(db, input, redactor))
 }
-function discoverSnapshot(db: Db, input: EventArchiveInput) {
+function discoverSnapshot(db: Db, input: EventArchiveInput, redactor?: ReceiptRedactor) {
   const event = db.select({ event: schema.recordEvent, record: schema.record, enterprise: schema.enterprise }).from(schema.recordEvent)
     .innerJoin(schema.record, eq(schema.recordEvent.recordId, schema.record.id)).innerJoin(schema.enterprise, eq(schema.record.enterpriseId, schema.enterprise.id))
     .where(eq(schema.recordEvent.id, input.eventId)).get()
@@ -69,7 +70,7 @@ function discoverSnapshot(db: Db, input: EventArchiveInput) {
   }).from(q).where(related).orderBy(asc(q.id)).limit(input.queryPageSize).offset(offset(input.queryPage, input.queryPageSize)).all()
   // Aggregate only small status counts; never hydrate all query metadata or archive bodies.
   const states = db.select({ interface: q.interface, status: q.status, count: count() }).from(q).where(related).groupBy(q.interface, q.status).all()
-  return { event: eventSource(db, input.eventId), ruleVersion: EVENT_ARCHIVE_RULE_VERSION,
+  return { event: eventSource(db, input.eventId, redactor), ruleVersion: EVENT_ARCHIVE_RULE_VERSION,
     rows: generated.rows, total, page: input.page, pageSize: input.pageSize,
     coverage: { rows: coverage.map(({ collectionEvidence, ...row }) => ({ ...row, outcome: row.status !== 'success' ? row.status : row.candidateCount > 0 ? 'candidates' : row.relationCount > 0 ? 'no_candidate' : 'empty_unproven', collectionEvidence: safeCollectionEvidence(collectionEvidence) })), total: queryTotal, page: input.queryPage, pageSize: input.queryPageSize },
     interfaces: (['business_list', 'apply_list', 'recognized_list'] as const).map(source => ({ interface: source, states: states.filter(row => row.interface === source).map(({ status, count }) => ({ status, count })), queried: states.some(row => row.interface === source && row.status !== 'not_queried') })),

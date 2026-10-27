@@ -5,6 +5,7 @@ import * as schema from '../../db/schema'
 import { sourcePositionForSequence } from '../../lib/platform/recognized-evidence'
 import { normalizePlatformRelation } from '../../lib/platform/normalization'
 import { getRecordCorrespondenceAudit, listRecordCorrespondenceRefs, type CorrespondenceRead } from './record-correspondence'
+import type { ReceiptRedactor } from './import-receipt-redaction'
 
 type Db = BetterSQLite3Database<typeof schema>
 export type SourceKind = 'event' | 'relation' | 'export_row'
@@ -61,7 +62,7 @@ function publicCorrespondence(row: CorrespondenceRead) {
   return publicRow
 }
 /** Request-local hydration only. Never retained across a write or shared with another request. */
-export function sourceReader(db: Db, rows: CorrespondenceRead[], extra?: { kind: SourceKind; id: number }) {
+export function sourceReader(db: Db, rows: CorrespondenceRead[], extra?: { kind: SourceKind; id: number }, redactor?: ReceiptRedactor) {
   const eventIds = [...new Set(rows.flatMap(row => [row.eventId, row.predecessorEventId]).filter((id): id is number => id != null).concat(extra?.kind === 'event' ? [extra.id] : []))]
   const relationIds = [...new Set(rows.flatMap(row => row.relationId == null ? [] : [row.relationId]).concat(extra?.kind === 'relation' ? [extra.id] : []))]
   const exportRowIds = [...new Set(rows.flatMap(row => row.exportRowId == null ? [] : [row.exportRowId]).concat(extra?.kind === 'export_row' ? [extra.id] : []))]
@@ -89,13 +90,16 @@ export function sourceReader(db: Db, rows: CorrespondenceRead[], extra?: { kind:
   const occurrences = rows.flatMap(row => [row.eventId, row.predecessorEventId]).filter((id): id is number => id != null)
   if (extra?.kind === 'event') occurrences.push(extra.id)
   const copies = occurrences.flatMap(id => scope.filter(item => item.eventId === id).flatMap(item => [item, item, item]))
-  const presentation = readPublicPublishedNames(db, scope, copies, occurrences.length)
+  const presentation = readPublicPublishedNames(db, scope, copies, occurrences.length, 1, redactor)
   const facts = new Map(presentation.facts.map(fact => [fact.evidenceId, fact]))
   const eventSources = new Map(events.map(joined => {
     const id = joined.event.id, evidence = evidenceByEvent.get(id) ?? []
-    const officialEvidence = evidence.map(item => ({ ...(facts.has(item.id) ? { publishedName: facts.get(item.id) } : {}), evidence: sanitizeEvidence(item), storedFile: filesByPath.get(item.sourceFile) ?? null }))
+    const officialEvidence = evidence.map(item => {
+      const legacy = { evidence: sanitizeEvidence(item), storedFile: filesByPath.get(item.sourceFile) ?? null }
+      return { ...sanitizeEvidence(legacy) as typeof legacy, ...(facts.has(item.id) ? { publishedName: facts.get(item.id) } : {}) }
+    })
     const eventLinks = [...new Map([...(byEvent.get(id) ?? []), ...(byPredecessor.get(id) ?? [])].map(r => [r.id, r])).values()].sort((a, b) => a.id - b.id)
-    return [id, { ...joined.event, publishedPresentation: presentation.availability === 'unavailable' ? presentation : { ...presentation, facts: presentation.facts.filter(fact => fact.eventId === id) }, record: { id: joined.record.id, enterpriseId: joined.record.enterpriseId, titleCode: joined.record.titleCode, source: joined.record.source, usccRaw: joined.record.usccRaw }, evidence: evidence.map(item => ({ ...sanitizeEvidence(item) as typeof item, ...(facts.has(item.id) ? { publishedName: facts.get(item.id) } : {}) })), officialEvidence: sanitizeEvidence(officialEvidence), correspondences: eventLinks }] as const
+    return [id, { ...joined.event, publishedPresentation: presentation.availability === 'unavailable' ? presentation : { ...presentation, facts: presentation.facts.filter(fact => fact.eventId === id) }, record: { id: joined.record.id, enterpriseId: joined.record.enterpriseId, titleCode: joined.record.titleCode, source: joined.record.source, usccRaw: joined.record.usccRaw }, evidence: evidence.map(item => ({ ...sanitizeEvidence(item) as typeof item, ...(facts.has(item.id) ? { publishedName: facts.get(item.id) } : {}) })), officialEvidence, correspondences: eventLinks }] as const
   }))
   const relationSources = new Map(relations.map(({ relation, query }) => {
     const position = sourcePositionForSequence(query.collectionEvidence, relation.sequenceNo)
@@ -104,23 +108,23 @@ export function sourceReader(db: Db, rows: CorrespondenceRead[], extra?: { kind:
   const exportSources = new Map(exports.map(({ row, batch }) => [row.id, { ...row, rawFields: sanitizeEvidence(row.rawFields), batch: sanitizeEvidence(batch), correspondences: byExport.get(row.id) ?? [] }] as const))
   const read = (kind: SourceKind, id: number) => kind === 'event' ? eventSources.get(id) ?? null : kind === 'relation' ? relationSources.get(id) ?? null : exportSources.get(id) ?? null
   const detailRow = (row: CorrespondenceRead) => {
-    return { ...publicCorrespondence(row), event: row.eventId ? read('event', row.eventId) : null, predecessorEvent: row.predecessorEventId ? read('event', row.predecessorEventId) : null, relation: row.relationId ? read('relation', row.relationId) : null, exportRow: row.exportRowId ? read('export_row', row.exportRowId) : null }
+    return { ...publicCorrespondence(row), event: row.eventId ? eventSources.get(row.eventId) ?? null : null, predecessorEvent: row.predecessorEventId ? eventSources.get(row.predecessorEventId) ?? null : null, relation: row.relationId ? read('relation', row.relationId) : null, exportRow: row.exportRowId ? read('export_row', row.exportRowId) : null }
   }
   return { read, detail: detailRow }
 }
-export function readSource(db: Db, kind: SourceKind, id: number) { return sourceReader(db, [], { kind, id }).read(kind, id) }
-export function eventSource(db: Db, id: number) { return readSource(db, 'event', id) }
-export function relationSource(db: Db, id: number) { return readSource(db, 'relation', id) }
-export function exportRowSource(db: Db, id: number) { return readSource(db, 'export_row', id) }
-export function details(db: Db, rows: CorrespondenceRead[]) {
-  const reader = sourceReader(db, rows)
+export function readSource(db: Db, kind: SourceKind, id: number, redactor?: ReceiptRedactor) { return sourceReader(db, [], { kind, id }, redactor).read(kind, id) }
+export function eventSource(db: Db, id: number, redactor?: ReceiptRedactor) { return readSource(db, 'event', id, redactor) as ReturnType<typeof detail>['event'] }
+export function relationSource(db: Db, id: number, redactor?: ReceiptRedactor) { return readSource(db, 'relation', id, redactor) }
+export function exportRowSource(db: Db, id: number, redactor?: ReceiptRedactor) { return readSource(db, 'export_row', id, redactor) }
+export function details(db: Db, rows: CorrespondenceRead[], redactor?: ReceiptRedactor) {
+  const reader = sourceReader(db, rows, undefined, redactor)
   return rows.map(reader.detail)
 }
 /** Opt-in list projection; source IDs resolve through the existing point/source routes. */
 export function summaries(rows: CorrespondenceRead[]) {
   return rows.map(publicCorrespondence)
 }
-export function detail(db: Db, row: CorrespondenceRead) { return details(db, [row])[0]! }
+export function detail(db: Db, row: CorrespondenceRead, redactor?: ReceiptRedactor) { return details(db, [row], redactor)[0]! }
 export function audit(db: Db, correspondenceId: number) {
   return getRecordCorrespondenceAudit(db, correspondenceId).map(({ evidence, ...row }) => ({ ...row, evidence: sanitizeEvidence(evidence) }))
 }
