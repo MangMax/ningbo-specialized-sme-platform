@@ -1067,7 +1067,7 @@ function enterpriseDetail(db: Db, id: number, asOf: number): RosterEnterpriseDet
   const selectedEvidence = snap.evidence.filter(v => eventIds.has(v.recordEventId))
   const publishedPresentation = readPublicPublishedNames(db, selectedEvidence.map(v => ({ evidenceId: v.id, eventId: v.recordEventId })))
   return {
-    qualificationAssessment: readCurrentQualificationAssessment((db as Db & { $client: import('better-sqlite3').Database }).$client, id, asOf, enterpriseSnapshot.ownQueryIds),
+    qualificationAssessment: readCurrentQualificationAssessment((db as Db & { $client: import('better-sqlite3').Database }).$client, id, asOf, enterpriseSnapshot.ownQueryIds, publishedPresentation),
     publishedPresentation,
     enterprise: row,
     aliases: snap.aliases

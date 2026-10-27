@@ -2,7 +2,7 @@ import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { migrate } from 'drizzle-orm/better-sqlite3/migrator'
 import { eq } from 'drizzle-orm'
-import { afterEach, beforeEach, expect, it } from 'vitest'
+import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import * as schema from '../db/schema'
 import { TITLE_SEED } from '../db/titles'
 import { getRosterEnterpriseDetail } from '../lib/roster/enterprise-roster'
@@ -10,6 +10,9 @@ import { readCurrentCandidate } from '../lib/roster/current-qualification'
 import { reviewCurrentExportDecision } from './helpers/current-export-decisions'
 import { saveDecision102 } from '../server/utils/decision-lifecycle-102'
 import { preflightRecordCorrespondences, commitRecordCorrespondences, type CorrespondenceRequest } from '../server/utils/record-correspondence'
+import * as correspondenceReads from '../server/utils/record-correspondence'
+import * as publishedReads from '../lib/roster/official-published-presentation'
+import { readEvidenceToken113 } from '../server/utils/evidence-impact-113'
 
 const AS_OF = Date.parse('2026-06-01T00:00:00Z')
 let sqlite: Database.Database
@@ -19,9 +22,9 @@ beforeEach(() => {
   sqlite.pragma('foreign_keys = ON')
   db = drizzle(sqlite, { schema })
   migrate(db, { migrationsFolder: 'db/migrations' })
-  db.insert(schema.title).values(TITLE_SEED).run()
+  db.insert(schema.title).values([...TITLE_SEED]).run()
 })
-afterEach(() => sqlite.close())
+afterEach(() => { vi.restoreAllMocks(); sqlite.close() })
 
 function formalEnterprise() {
   const enterprise = db.insert(schema.enterprise).values({ name: '合成正式企业', nameNorm: '合成正式企业', usccNorm: '913302000000000001' }).returning().get()
@@ -272,4 +275,68 @@ it('reads a deterministic snapshot under query-only SQLite and keeps legacy proj
   expect(sqlite.prepare('select count(*) as n from difference_reason').get()).toEqual({ n: 1 })
   expect(sqlite.prepare('select count(*) as n from evidence_review_receipt_114').get()).toEqual({ n: 1 })
   expect(legacy.assessment).toBeUndefined()
+})
+
+it.each([
+  { case: 'legacy-record-name-is-not-capture', recordName: '旧记录名', availability: 'unknown_legacy' as const, nameRaw: null, gap: 'published_name_not_retained' },
+  { case: 'captured-name-without-record-name', recordName: null, availability: 'captured' as const, nameRaw: '实际公布名', gap: null },
+  { case: 'captured-null-name', recordName: '旧记录名', availability: 'captured' as const, nameRaw: null, gap: 'published_name_unknown' },
+])('uses per-evidence published facts for completeness: $case', ({ recordName, availability, nameRaw, gap }) => {
+  const { enterprise, record, event, evidence } = formalEnterprise()
+  db.update(schema.record).set({ nameRaw: recordName }).where(eq(schema.record.id, record.id)).run()
+  const fact: publishedReads.OfficialPublishedFact = availability === 'captured'
+    ? { evidenceId: evidence.id, eventId: event.id, availability, revision: 1, nameRaw, sourceBindingKnown: true }
+    : { evidenceId: evidence.id, eventId: event.id, availability, revision: null, nameRaw: null, sourceBindingKnown: null }
+  // Isolate the completeness consumer; capture/SQL semantics have their own public tests.
+  vi.spyOn(publishedReads, 'readOfficialPublishedPresentation').mockReturnValue(new Map([[evidence.id, fact]]))
+  const detail = getRosterEnterpriseDetail(db, enterprise.id, AS_OF)!
+  const value = detail.qualificationAssessment.titles.find(t => t.titleCode === 'innovative_sme')!
+  expect(detail.publishedPresentation).toMatchObject({ availability: 'available', facts: [fact] })
+  expect(value.completeness.publishedNames).toEqual([{ evidenceId: evidence.id, availability, nameKnown: nameRaw !== null }])
+  if (gap) expect(value.completeness.gaps).toContain(gap)
+  else expect(value.completeness.gaps).not.toContain('published_name_not_retained')
+})
+
+it.each([false, true])('keeps verified migration qualification independent of later location: movedOut=%s', movedOut => {
+  const enterprise = db.insert(schema.enterprise).values({ name: '独立迁入企业', nameNorm: '独立迁入企业', usccNorm: '913302000000000002' }).returning().get()
+  const { query, relation } = observation(enterprise, 'success', '终审通过')
+  const scope = { enterpriseId: enterprise.id, titleCode: 'innovative_sme' as const, direction: 'extra_in_miit' as const }
+  saveDecision102(db, { ...scope, action: 'replace', expectedCurrentId: null, idempotencyKey: 'migration-qualified', actor: { type: 'agent', id: 'fixture' }, ruleVersion: 'fixture', basis: '已独立核实迁入及资格', effectiveAt: '2025-01-01T00:00:00Z', decision: {
+    status: 'confirmed_reason', reasonCode: 'moved_in', measureCode: 'record_moved_in', verificationStatus: 'confirmed', evidenceQueryId: query.id, evidenceRelationId: relation!.id,
+    currentQualification: { titleCode: 'innovative_sme', validFrom: '2025-01-01T00:00:00Z', validUntil: '2028-01-01T00:00:00Z', basis: '独立核实的称号资格', publicationCheck: { status: 'not_found', scope: '宁波本称号公开名单' } },
+  } })
+  const current = db.select().from(schema.differenceReason).get()!
+  const token = readEvidenceToken113(db, scope)
+  saveDecision102(db, { ...scope, action: 'maintain', expectedCurrentId: current.id, idempotencyKey: 'migration-reviewed', actor: { type: 'agent', id: 'fixture' }, ruleVersion: 'fixture', basis: '已复核独立资格依据', effectiveAt: '2025-01-01T00:00:00Z', reviewedEvidence: { latestRevisionId: token.latestRevisionId, projectionReady: true } })
+  if (movedOut) subjectDecision(enterprise.id, 'moved_out', 'specialized_sme', 'missing_in_miit', '2026-03-01T00:00:00Z')
+  const value = assessment(enterprise.id)
+  expect(value).toMatchObject({ group: movedOut ? 'excluded' : 'eligible', officialQualification: { group: 'eligible' }, region: { status: movedOut ? 'outside_ningbo' : 'ningbo' } })
+  expect(value.officialQualification.basis).toContain('独立核实的称号资格')
+  expect(value.officialQualification.notes).not.toContain('缺少已确认认定及资格依据')
+})
+
+it('keeps published-name read failure distinct from missing capture and reuses one read', () => {
+  const { enterprise, evidence } = formalEnterprise()
+  const read = vi.spyOn(publishedReads, 'readOfficialPublishedPresentation').mockImplementation(() => { throw new publishedReads.OfficialPublishedPresentationError('response_limit') })
+  const detail = getRosterEnterpriseDetail(db, enterprise.id, AS_OF)!
+  const value = detail.qualificationAssessment.titles.find(t => t.titleCode === 'innovative_sme')!
+  expect(detail.publishedPresentation).toMatchObject({ availability: 'unavailable', error: 'response_limit' })
+  expect(value.completeness.publishedNames).toEqual([{ evidenceId: evidence.id, availability: 'unavailable', nameKnown: false }])
+  expect(value.completeness.gaps).toContain('published_name_read_unavailable')
+  expect(value.completeness.gaps).not.toContain('published_name_not_retained')
+  expect(value.group).toBe('eligible')
+  expect(read).toHaveBeenCalledTimes(1)
+})
+
+it('does not claim changed sources when correspondence revalidation is incomplete', () => {
+  const { enterprise, event } = formalEnterprise()
+  const { relation } = observation(enterprise, 'success', '终审通过')
+  const request: CorrespondenceRequest = { idempotencyKey: 'unchanged-edge', sourceIdentity: 'synthetic/source', actor: { type: 'agent', id: 'fixture' }, basis: '合成对应依据', ruleId: 'manual', ruleVersion: 'fixture', operations: [{ action: 'create', status: 'confirmed', edge: { type: 'event_process', eventId: event.id, relationId: relation!.id, role: 'context_only' } }] }
+  commitRecordCorrespondences(db, request, preflightRecordCorrespondences(db, request).planHash)
+  const refs = correspondenceReads.listRecordCorrespondenceRefs(db, { enterpriseId: enterprise.id, titleCode: 'innovative_sme' })
+  vi.spyOn(correspondenceReads, 'listRecordCorrespondenceRefs').mockReturnValue(refs.map(ref => ({ ...ref, requiresRevalidation: true })))
+  const value = assessment(enterprise.id)
+  expect(value.correspondence.status).toBe('requires_revalidation')
+  expect(value.correspondence.message).not.toContain('来源变化')
+  expect(value.group).toBe('eligible')
 })

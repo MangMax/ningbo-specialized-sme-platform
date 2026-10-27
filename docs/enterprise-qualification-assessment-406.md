@@ -30,7 +30,7 @@
 | `subject` | 可适用的已确认注销/主体终止、适用性待核，或未建立主体终止事实；后者不证明实际存续 |
 | `region` | 已确认迁入/迁回、迁出、顺序/适用性待核，或未建立迁移事实；迁出不自动撤销全国称号 |
 | `platform` | 尚未查询、查询失败、或需核实的实际观察；保留原状态、来源接口、时间、条件、主体匹配与覆盖，查询失败不冒充无记录 |
-| `correspondence` | 候选、已确认、来源变化需重核或无对应；confirmed 不是正式资格或完整性证明 |
+| `correspondence` | 候选、已确认、需重核或无对应（未完成复验不声称来源已变化）；confirmed 不是正式资格或完整性证明 |
 | `completeness` | 正式出处、原周期语义、身份、公布名留档及文件版本缺口；记录齐备不等于新的人工作业确认 |
 | `shadow` | 原 reader 的 legacyGroup；如新评估因明确主体终止优先排除而不同，明确给出解释，旧投影不改 |
 
@@ -68,3 +68,10 @@ R1 rg exit2、R1 截断与 R2 缺 Nuxt 配置的 harness FAIL 独立保留；不
 runner 为 `pnpm exec vitest run tests/enterprise-qualification-assessment-406.test.ts --maxWorkers=1`，
 同时使用内置 JSON reporter 并解析逐 case 结果；report 未提供 unhandled 字段，保持 UNKNOWN。
 父在同 assigned worktree 执行的 Nuxt prepare exit 0 为继承设置证据，本实施未重跑 prepare。
+
+## R1反馈窄修
+
+- 完整性直接复用同事务 `publishedPresentation`，按正式事件的 evidenceId 列出未捕获、捕获名未知、读取不可用；旧 record 名不代替逐出处留档。不会重复读取已完成的公布事实。
+- 已核实迁入资格使用原验证条件独立计算，后续迁出只决定宁波纳入范围；正式资格说明采用实际生效依据，不再并列“缺少资格依据”。旧地域分支和 legacyGroup 保留。
+- 对应需重新核实可能来自预算未完成，因此汇总消息不声明确定来源变化。
+- 测试种子只复制为可变数组以适配 Drizzle，不改种子值。父新增六个 focused 回归；原25条断言保留。原类型检查exit2、R1三P2及父两次误路径读取exit2均保留。

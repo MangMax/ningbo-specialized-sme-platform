@@ -160,6 +160,8 @@ const qualificationGroupLabel = { eligible: '宁波当前可纳入', pending: '�
 const qualificationGapLabel: Record<string, string> = {
   missing_official_source: '正式出处待补', missing_cycle_semantics: '原周期、批次或复核结论待核',
   identity_unresolved: '主体身份对应待核', published_name_not_retained: '逐出处公布名称尚未留档',
+  published_name_unknown: '已留档原行，公布名称仍未知',
+  published_name_read_unavailable: '本次逐出处名称读取未完成',
   source_version_unavailable: '来源文件版本待核',
 }
 const pendingRows = computed(() => pendingData.value?.rows ?? [])
