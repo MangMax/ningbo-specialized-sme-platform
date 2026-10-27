@@ -6,6 +6,7 @@ import { sourcePositionForSequence } from '../platform/recognized-evidence'
 import { normalizePlatformRelation, type PlatformNormalizationConflict } from '../platform/normalization'
 import { readEnterpriseSnapshot, readEnterpriseHistories, enterpriseComparisonCoordinates } from './enterprise-read-snapshot'
 import { readPlatformBusinessDetails } from '../../server/utils/platform-business-detail-read'
+import { readCurrentQualificationAssessment, type CurrentQualificationSnapshot } from './current-qualification'
 import type { PlatformBusinessDetail } from './platform-business-detail'
 /**
  * 跨称号去重企业总表 / 企业详情 / 差异与解释 —— 契约 §7.1 / §7.2 / §7.3 的**读模型**(RL-04)。
@@ -835,6 +836,8 @@ export interface RosterPlatformRelationRow {
 }
 
 export interface RosterEnterpriseDetail {
+  /** #406 additive snapshot; legacy titleAssessments and lifecycle retain their meaning. */
+  qualificationAssessment: CurrentQualificationSnapshot
   publishedPresentation: PublishedPresentation
   enterprise: RosterEnterpriseRow
   aliases: RosterAliasRow[]
@@ -991,11 +994,11 @@ export function readPublicPublishedNames(db: Db, scope: readonly OfficialPublish
   }
 }
 
-export function getRosterEnterpriseDetail(db: Db, id: number): RosterEnterpriseDetail | null {
-  return db.transaction(() => enterpriseDetail(db, id))
+export function getRosterEnterpriseDetail(db: Db, id: number, asOf = Date.now()): RosterEnterpriseDetail | null {
+  return db.transaction(() => enterpriseDetail(db, id, asOf))
 }
 
-function enterpriseDetail(db: Db, id: number): RosterEnterpriseDetail | null {
+function enterpriseDetail(db: Db, id: number, asOf: number): RosterEnterpriseDetail | null {
   // 只建**这一家**的画像:详情页开一行,不该把整库 7352 家全算一遍。
   const enterpriseSnapshot = readEnterpriseSnapshot(db, id)
   const { snap, index, profileOf } = readRosterContext(db, enterpriseSnapshot)
@@ -1064,6 +1067,7 @@ function enterpriseDetail(db: Db, id: number): RosterEnterpriseDetail | null {
   const selectedEvidence = snap.evidence.filter(v => eventIds.has(v.recordEventId))
   const publishedPresentation = readPublicPublishedNames(db, selectedEvidence.map(v => ({ evidenceId: v.id, eventId: v.recordEventId })))
   return {
+    qualificationAssessment: readCurrentQualificationAssessment((db as Db & { $client: import('better-sqlite3').Database }).$client, id, asOf, enterpriseSnapshot.ownQueryIds),
     publishedPresentation,
     enterprise: row,
     aliases: snap.aliases

@@ -17,6 +17,7 @@ export default defineMcpTool({
   description: [
     '按企业 id 查询企业身份、已确认/待核曾用名、各称号记录、生命周期、事件、出处、差异和平台证据。',
     '返回与 `GET /api/roster/enterprises/:id` 相同的详情读模型。只读，不需要 token。',
+    '新增 qualificationAssessment：同一只读快照绑定企业、称号、原周期、执行时点及事实/来源/决定/观察版本；分别解释正式资格、主体、地域、平台观察、对应和资料缺口。旧字段原义不变，不生成任务或确认。契约 docs/enterprise-qualification-assessment-406.md。',
     '新增 titleAssessments 与差异行 queryCoverage/currentDecision/explanationValidity/assessment；覆盖、决定、解释有效性独立；旧 status 保留原义。契约 docs/query-coverage-contract-108.md。',
     '已认定查询保留全部原始行；行 enterpriseId 为 null 表示未匹配主体，查询键覆盖不确认归属。',
   ].join('\n'),
