@@ -1055,19 +1055,21 @@ function enterpriseDetail(db: Db, id: number, asOf: number): RosterEnterpriseDet
   // Both directions use the same coverage for a title. Its IDs came from this
   // enterprise's snapshot, so coverage need not rescan global query keys.
   const coverageByTitle = new Map<string, ReturnType<typeof readQueryCoverage>>()
-  const assessmentFor = (scope: Parameters<typeof readQueryAssessment>[1]) => {
-    let coverage = coverageByTitle.get(scope.titleCode)
+  const coverageForTitle = (titleCode: Parameters<typeof readQueryAssessment>[1]['titleCode']) => {
+    let coverage = coverageByTitle.get(titleCode)
     if (!coverage) {
-      coverage = readQueryCoverage(db, scope, undefined, enterpriseSnapshot.ownQueryIds)
-      coverageByTitle.set(scope.titleCode, coverage)
+      coverage = readQueryCoverage(db, {enterpriseId:id,titleCode,direction:'missing_in_miit'}, undefined, enterpriseSnapshot.ownQueryIds)
+      coverageByTitle.set(titleCode, coverage)
     }
-    return readQueryAssessment(db, scope, undefined, coverage)
+    return coverage
   }
+  const assessmentFor = (scope: Parameters<typeof readQueryAssessment>[1]) =>
+    readQueryAssessment(db, scope, undefined, coverageForTitle(scope.titleCode))
 
   const selectedEvidence = snap.evidence.filter(v => eventIds.has(v.recordEventId))
   const publishedPresentation = readPublicPublishedNames(db, selectedEvidence.map(v => ({ evidenceId: v.id, eventId: v.recordEventId })))
   return {
-    qualificationAssessment: readCurrentQualificationAssessment((db as Db & { $client: import('better-sqlite3').Database }).$client, id, asOf, enterpriseSnapshot.ownQueryIds, publishedPresentation),
+    qualificationAssessment: readCurrentQualificationAssessment((db as Db & { $client: import('better-sqlite3').Database }).$client, id, asOf, {ownQueryIds:enterpriseSnapshot.ownQueryIds,publishedNames:publishedPresentation,coverageForTitle}),
     publishedPresentation,
     enterprise: row,
     aliases: snap.aliases

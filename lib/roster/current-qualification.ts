@@ -24,6 +24,11 @@ export const CURRENT_RULE_VERSION = 'current-roster-116-v8'
 export type CurrentGroup = 'eligible' | 'pending' | 'excluded'
 export const QUALIFICATION_ASSESSMENT_VERSION = 'enterprise-qualification-406-v1'
 type PublishedNameAssessmentInput = { availability: 'available' | 'unavailable'; facts: OfficialPublishedFact[] }
+type QualificationAssessmentReadOptions = {
+  ownQueryIds?: readonly number[]
+  publishedNames?: PublishedNameAssessmentInput
+  coverageForTitle?: (title: CurrentTitle) => ReturnType<typeof readQueryCoverage>
+}
 export interface CurrentQualificationAssessment {
   titleCode: CurrentTitle
   group: CurrentGroup
@@ -102,10 +107,10 @@ export function readCurrentCandidate(db: Database.Database, enterpriseId: number
 /** One enterprise, one SQLite snapshot, one execution time; never creates facts or decisions.
  * asOf is the evaluation time of the current stored facts, not a historical replay.
  */
-export function readCurrentQualificationAssessment(db: Database.Database, enterpriseId: number, asOf = Date.now(), ownQueryIds?: readonly number[], publishedNames?: PublishedNameAssessmentInput): CurrentQualificationSnapshot {
+export function readCurrentQualificationAssessment(db: Database.Database, enterpriseId: number, asOf = Date.now(), options: QualificationAssessmentReadOptions = {}): CurrentQualificationSnapshot {
   return db.transaction(() => {
     const read = createCurrentCandidateReader(db)
-    const titles = CURRENT_TITLES.map(title => read(enterpriseId, title, new Date(asOf).getUTCFullYear(), asOf, undefined, false, true, {ownQueryIds,publishedNames}).assessment!)
+    const titles = CURRENT_TITLES.map(title => read(enterpriseId, title, new Date(asOf).getUTCFullYear(), asOf, undefined, false, true, options).assessment!)
     const scope = { enterpriseId, asOf: new Date(asOf).toISOString(), ruleVersion: CURRENT_RULE_VERSION, assessmentVersion: QUALIFICATION_ASSESSMENT_VERSION }
     return { ...scope, snapshotId: assessmentDigest([scope, titles]), titles }
   })()
@@ -127,7 +132,7 @@ export function createCurrentCandidateReader(db: Database.Database) {
     sql`select (select id from difference_reason where enterprise_id=${sql.placeholder('enterpriseId')}
       and title_code=${titleCode} and direction=${direction} order by recorded_at desc,id desc limit 1)`)),sql` union all `)
   const headsQuery=reader.select().from(d).where(sql`${d.id} in (${headIds})`).prepare()
-  return function readCandidate(enterpriseId: number, title: CurrentTitle, year: number, executionTime = Date.now(), keys?: { queries: IdentityKeyVariants; relations: IdentityKeyVariants }, includeFilterFacts = false, includeReferences = true, assessmentOptions?: { ownQueryIds?: readonly number[]; publishedNames?: PublishedNameAssessmentInput }): CurrentRow {
+  return function readCandidate(enterpriseId: number, title: CurrentTitle, year: number, executionTime = Date.now(), keys?: { queries: IdentityKeyVariants; relations: IdentityKeyVariants }, includeFilterFacts = false, includeReferences = true, assessmentOptions?: QualificationAssessmentReadOptions): CurrentRow {
   const enterprise = statement('select id,name,name_norm,uscc_norm,district,city from enterprise where id=?').get(enterpriseId) as any
   const events = statement(`select e.id,e.event_type as eventType,e.year,e.decided_year as decidedYear,e.batch_seq as batchSeq,e.review_outcome as reviewOutcome,e.revision,r.name_raw as nameRaw,r.uscc_raw as usccRaw,r.source from record r join record_event e on e.record_id=r.id where r.enterprise_id=? and r.title_code=? order by e.id`).all(enterpriseId,title) as (LifecycleEvent & { batchSeq: number|null; nameRaw: string|null; usccRaw: string|null; source: string; revision: number })[]
   const evidence = statement(`select v.id,v.record_event_id as eventId,v.source_file as sourceFile,v.attachment,v.list_no as listNo,v.page from record_evidence v join record_event e on e.id=v.record_event_id join record r on r.id=e.record_id where r.enterprise_id=? and r.title_code=? order by v.id`).all(enterpriseId,title) as (CurrentWorkbookFacts['evidence'][number] & {id:number})[]
@@ -187,7 +192,7 @@ export function createCurrentCandidateReader(db: Database.Database) {
       continue
     }
     if (['pending_review','platform_stale','renamed'].includes(d.reasonCode ?? '')) continue
-    const assessment = readQueryAssessment(reader,{enterpriseId,titleCode:d.titleCode,direction:d.direction as 'missing_in_miit'|'extra_in_miit'},keys?.queries)
+    const assessment = readQueryAssessment(reader,{enterpriseId,titleCode:d.titleCode,direction:d.direction as 'missing_in_miit'|'extra_in_miit'},keys?.queries,assessmentOptions?.coverageForTitle?.(d.titleCode as CurrentTitle))
     if (d.titleCode === title) workbookAssessments.push({explanationValidity:assessment.explanationValidity.status,queryCoverage:assessment.queryCoverage.status,
       noRecord:assessment.queryCoverage.sources.find(source => source.titleCode === d.titleCode && source.subjectMatch === 'exact_uscc')?.outcome === 'no_record'})
     row.references.push(`decision:${d.id} explanationValidity:${assessment.explanationValidity.status} queryCoverage:${assessment.queryCoverage.status}`)
@@ -368,7 +373,7 @@ export function createCurrentCandidateReader(db: Database.Database) {
       const capture = statement('select revision,sha256 from official_evidence_row_revision where evidence_id=? order by revision desc limit 1').get(v.id) as {revision:number;sha256:string|null}|undefined
       return { evidenceId:v.id, eventId:v.eventId, sourceFile:v.sourceFile, storedFileId:file?.id ?? null, sha256:file?.sha256 ?? null, bytes:file?.bytes ?? null, removedAt:file?.removedAt ?? null, capturedRevision:capture?.revision ?? null, capturedSha256:capture?.sha256 ?? null }
     })
-    const coverage = readQueryCoverage(reader, {enterpriseId,titleCode:title,direction:'missing_in_miit'}, keys?.queries, assessmentOptions.ownQueryIds)
+    const coverage = assessmentOptions.coverageForTitle?.(title) ?? readQueryCoverage(reader, {enterpriseId,titleCode:title,direction:'missing_in_miit'}, keys?.queries, assessmentOptions.ownQueryIds)
     const observedRows = platformRefs.map(ref => {
       const r = statement('select status,year,batch from platform_relation where id=?').get(ref.id) as {status:string|null;year:number|null;batch:string|null}
       return {queryId:ref.queryId,relationId:ref.id,...r}
