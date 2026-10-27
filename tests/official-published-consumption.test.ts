@@ -140,10 +140,11 @@ it('B02 preserves null empty whitespace binding unknown legacy and repeated equa
 it('B03 hydrates only retained current rows after qualification counts filters and options', async () => {
   const f = await paired()
   await f.commit(f.announcement([f.record('specialized_sme', [{ eventType:'award',year:2024,batchSeq:1,evidence:[f.evidence(f.published('第二企业',3,2,{usccRaw:null}))] }], '第二企业', null)]), 'second')
-  const read = vi.spyOn(official, 'listEventOfficialEvidence')
+  const read = vi.spyOn(official, 'listEventsOfficialEvidencePages')
   const current = await f.http('/current?page=1&pageSize=1')
   expect(current.total).toBe(2); expect(current.rows).toHaveLength(1)
-  expect(read.mock.calls.map(call => call[1])).toEqual([1,2])
+  expect(read).toHaveBeenCalledTimes(1)
+  expect(read.mock.calls.map(call => [call[1],call[2]])).toEqual([[[{eventId:1},{eventId:2}],{pageSize:50,maxBytes:65536}]])
   expect(current.options.recognitionYears).toEqual([2021,2024])
   expect(current.rows[0].qualificationWitnesses).toMatchObject([{cycle:{originYear:2021,batchSeq:1},awardEventId:1,recognition:{precision:'year',year:2021}}])
   expect(current.rows[0].references).toEqual(expect.arrayContaining(['evidence:1 2021公布.pdf  序号:1','evidence:2 2024公布.pdf  序号:1']))
@@ -163,7 +164,7 @@ it('B04 reads raw-only latest after public correction without caching or changin
 
 it('B05 separates unavailable safe errors from unknown legacy while preserving original detail and locators', async () => {
   const f = await paired()
-  vi.spyOn(official,'listEventOfficialEvidence').mockImplementation(() => { throw new Error('private sql secret capture') })
+  vi.spyOn(official,'listEventsOfficialEvidencePages').mockImplementation(() => { throw new Error('private sql secret capture') })
   const detail = await f.http('/detail?id=1')
   expect(detail.publishedPresentation).toEqual({availability:'unavailable',error:'read_failed',facts:[]})
   expect(detail.evidence.map((v:any) => [v.id,v.sourceFile,v.page])).toEqual([[1,'2021公布.pdf',1],[2,'2024公布.pdf',1]])
@@ -179,10 +180,11 @@ it('B06 reuses one selected event Map across source detail and repeated referenc
   const { sourceReader } = await import('../server/utils/record-correspondence-read')
   // Caller-selected reference inputs to the pure reader, not forged persisted decisions.
   const row = { id: 17, type:'later_process',role:'followup_apply',status:'candidate',eventId:1,predecessorEventId:2,relationId:null,exportRowId:null } as any
-  const read = vi.spyOn(official,'listEventOfficialEvidence'), latest = vi.spyOn(official,'readLatestOfficialEvidence')
+  const read = vi.spyOn(official,'listEventsOfficialEvidencePages'), latest = vi.spyOn(official,'readLatestOfficialEvidence')
   const reader = sourceReader(f.db,[row,{...row,id:18}],{kind:'event',id:1})
   const direct = reader.read('event',1) as any, first = reader.detail(row), second = reader.detail({...row,id:18})
-  expect(read.mock.calls.map(call => [call[1],call[2]])).toEqual([[1,{pageSize:50,maxBytes:65536}],[2,{pageSize:50,maxBytes:65536}]])
+  expect(read).toHaveBeenCalledTimes(1)
+  expect(read.mock.calls.map(call => [call[1],call[2]])).toEqual([[[{eventId:1},{eventId:2}],{pageSize:50,maxBytes:65536}]])
   expect(first.event).toBe(direct); expect(second.event).toBe(direct)
   expect((first.event as any).evidence[0].publishedName).toBe((second.event as any).evidence[0].publishedName)
   expect((first.predecessorEvent as any).publishedPresentation.facts).toEqual([minimal(2,2,'2024新名')])
@@ -192,7 +194,7 @@ it('B06 reuses one selected event Map across source detail and repeated referenc
 it('B07 applies final source copy and text budget without truncating old locators or shrinking A pages', async () => {
   const f = await fixture(), name = 'x'.repeat(600)
   await f.commit(f.announcement([f.record('specialized_sme',[{eventType:'award',year:2024,batchSeq:1,evidence:Array.from({length:20},(_,i) => f.evidence(f.published(name,1,i+1)))}])]),'budget')
-  const read = vi.spyOn(official,'listEventOfficialEvidence')
+  const read = vi.spyOn(official,'listEventsOfficialEvidencePages')
   const detail = await f.http('/detail?id=1')
   expect(detail.publishedPresentation.availability).toBe('available')
   expect(detail.publishedPresentation.facts).toHaveLength(20)
@@ -201,6 +203,8 @@ it('B07 applies final source copy and text budget without truncating old locator
   expect(source.source.evidence).toHaveLength(20)
   expect(source.source.evidence.map((v:any) => [v.id,v.page,v.listNo])).toEqual(Array.from({length:20},(_,i)=>[i+1,1,i+1]))
   expect(source.source.evidence.every((v:any) => !('publishedName' in v))).toBe(true)
+  expect(read).toHaveBeenCalledTimes(2)
+  expect(read.mock.calls.map(call => call[1])).toEqual([[{eventId:1}],[{eventId:1}]])
   expect(read.mock.calls.every(call => JSON.stringify(call[2]) === JSON.stringify({pageSize:50,maxBytes:65536}))).toBe(true)
 })
 
