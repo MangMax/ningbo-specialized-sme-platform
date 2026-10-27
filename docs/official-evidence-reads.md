@@ -89,3 +89,37 @@ LIMIT 与限定投影不代表 JSON 解析/磁盘成本恒定；生产分布、�
 基础 catalog 外的正常领域状态由 B 公开命令建立，损坏/极端旧数据反例明确标注。
 真实 Nuxt/MCP JSON-RPC 专属验收必须父唯一 heavy slot；小 H3 不是实际 MCP transport。
 历史 #345/#346 full FAIL/UNKNOWN 和 A/B 原失败/清理未知不因 C 窄绿消失，不宣称母票或部署验收。
+
+## #399：旧 items 错误封套兼容
+
+用户已批准恢复 `list_roster_import_items` 旧请求的 SDK 错误封套：HTTP 200、
+`result.isError=true`。鉴权仍先行，缺失、错误或未配置 MCP token，以及误用 API token，
+均为 HTTP 401、顶层 `error.code=-32001`、无 result。
+
+兼容分流仅识别非 null、非数组的 arguments 对象，全部 own 键须属于
+`batchId/receiptId/idempotencyKey/page/pageSize`。空对象和 partial 对象也分发，
+但不因此成为合法 selector。旧字段的 null、错误类型及 page 0/1000001、pageSize 0/51/2.5
+交给 SDK 原 raw shape 校验；middleware 只允许分发，不构造 tool error。
+SDK shape 不含组合 refine，因此 handler 在 `useDb()` 前复用完整 `importItemsReadSchema`，
+保留原三选一及 trim-empty key 判定，用原 `ImportReceiptError` 和 `importReceiptMcpResult`
+产生领域错误。合法 key 不 trim、不改写；缺省 page 1/pageSize 20 仍由既有 reader 决定。
+
+任一 `projection/source/itemIndex/oldRecordId/cursor/maxBytes` 或未知 own 键均走严格 raw gate；
+`projection='legacy'`、`source='default'` 不是枚举值。新字段孤立、错配、null、非法边界或未知键
+仍为 HTTP 400、顶层 `error.code=-32602`、无 result。缺 arguments、undefined/null/primitive/数组
+容器不扩为 `{}`。own 新键为 undefined 也不走旧分流，但原 optional schema 可能接受合法其余
+shape；未知键即 undefined 仍拒绝。undefined 仅是 JS helper 边界，不是 JSON wire 值。
+handler 只移除已知 optional 字段的 undefined，保留未知键以供严格校验。
+
+零 DB 保证限于 schema/selector/空白 key 拒绝前不获取 DB、不调用 reader。
+cursor 解码、已绑定 cursor 越界、source 不存在或状态不符仍由后续领域 reader 处理，
+不能把全部领域错误或原 27 请求矩阵宣称为零 DB。其它工具、REST 和旧匿名 exact/root-extra
+读取兼容保持原路径。
+
+本次 small 用新增 `399 ` 用例，冻结测试字节后取得 RED 82 FAIL/75 PASS → GREEN 157 PASS/0 FAIL；
+原 62 用例被过滤。raw helper 的 null 只证明分发；真实 handler 使用 useDb/reader spy 和原错误封套，
+正常 content 的 spy 结果不代替真实 reader 默认值或 wire 验收。SDK schema adapter 用实际安装包，
+仅证明字段校验。新增 Nuxt dev+fetch transport 用例、本 head type/build、compiled raw+SDK 及
+原 receipt 27 分区/full 均 UNRUN，交父另授。原 R10 HTTP400/id103/-32602/noresult、100B、
+SHA256 `0fcec0993e58fa570fd813f921484d6061eda69ca3774090d67bee8b4aea38f2` 保留为历史观察；
+原 full 5058 PASS/34 FAIL/19 SKIP、exit 1 及其它 FAIL/UNKNOWN 不改标。

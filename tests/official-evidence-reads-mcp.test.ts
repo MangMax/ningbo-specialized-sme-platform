@@ -161,3 +161,60 @@ it('enforces the 300 and 301 event source boundary over real HTTP and MCP withou
   const over=await http(path);expect(over.status).toBe(413);expect(over.body).toMatchObject({error:{code:'source_limit'}})
   const mcp=rpcValue(await rpc('get_official_event',args));expect(mcp.isError).toBe(true);expect(mcp.body).toEqual(over.body)
 })
+
+// #399: Nuxt dev + fetch regressions. Added for the parent's heavy lane;
+// these are not compiled-server/SDK-client evidence and are UNRUN in this change.
+it('399 transport legacy SDK field errors retain HTTP200 tool results', async () => {
+  for (const args of [{ batchId: 1, page: 0 }, { batchId: 1, page: 1000001 }, { batchId: 1, pageSize: 0 }, { batchId: 1, pageSize: 51 }, { batchId: 1, pageSize: 2.5 }, { batchId: null }, { batchId: '1' }, { batchId: 1, pageSize: null }, { batchId: 1, pageSize: true }]) {
+    const result = await rpc('list_roster_import_items', args)
+    expect(result.status).toBe(200)
+    expect(result.body).not.toHaveProperty('error')
+    const tool = rpcResult.parse(result.body).result
+    expect(tool.isError).toBe(true)
+    expect(tool.content).toEqual([{ type: 'text', text: expect.stringContaining('Input validation error: Invalid arguments for tool list_roster_import_items:') }])
+  }
+})
+it('399 transport legacy selectors retain original domain error results', async () => {
+  for (const [args, message] of [[{}, 'Supply exactly one batchId, idempotencyKey or receiptId'], [{ batchId: 1, receiptId: 2 }, 'Supply exactly one batchId, idempotencyKey or receiptId'], [{ idempotencyKey: '   ' }, 'Invalid idempotencyKey']] as const) {
+    const result = await rpc('list_roster_import_items', args)
+    expect(result.status).toBe(200); expect(result.body).not.toHaveProperty('error')
+    expect(rpcValue(result)).toEqual({ isError: true, body: { error: { code: 'invalid_query', message } } })
+  }
+})
+it('399 transport auth and opt-in errors keep top-level envelopes', async () => {
+  for (const token of [null, 'wrong-399-token', apiToken]) {
+    for (const args of [{ batchId: 1, pageSize: 51 }, {}, { projection: 'snapshot', source: 'private_batch', batchId: 1 }]) {
+      const result = await rpc('list_roster_import_items', args, token)
+      expect(result.status).toBe(401); expect(result.body).toMatchObject({ error: { code: -32001 } }); expect(result.body).not.toHaveProperty('result')
+    }
+  }
+  for (const args of [{ batchId: 1, extra: 1 }, { batchId: 1, projection: null }, { batchId: 1, source: 'default' }, { batchId: 1, itemIndex: 0 }, { projection: 'snapshot', source: 'private_batch', batchId: 1, itemIndex: 0, oldRecordId: 1, pageSize: 20 }, { projection: 'eventIds', source: 'redacted_receipt', receiptId: 1, itemIndex: 0, oldRecordId: 1, pageSize: 51 }]) {
+    const result = await rpc('list_roster_import_items', args)
+    expect(result.status).toBe(400); expect(result.body).toMatchObject({ error: { code: -32602 } }); expect(result.body).not.toHaveProperty('result')
+  }
+})
+it('399 transport three legacy selectors and explicit defaults preserve content bytes', async () => {
+  // Reuse the existing public command/lifecycle without consuming the six
+  // historical official-capture seed identities or changing their oracle.
+  const key = '399-legacy-normal'
+  const saved = await commit({ announcement: { sourceDocument: { source: 'jxj', title: key }, records: [{ enterprise: { name: key }, titleCode: 'specialized_sme', events: [{ eventType: 'award', year: 2021, evidence: [{ sourceFile: 'notice.txt', listNo: 399 }] }] }] } }, key)
+  const batchId = saved.saved.batchId
+  const receiptId = z.object({ id: z.number() }).parse(sqlite.prepare('SELECT id FROM import_receipt WHERE batch_id=? ORDER BY id DESC LIMIT 1').get(batchId)).id
+  const rest = await http('/api/roster/import/receipts/items?batchId=' + batchId)
+  expect(rest.status).toBe(200); expect(rest.body).toMatchObject({ batchId, receiptId, page: 1, pageSize: 20 })
+  const expectedText = JSON.stringify(rest.body)
+  for (const args of [{ batchId }, { receiptId }, { idempotencyKey: key }, { batchId, page: 1, pageSize: 20 }]) {
+    const result = await rpc('list_roster_import_items', args)
+    expect(result.status).toBe(200)
+    expect(rpcResult.parse(result.body).result.content).toEqual([{ type: 'text', text: expectedText }])
+    expect(rpcValue(result)).toEqual({ isError: false, body: rest.body })
+  }
+})
+it('399 transport other legacy receipt tools retain SDK field errors', async () => {
+  for (const args of [{ batchId: 1, page: 0 }, { batchId: 1, page: 1000001 }, { batchId: 1, pageSize: 0 }, { batchId: 1, pageSize: 51 }, { batchId: 1, pageSize: 2.5 }]) {
+    const result = await rpc('list_roster_import_receipts', args)
+    expect(result.status).toBe(200); expect(result.body).not.toHaveProperty('error'); expect(rpcResult.parse(result.body).result.isError).toBe(true)
+  }
+  const result = await rpc('get_roster_import_request', { batchId: 1, maxBytes: 65537 })
+  expect(result.status).toBe(200); expect(result.body).not.toHaveProperty('error'); expect(rpcResult.parse(result.body).result.isError).toBe(true)
+})
