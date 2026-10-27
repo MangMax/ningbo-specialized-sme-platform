@@ -11,7 +11,7 @@ function checkedAssessment(detail: Record<string, unknown>) {
   const assessment = object(detail.qualificationAssessment, 'qualificationAssessment')
   const { enterpriseId, asOf, ruleVersion, assessmentVersion, snapshotId, titles } = assessment
   assert(Number.isSafeInteger(enterpriseId) && (enterpriseId as number) > 0, 'enterpriseId must be a stable positive integer')
-  assert.equal(object(detail.enterprise, 'enterprise').id, enterpriseId, 'assessment must belong to the detail enterprise')
+  assert.equal(object(detail.enterprise, 'enterprise').enterpriseId, enterpriseId, 'assessment must belong to the detail enterprise')
   assert(typeof asOf === 'string' && Number.isFinite(Date.parse(asOf)), 'asOf must be a valid ISO execution time')
   assert.equal(new Date(asOf).toISOString(), asOf, 'asOf must use the canonical ISO execution time')
   assert(typeof ruleVersion === 'string' && ruleVersion.trim().length > 0, 'ruleVersion is required')

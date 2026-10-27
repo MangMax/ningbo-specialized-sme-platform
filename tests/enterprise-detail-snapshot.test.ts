@@ -23,7 +23,7 @@ function detail(asOf = '2026-10-27T12:00:00.000Z') {
     references: ['event:11'], notes: [], shadow: { legacyGroup: 'eligible', difference: null },
   }
   const titles = [title, { ...structuredClone(title), titleCode: 'specialized_sme' }, { ...structuredClone(title), titleCode: 'little_giant' }]
-  return { enterprise: { id: 7, name: '字面企业', uscc: null }, records: [{ id: 9, legacy: null }],
+  return { enterprise: { enterpriseId: 7, name: '字面企业', uscc: null }, records: [{ id: 9, legacy: null }],
     qualificationAssessment: { ...scope, snapshotId: digest(scope, titles), titles } }
 }
 
@@ -38,9 +38,9 @@ function reseal(value: ReturnType<typeof detail>) {
 
 describe('enterprise detail snapshot comparison', () => {
   it('C01 legacy strict equality preserves all fields', () => {
-    const a = { enterprise: { id: 7 }, records: [{ unknown: null }], extra: undefined }
+    const a = { enterprise: { enterpriseId: 7 }, records: [{ unknown: null }], extra: undefined }
     expect(() => assertEnterpriseDetailSnapshotEqual(a, structuredClone(a))).not.toThrow()
-    expect(() => assertEnterpriseDetailSnapshotEqual(a, { enterprise: { id: 7 }, records: [{ unknown: null }] })).toThrow()
+    expect(() => assertEnterpriseDetailSnapshotEqual(a, { enterprise: { enterpriseId: 7 }, records: [{ unknown: null }] })).toThrow()
     expect(() => assertEnterpriseDetailSnapshotEqual(a, { ...a, records: [{ unknown: '' }] })).toThrow()
   })
   it('C02 identical facts at two valid execution times compare', () => {
@@ -135,7 +135,7 @@ describe('enterprise detail snapshot comparison', () => {
       Reflect.deleteProperty(invalid.qualificationAssessment, field)
       expect(() => assertEnterpriseDetailSnapshotEqual(invalid, structuredClone(invalid))).toThrow()
     }
-    b.enterprise.id = 8
+    b.enterprise.enterpriseId = 8
     expect(() => assertEnterpriseDetailSnapshotEqual(a, b)).toThrow()
   })
   it('C29 digest binds all scope fields and complete titles', () => {
@@ -143,7 +143,7 @@ describe('enterprise detail snapshot comparison', () => {
       (v: ReturnType<typeof detail>) => { v.qualificationAssessment.asOf = '2026-10-27T12:00:01.000Z' },
       (v: ReturnType<typeof detail>) => { v.qualificationAssessment.ruleVersion = 'another-rule' },
       (v: ReturnType<typeof detail>) => { v.qualificationAssessment.assessmentVersion = 'another-assessment' },
-      (v: ReturnType<typeof detail>) => { v.enterprise.id = 8; v.qualificationAssessment.enterpriseId = 8 },
+      (v: ReturnType<typeof detail>) => { v.enterprise.enterpriseId = 8; v.qualificationAssessment.enterpriseId = 8 },
       (v: ReturnType<typeof detail>) => { v.qualificationAssessment.titles[2]!.versions.observations = 'changed' },
       (v: ReturnType<typeof detail>) => { Object.assign(v.qualificationAssessment.titles[0]!, { future: 'changed' }) },
     ]) {
