@@ -591,7 +591,7 @@ async function handler399() {
   vi.doMock('@nuxtjs/mcp-toolkit/server', () => ({ defineMcpTool: (definition: unknown) => definition }))
   const tool = (await import('../server/mcp/tools/list_roster_import_items')).default
   const dbModule = await import('@db'), receipts = await import('../server/utils/import-receipts')
-  const db = {} as NonNullable<typeof current.db>
+  const db = {} as ReturnType<typeof dbModule.useDb>
   const acquire = vi.spyOn(dbModule, 'useDb').mockReturnValue(db)
   const read = vi.spyOn(receipts, 'readImportReceipt').mockReturnValue({ batchId: 1, receiptId: null, status: 'committed', page: 1, pageSize: 20, total: 0, rows: [] })
   return { tool, db, acquire, read, restore: () => { acquire.mockRestore(); read.mockRestore() } }
