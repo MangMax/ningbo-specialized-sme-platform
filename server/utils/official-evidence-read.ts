@@ -78,6 +78,10 @@ export function officialEvidenceRpcError(body:unknown,authorized:boolean):Respon
     if(name==='get_roster_evidence' && args && typeof args==='object' && !('official' in args)) continue
     const sensitive=name==='list_roster_import_items' || args && typeof args==='object' && 'official' in args
     const status=sensitive&&!authorized?401:400
+    // Preserve the SDK's legacy field-error envelope, but only after auth. Any
+    // new/unknown own key (even undefined) must still pass the strict raw gate.
+    if(status!==401 && name==='list_roster_import_items' && args && typeof args==='object' && !Array.isArray(args)
+      && Reflect.ownKeys(args).every(key=>typeof key==='string' && ['batchId','receiptId','idempotencyKey','page','pageSize'].includes(key))) continue
     const contract=name==='get_roster_evidence'?evidenceReadSchema:name==='get_official_event'?eventReadSchema:importItemsReadSchema
     if(status!==401 && contract.safeParse(args).success) continue
     return new Response(JSON.stringify({jsonrpc:'2.0',id:typeof rpc.id==='number'||typeof rpc.id==='string'?rpc.id:null,error:{code:status===401?-32001:-32602,message:status===401?'Configured MCP token required':'Invalid exact official read arguments'}}),{status,headers:{'content-type':'application/json','cache-control':'no-store'}})

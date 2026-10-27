@@ -443,3 +443,209 @@ it.each(['legacy list', 'private snapshot', 'receipt not retained', 'event IDs']
     expect(validate(noCursor).valid).toBe(false)
   }
 })
+
+// #399 small lane: no fixture(), listener, SQLite instance or SDK transport.
+// Literal partitions come from the approved five-key compatibility boundary.
+function rpc399(args: unknown) {
+  return { jsonrpc: '2.0', id: 399, method: 'tools/call', params: { name: 'list_roster_import_items', arguments: args } }
+}
+const legacy399: { case: string; args: Record<string, unknown> }[] = [
+  { case: 'batch-defaults', args: { batchId: 1 } },
+  { case: 'receipt-defaults', args: { receiptId: 2 } },
+  { case: 'key-preserved', args: { idempotencyKey: ' x ' } },
+  { case: 'explicit-defaults', args: { batchId: 1, page: 1, pageSize: 20 } },
+  { case: 'optional-undefined', args: { batchId: 1, receiptId: undefined, page: undefined, pageSize: undefined } },
+  { case: 'empty-selector', args: {} },
+  { case: 'undefined-selector', args: { batchId: undefined } },
+  { case: 'multiple-selector', args: { batchId: 1, receiptId: 2 } },
+  { case: 'whitespace-key', args: { idempotencyKey: '   ' } },
+  { case: 'partial-paging', args: { pageSize: 20 } },
+]
+const invalidFields399: { case: string; args: Record<string, unknown> }[] = [
+  { case: 'page-zero', args: { batchId: 1, page: 0 } },
+  { case: 'page-over', args: { batchId: 1, page: 1000001 } },
+  { case: 'size-zero', args: { batchId: 1, pageSize: 0 } },
+  { case: 'size-over', args: { batchId: 1, pageSize: 51 } },
+  { case: 'size-fraction', args: { batchId: 1, pageSize: 2.5 } },
+  { case: 'page-null', args: { batchId: 1, page: null } },
+  { case: 'size-null', args: { batchId: 1, pageSize: null } },
+  { case: 'batch-null', args: { batchId: null } },
+  { case: 'receipt-null', args: { receiptId: null } },
+  { case: 'key-null', args: { idempotencyKey: null } },
+  { case: 'batch-string', args: { batchId: '1' } },
+  { case: 'receipt-boolean', args: { receiptId: true } },
+  { case: 'key-number', args: { idempotencyKey: 1 } },
+  { case: 'page-string', args: { batchId: 1, page: '1' } },
+  { case: 'size-boolean', args: { batchId: 1, pageSize: true } },
+  { case: 'batch-zero', args: { batchId: 0 } },
+  { case: 'receipt-unsafe', args: { receiptId: Number.MAX_SAFE_INTEGER + 1 } },
+  { case: 'key-empty', args: { idempotencyKey: '' } },
+  { case: 'key-over', args: { idempotencyKey: 'x'.repeat(4097) } },
+]
+it.each([...legacy399, ...invalidFields399])('399 raw legacy dispatch $case', async ({ args }) => {
+  const { officialEvidenceRpcError } = await import('../server/utils/official-evidence-read')
+  // null proves raw dispatch only, never HTTP200 or an SDK tool-error envelope.
+  expect(officialEvidenceRpcError(rpc399(args), true)).toBeNull()
+})
+it.each([
+  { case: 'missing', body: { jsonrpc: '2.0', id: 399, method: 'tools/call', params: { name: 'list_roster_import_items' } } },
+  ...[undefined, null, [], 1, 'x', true].map((args, i) => ({ case: ['undefined', 'null', 'array', 'number', 'string', 'boolean'][i], body: rpc399(args) })),
+])('399 raw malformed root $case', async ({ body }) => {
+  const { officialEvidenceRpcError } = await import('../server/utils/official-evidence-read')
+  const result = officialEvidenceRpcError(body, true)
+  expect(result?.status).toBe(400)
+  expect(await result!.json()).toEqual({ jsonrpc: '2.0', id: 399, error: { code: -32602, message: 'Invalid exact official read arguments' } })
+})
+it.each(['projection', 'source', 'itemIndex', 'oldRecordId', 'cursor', 'maxBytes', 'extra'])('399 raw own key stays strict %s', async key => {
+  const { officialEvidenceRpcError } = await import('../server/utils/official-evidence-read')
+  for (const value of [undefined, null, 'invalid']) {
+    // Invalid old paging distinguishes strict routing even for optional undefined.
+    const result = officialEvidenceRpcError(rpc399({ batchId: 1, pageSize: 51, [key]: value }), true)
+    expect(result?.status).toBe(400)
+    expect(await result!.json()).toMatchObject({ error: { code: -32602 } })
+  }
+  const optional = officialEvidenceRpcError(rpc399({ batchId: 1, [key]: undefined }), true)
+  if (key === 'extra') expect(optional?.status).toBe(400)
+  else expect(optional).toBeNull() // helper-only: undefined is not JSON wire data.
+})
+const snapshot399 = { projection: 'snapshot', source: 'private_batch', batchId: 1, itemIndex: 0, oldRecordId: 1 }
+const events399 = { projection: 'eventIds', source: 'redacted_receipt', receiptId: 2, itemIndex: 0, oldRecordId: 1 }
+const strictInvalid399: { case: string; args: Record<string, unknown> }[] = [
+  { case: 'projection-null', args: { batchId: 1, projection: null } },
+  { case: 'source-null', args: { batchId: 1, source: null } },
+  { case: 'projection-legacy', args: { batchId: 1, projection: 'legacy' } },
+  { case: 'source-default', args: { batchId: 1, source: 'default' } },
+  { case: 'source-only', args: { batchId: 1, source: 'private_batch' } },
+  { case: 'index-only', args: { batchId: 1, itemIndex: 0 } },
+  { case: 'old-id-only', args: { batchId: 1, oldRecordId: 1 } },
+  { case: 'cursor-only', args: { batchId: 1, cursor: 'x' } },
+  { case: 'budget-only', args: { batchId: 1, maxBytes: 16384 } },
+  { case: 'unknown-defined', args: { batchId: 1, extra: 1 } },
+  { case: 'unknown-undefined', args: { batchId: 1, extra: undefined } },
+  { case: 'snapshot-page', args: { ...snapshot399, page: 1 } },
+  { case: 'snapshot-size', args: { ...snapshot399, pageSize: 20 } },
+  { case: 'snapshot-cursor', args: { ...snapshot399, cursor: 'x' } },
+  { case: 'snapshot-two-selectors', args: { ...snapshot399, receiptId: 2 } },
+  { case: 'snapshot-key', args: { ...snapshot399, idempotencyKey: 'x' } },
+  { case: 'snapshot-wrong-source', args: { ...snapshot399, source: 'redacted_receipt' } },
+  { case: 'receipt-wrong-source', args: { ...events399, source: 'private_batch' } },
+  { case: 'snapshot-no-source', args: { ...snapshot399, source: undefined } },
+  { case: 'snapshot-no-index', args: { ...snapshot399, itemIndex: undefined } },
+  { case: 'snapshot-no-old-id', args: { ...snapshot399, oldRecordId: undefined } },
+  { case: 'index-negative', args: { ...events399, itemIndex: -1 } },
+  { case: 'index-over', args: { ...events399, itemIndex: Number.MAX_SAFE_INTEGER } },
+  { case: 'old-id-zero', args: { ...events399, oldRecordId: 0 } },
+  { case: 'events-page', args: { ...events399, page: 1 } },
+  { case: 'events-size-zero', args: { ...events399, pageSize: 0 } },
+  { case: 'events-size-over', args: { ...events399, pageSize: 51 } },
+  { case: 'events-size-fraction', args: { ...events399, pageSize: 2.5 } },
+  { case: 'budget-zero', args: { ...events399, maxBytes: 0 } },
+  { case: 'budget-over', args: { ...events399, maxBytes: 65537 } },
+  { case: 'cursor-empty', args: { ...events399, cursor: '' } },
+  { case: 'cursor-over', args: { ...events399, cursor: 'x'.repeat(513) } },
+]
+it.each(strictInvalid399)('399 raw strict rejection $case', async ({ args }) => {
+  const { officialEvidenceRpcError } = await import('../server/utils/official-evidence-read')
+  const result = officialEvidenceRpcError(rpc399(args), true)
+  expect(result?.status).toBe(400)
+  const body = await result!.json()
+  expect(body).toMatchObject({ jsonrpc: '2.0', id: 399, error: { code: -32602 } })
+  expect(body).not.toHaveProperty('result')
+})
+it('399 raw valid opt-in boundaries and domain cursor dispatch', async () => {
+  const { officialEvidenceRpcError } = await import('../server/utils/official-evidence-read')
+  for (const args of [snapshot399, events399, { ...snapshot399, source: 'redacted_receipt', batchId: undefined, receiptId: 2 }, { ...events399, source: 'private_batch', receiptId: undefined, batchId: 1 }, { ...events399, pageSize: 1, maxBytes: 1 }, { ...events399, pageSize: 50, maxBytes: 65536, itemIndex: Number.MAX_SAFE_INTEGER - 1, oldRecordId: Number.MAX_SAFE_INTEGER, cursor: 'x'.repeat(512) }, { ...events399, cursor: 'not-base64' }, { ...events399, cursor: Buffer.from(JSON.stringify({ source: 'redacted_receipt', sourceId: 2, itemIndex: 0, oldRecordId: 1, afterIndex: 999999 })).toString('base64url') }]) {
+    expect(officialEvidenceRpcError(rpc399(args), true)).toBeNull()
+  }
+})
+it('399 raw auth precedes legacy strict malformed and batch dispatch', async () => {
+  const { officialEvidenceRpcError } = await import('../server/utils/official-evidence-read')
+  const { resolveMcpAuth } = await import('../server/utils/mcp-auth')
+  for (const auth of [{ given: null, configured: 'synthetic-399-mcp' }, { given: 'wrong', configured: 'synthetic-399-mcp' }, { given: 'synthetic-399-mcp', configured: '' }, { given: 'synthetic-399-api', configured: 'synthetic-399-mcp' }]) {
+    expect(resolveMcpAuth(auth).writeAuthorized).toBe(false)
+    for (const args of [{ batchId: 1 }, { batchId: 1, pageSize: 51 }, {}, null, { ...events399, pageSize: 51 }]) {
+      const response = officialEvidenceRpcError(rpc399(args), resolveMcpAuth(auth).writeAuthorized)
+      expect(response?.status).toBe(401)
+      expect(await response!.json()).toEqual({ jsonrpc: '2.0', id: 399, error: { code: -32001, message: 'Configured MCP token required' } })
+    }
+  }
+  const publicRead = { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'get_roster_evidence', arguments: { id: 1, legacyIgnored: 1 } } }
+  expect(officialEvidenceRpcError([publicRead, rpc399({ batchId: 1, pageSize: 51 })], false)?.status).toBe(401)
+  const invalid = { ...publicRead, id: 2, params: { name: 'get_official_event', arguments: { eventId: 1, official: 'latest', pageSize: 51 } } }
+  expect(await officialEvidenceRpcError([rpc399({}), invalid], true)!.json()).toMatchObject({ id: 2, error: { code: -32602 } })
+  expect(await officialEvidenceRpcError([invalid, rpc399({})], true)!.json()).toMatchObject({ id: 2, error: { code: -32602 } })
+})
+it('399 raw other tools retain their original dispatch and strict opt-in', async () => {
+  const { officialEvidenceRpcError } = await import('../server/utils/official-evidence-read')
+  for (const [name, args] of [['get_roster_evidence', { id: 1, legacyIgnored: 1 }], ['get_official_event', { eventId: 1 }], ['list_roster_import_receipts', { batchId: 1, pageSize: 51 }], ['get_roster_import_request', { batchId: 1, maxBytes: 65537 }]] as const) {
+    expect(officialEvidenceRpcError({ ...rpc399(args), params: { name, arguments: args } }, false)).toBeNull()
+  }
+  for (const [name, args] of [['get_roster_evidence', { id: 1, official: 'latest', extra: 1 }], ['get_official_event', { eventId: 1, official: 'latest', pageSize: 51 }]] as const) {
+    expect(officialEvidenceRpcError({ ...rpc399(args), params: { name, arguments: args } }, true)?.status).toBe(400)
+  }
+})
+
+async function handler399() {
+  // Identity definition adapter only; production handler, schema, error class and
+  // importReceiptMcpResult are real. This is not toolkit/SDK transport evidence.
+  vi.doMock('@nuxtjs/mcp-toolkit/server', () => ({ defineMcpTool: (definition: unknown) => definition }))
+  const tool = (await import('../server/mcp/tools/list_roster_import_items')).default
+  const dbModule = await import('@db'), receipts = await import('../server/utils/import-receipts')
+  const db = {} as NonNullable<typeof current.db>
+  const acquire = vi.spyOn(dbModule, 'useDb').mockReturnValue(db)
+  const read = vi.spyOn(receipts, 'readImportReceipt').mockReturnValue({ batchId: 1, receiptId: null, status: 'committed', page: 1, pageSize: 20, total: 0, rows: [] })
+  return { tool, db, acquire, read, restore: () => { acquire.mockRestore(); read.mockRestore() } }
+}
+it.each([
+  { case: 'empty', args: {}, message: 'Supply exactly one batchId, idempotencyKey or receiptId' },
+  { case: 'undefined-selector', args: { batchId: undefined }, message: 'Supply exactly one batchId, idempotencyKey or receiptId' },
+  { case: 'batch-receipt', args: { batchId: 1, receiptId: 2 }, message: 'Supply exactly one batchId, idempotencyKey or receiptId' },
+  { case: 'batch-key', args: { batchId: 1, idempotencyKey: 'x' }, message: 'Supply exactly one batchId, idempotencyKey or receiptId' },
+  { case: 'receipt-key', args: { receiptId: 2, idempotencyKey: 'x' }, message: 'Supply exactly one batchId, idempotencyKey or receiptId' },
+  { case: 'whitespace', args: { idempotencyKey: '   ' }, message: 'Invalid idempotencyKey' },
+  { case: 'unknown-undefined', args: { batchId: 1, extra: undefined }, message: 'Unsupported query field' },
+])('399 handler original selector error before DB $case', async ({ args, message }) => {
+  const f = await handler399()
+  try {
+    expect(await f.tool.handler(args as never, {} as never)).toEqual({ isError: true, structuredContent: { error: { code: 'invalid_query', message } } })
+    expect(f.acquire).not.toHaveBeenCalled(); expect(f.read).not.toHaveBeenCalled()
+  } finally { f.restore() }
+})
+it.each([...invalidFields399, ...strictInvalid399])('399 handler full schema rejects before DB $case', async ({ args }) => {
+  const f = await handler399()
+  try {
+    expect(await f.tool.handler(args as never, {} as never)).toMatchObject({ isError: true, structuredContent: { error: { code: 'invalid_query' } } })
+    expect(f.acquire).not.toHaveBeenCalled(); expect(f.read).not.toHaveBeenCalled()
+  } finally { f.restore() }
+})
+it('399 handler preserves accepted selectors undefined normalization and content bytes', async () => {
+  const f = await handler399()
+  try {
+    for (const [args, expected] of [
+      [{ batchId: 1 }, { batchId: 1 }], [{ receiptId: 2 }, { receiptId: 2 }], [{ idempotencyKey: ' x ' }, { idempotencyKey: ' x ' }],
+      [{ batchId: 1, page: 1, pageSize: 20 }, { batchId: 1, page: 1, pageSize: 20 }],
+      [{ batchId: 1, receiptId: undefined, idempotencyKey: undefined, page: undefined, pageSize: undefined, projection: undefined, source: undefined, itemIndex: undefined, oldRecordId: undefined, cursor: undefined, maxBytes: undefined }, { batchId: 1 }],
+      [snapshot399, snapshot399], [events399, events399],
+      [{ batchId: Number.MAX_SAFE_INTEGER, page: 1000000, pageSize: 50 }, { batchId: Number.MAX_SAFE_INTEGER, page: 1000000, pageSize: 50 }],
+    ] as const) {
+      f.acquire.mockClear(); f.read.mockClear()
+      expect(await f.tool.handler(args as never, {} as never)).toEqual({ content: [{ type: 'text', text: '{"batchId":1,"receiptId":null,"status":"committed","page":1,"pageSize":20,"total":0,"rows":[]}' }] })
+      expect(f.acquire).toHaveBeenCalledOnce(); expect(f.read).toHaveBeenCalledExactlyOnceWith(f.db, 'items', expected)
+    }
+    const { ImportReceiptError } = await import('../server/utils/import-receipts')
+    f.read.mockImplementationOnce(() => { throw new ImportReceiptError(404, 'not_found', 'Import batch or receipt not found') })
+    expect(await f.tool.handler({ batchId: 1 } as never, {} as never)).toEqual({ isError: true, structuredContent: { error: { code: 'not_found', message: 'Import batch or receipt not found' } } })
+  } finally { f.restore() }
+})
+it.each(invalidFields399)('399 SDK field schema rejects legacy $case', async ({ args }) => {
+  const { importItemsReadShape } = await import('../server/utils/official-evidence-read')
+  const { objectFromShape, safeParseAsync } = await import('@modelcontextprotocol/sdk/server/zod-compat.js')
+  // Actual installed SDK schema adapter only. SDK server ordering is inspected
+  // statically; HTTP/status/result.isError remains a separate UNRUN lane.
+  expect((await safeParseAsync(objectFromShape(importItemsReadShape), args)).success).toBe(false)
+})
+it('399 SDK raw shape accepts selector combinations for handler validation', async () => {
+  const { importItemsReadShape } = await import('../server/utils/official-evidence-read')
+  const { objectFromShape, safeParseAsync } = await import('@modelcontextprotocol/sdk/server/zod-compat.js')
+  for (const args of [{}, { batchId: 1, receiptId: 2 }, { idempotencyKey: '   ' }]) expect((await safeParseAsync(objectFromShape(importItemsReadShape), args)).success).toBe(true)
+})
