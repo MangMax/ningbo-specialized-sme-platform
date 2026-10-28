@@ -1809,3 +1809,125 @@ REST `/api/platform/batches` 与 MCP `submit_platform_batch` 提交后按稳定 
 ## 平台业务记录投影扩展（#244）
 
 统一 import 现支持 `sourceKind=platform_archive` 与 `payload.platformRecordObservations:[{relationId}]`（每批 1..100，严格校验）；预检读取原观察并冻结源指纹，commit 同事务投影，旧 ID/引用保持。REST/MCP、回执、错误与共享 DTO 的完整增量契约见 [platform-business-record-contract.md](platform-business-record-contract.md)。本层不接入 UI 或候选消费者。
+
+## #407 增量：候选字段、提交时资格快照与精确历史读回
+
+本节补充既有接口，不改前文业务数、审批结论、周期判定、权限和原默认投影。
+共享资格规则仍为 `current-roster-116-v8`；当前输出版本为 `enterprise-qualification-407-v1`。
+`enterprise-qualification-406-v1` 是 #406 发布时版本，历史说明及已保存快照按原版本保留。
+本节是当前实现契约，不是未来消费者或运行验收的GREEN声明。
+
+### 阶段与字段语义
+
+1. announcement preflight 的 `preflight.qualificationDiagnostics`，以及正式事件更正 preflight 的
+   `qualificationDiagnostics`，是候选字段解释。更正使用原事件应用 patch 后的候选，不先入库再回滚。
+   它们独立于 `qualificationReadback.stage=before` 的当前事实评估；proposed 不等于 after。
+   预检可沿旧路径保存batch/receipt记账，不改enterprise/event/evidence业务事实。
+2. 唯一已有主体的 before 通过共享 reader 返回完整三称号；新候选为 not_retained/new_target，
+   不虚构新ID/T2。多主体明确 multiple_targets/target:null，不选第一个；未知主体不猜。
+3. commit 的 actual `stage=after` 在原事务中全部业务更改成功后、旧 summary/receipt JSON 保存前捕获。
+   目标来自实际成功执行结果，不来自 before、候选ID或数组首项。每阶段共享 assessment reader 最多一次；
+   同主体多个事件/称号仍一次，多主体零次，actual after保留真实enterpriseIds。
+4. 当前详情重新评当前存储事实。历史 capture 固定当时内容/时点/版本，不能因今天详情改变而回填。
+   旧合法载荷、省略值/null兼容；新增解释不新增资格硬失败。原严格patch枚举、revision/file/source CAS、
+   planHash、审计和真实业务失败整批回滚保留；附加读回不可用不吞核心业务错误或伪造成功after。
+
+review 的 year 是原认定年，decidedYear 是结论年，batchSeq 是原批次，reviewOutcome 是该次结论；
+不把同一通知的新认定年/新批次借给复核。字段缺口保留 unknown/blank/invalid 与原 inputState：
+omitted/null/provided，不将原行 null、blank 和未留存合并。显式非法 outcome 枚举仍沿旧校验拒绝。
+award 的 decidedYear为空时原year fallback、未知批次兼容沿旧规则；fieldGaps只解释原字段，
+不反馈原group、旧gaps/status或周期策略。nurture/maintain不套review必填；
+纯nurture excluded表示仅培育、不构成称号，不是注销/终止，也不把§6.6的none当作确定终止。
+
+published-name原行capture、对应confirmed和正式事件语义是独立维度。
+捕获名称即使非空、对应即使confirmed，也不能补原年/批次/结论年/结论或代替正式事件更正；
+旧未知原行、captured+null、captured+blank分别保留。来源漂移沿原拒绝/回滚，不以额外读回绕过保护。
+
+### 完整共享 snapshot 与不可变回放
+
+captured readback 为 `{stage:'before'|'after',status:'captured',target:{enterpriseId},assessment}`。
+assessment保留enterpriseId、asOf、ruleVersion、assessmentVersion、snapshotId及完整titles；
+innovative_sme、specialized_sme、little_giant各一份，含各分维度结果、原事件、出处及输入版本。
+`scope={enterpriseId,asOf,ruleVersion,assessmentVersion}`，
+`snapshotId=SHA256(JSON.stringify([scope,titles]))`；不能裁成单称号后仍称完整T2。
+摘要不是来源真实性、人工作业确认或第二个权威版本表。HTTP/MCP详情没有新增任意历史asOf查询参数。
+
+同键announcement commit沿保存capture回放；correction沿原request+planHash幂等commit回放，
+reader0、不重复审计、不重算今天T2或覆写旧asOf/versions。
+correction公开API与qualification历史投影按**当前**既有redactor检查原保存完整内容；
+若当前秘密配置使键/值需要转换，该slot为unavailable/read_unavailable，不带partial/raw、不重mint共享snapshot digest，
+不覆盖原存储。内部core未传finalizer的结果不等于公开安全投影；仅可信core生成的精确typed槽可免于二次脱敏扩张，
+任意raw同名key仍走原脱敏。秘密集合复用既有context/runtime/env/DB解析，不新增凭据解析或权限。
+该覆盖面不能外推为所有announcement写transport或未来调用方均已完成安全改造。
+
+`not_retained` 表示当时未保留/范围未建立（如legacy_receipt、新主体或多主体），不等同于无资格；
+`unavailable` 表示已选择的附加结果不能完整安全交付，不等于业务提交失败。
+未知字段、未留存历史、来源读不可用与response_limit分别表达，不把它们合成成功空值。
+
+### 历史候选 diagnostics
+
+仅实际成功record_event可将同一plan执行位置的qualificationCandidate.diagnostics存入
+`summary.qualificationDiagnosticsByItem`。内部binding包含itemIndex、实际ref/enterpriseId/recordId、原candidateRef，
+并保存 `SHA256(JSON.stringify([binding,diagnostics]))`。实际record ID不用于反猜原records/events下标；
+两个record、多event、同主体多称号逐项绑定。digest只检一致性，不认证能同时重写数据与digest的外部DB writer。
+同key不重算/覆盖，既有receipt ledger复制同一summary；内部map不重复出现在公共counts/projection summary。
+
+公开 `qualificationDiagnostics` 为以下closed availability之一：
+
+```text
+{status:'captured',items:[{ref,eventType,values,fieldGaps},...]}
+{status:'not_retained',reason:'legacy_receipt'}
+{status:'unavailable',reason:'read_unavailable'}
+```
+
+items只来自该选中成功项的原候选；真实留存且原helper没有诊断时才可为空数组。
+values保留原null/blank和原helper表达的omitted inputState，不从当前事件/T2/batch.preflight重建。
+旧summary没留存就是not_retained；已存但类型、绑定、digest或当前脱敏检查失败就是unavailable，无items/raw。
+诊断不是after事实，不可决定group或反向更正事件；一个slot不可用不裁掉另一份安全完整assessment。
+
+### HTTP/MCP 精确 selector、预算与兼容
+
+既有 `GET /api/roster/import/receipts/items` 与 MCP `list_roster_import_items` 增加
+`projection=qualification`，仍沿既有敏感回执token保护，不新开匿名读面或endpoint。
+参数只允许以下精确互斥source/ID，加必需itemIndex和可选maxBytes：
+
+- source=private_batch + batchId；receiptId不允许。
+- source=redacted_receipt + receiptId；batchId不允许，不取latest receipt、不回退batch summary。
+
+只选committed announcement的成功record_event；更正batch不借此白名单，历史沿原correction commit回放。
+qualification不要求且拒收oldRecordId；也拒收idempotencyKey/page/pageSize/cursor。
+HTTP接受规范整数字符串；MCP按其字段类型及同一组合schema验证，重复/blank/boolean/未知字段不静默丢弃。
+默认items分页和旧snapshot/eventIds的oldRecordId、cursor、merge folds、pageSize与错误语义保留。
+
+输出为 `{source,batchId,receiptId,itemIndex,target,qualificationReadback,qualificationDiagnostics}`。
+两个预算不得混用：每次附加capture封套本身上限65536 UTF8 bytes；历史读回则对**两个slot和全部metadata的整个response**计量。
+qualification的maxBytes默认65536，可传整数1..65536（1是合法小预算，不是非法selector）；
+旧snapshot/eventIds默认仍为16384。
+SQL先定位一个source/item并检查字段类型与长度；assessment与诊断各自有界载入（独立payload<=65536，
+诊断candidateRef<=32字节、digest64字节及固定数字/状态metadata），不将整份summary/item_results/request_body无界载入JS。
+已存payload无法完整安全载入时相应slot unavailable；已完成finalization的完整公开response超maxBytes为413，
+返回实际requiredBytes且无partial，不以保存capture已过65536门槛代替最终预算。
+
+| qualification历史读 HTTP / domain错误 | 语义 |
+| --- | --- |
+| 400 invalid_query | 非法字段类型、范围或source/ID/不适用字段组合 |
+| 401 unauthorized | 沿既有回执读面鉴权，不新增权限规则 |
+| 404 not_found | qualification合法精确source或item不存在；旧merge的missing等代码不重写 |
+| 409 selector_mismatch | 非成功record_event、非announcement/commit或所选item主体ID非法，不取第一项冒充；保存capture/diagnostics自身绑定失效按相应slot unavailable处理 |
+| 413 response_limit + requiredBytes | 完整公开封套超maxBytes，无partial；旧分支field_limit等保持 |
+| 500 internal_error | 无法完成精确读取；错误不带原SQL/凭据/原始文本 |
+
+MCP沿既有tool content和ImportReceiptError的isError/structuredContent包装；原RPC严格参数/鉴权门禁不变，
+不把工具错误变成成功空结果。OpenAPI的qualification enum/独立response oneOf及条件默认值在既有items route metadata中描述。
+
+### 当前范围与证据上限
+
+实现仅覆盖本片announcement/correction预检与提交附加输出、精确历史qualification投影、共享详情fieldGaps及metadata。
+没有第二权威表、DB迁移或新事务写通道；不将历史snapshot回灌当前资格。
+#408–#411的查询/导出/列表差异/年度等消费者未在本片统一切换或统一验收。
+
+#407已有分阶段合成SQLite/原handler/本地HTTP的focused回执；各PASS、FAIL、STOP、UNKNOWN保留其实际source SHA、
+时点及guard到达范围，包括旧nurture oracle失败和父单literal修正后的独立补项。新代码不能拼接旧回执声称整套GREEN。
+本轮文档/详情回归准备不运行任何测试；新增406详情控制、语义编译及当前候选三文件联合运行均UNRUN，父另grant。
+真实SDK/Nitro/native worker、browser/390px、full/CI/生产没有本轮fresh验收。
+既有#406/PR414的设置/type/build及有限SDK/浏览器证据只保留原范围，不能转作#407新验收。

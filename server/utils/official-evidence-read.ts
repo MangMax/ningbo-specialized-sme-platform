@@ -13,12 +13,15 @@ export const eventReadSchema = z.strictObject(eventReadShape).refine(v => v.offi
 export const importItemsReadShape = {
   batchId: id.optional(), receiptId: id.optional(), idempotencyKey: z.string().min(1).max(4096).optional(),
   page: id.max(1000000).optional(), pageSize: id.max(50).optional(),
-  projection: z.enum(['snapshot','eventIds']).optional(), source: z.enum(['private_batch','redacted_receipt']).optional(),
+  projection: z.enum(['snapshot','eventIds','qualification']).optional(), source: z.enum(['private_batch','redacted_receipt']).optional(),
   itemIndex: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER - 1).optional(), oldRecordId: id.optional(),
   cursor: z.string().min(1).max(512).optional(), maxBytes: id.max(65536).optional(),
 }
 export const importItemsReadSchema = z.strictObject(importItemsReadShape).superRefine((v,ctx) => {
-  const valid = v.projection === undefined
+  const valid = v.projection === 'qualification'
+    ? v.itemIndex!==undefined && [v.idempotencyKey,v.page,v.pageSize,v.oldRecordId,v.cursor].every(x=>x===undefined)
+      && (v.source==='private_batch' ? v.batchId!==undefined && v.receiptId===undefined : v.source==='redacted_receipt' && v.receiptId!==undefined && v.batchId===undefined)
+    : v.projection === undefined
     ? [v.batchId,v.receiptId,v.idempotencyKey].filter(x=>x!==undefined).length===1 && [v.source,v.itemIndex,v.oldRecordId,v.cursor,v.maxBytes].every(x=>x===undefined)
     : v.itemIndex!==undefined && v.oldRecordId!==undefined && v.idempotencyKey===undefined && v.page===undefined
       && (v.source==='private_batch' ? v.batchId!==undefined && v.receiptId===undefined : v.source==='redacted_receipt' && v.receiptId!==undefined && v.batchId===undefined)

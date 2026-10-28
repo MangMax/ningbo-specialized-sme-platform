@@ -7,6 +7,8 @@ import { computeTitleLifecycle } from '../../lib/roster/lifecycle'
 import { advanceOfficialEventRevision } from './roster-event-version'
 import { ensureBatchRow } from './roster-batch-ledger'
 import { refreshDerivedFileParts } from './file-parts'
+import { CURRENT_TITLES, diagnoseOfficialEventFields, readCurrentQualificationAssessment } from '../../lib/roster/current-qualification'
+import type { RosterImportBeforeQualificationReadback, RosterImportAfterQualificationReadback } from '../../lib/roster-import-client'
 
 type Db = BetterSQLite3Database<typeof schema>
 type Tx = Parameters<Parameters<Db['transaction']>[0]>[0]
@@ -99,23 +101,137 @@ function boundBatch(db: Executor, request: EventCorrectionRequest) {
   if (batch && (batch.sourceKind !== 'event_correction' || batch.sourceIdentity !== request.sourceIdentity || (batch.preflightResult as { requestHash?: string } | null)?.requestHash !== hash(request))) fail(409, 'idempotency_conflict', 'Idempotency key belongs to another request')
   return batch
 }
-export function preflightEventCorrections(db: Db, request: EventCorrectionRequest) {
+
+type QualificationReadback = RosterImportBeforeQualificationReadback | RosterImportAfterQualificationReadback
+type QualificationUnavailable = Extract<QualificationReadback, { status: 'unavailable' }>
+type QualificationPhase = QualificationReadback['stage']
+/** Internal transport predicate, never a JSON request field or part of a plan hash. */
+export type CorrectionQualificationSafety = (value: unknown) => boolean
+const readbackProtocol = 'event-correction-407-v1'
+const trustedReadbacks = new WeakMap<object, { safety: CorrectionQualificationSafety; value: unknown }>()
+function isObject(value: unknown): value is Record<string, unknown> { return value !== null && typeof value === 'object' && !Array.isArray(value) }
+function positiveId(value: unknown): value is number { return typeof value === 'number' && Number.isSafeInteger(value) && value > 0 && value < Number.MAX_SAFE_INTEGER }
+function exactKeys(value: Record<string, unknown>, keys: readonly string[]) { return Object.keys(value).length === keys.length && keys.every(key => Object.hasOwn(value, key)) }
+/** Protocol integrity only; no eligibility or missing-field rule is reproduced here. */
+function completeSnapshot(value: unknown, enterpriseId: number): boolean {
+  if (!isObject(value) || !exactKeys(value, ['enterpriseId', 'asOf', 'ruleVersion', 'assessmentVersion', 'snapshotId', 'titles'])
+    || value.enterpriseId !== enterpriseId || typeof value.asOf !== 'string' || !Number.isFinite(Date.parse(value.asOf))
+    || typeof value.ruleVersion !== 'string' || !value.ruleVersion || typeof value.assessmentVersion !== 'string' || !value.assessmentVersion
+    || typeof value.snapshotId !== 'string' || !/^[a-f0-9]{64}$/.test(value.snapshotId) || !Array.isArray(value.titles) || value.titles.length !== CURRENT_TITLES.length) return false
+  const codes = new Set<unknown>()
+  for (const title of value.titles) {
+    if (!isObject(title) || !CURRENT_TITLES.some(code => code === title.titleCode) || codes.has(title.titleCode) || !isObject(title.versions)) return false
+    codes.add(title.titleCode)
+    for (const key of ['facts', 'sources', 'decisions', 'observations']) {
+      const digest = title.versions[key]
+      if (typeof digest !== 'string' || !/^[a-f0-9]{64}$/.test(digest)) return false
+    }
+    if (typeof title.group !== 'string' || !['eligible', 'pending', 'excluded'].includes(title.group)
+      || !['officialQualification', 'subject', 'region', 'platform', 'correspondence', 'completeness', 'shadow'].every(key => isObject(title[key]))
+      || !['cycles', 'evidence', 'sourceVersions', 'references', 'notes'].every(key => Array.isArray(title[key]))) return false
+  }
+  const scope = { enterpriseId: value.enterpriseId, asOf: value.asOf, ruleVersion: value.ruleVersion, assessmentVersion: value.assessmentVersion }
+  return value.snapshotId === hash([scope, value.titles])
+}
+function unavailable(stage: QualificationPhase, target: { enterpriseId: number }): QualificationUnavailable {
+  return stage === 'before' ? { stage, status: 'unavailable', reason: 'read_unavailable', target } : { stage, status: 'unavailable', reason: 'read_unavailable', target }
+}
+/** No predicate means an internal, unredacted core result, not permission to bypass transport. */
+function protectCapture<T extends object>(capture: T, stage: QualificationPhase, target: { enterpriseId: number }, safety?: CorrectionQualificationSafety): T | QualificationUnavailable {
+  try {
+    if (!isObject(capture) || !completeSnapshot(capture.assessment, target.enterpriseId) || safety && !safety(capture)) return unavailable(stage, target)
+    const requiredBytes = Buffer.byteLength(JSON.stringify(capture), 'utf8')
+    if (requiredBytes > 65536) return stage === 'before'
+      ? { stage, status: 'unavailable', reason: 'response_limit', target, requiredBytes }
+      : { stage, status: 'unavailable', reason: 'response_limit', target, requiredBytes }
+    return capture
+  } catch { return unavailable(stage, target) }
+}
+function readQualification(db: Db, targets: readonly { enterpriseId: number }[], stage: QualificationPhase, safety?: CorrectionQualificationSafety): QualificationReadback {
+  const enterpriseIds = [...new Set(targets.map(target => target.enterpriseId))].sort((a, b) => a - b)
+  if (!enterpriseIds.length) return stage === 'before' ? legacyReadback(stage) : { stage, status: 'not_retained', reason: 'no_targets', target: null }
+  if (enterpriseIds.length !== 1) return stage === 'before'
+    ? { stage, status: 'not_retained', reason: 'multiple_targets', target: null, enterpriseIds }
+    : { stage, status: 'not_retained', reason: 'multiple_targets', target: null, enterpriseIds }
+  const target = { enterpriseId: enterpriseIds[0]! }
+  try {
+    const asOf = Date.now()
+    const assessment = readCurrentQualificationAssessment((db as Db & { $client: import('better-sqlite3').Database }).$client, target.enterpriseId, asOf)
+    const capture: Extract<QualificationReadback, { status: 'captured' }> = stage === 'before'
+      ? { stage, status: 'captured', target, assessment }
+      : { stage, status: 'captured', target, assessment }
+    return protectCapture(capture, stage, target, safety)
+  } catch { return unavailable(stage, target) }
+}
+function legacyReadback(stage: QualificationPhase): QualificationReadback {
+  return stage === 'before' ? { stage, status: 'not_retained', reason: 'scope_not_established', target: null }
+    : { stage, status: 'not_retained', reason: 'legacy_receipt', target: null }
+}
+function storedReadback(value: unknown, stage: QualificationPhase, safety?: CorrectionQualificationSafety): unknown {
+  if (!isObject(value) || value.stage !== stage) return legacyReadback(stage)
+  if (value.status === 'captured' && exactKeys(value, ['stage', 'status', 'target', 'assessment']) && isObject(value.target)
+    && exactKeys(value.target, ['enterpriseId']) && positiveId(value.target.enterpriseId)) {
+    return protectCapture(value, stage, { enterpriseId: value.target.enterpriseId }, safety)
+  }
+  if (value.status === 'not_retained' && value.target === null) {
+    if ((value.reason === 'scope_not_established' && stage === 'before' || (value.reason === 'legacy_receipt' || value.reason === 'no_targets') && stage === 'after')
+      && exactKeys(value, ['stage', 'status', 'target', 'reason'])) return value
+    if (value.reason === 'multiple_targets' && exactKeys(value, ['stage', 'status', 'target', 'reason', 'enterpriseIds'])
+      && Array.isArray(value.enterpriseIds) && value.enterpriseIds.length > 1 && value.enterpriseIds.every(positiveId)) return value
+  }
+  if (value.status === 'unavailable' && isObject(value.target) && exactKeys(value.target, ['enterpriseId']) && positiveId(value.target.enterpriseId)) {
+    if (value.reason === 'read_unavailable' && exactKeys(value, ['stage', 'status', 'target', 'reason'])) return value
+    if (value.reason === 'response_limit' && exactKeys(value, ['stage', 'status', 'target', 'reason', 'requiredBytes']) && positiveId(value.requiredBytes)) return value
+  }
+  return legacyReadback(stage)
+}
+function responseWithReadback<T extends object>(legacy: T, value: unknown, safety?: CorrectionQualificationSafety) {
+  const result = { ...legacy, qualificationReadback: value }
+  if (safety) trustedReadbacks.set(result, { safety, value })
+  return result
+}
+/** Only this core's exact response slot sealed for this request's finalizer may bypass a second pass. */
+export function finalizedCorrectionReadback(result: unknown, safety: CorrectionQualificationSafety) {
+  if (!isObject(result)) return undefined
+  const entry = trustedReadbacks.get(result)
+  if (!entry || entry.safety !== safety || result.qualificationReadback !== entry.value) return undefined
+  return { legacy: Object.fromEntries(Object.entries(result).filter(([key]) => key !== 'qualificationReadback')), value: entry.value }
+}
+function replayReadback(result: Record<string, unknown>, stage: QualificationPhase, safety?: CorrectionQualificationSafety) {
+  const legacy = Object.fromEntries(Object.entries(result).filter(([key]) => key !== 'qualificationReadbackProtocol' && key !== 'qualificationReadback'))
+  return responseWithReadback(legacy, storedReadback(result.qualificationReadback, stage, safety), safety)
+}
+
+export function preflightEventCorrections(db: Db, request: EventCorrectionRequest, safety?: CorrectionQualificationSafety) {
   return db.transaction(tx => {
     const old = boundBatch(tx, request)
+    if (old && isObject(old.preflightResult) && old.preflightResult.qualificationReadbackProtocol === readbackProtocol) {
+      const result = replayReadback(old.preflightResult, 'before', safety)
+      return responseWithReadback({ ...result, batchStatus: old.status }, result.qualificationReadback, safety)
+    }
+    if (old && isObject(old.preflightResult) && !Object.hasOwn(old.preflightResult, 'qualificationReadback')) {
+      return responseWithReadback({ ...old.preflightResult, batchStatus: old.status }, legacyReadback('before'), safety)
+    }
     if (old?.preflightResult) return { ...(old.preflightResult as object), batchStatus: old.status }
     const plan = buildPlan(tx, request)
     const batch = ensureBatchRow(db, { idempotencyKey: request.idempotencyKey, sourceIdentity: request.sourceIdentity, sourceKind: 'event_correction' })
-    const result = { batchId: batch.id, batchStatus: 'preflight', ...plan }
-    tx.update(schema.importBatch).set({ preflightResult: result }).where(eq(schema.importBatch.id, batch.id)).run()
-    return result
+    const qualificationDiagnostics = plan.targets.map(target => ({ ref: `event:${target.eventId}`, eventType: target.after.eventType, ...diagnoseOfficialEventFields(target.after) }))
+    const result = { batchId: batch.id, batchStatus: 'preflight', ...plan, qualificationDiagnostics }
+    const qualificationReadback = readQualification(db, plan.targets, 'before', safety)
+    tx.update(schema.importBatch).set({ preflightResult: { ...result, qualificationReadback, qualificationReadbackProtocol: readbackProtocol } }).where(eq(schema.importBatch.id, batch.id)).run()
+    return responseWithReadback(result, qualificationReadback, safety)
   }, { behavior: 'immediate' })
 }
-export function commitEventCorrections(db: Db, request: EventCorrectionRequest, planHash: string) {
+export function commitEventCorrections(db: Db, request: EventCorrectionRequest, planHash: string, safety?: CorrectionQualificationSafety) {
   return db.transaction(tx => {
     const batch = boundBatch(tx, request)
     const stored = batch?.preflightResult as ReturnType<typeof buildPlan> | null
     if (!batch || !stored || stored.planHash !== planHash) fail(409, 'plan_mismatch', 'Matching bound preflight required')
-    if (batch.status === 'committed') return batch.summary
+    if (batch.status === 'committed') {
+      if (isObject(batch.summary) && batch.summary.qualificationReadbackProtocol === readbackProtocol) return replayReadback(batch.summary, 'after', safety)
+      if (isObject(batch.summary) && !Object.hasOwn(batch.summary, 'qualificationReadback')) return responseWithReadback(batch.summary, legacyReadback('after'), safety)
+      return batch.summary
+    }
     const plan = buildPlan(tx, request)
     if (plan.planHash !== planHash) fail(409, 'plan_mismatch', 'Event/source/impact changed after preflight')
     const correctedAt = new Date().toISOString()
@@ -127,7 +243,8 @@ export function commitEventCorrections(db: Db, request: EventCorrectionRequest, 
     }
     refreshDerivedFileParts(tx, plan.targets.flatMap(target => target.evidence.map(row => row.sourceFile)))
     const receipt = { batchId: batch.id, planHash, eventIds: plan.targets.map(t => t.eventId), impact: plan.impact, committedAt: correctedAt }
-    tx.update(schema.importBatch).set({ status: 'committed', summary: receipt, itemResults: plan.targets.map(t => ({ eventId: t.eventId, revision: t.after.revision })), committedAt: correctedAt, error: null }).where(eq(schema.importBatch.id, batch.id)).run()
-    return receipt
+    const qualificationReadback = readQualification(db, plan.targets, 'after', safety)
+    tx.update(schema.importBatch).set({ status: 'committed', summary: { ...receipt, qualificationReadback, qualificationReadbackProtocol: readbackProtocol }, itemResults: plan.targets.map(t => ({ eventId: t.eventId, revision: t.after.revision })), committedAt: correctedAt, error: null }).where(eq(schema.importBatch.id, batch.id)).run()
+    return responseWithReadback(receipt, qualificationReadback, safety)
   }, { behavior: 'immediate' })
 }

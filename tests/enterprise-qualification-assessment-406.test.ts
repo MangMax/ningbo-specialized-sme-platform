@@ -340,3 +340,78 @@ it('does not claim changed sources when correspondence revalidation is incomplet
   expect(value.correspondence.message).not.toContain('来源变化')
   expect(value.group).toBe('eligible')
 })
+
+// #407 additive detail controls. All preceding #406 test bytes remain frozen.
+import { createHash } from 'node:crypto'
+import { diagnoseOfficialEventFields, readCurrentQualificationAssessment } from '../lib/roster/current-qualification'
+
+it('field_gaps_review_raw_states_407', () => {
+  // Pure field helper assertion; the shared file fixture is not qualification evidence here.
+  expect(diagnoseOfficialEventFields({ eventType: 'review', year: null, decidedYear: '  ', reviewOutcome: null })).toEqual({
+    values: { year: null, decidedYear: '  ', batchSeq: null, reviewOutcome: null },
+    fieldGaps: [
+      { field: 'year', valueState: 'unknown', inputState: 'null' },
+      { field: 'decidedYear', valueState: 'blank', inputState: 'provided' },
+      { field: 'batchSeq', valueState: 'unknown', inputState: 'omitted' },
+      { field: 'reviewOutcome', valueState: 'unknown', inputState: 'null' },
+    ],
+  })
+})
+
+it('field_gaps_award_keeps_legacy_fallback_407', () => {
+  const { enterprise, event } = formalEnterprise()
+  db.update(schema.recordEvent).set({ decidedYear: null, batchSeq: null }).where(eq(schema.recordEvent.id, event.id)).run()
+  const value = assessment(enterprise.id)
+  expect(value).toMatchObject({ group: 'eligible', cycles: [{ originYear: 2025, batchSeq: null, precision: 'year' }],
+    evidence: [{ eventId: event.id, eventType: 'award', year: 2025, decidedYear: null, batchSeq: null, reviewOutcome: null }] })
+  expect(value.completeness.fieldGaps).toEqual([
+    { eventId: event.id, field: 'decidedYear', valueState: 'unknown', inputState: 'null' },
+    { eventId: event.id, field: 'batchSeq', valueState: 'unknown', inputState: 'null' },
+  ])
+  expect(readCurrentCandidate(sqlite, enterprise.id, 'innovative_sme', 2026, AS_OF).group).toBe('eligible')
+})
+
+it('field_gaps_nonreview_keeps_groups_407', () => {
+  const { enterprise, event } = formalEnterprise()
+  db.update(schema.recordEvent).set({ eventType: 'nurture', decidedYear: null, batchSeq: null }).where(eq(schema.recordEvent.id, event.id)).run()
+  const nurture = assessment(enterprise.id)
+  expect(nurture).toMatchObject({ group: 'excluded', officialQualification: { group: 'excluded' }, subject: { status: 'not_established' } })
+  expect(nurture.completeness.fieldGaps).toEqual([])
+  expect(readCurrentCandidate(sqlite, enterprise.id, 'innovative_sme', 2026, AS_OF).group).toBe('excluded')
+  db.update(schema.recordEvent).set({ eventType: 'maintain' }).where(eq(schema.recordEvent.id, event.id)).run()
+  const maintain = assessment(enterprise.id)
+  expect(maintain).toMatchObject({ group: 'pending', subject: { status: 'not_established' } })
+  expect(maintain.completeness.fieldGaps).toEqual([])
+  expect(readCurrentCandidate(sqlite, enterprise.id, 'innovative_sme', 2026, AS_OF).group).toBe('pending')
+})
+
+it('detail_snapshot_scope_and_field_gaps_407', () => {
+  const { enterprise, event } = formalEnterprise()
+  db.update(schema.recordEvent).set({ eventType: 'review', year: null, decidedYear: null, batchSeq: null, reviewOutcome: null }).where(eq(schema.recordEvent.id, event.id)).run()
+  const before = sqlite.prepare('select total_changes() as n').get()
+  sqlite.pragma('query_only = ON')
+  // Both are real API/MCP-shared function seams, not a started transport or historical-asOf API.
+  const shared = readCurrentQualificationAssessment(sqlite, enterprise.id, AS_OF)
+  const detail = getRosterEnterpriseDetail(db, enterprise.id, AS_OF)!
+  const scope = { enterpriseId: enterprise.id, asOf: '2026-06-01T00:00:00.000Z', ruleVersion: 'current-roster-116-v8', assessmentVersion: 'enterprise-qualification-407-v1' }
+  expect(detail.qualificationAssessment).toEqual(shared)
+  expect(shared).toMatchObject(scope)
+  expect(shared.titles.map(title => title.titleCode).sort()).toEqual(['innovative_sme', 'little_giant', 'specialized_sme'])
+  expect(shared.snapshotId).toMatch(/^[a-f0-9]{64}$/)
+  expect(shared.snapshotId).toBe(createHash('sha256').update(JSON.stringify([scope, shared.titles])).digest('hex'))
+  for (const title of shared.titles) expect(title.versions).toEqual({
+    facts: expect.stringMatching(/^[a-f0-9]{64}$/), sources: expect.stringMatching(/^[a-f0-9]{64}$/),
+    decisions: expect.stringMatching(/^[a-f0-9]{64}$/), observations: expect.stringMatching(/^[a-f0-9]{64}$/),
+  })
+  const review = shared.titles.find(title => title.titleCode === 'innovative_sme')
+  if (!review) throw new Error('Synthetic innovative assessment required')
+  expect(review.group).toBe('pending')
+  expect(review.completeness.fieldGaps).toEqual([
+    { eventId: event.id, field: 'year', valueState: 'unknown', inputState: 'null' },
+    { eventId: event.id, field: 'decidedYear', valueState: 'unknown', inputState: 'null' },
+    { eventId: event.id, field: 'batchSeq', valueState: 'unknown', inputState: 'null' },
+    { eventId: event.id, field: 'reviewOutcome', valueState: 'unknown', inputState: 'null' },
+  ])
+  expect(readCurrentCandidate(sqlite, enterprise.id, 'innovative_sme', 2026, AS_OF).group).toBe('pending')
+  expect(sqlite.prepare('select total_changes() as n').get()).toEqual(before)
+})

@@ -1,5 +1,8 @@
 # 企业详情共享资格评估（#406）
 
+> 版本说明：以下原 #406 条款、`enterprise-qualification-406-v1` 与回执按发布时历史保留。
+> 当前 #407 增量使用 `enterprise-qualification-407-v1`，见文末；历史 PASS 不替代当前候选验收。
+
 `GET /api/roster/enterprises/:id` 与 MCP `get_enterprise_detail` 继续使用
 `getRosterEnterpriseDetail`，兼容新增 `qualificationAssessment`。原 `enterprise`、
 `records.lifecycle`、`recognitions`、`differences`、`titleAssessments` 和平台原行含义不变。
@@ -75,3 +78,68 @@ runner 为 `pnpm exec vitest run tests/enterprise-qualification-assessment-406.t
 - 已核实迁入资格使用原验证条件独立计算，后续迁出只决定宁波纳入范围；正式资格说明采用实际生效依据，不再并列“缺少资格依据”。旧地域分支和 legacyGroup 保留。
 - 对应需重新核实可能来自预算未完成，因此汇总消息不声明确定来源变化。
 - 测试种子只复制为可变数组以适配 Drizzle，不改种子值。父新增六个 focused 回归；原25条断言保留。原类型检查exit2、R1三P2及父两次误路径读取exit2均保留。
+
+## #407 当前增量：字段解释、提交快照与历史读回
+
+当前共享封套版本为 `enterprise-qualification-407-v1`，规则版本仍为
+`current-roster-116-v8`。`fieldGaps` 是原事件字段的解释增量，不回写或改变原
+`group`、`completeness.gaps/status`、周期恢复/终止和未知批次保护。
+review 的 `year` 是原认定年，`decidedYear` 是结论年，`batchSeq` 是原批次；不借本通知新批次猜填。
+缺口按 `year/decidedYear/batchSeq/reviewOutcome` 点名，`valueState` 区分 unknown/blank/invalid，
+原 helper 的 `inputState` 区分 omitted/null/provided。原候选 blank 不 trim 成 null；已入库字段为 null 时如实解释 null。
+award 的原 year fallback、未知批次兼容沿旧算法；记录字段未知可有 fieldGaps，但不套 review 的资格失败条件。
+nurture/maintain 不套 review 缺口；纯培育的 excluded 表示不构成称号，不是主体注销/终止，
+也不将 `none` 当作确定终止。它们各自原 group 继续由现有 reader 判定。
+
+详情仍是**当前存储事实**在一个读事务/执行时点的评估，不是可指定历史数据库回放的接口。
+完整 snapshot 包含三份称号 assessment（innovative_sme、specialized_sme、little_giant），不能裁掉称号或维度。
+其身份算法为 `SHA256(JSON.stringify([scope, titles]))`，其中 scope 按
+`{enterpriseId, asOf, ruleVersion, assessmentVersion}` 构造；`snapshotId` 与每称号四个输入版本摘要可独立核对，
+不代表原件真实性或人工确认。保存的旧 snapshot 保留当时的版本/时点/内容，不能升级版本后冒充原捕获。
+
+| 阶段 | #407 输出的含义 |
+| --- | --- |
+| announcement preflight / 正式事件 correction preflight | `qualificationDiagnostics` 是原候选或 patch 应用后的候选字段解释；独立的 `qualificationReadback.stage=before` 只读当前已存在的唯一主体，proposed 不是 after |
+| announcement commit / 正式事件 correction commit | 全部真实业务更改成功后、既有 summary/receipt JSON 保存前，同事务捕获 actual `stage=after`，不使用候选新ID或 before 代替实际结果 |
+| 当前详情 | 重新评当前事实，可能与旧 receipt 不同；不反填历史 |
+| qualification 历史投影 / correction 同键回放 | 读原保存的 capture，保留原 asOf/versions/digest；不再调用当前 assessment reader |
+
+每个预检/提交阶段，唯一实际主体最多调用一次共享 assessment reader，返回完整三称号；多主体零次，
+明确 multiple_targets/target:null，不选第一个。新候选未有主体为 new_target，不虚构 enterpriseId/T2。
+原合法批量、旧载荷/null/省略值兼容和真实业务失败回滚语义保留；来源、revision、file/plan CAS 与审计沿旧路径。
+published-name 原行 capture、名称 known 与否、来源 confirmed 对应、正式事件语义更正是不同事实维度，不能互相填充。
+
+精确历史读使用既有 `/api/roster/import/receipts/items?projection=qualification` / MCP
+`list_roster_import_items`：只选 announcement 成功 record_event，source=private_batch+batchId 或
+redacted_receipt+receiptId 互斥，itemIndex 必需，拒收 oldRecordId/page/pageSize/cursor/idempotencyKey。
+更正历史沿原 request+planHash 的幂等 commit，不借 announcement receipt 白名单。
+当前源代码中的具体封套、独立预算与错误见[契约的 #407 增量](roster-lifecycle-contract.md)。
+
+历史 `qualificationDiagnostics` 是 availability 封套：captured/items（只在确实保存且无诊断时才为空）、
+not_retained/legacy_receipt，或 unavailable/read_unavailable。
+生产端把同一 plan 执行位置的原候选与成功结果绑定，内部 `summary.qualificationDiagnosticsByItem`
+保存 itemIndex、实际 ref/enterpriseId/recordId、原 candidateRef、诊断及 binding+诊断的独立 digest；
+不以新record ID猜原输入下标。原 null/blank/omitted 状态不从当前事件/T2/preflight 重建；
+旧 summary 没留存就是未留存。内部 map 不重复泄漏到公共 counts summary。
+
+capture 封套本身 <=65536 UTF8 bytes，与**整个历史 response**的 maxBytes 是两个预算。
+后者含两个 slot 和全部 metadata，qualification 默认65536、允许1..65536，超出为413 response_limit+requiredBytes，无partial。
+SQL 先精确定位、类型/长度限制，再有界载入；当前 redactor 若改变一个 slot 的任意内容/键，该 slot 整体 unavailable，
+不修改原摘要、不重算共享 T2 digest，也不影响另一份安全完整 slot。
+correction 公开回放在当前 redactor 上重新检查保存 capture，reader0且不覆盖原存储。
+新增安全 finalization 的具体覆盖面是 correction API 与 qualification 历史投影；
+不能外推为所有 announcement 写 transport 或未来消费者均已完成安全改造。
+
+## #407 验证状态与范围
+
+原 #406 历史回执与所有 FAIL/STOP/UNKNOWN 保留。当前406测试文件的静态 inventory 是20个声明、32个
+literal展开行；这不是新的 runtime discovery，也不回改前文历史25/25。此次仅追加4个字段/详情控制，
+旧测试全文前缀保留；新增测试 runtime/语义编译均 UNRUN。
+helper 控制只证明字段解释；真实内存SQLite详情控制经 `getRosterEnterpriseDetail` 与共享 snapshot函数接缝，
+不冒充已启动的 HTTP/MCP 服务。具体新用例与源SHA由本轮交接记录。
+
+#407 已有分阶段合成SQLite/公开handler/本地HTTP focused 回执分别绑定各自源码；
+后续生产增量不能继承成当前三文件整套GREEN。真实SDK/Nitro/native worker、browser/390px、
+相关完整测试/typecheck/build/full/CI及生产没有本次 fresh验收，父另grant。
+#406/PR414 的继承设置、类型/构建及有限SDK/浏览器证据保留原范围，不外推为#407验收。
+#408–#411 的查询/导出/列表差异/年度等消费者没有在本片统一切换或统一验收。
