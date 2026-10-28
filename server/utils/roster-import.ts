@@ -32,6 +32,7 @@ import { isPageCapable } from '../../lib/roster/evidence-page'
 import { normalizeName, normalizeUscc } from '../../lib/domain'
 import { duplicateTwinKey } from '../../lib/roster/duplicate-merge'
 import { missingUsccSourceFields, usccFormatVerdict } from '../../lib/roster/uscc-research'
+import { diagnoseOfficialEventFields, readCurrentQualificationAssessment } from '../../lib/roster/current-qualification'
 import { PLATFORM_INTERFACE_VALUES, TITLE_ORDER, type PlatformInterface } from '../../lib/labels'
 import type {
   DuplicateNameCandidate,
@@ -47,6 +48,9 @@ import type {
   RosterImportPlatformQuery,
   RosterImportRelation,
   RosterImportPreflight,
+  RosterImportQualificationDiagnostic,
+  RosterImportHistoricalQualificationDiagnostics,
+  RosterImportAfterQualificationReadback,
   RosterImportReplayResponse,
   RosterImportRequest,
   RosterImportSummary,
@@ -62,6 +66,16 @@ import { recordImportReceipt } from './import-receipt-ledger'
 import { refreshDerivedFileParts } from './file-parts'
 
 type Db = BetterSQLite3Database<typeof schema>
+/** Internal persistence only; the public summary keeps its existing counts/projection shape. */
+type StoredImportDiagnosticBinding = {
+  itemIndex: number; ref: string; enterpriseId: number; recordId: number; candidateRef: string
+  diagnostics: RosterImportHistoricalQualificationDiagnostics
+  digest: string
+}
+type StoredImportSummary = RosterImportSummary & {
+  qualificationReadback?: RosterImportAfterQualificationReadback
+  qualificationDiagnosticsByItem?: Record<string, StoredImportDiagnosticBinding>
+}
 /** 事务内外都能用的执行器（`tx` 与本连接在 select/insert/update/delete 上同形）。 */
 type Tx = Parameters<Parameters<Db['transaction']>[0]>[0]
 export type Executor = Db | Tx
@@ -917,6 +931,8 @@ export function platformAliasEvidenceMismatch(
 /** 计划中的一项动作。 */
 interface PlannedItem {
   item: RosterImportItemResult
+  /** Frozen by the same identity resolution as the write closure; never re-guessed on readback. */
+  qualificationCandidate?: { ref: string; targetKey: string; enterpriseId: number | null; diagnostics: RosterImportQualificationDiagnostic[] }
   /** 预检的影响归类。`note` = **只记录、不计入任何影响计数**（如重名候选）。 */
   action: 'add' | 'update' | 'skip' | 'note'
   /** 是否落在待核状态（`pending` / `needs_review` / 未知枚举）。 */
@@ -1791,6 +1807,12 @@ function planAnnouncementRecord(
       existing ? `record:${existingRecord?.id ?? ref}` : ref,
       { enterpriseId: existing?.id ?? null, titleCode, source },
     ),
+    qualificationCandidate: {
+      ref,
+      targetKey: existing ? `enterprise:${existing.id}` : `new:${identityKeyOf({ name, uscc: identityUscc })}`,
+      enterpriseId: existing?.id ?? null,
+      diagnostics: source === 'jxj' ? events.map((event, eventIndex) => ({ ref: `${ref}#${eventIndex}`, eventType: event.eventType, ...diagnoseOfficialEventFields(event) })) : [],
+    },
     // 两条判据**都要**：不复用 ⇒ add；复用且有出处指针收敛 ⇒ update（预检如实计入 §8.5）；
     // 复用且无收敛 ⇒ skip。
     action: !reused ? 'add' : repoints > 0 ? 'update' : 'skip',
@@ -4299,6 +4321,36 @@ class ExecStageFailure extends Error {
   }
 }
 
+/** Ancillary before/current readback: at most one complete shared assessment, never a write gate.
+ * Other payload commands may affect additional subjects; this first slice does not certify them.
+ */
+function readPreflightQualification(db: Db, request: RosterImportRequest, plan: Plan): Pick<RosterImportPreflight, 'qualificationDiagnostics' | 'qualificationReadback'> {
+  const candidates = plan.items.flatMap(item => item.qualificationCandidate ? [item.qualificationCandidate] : [])
+  if (!candidates.some(candidate => candidate.diagnostics.length)) return {}
+  const qualificationDiagnostics = candidates.flatMap(candidate => candidate.diagnostics)
+  if (plan.conflicts.length) return { qualificationDiagnostics }
+  if (Object.entries(request.payload).some(([key, value]) => key !== 'announcement' && key !== 'officialEvidencePlanHash' && value != null && (!Array.isArray(value) || value.length > 0))) {
+    return { qualificationDiagnostics, qualificationReadback: { stage: 'before', status: 'not_retained', target: null, reason: 'scope_not_established' } }
+  }
+  const targets = new Map(candidates.map(candidate => [candidate.targetKey, candidate.enterpriseId]))
+  if (targets.size > 1) {
+    const enterpriseIds = [...new Set([...targets.values()].filter((id): id is number => id !== null))].sort((a, b) => a - b)
+    return { qualificationDiagnostics, qualificationReadback: { stage: 'before', status: 'not_retained', reason: 'multiple_targets', target: null, enterpriseIds } }
+  }
+  const enterpriseId = [...targets.values()][0]!
+  if (enterpriseId === null) return { qualificationDiagnostics, qualificationReadback: { stage: 'before', status: 'not_retained', reason: 'new_target', target: null } }
+  const target = { enterpriseId }
+  try {
+    const assessment = readCurrentQualificationAssessment((db as Db & { $client: import('better-sqlite3').Database }).$client, enterpriseId, Date.now())
+    const qualificationReadback = { stage: 'before' as const, status: 'captured' as const, target, assessment }
+    const requiredBytes = Buffer.byteLength(JSON.stringify(qualificationReadback), 'utf8')
+    return { qualificationDiagnostics, qualificationReadback: requiredBytes <= 65536 ? qualificationReadback
+      : { stage: 'before', status: 'unavailable', reason: 'response_limit', target, requiredBytes } }
+  } catch {
+    return { qualificationDiagnostics, qualificationReadback: { stage: 'before', status: 'unavailable', reason: 'read_unavailable', target } }
+  }
+}
+
 /**
  * 只读预检（契约 §8.1）：**不写业务数据**，只算影响并落一条 `status='preflight'` 的批次。
  * 同一幂等键重复调用：复用既有批次行、刷新它的预检结果。
@@ -4335,7 +4387,7 @@ function preflightRosterImportCore(
   }
 
   const plan = planRosterImport(db, request, { batchId: batch.id, pageCountErrors, filesDir })
-  const preflight = { ...summarizePlan(plan), batchStatus: batch.status }
+  const preflight = { ...summarizePlan(plan), ...readPreflightQualification(db, request, plan), batchStatus: batch.status }
   db.update(schema.importBatch)
     .set({ preflightResult: preflight })
     .where(eq(schema.importBatch.id, batch.id))
@@ -4346,6 +4398,58 @@ function preflightRosterImportCore(
 // ---------------------------------------------------------------------------
 // 提交
 // ---------------------------------------------------------------------------
+
+/** Only successful execution results may identify an after target. Candidate IDs are not used.
+ * Other command families remain explicitly outside this announcement-only capture slice.
+ */
+function captureAnnouncementDiagnostics(plan: Plan, items: readonly RosterImportItemResult[]): Record<string, StoredImportDiagnosticBinding> {
+  const retained: Record<string, StoredImportDiagnosticBinding> = {}
+  // The execution loop emits exactly one result per planned item, in this order.
+  // Final record IDs/refs cannot recover the request index (two inputs may reuse one record).
+  items.forEach((item, itemIndex) => {
+    const candidate = plan.items[itemIndex]?.qualificationCandidate
+    const enterpriseId = item.detail?.enterpriseId, recordId = item.detail?.recordId
+    if (!item.ok || item.kind !== 'record_event' || !candidate
+      || typeof enterpriseId !== 'number' || !Number.isSafeInteger(enterpriseId) || enterpriseId <= 0
+      || typeof recordId !== 'number' || !Number.isSafeInteger(recordId) || recordId <= 0 || item.ref !== `record:${recordId}`
+      || candidate.enterpriseId !== null && candidate.enterpriseId !== enterpriseId
+      || !/^record:(0|[1-9]\d*)$/.test(candidate.ref)
+      || candidate.diagnostics.some((diagnostic, eventIndex) => diagnostic.ref !== `${candidate.ref}#${eventIndex}`)) return
+    const binding = { itemIndex, ref: item.ref, enterpriseId, recordId, candidateRef: candidate.ref }
+    const diagnostics: RosterImportHistoricalQualificationDiagnostics = { status: 'captured', items: candidate.diagnostics }
+    retained[String(itemIndex)] = { ...binding, diagnostics,
+      digest: createHash('sha256').update(JSON.stringify([binding, diagnostics])).digest('hex') }
+  })
+  return retained
+}
+
+function captureAnnouncementQualification(db: Db, request: RosterImportRequest, items: readonly RosterImportItemResult[]): RosterImportAfterQualificationReadback {
+  if (Object.entries(request.payload).some(([key, value]) => key !== 'announcement' && key !== 'officialEvidencePlanHash' && value != null && (!Array.isArray(value) || value.length > 0))) {
+    return { stage: 'after', status: 'not_retained', reason: 'scope_not_established', target: null }
+  }
+  const records = request.payload.announcement?.records
+  if (!Array.isArray(records)) return { stage: 'after', status: 'not_retained', reason: 'scope_not_established', target: null }
+  if (!records.length) return { stage: 'after', status: 'not_retained', reason: 'no_targets', target: null }
+  const executed = items.filter(item => item.ok && item.kind === 'record_event')
+  const ids = executed.map(item => item.detail?.enterpriseId)
+  if (executed.length !== records.length || ids.some(id => typeof id !== 'number' || !Number.isSafeInteger(id) || id <= 0)) {
+    return { stage: 'after', status: 'not_retained', reason: 'scope_not_established', target: null }
+  }
+  const enterpriseIds = [...new Set(ids as number[])].sort((a, b) => a - b)
+  if (enterpriseIds.length > 1) return { stage: 'after', status: 'not_retained', reason: 'multiple_targets', target: null, enterpriseIds }
+  const enterpriseId = enterpriseIds[0]!
+  const target = { enterpriseId }
+  try {
+    if (!findEnterpriseById(db, enterpriseId)) return { stage: 'after', status: 'unavailable', reason: 'read_unavailable', target }
+    const asOf = Date.now()
+    const assessment = readCurrentQualificationAssessment((db as Db & { $client: import('better-sqlite3').Database }).$client, enterpriseId, asOf)
+    const capture = { stage: 'after' as const, status: 'captured' as const, target, assessment }
+    const requiredBytes = Buffer.byteLength(JSON.stringify(capture), 'utf8')
+    return requiredBytes <= 65536 ? capture : { stage: 'after', status: 'unavailable', reason: 'response_limit', target, requiredBytes }
+  } catch {
+    return { stage: 'after', status: 'unavailable', reason: 'read_unavailable', target }
+  }
+}
 
 /**
  * 事务提交（契约 §8.2）。
@@ -4360,7 +4464,7 @@ function commitRosterImportCore(
   request: RosterImportRequest,
   pageCountErrors: readonly RosterImportItemResult[] = [],
   filesDir?: string,
-): { batchId: number; status: 'committed' | 'failed'; summary: RosterImportSummary; items: RosterImportItemResult[]; error: string | null } {
+): { batchId: number; status: 'committed' | 'failed'; summary: StoredImportSummary; items: RosterImportItemResult[]; error: string | null; qualificationReadback?: RosterImportAfterQualificationReadback } {
   const batch = ensureBatchRow(db, request)
 
   if (batch.status === 'committed') {
@@ -4369,7 +4473,12 @@ function commitRosterImportCore(
     // 否则调用方拿到的是 `undefined`，把它当数字用就会静默算错。
     const summary = readSummaryOf(batch.summary) ?? { written: 0, skipped: 0, failed: 0, evidenceRepointed: 0 }
     const items = publicRosterImportItems((batch.itemResults as RosterImportItemResult[] | null) ?? [], batch.id)
-    return { batchId: batch.id, status: 'committed', summary, items, error: null }
+    const storedCapture = isObject(batch.summary) && isObject(batch.summary.qualificationReadback) && batch.summary.qualificationReadback.stage === 'after'
+      ? batch.summary.qualificationReadback as unknown as RosterImportAfterQualificationReadback : undefined
+    const qualificationReadback = batch.sourceKind === 'announcement'
+      ? storedCapture ?? { stage: 'after' as const, status: 'not_retained' as const, reason: 'legacy_receipt' as const, target: null }
+      : undefined
+    return { batchId: batch.id, status: 'committed', summary, items, error: null, ...(qualificationReadback ? { qualificationReadback } : {}) }
   }
 
   const plan = planRosterImport(db, request, { batchId: batch.id, pageCountErrors, filesDir })
@@ -4455,7 +4564,12 @@ function commitRosterImportCore(
     }
   }
 
-  const summary = summarizeCommit(plan, items)
+  const summary: StoredImportSummary = summarizeCommit(plan, items)
+  // This is inside recordImportReceipt's business transaction, after every write closure
+  // succeeded and before either the batch or durable receipt JSON is saved.
+  const qualificationReadback = request.sourceKind === 'announcement' ? captureAnnouncementQualification(db, request, items) : undefined
+  if (qualificationReadback) summary.qualificationReadback = qualificationReadback
+  if (request.sourceKind === 'announcement') summary.qualificationDiagnosticsByItem = captureAnnouncementDiagnostics(plan, items)
   db.update(schema.importBatch)
     .set({
       status: 'committed',
@@ -4467,7 +4581,7 @@ function commitRosterImportCore(
     })
     .where(eq(schema.importBatch.id, batch.id))
     .run()
-  return { batchId: batch.id, status: 'committed', summary, items: publicRosterImportItems(items, batch.id), error: null }
+  return { batchId: batch.id, status: 'committed', summary, items: publicRosterImportItems(items, batch.id), error: null, ...(qualificationReadback ? { qualificationReadback } : {}) }
 }
 
 /** Keep replay snapshots in the batch ledger, but expose only caller-facing item details. */
@@ -4610,12 +4724,16 @@ export function preflightRosterImport(db: Db, request: RosterImportRequest, page
   return recordImportReceipt(db, 'preflight', request, () => preflightRosterImportCore(db, request, pageCountErrors, context.filesDir), context)
 }
 export function commitRosterImport(db: Db, request: RosterImportRequest, pageCountErrors: readonly RosterImportItemResult[] = [], options: import('../../lib/logging').LogContext & { deferCandidateTasks?: boolean; filesDir?: string } = {}) {
-  return recordImportReceipt(db, 'commit', request, () => db.transaction(() => {
+  const result = recordImportReceipt(db, 'commit', request, () => db.transaction(() => {
     const result = commitRosterImportCore(db, request, pageCountErrors, options.filesDir)
     const candidateTaskIds = result.status === 'committed'
       ? enqueueArchivedCandidates(db, request.payload.platformQueries ?? [], '', options.deferCandidateTasks, options) : []
     return { ...result, candidateTaskIds }
   }), options)
+  // The ledger has saved its immutable internal summary. Expose the capture only once,
+  // at the response root; duplicating it in the public summary would double its byte budget.
+  const { qualificationReadback: _storedCapture, qualificationDiagnosticsByItem: _storedDiagnostics, ...summary } = result.summary
+  return { ...result, summary }
 }
 export function replayRosterImport(db: Db, request: RosterImportRequest, context: import('../../lib/logging').LogContext = {}) {
   return recordImportReceipt(db, 'replay', request, () => replayRosterImportCore(db, request), context)

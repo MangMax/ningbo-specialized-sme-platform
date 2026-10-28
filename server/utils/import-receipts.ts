@@ -4,6 +4,10 @@ import { importItemsReadSchema, officialReadQuery, type ImportItemsRead } from '
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import type * as schema from '../../db/schema'
 import { importReceiptRedactor } from './import-receipt-redaction'
+import { createHash } from 'node:crypto'
+import { isDeepStrictEqual } from 'node:util'
+import { CURRENT_TITLES } from '../../lib/roster/current-titles'
+import type { RosterImportHistoricalQualificationDiagnostics } from '../../lib/roster-import-client'
 
 type Db = BetterSQLite3Database<typeof schema>
 export type ImportReceiptAction = 'get' | 'items' | 'history' | 'request'
@@ -47,11 +51,165 @@ export function readImportReceipt(db: Db, action: ImportReceiptAction, args: Rec
     const parsed=importItemsReadSchema.safeParse(officialReadQuery(args))
     if(!parsed.success) return invalid('Invalid exact merge snapshot selector')
     const selector = parsed.data
+    if(selector.projection==='qualification') {
+      try { return db.transaction(()=>readQualificationProjection(db,selector)) }
+      catch(error) {if(error instanceof ImportReceiptError) throw error; throw new ImportReceiptError(500,'internal_error','Exact qualification read failed')}
+    }
     try { return db.transaction(()=>readMergeSnapshotProjection(db,selector)) }
     catch(error) {if(error instanceof ImportReceiptError) throw error; throw new ImportReceiptError(500,'internal_error','Exact snapshot read failed')}
   }
   const redact = importReceiptRedactor(db)
   return db.transaction(() => redact(readImportReceiptSnapshot(db, action, args)))
+}
+
+function qualificationObject(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+}
+function qualificationId(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0
+}
+function qualificationKeys(value: Record<string, unknown>, keys: readonly string[]) {
+  return Object.keys(value).length === keys.length && keys.every(key => Object.hasOwn(value, key))
+}
+/** Validate the saved protocol, never recompute qualification or mint a new snapshot identity. */
+function retainedQualificationSnapshot(value: unknown, enterpriseId: number): boolean {
+  if (!qualificationObject(value) || !qualificationKeys(value, ['enterpriseId','asOf','ruleVersion','assessmentVersion','snapshotId','titles'])
+    || value.enterpriseId !== enterpriseId || typeof value.asOf !== 'string' || !Number.isFinite(Date.parse(value.asOf))
+    || typeof value.ruleVersion !== 'string' || !value.ruleVersion || typeof value.assessmentVersion !== 'string' || !value.assessmentVersion
+    || typeof value.snapshotId !== 'string' || !/^[a-f0-9]{64}$/.test(value.snapshotId)
+    || !Array.isArray(value.titles) || value.titles.length !== CURRENT_TITLES.length) return false
+  const codes = new Set<unknown>()
+  for (const title of value.titles) {
+    if (!qualificationObject(title) || !CURRENT_TITLES.some(code => code === title.titleCode) || codes.has(title.titleCode) || !qualificationObject(title.versions)) return false
+    codes.add(title.titleCode)
+    for (const key of ['facts','sources','decisions','observations']) {
+      const digest = title.versions[key]
+      if (typeof digest !== 'string' || !/^[a-f0-9]{64}$/.test(digest)) return false
+    }
+    if (typeof title.group !== 'string' || !['eligible','pending','excluded'].includes(title.group)
+      || !['officialQualification','subject','region','platform','correspondence','completeness','shadow'].every(key => qualificationObject(title[key]))
+      || !['cycles','evidence','sourceVersions','references','notes'].every(key => Array.isArray(title[key]))) return false
+  }
+  const scope = { enterpriseId: value.enterpriseId, asOf: value.asOf, ruleVersion: value.ruleVersion, assessmentVersion: value.assessmentVersion }
+  return value.snapshotId === createHash('sha256').update(JSON.stringify([scope, value.titles])).digest('hex')
+}
+/** Only the exact server-owned summary slot is eligible; arbitrary item detail/raw stays legacy. */
+function retainedQualificationReadback(value: unknown, enterpriseId: number, redact: ReturnType<typeof importReceiptRedactor>): Record<string, unknown> {
+  const unavailable = { stage: 'after', status: 'unavailable', reason: 'read_unavailable', target: { enterpriseId } }
+  if (!qualificationObject(value) || value.stage !== 'after') return unavailable
+  if (value.status === 'captured') {
+    if (!qualificationKeys(value, ['stage','status','target','assessment']) || !qualificationObject(value.target)
+      || !qualificationKeys(value.target, ['enterpriseId']) || value.target.enterpriseId !== enterpriseId
+      || !retainedQualificationSnapshot(value.assessment, enterpriseId)) return unavailable
+    const redacted = redact(value)
+    // Current secrets may change since capture. No partial/raw fallback or replacement digest.
+    if (!isDeepStrictEqual(value, redacted) || JSON.stringify(value) !== JSON.stringify(redacted)) return unavailable
+    return value
+  }
+  if (value.status === 'not_retained' && value.target === null) {
+    if (typeof value.reason === 'string' && ['legacy_receipt','no_targets','scope_not_established'].includes(value.reason)
+      && qualificationKeys(value, ['stage','status','reason','target'])) return value
+    if (value.reason === 'multiple_targets' && qualificationKeys(value, ['stage','status','reason','target','enterpriseIds'])
+      && Array.isArray(value.enterpriseIds) && value.enterpriseIds.length > 1 && value.enterpriseIds.every(qualificationId)
+      && new Set(value.enterpriseIds).size === value.enterpriseIds.length && value.enterpriseIds.includes(enterpriseId)) return value
+  }
+  if (value.status === 'unavailable' && qualificationObject(value.target) && qualificationKeys(value.target, ['enterpriseId']) && value.target.enterpriseId === enterpriseId) {
+    if (value.reason === 'read_unavailable' && qualificationKeys(value, ['stage','status','reason','target'])) return value
+    if (value.reason === 'response_limit' && qualificationKeys(value, ['stage','status','reason','target','requiredBytes']) && qualificationId(value.requiredBytes)) return value
+  }
+  return unavailable
+}
+const historicalDiagnosticValue = z.union([z.number().int().min(-Number.MAX_SAFE_INTEGER).max(Number.MAX_SAFE_INTEGER), z.string(), z.null()])
+const historicalDiagnosticSchema = z.strictObject({
+  ref: z.string().max(64).regex(/^record:(0|[1-9]\d*)#(0|[1-9]\d*)$/),
+  eventType: z.enum(['award','review','nurture','maintain']),
+  values: z.strictObject({ year: historicalDiagnosticValue, decidedYear: historicalDiagnosticValue, batchSeq: historicalDiagnosticValue, reviewOutcome: historicalDiagnosticValue }),
+  fieldGaps: z.array(z.strictObject({ field: z.enum(['year','decidedYear','batchSeq','reviewOutcome']), valueState: z.enum(['unknown','blank','invalid']), inputState: z.enum(['omitted','null','provided']) })).max(4)
+    .refine(gaps => new Set(gaps.map(gap => gap.field)).size === gaps.length),
+})
+const historicalDiagnosticsSchema = z.discriminatedUnion('status', [
+  z.strictObject({ status: z.literal('captured'), items: z.array(historicalDiagnosticSchema) }),
+  z.strictObject({ status: z.literal('not_retained'), reason: z.literal('legacy_receipt') }),
+  z.strictObject({ status: z.literal('unavailable'), reason: z.literal('read_unavailable') }),
+])
+function retainedQualificationDiagnostics(value: unknown, binding: { itemIndex: number; ref: string; enterpriseId: number; recordId: number; candidateRef: string }, digest: string, redact: ReturnType<typeof importReceiptRedactor>): RosterImportHistoricalQualificationDiagnostics {
+  const unavailable = { status: 'unavailable' as const, reason: 'read_unavailable' as const }
+  if (!/^record:(0|[1-9]\d*)$/.test(binding.candidateRef) || !Number.isSafeInteger(Number(binding.candidateRef.slice(7))) || !/^[a-f0-9]{64}$/.test(digest)) return unavailable
+  const parsed = historicalDiagnosticsSchema.safeParse(value)
+  if (!parsed.success || JSON.stringify(value) !== JSON.stringify(parsed.data)) return unavailable
+  if (parsed.data.status === 'captured' && parsed.data.items.some((diagnostic, eventIndex) => diagnostic.ref !== `${binding.candidateRef}#${eventIndex}`)) return unavailable
+  if (digest !== createHash('sha256').update(JSON.stringify([binding, value])).digest('hex')) return unavailable
+  if (parsed.data.status === 'captured') {
+    const redacted = redact(value)
+    if (!isDeepStrictEqual(value, redacted) || JSON.stringify(value) !== JSON.stringify(redacted)) return unavailable
+  }
+  return parsed.data
+}
+/** One exact source/item; all raw JSON and length/type gates stay inside SQLite. */
+function readQualificationProjection(db: Db, args: ImportItemsRead) {
+  const source = args.source!, sourceId = (source === 'private_batch' ? args.batchId : args.receiptId)!, itemIndex = args.itemIndex!
+  const maxBytes = args.maxBytes ?? 65536
+  const sourceQuery = source === 'private_batch'
+    ? sql`SELECT b.id AS batch_id,NULL AS receipt_id,b.status,b.status AS batch_status,b.source_kind,'commit' AS operation,b.item_results,b.summary FROM import_batch b WHERE b.id=${sourceId}`
+    : sql`SELECT b.id AS batch_id,r.id AS receipt_id,r.status,b.status AS batch_status,b.source_kind,r.operation,r.item_results,r.summary FROM import_receipt r JOIN import_batch b ON b.id=r.batch_id WHERE r.id=${sourceId}`
+  const itemPath = `$[${itemIndex}]`
+  const diagnosticPath = `$.qualificationDiagnosticsByItem."${itemIndex}"`
+  const row = db.get<{ batchId: number; receiptId: number | null; itemType: string | null; validSource: number; validItem: number; enterpriseId: number | null; recordId: number | null; recordBound: number; captureMissing: number; payload: string | null; diagnosticsMissing: number; diagnosticsBound: number; candidateRef: string | null; diagnosticsDigest: string | null; diagnosticsPayload: string | null }>(sql`
+    WITH source_row AS (${sourceQuery}), normalized AS (
+      SELECT *,CASE WHEN json_valid(item_results) THEN item_results ELSE 'null' END AS items,
+        CASE WHEN json_valid(summary) THEN summary ELSE 'false' END AS saved_summary FROM source_row
+    ), selected AS (
+      SELECT *,json_type(items,${itemPath}) AS item_type,
+        CASE WHEN json_type(items,${itemPath})='object' THEN json_extract(items,${itemPath}) ELSE '{}' END AS item,
+        json_type(saved_summary,'$.qualificationReadback') AS capture_type,
+        CASE WHEN json_type(saved_summary,'$.qualificationReadback')='object' THEN json_extract(saved_summary,'$.qualificationReadback') ELSE NULL END AS capture,
+        json_type(saved_summary,'$.qualificationDiagnosticsByItem') AS diagnostics_type,
+        CASE WHEN json_type(saved_summary,${diagnosticPath})='object' THEN json_extract(saved_summary,${diagnosticPath}) ELSE '{}' END AS diagnostic_entry FROM normalized
+    ) SELECT batch_id AS batchId,receipt_id AS receiptId,item_type AS itemType,
+      coalesce(status='committed' AND batch_status='committed' AND operation='commit' AND source_kind='announcement',0) AS validSource,
+      coalesce(item_type='object' AND json_type(item,'$.ok')='true' AND json_type(item,'$.kind')='text' AND json_extract(item,'$.kind')='record_event'
+        AND json_type(item,'$.detail.enterpriseId')='integer' AND json_extract(item,'$.detail.enterpriseId') BETWEEN 1 AND 9007199254740991,0) AS validItem,
+      CASE WHEN json_type(item,'$.detail.enterpriseId')='integer' AND json_extract(item,'$.detail.enterpriseId') BETWEEN 1 AND 9007199254740991 THEN json_extract(item,'$.detail.enterpriseId') ELSE NULL END AS enterpriseId,
+      CASE WHEN json_type(item,'$.detail.recordId')='integer' AND json_extract(item,'$.detail.recordId') BETWEEN 1 AND 9007199254740991 THEN json_extract(item,'$.detail.recordId') ELSE NULL END AS recordId,
+      coalesce(json_type(item,'$.detail.recordId')='integer' AND json_extract(item,'$.detail.recordId') BETWEEN 1 AND 9007199254740991
+        AND json_type(item,'$.ref')='text' AND json_extract(item,'$.ref')='record:'||json_extract(item,'$.detail.recordId'),0) AS recordBound,
+      coalesce((summary IS NULL OR json_type(saved_summary)='null' OR json_type(saved_summary)='object' AND (capture_type IS NULL OR capture_type='null')),0) AS captureMissing,
+      CASE WHEN capture_type='object' AND length(CAST(capture AS BLOB))<=65536 THEN capture ELSE NULL END AS payload,
+      coalesce(summary IS NULL OR json_type(saved_summary)='null' OR json_type(saved_summary)='object' AND diagnostics_type IS NULL,0) AS diagnosticsMissing,
+      coalesce(diagnostics_type='object' AND (SELECT count(*) FROM json_each(diagnostic_entry))=7
+        AND json_type(diagnostic_entry,'$.itemIndex')='integer' AND json_extract(diagnostic_entry,'$.itemIndex')=${itemIndex}
+        AND json_type(diagnostic_entry,'$.ref')='text' AND json_extract(diagnostic_entry,'$.ref')=json_extract(item,'$.ref')
+        AND json_type(diagnostic_entry,'$.enterpriseId')='integer' AND json_extract(diagnostic_entry,'$.enterpriseId')=json_extract(item,'$.detail.enterpriseId')
+        AND json_type(diagnostic_entry,'$.recordId')='integer' AND json_extract(diagnostic_entry,'$.recordId')=json_extract(item,'$.detail.recordId'),0) AS diagnosticsBound,
+      CASE WHEN json_type(diagnostic_entry,'$.candidateRef')='text' AND length(CAST(json_extract(diagnostic_entry,'$.candidateRef') AS BLOB))<=32 THEN json_extract(diagnostic_entry,'$.candidateRef') ELSE NULL END AS candidateRef,
+      CASE WHEN json_type(diagnostic_entry,'$.digest')='text' AND length(CAST(json_extract(diagnostic_entry,'$.digest') AS BLOB))=64 THEN json_extract(diagnostic_entry,'$.digest') ELSE NULL END AS diagnosticsDigest,
+      CASE WHEN json_type(diagnostic_entry,'$.diagnostics')='object' AND length(CAST(json_extract(diagnostic_entry,'$.diagnostics') AS BLOB))<=65536 THEN json_extract(diagnostic_entry,'$.diagnostics') ELSE NULL END AS diagnosticsPayload FROM selected`)
+  if (!row || row.itemType === null) throw new ImportReceiptError(404, 'not_found', 'Exact import source or item not found')
+  if (!row.validSource || !row.validItem || !qualificationId(row.batchId) || row.receiptId !== null && !qualificationId(row.receiptId) || !qualificationId(row.enterpriseId)) {
+    throw new ImportReceiptError(409, 'selector_mismatch', 'Exact announcement record item required')
+  }
+  const redact = importReceiptRedactor(db)
+  let readback: Record<string, unknown>
+  if (row.captureMissing) readback = { stage: 'after', status: 'not_retained', reason: 'legacy_receipt', target: null }
+  else if (!row.recordBound || row.payload === null) readback = { stage: 'after', status: 'unavailable', reason: 'read_unavailable', target: { enterpriseId: row.enterpriseId } }
+  else {
+    try { readback = retainedQualificationReadback(JSON.parse(row.payload), row.enterpriseId, redact) }
+    catch { readback = { stage: 'after', status: 'unavailable', reason: 'read_unavailable', target: { enterpriseId: row.enterpriseId } } }
+  }
+  let diagnostics: RosterImportHistoricalQualificationDiagnostics = row.diagnosticsMissing
+    ? { status: 'not_retained', reason: 'legacy_receipt' } : { status: 'unavailable', reason: 'read_unavailable' }
+  if (!row.diagnosticsMissing && row.recordBound && row.diagnosticsBound && qualificationId(row.recordId)
+    && row.candidateRef !== null && row.diagnosticsDigest !== null && row.diagnosticsPayload !== null) {
+    try {
+      diagnostics = retainedQualificationDiagnostics(JSON.parse(row.diagnosticsPayload), { itemIndex, ref: `record:${row.recordId}`, enterpriseId: row.enterpriseId, recordId: row.recordId, candidateRef: row.candidateRef }, row.diagnosticsDigest, redact)
+    } catch { diagnostics = { status: 'unavailable', reason: 'read_unavailable' } }
+  }
+  // This closed envelope contains no arbitrary legacy/raw text. Only a verified capture
+  // may be delivered intact; rerunning generic redaction here could invalidate its digest.
+  const envelope = { source, batchId: row.batchId, receiptId: row.receiptId, itemIndex, target: readback.target, qualificationReadback: readback, qualificationDiagnostics: diagnostics }
+  const requiredBytes = Buffer.byteLength(JSON.stringify(envelope), 'utf8')
+  if (requiredBytes > maxBytes) throw new ImportReceiptError(413, 'response_limit', 'Qualification projection exceeds maxBytes', requiredBytes)
+  return envelope
 }
 function readImportReceiptSnapshot(db: Db, action: ImportReceiptAction, args: Record<string, unknown>) {
   const allowed = new Set(['batchId', 'idempotencyKey', ...(action === 'history' ? [] : ['receiptId']), ...(action === 'history' || action === 'items' ? ['page', 'pageSize'] : []), ...(action === 'request' ? ['offset', 'maxBytes'] : [])])

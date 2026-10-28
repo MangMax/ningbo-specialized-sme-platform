@@ -21,6 +21,7 @@
  * 同一来源重复调用不会重复写企业/事件。
  */
 import type { PlatformInterface } from './labels'
+import type { CurrentQualificationSnapshot, OfficialEventFieldDiagnostics } from './roster/current-qualification'
 
 export type OfficialDeclaration =
   | { kind: 'existing'; sourceDocumentId: number; basis: string }
@@ -437,8 +438,34 @@ export interface DuplicateNameCandidate {
   sourceRef: string
 }
 
+/** Candidate input diagnostics are not a projected post-commit qualification. */
+export interface RosterImportQualificationDiagnostic extends OfficialEventFieldDiagnostics {
+  ref: string
+  eventType: RosterImportEvent['eventType']
+}
+/** Original candidate diagnostics retained for one exact successful historical item. */
+export type RosterImportHistoricalQualificationDiagnostics =
+  | { status: 'captured'; items: RosterImportQualificationDiagnostic[] }
+  | { status: 'not_retained'; reason: 'legacy_receipt' }
+  | { status: 'unavailable'; reason: 'read_unavailable' }
+export type RosterImportBeforeQualificationReadback =
+  | { stage: 'before'; status: 'captured'; target: { enterpriseId: number }; assessment: CurrentQualificationSnapshot }
+  | { stage: 'before'; status: 'not_retained'; target: null; reason: 'new_target' | 'multiple_targets' | 'scope_not_established'; enterpriseIds?: number[] }
+  | { stage: 'before'; status: 'unavailable'; target: { enterpriseId: number }; reason: 'response_limit'; requiredBytes: number }
+  | { stage: 'before'; status: 'unavailable'; target: { enterpriseId: number }; reason: 'read_unavailable' }
+
+/** Immutable observation of a successful announcement commit, never a qualification authority. */
+export type RosterImportAfterQualificationReadback =
+  | { stage: 'after'; status: 'captured'; target: { enterpriseId: number }; assessment: CurrentQualificationSnapshot }
+  | { stage: 'after'; status: 'not_retained'; target: null; reason: 'multiple_targets' | 'no_targets' | 'scope_not_established' | 'legacy_receipt'; enterpriseIds?: number[] }
+  | { stage: 'after'; status: 'unavailable'; target: { enterpriseId: number }; reason: 'response_limit'; requiredBytes: number }
+  | { stage: 'after'; status: 'unavailable'; target: { enterpriseId: number }; reason: 'read_unavailable' }
+
 /** 预检的影响计数；`conflicts` 是**逐项冲突**（不静默丢行）。 */
 export interface RosterImportPreflight {
+  qualificationDiagnostics?: RosterImportQualificationDiagnostic[]
+  /** Current stored facts only. No after/historical capture is implied by this field. */
+  qualificationReadback?: RosterImportBeforeQualificationReadback
   officialEvidencePlanHash?: string
   canonicalProjection?: { relationId: number | null; identityState: string; contentState: string; keySource: string }[]
   /** Frozen server-side source inputs for bounded historical projection. */
@@ -494,6 +521,8 @@ export interface RosterImportSummary {
 }
 
 export interface RosterImportCommitResponse {
+  /** Saved in existing batch/receipt JSON and returned here once, including on replay. */
+  qualificationReadback?: RosterImportAfterQualificationReadback
   /** #214: durable candidate-task IDs for archived query scopes; does not imply candidate completion. */
   candidateTaskIds?: string[]
   batchId: number

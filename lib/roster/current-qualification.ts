@@ -22,7 +22,38 @@ export type { CurrentTitle }
 
 export const CURRENT_RULE_VERSION = 'current-roster-116-v8'
 export type CurrentGroup = 'eligible' | 'pending' | 'excluded'
-export const QUALIFICATION_ASSESSMENT_VERSION = 'enterprise-qualification-406-v1'
+export const QUALIFICATION_ASSESSMENT_VERSION = 'enterprise-qualification-407-v1'
+
+export interface OfficialEventFieldGap {
+  field: 'year' | 'decidedYear' | 'batchSeq' | 'reviewOutcome'
+  valueState: 'unknown' | 'blank' | 'invalid'
+  inputState: 'omitted' | 'null' | 'provided'
+}
+export interface OfficialEventFieldDiagnostics {
+  values: { year: unknown; decidedYear: unknown; batchSeq: unknown; reviewOutcome: unknown }
+  fieldGaps: OfficialEventFieldGap[]
+}
+/** Describes recorded fields only; never supplies a missing value or decides eligibility.
+ * An award's existing year fallback and unnumbered batch remain the adjudicator's concern.
+ */
+export function diagnoseOfficialEventFields(event: { eventType: unknown; year?: unknown; decidedYear?: unknown; batchSeq?: unknown; reviewOutcome?: unknown }): OfficialEventFieldDiagnostics {
+  const values = { year: event.year ?? null, decidedYear: event.decidedYear ?? null, batchSeq: event.batchSeq ?? null, reviewOutcome: event.reviewOutcome ?? null }
+  const fieldGaps: OfficialEventFieldGap[] = []
+  if (event.eventType !== 'award' && event.eventType !== 'review') return { values, fieldGaps }
+  const fields: OfficialEventFieldGap['field'][] = ['year', 'decidedYear', 'batchSeq']
+  if (event.eventType === 'review') fields.push('reviewOutcome')
+  for (const field of fields) {
+    const value = event[field]
+    const known = field === 'reviewOutcome' ? value === 'passed' || value === 'failed'
+      : typeof value === 'number' && Number.isSafeInteger(value)
+        && (field === 'batchSeq' ? value > 0 : value >= 1900 && value <= 9999)
+    if (!known) fieldGaps.push({ field,
+      valueState: value == null ? 'unknown' : typeof value === 'string' && !value.trim() ? 'blank' : 'invalid',
+      inputState: value === undefined ? 'omitted' : value === null ? 'null' : 'provided',
+    })
+  }
+  return { values, fieldGaps }
+}
 type PublishedNameAssessmentInput = { availability: 'available' | 'unavailable'; facts: OfficialPublishedFact[] }
 type QualificationAssessmentReadOptions = {
   ownQueryIds?: readonly number[]
@@ -45,7 +76,7 @@ export interface CurrentQualificationAssessment {
     observations: (QueryCoverageSource & { applicability: 'at_or_before_as_of' | 'after_as_of' | 'unknown_time'; rows: { relationId: number; status: string | null; year: number | null; batch: string | null }[] })[]
   }
   correspondence: { status: 'requires_revalidation' | 'confirmed' | 'candidate' | 'unmatched'; message: string; refs: ReturnType<typeof listRecordCorrespondenceRefs> }
-  completeness: { status: 'incomplete' | 'recorded'; message: string; gaps: string[]; eventIds: number[]; publishedNames: { evidenceId: number; availability: OfficialPublishedFact['availability']; nameKnown: boolean }[] }
+  completeness: { status: 'incomplete' | 'recorded'; message: string; gaps: string[]; eventIds: number[]; fieldGaps?: (OfficialEventFieldGap & { eventId: number })[]; publishedNames: { evidenceId: number; availability: OfficialPublishedFact['availability']; nameKnown: boolean }[] }
   evidence: { eventId: number; revision: number; eventType: string; year: number | null; batchSeq: number | null; decidedYear: number | null; reviewOutcome: string | null; evidenceIds: number[] }[]
   sourceVersions: { evidenceId: number; eventId: number; sourceFile: string; storedFileId: number | null; sha256: string | null; bytes: number | null; removedAt: string | null; capturedRevision: number | null; capturedSha256: string | null }[]
   references: string[]
@@ -411,7 +442,7 @@ export function createCurrentCandidateReader(db: Database.Database) {
       region:{status:regionStatus,message:regionStatus === 'outside_ningbo' ? '已确认迁出，不纳入宁波当前结果；不据此认定全国称号撤销' : regionStatus === 'ningbo' ? '已确认迁回或迁入宁波；主体及称号资格分别判断' : regionStatus === 'unresolved' ? '主体地域事实适用性或生效顺序待核' : '未见可适用的迁移决定；沿用正式公布地域范围',decisionIds:latest.map(d => d.id)},
       platform:{status:platformStatus,comparison:'not_established',message:platformStatus === 'not_queried' ? '截至评估时点尚无可适用平台查询；其它观察保留' : platformStatus === 'query_failed' ? '平台查询失败，不等于平台无记录，也不否定正式资格' : '平台观察已保留；同主体、称号、周期、时点及覆盖尚需核实，未自动确认一致或未同步',truncated:coverage.truncated,observations},
       correspondence:{status:correspondenceStatus,message:correspondenceStatus === 'requires_revalidation' ? '来源需重新核实，当前未确认仍适用；未自动确认' : correspondenceStatus === 'confirmed' ? '已确认来源对应；不代表正式资格成立或资料已齐' : correspondenceStatus === 'candidate' ? '存在对应候选，尚未确认' : '尚无已确认对应；不据此否定正式资格',refs:correspondences},
-      completeness:{status:gaps.length ? 'incomplete' : 'recorded',message:gaps.length ? '资料仍有缺口；未留档名称或来源版本未知不等于资格无效' : '既有字段已记录；未推断具体有效日或未录入的政策条款',gaps,publishedNames,eventIds:events.filter(e => incomplete.some(v => v.id === e.id) || e.source === 'jxj' && e.eventType === 'review' && (e.year == null || e.batchSeq == null || e.decidedYear == null || e.reviewOutcome == null)).map(e => e.id)},
+      completeness:{status:gaps.length ? 'incomplete' : 'recorded',message:gaps.length ? '资料仍有缺口；未留档名称或来源版本未知不等于资格无效' : '既有字段已记录；未推断具体有效日或未录入的政策条款',gaps,publishedNames,eventIds:events.filter(e => incomplete.some(v => v.id === e.id) || e.source === 'jxj' && e.eventType === 'review' && (e.year == null || e.batchSeq == null || e.decidedYear == null || e.reviewOutcome == null)).map(e => e.id),fieldGaps:events.filter(e => e.source === 'jxj').flatMap(e => diagnoseOfficialEventFields(e).fieldGaps.map(gap => ({eventId:e.id,...gap})))},
       evidence:formalEvidence,sourceVersions,references:[...row.references],notes:[...row.notes],
       shadow:{legacyGroup:row.group,difference:group === row.group ? null : '已确认主体终止优先排除；旧投影的其它未决缺口保留'},
     }

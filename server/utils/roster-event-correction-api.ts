@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { isDeepStrictEqual } from 'node:util'
 import { eventReadSchema, officialReadQuery, readPublicOfficialEvidence } from './official-evidence-read'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../db/schema'
@@ -6,7 +7,7 @@ import { readApiToken, resolveApiAuth } from './api-auth'
 import { sanitizeEvidence } from './record-correspondence-read'
 import { cookieRedactor } from '../../lib/platform/client'
 import { credentialContext, resolveCredential } from './credential-state'
-import { commitEventCorrections, eventCorrectionRequestSchema, preflightEventCorrections, readEventCorrectionAudit, readOfficialEvent } from './roster-event-correction'
+import { commitEventCorrections, eventCorrectionRequestSchema, finalizedCorrectionReadback, preflightEventCorrections, readEventCorrectionAudit, readOfficialEvent } from './roster-event-correction'
 
 export type EventCorrectionAction = 'get' | 'audit' | 'preflight' | 'commit'
 const integer = z.coerce.number().int().positive().max(Number.MAX_SAFE_INTEGER)
@@ -23,17 +24,18 @@ export function handleEventCorrectionRequest(input: { action: EventCorrectionAct
     const runtime = typeof useRuntimeConfig === 'function' ? useRuntimeConfig() : null
     const secrets = [context.apiToken, runtime?.apiToken, runtime?.mcpToken, process.env.NUXT_API_TOKEN, process.env.NUXT_MCP_TOKEN, resolveCredential('miitCookie', credentials).value, resolveCredential('ocrToken', credentials).value].filter((s): s is string => !!s)
     const redactors = [...new Set(secrets)].map(cookieRedactor)
+    const qualificationSafety = (value: unknown) => isDeepStrictEqual(value, sanitizeEvidence(value, redactors))
     let result: unknown
     if (write) {
       if (Buffer.byteLength(JSON.stringify(input.body) ?? '', 'utf8') > 1024 * 1024) return fail(413, 'request_limit', 'Event correction request exceeds 1 MiB')
       if (input.action === 'preflight') {
         const parsed = eventCorrectionRequestSchema.safeParse(input.body)
         if (!parsed.success) return fail(400, 'invalid_request', 'Invalid event correction request; use the documented strict whitelist')
-        result = preflightEventCorrections(context.db, parsed.data)
+        result = preflightEventCorrections(context.db, parsed.data, qualificationSafety)
       } else {
         const parsed = z.strictObject({ request: eventCorrectionRequestSchema, planHash: z.string().regex(/^[a-f0-9]{64}$/) }).safeParse(input.body)
         if (!parsed.success) return fail(400, 'invalid_request', 'Original correction request and planHash required')
-        result = commitEventCorrections(context.db, parsed.data.request, parsed.data.planHash)
+        result = commitEventCorrections(context.db, parsed.data.request, parsed.data.planHash, qualificationSafety)
       }
     } else {
       const id = integer.safeParse(input.id)
@@ -52,7 +54,14 @@ export function handleEventCorrectionRequest(input: { action: EventCorrectionAct
     }
     // The opt-in branch already sanitizes legacy fields and independently budgets the
     // redacted official envelope. A second pass can expand it after that final gate.
-    return { status: 200, headers, body: input.action==='get' && input.query && 'official' in input.query ? result : sanitizeEvidence(result, redactors) }
+    if (input.action==='get' && input.query && 'official' in input.query) return { status: 200, headers, body: result }
+    const finalized = finalizedCorrectionReadback(result, qualificationSafety)
+    if (finalized) {
+      const legacy = sanitizeEvidence(finalized.legacy, redactors)
+      if (!legacy || typeof legacy !== 'object' || Array.isArray(legacy)) throw new Error('Invalid sanitized correction result')
+      return { status: 200, headers, body: { ...legacy, qualificationReadback: finalized.value } }
+    }
+    return { status: 200, headers, body: sanitizeEvidence(result, redactors) }
   } catch (error) {
     const known = error as { statusCode?: number; code?: string; message?: string }
     if (known.statusCode && known.code) return fail(known.statusCode, known.code, known.message ?? 'Correction rejected')
