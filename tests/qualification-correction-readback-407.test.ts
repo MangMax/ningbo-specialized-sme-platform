@@ -510,3 +510,32 @@ it('public_unmarked_same_name_slot_keeps_legacy_sanitizer', async () => {
     nested: { qualificationReadback: 'token=[REDACTED]' } })
   expect(db.select().from(schema.eventCorrectionAudit).all()).toEqual([])
 })
+
+it('announcement_hash_recheck_keeps_existing_before_snapshot', async () => {
+  const body: RosterImportRequest = {
+    idempotencyKey: '407-announcement-hash-recheck', sourceKind: 'announcement', sourceIdentity: 'synthetic/hash-recheck',
+    payload: { announcement: { sourceDocument: { source: 'jxj', title: document.title }, records: [{
+      enterprise: { name: enterprise.name }, source: 'jxj', titleCode: 'innovative_sme',
+      events: [{ eventType: 'award', year: 2024, decidedYear: 2024, batchSeq: 1, evidence: [{
+        sourceFile: 'notice.txt', attachment: '附件2', listNo: 2, page: null, publishedRow: publishedRow('合成公布原名'),
+      }] }],
+    }] } },
+  }
+  const before = businessState()
+  const first = await post('/api/roster/import/preflight', body)
+  expect(first.status).toBe(200)
+  expect(first.body.preflight.conflicts).toEqual([])
+  expect(first.body.preflight.officialEvidencePlanHash).toMatch(/^[a-f0-9]{64}$/)
+  expect(first.body.preflight.qualificationReadback).toMatchObject({ stage: 'before', status: 'captured', target: { enterpriseId: enterprise.id } })
+  expectPublicCorrectionSnapshot(first.body.preflight.qualificationReadback.assessment)
+  body.payload.officialEvidencePlanHash = first.body.preflight.officialEvidencePlanHash
+  const spy = vi.spyOn(qualification, 'readCurrentQualificationAssessment')
+  const repeated = await post('/api/roster/import/preflight', body)
+  expect(repeated.status).toBe(200)
+  expect(repeated.body.preflight.conflicts).toEqual([])
+  expect(repeated.body.preflight.officialEvidencePlanHash).toBe(first.body.preflight.officialEvidencePlanHash)
+  expect(businessState()).toEqual(before)
+  expect(repeated.body.preflight.qualificationReadback).toEqual(first.body.preflight.qualificationReadback)
+  expect(repeated.body.preflight.qualificationDiagnostics).toEqual(first.body.preflight.qualificationDiagnostics)
+  expect(spy).toHaveBeenCalledTimes(1)
+})

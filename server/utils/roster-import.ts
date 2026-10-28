@@ -4329,7 +4329,7 @@ function readPreflightQualification(db: Db, request: RosterImportRequest, plan: 
   if (!candidates.some(candidate => candidate.diagnostics.length)) return {}
   const qualificationDiagnostics = candidates.flatMap(candidate => candidate.diagnostics)
   if (plan.conflicts.length) return { qualificationDiagnostics }
-  if (Object.entries(request.payload).some(([key, value]) => key !== 'announcement' && value != null && (!Array.isArray(value) || value.length > 0))) {
+  if (Object.entries(request.payload).some(([key, value]) => key !== 'announcement' && key !== 'officialEvidencePlanHash' && value != null && (!Array.isArray(value) || value.length > 0))) {
     return { qualificationDiagnostics, qualificationReadback: { stage: 'before', status: 'not_retained', target: null, reason: 'scope_not_established' } }
   }
   const targets = new Map(candidates.map(candidate => [candidate.targetKey, candidate.enterpriseId]))
