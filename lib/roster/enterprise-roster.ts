@@ -1,6 +1,6 @@
-import { readOfficialPublishedPresentation, OfficialPublishedPresentationError, type OfficialPublishedScope } from './official-published-presentation'
+import { readOfficialPublishedPresentation, projectOfficialPublishedNames, OfficialPublishedPresentationError, type OfficialPublishedScope } from './official-published-presentation'
 import type { ReceiptRedactor } from '../../server/utils/import-receipt-redaction'
-import { publishedNameText, type PublishedPresentation } from './correspondence-view'
+import type { PublishedPresentation } from './correspondence-view'
 import { readQueryAssessment, readQueryCoverage, type QueryAssessment } from './query-assessment'
 import { sourcePositionForSequence } from '../platform/recognized-evidence'
 import { normalizePlatformRelation, type PlatformNormalizationConflict } from '../platform/normalization'
@@ -981,14 +981,7 @@ function differenceUniverse(db: Db, snap: Snapshot, derived: Array<{ enterpriseI
 export function readPublicPublishedNames(db: Db, scope: readonly OfficialPublishedScope[], copies: readonly OfficialPublishedScope[] = scope, envelopeCount = 1, textCopies = 1, redactor?: ReceiptRedactor): PublishedPresentation {
   try {
     const facts = readOfficialPublishedPresentation(db, scope, redactor)
-    const projected = copies.map(item => facts.get(item.evidenceId)!)
-    const texts = projected.map(publishedNameText)
-    // Include all serialized name copies, text escaping and scope envelopes.
-    const bytes = Buffer.byteLength(JSON.stringify(projected)) + Buffer.byteLength(JSON.stringify(texts)) * textCopies
-      + envelopeCount * Buffer.byteLength(JSON.stringify({ publishedPresentation: { availability: 'available', error: null, facts: [] } }))
-      + projected.length * Buffer.byteLength(JSON.stringify({ publishedName: null }))
-    if (bytes > 65536) throw new OfficialPublishedPresentationError('response_limit')
-    return { availability: 'available', error: null, facts: [...facts.values()] }
+    return projectOfficialPublishedNames([...facts.values()], copies, envelopeCount, textCopies)
   } catch (error) {
     return { availability: 'unavailable', error: error instanceof OfficialPublishedPresentationError ? error.code : 'read_failed', facts: [] }
   }
