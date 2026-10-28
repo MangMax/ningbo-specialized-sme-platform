@@ -1,3 +1,4 @@
+import { assertEnterpriseDetailSnapshotEqual } from './helpers/enterprise-detail-snapshot'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -52,7 +53,7 @@ it('empty reads and unqueried coordinates retain legacy status and expose indepe
   const detail = await get(`/api/roster/enterprises/${e.id}`)
   expect(detail.differences[0]).toMatchObject({ status: 'not_queried', explanationId: null, assessment: 'not_queried', queryCoverage: { status: 'not_queried', sources: [], truncated: false }, currentDecision: { ...scope(e), versionId: null, current: null }, explanationValidity: { status: 'not_applicable', reasons: [], explanationId: null, evidenceQueryIds: [] } })
   expect(assessment(detail)).toMatchObject({ assessment: 'not_queried' })
-  expect(await mcp('get_enterprise_detail', { enterpriseId: e.id })).toEqual(detail)
+  assertEnterpriseDetailSnapshotEqual(await mcp('get_enterprise_detail', { enterpriseId: e.id }), detail)
 })
 
 function query(e: ReturnType<typeof company>, changes: Partial<typeof schema.platformQuery.$inferInsert> = {}, evidenceChanges: Record<string, unknown> = {}) {
@@ -66,7 +67,7 @@ it('complete exact-title coverage reports queried unjudged while preserving the 
   expect(assessment(detail)).toMatchObject({ assessment: 'queried_unjudged', currentDecision: { current: null }, queryCoverage: { status: 'complete', sources: [{ queryId: q.id, interface: 'business_list', status: 'complete', outcome: 'no_record', subjectMatch: 'exact_uscc' }] } })
   expect(detail.differences[0]).toMatchObject({ status: 'not_queried', reasonCode: null, explanationId: null, assessment: 'queried_unjudged' })
   expect(assessment(detail, 'little_giant')).toMatchObject({ queryCoverage: { status: 'not_queried' } })
-  expect(await mcp('get_enterprise_detail', { enterpriseId: e.id })).toEqual(detail)
+  assertEnterpriseDetailSnapshotEqual(await mcp('get_enterprise_detail', { enterpriseId: e.id }), detail)
 })
 
 it('old missing-code explanation becomes premise invalid without changing its ID reason or evidence across REST and MCP', async () => {
@@ -135,7 +136,7 @@ it('confirmed decision and its evidence remain readable independently from later
   const invalid = await command(e, 'replace', null, {}, 409)
   expect(invalid.body.error.code).toBe('stale_version')
   expect(assessment(await get(`/api/roster/enterprises/${e.id}`)).currentDecision).toEqual(a.currentDecision)
-  expect(await mcp('get_enterprise_detail', { enterpriseId: e.id })).toEqual(detail)
+  assertEnterpriseDetailSnapshotEqual(await mcp('get_enterprise_detail', { enterpriseId: e.id }), detail)
 })
 it('withdrawal retains the lifecycle version without reviving its old decision or changing complete query coverage', async () => {
   const e = company(); query(e)

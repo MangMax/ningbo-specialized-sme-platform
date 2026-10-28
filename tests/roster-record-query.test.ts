@@ -1,3 +1,4 @@
+import { assertEnterpriseDetailSnapshotEqual } from './helpers/enterprise-detail-snapshot'
 import { decodeJsonRead } from './helpers/json-read-adapter'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -553,7 +554,7 @@ describe('REST / MCP 共用记录查询与企业详情读模型', () => {
   it('MCP 企业详情复用 REST 使用的详情读模型', async () => {
     const restReadModel = getRosterEnterpriseDetail(db, reassessed)
     const mcp = await enterpriseDetailTool.handler({ enterpriseId: reassessed })
-    expect(mcp).toEqual(restReadModel)
+    assertEnterpriseDetailSnapshotEqual(mcp, restReadModel)
     await expect(enterpriseDetailTool.handler({ enterpriseId: 999999 })).rejects.toMatchObject({ statusCode: 404 })
   })
 })

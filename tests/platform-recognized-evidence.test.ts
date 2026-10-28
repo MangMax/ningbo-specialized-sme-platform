@@ -1,3 +1,4 @@
+import { assertEnterpriseDetailSnapshotEqual } from './helpers/enterprise-detail-snapshot'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -359,7 +360,7 @@ it.each(['uscc', 'name'] as const)('archive-before-master %s query preserves eve
   try {
     const detail = await (await fetch(`${restApi.baseUrl}/api/roster/enterprises/${enterpriseId}`)).json()
     const detailTool = (await import('../server/mcp/tools/get_enterprise_detail')).default as any
-    expect(JSON.parse(await detailTool.handler({ enterpriseId }))).toEqual(detail)
+    assertEnterpriseDetailSnapshotEqual(JSON.parse(await detailTool.handler({ enterpriseId })), detail)
     expect(detail.platform.queries.map((q: any) => q.id)).toEqual([archived.query.id])
     expect(detail.platform.queries[0]).toMatchObject({ relationCount: 4, collectionEvidence: evidence })
     expect(detail.platform.relations.map((r: any) => r.id)).toEqual(archived.relations.map((r: any) => r.id))

@@ -1,3 +1,4 @@
+import { assertEnterpriseDetailSnapshotEqual } from './helpers/enterprise-detail-snapshot'
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -41,7 +42,7 @@ beforeAll(async () => {
   full = await rest(`/api/comparison?view=full&enterpriseId=${fixture.enterprise.id}`)
   expect(await rest(`/api/comparison?enterpriseId=${fixture.enterprise.id}`)).toEqual(full)
   detail = await rest(`/api/roster/enterprises/${fixture.enterprise.id}`)
-  expect(await mcp('get_enterprise_detail', { enterpriseId: fixture.enterprise.id })).toEqual(detail)
+  assertEnterpriseDetailSnapshotEqual(await mcp('get_enterprise_detail', { enterpriseId: fixture.enterprise.id }), detail)
 }, 30000)
 afterAll(async () => {
   try { expect(persisted()).toEqual(before) }
