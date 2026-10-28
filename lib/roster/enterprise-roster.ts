@@ -6,6 +6,7 @@ import { sourcePositionForSequence } from '../platform/recognized-evidence'
 import { normalizePlatformRelation, type PlatformNormalizationConflict } from '../platform/normalization'
 import { readEnterpriseSnapshot, readEnterpriseHistories, enterpriseComparisonCoordinates } from './enterprise-read-snapshot'
 import { readPlatformBusinessDetails } from '../../server/utils/platform-business-detail-read'
+import { readCurrentQualificationAssessment, type CurrentQualificationSnapshot } from './current-qualification'
 import type { PlatformBusinessDetail } from './platform-business-detail'
 /**
  * 跨称号去重企业总表 / 企业详情 / 差异与解释 —— 契约 §7.1 / §7.2 / §7.3 的**读模型**(RL-04)。
@@ -835,6 +836,8 @@ export interface RosterPlatformRelationRow {
 }
 
 export interface RosterEnterpriseDetail {
+  /** #406 additive snapshot; legacy titleAssessments and lifecycle retain their meaning. */
+  qualificationAssessment: CurrentQualificationSnapshot
   publishedPresentation: PublishedPresentation
   enterprise: RosterEnterpriseRow
   aliases: RosterAliasRow[]
@@ -991,11 +994,11 @@ export function readPublicPublishedNames(db: Db, scope: readonly OfficialPublish
   }
 }
 
-export function getRosterEnterpriseDetail(db: Db, id: number): RosterEnterpriseDetail | null {
-  return db.transaction(() => enterpriseDetail(db, id))
+export function getRosterEnterpriseDetail(db: Db, id: number, asOf = Date.now()): RosterEnterpriseDetail | null {
+  return db.transaction(() => enterpriseDetail(db, id, asOf))
 }
 
-function enterpriseDetail(db: Db, id: number): RosterEnterpriseDetail | null {
+function enterpriseDetail(db: Db, id: number, asOf: number): RosterEnterpriseDetail | null {
   // 只建**这一家**的画像:详情页开一行,不该把整库 7352 家全算一遍。
   const enterpriseSnapshot = readEnterpriseSnapshot(db, id)
   const { snap, index, profileOf } = readRosterContext(db, enterpriseSnapshot)
@@ -1052,18 +1055,21 @@ function enterpriseDetail(db: Db, id: number): RosterEnterpriseDetail | null {
   // Both directions use the same coverage for a title. Its IDs came from this
   // enterprise's snapshot, so coverage need not rescan global query keys.
   const coverageByTitle = new Map<string, ReturnType<typeof readQueryCoverage>>()
-  const assessmentFor = (scope: Parameters<typeof readQueryAssessment>[1]) => {
-    let coverage = coverageByTitle.get(scope.titleCode)
+  const coverageForTitle = (titleCode: Parameters<typeof readQueryAssessment>[1]['titleCode']) => {
+    let coverage = coverageByTitle.get(titleCode)
     if (!coverage) {
-      coverage = readQueryCoverage(db, scope, undefined, enterpriseSnapshot.ownQueryIds)
-      coverageByTitle.set(scope.titleCode, coverage)
+      coverage = readQueryCoverage(db, {enterpriseId:id,titleCode,direction:'missing_in_miit'}, undefined, enterpriseSnapshot.ownQueryIds)
+      coverageByTitle.set(titleCode, coverage)
     }
-    return readQueryAssessment(db, scope, undefined, coverage)
+    return coverage
   }
+  const assessmentFor = (scope: Parameters<typeof readQueryAssessment>[1]) =>
+    readQueryAssessment(db, scope, undefined, coverageForTitle(scope.titleCode))
 
   const selectedEvidence = snap.evidence.filter(v => eventIds.has(v.recordEventId))
   const publishedPresentation = readPublicPublishedNames(db, selectedEvidence.map(v => ({ evidenceId: v.id, eventId: v.recordEventId })))
   return {
+    qualificationAssessment: readCurrentQualificationAssessment((db as Db & { $client: import('better-sqlite3').Database }).$client, id, asOf, {ownQueryIds:enterpriseSnapshot.ownQueryIds,publishedNames:publishedPresentation,coverageForTitle}),
     publishedPresentation,
     enterprise: row,
     aliases: snap.aliases

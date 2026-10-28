@@ -120,7 +120,7 @@ it('HTTP detail preserves legacy Unicode keys without allocating normalization c
     // Observe the same reader on this instrumented connection, then compare to
     // the worker/HTTP result. A worker has its own driver, so a zero reading on
     // the writer connection alone would prove nothing about its allocations.
-    expect(getRosterEnterpriseDetail(db, owner)).toEqual(detail)
+    expect(getRosterEnterpriseDetail(db, owner, Date.parse(detail.qualificationAssessment.asOf))).toEqual(detail)
     expect(normalizationCalls).toBeGreaterThan(0)
     // Supplementary allocation observation at the real SQLite/HTTP seam.
     // Unrelated ASCII punctuation/lowercase keys must stay inside native SQL.
@@ -138,11 +138,14 @@ it('HTTP detail shares title coverage and keeps unrelated Unicode keys out of re
   addUnrelated(0, 200)
   normalizationCalls = coverageSqlCalls = 0
   try {
-    const direct = getRosterEnterpriseDetail(db, owner)!
-    const callsAt200 = normalizationCalls
     const response = await fetch(`${base}/api/roster/enterprises/${owner}`)
     expect(response.status).toBe(200)
-    expect(await response.json()).toEqual(direct)
+    const detail = await response.json()
+    // Compare the complete response at the HTTP snapshot time, not two clocks.
+    const asOf = Date.parse(detail.qualificationAssessment.asOf)
+    const direct = getRosterEnterpriseDetail(db, owner, asOf)!
+    const callsAt200 = normalizationCalls
+    expect(detail).toEqual(direct)
     const specialized = direct.titleAssessments.filter(row => row.titleCode === 'specialized_sme')
     expect(specialized).toHaveLength(2)
     expect(specialized[0]?.queryCoverage).toEqual(specialized[1]?.queryCoverage)
@@ -154,7 +157,7 @@ it('HTTP detail shares title coverage and keeps unrelated Unicode keys out of re
     expect(normalizationCalls).toBeLessThan(400)
     addUnrelated(200, 800)
     normalizationCalls = coverageSqlCalls = 0
-    expect(getRosterEnterpriseDetail(db, owner)).toEqual(direct)
+    expect(getRosterEnterpriseDetail(db, owner, asOf)).toEqual(direct)
     expect(coverageSqlCalls).toBeLessThanOrEqual(3)
     // One owned-ID selection still visits exceptional keys; the title/direction
     // assessments must not each revisit those 800 unrelated keys.
@@ -200,7 +203,7 @@ it('HTTP name-only detail skips impossible normalized-name matches in unrelated 
     expect(response.status).toBe(200)
     const detail = await response.json()
     expect(detail.platform.queries.map((q: any) => q.id)).toEqual([exact.id])
-    expect(getRosterEnterpriseDetail(db, identity.id)).toEqual(detail)
+    expect(getRosterEnterpriseDetail(db, identity.id, Date.parse(detail.qualificationAssessment.asOf))).toEqual(detail)
     expect(normalizationCalls).toBeLessThan(30)
   } finally {
     db.$client.prepare(`DELETE FROM platform_query WHERE id IN (${[exact.id, ...ids].map(() => '?').join(',')})`).run(exact.id, ...ids)

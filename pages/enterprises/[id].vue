@@ -154,6 +154,16 @@ const {
 } = useEnterprisePendingImpacts(id)
 
 const assessments = computed<(ReviewAssessment & ReviewScope)[]>(() => (data.value?.titleAssessments ?? []) as unknown as (ReviewAssessment & ReviewScope)[])
+// Presentation only: all eligibility and applicability decisions come from the detail snapshot.
+const qualificationRows = computed(() => data.value?.qualificationAssessment?.titles ?? [])
+const qualificationGroupLabel = { eligible: '宁波当前可纳入', pending: '宁波当前待核', excluded: '不纳入宁波当前结果' }
+const qualificationGapLabel: Record<string, string> = {
+  missing_official_source: '正式出处待补', missing_cycle_semantics: '原周期、批次或复核结论待核',
+  identity_unresolved: '主体身份对应待核', published_name_not_retained: '逐出处公布名称尚未留档',
+  published_name_unknown: '已留档原行，公布名称仍未知',
+  published_name_read_unavailable: '本次逐出处名称读取未完成',
+  source_version_unavailable: '来源文件版本待核',
+}
 const pendingRows = computed(() => pendingData.value?.rows ?? [])
 const pendingHasMore = computed(() => !!pendingData.value?.nextCursor)
 const focusedImpactId = ref<number | undefined>()
@@ -596,6 +606,27 @@ function openPreview(e: Evidence) {
               </div>
             </dl>
             <p v-else class="text-muted-foreground px-4 py-6 text-[13px]">尚无正式称号记录。</p>
+            <DisclosurePanel v-if="qualificationRows.length" trigger-class="px-4" class="border-t">
+              <template #title>当前资格与依据</template>
+              <div class="flex min-w-0 flex-col gap-4 px-4 pb-4 text-base leading-6">
+                <p class="text-muted-foreground text-sm">评估时点：{{ data?.qualificationAssessment?.asOf }}。下次复核年份用于安排复核，当前资格以下列评估为准。</p>
+                <section v-for="item in qualificationRows" :key="item.titleCode" class="flex min-w-0 flex-col gap-2 break-words">
+                  <h3 class="flex flex-wrap items-center gap-2"><TitleBadge :code="item.titleCode" /><span>{{ qualificationGroupLabel[item.group] }}</span></h3>
+                  <p>正式资格：{{ item.officialQualification.message }}</p>
+                  <p v-for="note in item.officialQualification.notes" :key="note">{{ note }}</p>
+                  <p>主体：{{ item.subject.message }}</p>
+                  <p>地域：{{ item.region.message }}</p>
+                  <p>平台同步：{{ item.platform.message }}</p>
+                  <p v-for="observation in item.platform.observations" :key="observation.queryId">
+                    <template v-if="observation.applicability === 'after_as_of'">评估时点后采集，保留追溯：</template><template v-else-if="observation.applicability === 'unknown_time'">采集时间待核：</template>
+                    {{ observation.queriedAt }}：{{ observation.queryStatus === 'no_record' ? '查询记录为无记录' : observation.queryStatus === 'failed' || observation.queryStatus === 'auth_failed' ? '查询失败' : '已保留平台观察' }}<template v-for="sourceRow in observation.rows" :key="sourceRow.relationId">；{{ sourceRow.status ?? '办理状态未记录' }}</template>。
+                  </p>
+                  <p>来源对应：{{ item.correspondence.message }}</p>
+                  <p>资料：{{ item.completeness.message }}<template v-for="gap in item.completeness.gaps" :key="gap">；{{ qualificationGapLabel[gap] ?? '资料待核' }}</template>。</p>
+                  <p v-for="(cycle, index) in item.cycles" :key="index">原认定周期 {{ cycle.originYear }} 年 · {{ cycle.batchSeq == null ? '原批次未记录，未推断数字批次' : `第 ${cycle.batchSeq} 批` }}（年份精度）</p>
+                </section>
+              </div>
+            </DisclosurePanel>
           </section>
 
           <section class="bg-card overflow-hidden rounded-lg border" aria-label="认定与复核记录">
