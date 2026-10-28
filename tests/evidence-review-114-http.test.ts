@@ -1,3 +1,4 @@
+import { assertEnterpriseDetailSnapshotEqual } from './helpers/enterprise-detail-snapshot'
 import { createHash } from 'node:crypto'
 import { minimalPdf } from './helpers/minimal-pdf'
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from 'node:fs'
@@ -137,7 +138,7 @@ describe('ticket 114 public evidence review',()=>{
     const enterprise=(await get('/api/roster/enterprises/'+e.id)).body
     expect(assess(enterprise)).toMatchObject({assessment:'decided',explanationValidity:{status:'valid',reasons:[],explanationId:d.body.versionId}})
     if(kind==='failed'||kind==='partial') expect(assess(enterprise).queryCoverage.sources).toContainEqual(expect.objectContaining({queryId:changedQuery,status:kind,outcome:'unknown'}))
-    expect((await rpc('get_enterprise_detail',{enterpriseId:e.id})).value).toEqual(enterprise)
+    assertEnterpriseDetailSnapshotEqual((await rpc('get_enterprise_detail',{enterpriseId:e.id})).value, enterprise)
     expect((await get('/api/roster/decision-lifecycle/'+d.body.versionId)).body).toEqual(original)
     expect((await get('/api/roster/decision-lifecycle/history',scope)).body.total).toBe(1)
     expect((await rpc('save_difference_decision',maintain,'synthetic-mcp')).value).toEqual(receipt.body)
