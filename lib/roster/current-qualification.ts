@@ -1,3 +1,4 @@
+import type { ReceiptRuntimeContext } from '../../server/utils/receipt-runtime-context'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { createHash } from 'node:crypto'
 import { createDrizzleLogger } from '../logging/drizzle'
@@ -151,8 +152,8 @@ export function readCurrentQualificationAssessment(db: Database.Database, enterp
  * Both paths execute the same adjudication. Default read options and digests
  * remain those of readCurrentQualificationAssessment.
  */
-export function createCurrentQualificationAssessmentReader(db: Database.Database) {
-  const evaluate = createCurrentCandidateEvaluationReader(db)
+export function createCurrentQualificationAssessmentReader(db: Database.Database, receiptRuntime?: ReceiptRuntimeContext) {
+  const evaluate = createCurrentCandidateEvaluationReader(db, receiptRuntime)
   let correspondenceReader: ReturnType<typeof createEnterpriseTitleCorrespondenceRefsReader> | undefined
   const preparedCorrespondences = (enterpriseId: number, titleCode: string) => {
     correspondenceReader ??= createEnterpriseTitleCorrespondenceRefsReader(prepareCurrentReader(db))
@@ -182,7 +183,7 @@ export function createCurrentQualificationAssessmentReader(db: Database.Database
     for (const { scopeTitle, ...ref } of refs) byTitle.get(scopeTitle)!.push(ref)
     return byTitle
   }
-  const readSnapshot = db.transaction((enterpriseId: number, asOf: number, options: QualificationAssessmentReadOptions, filterTitle?: CurrentTitle, presentationTitle?: CurrentTitle) => {
+  const readSnapshot = db.transaction((enterpriseId: number, asOf: number, options: QualificationAssessmentReadOptions, filterTitle?: CurrentTitle, presentationTitle?: CurrentTitle, workbookTitle?: CurrentTitle) => {
     // No filterTitle means the existing default reader follows its original SQL.
     const references = filterTitle == null ? undefined : readHydrationReferences(enterpriseId)
     let publishedPresentation: PublishedPresentation | undefined
@@ -197,17 +198,37 @@ export function createCurrentQualificationAssessmentReader(db: Database.Database
       try { publishedPresentation = projectOfficialPublishedNames(input.facts, selected, 1, 2) }
       catch (error) { publishedPresentation = unavailable(error) }
     }
-    const rows = CURRENT_TITLES.map(title => evaluate(enterpriseId, title, new Date(asOf).getUTCFullYear(), asOf, undefined, title === filterTitle, true, options, title === filterTitle, references?.get(title), filterTitle == null ? undefined : preparedCorrespondences, title === presentationTitle ? observePublishedForCurrent : undefined).row)
+    // Per-call, owned verified output only. Nothing is cached on the reader.
+    let workbookScope: readonly OfficialPublishedScope[] | undefined
+    let workbookPublished: ReadonlyMap<number, OfficialPublishedFact> | undefined
+    let workbookSourceError: unknown
+    const observePublishedForWorkbook: CurrentPublishedNameObservation = (scope, selected, input, sourceError) => {
+      workbookScope = selected
+      if (scope.length !== selected.length || scope.some((item, i) => item.evidenceId !== selected[i]!.evidenceId || item.eventId !== selected[i]!.eventId)) return
+      if (input.availability === 'unavailable') {
+        workbookSourceError = sourceError instanceof OfficialPublishedPresentationError ? sourceError : new OfficialPublishedPresentationError('read_failed')
+      } else {
+        workbookPublished = new Map(input.facts.map(fact => [fact.evidenceId, fact]))
+      }
+    }
+    const rows = CURRENT_TITLES.map(title => evaluate(enterpriseId, title, new Date(asOf).getUTCFullYear(), asOf, undefined, title === filterTitle, true, options, title === filterTitle, references?.get(title), filterTitle == null ? undefined : preparedCorrespondences, title === workbookTitle ? observePublishedForWorkbook : title === presentationTitle ? observePublishedForCurrent : undefined).row)
     if (presentationTitle != null && publishedPresentation === undefined) {
       if (presentationScope === undefined) throw new Error('Current published-name scope was not evaluated')
       try {
-        const facts = readOfficialPublishedPresentation(prepareCurrentReader(db), presentationScope)
+        const facts = readOfficialPublishedPresentation(prepareCurrentReader(db), presentationScope, undefined, receiptRuntime)
         publishedPresentation = projectOfficialPublishedNames([...facts.values()], presentationScope, 1, 2)
       } catch (error) { publishedPresentation = unavailable(error) }
     }
+    if (workbookTitle != null) {
+      if (workbookScope === undefined) throw new Error('Workbook published-name scope was not evaluated')
+      // Same ordered scope: retain typed failure without retry. A different scope
+      // keeps its own independent validation and error order, within this read.
+      if (workbookSourceError !== undefined) throw workbookSourceError
+      workbookPublished ??= readOfficialPublishedPresentation(prepareCurrentReader(db), workbookScope, undefined, receiptRuntime)
+    }
     const titles = rows.map(row => row.assessment!)
     const scope = { enterpriseId, asOf: new Date(asOf).toISOString(), ruleVersion: CURRENT_RULE_VERSION, assessmentVersion: QUALIFICATION_ASSESSMENT_VERSION }
-    return { rows, snapshot: { ...scope, snapshotId: assessmentDigest([scope, titles]), titles }, ...(publishedPresentation === undefined ? {} : { publishedPresentation }) }
+    return { rows, snapshot: { ...scope, snapshotId: assessmentDigest([scope, titles]), titles }, ...(publishedPresentation === undefined ? {} : { publishedPresentation }), ...(workbookPublished === undefined ? {} : { workbookPublished }) }
   })
   return {
     read(enterpriseId: number, asOf = Date.now(), options: QualificationAssessmentReadOptions = {}, filterTitle?: CurrentTitle) {
@@ -218,6 +239,12 @@ export function createCurrentQualificationAssessmentReader(db: Database.Database
       const read = readSnapshot(enterpriseId, asOf, {}, title, title)
       if (read.publishedPresentation === undefined) throw new Error('Current published-name presentation missing')
       return { ...read, publishedPresentation: read.publishedPresentation }
+    },
+    readWorkbook(enterpriseId: number, asOf: number, title: CurrentTitle) {
+      // Full default T2 SQL/options/context; no caller-provided sources or facts.
+      const read = readSnapshot(enterpriseId, asOf, {}, undefined, undefined, title)
+      if (read.workbookPublished === undefined) throw new Error('Workbook published-name facts missing')
+      return { ...read, workbookPublished: read.workbookPublished }
     },
     readTitle(enterpriseId: number, title: CurrentTitle, asOf: number, keys?: { queries: IdentityKeyVariants; relations: IdentityKeyVariants }) {
       return evaluate(enterpriseId, title, new Date(asOf).getUTCFullYear(), asOf, keys, true, false, undefined, true, undefined, preparedCorrespondences)
@@ -232,7 +259,7 @@ export function createCurrentCandidateReader(db: Database.Database) {
   return (...args: [enterpriseId: number, title: CurrentTitle, year: number, executionTime?: number, keys?: { queries: IdentityKeyVariants; relations: IdentityKeyVariants }, includeFilterFacts?: boolean, includeReferences?: boolean, assessmentOptions?: QualificationAssessmentReadOptions, includePendingFilterFacts?: boolean, suppliedPlatformRefs?: readonly CurrentPlatformReference[], preparedCorrespondences?: ReturnType<typeof createEnterpriseTitleCorrespondenceRefsReader>]) => evaluate(...args).row
 }
 
-function createCurrentCandidateEvaluationReader(db: Database.Database) {
+function createCurrentCandidateEvaluationReader(db: Database.Database, receiptRuntime?: ReceiptRuntimeContext) {
   const reader=prepareCurrentReader(db)
   const statements = new Map<string, Database.Statement>()
   const statement = (text: string) => {
@@ -480,7 +507,7 @@ function createCurrentCandidateEvaluationReader(db: Database.Database) {
     let publishedFacts = assessmentOptions.publishedNames
     let publishedReadError: unknown
     if (!publishedFacts) {
-      try { publishedFacts = {availability:'available',facts:[...readOfficialPublishedPresentation(reader,evidence.map(v => ({evidenceId:v.id,eventId:v.eventId}))).values()]} }
+      try { publishedFacts = {availability:'available',facts:[...readOfficialPublishedPresentation(reader,evidence.map(v => ({evidenceId:v.id,eventId:v.eventId})), undefined, receiptRuntime).values()]} }
       catch (error) { publishedReadError = error; publishedFacts = {availability:'unavailable',facts:[]} }
     }
     // One-way observation of this owned verified read, before the existing T2

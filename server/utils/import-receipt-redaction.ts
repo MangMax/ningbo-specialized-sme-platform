@@ -1,3 +1,4 @@
+import { validateReceiptRuntimeContext, type ReceiptRuntimeContext } from './receipt-runtime-context'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import type * as schema from '../../db/schema'
 import { cookieRedactor } from '../../lib/platform/client'
@@ -16,9 +17,9 @@ export type ReceiptRedactor = ((value: unknown, mode?: ReceiptRedactionMode) => 
   readonly knownRedactors: ReadonlyArray<(text: string) => string>
 }
 export type RedactionOptions = { additionalSecrets?: readonly (string | null | undefined)[] }
-export function importReceiptRedactor(db: Db, options: RedactionOptions = {}): ReceiptRedactor {
-  const runtime = typeof useRuntimeConfig === 'function' ? useRuntimeConfig() : undefined
-  const context = { ...credentialContext(), db }
+export function importReceiptRedactor(db: Db, options: RedactionOptions = {}, receiptRuntime?: ReceiptRuntimeContext): ReceiptRedactor {
+  const runtime = receiptRuntime === undefined ? (typeof useRuntimeConfig === 'function' ? useRuntimeConfig() : undefined) : validateReceiptRuntimeContext(receiptRuntime)
+  const context = receiptRuntime === undefined ? { ...credentialContext(), db } : { db, ocrToken: runtime?.ocrToken }
   const secrets = [...(options.additionalSecrets ?? []), runtime?.apiToken, runtime?.mcpToken, process.env.NUXT_API_TOKEN, process.env.NUXT_MCP_TOKEN, resolveCredential('miitCookie', context).value, resolveCredential('ocrToken', context).value]
   const redactors = Object.freeze([...new Set(secrets.filter((value): value is string => !!value))].map(cookieRedactor))
   function redact(value: unknown): unknown {

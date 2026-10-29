@@ -1,18 +1,15 @@
+import type { ReceiptRuntimeContext } from '../../server/utils/receipt-runtime-context'
 import { Stream } from 'documonster/excel'
 import type Database from 'better-sqlite3'
 import { createHash } from 'node:crypto'
 import { createWriteStream } from 'node:fs'
 import { once } from 'node:events'
 import { finished } from 'node:stream/promises'
-import { CURRENT_RULE_VERSION, prepareCurrentReader, createCurrentCandidateReader, type CurrentTitle } from './current-qualification'
+import { CURRENT_RULE_VERSION, prepareCurrentReader, createCurrentQualificationAssessmentReader, QUALIFICATION_ASSESSMENT_VERSION, type CurrentTitle } from './current-qualification'
 import { currentCandidateBindings, currentCandidateSqlFor } from './current-candidates'
 import { TITLES } from '../labels'
-import { readIdentityKeyVariants } from './current-identity-keys'
 import { CURRENT_COLUMNS, currentWorkbookValues } from './current-workbook-presentation'
 import { appLog, type LogContext } from '../logging'
-import { drizzle } from 'drizzle-orm/better-sqlite3'
-import * as schema from '../../db/schema'
-import { readOfficialPublishedPresentation } from './official-published-presentation'
 
 export class CurrentWorkbookLimitError extends Error {}
 function textCell(value: unknown): string | null {
@@ -42,8 +39,8 @@ function sheetOptions() {
   return {views:[{state:'frozen' as const,xSplit:2,ySplit:1,topLeftCell:'C2',zoomScale:90}]}
 }
 /** Streaming rows in one pinned SQLite read transaction, owned by the independent executor. */
-export async function writeCurrentWorkbook(db: Database.Database, title: CurrentTitle, filename: string, progress: (done: number,total: number,snapshotStartedAt: string) => void, logContext?: LogContext) {
-  const generatedAt = new Date().toISOString(), year = new Date(generatedAt).getFullYear()
+export async function writeCurrentWorkbook(db: Database.Database, title: CurrentTitle, filename: string, progress: (done: number,total: number,snapshotStartedAt: string) => void, logContext?: LogContext, receiptRuntime?: ReceiptRuntimeContext) {
+  const generatedAt = new Date().toISOString(), year = new Date(generatedAt).getUTCFullYear()
   const output = createWriteStream(filename)
   const completed = finished(output, { cleanup: true })
   // Observe early open/write failures even before the final workbook commit.
@@ -65,9 +62,7 @@ export async function writeCurrentWorkbook(db: Database.Database, title: Current
     // SQLite functions must be registered before a streaming SELECT is active.
     prepareCurrentReader(db)
     db.exec('BEGIN')
-    const readCandidate = createCurrentCandidateReader(db)
-    const displayReader = drizzle(db, { schema })
-    const keys={queries:readIdentityKeyVariants(db,'queries'),relations:readIdentityKeyVariants(db,'unassignedRelations')}
+    const assessmentReader = createCurrentQualificationAssessmentReader(db, receiptRuntime)
     const bindings=currentCandidateBindings(title)
     const currentCandidateSql=currentCandidateSqlFor(db)
     const total = (db.prepare(`select count(*) as n from (${currentCandidateSql})`).get(bindings) as {n:number}).n
@@ -75,7 +70,7 @@ export async function writeCurrentWorkbook(db: Database.Database, title: Current
     workbookStarted = true
     appLog({ source: 'export', operation: 'export.current.workbook', outcome: 'started' }, logContext)
     const workbook = new Stream.WorkbookWriter({ stream: output, useStyles: true, useSharedStrings: false, trueStreaming: true })
-    const counts = { eligible: 0, pending: 0, excluded: 0 }, hash = createHash('sha256').update(CURRENT_RULE_VERSION + ':' + year)
+    const counts = { eligible: 0, pending: 0, excluded: 0 }, hash = createHash('sha256').update(JSON.stringify(['current-export-assessment-409-v2',QUALIFICATION_ASSESSMENT_VERSION,CURRENT_RULE_VERSION,year,title]) + '\n')
     const deferred = { pending: [] as number[], excluded: [] as number[] }
     progress(0,total,snapshotStartedAt)
     // ZIP entries are sequential. Finish each sheet before opening the next,
@@ -87,22 +82,34 @@ export async function writeCurrentWorkbook(db: Database.Database, title: Current
       sheet.columns = widths.map(width => ({width}))
       styledRow(sheet,CURRENT_HEADERS,true)
       let scanned = 0, written = 0
-      const ids = group === 'eligible' ? db.prepare(`select id from (${currentCandidateSql}) order by id`).iterate(bindings) as Iterable<{id:number}> : deferred[group]
-      for (const candidate of ids) {
-        const id = typeof candidate === 'number' ? candidate : candidate.id
-        const row = readCandidate(id,title,year,Date.parse(generatedAt),keys)
-        if (group === 'eligible') {
-          hash.update(JSON.stringify(row))
-          if (counts[row.group] >= 1048575) throw new CurrentWorkbookLimitError('Excel 单表超过1048575条数据上限，未发布文件；请拆分数据范围')
-          counts[row.group]++
-          if (row.group !== 'eligible') deferred[row.group].push(id)
+      // Exhaust each bounded SELECT before full T2 opens its nested SAVEPOINT.
+      function* candidateIds() {
+        let after = -1
+        const statement = db.prepare(`select id from (${currentCandidateSql}) where id > @after order by id limit 100`)
+        while (true) {
+          const batch = statement.all({...bindings,after}) as {id:number}[]
+          if (!batch.length) return
+          for (const item of batch) yield item.id
+          after = batch[batch.length-1]!.id
         }
-        if (row.group === group) {
-          const published = readOfficialPublishedPresentation(displayReader, row.workbookFacts!.evidence
-            .filter(item => row.workbookFacts!.events.some(event => event.id === item.eventId && event.source === 'jxj' && (event.eventType === 'award' || event.eventType === 'review')))
-            .map(item => ({ evidenceId: item.id, eventId: item.eventId })))
-          // Every cell is a string/blank: no formula objects or numeric credit codes.
-          const values = currentWorkbookValues(title,row,++written,published)
+      }
+      const ids = group === 'eligible' ? candidateIds() : deferred[group]
+      for (const id of ids) {
+        // Count the canonical scan once; defer IDs only, never T2 or cell data.
+        const canonicalGroup = group === 'eligible' ? assessmentReader.readTitle(id,title,Date.parse(generatedAt)).group : group
+        if (group === 'eligible') {
+          if (counts[canonicalGroup] >= 1048575) throw new CurrentWorkbookLimitError('Excel 单表超过1048575条数据上限，未发布文件；请拆分数据范围')
+          counts[canonicalGroup]++
+          if (canonicalGroup !== 'eligible') deferred[canonicalGroup].push(id)
+        }
+        if (canonicalGroup === group) {
+          const { rows, snapshot, workbookPublished } = assessmentReader.readWorkbook(id,Date.parse(generatedAt),title)
+          const row = rows.find(item => item.assessment!.titleCode === title)!
+          if (row.assessment!.group !== group) throw new Error('Workbook scan and full assessment group differ')
+          // Keep the original row and its non-enumerable workbookFacts.
+          const values = currentWorkbookValues(title,row,++written,workbookPublished)
+          const { titles: _titles, snapshotId, ...scope } = snapshot
+          hash.update(JSON.stringify([group,id,scope,snapshotId,values]) + '\n')
           styledRow(sheet,values)
           await drain()
         }
