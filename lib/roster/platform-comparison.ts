@@ -255,6 +255,10 @@ function processResult(p: Process,input: CandidateComparisonInput,b: Binding,que
     const current=observations.includes(r)
     const m=r.businessRecord,q=(current?queries:historyQueries).find(q=>q.q.source.queryId===r.queryId && q.usable && q.complete && q.unrestricted && q.outcome==='records')
     if(!q)return result('coverage_incomplete')
+    // Query IDs do not license borrowing another endpoint's coverage. Every
+    // annual claim must match the actual query metadata and observation source.
+    const coverage=p.input.coverage.filter(c=>c.queryId===r.queryId)
+    if(q.q.source.interface!==r.interface || m.interface!==r.interface || q.q.source.queryStatus!==r.queryStatus || !coverage.length || coverage.some(c=>c.interface!==r.interface || c.queriedAt!==q.q.source.queriedAt || c.status!==q.q.source.queryStatus || c.completeness!==q.q.source.completeness || c.fullRange!==q.q.source.fullRange))return result('coverage_incomplete')
     const formalYear=official.decidedYear??official.year??Infinity
     if(current && new Date(q.time!).getUTCFullYear()<=formalYear)return result('temporal_order_unresolved')
     if(r.queryStatus!=='success' || r.queriedAt!==q.q.source.queriedAt || r.queryKey!==q.q.queryKey || r.titleCode!==input.titleCode || r.enterpriseId!==input.legacy.enterpriseId || r.target.eventId!==e.id || r.target.enterpriseId!==input.legacy.enterpriseId || r.target.titleCode!==input.titleCode || r.usccRaw!==e.record.usccRaw || e.record.usccRaw!==q.q.queryKey)return result('cycle_unresolved')

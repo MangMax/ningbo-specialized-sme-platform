@@ -237,3 +237,15 @@ describe('PR429 R1 regression',()=>{
   it('F3_native_apply_zero_is_not_single_title_absence',()=>{const i=z(),q=i.queries.sources[0]!;Object.assign(q.source,{interface:'apply_list',titleCode:null,rdjb:''});q.metadata!.source='queryList';q.metadata!.titleScope={mode:'source_default',rdjb:[]};for(const page of [...q.source.pages,...q.metadata!.pages]){page.source='queryList';page.rdjb=null}states(seal(i),'unknown','not_established','coverage_incomplete')})
   it('F3_apply_title_lineage_must_remain_bound',()=>{const i=nativeApplyCorroboration(p());i.processes[0]!.sourceRefs.titleScopeRefs=i.processes[0]!.sourceRefs.titleScopeRefs.filter(r=>r.relationId!==304);states(seal(i),'records','not_established','source_requires_revalidation')})
 })
+
+
+describe('PR429 R2 source binding',()=>{
+  it('F2_query_interface_cannot_be_borrowed_from_directory',()=>{
+    const i=borrowedHistory(p()),q=i.queries.sources.find(q=>q.source.queryId===203)!
+    q.source.interface='recognized_list';q.metadata!.source='queryBusList';for(const page of [...q.source.pages,...q.metadata!.pages])page.source='queryBusList'
+    states(seal(i),'records','not_established','coverage_incomplete')
+  })
+  it('F2_historical_record_interface_must_match_observation',()=>{const i=borrowedHistory(p());i.processes[0]!.input.groups[0]!.observationRefs[1]!.businessRecord.interface='apply_list';states(seal(i),'records','not_established','coverage_incomplete')})
+  it('F2_annual_coverage_interface_must_match_query',()=>{const i=borrowedHistory(p()),x=i.processes[0]!;for(const coverage of [x.input.coverage,x.sourceRefs.coverage])coverage.find(c=>c.queryId===203)!.interface='recognized_list';states(seal(i),'records','not_established','coverage_incomplete')})
+  it('F2_annual_coverage_time_must_match_query',()=>{const i=borrowedHistory(p()),x=i.processes[0]!;for(const coverage of [x.input.coverage,x.sourceRefs.coverage])coverage.find(c=>c.queryId===203)!.queriedAt='2025-04-01T00:00:00Z';states(seal(i),'records','not_established','coverage_incomplete')})
+})

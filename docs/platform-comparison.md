@@ -73,6 +73,9 @@ P/N使用的当前查询与正式结论年度相同或更早、且无法证明�
 annual选定逻辑步骤内全部历史观察都参与稳定字段、冲突与时间判断；因此逐一校验其
 同事件/主体/称号、query覆盖和record/version/hash及sourceRefs，并将依赖纳入safe refs。
 只有当前endpoint版本需要当前支持决定，不无差别要求历史版本重新confirmed。
+每项依赖还须让query witness.interface、观察interface、businessRecord.interface一致；
+相同queryId的annual/source coverage在接口、查询时间、状态、completeness和fullRange上
+必须逐项匹配实际query元数据。目录查询不能借queryId充当business历史的覆盖证明。
 未知状态、潜在更晚 scope gap、旧版本、撤回/需重核决定均不能套用 P/N。
 sourceGeneration 与当前决定分别绑定：同 generation 不意味着决定没有变化。
 
@@ -225,7 +228,7 @@ plugin-validation.json,type-validation.json,release.json}。父证明位于
 未运行 full/build/HTTP/DB app/browser，也未触碰 3480/3481；没有生产验收、后继接线或默认激活结论。
 
 
-## R2 审查修复验证
+## R2 审查修复验证（历史）
 
 PR429 R1固定head0337f0fb发现Standards数组getter P2及Spec三项P2：P/N同年先后、
 annual历史依赖闭环、原生apply_list覆盖。旧报告、原87项及全部FAIL/STOP/UNKNOWN均保留。
@@ -241,3 +244,19 @@ annual历史依赖闭环、原生apply_list覆盖。旧报告、原87项及全�
 
 修复仍只涉及原三个owner，不改默认407-v1/current/export或annual authority。此处记录本地
 门禁，独立R2审查、CI与生产不由本次测试代签。所有新生产路径仍未激活。
+
+
+## R3 来源交叉绑定验证
+
+R2 Spec保留一个F2部分闭合P2：历史business观察可借recognized_list查询覆盖。
+新增四个独立控制覆盖query接口、业务版本接口、annual coverage接口及时间错配；
+唯一修复前RED为4 FAIL、80项名称过滤。修复仅收紧逐依赖来源交叉核验，未改annual策略。
+
+新完整core84/84、原annual18/18，共102/102，exit0/signal null、0 skip，failureMessages全空；
+合法历史借证正控与原生apply_list佐证正控均保留。新插件实际加载及完整typecheck通过，
+原始日志诊断gate干净。source精确绑定，文档单独后置；aggregateUnhandled字段缺失仍UNKNOWN。
+原件：/tmp/issue426-implementation-6BVZlN/r2-red-parent、r2-green-parent、r2-type-parent；
+源码/断言与交付证明：/tmp/pr429-r2-parent-fix-qhyfsoll。
+
+所有旧R1/R2静态反例、历史RED/FAIL/STOP及UNKNOWN均保留。独立R3尚待审，不自签闭合。
+未运行full/build/HTTP/DB app/browser/CI/生产，默认reader和后继消费者仍未接入。
