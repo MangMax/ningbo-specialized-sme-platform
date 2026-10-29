@@ -1,3 +1,4 @@
+import type { ReceiptRuntimeContext } from '../../server/utils/receipt-runtime-context'
 import { publishedNameText, type PublishedPresentation } from './correspondence-view'
 import { listEventsOfficialEvidencePages, OfficialEvidenceError } from '../../server/utils/official-evidence'
 import { importReceiptRedactor, type OfficialPublishedNameInput, type ReceiptRedactor } from '../../server/utils/import-receipt-redaction'
@@ -23,7 +24,7 @@ export function assertOfficialPublishedBudget(facts: Iterable<OfficialPublishedF
 }
 
 /** Same caller snapshot across bounded event chunks and active cursor waves. */
-export function readOfficialPublishedPresentation(db: Parameters<typeof importReceiptRedactor>[0], scope: readonly OfficialPublishedScope[], redactor?: ReceiptRedactor): ReadonlyMap<number, OfficialPublishedFact> {
+export function readOfficialPublishedPresentation(db: Parameters<typeof importReceiptRedactor>[0], scope: readonly OfficialPublishedScope[], redactor?: ReceiptRedactor, receiptRuntime?: ReceiptRuntimeContext): ReadonlyMap<number, OfficialPublishedFact> {
   const facts = new Map<number, OfficialPublishedFact>(), events = new Set<number>()
   try {
     for (const item of scope) {
@@ -33,7 +34,7 @@ export function readOfficialPublishedPresentation(db: Parameters<typeof importRe
       events.add(item.eventId)
       assertOfficialPublishedBudget(facts.values())
     }
-    const redact = events.size ? redactor ?? importReceiptRedactor(db) : undefined
+    const redact = events.size ? redactor ?? importReceiptRedactor(db, {}, receiptRuntime) : undefined
     type Entry = { fact: OfficialPublishedFact } | { error: DisplayErrorCode }
     type Pending = { eventId: number; afterEvidenceId?: number; done: boolean; bytes: number; entries: Entry[] }
     const eventIds = [...events]

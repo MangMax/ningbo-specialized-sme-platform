@@ -12,7 +12,7 @@ import type { OfficialPublishedRow, RosterImportPayload, RosterImportRecord } fr
 import { preflightRosterImport, commitRosterImport } from '../server/utils/roster-import'
 import { handleRosterImportRequest } from '../server/utils/roster-import-http'
 import { handleEvidenceCorrectionRequest } from '../server/utils/roster-evidence-correction-api'
-import { readCurrentCandidate, type CurrentTitle } from '../lib/roster/current-qualification'
+import { readCurrentQualificationAssessment, createCurrentQualificationAssessmentReader, readCurrentCandidate, type CurrentTitle } from '../lib/roster/current-qualification'
 import { writeCurrentWorkbook } from '../lib/roster/current-workbook'
 import { startHttpFixture } from './helpers/http-fixture'
 import { minimalPdf } from './helpers/minimal-pdf'
@@ -223,20 +223,55 @@ it('isolates sidecar-only changes from enumerable qualification and dataVersion 
   const before = readCurrentCandidate(f.sqlite, exact.enterpriseId, 'specialized_sme', qualificationYear, executionTime), originalJson = JSON.stringify(before)
   expect(before.group).toBe('eligible')
   expect(Object.getOwnPropertyDescriptor(before, 'workbookFacts')?.enumerable).toBe(false)
+  const beforeT2 = readCurrentQualificationAssessment(f.sqlite, exact.enterpriseId, executionTime)
+  const beforeEvidence = f.sqlite.prepare('select v.id,v.record_event_id as eventId,v.source_file as sourceFile,v.attachment,v.list_no as listNo,v.page from record_evidence v join record_event e on e.id=v.record_event_id join record r on r.id=e.record_id where r.enterprise_id=? and r.title_code=? order by v.id').all(exact.enterpriseId,'specialized_sme')
   const firstFile = join(f.dir, 'before.xlsx'), secondFile = join(f.dir, 'after.xlsx')
   const first = await writeCurrentWorkbook(f.sqlite, 'specialized_sme', firstFile, () => {})
   expect(first.generatedAt).toBe('2026-10-25T08:00:00.000Z')
   const row = f.published('更正后原名', 1, 1, { declaration: { kind: 'existing', sourceDocumentId: exact.official.row.sourceDocumentId, basis: '同一正式公布核实' } })
   await f.correct(target.id, row, 'raw-only')
-  expect((await f.exact(target.id)).official.row).toMatchObject({ revision: 2, nameRaw: '更正后原名' })
+  const corrected = (await f.exact(target.id)).official.row
+  expect(corrected).toMatchObject({ revision: 2, nameRaw: '更正后原名', sha256: digest })
   // Controlled sidecar-only experiment: B correctly increments legacy event.revision.
   // Pin that one legacy input back to baseline, leaving the normal public capture history intact.
   // This is an isolation control, never a suggested business write or capture shortcut.
   f.sqlite.prepare('UPDATE record_event SET revision=? WHERE id=?').run(exact.event.revision, target.recordEventId)
   expect(JSON.stringify(readCurrentCandidate(f.sqlite, exact.enterpriseId, 'specialized_sme', qualificationYear, executionTime))).toBe(originalJson)
+  const afterT2 = readCurrentQualificationAssessment(f.sqlite, exact.enterpriseId, executionTime)
+  const expectedT2 = structuredClone(beforeT2)
+  const selected = expectedT2.titles.find(item => item.titleCode === 'specialized_sme')!
+  const sourceVersion = selected.sourceVersions.find(item => item.evidenceId === target.id)!
+  expect(sourceVersion.capturedRevision).toBe(1)
+  sourceVersion.capturedRevision = 2 // Independent public correction literal, not after-T2 output.
+  expect(sourceVersion.capturedSha256).toBe(digest)
+  expect(f.sqlite.prepare('select v.id,v.record_event_id as eventId,v.source_file as sourceFile,v.attachment,v.list_no as listNo,v.page from record_evidence v join record_event e on e.id=v.record_event_id join record r on r.id=e.record_id where r.enterprise_id=? and r.title_code=? order by v.id').all(exact.enterpriseId,'specialized_sme')).toEqual(beforeEvidence)
+  const hashJSON = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex')
+  selected.versions.sources = hashJSON([beforeEvidence,selected.sourceVersions,selected.completeness.publishedNames])
+  const { snapshotId: _oldDigest, titles: expectedTitles, ...expectedScope } = expectedT2
+  expectedT2.snapshotId = hashJSON([expectedScope,expectedTitles])
+  expect(afterT2).toEqual(expectedT2) // Every unlisted full-T2 path stays byte/structurally equal.
   const second = await writeCurrentWorkbook(f.sqlite, 'specialized_sme', secondFile, () => {})
   expect(second.generatedAt).toBe(first.generatedAt)
-  expect(second.counts).toEqual(first.counts); expect(second.dataVersion).toBe(first.dataVersion); expect(second.ruleVersion).toBe(first.ruleVersion)
+  expect(second.counts).toEqual(first.counts); expect(second.ruleVersion).toBe(first.ruleVersion)
+  const beforeBook = new ExcelJS.Workbook(); await beforeBook.xlsx.readFile(firstFile)
+  const afterBook = new ExcelJS.Workbook(); await afterBook.xlsx.readFile(secondFile)
+  const cells = (book: ExcelJS.Workbook) => book.worksheets.map(sheet => Array.from({length:sheet.rowCount},(_,r) => Array.from({length:sheet.columnCount},(_,c) => sheet.getRow(r+1).getCell(c+1).value)))
+  const beforeCells = cells(beforeBook), afterCells = cells(afterBook)
+  expect(beforeBook.getWorksheet('有效企业')!.getCell('H2').value).toContain('公布名称："原捕获名"')
+  expect(beforeBook.getWorksheet('有效企业')!.getCell('L2').value).toContain('公布名称："原捕获名"')
+  for (const column of [7,11]) {
+    expect(afterCells[0]![1]![column]).toBe(String(beforeCells[0]![1]![column]).replace('原捕获名','更正后原名'))
+    beforeCells[0]![1]![column] = afterCells[0]![1]![column]!
+  }
+  expect(afterCells).toEqual(beforeCells) // H2/L2 alone may change, including all explanation cells.
+  const independentVersion = (book: ExcelJS.Workbook, snapshot: typeof beforeT2) => {
+    const {titles:_titles,snapshotId,...scope}=snapshot
+    const values=Array.from({length:12},(_,c)=>book.getWorksheet('有效企业')!.getRow(2).getCell(c+1).value)
+    return 'sha256:'+createHash('sha256').update(JSON.stringify(['current-export-assessment-409-v2','enterprise-qualification-407-v1','current-roster-116-v8',2026,'specialized_sme'])+'\n')
+      .update(JSON.stringify(['eligible',exact.enterpriseId,scope,snapshotId,values])+'\n').digest('hex')
+  }
+  expect(first.dataVersion).toBe(independentVersion(beforeBook,beforeT2))
+  expect(second.dataVersion).toBe(independentVersion(afterBook,expectedT2))
   expect(createHash('sha256').update(readFileSync(secondFile)).digest('hex')).not.toBe(createHash('sha256').update(readFileSync(firstFile)).digest('hex'))
   const workbook = new ExcelJS.Workbook(); await workbook.xlsx.readFile(secondFile)
   expect(workbook.getWorksheet('有效企业')!.getCell('H2').value).toContain('公布名称："更正后原名"')
@@ -298,6 +333,10 @@ it('refuses an oversized event page without shrinking or retrying and rolls back
   expect(page).toHaveBeenCalledTimes(1)
   await expect(writeCurrentWorkbook(f.sqlite, 'specialized_sme', join(f.dir, 'page-limit.xlsx'), () => {})).rejects.toMatchObject({ code: 'response_limit' })
   expect(page).toHaveBeenCalledTimes(2); expect(f.sqlite.inTransaction).toBe(false)
+  for (const call of page.mock.calls) {
+    expect(call[1]).toEqual([{eventId:f.ids()[0]!.recordEventId}])
+    expect(call[2]).toEqual({pageSize:50,maxBytes:65536})
+  }
 })
 
 it('rejects corrupt historical raw fields and oversized legacy scope instead of silently truncating them', async () => {
@@ -334,10 +373,32 @@ it('hydrates only the matched sheet after hashing and never repeats deferred-row
     f.record('specialized_sme', [{ eventType: 'award', year: 2021, batchSeq: 1, evidence: [f.evidence(f.published('待核公布名', 2, 2))] }], '到期待核主体', null),
     f.record('specialized_sme', [{ eventType: 'nurture', year: 2021, batchSeq: 1, evidence: [{ sourceFile: '独立佐证.pdf', listNo: 3, page: 1 }] }], '仅培育主体', null),
   ]), 'groups')
+  const owned = createCurrentQualificationAssessmentReader(f.sqlite)
+  for (const [index,item] of f.ids().entries()) {
+    const enterpriseId=f.db.select().from(schema.record).all().find(record => record.id === f.db.select().from(schema.recordEvent).all().find(event => event.id === item.recordEventId)!.recordId)!.enterpriseId!
+    const defaultT2=readCurrentQualificationAssessment(f.sqlite,enterpriseId,executionTime)
+    const workbookRead=owned.readWorkbook(enterpriseId,executionTime,'specialized_sme')
+    expect(workbookRead.snapshot).toEqual(defaultT2)
+    expect(workbookRead.rows.find(row=>row.assessment!.titleCode==='specialized_sme')!.assessment!.group).toBe(owned.readTitle(enterpriseId,'specialized_sme',executionTime).group)
+    expect(Object.getOwnPropertyDescriptor(workbookRead.rows.find(row=>row.assessment!.titleCode==='specialized_sme')!,'workbookFacts')?.enumerable).toBe(false)
+    const selected=defaultT2.titles.find(title=>title.titleCode==='specialized_sme')!
+    expect(selected.group).toBe(['eligible','pending','excluded'][index])
+    expect(selected.sourceVersions.map(source=>source.eventId)).toEqual([item.recordEventId])
+    expect(workbookRead.workbookPublished).toEqual(index===2 ? new Map() : new Map([[item.id,{
+      evidenceId:item.id,eventId:item.recordEventId,revision:1,availability:'captured',
+      nameRaw:['有效公布名','待核公布名'][index],sourceBindingKnown:true,
+    }]]))
+    if (index===2) {
+      expect(selected.evidence).toContainEqual(expect.objectContaining({eventId:item.recordEventId,eventType:'nurture'}))
+      expect(selected.completeness.publishedNames).toEqual([])
+    }
+  }
+  // Only this measured workbook run contributes to the page trace below.
   const page = observePublishedPages(), filename = join(f.dir, 'groups.xlsx')
   const result = await writeCurrentWorkbook(f.sqlite, 'specialized_sme', filename, () => {})
   expect(result.counts).toEqual({ eligible: 1, pending: 1, excluded: 1 })
-  expect(page.mock.calls.map(call => call[1])).toEqual([f.ids()[0]!.recordEventId, f.ids()[1]!.recordEventId])
+  expect(page.mock.calls.map(call => call[1])).toEqual(f.ids().map(item=>item.recordEventId))
+  for (const call of page.mock.calls) expect(call[2]).toEqual({pageSize:50,maxBytes:65536})
   const workbook = new ExcelJS.Workbook(); await workbook.xlsx.readFile(filename)
   expect(workbook.getWorksheet('有效企业')!.getCell('H2').value).toContain('公布名称："有效公布名"')
   expect(workbook.getWorksheet('待确认')!.getCell('H2').value).toContain('公布名称："待核公布名"')

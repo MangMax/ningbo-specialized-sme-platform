@@ -36,9 +36,9 @@
 
 ## 工作簿与资格
 
-四张表固定为“有效企业”“待确认”“排除明细”“口径说明”。前三表列固定为：序号、稳定企业标识、统一社会信用代码、现名、公布名、已确认曾用名、宁波区县、称号、首次认定、最近授予/延续资格依据、复核情况、公布对应情况、备注、可核对依据。所有身份/来源文本写成文本单元格。按稳定企业 ID 一称号一行，跨称号独立，无分页截断；空集仍包含表头及说明。说明给三组精确计数、规则、快照摘要、时间及当前识别范围，不声称全市完整。
+四张表固定为“有效企业”“待确认”“排除明细”“口径说明”。前三表列固定为：序号、企业名称、统一社会信用代码、区县、称号、首次认定年份、认定及复核情况、公布名称、已确认曾用名、公布对应情况、情况说明、来源及页码。所有身份/来源文本写成文本单元格。按稳定企业 ID 一称号一行，跨称号独立，无分页截断；空集仍包含表头及说明。说明给三组精确计数、规则、快照摘要、时间及当前识别范围，不声称全市完整。
 
-共享入口为 `readCurrentCandidate` 和 `writeCurrentWorkbook`。只读正式业务数据；任务状态和独立产物为允许的写入。
+共享入口为 `createCurrentQualificationAssessmentReader` 和 `writeCurrentWorkbook`。只读正式业务数据；任务状态和独立产物为允许的写入。
 
 工作簿适配器使用精确版本 `documonster@0.20.2` 的公开 `Stream.WorkbookWriter` / `Stream.commitRow`，保留原有仅接收文件名的接口，由适配器创建并持有默认生命周期的 `fs.WriteStream`，关闭共享字符串、逐行编码。固定四张表按顺序完成，避免 ZIP 后续条目在前表结束前积累整表输出；首遍生成数据摘要与组计数，直接写有效企业，仅暂存待确认/排除组的稳定 ID（受现有单表行上限约束），随后在同一读取事务内重读这些 ID。不会收集完整单元格行、工作表 XML 或 ZIP，分组内仍按稳定 ID 排序。这个选择增加部分候选读取和 ID 空间成本，需保留同种子、同预算下的耗时/内存证据，不声称总内存恒定。每 100 个候选让出事件循环；进度仍只按首遍的每 100 个候选上报，延后写表不重复完成计数。写入触发背压时暂停生产，文件流的写入、提前关闭或最终提交错误均使执行失败。最终提交和文件流关闭后才返回，原有 `.part` 同步、原子发布及失败/取消清理仍由任务服务负责。此路径只写字符串或空单元格，不使用库的日期转换或公式缓存推断。
 
@@ -82,3 +82,12 @@ v8 补充：绑定 enterpriseId 不能忽略明确矛盾的原始统代；新写
 有旧正式历史时，独立当前资格区间必须严格晚于已知旧周期及事实年份；现有失败、未知复核结论/批次不能只凭区间起点消解。可选 `currentQualification.awardYear` 明确记录经独立核实的真实新授予年份（不能由区间、平台状态或说明文字推定），且不得晚于有效区间起点年份；只有严格晚于旧周期和所有事实时才恢复。较晚失败、同年顺序或缺时间仍待核。保留旧 event/evidence、首次年份、公布身份说明和新决定资格依据/核对范围；不向正式事件表补造事件。没有本地正式历史时首次年份仍留空。
 
 未归属关系候选及引用统一使用 normalizeUscc（空白消除、转大写），只识别候选，不自动确认关系或资格。导出固定读事务内一次遍历现有身份键索引收集非规范变体，各企业复用索引取全局最新51个查询ID后才投影元数据，保留50条加truncated契约；不读归档原始大字段、不持久缓存、不截断候选。
+
+
+### #409 共享评估消费与内部来源上下文
+
+三组直接读取完整三称号 T2 的所选称号 assessment.group，保留原行非枚举工作簿事实与逐出处独立复验；不复制资格策略。全称号候选按稳定ID有界keyset读取，先排空语句再以共享readTitle计数；只在所属sheet为每主体一次进入完整评估，严格校验扫描组与完整T2组一致。相同有序完整出处scope与正式显示scope在同次默认T2读取内复用已验证raw facts或typed error；不同scope保留独立显示复验，不缩减完整T2来源或复用查询最终展示预算。待确认不受查询页面的非空搜索定位限制；三个业务表与12列文本/空语义不变。
+
+每次执行使用一个 generatedAt/asOf、UTC年份及一个只读SQLite快照。dataVersion仍是opaque的sha256:摘要；新算法逐帧JSON后加换行：首帧[current-export-assessment-409-v2,assessmentVersion,ruleVersion,UTCyear,title]，随后依有效/待确认/排除的固定sheet顺序、每sheet稳定ID顺序逐帧[group,id,完整三称号scope,完整T2 snapshotId,实际12列文本/空投影]。scope含enterpriseId/asOf/ruleVersion/assessmentVersion；各组序号取该组稳定ID顺序。企业T2摘要不同于job.snapshotId（仍为jobID）。历史产物/摘要不重写，不要求两次实时执行摘要相等。
+
+执行时父进程仅捕获runtime apiToken/mcpToken/ocrToken，以私有启动IPC传递不可变窄context；不进入公开输入、任务持久化、日志或响应。worker在相同只读快照内自行resolve saved/env：saved优先，OCR仅无saved时runtime.trim优先于env NUXT_OCR_TOKEN/PADDLE fallback。未选中的runtime OCR不额外脱敏；原additionalSecrets、runtime API/MCP、env API/MCP、已选cookie/OCR的union顺序和默认省略路径保留。显式空context不回退child runtime。新transport单字段16KiB、三字段合计48KiB、JSON64KiB，非法/超限安全失败不截断；既有source/response/page/workbook预算不变。

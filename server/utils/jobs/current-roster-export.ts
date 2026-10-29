@@ -1,3 +1,4 @@
+import { captureReceiptRuntimeContext } from '../receipt-runtime-context'
 import { mkdir, rm, rename, stat, open } from 'node:fs/promises'
 import { createReadStream } from 'node:fs'
 import { join } from 'node:path'
@@ -31,6 +32,7 @@ export const currentRosterExportSpec: JobSpec = {
     try {
       await cleanupCurrentExports(ctx.db, logContext)
       await mkdir(dir,{ recursive:true, mode:0o700 })
+      const receiptRuntime = captureReceiptRuntimeContext(typeof useRuntimeConfig === 'function' ? useRuntimeConfig() : undefined)
       worker = createCurrentExportWorker()
       workerExited = new Promise(resolve => worker!.once('exit', () => resolve()))
       appLog({ source: 'export', operation: 'export.current.process', outcome: 'started' }, logContext)
@@ -44,7 +46,7 @@ export const currentRosterExportSpec: JobSpec = {
         worker!.once('error', error => { if (!processSettled) { processUnknown = true; reject(error) } })
         worker!.once('exit',() => { if (!processSettled) { processUnknown = true; cancelled ? resolve(null) : reject(new Error('导出执行进程中断；请重新提交')) } })
         timer = setInterval(() => { if (ctx.cancelled()) { cancelled=true; void worker!.terminate() } },50)
-        worker!.postMessage({dbPath, title:params.titleCode, temporaryPath,jobId:ctx.jobId,logContext})
+        worker!.postMessage({dbPath, title:params.titleCode, temporaryPath,jobId:ctx.jobId,logContext,receiptRuntime})
       })
       if (cancelled || ctx.cancelled()) { appLog({ source: 'export', operation: 'export.current.process', outcome: 'cancelled', errorCode: 'export_cancelled' }, logContext); return {cancelled:true,result:checkpoint} }
       appLog({ source: 'export', operation: 'export.current.process', outcome: 'success' }, logContext)
