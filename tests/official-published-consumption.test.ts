@@ -11,7 +11,7 @@ import type { OfficialPublishedRow, RosterImportPayload, RosterImportRecord } fr
 import { preflightRosterImport, commitRosterImport } from '../server/utils/roster-import'
 import { handleRosterImportRequest } from '../server/utils/roster-import-http'
 import { handleEvidenceCorrectionRequest } from '../server/utils/roster-evidence-correction-api'
-import { readCurrentCandidate, type CurrentTitle } from '../lib/roster/current-qualification'
+import { readCurrentCandidate, readCurrentQualificationAssessment, type CurrentTitle } from '../lib/roster/current-qualification'
 import { writeCurrentWorkbook } from '../lib/roster/current-workbook'
 import { startHttpFixture } from './helpers/http-fixture'
 import { minimalPdf } from './helpers/minimal-pdf'
@@ -331,7 +331,14 @@ it.each([{ case: 'Spec25', count: 25, perEvent: 5 }, { case: 'Standards24', coun
     expect(dtoBytes + textBytes).toBeLessThan(65536)
     expect(dtoBytes + textBytes * 2).toBeGreaterThan(65536)
     const before = JSON.parse(JSON.stringify(readCurrentCandidate(f.sqlite, 1, 'specialized_sme', qualificationYear, executionTime, undefined, true)))
-    const current = await get(), { publishedPresentation, ...old } = current.rows[0]
+    const current = await get(), { publishedPresentation, qualificationAssessment, ...old } = current.rows[0]
+    // The additive complete T2 is checked before the unchanged legacy-row oracle.
+    const scope = { enterpriseId: 1, asOf: new Date(executionTime).toISOString(), ruleVersion: 'current-roster-116-v8', assessmentVersion: 'enterprise-qualification-407-v1' }
+    expect(current.responseVersion).toBe('current-qualified-408-v1')
+    expect(qualificationAssessment).toMatchObject(scope)
+    expect(qualificationAssessment.titles.map((item: { titleCode: string }) => item.titleCode)).toEqual(['little_giant', 'specialized_sme', 'innovative_sme'])
+    expect(qualificationAssessment.snapshotId).toBe(createHash('sha256').update(JSON.stringify([scope, qualificationAssessment.titles])).digest('hex'))
+    expect(qualificationAssessment).toEqual(readCurrentQualificationAssessment(f.sqlite, 1, executionTime))
     expect(current.total).toBe(1); expect(current.uncertainTotal).toBe(0); expect(old).toEqual(before)
     expect(old.references.filter((v: string) => v.startsWith('evidence:'))).toHaveLength(count)
     const detail = await f.http('/detail?id=1')

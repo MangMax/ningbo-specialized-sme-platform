@@ -511,12 +511,30 @@ export function pageRecordCorrespondences(db: Db, filter: CorrespondenceFilter, 
   return { rows, total, ...paging }
 }
 /** Reverse links expose only these columns; candidate provenance is never needed. */
-export function listRecordCorrespondenceRefs(db: Db, filter: CorrespondenceFilter, sources?: { eventIds: number[]; relationIds: number[]; exportRowIds: number[] }) {
+function correspondenceRefColumns() {
   const t = schema.recordCorrespondence
-  const refs = db.select({ id: t.id, type: t.type, role: t.role, status: t.status, eventId: t.eventId, predecessorEventId: t.predecessorEventId, relationId: t.relationId, exportRowId: t.exportRowId, enterpriseId: t.enterpriseId, titleCode: t.titleCode, revision: t.revision })
-    .from(t).where(sources ? or(inArray(t.eventId, sources.eventIds), inArray(t.predecessorEventId, sources.eventIds), inArray(t.relationId, sources.relationIds), inArray(t.exportRowId, sources.exportRowIds)) : correspondenceWhere(filter)).orderBy(asc(t.id)).all()
+  return { id: t.id, type: t.type, role: t.role, status: t.status, eventId: t.eventId, predecessorEventId: t.predecessorEventId, relationId: t.relationId, exportRowId: t.exportRowId, enterpriseId: t.enterpriseId, titleCode: t.titleCode, revision: t.revision }
+}
+type CorrespondenceRefRow = Pick<StoredCorrespondence, keyof ReturnType<typeof correspondenceRefColumns>>
+function refsWithCurrentValidity(db: Db, refs: CorrespondenceRefRow[]) {
   const validity = new Map(idChunks(refs.filter(r => r.status === 'confirmed').map(r => r.id)).flatMap(ids => [...correspondenceRefValidity(db, ids)]))
   return refs.map(row => ({ ...row, requiresRevalidation: validity.get(row.id) ?? false }))
+}
+export function listRecordCorrespondenceRefs(db: Db, filter: CorrespondenceFilter, sources?: { eventIds: number[]; relationIds: number[]; exportRowIds: number[] }) {
+  const t = schema.recordCorrespondence
+  const refs = db.select(correspondenceRefColumns())
+    .from(t).where(sources ? or(inArray(t.eventId, sources.eventIds), inArray(t.predecessorEventId, sources.eventIds), inArray(t.relationId, sources.relationIds), inArray(t.exportRowId, sources.exportRowIds)) : correspondenceWhere(filter)).orderBy(asc(t.id)).all()
+  return refsWithCurrentValidity(db, refs)
+}
+/** Request-owned fixed-scope statement only. Every call reads and revalidates
+ * current rows; neither returned rows nor source validity are cached.
+ */
+export function createEnterpriseTitleCorrespondenceRefsReader(db: Db) {
+  const t = schema.recordCorrespondence
+  const prepared = db.select(correspondenceRefColumns()).from(t)
+    .where(and(eq(t.enterpriseId, sql.placeholder('enterpriseId')), eq(t.titleCode, sql.placeholder('titleCode'))))
+    .orderBy(asc(t.id)).prepare()
+  return (enterpriseId: number, titleCode: string) => refsWithCurrentValidity(db, prepared.all({ enterpriseId, titleCode }))
 }
 export function getRecordCorrespondenceAudit(db: Db, correspondenceId: number): CorrespondenceAudit[] {
   return db.select().from(schema.recordCorrespondenceAudit).where(eq(schema.recordCorrespondenceAudit.correspondenceId, correspondenceId)).orderBy(asc(schema.recordCorrespondenceAudit.id)).all()

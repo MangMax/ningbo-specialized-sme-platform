@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, beforeEach, expect, it } from 'vitest'
+import { assertCurrentQualifiedRowsSnapshotEqual408 } from './helpers/current-qualified-408'
 import { schema as s } from '../db/client'
 import { commitRecordCorrespondences, preflightRecordCorrespondences } from '../server/utils/record-correspondence'
 import { readEvidenceToken113 } from '../server/utils/evidence-impact-113'
@@ -62,7 +63,7 @@ it('requires one current award and one confirmed recognized relation for valid a
   expect(result.body).toMatchObject({ total: 1, rows: [{ enterpriseId: current.enterprise.id }] })
   expect(result.body.rows[0]).toMatchObject({matchedValidYears:[year+2],matchedMaintenance:[{year:year-1,batch:null}],qualificationWitnesses:[{matchedValidYear:year+2,matchedMaintenance:{year:year-1,batch:null},conditionQueryId:matchedRelation.queryId}]})
   expect(result.body.rows[0]).not.toHaveProperty('validYears')
-  expect((await mcp({ validYear: year + 2, maintenanceYear: year - 1 })).rows).toEqual(result.body.rows)
+  assertCurrentQualifiedRowsSnapshotEqual408((await mcp({ validYear: year + 2, maintenanceYear: year - 1 })).rows, result.body.rows)
   expect(result.body.options).toMatchObject({ validYears: [year + 2], maintenanceYears: [year - 1] })
   expect((await query({ validYear: String(year + 3) })).body.total).toBe(0) // lifecycle dueYear is not source validYear
 })
