@@ -255,3 +255,42 @@ it('pending_names_unavailable_retains_both_groups_request_and_retry_408', async 
   expectBack(801, target)
   expectBack(802, target)
 })
+
+
+it.each([
+  { id: 'desktop_subject', narrow: false, dimension: 'subject' as const },
+  { id: 'mobile_subject', narrow: true, dimension: 'subject' as const },
+  { id: 'desktop_region', narrow: false, dimension: 'region' as const },
+  { id: 'mobile_region', narrow: true, dimension: 'region' as const },
+])('pending_shared_reason_visible_without_event_gaps_408_$id', async ({ narrow, dimension }) => {
+  const { view, requests } = await setup({}, narrow)
+  const response = wire()
+  const pendingRow = { ...row(802, 'synthetic_408_公布待核', false), group: 'pending' as const, filterMatch: { status: 'matched' as const, checks: [] } }
+  const qa = pendingRow.qualificationAssessment
+  const selected = qa.titles.find(title => title.titleCode === 'innovative_sme')!
+  selected.group = 'pending'
+  selected.subject = { status: dimension === 'subject' ? 'unresolved' : 'not_established', message: dimension === 'subject' ? '主体事实适用性待核' : '未见可适用的已确认主体终止事实；不据此证明存续', decisionIds: [] }
+  selected.region = { status: 'unresolved', message: '主体地域事实适用性或生效顺序待核', decisionIds: [] }
+  selected.notes = [dimension === 'subject' ? '主体事实尚未确认（decision:91）' : '迁移决定生效顺序尚未核实']
+  qa.titles[0]!.notes = ['other_title_reason_should_not_appear']
+  const { snapshotId: _, titles, ...scope } = qa
+  qa.snapshotId = digest([scope, titles])
+  response.publishedPending.rows = [pendingRow]
+  const before = JSON.stringify(response)
+  requests[0]!.result.resolve(response); await flushPromises()
+  const section = view.get(pendingRegion)
+  const surface = narrow ? section.get('ul[aria-label="已公布待核企业列表"]') : section.get('table')
+  // Guard the exact public counterexample before asserting the omitted reason.
+  expect(selected.officialQualification.group).toBe('eligible')
+  expect(selected.completeness.status).toBe('recorded')
+  expect(selected.completeness.fieldGaps).toEqual([])
+  expect(surface.text()).toContain('synthetic_408_公布待核')
+  expect(surface.text()).toContain('正式资格当前有效')
+  expect(surface.text()).toContain('合成资料已记录')
+  expect(surface.text()).not.toContain('待核字段：')
+  expect(surface.text()).toContain(selected.region.message)
+  expect(surface.text()).toContain(selected.subject.message)
+  expect(surface.text()).toContain(selected.notes[0])
+  expect(surface.text()).not.toContain('other_title_reason_should_not_appear')
+  expect(JSON.stringify(response)).toBe(before)
+})

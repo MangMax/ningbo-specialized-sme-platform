@@ -126,3 +126,14 @@ B4 原静态 own-mock 的顶层 config.port 断言 FAIL 保留；父仅修正为
 401 confirmed runtime、native SQL plan/逐 IPC/binding load 等保持精确 UNKNOWN/UNRUN；父已接受 unchanged idChunks400/有效性 body 及实际小 confirmed drift/performance 证据覆盖本票 delta，不把 405 家企业当作 401 条 confirmed。原 busy iterator、display reads 9 对 3、prepare119、fixture oracle、类型/插件错误及浏览器 STOP 原件均保留。
 
 全量测试、CI、母 #413 组合验收、真实业务库/3481 环境与部署未运行；本文不声明 whole #408 ready，也不授权提交、PR、合并或部署。
+
+
+### PR424 R1 待核原因展示窄修（后置证据补记）
+
+R1 Standards 静态 0 finding；Spec 发现一项 P2：正式资格有效、事件字段已记录，但主体或地域事实仍待核时，查询页未显示共享评估的具体原因。仅在原页面的桌面／移动待核区域展示所选称号已有 `subject.message`、`region.message` 和 `notes`，去重后按普通文本换行；不新增资格条件、不借其他称号、不改计数、筛选或 DTO。
+
+`/tmp/pr424-pending-reasons-parent-sw62cl7r` 保留四例组件业务 RED 原件：桌面／移动各覆盖主体未决和地域未决，在正式资格 eligible、completeness recorded、fieldGaps 空等 guard 后，缺少地域说明断言失败。原监督器误漏 Vitest 名称引号而 STOP 的记录保留；父只读核验原始四例 JSON，没有重跑 RED。随后三文件 UI 回归 **27/27 PASS**（原23＋新增4），显式 locked5.4.0 插件完整 typecheck、普通 build 均 exit0，源码首尾 exact；默认类型环境历史 INCOMPLETE 不改写。
+
+`/tmp/pr424-pending-reasons-resume-zxebxi8_` 使用本次实际构建和隔离合成库，在桌面1440×900及390×844各确认主体、地域待核说明和 notes，名称／长说明正常换行且无横向溢出，eligible/pending 计数仍2/3。真实 HTTP200 完整 body 独立校验三称号、scope/versions/digest、整体 pending 与正式 eligible、fieldGaps 空及零写。该真实 fixture 的来源／名称完整性仍 incomplete，不能冒称实页复现了 completeness recorded；后者仅由四例组件控制证明。SDK NOT_STARTED。所见 owned/listener 释放、单次 rawbind 成功、samegrant CAS release-first FREE；未观测 handles/app-native close 等 UNKNOWN 保留。
+
+这次仅页面、原408UI测试及本节文档差量；原177例仍绑定623266fc，核心/协议逻辑未变且未重复执行。R1 Spec 记录保留，独立 R2 关闭与否由新固定候选复审核定。上述两次运行后的本文补记不冒充运行输入；full/CI/母413/真实环境及部署仍 UNRUN。

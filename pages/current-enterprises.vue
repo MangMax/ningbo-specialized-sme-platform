@@ -82,6 +82,10 @@ const { displayed, isShowingPrevious, paginationDisabled } = useRetainedQuerySna
 const rows = computed(() => displayed.value?.rows ?? [])
 const pending = computed<CurrentQualifiedResult['publishedPending'] | undefined>(() => displayed.value?.responseVersion === 'current-qualified-408-v1' ? displayed.value.publishedPending : undefined)
 const selectedAssessment = (row: CurrentRow) => row.qualificationAssessment?.titles.find(item => item.titleCode === displayed.value?.request.params.titleCode)
+const pendingReasonMessages = (row: CurrentRow) => {
+  const assessment = selectedAssessment(row)
+  return [...new Set([assessment?.subject.message, assessment?.region.message, ...(assessment?.notes ?? [])].filter((message): message is string => Boolean(message)))]
+}
 const fieldLabels = { year: '事项年份', decidedYear: '结论年份', batchSeq: '认定批次', reviewOutcome: '复核结论' }
 const fieldGapLabels = (row: CurrentRow) => [...new Set((selectedAssessment(row)?.completeness.fieldGaps ?? []).map(gap => fieldLabels[gap.field]))]
 const matchLabels: Record<CurrentFilterMatchStatus, string> = { matched: '符合已选筛选', not_matched: '不符合已选筛选', not_established: '尚不能确认满足已选筛选' }
@@ -273,6 +277,7 @@ useHead({ title: '优质中小企业查询' })
                   <TableCell class="align-top break-words text-sm leading-5">
                     <p>{{ selectedAssessment(row)?.officialQualification.message }}</p>
                     <p>{{ selectedAssessment(row)?.completeness.message }}</p>
+                    <p v-for="message in pendingReasonMessages(row)" :key="message" class="[overflow-wrap:anywhere]">{{ message }}</p>
                     <p v-if="fieldGapLabels(row).length">待核字段：{{ fieldGapLabels(row).join('、') }}</p>
                     <p>{{ matchLabels[row.filterMatch.status] }}</p>
                     <p v-for="check in row.filterMatch.checks" :key="check.field" class="text-muted-foreground">{{ filterLabels[check.field] }}：{{ matchLabels[check.status] }}</p>
@@ -291,6 +296,7 @@ useHead({ title: '优质中小企业查询' })
               <p v-if="row.aliases.length" class="text-muted-foreground break-words text-sm">已确认曾用名：{{ row.aliases.join('、') }}</p>
               <p class="text-sm leading-5">{{ selectedAssessment(row)?.officialQualification.message }}</p>
               <p class="text-sm leading-5">{{ selectedAssessment(row)?.completeness.message }}</p>
+              <p v-for="message in pendingReasonMessages(row)" :key="message" class="text-sm leading-5 [overflow-wrap:anywhere]">{{ message }}</p>
               <p v-if="fieldGapLabels(row).length" class="text-sm leading-5">待核字段：{{ fieldGapLabels(row).join('、') }}</p>
               <p class="text-sm leading-5">{{ matchLabels[row.filterMatch.status] }}</p>
               <p v-for="check in row.filterMatch.checks" :key="check.field" class="text-muted-foreground text-sm">{{ filterLabels[check.field] }}：{{ matchLabels[check.status] }}</p>
