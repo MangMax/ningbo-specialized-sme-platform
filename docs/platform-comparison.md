@@ -475,3 +475,62 @@ HARNESS_STOP、RED、Gate3、#426/#430/#433 FAIL/STOP及读取偏差保留。
 aggregateUnhandled字段缺失与未观测短命资源/handles仍UNKNOWN。
 未运行install/prepare/build/full/HTTP/DBapp/生产，未commit/push/PRbody/review/merge/watch，
 未委派或启动#428/#410；dirty-ready交父提交和重新安排双轴复审，不自签公开消费ready。
+
+
+## #435 独立修订域与真实平台 hash 协议
+
+比较输入继续限定为可信 reader 在同一个只读 snapshot 内装配的 authority 投影。
+current-qualification 的 sourceVersions 按 evidence ID 从
+`official_evidence_row_revision order by revision desc limit 1` 取当前 capture；
+event revision 则由事件写入 authority 独立推进。新增 evidence 可以是 row revision1，
+而所属 event 已是 revision2；更正一行也不会推进同事件其余 evidence 的行计数。
+
+core 的两处来源 guard 因此分别验证 capturedRevision 为正安全整数，不再要求它等于
+事件 revision。event/evidence 归属、未过滤的 dependency sources、当前 file/capture hash、
+removed、sourceRefs.event.revision、sourceGeneration、平台版本引用与当前决定保护仍保留。
+`sourceRefs.event.revision` 负责拒绝旧事件来源混用；capture 的 latest 保证来自可信 reader，
+不是由两个计数相等证明。类型和摘要不认证任意上传输入；若要让 core 独立认证历史
+capture 当前性，须另过 Gate3，本票没有增加 witness、reader 或全 evidence 覆盖规则。
+
+hashAlgorithm 显式兼容 `platform-row-json-v1` 与旧纯输入 `sha256`。
+真实 writer 存储的是 SHA256(`platform-row-json-v1\n` + canonical JSON) 的协议标识，
+不在 adapter/core 改名，也不读取 raw 正文重算。未知、未来、null 或大小写变体协议
+仍拒绝；小写64hex只是形状条件，不能代替身份、版本、interface、来源和当前决定校验。
+旧 DTO、默认407-v1/current/export、摘要 framing/normalizer/sourceGeneration 均未修改。
+
+固定 HEAD `2e40399fe23c73ef67f5c42e4fb186c713a431bc`，tree
+`ecee92c38919ac5808b668ba8a188c9e311badc6`。本候选仅三 owner：core/tests/本文档。
+测试原全文 prefix 和全部旧 expected 字节保留，尾部追加40个冻结完整 input/expected。
+覆盖 P/N/Z、event7/rows1与3、单行更新、同值旧事件sourceRefs、file drift、removed、
+wrong ownership、ABA、撤回/当前决定、版本/interface、未知协议及非法内容hash。
+每例固定名字；独立文档编码器验证摘要，deep freeze/finally验证输入无变更。
+
+证据及历史状态分列：
+
+- 首轮三个正向 guarded RED：3 executed/failed、196 filtered，分别为
+  `issue435_P_event7_rows1_3`、`issue435_P_platform_protocol`、
+  `issue435_public_safe_facts_synthetic_legacy_shell`。原值、legacy hash、sourceGeneration、
+  独立digest guards均到达，实际唯一cycle reason为source_requires_revalidation。
+- 首轮后处理误要求failureMessages包含方法名toEqual，Vitest实际措辞为to deeply equal，
+  形成harness STOP；原validator/validation/log均未修改。父独立核原JSON、精确fullname、
+  898行末断言及三组marker后接受业务RED，证据`/tmp/issue435-parent-red-dxc_xv26/decision.json`。
+  没有重跑setup或RED；后续通过不抹除历史STOP。
+- 恢复后唯一完整 core199＋annual18，共217/217 PASS，0 filter/skip，全部failureMessages空。
+  40组完整结果等于冻结expected；新旧input/expected未因GREEN修改。三个原RED的
+  inputDigest保持，修复后的完整resultDigest匹配独立expected。
+- 新独立类型lane：插件真实resolve/load（vue-router5.4.0，SHA
+  `0186b559341b0cfebf9c3f3faf0595ca173e934ea0db73fc0e462ebbcc9c15d1`），
+  完整typecheck exit0/signal null，raw TS/module/plugin diagnostic gate无匹配。
+  NODE_PATH仅该类型lane使用本WT的node_modules/.pnpm/node_modules。
+- 每lane独立同grant锁CAS，900/870/30秒、5GiB，PID/birth/root-first/reap保护；
+  release FIRST并读回FREE后整理证据。运行前后全部1819个tracked源码SHA无漂移。
+  aggregate unhandled缺字段及短命未观测资源/handles仍UNKNOWN。
+
+原始运行在`/tmp/issue435-implementation-gBBI8c/{red,green,types}`；新版结构化校验
+另存validation-v2，不覆盖旧harness STOP。完整source→run、diff/inverse、逐例AC见final/。
+真实反例literal仅formal/queries/processes采用原安全事实，缺失的legacy剩余字段明确
+使用合成壳，不冒称原公开完整input；#428实际公开装配回验仍UNRUN。
+
+本文为所有运行完成、释放后的后置delta，未参与上述测试/typecheck；core/tests字节
+与运行绑定。未运行full/build/HTTP/DBapp/CI/生产，未改#428，未commit/push/PR/review/merge。
+交父三owner dirty-ready候选，独立审查与合并由父处理。

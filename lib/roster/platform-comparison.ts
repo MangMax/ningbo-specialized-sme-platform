@@ -335,9 +335,11 @@ function processResult(p: Process,input: CandidateComparisonInput,b: Binding,que
     const formalYear=official.decidedYear??official.year??Infinity
     if(current && new Date(q.time!).getUTCFullYear()<=formalYear)return result('temporal_order_unresolved')
     if(r.queryStatus!=='success' || r.queriedAt!==q.q.source.queriedAt || r.queryKey!==q.q.queryKey || r.titleCode!==input.titleCode || r.enterpriseId!==input.legacy.enterpriseId || r.target.eventId!==e.id || r.target.enterpriseId!==input.legacy.enterpriseId || r.target.titleCode!==input.titleCode || r.usccRaw!==e.record.usccRaw || e.record.usccRaw!==q.q.queryKey)return result('cycle_unresolved')
-    if(m.groupState!=='verified'||m.identityState!=='resolved'||m.contentState!=='verified'||!m.recordId||!m.versionId||m.hashAlgorithm!=='sha256'||!m.contentHash||!/^[a-f0-9]{64}$/.test(m.contentHash))return result('source_requires_revalidation')
+    // Protocol labels are explicit: retain legacy sha256; 64hex alone is not proof.
+    if(m.groupState!=='verified'||m.identityState!=='resolved'||m.contentState!=='verified'||!m.recordId||!m.versionId||!['sha256','platform-row-json-v1'].includes(m.hashAlgorithm ?? '')||!m.contentHash||!/^[a-f0-9]{64}$/.test(m.contentHash))return result('source_requires_revalidation')
     if(!s.observations.some(v=>v.relationId===r.relationId && v.queryId===r.queryId && v.interface===r.interface && v.recordId===m.recordId && v.versionId===m.versionId && /^[a-f0-9]{64}$/.test(v.sourceFingerprint)) || !s.titleScopeRefs.some(v=>v.relationId===r.relationId && v.queryId===r.queryId && v.titleCode===input.titleCode && v.recordId===m.recordId && v.versionId===m.versionId))return result('source_requires_revalidation')
-    if(!s.evidence.length || !s.evidence.every(v=>official.evidenceIds.includes(v.id) && a.sourceVersions.some(src=>src.evidenceId===v.id && src.eventId===e.id && src.sha256===v.sha256 && src.removedAt===null && src.capturedRevision===official.revision && src.capturedSha256===src.sha256)))return result('source_requires_revalidation')
+    // Latest capture comes from the trusted snapshot reader; its row counter is not the event counter.
+    if(!s.evidence.length || !s.evidence.every(v=>official.evidenceIds.includes(v.id) && a.sourceVersions.some(src=>src.evidenceId===v.id && src.eventId===e.id && src.sha256===v.sha256 && src.removedAt===null && positiveId(src.capturedRevision ?? 0) && src.capturedSha256===src.sha256)))return result('source_requires_revalidation')
   }
   const current=p.currentDecisionRefs.filter(d=>observations.some(r=>r.relationId===d.relationId))
   if(p.currentDecisionRefs.some(d=>d.eventId===e.id && ['rejected','unlinked'].includes(d.status)) || current.some(d=>d.requiresRevalidation) || !current.some(d=>d.status==='confirmed'&&!d.requiresRevalidation&&d.endedAt===null&&d.eventId===e.id&&d.enterpriseId===input.legacy.enterpriseId&&d.titleCode===input.titleCode&&d.type==='event_process'&&d.role===(e.eventType==='award'?'supports_award':'supports_review')))return result('source_requires_revalidation')
@@ -368,7 +370,7 @@ export function comparePlatformComparison(input: CandidateComparisonInput): Plat
     else if(conflict)rs.push('source_conflict')
     else if(b.cycle.batchSeq===null)rs.push('cycle_unresolved')
     else if(a.group!=='eligible'||a.officialQualification.group!=='eligible'||b.judgment.group!=='eligible')rs.push('formal_unresolved')
-    else if(!refs.sources.length || refs.sources.some(s=>!s.sha256) || checked.dependencies.get(b)!.sources.some(s=>!s.sha256||s.removedAt!==null||s.sha256!==s.capturedSha256||!checked.events.get(s.eventId)?.evidenceIds.includes(s.evidenceId)||!refs.events.some(e=>e.id===s.eventId&&e.revision===s.capturedRevision)))rs.push('source_requires_revalidation')
+    else if(!refs.sources.length || refs.sources.some(s=>!s.sha256) || checked.dependencies.get(b)!.sources.some(s=>!s.sha256||s.removedAt!==null||s.sha256!==s.capturedSha256||!checked.events.get(s.eventId)?.evidenceIds.includes(s.evidenceId)||!refs.events.some(e=>e.id===s.eventId)||!positiveId(s.capturedRevision ?? 0)))rs.push('source_requires_revalidation')
     else {
       const applicable=input.processes.filter(p=>b.eventIds.includes(p.input.event.id))
       const processResults=applicable.map(p=>processResult(p,input,b,selected,all,refs))
