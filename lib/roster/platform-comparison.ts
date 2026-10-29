@@ -368,7 +368,7 @@ export function comparePlatformComparison(input: CandidateComparisonInput): Plat
     else if(conflict)rs.push('source_conflict')
     else if(b.cycle.batchSeq===null)rs.push('cycle_unresolved')
     else if(a.group!=='eligible'||a.officialQualification.group!=='eligible'||b.judgment.group!=='eligible')rs.push('formal_unresolved')
-    else if(!refs.sources.length || refs.sources.some(s=>!s.sha256) || checked.dependencies.get(b)!.sources.some(s=>s.removedAt!==null||s.sha256!==s.capturedSha256||!refs.events.some(e=>e.id===s.eventId&&e.revision===s.capturedRevision)))rs.push('source_requires_revalidation')
+    else if(!refs.sources.length || refs.sources.some(s=>!s.sha256) || checked.dependencies.get(b)!.sources.some(s=>!s.sha256||s.removedAt!==null||s.sha256!==s.capturedSha256||!checked.events.get(s.eventId)?.evidenceIds.includes(s.evidenceId)||!refs.events.some(e=>e.id===s.eventId&&e.revision===s.capturedRevision)))rs.push('source_requires_revalidation')
     else {
       const applicable=input.processes.filter(p=>b.eventIds.includes(p.input.event.id))
       const processResults=applicable.map(p=>processResult(p,input,b,selected,all,refs))

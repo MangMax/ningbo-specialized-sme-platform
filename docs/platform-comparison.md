@@ -354,3 +354,17 @@ not_established，新预期为 invalid_cycle_join，后者仍验证 excluded 原
 历史 288/type 仅属 #427 继承，不计本票 fresh；旧 FAIL/STOP/UNKNOWN 全保留。
 本文为释放后的后置记录，未参与上述测试/typecheck。未运行 build/full/HTTP/DBapp/
 生产，没有 commit/push/PR/review/委派，未实施 #427/#428/#410。
+
+
+### PR434 R2：提供的来源仍须独立校验
+
+R1 Spec F1 指出：错指同周期另一事件的来源被 refs 过滤后，两个 null hash
+可能绕过原有重核阻断。修复在未过滤的 dependency sources 上独立检查非空 hash
+及 event/evidence 归属；既不把错属来源加入 proof refs，也不补造缺失来源。
+
+六项独立回归覆盖正确事件、同周期错误事件、不存在事件 × 空/有效 hash。
+原候选 RED 为 2 FAIL/4 PASS，153 名称过滤；固定测试字节后完整 core159＋annual18
+共177 PASS，0 skip，插件实际加载及完整 typecheck 通过。各窗口先释放锁再整理证据。
+原171 PASS与流程FAIL、R1 P1均保留；未观测unhandled/handles仍UNKNOWN。
+本节为运行后的文档差量，不外推#427集成、build/full/CI/生产。
+证据：/tmp/pr434-parent-f1-6axyguga。

@@ -802,3 +802,29 @@ describe('issue433 complete authority bindings', () => {
     expect(result.comparison).toEqual({state:'not_established',cycles:[{originYear:2024,batchSeq:1,state:'not_established',reasons:['source_requires_revalidation'],refs:{eventIds:[21,23],evidenceIds:[121,123],queryIds:[],relationIds:[],events:[{id:21,revision:1},{id:23,revision:1}],sources:[{evidenceId:121,sha256:aHash}],versions:[],decisions:[],sourceGenerations:[]}}]})
   })
 })
+
+// PR434 F1: invalid provided sources must remain blockers after refs filtering.
+describe('issue433 provided source ownership', () => {
+  for (const eventId of [21, 24, 999]) for (const sourceHash of [null, aHash]) {
+    it(`issue433_source_owner_${eventId}_${sourceHash === null ? 'null' : 'valid'}`, () => {
+      const i = structuredClone(issue433Cases.find(c => c.name === 'issue433_latest_award_only')!.input)
+      i.queries = structuredClone(z().queries)
+      const source = i.formal.assessment.sourceVersions.find(s => s.evidenceId === 124)!
+      Object.assign(source, { eventId, sha256: sourceHash, capturedSha256: sourceHash })
+      seal(i)
+      const before = JSON.stringify(i)
+      expect(i.formal.assessment.evidence.map(e => [e.eventId, e.evidenceIds])).toEqual([[21, [121]], [24, [124]]])
+      expect(source.eventId).toBe(eventId)
+      expect(source.sha256).toBe(sourceHash)
+      const result = comparePlatformComparison(freeze(i))
+      const valid = eventId === 24 && sourceHash !== null
+      expect(result.observation.state).toBe('no_record')
+      expect(result.comparison.state).toBe(valid ? 'unsynchronized' : 'not_established')
+      expect(result.comparison.cycles[0]!.reasons).toEqual([valid ? 'no_record_in_applicable_scope' : 'source_requires_revalidation'])
+      expect(result.comparison.cycles[0]!.refs.sources).toEqual(eventId === 24
+        ? [{ evidenceId: 121, sha256: aHash }, { evidenceId: 124, sha256: sourceHash }]
+        : [{ evidenceId: 121, sha256: aHash }])
+      expect(JSON.stringify(i)).toBe(before)
+    })
+  }
+})
