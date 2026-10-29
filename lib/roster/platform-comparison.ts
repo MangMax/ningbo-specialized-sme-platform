@@ -1,6 +1,6 @@
 /** #426 pure comparison interface. Formal qualification and annual selection retain their existing authorities. */
 import type { CurrentQualificationAssessment as Assessment, CurrentQualificationSnapshot as Snapshot } from './current-qualification'
-import type { CycleJudgment } from './qualification-cycles'
+import { originTime, type CycleJudgment } from './qualification-cycles'
 import type { AnnualProcessInput, AnnualProcessSourceRefs, EventAnnualProcessRead, AnnualFinalQualification } from './annual-process'
 import type { PlatformBusinessGroup, PlatformBusinessObservationRef } from '../platform/business-record'
 import type { RelationSource } from './correspondence-view'
@@ -159,7 +159,7 @@ function guards(input: CandidateComparisonInput): void {
     keys.add(key)
     for (const id of [...eventIds, ...judgment.awardEventIds]) {
       const e = actual.evidence.find(e => e.eventId === id)
-      if (!e || e.year !== cycle.originYear || e.batchSeq !== cycle.batchSeq) throw new Error('invalid_cycle_event')
+      if (!e || originTime({ ...e, id: e.eventId }) !== cycle.originYear || e.batchSeq !== cycle.batchSeq) throw new Error('invalid_cycle_event')
     }
     const e = actual.evidence.find(e => e.eventId === judgment.anchor!.id)!
     for (const key of ['eventType','year','decidedYear','reviewOutcome','batchSeq'] as const) if (e[key] !== judgment.anchor[key]) throw new Error('invalid_cycle_anchor')

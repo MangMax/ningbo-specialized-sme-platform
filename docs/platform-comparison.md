@@ -260,3 +260,40 @@ R2 Spec保留一个F2部分闭合P2：历史business观察可借recognized_list�
 
 所有旧R1/R2静态反例、历史RED/FAIL/STOP及UNKNOWN均保留。独立R3尚待审，不自签闭合。
 未运行full/build/HTTP/DB app/browser/CI/生产，默认reader和后继消费者仍未接入。
+
+
+## #430 空原年周期连接修复
+
+核心的 event/cycle join 复用既有 qualification-cycles.originTime：已知 year 优先，
+仅 award 的 year=null 可使用 decidedYear；review 不借结论年填原周期。
+两年皆未知或原周期错配仍拒绝。原 year/null、decidedYear、anchor、source 值及旧
+snapshotId/hash 保留，未知 batch 不填 0。不改正式资格、annual/P/N、预算或默认接线。
+新增的运行时模块为纯 qualification-cycles，它只 type-import lifecycle，无 IO/DB。
+旧核心的 value 依赖仍为 node:crypto 与 annual-process（后者 value-import domain）；
+类型导入的 current-qualification 和 server reader 不因此成为运行时依赖。
+
+本轮固定 base bceec6c3a9867f544e25418fb44cd60a3816c18d /
+tree 0fa62f00dac18195f691863de76a140cb035bc48；fresh 验证如下：
+
+- 新增六例首次 RED：2 FAIL / 4 PASS，旧84项按名称过滤为 skipped。
+  两个合法 null-origin case 均在旧 hash/值断言之后抛 invalid_cycle_event；
+  旧报告校验器误要求 filtered=pending 的 AssertionError 原件保留，未修未重跑。
+  父独立接受 expected RED，证明 /tmp/issue430-parent-red-proof-g_b1guvz/proof.json。
+- 仅改已审两处 core 差量后，一次完整 core90（旧84＋新6）与原annual18，共108 PASS，
+  exit0/signal null，0 skipped/pending，各case failureMessages空，fullnames逐例核对。
+- 独立 grant 下插件实际 resolve/load 及完整 nuxt typecheck 均 exit0/signal null；
+  raw TS/module/plugin 诊断 gate 无匹配。各lane sourceExact，测试从RED冻结未变。
+- 两lane均 release-FIRST，同grant原字节CAS及FREE读回；900/870/30秒、5GiB、
+  owned PID/birth监控保留。aggregateUnhandled字段缺失与短命未观测资源仍UNKNOWN。
+
+core SHA256：c62e69274f05bf49d556f492d38f4766f125068f79f9a80c8b38535d99f6e540。
+tests SHA256：226fe22c5d8fd79a3d851c44009818ad9b1c9a695dc4b0815cf1a19f3803f9af。
+原始运行 /tmp/issue430-implementation-e0ywgcip/{red,green,types}，完整逐例证据
+在 green/validation.json；输入真实literal出处为#427的null-origin-input.json，永久
+测试内嵌完整JSON、无/tmp运行依赖。无query真实原输入与另借z的合成2026完整Z分别控制；
+合成query不冒称真实SQLite曾有该query。原DTO/hash、year=null和正式eligible保持。
+
+本文档为类型验证并释放之后的后置delta，未参与上述运行；core/tests字节绑定新运行。
+旧#426 102PASS仅历史证据，不作为此次fresh证据；所有历史FAIL/STOP及UNKNOWN保留。
+未运行build/full/HTTP/DBapp/SDK/browser/CI/生产；未实施#427/#428/#410。
+默认407-v1/current/export和生产消费者仍未接入。此处只交dirty候选，不自签独立审查。
