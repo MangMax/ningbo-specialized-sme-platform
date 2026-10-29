@@ -249,3 +249,425 @@ describe('PR429 R2 source binding',()=>{
   it('F2_annual_coverage_interface_must_match_query',()=>{const i=borrowedHistory(p()),x=i.processes[0]!;for(const coverage of [x.input.coverage,x.sourceRefs.coverage])coverage.find(c=>c.queryId===203)!.interface='recognized_list';states(seal(i),'records','not_established','coverage_incomplete')})
   it('F2_annual_coverage_time_must_match_query',()=>{const i=borrowedHistory(p()),x=i.processes[0]!;for(const coverage of [x.input.coverage,x.sourceRefs.coverage])coverage.find(c=>c.queryId===203)!.queriedAt='2025-04-01T00:00:00Z';states(seal(i),'records','not_established','coverage_incomplete')})
 })
+
+
+// #430: literal captured by #427's guarded SQLite case; no runtime file dependency.
+// Snapshot/hash, null origin, source and authority fields are preserved verbatim.
+function nullOrigin430(): Input {
+  return JSON.parse(String.raw`
+{
+  "version": "platform-comparison-410-v1",
+  "legacy": {
+    "enterpriseId": 1,
+    "asOf": "2026-06-01T00:00:00.000Z",
+    "ruleVersion": "current-roster-116-v8",
+    "assessmentVersion": "enterprise-qualification-407-v1",
+    "snapshotId": "c6f5dbbd184deaa354405b92176b0fc055d74e20c10e7a24c1d6fd481f70a110",
+    "titles": [
+      {
+        "titleCode": "little_giant",
+        "group": "pending",
+        "cycles": [],
+        "versions": {
+          "facts": "ca196556529bf6b9e0a8645d689a8511d61a4ec2a92406d94b08b7dbef067a9e",
+          "sources": "5ae1625b488b3935122d8dd627fe575b388a5aa360378fa4407aad08baaed1e2",
+          "decisions": "5ae1625b488b3935122d8dd627fe575b388a5aa360378fa4407aad08baaed1e2",
+          "observations": "fde5898c71060f1c5aadf68018968f659c530e2a88ab3d1493e06a7a7dda95d8"
+        },
+        "officialQualification": {
+          "group": "pending",
+          "message": "正式资格待核；已有公布及具体缺口保留",
+          "basis": "",
+          "notes": [
+            "缺少已确认认定及资格依据；平台状态或候选对应不能单独证明资格"
+          ]
+        },
+        "subject": {
+          "status": "not_established",
+          "message": "未见可适用的已确认主体终止事实；不据此证明存续",
+          "decisionIds": []
+        },
+        "region": {
+          "status": "not_established",
+          "message": "未见可适用的迁移决定；沿用正式公布地域范围",
+          "decisionIds": []
+        },
+        "platform": {
+          "status": "not_queried",
+          "comparison": "not_established",
+          "message": "截至评估时点尚无可适用平台查询；其它观察保留",
+          "truncated": false,
+          "observations": []
+        },
+        "correspondence": {
+          "status": "unmatched",
+          "message": "尚无已确认对应；不据此否定正式资格",
+          "refs": []
+        },
+        "completeness": {
+          "status": "recorded",
+          "message": "既有字段已记录；未推断具体有效日或未录入的政策条款",
+          "gaps": [],
+          "publishedNames": [],
+          "eventIds": [],
+          "fieldGaps": []
+        },
+        "evidence": [],
+        "sourceVersions": [],
+        "references": [],
+        "notes": [
+          "缺少已确认认定及资格依据；平台状态或候选对应不能单独证明资格"
+        ],
+        "shadow": {
+          "legacyGroup": "pending",
+          "difference": null
+        }
+      },
+      {
+        "titleCode": "specialized_sme",
+        "group": "eligible",
+        "cycles": [
+          {
+            "originYear": 2024,
+            "batchSeq": 1,
+            "precision": "year"
+          }
+        ],
+        "versions": {
+          "facts": "285152a22cdf32253a562cb51d98d0cf1394cd5e6a3f48c5bc5e14ac44c1c510",
+          "sources": "8241fd8584a6a62efdc0d2c4dc3cc2958e9ec794c7d7bcae5cfa0bbcdb7072c7",
+          "decisions": "5ae1625b488b3935122d8dd627fe575b388a5aa360378fa4407aad08baaed1e2",
+          "observations": "fde5898c71060f1c5aadf68018968f659c530e2a88ab3d1493e06a7a7dda95d8"
+        },
+        "officialQualification": {
+          "group": "eligible",
+          "message": "正式资格当前有效（按已录入的年份或已核实有效期间）",
+          "basis": "event:1@1 award /1 结论年:2024",
+          "notes": []
+        },
+        "subject": {
+          "status": "not_established",
+          "message": "未见可适用的已确认主体终止事实；不据此证明存续",
+          "decisionIds": []
+        },
+        "region": {
+          "status": "not_established",
+          "message": "未见可适用的迁移决定；沿用正式公布地域范围",
+          "decisionIds": []
+        },
+        "platform": {
+          "status": "not_queried",
+          "comparison": "not_established",
+          "message": "截至评估时点尚无可适用平台查询；其它观察保留",
+          "truncated": false,
+          "observations": []
+        },
+        "correspondence": {
+          "status": "unmatched",
+          "message": "尚无已确认对应；不据此否定正式资格",
+          "refs": []
+        },
+        "completeness": {
+          "status": "recorded",
+          "message": "既有字段已记录；未推断具体有效日或未录入的政策条款",
+          "gaps": [],
+          "publishedNames": [
+            {
+              "evidenceId": 1,
+              "availability": "captured",
+              "nameKnown": true
+            }
+          ],
+          "eventIds": [],
+          "fieldGaps": [
+            {
+              "eventId": 1,
+              "field": "year",
+              "valueState": "unknown",
+              "inputState": "null"
+            }
+          ]
+        },
+        "evidence": [
+          {
+            "eventId": 1,
+            "revision": 1,
+            "eventType": "award",
+            "year": null,
+            "batchSeq": 1,
+            "decidedYear": 2024,
+            "reviewOutcome": null,
+            "evidenceIds": [
+              1
+            ]
+          }
+        ],
+        "sourceVersions": [
+          {
+            "evidenceId": 1,
+            "eventId": 1,
+            "sourceFile": "synthetic/null-year-427.pdf",
+            "storedFileId": 1,
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "bytes": 10,
+            "removedAt": null,
+            "capturedRevision": 1,
+            "capturedSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          }
+        ],
+        "references": [
+          "evidence:1 synthetic/null-year-427.pdf  序号:1"
+        ],
+        "notes": [],
+        "shadow": {
+          "legacyGroup": "eligible",
+          "difference": null
+        }
+      },
+      {
+        "titleCode": "innovative_sme",
+        "group": "pending",
+        "cycles": [],
+        "versions": {
+          "facts": "ca196556529bf6b9e0a8645d689a8511d61a4ec2a92406d94b08b7dbef067a9e",
+          "sources": "5ae1625b488b3935122d8dd627fe575b388a5aa360378fa4407aad08baaed1e2",
+          "decisions": "5ae1625b488b3935122d8dd627fe575b388a5aa360378fa4407aad08baaed1e2",
+          "observations": "fde5898c71060f1c5aadf68018968f659c530e2a88ab3d1493e06a7a7dda95d8"
+        },
+        "officialQualification": {
+          "group": "pending",
+          "message": "正式资格待核；已有公布及具体缺口保留",
+          "basis": "",
+          "notes": [
+            "缺少已确认认定及资格依据；平台状态或候选对应不能单独证明资格"
+          ]
+        },
+        "subject": {
+          "status": "not_established",
+          "message": "未见可适用的已确认主体终止事实；不据此证明存续",
+          "decisionIds": []
+        },
+        "region": {
+          "status": "not_established",
+          "message": "未见可适用的迁移决定；沿用正式公布地域范围",
+          "decisionIds": []
+        },
+        "platform": {
+          "status": "not_queried",
+          "comparison": "not_established",
+          "message": "截至评估时点尚无可适用平台查询；其它观察保留",
+          "truncated": false,
+          "observations": []
+        },
+        "correspondence": {
+          "status": "unmatched",
+          "message": "尚无已确认对应；不据此否定正式资格",
+          "refs": []
+        },
+        "completeness": {
+          "status": "recorded",
+          "message": "既有字段已记录；未推断具体有效日或未录入的政策条款",
+          "gaps": [],
+          "publishedNames": [],
+          "eventIds": [],
+          "fieldGaps": []
+        },
+        "evidence": [],
+        "sourceVersions": [],
+        "references": [],
+        "notes": [
+          "缺少已确认认定及资格依据；平台状态或候选对应不能单独证明资格"
+        ],
+        "shadow": {
+          "legacyGroup": "pending",
+          "difference": null
+        }
+      }
+    ]
+  },
+  "titleCode": "specialized_sme",
+  "formal": {
+    "assessment": {
+      "titleCode": "specialized_sme",
+      "group": "eligible",
+      "officialQualification": {
+        "group": "eligible",
+        "message": "正式资格当前有效（按已录入的年份或已核实有效期间）",
+        "basis": "event:1@1 award /1 结论年:2024",
+        "notes": []
+      },
+      "subject": {
+        "status": "not_established",
+        "message": "未见可适用的已确认主体终止事实；不据此证明存续",
+        "decisionIds": []
+      },
+      "region": {
+        "status": "not_established",
+        "message": "未见可适用的迁移决定；沿用正式公布地域范围",
+        "decisionIds": []
+      },
+      "cycles": [
+        {
+          "originYear": 2024,
+          "batchSeq": 1,
+          "precision": "year"
+        }
+      ],
+      "versions": {
+        "facts": "285152a22cdf32253a562cb51d98d0cf1394cd5e6a3f48c5bc5e14ac44c1c510",
+        "sources": "8241fd8584a6a62efdc0d2c4dc3cc2958e9ec794c7d7bcae5cfa0bbcdb7072c7",
+        "decisions": "5ae1625b488b3935122d8dd627fe575b388a5aa360378fa4407aad08baaed1e2",
+        "observations": "fde5898c71060f1c5aadf68018968f659c530e2a88ab3d1493e06a7a7dda95d8"
+      },
+      "evidence": [
+        {
+          "eventId": 1,
+          "revision": 1,
+          "eventType": "award",
+          "year": null,
+          "batchSeq": 1,
+          "decidedYear": 2024,
+          "reviewOutcome": null,
+          "evidenceIds": [
+            1
+          ]
+        }
+      ],
+      "sourceVersions": [
+        {
+          "evidenceId": 1,
+          "eventId": 1,
+          "sourceFile": "synthetic/null-year-427.pdf",
+          "storedFileId": 1,
+          "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "bytes": 10,
+          "removedAt": null,
+          "capturedRevision": 1,
+          "capturedSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      ],
+      "completeness": {
+        "status": "recorded",
+        "message": "既有字段已记录；未推断具体有效日或未录入的政策条款",
+        "gaps": [],
+        "publishedNames": [
+          {
+            "evidenceId": 1,
+            "availability": "captured",
+            "nameKnown": true
+          }
+        ],
+        "eventIds": [],
+        "fieldGaps": [
+          {
+            "eventId": 1,
+            "field": "year",
+            "valueState": "unknown",
+            "inputState": "null"
+          }
+        ]
+      },
+      "correspondence": {
+        "status": "unmatched",
+        "message": "尚无已确认对应；不据此否定正式资格",
+        "refs": []
+      }
+    },
+    "cycles": [
+      {
+        "cycle": {
+          "originYear": 2024,
+          "batchSeq": 1,
+          "precision": "year"
+        },
+        "judgment": {
+          "anchor": {
+            "id": 1,
+            "eventType": "award",
+            "year": null,
+            "decidedYear": 2024,
+            "batchSeq": 1,
+            "reviewOutcome": null,
+            "revision": 1,
+            "nameRaw": "合成427空原年",
+            "usccRaw": "91330211255994457P",
+            "source": "jxj"
+          },
+          "originYear": 2024,
+          "batch": 1,
+          "group": "eligible",
+          "awardEventIds": [
+            1
+          ]
+        },
+        "eventIds": [
+          1
+        ]
+      }
+    ]
+  },
+  "queries": {
+    "sources": [],
+    "truncated": false
+  },
+  "processes": []
+}
+`)
+}
+describe('issue430 origin authority join', () => {
+  it('real_null_origin_without_queries_preserves_legacy', () => {
+    const i=nullOrigin430(), before=JSON.stringify(i), l=i.legacy
+    expect(l.snapshotId).toBe('c6f5dbbd184deaa354405b92176b0fc055d74e20c10e7a24c1d6fd481f70a110')
+    expect(hash(JSON.stringify([{enterpriseId:l.enterpriseId,asOf:l.asOf,ruleVersion:l.ruleVersion,assessmentVersion:l.assessmentVersion},l.titles]))).toBe('c6f5dbbd184deaa354405b92176b0fc055d74e20c10e7a24c1d6fd481f70a110')
+    expect(i.formal.assessment.evidence[0]!.year).toBeNull()
+    expect(i.queries).toEqual({sources:[],truncated:false})
+    const r=comparePlatformComparison(i)
+    expect(r.observation.state).toBe('not_queried')
+    expect(r.comparison.state).toBe('not_established')
+    expect(r.comparison.cycles[0]!.reasons).toEqual(['not_queried'])
+    expect(i.formal.assessment.group).toBe('eligible')
+    expect(JSON.stringify(i)).toBe(before)
+  })
+  it('award_null_origin_accepts_real_2024_cycle_preserves_hash_and_Z', () => {
+    const i = nullOrigin430(), l = i.legacy
+    expect(l.snapshotId).toBe('c6f5dbbd184deaa354405b92176b0fc055d74e20c10e7a24c1d6fd481f70a110')
+    expect(hash(JSON.stringify([{enterpriseId:l.enterpriseId,asOf:l.asOf,ruleVersion:l.ruleVersion,assessmentVersion:l.assessmentVersion},l.titles]))).toBe('c6f5dbbd184deaa354405b92176b0fc055d74e20c10e7a24c1d6fd481f70a110')
+    expect(i.formal.assessment.evidence[0]).toEqual({eventId:1,revision:1,eventType:'award',year:null,batchSeq:1,decidedYear:2024,reviewOutcome:null,evidenceIds:[1]})
+    expect(i.formal.cycles[0]!.cycle).toEqual({originYear:2024,batchSeq:1,precision:'year'})
+    expect(i.formal.cycles[0]!.judgment.anchor!.year).toBeNull()
+    i.queries = z().queries // independently specified complete 2026 exact-USCC zero
+    const before = JSON.stringify(i)
+    const r = comparePlatformComparison(i)
+    expect(r.observation.state).toBe('no_record')
+    expect(r.comparison.state).toBe('unsynchronized')
+    expect(r.comparison.cycles).toEqual([{originYear:2024,batchSeq:1,state:'unsynchronized',reasons:['no_record_in_applicable_scope'],refs:{eventIds:[1],evidenceIds:[1],queryIds:[201],relationIds:[],events:[{id:1,revision:1}],sources:[{evidenceId:1,sha256:'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'}],versions:[],decisions:[],sourceGenerations:[]}}])
+    expect(i.formal.assessment.group).toBe('eligible')
+    expect(i.formal.assessment.evidence[0]!.year).toBeNull()
+    expect(i.formal.cycles[0]!.judgment.anchor!.year).toBeNull()
+    expect(JSON.stringify(i)).toBe(before)
+  })
+  it('known_origin_wins_over_different_decided_year', () => {
+    const i=z(), e=i.formal.assessment.evidence[0]!, a=i.formal.cycles[0]!.judgment.anchor!
+    e.decidedYear=a.decidedYear=2025
+    const r=comparePlatformComparison(seal(i))
+    expect(r.comparison.cycles[0]!.originYear).toBe(2024)
+    expect(r.comparison.state).toBe('unsynchronized')
+    expect(e.year).toBe(2024); expect(e.decidedYear).toBe(2025)
+  })
+  it('review_null_origin_cannot_borrow_decided_year', () => {
+    const i=z(), e=i.formal.assessment.evidence[0]!, a=i.formal.cycles[0]!.judgment.anchor!
+    e.eventType=a.eventType='review'; e.year=a.year=null
+    e.decidedYear=a.decidedYear=2024; e.reviewOutcome=a.reviewOutcome='passed'
+    i.formal.cycles[0]!.judgment.awardEventIds=[]
+    expect(()=>comparePlatformComparison(seal(i))).toThrow('invalid_cycle_event')
+  })
+  it('award_both_years_unknown_rejects', () => {
+    const i=z(); i.formal.assessment.evidence[0]!.year=null; i.formal.cycles[0]!.judgment.anchor!.year=null
+    expect(()=>comparePlatformComparison(seal(i))).toThrow('invalid_cycle_event')
+  })
+  it('award_null_origin_wrong_cycle_rejects', () => {
+    const i=z(), e=i.formal.assessment.evidence[0]!, a=i.formal.cycles[0]!.judgment.anchor!
+    e.year=a.year=null; e.decidedYear=a.decidedYear=2023
+    expect(()=>comparePlatformComparison(seal(i))).toThrow('invalid_cycle_event')
+  })
+})
