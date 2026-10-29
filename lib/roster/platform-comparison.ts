@@ -1,6 +1,6 @@
 /** #426 pure comparison interface. Formal qualification and annual selection retain their existing authorities. */
 import type { CurrentQualificationAssessment as Assessment, CurrentQualificationSnapshot as Snapshot } from './current-qualification'
-import { originTime, type CycleJudgment } from './qualification-cycles'
+import { adjudicateQualificationCycles, originTime, type CycleJudgment, type QualificationEvent } from './qualification-cycles'
 import type { AnnualProcessInput, AnnualProcessSourceRefs, EventAnnualProcessRead, AnnualFinalQualification } from './annual-process'
 import type { PlatformBusinessGroup, PlatformBusinessObservationRef } from '../platform/business-record'
 import type { RelationSource } from './correspondence-view'
@@ -47,8 +47,8 @@ export type CandidateComparisonInput = Immutable<{
     // Direct canonical assessment fields, not an eligible flag supplied by a caller.
     assessment: Pick<Assessment, 'titleCode' | 'group' | 'officialQualification' | 'subject' | 'region' |
       'cycles' | 'versions' | 'evidence' | 'sourceVersions' | 'completeness' | 'correspondence'>
-    // Join to the CURRENT cycles already selected by existing authority. Do not reselect cycles.
-    // This join is presently absent from public skinny T2 and must be frozen by parent.
+    // Complete instance multiset selected by authority, validated without replacing legacy.
+    // eventIds are direct members; ambiguous reviews are dependencies, not direct members.
     cycles: {
       cycle: FormalCycle
       judgment: Pick<CycleJudgment, 'anchor' | 'originYear' | 'batch' | 'group' | 'awardEventIds'>
@@ -139,7 +139,20 @@ function instant(value: string): number | null {
   const date = value.slice(0, 10), day = Date.parse(date + 'T00:00:00Z'), time = Date.parse(value)
   return Number.isFinite(day) && new Date(day).toISOString().slice(0, 10) === date && Number.isFinite(time) ? time : null
 }
-function guards(input: CandidateComparisonInput): void {
+type CheckedEvent = CandidateComparisonInput['formal']['assessment']['evidence'][number]
+type CheckedSource = CandidateComparisonInput['formal']['assessment']['sourceVersions'][number]
+interface CheckedFormal {
+  events: Map<number, CheckedEvent>
+  dependencies: Map<Binding, { eventIds: number[]; sources: CheckedSource[] }>
+}
+const sortedIds = (ids: readonly number[]) => [...ids].sort((a,b)=>a-b)
+const multiset = (rows: readonly unknown[]) => rows.map(canonical).sort(compare)
+function narrowJudgment(j: Binding['judgment']) {
+  const a=j.anchor
+  return {originYear:j.originYear,batch:j.batch,group:j.group,awardEventIds:sortedIds(j.awardEventIds),
+    anchor:a===null?null:{id:a.id,eventType:a.eventType,year:a.year,batchSeq:a.batchSeq,decidedYear:a.decidedYear,reviewOutcome:a.reviewOutcome}}
+}
+function guards(input: CandidateComparisonInput): CheckedFormal {
   jsonCopy(input)
   const { legacy, formal, titleCode } = input
   const scope = { enterpriseId: legacy.enterpriseId, asOf: legacy.asOf, ruleVersion: legacy.ruleVersion, assessmentVersion: legacy.assessmentVersion }
@@ -152,18 +165,77 @@ function guards(input: CandidateComparisonInput): void {
   if (actual.evidence.some(e=>!positiveId(e.eventId)||!positiveId(e.revision)||e.evidenceIds.some(id=>!positiveId(id)))) throw new Error('invalid_formal_reference')
   for (const key of Object.keys(formal.assessment) as (keyof typeof formal.assessment)[]) if (canonical(formal.assessment[key]) !== canonical(actual[key])) throw new Error('invalid_selected_assessment')
   if (formal.cycles.length !== actual.cycles.length || formal.cycles.length > 40) throw new Error('invalid_cycle_join')
-  const keys = new Set<string>()
+  const events = new Map<number, CheckedEvent>()
+  for(const e of actual.evidence){
+    if(events.has(e.eventId))throw new Error('invalid_formal_reference')
+    events.set(e.eventId,e)
+  }
+  const actualKeys=new Set(actual.cycles.map(canonical))
+  // Keep existing local diagnostics before the stronger completeness checks.
   for (const binding of formal.cycles) {
     const { cycle, judgment, eventIds } = binding, key = canonical(cycle)
-    if (keys.has(key) || !actual.cycles.some(c => canonical(c) === key) || judgment.originYear !== cycle.originYear || judgment.batch !== cycle.batchSeq || !judgment.anchor || !eventIds.includes(judgment.anchor.id)) throw new Error('invalid_cycle_join')
-    keys.add(key)
+    if (!actualKeys.has(key) || judgment.originYear !== cycle.originYear || judgment.batch !== cycle.batchSeq || (judgment.anchor !== null && !eventIds.includes(judgment.anchor.id))) throw new Error('invalid_cycle_join')
     for (const id of [...eventIds, ...judgment.awardEventIds]) {
-      const e = actual.evidence.find(e => e.eventId === id)
+      const e = events.get(id)
       if (!e || originTime({ ...e, id: e.eventId }) !== cycle.originYear || e.batchSeq !== cycle.batchSeq) throw new Error('invalid_cycle_event')
     }
-    const e = actual.evidence.find(e => e.eventId === judgment.anchor!.id)!
-    for (const key of ['eventType','year','decidedYear','reviewOutcome','batchSeq'] as const) if (e[key] !== judgment.anchor[key]) throw new Error('invalid_cycle_anchor')
+    if(judgment.anchor!==null){
+      const e = events.get(judgment.anchor.id)!
+      for (const key of ['eventType','year','decidedYear','reviewOutcome','batchSeq'] as const) if (e[key] !== judgment.anchor[key]) throw new Error('invalid_cycle_anchor')
+    }
   }
+  const facts:QualificationEvent[]=[]
+  const byYear=new Map<number,Map<number|null,QualificationEvent[]>>()
+  let latestOrigin=-Infinity
+  for(const e of events.values()){
+    if(!['award','review'].includes(e.eventType)||!e.evidenceIds.length)continue
+    const fact={id:e.eventId,eventType:e.eventType,year:e.year,batchSeq:e.batchSeq,decidedYear:e.decidedYear,reviewOutcome:e.reviewOutcome}
+    facts.push(fact)
+    const origin=originTime(fact)
+    if(origin===null)continue
+    latestOrigin=Math.max(latestOrigin,origin)
+    const batches=byYear.get(origin)??new Map<number|null,QualificationEvent[]>()
+    const bucket=batches.get(fact.batchSeq)??[];bucket.push(fact);batches.set(fact.batchSeq,bucket);byYear.set(origin,batches)
+  }
+  facts.sort((a,b)=>a.id-b.id)
+  const current=byYear.get(latestOrigin),unassigned=current?.get(null)??[]
+  const reviews=unassigned.filter(e=>e.eventType==='review'),grants=unassigned.filter(e=>e.eventType==='award')
+  const partitions=[...(current??[])].filter(([batch])=>batch!==null).map(([,rows])=>rows)
+  partitions.push(...grants.map(e=>[e]))
+  if(current&&!partitions.length&&reviews.length)partitions.push(reviews)
+  if(partitions.length>40)throw new Error('invalid_cycle_join')
+  // One full validation plus at most forty partition witnesses. Never replace supplied results.
+  const year=new Date(legacy.asOf).getUTCFullYear(),authority=adjudicateQualificationCycles(facts,year)
+  const skinny=authority.cycles.map(c=>({originYear:c.originYear,batchSeq:c.batch,precision:'year'}))
+  if(!same(multiset(skinny),multiset(actual.cycles))||!same(multiset(skinny),multiset(formal.cycles.map(b=>b.cycle))))throw new Error('invalid_cycle_join')
+  const expected=new Map<string,number>(),members=new Map<string,{eventIds:number[]}>(),witnesses:ReturnType<typeof narrowJudgment>[]=[]
+  for(const direct of partitions){
+    const dependencies=direct===reviews?direct:[...direct,...reviews]
+    const local=adjudicateQualificationCycles([...dependencies].sort((a,b)=>a.id-b.id),year)
+    if(local.cycles.length!==1)throw new Error('invalid_cycle_join')
+    const judgment=local.cycles[0]!,ids=sortedIds(direct.map(e=>e.id))
+    const tuple=canonical({cycle:{originYear:judgment.originYear,batchSeq:judgment.batch,precision:'year'},judgment:narrowJudgment(judgment),eventIds:ids})
+    expected.set(tuple,(expected.get(tuple)??0)+1)
+    members.set(canonical(ids),{eventIds:sortedIds(dependencies.map(e=>e.id))})
+    witnesses.push(narrowJudgment(judgment))
+  }
+  if(!same(multiset(witnesses),multiset(authority.cycles.map(narrowJudgment))))throw new Error('invalid_cycle_join')
+  const sourcesByEvidence=new Map<number,CheckedSource[]>()
+  for(const source of actual.sourceVersions){const rows=sourcesByEvidence.get(source.evidenceId)??[];rows.push(source);sourcesByEvidence.set(source.evidenceId,rows)}
+  const dependencies:CheckedFormal['dependencies']=new Map()
+  for(const b of formal.cycles){
+    if(new Set(b.eventIds).size!==b.eventIds.length)throw new Error('invalid_cycle_event')
+    const ids=sortedIds(b.eventIds),member=members.get(canonical(ids))
+    if(!member)throw new Error('invalid_cycle_event')
+    if(new Set(b.judgment.awardEventIds).size!==b.judgment.awardEventIds.length)throw new Error('invalid_cycle_join')
+    const tuple=canonical({cycle:b.cycle,judgment:narrowJudgment(b.judgment),eventIds:ids}),count=expected.get(tuple)??0
+    if(!count)throw new Error('invalid_cycle_join')
+    expected.set(tuple,count-1)
+    const evidenceIds=new Set(member.eventIds.flatMap(id=>events.get(id)!.evidenceIds))
+    dependencies.set(b,{eventIds:member.eventIds,sources:[...evidenceIds].flatMap(id=>sourcesByEvidence.get(id)??[])})
+  }
+  if([...expected.values()].some(count=>count!==0))throw new Error('invalid_cycle_join')
+  return {events,dependencies}
 }
 // Only these arrays are sets. Pages and all other arrays retain their order.
 const SET_ARRAYS = new Set(['titles','cycles','evidence','sourceVersions','groups','observationRefs','existingCorrespondenceIds','existingCorrespondences','currentDecisionRefs','decisionRefs','eventIds','awardEventIds','evidenceIds','decisionIds','relationIds','queryIds','observations','titleScopeRefs','coverage','scopeGaps','sources','publishedNames','fieldGaps'])
@@ -221,12 +293,13 @@ function checkedQuery(q: Query, title: string, asOf: number): CheckedQuery {
   else if(!r.unrestricted)r.reasons=['cycle_unresolved']
   return r
 }
-function cycleRefs(input: CandidateComparisonInput,b: Binding): SafeComparisonRefs {
-  const out=emptyRefs(),a=input.formal.assessment
-  out.eventIds=[...b.eventIds].sort((a,b)=>a-b)
-  out.events=a.evidence.filter(e=>b.eventIds.includes(e.eventId)).map(e=>({id:e.eventId,revision:e.revision})).sort((a,b)=>a.id-b.id)
-  out.evidenceIds=[...new Set(a.evidence.filter(e=>b.eventIds.includes(e.eventId)).flatMap(e=>e.evidenceIds))].sort((a,b)=>a-b)
-  out.sources=a.sourceVersions.filter(s=>out.evidenceIds.includes(s.evidenceId)).map(s=>({evidenceId:s.evidenceId,sha256:s.sha256})).sort((a,b)=>a.evidenceId-b.evidenceId)
+function cycleRefs(checked: CheckedFormal,b: Binding): SafeComparisonRefs {
+  const out=emptyRefs(),dependency=checked.dependencies.get(b)!
+  out.eventIds=[...dependency.eventIds]
+  out.events=out.eventIds.map(id=>({id,revision:checked.events.get(id)!.revision}))
+  out.evidenceIds=sortedIds([...new Set(out.eventIds.flatMap(id=>checked.events.get(id)!.evidenceIds))])
+  const eventIds=new Set(out.eventIds)
+  out.sources=dependency.sources.filter(s=>eventIds.has(s.eventId)&&checked.events.get(s.eventId)!.evidenceIds.includes(s.evidenceId)).map(s=>({evidenceId:s.evidenceId,sha256:s.sha256})).sort((a,b)=>a.evidenceId-b.evidenceId)
   return out
 }
 function processResult(p: Process,input: CandidateComparisonInput,b: Binding,queries: CheckedQuery[],historyQueries: CheckedQuery[],refs: SafeComparisonRefs): {state:State; reasons:ComparisonReason[]} {
@@ -274,7 +347,7 @@ function processResult(p: Process,input: CandidateComparisonInput,b: Binding,que
   return {state:mismatch?'unsynchronized':'synchronized',reasons:[mismatch?'same_event_result_not_reflected':'same_event_result_agrees']}
 }
 export function comparePlatformComparison(input: CandidateComparisonInput): PlatformComparison {
-  guards(input)
+  const checked=guards(input)
   if(input.queries.sources.length>50 || input.processes.length>40)throw new Error('input_resource_limit')
   if(input.queries.sources.some(q=>Buffer.byteLength(canonical(q))>65536)||input.processes.some(p=>Buffer.byteLength(canonical(p.sourceRefs))>65536))throw new Error('input_resource_limit')
   const scope:Scope={enterpriseId:input.legacy.enterpriseId,titleCode:input.titleCode,asOf:input.legacy.asOf,ruleVersion:input.legacy.ruleVersion,assessmentVersion:input.legacy.assessmentVersion,legacySnapshotId:input.legacy.snapshotId}
@@ -289,13 +362,13 @@ export function comparePlatformComparison(input: CandidateComparisonInput): Plat
   const observationState:ObservationState=truncated||conflict?'unknown':sufficient.some(q=>q.outcome==='records')?'records':sufficient.some(q=>q.outcome==='no_record')?'no_record':selected.some(q=>q.failed)?'query_failed':all.some(q=>q.time==null)?'unknown':(!all.length||all.every(q=>q.reasons.includes('observation_after_as_of'))||selected.length>0&&selected.every(q=>q.notQueried))?'not_queried':'unknown'
   const observation:PlatformComparison['observation']={state:observationState,sources:all.map<PlatformComparison['observation']['sources'][number]>(q=>({queryId:q.q.source.queryId,queryStatus:['success','no_record','partial','failed','auth_failed','not_queried'].includes(q.q.source.queryStatus)?q.q.source.queryStatus:'unknown',outcome:q.usable&&q.complete?q.outcome:'unknown',applicability:q.usable?'applicable':q.time===null?'unknown':'inapplicable',reasons:reasons(q.reasons)})).sort((a,b)=>a.queryId-b.queryId||compare(canonical(a),canonical(b)))}
   const cycles:PlatformComparison['comparison']['cycles']=input.formal.cycles.map(b=>{
-    const refs=cycleRefs(input,b),rs:ComparisonReason[]=[],a=input.formal.assessment
+    const refs=cycleRefs(checked,b),rs:ComparisonReason[]=[],a=input.formal.assessment
     let state:State='not_established'
     if(truncated)rs.push('metadata_truncated')
     else if(conflict)rs.push('source_conflict')
     else if(b.cycle.batchSeq===null)rs.push('cycle_unresolved')
     else if(a.group!=='eligible'||a.officialQualification.group!=='eligible'||b.judgment.group!=='eligible')rs.push('formal_unresolved')
-    else if(!refs.sources.length || refs.sources.some(s=>!s.sha256) || a.sourceVersions.filter(s=>refs.evidenceIds.includes(s.evidenceId)).some(s=>s.removedAt!==null||s.sha256!==s.capturedSha256||!refs.events.some(e=>e.id===s.eventId&&e.revision===s.capturedRevision)))rs.push('source_requires_revalidation')
+    else if(!refs.sources.length || refs.sources.some(s=>!s.sha256) || checked.dependencies.get(b)!.sources.some(s=>s.removedAt!==null||s.sha256!==s.capturedSha256||!refs.events.some(e=>e.id===s.eventId&&e.revision===s.capturedRevision)))rs.push('source_requires_revalidation')
     else {
       const applicable=input.processes.filter(p=>b.eventIds.includes(p.input.event.id))
       const processResults=applicable.map(p=>processResult(p,input,b,selected,all,refs))
@@ -309,7 +382,7 @@ export function comparePlatformComparison(input: CandidateComparisonInput): Plat
         else if(processResults.some(r=>r.state==='unsynchronized'))state='unsynchronized'
         else if(processResults.every(r=>r.state==='synchronized'))state='synchronized'
       }else if(sufficient.some(q=>q.outcome==='no_record')){
-        const zeros=sufficient.filter(q=>q.outcome==='no_record'),year=Math.max(...input.formal.assessment.evidence.filter(e=>b.eventIds.includes(e.eventId)).map(e=>e.decidedYear??e.year??Infinity))
+        const zeros=sufficient.filter(q=>q.outcome==='no_record'),year=Math.max(...b.eventIds.map(id=>{const e=checked.events.get(id)!;return e.decidedYear??e.year??Infinity}))
         if(zeros.some(q=>new Date(q.time!).getUTCFullYear()<=year))rs.push('temporal_order_unresolved')
         else {state='unsynchronized';rs.push('no_record_in_applicable_scope');refs.queryIds.push(...zeros.map(q=>q.q.source.queryId))}
       }else if(input.processes.length)rs.push('cycle_unresolved')
@@ -324,7 +397,7 @@ export function comparePlatformComparison(input: CandidateComparisonInput): Plat
       ;(refs as any)[key]=[...new Map(values.map(v=>[canonical(v),v])).values()].sort((a,b)=>typeof a==='number'&&typeof b==='number'?a-b:compare(canonical(a),canonical(b)))
     }
     return {originYear:b.cycle.originYear,batchSeq:b.cycle.batchSeq,state,reasons:reasons(rs),refs}
-  }).sort((a,b)=>a.originYear-b.originYear||(a.batchSeq??-1)-(b.batchSeq??-1))
+  }).sort((a,b)=>a.originYear-b.originYear||(a.batchSeq??-1)-(b.batchSeq??-1)||compare(canonical(a),canonical(b)))
   let state:State='not_established'
   if(cycles.length&&!cycles.some(c=>c.reasons.includes('source_conflict'))){
     if(cycles.some(c=>c.state==='unsynchronized'))state='unsynchronized'

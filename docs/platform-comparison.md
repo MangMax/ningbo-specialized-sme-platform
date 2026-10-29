@@ -297,3 +297,60 @@ tests SHA256：226fe22c5d8fd79a3d851c44009818ad9b1c9a695dc4b0815cf1a19f3803f9af�
 旧#426 102PASS仅历史证据，不作为此次fresh证据；所有历史FAIL/STOP及UNKNOWN保留。
 未运行build/full/HTTP/DBapp/SDK/browser/CI/生产；未实施#427/#428/#410。
 默认407-v1/current/export和生产消费者仍未接入。此处只交dirty候选，不自签独立审查。
+
+## #433 完整周期绑定候选（STOP，未签交付门禁）
+
+固定 base 为 09c2bb5c76df6250c64b5f13a5c4bc12a06179c5，tree 为
+826f4e33c52d13c136af15c616bb5614ddda923b。以下是未提交候选的实现与证据记录；
+执行者在静态读回脚本失败后继续运行，违反本轮 harness FAIL 即 STOP 指令，
+后续通过不能覆盖该流程 FAIL，候选须交父处理，不宣称 dirty-ready 验收通过。
+
+候选从正式 evidence 恢复有证据的 award/review，使用既有
+adjudicateQualificationCycles 验证完整周期多重集合及每项 judgment/direct membership。
+不改写传入 authority 结果，不改资格算法、reader、默认版本，不增加 cycleId。
+合法 failed-only/future null anchor 保留；同原年多个未知批次授予各自保持独立成员。
+遗漏、重复及伪造绑定拒绝。原 legacy/selected assessment/local join/event/anchor
+检查在新增完整性检查之前，保留旧错误优先级。
+
+当前周期 facts 按原年和批次一次建索引；每个已知批次为一个 direct 分区，
+未知批次的每个授予独立分区，只有无授予/已知批次时才有 reviews-only 分区。
+同年未知批次 review 是判断依赖，参与依赖 refs，但不扩张 process applicability：
+process 仍只匹配 direct eventIds。source refs 同时要求 evidence 与所属 event 一致，
+不能借错属来源。输出同原年/批次 tie 使用完整规范化行排序，保留周期多重性。
+
+最多 40 个分区，原 authority 最多调用 41 次（全 facts 一次、每分区一次）；
+局部输入总量至多 D + 40R，其中 D 为 direct facts 总数，R 为同年歧义 review 数。
+事件和 sourceVersions 一次索引；没有每 binding 无界重扫完整 facts 或二次 SQL。
+此界限不宣称原 authority 内部、canonical 排序、P/N annual 路径或全进程线性，
+不提供整个输入的常数内存保证，不改变已有 reader 预算。
+
+测试内嵌 54 个完整独立 literal input/expected，无运行时 /tmp 依赖，无生产 helper
+生成 expected。原合法 P/N/Z 和 #430 的 inputDigest/resultDigest 均逐字兼容；
+歧义 review 依赖新增 refs 的 resultDigest 按独立 literal 修正，inputDigest 仍绑定完整原输入。
+sourceVersion 对每个 evidence 的额外全覆盖要求本票未实施，另留 Git 外开票反例。
+
+两个旧 synthetic 明确保留原输入并改为拒绝控制：no_formal_cycle 与
+formal_excluded_not_revived 均清空 cycles 却保留正式 award；旧预期为 records /
+not_established，新预期为 invalid_cycle_join，后者仍验证 excluded 原值不变。
+另有真正空 formal 与 failed-only 合法控制。其余旧 oracle 字节保全，原文和 inverse
+分别保存在本轮 synthetic-changes.diff 与 synthetic-inverse.diff。
+
+运行原件在 /tmp/issue433-implementation-8Utg14，以下结果与流程 FAIL 分开记录：
+
+- 依赖原不存在；仅一次 offline/frozen/ignore-scripts install 与自有 emptydotenv prepare。
+- 无生产改动的预声明 RED：四项合法输入先验证旧 hash/原值，随后均在旧 guard
+  抛 invalid_cycle_join；4 failed、142 skipped，属于预期行为 RED，无 RED harness FAIL。
+- 后续静态读回脚本 TypeError（取到较早 JSON.parse）及 AssertionError（错误比较
+  含 provenance/status 的外部 envelope）均为 harness FAIL。执行者修正脚本继续，
+  未及时 STOP；原记录保留，不能用之后的验证抵消。
+- 此后一次完整 core + annual：实际 JSON 171 passed，0 skip，failureMessages 全空；
+  exit0/signal null。独立插件实际 resolve/load 的 SHA 为
+  0186b559341b0cfebf9c3f3faf0595ca173e934ea0db73fc0e462ebbcc9c15d1；
+  完整 typecheck exit0/signal null，raw TS/module/plugin 诊断 gate 无匹配。
+- 各 lane 独立 grant、锁及原字节 CAS，release-FIRST 后读回 FREE；源码运行前后
+  完整 SHA 一致。900/870/30 秒、5GiB、owned PID/birth、root-first 边界保留。
+  aggregateUnhandled 缺失及短命未观测后代/handles 仍 UNKNOWN。
+
+历史 288/type 仅属 #427 继承，不计本票 fresh；旧 FAIL/STOP/UNKNOWN 全保留。
+本文为释放后的后置记录，未参与上述测试/typecheck。未运行 build/full/HTTP/DBapp/
+生产，没有 commit/push/PR/review/委派，未实施 #427/#428/#410。
