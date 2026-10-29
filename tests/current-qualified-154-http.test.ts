@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, beforeEach, expect, it } from 'vitest'
+import { assertCurrentQualifiedRowsSnapshotEqual408 } from './helpers/current-qualified-408'
 import { eq } from 'drizzle-orm'
 import { schema as s } from '../db/client'
 import { currentExport118Fixture, year } from './helpers/current-export-118'
@@ -60,7 +61,7 @@ it('filters confirmed alias, USCC and district together and preserves qualificat
   expect(result.body.rows[0]).toMatchObject({ enterpriseId: a.enterprise.id, aliases: ['旧公布名'], publishedNames: ['旧公布名'], firstYear: year, publication: '已见本称号宁波公布记录' })
   expect(result.body.rows[0].references.join(' ')).toContain('evidence:')
   expect((await query({ titleCode: 'specialized_sme', q: a.enterprise.usccNorm!, district: '海曙区' })).body.total).toBe(0)
-  expect((await mcp({ titleCode: 'specialized_sme', q: '旧公布名', district: '鄞州区' })).rows).toEqual(result.body.rows)
+  assertCurrentQualifiedRowsSnapshotEqual408((await mcp({ titleCode: 'specialized_sme', q: '旧公布名', district: '鄞州区' })).rows, result.body.rows)
 })
 
 it('rejects invalid public query instead of returning an invented empty result', async () => {

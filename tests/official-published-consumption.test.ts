@@ -11,7 +11,7 @@ import type { OfficialPublishedRow, RosterImportPayload, RosterImportRecord } fr
 import { preflightRosterImport, commitRosterImport } from '../server/utils/roster-import'
 import { handleRosterImportRequest } from '../server/utils/roster-import-http'
 import { handleEvidenceCorrectionRequest } from '../server/utils/roster-evidence-correction-api'
-import { readCurrentCandidate, type CurrentTitle } from '../lib/roster/current-qualification'
+import { readCurrentCandidate, readCurrentQualificationAssessment, type CurrentQualificationSnapshot, type CurrentTitle } from '../lib/roster/current-qualification'
 import { writeCurrentWorkbook } from '../lib/roster/current-workbook'
 import { startHttpFixture } from './helpers/http-fixture'
 import { minimalPdf } from './helpers/minimal-pdf'
@@ -20,7 +20,7 @@ import { assertOfficialPublishedBudget, readOfficialPublishedPresentation, Offic
 import { currentWorkbookValues } from '../lib/roster/current-workbook-presentation'
 
 import { getRosterEnterpriseDetail } from '../lib/roster/enterprise-roster'
-import { listCurrentQualified } from '../lib/roster/current-qualified-query'
+import { listCurrentQualified, type CurrentQualifiedResult } from '../lib/roster/current-qualified-query'
 import { handleRecordCorrespondenceRequest } from '../server/utils/record-correspondence-api'
 
 const routeContext = vi.hoisted(() => ({ db: undefined as any }))
@@ -239,11 +239,47 @@ it('B09 retains captured old and new names after public merge using the survivin
 
 it('B10 preserves enumerable qualification input exactly under an explicit sidecar-only isolation control', async () => {
   const f = await paired(), before = await f.http('/current'), exact = await f.exact(2)
+  const scope = { enterpriseId: 1, asOf: '2026-10-25T08:00:00.000Z', ruleVersion: 'current-roster-116-v8', assessmentVersion: 'enterprise-qualification-407-v1' }
+  const assertQA = (value: CurrentQualificationSnapshot) => {
+    expect(value).toMatchObject(scope)
+    expect(value.titles.map(item => item.titleCode)).toEqual(['little_giant', 'specialized_sme', 'innovative_sme'])
+    expect(value.snapshotId).toBe(createHash('sha256').update(JSON.stringify([scope, value.titles])).digest('hex'))
+    expect(value).toEqual(readCurrentQualificationAssessment(f.sqlite, 1, executionTime))
+  }
+  const beforeQA: CurrentQualificationSnapshot = before.rows[0].qualificationAssessment
+  assertQA(beforeQA)
+  const capturedSha256 = 'e207797150f31c324144b0f6d2a197f50843ef0b481c3874c0b19889dddfcc4d'
+  const originalSources = [
+    { evidenceId: 1, eventId: 1, sourceFile: '2021公布.pdf', storedFileId: 1, sha256: capturedSha256, bytes: 458, removedAt: null, capturedRevision: 1, capturedSha256 },
+    { evidenceId: 2, eventId: 2, sourceFile: '2024公布.pdf', storedFileId: 2, sha256: capturedSha256, bytes: 458, removedAt: null, capturedRevision: 1, capturedSha256 },
+  ]
+  const knownNames = [{ evidenceId: 1, availability: 'captured', nameKnown: true }, { evidenceId: 2, availability: 'captured', nameKnown: true }]
+  expect(beforeQA.titles[1]!.sourceVersions).toEqual(originalSources)
+  expect(beforeQA.titles[1]!.completeness.publishedNames).toEqual(knownNames)
+  expect(beforeQA.titles[1]!.versions.sources).toBe('4f5c00947fcde877a9d6c0fe6c35228182045c2a23083178b16e385ccc81893d')
+  expect(beforeQA.titles[1]!.group).toBe('eligible')
+  expect(beforeQA.titles[1]!.cycles).toEqual([{ originYear: 2021, batchSeq: 1, precision: 'year' }])
   const row = f.published('隔离变量公布名',2,1,{declaration:{kind:'existing',sourceDocumentId:exact.official.row.sourceDocumentId,basis:'同一公布事实'}})
   await f.correct(2,row,'isolation')
   // Public correction increments event.revision. Pin just that old input to isolate the sidecar.
   f.sqlite.prepare('UPDATE record_event SET revision=? WHERE id=2').run(exact.event.revision)
-  const after = await f.http('/current'), strip = (v:any) => ({...v,rows:v.rows.map(({publishedPresentation,...old}:any)=>old)})
+  const after = await f.http('/current')
+  const afterQA: CurrentQualificationSnapshot = after.rows[0].qualificationAssessment
+  assertQA(afterQA)
+  expect(afterQA.titles[1]!.sourceVersions).toEqual([originalSources[0], { ...originalSources[1], capturedRevision: 2 }])
+  expect(afterQA.titles[1]!.completeness.publishedNames).toEqual(knownNames)
+  expect(afterQA.titles[1]!.versions.sources).toBe('6b237ce4671d559acbd79ad50cb0c4a7926e442363e339060399c091505b0155')
+  // Exactly these source changes are allowed. Everything else, including unknown
+  // added/deleted fields and both non-target titles, stays deeply equal.
+  const expectedAfter = structuredClone(beforeQA)
+  expectedAfter.titles[1]!.sourceVersions[1]!.capturedRevision = 2
+  expectedAfter.titles[1]!.versions.sources = '6b237ce4671d559acbd79ad50cb0c4a7926e442363e339060399c091505b0155'
+  expectedAfter.snapshotId = createHash('sha256').update(JSON.stringify([scope, expectedAfter.titles])).digest('hex')
+  expect(afterQA).toEqual(expectedAfter)
+  expect(afterQA.snapshotId).not.toBe(beforeQA.snapshotId)
+  expect([afterQA.titles[0], afterQA.titles[2]]).toEqual([beforeQA.titles[0], beforeQA.titles[2]])
+  // Only after the complete new object is validated, retain the old enumerable oracle.
+  const strip = (v: CurrentQualifiedResult) => ({ ...v, rows: v.rows.map(({ publishedPresentation, qualificationAssessment, ...old }) => old) })
   expect(strip(after)).toEqual(strip(before))
   expect(factsOf(after.rows[0])).toEqual([minimal(1,1,'2021旧名'),minimal(2,2,'隔离变量公布名',2)])
   expect(readCurrentCandidate(f.sqlite,1,'specialized_sme',qualificationYear,executionTime).group).toBe('eligible')
@@ -331,7 +367,14 @@ it.each([{ case: 'Spec25', count: 25, perEvent: 5 }, { case: 'Standards24', coun
     expect(dtoBytes + textBytes).toBeLessThan(65536)
     expect(dtoBytes + textBytes * 2).toBeGreaterThan(65536)
     const before = JSON.parse(JSON.stringify(readCurrentCandidate(f.sqlite, 1, 'specialized_sme', qualificationYear, executionTime, undefined, true)))
-    const current = await get(), { publishedPresentation, ...old } = current.rows[0]
+    const current = await get(), { publishedPresentation, qualificationAssessment, ...old } = current.rows[0]
+    // The additive complete T2 is checked before the unchanged legacy-row oracle.
+    const scope = { enterpriseId: 1, asOf: new Date(executionTime).toISOString(), ruleVersion: 'current-roster-116-v8', assessmentVersion: 'enterprise-qualification-407-v1' }
+    expect(current.responseVersion).toBe('current-qualified-408-v1')
+    expect(qualificationAssessment).toMatchObject(scope)
+    expect(qualificationAssessment.titles.map((item: { titleCode: string }) => item.titleCode)).toEqual(['little_giant', 'specialized_sme', 'innovative_sme'])
+    expect(qualificationAssessment.snapshotId).toBe(createHash('sha256').update(JSON.stringify([scope, qualificationAssessment.titles])).digest('hex'))
+    expect(qualificationAssessment).toEqual(readCurrentQualificationAssessment(f.sqlite, 1, executionTime))
     expect(current.total).toBe(1); expect(current.uncertainTotal).toBe(0); expect(old).toEqual(before)
     expect(old.references.filter((v: string) => v.startsWith('evidence:'))).toHaveLength(count)
     const detail = await f.http('/detail?id=1')

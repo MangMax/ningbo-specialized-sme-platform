@@ -5,7 +5,7 @@ import { useQuery } from '@pinia/colada'
 import { Search } from '@lucide/vue'
 import { TITLES } from '~~/lib/labels'
 import { CURRENT_TITLES, type CurrentTitle } from '~~/lib/roster/current-titles'
-import type { CurrentQualifiedRow as CurrentRow } from '~~/lib/roster/current-qualified-query'
+import type { CurrentQualifiedRow as CurrentRow, CurrentQualifiedResult, CurrentFilterMatchStatus } from '~~/lib/roster/current-qualified-query'
 import { publishedNameText } from '~~/lib/roster/correspondence-view'
 import { NINGBO_DISTRICTS, NINGBO_INDEPENDENT_ZONES } from '~~/lib/domain'
 import { captureQueryRequest, useRetainedQuerySnapshot } from '~/composables/useRetainedQuerySnapshot'
@@ -66,19 +66,37 @@ const maintenanceYearModel = computed({ get: () => maintenanceYear.value || 'all
 const maintenanceBatchModel = computed({ get: () => maintenanceBatch.value || 'all', set: (value: string) => update({ maintenanceBatch: value === 'all' ? undefined : value, page: undefined }) })
 const params = computed(() => ({ titleCode: title.value, q: q.value || undefined, district: district.value || undefined, recognitionFrom: recognitionFrom.value || undefined, recognitionTo: recognitionTo.value || undefined, validYear: validYear.value || undefined, maintenanceYear: maintenanceYear.value || undefined, maintenanceBatch: maintenanceBatch.value || undefined, sort: sort.value, page: page.value, pageSize: pageSize.value }))
 const activeRequest = computed(() => captureQueryRequest('current-qualified', params.value))
-type Result = { rows: CurrentRow[]; total: number; uncertainTotal: number; options: { recognitionYears: number[]; validYears: number[]; maintenanceYears: number[]; maintenanceBatchesByYear: Record<string, number[]> }; page: number; pageSize: number; request: typeof activeRequest.value }
+// Older responses may lack the additive extension; absence is not a pending census.
+type Result = Omit<CurrentQualifiedResult, 'responseVersion' | 'publishedPending'> & Partial<Pick<CurrentQualifiedResult, 'responseVersion' | 'publishedPending'>> & { request: typeof activeRequest.value }
 const { data, isLoading, error, refetch } = useQuery<Result>({
   key: () => ['current-qualified', params.value],
   query: async ({ entry }) => {
     const request = captureQueryRequest('current-qualified', entry.key[1] as typeof params.value)
     const response = await $fetch<Omit<Result, 'request'>>('/api/roster/current-enterprises', { query: request.params })
-    if (response.rows.some(row => row.publishedPresentation?.availability === 'unavailable')) throw new Error('Official published names unavailable')
+    if ([...response.rows, ...(response.publishedPending?.rows ?? [])].some(row => row.publishedPresentation?.availability === 'unavailable')) throw new Error('Official published names unavailable')
     return { ...response, request }
   },
   placeholderData: previous => previous,
 })
 const { displayed, isShowingPrevious, paginationDisabled } = useRetainedQuerySnapshot(data, isLoading, error, activeRequest)
 const rows = computed(() => displayed.value?.rows ?? [])
+const pending = computed<CurrentQualifiedResult['publishedPending'] | undefined>(() => displayed.value?.responseVersion === 'current-qualified-408-v1' ? displayed.value.publishedPending : undefined)
+const selectedAssessment = (row: CurrentRow) => row.qualificationAssessment?.titles.find(item => item.titleCode === displayed.value?.request.params.titleCode)
+const pendingReasonMessages = (row: CurrentRow) => {
+  const assessment = selectedAssessment(row)
+  return [...new Set([assessment?.subject.message, assessment?.region.message, ...(assessment?.notes ?? [])].filter((message): message is string => Boolean(message)))]
+}
+const fieldLabels = { year: '事项年份', decidedYear: '结论年份', batchSeq: '认定批次', reviewOutcome: '复核结论' }
+const fieldGapLabels = (row: CurrentRow) => [...new Set((selectedAssessment(row)?.completeness.fieldGaps ?? []).map(gap => fieldLabels[gap.field]))]
+const matchLabels: Record<CurrentFilterMatchStatus, string> = { matched: '符合已选筛选', not_matched: '不符合已选筛选', not_established: '尚不能确认满足已选筛选' }
+const filterLabels = { recognitionRange: '认定时间', validYear: '有效年份', maintenanceYear: '维护年份', maintenanceBatch: '维护批次' }
+function updatePagination(changes: Record<string, string | undefined>) {
+  if (!displayed.value || paginationDisabled.value) return
+  const query: Record<string, string | undefined> = Object.fromEntries(Object.entries(displayed.value.request.params).filter(([, value]) => value != null).map(([key, value]) => [key, String(value)]))
+  Object.assign(query, changes)
+  for (const [key, value] of Object.entries(query)) if (value == null || value === '') delete query[key]
+  void router.push({ path: route.path, query })
+}
 const options = computed(() => displayed.value?.request.params.titleCode === title.value && displayed.value.options ? displayed.value.options : { recognitionYears: [], validYears: [], maintenanceYears: [], maintenanceBatchesByYear: {} })
 const yearOptions = (values: number[], selected: string) => [...new Set([...values, ...(selected ? [Number(selected)] : [])])].sort((a,b) => a-b)
 const batchOptions = computed(() => [...new Set([...(options.value.maintenanceBatchesByYear[maintenanceYear.value] ?? []), ...(maintenanceBatch.value ? [Number(maintenanceBatch.value)] : [])])].sort((a,b) => a-b))
@@ -196,12 +214,13 @@ useHead({ title: '优质中小企业查询' })
             </TableRow></TableHeader>
             <TableBody>
               <TableRow v-for="row in rows" :key="row.enterpriseId">
-                <TableCell class="align-top break-words"><span class="font-medium">{{ row.name }}</span><span v-if="row.aliases.length" class="text-muted-foreground mt-1 block text-xs">已确认曾用名：{{ row.aliases.join('、') }}</span></TableCell>
+                <TableCell class="align-top whitespace-normal break-words [overflow-wrap:anywhere]"><span class="font-medium">{{ row.name }}</span><span v-if="row.aliases.length" class="text-muted-foreground mt-1 block text-xs">已确认曾用名：{{ row.aliases.join('、') }}</span></TableCell>
                 <TableCell class="align-top break-all font-mono text-xs">{{ row.uscc ?? '未记录' }}</TableCell>
                 <TableCell class="align-top">{{ row.district ?? '未记录' }}</TableCell>
                 <TableCell class="align-top break-words text-sm leading-5">
                   <p><span class="text-muted-foreground">{{ recognitionSummary(row) }}</span><span class="mx-1 text-muted-foreground">·</span>{{ sourceSummary(row) }}</p>
                   <p class="text-muted-foreground">{{ conditionSummary(row) }}</p>
+                  <p>{{ selectedAssessment(row)?.officialQualification.message }}</p>
                   <p v-for="fact in publishedHints(row)" :key="fact.evidenceId" class="text-muted-foreground break-words [overflow-wrap:anywhere]"><NuxtLink :to="publishedDetailUrl(row, fact.eventId)" class="underline underline-offset-2">{{ publishedNameText(fact) }}</NuxtLink></p>
                   <p v-if="movedInSummary(row)" class="text-muted-foreground">{{ movedInSummary(row) }}</p>
                 </TableCell>
@@ -227,6 +246,7 @@ useHead({ title: '优质中小企业查询' })
             <p v-if="row.aliases.length" class="text-muted-foreground break-words text-sm leading-5">已确认曾用名：{{ row.aliases.join('、') }}</p>
             <p class="text-sm leading-5">{{ recognitionSummary(row) }} · {{ sourceSummary(row) }}</p>
             <p class="text-muted-foreground text-sm leading-5">{{ conditionSummary(row) }}</p>
+            <p class="text-sm leading-5">{{ selectedAssessment(row)?.officialQualification.message }}</p>
             <p v-for="fact in publishedHints(row)" :key="fact.evidenceId" class="text-muted-foreground break-words text-sm leading-5 [overflow-wrap:anywhere]"><NuxtLink :to="publishedDetailUrl(row, fact.eventId)" class="underline underline-offset-2">{{ publishedNameText(fact) }}</NuxtLink></p>
             <p v-if="movedInSummary(row)" class="text-muted-foreground text-sm leading-5">{{ movedInSummary(row) }}</p>
           </li>
@@ -234,6 +254,59 @@ useHead({ title: '优质中小企业查询' })
         <Empty v-if="displayed && !rows.length" class="sm:hidden border-0"><EmptyHeader><EmptyTitle>没有符合条件的当前有效企业</EmptyTitle></EmptyHeader></Empty>
       </CardContent>
     </Card>
-    <TablePagination v-if="displayed" :page="displayed.request.page" :page-size="displayed.request.pageSize" :total="displayed.total" :loading="paginationDisabled" unit="家企业" @update:page="update({ page: $event === 1 ? undefined : String($event) })" @update:page-size="update({ pageSize: String($event), page: undefined })" />
+    <TablePagination v-if="displayed" :page="displayed.request.page" :page-size="displayed.request.pageSize" :total="displayed.total" :loading="paginationDisabled" unit="家企业" @update:page="updatePagination({ page: $event === 1 ? undefined : String($event) })" @update:page-size="updatePagination({ pageSize: String($event), page: undefined })" />
+    <p v-if="displayed && !pending" class="text-muted-foreground text-sm" role="status">本次响应未提供公布待核查询信息，不能据此判断是否存在已公布待核企业。</p>
+    <p v-else-if="pending && !pending.requested" class="text-muted-foreground text-sm">输入企业名称、已确认曾用名或统一社会信用代码，可定位本称号已公布待核企业；当前未请求该查询，不表示待核企业总量为零。</p>
+    <section v-else-if="displayed && pending?.requested" class="flex min-w-0 flex-col gap-3" aria-label="已公布待核企业">
+      <div class="flex flex-col gap-1">
+        <h2 class="font-medium">已公布待核企业</h2>
+        <p class="text-muted-foreground text-sm leading-5">以下企业有本称号正式公布依据，资格仍待核实。按名称、信用代码、已确认曾用名及所选区县定位；不计入上方当前有效企业或日期精度不确定计数。筛选符合情况仅说明已选条件的证据，不代表资格有效。</p>
+      </div>
+      <Card class="gap-0 overflow-hidden py-0 shadow-none">
+        <CardContent class="p-0">
+          <div class="data-table-scroll hidden sm:block [&_[data-slot=table-container]]:overflow-visible">
+            <Table class="data-table min-w-[850px] table-fixed">
+              <TableHeader><TableRow class="hover:bg-transparent">
+                <TableHead class="bg-muted w-[24%]">企业名称</TableHead><TableHead class="bg-muted w-[19%]">统一社会信用代码</TableHead><TableHead class="bg-muted w-[12%]">区县</TableHead><TableHead class="bg-muted w-[31%]">公布事实与待核说明</TableHead><TableHead class="bg-muted w-[14%]">详情与出处</TableHead>
+              </TableRow></TableHeader>
+              <TableBody>
+                <TableRow v-for="row in pending.rows" :key="row.enterpriseId">
+                  <TableCell class="align-top whitespace-normal break-words [overflow-wrap:anywhere]"><span class="font-medium">{{ row.name }}</span><span v-if="row.aliases.length" class="text-muted-foreground mt-1 block text-xs">已确认曾用名：{{ row.aliases.join('、') }}</span></TableCell>
+                  <TableCell class="align-top break-all font-mono text-xs">{{ row.uscc ?? '未记录' }}</TableCell>
+                  <TableCell class="align-top">{{ row.district ?? '未记录' }}</TableCell>
+                  <TableCell class="align-top break-words text-sm leading-5">
+                    <p>{{ selectedAssessment(row)?.officialQualification.message }}</p>
+                    <p>{{ selectedAssessment(row)?.completeness.message }}</p>
+                    <p v-for="message in pendingReasonMessages(row)" :key="message" class="[overflow-wrap:anywhere]">{{ message }}</p>
+                    <p v-if="fieldGapLabels(row).length">待核字段：{{ fieldGapLabels(row).join('、') }}</p>
+                    <p>{{ matchLabels[row.filterMatch.status] }}</p>
+                    <p v-for="check in row.filterMatch.checks" :key="check.field" class="text-muted-foreground">{{ filterLabels[check.field] }}：{{ matchLabels[check.status] }}</p>
+                    <p v-for="fact in publishedHints(row)" :key="fact.evidenceId" class="text-muted-foreground [overflow-wrap:anywhere]"><NuxtLink :to="publishedDetailUrl(row, fact.eventId)" class="underline underline-offset-2">{{ publishedNameText(fact) }}</NuxtLink></p>
+                  </TableCell>
+                  <TableCell class="align-top"><Button as-child variant="outline" size="sm"><NuxtLink :to="detailUrl(row.enterpriseId)">查看详情与出处</NuxtLink></Button></TableCell>
+                </TableRow>
+                <TableRow v-if="!pending.rows.length"><TableCell colspan="5" class="p-0"><Empty class="border-0"><EmptyHeader><EmptyTitle>本页没有定位到的已公布待核企业</EmptyTitle></EmptyHeader></Empty></TableCell></TableRow>
+              </TableBody>
+            </Table>
+          </div>
+          <ul v-if="pending.rows.length" class="flex flex-col divide-y sm:hidden" aria-label="已公布待核企业列表">
+            <li v-for="row in pending.rows" :key="row.enterpriseId" class="flex min-w-0 flex-col gap-1.5 p-3">
+              <div class="flex items-start justify-between gap-2"><div class="min-w-0"><p class="font-medium break-words">{{ row.name }}</p><p class="text-muted-foreground break-all font-mono text-xs">{{ row.uscc ?? '信用代码未记录' }}</p></div><Button as-child variant="outline" size="sm" class="min-h-11 shrink-0"><NuxtLink :to="detailUrl(row.enterpriseId)" :aria-label="`查看 ${row.name} 详情与出处`">详情与出处</NuxtLink></Button></div>
+              <p class="text-sm">{{ row.district ?? '区县未记录' }}</p>
+              <p v-if="row.aliases.length" class="text-muted-foreground break-words text-sm">已确认曾用名：{{ row.aliases.join('、') }}</p>
+              <p class="text-sm leading-5">{{ selectedAssessment(row)?.officialQualification.message }}</p>
+              <p class="text-sm leading-5">{{ selectedAssessment(row)?.completeness.message }}</p>
+              <p v-for="message in pendingReasonMessages(row)" :key="message" class="text-sm leading-5 [overflow-wrap:anywhere]">{{ message }}</p>
+              <p v-if="fieldGapLabels(row).length" class="text-sm leading-5">待核字段：{{ fieldGapLabels(row).join('、') }}</p>
+              <p class="text-sm leading-5">{{ matchLabels[row.filterMatch.status] }}</p>
+              <p v-for="check in row.filterMatch.checks" :key="check.field" class="text-muted-foreground text-sm">{{ filterLabels[check.field] }}：{{ matchLabels[check.status] }}</p>
+              <p v-for="fact in publishedHints(row)" :key="fact.evidenceId" class="text-muted-foreground break-words text-sm [overflow-wrap:anywhere]"><NuxtLink :to="publishedDetailUrl(row, fact.eventId)" class="underline underline-offset-2">{{ publishedNameText(fact) }}</NuxtLink></p>
+            </li>
+          </ul>
+          <Empty v-else class="border-0 sm:hidden"><EmptyHeader><EmptyTitle>本页没有定位到的已公布待核企业</EmptyTitle></EmptyHeader></Empty>
+        </CardContent>
+      </Card>
+      <TablePagination :page="displayed.request.page" :page-size="displayed.request.pageSize" :total="pending.total" :loading="paginationDisabled" unit="家企业" @update:page="updatePagination({ page: $event === 1 ? undefined : String($event) })" @update:page-size="updatePagination({ pageSize: String($event), page: undefined })" />
+    </section>
   </div>
 </template>
