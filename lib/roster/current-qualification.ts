@@ -10,7 +10,7 @@ import type Database from 'better-sqlite3'
 import { readOfficialPublishedPresentation, projectOfficialPublishedNames, OfficialPublishedPresentationError, type OfficialPublishedFact, type OfficialPublishedScope } from './official-published-presentation'
 import type { PublishedPresentation } from './correspondence-view'
 import { identityFunctions } from './enterprise-read-snapshot'
-import { readQueryAssessment, readQueryCoverage, type QueryCoverageSource } from './query-assessment'
+import { readQueryAssessment, readQueryCoverage, readQueryComparisonWitnesses, type QueryCoverageSource } from './query-assessment'
 import { relationScopeSql, TITLE_RDJB_CODES } from './current-platform-scope'
 import { normalizeName, normalizeUscc } from '../domain'
 import { identityKeys, type IdentityKeyVariants } from './current-identity-keys'
@@ -19,6 +19,7 @@ import { adjudicateQualificationCycles, awardTime, originTime, factTime, type Qu
 import { sourcePositionForSequence, RDJB_TITLE_CODES } from '../platform/recognized-evidence'
 import { recognizedFilterFacts } from './recognized-filter-facts'
 import { CURRENT_TITLES, type CurrentTitle } from './current-titles'
+import { comparePlatformComparison, COMPARISON_VERSION, type CandidateComparisonInput } from './platform-comparison'
 export { CURRENT_TITLES }
 export type { CurrentTitle }
 
@@ -58,6 +59,7 @@ export function diagnoseOfficialEventFields(event: { eventType: unknown; year?: 
 }
 type PublishedNameAssessmentInput = { availability: 'available' | 'unavailable'; facts: OfficialPublishedFact[] }
 // Private output observer, never a caller-supplied source reader or facts option.
+type CurrentCycleObservation = (cycles: ReturnType<typeof adjudicateQualificationCycles>['cycles'], formal: readonly QualificationEvent[]) => void
 type CurrentPublishedNameObservation = (scope: readonly OfficialPublishedScope[], presentationScope: readonly OfficialPublishedScope[], input: { readonly availability: 'available' | 'unavailable'; readonly facts: readonly OfficialPublishedFact[] }, sourceError?: unknown) => void
 type QualificationAssessmentReadOptions = {
   ownQueryIds?: readonly number[]
@@ -183,7 +185,7 @@ export function createCurrentQualificationAssessmentReader(db: Database.Database
     for (const { scopeTitle, ...ref } of refs) byTitle.get(scopeTitle)!.push(ref)
     return byTitle
   }
-  const readSnapshot = db.transaction((enterpriseId: number, asOf: number, options: QualificationAssessmentReadOptions, filterTitle?: CurrentTitle, presentationTitle?: CurrentTitle, workbookTitle?: CurrentTitle) => {
+  const readSnapshotBody = (enterpriseId: number, asOf: number, options: QualificationAssessmentReadOptions, filterTitle?: CurrentTitle, presentationTitle?: CurrentTitle, workbookTitle?: CurrentTitle, comparison?: { title: CurrentTitle; collect: CurrentCycleObservation }) => {
     // No filterTitle means the existing default reader follows its original SQL.
     const references = filterTitle == null ? undefined : readHydrationReferences(enterpriseId)
     let publishedPresentation: PublishedPresentation | undefined
@@ -211,7 +213,7 @@ export function createCurrentQualificationAssessmentReader(db: Database.Database
         workbookPublished = new Map(input.facts.map(fact => [fact.evidenceId, fact]))
       }
     }
-    const rows = CURRENT_TITLES.map(title => evaluate(enterpriseId, title, new Date(asOf).getUTCFullYear(), asOf, undefined, title === filterTitle, true, options, title === filterTitle, references?.get(title), filterTitle == null ? undefined : preparedCorrespondences, title === workbookTitle ? observePublishedForWorkbook : title === presentationTitle ? observePublishedForCurrent : undefined).row)
+    const rows = CURRENT_TITLES.map(title => evaluate(enterpriseId, title, new Date(asOf).getUTCFullYear(), asOf, undefined, title === filterTitle, true, options, title === filterTitle, references?.get(title), filterTitle == null ? undefined : preparedCorrespondences, title === workbookTitle ? observePublishedForWorkbook : title === presentationTitle ? observePublishedForCurrent : undefined, title === comparison?.title ? comparison.collect : undefined).row)
     if (presentationTitle != null && publishedPresentation === undefined) {
       if (presentationScope === undefined) throw new Error('Current published-name scope was not evaluated')
       try {
@@ -229,8 +231,38 @@ export function createCurrentQualificationAssessmentReader(db: Database.Database
     const titles = rows.map(row => row.assessment!)
     const scope = { enterpriseId, asOf: new Date(asOf).toISOString(), ruleVersion: CURRENT_RULE_VERSION, assessmentVersion: QUALIFICATION_ASSESSMENT_VERSION }
     return { rows, snapshot: { ...scope, snapshotId: assessmentDigest([scope, titles]), titles }, ...(publishedPresentation === undefined ? {} : { publishedPresentation }), ...(workbookPublished === undefined ? {} : { workbookPublished }) }
+  }
+  // Preserve the original default wrapper, including caller-owned SAVEPOINT semantics.
+  const readSnapshot = db.transaction(readSnapshotBody)
+  const readComparison = db.transaction((enterpriseId: number, asOf: number, title: CurrentTitle) => {
+    let cycles: CandidateComparisonInput['formal']['cycles'] = []
+    const collect: CurrentCycleObservation = (judgments, formal) => {
+      cycles = judgments.map(judgment => ({
+        cycle: { originYear: judgment.originYear, batchSeq: judgment.batch, precision: 'year' },
+        judgment: { originYear: judgment.originYear, batch: judgment.batch, group: judgment.group,
+          awardEventIds: [...judgment.awardEventIds], anchor: judgment.anchor === null ? null : {
+            id: judgment.anchor.id, eventType: judgment.anchor.eventType, year: judgment.anchor.year,
+            batchSeq: judgment.anchor.batchSeq, decidedYear: judgment.anchor.decidedYear, reviewOutcome: judgment.anchor.reviewOutcome,
+          } },
+        eventIds: formal.filter(event => originTime(event) === judgment.originYear && event.batchSeq === judgment.batch).map(event => event.id),
+      }))
+    }
+    const { snapshot: legacy } = readSnapshotBody(enterpriseId, asOf, {}, undefined, undefined, undefined, { title, collect })
+    const assessment = legacy.titles.find(item => item.titleCode === title)!
+    const { titleCode, group, officialQualification, subject, region, versions, evidence, sourceVersions, completeness, correspondence } = assessment
+    return comparePlatformComparison({ version: COMPARISON_VERSION, legacy, titleCode: title,
+      formal: { assessment: { titleCode, group, officialQualification, subject, region, cycles: assessment.cycles,
+        versions, evidence, sourceVersions, completeness, correspondence }, cycles },
+      queries: readQueryComparisonWitnesses(prepareCurrentReader(db), { enterpriseId, titleCode: title, direction: 'missing_in_miit' }),
+      processes: [],
+    })
   })
   return {
+    readPlatformComparison(enterpriseId: number, asOf: number, title: CurrentTitle) {
+      // One snapshot; never open the default wrapper inside this transaction.
+      // SQLite rejects busy caller iterators. No fallback, commit or retry.
+      return readComparison(enterpriseId, asOf, title)
+    },
     read(enterpriseId: number, asOf = Date.now(), options: QualificationAssessmentReadOptions = {}, filterTitle?: CurrentTitle) {
       return readSnapshot(enterpriseId, asOf, options, filterTitle)
     },
@@ -274,7 +306,7 @@ function createCurrentCandidateEvaluationReader(db: Database.Database, receiptRu
     sql`select (select id from difference_reason where enterprise_id=${sql.placeholder('enterpriseId')}
       and title_code=${titleCode} and direction=${direction} order by recorded_at desc,id desc limit 1)`)),sql` union all `)
   const headsQuery=reader.select().from(d).where(sql`${d.id} in (${headIds})`).prepare()
-  return function readCandidate(enterpriseId: number, title: CurrentTitle, year: number, executionTime = Date.now(), keys?: { queries: IdentityKeyVariants; relations: IdentityKeyVariants }, includeFilterFacts = false, includeReferences = true, assessmentOptions?: QualificationAssessmentReadOptions, includePendingFilterFacts = false, suppliedPlatformRefs?: readonly CurrentPlatformReference[], preparedCorrespondences?: ReturnType<typeof createEnterpriseTitleCorrespondenceRefsReader>, observePublishedForCurrent?: CurrentPublishedNameObservation): { row: CurrentRow; group: CurrentGroup } {
+  return function readCandidate(enterpriseId: number, title: CurrentTitle, year: number, executionTime = Date.now(), keys?: { queries: IdentityKeyVariants; relations: IdentityKeyVariants }, includeFilterFacts = false, includeReferences = true, assessmentOptions?: QualificationAssessmentReadOptions, includePendingFilterFacts = false, suppliedPlatformRefs?: readonly CurrentPlatformReference[], preparedCorrespondences?: ReturnType<typeof createEnterpriseTitleCorrespondenceRefsReader>, observePublishedForCurrent?: CurrentPublishedNameObservation, observeCycles?: CurrentCycleObservation): { row: CurrentRow; group: CurrentGroup } {
   const enterprise = statement('select id,name,name_norm,uscc_norm,district,city from enterprise where id=?').get(enterpriseId) as any
   const events = statement(`select e.id,e.event_type as eventType,e.year,e.decided_year as decidedYear,e.batch_seq as batchSeq,e.review_outcome as reviewOutcome,e.revision,r.name_raw as nameRaw,r.uscc_raw as usccRaw,r.source from record r join record_event e on e.record_id=r.id where r.enterprise_id=? and r.title_code=? order by e.id`).all(enterpriseId,title) as (LifecycleEvent & { batchSeq: number|null; nameRaw: string|null; usccRaw: string|null; source: string; revision: number })[]
   const evidence = statement(`select v.id,v.record_event_id as eventId,v.source_file as sourceFile,v.attachment,v.list_no as listNo,v.page from record_evidence v join record_event e on e.id=v.record_event_id join record r on r.id=e.record_id where r.enterprise_id=? and r.title_code=? order by v.id`).all(enterpriseId,title) as (CurrentWorkbookFacts['evidence'][number] & {id:number})[]
@@ -564,6 +596,7 @@ function createCurrentCandidateEvaluationReader(db: Database.Database, receiptRu
       shadow:{legacyGroup:row.group,difference:group === row.group ? null : '已确认主体终止优先排除；旧投影的其它未决缺口保留'},
     }
   }
+  observeCycles?.(qualification.cycles, formal)
   return { row, group }
 }
 }

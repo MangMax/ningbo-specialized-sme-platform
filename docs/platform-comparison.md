@@ -1,13 +1,14 @@
-# 平台同步解释纯核心（#426）
+# 平台同步解释：纯核心与显式读取
 
 `lib/roster/platform-comparison.ts` 提供同步纯函数
 `comparePlatformComparison(input: CandidateComparisonInput): PlatformComparison`。
 新投影版本为 `platform-comparison-410-v1`。它解释已经归一的来源见证，
 不生成正式资格、不写人工差异原因、对应决定或审计。
 
-本模块尚未接入 reader、HTTP/MCP、列表、筛选、详情或工作簿。
+既有 reader 新增 #427 显式比较方法，仅装配完整零记录支路所需的可信输入。
+HTTP/MCP、列表、筛选、详情和工作簿未启用比较投影。
 默认 `enterprise-qualification-407-v1`、current/export 及旧 snapshot/hash 不变。
-#427/#428/#410 不属于本次交付；纯算法通过不代表它们已具备生产输入或通过验收。
+#428 年度流程见证和 #410 公开消费仍为后继；纯算法通过不代表它们已通过验收。
 
 ## 输入与可信装配
 
@@ -297,3 +298,57 @@ tests SHA256：226fe22c5d8fd79a3d851c44009818ad9b1c9a695dc4b0815cf1a19f3803f9af�
 旧#426 102PASS仅历史证据，不作为此次fresh证据；所有历史FAIL/STOP及UNKNOWN保留。
 未运行build/full/HTTP/DBapp/SDK/browser/CI/生产；未实施#427/#428/#410。
 默认407-v1/current/export和生产消费者仍未接入。此处只交dirty候选，不自签独立审查。
+
+
+## #427 显式 reader 候选（未启用公开消费者）
+
+`createCurrentQualificationAssessmentReader(db, receiptRuntime?)` 新增：
+
+```ts
+readPlatformComparison(enterpriseId: number, asOf: number, title: CurrentTitle): PlatformComparison
+```
+
+它独立返回 `platform-comparison-410-v1`，scope 绑定完整旧 `legacySnapshotId`，
+另有 `inputDigest`、`resultDigest`。调用者提供评估时点；它不接收外部资格、coverage、
+对应决定或 annual 事实。默认 `read`、`readCurrent`、`readWorkbook`、`readTitle`
+均不调用比较 core，不向旧 titles 增添未计入旧摘要的字段。
+
+实现只在一次外层 SQLite transaction 中复用完整原 `readSnapshotBody`，
+再取实际 metadata 并调用唯一 core。默认读取仍保留原 transaction wrapper 的语义。
+私有单向 collector 取同一次 `adjudicateQualificationCycles` 的当前 judgments 和 formal，
+按既有 `originTime` 连接 eventIds；不重复选周期、不从平台维护年或批次猜周期。
+#430 允许的 award 原年 null 通过既有 authority 解释，原 DTO、null 和旧 hash 均保留。
+
+内部 `readQueryComparisonWitnesses` 共用原 selector 和 `coverageOf`，保留全部候选 source、
+原 queryKey 与经 schema 验证的窄 metadata；不使用聚合 status/latest map 代替完整来源。
+原 ownQueryIds、identity variants、同称号筛选、top51 探测／返回50 和 truncated 语义不变。
+不先过滤未来候选来消除截断；严格 asOf/time-before-retry 仍由同一 core 判断。
+SQL 只提取既有窄 metadata 字段；不额外读取 raw_response、整份 raw_fields 或来源正文。
+metadata.error 进入输入摘要，返回仍只有闭合 reason 和 safe refs。
+
+暂时 `processes=[]`。2024 eligible 周期与 2026 exact-USCC 单 title unrestricted
+完整成功零行可得到 `no_record / unsynchronized`，正式 group 不变；失败、partial、
+缺 metadata、同年先后未知、截断或 records-only 不冒称一致。原生 apply_list 的无单称号
+范围不能单独签 Z。年度 P/N 接线由 #428 承担。
+
+调用者外层事务不会被提交。活跃 iterator 导致 SQLite busy 时直接抛出，不 fallback/retry；
+应先耗尽批次再调用。双连接 WAL 测试证明 body 与新增 metadata 共用一个 snapshot，
+后续调用才看到另一连接已提交的新来源；reader 仅复用请求内 handles，不缓存 T2/结果。
+在本次小合成 fixture 中，相比完整默认 read，新方法执行额外2条 SQLite statement；
+这是该 fixture 的实测差量，不是全局性能或总内存上界。核心原有40周期、50来源、50页和
+单 witness 65536 bytes 守卫保持，超限不截断后冒充完整；错误原码传播。
+
+本次候选在 base `09c2bb5c76df6250c64b5f13a5c4bc12a06179c5` 上分层 fresh 验证：
+新 reader 39、原406含新增默认控制37、工作簿含新增控制18、core90、annual18、既有408查询86，
+共288个不同 case PASS、0 skip。首次最窄两例在扩矩阵前单列通过，不重复计入288。
+默认406对照实现前冻结的完整旧 DTO/旧hash，默认工作簿按实际 worksheet values 与完整
+scope/snapshotId 独立复算 D409 摘要，并断言默认路径 core 调用0。
+插件实际 resolve/load 与完整 typecheck 均 exit0，raw TS/plugin gate 无诊断。
+原始运行与逐例 fullnames 在 `/tmp/issue427-integration-sct6ti/`；所有 lane 源绑定，
+独立900/870/30秒、5GiB grant 均 release-FIRST/CAS释放读回FREE。
+aggregate unhandled 字段缺失及短命未观测资源仍 UNKNOWN。
+
+本文为运行完成及释放后的文档 delta，未参与上述运行；实现与测试源码另有精确 pin。
+旧 #427 首 RED、真实 Gate3、#426/#430 的历史 FAIL/STOP/UNKNOWN 全部保留。
+build/full/HTTPapp/SDK/browser/CI/生产及 #428/#410 未运行；无 commit/push/PR/独立审核。
+候选保持 dirty 交父核验，以上不等于公开消费者已启用或生产验收通过。
