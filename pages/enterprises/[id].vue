@@ -541,7 +541,7 @@ function openPreview(e: Evidence) {
     <template v-else-if="detail">
       <TableFailureState v-if="error" title="企业详情更新失败" description="保留上次成功的企业详情和决定，请重试读取当前状态。" :pending="isLoading" @retry="refetch()" />
 
-      <PageHeader :title="detail.name">
+      <PageHeader :title="detail.name" class="min-w-0 max-w-full [&_h1]:max-w-full [&_h1]:whitespace-normal [&_h1]:[overflow-wrap:anywhere]">
         <template #breadcrumb>
           <NuxtLink :to="backTo" class="hover:text-foreground hover:underline">{{ route.query.currentBack != null ? '优质中小企业查询' : sourceReturnTarget(route.query.returnTo) ? '记录级对比' : '企业列表' }}</NuxtLink>
           <span class="mx-1.5">/</span>
