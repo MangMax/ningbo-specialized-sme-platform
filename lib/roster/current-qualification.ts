@@ -237,15 +237,32 @@ export function createCurrentQualificationAssessmentReader(db: Database.Database
   const readComparison = db.transaction((enterpriseId: number, asOf: number, title: CurrentTitle) => {
     let cycles: CandidateComparisonInput['formal']['cycles'] = []
     const collect: CurrentCycleObservation = (judgments, formal) => {
-      cycles = judgments.map(judgment => ({
-        cycle: { originYear: judgment.originYear, batchSeq: judgment.batch, precision: 'year' },
-        judgment: { originYear: judgment.originYear, batch: judgment.batch, group: judgment.group,
-          awardEventIds: [...judgment.awardEventIds], anchor: judgment.anchor === null ? null : {
-            id: judgment.anchor.id, eventType: judgment.anchor.eventType, year: judgment.anchor.year,
-            batchSeq: judgment.anchor.batchSeq, decidedYear: judgment.anchor.decidedYear, reviewOutcome: judgment.anchor.reviewOutcome,
-          } },
-        eventIds: formal.filter(event => originTime(event) === judgment.originYear && event.batchSeq === judgment.batch).map(event => event.id),
-      }))
+      const unassignedGrantOffsets = new Map<number, number>()
+      cycles = judgments.map(judgment => {
+        const sameScope = formal.filter(event => originTime(event) === judgment.originYear && event.batchSeq === judgment.batch)
+        let eventIds = sameScope.map(event => event.id)
+        if (judgment.batch === null) {
+          const grants = sameScope.filter(event => event.eventType === 'award')
+          if (grants.length) {
+            // The authority emits one possible cycle per unassigned grant in
+            // formal input order, including future grants without an anchor.
+            const offset = unassignedGrantOffsets.get(judgment.originYear) ?? 0
+            const grant = grants[offset]
+            if (!grant) throw new Error('invalid_cycle_join')
+            eventIds = [grant.id]
+            unassignedGrantOffsets.set(judgment.originYear, offset + 1)
+          }
+        }
+        return {
+          cycle: { originYear: judgment.originYear, batchSeq: judgment.batch, precision: 'year' },
+          judgment: { originYear: judgment.originYear, batch: judgment.batch, group: judgment.group,
+            awardEventIds: [...judgment.awardEventIds], anchor: judgment.anchor === null ? null : {
+              id: judgment.anchor.id, eventType: judgment.anchor.eventType, year: judgment.anchor.year,
+              batchSeq: judgment.anchor.batchSeq, decidedYear: judgment.anchor.decidedYear, reviewOutcome: judgment.anchor.reviewOutcome,
+            } },
+          eventIds,
+        }
+      })
     }
     const { snapshot: legacy } = readSnapshotBody(enterpriseId, asOf, {}, undefined, undefined, undefined, { title, collect })
     const assessment = legacy.titles.find(item => item.titleCode === title)!

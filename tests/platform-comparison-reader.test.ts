@@ -1135,3 +1135,1019 @@ const NULL_ORIGIN_ORACLE = {
   },
   "processes": []
 }
+
+
+// #427 R2: append-only real SQLite regressions; frozen independent expectations.
+// Only reader427_r2_double_null_batch_distinct_decided_year is authorized for the first RED.
+const READER427_R2_CASES = [
+  {
+    "name": "reader427_r2_failed_only_null_anchor",
+    "events": [
+      {
+        "id": 1,
+        "eventType": "review",
+        "year": 2024,
+        "batchSeq": 1,
+        "decidedYear": 2025,
+        "reviewOutcome": "failed"
+      }
+    ],
+    "group": "excluded",
+    "expectedBindings": [
+      {
+        "cycle": {
+          "originYear": 2024,
+          "batchSeq": 1,
+          "precision": "year"
+        },
+        "judgment": {
+          "anchor": null,
+          "originYear": 2024,
+          "batch": 1,
+          "group": "excluded",
+          "awardEventIds": []
+        },
+        "eventIds": [
+          1
+        ]
+      }
+    ],
+    "expectedResults": [
+      {
+        "originYear": 2024,
+        "batchSeq": 1,
+        "state": "not_established",
+        "reasons": [
+          "formal_unresolved"
+        ],
+        "refs": {
+          "eventIds": [
+            1
+          ],
+          "evidenceIds": [
+            1
+          ],
+          "queryIds": [],
+          "relationIds": [],
+          "events": [
+            {
+              "id": 1,
+              "revision": 1
+            }
+          ],
+          "sources": [
+            {
+              "evidenceId": 1,
+              "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }
+          ],
+          "versions": [],
+          "decisions": [],
+          "sourceGenerations": []
+        }
+      }
+    ]
+  },
+  {
+    "name": "reader427_r2_future_known_batch_empty_award_ids",
+    "events": [
+      {
+        "id": 1,
+        "eventType": "award",
+        "year": 2027,
+        "batchSeq": 1,
+        "decidedYear": null,
+        "reviewOutcome": null
+      }
+    ],
+    "group": "pending",
+    "expectedBindings": [
+      {
+        "cycle": {
+          "originYear": 2027,
+          "batchSeq": 1,
+          "precision": "year"
+        },
+        "judgment": {
+          "anchor": null,
+          "originYear": 2027,
+          "batch": 1,
+          "group": "pending",
+          "awardEventIds": []
+        },
+        "eventIds": [
+          1
+        ]
+      }
+    ],
+    "expectedResults": [
+      {
+        "originYear": 2027,
+        "batchSeq": 1,
+        "state": "not_established",
+        "reasons": [
+          "formal_unresolved"
+        ],
+        "refs": {
+          "eventIds": [
+            1
+          ],
+          "evidenceIds": [
+            1
+          ],
+          "queryIds": [],
+          "relationIds": [],
+          "events": [
+            {
+              "id": 1,
+              "revision": 1
+            }
+          ],
+          "sources": [
+            {
+              "evidenceId": 1,
+              "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }
+          ],
+          "versions": [],
+          "decisions": [],
+          "sourceGenerations": []
+        }
+      }
+    ]
+  },
+  {
+    "name": "reader427_r2_future_null_batch_empty_award_ids",
+    "events": [
+      {
+        "id": 1,
+        "eventType": "award",
+        "year": 2027,
+        "batchSeq": null,
+        "decidedYear": null,
+        "reviewOutcome": null
+      }
+    ],
+    "group": "pending",
+    "expectedBindings": [
+      {
+        "cycle": {
+          "originYear": 2027,
+          "batchSeq": null,
+          "precision": "year"
+        },
+        "judgment": {
+          "anchor": null,
+          "originYear": 2027,
+          "batch": null,
+          "group": "pending",
+          "awardEventIds": []
+        },
+        "eventIds": [
+          1
+        ]
+      }
+    ],
+    "expectedResults": [
+      {
+        "originYear": 2027,
+        "batchSeq": null,
+        "state": "not_established",
+        "reasons": [
+          "cycle_unresolved"
+        ],
+        "refs": {
+          "eventIds": [
+            1
+          ],
+          "evidenceIds": [
+            1
+          ],
+          "queryIds": [],
+          "relationIds": [],
+          "events": [
+            {
+              "id": 1,
+              "revision": 1
+            }
+          ],
+          "sources": [
+            {
+              "evidenceId": 1,
+              "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }
+          ],
+          "versions": [],
+          "decisions": [],
+          "sourceGenerations": []
+        }
+      }
+    ]
+  },
+  {
+    "name": "reader427_r2_double_null_batch_distinct_decided_year",
+    "events": [
+      {
+        "id": 1,
+        "eventType": "award",
+        "year": 2024,
+        "batchSeq": null,
+        "decidedYear": 2024,
+        "reviewOutcome": null
+      },
+      {
+        "id": 2,
+        "eventType": "award",
+        "year": 2024,
+        "batchSeq": null,
+        "decidedYear": 2025,
+        "reviewOutcome": null
+      }
+    ],
+    "group": "eligible",
+    "expectedBindings": [
+      {
+        "cycle": {
+          "originYear": 2024,
+          "batchSeq": null,
+          "precision": "year"
+        },
+        "judgment": {
+          "anchor": {
+            "id": 1,
+            "eventType": "award",
+            "year": 2024,
+            "batchSeq": null,
+            "decidedYear": 2024,
+            "reviewOutcome": null
+          },
+          "originYear": 2024,
+          "batch": null,
+          "group": "eligible",
+          "awardEventIds": [
+            1
+          ]
+        },
+        "eventIds": [
+          1
+        ]
+      },
+      {
+        "cycle": {
+          "originYear": 2024,
+          "batchSeq": null,
+          "precision": "year"
+        },
+        "judgment": {
+          "anchor": {
+            "id": 2,
+            "eventType": "award",
+            "year": 2024,
+            "batchSeq": null,
+            "decidedYear": 2025,
+            "reviewOutcome": null
+          },
+          "originYear": 2024,
+          "batch": null,
+          "group": "eligible",
+          "awardEventIds": [
+            2
+          ]
+        },
+        "eventIds": [
+          2
+        ]
+      }
+    ],
+    "expectedResults": [
+      {
+        "originYear": 2024,
+        "batchSeq": null,
+        "state": "not_established",
+        "reasons": [
+          "cycle_unresolved"
+        ],
+        "refs": {
+          "eventIds": [
+            1
+          ],
+          "evidenceIds": [
+            1
+          ],
+          "queryIds": [],
+          "relationIds": [],
+          "events": [
+            {
+              "id": 1,
+              "revision": 1
+            }
+          ],
+          "sources": [
+            {
+              "evidenceId": 1,
+              "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }
+          ],
+          "versions": [],
+          "decisions": [],
+          "sourceGenerations": []
+        }
+      },
+      {
+        "originYear": 2024,
+        "batchSeq": null,
+        "state": "not_established",
+        "reasons": [
+          "cycle_unresolved"
+        ],
+        "refs": {
+          "eventIds": [
+            2
+          ],
+          "evidenceIds": [
+            2
+          ],
+          "queryIds": [],
+          "relationIds": [],
+          "events": [
+            {
+              "id": 2,
+              "revision": 1
+            }
+          ],
+          "sources": [
+            {
+              "evidenceId": 2,
+              "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }
+          ],
+          "versions": [],
+          "decisions": [],
+          "sourceGenerations": []
+        }
+      }
+    ]
+  },
+  {
+    "name": "reader427_r2_known_unknown_awards_ambiguous_review_dependencies",
+    "events": [
+      {
+        "id": 1,
+        "eventType": "award",
+        "year": 2024,
+        "batchSeq": 1,
+        "decidedYear": 2024,
+        "reviewOutcome": null
+      },
+      {
+        "id": 2,
+        "eventType": "award",
+        "year": 2024,
+        "batchSeq": null,
+        "decidedYear": 2024,
+        "reviewOutcome": null
+      },
+      {
+        "id": 3,
+        "eventType": "award",
+        "year": 2024,
+        "batchSeq": null,
+        "decidedYear": 2025,
+        "reviewOutcome": null
+      },
+      {
+        "id": 4,
+        "eventType": "review",
+        "year": 2024,
+        "batchSeq": null,
+        "decidedYear": 2026,
+        "reviewOutcome": "passed"
+      }
+    ],
+    "group": "pending",
+    "expectedBindings": [
+      {
+        "cycle": {
+          "originYear": 2024,
+          "batchSeq": 1,
+          "precision": "year"
+        },
+        "judgment": {
+          "anchor": {
+            "id": 1,
+            "eventType": "award",
+            "year": 2024,
+            "batchSeq": 1,
+            "decidedYear": 2024,
+            "reviewOutcome": null
+          },
+          "originYear": 2024,
+          "batch": 1,
+          "group": "pending",
+          "awardEventIds": [
+            1
+          ]
+        },
+        "eventIds": [
+          1
+        ]
+      },
+      {
+        "cycle": {
+          "originYear": 2024,
+          "batchSeq": null,
+          "precision": "year"
+        },
+        "judgment": {
+          "anchor": {
+            "id": 2,
+            "eventType": "award",
+            "year": 2024,
+            "batchSeq": null,
+            "decidedYear": 2024,
+            "reviewOutcome": null
+          },
+          "originYear": 2024,
+          "batch": null,
+          "group": "pending",
+          "awardEventIds": [
+            2
+          ]
+        },
+        "eventIds": [
+          2
+        ]
+      },
+      {
+        "cycle": {
+          "originYear": 2024,
+          "batchSeq": null,
+          "precision": "year"
+        },
+        "judgment": {
+          "anchor": {
+            "id": 3,
+            "eventType": "award",
+            "year": 2024,
+            "batchSeq": null,
+            "decidedYear": 2025,
+            "reviewOutcome": null
+          },
+          "originYear": 2024,
+          "batch": null,
+          "group": "pending",
+          "awardEventIds": [
+            3
+          ]
+        },
+        "eventIds": [
+          3
+        ]
+      }
+    ],
+    "expectedResults": [
+      {
+        "originYear": 2024,
+        "batchSeq": null,
+        "state": "not_established",
+        "reasons": [
+          "cycle_unresolved"
+        ],
+        "refs": {
+          "eventIds": [
+            2,
+            4
+          ],
+          "evidenceIds": [
+            2,
+            4
+          ],
+          "queryIds": [],
+          "relationIds": [],
+          "events": [
+            {
+              "id": 2,
+              "revision": 1
+            },
+            {
+              "id": 4,
+              "revision": 1
+            }
+          ],
+          "sources": [
+            {
+              "evidenceId": 2,
+              "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            },
+            {
+              "evidenceId": 4,
+              "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }
+          ],
+          "versions": [],
+          "decisions": [],
+          "sourceGenerations": []
+        }
+      },
+      {
+        "originYear": 2024,
+        "batchSeq": null,
+        "state": "not_established",
+        "reasons": [
+          "cycle_unresolved"
+        ],
+        "refs": {
+          "eventIds": [
+            3,
+            4
+          ],
+          "evidenceIds": [
+            3,
+            4
+          ],
+          "queryIds": [],
+          "relationIds": [],
+          "events": [
+            {
+              "id": 3,
+              "revision": 1
+            },
+            {
+              "id": 4,
+              "revision": 1
+            }
+          ],
+          "sources": [
+            {
+              "evidenceId": 3,
+              "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            },
+            {
+              "evidenceId": 4,
+              "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }
+          ],
+          "versions": [],
+          "decisions": [],
+          "sourceGenerations": []
+        }
+      },
+      {
+        "originYear": 2024,
+        "batchSeq": 1,
+        "state": "not_established",
+        "reasons": [
+          "formal_unresolved"
+        ],
+        "refs": {
+          "eventIds": [
+            1,
+            4
+          ],
+          "evidenceIds": [
+            1,
+            4
+          ],
+          "queryIds": [],
+          "relationIds": [],
+          "events": [
+            {
+              "id": 1,
+              "revision": 1
+            },
+            {
+              "id": 4,
+              "revision": 1
+            }
+          ],
+          "sources": [
+            {
+              "evidenceId": 1,
+              "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            },
+            {
+              "evidenceId": 4,
+              "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }
+          ],
+          "versions": [],
+          "decisions": [],
+          "sourceGenerations": []
+        }
+      }
+    ]
+  },
+  {
+    "name": "reader427_r2_reviews_only_null_batch",
+    "events": [
+      {
+        "id": 1,
+        "eventType": "review",
+        "year": 2024,
+        "batchSeq": null,
+        "decidedYear": 2025,
+        "reviewOutcome": "passed"
+      },
+      {
+        "id": 2,
+        "eventType": "review",
+        "year": 2024,
+        "batchSeq": null,
+        "decidedYear": 2026,
+        "reviewOutcome": "failed"
+      }
+    ],
+    "group": "pending",
+    "expectedBindings": [
+      {
+        "cycle": {
+          "originYear": 2024,
+          "batchSeq": null,
+          "precision": "year"
+        },
+        "judgment": {
+          "anchor": null,
+          "originYear": 2024,
+          "batch": null,
+          "group": "pending",
+          "awardEventIds": []
+        },
+        "eventIds": [
+          1,
+          2
+        ]
+      }
+    ],
+    "expectedResults": [
+      {
+        "originYear": 2024,
+        "batchSeq": null,
+        "state": "not_established",
+        "reasons": [
+          "cycle_unresolved"
+        ],
+        "refs": {
+          "eventIds": [
+            1,
+            2
+          ],
+          "evidenceIds": [
+            1,
+            2
+          ],
+          "queryIds": [],
+          "relationIds": [],
+          "events": [
+            {
+              "id": 1,
+              "revision": 1
+            },
+            {
+              "id": 2,
+              "revision": 1
+            }
+          ],
+          "sources": [
+            {
+              "evidenceId": 1,
+              "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            },
+            {
+              "evidenceId": 2,
+              "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }
+          ],
+          "versions": [],
+          "decisions": [],
+          "sourceGenerations": []
+        }
+      }
+    ]
+  },
+  {
+    "name": "reader427_r2_identical_judgments_distinct_direct_forward",
+    "events": [
+      {
+        "id": 1,
+        "eventType": "award",
+        "year": 2027,
+        "batchSeq": null,
+        "decidedYear": null,
+        "reviewOutcome": null
+      },
+      {
+        "id": 2,
+        "eventType": "award",
+        "year": 2027,
+        "batchSeq": null,
+        "decidedYear": null,
+        "reviewOutcome": null
+      }
+    ],
+    "group": "pending",
+    "expectedBindings": [
+      {
+        "cycle": {
+          "originYear": 2027,
+          "batchSeq": null,
+          "precision": "year"
+        },
+        "judgment": {
+          "anchor": null,
+          "originYear": 2027,
+          "batch": null,
+          "group": "pending",
+          "awardEventIds": []
+        },
+        "eventIds": [
+          1
+        ]
+      },
+      {
+        "cycle": {
+          "originYear": 2027,
+          "batchSeq": null,
+          "precision": "year"
+        },
+        "judgment": {
+          "anchor": null,
+          "originYear": 2027,
+          "batch": null,
+          "group": "pending",
+          "awardEventIds": []
+        },
+        "eventIds": [
+          2
+        ]
+      }
+    ],
+    "expectedResults": [
+      {
+        "originYear": 2027,
+        "batchSeq": null,
+        "state": "not_established",
+        "reasons": [
+          "cycle_unresolved"
+        ],
+        "refs": {
+          "eventIds": [
+            1
+          ],
+          "evidenceIds": [
+            1
+          ],
+          "queryIds": [],
+          "relationIds": [],
+          "events": [
+            {
+              "id": 1,
+              "revision": 1
+            }
+          ],
+          "sources": [
+            {
+              "evidenceId": 1,
+              "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }
+          ],
+          "versions": [],
+          "decisions": [],
+          "sourceGenerations": []
+        }
+      },
+      {
+        "originYear": 2027,
+        "batchSeq": null,
+        "state": "not_established",
+        "reasons": [
+          "cycle_unresolved"
+        ],
+        "refs": {
+          "eventIds": [
+            2
+          ],
+          "evidenceIds": [
+            2
+          ],
+          "queryIds": [],
+          "relationIds": [],
+          "events": [
+            {
+              "id": 2,
+              "revision": 1
+            }
+          ],
+          "sources": [
+            {
+              "evidenceId": 2,
+              "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }
+          ],
+          "versions": [],
+          "decisions": [],
+          "sourceGenerations": []
+        }
+      }
+    ]
+  },
+  {
+    "name": "reader427_r2_identical_judgments_distinct_direct_reverse_insert",
+    "events": [
+      {
+        "id": 2,
+        "eventType": "award",
+        "year": 2027,
+        "batchSeq": null,
+        "decidedYear": null,
+        "reviewOutcome": null
+      },
+      {
+        "id": 1,
+        "eventType": "award",
+        "year": 2027,
+        "batchSeq": null,
+        "decidedYear": null,
+        "reviewOutcome": null
+      }
+    ],
+    "group": "pending",
+    "expectedBindings": [
+      {
+        "cycle": {
+          "originYear": 2027,
+          "batchSeq": null,
+          "precision": "year"
+        },
+        "judgment": {
+          "anchor": null,
+          "originYear": 2027,
+          "batch": null,
+          "group": "pending",
+          "awardEventIds": []
+        },
+        "eventIds": [
+          1
+        ]
+      },
+      {
+        "cycle": {
+          "originYear": 2027,
+          "batchSeq": null,
+          "precision": "year"
+        },
+        "judgment": {
+          "anchor": null,
+          "originYear": 2027,
+          "batch": null,
+          "group": "pending",
+          "awardEventIds": []
+        },
+        "eventIds": [
+          2
+        ]
+      }
+    ],
+    "expectedResults": [
+      {
+        "originYear": 2027,
+        "batchSeq": null,
+        "state": "not_established",
+        "reasons": [
+          "cycle_unresolved"
+        ],
+        "refs": {
+          "eventIds": [
+            1
+          ],
+          "evidenceIds": [
+            1
+          ],
+          "queryIds": [],
+          "relationIds": [],
+          "events": [
+            {
+              "id": 1,
+              "revision": 1
+            }
+          ],
+          "sources": [
+            {
+              "evidenceId": 1,
+              "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }
+          ],
+          "versions": [],
+          "decisions": [],
+          "sourceGenerations": []
+        }
+      },
+      {
+        "originYear": 2027,
+        "batchSeq": null,
+        "state": "not_established",
+        "reasons": [
+          "cycle_unresolved"
+        ],
+        "refs": {
+          "eventIds": [
+            2
+          ],
+          "evidenceIds": [
+            2
+          ],
+          "queryIds": [],
+          "relationIds": [],
+          "events": [
+            {
+              "id": 2,
+              "revision": 1
+            }
+          ],
+          "sources": [
+            {
+              "evidenceId": 2,
+              "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }
+          ],
+          "versions": [],
+          "decisions": [],
+          "sourceGenerations": []
+        }
+      }
+    ]
+  }
+] as const
+
+it.each(READER427_R2_CASES)('$name', spec => {
+  const sqlite = new Database(':memory:')
+  const compare = vi.spyOn(core, 'comparePlatformComparison') // actual core call-through; never stub a result
+  try {
+    sqlite.pragma('foreign_keys=ON')
+    const db = drizzle(sqlite, { schema })
+    migrate(db, { migrationsFolder: 'db/migrations' })
+    db.insert(schema.title).values([...TITLE_SEED]).run()
+    db.insert(schema.enterprise).values({ id: 1, name: '合成427R2', nameNorm: '合成427R2', usccNorm: U }).run()
+    db.insert(schema.record).values({ id: 1, enterpriseId: 1, titleCode: T, source: 'jxj', nameRaw: '合成427R2', usccRaw: U }).run()
+    db.insert(schema.storedFile).values({ id: 1, relPath: 'synthetic/427-r2.pdf', filename: '427-r2.pdf', ext: 'pdf', bytes: 10, sha256: SHA }).run()
+    db.insert(schema.importBatch).values({ id: 1, idempotencyKey: '427-r2-fixture', sourceKind: 'announcement', sourceIdentity: '427-r2-fixture', status: 'committed' }).run()
+    for (const event of spec.events) {
+      db.insert(schema.recordEvent).values({ ...event, recordId: 1, revision: 1 }).run()
+      db.insert(schema.recordEvidence).values({ id: event.id, recordEventId: event.id, sourceFile: 'synthetic/427-r2.pdf', listNo: event.id, page: 1 }).run()
+      db.insert(schema.officialEvidenceRowRevision).values({ evidenceId: event.id, revision: 1, eventId: event.id,
+        capturedRecordId: 1, capturedEnterpriseId: 1, nameRaw: '合成427R2', usccRaw: U, storedFileId: 1,
+        path: 'synthetic/427-r2.pdf', sha256: SHA, bytes: 10, sourceBindingKnown: false, listNo: event.id, page: 1,
+        actor: { type: 'agent', id: 'synthetic-427-r2' }, basis: '独立合成正式逐行事实', commandKind: 'import', importBatchId: 1,
+        createdAt: '2026-01-01T00:00:00Z' }).run()
+    }
+    const reader = createCurrentQualificationAssessmentReader(sqlite)
+    sqlite.pragma('query_only=ON')
+    const changes = sqlite.prepare('select total_changes() as n').get()
+    const legacy = reader.read(1, AS_OF).snapshot
+    const selected = legacy.titles.find(t => t.titleCode === T)!
+    const expectedScope = { enterpriseId: 1, asOf: '2026-06-01T00:00:00.000Z', ruleVersion: 'current-roster-116-v8', assessmentVersion: 'enterprise-qualification-407-v1' }
+    const { titles, snapshotId, ...scope } = legacy
+    expect(scope).toEqual(expectedScope)
+    expect(titles.map(t => t.titleCode).sort()).toEqual(['innovative_sme', 'little_giant', 'specialized_sme'])
+    expect(snapshotId).toBe(hash(JSON.stringify([expectedScope, titles])))
+    expect(selected.group).toBe(spec.group)
+    expect(selected.officialQualification.group).toBe(spec.group)
+    expect(selected.cycles).toEqual(spec.expectedBindings.map(b => b.cycle))
+    // Exact recorded values, not guessed cycle fields or production-helper-generated expected verdicts.
+    expect(selected.evidence).toEqual([...spec.events].sort((a, b) => a.id - b.id).map(e => ({ eventId: e.id, revision: 1,
+      eventType: e.eventType, year: e.year, batchSeq: e.batchSeq, decidedYear: e.decidedYear, reviewOutcome: e.reviewOutcome, evidenceIds: [e.id] })))
+    expect(selected.sourceVersions).toEqual([...spec.events].sort((a, b) => a.id - b.id).map(e => ({ evidenceId: e.id, eventId: e.id,
+      sourceFile: 'synthetic/427-r2.pdf', storedFileId: 1, sha256: SHA, bytes: 10, removedAt: null, capturedRevision: 1, capturedSha256: SHA })))
+    expect(selected.platform.comparison).toBe('not_established')
+    expect(selected.platform.observations).toEqual([])
+    expect(sqlite.prepare('select count(*) as n from platform_query').get()).toEqual({ n: 0 })
+    expect(sqlite.pragma('query_only', { simple: true })).toBe(1)
+    expect(sqlite.prepare('select total_changes() as n').get()).toEqual(changes)
+    expect(sqlite.inTransaction).toBe(false)
+    expect(compare).not.toHaveBeenCalled()
+    console.info('READER427_R2_GUARDS', JSON.stringify({ name: spec.name, legacy, changes, guardsReached: true }))
+    try {
+      // First RED must fail here, after all legacy/metadata/zero-write guards above.
+      // Current candidate is predeclared to throw invalid_cycle_event for the selected double-null case.
+      const projection = reader.readPlatformComparison(1, AS_OF, T)
+      expect(compare).toHaveBeenCalledTimes(1)
+      const input = compare.mock.calls[0]![0]
+      expect(input.legacy).toEqual(legacy)
+      expect(input.formal.cycles).toEqual(spec.expectedBindings)
+      expect(input.processes).toEqual([])
+      expect(input.queries).toEqual({ sources: [], truncated: false })
+      expect(projection.scope).toEqual({ ...expectedScope, titleCode: T, legacySnapshotId: snapshotId })
+      expect(projection.observation).toEqual({ state: 'not_queried', sources: [] })
+      expect(projection.comparison).toEqual({ state: 'not_established', cycles: spec.expectedResults })
+      expect(projection.inputDigest).toBe(digestInput427(input, projection.scope))
+      expect(projection.resultDigest).toBe(hash(canonical427([projection.inputDigest, projection.observation, projection.comparison])))
+    } finally {
+      const attempted = compare.mock.calls[0]?.[0]
+      console.info('READER427_R2_ATTEMPT', JSON.stringify({ name: spec.name, actualBindings: attempted?.formal.cycles,
+        expectedBindings: spec.expectedBindings, legacySnapshotId: snapshotId }))
+      expect(reader.read(1, AS_OF).snapshot).toEqual(legacy)
+      expect(sqlite.prepare('select total_changes() as n').get()).toEqual(changes)
+      expect(sqlite.pragma('query_only', { simple: true })).toBe(1)
+      expect(sqlite.inTransaction).toBe(false)
+    }
+  } finally { compare.mockRestore(); sqlite.close() }
+})

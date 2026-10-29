@@ -423,3 +423,55 @@ R1 Spec F1 指出：错指同周期另一事件的来源被 refs 过滤后，两
 原171 PASS与流程FAIL、R1 P1均保留；未观测unhandled/handles仍UNKNOWN。
 本节为运行后的文档差量，不外推#427集成、build/full/CI/生产。
 证据：/tmp/pr434-parent-f1-6axyguga。
+
+
+## #427 R2 reader：direct 成员与歧义 review 依赖
+
+#433 的严格 core 校验合入后，reader collector 须保留 authority 的周期实例多重性。
+同原年 null 批次的每个正式 award 都是独立的可能周期，不能按 year/batch 把全部
+award/review 填入每个 binding。collector 按 formal 输入顺序，将 authority 的逐 grant
+输出连接到对应单个 direct event ID；即使未来 grant 的 anchor=null、awardEventIds=[]，
+也不以锚点或授予 ID 列表猜成员，不重判正式资格、不补 year/batch 或裁掉周期。
+
+已知批次仍保留同原年/原批的直接事件；仅在该年既无已知批次分区、也无未知
+批次授予分区时，reviews-only 才以该 reviews 集合作为 direct 成员。同年未知批次 review 是 core 处理的判断依赖，
+进入完整依赖 refs，但不混入每个 grant 的 direct eventIds 或扩大 process applicability。
+完全相同的 judgment 也不能合并：两个不同直接事件仍保留两个周期实例，输出 tie
+顺序由 core 的完整规范化行排序；本票不增加 cycleId。
+
+本轮 reader 小修由父执行，只改 current-qualification.ts。固定实际 HEAD
+35fe48b80d278cca1a7739daec875d0a826e38b9 / tree d683a0917130e03afa56511c1b9a34bafeabcf87；
+reader SHA256 929ee6610c9322cfe0f91ebdbf00e6cdb53dbe15b98ad1b1705d9ab4b61fa6bb，
+冻结测试 SHA256 5f971c87b35180d00dfb4e4a779b762b3c7055e768e28bc4df1ec8007e496bb2。
+测试仅尾部增加八组真实 SQLite 独立 literal，原39源码前缀和旧406/workbook完整保留。
+
+历史 RED 与本次 GREEN 分列：
+
+- 首次 selector 因 `$name` 格式化为带引号/截断 fullname 未命中，47 全 skipped，
+  进程exit0而runner STOP；没有业务guards执行，不能算产品RED。原HARNESS_STOP保留。
+- 父授权 recovery 从原JSON机器导出唯一实际fullname selector；源码不变，静态47名
+  恰匹配1。实际1 executed/46 filtered，在完整legacy/hash/周期/source/零写guards后
+  抛 invalid_cycle_event；两个binding实际都为[1,2]，独立literal要求[1]、[2]。
+- 父 reader 窄修后，本轮静态TS解析、diffcheck及前缀/authority保护通过；随后唯一
+  完整reader文件47/47 PASS、0skip，八组guard/captured binding均匹配独立literal，
+  完整公开refs、双digest及finally只读断言也通过。此次不使用 -t。
+- 独立相关回归：406 37、workbook18、core159、annual18，共232/232；另有原408查询
+  86/86，均0skip。共365次case执行；格式化后同名的参数项保留多重性，不宣称365个
+  不同fullname。159/18是本轮新core/annual fresh，不沿用旧90/18或父177的运行结论。
+- 实际插件resolve/load及完整typecheck均exit0/signal null，raw TS/module/plugin gate空。
+  所有 lane 运行源码字节一致，各自新grant900/870/30秒、5GiB，先CAS释放读回FREE
+  再整理证据。实际原始JSON和逐例captured绑定位于/tmp/issue427-r2-green-c9y7LV。
+
+failed-only/null anchor、future known/null batch、不同decidedYear的双未知批次、
+known+unknown awards与歧义review、reviews-only、相同judgment的不同direct及反向
+插入均有独立完整binding/refs literal；expected不由生产helper生成，call-through不stub结果。
+默认407-v1/完整旧DTO/hash、默认core调用0、metadata51/50及time-before-retry、Z范围与
+processes=[]、原事务/WAL/预算规则保持；没有修改core/qualification/annual authority。
+小修增加的成员选择遍历不被宣称为全局性能或内存上界修复，原预算限度仍适用。
+
+本文是全部运行及释放后的文档delta，未参与上述执行；code/tests与source/run清单另行绑定。
+旧288/type、父#433的177/type和本票旧窗口证据均仅继承，不冒作本次执行；全部历史
+HARNESS_STOP、RED、Gate3、#426/#430/#433 FAIL/STOP及读取偏差保留。
+aggregateUnhandled字段缺失与未观测短命资源/handles仍UNKNOWN。
+未运行install/prepare/build/full/HTTP/DBapp/生产，未commit/push/PRbody/review/merge/watch，
+未委派或启动#428/#410；dirty-ready交父提交和重新安排双轴复审，不自签公开消费ready。
