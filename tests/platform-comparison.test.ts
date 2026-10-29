@@ -59,6 +59,46 @@ function recordsOnly(): Input {const i=p();i.processes=[];return i}
 function queryAt(i: Input,time: string) {i.queries.sources[0]!.source.queriedAt=time;return i}
 function freeze<T>(x:T):T {if(x&&typeof x==='object'){Object.values(x).forEach(freeze);Object.freeze(x)}return x}
 
+function reviewInYear(i: Input, year: number): Input {
+  const e=i.formal.assessment.evidence[0]!,b=i.formal.cycles[0]!,x=i.processes[0]!
+  Object.assign(e,{eventType:'review',decidedYear:year,reviewOutcome:'passed'})
+  Object.assign(b.judgment.anchor!,{eventType:'review',decidedYear:year,reviewOutcome:'passed'});b.judgment.awardEventIds=[]
+  Object.assign(x.input.event,{eventType:'review',decidedYear:year,reviewOutcome:'passed'})
+  Object.assign(x.sourceRefs.event,{eventType:'review',decidedYear:year,reviewOutcome:'passed'})
+  Object.assign(x.sourceRefs.scope,{businessYear:year,declareKind:'review'})
+  for(const g of x.input.groups)for(const o of g.observationRefs){o.evidence.process.eventType='review';o.evidence.process.declareKind='review';o.evidence.process.appliedAt=year+'-03-01 09:00:00';o.evidence.temporal.relationYear=year}
+  for(const d of x.currentDecisionRefs)d.role='supports_review'
+  if(x.finalQualification)for(const d of x.finalQualification.decisionRefs)d.role='supports_review'
+  return seal(i)
+}
+function borrowedHistory(i: Input): Input {
+  const x=i.processes[0]!,g=x.input.groups[0]!,current=g.observationRefs[0]!,old=structuredClone(current),q=structuredClone(i.queries.sources[0]!)
+  Object.assign(old,{relationId:299,queryId:203,queriedAt:'2025-05-31T00:00:00Z',existingCorrespondenceIds:[],existingCorrespondences:[]})
+  old.businessRecord.versionId=10;old.businessRecord.contentHash='e'.repeat(64)
+  current.evidence.temporal.relationYear=null;current.evidence.process.appliedAt=null;g.observationRefs.push(old)
+  Object.assign(q.source,{queryId:203,queriedAt:old.queriedAt});i.queries.sources.push(q)
+  x.sourceRefs.observations.push({queryId:203,relationId:299,interface:'business_list',recordId:10,versionId:10,sourceFingerprint:'f'.repeat(64)})
+  x.sourceRefs.titleScopeRefs.push({queryId:203,relationId:299,titleCode:T,platformKey:'SQ-10',usccNorm:U,recordId:10,versionId:10})
+  const c={queryId:203,interface:'business_list',queriedAt:old.queriedAt,status:'success',completeness:'complete',fullRange:true}
+  x.input.coverage.push(c);x.sourceRefs.coverage.push(structuredClone(c))
+  return seal(i)
+}
+function nativeApplyCorroboration(i: Input): Input {
+  const x=i.processes[0]!,o=structuredClone(x.input.groups[0]!.observationRefs[0]!),q=structuredClone(i.queries.sources[0]!)
+  Object.assign(o,{relationId:304,queryId:204,interface:'apply_list',rdjb:'',queryTitleCode:null,existingCorrespondenceIds:[],existingCorrespondences:[]})
+  Object.assign(o.businessRecord,{interface:'apply_list',recordId:30,versionId:31})
+  Object.assign(q.source,{queryId:204,interface:'apply_list',titleCode:null,rdjb:''});q.metadata!.source='queryList';q.metadata!.titleScope={mode:'source_default',rdjb:[]}
+  for(const page of [...q.source.pages,...q.metadata!.pages]){page.source='queryList';page.rdjb=null}
+  i.queries.sources.push(q)
+  x.input.groups.push({businessRecord:structuredClone(o.businessRecord),representativeRelationId:304,observationRefs:[o],existingCorrespondenceIds:[],existingCorrespondences:[],conflicts:[]})
+  x.sourceRefs.observations.push({queryId:204,relationId:304,interface:'apply_list',recordId:30,versionId:31,sourceFingerprint:'e'.repeat(64)})
+  x.sourceRefs.titleScopeRefs.push({queryId:204,relationId:304,titleCode:T,platformKey:'SQ-10',usccNorm:U,recordId:30,versionId:31})
+  const c={queryId:204,interface:'apply_list',queriedAt:q.source.queriedAt,status:'success',completeness:'complete',fullRange:true}
+  x.input.coverage.push(c);x.sourceRefs.coverage.push(structuredClone(c))
+  if(x.finalQualification?.status==='confirmed')x.finalQualification.stepId='["[\\"apply_list\\",30]","[\\"business_list\\",10]"]'
+  return seal(i)
+}
+
 describe('platform comparison 426',()=>{
   it('Z_unrestricted_zero',()=>{
     const i=z(),l=i.legacy
@@ -175,4 +215,25 @@ describe('platform comparison 426',()=>{
   })
   it('unknown_status_is_not_N_even_without_candidate',()=>{const i=p(true);i.processes[0]!.input.groups[0]!.observationRefs[0]!.evidence.process.status='已退回待审核';states(seal(i),'records','not_established','platform_status_unmapped')})
   it('missing_metadata_is_not_zero',()=>{const i=z();i.queries.sources[0]!.metadata=null;states(i,'unknown','not_established','coverage_incomplete')})
+})
+
+
+describe('PR429 R1 regression',()=>{
+  it('S1_array_index_getter_is_rejected_without_execution',()=>{
+    const i=z(),q=i.queries.sources[0]!;let calls=0
+    Object.defineProperty(i.queries.sources,'0',{enumerable:true,configurable:true,get(){calls++;i.queries.truncated=true;return q}})
+    expect(()=>comparePlatformComparison(i)).toThrow('invalid_json_input');expect(calls).toBe(0);expect(i.queries.truncated).toBe(false)
+  })
+  for(const opposite of [false,true])it(opposite?'F1_N_same_year_order_unknown':'F1_P_same_year_order_unknown',()=>states(reviewInYear(p(opposite),2026),'records','not_established','temporal_order_unresolved'))
+  it('F1_observation_before_formal_year',()=>{const i=reviewInYear(p(true),2026),x=i.processes[0]!;i.queries.sources[0]!.source.queriedAt='2025-05-31T00:00:00Z';x.input.groups[0]!.observationRefs[0]!.queriedAt='2025-05-31T00:00:00Z';x.input.coverage[0]!.queriedAt=x.sourceRefs.coverage[0]!.queriedAt='2025-05-31T00:00:00Z';states(seal(i),'records','not_established','temporal_order_unresolved')})
+  it('F2_foreign_history_cannot_supply_current_stable_fields',()=>{const i=borrowedHistory(p());i.processes[0]!.input.groups[0]!.observationRefs[1]!.target.eventId=2;states(seal(i),'records','not_established','cycle_unresolved')})
+  it('F2_unbound_history_cannot_supply_current_stable_fields',()=>{const i=borrowedHistory(p()),x=i.processes[0]!;x.sourceRefs.observations=x.sourceRefs.observations.filter(r=>r.relationId!==299);x.sourceRefs.titleScopeRefs=x.sourceRefs.titleScopeRefs.filter(r=>r.relationId!==299);states(seal(i),'records','not_established','source_requires_revalidation')})
+  it('F2_bound_history_is_included_without_requiring_old_confirmation',()=>{
+    const i=borrowedHistory(p()),r=states(i,'records','synchronized','same_event_result_agrees'),refs=r.comparison.cycles[0]!.refs
+    expect(refs.relationIds).toEqual([299,301]);expect(refs.queryIds).toEqual([202,203]);expect(refs.versions.map(v=>v.versionId).sort((a,b)=>a-b)).toEqual([10,11]);expect(refs.decisions).toEqual([{id:401,revision:1}])
+  })
+  it('F2_invalid_historical_version_cannot_supply_fields',()=>{const i=borrowedHistory(p());i.processes[0]!.input.groups[0]!.observationRefs[1]!.businessRecord.contentHash=null;states(seal(i),'records','not_established','source_requires_revalidation')})
+  it('F3_native_apply_corroborates_title_bound_business',()=>{const i=nativeApplyCorroboration(p()),r=states(i,'records','synchronized','same_event_result_agrees');expect(r.comparison.cycles[0]!.refs.relationIds).toEqual([301,304]);expect(r.comparison.cycles[0]!.refs.queryIds).toEqual([202,204])})
+  it('F3_native_apply_zero_is_not_single_title_absence',()=>{const i=z(),q=i.queries.sources[0]!;Object.assign(q.source,{interface:'apply_list',titleCode:null,rdjb:''});q.metadata!.source='queryList';q.metadata!.titleScope={mode:'source_default',rdjb:[]};for(const page of [...q.source.pages,...q.metadata!.pages]){page.source='queryList';page.rdjb=null}states(seal(i),'unknown','not_established','coverage_incomplete')})
+  it('F3_apply_title_lineage_must_remain_bound',()=>{const i=nativeApplyCorroboration(p());i.processes[0]!.sourceRefs.titleScopeRefs=i.processes[0]!.sourceRefs.titleScopeRefs.filter(r=>r.relationId!==304);states(seal(i),'records','not_established','source_requires_revalidation')})
 })

@@ -116,7 +116,12 @@ function jsonCopy(value: unknown, seen = new Set<object>()): any {
   let out: any
   if (Array.isArray(value)) {
     if (Object.keys(value).length !== value.length) throw new Error('invalid_json_input')
-    out = Array.from(value, v => jsonCopy(v, seen))
+    out = []
+    for (let index = 0; index < value.length; index++) {
+      const descriptor = Object.getOwnPropertyDescriptor(value, String(index))
+      if (!descriptor || !('value' in descriptor) || !descriptor.enumerable) throw new Error('invalid_json_input')
+      out.push(jsonCopy(descriptor.value, seen))
+    }
   } else {
     out = Object.create(null)
     for (const key of Object.keys(value).sort(compare)) {
@@ -191,7 +196,11 @@ function checkedQuery(q: Query, title: string, asOf: number): CheckedQuery {
   const r: CheckedQuery={q,time:t,usable:false,complete:false,unrestricted:false,outcome:'unknown',failed:false,notQueried:false,reasons:[]}
   if(t==null){r.reasons=['invalid_query_time'];return r}
   if(t>asOf){r.reasons=['observation_after_as_of'];return r}
-  if(!positiveId(s.queryId) || s.titleCode!==title || !m || sourceInterface[s.interface]!==m.source || !m.titleScope.rdjb.includes(rdjb[title]!) || m.titleScope.rdjb.length!==1 || s.rdjb!==rdjb[title]) {r.reasons=['coverage_incomplete'];return r}
+  const nativeApply=s.interface==='apply_list'
+  const titleScope=m && (nativeApply
+    ? s.titleCode===null && s.rdjb==='' && m.titleScope.mode==='source_default' && m.titleScope.rdjb.length===0
+    : s.titleCode===title && m.titleScope.rdjb.length===1 && m.titleScope.rdjb[0]===rdjb[title] && s.rdjb===rdjb[title])
+  if(!positiveId(s.queryId) || !m || sourceInterface[s.interface]!==m.source || !titleScope) {r.reasons=['coverage_incomplete'];return r}
   r.usable=true
   r.notQueried=s.queryStatus==='not_queried' && m.status==='not_queried'
   r.failed=['failed','auth_failed'].includes(s.queryStatus) || ['failed','auth_failed'].includes(m.status) || m.error!==null || m.pages.some(p=>p.status!=='success')
@@ -199,7 +208,7 @@ function checkedQuery(q: Query, title: string, asOf: number): CheckedQuery {
   if(r.failed){r.reasons=['query_failed'];return r}
   const consistent=s.queryStatus===m.status && same(s.conditions,m.effectiveConditions) && same(s.pages,m.pages) && s.fullRange===m.fullRange && s.completeness===m.completeness && same(s.unfinished,m.unfinished)
   const pages=m.pages,size=m.limits.pageSize
-  const pageShape=pages.length>0 && pages.length<=50 && Number.isSafeInteger(size) && size>0 && size<=50 && pages[0]!.page===1 && pages.every((p,i)=>p.source===m.source && p.rdjb===rdjb[title] && p.status==='success' && p.error===null && p.page===i+1 && Number.isSafeInteger(p.fetchedCount) && p.fetchedCount>=0 && p.fetchedCount<=size)
+  const pageShape=pages.length>0 && pages.length<=50 && Number.isSafeInteger(size) && size>0 && size<=50 && pages[0]!.page===1 && pages.every((p,i)=>p.source===m.source && (nativeApply ? p.rdjb==null : p.rdjb===rdjb[title]) && p.status==='success' && p.error===null && p.page===i+1 && Number.isSafeInteger(p.fetchedCount) && p.fetchedCount>=0 && p.fetchedCount<=size)
   const totals=[...new Set(pages.map(p=>p.declaredTotal).filter(v=>v!==null))]
   const maxPages=[...new Set(pages.map(p=>p.maxPage).filter(v=>v!=null))]
   const count=pages.reduce((n,p)=>n+p.fetchedCount,0),last=pages.at(-1)
@@ -220,7 +229,7 @@ function cycleRefs(input: CandidateComparisonInput,b: Binding): SafeComparisonRe
   out.sources=a.sourceVersions.filter(s=>out.evidenceIds.includes(s.evidenceId)).map(s=>({evidenceId:s.evidenceId,sha256:s.sha256})).sort((a,b)=>a.evidenceId-b.evidenceId)
   return out
 }
-function processResult(p: Process,input: CandidateComparisonInput,b: Binding,queries: CheckedQuery[],refs: SafeComparisonRefs): {state:State; reasons:ComparisonReason[]} {
+function processResult(p: Process,input: CandidateComparisonInput,b: Binding,queries: CheckedQuery[],historyQueries: CheckedQuery[],refs: SafeComparisonRefs): {state:State; reasons:ComparisonReason[]} {
   const a=input.formal.assessment,e=p.input.event,s=p.sourceRefs,official=a.evidence.find(v=>v.eventId===e.id)
   const result=(reason:ComparisonReason):{state:State;reasons:ComparisonReason[]}=>({state:'not_established',reasons:[reason]})
   if(!official || !b.eventIds.includes(e.id) || e.record.enterpriseId!==input.legacy.enterpriseId || e.record.titleCode!==input.titleCode || s.event.id!==e.id) return result('cycle_unresolved')
@@ -238,19 +247,26 @@ function processResult(p: Process,input: CandidateComparisonInput,b: Binding,que
   if(annual.reasons.some(r=>r!=='official_result_mismatch'))return result('coverage_incomplete')
   const observations=latest.groups.flatMap(g=>g.observationRefs).filter(r=>latest.latestVersionRefs.some(v=>v.interface===r.interface && v.recordId===r.businessRecord.recordId && v.versionId===r.businessRecord.versionId && v.relationIds.includes(r.relationId)))
   if(!observations.length)return result('source_requires_revalidation')
-  for(const r of observations){
-    const m=r.businessRecord,q=queries.find(q=>q.q.source.queryId===r.queryId && q.usable && q.complete && q.unrestricted && q.outcome==='records')
+  // annual uses every observation in the selected logical step for stable fields,
+  // conflicts and chronology. Historical support must remain bound even though
+  // only current endpoint versions need a current confirmation.
+  const dependencies=latest.groups.flatMap(g=>g.observationRefs)
+  for(const r of dependencies){
+    const current=observations.includes(r)
+    const m=r.businessRecord,q=(current?queries:historyQueries).find(q=>q.q.source.queryId===r.queryId && q.usable && q.complete && q.unrestricted && q.outcome==='records')
     if(!q)return result('coverage_incomplete')
-    if(r.queryStatus!=='success' || r.queriedAt!==q.q.source.queriedAt || r.queryKey!==q.q.queryKey || r.titleCode!==input.titleCode || r.enterpriseId!==input.legacy.enterpriseId || r.target.eventId!==e.id || r.target.enterpriseId!==input.legacy.enterpriseId || r.usccRaw!==e.record.usccRaw || e.record.usccRaw!==q.q.queryKey)return result('cycle_unresolved')
+    const formalYear=official.decidedYear??official.year??Infinity
+    if(current && new Date(q.time!).getUTCFullYear()<=formalYear)return result('temporal_order_unresolved')
+    if(r.queryStatus!=='success' || r.queriedAt!==q.q.source.queriedAt || r.queryKey!==q.q.queryKey || r.titleCode!==input.titleCode || r.enterpriseId!==input.legacy.enterpriseId || r.target.eventId!==e.id || r.target.enterpriseId!==input.legacy.enterpriseId || r.target.titleCode!==input.titleCode || r.usccRaw!==e.record.usccRaw || e.record.usccRaw!==q.q.queryKey)return result('cycle_unresolved')
     if(m.groupState!=='verified'||m.identityState!=='resolved'||m.contentState!=='verified'||!m.recordId||!m.versionId||m.hashAlgorithm!=='sha256'||!m.contentHash||!/^[a-f0-9]{64}$/.test(m.contentHash))return result('source_requires_revalidation')
-    if(!s.observations.some(v=>v.relationId===r.relationId && v.queryId===r.queryId && v.recordId===m.recordId && v.versionId===m.versionId && /^[a-f0-9]{64}$/.test(v.sourceFingerprint)) || !s.titleScopeRefs.some(v=>v.relationId===r.relationId && v.titleCode===input.titleCode && v.recordId===m.recordId && v.versionId===m.versionId))return result('source_requires_revalidation')
+    if(!s.observations.some(v=>v.relationId===r.relationId && v.queryId===r.queryId && v.interface===r.interface && v.recordId===m.recordId && v.versionId===m.versionId && /^[a-f0-9]{64}$/.test(v.sourceFingerprint)) || !s.titleScopeRefs.some(v=>v.relationId===r.relationId && v.queryId===r.queryId && v.titleCode===input.titleCode && v.recordId===m.recordId && v.versionId===m.versionId))return result('source_requires_revalidation')
     if(!s.evidence.length || !s.evidence.every(v=>official.evidenceIds.includes(v.id) && a.sourceVersions.some(src=>src.evidenceId===v.id && src.eventId===e.id && src.sha256===v.sha256 && src.removedAt===null && src.capturedRevision===official.revision && src.capturedSha256===src.sha256)))return result('source_requires_revalidation')
   }
   const current=p.currentDecisionRefs.filter(d=>observations.some(r=>r.relationId===d.relationId))
   if(p.currentDecisionRefs.some(d=>d.eventId===e.id && ['rejected','unlinked'].includes(d.status)) || current.some(d=>d.requiresRevalidation) || !current.some(d=>d.status==='confirmed'&&!d.requiresRevalidation&&d.endedAt===null&&d.eventId===e.id&&d.enterpriseId===input.legacy.enterpriseId&&d.titleCode===input.titleCode&&d.type==='event_process'&&d.role===(e.eventType==='award'?'supports_award':'supports_review')))return result('source_requires_revalidation')
   const mismatch=annual.reasons.includes('official_result_mismatch')
   if(!mismatch){const f=p.finalQualification;if(!annual.finalCandidateStepId||!f||f.stepId!==annual.finalCandidateStepId||f.status!=='confirmed'||f.reasons.length||!f.decisionRefs.length||!f.decisionRefs.every(d=>current.some(c=>c.id===d.id&&c.revision===d.revision&&c.relationId===d.relationId&&c.status==='confirmed'&&!c.requiresRevalidation)))return result('source_requires_revalidation')}
-  refs.queryIds.push(...observations.map(r=>r.queryId));refs.relationIds.push(...observations.map(r=>r.relationId));refs.versions.push(...observations.map(r=>({recordId:r.businessRecord.recordId!,versionId:r.businessRecord.versionId!,contentHash:r.businessRecord.contentHash!})));refs.decisions.push(...current.filter(d=>d.status==='confirmed').map(d=>({id:d.id,revision:d.revision})));refs.sourceGenerations.push(p.sourceGeneration)
+  refs.queryIds.push(...dependencies.map(r=>r.queryId));refs.relationIds.push(...dependencies.map(r=>r.relationId));refs.versions.push(...dependencies.map(r=>({recordId:r.businessRecord.recordId!,versionId:r.businessRecord.versionId!,contentHash:r.businessRecord.contentHash!})));refs.decisions.push(...current.filter(d=>d.status==='confirmed').map(d=>({id:d.id,revision:d.revision})));refs.sourceGenerations.push(p.sourceGeneration)
   return {state:mismatch?'unsynchronized':'synchronized',reasons:[mismatch?'same_event_result_not_reflected':'same_event_result_agrees']}
 }
 export function comparePlatformComparison(input: CandidateComparisonInput): PlatformComparison {
@@ -263,7 +279,7 @@ export function comparePlatformComparison(input: CandidateComparisonInput): Plat
   const retryKey=(q:CheckedQuery)=>canonical([q.q.source.interface,q.q.metadata?.effectiveConditions??null,q.q.source.titleCode,q.q.metadata?.fullRange??null])
   const usable=all.filter(q=>q.usable)
   const selected=usable.filter(q=>!usable.some(other=>retryKey(q)===retryKey(other)&&other.time!>q.time!))
-  const sufficient=selected.filter(q=>q.complete&&q.unrestricted&&q.outcome!=='unknown')
+  const sufficient=selected.filter(q=>q.q.source.interface!=='apply_list'&&q.complete&&q.unrestricted&&q.outcome!=='unknown')
   const conflict=new Set(sufficient.map(q=>q.outcome)).size>1
   const truncated=input.queries.truncated
   const observationState:ObservationState=truncated||conflict?'unknown':sufficient.some(q=>q.outcome==='records')?'records':sufficient.some(q=>q.outcome==='no_record')?'no_record':selected.some(q=>q.failed)?'query_failed':all.some(q=>q.time==null)?'unknown':(!all.length||all.every(q=>q.reasons.includes('observation_after_as_of'))||selected.length>0&&selected.every(q=>q.notQueried))?'not_queried':'unknown'
@@ -278,7 +294,7 @@ export function comparePlatformComparison(input: CandidateComparisonInput): Plat
     else if(!refs.sources.length || refs.sources.some(s=>!s.sha256) || a.sourceVersions.filter(s=>refs.evidenceIds.includes(s.evidenceId)).some(s=>s.removedAt!==null||s.sha256!==s.capturedSha256||!refs.events.some(e=>e.id===s.eventId&&e.revision===s.capturedRevision)))rs.push('source_requires_revalidation')
     else {
       const applicable=input.processes.filter(p=>b.eventIds.includes(p.input.event.id))
-      const processResults=applicable.map(p=>processResult(p,input,b,selected,refs))
+      const processResults=applicable.map(p=>processResult(p,input,b,selected,all,refs))
       // Duplicate lineage pointing to a different event is a real assignment conflict.
       const relationEvents=new Map<number,Set<number>>()
       for(const p of input.processes)for(const g of p.input.groups)for(const r of g.observationRefs){const values=relationEvents.get(r.relationId)??new Set<number>();values.add(p.input.event.id);relationEvents.set(r.relationId,values)}

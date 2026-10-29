@@ -49,6 +49,9 @@ fullRange/unfinished/error/limits，不包含 rows/rawData/raw_response/rawField
 核心核对 metadata 和 QueryCoverageSource 的条件、页、状态及范围一致，
 不直接相信 outcome 或旧聚合 coverage.status。全范围完成证明要求从 page 1 连续读取，
 页状态成功、计数合法、总数或末页证明闭合；pages 不会被自动修复或重排。
+原生 apply_list/queryList 保留无单称号查询范围：source.titleCode=null、空 rdjb、
+source_default/空 titleScope.rdjb、page.rdjb=null。它只能在完整 annual/current title lineage
+及当前 business_list 见证内参与 P/N，不独立证明某称号零记录；Z仍要求明确单称号范围。
 
 query 与 asOf 使用严格带时区 instant，验证实际日历日期、时分秒和 offset，
 允许至毫秒精度。先排除未来 query，再按 interface/conditions/title/fullRange 选 retry。
@@ -65,6 +68,11 @@ P 需要同事件、同原周期、当前 indexed record/version/contentHash、�
 supports_review refs，以及与当前 candidate 匹配的已有 confirmed finalQualification。
 N 需要实际 latestStep 的 official_result_mismatch 和独立有效的同事件当前支持 refs；
 N 可没有 finalCandidate，不能把所有 null candidate 当成 N。
+P/N使用的当前查询与正式结论年度相同或更早、且无法证明结果先后时，同样返回
+ temporal_order_unresolved；不只零记录支路受此保护，跨年度充分见证仍可比较。
+annual选定逻辑步骤内全部历史观察都参与稳定字段、冲突与时间判断；因此逐一校验其
+同事件/主体/称号、query覆盖和record/version/hash及sourceRefs，并将依赖纳入safe refs。
+只有当前endpoint版本需要当前支持决定，不无差别要求历史版本重新confirmed。
 未知状态、潜在更晚 scope gap、旧版本、撤回/需重核决定均不能套用 P/N。
 sourceGeneration 与当前决定分别绑定：同 generation 不意味着决定没有变化。
 
@@ -117,7 +125,8 @@ platform_status_unmapped
 canonical JSON 使用排序对象键、无空白 JSON、UTF-8、有限 number/string/boolean/null。
 对象键与排序比较使用 JS 字符串 `<`/`>`，不使用 localeCompare。
 拒绝 undefined、NaN、Infinity、函数、循环引用、稀疏数组、symbol key、非普通对象和对象 getter。
-输入先复制再归一和排序；不会原地 sort。
+数组逐索引验证own enumerable data descriptor，再递归复制descriptor.value；
+不会通过Array.from执行数组索引getter。输入先复制再归一和排序；不会原地sort。
 
 可选字段有明确投影规则：page 缺 maxPage、completeness 缺 fieldGaps、annual input 缺
 scopeGaps，在新 inputDigest 的归一副本中显式变为 null。显式 undefined 一律拒绝。
@@ -184,7 +193,7 @@ evidenceId/sha256、recordId/versionId/contentHash、decision id/revision、sour
 既有 51 探测/50 返回保持；truncated=true 阻断全局结论，不能自行补查。
 完整 annual scope 在原预算内无法证明时，adapter 必须保留缺口，不得拿分页值声称完整。
 
-## 实跑与有限继承
+## R1 实跑与有限继承（历史，非当前修复候选）
 
 分析/运行 base：a12f2a1cf36e7ed4e1dc03a5b93af15b54beac9d，
 tree a085ff41efa0626a83829f3f9fca69cf0865679e。
@@ -196,7 +205,7 @@ tree a085ff41efa0626a83829f3f9fca69cf0865679e。
 | 父类型修正证明 | source 95a5df1661dda1707f95709ab3911c4b5ae2429418df8652330e6aaf4e2cb4a3 → candidate 067997a45385b3b149c6c12d0043c3407fb183d2320252d5a72c17b54c621976；只增加 map 类型上下文 |
 | 擦除等价 | 父 TypeScript 5.9.3 固定 ES2022/ESNext/同 filename/no sourcemap，输出 JS 24667 bytes 全等；SHA 71847c6cf5c3865a554247293adeb35622bdc3d71e7c602756cccccc8075e67b，syntax errors0；本轮仅核 proof/source hashes |
 | 新 fresh 类型验证 | 插件实际 resolve/load 通过，完整 nuxt typecheck exit0/signal null，raw TS/plugin gate 无诊断 |
-| 当前测试文件 | SHA 4810714edb684f99e7aa6dfd95bf4d382dab909d2b2314a46739aafe160fb91b，与旧 87 项运行一致 |
+| R1 测试文件 | SHA 4810714edb684f99e7aa6dfd95bf4d382dab909d2b2314a46739aafe160fb91b，与旧 87 项运行一致 |
 
 旧初次 typecheck exit2（TS2322）、随后静态比较器 SourceFile.text 错误及 NameError 的 STOP
 均保留；后两者是 harness 失败，不列为产品 FAIL。新类型通过不抹除旧记录。
@@ -214,3 +223,21 @@ plugin-validation.json,type-validation.json,release.json}。父证明位于
 
 本文档是新类型通过之后的独立后置 delta，没有参与旧 87 项测试或新类型运行。
 未运行 full/build/HTTP/DB app/browser，也未触碰 3480/3481；没有生产验收、后继接线或默认激活结论。
+
+
+## R2 审查修复验证
+
+PR429 R1固定head0337f0fb发现Standards数组getter P2及Spec三项P2：P/N同年先后、
+annual历史依赖闭环、原生apply_list覆盖。旧报告、原87项及全部FAIL/STOP/UNKNOWN均保留。
+
+- 新增11个独立反例控制，旧69个core正文和期望保持。修复前单次RED：10 FAIL/1 PASS，
+  原69项名称过滤未运行；失败均为预声明判定或refs断言，不是种子/导入错误。
+- 修复后完整core 80/80、原annual 18/18，合计98/98，exit0/signal null，0 skip；
+  原始JSON各failureMessages为空。aggregateUnhandled字段缺失仍UNKNOWN。
+- 新插件实际resolve/load及完整typecheck均exit0/signal null，raw诊断gate干净。
+- 原始运行：/tmp/issue426-implementation-6BVZlN/r1-red-parent、r1-green-parent、r1-type-parent。
+  两个GREEN/type运行各自sourceExact，release-FIRST原字节CAS及FREE读回保留。
+- 文档为类型验证之后的后置差量；core与tests字节绑定上述新运行，未重build/full/HTTP。
+
+修复仍只涉及原三个owner，不改默认407-v1/current/export或annual authority。此处记录本地
+门禁，独立R2审查、CI与生产不由本次测试代签。所有新生产路径仍未激活。
