@@ -1,3 +1,4 @@
+import { publishedNameText, type PublishedPresentation } from './correspondence-view'
 import { listEventsOfficialEvidencePages, OfficialEvidenceError } from '../../server/utils/official-evidence'
 import { importReceiptRedactor, type OfficialPublishedNameInput, type ReceiptRedactor } from '../../server/utils/import-receipt-redaction'
 
@@ -96,4 +97,20 @@ export function readOfficialPublishedPresentation(db: Parameters<typeof importRe
     // Never expose SQL, credentials or raw capture envelopes through future public callers.
     throw new OfficialPublishedPresentationError(code)
   }
+}
+
+/** Final display projection only; never supplies qualification/assessment input.
+ * Source ownership/full-page validation must already have run through the existing
+ * reader. The current assessment owns that read; no preloaded-data read option exists.
+ */
+export function projectOfficialPublishedNames(facts: readonly OfficialPublishedFact[], copies: readonly OfficialPublishedScope[], envelopeCount = 1, textCopies = 1): PublishedPresentation {
+  const byEvidence = new Map(facts.map(fact => [fact.evidenceId, fact]))
+  const projected = copies.map(item => byEvidence.get(item.evidenceId)!)
+  const texts = projected.map(publishedNameText)
+  // Moved unchanged from readPublicPublishedNames: final redacted UTF8/escaping.
+  const bytes = Buffer.byteLength(JSON.stringify(projected)) + Buffer.byteLength(JSON.stringify(texts)) * textCopies
+    + envelopeCount * Buffer.byteLength(JSON.stringify({ publishedPresentation: { availability: 'available', error: null, facts: [] } }))
+    + projected.length * Buffer.byteLength(JSON.stringify({ publishedName: null }))
+  if (bytes > 65536) throw new OfficialPublishedPresentationError('response_limit')
+  return { availability: 'available', error: null, facts: [...facts] }
 }
