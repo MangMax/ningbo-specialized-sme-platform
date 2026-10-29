@@ -92,6 +92,17 @@ function completePages(pages: PlatformQueryPage[], pageSize: number, fullRange: 
 export function readQueryCoverage(db: DecisionDb, scope: AssessmentScope, variants?: IdentityKeyVariants, ownQueryIds?: readonly number[]) {
   return coverageOf(queryMetadata(db, scope, variants, ownQueryIds), scope)
 }
+/** Internal opt-in witness projection. Keep every retained retry/asOf candidate,
+ * not the legacy aggregate status or its latest map. No rows/body fields escape SQL. */
+export function readQueryComparisonWitnesses(db: DecisionDb, scope: AssessmentScope, variants?: IdentityKeyVariants, ownQueryIds?: readonly number[]) {
+  const selected = queryMetadata(db, scope, variants, ownQueryIds)
+  const coverage = coverageOf(selected, scope)
+  const rows = new Map(selected.rows.map(row => [row.id, row]))
+  return { truncated: selected.truncated, sources: coverage.sources.map(source => {
+    const row = rows.get(source.queryId)!
+    return { source, queryKey: row.queryKey, metadata: metadataOf(row) }
+  }) }
+}
 function coverageOf({ rows, truncated, uscc }: ReturnType<typeof queryMetadata>, scope: AssessmentScope) {
   const rdjb = rdjbByTitle[scope.titleCode]
 

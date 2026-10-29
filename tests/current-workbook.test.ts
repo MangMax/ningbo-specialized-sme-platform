@@ -384,3 +384,25 @@ it('D409 v2 hashes mixed groups in sheet order then stable identity order', asyn
   }
   expect(result.dataVersion).toBe('sha256:'+hash.digest('hex'))
 })
+
+
+it('427 default_export_keeps_D409_digest_and_never_invokes_comparison', async () => {
+  const core = await import('../lib/roster/platform-comparison')
+  const spy = vi.spyOn(core, 'comparePlatformComparison')
+  const { db, file } = fixture()
+  try {
+    const id = candidate(db, '427 default workbook')
+    const result = await writeCurrentWorkbook(db.$client, 'little_giant', file, () => {})
+    const snapshot = readCurrentQualificationAssessment(db.$client, id, Date.parse(result.generatedAt))
+    expect(snapshot.assessmentVersion).toBe('enterprise-qualification-407-v1')
+    expect(snapshot.titles.every(t => t.platform.comparison === 'not_established')).toBe(true)
+    const workbook = new ExcelJS.Workbook(); await workbook.xlsx.readFile(file)
+    const values = Array.from({ length: 12 }, (_, i) => workbook.getWorksheet('有效企业')!.getRow(2).getCell(i + 1).value)
+    const { titles: _titles, snapshotId, ...scope } = snapshot
+    const digest = createHash('sha256').update(JSON.stringify(['current-export-assessment-409-v2', 'enterprise-qualification-407-v1', 'current-roster-116-v8', new Date(result.generatedAt).getUTCFullYear(), 'little_giant']) + '\n')
+      .update(JSON.stringify(['eligible', id, scope, snapshotId, values]) + '\n').digest('hex')
+    expect(result.dataVersion).toBe('sha256:' + digest)
+    expect(result.counts).toEqual({ eligible: 1, pending: 0, excluded: 0 })
+    expect(spy).not.toHaveBeenCalled()
+  } finally { spy.mockRestore() }
+})

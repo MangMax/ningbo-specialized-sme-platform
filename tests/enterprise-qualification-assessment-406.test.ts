@@ -415,3 +415,294 @@ it('detail_snapshot_scope_and_field_gaps_407', () => {
   expect(readCurrentCandidate(sqlite, enterprise.id, 'innovative_sme', 2026, AS_OF).group).toBe('pending')
   expect(sqlite.prepare('select total_changes() as n').get()).toEqual(before)
 })
+
+
+it('427 default_read_current_workbook_preserve_complete_frozen_legacy_without_core', async () => {
+  const core = await import('../lib/roster/platform-comparison')
+  const { createCurrentQualificationAssessmentReader } = await import('../lib/roster/current-qualification')
+  const spy = vi.spyOn(core, 'comparePlatformComparison')
+  db.insert(schema.enterprise).values({ id: 1, name: '合成427', nameNorm: '合成427', usccNorm: '91330211255994457P' }).run()
+  db.insert(schema.record).values({ id: 1, enterpriseId: 1, titleCode: 'specialized_sme', source: 'jxj', nameRaw: '合成427', usccRaw: '91330211255994457P' }).run()
+  db.insert(schema.recordEvent).values({ id: 1, recordId: 1, eventType: 'award', year: 2024, batchSeq: 1 }).run()
+  db.insert(schema.storedFile).values({ id: 1, relPath: 'synthetic/427.pdf', filename: '427.pdf', ext: 'pdf', bytes: 10, sha256: 'a'.repeat(64) }).run()
+  db.insert(schema.recordEvidence).values({ id: 1, recordEventId: 1, sourceFile: 'synthetic/427.pdf', listNo: 1, page: 1 }).run()
+  db.insert(schema.importBatch).values({ id: 1, idempotencyKey: '427-fixture', sourceKind: 'announcement', sourceIdentity: '427-fixture', status: 'committed' }).run()
+  db.insert(schema.officialEvidenceRowRevision).values({ evidenceId: 1, revision: 1, eventId: 1, capturedRecordId: 1, capturedEnterpriseId: 1,
+    nameRaw: '合成427', usccRaw: '91330211255994457P', storedFileId: 1, path: 'synthetic/427.pdf', sha256: 'a'.repeat(64), bytes: 10, sourceBindingKnown: false,
+    listNo: 1, page: 1, actor: { type: 'agent', id: 'synthetic-427' }, basis: 'fixture', commandKind: 'import', importBatchId: 1, createdAt: '2024-06-01T00:00:00Z' }).run()
+  db.insert(schema.platformQuery).values({ id: 1, interface: 'recognized_list', queryKey: '91330211255994457P', rdjb: '2', titleCode: 'specialized_sme', queriedAt: '2026-05-31T00:00:00Z', status: 'no_record', collectionEvidence: {
+    source: 'queryBusList', status: 'no_record', effectiveConditions: { uscc: '91330211255994457P', combination: 'and' }, titleScope: { mode: 'selected', rdjb: ['2'] },
+    queriedAt: '2026-05-31T00:00:00Z', completedAt: '2026-05-31T00:00:01Z', rows: [], pages: [{ source: 'queryBusList', rdjb: '2', page: 1, status: 'success', fetchedCount: 0, declaredTotal: 0, error: null }], fetchedCount: 0, declaredTotal: 0, completeness: 'complete', fullRange: true, unfinished: [], error: null, limits: { maxRequests: 100, maxRows: 5000, maxDurationMs: 60000, pageSize: 50 },
+  } }).run()
+  sqlite.pragma('query_only=ON')
+  const changes = sqlite.prepare('select total_changes() as n').get()
+  const reader = createCurrentQualificationAssessmentReader(sqlite)
+  const expected = DEFAULT_427_LEGACY
+  expect(reader.read(1, AS_OF).snapshot).toEqual(expected)
+  expect(reader.readCurrent(1, AS_OF, 'specialized_sme').snapshot).toEqual(expected)
+  expect(reader.readWorkbook(1, AS_OF, 'specialized_sme').snapshot).toEqual(expected)
+  expect(reader.readTitle(1, 'specialized_sme', AS_OF).group).toBe('eligible')
+  expect(spy).not.toHaveBeenCalled()
+  expect(sqlite.prepare('select total_changes() as n').get()).toEqual(changes)
+})
+
+const DEFAULT_427_LEGACY = {
+  "enterpriseId": 1,
+  "asOf": "2026-06-01T00:00:00.000Z",
+  "ruleVersion": "current-roster-116-v8",
+  "assessmentVersion": "enterprise-qualification-407-v1",
+  "snapshotId": "4b31cc766121ce8f88fe3a00fc100bc26d2d3e87ae12edb0279494fb921e9ef4",
+  "titles": [
+    {
+      "titleCode": "little_giant",
+      "group": "pending",
+      "cycles": [],
+      "versions": {
+        "facts": "62bca7493f42412765934a2b5e3f594ceac390b489795af0ab47666bc6658a7f",
+        "sources": "5ae1625b488b3935122d8dd627fe575b388a5aa360378fa4407aad08baaed1e2",
+        "decisions": "5ae1625b488b3935122d8dd627fe575b388a5aa360378fa4407aad08baaed1e2",
+        "observations": "fde5898c71060f1c5aadf68018968f659c530e2a88ab3d1493e06a7a7dda95d8"
+      },
+      "officialQualification": {
+        "group": "pending",
+        "message": "正式资格待核；已有公布及具体缺口保留",
+        "basis": "",
+        "notes": [
+          "缺少已确认认定及资格依据；平台状态或候选对应不能单独证明资格"
+        ]
+      },
+      "subject": {
+        "status": "not_established",
+        "message": "未见可适用的已确认主体终止事实；不据此证明存续",
+        "decisionIds": []
+      },
+      "region": {
+        "status": "not_established",
+        "message": "未见可适用的迁移决定；沿用正式公布地域范围",
+        "decisionIds": []
+      },
+      "platform": {
+        "status": "not_queried",
+        "comparison": "not_established",
+        "message": "截至评估时点尚无可适用平台查询；其它观察保留",
+        "truncated": false,
+        "observations": []
+      },
+      "correspondence": {
+        "status": "unmatched",
+        "message": "尚无已确认对应；不据此否定正式资格",
+        "refs": []
+      },
+      "completeness": {
+        "status": "recorded",
+        "message": "既有字段已记录；未推断具体有效日或未录入的政策条款",
+        "gaps": [],
+        "publishedNames": [],
+        "eventIds": [],
+        "fieldGaps": []
+      },
+      "evidence": [],
+      "sourceVersions": [],
+      "references": [],
+      "notes": [
+        "缺少已确认认定及资格依据；平台状态或候选对应不能单独证明资格"
+      ],
+      "shadow": {
+        "legacyGroup": "pending",
+        "difference": null
+      }
+    },
+    {
+      "titleCode": "specialized_sme",
+      "group": "eligible",
+      "cycles": [
+        {
+          "originYear": 2024,
+          "batchSeq": 1,
+          "precision": "year"
+        }
+      ],
+      "versions": {
+        "facts": "afcacee681383592d9b4fa949e73ca3a196e1bf11a8f06e1da293a20eac03583",
+        "sources": "fb2650ff27443a8b8766ed917f1029a1340dc10f52fcebbcc792257054e554d0",
+        "decisions": "5ae1625b488b3935122d8dd627fe575b388a5aa360378fa4407aad08baaed1e2",
+        "observations": "ed43da9c3c1a047aa07aa378cce0f193a85e5d441e5c5d8cf69051b1ee453826"
+      },
+      "officialQualification": {
+        "group": "eligible",
+        "message": "正式资格当前有效（按已录入的年份或已核实有效期间）",
+        "basis": "event:1@1 award 2024/1 结论年:",
+        "notes": []
+      },
+      "subject": {
+        "status": "not_established",
+        "message": "未见可适用的已确认主体终止事实；不据此证明存续",
+        "decisionIds": []
+      },
+      "region": {
+        "status": "not_established",
+        "message": "未见可适用的迁移决定；沿用正式公布地域范围",
+        "decisionIds": []
+      },
+      "platform": {
+        "status": "requires_verification",
+        "comparison": "not_established",
+        "message": "平台观察已保留；同主体、称号、周期、时点及覆盖尚需核实，未自动确认一致或未同步",
+        "truncated": false,
+        "observations": [
+          {
+            "queryId": 1,
+            "interface": "recognized_list",
+            "queriedAt": "2026-05-31T00:00:00Z",
+            "queryStatus": "no_record",
+            "status": "complete",
+            "titleCode": "specialized_sme",
+            "rdjb": "2",
+            "conditions": {
+              "uscc": "91330211255994457P",
+              "combination": "and"
+            },
+            "pages": [
+              {
+                "source": "queryBusList",
+                "rdjb": "2",
+                "page": 1,
+                "status": "success",
+                "fetchedCount": 0,
+                "declaredTotal": 0,
+                "error": null
+              }
+            ],
+            "fullRange": true,
+            "completeness": "complete",
+            "unfinished": [],
+            "outcome": "no_record",
+            "subjectMatch": "exact_uscc",
+            "applicability": "at_or_before_as_of",
+            "rows": []
+          }
+        ]
+      },
+      "correspondence": {
+        "status": "unmatched",
+        "message": "尚无已确认对应；不据此否定正式资格",
+        "refs": []
+      },
+      "completeness": {
+        "status": "recorded",
+        "message": "既有字段已记录；未推断具体有效日或未录入的政策条款",
+        "gaps": [],
+        "publishedNames": [
+          {
+            "evidenceId": 1,
+            "availability": "captured",
+            "nameKnown": true
+          }
+        ],
+        "eventIds": [],
+        "fieldGaps": [
+          {
+            "eventId": 1,
+            "field": "decidedYear",
+            "valueState": "unknown",
+            "inputState": "null"
+          }
+        ]
+      },
+      "evidence": [
+        {
+          "eventId": 1,
+          "revision": 1,
+          "eventType": "award",
+          "year": 2024,
+          "batchSeq": 1,
+          "decidedYear": null,
+          "reviewOutcome": null,
+          "evidenceIds": [
+            1
+          ]
+        }
+      ],
+      "sourceVersions": [
+        {
+          "evidenceId": 1,
+          "eventId": 1,
+          "sourceFile": "synthetic/427.pdf",
+          "storedFileId": 1,
+          "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "bytes": 10,
+          "removedAt": null,
+          "capturedRevision": 1,
+          "capturedSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      ],
+      "references": [
+        "evidence:1 synthetic/427.pdf  序号:1"
+      ],
+      "notes": [],
+      "shadow": {
+        "legacyGroup": "eligible",
+        "difference": null
+      }
+    },
+    {
+      "titleCode": "innovative_sme",
+      "group": "pending",
+      "cycles": [],
+      "versions": {
+        "facts": "62bca7493f42412765934a2b5e3f594ceac390b489795af0ab47666bc6658a7f",
+        "sources": "5ae1625b488b3935122d8dd627fe575b388a5aa360378fa4407aad08baaed1e2",
+        "decisions": "5ae1625b488b3935122d8dd627fe575b388a5aa360378fa4407aad08baaed1e2",
+        "observations": "fde5898c71060f1c5aadf68018968f659c530e2a88ab3d1493e06a7a7dda95d8"
+      },
+      "officialQualification": {
+        "group": "pending",
+        "message": "正式资格待核；已有公布及具体缺口保留",
+        "basis": "",
+        "notes": [
+          "缺少已确认认定及资格依据；平台状态或候选对应不能单独证明资格"
+        ]
+      },
+      "subject": {
+        "status": "not_established",
+        "message": "未见可适用的已确认主体终止事实；不据此证明存续",
+        "decisionIds": []
+      },
+      "region": {
+        "status": "not_established",
+        "message": "未见可适用的迁移决定；沿用正式公布地域范围",
+        "decisionIds": []
+      },
+      "platform": {
+        "status": "not_queried",
+        "comparison": "not_established",
+        "message": "截至评估时点尚无可适用平台查询；其它观察保留",
+        "truncated": false,
+        "observations": []
+      },
+      "correspondence": {
+        "status": "unmatched",
+        "message": "尚无已确认对应；不据此否定正式资格",
+        "refs": []
+      },
+      "completeness": {
+        "status": "recorded",
+        "message": "既有字段已记录；未推断具体有效日或未录入的政策条款",
+        "gaps": [],
+        "publishedNames": [],
+        "eventIds": [],
+        "fieldGaps": []
+      },
+      "evidence": [],
+      "sourceVersions": [],
+      "references": [],
+      "notes": [
+        "缺少已确认认定及资格依据；平台状态或候选对应不能单独证明资格"
+      ],
+      "shadow": {
+        "legacyGroup": "pending",
+        "difference": null
+      }
+    }
+  ]
+}
