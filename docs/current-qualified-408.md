@@ -48,9 +48,9 @@
 
 ## 资源与 owner 边界
 
-扫描完整候选进行计数，仅保留有效页和待核页的轻量 ID/见证；迭代 statement 释放后，在同一外层读事务内 hydrate 两页完整 T2。请求内 prepared handles 复用不缓存结果或有效性，不跨请求累积全候选。完整 secret 集合、#391 批页、公开名称 1 DTO / 2 文本预算保留。64 KiB 为 IPC 单 chunk，不能据此声称总响应体上限；最大 200 × 两组、真实 SQL/heap/IPC/native 容量仍须专门授权验证，不能放宽 timeout/预算或削掉 T2。
+扫描完整候选进行计数，仅保留有效页和待核页的轻量 ID/见证；迭代 statement 释放后，在同一外层读事务内 hydrate 两页完整 T2。请求内 prepared handles 复用不缓存结果或有效性，不跨请求累积全候选。完整 secret 集合、#391 批页、公开名称 1 DTO / 2 文本预算保留。64 KiB 为 IPC 单 chunk，不能据此声称总响应体上限。旧 source-bound D 已验证 201 有效 + 201 待核的 200/200、1/1、0/0 页及完整计数；该容量结果不冒充本次核心接缝改动后的 fresh 容量验收。native SQL plan、逐 message IPC 和 binding load 等未观测指标保持 UNKNOWN，不为补指标新增观察框架，也不放宽 timeout/预算或削掉 T2。
 
-冻结 owner 共 13 路径：
+父 Gate3 批准 allowlist 共 16 路径；其中 406 与原 performance 测试为未改动的可选 owner，本票实际手写差量为 14 路径。前置共享投影提取和详情标题分别独立交付，不并入本票 owner：
 
 1. `lib/roster/current-qualification.ts`：共享评估与请求 prepared/read 接缝。
 2. `lib/roster/current-qualified-query.ts`：旧筛选见证、双组计数和有界 hydrate。
@@ -65,13 +65,64 @@
 11. `tests/helpers/current-qualified-408.ts`：本票专属真实 schema 合成 fixture。
 12. `tests/enterprise-qualification-assessment-406.test.ts`：默认共享 T2 完整等价回归。
 13. `docs/current-qualified-408.md`：当前契约与证据边界。
+14. `tests/current-qualified-154-http.test.ts`：严格跨执行时点行比较适配。
+15. `tests/current-qualified-155-http.test.ts`：同上，保留旧输入和错误 guards。
+16. `tests/official-published-consumption.test.ts`：加法完整 T2 兼容与来源修正 oracle。
 
 不增加 DB schema、资格事实表、全局 cache、共享组件或第二裁定器；超 owner/新 scope/破坏兼容/新架构须先交父裁定。
 
 ## 当前证据边界
 
-父已运行的核心集合为 89/89 PASS（本票 50 + 共享 406 的 36 + 原性能 3）；当时三文件集合 typecheck exit 0。这些结果只覆盖其对应源码/测试快照，不覆盖后续 HTTP/UI 新文件或本次页面/元数据/文档。
+证据按运行输入区分；后来的 PASS 不改写原 FAIL、INCOMPLETE、STOP 或 UNKNOWN。本次源码基线是 HEAD `127e29706f69aca000cb444680c59ce2ac005a01` / tree `01ae03ff4ce82a6559422adb8bd3d1dc28ce4153`，在其上仅两核心文件和原 consumption 测试为运行时 dirty 候选。本文证据更新发生于 B4 完全收尾并释放 slot 之后，是单独的文档差量，未作为 B4 运行输入。
 
-首 UI guarded RED 已实际成立：原有效名称、total=3、原 q/page=2/pageSize=1、captured query 和 pager=3 先通过，随后缺“已公布待核企业”分区失败。该结果是组件/transport 证据，不能冒充真实浏览器。历史 busy iterator、display reads 9 对 3、prepare 119 未小于 100、fixture revision oracle 及两轮类型 FAIL 均保留于 Git 外父回执；后续 PASS 不删除这些事实。
+### 本次核心与构建输入的 fresh 证据
 
-本次仅静态接入。新页面 GREEN、其余 UI case、HTTP/真实 SDK 八例、实际 dev OpenAPI 生成、desktop/390px、compiled、最大 200 × 两组和真实容量、全量测试/CI/build 均 UNRUN。aggregate 未捕获字段仍 UNKNOWN。后续由父分别授权最窄窗口，不宣称 whole #408 ready。
+`/tmp/issue408-resume-b03-b10-c_353oq0` 保留 consumption 完整 17/17 PASS、391 focused 11 PASS / 51 filtered、逐例 failureMessages=[]。B03 原 count=1、精确事件 scope、pageSize=50/maxBytes=65536 断言未放宽。B10 分别验证完整三称号 scope/default parity/独立 digest，以及 evidence2/event2 capturedRevision 1→2 和两个独立来源版本 literal，再保持旧 enumerable 字段严格相等；真实来源修正不是可删除的时间差异。
+
+保留页仅在同 enterprise/asOf/事务及精确有序来源 scope 时复用已验证官方事实，分别供完整 T2 与最终展示投影使用。scope 不同仍独立读取；不缩 T2 scope、不把所选称号事实灌给其他两称号，不跨请求缓存结果。最终展示 response_limit 不删除 T2 的 capturedRevision/nameKnown。旧默认 read/readTitle/options 保持，未改变全 secret 或批页校验。
+
+同一窗口真实加载 locked vue-router 5.4.0 插件 SHA `0186b559341b0cfebf9c3f3faf0595ca173e934ea0db73fc0e462ebbcc9c15d1`，显式仅向 type 子进程传入 `NODE_PATH=<WT>/node_modules/.pnpm/node_modules`，完整 typecheck 自然 exit0，raw log 无插件加载/解析或 TS 诊断；随后普通 build 自然 exit0。默认环境历史 exit0 但插件加载失败的 typecheck 仍是 INCOMPLETE，未改依赖或配置来宣称默认命令已修。tests/build/app/native 不继承该 NODE_PATH。生成物完整 2091 项及新的四入口/dependency/sourceMap SHA 已封存，build warnings 原样保留；不拿旧 worker pin 当当前产物。
+
+391 的 secret union、fault、typed union 及最终 65535/65536/65537 和 escaping 证据来自受控合成上下文、runtime/env 与 credential 值；这是实际工厂/投影路径的合成控制，不是扫描真实凭据的认证。未选中的 51 case 不称本次执行通过。
+
+### B4 真实浏览器与当前 compiled smoke
+
+`/tmp/issue408-b4-runtime-once-m6oum8la` 使用上述实际构建入口、default native 256/16，隔离合成 2 有效 / 3 待核 / 3 排除，一个 agent TaskSpace48/page，实际 1440×900 / DPR1。未重复移动端、分页、日期或详情操作。
+
+真实传输失败时，旧有效/待核两组、原请求范围、计数与详情链接保留。阻断状态下真实重新加载点击对应新失败请求 `52439.159`；第二次真实点击唯一对应透明暂停请求 `52439.161`，放行后同 ID HTTP200/loadingFinished 且 DOM 更新，手动 attempt 与 success 分别取证，未把自动恢复当手动成功。
+
+旧 pending 请求 `52439.165` 在真实 HTTP200 Response 阶段暂停；新目标 `52439.166` 完成且 DOM 已显示 eligible_001 后，透明放行旧请求。同旧 ID 的 response200/dataReceived/loadingFinished 事件随后返回，未取消，最终两组/source/counts/currentBack 保持新目标。该事件投递/DOM 隔离证据与底层时间字段分开：旧 `loadingFinished.timestamp=484432.154057` 数值早于新请求完成 `484432.623744`，因此不声称底层传输完成时间也晚于新请求；该数值顺序及原因保持 UNKNOWN，原始字段不归一化。
+
+本轮追加读取三个已完成请求 body 的 CDP 调用均返回 `No resource with given identifier found`，未补发请求或伪造 DTO；本 B4 的完整 wire T2/asOf/digest 追加校验为 UNRUN。页面/真实网络行为是当前 compiled smoke，不能提升成 actual SDK 或完整 HTTP 协议矩阵。SDK NOT_STARTED。截图均保留 PNG/SHA 并实际查看。
+
+本轮合成库全表 DDL/content hash 零写；root/native 实际 PID+birth observedGone、listener0、registered/whole owned0，runner 自然 exit0，stdio/logger 收尾完成。普通 rawbind 单次成功，release-first 同 grant byteCAS/readback 为 FREE。这只描述本轮；原 C3/D 的 Err48false / STOP_OPERATIONAL_REBIND 及原因 UNKNOWN 永久保留，不以新 bind 成功覆盖。app/native DB closeReturned、binding load、未观测 handles、aggregate unhandled 缺字段继续 UNKNOWN；自有 seed/reader DB closeReturned 单列已证。
+
+B4 原静态 own-mock 的顶层 config.port 断言 FAIL 保留；父仅修正为真实 stages.B.port 后的独立 7 PASS 收据作为附加 prerequisite，未修改或重跑原 FAIL 原件。
+
+### 最后七文件定向联合回归
+
+`/tmp/issue408-final-related-seven-iqoci9ir` 在同一候选核心/页面/协议/测试字节上，用一次无 filter/bail/retry 的 `maxWorkers=1` 完整运行以下七文件。实际原始 JSON 注册 **177/177 PASS**，0 FAIL/skip/filtered/todo，逐 case `failureMessages=[]`，自然 exit0/null；未按估算总数补造通过。
+
+| 完整文件 | 实际 PASS |
+| --- | ---: |
+| `tests/current-qualified-408.test.ts` | 86 |
+| `tests/enterprise-qualification-assessment-406.test.ts` | 36 |
+| `tests/current-qualified-read-performance.test.ts` | 3 |
+| `tests/current-qualified-408-ui.test.ts` | 11 |
+| `tests/current-qualified-408-http.test.ts` | 8 |
+| `tests/current-qualified-154-http.test.ts` | 7 |
+| `tests/current-qualified-155-http.test.ts` | 26 |
+
+后三文件使用其原真实 dev HTTP/MCP fixture：408 HTTP 包含真实 SDK Client/transport，旧154/155保留原 MCP JSONRPC transport，不冒称全部是 SDK 调用。实际8例同时逐响应验证完整三称号 scope/versions/digest、跨执行时点完整 facts 一致及全表 DDL/contenthash 零写；这不补造 B4 中三个 NoResource body 捕获。核心86包含原50、严格跨时点 adapter36；共享406与原3性能断言未放宽。
+
+运行源码1810首尾 exact，生成物2091无 delta；最大 sampled known aggregate RSS 为2676228096bytes，5GiB/900s总/870s active/30s reserve 均未放宽。samegrant raw-byte CAS release-first FREE，outer owned0/signals0。aggregate unhandled 缺字段保持 UNKNOWN；原 UI router warning/raw log 与 HTTP fixture rolling-log、内部 app/native close 可观测性边界保留。消费17/39111/显式插件完整 type/build 没有重跑，除文档外源码字节一致，按原收据继承。
+
+本节发生于七文件 runtime 释放之后，是独立文档差量，不作为该177例或 B4 的运行输入；不把定向回归写成 full/CI。
+
+### 继承范围与仍未覆盖
+
+原核心89、adapter36、HTTP8+旧33及UI23历史快照均保留；本次已将其中核心86、共享36、性能3、UI11、HTTP8+旧33作为上述177例 fresh 运行。未选的原154/155 UI12及桌面/390列表/分页/currentBack/日期仍按各自原源码快照继承。旧浏览器详情标题问题由独立前置交付，不能据合并倒签旧失败。本 B4 不重复这些矩阵，也不把旧 D 容量提升为当前源码的 fresh 容量运行。
+
+401 confirmed runtime、native SQL plan/逐 IPC/binding load 等保持精确 UNKNOWN/UNRUN；父已接受 unchanged idChunks400/有效性 body 及实际小 confirmed drift/performance 证据覆盖本票 delta，不把 405 家企业当作 401 条 confirmed。原 busy iterator、display reads 9 对 3、prepare119、fixture oracle、类型/插件错误及浏览器 STOP 原件均保留。
+
+全量测试、CI、母 #413 组合验收、真实业务库/3481 环境与部署未运行；本文不声明 whole #408 ready，也不授权提交、PR、合并或部署。

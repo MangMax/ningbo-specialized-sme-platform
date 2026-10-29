@@ -1,4 +1,3 @@
-import { readPublicPublishedNames } from './enterprise-roster'
 import type { PublishedPresentation } from './correspondence-view'
 import type Database from 'better-sqlite3'
 import { normalizeName, normalizeUscc } from '../domain'
@@ -109,16 +108,14 @@ export function listCurrentQualified(db: Database.Database, filter: CurrentQuali
     let pendingTotal = 0
     const selected: { id: number; matching: CurrentQualificationWitness[] }[] = []
     const pendingIds: number[] = []
-    const displayDb = prepareCurrentReader(db)
     const hydrate = (id: number): CurrentQualifiedRow => {
-      const { rows: titleRows, snapshot } = assessmentReader.read(id, at, {}, filter.titleCode)
+      const { rows: titleRows, snapshot, publishedPresentation } = assessmentReader.readCurrent(id, at, filter.titleCode)
       const row = titleRows.find(item => item.assessment!.titleCode === filter.titleCode)!
-      const scope = formalScope(row)
       const { assessment, ...publicRow } = row
       // Preserve the public-name budget, complete default secrets and the two
       // responsive text copies. T2 uses the unmodified shared default inputs.
       return { ...publicRow, group: assessment!.group, qualificationAssessment: snapshot,
-        publishedPresentation: readPublicPublishedNames(displayDb, scope, scope, 1, 2) }
+        publishedPresentation }
     }
     const recognitionYears = new Set<number>(), validYears = new Set<number>(), maintenanceYears = new Set<number>()
     const maintenanceBatchesByYear = new Map<number, Set<number>>()
