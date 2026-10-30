@@ -2179,3 +2179,537 @@ it.each(READER427_R2_CASES)('$name', spec => {
     }
   } finally { compare.mockRestore(); sqlite.close() }
 })
+
+// #438 STATIC CANDIDATE: append only to the exact-base test owner after parent pins WT.
+// No production code is present in this delivery. All tests remain UNRUN.
+type Title438 = 'little_giant' | 'specialized_sme' | 'innovative_sme'
+type MultiReader438 = {
+  readPlatformComparisons(enterpriseId: number, asOf: number, titles: readonly Title438[]): {
+    snapshot: import('../lib/roster/current-qualification').CurrentQualificationSnapshot
+    comparisons: PlatformComparison[]
+  }
+}
+// Complete inputs below derive ONLY from the pre-existing literal, never a runtime DTO,
+// spy output, single-reader response, or the core. This small fixture proves wiring only;
+// the distinct-facts P/N/Z matrix remains a separate mandatory acceptance lane.
+function minimalInputs438(): CandidateComparisonInput[] {
+  return (['little_giant','specialized_sme','innovative_sme'] as const).map(titleCode => {
+    const a = LEGACY_ORACLE.titles.find(t => t.titleCode === titleCode)!
+    const {group,officialQualification,subject,region,cycles,versions,evidence,sourceVersions,completeness,correspondence}=a
+    return {
+      version: 'platform-comparison-410-v1', legacy: LEGACY_ORACLE, titleCode,
+      formal: { assessment: {titleCode,group,officialQualification,subject,region,cycles,versions,evidence,sourceVersions,completeness,correspondence},
+        cycles: titleCode === 'specialized_sme' ? [{cycle:{originYear:2024,batchSeq:1,precision:'year'},
+          judgment:{originYear:2024,batch:1,group:'eligible',awardEventIds:[1],anchor:{id:1,eventType:'award',year:2024,batchSeq:1,decidedYear:null,reviewOutcome:null}},eventIds:[1]}] : [] },
+      queries: {truncated:false,sources:titleCode === 'specialized_sme' ? [{
+        source:{queryId:1,interface:'recognized_list',queriedAt:'2026-05-31T00:00:00Z',queryStatus:'no_record',status:'complete',titleCode:'specialized_sme',rdjb:'2',
+          conditions:{uscc:'91330211255994457P',combination:'and'},pages:[{source:'queryBusList',rdjb:'2',page:1,status:'success',fetchedCount:0,declaredTotal:0,error:null}],
+          fullRange:true,completeness:'complete',unfinished:[],outcome:'no_record',subjectMatch:'exact_uscc'},
+        queryKey:'91330211255994457P',metadata:{source:'queryBusList',status:'no_record',effectiveConditions:{uscc:'91330211255994457P',combination:'and'},
+          titleScope:{mode:'selected',rdjb:['2']},pages:[{source:'queryBusList',rdjb:'2',page:1,status:'success',fetchedCount:0,declaredTotal:0,error:null}],
+          completeness:'complete',fullRange:true,unfinished:[],error:null,limits:{maxRequests:100,maxRows:5000,maxDurationMs:60000,pageSize:50}}
+      }] : []}, processes:[]
+    } as CandidateComparisonInput
+  })
+}
+function expectedMinimal438(): PlatformComparison[] {
+  return minimalInputs438().map(input => {
+    const scope = {enterpriseId:1,titleCode:input.titleCode,asOf:'2026-06-01T00:00:00.000Z',ruleVersion:'current-roster-116-v8',assessmentVersion:'enterprise-qualification-407-v1',legacySnapshotId:'4b31cc766121ce8f88fe3a00fc100bc26d2d3e87ae12edb0279494fb921e9ef4'}
+    const observation: PlatformComparison['observation'] = input.titleCode==='specialized_sme'
+      ? {state:'no_record',sources:[{queryId:1,queryStatus:'no_record',outcome:'no_record',applicability:'applicable',reasons:[]}]}
+      : {state:'not_queried',sources:[]}
+    const comparison: PlatformComparison['comparison'] = input.titleCode==='specialized_sme'
+      ? {state:'unsynchronized',cycles:[{originYear:2024,batchSeq:1,state:'unsynchronized',reasons:['no_record_in_applicable_scope'],
+        refs:{eventIds:[1],evidenceIds:[1],queryIds:[1],relationIds:[],events:[{id:1,revision:1}],sources:[{evidenceId:1,sha256:SHA}],versions:[],decisions:[],sourceGenerations:[]}}]}
+      : {state:'not_established',cycles:[]}
+    const inputDigest=digestInput427(input,scope)
+    return {version:'platform-comparison-410-v1',scope,observation,comparison,inputDigest,
+      resultDigest:hash(canonical427([inputDigest,observation,comparison]))}
+  })
+}
+it('reader438_guarded_RED_entry_missing_after_full_legacy_guards', () => {
+  const sqlite = new Database(':memory:')
+  try {
+    sqlite.pragma('foreign_keys = ON')
+    const db = drizzle(sqlite, { schema })
+    migrate(db, { migrationsFolder: 'db/migrations' })
+    db.insert(schema.title).values([...TITLE_SEED]).run()
+    const enterprise = db.insert(schema.enterprise).values({ name: '合成427', nameNorm: '合成427', usccNorm: U }).returning().get()
+    const record = db.insert(schema.record).values({ enterpriseId: enterprise.id, titleCode: T, source: 'jxj', nameRaw: '合成427', usccRaw: U }).returning().get()
+    const event = db.insert(schema.recordEvent).values({ recordId: record.id, eventType: 'award', year: 2024, batchSeq: 1, decidedYear: null, reviewOutcome: null }).returning().get()
+    const file = db.insert(schema.storedFile).values({ relPath: 'synthetic/427.pdf', filename: '427.pdf', ext: 'pdf', bytes: 10, sha256: SHA }).returning().get()
+    const evidence = db.insert(schema.recordEvidence).values({ recordEventId: event.id, sourceFile: file.relPath, listNo: 1, page: 1 }).returning().get()
+    const batch = db.insert(schema.importBatch).values({ idempotencyKey: '427-synthetic-only', sourceKind: 'announcement', sourceIdentity: '427-fixture', status: 'committed' }).returning().get()
+    db.insert(schema.officialEvidenceRowRevision).values({
+      evidenceId: evidence.id, revision: 1, eventId: event.id,
+      capturedRecordId: record.id, capturedEnterpriseId: enterprise.id,
+      nameRaw: '合成427', usccRaw: U, storedFileId: file.id, path: file.relPath, sha256: SHA, bytes: 10,
+      sourceBindingKnown: false, listNo: 1, page: 1,
+      actor: { type: 'agent', id: 'synthetic-427' }, basis: '合成逐行留档', commandKind: 'import', importBatchId: batch.id,
+      createdAt: '2024-06-01T00:00:00Z',
+    }).run()
+    // sourceBindingKnown=false is legal without source_document, not a fabricated bound source.
+    // Z's existing core source guard requires actual current/captured hash and revision, supplied above.
+    const metadata = {
+      source: 'queryBusList', status: 'no_record',
+      effectiveConditions: { uscc: U, combination: 'and' },
+      titleScope: { mode: 'selected', rdjb: ['2'] },
+      queriedAt: Q_AT, completedAt: '2026-05-31T00:00:01Z', rows: [],
+      pages: [{ source: 'queryBusList', rdjb: '2', page: 1, status: 'success', fetchedCount: 0, declaredTotal: 0, error: null }],
+      fetchedCount: 0, declaredTotal: 0, completeness: 'complete', fullRange: true, unfinished: [], error: null,
+      limits: { maxRequests: 100, maxRows: 5000, maxDurationMs: 60000, pageSize: 50 },
+    } satisfies NonNullable<typeof schema.platformQuery.$inferInsert.collectionEvidence>
+    const query = db.insert(schema.platformQuery).values({ interface: 'recognized_list', queryKey: U, rdjb: '2', titleCode: T, queriedAt: Q_AT, status: 'no_record', collectionEvidence: metadata }).returning().get()
+    expect(sqlite.prepare('select count(*) as n from platform_relation').get()).toEqual({ n: 0 })
+    expect(sqlite.prepare('select count(*) as n from platform_query').get()).toEqual({ n: 1 })
+    // Default source reader is real SQLite; no mocks/overrides of coverage, names, cycle policy.
+    const reader = createCurrentQualificationAssessmentReader(sqlite)
+    sqlite.pragma('query_only = ON')
+    expect(sqlite.pragma('query_only', { simple: true })).toBe(1)
+    const changes = sqlite.prepare('select total_changes() as n').get()
+    const before = reader.read(enterprise.id, AS_OF)
+    const old = before.snapshot
+    expect(old.titles).toHaveLength(3)
+    const scope = { enterpriseId: enterprise.id, asOf: '2026-06-01T00:00:00.000Z', ruleVersion: 'current-roster-116-v8', assessmentVersion: 'enterprise-qualification-407-v1' }
+    const { titles, snapshotId, ...actualScope } = old
+    expect(actualScope).toEqual(scope)
+    expect(snapshotId).toBe(hash(JSON.stringify([scope, titles])))
+    const selected = old.titles.find(t => t.titleCode === T)!
+    // Fixture validity guards precede the missing method assertion.
+    expect(selected.group).toBe('eligible')
+    expect(selected.officialQualification.group).toBe('eligible')
+    expect(selected.cycles).toEqual([{ originYear: 2024, batchSeq: 1, precision: 'year' }])
+    expect(selected.evidence).toEqual([{ eventId: event.id, revision: 1, eventType: 'award', year: 2024, batchSeq: 1, decidedYear: null, reviewOutcome: null, evidenceIds: [evidence.id] }])
+    expect(selected.sourceVersions).toEqual([{ evidenceId: evidence.id, eventId: event.id, sourceFile: file.relPath, storedFileId: file.id, sha256: SHA, bytes: 10, removedAt: null, capturedRevision: 1, capturedSha256: SHA }])
+    expect(selected.completeness.publishedNames).toEqual([{ evidenceId: evidence.id, availability: 'captured', nameKnown: true }])
+    expect(selected.platform.comparison).toBe('not_established')
+    expect(selected.platform.truncated).toBe(false)
+    expect(selected.platform.observations).toEqual([{
+      queryId: query.id, interface: 'recognized_list', queriedAt: Q_AT, queryStatus: 'no_record', status: 'complete',
+      titleCode: T, rdjb: '2', conditions: { uscc: U, combination: 'and' }, pages: metadata.pages,
+      fullRange: true, completeness: 'complete', unfinished: [], outcome: 'no_record', subjectMatch: 'exact_uscc',
+      applicability: 'at_or_before_as_of', rows: [],
+    }])
+    expect(sqlite.prepare('select total_changes() as n').get()).toEqual(changes)
+    expect(sqlite.inTransaction).toBe(false)
+
+    const legacyBytes = JSON.stringify(old)
+    expect(old).toEqual(LEGACY_ORACLE)
+    expect(hash(legacyBytes)).toBe('12e1859b34a137bf6e567ab8b660d57be4b3fdbe284669d629e65caa1f0f35d9')
+    const compare = vi.spyOn(core, 'comparePlatformComparison')
+    try {
+      expect(compare).not.toHaveBeenCalled()
+      // The only accepted first RED: missing method, after real SQLite guards.
+      expect((reader as typeof reader & MultiReader438).readPlatformComparisons).toBeTypeOf('function')
+      const actual = (reader as typeof reader & MultiReader438).readPlatformComparisons(1, AS_OF,
+        ['innovative_sme', 'specialized_sme', 'little_giant', 'specialized_sme'])
+      expect(actual.snapshot).toEqual(LEGACY_ORACLE)
+      expect(actual.comparisons).toEqual(expectedMinimal438())
+      expect(compare).toHaveBeenCalledTimes(3)
+      expect(compare.mock.calls.map(([input]) => input)).toEqual(minimalInputs438())
+      expect(JSON.stringify(reader.read(1, AS_OF).snapshot)).toBe(legacyBytes)
+      expect(compare).toHaveBeenCalledTimes(3)
+      expect(sqlite.prepare('select total_changes() as n').get()).toEqual(changes)
+      expect(sqlite.inTransaction).toBe(false)
+    } finally { compare.mockRestore() }
+  } finally { sqlite.close() }
+})
+
+// #438: fixture writers establish facts only. Expected reader inputs below are
+// independently assembled from literals, never captured from a production read.
+import { ensurePlatformObservation } from '../server/utils/platform-business-record'
+import { preflightRecordCorrespondences, commitRecordCorrespondences, type CorrespondenceRequest } from '../server/utils/record-correspondence'
+import * as processReads438 from '../server/utils/platform-comparison-input'
+const TITLES438 = ['little_giant', 'specialized_sme', 'innovative_sme'] as const
+const NAME438 = '合成438'
+const DECIDED438 = '2026-05-31T12:00:00.000Z'
+type Kind438 = 'P' | 'N' | 'Z'
+function raw438(index: number, kind: Kind438) {
+  return { id: `SQ-438-${index}`, qymc: NAME438, tyshxydm: U, sblx: '申请', sqsj: '2024-03-01 09:00:00', year: '2024', cszt: kind === 'N' ? '终审不通过' : '终审通过' }
+}
+function metadata438(index: number, kind: Kind438) {
+  const rdjb = ['3','2','1'][index]!, zero = kind === 'Z'
+  const source = zero ? 'queryBusList' : 'businessList'
+  return { source, status: zero ? 'no_record' : 'success', effectiveConditions: {uscc:U,combination:'and'},titleScope:{mode:'selected',rdjb:[rdjb]},
+    queriedAt:Q_AT,completedAt:'2026-05-31T00:00:01Z',rows:zero?[]:[raw438(index,kind)],
+    pages:[{source,rdjb,page:1,status:'success',fetchedCount:zero?0:1,declaredTotal:zero?0:1,error:null}],
+    fetchedCount:zero?0:1,declaredTotal:zero?0:1,completeness:'complete',fullRange:true,unfinished:[],error:null,
+    limits:{maxRequests:100,maxRows:5000,maxDurationMs:60000,pageSize:50}}
+}
+function fixture438(kinds: readonly Kind438[] = ['P','N','Z'], filename = ':memory:') {
+  const trace: string[] = []
+  const sqlite = new Database(filename,{verbose(sql){if(typeof sql!=='string') throw new TypeError('Expected SQL trace string');trace.push(sql)}})
+  try {
+    sqlite.pragma('foreign_keys=ON')
+    const db=drizzle(sqlite,{schema}); migrate(db,{migrationsFolder:'db/migrations'})
+    db.insert(schema.title).values([...TITLE_SEED]).run()
+    db.insert(schema.enterprise).values({id:1,name:NAME438,nameNorm:NAME438,usccNorm:U}).run()
+    db.insert(schema.storedFile).values({id:1,relPath:'synthetic/438.pdf',filename:'438.pdf',ext:'pdf',bytes:10,sha256:SHA}).run()
+    db.insert(schema.importBatch).values({id:1,idempotencyKey:'438-evidence',sourceKind:'announcement',sourceIdentity:'438',status:'committed'}).run()
+    vi.useFakeTimers({toFake:['Date']});vi.setSystemTime(new Date(DECIDED438))
+    try {
+      for (let i=0;i<3;i++) {
+        const title=TITLES438[i]!,kind=kinds[i]!,eventId=11+i,evidenceId=21+i,queryId=101+i
+        db.insert(schema.record).values({id:1+i,enterpriseId:1,titleCode:title,source:'jxj',nameRaw:NAME438,usccRaw:U}).run()
+        db.insert(schema.recordEvent).values({id:eventId,recordId:1+i,eventType:'award',year:2024,batchSeq:1,decidedYear:null,reviewOutcome:null}).run()
+        db.insert(schema.recordEvidence).values({id:evidenceId,recordEventId:eventId,sourceFile:'synthetic/438.pdf',listNo:i+1,page:1}).run()
+        db.insert(schema.officialEvidenceRowRevision).values({evidenceId,revision:1,eventId,capturedRecordId:1+i,capturedEnterpriseId:1,
+          nameRaw:NAME438,usccRaw:U,storedFileId:1,path:'synthetic/438.pdf',sha256:SHA,bytes:10,sourceBindingKnown:false,listNo:i+1,page:1,
+          actor:{type:'agent',id:'fixture438'},basis:'独立合成逐行事实',commandKind:'import',importBatchId:1,createdAt:'2024-06-01T00:00:00Z'}).run()
+        db.insert(schema.platformQuery).values({id:queryId,interface:kind==='Z'?'recognized_list':'business_list',queryKey:U,rdjb:['3','2','1'][i]!,titleCode:title,queriedAt:Q_AT,status:kind==='Z'?'no_record':'success',collectionEvidence:metadata438(i,kind) as PlatformLiveQueryResult}).run()
+        if(kind!=='Z') {
+          db.insert(schema.platformRelation).values({id:201+i,queryId,sequenceNo:1,relationKey:`SQ-438-${i}`,enterpriseId:1,nameRaw:NAME438,usccRaw:U,
+            verificationStatus:'confirmed',matchBasis:'uscc',rawFields:raw438(i,kind)}).run()
+          sqlite.transaction(()=>ensurePlatformObservation(db,201+i))()
+          const request: CorrespondenceRequest={idempotencyKey:`438-support-${i}`,sourceIdentity:'438',actor:{type:'user',id:'fixture438'},basis:'逐行核对',ruleId:'manual',ruleVersion:'1',
+            operations:[{action:'create',status:'confirmed',edge:{type:'event_process',role:'supports_award',eventId,relationId:201+i}}]}
+          const plan=preflightRecordCorrespondences(db,request)
+          commitRecordCorrespondences(db,request,plan.planHash)
+        }
+      }
+    } finally { vi.useRealTimers() }
+    const reader=createCurrentQualificationAssessmentReader(sqlite)
+    return {sqlite,db,reader,trace}
+  } catch(error) {sqlite.close();throw error}
+}
+function independent438(kinds: readonly Kind438[] = ['P','N','Z']) {
+  // No database, reader, source helper or core call is permitted in this oracle.
+  const jhash=(value:unknown)=>hash(JSON.stringify(value))
+  const ordinal=(i:number)=>kinds.slice(0,i+1).filter(k=>k!=='Z').length
+  const coverageSources=kinds.map((kind,i)=>({queryId:101+i,interface:kind==='Z'?'recognized_list':'business_list',queriedAt:Q_AT,queryStatus:kind==='Z'?'no_record':'success',status:'complete',
+    titleCode:TITLES438[i]!,rdjb:['3','2','1'][i]!,conditions:{uscc:U,combination:'and'},pages:metadata438(i,kind).pages,
+    fullRange:true,completeness:'complete',unfinished:[],outcome:kind==='Z'?'no_record':'records',subjectMatch:'exact_uscc'}))
+  const refs=(i:number)=>kinds[i]==='Z'?[]:[{id:ordinal(i),type:'event_process',role:'supports_award',status:'confirmed',eventId:11+i,predecessorEventId:null,relationId:201+i,exportRowId:null,
+    enterpriseId:1,titleCode:TITLES438[i],revision:2,requiresRevalidation:false}]
+  const evidence=(i:number)=>({eventId:11+i,revision:1,eventType:'award',year:2024,batchSeq:1,decidedYear:null,reviewOutcome:null,evidenceIds:[21+i]})
+  const versions=(i:number)=>[{evidenceId:21+i,eventId:11+i,sourceFile:'synthetic/438.pdf',storedFileId:1,sha256:SHA,bytes:10,removedAt:null,capturedRevision:1,capturedSha256:SHA}]
+  const titles=kinds.map((kind,i)=>{
+    const base=structuredClone(LEGACY_ORACLE.titles[1]!)
+    const source=coverageSources[i]!,correspondences=refs(i)
+    const observed=kind==='Z'?[]:[{queryId:101+i,relationId:201+i,status:null,year:null,batch:null}]
+    const published=[{evidenceId:21+i,availability:'captured',nameKnown:true}]
+    const ev=[{id:11+i,eventType:'award',year:2024,decidedYear:null,batchSeq:1,reviewOutcome:null,revision:1,nameRaw:NAME438,usccRaw:U,source:'jxj'}]
+    const rawEvidence=[{id:21+i,eventId:11+i,sourceFile:'synthetic/438.pdf',attachment:null,listNo:i+1,page:1}]
+    return {...base,titleCode:TITLES438[i],
+      versions:{facts:jhash([{id:1,name:NAME438,name_norm:NAME438,uscc_norm:U,district:null,city:null},ev,[]]),
+        sources:jhash([rawEvidence,versions(i),published]),decisions:jhash([[],[],correspondences]),observations:jhash([{status:'complete',sources:[source],truncated:false},observed])},
+      officialQualification:{...base.officialQualification,basis:`event:${11+i}@1 award 2024/1 结论年:`},
+      platform:{...base.platform,observations:[{...source,applicability:'at_or_before_as_of',rows:observed.map(({queryId:_,...r})=>r)}]},
+      correspondence:kind==='Z'?base.correspondence:{status:'confirmed',message:'已确认来源对应；不代表正式资格成立或资料已齐',refs:correspondences},
+      completeness:{...base.completeness,publishedNames:published,fieldGaps:[{eventId:11+i,field:'decidedYear',valueState:'unknown',inputState:'null'}]},
+      evidence:[evidence(i)],sourceVersions:versions(i),references:[`evidence:${21+i} synthetic/438.pdf  序号:${i+1}`,
+        ...(kind==='Z'?[]:[`platform-relation:${201+i} query:${101+i}`,`correspondence:${ordinal(i)}@2 confirmed`])]}
+  })
+  const scope={enterpriseId:1,asOf:'2026-06-01T00:00:00.000Z',ruleVersion:'current-roster-116-v8',assessmentVersion:'enterprise-qualification-407-v1'}
+  const legacy={...scope,snapshotId:jhash([scope,titles]),titles}
+  const business=(i:number)=>({recordId:ordinal(i),versionId:ordinal(i),interface:'business_list',platformKey:`SQ-438-${i}`,groupState:'verified',identityState:'resolved',contentState:'verified',keySource:'both',projectionRuleVersion:'platform-observation-v1',hashAlgorithm:'platform-row-json-v1',contentHash:hash('platform-row-json-v1\n'+canonical427(raw438(i,kinds[i]!)))})
+  const titleScopeRefs=kinds.flatMap((kind,i)=>kind==='Z'?[]:[{queryId:101+i,relationId:201+i,titleCode:TITLES438[i],platformKey:`SQ-438-${i}`,usccNorm:U,recordId:ordinal(i),versionId:ordinal(i)}])
+  const processes=kinds.map((kind,i)=>{
+    if(kind==='Z')return []
+    const titleCode=TITLES438[i]!,rdjb=['3','2','1'][i]!,id=ordinal(i)
+    const decision={id,relationId:201+i,exportRowId:null,eventId:11+i,predecessorEventId:null,enterpriseId:1,titleCode,type:'event_process',role:'supports_award',status:'confirmed',revision:2,ruleId:'manual',ruleVersion:'1',createdAt:DECIDED438,decidedAt:DECIDED438,endedAt:null}
+    const fullEvidence={title:{official:titleCode,row:titleCode,corroboratedByRelationIds:[],basis:'explicit_query_title'},
+      process:{eventType:'award',declareKind:'apply',appliedAt:'2024-03-01 09:00:00',status:kind==='N'?'终审不通过':'终审通过',province:null,normalizationConflicts:[]},
+      temporal:{relationYear:2024,relationBatch:null,awardBatchLabel:null},
+      source:{interface:'business_list',queryId:101+i,relationId:201+i,sequenceNo:1,queriedAt:Q_AT,status:'success',sourceRdjb:rdjb,sourcePage:1,identityOnly:false}}
+    const observation={relationId:201+i,queryId:101+i,sequenceNo:1,interface:'business_list',relationKey:`SQ-438-${i}`,queriedAt:Q_AT,queryStatus:'success',queryKey:U,rdjb,queryTitleCode:titleCode,titleCode,enterpriseId:1,usccRaw:U,nameRaw:NAME438,verificationStatus:'confirmed',matchBasis:'uscc',
+      target:{eventId:11+i,enterpriseId:1,titleCode,type:'event_process',role:'context_only'},evidence:{process:fullEvidence.process,temporal:fullEvidence.temporal,source:{identityOnly:false}},conflicts:[],businessRecord:business(i),existingCorrespondences:[decision],existingCorrespondenceIds:[id]}
+    const fingerprint=jhash({queryId:101+i,relationId:201+i,sequenceNo:1,interface:'business_list',relationKey:`SQ-438-${i}`,queriedAt:Q_AT,queryStatus:'success',queryKey:U,rdjb,queryTitleCode:titleCode,titleCode,enterpriseId:1,usccRaw:U,nameRaw:NAME438,verificationStatus:'confirmed',matchBasis:'uscc',businessRecord:business(i),target:observation.target,evidence:fullEvidence,conflicts:[]})
+    const coverage=[{queryId:101+i,interface:'business_list',queriedAt:Q_AT,status:'success',completeness:'complete',fullRange:true}]
+    const sourceRefs={scope:{enterpriseId:1,titleCode,businessYear:2024,declareKind:'apply',ruleVersion:'annual-process-250-v1'},
+      event:{id:11+i,recordId:1+i,eventType:'award',year:2024,batchSeq:1,sortKey:0,reviewOutcome:null,decidedYear:null,revision:1,usccRaw:U},
+      evidence:[{id:21+i,sourceFile:'synthetic/438.pdf',attachment:null,listNo:i+1,page:1,fileId:1,sha256:SHA,removedAt:null}],titleScopeRefs,
+      observations:[{queryId:101+i,relationId:201+i,interface:'business_list',recordId:id,versionId:id,sourceFingerprint:fingerprint}],coverage}
+    const currentDecision={...decision,requiresRevalidation:false}
+    return [{input:{event:{id:11+i,eventType:'award',year:2024,decidedYear:null,reviewOutcome:null,record:{enterpriseId:1,titleCode,usccRaw:U}},
+      groups:[{businessRecord:business(i),representativeRelationId:201+i,observationRefs:[observation],existingCorrespondences:[decision],existingCorrespondenceIds:[id],conflicts:[]}],coverage,scopeGaps:[]},
+      sourceRefs,sourceGeneration:jhash(sourceRefs),currentDecisionRefs:[currentDecision],
+      finalQualification:kind==='N'?{stepId:null,status:'none',decisionRefs:[],reasons:['official_result_mismatch']}:
+        {stepId:JSON.stringify([JSON.stringify(['business_list',id])]),status:'confirmed',decisionRefs:[currentDecision],reasons:[]}}]
+  })
+  const inputs=kinds.map((kind,i)=>{
+    const a=titles[i]!,{titleCode,group,officialQualification,subject,region,cycles,versions,evidence,sourceVersions,completeness,correspondence}=a
+    const {rows:_,queriedAt:_q,completedAt:_c,fetchedCount:_f,declaredTotal:_d,...metadata}=metadata438(i,kind)
+    return {version:'platform-comparison-410-v1',legacy,titleCode,formal:{assessment:{titleCode,group,officialQualification,subject,region,cycles,versions,evidence,sourceVersions,completeness,correspondence},
+      cycles:[{cycle:{originYear:2024,batchSeq:1,precision:'year'},judgment:{originYear:2024,batch:1,group:'eligible',awardEventIds:[11+i],anchor:{id:11+i,eventType:'award',year:2024,batchSeq:1,decidedYear:null,reviewOutcome:null}},eventIds:[11+i]}]},
+      queries:{truncated:false,sources:[{source:coverageSources[i],queryKey:U,metadata}]},processes:processes[i]} as CandidateComparisonInput
+  })
+  const comparisons=inputs.map((input,i)=>{
+    const kind=kinds[i]!,scope={...legacy, titleCode:TITLES438[i]!,legacySnapshotId:legacy.snapshotId}
+    const pairScope={enterpriseId:scope.enterpriseId,titleCode:scope.titleCode,asOf:scope.asOf,ruleVersion:scope.ruleVersion,assessmentVersion:scope.assessmentVersion,legacySnapshotId:scope.legacySnapshotId}
+    const observation={state:kind==='Z'?'no_record':'records',sources:[{queryId:101+i,queryStatus:kind==='Z'?'no_record':'success',outcome:kind==='Z'?'no_record':'records',applicability:'applicable',reasons:[]}]}
+    const state=kind==='P'?'synchronized':'unsynchronized'
+    const comparison={state,cycles:[{originYear:2024,batchSeq:1,state,reasons:[kind==='P'?'same_event_result_agrees':kind==='N'?'same_event_result_not_reflected':'no_record_in_applicable_scope'],
+      refs:{eventIds:[11+i],evidenceIds:[21+i],queryIds:[101+i],relationIds:kind==='Z'?[]:[201+i],events:[{id:11+i,revision:1}],sources:[{evidenceId:21+i,sha256:SHA}],
+        versions:kind==='Z'?[]:[{recordId:ordinal(i),versionId:ordinal(i),contentHash:business(i).contentHash}],decisions:kind==='Z'?[]:[{id:ordinal(i),revision:2}],sourceGenerations:processes[i]!.map(p=>p.sourceGeneration)}}]}
+    const inputDigest=digestInput427(input,pairScope)
+    return {version:'platform-comparison-410-v1',scope:pairScope,observation,comparison,inputDigest,resultDigest:hash(canonical427([inputDigest,observation,comparison]))}
+  })
+  return {snapshot:legacy,inputs,comparisons}
+}
+
+it.each([{name:'reader438_distinct_P_N_Z_complete_literals',kinds:['P','N','Z'] as const},{name:'reader438_rotated_Z_P_N_complete_literals',kinds:['Z','P','N'] as const}])('$name',({kinds})=>{
+  const expected=independent438(kinds),f=fixture438(kinds)
+  const compare=vi.spyOn(core,'comparePlatformComparison'),process=vi.spyOn(processReads438,'readPlatformComparisonProcesses')
+  try {
+    f.sqlite.pragma('query_only=ON')
+    const changes=f.sqlite.prepare('select total_changes() n').get()
+    expect(f.reader.read(1,AS_OF).snapshot).toEqual(expected.snapshot)
+    expect(compare).not.toHaveBeenCalled();expect(process).not.toHaveBeenCalled()
+    const actual=f.reader.readPlatformComparisons(1,AS_OF,['innovative_sme','little_giant','specialized_sme','little_giant'])
+    expect(actual).toEqual({snapshot:expected.snapshot,comparisons:expected.comparisons})
+    expect(compare.mock.calls.map(([input])=>input)).toEqual(expected.inputs)
+    expect(compare).toHaveBeenCalledTimes(3);expect(process).toHaveBeenCalledTimes(3)
+    expect(process.mock.calls.map(([,request])=>request)).toEqual(TITLES438.map((titleCode,i)=>({enterpriseId:1,titleCode,eventIds:[11+i],selectedQueryIds:[101+i]})))
+    // Supplemental parity only, after full independent input/output equality.
+    expect(TITLES438.map(t=>f.reader.readPlatformComparison(1,AS_OF,t))).toEqual(actual.comparisons)
+    expect(f.reader.read(1,AS_OF).snapshot).toEqual(expected.snapshot)
+    expect(f.sqlite.prepare('select total_changes() n').get()).toEqual(changes)
+    expect(f.sqlite.inTransaction).toBe(false)
+  } finally {compare.mockRestore();process.mockRestore();f.sqlite.close()}
+})
+
+it('reader438_subset_order_deduplicate_full_snapshot',()=>{
+  const f=fixture438(),expected=independent438(),compare=vi.spyOn(core,'comparePlatformComparison')
+  try {
+    const titles=Object.freeze(['innovative_sme','little_giant','innovative_sme'] as const)
+    f.sqlite.pragma('query_only=ON')
+    expect(f.reader.readPlatformComparisons(1,AS_OF,titles)).toEqual({snapshot:expected.snapshot,comparisons:[expected.comparisons[0],expected.comparisons[2]]})
+    expect(compare.mock.calls.map(([input])=>input)).toEqual([expected.inputs[0],expected.inputs[2]])
+    expect(titles).toEqual(['innovative_sme','little_giant','innovative_sme'])
+  } finally {compare.mockRestore();f.sqlite.close()}
+})
+it('reader438_invalid_titles_before_sql_without_accessors_or_iterators',()=>{
+  const f=fixture427(),compare=vi.spyOn(core,'comparePlatformComparison')
+  let reads=0
+  try {
+    const accessor=['little_giant'];Object.defineProperty(accessor,'0',{get(){reads++;throw Error('UNTRUSTED_GETTER')}})
+    const inherited=new Array(1);Object.setPrototypeOf(inherited,{0:'little_giant'})
+    const invalid:unknown[]=[[],null,undefined,'little_giant',['bad'],['little_giant','bad'],new Array(1),accessor,inherited]
+    for(const titles of invalid){
+      const count=f.statements()
+      expect(()=>f.reader.readPlatformComparisons(1,AS_OF,titles as Title438[])).toThrowError('invalid_comparison_titles')
+      expect(f.statements()).toBe(count)
+    }
+    expect(reads).toBe(0);expect(compare).not.toHaveBeenCalled()
+    const valid=['specialized_sme'] as Title438[]
+    Object.defineProperty(valid,Symbol.iterator,{get(){reads++;throw Error('UNTRUSTED_ITERATOR')}})
+    expect(f.reader.readPlatformComparisons(1,AS_OF,valid).comparisons).toHaveLength(1)
+    expect(reads).toBe(0)
+  } finally {compare.mockRestore();f.sqlite.close()}
+})
+it('reader438_full_T2_once_trace_partitions',()=>{
+  const f=fixture438(),compare=vi.spyOn(core,'comparePlatformComparison')
+  const original=queryReads.readQueryComparisonWitnesses
+  const cuts:{title:string;at:number}[]=[]
+  const query=vi.spyOn(queryReads,'readQueryComparisonWitnesses').mockImplementation((...args)=>{cuts.push({title:args[1].titleCode,at:f.trace.length});return original(...args)})
+  try {
+    f.sqlite.pragma('query_only=ON')
+    f.reader.read(1,AS_OF) // statement preparation outside measured scope
+    f.trace.length=0;f.reader.read(1,AS_OF)
+    const baseline=[...f.trace]
+    expect(baseline[0]).toBe('BEGIN');expect(baseline.at(-1)).toBe('COMMIT')
+    f.trace.length=0
+    const result=f.reader.readPlatformComparisons(1,AS_OF,TITLES438)
+    expect(cuts.map(c=>c.title)).toEqual(TITLES438)
+    expect(f.trace.slice(0,cuts[0]!.at)).toEqual(baseline.slice(0,-1))
+    expect(f.trace.filter(s=>/^(BEGIN|COMMIT|SAVEPOINT|RELEASE|ROLLBACK)/.test(s))).toEqual(['BEGIN','COMMIT'])
+    const deltas=cuts.map((cut,i)=>f.trace.slice(cut.at,cuts[i+1]?.at??f.trace.length-1))
+    for(let i=0;i<3;i++) {
+      expect(deltas[i]!.filter(s=>/^select|^with/i.test(s)).length).toBeLessThanOrEqual(([46,46,30] as const)[i]!)
+      expect(deltas[i]!.some(s=>s.startsWith('select id,name,name_norm,uscc_norm,district,city from enterprise'))).toBe(false)
+    }
+    expect(compare).toHaveBeenCalledTimes(3)
+    for(const [input] of compare.mock.calls)expect(input.legacy).toBe(result.snapshot)
+    console.info('TRACE438',JSON.stringify({baseline,multi:f.trace,cuts,deltas,transaction:['BEGIN','COMMIT']}))
+  } finally {query.mockRestore();compare.mockRestore();f.sqlite.close()}
+})
+it('reader438_all_legacy_entries_no_comparison_and_full_compatibility',()=>{
+  const f=fixture438(),compare=vi.spyOn(core,'comparePlatformComparison'),process=vi.spyOn(processReads438,'readPlatformComparisonProcesses')
+  try {
+    f.sqlite.pragma('query_only=ON')
+    const reads=()=>({read:f.reader.read(1,AS_OF),titles:TITLES438.map(t=>f.reader.readTitle(1,t,AS_OF)),current:TITLES438.map(t=>f.reader.readCurrent(1,AS_OF,t)),
+      workbooks:TITLES438.map(t=>{const r=f.reader.readWorkbook(1,AS_OF,t);return {...r,workbookPublished:[...r.workbookPublished],facts:r.rows.map(row=>row.workbookFacts)}})})
+    const before=reads()
+    expect(before.read.snapshot).toEqual(independent438().snapshot)
+    expect(compare).not.toHaveBeenCalled();expect(process).not.toHaveBeenCalled()
+    f.reader.readPlatformComparisons(1,AS_OF,TITLES438)
+    expect(reads()).toEqual(before)
+    expect(compare).toHaveBeenCalledTimes(3);expect(process).toHaveBeenCalledTimes(3)
+  } finally {compare.mockRestore();process.mockRestore();f.sqlite.close()}
+})
+it('reader438_caller_savepoint_busy_no_retry',()=>{
+  const f=fixture438(),compare=vi.spyOn(core,'comparePlatformComparison')
+  try {
+    f.sqlite.pragma('query_only=ON');f.sqlite.exec('BEGIN')
+    expect(f.reader.readPlatformComparisons(1,AS_OF,TITLES438)).toEqual({snapshot:independent438().snapshot,comparisons:independent438().comparisons})
+    expect(f.sqlite.inTransaction).toBe(true)
+    const iterator=f.sqlite.prepare('select id from enterprise').iterate()
+    try {
+      expect(iterator.next().done).toBe(false)
+      compare.mockClear();f.trace.length=0
+      expect(()=>f.reader.readPlatformComparisons(1,AS_OF,TITLES438)).toThrow(/busy|progress|savepoint/i)
+      expect(compare).not.toHaveBeenCalled()
+      expect(f.trace.filter(s=>/^COMMIT|^BEGIN/.test(s))).toEqual([])
+    } finally {iterator.return?.()}
+    expect(f.sqlite.inTransaction).toBe(true)
+    expect(f.reader.readPlatformComparisons(1,AS_OF,TITLES438).comparisons).toEqual(independent438().comparisons)
+    f.sqlite.exec('ROLLBACK');expect(f.sqlite.inTransaction).toBe(false)
+  } finally {compare.mockRestore();f.sqlite.close()}
+})
+it('reader438_WAL_mid_pair_commit_next_read_visible',()=>{
+  const dir=mkdtempSync(join(tmpdir(),'reader438-wal-')),filename=join(dir,'fixture.sqlite')
+  const f=fixture438(['P','N','Z'],filename)
+  let writer:Database.Database|undefined
+  const original=queryReads.readQueryComparisonWitnesses
+  try {
+    f.sqlite.pragma('journal_mode=WAL');writer=new Database(filename)
+    f.sqlite.pragma('query_only=ON')
+    const changes=f.sqlite.prepare('select total_changes() n').get()
+    const hook=vi.spyOn(queryReads,'readQueryComparisonWitnesses').mockImplementationOnce((...args)=>{
+      // The write occurs between full T2 and the first pair's source read.
+      writer!.prepare("update platform_query set queried_at='2027-01-01T00:00:00Z' where id=103").run()
+      return original(...args)
+    })
+    try {expect(f.reader.readPlatformComparisons(1,AS_OF,TITLES438)).toEqual({snapshot:independent438().snapshot,comparisons:independent438().comparisons})}
+    finally {hook.mockRestore()}
+    const next=f.reader.readPlatformComparisons(1,AS_OF,TITLES438)
+    expect(next.comparisons[2]!.observation).toEqual({state:'not_queried',sources:[{queryId:103,queryStatus:'no_record',outcome:'unknown',applicability:'inapplicable',reasons:['observation_after_as_of']}]})
+    expect(next.comparisons[2]!.comparison).toEqual({state:'not_established',cycles:[{originYear:2024,batchSeq:1,state:'not_established',reasons:['observation_after_as_of'],refs:{eventIds:[13],evidenceIds:[23],queryIds:[],relationIds:[],events:[{id:13,revision:1}],sources:[{evidenceId:23,sha256:SHA}],versions:[],decisions:[],sourceGenerations:[]}}]})
+    expect(next.snapshot.snapshotId).not.toBe(independent438().snapshot.snapshotId)
+    expect(next.comparisons[0]!.comparison).toEqual(independent438().comparisons[0]!.comparison)
+    expect(next.comparisons[1]!.comparison).toEqual(independent438().comparisons[1]!.comparison)
+    expect(f.sqlite.prepare('select total_changes() n').get()).toEqual(changes)
+    expect(f.sqlite.inTransaction).toBe(false)
+  } finally {writer?.close();f.sqlite.close();rmSync(dir,{recursive:true,force:true})}
+})
+it('reader438_incomplete_scope_fails_no_partial',()=>{
+  const f=fixture438(),compare=vi.spyOn(core,'comparePlatformComparison')
+  try {
+    // A malformed protective proof is a source failure, never an empty process.
+    f.sqlite.prepare("update record_correspondence set provenance=? where id=2").run(JSON.stringify({comparisonProofIds:{id:1}}))
+    f.sqlite.pragma('query_only=ON');const changes=f.sqlite.prepare('select total_changes() n').get()
+    expect(()=>f.reader.readPlatformComparisons(1,AS_OF,TITLES438)).toThrowError('platform_comparison_scope_unavailable')
+    // Complete cross-title protection rejects malformed proof before any core result.
+    expect(compare).not.toHaveBeenCalled()
+    expect(f.sqlite.inTransaction).toBe(false)
+    expect(f.sqlite.prepare('select total_changes() n').get()).toEqual(changes)
+  } finally {compare.mockRestore();f.sqlite.close()}
+})
+it('reader438_error_priority_cycle_before_annual',()=>{
+  const f=fixture427(),annual=vi.spyOn(processReads438,'readPlatformComparisonProcesses')
+  try {
+    for(let i=2;i<=41;i++){
+      f.db.insert(schema.recordEvent).values({id:i,recordId:1,eventType:'award',year:2024,batchSeq:i}).run()
+      f.db.insert(schema.recordEvidence).values({id:i,recordEventId:i,sourceFile:'synthetic/427.pdf',listNo:i}).run()
+    }
+    const q=query427(f,{interface:'business_list',status:'success'})
+    f.db.insert(schema.recordCorrespondence).values({edgeKey:'bad438',type:'event_process',role:'supports_award',eventId:1,relationId:1,enterpriseId:1,titleCode:T,status:'candidate',revision:1,targetIdentity:{},provenance:{comparisonProofIds:{id:q.id}},sourceFingerprint:'bad438',ruleId:'manual',ruleVersion:'1',createdAt:Q_AT}).run()
+    f.sqlite.pragma('query_only=ON')
+    expect(()=>f.reader.readPlatformComparisons(1,AS_OF,[T])).toThrowError('invalid_cycle_join')
+    expect(annual).not.toHaveBeenCalled()
+    expect(()=>f.reader.readPlatformComparison(1,AS_OF,T)).toThrowError('invalid_cycle_join')
+    expect(annual).not.toHaveBeenCalled()
+    expect(f.sqlite.inTransaction).toBe(false)
+  } finally {annual.mockRestore();f.sqlite.close()}
+})
+it.each([40,41])('reader438_cycle_cap_%i',count=>{
+  const f=fixture427()
+  try {
+    for(let i=2;i<=count;i++){
+      f.db.insert(schema.recordEvent).values({id:i,recordId:1,eventType:'award',year:2024,batchSeq:i}).run()
+      f.db.insert(schema.recordEvidence).values({id:i,recordEventId:i,sourceFile:'synthetic/427.pdf',listNo:i}).run()
+    }
+    query427(f);f.sqlite.pragma('query_only=ON')
+    const changes=f.sqlite.prepare('select total_changes() n').get(),legacy=f.reader.read(1,AS_OF).snapshot
+    if(count===40)expect(f.reader.readPlatformComparisons(1,AS_OF,[T]).comparisons[0]!.comparison.cycles).toHaveLength(40)
+    else expect(()=>f.reader.readPlatformComparisons(1,AS_OF,[T])).toThrowError('invalid_cycle_join')
+    expect(f.reader.read(1,AS_OF).snapshot).toEqual(legacy);expect(f.sqlite.prepare('select total_changes() n').get()).toEqual(changes)
+  } finally {f.sqlite.close()}
+})
+it.each([50,51])('reader438_query_cap_%i',count=>{
+  const f=fixture427()
+  try {
+    for(let i=0;i<count;i++)query427(f,{at:`2026-05-31T00:00:${String(i+1).padStart(2,'0')}Z`})
+    f.sqlite.pragma('query_only=ON')
+    const result=f.reader.readPlatformComparisons(1,AS_OF,[T])
+    expect(result.comparisons[0]!.observation.state).toBe(count===50?'no_record':'unknown')
+    expect(result.comparisons[0]!.comparison.cycles[0]!.reasons).toEqual(count===50?['no_record_in_applicable_scope']:['metadata_truncated'])
+  } finally {f.sqlite.close()}
+})
+it.each([50,51])('reader438_page_cap_%i',count=>{
+  const f=fixture427()
+  try {
+    const q=query427(f),metadata=q.collectionEvidence!
+    metadata.pages=Array.from({length:count},(_,i)=>({source:'queryBusList',rdjb:'2',page:i+1,status:'success',fetchedCount:0,declaredTotal:0,error:null}))
+    f.sqlite.prepare('update platform_query set collection_evidence=? where id=?').run(JSON.stringify(metadata),q.id)
+    f.sqlite.pragma('query_only=ON')
+    const result=f.reader.readPlatformComparisons(1,AS_OF,[T]).comparisons[0]!
+    expect(result.observation.state).toBe(count===50?'no_record':'unknown')
+    expect(result.comparison.cycles[0]!.reasons).toEqual(count===50?['no_record_in_applicable_scope']:['coverage_incomplete'])
+  } finally {f.sqlite.close()}
+})
+it.each([65536,65537])('reader438_witness_cap_%i',bytes=>{
+  const f=fixture427()
+  try {
+    const q=query427(f,{status:'failed'}),metadata=q.collectionEvidence!
+    metadata.error={code:'upstream_failed',message:'x'}
+    f.sqlite.prepare('update platform_query set collection_evidence=? where id=?').run(JSON.stringify(metadata),q.id)
+    const scope={enterpriseId:1,titleCode:T,direction:'missing_in_miit' as const}
+    const length=Buffer.byteLength(canonical427(queryReads.readQueryComparisonWitnesses(prepareCurrentReader(f.sqlite),scope).sources[0]))
+    metadata.error.message='x'.repeat(1+bytes-length)
+    f.sqlite.prepare('update platform_query set collection_evidence=? where id=?').run(JSON.stringify(metadata),q.id)
+    expect(Buffer.byteLength(canonical427(queryReads.readQueryComparisonWitnesses(prepareCurrentReader(f.sqlite),scope).sources[0]))).toBe(bytes)
+    f.sqlite.pragma('query_only=ON');const changes=f.sqlite.prepare('select total_changes() n').get()
+    if(bytes===65536)expect(f.reader.readPlatformComparisons(1,AS_OF,[T]).comparisons[0]!.comparison.cycles[0]!.reasons).toEqual(['query_failed'])
+    else expect(()=>f.reader.readPlatformComparisons(1,AS_OF,[T])).toThrowError('input_resource_limit')
+    expect(f.sqlite.prepare('select total_changes() n').get()).toEqual(changes);expect(f.sqlite.inTransaction).toBe(false)
+  } finally {f.sqlite.close()}
+})
+it('reader438_same_year_multicycle_null_isolation',()=>{
+  const f=fixture438(['Z','Z','Z']),compare=vi.spyOn(core,'comparePlatformComparison')
+  try {
+    for(let i=0;i<3;i++) {
+      f.sqlite.prepare('update record_event set batch_seq=null,decided_year=2024 where id=?').run(11+i)
+      f.db.insert(schema.recordEvent).values({id:111+i,recordId:1+i,eventType:'award',year:2024,batchSeq:null,decidedYear:2025}).run()
+      f.db.insert(schema.recordEvidence).values({id:121+i,recordEventId:111+i,sourceFile:'synthetic/438.pdf',listNo:11+i,page:1}).run()
+      f.db.insert(schema.officialEvidenceRowRevision).values({evidenceId:121+i,revision:1,eventId:111+i,capturedRecordId:1+i,capturedEnterpriseId:1,nameRaw:NAME438,usccRaw:U,storedFileId:1,path:'synthetic/438.pdf',sha256:SHA,bytes:10,sourceBindingKnown:false,listNo:11+i,page:1,actor:{type:'agent',id:'fixture438'},basis:'null周期',commandKind:'import',importBatchId:1,createdAt:Q_AT}).run()
+    }
+    f.sqlite.pragma('query_only=ON')
+    const result=f.reader.readPlatformComparisons(1,AS_OF,TITLES438)
+    for(let i=0;i<3;i++) {
+      const bindings=[{id:11+i,decidedYear:2024},{id:111+i,decidedYear:2025}].map(e=>({cycle:{originYear:2024,batchSeq:null,precision:'year'},judgment:{originYear:2024,batch:null,group:'eligible',awardEventIds:[e.id],anchor:{id:e.id,eventType:'award',year:2024,batchSeq:null,decidedYear:e.decidedYear,reviewOutcome:null}},eventIds:[e.id]}))
+      expect(compare.mock.calls[i]![0].formal.cycles).toEqual(bindings)
+      expect(result.snapshot.titles[i]!.cycles).toEqual(bindings.map(b=>b.cycle))
+      expect(result.comparisons[i]!.comparison).toEqual({state:'not_established',cycles:[{event:111+i,evidence:121+i},{event:11+i,evidence:21+i}].map(e=>({originYear:2024,batchSeq:null,state:'not_established',reasons:['cycle_unresolved'],refs:{eventIds:[e.event],evidenceIds:[e.evidence],queryIds:[],relationIds:[],events:[{id:e.event,revision:1}],sources:[{evidenceId:e.evidence,sha256:SHA}],versions:[],decisions:[],sourceGenerations:[]}}))})
+    }
+  } finally {compare.mockRestore();f.sqlite.close()}
+})
+it('reader438_reused_reader_no_cross_enterprise_facts',()=>{
+  const f=fixture438()
+  try {
+    f.db.insert(schema.enterprise).values({id:2,name:'另一个主体438',nameNorm:'另一个主体438',usccNorm:null}).run()
+    f.sqlite.pragma('query_only=ON')
+    const expected=independent438()
+    expect(f.reader.readPlatformComparisons(1,AS_OF,TITLES438)).toEqual({snapshot:expected.snapshot,comparisons:expected.comparisons})
+    const other=f.reader.readPlatformComparisons(2,AS_OF,TITLES438)
+    expect(other.snapshot.enterpriseId).toBe(2)
+    expect(other.comparisons.map(c=>({title:c.scope.titleCode,enterpriseId:c.scope.enterpriseId,observation:c.observation,comparison:c.comparison}))).toEqual(TITLES438.map(title=>({title,enterpriseId:2,observation:{state:'not_queried',sources:[]},comparison:{state:'not_established',cycles:[]}})))
+    expect(f.reader.readPlatformComparisons(1,AS_OF,TITLES438)).toEqual({snapshot:expected.snapshot,comparisons:expected.comparisons})
+  } finally {f.sqlite.close()}
+})
+it('reader438_readonly_all_paths_no_fact_or_audit_writes',()=>{
+  const f=fixture438()
+  try {
+    const tables=f.sqlite.prepare("select name from sqlite_master where type='table' and name not like 'sqlite_%' order by name").all() as {name:string}[]
+    const contents=()=>tables.map(({name})=>({name,rows:f.sqlite.prepare('select * from "'+name.replaceAll('"','""')+'" order by rowid').all()}))
+    const before=hash(canonical427(contents()))
+    f.sqlite.pragma('query_only=ON');const changes=f.sqlite.prepare('select total_changes() n').get()
+    f.reader.readPlatformComparisons(1,AS_OF,TITLES438)
+    expect(()=>f.reader.readPlatformComparisons(1,AS_OF,[])).toThrowError('invalid_comparison_titles')
+    f.reader.read(1,AS_OF)
+    expect(hash(canonical427(contents()))).toBe(before)
+    expect(f.sqlite.prepare('select total_changes() n').get()).toEqual(changes)
+    expect(f.sqlite.pragma('query_only',{simple:true})).toBe(1)
+  } finally {f.sqlite.close()}
+})

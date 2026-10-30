@@ -565,3 +565,47 @@ native `apply_list` 的 `titleCode:null`、`rdjb:''` 和 `source_default` 是合
 历史7/2FAIL、16/22FAIL、分页失败、四个类型FAIL、准备 syntaxFAIL、provider中断及全部STOP保持原件；后来PASS不覆盖它们。aggregate-unhandled、未观测短命进程、独立 DBclose/handles、完整 server stdout/stderr、CPU complexprobe 与数学内存证明仍 UNKNOWN。2k/20k、full suite/CI、生产与独立双轴审核未运行，不宣PASS。
 
 证据入口：`/tmp/issue428-final-gates-tktdl60x`、`/tmp/issue428-types-resume-1_525427`、`/tmp/issue428-built-safe-li4ku_l5`、`/private/tmp/issue428-built-runtime-9s7ra9we`。最后一层为已批准限定 compiled 验收；本节是随后文档收尾，未参与上述运行。完整 source→run→artifact 与逐AC由 Git 外候选交付包保存，独立 Spec/Standards 与合并由父处理。
+
+
+## #438 同一企业的内部多称号比较
+
+`createCurrentQualificationAssessmentReader` 增加内部方法：
+
+```ts
+readPlatformComparisons(enterpriseId: number, asOf: number, titles: readonly CurrentTitle[])
+// 返回 { snapshot: CurrentQualificationSnapshot, comparisons: PlatformComparison[] }
+```
+
+`titles` 必须是非空 dense 数组，索引必须是自有 data descriptor，值仅限
+`CURRENT_TITLES`。空、稀疏、非法值或索引 accessor 抛
+`invalid_comparison_titles`，在读取 SQL 前拒绝；不调用调用者 iterator。
+重复称号去重，输出固定为 little_giant、specialized_sme、innovative_sme 的子序列，
+不改变传入数组。参数只选择本次比较的称号，不提供外部 facts、预加载 T2 或可信标志。
+
+一次 SQLite 读事务内先构造一次原完整三称号 T2；每个选中称号沿既有私有
+collector、query/source/annual 和唯一 core 读取与比较，scope 绑定同一 snapshot。
+不以 title-filter fast path 代替 full T2，不累计跨企业 facts 或结果缓存。
+错误原码传播，不返回 partial comparisons，不 retry busy；调用者事务与 WAL
+一致性沿原约束。#441 完整保护集中的畸形 proof 可在首个 core 结果前拒绝。
+
+旧 single 方法及默认 read/readTitle/readCurrent/readWorkbook 的行为、错误顺序、
+完整407-v1 DTO/hash保持。默认 HTTP/MCP、列表、筛选、详情与导出不启用比较投影；
+本方法不是列表或全库批量能力，后继消费者与容量验收不在本票。
+
+成本为 `Q0 + Σ Δ_title`，事务控制语句单列。Q0 是一次完整原三称号 T2；
+各 pair 仍受原 query/cycle/page/witness 与年度 caps 约束。#441 已合入的
+fast-empty E=1 为5、全局83；closure-empty E=1≤30、全局≤147；
+deferred-present E=1≤46、全局≤670。无 deferred 的原43控制不变，
+旧83/667历史证据不能替代新 closure lane，也不因多称号方法放宽任何 caps。
+
+本票固定合成 PNZ 的实际 expanded SQL 为 Q0=46，三 pair=46/44/30；
+共166条读语句，另BEGIN/COMMIT共168条。此值仅为该fixture观测，
+不是全库扫描、CPU、heap/RSS或列表容量上界；expanded SQL也不等于原始
+SQL模板与参数直接记录。三称号最保守公式包络 `Q0+3×670` 仍需按实际选中
+称号收费，不能合并成一次pair预算。
+
+独立PNZ两轮换使用完整人工literal与独立canonical摘要，不以三个旧single
+互相比作为唯一oracle；同时保护同年多周期/null、source错误、WAL与零写。
+默认消费者验证分窗口完成：409 local19、真实source worker12、compiled worker12
+分别执行，不宣称一次43全文件运行。worker测试通过不外推所有服务或可选动态
+依赖可用。历史FAIL/STOP和UNKNOWN保留，fullCI/HTTP/browser/生产未验收。
