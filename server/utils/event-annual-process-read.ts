@@ -1,10 +1,12 @@
+import { identityFunctions } from '../../lib/roster/enterprise-read-snapshot'
+import type Database from 'better-sqlite3'
 import { createHash } from 'node:crypto'
 import { and, asc, eq, inArray, or, sql } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../db/schema'
 import { normalizeUscc } from '../../lib/domain'
 import { normalizePlatformRelation, PLATFORM_PROCESS_RAW_KEYS, platformProcessRawFromJson } from '../../lib/platform/normalization'
-import type { ScopedPlatformObservation } from '../../lib/platform/business-record'
+import type { ScopedPlatformObservation, PlatformBusinessGroup } from '../../lib/platform/business-record'
 import { ANNUAL_PROCESS_RULE_VERSION, buildAnnualProcess, type AnnualProcessCoverage, type AnnualProcessScopeGap, type AnnualProcessSourceRefs, type EventAnnualProcessRead } from '../../lib/roster/annual-process'
 import { readPlatformBusinessGroups, readPlatformBusinessMetadata } from './platform-business-record-read'
 import { normalizedUscc } from './event-archive-discovery'
@@ -20,17 +22,24 @@ export function readEventAnnualProcess(db: Db, eventId: number): EventAnnualProc
   if (!Number.isSafeInteger(eventId) || eventId <= 0) throw new Error('Invalid event ID')
   return db.transaction(() => readSnapshot(db, eventId))
 }
-function readSnapshot(db: Db, eventId: number): EventAnnualProcessRead | null {
+type ScalarQuery = { toSQL(): { sql: string; params: unknown[] } }
+type Scope = NonNullable<ReturnType<typeof sourceScope>>
+type Rows = ReturnType<Scope['rowsQuery']['all']>
+type Titles = ReturnType<Scope['titlesQuery']['all']>
+type Queries = ReturnType<Scope['queriesQuery']['all']>
+function sourceScope(db: Db, eventId: number, admitHeader?: (query: ScalarQuery, keys: string[]) => void, includeUnknownBusinessTitle = false) {
   const v = schema.recordEvent, rec = schema.record, ent = schema.enterprise
-  const joined = db.select({ event: v, record: { id: rec.id, enterpriseId: rec.enterpriseId, titleCode: rec.titleCode, usccRaw: rec.usccRaw, source: rec.source }, enterprise: { nameNorm: ent.nameNorm, usccNorm: ent.usccNorm } })
-    .from(v).innerJoin(rec, eq(v.recordId, rec.id)).innerJoin(ent, eq(rec.enterpriseId, ent.id)).where(eq(v.id, eventId)).get()
+  const headerQuery = db.select({ event: v, record: { id: rec.id, enterpriseId: rec.enterpriseId, titleCode: rec.titleCode, usccRaw: rec.usccRaw, source: rec.source }, enterprise: { nameNorm: ent.nameNorm, usccNorm: ent.usccNorm } })
+    .from(v).innerJoin(rec, eq(v.recordId, rec.id)).innerJoin(ent, eq(rec.enterpriseId, ent.id)).where(eq(v.id, eventId))
+  admitHeader?.(headerQuery, ['id', 'recordId', 'eventType', 'year', 'batchSeq', 'sortKey', 'reviewOutcome', 'decidedYear', 'revision', 'record_id', 'enterpriseId', 'titleCode', 'usccRaw', 'source', 'nameNorm', 'usccNorm'])
+  const joined = headerQuery.get()
   if (!joined || joined.record.source !== 'jxj' || !['award', 'review'].includes(joined.event.eventType)) return null
   const event = { id: joined.event.id, eventType: joined.event.eventType, year: joined.event.year, decidedYear: joined.event.decidedYear, reviewOutcome: joined.event.reviewOutcome,
     record: { enterpriseId: joined.record.enterpriseId, titleCode: joined.record.titleCode, usccRaw: joined.record.usccRaw ?? joined.enterprise.usccNorm } }
   const owner = event.record.enterpriseId, titleCode = event.record.titleCode
   const identity = normalizeUscc(event.record.usccRaw)
   const businessYear = event.eventType === 'review' ? event.decidedYear : event.year
-  const kind = event.eventType === 'review' ? 'review' : 'apply'
+  const kind: 'review' | 'apply' = event.eventType === 'review' ? 'review' : 'apply'
   const q = schema.platformQuery, r = schema.platformRelation, a = schema.enterpriseAlias
   const subjectKeys = [...(identity ? [identity] : []), `name:${joined.enterprise.nameNorm}`]
   const aliasKeys = db.select({ key: sql<string>`'name:' || ${a.nameNorm}` }).from(a).where(and(eq(a.enterpriseId, owner), eq(a.verificationStatus, 'confirmed')))
@@ -42,15 +51,13 @@ function readSnapshot(db: Db, eventId: number): EventAnnualProcessRead | null {
     // UNION's ordering can otherwise favor query_seq_uq and visit row bodies.
     .union(db.select({ id: sql<number>`${r.queryId}` }).from(sql`${r} indexed by platform_relation_uscc_query_idx`).where(identity ? sql`${normalizedUscc(r.usccRaw)} = ${identity}` : sql`0`))
   const queryTitle = sql<string | null>`coalesce(${q.titleCode}, case ${q.rdjb} when '1' then 'innovative_sme' when '2' then 'specialized_sme' when '3' then 'little_giant' end)`
-  const queryScope = and(inArray(q.id, relatedIds), inArray(q.interface, ['apply_list', 'business_list']), or(eq(queryTitle, titleCode), and(eq(q.interface, 'apply_list'), sql`${queryTitle} is null`)))!
+  const queryScope = and(inArray(q.id, relatedIds), inArray(q.interface, ['apply_list', 'business_list']), or(eq(queryTitle, titleCode), and(includeUnknownBusinessTitle ? sql`1` : eq(q.interface, 'apply_list'), sql`${queryTitle} is null`)))!
   // Metadata is bounded to this owner's related title and two process interfaces.
   // Scalar extraction never hydrates raw_response or collection_evidence.rows/pages.
-  const queries = db.select({ queryId: q.id, interface: q.interface, queryKey: q.queryKey, rdjb: q.rdjb, titleCode: q.titleCode, queriedAt: q.queriedAt, status: q.status,
+  const queriesQuery = db.select({ queryId: q.id, interface: q.interface, queryKey: q.queryKey, rdjb: q.rdjb, titleCode: q.titleCode, queriedAt: q.queriedAt, status: q.status,
     completeness: sql<string | null>`case when json_valid(${q.collectionEvidence}) then json_extract(${q.collectionEvidence}, '$.completeness') end`,
     fullRangeValue: sql<number | null>`case when json_valid(${q.collectionEvidence}) then json_extract(${q.collectionEvidence}, '$.fullRange') end`,
-  }).from(q).where(queryScope).orderBy(asc(q.id)).all()
-  const coverage: AnnualProcessCoverage[] = queries.map(row => ({ queryId: row.queryId, interface: row.interface, queriedAt: row.queriedAt, status: row.status, completeness: row.completeness, fullRange: row.fullRangeValue == null ? null : row.fullRangeValue === 1 }))
-  const queryMap = new Map(queries.map(row => [row.queryId, row]))
+  }).from(q).where(queryScope).orderBy(asc(q.id))
   const processRaw = sql`case when json_valid(${r.rawFields}) then json_extract(${r.rawFields}, ${sql.join(PLATFORM_PROCESS_RAW_KEYS.map(key => sql`${`$.${key}`}`), sql`, `)}) else null end`.mapWith(platformProcessRawFromJson)
   const matchingIdentity = and(or(eq(r.enterpriseId, owner), sql`${r.enterpriseId} is null`),
     or(identity ? sql`${normalizedUscc(r.usccRaw)} = ${identity}` : and(eq(r.enterpriseId, owner), eq(r.verificationStatus, 'confirmed')), and(sql`${normalizedUscc(r.usccRaw)} = ''`, or(eq(r.enterpriseId, owner), inArray(q.queryKey, subjectKeys), inArray(q.queryKey, aliasKeys)))))!
@@ -58,19 +65,28 @@ function readSnapshot(db: Db, eventId: number): EventAnnualProcessRead | null {
     select value, sum(json_extract(value, '$.fetchedCount')) over (order by cast(key as integer)) last_sequence
     from json_each(case when json_valid(${q.collectionEvidence}) then ${q.collectionEvidence} end, '$.pages')
     where json_extract(value, '$.status') = 'success') where last_sequence >= ${r.sequenceNo} limit 1)`
-  const rows = db.select({ id: r.id, queryId: r.queryId, sequenceNo: r.sequenceNo, relationKey: r.relationKey, enterpriseId: r.enterpriseId, usccRaw: r.usccRaw, nameRaw: r.nameRaw,
+  const rowsQuery = db.select({ id: r.id, queryId: r.queryId, sequenceNo: r.sequenceNo, relationKey: r.relationKey, enterpriseId: r.enterpriseId, usccRaw: r.usccRaw, nameRaw: r.nameRaw,
     declareKind: r.declareKind, appliedAt: r.appliedAt, year: r.year, province: r.province, batch: r.batch, awardBatchLabel: r.awardBatchLabel, status: r.status,
     verificationStatus: r.verificationStatus, matchBasis: r.matchBasis, rawFields: processRaw,
     sourcePage: pagePosition('page').mapWith(Number), sourceRdjb: pagePosition('rdjb').mapWith(String),
     // Explicit known transcription provenance, no arbitrary source text hydration or blank-row deletion.
     identityOnlySource: sql<number>`case when ${r.sourceText} like '%platform-verify-aclass%' and ${r.sourceText} like '%转写%' and (${r.sourceText} like '%名称%' or ${r.sourceText} like '%qymc%') then 1 else 0 end`,
-  }).from(q).innerJoin(r, eq(r.queryId, q.id)).where(and(queryScope, matchingIdentity)).orderBy(asc(q.id), asc(r.sequenceNo), asc(r.id)).all()
+  }).from(q).innerJoin(r, eq(r.queryId, q.id)).where(and(queryScope, matchingIdentity)).orderBy(asc(q.id), asc(r.sequenceNo), asc(r.id))
   // Small owner metadata detects ambiguous same-key explicit titles across the
   // archive without reading out-of-title raw process bodies.
-  const titleScopeRows = db.select({ relationId: r.id, queryId: r.queryId, relationKey: r.relationKey, usccRaw: r.usccRaw, titleCode: queryTitle })
-    .from(q).innerJoin(r, eq(r.queryId, q.id)).where(and(inArray(q.id, relatedIds), eq(q.interface, 'business_list'), matchingIdentity)).orderBy(asc(r.id)).all()
+  const titlesQuery = db.select({ relationId: r.id, queryId: r.queryId, relationKey: r.relationKey, usccRaw: r.usccRaw, titleCode: queryTitle })
+    .from(q).innerJoin(r, eq(r.queryId, q.id)).where(and(inArray(q.id, relatedIds), eq(q.interface, 'business_list'), matchingIdentity)).orderBy(asc(r.id))
+  // ID-only private projections let admission prove existence without touching
+  // raw7/page metadata or allocating annual DTOs. Default reads never execute it.
+  const rowIdsQuery = db.select({ relationId: r.id }).from(q).innerJoin(r, eq(r.queryId, q.id)).where(and(queryScope, matchingIdentity))
+  return { headerQuery, joined, event, owner, titleCode, businessYear, kind, queriesQuery, rowsQuery, titlesQuery, relatedIds, rowIdsQuery }
+}
+function prepareObservations(scope: Scope, rows: Rows, titleScopeRows: Titles, queries: Queries, metadata: ReturnType<typeof readPlatformBusinessMetadata>) {
+  const { joined, event, owner, titleCode, businessYear, kind } = scope
+  const eventId = event.id
+  const coverage: AnnualProcessCoverage[] = queries.map(row => ({ queryId: row.queryId, interface: row.interface, queriedAt: row.queriedAt, status: row.status, completeness: row.completeness, fullRange: row.fullRangeValue == null ? null : row.fullRangeValue === 1 }))
+  const queryMap = new Map(queries.map(row => [row.queryId, row]))
   const normalizedRows = rows.map(row => ({ row, query: queryMap.get(row.queryId)!, facts: normalizePlatformRelation(queryMap.get(row.queryId)!.interface, row) }))
-  const metadata = readPlatformBusinessMetadata(db, [...rows.map(row => row.id), ...titleScopeRows.map(row => row.relationId)])
   const keyOf = (row: typeof rows[number]) => row.relationKey?.trim() || metadata.get(row.id)?.platformKey || null
   const titleSeeds = normalizedRows.filter(({ query }) => query.titleCode === titleCode || query.rdjb === ({ innovative_sme: '1', specialized_sme: '2', little_giant: '3' } as Record<string, string>)[titleCode])
   const stable = ['declareKind', 'appliedAt', 'year', 'province', 'batch', 'awardBatchLabel'] as const
@@ -115,11 +131,21 @@ function readSnapshot(db: Db, eventId: number): EventAnnualProcessRead | null {
         temporal: { relationYear: f.year, relationBatch: f.batch, awardBatchLabel: f.awardBatchLabel },
         source: { interface: query.interface, queryId: row.queryId, relationId: row.id, sequenceNo: row.sequenceNo, queriedAt: query.queriedAt, status: query.status, sourceRdjb: row.sourceRdjb ?? (query.rdjb || null), sourcePage: row.sourcePage, identityOnly: row.identityOnlySource === 1 } }, conflicts }]
   })
-  const groups = readPlatformBusinessGroups(db, observations)
-  const process = buildAnnualProcess({ event, groups, coverage, scopeGaps })
+  return { joined, event, owner, titleCode, businessYear, kind, coverage, scopeGaps, unresolvedSources, observations, titleScopeRows, metadata }
+}
+function evidenceFields() {
   const e = schema.recordEvidence, file = schema.storedFile
-  const evidence = db.select({ id: e.id, sourceFile: e.sourceFile, attachment: e.attachment, listNo: e.listNo, page: e.page, fileId: file.id, sha256: file.sha256, removedAt: file.removedAt })
-    .from(e).leftJoin(file, eq(file.relPath, e.sourceFile)).where(eq(e.recordEventId, eventId)).orderBy(asc(e.id)).all()
+  return { id: e.id, sourceFile: e.sourceFile, attachment: e.attachment, listNo: e.listNo, page: e.page, fileId: file.id, sha256: file.sha256, removedAt: file.removedAt }
+}
+function evidenceQuery(db: Db, eventId: number) {
+  const e = schema.recordEvidence, file = schema.storedFile
+  return db.select(evidenceFields())
+    .from(e).leftJoin(file, eq(file.relPath, e.sourceFile)).where(eq(e.recordEventId, eventId)).orderBy(asc(e.id))
+}
+function finishRead(prepared: ReturnType<typeof prepareObservations>, groups: PlatformBusinessGroup[], loadEvidence: () => ReturnType<ReturnType<typeof evidenceQuery>['all']>) {
+  const { joined, event, owner, titleCode, businessYear, kind, coverage, scopeGaps, unresolvedSources, titleScopeRows, metadata } = prepared
+  const process = buildAnnualProcess({ event, groups, coverage, scopeGaps })
+  const evidence = loadEvidence()
   const sourceRefs: AnnualProcessSourceRefs = {
     scope: { enterpriseId: owner, titleCode, businessYear, declareKind: kind, ruleVersion: ANNUAL_PROCESS_RULE_VERSION },
     event: { ...joined.event, usccRaw: event.record.usccRaw }, evidence,
@@ -132,5 +158,282 @@ function readSnapshot(db: Db, eventId: number): EventAnnualProcessRead | null {
         businessRecord: ref.businessRecord, target: ref.target, evidence: ref.evidence, conflicts: ref.conflicts.filter(c => c !== 'correspondence_decision_conflict') }),
     })))].sort((a, b) => a.relationId - b.relationId), coverage,
   }
-  return { process, sourceRefs, sourceGeneration: hash(sourceRefs) }
+  return { input: { event, groups, coverage, scopeGaps }, read: { process, sourceRefs, sourceGeneration: hash(sourceRefs) } }
+}
+function readSnapshot(db: Db, eventId: number): EventAnnualProcessRead | null {
+  const scope = sourceScope(db, eventId)
+  if (!scope) return null
+  const queries = scope.queriesQuery.all()
+  const rows = scope.rowsQuery.all()
+  const titles = scope.titlesQuery.all()
+  const metadata = readPlatformBusinessMetadata(db, [...rows.map(row => row.id), ...titles.map(row => row.relationId)])
+  const prepared = prepareObservations(scope, rows, titles, queries, metadata)
+  const groups = readPlatformBusinessGroups(db, prepared.observations)
+  return finishRead(prepared, groups, () => evidenceQuery(db, eventId).all()).read
+}
+
+/** Stricter admission for the explicit comparison only. W is a policy charge,
+ * not an output, heap or RSS bound. All SQL scans remain data dependent. */
+const comparisonCaps = { rows: 64, titles: 64, history: 128, decisions: 128, evidence: 160, raw: 4096, proof: 4096, proofElements: 100, scalar: 1048576, source: 65536, charge: 16777216 } as const
+const unavailable = (): never => { throw new Error('platform_comparison_scope_unavailable') }
+const resource = (): never => { throw new Error('input_resource_limit') }
+const quoted = (name: string) => `"${name}"`
+const leaf = (name: string) => `case typeof(${name}) when 'null' then 4 when 'text' then 2+6.0*length(cast(${name} as blob)) when 'integer' then 32 when 'real' then 32 else 1e100 end`
+const objectBound = (fields: Record<string, string>) => `(${2 + Math.max(0, Object.keys(fields).length - 1)} + ${Object.entries(fields).map(([key, expression]) => `${3 + key.length}+(${expression})`).join('+') || '0'})`
+const queryKeys = ['queryId','interface','queryKey','rdjb','titleCode','queriedAt','status','completeness','fullRangeValue']
+const rowKeys = ['id','queryId','sequenceNo','relationKey','enterpriseId','usccRaw','nameRaw','declareKind','appliedAt','year','province','batch','awardBatchLabel','status','verificationStatus','matchBasis','rawFields','sourcePage','sourceRdjb','identityOnlySource']
+const titleKeys = ['relationId','queryId','relationKey','usccRaw','titleCode']
+const evidenceKeys = ['id','sourceFile','attachment','listNo','page','fileId','sha256','removedAt']
+function named(query: ScalarQuery, keys: string[]): ScalarQuery {
+  const statement = query.toSQL()
+  return { toSQL: () => ({ sql: `with projection(${keys.map(quoted).join(',')}) as (${statement.sql}) select * from projection`, params: statement.params }) }
+}
+function combine(queries: ScalarQuery[]): ScalarQuery {
+  const values = queries.map(query => query.toSQL())
+  return { toSQL: () => ({ sql: values.map(q => `select * from (${q.sql})`).join(' union '), params: values.flatMap(q => q.params) }) }
+}
+function derived(query: ScalarQuery, select: string, params: unknown[] = []): ScalarQuery {
+  const q = query.toSQL()
+  return { toSQL: () => ({ sql: `with admitted as (${q.sql}) ${select}`, params: [...q.params, ...params] }) }
+}
+function literalQuery(statement: string, params: unknown[] = []): ScalarQuery { return { toSQL: () => ({ sql: statement, params }) } }
+/** ID-only internal seam. No external facts, normalizer, eligibility or loader. */
+export function readAnnualComparisonBatch(sqlite: Database.Database, db: Db, request: { enterpriseId: number; titleCode: string; eventIds: readonly number[]; selectedQueryIds: readonly number[] }) {
+  if (!sqlite.inTransaction) unavailable()
+  identityFunctions(db)
+  const ids = [...new Set(request.eventIds)], selected = [...new Set(request.selectedQueryIds)]
+  if (ids.length > 40 || selected.length > 50) resource()
+  if ([...ids, ...selected].some(id => !Number.isSafeInteger(id) || id <= 0)) unavailable()
+  const selectedJson = JSON.stringify(selected)
+  const get = (query: ScalarQuery) => { const q = query.toSQL(); return sqlite.prepare(q.sql).get(...q.params) as Record<string, number> }
+  const all = <T>(query: ScalarQuery): T[] => { const q = query.toSQL(); return sqlite.prepare(q.sql).all(...q.params) as T[] }
+  const measure = (query: ScalarQuery, keys: string[], cap: number) => {
+    const bound = objectBound(Object.fromEntries(keys.map(key => [key, leaf(quoted(key))])))
+    const result = get(derived(query, `select count(*) n, coalesce(sum(1.0*${bound}),0) bytes from admitted`))
+    if (![result.n, result.bytes].every(n => typeof n === 'number' && Number.isFinite(n) && n >= 0)) unavailable()
+    if (result.n! > cap || result.bytes! > comparisonCaps.scalar) resource()
+    return { n: result.n!, bytes: result.bytes! }
+  }
+  let headerBytes = 0
+  const scopes = ids.map(id => {
+    const scope = sourceScope(db, id, (q, keys) => { const m = measure(named(q, keys), keys, 1); if (m.n !== 1) unavailable(); headerBytes += m.bytes }, true)
+    if (!scope || scope.owner !== request.enterpriseId || scope.titleCode !== request.titleCode) unavailable()
+    return scope!
+  })
+  const absent = () => ({ kind: 'absent' as const, entries: [], history: new Map<number, number[]>(),
+    admission: { kind: 'header_only' as const, uniqueScalarBytes: headerBytes + 32, expandedCharge: null,
+      sourceUpperBytes: [] as number[], actualSourceBytes: [] as number[] } })
+  if (!scopes.length) {
+    // No formal event can carry a process. Still prove the owner's protective
+    // graph empty; otherwise this ID-only request cannot assemble its source.
+    const emptyScope = get(literalQuery(`with owner as (select id,uscc_norm,name_norm from enterprise where id=?),
+      related as (select q.id from platform_query q where q.query_key in
+        (select uscc_norm from owner union select 'name:'||name_norm from owner
+          union select 'name:'||name_norm from enterprise_alias where enterprise_id=? and verification_status='confirmed')
+        union select r.query_id from platform_relation r where r.enterprise_id=? or exists
+          (select 1 from owner e where e.uscc_norm is not null and e.uscc_norm!='' and roster84_uscc(r.uscc_raw)=e.uscc_norm))
+      select case when not exists(select 1 from owner)
+        or exists(select 1 from platform_query q where q.id in (select id from related) and q.interface in ('apply_list','business_list'))
+        or exists(select 1 from record_correspondence c where c.enterprise_id=? and c.title_code=?)
+        then 8 else 0 end mask`, [request.enterpriseId,request.enterpriseId,request.enterpriseId,request.enterpriseId,request.titleCode]))
+    if (emptyScope.mask !== 0) unavailable()
+    return absent()
+  }
+  const uniqueScopes = [...new Map(scopes.map(scope => [JSON.stringify([scope.owner, scope.titleCode, scope.event.record.usccRaw, scope.joined.enterprise.nameNorm]), scope])).values()]
+  const related = combine(uniqueScopes.map(s => s.relatedIds)).toSQL()
+  const actualRows = combine(uniqueScopes.map(s => named(s.rowIdsQuery, ['relationId']))).toSQL()
+  const actualTitles = combine(uniqueScopes.map(s => named(s.titlesQuery, titleKeys))).toSQL()
+  // One scalar replaces the old late absence SELECT. No recognized query state
+  // is annual existence evidence. All IDs/text are bound, never interpolated.
+  const probe = get(literalQuery(`with related as (${related.sql}), annual_rows as (${actualRows.sql}),
+    titles as (${actualTitles.sql}), selected as (select value id from json_each(?)),
+    events as (select value id from json_each(?)),
+    potential as (select q.id,q.interface,q.status,q.collection_evidence,q.title_code,q.rdjb from platform_query q where q.id in (select id from related) and q.interface in ('apply_list','business_list')),
+    relations as (select relationId from annual_rows union select relationId from titles),
+    history as (select o.relation_id relationId from platform_business_observation o where o.record_id in
+      (select x.record_id from platform_business_observation x join relations r on r.relationId=x.relation_id where x.record_id is not null)),
+    protected as (select relationId from relations union select relationId from history)
+    select case
+      when exists(select 1 from potential q where q.id not in (select id from selected))
+        or exists(select 1 from platform_business_observation o join platform_relation r on r.id=o.relation_id
+          join platform_query q on q.id=r.query_id left join platform_business_record b on b.id=o.record_id
+          where q.id in (select id from related) and q.interface='recognized_list' and o.record_id is not null and b.interface is not q.interface)
+        or exists(select 1 from record_correspondence c where
+          (c.event_id in (select id from events) or c.predecessor_event_id in (select id from events) or (c.enterprise_id=? and c.title_code=?))
+          and (c.relation_id is null or c.relation_id not in (select relationId from protected))) then 8
+      when exists(select 1 from relations) then 1
+      when exists(select 1 from platform_relation r where r.query_id in (select id from potential)) then 8
+      when exists(select 1 from potential q where case
+        when q.status not in ('no_record','success') or q.collection_evidence is null or not json_valid(q.collection_evidence) then 1
+        when json_type(q.collection_evidence) is not 'object' then 1
+        else json_extract(q.collection_evidence,'$.source') is not case q.interface when 'apply_list' then 'queryList' else 'businessList' end
+          or json_extract(q.collection_evidence,'$.status') is not q.status
+          or json_extract(q.collection_evidence,'$.completeness') is not 'complete'
+          or json_type(q.collection_evidence,'$.fullRange') is not 'true'
+          or json_type(q.collection_evidence,'$.unfinished') is not 'array' or json_array_length(q.collection_evidence,'$.unfinished') is not 0
+          or json_type(q.collection_evidence,'$.error') is not 'null'
+          or (q.interface='apply_list' and (q.title_code is not null or q.rdjb is not ''
+            or json_extract(q.collection_evidence,'$.titleScope.mode') is not 'source_default'))
+          or (q.interface='business_list' and (q.rdjb not in ('1','2','3')
+            or json_extract(q.collection_evidence,'$.titleScope.mode') is not 'selected'))
+          or json_type(q.collection_evidence,'$.pages') is not 'array' or json_array_length(q.collection_evidence,'$.pages')=0
+          or exists(select 1 from json_each(q.collection_evidence,'$.pages') p where case when p.type is not 'object' then 1 else
+            json_extract(p.value,'$.status') is not 'success'
+            or json_type(p.value,'$.page') is not 'integer' or json_extract(p.value,'$.page') is not cast(p.key as integer)+1
+            or json_extract(p.value,'$.source') is not case q.interface when 'apply_list' then 'queryList' else 'businessList' end
+            or (q.interface='apply_list' and json_type(p.value,'$.rdjb') is not 'null')
+            or (q.interface='business_list' and json_extract(p.value,'$.rdjb') is not q.rdjb)
+            or json_type(p.value,'$.fetchedCount') is not 'integer' or json_extract(p.value,'$.fetchedCount') is not 0
+            or json_type(p.value,'$.declaredTotal') is null or json_type(p.value,'$.declaredTotal') not in ('null','integer') or json_extract(p.value,'$.declaredTotal')!=0 end)
+        end) then 2 else 0 end mask`, [...related.params, ...actualRows.params, ...actualTitles.params, selectedJson, JSON.stringify(ids), request.enterpriseId, request.titleCode]))
+  if (probe.mask === 8 || probe.mask === 2) unavailable()
+  if (headerBytes + 32 > comparisonCaps.scalar) resource()
+  if (probe.mask === 0) return absent()
+  if (probe.mask !== 1) unavailable()
+  // Only actual annual dependencies pay yearly metadata admission. Query-only
+  // witnesses remain complete and are checked exactly once by the pure core.
+  const qUnion = combine(uniqueScopes.map(s => named(s.queriesQuery, queryKeys)))
+  const qSql = qUnion.toSQL()
+  const dependencies = literalQuery(`with annual_queries as (${qSql.sql}), annual_rows as (${actualRows.sql}), titles as (${actualTitles.sql}),
+    relations as (select relationId from annual_rows union select relationId from titles)
+    select queryId id from annual_queries union select queryId id from titles
+    union select r.query_id id from platform_business_observation o join platform_relation r on r.id=o.relation_id
+      where o.record_id in (select x.record_id from platform_business_observation x join relations a on a.relationId=x.relation_id where x.record_id is not null)`,
+    [...qSql.params,...actualRows.params,...actualTitles.params]).toSQL()
+  const queryMetadata = literalQuery(`select id, interface, query_key, rdjb, title_code, queried_at, status,
+    case when collection_evidence is null then null when json_valid(collection_evidence) then json_object(
+      'source',json_extract(collection_evidence,'$.source'),'status',json_extract(collection_evidence,'$.status'),
+      'effectiveConditions',json_extract(collection_evidence,'$.effectiveConditions'),'titleScope',json_extract(collection_evidence,'$.titleScope'),
+      'pages',json_extract(collection_evidence,'$.pages'),'completeness',json_extract(collection_evidence,'$.completeness'),
+      'fullRange',json_extract(collection_evidence,'$.fullRange'),'unfinished',json_extract(collection_evidence,'$.unfinished'),
+      'error',json_extract(collection_evidence,'$.error'),'limits',json_extract(collection_evidence,'$.limits')) else null end metadata,
+    case when collection_evidence is null then 0 when json_valid(collection_evidence) then coalesce(json_array_length(collection_evidence,'$.pages'),0) else -1 end pages
+    from platform_query where id in (${dependencies.sql})`, dependencies.params)
+  const qm = measure(queryMetadata, ['id','interface','query_key','rdjb','title_code','queried_at','status','metadata','pages'], 50)
+  const queryUpper = get(derived(queryMetadata, `select coalesce(sum(u),0) total, coalesce(max(u),0) largest, coalesce(max(pages),0) pages, coalesce(min(pages),0) minimum from
+    (select 4096+4*${objectBound(Object.fromEntries(['id','interface','query_key','rdjb','title_code','queried_at','status'].map(k => [k,leaf(k)])))}+4*(32+6.0*coalesce(length(cast(metadata as blob)),4))+32*pages u,pages from admitted)`))
+  if (queryUpper.minimum! < 0) unavailable()
+  if (queryUpper.largest! > 65536 || queryUpper.pages! > 50) resource()
+  // C3: all archived rows, not the annual owner-filtered subset. A partial archive
+  // is business insufficiency; a declared successful-page/row mismatch is not.
+  const malformed = get(literalQuery(`select count(*) n from platform_query q where q.id in (${dependencies.sql})
+    and q.interface in ('apply_list','business_list') and q.collection_evidence is not null and
+    (not json_valid(q.collection_evidence) or case when json_valid(q.collection_evidence) then
+      json_type(q.collection_evidence,'$.pages') is not 'array' or exists (
+        select 1 from json_each(q.collection_evidence,'$.pages') p where case when p.type is not 'object' then 1 else json_extract(p.value,'$.status')='success'
+        and (json_type(p.value,'$.fetchedCount') is not 'integer' or json_extract(p.value,'$.fetchedCount')<0) end)
+      else 1 end)`, dependencies.params))
+  if (malformed.n) unavailable()
+  const closure = get(literalQuery(`select count(*) n from platform_query q where q.id in (${dependencies.sql}) and q.interface in ('apply_list','business_list')
+    and q.collection_evidence is not null and (
+      (select count(*) from platform_relation r where r.query_id=q.id) !=
+      (select coalesce(sum(json_extract(p.value,'$.fetchedCount')),0) from json_each(q.collection_evidence,'$.pages') p where json_extract(p.value,'$.status')='success')
+      or exists(select 1 from platform_relation r where r.query_id=q.id and (typeof(r.sequence_no)!='integer' or r.sequence_no<1))
+      or (select coalesce(max(r.sequence_no),0) from platform_relation r where r.query_id=q.id)!=(select count(*) from platform_relation r where r.query_id=q.id))`, dependencies.params))
+  if (closure.n) unavailable()
+  const pageShape = get(literalQuery(`select count(*) n from platform_query q where q.id in (${dependencies.sql}) and q.interface in ('apply_list','business_list') and q.collection_evidence is not null and exists (
+    select 1 from (
+      select p.value, json_extract(p.value,'$.page') page, json_extract(p.value,'$.rdjb') rdjb,
+        lag(json_extract(p.value,'$.page')) over (partition by json_extract(p.value,'$.rdjb') order by cast(p.key as integer)) previous
+      from json_each(q.collection_evidence,'$.pages') p
+    ) p where
+      (json_extract(q.collection_evidence,'$.fullRange')=1 or json_type(p.value,'$.page') is not null or json_type(p.value,'$.source') is not null) and (
+        json_type(p.value,'$.page') is not 'integer' or p.page<1
+        or json_type(p.value,'$.status') is not 'text' or json_extract(p.value,'$.status') not in ('success','auth_failed','failed')
+        or json_type(p.value,'$.fetchedCount') is not 'integer' or json_extract(p.value,'$.fetchedCount')<0
+        or (json_extract(p.value,'$.status')!='success' and json_extract(p.value,'$.fetchedCount')!=0)
+        or json_extract(p.value,'$.source') is not case q.interface when 'business_list' then 'businessList' else 'queryList' end
+        or (q.interface='apply_list' and json_type(p.value,'$.rdjb') is not 'null')
+        or (q.interface='business_list' and (json_type(p.value,'$.rdjb') is not 'text' or not exists(select 1 from json_each(q.collection_evidence,'$.titleScope.rdjb') scope where scope.value=p.rdjb)))
+        or (p.previous is not null and p.page!=p.previous+1)
+        or (p.previous is null and json_extract(q.collection_evidence,'$.fullRange')=1 and p.page!=1)
+        or (json_type(p.value,'$.declaredTotal') not in ('integer','null') or json_extract(p.value,'$.declaredTotal')<0)
+      ))`, dependencies.params))
+  if (pageShape.n) unavailable()
+  const rUnion = combine(uniqueScopes.map(s => named(s.rowsQuery, rowKeys)))
+  const tUnion = combine(uniqueScopes.map(s => named(s.titlesQuery, titleKeys)))
+  const fUnion = combine(scopes.map(s => named(evidenceQuery(db, s.event.id), evidenceKeys)))
+  for (const query of [qUnion, tUnion]) {
+    const missing = get(derived(query, `select count(*) n from admitted where queryId not in (select value from json_each(?))`, [selectedJson]))
+    if (missing.n) unavailable()
+  }
+  const qCost = measure(qUnion, queryKeys, 50), rCost = measure(rUnion, rowKeys, comparisonCaps.rows), tCost = measure(tUnion, titleKeys, comparisonCaps.titles), fCost = measure(fUnion, evidenceKeys, comparisonCaps.evidence)
+  const rawCost = get(derived(rUnion, `select coalesce(max(length(cast(rawFields as blob))),0) n from admitted`))
+  if (rawCost.n! > comparisonCaps.raw) resource()
+  const rt = combine([derived(rUnion, 'select id relationId from admitted'), derived(tUnion, 'select relationId from admitted')])
+  const mQuery = derived(rt, `select r.id relationId,o.record_id recordId,o.version_id versionId,b.interface,b.platform_key platformKey,o.identity_state identityState,o.content_state contentState,o.key_source keySource,o.projection_rule_version projectionRuleVersion,v.hash_algorithm hashAlgorithm,v.content_hash contentHash
+    from admitted x join platform_relation r on r.id=x.relationId left join platform_business_observation o on o.relation_id=r.id left join platform_business_record b on b.id=o.record_id left join platform_business_record_version v on v.id=o.version_id`)
+  const mKeys = ['relationId','recordId','versionId','interface','platformKey','identityState','contentState','keySource','projectionRuleVersion','hashAlgorithm','contentHash']
+  const mCost = measure(mQuery, mKeys, 128)
+  const hQuery = derived(rt, `select o.record_id recordId,o.relation_id relationId,r.query_id queryId,o.version_id versionId,b.interface,v.record_id versionRecordId
+    from platform_business_observation o left join platform_relation r on r.id=o.relation_id left join platform_business_record b on b.id=o.record_id left join platform_business_record_version v on v.id=o.version_id
+    where o.record_id in (select x.record_id from platform_business_observation x join admitted a on a.relationId=x.relation_id where x.record_id is not null)`)
+  const hKeys = ['recordId','relationId','queryId','versionId','interface','versionRecordId'], hCost = measure(hQuery, hKeys, comparisonCaps.history)
+  const badHistory = get(derived(hQuery, `select count(*) n from admitted h left join platform_query q on q.id=h.queryId where q.id is null or q.id not in (select value from json_each(?)) or q.interface is not h.interface or (h.versionId is not null and h.versionRecordId is not h.recordId)`, [selectedJson]))
+  if (badHistory.n) unavailable()
+  const badMapping = get(derived(rt, `select count(*) n from admitted a join platform_relation r on r.id=a.relationId join platform_query q on q.id=r.query_id join platform_business_observation o on o.relation_id=r.id
+    left join platform_business_record b on b.id=o.record_id left join platform_business_record_version v on v.id=o.version_id
+    where (o.record_id is not null and (b.id is null or b.interface is not q.interface)) or (o.version_id is not null and (v.id is null or v.record_id is not o.record_id))`))
+  if (badMapping.n) unavailable()
+  const protectedIds = combine([rt, derived(hQuery, 'select relationId from admitted')])
+  const dQuery = derived(protectedIds, `select c.id,c.relation_id relationId,c.export_row_id exportRowId,c.event_id eventId,c.predecessor_event_id predecessorEventId,c.enterprise_id enterpriseId,c.title_code titleCode,c.type,c.role,c.status,c.revision,c.rule_id ruleId,c.rule_version ruleVersion,c.created_at createdAt,c.decided_at decidedAt,c.ended_at endedAt,
+    q.title_code queryTitle,q.rdjb queryRdjb,q.interface queryInterface,q.status queryStatus,r.uscc_raw relationUscc,r.enterprise_id relationEnterpriseId,r.verification_status relationStatus,owner.id ownerId,owner.uscc_norm ownerUscc,target.id targetId,target.uscc_norm targetUscc,t.code targetTitle,
+    case when json_valid(c.provenance) then json_extract(c.provenance,'$.comparisonProofIds') end proofIds,
+    case when json_valid(c.provenance) then coalesce(json_array_length(c.provenance,'$.comparisonProofIds'),0) else -1 end proofCount
+    from record_correspondence c join admitted a on a.relationId=c.relation_id left join platform_relation r on r.id=c.relation_id left join platform_query q on q.id=r.query_id
+    left join enterprise owner on owner.id=r.enterprise_id left join enterprise target on target.id=c.enterprise_id left join title t on t.code=c.title_code`)
+  const dKeys = ['id','relationId','exportRowId','eventId','predecessorEventId','enterpriseId','titleCode','type','role','status','revision','ruleId','ruleVersion','createdAt','decidedAt','endedAt','queryTitle','queryRdjb','queryInterface','queryStatus','relationUscc','relationEnterpriseId','relationStatus','ownerId','ownerUscc','targetId','targetUscc','targetTitle','proofIds','proofCount']
+  const proofShape = get(derived(protectedIds, `select count(*) n from record_correspondence c join admitted a on a.relationId=c.relation_id where
+    case when not json_valid(c.provenance) then 1
+      when json_type(c.provenance,'$.comparisonProofIds') is null or json_type(c.provenance,'$.comparisonProofIds')='null' then 0
+      when json_type(c.provenance,'$.comparisonProofIds')!='array' then 1
+      else exists(select 1 from json_each(c.provenance,'$.comparisonProofIds') p where p.type!='integer' or p.value<1 or p.value>9007199254740991) end`))
+  if (proofShape.n) unavailable()
+  const dCost = measure(dQuery, dKeys, comparisonCaps.decisions)
+  const proof = get(derived(dQuery, `select coalesce(max(length(cast(proofIds as blob))),0) bytes,coalesce(max(proofCount),0) count,coalesce(min(proofCount),0) minimum from admitted`))
+  if (proof.minimum! < 0) unavailable()
+  if (proof.bytes! > comparisonCaps.proof || proof.count! > comparisonCaps.proofElements) resource()
+  const uniqueBytes = 32 + 32*fCost.n + headerBytes + qm.bytes + qCost.bytes + rCost.bytes + tCost.bytes + mCost.bytes + hCost.bytes + dCost.bytes + fCost.bytes
+  if (uniqueBytes > comparisonCaps.scalar) resource()
+  const arrayBound = (query: ScalarQuery, item: string) => get(derived(query, `select 2+coalesce(sum(1.0*(${item})),0)+max(0,count(*)-1) bytes from admitted`)).bytes!
+  const sourceUpperBytes = scopes.map(scope => {
+    const q = named(scope.queriesQuery, queryKeys), r = named(scope.rowsQuery, rowKeys), t = named(scope.titlesQuery, titleKeys)
+    const headerKeys = ['id','recordId','eventType','year','batchSeq','sortKey','reviewOutcome','decidedYear','revision','record_id','enterpriseId','titleCode','usccRaw','source','nameNorm','usccNorm']
+    const header = named(scope.headerQuery, headerKeys)
+    const eventKeys = headerKeys.slice(0,9)
+    const eventBound = get(derived(header, `select ${objectBound({ ...Object.fromEntries(eventKeys.map(k => [k,leaf(quoted(k))])), usccRaw: leaf('coalesce(usccRaw,usccNorm)') })} bytes from admitted`)).bytes!
+    const scopeBound = get(derived(header, `select ${objectBound({ enterpriseId:leaf('enterpriseId'),titleCode:leaf('titleCode'),businessYear:leaf("case when eventType='review' then decidedYear else year end"),declareKind:'8',ruleVersion:String(JSON.stringify(ANNUAL_PROCESS_RULE_VERSION).length) })} bytes from admitted`)).bytes!
+    const evidenceBound = arrayBound(named(evidenceQuery(db,scope.event.id),evidenceKeys),objectBound(Object.fromEntries(evidenceKeys.map(k=>[k,leaf(quoted(k))]))))
+    const titleBound = arrayBound(derived(t, `select a.*,o.record_id recordId,o.version_id versionId,b.platform_key platformKey,coalesce(roster84_uscc(a.usccRaw),'') usccNorm from admitted a left join platform_business_observation o on o.relation_id=a.relationId left join platform_business_record b on b.id=o.record_id`),objectBound({queryId:leaf('queryId'),relationId:leaf('relationId'),titleCode:leaf('titleCode'),platformKey:`${leaf('relationKey')}+${leaf('platformKey')}`,usccNorm:leaf('usccNorm'),recordId:leaf('recordId'),versionId:leaf('versionId')}))
+    const observationBound = arrayBound(derived(r, `select a.id relationId,a.queryId,q.interface,o.record_id recordId,o.version_id versionId from admitted a join platform_query q on q.id=a.queryId left join platform_business_observation o on o.relation_id=a.id`),objectBound({queryId:leaf('queryId'),relationId:leaf('relationId'),interface:leaf('interface'),recordId:leaf('recordId'),versionId:leaf('versionId'),sourceFingerprint:'66'}))
+    const coverageBound = arrayBound(q,objectBound({queryId:leaf('queryId'),interface:leaf('interface'),queriedAt:leaf('queriedAt'),status:leaf('status'),completeness:leaf('completeness'),fullRange:'5'}))
+    const total = Number(get(literalQuery(`select ${objectBound({scope:String(scopeBound),event:String(eventBound),evidence:String(evidenceBound),titleScopeRefs:String(titleBound),observations:String(observationBound),coverage:String(coverageBound)})} bytes`)).bytes)
+    if (!Number.isFinite(total)) unavailable()
+    if (total > comparisonCaps.source) resource()
+    return total
+  })
+  const p = 8192+32+32*fCost.n+headerBytes+qm.bytes+qCost.bytes+rCost.bytes+tCost.bytes+2*mCost.bytes+hCost.bytes+fCost.bytes+dCost.bytes
+  const expandedCharge = queryUpper.total!+sourceUpperBytes.reduce((a,b)=>a+b,0)+(1+16*ids.length)*(p+rCost.n*(qm.bytes+qCost.bytes+headerBytes))+ids.length*rCost.n*(4096+64*(rCost.n+tCost.n+dCost.n+hCost.n))
+  if (!Number.isFinite(expandedCharge)) unavailable()
+  if (expandedCharge > comparisonCaps.charge) resource()
+  // Hydration starts only after closure and all admission charges. One raw scope
+  // cache per request; Groups (and its authoritative second metadata pass) once.
+  const cache = new Map<string, {queries: Queries; rows: Rows; titles: Titles}>()
+  const key = (s: Scope) => JSON.stringify([s.owner,s.titleCode,s.event.record.usccRaw,s.joined.enterprise.nameNorm])
+  for (const s of uniqueScopes) cache.set(key(s),{queries:s.queriesQuery.all(),rows:s.rowsQuery.all(),titles:s.titlesQuery.all()})
+  const relationIds = [...new Set([...cache.values()].flatMap(v=>[...v.rows.map(r=>r.id),...v.titles.map(t=>t.relationId)]))]
+  const metadata = readPlatformBusinessMetadata(db,relationIds)
+  const history = new Map<number,number[]>()
+  for (const row of all<{recordId:number;relationId:number}>(hQuery)) {
+    const list = history.get(row.recordId) ?? []; list.push(row.relationId); history.set(row.recordId,list)
+  }
+  const prepared = scopes.map(scope=>{const v=cache.get(key(scope))!;return prepareObservations(scope,v.rows,v.titles,v.queries,metadata)})
+  const groups = readPlatformBusinessGroups(db,prepared.flatMap(p=>p.observations))
+  const e = schema.recordEvidence, file = schema.storedFile
+  const evidenceRows = db.select({ ...evidenceFields(), eventId: e.recordEventId }).from(e).leftJoin(file,eq(file.relPath,e.sourceFile)).where(inArray(e.recordEventId,ids)).orderBy(asc(e.id)).all()
+  const evidenceByEvent = Map.groupBy(evidenceRows,row=>row.eventId)
+  const entries = prepared.map(p=>finishRead(p,groups.filter(g=>g.observationRefs[0]?.target.eventId===p.event.id),()=> (evidenceByEvent.get(p.event.id) ?? []).map(({eventId: _eventId,...row})=>row)))
+  const actualSourceBytes = entries.map(e=>Buffer.byteLength(JSON.stringify(e.read.sourceRefs),'utf8'))
+  if (actualSourceBytes.some((n,i)=>n>sourceUpperBytes[i]!)) unavailable()
+  return {kind:'present' as const,entries,history,admission:{kind:'annual' as const,uniqueScalarBytes:uniqueBytes,expandedCharge,sourceUpperBytes,actualSourceBytes}}
 }

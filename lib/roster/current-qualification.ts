@@ -1,3 +1,4 @@
+import { readPlatformComparisonProcesses } from '../../server/utils/platform-comparison-input'
 import type { ReceiptRuntimeContext } from '../../server/utils/receipt-runtime-context'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { createHash } from 'node:crypto'
@@ -267,12 +268,15 @@ export function createCurrentQualificationAssessmentReader(db: Database.Database
     const { snapshot: legacy } = readSnapshotBody(enterpriseId, asOf, {}, undefined, undefined, undefined, { title, collect })
     const assessment = legacy.titles.find(item => item.titleCode === title)!
     const { titleCode, group, officialQualification, subject, region, versions, evidence, sourceVersions, completeness, correspondence } = assessment
-    return comparePlatformComparison({ version: COMPARISON_VERSION, legacy, titleCode: title,
+    const queries = readQueryComparisonWitnesses(prepareCurrentReader(db), { enterpriseId, titleCode: title, direction: 'missing_in_miit' })
+    const queryOnly: CandidateComparisonInput = { version: COMPARISON_VERSION, legacy, titleCode: title,
       formal: { assessment: { titleCode, group, officialQualification, subject, region, cycles: assessment.cycles,
-        versions, evidence, sourceVersions, completeness, correspondence }, cycles },
-      queries: readQueryComparisonWitnesses(prepareCurrentReader(db), { enterpriseId, titleCode: title, direction: 'missing_in_miit' }),
-      processes: [],
-    })
+        versions, evidence, sourceVersions, completeness, correspondence }, cycles }, queries, processes: [] }
+    // Dispatch this necessarily invalid join to its original authority. Preserve
+    // earlier guards and error priority; never manufacture a preliminary result.
+    if (cycles.length > 40) return comparePlatformComparison(queryOnly)
+    const processes = readPlatformComparisonProcesses(db, { enterpriseId, titleCode: title, eventIds: cycles.flatMap(cycle => cycle.eventIds), selectedQueryIds: queries.sources.map(query => query.source.queryId) })
+    return comparePlatformComparison({ ...queryOnly, processes })
   })
   return {
     readPlatformComparison(enterpriseId: number, asOf: number, title: CurrentTitle) {

@@ -279,11 +279,27 @@ it.each([
   ['restricted_zero', { conditions: { uscc: U, combination: 'and', whpcyear: '2024' } }, 'unknown', 'cycle_unresolved'],
   ['apply_is_not_single_title_zero', { interface: 'apply_list' }, 'unknown', 'coverage_incomplete'],
   ['recognized_records_no_process', { status: 'success' }, 'records', 'cycle_unresolved'],
-  ['business_records_no_process', { status: 'success', interface: 'business_list' }, 'records', 'coverage_incomplete'],
+  ['business_records_no_process', { status: 'success', interface: 'business_list' }, 'records', 'source_requires_revalidation'],
 ] as const)('reader427 %s', (_name, options, observation, reason) => {
   const f = fixture427()
-  try { query427(f, options); read427(f, observation, 'not_established', reason) }
-  finally { f.sqlite.close() }
+  const spy = _name === 'business_records_no_process' ? vi.spyOn(core, 'comparePlatformComparison') : null
+  try {
+    query427(f, options)
+    const result=read427(f, observation, 'not_established', reason)
+    if(spy) {
+      expect(spy).toHaveBeenCalledTimes(1)
+      const input=spy.mock.calls[0]![0]
+      expect(input.processes).toHaveLength(1)
+      const process=input.processes[0]!
+      expect(process.currentDecisionRefs).toEqual([])
+      expect(process.input.groups.flatMap(g=>g.observationRefs).map(r=>[r.businessRecord.identityState,r.businessRecord.recordId,r.businessRecord.versionId])).toEqual([['not_indexed',null,null]])
+      expect(process.sourceRefs.observations.map(r=>[r.recordId,r.versionId])).toEqual([[null,null]])
+      expect(process.sourceGeneration).toBe(hash(JSON.stringify(process.sourceRefs)))
+      expect(result.inputDigest).toBe(digestInput427(input,result.scope))
+      expect(result.resultDigest).toBe(hash(canonical427([result.inputDigest,result.observation,result.comparison])))
+    }
+  }
+  finally { spy?.mockRestore(); f.sqlite.close() }
 })
 it('reader427 no_queries', () => { const f = fixture427(); try { read427(f, 'not_queried', 'not_established', 'not_queried') } finally { f.sqlite.close() } })
 it.each([
@@ -358,15 +374,27 @@ it('reader427 selector_own_ids_variants_and_all_retry_candidates', () => {
     expect(withVariants.sources[0]!.queryKey).toBe(U.toLowerCase())
   } finally { f.sqlite.close() }
 })
-it('reader427 unchanged_legacy_coverage_and_two_additional_statements', () => {
+it('reader428 query_only_budget_preserves_default_bytes', () => {
   const f = fixture427()
   try {
     query427(f)
+    f.sqlite.pragma('query_only=ON')
+    const changes = f.sqlite.prepare('select total_changes() n').get()
+    const legacyBytes = JSON.stringify(f.reader.read(1, AS_OF).snapshot)
     f.reader.read(1, AS_OF) // warm request-owned handles
     let at = f.statements(); f.reader.read(1, AS_OF); const legacyCost = f.statements() - at
     at = f.statements(); f.reader.readPlatformComparison(1, AS_OF, T); const cost = f.statements() - at
-    expect(cost - legacyCost).toBe(2)
+    // Frozen ABSENT formula: witness2 + header2 per event + scopeProbe1.
+    const eventCount = 1 // this fixture creates exactly one official award
+    const incrementLimit = 2 + 2 * eventCount + 1
+    expect(incrementLimit).toBe(5)
+    expect(incrementLimit).toBeLessThanOrEqual(83)
+    expect(cost - legacyCost).toBeGreaterThanOrEqual(2)
+    expect(cost - legacyCost).toBeLessThanOrEqual(incrementLimit)
     expect(cost).toBeGreaterThan(2)
+    expect(JSON.stringify(f.reader.read(1, AS_OF).snapshot)).toBe(legacyBytes)
+    expect(f.sqlite.prepare('select total_changes() n').get()).toEqual(changes)
+    expect(f.sqlite.pragma('query_only', { simple: true })).toBe(1)
   } finally { f.sqlite.close() }
 })
 it('reader427 caller_transaction_and_busy_iterator', () => {
