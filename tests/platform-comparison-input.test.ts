@@ -948,3 +948,16 @@ it.skipIf(process.env.ISSUE441_TRACE_EXPORT!=='1')('closure441_remaining_trace_e
 
 // Independent proposal literal: generated from declared seed evidence, never actual reader output.
 const coverageSource441Proposal = {"sourceBytes":"{\"scope\":{\"enterpriseId\":1,\"titleCode\":\"little_giant\",\"businessYear\":2024,\"declareKind\":\"apply\",\"ruleVersion\":\"annual-process-250-v1\"},\"event\":{\"id\":11,\"recordId\":1,\"eventType\":\"award\",\"year\":2024,\"batchSeq\":1,\"sortKey\":0,\"reviewOutcome\":null,\"decidedYear\":null,\"revision\":1,\"usccRaw\":\"91330211255994457P\"},\"evidence\":[{\"id\":44111,\"sourceFile\":\"synthetic/441-current-publication.pdf\",\"attachment\":null,\"listNo\":1,\"page\":1,\"fileId\":null,\"sha256\":null,\"removedAt\":null}],\"titleScopeRefs\":[{\"queryId\":101,\"relationId\":201,\"titleCode\":\"little_giant\",\"platformKey\":\"甲·2024\",\"usccNorm\":\"91330211255994457P\",\"recordId\":1,\"versionId\":1},{\"queryId\":102,\"relationId\":202,\"titleCode\":\"specialized_sme\",\"platformKey\":\"业务／乙-2024\",\"usccNorm\":\"91330211255994457P\",\"recordId\":2,\"versionId\":2},{\"queryId\":103,\"relationId\":203,\"titleCode\":\"specialized_sme\",\"platformKey\":\"业务／乙-2024\",\"usccNorm\":\"91330211255994457P\",\"recordId\":2,\"versionId\":3}],\"observations\":[{\"queryId\":101,\"relationId\":201,\"interface\":\"business_list\",\"recordId\":1,\"versionId\":1,\"sourceFingerprint\":\"1a60e3b4bcda5f15d2573013ae33484f1c384c85f72b7bf242821ac85227b072\"}],\"coverage\":[{\"queryId\":101,\"interface\":\"business_list\",\"queriedAt\":\"2026-05-31T00:00:00Z\",\"status\":\"success\",\"completeness\":\"complete\",\"fullRange\":true}]}","sourceGeneration":"bb9ebcc7ec3e1e06650eb924e442c7b2fe8baa729f3494de8f3d3242912eb354"}
+
+// PR442 R1: native multi-level scope cannot borrow a single-title metadata label.
+for (const rdjb of ['2,3', '2,1', '2,9', '9']) it(`closure441_native_levels_conflict_${rdjb}`, () => {
+  const seed = structuredClone(literals441[0]!.input)
+  seed.platformQuery.find(query => query.id === 102)!.rdjb = rdjb
+  const f = fixture441(seed)
+  try { readonly441(f, () => {
+    expect(f.request.selectedQueryIds).toEqual([101])
+    expect(f.sqlite.prepare('select title_code title, rdjb from platform_query where id=102').get())
+      .toEqual({ title: 'specialized_sme', rdjb })
+    expect(() => f.batch()).toThrowError(new Error('platform_comparison_scope_unavailable'))
+  }) } finally { f.sqlite.close() }
+})

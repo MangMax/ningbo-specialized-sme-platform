@@ -239,7 +239,7 @@ function closureQueryTitle(query: ClosureQuery): string | null {
   const levels = query.rdjb.split(',').filter(Boolean)
   const fallback = levels.length === 1 ? closureTitles[levels[0]!] : undefined
   const title = query.title_code ?? fallback
-  if (!title || !Object.values(closureTitles).includes(title) || (query.title_code && fallback && query.title_code !== fallback)) return null
+  if (!title || !Object.values(closureTitles).includes(title) || levels.some(level => closureTitles[level] !== title)) return null
   if (query.metadata !== null) {
     const metadata: unknown = JSON.parse(query.metadata)
     if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return null
