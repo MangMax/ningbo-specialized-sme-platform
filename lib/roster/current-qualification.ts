@@ -186,7 +186,7 @@ export function createCurrentQualificationAssessmentReader(db: Database.Database
     for (const { scopeTitle, ...ref } of refs) byTitle.get(scopeTitle)!.push(ref)
     return byTitle
   }
-  const readSnapshotBody = (enterpriseId: number, asOf: number, options: QualificationAssessmentReadOptions, filterTitle?: CurrentTitle, presentationTitle?: CurrentTitle, workbookTitle?: CurrentTitle, comparison?: { title: CurrentTitle; collect: CurrentCycleObservation }) => {
+  const readSnapshotBody = (enterpriseId: number, asOf: number, options: QualificationAssessmentReadOptions, filterTitle?: CurrentTitle, presentationTitle?: CurrentTitle, workbookTitle?: CurrentTitle, comparisons?: ReadonlyMap<CurrentTitle, CurrentCycleObservation>) => {
     // No filterTitle means the existing default reader follows its original SQL.
     const references = filterTitle == null ? undefined : readHydrationReferences(enterpriseId)
     let publishedPresentation: PublishedPresentation | undefined
@@ -214,7 +214,7 @@ export function createCurrentQualificationAssessmentReader(db: Database.Database
         workbookPublished = new Map(input.facts.map(fact => [fact.evidenceId, fact]))
       }
     }
-    const rows = CURRENT_TITLES.map(title => evaluate(enterpriseId, title, new Date(asOf).getUTCFullYear(), asOf, undefined, title === filterTitle, true, options, title === filterTitle, references?.get(title), filterTitle == null ? undefined : preparedCorrespondences, title === workbookTitle ? observePublishedForWorkbook : title === presentationTitle ? observePublishedForCurrent : undefined, title === comparison?.title ? comparison.collect : undefined).row)
+    const rows = CURRENT_TITLES.map(title => evaluate(enterpriseId, title, new Date(asOf).getUTCFullYear(), asOf, undefined, title === filterTitle, true, options, title === filterTitle, references?.get(title), filterTitle == null ? undefined : preparedCorrespondences, title === workbookTitle ? observePublishedForWorkbook : title === presentationTitle ? observePublishedForCurrent : undefined, comparisons?.get(title)).row)
     if (presentationTitle != null && publishedPresentation === undefined) {
       if (presentationScope === undefined) throw new Error('Current published-name scope was not evaluated')
       try {
@@ -235,7 +235,7 @@ export function createCurrentQualificationAssessmentReader(db: Database.Database
   }
   // Preserve the original default wrapper, including caller-owned SAVEPOINT semantics.
   const readSnapshot = db.transaction(readSnapshotBody)
-  const readComparison = db.transaction((enterpriseId: number, asOf: number, title: CurrentTitle) => {
+  const comparisonCollector = () => {
     let cycles: CandidateComparisonInput['formal']['cycles'] = []
     const collect: CurrentCycleObservation = (judgments, formal) => {
       const unassignedGrantOffsets = new Map<number, number>()
@@ -265,7 +265,10 @@ export function createCurrentQualificationAssessmentReader(db: Database.Database
         }
       })
     }
-    const { snapshot: legacy } = readSnapshotBody(enterpriseId, asOf, {}, undefined, undefined, undefined, { title, collect })
+    return { collect, cycles: () => cycles }
+  }
+  // Only this reader's owned full snapshot and observed cycles enter this seam.
+  const compareOwnedSnapshot = (enterpriseId: number, title: CurrentTitle, legacy: CurrentQualificationSnapshot, cycles: CandidateComparisonInput['formal']['cycles']) => {
     const assessment = legacy.titles.find(item => item.titleCode === title)!
     const { titleCode, group, officialQualification, subject, region, versions, evidence, sourceVersions, completeness, correspondence } = assessment
     const queries = readQueryComparisonWitnesses(prepareCurrentReader(db), { enterpriseId, titleCode: title, direction: 'missing_in_miit' })
@@ -277,8 +280,34 @@ export function createCurrentQualificationAssessmentReader(db: Database.Database
     if (cycles.length > 40) return comparePlatformComparison(queryOnly)
     const processes = readPlatformComparisonProcesses(db, { enterpriseId, titleCode: title, eventIds: cycles.flatMap(cycle => cycle.eventIds), selectedQueryIds: queries.sources.map(query => query.source.queryId) })
     return comparePlatformComparison({ ...queryOnly, processes })
+  }
+  const readComparison = db.transaction((enterpriseId: number, asOf: number, title: CurrentTitle) => {
+    const collector = comparisonCollector()
+    const { snapshot: legacy } = readSnapshotBody(enterpriseId, asOf, {}, undefined, undefined, undefined, new Map([[title, collector.collect]]))
+    return compareOwnedSnapshot(enterpriseId, title, legacy, collector.cycles())
+  })
+  const readComparisons = db.transaction((enterpriseId: number, asOf: number, titles: readonly CurrentTitle[]) => {
+    const collectors = new Map(titles.map(title => [title, comparisonCollector()]))
+    const observers = new Map([...collectors].map(([title, collector]) => [title, collector.collect]))
+    const { snapshot } = readSnapshotBody(enterpriseId, asOf, {}, undefined, undefined, undefined, observers)
+    const comparisons = titles.map(title => compareOwnedSnapshot(enterpriseId, title, snapshot, collectors.get(title)!.cycles()))
+    return { snapshot, comparisons }
   })
   return {
+    readPlatformComparisons(enterpriseId: number, asOf: number, titles: readonly CurrentTitle[]) {
+      // Validate data descriptors before reading values: no caller iterator or
+      // array-index accessor executes. The normalized array is reader-owned.
+      if (!Array.isArray(titles)) throw new Error('invalid_comparison_titles')
+      const length = Object.getOwnPropertyDescriptor(titles, 'length')
+      if (!length || !('value' in length) || !Number.isSafeInteger(length.value) || length.value < 1) throw new Error('invalid_comparison_titles')
+      const selected = new Set<CurrentTitle>()
+      for (let index = 0; index < length.value; index++) {
+        const item = Object.getOwnPropertyDescriptor(titles, String(index))
+        if (!item || !('value' in item) || !CURRENT_TITLES.includes(item.value)) throw new Error('invalid_comparison_titles')
+        selected.add(item.value)
+      }
+      return readComparisons(enterpriseId, asOf, CURRENT_TITLES.filter(title => selected.has(title)))
+    },
     readPlatformComparison(enterpriseId: number, asOf: number, title: CurrentTitle) {
       // One snapshot; never open the default wrapper inside this transaction.
       // SQLite rejects busy caller iterators. No fallback, commit or retry.
