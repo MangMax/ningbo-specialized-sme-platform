@@ -22,6 +22,10 @@ export interface OwnedIngress {
   body: ReadableStream<Uint8Array> | null
   responseFinished?: Promise<{ finished: true }>
   closed: Promise<{ closed: true }>
+  /** Actual peer close; registration must report an already-closed peer synchronously.
+   * The returned detach must synchronously remove the observer and must not throw.
+   * This is an actual listener, not a non-removable Promise.then wrapper. */
+  subscribeClosed?(listener: () => void): () => void
   terminate(reason: string): void | Promise<void>
 }
 export interface IngressClock {
@@ -60,8 +64,8 @@ export function createSessionInitializationTransport<E, O extends SessionOwner>(
   const sessions = new Map<string, Entry>()
   const jobs = new Set<Job>()
   let ordinary = 0, control = 0, streams = 0
-  type Life = { lease: AdmissionLease; created: number; last: number; timer?: unknown;
-    closing: boolean; resources: Promise<boolean>; resourceDone: (ok: boolean) => void }
+  type Life = { lease: AdmissionLease; created: number; last: number; published: boolean; timer?: unknown;
+    closing: boolean; observerFailed?: boolean; detachInitialization?: () => void; resources: Promise<boolean>; resourceDone: (ok: boolean) => void }
   const lives = new Map<AdmissionLease, Life>()
   const lifeClock = deps.lifecycleClock ?? {
     now: () => performance.now(),
@@ -72,7 +76,9 @@ export function createSessionInitializationTransport<E, O extends SessionOwner>(
     },
     clearTimeout(timer: unknown) { clearTimeout(timer as ReturnType<typeof setTimeout>) },
   }
-  const deadline = (life: Life) => Math.min(life.created + 1800000, life.last + 300000)
+  const deadline = (life: Life) => !life.published
+    ? life.created + 5000
+    : Math.min(life.created + 1800000, life.last + 300000)
   function disarm(life: Life) {
     if (life.timer !== undefined) lifeClock.clearTimeout(life.timer)
     life.timer = undefined
@@ -80,6 +86,7 @@ export function createSessionInitializationTransport<E, O extends SessionOwner>(
   function retire(life: Life) {
     if (life.closing) return
     life.closing = true; disarm(life)
+    life.detachInitialization?.()
     // close synchronously revokes before any public resource cleanup awaits.
     void life.lease.close().then(result => { if (result.complete) lives.delete(life.lease) })
   }
@@ -95,7 +102,8 @@ export function createSessionInitializationTransport<E, O extends SessionOwner>(
     return { streams, timers: [...lives.values()].filter(life => life.timer !== undefined).length, retained: lives.size }
   }
   const idKey = (id: string | number) => typeof id + ':' + String(id)
-  const validId = (id: unknown): id is string | number => (typeof id === 'string' && id.length > 0) || (typeof id === 'number' && Number.isSafeInteger(id) && id !== 0)
+  const utf8 = new TextEncoder()
+  const validId = (id: unknown): id is string | number => (typeof id === 'string' && id.length > 0 && utf8.encode(id).byteLength <= 128) || (typeof id === 'number' && Number.isSafeInteger(id) && id !== 0)
   const verified = (receipt: unknown): boolean => !!receipt && typeof receipt === 'object' && Reflect.ownKeys(receipt).length === 1 && Object.getOwnPropertyDescriptor(receipt, 'finished')?.value === true
   function requestSnapshot() {
     let distinctIds = 0
@@ -258,6 +266,8 @@ export function createSessionInitializationTransport<E, O extends SessionOwner>(
       const isControl = message.method === 'notifications/initialized' || message.method === 'notifications/cancelled'
       if (isControl) {
         if ('id' in message || (message.method === 'notifications/cancelled' && !validId(message.params?.requestId))) return refusal(400, 'invalid_control')
+        if (message.method === 'notifications/cancelled' && message.params?.reason !== undefined
+          && (typeof message.params.reason !== 'string' || utf8.encode(message.params.reason).byteLength > 1024)) return refusal(400, 'invalid_control')
         const ticket = charge(existing, 'control', request.responseFinished, event)
         if (!ticket) return refusal(503, 'control_capacity')
         try {
@@ -297,14 +307,34 @@ export function createSessionInitializationTransport<E, O extends SessionOwner>(
       catch { return refusal(500, 'provider_failed') } // no fabricated handler receipt
     }
     if (message?.jsonrpc !== '2.0' || message.method !== 'initialize' || !('id' in message)) return refusal(501, 'rpc_not_implemented')
+    if (message.id !== 0 && !validId(message.id)) return refusal(400, 'invalid_request_id')
+    if (!request.subscribeClosed) return refusal(503, 'disconnect_observer_required')
     const reserved = admission.reserve()
     if (!reserved.ok) return refusal(503, reserved.reason)
     const lease = reserved.lease
     let resourceDone!: (ok: boolean) => void
     const resources = new Promise<boolean>(resolve => { resourceDone = resolve })
     const created = lifeClock.now()
-    const life: Life = { lease, created, last: created, closing: false, resources, resourceDone }
+    const life: Life = { lease, created, last: created, published: false, closing: false, resources, resourceDone }
     lives.set(lease, life); arm(life)
+    let initializing = true
+    let detach = () => {}
+    const finishInitialization = () => {
+      initializing = false
+      life.detachInitialization = undefined
+      const remove = detach; detach = () => {}
+      try { remove() } catch { life.observerFailed = true }
+    }
+    life.detachInitialization = finishInitialization
+    try {
+      detach = request.subscribeClosed(() => { if (initializing) retire(life) })
+      if (typeof detach !== 'function') throw new Error('invalid_detach')
+      if (!initializing) finishInitialization() // synchronous already-closed notification
+    } catch {
+      life.observerFailed = true
+      retire(life)
+      return refusal(503, 'disconnect_observer_failed')
+    }
     let published: Entry | undefined
     let response: Response | undefined
     let initializationFailed = false
@@ -363,7 +393,7 @@ export function createSessionInitializationTransport<E, O extends SessionOwner>(
       // A pre-populated/unsupported connection has unproven ownership. Quarantine
       // without invoking a close that could delete somebody else's native session.
       if (unsafeConnection) { life.resourceDone(false); throw new Error('cleanup_ownership_unknown') }
-      let failed = false
+      let failed = life.observerFailed === true
       if (captured?.closeStandaloneSSEStream) {
         try { captured.closeStandaloneSSEStream() } catch { failed = true }
       }
@@ -389,10 +419,12 @@ export function createSessionInitializationTransport<E, O extends SessionOwner>(
       if (sessionId && sessions.get(sessionId)?.lease === lease) sessions.delete(sessionId)
     })
     if (!initialized.ok) {
+      finishInitialization()
       disarm(life); if (lease.state() === 'closed') lives.delete(lease)
       return refusal(503, initialized.reason === 'revoked' ? 'initialization_revoked' : 'initialization_failed')
     }
     if (initializationFailed || !response || !initialized.value.sessionId) {
+      finishInitialization()
       retire(life)
       const result = await lease.close()
       return refusal(result.complete ? 500 : 503, result.complete ? 'initialization_failed' : 'cleanup_incomplete')
@@ -400,13 +432,19 @@ export function createSessionInitializationTransport<E, O extends SessionOwner>(
     let current: SessionIdentity
     try { current = await deps.authenticate(event) } catch { current = { kind: 'invalid' } }
     if (current.kind === 'invalid' || !sameIdentity(identity, current)) {
+      finishInitialization()
       retire(life); await lease.close()
       return refusal(401, 'identity_changed')
     }
     // No await between ready check and publication; shutdown cannot interleave here.
-    if (lease.state() !== 'ready') return refusal(503, 'initialization_revoked')
+    if (deadline(life) <= lifeClock.now()) retire(life)
+    if (life.closing || lease.state() !== 'ready') { finishInitialization(); return refusal(503, 'initialization_revoked') }
+    finishInitialization()
+    if (life.observerFailed) { retire(life); return refusal(503, 'disconnect_observer_failed') }
     published = { lease, identity, owner: initialized.value.owner, connection: captured, ordinary: 0, control: 0, get: 0, life, ids: new Map([[idKey(message.id), { active: false, handlerDone: true, cancelled: false }]]), jobs: new Set() }
     sessions.set(initialized.value.sessionId, published)
+    life.published = true
+    finishInitialization()
     touch(life)
     return response
   }
@@ -419,7 +457,7 @@ export function createSessionInitializationTransport<E, O extends SessionOwner>(
  * A handler returning is not completion. This helper does not parse HTTP.
  */
 export function createSocketOwnership<S extends object>() {
-  type Owner = { request: boolean; response: boolean; terminating: boolean }
+  type Owner = { request: boolean; response: boolean; terminating: boolean; observer?: () => void }
   type State = { active: Set<Owner>; pending: Set<Owner>; destroy: () => void; scheduled: boolean;
     destroyRequested: boolean; closed: boolean; receipt: Promise<{ closed: true }>; acknowledge: () => void }
   const sockets = new WeakMap<S, State>()
@@ -450,11 +488,17 @@ export function createSocketOwnership<S extends object>() {
       const owner: Owner = { request: false, response: false, terminating: false }
       current.active.add(owner)
       function complete() {
-        if (owner.request && owner.response) current.active.delete(owner)
+        if (owner.request && owner.response && !owner.observer) current.active.delete(owner)
         schedule(current)
       }
       return Object.freeze({
         closed: current.receipt,
+        subscribeClosed(listener: () => void) {
+          if (current.closed) { listener(); return () => {} }
+          if (!current.active.has(owner) || owner.observer) throw new Error('inactive_or_observed_owner')
+          owner.observer = listener
+          return () => { if (owner.observer === listener) owner.observer = undefined; complete() }
+        },
         requestFinished() { owner.request = true; complete() },
         responseFinished() { owner.response = true; complete() },
         terminate() {
@@ -467,8 +511,12 @@ export function createSocketOwnership<S extends object>() {
     closed(socket: S) {
       const state = sockets.get(socket)
       if (!state || state.closed) return
-      state.closed = true; state.active.clear(); state.pending.clear(); state.acknowledge()
+      state.closed = true
+      const observers = [...state.active].map(owner => { const observer = owner.observer; owner.observer = undefined; return observer })
+      state.active.clear(); state.pending.clear(); state.acknowledge()
+      for (const observer of observers) { try { observer?.() } catch { /* one caller cannot prevent other close notifications */ } }
     },
+    observerCount(socket: S) { return [...(sockets.get(socket)?.active ?? [])].filter(owner => owner.observer).length },
     snapshot(socket: S) {
       const state = sockets.get(socket)
       return { active: state?.active.size ?? 0, terminating: state?.pending.size ?? 0,

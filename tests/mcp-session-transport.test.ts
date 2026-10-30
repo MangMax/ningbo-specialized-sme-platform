@@ -171,6 +171,8 @@ const rpcKey=(sid,id)=>sid+':'+typeof id+':'+String(id);
 export function rpcStats(){return {events:rpcEvents.slice(),...adapter.requestSnapshot()}}
 export function rpcRelease(label){const release=releases.get(label);if(release){releases.delete(label);release()}return true}
 
+let initReplyHeld=false;const initReplyReleases=[],initReplySids=[];
+export function initControl(op){if(op==='hold'){initReplyHeld=true;initReplySids.length=0}if(op==='release'){initReplyHeld=false;for(const resolve of initReplyReleases.splice(0))resolve()}return {sids:initReplySids.slice()}}
 const foreignOwned = [];
 async function foreignSnapshot() {
   return Promise.all(foreignOwned.map(async entry => ({key:entry.key,value:await useStorage('mcp').getItem(entry.key)})));
@@ -188,7 +190,7 @@ export async function releaseForeign() {
   return {before,deletedKeys,remaining};
 }
 const adapter = createSessionInitializationTransport({
-  ${['get','ttl'].includes(phase) ? 'lifecycleClock,' : ''}
+  ${['get','ttl','init'].includes(phase) ? 'lifecycleClock,' : ''}
   ${rpcMode ? `handlerFinished:(event,request)=>{
     if(request.method!=='tools/call'&&request.method!=='tools/list')throw new Error('unobserved handler');
     const key=rpcKey(request.sessionId,request.id);
@@ -258,7 +260,7 @@ const adapter = createSessionInitializationTransport({
     owner.close = async () => { closes++;rpcEvents.push({op:'owner-close',sid:owner.server.transport?.sessionId});await close(); };
     return owner;
   },
-  provider: async (factory,event) => {const trace=traces.get(event);if(trace)trace.providerCalled=true;return (${faultMode ? `async (factory, event) => {
+  provider: async (factory,event) => {const trace=traces.get(event);if(trace)trace.providerCalled=true;const response=await (${faultMode ? `async (factory, event) => {
     const response = await nativeProvider(factory,event);
     if (event.web.request.method === 'POST' && !event.web.request.headers.has('mcp-session-id')) {
       const sid = response.headers.get('mcp-session-id');
@@ -283,7 +285,7 @@ const adapter = createSessionInitializationTransport({
       throw new Error('injected post-allocation failure');
     }
     return response;
-  }` : 'nativeProvider'})(factory,event);},
+  }` : 'nativeProvider'})(factory,event);if(initReplyHeld&&!event.web.request.headers.has('mcp-session-id')&&response.ok){initReplySids.push(response.headers.get('mcp-session-id'));await new Promise(resolve=>initReplyReleases.push(resolve))}return response;},
   adopted: event => event.context._mcpServer,
   cleanupSession: async sid => {
     if (!/^[A-Za-z0-9_-]{1,256}$/.test(sid)) throw new Error('noncanonical sid');
@@ -323,12 +325,14 @@ export default eventHandler(async event => {
   ingressEvidence.push(record);
   const trace={trace:++traceSerial,sid:getHeader(event,'mcp-session-id')??null,method:req.method,providerCalled:false,repoRefusal:false};traces.set(event,trace);
   const ownership=ownershipFor(req);
-  const closed=ownership.closed.then(receipt=>{record.serverClosed=true;return receipt});
+
   const rawHeaders=[];for(let i=0;i<req.rawHeaders.length;i+=2)rawHeaders.push([req.rawHeaders[i],req.rawHeaders[i+1]]);
   const headers = new Headers();for(const [k,v] of rawHeaders)headers.append(k,v);
   const responseFinished=new Promise(resolve=>{for(const op of ['finish','close'])event.node.res.once(op,()=>{traceEvent(trace,'response-'+op);resolve({finished:true});traceSettled(trace,'response-'+op+'-reconciled')})});
   const response = await adapter.handle(event,{responseFinished,method:req.method,url:getRequestURL(event).href,headers,rawHeaders,
-    body:req.method==='POST'?Readable.toWeb(req):null,closed,
+    body:req.method==='POST'?Readable.toWeb(req):null,
+    get closed(){return ownership.closed.then(receipt=>{record.serverClosed=true;return receipt})},
+    subscribeClosed:listener=>ownership.subscribeClosed(()=>{record.serverClosed=true;listener()}),
     terminate() {record.terminated++;record.before=adapter.bodySnapshot();ownership.terminate();},
   });
   record.after=adapter.bodySnapshot();traceEvent(trace,'dispatch-return');
@@ -336,7 +340,7 @@ export default eventHandler(async event => {
   const res=event.node.res;
   if((record.terminated===1 || trace.repoRefusal || (!trace.providerCalled&&response.status>=400&&req.method!=='POST')) && !socket.destroyed && !res.destroyed) {
     const state=()=>({socketNull:res.socket===null,writableEnded:res.writableEnded,writableFinished:res.writableFinished});
-    const allowed={400:['invalid_body','invalid_framing','invalid_request_id','invalid_control','invalid_rpc'],401:['invalid_identity'],404:['session_not_found'],405:['stream_not_supported','method_not_supported'],408:['body_timeout'],409:['duplicate_request_id','session_closing','stream_already_active'],413:['body_too_large'],501:['handler_receipt_unavailable'],503:['request_capacity','control_capacity','request_id_capacity','pending_capacity','session_capacity','stream_capacity']};
+    const allowed={400:['invalid_body','invalid_framing','invalid_request_id','invalid_control','invalid_rpc'],401:['invalid_identity'],404:['session_not_found'],405:['stream_not_supported','method_not_supported'],408:['body_timeout'],409:['duplicate_request_id','session_closing','stream_already_active'],413:['body_too_large'],501:['handler_receipt_unavailable'],503:['request_capacity','control_capacity','request_id_capacity','pending_capacity','session_capacity','stream_capacity','initialization_revoked','disconnect_observer_required','disconnect_observer_failed']};
     if(!allowed[response.status] || response.bodyUsed || res.writableEnded) throw new Error('unsafe queued error response');
     const responseHeaders=[...response.headers];
     if(responseHeaders.length!==1 || responseHeaders[0][0]!=='content-type' || responseHeaders[0][1]!=='application/json') throw new Error('unexpected queued error headers');
@@ -370,7 +374,7 @@ export default eventHandler(async event => {
 import { toNodeListener } from 'h3';
 import { useNitroApp, useStorage } from 'nitropack/runtime';
 import { owners, hold, stats, release } from './state.mjs';
-${adapterMode ? "import { adapterStats, adapterShutdown, releaseForeign, ingressStats, rpcStats, rpcRelease, lifecycleStats, lifecycleAdvance, lifecycleShutdown, standaloneClose } from './adapter.mjs'; export { adapterStats, releaseForeign, ingressStats, rpcStats, rpcRelease, lifecycleStats, lifecycleAdvance, lifecycleShutdown, standaloneClose };" : ''}
+${adapterMode ? "import { adapterStats, adapterShutdown, releaseForeign, ingressStats, rpcStats, rpcRelease, lifecycleStats, lifecycleAdvance, lifecycleShutdown, standaloneClose, initControl } from './adapter.mjs'; export { adapterStats, releaseForeign, ingressStats, rpcStats, rpcRelease, lifecycleStats, lifecycleAdvance, lifecycleShutdown, standaloneClose, initControl };" : ''}
 ${adapterMode ? "export { registerRequest, ownershipStats } from './ownership.mjs';" : ''}
 export const listener = toNodeListener(useNitroApp().h3App);
 export { hold, stats, release };
@@ -386,7 +390,7 @@ export async function dispose() {
 `)
   await writeFile(join(directory, 'bootstrap.mjs'), `
 import { createServer } from 'node:http';
-import { listener, hold, stats, release, dispose${adapterMode ? ', adapterStats, releaseForeign, ingressStats, registerRequest, ownershipStats, rpcStats, rpcRelease, lifecycleStats, lifecycleAdvance, lifecycleShutdown, standaloneClose' : ''} } from './output/server/index.mjs';
+import { listener, hold, stats, release, dispose${adapterMode ? ', adapterStats, releaseForeign, ingressStats, registerRequest, ownershipStats, rpcStats, rpcRelease, lifecycleStats, lifecycleAdvance, lifecycleShutdown, standaloneClose, initControl' : ''} } from './output/server/index.mjs';
 const holds=new Map();
 const server = createServer((req,res)=>{
   ${adapterMode ? "if(!registerRequest(req,res))return;" : ''}
@@ -400,7 +404,7 @@ const server = createServer((req,res)=>{
 server.listen(0, '127.0.0.1', () => process.send({ready:true,port:server.address().port}));
 process.on('message', async ({id,op}) => {
   // No unhandledRejection handler and no global timer patch.
-  ${adapterMode ? "if(op==='lifecycleStats')process.send({id,value:lifecycleStats()});if(op==='lifecycleShutdown')process.send({id,value:lifecycleShutdown()});if(op.startsWith('advance:'))process.send({id,value:await lifecycleAdvance(Number(op.slice(8)))});if(op.startsWith('standalone:'))process.send({id,value:standaloneClose(op.slice(11))});if(op==='rpcStats')process.send({id,value:rpcStats()});if(op.startsWith('rpc-release:'))process.send({id,value:rpcRelease(op.slice(12))});" : ''}
+  ${adapterMode ? "if(op.startsWith('init:'))process.send({id,value:initControl(op.slice(5))});if(op==='lifecycleStats')process.send({id,value:lifecycleStats()});if(op==='lifecycleShutdown')process.send({id,value:lifecycleShutdown()});if(op.startsWith('advance:'))process.send({id,value:await lifecycleAdvance(Number(op.slice(8)))});if(op.startsWith('standalone:'))process.send({id,value:standaloneClose(op.slice(11))});if(op==='rpcStats')process.send({id,value:rpcStats()});if(op.startsWith('rpc-release:'))process.send({id,value:rpcRelease(op.slice(12))});" : ''}
   if (op.startsWith('finish-')) {holds.get(op.slice(7))?.();process.send({id,value:true});}
   ${adapterMode ? "if(op==='ownershipStats')process.send({id,value:ownershipStats()});" : ''}
   if (op === 'hold') { hold(); process.send({id,value:true}); }
@@ -733,6 +737,12 @@ describe('A_actual_session_admission', () => {
 
 import { createSessionInitializationTransport as createActualSessionInitializationTransport, type InitializationDependencies, type SessionOwner, type OwnedIngress } from '../server/utils/mcp-session-transport'
 
+function controlledPeer() {
+  const receipt=admissionDeferred<{closed:true}>(),listeners=new Set<()=>void>();let ended=false
+  return {closed:receipt.promise,subscribeClosed(listener:()=>void){if(ended){listener();return ()=>{}}listeners.add(listener);return ()=>{listeners.delete(listener)}},
+    close(){if(ended)return;ended=true;receipt.resolve({closed:true});for(const listener of [...listeners])listener();listeners.clear()},observerCount:()=>listeners.size}
+}
+
 // Controlled pure-test input adapter. Never used by the real Nitro fixture.
 function createSessionInitializationTransport<E, O extends SessionOwner>(deps: Omit<InitializationDependencies<E, O>, 'replay'>) {
   const adapter = createActualSessionInitializationTransport({ ...deps, replay: async (event, _request, run) => run(event) })
@@ -742,16 +752,16 @@ function createSessionInitializationTransport<E, O extends SessionOwner>(deps: O
     if (bytes) headers.set('content-length', String(bytes.length))
     const input: OwnedIngress = { method: request.method, url: request.url, headers, rawHeaders: [...headers],
       body: bytes ? new ReadableStream({ start(c) { c.enqueue(bytes); c.close() } }) : null,
-      closed: Promise.resolve({ closed: true }), responseFinished: Promise.resolve({finished:true}), terminate() {},
+      ...controlledPeer(), responseFinished: Promise.resolve({finished:true}), terminate() {},
     }
     return adapter.handle(event, input)
   } }
 }
 
-describe.skipIf(!['adapter','body','shared','rpc','quota','get','ttl','restart'].includes(phase))('T_actual_transport_initialization', () => {
+describe.skipIf(!['adapter','body','shared','rpc','quota','get','ttl','restart','init'].includes(phase))('T_actual_transport_initialization', () => {
   const evidence: Record<string, any> = { mode: 'real-adapter', clients: [] }
   beforeAll(async () => {
-    directory = await prepareFixture(true,false,['rpc','quota','get','ttl','restart'].includes(phase))
+    directory = await prepareFixture(true,false,['rpc','quota','get','ttl','restart','init'].includes(phase))
     child = fork(join(directory, 'bootstrap.mjs'), [], { cwd: directory, stdio: ['ignore', 'inherit', 'inherit', 'ipc'], execArgv: ['--unhandled-rejections=strict'] })
     endpoint = await new Promise<string>((resolveReady, reject) => {
       const timer = setTimeout(() => reject(new Error('INFRA: fixture startup deadline')), 15000)
@@ -1117,6 +1127,39 @@ describe.skipIf(!['adapter','body','shared','rpc','quota','get','ttl','restart']
   },75000)
 
 
+  it.skipIf(phase!=='init')('R1_real_init_disconnect_deadline_fields_and_late_cleanup',async()=>{
+    expect(controlSucceeded).toBe(true)
+    const audit:any={http:[],errors:[],attempts:[]};evidence.r1=audit
+    const url=endpoint.replace('/mcp','/adapter'),parsed=new URL(url)
+    for(const mode of ['disconnect','deadline']){
+      await command('init:hold');const record:any={mode,wire:'',closed:false};audit.attempts.push(record)
+      const socket=connectSocket(Number(parsed.port),'127.0.0.1');socket.setEncoding('utf8');socket.on('data',chunk=>{record.wire+=chunk});socket.on('error',error=>{record.error=String(error)});socket.on('close',()=>{record.closed=true})
+      try{
+        await new Promise<void>((resolve,reject)=>{socket.once('connect',resolve);socket.once('error',reject)})
+        const body=JSON.stringify({jsonrpc:'2.0',id:0,method:'initialize',params:{protocolVersion:'2025-03-26',capabilities:{},clientInfo:{name:'r1',version:'1'}}})
+        socket.write('POST /adapter HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer fixture-A\r\nContent-Type: application/json\r\nAccept: application/json, text/event-stream\r\nContent-Length: '+Buffer.byteLength(body)+'\r\n\r\n'+body)
+        await expect.poll(async()=>(await command('init:stats')).sids.length).toBe(1);record.sid=(await command('init:stats')).sids[0];expect(typeof record.sid).toBe('string');expect(record.sid.length).toBeGreaterThan(0)
+        if(mode==='disconnect'){record.intentionalPeerAbort=true;socket.destroy();await expect.poll(()=>record.closed).toBe(true)}
+        else{await command('advance:4999');expect((await command('adapterStats')).pending).toBe(1);await command('advance:1')}
+        await expect.poll(async()=>(await command('adapterStats')).closing).toBe(1)
+        await command('init:release');await expect.poll(async()=>(await command('adapterStats')).total).toBe(0)
+        record.stats=await command('rpcStats');expect(record.stats.events.filter((x:any)=>x.op==='storage-verified'&&x.sid===record.sid&&x.receipt.empty)).toHaveLength(1);expect(record.stats.events.filter((x:any)=>x.op==='transport-onclose-event'&&x.sid===record.sid)).toHaveLength(1)
+        if(mode==='deadline'){await expect.poll(()=>record.wire.includes('503')).toBe(true);expect(record.wire).toContain('initialization_revoked');socket.end();await expect.poll(()=>record.closed).toBe(true)}
+      }finally{await command('init:release');if(!record.closed){record.emergencyDestroy=true;socket.destroy()}}
+      expect(record.emergencyDestroy).toBeUndefined()
+    }
+    const made=await makeLifecycleClient('r1-fields',audit);clients.push({close:()=>made.client.close(),transport:made.transport})
+    const send=async(frame:any)=>{const response=await fetch(url,{method:'POST',headers:{authorization:'Bearer fixture-A','mcp-session-id':made.sid,'content-type':'application/json',accept:'application/json, text/event-stream'},body:JSON.stringify(frame)});const row={status:response.status,body:await response.text()};audit.http.push(row);return row}
+    const id='😀'.repeat(32)
+    const prior=await command('rpcStats');expect((await send({jsonrpc:'2.0',id:id+'a',method:'tools/call',params:{name:'probe',arguments:{mode:'immediate',label:'rejected'}}})).status).toBe(400);expect((await command('rpcStats')).distinctIds).toBe(prior.distinctIds)
+    expect((await send({jsonrpc:'2.0',id,method:'tools/call',params:{name:'probe',arguments:{mode:'immediate',label:'utf8-128'}}})).status).toBe(200)
+    for(const [i,reason] of ['😀'.repeat(255)+'abc','😀'.repeat(256),'😀'.repeat(256)+'a',12].entries()){
+      const before=await command('rpcStats');const response=await send({jsonrpc:'2.0',method:'notifications/cancelled',params:{requestId:id,reason}});expect(response.status).toBe(i<2?202:400);const after=await command('rpcStats');expect(after.distinctIds).toBe(before.distinctIds);expect(after.ordinary).toBe(0);expect(after.control).toBe(0)
+    }
+    await made.transport.terminateSession();await made.client.close();clients.splice(0);await expect.poll(async()=>(await command('adapterStats')).total).toBe(0)
+    audit.final=await command('lifecycleStats');expect(audit.final).toMatchObject({total:0,streams:0,timers:0,retained:0,requests:{ordinary:0,control:0,charged:0}})
+  },45000)
+
   it.skipIf(phase!=='restart')('O_real_restart_rejects_old_sid_and_accepts_new_Client',async()=>{
     expect(controlSucceeded).toBe(true)
     const audit:any={http:[],errors:[],processes:[]};evidence.restart=audit
@@ -1222,7 +1265,7 @@ describe.skipIf(!['adapter','body','shared','rpc','quota','get','ttl','restart']
     } finally {await a.client.close();if(b)await b.client.close();await command('rpc-release:ttl-active');await command('rpc-release:ttl-delete-race');if(pending)await pending;if(deletePending)await deletePending;await command('lifecycleShutdown')}
   },45000)
 
-  it('T_real_eight_pending_ninth_http_rejection', async () => {
+  it.skipIf(phase !== 'adapter')('T_real_eight_pending_ninth_http_rejection', async () => {
     expect(controlSucceeded).toBe(true)
     const { Client } = await import('@modelcontextprotocol/sdk/client/index.js')
     const { StreamableHTTPClientTransport } = await import('@modelcontextprotocol/sdk/client/streamableHttp.js')
@@ -1602,12 +1645,12 @@ function bodyClock() {
   }
 }
 function bodyHarness(options: { bytes?: Uint8Array; raw?: Array<[string,string]>; stall?: boolean; close?: 'immediate'|'late'|'reject'|'never'; context?: string } = {}) {
-  const closed = admissionDeferred<{ closed: true }>()
+  const peer=controlledPeer(),closed={promise:peer.closed,resolve:(_receipt:{closed:true})=>peer.close()}
   let controller!: ReadableStreamDefaultController<Uint8Array>, terminated = 0, factories = 0
   const clock = bodyClock(), context = { marker: options.context ?? 'body-context' }
   const bytes = options.bytes ?? new TextEncoder().encode('{"jsonrpc":"2.0","id":0,"method":"initialize"}')
   const stream = new ReadableStream<Uint8Array>({start(c) { controller = c; if (!options.stall) { c.enqueue(bytes); c.close() } }})
-  const ingress = { method:'POST', url:'http://unit/adapter', headers:new Headers({'content-type':'application/json','content-length':String(bytes.length)}), rawHeaders:options.raw ?? [['content-length',String(bytes.length)]], body:stream, closed:closed.promise,
+  const ingress = { method:'POST', url:'http://unit/adapter', headers:new Headers({'content-type':'application/json','content-length':String(bytes.length)}), rawHeaders:options.raw ?? [['content-length',String(bytes.length)]], body:stream, closed:closed.promise,subscribeClosed:peer.subscribeClosed,
     terminate() { terminated++; if (options.close === 'reject') return Promise.reject(new Error('termination rejected')); if (!options.close || options.close === 'immediate') { controller.error(new Error('terminated')); closed.resolve({closed:true}) } },
   }
   const replayed: any[] = []
@@ -1695,6 +1738,12 @@ describe('B_ingress_pure', () => {
 
 import { createSocketOwnership } from '../server/utils/mcp-session-transport'
 describe('W_socket_ownership_pure', () => {
+  it('R1_socket_observers_detach_and_already_closed_notify_once',()=>{
+    const manager=createSocketOwnership<object>(),socket={};let calls=0
+    for(let i=0;i<80;i++){const h=manager.register(socket,()=>{}),detach=h.subscribeClosed(()=>{calls++});expect(manager.observerCount(socket)).toBe(1);detach();detach();h.requestFinished();h.responseFinished();expect(manager.observerCount(socket)).toBe(0);expect(manager.snapshot(socket).active).toBe(0)}
+    const h=manager.register(socket,()=>{});h.subscribeClosed(()=>{calls++;throw new Error('observer failure')});const sibling=manager.register(socket,()=>{});sibling.subscribeClosed(()=>{calls++});manager.closed(socket);expect(calls).toBe(2);expect(manager.observerCount(socket)).toBe(0);h.subscribeClosed(()=>{calls++});expect(calls).toBe(3)
+  })
+
   it('W_dynamic_later_owner_blocks_close_until_both_halves_finish', async () => {
     const manager=createSocketOwnership<object>();const socket={};let destroys=0
     const prior=manager.register(socket,()=>{destroys++}), failed=manager.register(socket,()=>{destroys++})
@@ -1745,13 +1794,28 @@ function quotaHarness(missingHandlerReceipt=false) {
     const handler=admissionDeferred<{finished:true}>(),response=admissionDeferred<{finished:true}>()
     const message={jsonrpc:'2.0',...(id===undefined?{}:{id}),method,params:options.params??{},...(options.padding?{padding:'x'.repeat(options.padding)}:{})}
     const bytes=new TextEncoder().encode(JSON.stringify(message));const headers=new Headers({authorization:'Bearer fixture',...(sid?{'mcp-session-id':sid}:{}),'content-length':String(bytes.length)})
-    const event={sid,method,handler,token:options.token};const input={method:options.delete?'DELETE':'POST',url:'http://unit/adapter',headers,rawHeaders:[...headers] as Array<[string,string]>,body:new ReadableStream<Uint8Array>({start(c){c.enqueue(bytes);c.close()}}),closed:Promise.resolve({closed:true as const}),responseFinished:response.promise,terminate(){}}
+    const event={sid,method,handler,token:options.token};const input={method:options.delete?'DELETE':'POST',url:'http://unit/adapter',headers,rawHeaders:[...headers] as Array<[string,string]>,body:new ReadableStream<Uint8Array>({start(c){c.enqueue(bytes);c.close()}}),...controlledPeer(),responseFinished:response.promise,terminate(){}}
     return {result:adapter.handle(event,input),handler:()=>handler.resolve({finished:true}),finish:()=>response.resolve({finished:true})}
   }
   return {adapter,invoke,provided:()=>provided,async session(){const call=invoke(undefined,0,'initialize');const result=await call.result;call.finish();expect(result.status).toBe(200);const sid=result.headers.get('mcp-session-id');expect(sid).toBeTypeOf('string');expect(sid).not.toBe('');return sid!}}
 }
 async function quotaFlush(){for(let i=0;i<20;i++)await Promise.resolve()}
 describe('Q_rpc_quota_ids_pure',()=>{
+  it('R1_UTF8_id128_129_and_cancel_reason_boundaries',async()=>{
+    const h=quotaHarness(),sid=await h.session(),id='😀'.repeat(32)
+    const before=h.adapter.requestSnapshot(),provided=h.provided();expect((await h.invoke(sid,id+'a').result).status).toBe(400);expect(h.provided()).toBe(provided);expect(h.adapter.requestSnapshot()).toEqual(before)
+    const active=h.invoke(sid,id);expect((await active.result).status).toBe(200)
+    for(const reason of ['😀'.repeat(256)+'a',42,null]){const snapshot=h.adapter.requestSnapshot(),n=h.provided();const bad=h.invoke(sid,undefined,'notifications/cancelled',{params:{requestId:id,reason}});expect((await bad.result).status).toBe(400);expect(h.provided()).toBe(n);expect(h.adapter.requestSnapshot()).toEqual(snapshot)}
+    for(const [i,reason] of ['😀'.repeat(255)+'abc','😀'.repeat(256)].entries()){const target=i===0?id:'second',call=i===0?active:h.invoke(sid,target);if(i)await call.result;const cancel=h.invoke(sid,undefined,'notifications/cancelled',{params:{requestId:target,reason}});expect((await cancel.result).status).toBe(202);cancel.finish();call.handler();call.finish();await quotaFlush()}
+    for(const [initId,status] of [[0,200],['😀'.repeat(32),200],['😀'.repeat(32)+'a',400]] as const){const n=h.provided(),init=h.invoke(undefined,initId,'initialize');expect((await init.result).status).toBe(status);init.finish();if(status===400)expect(h.provided()).toBe(n)}
+    h.adapter.shutdown();await quotaFlush()
+  })
+  it('R1_T_phase_matrix_is_adapter_only',async()=>{
+    const source=await readFile(fileURLToPath(import.meta.url),'utf8')
+    expect(source).toContain("it.skipIf(phase !== 'adapter')('T_real_eight_pending_ninth_http_rejection'")
+    expect(['adapter','rpc','quota','get','ttl','restart'].map(value=>value==='adapter')).toEqual([true,false,false,false,false,false])
+  })
+
   it('Q_missing_handler_receipt_safe_501_no_dispatch',async()=>{
     const h=quotaHarness(true),sid=await h.session(),before=h.provided()
     const call=h.invoke(sid,1,'tools/list'),response=await call.result
@@ -1817,13 +1881,13 @@ describe('Q_rpc_quota_ids_pure',()=>{
   })
 })
 
-function lifecycleHarness(options:{pending?:boolean;cleanup?:'reject'|'never';standaloneFailure?:boolean}={}) {
+function lifecycleHarness(options:{pending?:boolean;cleanup?:'reject'|'never';standaloneFailure?:boolean;authRecheck?:boolean;detachThrow?:boolean;alreadyClosed?:boolean}={}) {
   let time=0,next=0,sidNumber=0,epoch=1,closes=0,transportCloses=0,cleanups=0,standaloneCloses=0,providers=0
-  const timers=new Map<number,{at:number;fn:()=>void}>(),factoryGate=admissionDeferred<void>(),cleanupGate=admissionDeferred<void>()
+  const timers=new Map<number,{at:number;fn:()=>void}>(),factoryGate=admissionDeferred<void>(),cleanupGate=admissionDeferred<void>(),authGate=admissionDeferred<void>()
   const clock={now:()=>time,setTimeout(fn:()=>void,delay:number){const id=++next;timers.set(id,{at:time+delay,fn});return id},clearTimeout(id:unknown){timers.delete(id as number)}}
   const adapter=createActualSessionInitializationTransport<any,any>({
     lifecycleClock:clock,
-    authenticate:e=>({kind:'authorized',epoch:e.epoch??epoch,principal:e.principal??'A'}),
+    authenticate:async e=>{e.auths=(e.auths??0)+1;if(options.authRecheck&&e.auths===2)await authGate.promise;return {kind:'authorized',epoch:e.epoch??epoch,principal:e.principal??'A'}},
     replay:async(e,request,run)=>{e.request=request;return run(e)},
     factory:async()=>{if(options.pending)await factoryGate.promise;return {connect:async()=>{},close:async()=>{closes++}}},
     provider:async(factory,e)=>{providers++;if(!e.sid){const owner=factory(),connection={sessionId:undefined as string|undefined,close:async()=>{transportCloses++},closeStandaloneSSEStream(){standaloneCloses++;if(options.standaloneFailure)throw new Error('private close failure')},closeSSEStream(){}};await owner.connect(connection);connection.sessionId='life-'+(++sidNumber);e.owner=owner;return new Response('{}',{headers:{'mcp-session-id':connection.sessionId}})}return new Response(null,{status:e.method?.startsWith('notifications/')?202:200})},
@@ -1832,15 +1896,38 @@ function lifecycleHarness(options:{pending?:boolean;cleanup?:'reject'|'never';st
   })
   function invoke(sid:string|undefined,id:any,method='tools/call',extra:{http?:string;principal?:string;epoch?:number;target?:any}={}) {
     const handler=admissionDeferred<{finished:true}>(),response=admissionDeferred<{finished:true}>(),body=JSON.stringify({jsonrpc:'2.0',...(id===undefined?{}:{id}),method,params:{requestId:extra.target}}),bytes=new TextEncoder().encode(body),headers=new Headers({authorization:'Bearer secret','content-length':String(bytes.length),...(sid?{'mcp-session-id':sid}:{})})
-    const event={sid,method,handler,...extra};const input={method:extra.http??'POST',url:'http://unit/life',headers,rawHeaders:[...headers] as Array<[string,string]>,body:new ReadableStream<Uint8Array>({start(c){c.enqueue(bytes);c.close()}}),closed:Promise.resolve({closed:true as const}),responseFinished:response.promise,terminate(){}}
-    return {result:adapter.handle(event,input),handler:()=>handler.resolve({finished:true}),finish:()=>response.resolve({finished:true}),rejectReceipt:()=>response.reject(new Error('private receipt failure'))}
+    const peer=controlledPeer();if(options.alreadyClosed)peer.close()
+    const event={sid,method,handler,...extra};const input={method:extra.http??'POST',url:'http://unit/life',headers,rawHeaders:[...headers] as Array<[string,string]>,body:new ReadableStream<Uint8Array>({start(c){c.enqueue(bytes);c.close()}}),...peer,subscribeClosed:(listener:()=>void)=>{const detach=peer.subscribeClosed(listener);return ()=>{detach();if(options.detachThrow)throw new Error('private detach failure')}},responseFinished:response.promise,terminate(){}}
+    return {peer,result:adapter.handle(event,input),handler:()=>handler.resolve({finished:true}),finish:()=>response.resolve({finished:true}),rejectReceipt:()=>response.reject(new Error('private receipt failure'))}
   }
-  return {adapter,invoke,clock,timers,factoryGate,cleanupGate,setEpoch:(value:number)=>{epoch=value},counts:()=>({closes,transportCloses,cleanups,standaloneCloses,providers}),
+  return {adapter,invoke,clock,timers,factoryGate,cleanupGate,authGate,setTimeWithoutTimers:(value:number)=>{time=value},setEpoch:(value:number)=>{epoch=value},counts:()=>({closes,transportCloses,cleanups,standaloneCloses,providers}),
     async advance(ms:number){time+=ms;for(const [id,t] of [...timers])if(t.at<=time){timers.delete(id);t.fn()}await quotaFlush()},
     async session(){const c=invoke(undefined,0,'initialize');const response=await c.result;c.finish();expect(response.status).toBe(200);return response.headers.get('mcp-session-id')!}}
 }
 
 describe('L_get_ttl_lifecycle_pure',()=>{
+  it('R1_deadline_at_publication_when_timer_delayed_during_auth',async()=>{
+    const h=lifecycleHarness({authRecheck:true}),init=h.invoke(undefined,0,'initialize');await quotaFlush();expect(h.adapter.snapshot().ready).toBe(1)
+    h.setTimeWithoutTimers(5000);h.authGate.resolve();expect((await init.result).status).toBe(503);await quotaFlush()
+    expect(h.adapter.snapshot().total).toBe(0);expect(init.peer.observerCount()).toBe(0);expect(h.counts().closes).toBe(1)
+  })
+  it('R1_auth_recheck_timer_retires_then_late_auth_never_publishes',async()=>{
+    const h=lifecycleHarness({authRecheck:true}),init=h.invoke(undefined,0,'initialize');await quotaFlush();await h.advance(5000)
+    expect(h.counts().closes).toBe(1);h.authGate.resolve();expect((await init.result).status).toBe(503);expect(init.peer.observerCount()).toBe(0)
+  })
+  it('R1_already_closed_no_factory_and_detach_failure_retires',async()=>{
+    const h=lifecycleHarness({alreadyClosed:true}),init=h.invoke(undefined,0,'initialize');expect((await init.result).status).toBe(503);expect(h.counts().providers).toBe(0);expect(h.adapter.snapshot().total).toBe(0)
+    const b=lifecycleHarness({detachThrow:true}),bad=b.invoke(undefined,0,'initialize');expect((await bad.result).status).toBe(503);await quotaFlush();expect(b.counts().closes).toBe(1);expect(b.adapter.snapshot()).toMatchObject({closing:1,total:1});expect(bad.peer.observerCount()).toBe(0)
+  })
+  it('R1_pending_disconnect_late_factory_no_publish',async()=>{
+    const h=lifecycleHarness({pending:true}),init=h.invoke(undefined,0,'initialize');await quotaFlush();init.peer.close();expect(h.adapter.snapshot().closing).toBe(1)
+    h.factoryGate.resolve();expect((await init.result).status).toBe(503);await quotaFlush();expect(h.adapter.snapshot().total).toBe(0);expect(init.peer.observerCount()).toBe(0)
+  })
+  it('R1_repeated_initialize_delete_detaches_observers',async()=>{
+    const h=lifecycleHarness()
+    for(let i=0;i<80;i++){const init=h.invoke(undefined,0,'initialize'),response=await init.result;expect(response.status).toBe(200);expect(init.peer.observerCount()).toBe(0);init.finish();const sid=response.headers.get('mcp-session-id')!;const del=h.invoke(sid,undefined,'DELETE',{http:'DELETE'});expect((await del.result).status).toBe(204);del.finish();await quotaFlush();expect(h.adapter.snapshot().total).toBe(0)}
+  })
+
   it('L_get_one_eight_identity_and_response_receipt',async()=>{
     const h=lifecycleHarness(),sids:string[]=[],streams:any[]=[];for(let i=0;i<9;i++)sids.push(await h.session())
     for(const sid of sids.slice(0,8)){const c=h.invoke(sid,undefined,'GET',{http:'GET'});expect((await c.result).status).toBe(200);streams.push(c)}
@@ -1900,12 +1987,12 @@ describe('L_get_ttl_lifecycle_pure',()=>{
   })
   it('L_pending_expiry_late_factory_cleans_without_publish',async()=>{
     const h=lifecycleHarness({pending:true}),init=h.invoke(undefined,0,'initialize');await quotaFlush();expect(h.adapter.snapshot().pending).toBe(1)
-    await h.advance(300000);expect(h.adapter.snapshot()).toMatchObject({closing:1,total:1});expect(h.adapter.lifecycleSnapshot().timers).toBe(0)
+    await h.advance(4999);expect(h.adapter.snapshot().pending).toBe(1);await h.advance(1);expect(h.adapter.snapshot()).toMatchObject({closing:1,total:1});expect(h.adapter.lifecycleSnapshot().timers).toBe(0)
     h.factoryGate.resolve();expect((await init.result).status).toBe(503);init.finish();await quotaFlush();expect(h.counts().closes).toBe(1);expect(h.counts().providers).toBe(0);expect(h.adapter.snapshot().total).toBe(0)
   })
   it('L_never_factory_bounded_shutdown_stops_new_admission',async()=>{
     const h=lifecycleHarness({pending:true});for(let i=0;i<8;i++)void h.invoke(undefined,i,'initialize').result
-    await quotaFlush();await h.advance(300000);expect(h.adapter.snapshot()).toMatchObject({closing:8,total:8});expect(h.adapter.shutdown().complete).toBe(false);expect(h.timers.size).toBe(0)
+    await quotaFlush();await h.advance(5000);expect(h.adapter.snapshot()).toMatchObject({closing:8,total:8});expect(h.adapter.shutdown().complete).toBe(false);expect(h.timers.size).toBe(0)
     expect((await h.invoke(undefined,9,'initialize').result).status).toBe(503);expect(h.adapter.snapshot().total).toBe(8)
   })
   it('L_expiry_ordinary_get_receipts_hold_charge_and_late_reconcile',async()=>{
