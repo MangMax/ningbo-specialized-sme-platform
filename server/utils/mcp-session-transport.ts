@@ -309,6 +309,9 @@ export function createSessionInitializationTransport<E, O extends SessionOwner>(
     if (message?.jsonrpc !== '2.0' || message.method !== 'initialize' || !('id' in message)) return refusal(501, 'rpc_not_implemented')
     if (message.id !== 0 && !validId(message.id)) return refusal(400, 'invalid_request_id')
     if (!request.subscribeClosed) return refusal(503, 'disconnect_observer_required')
+    // A native-ready lease can still be waiting for authentication revalidation.
+    // Its unpublished handshake keeps this admission charge until publish/retire.
+    if ([...lives.values()].filter(life => !life.published && !life.closing).length >= 8) return refusal(503, 'pending_capacity')
     const reserved = admission.reserve()
     if (!reserved.ok) return refusal(503, reserved.reason)
     const lease = reserved.lease
@@ -342,54 +345,69 @@ export function createSessionInitializationTransport<E, O extends SessionOwner>(
     let capturedSid: string | undefined
     let unsafeConnection = false
     let retired = false
+    let closeOwned: (() => Promise<void>) | undefined
     const initialized = await lease.initialize(async () => {
-      const owner = await deps.factory(event)
-      if (ownerLeases.has(owner)) throw new Error('owner_already_owned')
-      ownerLeases.set(owner, lease)
-      // Explicit candidate ownership. Public close is coalesced even if vendor calls it.
-      const originalClose = owner.close.bind(owner)
-      let close: Promise<void> | undefined
-      owner.close = () => close ??= Promise.resolve().then(originalClose)
-      const originalConnect = owner.connect.bind(owner)
-      owner.connect = async transport => {
-        if (lease.state() !== 'pending') throw new Error('revoked')
-        if (captured || connectionLeases.has(transport)) throw new Error('transport_already_owned')
-        captured = transport
-        connectionLeases.set(transport, lease)
-        // SDK1.32.1 declares a writable public sessionId field. Its assignment
-        // precedes onsessioninitialized, so reject collisions BEFORE publication.
-        const descriptor = Object.getOwnPropertyDescriptor(transport, 'sessionId')
-        if (transport.sessionId !== undefined || (descriptor && (!descriptor.configurable || descriptor.get || descriptor.set))) {
-          unsafeConnection = true
-          throw new Error('unsupported_transport_identity')
-        }
-        Object.defineProperty(transport, 'sessionId', {
-          configurable: false, enumerable: true,
-          get: () => capturedSid,
-          set: (value: string | undefined) => {
-            if (value === undefined && capturedSid === undefined) return
-            if (retired || typeof value !== 'string' || !/^[A-Za-z0-9_-]{1,256}$/.test(value)
-              || (capturedSid !== undefined && capturedSid !== value)
-              || (claims.has(value) && claims.get(value) !== lease)) throw new Error('session_identity_conflict')
-            capturedSid = value
-            claims.set(value, lease)
-          },
-        })
-        const originalTransportClose = transport.close.bind(transport)
-        let transportClose: Promise<void> | undefined
-        transport.close = () => transportClose ??= Promise.resolve().then(originalTransportClose)
-        await originalConnect(transport)
-        if (lease.state() !== 'pending') throw new Error('revoked')
+      let owner: O
+      try {
+        owner = await deps.factory(event)
+        // A rejected borrowed owner is not this lease's resource to close.
+        if (ownerLeases.has(owner)) throw new Error('owner_already_owned')
+      }
+      catch (error) {
+        // Reconcile our observer before admission is allowed to release a failed
+        // factory. A failed detach is still an owned, unclosed resource.
+        finishInitialization()
+        if (!life.observerFailed) throw error
+        initializationFailed = true
+        return { owner: undefined, sessionId: undefined }
       }
       try {
+        ownerLeases.set(owner, lease)
+        // Explicit candidate ownership. Public close is coalesced even if vendor calls it.
+        const originalClose = owner.close.bind(owner)
+        let close: Promise<void> | undefined
+        closeOwned = () => close ??= Promise.resolve().then(originalClose)
+        owner.close = closeOwned
+        const originalConnect = owner.connect.bind(owner)
+        owner.connect = async transport => {
+          if (lease.state() !== 'pending') throw new Error('revoked')
+          if (captured || connectionLeases.has(transport)) throw new Error('transport_already_owned')
+          captured = transport
+          connectionLeases.set(transport, lease)
+          // SDK1.32.1 declares a writable public sessionId field. Its assignment
+          // precedes onsessioninitialized, so reject collisions BEFORE publication.
+          const descriptor = Object.getOwnPropertyDescriptor(transport, 'sessionId')
+          if (transport.sessionId !== undefined || (descriptor && (!descriptor.configurable || descriptor.get || descriptor.set))) {
+            unsafeConnection = true
+            throw new Error('unsupported_transport_identity')
+          }
+          Object.defineProperty(transport, 'sessionId', {
+            configurable: false, enumerable: true,
+            get: () => capturedSid,
+            set: (value: string | undefined) => {
+              if (value === undefined && capturedSid === undefined) return
+              if (retired || typeof value !== 'string' || !/^[A-Za-z0-9_-]{1,256}$/.test(value)
+                || (capturedSid !== undefined && capturedSid !== value)
+                || (claims.has(value) && claims.get(value) !== lease)) throw new Error('session_identity_conflict')
+              capturedSid = value
+              claims.set(value, lease)
+            },
+          })
+          const originalTransportClose = transport.close.bind(transport)
+          let transportClose: Promise<void> | undefined
+          transport.close = () => transportClose ??= Promise.resolve().then(originalTransportClose)
+          await originalConnect(transport)
+          if (lease.state() !== 'pending') throw new Error('revoked')
+        }
         if (lease.state() !== 'pending') throw new Error('revoked')
         response = await deps.provider(() => owner, event)
         const headerSid = response.headers.get('mcp-session-id')
         if (!response.ok || !capturedSid || headerSid !== capturedSid || deps.adopted(event) !== owner) initializationFailed = true
-      } catch { initializationFailed = true }
+      } catch { initializationFailed = true; finishInitialization() }
       // Return ownership even on activation failure: cleanup failure must keep charge.
       return { owner, sessionId: capturedSid }
     }, async ({ owner, sessionId }) => {
+      if (!owner) { life.resourceDone(false); throw new Error('disconnect_observer_failed') }
       // A pre-populated/unsupported connection has unproven ownership. Quarantine
       // without invoking a close that could delete somebody else's native session.
       if (unsafeConnection) { life.resourceDone(false); throw new Error('cleanup_ownership_unknown') }
@@ -397,7 +415,9 @@ export function createSessionInitializationTransport<E, O extends SessionOwner>(
       if (captured?.closeStandaloneSSEStream) {
         try { captured.closeStandaloneSSEStream() } catch { failed = true }
       }
-      try { await owner.close() } catch { failed = true }
+      // A failed public-method assignment must not lose the owned close handle.
+      if (closeOwned) { try { await closeOwned() } catch { failed = true } }
+      else failed = true
       if (captured) {
         try { await captured.close() } catch { failed = true }
       }
@@ -423,7 +443,7 @@ export function createSessionInitializationTransport<E, O extends SessionOwner>(
       disarm(life); if (lease.state() === 'closed') lives.delete(lease)
       return refusal(503, initialized.reason === 'revoked' ? 'initialization_revoked' : 'initialization_failed')
     }
-    if (initializationFailed || !response || !initialized.value.sessionId) {
+    if (initializationFailed || !response || !initialized.value.sessionId || !initialized.value.owner) {
       finishInitialization()
       retire(life)
       const result = await lease.close()

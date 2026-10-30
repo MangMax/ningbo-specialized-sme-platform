@@ -16,7 +16,7 @@
 - `{kind:'anonymous',epoch}`：仅允许完全无 Authorization 的请求；空凭据也不是匿名。
 - `{kind:'authorized',principal,epoch}`：需要非空凭据、非空有界 principal，epoch 为可信非负安全整数。
 
-epoch 必须由 caller 提供可信单调代际，不能用 token hash 冒充。epoch 1→2→3 的 ABA 测试只证明回调契约，不证明生产配置轮换。sid 绑定身份类别、principal、epoch；错误身份或旧 epoch 返回 404 `session_not_found`，不关闭或续期合法 owner。初始化结束再次认证，身份变化不得发布候选。
+epoch 必须由 caller 提供可信单调代际，不能用 token hash 冒充。epoch 1→2→3 的 ABA 测试只证明回调契约，不证明生产配置轮换。sid 绑定身份类别、principal、epoch；错误身份或旧 epoch 返回 404 `session_not_found`，不关闭或续期合法 owner。初始化结束再次认证，身份变化不得发布候选。认证复核期间即使底层 admission lease 已 native-ready，未发布 handshake 仍收费；transport 在 reserve 前按 lives 中未 published 且未 closing 的 lease 原子核 8 上限。snapshot 的 ready 是底层资源状态，不等于已发布 sid。发布或同步 retire 后释放 handshake 名额，未完成 closing 仍计总额64。
 
 ## API 与 caller 回执
 
@@ -40,12 +40,14 @@ epoch 必须由 caller 提供可信单调代际，不能用 token hash 冒充。
 
 SessionConnection 只依赖公开 sessionId、close、closeSSEStream、closeStandaloneSSEStream。公共 connect 边界捕获真实 transport；SDK 分配 sid 时即建立 lease 归属，响应 header 必须一致。provider 分配后抛错仍清理捕获的自身 sid；冲突 sid 不覆盖或清理别的会话。不能信任任意 event sid 做清理。
 
+factory reject 或返回已登记 borrowed owner 时，先实际 detach 初始化观察；成功才允许 admission 释放无新资源的 lease。detach 在移除前失败时返回无 owner 隔离标记，cleanup 明确失败，保留 closing/total 收费并报告 shutdown incomplete；绝不关闭 borrowed owner，也不重试。新 owner 的公共 close/connect 读取或包装失败也走同一失败裁定：若已取得原始 close 则保存 coalesced closeOwned 并一次调用；无法取得可靠 close 则保持 closing。仅 callback 声称完成不能证明外部 listener 已移除；纯测试直接检查受控 listenerSet。
+
 ## 固定资源与方法合同
 
 | 资源 | 上限/规则 |
 | --- | --- |
 | session 总数 | 64，包含 pending、ready、未完成 closing |
-| pending | 8；第 9 个在 factory/connect 前拒绝，无队列/自动重试 |
+| 未发布 handshake | 8，包含第二次认证复核；第 9 个在 factory/connect/provider 前拒绝，无队列/自动重试 |
 | 初始化期限 | created 起 5000 ms，持续到真正发布；factory ready 或认证复核开始不解除期限 |
 | 普通 RPC | 每 session 4，全局 32 |
 | control | 每 session 2，全局 8；initialized、cancel、DELETE 统一收费 |
@@ -83,9 +85,9 @@ fixture 对已确认属于组件的有界 JSON 错误，用 Node ServerResponse 
 
 unknown、completed、repeated cancel 不创建 ID 状态、不转发给会续 vendor lastAccessed 的 provider、不续 TTL。首次有效 active cancel、成功初始化、已准入普通请求、GET、initialized 才更新 eligible activity。错误身份、容量拒绝不续命；absolute 不受任何 activity 延长。
 
-期限到达先同步 revoke/disarm，再公共 standalone close → owner.close → 捕获 transport.close → 精确 storage receipt → 全部 job 双回执 → 删除 session/claims/ID/timer → lease release。pending late factory resolve 必须先清理，不得发布；factory/cleanup/receipt never 或失败仍 closing，占总额并报告 incomplete。
+期限到达先同步 revoke/disarm，再公共 standalone close → owner.close → 捕获 transport.close → 精确 storage receipt → 全部 job 双回执 → 删除 session/claims/ID/timer → lease release。pending late factory resolve 必须先清理，不得发布；factory never、cleanup/receipt never 或失败仍 closing，占总额并报告 incomplete。无资源 factory reject 在确认 observer 已解绑后可以释放。
 
-未发布初始化使用独立 5 秒期限，ready 后 idle 仍为 300000 ms。发布线性化点再次核对 deadline <= now，即使 timer 延迟或认证复核挂起，也先 retire 而不能迟到发布。初始化期间 peer close 同样 revoke；已分配 sid 的迟到 provider 返回必须清理自身真实 memory namespace。
+未发布初始化使用独立 5 秒期限，发布后 idle 仍为 300000 ms。发布线性化点再次核对 deadline <= now，即使 timer 延迟或认证复核挂起，也先 retire 而不能迟到发布。初始化期间 peer close 同样 revoke；已分配 sid 的迟到 provider 返回必须清理自身真实 memory namespace。
 
 DELETE 的 204 只表明公共资源与 storage 阶段完成；最终 lease 仍需等待 DELETE 自己的 response 回执及其余请求。handler 忽略 abort 时，204 后仍可 closing。这样避免 DELETE 自等回执死锁。TTL/DELETE/shutdown 竞争共享同一关闭路径；shutdown 停新 admission、清 timer，但不承诺同步 complete=true 或立即 GC。
 
@@ -95,18 +97,19 @@ storage 限定真实 memory backend，按安装源码的相对 getKeys 语义处
 
 ## 分层证据与限制
 
-R1 恢复原件根目录：`/tmp/issue444-r1-restore-ort2Y2`；上一轮原件 `/tmp/issue444-list-recovery-jKBwu4` 保留。本文此次更新在 R1 type/build 成功后写入，不属于这些 runtime 的输入。临时路径是本机审查证据，不是部署依赖；合并前需由父保管原件。
+R2 恢复原件根目录：`/tmp/issue444-r2-restore-VPxgLx`；R1 `/tmp/issue444-r1-restore-ort2Y2` 与更早 `/tmp/issue444-list-recovery-jKBwu4` 保留。本文此次更新在 R2 type/build 成功后写入，不属于这些 runtime 的输入。临时路径是本机审查证据，不是部署依赖；合并前需由父保管原件。
 
 | 要求 | 证据与性质 |
 | --- | --- |
-| 准入、配额、ID、body、共享 socket、GET/TTL/epoch callback | R1 pure 76 PASS：原 68 加 8 个独立回归；受控 Promise/clock，不冒真实网络 |
-| 初始化断连/期限/字段 | R1 INIT 1 PASS；真实 provider 分配 sid 后断连和组件时钟到期均不发布，精确清理；真实 Client 控制与 raw 字段边界分列 |
+| 准入、配额、ID、body、共享 socket、GET/TTL/epoch callback | R2 pure 86 PASS：原 76 加 10 个回归实例；phase 用例验证 it.skipIf 实际使用的 helper，已去掉恒真映射；受控 Promise/clock，不冒真实网络 |
+| 未发布 handshake 8/9 | R2 AUTH 1 PASS；八个真实 SDK Client 并发第二次认证挂起，第九个实际 HTTP503，factory/connect/provider 均保持8；释放后八sid独立并逐一DELETE |
+| 初始化断连/期限/字段 | R2 INIT 1 PASS；真实 provider 分配 sid 后断连和组件时钟到期均不发布，精确清理；真实 Client 控制与 raw 字段边界分列 |
 | 重启与局部 tools/list/call | 继承上一轮 O_real_restart_rejects_old_sid_and_accepts_new_Client PASS；两进程顺序自然退出，旧 sid 404/factory0、新 Client 正常；本轮未重跑 |
-| 8 pending 拒 9 | R1 T 专用 adapter phase 1 PASS；其他 rpc/get/ttl/restart phase 跳过 T，纯 phase 矩阵独立验证 |
-| body 慢流/超限、共享 pipeline、A 分配后异常 | 历史真实 evidence 有限继承，新增 observer/helper 接缝由本轮 pure 与真实 init/T/X/L 覆盖；不冒历史 case fresh 重跑 |
+| 8 pending 拒 9 | R2 T 专用 adapter phase 1 PASS；其他 rpc/get/ttl/restart phase 跳过 T，纯 phase 矩阵独立验证 |
+| body 慢流/超限、共享 pipeline、A 分配后异常 | 历史真实 evidence 有限继承，本轮失败出口与 handshake 接缝由 pure 与真实 AUTH/INIT/T/L 覆盖；不冒历史 case fresh 重跑 |
 | GET 1/8、SDK reconnect、ordinary/control 饱和独立 | 历史 M_real_GET_limits_reconnect_and_independent_quotas PASS；raw GET 与真实 Client 事件分列 |
-| TTL 活跃 RPC/GET、每 sid 一次底层 onclose | R1 L 1 PASS；只驱动组件时钟，不宣称等待 30 分钟墙钟 |
-| 取消隔离、active/internal waiting、late/repeat/unknown | R1 X 1 PASS；真实 SDK signal 归属 oracle 保留 |
+| TTL 活跃 RPC/GET、每 sid 一次底层 onclose | R2 L 1 PASS；只驱动组件时钟，不宣称等待 30 分钟墙钟 |
+| 取消隔离、active/internal waiting、late/repeat/unknown | 继承 R1 X 1 PASS；本轮选择 L 为关闭路径必要回归，不冒 X fresh |
 | 完整 type | 本轮固定 Node24.22.1/Nuxt typecheck PASS；type 专用 NODE_PATH；router plugin 实际 load/SHA 验证；raw TS/MODULE_NOT_FOUND gate |
 | 普通 app build | 本轮固定 Node 直接 Nuxt build exit0，无 NODE_PATH；全 output/四入口/native/models/maps 封存；未启动产物 |
 | compiled 新 endpoint、生产 auth/epoch/全部工具回执、旧 stateless 入口兼容 | UNRUN，#445 独立接线与验收，不能从 build exit0 外推 |
@@ -121,7 +124,7 @@ fixture 双进程 PID/观测身份、原生 HTTP status/body、typed ID、handle
 
 #445 需要真实认证与单调 epoch 来源、每请求 currentevent、所有已注册 handler 的真实完成回执、全 listener socket ownership、唯一 ingress/replay、原生 response/close 回执和精确 storage 清理；在显式新入口验证 source/compiled 两层，保留旧 `/mcp` 合同。不得把本 fixture 公共 tools/list/probe handler 当生产业务实现。
 
-本票四 owner 已形成候选：admission、transport、test、本文。R1 恢复保持 admission 和原 1822 tracked 文件不变；本轮无 commit/push/PR 更新。独立 Spec/Standards 的 R1 历史发现保留，本次 dirty 候选由父核验；本说明不是生产启用或 #439 native 取消完成声明。
+本票四 owner 已形成候选：admission、transport、test、本文。R2 恢复保持 admission 和原 1822 tracked 文件不变；本轮无 commit/push/PR 更新。独立 Spec/Standards 的 R1/R2 历史发现及父静态跟进保留，本次 dirty 候选由父核验；本说明不是生产启用或 #439 native 取消完成声明。
 
 ## D1–D5 收口矩阵
 
@@ -129,7 +132,7 @@ fixture 双进程 PID/观测身份、原生 HTTP status/body、typed ID、handle
 | --- | --- | --- |
 | D1 真实装配 | 临时 Nitro、原 factory/provider/SDK、initialize/list/call/DELETE 控制及继承的两进程 restart | app 生产配置和 compiled endpoint；四入口 app build 未接入新组件 |
 | D2 关闭与 storage | 一次公共底层 onclose、精确 memory receipt、foreign witness、自然进程退出 | 任意 storage 故障可靠性、立即 GC、61 秒精确退出保证 |
-| D3 有界资源 | 64/8、4/32、2/8、GET1/8、body40、16/64KiB、5秒与双回执 | control 满或恶意慢 body 下取消必达；repo 没有队列/自动重试 |
+| D3 有界资源 | 总64/未发布handshake8（含auth复核）、4/32、2/8、GET1/8、body40、16/64KiB、5秒与双回执 | control 满或恶意慢 body 下取消必达；repo 没有队列/自动重试 |
 | D4 revoked/late | late init 不发布、cleanup/receipt failed/never 保持 closing、late reconcile 一次释放 | 未观察对象的完整回收；失败后不能强杀冒充产品成功 |
 | D5 身份/epoch | anonymous/authorized/invalid、session/typed ID 隔离、ABA callback 单测、真实 wrongidentity/cancel隔离 | 生产 epoch 来源、完整生产工具 context 与回执，由 #445 接线 |
 

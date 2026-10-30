@@ -13,6 +13,7 @@ import { dirname, join, resolve } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
 // Independent expected values: never import implementation constants/builders.
+const isPendingAdapterPhase = (value: string) => value === 'adapter'
 const literalCases = [
   ['L_sessions', { ready: 63, closing: 1, request: 1 }, { status: 503, code: 'session_capacity' }],
   ['L_pending', { pending: 8, request: 1 }, { status: 503, code: 'session_pending_limit' }],
@@ -171,8 +172,10 @@ const rpcKey=(sid,id)=>sid+':'+typeof id+':'+String(id);
 export function rpcStats(){return {events:rpcEvents.slice(),...adapter.requestSnapshot()}}
 export function rpcRelease(label){const release=releases.get(label);if(release){releases.delete(label);release()}return true}
 
+let authHeld=false,authEntered=0,authProviders=0;const authCalls=new WeakMap(),authReleases=[];
+async function authGate(event){const n=(authCalls.get(event)??0)+1;authCalls.set(event,n);if(authHeld&&n===2){authEntered++;await new Promise(resolve=>authReleases.push(resolve))}}
 let initReplyHeld=false;const initReplyReleases=[],initReplySids=[];
-export function initControl(op){if(op==='hold'){initReplyHeld=true;initReplySids.length=0}if(op==='release'){initReplyHeld=false;for(const resolve of initReplyReleases.splice(0))resolve()}return {sids:initReplySids.slice()}}
+export function initControl(op){if(op==='authhold'){authHeld=true;authEntered=0;authProviders=0}if(op==='authrelease'){authHeld=false;for(const resolve of authReleases.splice(0))resolve()}if(op==='authstats')return {entered:authEntered,providers:authProviders};if(op==='hold'){initReplyHeld=true;initReplySids.length=0}if(op==='release'){initReplyHeld=false;for(const resolve of initReplyReleases.splice(0))resolve()}return {sids:initReplySids.slice()}}
 const foreignOwned = [];
 async function foreignSnapshot() {
   return Promise.all(foreignOwned.map(async entry => ({key:entry.key,value:await useStorage('mcp').getItem(entry.key)})));
@@ -190,13 +193,13 @@ export async function releaseForeign() {
   return {before,deletedKeys,remaining};
 }
 const adapter = createSessionInitializationTransport({
-  ${['get','ttl','init'].includes(phase) ? 'lifecycleClock,' : ''}
+  ${['get','ttl','init','auth'].includes(phase) ? 'lifecycleClock,' : ''}
   ${rpcMode ? `handlerFinished:(event,request)=>{
     if(request.method!=='tools/call'&&request.method!=='tools/list')throw new Error('unobserved handler');
     const key=rpcKey(request.sessionId,request.id);
     return new Promise(resolve=>completions.set(key,()=>{rpcEvents.push({op:'handler-finished',sid:request.sessionId,id:request.id,trace:traces.get(event)?.trace,quota:adapter.requestSnapshot()});completions.delete(key);resolve({finished:true});traceSettled(traces.get(event),'handler-reconciled')}));
   },` : ''}
-  authenticate: event => { if (useEvent() !== event) throw new Error('current event mismatch'); ${rpcMode ? "const auth=getHeader(event,'authorization');return auth==='Bearer fixture-A'?{kind:'authorized',principal:'A',epoch:1}:auth==='Bearer fixture-B'?{kind:'authorized',principal:'B',epoch:1}:{kind:'invalid'};" : "return getHeader(event,'authorization') !== undefined ? {kind:'invalid'} : {kind:'anonymous',epoch:1};"} },
+  authenticate: async event => { if (useEvent() !== event) throw new Error('current event mismatch');await authGate(event); ${rpcMode ? "const auth=getHeader(event,'authorization');return auth==='Bearer fixture-A'?{kind:'authorized',principal:'A',epoch:1}:auth==='Bearer fixture-B'?{kind:'authorized',principal:'B',epoch:1}:{kind:'invalid'};" : "return getHeader(event,'authorization') !== undefined ? {kind:'invalid'} : {kind:'anonymous',epoch:1};"} },
   replay: async (event,request,run) => {
     const url = new URL(request.url); url.pathname = '/__replay';
     // Consume the validated replay once, then pass exactly those bytes to H3.
@@ -260,7 +263,7 @@ const adapter = createSessionInitializationTransport({
     owner.close = async () => { closes++;rpcEvents.push({op:'owner-close',sid:owner.server.transport?.sessionId});await close(); };
     return owner;
   },
-  provider: async (factory,event) => {const trace=traces.get(event);if(trace)trace.providerCalled=true;const response=await (${faultMode ? `async (factory, event) => {
+  provider: async (factory,event) => {authProviders++;const trace=traces.get(event);if(trace)trace.providerCalled=true;const response=await (${faultMode ? `async (factory, event) => {
     const response = await nativeProvider(factory,event);
     if (event.web.request.method === 'POST' && !event.web.request.headers.has('mcp-session-id')) {
       const sid = response.headers.get('mcp-session-id');
@@ -758,10 +761,10 @@ function createSessionInitializationTransport<E, O extends SessionOwner>(deps: O
   } }
 }
 
-describe.skipIf(!['adapter','body','shared','rpc','quota','get','ttl','restart','init'].includes(phase))('T_actual_transport_initialization', () => {
+describe.skipIf(!['adapter','body','shared','rpc','quota','get','ttl','restart','init','auth'].includes(phase))('T_actual_transport_initialization', () => {
   const evidence: Record<string, any> = { mode: 'real-adapter', clients: [] }
   beforeAll(async () => {
-    directory = await prepareFixture(true,false,['rpc','quota','get','ttl','restart','init'].includes(phase))
+    directory = await prepareFixture(true,false,['rpc','quota','get','ttl','restart','init','auth'].includes(phase))
     child = fork(join(directory, 'bootstrap.mjs'), [], { cwd: directory, stdio: ['ignore', 'inherit', 'inherit', 'ipc'], execArgv: ['--unhandled-rejections=strict'] })
     endpoint = await new Promise<string>((resolveReady, reject) => {
       const timer = setTimeout(() => reject(new Error('INFRA: fixture startup deadline')), 15000)
@@ -1265,7 +1268,7 @@ describe.skipIf(!['adapter','body','shared','rpc','quota','get','ttl','restart',
     } finally {await a.client.close();if(b)await b.client.close();await command('rpc-release:ttl-active');await command('rpc-release:ttl-delete-race');if(pending)await pending;if(deletePending)await deletePending;await command('lifecycleShutdown')}
   },45000)
 
-  it.skipIf(phase !== 'adapter')('T_real_eight_pending_ninth_http_rejection', async () => {
+  it.skipIf(!isPendingAdapterPhase(phase))('T_real_eight_pending_ninth_http_rejection', async () => {
     expect(controlSucceeded).toBe(true)
     const { Client } = await import('@modelcontextprotocol/sdk/client/index.js')
     const { StreamableHTTPClientTransport } = await import('@modelcontextprotocol/sdk/client/streamableHttp.js')
@@ -1299,6 +1302,60 @@ describe.skipIf(!['adapter','body','shared','rpc','quota','get','ttl','restart',
       evidence.held = await command('adapterStats')
     } finally {
       await command('release')
+      const settled = await joined
+      evidence.initializations = settled.map(result => result.status)
+    }
+    expect(evidence.initializations).toEqual(Array(8).fill('fulfilled'))
+    const ids = accepted.map(item => item.transport.sessionId)
+    expect(ids.every(id => typeof id === 'string' && id.length > 0)).toBe(true)
+    expect(new Set(ids).size).toBe(8)
+    expect(await command('adapterStats')).toMatchObject({ factories: 8, connects: 8, pending: 0, ready: 8, total: 8 })
+    for (const item of accepted) {
+      await item.transport.terminateSession()
+      expect(item.record.http.some((row: any) => row.method === 'DELETE' && row.status === 204)).toBe(true)
+      await item.client.close()
+      item.record.closed = true
+    }
+    await clients[8]!.close()
+    clients.splice(0)
+    evidence.cleaned = await command('adapterStats')
+    expect(evidence.cleaned).toEqual({ factories: 8, connects: 8, closes: 8, storageCleanups: 8, pending: 0, ready: 0, closing: 0, total: 0, accepting: true })
+  }, 60000)
+
+  it.skipIf(phase!=='auth')('R2_real_auth_eight_pending_ninth_http_rejection', async () => {
+    expect(controlSucceeded).toBe(true)
+    const { Client } = await import('@modelcontextprotocol/sdk/client/index.js')
+    const { StreamableHTTPClientTransport } = await import('@modelcontextprotocol/sdk/client/streamableHttp.js')
+    const make = (index: number) => {
+      const record: any = { index, http: [] }; evidence.clients.push(record)
+      const client = new Client({ name: `adapter-${index}`, version: '1' })
+      const transport = new StreamableHTTPClientTransport(new URL(endpoint.replace('/mcp', '/adapter')), {
+        fetch: async (input, init) => {
+          const headers=new Headers(init?.headers);headers.set('authorization','Bearer fixture-A');const response = await fetch(input, {...init,headers})
+          const row: any = { method: init?.method, status: response.status }
+          if (response.status === 503) row.body = await response.clone().json()
+          record.http.push(row)
+          return response
+        },
+      })
+      clients.push({ close: () => client.close(), transport })
+      return { client, transport, record }
+    }
+    await command('init:authhold')
+    const accepted = Array.from({ length: 8 }, (_, index) => make(index))
+    const attempts = accepted.map(async item => { await item.client.connect(item.transport); item.record.initialized = true; item.record.sessionId = item.transport.sessionId })
+    // Attach rejection observation immediately; do not use local rejection as admission proof.
+    const joined = Promise.allSettled(attempts)
+    try {
+      await expect.poll(async () => (await command('init:authstats')).entered).toBe(8);expect(await command('init:authstats')).toEqual({entered:8,providers:8})
+      expect(await command('adapterStats')).toMatchObject({ factories: 8, connects: 8, pending: 0, ready: 8, total: 8 })
+      const ninth = make(8)
+      await expect(ninth.client.connect(ninth.transport)).rejects.toThrow()
+      expect(ninth.record.http).toEqual([{ method: 'POST', status: 503, body: { jsonrpc: '2.0', id: null, error: { code: -32000, message: 'pending_capacity', data: { code: 'pending_capacity' } } } }])
+      expect(await command('adapterStats')).toMatchObject({ factories: 8, connects: 8, pending: 0, ready: 8, total: 8 })
+      expect(await command('init:authstats')).toEqual({entered:8,providers:8});evidence.authHeld=await command('init:authstats');evidence.held = await command('adapterStats')
+    } finally {
+      await command('init:authrelease')
       const settled = await joined
       evidence.initializations = settled.map(result => result.status)
     }
@@ -1811,9 +1868,7 @@ describe('Q_rpc_quota_ids_pure',()=>{
     h.adapter.shutdown();await quotaFlush()
   })
   it('R1_T_phase_matrix_is_adapter_only',async()=>{
-    const source=await readFile(fileURLToPath(import.meta.url),'utf8')
-    expect(source).toContain("it.skipIf(phase !== 'adapter')('T_real_eight_pending_ninth_http_rejection'")
-    expect(['adapter','rpc','quota','get','ttl','restart'].map(value=>value==='adapter')).toEqual([true,false,false,false,false,false])
+    expect(['adapter','rpc','quota','get','ttl','restart','init','auth',''].map(isPendingAdapterPhase)).toEqual([true,false,false,false,false,false,false,false,false])
   })
 
   it('Q_missing_handler_receipt_safe_501_no_dispatch',async()=>{
@@ -1881,31 +1936,65 @@ describe('Q_rpc_quota_ids_pure',()=>{
   })
 })
 
-function lifecycleHarness(options:{pending?:boolean;cleanup?:'reject'|'never';standaloneFailure?:boolean;authRecheck?:boolean;detachThrow?:boolean;alreadyClosed?:boolean}={}) {
-  let time=0,next=0,sidNumber=0,epoch=1,closes=0,transportCloses=0,cleanups=0,standaloneCloses=0,providers=0
+function lifecycleHarness(options:{pending?:boolean;cleanup?:'reject'|'never';standaloneFailure?:boolean;authRecheck?:boolean;detachThrow?:boolean;alreadyClosed?:boolean;authIndividual?:boolean;factoryReject?:boolean;borrow?:boolean;wrapping?:'close-set'|'connect-get'|'close-get'}={}) {
+  let time=0,next=0,sidNumber=0,epoch=1,closes=0,transportCloses=0,cleanups=0,standaloneCloses=0,providers=0,factories=0,connects=0
+  let borrowed:any
   const timers=new Map<number,{at:number;fn:()=>void}>(),factoryGate=admissionDeferred<void>(),cleanupGate=admissionDeferred<void>(),authGate=admissionDeferred<void>()
   const clock={now:()=>time,setTimeout(fn:()=>void,delay:number){const id=++next;timers.set(id,{at:time+delay,fn});return id},clearTimeout(id:unknown){timers.delete(id as number)}}
   const adapter=createActualSessionInitializationTransport<any,any>({
     lifecycleClock:clock,
-    authenticate:async e=>{e.auths=(e.auths??0)+1;if(options.authRecheck&&e.auths===2)await authGate.promise;return {kind:'authorized',epoch:e.epoch??epoch,principal:e.principal??'A'}},
+    authenticate:async e=>{e.auths=(e.auths??0)+1;if(options.authRecheck&&e.auths===2)await authGate.promise;if(options.authIndividual&&e.auths===2)await e.authGate.promise;return {kind:'authorized',epoch:e.epoch??epoch,principal:e.principal??'A'}},
     replay:async(e,request,run)=>{e.request=request;return run(e)},
-    factory:async()=>{if(options.pending)await factoryGate.promise;return {connect:async()=>{},close:async()=>{closes++}}},
+    factory:async()=>{factories++;if(options.pending)await factoryGate.promise;if(options.factoryReject)throw new Error('private factory failure');if(options.borrow&&borrowed)return borrowed;const owner:any={connect:async()=>{connects++},close:async()=>{closes++}};borrowed=owner;
+      if(options.wrapping==='close-set')Object.defineProperty(owner,'close',{value:owner.close,writable:false});
+      if(options.wrapping==='connect-get')Object.defineProperty(owner,'connect',{get(){throw new Error('private getter')}});
+      if(options.wrapping==='close-get')Object.defineProperty(owner,'close',{get(){throw new Error('private getter')}});
+      return owner},
     provider:async(factory,e)=>{providers++;if(!e.sid){const owner=factory(),connection={sessionId:undefined as string|undefined,close:async()=>{transportCloses++},closeStandaloneSSEStream(){standaloneCloses++;if(options.standaloneFailure)throw new Error('private close failure')},closeSSEStream(){}};await owner.connect(connection);connection.sessionId='life-'+(++sidNumber);e.owner=owner;return new Response('{}',{headers:{'mcp-session-id':connection.sessionId}})}return new Response(null,{status:e.method?.startsWith('notifications/')?202:200})},
     adopted:e=>e.owner,handlerFinished:e=>e.handler.promise,
     cleanupSession:async()=>{cleanups++;if(options.cleanup==='reject')throw new Error('private credential');if(options.cleanup==='never')await cleanupGate.promise;return {empty:true}},
   })
-  function invoke(sid:string|undefined,id:any,method='tools/call',extra:{http?:string;principal?:string;epoch?:number;target?:any}={}) {
+  function invoke(sid:string|undefined,id:any,method='tools/call',extra:{http?:string;principal?:string;epoch?:number;target?:any;detachBeforeThrow?:boolean}={}) {
+    const authGate=admissionDeferred<void>()
     const handler=admissionDeferred<{finished:true}>(),response=admissionDeferred<{finished:true}>(),body=JSON.stringify({jsonrpc:'2.0',...(id===undefined?{}:{id}),method,params:{requestId:extra.target}}),bytes=new TextEncoder().encode(body),headers=new Headers({authorization:'Bearer secret','content-length':String(bytes.length),...(sid?{'mcp-session-id':sid}:{})})
     const peer=controlledPeer();if(options.alreadyClosed)peer.close()
-    const event={sid,method,handler,...extra};const input={method:extra.http??'POST',url:'http://unit/life',headers,rawHeaders:[...headers] as Array<[string,string]>,body:new ReadableStream<Uint8Array>({start(c){c.enqueue(bytes);c.close()}}),...peer,subscribeClosed:(listener:()=>void)=>{const detach=peer.subscribeClosed(listener);return ()=>{detach();if(options.detachThrow)throw new Error('private detach failure')}},responseFinished:response.promise,terminate(){}}
-    return {peer,result:adapter.handle(event,input),handler:()=>handler.resolve({finished:true}),finish:()=>response.resolve({finished:true}),rejectReceipt:()=>response.reject(new Error('private receipt failure'))}
+    const event={sid,method,handler,authGate,...extra};const input={method:extra.http??'POST',url:'http://unit/life',headers,rawHeaders:[...headers] as Array<[string,string]>,body:new ReadableStream<Uint8Array>({start(c){c.enqueue(bytes);c.close()}}),...peer,subscribeClosed:(listener:()=>void)=>{const detach=peer.subscribeClosed(listener);return ()=>{if(extra.detachBeforeThrow)throw new Error('detach before removal');detach();if(options.detachThrow)throw new Error('private detach failure')}},responseFinished:response.promise,terminate(){}}
+    return {peer,releaseAuth:()=>authGate.resolve(),result:adapter.handle(event,input),handler:()=>handler.resolve({finished:true}),finish:()=>response.resolve({finished:true}),rejectReceipt:()=>response.reject(new Error('private receipt failure'))}
   }
-  return {adapter,invoke,clock,timers,factoryGate,cleanupGate,authGate,setTimeWithoutTimers:(value:number)=>{time=value},setEpoch:(value:number)=>{epoch=value},counts:()=>({closes,transportCloses,cleanups,standaloneCloses,providers}),
+  return {adapter,invoke,clock,timers,factoryGate,cleanupGate,authGate,setTimeWithoutTimers:(value:number)=>{time=value},setEpoch:(value:number)=>{epoch=value},counts:()=>({closes,transportCloses,cleanups,standaloneCloses,providers,factories,connects}),
     async advance(ms:number){time+=ms;for(const [id,t] of [...timers])if(t.at<=time){timers.delete(id);t.fn()}await quotaFlush()},
     async session(){const c=invoke(undefined,0,'initialize');const response=await c.result;c.finish();expect(response.status).toBe(200);return response.headers.get('mcp-session-id')!}}
 }
 
 describe('L_get_ttl_lifecycle_pure',()=>{
+  it.each(['release','timeout','disconnect'] as const)('R2_auth_eight_concurrent_ninth_rejected_%s',async mode=>{
+    const h=lifecycleHarness({authIndividual:true});const calls=Array.from({length:8},()=>h.invoke(undefined,0,'initialize'))
+    await quotaFlush();expect(h.counts()).toMatchObject({factories:8,connects:8,providers:8});expect(h.adapter.snapshot().ready).toBe(8)
+    const ninth=h.invoke(undefined,0,'initialize');expect((await ninth.result).status).toBe(503);expect(h.counts()).toMatchObject({factories:8,connects:8,providers:8})
+    if(mode==='release'){calls[0]!.releaseAuth();expect((await calls[0]!.result).status).toBe(200);calls[0]!.finish()}
+    if(mode==='disconnect'){calls[0]!.peer.close();await quotaFlush();expect(h.counts().closes).toBe(1)}
+    if(mode==='timeout'){await h.advance(5000);expect(h.counts().closes).toBe(8)}
+    const next=h.invoke(undefined,0,'initialize');await quotaFlush();expect(h.counts().factories).toBe(9);expect(h.counts().providers).toBe(9)
+    for(const c of [...calls,next]){c.releaseAuth();const response=await c.result;expect(response.status).toBe(mode==='timeout'&&c!==next||mode==='disconnect'&&c===calls[0]?503:200);c.finish();expect(c.peer.observerCount()).toBe(0)}
+    h.adapter.shutdown();await quotaFlush();expect(h.adapter.snapshot().total).toBe(0)
+  })
+  it('R2_factory_reject_detach_before_removal_is_bounded64',async()=>{
+    const h=lifecycleHarness({factoryReject:true});const observers=[]
+    for(let i=0;i<64;i++){const c=h.invoke(undefined,0,'initialize',{detachBeforeThrow:true});expect((await c.result).status).toBe(503);observers.push(c.peer);expect(c.peer.observerCount()).toBe(1);expect(h.adapter.snapshot()).toMatchObject({closing:i+1,total:i+1})}
+    const extra=h.invoke(undefined,0,'initialize',{detachBeforeThrow:true});expect((await extra.result).status).toBe(503);expect(extra.peer.observerCount()).toBe(0);expect(h.counts()).toMatchObject({factories:64,providers:0,closes:0});expect(h.adapter.shutdown().complete).toBe(false)
+    expect(observers.reduce((n,p)=>n+p.observerCount(),0)).toBe(64);for(const p of observers)p.close();expect(h.adapter.snapshot().total).toBe(64);expect(h.counts().factories).toBe(64)
+  })
+  it('R2_factory_reject_successful_detach_and_close_races_once',async()=>{
+    for(const mode of ['normal','closed','alreadyclosed']){const h=lifecycleHarness({factoryReject:true,pending:true,alreadyClosed:mode==='alreadyclosed'}),c=h.invoke(undefined,0,'initialize');await quotaFlush();if(mode==='closed'){c.peer.close();c.peer.close()}h.factoryGate.resolve();expect((await c.result).status).toBe(503);expect(c.peer.observerCount()).toBe(0);expect(h.adapter.snapshot().total).toBe(0);expect(h.counts()).toMatchObject({factories:mode==='alreadyclosed'?0:1,providers:0,closes:0});expect(h.adapter.shutdown().complete).toBe(true)}
+  })
+  it.each([false,true])('R2_foreign_owner_detach_failure_%s_preserves_first',async fail=>{
+    const h=lifecycleHarness({borrow:true}),sid=await h.session(),second=h.invoke(undefined,0,'initialize',{detachBeforeThrow:fail});expect((await second.result).status).toBe(503);expect(second.peer.observerCount()).toBe(fail?1:0);expect(h.counts()).toMatchObject({factories:2,connects:1,providers:1,closes:0});expect(h.adapter.snapshot()).toMatchObject({ready:1,closing:fail?1:0,total:fail?2:1})
+    const ordinary=h.invoke(sid,1);expect((await ordinary.result).status).toBe(200);ordinary.handler();ordinary.finish();const del=h.invoke(sid,undefined,'DELETE',{http:'DELETE'});expect((await del.result).status).toBe(204);del.finish();await quotaFlush();expect(h.counts().closes).toBe(1);expect(h.adapter.snapshot().total).toBe(fail?1:0);expect(h.adapter.shutdown().complete).toBe(!fail);expect(h.counts().closes).toBe(1);second.peer.close()
+  })
+  it.each(['close-set','connect-get','close-get'] as const)('R2_owned_public_method_wrapping_failure_%s',async wrapping=>{
+    const h=lifecycleHarness({wrapping}),c=h.invoke(undefined,0,'initialize');expect((await c.result).status).toBe(wrapping==='close-get'?503:500);expect(c.peer.observerCount()).toBe(0);expect(h.counts()).toMatchObject({factories:1,providers:0,closes:wrapping==='close-get'?0:1});expect(h.adapter.snapshot().total).toBe(wrapping==='close-get'?1:0);expect(h.adapter.shutdown().complete).toBe(wrapping!=='close-get')
+  })
+
   it('R1_deadline_at_publication_when_timer_delayed_during_auth',async()=>{
     const h=lifecycleHarness({authRecheck:true}),init=h.invoke(undefined,0,'initialize');await quotaFlush();expect(h.adapter.snapshot().ready).toBe(1)
     h.setTimeWithoutTimers(5000);h.authGate.resolve();expect((await init.result).status).toBe(503);await quotaFlush()
