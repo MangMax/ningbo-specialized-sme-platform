@@ -5,10 +5,10 @@
 新投影版本为 `platform-comparison-410-v1`。它解释已经归一的来源见证，
 不生成正式资格、不写人工差异原因、对应决定或审计。
 
-既有 reader 新增 #427 显式比较方法，仅装配完整零记录支路所需的可信输入。
+既有 reader 的 #427 显式比较方法由 #428 接入同 snapshot 年度流程、当前对应与业务版本见证，支持完整零记录及 P/N 分支。
 HTTP/MCP、列表、筛选、详情和工作簿未启用比较投影。
 默认 `enterprise-qualification-407-v1`、current/export 及旧 snapshot/hash 不变。
-#428 年度流程见证和 #410 公开消费仍为后继；纯算法通过不代表它们已通过验收。
+#428 已完成限定可信装配与编译产物验收；#410 公开消费仍为后继，未新增公开比较入口。
 
 ## 输入与可信装配
 
@@ -534,3 +534,34 @@ wrong ownership、ABA、撤回/当前决定、版本/interface、未知协议及
 本文为所有运行完成、释放后的后置delta，未参与上述测试/typecheck；core/tests字节
 与运行绑定。未运行full/build/HTTP/DBapp/CI/生产，未改#428，未commit/push/PR/review/merge。
 交父三owner dirty-ready候选，独立审查与合并由父处理。
+
+### #428 年度存在性与 query-only 装配
+
+显式比较保留完整 query witnesses。recognized 查询的状态、时间、retry、条件、title、分页与实际 canonical 65536 字节限制仍由原比较 core 裁定，不把 failed/partial/future 查询当作年度业务实体。年度适配器仅在同一 snapshot 的标量 SQL 证明真实年度来源及保护图为空后返回 `processes: []`；不构造空 process，也不对该空路径构造年度 sourceRefs 或收取年度 W。
+
+native `apply_list` 的 `titleCode:null`、`rdjb:''` 和 `source_default` 是合法查询范围。完整零 archive 可证明无年度实体，但该查询仍不能独立建立单 title 的 Z，原 core 保留 `coverage_incomplete`。实际 unknown-title 行仍保留；未完成 process 查询、保护-only 决定或闭合不足抛 `platform_comparison_scope_unavailable`，不得回退空数组。非法 proof/history 不被空路径吞掉。非空年度来源沿原年度装配及资格 authority，真实超限为 `input_resource_limit`；SQLite busy 保留原错误。
+
+父已批准仅对 `reader427 business_records_no_process` 精化 reason：原输入为成功 business 查询、一条未索引业务行、null record/version、无决定；原 query-only 阶段为 `coverage_incomplete`，真实年度装配后为 `source_requires_revalidation`。`observation: records`、`comparison: not_established`、默认完整 legacy、零写及完整 T2/digest 规则不变。原断言和历史 FAIL 保存在 Git 外交付中；此条不授权其他 reason 批量变化。
+
+空路径经父事前冻结的额外 SELECT 上界为 `2+2E+1 <= 83`（原 witness 两次、每 event 两次 header、一次 probe）。非空保留 `B=22+9E+3S+ceil(U_RT/400)+2ceil(U_obs/400)`、enrichment `<=4E` 与总增量 `<=667`，probe 替换旧 absence 一个 SQL 槽。旧 `reader427 unchanged_legacy_coverage_and_two_additional_statements` 的 +2 oracle 经父事前公式批准，单项替换为 `reader428 query_only_budget_preserves_default_bytes`：E=1 为5、全局83；完整 reader47 无过滤通过。原断言、inverse 与批准 proof 保留于 Git 外，未按实测结果提高阈值。W16MiB 及16倍仅 policy 收费，不是输出/heap/RSS 数学上界；实际 SQL 模板、payload、RSS 与扫描计划必须独立记录。实测小 trace 空 Z 为5、closed P 为43；这只验证小控制，不代表全局 CPU 或容量验收。
+
+
+### #428 最终候选与证据边界（运行后文档差量）
+
+基线为 #435 合并 `10728732e4c7310a3828d03546caeb4281301f80`，tree `f79d823f30274ac7bb571ec758655051d8c88c9a`。九 owner 内八文件修改；纯比较 core、其测试、正式资格/normalizer/schema 均保持基线字节。默认 annual 与 sourceGeneration 原 JSON 顺序不变，默认407-v1/current/409导出不启用显式 comparison。人工 confirmed_no_diff 不自动写入。
+
+真实年度实体存在时必须完整闭合实际 query/title lineage、保护 history/决定与当前 record/version/hash；未知或不可闭合抛 `platform_comparison_scope_unavailable`，实际超限抛 `input_resource_limit`，SQLite BUSY 原错直传且不 retry。只有真实年度实体及保护图为空才省略 process；queries 完整交原 core 裁定失败、partial、future、retry 与 coverage。41 cycle 保持原 core 错误优先级。批次内按 scope 复用读取，不逐 event 重复 full-loader；不读 raw_response。
+
+入场收费采用 row64/title64/history128/decision128/evidence160、raw7、proof4096/100、A1MiB/U65536/W16MiB。W 的16倍是 policy 收费，不是数学输出、heap 或 RSS 上界。query-only 的65536按实际 canonical 长度裁定，不拿保守 upper 当实际字节。exact/one-over 使用真实 SQLite 接缝；不可表示的 A/queryUpper/proof 字节边界只标 nearest reachable/qualified，不捏造无效 facts。部分 EXPLAIN、采样 RSS 与 pure19 不证明严格扫描 CPU 或内存界。
+
+已执行证据按各自源码绑定继承，不合并宣称本次全部 fresh：
+
+- 完整 adapter72 + reader47 =119，含已批准的新预算 case，无过滤；相关五文件 core199、annual-process18、406 37、408 86、workbook18 =358，无过滤。annual-process18 不是 annual-read23，也不包含2k容量。
+- 真实公开 fixture 文件30项通过，包含 P/N 三称号×award/review、版本/当前决定/ABA/撤回/历史及时间反例。后续两测试 owner 类型修复含 notnull/Reflect.apply 实际行为差量，仅针对 partial 装配与 trace Z/P 三项复验；不是重新完整执行119/358/30。
+- 插件真实 resolve/load/hash、完整 typecheck/raw gate、独立普通 build 通过；1877产物完整集合冻结。构建 warning 保留，不推出浏览器功能验收。
+- 隔离 built 唯一执行：真实 HTTP 公布证据→档案→索引→对应决定→annual/current，实际 compiled 内部 reader 单列 synchronized；默认完整407/hash、sourceGeneration 和读窗口 total_changes/data_version/DB-WAL hash 零写断言通过。固定 asOf 与 current 实时时点各自核 hash，不错误要求相等；没有公开显式 comparison consumer。
+- built runtime 同 grant CAS release-FIRST FREE，observed owned 余0；6.625秒、21次采样峰值1,090,469,888字节仅为此次观测。实际 job/child drain 完结条件通过；具体 job 数/轨迹、可选 candidate 分支未归档，不补称已观察。
+
+历史7/2FAIL、16/22FAIL、分页失败、四个类型FAIL、准备 syntaxFAIL、provider中断及全部STOP保持原件；后来PASS不覆盖它们。aggregate-unhandled、未观测短命进程、独立 DBclose/handles、完整 server stdout/stderr、CPU complexprobe 与数学内存证明仍 UNKNOWN。2k/20k、full suite/CI、生产与独立双轴审核未运行，不宣PASS。
+
+证据入口：`/tmp/issue428-final-gates-tktdl60x`、`/tmp/issue428-types-resume-1_525427`、`/tmp/issue428-built-safe-li4ku_l5`、`/private/tmp/issue428-built-runtime-9s7ra9we`。最后一层为已批准限定 compiled 验收；本节是随后文档收尾，未参与上述运行。完整 source→run→artifact 与逐AC由 Git 外候选交付包保存，独立 Spec/Standards 与合并由父处理。

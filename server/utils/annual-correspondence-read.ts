@@ -1,11 +1,12 @@
+import type Database from 'better-sqlite3'
 import { inArray } from 'drizzle-orm'
-import { useDb } from '@db'
+import { useDb } from '../../db'
 import * as s from '../../db/schema'
 import type { EventAnnualProcessRead } from '../../lib/roster/annual-process'
 import { qualifyAnnualFinal, readAnnualDecisionRefs, type AnnualDb, type AnnualWriteScope } from './annual-correspondence'
-import { readEventAnnualProcess } from './event-annual-process-read'
+import { readEventAnnualProcess, readAnnualComparisonBatch } from './event-annual-process-read'
 
-function writeScope(db: AnnualDb, read: EventAnnualProcessRead): AnnualWriteScope {
+function writeScope(db: AnnualDb, read: EventAnnualProcessRead, historyFor?: (recordIds: number[]) => number[]): AnnualWriteScope {
   const process = read.process
   return {
     eventId: process.event.id, enterpriseId: process.event.record.enterpriseId, titleCode: process.event.record.titleCode,
@@ -19,10 +20,10 @@ function writeScope(db: AnnualDb, read: EventAnnualProcessRead): AnnualWriteScop
           version.interface === ref.interface && version.recordId === ref.businessRecord.recordId && version.versionId === ref.businessRecord.versionId)
       }).map(ref => ref.relationId)
       const recordIds = [...new Set(observations.filter(ref => ref.businessRecord.groupState === 'verified' && ref.businessRecord.recordId != null).map(ref => ref.businessRecord.recordId!))]
-      const history: number[] = []
+      const history: number[] = historyFor ? historyFor(recordIds) : []
       // Indexed identity history is protective only. It never expands annual
       // facts, selected versions, generation, or borrowed proof eligibility.
-      for (let i = 0; i < recordIds.length; i += 400) history.push(...db.select({id:s.platformBusinessObservation.relationId}).from(s.platformBusinessObservation)
+      if (!historyFor) for (let i = 0; i < recordIds.length; i += 400) history.push(...db.select({id:s.platformBusinessObservation.relationId}).from(s.platformBusinessObservation)
         .where(inArray(s.platformBusinessObservation.recordId,recordIds.slice(i,i+400))).all().map(row => row.id))
       return {stepId:step.id,currentRelationIds:[...new Set(currentRelationIds)],protectionRelationIds:[...new Set([...observations.map(ref => ref.relationId),...history])],
         preferredRelationId:step.preferredWriteRelationId,eligible:step.annualEligible,reasons:step.reasons}
@@ -53,4 +54,25 @@ export function enrichAnnualProcessFinalQualification(db: AnnualDb, read: EventA
 export function annualTaskContext() {
   const config = useRuntimeConfig()
   return {get db(){return useDb()},readScope:readAnnualWriteScope,filesDir:config.filesDir,config}
+}
+
+/** Internal ID-only port. Sources and protective history are read here; callers
+ * cannot supply facts, eligibility, a history map or a loader. */
+export function readAnnualComparisonInputs(sqlite: Database.Database, db: AnnualDb, request: Parameters<typeof readAnnualComparisonBatch>[2]) {
+  const batch = readAnnualComparisonBatch(sqlite, db, request)
+  if (batch.kind === 'absent') return { processes: [], admission: batch.admission }
+  const historyFor = (ids: number[]) => ids.flatMap(id => {
+    const rows = batch.history.get(id)
+    if (!rows) throw new Error('platform_comparison_scope_unavailable')
+    return rows
+  })
+  const processes = batch.entries.map(({ input, read }) => {
+    const scope = writeScope(db, read, historyFor)
+    const currentDecisionRefs = readAnnualDecisionRefs(db, [...new Set(scope.steps.flatMap(step => [...step.protectionRelationIds, ...step.currentRelationIds]))], scope)
+    const final = qualifyAnnualFinal(db, scope)
+    const used = new Set(final.decisionRefs.map(ref => ref.id))
+    return { input, sourceRefs: read.sourceRefs, sourceGeneration: read.sourceGeneration, currentDecisionRefs,
+      finalQualification: { ...final, decisionRefs: currentDecisionRefs.filter(ref => used.has(ref.id)) } }
+  })
+  return { processes, admission: batch.admission }
 }
