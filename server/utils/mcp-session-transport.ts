@@ -329,15 +329,6 @@ export function createSessionInitializationTransport<E, O extends SessionOwner>(
       try { remove() } catch { life.observerFailed = true }
     }
     life.detachInitialization = finishInitialization
-    try {
-      detach = request.subscribeClosed(() => { if (initializing) retire(life) })
-      if (typeof detach !== 'function') throw new Error('invalid_detach')
-      if (!initializing) finishInitialization() // synchronous already-closed notification
-    } catch {
-      life.observerFailed = true
-      retire(life)
-      return refusal(503, 'disconnect_observer_failed')
-    }
     let published: Entry | undefined
     let response: Response | undefined
     let initializationFailed = false
@@ -347,6 +338,24 @@ export function createSessionInitializationTransport<E, O extends SessionOwner>(
     let retired = false
     let closeOwned: (() => Promise<void>) | undefined
     const initialized = await lease.initialize(async () => {
+      // Admission is started before a caller can synchronously report closure or
+      // partially register and throw. Neither path may release an unstarted lease.
+      try {
+        detach = request.subscribeClosed!(() => { if (initializing) retire(life) })
+        if (typeof detach !== 'function') throw new Error('invalid_detach')
+        if (!initializing) finishInitialization()
+      } catch {
+        life.observerFailed = true
+        finishInitialization()
+        retire(life)
+        initializationFailed = true
+        return { owner: undefined, sessionId: undefined }
+      }
+      if (life.closing) {
+        finishInitialization()
+        if (life.observerFailed) return { owner: undefined, sessionId: undefined }
+        throw new Error('initialization_revoked')
+      }
       let owner: O
       try {
         owner = await deps.factory(event)

@@ -40,6 +40,8 @@ epoch 必须由 caller 提供可信单调代际，不能用 token hash 冒充。
 
 SessionConnection 只依赖公开 sessionId、close、closeSSEStream、closeStandaloneSSEStream。公共 connect 边界捕获真实 transport；SDK 分配 sid 时即建立 lease 归属，响应 header 必须一致。provider 分配后抛错仍清理捕获的自身 sid；冲突 sid 不覆盖或清理别的会话。不能信任任意 event sid 做清理。
 
+观察器注册在 `lease.initialize` 已同步进入 started 后进行。注册期间同步 close 或重入 shutdown 只撤销，不能走 unstarted 的无资源释放。正常同步通知返回的 detach 成功后可释放且 factory 不执行；部分登记后 throw、返回非函数、同步通知后的 detach 失败均返回无 owner 隔离记录，cleanup 失败保持 closing/total。组件不能根据 throw 猜测登记是否发生：即使测试外部 Set 为0，没有可靠解绑证明仍收费。失败至64后第65个不再注册，无自动重试，不关闭任何无归属 owner。
+
 factory reject 或返回已登记 borrowed owner 时，先实际 detach 初始化观察；成功才允许 admission 释放无新资源的 lease。detach 在移除前失败时返回无 owner 隔离标记，cleanup 明确失败，保留 closing/total 收费并报告 shutdown incomplete；绝不关闭 borrowed owner，也不重试。新 owner 的公共 close/connect 读取或包装失败也走同一失败裁定：若已取得原始 close 则保存 coalesced closeOwned 并一次调用；无法取得可靠 close 则保持 closing。仅 callback 声称完成不能证明外部 listener 已移除；纯测试直接检查受控 listenerSet。
 
 ## 固定资源与方法合同
@@ -97,19 +99,20 @@ storage 限定真实 memory backend，按安装源码的相对 getKeys 语义处
 
 ## 分层证据与限制
 
-R2 恢复原件根目录：`/tmp/issue444-r2-restore-VPxgLx`；R1 `/tmp/issue444-r1-restore-ort2Y2` 与更早 `/tmp/issue444-list-recovery-jKBwu4` 保留。本文此次更新在 R2 type/build 成功后写入，不属于这些 runtime 的输入。临时路径是本机审查证据，不是部署依赖；合并前需由父保管原件。
+R3 恢复原件根目录：`/tmp/issue444-r3-restore-642448`；R2 `/tmp/issue444-r2-restore-VPxgLx`、R1 `/tmp/issue444-r1-restore-ort2Y2` 与更早原件均保留。本文此次更新在 R3 type/build 成功后写入，不属于这些 runtime 的输入。临时路径是本机审查证据，不是部署依赖；合并前需由父保管原件。
 
 | 要求 | 证据与性质 |
 | --- | --- |
-| 准入、配额、ID、body、共享 socket、GET/TTL/epoch callback | R2 pure 86 PASS：原 76 加 10 个回归实例；phase 用例验证 it.skipIf 实际使用的 helper，已去掉恒真映射；受控 Promise/clock，不冒真实网络 |
-| 未发布 handshake 8/9 | R2 AUTH 1 PASS；八个真实 SDK Client 并发第二次认证挂起，第九个实际 HTTP503，factory/connect/provider 均保持8；释放后八sid独立并逐一DELETE |
-| 初始化断连/期限/字段 | R2 INIT 1 PASS；真实 provider 分配 sid 后断连和组件时钟到期均不发布，精确清理；真实 Client 控制与 raw 字段边界分列 |
+| 准入、配额、ID、body、共享 socket、GET/TTL/epoch callback | R3 pure 96 PASS：原 86 加 10 个注册/重入/隔离回归实例；phase 用例验证 it.skipIf 实际使用的 helper，已去掉恒真映射；受控 Promise/clock，不冒真实网络 |
+| 注册失败上界 | R3 五种失败各64/65、同步正常notify、三种重入shutdown、foreign owner隔离纯回归PASS；实际listenerSet与charge同时断言 |
+| 未发布 handshake 8/9 | R3 AUTH 1 PASS；八个真实 SDK Client 并发第二次认证挂起，第九个实际 HTTP503，factory/connect/provider 均保持8；释放后八sid独立并逐一DELETE |
+| 初始化断连/期限/字段 | R3 INIT 1 PASS；真实 provider 分配 sid 后断连和组件时钟到期均不发布，精确清理；真实 Client 控制与 raw 字段边界分列 |
 | 重启与局部 tools/list/call | 继承上一轮 O_real_restart_rejects_old_sid_and_accepts_new_Client PASS；两进程顺序自然退出，旧 sid 404/factory0、新 Client 正常；本轮未重跑 |
-| 8 pending 拒 9 | R2 T 专用 adapter phase 1 PASS；其他 rpc/get/ttl/restart phase 跳过 T，纯 phase 矩阵独立验证 |
-| body 慢流/超限、共享 pipeline、A 分配后异常 | 历史真实 evidence 有限继承，本轮失败出口与 handshake 接缝由 pure 与真实 AUTH/INIT/T/L 覆盖；不冒历史 case fresh 重跑 |
+| 8 pending 拒 9 | R3 T 专用 adapter phase 1 PASS；其他 rpc/get/ttl/restart phase 跳过 T，纯 phase 矩阵独立验证 |
+| body 慢流/超限、共享 pipeline、A 分配后异常 | 历史真实 evidence 有限继承，本轮失败出口与 handshake 接缝由 pure 与真实 INIT/AUTH/T 覆盖；不冒历史 case fresh 重跑 |
 | GET 1/8、SDK reconnect、ordinary/control 饱和独立 | 历史 M_real_GET_limits_reconnect_and_independent_quotas PASS；raw GET 与真实 Client 事件分列 |
-| TTL 活跃 RPC/GET、每 sid 一次底层 onclose | R2 L 1 PASS；只驱动组件时钟，不宣称等待 30 分钟墙钟 |
-| 取消隔离、active/internal waiting、late/repeat/unknown | 继承 R1 X 1 PASS；本轮选择 L 为关闭路径必要回归，不冒 X fresh |
+| TTL 活跃 RPC/GET、每 sid 一次底层 onclose | 继承 R2 L 1 PASS；本轮未重跑，只驱动组件时钟，不宣称等待 30 分钟墙钟 |
+| 取消隔离、active/internal waiting、late/repeat/unknown | 继承 R1 X 1 PASS；本轮 X/GET/TTL 主逻辑未变，有限继承，不冒 fresh |
 | 完整 type | 本轮固定 Node24.22.1/Nuxt typecheck PASS；type 专用 NODE_PATH；router plugin 实际 load/SHA 验证；raw TS/MODULE_NOT_FOUND gate |
 | 普通 app build | 本轮固定 Node 直接 Nuxt build exit0，无 NODE_PATH；全 output/四入口/native/models/maps 封存；未启动产物 |
 | compiled 新 endpoint、生产 auth/epoch/全部工具回执、旧 stateless 入口兼容 | UNRUN，#445 独立接线与验收，不能从 build exit0 外推 |
@@ -124,7 +127,7 @@ fixture 双进程 PID/观测身份、原生 HTTP status/body、typed ID、handle
 
 #445 需要真实认证与单调 epoch 来源、每请求 currentevent、所有已注册 handler 的真实完成回执、全 listener socket ownership、唯一 ingress/replay、原生 response/close 回执和精确 storage 清理；在显式新入口验证 source/compiled 两层，保留旧 `/mcp` 合同。不得把本 fixture 公共 tools/list/probe handler 当生产业务实现。
 
-本票四 owner 已形成候选：admission、transport、test、本文。R2 恢复保持 admission 和原 1822 tracked 文件不变；本轮无 commit/push/PR 更新。独立 Spec/Standards 的 R1/R2 历史发现及父静态跟进保留，本次 dirty 候选由父核验；本说明不是生产启用或 #439 native 取消完成声明。
+本票四 owner 已形成候选：admission、transport、test、本文。R3 恢复保持 admission 和原 1822 tracked 文件不变；本轮无 commit/push/PR 更新。独立 Spec/Standards 的 R1/R2/R3 历史发现及父静态跟进保留，R3 Standards 覆盖未完成，不继承为 PASS；下一 R4 需完整独立审查。本次 dirty 候选由父核验；本说明不是生产启用或 #439 native 取消完成声明。
 
 ## D1–D5 收口矩阵
 
