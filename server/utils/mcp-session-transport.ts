@@ -465,11 +465,13 @@ export function createSessionInitializationTransport<E, O extends SessionOwner>(
       retire(life); await lease.close()
       return refusal(401, 'identity_changed')
     }
-    // No await between ready check and publication; shutdown cannot interleave here.
+    // Detach below is a caller callback; recheck revocation after it returns.
     if (deadline(life) <= lifeClock.now()) retire(life)
     if (life.closing || lease.state() !== 'ready') { finishInitialization(); return refusal(503, 'initialization_revoked') }
     finishInitialization()
     if (life.observerFailed) { retire(life); return refusal(503, 'disconnect_observer_failed') }
+    if (deadline(life) <= lifeClock.now()) retire(life)
+    if (life.closing || lease.state() !== 'ready') return refusal(503, 'initialization_revoked')
     published = { lease, identity, owner: initialized.value.owner, connection: captured, ordinary: 0, control: 0, get: 0, life, ids: new Map([[idKey(message.id), { active: false, handlerDone: true, cancelled: false }]]), jobs: new Set() }
     sessions.set(initialized.value.sessionId, published)
     life.published = true

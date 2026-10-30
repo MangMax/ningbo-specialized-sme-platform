@@ -1954,7 +1954,7 @@ function lifecycleHarness(options:{pending?:boolean;cleanup?:'reject'|'never';st
     adopted:e=>e.owner,handlerFinished:e=>e.handler.promise,
     cleanupSession:async()=>{cleanups++;if(options.cleanup==='reject')throw new Error('private credential');if(options.cleanup==='never')await cleanupGate.promise;return {empty:true}},
   })
-  function invoke(sid:string|undefined,id:any,method='tools/call',extra:{http?:string;principal?:string;epoch?:number;target?:any;detachBeforeThrow?:boolean;registration?:string}={}) {
+  function invoke(sid:string|undefined,id:any,method='tools/call',extra:{http?:string;principal?:string;epoch?:number;target?:any;detachBeforeThrow?:boolean;registration?:string;afterDetach?:()=>void}={}) {
     const authGate=admissionDeferred<void>()
     const handler=admissionDeferred<{finished:true}>(),response=admissionDeferred<{finished:true}>(),body=JSON.stringify({jsonrpc:'2.0',...(id===undefined?{}:{id}),method,params:{requestId:extra.target}}),bytes=new TextEncoder().encode(body),headers=new Headers({authorization:'Bearer secret','content-length':String(bytes.length),...(sid?{'mcp-session-id':sid}:{})})
     const peer=controlledPeer();if(options.alreadyClosed)peer.close()
@@ -1966,7 +1966,7 @@ function lifecycleHarness(options:{pending?:boolean;cleanup?:'reject'|'never';st
       if(extra.registration==='register-throw'||extra.registration==='shutdown-throw')throw new Error('partial registration');
       if(extra.registration==='register-undefined'||extra.registration==='shutdown-invalid')return undefined;
       if(extra.registration==='register-number')return 42;
-      return ()=>{detachCalls++;if(extra.detachBeforeThrow||extra.registration==='notify-throw')throw new Error('detach before removal');detach();if(options.detachThrow)throw new Error('private detach failure')}},responseFinished:response.promise,terminate(){}}
+      return ()=>{detachCalls++;if(extra.detachBeforeThrow||extra.registration==='notify-throw')throw new Error('detach before removal');detach();extra.afterDetach?.();if(options.detachThrow)throw new Error('private detach failure')}},responseFinished:response.promise,terminate(){}}
     return {peer,releaseAuth:()=>authGate.resolve(),result:adapter.handle(event,input),handler:()=>handler.resolve({finished:true}),finish:()=>response.resolve({finished:true}),rejectReceipt:()=>response.reject(new Error('private receipt failure'))}
   }
   return {adapter,invoke,clock,timers,factoryGate,cleanupGate,authGate,setTimeWithoutTimers:(value:number)=>{time=value},setEpoch:(value:number)=>{epoch=value},counts:()=>({closes,transportCloses,cleanups,standaloneCloses,providers,factories,connects,registrations,detachCalls}),
@@ -1975,6 +1975,26 @@ function lifecycleHarness(options:{pending?:boolean;cleanup?:'reject'|'never';st
 }
 
 describe('L_get_ttl_lifecycle_pure',()=>{
+  it('R4_detach_removed_then_shutdown_rejects_publication_and_closes_once',async()=>{
+    const h=lifecycleHarness();let callbacks=0,removed=-1
+    const c=h.invoke(undefined,0,'initialize',{afterDetach:()=>{callbacks++;removed=c.peer.observerCount();h.adapter.shutdown()}})
+    const response=await c.result;expect(response.status).toBe(503);expect(response.headers.get('mcp-session-id')).toBeNull();expect(await response.json()).toMatchObject({error:{data:{code:'initialization_revoked'}}})
+    expect(callbacks).toBe(1);expect(removed).toBe(0);expect(c.peer.observerCount()).toBe(0);c.finish();await quotaFlush()
+    expect(h.counts()).toMatchObject({factories:1,providers:1,connects:1,detachCalls:1,closes:1,transportCloses:1,cleanups:1});expect(h.adapter.snapshot()).toMatchObject({total:0,closing:0,ready:0});expect(h.adapter.requestSnapshot().charged).toBe(0);expect(h.adapter.lifecycleSnapshot()).toEqual({streams:0,timers:0,retained:0});expect(h.adapter.shutdown()).toMatchObject({complete:true,total:0});c.peer.close();await quotaFlush();expect(h.counts().closes).toBe(1)
+  })
+  it('R4_detach_removed_then_clock_crosses_deadline_without_timer_rejects_publication',async()=>{
+    const h=lifecycleHarness();let callbacks=0,removed=-1
+    const c=h.invoke(undefined,0,'initialize',{afterDetach:()=>{callbacks++;removed=c.peer.observerCount();h.setTimeWithoutTimers(5001)}})
+    const response=await c.result;expect(response.status).toBe(503);expect(response.headers.get('mcp-session-id')).toBeNull();expect(await response.json()).toMatchObject({error:{data:{code:'initialization_revoked'}}});c.finish();await quotaFlush()
+    expect(callbacks).toBe(1);expect(removed).toBe(0);expect(c.peer.observerCount()).toBe(0);expect(h.counts()).toMatchObject({closes:1,transportCloses:1,cleanups:1,detachCalls:1});expect(h.adapter.snapshot().total).toBe(0);expect(h.adapter.requestSnapshot().charged).toBe(0);expect(h.adapter.lifecycleSnapshot()).toEqual({streams:0,timers:0,retained:0});expect(h.adapter.shutdown().complete).toBe(true)
+  })
+  it('R4_detach_closes_other_initializing_session_current_still_publishes',async()=>{
+    const h=lifecycleHarness({authIndividual:true}),other=h.invoke(undefined,0,'initialize');await quotaFlush();expect(other.peer.observerCount()).toBe(1);let callbacks=0
+    const current=h.invoke(undefined,0,'initialize',{afterDetach:()=>{callbacks++;expect(current.peer.observerCount()).toBe(0);other.peer.close()}});await quotaFlush();current.releaseAuth()
+    const response=await current.result;expect(response.status).toBe(200);const sid=response.headers.get('mcp-session-id');expect(sid).toBe('life-2');if(!sid)throw new Error('missing current sid');current.finish();other.releaseAuth();expect((await other.result).status).toBe(503);other.finish();await quotaFlush()
+    expect(callbacks).toBe(1);expect(other.peer.observerCount()).toBe(0);expect(h.counts()).toMatchObject({closes:1,transportCloses:1,cleanups:1});expect(h.adapter.snapshot()).toMatchObject({ready:1,total:1});const call=h.invoke(sid,1);expect((await call.result).status).toBe(200);call.handler();call.finish();await quotaFlush();h.adapter.shutdown();await quotaFlush();expect(h.adapter.shutdown()).toMatchObject({complete:true,total:0});expect(h.counts()).toMatchObject({closes:2,transportCloses:2,cleanups:2});expect(h.adapter.requestSnapshot().charged).toBe(0);expect(h.adapter.lifecycleSnapshot()).toEqual({streams:0,timers:0,retained:0})
+  })
+
   it.each(['notify-throw','register-throw','register-undefined','register-number','throw-before-register'])('R3_registration_failure_%s_retains64',async registration=>{
     const h=lifecycleHarness(),peers=[]
     for(let i=0;i<64;i++){const c=h.invoke(undefined,0,'initialize',{registration});expect((await c.result).status).toBe(503);peers.push(c.peer);expect(c.peer.observerCount()).toBe(registration==='throw-before-register'?0:1);expect(h.adapter.snapshot()).toMatchObject({closing:i+1,total:i+1});expect(h.adapter.lifecycleSnapshot().retained).toBe(i+1)}
