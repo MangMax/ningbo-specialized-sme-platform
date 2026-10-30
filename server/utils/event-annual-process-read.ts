@@ -10,6 +10,7 @@ import type { ScopedPlatformObservation, PlatformBusinessGroup } from '../../lib
 import { ANNUAL_PROCESS_RULE_VERSION, buildAnnualProcess, type AnnualProcessCoverage, type AnnualProcessScopeGap, type AnnualProcessSourceRefs, type EventAnnualProcessRead } from '../../lib/roster/annual-process'
 import { readPlatformBusinessGroups, readPlatformBusinessMetadata } from './platform-business-record-read'
 import { normalizedUscc } from './event-archive-discovery'
+import { platformQueryResultShape } from '../../lib/platform/live-query'
 
 type Db = BetterSQLite3Database<typeof schema>
 const hash = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex')
@@ -197,6 +198,121 @@ function derived(query: ScalarQuery, select: string, params: unknown[] = []): Sc
   return { toSQL: () => ({ sql: `with admitted as (${q.sql}) ${select}`, params: [...q.params, ...params] }) }
 }
 function literalQuery(statement: string, params: unknown[] = []): ScalarQuery { return { toSQL: () => ({ sql: statement, params }) } }
+function comparisonZeroMask() {
+  return `case
+      when exists(select 1 from platform_relation r where r.query_id in (select id from potential)) then 8
+      when exists(select 1 from potential q where case
+        when q.status not in ('no_record','success') or q.collection_evidence is null or not json_valid(q.collection_evidence) then 1
+        when json_type(q.collection_evidence) is not 'object' then 1
+        else json_extract(q.collection_evidence,'$.source') is not case q.interface when 'apply_list' then 'queryList' else 'businessList' end
+          or json_extract(q.collection_evidence,'$.status') is not q.status
+          or json_extract(q.collection_evidence,'$.completeness') is not 'complete'
+          or json_type(q.collection_evidence,'$.fullRange') is not 'true'
+          or json_type(q.collection_evidence,'$.unfinished') is not 'array' or json_array_length(q.collection_evidence,'$.unfinished') is not 0
+          or json_type(q.collection_evidence,'$.error') is not 'null'
+          or (q.interface='apply_list' and (q.title_code is not null or q.rdjb is not ''
+            or json_extract(q.collection_evidence,'$.titleScope.mode') is not 'source_default'))
+          or (q.interface='business_list' and (q.rdjb not in ('1','2','3')
+            or json_extract(q.collection_evidence,'$.titleScope.mode') is not 'selected'))
+          or json_type(q.collection_evidence,'$.pages') is not 'array' or json_array_length(q.collection_evidence,'$.pages')=0
+          or exists(select 1 from json_each(q.collection_evidence,'$.pages') p where case when p.type is not 'object' then 1 else
+            json_extract(p.value,'$.status') is not 'success'
+            or json_type(p.value,'$.page') is not 'integer' or json_extract(p.value,'$.page') is not cast(p.key as integer)+1
+            or json_extract(p.value,'$.source') is not case q.interface when 'apply_list' then 'queryList' else 'businessList' end
+            or (q.interface='apply_list' and json_type(p.value,'$.rdjb') is not 'null')
+            or (q.interface='business_list' and json_extract(p.value,'$.rdjb') is not q.rdjb)
+            or json_type(p.value,'$.fetchedCount') is not 'integer' or json_extract(p.value,'$.fetchedCount') is not 0
+            or json_type(p.value,'$.declaredTotal') is null or json_type(p.value,'$.declaredTotal') not in ('null','integer') or json_extract(p.value,'$.declaredTotal')!=0 end)
+        end) then 2 else 0 end`
+}
+
+type ClosureMetadata = ReturnType<typeof readPlatformBusinessMetadata> extends Map<number, infer M> ? M : never
+type ClosureNode = ClosureMetadata & { queryId: number; relationKey: string | null; usccRaw: string | null; isAnnualRow: number }
+type ClosureHistory = { recordId: number; relationId: number; queryId: number }
+type ClosureQuery = { id: number; interface: string; title_code: string | null; rdjb: string; metadata: string | null }
+type ClosureDecision = { relationId: number; eventId: number | null; predecessorEventId: number | null; enterpriseId: number | null; titleCode: string }
+const closureTitles: Record<string, string> = { '1': 'innovative_sme', '2': 'specialized_sme', '3': 'little_giant' }
+const closurePageTitle = platformQueryResultShape.pages.element.pick({ rdjb: true })
+/** Applicability only. Collection completion remains with the original validators/core. */
+function closureQueryTitle(query: ClosureQuery): string | null {
+  if (query.interface !== 'business_list') return null
+  const levels = query.rdjb.split(',').filter(Boolean)
+  const fallback = levels.length === 1 ? closureTitles[levels[0]!] : undefined
+  const title = query.title_code ?? fallback
+  if (!title || !Object.values(closureTitles).includes(title) || levels.some(level => closureTitles[level] !== title)) return null
+  if (query.metadata !== null) {
+    const metadata: unknown = JSON.parse(query.metadata)
+    if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return null
+    const fields = metadata as Record<string, unknown>
+    const scope = platformQueryResultShape.titleScope.safeParse(fields.titleScope)
+    if (!scope.success || scope.data.mode !== 'selected' || !scope.data.rdjb.length || scope.data.rdjb.some(level => closureTitles[level] !== title)) return null
+    if (!Array.isArray(fields.pages)) return null
+    for (const page of fields.pages) {
+      const parsed = closurePageTitle.safeParse(page)
+      if (!parsed.success || parsed.data.rdjb == null || closureTitles[parsed.data.rdjb] !== title) return null
+    }
+  }
+  return title
+}
+/** Private, once per admitted closure. No supplied facts or persistent classification cache. */
+function classifyComparisonClosure(nodes: ClosureNode[], history: ClosureHistory[], queries: ClosureQuery[], decisions: ClosureDecision[], request: { enterpriseId: number; titleCode: string; eventIds: readonly number[] }) {
+  const parent = nodes.map((_, index) => index)
+  const root = (index: number): number => {
+    let cursor = index
+    while (parent[cursor] !== cursor) { parent[cursor] = parent[parent[cursor]!]!; cursor = parent[cursor]! }
+    return cursor
+  }
+  const join = (a: number, b: number) => { parent[root(b)] = root(a) }
+  const records = new Map<number, number>(), keys = new Map<string, number>(), relations = new Map<number, number>()
+  const titles = new Map(queries.map(query => [query.id, closureQueryTitle(query)]))
+  const queryNodes = new Map<number, number[]>()
+  const attach = (queryId: number, index: number) => { const list = queryNodes.get(queryId) ?? []; list.push(index); queryNodes.set(queryId, list) }
+  for (const [index, node] of nodes.entries()) {
+    relations.set(node.relationId, index); attach(node.queryId, index)
+    if (node.recordId !== null) {
+      const prior = records.get(node.recordId)
+      if (prior !== undefined) join(prior, index)
+      else records.set(node.recordId, index)
+    }
+    const uscc = normalizeUscc(node.usccRaw), key = node.relationKey?.trim() || node.platformKey || null
+    if (uscc && key) {
+      const identity = JSON.stringify([uscc, key]), prior = keys.get(identity)
+      if (prior !== undefined) join(prior, index)
+      else keys.set(identity, index)
+    }
+  }
+  for (const row of history) {
+    const index = records.get(row.recordId)
+    if (index === undefined) unavailable()
+    relations.set(row.relationId, index!); attach(row.queryId, index!)
+  }
+  const current = new Set<number>(), unknown = new Set<number>()
+  for (const [index, node] of nodes.entries()) {
+    if (node.isAnnualRow) current.add(root(index))
+    if (node.recordId === null && !(normalizeUscc(node.usccRaw) && (node.relationKey?.trim() || node.platformKey))) unknown.add(root(index))
+  }
+  for (const [queryId, indices] of queryNodes) for (const index of indices) {
+    const title = titles.get(queryId)
+    if (!title) unknown.add(root(index))
+    else if (title === request.titleCode) current.add(root(index))
+  }
+  const events = new Set(request.eventIds)
+  for (const decision of decisions) {
+    // Status is not a current-target predicate; other own rejection/unlink stays other.
+    if ((decision.eventId !== null && events.has(decision.eventId)) || (decision.predecessorEventId !== null && events.has(decision.predecessorEventId)) || (decision.enterpriseId === request.enterpriseId && decision.titleCode === request.titleCode)) {
+      const index = relations.get(decision.relationId)
+      if (index === undefined) unavailable()
+      current.add(root(index!))
+    }
+  }
+  const metadataOnly = new Set<number>()
+  for (const query of queries) {
+    const title = titles.get(query.id)
+    if (title && title !== request.titleCode && (queryNodes.get(query.id) ?? []).every(index => !current.has(root(index)) && !unknown.has(root(index)))) metadataOnly.add(query.id)
+  }
+  return { metadataOnly, hasCurrentRoot: current.size > 0 }
+}
+
 /** ID-only internal seam. No external facts, normalizer, eligibility or loader. */
 export function readAnnualComparisonBatch(sqlite: Database.Database, db: Db, request: { enterpriseId: number; titleCode: string; eventIds: readonly number[]; selectedQueryIds: readonly number[] }) {
   if (!sqlite.inTransaction) unavailable()
@@ -254,52 +370,48 @@ export function readAnnualComparisonBatch(sqlite: Database.Database, db: Db, req
       (select x.record_id from platform_business_observation x join relations r on r.relationId=x.relation_id where x.record_id is not null)),
     protected as (select relationId from relations union select relationId from history)
     select case
-      when exists(select 1 from potential q where q.id not in (select id from selected))
-        or exists(select 1 from platform_business_observation o join platform_relation r on r.id=o.relation_id
+      when exists(select 1 from platform_business_observation o join platform_relation r on r.id=o.relation_id
           join platform_query q on q.id=r.query_id left join platform_business_record b on b.id=o.record_id
           where q.id in (select id from related) and q.interface='recognized_list' and o.record_id is not null and b.interface is not q.interface)
         or exists(select 1 from record_correspondence c where
           (c.event_id in (select id from events) or c.predecessor_event_id in (select id from events) or (c.enterprise_id=? and c.title_code=?))
           and (c.relation_id is null or c.relation_id not in (select relationId from protected))) then 8
+      when exists(select 1 from potential q where q.id not in (select id from selected))
+        or exists(select 1 from titles t where t.queryId not in (select id from selected))
+        or exists(select 1 from history h join platform_relation r on r.id=h.relationId where r.query_id not in (select id from selected)) then 4
       when exists(select 1 from relations) then 1
-      when exists(select 1 from platform_relation r where r.query_id in (select id from potential)) then 8
-      when exists(select 1 from potential q where case
-        when q.status not in ('no_record','success') or q.collection_evidence is null or not json_valid(q.collection_evidence) then 1
-        when json_type(q.collection_evidence) is not 'object' then 1
-        else json_extract(q.collection_evidence,'$.source') is not case q.interface when 'apply_list' then 'queryList' else 'businessList' end
-          or json_extract(q.collection_evidence,'$.status') is not q.status
-          or json_extract(q.collection_evidence,'$.completeness') is not 'complete'
-          or json_type(q.collection_evidence,'$.fullRange') is not 'true'
-          or json_type(q.collection_evidence,'$.unfinished') is not 'array' or json_array_length(q.collection_evidence,'$.unfinished') is not 0
-          or json_type(q.collection_evidence,'$.error') is not 'null'
-          or (q.interface='apply_list' and (q.title_code is not null or q.rdjb is not ''
-            or json_extract(q.collection_evidence,'$.titleScope.mode') is not 'source_default'))
-          or (q.interface='business_list' and (q.rdjb not in ('1','2','3')
-            or json_extract(q.collection_evidence,'$.titleScope.mode') is not 'selected'))
-          or json_type(q.collection_evidence,'$.pages') is not 'array' or json_array_length(q.collection_evidence,'$.pages')=0
-          or exists(select 1 from json_each(q.collection_evidence,'$.pages') p where case when p.type is not 'object' then 1 else
-            json_extract(p.value,'$.status') is not 'success'
-            or json_type(p.value,'$.page') is not 'integer' or json_extract(p.value,'$.page') is not cast(p.key as integer)+1
-            or json_extract(p.value,'$.source') is not case q.interface when 'apply_list' then 'queryList' else 'businessList' end
-            or (q.interface='apply_list' and json_type(p.value,'$.rdjb') is not 'null')
-            or (q.interface='business_list' and json_extract(p.value,'$.rdjb') is not q.rdjb)
-            or json_type(p.value,'$.fetchedCount') is not 'integer' or json_extract(p.value,'$.fetchedCount') is not 0
-            or json_type(p.value,'$.declaredTotal') is null or json_type(p.value,'$.declaredTotal') not in ('null','integer') or json_extract(p.value,'$.declaredTotal')!=0 end)
-        end) then 2 else 0 end mask`, [...related.params, ...actualRows.params, ...actualTitles.params, selectedJson, JSON.stringify(ids), request.enterpriseId, request.titleCode]))
+      else ${comparisonZeroMask()} end mask`, [...related.params, ...actualRows.params, ...actualTitles.params, selectedJson, JSON.stringify(ids), request.enterpriseId, request.titleCode]))
   if (probe.mask === 8 || probe.mask === 2) unavailable()
   if (headerBytes + 32 > comparisonCaps.scalar) resource()
   if (probe.mask === 0) return absent()
-  if (probe.mask !== 1) unavailable()
+  const deferred = probe.mask === 4
+  if (probe.mask !== 1 && !deferred) unavailable()
   // Only actual annual dependencies pay yearly metadata admission. Query-only
   // witnesses remain complete and are checked exactly once by the pure core.
   const qUnion = combine(uniqueScopes.map(s => named(s.queriesQuery, queryKeys)))
   const qSql = qUnion.toSQL()
-  const dependencies = literalQuery(`with annual_queries as (${qSql.sql}), annual_rows as (${actualRows.sql}), titles as (${actualTitles.sql}),
+  let dependencies = literalQuery(`with annual_queries as (${qSql.sql}), annual_rows as (${actualRows.sql}), titles as (${actualTitles.sql}),
     relations as (select relationId from annual_rows union select relationId from titles)
     select queryId id from annual_queries union select queryId id from titles
     union select r.query_id id from platform_business_observation o join platform_relation r on r.id=o.relation_id
       where o.record_id in (select x.record_id from platform_business_observation x join relations a on a.relationId=x.relation_id where x.record_id is not null)`,
     [...qSql.params,...actualRows.params,...actualTitles.params]).toSQL()
+  const completeProtected = literalQuery(`with annual_rows as (${actualRows.sql}), titles as (${actualTitles.sql}),
+    relations as (select relationId from annual_rows union select relationId from titles)
+    select relationId from relations union select o.relation_id from platform_business_observation o
+      where o.record_id in (select x.record_id from platform_business_observation x join relations a on a.relationId=x.relation_id where x.record_id is not null)`,
+    [...actualRows.params, ...actualTitles.params]).toSQL()
+  let dependencyIds: { id: number; isPotential: number }[] = [], idCharge = 0
+  if (deferred) {
+    dependencyIds = all(literalQuery(`with dependencies as (${dependencies.sql}), related as (${related.sql}), candidate(id,isPotential) as (
+      select id,0 from dependencies union all select q.id,1 from platform_query q where q.id in (select id from related) and q.interface in ('apply_list','business_list'))
+      select id,max(isPotential) isPotential from candidate group by id order by id limit 51`, [...dependencies.params, ...related.params]))
+    if (dependencyIds.some(row => !Number.isSafeInteger(row.id) || row.id <= 0)) unavailable()
+    if (dependencyIds.length > 50) resource()
+    // Same A/W budget: ID+flag objects and bound safe-integer JSON, never a free cache.
+    idCharge = 87*dependencyIds.length+1 + Math.max(2,17*dependencyIds.length+1)
+    dependencies = literalQuery('select value id from json_each(?)', [JSON.stringify(dependencyIds.map(row => row.id))]).toSQL()
+  }
   const queryMetadata = literalQuery(`select id, interface, query_key, rdjb, title_code, queried_at, status,
     case when collection_evidence is null then null when json_valid(collection_evidence) then json_object(
       'source',json_extract(collection_evidence,'$.source'),'status',json_extract(collection_evidence,'$.status'),
@@ -329,7 +441,9 @@ export function readAnnualComparisonBatch(sqlite: Database.Database, db: Db, req
       (select count(*) from platform_relation r where r.query_id=q.id) !=
       (select coalesce(sum(json_extract(p.value,'$.fetchedCount')),0) from json_each(q.collection_evidence,'$.pages') p where json_extract(p.value,'$.status')='success')
       or exists(select 1 from platform_relation r where r.query_id=q.id and (typeof(r.sequence_no)!='integer' or r.sequence_no<1))
-      or (select coalesce(max(r.sequence_no),0) from platform_relation r where r.query_id=q.id)!=(select count(*) from platform_relation r where r.query_id=q.id))`, dependencies.params))
+      or (select coalesce(max(r.sequence_no),0) from platform_relation r where r.query_id=q.id)!=(select count(*) from platform_relation r where r.query_id=q.id))
+      ${deferred ? `or (q.id in (${dependencies.sql}) and q.id not in (select value from json_each(?)) and exists(select 1 from platform_relation r where r.query_id=q.id and r.id not in (${completeProtected.sql})))` : ''}`,
+      deferred ? [...dependencies.params, ...dependencies.params, selectedJson, ...completeProtected.params] : dependencies.params))
   if (closure.n) unavailable()
   const pageShape = get(literalQuery(`select count(*) n from platform_query q where q.id in (${dependencies.sql}) and q.interface in ('apply_list','business_list') and q.collection_evidence is not null and exists (
     select 1 from (
@@ -353,29 +467,32 @@ export function readAnnualComparisonBatch(sqlite: Database.Database, db: Db, req
   const rUnion = combine(uniqueScopes.map(s => named(s.rowsQuery, rowKeys)))
   const tUnion = combine(uniqueScopes.map(s => named(s.titlesQuery, titleKeys)))
   const fUnion = combine(scopes.map(s => named(evidenceQuery(db, s.event.id), evidenceKeys)))
-  for (const query of [qUnion, tUnion]) {
+  for (const query of deferred ? [qUnion] : [qUnion, tUnion]) {
     const missing = get(derived(query, `select count(*) n from admitted where queryId not in (select value from json_each(?))`, [selectedJson]))
     if (missing.n) unavailable()
   }
-  const qCost = measure(qUnion, queryKeys, 50), rCost = measure(rUnion, rowKeys, comparisonCaps.rows), tCost = measure(tUnion, titleKeys, comparisonCaps.titles), fCost = measure(fUnion, evidenceKeys, comparisonCaps.evidence)
+  const qCost = measure(qUnion, queryKeys, 50), rCost = measure(rUnion, rowKeys, comparisonCaps.rows), tCost = measure(tUnion, titleKeys, comparisonCaps.titles)
+  let fCost = deferred ? null : measure(fUnion, evidenceKeys, comparisonCaps.evidence)
   const rawCost = get(derived(rUnion, `select coalesce(max(length(cast(rawFields as blob))),0) n from admitted`))
   if (rawCost.n! > comparisonCaps.raw) resource()
   const rt = combine([derived(rUnion, 'select id relationId from admitted'), derived(tUnion, 'select relationId from admitted')])
-  const mQuery = derived(rt, `select r.id relationId,o.record_id recordId,o.version_id versionId,b.interface,b.platform_key platformKey,o.identity_state identityState,o.content_state contentState,o.key_source keySource,o.projection_rule_version projectionRuleVersion,v.hash_algorithm hashAlgorithm,v.content_hash contentHash
-    from admitted x join platform_relation r on r.id=x.relationId left join platform_business_observation o on o.relation_id=r.id left join platform_business_record b on b.id=o.record_id left join platform_business_record_version v on v.id=o.version_id`)
-  const mKeys = ['relationId','recordId','versionId','interface','platformKey','identityState','contentState','keySource','projectionRuleVersion','hashAlgorithm','contentHash']
+  const mQuery = derived(rt, `select r.id relationId,o.record_id recordId,o.version_id versionId,b.interface,b.platform_key platformKey,o.identity_state identityState,o.content_state contentState,o.key_source keySource,o.projection_rule_version projectionRuleVersion,v.hash_algorithm hashAlgorithm,v.content_hash contentHash${deferred ? `,r.query_id queryId,r.relation_key relationKey,r.uscc_raw usccRaw,case when r.id in (${actualRows.sql}) then 1 else 0 end isAnnualRow` : ''}
+    from admitted x join platform_relation r on r.id=x.relationId left join platform_business_observation o on o.relation_id=r.id left join platform_business_record b on b.id=o.record_id left join platform_business_record_version v on v.id=o.version_id`, deferred ? actualRows.params : [])
+  const mKeys = ['relationId','recordId','versionId','interface','platformKey','identityState','contentState','keySource','projectionRuleVersion','hashAlgorithm','contentHash', ...(deferred ? ['queryId','relationKey','usccRaw','isAnnualRow'] : [])]
   const mCost = measure(mQuery, mKeys, 128)
   const hQuery = derived(rt, `select o.record_id recordId,o.relation_id relationId,r.query_id queryId,o.version_id versionId,b.interface,v.record_id versionRecordId
     from platform_business_observation o left join platform_relation r on r.id=o.relation_id left join platform_business_record b on b.id=o.record_id left join platform_business_record_version v on v.id=o.version_id
     where o.record_id in (select x.record_id from platform_business_observation x join admitted a on a.relationId=x.relation_id where x.record_id is not null)`)
   const hKeys = ['recordId','relationId','queryId','versionId','interface','versionRecordId'], hCost = measure(hQuery, hKeys, comparisonCaps.history)
-  const badHistory = get(derived(hQuery, `select count(*) n from admitted h left join platform_query q on q.id=h.queryId where q.id is null or q.id not in (select value from json_each(?)) or q.interface is not h.interface or (h.versionId is not null and h.versionRecordId is not h.recordId)`, [selectedJson]))
+  const badHistory = get(derived(hQuery, `select count(*) n from admitted h left join platform_query q on q.id=h.queryId where q.id is null ${deferred ? '' : 'or q.id not in (select value from json_each(?))'} or q.interface is not h.interface or (h.versionId is not null and h.versionRecordId is not h.recordId)`, deferred ? [] : [selectedJson]))
   if (badHistory.n) unavailable()
   const badMapping = get(derived(rt, `select count(*) n from admitted a join platform_relation r on r.id=a.relationId join platform_query q on q.id=r.query_id join platform_business_observation o on o.relation_id=r.id
     left join platform_business_record b on b.id=o.record_id left join platform_business_record_version v on v.id=o.version_id
     where (o.record_id is not null and (b.id is null or b.interface is not q.interface)) or (o.version_id is not null and (v.id is null or v.record_id is not o.record_id))`))
   if (badMapping.n) unavailable()
-  const protectedIds = combine([rt, derived(hQuery, 'select relationId from admitted')])
+  // Deferred coverage and decisions share the same complete ID-only protection set.
+  // History metadata is still validated/hydrated once through hQuery above.
+  const protectedIds = deferred ? literalQuery(completeProtected.sql, completeProtected.params) : combine([rt, derived(hQuery, 'select relationId from admitted')])
   const dQuery = derived(protectedIds, `select c.id,c.relation_id relationId,c.export_row_id exportRowId,c.event_id eventId,c.predecessor_event_id predecessorEventId,c.enterprise_id enterpriseId,c.title_code titleCode,c.type,c.role,c.status,c.revision,c.rule_id ruleId,c.rule_version ruleVersion,c.created_at createdAt,c.decided_at decidedAt,c.ended_at endedAt,
     q.title_code queryTitle,q.rdjb queryRdjb,q.interface queryInterface,q.status queryStatus,r.uscc_raw relationUscc,r.enterprise_id relationEnterpriseId,r.verification_status relationStatus,owner.id ownerId,owner.uscc_norm ownerUscc,target.id targetId,target.uscc_norm targetUscc,t.code targetTitle,
     case when json_valid(c.provenance) then json_extract(c.provenance,'$.comparisonProofIds') end proofIds,
@@ -393,7 +510,46 @@ export function readAnnualComparisonBatch(sqlite: Database.Database, db: Db, req
   const proof = get(derived(dQuery, `select coalesce(max(length(cast(proofIds as blob))),0) bytes,coalesce(max(proofCount),0) count,coalesce(min(proofCount),0) minimum from admitted`))
   if (proof.minimum! < 0) unavailable()
   if (proof.bytes! > comparisonCaps.proof || proof.count! > comparisonCaps.proofElements) resource()
-  const uniqueBytes = 32 + 32*fCost.n + headerBytes + qm.bytes + qCost.bytes + rCost.bytes + tCost.bytes + mCost.bytes + hCost.bytes + dCost.bytes + fCost.bytes
+  let admittedTitles: Map<Scope, Titles> | undefined
+  let admittedMetadata: ReturnType<typeof readPlatformBusinessMetadata> | undefined
+  let admittedHistory: ClosureHistory[] | undefined
+  const prefixBytes = 32 + headerBytes + qm.bytes + qCost.bytes + rCost.bytes + tCost.bytes + mCost.bytes + hCost.bytes + dCost.bytes + idCharge
+  if (deferred) {
+    if (prefixBytes > comparisonCaps.scalar) resource()
+    const sharedTitles = new Map<number, Titles[number]>()
+    admittedTitles = new Map(uniqueScopes.map(scope => [scope, scope.titlesQuery.all().map(row => {
+      const existing = sharedTitles.get(row.relationId)
+      if (existing) return existing
+      sharedTitles.set(row.relationId, row); return row
+    })]))
+    const nodes = mCost.n ? all<ClosureNode>(mQuery) : []
+    admittedHistory = all<ClosureHistory>(hQuery)
+    const classification = classifyComparisonClosure(nodes, admittedHistory, all<ClosureQuery>(queryMetadata), all<ClosureDecision>(dQuery), request)
+    const closed = (id: number) => selected.includes(id) || classification.metadataOnly.has(id)
+    if (dependencyIds.some(row => row.isPotential && !closed(row.id)) || admittedHistory.some(row => !closed(row.queryId))) unavailable()
+    const metadataOnlyJson = JSON.stringify([...classification.metadataOnly])
+    const missingTitles = get(derived(tUnion, `select count(*) n from admitted where queryId not in (select value from json_each(?)) and queryId not in (select value from json_each(?))`, [selectedJson, metadataOnlyJson]))
+    if (missingTitles.n) unavailable()
+    if (!classification.hasCurrentRoot) {
+      // Original full zero proof, applied after removing only proved-independent queries.
+      const zero = get(literalQuery(`with potential as (select q.* from platform_query q where q.id in (select value from json_each(?)))
+        select ${comparisonZeroMask()} mask`, [JSON.stringify(dependencyIds.filter(row => row.isPotential && !classification.metadataOnly.has(row.id)).map(row => row.id))]))
+      if (zero.mask !== 0) unavailable()
+      if (prefixBytes + 32 > comparisonCaps.scalar) resource()
+      return { kind: 'absent' as const, entries: [], history: new Map<number, number[]>(),
+        admission: { kind: 'scope_closure' as const, uniqueScalarBytes: prefixBytes+32, expandedCharge: null, sourceUpperBytes: [] as number[], actualSourceBytes: [] as number[] } }
+    }
+    // Explicit projection preserves legacy field order and excludes classification columns.
+    admittedMetadata = new Map(nodes.map(row => [row.relationId, {
+      relationId: row.relationId, recordId: row.recordId, versionId: row.versionId, interface: row.interface, platformKey: row.platformKey,
+      identityState: row.identityState, contentState: row.contentState, keySource: row.keySource, projectionRuleVersion: row.projectionRuleVersion,
+      hashAlgorithm: row.hashAlgorithm, contentHash: row.contentHash,
+    }]))
+    fCost = measure(fUnion, evidenceKeys, comparisonCaps.evidence)
+  }
+  // fCost is deferred only until the current-present/absent decision, never omitted on present.
+  if (!fCost) unavailable()
+  const uniqueBytes = prefixBytes + 32*fCost!.n + fCost!.bytes
   if (uniqueBytes > comparisonCaps.scalar) resource()
   const arrayBound = (query: ScalarQuery, item: string) => get(derived(query, `select 2+coalesce(sum(1.0*(${item})),0)+max(0,count(*)-1) bytes from admitted`)).bytes!
   const sourceUpperBytes = scopes.map(scope => {
@@ -412,7 +568,7 @@ export function readAnnualComparisonBatch(sqlite: Database.Database, db: Db, req
     if (total > comparisonCaps.source) resource()
     return total
   })
-  const p = 8192+32+32*fCost.n+headerBytes+qm.bytes+qCost.bytes+rCost.bytes+tCost.bytes+2*mCost.bytes+hCost.bytes+fCost.bytes+dCost.bytes
+  const p = 8192+32+32*fCost!.n+headerBytes+qm.bytes+qCost.bytes+rCost.bytes+tCost.bytes+2*mCost.bytes+hCost.bytes+fCost!.bytes+dCost.bytes+idCharge
   const expandedCharge = queryUpper.total!+sourceUpperBytes.reduce((a,b)=>a+b,0)+(1+16*ids.length)*(p+rCost.n*(qm.bytes+qCost.bytes+headerBytes))+ids.length*rCost.n*(4096+64*(rCost.n+tCost.n+dCost.n+hCost.n))
   if (!Number.isFinite(expandedCharge)) unavailable()
   if (expandedCharge > comparisonCaps.charge) resource()
@@ -420,11 +576,11 @@ export function readAnnualComparisonBatch(sqlite: Database.Database, db: Db, req
   // cache per request; Groups (and its authoritative second metadata pass) once.
   const cache = new Map<string, {queries: Queries; rows: Rows; titles: Titles}>()
   const key = (s: Scope) => JSON.stringify([s.owner,s.titleCode,s.event.record.usccRaw,s.joined.enterprise.nameNorm])
-  for (const s of uniqueScopes) cache.set(key(s),{queries:s.queriesQuery.all(),rows:s.rowsQuery.all(),titles:s.titlesQuery.all()})
+  for (const s of uniqueScopes) cache.set(key(s),{queries:s.queriesQuery.all(),rows:s.rowsQuery.all(),titles:admittedTitles?.get(s) ?? s.titlesQuery.all()})
   const relationIds = [...new Set([...cache.values()].flatMap(v=>[...v.rows.map(r=>r.id),...v.titles.map(t=>t.relationId)]))]
-  const metadata = readPlatformBusinessMetadata(db,relationIds)
+  const metadata = admittedMetadata ?? readPlatformBusinessMetadata(db,relationIds)
   const history = new Map<number,number[]>()
-  for (const row of all<{recordId:number;relationId:number}>(hQuery)) {
+  for (const row of admittedHistory ?? all<{recordId:number;relationId:number}>(hQuery)) {
     const list = history.get(row.recordId) ?? []; list.push(row.relationId); history.set(row.recordId,list)
   }
   const prepared = scopes.map(scope=>{const v=cache.get(key(scope))!;return prepareObservations(scope,v.rows,v.titles,v.queries,metadata)})
