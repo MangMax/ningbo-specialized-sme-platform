@@ -1,4 +1,4 @@
-import { afterAll, expect, it } from 'vitest'
+import { afterAll, expect, it, vi } from 'vitest'
 import { currentExport118Fixture } from './helpers/current-export-118'
 import { schema as s } from '../db/client'
 import { readQueryAssessment } from '../lib/roster/query-assessment'
@@ -39,4 +39,29 @@ it('does not retain identity variants across export snapshots or read source bod
   expect(assessment.queryCoverage.sources).toHaveLength(1)
   expect(assessment.queryCoverage.status).toBe('failed')
   expect(JSON.stringify([...fresh])).not.toContain('RAW_SENTINEL')
+})
+
+it('preserves full three-title workbook snapshots and cells with indexed coverage', async()=>{
+  const { createCurrentQualificationAssessmentReader } = await import('../lib/roster/current-qualification')
+  const { currentWorkbookValues } = await import('../lib/roster/current-workbook-presentation')
+  const id=f.candidate('Workbook indexed coverage',[]).enterprise.id
+  f.db.$client.prepare('update enterprise set uscc_norm=? where id=?').run('WORKBOOK-KEY',id)
+  for(const titleCode of ['little_giant','specialized_sme','innovative_sme'] as const)
+    f.db.insert(s.platformQuery).values({interface:'apply_list',queryKey:' workbook-key ',titleCode,rdjb:({little_giant:'3',specialized_sme:'2',innovative_sme:'1'}[titleCode]),queriedAt:'2026-10-30T00:00:00Z',status:'failed'}).run()
+  const reader=createCurrentQualificationAssessmentReader(f.db.$client),asOf=Date.parse('2026-10-31T12:00:00Z')
+  const expected=reader.readWorkbook(id,asOf,'little_giant')
+  const keys=readIdentityKeyVariants(f.db.$client,'queries')
+  const prepare=vi.spyOn(f.db.$client,'prepare')
+  let actual: ReturnType<typeof reader.readWorkbook>
+  try {
+    actual=reader.readWorkbook(id,asOf,'little_giant',keys)
+    const queries=prepare.mock.calls.map(([text])=>text).join('\n')
+    expect(queries).toContain('indexed by platform_query_key_idx')
+    expect(queries).not.toContain('instr(q.query_key')
+  } finally { prepare.mockRestore() }
+  expect(actual.snapshot).toEqual(expected.snapshot)
+  expect(actual.snapshot.titles).toHaveLength(3)
+  expect(actual.rows).toEqual(expected.rows)
+  expect(actual.workbookPublished).toEqual(expected.workbookPublished)
+  expect(currentWorkbookValues('little_giant',actual.rows[0]!,1,actual.workbookPublished)).toEqual(currentWorkbookValues('little_giant',expected.rows[0]!,1,expected.workbookPublished))
 })
