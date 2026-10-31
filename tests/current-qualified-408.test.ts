@@ -31,7 +31,7 @@ it('published_pending_keeps_eligible_totals_408', () => {
   const shared = readCurrentQualificationAssessment(fixture.sqlite, enterprise.id, Date.parse(AS_OF_408))
   expect(shared).toMatchObject({
     enterpriseId: enterprise.id, asOf: AS_OF_408,
-    ruleVersion: 'current-roster-116-v8', assessmentVersion: 'enterprise-qualification-407-v1',
+    ruleVersion: 'current-roster-116-v9', assessmentVersion: 'enterprise-qualification-407-v2',
   })
   expect(shared.titles.map(title => title.titleCode).sort())
     .toEqual(['innovative_sme', 'little_giant', 'specialized_sme'])
@@ -152,7 +152,7 @@ it.each([
   const factory = createCurrentQualificationAssessmentReader(fixture.sqlite)
   const optimized = factory.read(enterprise.id, Date.parse(AS_OF_408), {}, 'innovative_sme').snapshot
   expect(optimized).toEqual(defaults)
-  expect(defaults).toMatchObject({ enterpriseId: enterprise.id, asOf: AS_OF_408, ruleVersion: 'current-roster-116-v8', assessmentVersion: 'enterprise-qualification-407-v1' })
+  expect(defaults).toMatchObject({ enterpriseId: enterprise.id, asOf: AS_OF_408, ruleVersion: 'current-roster-116-v9', assessmentVersion: 'enterprise-qualification-407-v2' })
   expect(defaults.titles.map(t => t.titleCode)).toEqual(['little_giant', 'specialized_sme', 'innovative_sme'])
   expect(defaults.titles.map(t => t.group)).toEqual(groups)
   expect(defaults.snapshotId).toBe(independentDigest408(defaults))
@@ -280,9 +280,10 @@ it.each([
 })
 
 it.each([
-  { id: 'utc_previous_local_next', iso: '2025-12-31T16:30:00.000Z', local: 2026, eligible: 1 },
+  { id: 'before_shanghai_year', iso: '2025-12-31T15:59:59.999Z', local: 2026, eligible: 1 },
+  { id: 'utc_previous_shanghai_next', iso: '2025-12-31T16:30:00.000Z', local: 2025, eligible: 0 },
   { id: 'utc_next_local_previous', iso: '2026-01-01T00:30:00.000Z', local: 2025, eligible: 0 },
-])('evaluation_uses_utc_year_not_local_or_filter_year_408_$id', ({ iso, local, eligible }) => {
+])('evaluation_uses_shanghai_year_not_host_or_filter_year_408_$id', ({ iso, local, eligible }) => {
   const m = matrix408(fixture.sqlite)
   const a = m.formal('synthetic_408_utc', [{ eventType: 'award', year: 2023, decidedYear: 2023, batchSeq: 1 }])
   vi.setSystemTime(new Date(iso))
@@ -398,7 +399,7 @@ function assertRefSnapshot408(enterpriseId: number, refs: Record<'little_giant' 
   const defaults = readCurrentQualificationAssessment(fixture.sqlite, enterpriseId, Date.parse(AS_OF_408), options)
   const optimized = createCurrentQualificationAssessmentReader(fixture.sqlite).read(enterpriseId, Date.parse(AS_OF_408), options, 'innovative_sme').snapshot
   expect(optimized).toEqual(defaults)
-  expect(defaults).toMatchObject({ enterpriseId, asOf: AS_OF_408, ruleVersion: 'current-roster-116-v8', assessmentVersion: 'enterprise-qualification-407-v1' })
+  expect(defaults).toMatchObject({ enterpriseId, asOf: AS_OF_408, ruleVersion: 'current-roster-116-v9', assessmentVersion: 'enterprise-qualification-407-v2' })
   expect(defaults.titles.map(t => t.titleCode)).toEqual(['little_giant', 'specialized_sme', 'innovative_sme'])
   for (const title of defaults.titles) {
     const expected = refs[title.titleCode]
@@ -595,7 +596,7 @@ function crossRequestLiteralRows408(asOf: string): CurrentQualifiedRow[] {
       sourceVersions: [{ evidenceId: eventId + 100, eventId, sourceFile: 'synthetic/408/adapter-literal.pdf', storedFileId: null, sha256: null, bytes: null, removedAt: null, capturedRevision: 1, capturedSha256: '5'.repeat(64) }],
       references: [`evidence:${eventId + 100}`], notes: [], shadow: { legacyGroup: group, difference: null },
     }))
-    const scope = { enterpriseId, asOf, ruleVersion: 'current-roster-116-v8', assessmentVersion: 'enterprise-qualification-407-v1' }
+    const scope = { enterpriseId, asOf, ruleVersion: 'current-roster-116-v9', assessmentVersion: 'enterprise-qualification-407-v2' }
     return {
       enterpriseId, name: `synthetic_408_adapter_${enterpriseId}`, uscc: null, district: '鄞州区', publishedNames: [`synthetic_408_published_${enterpriseId}`], aliases: ['synthetic_408_confirmed_alias'], firstYear: 2025,
       basis: 'synthetic_408_basis', reviews: '', publication: '已见本称号宁波公布记录', notes: [], references: [`evidence:${enterpriseId * 10 + 103}`], group: 'eligible',

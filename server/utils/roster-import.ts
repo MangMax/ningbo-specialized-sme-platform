@@ -4341,7 +4341,7 @@ function readPreflightQualification(db: Db, request: RosterImportRequest, plan: 
   if (enterpriseId === null) return { qualificationDiagnostics, qualificationReadback: { stage: 'before', status: 'not_retained', reason: 'new_target', target: null } }
   const target = { enterpriseId }
   try {
-    const assessment = readCurrentQualificationAssessment((db as Db & { $client: import('better-sqlite3').Database }).$client, enterpriseId, Date.now())
+    const assessment = readCurrentQualificationAssessment((db as Db & { $client: import('better-sqlite3').Database }).$client, enterpriseId, Date.now(), { assessmentVersion: 'enterprise-qualification-407-v1' })
     const qualificationReadback = { stage: 'before' as const, status: 'captured' as const, target, assessment }
     const requiredBytes = Buffer.byteLength(JSON.stringify(qualificationReadback), 'utf8')
     return { qualificationDiagnostics, qualificationReadback: requiredBytes <= 65536 ? qualificationReadback
@@ -4442,7 +4442,7 @@ function captureAnnouncementQualification(db: Db, request: RosterImportRequest, 
   try {
     if (!findEnterpriseById(db, enterpriseId)) return { stage: 'after', status: 'unavailable', reason: 'read_unavailable', target }
     const asOf = Date.now()
-    const assessment = readCurrentQualificationAssessment((db as Db & { $client: import('better-sqlite3').Database }).$client, enterpriseId, asOf)
+    const assessment = readCurrentQualificationAssessment((db as Db & { $client: import('better-sqlite3').Database }).$client, enterpriseId, asOf, { assessmentVersion: 'enterprise-qualification-407-v1' })
     const capture = { stage: 'after' as const, status: 'captured' as const, target, assessment }
     const requiredBytes = Buffer.byteLength(JSON.stringify(capture), 'utf8')
     return requiredBytes <= 65536 ? capture : { stage: 'after', status: 'unavailable', reason: 'response_limit', target, requiredBytes }

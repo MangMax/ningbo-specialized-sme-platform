@@ -175,7 +175,7 @@ function readQualification(db: Db, targets: readonly { enterpriseId: number }[],
   const target = { enterpriseId: enterpriseIds[0]! }
   try {
     const asOf = Date.now()
-    const assessment = readCurrentQualificationAssessment((db as Db & { $client: import('better-sqlite3').Database }).$client, target.enterpriseId, asOf)
+    const assessment = readCurrentQualificationAssessment((db as Db & { $client: import('better-sqlite3').Database }).$client, target.enterpriseId, asOf, { assessmentVersion: 'enterprise-qualification-407-v1' })
     const capture: Extract<QualificationReadback, { status: 'captured' }> = stage === 'before'
       ? { stage, status: 'captured', target, assessment }
       : { stage, status: 'captured', target, assessment }

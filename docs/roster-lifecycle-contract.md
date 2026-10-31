@@ -1813,7 +1813,7 @@ REST `/api/platform/batches` 与 MCP `submit_platform_batch` 提交后按稳定 
 ## #407 增量：候选字段、提交时资格快照与精确历史读回
 
 本节补充既有接口，不改前文业务数、审批结论、周期判定、权限和原默认投影。
-共享资格规则仍为 `current-roster-116-v8`；当前输出版本为 `enterprise-qualification-407-v1`。
+历史 407-v1 回执的资格规则固定为 `current-roster-116-v8`；当前读取默认版本见本文末“正式有效期消费”。
 `enterprise-qualification-406-v1` 是 #406 发布时版本，历史说明及已保存快照按原版本保留。
 本节是当前实现契约，不是未来消费者或运行验收的GREEN声明。
 
@@ -1945,6 +1945,28 @@ REST `POST /api/roster/events/corrections/preflight` 的 `operations[].patch.for
 - `originAwardEventId`（可选）：明确对应的本 record 原认定事件；必须同原年度且已知批次不能冲突。省略保持未关联，不按未知批次推定关联。
 
 事实随原事件 revision、预检来源指纹、提交审计和幂等回执保存；非法来源或日期整批拒绝。
-历史行默认为 null，无批量回填。此增量仅承载事实，407-v1 和现行年度资格规则不消费该字段；
+历史行默认为 null，无批量回填。第一步仅承载事实；显式 407-v1 兼容调用仍不消费该字段；
 不得将写入成功解释成 current-qualified 已有效。后续消费须重新验证来源 SHA、原周期及后续相反事实，
 单独发布规则/assessment 版本并验证 current-qualified 与导出同一 authority。
+
+
+## 正式有效期消费（current-roster-116-v9 / enterprise-qualification-407-v2）
+
+当前详情、current-qualified 及当前导出默认共享 v2 evaluator。执行时点转换为 Asia/Shanghai 日历日；
+来源明确的 interval 含起止日，不把认定年/文号年/维护年互换，不由三年规则生成起止日期。
+文件已移除、SHA 不符、出处不属于事件、原认定引用冲突时，相关正式有效期不能作为确定有效依据。
+validity 原始载荷摘要及解析/来源有效状态进入事实 digest，原文件版本进入 sources digest；asOf 与版本进入 snapshotId。
+
+明确 originAwardEventId 可将复核关联至同 record 原认定，包括 null 批次；仅内部周期归属使用引用，
+不改写原批次。未关联的同年其它认定/相反结论仍独立裁定。明确 failed、未知结论、同年恢复顺序冲突、
+主体终止、外迁及身份未决规则仍保留；有效日期不覆盖这些事实。
+
+continuation 有两个不同值：
+
+- until_this_review_results：本次复核名单公布前原资格视同有效，须有明确 publishedOn 和原认定引用才能使用该公布前宽限；公布当日起使用本次明确结论。通过后按已有年精度规则裁定，不无限延续、不伪造三年截止日。
+- until_next_review_results：本次明确通过后的原资格，在下一轮结果公布前持续有效；后续失败/未知结论及恢复规则仍裁定。与 interval 同时存在时，起日前不有效，截止日后可依据该条款持续至下一轮结果。
+
+原文只记“有效期三年”而没有精确日区间时仍保留年精度，进入到期年未见明确延续依据仍 pending。
+显式 readCurrentQualificationAssessment(..., {assessmentVersion:'enterprise-qualification-407-v1'})
+保留旧 v8 年度规则、UTC 年界和字段投影，返回旧版本名及可复现 digest。纠偏/导入的既有 407-v1
+回执协议固定使用该兼容调用；不应将历史回执与当前 v2 详情要求字节相等。当前查询/导出不使用该兼容入口。

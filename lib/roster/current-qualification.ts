@@ -1,3 +1,4 @@
+import { formalValiditySchema, type FormalValidity } from './formal-validity'
 import { readPlatformComparisonProcesses } from '../../server/utils/platform-comparison-input'
 import type { ReceiptRuntimeContext } from '../../server/utils/receipt-runtime-context'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
@@ -24,9 +25,12 @@ import { comparePlatformComparison, COMPARISON_VERSION, type CandidateComparison
 export { CURRENT_TITLES }
 export type { CurrentTitle }
 
-export const CURRENT_RULE_VERSION = 'current-roster-116-v8'
+export const CURRENT_RULE_VERSION = 'current-roster-116-v9'
+export const LEGACY_CURRENT_RULE_VERSION = 'current-roster-116-v8'
+export const LEGACY_QUALIFICATION_ASSESSMENT_VERSION = 'enterprise-qualification-407-v1'
+export function qualificationDay(time: number) { return new Date(time + 8 * 60 * 60 * 1000).toISOString().slice(0, 10) }
 export type CurrentGroup = 'eligible' | 'pending' | 'excluded'
-export const QUALIFICATION_ASSESSMENT_VERSION = 'enterprise-qualification-407-v1'
+export const QUALIFICATION_ASSESSMENT_VERSION = 'enterprise-qualification-407-v2'
 
 export interface OfficialEventFieldGap {
   field: 'year' | 'decidedYear' | 'batchSeq' | 'reviewOutcome'
@@ -62,7 +66,9 @@ type PublishedNameAssessmentInput = { availability: 'available' | 'unavailable';
 // Private output observer, never a caller-supplied source reader or facts option.
 type CurrentCycleObservation = (cycles: ReturnType<typeof adjudicateQualificationCycles>['cycles'], formal: readonly QualificationEvent[]) => void
 type CurrentPublishedNameObservation = (scope: readonly OfficialPublishedScope[], presentationScope: readonly OfficialPublishedScope[], input: { readonly availability: 'available' | 'unavailable'; readonly facts: readonly OfficialPublishedFact[] }, sourceError?: unknown) => void
-type QualificationAssessmentReadOptions = {
+export type QualificationAssessmentReadOptions = {
+  /** Explicit compatibility boundary for published 407-v1 receipts. */
+  assessmentVersion?: typeof QUALIFICATION_ASSESSMENT_VERSION | typeof LEGACY_QUALIFICATION_ASSESSMENT_VERSION
   ownQueryIds?: readonly number[]
   publishedNames?: PublishedNameAssessmentInput
   coverageForTitle?: (title: CurrentTitle) => ReturnType<typeof readQueryCoverage>
@@ -84,7 +90,7 @@ export interface CurrentQualificationAssessment {
   }
   correspondence: { status: 'requires_revalidation' | 'confirmed' | 'candidate' | 'unmatched'; message: string; refs: ReturnType<typeof listRecordCorrespondenceRefs> }
   completeness: { status: 'incomplete' | 'recorded'; message: string; gaps: string[]; eventIds: number[]; fieldGaps?: (OfficialEventFieldGap & { eventId: number })[]; publishedNames: { evidenceId: number; availability: OfficialPublishedFact['availability']; nameKnown: boolean }[] }
-  evidence: { eventId: number; revision: number; eventType: string; year: number | null; batchSeq: number | null; decidedYear: number | null; reviewOutcome: string | null; evidenceIds: number[] }[]
+  evidence: { eventId: number; revision: number; eventType: string; year: number | null; batchSeq: number | null; decidedYear: number | null; reviewOutcome: string | null; formalValidity?: FormalValidity | null; validityInvalid?: boolean; evidenceIds: number[] }[]
   sourceVersions: { evidenceId: number; eventId: number; sourceFile: string; storedFileId: number | null; sha256: string | null; bytes: number | null; removedAt: string | null; capturedRevision: number | null; capturedSha256: string | null }[]
   references: string[]
   notes: string[]
@@ -214,7 +220,7 @@ export function createCurrentQualificationAssessmentReader(db: Database.Database
         workbookPublished = new Map(input.facts.map(fact => [fact.evidenceId, fact]))
       }
     }
-    const rows = CURRENT_TITLES.map(title => evaluate(enterpriseId, title, new Date(asOf).getUTCFullYear(), asOf, undefined, title === filterTitle, true, options, title === filterTitle, references?.get(title), filterTitle == null ? undefined : preparedCorrespondences, title === workbookTitle ? observePublishedForWorkbook : title === presentationTitle ? observePublishedForCurrent : undefined, comparisons?.get(title)).row)
+    const rows = CURRENT_TITLES.map(title => evaluate(enterpriseId, title, (options.assessmentVersion === LEGACY_QUALIFICATION_ASSESSMENT_VERSION ? new Date(asOf).getUTCFullYear() : Number(qualificationDay(asOf).slice(0,4))), asOf, undefined, title === filterTitle, true, options, title === filterTitle, references?.get(title), filterTitle == null ? undefined : preparedCorrespondences, title === workbookTitle ? observePublishedForWorkbook : title === presentationTitle ? observePublishedForCurrent : undefined, comparisons?.get(title)).row)
     if (presentationTitle != null && publishedPresentation === undefined) {
       if (presentationScope === undefined) throw new Error('Current published-name scope was not evaluated')
       try {
@@ -230,7 +236,7 @@ export function createCurrentQualificationAssessmentReader(db: Database.Database
       workbookPublished ??= readOfficialPublishedPresentation(prepareCurrentReader(db), workbookScope, undefined, receiptRuntime)
     }
     const titles = rows.map(row => row.assessment!)
-    const scope = { enterpriseId, asOf: new Date(asOf).toISOString(), ruleVersion: CURRENT_RULE_VERSION, assessmentVersion: QUALIFICATION_ASSESSMENT_VERSION }
+    const scope = { enterpriseId, asOf: new Date(asOf).toISOString(), ruleVersion: options.assessmentVersion === LEGACY_QUALIFICATION_ASSESSMENT_VERSION ? LEGACY_CURRENT_RULE_VERSION : CURRENT_RULE_VERSION, assessmentVersion: options.assessmentVersion ?? QUALIFICATION_ASSESSMENT_VERSION }
     return { rows, snapshot: { ...scope, snapshotId: assessmentDigest([scope, titles]), titles }, ...(publishedPresentation === undefined ? {} : { publishedPresentation }), ...(workbookPublished === undefined ? {} : { workbookPublished }) }
   }
   // Preserve the original default wrapper, including caller-owned SAVEPOINT semantics.
@@ -283,13 +289,13 @@ export function createCurrentQualificationAssessmentReader(db: Database.Database
   }
   const readComparison = db.transaction((enterpriseId: number, asOf: number, title: CurrentTitle) => {
     const collector = comparisonCollector()
-    const { snapshot: legacy } = readSnapshotBody(enterpriseId, asOf, {}, undefined, undefined, undefined, new Map([[title, collector.collect]]))
+    const { snapshot: legacy } = readSnapshotBody(enterpriseId, asOf, { assessmentVersion: LEGACY_QUALIFICATION_ASSESSMENT_VERSION }, undefined, undefined, undefined, new Map([[title, collector.collect]]))
     return compareOwnedSnapshot(enterpriseId, title, legacy, collector.cycles())
   })
   const readComparisons = db.transaction((enterpriseId: number, asOf: number, titles: readonly CurrentTitle[]) => {
     const collectors = new Map(titles.map(title => [title, comparisonCollector()]))
     const observers = new Map([...collectors].map(([title, collector]) => [title, collector.collect]))
-    const { snapshot } = readSnapshotBody(enterpriseId, asOf, {}, undefined, undefined, undefined, observers)
+    const { snapshot } = readSnapshotBody(enterpriseId, asOf, { assessmentVersion: LEGACY_QUALIFICATION_ASSESSMENT_VERSION }, undefined, undefined, undefined, observers)
     const comparisons = titles.map(title => compareOwnedSnapshot(enterpriseId, title, snapshot, collectors.get(title)!.cycles()))
     return { snapshot, comparisons }
   })
@@ -329,7 +335,7 @@ export function createCurrentQualificationAssessmentReader(db: Database.Database
       return { ...read, workbookPublished: read.workbookPublished }
     },
     readTitle(enterpriseId: number, title: CurrentTitle, asOf: number, keys?: { queries: IdentityKeyVariants; relations: IdentityKeyVariants }) {
-      return evaluate(enterpriseId, title, new Date(asOf).getUTCFullYear(), asOf, keys, true, false, undefined, true, undefined, preparedCorrespondences)
+      return evaluate(enterpriseId, title, Number(qualificationDay(asOf).slice(0,4)), asOf, keys, true, false, undefined, true, undefined, preparedCorrespondences)
     },
   }
 }
@@ -358,12 +364,32 @@ function createCurrentCandidateEvaluationReader(db: Database.Database, receiptRu
   const headsQuery=reader.select().from(d).where(sql`${d.id} in (${headIds})`).prepare()
   return function readCandidate(enterpriseId: number, title: CurrentTitle, year: number, executionTime = Date.now(), keys?: { queries: IdentityKeyVariants; relations: IdentityKeyVariants }, includeFilterFacts = false, includeReferences = true, assessmentOptions?: QualificationAssessmentReadOptions, includePendingFilterFacts = false, suppliedPlatformRefs?: readonly CurrentPlatformReference[], preparedCorrespondences?: ReturnType<typeof createEnterpriseTitleCorrespondenceRefsReader>, observePublishedForCurrent?: CurrentPublishedNameObservation, observeCycles?: CurrentCycleObservation): { row: CurrentRow; group: CurrentGroup } {
   const enterprise = statement('select id,name,name_norm,uscc_norm,district,city from enterprise where id=?').get(enterpriseId) as any
-  const events = statement(`select e.id,e.event_type as eventType,e.year,e.decided_year as decidedYear,e.batch_seq as batchSeq,e.review_outcome as reviewOutcome,e.revision,r.name_raw as nameRaw,r.uscc_raw as usccRaw,r.source from record r join record_event e on e.record_id=r.id where r.enterprise_id=? and r.title_code=? order by e.id`).all(enterpriseId,title) as (LifecycleEvent & { batchSeq: number|null; nameRaw: string|null; usccRaw: string|null; source: string; revision: number })[]
+  const events = statement(`select e.id,e.event_type as eventType,e.year,e.decided_year as decidedYear,e.batch_seq as batchSeq,e.review_outcome as reviewOutcome,e.revision,r.name_raw as nameRaw,r.uscc_raw as usccRaw,r.source from record r join record_event e on e.record_id=r.id where r.enterprise_id=? and r.title_code=? order by e.id`).all(enterpriseId,title) as (LifecycleEvent & { batchSeq: number|null; nameRaw: string|null; usccRaw: string|null; source: string; revision: number; formalValidity?: FormalValidity; validityInvalid?: boolean; formalValidityInputHash?: string; recordId?: number })[]
   const evidence = statement(`select v.id,v.record_event_id as eventId,v.source_file as sourceFile,v.attachment,v.list_no as listNo,v.page from record_evidence v join record_event e on e.id=v.record_event_id join record r on r.id=e.record_id where r.enterprise_id=? and r.title_code=? order by v.id`).all(enterpriseId,title) as (CurrentWorkbookFacts['evidence'][number] & {id:number})[]
+  const legacy = assessmentOptions?.assessmentVersion === LEGACY_QUALIFICATION_ASSESSMENT_VERSION
+  if (!legacy) {
+    const validityRows = statement(`select e.id,e.record_id as recordId,e.formal_validity as value from record_event e join record r on r.id=e.record_id where r.enterprise_id=? and r.title_code=? order by e.id`).all(enterpriseId,title) as {id:number;recordId:number;value:string|null}[]
+    for (const raw of validityRows) {
+      const event = events.find(e => e.id === raw.id)!
+      if (!raw.value) continue
+      event.formalValidityInputHash=assessmentDigest(raw.value)
+      let parsed: ReturnType<typeof formalValiditySchema.safeParse>
+      try { parsed = formalValiditySchema.safeParse(JSON.parse(raw.value)) } catch { event.validityInvalid=true; continue }
+      if (!parsed.success) { event.validityInvalid=true; continue }
+      const fact = parsed.data
+      const ref = evidence.find(e => e.id === fact.evidenceId && e.eventId === event.id)
+      const file = ref && statement('select sha256,removed_at as removedAt from stored_file where rel_path=?').get(ref.sourceFile) as {sha256:string;removedAt:string|null}|undefined
+      const origin = fact.originAwardEventId == null ? undefined : events.find(e => e.id === fact.originAwardEventId)
+      const originRecord = origin && validityRows.find(e => e.id === origin.id)?.recordId
+      const originValid = fact.originAwardEventId == null || !!origin && originRecord === raw.recordId && origin.eventType === 'award' && origin.year != null && origin.year === event.year && !(origin.batchSeq != null && event.batchSeq != null && origin.batchSeq !== event.batchSeq)
+      if (!file || file.removedAt || file.sha256 !== fact.sourceSha256 || !originValid) event.validityInvalid=true
+      else event.formalValidity=fact
+    }
+  }
   const formal = events.filter(e => e.source === 'jxj' && ['award','review'].includes(e.eventType) && evidence.some(v => v.eventId === e.id))
   const lifecycle = computeTitleLifecycle(formal)
   const row: CurrentRow = { enterpriseId, name: enterprise.name, uscc: enterprise.uscc_norm, district: enterprise.district, publishedNames: [...new Set(formal.map(e => e.nameRaw).filter((n): n is string => !!n))], aliases: [], firstYear: lifecycle.firstRecognitionYear, basis: formal.map(e => `event:${e.id}@${e.revision} ${e.eventType} ${e.year ?? ''}/${e.batchSeq ?? ''} 结论年:${e.decidedYear ?? ''}`).join('\n'), reviews: formal.filter(e => e.eventType === 'review').map(e => `${e.year ?? '?'}年原认定批次；结论年${e.decidedYear ?? '?'}；${e.reviewOutcome ?? '未知'}`).join('\n'), publication: formal.length ? '已见本称号宁波公布记录' : '尚未完成公布匹配核实', notes: [], references: evidence.map(v => `evidence:${v.id} ${v.sourceFile} ${v.attachment ?? ''} 序号:${v.listNo ?? ''}`), group: 'pending' }
-  const qualification = adjudicateQualificationCycles(formal, year)
+  const qualification = adjudicateQualificationCycles(formal, year, legacy ? undefined : qualificationDay(executionTime))
   let qualificationSource: 'formal' | 'migration' = 'formal'
   let migrationAwardYears: number[] = []
   row.group = qualification.group
@@ -631,7 +657,7 @@ function createCurrentCandidateEvaluationReader(db: Database.Database, receiptRu
     const regionStatus = locationConflict || subjectGap ? 'unresolved' : latest[0]?.reasonCode === 'moved_out' ? 'outside_ningbo' : latest[0]?.reasonCode === 'moved_in' ? 'ningbo' : 'not_established'
     // A proven termination remains an exclusion even if another independent
     // dimension is unresolved. The old projection is retained explicitly below.
-    const formalEvidence = events.filter(e => e.source === 'jxj').map(e => ({eventId:e.id,revision:e.revision,eventType:e.eventType,year:e.year,batchSeq:e.batchSeq,decidedYear:e.decidedYear,reviewOutcome:e.reviewOutcome,evidenceIds:evidence.filter(v => v.eventId === e.id).map(v => v.id)}))
+    const formalEvidence = events.filter(e => e.source === 'jxj').map(e => ({eventId:e.id,revision:e.revision,eventType:e.eventType,year:e.year,batchSeq:e.batchSeq,decidedYear:e.decidedYear,reviewOutcome:e.reviewOutcome,...(!legacy && (e.formalValidity || e.validityInvalid) ? {formalValidity:e.formalValidity ?? null,validityInvalid:e.validityInvalid ?? false} : {}),evidenceIds:evidence.filter(v => v.eventId === e.id).map(v => v.id)}))
     row.assessment = {
       titleCode:title,group,
       cycles:qualification.cycles.map(c => ({originYear:c.originYear,batchSeq:c.batch,precision:'year'})),
