@@ -45,7 +45,7 @@ const hasRealFileStore = existsSync(join(process.cwd(), 'files', 'miit', 'export
 /** 合成夹具的期望(独立于 payload 构造器,手数出来的 7 行里的 6 家 / 7 条事件)。 */
 const EXPECTED_SYNTHETIC = { rows: 7, enterprises: 6, records: 6, events: 7, evidences: 7 }
 /** 真件的期望(`docs/roster-little-giant-source.md` §4 记录的数字)。 */
-const EXPECTED_REAL = { rows: 511, enterprises: 510, records: 510, events: 511, evidences: 511 }
+const EXPECTED_REAL = { rows: 511, enterprises: 510, records: 510, events: 539, evidences: 539 }
 
 interface Expected {
   rows: number
@@ -136,7 +136,7 @@ describe('RL-02 端到端:经真实 HTTP 提交小巨人工作簿', () => {
     expect(workbook.rows.length + workbook.issues.filter((i) => i.severity === 'blocked').length).toBe(
       expected.rows,
     )
-    expect(workbook.rows).toHaveLength(expected.events)
+    expect(workbook.rows).toHaveLength(expected.rows)
   })
 
   it(`跨批次同一信用代码 ${SYNTHETIC_DUPLICATE_USCC}:企业一行,但两批各留一条认定事件`, async () => {
@@ -154,10 +154,11 @@ describe('RL-02 端到端:经真实 HTTP 提交小巨人工作簿', () => {
       .orderBy(schema.recordEvent.batchSeq)
       .all()
 
-    expect(rows).toHaveLength(2)
+    expect(rows).toHaveLength(hasRealSource ? 3 : 2)
     expect(new Set(rows.map((row) => row.enterpriseId)).size).toBe(1)
     expect(rows.map((row) => [row.eventType, row.batchSeq, row.year])).toEqual([
       ['award', 2, 2020],
+      ...(hasRealSource ? [['review', 2, 2020]] : []),
       ['award', 6, 2024],
     ])
   })
@@ -177,15 +178,15 @@ describe('RL-02 端到端:经真实 HTTP 提交小巨人工作簿', () => {
       .all()
 
     // 序号 14 在两份源里都只出现一次(真件 r15 / 夹具第 2 条),且都是第 2 批。
-    expect(evidence).toEqual([
+    expect(evidence).toEqual(Array.from({ length: hasRealSource ? 2 : 1 }, () => (
       {
         sourceFile: source.sourceFile,
         attachment: workbook.sheetName,
         listNo: 14,
         page: null,
         batchSeq: 2,
-      },
-    ])
+      }
+    )))
 
     // 每条源行都带出处,无一遗漏。
     expect(rosterRowCounts(db).record_evidence).toBe(expected.evidences)
@@ -252,12 +253,12 @@ describe('RL-02 端到端:经真实 HTTP 提交小巨人工作簿', () => {
       expect(workbook.missingBatches).toEqual([8])
     })
 
-    it('库里就是 510 企业 / 510 记录 / 511 事件 / 511 出处', () => {
+    it('库里保留511认定和28明确失败复核，共539事件和出处', () => {
       expect(rosterRowCounts(db)).toMatchObject({
         enterprise: 510,
         record: 510,
-        record_event: 511,
-        record_evidence: 511,
+        record_event: 539,
+        record_evidence: 539,
       })
     })
   })

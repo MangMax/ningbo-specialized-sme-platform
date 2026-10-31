@@ -13,8 +13,8 @@ import { isNingboDistrict, normalizeUscc } from '../domain'
  *    **不要**按名字取。
  *  - **表头只有一行**(r1),数据从 **r2** 起。这与工信部三张导出表的「两行表头、数据从 r3 起」
  *    **不同**,照抄那张表的读法会整表错位。
- *  - A:J 是这份名单的字段区;**K 起**是备注/主导产品/行业代码等**旁侧杂项**,
- *    其中 M(主导产品)、N–Q(行业)看着也「像名单」,但它们**不是**名单字段 ⇒ 一律不读。
+ *  - A:J 是认定名单字段区；K:L 是同一行的业务备注，单独保留。
+ *    M 起的产品、行业及独立侧表不用于认定或复核事件。
  *  - **G 列与 I 列的表头都叫「联系方式」**(一个是法人的、一个是联系人的)。
  *    按表头名取列必然撞车 ⇒ **本模块一律按列号取值**。
  *
@@ -31,7 +31,7 @@ import { isNingboDistrict, normalizeUscc } from '../domain'
 /** 本工作簿承载的称号。`db/titles.ts` 的 `little_giant`。 */
 export const LITTLE_GIANT_TITLE_CODE = 'little_giant'
 
-/** 名单字段区只到 **J** 列。K 起是旁侧杂项,**永不**当名单读。 */
+/** 名单身份字段区只到 J；K:L 备注不产生额外企业行。 */
 export const NOTICE_COLUMN_RANGE = { from: 'A', to: 'J' } as const
 
 /** 名单字段区的最后一列号(J = 10)。 */
@@ -81,6 +81,8 @@ export interface LittleGiantRow {
    * 只在这份原值里留存。
    */
   raw: string[]
+  /** 同行 K/L 原文；与 A:J 身份字段分开，不借用独立侧表。 */
+  remarks?: { primary: string; secondary: string }
 }
 
 export type LittleGiantIssueCode =
@@ -169,7 +171,7 @@ export async function parseLittleGiantWorkbook(
   assertExcelSheets(sourceParts, sheets.map(sheet => Worksheet.getName(sheet)))
   const sheet = sheets[0]
   if (!sheet) throw new Error('工作簿里没有工作表')
-  const valueAt = await createExcelValueReader(sheet, input, sourceParts.get(Worksheet.getName(sheet))!, { firstRow: 1, columnCount: NOTICE_LIMIT })
+  const valueAt = await createExcelValueReader(sheet, input, sourceParts.get(Worksheet.getName(sheet))!, { firstRow: 1, columnCount: 12 })
 
   const headers: string[] = []
   for (let column = 1; column <= NOTICE_LIMIT; column += 1) {
@@ -228,6 +230,7 @@ export async function parseLittleGiantWorkbook(
       batchSeq,
       year: batchSeqToYear(batchSeq),
       raw,
+      remarks: { primary: cellText(valueAt(sourceRowNo, 11)).trim(), secondary: cellText(valueAt(sourceRowNo, 12)).trim() },
     })
 
     // 进名单之后的可疑字段:只警示,**不丢行**。

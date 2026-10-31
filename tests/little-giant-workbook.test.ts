@@ -116,9 +116,9 @@ describe('RL-02 工作簿解析:K 列之后绝不当作名单', () => {
       district: '鄞州区',
       batchLabel: '第1批',
     })
-    // K 之后的备注**不是**本名单字段:整条记录里不该出现它。
+    // 备注与身份字段分开保存，产品等独立字段仍不进入记录。
     expect(JSON.stringify(workbook.rows)).not.toContain('大型碎纸机')
-    expect(JSON.stringify(workbook.rows)).not.toContain('企业注销')
+    expect(workbook.rows[0]!.remarks).toEqual({ primary: '企业注销-2022年未通过第1批复评', secondary: '' })
   })
 
   it('只读 A:J —— 表头与逐行原值都只到第 10 列', async () => {

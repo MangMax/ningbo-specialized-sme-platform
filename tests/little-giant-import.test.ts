@@ -23,6 +23,37 @@ const DUPLICATE_ACROSS_BATCHES = [
   { seq: 20, district: '镇海区', name: '宁波昌扬机械工业有限公司', uscc: '91330211316904639T', batch: '第6批' },
 ] as const
 
+describe('正式名单同行复核备注', () => {
+  it('preserves original award and imports explicit failed review with original cycle and source', async () => {
+    const workbook = await parseLittleGiantWorkbook(await buildLittleGiantWorkbookBuffer([
+      { seq: 57, name: '合成甲公司', uscc: '91330211MA2AB00001', district: '镇海区', batch: '第3批', extra: { K: '2024年未通过第三批小巨人复核', L: '2024年第二批重新认定为市专' } },
+    ]))
+    const request = buildLittleGiantImportRequest(workbook)
+    expect(request.payload.announcement.records[0]!.events).toEqual([
+      { eventType: 'award', year: 2021, batchSeq: 3, decidedYear: 2021, reviewOutcome: null, evidence: [{ sourceFile: LITTLE_GIANT_SOURCE_FILE, attachment: '专精特新小巨人企业 (2)', listNo: 57, page: null }] },
+      { eventType: 'review', year: 2021, batchSeq: 3, decidedYear: 2024, reviewOutcome: 'failed', evidence: [{ sourceFile: LITTLE_GIANT_SOURCE_FILE, attachment: '专精特新小巨人企业 (2)', listNo: 57, page: null }] },
+    ])
+    expect(request.idempotencyKey).toBe(`${LITTLE_GIANT_SOURCE_FILE}#sha256:${workbook.sha256}#review-notes-v1`)
+    expect(buildLittleGiantImportReport(workbook).totals).toMatchObject({ sourceRows: 1, events: 2, evidences: 2 })
+    expect(buildLittleGiantImportReport(workbook).rowAccounting.reconciled).toBe(true)
+  })
+
+  it.each(['企业注销-2022年未通过第1批复评', '企业停产-2022年未通过第一批小巨人复核，放弃复核', '已是大企业-2022年未通过复核'])('retains explicit failed review in compound note %s', async note => {
+    const workbook = await parseLittleGiantWorkbook(await buildLittleGiantWorkbookBuffer([
+      { seq: 1, name: '合成乙公司', batch: '第1批', extra: { K: note } },
+    ]))
+    expect(buildLittleGiantImportRequest(workbook).payload.announcement.records[0]!.events.map(e => [e.eventType, e.decidedYear, e.reviewOutcome])).toEqual([['award', 2019, null], ['review', 2022, 'failed']])
+  })
+
+  it.each(['市专复核未通过', '2024年未通过第二批小巨人复核', '2018年未通过第三批小巨人复核', '企业注销', '2024年复核中', '2024年未通过第三批小巨人复核后已重新通过'])('does not manufacture a review from unsupported note %s', async note => {
+    const workbook = await parseLittleGiantWorkbook(await buildLittleGiantWorkbookBuffer([
+      { seq: 1, name: '合成丙公司', batch: '第3批', extra: { K: note, L: '2024年10月市专复核' } },
+    ]))
+    expect(buildLittleGiantImportRequest(workbook).payload.announcement.records[0]!.events.map(e => e.eventType)).toEqual(['award'])
+    expect(buildLittleGiantImportReport(workbook).remarks[0]).toMatchObject({ primary: note, secondary: '2024年10月市专复核', reviewImported: false })
+  })
+})
+
 describe('RL-02 导入请求:企业去重、批次事件不折叠', () => {
   it('同一信用代码跨批次 → 合成**一条**企业记录,但带**两条**认定事件', async () => {
     const workbook = await parseLittleGiantWorkbook(

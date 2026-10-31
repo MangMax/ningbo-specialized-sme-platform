@@ -84,13 +84,13 @@ export interface LittleGiantImportEvidence extends RosterImportEvidence {
   page: number | null
 }
 
-/** 认定事件:这份来源只有认定,**没有**复核信息(故 `reviewOutcome` 恒为 `null`,不猜)。 */
+/** 认定行及同一行备注中明确记载的复核事件。 */
 export interface LittleGiantImportEvent extends RosterImportEvent {
-  eventType: 'award'
+  eventType: 'award' | 'review'
   year: number
   batchSeq: number
   decidedYear: number
-  reviewOutcome: null
+  reviewOutcome: 'failed' | null
   evidence: LittleGiantImportEvidence[]
 }
 
@@ -174,6 +174,8 @@ export interface LittleGiantImportReport {
     warnings: Array<Pick<LittleGiantIssue, 'sourceRowNo' | 'listNo' | 'name' | 'code' | 'message'>>
   }
   totals: LittleGiantImportTotals
+  /** 备注原文保留供主体/跨称号事实另行核验，不自动改主体状态。 */
+  remarks: Array<{ sourceRowNo: number; listNo: number; primary: string; secondary: string; reviewImported: boolean }>
 }
 
 /**
@@ -189,7 +191,7 @@ export function buildLittleGiantImportRequest(
 ): LittleGiantImportRequest {
   const sourceFile = options.sourceFile ?? LITTLE_GIANT_SOURCE_FILE
   return {
-    idempotencyKey: littleGiantIdempotencyKey(sourceFile, workbook.sha256),
+    idempotencyKey: littleGiantIdempotencyKey(sourceFile, workbook.sha256) + (workbook.rows.some(row => failedReviewYear(row.remarks?.primary ?? '', row.batchSeq, row.year) !== null) ? '#review-notes-v1' : ''),
     sourceKind: 'announcement',
     sourceIdentity: options.sourceIdentity ?? sourceFile,
     sourceSha256: workbook.sha256,
@@ -218,6 +220,7 @@ export function buildLittleGiantImportReport(
   for (const seq of batchSeqs) batchYears[seq] = batchSeqToYear(seq)
 
   const events = workbook.rows.length
+  const reviews = workbook.rows.filter(row => failedReviewYear(row.remarks?.primary ?? '', row.batchSeq, row.year) !== null).length
   const enterpriseCount = uniqueEnterprises(workbook).length
   const blank = workbook.blankRowNumbers.length
   const notes = [
@@ -259,9 +262,10 @@ export function buildLittleGiantImportReport(
       sourceRows: workbook.dataRowCount,
       enterprises: enterpriseCount,
       records: enterpriseCount,
-      events,
-      evidences: events,
+      events: events + reviews,
+      evidences: events + reviews,
     },
+    remarks: workbook.rows.filter(row => row.remarks?.primary || row.remarks?.secondary).map(row => ({ sourceRowNo: row.sourceRowNo, listNo: row.listNo, primary: row.remarks?.primary ?? '', secondary: row.remarks?.secondary ?? '', reviewImported: failedReviewYear(row.remarks?.primary ?? '', row.batchSeq, row.year) !== null })),
   }
 }
 
@@ -281,7 +285,7 @@ function groupRecords(workbook: LittleGiantWorkbook, sourceFile: string): Little
       batchSeq: row.batchSeq,
       // 认定事件的「结论年份」就是认定年份本身(公布名单的批次 → 年份是权威约定)。
       decidedYear: row.year,
-      // 复核结论:本来源是认定名单,**没有**复核信息 ⇒ 留空(未知不猜成通过)。
+      // 原认定仍保留；备注里的复核另建事件，不覆盖认定历史。
       reviewOutcome: null,
       evidence: [
         {
@@ -294,6 +298,8 @@ function groupRecords(workbook: LittleGiantWorkbook, sourceFile: string): Little
       ],
     }
 
+    const reviewYear = failedReviewYear(row.remarks?.primary ?? '', row.batchSeq, row.year)
+    const events = reviewYear === null ? [event] : [event, { ...event, eventType: 'review' as const, decidedYear: reviewYear, reviewOutcome: 'failed' as const }]
     const existing = groups.get(key)
     if (!existing) {
       groups.set(key, {
@@ -306,11 +312,11 @@ function groupRecords(workbook: LittleGiantWorkbook, sourceFile: string): Little
           district: row.district === '' ? null : row.district,
         },
         titleCode: LITTLE_GIANT_TITLE_CODE,
-        events: [event],
+        events,
       })
       continue
     }
-    existing.events.push(event)
+    existing.events.push(...events)
   }
 
   // 事件按批次序号排(源行顺序已经如此,这里显式钉死,免得日后改读法悄悄变序)。
@@ -318,6 +324,15 @@ function groupRecords(workbook: LittleGiantWorkbook, sourceFile: string): Little
     record.events.sort((a, b) => a.batchSeq - b.batchSeq)
   }
   return [...groups.values()]
+}
+
+/** 只接收本工作簿 K 列的明确失败陈述；市专备注、模糊状态和冲突批次不映射。 */
+function failedReviewYear(note: string, batch: number, awardYear: number): number | null {
+  const match = /^(?:企业注销-|企业停产-|已是大企业-)?(\d{4})年未通过(?:第([一二三四五六七八]|\d+)批)?(?:小巨人)?(?:复核|复评)(?:$|[，；;])/u.exec(note)
+  if (!match) return null
+  const statedBatch = match[2] == null ? batch : Number(match[2]) || '一二三四五六七八'.indexOf(match[2]) + 1
+  const year = Number(match[1])
+  return statedBatch === batch && year >= awardYear ? year : null
 }
 
 function uniqueEnterprises(workbook: LittleGiantWorkbook): string[] {
