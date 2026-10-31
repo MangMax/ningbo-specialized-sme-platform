@@ -17,7 +17,7 @@ import { listRecordCorrespondences, readScopedRecordCorrespondences } from './re
 type Db = ReturnType<typeof useDb>
 type Query = typeof schema.platformQuery.$inferSelect
 type Relation = ReturnType<typeof normalizePlatformRelation<typeof schema.platformRelation.$inferSelect>>
-type Event = typeof schema.recordEvent.$inferSelect
+type Event = Omit<typeof schema.recordEvent.$inferSelect, 'formalValidity'>
 type Edge = ReturnType<typeof listRecordCorrespondences>[number]
 /** Only an authorized evidence reader may supply these verified, persisted attestations.
  * HTTP/MCP currently have no such reader; client-supplied assertions are not accepted. */

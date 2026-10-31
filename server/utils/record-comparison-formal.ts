@@ -2,7 +2,7 @@ import type { useDb } from '../../db/client'
 import type * as schema from '../../db/schema'
 import type { RecordComparisonInput } from '../../lib/roster/record-comparison'
 
-type Event = typeof schema.recordEvent.$inferSelect
+type Event = Omit<typeof schema.recordEvent.$inferSelect, 'formalValidity'>
 type RecordRow = Pick<typeof schema.record.$inferSelect, 'id' | 'enterpriseId' | 'titleCode' | 'source' | 'usccRaw' | 'nameRaw'>
 interface FormalRow {
   eventId: number; recordId: number; eventType: Event['eventType']; year: number | null; batchSeq: number | null

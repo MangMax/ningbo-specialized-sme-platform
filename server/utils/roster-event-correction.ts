@@ -1,3 +1,5 @@
+import { formalValiditySchema } from '../../lib/roster/formal-validity'
+import { isDeepStrictEqual } from 'node:util'
 import { createHash } from 'node:crypto'
 import { and, asc, count, eq, inArray } from 'drizzle-orm'
 import { z } from 'zod'
@@ -17,7 +19,7 @@ const positive = z.number().int().positive().max(Number.MAX_SAFE_INTEGER - 1)
 const year = z.number().int().min(1900).max(9999).nullable()
 export const eventCorrectionOperationSchema = z.strictObject({
   eventId: positive, recordId: positive, enterpriseId: positive, expectedRevision: positive,
-  patch: z.strictObject({ eventType: z.enum(['award', 'review', 'nurture']).optional(), year: year.optional(), decidedYear: year.optional(), batchSeq: positive.nullable().optional(), reviewOutcome: z.enum(['passed', 'failed']).nullable().optional() }).refine(patch => Object.keys(patch).length > 0, 'Patch must contain an event field'),
+  patch: z.strictObject({ formalValidity: formalValiditySchema.nullable().optional(), eventType: z.enum(['award', 'review', 'nurture']).optional(), year: year.optional(), decidedYear: year.optional(), batchSeq: positive.nullable().optional(), reviewOutcome: z.enum(['passed', 'failed']).nullable().optional() }).refine(patch => Object.keys(patch).length > 0, 'Patch must contain an event field'),
 })
 export const eventCorrectionRequestSchema = z.strictObject({
   idempotencyKey: z.string().trim().min(1).max(200), sourceIdentity: z.string().trim().min(1).max(1000),
@@ -66,7 +68,18 @@ function buildPlan(db: Executor, request: EventCorrectionRequest) {
     if (!source.evidence.length) fail(422, 'basis_required', 'Official source evidence is required for correction')
     const after = { ...before, ...op.patch, sortKey: op.patch.year === undefined ? before.sortKey : op.patch.year ?? 0, revision: before.revision + 1 }
     if (after.eventType === 'maintain' || after.eventType !== 'review' && after.reviewOutcome != null || after.year != null && after.decidedYear != null && after.decidedYear < after.year) fail(422, 'invalid_event_combination', 'Only official award/review/nurture; reviewOutcome is review-only and decidedYear cannot precede year')
-    if (Object.entries(op.patch).every(([key, value]) => before[key as keyof typeof before] === value)) fail(422, 'no_change', 'Correction must change an event field')
+    if (after.formalValidity) {
+      const fact = after.formalValidity
+      const evidence = source.evidence.find(row => row.id === fact.evidenceId)
+      const file = source.files.find(row => row.relPath === evidence?.sourceFile && row.sha256 === fact.sourceSha256 && row.removedAt == null)
+      if (!evidence || !file) fail(422, 'invalid_validity_source', 'Formal validity must reference current event evidence and stored file SHA256')
+      if (fact.originAwardEventId !== undefined) {
+        const origin = db.select().from(schema.recordEvent).where(eq(schema.recordEvent.id, fact.originAwardEventId)).get()
+        if (!origin || origin.recordId !== after.recordId || origin.eventType !== 'award' || origin.year == null || origin.year !== after.year || after.batchSeq != null && origin.batchSeq != null && origin.batchSeq !== after.batchSeq) fail(422, 'invalid_validity_origin', 'Origin must be the same record award and original year with no known batch conflict')
+      }
+      if (after.eventType !== 'award' && after.eventType !== 'review') fail(422, 'invalid_event_combination', 'Formal validity requires award or review')
+    }
+    if (Object.entries(op.patch).every(([key, value]) => isDeepStrictEqual(before[key as keyof typeof before], value))) fail(422, 'no_change', 'Correction must change an event field')
     const related = db.select({ id: schema.recordCorrespondence.id, revision: schema.recordCorrespondence.revision, status: schema.recordCorrespondence.status }).from(schema.recordCorrespondence).where(eq(schema.recordCorrespondence.eventId, op.eventId)).orderBy(asc(schema.recordCorrespondence.id)).limit(301).all()
     // Predecessor confirmations are covered by the same event revision fingerprint.
     const predecessors = db.select({ id: schema.recordCorrespondence.id, revision: schema.recordCorrespondence.revision, status: schema.recordCorrespondence.status }).from(schema.recordCorrespondence).where(eq(schema.recordCorrespondence.predecessorEventId, op.eventId)).orderBy(asc(schema.recordCorrespondence.id)).limit(301).all()

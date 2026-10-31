@@ -1931,3 +1931,20 @@ MCP沿既有tool content和ImportReceiptError的isError/structuredContent包装�
 本轮文档/详情回归准备不运行任何测试；新增406详情控制、语义编译及当前候选三文件联合运行均UNRUN，父另grant。
 真实SDK/Nitro/native worker、browser/390px、full/CI/生产没有本轮fresh验收。
 既有#406/PR414的设置/type/build及有限SDK/浏览器证据只保留原范围，不能转作#407新验收。
+
+## 正式事件有效期事实（纠偏增量；尚不改变资格裁定）
+
+REST `POST /api/roster/events/corrections/preflight` 的 `operations[].patch.formalValidity`
+可省略（保留）、为 null（明确撤回该事实），或为严格对象：
+
+- `evidenceId`：当前事件已有的正式出处 ID；`sourceSha256`：该出处对应未移除文件的 SHA256。
+- `statementPages`：原文有效期/延续条款页码，1..20 页。名单行页码仍保存在原 evidence，不改写。
+- `interval: { validFrom, validThrough }`：原文明确的 ISO 日期闭区间，起日不得晚于截止日。
+- `continuation: "until_next_review_results"`：原文明确的下一轮结果公布前延续条款。与 interval 至少存在一项；不能从三年规则推造日期。
+- `publishedOn`（可选）：明确公布日期，独立于业务年度和有效期起日。
+- `originAwardEventId`（可选）：明确对应的本 record 原认定事件；必须同原年度且已知批次不能冲突。省略保持未关联，不按未知批次推定关联。
+
+事实随原事件 revision、预检来源指纹、提交审计和幂等回执保存；非法来源或日期整批拒绝。
+历史行默认为 null，无批量回填。此增量仅承载事实，407-v1 和现行年度资格规则不消费该字段；
+不得将写入成功解释成 current-qualified 已有效。后续消费须重新验证来源 SHA、原周期及后续相反事实，
+单独发布规则/assessment 版本并验证 current-qualified 与导出同一 authority。
