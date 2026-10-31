@@ -1,12 +1,22 @@
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { expect, it, vi } from 'vitest'
+import { afterEach, expect, it, vi } from 'vitest'
 import { useDb, schema } from '../db/client'
 import { handleEventCorrectionRequest } from '../server/utils/roster-event-correction-api'
 
+const opened: Array<ReturnType<typeof useDb>> = []
+afterEach(() => {
+  try {
+    for (const db of opened.splice(0)) if (db.$client.open) db.$client.close()
+  } finally {
+    vi.unstubAllGlobals()
+  }
+})
+
 function fixture() {
   const db = useDb({ dbPath: join(mkdtempSync(join(tmpdir(), 'formal-validity-')), 'owned.db') })
+  opened.push(db)
   vi.stubGlobal('useRuntimeConfig', () => ({ apiToken: 'synthetic' }))
   const enterprise = db.insert(schema.enterprise).values({ name: '合成原件企业', nameNorm: '合成原件企业' }).returning().get()
   const record = db.insert(schema.record).values({ enterpriseId: enterprise.id, titleCode: 'innovative_sme', source: 'jxj' }).returning().get()
