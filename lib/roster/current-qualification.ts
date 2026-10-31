@@ -328,9 +328,12 @@ export function createCurrentQualificationAssessmentReader(db: Database.Database
       if (read.publishedPresentation === undefined) throw new Error('Current published-name presentation missing')
       return { ...read, publishedPresentation: read.publishedPresentation }
     },
-    readWorkbook(enterpriseId: number, asOf: number, title: CurrentTitle) {
+    readWorkbook(enterpriseId: number, asOf: number, title: CurrentTitle, queryKeys?: IdentityKeyVariants) {
       // Full default T2 SQL/options/context; no caller-provided sources or facts.
-      const read = readSnapshot(enterpriseId, asOf, {}, undefined, undefined, title)
+      const options: QualificationAssessmentReadOptions = queryKeys === undefined ? {} : {
+        coverageForTitle: titleCode => readQueryCoverage(prepareCurrentReader(db), { enterpriseId, titleCode, direction: 'missing_in_miit' }, queryKeys),
+      }
+      const read = readSnapshot(enterpriseId, asOf, options, undefined, undefined, title)
       if (read.workbookPublished === undefined) throw new Error('Workbook published-name facts missing')
       return { ...read, workbookPublished: read.workbookPublished }
     },

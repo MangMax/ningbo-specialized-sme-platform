@@ -7,6 +7,7 @@ import { once } from 'node:events'
 import { finished } from 'node:stream/promises'
 import { CURRENT_RULE_VERSION, qualificationDay, prepareCurrentReader, createCurrentQualificationAssessmentReader, QUALIFICATION_ASSESSMENT_VERSION, type CurrentTitle } from './current-qualification'
 import { currentCandidateBindings, currentCandidateSqlFor } from './current-candidates'
+import { readIdentityKeyVariants } from './current-identity-keys'
 import { TITLES } from '../labels'
 import { CURRENT_COLUMNS, currentWorkbookValues } from './current-workbook-presentation'
 import { appLog, type LogContext } from '../logging'
@@ -62,6 +63,9 @@ export async function writeCurrentWorkbook(db: Database.Database, title: Current
     // SQLite functions must be registered before a streaming SELECT is active.
     prepareCurrentReader(db)
     db.exec('BEGIN')
+    // Enumerate narrow query keys once inside this pinned snapshot. Full T2
+    // still reads and verifies every title and source; only coverage lookup changes.
+    const queryKeys = readIdentityKeyVariants(db, 'queries')
     const assessmentReader = createCurrentQualificationAssessmentReader(db, receiptRuntime)
     const bindings=currentCandidateBindings(title)
     const currentCandidateSql=currentCandidateSqlFor(db)
@@ -103,7 +107,7 @@ export async function writeCurrentWorkbook(db: Database.Database, title: Current
           if (canonicalGroup !== 'eligible') deferred[canonicalGroup].push(id)
         }
         if (canonicalGroup === group) {
-          const { rows, snapshot, workbookPublished } = assessmentReader.readWorkbook(id,Date.parse(generatedAt),title)
+          const { rows, snapshot, workbookPublished } = assessmentReader.readWorkbook(id,Date.parse(generatedAt),title,queryKeys)
           const row = rows.find(item => item.assessment!.titleCode === title)!
           if (row.assessment!.group !== group) throw new Error('Workbook scan and full assessment group differ')
           // Keep the original row and its non-enumerable workbookFacts.
