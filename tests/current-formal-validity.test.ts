@@ -135,3 +135,15 @@ it('keeps legacy snapshot input bytes stable when formal dates are added', () =>
   expect(f.read('2026-10-31', { assessmentVersion: 'enterprise-qualification-407-v1' })).toEqual(before)
   expect(f.read().snapshotId).not.toBe(before.snapshotId)
 })
+
+
+it.each(['passed', 'failed', null] as const)('honors this-result grace over an expired explicit interval until publication of %s', outcome => {
+  const f = fixture('yongchuang')
+  f.db.update(schema.recordEvent).set({ formalValidity: { evidenceId: f.db.select().from(schema.recordEvidence).all().find(e => e.recordEventId === f.award.id)!.id, sourceSha256: f.file.sha256, statementPages: [2], interval: { validFrom: '2022-03-01', validThrough: '2025-12-31' } } }).where(eq(schema.recordEvent.id, f.award.id)).run()
+  f.install({ ...f.fact, publishedOn: '2026-02-27' })
+  f.db.update(schema.recordEvent).set({ reviewOutcome: outcome }).where(eq(schema.recordEvent.id, f.review!.id)).run()
+  expect(f.selected('2022-02-28').group).toBe('pending')
+  expect(f.selected('2026-02-26').group).toBe('eligible')
+  if (outcome === 'passed') expect(f.selected('2026-02-27').group).toBe('eligible')
+  else expect(f.selected('2026-02-27').group).not.toBe('eligible')
+})

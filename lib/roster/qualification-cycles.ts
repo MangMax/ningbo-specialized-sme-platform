@@ -94,10 +94,11 @@ function adjudicateCycle(events: QualificationEvent[], originYear: number, batch
     const dueYear = anchor ? factTime(anchor)! + 3 : null
     const fact = day ? anchor?.formalValidity : undefined
     const futureReviewGrace = day && anchor?.eventType === 'award' && events.some(e => e.eventType === 'review' && e.formalValidity?.continuation === 'until_this_review_results' && e.formalValidity.publishedOn && day < e.formalValidity.publishedOn && e.formalValidity.originAwardEventId === anchor.id)
-    if (day && fact?.interval) {
+    if (futureReviewGrace && (!fact?.interval || fact.interval.validFrom <= day!)) result.group='eligible'
+    else if (day && fact?.interval) {
       if (fact.interval.validFrom <= day && (day <= fact.interval.validThrough || fact.continuation === 'until_next_review_results' && (!fact.publishedOn || fact.publishedOn <= day))) result.group='eligible'
       else result.notes.push('不在正式来源明确有效日期闭区间内，待确认后续资格')
-    } else if (futureReviewGrace || day && fact?.continuation === 'until_next_review_results' && (!fact.publishedOn || fact.publishedOn <= day)) result.group='eligible'
+    } else if (day && fact?.continuation === 'until_next_review_results' && (!fact.publishedOn || fact.publishedOn <= day)) result.group='eligible'
     else if (dueYear != null && (year === Infinity || dueYear > year)) result.group='eligible'
     else result.notes.push('已到复核年份，未见明确延续结果，待确认')
   }
