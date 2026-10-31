@@ -225,6 +225,13 @@
       "when": 1792400021012,
       "tag": "0031_current_candidate_covering_indexes",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "6",
+      "when": 1792400021013,
+      "tag": "0032_event_formal_validity",
+      "breakpoints": true
     }
   ]
 }

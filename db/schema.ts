@@ -1,3 +1,4 @@
+import type { FormalValidity } from '../lib/roster/formal-validity'
 import { sql } from 'drizzle-orm'
 import type { AnySQLiteColumn } from 'drizzle-orm/sqlite-core'
 import {
@@ -122,6 +123,8 @@ export const recordEvent = sqliteTable(
      * 2027(= 2024 + 3)。可空;缺失时锚点退回 `year` 并把该企业标为待核 —— **不猜**。
      */
     decidedYear: integer('decided_year'),
+    /** Source-bound formal facts; null retains historical unknown precision. */
+    formalValidity: text('formal_validity', { mode: 'json' }).$type<FormalValidity>(),
     /** Monotonic formal-source revision; event/evidence corrections advance it atomically. */
     revision: integer('revision').notNull().default(1),
   },

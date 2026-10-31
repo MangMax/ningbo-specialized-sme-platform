@@ -126,7 +126,8 @@ it('attachment1_commit_receipt_and_detail_share_full_snapshot', async () => {
   expect(title).toMatchObject({ group: 'eligible', evidence: [{ eventType: 'award', year: 2025, decidedYear: 2025, batchSeq: 2, reviewOutcome: null }] })
   const detail = await get('/api/roster/enterprises/1')
   expect(detail.status).toBe(200)
-  expect(detail.body.qualificationAssessment).toEqual(capture.assessment)
+  expect(qualification.readCurrentQualificationAssessment(db.$client, 1, NOW, { assessmentVersion: 'enterprise-qualification-407-v1' })).toEqual(capture.assessment)
+  expect(detail.body.qualificationAssessment).toEqual(qualification.readCurrentQualificationAssessment(db.$client, 1, NOW))
   const metadata = await get(`/api/roster/import/receipts?batchId=${result.body.batchId}`)
   expect(metadata.status).toBe(200)
   expect(metadata.body.receiptId).toBeGreaterThan(0)
@@ -255,7 +256,7 @@ it('unauthorized_submission_writes_no_business_or_receipt', async () => {
 it('existing_target_preflight_reports_current_T2_separately_from_proposed_review', async () => {
   const first = await post('commit', request([award]))
   expect(first.body.status).toBe('committed')
-  const before = getRosterEnterpriseDetail(db, 1, NOW)!.qualificationAssessment
+  const before = qualification.readCurrentQualificationAssessment(db.$client, 1, NOW, { assessmentVersion: 'enterprise-qualification-407-v1' })
   const body = request([{ ...review, batchSeq: null }])
   body.idempotencyKey = '407-proposed-review'
   const spy = vi.spyOn(qualification, 'readCurrentQualificationAssessment')

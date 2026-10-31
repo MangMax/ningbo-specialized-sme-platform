@@ -5,7 +5,7 @@ import { createHash } from 'node:crypto'
 import { createWriteStream } from 'node:fs'
 import { once } from 'node:events'
 import { finished } from 'node:stream/promises'
-import { CURRENT_RULE_VERSION, prepareCurrentReader, createCurrentQualificationAssessmentReader, QUALIFICATION_ASSESSMENT_VERSION, type CurrentTitle } from './current-qualification'
+import { CURRENT_RULE_VERSION, qualificationDay, prepareCurrentReader, createCurrentQualificationAssessmentReader, QUALIFICATION_ASSESSMENT_VERSION, type CurrentTitle } from './current-qualification'
 import { currentCandidateBindings, currentCandidateSqlFor } from './current-candidates'
 import { TITLES } from '../labels'
 import { CURRENT_COLUMNS, currentWorkbookValues } from './current-workbook-presentation'
@@ -40,7 +40,7 @@ function sheetOptions() {
 }
 /** Streaming rows in one pinned SQLite read transaction, owned by the independent executor. */
 export async function writeCurrentWorkbook(db: Database.Database, title: CurrentTitle, filename: string, progress: (done: number,total: number,snapshotStartedAt: string) => void, logContext?: LogContext, receiptRuntime?: ReceiptRuntimeContext) {
-  const generatedAt = new Date().toISOString(), year = new Date(generatedAt).getUTCFullYear()
+  const generatedAt = new Date().toISOString(), year = Number(qualificationDay(Date.parse(generatedAt)).slice(0,4))
   const output = createWriteStream(filename)
   const completed = finished(output, { cleanup: true })
   // Observe early open/write failures even before the final workbook commit.

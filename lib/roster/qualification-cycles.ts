@@ -1,10 +1,11 @@
+import type { FormalValidity } from './formal-validity'
 import type { LifecycleEvent } from './lifecycle'
 
 /** Original-award cycle adjudication shared by planning and current eligibility.
  * No database or presentation facts enter this module. Infinity means a plan,
  * not current eligibility: future facts are retained and expiry is not applied. */
 type CurrentGroup = 'eligible' | 'pending' | 'excluded'
-export type QualificationEvent = LifecycleEvent & { batchSeq: number | null }
+export type QualificationEvent = LifecycleEvent & { batchSeq: number | null; formalValidity?: FormalValidity; validityInvalid?: boolean; recordId?: number }
 export interface CycleJudgment {
   anchor: QualificationEvent | null
   originYear: number
@@ -15,9 +16,10 @@ export interface CycleJudgment {
   notes: string[]
   awardEventIds: number[]
 }
-export const awardTime = (e: QualificationEvent) => e.decidedYear ?? e.year
-export const originTime = (e: QualificationEvent) => e.year ?? (e.eventType === 'award' ? awardTime(e) : null)
-export const factTime = (e: QualificationEvent) => e.eventType === 'award' ? awardTime(e) : e.decidedYear
+type EventTime = LifecycleEvent
+export const awardTime = (e: EventTime) => e.decidedYear ?? e.year
+export const originTime = (e: EventTime) => e.year ?? (e.eventType === 'award' ? awardTime(e) : null)
+export const factTime = (e: EventTime) => e.eventType === 'award' ? awardTime(e) : e.decidedYear
 interface CycleFacts {
   awards: QualificationEvent[]
   passed: QualificationEvent[]
@@ -35,10 +37,11 @@ function hasUsableTime(event: QualificationEvent, originYear: number, year: numb
 }
 
 /** Separate known facts from uncertain facts before deciding whether a gap matters. */
-function cycleFacts(events: QualificationEvent[], ambiguous: QualificationEvent[], originYear: number, year: number): CycleFacts {
+function cycleFacts(events: QualificationEvent[], ambiguous: QualificationEvent[], originYear: number, year: number, day?: string): CycleFacts {
   const awards: QualificationEvent[] = [], passed: QualificationEvent[] = [], failed: QualificationEvent[] = [], gaps = [...ambiguous]
   for (const event of events) {
-    const batchKnown = event.batchSeq != null || event.eventType === 'award'
+    if (day && event.eventType === 'review' && event.formalValidity?.publishedOn && event.formalValidity.publishedOn > day) continue
+    const batchKnown = event.batchSeq != null || event.eventType === 'award' || !!(day && event.formalValidity?.originAwardEventId)
     if (!hasUsableTime(event,originYear,year) || !batchKnown) gaps.push(event)
     else if (event.eventType === 'award') awards.push(event)
     else if (event.reviewOutcome === 'passed') passed.push(event)
@@ -66,8 +69,8 @@ function gapResolvedBy(gap: QualificationEvent, facts: CycleFacts, originYear: n
 }
 
 /** Adjudicate an originating cycle using only applicable, unresolved evidence. */
-function adjudicateCycle(events: QualificationEvent[], originYear: number, batch: number | null, year: number, ambiguous: QualificationEvent[] = []): CycleJudgment {
-  const facts = cycleFacts(events,ambiguous,originYear,year)
+function adjudicateCycle(events: QualificationEvent[], originYear: number, batch: number | null, year: number, ambiguous: QualificationEvent[] = [], day?: string): CycleJudgment {
+  const facts = cycleFacts(events,ambiguous,originYear,year,day)
   // Only the latest actual grant can support a restored qualification. Older
   // grants remain in the adjudication and evidence history, but not filters.
   const anchor = [...facts.awards,...facts.passed].sort((a,b) => factTime(a)! - factTime(b)! || a.id - b.id).at(-1) ?? null
@@ -78,7 +81,8 @@ function adjudicateCycle(events: QualificationEvent[], originYear: number, batch
     if (resolved) result.notes.push(`旧缺口 event:${gap.id}（日期/批次/结论）由${resolved}消解，历史及出处保留`)
     else unresolved.push(gap)
   }
-  if (originYear > year) result.notes.push('原认定年份尚未生效，当前周期待确认')
+  if (day && [...events,...ambiguous].some(e => e.validityInvalid)) result.notes.push('正式有效期来源或原周期引用已失效，待核')
+  else if (originYear > year) result.notes.push('原认定年份尚未生效，当前周期待确认')
   else if (unresolved.length) {
     for (const event of unresolved) result.notes.push(`event:${event.id} ${event.eventType === 'award' ? '认定日期/批次' : '复核结论/结论年份/批次'}不完整或无法证明被后续事实消解，当前周期待确认`)
   } else if (facts.lastFailure >= facts.lastAward && facts.failed.length) {
@@ -88,7 +92,14 @@ function adjudicateCycle(events: QualificationEvent[], originYear: number, batch
     // A pass only extends a settled cycle. Expiry is a current-qualification
     // concern; planning omits its cutoff while retaining all recovery/gap guards.
     const dueYear = anchor ? factTime(anchor)! + 3 : null
-    if (dueYear != null && (year === Infinity || dueYear > year)) result.group='eligible'
+    const fact = day ? anchor?.formalValidity : undefined
+    const futureReviewGrace = day && anchor?.eventType === 'award' && events.some(e => e.eventType === 'review' && e.formalValidity?.continuation === 'until_this_review_results' && e.formalValidity.publishedOn && day < e.formalValidity.publishedOn && e.formalValidity.originAwardEventId === anchor.id)
+    if (futureReviewGrace && (!fact?.interval || fact.interval.validFrom <= day!)) result.group='eligible'
+    else if (day && fact?.interval) {
+      if (fact.interval.validFrom <= day && (day <= fact.interval.validThrough || fact.continuation === 'until_next_review_results' && (!fact.publishedOn || fact.publishedOn <= day))) result.group='eligible'
+      else result.notes.push('不在正式来源明确有效日期闭区间内，待确认后续资格')
+    } else if (day && fact?.continuation === 'until_next_review_results' && (!fact.publishedOn || fact.publishedOn <= day)) result.group='eligible'
+    else if (dueYear != null && (year === Infinity || dueYear > year)) result.group='eligible'
     else result.notes.push('已到复核年份，未见明确延续结果，待确认')
   }
   return result
@@ -106,10 +117,12 @@ function hasUnresolvedRecovery(current: CycleJudgment[], history: CycleJudgment[
   return false
 }
 
-export function adjudicateQualificationCycles(formal: QualificationEvent[], year = Infinity): { group: CurrentGroup; notes: string[]; originYear: number; cycles: CycleJudgment[] } {
+export function adjudicateQualificationCycles(formal: QualificationEvent[], year = Infinity, day?: string): { group: CurrentGroup; notes: string[]; originYear: number; cycles: CycleJudgment[] } {
   const byYear = new Map<number, Map<number | null, QualificationEvent[]>>()
   const unknown: QualificationEvent[] = []
+  const linked = day ? formal.filter(e => e.eventType === 'review' && e.formalValidity?.originAwardEventId) : []
   for (const event of formal) {
+    if (linked.includes(event)) continue
     const origin = originTime(event)
     if (origin == null) { unknown.push(event); continue }
     let batches = byYear.get(origin)
@@ -130,10 +143,10 @@ export function adjudicateQualificationCycles(formal: QualificationEvent[], year
     // or unresolved separate grant keeps its effect instead of vanishing in the
     // latest known grant. Unknown reviews remain applicability gaps.
     const possible = [
-      ...known.map(([batch,events]) => adjudicateCycle(events,origin,batch,year,reviews)),
-      ...grants.map(grant => adjudicateCycle([grant],origin,null,year,reviews)),
+      ...known.map(([batch,events]) => adjudicateCycle([...events,...linked.filter(e => events.some(a => a.id === e.formalValidity!.originAwardEventId))],origin,batch,year,reviews,day)),
+      ...grants.map(grant => adjudicateCycle([grant,...linked.filter(e => e.formalValidity!.originAwardEventId === grant.id)],origin,null,year,reviews,day)),
     ]
-    return possible.length ? possible : [adjudicateCycle(reviews,origin,null,year)]
+    return possible.length ? possible : [adjudicateCycle(reviews,origin,null,year,[],day)]
   })
   // Selection follows adjudication, retains *every* batch of the current year,
   // and never uses the latest passed event to erase another batch or a failure.

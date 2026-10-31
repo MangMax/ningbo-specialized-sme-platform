@@ -206,7 +206,7 @@ it.each([
 })
 
 it.each([
-  { case: 'before-due-year', asOf: '2027-12-31T23:59:59.999Z', group: 'eligible' },
+  { case: 'before-due-year', asOf: '2027-12-31T15:59:59.999Z', group: 'eligible' },
   { case: 'at-due-year', asOf: '2028-01-01T00:00:00Z', group: 'pending' },
 ])('retains year precision and does not invent a policy extension: $case', ({ asOf, group }) => {
   const { enterprise } = formalEnterprise()
@@ -393,7 +393,7 @@ it('detail_snapshot_scope_and_field_gaps_407', () => {
   // Both are real API/MCP-shared function seams, not a started transport or historical-asOf API.
   const shared = readCurrentQualificationAssessment(sqlite, enterprise.id, AS_OF)
   const detail = getRosterEnterpriseDetail(db, enterprise.id, AS_OF)!
-  const scope = { enterpriseId: enterprise.id, asOf: '2026-06-01T00:00:00.000Z', ruleVersion: 'current-roster-116-v8', assessmentVersion: 'enterprise-qualification-407-v1' }
+  const scope = { enterpriseId: enterprise.id, asOf: '2026-06-01T00:00:00.000Z', ruleVersion: 'current-roster-116-v9', assessmentVersion: 'enterprise-qualification-407-v2' }
   expect(detail.qualificationAssessment).toEqual(shared)
   expect(shared).toMatchObject(scope)
   expect(shared.titles.map(title => title.titleCode).sort()).toEqual(['innovative_sme', 'little_giant', 'specialized_sme'])
@@ -437,7 +437,10 @@ it('427 default_read_current_workbook_preserve_complete_frozen_legacy_without_co
   sqlite.pragma('query_only=ON')
   const changes = sqlite.prepare('select total_changes() as n').get()
   const reader = createCurrentQualificationAssessmentReader(sqlite)
-  const expected = DEFAULT_427_LEGACY
+  // Published v1 remains byte-reproducible; current defaults deliberately publish v2.
+  expect(reader.read(1, AS_OF, { assessmentVersion: 'enterprise-qualification-407-v1' }).snapshot).toEqual(DEFAULT_427_LEGACY)
+  const scope = { enterpriseId: 1, asOf: DEFAULT_427_LEGACY.asOf, ruleVersion: 'current-roster-116-v9', assessmentVersion: 'enterprise-qualification-407-v2' }
+  const expected = { ...DEFAULT_427_LEGACY, ...scope, snapshotId: createHash('sha256').update(JSON.stringify([scope, DEFAULT_427_LEGACY.titles])).digest('hex') }
   expect(reader.read(1, AS_OF).snapshot).toEqual(expected)
   expect(reader.readCurrent(1, AS_OF, 'specialized_sme').snapshot).toEqual(expected)
   expect(reader.readWorkbook(1, AS_OF, 'specialized_sme').snapshot).toEqual(expected)
