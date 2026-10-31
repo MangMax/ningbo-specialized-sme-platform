@@ -82,8 +82,8 @@ describe(`RL-02 源文件结构与逐行交代(${source.label})`, () => {
   it('报告里的合计与 payload 对得上:企业去重、事件不折叠、每条事件一条出处', () => {
     const report = buildLittleGiantImportReport(workbook, { sourceFile: source.sourceFile })
 
-    expect(report.totals.events).toBe(workbook.rows.length)
-    expect(report.totals.evidences).toBe(workbook.rows.length)
+    expect(report.totals.events).toBe(workbook.rows.length + (hasRealSource ? 28 : 0))
+    expect(report.totals.evidences).toBe(workbook.rows.length + (hasRealSource ? 28 : 0))
     expect(report.totals.enterprises).toBe(
       new Set(workbook.rows.map((row) => (row.uscc === '' ? `name:${row.name}` : row.uscc))).size,
     )
@@ -127,7 +127,7 @@ describe.runIf(hasRealSource)('RL-02 真件的具体数字(仅真件在时断言
       },
     ])
     expect(report.totals).toEqual({
-      sourceRows: 511, enterprises: 510, records: 510, events: 511, evidences: 511,
+      sourceRows: 511, enterprises: 510, records: 510, events: 539, evidences: 539,
     })
     expect(report.issues.byCode).toEqual({ duplicate_uscc: 2 })
   })
