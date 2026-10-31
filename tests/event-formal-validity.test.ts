@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { afterEach, expect, it, vi } from 'vitest'
 import { useDb, schema } from '../db/client'
 import { handleEventCorrectionRequest } from '../server/utils/roster-event-correction-api'
+import { versionedOfficialEvent } from '../server/utils/roster-event-version'
 
 const opened: Array<ReturnType<typeof useDb>> = []
 afterEach(() => {
@@ -25,7 +26,7 @@ function fixture() {
   db.insert(schema.storedFile).values({ relPath: 'owned/notice.pdf', filename: 'notice.pdf', ext: 'pdf', bytes: 1, sha256: sha }).run()
   const evidence = db.insert(schema.recordEvidence).values({ recordEventId: event.id, sourceFile: 'owned/notice.pdf', page: 27, listNo: 907 }).returning().get()
   const fact = { evidenceId: evidence.id, sourceSha256: sha, statementPages: [2], interval: { validFrom: '2023-11-01', validThrough: '2026-10-31' } }
-  const request = (value: unknown) => ({ idempotencyKey: 'validity', sourceIdentity: 'owned:notice', actor: { type: 'agent', id: 'test' }, basis: 'Independent expected from 2024 notice page2; business year remains2023', operations: [{ eventId: event.id, recordId: record.id, enterpriseId: enterprise.id, expectedRevision: 1, patch: { formalValidity: value } }] })
+  const request = (value: unknown) => ({ idempotencyKey: 'validity', sourceIdentity: 'owned:notice', actor: { type: 'agent', id: 'test' }, basis: 'Independent expected from 2024 notice page2; business year remains2023', operations: [{ eventId: event.id, recordId: record.id, enterpriseId: enterprise.id, expectedRevision: 1, patch: { formalValidity: value } as { formalValidity?: unknown; year?: number } }] })
   const call = (action: 'preflight' | 'commit' | 'get' | 'audit', body?: unknown) => handleEventCorrectionRequest({ action, method: body ? 'POST' : 'GET', id: event.id, body, headers: { authorization: 'Bearer synthetic' } }, { db, apiToken: 'synthetic' })
   return { db, event, fact, request, call }
 }
@@ -94,4 +95,57 @@ it('withdraws formal facts explicitly with audit rather than inventing replaceme
   expect(f.call('commit', { request: clear, planHash: (clearPlan.body as any).planHash }).status).toBe(200)
   expect(f.call('get').body).toMatchObject({ event: { revision: 3, year: 2023, formalValidity: null } })
   expect(f.call('audit').body).toMatchObject({ total: 2, rows: [{ after: { formalValidity: f.fact } }, { before: { formalValidity: f.fact }, after: { formalValidity: null } }] })
+})
+
+it('keeps legacy provenance bytes unchanged when nullable formal validity is added', () => {
+  const f = fixture()
+  const { formalValidity: _, revision, ...legacy } = f.event
+  expect(JSON.stringify(versionedOfficialEvent(f.event))).toBe(JSON.stringify(legacy))
+  const revised = { ...f.event, revision: 2 }
+  expect(JSON.stringify(versionedOfficialEvent(revised))).toBe(JSON.stringify({ ...legacy, revision: 2 }))
+  expect(versionedOfficialEvent({ ...revised, formalValidity: f.fact })).toEqual({ ...legacy, revision: 2, formalValidity: f.fact })
+})
+
+function linkedReview(f: ReturnType<typeof fixture>) {
+  const review = f.db.insert(schema.recordEvent).values({ recordId: f.event.recordId, eventType: 'review', year: 2023, decidedYear: 2026, reviewOutcome: 'passed' }).returning().get()
+  const evidence = f.db.insert(schema.recordEvidence).values({ recordEventId: review.id, sourceFile: 'owned/notice.pdf', page: 12 }).returning().get()
+  return { review, fact: { ...f.fact, evidenceId: evidence.id, originAwardEventId: f.event.id } }
+}
+
+it('validates simultaneous origin and review corrections against their final values', () => {
+  const f = fixture(), { review, fact } = linkedReview(f)
+  const request = f.request(null)
+  request.operations[0]!.patch = { year: 2022 }
+  request.operations.push({ eventId: review.id, recordId: review.recordId, enterpriseId: request.operations[0]!.enterpriseId, expectedRevision: 1, patch: { year: 2022, formalValidity: fact } })
+  const plan = f.call('preflight', request)
+  expect(plan.status).toBe(200)
+  expect(f.call('commit', { request, planHash: (plan.body as any).planHash }).status).toBe(200)
+  expect(f.db.select().from(schema.recordEvent).all().filter(e => [review.id, f.event.id].includes(e.id)).map(e => e.year)).toEqual([2022, 2022])
+})
+
+it('rejects a same-batch final origin mismatch without committing either event', () => {
+  const f = fixture(), { review, fact } = linkedReview(f)
+  const request = f.request(null)
+  request.operations[0]!.patch = { year: 2022 }
+  request.operations.push({ eventId: review.id, recordId: review.recordId, enterpriseId: request.operations[0]!.enterpriseId, expectedRevision: 1, patch: { formalValidity: fact } })
+  expect(f.call('preflight', request)).toMatchObject({ status: 422, body: { error: { code: 'invalid_validity_origin' } } })
+  expect(f.db.select().from(schema.recordEvent).all().map(e => e.revision)).toEqual([1, 1])
+})
+
+it('protects existing reverse origin references and permits explicit withdrawal in the same batch', () => {
+  const f = fixture(), { review, fact } = linkedReview(f)
+  const attach = f.request(null)
+  attach.operations[0] = { eventId: review.id, recordId: review.recordId, enterpriseId: attach.operations[0]!.enterpriseId, expectedRevision: 1, patch: { formalValidity: fact } }
+  const attachPlan = f.call('preflight', attach)
+  expect(attachPlan.status).toBe(200)
+  expect(f.call('commit', { request: attach, planHash: (attachPlan.body as any).planHash }).status).toBe(200)
+  const change = f.request(null)
+  change.idempotencyKey = 'origin-change'
+  change.operations[0]!.patch = { year: 2022 }
+  expect(f.call('preflight', change)).toMatchObject({ status: 422, body: { error: { code: 'invalid_validity_origin' } } })
+  change.operations.push({ eventId: review.id, recordId: review.recordId, enterpriseId: change.operations[0]!.enterpriseId, expectedRevision: 2, patch: { formalValidity: null } })
+  const plan = f.call('preflight', change)
+  expect(plan.status).toBe(200)
+  expect(f.call('commit', { request: change, planHash: (plan.body as any).planHash }).status).toBe(200)
+  expect(f.call('get').body).toMatchObject({ event: { year: 2022, revision: 2 } })
 })

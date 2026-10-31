@@ -73,10 +73,6 @@ function buildPlan(db: Executor, request: EventCorrectionRequest) {
       const evidence = source.evidence.find(row => row.id === fact.evidenceId)
       const file = source.files.find(row => row.relPath === evidence?.sourceFile && row.sha256 === fact.sourceSha256 && row.removedAt == null)
       if (!evidence || !file) fail(422, 'invalid_validity_source', 'Formal validity must reference current event evidence and stored file SHA256')
-      if (fact.originAwardEventId !== undefined) {
-        const origin = db.select().from(schema.recordEvent).where(eq(schema.recordEvent.id, fact.originAwardEventId)).get()
-        if (!origin || origin.recordId !== after.recordId || origin.eventType !== 'award' || origin.year == null || origin.year !== after.year || after.batchSeq != null && origin.batchSeq != null && origin.batchSeq !== after.batchSeq) fail(422, 'invalid_validity_origin', 'Origin must be the same record award and original year with no known batch conflict')
-      }
       if (after.eventType !== 'award' && after.eventType !== 'review') fail(422, 'invalid_event_combination', 'Formal validity requires award or review')
     }
     if (Object.entries(op.patch).every(([key, value]) => isDeepStrictEqual(before[key as keyof typeof before], value))) fail(422, 'no_change', 'Correction must change an event field')
@@ -88,10 +84,21 @@ function buildPlan(db: Executor, request: EventCorrectionRequest) {
     if (!titleEvents.has(titleKey)) titleEvents.set(titleKey, lifecycleEvents(db, source.record))
     return { titleCode: source.record.titleCode, eventId: op.eventId, recordId: op.recordId, enterpriseId: op.enterpriseId, before, after, evidence: source.evidence, files: source.files, correspondences: [...related, ...predecessors].sort((a, b) => a.id - b.id), lifecycleBefore: computeTitleLifecycle(titleEvents.get(titleKey)!) }
   })
+  const finalEvents = new Map(targets.map(target => [target.eventId, target.after]))
+  const validityOrigins: Array<{ eventId: number; origin: typeof schema.recordEvent.$inferSelect | null }> = []
   for (const target of targets) {
     // Input-key scoped candidates only; no all-events/raw query materialization.
     if (!siblingsByRecord.has(target.recordId)) siblingsByRecord.set(target.recordId, db.select().from(schema.recordEvent).where(eq(schema.recordEvent.recordId, target.recordId)).all())
     const siblings = siblingsByRecord.get(target.recordId)!
+    for (const stored of siblings) {
+      const event = finalEvents.get(stored.id) ?? stored
+      const originId = event.formalValidity?.originAwardEventId
+      if (originId === undefined || !finalEvents.has(event.id) && !finalEvents.has(originId)) continue
+      const originBefore = db.select().from(schema.recordEvent).where(eq(schema.recordEvent.id, originId)).get() ?? null
+      const origin = finalEvents.get(originId) ?? originBefore
+      if (!origin || origin.recordId !== event.recordId || origin.eventType !== 'award' || origin.year == null || origin.year !== event.year || event.batchSeq != null && origin.batchSeq != null && origin.batchSeq !== event.batchSeq) fail(422, 'invalid_validity_origin', 'Origin must be the same record award and original year with no known batch conflict')
+      if (!validityOrigins.some(link => link.eventId === event.id)) validityOrigins.push({ eventId: event.id, origin: originBefore })
+    }
     const desired = target.after
     const conflict = siblings.some(stored => {
       if (stored.id === desired.id) return false
@@ -104,10 +111,9 @@ function buildPlan(db: Executor, request: EventCorrectionRequest) {
     })
     if (conflict) fail(409, 'natural_key_conflict', 'Another event occupies the official event scope; distinct review rounds require known origin, batch and decision years; events are never merged by correction')
   }
-  const finalEvents = new Map(targets.map(target => [target.eventId, target.after]))
   const projected = targets.map(target => ({ ...target, lifecycleAfter: computeTitleLifecycle(titleEvents.get(`${target.enterpriseId}:${target.titleCode}`)!.map(event => finalEvents.get(event.id) ?? event)) }))
   const requestHash = hash(request)
-  return { requestHash, planHash: hash({ requestHash, targets: projected }), targets: projected, impact: { corrected: targets.length, requiresRevalidation: targets.reduce((n, t) => n + t.correspondences.filter(c => c.status === 'confirmed').length, 0) } }
+  return { requestHash, planHash: hash({ requestHash, targets: projected, ...(validityOrigins.length ? { validityOrigins } : {}) }), targets: projected, impact: { corrected: targets.length, requiresRevalidation: targets.reduce((n, t) => n + t.correspondences.filter(c => c.status === 'confirmed').length, 0) } }
 }
 function boundBatch(db: Executor, request: EventCorrectionRequest) {
   const batch = db.select().from(schema.importBatch).where(eq(schema.importBatch.idempotencyKey, request.idempotencyKey)).get()
