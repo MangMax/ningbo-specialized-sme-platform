@@ -60,7 +60,14 @@ export function verifySourceCompleteness(manifest, readbacks) {
     if (files.length !== 1 || files[0]?.sha256 !== source.sourceSha256) add('source_hash', i)
     for (const [field, expected] of Object.entries(row.facts)) {
       // Unknown source facts impose no invented value; always report them below.
-      if (expected !== null && !isDeepStrictEqual(response.event[field], expected)) add('fact_mismatch', i, field)
+      if (expected === null) continue
+      const actual = response.event[field]
+      // Optional validity facts outside this source manifest may already have
+      // been independently verified. Compare only the declared known facts.
+      const matches = field === 'formalValidity' && actual && typeof actual === 'object'
+        ? Object.entries(expected).every(([key, value]) => isDeepStrictEqual(actual[key], value))
+        : isDeepStrictEqual(actual, expected)
+      if (!matches) add('fact_mismatch', i, field)
     }
     const v = row.facts.formalValidity
     if (v && (v.evidenceId !== row.evidenceId || v.sourceSha256 !== source.sourceSha256)) add('validity_binding', i)

@@ -82,3 +82,13 @@ it('CLI returns 0 for reconciled facts, 1 for missing known facts, 2 for malform
     expect(invalid.stderr).toContain('Invalid completeness inputs')
   } finally { rmSync(dir, { recursive: true, force: true }) }
 })
+
+it('accepts additional verified validity facts outside the declared source scope', () => {
+  const f = fixture()
+  delete f.manifest.rows[0].facts.formalValidity.continuation
+  f.readbacks[0].event.formalValidity.originAwardEventId = 31
+  f.readbacks[0].event.formalValidity.publishedOn = '2024-01-01'
+  expect(run(f).ok).toBe(true)
+  f.readbacks[0].event.formalValidity.interval.validThrough = '2025-12-31'
+  expect(run(f).issues).toContainEqual({ code: 'fact_mismatch', row: 0, field: 'formalValidity' })
+})
