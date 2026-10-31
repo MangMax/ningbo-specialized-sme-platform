@@ -1,3 +1,6 @@
+import toolkitConfig from '#nuxt-mcp-toolkit/config.mjs'
+import { useEvent } from 'nitropack/runtime'
+import { isSessionEvent } from '../utils/mcp-session-runtime'
 import { officialEvidenceRpcError } from '../utils/official-evidence-read'
 import { runtimeLogPolicyRpcError } from '../utils/logging-mcp'
 import { decisionRpcError102 } from '../utils/decision-lifecycle-102-mcp'
@@ -7,7 +10,7 @@ import { eventCorrectionRpcError } from '../utils/mcp-event-correction'
 import { platformQueryRpcError } from '../utils/mcp-platform-query'
 import { currentQualifiedRpcError } from '../utils/current-qualified-filter'
 import { getHeader, getMethod, readBody, setHeader } from 'h3'
-import { defineMcpHandler, getMcpTools } from '@nuxtjs/mcp-toolkit/server'
+import { defineMcpHandler, getMcpTools, getMcpResources, getMcpPrompts } from '@nuxtjs/mcp-toolkit/server'
 import { requestLogContext } from '../../lib/logging'
 import { applyMcpLogMetadata } from '../utils/mcp-log-context'
 import { logSemanticOperation, semanticErrorCode } from '../utils/semantic-operation-log'
@@ -47,9 +50,13 @@ import {
  * 缓存取的(见 `providers/node.js` 的 `toWebRequest`),所以下游仍能拿到完整 body。
  */
 export default defineMcpHandler({
-  tools: async event => (await getMcpTools()).map(tool => ({
+  resources: event => isSessionEvent(event) ? [] : getMcpResources({ event, orphansOnly: toolkitConfig.defaultHandlerStrategy === 'orphans' }),
+  prompts: event => isSessionEvent(event) ? [] : getMcpPrompts({ event, orphansOnly: toolkitConfig.defaultHandlerStrategy === 'orphans' }),
+  tools: async configuredEvent => (await getMcpTools()).filter(tool => !isSessionEvent(configuredEvent) || ['list_enterprises', 'get_enterprise_detail'].includes(tool.name ?? '')).map(tool => ({
     ...tool,
     handler: async (...args: Parameters<typeof tool.handler>) => {
+      const event = isSessionEvent(configuredEvent) ? useEvent() : configuredEvent
+      if (isSessionEvent(configuredEvent) && !isSessionEvent(event)) throw new Error('session_context_missing')
       const operation = `mcp.tool.${tool.name}`
       const started = performance.now()
       try {

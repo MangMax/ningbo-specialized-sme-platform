@@ -1,4 +1,6 @@
-# 有界 MCP 会话与取消组件（#444）
+# 有界 MCP 会话与取消（#444 组件 / #445 接线）
+
+> 阅读范围：下文原有 #444/R1–R4 内容是 S1 交付时的历史记录，其中“#445 待验收/UNRUN”、1877 项旧 output 和 callback epoch 描述均保留原时点。当前 #445 合同及分层证据见末尾“#445 当前接线合同与证据”。后续 PASS 不覆盖历史 FAIL/UNKNOWN。
 
 本票交付可注入的局部组件，不注册生产路由，不改变旧 `/mcp`、全局 toolkit 配置或企业工具。生产显式 `/mcp-session`、所有真实 handler 的完成回执、可信认证 epoch 来源，以及 source/compiled endpoint 验收属于 #445。SDK signal 到达不等于企业 native/worker 工作已停止；后者仍由 #439 独立验收。
 
@@ -141,3 +143,78 @@ fixture 双进程 PID/观测身份、原生 HTTP status/body、typed ID、handle
 | D5 身份/epoch | anonymous/authorized/invalid、session/typed ID 隔离、ABA callback 单测、真实 wrongidentity/cancel隔离 | 生产 epoch 来源、完整生产工具 context 与回执，由 #445 接线 |
 
 本次 app output 封存含 1877 项、186 个 source map、9 个 native 文件和 58 个外置 package 清单；四入口为 server index、enterprise-read-worker、import-execution-worker、current-export-worker。source map 未发现新 mcp-session 组件引用，符合尚未接生产路由的范围。该构建不能当新组件 compiled 集成证明；组件真实执行证明来自独立 Nitro source fixture。
+
+
+## #445 当前接线合同与证据
+
+本节是六 owner 实现候选的后置文档，不是整体 ready、审查通过、CI 或生产发布声明。代码运行输入与本次仅含 docs 的最终审查输入分别封存；文档没有参与前述 type/runtime。固定 base 为 `87befe3ade1d2a0b3240a026e19bb3ec5d149df0` / tree `ef85a02ec797ffd5edf5edbd5902bd58a531aed6`。S1 admission/transport/test 字节未改。
+
+### 两个入口与身份
+
+以下身份/RPC错误码以装配、合法framing等更早关卡已通过为前提；public错误优先级见下文。
+
+- 旧 `/mcp` 保持 toolkit stateless：无 session header 的 HTTP 只读和原 URL 的 SDK Client 继续可用；既有写工具鉴权、敏感读取保护、schema 与 configured token 来源规则保留。没有新增旧入口热更新能力承诺。
+- 新 `/mcp-session` 显式启用进程内 memory session。工具白名单只有 `list_enterprises`、`get_enterprise_detail`；同时在路由和实际工具集合限制，不能只依赖 `readOnlyHint`。resources/prompts 不引入额外能力；协议初始化、通知、GET、DELETE 等按 S1 合同。
+- 新入口只识别 Authorization。任何 `x-mcp-token` 出现（含空值、同时附合法 Authorization）均 `401 invalid_identity`。完全无 Authorization 可以是 anonymous；无效/空凭据不冒充 anonymous。
+- sid 绑定 anonymous/authorized 身份、owner 与进程 registry。有效 token 配上别的 anonymous owner sid 是 `404 session_not_found`，不是401；无效 token 仍先401。拒绝不关闭/借用合法 owner，原 owner 仍能只读。字符串/数字 typed ID 不混用，跨 sid/owner 的完成或取消不能解锁别的请求。
+- `params.task`、`params._meta['io.modelcontextprotocol/related-task']`、`tasks/*` 在新入口前置拒绝；普通 `_meta` 保留。新入口写工具调用精确403 `tool_not_allowed`，task 为400 `task_not_supported`。
+
+进程启动 capture 不可变 credential snapshot，轮换必须重启。已观察到 `NUXT_MCP_TOKEN` 或本次 event 的当前配置与 snapshot 不同，新 initialize 和已有 sid 的新 dispatch 均 sticky 拒绝，恢复 A 也不复活。当前精确响应是 **401 `invalid_identity`**。父先前指定503属于测试 oracle 过度指定，已更正，仅新 sticky case 改为401；旧503静态候选、正逆差量仍保留。未被观察到的瞬时配置变化不保证检测；无新增热配置控制面，不用 token hash 冒充递增 epoch。跨进程不要求共享数字 epoch：A→B→A 用三个真实进程及新 registry 证明隔离。
+
+### 接线 authority 与完整回执
+
+[nuxt.config.ts](../nuxt.config.ts) 捕获原 toolkit config/transport 虚拟 factory，不把 repo index 的默认配置对象当 route handler。新 [route](../server/routes/mcp-session.ts) 调用实际 toolkit handler，复用 [index](../server/mcp/index.ts) 的原 schema/鉴权；仅由私有对象身份标记的新 event 切换 sessions/两个工具，旧 event 分支保持原义。[runtime helper](../server/utils/mcp-session-runtime.ts) 关联本次 event、实际 factory candidate、原 provider、捕获的公共 transport 和真实 response。
+
+锁定 SDK1.32.1 `Protocol.setRequestHandler` 原 parse+handler 完整注册 thunk，保留 registry 写入与原值/throw，只观察已认领 owner。它包含输入校验、真实 callback、输出校验及 await 的 onCalled；业务 callback finally 不等于完成。cancel 后 SDK 可 suppress send，必须等完整 thunk；unknown method 没有注册 thunk时仅用实际 error send 的严格 ID/owner 关联 fallback。禁止复制 dispatcher/controller/私有 Map。native response finish/close 与 handler 两侧结束才释放，失败/late/永不结束不假 free。DELETE204仅公共资源/storage阶段完成，不替代最终双回执。
+
+原生 body 只读一次。S1 在 toolkit 首次 `readBody` 前收费/限额；POST 对相同有界 bytes 建立 replay。H3 middleware 先得到公开 parsed-body cache，toolkit `toWebRequest` 得到同 URL/method/headers、同 bytes 的 fresh Request，避免已 consumed Request 导致 SDK400。GET/DELETE 不走 JSON.parse/fresh body replay。缓存和 Request 有额外有界拷贝，未提高 initialize16KiB/ordinary64KiB。公共 H3+SDK paired 控制和真实 app 初始化分别证明接缝，不能只凭400消失宣称初始化成功。
+
+### public framing、source 前端与 compiled listener
+
+POST 严格一个十进制 Content-Length，禁止 TE、重复 CL、CL+TE、Content-Encoding；无 sid 16KiB、有 sid 64KiB。当前 public 缺长度是 **400 `invalid_framing`**，超限413 `body_too_large`；早期 #445 issue body 的411是已撤销旧文案，原文仍封存，不是当前测试/产品合同。Node parser 对 duplicate CL、TE+CL 可提前400，和 adapter/frontend code 分开归因，未到 worker 不签 worker PASS。
+
+Nuxt source 的真实 client socket 在 frontend；proxy 重建后的 worker headers/socket 不能冒称 raw client。采用本 Nuxt 实例公开 listen hook、唯一实例 request listener 包装和 app 第一层 scoped handler；不改 Server.prototype/CLI/完整 entry、不 removeAllListeners。pins 同时核 realpath/SHA/次数/ESM export 来源；ufo/radix3 的 ESM pin 不用 require-CJS 入口替代。method/target/baseURL 选择按锁定 H3 routing 语义，baseURL来自可信 Nuxt config，不信 Host 或用户内部 header。
+
+能力声明从 listen hook 成功安装且真实 app handler 发布开始。此前 CLI loading/error 窗口不宣称新 endpoint 已可用；不要求首次 TCP accept 前 MCP 已注册。安装形状/pin/profile 不成立，新功能503 failclosed。安装成立后 public framing400/413优先于 worker auth/graph；合法 framing 再按 worker assembly503 → auth401 → body/RPC 处理。component profile 显式不冒充 frontend axis；compiled direct-node 原 entry 两处 listener 实参使用同一纯 header gate，不依赖 source proxy。
+
+每条原生 route（含非 MCP）登记 request/response ownership，无 MCP 全局 cap 去压旧 route。error JSON 先向精确 native response 有限 end，再等真实 finish/close 后调用原请求 termination；不在 JSON 排队前 destroy worker/proxy socket造成 timeout。不用 Connection:close 充当独占，不无界 drain/缓冲未经鉴权 body。执行 termination 前动态核 prior/later foreign；共享 socket 未结束就不能误毁。listen 前已经存在的未知 socket 无可靠 disposal authority，不能从一个 owner 完成推出整 socket 可回收；unknown close 不假 cleanup。前端额外诊断至多64、worker256条；没有 token/sid/request body 原文或生产 HTTP debug。
+
+### 资源继承和实际证据分层
+
+S1固定64含closing、未发布handshake8、pending5s、ordinary4/32、control2/8、GET1/8、distinct ID256、body40/16–64KiB/5s+250ms观察、idle300000/absolute1800000ms等合同沿用上文。rendezvous/replay受已收费容量及有限 replay集合支配，不新增服务端任务队列；真实关闭失败继续收费。本票没有重复全部容量饱和或30分钟墙钟；继承只限未改 S1 组件及其已证范围。
+
+| 层次 | 实际证据 | 不可外推 |
+| --- | --- | --- |
+| SDK公开控制 | InMemoryTransport initialize/list、真实 notifications/cancel 到 extra.signal；send-only反例仍保留 | 单独控制不代表 toolkit/Nitro 接线 |
+| component source / compiled | 最终两个独立1 PASS，显式 component profile；source1 chunk、compiled4 chunks，各图与输出SHA/边/并集；完整thunk/input/output/onCalled/current-event/cancel send0及owners/requests0 | 临时只读 probe 不是实际企业工具，也不是 Nuxt frontend |
+| source app A/W/B/D | actual模块扫描原index及真实readtools；独立迁移DB/企业literal；legacy/no-header/REST；合法schema后精确拒绝/零写；401 pipeline；断连两表面与sibling | A旧诊断overflow不抹除；prelisten未知旧socket仅literal范围；修复版本继承见交付矩阵 |
+| source public frontend F/E | 安装/app-entered/refusal-end真实到达；[200,400,200]；gzip400/超限413；parser400单列；worker未收到拒绝不能签workerbody通过 | 不以worker重建CL证明原始framing；旧E invalid_body冲突保留 |
+| app compiled C/N/R | 同一真实普通build产物，direct node+enterprise-read native模型/SQL literal；旧入口/REST、合法schema拒绝/零写、400/413/pipeline/sibling；required CJS cache与OS native loads | 不是 componentcompiled 替代实际app，不代表全app可选功能 |
+| 三进程 epoch | A→B→A同artifact/同业务DB；旧授权与匿名sid在第三A均404，新Client实际读；旧进程先close再下一spawn原断言完成 | postreadback无独立关闭时间戳、完整snapshot payload、enterprise单独exit，保留UNKNOWN |
+| 同进程 sticky | 原owner先真实读；test-only nonce IPC置B/回A ACK；四次本event已存在config cache实际比对及init/原SID精确401 | 仅实际env路径；任意runtimeConfig热API、原在途enterprise gate收口未证 |
+| 最终标准T | CLI exit0、raw TS/plugin诊断0；router/Volar/TS shim真实load/SHA；当前完整标准project配置 | 308个物理Vue inventory不等于完整TS program读文件实测；不称全CI |
+
+同进程在途 handler 的可控 config-change gate 没有实际证据，明确 UNKNOWN；未为测试向生产加 probe/热配置 HTTP。企业 native 取消退出由 #439，当前本票 UNRUN。main 子进程与测试DB关闭、saved same-grant FREE和 sampled owned=[]分列；enterprise或fixture child没有单独 exitCode/signal原件时保留UNKNOWN。正常测试关闭可发送SIGTERM；runner emergency signals=[]不等于“无任何signal”。unhandled/短命进程/瞬时RSS完整性同样未知。
+
+### build、类型环境和固定 profile closure
+
+真实 app普通 build的 **native CLI exit0** 与原 wrapper **STOP**同时成立：原闭包审计把ESM边错用require条件寻找不存在的`.cjs`，不得把后续离线审计写成原wrapper成功。后续按Node24真实import/require条件、exists/realpath/SHA及 artifact边界重审；BigInt target、浏览器crypto外置、render-worker运行时URL、chunk-size及plugin-timing warnings保留原文和分类；该次B原log没有secure-exec warning，secure-exec缺边是独立离线审计事实，不伪造日志。
+
+接受 profile `445-readonly-direct-node24.22.1-darwin-arm64-no-codemode-v1`：manifest `3b38f6bdb576eb4c1508c35a2f8509fd683b507e87108f03e5e644aff2e31bfe`，scope validation `cec2259f827c4737801dbefcf4aa43d4a173915cc122d0a19c5e2d1d54ab626d`，runtime obligation `f955ae56307760fbaf49df2eae03557e9035f165e8dcfd44e9d26fe190771ce5`。optional17/dynamic22分类不等于全artifact依赖闭包PASS；固定CodeMode=false/undefined及不可由RPC/headers开启的分支才可豁免，native/model/Drizzle/Sharp/libvips必须实际加载见证。写worker只inventory，不为凑证启动写业务。全部2001项artifact保持封存SHA，生产源0073…与后增的test-only loader/sourcepins分开。
+
+标准T仅type使用本安装vue-router邻接node_modules的 NODE_PATH；锁定公开 `vue-router/volar/sfc-route-blocks` 的CJS实际target SHA `0186b559341b0cfebf9c3f3faf0595ca173e934ea0db73fc0e462ebbcc9c15d1`，必须实际checker load，resolve不能替代load。该环境不传build/runtime，不改deps/tsconfig/include。最终T允许标准`.nuxt`生成357→358共7项差量并完整保留，不能继续声称357exact。T、组件及app产物证据不是一次统一全套测试。
+
+### 六个 TODO 的实际替代与剩余范围
+
+原六条 `it.todo` 不删除，不计PASS。它们是早期清单标题，当前按独立可执行case/分阶段receipt对照，不通过改TODO文字制造绿灯。
+
+| 原TODO尾名 | 实际替代case | 证据/剩余 |
+| --- | --- | --- |
+| `C_import_control_pinned_SDK_toolkit_H3_Nitro_from_assigned_installation` | `C_public_SDK_import_and_initialize_listTools`；两个 `F_registered_thunk_validation_hook_and_cancel_send_zero` | SDK控制的toolkit/Nitro只是resolve守卫；完整运行接线由两个真实fixture和app C/N/R各自补证 |
+| `C_local_SDK_cancel_signal_and_full_thunk_receipt_without_send` | `C_public_SDK_notification_aborts_real_extra_signal`；两个 F | InMemory signal控制与真实完整thunk/onCalled/send0分开；native企业退出不在此范围 |
+| `C_registered_output_validation_and_unknown_error_send_fallback` | 两个 F；helper negatives | 输入/输出validation、unknown error-send、late/typedID/foreign隔离均有独立guard，不能用业务finally替代 |
+| `C_source_frontend_proxy_pipeline_disconnect_no_collateral_close` | D、W、public frontend F、E；frontend literals | 真实source双ingress与pipeline/断连各自证据；未知prelisten socket回收不宣称实证 |
+| `C_compiled_entry_markers_and_legacy_stateless_zero_effect_guards` | compiled C、N、R；最终component-compiled F | 实际app entry2/装配/native模型、旧入口/拒绝零写、raw listener分别证明；fixture不代app |
+| `C_three_process_A_B_A_old_sid_never_revives` | `E_three_process_A_B_A_old_authorized_and_anonymous_sid_never_revive` | 真实三进程native PASS加后置离线复核；原读回工具FAIL与缺失原件保持 |
+
+完整fullname、每lane实际selected/filtered/TODO、源码→build→audit→artifact→run SHA、修复版本继承边界、历史FAIL索引在本机最终交付包 `/tmp/issue445-final-offline-IJTmmF`。旧40case正文/expected保持；不是“本轮40项全PASS”。本节没有将原inflight gate、enterprise独立退出、全CI/生产等UNKNOWN/UNRUN归为已覆盖。
