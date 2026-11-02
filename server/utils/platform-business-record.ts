@@ -89,7 +89,7 @@ export function applyProjectionPreview(plan: { applyRecord: ApplyProjectionField
   return plan.applyRecord ? { ...plan.applyRecord, ruleVersion: APPLY_PROJECTION_RULE } : null
 }
 
-const APPLY_FIELDS = ['declareKind', 'declarationYear', 'appliedAt', 'status', 'nameRaw', 'usccRaw', 'province'] as const
+const APPLY_FIELDS = ['declareKind', 'declarationYear', 'appliedAt', 'status', 'nameRaw', 'usccRaw'] as const
 
 /** One typed row per immutable content version. Rejects a same-version drift instead of
  * silently reinterpreting historical content under a newer rule. */
@@ -126,11 +126,11 @@ export function ensurePlatformObservation(db: Executor, relationId: number, batc
   const created = db.insert(schema.platformBusinessObservation).values({ ...projection, batchId: batchId ?? null }).onConflictDoNothing().returning().get()
   const observation = created ?? db.select().from(schema.platformBusinessObservation).where(eq(schema.platformBusinessObservation.relationId, relationId)).get()!
   if (Object.entries(projection).some(([field, value]) => observation[field as keyof typeof observation] !== value)) throw new PlatformProjectionError('projection_mapping_conflict', 'Stored projection does not match original observation')
-  const typed = plan.applyRecord && recordId != null && versionId != null
+  const applyProjectionResult = plan.applyRecord && recordId != null && versionId != null
     ? ensureApplyProjection(db, versionId, recordId, plan.applyRecord)
     : null
   return {
     ...projection, recordCreated, versionCreated, observationCreated: !!created,
-    ...(typed ? { applyProjectionCreated: typed.created, applyProjectionReused: typed.reused } : {}),
+    ...(applyProjectionResult ? { applyProjectionCreated: applyProjectionResult.created, applyProjectionReused: applyProjectionResult.reused } : {}),
   }
 }

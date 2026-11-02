@@ -10,9 +10,9 @@
 | `GET /api/platform/declarations/{recordId}` | 等价 MCP `get_platform_declaration`。 |
 | 页面 `/platform-declarations` | 侧边栏「申报记录」入口；筛选、分页、观察与版本详情。 |
 
-公共筛选：`view=records|isolated`（默认 records）、`q`（企业名称/统一社会信用代码关键词，只通过已归属观察匹配）、`enterpriseId`、`platformKey`（精确申报编号）、`declareKind`（原 `sblx`）、`year`（来源明确年份）、`status`（原 `cszt`）、`page`、`pageSize`（最多 200）。
+公共筛选：`view=records|isolated`（默认 records）、`q`（企业名称/统一社会信用代码关键词，只通过已归属观察匹配）、`enterpriseId`、`platformKey`（精确申报编号）、`declareKind`（事项；已知 申请/更新/复核 归一为 apply/update/review 后匹配，字典外原值保留）、`year`（来源明确年份）、`status`（原 `cszt`）、`page`、`pageSize`（最多 200）。
 
-- `records` 按业务记录组织：同一 `platform_business_record` 的匹配内容版本压缩为一行，返回匹配版本、匹配版本数、全部版本数、观察数、最近采集时间、企业归属与冲突。匹配版本按 `applied_at` 最新（缺失最后）再按 `version_id` 选择；不代表正式结论或时间顺序。
+- `records` 按业务记录组织：同一 `platform_business_record` 的匹配内容版本压缩为一行，返回匹配版本、匹配版本数、全部版本数、观察数、最近采集时间、企业归属与冲突。匹配版本按 `applied_at` 最新（缺失最后）再按 `version_id` 选择；不代表正式结论或时间顺序。尚未建立 typed 投影的历史内容版本仍以空字段出现，并明确标注；不因回填未执行而从查询面消失。
 - `isolated` 单独列出 `missing_key`、`conflict`、`unverifiable` 或无版本的申报观察，不并入任何记录；仍按原 `relationId` 可定位。
 - 未知 `sblx`/`year`/`cszt` 保持 null/原值；不从 `sqsj`、`queriedAt`、`batch` 推年份，不推称号，不跨接口合并。
 
@@ -33,6 +33,7 @@
 
 ## 验收边界
 
-- 真实隔离 SQLite + 公开 REST/MCP handler：筛选、分页、未知值、缺编号隔离、历史版本、无 raw 泄露、非法输入。
-- 页面组件覆盖记录表/隔离表/详情；实际桌面与 390px 操作在集成分支构建后执行，不以像素断言代替。
+- 真实隔离 SQLite + 公开 REST/MCP handler：筛选、分页、未知值、缺编号隔离、历史版本、无 raw 泄露、非法输入；迁移 `0033` 在既有库上仅新增表，不重建/改写旧表。
+- 页面组件覆盖记录表/隔离表/详情，页面用例覆盖筛选、视图切换、分页、空态与失败重试；列表/详情预算用例覆盖 200 页、100 版本、200 观察截断与响应体量。
+- 人工操作记录（2026-11-03，集成分支构建产物）：1280px 与 390px 实际打开 `/platform-declarations`，筛选/记录表/横向滚动提示/分页/详情弹窗可用；390px 下筛选纵向排列、表格可横向滚动、详情弹窗可滚动。该记录不是像素级断言。
 - 不操作生产数据库/WAL/原始文件；不部署、不合并 main。

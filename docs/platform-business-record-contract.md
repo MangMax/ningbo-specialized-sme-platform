@@ -43,7 +43,7 @@
 
 `apply_list`（上游 `queryList`）在共享身份/版本/观察之外新增 `platform_apply_projection`，一内容版本一行，关联 `platform_business_record_version.id` 与 `platform_business_record.id`。复合外键 `(version_id, record_id)` 保证版本归属一致；`ON DELETE RESTRICT` 保留历史引用。
 
-投影字段只来自归档原行的真实来源语义：`sblx` → `declare_kind`（去首尾空白，字典外原值保留）、显式 `year` → `declaration_year`（JSON 整数或十进制整数字符串；缺失/空白/布尔/小数/非数字为 null）、`sqsj` → `applied_at`、`cszt` → `status`、`qymc` → `name_raw`、`tyshxydm` → `uscc_raw`、`szsfmc` → `province`。不从 `sqsj`/`queriedAt`/`batch` 推年，不推称号，不跨接口合并。
+投影字段只来自归档原行的真实来源语义：`sblx` → `declare_kind`（已知 申请/更新/复核 沿用既有字典归一为 apply/update/review，字典外原值去首尾空白后保留）、显式 `year` → `declaration_year`（JSON 整数或十进制整数字符串；缺失/空白/布尔/小数/非数字为 null）、`sqsj` → `applied_at`、`cszt` → `status`、`qymc` → `name_raw`、`tyshxydm` → `uscc_raw`。不从 `sqsj`/`queriedAt`/`batch` 推年，不推称号，不跨接口合并。
 
 规则版本 `platform-apply-v1`。`ensurePlatformObservation` 在同一导入事务内为 resolved+verified 的 `apply_list` 观察建立或核对投影；缺编号、编号冲突、原文不可核实的观察不建投影，仍以原 relationId 隔离。同内容版本出现不同投影整批以 `apply_projection_conflict` 拒绝，不静默重解释历史内容。
 

@@ -2,6 +2,7 @@ import { sql, type SQL } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../db/schema'
 import { normalizeName, normalizeUscc } from '../../lib/domain'
+import { normalizeDeclareKind } from '../../lib/platform/identity'
 import {
   DECLARATION_OBSERVATION_LIMIT,
   DECLARATION_VERSION_LIMIT,
@@ -47,10 +48,11 @@ function enterpriseExists(recordColumn: SQL, filter: DeclarationFilter): SQL | n
 function recordConditions(filter: DeclarationFilter): SQL[] {
   const conditions: SQL[] = [sql`b.interface = 'apply_list'`]
   if (filter.platformKey) conditions.push(sql`b.platform_key = ${filter.platformKey}`)
-  if (filter.declareKind) conditions.push(sql`p.declare_kind = ${filter.declareKind}`)
+  const declareKind = filter.declareKind ? normalizeDeclareKind(filter.declareKind) : null
+  if (declareKind) conditions.push(sql`p.declare_kind = ${declareKind}`)
   if (filter.year != null) conditions.push(sql`p.declaration_year = ${filter.year}`)
   if (filter.status) conditions.push(sql`p.status = ${filter.status}`)
-  const enterprise = enterpriseExists(sql`p.record_id`, filter)
+  const enterprise = enterpriseExists(sql`b.id`, filter)
   if (enterprise) conditions.push(enterprise)
   return conditions
 }
@@ -67,7 +69,8 @@ function isolatedConditions(filter: DeclarationFilter): SQL[] {
     conditions.push(sql`(e.name_norm LIKE ${name} or e.uscc_norm LIKE ${uscc})`)
   }
   if (filter.platformKey) conditions.push(sql`r.relation_key = ${filter.platformKey}`)
-  if (filter.declareKind) conditions.push(sql`r.declare_kind = ${filter.declareKind}`)
+  const declareKind = filter.declareKind ? normalizeDeclareKind(filter.declareKind) : null
+  if (declareKind) conditions.push(sql`r.declare_kind = ${declareKind}`)
   if (filter.year != null) conditions.push(sql`r.year = ${filter.year}`)
   if (filter.status) conditions.push(sql`r.status = ${filter.status}`)
   return conditions
@@ -105,21 +108,22 @@ function listRecordRows(db: Db, filter: DeclarationFilter, total: number): Decla
   const where = sql.join(recordConditions(filter), sql` and `)
   const rows = db.all<{
     recordId: number; platformKey: string; versionId: number; declareKind: string | null; declarationYear: number | null;
-    appliedAt: string | null; status: string | null; nameRaw: string | null; usccRaw: string | null; province: string | null;
+    appliedAt: string | null; status: string | null; nameRaw: string | null; usccRaw: string | null;
     ruleVersion: string | null; matchedVersionCount: number; versionCount: number; observationCount: number; latestObservationAt: string | null
   }>(sql`
     with matched as (
-      select p.version_id, p.record_id, p.declare_kind, p.declaration_year, p.applied_at, p.status,
-        p.name_raw, p.uscc_raw, p.province, p.rule_version, b.platform_key,
-        count(*) over (partition by p.record_id) as matched_version_count,
-        row_number() over (partition by p.record_id order by (p.applied_at is null), p.applied_at desc, p.version_id desc) as rn
-      from platform_apply_projection p
-      join platform_business_record b on b.id = p.record_id
+      select v.id as version_id, v.record_id, p.declare_kind, p.declaration_year, p.applied_at, p.status,
+        p.name_raw, p.uscc_raw, p.rule_version, b.platform_key,
+        count(*) over (partition by v.record_id) as matched_version_count,
+        row_number() over (partition by v.record_id order by (p.applied_at is null), p.applied_at desc, v.id desc) as rn
+      from platform_business_record_version v
+      left join platform_apply_projection p on p.version_id = v.id
+      join platform_business_record b on b.id = v.record_id
       where ${where}
     )
     select m.record_id as recordId, m.platform_key as platformKey, m.version_id as versionId,
       m.declare_kind as declareKind, m.declaration_year as declarationYear, m.applied_at as appliedAt,
-      m.status, m.name_raw as nameRaw, m.uscc_raw as usccRaw, m.province, m.rule_version as ruleVersion,
+      m.status, m.name_raw as nameRaw, m.uscc_raw as usccRaw, m.rule_version as ruleVersion,
       m.matched_version_count as matchedVersionCount,
       (select count(*) from platform_business_record_version v where v.record_id = m.record_id) as versionCount,
       (select count(*) from platform_business_observation o where o.record_id = m.record_id) as observationCount,
@@ -132,15 +136,14 @@ function listRecordRows(db: Db, filter: DeclarationFilter, total: number): Decla
     limit ${pageSize} offset ${offset}
   `)
   const assignments = enterpriseAssignments(db, rows.map(row => row.recordId))
-  const conflictRows = rows.length ? db.all<{ recordId: number; identityState: string; contentState: string }>(sql`
-    select distinct o.record_id as recordId, o.identity_state as identityState, o.content_state as contentState
+  const conflictRows = rows.length ? db.all<{ recordId: number; contentState: string }>(sql`
+    select distinct o.record_id as recordId, o.content_state as contentState
     from platform_business_observation o
     where o.record_id in (${sql.join(rows.map(row => sql`${row.recordId}`), sql`, `)})
   `) : []
   const conflictByRecord = new Map<number, string[]>()
   for (const row of conflictRows) {
     const list = conflictByRecord.get(row.recordId) ?? []
-    if (row.identityState === 'conflict' && !list.includes('platform_key_conflict')) list.push('platform_key_conflict')
     if (row.contentState === 'unverifiable' && !list.includes('unverifiable_observation')) list.push('unverifiable_observation')
     conflictByRecord.set(row.recordId, list)
   }
@@ -154,7 +157,7 @@ function listRecordRows(db: Db, filter: DeclarationFilter, total: number): Decla
       matchedVersion: {
         versionId: row.versionId, declareKind: row.declareKind, declarationYear: row.declarationYear,
         appliedAt: row.appliedAt, status: row.status, nameRaw: row.nameRaw, usccRaw: row.usccRaw,
-        province: row.province, ruleVersion: row.ruleVersion,
+        ruleVersion: row.ruleVersion,
       },
       matchedVersionCount: row.matchedVersionCount,
       versionCount: row.versionCount,
@@ -203,9 +206,10 @@ export function listPlatformDeclarations(input: unknown, db: Db): DeclarationLis
   }
   const where = sql.join(recordConditions(filter), sql` and `)
   const total = db.get<{ total: number }>(sql`
-    select count(distinct p.record_id) as total
-    from platform_apply_projection p
-    join platform_business_record b on b.id = p.record_id
+    select count(distinct b.id) as total
+    from platform_business_record_version v
+    left join platform_apply_projection p on p.version_id = v.id
+    join platform_business_record b on b.id = v.record_id
     where ${where}
   `)!.total
   return listRecordRows(db, filter, total)
@@ -213,12 +217,12 @@ export function listPlatformDeclarations(input: unknown, db: Db): DeclarationLis
 
 function versionFields(row: {
   versionId: number; declareKind: string | null; declarationYear: number | null; appliedAt: string | null;
-  status: string | null; nameRaw: string | null; usccRaw: string | null; province: string | null; ruleVersion: string | null
+  status: string | null; nameRaw: string | null; usccRaw: string | null; ruleVersion: string | null
 }): DeclarationVersionFields {
   return {
     versionId: row.versionId, declareKind: row.declareKind, declarationYear: row.declarationYear,
     appliedAt: row.appliedAt, status: row.status, nameRaw: row.nameRaw, usccRaw: row.usccRaw,
-    province: row.province, ruleVersion: row.ruleVersion,
+    ruleVersion: row.ruleVersion,
   }
 }
 
@@ -234,7 +238,7 @@ export function getPlatformDeclaration(db: Db, recordId: number): DeclarationDet
   const versions = db.all<DeclarationVersion>(sql`
     select v.id as versionId, v.hash_algorithm as hashAlgorithm, v.content_hash as contentHash, v.created_at as createdAt,
       p.declare_kind as declareKind, p.declaration_year as declarationYear, p.applied_at as appliedAt, p.status,
-      p.name_raw as nameRaw, p.uscc_raw as usccRaw, p.province, p.rule_version as ruleVersion,
+      p.name_raw as nameRaw, p.uscc_raw as usccRaw, p.rule_version as ruleVersion,
       (select count(*) from platform_business_observation o where o.version_id = v.id) as observationCount,
       (select min(q.queried_at) from platform_business_observation o
         join platform_relation r on r.id = o.relation_id join platform_query q on q.id = r.query_id
@@ -252,14 +256,14 @@ export function getPlatformDeclaration(db: Db, recordId: number): DeclarationDet
   const observationTotal = db.get<{ total: number }>(sql`select count(*) as total from platform_business_observation where record_id = ${recordId}`)!.total
   const observations = db.all<DeclarationObservation & {
     declareKind: string | null; declarationYear: number | null; appliedAt: string | null; status: string | null;
-    nameRaw: string | null; usccRaw: string | null; province: string | null; ruleVersion: string | null
+    nameRaw: string | null; usccRaw: string | null; ruleVersion: string | null
   }>(sql`
     select o.relation_id as relationId, r.query_id as queryId, q.queried_at as queriedAt, q.query_key as queryKey,
       q.status as queryStatus, r.sequence_no as sequenceNo, r.enterprise_id as enterpriseId, e.name as enterpriseName,
       o.identity_state as identityState, o.content_state as contentState, o.key_source as keySource,
-      o.projection_rule_version as projectionRuleVersion, o.input_fingerprint as inputFingerprint, o.version_id as versionId,
+      o.projection_rule_version as projectionRuleVersion, o.version_id as versionId,
       p.declare_kind as declareKind, p.declaration_year as declarationYear, p.applied_at as appliedAt, p.status,
-      p.name_raw as nameRaw, p.uscc_raw as usccRaw, p.province, p.rule_version as ruleVersion
+      p.name_raw as nameRaw, p.uscc_raw as usccRaw, p.rule_version as ruleVersion
     from platform_business_observation o
     join platform_relation r on r.id = o.relation_id
     join platform_query q on q.id = r.query_id
@@ -272,9 +276,9 @@ export function getPlatformDeclaration(db: Db, recordId: number): DeclarationDet
   return {
     record,
     versions: versions.map(version => ({ ...version, ...versionFields(version) })),
-    observations: observations.map(({ declareKind, declarationYear, appliedAt, status, nameRaw, usccRaw, province, ruleVersion, ...observation }) => ({
+    observations: observations.map(({ declareKind, declarationYear, appliedAt, status, nameRaw, usccRaw, ruleVersion, ...observation }) => ({
       ...observation,
-      version: observation.versionId == null ? null : versionFields({ versionId: observation.versionId, declareKind, declarationYear, appliedAt, status, nameRaw, usccRaw, province, ruleVersion }),
+      version: observation.versionId == null ? null : versionFields({ versionId: observation.versionId, declareKind, declarationYear, appliedAt, status, nameRaw, usccRaw, ruleVersion }),
     })),
     counts: {
       versions: versionTotal,

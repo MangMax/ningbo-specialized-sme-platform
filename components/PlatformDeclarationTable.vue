@@ -22,7 +22,6 @@ const enterprise = (row: Extract<DeclarationRow, { kind: 'record' }>) => {
 const enterpriseId = (row: Extract<DeclarationRow, { kind: 'record' }>) => row.enterpriseIds.length === 1 ? row.enterpriseIds[0]! : null
 const conflictLabel: Record<string, string> = {
   enterprise_assignment_conflict: '企业归属冲突',
-  platform_key_conflict: '平台编号冲突',
   unverifiable_observation: '存在内容未核实观察',
 }
 </script>
@@ -39,9 +38,9 @@ const conflictLabel: Record<string, string> = {
             <tr>
               <th class="min-w-40 px-3 py-2 font-medium">申报编号</th>
               <th class="min-w-52 px-3 py-2 font-medium">企业</th>
-              <th class="px-3 py-2 font-medium">事项</th>
+              <th class="min-w-16 px-3 py-2 font-medium whitespace-nowrap">事项</th>
               <th class="min-w-[4.5rem] px-3 py-2 font-medium whitespace-nowrap">年度</th>
-              <th class="px-3 py-2 font-medium">状态</th>
+              <th class="min-w-20 px-3 py-2 font-medium whitespace-nowrap">状态</th>
               <th class="px-3 py-2 font-medium whitespace-nowrap">申报时间</th>
               <th class="px-3 py-2 font-medium whitespace-nowrap">版本 / 观察</th>
               <th class="px-3 py-2 font-medium whitespace-nowrap">最近采集</th>
@@ -56,11 +55,11 @@ const conflictLabel: Record<string, string> = {
                 <span v-else>{{ enterprise(row) }}</span>
                 <span class="text-muted-foreground block text-xs">{{ missing(row.matchedVersion.usccRaw) }}</span>
               </td>
-              <td class="px-3 py-2">{{ declareKind(row.matchedVersion.declareKind) }}</td>
+              <td class="px-3 py-2 whitespace-nowrap">{{ declareKind(row.matchedVersion.declareKind) }}</td>
               <td class="px-3 py-2 tabular-nums">{{ missing(row.matchedVersion.declarationYear) }}</td>
-              <td class="px-3 py-2">{{ missing(row.matchedVersion.status) }}</td>
+              <td class="px-3 py-2 whitespace-nowrap">{{ missing(row.matchedVersion.status) }}</td>
               <td class="px-3 py-2 tabular-nums">{{ time(row.matchedVersion.appliedAt) }}</td>
-              <td class="px-3 py-2 tabular-nums">{{ row.versionCount }} / {{ row.observationCount }}<span v-if="row.matchedVersionCount > 1" class="text-muted-foreground block text-xs">匹配 {{ row.matchedVersionCount }} 个版本</span></td>
+              <td class="px-3 py-2 tabular-nums">{{ row.versionCount }} / {{ row.observationCount }}<span v-if="row.matchedVersionCount > 1" class="text-muted-foreground block text-xs">匹配 {{ row.matchedVersionCount }} 个版本</span><span v-if="row.matchedVersion.ruleVersion == null" class="text-muted-foreground block text-xs">尚未建立 typed 投影</span></td>
               <td class="px-3 py-2 tabular-nums">{{ time(row.latestObservationAt) }}</td>
               <td class="bg-card border-l px-3 py-2">
                 <div class="flex flex-col items-start gap-1">
@@ -84,9 +83,9 @@ const conflictLabel: Record<string, string> = {
             <tr>
               <th class="px-3 py-2 font-medium whitespace-nowrap">原行 / 查询</th>
               <th class="min-w-52 px-3 py-2 font-medium">企业原值</th>
-              <th class="px-3 py-2 font-medium">事项</th>
+              <th class="min-w-16 px-3 py-2 font-medium whitespace-nowrap">事项</th>
               <th class="min-w-[4.5rem] px-3 py-2 font-medium whitespace-nowrap">年度</th>
-              <th class="px-3 py-2 font-medium">状态</th>
+              <th class="min-w-20 px-3 py-2 font-medium whitespace-nowrap">状态</th>
               <th class="px-3 py-2 font-medium whitespace-nowrap">申报时间</th>
               <th class="px-3 py-2 font-medium whitespace-nowrap">采集</th>
               <th class="px-3 py-2 font-medium">隔离原因</th>
@@ -97,9 +96,9 @@ const conflictLabel: Record<string, string> = {
             <tr v-for="row in isolated" :key="row.relationId" class="border-t" data-testid="platform-declaration-isolated-row" :data-relation-id="row.relationId">
               <td class="px-3 py-2 whitespace-nowrap">行 #{{ row.relationId }} · 查询 #{{ row.queryId }}</td>
               <td class="px-3 py-2">{{ missing(row.nameRaw) }}<span class="text-muted-foreground block text-xs">{{ missing(row.usccRaw) }}</span><span v-if="row.enterpriseName" class="text-muted-foreground block text-xs">已归属 {{ row.enterpriseName }}</span></td>
-              <td class="px-3 py-2">{{ declareKind(row.declareKind) }}</td>
+              <td class="px-3 py-2 whitespace-nowrap">{{ declareKind(row.declareKind) }}</td>
               <td class="px-3 py-2 tabular-nums">{{ missing(row.declarationYear) }}</td>
-              <td class="px-3 py-2">{{ missing(row.status) }}</td>
+              <td class="px-3 py-2 whitespace-nowrap">{{ missing(row.status) }}</td>
               <td class="px-3 py-2 tabular-nums">{{ time(row.appliedAt) }}</td>
               <td class="px-3 py-2 tabular-nums">{{ time(row.queriedAt) }}</td>
               <td class="px-3 py-2 text-xs">

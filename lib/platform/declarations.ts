@@ -12,7 +12,7 @@ export const declarationFilterSchema = z.strictObject({
   enterpriseId: z.number().int().positive().optional(),
   /** Exact 申报编号 as archived; never normalized or merged across interfaces. */
   platformKey: z.string().trim().min(1).max(200).optional(),
-  /** Raw sblx value preserved by the typed projection. */
+  /** Known source values are normalized to apply/update/review; unknown values stay raw. */
   declareKind: z.string().trim().min(1).max(200).optional(),
   /** Explicit source year only. */
   year: z.number().int().positive().optional(),
@@ -23,6 +23,42 @@ export const declarationFilterSchema = z.strictObject({
 })
 export type DeclarationFilter = z.infer<typeof declarationFilterSchema>
 
+/** HTTP query strings are converted once, then validated by the same strict schema as MCP. */
+export function declarationFilterFromQuery(raw: Record<string, unknown>): DeclarationFilter {
+  const text = (value: unknown) => typeof value === 'string' && value.trim() ? value.trim() : undefined
+  const positive = (value: unknown, name: string) => {
+    if (value === undefined || value === '') return undefined
+    const parsed = Number(value)
+    if (!Number.isSafeInteger(parsed) || parsed < 1) {
+      throw Object.assign(new Error(`${name} must be a positive integer`), { statusCode: 400, code: 'invalid_declaration_filter' })
+    }
+    return parsed
+  }
+  const enterpriseId = positive(raw.enterpriseId, 'enterpriseId')
+  const year = positive(raw.year, 'year')
+  const page = positive(raw.page, 'page')
+  const pageSize = positive(raw.pageSize, 'pageSize')
+  const view = text(raw.view)
+  try {
+    return declarationFilterSchema.parse({
+      ...(view ? { view } : {}),
+      ...(text(raw.q) ? { q: text(raw.q) } : {}),
+      ...(enterpriseId != null ? { enterpriseId } : {}),
+      ...(text(raw.platformKey) ? { platformKey: text(raw.platformKey) } : {}),
+      ...(text(raw.declareKind) ? { declareKind: text(raw.declareKind) } : {}),
+      ...(year != null ? { year } : {}),
+      ...(text(raw.status) ? { status: text(raw.status) } : {}),
+      ...(page != null ? { page } : {}),
+      ...(pageSize != null ? { pageSize } : {}),
+    })
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      throw Object.assign(new Error('Invalid declaration query parameters'), { statusCode: 400, code: 'invalid_declaration_filter' })
+    }
+    throw error
+  }
+}
+
 export interface DeclarationVersionFields {
   versionId: number
   declareKind: string | null
@@ -31,7 +67,6 @@ export interface DeclarationVersionFields {
   status: string | null
   nameRaw: string | null
   usccRaw: string | null
-  province: string | null
   ruleVersion: string | null
 }
 
@@ -93,7 +128,6 @@ export interface DeclarationObservation {
   contentState: 'verified' | 'unverifiable'
   keySource: string
   projectionRuleVersion: string
-  inputFingerprint: string
   versionId: number | null
   version: DeclarationVersionFields | null
 }

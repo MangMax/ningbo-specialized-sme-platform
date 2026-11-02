@@ -16,13 +16,12 @@ describe('apply_list typed projection parser', () => {
       batch: '2024-1',
       title: '小巨人',
     })).toEqual({
-      declareKind: '申请',
+      declareKind: 'apply',
       declarationYear: 2024,
       appliedAt: '2024-03-01 09:00:00',
       status: '终审通过',
       nameRaw: '合成企业',
       usccRaw: '91330211255994457P',
-      province: '宁波市',
     })
   })
 
@@ -43,7 +42,6 @@ describe('apply_list typed projection parser', () => {
       status: null,
       nameRaw: null,
       usccRaw: null,
-      province: null,
     })
     expect(parseApplyRecord({ year: 2025 }).declarationYear).toBe(2025)
     for (const year of [0, -1, 2024.5, Number.NaN, Number.POSITIVE_INFINITY, '', '   ', '2024.5', '2024年', 'abc', true, null, undefined, {}, []]) {

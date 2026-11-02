@@ -839,7 +839,6 @@ export const platformApplyProjection = sqliteTable('platform_apply_projection', 
   status: text('status'),
   nameRaw: text('name_raw'),
   usccRaw: text('uscc_raw'),
-  province: text('province'),
   ruleVersion: text('rule_version').notNull(),
   createdAt: text('created_at').notNull().$defaultFn(() => new Date().toISOString()),
 }, t => [

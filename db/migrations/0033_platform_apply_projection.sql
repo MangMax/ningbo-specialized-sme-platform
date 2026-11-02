@@ -7,7 +7,6 @@ CREATE TABLE `platform_apply_projection` (
 	`status` text,
 	`name_raw` text,
 	`uscc_raw` text,
-	`province` text,
 	`rule_version` text NOT NULL,
 	`created_at` text NOT NULL,
 	FOREIGN KEY (`version_id`) REFERENCES `platform_business_record_version`(`id`) ON UPDATE no action ON DELETE restrict,

@@ -6,6 +6,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import TableFailureState from '@/components/TableFailureState.vue'
 import type { DeclarationDetail } from '~~/lib/platform/declarations'
 import { PLATFORM_HISTORY_STATES } from '~~/lib/roster/platform-records'
+import { RELATION_DECLARE_KINDS } from '~~/lib/labels'
 import { formatFetchTime } from '~~/lib/reconcile-time'
 
 const props = defineProps<{ recordId: number | null; open: boolean }>()
@@ -38,6 +39,7 @@ watch(() => [props.open, props.recordId] as const, ([open, id]) => {
 const missing = (value: string | number | null | undefined) => value === null || value === undefined || value === '' ? '未提供' : String(value)
 const time = (value: string | null) => value ? formatFetchTime(value) ?? value : '未提供'
 const state = (value: string) => PLATFORM_HISTORY_STATES[value] ?? value
+const declareKind = (value: string | null) => value ? RELATION_DECLARE_KINDS[value] ?? value : '事项未提供'
 </script>
 
 <template>
@@ -65,13 +67,13 @@ const state = (value: string) => PLATFORM_HISTORY_STATES[value] ?? value
             <article v-for="version in data.versions" :key="version.versionId" class="rounded-sm border p-3" data-testid="platform-declaration-version">
               <div class="flex flex-wrap items-baseline gap-2">
                 <span class="text-sm font-medium">版本 #{{ version.versionId }}</span>
-                <Badge variant="outline">{{ version.declareKind ?? '事项未提供' }}</Badge>
+                <Badge variant="outline">{{ declareKind(version.declareKind) }}</Badge>
+                <Badge v-if="version.ruleVersion == null" variant="quiet">尚未建立 typed 投影</Badge>
                 <span class="text-muted-foreground text-xs">年度 {{ missing(version.declarationYear) }} · 状态 {{ missing(version.status) }}</span>
               </div>
               <dl class="mt-2 grid grid-cols-1 gap-x-3 gap-y-1 text-[13px] sm:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">
                 <dt class="text-muted-foreground">企业原值</dt><dd>{{ missing(version.nameRaw) }} · {{ missing(version.usccRaw) }}</dd>
                 <dt class="text-muted-foreground">申报时间</dt><dd>{{ time(version.appliedAt) }}</dd>
-                <dt class="text-muted-foreground">省份</dt><dd>{{ missing(version.province) }}</dd>
                 <dt class="text-muted-foreground">规则版本</dt><dd>{{ missing(version.ruleVersion) }}</dd>
                 <dt class="text-muted-foreground">观察次数</dt><dd>{{ version.observationCount }} · 首次 {{ time(version.firstObservedAt) }} · 最近 {{ time(version.lastObservedAt) }}</dd>
                 <dt class="text-muted-foreground">内容哈希</dt><dd class="break-all font-mono text-xs">{{ version.hashAlgorithm }} · {{ version.contentHash }}</dd>

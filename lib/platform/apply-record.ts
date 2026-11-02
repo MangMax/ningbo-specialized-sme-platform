@@ -1,12 +1,14 @@
 /**
  * #452: apply_list (upstream queryList) source-specific typed projection.
  *
- * Only fields actually present on the archived row are projected. Unknown strings
- * (including non-dictionary sblx/cszt values) are preserved; missing or blank
- * values stay null. A declaration year is accepted only as an explicit positive
- * integer (JSON number or a decimal-integer string): it is never inferred from
- * sqsj, queriedAt, batch or a title.
+ * Only fields actually present on the archived row are projected. The known sblx
+ * values use the existing apply/update/review dictionary; unknown values are
+ * preserved verbatim. Missing or blank values stay null. A declaration year is
+ * accepted only as an explicit positive integer (JSON number or a decimal-integer
+ * string): it is never inferred from sqsj, queriedAt, batch or a title.
  */
+import { normalizeDeclareKind } from './identity'
+
 export const APPLY_PROJECTION_RULE = 'platform-apply-v1'
 
 export interface ApplyProjectionFields {
@@ -20,7 +22,6 @@ export interface ApplyProjectionFields {
   status: string | null
   nameRaw: string | null
   usccRaw: string | null
-  province: string | null
 }
 
 function text(value: unknown): string | null {
@@ -45,12 +46,11 @@ function year(value: unknown): number | null {
 export function parseApplyRecord(raw: unknown): ApplyProjectionFields {
   const row = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw as Record<string, unknown> : {}
   return {
-    declareKind: text(row.sblx),
+    declareKind: normalizeDeclareKind(row.sblx),
     declarationYear: year(row.year),
     appliedAt: text(row.sqsj),
     status: text(row.cszt),
     nameRaw: text(row.qymc),
     usccRaw: text(row.tyshxydm),
-    province: text(row.szsfmc),
   }
 }

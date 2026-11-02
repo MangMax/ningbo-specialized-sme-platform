@@ -60,13 +60,12 @@ describe('apply_list typed projection through public import HTTP', () => {
     expect(projection).toEqual({
       version_id: observation!.versionId,
       record_id: observation!.recordId,
-      declare_kind: '申请',
+      declare_kind: 'apply',
       declaration_year: 2024,
       applied_at: '2024-03-01 09:00:00',
       status: '终审通过',
       name_raw: '合成申报企业',
       uscc_raw: '91330211255994457P',
-      province: '宁波市',
       rule_version: 'platform-apply-v1',
       created_at: expect.any(String),
     })
@@ -114,13 +113,13 @@ describe('apply_list typed projection through public import HTTP', () => {
     const before = db.get<{ n: number }>(sql`SELECT count(*) n FROM platform_apply_projection`)!.n
     const plan = await post('preflight', req)
     expect(plan.preflight.conflicts).toEqual([])
-    expect(plan.preflight.canonicalProjection[0]).toMatchObject({ relationId: relation.id, identityState: 'resolved', contentState: 'verified', applyProjection: { declareKind: '复核', declarationYear: 2023, status: '终审通过', ruleVersion: 'platform-apply-v1' } })
+    expect(plan.preflight.canonicalProjection[0]).toMatchObject({ relationId: relation.id, identityState: 'resolved', contentState: 'verified', applyProjection: { declareKind: 'review', declarationYear: 2023, status: '终审通过', ruleVersion: 'platform-apply-v1' } })
     expect(db.get<{ n: number }>(sql`SELECT count(*) n FROM platform_apply_projection`)!.n).toBe(before)
 
     const saved = await post('commit', req)
     expect(saved.status).toBe('committed')
     expect(saved.summary.canonicalProjection).toMatchObject({ recordsCreated: 1, versionsCreated: 1, observationsCreated: 1, applyProjectionsCreated: 1 })
-    expect(db.get(sql`SELECT declare_kind AS declareKind, declaration_year AS declarationYear, status FROM platform_apply_projection`)).toEqual({ declareKind: '复核', declarationYear: 2023, status: '终审通过' })
+    expect(db.get(sql`SELECT declare_kind AS declareKind, declaration_year AS declarationYear, status FROM platform_apply_projection`)).toEqual({ declareKind: 'review', declarationYear: 2023, status: '终审通过' })
     const retried = await post('commit', request('history-backfill-2', { platformRecordObservations: [{ relationId: relation.id }] }))
     expect(retried.status).toBe('committed')
     expect(retried.summary.canonicalProjection).toMatchObject({ observationsReused: 1, applyProjectionsCreated: 0, applyProjectionsReused: 1 })

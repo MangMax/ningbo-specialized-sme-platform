@@ -73,12 +73,12 @@ it('filters, paginates and exposes matched versions without raw JSON', async () 
   expect(all.http).toBe(200); expect(all.total).toBe(2)
   expect(JSON.stringify(all)).not.toContain('UNEXPOSED_RAW_VALUE')
   const recordA = all.rows.find((row: any) => row.record.platformKey === 'SQ-A')
-  expect(recordA).toMatchObject({ kind: 'record', matchedVersion: { declareKind: '申请', declarationYear: 2024, status: '已退回' }, matchedVersionCount: 2, versionCount: 2, observationCount: 2 })
+  expect(recordA).toMatchObject({ kind: 'record', matchedVersion: { declareKind: 'apply', declarationYear: 2024, status: '已退回' }, matchedVersionCount: 2, versionCount: 2, observationCount: 2 })
   expect(recordA.enterpriseIds).toEqual([enterpriseA.id])
 
   expect((await get('/api/platform/declarations?year=2024')).rows.map((row: any) => row.record.platformKey)).toEqual(['SQ-A'])
   expect((await get('/api/platform/declarations?year=2025')).rows.map((row: any) => row.record.platformKey)).toEqual(['SQ-B'])
-  expect((await get('/api/platform/declarations?declareKind=复核')).rows.map((row: any) => row.record.platformKey)).toEqual(['SQ-B'])
+  expect((await get('/api/platform/declarations?declareKind=review')).rows.map((row: any) => row.record.platformKey)).toEqual(['SQ-B'])
   expect((await get('/api/platform/declarations?status=终审通过')).rows.map((row: any) => row.record.platformKey)).toEqual(['SQ-A'])
   expect((await get('/api/platform/declarations?status=已退回')).rows.map((row: any) => row.record.platformKey)).toEqual(['SQ-A'])
   expect((await get('/api/platform/declarations?platformKey=SQ-B')).rows.map((row: any) => row.record.platformKey)).toEqual(['SQ-B'])
@@ -119,9 +119,61 @@ it('isolates missing-key and conflicting-key observations and rejects invalid fi
 it('MCP tools reuse the same read service and input contract', async () => {
   const listTool = (await import('../server/mcp/tools/list_platform_declarations')).default
   const detailTool = (await import('../server/mcp/tools/get_platform_declaration')).default
-  const listed: any = await (listTool.handler as any)({ year: 2024, page: 1, pageSize: 25, view: 'records' })
+  const listed: any = (await (listTool.handler as any)({ year: 2024, page: 1, pageSize: 25, view: 'records' })).structuredContent
   expect(listed.rows.map((row: any) => row.record.platformKey)).toEqual(['SQ-A'])
-  const detail: any = await (detailTool.handler as any)({ recordId: listed.rows[0].record.id })
+  const detail: any = (await (detailTool.handler as any)({ recordId: listed.rows[0].record.id })).structuredContent
   expect(detail.record.platformKey).toBe('SQ-A')
   expect(detail.versions).toHaveLength(2)
+})
+
+it('keeps resolved versions without a typed projection visible with explicit unknown fields', async () => {
+  const query = db.insert(schema.platformQuery).values({ interface: 'apply_list', queryKey: 'name:未投影', queriedAt: '2026-09-01T00:00:00Z', status: 'success' }).returning().get()
+  const relation = db.insert(schema.platformRelation).values({ queryId: query.id, sequenceNo: 1, relationKey: 'SQ-UNPROJECTED', rawFields: { id: 'SQ-UNPROJECTED', qymc: '未投影企业', tyshxydm: '91330211255994499X', sblx: '申请', year: '2024', cszt: '待审核' } }).returning().get()
+  const record = db.insert(schema.platformBusinessRecord).values({ interface: 'apply_list', platformKey: 'SQ-UNPROJECTED', identityRuleVersion: 'platform-observation-v1' }).returning().get()
+  const version = db.insert(schema.platformBusinessRecordVersion).values({ recordId: record.id, hashAlgorithm: 'platform-row-json-v1', contentHash: 'unprojected-hash', canonicalRawJson: '{"id":"SQ-UNPROJECTED"}' }).returning().get()
+  db.insert(schema.platformBusinessObservation).values({ relationId: relation.id, recordId: record.id, versionId: version.id, identityState: 'resolved', contentState: 'verified', keySource: 'relation_key', projectionRuleVersion: 'platform-observation-v1', inputFingerprint: 'unprojected-fingerprint' }).run()
+
+  const list = await get('/api/platform/declarations?platformKey=SQ-UNPROJECTED')
+  expect(list.http).toBe(200); expect(list.total).toBe(1)
+  expect(list.rows[0]).toMatchObject({ kind: 'record', matchedVersion: { versionId: version.id, ruleVersion: null, declareKind: null }, versionCount: 1, observationCount: 1 })
+  const detail = await get(`/api/platform/declarations/${record.id}`)
+  expect(detail.http).toBe(200)
+  expect(detail.versions[0]).toMatchObject({ versionId: version.id, ruleVersion: null, declareKind: null })
+  expect(detail.observations[0]).toMatchObject({ relationId: relation.id, versionId: version.id, version: { versionId: version.id, ruleVersion: null, declareKind: null } })
+})
+
+it('bounds list pages and detail history instead of returning unbounded bodies', async () => {
+  db.transaction(tx => {
+    for (let i = 1; i <= 205; i++) {
+      const record = tx.insert(schema.platformBusinessRecord).values({ interface: 'apply_list', platformKey: `BUDGET-${String(i).padStart(3, '0')}`, identityRuleVersion: 'platform-observation-v1' }).returning().get()
+      const version = tx.insert(schema.platformBusinessRecordVersion).values({ recordId: record.id, hashAlgorithm: 'platform-row-json-v1', contentHash: `budget-hash-${i}`, canonicalRawJson: '{}' }).returning().get()
+      tx.insert(schema.platformApplyProjection).values({ versionId: version.id, recordId: record.id, declareKind: 'apply', declarationYear: 2031, appliedAt: '2026-01-01', status: '待审核', nameRaw: '预算企业', usccRaw: '91330211255994499X', ruleVersion: 'platform-apply-v1' }).run()
+    }
+  })
+  const first = await get('/api/platform/declarations?year=2031&pageSize=200')
+  expect(first.http).toBe(200); expect(first.total).toBe(205); expect(first.rows).toHaveLength(200)
+  expect(JSON.stringify(first).length).toBeLessThan(600_000)
+  expect((await get('/api/platform/declarations?year=2031&page=2&pageSize=200')).rows).toHaveLength(5)
+
+  const record = db.insert(schema.platformBusinessRecord).values({ interface: 'apply_list', platformKey: 'DETAIL-BUDGET', identityRuleVersion: 'platform-observation-v1' }).returning().get()
+  let firstVersion: number | null = null
+  for (let i = 1; i <= 101; i++) {
+    const version = db.insert(schema.platformBusinessRecordVersion).values({ recordId: record.id, hashAlgorithm: 'platform-row-json-v1', contentHash: `detail-hash-${i}`, canonicalRawJson: '{}' }).returning().get()
+    firstVersion ??= version.id
+    db.insert(schema.platformApplyProjection).values({ versionId: version.id, recordId: record.id, declareKind: 'apply', declarationYear: 2032, status: '待审核', nameRaw: '详情预算企业', usccRaw: '91330211255994499X', ruleVersion: 'platform-apply-v1' }).run()
+    if (i <= 201) {
+      const query = db.insert(schema.platformQuery).values({ interface: 'apply_list', queryKey: `detail-budget-${i}`, queriedAt: `2026-10-01T00:00:${String(i % 60).padStart(2, '0')}Z`, status: 'success' }).returning().get()
+      const relation = db.insert(schema.platformRelation).values({ queryId: query.id, sequenceNo: 1, relationKey: 'DETAIL-BUDGET', rawFields: { id: 'DETAIL-BUDGET' } }).returning().get()
+      db.insert(schema.platformBusinessObservation).values({ relationId: relation.id, recordId: record.id, versionId: firstVersion, identityState: 'resolved', contentState: 'verified', keySource: 'relation_key', projectionRuleVersion: 'platform-observation-v1', inputFingerprint: `detail-fingerprint-${i}` }).run()
+    }
+  }
+  for (let i = 102; i <= 201; i++) {
+    const query = db.insert(schema.platformQuery).values({ interface: 'apply_list', queryKey: `detail-budget-extra-${i}`, queriedAt: `2026-10-02T00:00:${String(i % 60).padStart(2, '0')}Z`, status: 'success' }).returning().get()
+    const relation = db.insert(schema.platformRelation).values({ queryId: query.id, sequenceNo: 1, relationKey: 'DETAIL-BUDGET', rawFields: { id: 'DETAIL-BUDGET' } }).returning().get()
+    db.insert(schema.platformBusinessObservation).values({ relationId: relation.id, recordId: record.id, versionId: firstVersion, identityState: 'resolved', contentState: 'verified', keySource: 'relation_key', projectionRuleVersion: 'platform-observation-v1', inputFingerprint: `detail-fingerprint-extra-${i}` }).run()
+  }
+  const detail = await get(`/api/platform/declarations/${record.id}`)
+  expect(detail.http).toBe(200)
+  expect(detail.versions).toHaveLength(100); expect(detail.counts.versions).toBe(101); expect(detail.counts.versionsTruncated).toBe(true)
+  expect(detail.observations).toHaveLength(200); expect(detail.counts.observations).toBe(201); expect(detail.counts.observationsTruncated).toBe(true)
 })

@@ -8,8 +8,8 @@ const record = {
   kind: 'record' as const,
   record: { id: 7, platformKey: 'SQ-2024-1', interface: 'apply_list' as const },
   matchedVersion: {
-    versionId: 12, declareKind: '申请', declarationYear: 2024, appliedAt: '2024-03-01 09:00:00',
-    status: '终审通过', nameRaw: '甲合成企业', usccRaw: '91330211255994457P', province: '宁波市', ruleVersion: 'platform-apply-v1',
+    versionId: 12, declareKind: 'apply', declarationYear: 2024, appliedAt: '2024-03-01 09:00:00',
+    status: '终审通过', nameRaw: '甲合成企业', usccRaw: '91330211255994457P', ruleVersion: 'platform-apply-v1',
   },
   matchedVersionCount: 2,
   versionCount: 2,
@@ -81,11 +81,11 @@ describe('申报记录详情', () => {
     const detail = {
       record: { id: 7, platformKey: 'SQ-2024-1', interface: 'apply_list', identityRuleVersion: 'platform-observation-v1', createdAt: '2026-10-01T00:00:00Z' },
       versions: [
-        { versionId: 12, hashAlgorithm: 'platform-row-json-v1', contentHash: 'abc', createdAt: '2026-10-01T00:00:00Z', declareKind: '申请', declarationYear: 2024, appliedAt: '2024-03-01', status: '终审通过', nameRaw: '甲合成企业', usccRaw: '91330211255994457P', province: '宁波市', ruleVersion: 'platform-apply-v1', observationCount: 2, firstObservedAt: '2026-10-01T00:00:00Z', lastObservedAt: '2026-10-02T00:00:00Z' },
-        { versionId: 11, hashAlgorithm: 'platform-row-json-v1', contentHash: 'def', createdAt: '2026-09-01T00:00:00Z', declareKind: null, declarationYear: null, appliedAt: null, status: null, nameRaw: null, usccRaw: null, province: null, ruleVersion: null, observationCount: 1, firstObservedAt: '2026-09-01T00:00:00Z', lastObservedAt: '2026-09-01T00:00:00Z' },
+        { versionId: 12, hashAlgorithm: 'platform-row-json-v1', contentHash: 'abc', createdAt: '2026-10-01T00:00:00Z', declareKind: 'apply', declarationYear: 2024, appliedAt: '2024-03-01', status: '终审通过', nameRaw: '甲合成企业', usccRaw: '91330211255994457P', ruleVersion: 'platform-apply-v1', observationCount: 2, firstObservedAt: '2026-10-01T00:00:00Z', lastObservedAt: '2026-10-02T00:00:00Z' },
+        { versionId: 11, hashAlgorithm: 'platform-row-json-v1', contentHash: 'def', createdAt: '2026-09-01T00:00:00Z', declareKind: null, declarationYear: null, appliedAt: null, status: null, nameRaw: null, usccRaw: null, ruleVersion: null, observationCount: 1, firstObservedAt: '2026-09-01T00:00:00Z', lastObservedAt: '2026-09-01T00:00:00Z' },
       ],
       observations: [
-        { relationId: 21, queryId: 31, queriedAt: '2026-10-02T00:00:00Z', queryKey: 'q', queryStatus: 'success', sequenceNo: 1, enterpriseId: 11, enterpriseName: '甲合成企业', identityState: 'resolved', contentState: 'verified', keySource: 'both', projectionRuleVersion: 'platform-observation-v1', inputFingerprint: 'fp', versionId: 12, version: null },
+        { relationId: 21, queryId: 31, queriedAt: '2026-10-02T00:00:00Z', queryKey: 'q', queryStatus: 'success', sequenceNo: 1, enterpriseId: 11, enterpriseName: '甲合成企业', identityState: 'resolved', contentState: 'verified', keySource: 'both', projectionRuleVersion: 'platform-observation-v1', versionId: 12, version: null },
       ],
       counts: { versions: 2, observations: 1, versionsTruncated: false, observationsTruncated: false },
     }
