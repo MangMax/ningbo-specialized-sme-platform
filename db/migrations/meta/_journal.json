@@ -232,6 +232,13 @@
       "when": 1792400021013,
       "tag": "0032_event_formal_validity",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "6",
+      "when": 1793635658696,
+      "tag": "0033_platform_apply_projection",
+      "breakpoints": true
     }
   ]
 }

@@ -39,6 +39,18 @@
 
 回执沿用 `/api/roster/import/receipts` 及对应 MCP 读工具。`items[].detail.canonicalProjection` 返回逐观察的 relationId/recordId/versionId/状态、规则、指纹和 created 布尔值；不回传 raw。`summary.canonicalProjection` 单独统计 recordsCreated、versionsCreated、observationsCreated、observationsReused、missingKey、conflict、unverifiable。旧 summary.written/rowsWritten 仍只计旧实体/查询/关系等新增行，历史投影为 0。相同键重试返回原计数；新键重新投影返回新操作的 reused 计数。`/replay` 仍只做既有公布文件出处收敛，不承担平台投影恢复。
 
+## apply_list 来源专用 typed 投影（#452）
+
+`apply_list`（上游 `queryList`）在共享身份/版本/观察之外新增 `platform_apply_projection`，一内容版本一行，关联 `platform_business_record_version.id` 与 `platform_business_record.id`。复合外键 `(version_id, record_id)` 保证版本归属一致；`ON DELETE RESTRICT` 保留历史引用。
+
+投影字段只来自归档原行的真实来源语义：`sblx` → `declare_kind`（去首尾空白，字典外原值保留）、显式 `year` → `declaration_year`（JSON 整数或十进制整数字符串；缺失/空白/布尔/小数/非数字为 null）、`sqsj` → `applied_at`、`cszt` → `status`、`qymc` → `name_raw`、`tyshxydm` → `uscc_raw`、`szsfmc` → `province`。不从 `sqsj`/`queriedAt`/`batch` 推年，不推称号，不跨接口合并。
+
+规则版本 `platform-apply-v1`。`ensurePlatformObservation` 在同一导入事务内为 resolved+verified 的 `apply_list` 观察建立或核对投影；缺编号、编号冲突、原文不可核实的观察不建投影，仍以原 relationId 隔离。同内容版本出现不同投影整批以 `apply_projection_conflict` 拒绝，不静默重解释历史内容。
+
+迁移 `0033_platform_apply_projection` 只新增该表与索引，不重建既有表。历史观察继续走 `platformRecordObservations`（每批 1..100）投影；预检返回 `canonicalProjection[].applyProjection` 计划，提交回执的 `canonicalProjection` 增加 `applyProjectionsCreated`/`applyProjectionsReused`（仅当批次包含 apply 投影时出现）。旧 query/relation/raw/hash/version/observation/对应/审计/深链均不改写。
+
+本投影是分域扩展新增的第 53 张应用表；ADR 的 52 表是 #297 的审计基线，不是本轮重审结论。HTTP/MCP 本地申报查询与页面属于 #453，不在本层实施。
+
 ## 下一层读接口接缝
 
 共享写回 DTO 位于 `lib/platform/business-record.ts`，领域入口位于 `server/utils/platform-business-record.ts`。下一层应先按企业、queryIds、sourceSet、asOf 限定原观察，再 LEFT JOIN mapping/version/record，输出观察来源和旧决定引用。未索引为 not_indexed；missing_key、conflict、unverifiable 以原 relationId 隔离，不把所有 null 合成一组。不同版本/接口/角色不能折叠；相同版本的多个出处都要保留。不得用同 record 的其他观察代替选定来源的 proof 或复制旧裁决。
