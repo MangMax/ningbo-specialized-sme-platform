@@ -27,6 +27,7 @@
 
 - 实时 `query_platform`：上游在本次条件与时点返回什么，包含未完成范围。
 - 本地归档 `list_platform_queries` / `GET /api/platform/queries`：留存过哪些查询、原行与观察历史。
+- 本地申报记录 `list_platform_declarations` / `GET /api/platform/declarations`：按企业、申报编号、原 `sblx`、明确年份与原 `cszt` 查询 `apply_list` typed 投影；缺编号/冲突/不可核实观察单独隔离。
 - 现有优质中小企业查询 `GET /api/roster/current-enterprises` / `list_current_qualified_enterprises`：本地规则下当前确定有效且匹配筛选的企业，页面为 `/current-enterprises`。
 
 三来源各自的有类型本地业务查询是下一步目标，不能将归档列表更名即宣称已交付。现有查询与 [三称号异步导出](current-roster-export-contract.md)复用资格规则；查询返回确定有效匹配，工作簿另有待确认/排除明细，输出形态不同不等于资格规则不同。来源字段的已验证投影按现有契约限制，不把 `queryBusList` 的某称号/格式规则推广到其他来源。

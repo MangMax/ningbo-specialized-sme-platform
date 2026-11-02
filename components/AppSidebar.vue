@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { SidebarProps } from '@/components/ui/sidebar'
-import { ChartColumn, FolderOpen, Gauge, GitCompareArrows, LayoutList, ScanText, KeyRound, ListTodo, Search, Logs } from '@lucide/vue'
+import { ChartColumn, FileText, FolderOpen, Gauge, GitCompareArrows, LayoutList, ScanText, KeyRound, ListTodo, Search, Logs } from '@lucide/vue'
 import { ENTERPRISE_LIST_TITLE } from '~~/lib/labels'
 import NavMain from '@/components/NavMain.vue'
 import {
@@ -25,6 +25,8 @@ const colorMode = useAppColorMode()
 const nav = [
   { title: ENTERPRISE_LIST_TITLE, url: '/', icon: LayoutList },
   { title: '优质中小企业查询', url: '/current-enterprises', icon: Search },
+  // 申报记录:本地 apply_list typed 投影的查询入口;缺编号观察单独隔离展示。
+  { title: '申报记录', url: '/platform-declarations', icon: FileText },
   { title: '文件管理', url: '/files', icon: FolderOpen },
   // 识别校对:扫描件的逐页 OCR 结果在这里对着页图核对、改、删、导入(票 14 的页面半边)。
   { title: '识别校对', url: '/ocr', icon: ScanText },
