@@ -852,6 +852,44 @@ export const platformApplyProjection = sqliteTable('platform_apply_projection', 
 ])
 
 /**
+ * Source-specific typed projection for business_list (upstream businessList). One row
+ * per immutable content version; the composite owner FK prevents a version/record
+ * mismatch. Fields are copied from the archived raw row only (null when absent),
+ * never inferred. Query title scope is not a row fact and is not stored here.
+ */
+export const platformBusinessProjection = sqliteTable('platform_business_projection', {
+  versionId: integer('version_id').primaryKey().references(() => platformBusinessRecordVersion.id, { onDelete: 'restrict' }),
+  recordId: integer('record_id').notNull().references(() => platformBusinessRecord.id, { onDelete: 'restrict' }),
+  /** Raw sblx after trimming; unknown dictionary values are retained. */
+  declareKind: text('declare_kind'),
+  /** Explicit positive decimal-integer source year only. */
+  businessYear: integer('business_year'),
+  /** Raw sqsj after trimming. */
+  appliedAt: text('applied_at'),
+  /** Raw cszt after trimming. */
+  status: text('status'),
+  /** Raw whpc (维护批次) after trimming. */
+  batch: text('batch'),
+  /** Raw personuuid (原认定批次标签) after trimming. */
+  awardBatchLabel: text('award_batch_label'),
+  /** Raw szsfmc (属地) after trimming. */
+  province: text('province'),
+  nameRaw: text('name_raw'),
+  usccRaw: text('uscc_raw'),
+  ruleVersion: text('rule_version').notNull(),
+  createdAt: text('created_at').notNull().$defaultFn(() => new Date().toISOString()),
+}, t => [
+  foreignKey({ columns: [t.versionId, t.recordId], foreignColumns: [platformBusinessRecordVersion.id, platformBusinessRecordVersion.recordId] }).onDelete('restrict'),
+  index('platform_business_projection_record_idx').on(t.recordId),
+  index('platform_business_projection_year_idx').on(t.businessYear),
+  index('platform_business_projection_kind_idx').on(t.declareKind),
+  index('platform_business_projection_status_idx').on(t.status),
+  index('platform_business_projection_batch_idx').on(t.batch),
+  index('platform_business_projection_applied_idx').on(t.appliedAt),
+  index('platform_business_projection_uscc_idx').on(t.usccRaw),
+])
+
+/**
  * **差异原因与后续措施**(契约 4)——**成对**记录的一行。
  *
  * 一行 = 「这家企业 × 这个称号 × 这个方向的差异」在**某个时点**的解释:
