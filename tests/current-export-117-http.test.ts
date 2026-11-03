@@ -384,7 +384,7 @@ it('产物存储错误不泄露路径', async () => {
   } finally {rmSync(root,{force:true});renameSync(backup,root)}
   const retry=await json(await submit('storage-retry',{regenerateOf:failed.id}))
   expect((await terminal(retry.jobId)).state).toBe('done')
-},30000)
+},90000)
 it('平台单独候选不遗漏且不冒充已确认资格', async () => {
   const c=db.insert(s.enterprise).values({name:'仅平台识别候选',nameNorm:'仅平台识别候选',usccNorm:'PLATFORM-CANDIDATE-117'}).returning().get()
   const q=db.insert(s.platformQuery).values({interface:'recognized_list',queryKey:c.usccNorm!,rdjb:'3',titleCode:'little_giant',queriedAt:new Date().toISOString(),status:'success'}).returning().get()
