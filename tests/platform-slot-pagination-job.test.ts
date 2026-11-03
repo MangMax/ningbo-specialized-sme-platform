@@ -61,7 +61,7 @@ beforeAll(async () => {
 })
 afterEach(async () => {
   await whenIdle()
-  for (const table of [schema.differenceReason, schema.platformBusinessObservation, schema.platformBusinessRecordVersion, schema.platformBusinessRecord, schema.platformRelation, schema.platformQuery, schema.importReceipt, schema.importBatch, schema.job]) db.delete(table).run()
+  for (const table of [schema.differenceReason, schema.platformApplyProjection, schema.platformBusinessObservation, schema.platformBusinessRecordVersion, schema.platformBusinessRecord, schema.platformRelation, schema.platformQuery, schema.importReceipt, schema.importBatch, schema.job]) db.delete(table).run()
   calls.length = 0
 })
 afterAll(async () => {

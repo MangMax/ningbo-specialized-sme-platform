@@ -1,3 +1,4 @@
+import { CURRENT_RULE_VERSION, QUALIFICATION_ASSESSMENT_VERSION } from '../lib/roster/current-qualification'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -232,7 +233,7 @@ it.each(workerModes409.flatMap(mode => ocrPartitions409.map(partition => ({ mode
   expect(message.type).toBe('done')
   if (message.type !== 'done') throw new Error('Expected actual workbook completion')
   expect(message.result.counts).toEqual({ eligible: 1, pending: 1, excluded: 1 }); expect(message.result.total).toBe(3)
-  expect(progress).toContainEqual(expect.objectContaining({ done: 0, total: 3, snapshotId: 'actual-worker-409', ruleVersion: 'current-roster-116-v8' }))
+  expect(progress).toContainEqual(expect.objectContaining({ done: 0, total: 3, snapshotId: 'actual-worker-409', ruleVersion: CURRENT_RULE_VERSION }))
   const workbook = new ExcelJS.Workbook(); await workbook.xlsx.readFile(temporaryPath)
   expect(workbook.worksheets.map(sheet => sheet.name)).toEqual(['有效企业','待确认','排除明细','口径说明'])
   const selected = [W409.runtimeApi,W409.runtimeMcp,W409.envApi,W409.envMcp,partition.savedCookie ? W409.savedCookie : W409.envCookie,partition.selectedOcr]

@@ -1,3 +1,4 @@
+import { CURRENT_RULE_VERSION, QUALIFICATION_ASSESSMENT_VERSION } from '../lib/roster/current-qualification'
 import { afterAll, beforeAll, expect, it } from 'vitest'
 import { createHash } from 'node:crypto'
 import { existsSync, statSync } from 'node:fs'
@@ -158,7 +159,7 @@ it('B409 separates three title groups and exhausts 201 public query and Excel me
 function expectIndependent409Digest(wb: ExcelJS.Workbook, result: { generatedAt: string; dataVersion: string }, title: string, identityByName: ReadonlyMap<string, number>) {
   const at = Date.parse(result.generatedAt)
   expect(new Date(at).getUTCFullYear()).toBe(2026)
-  const digest = createHash('sha256').update(JSON.stringify(['current-export-assessment-409-v2','enterprise-qualification-407-v1','current-roster-116-v8',2026,title]) + '\n')
+  const digest = createHash('sha256').update(JSON.stringify(['current-export-assessment-409-v2',QUALIFICATION_ASSESSMENT_VERSION,CURRENT_RULE_VERSION,2026,title]) + '\n')
   for (const [group, sheetName] of [['eligible','有效企业'],['pending','待确认'],['excluded','排除明细']] as const) {
     const sheet = wb.getWorksheet(sheetName)!
     for (let rowIndex = 2; rowIndex <= sheet.rowCount; rowIndex++) {
@@ -167,7 +168,7 @@ function expectIndependent409Digest(wb: ExcelJS.Workbook, result: { generatedAt:
       expect(id).toBeTypeOf('number')
       const snapshot = readCurrentQualificationAssessment(f.db.$client, id, at)
       expect(snapshot.titles.map(item => item.titleCode)).toEqual(['little_giant','specialized_sme','innovative_sme'])
-      expect(snapshot).toMatchObject({ enterpriseId: id, asOf: result.generatedAt, ruleVersion: 'current-roster-116-v8', assessmentVersion: 'enterprise-qualification-407-v1' })
+      expect(snapshot).toMatchObject({ enterpriseId: id, asOf: result.generatedAt, ruleVersion: CURRENT_RULE_VERSION, assessmentVersion: QUALIFICATION_ASSESSMENT_VERSION })
       const { titles, snapshotId, ...scope } = snapshot
       expect(snapshotId).toBe(createHash('sha256').update(JSON.stringify([scope,titles])).digest('hex'))
       digest.update(JSON.stringify([group,id,scope,snapshotId,values]) + '\n')
