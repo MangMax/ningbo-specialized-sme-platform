@@ -77,6 +77,8 @@ partial/失败/未查询必须保留每个未完成称号的实际 next/failed p
 
 **#327 的 typed 选择。** `collectionEvidence.rawData.version=1` 显式选择 `rawData.rows` 作为 `relations[].rawFields` 与业务内容版本输入；`rows` 仍只用于旧字符串投影和既有身份字段映射。version 非1、null、缺页/缺行、页位置/数量/来源、响应解析、投影或关系不相符均整批拒绝，不能静默回退。无 rawData 的旧认定归档仍要求 `rawFields === rows`；旧申报/关联请求不带封套时按原契约接受。历史类型未知，不重算旧hash、ID、观察或决定；同观察改typed原文明确冲突。不同接口的业务身份独立。
 
+旧 `reconcile` 复用新鲜槽位时，写入载荷必须原样重放已存 `relations[].rawFields`；字符串投影只用于旧页/行校验，不能覆盖 typed 原行，否则会与版本哈希冲突。该路径不重算旧 hash、ID、观察或决定。
+
 `platformResultToImport` 同时支持 `queryList → apply_list`、`businessList → business_list`、`queryBusList → recognized_list` 的 v1 封套。三来源共享原页/typed行/旧投影/关系与查询身份配对；条件、网格名、称号范围仍按各来源验证。申报/关联的标准字段继续走既有 normalization；认定来源不借用其字段。认定的精确 USCC 主体、称号、确认护栏保持。每个批量 segment 独立转存，保留原时点与 fullRange/unfinished，不能把续页拼成伪造完整查询。
 
 `null/""`、数字/同文字符串、布尔/同文字符串、对象/JSON字符串、缺键/null 保留不同内容版本；对象键重排仍复用相同版本，数组顺序保留。预检只写账本；提交沿用同一业务事务和既有哈希算法，哈希命中异文拒绝并回滚本批。#300 的查询元数据/导出重放校验不在本片；#298 由父组合验收后收口，这不表示生产或全部消费者完成 typed 迁移。

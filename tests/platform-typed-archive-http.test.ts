@@ -54,7 +54,8 @@ beforeAll(async () => {
   const queryRoute = (await import('../server/api/platform/query.post')).default
   const readRoute = (await import('../server/api/platform/queries.get')).default
   const evidenceRoute = (await import('../server/api/platform/queries/[queryId]/evidence.get')).default
-  const router = createRouter().post('/api/platform/query', queryRoute).get('/api/platform/queries', readRoute).get('/api/platform/queries/:queryId/evidence', evidenceRoute)
+  const declarationsRoute = (await import('../server/api/platform/declarations.get')).default
+  const router = createRouter().post('/api/platform/query', queryRoute).get('/api/platform/queries', readRoute).get('/api/platform/queries/:queryId/evidence', evidenceRoute).get('/api/platform/declarations', declarationsRoute)
   for (const action of ['preflight', 'commit'] as const) {
     vi.stubGlobal('defineRouteMeta', (value: any) => { importMetadata[action] = value.openAPI })
     router.post(`/api/roster/import/${action}`, (await import(`../server/api/roster/import/${action}.post.ts`)).default)
@@ -286,6 +287,19 @@ it('public REST metadata and MCP discovery describe typed selection while preser
     expect(value).toMatchObject({ preflight: { conflicts: [] } })
   } finally { await anonymous.close() }
   expect(businessState()).toEqual(before)
+})
+
+it('typed apply_list archive feeds the declaration projection without rewriting its raw identity', async () => {
+  const typedRow = { id: 'SQ-DECL-TYPED', qymc: '合成申报企业', tyshxydm: '91330211255994457P', sblx: '申请', year: 2024, sqsj: '2024-03-01 09:00:00', cszt: '待审核', unknown: null }
+  const evidence = await collect(typedRow, 'REST', 'queryList')
+  const saved = await submit('REST', 'commit', request([platformResultToImport(evidence)]))
+  expect(saved.status).toBe('committed')
+  const stored = await readSaved(saved)
+  expect(stored.row.relations[0].rawFields).toEqual(typedRow)
+  const listed: any = await (await nativeFetch(`${base}/api/platform/declarations?platformKey=SQ-DECL-TYPED`)).json()
+  expect(listed.rows).toHaveLength(1)
+  expect(listed.rows[0].matchedVersion).toMatchObject({ declareKind: 'apply', declarationYear: 2024, appliedAt: '2024-03-01 09:00:00', status: '待审核', nameRaw: '合成申报企业', usccRaw: '91330211255994457P' })
+  expect(stored.row.relations[0].rawFields).toEqual(typedRow)
 })
 
 it('public typed archival ignores object key order for versions while preserving array order and original row objects', async () => {

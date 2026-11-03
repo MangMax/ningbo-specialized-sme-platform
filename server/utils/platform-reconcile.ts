@@ -237,25 +237,24 @@ async function mapWithConcurrency<T, R>(
 // 读既有证据(新鲜性复用)
 // ---------------------------------------------------------------------------
 
-function textOf(value: unknown): string {
-  return value == null ? '' : String(value)
+/** Mirror the live adapter's legacy string projection without losing typed source. */
+function legacyText(value: unknown): string {
+  if (value === null || value === undefined) return ''
+  if (typeof value === 'string') return value
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value)
+  return JSON.stringify(value)
 }
 
 /**
  * 从库里读回一条 `platform_relation` 的**原始字段**。
  *
- * 落库时 `raw_fields` 存的就是平台那一行的全部字段(§1.4),所以能原样还原成 `PlatformRow`;
- * 万一某行没有 `raw_fields`(例如早期直接写库的演示数据),就按列**合成**一份等价字段 ——
- * 这样重建出来的载荷与列值一致,写入侧按 `(query_id, sequence_no)` 判为已存在而**跳过**,
- * 不会覆盖库里的原文,也不会丢掉关系。
+ * `raw_fields` 已保存的 typed JSON 原样返回;typed 原行不能再被字符串化后冒充原文,
+ * 否则复用归档重放会与 `platform_business_record_version` 的类型化哈希冲突。
+ * 万一某行没有 `raw_fields`(例如早期直接写库的演示数据),才按列**合成**一份等价字段。
  */
-function rawRowOf(row: typeof schema.platformRelation.$inferSelect): PlatformRow {
-  if (row.rawFields && Object.keys(row.rawFields).length > 0) {
-    const out: PlatformRow = {}
-    for (const [key, value] of Object.entries(row.rawFields)) out[key] = textOf(value)
-    return out
-  }
-  const synthesized: PlatformRow = {}
+function storedRawFields(row: typeof schema.platformRelation.$inferSelect): Record<string, unknown> {
+  if (row.rawFields && Object.keys(row.rawFields).length > 0) return row.rawFields
+  const synthesized: Record<string, unknown> = {}
   if (row.relationKey) synthesized.id = row.relationKey
   if (row.nameRaw) synthesized.qymc = row.nameRaw
   if (row.usccRaw) synthesized.tyshxydm = row.usccRaw
@@ -267,6 +266,15 @@ function rawRowOf(row: typeof schema.platformRelation.$inferSelect): PlatformRow
   if (row.awardBatchLabel) synthesized.personuuid = row.awardBatchLabel
   if (row.year != null) synthesized.year = String(row.year)
   return synthesized
+}
+
+/** Old string projection used only to revalidate legacy page rows; never the write payload.
+ * Assignment deliberately mirrors the adapter's legacy projection (which drops an own
+ * `__proto__` key); the typed payload keeps the exact row separately. */
+function legacyRowOf(row: typeof schema.platformRelation.$inferSelect): PlatformRow {
+  const out: PlatformRow = {}
+  for (const [key, value] of Object.entries(storedRawFields(row))) out[key] = legacyText(value)
+  return out
 }
 
 /**
@@ -301,12 +309,14 @@ function freshStoredSlotsSnapshot(db: Pick<Db, 'select'>, queryKey: string, cuto
       .where(eq(schema.platformRelation.queryId, query.id))
       .all()
       .sort((a, b) => a.sequenceNo - b.sequenceNo)
-    const rawRows = relations.map(rawRowOf)
-    const collection = readCompleteLegacySlot(query.rawResponse, query, rawRows)
-    if (!collection || (query.status === 'no_record') !== (rawRows.length === 0)) continue
+    const legacyRows = relations.map(legacyRowOf)
+    const payloadRows = relations.map(storedRawFields)
+    const collection = readCompleteLegacySlot(query.rawResponse, query, legacyRows)
+    if (!collection || (query.status === 'no_record') !== (legacyRows.length === 0)) continue
     out.set(key, {
       collection,
-      rawRows,
+      rawRows: legacyRows,
+      payloadRows,
       raw: '',
       evidence: {
         interface: query.interface,
@@ -315,35 +325,41 @@ function freshStoredSlotsSnapshot(db: Pick<Db, 'select'>, queryKey: string, cuto
         status: query.status,
         completeness: collection.completeness,
         failureReason: query.failureReason,
-        relations: relations.map(row => normalizePlatformRelation(query.interface, row)).map((row) => ({
-          interface: query.interface,
-          rdjb: query.rdjb,
-          sequenceNo: row.sequenceNo,
-          relationKey: row.relationKey,
-          nameRaw: row.nameRaw,
-          usccRaw: row.usccRaw,
-          province: row.province,
-          status: row.status,
-          batch: row.batch,
-          declareKind: row.declareKind,
-          appliedAt: row.appliedAt,
-          awardBatchLabel: row.awardBatchLabel,
-          year: row.year,
-          normalizationConflicts: row.normalizationConflicts,
-          sourceKind: query.interface === 'business_list' ? 'platform_business' : 'platform_apply',
-          rawFields: rawRowOf(row),
-        })),
+        relations: relations.map((archived, index) => {
+          const row = normalizePlatformRelation(query.interface, archived)
+          return {
+            interface: query.interface,
+            rdjb: query.rdjb,
+            sequenceNo: row.sequenceNo,
+            relationKey: row.relationKey,
+            nameRaw: row.nameRaw,
+            usccRaw: row.usccRaw,
+            province: row.province,
+            status: row.status,
+            batch: row.batch,
+            declareKind: row.declareKind,
+            appliedAt: row.appliedAt,
+            awardBatchLabel: row.awardBatchLabel,
+            year: row.year,
+            normalizationConflicts: row.normalizationConflicts,
+            sourceKind: query.interface === 'business_list' ? 'platform_business' : 'platform_apply',
+            rawFields: payloadRows[index]!,
+          }
+        }),
       },
     })
   }
   return out
 }
 
-/** 一个槽位的证据:查询状态分类用 `evidence`,载荷构造用 `rawRows`。 */
+/** 一个槽位的证据:查询状态分类用 `evidence`,载荷构造用 typed `payloadRows`。 */
 interface StoredSlot {
   collection?: LegacySlotCollection
   evidence: ReconcileQueryEvidence
+  /** Legacy string projection, used only for old page/row validation. */
   rawRows: PlatformRow[]
+  /** Exact stored JSON rows; reused typed archives must never be replayed as strings. */
+  payloadRows: Record<string, unknown>[]
   /** 本次实查拿到的**原始响应原文**(落 `platform_query.raw_response`);复用时为空串。 */
   raw: string
 }
@@ -494,6 +510,7 @@ function toQueryInput(slot: StoredSlot, queryKey: string): PlatformQueryInput {
       status: evidence.status,
       failureReason: evidence.failureReason ?? null,
       rows: slot.rawRows,
+      rawRows: slot.payloadRows,
       maxCount: slot.collection?.declaredTotal ?? 0,
       collection: slot.collection,
       source: null,
@@ -641,7 +658,7 @@ export async function runPlatformReconcile(options: ReconcileRunOptions): Promis
           networkCount += 1
           networkByInterface[outcome.interface] = (networkByInterface[outcome.interface] ?? 0) + 1
         }
-        slots.push({ evidence: toEvidence(outcome), rawRows: outcome.rows, raw: outcome.raw, collection: outcome.collection })
+        slots.push({ evidence: toEvidence(outcome), rawRows: outcome.rows, payloadRows: outcome.rows, raw: outcome.raw, collection: outcome.collection })
       }
     }
     if (options.shouldCancel?.()) cancelled = true

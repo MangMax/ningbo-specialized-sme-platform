@@ -56,6 +56,35 @@ function seedTarget(db: ReturnType<typeof freshDb>, name: string, uscc: string) 
 
 const ok = (call: PlatformCall) => emptyReply(call)
 
+const TYPED_QUERIED = '2026-10-16T02:00:00.000Z'
+/** A complete legacy slot whose accepted page still contains the original typed row. */
+function typedSlotResponse(source: 'businessList' | 'queryList', rdjb: string | null, rows: Record<string, unknown>[], uscc: string) {
+  const grid = source === 'businessList' ? 'businessListGrid' : 'applyGrid'
+  const raw = JSON.stringify({ zrarData: { grid: { [grid]: { pageSet: rows, page: 1, pageSize: 50, maxCount: rows.length, maxPage: 1 } } } })
+  return JSON.stringify({
+    kind: 'legacy-slot-pages/v1', interface: source === 'businessList' ? 'business_list' : 'apply_list', rdjb: rdjb ?? '', queryKey: uscc,
+    queriedAt: TYPED_QUERIED, completedAt: TYPED_QUERIED, completeness: 'complete', declaredTotal: rows.length,
+    pages: [{ source, rdjb, page: 1, status: 'success', fetchedCount: rows.length, declaredTotal: rows.length, error: null, queriedAt: TYPED_QUERIED, raw }],
+    unfinished: [], requestCount: 1, failureReason: null,
+  })
+}
+function seedTypedSlot(db: ReturnType<typeof freshDb>, uscc: string, rdjb: string, rows: Record<string, unknown>[]) {
+  const business = rdjb !== ''
+  const titleCode = business ? ({ '1': 'innovative_sme', '2': 'specialized_sme', '3': 'little_giant' } as const)[rdjb as '1' | '2' | '3'] : null
+  const query = db.insert(schema.platformQuery).values({
+    interface: business ? 'business_list' : 'apply_list', queryKey: uscc, rdjb,
+    queriedAt: TYPED_QUERIED, status: rows.length ? 'success' : 'no_record', titleCode,
+    rawResponse: typedSlotResponse(business ? 'businessList' : 'queryList', business ? rdjb : null, rows, uscc),
+  }).returning().get()
+  for (const [index, rawFields] of rows.entries()) {
+    db.insert(schema.platformRelation).values({
+      queryId: query.id, sequenceNo: index + 1, relationKey: rawFields.id as string ?? null,
+      nameRaw: rawFields.qymc as string ?? null, usccRaw: rawFields.tyshxydm as string ?? null, rawFields,
+    }).run()
+  }
+  return query
+}
+
 it('settles auto-enqueued derived jobs before fixture teardown', async () => {
   const db = freshDb()
   seedTarget(db, '派生任务收尾企业', '91330211000000018T')
@@ -223,6 +252,28 @@ describe('凭据:拿不到就不发请求、不写半截结果', () => {
     expect(report.counts.reusedFresh).toBe(1)
     expect(report.write).toBeNull()
     expect(enterpriseId).toBeGreaterThan(0)
+  })
+
+  it('复用 typed 归档写出差异时不把原行字符串化，原行类型与关系保持不变', async () => {
+    const db = freshDb()
+    const uscc = '91330211000000088X'
+    seedTarget(db, '宁波类型保真科技有限公司', uscc)
+    const typed = JSON.parse(`{"id":"SQ-TYPED","qymc":"宁波类型保真科技有限公司","tyshxydm":"${uscc}","n":1,"b":true,"x":null,"o":{"a":1},"arr":[1,false],"__proto__":{"own":true},"constructor":"own"}`)
+    for (const rdjb of ['1', '2']) seedTypedSlot(db, uscc, rdjb, [])
+    seedTypedSlot(db, uscc, '3', [typed])
+    seedTypedSlot(db, uscc, '', [])
+    const before = db.select().from(schema.platformRelation).all()
+    const report = await runPlatformReconcile({
+      db,
+      fetchImpl: async () => { throw new Error('fresh typed slots must not reach the network') },
+      write: true,
+      now: () => new Date('2026-10-16T02:01:00.000Z'),
+      retries: 0,
+    })
+    expect(report.queries.network).toBe(0)
+    expect(report.write?.status).toBe('committed')
+    expect(db.select().from(schema.platformRelation).all()).toEqual(before)
+    expect(before.find(row => row.rawFields?.b === true)?.rawFields).toEqual(typed)
   })
 })
 
