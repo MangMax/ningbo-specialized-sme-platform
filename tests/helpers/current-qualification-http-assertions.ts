@@ -1,3 +1,4 @@
+import { CURRENT_RULE_VERSION } from '../../lib/roster/current-qualification'
 import { expect } from 'vitest'
 import { rows, businessIdentity, expectedBusinessIdentity, matchesBusinessIdentity, type currentExport118Fixture } from './current-export-118'
 import type { QualificationCase } from '../fixtures/current-qualification-r4'
@@ -43,12 +44,12 @@ export function currentQualificationHttpAssertions(f: ExportFixture, assertRefer
       expect(response.headers.get('location')).toBe('/api/jobs/'+accepted.jobId)
       const job=await f.terminal(accepted.jobId)
       expect(job.state,JSON.stringify(job)).toBe('done')
-      expect(job.result.ruleVersion).toBe('current-roster-116-v8')
+      expect(job.result.ruleVersion).toBe(CURRENT_RULE_VERSION)
       const {wb}=await f.download(job)
       const explanation=Object.fromEntries(rows(wb,'口径说明').map(row=>[row[1],row[2]]))
       expect(explanation['规则版本']).toBeUndefined()
       const summary=await (await fetch(f.url('/api/task-center/'+accepted.jobId),{headers:f.headers})).json()
-      expect(summary.export.ruleVersion).toBe('current-roster-116-v8')
+      expect(summary.export.ruleVersion).toBe(CURRENT_RULE_VERSION)
       const observations=[]
       for (const c of entries) {
         const actual=wb.worksheets.slice(0,3).flatMap(sheet=>rows(wb,sheet.name).filter(row=>matchesBusinessIdentity(f.db, row, c.enterprise.id)).map(row=>({sheet:sheet.name,row})))

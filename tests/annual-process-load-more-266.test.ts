@@ -17,7 +17,7 @@ afterEach(() => { wrapper?.unmount(); document.body.innerHTML = ''; vi.useRealTi
 const events = [7, 8].map(id => ({ id, recordId: 2, type: 'award', year: 2024, seq: 1, decidedYear: null, reviewOutcome: null, titleCode: 'specialized_sme', source: 'jxj', district: null, evidence: [] }))
 const jobId = '01J00000000000000000000001'
 function annual(eventId = 7, generation = 'scope-a', status: 'confirmed' | 'eligible' | 'none' = 'eligible'): EventAnnualProcessPage {
-  const event = { id: eventId, eventType: 'award', year: 2024, decidedYear: null, reviewOutcome: null, record: { enterpriseId: 1, titleCode: 'specialized_sme', usccRaw: '91330200123456789A' } }
+  const event = { id: eventId, eventType: 'award', year: 2024, batchSeq: 1, sortKey: 0, decidedYear: null, reviewOutcome: null, record: { enterpriseId: 1, titleCode: 'specialized_sme', usccRaw: '91330200123456789A' } }
   const groups = [101, 102].map((id, index): PlatformBusinessGroup => {
     const metadata = { recordId: id, versionId: id, interface: 'business_list', platformKey: `SYNTHETIC-${id}`, groupState: 'verified', identityState: 'resolved', contentState: 'verified', keySource: 'both', projectionRuleVersion: '1', hashAlgorithm: 'sha256', contentHash: `synthetic-${id}` } as const
     const decisions: PlatformCorrespondenceRef[] = status === 'confirmed' ? [{ id: id - 60, relationId: id, exportRowId: null, eventId, predecessorEventId: null, enterpriseId: 1, titleCode: event.record.titleCode, type: 'event_process', role: 'context_only', status: 'confirmed', revision: 2, ruleId: 'event-annual-process', ruleVersion: '1', createdAt: '2026-10-01', decidedAt: '2026-10-01', endedAt: null }] : []
