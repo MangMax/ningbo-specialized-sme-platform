@@ -40,7 +40,7 @@ describe('0034 platform business projection migration', () => {
       expect(storedRelation.relation_key).toBe('SQ-LEGACY-B')
       expect(JSON.parse(storedRelation.raw_fields)).toEqual(relation.rawFields)
       expect(sqlite.prepare('SELECT count(*) n FROM platform_business_projection').get()).toEqual({ n: 0 })
-      expect(sqlite.prepare('PRAGMA table_info(platform_business_projection)').all().map((column: { name: string }) => column.name)).toEqual([
+      expect((sqlite.prepare('PRAGMA table_info(platform_business_projection)').all() as { name: string }[]).map(column => column.name)).toEqual([
         'version_id', 'record_id', 'declare_kind', 'business_year', 'applied_at', 'status', 'batch', 'award_batch_label', 'province', 'name_raw', 'uscc_raw', 'rule_version', 'created_at',
       ])
       expect(sqlite.prepare("SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='platform_business_projection' ORDER BY name").all()).toEqual([
