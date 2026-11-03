@@ -61,7 +61,8 @@ beforeAll(async () => {
 })
 afterEach(async () => {
   await whenIdle()
-  for (const table of [schema.differenceReason, schema.platformBusinessObservation, schema.platformBusinessRecordVersion, schema.platformBusinessRecord, schema.platformRelation, schema.platformQuery, schema.importReceipt, schema.importBatch, schema.job]) db.delete(table).run()
+  // Typed projections reference content versions with ON DELETE RESTRICT; clear them first.
+  for (const table of [schema.differenceReason, schema.platformApplyProjection, schema.platformBusinessProjection, schema.platformBusinessObservation, schema.platformBusinessRecordVersion, schema.platformBusinessRecord, schema.platformRelation, schema.platformQuery, schema.importReceipt, schema.importBatch, schema.job]) db.delete(table).run()
   calls.length = 0
 })
 afterAll(async () => {
