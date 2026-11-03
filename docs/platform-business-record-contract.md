@@ -65,6 +65,20 @@
 
 本投影是分域扩展新增的第 54 张应用表；ADR 的 52 表是 #297 的审计基线，不是本轮重审结论。HTTP/MCP 本地关联办理查询、页面与真实消费者对照属于 #458，见 [关联办理本地查询](platform-business-processes.md)：详情按观察返回其自己的对应决定引用（id/status/revision），不复制决定内容、不传播到其他观察。
 
+## recognized_list 来源专用 typed 投影（#461）
+
+`recognized_list`（上游 `queryBusList`，平台认定目录）在共享身份/版本/观察之外新增 `platform_recognized_projection`，一内容版本一行，关联 `platform_business_record_version.id` 与 `platform_business_record.id`。复合外键 `(version_id, record_id)` 保证版本归属一致；`ON DELETE RESTRICT` 保留历史引用。
+
+投影字段只来自归档原行的真实来源语义，文本字段只去除首尾空白：`id` 仍是既有 `platform_business_record.platform_key`（目录业务编号）；`rddqrq` → `validity_date_raw`（有效期/失效日期**原值**逐字保留，精度与格式不改写、不截断、不解析成日期或年份）；`whpcyear` → `maintenance_year`（仅显式正整数：JSON 整数或十进制整数字符串；缺失/空白/布尔/小数/负数/非数字为 null）；`whpc` → `maintenance_batch`；`szq` → `district`（返回行原值，不是查询筛选码）；`rdxx` → `award_note`；行级 `rdjb` → `title_raw`（平台称号原值，不归一化）；`qymc`/`tyshxydm` → `name_raw`/`uscc_raw`。缺值保留 null，不从查询条件、`queriedAt`、批次或名称猜填；也不从 `rddqrq`/`whpc` 推造维护年份。
+
+称号仍只作为原查询的显式范围（`platform_query.rdjb` / `platform_query_title_scope`）表达，是查询事实，不写入内容版本。若原行确实带 `rdjb`，只按原值保存为 `title_raw`；读路径必须与查询范围分开显示，不一致时沿用既有冲突名 `title_conflict`（见 `server/utils/platform-business-detail-read.ts`），不新增冲突名，也不把查询范围升格为逐行称号事实或把行值写回查询。
+
+规则版本 `platform-recognized-v1`。`ensurePlatformObservation` 在同一导入事务内为 resolved+verified 的 `recognized_list` 观察幂等建立或核对投影；`apply_list`/`business_list` 既有投影行为与回执完全不变。缺编号、编号冲突、原文不可核实的观察不建立可复用 typed 行，仍以原 relationId 隔离；同内容版本出现不同投影整批以 `recognized_projection_conflict` 拒绝并回滚，不静默重解释历史内容。同编号跨接口（`apply_list`/`business_list`/`recognized_list`）仍按 `(interface, platform_key)` 分离，不自动合并。
+
+迁移 `0035_platform_recognized_projection` 只新增该表与索引，不重建既有表。历史观察继续走 `platformRecordObservations`（每批 1..100）投影；预检返回 `canonicalProjection[].recognizedProjection` 计划，提交回执的 `canonicalProjection` 增加 `recognizedProjectionsCreated`/`recognizedProjectionsReused`（仅当批次包含 recognized 投影时出现）。旧 query/relation/raw/hash/version/observation/对应/审计/深链均不改写；`apply_list` 与 `business_list` 的既有投影及回执字段不变。
+
+本投影是分域扩展新增的第 55 张应用表；ADR 的 52 表是 #297 的审计基线，不是本轮重审结论。本层只保存目录原行事实，**不决定当前正式资格**：缺少或不同的目录行本身不会使称号失效，正式资格/事件/当前有效企业结果仍来自正式公布事实与既有资格读取。HTTP/MCP 目录读路径、页面与真实消费者对照属于 #462，不在本层实施。
+
 ## 下一层读接口接缝
 
 共享写回 DTO 位于 `lib/platform/business-record.ts`，领域入口位于 `server/utils/platform-business-record.ts`。下一层应先按企业、queryIds、sourceSet、asOf 限定原观察，再 LEFT JOIN mapping/version/record，输出观察来源和旧决定引用。未索引为 not_indexed；missing_key、conflict、unverifiable 以原 relationId 隔离，不把所有 null 合成一组。不同版本/接口/角色不能折叠；相同版本的多个出处都要保留。不得用同 record 的其他观察代替选定来源的 proof 或复制旧裁决。
