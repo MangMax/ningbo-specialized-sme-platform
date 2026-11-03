@@ -89,9 +89,13 @@ it('C31 workbook count and eligible cursor share the covering candidate path', a
   const f = consumerFixture()
   const result = await writeCurrentWorkbook(f.db, 'innovative_sme', join(f.dir, 'tiny.xlsx'), () => {})
   expect(result).toMatchObject({ total: 4, counts: { eligible: 2, pending: 1, excluded: 1 } })
-  const candidate = f.statements.filter(sql => sql.startsWith('select count(*) as n from (with owners') || sql.startsWith('select id from (with owners'))
-  expect(candidate).toHaveLength(2)
-  for (const sql of candidate) {
+  const counts = f.statements.filter(sql => sql.startsWith('select count(*) as n from (with owners'))
+  const cursors = f.statements.filter(sql => sql.startsWith('select id from (with owners'))
+  // One complete-set count plus at least one bounded cursor page; the cursor is
+  // re-run per 100-id batch, so its execution count is data dependent, not 2.
+  expect(counts).toHaveLength(1)
+  expect(cursors.length).toBeGreaterThan(0)
+  for (const sql of [...counts, ...cursors]) {
     expect(sql).toContain(`INDEXED BY ${relationIndex}`)
     expect(sql).toContain(`INDEXED BY ${queryIndex}`)
   }

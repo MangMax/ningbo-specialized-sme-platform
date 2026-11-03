@@ -221,22 +221,40 @@ it.each([28, 29])('upgrades real SQLite from journal index %i with old data sche
     CREATE TRIGGER issue349_synthetic_preserved AFTER UPDATE ON record_evidence BEGIN SELECT 1; END;
   `)
   const objects = () => sqlite.prepare("SELECT type,name,tbl_name,sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY type,name").all() as { type: string; name: string; tbl_name: string; sql: string }[]
+  const columns = (name: string) => (sqlite.pragma(`table_info('${name}')`) as { name: string; type: string; notnull: number; pk: number; dflt_value: unknown }[])
   const oldObjects = objects(), tables = oldObjects.filter(o => o.type === 'table').map(o => o.name)
-  const contents = () => tables.map(name => [name, sqlite.prepare(`SELECT * FROM "${name}" ORDER BY rowid`).all()])
+  const oldColumns = new Map(tables.map(name => [name, columns(name)]))
+  // Baseline columns only: later additive migrations may add columns and objects.
+  const rowsOf = (name: string) => sqlite.prepare(`SELECT ${oldColumns.get(name)!.map(c => `"${c.name}"`).join(',')} FROM "${name}" ORDER BY rowid`).all()
+  const contents = () => tables.map(name => [name, rowsOf(name)])
   const before = contents(), ledger = sqlite.prepare('SELECT * FROM __drizzle_migrations ORDER BY id').all()
   migrate(db, { migrationsFolder: folder })
-  expect(objects().filter(o => oldObjects.some(old => old.name === o.name))).toEqual(oldObjects)
+  const afterObjects = objects()
+  // Every baseline object still exists with its original type. Baseline table
+  // columns keep their declared shape as a prefix: ALTER TABLE ADD COLUMN is an
+  // accepted additive migration. Indexes/triggers/views must keep their SQL.
+  expect(afterObjects.filter(o => oldObjects.some(old => old.name === o.name && old.type === o.type))).toHaveLength(oldObjects.length)
+  for (const name of tables) {
+    const now = columns(name)
+    for (const column of oldColumns.get(name)!) expect(now.find(c => c.name === column.name)).toEqual(column)
+  }
+  // Later migrations may add indexes/triggers, including on baseline tables;
+  // every pre-existing non-table object must still carry its exact SQL.
+  const afterByKey = new Map(afterObjects.map(o => [`${o.type}:${o.name}`, o.sql]))
+  for (const old of oldObjects.filter(o => o.type !== 'table')) expect(afterByKey.get(`${old.type}:${old.name}`)).toBe(old.sql)
   for (const [name, data] of before) {
     if (name === '__drizzle_migrations') continue
-    expect(sqlite.prepare(`SELECT * FROM "${name}" ORDER BY rowid`).all()).toEqual(data)
+    expect(rowsOf(name as string)).toEqual(data)
   }
   expect(sqlite.prepare('SELECT * FROM __drizzle_migrations ORDER BY id LIMIT ?').all(ledger.length)).toEqual(ledger)
   expect(sqlite.prepare('SELECT count(*) n FROM official_evidence_row_revision').get()).toEqual({ n: 0 })
   expect(readLatestOfficialEvidence(db, 71).row).toBeNull()
   const added = objects().filter(o => !oldObjects.some(old => old.name === o.name))
-  expect(added.filter(o => o.type === 'table').map(o => o.name)).toEqual(lastIndex === 28 ? ['official_evidence_row_revision', 'platform_body_leaf', 'platform_body_part', 'platform_body_root', 'platform_query_body_ref', 'platform_relation_body_ref', 'platform_version_body_ref'] : ['official_evidence_row_revision'])
+  // Migrations after this baseline may add further tables (typed projections);
+  // assert the ones this feature must add, not the complete future set.
+  expect(added.filter(o => o.type === 'table').map(o => o.name)).toEqual(expect.arrayContaining(lastIndex === 28 ? ['official_evidence_row_revision', 'platform_body_leaf', 'platform_body_part', 'platform_body_root', 'platform_query_body_ref', 'platform_relation_body_ref', 'platform_version_body_ref'] : ['official_evidence_row_revision']))
   expect(added.filter(o => o.tbl_name === 'official_evidence_row_revision' && o.type === 'index').map(o => o.name)).toEqual(expect.arrayContaining(['official_evidence_row_revision_uq', 'official_evidence_row_source_idx', 'official_evidence_row_event_idx']))
-  const after = contents(); migrate(db, { migrationsFolder: folder }); expect(contents()).toEqual(after)
+  const settled = contents(); migrate(db, { migrationsFolder: folder }); expect(contents()).toEqual(settled)
   expect(sqlite.pragma('foreign_key_check')).toEqual([]); expect(sqlite.pragma('integrity_check', { simple: true })).toBe('ok')
 })
 

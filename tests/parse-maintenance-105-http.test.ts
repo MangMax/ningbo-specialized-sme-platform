@@ -109,7 +109,10 @@ it('state-only PATCH preserves segments while empty replacement restores derived
   const { parts: _afterParts, parseState: _afterState, ...metadataAfter } = await call('get_file', { fileId: f.id })
   expect(metadataAfter).toEqual(metadataBefore)
   expect(await call('get_ocr_result', { fileId: f.id })).toEqual(ocrBefore)
-  expect(await (await fetch(detailUrl)).json()).toEqual(enterpriseBefore)
+  // Qualification scope carries a per-read execution asOf and its digest; the
+  // stored facts around it must be unchanged.
+  const stableDetail = (detail: any) => { const copy = structuredClone(detail); delete copy.qualificationAssessment?.asOf; delete copy.qualificationAssessment?.snapshotId; return copy }
+  expect(stableDetail(await (await fetch(detailUrl)).json())).toEqual(stableDetail(enterpriseBefore))
   const reverted = await call('save_parse_result', { fileId: f.id, ...write(cleared.state.version, 'unparsed-again', { parseState: 'unparsed' }) })
   expect(reverted.state.parts).toEqual(cleared.state.parts)
   expect(reverted.state.parseState).toBe('unparsed')

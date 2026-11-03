@@ -30,7 +30,9 @@ type Titles = ReturnType<Scope['titlesQuery']['all']>
 type Queries = ReturnType<Scope['queriesQuery']['all']>
 function sourceScope(db: Db, eventId: number, admitHeader?: (query: ScalarQuery, keys: string[]) => void, includeUnknownBusinessTitle = false) {
   const v = schema.recordEvent, rec = schema.record, ent = schema.enterprise
-  const headerQuery = db.select({ event: v, record: { id: rec.id, enterpriseId: rec.enterpriseId, titleCode: rec.titleCode, usccRaw: rec.usccRaw, source: rec.source }, enterprise: { nameNorm: ent.nameNorm, usccNorm: ent.usccNorm } })
+  // Explicit event projection: the admitted header has a fixed arity, so a new
+  // record_event column must not widen it or silently change the source digest.
+  const headerQuery = db.select({ event: { id: v.id, recordId: v.recordId, eventType: v.eventType, year: v.year, batchSeq: v.batchSeq, sortKey: v.sortKey, reviewOutcome: v.reviewOutcome, decidedYear: v.decidedYear, revision: v.revision }, record: { id: rec.id, enterpriseId: rec.enterpriseId, titleCode: rec.titleCode, usccRaw: rec.usccRaw, source: rec.source }, enterprise: { nameNorm: ent.nameNorm, usccNorm: ent.usccNorm } })
     .from(v).innerJoin(rec, eq(v.recordId, rec.id)).innerJoin(ent, eq(rec.enterpriseId, ent.id)).where(eq(v.id, eventId))
   admitHeader?.(headerQuery, ['id', 'recordId', 'eventType', 'year', 'batchSeq', 'sortKey', 'reviewOutcome', 'decidedYear', 'revision', 'record_id', 'enterpriseId', 'titleCode', 'usccRaw', 'source', 'nameNorm', 'usccNorm'])
   const joined = headerQuery.get()
@@ -149,7 +151,11 @@ function finishRead(prepared: ReturnType<typeof prepareObservations>, groups: Pl
   const evidence = loadEvidence()
   const sourceRefs: AnnualProcessSourceRefs = {
     scope: { enterpriseId: owner, titleCode, businessYear, declareKind: kind, ruleVersion: ANNUAL_PROCESS_RULE_VERSION },
-    event: { ...joined.event, usccRaw: event.record.usccRaw }, evidence,
+    // Explicit event projection: a new record_event column must never widen the
+    // admitted header or silently change the source digest shape.
+    event: { id: joined.event.id, recordId: joined.event.recordId, eventType: joined.event.eventType, year: joined.event.year,
+      batchSeq: joined.event.batchSeq, sortKey: joined.event.sortKey, reviewOutcome: joined.event.reviewOutcome,
+      decidedYear: joined.event.decidedYear, revision: joined.event.revision, usccRaw: event.record.usccRaw }, evidence,
     titleScopeRefs: titleScopeRows.map(row => ({ queryId: row.queryId, relationId: row.relationId, titleCode: row.titleCode, platformKey: row.relationKey?.trim() || metadata.get(row.relationId)?.platformKey || null, usccNorm: normalizeUscc(row.usccRaw), recordId: metadata.get(row.relationId)?.recordId ?? null, versionId: metadata.get(row.relationId)?.versionId ?? null })),
     observations: [...unresolvedSources, ...groups.flatMap(g => g.observationRefs.map(ref => ({ queryId: ref.queryId, relationId: ref.relationId, interface: ref.interface,
       recordId: ref.businessRecord.recordId, versionId: ref.businessRecord.versionId,

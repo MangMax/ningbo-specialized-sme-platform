@@ -311,9 +311,11 @@ it('accepts exactly the built application route templates and no other spelling'
       .map(match => match[1]!)
       .filter(route => route === '/mcp' || route.startsWith('/api/')),
   )].sort()
-  // Frozen catalog: 123 routes plus the two #310 parse-result POST routes.
-  expect(actual).toHaveLength(125)
+  // Exact set equality is the contract; a hardcoded total would only duplicate
+  // it and go stale whenever a real route ships (e.g. the #453 declarations pair).
   expect([...APPLICATION_LOG_ROUTES].sort()).toEqual(actual)
+  expect(actual).toContain('/api/platform/declarations')
+  expect(actual).toContain('/api/platform/declarations/:recordId')
 })
 
 it('records new annual and candidate HTTP templates without concrete event or task identities', async () => {

@@ -1,3 +1,4 @@
+import { CURRENT_RULE_VERSION, QUALIFICATION_ASSESSMENT_VERSION } from '../lib/roster/current-qualification'
 import { afterAll, beforeAll, expect, it } from 'vitest'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -60,7 +61,7 @@ it('discovers a real export in both tabs and downloads the named workbook throug
   })
   const id = await submit('first')
   const done = await terminal(id)
-  expect(done).toMatchObject({ id, group: 'export', state: 'done', export: { titleCode: 'little_giant', ruleVersion: 'current-roster-116-v8', artifact: { id, availability: 'available', filename: 'current-little_giant.xlsx' } } })
+  expect(done).toMatchObject({ id, group: 'export', state: 'done', export: { titleCode: 'little_giant', ruleVersion: CURRENT_RULE_VERSION, artifact: { id, availability: 'available', filename: 'current-little_giant.xlsx' } } })
   const exports = await read('/api/task-center?tab=export&titleCode=little_giant&state=done')
   expect(exports).toMatchObject({ exportReady: true, total: 1, counts: { export: 1 } })
   expect(exports.rows.map((row: any) => row.id)).toEqual([id])

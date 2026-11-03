@@ -1,3 +1,4 @@
+import { CURRENT_RULE_VERSION, QUALIFICATION_ASSESSMENT_VERSION } from '../../lib/roster/current-qualification'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -124,7 +125,7 @@ export function expectCounts(wb: ExcelJS.Workbook, job: any, counts: {eligible:n
   }
   expect(notes['规则版本']).toBeUndefined()
   expect(notes['数据版本']).toBeUndefined()
-  expect(job.result.ruleVersion).toBe('current-roster-116-v8')
+  expect(job.result.ruleVersion).toBe(CURRENT_RULE_VERSION)
   expect(job.result.dataVersion).toMatch(/^sha256:/)
   expect(notes['范围']).toContain('未实时采集，不证明全市完整')
 }

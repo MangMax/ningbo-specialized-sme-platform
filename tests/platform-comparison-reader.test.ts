@@ -1,4 +1,5 @@
 /** #427 explicit reader integration; original RED/source evidence stays outside Git. */
+import { CURRENT_RULE_VERSION, LEGACY_CURRENT_RULE_VERSION, LEGACY_QUALIFICATION_ASSESSMENT_VERSION, QUALIFICATION_ASSESSMENT_VERSION } from '../lib/roster/current-qualification'
 import Database from 'better-sqlite3'
 import { adjudicateQualificationCycles } from '../lib/roster/qualification-cycles'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
@@ -21,6 +22,18 @@ const U = '91330211255994457P', T = 'specialized_sme' as const
 const AS_OF = Date.parse('2026-06-01T00:00:00Z')
 const Q_AT = '2026-05-31T00:00:00Z', SHA = 'a'.repeat(64)
 const hash = (value: string) => createHash('sha256').update(value).digest('hex')
+/**
+ * The frozen oracles record the legacy scope (v8 / 407-v1). Plain `read()` now
+ * stamps the live versions while the comparison seam still anchors on the legacy
+ * snapshot, so both sides are derived from the same frozen facts instead of
+ * duplicating a second oracle.
+ */
+function restamp(snapshot: { titles: unknown[]; snapshotId: string; [key: string]: unknown }, ruleVersion: string, assessmentVersion: string) {
+  const { titles, snapshotId: _digest, ...scope } = structuredClone(snapshot) as Record<string, unknown> & { titles: unknown[] }
+  const stamped = { ...scope, ruleVersion, assessmentVersion }
+  return { ...stamped, snapshotId: hash(JSON.stringify([stamped, titles])), titles }
+}
+const asCurrent = (snapshot: Parameters<typeof restamp>[0]) => restamp(snapshot, CURRENT_RULE_VERSION, QUALIFICATION_ASSESSMENT_VERSION)
 
 type ProposedReader = {
   readPlatformComparison(enterpriseId: number, asOf: number, title: typeof T): PlatformComparison
@@ -69,7 +82,7 @@ it('Z_2024_formal_2026_complete_zero_preserves_legacy', () => {
     const before = reader.read(enterprise.id, AS_OF)
     const old = before.snapshot
     expect(old.titles).toHaveLength(3)
-    const scope = { enterpriseId: enterprise.id, asOf: '2026-06-01T00:00:00.000Z', ruleVersion: 'current-roster-116-v8', assessmentVersion: 'enterprise-qualification-407-v1' }
+    const scope = { enterpriseId: enterprise.id, asOf: '2026-06-01T00:00:00.000Z', ruleVersion: CURRENT_RULE_VERSION, assessmentVersion: QUALIFICATION_ASSESSMENT_VERSION }
     const { titles, snapshotId, ...actualScope } = old
     expect(actualScope).toEqual(scope)
     expect(snapshotId).toBe(hash(JSON.stringify([scope, titles])))
@@ -93,8 +106,8 @@ it('Z_2024_formal_2026_complete_zero_preserves_legacy', () => {
     expect(sqlite.inTransaction).toBe(false)
 
     const legacyBytes = JSON.stringify(old)
-    expect(old).toEqual(LEGACY_ORACLE)
-    expect(hash(legacyBytes)).toBe('12e1859b34a137bf6e567ab8b660d57be4b3fdbe284669d629e65caa1f0f35d9')
+    expect(old).toEqual(asCurrent(LEGACY_ORACLE))
+    expect(hash(legacyBytes)).toBe(hash(JSON.stringify(asCurrent(LEGACY_ORACLE))))
     // Missing method was the original guarded RED; now exercise the real interface.
     const proposed = reader as typeof reader & ProposedReader
     expect(proposed.readPlatformComparison).toBeTypeOf('function')
@@ -102,7 +115,9 @@ it('Z_2024_formal_2026_complete_zero_preserves_legacy', () => {
     try {
       const result = proposed.readPlatformComparison(enterprise.id, AS_OF, T)
       expect(result.version).toBe('platform-comparison-410-v1')
-      expect(result.scope).toEqual({ ...scope, titleCode: T, legacySnapshotId: snapshotId })
+      // Comparison is anchored on the legacy snapshot, not the live plain read.
+      const legacyScope = { ...scope, ruleVersion: LEGACY_CURRENT_RULE_VERSION, assessmentVersion: LEGACY_QUALIFICATION_ASSESSMENT_VERSION }
+      expect(result.scope).toEqual({ ...legacyScope, titleCode: T, legacySnapshotId: hash(JSON.stringify([legacyScope, titles])) })
       expect(result.observation.state).toBe('no_record') // independent literal, never core-generated expected
       expect(result.comparison.state).toBe('unsynchronized')
       expect(result.comparison.cycles).toEqual([{
@@ -113,7 +128,7 @@ it('Z_2024_formal_2026_complete_zero_preserves_legacy', () => {
       }])
       expect(compare).toHaveBeenCalledTimes(1)
       const input: CandidateComparisonInput = compare.mock.calls[0]![0]
-      expect(input.legacy).toEqual(old)
+      expect(input.legacy).toEqual(reader.read(enterprise.id, AS_OF, { assessmentVersion: LEGACY_QUALIFICATION_ASSESSMENT_VERSION }).snapshot)
       expect(input.processes).toEqual([])
       expect(input.formal.cycles).toHaveLength(1)
       expect(input.formal.cycles[0]).toMatchObject({ cycle: { originYear: 2024, batchSeq: 1, precision: 'year' },
@@ -157,7 +172,7 @@ it('legacy_null_origin_award_decided_year_preserves_null_after_430', () => {
     }).run()
     sqlite.pragma('query_only = ON')
     const changes = sqlite.prepare('select total_changes() as n').get()
-    const legacy = createCurrentQualificationAssessmentReader(sqlite).read(1, AS_OF).snapshot
+    const legacy = createCurrentQualificationAssessmentReader(sqlite).read(1, AS_OF, { assessmentVersion: LEGACY_QUALIFICATION_ASSESSMENT_VERSION }).snapshot
     const a = legacy.titles.find(t => t.titleCode === T)!
     const { titles, snapshotId, ...scope } = legacy
     expect(snapshotId).toBe(hash(JSON.stringify([scope, titles])))
@@ -195,7 +210,7 @@ it('legacy_null_origin_award_decided_year_preserves_null_after_430', () => {
     expect(actual.scope).toEqual(projection.scope)
     expect(actual.observation).toEqual(projection.observation)
     expect(actual.comparison).toEqual(projection.comparison)
-    expect(createCurrentQualificationAssessmentReader(sqlite).read(1, AS_OF).snapshot).toEqual(legacy)
+    expect(createCurrentQualificationAssessmentReader(sqlite).read(1, AS_OF).snapshot).toEqual(asCurrent(legacy))
     expect(input).toEqual(original)
     expect(sqlite.prepare('select total_changes() as n').get()).toEqual(changes)
     expect(sqlite.pragma('query_only', { simple: true })).toBe(1)
@@ -254,13 +269,13 @@ function query427(f: Fixture427, options: {
 function read427(f: Fixture427, o: PlatformComparison['observation']['state'], c: PlatformComparison['comparison']['state'], reason: string) {
   f.sqlite.pragma('query_only=ON')
   const before = f.sqlite.prepare('select total_changes() as n').get()
-  const legacy = f.reader.read(1, AS_OF).snapshot
+  const legacy = f.reader.read(1, AS_OF, { assessmentVersion: LEGACY_QUALIFICATION_ASSESSMENT_VERSION }).snapshot
   const projection = f.reader.readPlatformComparison(1, AS_OF, T)
   expect(projection.observation.state).toBe(o)
   expect(projection.comparison.state).toBe(c)
   expect(projection.comparison.cycles[0]!.reasons).toContain(reason)
   expect(projection.scope.legacySnapshotId).toBe(legacy.snapshotId)
-  expect(f.reader.read(1, AS_OF).snapshot).toEqual(legacy)
+  expect(f.reader.read(1, AS_OF).snapshot).toEqual(asCurrent(legacy))
   expect(f.sqlite.prepare('select total_changes() as n').get()).toEqual(before)
   expect(JSON.stringify(projection)).not.toMatch(/SECRET_427|synthetic\/|合成427/)
   return projection
@@ -2130,9 +2145,9 @@ it.each(READER427_R2_CASES)('$name', spec => {
     const reader = createCurrentQualificationAssessmentReader(sqlite)
     sqlite.pragma('query_only=ON')
     const changes = sqlite.prepare('select total_changes() as n').get()
-    const legacy = reader.read(1, AS_OF).snapshot
+    const legacy = reader.read(1, AS_OF, { assessmentVersion: LEGACY_QUALIFICATION_ASSESSMENT_VERSION }).snapshot
     const selected = legacy.titles.find(t => t.titleCode === T)!
-    const expectedScope = { enterpriseId: 1, asOf: '2026-06-01T00:00:00.000Z', ruleVersion: 'current-roster-116-v8', assessmentVersion: 'enterprise-qualification-407-v1' }
+    const expectedScope = { enterpriseId: 1, asOf: '2026-06-01T00:00:00.000Z', ruleVersion: LEGACY_CURRENT_RULE_VERSION, assessmentVersion: LEGACY_QUALIFICATION_ASSESSMENT_VERSION }
     const { titles, snapshotId, ...scope } = legacy
     expect(scope).toEqual(expectedScope)
     expect(titles.map(t => t.titleCode).sort()).toEqual(['innovative_sme', 'little_giant', 'specialized_sme'])
@@ -2172,7 +2187,7 @@ it.each(READER427_R2_CASES)('$name', spec => {
       const attempted = compare.mock.calls[0]?.[0]
       console.info('READER427_R2_ATTEMPT', JSON.stringify({ name: spec.name, actualBindings: attempted?.formal.cycles,
         expectedBindings: spec.expectedBindings, legacySnapshotId: snapshotId }))
-      expect(reader.read(1, AS_OF).snapshot).toEqual(legacy)
+      expect(reader.read(1, AS_OF).snapshot).toEqual(asCurrent(legacy))
       expect(sqlite.prepare('select total_changes() as n').get()).toEqual(changes)
       expect(sqlite.pragma('query_only', { simple: true })).toBe(1)
       expect(sqlite.inTransaction).toBe(false)
@@ -2270,7 +2285,7 @@ it('reader438_guarded_RED_entry_missing_after_full_legacy_guards', () => {
     const before = reader.read(enterprise.id, AS_OF)
     const old = before.snapshot
     expect(old.titles).toHaveLength(3)
-    const scope = { enterpriseId: enterprise.id, asOf: '2026-06-01T00:00:00.000Z', ruleVersion: 'current-roster-116-v8', assessmentVersion: 'enterprise-qualification-407-v1' }
+    const scope = { enterpriseId: enterprise.id, asOf: '2026-06-01T00:00:00.000Z', ruleVersion: CURRENT_RULE_VERSION, assessmentVersion: QUALIFICATION_ASSESSMENT_VERSION }
     const { titles, snapshotId, ...actualScope } = old
     expect(actualScope).toEqual(scope)
     expect(snapshotId).toBe(hash(JSON.stringify([scope, titles])))
@@ -2294,8 +2309,8 @@ it('reader438_guarded_RED_entry_missing_after_full_legacy_guards', () => {
     expect(sqlite.inTransaction).toBe(false)
 
     const legacyBytes = JSON.stringify(old)
-    expect(old).toEqual(LEGACY_ORACLE)
-    expect(hash(legacyBytes)).toBe('12e1859b34a137bf6e567ab8b660d57be4b3fdbe284669d629e65caa1f0f35d9')
+    expect(old).toEqual(asCurrent(LEGACY_ORACLE))
+    expect(hash(legacyBytes)).toBe(hash(JSON.stringify(asCurrent(LEGACY_ORACLE))))
     const compare = vi.spyOn(core, 'comparePlatformComparison')
     try {
       expect(compare).not.toHaveBeenCalled()
@@ -2400,7 +2415,7 @@ function independent438(kinds: readonly Kind438[] = ['P','N','Z']) {
       evidence:[evidence(i)],sourceVersions:versions(i),references:[`evidence:${21+i} synthetic/438.pdf  序号:${i+1}`,
         ...(kind==='Z'?[]:[`platform-relation:${201+i} query:${101+i}`,`correspondence:${ordinal(i)}@2 confirmed`])]}
   })
-  const scope={enterpriseId:1,asOf:'2026-06-01T00:00:00.000Z',ruleVersion:'current-roster-116-v8',assessmentVersion:'enterprise-qualification-407-v1'}
+  const scope={enterpriseId:1,asOf:'2026-06-01T00:00:00.000Z',ruleVersion:LEGACY_CURRENT_RULE_VERSION,assessmentVersion:LEGACY_QUALIFICATION_ASSESSMENT_VERSION}
   const legacy={...scope,snapshotId:jhash([scope,titles]),titles}
   const business=(i:number)=>({recordId:ordinal(i),versionId:ordinal(i),interface:'business_list',platformKey:`SQ-438-${i}`,groupState:'verified',identityState:'resolved',contentState:'verified',keySource:'both',projectionRuleVersion:'platform-observation-v1',hashAlgorithm:'platform-row-json-v1',contentHash:hash('platform-row-json-v1\n'+canonical427(raw438(i,kinds[i]!)))})
   const titleScopeRefs=kinds.flatMap((kind,i)=>kind==='Z'?[]:[{queryId:101+i,relationId:201+i,titleCode:TITLES438[i],platformKey:`SQ-438-${i}`,usccNorm:U,recordId:ordinal(i),versionId:ordinal(i)}])
@@ -2454,7 +2469,7 @@ it.each([{name:'reader438_distinct_P_N_Z_complete_literals',kinds:['P','N','Z'] 
   try {
     f.sqlite.pragma('query_only=ON')
     const changes=f.sqlite.prepare('select total_changes() n').get()
-    expect(f.reader.read(1,AS_OF).snapshot).toEqual(expected.snapshot)
+    expect(f.reader.read(1,AS_OF).snapshot).toEqual(asCurrent(expected.snapshot))
     expect(compare).not.toHaveBeenCalled();expect(process).not.toHaveBeenCalled()
     const actual=f.reader.readPlatformComparisons(1,AS_OF,['innovative_sme','little_giant','specialized_sme','little_giant'])
     expect(actual).toEqual({snapshot:expected.snapshot,comparisons:expected.comparisons})
@@ -2463,7 +2478,7 @@ it.each([{name:'reader438_distinct_P_N_Z_complete_literals',kinds:['P','N','Z'] 
     expect(process.mock.calls.map(([,request])=>request)).toEqual(TITLES438.map((titleCode,i)=>({enterpriseId:1,titleCode,eventIds:[11+i],selectedQueryIds:[101+i]})))
     // Supplemental parity only, after full independent input/output equality.
     expect(TITLES438.map(t=>f.reader.readPlatformComparison(1,AS_OF,t))).toEqual(actual.comparisons)
-    expect(f.reader.read(1,AS_OF).snapshot).toEqual(expected.snapshot)
+    expect(f.reader.read(1,AS_OF).snapshot).toEqual(asCurrent(expected.snapshot))
     expect(f.sqlite.prepare('select total_changes() n').get()).toEqual(changes)
     expect(f.sqlite.inTransaction).toBe(false)
   } finally {compare.mockRestore();process.mockRestore();f.sqlite.close()}
@@ -2505,8 +2520,9 @@ it('reader438_full_T2_once_trace_partitions',()=>{
   const query=vi.spyOn(queryReads,'readQueryComparisonWitnesses').mockImplementation((...args)=>{cuts.push({title:args[1].titleCode,at:f.trace.length});return original(...args)})
   try {
     f.sqlite.pragma('query_only=ON')
-    f.reader.read(1,AS_OF) // statement preparation outside measured scope
-    f.trace.length=0;f.reader.read(1,AS_OF)
+    const legacyRead = () => f.reader.read(1,AS_OF,{assessmentVersion: LEGACY_QUALIFICATION_ASSESSMENT_VERSION})
+    legacyRead() // statement preparation outside measured scope
+    f.trace.length=0;legacyRead()
     const baseline=[...f.trace]
     expect(baseline[0]).toBe('BEGIN');expect(baseline.at(-1)).toBe('COMMIT')
     f.trace.length=0
@@ -2531,7 +2547,7 @@ it('reader438_all_legacy_entries_no_comparison_and_full_compatibility',()=>{
     const reads=()=>({read:f.reader.read(1,AS_OF),titles:TITLES438.map(t=>f.reader.readTitle(1,t,AS_OF)),current:TITLES438.map(t=>f.reader.readCurrent(1,AS_OF,t)),
       workbooks:TITLES438.map(t=>{const r=f.reader.readWorkbook(1,AS_OF,t);return {...r,workbookPublished:[...r.workbookPublished],facts:r.rows.map(row=>row.workbookFacts)}})})
     const before=reads()
-    expect(before.read.snapshot).toEqual(independent438().snapshot)
+    expect(before.read.snapshot).toEqual(asCurrent(independent438().snapshot))
     expect(compare).not.toHaveBeenCalled();expect(process).not.toHaveBeenCalled()
     f.reader.readPlatformComparisons(1,AS_OF,TITLES438)
     expect(reads()).toEqual(before)

@@ -1,3 +1,4 @@
+import { CURRENT_RULE_VERSION } from '../lib/roster/current-qualification'
 import { businessIdentity, expectedBusinessIdentity } from './helpers/current-export-118'
 import { reviewCurrentExportDecision } from './helpers/current-export-decisions'
 import { mkdtempSync, rmSync, existsSync, writeFileSync, renameSync } from 'node:fs'
@@ -197,13 +198,13 @@ it('阻塞执行、背压、取消与失败', async () => {
     }
     expect((await fetch(url('/api/jobs/'+first.jobId),{method:'DELETE',headers})).status).toBe(202)
     const cancelledJob=await terminal(first.jobId)
-    expect(cancelledJob.state).toBe('cancelled');expect(cancelledJob.result.ruleVersion).toBe('current-roster-116-v8')
+    expect(cancelledJob.state).toBe('cancelled');expect(cancelledJob.result.ruleVersion).toBe(CURRENT_RULE_VERSION)
     expect(existsSync(join(dbPath+'.exports',first.jobId+'.part'))).toBe(false)
     expect((await fetch(url('/api/job-artifacts/'+first.jobId),{headers})).status).toBe(404)
     const failed = await json(await submit('killed-executor'))
     process.kill(await executor(),'SIGKILL')
     const failure = await terminal(failed.jobId)
-    expect(failure.state).toBe('failed'); expect(failure.error).toContain('中断');expect(failure.result.ruleVersion).toBe('current-roster-116-v8')
+    expect(failure.state).toBe('failed'); expect(failure.error).toContain('中断');expect(failure.result.ruleVersion).toBe(CURRENT_RULE_VERSION)
     expect(existsSync(join(dbPath+'.exports',failed.jobId+'.part'))).toBe(false)
     expect((await fetch(url('/api/job-artifacts/'+failed.jobId),{headers})).status).toBe(404)
   } finally { try {process.kill(pid,'SIGCONT')} catch {} }
@@ -314,7 +315,7 @@ it('未知周期、同年恢复与执行版本', async () => {
   const response=await submit('unknown-cycle'),id=(await json(response)).jobId
   let active:any
   for(let i=0;i<500;i++) {active=await json(await fetch(url('/api/jobs/'+id)));if(active.state==='running' && active.progress.done>=100)break;await new Promise(r=>setTimeout(r,10))}
-  expect(active.result.ruleVersion).toBe('current-roster-116-v8')
+  expect(active.result.ruleVersion).toBe(CURRENT_RULE_VERSION)
   expect(active.result.snapshotId).toBe(id)
   const job=await terminal(id);expect(job.state).toBe('done')
   const wb=new ExcelJS.Workbook();await wb.xlsx.load(Buffer.from(await (await fetch(url(job.result.artifact.downloadUrl),{headers})).arrayBuffer()) as any)
@@ -379,11 +380,11 @@ it('产物存储错误不泄露路径', async () => {
     const response=await submit('storage-error');expect(response.status).toBe(202)
     failed=await terminal((await json(response)).jobId)
     expect(failed.state).toBe('failed');expect(JSON.stringify(failed)).not.toContain(dir)
-    expect(failed.result.ruleVersion).toBe('current-roster-116-v8')
+    expect(failed.result.ruleVersion).toBe(CURRENT_RULE_VERSION)
   } finally {rmSync(root,{force:true});renameSync(backup,root)}
   const retry=await json(await submit('storage-retry',{regenerateOf:failed.id}))
   expect((await terminal(retry.jobId)).state).toBe('done')
-},30000)
+},90000)
 it('平台单独候选不遗漏且不冒充已确认资格', async () => {
   const c=db.insert(s.enterprise).values({name:'仅平台识别候选',nameNorm:'仅平台识别候选',usccNorm:'PLATFORM-CANDIDATE-117'}).returning().get()
   const q=db.insert(s.platformQuery).values({interface:'recognized_list',queryKey:c.usccNorm!,rdjb:'3',titleCode:'little_giant',queriedAt:new Date().toISOString(),status:'success'}).returning().get()

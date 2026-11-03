@@ -1,3 +1,4 @@
+import { CURRENT_RULE_VERSION, QUALIFICATION_ASSESSMENT_VERSION } from '../lib/roster/current-qualification'
 import { createHash } from 'node:crypto'
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
@@ -267,7 +268,7 @@ it('isolates sidecar-only changes from enumerable qualification and dataVersion 
   const independentVersion = (book: ExcelJS.Workbook, snapshot: typeof beforeT2) => {
     const {titles:_titles,snapshotId,...scope}=snapshot
     const values=Array.from({length:12},(_,c)=>book.getWorksheet('有效企业')!.getRow(2).getCell(c+1).value)
-    return 'sha256:'+createHash('sha256').update(JSON.stringify(['current-export-assessment-409-v2','enterprise-qualification-407-v1','current-roster-116-v8',2026,'specialized_sme'])+'\n')
+    return 'sha256:'+createHash('sha256').update(JSON.stringify(['current-export-assessment-409-v2',QUALIFICATION_ASSESSMENT_VERSION,CURRENT_RULE_VERSION,2026,'specialized_sme'])+'\n')
       .update(JSON.stringify(['eligible',exact.enterpriseId,scope,snapshotId,values])+'\n').digest('hex')
   }
   expect(first.dataVersion).toBe(independentVersion(beforeBook,beforeT2))
