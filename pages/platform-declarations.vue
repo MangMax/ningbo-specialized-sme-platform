@@ -108,73 +108,54 @@ const emptyDescription = computed(() => view.value === 'records'
 </script>
 
 <template>
-  <div class="flex min-w-0 flex-col gap-4" :aria-busy="loading">
-    <PageHeader title="申报记录" description="本地查询已归档的申报业务：按企业、申报编号、事项、明确年度与状态筛选；未知值保持空，不猜填称号或年度。">
-      <template #breadcrumb><NuxtLink to="/" class="hover:underline">企业列表</NuxtLink><span> / 申报记录</span></template>
-      <template #actions>
-        <span class="text-muted-foreground text-xs">只读 · 不再访问外部平台</span>
-      </template>
-    </PageHeader>
+  <div class="flex min-w-0 flex-col gap-2 sm:gap-3" :aria-busy="loading">
+    <PageHeader title="申报记录" description="本地查询已归档的申报业务：按企业、申报编号、事项、明确年度与状态筛选；未知值保持空，不猜填称号或年度。" />
 
-    <Card class="gap-0 py-0">
-      <CardContent class="p-4">
-        <form class="flex min-w-0 flex-col gap-3" @submit.prevent="search">
-          <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-6">
-            <label class="flex min-w-0 flex-col gap-1 text-[13px]">
-              <span class="text-muted-foreground">企业名称或信用代码</span>
-              <Input v-model="enterpriseQuery" placeholder="关键词" class="bg-card" aria-label="企业名称或信用代码" />
-            </label>
-            <label class="flex min-w-0 flex-col gap-1 text-[13px]">
-              <span class="text-muted-foreground">申报编号</span>
-              <Input v-model="platformKey" placeholder="精确编号" class="bg-card" aria-label="申报编号" />
-            </label>
-            <label class="flex min-w-0 flex-col gap-1 text-[13px]">
-              <span class="text-muted-foreground">事项（原 sblx）</span>
-              <Input v-model="declareKind" placeholder="如 申请 / 复核" class="bg-card" aria-label="事项" />
-            </label>
-            <label class="flex min-w-0 flex-col gap-1 text-[13px]">
-              <span class="text-muted-foreground">明确年度</span>
-              <Input v-model="yearInput" inputmode="numeric" placeholder="如 2024" class="bg-card" aria-label="明确年度" :aria-invalid="Boolean(yearError)" />
-              <span v-if="yearError" class="text-destructive text-xs">{{ yearError }}</span>
-            </label>
-            <label class="flex min-w-0 flex-col gap-1 text-[13px]">
-              <span class="text-muted-foreground">状态（原 cszt）</span>
-              <Input v-model="status" placeholder="如 终审通过" class="bg-card" aria-label="状态" />
-            </label>
-            <div class="flex min-w-0 flex-col gap-1 text-[13px]">
-              <span class="text-muted-foreground">视图</span>
-              <Select :model-value="view" @update:model-value="view = $event as 'records' | 'isolated'">
-                <SelectTrigger class="bg-card" aria-label="申报记录视图"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="records">业务记录</SelectItem>
-                  <SelectItem value="isolated">缺编号观察</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-          <div class="flex flex-wrap items-center gap-2">
-            <Button type="submit" :disabled="loading || Boolean(yearError)"><Search data-icon="inline-start" />查询</Button>
-            <Button type="button" variant="outline" :disabled="loading" @click="reset"><X data-icon="inline-start" />重置</Button>
-            <span class="text-muted-foreground text-xs" aria-live="polite">共 {{ total.toLocaleString('zh-CN') }} {{ view === 'records' ? '条申报记录' : '条隔离观察' }}</span>
-          </div>
-        </form>
+    <form class="flex flex-col gap-2" @submit.prevent="search">
+      <div class="flex flex-wrap items-center gap-2">
+        <div class="relative w-full min-w-52 flex-1 sm:max-w-[13rem]">
+          <Search class="text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2" aria-hidden="true" />
+          <Input v-model="enterpriseQuery" class="bg-card h-8 pl-8" placeholder="搜索企业名称或信用代码" aria-label="企业名称或信用代码" />
+        </div>
+        <Input v-model="platformKey" class="bg-card h-8 w-full sm:w-32" placeholder="申报编号" aria-label="申报编号" />
+        <Input v-model="declareKind" class="bg-card h-8 w-full sm:w-24" placeholder="全部事项" aria-label="事项" />
+        <Input v-model="yearInput" inputmode="numeric" class="bg-card h-8 w-full sm:w-20" placeholder="全部年度" aria-label="明确年度" :aria-invalid="Boolean(yearError)" />
+        <Input v-model="status" class="bg-card h-8 w-full sm:w-28" placeholder="全部状态" aria-label="状态" />
+        <Select :model-value="view" @update:model-value="view = $event as 'records' | 'isolated'">
+          <SelectTrigger class="bg-card h-8 w-full sm:w-28" aria-label="申报记录视图"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="records">业务记录</SelectItem>
+            <SelectItem value="isolated">缺编号观察</SelectItem>
+          </SelectContent>
+        </Select>
+        <Button type="submit" variant="outline" size="sm" :disabled="loading || Boolean(yearError)"><Search data-icon="inline-start" />查询</Button>
+        <Button type="button" variant="ghost" size="sm" :disabled="loading" @click="reset"><X data-icon="inline-start" />重置</Button>
+        <span class="text-muted-foreground text-[13px] tabular-nums" aria-live="polite">共 {{ total.toLocaleString('zh-CN') }} {{ view === 'records' ? '条记录' : '条观察' }}</span>
+      </div>
+      <p v-if="yearError" class="text-destructive text-[13px] leading-5">{{ yearError }}</p>
+    </form>
+
+    <Card class="gap-0 overflow-hidden py-0 shadow-none">
+      <CardContent class="relative p-0">
+        <TableLoadingStatus kind="ledger" :loading="loading" label="正在加载申报记录…" />
+        <TableFailureState v-if="error" :compact="rows.length > 0" :title="`申报记录第 ${page} 页加载失败`" :description="`${error}${data ? `；保留第 ${data.page} 页结果。` : ''}`" :pending="loading" @retry="load" />
+        <div v-if="loading && !rows.length" class="flex flex-col gap-3 p-3 pt-8" aria-hidden="true">
+          <Skeleton class="h-5 w-2/3" />
+          <Skeleton class="h-4 w-full" />
+          <Skeleton class="h-4 w-3/4" />
+        </div>
+        <Empty v-else-if="!error && !rows.length" class="border-0">
+          <EmptyHeader>
+            <EmptyMedia variant="icon"><Search /></EmptyMedia>
+            <EmptyTitle>{{ emptyTitle }}</EmptyTitle>
+            <EmptyDescription>{{ emptyDescription }}</EmptyDescription>
+          </EmptyHeader>
+        </Empty>
+        <PlatformDeclarationTable v-if="rows.length" :view="view" :rows="rows" :loading="loading" @open-record="openRecord" />
       </CardContent>
     </Card>
 
-    <div class="relative h-6"><TableLoadingStatus kind="platform" :loading="loading" label="正在加载申报记录…" /></div>
-    <TableFailureState v-if="error" :title="`申报记录第 ${page} 页加载失败`" :description="`${error}${data ? `；保留第 ${data.page} 页结果。` : ''}`" :pending="loading" @retry="load" />
-    <template v-if="loading && !rows.length"><Skeleton v-for="i in 3" :key="i" class="h-24 w-full" /></template>
-    <Empty v-else-if="!error && !rows.length">
-      <EmptyHeader>
-        <EmptyMedia variant="icon"><Search /></EmptyMedia>
-        <EmptyTitle>{{ emptyTitle }}</EmptyTitle>
-        <EmptyDescription>{{ emptyDescription }}</EmptyDescription>
-      </EmptyHeader>
-    </Empty>
-    <template v-else-if="rows.length">
-      <PlatformDeclarationTable :view="view" :rows="rows" :loading="loading" @open-record="openRecord" />
-      <TablePagination :page="data?.page ?? page" :page-size="data?.pageSize ?? pageSize" :total="total" :loading="loading" :unit="view === 'records' ? '条记录' : '条观察'" @update:page="page = $event" @update:page-size="changeSize" />
-    </template>
+    <TablePagination v-if="rows.length" :page="data?.page ?? page" :page-size="data?.pageSize ?? pageSize" :total="total" :loading="loading" :unit="view === 'records' ? '条记录' : '条观察'" @update:page="page = $event" @update:page-size="changeSize" />
 
     <PlatformDeclarationDetailDialog v-model:open="detailOpen" :record-id="selectedRecordId" />
   </div>

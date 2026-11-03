@@ -44,7 +44,7 @@ const declareKind = (value: string | null) => value ? RELATION_DECLARE_KINDS[val
 
 <template>
   <Dialog :open="open" @update:open="emit('update:open', $event)">
-    <DialogContent class="max-h-[88dvh] min-w-0 overflow-y-auto sm:max-w-4xl" data-testid="platform-declaration-detail">
+    <DialogContent class="max-h-[85dvh] min-w-0 overflow-y-auto sm:max-w-3xl" data-testid="platform-declaration-detail">
       <DialogHeader>
         <DialogTitle>申报记录 #{{ recordId }} · 实际观察与历史版本</DialogTitle>
         <DialogDescription>版本按内容版本编号排列，不代表时间顺序；观察按采集时间倒序。未建立 typed 投影的历史版本保留为空字段，不猜填。</DialogDescription>

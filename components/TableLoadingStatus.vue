@@ -1,7 +1,7 @@
 <script setup lang="ts">
 defineProps<{
   loading: boolean
-  kind: 'ledger' | 'comparison' | 'files' | 'platform'
+  kind: 'ledger' | 'comparison' | 'files'
   label: string
 }>()
 </script>
