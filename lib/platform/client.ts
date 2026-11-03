@@ -60,6 +60,8 @@ export interface PlatformQueryOutcome extends Omit<PlatformResponseOutcome, 'sta
   /** 原始响应原文,供 `platform_query.raw_response` 留证。 */
   raw: string
   rows: PlatformRow[]
+  /** Exact stored JSON rows for an explicitly reused archive; absent for fresh legacy reads. */
+  rawRows?: Record<string, unknown>[]
   /** Legacy traversal evidence lives in rawResponse, never recognized collectionEvidence. */
   collection?: LegacySlotCollection
 }

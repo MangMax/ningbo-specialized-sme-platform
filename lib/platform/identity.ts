@@ -46,8 +46,8 @@ export interface PlatformRelationRecord {
   year: number | null
   /** 该关系来自哪个接口 —— 决定 `enterprise_alias.source_kind`。 */
   sourceKind: 'platform_business' | 'platform_apply'
-  /** 整行原始字段(留证)。 */
-  rawFields: PlatformRow
+  /** 整行原始字段(留证);typed 原文保留 JSON 类型,旧归档仍是字符串投影。 */
+  rawFields: Record<string, unknown>
 }
 
 const DECLARE_KINDS: Record<string, string> = {
@@ -95,17 +95,20 @@ export function processFactsFromRow(row: PlatformRow) {
 export function relationFromRow(
   row: PlatformRow,
   meta: PlatformQueryMeta & { sequenceNo?: number },
+  rawFields: Record<string, unknown> = row,
 ): PlatformRelationRecord {
   return {
     interface: meta.interface,
     rdjb: meta.rdjb ?? '',
     sequenceNo: meta.sequenceNo ?? 0,
+    // Identity/normalized fields keep the legacy string projection. Callers replaying
+    // a typed observation pass the exact stored row separately so raw types survive.
     relationKey: text(row.id),
     nameRaw: text(row.qymc),
     usccRaw: text(row.tyshxydm),
     ...processFactsFromRow(row),
     sourceKind: meta.interface === 'business_list' ? 'platform_business' : 'platform_apply',
-    rawFields: { ...row },
+    rawFields: { ...rawFields },
   }
 }
 

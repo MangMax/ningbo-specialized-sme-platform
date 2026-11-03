@@ -232,12 +232,18 @@ function collectRelations(
   return queries.flatMap((query) =>
     query.outcome.rows.map((row, index) => ({
       query,
-      relation: relationFromRow(row, {
-        interface: query.interface,
-        rdjb: query.rdjb,
-        queryKey: query.queryKey,
-        sequenceNo: index + 1,
-      }),
+      relation: relationFromRow(
+        row,
+        {
+          interface: query.interface,
+          rdjb: query.rdjb,
+          queryKey: query.queryKey,
+          sequenceNo: index + 1,
+        },
+        // A reused archive carries its exact stored row separately; never replay the
+        // string projection as if it were the original payload.
+        query.outcome.rawRows?.[index] ?? row,
+      ),
     })),
   )
 }
