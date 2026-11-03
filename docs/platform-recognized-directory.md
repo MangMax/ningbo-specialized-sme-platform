@@ -112,7 +112,12 @@
 - 表格沿用共享 `data-table-scroll`（不再用 `[&_[data-slot=table-container]]:overflow-visible` 关闭其滚动）；表格最小宽 `min-w-[880px]`，1280px 下不产生页面级横向溢出，1024/768 由卡片自身横向滚动到达「详情」；「版本 / 观察」列 10% 且 `whitespace-nowrap`，`1 / 1` 不裁切。
 - 详情弹窗标题 `pr-8` 并缩短为「平台认定目录 #<recordId> · 观察与版本」，390px 下不钻到绝对定位的关闭按钮下；观察表改用共享 `Table` 原语并保留同一 `overflow-x-auto`。
 
-**UNRUN: no browser in this environment** — 本切片未执行桌面或 390px 实际浏览器操作（无浏览器可用），未记录任何像素/交互观察。已覆盖的替代证据：组件与页面用例（`tests/platform-recognized-directory-ui.test.ts`、`tests/platform-recognized-directory-page-ui.test.ts`）覆盖筛选、视图切换、分页、空态、失败保留与显式重试、深链预填、记录/隔离表与详情截断；桌面/390px 布局沿用 `docs/ui-conventions.md` 的 `sm:hidden` 桌面表格 + 移动卡片双布局。集成阶段需由具备浏览器的环境补做 1280px/390px 实操。
+**实操记录（2026-11-04，Asia/Shanghai；集成分支 `t3/implement-spec-319` 的 `pnpm dev`，隔离临时 SQLite，经领域层写入 3 条已解析目录记录 + 缺编号/冲突隔离观察）**：
+
+- **1280px**：侧边栏「平台认定目录」可达；表格实际宽 974px、卡片内容宽 974px，页面无横向溢出（`scrollWidth-clientWidth=0`），9 列全部可见，「版本 / 观察」显示 `1 / 1` 且不裁切，「详情」列的「观察与版本」「当前有效资格」完整可点；企业关键词 `示例` 查询返回 1 条且计数同步为「共 1 条记录」；「观察与版本」打开详情，记录身份、内容版本、有效期/维护年/批次/属地、行称号原值与查询称号范围、观察表均可见。
+- **390px**：筛选纵向排列、记录改为卡片（「观察与版本」按钮高 44px），页面无横向溢出；详情弹窗宽 358px、内部纵向滚动，标题「平台认定目录 #3 · 观察与版本」单行显示且不压住右上关闭按钮（标题 `padding-right: 32px`），观察表在弹窗内横向滚动（内容 991px / 视口 296px），关闭可用。
+- **真实消费者**：企业详情平台记录表的 `recognized_list` 行出现「本地目录记录」链接，携带 `platformKey=DIR-UI-1 / DIR-UI-2`；`/platform-queries` 认定查询卡片链接按 USCC/名称归一为 `q`，`scope:` 键不带 `q`。
+- 以上为人工操作观察，不是像素级断言；覆盖筛选、空态/失败重试、分页、详情与深链的组件用例仍见下方测试表。
 
 ## 测试
 
