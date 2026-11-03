@@ -14,8 +14,17 @@ const refs = relations.map((r, index) => ({ relationId: r.id, queryId: r.queryId
 const decision: PlatformCorrespondenceRef = { id: 329, relationId: 101, exportRowId: null, eventId: 200, predecessorEventId: null, enterpriseId: 1, titleCode: 'specialized_sme', type: 'event_process', role: 'context_only', status: 'confirmed', revision: 2, ruleId: 'manual', ruleVersion: 'old', createdAt: '2026-10-01', decidedAt: '2026-10-02', endedAt: null }
 refs[0] = { ...refs[0]!, existingCorrespondenceIds: [329], existingCorrespondences: [decision] } as typeof refs[number]
 const businessRecords = [{ businessRecord: metadata(), representativeRelationId: 103, observationRefs: refs, versions: [{ businessRecord: metadata(), representativeRelationId: 103, observationRefs: [refs[0], refs[2]] }, { businessRecord: metadata(2), representativeRelationId: 102, observationRefs: [refs[1]] }], versionCount: 2, observationCount: 3, existingCorrespondenceIds: [], existingCorrespondences: [], conflicts: ['title_conflict'] }]
-function view() { return mount(PlatformRecords, { attachTo: document.body, props: { queries, relations, businessRecords } as never }) }
+const stubs = { NuxtLink: { props: ['to'], template: '<a :href="typeof to === \'string\' ? to : to.path"><slot /></a>' } }
+function view() { return mount(PlatformRecords, { attachTo: document.body, props: { queries, relations, businessRecords } as never, global: { stubs } }) }
 const body = () => new DOMWrapper(document.body)
+
+it('links the existing platform evidence row to the local business-process page by exact platformKey', () => {
+  const wrapper = view()
+  try {
+    const link = wrapper.get('[data-testid="platform-relation"] a[href="/platform-business-processes"]')
+    expect(link.text()).toBe('本地办理记录')
+  } finally { wrapper.unmount() }
+})
 
 it('one business expands all versions and observation times and opens the exact original source without nested dialogs', async () => {
   const fetch = vi.fn(async () => ({ source: { ...relations[0], nameRaw: '原观察1', query: queries[0] }, normalizationConflicts: [], correspondences: [], candidates: [], audit: [] }))
