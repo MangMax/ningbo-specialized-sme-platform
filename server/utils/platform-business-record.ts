@@ -2,8 +2,9 @@ import { createHash } from 'node:crypto'
 import { and, eq, sql } from 'drizzle-orm'
 import * as schema from '../../db/schema'
 import type { Executor } from './roster-import'
-import type { PlatformApplyProjectionPreview, PlatformObservationProjection, PlatformProjectionResult } from '../../lib/platform/business-record'
+import type { PlatformApplyProjectionPreview, PlatformBusinessProjectionPreview, PlatformObservationProjection, PlatformProjectionResult } from '../../lib/platform/business-record'
 import { APPLY_PROJECTION_RULE, parseApplyRecord, type ApplyProjectionFields } from '../../lib/platform/apply-record'
+import { BUSINESS_PROJECTION_RULE, parseBusinessProcess, type BusinessProjectionFields } from '../../lib/platform/business-projection'
 
 export const PLATFORM_PROJECTION_RULE = 'platform-observation-v1'
 export const PLATFORM_RAW_HASH_RULE = 'platform-row-json-v1'
@@ -39,9 +40,10 @@ export function planPlatformObservation(input: Input) {
     keySource: relationKey && rawKey ? 'both' : relationKey ? 'relation_key' : rawKey ? 'raw_id' : 'none',
     canonicalRawJson,
     contentHash: canonicalRawJson ? hash(`${PLATFORM_RAW_HASH_RULE}\n${canonicalRawJson}`) : null,
-    // Only a verified apply_list version can own typed source fields. Unknown/missing
+    // Only a verified single-source version can own typed source fields. Unknown/missing
     // keys stay isolated as observations and never acquire a reusable typed row.
     applyRecord: input.interface === 'apply_list' && canonicalRawJson ? parseApplyRecord(raw) : null,
+    businessProjection: input.interface === 'business_list' && canonicalRawJson ? parseBusinessProcess(raw) : null,
   } as const
 }
 
@@ -89,6 +91,11 @@ export function applyProjectionPreview(plan: { applyRecord: ApplyProjectionField
   return plan.applyRecord ? { ...plan.applyRecord, ruleVersion: APPLY_PROJECTION_RULE } : null
 }
 
+/** Planned business_list fields for preflight only. Query title scope and raw bytes stay server-side. */
+export function businessProjectionPreview(plan: { businessProjection: BusinessProjectionFields | null }): PlatformBusinessProjectionPreview | null {
+  return plan.businessProjection ? { ...plan.businessProjection, ruleVersion: BUSINESS_PROJECTION_RULE } : null
+}
+
 const APPLY_FIELDS = ['declareKind', 'declarationYear', 'appliedAt', 'status', 'nameRaw', 'usccRaw'] as const
 
 /** One typed row per immutable content version. Rejects a same-version drift instead of
@@ -101,6 +108,21 @@ function ensureApplyProjection(db: Executor, versionId: number, recordId: number
     return { created: false, reused: true }
   }
   db.insert(schema.platformApplyProjection).values({ versionId, recordId, ...fields, ruleVersion: APPLY_PROJECTION_RULE }).run()
+  return { created: true, reused: false }
+}
+
+const BUSINESS_FIELDS = ['declareKind', 'businessYear', 'appliedAt', 'status', 'batch', 'awardBatchLabel', 'province', 'nameRaw', 'usccRaw'] as const
+
+/** One typed row per immutable content version. Rejects a same-version drift instead of
+ * silently reinterpreting historical content under a newer rule. */
+function ensureBusinessProjection(db: Executor, versionId: number, recordId: number, fields: BusinessProjectionFields): { created: boolean; reused: boolean } {
+  const existing = db.select().from(schema.platformBusinessProjection).where(eq(schema.platformBusinessProjection.versionId, versionId)).get()
+  if (existing) {
+    if (existing.ruleVersion !== BUSINESS_PROJECTION_RULE) throw new PlatformProjectionError('business_projection_conflict', 'Business projection rule differs')
+    if (BUSINESS_FIELDS.some(field => existing[field] !== fields[field])) throw new PlatformProjectionError('business_projection_conflict', 'Business projection fields differ for the same content version')
+    return { created: false, reused: true }
+  }
+  db.insert(schema.platformBusinessProjection).values({ versionId, recordId, ...fields, ruleVersion: BUSINESS_PROJECTION_RULE }).run()
   return { created: true, reused: false }
 }
 
@@ -129,8 +151,12 @@ export function ensurePlatformObservation(db: Executor, relationId: number, batc
   const applyProjectionResult = plan.applyRecord && recordId != null && versionId != null
     ? ensureApplyProjection(db, versionId, recordId, plan.applyRecord)
     : null
+  const businessProjectionResult = plan.businessProjection && recordId != null && versionId != null
+    ? ensureBusinessProjection(db, versionId, recordId, plan.businessProjection)
+    : null
   return {
     ...projection, recordCreated, versionCreated, observationCreated: !!created,
     ...(applyProjectionResult ? { applyProjectionCreated: applyProjectionResult.created, applyProjectionReused: applyProjectionResult.reused } : {}),
+    ...(businessProjectionResult ? { businessProjectionCreated: businessProjectionResult.created, businessProjectionReused: businessProjectionResult.reused } : {}),
   }
 }

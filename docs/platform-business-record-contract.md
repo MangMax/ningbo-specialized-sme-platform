@@ -51,6 +51,20 @@
 
 本投影是分域扩展新增的第 53 张应用表；ADR 的 52 表是 #297 的审计基线，不是本轮重审结论。HTTP/MCP 本地申报查询与页面属于 #453，不在本层实施。
 
+## business_list 来源专用 typed 投影（#457）
+
+`business_list`（上游 `businessList`，关联办理）在共享身份/版本/观察之外新增 `platform_business_projection`，一内容版本一行，关联 `platform_business_record_version.id` 与 `platform_business_record.id`。复合外键 `(version_id, record_id)` 保证版本归属一致；`ON DELETE RESTRICT` 保留历史引用。
+
+投影字段只来自归档原行的真实来源语义：`id` 仍是既有 `platform_business_record.platform_key`（办理编号）；`sblx` → `declare_kind`（已知 申请/更新/复核 归一为 apply/update/review，字典外原值去首尾空白后保留）、显式 `year` → `business_year`（JSON 整数或十进制整数字符串；缺失/空白/布尔/小数/非数字为 null）、`sqsj` → `applied_at`、`cszt` → `status`、`whpc` → `batch`、`personuuid` → `award_batch_label`（原认定批次标签，不是人员身份）、`szsfmc` → `province`、`qymc` → `name_raw`、`tyshxydm` → `uscc_raw`。不从 `sqsj`/`queriedAt`/批次/名称推年份、称号或状态。
+
+称号只是查询的明确范围（`platform_query.rdjb` / `platform_query_title_scope`），属于查询事实，不写入内容版本、不当作逐行称号事实；同一内容版本在不同查询称号范围下不产生不同的 typed 行或伪版本。同编号跨接口（`apply_list`/`business_list`/`recognized_list`）仍按 `(interface, platform_key)` 分离，不自动合并，也不生成有源关联或对应决定。
+
+规则版本 `platform-business-v1`。`ensurePlatformObservation` 在同一导入事务内为 resolved+verified 的 `business_list` 观察建立或核对投影；缺编号、编号冲突、原文不可核实的观察不建投影，仍以原 relationId 隔离。同内容版本出现不同投影整批以 `business_projection_conflict` 拒绝，不静默重解释历史内容。
+
+迁移 `0034_platform_business_projection` 只新增该表与索引，不重建既有表。历史观察继续走 `platformRecordObservations`（每批 1..100）投影；预检返回 `canonicalProjection[].businessProjection` 计划，提交回执的 `canonicalProjection` 增加 `businessProjectionsCreated`/`businessProjectionsReused`（仅当批次包含 business 投影时出现）。旧 query/relation/raw/hash/version/observation/对应/审计/深链均不改写；`apply_list` 的既有投影与回执字段不变。
+
+本投影是分域扩展新增的第 54 张应用表；ADR 的 52 表是 #297 的审计基线，不是本轮重审结论。HTTP/MCP 本地关联办理查询、页面与真实消费者对照属于 #458，不在本层实施。
+
 ## 下一层读接口接缝
 
 共享写回 DTO 位于 `lib/platform/business-record.ts`，领域入口位于 `server/utils/platform-business-record.ts`。下一层应先按企业、queryIds、sourceSet、asOf 限定原观察，再 LEFT JOIN mapping/version/record，输出观察来源和旧决定引用。未索引为 not_indexed；missing_key、conflict、unverifiable 以原 relationId 隔离，不把所有 null 合成一组。不同版本/接口/角色不能折叠；相同版本的多个出处都要保留。不得用同 record 的其他观察代替选定来源的 proof 或复制旧裁决。

@@ -239,6 +239,13 @@
       "when": 1793635658696,
       "tag": "0033_platform_apply_projection",
       "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "6",
+      "when": 1793675642789,
+      "tag": "0034_platform_business_projection",
+      "breakpoints": true
     }
   ]
 }
