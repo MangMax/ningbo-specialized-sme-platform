@@ -1,6 +1,6 @@
 import { enqueueArchivedCandidates } from './jobs/candidate-discovery'
 import { managedDecision102 } from './decision-lifecycle-102'
-import { applyProjectionPreview, assertPlatformObservationReplay, businessProjectionPreview, ensurePlatformObservation, planPlatformObservation, platformObservationPayload, PlatformProjectionError, projectionPreview, readPlatformObservationPlan } from './platform-business-record'
+import { applyProjectionPreview, assertPlatformObservationReplay, businessProjectionPreview, ensurePlatformObservation, planPlatformObservation, platformObservationPayload, PlatformProjectionError, projectionPreview, readPlatformObservationPlan, recognizedProjectionPreview } from './platform-business-record'
 import type { PlatformProjectionResult, PlatformProjectionSummary } from '../../lib/platform/business-record'
 import { isDeepStrictEqual } from 'node:util'
 import { archiveQueryKey, platformEvidenceError, PLATFORM_PERSISTED_SOURCE, recognizedEvidenceError, recognizedStoredStatus, RDJB_TITLE_CODES, sourcePositionForSequence } from '../../lib/platform/recognized-evidence'
@@ -1499,7 +1499,8 @@ export function planRosterImport(
       if (expected && projection.inputFingerprint !== expected) throw new PlatformProjectionError('projection_source_drift', `Original relation ${relationId} changed since preflight`)
       const apply = applyProjectionPreview(projection)
       const business = businessProjectionPreview(projection)
-      push({ item: success('platform_observation', `relation:${relationId}`, { canonicalProjection: [{ ...projectionPreview(projection), ...(apply ? { applyProjection: apply } : {}), ...(business ? { businessProjection: business } : {}) }] }), action: 'note', review: projection.identityState !== 'resolved' || projection.contentState !== 'verified', run: tx => projectionItem(tx, relationId, context.batchId, expected ?? projection.inputFingerprint) })
+      const recognized = recognizedProjectionPreview(projection)
+      push({ item: success('platform_observation', `relation:${relationId}`, { canonicalProjection: [{ ...projectionPreview(projection), ...(apply ? { applyProjection: apply } : {}), ...(business ? { businessProjection: business } : {}), ...(recognized ? { recognizedProjection: recognized } : {}) }] }), action: 'note', review: projection.identityState !== 'resolved' || projection.contentState !== 'verified', run: tx => projectionItem(tx, relationId, context.batchId, expected ?? projection.inputFingerprint) })
     } catch (error) {
       if (!(error instanceof PlatformProjectionError)) throw error
       if (expected && !platformObservationSources.some(row => row.relationId === relationId)) platformObservationSources.push({ relationId, inputFingerprint: expected })
@@ -3137,7 +3138,8 @@ function planPlatformQuery(
       const projection = archived?.id != null ? readPlatformObservationPlan(db, archived.id) : planPlatformObservation({ interface: query.interface, relationKey: optionalString(archived?.values.relationKey), rawFields: archived?.values.rawFields })
       const apply = applyProjectionPreview(projection)
       const business = businessProjectionPreview(projection)
-      return { relationId: archived?.id ?? null, identityState: projection.identityState, contentState: projection.contentState, keySource: projection.keySource, ...(apply ? { applyProjection: apply } : {}), ...(business ? { businessProjection: business } : {}) }
+      const recognized = recognizedProjectionPreview(projection)
+      return { relationId: archived?.id ?? null, identityState: projection.identityState, contentState: projection.contentState, keySource: projection.keySource, ...(apply ? { applyProjection: apply } : {}), ...(business ? { businessProjection: business } : {}), ...(recognized ? { recognizedProjection: recognized } : {}) }
     }) }),
     action: originalSource ? 'note' : 'add',
     review: query.status === 'failed',
@@ -4771,8 +4773,10 @@ function summarizeCommit(plan: Plan, items: RosterImportItemResult[]): RosterImp
   const canonicalProjection: PlatformProjectionSummary = { recordsCreated: 0, versionsCreated: 0, observationsCreated: 0, observationsReused: 0, missingKey: 0, conflict: 0, unverifiable: 0 }
   let applyProjectionsCreated = 0, applyProjectionsReused = 0
   let businessProjectionsCreated = 0, businessProjectionsReused = 0
+  let recognizedProjectionsCreated = 0, recognizedProjectionsReused = 0
   let hasApplyProjection = false
   let hasBusinessProjection = false
+  let hasRecognizedProjection = false
   for (const projection of projections) {
     canonicalProjection.recordsCreated += Number(projection.recordCreated)
     canonicalProjection.versionsCreated += Number(projection.versionCreated)
@@ -4787,6 +4791,9 @@ function summarizeCommit(plan: Plan, items: RosterImportItemResult[]): RosterImp
     if (projection.businessProjectionCreated !== undefined || projection.businessProjectionReused !== undefined) hasBusinessProjection = true
     businessProjectionsCreated += Number(projection.businessProjectionCreated ?? 0)
     businessProjectionsReused += Number(projection.businessProjectionReused ?? 0)
+    if (projection.recognizedProjectionCreated !== undefined || projection.recognizedProjectionReused !== undefined) hasRecognizedProjection = true
+    recognizedProjectionsCreated += Number(projection.recognizedProjectionCreated ?? 0)
+    recognizedProjectionsReused += Number(projection.recognizedProjectionReused ?? 0)
   }
   if (hasApplyProjection) {
     canonicalProjection.applyProjectionsCreated = applyProjectionsCreated
@@ -4795,6 +4802,10 @@ function summarizeCommit(plan: Plan, items: RosterImportItemResult[]): RosterImp
   if (hasBusinessProjection) {
     canonicalProjection.businessProjectionsCreated = businessProjectionsCreated
     canonicalProjection.businessProjectionsReused = businessProjectionsReused
+  }
+  if (hasRecognizedProjection) {
+    canonicalProjection.recognizedProjectionsCreated = recognizedProjectionsCreated
+    canonicalProjection.recognizedProjectionsReused = recognizedProjectionsReused
   }
   return { written, skipped, failed: 0, evidenceRepointed, ...(projections.length ? { canonicalProjection } : {}) }
 }

@@ -11,7 +11,7 @@
 | 企业身份与资料 | `enterprise`、`enterprise_alias`、资料/别名审计；现有企业资料 PATCH | 统代优先，别名保留来源；归属待核不强并，现用资料不代替历史原值 |
 | 正式公布历史 | `source_document`、`record/event/evidence`；正式导入、事件/出处更正 | record 是企业×称号×发布方容器；事件、出处各有 ID，平台状态不改写正式事件 |
 | 平台采集与原档 | `platform_query/relation`、称号索引；实时单查/批查、归档列表、精确原档 | 查询状态是采集结果，关系行是观察；查询条件不是每条业务的称号/年度事实 |
-| 平台身份与历史 | `platform_business_record/version/observation`；`platform_apply_projection`；`platform_business_projection` | 当前三来源按接口+业务编号隔离，版本与观察分开；缺键、冲突、不可核实显式保留；申报与关联办理来源已有按内容版本关联的有类型投影 |
+| 平台身份与历史 | `platform_business_record/version/observation`；`platform_apply_projection`；`platform_business_projection`；`platform_recognized_projection` | 当前三来源按接口+业务编号隔离，版本与观察分开；缺键、冲突、不可核实显式保留；申报、关联办理与认定目录来源已有按内容版本关联的有类型投影；目录原值不决定正式资格 |
 | 文件导出快照 | `platform_export_batch/row` | 保留文件版本与物理行；审核状态不同于工商登记状态，不替代正式历史 |
 | 对应、差异与年度 | `record_correspondence`、proof、`difference_reason`、113/114 表及审计 | 决定精确到原观察/导出行；先限定来源范围再分组；年度完整过程与唯一 final 分开 |
 | 当前有效资格 | `current-qualification`、优质中小企业查询与三称号工作簿 | 复用资格读取，待核/排除与有效分开，不另造资格 writer |
