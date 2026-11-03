@@ -1,3 +1,4 @@
+import { CURRENT_RULE_VERSION } from '../lib/roster/current-qualification'
 import { businessIdentity, expectedBusinessIdentity, matchesBusinessIdentity } from './helpers/current-export-118'
 import { execFileSync } from 'node:child_process'
 
@@ -277,7 +278,7 @@ it('本称号生成失败无半成品且可显式重新生成', async () => {
   const accepted = await f.json(response), failed = await f.terminal(accepted.jobId)
   expect(failed.state).toBe('failed'); expect(failed.error).toContain('Excel')
   expect(failed.params.titleCode).toBe('specialized_sme')
-  expect(failed.result.ruleVersion).toBe('current-roster-116-v8')
+  expect(failed.result.ruleVersion).toBe(CURRENT_RULE_VERSION)
   expect(failed.result.artifact).toBeUndefined()
   expect(JSON.stringify(failed)).not.toContain(f.dir)
   expect((await fetch(f.url('/api/job-artifacts/' + failed.id),{headers:f.headers})).status).toBe(404)

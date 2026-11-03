@@ -1,3 +1,4 @@
+import { CURRENT_RULE_VERSION, QUALIFICATION_ASSESSMENT_VERSION } from '../lib/roster/current-qualification'
 import { createHash } from 'node:crypto'
 import { writeFileSync, renameSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
@@ -70,8 +71,8 @@ function databaseContent() {
 function verifySnapshot(snapshot: CurrentQualificationSnapshot, result: CurrentQualifiedResult) {
   expect(snapshot.asOf).toBe(result.snapshotStartedAt)
   expect(new Date(snapshot.asOf).getUTCFullYear()).toBe(year)
-  expect(snapshot.ruleVersion).toBe('current-roster-116-v8')
-  expect(snapshot.assessmentVersion).toBe('enterprise-qualification-407-v1')
+  expect(snapshot.ruleVersion).toBe(CURRENT_RULE_VERSION)
+  expect(snapshot.assessmentVersion).toBe(QUALIFICATION_ASSESSMENT_VERSION)
   expect(snapshot.titles.map(t => t.titleCode)).toEqual(['little_giant', 'specialized_sme', 'innovative_sme'])
   const scope = { enterpriseId: snapshot.enterpriseId, asOf: snapshot.asOf, ruleVersion: snapshot.ruleVersion, assessmentVersion: snapshot.assessmentVersion }
   expect(snapshot.snapshotId).toBe(hash([scope, snapshot.titles]))

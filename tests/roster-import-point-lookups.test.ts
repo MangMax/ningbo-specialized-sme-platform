@@ -95,7 +95,9 @@ describe('Historical import point lookup work', () => {
       const input = request('measured')
       const preflight = measure(db, () => preflightRosterImport(db, input))
       const commit = measure(db, () => commitRosterImport(db, input))
-      expect(preflight.result.preflight).toEqual({ add: 0, update: 0, remove: 0, review: 8, conflicts: [], duplicateCandidates: [], evidenceRepoints: 0, batchStatus: 'preflight' })
+      // Stable write-plan contract; qualification diagnostics/readback are
+      // covered by their own tests and are not part of the point-lookup budget.
+      expect(preflight.result.preflight).toMatchObject({ add: 0, update: 0, remove: 0, review: 8, conflicts: [], duplicateCandidates: [], evidenceRepoints: 0, batchStatus: 'preflight' })
       expect(commit.result.status).toBe('committed')
       expect(commit.result.summary).toEqual({ written: 0, skipped: 16, failed: 0, evidenceRepointed: 0 })
       expect(commitRosterImport(db, input)).toEqual(commit.result)

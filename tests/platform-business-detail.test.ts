@@ -9,7 +9,7 @@ import { ensurePlatformObservation } from '../server/utils/platform-business-rec
 import { getRosterEnterpriseDetail } from '../lib/roster/enterprise-roster'
 
 const cleanup: Array<() => void | Promise<void>> = []
-afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close(); vi.unstubAllEnvs(); vi.unstubAllGlobals() })
+afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close(); vi.unstubAllEnvs(); vi.unstubAllGlobals(); vi.useRealTimers() })
 function fixture() {
   const dir = mkdtempSync(join(tmpdir(), 'business-detail246-'))
   const db = useDb({ dbPath: join(dir, 'roster.db') })
@@ -103,5 +103,8 @@ it('HTTP detail reads scoped lightweight canonical mappings inside the offmain d
   cleanup.push(() => new Promise<void>(resolve => server.close(() => resolve())))
   const response = await fetch(`http://127.0.0.1:${(server.address() as { port: number }).port}/api/roster/enterprises/${f.enterprise.id}`)
   expect(response.status).toBe(200)
-  expect(await response.json()).toEqual(direct)
+  // The qualification scope carries an execution-time asOf, and the HTTP read
+  // runs in its own executor; compare every field except that timing digest.
+  const body = await response.json() as any, strip = (detail: any) => { const copy = structuredClone(detail); delete copy.qualificationAssessment?.asOf; delete copy.qualificationAssessment?.snapshotId; return copy }
+  expect(strip(body)).toEqual(strip(direct))
 })

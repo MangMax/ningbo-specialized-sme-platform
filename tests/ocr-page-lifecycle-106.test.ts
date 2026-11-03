@@ -198,7 +198,10 @@ it('page redo and deletion preserve source bytes, images, file parts, formal eve
   expect(deleted).toMatchObject({ deleted: 1, remaining: 1 })
   expect(await call('get_ocr_result', { fileId: file.id, page: 2 })).toEqual(other)
   expect(await call('get_file', { fileId: file.id })).toEqual(fileBefore)
-  expect(await (await fetch(detailUrl)).json()).toEqual(before)
+  // Detail must be unchanged apart from the qualification scope's execution-time
+  // asOf and its snapshot digest, which are per-read timing, not stored facts.
+  const stable = (detail: any) => { const copy = structuredClone(detail); delete copy.qualificationAssessment?.asOf; delete copy.qualificationAssessment?.snapshotId; return copy }
+  expect(stable(await (await fetch(detailUrl)).json())).toEqual(stable(before))
   expect(Buffer.from(await (await fetch(`${app.baseUrl}/api/files/synthetic.pdf`)).arrayBuffer())).toEqual(minimalPdf({ pages: 6 }))
   expect(Buffer.from(await (await fetch(`${app.baseUrl}/api/files/.synthetic.pdf.pages/p001.png`)).arrayBuffer())).toEqual(png)
 })

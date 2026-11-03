@@ -1,3 +1,4 @@
+import { CURRENT_RULE_VERSION, QUALIFICATION_ASSESSMENT_VERSION } from '../lib/roster/current-qualification'
 import { createHash } from 'node:crypto'
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
@@ -239,7 +240,7 @@ it('B09 retains captured old and new names after public merge using the survivin
 
 it('B10 preserves enumerable qualification input exactly under an explicit sidecar-only isolation control', async () => {
   const f = await paired(), before = await f.http('/current'), exact = await f.exact(2)
-  const scope = { enterpriseId: 1, asOf: '2026-10-25T08:00:00.000Z', ruleVersion: 'current-roster-116-v8', assessmentVersion: 'enterprise-qualification-407-v1' }
+  const scope = { enterpriseId: 1, asOf: '2026-10-25T08:00:00.000Z', ruleVersion: CURRENT_RULE_VERSION, assessmentVersion: QUALIFICATION_ASSESSMENT_VERSION }
   const assertQA = (value: CurrentQualificationSnapshot) => {
     expect(value).toMatchObject(scope)
     expect(value.titles.map(item => item.titleCode)).toEqual(['little_giant', 'specialized_sme', 'innovative_sme'])
@@ -369,7 +370,7 @@ it.each([{ case: 'Spec25', count: 25, perEvent: 5 }, { case: 'Standards24', coun
     const before = JSON.parse(JSON.stringify(readCurrentCandidate(f.sqlite, 1, 'specialized_sme', qualificationYear, executionTime, undefined, true)))
     const current = await get(), { publishedPresentation, qualificationAssessment, ...old } = current.rows[0]
     // The additive complete T2 is checked before the unchanged legacy-row oracle.
-    const scope = { enterpriseId: 1, asOf: new Date(executionTime).toISOString(), ruleVersion: 'current-roster-116-v8', assessmentVersion: 'enterprise-qualification-407-v1' }
+    const scope = { enterpriseId: 1, asOf: new Date(executionTime).toISOString(), ruleVersion: CURRENT_RULE_VERSION, assessmentVersion: QUALIFICATION_ASSESSMENT_VERSION }
     expect(current.responseVersion).toBe('current-qualified-408-v1')
     expect(qualificationAssessment).toMatchObject(scope)
     expect(qualificationAssessment.titles.map((item: { titleCode: string }) => item.titleCode)).toEqual(['little_giant', 'specialized_sme', 'innovative_sme'])

@@ -1,4 +1,5 @@
 /** #428 real public handler HTTP chain; does not claim compiled Nitro evidence. */
+import { CURRENT_RULE_VERSION, LEGACY_CURRENT_RULE_VERSION, LEGACY_QUALIFICATION_ASSESSMENT_VERSION, QUALIFICATION_ASSESSMENT_VERSION } from '../lib/roster/current-qualification'
 import { createHash } from 'node:crypto'
 import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -109,7 +110,7 @@ it('P_closed_public_award', async () => {
       expect(annual.sourceGeneration).toBe(hash(JSON.stringify(annual.sourceRefs)))
       expect(legacy.titles).toHaveLength(3)
       const { snapshotId, titles, ...scope } = legacy
-      expect(scope).toEqual({ enterpriseId: enterprise.id, asOf: '2026-06-01T00:00:00.000Z', ruleVersion: 'current-roster-116-v8', assessmentVersion: 'enterprise-qualification-407-v1' })
+      expect(scope).toEqual({ enterpriseId: enterprise.id, asOf: '2026-06-01T00:00:00.000Z', ruleVersion: CURRENT_RULE_VERSION, assessmentVersion: QUALIFICATION_ASSESSMENT_VERSION })
       expect(snapshotId).toBe(hash(JSON.stringify([scope, titles])))
       expect(titles.find(t => t.titleCode === title)!.officialQualification.group).toBe('eligible')
       expect(JSON.stringify(reader.read(enterprise.id, asOf).snapshot)).toBe(legacyBytes)
@@ -246,7 +247,7 @@ async function publicPartition428(spec:PublicPartition428) {
       expect(annual.sourceGeneration).toBe(hash(JSON.stringify(annual.sourceRefs)))
       expect(legacy.titles).toHaveLength(3)
       const { snapshotId, titles, ...scope } = legacy
-      expect(scope).toEqual({ enterpriseId: enterprise.id, asOf: '2026-06-01T00:00:00.000Z', ruleVersion: 'current-roster-116-v8', assessmentVersion: 'enterprise-qualification-407-v1' })
+      expect(scope).toEqual({ enterpriseId: enterprise.id, asOf: '2026-06-01T00:00:00.000Z', ruleVersion: CURRENT_RULE_VERSION, assessmentVersion: QUALIFICATION_ASSESSMENT_VERSION })
       expect(snapshotId).toBe(hash(JSON.stringify([scope, titles])))
       expect(titles.find(t => t.titleCode === title)!.officialQualification.group).toBe('eligible')
       expect(JSON.stringify(reader.read(enterprise.id, asOf).snapshot)).toBe(legacyBytes)
@@ -436,7 +437,9 @@ function traceSmall428(sqlite:Database.Database, enterpriseId:number, title:Publ
     const reader=createCurrentQualificationAssessmentReader(sqlite), asOf=Date.parse('2026-06-01T00:00:00Z')
     const base:Call[]=[],explicit:Call[]=[]
     const baseTx:{nested:boolean;mode:string}[]=[],explicitTx:{nested:boolean;mode:string}[]=[]
-    active=base;transactions=baseTx;const legacy=reader.read(enterpriseId,asOf).snapshot
+    // The comparison seam is anchored on a legacy-version snapshot, so read that
+    // snapshot explicitly instead of re-stamping the live one.
+    active=base;transactions=baseTx;const legacy=reader.read(enterpriseId,asOf,{ assessmentVersion: LEGACY_QUALIFICATION_ASSESSMENT_VERSION }).snapshot
     active=explicit;transactions=explicitTx;const result=reader.readPlatformComparison(enterpriseId,asOf,title)
     active=null;transactions=null
     const signature=(c:Call)=>digest(c.sql+'\n'+c.method)
@@ -484,7 +487,9 @@ function traceSmall428(sqlite:Database.Database, enterpriseId:number, title:Publ
       expect([counts.sourceQ,counts.sourceR,counts.sourceT]).toEqual([1,1,1])
       expect(counts.enrichment).toBeLessThanOrEqual(4)
     } else expect(['F','sourceQ','sourceR','sourceT','history','metadata','group_decisions','enrichment'].every(k=>!counts[k])).toBe(true)
-    expect(JSON.stringify(reader.read(enterpriseId,asOf).snapshot)).toBe(JSON.stringify(legacy))
+    // The comparison seam reads the legacy-version snapshot; repeat that exact read
+    // to prove the comparison added no writes and did not change the legacy scope.
+    expect(JSON.stringify(reader.read(enterpriseId,asOf,{assessmentVersion: LEGACY_QUALIFICATION_ASSESSMENT_VERSION}).snapshot)).toBe(JSON.stringify(legacy))
     expect(sqlite.prepare('select total_changes() n').get()).toEqual(unchanged)
     expect(sqlite.pragma('query_only',{simple:true})).toBe(1)
   } finally {

@@ -9,6 +9,7 @@ import { TASK_EXPORTS, TASK_GROUPS, TASK_LABELS, TASK_TABS, type TaskList, type 
 import { readApiToken, resolveApiAuth } from './api-auth'
 import { currentArtifact, currentExportDbPath } from './current-export-artifact'
 import { requestJobCancel, jobSpecs } from './job-runner'
+import { CURRENT_RULE_VERSION, LEGACY_CURRENT_RULE_VERSION } from '../../lib/roster/current-qualification'
 import { retryPlatformBatch } from './platform-batch-query'
 import { MAX_BATCH_ATTEMPTS } from '../../lib/platform/batch-query'
 
@@ -146,7 +147,9 @@ async function summarize(row: ProjectedTask, authorized: boolean, db: Db, detail
       titleCode: title?.titleCode ?? null, regenerateOf: isJobId(meta.regenerateOf) ? meta.regenerateOf : null,
       phase: ['starting','workbook','complete'].includes(meta.phase) ? meta.phase : 'unknown',
       generatedAt: date(meta.generatedAt), snapshotStartedAt: date(meta.snapshotStartedAt),
-      ruleVersion: ['current-roster-116-v1', 'current-roster-116-v2', 'current-roster-116-v3', 'current-roster-116-v4', 'current-roster-116-v5', 'current-roster-116-v6', 'current-roster-116-v7', 'current-roster-116-v8'].includes(meta.ruleVersion) ? meta.ruleVersion : null,
+      // Whitelist the live rule version plus its predecessor: a bump must not turn
+      // fresh exports into "unknown rule" in the task center.
+      ruleVersion: [CURRENT_RULE_VERSION, LEGACY_CURRENT_RULE_VERSION, 'current-roster-116-v1', 'current-roster-116-v2', 'current-roster-116-v3', 'current-roster-116-v4', 'current-roster-116-v5', 'current-roster-116-v6', 'current-roster-116-v7'].includes(meta.ruleVersion) ? meta.ruleVersion : null,
       dataVersion: /^sha256:[a-f0-9]{64}$/.test(meta.dataVersion) ? meta.dataVersion : null,
       counts: meta.counts && Object.values(meta.counts).every(n => Number.isSafeInteger(n) && Number(n) >= 0) ? meta.counts : null,
       artifact, canDownload: authorized && artifact?.availability === 'available', canRegenerate: authorized && !active && !!title,
