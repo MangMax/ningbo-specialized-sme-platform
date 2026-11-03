@@ -43,6 +43,8 @@ export const APPLICATION_LOG_ROUTES: ReadonlySet<string> = new Set([
   "/api/platform/queries",
   "/api/platform/queries/:queryId/evidence",
   "/api/platform/query",
+  "/api/platform/recognized-directory",
+  "/api/platform/recognized-directory/:recordId",
   "/api/platform/snapshots",
   "/api/platform/snapshots/diff",
   "/api/quality",

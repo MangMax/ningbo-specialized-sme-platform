@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { SidebarProps } from '@/components/ui/sidebar'
-import { ChartColumn, ClipboardList, FileText, FolderOpen, Gauge, GitCompareArrows, LayoutList, ScanText, KeyRound, ListTodo, Search, Logs } from '@lucide/vue'
+import { BookOpenCheck, ChartColumn, ClipboardList, FileText, FolderOpen, Gauge, GitCompareArrows, LayoutList, ScanText, KeyRound, ListTodo, Search, Logs } from '@lucide/vue'
 import { ENTERPRISE_LIST_TITLE } from '~~/lib/labels'
 import NavMain from '@/components/NavMain.vue'
 import {
@@ -29,6 +29,8 @@ const nav = [
   { title: '申报记录', url: '/platform-declarations', icon: FileText },
   // 关联办理:本地 business_list typed 投影的查询入口;称号范围是查询事实,不是逐行称号。
   { title: '关联办理', url: '/platform-business-processes', icon: ClipboardList },
+  // 平台认定目录:本地 recognized_list typed 投影的镜像查询入口;不是「当前有效企业」资格模型。
+  { title: '平台认定目录', url: '/platform-recognized-directory', icon: BookOpenCheck },
   { title: '文件管理', url: '/files', icon: FolderOpen },
   // 识别校对:扫描件的逐页 OCR 结果在这里对着页图核对、改、删、导入(票 14 的页面半边)。
   { title: '识别校对', url: '/ocr', icon: ScanText },

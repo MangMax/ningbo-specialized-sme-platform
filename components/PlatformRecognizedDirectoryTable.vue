@@ -1,0 +1,160 @@
+<script setup lang="ts">
+import { computed } from 'vue'
+import { ExternalLink, History } from '@lucide/vue'
+import type { RecognizedDirectoryRow } from '~~/lib/platform/recognized-directory'
+import { RECOGNIZED_TITLE_CODE_BY_RDJB } from '~~/lib/platform/recognized-directory'
+import { PLATFORM_RDJBS } from '~~/lib/labels'
+import { formatFetchTime } from '~~/lib/reconcile-time'
+import { Button } from '@/components/ui/button'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+
+const props = defineProps<{ view: 'records' | 'isolated'; rows: RecognizedDirectoryRow[]; loading?: boolean }>()
+const emit = defineEmits<{ 'open-record': [recordId: number] }>()
+
+type RecordRow = Extract<RecognizedDirectoryRow, { kind: 'record' }>
+const records = computed(() => props.rows.filter((row): row is RecordRow => row.kind === 'record'))
+const isolated = computed(() => props.rows.filter((row): row is Extract<RecognizedDirectoryRow, { kind: 'observation' }> => row.kind === 'observation'))
+const missing = (value: string | number | null | undefined) => value === null || value === undefined || value === '' ? '未提供' : String(value)
+const time = (value: string | null) => value ? formatFetchTime(value) ?? value : '未提供'
+const scopes = (values: string[]) => values.length ? values.map(value => PLATFORM_RDJBS[value] ?? value).join('、') : '未记录'
+const enterprise = (row: RecordRow) => {
+  if (row.enterpriseNames.length === 1) return row.enterpriseNames[0]!
+  if (row.enterpriseNames.length > 1) return `${row.enterpriseNames.length} 家企业归属冲突`
+  return row.matchedVersion.nameRaw ?? '未匹配主体'
+}
+const enterpriseId = (row: RecordRow) => row.enterpriseIds.length === 1 ? row.enterpriseIds[0]! : null
+/** A navigation entry only. The title code comes from the unambiguous observed query scope,
+ * never from the row-level title, and the existing current-enterprises reader decides. */
+const currentQuery = (row: RecordRow) => {
+  const titleCode = row.titleScopes.length === 1 ? RECOGNIZED_TITLE_CODE_BY_RDJB[row.titleScopes[0]!] : undefined
+  const q = row.enterpriseNames.length === 1 ? row.enterpriseNames[0] : row.matchedVersion.nameRaw ?? row.matchedVersion.usccRaw ?? undefined
+  return { titleCode, q }
+}
+const conflictLabel: Record<string, string> = {
+  title_conflict: '行称号与查询范围不一致',
+  enterprise_assignment_conflict: '企业归属冲突',
+  unverifiable_observation: '存在内容未核实观察',
+}
+</script>
+
+<template>
+  <div class="min-w-0" data-testid="platform-recognized-directory-table">
+    <template v-if="view === 'records'">
+      <p class="text-muted-foreground mb-2 text-[13px] leading-5" data-testid="platform-recognized-boundary">
+        目录镜像不是当前有效资格：目录行存在、消失或日期原值都不直接推出正式有效或失效；称号范围来自原查询，不是逐行称号事实。
+      </p>
+      <p v-if="records.length" class="text-muted-foreground mb-2 text-[13px] leading-5 sm:hidden">点开「观察与版本」查看有效期原值、维护年/批次、属地与内容版本。</p>
+      <div v-if="records.length" class="data-table-scroll hidden sm:block [&_[data-slot=table-container]]:overflow-visible">
+        <Table class="data-table min-w-[1040px] table-fixed 2xl:min-w-[1160px]" aria-label="平台认定目录">
+          <TableHeader>
+            <TableRow class="hover:bg-transparent">
+              <TableHead class="w-[11%]">目录业务ID</TableHead>
+              <TableHead class="w-[18%]">企业</TableHead>
+              <TableHead class="w-[11%] whitespace-nowrap">有效期（原值）</TableHead>
+              <TableHead class="w-[6%] whitespace-nowrap">维护年</TableHead>
+              <TableHead class="w-[7%] whitespace-nowrap">维护批次</TableHead>
+              <TableHead class="w-[8%] whitespace-nowrap">属地（原值）</TableHead>
+              <TableHead class="w-[10%] whitespace-nowrap">称号范围</TableHead>
+              <TableHead class="w-[8%] whitespace-nowrap">版本 / 观察</TableHead>
+              <TableHead class="sticky right-0 z-20 w-[13%] border-l bg-muted">详情</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            <TableRow v-for="row in records" :key="row.record.id" class="align-top" data-testid="platform-recognized-directory-row" :data-record-id="row.record.id">
+              <TableCell class="break-all font-mono text-xs">{{ row.record.platformKey }}</TableCell>
+              <TableCell class="whitespace-normal break-words [overflow-wrap:anywhere]">
+                <NuxtLink v-if="enterpriseId(row) != null" :to="`/enterprises/${enterpriseId(row)}`" class="font-medium hover:underline">{{ enterprise(row) }}</NuxtLink>
+                <span v-else class="font-medium">{{ enterprise(row) }}</span>
+                <span class="text-muted-foreground mt-1 block break-all font-mono text-xs">{{ missing(row.matchedVersion.usccRaw) }}</span>
+              </TableCell>
+              <TableCell class="whitespace-nowrap font-mono text-xs">{{ missing(row.matchedVersion.validityDateRaw) }}</TableCell>
+              <TableCell class="tabular-nums">{{ missing(row.matchedVersion.maintenanceYear) }}</TableCell>
+              <TableCell class="break-all font-mono text-xs">{{ missing(row.matchedVersion.maintenanceBatch) }}</TableCell>
+              <TableCell class="break-all font-mono text-xs">{{ missing(row.matchedVersion.district) }}</TableCell>
+              <TableCell class="whitespace-normal text-xs leading-5">{{ scopes(row.titleScopes) }}</TableCell>
+              <TableCell class="tabular-nums">{{ row.versionCount }} / {{ row.observationCount }}<span v-if="row.matchedVersionCount > 1" class="text-muted-foreground block text-xs">匹配 {{ row.matchedVersionCount }} 个版本</span><span v-if="row.matchedVersion.ruleVersion == null" class="text-muted-foreground block text-xs">尚未建立 typed 投影</span></TableCell>
+              <TableCell class="sticky right-0 z-10 border-l bg-card">
+                <Button variant="ghost" size="sm" :disabled="loading" @click="emit('open-record', row.record.id)"><History data-icon="inline-start" />观察与版本</Button>
+                <NuxtLink v-if="currentQuery(row).titleCode || currentQuery(row).q" :to="{ path: '/current-enterprises', query: { ...(currentQuery(row).titleCode ? { titleCode: currentQuery(row).titleCode } : {}), ...(currentQuery(row).q ? { q: currentQuery(row).q } : {}) } }" class="mt-1 block text-xs hover:underline" data-testid="platform-recognized-current-link">当前有效资格</NuxtLink>
+                <span v-for="conflict in row.conflicts" :key="conflict" class="text-muted-foreground mt-1 block text-xs">{{ conflictLabel[conflict] ?? conflict }}</span>
+              </TableCell>
+            </TableRow>
+          </TableBody>
+        </Table>
+      </div>
+      <ul v-if="records.length" class="flex flex-col divide-y sm:hidden" aria-label="平台认定目录列表">
+        <li v-for="row in records" :key="row.record.id" class="flex min-w-0 flex-col gap-1.5 p-3" data-testid="platform-recognized-directory-card" :data-record-id="row.record.id">
+          <div class="flex items-start justify-between gap-2">
+            <div class="min-w-0">
+              <p class="break-all font-mono text-xs">{{ row.record.platformKey }}</p>
+              <NuxtLink v-if="enterpriseId(row) != null" :to="`/enterprises/${enterpriseId(row)}`" class="font-medium break-words hover:underline">{{ enterprise(row) }}</NuxtLink>
+              <p v-else class="font-medium break-words">{{ enterprise(row) }}</p>
+              <p class="text-muted-foreground break-all font-mono text-xs">{{ missing(row.matchedVersion.usccRaw) }}</p>
+            </div>
+            <Button variant="outline" size="sm" class="min-h-11 shrink-0" :disabled="loading" @click="emit('open-record', row.record.id)"><History data-icon="inline-start" />观察与版本</Button>
+          </div>
+          <p class="font-mono text-sm leading-5">有效期 {{ missing(row.matchedVersion.validityDateRaw) }}</p>
+          <p class="text-sm leading-5">维护年 {{ missing(row.matchedVersion.maintenanceYear) }} · 批次 {{ missing(row.matchedVersion.maintenanceBatch) }} · 属地 {{ missing(row.matchedVersion.district) }}</p>
+          <p class="text-sm leading-5">称号范围 {{ scopes(row.titleScopes) }}</p>
+          <p class="text-muted-foreground text-sm leading-5">版本 {{ row.versionCount }} / 观察 {{ row.observationCount }}<template v-if="row.matchedVersion.ruleVersion == null"> · 尚未建立 typed 投影</template></p>
+          <NuxtLink v-if="currentQuery(row).titleCode || currentQuery(row).q" :to="{ path: '/current-enterprises', query: { ...(currentQuery(row).titleCode ? { titleCode: currentQuery(row).titleCode } : {}), ...(currentQuery(row).q ? { q: currentQuery(row).q } : {}) } }" class="text-xs hover:underline" data-testid="platform-recognized-current-link">当前有效资格（既有查询）</NuxtLink>
+          <p v-for="conflict in row.conflicts" :key="conflict" class="text-muted-foreground text-xs">{{ conflictLabel[conflict] ?? conflict }}</p>
+        </li>
+      </ul>
+    </template>
+
+    <template v-else>
+      <p class="text-muted-foreground mb-2 text-[13px] leading-5" data-testid="platform-recognized-isolated-boundary">缺编号、编号冲突或内容不可核实的目录观察逐条隔离，不并入任何目录记录；点开「查看原查询」核对来源。</p>
+      <div v-if="isolated.length" class="data-table-scroll hidden sm:block [&_[data-slot=table-container]]:overflow-visible">
+        <Table class="data-table min-w-[880px] table-fixed" aria-label="隔离的目录观察">
+          <TableHeader>
+            <TableRow class="hover:bg-transparent">
+              <TableHead class="w-[14%]">原行 / 查询</TableHead>
+              <TableHead class="w-[22%]">企业原值</TableHead>
+              <TableHead class="w-[12%] whitespace-nowrap">称号范围</TableHead>
+              <TableHead class="w-[12%] whitespace-nowrap">采集时间</TableHead>
+              <TableHead class="w-[18%]">隔离原因</TableHead>
+              <TableHead class="sticky right-0 z-20 w-[12%] border-l bg-muted">查询证据</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            <TableRow v-for="row in isolated" :key="row.relationId" class="align-top" data-testid="platform-recognized-directory-isolated-row" :data-relation-id="row.relationId">
+              <TableCell class="whitespace-nowrap">行 #{{ row.relationId }} · 查询 #{{ row.queryId }}</TableCell>
+              <TableCell class="whitespace-normal break-words [overflow-wrap:anywhere]">{{ missing(row.nameRaw) }}<span class="text-muted-foreground mt-1 block break-all font-mono text-xs">{{ missing(row.usccRaw) }}</span><span v-if="row.enterpriseName" class="text-muted-foreground mt-1 block text-xs">已归属 {{ row.enterpriseName }}</span></TableCell>
+              <TableCell class="whitespace-normal text-xs leading-5">{{ scopes(row.titleScopes) }}</TableCell>
+              <TableCell class="whitespace-nowrap tabular-nums">{{ time(row.queriedAt) }}</TableCell>
+              <TableCell class="text-xs">
+                <span v-if="row.identityState === 'missing_key'">缺少平台业务编号</span>
+                <span v-else-if="row.identityState === 'conflict'">平台编号冲突</span>
+                <span v-if="row.contentState === 'unverifiable'">原文内容无法核实</span>
+              </TableCell>
+              <TableCell class="sticky right-0 z-10 border-l bg-card">
+                <NuxtLink :to="{ path: '/platform-queries', query: { queryKey: row.queryKey } }" class="inline-flex items-center gap-1 text-xs hover:underline">查看原查询<ExternalLink class="size-3" /></NuxtLink>
+              </TableCell>
+            </TableRow>
+          </TableBody>
+        </Table>
+      </div>
+      <ul v-if="isolated.length" class="flex flex-col divide-y sm:hidden" aria-label="隔离的目录观察列表">
+        <li v-for="row in isolated" :key="row.relationId" class="flex min-w-0 flex-col gap-1.5 p-3" data-testid="platform-recognized-directory-isolated-card" :data-relation-id="row.relationId">
+          <div class="flex items-start justify-between gap-2">
+            <div class="min-w-0">
+              <p class="break-words font-medium">{{ missing(row.nameRaw) }}</p>
+              <p class="text-muted-foreground break-all font-mono text-xs">{{ missing(row.usccRaw) }}</p>
+              <p v-if="row.enterpriseName" class="text-muted-foreground text-xs">已归属 {{ row.enterpriseName }}</p>
+            </div>
+            <span class="text-muted-foreground shrink-0 text-xs">行 #{{ row.relationId }} · 查询 #{{ row.queryId }}</span>
+          </div>
+          <p class="text-sm leading-5">称号范围 {{ scopes(row.titleScopes) }}</p>
+          <p class="text-muted-foreground text-sm leading-5">采集 {{ time(row.queriedAt) }}</p>
+          <p class="text-xs">
+            <span v-if="row.identityState === 'missing_key'">缺少平台业务编号</span>
+            <span v-else-if="row.identityState === 'conflict'">平台编号冲突</span>
+            <span v-if="row.contentState === 'unverifiable'">原文内容无法核实</span>
+          </p>
+          <NuxtLink :to="{ path: '/platform-queries', query: { queryKey: row.queryKey } }" class="inline-flex items-center gap-1 text-xs hover:underline">查看原查询<ExternalLink class="size-3" /></NuxtLink>
+        </li>
+      </ul>
+    </template>
+  </div>
+</template>
