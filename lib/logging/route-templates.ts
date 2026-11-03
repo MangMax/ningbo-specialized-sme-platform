@@ -37,6 +37,8 @@ export const APPLICATION_LOG_ROUTES: ReadonlySet<string> = new Set([
   "/api/platform/batches/:batchId",
   "/api/platform/batches/:batchId/items/:itemId",
   "/api/platform/batches/:batchId/retry",
+  "/api/platform/business-processes",
+  "/api/platform/business-processes/:recordId",
   "/api/platform/capabilities",
   "/api/platform/declarations",
   "/api/platform/declarations/:recordId",

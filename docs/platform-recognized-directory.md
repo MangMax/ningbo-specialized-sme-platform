@@ -12,6 +12,7 @@
 - 目录存在/消失、`rddqrq` 原值、`whpcyear`/`whpc` **都不直接推出正式有效或失效**。本层不新建第二资格算法，也不写入正式事件/对应。
 - 页面与接口名称固定为「平台认定目录（镜像）」；页面描述明写「不是『当前有效企业』资格模型」。每条目录记录提供到既有 `/current-enterprises` 的**导航入口**（`q=企业名称/USCC`，仅当观察到的查询称号范围唯一时才带 `titleCode`）；这是入口，不是判定。
 - 目录行与正式资格的对照见「三路对照」；目录读路径与旧企业平台历史的对照见「影子对照」。
+- 术语：**平台认定目录（镜像）** 指本读模型；**有效期原值** 指 `rddqrq` 原样字符串——不是认定日期，也不是精确到期日。两者见 [GLOSSARY](../GLOSSARY.md)。
 
 ## 查询入口
 
@@ -20,14 +21,15 @@
 | `GET /api/platform/recognized-directory` | 等价 MCP `list_platform_recognized_directory`。 |
 | `GET /api/platform/recognized-directory/{recordId}` | 等价 MCP `get_platform_recognized_record`。 |
 | 页面 `/platform-recognized-directory` | 侧边栏「平台认定目录」；筛选、分页、观察与版本详情。 |
-| 真实消费者 | `components/PlatformRecords.vue` 的 `recognized_list` 行「本地目录记录」（携带精确 `platformKey`）；`/platform-queries` 的 `recognized_list` 查询卡片「本地目录记录」（携带该查询的 `q`）。 |
+| 真实消费者（必需） | `components/PlatformRecords.vue` 的 `recognized_list` 行「本地目录记录」：仅在已解析出 `platformKey` 时渲染，深链携带精确 `platformKey`；缺编号/编号冲突/未核实行不渲染链接。 |
+| 次级入口（非必需） | `/platform-queries` 的 `recognized_list` 查询卡片「本地目录记录」：USCC 形 key → `q=key`；`name:<名称>` → `q=<名称>`；`scope:...` 及其它 → 不带 `q`（进入目录页，不加筛选）。它只是导航，不承担消费者职责。 |
 
 ### 筛选（REST 与 MCP 同一 zod strict 契约）
 
 | 参数 | 语义 |
 |---|---|
 | `view` | `records`（默认）或 `isolated`。 |
-| `q` | 企业名称/统一社会信用代码关键词；只通过已归属观察匹配。 |
+| `q` | 企业名称/统一社会信用代码关键词；只通过已归属观察匹配。查询卡片的 `scope:queryBusList:...` 键不含企业名称/统代，因此该入口不带 `q`。 |
 | `enterpriseId` | 精确企业 ID（经已归属观察）。 |
 | `platformKey` | 精确目录业务ID = `platform_business_record.platform_key`；`interface='recognized_list'` 限定，跨接口同编号不合并。`view=isolated` 下匹配原行编号，因为未投影观察没有目录业务ID。 |
 | `rdjb` | 来源查询的**显式称号范围**（1/2/3），取 `platform_query.rdjb` 或 `platform_query_title_scope`；不是逐行称号事实。 |
@@ -53,9 +55,12 @@
 ## 预算
 
 - 列表 SQL 只读 `platform_recognized_projection` 与既有 `platform_business_record(_version)`/`observation`/`relation`/`query` 列与其索引；企业关键词通过已归属 observation/relation/enterprise 做 `EXISTS`，称号范围通过 `platform_query`/`platform_query_title_scope` 做 `EXISTS`（不 JOIN，避免行倍增），**不扫描或解析 raw JSON**。
+- `total` 与行查询共用同一组 `WHERE`：包括 `rdjb` 在内的每个筛选都约束**同一个被选中的内容版本**（`versionTitleScopeExists` 以 `v.id` 关联），不会出现「记录级命中、行级不命中」的 `total=1, rows=[]`。
+- 记录级冲突只做 `select distinct o.record_id` 聚合：未核实观察一条、行称号与查询范围冲突一条（SQL 内联 `platform_query.rdjb` + `platform_query_title_scope` 判定，与 `titleScopesByQuery` 同一语义）、企业归属复用既有 helper；不物化观察行，内存与响应按 ≤200 个记录 ID 有界。
 - 每页最多 200 条记录；详情最多 100 个版本、200 次观察，计数另查。详情称号范围只针对实际返回的 ≤100 个版本、≤200 次观察的 query id。
 - 稳定排序：记录按最近采集时间倒序、记录 ID 倒序；版本按版本 ID 倒序；观察按采集时间倒序、relation ID 倒序。
 - 测试预算：小详情响应体 < 600 KB；101 版本 / 201 观察的详情 < 900 KB（`tests/platform-recognized-directory-http.test.ts`）。
+- 分页一致性与 60 观察有界冲突回归：`tests/platform-recognized-directory-http.test.ts`（`rdjb=1&whpcyear=2025` → total 0 / rows []；`rdjb=2&whpcyear=2025` → total 1；单记录 60 观察仍返回 `title_conflict` 且响应 < 10 KB）。
 - 失败返回 400/404，不把失败/无记录混成空结果；响应 `cache-control: no-store`。
 
 ## 影子对照（同一隔离 SQLite，同一观察）
@@ -85,6 +90,7 @@
 - A = 新目录读路径（公开 HTTP `GET /api/platform/recognized-directory`）。
 - B = `enterpriseReads.currentQualifiedJson(dbPath, {titleCode:'innovative_sme'})`（`/api/roster/current-enterprises` 路由同一调用）。
 - C = 真实异步导出写入器 `writeCurrentWorkbook(db.$client, title, file, () => {})` + `readExportWorkbook`。
+- 三称号：`innovative_sme`、`specialized_sme`、`little_giant` 各跑一遍基线 A/B/C、改 typed 投影、删 typed 投影三步。观测到的 `rddqrq`/`whpcyear` 筛选见证仅适用于 `innovative_sme`（`lib/roster/recognized-filter-facts.ts`），另两称号的 `matchedValidYears` 预期为空——这是既有已批准语义，不是本层差异。
 - 种子：正式认定事实 + `recognized_list` 观察 + 已确认 `event_recognized` 对应（`matrix408(...).formal` 与 #461 投影路径 `ensurePlatformObservation`）。
 
 | 步骤 | A（目录） | B（当前有效） | C（导出工作簿） | 理由与非结论边界 |
@@ -102,6 +108,9 @@
 对照测试：`tests/platform-recognized-directory-three-way.test.ts`（每步都断言 A 的精确变化、B 的资格面与 C 的决策面；不使用新 reader 作为 B/C 的 oracle）。
 
 ## 人工 UI 验收
+
+- 表格沿用共享 `data-table-scroll`（不再用 `[&_[data-slot=table-container]]:overflow-visible` 关闭其滚动）；表格最小宽 `min-w-[880px]`，1280px 下不产生页面级横向溢出，1024/768 由卡片自身横向滚动到达「详情」；「版本 / 观察」列 10% 且 `whitespace-nowrap`，`1 / 1` 不裁切。
+- 详情弹窗标题 `pr-8` 并缩短为「平台认定目录 #<recordId> · 观察与版本」，390px 下不钻到绝对定位的关闭按钮下；观察表改用共享 `Table` 原语并保留同一 `overflow-x-auto`。
 
 **UNRUN: no browser in this environment** — 本切片未执行桌面或 390px 实际浏览器操作（无浏览器可用），未记录任何像素/交互观察。已覆盖的替代证据：组件与页面用例（`tests/platform-recognized-directory-ui.test.ts`、`tests/platform-recognized-directory-page-ui.test.ts`）覆盖筛选、视图切换、分页、空态、失败保留与显式重试、深链预填、记录/隔离表与详情截断；桌面/390px 布局沿用 `docs/ui-conventions.md` 的 `sm:hidden` 桌面表格 + 移动卡片双布局。集成阶段需由具备浏览器的环境补做 1280px/390px 实操。
 

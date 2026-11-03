@@ -4,6 +4,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import TableFailureState from '@/components/TableFailureState.vue'
 import RecordSourceReader from '@/components/record-correspondence/SourceReader.vue'
 import type { RecognizedDirectoryDetail } from '~~/lib/platform/recognized-directory'
@@ -55,7 +56,7 @@ const conflictLabel: Record<string, string> = {
   <Dialog :open="open" @update:open="emit('update:open', $event)">
     <DialogContent class="max-h-[85dvh] min-w-0 overflow-y-auto sm:max-w-4xl" data-testid="platform-recognized-directory-detail">
       <DialogHeader>
-        <DialogTitle>平台认定目录 #{{ recordId }} · 实际观察与历史版本</DialogTitle>
+        <DialogTitle class="pr-8">平台认定目录 #{{ recordId }} · 观察与版本</DialogTitle>
         <DialogDescription>版本按内容版本编号排列，不代表时间顺序；观察按采集时间倒序。有效期原值是原样字符串，不解析为日期。行称号原值与查询称号范围分开显示。这是目录镜像，不作为当前有效资格判定；原档仍按查询证据读取。</DialogDescription>
       </DialogHeader>
       <div v-if="loading && !data" class="flex flex-col gap-2"><Skeleton class="h-24 w-full" /><Skeleton class="h-40 w-full" /></div>
@@ -101,27 +102,39 @@ const conflictLabel: Record<string, string> = {
         <section class="min-w-0">
           <h3 class="text-sm font-medium">实际观察 <span class="text-muted-foreground font-normal">{{ data.counts.observations }} 次<template v-if="data.counts.observationsTruncated">（仅显示最近 {{ data.observations.length }} 次）</template></span></h3>
           <div class="mt-2 min-w-0 overflow-x-auto rounded-sm border">
-            <table class="w-full min-w-[900px] text-left text-[13px] leading-5" aria-label="平台认定目录实际观察">
-              <thead class="bg-muted/40 text-muted-foreground"><tr><th class="px-3 py-2 font-medium">原行 / 查询</th><th class="px-3 py-2 font-medium">采集时间</th><th class="px-3 py-2 font-medium">称号范围</th><th class="px-3 py-2 font-medium">内容版本</th><th class="px-3 py-2 font-medium">企业</th><th class="px-3 py-2 font-medium">行称号</th><th class="px-3 py-2 font-medium">对应决定</th><th class="px-3 py-2 font-medium">状态</th><th class="px-3 py-2 font-medium">原行</th></tr></thead>
-              <tbody>
-                <tr v-for="observation in data.observations" :key="observation.relationId" class="border-t" data-testid="platform-recognized-directory-observation">
-                  <td class="px-3 py-2 whitespace-nowrap">行 #{{ observation.relationId }} · 查询 #{{ observation.queryId }}</td>
-                  <td class="px-3 py-2 tabular-nums">{{ time(observation.queriedAt) }}</td>
-                  <td class="px-3 py-2">{{ scopes(observation.titleScopes) }}</td>
-                  <td class="px-3 py-2">{{ observation.versionId == null ? '未建立' : `版本 #${observation.versionId}` }}</td>
-                  <td class="px-3 py-2">{{ observation.enterpriseName ?? '未匹配主体' }}</td>
-                  <td class="px-3 py-2 font-mono text-xs">{{ missing(observation.version?.titleRaw) }}<span v-if="observation.titleConflict" class="text-muted-foreground mt-1 block">行称号与查询范围不一致</span></td>
-                  <td class="px-3 py-2 text-xs">
+            <Table class="min-w-[900px] text-[13px] leading-5" aria-label="平台认定目录实际观察">
+              <TableHeader>
+                <TableRow class="bg-muted/40 text-muted-foreground hover:bg-transparent">
+                  <TableHead class="px-3 py-2 font-medium">原行 / 查询</TableHead>
+                  <TableHead class="px-3 py-2 font-medium">采集时间</TableHead>
+                  <TableHead class="px-3 py-2 font-medium">称号范围</TableHead>
+                  <TableHead class="px-3 py-2 font-medium">内容版本</TableHead>
+                  <TableHead class="px-3 py-2 font-medium">企业</TableHead>
+                  <TableHead class="px-3 py-2 font-medium">行称号</TableHead>
+                  <TableHead class="px-3 py-2 font-medium">对应决定</TableHead>
+                  <TableHead class="px-3 py-2 font-medium">状态</TableHead>
+                  <TableHead class="px-3 py-2 font-medium">原行</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                <TableRow v-for="observation in data.observations" :key="observation.relationId" class="border-t" data-testid="platform-recognized-directory-observation">
+                  <TableCell class="px-3 py-2 whitespace-nowrap">行 #{{ observation.relationId }} · 查询 #{{ observation.queryId }}</TableCell>
+                  <TableCell class="px-3 py-2 tabular-nums">{{ time(observation.queriedAt) }}</TableCell>
+                  <TableCell class="px-3 py-2">{{ scopes(observation.titleScopes) }}</TableCell>
+                  <TableCell class="px-3 py-2">{{ observation.versionId == null ? '未建立' : `版本 #${observation.versionId}` }}</TableCell>
+                  <TableCell class="px-3 py-2">{{ observation.enterpriseName ?? '未匹配主体' }}</TableCell>
+                  <TableCell class="px-3 py-2 font-mono text-xs">{{ missing(observation.version?.titleRaw) }}<span v-if="observation.titleConflict" class="text-muted-foreground mt-1 block">行称号与查询范围不一致</span></TableCell>
+                  <TableCell class="px-3 py-2 text-xs">
                     <template v-if="observation.correspondenceRefs.length">
                       <span v-for="ref in observation.correspondenceRefs" :key="ref.id" class="mr-1 whitespace-nowrap">#{{ ref.id }} · {{ ref.status }}</span>
                     </template>
                     <span v-else class="text-muted-foreground">此原行暂无对应决定</span>
-                  </td>
-                  <td class="px-3 py-2 text-xs">{{ state(observation.identityState) }}<template v-if="observation.contentState === 'unverifiable'"> · 原文内容无法核实</template></td>
-                  <td class="px-3 py-2"><div class="flex flex-col items-start gap-1"><NuxtLink :to="{ path: '/platform-queries', query: { queryKey: observation.queryKey } }" class="whitespace-nowrap text-xs hover:underline">查看原查询</NuxtLink><Button variant="ghost" size="sm" class="h-7 px-2 text-xs" @click="sourceRelationId = sourceRelationId === observation.relationId ? null : observation.relationId">{{ sourceRelationId === observation.relationId ? '收起原行' : '原行与对应' }}</Button></div></td>
-                </tr>
-              </tbody>
-            </table>
+                  </TableCell>
+                  <TableCell class="px-3 py-2 text-xs">{{ state(observation.identityState) }}<template v-if="observation.contentState === 'unverifiable'"> · 原文内容无法核实</template></TableCell>
+                  <TableCell class="px-3 py-2"><div class="flex flex-col items-start gap-1"><NuxtLink :to="{ path: '/platform-queries', query: { queryKey: observation.queryKey } }" class="whitespace-nowrap text-xs hover:underline">查看原查询</NuxtLink><Button variant="ghost" size="sm" class="h-7 px-2 text-xs" @click="sourceRelationId = sourceRelationId === observation.relationId ? null : observation.relationId">{{ sourceRelationId === observation.relationId ? '收起原行' : '原行与对应' }}</Button></div></TableCell>
+                </TableRow>
+              </TableBody>
+            </Table>
           </div>
           <section v-if="sourceRelationId != null" class="mt-3 min-w-0 rounded-sm border p-3">
             <h4 class="mb-2 text-sm font-medium">原行 #{{ sourceRelationId }} 与对应决定</h4>

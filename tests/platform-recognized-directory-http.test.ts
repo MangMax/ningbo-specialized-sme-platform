@@ -148,6 +148,57 @@ it('filters the archived directory rows without raw JSON and reports recorded co
   expect(JSON.stringify(detail).length).toBeLessThan(600_000)
 })
 
+it('applies every filter to the same matched content version', async () => {
+  // One record, two content versions observed under different query title scopes.
+  seed({ key: 'DIR-STABLE', rdjb: '1', at: '2026-08-01T00:00:00Z', scopes: ['1'], raw: { id: 'DIR-STABLE', qymc: '分页稳定企业', rdjb: '1', whpcyear: '2024' } })
+  seed({ key: 'DIR-STABLE', rdjb: '2', at: '2026-08-02T00:00:00Z', scopes: ['2'], raw: { id: 'DIR-STABLE', qymc: '分页稳定企业', rdjb: '2', whpcyear: '2025' } })
+
+  const mismatched = await get('/api/platform/recognized-directory?rdjb=1&whpcyear=2025')
+  expect(mismatched.total).toBe(0)
+  expect(mismatched.rows).toEqual([])
+
+  const matched = await get('/api/platform/recognized-directory?rdjb=2&whpcyear=2025')
+  expect(matched.total).toBe(1)
+  expect(matched.rows).toHaveLength(1)
+  expect(matched.rows[0]).toMatchObject({
+    record: { platformKey: 'DIR-STABLE' },
+    matchedVersion: { maintenanceYear: 2025 },
+    matchedVersionCount: 1,
+  })
+})
+
+it('bounds record conflicts by record ids when one record carries many observations', async () => {
+  const raw = { id: 'DIR-MANY', qymc: '大量观察企业', rdjb: '2', rddqrq: '2027-12-31' }
+  for (let index = 0; index < 59; index++) {
+    seed({ key: 'DIR-MANY', rdjb: '2', at: new Date(Date.UTC(2026, 6, 1, 0, index)).toISOString(), scopes: ['2'], raw })
+  }
+  seed({ key: 'DIR-MANY', rdjb: '2', at: '2026-07-02T00:00:00Z', scopes: ['2'], raw: { ...raw, rdjb: '3' } })
+
+  const response = await get('/api/platform/recognized-directory?platformKey=DIR-MANY')
+  expect(response.total).toBe(1)
+  expect(response.rows).toHaveLength(1)
+  expect(response.rows[0]).toMatchObject({
+    record: { platformKey: 'DIR-MANY' },
+    observationCount: 60,
+    conflicts: ['title_conflict'],
+  })
+  // Conflicts must stay record-shaped, never echo the 60 observation rows.
+  expect(JSON.stringify(response).length).toBeLessThan(10_000)
+})
+
+it('keeps conflict semantics for padded scopes and unknown row titles', async () => {
+  // Whitespace in the archived scope list must not suppress a real title conflict.
+  seed({ key: 'name:空白范围企业', rdjb: '1, 2', at: '2026-09-01T00:00:00Z', raw: { id: 'DIR-SPACE', qymc: '空白范围企业', rdjb: '3' } })
+  const padded = await get('/api/platform/recognized-directory?platformKey=DIR-SPACE')
+  expect(padded.total).toBe(1)
+  expect(padded.rows[0]).toMatchObject({ record: { platformKey: 'DIR-SPACE' }, titleScopes: ['1', '2'], conflicts: ['title_conflict'] })
+
+  // An unknown or absent row title is never a conflict, even when the scope list is non-empty.
+  seed({ key: 'name:未知称号企业', rdjb: '1, 2', at: '2026-09-02T00:00:00Z', raw: { id: 'DIR-UNKNOWN', qymc: '未知称号企业', rdjb: '9' } })
+  const unknown = await get('/api/platform/recognized-directory?platformKey=DIR-UNKNOWN')
+  expect(unknown.rows[0]).toMatchObject({ record: { platformKey: 'DIR-UNKNOWN' }, conflicts: [] })
+})
+
 it('isolates unprojected observations and rejects invalid or cross-interface reads', async () => {
   const missing = seed({ key: 'name:无编号目录企业', rdjb: '2', at: '2026-11-01T00:00:00Z', raw: { qymc: '无编号目录企业', rddqrq: '2029-01-01' }, relationKey: null })
   expect(missing.recordId).toBeNull()

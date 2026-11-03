@@ -15,6 +15,8 @@ import { enterpriseReads } from '../server/utils/enterprise-read'
 import { writeCurrentWorkbook } from '../lib/roster/current-workbook'
 import { readExportWorkbook } from './helpers/read-export-workbook'
 import type { RecognizedDirectoryListResult } from '../lib/platform/recognized-directory'
+import { TITLE_RDJB_CODES } from '../lib/platform/recognized-evidence'
+import type { CurrentTitle } from '../lib/roster/current-titles'
 
 // The public reader seam: the same h3 routes the application mounts.
 for (const [key, value] of Object.entries({ defineEventHandler, setHeader, getQuery, getRouterParam, createError })) vi.stubGlobal(key, value)
@@ -41,7 +43,7 @@ let stamp = 0
 function seedRecognized(db: ReturnType<typeof useDb>, formal: FormalSeed, eventId: number, raw: Record<string, unknown>, conditions: Record<string, unknown> = {}) {
   const enterprise = formal.enterprise
   const titleCode = formal.record.titleCode
-  const rdjb = ({ innovative_sme: '1', specialized_sme: '2', little_giant: '3' } as Record<string, string>)[titleCode]!
+  const rdjb = TITLE_RDJB_CODES[titleCode]!
   const queriedAt = new Date(Date.UTC(2026, 4, 1, 0, stamp++)).toISOString()
   const query = db.insert(schema.platformQuery).values({
     interface: 'recognized_list', queryKey: enterprise.usccNorm ?? `name:${enterprise.name}`, titleCode, rdjb, queriedAt, status: 'success',
@@ -122,8 +124,8 @@ async function readA(base: string, query: Record<string, string> = {}) {
 }
 
 /** The exact call the /api/roster/current-enterprises route makes. */
-async function readB(dbPath: string, filter: Record<string, unknown> = {}) {
-  const result = await enterpriseReads.currentQualifiedJson(dbPath, { titleCode: 'innovative_sme', page: 1, pageSize: 25, ...filter } as never, new AbortController().signal)
+async function readB(dbPath: string, titleCode: CurrentTitle, filter: Record<string, unknown> = {}) {
+  const result = await enterpriseReads.currentQualifiedJson(dbPath, { titleCode, page: 1, pageSize: 25, ...filter } as never, new AbortController().signal)
   return JSON.parse(result.body.toString('utf8')) as { total: number; uncertainTotal: number; rows: Record<string, unknown>[] }
 }
 
@@ -140,9 +142,9 @@ function strip(value: unknown): unknown {
 
 let workbookCounter = 0
 /** The real workbook writer the async export job runs; only the generated-at row is volatile. */
-async function readC(db: ReturnType<typeof useDb>, dir: string) {
+async function readC(db: ReturnType<typeof useDb>, dir: string, titleCode: CurrentTitle) {
   const file = join(dir, `current-${workbookCounter++}.xlsx`)
-  const summary = await writeCurrentWorkbook(db.$client, 'innovative_sme', file, () => {})
+  const summary = await writeCurrentWorkbook(db.$client, titleCode, file, () => {})
   const workbook = await readExportWorkbook(readFileSync(file))
   const sheets = workbook.worksheets.map(sheet => ({
     name: sheet.name,
@@ -163,50 +165,65 @@ const exportSnapshot = (c: Awaited<ReturnType<typeof readC>>) => ({
 const citationColumn = (c: Awaited<ReturnType<typeof readC>>) => (c.sheets.find(sheet => sheet.name === '有效企业')?.rows ?? []).map(row => String(row[11] ?? '')).join('\n')
 const eligibility = (b: Awaited<ReturnType<typeof readB>>) => ({ total: b.total, rows: b.rows.map(row => [row.enterpriseId, row.name, row.group]) })
 
-it('keeps the qualification read model and the export snapshot identical when directory typed values change or disappear', async () => {
+// The observed rddqrq/whpcyear filter witness is empirically innovative_sme only
+// (lib/roster/recognized-filter-facts.ts); the other titles still prove A/B/C invariance.
+const THREE_WAY_TITLES = [
+  { title: 'innovative_sme', label: '创新型', uscc: '91330211FFFF000011', validYears: [2028] },
+  { title: 'specialized_sme', label: '专精特新', uscc: '91330211FFFF000012', validYears: [] },
+  { title: 'little_giant', label: '小巨人', uscc: '91330211FFFF000013', validYears: [] },
+] as const
+
+it('keeps the qualification read model and the export snapshot identical when directory typed values change or disappear for every title', async () => {
   const { dir, dbPath, db, matrix } = setup()
   const { server, base } = await startServer()
   try {
-    const formal = matrix.formal('三路对照企业', [{ eventType: 'award', year: 2025, decidedYear: 2025, batchSeq: 1 }], { uscc: '91330211FFFF000001' })
-    const uscc = formal.enterprise.usccNorm
-    const raw = { id: 'DIR-TRI-1', qymc: formal.enterprise.name, tyshxydm: uscc, rdjb: '1', rddqrq: '2028-06-01', whpcyear: '2024', whpc: '2024-2', szq: '33020000', rdxx: '原始认定说明' }
-    const seeded = seedRecognized(db, formal, formal.events[0]!.id, raw, { rddqrq: '2028' })
+    for (const { title, label, uscc, validYears } of THREE_WAY_TITLES) {
+      const name = `三路对照${label}企业`
+      const formal = matrix.formal(name, [{ eventType: 'award', year: 2025, decidedYear: 2025, batchSeq: 1 }], { uscc, title })
+      const rdjb = TITLE_RDJB_CODES[title]!
+      const raw = { id: `DIR-TRI-${rdjb}`, qymc: name, tyshxydm: uscc, rdjb, rddqrq: '2028-06-01', whpcyear: '2024', whpc: '2024-2', szq: '33020000', rdxx: '原始认定说明' }
+      const seeded = seedRecognized(db, formal, formal.events[0]!.id, raw, { rddqrq: '2028' })
 
-    const before = databaseContent(db)
-    const A0 = await readA(base, { q: '三路对照企业' })
-    const B0 = await readB(dbPath)
-    const C0 = await readC(db, dir)
-    // Baseline stability: three read-only surfaces never write.
-    expect(databaseContent(db)).toBe(before)
-    expect(A0.total).toBe(1)
-    expect(A0.rows[0]).toMatchObject({ kind: 'record', matchedVersion: { validityDateRaw: '2028-06-01', maintenanceYear: 2024, maintenanceBatch: '2024-2', district: '33020000', titleRaw: '1' }, titleScopes: ['1'] })
-    expect(B0.total).toBe(1)
-    expect(B0.rows[0]).toMatchObject({ enterpriseId: formal.enterprise.id, group: 'eligible' })
-    expect((B0.rows[0] as { matchedValidYears: number[] }).matchedValidYears).toEqual([2028])
-    expect(C0.counts.eligible).toBe(1)
-    expect(eligibleIdentities(C0)).toEqual([[formal.enterprise.name, uscc]])
+      const before = databaseContent(db)
+      const A0 = await readA(base, { q: name })
+      const B0 = await readB(dbPath, title)
+      const C0 = await readC(db, dir, title)
+      // Baseline stability: three read-only surfaces never write.
+      expect(databaseContent(db)).toBe(before)
+      expect(A0.total).toBe(1)
+      expect(A0.rows[0]).toMatchObject({
+        kind: 'record',
+        matchedVersion: { validityDateRaw: '2028-06-01', maintenanceYear: 2024, maintenanceBatch: '2024-2', district: '33020000', titleRaw: rdjb },
+        titleScopes: [rdjb],
+      })
+      expect(B0.total).toBe(1)
+      expect(B0.rows[0]).toMatchObject({ enterpriseId: formal.enterprise.id, group: 'eligible' })
+      expect((B0.rows[0] as { matchedValidYears: number[] }).matchedValidYears).toEqual([...validYears])
+      expect(C0.counts.eligible).toBe(1)
+      expect(eligibleIdentities(C0)).toEqual([[name, uscc]])
 
-    // A typed projection change is visible only in the directory reader.
-    db.update(schema.platformRecognizedProjection).set({ validityDateRaw: '2031-12-31', maintenanceYear: 2031, district: '99999999' })
-      .where(eq(schema.platformRecognizedProjection.recordId, seeded.recordId)).run()
-    const A1 = await readA(base, { q: '三路对照企业' })
-    const B1 = await readB(dbPath)
-    const C1 = await readC(db, dir)
-    expect(A1.total).toBe(1)
-    expect(A1.rows[0]).toMatchObject({ matchedVersion: { validityDateRaw: '2031-12-31', maintenanceYear: 2031, district: '99999999' } })
-    expect(strip(B1)).toEqual(strip(B0))
-    expect(C1).toEqual(C0)
+      // A typed projection change is visible only in the directory reader.
+      db.update(schema.platformRecognizedProjection).set({ validityDateRaw: '2031-12-31', maintenanceYear: 2031, district: '99999999' })
+        .where(eq(schema.platformRecognizedProjection.recordId, seeded.recordId)).run()
+      const A1 = await readA(base, { q: name })
+      const B1 = await readB(dbPath, title)
+      const C1 = await readC(db, dir, title)
+      expect(A1.total).toBe(1)
+      expect(A1.rows[0]).toMatchObject({ matchedVersion: { validityDateRaw: '2031-12-31', maintenanceYear: 2031, district: '99999999' } })
+      expect(strip(B1)).toEqual(strip(B0))
+      expect(C1).toEqual(C0)
 
-    // Removing only the typed projection empties the typed columns and keeps the record visible.
-    db.delete(schema.platformRecognizedProjection).where(eq(schema.platformRecognizedProjection.recordId, seeded.recordId)).run()
-    const A2 = await readA(base, { q: '三路对照企业' })
-    const B2 = await readB(dbPath)
-    const C2 = await readC(db, dir)
-    expect(A2.total).toBe(1)
-    expect(A2.rows[0]).toMatchObject({ matchedVersion: { validityDateRaw: null, maintenanceYear: null, maintenanceBatch: null, district: null, ruleVersion: null } })
-    expect(A2.rows[0]).toMatchObject({ conflicts: [] })
-    expect(strip(B2)).toEqual(strip(B0))
-    expect(C2).toEqual(C0)
+      // Removing only the typed projection empties the typed columns and keeps the record visible.
+      db.delete(schema.platformRecognizedProjection).where(eq(schema.platformRecognizedProjection.recordId, seeded.recordId)).run()
+      const A2 = await readA(base, { q: name })
+      const B2 = await readB(dbPath, title)
+      const C2 = await readC(db, dir, title)
+      expect(A2.total).toBe(1)
+      expect(A2.rows[0]).toMatchObject({ matchedVersion: { validityDateRaw: null, maintenanceYear: null, maintenanceBatch: null, district: null, ruleVersion: null } })
+      expect(A2.rows[0]).toMatchObject({ conflicts: [] })
+      expect(strip(B2)).toEqual(strip(B0))
+      expect(C2).toEqual(C0)
+    }
   } finally {
     await new Promise<void>(resolve => server.close(() => resolve()))
     db.$client.close(); rmSync(dir, { recursive: true, force: true }); vi.unstubAllEnvs()
@@ -220,18 +237,18 @@ it('isolates the directory row when its observation disappears and never lets th
     const formal = matrix.formal('目录消失对照企业', [{ eventType: 'award', year: 2025, decidedYear: 2025, batchSeq: 1 }], { uscc: '91330211FFFF000002' })
     const raw = { id: 'DIR-TRI-2', qymc: formal.enterprise.name, tyshxydm: formal.enterprise.usccNorm, rdjb: '1', rddqrq: '2028-06-01', whpcyear: '2024', whpc: '2024-2', szq: '33020000' }
     const seeded = seedRecognized(db, formal, formal.events[0]!.id, raw, { rddqrq: '2028' })
-    const C0 = await readC(db, dir)
-    const B0 = await readB(dbPath)
-    const B0Filtered = await readB(dbPath, { validYear: 2028 })
+    const C0 = await readC(db, dir, 'innovative_sme')
+    const B0 = await readB(dbPath, 'innovative_sme')
+    const B0Filtered = await readB(dbPath, 'innovative_sme', { validYear: 2028 })
     expect((await readA(base, { q: '目录消失对照企业' })).total).toBe(1)
     expect(B0.total).toBe(1)
     expect(B0Filtered.total).toBe(1)
 
     removeDirectoryArchive(db, seeded.recordId, seeded.relation.id, seeded.query.id)
     const A1 = await readA(base, { q: '目录消失对照企业' })
-    const B1 = await readB(dbPath)
-    const B1Filtered = await readB(dbPath, { validYear: 2028 })
-    const C1 = await readC(db, dir)
+    const B1 = await readB(dbPath, 'innovative_sme')
+    const B1Filtered = await readB(dbPath, 'innovative_sme', { validYear: 2028 })
+    const C1 = await readC(db, dir, 'innovative_sme')
     expect(A1.total).toBe(0)
     expect(B1.total).toBe(1)
     expect(B1.rows[0]).toMatchObject({ enterpriseId: formal.enterprise.id, group: 'eligible' })
@@ -255,16 +272,16 @@ it('adds unconfirmed and title-conflicting directory rows to the directory reade
   const { server, base } = await startServer()
   try {
     const formal = matrix.formal('未确认目录对照企业', [{ eventType: 'award', year: 2025, decidedYear: 2025, batchSeq: 1 }], { uscc: '91330211FFFF000003' })
-    const C0 = await readC(db, dir)
-    const B0 = await readB(dbPath)
+    const C0 = await readC(db, dir, 'innovative_sme')
+    const B0 = await readB(dbPath, 'innovative_sme')
     expect((await readA(base, { q: '未确认目录对照企业' })).total).toBe(0)
     expect(B0.total).toBe(1)
 
     // An unconfirmed directory row (no confirmed event_recognized edge) is visible only in A.
     const unconfirmed = seedUnconfirmed(db, formal.enterprise, { id: 'DIR-TRI-3', qymc: formal.enterprise.name, tyshxydm: formal.enterprise.usccNorm, rdjb: '1', rddqrq: '2028-06-01' })
     const A1 = await readA(base, { q: '未确认目录对照企业' })
-    const B1 = await readB(dbPath)
-    const C1 = await readC(db, dir)
+    const B1 = await readB(dbPath, 'innovative_sme')
+    const C1 = await readC(db, dir, 'innovative_sme')
     expect(A1.total).toBe(1)
     expect(A1.rows[0]).toMatchObject({ record: { platformKey: 'DIR-TRI-3' }, conflicts: [] })
     // The assessment records platform observations by design; the qualification decision does not move.
@@ -276,8 +293,8 @@ it('adds unconfirmed and title-conflicting directory rows to the directory reade
     // A row whose raw rdjb contradicts the observed query scope reports a structured conflict; B/C stay identical.
     seedUnconfirmed(db, formal.enterprise, { id: 'DIR-TRI-4', qymc: formal.enterprise.name, tyshxydm: formal.enterprise.usccNorm, rdjb: '3', rddqrq: '2029-01-01' }, '1')
     const A2 = await readA(base, { q: '未确认目录对照企业' })
-    const B2 = await readB(dbPath)
-    const C2 = await readC(db, dir)
+    const B2 = await readB(dbPath, 'innovative_sme')
+    const C2 = await readC(db, dir, 'innovative_sme')
     expect(A2.total).toBe(2)
     const conflicting = A2.rows.find(row => row.kind === 'record' && row.record.platformKey === 'DIR-TRI-4')
     expect(conflicting).toMatchObject({ conflicts: ['title_conflict'], matchedVersion: { titleRaw: '3' }, titleScopes: ['1'] })
@@ -300,9 +317,9 @@ it('removes only the validYear filter hit when a directory witness disappears, w
     seedRecognized(db, first, first.events[0]!.id, raw('DIR-TRI-5', first.enterprise.name, first.enterprise.usccNorm), { rddqrq: '2028' })
     const secondSeeded = seedRecognized(db, second, second.events[0]!.id, raw('DIR-TRI-6', second.enterprise.name, second.enterprise.usccNorm), { rddqrq: '2028' })
 
-    const C0 = await readC(db, dir)
-    const B0 = await readB(dbPath)
-    const B0Filtered = await readB(dbPath, { validYear: 2028 })
+    const C0 = await readC(db, dir, 'innovative_sme')
+    const B0 = await readB(dbPath, 'innovative_sme')
+    const B0Filtered = await readB(dbPath, 'innovative_sme', { validYear: 2028 })
     expect((await readA(base)).total).toBe(2)
     expect(B0.total).toBe(2)
     expect(B0Filtered.total).toBe(2)
@@ -311,9 +328,9 @@ it('removes only the validYear filter hit when a directory witness disappears, w
 
     removeDirectoryArchive(db, secondSeeded.recordId, secondSeeded.relation.id, secondSeeded.query.id)
     const A1 = await readA(base)
-    const B1 = await readB(dbPath)
-    const B1Filtered = await readB(dbPath, { validYear: 2028 })
-    const C1 = await readC(db, dir)
+    const B1 = await readB(dbPath, 'innovative_sme')
+    const B1Filtered = await readB(dbPath, 'innovative_sme', { validYear: 2028 })
+    const C1 = await readC(db, dir, 'innovative_sme')
     expect(A1.total).toBe(1)
     // With the filter off, both formal rows stay; deleting a directory witness never drops eligibility.
     expect(B1.total).toBe(2)

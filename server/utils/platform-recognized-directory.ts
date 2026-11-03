@@ -37,19 +37,6 @@ function titleConflictOf(titleRaw: string | null, scopes: string[]): boolean {
   return titleRaw != null && KNOWN_RDJBS.has(titleRaw) && scopes.length > 0 && !scopes.includes(titleRaw)
 }
 
-/** Title scope is a query fact: match the explicit rdjb on the query or its scope index. */
-function titleScopeExists(rdjb: string): SQL {
-  return sql`exists (
-    select 1 from platform_business_observation o
-    join platform_relation r on r.id = o.relation_id
-    join platform_query q on q.id = r.query_id
-    where o.record_id = b.id and (
-      instr(',' || q.rdjb || ',', ',' || ${rdjb} || ',') > 0
-      or exists (select 1 from platform_query_title_scope s where s.query_id = q.id and s.rdjb = ${rdjb})
-    )
-  )`
-}
-
 /** Restrict matched content versions to those actually observed under the selected title scope. */
 function versionTitleScopeExists(rdjb: string): SQL {
   return sql`exists (
@@ -76,7 +63,8 @@ function recordConditions(filter: RecognizedDirectoryFilter): SQL[] {
   if (filter.whpcyear != null) conditions.push(sql`p.maintenance_year = ${filter.whpcyear}`)
   if (filter.whpc) conditions.push(sql`p.maintenance_batch = ${filter.whpc}`)
   if (filter.szq) conditions.push(sql`p.district = ${filter.szq}`)
-  if (filter.rdjb) conditions.push(titleScopeExists(filter.rdjb))
+  // Every filter constrains the same content version that the row query selects.
+  if (filter.rdjb) conditions.push(versionTitleScopeExists(filter.rdjb))
   const enterprise = businessEnterpriseExists(filter)
   if (enterprise) conditions.push(enterprise)
   return conditions
@@ -115,29 +103,43 @@ function recordsTitleScopes(rows: { recordId: number; queryId: number }[], scope
   return new Map([...grouped.entries()].map(([recordId, set]): [number, string[]] => [recordId, orderedScopes(set)]))
 }
 
-/** Record-level structured conflicts. Bounded to the requested record ids; reads no raw JSON. */
+/** Record-level structured conflicts. Every read aggregates DISTINCT record ids, so a record
+ * with many observations stays bounded; reads no raw JSON. */
 function recordConflicts(db: Db, recordIds: number[]): Map<number, string[]> {
   const result = new Map<number, string[]>()
   if (!recordIds.length) return result
   const ids = sql.join(recordIds.map(id => sql`${id}`), sql`, `)
-  const pairs = db.all<{ recordId: number; queryId: number; titleRaw: string | null; contentState: string }>(sql`
-    select o.record_id as recordId, r.query_id as queryId, o.content_state as contentState, p.title_raw as titleRaw
+  const unverifiable = new Set(db.all<{ recordId: number }>(sql`
+    select distinct o.record_id as recordId
+    from platform_business_observation o
+    where o.record_id in (${ids}) and o.content_state = 'unverifiable'
+  `).map(row => row.recordId))
+  // A known row-level rdjb contradicting the observed explicit query scope is a conflict.
+  // The scope is the same query fact `titleScopesByQuery` returns: q.rdjb split on commas,
+  // trimmed, plus explicit platform_query_title_scope rows.
+  const scopeList = sql`replace(replace(replace(replace(q.rdjb, ' ', ''), char(9), ''), char(10), ''), char(13), '')`
+  const titleConflict = new Set(db.all<{ recordId: number }>(sql`
+    select distinct o.record_id as recordId
     from platform_business_observation o
     join platform_relation r on r.id = o.relation_id
-    left join platform_recognized_projection p on p.version_id = o.version_id
+    join platform_query q on q.id = r.query_id
+    join platform_recognized_projection p on p.version_id = o.version_id
     where o.record_id in (${ids})
-  `)
-  const scopesByQuery = titleScopesByQuery(db, [...new Set(pairs.map(pair => pair.queryId))])
+      and p.title_raw in ('1', '2', '3')
+      and (
+        replace(${scopeList}, ',', '') <> ''
+        or exists (select 1 from platform_query_title_scope s where s.query_id = q.id and trim(s.rdjb) <> '')
+      )
+      and instr(',' || ${scopeList} || ',', ',' || p.title_raw || ',') = 0
+      and not exists (
+        select 1 from platform_query_title_scope s where s.query_id = q.id and s.rdjb = p.title_raw
+      )
+  `).map(row => row.recordId))
   const assignments = enterpriseAssignments(db, recordIds)
-  const flags = new Map<number, Set<string>>()
-  for (const pair of pairs) {
-    const set = flags.get(pair.recordId) ?? new Set<string>()
-    if (titleConflictOf(pair.titleRaw, scopesByQuery.get(pair.queryId) ?? [])) set.add('title_conflict')
-    if (pair.contentState === 'unverifiable') set.add('unverifiable_observation')
-    flags.set(pair.recordId, set)
-  }
   for (const recordId of recordIds) {
-    const set = flags.get(recordId) ?? new Set<string>()
+    const set = new Set<string>()
+    if (titleConflict.has(recordId)) set.add('title_conflict')
+    if (unverifiable.has(recordId)) set.add('unverifiable_observation')
     if ((assignments.get(recordId)?.ids.length ?? 0) > 1) set.add('enterprise_assignment_conflict')
     result.set(recordId, CONFLICT_ORDER.filter(conflict => set.has(conflict)))
   }
@@ -146,9 +148,7 @@ function recordConflicts(db: Db, recordIds: number[]): Map<number, string[]> {
 
 function listRecordRows(db: Db, filter: RecognizedDirectoryFilter, total: number): RecognizedDirectoryListResult {
   const { page, pageSize, offset } = pageOf(filter)
-  const conditions = recordConditions(filter)
-  if (filter.rdjb) conditions.push(versionTitleScopeExists(filter.rdjb))
-  const where = sql.join(conditions, sql` and `)
+  const where = sql.join(recordConditions(filter), sql` and `)
   const rows = db.all<{
     recordId: number; platformKey: string; versionId: number; validityDateRaw: string | null; maintenanceYear: number | null;
     maintenanceBatch: string | null; district: string | null; awardNote: string | null; titleRaw: string | null; nameRaw: string | null;

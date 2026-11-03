@@ -2,7 +2,7 @@
 import { computed } from 'vue'
 import { ExternalLink, History } from '@lucide/vue'
 import type { RecognizedDirectoryRow } from '~~/lib/platform/recognized-directory'
-import { RECOGNIZED_TITLE_CODE_BY_RDJB } from '~~/lib/platform/recognized-directory'
+import { RDJB_TITLE_CODES } from '~~/lib/platform/recognized-evidence'
 import { PLATFORM_RDJBS } from '~~/lib/labels'
 import { formatFetchTime } from '~~/lib/reconcile-time'
 import { Button } from '@/components/ui/button'
@@ -26,7 +26,7 @@ const enterpriseId = (row: RecordRow) => row.enterpriseIds.length === 1 ? row.en
 /** A navigation entry only. The title code comes from the unambiguous observed query scope,
  * never from the row-level title, and the existing current-enterprises reader decides. */
 const currentQuery = (row: RecordRow) => {
-  const titleCode = row.titleScopes.length === 1 ? RECOGNIZED_TITLE_CODE_BY_RDJB[row.titleScopes[0]!] : undefined
+  const titleCode = row.titleScopes.length === 1 ? RDJB_TITLE_CODES[row.titleScopes[0]!] : undefined
   const q = row.enterpriseNames.length === 1 ? row.enterpriseNames[0] : row.matchedVersion.nameRaw ?? row.matchedVersion.usccRaw ?? undefined
   return { titleCode, q }
 }
@@ -44,18 +44,18 @@ const conflictLabel: Record<string, string> = {
         目录镜像不是当前有效资格：目录行存在、消失或日期原值都不直接推出正式有效或失效；称号范围来自原查询，不是逐行称号事实。
       </p>
       <p v-if="records.length" class="text-muted-foreground mb-2 text-[13px] leading-5 sm:hidden">点开「观察与版本」查看有效期原值、维护年/批次、属地与内容版本。</p>
-      <div v-if="records.length" class="data-table-scroll hidden sm:block [&_[data-slot=table-container]]:overflow-visible">
-        <Table class="data-table min-w-[1040px] table-fixed 2xl:min-w-[1160px]" aria-label="平台认定目录">
+      <div v-if="records.length" class="data-table-scroll hidden sm:block">
+        <Table class="data-table min-w-[880px] table-fixed 2xl:min-w-[1160px]" aria-label="平台认定目录">
           <TableHeader>
             <TableRow class="hover:bg-transparent">
-              <TableHead class="w-[11%]">目录业务ID</TableHead>
-              <TableHead class="w-[18%]">企业</TableHead>
+              <TableHead class="w-[12%]">目录业务ID</TableHead>
+              <TableHead class="w-[17%]">企业</TableHead>
               <TableHead class="w-[11%] whitespace-nowrap">有效期（原值）</TableHead>
               <TableHead class="w-[6%] whitespace-nowrap">维护年</TableHead>
               <TableHead class="w-[7%] whitespace-nowrap">维护批次</TableHead>
               <TableHead class="w-[8%] whitespace-nowrap">属地（原值）</TableHead>
               <TableHead class="w-[10%] whitespace-nowrap">称号范围</TableHead>
-              <TableHead class="w-[8%] whitespace-nowrap">版本 / 观察</TableHead>
+              <TableHead class="w-[10%] whitespace-nowrap">版本 / 观察</TableHead>
               <TableHead class="sticky right-0 z-20 w-[13%] border-l bg-muted">详情</TableHead>
             </TableRow>
           </TableHeader>
@@ -72,7 +72,7 @@ const conflictLabel: Record<string, string> = {
               <TableCell class="break-all font-mono text-xs">{{ missing(row.matchedVersion.maintenanceBatch) }}</TableCell>
               <TableCell class="break-all font-mono text-xs">{{ missing(row.matchedVersion.district) }}</TableCell>
               <TableCell class="whitespace-normal text-xs leading-5">{{ scopes(row.titleScopes) }}</TableCell>
-              <TableCell class="tabular-nums">{{ row.versionCount }} / {{ row.observationCount }}<span v-if="row.matchedVersionCount > 1" class="text-muted-foreground block text-xs">匹配 {{ row.matchedVersionCount }} 个版本</span><span v-if="row.matchedVersion.ruleVersion == null" class="text-muted-foreground block text-xs">尚未建立 typed 投影</span></TableCell>
+              <TableCell class="whitespace-nowrap tabular-nums">{{ row.versionCount }} / {{ row.observationCount }}<span v-if="row.matchedVersionCount > 1" class="text-muted-foreground block text-xs">匹配 {{ row.matchedVersionCount }} 个版本</span><span v-if="row.matchedVersion.ruleVersion == null" class="text-muted-foreground block text-xs">尚未建立 typed 投影</span></TableCell>
               <TableCell class="sticky right-0 z-10 border-l bg-card">
                 <Button variant="ghost" size="sm" :disabled="loading" @click="emit('open-record', row.record.id)"><History data-icon="inline-start" />观察与版本</Button>
                 <NuxtLink v-if="currentQuery(row).titleCode || currentQuery(row).q" :to="{ path: '/current-enterprises', query: { ...(currentQuery(row).titleCode ? { titleCode: currentQuery(row).titleCode } : {}), ...(currentQuery(row).q ? { q: currentQuery(row).q } : {}) } }" class="mt-1 block text-xs hover:underline" data-testid="platform-recognized-current-link">当前有效资格</NuxtLink>
@@ -105,7 +105,7 @@ const conflictLabel: Record<string, string> = {
 
     <template v-else>
       <p class="text-muted-foreground mb-2 text-[13px] leading-5" data-testid="platform-recognized-isolated-boundary">缺编号、编号冲突或内容不可核实的目录观察逐条隔离，不并入任何目录记录；点开「查看原查询」核对来源。</p>
-      <div v-if="isolated.length" class="data-table-scroll hidden sm:block [&_[data-slot=table-container]]:overflow-visible">
+      <div v-if="isolated.length" class="data-table-scroll hidden sm:block">
         <Table class="data-table min-w-[880px] table-fixed" aria-label="隔离的目录观察">
           <TableHeader>
             <TableRow class="hover:bg-transparent">

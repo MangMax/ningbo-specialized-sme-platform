@@ -140,6 +140,38 @@ describe('真实消费者深链', () => {
       expect(section.findAll('a').some(anchor => anchor.text() === '本地办理记录')).toBe(false)
     } finally { view.unmount() }
   })
+
+  it('never links an unresolved recognized row without an exact directory business id', () => {
+    const query: PlatformRecordQuery = {
+      id: 61, interface: 'recognized_list', queryKey: 'name:缺编号目录企业', rdjb: '2',
+      queriedAt: '2026-10-01T00:00:00Z', status: 'success', relationCount: 1, failureReason: null,
+    }
+    const relation: PlatformRecord = {
+      id: 101, queryId: 61, sequenceNo: 1, relationKey: 'REL-NO-KEY', usccRaw: null, nameRaw: '缺编号目录企业',
+      province: null, status: null, batch: null, declareKind: null, appliedAt: null, awardBatchLabel: null, year: null,
+      matchBasis: 'manual', verificationStatus: 'pending', sourceRdjb: '2', sourcePage: 1,
+      rawFields: { qymc: '缺编号目录企业' },
+    }
+    for (const identityState of ['missing_key', 'conflict'] as const) {
+      const business = groupPlatformBusinessDetails([{
+        relationId: 101, queryId: 61, queriedAt: '2026-10-01T00:00:00Z',
+        businessRecord: {
+          recordId: null, versionId: null, interface: 'recognized_list', platformKey: null,
+          groupState: identityState, identityState, contentState: identityState === 'missing_key' ? 'unverifiable' : 'verified',
+          keySource: 'none', projectionRuleVersion: 'platform-observation-v1',
+          hashAlgorithm: null, contentHash: null,
+        },
+        existingCorrespondenceIds: [], existingCorrespondences: [], conflicts: [],
+        titleCode: 'specialized_sme', enterpriseId: null, usccRaw: null, nameRaw: '缺编号目录企业',
+      }])[0]!
+      const view = mount(PlatformRecords, { props: { queries: [query], relations: [relation], businessRecords: [business] }, global: { stubs } })
+      try {
+        const section = view.get('[data-record-kind="recognized_list"]')
+        expect(section.text()).toContain('缺编号目录企业')
+        expect(section.find('[data-testid="platform-recognized-directory-link"]').exists()).toBe(false)
+      } finally { view.unmount() }
+    }
+  })
 })
 
 describe('平台认定目录详情', () => {
@@ -151,6 +183,7 @@ describe('平台认定目录详情', () => {
       await flushPromises()
       expect(fetch).toHaveBeenCalledWith('/api/platform/recognized-directory/7', { retry: 0 })
       const dialog = new DOMWrapper(document.body).get('[data-testid="platform-recognized-directory-detail"]')
+      expect(dialog.text()).toContain('平台认定目录 #7 · 观察与版本')
       expect(dialog.text()).toContain('版本 #12')
       expect(dialog.text()).toContain('有效期（原值）')
       expect(dialog.text()).toContain('2027-12-31')

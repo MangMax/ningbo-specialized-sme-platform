@@ -44,6 +44,16 @@ const sourcePage = computed(() => data.value?.page ?? page.value)
 const sourcePageSize = computed(() => data.value?.pageSize ?? pageSize.value)
 const statusVariant = (status: string) => status === 'failed' ? 'destructive' : status === 'success' ? 'secondary' : 'quiet'
 const label = (map: Record<string, string>, code: string) => map[code] ?? code
+/** Secondary entry only: q matches enterprise name/USCC, so only those keys map to a filter. */
+const USCC_LIKE_KEY = /^[0-9A-Z]{18}$/i
+const recognizedDirectoryQuery = (key: string) => {
+  if (USCC_LIKE_KEY.test(key)) return { q: key }
+  if (key.startsWith('name:')) {
+    const name = key.slice('name:'.length).trim()
+    return name ? { q: name } : {}
+  }
+  return {}
+}
 // The public archive API has no revision token. Invalidate on every observable
 // summary identity change; never invent a version/cursor from missing fields.
 const identity = (row: PlatformQueriesResult['rows'][number]) => JSON.stringify([scope.value, row.query])
@@ -73,7 +83,7 @@ const identity = (row: PlatformQueriesResult['rows'][number]) => JSON.stringify(
           <span class="text-muted-foreground break-all font-mono text-xs">{{ row.query.queryKey }}</span>
           <span class="text-muted-foreground text-xs">查询 #{{ row.query.id }} · {{ row.query.queriedAt }} · {{ row.query.relationCount }} 条关系</span>
           <NuxtLink v-if="row.query.interface === 'business_list'" :to="{ path: '/platform-business-processes', query: { q: row.query.queryKey } }" class="text-xs hover:underline">本地办理记录</NuxtLink>
-          <NuxtLink v-if="row.query.interface === 'recognized_list'" :to="{ path: '/platform-recognized-directory', query: { q: row.query.queryKey } }" class="text-xs hover:underline">本地目录记录</NuxtLink>
+          <NuxtLink v-if="row.query.interface === 'recognized_list'" :to="{ path: '/platform-recognized-directory', query: recognizedDirectoryQuery(row.query.queryKey) }" class="text-xs hover:underline">本地目录记录</NuxtLink>
         </div>
         <p v-if="row.query.failureReason" class="text-destructive break-all text-xs">失败原因：{{ row.query.failureReason }}</p>
         <p class="text-muted-foreground text-xs">摘要未携带关系内容、采集原档和响应原文；尚未加载的字段请展开后读取，各项进度分别显示。</p>

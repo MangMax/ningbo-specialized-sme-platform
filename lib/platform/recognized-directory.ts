@@ -6,14 +6,6 @@ import { MAX_PAGE_SIZE } from '../query'
 export const RECOGNIZED_DIRECTORY_VIEWS = ['records', 'isolated'] as const
 export type RecognizedDirectoryView = (typeof RECOGNIZED_DIRECTORY_VIEWS)[number]
 
-/** Navigation-only mirror of RDJB_TITLE_CODES for the /current-enterprises entry.
- * It never decides qualification; the existing current-enterprises reader does. */
-export const RECOGNIZED_TITLE_CODE_BY_RDJB: Record<string, string> = {
-  '1': 'innovative_sme',
-  '2': 'specialized_sme',
-  '3': 'little_giant',
-}
-
 export const recognizedDirectoryFilterSchema = z.strictObject({
   view: z.enum(RECOGNIZED_DIRECTORY_VIEWS).default('records'),
   /** Enterprise name or USCC keyword; matched only through an assigned observation. */

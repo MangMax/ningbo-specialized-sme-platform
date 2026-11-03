@@ -33,29 +33,38 @@ function mountPage() {
   return mount(Page, { global: { stubs } })
 }
 
-describe('查询证据卡片的目录深链', () => {
-  it('links a recognized query card to the local directory page with its query key', async () => {
-    vi.stubGlobal('useRoute', () => ({ query: {} }))
-    const result = {
-      total: 1, page: 1, pageSize: 50, counts: { partial: 1 },
-      rows: [{ relationsIncluded: false, query: { id: 7, queryKey: '91330211AAAAAAAA1X', interface: 'recognized_list', status: 'partial', rdjb: '2', queriedAt: '2026-10-21', createdAt: '2026-10-21', relationCount: 1 }, relations: [] }],
-    }
-    vi.stubGlobal('$fetch', vi.fn(async () => result))
-    const view = mount(PlatformQueriesPage, {
-      global: {
-        stubs: {
-          NuxtLink: { props: ['to'], template: '<a :data-to="JSON.stringify(to)"><slot /></a>' },
-          PageHeader: { template: '<header><slot /></header>' },
-        },
+const queryCardResponse = (queryKey: string) => ({
+  total: 1, page: 1, pageSize: 50, counts: { partial: 1 },
+  rows: [{ relationsIncluded: false, query: { id: 7, queryKey, interface: 'recognized_list', status: 'partial', rdjb: '2', queriedAt: '2026-10-21', createdAt: '2026-10-21', relationCount: 1 }, relations: [] }],
+})
+function mountQueriesPage() {
+  return mount(PlatformQueriesPage, {
+    global: {
+      stubs: {
+        NuxtLink: { props: ['to'], template: '<a :data-to="JSON.stringify(to)"><slot /></a>' },
+        PageHeader: { template: '<header><slot /></header>' },
       },
-    })
+    },
+  })
+}
+const directoryLinkCases = [
+  ['an exact USCC key', '91330211AAAAAAAA1X', { q: '91330211AAAAAAAA1X' }],
+  ['a name: key', 'name:宁波示例企业', { q: '宁波示例企业' }],
+  ['a scope: key', 'scope:queryBusList:1:%7B%22whpcyear%22%3A%222024%22%7D', {}],
+] as const
+
+describe('查询证据卡片的目录深链', () => {
+  it.each(directoryLinkCases)('links a recognized query card with %s', async (_label, queryKey, expectedQuery) => {
+    vi.stubGlobal('useRoute', () => ({ query: {} }))
+    vi.stubGlobal('$fetch', vi.fn(async () => queryCardResponse(queryKey)))
+    const view = mountQueriesPage()
     try {
       await flushPromises()
       const link = view.findAll('a').find(anchor => anchor.text() === '本地目录记录')!
-      expect(JSON.parse(link.attributes('data-to')!)).toEqual({ path: '/platform-recognized-directory', query: { q: '91330211AAAAAAAA1X' } })
+      expect(JSON.parse(link.attributes('data-to')!)).toEqual({ path: '/platform-recognized-directory', query: expectedQuery })
       // The evidence reader still renders on the same card.
       expect(view.text()).toContain('尚未加载')
-    } finally { view.unmount() }
+    } finally { view.unmount(); vi.unstubAllGlobals() }
   })
 })
 
