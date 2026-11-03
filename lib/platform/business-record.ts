@@ -1,3 +1,5 @@
+import type { ApplyProjectionFields } from './apply-record'
+
 /** Storage/write seam for #244. Consumers must scope original observations before grouping. */
 export interface PlatformObservationProjection {
   relationId: number
@@ -9,10 +11,17 @@ export interface PlatformObservationProjection {
   projectionRuleVersion: string
   inputFingerprint: string
 }
+/** Planned typed apply_list row. Never includes raw bytes or a client-supplied hash. */
+export interface PlatformApplyProjectionPreview extends ApplyProjectionFields {
+  ruleVersion: string
+}
 export interface PlatformProjectionResult extends PlatformObservationProjection {
   recordCreated: boolean
   versionCreated: boolean
   observationCreated: boolean
+  /** Present only when an apply_list typed projection was required. */
+  applyProjectionCreated?: boolean
+  applyProjectionReused?: boolean
 }
 export interface PlatformProjectionSummary {
   recordsCreated: number
@@ -22,6 +31,9 @@ export interface PlatformProjectionSummary {
   missingKey: number
   conflict: number
   unverifiable: number
+  /** Present only when the batch contained typed apply_list projections. */
+  applyProjectionsCreated?: number
+  applyProjectionsReused?: number
 }
 
 /** Read-side DTOs. All references belong to the caller's selected observation scope. */

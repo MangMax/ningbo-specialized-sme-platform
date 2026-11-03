@@ -56,6 +56,12 @@ const DECLARE_KINDS: Record<string, string> = {
   复核: 'review',
 }
 
+/** Known source values use the existing dictionary; unknown values stay verbatim. */
+export function normalizeDeclareKind(value: unknown): string | null {
+  const raw = text(value)
+  return raw ? (Object.hasOwn(DECLARE_KINDS, raw) ? DECLARE_KINDS[raw]! : raw) : null
+}
+
 function text(value: unknown): string | null {
   return typeof value === 'string' && value.trim() ? value.trim() : null
 }
@@ -74,7 +80,7 @@ export function processFactsFromRow(row: PlatformRow) {
     status: text(row.cszt),
     batch: text(row.whpc),
     // 非字典取值原样保留，包括原型同名键。
-    declareKind: rawKind ? (Object.hasOwn(DECLARE_KINDS, rawKind) ? DECLARE_KINDS[rawKind]! : rawKind) : null,
+    declareKind: normalizeDeclareKind(rawKind),
     appliedAt: text(row.sqsj),
     awardBatchLabel: text(row.personuuid),
     year: toYear(row.year),

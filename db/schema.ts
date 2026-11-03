@@ -822,6 +822,36 @@ export const platformBusinessObservation = sqliteTable('platform_business_observ
 ])
 
 /**
+ * Source-specific typed projection for apply_list (upstream queryList). One row per
+ * immutable content version; the composite owner FK prevents a version/record mismatch.
+ * Fields are copied from the archived raw row only (null when absent), never inferred.
+ */
+export const platformApplyProjection = sqliteTable('platform_apply_projection', {
+  versionId: integer('version_id').primaryKey().references(() => platformBusinessRecordVersion.id, { onDelete: 'restrict' }),
+  recordId: integer('record_id').notNull().references(() => platformBusinessRecord.id, { onDelete: 'restrict' }),
+  /** Raw sblx after trimming; unknown dictionary values are retained. */
+  declareKind: text('declare_kind'),
+  /** Explicit positive decimal-integer source year only. */
+  declarationYear: integer('declaration_year'),
+  /** Raw sqsj after trimming. */
+  appliedAt: text('applied_at'),
+  /** Raw cszt after trimming. */
+  status: text('status'),
+  nameRaw: text('name_raw'),
+  usccRaw: text('uscc_raw'),
+  ruleVersion: text('rule_version').notNull(),
+  createdAt: text('created_at').notNull().$defaultFn(() => new Date().toISOString()),
+}, t => [
+  foreignKey({ columns: [t.versionId, t.recordId], foreignColumns: [platformBusinessRecordVersion.id, platformBusinessRecordVersion.recordId] }).onDelete('restrict'),
+  index('platform_apply_projection_record_idx').on(t.recordId),
+  index('platform_apply_projection_year_idx').on(t.declarationYear),
+  index('platform_apply_projection_kind_idx').on(t.declareKind),
+  index('platform_apply_projection_status_idx').on(t.status),
+  index('platform_apply_projection_applied_idx').on(t.appliedAt),
+  index('platform_apply_projection_uscc_idx').on(t.usccRaw),
+])
+
+/**
  * **差异原因与后续措施**(契约 4)——**成对**记录的一行。
  *
  * 一行 = 「这家企业 × 这个称号 × 这个方向的差异」在**某个时点**的解释:

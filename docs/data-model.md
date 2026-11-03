@@ -11,7 +11,7 @@
 | 企业身份与资料 | `enterprise`、`enterprise_alias`、资料/别名审计；现有企业资料 PATCH | 统代优先，别名保留来源；归属待核不强并，现用资料不代替历史原值 |
 | 正式公布历史 | `source_document`、`record/event/evidence`；正式导入、事件/出处更正 | record 是企业×称号×发布方容器；事件、出处各有 ID，平台状态不改写正式事件 |
 | 平台采集与原档 | `platform_query/relation`、称号索引；实时单查/批查、归档列表、精确原档 | 查询状态是采集结果，关系行是观察；查询条件不是每条业务的称号/年度事实 |
-| 平台身份与历史 | `platform_business_record/version/observation` | 当前三来源按接口+业务编号隔离，版本与观察分开；缺键、冲突、不可核实显式保留 |
+| 平台身份与历史 | `platform_business_record/version/observation`；`platform_apply_projection` | 当前三来源按接口+业务编号隔离，版本与观察分开；缺键、冲突、不可核实显式保留；申报来源已有按内容版本关联的有类型投影 |
 | 文件导出快照 | `platform_export_batch/row` | 保留文件版本与物理行；审核状态不同于工商登记状态，不替代正式历史 |
 | 对应、差异与年度 | `record_correspondence`、proof、`difference_reason`、113/114 表及审计 | 决定精确到原观察/导出行；先限定来源范围再分组；年度完整过程与唯一 final 分开 |
 | 当前有效资格 | `current-qualification`、优质中小企业查询与三称号工作簿 | 复用资格读取，待核/排除与有效分开，不另造资格 writer |
@@ -27,6 +27,7 @@
 
 - 实时 `query_platform`：上游在本次条件与时点返回什么，包含未完成范围。
 - 本地归档 `list_platform_queries` / `GET /api/platform/queries`：留存过哪些查询、原行与观察历史。
+- 本地申报记录 `list_platform_declarations` / `GET /api/platform/declarations`：按企业、申报编号、原 `sblx`、明确年份与原 `cszt` 查询 `apply_list` typed 投影；缺编号/冲突/不可核实观察单独隔离。
 - 现有优质中小企业查询 `GET /api/roster/current-enterprises` / `list_current_qualified_enterprises`：本地规则下当前确定有效且匹配筛选的企业，页面为 `/current-enterprises`。
 
 三来源各自的有类型本地业务查询是下一步目标，不能将归档列表更名即宣称已交付。现有查询与 [三称号异步导出](current-roster-export-contract.md)复用资格规则；查询返回确定有效匹配，工作簿另有待确认/排除明细，输出形态不同不等于资格规则不同。来源字段的已验证投影按现有契约限制，不把 `queryBusList` 的某称号/格式规则推广到其他来源。

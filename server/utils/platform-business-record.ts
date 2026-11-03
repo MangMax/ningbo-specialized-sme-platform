@@ -2,7 +2,8 @@ import { createHash } from 'node:crypto'
 import { and, eq, sql } from 'drizzle-orm'
 import * as schema from '../../db/schema'
 import type { Executor } from './roster-import'
-import type { PlatformObservationProjection, PlatformProjectionResult } from '../../lib/platform/business-record'
+import type { PlatformApplyProjectionPreview, PlatformObservationProjection, PlatformProjectionResult } from '../../lib/platform/business-record'
+import { APPLY_PROJECTION_RULE, parseApplyRecord, type ApplyProjectionFields } from '../../lib/platform/apply-record'
 
 export const PLATFORM_PROJECTION_RULE = 'platform-observation-v1'
 export const PLATFORM_RAW_HASH_RULE = 'platform-row-json-v1'
@@ -38,6 +39,9 @@ export function planPlatformObservation(input: Input) {
     keySource: relationKey && rawKey ? 'both' : relationKey ? 'relation_key' : rawKey ? 'raw_id' : 'none',
     canonicalRawJson,
     contentHash: canonicalRawJson ? hash(`${PLATFORM_RAW_HASH_RULE}\n${canonicalRawJson}`) : null,
+    // Only a verified apply_list version can own typed source fields. Unknown/missing
+    // keys stay isolated as observations and never acquire a reusable typed row.
+    applyRecord: input.interface === 'apply_list' && canonicalRawJson ? parseApplyRecord(raw) : null,
   } as const
 }
 
@@ -80,6 +84,26 @@ export function projectionPreview(plan: ReturnType<typeof readPlatformObservatio
   return { relationId: plan.relationId, identityState: plan.identityState, contentState: plan.contentState, keySource: plan.keySource, projectionRuleVersion: plan.projectionRuleVersion, inputFingerprint: plan.inputFingerprint }
 }
 
+/** Planned apply_list fields for preflight only. Raw bytes and hashes stay server-side. */
+export function applyProjectionPreview(plan: { applyRecord: ApplyProjectionFields | null }): PlatformApplyProjectionPreview | null {
+  return plan.applyRecord ? { ...plan.applyRecord, ruleVersion: APPLY_PROJECTION_RULE } : null
+}
+
+const APPLY_FIELDS = ['declareKind', 'declarationYear', 'appliedAt', 'status', 'nameRaw', 'usccRaw'] as const
+
+/** One typed row per immutable content version. Rejects a same-version drift instead of
+ * silently reinterpreting historical content under a newer rule. */
+function ensureApplyProjection(db: Executor, versionId: number, recordId: number, fields: ApplyProjectionFields): { created: boolean; reused: boolean } {
+  const existing = db.select().from(schema.platformApplyProjection).where(eq(schema.platformApplyProjection.versionId, versionId)).get()
+  if (existing) {
+    if (existing.ruleVersion !== APPLY_PROJECTION_RULE) throw new PlatformProjectionError('apply_projection_conflict', 'Apply projection rule differs')
+    if (APPLY_FIELDS.some(field => existing[field] !== fields[field])) throw new PlatformProjectionError('apply_projection_conflict', 'Apply projection fields differ for the same content version')
+    return { created: false, reused: true }
+  }
+  db.insert(schema.platformApplyProjection).values({ versionId, recordId, ...fields, ruleVersion: APPLY_PROJECTION_RULE }).run()
+  return { created: true, reused: false }
+}
+
 /** Caller owns the single import transaction, including the original archive and receipt. */
 export function ensurePlatformObservation(db: Executor, relationId: number, batchId?: number, expectedFingerprint?: string): PlatformProjectionResult {
   const plan = readPlatformObservationPlan(db, relationId)
@@ -102,5 +126,11 @@ export function ensurePlatformObservation(db: Executor, relationId: number, batc
   const created = db.insert(schema.platformBusinessObservation).values({ ...projection, batchId: batchId ?? null }).onConflictDoNothing().returning().get()
   const observation = created ?? db.select().from(schema.platformBusinessObservation).where(eq(schema.platformBusinessObservation.relationId, relationId)).get()!
   if (Object.entries(projection).some(([field, value]) => observation[field as keyof typeof observation] !== value)) throw new PlatformProjectionError('projection_mapping_conflict', 'Stored projection does not match original observation')
-  return { ...projection, recordCreated, versionCreated, observationCreated: !!created }
+  const applyProjectionResult = plan.applyRecord && recordId != null && versionId != null
+    ? ensureApplyProjection(db, versionId, recordId, plan.applyRecord)
+    : null
+  return {
+    ...projection, recordCreated, versionCreated, observationCreated: !!created,
+    ...(applyProjectionResult ? { applyProjectionCreated: applyProjectionResult.created, applyProjectionReused: applyProjectionResult.reused } : {}),
+  }
 }
