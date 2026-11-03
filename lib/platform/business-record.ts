@@ -1,4 +1,5 @@
 import type { ApplyProjectionFields } from './apply-record'
+import type { BusinessProjectionFields } from './business-projection'
 
 /** Storage/write seam for #244. Consumers must scope original observations before grouping. */
 export interface PlatformObservationProjection {
@@ -15,6 +16,10 @@ export interface PlatformObservationProjection {
 export interface PlatformApplyProjectionPreview extends ApplyProjectionFields {
   ruleVersion: string
 }
+/** Planned typed business_list row. Never includes raw bytes, query title scope or a client-supplied hash. */
+export interface PlatformBusinessProjectionPreview extends BusinessProjectionFields {
+  ruleVersion: string
+}
 export interface PlatformProjectionResult extends PlatformObservationProjection {
   recordCreated: boolean
   versionCreated: boolean
@@ -22,6 +27,9 @@ export interface PlatformProjectionResult extends PlatformObservationProjection 
   /** Present only when an apply_list typed projection was required. */
   applyProjectionCreated?: boolean
   applyProjectionReused?: boolean
+  /** Present only when a business_list typed projection was required. */
+  businessProjectionCreated?: boolean
+  businessProjectionReused?: boolean
 }
 export interface PlatformProjectionSummary {
   recordsCreated: number
@@ -34,6 +42,9 @@ export interface PlatformProjectionSummary {
   /** Present only when the batch contained typed apply_list projections. */
   applyProjectionsCreated?: number
   applyProjectionsReused?: number
+  /** Present only when the batch contained typed business_list projections. */
+  businessProjectionsCreated?: number
+  businessProjectionsReused?: number
 }
 
 /** Read-side DTOs. All references belong to the caller's selected observation scope. */

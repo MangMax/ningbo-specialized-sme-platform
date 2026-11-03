@@ -16,10 +16,13 @@ describe('0033 platform apply projection migration', () => {
     const fullMigrations = resolve(import.meta.dirname, '../db/migrations')
     const preMigrations = join(dir, 'pre-migrations')
     cpSync(fullMigrations, preMigrations, { recursive: true })
+    // Later migrations must also be removed so the pre-state ends exactly before
+    // the migration under test; the full set then applies 0033 and everything after.
     rmSync(join(preMigrations, '0033_platform_apply_projection.sql'))
+    rmSync(join(preMigrations, '0034_platform_business_projection.sql'))
     const journalPath = join(preMigrations, 'meta', '_journal.json')
     const journal = JSON.parse(readFileSync(journalPath, 'utf8'))
-    journal.entries = journal.entries.filter((entry: { tag: string }) => entry.tag !== '0033_platform_apply_projection')
+    journal.entries = journal.entries.filter((entry: { tag: string }) => entry.tag !== '0033_platform_apply_projection' && entry.tag !== '0034_platform_business_projection')
     writeFileSync(journalPath, JSON.stringify(journal))
 
     const dbPath = join(dir, 'existing.sqlite')

@@ -3,6 +3,7 @@ import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../db/schema'
 import { normalizeName, normalizeUscc } from '../../lib/domain'
 import { normalizeDeclareKind } from '../../lib/platform/identity'
+import { businessEnterpriseExists, enterpriseAssignments, fail, pageOf } from './platform-business-read'
 import {
   DECLARATION_OBSERVATION_LIMIT,
   DECLARATION_VERSION_LIMIT,
@@ -18,31 +19,11 @@ import {
 } from '../../lib/platform/declarations'
 
 type Db = BetterSQLite3Database<typeof schema>
-const fail = (statusCode: number, code: string, message: string): never => {
-  throw Object.assign(new Error(message), { statusCode, code })
-}
 
 function normalizedFilter(input: unknown): DeclarationFilter {
   const parsed = declarationFilterSchema.safeParse(input)
   if (!parsed.success) throw Object.assign(new Error('Invalid declaration query parameters'), { statusCode: 400, code: 'invalid_declaration_filter' })
   return parsed.data
-}
-
-function enterpriseExists(recordColumn: SQL, filter: DeclarationFilter): SQL | null {
-  if (filter.enterpriseId == null && !filter.q) return null
-  const clauses: SQL[] = []
-  if (filter.enterpriseId != null) clauses.push(sql`r.enterprise_id = ${filter.enterpriseId}`)
-  if (filter.q) {
-    const name = `%${normalizeName(filter.q)}%`
-    const uscc = `%${normalizeUscc(filter.q)}%`
-    clauses.push(sql`(e.name_norm LIKE ${name} OR e.uscc_norm LIKE ${uscc})`)
-  }
-  return sql`exists (
-    select 1 from platform_business_observation o
-    join platform_relation r on r.id = o.relation_id
-    left join enterprise e on e.id = r.enterprise_id
-    where o.record_id = ${recordColumn} and ${sql.join(clauses, sql` and `)}
-  )`
 }
 
 function recordConditions(filter: DeclarationFilter): SQL[] {
@@ -52,7 +33,7 @@ function recordConditions(filter: DeclarationFilter): SQL[] {
   if (declareKind) conditions.push(sql`p.declare_kind = ${declareKind}`)
   if (filter.year != null) conditions.push(sql`p.declaration_year = ${filter.year}`)
   if (filter.status) conditions.push(sql`p.status = ${filter.status}`)
-  const enterprise = enterpriseExists(sql`b.id`, filter)
+  const enterprise = businessEnterpriseExists(filter)
   if (enterprise) conditions.push(enterprise)
   return conditions
 }
@@ -74,33 +55,6 @@ function isolatedConditions(filter: DeclarationFilter): SQL[] {
   if (filter.year != null) conditions.push(sql`r.year = ${filter.year}`)
   if (filter.status) conditions.push(sql`r.status = ${filter.status}`)
   return conditions
-}
-
-function pageOf(filter: DeclarationFilter) {
-  return { page: filter.page, pageSize: filter.pageSize, offset: (filter.page - 1) * filter.pageSize }
-}
-
-function enterpriseAssignments(db: Db, recordIds: number[]) {
-  if (!recordIds.length) return new Map<number, { ids: number[]; names: string[] }>()
-  const ids = sql.join(recordIds.map(id => sql`${id}`), sql`, `)
-  const rows = db.all<{ recordId: number; enterpriseId: number | null; name: string | null }>(sql`
-    select distinct o.record_id as recordId, r.enterprise_id as enterpriseId, e.name as name
-    from platform_business_observation o
-    join platform_relation r on r.id = o.relation_id
-    left join enterprise e on e.id = r.enterprise_id
-    where o.record_id in (${ids})
-    order by o.record_id, r.enterprise_id
-  `)
-  const grouped = new Map<number, { ids: number[]; names: string[] }>()
-  for (const row of rows) {
-    const entry = grouped.get(row.recordId) ?? { ids: [], names: [] }
-    if (row.enterpriseId != null && !entry.ids.includes(row.enterpriseId)) {
-      entry.ids.push(row.enterpriseId)
-      if (row.name) entry.names.push(row.name)
-    }
-    grouped.set(row.recordId, entry)
-  }
-  return grouped
 }
 
 function listRecordRows(db: Db, filter: DeclarationFilter, total: number): DeclarationListResult {

@@ -36,6 +36,17 @@ it('retains the successful source page after a later page fails and retries only
   expect(w.text()).toContain('second')
   expect(w.text()).not.toContain('retained')
 })
+it('links a business_list query card to the local business-process page with its query key', async () => {
+  vi.stubGlobal('useRoute', () => reactive({ query: {} }))
+  const result = summary('91330211255994457P')
+  result.rows[0]!.query.interface = 'business_list'
+  vi.stubGlobal('$fetch', vi.fn().mockResolvedValue(result))
+  const w = mount(Page, { global: { stubs: { NuxtLink: { props: ['to'], template: '<a :data-to="JSON.stringify(to)"><slot /></a>' }, PageHeader: { template: '<header><slot /></header>' } } } }); wrappers.push(w)
+  await flushPromises()
+  const link = w.findAll('a').find(anchor => anchor.text() === '本地办理记录')!
+  expect(JSON.parse(link.attributes('data-to')!)).toEqual({ path: '/platform-business-processes', query: { q: '91330211255994457P' } })
+})
+
 it.each(['failed', 'not_queried', 'no_record', 'unrecognized-status'])('preserves query status %s without interpreting an unloaded relation array', async status => {
   vi.stubGlobal('useRoute', () => reactive({ query: {} }))
   const result = summary('status')
