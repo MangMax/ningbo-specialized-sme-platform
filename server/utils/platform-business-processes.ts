@@ -3,6 +3,7 @@ import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../db/schema'
 import { normalizeName, normalizeUscc } from '../../lib/domain'
 import { normalizeDeclareKind } from '../../lib/platform/identity'
+import { businessEnterpriseExists, enterpriseAssignments, fail, orderedScopes, pageOf, titleScopesByQuery } from './platform-business-read'
 import {
   BUSINESS_PROCESS_OBSERVATION_LIMIT,
   BUSINESS_PROCESS_VERSION_LIMIT,
@@ -18,9 +19,6 @@ import {
 } from '../../lib/platform/business-processes'
 
 type Db = BetterSQLite3Database<typeof schema>
-const fail = (statusCode: number, code: string, message: string): never => {
-  throw Object.assign(new Error(message), { statusCode, code })
-}
 
 function normalizedFilter(input: unknown): BusinessProcessFilter {
   const parsed = businessProcessFilterSchema.safeParse(input)
@@ -28,30 +26,28 @@ function normalizedFilter(input: unknown): BusinessProcessFilter {
   return parsed.data
 }
 
-function enterpriseExists(recordColumn: SQL, filter: BusinessProcessFilter): SQL | null {
-  if (filter.enterpriseId == null && !filter.q) return null
-  const clauses: SQL[] = []
-  if (filter.enterpriseId != null) clauses.push(sql`r.enterprise_id = ${filter.enterpriseId}`)
-  if (filter.q) {
-    const name = `%${normalizeName(filter.q)}%`
-    const uscc = `%${normalizeUscc(filter.q)}%`
-    clauses.push(sql`(e.name_norm LIKE ${name} OR e.uscc_norm LIKE ${uscc})`)
-  }
-  return sql`exists (
-    select 1 from platform_business_observation o
-    join platform_relation r on r.id = o.relation_id
-    left join enterprise e on e.id = r.enterprise_id
-    where o.record_id = ${recordColumn} and ${sql.join(clauses, sql` and `)}
-  )`
-}
-
-/** Title scope is a query fact: match the explicit rdjb on the query or its scope index. */
-function titleScopeExists(recordColumn: SQL, rdjb: string): SQL {
+/** Title scope is a query fact: match the explicit rdjb on the query or its scope index.
+ * The scope index is populated by the 0027 trigger from collectionEvidence; the direct
+ * rdjb membership fallback keeps legacy/import rows that predate or omit that evidence. */
+function titleScopeExists(rdjb: string): SQL {
   return sql`exists (
     select 1 from platform_business_observation o
     join platform_relation r on r.id = o.relation_id
     join platform_query q on q.id = r.query_id
-    where o.record_id = ${recordColumn} and (
+    where o.record_id = b.id and (
+      instr(',' || q.rdjb || ',', ',' || ${rdjb} || ',') > 0
+      or exists (select 1 from platform_query_title_scope s where s.query_id = q.id and s.rdjb = ${rdjb})
+    )
+  )`
+}
+
+/** Restrict matched content versions to those actually observed under the selected title scope. */
+function versionTitleScopeExists(rdjb: string): SQL {
+  return sql`exists (
+    select 1 from platform_business_observation o
+    join platform_relation r on r.id = o.relation_id
+    join platform_query q on q.id = r.query_id
+    where o.version_id = v.id and (
       instr(',' || q.rdjb || ',', ',' || ${rdjb} || ',') > 0
       or exists (select 1 from platform_query_title_scope s where s.query_id = q.id and s.rdjb = ${rdjb})
     )
@@ -72,8 +68,8 @@ function recordConditions(filter: BusinessProcessFilter): SQL[] {
   if (filter.year != null) conditions.push(sql`p.business_year = ${filter.year}`)
   if (filter.status) conditions.push(sql`p.status = ${filter.status}`)
   if (filter.batch) conditions.push(sql`p.batch = ${filter.batch}`)
-  if (filter.rdjb) conditions.push(titleScopeExists(sql`b.id`, filter.rdjb))
-  const enterprise = enterpriseExists(sql`b.id`, filter)
+  if (filter.rdjb) conditions.push(titleScopeExists(filter.rdjb))
+  const enterprise = businessEnterpriseExists(filter)
   if (enterprise) conditions.push(enterprise)
   return conditions
 }
@@ -100,84 +96,21 @@ function isolatedConditions(filter: BusinessProcessFilter): SQL[] {
   return conditions
 }
 
-function pageOf(filter: BusinessProcessFilter) {
-  return { page: filter.page, pageSize: filter.pageSize, offset: (filter.page - 1) * filter.pageSize }
-}
-
-/** Explicit query title scopes keyed by query id. Never a per-row title fact. */
-function titleScopesByQuery(db: Db, queryIds: number[]): Map<number, string[]> {
-  const scopes = new Map<number, Set<string>>()
-  if (!queryIds.length) return new Map<number, string[]>()
-  const ids = sql.join(queryIds.map(id => sql`${id}`), sql`, `)
-  const rows = db.all<{ queryId: number; rdjb: string; scoped: string | null }>(sql`
-    select q.id as queryId, q.rdjb as rdjb, s.rdjb as scoped
-    from platform_query q left join platform_query_title_scope s on s.query_id = q.id
-    where q.id in (${ids})
-  `)
-  const order = ['1', '2', '3']
-  for (const row of rows) {
-    const set = scopes.get(row.queryId) ?? new Set<string>()
-    for (const value of row.rdjb.split(',').map(value => value.trim()).filter(Boolean)) set.add(value)
-    if (row.scoped) set.add(row.scoped)
-    scopes.set(row.queryId, set)
-  }
-  return new Map([...scopes.entries()].map(([queryId, set]) => [
-    queryId,
-    [...set].sort((a, b) => {
-      const ai = order.indexOf(a), bi = order.indexOf(b)
-      return (ai < 0 ? order.length : ai) - (bi < 0 ? order.length : bi) || a.localeCompare(b)
-    }),
-  ]))
-}
-
-function enterpriseAssignments(db: Db, recordIds: number[]) {
-  if (!recordIds.length) return new Map<number, { ids: number[]; names: string[] }>()
-  const ids = sql.join(recordIds.map(id => sql`${id}`), sql`, `)
-  const rows = db.all<{ recordId: number; enterpriseId: number | null; name: string | null }>(sql`
-    select distinct o.record_id as recordId, r.enterprise_id as enterpriseId, e.name as name
-    from platform_business_observation o
-    join platform_relation r on r.id = o.relation_id
-    left join enterprise e on e.id = r.enterprise_id
-    where o.record_id in (${ids})
-    order by o.record_id, r.enterprise_id
-  `)
-  const grouped = new Map<number, { ids: number[]; names: string[] }>()
-  for (const row of rows) {
-    const entry = grouped.get(row.recordId) ?? { ids: [], names: [] }
-    if (row.enterpriseId != null && !entry.ids.includes(row.enterpriseId)) {
-      entry.ids.push(row.enterpriseId)
-      if (row.name) entry.names.push(row.name)
-    }
-    grouped.set(row.recordId, entry)
-  }
-  return grouped
-}
-
-function recordsTitleScopes(db: Db, recordIds: number[], scopesByQuery: Map<number, string[]>): Map<number, string[]> {
+function recordsTitleScopes(rows: { recordId: number; queryId: number }[], scopesByQuery: Map<number, string[]>): Map<number, string[]> {
   const grouped = new Map<number, Set<string>>()
-  if (!recordIds.length) return new Map<number, string[]>()
-  const ids = sql.join(recordIds.map(id => sql`${id}`), sql`, `)
-  const rows = db.all<{ recordId: number; queryId: number }>(sql`
-    select distinct o.record_id as recordId, r.query_id as queryId
-    from platform_business_observation o
-    join platform_relation r on r.id = o.relation_id
-    where o.record_id in (${ids})
-  `)
   for (const row of rows) {
     const set = grouped.get(row.recordId) ?? new Set<string>()
     for (const scope of scopesByQuery.get(row.queryId) ?? []) set.add(scope)
     grouped.set(row.recordId, set)
   }
-  const order = ['1', '2', '3']
-  return new Map([...grouped.entries()].map(([recordId, set]): [number, string[]] => [
-    recordId,
-    [...set].sort((a, b) => (order.indexOf(a) < 0 ? order.length : order.indexOf(a)) - (order.indexOf(b) < 0 ? order.length : order.indexOf(b)) || a.localeCompare(b)),
-  ]))
+  return new Map([...grouped.entries()].map(([recordId, set]): [number, string[]] => [recordId, orderedScopes(set)]))
 }
 
 function listRecordRows(db: Db, filter: BusinessProcessFilter, total: number): BusinessProcessListResult {
   const { page, pageSize, offset } = pageOf(filter)
-  const where = sql.join(recordConditions(filter), sql` and `)
+  const conditions = recordConditions(filter)
+  if (filter.rdjb) conditions.push(versionTitleScopeExists(filter.rdjb))
+  const where = sql.join(conditions, sql` and `)
   const rows = db.all<{
     recordId: number; platformKey: string; versionId: number; declareKind: string | null; businessYear: number | null;
     appliedAt: string | null; status: string | null; batch: string | null; awardBatchLabel: string | null; province: string | null;
@@ -216,7 +149,7 @@ function listRecordRows(db: Db, filter: BusinessProcessFilter, total: number): B
     where o.record_id in (${sql.join(recordIds.map(id => sql`${id}`), sql`, `)})
   `) : []
   const scopesByQuery = titleScopesByQuery(db, [...new Set(queryRows.map(row => row.queryId))])
-  const titleScopes = recordsTitleScopes(db, recordIds, scopesByQuery)
+  const titleScopes = recordsTitleScopes(queryRows, scopesByQuery)
   const conflictRows = recordIds.length ? db.all<{ recordId: number; contentState: string }>(sql`
     select distinct o.record_id as recordId, o.content_state as contentState
     from platform_business_observation o
@@ -363,11 +296,12 @@ export function getPlatformBusinessProcess(db: Db, recordId: number): BusinessPr
     order by q.queried_at desc, o.relation_id desc
     limit ${BUSINESS_PROCESS_OBSERVATION_LIMIT}
   `)
-  const versionQueryRows = db.all<{ versionId: number; queryId: number }>(sql`
+  const versionIds = versions.map(version => version.versionId)
+  const versionQueryRows = versionIds.length ? db.all<{ versionId: number; queryId: number }>(sql`
     select distinct o.version_id as versionId, r.query_id as queryId
     from platform_business_observation o join platform_relation r on r.id = o.relation_id
-    where o.record_id = ${recordId} and o.version_id is not null
-  `)
+    where o.version_id in (${sql.join(versionIds.map(id => sql`${id}`), sql`, `)})
+  `) : []
   const queryIds = [...new Set([...observations.map(observation => observation.queryId), ...versionQueryRows.map(row => row.queryId)])]
   const scopesByQuery = titleScopesByQuery(db, queryIds)
   const versionScopes = new Map<number, Set<string>>()
@@ -376,12 +310,25 @@ export function getPlatformBusinessProcess(db: Db, recordId: number): BusinessPr
     for (const scope of scopesByQuery.get(row.queryId) ?? []) set.add(scope)
     versionScopes.set(row.versionId, set)
   }
+  const relationIds = observations.map(observation => observation.relationId)
+  const correspondenceRows = relationIds.length ? db.all<{ relationId: number; id: number; status: string; revision: number }>(sql`
+    select relation_id as relationId, id, status, revision from record_correspondence
+    where relation_id in (${sql.join(relationIds.map(id => sql`${id}`), sql`, `)})
+    order by relation_id, id
+  `) : []
+  const correspondenceByRelation = new Map<number, { id: number; status: string; revision: number }[]>()
+  for (const row of correspondenceRows) {
+    const list = correspondenceByRelation.get(row.relationId) ?? []
+    list.push({ id: row.id, status: row.status, revision: row.revision })
+    correspondenceByRelation.set(row.relationId, list)
+  }
   return {
     record,
-    versions: versions.map(version => ({ ...version, titleScopes: [...(versionScopes.get(version.versionId) ?? [])] })),
+    versions: versions.map(version => ({ ...version, titleScopes: orderedScopes(versionScopes.get(version.versionId) ?? []) })),
     observations: observations.map(({ declareKind, businessYear, appliedAt, status, batch, awardBatchLabel, province, nameRaw, usccRaw, ruleVersion, ...observation }) => ({
       ...observation,
       titleScopes: scopesByQuery.get(observation.queryId) ?? [],
+      correspondenceRefs: correspondenceByRelation.get(observation.relationId) ?? [],
       version: observation.versionId == null ? null : versionFields({ versionId: observation.versionId, declareKind, businessYear, appliedAt, status, batch, awardBatchLabel, province, nameRaw, usccRaw, ruleVersion }),
     })),
     counts: {

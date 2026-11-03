@@ -29,7 +29,7 @@ describe('关联办理页面', () => {
   beforeEach(() => {
     fetch = vi.fn(async () => response)
     vi.stubGlobal('$fetch', fetch)
-    vi.stubGlobal('useRoute', () => ({ query: { platformKey: 'SQ-PREFILL' } }))
+    vi.stubGlobal('useRoute', () => ({ query: { platformKey: 'SQ-PREFILL', q: '影子企业' } }))
   })
   afterEach(() => vi.unstubAllGlobals())
 
@@ -37,7 +37,7 @@ describe('关联办理页面', () => {
     const view = mountPage()
     try {
       await flushPromises()
-      expect(fetch).toHaveBeenCalledWith('/api/platform/business-processes', expect.objectContaining({ query: expect.objectContaining({ view: 'records', platformKey: 'SQ-PREFILL', page: 1, pageSize: 25 }) }))
+      expect(fetch).toHaveBeenCalledWith('/api/platform/business-processes', expect.objectContaining({ query: expect.objectContaining({ view: 'records', platformKey: 'SQ-PREFILL', q: '影子企业', page: 1, pageSize: 25 }) }))
       expect(view.text()).toContain('SQ-2023-1')
       expect(view.text()).toContain('甲办理企业')
 

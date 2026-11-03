@@ -2,8 +2,10 @@
 import { ref, watch } from 'vue'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import TableFailureState from '@/components/TableFailureState.vue'
+import RecordSourceReader from '@/components/record-correspondence/SourceReader.vue'
 import type { BusinessProcessDetail } from '~~/lib/platform/business-processes'
 import { PLATFORM_HISTORY_STATES } from '~~/lib/roster/platform-records'
 import { PLATFORM_RDJBS, RELATION_DECLARE_KINDS } from '~~/lib/labels'
@@ -14,6 +16,7 @@ const emit = defineEmits<{ 'update:open': [value: boolean] }>()
 const data = ref<BusinessProcessDetail>()
 const loading = ref(false)
 const error = ref('')
+const sourceRelationId = ref<number | null>(null)
 let generation = 0
 
 async function load(id: number) {
@@ -33,6 +36,7 @@ async function load(id: number) {
 watch(() => [props.open, props.recordId] as const, ([open, id]) => {
   if (!open || id == null) return
   data.value = undefined
+  sourceRelationId.value = null
   void load(id)
 }, { immediate: true })
 
@@ -90,7 +94,7 @@ const scopes = (values: string[]) => values.length ? values.map(value => PLATFOR
           <h3 class="text-sm font-medium">实际观察 <span class="text-muted-foreground font-normal">{{ data.counts.observations }} 次<template v-if="data.counts.observationsTruncated">（仅显示最近 {{ data.observations.length }} 次）</template></span></h3>
           <div class="mt-2 min-w-0 overflow-x-auto rounded-sm border">
             <table class="w-full min-w-[820px] text-left text-[13px] leading-5" aria-label="关联办理实际观察">
-              <thead class="bg-muted/40 text-muted-foreground"><tr><th class="px-3 py-2 font-medium">原行 / 查询</th><th class="px-3 py-2 font-medium">采集时间</th><th class="px-3 py-2 font-medium">称号范围</th><th class="px-3 py-2 font-medium">内容版本</th><th class="px-3 py-2 font-medium">企业</th><th class="px-3 py-2 font-medium">状态</th><th class="px-3 py-2 font-medium">原行</th></tr></thead>
+              <thead class="bg-muted/40 text-muted-foreground"><tr><th class="px-3 py-2 font-medium">原行 / 查询</th><th class="px-3 py-2 font-medium">采集时间</th><th class="px-3 py-2 font-medium">称号范围</th><th class="px-3 py-2 font-medium">内容版本</th><th class="px-3 py-2 font-medium">企业</th><th class="px-3 py-2 font-medium">对应决定</th><th class="px-3 py-2 font-medium">状态</th><th class="px-3 py-2 font-medium">原行</th></tr></thead>
               <tbody>
                 <tr v-for="observation in data.observations" :key="observation.relationId" class="border-t" data-testid="platform-business-process-observation">
                   <td class="px-3 py-2 whitespace-nowrap">行 #{{ observation.relationId }} · 查询 #{{ observation.queryId }}</td>
@@ -98,12 +102,22 @@ const scopes = (values: string[]) => values.length ? values.map(value => PLATFOR
                   <td class="px-3 py-2">{{ scopes(observation.titleScopes) }}</td>
                   <td class="px-3 py-2">{{ observation.versionId == null ? '未建立' : `版本 #${observation.versionId}` }}</td>
                   <td class="px-3 py-2">{{ observation.enterpriseName ?? '未匹配主体' }}</td>
+                  <td class="px-3 py-2 text-xs">
+                    <template v-if="observation.correspondenceRefs.length">
+                      <span v-for="ref in observation.correspondenceRefs" :key="ref.id" class="mr-1 whitespace-nowrap">#{{ ref.id }} · {{ ref.status }}</span>
+                    </template>
+                    <span v-else class="text-muted-foreground">此原行暂无对应决定</span>
+                  </td>
                   <td class="px-3 py-2 text-xs">{{ state(observation.identityState) }}<template v-if="observation.contentState === 'unverifiable'"> · 原文内容无法核实</template></td>
-                  <td class="px-3 py-2"><NuxtLink :to="{ path: '/platform-queries', query: { queryKey: observation.queryKey } }" class="whitespace-nowrap text-xs hover:underline">查看原查询</NuxtLink></td>
+                  <td class="px-3 py-2"><div class="flex flex-col items-start gap-1"><NuxtLink :to="{ path: '/platform-queries', query: { queryKey: observation.queryKey } }" class="whitespace-nowrap text-xs hover:underline">查看原查询</NuxtLink><Button variant="ghost" size="sm" class="h-7 px-2 text-xs" @click="sourceRelationId = sourceRelationId === observation.relationId ? null : observation.relationId">{{ sourceRelationId === observation.relationId ? '收起原行' : '原行与对应' }}</Button></div></td>
                 </tr>
               </tbody>
             </table>
           </div>
+          <section v-if="sourceRelationId != null" class="mt-3 min-w-0 rounded-sm border p-3">
+            <h4 class="mb-2 text-sm font-medium">原行 #{{ sourceRelationId }} 与对应决定</h4>
+            <RecordSourceReader kind="relation" :id="sourceRelationId" presentation="business" />
+          </section>
         </section>
       </div>
     </DialogContent>

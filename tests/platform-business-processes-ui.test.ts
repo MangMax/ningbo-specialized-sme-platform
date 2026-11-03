@@ -5,7 +5,7 @@ import PlatformBusinessProcessTable from '../components/PlatformBusinessProcessT
 import PlatformBusinessProcessDetailDialog from '../components/PlatformBusinessProcessDetailDialog.vue'
 import type { BusinessProcessRow } from '../lib/platform/business-processes'
 
-const stubs = { NuxtLink: { props: ['to'], template: '<a :href="typeof to === \'string\' ? to : to.path"><slot /></a>' } }
+const stubs = { NuxtLink: { props: ['to'], template: '<a :href="typeof to === \'string\' ? to : to.path"><slot /></a>' }, RecordSourceReader: { template: '<div data-testid="source-reader-stub" />' } }
 const version = {
   versionId: 12, declareKind: 'review', businessYear: 2023, appliedAt: '2023-02-01 09:00:00', status: '终审通过',
   batch: '2023-2', awardBatchLabel: '第三批', province: '浙江省', nameRaw: '甲办理企业', usccRaw: '91330211255994457P', ruleVersion: 'platform-business-v1',
@@ -32,7 +32,7 @@ const isolated: BusinessProcessRow = {
 const detail = {
   record: { id: 7, platformKey: 'SQ-2023-1', interface: 'business_list' as const, identityRuleVersion: 'platform-observation-v1', createdAt: '2026-10-01T00:00:00Z' },
   versions: [{ ...version, hashAlgorithm: 'platform-row-json-v1', contentHash: 'a'.repeat(64), createdAt: '2026-10-01T00:00:00Z', observationCount: 2, firstObservedAt: '2026-10-01T00:00:00Z', lastObservedAt: '2026-10-02T00:00:00Z', titleScopes: ['2'] }],
-  observations: [{ relationId: 9, queryId: 4, queriedAt: '2026-10-01T00:00:00Z', queryKey: '91330211255994457P', queryStatus: 'success', sequenceNo: 1, enterpriseId: 11, enterpriseName: '甲办理企业', identityState: 'resolved' as const, contentState: 'verified' as const, keySource: 'both' as const, projectionRuleVersion: 'platform-observation-v1', versionId: 12, titleScopes: ['2'], version }],
+  observations: [{ relationId: 9, queryId: 4, queriedAt: '2026-10-01T00:00:00Z', queryKey: '91330211255994457P', queryStatus: 'success', sequenceNo: 1, enterpriseId: 11, enterpriseName: '甲办理企业', identityState: 'resolved' as const, contentState: 'verified' as const, keySource: 'both' as const, projectionRuleVersion: 'platform-observation-v1', versionId: 12, titleScopes: ['2'], correspondenceRefs: [{ id: 1, status: 'confirmed', revision: 2 }], version }],
   counts: { versions: 1, observations: 2, versionsTruncated: false, observationsTruncated: true },
 }
 
@@ -77,6 +77,10 @@ describe('关联办理详情', () => {
       expect(dialog.text()).toContain('专精特新中小企业')
       expect(dialog.text()).toContain('仅显示最近 1 次')
       expect(dialog.text()).toContain('第三批')
+      expect(dialog.text()).toContain('#1 · confirmed')
+      expect(dialog.find('[data-testid="source-reader-stub"]').exists()).toBe(false)
+      await dialog.findAll('button').find(button => button.text().includes('原行与对应'))!.trigger('click')
+      expect(dialog.find('[data-testid="source-reader-stub"]').exists()).toBe(true)
       expect(dialog.text()).not.toContain('secretRaw')
     } finally { view.unmount(); vi.unstubAllGlobals() }
   })

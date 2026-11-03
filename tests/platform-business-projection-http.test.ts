@@ -100,6 +100,25 @@ describe('business_list typed projection through public import HTTP', () => {
     expect(db.get<{ n: number }>(sql`SELECT count(*) n FROM platform_relation`)!.n).toBe(2)
   }))
 
+  it('does not create a second version or typed row when the same raw is observed under different query title scopes', async () => fixture(async (db, post) => {
+    const raw = { id: 'SQ-SCOPE-B', qymc: '称号范围企业', sblx: '复核', year: '2023', sqsj: '2023-02-01', cszt: '终审通过', whpc: '2023-2' }
+    const one = businessQuery('2026-10-01T00:00:00Z', raw, '2')
+    const two = businessQuery('2026-10-02T00:00:00Z', raw, '1')
+    const saved = await post('commit', request('scope-replay', { platformQueries: [one, two] }))
+    expect(saved.status).toBe('committed')
+    expect(db.get<{ n: number }>(sql`SELECT count(*) n FROM platform_business_projection`)!.n).toBe(1)
+    expect(db.get<{ n: number }>(sql`SELECT count(*) n FROM platform_business_record_version`)!.n).toBe(1)
+    expect(db.get<{ n: number }>(sql`SELECT count(*) n FROM platform_business_observation`)!.n).toBe(2)
+    expect(db.get<{ n: number }>(sql`SELECT count(*) n FROM platform_business_record`)!.n).toBe(1)
+  }))
+
+  it('preserves unknown status and maintenance batch verbatim without inventing a year', async () => fixture(async (db, post) => {
+    const raw = { id: 'SQ-UNKNOWN-B', qymc: '未知值企业', sblx: '其他事项', year: null, cszt: '未知状态', whpc: '未知批次' }
+    const saved = await post('commit', request('unknown-values', { platformQueries: [businessQuery('2026-10-05T00:00:00Z', raw)] }))
+    expect(saved.status).toBe('committed')
+    expect(db.get(sql`SELECT declare_kind AS declareKind, business_year AS businessYear, status, batch FROM platform_business_projection`)).toEqual({ declareKind: '其他事项', businessYear: null, status: '未知状态', batch: '未知批次' })
+  }))
+
   it('keeps missing-key, conflicting-key and unverifiable observations isolated without a typed row', async () => fixture(async (db, post) => {
     const missing = businessQuery('2026-10-01T00:00:00Z', { qymc: '无编号企业', sblx: '申请', year: '2024' })
     const conflict = businessQuery('2026-10-02T00:00:00Z', { id: 'RAW-ID', qymc: '冲突企业' })

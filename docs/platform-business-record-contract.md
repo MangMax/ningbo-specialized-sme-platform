@@ -63,7 +63,7 @@
 
 迁移 `0034_platform_business_projection` 只新增该表与索引，不重建既有表。历史观察继续走 `platformRecordObservations`（每批 1..100）投影；预检返回 `canonicalProjection[].businessProjection` 计划，提交回执的 `canonicalProjection` 增加 `businessProjectionsCreated`/`businessProjectionsReused`（仅当批次包含 business 投影时出现）。旧 query/relation/raw/hash/version/observation/对应/审计/深链均不改写；`apply_list` 的既有投影与回执字段不变。
 
-本投影是分域扩展新增的第 54 张应用表；ADR 的 52 表是 #297 的审计基线，不是本轮重审结论。HTTP/MCP 本地关联办理查询、页面与真实消费者对照属于 #458，不在本层实施。
+本投影是分域扩展新增的第 54 张应用表；ADR 的 52 表是 #297 的审计基线，不是本轮重审结论。HTTP/MCP 本地关联办理查询、页面与真实消费者对照属于 #458，见 [关联办理本地查询](platform-business-processes.md)：详情按观察返回其自己的对应决定引用（id/status/revision），不复制决定内容、不传播到其他观察。
 
 ## 下一层读接口接缝
 

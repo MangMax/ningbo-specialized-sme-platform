@@ -18,16 +18,13 @@ import PlatformBusinessProcessDetailDialog from '@/components/PlatformBusinessPr
 
 useHead({ title: '关联办理 · 专精特新' })
 
-const initialPlatformKey = (() => {
-  try {
-    const value = useRoute().query.platformKey
-    return typeof value === 'string' ? value : ''
-  } catch { return '' }
+const initialQuery = (() => {
+  try { return useRoute().query } catch { return {} }
 })()
 
 const view = ref<'records' | 'isolated'>('records')
-const enterpriseQuery = ref('')
-const platformKey = ref(initialPlatformKey)
+const enterpriseQuery = ref(typeof initialQuery.q === 'string' ? initialQuery.q : '')
+const platformKey = ref(typeof initialQuery.platformKey === 'string' ? initialQuery.platformKey : '')
 const rdjb = ref('all')
 const declareKind = ref('')
 const yearInput = ref('')

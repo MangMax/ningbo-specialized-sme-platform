@@ -152,6 +152,26 @@ it('isolates missing-key observations and rejects invalid filters', async () => 
   expect((await get('/api/platform/business-processes/999999')).http).toBe(404)
 })
 
+it('restricts the matched version and its count to the selected explicit title scope', async () => {
+  const rawOld = { id: 'SQ-B-SCOPE', qymc: '称号范围企业', tyshxydm: '91330211255994459R', sblx: '申请', year: 2023, sqsj: '2023-01-01 09:00:00', cszt: '通过', whpc: '2023-1' }
+  const rawNew = { ...rawOld, sblx: '复核', year: 2024, sqsj: '2024-01-01 09:00:00', cszt: '待审核', whpc: '2024-1' }
+  const saved = await post('/api/roster/import/commit', request('seed-scope', [
+    businessQuery('2026-11-01T00:00:00Z', rawOld, '2', '91330211255994459R'),
+    businessQuery('2026-11-02T00:00:00Z', rawNew, '1', '91330211255994459R'),
+  ]))
+  expect(saved.status).toBe('committed')
+  addTitleScopes('91330211255994459R', '2026-11-01T00:00:00Z', ['2'])
+  addTitleScopes('91330211255994459R', '2026-11-02T00:00:00Z', ['1'])
+
+  const scopeTwo = await get('/api/platform/business-processes?platformKey=SQ-B-SCOPE&rdjb=2')
+  expect(scopeTwo.rows).toHaveLength(1)
+  expect(scopeTwo.rows[0]).toMatchObject({ matchedVersion: { status: '通过', businessYear: 2023, declareKind: 'apply' }, matchedVersionCount: 1, versionCount: 2 })
+  const scopeOne = await get('/api/platform/business-processes?platformKey=SQ-B-SCOPE&rdjb=1')
+  expect(scopeOne.rows[0]).toMatchObject({ matchedVersion: { status: '待审核', businessYear: 2024, declareKind: 'review' }, matchedVersionCount: 1, versionCount: 2 })
+  const allScopes = await get('/api/platform/business-processes?platformKey=SQ-B-SCOPE')
+  expect(allScopes.rows[0]).toMatchObject({ matchedVersion: { status: '待审核', businessYear: 2024 }, matchedVersionCount: 2, versionCount: 2, titleScopes: ['1', '2'] })
+})
+
 it('bounds detail history and observation reads explicitly', async () => {
   const raw = { id: 'SQ-B-BIG', qymc: '大量版本企业', sblx: '申请', year: 2020, cszt: '待审核', whpc: '2020-1' }
   const queries: RosterImportPlatformQuery[] = []
