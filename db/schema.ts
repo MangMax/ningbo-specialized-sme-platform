@@ -890,6 +890,43 @@ export const platformBusinessProjection = sqliteTable('platform_business_project
 ])
 
 /**
+ * Source-specific typed projection for recognized_list (upstream queryBusList, 平台认定目录).
+ * One row per immutable content version; the composite owner FK prevents a version/record
+ * mismatch. Fields are copied from the archived raw row only (null when absent), never
+ * inferred from query conditions, queriedAt, batch or name. Query title scope is not a row
+ * fact and is not stored here; a row-level rdjb is retained verbatim as its own raw field.
+ */
+export const platformRecognizedProjection = sqliteTable('platform_recognized_projection', {
+  versionId: integer('version_id').primaryKey().references(() => platformBusinessRecordVersion.id, { onDelete: 'restrict' }),
+  recordId: integer('record_id').notNull().references(() => platformBusinessRecord.id, { onDelete: 'restrict' }),
+  /** Raw rddqrq (有效期原值) after trimming; never parsed into a date or year. */
+  validityDateRaw: text('validity_date_raw'),
+  /** Explicit positive decimal-integer source whpcyear only. */
+  maintenanceYear: integer('maintenance_year'),
+  /** Raw whpc (维护批次) after trimming. */
+  maintenanceBatch: text('maintenance_batch'),
+  /** Raw szq (属地) after trimming. */
+  district: text('district'),
+  /** Raw rdxx (平台认定说明) after trimming. */
+  awardNote: text('award_note'),
+  /** Raw row-level rdjb (平台称号原值) after trimming; never the query title scope. */
+  titleRaw: text('title_raw'),
+  nameRaw: text('name_raw'),
+  usccRaw: text('uscc_raw'),
+  ruleVersion: text('rule_version').notNull(),
+  createdAt: text('created_at').notNull().$defaultFn(() => new Date().toISOString()),
+}, t => [
+  foreignKey({ columns: [t.versionId, t.recordId], foreignColumns: [platformBusinessRecordVersion.id, platformBusinessRecordVersion.recordId] }).onDelete('restrict'),
+  index('platform_recognized_projection_record_idx').on(t.recordId),
+  index('platform_recognized_projection_validity_idx').on(t.validityDateRaw),
+  index('platform_recognized_projection_year_idx').on(t.maintenanceYear),
+  index('platform_recognized_projection_batch_idx').on(t.maintenanceBatch),
+  index('platform_recognized_projection_district_idx').on(t.district),
+  index('platform_recognized_projection_title_idx').on(t.titleRaw),
+  index('platform_recognized_projection_uscc_idx').on(t.usccRaw),
+])
+
+/**
  * **差异原因与后续措施**(契约 4)——**成对**记录的一行。
  *
  * 一行 = 「这家企业 × 这个称号 × 这个方向的差异」在**某个时点**的解释:

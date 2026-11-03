@@ -91,7 +91,7 @@ const aliases = () => db.select().from(schema.enterpriseAlias).all()
 /** 每个用例都在**干净的库**上跑:清掉前一个用例写下的证据行。 */
 function clearEvidence() {
   // Typed projections reference content versions with ON DELETE RESTRICT; clear them first.
-  for (const table of [schema.enterpriseAlias, schema.differenceReason, schema.platformApplyProjection, schema.platformBusinessProjection, schema.platformBusinessObservation, schema.platformBusinessRecordVersion, schema.platformBusinessRecord, schema.platformRelation, schema.platformQuery, schema.importReceipt, schema.importBatch]) {
+  for (const table of [schema.enterpriseAlias, schema.differenceReason, schema.platformApplyProjection, schema.platformBusinessProjection, schema.platformRecognizedProjection, schema.platformBusinessObservation, schema.platformBusinessRecordVersion, schema.platformBusinessRecord, schema.platformRelation, schema.platformQuery, schema.importReceipt, schema.importBatch]) {
     db.delete(table).run()
   }
 }
