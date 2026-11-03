@@ -217,7 +217,9 @@ export function buildAnnualProcess(input: AnnualProcessInput): EventAnnualProces
 /** Skinny stable source set. Decision state is deliberately absent from generation inputs. */
 export interface AnnualProcessSourceRefs {
   scope: { enterpriseId: number; titleCode: string; businessYear: number | null; declareKind: string; ruleVersion: string }
-  event: { id: number; revision: number; recordId: number; eventType: string; year: number | null; decidedYear: number | null; reviewOutcome: string | null; usccRaw: string | null }
+  // Explicit, fixed shape: the source generation hashes exactly these fields, so
+  // a new record_event column must never leak in by spreading the whole row.
+  event: { id: number; revision: number; recordId: number; eventType: string; year: number | null; batchSeq: number | null; sortKey: number; decidedYear: number | null; reviewOutcome: string | null; usccRaw: string | null }
   evidence: Array<{ id: number; sourceFile: string; attachment: string | null; listNo: number | null; page: number | null; fileId: number | null; sha256: string | null; removedAt: string | null }>
   titleScopeRefs: Array<{ queryId: number; relationId: number; titleCode: string | null; platformKey: string | null; usccNorm: string; recordId: number | null; versionId: number | null }>
   observations: Array<{ queryId: number; relationId: number; interface: string; recordId: number | null; versionId: number | null; sourceFingerprint: string }>

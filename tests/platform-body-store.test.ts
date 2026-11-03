@@ -265,12 +265,21 @@ it('upgrades pre-0029 SQLite without changing legacy schema data triggers or NOT
     db.insert(schema.platformBusinessRecordVersion).values({ recordId: 1, hashAlgorithm: 'fixture', contentHash: 'fixture', canonicalRawJson: ' {"z":1} ' }).run()
     const oldSchema = sqlite.prepare("SELECT type,name,sql FROM sqlite_master WHERE name NOT LIKE '__drizzle%' AND name NOT LIKE 'sqlite_%' ORDER BY name").all() as { name: string }[]
     const tables = sqlite.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE '__drizzle%' ORDER BY name").all() as { name: string }[]
-    const contents = () => tables.map(({ name }) => [name, sqlite.prepare(`SELECT * FROM "${name}" ORDER BY rowid`).all()])
+    // Baseline columns only: later additive migrations must not look like row loss.
+    const baselineColumns = new Map(tables.map(({ name }) => [name, (sqlite.pragma(`table_info('${name}')`) as { name: string }[]).map(column => column.name)]))
+    const contents = () => tables.map(({ name }) => [name, sqlite.prepare(`SELECT ${baselineColumns.get(name)!.map(column => `"${column}"`).join(',')} FROM "${name}" ORDER BY rowid`).all()])
     const before = contents()
     migrate(db, { migrationsFolder: folder }); migrate(db, { migrationsFolder: folder })
     expect(contents()).toEqual(before)
-    const names = new Set(oldSchema.map(row => row.name))
-    expect(sqlite.prepare('SELECT type,name,sql FROM sqlite_master ORDER BY name').all().filter(row => names.has((row as { name: string }).name))).toEqual(oldSchema)
+    // Tables may only gain trailing columns (ALTER TABLE ADD COLUMN rewrites the
+    // stored CREATE SQL), so baseline columns are checked as a prefix instead.
+    for (const { name } of tables) {
+      const now = (sqlite.pragma(`table_info('${name}')`) as { name: string }[]).map(column => column.name)
+      expect(now.slice(0, baselineColumns.get(name)!.length)).toEqual(baselineColumns.get(name))
+    }
+    // Non-table objects (indexes/triggers) keep their exact SQL; new ones may appear.
+    const afterByName = new Map((sqlite.prepare("SELECT type,name,sql FROM sqlite_master WHERE type!='table' ORDER BY name").all() as { type: string; name: string; sql: string }[]).map(row => [row.name, row]))
+    for (const old of oldSchema as { type: string; name: string; sql: string }[]) if (old.type !== 'table') expect(afterByName.get(old.name)?.sql).toBe(old.sql)
     expect((sqlite.pragma('table_info(platform_business_record_version)') as { name: string; notnull: number }[]).find(row => row.name === 'canonical_raw_json')!.notnull).toBe(1)
     expect(() => sqlite.exec('UPDATE platform_business_record_version SET canonical_raw_json=NULL')).toThrow(/NOT NULL/)
     expect(() => sqlite.exec("INSERT INTO platform_query(interface,query_key,rdjb,queried_at,status,created_at) SELECT interface,query_key,rdjb,queried_at,status,created_at FROM platform_query")).toThrow(/UNIQUE/)

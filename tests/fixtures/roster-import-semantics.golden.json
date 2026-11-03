@@ -12,6 +12,65 @@
         "conflicts": [],
         "evidenceRepoints": 0,
         "duplicateCandidates": [],
+        "qualificationDiagnostics": [
+          {
+            "ref": "record:0#0",
+            "eventType": "award",
+            "values": {
+              "year": 2022,
+              "decidedYear": null,
+              "batchSeq": 2,
+              "reviewOutcome": null
+            },
+            "fieldGaps": [
+              {
+                "field": "decidedYear",
+                "valueState": "unknown",
+                "inputState": "omitted"
+              }
+            ]
+          },
+          {
+            "ref": "record:0#1",
+            "eventType": "review",
+            "values": {
+              "year": 2022,
+              "decidedYear": 2025,
+              "batchSeq": null,
+              "reviewOutcome": "passed"
+            },
+            "fieldGaps": [
+              {
+                "field": "batchSeq",
+                "valueState": "unknown",
+                "inputState": "omitted"
+              }
+            ]
+          },
+          {
+            "ref": "record:1#0",
+            "eventType": "award",
+            "values": {
+              "year": 2021,
+              "decidedYear": null,
+              "batchSeq": 1,
+              "reviewOutcome": null
+            },
+            "fieldGaps": [
+              {
+                "field": "decidedYear",
+                "valueState": "unknown",
+                "inputState": "omitted"
+              }
+            ]
+          }
+        ],
+        "qualificationReadback": {
+          "stage": "before",
+          "status": "not_retained",
+          "target": null,
+          "reason": "scope_not_established"
+        },
         "batchStatus": "preflight"
       }
     },
@@ -36,7 +95,7 @@
           "id": 1,
           "idempotencyKey": "sem/announce#sha256:a1",
           "itemResultsSha": null,
-          "preflightResultSha": "fd7c63d6c43dc0bd",
+          "preflightResultSha": "b5c22858d758acf3",
           "sourceIdentity": "jxj/announcement/2026/1/一批到底.pdf",
           "sourceKind": "announcement",
           "sourceSha256": null,
@@ -183,7 +242,13 @@
           }
         }
       ],
-      "error": null
+      "error": null,
+      "qualificationReadback": {
+        "stage": "after",
+        "status": "not_retained",
+        "reason": "scope_not_established",
+        "target": null
+      }
     },
     "rowCounts": {
       "importBatch": 1,
@@ -211,7 +276,7 @@
           "sourceKind": "announcement",
           "sourceSha256": null,
           "status": "committed",
-          "summarySha": "4a8f918bc3fa71de"
+          "summarySha": "bc0153afd26d901c"
         }
       ],
       "enterprise": [
@@ -263,6 +328,7 @@
           "batchSeq": 2,
           "decidedYear": null,
           "eventType": "award",
+          "formalValidity": null,
           "id": 1,
           "recordId": 1,
           "reviewOutcome": null,
@@ -274,6 +340,7 @@
           "batchSeq": null,
           "decidedYear": 2025,
           "eventType": "review",
+          "formalValidity": null,
           "id": 2,
           "recordId": 1,
           "reviewOutcome": "passed",
@@ -285,6 +352,7 @@
           "batchSeq": 1,
           "decidedYear": null,
           "eventType": "award",
+          "formalValidity": null,
           "id": 3,
           "recordId": 2,
           "reviewOutcome": null,
@@ -528,7 +596,7 @@
           "sourceKind": "announcement",
           "sourceSha256": null,
           "status": "committed",
-          "summarySha": "4a8f918bc3fa71de"
+          "summarySha": "bc0153afd26d901c"
         },
         {
           "error": "批次校验未通过：2 项有误，未写入任何数据",
@@ -599,7 +667,7 @@
           "sourceKind": "announcement",
           "sourceSha256": null,
           "status": "committed",
-          "summarySha": "4a8f918bc3fa71de"
+          "summarySha": "bc0153afd26d901c"
         },
         {
           "error": "批次校验未通过：2 项有误，未写入任何数据",
@@ -727,7 +795,7 @@
           "sourceKind": "announcement",
           "sourceSha256": null,
           "status": "committed",
-          "summarySha": "4a8f918bc3fa71de"
+          "summarySha": "bc0153afd26d901c"
         },
         {
           "error": "批次校验未通过：2 项有误，未写入任何数据",
@@ -905,7 +973,7 @@
           "sourceKind": "announcement",
           "sourceSha256": null,
           "status": "committed",
-          "summarySha": "4a8f918bc3fa71de"
+          "summarySha": "bc0153afd26d901c"
         },
         {
           "error": "批次校验未通过：2 项有误，未写入任何数据",
@@ -1012,7 +1080,7 @@
           "sourceKind": "announcement",
           "sourceSha256": null,
           "status": "committed",
-          "summarySha": "4a8f918bc3fa71de"
+          "summarySha": "bc0153afd26d901c"
         },
         {
           "error": "批次校验未通过：2 项有误，未写入任何数据",
@@ -1281,7 +1349,7 @@
           "sourceKind": "announcement",
           "sourceSha256": null,
           "status": "committed",
-          "summarySha": "4a8f918bc3fa71de"
+          "summarySha": "bc0153afd26d901c"
         },
         {
           "error": "批次校验未通过：2 项有误，未写入任何数据",

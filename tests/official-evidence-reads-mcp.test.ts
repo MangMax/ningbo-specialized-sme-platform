@@ -95,7 +95,7 @@ it('discovers bounded opt-in fields on actual OpenAPI and MCP schemas while keep
   expect(tools.map(t=>t.name)).toContain('get_roster_evidence');expect(tools.map(t=>t.name)).toContain('get_official_event');expect(tools.map(t=>t.name)).not.toContain('list_roster_import_items')
   const evidence=tools.find(t=>t.name==='get_roster_evidence')!;expect(evidence.inputSchema).toMatchObject({properties:{official:{enum:['latest','history']},pageSize:{maximum:50},maxBytes:{maximum:65536}}})
   const auth=z.object({result:z.object({tools:z.array(z.object({name:z.string(),inputSchema:z.record(z.string(),z.unknown())}))})}).parse((await rpc('',{},mcpToken,'tools/list')).body).result.tools
-  expect(auth.find(t=>t.name==='list_roster_import_items')?.inputSchema).toMatchObject({properties:{projection:{enum:['snapshot','eventIds']},source:{enum:['private_batch','redacted_receipt']},itemIndex:{minimum:0}}})
+  expect(auth.find(t=>t.name==='list_roster_import_items')?.inputSchema).toMatchObject({properties:{projection:{enum:['snapshot','eventIds','qualification']},source:{enum:['private_batch','redacted_receipt']},itemIndex:{minimum:0}}})
   const spec=await http('/_openapi.json');expect(spec.status).toBe(200)
   const serialized=JSON.stringify(spec.body);for(const field of ['beforeRevision','afterEvidenceId','oldRecordId','storedRedacted','requiredBytes']) expect(serialized).toContain(field)
 })
