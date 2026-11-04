@@ -4,6 +4,11 @@ export type ReviewAssessment = Omit<QueryAssessment, 'explanationValidity'> & {
   explanationValidity: Omit<QueryAssessment['explanationValidity'], 'status'> & { status: string }
 }
 export type DecisionVersion = NonNullable<QueryAssessment['currentDecision']['current']>
+export type EnterpriseFactReference = NonNullable<DecisionVersion['factReferences']>[number]
+export interface ReviewDecisionDraft {
+  status: string; reasonCode: string; reasonNote: string; measureCode: string; measureNote: string
+  evidenceQueryId: string; evidenceRelationId: string; factReferences?: EnterpriseFactReference[]
+}
 export type ReviewScope = { enterpriseId: number; titleCode: string; direction: string }
 export interface ImpactRow extends ReviewScope {
   id: number; decisionId: number; latestRevisionId: number; reviewedRevisionId: number | null

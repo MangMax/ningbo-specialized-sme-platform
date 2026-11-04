@@ -5,6 +5,7 @@ import { useInitialDifferenceDecision, type InitialDecisionHead, type InitialDec
 import { REVIEW_DRAFTS_KEY, useReviewDrafts } from '~/composables/useReviewDrafts'
 import { useEvidenceReviewRefresh } from '~/composables/useEvidenceReviewRefresh'
 import ReplacementDecisionFields from '@/components/evidence-review/ReplacementDecisionFields.vue'
+import EnterpriseFactReferences from '@/components/enterprise/EnterpriseFactReferences.vue'
 import DecisionVersionDetails from '@/components/evidence-review/DecisionVersionDetails.vue'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
@@ -27,6 +28,7 @@ const c = useInitialDifferenceDecision(scope, {
 }, session, () => store.ownsInitial(scope, session))
 const { basis, draft, head, phase, writeState, message, correctionAccepted, dirty, locked, canSave, canRetry, receipt, submittedVersion } = c
 const formId = useId(), statusId = useId()
+const factReferencesReady = ref(true)
 const editing = computed(() => writeState.value === 'ready' && phase.value === 'ready' && (!head.value?.current || correctionAccepted.value))
 const entryOpen = ref(!!session.request || !!retained && c.dirty.value)
 const started = computed(() => entryOpen.value || correctionAccepted.value)
@@ -75,7 +77,7 @@ onBeforeUnmount(() => { c.dispose(); window.removeEventListener('beforeunload', 
       {{ head?.current ? '核对后追加更正' : '登记差异判断' }}
     </Button>
     <Button v-else-if="head && !correctionAccepted && (['saved', 'superseded'].includes(phase) || phase === 'ready' && !!head.current) && writeState === 'ready'" type="button" class="self-start" @click="begin">{{ head?.current ? '核对后追加更正' : '登记差异判断' }}</Button>
-    <form v-if="started && phase !== 'saved' && phase !== 'superseded' && phase !== 'readback'" :id="formId" class="flex min-w-0 flex-col gap-3" @submit.prevent="c.save">
+    <form v-if="started && phase !== 'saved' && phase !== 'superseded' && phase !== 'readback'" :id="formId" class="flex min-w-0 flex-col gap-3" @submit.prevent="(canRetry || factReferencesReady) && c.save()">
       <fieldset class="flex min-w-0 flex-col gap-3" :disabled="!editing || locked">
         <legend class="sr-only">差异判断业务字段</legend>
         <label class="flex flex-col gap-1 text-sm">
@@ -84,6 +86,7 @@ onBeforeUnmount(() => { c.dispose(); window.removeEventListener('beforeunload', 
         </label>
         <p class="text-muted-foreground text-[13px] leading-5">请明确选择结论、原因和措施。查询覆盖完整不等于无差异；以下字段沿用追加更正的业务词表。</p>
         <ReplacementDecisionFields v-model="draft" class="[&_legend]:sr-only" />
+        <EnterpriseFactReferences :enterprise-id="scope.enterpriseId" :model-value="draft.factReferences ?? []" editable @update:model-value="draft.factReferences = $event" @validity="factReferencesReady = $event" />
       </fieldset>
     </form>
     <!-- 与既有复核表单共用 Sheet footer；内联仍处于普通流，唯一按钮关联原 form。 -->
@@ -94,7 +97,7 @@ onBeforeUnmount(() => { c.dispose(); window.removeEventListener('beforeunload', 
           <AlertDescription>{{ message }}</AlertDescription>
         </Alert>
         <div class="flex flex-wrap gap-2">
-          <Button v-if="started && phase !== 'saved' && phase !== 'superseded' && phase !== 'readback'" type="submit" :form="formId" :disabled="!canSave && !canRetry" :aria-describedby="statusId">
+          <Button v-if="started && phase !== 'saved' && phase !== 'superseded' && phase !== 'readback'" type="submit" :form="formId" :disabled="!canRetry && (!canSave || !factReferencesReady)" :aria-describedby="statusId">
             {{ phase === 'saving' ? '正在提交…' : phase === 'unknown' ? '重试同一次提交' : head?.current ? '追加更正判断' : '保存差异判断' }}
           </Button>
           <Button v-if="phase !== 'unknown' && phase !== 'saving'" type="button" variant="outline" :disabled="phase === 'loading'" @click="c.load">

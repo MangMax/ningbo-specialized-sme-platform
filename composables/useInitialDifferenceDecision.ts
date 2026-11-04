@@ -1,5 +1,5 @@
 import { computed, reactive, ref, toRefs } from 'vue'
-import type { DecisionVersion, ReviewScope } from '~~/lib/roster/evidence-review-ui'
+import type { DecisionVersion, ReviewDecisionDraft, ReviewScope } from '~~/lib/roster/evidence-review-ui'
 import { DIFFERENCE_MEASURES, DIFFERENCE_REASONS } from '~~/lib/labels'
 
 export interface InitialDecisionHead extends ReviewScope { versionId: number | null; current: DecisionVersion | null }
@@ -10,7 +10,7 @@ interface InitialDecisionApi {
   version?: (id: number) => Promise<DecisionVersion>
   post: (body: Record<string, unknown>) => Promise<InitialDecisionReceipt>
 }
-export function emptyInitialDecisionDraft() {
+export function emptyInitialDecisionDraft(): ReviewDecisionDraft {
   return { status: '', reasonCode: '', reasonNote: '', measureCode: '', measureNote: '', evidenceQueryId: '', evidenceRelationId: '' }
 }
 /** One ordinary browser command, retained only for the lifetime of its exact-scope host. No credentials. */
@@ -27,7 +27,7 @@ export function createInitialDecisionState(scope: ReviewScope) {
 export type InitialDecisionState = ReturnType<typeof createInitialDecisionState>
 export function initialDecisionNeedsGuard(state: InitialDecisionState): boolean {
   if (state.request) return state.phase !== 'saved' && state.phase !== 'superseded'
-  return !!state.basis || Object.values(state.draft).some(Boolean)
+  return !!state.basis || Object.values(state.draft).some(value => Array.isArray(value) ? value.length > 0 : Boolean(value))
 }
 const sameScope = (a: ReviewScope, b: ReviewScope) => a.enterpriseId === b.enterpriseId && a.titleCode === b.titleCode && a.direction === b.direction
 
@@ -165,7 +165,8 @@ export function useInitialDifferenceDecision(scope: ReviewScope, api: InitialDec
           decision: { status: d.status, reasonCode: d.status === 'confirmed_no_diff' ? null : d.reasonCode,
             reasonNote: d.reasonNote.trim() || null, measureCode: d.measureCode, measureNote: d.measureNote.trim() || null,
             verificationStatus: 'confirmed', evidenceQueryId: d.evidenceQueryId ? Number(d.evidenceQueryId) : null,
-            evidenceRelationId: d.evidenceRelationId ? Number(d.evidenceRelationId) : null } }
+            evidenceRelationId: d.evidenceRelationId ? Number(d.evidenceRelationId) : null,
+            ...(d.factReferences?.length ? { factReferences: d.factReferences } : {}) } }
       }
       // No await between this host-owned identity and dispatch. The Form watcher is not the owner.
       phase.value = 'saving'; message.value = ''; operation.retained = true
@@ -185,9 +186,9 @@ export function useInitialDifferenceDecision(scope: ReviewScope, api: InitialDec
         // Keep its identity even when the server gate changes after our capability check.
         writeState.value = 'readonly'; phase.value = 'unknown'
         message.value = '页面提交已关闭，本次请求身份保留。重新确认能力后，只能重试同一次提交。'
-      } else if (['origin_required', 'origin_mismatch', 'cross_site_request', 'unsupported_media_type', 'invalid_request', 'evidence_mismatch', 'evidence_not_found', 'invalid_prior_time'].includes(code ?? '')) {
+      } else if (['origin_required', 'origin_mismatch', 'cross_site_request', 'unsupported_media_type', 'invalid_request', 'evidence_mismatch', 'evidence_not_found', 'invalid_prior_time', 'fact_reference_mismatch'].includes(code ?? '')) {
         phase.value = 'ready'; state.request = null
-        message.value = '提交未被接受，填写内容保留。请核对业务字段或重新读取页面提交能力。'
+        message.value = code === 'fact_reference_mismatch' ? '关联事实已变化，填写内容保留。请刷新可关联事实，重新选择后提交。' : '提交未被接受，填写内容保留。请核对业务字段或重新读取页面提交能力。'
       } else {
         phase.value = 'unknown'
         message.value = '提交结果尚不能确认。填写内容已锁定；请重试同一次提交，系统会复用原提交标识。'
