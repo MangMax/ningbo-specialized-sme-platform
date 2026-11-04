@@ -83,11 +83,20 @@ describe('mcp-auth 鉴权判据', () => {
       'list_roster_import_items',
       'get_roster_import_request',
       'patch_enterprise_profile',
+      'preflight_enterprise_fact',
+      'commit_enterprise_fact',
 
       'preflight_roster_evidence_corrections',
       'commit_roster_evidence_corrections',
       'get_roster_evidence_correction_batch',
     ])
+  })
+
+  it('enterprise fact commands require credentials while fact reads remain public', () => {
+    for (const name of ['preflight_enterprise_fact', 'commit_enterprise_fact']) {
+      expect(writeToolCallIn({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: {} } })).toBe(name)
+    }
+    expect(writeToolCallIn({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'get_enterprise_facts', arguments: {} } })).toBeNull()
   })
 
   it('RL-11:名录写入 tool 是写入、只读预检不是', () => {
