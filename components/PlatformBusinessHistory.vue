@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import type { PlatformBusinessDetail } from '~~/lib/roster/platform-business-detail'
+import type { PlatformBusinessDetail, PlatformDetailObservation } from '~~/lib/roster/platform-business-detail'
 import type { PlatformRecord, PlatformRecordQuery } from '~~/lib/roster/platform-records'
 import { PLATFORM_HISTORY_CONFLICTS, PLATFORM_HISTORY_STATES } from '~~/lib/roster/platform-records'
 import { formatFetchTime } from '~~/lib/reconcile-time'
@@ -18,6 +18,8 @@ const sections = computed(() => [
     .map(o => ({ businessRecord: o.businessRecord, observationRefs: [o] })),
 ])
 const decisionStatus: Record<string, string> = { candidate: '待核', confirmed: '已确认', rejected: '已否决', unlinked: '已解除' }
+const observationName = (observation: PlatformDetailObservation) => observation.typedFields ? observation.typedFields.nameRaw ?? '名称未提供' : props.records.get(observation.relationId)?.nameRaw ?? '名称未提供'
+const observationUscc = (observation: PlatformDetailObservation) => observation.typedFields ? observation.typedFields.usccRaw ?? '信用代码未提供' : props.records.get(observation.relationId)?.usccRaw ?? '信用代码未提供'
 </script>
 <template>
   <DisclosurePanel compact :heading-level="4" :title="`版本与采集历史 · ${business.versionCount} 个内容版本 · ${business.observationCount} 次采集`" data-testid="platform-business-history">
@@ -28,7 +30,7 @@ const decisionStatus: Record<string, string> = { candidate: '待核', confirmed:
         <h5 class="text-sm font-medium">{{ section.businessRecord.groupState === 'verified' ? `内容版本 #${section.businessRecord.versionId}` : PLATFORM_HISTORY_STATES[section.businessRecord.groupState] ?? '内容未知' }} · {{ section.observationRefs.length }} 次采集</h5>
         <div v-for="observation in section.observationRefs" :key="observation.relationId" class="mt-2 flex flex-col gap-1 border-t pt-2 text-[13px]" data-testid="platform-observation" :data-relation-id="observation.relationId">
           <p>行 #{{ observation.relationId }} · 查询 #{{ observation.queryId }} · <time :datetime="observation.queriedAt">{{ formatFetchTime(observation.queriedAt) ?? observation.queriedAt }}</time></p>
-          <p class="text-muted-foreground">来源称号：{{ PLATFORM_RDJBS[records.get(observation.relationId)?.sourceRdjb ?? queries.get(observation.queryId)?.rdjb ?? ''] ?? '未标注' }} · {{ records.get(observation.relationId)?.nameRaw ?? '名称未提供' }} · {{ records.get(observation.relationId)?.usccRaw ?? '信用代码未提供' }}</p>
+          <p class="text-muted-foreground">来源称号：{{ PLATFORM_RDJBS[records.get(observation.relationId)?.sourceRdjb ?? queries.get(observation.queryId)?.rdjb ?? ''] ?? '未标注' }} · {{ observationName(observation) }} · {{ observationUscc(observation) }}</p>
           <PlatformFieldConflicts :conflicts="records.get(observation.relationId)?.normalizationConflicts" />
           <p v-for="conflict in observation.conflicts" :key="conflict">{{ PLATFORM_HISTORY_CONFLICTS[conflict] ?? '原观察存在冲突，待核' }}</p>
           <p v-if="!observation.existingCorrespondences.length" class="text-muted-foreground">此原行暂无对应决定</p>

@@ -8,8 +8,8 @@ import PlatformRecordDetails from './PlatformRecordDetails.vue'
 import PlatformBusinessHistory from './PlatformBusinessHistory.vue'
 import RecordSourceReader from './record-correspondence/SourceReader.vue'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
-import { platformFailureForDisplay, recognizedField, PLATFORM_HISTORY_CONFLICTS } from '~~/lib/roster/platform-records'
-import { groupPlatformBusinessDetails, hasKnownPlatformBusiness, type PlatformBusinessDetail } from '~~/lib/roster/platform-business-detail'
+import { platformFailureForDisplay, platformFieldValue, recognizedField, PLATFORM_HISTORY_CONFLICTS } from '~~/lib/roster/platform-records'
+import { groupPlatformBusinessDetails, hasKnownPlatformBusiness, type PlatformBusinessDetail, type PlatformDetailTypedFields } from '~~/lib/roster/platform-business-detail'
 import type { PlatformRecord, PlatformRecordQuery } from '~~/lib/roster/platform-records'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
@@ -36,6 +36,27 @@ const time = (value: string) => /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : form
 const queryById = computed(() => new Map(props.queries.map(query => [query.id, query])))
 const recordById = computed(() => new Map(props.relations.map(record => [record.id, record])))
 const observationById = computed(() => new Map((props.businessRecords ?? []).flatMap(b => b.observationRefs).map(o => [o.relationId, o])))
+const typedFieldsFor = (record: { id: number }): PlatformDetailTypedFields | null => observationById.value.get(record.id)?.typedFields ?? null
+/** Typed projection wins when the source models the field; unprojected history and unmodeled
+ * apply columns keep the legacy relation/raw read. A projected null stays "未提供". */
+const typedOrLegacy = (record: { id: number }, field: string) => {
+  const typed = typedFieldsFor(record) as Record<string, unknown> | null
+  return platformFieldValue(typed && Object.hasOwn(typed, field) ? typed[field] : (record as Record<string, unknown>)[field])
+}
+const typedOrLegacyLabel = (record: { id: number }, field: string) => {
+  const typed = typedFieldsFor(record) as Record<string, unknown> | null
+  const value = String(typed && Object.hasOwn(typed, field) ? typed[field] ?? '' : (record as Record<string, unknown>)[field] ?? '')
+  return value ? RELATION_DECLARE_KINDS[value] ?? '类型待核' : '未提供'
+}
+const RECOGNIZED_TYPED_FIELDS: Record<string, keyof PlatformDetailTypedFields> = {
+  szq: 'district', rdxx: 'awardNote', rddqrq: 'validityDateRaw', whpcyear: 'maintenanceYear', whpc: 'maintenanceBatch',
+}
+const recognizedColumn = (record: { id: number; rawFields?: Record<string, unknown> | null }, field: string) => {
+  const typed = typedFieldsFor(record) as Record<string, unknown> | null
+  const key = RECOGNIZED_TYPED_FIELDS[field]
+  if (typed && key && Object.hasOwn(typed, key)) return platformFieldValue(typed[key])
+  return recognizedField(record.rawFields, field)
+}
 // 申报记录未带称号时，仅以相同编号的唯一关联称号作展示筛选，不是权威称号事实。
 const rows = computed(() => props.relations.map(record => {
   const query = queryById.value.get(record.queryId)
@@ -175,17 +196,17 @@ const tables = computed(() => sources.filter(table => selectedSource.value === '
                 <template v-for="({record, business}, index) in group.rows" :key="record.id">
                 <tr class="border-t" data-testid="platform-relation" :data-record-id="record.id">
                   <td class="px-3 py-1.5 tabular-nums" :class="{ 'pl-9': activeTitle === 'all' }">{{ index + 1 }}</td>
-                  <td class="px-3 py-1.5">{{ record.nameRaw ?? '未提供' }}<span v-if="table.recognized && record.enterpriseId === null" class="text-muted-foreground block text-xs">未匹配主体</span><template v-if="business"><span class="text-muted-foreground block">{{ business.businessRecord.platformKey ?? record.relationKey ?? '编号未知' }}</span><span v-for="conflict in business.conflicts" :key="conflict" class="block">{{ PLATFORM_HISTORY_CONFLICTS[conflict] ?? '原观察存在冲突，待核' }}</span></template></td>
-                  <td class="px-3 py-1.5 tabular-nums">{{ record.usccRaw ?? '未提供' }}</td>
+                  <td class="px-3 py-1.5">{{ typedOrLegacy(record, 'nameRaw') }}<span v-if="table.recognized && record.enterpriseId === null" class="text-muted-foreground block text-xs">未匹配主体</span><template v-if="business"><span class="text-muted-foreground block">{{ business.businessRecord.platformKey ?? record.relationKey ?? '编号未知' }}</span><span v-for="conflict in business.conflicts" :key="conflict" class="block">{{ PLATFORM_HISTORY_CONFLICTS[conflict] ?? '原观察存在冲突，待核' }}</span></template></td>
+                  <td class="px-3 py-1.5 tabular-nums">{{ typedOrLegacy(record, 'usccRaw') }}</td>
                   <template v-if="table.recognized">
-                  <td v-for="field in ['szq', 'rdxx', 'rddqrq', 'whpcyear', 'whpc']" :key="field" class="px-3 py-1.5">{{ recognizedField(record.rawFields, field) }}</td>
+                  <td v-for="field in ['szq', 'rdxx', 'rddqrq', 'whpcyear', 'whpc']" :key="field" class="px-3 py-1.5">{{ recognizedColumn(record, field) }}</td>
                   </template>
                   <template v-else>
-                  <td class="px-3 py-1.5">{{ record.province ?? '未提供' }}</td>
-                  <td class="px-3 py-1.5">{{ record.declareKind ? RELATION_DECLARE_KINDS[record.declareKind] ?? '类型待核' : '未提供' }}</td>
-                  <td class="px-3 py-1.5">{{ record.status ?? '未提供' }}<span v-if="record.normalizationConflicts?.length" class="text-muted-foreground block text-xs">字段冲突，待核</span></td>
-                  <td class="px-3 py-1.5 tabular-nums">{{ record.appliedAt ?? '未提供' }}</td>
-                  <td class="px-3 py-1.5">{{ record.batch ?? '未提供' }}</td>
+                  <td class="px-3 py-1.5">{{ typedOrLegacy(record, 'province') }}</td>
+                  <td class="px-3 py-1.5">{{ typedOrLegacyLabel(record, 'declareKind') }}</td>
+                  <td class="px-3 py-1.5">{{ typedOrLegacy(record, 'status') }}<span v-if="record.normalizationConflicts?.length" class="text-muted-foreground block text-xs">字段冲突，待核</span></td>
+                  <td class="px-3 py-1.5 tabular-nums">{{ typedOrLegacy(record, 'appliedAt') }}</td>
+                  <td class="px-3 py-1.5">{{ typedOrLegacy(record, 'batch') }}</td>
                   </template>
                   <td v-if="table.hasAliases" class="px-3 py-1.5">{{ record.aliasNameRaw ?? '—' }}</td>
                   <td class="bg-card border-l px-3 py-1.5"><div class="flex flex-col items-start gap-1"><PlatformRecordDetails :record="record" :query="queryById.get(record.queryId)" /><Button variant="ghost" size="sm" @click="selectedRelationId = record.id">对应事件/出处</Button><NuxtLink v-if="business?.businessRecord.interface === 'business_list' && business.businessRecord.platformKey" :to="{ path: '/platform-business-processes', query: { platformKey: business.businessRecord.platformKey } }" class="text-xs hover:underline">本地办理记录</NuxtLink><NuxtLink v-if="business?.businessRecord.interface === 'recognized_list' && business.businessRecord.platformKey" :to="{ path: '/platform-recognized-directory', query: { platformKey: business.businessRecord.platformKey } }" class="text-xs hover:underline" data-testid="platform-recognized-directory-link">本地目录记录</NuxtLink></div></td>
