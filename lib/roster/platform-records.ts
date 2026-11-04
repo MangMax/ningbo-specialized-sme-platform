@@ -40,9 +40,12 @@ export const PLATFORM_BUSINESS_FIELDS: Record<string, string> = {
   personuuid: '平台批次原值', sshy: '所属行业', jtxflymc: '细分领域', zdcpmc: '主导产品',
   qylx: '企业类型原值', sfty: '同意标记原值', zyzb: '主营占比原值',
 }
-export function recognizedField(raw: Record<string, unknown> | null | undefined, field: string): string {
-  const value = raw?.[field]
+/** Shared display rule for typed projection values and legacy raw/import columns. */
+export function platformFieldValue(value: unknown): string {
   return (typeof value === 'string' && value !== '') || typeof value === 'number' || typeof value === 'boolean' ? String(value) : '未提供'
+}
+export function recognizedField(raw: Record<string, unknown> | null | undefined, field: string): string {
+  return platformFieldValue(raw?.[field])
 }
 export function platformBusinessFields(raw: Record<string, unknown> | null | undefined) {
   return Object.entries(raw ?? {}).filter(([key, value]) =>
