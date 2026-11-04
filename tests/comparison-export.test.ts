@@ -278,7 +278,7 @@ describe('comparison export route', () => {
 it('473 downloaded comparison workbook shadow preserves columns rows title distribution and notes', async () => {
   const { ensurePlatformObservation } = await import('../server/utils/platform-business-record')
   const owner = db.select().from(schema.enterprise).all().find(e => e.name === '市专01')!
-  for (const [index, source] of ['apply_list', 'business_list', 'recognized_list'].entries()) {
+  for (const [index, source] of (['apply_list', 'business_list', 'recognized_list'] as const).entries()) {
     const query = db.insert(schema.platformQuery).values({ interface: source, queryKey: owner.usccNorm!, rdjb: '2', queriedAt: '2026-11-01', status: 'success' }).returning().get()
     const relation = db.insert(schema.platformRelation).values({ queryId: query.id, sequenceNo: 1, relationKey: `473-export-${index}`, enterpriseId: owner.id, nameRaw: owner.name, usccRaw: owner.usccNorm,
       rawFields: { id: `473-export-${index}`, qymc: owner.name, tyshxydm: owner.usccNorm, cszt: '终审通过' } }).returning().get()

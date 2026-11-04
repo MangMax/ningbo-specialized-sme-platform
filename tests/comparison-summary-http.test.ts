@@ -299,7 +299,7 @@ it('473 same SQLite snapshot full HTTP shadow preserves pagination filters evide
   const { ensurePlatformObservation } = await import('../server/utils/platform-business-record')
   const { platformRelation, platformQuery } = await import('../db/schema')
   // Archive bootstrap deliberately precedes the read-only public HTTP shadow.
-  for (const [index, source] of ['apply_list', 'business_list', 'recognized_list'].entries()) {
+  for (const [index, source] of (['apply_list', 'business_list', 'recognized_list'] as const).entries()) {
     const query = db.insert(platformQuery).values({ interface: source, queryKey: uscc, rdjb: '2', queriedAt: '2026-11-01T00:00:00Z', status: 'success' }).returning().get()
     db.insert(platformRelation).values({ queryId: query.id, sequenceNo: 1, relationKey: `473-${index}`, enterpriseId: alphaId, nameRaw: 'Alpha企业', usccRaw: uscc,
       matchBasis: 'uscc', verificationStatus: 'confirmed', rawFields: { id: `473-${index}`, qymc: 'Alpha企业', tyshxydm: uscc, cszt: '上游新状态', sblx: '申请', year: '2024', whpc: '2024-1' } }).run()
