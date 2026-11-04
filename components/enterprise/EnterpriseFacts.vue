@@ -10,6 +10,7 @@ interface Point { precision: string; value: string | null }
 interface Fact { kind: string; source: { reference: string; statement: string }; observed: Point; effective: Point; city: string | null }
 interface Row { id: number; factId: number; status: string; action: string; fact: Fact; basis: string; createdAt: string; actor: { id: string } }
 const props = defineProps<{ enterpriseId: number }>()
+const emit = defineEmits<{ saved: [] }>()
 const data = ref<{ facts: Row[]; history: Row[]; version: string } | null>(null)
 const loading = ref(false), failed = ref(false)
 const labels: Record<string, string> = { moved_in: '迁入宁波', moved_out: '迁出宁波', cancelled: '注销', registration_status: '登记状态' }
@@ -48,7 +49,7 @@ async function save() {
   try {
     const plan = await $fetch<{ planHash: string }>(`/api/roster/enterprises/${props.enterpriseId}/facts/browser-preflight`, { method: 'POST', body: attempt.request })
     await $fetch(`/api/roster/enterprises/${props.enterpriseId}/facts/browser-commit`, { method: 'POST', body: { request: attempt.request, planHash: plan.planHash } })
-    action.value = null; attempt = null; message.value = '事实操作已记录。'; await load()
+    action.value = null; attempt = null; message.value = '事实操作已记录。'; await load(); emit('saved')
   } catch (error) {
     const code = (error as { data?: { error?: { code?: string } } }).data?.error?.code
     if (code === 'version_conflict' || code === 'fact_conflict') {

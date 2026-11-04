@@ -747,7 +747,7 @@ function openPreview(e: Evidence) {
             </p>
           </section>
 
-          <EnterpriseFacts :key="`facts-${detail.id}`" :enterprise-id="detail.id" />
+          <EnterpriseFacts :key="`facts-${detail.id}`" :enterprise-id="detail.id" @saved="onReviewSaved" />
 
           <EnterpriseExplanations
             :key="detail.id"
