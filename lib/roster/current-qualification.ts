@@ -172,7 +172,7 @@ export function readCurrentQualificationAssessment(db: Database.Database, enterp
  * remain those of readCurrentQualificationAssessment.
  */
 export function createCurrentQualificationAssessmentReader(db: Database.Database, receiptRuntime?: ReceiptRuntimeContext, defaults: { recognizedFactSource?: RecognizedFactSource } = {}) {
-  const evaluate = createCurrentCandidateEvaluationReader(db, receiptRuntime)
+  const evaluate = createCurrentCandidateEvaluationReader(db, receiptRuntime, defaults.recognizedFactSource)
   let correspondenceReader: ReturnType<typeof createEnterpriseTitleCorrespondenceRefsReader> | undefined
   const preparedCorrespondences = (enterpriseId: number, titleCode: string) => {
     correspondenceReader ??= createEnterpriseTitleCorrespondenceRefsReader(prepareCurrentReader(db))
@@ -351,8 +351,7 @@ export function createCurrentQualificationAssessmentReader(db: Database.Database
       return { ...read, workbookPublished: read.workbookPublished }
     },
     readTitle(enterpriseId: number, title: CurrentTitle, asOf: number, keys?: { queries: IdentityKeyVariants; relations: IdentityKeyVariants }) {
-      const options = defaults.recognizedFactSource ? { recognizedFactSource: defaults.recognizedFactSource } : undefined
-      return evaluate(enterpriseId, title, Number(qualificationDay(asOf).slice(0,4)), asOf, keys, true, false, options, true, undefined, preparedCorrespondences)
+      return evaluate(enterpriseId, title, Number(qualificationDay(asOf).slice(0,4)), asOf, keys, true, false, undefined, true, undefined, preparedCorrespondences)
     },
   }
 }
@@ -364,7 +363,7 @@ export function createCurrentCandidateReader(db: Database.Database) {
   return (...args: [enterpriseId: number, title: CurrentTitle, year: number, executionTime?: number, keys?: { queries: IdentityKeyVariants; relations: IdentityKeyVariants }, includeFilterFacts?: boolean, includeReferences?: boolean, assessmentOptions?: QualificationAssessmentReadOptions, includePendingFilterFacts?: boolean, suppliedPlatformRefs?: readonly CurrentPlatformReference[], preparedCorrespondences?: ReturnType<typeof createEnterpriseTitleCorrespondenceRefsReader>]) => evaluate(...args).row
 }
 
-function createCurrentCandidateEvaluationReader(db: Database.Database, receiptRuntime?: ReceiptRuntimeContext) {
+function createCurrentCandidateEvaluationReader(db: Database.Database, receiptRuntime?: ReceiptRuntimeContext, recognizedFactSource?: RecognizedFactSource) {
   const reader=prepareCurrentReader(db)
   const statements = new Map<string, Database.Statement>()
   const statement = (text: string) => {
@@ -375,7 +374,7 @@ function createCurrentCandidateEvaluationReader(db: Database.Database, receiptRu
   // #468: one prepared reader per requested source, never a result cache.
   const filterSources = new Map<RecognizedFactSource, ReturnType<typeof createRecognizedFilterSourceReader>>()
   const filterSourceReader = (source?: RecognizedFactSource) => {
-    const resolved = resolveRecognizedFactSource(source)
+    const resolved = resolveRecognizedFactSource(source ?? recognizedFactSource)
     let reader = filterSources.get(resolved)
     if (!reader) { reader = createRecognizedFilterSourceReader(db, resolved); filterSources.set(resolved, reader) }
     return reader
