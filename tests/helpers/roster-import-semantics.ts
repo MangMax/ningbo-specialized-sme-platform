@@ -133,7 +133,12 @@ function readTables(db: TestDb): RosterStateTables {
     enterpriseAlias: canonical(db.select().from(schema.enterpriseAlias).all()),
     platformQuery: canonical(db.select().from(schema.platformQuery).all()),
     platformRelation: canonical(db.select().from(schema.platformRelation).all()),
-    differenceReason: canonical(db.select().from(schema.differenceReason).all()),
+    // The legacy import sequence never pins independent facts. Check the new
+    // nullable column explicitly, then keep every old golden byte unchanged.
+    differenceReason: canonical(db.select().from(schema.differenceReason).all().map(({ factReferences, ...legacy }) => {
+      if (factReferences !== null) throw new Error('Legacy import unexpectedly pinned enterprise facts')
+      return legacy
+    })),
     platformExportBatch: canonical(db.select().from(schema.platformExportBatch).all()),
     platformExportRow: canonical(db.select().from(schema.platformExportRow).all()),
   }

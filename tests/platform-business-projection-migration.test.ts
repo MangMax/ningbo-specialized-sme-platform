@@ -20,7 +20,7 @@ describe('0034 platform business projection migration', () => {
     rmSync(join(preMigrations, '0035_platform_recognized_projection.sql'))
     const journalPath = join(preMigrations, 'meta', '_journal.json')
     const journal = JSON.parse(readFileSync(journalPath, 'utf8'))
-    journal.entries = journal.entries.filter((entry: { tag: string }) => entry.tag !== '0034_platform_business_projection' && entry.tag !== '0035_platform_recognized_projection')
+    journal.entries = journal.entries.filter((entry: { idx: number }) => entry.idx < 34)
     writeFileSync(journalPath, JSON.stringify(journal))
 
     const dbPath = join(dir, 'existing.sqlite')

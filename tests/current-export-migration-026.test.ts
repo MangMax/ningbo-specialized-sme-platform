@@ -20,7 +20,7 @@ it('adds optional qualification without rewriting legacy decisions and migrates 
     const old=sqlite.prepare('select * from difference_reason').get() as any
     migrate(drizzle(sqlite),{migrationsFolder:folder})
     const upgraded=sqlite.prepare('select * from difference_reason').get() as any
-    expect(upgraded).toEqual({...old,current_qualification:null})
+    expect(upgraded).toEqual({...old,current_qualification:null,fact_references:null})
     const history=sqlite.prepare('select * from __drizzle_migrations').all()
     migrate(drizzle(sqlite),{migrationsFolder:folder})
     expect(sqlite.prepare('select * from __drizzle_migrations').all()).toEqual(history)
