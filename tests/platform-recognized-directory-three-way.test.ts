@@ -202,7 +202,9 @@ it('keeps the qualification read model and the export snapshot identical when di
       expect(C0.counts.eligible).toBe(1)
       expect(eligibleIdentities(C0)).toEqual([[name, uscc]])
 
-      // A typed projection change is visible only in the directory reader.
+      // #468: the typed projection is now the current-qualification filter source.
+      // A typed-only change moves the filter witness but never the formal group or
+      // workbook decision surface (the workbook consumes groups, not filter facts).
       db.update(schema.platformRecognizedProjection).set({ validityDateRaw: '2031-12-31', maintenanceYear: 2031, district: '99999999' })
         .where(eq(schema.platformRecognizedProjection.recordId, seeded.recordId)).run()
       const A1 = await readA(base, { q: name })
@@ -210,7 +212,10 @@ it('keeps the qualification read model and the export snapshot identical when di
       const C1 = await readC(db, dir, title)
       expect(A1.total).toBe(1)
       expect(A1.rows[0]).toMatchObject({ matchedVersion: { validityDateRaw: '2031-12-31', maintenanceYear: 2031, district: '99999999' } })
-      expect(strip(B1)).toEqual(strip(B0))
+      expect(eligibility(B1)).toEqual(eligibility(B0))
+      expect((B1.rows[0] as { matchedValidYears: number[] }).matchedValidYears).toEqual([])
+      expect(strip(B1.rows.map(row => (row as { qualificationAssessment: unknown }).qualificationAssessment)))
+        .toEqual(strip(B0.rows.map(row => (row as { qualificationAssessment: unknown }).qualificationAssessment)))
       expect(C1).toEqual(C0)
 
       // Removing only the typed projection empties the typed columns and keeps the record visible.

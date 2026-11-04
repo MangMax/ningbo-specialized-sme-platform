@@ -20,6 +20,7 @@ import { computeTitleLifecycle, type LifecycleEvent } from './lifecycle'
 import { adjudicateQualificationCycles, awardTime, originTime, factTime, type QualificationEvent } from './qualification-cycles'
 import { sourcePositionForSequence, RDJB_TITLE_CODES } from '../platform/recognized-evidence'
 import { recognizedFilterFacts } from './recognized-filter-facts'
+import { createRecognizedFilterSourceReader, resolveRecognizedFactSource, type RecognizedFactSource } from './recognized-filter-source'
 import { CURRENT_TITLES, type CurrentTitle } from './current-titles'
 import { comparePlatformComparison, COMPARISON_VERSION, type CandidateComparisonInput } from './platform-comparison'
 export { CURRENT_TITLES }
@@ -72,6 +73,8 @@ export type QualificationAssessmentReadOptions = {
   ownQueryIds?: readonly number[]
   publishedNames?: PublishedNameAssessmentInput
   coverageForTitle?: (title: CurrentTitle) => ReturnType<typeof readQueryCoverage>
+  /** #468 read-path switch. Absent keeps typed unless the operational env rollback is set. */
+  recognizedFactSource?: RecognizedFactSource
 }
 export interface CurrentQualificationAssessment {
   titleCode: CurrentTitle
@@ -161,7 +164,7 @@ export function readCurrentQualificationAssessment(db: Database.Database, enterp
  * Both paths execute the same adjudication. Default read options and digests
  * remain those of readCurrentQualificationAssessment.
  */
-export function createCurrentQualificationAssessmentReader(db: Database.Database, receiptRuntime?: ReceiptRuntimeContext) {
+export function createCurrentQualificationAssessmentReader(db: Database.Database, receiptRuntime?: ReceiptRuntimeContext, defaults: { recognizedFactSource?: RecognizedFactSource } = {}) {
   const evaluate = createCurrentCandidateEvaluationReader(db, receiptRuntime)
   let correspondenceReader: ReturnType<typeof createEnterpriseTitleCorrespondenceRefsReader> | undefined
   const preparedCorrespondences = (enterpriseId: number, titleCode: string) => {
@@ -193,6 +196,9 @@ export function createCurrentQualificationAssessmentReader(db: Database.Database
     return byTitle
   }
   const readSnapshotBody = (enterpriseId: number, asOf: number, options: QualificationAssessmentReadOptions, filterTitle?: CurrentTitle, presentationTitle?: CurrentTitle, workbookTitle?: CurrentTitle, comparisons?: ReadonlyMap<CurrentTitle, CurrentCycleObservation>) => {
+    // #468: reader-level defaults never override an explicit per-request choice.
+    const readOptions: QualificationAssessmentReadOptions = defaults.recognizedFactSource && !options.recognizedFactSource
+      ? { ...options, recognizedFactSource: defaults.recognizedFactSource } : options
     // No filterTitle means the existing default reader follows its original SQL.
     const references = filterTitle == null ? undefined : readHydrationReferences(enterpriseId)
     let publishedPresentation: PublishedPresentation | undefined
@@ -220,7 +226,7 @@ export function createCurrentQualificationAssessmentReader(db: Database.Database
         workbookPublished = new Map(input.facts.map(fact => [fact.evidenceId, fact]))
       }
     }
-    const rows = CURRENT_TITLES.map(title => evaluate(enterpriseId, title, (options.assessmentVersion === LEGACY_QUALIFICATION_ASSESSMENT_VERSION ? new Date(asOf).getUTCFullYear() : Number(qualificationDay(asOf).slice(0,4))), asOf, undefined, title === filterTitle, true, options, title === filterTitle, references?.get(title), filterTitle == null ? undefined : preparedCorrespondences, title === workbookTitle ? observePublishedForWorkbook : title === presentationTitle ? observePublishedForCurrent : undefined, comparisons?.get(title)).row)
+    const rows = CURRENT_TITLES.map(title => evaluate(enterpriseId, title, (readOptions.assessmentVersion === LEGACY_QUALIFICATION_ASSESSMENT_VERSION ? new Date(asOf).getUTCFullYear() : Number(qualificationDay(asOf).slice(0,4))), asOf, undefined, title === filterTitle, true, readOptions, title === filterTitle, references?.get(title), filterTitle == null ? undefined : preparedCorrespondences, title === workbookTitle ? observePublishedForWorkbook : title === presentationTitle ? observePublishedForCurrent : undefined, comparisons?.get(title)).row)
     if (presentationTitle != null && publishedPresentation === undefined) {
       if (presentationScope === undefined) throw new Error('Current published-name scope was not evaluated')
       try {
@@ -236,7 +242,7 @@ export function createCurrentQualificationAssessmentReader(db: Database.Database
       workbookPublished ??= readOfficialPublishedPresentation(prepareCurrentReader(db), workbookScope, undefined, receiptRuntime)
     }
     const titles = rows.map(row => row.assessment!)
-    const scope = { enterpriseId, asOf: new Date(asOf).toISOString(), ruleVersion: options.assessmentVersion === LEGACY_QUALIFICATION_ASSESSMENT_VERSION ? LEGACY_CURRENT_RULE_VERSION : CURRENT_RULE_VERSION, assessmentVersion: options.assessmentVersion ?? QUALIFICATION_ASSESSMENT_VERSION }
+    const scope = { enterpriseId, asOf: new Date(asOf).toISOString(), ruleVersion: readOptions.assessmentVersion === LEGACY_QUALIFICATION_ASSESSMENT_VERSION ? LEGACY_CURRENT_RULE_VERSION : CURRENT_RULE_VERSION, assessmentVersion: readOptions.assessmentVersion ?? QUALIFICATION_ASSESSMENT_VERSION }
     return { rows, snapshot: { ...scope, snapshotId: assessmentDigest([scope, titles]), titles }, ...(publishedPresentation === undefined ? {} : { publishedPresentation }), ...(workbookPublished === undefined ? {} : { workbookPublished }) }
   }
   // Preserve the original default wrapper, including caller-owned SAVEPOINT semantics.
@@ -338,7 +344,8 @@ export function createCurrentQualificationAssessmentReader(db: Database.Database
       return { ...read, workbookPublished: read.workbookPublished }
     },
     readTitle(enterpriseId: number, title: CurrentTitle, asOf: number, keys?: { queries: IdentityKeyVariants; relations: IdentityKeyVariants }) {
-      return evaluate(enterpriseId, title, Number(qualificationDay(asOf).slice(0,4)), asOf, keys, true, false, undefined, true, undefined, preparedCorrespondences)
+      const options = defaults.recognizedFactSource ? { recognizedFactSource: defaults.recognizedFactSource } : undefined
+      return evaluate(enterpriseId, title, Number(qualificationDay(asOf).slice(0,4)), asOf, keys, true, false, options, true, undefined, preparedCorrespondences)
     },
   }
 }
@@ -357,6 +364,14 @@ function createCurrentCandidateEvaluationReader(db: Database.Database, receiptRu
     let prepared = statements.get(text)
     if (!prepared) { prepared=db.prepare(text); statements.set(text,prepared) }
     return prepared
+  }
+  // #468: one prepared reader per requested source, never a result cache.
+  const filterSources = new Map<RecognizedFactSource, ReturnType<typeof createRecognizedFilterSourceReader>>()
+  const filterSourceReader = (source?: RecognizedFactSource) => {
+    const resolved = resolveRecognizedFactSource(source)
+    let reader = filterSources.get(resolved)
+    if (!reader) { reader = createRecognizedFilterSourceReader(db, resolved); filterSources.set(resolved, reader) }
+    return reader
   }
   const d=schema.differenceReason
   // Same six #102 scopes and recordedAt/id descending head as latestDecision102.
@@ -540,27 +555,12 @@ function createCurrentCandidateEvaluationReader(db: Database.Database, receiptRu
     // unknown-batch grants. Never reconstruct them from basis/reviews strings.
     const awards = qualificationSource === 'formal' ? qualification.cycles.flatMap(cycle => cycle.awardEventIds.map(awardEventId => ({ cycle, awardEventId }))) : []
     const linked = correspondences.filter(ref => ref.type === 'event_recognized' && ref.role === 'recognized_corrob' && ref.status === 'confirmed' && !ref.requiresRevalidation && ref.eventId != null && ref.relationId != null)
-    const filterSource = statement(`select q.id as queryId,q.title_code as titleCode,q.rdjb,r.sequence_no as sequenceNo,
-      json_extract(q.collection_evidence,'$.pages') as pages,
-      json_extract(q.collection_evidence,'$.effectiveConditions.rddqrq') as conditionValidYear,
-      json_extract(q.collection_evidence,'$.effectiveConditions.whpcyear') as conditionMaintenanceYear,
-      json_extract(q.collection_evidence,'$.effectiveConditions.whpc') as conditionMaintenanceBatch,
-      json_extract(r.raw_fields,'$.rddqrq') as rawValid,
-      json_extract(r.raw_fields,'$.whpcyear') as rawMaintenanceYear,
-      json_extract(r.raw_fields,'$.whpc') as rawMaintenanceBatch
-      from platform_relation r join platform_query q on q.id=r.query_id
-      where r.id=@relationId and (r.enterprise_id=@enterpriseId or (r.enterprise_id is null and @uscc is not null and roster84_uscc(r.uscc_raw)=@uscc)) and r.verification_status='confirmed'
-      and q.interface='recognized_list' and q.status='success'
-      and json_extract(q.collection_evidence,'$.status')='success'
-      and json_extract(q.collection_evidence,'$.source')='queryBusList'
-      and json_extract(q.collection_evidence,'$.effectiveConditions.combination')='and'
-      and json_extract(q.collection_evidence,'$.completeness')='complete'
-      and json_extract(q.collection_evidence,'$.fullRange')=1`)
+    const filterSource = filterSourceReader(assessmentOptions?.recognizedFactSource)
     row.qualificationWitnesses = awards.flatMap<CurrentQualificationWitness>(({cycle,awardEventId}) => {
       const event = formal.find(item => item.id === awardEventId)!
       const base = { cycle: { originYear: cycle.originYear, batchSeq: cycle.batch }, awardEventId, recognition: { precision: 'year' as const, year: awardTime(event)! } }
       const matches = linked.filter(ref => ref.eventId === awardEventId).flatMap(ref => {
-        const source = filterSource.get({relationId:ref.relationId,enterpriseId,uscc:normalizeUscc(enterprise.uscc_norm)||null,title,rdjb}) as {queryId:number;titleCode:string|null;rdjb:string;sequenceNo:number;pages:string|null;conditionValidYear:unknown;conditionMaintenanceYear:unknown;conditionMaintenanceBatch:unknown;rawValid:unknown;rawMaintenanceYear:unknown;rawMaintenanceBatch:unknown}|undefined
+        const source = filterSource.read({relationId:ref.relationId!,enterpriseId,uscc:normalizeUscc(enterprise.uscc_norm)||null})
         if (!source) return []
         let pages: unknown
         try { pages = source.pages ? JSON.parse(source.pages) : null } catch { return [] }
