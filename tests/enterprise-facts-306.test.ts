@@ -3,6 +3,7 @@ import { createServer, type Server } from 'node:http'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import * as h3 from 'h3'
 import { createApp, createRouter, defineEventHandler, toNodeListener } from 'h3'
 import { schema, useDb } from '../db'
 const dir = mkdtempSync(join(tmpdir(), 'facts-306-'))
@@ -10,7 +11,7 @@ const db = useDb({ dbPath: join(dir, 'test.db') })
 let server: Server, base: string, seq = 0
 let mcp: Record<string, any>
 beforeAll(async () => {
-  vi.stubGlobal('defineEventHandler', defineEventHandler)
+  for (const [key, value] of Object.entries(h3)) vi.stubGlobal(key, value)
   vi.stubGlobal('useRuntimeConfig', () => ({ apiToken: 'facts-token' }))
   vi.doMock('@db', () => ({ useDb: () => db }))
   vi.doMock('@nuxtjs/mcp-toolkit/server', () => ({ defineMcpTool: (tool: unknown) => tool }))
@@ -19,7 +20,8 @@ beforeAll(async () => {
   const get = (await import('../server/api/roster/enterprises/[id]/facts.get')).default
   const preflight = (await import('../server/api/roster/enterprises/[id]/facts/preflight.post')).default
   const commit = (await import('../server/api/roster/enterprises/[id]/facts/commit.post')).default
-  server = createServer(toNodeListener(createApp().use(createRouter().get('/:id', get).post('/:id/preflight', preflight).post('/:id/commit', commit))))
+  const detail = (await import('../server/api/roster/enterprises/[id].get')).default
+  server = createServer(toNodeListener(createApp().use(createRouter().get('/:id/detail', detail).get('/:id', get).post('/:id/preflight', preflight).post('/:id/commit', commit))))
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
   base = `http://127.0.0.1:${(server.address() as { port: number }).port}`
 })
@@ -105,4 +107,76 @@ it('same-input shadow retains legacy IDs heads aliases and moved-in columns; fai
   expect((await http(id)).body).toEqual(current)
   expect(legacy()).toEqual(before)
   expect((await http(id, '/commit', { request, planHash: plan.planHash })).status).toBe(200)
+})
+
+it('confirmed past independent facts exclude through the existing qualification reader without changing legacy storage', async () => {
+  const { readCurrentQualificationAssessment } = await import('../lib/roster/current-qualification')
+  const id = seed()
+  const read = () => readCurrentQualificationAssessment(db.$client, id).titles.find(t => t.titleCode === 'specialized_sme')!
+  const input = await command(id, { action: 'assert', fact })
+  const first = await commit(id, input)
+  await commit(id, await command(id, { action: 'confirm', factId: first.body.factId }))
+  expect(read().region.status).toBe('outside_ningbo')
+  expect(read().group).toBe('excluded')
+  const detail = await http(id, '/detail')
+  expect(detail.status).toBe(200)
+  expect(detail.body.qualificationAssessment.titles.find((t: any) => t.titleCode === 'specialized_sme').region.status).toBe('outside_ningbo')
+})
+it('conservative intervals preserve precision and unknown registration never implies termination', async () => {
+  const { readCurrentQualificationAssessment } = await import('../lib/roster/current-qualification')
+  for (const [kind, effective, region, subject] of [
+    ['moved_out', { precision: 'year', value: '2026' }, 'unresolved', 'unresolved'],
+    ['moved_out', { precision: 'month', value: '2026-11' }, 'unresolved', 'unresolved'],
+    ['moved_out', { precision: 'unknown', value: null }, 'unresolved', 'unresolved'],
+    ['registration_status', { precision: 'year', value: '2024' }, 'unresolved', 'unresolved'],
+    ['cancelled', { precision: 'year', value: '2024' }, 'not_established', 'terminated'],
+  ] as const) {
+    const id = seed()
+    const first = await commit(id, await command(id, { action: 'assert', fact: { ...fact, kind, effective } }))
+    await commit(id, await command(id, { action: 'confirm', factId: first.body.factId }))
+    const read = readCurrentQualificationAssessment(db.$client, id, Date.parse('2026-11-04T00:00:00Z')).titles[0]!
+    expect(read.region.status).toBe(region)
+    expect(read.subject.status).toBe(subject)
+    expect((await http(id)).body.facts[0].fact.effective).toEqual(effective)
+  }
+})
+it('whole-consumer legacy rollback retains new writes and same-input legacy-only results', async () => {
+  const { readCurrentQualificationAssessment } = await import('../lib/roster/current-qualification')
+  const id = seed(), read = () => readCurrentQualificationAssessment(db.$client, id, Date.parse('2026-11-04T00:00:00Z'))
+  const before = read()
+  process.env.ENTERPRISE_FACT_CONSUMER_SOURCE = 'legacy'
+  try { expect(read()).toEqual(before) } finally { delete process.env.ENTERPRISE_FACT_CONSUMER_SOURCE }
+  const first = await commit(id, await command(id, { action: 'assert', fact }))
+  await commit(id, await command(id, { action: 'confirm', factId: first.body.factId }))
+  const stored = (await http(id)).body
+  process.env.ENTERPRISE_FACT_CONSUMER_SOURCE = 'legacy'
+  try { expect(read()).toEqual(before); expect((await http(id)).body).toEqual(stored) }
+  finally { delete process.env.ENTERPRISE_FACT_CONSUMER_SOURCE }
+})
+it('difference commands pin multiple owned confirmed revisions and reject cross-enterprise stale or pending references', async () => {
+  const { saveDecision102 } = await import('../server/utils/decision-lifecycle-102')
+  const id = seed(), other = seed(), refs: any[] = []
+  for (const kind of ['moved_out', 'cancelled']) {
+    const first = await commit(id, await command(id, { action: 'assert', fact: { ...fact, kind } }))
+    await commit(id, await command(id, { action: 'confirm', factId: first.body.factId }))
+    refs.push({ enterpriseId: id, factId: first.body.factId, revision: 2, kind })
+  }
+  const request: any = { enterpriseId: id, titleCode: 'specialized_sme', direction: 'missing_in_miit', action: 'replace', expectedCurrentId: null, idempotencyKey: `decision-${++seq}`, actor: { type: 'agent', id: 'test' }, basis: '核实', ruleVersion: 'test', effectiveAt: '2026-01-01T00:00:00Z', decision: { status: 'confirmed_reason', reasonCode: 'platform_stale', measureCode: 'none', verificationStatus: 'confirmed', factReferences: refs } }
+  for (const bad of [{ ...refs[0], enterpriseId: other }, { ...refs[0], revision: 1 }, { ...refs[0], kind: 'moved_in' }]) {
+    expect(() => saveDecision102(db, { ...request, decision: { ...request.decision, factReferences: [bad] } })).toThrow()
+  }
+  const result = saveDecision102(db, request)
+  const row = db.$client.prepare('select fact_references from difference_reason where id=?').get(result.versionId) as any
+  expect(JSON.parse(row.fact_references)).toEqual(refs)
+})
+it('overlapping opposite migrations stay pending and confirmed cancellation survives a later migration', async () => {
+  const { readCurrentQualificationAssessment } = await import('../lib/roster/current-qualification')
+  const id = seed(), read = () => readCurrentQualificationAssessment(db.$client, id, Date.parse('2026-11-04T00:00:00Z')).titles[0]!
+  for (const kind of ['moved_in', 'moved_out', 'cancelled', 'moved_in']) {
+    const first = await commit(id, await command(id, { action: 'assert', fact: { ...fact, kind, effective: { precision: 'year', value: kind === 'moved_in' ? '2024' : '2024' } } }))
+    await commit(id, await command(id, { action: 'confirm', factId: first.body.factId }))
+    if (kind === 'moved_out') expect(read().region.status).toBe('unresolved')
+  }
+  expect(read().subject.status).toBe('terminated')
+  expect(read().group).toBe('excluded')
 })

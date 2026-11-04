@@ -1,3 +1,4 @@
+import { readEnterpriseFactEffects } from './enterprise-fact-effects'
 import { formalValiditySchema, type FormalValidity } from './formal-validity'
 import { readPlatformComparisonProcesses } from '../../server/utils/platform-comparison-input'
 import type { ReceiptRuntimeContext } from '../../server/utils/receipt-runtime-context'
@@ -607,7 +608,9 @@ function createCurrentCandidateEvaluationReader(db: Database.Database, receiptRu
   } satisfies CurrentWorkbookFacts,enumerable:false})
   // One canonical assessment-group decision for both the scan projection and
   // full T2. Keep the legacy row.group unchanged for existing consumers.
-  const group: CurrentGroup = terminations.length ? 'excluded' : row.group
+  const independent = readEnterpriseFactEffects(db, enterpriseId, executionTime)
+  if (independent) row.references.push(...independent.refs)
+  const group: CurrentGroup = independent?.terminated || terminations.length ? 'excluded' : independent?.pending ? 'pending' : independent?.region === 'outside_ningbo' ? 'excluded' : row.group
   if (assessmentOptions) {
     // These dimensions reuse the facts and applicability decisions above. Platform
     // observations and correspondence confirmation never feed back into eligibility.
@@ -656,15 +659,15 @@ function createCurrentCandidateEvaluationReader(db: Database.Database, receiptRu
       ...(sourceVersions.some(s => !s.sha256 || s.removedAt) ? ['source_version_unavailable'] : []),
     ]
     const locationConflict = new Set(latest.map(d => d.reasonCode)).size > 1
-    const subjectStatus = terminations.length ? 'terminated' : subjectGap ? 'unresolved' : 'not_established'
-    const regionStatus = locationConflict || subjectGap ? 'unresolved' : latest[0]?.reasonCode === 'moved_out' ? 'outside_ningbo' : latest[0]?.reasonCode === 'moved_in' ? 'ningbo' : 'not_established'
+    const subjectStatus = independent?.terminated || terminations.length ? 'terminated' : independent?.pending ? 'unresolved' : subjectGap ? 'unresolved' : 'not_established'
+    const regionStatus = independent ? independent.region : locationConflict || subjectGap ? 'unresolved' : latest[0]?.reasonCode === 'moved_out' ? 'outside_ningbo' : latest[0]?.reasonCode === 'moved_in' ? 'ningbo' : 'not_established'
     // A proven termination remains an exclusion even if another independent
     // dimension is unresolved. The old projection is retained explicitly below.
     const formalEvidence = events.filter(e => e.source === 'jxj').map(e => ({eventId:e.id,revision:e.revision,eventType:e.eventType,year:e.year,batchSeq:e.batchSeq,decidedYear:e.decidedYear,reviewOutcome:e.reviewOutcome,...(!legacy && (e.formalValidity || e.validityInvalid) ? {formalValidity:e.formalValidity ?? null,validityInvalid:e.validityInvalid ?? false} : {}),evidenceIds:evidence.filter(v => v.eventId === e.id).map(v => v.id)}))
     row.assessment = {
       titleCode:title,group,
       cycles:qualification.cycles.map(c => ({originYear:c.originYear,batchSeq:c.batch,precision:'year'})),
-      versions:{facts:assessmentDigest([enterprise,events,aliases]),sources:assessmentDigest([evidence,sourceVersions,publishedNames]),decisions:assessmentDigest([heads,decisionAssessments,correspondences]),observations:assessmentDigest([coverage,observedRows])},
+      versions:{facts:assessmentDigest(independent ? [enterprise,events,aliases,independent] : [enterprise,events,aliases]),sources:assessmentDigest([evidence,sourceVersions,publishedNames]),decisions:assessmentDigest([heads,decisionAssessments,correspondences]),observations:assessmentDigest([coverage,observedRows])},
       officialQualification:{group:officialGroup,message:officialGroup === 'eligible' ? '正式资格当前有效（按已录入的年份或已核实有效期间）' : officialGroup === 'excluded' ? '正式资格不纳入当前有效；历史依据保留' : '正式资格待核；已有公布及具体缺口保留',basis:[row.basis,...migrationBasis].filter(Boolean).join('\n'),notes:officialNotes},
       subject:{status:subjectStatus,message:subjectStatus === 'terminated' ? '已确认注销或主体终止，全部称号排除；迁回不恢复主体' : subjectStatus === 'unresolved' ? '主体事实适用性待核' : '未见可适用的已确认主体终止事实；不据此证明存续',decisionIds:terminations.map(d => d.id)},
       region:{status:regionStatus,message:regionStatus === 'outside_ningbo' ? '已确认迁出，不纳入宁波当前结果；不据此认定全国称号撤销' : regionStatus === 'ningbo' ? '已确认迁回或迁入宁波；主体及称号资格分别判断' : regionStatus === 'unresolved' ? '主体地域事实适用性或生效顺序待核' : '未见可适用的迁移决定；沿用正式公布地域范围',decisionIds:latest.map(d => d.id)},
