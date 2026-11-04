@@ -2,11 +2,11 @@
 
 状态：**最终登记，不是 fresh PASS**。本文件盘点「谁仍在读旧路径」，给出 14 组状态、承载票、剩余未切清单、回退边界与「迁移完成」的可交付定义；不修改生产代码、数据库、页面或导出规则。
 
-- 基线：集成分支 `t3/implement-spec-455` @ `3540f7fe`（#455 slice 3 合入后的 tip；本工作树分支 `t3/455-closeout`）。
+- 基线：集成分支 `t3/implement-spec-455` @ `b58ca454`（slice 4 + 评审收口后；原 slice 1–3 证据见各 commit）。
 - 上级：issue #455（scope:L）、#296、ADR `docs/adr/0001-source-domain-boundaries.md` §6/§7。
 - 行号与结论均为该基线的静态代码检索结果；**所列行号可能随后续提交漂移**，复核时以文件内容与符号名为准。
 - 「登记」不等于「已在隔离真实数据上对照通过」，也不等于 UI 桌面/390px、异步导出或性能已验收。所有未运行项见 §7。
-- 切片证据：slice 1 `7a56e3e3`（本文件初版）、slice 2 `3207f0e4`（企业详情 typed 读取）、slice 3 `7b1164b8`（当前资格 recognized typed 读取）。
+- 切片证据：slice 1 `7a56e3e3`（本文件初版）、slice 2 `3207f0e4`（企业详情 typed 读取）、slice 3 `7b1164b8`（当前资格 recognized typed 读取）、评审收口 `70e15349`（复用来源事实接缝、显式回退、人工 UI 与影子证据）。
 
 ## 0. 登记口径
 
@@ -419,8 +419,8 @@
 | 切片 | 票/PR | 状态 | 证据 | 备注 |
 |---|---|---|---|---|
 | 1 | #455 slice 1 / 本文件 | **已完成** | `7a56e3e3`；本文件 14 组登记 | 只登记，不写生产代码 |
-| 2 | #455 slice 2 / 企业详情 | **已完成** | `3207f0e4`；`docs/platform-enterprise-detail-typed-switch.md`；`tests/enterprise-detail-typed-*-455.test.ts` | 仅 1b 企业详情的 typed 字段；1c/1d 仍未切 |
-| 3 | #468 | **部分完成** | `7b1164b8`；`docs/current-qualification-typed-read-468.md`；`tests/current-qualified-recognized-typed-468.test.ts` | 资格见证已切；HTTP/MCP/页面消费 typed；工作簿决策面不变；候选 SQL 未切；**#468 仍 OPEN** |
+| 2 | #455 slice 2 / 企业详情 | **已完成** | `3207f0e4` + `70e15349`；`docs/platform-enterprise-detail-typed-switch.md`；`tests/enterprise-detail-typed-*-455.test.ts` | 仅 1b 企业详情的 typed 字段；1c/1d 仍未切 |
+| 3 | #468 | **部分完成** | `7b1164b8` + `70e15349`；`docs/current-qualification-typed-read-468.md`；`tests/current-qualified-recognized-typed-468.test.ts` | 资格见证已切；HTTP/MCP/页面消费 typed；工作簿决策面不变；候选 SQL 未切；**#468 仍 OPEN** |
 | 4 | #455 slice 4 / 本提交 | **本提交完成（文档）** | 本提交；本文件 §3 完成定义 + §3.8 剩余清单 | 其余组切换或显式登记；slice 4 不写生产代码 |
 
 - slice 1/2 已完成；slice 3 是「部分完成」，不得写成整组已切，也不得关闭 #468。
@@ -485,7 +485,7 @@ rg -n "import_receipt|import_batch|platform_export_batch|snapshot" lib server db
 
 ## 7. 已运行与 UNRUN
 
-### 7.1 已运行（2026-11-04，基线 `3540f7fe`）
+### 7.1 已运行（2026-11-04，评审收口后）
 
 本提交实际运行：
 
