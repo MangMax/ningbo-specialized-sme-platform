@@ -1,3 +1,4 @@
+import { withArchiveProcessFacts } from '../../lib/platform/observation-facts'
 import { and, eq, inArray, sql, type SQL } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../db/schema'
@@ -371,7 +372,7 @@ export function readPlatformBusinessProcessFacts(db: Db, relationIds: number[]):
       const normalized = normalizePlatformRelation('business_list', row.legacy)
       const titleRaw = legacyRowTitle({ rdjb: row.legacy.rawRdjb })
       const typed = row.projectionVersionId != null
-      result.set(row.relationId, {
+      result.set(row.relationId, withArchiveProcessFacts({
         ...businessFactBase(row.relationId, normalized, {
           nameRaw: typed ? row.nameRaw ?? null : normalized.nameRaw ?? null,
           usccRaw: typed ? row.usccRaw ?? null : normalized.usccRaw ?? null,
@@ -387,12 +388,12 @@ export function readPlatformBusinessProcessFacts(db: Db, relationIds: number[]):
         batch: typed ? row.batch ?? null : normalized.batch ?? null,
         awardBatchLabel: typed ? row.awardBatchLabel ?? null : normalized.awardBatchLabel ?? null,
         province: typed ? row.province ?? null : normalized.province ?? null,
-      })
+      }, normalized))
     }
     const missing = ids.filter(id => !result.has(id))
     if (missing.length) for (const row of readLegacyRelationRows(db, missing)) {
       const normalized = normalizePlatformRelation('business_list', row)
-      result.set(row.id, {
+      result.set(row.id, withArchiveProcessFacts({
         ...businessFactBase(row.id, normalized, {
           nameRaw: normalized.nameRaw ?? null, usccRaw: normalized.usccRaw ?? null,
           titleRaw: legacyRowTitle({ rdjb: row.rawRdjb }),
@@ -402,7 +403,7 @@ export function readPlatformBusinessProcessFacts(db: Db, relationIds: number[]):
         appliedAt: normalized.appliedAt ?? null, status: normalized.status ?? null,
         batch: normalized.batch ?? null, awardBatchLabel: normalized.awardBatchLabel ?? null,
         province: normalized.province ?? null,
-      })
+      }, normalized))
     }
   }
   return result

@@ -21,6 +21,8 @@ export type PlatformFactField =
   | 'validityDateRaw' | 'maintenanceYear' | 'maintenanceBatch' | 'district' | 'awardNote' | 'titleRaw'
 
 export interface PlatformObservationFact {
+  /** Archive display facts, separate from the source content's null/identity contract. */
+  archiveProcessFacts?: ArchiveProcessFacts
   relationId: number
   interface: PlatformFactInterface
   /** The content version's typed row id; null when the observation has no projection. */
@@ -54,4 +56,23 @@ export interface PlatformObservationFact {
 export function legacyRowTitle(rawFields: Record<string, unknown> | null | undefined): string | null {
   const value = rawFields?.rdjb
   return typeof value === 'string' && value.trim() ? value.trim() : null
+}
+
+const archiveProcessFields = ['province', 'status', 'batch', 'declareKind', 'appliedAt', 'awardBatchLabel', 'year'] as const
+export type ArchiveProcessFacts = Pick<PlatformObservationFact, typeof archiveProcessFields[number]>
+
+/** Source-reader boundary for archive display consumers. Normalization has already
+ * reconciled stored/raw conflicts. Only non-null modeled content may supplement it;
+ * identities and all original content facts remain untouched. No raw is parsed here. */
+export function withArchiveProcessFacts(
+  fact: PlatformObservationFact,
+  normalized: Partial<ArchiveProcessFacts>,
+): PlatformObservationFact {
+  const archiveProcessFacts = Object.fromEntries(archiveProcessFields.map(field => [
+    field,
+    fact.projectionVersionId != null && fact.modeledFields.includes(field)
+      && fact[field] != null && !fact.normalizationConflicts.some(conflict => conflict.field === field)
+      ? fact[field] : normalized[field] ?? null,
+  ])) as ArchiveProcessFacts
+  return { ...fact, archiveProcessFacts }
 }

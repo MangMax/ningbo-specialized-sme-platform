@@ -249,22 +249,16 @@ function attachPlatformEvidenceSnapshot<T extends RowKey>(
   const queryById = new Map(queries.map(query => [query.id, query]))
   const toRelation = (archived: typeof schema.platformRelation.$inferSelect): ComparisonRelation => {
     const query = queryById.get(archived.queryId)
-    const row = normalizePlatformRelation(query?.interface ?? '', archived)
     const fact = facts.get(archived.id)
-    if (fact?.projectionVersionId != null) {
-      // Comparison is an archive-compatible view, not a new identity resolver.
-      // Keep archived names/USCC verbatim (including null); projections describe source
-      // content and must not relabel an already-associated evidence observation.
-      // A modeled null describes absent source content, not deletion of a populated
-      // archive fact. This compatibility rule belongs only to this consumer.
-      // Legacy normalization remains necessary for unmodeled fields and conflicts;
-      // do not change the source fact contract or coalesce its nulls globally.
-      for (const field of ['declareKind', 'year', 'appliedAt', 'status', 'batch', 'awardBatchLabel', 'province'] as const) {
-        if (fact.modeledFields.includes(field) && fact[field] != null && !row.normalizationConflicts.some(c => c.field === field)) {
-          Object.assign(row, { [field]: fact[field] })
-        }
-      }
+    const modeledSource = query?.interface === 'apply_list' || query?.interface === 'business_list' || query?.interface === 'recognized_list'
+    // The typed path never interprets relation raw. Source readers provide archive
+    // compatibility; identity, ownership and raw evidence remain the archived values.
+    if (source === 'typed' && modeledSource && !fact?.archiveProcessFacts) {
+      throw new Error(`missing_archive_process_facts:${archived.id}`)
     }
+    const row = source === 'typed' && modeledSource && fact?.archiveProcessFacts
+      ? { ...archived, ...fact.archiveProcessFacts, normalizationConflicts: fact.normalizationConflicts }
+      : normalizePlatformRelation(query?.interface ?? '', archived) // explicit legacy / unmodeled source
     return {
       ...(query?.interface === 'recognized_list' ? { enterpriseId: row.enterpriseId } : {}),
       normalizationConflicts: row.normalizationConflicts,
