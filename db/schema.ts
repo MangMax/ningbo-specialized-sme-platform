@@ -1008,6 +1008,7 @@ export const differenceReason = sqliteTable(
     movedInYear: integer('moved_in_year'),
     movedInBatch: integer('moved_in_batch'),
     /** Explicit reviewed qualification; migration alone never supplies it. */
+    factReferences: text('fact_references', { mode: 'json' }).$type<{ enterpriseId: number; factId: number; revision: number; kind: string }[]>(),
     currentQualification: text('current_qualification', { mode: 'json' }).$type<{ titleCode: string; validFrom: string; validUntil: string; basis: string; publicationCheck: { status: 'not_found' | 'not_checked'; scope: string } }>(),
     /** 核验状态:`confirmed` 已确认 / `pending` 待核实。 */
     verificationStatus: text('verification_status', { enum: ['confirmed', 'pending'] })
