@@ -2,6 +2,7 @@ import type { PublishedPresentation } from './correspondence-view'
 import type Database from 'better-sqlite3'
 import { normalizeName, normalizeUscc } from '../domain'
 import { CURRENT_RULE_VERSION, prepareCurrentReader, createCurrentQualificationAssessmentReader, type CurrentQualificationSnapshot, type CurrentQualificationWitness, type CurrentRow, type CurrentTitle } from './current-qualification'
+import type { RecognizedFactSource } from './recognized-filter-source'
 import { currentCandidateBindings, currentCandidateSqlFor } from './current-candidates'
 import { readIdentityKeyVariants } from './current-identity-keys'
 
@@ -88,15 +89,19 @@ function retainFilterWitnesses(row: CurrentRow, matching: CurrentQualificationWi
   row.matchedMaintenance = matching.flatMap(w => w.matchedMaintenance ? [w.matchedMaintenance] : []).filter((fact,index,all) => all.findIndex(other => other.year === fact.year && other.batch === fact.batch) === index).sort((a,b) => a.year-b.year || (a.batch ?? 0)-(b.batch ?? 0))
 }
 
+export interface CurrentQualifiedReadOptions {
+  /** Explicit #468 rollback seam; absent follows the operational default. */
+  recognizedFactSource?: RecognizedFactSource
+}
 /** Complete independent counts; at most two requested pages retain full T2. */
-export function listCurrentQualified(db: Database.Database, filter: CurrentQualifiedFilter): CurrentQualifiedResult {
+export function listCurrentQualified(db: Database.Database, filter: CurrentQualifiedFilter, readOptions: CurrentQualifiedReadOptions = {}): CurrentQualifiedResult {
   const page = filter.page ?? 1, pageSize = filter.pageSize ?? 25
   const snapshotStartedAt = new Date().toISOString()
   const at = Date.parse(snapshotStartedAt)
   prepareCurrentReader(db)
   db.exec('BEGIN')
   try {
-    const assessmentReader = createCurrentQualificationAssessmentReader(db)
+    const assessmentReader = createCurrentQualificationAssessmentReader(db, undefined, readOptions)
     const keys = { queries: readIdentityKeyVariants(db, 'queries'), relations: readIdentityKeyVariants(db, 'unassignedRelations') }
     const order = filter.sort === 'name_asc' ? 'e.name collate nocase asc, c.id asc'
       : filter.sort === 'name_desc' ? 'e.name collate nocase desc, c.id asc' : 'c.id asc'
