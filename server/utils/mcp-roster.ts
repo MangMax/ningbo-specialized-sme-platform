@@ -88,6 +88,7 @@ export interface ListDifferenceRow extends QueryAssessment {
   reasonCode: string | null
   measureCode: string | null
   movedIn: { city: string | null; titleCode: string | null; year: number | null; batch: number | null } | null
+  factReferences?: NonNullable<typeof schema.differenceReason.$inferSelect.factReferences>
   verificationStatus: string
   recordedAt: string
   evidence: { queryId: number; queriedAt: string; interface: string; status: string } | null
@@ -119,15 +120,15 @@ export function listDifferences(db: Db, input: ListDifferencesInput = {}): ListD
     }
     const { page,pageSize } = pageOf(input)
     const rows = tx.select({ enterpriseId: d.enterpriseId, name: schema.enterprise.name, titleCode: d.titleCode, direction: d.direction, status: d.status, reasonCode: d.reasonCode,
-      measureCode: d.measureCode, verificationStatus: d.verificationStatus, recordedAt: d.recordedAt,
+      measureCode: d.measureCode, verificationStatus: d.verificationStatus, recordedAt: d.recordedAt, factReferences: d.factReferences,
       movedInCity: d.movedInCity, movedInTitleCode: d.movedInTitleCode, movedInYear: d.movedInYear, movedInBatch: d.movedInBatch,
       queryId: schema.platformQuery.id, queriedAt: schema.platformQuery.queriedAt, queryInterface: schema.platformQuery.interface, queryStatus: schema.platformQuery.status,
     }).from(d).innerJoin(schema.enterprise,eq(schema.enterprise.id,d.enterpriseId)).leftJoin(schema.platformQuery,eq(schema.platformQuery.id,d.evidenceQueryId)).where(where)
       .orderBy(asc(d.enterpriseId),asc(d.titleCode),asc(d.direction)).limit(pageSize).offset((page-1)*pageSize).all()
     const assessments = readQueryAssessments(db, rows)
     const projected = rows.map((row, index) => {
-        const { movedInCity,movedInTitleCode,movedInYear,movedInBatch,queryId,queriedAt,queryInterface,queryStatus,...summary } = row
-        return { ...summary, ...assessments[index]!, movedIn: [movedInCity,movedInTitleCode,movedInYear,movedInBatch].some(v => v != null) ? { city: movedInCity,titleCode: movedInTitleCode,year: movedInYear,batch: movedInBatch } : null,
+        const { movedInCity,movedInTitleCode,movedInYear,movedInBatch,queryId,queriedAt,queryInterface,queryStatus,factReferences,...summary } = row
+        return { ...summary, ...(factReferences?.length ? { factReferences } : {}), ...assessments[index]!, movedIn: [movedInCity,movedInTitleCode,movedInYear,movedInBatch].some(v => v != null) ? { city: movedInCity,titleCode: movedInTitleCode,year: movedInYear,batch: movedInBatch } : null,
           evidence: queryId != null ? { queryId, queriedAt: queriedAt!, interface: queryInterface!, status: queryStatus! } : null }
       })
     return { rows: projected,counts }

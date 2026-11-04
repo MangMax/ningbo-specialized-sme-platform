@@ -71,6 +71,7 @@ export function listRosterDifferences(db: Db, filter: RosterDifferenceFilter = {
       const movedIn = explanation && ([explanation.movedInCity, explanation.movedInTitleCode, explanation.movedInYear, explanation.movedInBatch].some(v => v != null) || explanation.reasonCode === 'moved_in')
         ? { city: explanation.movedInCity, titleCode: explanation.movedInTitleCode, year: explanation.movedInYear, batch: explanation.movedInBatch, complete: [explanation.movedInCity, explanation.movedInTitleCode, explanation.movedInYear, explanation.movedInBatch].every(v => v != null) } : null
       return { ...r, district: districts.get(r.enterpriseId) ?? null, reasonNote: explanation?.reasonNote ?? null, measureCode: explanation?.measureCode ?? null, measureNote: explanation?.measureNote ?? null, movedIn,
+        ...(explanation?.factReferences?.length ? { factReferences: explanation.factReferences } : {}),
         verificationStatus: explanation?.verificationStatus ?? 'pending', recordedAt: explanation?.recordedAt ?? null,
         evidence: query ? { queryId: query.id, queriedAt: query.queriedAt, interface: query.interface, status: query.status, failureReason: query.failureReason, relationIds: relations.get(query.id) ?? [] } : null,
         ...assessments[i]!,

@@ -25,6 +25,7 @@ export default defineMcpTool({
     openWorldHint: false,
   },
   description: [
+    '显式关联主体事实时额外返回 factReferences（enterpriseId/factId/revision/kind）；按存储版本原样读回，不跟随之后更正或撤回；旧空引用不新增空字段。',
     '名录与平台的差异及其**当前解释**（每 企业×称号×方向 取 `recordedAt` 最新那条）。',
     '`status` 是契约 §3.2 的六态（未查询 / 查询失败 / 无记录 / 已确认无差异 / 已确认原因 / 待核实 —— 彼此可区分）；',
     '`reasonCode` 与 `measureCode` **成对**；`movedIn` 承载迁入的原城市/称号/年份/批次（缺项留空待核）。',
