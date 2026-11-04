@@ -401,7 +401,7 @@ it.each(['apply_list', 'business_list', 'recognized_list'] as const)('473 HTTP a
   const rawFields = { id: 'archive-seam', qymc: 'Source Identity', cszt: '终审通过', year: '2024', szsfmc: '浙江省' }
   const relation = db.insert(platformRelation).values({ queryId: query.id, sequenceNo: 1, enterpriseId: alphaId,
     nameRaw: null, usccRaw: null, aliasNameRaw: 'Archived Alias', status: '已退回', year: 2023,
-    matchBasis: 'name', verificationStatus: 'pending', rawFields }).returning().get()
+    matchBasis: 'manual', verificationStatus: 'pending', rawFields }).returning().get()
   for (const projected of [false, true]) {
     if (projected) ensurePlatformObservation(db, relation.id)
     db.$client.pragma('query_only=ON')
