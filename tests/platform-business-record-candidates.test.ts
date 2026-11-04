@@ -79,13 +79,20 @@ describe('scoped business version candidates', () => {
     expect(result.rows.every((r: any) => r.conflicts.includes('multiple_candidate_rows'))).toBe(true)
   })
 
-  it('keeps target roles separate even for the same content version', () => {
+  it('derives target roles from the typed declareKind', () => {
     const f = fixture(), raw = { id: 'SQ246', year: '2025' }
-    f.row({ raw, stored: { declareKind: 'apply' } }); f.row({ raw, stored: { declareKind: 'review' } })
+    f.row({ raw: { ...raw, sblx: '申请' } }); f.row({ raw: { ...raw, sblx: '复核' } })
     const result = f.candidates({ eventId: undefined, enterpriseId: f.enterprise.id, titleCode: 'specialized_sme' })
     expect(result.total).toBe(2)
     expect(result.rows.map((r: any) => [r.edge.role, r.observationRefs.length])).toEqual([['followup_apply', 1], ['followup_review', 1]])
-    expect(result.rows[0].businessRecord.versionId).toBe(result.rows[1].businessRecord.versionId)
+  })
+
+  it('ignores legacy stored process columns when a typed projection exists', () => {
+    const f = fixture(), raw = { id: 'SQ246', year: '2025', sblx: '申请' }
+    f.row({ raw, stored: { declareKind: 'apply' } }); f.row({ raw, stored: { declareKind: 'review' } })
+    const result = f.candidates({ eventId: undefined, enterpriseId: f.enterprise.id, titleCode: 'specialized_sme' })
+    expect(result.total).toBe(1)
+    expect(result.rows[0]).toMatchObject({ edge: { role: 'followup_apply' }, observationRefs: [{ evidence: { process: { declareKind: 'apply' } } }, { evidence: { process: { declareKind: 'apply' } } }] })
   })
 
   it('keeps distinct business identities even when complete raw content matches', () => {
@@ -127,22 +134,25 @@ describe('scoped business version candidates', () => {
     expect(f.candidates().rows[0].edge.relationId).toBe(old.relation.id)
   })
 
-  it('preserves normalization conflicts on a grouped version with missing stored fields', () => {
+  it('keeps stored-vs-raw conflicts visible while typed fields still win', () => {
     const f = fixture(), clean = f.row(), conflict = f.row({ stored: { year: 2024, status: '终审通过' } })
     const result = f.candidates()
     expect(result.total).toBe(1)
     expect(result.rows[0].businessRecord.versionId).toBe(clean.projection!.versionId)
-    expect(result.rows[0].observationRefs[1]).toMatchObject({ relationId: conflict.relation.id, conflicts: ['platform_field_conflict', 'platform_year_missing'], evidence: { process: { normalizationConflicts: [{ field: 'year', storedValue: 2024, rawValue: 2025 }] } } })
-    expect(result.rows[0].conflicts).toEqual(['platform_field_conflict', 'platform_year_missing'])
+    expect(result.rows[0].observationRefs[1]).toMatchObject({ relationId: conflict.relation.id, conflicts: ['platform_field_conflict'], evidence: { process: { status: null, normalizationConflicts: [{ field: 'year', storedValue: 2024, rawValue: 2025 }] }, temporal: { relationYear: 2025 } } })
+    expect(result.rows[0].conflicts).toEqual(['platform_field_conflict'])
   })
 
-  it('retains raw identity and title conflicts across observations of one version', () => {
+  it('retains typed identity and recognized row-title conflicts across observations of one version', () => {
     const f = fixture(), raw = { id: 'SQ246', year: '2025', sblx: '申请', whpc: '2025-1', tyshxydm: '91330211000000001A', rdjb: '1' }
-    const a = f.row({ raw }), b = f.row({ raw })
+    const a = f.row({ source: 'recognized_list', raw }), b = f.row({ source: 'recognized_list', raw })
     const result = f.candidates()
     expect(result.total).toBe(1)
-    expect(result.rows[0].conflicts).toEqual(['identity_conflict', 'title_conflict'])
-    expect(result.rows[0].observationRefs.map((o: any) => [o.relationId, o.conflicts, o.evidence.identity.rawUscc, o.evidence.title.rawRdjb])).toEqual([[a.relation.id, ['identity_conflict', 'title_conflict'], raw.tyshxydm, '1'], [b.relation.id, ['identity_conflict', 'title_conflict'], raw.tyshxydm, '1']])
+    expect(result.rows[0].conflicts).toEqual(expect.arrayContaining(['identity_conflict', 'title_conflict']))
+    expect(result.rows[0].observationRefs.map((o: any) => [o.relationId, o.conflicts, o.evidence.identity.rawUscc, o.evidence.title.rawRdjb])).toEqual([
+      [a.relation.id, expect.arrayContaining(['identity_conflict', 'title_conflict']), raw.tyshxydm, '1'],
+      [b.relation.id, expect.arrayContaining(['identity_conflict', 'title_conflict']), raw.tyshxydm, '1'],
+    ])
   })
 
   it('filters owner title status and recognized target before canonical reads', () => {

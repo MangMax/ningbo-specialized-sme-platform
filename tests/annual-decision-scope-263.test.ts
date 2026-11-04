@@ -158,12 +158,21 @@ it('continues validating current source fingerprints and blocks stale current-ta
   } finally { observed.restore() }
 })
 
-it.each([{ name: 'new-version', rawStatus: true }, { name: 'same-version-different-stored-status', rawStatus: false }])('does not inherit confirmation for $name', ({ rawStatus }) => {
-  const f = fixture(), old = f.add({ status: '终审不通过', rawStatus }), oldId = f.decide(old.relation.id)
-  const current = f.add({ rawStatus }), scope = f.scope(), oldRow = f.db.select().from(s.recordCorrespondence).where(eq(s.recordCorrespondence.id, oldId)).get()
+it('does not inherit confirmation for a new content version', () => {
+  const f = fixture(), old = f.add({ status: '终审不通过', rawStatus: true }), oldId = f.decide(old.relation.id)
+  const current = f.add({ rawStatus: true }), scope = f.scope(), oldRow = f.db.select().from(s.recordCorrespondence).where(eq(s.recordCorrespondence.id, oldId)).get()
   f.foreign(current.relation.id, 20)
   expect(qualifyAnnualFinal(f.db, scope)).toMatchObject({ status: 'eligible', decisionRefs: [] })
   const result = reconcileAnnualStep(f.db, readAnnualWriteScope, { eventId: f.event.id, generation: scope.generation, stepId: scope.steps[0]!.stepId })
   expect(result).toMatchObject({ status: 'created', decisionRefs: [{ relationId: current.relation.id, requiresRevalidation: false }] })
+  expect(f.db.select().from(s.recordCorrespondence).where(eq(s.recordCorrespondence.id, oldId)).get()).toEqual(oldRow)
+})
+
+it('does not inherit an old stored status when the same content version has no typed status', () => {
+  const f = fixture(), old = f.add({ status: '终审不通过', rawStatus: false }), oldId = f.decide(old.relation.id)
+  const current = f.add({ rawStatus: false }), scope = f.scope(), oldRow = f.db.select().from(s.recordCorrespondence).where(eq(s.recordCorrespondence.id, oldId)).get()
+  f.foreign(current.relation.id, 20)
+  expect(scope.steps[0]!.reasons).toContain('latest_status_missing')
+  expect(qualifyAnnualFinal(f.db, scope)).toMatchObject({ stepId: null, status: 'none', decisionRefs: [] })
   expect(f.db.select().from(s.recordCorrespondence).where(eq(s.recordCorrespondence.id, oldId)).get()).toEqual(oldRow)
 })

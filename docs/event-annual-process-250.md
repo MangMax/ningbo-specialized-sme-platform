@@ -21,7 +21,9 @@ coverage 保留原 query 状态及 range 证明，legacy 缺 metadata 是 archiv
 
 `sourceGeneration` 是 sourceRefs 稳定 JSON 的 SHA256，排除所有对应决定及决定冲突。sourceRefs 包含 scope（owner/title/业务年/事项/规则版本）、正式事件 revision 与字段、全部正式 evidence 与文件 hash/removedAt、完整限定观察集合（queryId/relationId/interface/recordId/versionId/sourceFingerprint）与覆盖 metadata。每观察 sourceFingerprint 包含时间/身份/接口/称号/target、规范七字段 facts 与真冲突、业务 metadata/contentHash/版本/来源；写对应自身不改变代次。正式来源、观察集合/版本/资格事实改变会改变代次。hash 不替代写侧 protected preflight 的独立 provenance/sourceFingerprint 验证。
 
-读取先经索引限定事件 owner/query/title，再 SQL 只投影七个 raw facts，规范后限定事项；无native称号的queryList仅由唯一明确business_list称号种子、同规范USCC/平台key/稳定事实建立年度title lineage后调用共享 readPlatformBusinessGroups。不加载大 raw、raw_response、collectionEvidence.rows；无全库 scanallquery/JS array-in。纯身份取证转写须具有明确来源且无业务ID/事项/申报时间/状态才排除；未知空业务保留为缺口。该函数不写投影/ledger、不联网。
+读取先经索引限定事件 owner/query/title，再按已限定 relation IDs 调用来源专用事实 seam（`readPlatformObservationFacts`）：apply/business/recognized 各自读取 typed 投影；未投影的历史观察回退既有规范。消费者不读取各投影表布局，也不新增三接口通用字段 adapter。规范后限定事项；无native称号的queryList仅由唯一明确business_list称号种子、同规范USCC/平台key/稳定事实建立年度title lineage后调用共享 readPlatformBusinessGroups。不加载大 raw、raw_response、collectionEvidence.rows；无全库 scanallquery/JS array-in。纯身份取证转写须具有明确来源且无业务ID/事项/申报时间/状态才排除；未知空业务保留为缺口。该函数不写投影/ledger、不联网。
+
+#320 起，候选与默认年度事实共用 `lib/platform/observation-facts.ts` 的 observation fact 契约与 `server/utils/platform-source-facts.ts` 的按来源分发；typed 投影优先，未投影历史行保留 legacy fallback。显式 comparison admission 为保持其冻结 SQL/payload 预算，继续使用已限定行的 legacy 投影；默认年度读取使用该 seam。候选 `year_mismatch` 显式使用比较年：award 用原认定年，review 用 `decided_year`；recognized 维护年不参与年度过程比较。复核缺结论年保留 `official_decision_year_missing`，不误报 `year_mismatch`。
 
 公开协议：GET `/api/roster/events/:id/annual-process?page=1&pageSize=50`，MCP `get_event_annual_process {eventId,page?,pageSize?}`，同一应用 adapter。仅接受正安全整数，pageSize <=200；REST拒绝 asOf/sourceSet 等未知参数；MCP输入shape不公布、不解释这些参数（沿用toolkit处理）。响应 `{process,sourceGeneration,sourceRefs,total,page,pageSize}`；仅 `process.steps` 在资格计算完成后分页。latest/final ID 可指向当前页以外的步骤。所有步骤及来源的完整重算由内部读取函数完成；sourceRefs 是完整集合，展示分页不是资格范围。找不到正式award/review返回404，坏参数400，非GET405，内部失败500且不泄露异常。
 
