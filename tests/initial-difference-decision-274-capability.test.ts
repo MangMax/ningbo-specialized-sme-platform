@@ -35,7 +35,14 @@ async function fill(v: ReturnType<typeof mount>) {
 }
 function render(h: ReturnType<typeof harness>) {
   const shown = ref(true); let store!: ReturnType<typeof useReviewDrafts>
-  vi.stubGlobal('$fetch', (url: string, opts?: any) => url.endsWith('browser-context') ? h.api.context() : url.endsWith('/current') ? h.api.current() : url.endsWith('browser-commands') ? h.api.post(opts.body) : h.api.version(Number(url.split('/').at(-1))))
+  vi.stubGlobal('$fetch', (url: string, opts?: any) => {
+    if (url.endsWith('browser-context')) return h.api.context()
+    if (url.endsWith('/current')) return h.api.current()
+    if (url.endsWith('browser-commands')) return h.api.post(opts.body)
+    if (url.endsWith('/facts')) return Promise.resolve({ facts: [], history: [] })
+    if (/decision-lifecycle\/\d+$/.test(url)) return h.api.version(Number(url.split('/').at(-1)))
+    throw new Error('Unexpected test request: ' + url)
+  })
   const Host = defineComponent({ components: { Form }, setup() { store = useReviewDrafts(); provide(REVIEW_DRAFTS_KEY, store); return { shown, scope } }, template: '<Form v-if="shown" :scope="scope" />' })
   const view = mount(Host, { attachTo: document.body, global: { plugins: [createPinia(), PiniaColada] } })
   return { view, shown, store: () => store, session: () => store.drafts[key]?.initialSubmission }
