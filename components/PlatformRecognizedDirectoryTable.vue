@@ -49,11 +49,11 @@ const conflictLabel: Record<string, string> = {
           <TableHeader>
             <TableRow class="hover:bg-transparent">
               <TableHead class="w-[12%]">目录业务ID</TableHead>
-              <TableHead class="w-[17%]">企业</TableHead>
+              <TableHead class="w-[16%]">企业</TableHead>
               <TableHead class="w-[11%] whitespace-nowrap">有效期（原值）</TableHead>
               <TableHead class="w-[6%] whitespace-nowrap">维护年</TableHead>
               <TableHead class="w-[7%] whitespace-nowrap">维护批次</TableHead>
-              <TableHead class="w-[8%] whitespace-nowrap">属地（原值）</TableHead>
+              <TableHead class="w-[9%] whitespace-nowrap">属地（原值）</TableHead>
               <TableHead class="w-[10%] whitespace-nowrap">称号范围</TableHead>
               <TableHead class="w-[10%] whitespace-nowrap">版本 / 观察</TableHead>
               <TableHead class="sticky right-0 z-20 w-[13%] border-l bg-muted">详情</TableHead>
@@ -61,16 +61,16 @@ const conflictLabel: Record<string, string> = {
           </TableHeader>
           <TableBody>
             <TableRow v-for="row in records" :key="row.record.id" class="align-top" data-testid="platform-recognized-directory-row" :data-record-id="row.record.id">
-              <TableCell class="break-all font-mono text-xs">{{ row.record.platformKey }}</TableCell>
+              <TableCell class="whitespace-normal break-all font-mono text-xs">{{ row.record.platformKey }}</TableCell>
               <TableCell class="whitespace-normal break-words [overflow-wrap:anywhere]">
                 <NuxtLink v-if="enterpriseId(row) != null" :to="`/enterprises/${enterpriseId(row)}`" class="font-medium hover:underline">{{ enterprise(row) }}</NuxtLink>
                 <span v-else class="font-medium">{{ enterprise(row) }}</span>
                 <span class="text-muted-foreground mt-1 block break-all font-mono text-xs">{{ missing(row.matchedVersion.usccRaw) }}</span>
               </TableCell>
-              <TableCell class="whitespace-nowrap font-mono text-xs">{{ missing(row.matchedVersion.validityDateRaw) }}</TableCell>
+              <TableCell class="break-all font-mono text-xs">{{ missing(row.matchedVersion.validityDateRaw) }}</TableCell>
               <TableCell class="tabular-nums">{{ missing(row.matchedVersion.maintenanceYear) }}</TableCell>
-              <TableCell class="break-all font-mono text-xs">{{ missing(row.matchedVersion.maintenanceBatch) }}</TableCell>
-              <TableCell class="break-all font-mono text-xs">{{ missing(row.matchedVersion.district) }}</TableCell>
+              <TableCell class="whitespace-normal break-all font-mono text-xs">{{ missing(row.matchedVersion.maintenanceBatch) }}</TableCell>
+              <TableCell class="whitespace-normal break-all font-mono text-xs">{{ missing(row.matchedVersion.district) }}</TableCell>
               <TableCell class="whitespace-normal text-xs leading-5">{{ scopes(row.titleScopes) }}</TableCell>
               <TableCell class="whitespace-nowrap tabular-nums">{{ row.versionCount }} / {{ row.observationCount }}<span v-if="row.matchedVersionCount > 1" class="text-muted-foreground block text-xs">匹配 {{ row.matchedVersionCount }} 个版本</span><span v-if="row.matchedVersion.ruleVersion == null" class="text-muted-foreground block text-xs">尚未建立 typed 投影</span></TableCell>
               <TableCell class="sticky right-0 z-10 border-l bg-card">

@@ -159,6 +159,7 @@
 
 - `GET /api/platform/recognized-directory?pageSize=5`：200，total 10,065，5 行响应 4.9KB，约 88ms；详情 200（1 版本 / 1 观察，2.2KB，约 4ms）；页面 200；MCP `tools/list` 含 `list_platform_recognized_directory` 与 `get_platform_recognized_record`；按企业 USCC 的 `current-enterprises` 查询 200（约 2.8s，走既有 off-main reader）。
 - 1280px 与 390px 真实数据页面：表格 954px 与容器同宽、无页面横向溢出；25 行/卡片正常；390px 详情弹窗 358px、标题避让关闭按钮、观察表在弹窗内横向滚动（1329px / 296px）。
+- 真实目录业务ID 为 36 位 UUID、部分 `rddqrq` 为 datetime 原值：表格按列宽折行显示，不压到相邻列（回归 `tests/platform-recognized-directory-ui.test.ts`）。
 - **限制**：1.9GB 真实副本上的全量 `current-enterprises` 逐页读取超过 8 分钟未完成，本次资格不变性改用每称号 20 家 USCC 抽样；导出为全量真实工作簿。抽样结论不外推到未抽样企业。
 
 ## 存储与历史投影

@@ -93,6 +93,24 @@ describe('平台认定目录表格', () => {
     } finally { view.unmount() }
   })
 
+  it('keeps a real-length UUID directory key and a datetime validity value intact', () => {
+    const uuid = 'f251d3e6-fcb0-43ce-b2fb-55de9992ee45'
+    const realKey: RecognizedDirectoryRow = {
+      ...record,
+      record: { ...record.record, platformKey: uuid },
+      matchedVersion: { ...version, validityDateRaw: '2024-03-28 10:33:22' },
+    }
+    const view = mount(PlatformRecognizedDirectoryTable, { props: { view: 'records', rows: [realKey] }, global: { stubs } })
+    try {
+      expect(view.text()).toContain(uuid)
+      expect(view.text()).toContain('2024-03-28 10:33:22')
+      // Real directory keys are 36-char UUIDs: the cell must wrap instead of
+      // inheriting the shared table's nowrap and running into the next column.
+      const keyCell = view.findAll('td').find(cell => cell.text().includes(uuid))!
+      expect(keyCell.classes()).toContain('whitespace-normal')
+    } finally { view.unmount() }
+  })
+
   it('separates missing-key observations and links to the original query', () => {
     const view = mount(PlatformRecognizedDirectoryTable, { props: { view: 'isolated', rows: [isolated] }, global: { stubs } })
     try {
