@@ -130,6 +130,37 @@
 | `pnpm vitest run tests/platform-recognized-directory-shadow.test.ts --maxWorkers=1 --no-file-parallelism` | 旧企业平台历史读路径 vs 新目录读路径 |
 | `pnpm vitest run tests/platform-recognized-directory-three-way.test.ts --maxWorkers=1 --no-file-parallelism` | A/B/C 三路与四种目录变更 |
 
+## 真实业务副本验证（2026-11-04）
+
+数据来源：`3482` 端口 Docker 实例的 `/state/data/roster.db`（部署镜像 `spztx-roster:main-49133834`）。用 `better-sqlite3` 的在线 `backup` 接口复制到隔离文件（约 1.9GB），**原实例只读、未写入、未改容器内状态**；验证代码为 `main` 的 `fd8efe32`。
+
+### 迁移与回填
+
+- 部署库有 55 张表，**没有** `platform_apply_projection` / `platform_business_projection` / `platform_recognized_projection`。在副本上按 main 迁移后新增这 3 张表（0033/0034/0035），既有表与行不变。
+- 认定数据：7,327 次 `recognized_list` 查询（6,964 success / 339 no_record / 21 failed / 3 partial），10,065 行 / 记录 / 版本 / 观察，覆盖 6,965 家企业；全部 `resolved + verified`，无缺编号、编号冲突或未核实观察，`view=isolated` = 0。
+- `ensurePlatformObservation` 为 10,065 个真实观察创建 10,065 条 typed 投影：0 冲突、0 复用、耗时约 5.4s。
+- 真实空值分布：`validity_date_raw` 0 空、`maintenance_year` **10,065 空**（真实 `whpcyear` 全为空串）、`maintenance_batch` 2 空（空串）、`district` 0 空、`award_note` **10,065 空**（行内无 `rdxx`）、`title_raw/name_raw/uscc_raw` 0 空。
+- 原值精度：`rddqrq` 有 9,503 条 date-only（`YYYY-MM-DD`）与 **562 条 datetime**（`YYYY-MM-DD HH:MM:SS`）；投影全部原样保留，未解析成日期。精确过滤 `rddqrq=2024-03-28 10:33:22` 命中 1 条且返回同值；用年份前缀 `2024` 过滤为 0。
+
+### 查询与影子对照
+
+- 目录 total = 10,065；51 页（每页 200，末页 65，合计 10,065）；isolated = 0。
+- `rdjb` 过滤返回 10,062 / 10,061 / 10,062（1/2/3）：真实查询多数记录的范围是 `1,2,3`，过滤按**查询称号范围**而不是逐行称号，符合契约；行称号超出查询范围的冲突为 0。
+- `whpc=2024-1` 2,082；`szq=133020300` 665；`whpcyear=2024` 0（真实 `whpcyear` 为空）。
+- 影子对照：抽取 100 家企业、163 条记录，旧 `readPlatformBusinessDetails` 与新目录 reader 的记录/版本/观察定位 **0 差异**。
+
+### 资格与导出不变
+
+- 删除全部 typed 投影与回填后，三称号各 20 家 USCC 抽样的 `current-enterprises` 结果（total / rows / group）完全一致。
+- 三称号**完整真实导出工作簿**的 counts、四个 sheet 行数与「有效企业」身份 hash 在删除/回填前后完全一致：创新型 eligible 4,186 + pending 2,444；专精特新 2,996 + 806 + 3 excluded；小巨人 156 + 1,084 + 29 excluded。
+- 目录 ≠ 当前有效（真实样本）：按企业 ID 取 120 条目录行，专精特新 73/73 当前 eligible，创新型 1/1，小巨人仅 2/46。样本按企业 ID 抽取、非随机，不能外推为总体比例；它只证明「目录行存在且行称号在小巨人范围内」也不等于本地当前有效资格，与设计边界一致。
+
+### 公开入口与限制
+
+- `GET /api/platform/recognized-directory?pageSize=5`：200，total 10,065，5 行响应 4.9KB，约 88ms；详情 200（1 版本 / 1 观察，2.2KB，约 4ms）；页面 200；MCP `tools/list` 含 `list_platform_recognized_directory` 与 `get_platform_recognized_record`；按企业 USCC 的 `current-enterprises` 查询 200（约 2.8s，走既有 off-main reader）。
+- 1280px 与 390px 真实数据页面：表格 954px 与容器同宽、无页面横向溢出；25 行/卡片正常；390px 详情弹窗 358px、标题避让关闭按钮、观察表在弹窗内横向滚动（1329px / 296px）。
+- **限制**：1.9GB 真实副本上的全量 `current-enterprises` 逐页读取超过 8 分钟未完成，本次资格不变性改用每称号 20 家 USCC 抽样；导出为全量真实工作簿。抽样结论不外推到未抽样企业。
+
 ## 存储与历史投影
 
 存储、迁移、规则版本与回填路径见 [平台业务记录契约](platform-business-record-contract.md) 的「recognized_list 来源专用 typed 投影（#461）」。历史观察继续通过 `platformRecordObservations`（每批 1..100）投影；预检/提交回执给出 `recognizedProjectionsCreated`/`recognizedProjectionsReused`。本层不新增写入命令。
