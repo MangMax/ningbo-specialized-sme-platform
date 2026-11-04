@@ -1,8 +1,9 @@
 # 当前资格的 recognized_list 类型化读取（#468，第 6 组）
 
-状态：**部分完成**。资格见证与四个消费者（HTTP、MCP、页面、三称号异步工作簿）已切到
-`platform_recognized_projection`；`currentCandidateSql` 的候选集合仍是旧 `platform_relation`
-路径，按本票范围显式登记、未切换。本文只记录第 6 组的读路径切换，不改资格/年度/对应/导出规则。
+状态：**部分完成**。资格筛选见证已切到 `platform_recognized_projection`；HTTP、MCP 与页面消费该见证。
+三称号异步工作簿共享同一资格评估器，但工作簿只消费正式分组/列，不消费筛选见证，因此其决策面不随本次切换变化。
+`currentCandidateSql` 的候选集合仍是旧 `platform_relation` 路径，按本票范围显式登记、未切换。
+本文只记录第 6 组的读路径切换，不改资格/年度/对应/导出规则。
 
 ## 旧调用清单
 
@@ -14,7 +15,7 @@
 | HTTP | `GET /api/roster/current-enterprises` → `enterpriseReads.currentQualifiedJson` → `listCurrentQualified` | `filterSource` 从 `platform_relation.raw_fields` 取 `rddqrq`/`whpcyear`/`whpc`，从 `platform_query.collection_evidence` 取 `pages`/`effectiveConditions`/`completeness`/`fullRange` |
 | MCP | `list_current_qualified_enterprises` → 同一 `enterpriseReads.currentQualifiedJson` | 同上 |
 | 页面 | `pages/current-enterprises.vue` → HTTP | 同上（页面不另读数据库） |
-| 三称号异步工作簿 | `lib/roster/current-workbook.ts` → `createCurrentQualificationAssessmentReader(...).readTitle/readWorkbook` | 同一评估器；工作簿只消费分组/列，不消费筛选见证 |
+| 三称号异步工作簿 | `lib/roster/current-workbook.ts` → `createCurrentQualificationAssessmentReader(...).readTitle/readWorkbook` | 同一评估器；工作簿只消费正式分组/列，不消费筛选见证，故不是「仍读旧 filterSource」，也不会因 typed 见证变化而改行 |
 | 候选集合 | `lib/roster/current-candidates.ts` 的 `currentCandidateSql` | `platform_relation`/`platform_query` union；**本票未切** |
 | 筛选事实纯函数 | `lib/roster/recognized-filter-facts.ts` | 仍只解释 `queryBusList` 的返回值，不读表 |
 
@@ -47,7 +48,8 @@ union 候选，未改为按投影/观察枚举。原因与边界：
 - `tests/current-candidate-covering-index-363.test.ts` 的 C04 冻结了 `currentCandidateSql` 的字节与
   sha256；本票不改该断言。
 - 投影与观察都以 `platform_relation` 为根（`platform_business_observation.relation_id`），按 relation
-  union 的候选集合不会因投影存在/缺失而增减；本票的资格见证与四消费者均已切到 typed。
+  union 的候选集合不会因投影存在/缺失而增减；本票已切的是资格见证与消费该见证的 HTTP/MCP/页面。
+  工作簿共享评估器但不消费筛选见证，候选枚举仍走旧 union。
 - 未投影的历史行仍由 LEFT 语义（本票为自动 raw 回退）保留为候选与见证，不因回退丢失。
 - 若后续要把候选枚举也改为 observation/projection 优先，必须单独处理 C04 冻结、行数不变与未投影
   历史行证明，另开切片。
@@ -58,7 +60,8 @@ union 候选，未改为按投影/观察枚举。原因与边界：
    行时，该行内容事实走原 `raw_fields` JSON。历史归档无需回填即可继续被读取。
 2. **显式旧读者**：
    - 运维：设置 `ROSTER_RECOGNIZED_FILTER_SOURCE=legacy`，所有当前资格读取使用切换前的
-     `filterSource` SQL（字节与切换前一致，无新增 join）。去掉该变量即回到 typed。
+     `filterSource` SQL（语义与切换前一致、无新增 join；字符串重排了空白，不是逐字节相同）。
+     去掉该变量即回到 typed。该 env 回退有独立测试，不只依赖代码 option。
    - 代码/测试：`listCurrentQualified(db, filter, { recognizedFactSource: 'legacy' })` 或
      `createCurrentQualificationAssessmentReader(db, runtime, { recognizedFactSource: 'legacy' })`。
 3. **判断条件**：typed 路径在同一关系上存在 projection 行即视为该内容版本的来源答案；字段 null 是
@@ -80,7 +83,9 @@ maintenanceBatch、`qualificationAssessment`、proof/audit 定位由
 | 前后空白 `whpc` | `' 2023-2 '` 不匹配复合年，未知 | trim 后为 `'2023-2'`，维护年 2023、批次 null | 同上 |
 | 带空白的 `whpcyear` | `' 2024 '` 被旧判定视为「非空」，抑制 `whpc` 复合年 | #461 明确空白不是整数 → null（缺失），`whpc` 复合年可作维护年 | 同上；非空但非法的原值在 typed 中按未知处理 |
 
-除以上 trim 类差异外，本票未观察到行集合、计数、分页、筛选或 T2/proof 定位的差异。未把 typed
+另一类不是「切换前后」差异、但消费 typed 后生效的语义：直接改 typed 投影值会移动 `matchedValidYears`/`matchedMaintenance` 和所选筛选的命中集合（三路对照已更新）；它不改变正式资格分组、行集合或工作簿决策面。
+
+除以上 trim 类差异外，本票未观察到同输入下 typed 与 legacy 在行集合、计数、分页、筛选或 T2/proof 定位的差异。未把 typed
 reader 本身当唯一 oracle：对照的旧侧是切换前 SQL，且测试同时断言未投影行仍走旧值。
 
 **未变**：资格/年度/对应/导出规则；三称号 Excel 12 列与排序；四张表及计数；旧表/列/raw/审计；
@@ -94,7 +99,7 @@ reader 本身当唯一 oracle：对照的旧侧是切换前 SQL，且测试同�
 
 | 命令 | 结果 |
 |---|---|
-| `pnpm vitest run tests/current-qualified-recognized-typed-468.test.ts --maxWorkers=1 --no-file-parallelism` | 5/5 PASS：影子对照（13 组筛选/分页）、null 投影不回退、未投影回退、trim 差异、HTTP+MCP+工作簿同读者 |
+| `pnpm vitest run tests/current-qualified-recognized-typed-468.test.ts --maxWorkers=1 --no-file-parallelism` | 6/6 PASS：影子对照（13 组筛选/分页）、null 投影不回退、未投影回退、trim 差异、env legacy 回退、HTTP+MCP+工作簿同评估器 |
 | `pnpm vitest run tests/current-qualified-155-http.test.ts --maxWorkers=1 --no-file-parallelism` | 26/26 PASS（旧 fixture 只写 raw_fields，走自动回退） |
 | `pnpm vitest run tests/current-qualified-408.test.ts --maxWorkers=1 --no-file-parallelism` | 87/87 PASS |
 | `pnpm vitest run tests/platform-recognized-projection-http.test.ts --maxWorkers=1 --no-file-parallelism` | 12/12 PASS（#461 投影行为未变） |
@@ -107,11 +112,15 @@ reader 本身当唯一 oracle：对照的旧侧是切换前 SQL，且测试同�
 `ISSUE409_COMPILED_INVENTORY_SHA256` 编译清单，缺省时按设计报 `409 actual worker artifact grant required`；
 本次保持 UNRUN，不改测试或延长 timeout。
 
-未执行：全量套件、CI、真实业务库/备份、部署、页面桌面/390px 实操与异步导出下载后的独立解析重跑。
-本切片只证明页面消费的 HTTP DTO 与工作簿分组面不变。
+未执行：全量套件、CI、真实业务库/备份、部署、异步导出下载后的独立解析重跑。
+
+已做手工页面路径（2026-11-04，隔离 `/tmp/455-ui/roster.db`，dev `:3210`）：
+`/current-enterprises?titleCode=innovative_sme&validYear=2028&maintenanceYear=2023` 在 1280px 与 390px 均显示 1 家「宁波界面演示企业」、有效年份 2028、维护年份 2023；两档页面 `scrollWidth-clientWidth=0`，筛选条件可见。
+该路径只证明筛选命中与页面无横向溢出，不替代全量 UI 或真实库验收。
 
 ## 与 #455 第 6 组登记
 
-- 第 6 组状态：**资格见证与四消费者已切换**；**候选 SQL 未切**，按上文显式登记。
+- 第 6 组状态：**资格见证已切换；HTTP/MCP/页面消费 typed 见证；工作簿决策面不变；候选 SQL 未切**。
+  不把工作簿写成「已消费 typed 筛选见证」；它共享评估器但不读取筛选见证。
 - 旧调用与前后差异：本文。
-- 回退：`ROSTER_RECOGNIZED_FILTER_SOURCE=legacy` 或内部 `recognizedFactSource:'legacy'`。
+- 回退：`ROSTER_RECOGNIZED_FILTER_SOURCE=legacy` 或内部 `recognizedFactSource:'legacy'`；env 回退测试见 `tests/current-qualified-recognized-typed-468.test.ts`。

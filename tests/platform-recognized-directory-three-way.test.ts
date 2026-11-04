@@ -173,7 +173,7 @@ const THREE_WAY_TITLES = [
   { title: 'little_giant', label: '小巨人', uscc: '91330211FFFF000013', validYears: [] },
 ] as const
 
-it('keeps the qualification read model and the export snapshot identical when directory typed values change or disappear for every title', async () => {
+it('keeps formal qualification eligibility and the export decision surface identical when directory typed values change or disappear for every title', async () => {
   const { dir, dbPath, db, matrix } = setup()
   const { server, base } = await startServer()
   try {
