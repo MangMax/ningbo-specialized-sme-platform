@@ -82,18 +82,16 @@ describe('平台认定目录页面', () => {
     try {
       await flushPromises()
       expect(fetch).toHaveBeenCalledWith('/api/platform/recognized-directory', expect.objectContaining({ query: expect.objectContaining({ view: 'records', platformKey: 'DIR-PREFILL', q: '影子企业', page: 1, pageSize: 25 }) }))
-      expect(view.text()).toContain('DIR-2024-1')
       expect(view.text()).toContain('甲目录企业')
-      expect(view.text()).toContain('不是当前有效资格')
+      expect(view.text()).not.toContain('DIR-2024-1')
       expect(view.get('a[href="/current-enterprises"]').element.tagName).toBe('A')
 
-      await view.get('input[aria-label="有效期原值"]').setValue('2027-12-31')
+      await view.get('input[aria-label="有效期"]').setValue('2027-12-31')
       await view.get('input[aria-label="维护批次"]').setValue('2024-2')
       await view.get('input[aria-label="属地"]').setValue('33020000')
-      await view.get('input[aria-label="有效维护年"]').setValue('2024')
       await view.get('form').trigger('submit')
       await flushPromises()
-      expect(fetch.mock.calls.at(-1)![1].query).toMatchObject({ rddqrq: '2027-12-31', whpc: '2024-2', szq: '33020000', whpcyear: 2024, page: 1 })
+      expect(fetch.mock.calls.at(-1)![1].query).toMatchObject({ rddqrq: '2027-12-31', whpc: '2024-2', szq: '33020000', page: 1 })
 
       const selects = view.findAllComponents(Select)
       selects[0]!.vm.$emit('update:modelValue', '1')
@@ -109,26 +107,12 @@ describe('平台认定目录页面', () => {
     } finally { view.unmount() }
   })
 
-  it('rejects a non-integer maintenance year before querying', async () => {
-    const view = mountPage()
-    try {
-      await flushPromises()
-      const calls = fetch.mock.calls.length
-      await view.get('input[aria-label="有效维护年"]').setValue('20x4')
-      expect(view.text()).toContain('有效维护年必须是正整数')
-      await view.get('form').trigger('submit')
-      await flushPromises()
-      expect(fetch.mock.calls.length).toBe(calls)
-    } finally { view.unmount() }
-  })
-
   it('shows distinct empty records and isolated states', async () => {
     fetch.mockResolvedValue({ ...response, rows: [], total: 0 })
     const view = mountPage()
     try {
       await flushPromises()
       expect(view.text()).toContain('没有匹配的目录记录')
-      expect(view.text()).toContain('不猜填')
     } finally { view.unmount() }
   })
 
@@ -142,7 +126,7 @@ describe('平台认定目录页面', () => {
       fetch.mockResolvedValueOnce(response)
       await view.get('[data-testid="table-retry"]').trigger('click')
       await flushPromises()
-      expect(view.text()).toContain('DIR-2024-1')
+      expect(view.text()).toContain('甲目录企业')
       expect(view.text()).not.toContain('synthetic directory read failure')
     } finally { view.unmount() }
   })

@@ -57,44 +57,32 @@ const conflictLabel: Record<string, string> = {
     <DialogContent class="max-h-[85dvh] min-w-0 overflow-y-auto sm:max-w-4xl" data-testid="platform-recognized-directory-detail">
       <DialogHeader>
         <DialogTitle class="pr-8">平台认定目录 #{{ recordId }} · 观察与版本</DialogTitle>
-        <DialogDescription>版本按内容版本编号排列，不代表时间顺序；观察按采集时间倒序。有效期原值是原样字符串，不解析为日期。行称号原值与查询称号范围分开显示。这是目录镜像，不作为当前有效资格判定；原档仍按查询证据读取。</DialogDescription>
+        <DialogDescription class="sr-only">平台认定目录记录的内容版本与实际观察</DialogDescription>
       </DialogHeader>
       <div v-if="loading && !data" class="flex flex-col gap-2"><Skeleton class="h-24 w-full" /><Skeleton class="h-40 w-full" /></div>
       <TableFailureState v-else-if="error" :title="`平台认定目录 #${recordId} 加载失败`" :description="error" :pending="loading" @retry="recordId != null && load(recordId)" />
       <div v-else-if="data" class="flex min-w-0 flex-col gap-5">
-        <section class="min-w-0">
-          <h3 class="text-sm font-medium">记录身份</h3>
-          <dl class="mt-2 grid grid-cols-1 gap-x-3 gap-y-1 text-[13px] sm:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">
-            <dt class="text-muted-foreground">目录业务ID</dt><dd class="font-mono break-all">{{ data.record.platformKey }}</dd>
-            <dt class="text-muted-foreground">来源</dt><dd>{{ data.record.interface }}</dd>
-            <dt class="text-muted-foreground">身份规则</dt><dd>{{ data.record.identityRuleVersion }}</dd>
-            <dt class="text-muted-foreground">建立时间</dt><dd>{{ time(data.record.createdAt) }}</dd>
-          </dl>
-          <div v-if="data.conflicts.length" class="mt-2 flex flex-wrap gap-1" data-testid="platform-recognized-directory-conflicts">
-            <Badge v-for="conflict in data.conflicts" :key="conflict" variant="outline">{{ conflictLabel[conflict] ?? conflict }}</Badge>
-          </div>
-        </section>
+        <div v-if="data.conflicts.length" class="flex flex-wrap gap-1" data-testid="platform-recognized-directory-conflicts">
+          <Badge v-for="conflict in data.conflicts" :key="conflict" variant="outline">{{ conflictLabel[conflict] ?? conflict }}</Badge>
+        </div>
         <section class="min-w-0">
           <h3 class="text-sm font-medium">内容版本 <span class="text-muted-foreground font-normal">{{ data.counts.versions }} 个<template v-if="data.counts.versionsTruncated">（仅显示前 {{ data.versions.length }} 个）</template></span></h3>
           <div class="mt-2 flex flex-col gap-2">
             <article v-for="version in data.versions" :key="version.versionId" class="rounded-sm border p-3" data-testid="platform-recognized-directory-version">
               <div class="flex flex-wrap items-baseline gap-2">
                 <span class="text-sm font-medium">版本 #{{ version.versionId }}</span>
-                <Badge variant="outline">有效期原值 {{ missing(version.validityDateRaw) }}</Badge>
+                <Badge variant="outline">有效期 {{ missing(version.validityDateRaw) }}</Badge>
                 <Badge v-if="version.ruleVersion == null" variant="quiet">尚未建立 typed 投影</Badge>
-                <span class="text-muted-foreground text-xs">维护年 {{ missing(version.maintenanceYear) }} · 批次 {{ missing(version.maintenanceBatch) }}</span>
               </div>
               <dl class="mt-2 grid grid-cols-1 gap-x-3 gap-y-1 text-[13px] sm:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">
-                <dt class="text-muted-foreground">有效期（原值）</dt><dd class="font-mono break-all">{{ missing(version.validityDateRaw) }}</dd>
-                <dt class="text-muted-foreground">维护年 / 维护批次</dt><dd>{{ missing(version.maintenanceYear) }} · {{ missing(version.maintenanceBatch) }}</dd>
-                <dt class="text-muted-foreground">属地（原值/代码）</dt><dd class="font-mono break-all">{{ missing(version.district) }}</dd>
+                <dt class="text-muted-foreground">有效期</dt><dd class="font-mono break-all">{{ missing(version.validityDateRaw) }}</dd>
+                <dt class="text-muted-foreground">维护批次</dt><dd>{{ missing(version.maintenanceBatch) }}</dd>
+                <dt class="text-muted-foreground">属地</dt><dd class="font-mono break-all">{{ missing(version.district) }}</dd>
                 <dt class="text-muted-foreground">平台认定说明</dt><dd class="whitespace-pre-wrap break-words">{{ missing(version.awardNote) }}</dd>
-                <dt class="text-muted-foreground">行称号原值</dt><dd>{{ missing(version.titleRaw) }}<span class="text-muted-foreground"> · 不是查询称号范围</span></dd>
-                <dt class="text-muted-foreground">称号范围（查询事实）</dt><dd>{{ scopes(version.titleScopes) }}</dd>
-                <dt class="text-muted-foreground">企业原值</dt><dd>{{ missing(version.nameRaw) }} · {{ missing(version.usccRaw) }}</dd>
-                <dt class="text-muted-foreground">观察次数</dt><dd>{{ version.observationCount }} · 首次 {{ time(version.firstObservedAt) }} · 最近 {{ time(version.lastObservedAt) }}</dd>
-                <dt class="text-muted-foreground">规则版本</dt><dd>{{ missing(version.ruleVersion) }}</dd>
-                <dt class="text-muted-foreground">内容哈希</dt><dd class="break-all font-mono text-xs">{{ version.hashAlgorithm }} · {{ version.contentHash }}</dd>
+                <dt class="text-muted-foreground">行称号</dt><dd>{{ missing(version.titleRaw) }}</dd>
+                <dt class="text-muted-foreground">称号范围</dt><dd>{{ scopes(version.titleScopes) }}</dd>
+                <dt class="text-muted-foreground">企业</dt><dd>{{ missing(version.nameRaw) }} · {{ missing(version.usccRaw) }}</dd>
+                <dt class="text-muted-foreground">观察次数</dt><dd>{{ version.observationCount }}</dd>
               </dl>
             </article>
           </div>
@@ -128,7 +116,7 @@ const conflictLabel: Record<string, string> = {
                     <template v-if="observation.correspondenceRefs.length">
                       <span v-for="ref in observation.correspondenceRefs" :key="ref.id" class="mr-1 whitespace-nowrap">#{{ ref.id }} · {{ ref.status }}</span>
                     </template>
-                    <span v-else class="text-muted-foreground">此原行暂无对应决定</span>
+                    <span v-else class="text-muted-foreground">—</span>
                   </TableCell>
                   <TableCell class="px-3 py-2 text-xs">{{ state(observation.identityState) }}<template v-if="observation.contentState === 'unverifiable'"> · 原文内容无法核实</template></TableCell>
                   <TableCell class="px-3 py-2"><div class="flex flex-col items-start gap-1"><NuxtLink :to="{ path: '/platform-queries', query: { queryKey: observation.queryKey } }" class="whitespace-nowrap text-xs hover:underline">查看原查询</NuxtLink><Button variant="ghost" size="sm" class="h-7 px-2 text-xs" @click="sourceRelationId = sourceRelationId === observation.relationId ? null : observation.relationId">{{ sourceRelationId === observation.relationId ? '收起原行' : '原行与对应' }}</Button></div></TableCell>

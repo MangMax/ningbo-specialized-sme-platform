@@ -8,7 +8,7 @@ import { Card, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
-import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/components/ui/empty'
+import { Empty, EmptyHeader, EmptyMedia, EmptyTitle } from '@/components/ui/empty'
 import PageHeader from '@/components/PageHeader.vue'
 import TableFailureState from '@/components/TableFailureState.vue'
 import TableLoadingStatus from '@/components/TableLoadingStatus.vue'
@@ -27,7 +27,6 @@ const enterpriseQuery = ref(typeof initialQuery.q === 'string' ? initialQuery.q 
 const platformKey = ref(typeof initialQuery.platformKey === 'string' ? initialQuery.platformKey : '')
 const rdjb = ref('all')
 const validityDateInput = ref('')
-const maintenanceYearInput = ref('')
 const maintenanceBatch = ref('')
 const district = ref('')
 const page = ref(1)
@@ -40,8 +39,6 @@ const detailOpen = ref(false)
 let generation = 0
 let controller: AbortController | undefined
 
-const maintenanceYear = computed(() => maintenanceYearInput.value.trim())
-const maintenanceYearError = computed(() => maintenanceYear.value && !/^\d+$/.test(maintenanceYear.value) ? '有效维护年必须是正整数' : '')
 const titleOptions = computed(() => PLATFORM_RDJB_ORDER.map(value => ({ value, label: PLATFORM_RDJBS[value] ?? value })))
 
 function requestParams() {
@@ -51,7 +48,6 @@ function requestParams() {
     ...(platformKey.value.trim() ? { platformKey: platformKey.value.trim() } : {}),
     ...(rdjb.value !== 'all' ? { rdjb: rdjb.value } : {}),
     ...(validityDateInput.value.trim() ? { rddqrq: validityDateInput.value.trim() } : {}),
-    ...(maintenanceYear.value && !maintenanceYearError.value ? { whpcyear: Number(maintenanceYear.value) } : {}),
     ...(maintenanceBatch.value.trim() ? { whpc: maintenanceBatch.value.trim() } : {}),
     ...(district.value.trim() ? { szq: district.value.trim() } : {}),
     page: page.value,
@@ -60,7 +56,6 @@ function requestParams() {
 }
 
 async function load() {
-  if (maintenanceYearError.value) return
   const request = ++generation
   controller?.abort()
   controller = new AbortController()
@@ -85,7 +80,6 @@ function reset() {
   platformKey.value = ''
   rdjb.value = 'all'
   validityDateInput.value = ''
-  maintenanceYearInput.value = ''
   maintenanceBatch.value = ''
   district.value = ''
   if (page.value !== 1) page.value = 1
@@ -114,14 +108,11 @@ void load()
 const total = computed(() => data.value?.total ?? 0)
 const rows = computed(() => data.value?.rows ?? [])
 const emptyTitle = computed(() => view.value === 'records' ? '没有匹配的目录记录' : '没有隔离的目录观察')
-const emptyDescription = computed(() => view.value === 'records'
-  ? '当前条件下没有已建立 typed 投影的目录记录；未知有效期、维护年、批次或属地不猜填，也不把查询条件写成行事实。'
-  : '缺编号、编号冲突或原文无法核实的目录观察会在此逐条保留，不并入任何目录记录。')
 </script>
 
 <template>
   <div class="flex min-w-0 flex-col gap-2 sm:gap-3" :aria-busy="loading">
-    <PageHeader title="平台认定目录（镜像）" description="本地只读镜像：归档的 queryBusList 平台认定目录行，按企业、目录业务ID、明确称号范围、有效期原值、有效维护年、维护批次与属地筛选。这是平台认定目录镜像，不是「当前有效企业」资格模型；目录存在、消失或日期原值都不直接推出正式有效或失效，资格仍由现有查询判定。称号范围来自原查询，不代表逐行称号事实。">
+    <PageHeader title="平台认定目录（镜像）">
       <template #actions><NuxtLink to="/current-enterprises" class="text-muted-foreground inline-flex items-center gap-1 text-xs hover:underline">当前有效企业查询</NuxtLink></template>
     </PageHeader>
 
@@ -131,7 +122,6 @@ const emptyDescription = computed(() => view.value === 'records'
           <Search class="text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2" aria-hidden="true" />
           <Input v-model="enterpriseQuery" class="bg-card h-8 pl-8" placeholder="搜索企业名称或信用代码" aria-label="企业名称或信用代码" />
         </div>
-        <Input v-model="platformKey" class="bg-card h-8 w-full sm:w-36" placeholder="目录业务ID" aria-label="目录业务ID" />
         <Select :model-value="rdjb" @update:model-value="rdjb = String($event)">
           <SelectTrigger class="bg-card h-8 w-full sm:w-40" aria-label="称号范围"><SelectValue /></SelectTrigger>
           <SelectContent>
@@ -139,10 +129,9 @@ const emptyDescription = computed(() => view.value === 'records'
             <SelectItem v-for="option in titleOptions" :key="option.value" :value="option.value">{{ option.label }}</SelectItem>
           </SelectContent>
         </Select>
-        <Input v-model="validityDateInput" class="bg-card h-8 w-full font-mono sm:w-36" placeholder="有效期原值" aria-label="有效期原值" />
-        <Input v-model="maintenanceYearInput" inputmode="numeric" class="bg-card h-8 w-full sm:w-28" placeholder="有效维护年" aria-label="有效维护年" :aria-invalid="Boolean(maintenanceYearError)" />
+        <Input v-model="validityDateInput" class="bg-card h-8 w-full font-mono sm:w-36" placeholder="有效期" aria-label="有效期" />
         <Input v-model="maintenanceBatch" class="bg-card h-8 w-full sm:w-28" placeholder="维护批次" aria-label="维护批次" />
-        <Input v-model="district" class="bg-card h-8 w-full sm:w-32" placeholder="属地原值" aria-label="属地" />
+        <Input v-model="district" class="bg-card h-8 w-full sm:w-32" placeholder="属地" aria-label="属地" />
         <Select :model-value="view" @update:model-value="view = $event as 'records' | 'isolated'">
           <SelectTrigger class="bg-card h-8 w-full sm:w-28" aria-label="目录视图"><SelectValue /></SelectTrigger>
           <SelectContent>
@@ -150,12 +139,10 @@ const emptyDescription = computed(() => view.value === 'records'
             <SelectItem value="isolated">隔离观察</SelectItem>
           </SelectContent>
         </Select>
-        <Button type="submit" variant="outline" size="sm" :disabled="loading || Boolean(maintenanceYearError)"><Search data-icon="inline-start" />查询</Button>
+        <Button type="submit" variant="outline" size="sm" :disabled="loading"><Search data-icon="inline-start" />查询</Button>
         <Button type="button" variant="ghost" size="sm" :disabled="loading" @click="reset"><X data-icon="inline-start" />重置</Button>
         <span class="text-muted-foreground text-[13px] tabular-nums" aria-live="polite">共 {{ total.toLocaleString('zh-CN') }} {{ view === 'records' ? '条记录' : '条观察' }}</span>
       </div>
-      <p v-if="maintenanceYearError" class="text-destructive text-[13px] leading-5">{{ maintenanceYearError }}</p>
-      <p class="text-muted-foreground text-[13px] leading-5">有效期原值按原样字符串精确匹配，不解析日期；维护年只接受显式正整数。</p>
     </form>
 
     <Card class="gap-0 overflow-hidden py-0 shadow-none">
@@ -171,7 +158,6 @@ const emptyDescription = computed(() => view.value === 'records'
           <EmptyHeader>
             <EmptyMedia variant="icon"><Search /></EmptyMedia>
             <EmptyTitle>{{ emptyTitle }}</EmptyTitle>
-            <EmptyDescription>{{ emptyDescription }}</EmptyDescription>
           </EmptyHeader>
         </Empty>
         <PlatformRecognizedDirectoryTable v-if="rows.length" :view="view" :rows="rows" :loading="loading" @open-record="openRecord" />
