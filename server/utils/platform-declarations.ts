@@ -1,3 +1,4 @@
+import { withArchiveProcessFacts } from '../../lib/platform/observation-facts'
 import { and, eq, inArray, sql, type SQL } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../db/schema'
@@ -276,7 +277,7 @@ export function readPlatformDeclarationFacts(db: Db, relationIds: number[]): Map
       const normalized = normalizePlatformRelation('apply_list', row.legacy)
       const titleRaw = legacyRowTitle({ rdjb: row.legacy.rawRdjb })
       const typed = row.projectionVersionId != null
-      result.set(row.relationId, {
+      result.set(row.relationId, withArchiveProcessFacts({
         ...applyFactBase(row.relationId, normalized, {
           nameRaw: typed ? row.nameRaw ?? null : normalized.nameRaw ?? null,
           usccRaw: typed ? row.usccRaw ?? null : normalized.usccRaw ?? null,
@@ -289,12 +290,12 @@ export function readPlatformDeclarationFacts(db: Db, relationIds: number[]): Map
         year: typed ? row.year ?? null : normalized.year ?? null,
         appliedAt: typed ? row.appliedAt ?? null : normalized.appliedAt ?? null,
         status: typed ? row.status ?? null : normalized.status ?? null,
-      })
+      }, normalized))
     }
     const missing = ids.filter(id => !result.has(id))
     if (missing.length) for (const row of readLegacyRelationRows(db, missing)) {
       const normalized = normalizePlatformRelation('apply_list', row)
-      result.set(row.id, {
+      result.set(row.id, withArchiveProcessFacts({
         ...applyFactBase(row.id, normalized, {
           nameRaw: normalized.nameRaw ?? null, usccRaw: normalized.usccRaw ?? null,
           titleRaw: legacyRowTitle({ rdjb: row.rawRdjb }),
@@ -302,7 +303,7 @@ export function readPlatformDeclarationFacts(db: Db, relationIds: number[]): Map
         projectionVersionId: null, projectionRuleVersion: null, modeledFields: [],
         declareKind: normalized.declareKind ?? null, year: normalized.year ?? null,
         appliedAt: normalized.appliedAt ?? null, status: normalized.status ?? null,
-      })
+      }, normalized))
     }
   }
   return result

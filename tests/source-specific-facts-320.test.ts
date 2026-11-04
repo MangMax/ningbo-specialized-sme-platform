@@ -118,3 +118,25 @@ it('serves the review-year annual process and candidate discovery through real H
     expect(dispatchRecordCorrespondenceMcp('discover', { eventId: f.event.id }, { db: f.db })).toEqual(candidates)
   } finally { await app.close() }
 })
+
+it('473 source facts expose archive compatibility without changing typed null identity or conflict facts', async () => {
+  const { readPlatformObservationFacts } = await import('../server/utils/platform-source-facts')
+  const f = fixture({ contradictStored: true })
+  const conflicted = readPlatformObservationFacts(f.db, 'business_list', [f.relation.id]).get(f.relation.id)!
+  expect(conflicted).toMatchObject({ year: 2024, status: '终审通过' })
+  expect(conflicted.archiveProcessFacts).toMatchObject({ year: null, status: null })
+  expect(conflicted.normalizationConflicts).toContainEqual({ field: 'year', storedValue: 2023, rawValue: 2024 })
+
+  for (const [index, source] of (['apply_list', 'business_list', 'recognized_list'] as const).entries()) {
+    const query = f.db.insert(schema.platformQuery).values({ interface: source, queryKey: 'archive', rdjb: '2', queriedAt: `2026-11-03T00:00:0${index}Z`, status: 'success' }).returning().get()
+    const relation = f.db.insert(schema.platformRelation).values({ queryId: query.id, sequenceNo: 1, nameRaw: 'Archived Identity', status: '终审通过', year: 2024, province: '浙江省', rawFields: { id: `archive-${index}`, qymc: 'Source Identity' } }).returning().get()
+    // Both pre-projection archives and naturally bootstrapped typed rows retain archive facts.
+    const legacy = readPlatformObservationFacts(f.db, source, [relation.id]).get(relation.id)!
+    expect(legacy.archiveProcessFacts).toMatchObject({ status: '终审通过', year: 2024, province: '浙江省' })
+    ensurePlatformObservation(f.db, relation.id)
+    const typed = readPlatformObservationFacts(f.db, source, [relation.id]).get(relation.id)!
+    expect(typed.nameRaw).toBe('Source Identity')
+    if (source !== 'recognized_list') expect(typed.status).toBeNull()
+    expect(typed.archiveProcessFacts).toMatchObject({ status: '终审通过', year: 2024, province: '浙江省' })
+  }
+})

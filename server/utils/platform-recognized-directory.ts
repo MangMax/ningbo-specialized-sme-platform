@@ -1,3 +1,4 @@
+import { withArchiveProcessFacts } from '../../lib/platform/observation-facts'
 import { and, eq, inArray, sql, type SQL } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../db/schema'
@@ -392,7 +393,7 @@ export function readPlatformRecognizedFacts(db: Db, relationIds: number[]): Map<
     for (const row of rows) {
       const normalized = normalizePlatformRelation('recognized_list', row.legacy)
       const typed = row.projectionVersionId != null
-      result.set(row.relationId, {
+      result.set(row.relationId, withArchiveProcessFacts({
         relationId: row.relationId, interface: 'recognized_list',
         projectionVersionId: typed ? row.projectionVersionId : null,
         projectionRuleVersion: typed ? row.projectionRuleVersion ?? null : null,
@@ -409,12 +410,12 @@ export function readPlatformRecognizedFacts(db: Db, relationIds: number[]): Map<
         awardNote: typed ? row.awardNote ?? null : null,
         titleRaw: typed ? row.titleRaw ?? legacyRowTitle({ rdjb: row.legacy.rawRdjb }) : legacyRowTitle({ rdjb: row.legacy.rawRdjb }),
         normalizationConflicts: normalized.normalizationConflicts,
-      })
+      }, normalized))
     }
     const missing = ids.filter(id => !result.has(id))
     if (missing.length) for (const row of readLegacyRelationRows(db, missing)) {
       const normalized = normalizePlatformRelation('recognized_list', row)
-      result.set(row.id, {
+      result.set(row.id, withArchiveProcessFacts({
         relationId: row.id, interface: 'recognized_list',
         projectionVersionId: null, projectionRuleVersion: null, modeledFields: [],
         declareKind: normalized.declareKind ?? null, year: normalized.year ?? null, appliedAt: normalized.appliedAt ?? null,
@@ -422,7 +423,7 @@ export function readPlatformRecognizedFacts(db: Db, relationIds: number[]): Map<
         province: normalized.province ?? null, nameRaw: normalized.nameRaw ?? null, usccRaw: normalized.usccRaw ?? null,
         validityDateRaw: null, maintenanceYear: null, maintenanceBatch: null, district: null, awardNote: null,
         titleRaw: legacyRowTitle({ rdjb: row.rawRdjb }), normalizationConflicts: normalized.normalizationConflicts,
-      })
+      }, normalized))
     }
   }
   return result
