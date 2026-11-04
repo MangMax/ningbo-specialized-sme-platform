@@ -253,6 +253,20 @@
       "when": 1793722864497,
       "tag": "0035_platform_recognized_projection",
       "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "6",
+      "when": 1793722864498,
+      "tag": "0036_enterprise_facts",
+      "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "6",
+      "when": 1793722864499,
+      "tag": "0037_difference_fact_references",
+      "breakpoints": true
     }
   ]
 }

@@ -36,7 +36,7 @@ it.each(['fresh', 'upgrade'])('adds empty durable impact storage and preserves e
   migrate(db, { migrationsFolder })
   if (mode === 'fresh') seed()
   expect(sqlite.prepare('select * from __drizzle_migrations order by id limit ?').all(oldLedger.length)).toEqual(oldLedger)
-  if (mode === 'upgrade') expect(sqlite.prepare('select * from difference_reason').all()).toEqual(original.map(row => ({...(row as Record<string,unknown>),current_qualification:null})))
+  if (mode === 'upgrade') expect(sqlite.prepare('select * from difference_reason').all()).toEqual(original.map(row => ({...(row as Record<string,unknown>),current_qualification:null,fact_references:null})))
   const ledger = sqlite.prepare('select * from __drizzle_migrations order by id').all()
   migrate(db, { migrationsFolder }); expect(sqlite.prepare('select * from __drizzle_migrations order by id').all()).toEqual(ledger)
   expect(processEvidenceImpacts113(db, { limit: 1 })).toEqual({ processed: 0, unfinished: false, watermark: 0 })

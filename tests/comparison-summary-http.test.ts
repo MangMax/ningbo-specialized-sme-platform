@@ -35,13 +35,18 @@ beforeAll(async () => {
   vi.stubGlobal('readBody', readBody)
   vi.stubGlobal('setHeader', setHeader)
   vi.stubGlobal('setResponseStatus', setResponseStatus)
-  vi.stubGlobal('useRuntimeConfig', () => ({ curatedPath, reconcilePath }))
+  vi.stubGlobal('useRuntimeConfig', () => ({ curatedPath, reconcilePath, apiToken: 'synthetic-token' }))
   vi.doMock('@db', () => ({ useDb: () => db }))
   const handler = (await import('../server/api/comparison.get')).default
   const evidence = (await import('../server/api/platform/queries/[queryId]/evidence.get')).default
   const curate = (await import('../server/api/comparison/curated.patch')).default
   const router = createRouter()
   router.get('/api/comparison', handler)
+  const { comparisonScopeProofRoute } = await import('../server/utils/comparison-scope-proof-route')
+  router.post('/api/roster/comparison-scope-proofs/preflight', comparisonScopeProofRoute('preflight'))
+  router.post('/api/roster/comparison-scope-proofs/commit', comparisonScopeProofRoute('commit'))
+  router.get('/api/roster/comparison-scope-proofs/:id', comparisonScopeProofRoute('get', 'id'))
+  router.get('/api/roster/comparison-scope-proofs/:id/audit', comparisonScopeProofRoute('audit', 'id'))
   router.patch('/api/comparison/curated', curate)
   router.get('/api/platform/queries/:queryId/evidence', evidence)
   router.post('/api/roster/import/commit', defineEventHandler(async event => {
@@ -287,4 +292,135 @@ it('preserves failed coverage and withdrawn decisions in the bounded list assess
   expect(result.rows.find((row: { name: string }) => row.name === names[0]).assessment.queryCoverage.status).toBe('failed')
   expect(result.rows.find((row: { name: string }) => row.name === names[1]).assessment).toMatchObject({ assessment: 'withdrawn', explanationValidity: { status: 'not_applicable' } })
   for (const name of names.slice(2)) expect(result.rows.find((row: { name: string }) => row.name === name).assessment.queryCoverage.status).toBe('not_queried')
+})
+
+
+it('473 same SQLite snapshot full HTTP shadow preserves pagination filters evidence IDs and states', async () => {
+  const { ensurePlatformObservation } = await import('../server/utils/platform-business-record')
+  const { platformRelation, platformQuery } = await import('../db/schema')
+  // Archive bootstrap deliberately precedes the read-only public HTTP shadow.
+  for (const [index, source] of (['apply_list', 'business_list', 'recognized_list'] as const).entries()) {
+    const query = db.insert(platformQuery).values({ interface: source, queryKey: uscc, rdjb: '2', queriedAt: '2026-11-01T00:00:00Z', status: 'success' }).returning().get()
+    db.insert(platformRelation).values({ queryId: query.id, sequenceNo: 1, relationKey: `473-${index}`, enterpriseId: alphaId, nameRaw: 'Alpha企业', usccRaw: uscc,
+      matchBasis: 'uscc', verificationStatus: 'confirmed', rawFields: { id: `473-${index}`, qymc: 'Alpha企业', tyshxydm: uscc, cszt: '上游新状态', sblx: '申请', year: '2024', whpc: '2024-1' } }).run()
+  }
+  for (const r of db.select().from(platformRelation).all()) ensurePlatformObservation(db, r.id)
+  const before = db.$client.prepare('select total_changes() n').get()
+  db.$client.pragma('query_only=ON')
+  try {
+    for (const query of ['', '?pageSize=1&page=2', '?title=specialized_sme', '?q=Alpha', '?district=镇海区', '?direction=missing_in_miit', '?q=不存在', '?q=Legacy统代企业']) {
+      vi.stubEnv('ROSTER_COMPARISON_TYPED_READ', 'legacy')
+      const legacy = await get(query)
+      vi.stubEnv('ROSTER_COMPARISON_TYPED_READ', 'typed')
+      const typed = await get(query)
+      expect(typed).toEqual(legacy)
+    }
+    expect(db.$client.prepare('select total_changes() n').get()).toEqual(before)
+  } finally {
+    db.$client.pragma('query_only=OFF')
+    vi.unstubAllEnvs()
+  }
+})
+
+it.each([
+  { label: 'modeled null retains archived status and year', rawFields: { id: '473-null' }, expected: { status: '终审通过', year: 2024 } },
+  { label: 'divergent source identity retains archived identity and ownership', rawFields: { id: '473-identity', qymc: 'Source Name', tyshxydm: '91330211000000001X' }, expected: { nameRaw: 'Archived Name', usccRaw: uscc } },
+])('473 public HTTP compatibility: $label', async ({ rawFields, expected }) => {
+  const { ensurePlatformObservation } = await import('../server/utils/platform-business-record')
+  const { platformRelation, platformQuery } = await import('../db/schema')
+  const query = db.insert(platformQuery).values({ interface: 'business_list', queryKey: uscc, rdjb: '2', queriedAt: rawFields.id === '473-null' ? '2026-11-02T00:00:00Z' : '2026-11-02T00:00:01Z', status: 'success' }).returning().get()
+  const relation = db.insert(platformRelation).values({ queryId: query.id, sequenceNo: 1, enterpriseId: alphaId,
+    nameRaw: 'Archived Name', usccRaw: uscc, status: '终审通过', year: 2024,
+    matchBasis: 'uscc', verificationStatus: 'confirmed', rawFields }).returning().get()
+  expect(ensurePlatformObservation(db, relation.id).versionId).toEqual(expect.any(Number))
+  db.$client.pragma('query_only=ON')
+  try {
+    vi.stubEnv('ROSTER_COMPARISON_TYPED_READ', 'legacy')
+    const legacy = await get(`?enterpriseId=${alphaId}`)
+    vi.stubEnv('ROSTER_COMPARISON_TYPED_READ', 'typed')
+    const typed = await get(`?enterpriseId=${alphaId}`)
+    const evidence = typed.rows[0].platform.queries.find((q: { id: number }) => q.id === query.id)
+    expect(evidence.relations).toMatchObject([{ id: relation.id, queryId: query.id, normalizationConflicts: [], ...expected }])
+    expect(typed).toEqual(legacy)
+    const response = await fetch(`${base}/api/platform/queries/${query.id}/evidence?field=relation&relationId=${relation.id}`)
+    expect(response.status).toBe(200)
+    const chunk = await response.json()
+    expect(JSON.parse(Buffer.from(chunk.data, 'base64').toString('utf8'))).toMatchObject({ id: relation.id, queryId: query.id, enterpriseId: alphaId, nameRaw: 'Archived Name', usccRaw: uscc, status: '终审通过', year: 2024, rawFields })
+  } finally {
+    db.$client.pragma('query_only=OFF')
+    vi.unstubAllEnvs()
+  }
+})
+
+
+it('473 same-input HTTP shadow retains proof IDs and append-only audit IDs', async () => {
+  const schema = await import('../db/schema')
+  const file = db.insert(schema.storedFile).values({ relPath: 'synthetic/473.pdf', filename: '473.pdf', ext: 'pdf', bytes: 8, sha256: 'a'.repeat(64), source: 'jxj', kind: 'announcement' }).returning().get()
+  const doc = db.insert(schema.sourceDocument).values({ source: 'jxj', title: '473 synthetic proof', path: file.relPath }).returning().get()
+  const record = db.select().from(schema.record).all().find(r => r.enterpriseId === alphaId)!
+  const event = db.insert(schema.recordEvent).values({ recordId: record.id, eventType: 'award', year: 2024 }).returning().get()
+  db.insert(schema.recordEvidence).values({ recordEventId: event.id, sourceFile: doc.path, page: 1, listNo: 1 }).run()
+  const request = { idempotencyKey: '473-proof', sourceIdentity: 'synthetic/473-proof', actor: { type: 'agent', id: 'synthetic' }, basis: 'Synthetic complete announcement scope reviewed', ruleId: 'manual-scope', ruleVersion: '1', operations: [{ action: 'create', kind: 'official_coverage', status: 'confirmed', evidence: { titleCode: 'specialized_sme', fromYear: 2024, throughYear: 2024, enterpriseIds: null, fullRange: true, sourceDocuments: [{ id: doc.id, fileId: file.id, sha256: file.sha256, reference: { field: 'record_evidence.source_file', page: 1, listNo: 1 } }] } }] }
+  const post = async (action: string, body: unknown) => {
+    const response = await fetch(`${base}/api/roster/comparison-scope-proofs/${action}`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer synthetic-token' }, body: JSON.stringify(body) })
+    expect(response.status).toBe(200)
+    return response.json()
+  }
+  const plan = await post('preflight', request)
+  const receipt = await post('commit', { request, planHash: plan.planHash })
+  expect(receipt.proofIds).toHaveLength(1)
+  const id = receipt.proofIds[0]
+  const snapshots: unknown[] = []
+  db.$client.pragma('query_only=ON')
+  try {
+    for (const mode of ['legacy', 'typed']) {
+      vi.stubEnv('ROSTER_COMPARISON_TYPED_READ', mode)
+      await get(`?enterpriseId=${alphaId}`)
+      const proofResponse = await fetch(`${base}/api/roster/comparison-scope-proofs/${id}`)
+      const auditResponse = await fetch(`${base}/api/roster/comparison-scope-proofs/${id}/audit`)
+      expect(proofResponse.status).toBe(200)
+      expect(auditResponse.status).toBe(200)
+      const proof = await proofResponse.json()
+      const audit = await auditResponse.json()
+      expect(proof).toMatchObject({ id, status: 'confirmed', valid: true, revision: 2 })
+      expect(audit.rows.map((r: { toStatus: string }) => r.toStatus)).toEqual(['candidate', 'confirmed'])
+      expect(audit.rows.every((r: { id: number }) => Number.isInteger(r.id))).toBe(true)
+      snapshots.push({ proof, audit })
+    }
+    expect(snapshots[1]).toEqual(snapshots[0])
+  } finally {
+    db.$client.pragma('query_only=OFF')
+    vi.unstubAllEnvs()
+  }
+})
+
+it.each(['apply_list', 'business_list', 'recognized_list'] as const)('473 HTTP archive seam retains %s conflicts unmodeled fields and null identities', async (source) => {
+  const { ensurePlatformObservation } = await import('../server/utils/platform-business-record')
+  const { platformRelation, platformQuery } = await import('../db/schema')
+  const query = db.insert(platformQuery).values({ interface: source, queryKey: uscc, rdjb: '2', queriedAt: '2026-11-04T00:00:00Z', status: 'success' }).returning().get()
+  const rawFields = { id: 'archive-seam', qymc: 'Source Identity', cszt: '终审通过', year: '2024', szsfmc: '浙江省' }
+  const relation = db.insert(platformRelation).values({ queryId: query.id, sequenceNo: 1, enterpriseId: alphaId,
+    nameRaw: null, usccRaw: null, aliasNameRaw: 'Archived Alias', status: '已退回', year: 2023,
+    matchBasis: 'manual', verificationStatus: 'pending', rawFields }).returning().get()
+  for (const projected of [false, true]) {
+    if (projected) ensurePlatformObservation(db, relation.id)
+    db.$client.pragma('query_only=ON')
+    try {
+      vi.stubEnv('ROSTER_COMPARISON_TYPED_READ', 'legacy')
+      const legacy = await get(`?enterpriseId=${alphaId}`)
+      vi.stubEnv('ROSTER_COMPARISON_TYPED_READ', 'typed')
+      const typed = await get(`?enterpriseId=${alphaId}`)
+      expect(typed).toEqual(legacy)
+      const row = typed.rows[0].platform.queries.find((q: { id: number }) => q.id === query.id).relations[0]
+      expect(row).toMatchObject({ id: relation.id, queryId: query.id, nameRaw: null, usccRaw: null, aliasNameRaw: 'Archived Alias', rawFields,
+        status: source === 'recognized_list' ? '已退回' : null, year: source === 'recognized_list' ? 2023 : null })
+      expect(row.normalizationConflicts).toEqual(source === 'recognized_list' ? [] : [
+        { field: 'status', storedValue: '已退回', rawValue: '终审通过' },
+        { field: 'year', storedValue: 2023, rawValue: 2024 },
+      ])
+    } finally {
+      db.$client.pragma('query_only=OFF')
+      vi.unstubAllEnvs()
+    }
+  }
 })

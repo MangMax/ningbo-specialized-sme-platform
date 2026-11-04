@@ -18,6 +18,7 @@ import SourceReader from '@/components/record-correspondence/SourceReader.vue'
 import EventCorrespondenceReview from '@/components/record-correspondence/EventCorrespondenceReview.vue'
 import TableFailureState from '@/components/TableFailureState.vue'
 import AssessmentStatusBadge from '@/components/evidence-review/AssessmentStatusBadge.vue'
+import EnterpriseFacts from '@/components/enterprise/EnterpriseFacts.vue'
 import EnterpriseExplanations from '@/components/evidence-review/EnterpriseExplanations.vue'
 import PlatformRecords from '@/components/PlatformRecords.vue'
 import { hasKnownPlatformBusiness } from '~~/lib/roster/platform-business-detail'
@@ -745,6 +746,8 @@ function openPreview(e: Evidence) {
               待复核清单读取失败；这不代表没有待处理项。
             </p>
           </section>
+
+          <EnterpriseFacts :key="`facts-${detail.id}`" :enterprise-id="detail.id" @saved="onReviewSaved" />
 
           <EnterpriseExplanations
             :key="detail.id"

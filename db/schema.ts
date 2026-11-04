@@ -1007,6 +1007,7 @@ export const differenceReason = sqliteTable(
     movedInTitleCode: text('moved_in_title_code').references(() => title.code),
     movedInYear: integer('moved_in_year'),
     movedInBatch: integer('moved_in_batch'),
+    factReferences: text('fact_references', { mode: 'json' }).$type<{ enterpriseId: number; factId: number; revision: number; kind: string }[]>(),
     /** Explicit reviewed qualification; migration alone never supplies it. */
     currentQualification: text('current_qualification', { mode: 'json' }).$type<{ titleCode: string; validFrom: string; validUntil: string; basis: string; publicationCheck: { status: 'not_found' | 'not_checked'; scope: string } }>(),
     /** 核验状态:`confirmed` 已确认 / `pending` 待核实。 */
@@ -1442,3 +1443,23 @@ export const platformVersionBodyRef = sqliteTable('platform_version_body_ref', {
   field: text('field', { enum: ['canonicalRawJson'] }).notNull(),
   rootId: integer('root_id').notNull().references(() => platformBodyRoot.id, { onDelete: 'restrict' }),
 }, t => [primaryKey({ columns: [t.ownerId, t.field] }), check('platform_version_body_ref_field_ck', sql`${t.field} = 'canonicalRawJson'`)])
+
+/** #306 append-only enterprise assertions; no migration from legacy explanation heads. */
+export const enterpriseFactRevision = sqliteTable('enterprise_fact_revision', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  enterpriseId: integer('enterprise_id').notNull().references(() => enterprise.id),
+  factId: integer('fact_id').notNull(),
+  revision: integer('revision').notNull(),
+  status: text('status', { enum: ['pending', 'confirmed', 'replaced', 'withdrawn'] }).notNull(),
+  fact: text('fact', { mode: 'json' }).$type<Record<string, unknown>>().notNull(),
+  replaces: integer('replaces'),
+  action: text('action').notNull(),
+  actor: text('actor', { mode: 'json' }).$type<{ type: 'user' | 'agent'; id: string }>().notNull(),
+  basis: text('basis').notNull(),
+  createdAt: text('created_at').notNull(),
+}, table => [uniqueIndex('enterprise_fact_revision_key').on(table.enterpriseId, table.factId, table.revision)])
+export const enterpriseFactReceipt = sqliteTable('enterprise_fact_receipt', {
+  idempotencyKey: text('idempotency_key').primaryKey(),
+  requestHash: text('request_hash').notNull(),
+  receipt: text('receipt', { mode: 'json' }).$type<{ factId: number; version: string; committedAt: string }>().notNull(),
+})

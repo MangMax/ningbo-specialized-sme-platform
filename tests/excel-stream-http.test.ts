@@ -13,7 +13,10 @@ const jszip = createRequire(createRequire(import.meta.url).resolve('exceljs/pack
 
 const source = vi.hoisted(() => ({ rows: [] as object[], read: 0 }))
 vi.mock('@db', () => ({ useDb: () => ({}) }))
-vi.mock('../lib/query', () => ({ allRecords: () => source.rows }))
+vi.mock('../lib/query', async (importOriginal) => ({
+  ...await importOriginal<typeof import('../lib/query')>(),
+  allRecords: () => source.rows,
+}))
 
 let handler: (event: ReturnType<typeof createEvent>) => Promise<unknown>
 

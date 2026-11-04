@@ -33,6 +33,7 @@ export const currentQualification102 = z.strictObject({
 }).refine(q => Date.parse(q.validFrom) < Date.parse(q.validUntil), 'Qualification interval must be nonempty')
   .refine(q => q.awardYear == null || q.awardYear <= new Date(q.validFrom).getUTCFullYear(), 'Award must precede or start the qualification interval')
 const content = z.strictObject({
+  factReferences: z.array(z.strictObject({ enterpriseId: positive, factId: positive, revision: positive, kind: z.enum(['moved_in', 'moved_out', 'cancelled', 'registration_status']) })).max(100).optional(),
   currentQualification: currentQualification102.optional(),
   status: z.enum(s.differenceReason.status.enumValues!),
   reasonCode: z.enum(s.differenceReason.reasonCode.enumValues!).nullish(),
@@ -193,6 +194,10 @@ export function saveDecision102(db: DecisionDb, command: DecisionCommand102) {
     if ((command.action === 'replace') !== !!command.decision) throw new DecisionError102(400, 'invalid_request', 'Replacement requires decision; withdrawal must omit decision')
     if (command.action === 'withdraw' && (!previous || previous.lifecycleAction === 'withdraw')) throw new DecisionError102(409, 'no_current_decision', 'No active decision to withdraw')
     const d = command.decision ?? { status: 'not_queried' as const, measureCode: 'none' as const, verificationStatus: 'pending' as const }
+    for (const ref of d.factReferences ?? []) {
+      const fact = tx.select().from(s.enterpriseFactRevision).where(and(eq(s.enterpriseFactRevision.enterpriseId, command.enterpriseId), eq(s.enterpriseFactRevision.factId, ref.factId))).orderBy(desc(s.enterpriseFactRevision.revision)).get()
+      if (ref.enterpriseId !== command.enterpriseId || !fact || fact.revision !== ref.revision || fact.status !== 'confirmed' || fact.fact.kind !== ref.kind) throw new DecisionError102(422, 'fact_reference_mismatch', 'Fact reference must pin a current confirmed fact owned by this enterprise')
+    }
     // Validate source identity/title with narrow projections; original bodies remain untouched.
     const relation = d.evidenceRelationId ? tx.select({ queryId: s.platformRelation.queryId, enterpriseId: s.platformRelation.enterpriseId, uscc: s.platformRelation.usccRaw, verificationStatus: s.platformRelation.verificationStatus, sequenceNo: s.platformRelation.sequenceNo }).from(s.platformRelation).where(eq(s.platformRelation.id, d.evidenceRelationId)).get() : null
     if (d.currentQualification && (!relation || relation.verificationStatus !== 'confirmed')) throw new DecisionError102(422, 'qualification_evidence_unconfirmed', 'Current qualification requires an explicitly confirmed source row')
@@ -229,7 +234,7 @@ export function saveDecision102(db: DecisionDb, command: DecisionCommand102) {
       measureCode: d.measureCode, measureNote: d.measureNote ?? null,
       evidenceQueryId: d.evidenceQueryId ?? null, evidenceRelationId: d.evidenceRelationId ?? null,
       verificationStatus: d.verificationStatus, movedInCity: d.movedIn?.city ?? null, movedInTitleCode: d.movedIn?.titleCode ?? null,
-      movedInYear: d.movedIn?.year ?? null, movedInBatch: d.movedIn?.batch ?? null, currentQualification: d.currentQualification ?? null,
+      movedInYear: d.movedIn?.year ?? null, movedInBatch: d.movedIn?.batch ?? null, factReferences: d.factReferences ?? [], currentQualification: d.currentQualification ?? null,
       lifecycleAction: command.action, previousId: previous?.id ?? null, actor: command.actor === null ? jsonNull : command.actor, basis: command.basis,
       ruleVersion: command.ruleVersion, effectiveAt: command.effectiveAt, idempotencyKey: command.idempotencyKey, requestHash: hash, recordedAt,
     }).returning().get()
