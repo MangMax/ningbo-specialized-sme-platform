@@ -12,9 +12,23 @@ export type PlatformFactInterface = 'apply_list' | 'business_list' | 'recognized
  * the archived stored year when present; a directory maintenance year is not a process
  * business year and is never exposed here as one.
  */
+/** Fields a source-specific typed projection actually models. A field absent from this
+ * list is not authoritative: detail consumers must keep the legacy relation/raw column.
+ * An empty list means this observation has no typed projection at all. */
+export type PlatformFactField =
+  | 'declareKind' | 'year' | 'appliedAt' | 'status' | 'batch' | 'awardBatchLabel'
+  | 'province' | 'nameRaw' | 'usccRaw'
+  | 'validityDateRaw' | 'maintenanceYear' | 'maintenanceBatch' | 'district' | 'awardNote' | 'titleRaw'
+
 export interface PlatformObservationFact {
   relationId: number
   interface: PlatformFactInterface
+  /** The content version's typed row id; null when the observation has no projection. */
+  projectionVersionId: number | null
+  /** The typed projection rule version; null when the observation has no projection. */
+  projectionRuleVersion: string | null
+  /** Fields owned by the typed row. Empty for a legacy/unprojected observation. */
+  modeledFields: readonly PlatformFactField[]
   declareKind: string | null
   year: number | null
   appliedAt: string | null
@@ -22,7 +36,14 @@ export interface PlatformObservationFact {
   batch: string | null
   awardBatchLabel: string | null
   province: string | null
+  nameRaw: string | null
   usccRaw: string | null
+  /** Recognized_list content fields; null for other interfaces and legacy rows. */
+  validityDateRaw: string | null
+  maintenanceYear: number | null
+  maintenanceBatch: string | null
+  district: string | null
+  awardNote: string | null
   /** Row-level title raw value. Modeled only by recognized_list; legacy recognized rows
    * may expose rawFields.rdjb to preserve their existing conflict reporting. */
   titleRaw: string | null

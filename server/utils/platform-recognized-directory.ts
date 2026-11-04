@@ -371,13 +371,19 @@ export function getPlatformRecognizedRecord(db: Db, recordId: number): Recognize
   }
 }
 
+const RECOGNIZED_MODELED_FIELDS = ['nameRaw', 'usccRaw', 'validityDateRaw', 'maintenanceYear', 'maintenanceBatch', 'district', 'awardNote', 'titleRaw'] as const
+
+/** Recognized content facts. The unmodeled process fields stay on the legacy normalized
+ * value for candidate/annual consumers, but are outside `modeledFields` for detail. */
 export function readPlatformRecognizedFacts(db: Db, relationIds: number[]): Map<number, PlatformObservationFact> {
   const result = new Map<number, PlatformObservationFact>()
   const o = schema.platformBusinessObservation, p = schema.platformRecognizedProjection, r = schema.platformRelation
   for (const ids of factBatches(relationIds)) {
     const rows = db.select({
-      relationId: o.relationId, projectionVersionId: p.versionId,
-      titleRaw: p.titleRaw, maintenanceBatch: p.maintenanceBatch, usccRaw: p.usccRaw,
+      relationId: o.relationId, projectionVersionId: p.versionId, projectionRuleVersion: p.ruleVersion,
+      titleRaw: p.titleRaw, validityDateRaw: p.validityDateRaw, maintenanceYear: p.maintenanceYear,
+      maintenanceBatch: p.maintenanceBatch, district: p.district, awardNote: p.awardNote,
+      nameRaw: p.nameRaw, usccRaw: p.usccRaw,
       legacy: legacyRelationColumns,
     }).from(o)
       .leftJoin(p, and(eq(p.versionId, o.versionId), eq(p.recordId, o.recordId)))
@@ -385,18 +391,24 @@ export function readPlatformRecognizedFacts(db: Db, relationIds: number[]): Map<
       .where(inArray(o.relationId, ids)).all()
     for (const row of rows) {
       const normalized = normalizePlatformRelation('recognized_list', row.legacy)
-      result.set(row.relationId, row.projectionVersionId != null ? {
+      const typed = row.projectionVersionId != null
+      result.set(row.relationId, {
         relationId: row.relationId, interface: 'recognized_list',
-        declareKind: null, year: normalized.year ?? null, appliedAt: null, status: normalized.status ?? null,
-        batch: normalized.batch ?? null, awardBatchLabel: normalized.awardBatchLabel ?? null,
-        province: normalized.province ?? null, usccRaw: row.usccRaw ?? normalized.usccRaw ?? null,
-        titleRaw: row.titleRaw ?? legacyRowTitle({ rdjb: row.legacy.rawRdjb }), normalizationConflicts: normalized.normalizationConflicts,
-      } : {
-        relationId: row.relationId, interface: 'recognized_list',
+        projectionVersionId: typed ? row.projectionVersionId : null,
+        projectionRuleVersion: typed ? row.projectionRuleVersion ?? null : null,
+        modeledFields: typed ? RECOGNIZED_MODELED_FIELDS : [],
         declareKind: normalized.declareKind ?? null, year: normalized.year ?? null, appliedAt: normalized.appliedAt ?? null,
         status: normalized.status ?? null, batch: normalized.batch ?? null, awardBatchLabel: normalized.awardBatchLabel ?? null,
-        province: normalized.province ?? null, usccRaw: normalized.usccRaw ?? null,
-        titleRaw: legacyRowTitle({ rdjb: row.legacy.rawRdjb }), normalizationConflicts: normalized.normalizationConflicts,
+        province: normalized.province ?? null,
+        nameRaw: typed ? row.nameRaw ?? null : normalized.nameRaw ?? null,
+        usccRaw: typed ? row.usccRaw ?? null : normalized.usccRaw ?? null,
+        validityDateRaw: typed ? row.validityDateRaw ?? null : null,
+        maintenanceYear: typed ? row.maintenanceYear ?? null : null,
+        maintenanceBatch: typed ? row.maintenanceBatch ?? null : null,
+        district: typed ? row.district ?? null : null,
+        awardNote: typed ? row.awardNote ?? null : null,
+        titleRaw: typed ? row.titleRaw ?? legacyRowTitle({ rdjb: row.legacy.rawRdjb }) : legacyRowTitle({ rdjb: row.legacy.rawRdjb }),
+        normalizationConflicts: normalized.normalizationConflicts,
       })
     }
     const missing = ids.filter(id => !result.has(id))
@@ -404,9 +416,11 @@ export function readPlatformRecognizedFacts(db: Db, relationIds: number[]): Map<
       const normalized = normalizePlatformRelation('recognized_list', row)
       result.set(row.id, {
         relationId: row.id, interface: 'recognized_list',
+        projectionVersionId: null, projectionRuleVersion: null, modeledFields: [],
         declareKind: normalized.declareKind ?? null, year: normalized.year ?? null, appliedAt: normalized.appliedAt ?? null,
         status: normalized.status ?? null, batch: normalized.batch ?? null, awardBatchLabel: normalized.awardBatchLabel ?? null,
-        province: normalized.province ?? null, usccRaw: normalized.usccRaw ?? null,
+        province: normalized.province ?? null, nameRaw: normalized.nameRaw ?? null, usccRaw: normalized.usccRaw ?? null,
+        validityDateRaw: null, maintenanceYear: null, maintenanceBatch: null, district: null, awardNote: null,
         titleRaw: legacyRowTitle({ rdjb: row.rawRdjb }), normalizationConflicts: normalized.normalizationConflicts,
       })
     }

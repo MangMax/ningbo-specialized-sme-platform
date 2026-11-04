@@ -7,6 +7,7 @@ import { afterEach, expect, it, vi } from 'vitest'
 import { schema, useDb } from '../db'
 import { ensurePlatformObservation } from '../server/utils/platform-business-record'
 import { getRosterEnterpriseDetail } from '../lib/roster/enterprise-roster'
+import { readPlatformBusinessDetails, resolvePlatformDetailTypedReadSource } from '../server/utils/platform-business-detail-read'
 import { normalizePlatformRelation } from '../lib/platform/normalization'
 
 const cleanup: Array<() => void | Promise<void>> = []
@@ -45,11 +46,15 @@ it('typed fields follow the content version and repeat for repeated observations
 
   const firstTyped = f.observation(first.relation.id).typedFields
   expect(firstTyped).toMatchObject({
-    interface: 'business_list', ruleVersion: 'platform-business-v1',
+    interface: 'business_list', projectionRuleVersion: 'platform-business-v1',
     nameRaw: '办理企业', usccRaw: '91330211BL', declareKind: 'review', year: 2024,
     appliedAt: '2024-02-02', status: '已受理', batch: '2024-1', province: '浙江省宁波市',
   })
-  expect(f.observation(replay.relation.id).typedFields).toEqual(firstTyped)
+  const factWithoutRelation = (fact: NonNullable<typeof firstTyped>) => {
+    const { relationId: _relationId, ...rest } = fact
+    return rest
+  }
+  expect(factWithoutRelation(f.observation(replay.relation.id).typedFields)).toEqual(factWithoutRelation(firstTyped))
   expect(f.observation(changed.relation.id).typedFields).toMatchObject({ status: '已办结', batch: '2024-2' })
   expect(f.detail().platform.businessRecords.flatMap((b: any) => b.observationRefs).every((o: any) => o.enterpriseId === f.enterprise.id)).toBe(true)
 
@@ -68,12 +73,14 @@ it('apply and recognized projections expose their own typed fields without inven
   const recognized = f.row({ source: 'recognized_list', raw: { id: 'DIR-1', qymc: '目录企业', tyshxydm: '91330211DIR', rddqrq: '2028-06-01 10:00:00', whpcyear: 2024, whpc: '2024-2', szq: '330203', rdxx: '原认定说明' } })
 
   const applyTyped = f.observation(apply.relation.id).typedFields
-  expect(applyTyped).toMatchObject({ interface: 'apply_list', ruleVersion: 'platform-apply-v1', declareKind: 'apply', year: 2025, appliedAt: '2025-03-01', status: '待审核', nameRaw: '申报企业', usccRaw: '91330211AP' })
-  expect(Object.hasOwn(applyTyped, 'batch')).toBe(false)
-  expect(Object.hasOwn(applyTyped, 'province')).toBe(false)
+  expect(applyTyped).toMatchObject({ interface: 'apply_list', projectionRuleVersion: 'platform-apply-v1', declareKind: 'apply', year: 2025, appliedAt: '2025-03-01', status: '待审核', nameRaw: '申报企业', usccRaw: '91330211AP' })
+  // The apply projection does not model batch/province; they stay outside modeledFields so
+  // the detail UI explicitly falls back to the relation column.
+  expect(applyTyped.modeledFields).not.toContain('batch')
+  expect(applyTyped.modeledFields).not.toContain('province')
 
-  expect(f.observation(recognized.relation.id).typedFields).toEqual({
-    interface: 'recognized_list', ruleVersion: 'platform-recognized-v1',
+  expect(f.observation(recognized.relation.id).typedFields).toMatchObject({
+    interface: 'recognized_list', projectionRuleVersion: 'platform-recognized-v1',
     nameRaw: '目录企业', usccRaw: '91330211DIR', validityDateRaw: '2028-06-01 10:00:00',
     maintenanceYear: 2024, maintenanceBatch: '2024-2', district: '330203', awardNote: '原认定说明',
   })
@@ -98,11 +105,12 @@ it('a projected empty/unknown source field stays null and never falls back to th
   const f = fixture()
   const projected = f.row({ source: 'recognized_list', raw: { id: 'DIR-EMPTY', qymc: '   ', tyshxydm: '', rddqrq: '', whpcyear: '2024.5', whpc: null, szq: '  ', rdxx: null }, stored: { nameRaw: '导入名称', usccRaw: 'IMPORTED-USCC', batch: 'stored-batch', year: 2020 } })
   const typed = f.observation(projected.relation.id).typedFields
-  expect(typed).toEqual({
-    interface: 'recognized_list', ruleVersion: 'platform-recognized-v1',
+  expect(typed).toMatchObject({
+    interface: 'recognized_list', projectionRuleVersion: 'platform-recognized-v1',
     nameRaw: null, usccRaw: null, validityDateRaw: null, maintenanceYear: null,
     maintenanceBatch: null, district: null, awardNote: null,
   })
+  expect(typed.modeledFields).toEqual(expect.arrayContaining(['nameRaw', 'usccRaw', 'validityDateRaw', 'maintenanceYear', 'maintenanceBatch', 'district', 'awardNote']))
   // The legacy relation columns are still present, proving the null typed value was not backfilled.
   const relation = f.detail().platform.relations.find((r: any) => r.id === projected.relation.id)
   expect(relation).toMatchObject({ nameRaw: '导入名称', usccRaw: 'IMPORTED-USCC', batch: 'stored-batch', year: 2020 })
@@ -149,4 +157,42 @@ it('HTTP enterprise detail returns the same observations and typed fields withou
   expect(body.platform.businessRecords.flatMap((b: any) => b.observationRefs).find((o: any) => o.relationId === projected.relation.id).typedFields).toMatchObject({
     validityDateRaw: '2030-12-31', maintenanceYear: 2025, maintenanceBatch: '2025-1', district: '330211', awardNote: 'HTTP 原认定说明',
   })
+})
+it('legacy and typed reads share rows/versions and differ only on modeled nulls; env rollback swaps the whole detail', () => {
+  const f = fixture()
+  const shadow = f.row({ raw: { id: 'BL-SHADOW', qymc: '影子企业', tyshxydm: '91330211SH', sblx: '申请', year: '2024', sqsj: '2024-01-01', cszt: '终审通过', whpc: '2024-1', szsfmc: '浙江省' } })
+  const emptyName = f.row({ raw: { id: 'BL-EMPTY-NAME', qymc: '', tyshxydm: '91330211EN', sblx: '申请', year: '2024' }, stored: { nameRaw: '导入名称' } })
+  f.row({ raw: { id: 'BL-LEGACY-SHADOW', qymc: '未投影企业', tyshxydm: '91330211LG', sblx: '申请', year: '2023' }, indexed: false })
+  const queries = f.db.select().from(schema.platformQuery).all()
+  const relations = f.db.select().from(schema.platformRelation).all()
+  const typed = readPlatformBusinessDetails(f.db, f.enterprise.id, queries as never, relations, { typedReadSource: 'typed' })
+  const legacy = readPlatformBusinessDetails(f.db, f.enterprise.id, queries as never, relations, { typedReadSource: 'legacy' })
+  const refs = (detail: typeof typed) => detail.flatMap(b => b.observationRefs)
+  const typedRefs = refs(typed), legacyRefs = refs(legacy)
+  expect(legacyRefs.map(o => o.relationId)).toEqual(typedRefs.map(o => o.relationId))
+  expect(legacy.flatMap(b => b.versions.map(v => v.businessRecord.versionId))).toEqual(typed.flatMap(b => b.versions.map(v => v.businessRecord.versionId)))
+  expect(legacyRefs.every(o => o.typedFields === null)).toBe(true)
+  const typedBy = new Map(typedRefs.map(o => [o.relationId, o]))
+  const legacyBy = new Map(legacyRefs.map(o => [o.relationId, o]))
+  const typedShadow = typedBy.get(shadow.relation.id)!.typedFields!
+  const legacyShadow = legacyBy.get(shadow.relation.id)!
+  expect(typedShadow).toMatchObject({ declareKind: 'apply', year: 2024, appliedAt: '2024-01-01', status: '终审通过', batch: '2024-1', province: '浙江省' })
+  expect(legacyShadow).toMatchObject({ nameRaw: '合成企业详情', usccRaw: 'SYN455' })
+  // The legacy reader's process columns are the old normalizePlatformRelation result.
+  expect(normalizePlatformRelation('business_list', shadow.relation as any)).toMatchObject({ status: '终审通过', batch: '2024-1', province: '浙江省' })
+  // Approved difference: a modeled null stays unknown in typed mode; legacy still shows the import column.
+  expect(typedBy.get(emptyName.relation.id)!.typedFields).toMatchObject({ modeledFields: expect.arrayContaining(['nameRaw']), nameRaw: null })
+  expect(legacyBy.get(emptyName.relation.id)).toMatchObject({ nameRaw: '导入名称', typedFields: null })
+  // Unprojected history has no typed rows in either mode.
+  const unprojected = typedBy.get(relations.find(r => r.relationKey === 'BL-LEGACY-SHADOW')!.id)!
+  expect(unprojected.typedFields).toBeNull()
+  expect(legacyBy.get(unprojected.relationId)!.typedFields).toBeNull()
+
+  vi.stubEnv('ROSTER_ENTERPRISE_DETAIL_TYPED_READ', 'legacy')
+  try {
+    expect(resolvePlatformDetailTypedReadSource()).toBe('legacy')
+    const rolledBack = f.detail()
+    expect(rolledBack.platform.businessRecords.flatMap((b: any) => b.observationRefs).every((o: any) => o.typedFields === null)).toBe(true)
+  } finally { vi.unstubAllEnvs() }
+  expect(resolvePlatformDetailTypedReadSource()).toBe('typed')
 })
