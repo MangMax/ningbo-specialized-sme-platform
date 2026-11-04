@@ -432,7 +432,7 @@ function traceSmall428(sqlite:Database.Database, enterpriseId:number, title:Publ
     return wrap(target,'default')
   } as typeof sqlite.transaction
   const unchanged=sqlite.prepare('select total_changes() n').get()
-  let evidence:Record<string,unknown>={kind,policy:{E:1,S:kind==='P'?1:0,U_RT:kind==='P'?1:0,U_obs:kind==='P'?1:0,emptyIncrement:5,presentIncrement:43,globalEmpty:83,globalPresent:667,W:'policy only, not heap/RSS bound'}}
+  let evidence:Record<string,unknown>={kind,policy:{E:1,S:kind==='P'?1:0,U_RT:kind==='P'?1:0,U_obs:kind==='P'?1:0,emptyIncrement:5,presentIncrement:44,globalEmpty:83,globalPresent:667,W:'policy only, not heap/RSS bound'}}
   try {
     const reader=createCurrentQualificationAssessmentReader(sqlite), asOf=Date.parse('2026-06-01T00:00:00Z')
     const base:Call[]=[],explicit:Call[]=[]
@@ -452,6 +452,7 @@ function traceSmall428(sqlite:Database.Database, enterpriseId:number, title:Publ
       if(c.stack.includes('readQueryComparisonWitnesses'))return 'witness'
       if(c.stack.includes('record-correspondence-ref-validity')||c.stack.includes('annual-correspondence.ts'))return 'enrichment'
       if(c.stack.includes('platform-business-record-read'))return c.sql.includes('platform_business_observation')?'metadata':'group_decisions'
+      if(c.stack.includes('platform-source-facts'))return 'source_facts'
       if(c.stack.includes('event-annual-process-read')) {
         if(c.method==='get')return c.sql.includes('record_event')&&!c.sql.trimStart().startsWith('with')?'header':'admission'
         if(c.method==='all'&&c.sql.trimStart().startsWith('select')) {
@@ -479,14 +480,18 @@ function traceSmall428(sqlite:Database.Database, enterpriseId:number, title:Publ
     expect([...baseCounts.values()].every(n=>n===0)).toBe(true)
     expect(counts.UNCLASSIFIED??0).toBe(0)
     expect(counts.witness).toBe(2)
-    expect(increment.length).toBeLessThanOrEqual(kind==='P'?43:5)
+    // The source-specific fact seam adds exactly one bounded SELECT in the explicit
+    // comparison path (the legacy control was 43). This is a deliberate +1 for the new
+    // seam, not a measured relaxation of an existing failing budget.
+    expect(increment.length).toBeLessThanOrEqual(kind==='P'?44:5)
     expect(classified.every(c=>c.inTransaction)).toBe(true)
     expect(baseTx).toHaveLength(1);expect(explicitTx).toHaveLength(1)
     if(kind==='P') {
       expect(counts.F).toBe(1)
       expect([counts.sourceQ,counts.sourceR,counts.sourceT]).toEqual([1,1,1])
       expect(counts.enrichment).toBeLessThanOrEqual(4)
-    } else expect(['F','sourceQ','sourceR','sourceT','history','metadata','group_decisions','enrichment'].every(k=>!counts[k])).toBe(true)
+      expect(counts.source_facts).toBe(1)
+    } else expect(['F','sourceQ','sourceR','sourceT','history','metadata','group_decisions','enrichment','source_facts'].every(k=>!counts[k])).toBe(true)
     // The comparison seam reads the legacy-version snapshot; repeat that exact read
     // to prove the comparison added no writes and did not change the legacy scope.
     expect(JSON.stringify(reader.read(enterpriseId,asOf,{assessmentVersion: LEGACY_QUALIFICATION_ASSESSMENT_VERSION}).snapshot)).toBe(JSON.stringify(legacy))

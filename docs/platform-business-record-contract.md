@@ -83,6 +83,18 @@
 
 共享写回 DTO 位于 `lib/platform/business-record.ts`，领域入口位于 `server/utils/platform-business-record.ts`。下一层应先按企业、queryIds、sourceSet、asOf 限定原观察，再 LEFT JOIN mapping/version/record，输出观察来源和旧决定引用。未索引为 not_indexed；missing_key、conflict、unverifiable 以原 relationId 隔离，不把所有 null 合成一组。不同版本/接口/角色不能折叠；相同版本的多个出处都要保留。不得用同 record 的其他观察代替选定来源的 proof 或复制旧裁决。
 
+## 来源专用事实读取与候选/年度消费（#320）
+
+三个 typed 投影各自由其来源模块拥有读取语义：
+
+- `server/utils/platform-declarations.ts` → `readPlatformDeclarationFacts`
+- `server/utils/platform-business-processes.ts` → `readPlatformBusinessProcessFacts`
+- `server/utils/platform-recognized-directory.ts` → `readPlatformRecognizedFacts`
+
+公共 fact 契约在 `lib/platform/observation-facts.ts`；`server/utils/platform-source-facts.ts` 只按接口分发，不做字段映射。每个来源模块先 LEFT JOIN 自己的 typed 投影；对尚未投影的历史观察，使用 `platform-legacy-relation-read.ts` 读取原行并回退既有规范化（含真实字段冲突）。候选与年度读取调用方必须先按 query/owner/title/role 限定 relation IDs，再调用该 seam；算法本身不读取投影表布局或 raw JSON。
+
+候选 `year_mismatch` 使用显式比较年：award 用原认定年（`record_event.year`），review 用结论年（`record_event.decided_year`）；recognized 的维护年不是办理业务年，不参与该比较。复核缺结论年保留 `official_decision_year_missing`。年度过程继续使用 `decided_year` 作为 review 的 businessYear，缺结论年不退回原认定年。该 seam 不改变观察级决定、拒绝/解除保护或 sourceGeneration 规则。
+
 ## 共享 scoped 读模型与候选（#246 第一项）
 
 公共读 DTO 在 `lib/platform/business-record.ts`；共享入口在 `server/utils/platform-business-record-read.ts`：

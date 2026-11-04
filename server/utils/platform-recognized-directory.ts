@@ -1,7 +1,10 @@
-import { sql, type SQL } from 'drizzle-orm'
+import { and, eq, inArray, sql, type SQL } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../db/schema'
 import { normalizeName, normalizeUscc } from '../../lib/domain'
+import { normalizePlatformRelation } from '../../lib/platform/normalization'
+import { legacyRowTitle, type PlatformObservationFact } from '../../lib/platform/observation-facts'
+import { readLegacyRelationRows } from './platform-legacy-relation-read'
 import {
   businessEnterpriseExists, enterpriseAssignments, fail, orderedScopes, pageOf, titleScopesByQuery,
 } from './platform-business-read'
@@ -18,8 +21,6 @@ import {
   type RecognizedDirectoryVersion,
   type RecognizedDirectoryVersionFields,
 } from '../../lib/platform/recognized-directory'
-
-type Db = BetterSQLite3Database<typeof schema>
 
 /** Stable conflict order for records and details. */
 const CONFLICT_ORDER = ['title_conflict', 'unverifiable_observation', 'enterprise_assignment_conflict'] as const
@@ -368,4 +369,45 @@ export function getPlatformRecognizedRecord(db: Db, recordId: number): Recognize
     },
     conflicts: recordConflicts(db, [recordId]).get(recordId) ?? [],
   }
+}
+
+const FACT_BATCH = 400
+function factBatches(ids: number[]) {
+  const unique = [...new Set(ids)].filter(id => Number.isSafeInteger(id) && id > 0).sort((a, b) => a - b)
+  return Array.from({ length: Math.ceil(unique.length / FACT_BATCH) }, (_, i) => unique.slice(i * FACT_BATCH, (i + 1) * FACT_BATCH))
+}
+
+/** Observation facts for already scoped relations. A directory maintenance year is not a
+ * process business year: `year` stays null and `maintenanceYear` is exposed separately. */
+export function readPlatformRecognizedFacts(db: Db, relationIds: number[]): Map<number, PlatformObservationFact> {
+  const result = new Map<number, PlatformObservationFact>()
+  const o = schema.platformBusinessObservation, p = schema.platformRecognizedProjection
+  for (const ids of factBatches(relationIds)) {
+    const typed = db.select({ relationId: o.relationId, recordId: o.recordId, versionId: o.versionId,
+      validityDateRaw: p.validityDateRaw, maintenanceYear: p.maintenanceYear, maintenanceBatch: p.maintenanceBatch,
+      district: p.district, awardNote: p.awardNote, titleRaw: p.titleRaw, nameRaw: p.nameRaw, usccRaw: p.usccRaw })
+      .from(o).innerJoin(p, and(eq(p.versionId, o.versionId), eq(p.recordId, o.recordId)))
+      .where(inArray(o.relationId, ids)).all()
+    for (const row of typed) result.set(row.relationId, {
+      relationId: row.relationId, interface: 'recognized_list', recordId: row.recordId, versionId: row.versionId, factSource: 'typed',
+      declareKind: null, year: null, appliedAt: null, status: null, batch: row.maintenanceBatch ?? null, awardBatchLabel: null,
+      province: null, nameRaw: row.nameRaw ?? null, usccRaw: row.usccRaw ?? null, titleRaw: row.titleRaw ?? null,
+      maintenanceYear: row.maintenanceYear ?? null, validityDateRaw: row.validityDateRaw ?? null, district: row.district ?? null,
+      awardNote: row.awardNote ?? null, normalizationConflicts: [],
+    })
+    const missing = ids.filter(id => !result.has(id))
+    if (!missing.length) continue
+    for (const row of readLegacyRelationRows(db, missing)) {
+      const normalized = normalizePlatformRelation('recognized_list', row)
+      result.set(row.id, {
+        relationId: row.id, interface: 'recognized_list', recordId: null, versionId: null, factSource: 'legacy',
+        declareKind: normalized.declareKind ?? null, year: normalized.year ?? null, appliedAt: normalized.appliedAt ?? null,
+        status: normalized.status ?? null, batch: normalized.batch ?? null, awardBatchLabel: normalized.awardBatchLabel ?? null,
+        province: normalized.province ?? null, nameRaw: normalized.nameRaw ?? null, usccRaw: normalized.usccRaw ?? null,
+        titleRaw: legacyRowTitle(normalized.rawFields), maintenanceYear: null, validityDateRaw: null, district: null, awardNote: null,
+        normalizationConflicts: normalized.normalizationConflicts,
+      })
+    }
+  }
+  return result
 }

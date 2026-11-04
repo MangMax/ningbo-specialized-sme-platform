@@ -5,10 +5,12 @@ import { and, asc, eq, inArray, or, sql } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../db/schema'
 import { normalizeUscc } from '../../lib/domain'
-import { normalizePlatformRelation, PLATFORM_PROCESS_RAW_KEYS, platformProcessRawFromJson } from '../../lib/platform/normalization'
+import { PLATFORM_PROCESS_RAW_KEYS, platformProcessRawFromJson } from '../../lib/platform/normalization'
+import type { PlatformObservationFact } from '../../lib/platform/observation-facts'
 import type { ScopedPlatformObservation, PlatformBusinessGroup } from '../../lib/platform/business-record'
 import { ANNUAL_PROCESS_RULE_VERSION, buildAnnualProcess, type AnnualProcessCoverage, type AnnualProcessScopeGap, type AnnualProcessSourceRefs, type EventAnnualProcessRead } from '../../lib/roster/annual-process'
 import { readPlatformBusinessGroups, readPlatformBusinessMetadata } from './platform-business-record-read'
+import { readPlatformObservationFacts } from './platform-source-facts'
 import { normalizedUscc } from './event-archive-discovery'
 import { platformQueryResultShape } from '../../lib/platform/live-query'
 
@@ -61,6 +63,9 @@ function sourceScope(db: Db, eventId: number, admitHeader?: (query: ScalarQuery,
     completeness: sql<string | null>`case when json_valid(${q.collectionEvidence}) then json_extract(${q.collectionEvidence}, '$.completeness') end`,
     fullRangeValue: sql<number | null>`case when json_valid(${q.collectionEvidence}) then json_extract(${q.collectionEvidence}, '$.fullRange') end`,
   }).from(q).where(queryScope).orderBy(asc(q.id))
+  // Legacy columns remain in the scoped row projection for the explicit comparison
+  // admission/resource contract. Annual facts themselves come from the source-specific
+  // readPlatformObservationFacts seam, never from this raw extraction.
   const processRaw = sql`case when json_valid(${r.rawFields}) then json_extract(${r.rawFields}, ${sql.join(PLATFORM_PROCESS_RAW_KEYS.map(key => sql`${`$.${key}`}`), sql`, `)}) else null end`.mapWith(platformProcessRawFromJson)
   const matchingIdentity = and(or(eq(r.enterpriseId, owner), sql`${r.enterpriseId} is null`),
     or(identity ? sql`${normalizedUscc(r.usccRaw)} = ${identity}` : and(eq(r.enterpriseId, owner), eq(r.verificationStatus, 'confirmed')), and(sql`${normalizedUscc(r.usccRaw)} = ''`, or(eq(r.enterpriseId, owner), inArray(q.queryKey, subjectKeys), inArray(q.queryKey, aliasKeys)))))!
@@ -84,12 +89,22 @@ function sourceScope(db: Db, eventId: number, admitHeader?: (query: ScalarQuery,
   const rowIdsQuery = db.select({ relationId: r.id }).from(q).innerJoin(r, eq(r.queryId, q.id)).where(and(queryScope, matchingIdentity))
   return { headerQuery, joined, event, owner, titleCode, businessYear, kind, queriesQuery, rowsQuery, titlesQuery, relatedIds, rowIdsQuery }
 }
-function prepareObservations(scope: Scope, rows: Rows, titleScopeRows: Titles, queries: Queries, metadata: ReturnType<typeof readPlatformBusinessMetadata>) {
+function prepareObservations(db: Db, scope: Scope, rows: Rows, titleScopeRows: Titles, queries: Queries, metadata: ReturnType<typeof readPlatformBusinessMetadata>) {
   const { joined, event, owner, titleCode, businessYear, kind } = scope
   const eventId = event.id
   const coverage: AnnualProcessCoverage[] = queries.map(row => ({ queryId: row.queryId, interface: row.interface, queriedAt: row.queriedAt, status: row.status, completeness: row.completeness, fullRange: row.fullRangeValue == null ? null : row.fullRangeValue === 1 }))
   const queryMap = new Map(queries.map(row => [row.queryId, row]))
-  const normalizedRows = rows.map(row => ({ row, query: queryMap.get(row.queryId)!, facts: normalizePlatformRelation(queryMap.get(row.queryId)!.interface, row) }))
+  // Scope is already fixed by owner/title/identity/role in sourceScope. Only now read the
+  // source-specific facts; the annual algorithm never interprets projection tables or raw JSON.
+  const factsByRelation = new Map<number, PlatformObservationFact>()
+  for (const [interfaceName, scopedRows] of Map.groupBy(rows, row => queryMap.get(row.queryId)!.interface)) {
+    for (const [relationId, fact] of readPlatformObservationFacts(db, interfaceName, scopedRows.map(row => row.id))) factsByRelation.set(relationId, fact)
+  }
+  const normalizedRows = rows.map(row => {
+    const facts = factsByRelation.get(row.id)
+    if (!facts) throw new Error('annual_observation_fact_missing')
+    return { row, query: queryMap.get(row.queryId)!, facts }
+  })
   const keyOf = (row: typeof rows[number]) => row.relationKey?.trim() || metadata.get(row.id)?.platformKey || null
   const titleSeeds = normalizedRows.filter(({ query }) => query.titleCode === titleCode || query.rdjb === ({ innovative_sme: '1', specialized_sme: '2', little_giant: '3' } as Record<string, string>)[titleCode])
   const stable = ['declareKind', 'appliedAt', 'year', 'province', 'batch', 'awardBatchLabel'] as const
@@ -174,7 +189,7 @@ function readSnapshot(db: Db, eventId: number): EventAnnualProcessRead | null {
   const rows = scope.rowsQuery.all()
   const titles = scope.titlesQuery.all()
   const metadata = readPlatformBusinessMetadata(db, [...rows.map(row => row.id), ...titles.map(row => row.relationId)])
-  const prepared = prepareObservations(scope, rows, titles, queries, metadata)
+  const prepared = prepareObservations(db, scope, rows, titles, queries, metadata)
   const groups = readPlatformBusinessGroups(db, prepared.observations)
   return finishRead(prepared, groups, () => evidenceQuery(db, eventId).all()).read
 }
@@ -589,7 +604,7 @@ export function readAnnualComparisonBatch(sqlite: Database.Database, db: Db, req
   for (const row of admittedHistory ?? all<{recordId:number;relationId:number}>(hQuery)) {
     const list = history.get(row.recordId) ?? []; list.push(row.relationId); history.set(row.recordId,list)
   }
-  const prepared = scopes.map(scope=>{const v=cache.get(key(scope))!;return prepareObservations(scope,v.rows,v.titles,v.queries,metadata)})
+  const prepared = scopes.map(scope=>{const v=cache.get(key(scope))!;return prepareObservations(db,scope,v.rows,v.titles,v.queries,metadata)})
   const groups = readPlatformBusinessGroups(db,prepared.flatMap(p=>p.observations))
   const e = schema.recordEvidence, file = schema.storedFile
   const evidenceRows = db.select({ ...evidenceFields(), eventId: e.recordEventId }).from(e).leftJoin(file,eq(file.relPath,e.sourceFile)).where(inArray(e.recordEventId,ids)).orderBy(asc(e.id)).all()
