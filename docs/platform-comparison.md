@@ -543,7 +543,7 @@ native `apply_list` 的 `titleCode:null`、`rdjb:''` 和 `source_default` 是合
 
 父已批准仅对 `reader427 business_records_no_process` 精化 reason：原输入为成功 business 查询、一条未索引业务行、null record/version、无决定；原 query-only 阶段为 `coverage_incomplete`，真实年度装配后为 `source_requires_revalidation`。`observation: records`、`comparison: not_established`、默认完整 legacy、零写及完整 T2/digest 规则不变。原断言和历史 FAIL 保存在 Git 外交付中；此条不授权其他 reason 批量变化。
 
-空路径经父事前冻结的额外 SELECT 上界为 `2+2E+1 <= 83`（原 witness 两次、每 event 两次 header、一次 probe）。非空保留 `B=22+9E+3S+ceil(U_RT/400)+2ceil(U_obs/400)`、enrichment `<=4E` 与总增量 `<=667`，probe 替换旧 absence 一个 SQL 槽。旧 `reader427 unchanged_legacy_coverage_and_two_additional_statements` 的 +2 oracle 经父事前公式批准，单项替换为 `reader428 query_only_budget_preserves_default_bytes`：E=1 为5、全局83；完整 reader47 无过滤通过。原断言、inverse 与批准 proof 保留于 Git 外，未按实测结果提高阈值。W16MiB 及16倍仅 policy 收费，不是输出/heap/RSS 数学上界；实际 SQL 模板、payload、RSS 与扫描计划必须独立记录。实测小 trace 空 Z 为5、closed P 为43（#320 来源事实 seam 在显式 comparison 路径新增恰好一次有界 SELECT，合同预算随之显式 +1 为44；这不是按实测放宽旧失败阈值）；这只验证小控制，不代表全局 CPU 或容量验收。
+空路径经父事前冻结的额外 SELECT 上界为 `2+2E+1 <= 83`（原 witness 两次、每 event 两次 header、一次 probe）。非空保留 `B=22+9E+3S+ceil(U_RT/400)+2ceil(U_obs/400)`、enrichment `<=4E` 与总增量 `<=667`，probe 替换旧 absence 一个 SQL 槽。旧 `reader427 unchanged_legacy_coverage_and_two_additional_statements` 的 +2 oracle 经父事前公式批准，单项替换为 `reader428 query_only_budget_preserves_default_bytes`：E=1 为5、全局83；完整 reader47 无过滤通过。原断言、inverse 与批准 proof 保留于 Git 外，未按实测结果提高阈值。W16MiB 及16倍仅 policy 收费，不是输出/heap/RSS 数学上界；实际 SQL 模板、payload、RSS 与扫描计划必须独立记录。实测小 trace 空 Z 为5、closed P 为43；这只验证小控制，不代表全局 CPU 或容量验收。
 
 
 ### #428 最终候选与证据边界（运行后文档差量）

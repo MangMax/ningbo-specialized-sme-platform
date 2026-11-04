@@ -91,7 +91,7 @@
 - `server/utils/platform-business-processes.ts` → `readPlatformBusinessProcessFacts`
 - `server/utils/platform-recognized-directory.ts` → `readPlatformRecognizedFacts`
 
-公共 fact 契约在 `lib/platform/observation-facts.ts`；`server/utils/platform-source-facts.ts` 只按接口分发，不做字段映射。每个来源模块先 LEFT JOIN 自己的 typed 投影；对尚未投影的历史观察，使用 `platform-legacy-relation-read.ts` 读取原行并回退既有规范化（含真实字段冲突）。候选与年度读取调用方必须先按 query/owner/title/role 限定 relation IDs，再调用该 seam；算法本身不读取投影表布局或 raw JSON。
+公共 fact 契约在 `lib/platform/observation-facts.ts`；`server/utils/platform-source-facts.ts` 只按接口分发，不做字段映射。每个来源模块先 LEFT JOIN 自己的 typed 投影；对尚未投影的历史观察，使用 `platform-legacy-relation-read.ts` 只读取七个允许的 process key 与所需原列并回退既有规范化。typed 行也保留 stored-vs-raw 规范化冲突；apply/recognized 未建模的 province/batch/status/year 等字段仍从同一已限定原行补齐，避免读取投影后来源指纹无故漂移。候选与年度读取调用方必须先按 query/owner/title/role 限定 relation IDs，再调用该 seam；算法本身不读取投影表布局或 raw JSON。
 
 候选 `year_mismatch` 使用显式比较年：award 用原认定年（`record_event.year`），review 用结论年（`record_event.decided_year`）；recognized 的维护年不是办理业务年，不参与该比较。复核缺结论年保留 `official_decision_year_missing`。年度过程继续使用 `decided_year` 作为 review 的 businessYear，缺结论年不退回原认定年。该 seam 不改变观察级决定、拒绝/解除保护或 sourceGeneration 规则。
 

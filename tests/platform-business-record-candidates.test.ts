@@ -134,13 +134,13 @@ describe('scoped business version candidates', () => {
     expect(f.candidates().rows[0].edge.relationId).toBe(old.relation.id)
   })
 
-  it('uses the typed projection instead of legacy stored-column conflicts', () => {
+  it('keeps stored-vs-raw conflicts visible while typed fields still win', () => {
     const f = fixture(), clean = f.row(), conflict = f.row({ stored: { year: 2024, status: '终审通过' } })
     const result = f.candidates()
     expect(result.total).toBe(1)
     expect(result.rows[0].businessRecord.versionId).toBe(clean.projection!.versionId)
-    expect(result.rows[0].observationRefs[1]).toMatchObject({ relationId: conflict.relation.id, conflicts: [], evidence: { process: { status: null, normalizationConflicts: [] }, temporal: { relationYear: 2025 } } })
-    expect(result.rows[0].conflicts).toEqual([])
+    expect(result.rows[0].observationRefs[1]).toMatchObject({ relationId: conflict.relation.id, conflicts: ['platform_field_conflict'], evidence: { process: { status: null, normalizationConflicts: [{ field: 'year', storedValue: 2024, rawValue: 2025 }] }, temporal: { relationYear: 2025 } } })
+    expect(result.rows[0].conflicts).toEqual(['platform_field_conflict'])
   })
 
   it('retains typed identity and recognized row-title conflicts across observations of one version', () => {

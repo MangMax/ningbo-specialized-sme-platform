@@ -4,8 +4,8 @@ import * as schema from '../../db/schema'
 import { normalizeName, normalizeUscc } from '../../lib/domain'
 import { normalizeDeclareKind } from '../../lib/platform/identity'
 import { normalizePlatformRelation } from '../../lib/platform/normalization'
-import { legacyRowTitle, type PlatformObservationFact } from '../../lib/platform/observation-facts'
-import { readLegacyRelationRows } from './platform-legacy-relation-read'
+import type { PlatformObservationFact } from '../../lib/platform/observation-facts'
+import { factBatches, legacyRelationColumns, readLegacyRelationRows } from './platform-legacy-relation-read'
 import { businessEnterpriseExists, enterpriseAssignments, fail, pageOf } from './platform-business-read'
 import {
   DECLARATION_OBSERVATION_LIMIT,
@@ -246,38 +246,41 @@ export function getPlatformDeclaration(db: Db, recordId: number): DeclarationDet
   }
 }
 
-const FACT_BATCH = 400
-function factBatches(ids: number[]) {
-  const unique = [...new Set(ids)].filter(id => Number.isSafeInteger(id) && id > 0).sort((a, b) => a - b)
-  return Array.from({ length: Math.ceil(unique.length / FACT_BATCH) }, (_, i) => unique.slice(i * FACT_BATCH, (i + 1) * FACT_BATCH))
-}
-
-/** Observation facts for already scoped relations. The source-specific typed projection wins;
- * an unprojected historical row falls back to the legacy normalization. Never reads unrelated rows. */
 export function readPlatformDeclarationFacts(db: Db, relationIds: number[]): Map<number, PlatformObservationFact> {
   const result = new Map<number, PlatformObservationFact>()
-  const o = schema.platformBusinessObservation, p = schema.platformApplyProjection
+  const o = schema.platformBusinessObservation, p = schema.platformApplyProjection, r = schema.platformRelation
   for (const ids of factBatches(relationIds)) {
-    const typed = db.select({ relationId: o.relationId, recordId: o.recordId, versionId: o.versionId,
-      declareKind: p.declareKind, year: p.declarationYear, appliedAt: p.appliedAt, status: p.status, nameRaw: p.nameRaw, usccRaw: p.usccRaw })
-      .from(o).innerJoin(p, and(eq(p.versionId, o.versionId), eq(p.recordId, o.recordId)))
+    const rows = db.select({
+      relationId: o.relationId, projectionVersionId: p.versionId,
+      declareKind: p.declareKind, year: p.declarationYear, appliedAt: p.appliedAt, status: p.status, usccRaw: p.usccRaw,
+      legacy: legacyRelationColumns,
+    }).from(o)
+      .leftJoin(p, and(eq(p.versionId, o.versionId), eq(p.recordId, o.recordId)))
+      .innerJoin(r, eq(r.id, o.relationId))
       .where(inArray(o.relationId, ids)).all()
-    for (const row of typed) result.set(row.relationId, {
-      relationId: row.relationId, interface: 'apply_list', recordId: row.recordId, versionId: row.versionId, factSource: 'typed',
-      declareKind: row.declareKind ?? null, year: row.year ?? null, appliedAt: row.appliedAt ?? null, status: row.status ?? null,
-      batch: null, awardBatchLabel: null, province: null, nameRaw: row.nameRaw ?? null, usccRaw: row.usccRaw ?? null,
-      titleRaw: null, maintenanceYear: null, validityDateRaw: null, district: null, awardNote: null, normalizationConflicts: [],
-    })
+    for (const row of rows) {
+      const normalized = normalizePlatformRelation('apply_list', row.legacy)
+      result.set(row.relationId, row.projectionVersionId != null ? {
+        relationId: row.relationId, interface: 'apply_list',
+        declareKind: row.declareKind ?? null, year: row.year ?? null, appliedAt: row.appliedAt ?? null, status: row.status ?? null,
+        batch: normalized.batch ?? null, awardBatchLabel: normalized.awardBatchLabel ?? null, province: normalized.province ?? null,
+        usccRaw: row.usccRaw ?? null, titleRaw: null, normalizationConflicts: normalized.normalizationConflicts,
+      } : {
+        relationId: row.relationId, interface: 'apply_list',
+        declareKind: normalized.declareKind ?? null, year: normalized.year ?? null, appliedAt: normalized.appliedAt ?? null,
+        status: normalized.status ?? null, batch: normalized.batch ?? null, awardBatchLabel: normalized.awardBatchLabel ?? null,
+        province: normalized.province ?? null, usccRaw: normalized.usccRaw ?? null, titleRaw: null,
+        normalizationConflicts: normalized.normalizationConflicts,
+      })
+    }
     const missing = ids.filter(id => !result.has(id))
-    if (!missing.length) continue
-    for (const row of readLegacyRelationRows(db, missing)) {
+    if (missing.length) for (const row of readLegacyRelationRows(db, missing)) {
       const normalized = normalizePlatformRelation('apply_list', row)
       result.set(row.id, {
-        relationId: row.id, interface: 'apply_list', recordId: null, versionId: null, factSource: 'legacy',
+        relationId: row.id, interface: 'apply_list',
         declareKind: normalized.declareKind ?? null, year: normalized.year ?? null, appliedAt: normalized.appliedAt ?? null,
-        status: normalized.status ?? null, batch: null, awardBatchLabel: null, province: null,
-        nameRaw: normalized.nameRaw ?? null, usccRaw: normalized.usccRaw ?? null, titleRaw: legacyRowTitle(normalized.rawFields),
-        maintenanceYear: null, validityDateRaw: null, district: null, awardNote: null,
+        status: normalized.status ?? null, batch: normalized.batch ?? null, awardBatchLabel: normalized.awardBatchLabel ?? null,
+        province: normalized.province ?? null, usccRaw: normalized.usccRaw ?? null, titleRaw: null,
         normalizationConflicts: normalized.normalizationConflicts,
       })
     }
