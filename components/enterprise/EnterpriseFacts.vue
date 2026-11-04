@@ -89,7 +89,7 @@ onMounted(async () => {
             <label>{{ key === 'observed' ? '观察时间' : '生效时间' }}精度
               <Select :model-value="draft[key].precision" @update:model-value="draft[key] = { precision: String($event), value: $event === 'unknown' ? null : '' }"><SelectTrigger :aria-label="`${key}时间精度`"><SelectValue /></SelectTrigger><SelectContent><SelectGroup><SelectItem v-for="(label, precision) in { unknown: '未知', year: '年', month: '月', day: '日', instant: '时刻' }" :key="precision" :value="precision">{{ label }}</SelectItem></SelectGroup></SelectContent></Select>
             </label>
-            <label v-if="draft[key].precision !== 'unknown'">{{ key === 'observed' ? '观察时间' : '生效时间' }}原值<Input v-model="draft[key].value" required :placeholder="({ year: '2025', month: '2025-01', day: '2025-01-01', instant: '2025-01-01T00:00:00Z' } as Record<string, string>)[draft[key].precision]" /></label>
+            <label v-if="draft[key].precision !== 'unknown'">{{ key === 'observed' ? '观察时间' : '生效时间' }}原值<Input :model-value="draft[key].value ?? ''" @update:model-value="draft[key].value = String($event)" required :placeholder="({ year: '2025', month: '2025-01', day: '2025-01-01', instant: '2025-01-01T00:00:00Z' } as Record<string, string>)[draft[key].precision]" /></label>
           </div>
         </template>
         <label>操作依据<Textarea v-model="basis" aria-label="操作依据" required maxlength="2000" /></label>
