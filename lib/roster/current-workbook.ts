@@ -6,7 +6,8 @@ import { createWriteStream } from 'node:fs'
 import { once } from 'node:events'
 import { finished } from 'node:stream/promises'
 import { CURRENT_RULE_VERSION, qualificationDay, prepareCurrentReader, createCurrentQualificationAssessmentReader, QUALIFICATION_ASSESSMENT_VERSION, type CurrentTitle } from './current-qualification'
-import { currentCandidateBindings, currentCandidateSqlFor } from './current-candidates'
+import { currentCandidateBindings, currentCandidateReadSqlFor } from './current-candidates'
+import { resolveRecognizedFactSource, type RecognizedFactSource } from './recognized-filter-source'
 import { readIdentityKeyVariants } from './current-identity-keys'
 import { TITLES } from '../labels'
 import { CURRENT_COLUMNS, currentWorkbookValues } from './current-workbook-presentation'
@@ -40,7 +41,7 @@ function sheetOptions() {
   return {views:[{state:'frozen' as const,xSplit:2,ySplit:1,topLeftCell:'C2',zoomScale:90}]}
 }
 /** Streaming rows in one pinned SQLite read transaction, owned by the independent executor. */
-export async function writeCurrentWorkbook(db: Database.Database, title: CurrentTitle, filename: string, progress: (done: number,total: number,snapshotStartedAt: string) => void, logContext?: LogContext, receiptRuntime?: ReceiptRuntimeContext) {
+export async function writeCurrentWorkbook(db: Database.Database, title: CurrentTitle, filename: string, progress: (done: number,total: number,snapshotStartedAt: string) => void, logContext?: LogContext, receiptRuntime?: ReceiptRuntimeContext, readOptions: { recognizedFactSource?: RecognizedFactSource } = {}) {
   const generatedAt = new Date().toISOString(), year = Number(qualificationDay(Date.parse(generatedAt)).slice(0,4))
   const output = createWriteStream(filename)
   const completed = finished(output, { cleanup: true })
@@ -66,9 +67,10 @@ export async function writeCurrentWorkbook(db: Database.Database, title: Current
     // Enumerate narrow query keys once inside this pinned snapshot. Full T2
     // still reads and verifies every title and source; only coverage lookup changes.
     const queryKeys = readIdentityKeyVariants(db, 'queries')
-    const assessmentReader = createCurrentQualificationAssessmentReader(db, receiptRuntime)
+    const recognizedFactSource = resolveRecognizedFactSource(readOptions.recognizedFactSource)
+    const assessmentReader = createCurrentQualificationAssessmentReader(db, receiptRuntime, { recognizedFactSource })
     const bindings=currentCandidateBindings(title)
-    const currentCandidateSql=currentCandidateSqlFor(db)
+    const currentCandidateSql=currentCandidateReadSqlFor(db, recognizedFactSource)
     const total = (db.prepare(`select count(*) as n from (${currentCandidateSql})`).get(bindings) as {n:number}).n
     const snapshotStartedAt = new Date().toISOString()
     workbookStarted = true
