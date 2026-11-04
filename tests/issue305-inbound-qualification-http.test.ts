@@ -134,3 +134,18 @@ it.each(titles)('retains first award and pending controls in qualified XLSX for 
     expect(actual.sort()).toEqual(cases.filter(c => c.eligible === eligible).map(c => `issue305-inbound-${title}-${c.id}`).sort())
   }
 })
+it('review probe: pending fact cannot undo reviewed legacy termination', async () => {
+ const id = ids.values().next().value!
+ const scope = {enterpriseId:id,titleCode:'little_giant',direction:'extra_in_miit'}
+ const cur = await (await fetch(base+'/api/roster/decision-lifecycle/current?'+new URLSearchParams({...scope,enterpriseId:String(id)}))).json()
+ const r=await post({...scope,action:'replace',expectedCurrentId:cur.current.id,idempotencyKey:'probe-terminate',actor,basis:'Verified termination',ruleVersion:'probe',effectiveAt:'2024-01-01T00:00:00Z',decision:{status:'confirmed_reason',reasonCode:'deregistered',measureCode:'none',verificationStatus:'confirmed'}})
+ const token=readEvidenceToken113(db,scope as any)
+ await post({...scope,action:'maintain',expectedCurrentId:r.versionId,idempotencyKey:'probe-maintain',actor,basis:'Verified termination',ruleVersion:'probe',effectiveAt:'2024-01-01T00:00:00Z',reviewedEvidence:{latestRevisionId:token.latestRevisionId,projectionReady:token.projectionReady}})
+ const read=async()=> (await (await fetch(base+`/api/roster/enterprises/${id}`)).json()).qualificationAssessment.titles.find((t:any)=>t.titleCode==='little_giant')
+ expect(await read()).toMatchObject({group:'excluded',subject:{status:'terminated'}})
+ const {getEnterpriseFacts,preflightEnterpriseFact,commitEnterpriseFact}=await import('../server/utils/enterprise-facts')
+ const request={action:'assert',expectedVersion:getEnterpriseFacts(db,id).version,idempotencyKey:'probe-pending',actor,basis:'Unknown registration observation',fact:{kind:'registration_status',source:{reference:'probe',statement:'Unknown'},observed:{precision:'year',value:'2024'},effective:{precision:'unknown',value:null},city:null}}
+ const plan=preflightEnterpriseFact(db,id,request)
+ commitEnterpriseFact(db,id,{request,planHash:plan.planHash})
+ expect(await read(), JSON.stringify(await read())).toMatchObject({group:'excluded',subject:{status:'terminated'}})
+})

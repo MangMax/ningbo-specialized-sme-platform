@@ -610,7 +610,7 @@ function createCurrentCandidateEvaluationReader(db: Database.Database, receiptRu
   // full T2. Keep the legacy row.group unchanged for existing consumers.
   const independent = readEnterpriseFactEffects(db, enterpriseId, executionTime)
   if (independent) row.references.push(...independent.refs)
-  const group: CurrentGroup = independent?.terminated ? 'excluded' : independent?.pending ? 'pending' : independent?.region === 'outside_ningbo' ? 'excluded' : terminations.length ? 'excluded' : row.group
+  const group: CurrentGroup = independent?.terminated || terminations.length ? 'excluded' : independent?.pending ? 'pending' : independent?.region === 'outside_ningbo' ? 'excluded' : row.group
   if (assessmentOptions) {
     // These dimensions reuse the facts and applicability decisions above. Platform
     // observations and correspondence confirmation never feed back into eligibility.
@@ -659,7 +659,7 @@ function createCurrentCandidateEvaluationReader(db: Database.Database, receiptRu
       ...(sourceVersions.some(s => !s.sha256 || s.removedAt) ? ['source_version_unavailable'] : []),
     ]
     const locationConflict = new Set(latest.map(d => d.reasonCode)).size > 1
-    const subjectStatus = independent?.terminated ? 'terminated' : independent?.pending ? 'unresolved' : terminations.length ? 'terminated' : subjectGap ? 'unresolved' : 'not_established'
+    const subjectStatus = independent?.terminated || terminations.length ? 'terminated' : independent?.pending ? 'unresolved' : subjectGap ? 'unresolved' : 'not_established'
     const regionStatus = independent ? independent.region : locationConflict || subjectGap ? 'unresolved' : latest[0]?.reasonCode === 'moved_out' ? 'outside_ningbo' : latest[0]?.reasonCode === 'moved_in' ? 'ningbo' : 'not_established'
     // A proven termination remains an exclusion even if another independent
     // dimension is unresolved. The old projection is retained explicitly below.
