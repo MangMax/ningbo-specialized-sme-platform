@@ -671,8 +671,6 @@ function createCurrentCandidateEvaluationReader(db: Database.Database, receiptRu
     const locationConflict = new Set(latest.map(d => d.reasonCode)).size > 1
     const subjectStatus = independent?.terminated || terminations.length ? 'terminated' : independent?.pending ? 'unresolved' : subjectGap ? 'unresolved' : 'not_established'
     const regionStatus = independent ? independent.region : locationConflict || subjectGap ? 'unresolved' : latest[0]?.reasonCode === 'moved_out' ? 'outside_ningbo' : latest[0]?.reasonCode === 'moved_in' ? 'ningbo' : 'not_established'
-    // The additive nullable column must not invalidate receipts for unchanged
-    // legacy decisions. Explicit pinned references remain versioned inputs.
     const versionHeads = heads.map(decisionVersionInput)
     // A proven termination remains an exclusion even if another independent
     // dimension is unresolved. The old projection is retained explicitly below.
