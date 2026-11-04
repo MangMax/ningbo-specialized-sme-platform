@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { onMounted, onUnmounted, ref } from 'vue'
 import TableFailureState from '@/components/TableFailureState.vue'
 import DisclosurePanel from '@/components/DisclosurePanel.vue'
 import { Input } from '@/components/ui/input'
@@ -15,11 +15,17 @@ const loading = ref(false), failed = ref(false)
 const labels: Record<string, string> = { moved_in: '迁入宁波', moved_out: '迁出宁波', cancelled: '注销', registration_status: '登记状态' }
 const statuses: Record<string, string> = { pending: '待确认', confirmed: '已确认事实', replaced: '已更正', withdrawn: '已撤回' }
 function time(point: Point) { return point.precision === 'unknown' ? '未知' : `${point.value}（${({ year: '年', month: '月', day: '日', instant: '时刻' } as Record<string, string>)[point.precision] ?? '未知精度'}）` }
+let readGeneration = 0
+onUnmounted(() => { readGeneration++ })
 async function load() {
+  const generation = ++readGeneration
   loading.value = true; failed.value = false
-  try { data.value = await $fetch(`/api/roster/enterprises/${props.enterpriseId}/facts`) }
-  catch { failed.value = true }
-  finally { loading.value = false }
+  try {
+    const result = await $fetch<NonNullable<typeof data.value>>(`/api/roster/enterprises/${props.enterpriseId}/facts`)
+    if (generation === readGeneration) data.value = result
+  }
+  catch { if (generation === readGeneration) failed.value = true }
+  finally { if (generation === readGeneration) loading.value = false }
 }
 const enabled = ref(false), saving = ref(false), message = ref('')
 const action = ref<'assert' | 'confirm' | 'replace' | 'withdraw' | null>(null)
@@ -34,6 +40,7 @@ function edit(next: typeof action.value, row?: Row) {
 }
 async function save() {
   if (!data.value || !action.value || saving.value) return
+  readGeneration++; loading.value = false
   saving.value = true; message.value = ''
   const business = { action: action.value, basis: basis.value, ...(action.value !== 'assert' ? { factId: target.value } : {}), ...(['assert', 'replace'].includes(action.value) ? { fact: draft.value } : {}) }
   const signature = JSON.stringify(business)

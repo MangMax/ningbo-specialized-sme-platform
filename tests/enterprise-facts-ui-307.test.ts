@@ -5,6 +5,33 @@ import EnterpriseFacts from '../components/enterprise/EnterpriseFacts.vue'
 const row = { id: 1, factId: 1, revision: 1, status: 'pending', action: 'assert', basis: '原件核对', actor: { type: 'agent', id: '记录员' }, createdAt: '2026-11-01T00:00:00Z', fact: { kind: 'moved_out', source: { reference: '公告附件第2页', statement: '原文：迁往地点待核' }, city: null, observed: { precision: 'month', value: '2026-10' }, effective: { precision: 'unknown', value: null } } }
 const data = { enterpriseId: 7, version: 'secret-version', facts: [row], history: [row] }
 afterEach(() => vi.unstubAllGlobals())
+it('older refresh cannot overwrite confirmed post-commit readback', async () => {
+  const freshRow = { ...row, status: 'confirmed' }
+  const fresh = { ...data, version: 'new-version', facts: [freshRow], history: [freshRow] }
+  let reads = 0
+  let finish!: (value: unknown) => void
+  vi.stubGlobal('$fetch', vi.fn(async (url: string) => {
+    if (url.endsWith('browser-context')) return { writeEnabled: true }
+    if (url.endsWith('browser-preflight')) return { planHash: 'a'.repeat(64) }
+    if (url.endsWith('browser-commit')) return { factId: 1 }
+    if (++reads === 2) return new Promise(resolve => { finish = resolve })
+    return reads === 1 ? data : fresh
+  }))
+  const wrapper = mount(EnterpriseFacts, { props: { enterpriseId: 7 } })
+  try {
+    await flushPromises()
+    await wrapper.get('[data-testid="facts-refresh"]').trigger('click')
+    await wrapper.findAll('button').find(button => button.text() === '确认事实')!.trigger('click')
+    await wrapper.get('[aria-label="操作依据"]').setValue('原文复核')
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+    expect(wrapper.text()).toContain('已确认事实')
+    finish(data)
+    await flushPromises()
+    expect(wrapper.text()).toContain('事实操作已记录。')
+    expect(wrapper.text()).toContain('已确认事实')
+  } finally { wrapper.unmount() }
+})
 it('shows sourced assertions and history with unknown time and city without technical version inputs', async () => {
   vi.stubGlobal('$fetch', vi.fn().mockResolvedValue(data))
   const wrapper = mount(EnterpriseFacts, { props: { enterpriseId: 7 } })
