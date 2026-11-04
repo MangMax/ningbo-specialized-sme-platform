@@ -284,6 +284,17 @@ it('473 downloaded comparison workbook shadow preserves columns rows title distr
       rawFields: { id: `473-export-${index}`, qymc: owner.name, tyshxydm: owner.usccNorm, cszt: '终审通过' } }).returning().get()
     expect(ensurePlatformObservation(db, relation.id).versionId).toEqual(expect.any(Number))
   }
+  // Same archived rename/migration decisions in both modes. The existing export
+  // writes only the no-USCC note; it does not render disposition notes.
+  for (const [name, reasonCode, measureCode] of [
+    ['市专01', 'renamed', 'update_current_name'],
+    ['市专02', 'moved_in', 'record_moved_in'],
+  ] as const) {
+    const enterprise = db.select().from(schema.enterprise).all().find(e => e.name === name)!
+    db.insert(schema.enterpriseAlias).values({ enterpriseId: enterprise.id, name: `${name}旧名`, nameNorm: `${name}旧名`, sourceKind: 'manual', verificationStatus: 'confirmed' }).run()
+    db.insert(schema.differenceReason).values({ enterpriseId: enterprise.id, titleCode: 'specialized_sme', direction: 'missing_in_miit', status: 'confirmed_reason', reasonCode, measureCode,
+      reasonNote: '已核验更名或迁入', movedInCity: reasonCode === 'moved_in' ? '杭州市' : null, movedInYear: reasonCode === 'moved_in' ? 2024 : null, recordedAt: '2026-11-02', verificationStatus: 'confirmed' }).run()
+  }
   const matrices: unknown[] = []
   try {
     for (const source of ['legacy', 'typed']) {
@@ -291,6 +302,12 @@ it('473 downloaded comparison workbook shadow preserves columns rows title distr
       const response = await fetch(`${baseUrl}/api/export?mode=comparison&title=specialized_sme&direction=missing_in_miit`)
       expect(response.status).toBe(200)
       const workbook = await readExportWorkbook(new Uint8Array(await response.arrayBuffer()))
+      const sheet = workbook.worksheets[0]!
+      expect(sheet.getCell('A3').value).toBe('市专01')
+      expect(sheet.getCell('A4').value).toBe('市专02')
+      expect(sheet.getCell('H3').text).toBe('')
+      expect(sheet.getCell('H4').text).toBe('')
+      expect(sheet.getCell('H2').text).toBe('无统代,另一侧无可匹配身份')
       matrices.push(workbook.worksheets.map(sheet => sheet.getSheetValues()))
     }
     expect(matrices[1]).toEqual(matrices[0])

@@ -252,10 +252,15 @@ function attachPlatformEvidenceSnapshot<T extends RowKey>(
     const row = normalizePlatformRelation(query?.interface ?? '', archived)
     const fact = facts.get(archived.id)
     if (fact?.projectionVersionId != null) {
-      // Source-owned fields replace only modeled columns. Preserve archive IDs, raw,
-      // ownership, and unmodeled fields; conflicts keep their existing unknown value.
-      for (const field of ['nameRaw', 'usccRaw', 'declareKind', 'year', 'appliedAt', 'status', 'batch', 'awardBatchLabel', 'province'] as const) {
-        if (fact.modeledFields.includes(field) && !row.normalizationConflicts.some(c => c.field === field)) {
+      // Comparison is an archive-compatible view, not a new identity resolver.
+      // Keep archived names/USCC verbatim (including null); projections describe source
+      // content and must not relabel an already-associated evidence observation.
+      // A modeled null describes absent source content, not deletion of a populated
+      // archive fact. This compatibility rule belongs only to this consumer.
+      // Legacy normalization remains necessary for unmodeled fields and conflicts;
+      // do not change the source fact contract or coalesce its nulls globally.
+      for (const field of ['declareKind', 'year', 'appliedAt', 'status', 'batch', 'awardBatchLabel', 'province'] as const) {
+        if (fact.modeledFields.includes(field) && fact[field] != null && !row.normalizationConflicts.some(c => c.field === field)) {
           Object.assign(row, { [field]: fact[field] })
         }
       }
