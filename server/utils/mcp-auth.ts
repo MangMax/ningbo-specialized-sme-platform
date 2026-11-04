@@ -78,6 +78,8 @@ export const MCP_WRITE_TOOLS = [
   'list_roster_import_items',
   'get_roster_import_request',
   'patch_enterprise_profile',
+  'preflight_enterprise_fact',
+  'commit_enterprise_fact',
 
   'preflight_roster_evidence_corrections',
   'commit_roster_evidence_corrections',
