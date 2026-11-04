@@ -106,7 +106,7 @@
 
 结论边界：以上证明的是「目录镜像的新增/消失/原值变化**不改变正式资格判定与导出的正式内容**」。它**不**证明目录值可推出资格，也**不**证明 B 的 `qualificationAssessment` 观察清单或导出的「来源及页码」出处文字不随平台归档变化——这两处按既有设计记录已归档观察，属已批准、有理由的差异。
 
-> #468 起，当前资格筛选见证改读同一 typed 投影：typed 值变化会移动 `matchedValidYears`/`matchedMaintenance` 与所选筛选的命中集合，但**不改变**正式资格分组、行集合或工作簿决策面。切换、回退与已批准 trim 差异见[当前资格的 recognized_list 类型化读取](current-qualification-typed-read-468.md)。
+> #468 起，当前资格筛选见证改读同一 typed 投影：typed 值变化会移动 `matchedValidYears`/`matchedMaintenance` 与所选筛选的命中集合，但**不改变**正式资格分组、行集合或工作簿决策面。切换、回退与已批准 trim 差异见 [#468 证据评论](https://github.com/MangMax/ningbo-specialized-sme-platform/issues/468#issuecomment-6626332094)。
 
 对照测试：`tests/platform-recognized-directory-three-way.test.ts`（每步都断言 A 的精确变化、B 的资格面与 C 的决策面；不使用新 reader 作为 B/C 的 oracle）。
 
