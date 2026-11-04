@@ -9,10 +9,13 @@ const r = schema.platformRelation
 /** Only the seven archived process keys, never the full raw row. */
 export const legacyProcessRaw = sql`case when json_valid(${r.rawFields}) then json_extract(${r.rawFields}, ${sql.raw(PLATFORM_PROCESS_RAW_KEYS.map(key => `'$.${key}'`).join(', '))}) else null end`.mapWith(platformProcessRawFromJson)
 
+/** Row-level title raw value is bounded text, never the full archive body. */
+export const legacyRawRdjb = sql<string | null>`case when json_valid(${r.rawFields}) then case when json_type(${r.rawFields}, '$.rdjb') = 'text' then json_extract(${r.rawFields}, '$.rdjb') else null end else null end`
+
 /** Stored columns and the bounded process-key projection needed by legacy normalization. */
 export const legacyRelationColumns = {
   id: r.id, queryId: r.queryId, sequenceNo: r.sequenceNo, relationKey: r.relationKey, enterpriseId: r.enterpriseId,
-  rawFields: legacyProcessRaw, declareKind: r.declareKind, appliedAt: r.appliedAt, year: r.year,
+  rawFields: legacyProcessRaw, rawRdjb: legacyRawRdjb, declareKind: r.declareKind, appliedAt: r.appliedAt, year: r.year,
   province: r.province, batch: r.batch, status: r.status, awardBatchLabel: r.awardBatchLabel, usccRaw: r.usccRaw,
 }
 
@@ -23,6 +26,7 @@ export type LegacyRelationRow = {
   relationKey: string | null
   enterpriseId: number | null
   rawFields: Record<string, unknown> | null
+  rawRdjb: string | null
   declareKind: string | null
   appliedAt: string | null
   year: number | null

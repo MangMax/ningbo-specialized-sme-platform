@@ -4,7 +4,7 @@ import * as schema from '../../db/schema'
 import { normalizeName, normalizeUscc } from '../../lib/domain'
 import { normalizeDeclareKind } from '../../lib/platform/identity'
 import { normalizePlatformRelation } from '../../lib/platform/normalization'
-import type { PlatformObservationFact } from '../../lib/platform/observation-facts'
+import { legacyRowTitle, type PlatformObservationFact } from '../../lib/platform/observation-facts'
 import { factBatches, legacyRelationColumns, readLegacyRelationRows } from './platform-legacy-relation-read'
 import { businessEnterpriseExists, enterpriseAssignments, fail, orderedScopes, pageOf, titleScopesByQuery } from './platform-business-read'
 import {
@@ -360,14 +360,16 @@ export function readPlatformBusinessProcessFacts(db: Db, relationIds: number[]):
       const normalized = normalizePlatformRelation('business_list', row.legacy)
       result.set(row.relationId, row.projectionVersionId != null ? {
         relationId: row.relationId, interface: 'business_list',
-        declareKind: row.declareKind ?? null, year: row.year ?? null, appliedAt: row.appliedAt ?? null, status: row.status ?? null,
-        batch: row.batch ?? null, awardBatchLabel: row.awardBatchLabel ?? null, province: row.province ?? null,
-        usccRaw: row.usccRaw ?? null, titleRaw: null, normalizationConflicts: normalized.normalizationConflicts,
+        declareKind: row.declareKind ?? null, year: row.year ?? null,
+        appliedAt: row.appliedAt ?? null, status: row.status ?? null,
+        batch: row.batch ?? null, awardBatchLabel: row.awardBatchLabel ?? null,
+        province: row.province ?? null, usccRaw: row.usccRaw ?? null,
+        titleRaw: legacyRowTitle({ rdjb: row.legacy.rawRdjb }), normalizationConflicts: normalized.normalizationConflicts,
       } : {
         relationId: row.relationId, interface: 'business_list',
         declareKind: normalized.declareKind ?? null, year: normalized.year ?? null, appliedAt: normalized.appliedAt ?? null,
         status: normalized.status ?? null, batch: normalized.batch ?? null, awardBatchLabel: normalized.awardBatchLabel ?? null,
-        province: normalized.province ?? null, usccRaw: normalized.usccRaw ?? null, titleRaw: null,
+        province: normalized.province ?? null, usccRaw: normalized.usccRaw ?? null, titleRaw: legacyRowTitle({ rdjb: row.legacy.rawRdjb }),
         normalizationConflicts: normalized.normalizationConflicts,
       })
     }
@@ -378,7 +380,7 @@ export function readPlatformBusinessProcessFacts(db: Db, relationIds: number[]):
         relationId: row.id, interface: 'business_list',
         declareKind: normalized.declareKind ?? null, year: normalized.year ?? null, appliedAt: normalized.appliedAt ?? null,
         status: normalized.status ?? null, batch: normalized.batch ?? null, awardBatchLabel: normalized.awardBatchLabel ?? null,
-        province: normalized.province ?? null, usccRaw: normalized.usccRaw ?? null, titleRaw: null,
+        province: normalized.province ?? null, usccRaw: normalized.usccRaw ?? null, titleRaw: legacyRowTitle({ rdjb: row.rawRdjb }),
         normalizationConflicts: normalized.normalizationConflicts,
       })
     }

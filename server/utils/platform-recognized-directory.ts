@@ -388,15 +388,15 @@ export function readPlatformRecognizedFacts(db: Db, relationIds: number[]): Map<
       result.set(row.relationId, row.projectionVersionId != null ? {
         relationId: row.relationId, interface: 'recognized_list',
         declareKind: null, year: normalized.year ?? null, appliedAt: null, status: normalized.status ?? null,
-        batch: row.maintenanceBatch ?? normalized.batch ?? null, awardBatchLabel: normalized.awardBatchLabel ?? null,
+        batch: normalized.batch ?? null, awardBatchLabel: normalized.awardBatchLabel ?? null,
         province: normalized.province ?? null, usccRaw: row.usccRaw ?? normalized.usccRaw ?? null,
-        titleRaw: row.titleRaw ?? null, normalizationConflicts: normalized.normalizationConflicts,
+        titleRaw: row.titleRaw ?? legacyRowTitle({ rdjb: row.legacy.rawRdjb }), normalizationConflicts: normalized.normalizationConflicts,
       } : {
         relationId: row.relationId, interface: 'recognized_list',
         declareKind: normalized.declareKind ?? null, year: normalized.year ?? null, appliedAt: normalized.appliedAt ?? null,
         status: normalized.status ?? null, batch: normalized.batch ?? null, awardBatchLabel: normalized.awardBatchLabel ?? null,
         province: normalized.province ?? null, usccRaw: normalized.usccRaw ?? null,
-        titleRaw: legacyRowTitle(normalized.rawFields), normalizationConflicts: normalized.normalizationConflicts,
+        titleRaw: legacyRowTitle({ rdjb: row.legacy.rawRdjb }), normalizationConflicts: normalized.normalizationConflicts,
       })
     }
     const missing = ids.filter(id => !result.has(id))
@@ -407,7 +407,7 @@ export function readPlatformRecognizedFacts(db: Db, relationIds: number[]): Map<
         declareKind: normalized.declareKind ?? null, year: normalized.year ?? null, appliedAt: normalized.appliedAt ?? null,
         status: normalized.status ?? null, batch: normalized.batch ?? null, awardBatchLabel: normalized.awardBatchLabel ?? null,
         province: normalized.province ?? null, usccRaw: normalized.usccRaw ?? null,
-        titleRaw: legacyRowTitle(normalized.rawFields), normalizationConflicts: normalized.normalizationConflicts,
+        titleRaw: legacyRowTitle({ rdjb: row.rawRdjb }), normalizationConflicts: normalized.normalizationConflicts,
       })
     }
   }
