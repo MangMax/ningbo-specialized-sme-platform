@@ -1,9 +1,16 @@
 import type { PlatformBusinessMetadata, PlatformBusinessObservationRef, PlatformCorrespondenceRef } from '../platform/business-record'
+import type { PlatformObservationFact } from '../platform/observation-facts'
 import { normalizeName, normalizeUscc } from '../domain'
 
 /** Lightweight archive references. No raw body or derived authoritative decision. */
 export type PlatformDetailObservation = Pick<PlatformBusinessObservationRef,
-  'relationId' | 'queryId' | 'queriedAt' | 'businessRecord' | 'existingCorrespondenceIds' | 'existingCorrespondences' | 'conflicts' | 'titleCode' | 'enterpriseId' | 'usccRaw' | 'nameRaw'>
+  'relationId' | 'queryId' | 'queriedAt' | 'businessRecord' | 'existingCorrespondenceIds' | 'existingCorrespondences' | 'conflicts' | 'titleCode' | 'enterpriseId' | 'usccRaw' | 'nameRaw'> & {
+  /** Source-owned typed fact for this observation's content version. `null` means the
+   * historical observation has no projection and display must fall back to the legacy
+   * relation/raw columns. A present fact's `modeledFields` is authoritative: a modeled
+   * field set to null means the archived source value is unknown and must not be backfilled. */
+  typedFields?: PlatformObservationFact | null
+}
 export interface PlatformDetailVersion {
   businessRecord: PlatformBusinessMetadata
   representativeRelationId: number

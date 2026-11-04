@@ -343,12 +343,23 @@ export function getPlatformBusinessProcess(db: Db, recordId: number): BusinessPr
   }
 }
 
+const BUSINESS_MODELED_FIELDS = ['declareKind', 'year', 'appliedAt', 'status', 'batch', 'awardBatchLabel', 'province', 'nameRaw', 'usccRaw'] as const
+
+function businessFactBase(relationId: number, normalized: ReturnType<typeof normalizePlatformRelation>, row: { nameRaw: string | null; usccRaw: string | null; titleRaw: string | null }) {
+  return {
+    relationId, interface: 'business_list' as const,
+    nameRaw: row.nameRaw, usccRaw: row.usccRaw, titleRaw: row.titleRaw,
+    validityDateRaw: null, maintenanceYear: null, maintenanceBatch: null, district: null, awardNote: null,
+    normalizationConflicts: normalized.normalizationConflicts,
+  }
+}
+
 export function readPlatformBusinessProcessFacts(db: Db, relationIds: number[]): Map<number, PlatformObservationFact> {
   const result = new Map<number, PlatformObservationFact>()
   const o = schema.platformBusinessObservation, p = schema.platformBusinessProjection, r = schema.platformRelation
   for (const ids of factBatches(relationIds)) {
     const rows = db.select({
-      relationId: o.relationId, projectionVersionId: p.versionId,
+      relationId: o.relationId, projectionVersionId: p.versionId, projectionRuleVersion: p.ruleVersion, nameRaw: p.nameRaw,
       declareKind: p.declareKind, year: p.businessYear, appliedAt: p.appliedAt, status: p.status, batch: p.batch,
       awardBatchLabel: p.awardBatchLabel, province: p.province, usccRaw: p.usccRaw,
       legacy: legacyRelationColumns,
@@ -358,30 +369,39 @@ export function readPlatformBusinessProcessFacts(db: Db, relationIds: number[]):
       .where(inArray(o.relationId, ids)).all()
     for (const row of rows) {
       const normalized = normalizePlatformRelation('business_list', row.legacy)
-      result.set(row.relationId, row.projectionVersionId != null ? {
-        relationId: row.relationId, interface: 'business_list',
-        declareKind: row.declareKind ?? null, year: row.year ?? null,
-        appliedAt: row.appliedAt ?? null, status: row.status ?? null,
-        batch: row.batch ?? null, awardBatchLabel: row.awardBatchLabel ?? null,
-        province: row.province ?? null, usccRaw: row.usccRaw ?? null,
-        titleRaw: legacyRowTitle({ rdjb: row.legacy.rawRdjb }), normalizationConflicts: normalized.normalizationConflicts,
-      } : {
-        relationId: row.relationId, interface: 'business_list',
-        declareKind: normalized.declareKind ?? null, year: normalized.year ?? null, appliedAt: normalized.appliedAt ?? null,
-        status: normalized.status ?? null, batch: normalized.batch ?? null, awardBatchLabel: normalized.awardBatchLabel ?? null,
-        province: normalized.province ?? null, usccRaw: normalized.usccRaw ?? null, titleRaw: legacyRowTitle({ rdjb: row.legacy.rawRdjb }),
-        normalizationConflicts: normalized.normalizationConflicts,
+      const titleRaw = legacyRowTitle({ rdjb: row.legacy.rawRdjb })
+      const typed = row.projectionVersionId != null
+      result.set(row.relationId, {
+        ...businessFactBase(row.relationId, normalized, {
+          nameRaw: typed ? row.nameRaw ?? null : normalized.nameRaw ?? null,
+          usccRaw: typed ? row.usccRaw ?? null : normalized.usccRaw ?? null,
+          titleRaw,
+        }),
+        projectionVersionId: typed ? row.projectionVersionId : null,
+        projectionRuleVersion: typed ? row.projectionRuleVersion ?? null : null,
+        modeledFields: typed ? BUSINESS_MODELED_FIELDS : [],
+        declareKind: typed ? row.declareKind ?? null : normalized.declareKind ?? null,
+        year: typed ? row.year ?? null : normalized.year ?? null,
+        appliedAt: typed ? row.appliedAt ?? null : normalized.appliedAt ?? null,
+        status: typed ? row.status ?? null : normalized.status ?? null,
+        batch: typed ? row.batch ?? null : normalized.batch ?? null,
+        awardBatchLabel: typed ? row.awardBatchLabel ?? null : normalized.awardBatchLabel ?? null,
+        province: typed ? row.province ?? null : normalized.province ?? null,
       })
     }
     const missing = ids.filter(id => !result.has(id))
     if (missing.length) for (const row of readLegacyRelationRows(db, missing)) {
       const normalized = normalizePlatformRelation('business_list', row)
       result.set(row.id, {
-        relationId: row.id, interface: 'business_list',
-        declareKind: normalized.declareKind ?? null, year: normalized.year ?? null, appliedAt: normalized.appliedAt ?? null,
-        status: normalized.status ?? null, batch: normalized.batch ?? null, awardBatchLabel: normalized.awardBatchLabel ?? null,
-        province: normalized.province ?? null, usccRaw: normalized.usccRaw ?? null, titleRaw: legacyRowTitle({ rdjb: row.rawRdjb }),
-        normalizationConflicts: normalized.normalizationConflicts,
+        ...businessFactBase(row.id, normalized, {
+          nameRaw: normalized.nameRaw ?? null, usccRaw: normalized.usccRaw ?? null,
+          titleRaw: legacyRowTitle({ rdjb: row.rawRdjb }),
+        }),
+        projectionVersionId: null, projectionRuleVersion: null, modeledFields: [],
+        declareKind: normalized.declareKind ?? null, year: normalized.year ?? null,
+        appliedAt: normalized.appliedAt ?? null, status: normalized.status ?? null,
+        batch: normalized.batch ?? null, awardBatchLabel: normalized.awardBatchLabel ?? null,
+        province: normalized.province ?? null,
       })
     }
   }

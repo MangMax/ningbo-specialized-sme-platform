@@ -16,7 +16,7 @@ export const legacyRawRdjb = sql<string | null>`case when json_valid(${r.rawFiel
 export const legacyRelationColumns = {
   id: r.id, queryId: r.queryId, sequenceNo: r.sequenceNo, relationKey: r.relationKey, enterpriseId: r.enterpriseId,
   rawFields: legacyProcessRaw, rawRdjb: legacyRawRdjb, declareKind: r.declareKind, appliedAt: r.appliedAt, year: r.year,
-  province: r.province, batch: r.batch, status: r.status, awardBatchLabel: r.awardBatchLabel, usccRaw: r.usccRaw,
+  province: r.province, batch: r.batch, status: r.status, awardBatchLabel: r.awardBatchLabel, nameRaw: r.nameRaw, usccRaw: r.usccRaw,
 }
 
 export type LegacyRelationRow = {
@@ -34,6 +34,7 @@ export type LegacyRelationRow = {
   batch: string | null
   status: string | null
   awardBatchLabel: string | null
+  nameRaw: string | null
   usccRaw: string | null
 }
 
