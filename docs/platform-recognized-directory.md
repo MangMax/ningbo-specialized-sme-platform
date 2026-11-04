@@ -10,7 +10,8 @@
 | **当前有效企业** | 清洗后、依正式认定与复核事件判定的当前资格读模型（既有 `current-qualification`）。 | `/current-enterprises`、`GET /api/roster/current-enterprises` |
 
 - 目录存在/消失、`rddqrq` 原值、`whpcyear`/`whpc` **都不直接推出正式有效或失效**。本层不新建第二资格算法，也不写入正式事件/对应。
-- 页面与接口名称固定为「平台认定目录（镜像）」；页面描述明写「不是『当前有效企业』资格模型」。每条目录记录提供到既有 `/current-enterprises` 的**导航入口**（`q=企业名称/USCC`，仅当观察到的查询称号范围唯一时才带 `titleCode`）；这是入口，不是判定。
+- 页面与接口名称固定为「平台认定目录（镜像）」；页面不显示解释性小字，边界由标题与本文档表达。每条目录记录提供到既有 `/current-enterprises` 的**导航入口**（`q=企业名称/USCC`，仅当观察到的查询称号范围唯一时才带 `titleCode`）；这是入口，不是判定。
+- 页面不展示目录业务ID（列与筛选均已移除；外部深链仍按 `platformKey` 精确过滤一次）；不展示维护年列（真实 `whpcyear` 全为空，维护信息由原值 `whpc` 的「年-批次」承载）；表头不再带「（原值）」，详情弹窗不再显示记录身份/规则版本/内容哈希等内部说明。
 - 目录行与正式资格的对照见「三路对照」；目录读路径与旧企业平台历史的对照见「影子对照」。
 - 术语：**平台认定目录（镜像）** 指本读模型；**有效期原值** 指 `rddqrq` 原样字符串——不是认定日期，也不是精确到期日。两者见 [GLOSSARY](../GLOSSARY.md)。
 
@@ -114,7 +115,7 @@
 
 **实操记录（2026-11-04，Asia/Shanghai；集成分支 `t3/implement-spec-319` 的 `pnpm dev`，隔离临时 SQLite，经领域层写入 3 条已解析目录记录 + 缺编号/冲突隔离观察）**：
 
-- **1280px**：侧边栏「平台认定目录」可达；表格实际宽 974px、卡片内容宽 974px，页面无横向溢出（`scrollWidth-clientWidth=0`），9 列全部可见，「版本 / 观察」显示 `1 / 1` 且不裁切，「详情」列的「观察与版本」「当前有效资格」完整可点；企业关键词 `示例` 查询返回 1 条且计数同步为「共 1 条记录」；「观察与版本」打开详情，记录身份、内容版本、有效期/维护年/批次/属地、行称号原值与查询称号范围、观察表均可见。
+- **1280px**：侧边栏「平台认定目录」可达；表格与容器同宽、页面无横向溢出（`scrollWidth-clientWidth=0`），7 列（企业/有效期/维护批次/属地/称号范围/版本/详情）全部可见，「版本 / 观察」显示 `1 / 1` 且不裁切；企业关键词查询与计数同步；「观察与版本」打开详情，内容版本、有效期/批次/属地、行称号与称号范围、观察表均可见。
 - **390px**：筛选纵向排列、记录改为卡片（「观察与版本」按钮高 44px），页面无横向溢出；详情弹窗宽 358px、内部纵向滚动，标题「平台认定目录 #3 · 观察与版本」单行显示且不压住右上关闭按钮（标题 `padding-right: 32px`），观察表在弹窗内横向滚动（内容 991px / 视口 296px），关闭可用。
 - **真实消费者**：企业详情平台记录表的 `recognized_list` 行出现「本地目录记录」链接，携带 `platformKey=DIR-UI-1 / DIR-UI-2`；`/platform-queries` 认定查询卡片链接按 USCC/名称归一为 `q`，`scope:` 键不带 `q`。
 - 以上为人工操作观察，不是像素级断言；覆盖筛选、空态/失败重试、分页、详情与深链的组件用例仍见下方测试表。
@@ -126,7 +127,7 @@
 | `pnpm vitest run tests/platform-recognized-directory-http.test.ts --maxWorkers=1 --no-file-parallelism` | 公开 HTTP：筛选（企业/目录ID/称号范围/有效期原值/维护年/批次/属地）、精确原值、分页、未知值、缺编号/冲突隔离、跨接口不合并、详情 100 版本/200 观察截断、无 raw 泄露、400/404、响应体预算 |
 | `pnpm vitest run tests/platform-recognized-directory-mcp.test.ts --maxWorkers=1 --no-file-parallelism` | MCP 工具名、与 REST/领域服务同一契约、isolated 视图 |
 | `pnpm vitest run tests/platform-recognized-directory-ui.test.ts --maxWorkers=1 --no-file-parallelism` | 表格 typed 原值/冲突/当前有效导航（唯一称号范围才带 titleCode）、隔离表、详情/截断/未投影版本、`PlatformRecords` 真实消费者深链 |
-| `pnpm vitest run tests/platform-recognized-directory-page-ui.test.ts --maxWorkers=1 --no-file-parallelism` | 页面 `q`/`platformKey` 预填、筛选/视图/分页、维护年校验、空态、失败重试、`/platform-queries` 卡片深链 |
+| `pnpm vitest run tests/platform-recognized-directory-page-ui.test.ts --maxWorkers=1 --no-file-parallelism` | 页面 `q`/`platformKey` 预填、筛选/视图/分页、空态、失败重试、`/platform-queries` 卡片深链 |
 | `pnpm vitest run tests/platform-recognized-directory-shadow.test.ts --maxWorkers=1 --no-file-parallelism` | 旧企业平台历史读路径 vs 新目录读路径 |
 | `pnpm vitest run tests/platform-recognized-directory-three-way.test.ts --maxWorkers=1 --no-file-parallelism` | A/B/C 三路与四种目录变更 |
 
@@ -159,7 +160,7 @@
 
 - `GET /api/platform/recognized-directory?pageSize=5`：200，total 10,065，5 行响应 4.9KB，约 88ms；详情 200（1 版本 / 1 观察，2.2KB，约 4ms）；页面 200；MCP `tools/list` 含 `list_platform_recognized_directory` 与 `get_platform_recognized_record`；按企业 USCC 的 `current-enterprises` 查询 200（约 2.8s，走既有 off-main reader）。
 - 1280px 与 390px 真实数据页面：表格 954px 与容器同宽、无页面横向溢出；25 行/卡片正常；390px 详情弹窗 358px、标题避让关闭按钮、观察表在弹窗内横向滚动（1329px / 296px）。
-- 真实目录业务ID 为 36 位 UUID、部分 `rddqrq` 为 datetime 原值：表格按列宽折行显示，不压到相邻列（回归 `tests/platform-recognized-directory-ui.test.ts`）。
+- 真实目录业务ID 为 36 位 UUID、部分 `rddqrq` 为 datetime 原值；页面不再显示目录业务ID，datetime 有效期按列宽折行（回归 `tests/platform-recognized-directory-ui.test.ts`）。
 - **限制**：1.9GB 真实副本上的全量 `current-enterprises` 逐页读取超过 8 分钟未完成，本次资格不变性改用每称号 20 家 USCC 抽样；导出为全量真实工作簿。抽样结论不外推到未抽样企业。
 
 ## 存储与历史投影

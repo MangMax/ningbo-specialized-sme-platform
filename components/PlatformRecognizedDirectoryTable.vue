@@ -40,35 +40,27 @@ const conflictLabel: Record<string, string> = {
 <template>
   <div class="min-w-0" data-testid="platform-recognized-directory-table">
     <template v-if="view === 'records'">
-      <p class="text-muted-foreground mb-2 text-[13px] leading-5" data-testid="platform-recognized-boundary">
-        目录镜像不是当前有效资格：目录行存在、消失或日期原值都不直接推出正式有效或失效；称号范围来自原查询，不是逐行称号事实。
-      </p>
-      <p v-if="records.length" class="text-muted-foreground mb-2 text-[13px] leading-5 sm:hidden">点开「观察与版本」查看有效期原值、维护年/批次、属地与内容版本。</p>
       <div v-if="records.length" class="data-table-scroll hidden sm:block">
         <Table class="data-table min-w-[880px] table-fixed 2xl:min-w-[1160px]" aria-label="平台认定目录">
           <TableHeader>
             <TableRow class="hover:bg-transparent">
-              <TableHead class="w-[12%]">目录业务ID</TableHead>
-              <TableHead class="w-[16%]">企业</TableHead>
-              <TableHead class="w-[11%] whitespace-nowrap">有效期（原值）</TableHead>
-              <TableHead class="w-[6%] whitespace-nowrap">维护年</TableHead>
-              <TableHead class="w-[7%] whitespace-nowrap">维护批次</TableHead>
-              <TableHead class="w-[9%] whitespace-nowrap">属地（原值）</TableHead>
-              <TableHead class="w-[10%] whitespace-nowrap">称号范围</TableHead>
+              <TableHead class="w-[22%]">企业</TableHead>
+              <TableHead class="w-[14%] whitespace-nowrap">有效期</TableHead>
+              <TableHead class="w-[10%] whitespace-nowrap">维护批次</TableHead>
+              <TableHead class="w-[11%] whitespace-nowrap">属地</TableHead>
+              <TableHead class="w-[15%] whitespace-nowrap">称号范围</TableHead>
               <TableHead class="w-[10%] whitespace-nowrap">版本 / 观察</TableHead>
-              <TableHead class="sticky right-0 z-20 w-[13%] border-l bg-muted">详情</TableHead>
+              <TableHead class="sticky right-0 z-20 w-[18%] border-l bg-muted">详情</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             <TableRow v-for="row in records" :key="row.record.id" class="align-top" data-testid="platform-recognized-directory-row" :data-record-id="row.record.id">
-              <TableCell class="whitespace-normal break-all font-mono text-xs">{{ row.record.platformKey }}</TableCell>
               <TableCell class="whitespace-normal break-words [overflow-wrap:anywhere]">
                 <NuxtLink v-if="enterpriseId(row) != null" :to="`/enterprises/${enterpriseId(row)}`" class="font-medium hover:underline">{{ enterprise(row) }}</NuxtLink>
                 <span v-else class="font-medium">{{ enterprise(row) }}</span>
                 <span class="text-muted-foreground mt-1 block break-all font-mono text-xs">{{ missing(row.matchedVersion.usccRaw) }}</span>
               </TableCell>
               <TableCell class="break-all font-mono text-xs">{{ missing(row.matchedVersion.validityDateRaw) }}</TableCell>
-              <TableCell class="tabular-nums">{{ missing(row.matchedVersion.maintenanceYear) }}</TableCell>
               <TableCell class="whitespace-normal break-all font-mono text-xs">{{ missing(row.matchedVersion.maintenanceBatch) }}</TableCell>
               <TableCell class="whitespace-normal break-all font-mono text-xs">{{ missing(row.matchedVersion.district) }}</TableCell>
               <TableCell class="whitespace-normal text-xs leading-5">{{ scopes(row.titleScopes) }}</TableCell>
@@ -86,7 +78,6 @@ const conflictLabel: Record<string, string> = {
         <li v-for="row in records" :key="row.record.id" class="flex min-w-0 flex-col gap-1.5 p-3" data-testid="platform-recognized-directory-card" :data-record-id="row.record.id">
           <div class="flex items-start justify-between gap-2">
             <div class="min-w-0">
-              <p class="break-all font-mono text-xs">{{ row.record.platformKey }}</p>
               <NuxtLink v-if="enterpriseId(row) != null" :to="`/enterprises/${enterpriseId(row)}`" class="font-medium break-words hover:underline">{{ enterprise(row) }}</NuxtLink>
               <p v-else class="font-medium break-words">{{ enterprise(row) }}</p>
               <p class="text-muted-foreground break-all font-mono text-xs">{{ missing(row.matchedVersion.usccRaw) }}</p>
@@ -94,7 +85,7 @@ const conflictLabel: Record<string, string> = {
             <Button variant="outline" size="sm" class="min-h-11 shrink-0" :disabled="loading" @click="emit('open-record', row.record.id)"><History data-icon="inline-start" />观察与版本</Button>
           </div>
           <p class="font-mono text-sm leading-5">有效期 {{ missing(row.matchedVersion.validityDateRaw) }}</p>
-          <p class="text-sm leading-5">维护年 {{ missing(row.matchedVersion.maintenanceYear) }} · 批次 {{ missing(row.matchedVersion.maintenanceBatch) }} · 属地 {{ missing(row.matchedVersion.district) }}</p>
+          <p class="text-sm leading-5">批次 {{ missing(row.matchedVersion.maintenanceBatch) }} · 属地 {{ missing(row.matchedVersion.district) }}</p>
           <p class="text-sm leading-5">称号范围 {{ scopes(row.titleScopes) }}</p>
           <p class="text-muted-foreground text-sm leading-5">版本 {{ row.versionCount }} / 观察 {{ row.observationCount }}<template v-if="row.matchedVersion.ruleVersion == null"> · 尚未建立 typed 投影</template></p>
           <NuxtLink v-if="currentQuery(row).titleCode || currentQuery(row).q" :to="{ path: '/current-enterprises', query: { ...(currentQuery(row).titleCode ? { titleCode: currentQuery(row).titleCode } : {}), ...(currentQuery(row).q ? { q: currentQuery(row).q } : {}) } }" class="text-xs hover:underline" data-testid="platform-recognized-current-link">当前有效资格（既有查询）</NuxtLink>
@@ -104,7 +95,6 @@ const conflictLabel: Record<string, string> = {
     </template>
 
     <template v-else>
-      <p class="text-muted-foreground mb-2 text-[13px] leading-5" data-testid="platform-recognized-isolated-boundary">缺编号、编号冲突或内容不可核实的目录观察逐条隔离，不并入任何目录记录；点开「查看原查询」核对来源。</p>
       <div v-if="isolated.length" class="data-table-scroll hidden sm:block">
         <Table class="data-table min-w-[880px] table-fixed" aria-label="隔离的目录观察">
           <TableHeader>

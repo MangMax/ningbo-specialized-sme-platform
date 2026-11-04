@@ -64,7 +64,6 @@ describe('平台认定目录表格', () => {
     const view = mount(PlatformRecognizedDirectoryTable, { props: { view: 'records', rows: [record, conflict] }, global: { stubs } })
     try {
       const row = view.get('[data-testid="platform-recognized-directory-row"]')
-      expect(row.text()).toContain('DIR-2024-1')
       expect(row.text()).toContain('甲目录企业')
       expect(row.text()).toContain('2027-12-31')
       expect(row.text()).toContain('2024-2')
@@ -81,7 +80,6 @@ describe('平台认定目录表格', () => {
       // The row-level title never becomes the navigation title; only the observed scope does.
       const conflictLink = view.get('[data-testid="platform-recognized-directory-row"][data-record-id="8"] [data-testid="platform-recognized-current-link"]')
       expect(JSON.parse(conflictLink.attributes('data-to')!).query).toEqual({ titleCode: 'innovative_sme', q: '甲目录企业' })
-      expect(view.text()).toContain('不是当前有效资格')
     } finally { view.unmount() }
   })
 
@@ -93,21 +91,18 @@ describe('平台认定目录表格', () => {
     } finally { view.unmount() }
   })
 
-  it('keeps a real-length UUID directory key and a datetime validity value intact', () => {
-    const uuid = 'f251d3e6-fcb0-43ce-b2fb-55de9992ee45'
+  it('keeps a real datetime validity value intact and never shows the directory business id', () => {
     const realKey: RecognizedDirectoryRow = {
       ...record,
-      record: { ...record.record, platformKey: uuid },
+      record: { ...record.record, platformKey: 'f251d3e6-fcb0-43ce-b2fb-55de9992ee45' },
       matchedVersion: { ...version, validityDateRaw: '2024-03-28 10:33:22' },
     }
     const view = mount(PlatformRecognizedDirectoryTable, { props: { view: 'records', rows: [realKey] }, global: { stubs } })
     try {
-      expect(view.text()).toContain(uuid)
       expect(view.text()).toContain('2024-03-28 10:33:22')
-      // Real directory keys are 36-char UUIDs: the cell must wrap instead of
-      // inheriting the shared table's nowrap and running into the next column.
-      const keyCell = view.findAll('td').find(cell => cell.text().includes(uuid))!
-      expect(keyCell.classes()).toContain('whitespace-normal')
+      expect(view.text()).not.toContain('f251d3e6-fcb0-43ce-b2fb-55de9992ee45')
+      expect(view.text()).not.toContain('目录业务ID')
+      expect(view.text()).not.toContain('维护年')
     } finally { view.unmount() }
   })
 
@@ -203,10 +198,10 @@ describe('平台认定目录详情', () => {
       const dialog = new DOMWrapper(document.body).get('[data-testid="platform-recognized-directory-detail"]')
       expect(dialog.text()).toContain('平台认定目录 #7 · 观察与版本')
       expect(dialog.text()).toContain('版本 #12')
-      expect(dialog.text()).toContain('有效期（原值）')
+      expect(dialog.text()).toContain('有效期')
       expect(dialog.text()).toContain('2027-12-31')
-      expect(dialog.text()).toContain('行称号原值')
-      expect(dialog.text()).toContain('称号范围（查询事实）')
+      expect(dialog.text()).toContain('行称号')
+      expect(dialog.text()).toContain('称号范围')
       expect(dialog.text()).toContain('专精特新中小企业')
       expect(dialog.text()).toContain('仅显示最近 1 次')
       expect(dialog.text()).toContain('行称号与查询范围不一致')
@@ -215,7 +210,7 @@ describe('平台认定目录详情', () => {
       await dialog.findAll('button').find(button => button.text().includes('原行与对应'))!.trigger('click')
       expect(dialog.find('[data-testid="source-reader-stub"]').exists()).toBe(true)
       expect(dialog.text()).not.toContain('secretRaw')
-      expect(dialog.text()).toContain('不作为当前有效资格判定')
+      expect(dialog.text()).not.toContain('目录业务ID')
     } finally { view.unmount(); vi.unstubAllGlobals() }
   })
 
