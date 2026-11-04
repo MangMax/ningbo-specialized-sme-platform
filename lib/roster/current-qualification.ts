@@ -608,7 +608,7 @@ function createCurrentCandidateEvaluationReader(db: Database.Database, receiptRu
   } satisfies CurrentWorkbookFacts,enumerable:false})
   // One canonical assessment-group decision for both the scan projection and
   // full T2. Keep the legacy row.group unchanged for existing consumers.
-  const independent = readEnterpriseFactEffects(db, enterpriseId, executionTime)
+  const independent = readEnterpriseFactEffects(db, enterpriseId, executionTime, statement)
   if (independent) row.references.push(...independent.refs)
   const group: CurrentGroup = independent?.terminated || terminations.length ? 'excluded' : independent?.pending ? 'pending' : independent?.region === 'outside_ningbo' ? 'excluded' : row.group
   if (assessmentOptions) {

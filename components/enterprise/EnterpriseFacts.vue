@@ -23,6 +23,7 @@ async function load() {
   loading.value = true; failed.value = false
   try {
     const result = await $fetch<NonNullable<typeof data.value>>(`/api/roster/enterprises/${props.enterpriseId}/facts`)
+    if (!result || !Array.isArray(result.facts) || !Array.isArray(result.history) || typeof result.version !== 'string') throw new Error('Invalid fact readback')
     if (generation === readGeneration) data.value = result
   }
   catch { if (generation === readGeneration) failed.value = true }

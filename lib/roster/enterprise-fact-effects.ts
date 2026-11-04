@@ -1,8 +1,8 @@
 import type Database from 'better-sqlite3'
 /** Whole-consumer rollback leaves all assertion writes and audit history intact. */
-export function readEnterpriseFactEffects(db: Database.Database, enterpriseId: number, asOf: number) {
+export function readEnterpriseFactEffects(db: Database.Database, enterpriseId: number, asOf: number, prepare: (sql: string) => Database.Statement = sql => db.prepare(sql)) {
   if (process.env.ENTERPRISE_FACT_CONSUMER_SOURCE === 'legacy') return null
-  const rows = db.prepare(`select fact_id as factId,revision,status,fact,basis from enterprise_fact_revision where enterprise_id=? order by id`).all(enterpriseId) as {factId:number;revision:number;status:string;fact:string;basis:string}[]
+  const rows = prepare(`select fact_id as factId,revision,status,fact,basis from enterprise_fact_revision where enterprise_id=? order by id`).all(enterpriseId) as {factId:number;revision:number;status:string;fact:string;basis:string}[]
   if (!rows.length) return null
   const heads = new Map(rows.map(r => [r.factId,r]))
   const refs: string[] = [], locations: {kind:string;start:number;end:number}[] = []

@@ -63,6 +63,17 @@ it('retains last readback on refresh failure and retries explicitly without show
   expect(wrapper.text()).not.toContain('事实记录加载失败')
   wrapper.unmount()
 })
+it('treats malformed readback as failure while retaining the last facts', async () => {
+  vi.stubGlobal('$fetch', vi.fn().mockResolvedValueOnce(data).mockResolvedValueOnce({ writeEnabled: false }).mockResolvedValueOnce({}))
+  const wrapper = mount(EnterpriseFacts, { props: { enterpriseId: 7 } })
+  await flushPromises()
+  await wrapper.get('[data-testid="facts-refresh"]').trigger('click')
+  await flushPromises()
+  expect(wrapper.text()).toContain('事实记录加载失败')
+  expect(wrapper.text()).toContain('公告附件第2页')
+  expect(wrapper.text()).not.toContain('暂无主体事实记录')
+  wrapper.unmount()
+})
 it('preserves a fact draft and retries the identical command after uncertain commit failure', async () => {
   let commits = 0
   const requests: unknown[] = []
