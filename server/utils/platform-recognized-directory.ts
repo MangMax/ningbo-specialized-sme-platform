@@ -4,7 +4,7 @@ import * as schema from '../../db/schema'
 import { normalizeName, normalizeUscc } from '../../lib/domain'
 import { normalizePlatformRelation } from '../../lib/platform/normalization'
 import { legacyRowTitle, type PlatformObservationFact } from '../../lib/platform/observation-facts'
-import { readLegacyRelationRows } from './platform-legacy-relation-read'
+import { factBatches, legacyRelationColumns, readLegacyRelationRows } from './platform-legacy-relation-read'
 import {
   businessEnterpriseExists, enterpriseAssignments, fail, orderedScopes, pageOf, titleScopesByQuery,
 } from './platform-business-read'
@@ -371,41 +371,43 @@ export function getPlatformRecognizedRecord(db: Db, recordId: number): Recognize
   }
 }
 
-const FACT_BATCH = 400
-function factBatches(ids: number[]) {
-  const unique = [...new Set(ids)].filter(id => Number.isSafeInteger(id) && id > 0).sort((a, b) => a - b)
-  return Array.from({ length: Math.ceil(unique.length / FACT_BATCH) }, (_, i) => unique.slice(i * FACT_BATCH, (i + 1) * FACT_BATCH))
-}
-
-/** Observation facts for already scoped relations. A directory maintenance year is not a
- * process business year: `year` stays null and `maintenanceYear` is exposed separately. */
 export function readPlatformRecognizedFacts(db: Db, relationIds: number[]): Map<number, PlatformObservationFact> {
   const result = new Map<number, PlatformObservationFact>()
-  const o = schema.platformBusinessObservation, p = schema.platformRecognizedProjection
+  const o = schema.platformBusinessObservation, p = schema.platformRecognizedProjection, r = schema.platformRelation
   for (const ids of factBatches(relationIds)) {
-    const typed = db.select({ relationId: o.relationId, recordId: o.recordId, versionId: o.versionId,
-      validityDateRaw: p.validityDateRaw, maintenanceYear: p.maintenanceYear, maintenanceBatch: p.maintenanceBatch,
-      district: p.district, awardNote: p.awardNote, titleRaw: p.titleRaw, nameRaw: p.nameRaw, usccRaw: p.usccRaw })
-      .from(o).innerJoin(p, and(eq(p.versionId, o.versionId), eq(p.recordId, o.recordId)))
+    const rows = db.select({
+      relationId: o.relationId, projectionVersionId: p.versionId,
+      titleRaw: p.titleRaw, maintenanceBatch: p.maintenanceBatch, usccRaw: p.usccRaw,
+      legacy: legacyRelationColumns,
+    }).from(o)
+      .leftJoin(p, and(eq(p.versionId, o.versionId), eq(p.recordId, o.recordId)))
+      .innerJoin(r, eq(r.id, o.relationId))
       .where(inArray(o.relationId, ids)).all()
-    for (const row of typed) result.set(row.relationId, {
-      relationId: row.relationId, interface: 'recognized_list', recordId: row.recordId, versionId: row.versionId, factSource: 'typed',
-      declareKind: null, year: null, appliedAt: null, status: null, batch: row.maintenanceBatch ?? null, awardBatchLabel: null,
-      province: null, nameRaw: row.nameRaw ?? null, usccRaw: row.usccRaw ?? null, titleRaw: row.titleRaw ?? null,
-      maintenanceYear: row.maintenanceYear ?? null, validityDateRaw: row.validityDateRaw ?? null, district: row.district ?? null,
-      awardNote: row.awardNote ?? null, normalizationConflicts: [],
-    })
-    const missing = ids.filter(id => !result.has(id))
-    if (!missing.length) continue
-    for (const row of readLegacyRelationRows(db, missing)) {
-      const normalized = normalizePlatformRelation('recognized_list', row)
-      result.set(row.id, {
-        relationId: row.id, interface: 'recognized_list', recordId: null, versionId: null, factSource: 'legacy',
+    for (const row of rows) {
+      const normalized = normalizePlatformRelation('recognized_list', row.legacy)
+      result.set(row.relationId, row.projectionVersionId != null ? {
+        relationId: row.relationId, interface: 'recognized_list',
+        declareKind: null, year: normalized.year ?? null, appliedAt: null, status: normalized.status ?? null,
+        batch: row.maintenanceBatch ?? normalized.batch ?? null, awardBatchLabel: normalized.awardBatchLabel ?? null,
+        province: normalized.province ?? null, usccRaw: row.usccRaw ?? normalized.usccRaw ?? null,
+        titleRaw: row.titleRaw ?? null, normalizationConflicts: normalized.normalizationConflicts,
+      } : {
+        relationId: row.relationId, interface: 'recognized_list',
         declareKind: normalized.declareKind ?? null, year: normalized.year ?? null, appliedAt: normalized.appliedAt ?? null,
         status: normalized.status ?? null, batch: normalized.batch ?? null, awardBatchLabel: normalized.awardBatchLabel ?? null,
-        province: normalized.province ?? null, nameRaw: normalized.nameRaw ?? null, usccRaw: normalized.usccRaw ?? null,
-        titleRaw: legacyRowTitle(normalized.rawFields), maintenanceYear: null, validityDateRaw: null, district: null, awardNote: null,
-        normalizationConflicts: normalized.normalizationConflicts,
+        province: normalized.province ?? null, usccRaw: normalized.usccRaw ?? null,
+        titleRaw: legacyRowTitle(normalized.rawFields), normalizationConflicts: normalized.normalizationConflicts,
+      })
+    }
+    const missing = ids.filter(id => !result.has(id))
+    if (missing.length) for (const row of readLegacyRelationRows(db, missing)) {
+      const normalized = normalizePlatformRelation('recognized_list', row)
+      result.set(row.id, {
+        relationId: row.id, interface: 'recognized_list',
+        declareKind: normalized.declareKind ?? null, year: normalized.year ?? null, appliedAt: normalized.appliedAt ?? null,
+        status: normalized.status ?? null, batch: normalized.batch ?? null, awardBatchLabel: normalized.awardBatchLabel ?? null,
+        province: normalized.province ?? null, usccRaw: normalized.usccRaw ?? null,
+        titleRaw: legacyRowTitle(normalized.rawFields), normalizationConflicts: normalized.normalizationConflicts,
       })
     }
   }

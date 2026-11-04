@@ -18,6 +18,10 @@ export interface AnnualProcessCoverage {
 export interface AnnualProcessStep {
   id: string
   businessKey: string | null
+  /** Official original award year (`record_event.year`), also on review events. */
+  awardYear: number | null
+  /** Official review conclusion year (`record_event.decided_year`); null for awards/unknown. */
+  decisionYear: number | null
   year: number | null
   declareKind: string | null
   /** Application time, never approval/completion time. */
@@ -143,7 +147,7 @@ function buildStep(groups: PlatformBusinessGroup[]): AnnualProcessStep {
   })
   return {
     id: JSON.stringify(unique(refs.map(interfaceKey)).sort()), businessKey: refs[0]!.businessRecord.platformKey ?? refs[0]!.relationKey,
-    year, declareKind, appliedAt, status, observedAt: latest[0]?.queriedAt ?? null,
+    awardYear: null, decisionYear: null, year, declareKind, appliedAt, status, observedAt: latest[0]?.queriedAt ?? null,
     annualEligible: false, reasons: unique(reasons), groups,
     latestObservationRelationIds: latest.map(r => r.relationId), latestVersionRefs,
     preferredWriteRelationId: endpointRefs.find(r => r.interface === 'business_list' && (r.queryTitleCode ?? ({ '1': 'innovative_sme', '2': 'specialized_sme', '3': 'little_giant' } as Record<string, string>)[r.rdjb]) === r.target.titleCode)?.relationId ?? null,
@@ -180,7 +184,11 @@ export function buildAnnualProcess(input: AnnualProcessInput): EventAnnualProces
     else logical.push([...groups])
   }
   const steps = logical.map(buildStep).filter(s => businessYear == null || s.year == null || s.year === businessYear).sort((a, b) => (time(a.appliedAt) ?? Infinity) - (time(b.appliedAt) ?? Infinity) || a.id.localeCompare(b.id))
-  for (const s of steps) s.annualEligible = businessYear != null && s.year === businessYear && s.declareKind === declareKind && !s.reasons.some(r => ['identity_unknown', 'business_identity_unverified', 'stable_source_conflict'].includes(r) || r.endsWith('_conflict') && r !== 'latest_observation_conflict' && r !== 'latest_source_conflict')
+  for (const s of steps) {
+    s.awardYear = event.year
+    s.decisionYear = event.decidedYear
+    s.annualEligible = businessYear != null && s.year === businessYear && s.declareKind === declareKind && !s.reasons.some(r => ['identity_unknown', 'business_identity_unverified', 'stable_source_conflict'].includes(r) || r.endsWith('_conflict') && r !== 'latest_observation_conflict' && r !== 'latest_source_conflict')
+  }
   let latest: AnnualProcessStep | null = null
   const eligible = steps.filter(s => s.annualEligible && time(s.appliedAt) != null)
   const max = Math.max(...eligible.map(s => time(s.appliedAt)!))

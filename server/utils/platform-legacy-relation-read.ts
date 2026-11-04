@@ -1,52 +1,49 @@
-import { sql } from 'drizzle-orm'
+import { inArray, sql } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
-import type * as schema from '../../db/schema'
+import * as schema from '../../db/schema'
+import { PLATFORM_PROCESS_RAW_KEYS, platformProcessRawFromJson } from '../../lib/platform/normalization'
 
 type Db = BetterSQLite3Database<typeof schema>
+const r = schema.platformRelation
 
-export interface LegacyRelationRow {
+/** Only the seven archived process keys, never the full raw row. */
+export const legacyProcessRaw = sql`case when json_valid(${r.rawFields}) then json_extract(${r.rawFields}, ${sql.raw(PLATFORM_PROCESS_RAW_KEYS.map(key => `'$.${key}'`).join(', '))}) else null end`.mapWith(platformProcessRawFromJson)
+
+/** Stored columns and the bounded process-key projection needed by legacy normalization. */
+export const legacyRelationColumns = {
+  id: r.id, queryId: r.queryId, sequenceNo: r.sequenceNo, relationKey: r.relationKey, enterpriseId: r.enterpriseId,
+  rawFields: legacyProcessRaw, declareKind: r.declareKind, appliedAt: r.appliedAt, year: r.year,
+  province: r.province, batch: r.batch, status: r.status, awardBatchLabel: r.awardBatchLabel, usccRaw: r.usccRaw,
+}
+
+export type LegacyRelationRow = {
   id: number
   queryId: number
   sequenceNo: number
   relationKey: string | null
   enterpriseId: number | null
   rawFields: Record<string, unknown> | null
-  sourceText: string | null
-  usccRaw: string | null
-  nameRaw: string | null
-  aliasNameRaw: string | null
-  province: string | null
-  status: string | null
-  batch: string | null
   declareKind: string | null
   appliedAt: string | null
-  awardBatchLabel: string | null
   year: number | null
-  matchBasis: string
-  verificationStatus: string
+  province: string | null
+  batch: string | null
+  status: string | null
+  awardBatchLabel: string | null
+  usccRaw: string | null
 }
 
-const LEGACY_BATCH = 400
+export const FACT_BATCH = 400
 
-/** Read original rows for unprojected historical observations without asking Drizzle to
- * parse malformed legacy JSON. Malformed bytes stay unverifiable rather than crashing. */
+export function factBatches(ids: number[]) {
+  const unique = [...new Set(ids)].filter(id => Number.isSafeInteger(id) && id > 0).sort((a, b) => a - b)
+  return Array.from({ length: Math.ceil(unique.length / FACT_BATCH) }, (_, i) => unique.slice(i * FACT_BATCH, (i + 1) * FACT_BATCH))
+}
+
+/** Read unindexed original rows for legacy fallback. Raw is bounded to the seven allowlisted
+ * process keys; malformed JSON stays unverifiable instead of crashing Drizzle decoding. */
 export function readLegacyRelationRows(db: Db, relationIds: number[]): LegacyRelationRow[] {
-  const unique = [...new Set(relationIds)].filter(id => Number.isSafeInteger(id) && id > 0).sort((a, b) => a - b)
-  const rows: Array<Omit<LegacyRelationRow, 'rawFields'> & { rawFields: string | null }> = []
-  for (let i = 0; i < unique.length; i += LEGACY_BATCH) {
-    const ids = sql.join(unique.slice(i, i + LEGACY_BATCH).map(id => sql`${id}`), sql`, `)
-    rows.push(...db.all<Omit<LegacyRelationRow, 'rawFields'> & { rawFields: string | null }>(sql`
-      select id, query_id as queryId, sequence_no as sequenceNo, relation_key as relationKey,
-        enterprise_id as enterpriseId, raw_fields as rawFields, source_text as sourceText,
-        uscc_raw as usccRaw, name_raw as nameRaw, alias_name_raw as aliasNameRaw, province, status, batch,
-        declare_kind as declareKind, applied_at as appliedAt, award_batch_label as awardBatchLabel, year,
-        match_basis as matchBasis, verification_status as verificationStatus
-      from platform_relation where id in (${ids}) order by id
-    `))
-  }
-  return rows.map(row => {
-    let rawFields: Record<string, unknown> | null = null
-    try { rawFields = row.rawFields == null ? null : JSON.parse(row.rawFields) } catch { rawFields = null }
-    return { ...row, rawFields }
-  })
+  const rows: LegacyRelationRow[] = []
+  for (const ids of factBatches(relationIds)) rows.push(...db.select(legacyRelationColumns).from(r).where(inArray(r.id, ids)).orderBy(r.id).all())
+  return rows
 }

@@ -248,7 +248,7 @@ it.each(['conflicting-status', 'unknown-title'])('retains normalized archived %s
   expect(result.sourceRefs.observations.map(r => r.relationId)).toEqual([early.id, late.id])
   expect(result.process.finalCandidateStepId).toBeNull()
   if (partition === 'unknown-title') expect(result.process.scopeGaps).toMatchObject([{ relationId: late.id, reasons: ['title_scope_unknown'] }])
-  else expect(result.process.steps.flatMap(s => s.groups.flatMap(g => g.observationRefs)).find(r => r.relationId === late.id)!.evidence.process).toMatchObject({ status: '待审核', normalizationConflicts: [] })
+  else expect(result.process.steps.flatMap(s => s.groups.flatMap(g => g.observationRefs)).find(r => r.relationId === late.id)!.evidence.process).toMatchObject({ status: '待审核', normalizationConflicts: [{ field: 'status', storedValue: '终审通过', rawValue: '待审核' }] })
 })
 
 it('excludes only proven identity transcriptions while retaining unindexed unknown business gaps', () => {
@@ -284,7 +284,7 @@ it('serves identical read-only HTTP and MCP results with strict bounded paramete
   } finally { await app.close() }
 })
 
-it('matches typed facts for all seven fields and ignores legacy column drift', async () => {
+it('matches typed facts for all seven fields and keeps legacy column drift as a blocking conflict', async () => {
   const f = fixture()
   const raw = { id: 'SQ-1', sblx: '申请', sqsj: '2024-03-01 09:00:00', cszt: '终审通过', year: '2024', whpc: '2024-7', personuuid: '第三批', szsfmc: '浙江省', extra: 'not-a-process-fact' }
   const row = f.row(f.query().id, { rawFields: raw })
@@ -293,8 +293,8 @@ it('matches typed facts for all seven fields and ignores legacy column drift', a
   expect(source.evidence).toMatchObject({ process: { declareKind: 'apply', appliedAt: '2024-03-01 09:00:00', status: '终审通过', province: '浙江省', normalizationConflicts: [] }, temporal: { relationYear: 2024, relationBatch: '2024-7', awardBatchLabel: '第三批' } })
   f.db.update(schema.platformRelation).set({ status: '终审不通过' }).where(eq(schema.platformRelation.id, row.id)).run()
   const changed = f.read()
-  expect(changed.process.finalCandidateStepId).not.toBeNull()
-  expect(changed.process.steps[0]!.groups[0]!.observationRefs[0]!.evidence.process).toMatchObject({ status: '终审通过', normalizationConflicts: [] })
+  expect(changed.process.finalCandidateStepId).toBeNull()
+  expect(changed.process.steps[0]!.groups[0]!.observationRefs[0]!.evidence.process).toMatchObject({ status: '终审通过', normalizationConflicts: [{ field: 'status', storedValue: '终审不通过', rawValue: '终审通过' }] })
 })
 
 it('normalizes stored and raw synonyms through the shared seam before annual qualification', async () => {
