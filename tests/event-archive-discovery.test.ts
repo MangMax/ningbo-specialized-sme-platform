@@ -83,7 +83,16 @@ it('isolates titles in mixed recognized archives and retains verified former-nam
   const history = f.discover({ eventId: review.id }).body as any
   expect(history.total).toBe(2)
   expect(history.rows[0].evidence.process.eventType).toBe('review')
-  expect(history.rows[0].conflicts).toContain('year_mismatch')
+  expect(history.rows[0].evidence.temporal).toMatchObject({ awardYear: 2025, decisionYear: null, comparisonYear: null })
+  expect(history.rows[0].conflicts).toContain('official_decision_year_missing')
+  expect(history.rows[0].conflicts).not.toContain('year_mismatch')
+  const concluded = f.db.insert(schema.recordEvent).values({ recordId: result.event.recordId, eventType: 'review', year: 2025, batchSeq: 1, decidedYear: 2024 }).returning().get()
+  const directory = f.discover({ eventId: concluded.id }).body as any
+  expect(directory.rows[0].evidence.temporal).toMatchObject({ awardYear: 2025, decisionYear: 2024, comparisonYear: 2024, relationYear: 2022 })
+  // A recognized directory maintenance year is not a process business year, so it is never
+  // compared to the review conclusion year. The business_list real-mismatch case lives in
+  // tests/source-specific-facts-320.test.ts.
+  expect(directory.rows[0].conflicts).not.toContain('year_mismatch')
 })
 
 it('finds failed and empty queries under confirmed aliases without accepting pending names', () => {

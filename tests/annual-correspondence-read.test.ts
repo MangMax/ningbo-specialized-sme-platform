@@ -71,11 +71,13 @@ it('requires an independent new-version decision and preserves the old fingerpri
  expect(f.reconcile()).toMatchObject({status:'created',decisionRefs:[{relationId:current.relation.id}]});expect(f.db.select().from(s.recordCorrespondence).where(eq(s.recordCorrespondence.id,oldRow.id)).get()).toEqual(oldRow)
  expect(f.db.select().from(s.recordCorrespondenceAudit).all().slice(0,audit.length)).toEqual(audit)
 })
-it('does not borrow an old differing stored status even when canonical raw version is equal',()=>{
+it('ignores an old differing stored status when the typed projection has no status',()=>{
  const f=fixture(),old=f.add({status:'终审不通过',rawStatus:false});f.manual('old-raw-equal',[{action:'create',status:'confirmed',edge:{type:'event_process',eventId:f.event.id,relationId:old.relation.id,role:'context_only'}}]);const current=f.add({rawStatus:false})
  const versions=f.db.select().from(s.platformBusinessObservation).all();expect(versions[0]!.versionId).toBe(versions[1]!.versionId)
- expect(f.scope().steps[0]!.currentRelationIds).toEqual([current.relation.id]);expect(qualifyAnnualFinal(f.db,f.scope())).toMatchObject({status:'eligible',decisionRefs:[]})
- expect(f.reconcile()).toMatchObject({status:'created',decisionRefs:[{relationId:current.relation.id}]})
+ expect(f.scope().steps[0]!.currentRelationIds).toEqual([old.relation.id,current.relation.id])
+ expect(f.scope().steps[0]!.reasons).toContain('latest_status_missing')
+ expect(qualifyAnnualFinal(f.db,f.scope())).toMatchObject({stepId:null,status:'none'})
+ expect(f.reconcile()).toMatchObject({status:'existing',relationId:old.relation.id})
 })
 it('never falls back to an older confirmed pass after a later application fails',()=>{
  const f=fixture();const old=f.add({key:'OLD',appliedAt:'2024-01-01'});f.reconcile();const latest=f.add({key:'LATEST',status:'终审不通过',appliedAt:'2024-12-01'})
