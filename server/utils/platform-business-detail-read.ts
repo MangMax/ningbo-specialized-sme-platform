@@ -1,112 +1,51 @@
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
-import { sql } from 'drizzle-orm'
 import type * as schema from '../../db/schema'
 import type { RosterPlatformQueryRow } from '../../lib/roster/enterprise-roster'
-import type { PlatformDetailObservation, PlatformDetailTypedFields } from '../../lib/roster/platform-business-detail'
+import type { PlatformDetailObservation } from '../../lib/roster/platform-business-detail'
 import { groupPlatformBusinessDetails } from '../../lib/roster/platform-business-detail'
+import type { PlatformFactInterface, PlatformObservationFact } from '../../lib/platform/observation-facts'
 import { sourcePositionForSequence } from '../../lib/platform/recognized-evidence'
 import { normalizePlatformRelation } from '../../lib/platform/normalization'
 import { RDJB_TITLE_CODES } from '../../lib/platform/recognized-evidence'
 import { readPlatformBusinessGroups } from './platform-business-record-read'
+import { readPlatformObservationFacts } from './platform-source-facts'
 import { normalizeUscc } from '../../lib/domain'
 
 type Db = BetterSQLite3Database<typeof schema>
 
-interface TypedDetailRow {
-  relationId: number
-  interface: string
-  applyVersionId: number | null
-  applyRuleVersion: string | null
-  applyDeclareKind: string | null
-  applyYear: number | null
-  applyAppliedAt: string | null
-  applyStatus: string | null
-  applyNameRaw: string | null
-  applyUsccRaw: string | null
-  businessVersionId: number | null
-  businessRuleVersion: string | null
-  businessDeclareKind: string | null
-  businessYear: number | null
-  businessAppliedAt: string | null
-  businessStatus: string | null
-  businessBatch: string | null
-  businessProvince: string | null
-  businessNameRaw: string | null
-  businessUsccRaw: string | null
-  recognizedVersionId: number | null
-  recognizedRuleVersion: string | null
-  recognizedValidityDateRaw: string | null
-  recognizedMaintenanceYear: number | null
-  recognizedMaintenanceBatch: string | null
-  recognizedDistrict: string | null
-  recognizedAwardNote: string | null
-  recognizedNameRaw: string | null
-  recognizedUsccRaw: string | null
+export type PlatformDetailTypedReadSource = 'typed' | 'legacy'
+export const PLATFORM_DETAIL_TYPED_READ_ENV = 'ROSTER_ENTERPRISE_DETAIL_TYPED_READ'
+
+/** Explicit #455 slice-2 rollback. Only the exact value `legacy` disables typed fields;
+ * absent/other values keep the typed-first read. */
+export function resolvePlatformDetailTypedReadSource(explicit?: PlatformDetailTypedReadSource): PlatformDetailTypedReadSource {
+  if (explicit) return explicit
+  return process.env[PLATFORM_DETAIL_TYPED_READ_ENV] === 'legacy' ? 'legacy' : 'typed'
 }
 
-const TYPED_CHUNK_SIZE = 400
-
-/** One observation row joined to exactly its version's typed projection. No raw body,
- * canonical JSON or query condition is read here; unprojected history returns no row value. */
-function readPlatformTypedDetailFields(db: Db, relationIds: number[]) {
-  const result = new Map<number, PlatformDetailTypedFields | null>()
-  const ids = [...new Set(relationIds)].sort((a, b) => a - b)
-  for (let index = 0; index < ids.length; index += TYPED_CHUNK_SIZE) {
-    const chunk = ids.slice(index, index + TYPED_CHUNK_SIZE)
-    const rows = db.all<TypedDetailRow>(sql`
-      select o.relation_id as relationId, q.interface as interface,
-        ap.version_id as applyVersionId, ap.rule_version as applyRuleVersion,
-        ap.declare_kind as applyDeclareKind, ap.declaration_year as applyYear, ap.applied_at as applyAppliedAt,
-        ap.status as applyStatus, ap.name_raw as applyNameRaw, ap.uscc_raw as applyUsccRaw,
-        bp.version_id as businessVersionId, bp.rule_version as businessRuleVersion,
-        bp.declare_kind as businessDeclareKind, bp.business_year as businessYear, bp.applied_at as businessAppliedAt,
-        bp.status as businessStatus, bp.batch as businessBatch, bp.province as businessProvince,
-        bp.name_raw as businessNameRaw, bp.uscc_raw as businessUsccRaw,
-        rp.version_id as recognizedVersionId, rp.rule_version as recognizedRuleVersion,
-        rp.validity_date_raw as recognizedValidityDateRaw, rp.maintenance_year as recognizedMaintenanceYear,
-        rp.maintenance_batch as recognizedMaintenanceBatch, rp.district as recognizedDistrict,
-        rp.award_note as recognizedAwardNote, rp.name_raw as recognizedNameRaw, rp.uscc_raw as recognizedUsccRaw
-      from platform_business_observation o
-      join platform_relation r on r.id = o.relation_id
-      join platform_query q on q.id = r.query_id
-      left join platform_apply_projection ap on ap.version_id = o.version_id and ap.record_id = o.record_id
-      left join platform_business_projection bp on bp.version_id = o.version_id and bp.record_id = o.record_id
-      left join platform_recognized_projection rp on rp.version_id = o.version_id and rp.record_id = o.record_id
-      where o.relation_id in (${sql.join(chunk.map(id => sql`${id}`), sql`, `)})
-    `)
-    for (const row of rows) {
-      if (row.interface === 'apply_list') {
-        result.set(row.relationId, row.applyVersionId == null ? null : {
-          interface: 'apply_list', ruleVersion: row.applyRuleVersion!,
-          nameRaw: row.applyNameRaw, usccRaw: row.applyUsccRaw,
-          declareKind: row.applyDeclareKind, year: row.applyYear,
-          appliedAt: row.applyAppliedAt, status: row.applyStatus,
-        })
-      } else if (row.interface === 'business_list') {
-        result.set(row.relationId, row.businessVersionId == null ? null : {
-          interface: 'business_list', ruleVersion: row.businessRuleVersion!,
-          nameRaw: row.businessNameRaw, usccRaw: row.businessUsccRaw,
-          declareKind: row.businessDeclareKind, year: row.businessYear,
-          appliedAt: row.businessAppliedAt, status: row.businessStatus,
-          batch: row.businessBatch, province: row.businessProvince,
-        })
-      } else if (row.interface === 'recognized_list') {
-        result.set(row.relationId, row.recognizedVersionId == null ? null : {
-          interface: 'recognized_list', ruleVersion: row.recognizedRuleVersion!,
-          nameRaw: row.recognizedNameRaw, usccRaw: row.recognizedUsccRaw,
-          validityDateRaw: row.recognizedValidityDateRaw, maintenanceYear: row.recognizedMaintenanceYear,
-          maintenanceBatch: row.recognizedMaintenanceBatch, district: row.recognizedDistrict,
-          awardNote: row.recognizedAwardNote,
-        })
-      }
-    }
+/** Source-owned typed facts only. This function never reads projection tables directly:
+ * each source module owns its projection layout and returns a legacy fallback too. */
+function readPlatformDetailFacts(db: Db, queries: RosterPlatformQueryRow[], relations: (typeof schema.platformRelation.$inferSelect)[]) {
+  const byQuery = new Map(queries.map(query => [query.id, query]))
+  const byInterface = new Map<PlatformFactInterface, number[]>()
+  for (const relation of relations) {
+    const interfaceName = byQuery.get(relation.queryId)?.interface as PlatformFactInterface | undefined
+    if (!interfaceName) continue
+    const ids = byInterface.get(interfaceName) ?? []
+    ids.push(relation.id); byInterface.set(interfaceName, ids)
+  }
+  const result = new Map<number, PlatformObservationFact>()
+  for (const [interfaceName, ids] of byInterface) {
+    for (const [relationId, fact] of readPlatformObservationFacts(db, interfaceName, ids)) result.set(relationId, fact)
   }
   return result
 }
 
 /** Caller supplies only displayed enterprise-scoped archives, inside its existing read transaction. */
-export function readPlatformBusinessDetails(db: Db, enterpriseId: number, queries: RosterPlatformQueryRow[], relations: (typeof schema.platformRelation.$inferSelect)[]) {
-  const typedFields = readPlatformTypedDetailFields(db, relations.map(relation => relation.id))
+export function readPlatformBusinessDetails(db: Db, enterpriseId: number, queries: RosterPlatformQueryRow[], relations: (typeof schema.platformRelation.$inferSelect)[], options: { typedReadSource?: PlatformDetailTypedReadSource } = {}) {
+  const typedFields = resolvePlatformDetailTypedReadSource(options.typedReadSource) === 'legacy'
+    ? new Map<number, PlatformObservationFact>()
+    : readPlatformDetailFacts(db, queries, relations)
   const byQuery = new Map(queries.map(q => [q.id, q]))
   const groups = readPlatformBusinessGroups(db, relations.map(archived => {
     const query = byQuery.get(archived.queryId)!
@@ -122,6 +61,6 @@ export function readPlatformBusinessDetails(db: Db, enterpriseId: number, querie
       // Archive grouping has no event/title-role selection. Actual query title is kept above for conflicts.
       target: { eventId: null, enterpriseId, titleCode: '', type: 'archive', role: 'archive' }, evidence: {}, conflicts }
   }))
-  const observations = groups.flatMap(g => g.observationRefs).map((o): PlatformDetailObservation => ({ relationId: o.relationId, queryId: o.queryId, queriedAt: o.queriedAt, businessRecord: o.businessRecord, existingCorrespondenceIds: o.existingCorrespondenceIds, existingCorrespondences: o.existingCorrespondences, conflicts: o.conflicts, titleCode: o.titleCode, enterpriseId: o.enterpriseId, usccRaw: o.usccRaw, nameRaw: o.nameRaw, typedFields: typedFields.get(o.relationId) ?? null })).sort((a, b) => a.relationId - b.relationId)
+  const observations = groups.flatMap(g => g.observationRefs).map((o): PlatformDetailObservation => ({ relationId: o.relationId, queryId: o.queryId, queriedAt: o.queriedAt, businessRecord: o.businessRecord, existingCorrespondenceIds: o.existingCorrespondenceIds, existingCorrespondences: o.existingCorrespondences, conflicts: o.conflicts, titleCode: o.titleCode, enterpriseId: o.enterpriseId, usccRaw: o.usccRaw, nameRaw: o.nameRaw, typedFields: typedFields.get(o.relationId)?.projectionVersionId != null ? typedFields.get(o.relationId)! : null })).sort((a, b) => a.relationId - b.relationId)
   return groupPlatformBusinessDetails(observations)
 }

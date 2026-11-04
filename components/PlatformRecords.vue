@@ -8,8 +8,9 @@ import PlatformRecordDetails from './PlatformRecordDetails.vue'
 import PlatformBusinessHistory from './PlatformBusinessHistory.vue'
 import RecordSourceReader from './record-correspondence/SourceReader.vue'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
-import { platformFailureForDisplay, platformFieldValue, recognizedField, PLATFORM_HISTORY_CONFLICTS } from '~~/lib/roster/platform-records'
-import { groupPlatformBusinessDetails, hasKnownPlatformBusiness, type PlatformBusinessDetail, type PlatformDetailTypedFields } from '~~/lib/roster/platform-business-detail'
+import { platformDetailRaw, platformDetailValue, platformFailureForDisplay, recognizedField, PLATFORM_HISTORY_CONFLICTS } from '~~/lib/roster/platform-records'
+import { groupPlatformBusinessDetails, hasKnownPlatformBusiness, type PlatformBusinessDetail } from '~~/lib/roster/platform-business-detail'
+import type { PlatformFactField, PlatformObservationFact } from '~~/lib/platform/observation-facts'
 import type { PlatformRecord, PlatformRecordQuery } from '~~/lib/roster/platform-records'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
@@ -36,26 +37,18 @@ const time = (value: string) => /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : form
 const queryById = computed(() => new Map(props.queries.map(query => [query.id, query])))
 const recordById = computed(() => new Map(props.relations.map(record => [record.id, record])))
 const observationById = computed(() => new Map((props.businessRecords ?? []).flatMap(b => b.observationRefs).map(o => [o.relationId, o])))
-const typedFieldsFor = (record: { id: number }): PlatformDetailTypedFields | null => observationById.value.get(record.id)?.typedFields ?? null
-/** Typed projection wins when the source models the field; unprojected history and unmodeled
- * apply columns keep the legacy relation/raw read. A projected null stays "未提供". */
-const typedOrLegacy = (record: { id: number }, field: string) => {
-  const typed = typedFieldsFor(record) as Record<string, unknown> | null
-  return platformFieldValue(typed && Object.hasOwn(typed, field) ? typed[field] : (record as Record<string, unknown>)[field])
+const typedFieldsFor = (record: { id: number }): PlatformObservationFact | null => observationById.value.get(record.id)?.typedFields ?? null
+const typedOrLegacy = (record: { id: number }, field: PlatformFactField) => platformDetailValue(typedFieldsFor(record), field, (record as Record<string, unknown>)[field])
+const typedOrLegacyLabel = (record: { id: number }, field: PlatformFactField) => {
+  const value = platformDetailRaw(typedFieldsFor(record), field, (record as Record<string, unknown>)[field])
+  return value ? RELATION_DECLARE_KINDS[String(value)] ?? '类型待核' : '未提供'
 }
-const typedOrLegacyLabel = (record: { id: number }, field: string) => {
-  const typed = typedFieldsFor(record) as Record<string, unknown> | null
-  const value = String(typed && Object.hasOwn(typed, field) ? typed[field] ?? '' : (record as Record<string, unknown>)[field] ?? '')
-  return value ? RELATION_DECLARE_KINDS[value] ?? '类型待核' : '未提供'
-}
-const RECOGNIZED_TYPED_FIELDS: Record<string, keyof PlatformDetailTypedFields> = {
+const RECOGNIZED_TYPED_FIELDS: Record<string, PlatformFactField> = {
   szq: 'district', rdxx: 'awardNote', rddqrq: 'validityDateRaw', whpcyear: 'maintenanceYear', whpc: 'maintenanceBatch',
 }
 const recognizedColumn = (record: { id: number; rawFields?: Record<string, unknown> | null }, field: string) => {
-  const typed = typedFieldsFor(record) as Record<string, unknown> | null
   const key = RECOGNIZED_TYPED_FIELDS[field]
-  if (typed && key && Object.hasOwn(typed, key)) return platformFieldValue(typed[key])
-  return recognizedField(record.rawFields, field)
+  return key ? platformDetailValue(typedFieldsFor(record), key, recognizedField(record.rawFields, field)) : recognizedField(record.rawFields, field)
 }
 // 申报记录未带称号时，仅以相同编号的唯一关联称号作展示筛选，不是权威称号事实。
 const rows = computed(() => props.relations.map(record => {

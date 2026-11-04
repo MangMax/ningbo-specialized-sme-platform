@@ -128,6 +128,17 @@ it('typed and legacy readers are identical on the same projected input across co
   expect(witnessOf(typed, seeded.b.enterprise.id)).toEqual(witnessOf(legacy, seeded.b.enterprise.id))
 })
 
+it('the operational env rollback selects the legacy reader without a code option', () => {
+  const { db, matrix } = setup()
+  seedShadow(db, matrix)
+  vi.stubEnv('ROSTER_RECOGNIZED_FILTER_SOURCE', 'legacy')
+  try {
+    const viaEnv = listCurrentQualified(db.$client, { titleCode: 'innovative_sme', validYear: 2028 })
+    const explicit = list(db, { titleCode: 'innovative_sme', validYear: 2028 }, 'legacy')
+    expect(strip(viaEnv)).toEqual(strip(explicit))
+  } finally { vi.unstubAllEnvs() }
+})
+
 it('a present typed projection is authoritative when its source field is null; it never falls back to raw', () => {
   const { db, matrix } = setup()
   const enterprise = matrix.formal('空投影字段', [{ eventType: 'award', year: 2026, decidedYear: 2026, batchSeq: 1 }], { uscc: '91330211TYPED4684' })
