@@ -1,3 +1,5 @@
+import { readPlatformObservationFacts } from '../server/utils/platform-source-facts'
+import type { PlatformObservationFact } from './platform/observation-facts'
 import { sourcePositionForSequence } from './platform/recognized-evidence'
 import { normalizePlatformRelation, type PlatformNormalizationConflict } from './platform/normalization'
 /**
@@ -139,6 +141,15 @@ function normUscc(uscc: string | null | undefined): string | null {
 export function attachPlatformEvidence<T extends RowKey>(
   rows: T[],
   db: BetterSQLite3Database<typeof schema>,
+  options: { source?: 'typed' | 'legacy' } = {},
+): (T & { platform: ComparisonPlatformEvidence })[] {
+  return db.transaction(tx => attachPlatformEvidenceSnapshot(rows, tx as typeof db, options))
+}
+
+function attachPlatformEvidenceSnapshot<T extends RowKey>(
+  rows: T[],
+  db: BetterSQLite3Database<typeof schema>,
+  options: { source?: 'typed' | 'legacy' } = {},
 ): (T & { platform: ComparisonPlatformEvidence })[] {
   const enterpriseIds = [...new Set(rows.map((row) => row.enterpriseId))]
   if (!enterpriseIds.length) return []
@@ -208,6 +219,16 @@ export function attachPlatformEvidence<T extends RowKey>(
     ))
     .orderBy(schema.platformRelation.queryId, schema.platformRelation.sequenceNo).all()
 
+  // Only this consumer is rolled back; detail/candidate readers keep their own switches.
+  const source = options.source ?? (process.env.ROSTER_COMPARISON_TYPED_READ === 'legacy' ? 'legacy' : 'typed')
+  const facts = new Map<number, PlatformObservationFact>()
+  if (source === 'typed') {
+    for (const interfaceName of ['apply_list', 'business_list', 'recognized_list'] as const) {
+      const queryIds = new Set(queries.filter(q => q.interface === interfaceName).map(q => q.id))
+      for (const [id, fact] of readPlatformObservationFacts(db, interfaceName, relationRows.filter(r => queryIds.has(r.queryId)).map(r => r.id))) facts.set(id, fact)
+    }
+  }
+
   const aliasesByEnterprise = new Map<number, ComparisonAlias[]>()
   for (const alias of aliases) {
     const item: ComparisonAlias = {
@@ -229,6 +250,16 @@ export function attachPlatformEvidence<T extends RowKey>(
   const toRelation = (archived: typeof schema.platformRelation.$inferSelect): ComparisonRelation => {
     const query = queryById.get(archived.queryId)
     const row = normalizePlatformRelation(query?.interface ?? '', archived)
+    const fact = facts.get(archived.id)
+    if (fact?.projectionVersionId != null) {
+      // Source-owned fields replace only modeled columns. Preserve archive IDs, raw,
+      // ownership, and unmodeled fields; conflicts keep their existing unknown value.
+      for (const field of ['nameRaw', 'usccRaw', 'declareKind', 'year', 'appliedAt', 'status', 'batch', 'awardBatchLabel', 'province'] as const) {
+        if (fact.modeledFields.includes(field) && !row.normalizationConflicts.some(c => c.field === field)) {
+          Object.assign(row, { [field]: fact[field] })
+        }
+      }
+    }
     return {
       ...(query?.interface === 'recognized_list' ? { enterpriseId: row.enterpriseId } : {}),
       normalizationConflicts: row.normalizationConflicts,

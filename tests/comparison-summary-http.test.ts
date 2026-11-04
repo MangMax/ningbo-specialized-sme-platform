@@ -288,3 +288,31 @@ it('preserves failed coverage and withdrawn decisions in the bounded list assess
   expect(result.rows.find((row: { name: string }) => row.name === names[1]).assessment).toMatchObject({ assessment: 'withdrawn', explanationValidity: { status: 'not_applicable' } })
   for (const name of names.slice(2)) expect(result.rows.find((row: { name: string }) => row.name === name).assessment.queryCoverage.status).toBe('not_queried')
 })
+
+
+it('473 same SQLite snapshot full HTTP shadow preserves pagination filters evidence IDs and states', async () => {
+  const { ensurePlatformObservation } = await import('../server/utils/platform-business-record')
+  const { platformRelation, platformQuery } = await import('../db/schema')
+  // Archive bootstrap deliberately precedes the read-only public HTTP shadow.
+  for (const [index, source] of ['apply_list', 'business_list', 'recognized_list'].entries()) {
+    const query = db.insert(platformQuery).values({ interface: source, queryKey: uscc, rdjb: '2', queriedAt: '2026-11-01T00:00:00Z', status: 'success' }).returning().get()
+    db.insert(platformRelation).values({ queryId: query.id, sequenceNo: 1, relationKey: `473-${index}`, enterpriseId: alphaId, nameRaw: 'Alpha企业', usccRaw: uscc,
+      matchBasis: 'uscc', verificationStatus: 'confirmed', rawFields: { id: `473-${index}`, qymc: 'Alpha企业', tyshxydm: uscc, cszt: '上游新状态', sblx: '申请', year: '2024', whpc: '2024-1' } }).run()
+  }
+  for (const r of db.select().from(platformRelation).all()) ensurePlatformObservation(db, r.id)
+  const before = db.$client.prepare('select total_changes() n').get()
+  db.$client.pragma('query_only=ON')
+  try {
+    for (const query of ['', '?pageSize=1&page=2', '?title=specialized_sme', '?q=Alpha', '?district=镇海区', '?direction=missing_in_miit', '?q=不存在', '?q=Legacy统代企业']) {
+      vi.stubEnv('ROSTER_COMPARISON_TYPED_READ', 'legacy')
+      const legacy = await get(query)
+      vi.stubEnv('ROSTER_COMPARISON_TYPED_READ', 'typed')
+      const typed = await get(query)
+      expect(typed).toEqual(legacy)
+    }
+    expect(db.$client.prepare('select total_changes() n').get()).toEqual(before)
+  } finally {
+    db.$client.pragma('query_only=OFF')
+    vi.unstubAllEnvs()
+  }
+})

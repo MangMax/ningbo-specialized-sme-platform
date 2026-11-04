@@ -311,3 +311,20 @@ describe('attachPlatformEvidence:状态、原因、措施照库原样带出', ()
     expect(row.platform!.relationCount).toBe(0)
   })
 })
+
+
+it('comparison typed read uses source projection and explicit legacy rollback preserves archived evidence', async () => {
+  const { ensurePlatformObservation } = await import('../server/utils/platform-business-record')
+  const relation = db.select().from(schema.platformRelation).all()[0]!
+  db.$client.prepare('update platform_relation set raw_fields=? where id=?').run(JSON.stringify({ id: relation.relationKey, cszt: '终审通过' }), relation.id)
+  ensurePlatformObservation(db, relation.id)
+  // A typed projection is authoritative; independent literal also detects an inert switch.
+  db.$client.prepare("update platform_business_projection set status = '投影状态'").run()
+  const input = [{ enterpriseId: withEvidence, titleCode: 'specialized_sme', direction: 'extra_in_miit' as const }]
+  const typed = attachPlatformEvidence(input, db)
+  const legacy = attachPlatformEvidence(input, db, { source: 'legacy' })
+  expect(typed[0]!.platform.queries[0]!.relations[0]!.status).toBe('投影状态')
+  expect(legacy[0]!.platform.queries[0]!.relations[0]!.status).toBe('终审通过')
+  expect(typed[0]!.platform.disposition).toEqual(legacy[0]!.platform.disposition)
+  expect(typed[0]!.platform.queries[0]!.relations.map(r => r.id)).toEqual(legacy[0]!.platform.queries[0]!.relations.map(r => r.id))
+})
