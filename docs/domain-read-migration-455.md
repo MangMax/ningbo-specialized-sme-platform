@@ -33,7 +33,7 @@
 | 3 | 正式公布（原值/事件/导入追加/更正归并/历史详情导出） | **由 #303 承载（部分已切）** | #303 OPEN；#355/#356 已合入 | 详情/正式来源/当前查询/当前工作簿读 `official_evidence_row_revision`；旧同步导出/台账仍读 `record/event/evidence` | 旧 record/event/evidence 字段与深链保留；新投影 additive |
 | 4 | 企业主体（资料/断言维护/迁移事实/维护页/差异/资格/技能） | **由 #306/#307 承载（未开始）** | #306、#307 OPEN | `difference_reason` 的 `moved_in/moved_out/deregistered` 与 `moved_in_*` 列；资料/别名走既有 PATCH | 旧 head、movedIn 列、审计与别名 ID 保留 |
 | 5 | 对应与年度（候选/确认/驳回/解除/全过程/final/proof） | **已切换（#320）** | #320 CLOSED，合入 `81a50de0` | `readPlatformObservationFacts` → 三来源 typed 读；未投影历史走 bounded legacy fallback | `useSourceFacts=false` 对照入口 + 旧 relation 原值保留 |
-| 6 | 当前资格与导出（周期/优质中小企业 HTTP/MCP/页面/三称号工作簿） | **由 #468 承载（复合：资格见证+四消费者已切；候选 SQL 未切）** | #468 OPEN；`7b1164b8`；候选 SQL 明确未切 | recognized typed 筛选见证 + 同一评估器；候选枚举仍 `currentCandidateSql` 旧 union | `ROSTER_RECOGNIZED_FILTER_SOURCE=legacy` 或内部 option；旧 relation/query/响应版本保留；**#468 不得因本行关闭** |
+| 6 | 当前资格与导出（周期/优质中小企业 HTTP/MCP/页面/三称号工作簿） | **由 #468 承载（复合：资格见证已切，HTTP/MCP/页面消费 typed；工作簿决策面不变；候选 SQL 未切）** | #468 OPEN；`7b1164b8`；候选 SQL 明确未切 | recognized typed 筛选见证 + 同一评估器；工作簿只消费分组/列，不消费筛选见证；候选枚举仍 `currentCandidateSql` 旧 union | `ROSTER_RECOGNIZED_FILTER_SOURCE=legacy` 或内部 option；旧 relation/query/响应版本保留；**#468 不得因本行关闭** |
 | 7 | 文件内容（内容/依赖/恢复/上传页/预览/出处/备份恢复） | **由 #311/#312 承载（未开始）** | #311、#312 OPEN | `stored_file`/`stored_file_part`/路径字符串；软移出 + `deleteDisk=1` | 旧 file ID/path/bytes/sha256 可读；物理删除字节不可恢复是 #312 缺口 |
 | 8 | OCR与解析（采集/校对/解析各拥有输入输出版本） | **已切换（#308/#309/#310）** | 三票 CLOSED | `ocr_result` 页版本（`id:revision`）+ 解析 `inputRef`/`expectedVersion` | 旧解析输入依据 unknown；旧读取接口与载荷保留 |
 | 9 | 后台任务（runner 外壳 + 各 kind 本义摘要） | **由 #314 承载（未开始）** | #314 OPEN；#313 已 CLOSED | `job.params/result/progress` JSON + `task-center-http.ts` 的 `json_extract` 投影 | 旧 job 行、取消/重试、历史 checkpoint 保留 |
@@ -60,11 +60,11 @@
 
 #### 1b 企业详情 — 已切换（#455 slice 2 / `3207f0e4`）
 
-- **读取链**：`GET /api/roster/enterprises/{id}` → `getRosterEnterpriseDetail`（`lib/roster/enterprise-roster.ts:1123`）→ `readPlatformBusinessDetails`（`server/utils/platform-business-detail-read.ts:108`）→ `readPlatformTypedDetailFields`（同文件 `:51`）。
-- **typed 读取**：按观察 `relationId` → `platform_business_observation.(version_id, record_id)` LEFT JOIN 三张来源投影，只读业务列；展示 `components/PlatformRecords.vue`、`components/PlatformBusinessHistory.vue` 优先 typed。
+- **读取链**：`GET /api/roster/enterprises/{id}` → `getRosterEnterpriseDetail`（`lib/roster/enterprise-roster.ts:1123`）→ `readPlatformBusinessDetails`（`server/utils/platform-business-detail-read.ts`）→ 来源专用事实接缝 `readPlatformObservationFacts`（`server/utils/platform-source-facts.ts`）。详情读取本身不写投影表布局。
+- **typed 读取**：按 query interface 分组 relation，调用三个来源模块自己的 fact reader；`PlatformObservationFact.modeledFields` 决定哪些字段由 typed 拥有。展示 `components/PlatformRecords.vue`、`components/PlatformBusinessHistory.vue` 优先 typed。
 - **仍未切的部分**：行集合、`relationId/queryId/versionId`、企业归属、分组、对应决定、冲突标记仍由旧 `platform_query`/`platform_relation` 与 `normalizePlatformRelation` 提供；typed 只替换业务字段。这是「企业详情面的字段读切换」，不是整组平台三业务切换。
 - **已批准差异**：投影存在但字段为 null 时展示「未提供」，不从 `raw_fields`/导入列/查询条件/批次/时间补猜；投影未建模字段（如 apply 的 `batch/province`）回退旧 relation 列。详见 `docs/platform-enterprise-detail-typed-switch.md`。
-- **回退**：无观察映射（`not_indexed/missing_key/conflict/unverifiable`）或历史版本无投影 → `typedFields=null`，全部字段回退 `normalizePlatformRelation`/`rawFields`；旧 `queries`/`relations`/`businessRecords` 均保留。
+- **回退**：无观察映射（`not_indexed/missing_key/conflict/unverifiable`）或历史版本无投影 → `typedFields=null`，全部字段回退 `normalizePlatformRelation`/`rawFields`；另可用 `ROSTER_ENTERPRISE_DETAIL_TYPED_READ=legacy` 或 `readPlatformBusinessDetails(..., {typedReadSource:'legacy'})` 整体回退；旧 `queries`/`relations`/`businessRecords` 均保留。
 - **证据**：`tests/enterprise-detail-typed-read-455.test.ts`、`tests/enterprise-detail-typed-ui-455.test.ts`；本提交 §7 重跑通过。
 
 #### 1c 企业列表/对比页/差异列表 — 本阶段不切
@@ -92,7 +92,7 @@
 
 #### 第 1 组整体回退
 
-- 1b：`typedFields=null` 即回退旧字段；旧 relation/query/`normalizePlatformRelation` 保留。
+- 1b：`typedFields=null` 即回退旧字段；另可 `ROSTER_ENTERPRISE_DETAIL_TYPED_READ=legacy` 整体回退；旧 relation/query/`normalizePlatformRelation` 保留。
 - 1c/1d：旧 reader 原样保留，不引入新决定 writer；后续若要切，必须另开票并补同输入对照。
 - 1a：typed 页面 additive；旧企业详情/原档读取仍可定位同一 query/relation ID。
 
@@ -181,13 +181,13 @@
 
 ### 第 6 组：当前资格与导出（周期/优质中小企业 HTTP/MCP/页面/三称号工作簿）
 
-**状态：由 #468 承载（复合：资格见证+四消费者已切；候选 SQL 未切）；#468 仍 OPEN。** 不得写成整组已切换，也不得关闭 #468。
+**状态：由 #468 承载（复合：资格见证已切，HTTP/MCP/页面消费 typed；工作簿决策面不变；候选 SQL 未切）；#468 仍 OPEN。** 不得写成整组已切换，也不得关闭 #468。
 
 - **owner / 稳定接缝**：`current-qualification` + `current-candidates` + `current-workbook`；HTTP/MCP/页面/异步工作簿必须同一资格规则。
 - **已切换的子面（`7b1164b8`）**
   - 资格见证：`lib/roster/recognized-filter-source.ts` 的 `recognizedFilterSourceSql`/`createRecognizedFilterSourceReader`；内容事实按 `platform_business_observation.relation_id` → `version_id` → `platform_recognized_projection` 读 `validity_date_raw/maintenance_year/maintenance_batch`。查询级 facts（`pages`/`effectiveConditions`/`status`/`completeness`/`fullRange`/`rdjb`）仍读 `platform_query.collection_evidence`，typed 不伪造这些字段。
-  - 四消费者共用同一评估器：HTTP `server/api/roster/current-enterprises.get.ts:63` → `enterpriseReads.currentQualifiedJson`；MCP `server/mcp/tools/list_current_qualified_enterprises.ts:14`；页面 `pages/current-enterprises.vue`（只消费 HTTP）；异步工作簿 `lib/roster/current-workbook.ts:69,103,110`。
-  - 证据：`tests/current-qualified-recognized-typed-468.test.ts`（5/5；影子对照 13 组筛选/分页、null 投影不回退、未投影回退、trim 差异、HTTP+MCP+工作簿同读者）；本提交 §7 重跑通过。
+  - 四个入口共用同一评估器：HTTP `server/api/roster/current-enterprises.get.ts:63` → `enterpriseReads.currentQualifiedJson`；MCP `server/mcp/tools/list_current_qualified_enterprises.ts:14`；页面 `pages/current-enterprises.vue`（只消费 HTTP）；异步工作簿 `lib/roster/current-workbook.ts:69,103,110`。HTTP/MCP/页面消费 typed 筛选见证；工作簿只消费正式分组/列，不消费筛选见证。
+  - 证据：`tests/current-qualified-recognized-typed-468.test.ts`（6/6；影子对照 13 组筛选/分页、null 投影不回退、未投影回退、trim 差异、env legacy 回退、HTTP+MCP+工作簿同评估器）；本提交 §7 重跑通过。
 - **未切的子面：候选枚举**
   - `lib/roster/current-candidates.ts:6 currentCandidateSql` 仍 union `record`/`difference_reason`/`record_correspondence`/`platform_relation`；`lib/roster/current-workbook.ts:71,92` 与 `lib/roster/current-qualified-query.ts:108` 仍使用该候选 SQL。
   - 原因：`tests/current-candidate-covering-index-363.test.ts` 的 C04 冻结了 `currentCandidateSql` 的字节与 sha256；投影与观察都以 `platform_relation` 为根，按 relation union 的候选集合不会因投影存在/缺失而增减；若改为 observation/projection 优先，必须单独处理 C04、行数不变与未投影历史行证明。
@@ -348,7 +348,7 @@
 | 1 | #455 slice 2 `3207f0e4`（已完成）；#453/#458/#462（CLOSED） | 1a/1b 已切；1c/1d 本阶段不切（见 §3.8） |
 | 3 | #303 OPEN；#302 OPEN；#349–#351、#355/#356 CLOSED | 详情/来源/当前查询/工作簿部分已切；同步导出/台账/归并快照未切 |
 | 4 | #306、#307 OPEN | 未开始；独立主体事实未建立 |
-| 6 | #468 OPEN；`7b1164b8` | 资格见证+四消费者已切；候选 SQL 未切 |
+| 6 | #468 OPEN；`7b1164b8` | 资格见证已切；HTTP/MCP/页面消费 typed；工作簿决策面不变；候选 SQL 未切 |
 | 7 | #311、#312 OPEN | 未开始 |
 | 9 | #314 OPEN；#313 CLOSED | 未开始；阻塞已解除 |
 | 10 | #315 OPEN | 未开始 |
@@ -368,14 +368,14 @@
 - [x] 旧 `queryId/relationId/sequenceNo`、`record/event/evidence`、`exportBatchId/exportRowId`、`correspondenceId/proofId`、`jobId/batchId/receiptId`、文件 ID、深链全部保留。
 - [x] 旧 raw、canonical、hash、sourceFingerprint、revision、审计、回执不被重写或删除。
 - [x] 未投影/未映射历史明确标 `unknown/not_indexed/unverifiable`，不从当前值倒填；typed 投影 additive。
-- [x] 已切组均有回退：第 5 组 `useSourceFacts=false`；第 8 组旧接口/旧输入 unknown；第 1b `typedFields=null` 回退旧字段；第 6 组 `ROSTER_RECOGNIZED_FILTER_SOURCE=legacy` 或内部 option；第 1a 旧企业详情/原档读取保留。
+- [x] 已切组均有回退：第 5 组 `useSourceFacts=false`；第 8 组旧接口/旧输入 unknown；第 1b `typedFields=null` 回退旧字段，且 `ROSTER_ENTERPRISE_DETAIL_TYPED_READ=legacy` 或内部 option 可整体回退；第 6 组 `ROSTER_RECOGNIZED_FILTER_SOURCE=legacy` 或内部 option；第 1a 旧企业详情/原档读取保留。
 - [x] 回退不依赖「恢复旧 DB 抹掉新提交」；新提交/回执/审计在回退后仍可读。
 - [x] 删除旧表/旧列/旧接口只在 contract 阶段、有实际停用证明与独立授权后进行；本阶段不做。
 
 ### 3.6 不把「开票」写成「已切换」
 
 - #302/#303/#306/#307/#311/#312/#314/#315/#316/#321/#324 均 OPEN；「已登记/已开票/部分完成」不等于「已切换」。
-- #468 仍 OPEN；本文件只登记「资格见证+四消费者已切、候选 SQL 未切」，**不关闭 #468**。
+- #468 仍 OPEN；本文件只登记「资格见证已切、HTTP/MCP/页面消费 typed、工作簿决策面不变、候选 SQL 未切」，**不关闭 #468**。
 - 第 14 组 #324 的验收尚未执行，不能把「验收已登记」写成「验收通过」。
 - 第 1c/1d 没有承载票，不能写成「由某票承载」已完成；只能写「本阶段不切」。
 
@@ -388,7 +388,7 @@
 | 本阶段不切 | 2 | 2、12 |
 | **合计** | **14** | — |
 
-- 其中第 1 组是复合承载：1a/1b 已切，1c/1d 本阶段不切；第 6 组是复合承载：资格见证+四消费者已切，候选 SQL 未切（#468 OPEN）。
+- 其中第 1 组是复合承载：1a/1b 已切，1c/1d 本阶段不切；第 6 组是复合承载：资格见证已切，HTTP/MCP/页面消费 typed，工作簿决策面不变，候选 SQL 未切（#468 OPEN）。
 - 因此「已切换」整组只有 2 组；不得把复合组的已切子面累加成「14 组已切换」。
 
 ### 3.8 剩余未切清单（逐条）
@@ -420,7 +420,7 @@
 |---|---|---|---|---|
 | 1 | #455 slice 1 / 本文件 | **已完成** | `7a56e3e3`；本文件 14 组登记 | 只登记，不写生产代码 |
 | 2 | #455 slice 2 / 企业详情 | **已完成** | `3207f0e4`；`docs/platform-enterprise-detail-typed-switch.md`；`tests/enterprise-detail-typed-*-455.test.ts` | 仅 1b 企业详情的 typed 字段；1c/1d 仍未切 |
-| 3 | #468 | **部分完成** | `7b1164b8`；`docs/current-qualification-typed-read-468.md`；`tests/current-qualified-recognized-typed-468.test.ts` | 资格见证+四消费者已切；候选 SQL 未切；**#468 仍 OPEN** |
+| 3 | #468 | **部分完成** | `7b1164b8`；`docs/current-qualification-typed-read-468.md`；`tests/current-qualified-recognized-typed-468.test.ts` | 资格见证已切；HTTP/MCP/页面消费 typed；工作簿决策面不变；候选 SQL 未切；**#468 仍 OPEN** |
 | 4 | #455 slice 4 / 本提交 | **本提交完成（文档）** | 本提交；本文件 §3 完成定义 + §3.8 剩余清单 | 其余组切换或显式登记；slice 4 不写生产代码 |
 
 - slice 1/2 已完成；slice 3 是「部分完成」，不得写成整组已切，也不得关闭 #468。
@@ -490,24 +490,27 @@ rg -n "import_receipt|import_batch|platform_export_batch|snapshot" lib server db
 本提交实际运行：
 
 ```bash
-pnpm vitest run tests/enterprise-detail-typed-read-455.test.ts tests/enterprise-detail-typed-ui-455.test.ts tests/current-qualified-recognized-typed-468.test.ts tests/current-qualified-408.test.ts tests/platform-recognized-projection-http.test.ts tests/platform-recognized-directory-three-way.test.ts --maxWorkers=1 --no-file-parallelism
+pnpm vitest run tests/enterprise-detail-typed-read-455.test.ts tests/enterprise-detail-typed-ui-455.test.ts tests/platform-business-detail.test.ts tests/platform-business-history-ui.test.ts tests/enterprise-read-http.test.ts tests/source-specific-facts-320.test.ts tests/current-qualified-recognized-typed-468.test.ts tests/current-qualified-408.test.ts tests/platform-recognized-projection-http.test.ts tests/platform-recognized-directory-three-way.test.ts tests/platform-business-record-candidates.test.ts --maxWorkers=1 --no-file-parallelism
 pnpm typecheck
 ```
 
 结果：
 
-- vitest：**6 个测试文件、117 个测试全部通过**（exit 0，7.53s）。分文件：`current-qualified-408` 87、`platform-recognized-projection-http` 12、`platform-recognized-directory-three-way` 4、`current-qualified-recognized-typed-468` 5、`enterprise-detail-typed-read-455` 6、`enterprise-detail-typed-ui-455` 3。
-- `enterprise-detail-typed-ui-455` 的 stderr 是测试环境未注册 `NuxtLink` 的 Vue 警告，不是测试失败。
+- vitest：**14 个测试文件、301 个测试全部通过**（exit 0）。覆盖 `current-qualified-408`、`current-qualified-recognized-typed-468`、`platform-recognized-projection-http`、`platform-recognized-directory-three-way`、`enterprise-detail-typed-read-455`、`enterprise-detail-typed-ui-455`、`platform-business-detail`、`platform-business-history-ui`、`enterprise-read-http`、`source-specific-facts-320`、`platform-business-record-candidates`、`platform-comparison-reader`、`platform-comparison-source-http`、`event-annual-process-read`。
+- `enterprise-detail-typed-ui-455`/`platform-business-history-ui` 的 stderr 是测试环境未注册 `NuxtLink` 的 Vue 警告，不是测试失败。
 - `pnpm typecheck`：**exit 0**（`nuxt typecheck`）。
-- 该运行只验证上述接缝的定向回归，不是 14 组迁移的 fresh 验收，也不是全量套件。
+- 人工 UI（隔离 `/tmp/455-ui/roster.db`，dev `:3210`，2026-11-04）：
+  - 企业详情 1280px：展开「平台记录」后已认定企业列表显示 `330203 / 界面验收原认定说明 / 2028-06-01 / 未提供 / 2023-2`；页面 `scrollWidth=clientWidth`，无横向溢出。390px：`innerWidth=390`，页面 `scrollWidth-clientWidth=0`，表格容器 `overflow-x: auto`（内容 960px），同一行 typed 值可读。
+  - `/current-enterprises?titleCode=innovative_sme&validYear=2028&maintenanceYear=2023` 1280px 与 390px：均显示 1 家「宁波界面演示企业」、有效年份 2028、维护年份 2023，页面无横向溢出。
+- 该运行只验证上述接缝的定向回归与两条手工页面路径，不是 14 组迁移的 fresh 验收，也不是全量套件。
 
 ### 7.2 UNRUN / 未验证项
 
 以下均 **UNRUN**，不得在后续报告中写成已通过：
 
 - 未连接生产/活动 DB、WAL、原始文件或生产服务；未做真实副本影子对照。
-- 未做桌面与 390px 页面实操/像素断言；未做真实浏览器布局验收。
-- 未做异步导出下载后的独立工作簿解析重跑；未跑完整 HTTP/MCP 组合、任务/导出组合。
+- 已做企业详情与当前有效查询的 1280/390px 手工路径（见 §7.1）；未做全站像素断言或所有筛选/弹窗交互的组合验收。
+- 未做异步导出下载后的独立工作簿解析重跑；`current-export-118-http` 覆盖真实异步下载/四表，新测试独立解析写入器产物，但两者未在同一用例里串成一次端到端。未跑完整 HTTP/MCP 组合、任务/导出组合。
 - 未跑全量套件、`build`、性能对照或 CI。
 - 未验证 PostgreSQL、部署、回滚或备份恢复；#324 的执行回执不存在。
 - 未验证 #468 候选 SQL 的等价性；C04 仍冻结 `currentCandidateSql` 字节/hash，本文件只登记未切，不关闭 #468。

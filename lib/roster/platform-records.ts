@@ -1,4 +1,5 @@
 import type { RosterPlatformQueryRow, RosterPlatformRelationRow } from './enterprise-roster'
+import type { PlatformFactField, PlatformObservationFact } from '../platform/observation-facts'
 
 export type PlatformRecordQuery = RosterPlatformQueryRow
 export type PlatformRecord = RosterPlatformRelationRow & { aliasNameRaw?: string | null }
@@ -46,6 +47,16 @@ export function platformFieldValue(value: unknown): string {
 }
 export function recognizedField(raw: Record<string, unknown> | null | undefined, field: string): string {
   return platformFieldValue(raw?.[field])
+}
+
+/** One rule for "source-owned typed field wins only when this source models it"; otherwise
+ * the legacy relation/raw column is used. A modeled null stays "未提供" (never backfilled). */
+export function platformDetailValue(typed: PlatformObservationFact | null | undefined, field: PlatformFactField, legacy: unknown): string {
+  return platformFieldValue(platformDetailRaw(typed, field, legacy))
+}
+
+export function platformDetailRaw(typed: PlatformObservationFact | null | undefined, field: PlatformFactField, legacy: unknown): unknown {
+  return typed?.modeledFields.includes(field) ? (typed as unknown as Record<string, unknown>)[field] : legacy
 }
 export function platformBusinessFields(raw: Record<string, unknown> | null | undefined) {
   return Object.entries(raw ?? {}).filter(([key, value]) =>

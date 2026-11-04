@@ -1,35 +1,15 @@
 import type { PlatformBusinessMetadata, PlatformBusinessObservationRef, PlatformCorrespondenceRef } from '../platform/business-record'
+import type { PlatformObservationFact } from '../platform/observation-facts'
 import { normalizeName, normalizeUscc } from '../domain'
-
-/** Source-specific typed projection values for one observation's content version.
- * `null` typedFields means the historical observation has no typed row and readers keep
- * the legacy normalizePlatformRelation path. A present object with a null field means the
- * archived source field is empty/unknown and must not be backfilled from raw or import columns.
- * Fields missing from the object are not modeled by that source projection (for example
- * apply_list has no batch/province column), so display keeps the legacy column. */
-export interface PlatformDetailTypedFields {
-  interface: 'apply_list' | 'business_list' | 'recognized_list'
-  ruleVersion: string
-  nameRaw: string | null
-  usccRaw: string | null
-  declareKind?: string | null
-  year?: number | null
-  appliedAt?: string | null
-  status?: string | null
-  batch?: string | null
-  province?: string | null
-  validityDateRaw?: string | null
-  maintenanceYear?: number | null
-  maintenanceBatch?: string | null
-  district?: string | null
-  awardNote?: string | null
-}
 
 /** Lightweight archive references. No raw body or derived authoritative decision. */
 export type PlatformDetailObservation = Pick<PlatformBusinessObservationRef,
   'relationId' | 'queryId' | 'queriedAt' | 'businessRecord' | 'existingCorrespondenceIds' | 'existingCorrespondences' | 'conflicts' | 'titleCode' | 'enterpriseId' | 'usccRaw' | 'nameRaw'> & {
-  /** Keyed by relationId but sourced from its versionId; null for unprojected history. */
-  typedFields?: PlatformDetailTypedFields | null
+  /** Source-owned typed fact for this observation's content version. `null` means the
+   * historical observation has no projection and display must fall back to the legacy
+   * relation/raw columns. A present fact's `modeledFields` is authoritative: a modeled
+   * field set to null means the archived source value is unknown and must not be backfilled. */
+  typedFields?: PlatformObservationFact | null
 }
 export interface PlatformDetailVersion {
   businessRecord: PlatformBusinessMetadata

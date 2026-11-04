@@ -34,12 +34,14 @@ it('recognized columns prefer typed projection values, keep projected nulls empt
   const query: PlatformRecordQuery = { id: 60, interface: 'recognized_list', queryKey: 'SYN455', rdjb: '2', queriedAt: '2026-10-01T00:00:00Z', status: 'success', relationCount: 3, failureReason: null }
   const typed = ref(100, 60, 'recognized_list', 1, 11, {
     interface: 'recognized_list', ruleVersion: 'platform-recognized-v1',
+    modeledFields: ['nameRaw', 'usccRaw', 'validityDateRaw', 'maintenanceYear', 'maintenanceBatch', 'district', 'awardNote', 'titleRaw'],
     nameRaw: 'typed-name', usccRaw: 'typed-uscc', validityDateRaw: '2030-01-01', maintenanceYear: 2025,
     maintenanceBatch: '2025-2', district: 'typed-district', awardNote: 'typed-note',
   })
   const legacy = ref(101, 60, 'recognized_list', 2, 12, null)
   const empty = ref(102, 60, 'recognized_list', 3, 13, {
     interface: 'recognized_list', ruleVersion: 'platform-recognized-v1',
+    modeledFields: ['nameRaw', 'usccRaw', 'validityDateRaw', 'maintenanceYear', 'maintenanceBatch', 'district', 'awardNote', 'titleRaw'],
     nameRaw: null, usccRaw: null, validityDateRaw: null, maintenanceYear: null,
     maintenanceBatch: null, district: null, awardNote: null,
   })
@@ -69,12 +71,14 @@ it('process columns prefer typed fields, keep unmodeled apply columns on the leg
   const applyQuery: PlatformRecordQuery = { id: 62, interface: 'apply_list', queryKey: 'SYN455', rdjb: '2', queriedAt: '2026-10-02T00:00:00Z', status: 'success', relationCount: 1, failureReason: null }
   const typedBusiness = ref(200, 61, 'business_list', 20, 21, {
     interface: 'business_list', ruleVersion: 'platform-business-v1',
+    modeledFields: ['declareKind', 'year', 'appliedAt', 'status', 'batch', 'awardBatchLabel', 'province', 'nameRaw', 'usccRaw'],
     nameRaw: 'typed-name', usccRaw: 'typed-uscc', declareKind: 'review', year: 2025,
     appliedAt: '2030-02-02', status: 'typed-status', batch: 'typed-batch', province: 'typed-province',
   })
   const legacyBusiness = ref(201, 61, 'business_list', 21, 22, null)
   const typedApply = ref(202, 62, 'apply_list', 22, 23, {
     interface: 'apply_list', ruleVersion: 'platform-apply-v1',
+    modeledFields: ['declareKind', 'year', 'appliedAt', 'status', 'nameRaw', 'usccRaw'],
     nameRaw: 'typed-apply-name', usccRaw: 'typed-apply-uscc', declareKind: 'apply', year: 2025,
     appliedAt: '2031-03-03', status: 'typed-apply-status',
   })
@@ -98,11 +102,13 @@ it('observation history prefers typed name/uscc and keeps projected nulls empty 
   const query: PlatformRecordQuery = { id: 63, interface: 'business_list', queryKey: 'SYN455', rdjb: '2', queriedAt: '2026-10-01T00:00:00Z', status: 'success', relationCount: 2, failureReason: null }
   const typedRef = ref(300, 63, 'business_list', 30, 31, {
     interface: 'business_list', ruleVersion: 'platform-business-v1',
+    modeledFields: ['declareKind', 'year', 'appliedAt', 'status', 'batch', 'awardBatchLabel', 'province', 'nameRaw', 'usccRaw'],
     nameRaw: 'typed-history-name', usccRaw: 'typed-history-uscc', declareKind: 'apply', year: 2025,
     appliedAt: '2025-01-01', status: '已受理', batch: '2025-1', province: '浙江省',
   })
   const emptyRef = ref(301, 63, 'business_list', 30, 31, {
     interface: 'business_list', ruleVersion: 'platform-business-v1',
+    modeledFields: ['declareKind', 'year', 'appliedAt', 'status', 'batch', 'awardBatchLabel', 'province', 'nameRaw', 'usccRaw'],
     nameRaw: null, usccRaw: null, declareKind: null, year: null,
     appliedAt: null, status: null, batch: null, province: null,
   })
