@@ -1807,6 +1807,134 @@ defineRouteMeta({
     "officialEvidencePlanHash": {
       "type": "string",
       "pattern": "^[a-f0-9]{64}$"
+    },
+    "aliases": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "enterpriseName": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "uscc": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "type": "string"
+          },
+          "sourceKind": {
+            "type": "string",
+            "enum": [
+              "platform_business",
+              "platform_apply",
+              "announcement",
+              "manual"
+            ]
+          },
+          "sourceRefId": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "sourceRelationRef": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "interface": {
+                    "type": "string",
+                    "enum": [
+                      "business_list",
+                      "apply_list",
+                      "recognized_list"
+                    ]
+                  },
+                  "queryKey": {
+                    "type": "string"
+                  },
+                  "rdjb": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "queriedAt": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "sequenceNo": {
+                    "type": "number",
+                    "minimum": 1
+                  },
+                  "relationKey": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  }
+                },
+                "required": [
+                  "interface",
+                  "queryKey",
+                  "sequenceNo"
+                ],
+                "additionalProperties": {}
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "verificationStatus": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "confirmed",
+                  "pending",
+                  "withdrawn"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "validFrom": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "validTo": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "note": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "name",
+          "sourceKind"
+        ],
+        "additionalProperties": {}
+      },
+      "description": "企业别名证据；uscc 或 enterpriseName 定位已有或本批企业，sourceRefId 与 sourceRelationRef 不可同时给。confirmed 平台别名须有匹配主体及别名的原关系证据。旧字段归一化、缺失/null、附加字段与逐项错误由原导入核心处理。"
     }
   },
   "additionalProperties": true

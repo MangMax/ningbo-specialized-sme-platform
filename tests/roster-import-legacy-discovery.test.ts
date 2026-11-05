@@ -1,0 +1,34 @@
+import { readFileSync } from 'node:fs'
+import { describe, expect, it } from 'vitest'
+import { z } from 'zod'
+import { rosterImportMcpPayloadSchema } from '../server/utils/roster-import-schema'
+
+function payloads() {
+  return [z.toJSONSchema(rosterImportMcpPayloadSchema, { io: 'input' }), ...['preflight', 'commit'].map(action => {
+    const source = readFileSync(new URL(`../server/api/roster/import/${action}.post.ts`, import.meta.url), 'utf8')
+    return JSON.parse(source.match(/payload: (\{\n[\s\S]*?\n\}),/)![1]!)
+  })] as any[]
+}
+
+describe('legacy alias import discovery', () => {
+  it('discovers alias required facts and natural relation identity independently on both transports', () => {
+    for (const payload of payloads()) {
+      const aliases = payload.properties.aliases
+      expect(aliases.type).toBe('array')
+      expect(aliases.minItems).toBeUndefined()
+      expect(aliases.maxItems).toBeUndefined()
+      const alias = aliases.items
+      expect(alias.required).toEqual(['name', 'sourceKind'])
+      expect(alias.properties.sourceKind.enum).toEqual(['platform_business', 'platform_apply', 'announcement', 'manual'])
+      expect(alias.properties.verificationStatus.anyOf[0].enum).toEqual(['confirmed', 'pending', 'withdrawn'])
+      expect(alias.properties.sourceRelationRef.anyOf[0].required).toEqual(['interface', 'queryKey', 'sequenceNo'])
+      expect(Object.keys(alias.properties)).toEqual(expect.arrayContaining(['enterpriseName', 'uscc', 'sourceRefId', 'sourceRelationRef', 'validFrom', 'validTo', 'note']))
+      expect(payload.required ?? []).not.toContain('aliases')
+    }
+  })
+
+  it.each([null, false, {}, [], [null], [{ name: '  旧名  ', sourceKind: 'unknown', sourceRefId: 2.9, verificationStatus: null, extra: { raw: null } }]])('keeps legacy alias values unchanged for core validation', aliases => {
+    const payload = { aliases, unrelated: { raw: null } }
+    expect(rosterImportMcpPayloadSchema.parse(payload)).toEqual(payload)
+  })
+})
