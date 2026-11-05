@@ -1,3 +1,4 @@
+import { initializeDb } from '../db/client'
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { mkdtempSync, rmSync } from 'node:fs'
@@ -12,7 +13,7 @@ import { EMPTY_APPLY_RESPONSE, platformFixture } from './helpers/platform-replay
 const dir = mkdtempSync(join(tmpdir(), 'cookie-credentials-'))
 let db: ReturnType<typeof useDb>
 let sequence = 0
-beforeEach(() => { db = useDb({ dbPath: join(dir, `${sequence++}.sqlite`) }) })
+beforeEach(() => { db = initializeDb({ create: true, dbPath: join(dir, `${sequence++}.sqlite`) }) })
 afterEach(() => db.$client.close())
 afterAll(() => rmSync(dir, { recursive: true, force: true }))
 const context = () => ({ db, env: {} })
