@@ -1,5 +1,8 @@
+import { useDb } from '@db'
+import { readStoredFileContentIdentity } from '../../utils/file-content-identity'
+import { verifyFileRead, verifyPageRead } from '../../utils/file-read-identity'
 import { createReadStream, statSync } from 'node:fs'
-import { extname, join, normalize, resolve, sep } from 'node:path'
+import { extname, normalize, resolve, sep } from 'node:path'
 import { resolvePreviewKind } from '../../../lib/preview'
 import { resolveInsideRoot } from '../../utils/stored-files'
 
@@ -65,12 +68,13 @@ defineRouteMeta({
       400: { description: '缺路径。' },
       403: { description: '路径越界。' },
       404: { description: '文件不存在 / 不是文件。' },
+      409: { description: 'file_content_conflict: 登记身份与磁盘内容不同。' },
       415: { description: '扩展名不在预览白名单内。' },
     },
   },
 })
 
-export default defineEventHandler((event) => {
+export default defineEventHandler(async (event) => {
   const raw = getRouterParam(event, 'path') ?? getRouterParam(event, 'id')
   if (!raw) {
     throw createError({ statusCode: 400, statusMessage: '缺少文件路径' })
@@ -78,7 +82,14 @@ export default defineEventHandler((event) => {
 
   // 路由参数可能是数组(带斜杠的路径),拼回一条相对路径。
   const requested = Array.isArray(raw) ? raw.join('/') : raw
-  const decoded = decodeURIComponent(requested)
+  let decoded = decodeURIComponent(requested)
+  const db = useDb()
+  // Numeric IDs are unambiguous: supported source filenames require an extension.
+  if (/^[1-9]\d*$/.test(decoded)) {
+    const registered = readStoredFileContentIdentity(db, Number(decoded))
+    if (!registered) throw createError({ statusCode: 404, message: '文件不存在' })
+    decoded = registered.relPath
+  }
 
   const root = filesRoot()
   const abs = resolveInsideRoot(root, normalize(decoded))
@@ -108,6 +119,17 @@ export default defineEventHandler((event) => {
     throw createError({ statusCode: 404, statusMessage: '不是一个文件' })
   }
 
+  const pageSource = /^((?:[^/]+\/)*)\.([^/]+\.pdf)\.pages\/p\d+\.png$/i.exec(decoded)
+  const identity = pageSource
+    ? await verifyPageRead(db, root, `${pageSource[1]}${pageSource[2]}`, decoded)
+    : await verifyFileRead(db, root, decoded)
+  setHeader(event, 'x-file-content-status', identity.status)
+  setHeader(event, 'x-file-historical-identity', identity.historical)
+  if (identity.registered) {
+    setHeader(event, 'x-file-id', String(identity.registered.fileId))
+    setHeader(event, 'x-file-sha256', identity.registered.sha256)
+  }
+
   const text = info.kind === 'markdown' || info.kind === 'text'
   // HTML and scripts are downloadable source, never executable same-origin documents.
   setHeader(event, 'content-type', text ? 'text/plain; charset=utf-8' : MIME[ext] ?? 'application/octet-stream')
@@ -115,8 +137,8 @@ export default defineEventHandler((event) => {
     setHeader(event, 'x-content-type-options', 'nosniff')
     setHeader(event, 'content-security-policy', "default-src 'none'; sandbox")
   }
-  // 来源文件不会变,可以放心长缓存;预览器重复打开时不必再走一次磁盘。
-  setHeader(event, 'cache-control', 'private, max-age=3600')
+  // Mutable locators must return through identity verification on every read.
+  setHeader(event, 'cache-control', 'private, no-store')
   // 文件名里常有中文与书名号,统一按 UTF-8 编码。
   setHeader(
     event,
