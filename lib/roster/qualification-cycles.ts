@@ -50,7 +50,7 @@ function cycleFacts(events: QualificationEvent[], ambiguous: QualificationEvent[
   }
   // A known failure date survives uncertain batch applicability. It is still a
   // temporal witness for cross-cycle recovery, even when this cycle has a gap.
-  const failureYears = [...events,...ambiguous].filter(e => e.eventType === 'review' && e.reviewOutcome === 'failed' && hasUsableTime(e,originYear,year)).map(e => e.decidedYear!)
+  const failureYears = [...events,...ambiguous].filter(e => e.eventType === 'review' && e.reviewOutcome === 'failed' && (!day || !e.formalValidity?.publishedOn || e.formalValidity.publishedOn <= day) && hasUsableTime(e,originYear,year)).map(e => e.decidedYear!)
   return {awards,passed,failed,gaps,failureYears,lastAward:latestFact(awards),lastPassed:latestFact(passed),lastFailure:latestFact(failed)}
 }
 
@@ -94,7 +94,7 @@ function adjudicateCycle(events: QualificationEvent[], originYear: number, batch
     // Undated legacy receipts and planning retain their historical rules.
     const dueYear = anchor ? factTime(anchor)! + 3 : null
     const fact = day ? anchor?.formalValidity : undefined
-    const futureReviewGrace = day && anchor?.eventType === 'award' && events.some(e => e.eventType === 'review' && e.formalValidity?.continuation === 'until_this_review_results' && e.formalValidity.publishedOn && day < e.formalValidity.publishedOn && e.formalValidity.originAwardEventId === anchor.id)
+    const futureReviewGrace = day && anchor && events.some(e => e.eventType === 'review' && e.formalValidity?.continuation === 'until_this_review_results' && e.formalValidity.publishedOn && day < e.formalValidity.publishedOn && facts.awards.some(a => a.id === e.formalValidity!.originAwardEventId))
     if (futureReviewGrace && !fact?.interval) result.group='eligible'
     else if (day && fact?.interval) {
       if (fact.interval.validFrom <= day && day <= fact.interval.validThrough) result.group='eligible'
