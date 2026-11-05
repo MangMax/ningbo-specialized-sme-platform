@@ -66,3 +66,7 @@ it('effective mode accepts passed review without origin coordinates but never un
  expect(adjudicateQualificationCycles([e],2026,'2026-11-05',true).group).toBe(outcome==='passed'?'eligible':'excluded')
  }
 })
+it('effective failure priority starts at publication rather than the unpublished decision year', () => {
+  const next = { ...review(2,2026,'failed'), formalValidity: { ...source, publishedOn: '2026-09-01', continuation: 'until_this_review_results' as const, originAwardEventId: 1 } }
+  expect(['2026-08-31','2026-09-01'].map(day => adjudicateQualificationCycles([award,next],2026,day,true).group)).toEqual(['eligible','excluded'])
+})

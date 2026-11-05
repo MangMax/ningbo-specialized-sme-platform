@@ -180,7 +180,7 @@ export function adjudicateQualificationCycles(formal: QualificationEvent[], year
   // dates and already partitioned older cycles, never a renewal's anchor year.
   if (hasUnresolvedRecovery(current,judgments)) { group='pending'; notes.push('同年认定恢复与旧周期失败结论顺序冲突，待确认') }
   if (notesOnlyGaps) {
-    const applicable = formal.filter(e => factTime(e) != null && factTime(e)! <= year)
+    const applicable = formal.filter(e => factTime(e) != null && factTime(e)! <= year && (!day || !e.formalValidity?.publishedOn || e.formalValidity.publishedOn <= day))
     const lastFailure = Math.max(...applicable.filter(e => e.eventType === 'review' && e.reviewOutcome === 'failed').map(e => factTime(e)!))
     const lastRecovery = Math.max(...applicable.filter(e => e.eventType === 'award' || e.reviewOutcome === 'passed').map(e => factTime(e)!))
     if (lastFailure >= lastRecovery && lastFailure !== -Infinity) { group='excluded'; notes.push('正式复核明确不通过，未见较晚通过或新认定恢复') }
