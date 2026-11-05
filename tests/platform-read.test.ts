@@ -1,3 +1,4 @@
+import { initializeDb } from '../db/client'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -6,7 +7,7 @@ import { schema, useDb } from '../db'
 import { listPlatformQueries } from '../lib/platform/read'
 
 const dir = mkdtempSync(join(tmpdir(), 'spztx-platform-read-'))
-const db = useDb({ dbPath: join(dir, 'read.db') })
+const db = initializeDb({ create: true, dbPath: join(dir, 'read.db') })
 
 const USCC = '91330211255994457P'
 const OTHER_USCC = '91330211000000009W'
