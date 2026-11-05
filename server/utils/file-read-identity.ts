@@ -1,3 +1,4 @@
+import { createError } from 'h3'
 import { stat } from 'node:fs/promises'
 import { relative } from 'node:path'
 import { eq } from 'drizzle-orm'

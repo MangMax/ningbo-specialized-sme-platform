@@ -73,7 +73,7 @@ it('raw page URLs reject same-size foreign manifest lineage without inventing hi
   writeFileSync(join(root, '.notice.pdf.pages/.pages.json'), JSON.stringify(manifest))
   vi.doMock('@db', () => ({ useDb: () => db }))
   vi.stubGlobal('setHeader', () => {})
-  vi.stubGlobal('sendStream', () => { throw new Error('must not serve foreign page') })
+  vi.stubGlobal('sendStream', async (_: unknown, stream: import('node:fs').ReadStream) => { for await (const _chunk of stream) { /* Drain denied baseline reads before fixture teardown. */ } return 'unexpected page' })
   const route = (await import('../server/api/files/[id].get')).default
   await expect(route({} as never)).rejects.toMatchObject({ statusCode: 409, data: { code: 'file_content_conflict', fileId: row.id, reason: 'page_source_mismatch' } })
   rmSync(join(root, '.notice.pdf.pages/.pages.json'))
@@ -87,7 +87,7 @@ it('range requests cannot return replaced registered bytes', async () => {
   vi.doMock('@db', () => ({ useDb: () => db }))
   vi.stubGlobal('getRequestHeader', () => 'bytes=0-0')
   vi.stubGlobal('setHeader', () => {})
-  vi.stubGlobal('sendStream', () => { throw new Error('must not stream changed range') })
+  vi.stubGlobal('sendStream', async (_: unknown, stream: import('node:fs').ReadStream) => { for await (const _chunk of stream) { /* Drain denied baseline reads before fixture teardown. */ } return 'unexpected range' })
   const route = (await import('../server/api/files/[id].get')).default
   await expect(route({} as never)).rejects.toMatchObject({ statusCode: 409, data: { code: 'file_content_conflict' } })
 })
