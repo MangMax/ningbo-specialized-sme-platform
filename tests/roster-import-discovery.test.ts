@@ -14,7 +14,7 @@ describe('roster import announcement discovery', () => {
   it('discovers announcement records, event vocabulary and published source identity', () => {
     const announcement = discovery.properties!.announcement as any
     expect(announcement.required).toEqual(['sourceDocument', 'records'])
-    expect(announcement.additionalProperties).toBe(true)
+    expect(announcement.additionalProperties).toEqual({})
     expect(announcement.properties.sourceDocument.properties.source.enum).toEqual(['jxj', 'miit'])
     const record = announcement.properties.records.items
     expect(record.required).toEqual(['enterprise', 'titleCode'])
@@ -28,7 +28,7 @@ describe('roster import announcement discovery', () => {
     const published = evidence.properties.publishedRow
     expect(published.additionalProperties).toBe(false)
     expect(published.required).toEqual(expect.arrayContaining(['nameRaw', 'declaration', 'sourceBindingKnown', 'actor', 'basis']))
-    expect(published.properties.declaration.anyOf.map((branch: any) => branch.properties.kind.const)).toEqual(['existing', 'independent'])
+    expect(published.properties.declaration.oneOf.map((branch: any) => branch.properties.kind.const)).toEqual(['existing', 'independent'])
     expect(discovery.required ?? []).not.toContain('announcement')
   })
 

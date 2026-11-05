@@ -37,7 +37,7 @@ it('preserves legacy HTTP item errors, numeric normalization and idempotent rece
     expect(readImportBatchOutcome(db, envelope.idempotencyKey)).toMatchObject({ status: 'committed', items: saved.items, summary: saved.summary })
     const enterprises = listEnterprises(db, { q: '发现模型测试企业' })
     expect(enterprises.rows).toHaveLength(1)
-    const detail = getRosterEnterpriseDetail(db, enterprises.rows[0]!.id)!
+    const detail = getRosterEnterpriseDetail(db, enterprises.rows[0]!.enterpriseId)!
     expect(detail.events).toEqual([expect.objectContaining({ eventType: 'award', year: 2021, decidedYear: null })])
 
     const invalid = { announcement: { ...payload.announcement, records: [{ ...payload.announcement.records[0], titleCode: 'not-a-title' }] } }
