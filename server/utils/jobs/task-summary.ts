@@ -39,6 +39,7 @@ export async function summarize(row: ProjectedTask, authorized: boolean, db: Db,
   const { reconcile, reconcileCollection } = readReconcileSummary(row)
   const annual = readAnnualSummary(row)
   const links: TaskSummary['links'] = []
+  if (row.kind === 'difference-snapshot') links.push({label:'快照范围、计数与未完成位置',to:`/api/roster/difference-snapshots/${row.id}`})
   if (annual) links.push({ label: '年度任务详情与重试资格', to: `/api/roster/annual-correspondence-tasks/${row.id}` })
   links.push(...readOcrLinks(row))
   if (group === 'platform') links.push({ label: '平台查询证据', to: '/platform-queries' }, { label: '比对与核查入口', to: '/comparison' })
