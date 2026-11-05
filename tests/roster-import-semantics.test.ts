@@ -1,3 +1,4 @@
+import { initializeDb } from '../db/client'
 /**
  * RL-18 —— **写入语义**的逐字回归：改「怎么找既有行」不许改「找到之后做什么」。
  *
@@ -123,7 +124,7 @@ const dirs: string[] = []
 function makeDb() {
   const dir = mkdtempSync(join(tmpdir(), 'spztx-roster-sem-'))
   dirs.push(dir)
-  return useDb({ dbPath: join(dir, 'roster.db') })
+  return initializeDb({ create: true, dbPath: join(dir, 'roster.db') })
 }
 
 afterAll(() => {

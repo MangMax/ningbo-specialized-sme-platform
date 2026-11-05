@@ -78,12 +78,12 @@ if (!existsSync(dbPath)) {
   process.exit(2)
 }
 
-const { useDb } = await import('../db/client.ts')
+const { initializeDb } = await import('../db/client.ts')
 const { listRosterDifferences } = await import('../lib/roster/enterprise-roster.ts')
 const { DIFFERENCE_REASONS, DIFFERENCE_STATUSES, TITLES, TITLE_ORDER } = await import('../lib/labels.ts')
 const { MAX_PAGE_SIZE } = await import('../lib/query.ts')
 
-const db = useDb({ dbPath })
+const db = initializeDb({ dbPath })
 
 /** 分页取完 —— `listRosterDifferences` 与 HTTP 端点同样受 `MAX_PAGE_SIZE` 约束。 */
 function allDifferenceRows() {

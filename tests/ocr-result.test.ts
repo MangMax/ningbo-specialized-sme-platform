@@ -170,7 +170,7 @@ beforeAll(async () => {
   dir = mkdtempSync(join(tmpdir(), 'spztx-ocr-'))
   process.env.NUXT_DB_PATH = join(dir, 'test.db')
   const mod = await import('../db')
-  db = mod.useDb()
+  db = mod.initializeDb({ create: true })
   schema = mod.schema
 })
 

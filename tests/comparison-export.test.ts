@@ -1,3 +1,4 @@
+import { initializeDb } from '../db/client'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -13,7 +14,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { schema, useDb } from '../db'
 
 const dir = mkdtempSync(join(tmpdir(), 'spztx-comparison-export-'))
-const db = useDb({ dbPath: join(dir, 'test.db') })
+const db = initializeDb({ create: true, dbPath: join(dir, 'test.db') })
 vi.doMock('@db', async (importOriginal) => ({
   ...(await importOriginal<object>()),
   useDb: () => db,

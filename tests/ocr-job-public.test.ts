@@ -1,3 +1,4 @@
+import { initializeDb } from '../db/client'
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -14,7 +15,7 @@ it('公开任务 HTTP 受文件级背压约束,完成结果经 OCR REST/MCP 原�
   const dbPath = join(dir, 'synthetic.sqlite')
   const filesDir = join(dir, 'files')
   mkdirSync(filesDir)
-  const db = useDb({ dbPath })
+  const db = initializeDb({ create: true, dbPath })
   const files = ['甲.pdf', '乙.pdf', '丙.pdf']
   const ids: number[] = []
   let child: ReturnType<typeof spawn> | undefined

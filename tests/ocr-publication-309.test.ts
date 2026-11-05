@@ -1,3 +1,4 @@
+import { initializeDb } from '../db/client'
 import { createHash } from 'node:crypto'
 import { createServer } from 'node:http'
 import { spawn, type ChildProcess } from 'node:child_process'
@@ -29,7 +30,7 @@ const dir = mkdtempSync(join(tmpdir(), 'issue309-public-'))
 const filesDir = join(dir, 'files')
 mkdirSync(filesDir)
 const dbPath = join(dir, 'synthetic.sqlite')
-const db = useDb({ dbPath })
+const db = initializeDb({ create: true, dbPath })
 let server: ReturnType<typeof createServer>, base: string
 let api: Awaited<ReturnType<typeof startMiniOcrApi>> | undefined
 let gate: (() => void) | undefined

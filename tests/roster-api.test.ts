@@ -1,3 +1,4 @@
+import { initializeDb } from '../db/client'
 import { decodeJsonRead } from './helpers/json-read-adapter'
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -22,7 +23,7 @@ import { schema, useDb } from '../db'
  */
 
 const dir = mkdtempSync(join(tmpdir(), 'spztx-roster-api-'))
-const db = useDb({ dbPath: join(dir, 'api.db') })
+const db = initializeDb({ create: true, dbPath: join(dir, 'api.db') })
 
 const USCC = '91330211AAAAAAA001X'
 let enterpriseId = 0

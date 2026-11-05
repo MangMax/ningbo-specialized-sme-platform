@@ -1,3 +1,4 @@
+import { initializeDb } from '../db/client'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -11,7 +12,7 @@ vi.mock('@nuxtjs/mcp-toolkit/server', () => ({ defineMcpTool: (tool: unknown) =>
 const dir = mkdtempSync(join(tmpdir(), 'business-processes-mcp-'))
 const dbPath = join(dir, 'business.sqlite')
 vi.stubEnv('NUXT_DB_PATH', dbPath)
-const db = useDb({ dbPath })
+const db = initializeDb({ create: true, dbPath })
 let listTool: typeof import('../server/mcp/tools/list_platform_business_processes').default
 let detailTool: typeof import('../server/mcp/tools/get_platform_business_process').default
 let recordId = 0

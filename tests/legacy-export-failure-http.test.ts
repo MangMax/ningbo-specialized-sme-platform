@@ -1,3 +1,4 @@
+import { initializeDb } from '../db/client'
 import { createServer, type Server } from 'node:http'
 import { randomBytes } from 'node:crypto'
 import { Writable } from 'node:stream'
@@ -37,7 +38,7 @@ vi.mock('node:fs', async (original) => {
   }
 })
 const dir = mkdtempSync(join(tmpdir(), 'legacy-export-failure-'))
-const db = useDb({ dbPath: join(dir, 'empty.db') })
+const db = initializeDb({ create: true, dbPath: join(dir, 'empty.db') })
 vi.doMock('@db', () => ({ useDb: () => db }))
 let server: Server
 let baseUrl: string

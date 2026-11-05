@@ -1,3 +1,4 @@
+import { initializeDb } from '../db/client'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -9,7 +10,7 @@ import { readPlatformBusinessDetails } from '../server/utils/platform-business-d
 import { getPlatformBusinessProcess, listPlatformBusinessProcesses } from '../server/utils/platform-business-processes'
 
 const dir = mkdtempSync(join(tmpdir(), 'business-processes-shadow-'))
-const db = useDb({ dbPath: join(dir, 'shadow.sqlite') })
+const db = initializeDb({ create: true, dbPath: join(dir, 'shadow.sqlite') })
 afterAll(() => { db.$client.close(); rmSync(dir, { recursive: true, force: true }) })
 
 function seedBusiness(queryKey: string, queryRdbj: string, time: string, raw: Record<string, unknown>, scopes: string[], relationKey: string | null = typeof raw.id === 'string' ? raw.id : null) {

@@ -1,3 +1,4 @@
+import { initializeDb } from '../db/client'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -13,7 +14,7 @@ import { startRosterApi } from './helpers/roster-http-server'
 import { startHttpFixture, type HttpFixture } from './helpers/http-fixture'
 
 const dir = mkdtempSync(join(tmpdir(), 'platform-normalization-'))
-const db = useDb({ dbPath: join(dir, 'test.sqlite') })
+const db = initializeDb({ create: true, dbPath: join(dir, 'test.sqlite') })
 const uscc = '91330211000000001A'
 const enterpriseId = db.insert(schema.enterprise).values({ name: '归一化测试企业', nameNorm: '归一化测试企业', usccNorm: uscc }).returning().get().id
 const queryId = db.insert(schema.platformQuery).values({ interface: 'business_list', queryKey: uscc, rdjb: '1', queriedAt: '2026-10-18T10:10:07.888Z', status: 'success', rawResponse: '原始响应 🙂\n' }).returning().get().id

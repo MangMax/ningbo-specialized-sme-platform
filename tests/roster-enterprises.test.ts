@@ -1,3 +1,4 @@
+import { initializeDb } from '../db/client'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -25,7 +26,7 @@ import { startRosterApi, type RosterApiServer } from './helpers/roster-http-serv
  */
 
 const dir = mkdtempSync(join(tmpdir(), 'spztx-roster-read-'))
-const db = useDb({ dbPath: join(dir, 'roster.db') })
+const db = initializeDb({ create: true, dbPath: join(dir, 'roster.db') })
 const TOKEN = 'roster-read-test-token'
 
 /** 企业 id 按 key 记下来,断言用 key 而不是裸数字。 */

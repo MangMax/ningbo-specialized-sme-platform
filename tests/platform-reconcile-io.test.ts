@@ -1,3 +1,4 @@
+import { initializeDb } from '../db/client'
 /**
  * 平台实查的**取数纪律** —— 并发上限、退避重试、会话过期、凭据缺失、新鲜复用。
  *
@@ -24,7 +25,7 @@ const connections: ReturnType<typeof useDb>[] = []
 function freshDb() {
   const dir = mkdtempSync(join(tmpdir(), 'spztx-reconcile-io-'))
   dirs.push(dir)
-  const db = useDb({ dbPath: join(dir, 'io.db') })
+  const db = initializeDb({ create: true, dbPath: join(dir, 'io.db') })
   connections.push(db)
   return db
 }

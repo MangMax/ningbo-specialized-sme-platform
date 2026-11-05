@@ -98,7 +98,7 @@
 - 实时平台操作遵循[平台查询说明](./platform-query.md)。独立查询通过应用 REST/MCP 单查或批量提交，按稳定 itemId 路由，不用名称/代码或数组顺序代替。检查失败后只重试未完成 itemId/页，保留已完成分段、行与时间。应用在批量、单查、旧入口和退避中全局最多并发两个请求；调查者数量与平台请求额度分别控制。
 - 超时、会话过期、HTTP 200 登录页、分页不全属于失败/部分证据，不是零记录。保留准确查询及分页边界。
 - 统一导入整批全成或全败。被拒绝后保留 OCR、纠偏、查证产物，修复报错项，再用相同来源、相同幂等键重试；当前提交契约允许失败批次同键重试。
-- 提交响应丢失时，若当前契约提供回执查询，先按原幂等键查询。当前公开 REST/MCP 无独立批次查询路由；再次同键提交可返回既有已提交回执，或安全重试失败批次。不得为消除结果不确定而换新键。
+- 提交响应丢失时，先用 `GET /api/roster/import/receipts` / `get_roster_import_receipt` 按原 `idempotencyKey` 或已知 `batchId` 查询；精确历史回执用 `receiptId`，三者只选一个。读取需独立 API/MCP token，不重新提交。区分 preflight、processing、failed、committed；HTTP 成功不等于业务提交成功，processing 保留未完成。按需用 `/receipts/history` / `list_roster_import_receipts` 查历史、`/receipts/items` / `list_roster_import_items` 分页查逐项结果、`/receipts/request` / `get_roster_import_request` 读脱敏原文块。旧原文 `not_retained` 保持未知；receiptId 与私有 batchId 不互换。检查已知回执后才决定是否明确同键重试，不自动重提或换新键。
 - 必需身份/来源字段无法由当前契约支持时保留待处理并开边界明确的票，不绕过校验、不编造计数、不接受真实业务错误。
 - 单一验收维度失败不放弃整轮；保留成功结果，只重试/修复失败单元，再核验受影响维度。非阻塞缺口单列；未解决业务错误仍阻止验收完成。
 
