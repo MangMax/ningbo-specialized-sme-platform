@@ -1,3 +1,6 @@
+import { useDb } from '@db'
+import { readStoredFileContentIdentity } from '../utils/file-content-identity'
+import { verifyFileRead, verifyPageRead } from '../utils/file-read-identity'
 import { createReadStream } from 'node:fs'
 import { DEFAULT_DPI, isPdfPath, normalizeDpi } from '~~/lib/pdf-page'
 import { listPdfPages, pageImagePath, resolveWithinRoot } from '../utils/pdf-pages'
@@ -28,10 +31,11 @@ defineRouteMeta({
       {
         name: 'file',
         in: 'query',
-        required: true,
+        required: false,
         schema: { type: 'string' },
         description: '相对文件库根的 PDF 路径(必给)。',
       },
+      { name: 'fileId', in: 'query', schema: { type: 'integer', minimum: 1 }, description: '稳定文件 ID; 与 file 至少给一个,同时给必须一致。' },
       { name: 'dpi', in: 'query', schema: { type: 'integer', minimum: 72, maximum: 600, default: 300 } },
       { name: 'page', in: 'query', schema: { type: 'integer', minimum: 1 }, description: '给页号则回该页 PNG。' },
     ],
@@ -58,6 +62,7 @@ defineRouteMeta({
       400: { description: '缺 `file` / 页号非法 / 分辨率越界。' },
       403: { description: '路径越界(必须落在文件库根内)。' },
       404: { description: '第 N 页尚未渲染。' },
+      409: { description: 'file_content_conflict / file_content_unknown: 源内容或页图出处无法确认。' },
       415: { description: '不是 PDF。' },
     },
   },
@@ -67,7 +72,11 @@ export default defineEventHandler(async (event) => {
   const root = useRuntimeConfig().filesDir
   const q = getQuery(event)
 
-  const file = typeof q.file === 'string' ? q.file.trim() : ''
+  const db = useDb()
+  const registered = q.fileId === undefined ? null : readStoredFileContentIdentity(db, Number(q.fileId))
+  if (q.fileId !== undefined && !registered) throw createError({ statusCode: 404, message: '文件不存在' })
+  const file = registered?.relPath ?? (typeof q.file === 'string' ? q.file.trim() : '')
+  if (registered && q.file !== undefined && q.file !== file) throw createError({ statusCode: 400, message: 'fileId 与 file 不一致' })
   if (!file) {
     throw createError({ statusCode: 400, message: '缺少 file 参数(相对文件库根的 PDF 路径)' })
   }
@@ -89,10 +98,15 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 403, message: '路径越界' })
   }
 
+  setHeader(event, 'cache-control', 'private, no-store')
+  const contentIdentity = await verifyFileRead(db, root, file)
   const rawPage = typeof q.page === 'string' ? q.page : undefined
   if (rawPage === undefined) {
+    const state = await listPdfPages(root, file, dpi)
+    if (state.pages.length) await verifyPageRead(db, root, file, undefined, contentIdentity)
     return {
-      ...(await listPdfPages(root, file, dpi)),
+      ...state,
+      contentIdentity,
       defaultDpi: DEFAULT_DPI,
     }
   }
@@ -110,8 +124,9 @@ export default defineEventHandler(async (event) => {
     })
   }
 
+  await verifyPageRead(db, root, file, (await import('node:path')).relative(root, abs), contentIdentity)
   setHeader(event, 'content-type', 'image/png')
-  setHeader(event, 'cache-control', 'private, max-age=3600')
+
   setHeader(event, 'content-disposition', `inline; filename*=UTF-8''p${String(page).padStart(3, '0')}.png`)
   return sendStream(event, createReadStream(abs))
 })

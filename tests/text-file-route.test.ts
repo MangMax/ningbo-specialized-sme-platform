@@ -1,9 +1,17 @@
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import Database from 'better-sqlite3'
+import { drizzle } from 'drizzle-orm/better-sqlite3'
+import { migrate } from 'drizzle-orm/better-sqlite3/migrator'
+import * as schema from '../db/schema'
 import { afterEach, expect, it, vi } from 'vitest'
+const sqlite = new Database(':memory:')
+const db = drizzle(sqlite, { schema })
+migrate(db, { migrationsFolder: 'db/migrations' })
+vi.mock('@db', () => ({ useDb: () => db }))
 const root = mkdtempSync(join(tmpdir(), 'preview-text-47-'))
-afterEach(() => { vi.unstubAllGlobals(); rmSync(root, { recursive: true, force: true }) })
+afterEach(() => { vi.unstubAllGlobals(); sqlite.close(); rmSync(root, { recursive: true, force: true }) })
 it('serves explicit text as inert text and rejects hidden sensitive files', async () => {
   writeFileSync(join(root, 'source.html'), '<script>alert(1)</script>')
   writeFileSync(join(root, '.secret.json'), '{"secret":true}')
@@ -18,11 +26,11 @@ it('serves explicit text as inert text and rejects hidden sensitive files', asyn
   vi.stubGlobal('getRequestHeader', () => undefined)
   vi.stubGlobal('sendStream', (_: unknown, stream: import('node:fs').ReadStream) => { sent = stream; return 'stream' })
   const route = (await import('../server/api/files/[id].get')).default
-  expect(route({} as never)).toBe('stream')
+  expect(await route({} as never)).toBe('stream')
   expect(headers.get('content-type')).toBe('text/plain; charset=utf-8')
   expect(headers.get('x-content-type-options')).toBe('nosniff')
   expect(headers.get('content-security-policy')).toContain("default-src 'none'")
   await new Promise<void>((resolve, reject) => { sent!.on('end', resolve).on('error', reject).resume() })
   path = '.secret.json'
-  expect(() => route({} as never)).toThrow(expect.objectContaining({ statusCode: 415 }))
+  await expect(route({} as never)).rejects.toThrow(expect.objectContaining({ statusCode: 415 }))
 })
