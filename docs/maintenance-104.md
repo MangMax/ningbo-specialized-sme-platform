@@ -40,7 +40,7 @@ REST PATCH 在同一对象附上元数据字段；MCP `update_file` 把字段放
 
 恢复流式计算原路径 SHA-256，并核对字节数、普通文件、根内真实路径及哈希期间 inode/mtime/ctime；缺失、目录、目标文件为符号链接、内容变更均拒绝。提交事务再次核对维护修订、已移出状态和登记磁盘事实。原文件已处于有效状态时仍核验磁盘事实；相同状态重试不重导事件。恢复不刷新登记哈希来迁就不匹配的磁盘文件，也不重建解析或 OCR。
 
-软移出仅标记 `removed_at`，磁盘字节及正式出处仍可读取，扫描不会自动复活。MCP `remove_file` 仍仅软移出。显式 `DELETE /api/files/{id}?deleteDisk=1|true` 现要求 API token 和完整版本封套，对等 MCP 为 `quarantine_file`；旧无封套物理删除请求拒绝，不再永久擦除字节。正式出处引用数大于0仍409拒绝。响应 `diskDeleted=false`，`diskQuarantined=true`，另带 `intent`（id、fileId、relPath、登记 SHA/bytes、state）。B 的确认/恢复 UI 尚未接入这个协议。
+软移出仅标记 `removed_at`，磁盘字节及正式出处仍可读取，扫描不会自动复活。MCP `remove_file` 仍仅软移出。显式 `DELETE /api/files/{id}?deleteDisk=1|true` 现要求 API token 和完整版本封套，对等 MCP 为 `quarantine_file`；旧无封套物理删除请求拒绝，不再永久擦除字节。正式出处引用数大于0仍409拒绝。响应 `diskDeleted=false`，`diskQuarantined=true`，另带 `intent`（id、fileId、relPath、登记 SHA/bytes、state）。文件页删除确认对话框已接入隔离、状态读回及恢复；恢复失败保留原命令供显式重试。
 
 `0038_file_physical_intent` 先独立提交 pending 意图，再在 SQLite 写锁内复核引用、登记身份和磁盘字节并改名到文件根内 `.physical-quarantine/{intentId}`，最后在同一事务提交软移出审计与 quarantined 完成回执。隔离目录由既有点目录扫描排除规则忽略。最终 SQL 失败不撤销改名：状态保持 pending，原路径可能不可用，原字节保留隔离区，不能把数据库回滚描述成字节已恢复。同键同完整请求可继续 pending 命令，已完成则返回原回执；同键异请求拒绝。原删除回执在之后恢复后仍原样重放，不重新隔离。
 

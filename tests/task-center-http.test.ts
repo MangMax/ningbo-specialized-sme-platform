@@ -175,3 +175,29 @@ it('bounds domain metadata and unknown historical results without forwarding ext
   expect(body.rows.find((row: any) => row.id === candidate).discovery.counts).toEqual({ succeeded: 1, needsReview: 0, failed: 0, created: 2, existing: 0 })
   expect(body.rows.find((row: any) => row.id === ids.unknown)).toMatchObject({ group: 'all', outcome: null, capabilities: { retry: false } })
 })
+
+it('summarizes annual event outcomes without exposing final checkpoints and directs retry to the domain', async () => {
+  db.update(schema.job).set({ kind: 'event-annual-correspondence', result: { ruleVersion: '1', attempt: 2, events: [
+    { eventId: 71, status: 'done', outcomes: ['PRIVATE_CHECKPOINT'.repeat(100000)], finalQualification: { status: 'eligible' } },
+    { eventId: 72, status: 'failed', generation: 'PRIVATE_GENERATION' },
+    { eventId: 73, status: 'pending' },
+  ] } }).where(eq(schema.job.id, ids.reconcile)).run()
+  const response = await fetch(`${api.baseUrl}/api/task-center/${ids.reconcile}`, { headers: { authorization: 'Bearer fixture-key' } })
+  expect(response.status).toBe(200)
+  const task = await response.json()
+  expect(task).toMatchObject({ label: '年度过程对应', group: 'platform', annual: { total: 3, done: 1, failed: 1, unfinished: 1, attempt: 2 }, capabilities: { retry: false } })
+  expect(task.capabilities.reason).toContain('年度专属接口')
+  expect(task.links).toContainEqual({ label: '年度任务详情与重试资格', to: `/api/roster/annual-correspondence-tasks/${ids.reconcile}` })
+  expect(JSON.stringify(task)).not.toContain('PRIVATE_')
+  expect(JSON.stringify(task)).not.toContain('eligible')
+  expect(JSON.stringify(task).length).toBeLessThan(3000)
+})
+
+it('keeps missing annual history unknown and does not authorize generic annual retry', async () => {
+  db.update(schema.job).set({ kind: 'event-annual-correspondence', result: null }).where(eq(schema.job.id, ids.batch)).run()
+  const task = await (await fetch(`${api.baseUrl}/api/task-center/${ids.batch}`)).json()
+  expect(task.annual).toEqual({ total: null, done: 0, failed: 0, unfinished: null, attempt: null })
+  expect(task.capabilities).toMatchObject({ cancel: false, retry: false, reason: '当前请求仅可查看任务。' })
+  const retry = await fetch(`${api.baseUrl}/api/task-center/${ids.batch}/retry`, { method: 'POST', headers: { authorization: 'Bearer fixture-key' } })
+  expect(retry.status).toBe(409)
+})

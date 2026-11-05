@@ -1,3 +1,4 @@
+import type { DiscoveryJsonSchema, NitroDiscoverySchema } from '../../../utils/nitro-discovery-schema'
 import { createRosterImportHandler } from '../../../utils/roster-import-route'
 
 /**
@@ -2687,7 +2688,7 @@ defineRouteMeta({
   "additionalProperties": true
 },
             },
-          },
+          } satisfies DiscoveryJsonSchema as unknown as NitroDiscoverySchema,
         },
       },
     },

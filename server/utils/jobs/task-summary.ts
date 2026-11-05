@@ -1,3 +1,4 @@
+import { annualProjection, readAnnualSummary } from './annual-summary'
 import { readCandidateSummary, candidateProjection } from './candidate-summary'
 import { readExportSummary, exportProjection } from './export-summary'
 import { readReconcileSummary, reconcileProjection } from './reconcile-summary'
@@ -23,6 +24,7 @@ const projection = {
   ...reconcileProjection,
   ...exportProjection,
   ...candidateProjection,
+  ...annualProjection,
 }
 export function readTasks(db: Db, where: SQL | undefined, limit: number, offset = 0) {
   return db.select(projection).from(j).where(where).orderBy(desc(j.createdAt), desc(j.id)).limit(limit).offset(offset).all()
@@ -35,7 +37,9 @@ export async function summarize(row: ProjectedTask, authorized: boolean, db: Db,
   const { discovery, discoveryRetry, discoveryItems, summary: discoverySummary } = readCandidateSummary(row, detail)
   const retry = discoveryRetry || batchRetry
   const { reconcile, reconcileCollection } = readReconcileSummary(row)
+  const annual = readAnnualSummary(row)
   const links: TaskSummary['links'] = []
+  if (annual) links.push({ label: '年度任务详情与重试资格', to: `/api/roster/annual-correspondence-tasks/${row.id}` })
   links.push(...readOcrLinks(row))
   if (group === 'platform') links.push({ label: '平台查询证据', to: '/platform-queries' }, { label: '比对与核查入口', to: '/comparison' })
   if(discovery && detail) for(const item of discoveryItems) if(item.enterpriseId) links.push({label:`核对公布事件 #${item.eventId}`,to:`/enterprises/${item.enterpriseId}?eventId=${item.eventId}`})
@@ -43,6 +47,7 @@ export async function summarize(row: ProjectedTask, authorized: boolean, db: Db,
   const exported = await readExportSummary(row, authorized, db)
 
   return {
+    ...(annual ? { annual } : {}),
     ...(exported ? { export: exported } : {}),
     ...(reconcile ? { reconcile, reconcileCollection } : {}),
     ...(discoverySummary ? { discovery: discoverySummary } : {}),
@@ -53,6 +58,6 @@ export async function summarize(row: ProjectedTask, authorized: boolean, db: Db,
     error: row.hasError && row.state === 'failed' ? row.restarted ? row.kind === CANDIDATE_JOB_KIND ? '服务重启，任务中断；可从检查点重试。' : '服务重启，任务中断；请从业务入口重新提交。' : row.kind === CANDIDATE_JOB_KIND ? '部分事件未完成；已完成候选保留，可显式重试未完成项。' : group === 'export' ? '导出失败；请检查数据与产物存储后显式重新生成。原始错误不展示。' : row.kind === 'platform-query-batch' ? '批次有失败或未完成范围；请查看摘要并显式重试。' : '任务失败；原始错误可能含敏感信息，摘要不展示。请核对业务入口与配置。' : null,
     ...(detail ? { items } : {}),
     outcome, capabilities: { cancel: authorized && active, retry: authorized && retry, retryItemIds: retry ? retryItemIds : [],
-      reason: !authorized ? '当前请求仅可查看任务。' : active ? '可请求取消；实际状态以服务端终态为准。' : retry ? '仅补查本批次未完成项，保留已完成结果。' : group === 'export' ? '导出不重放任务；请显式重新生成，新任务保留原任务关联。' : '此任务不支持安全重试，请从原业务入口核对后重新提交。' }, links,
+      reason: !authorized ? '当前请求仅可查看任务。' : active ? '可请求取消；实际状态以服务端终态为准。' : annual ? '请通过年度专属接口核对当前来源代次与重试资格；此处不重放年度任务。' : retry ? '仅补查本批次未完成项，保留已完成结果。' : group === 'export' ? '导出不重放任务；请显式重新生成，新任务保留原任务关联。' : '此任务不支持安全重试，请从原业务入口核对后重新提交。' }, links,
   }
 }

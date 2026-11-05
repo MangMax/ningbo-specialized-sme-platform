@@ -57,7 +57,7 @@ async function fixture(run: (f: any) => Promise<void>) {
 
 it('keeps platform legacy sentinels normalization and immutable source replay through public HTTP core', () => fixture(async ({ db, invalid, saved }) => {
   const query = { interface: 'apply_list', queryKey: 'legacy-key', queriedAt: '2026-11-05', status: 'success', rawResponse: '{original}', relations: [{ sequenceNo: 3.9, nameRaw: '  原行企业  ', year: 2026.9, declareKind: 'legacy-value', rawFields: { unknown: null } }] }
-  for (const [field, code] of [['interface', 'interface_unknown'], ['queryKey', 'query_key_required'], ['queriedAt', 'queried_at_required']]) await invalid({ platformQueries: [{ ...query, [field]: undefined }] }, code, field)
+  for (const [field, code] of [['interface', 'interface_unknown'], ['queryKey', 'query_key_required'], ['queriedAt', 'queried_at_required']] as const) await invalid({ platformQueries: [{ ...query, [field]: undefined }] }, code, field)
   await invalid({ platformQueries: [{ ...query, relations: [{}] }] }, 'sequence_no_required', 'relations[].sequenceNo')
   await invalid({ platformQueries: [{ ...query, status: 'bad' }] }, 'query_status_unknown', 'status')
   await invalid({ platformQueries: [{ ...query, reuseExisting: false }] }, 'query_reuse_invalid', 'reuseExisting')
@@ -97,16 +97,16 @@ it('archives all three typed collection sources with literal raw readback and re
 it('preserves difference required fields pending review and normalized decision readback with replay', () => fixture(async ({ db, owner, invalid, saved }) => {
   const id = await owner('差异归属企业')
   const difference = { enterpriseName: '差异归属企业', titleCode: 'specialized_sme', direction: 'missing_in_miit', recordedAt: '2026-11-05', status: 'confirmed_reason', reasonCode: 'pending_review', measureCode: 'follow_review', verificationStatus: 'confirmed', reasonNote: '  原因  ', movedIn: { city: '  宁波  ', year: 2020.9, batch: 2.9 } }
-  for (const [field, code] of [['titleCode', 'title_unknown'], ['direction', 'direction_unknown'], ['recordedAt', 'recorded_at_required'], ['enterpriseName', 'enterprise_not_found']]) await invalid({ differences: [{ ...difference, [field]: undefined }] }, code, field)
+  for (const [field, code] of [['titleCode', 'title_unknown'], ['direction', 'direction_unknown'], ['recordedAt', 'recorded_at_required'], ['enterpriseName', 'enterprise_not_found']] as const) await invalid({ differences: [{ ...difference, [field]: undefined }] }, code, field)
   await invalid({ differences: [{ ...difference, measureCode: 'none' }] }, 'pending_review_decision_invalid', 'reasonCode')
   await invalid({ differences: [{ ...difference, evidenceQueryId: 1, evidenceQueryRef: { interface: 'apply_list', queryKey: 'x' } }] }, 'evidence_ref_conflict', 'differences[].evidenceQueryRef')
   expect(getRosterEnterpriseDetail(db, id)!.differences).toEqual([expect.objectContaining({ explanationId: null, recordedAt: null, status: 'not_queried' })])
   await saved('difference-valid', { differences: [difference] })
   const rows = getRosterEnterpriseDetail(db, id)!.differences
   expect(rows).toHaveLength(1)
-  expect(rows[0]).toMatchObject({ titleCode: 'specialized_sme', direction: 'missing_in_miit', recordedAt: '2026-11-05', status: 'confirmed_reason', reasonCode: 'pending_review', measureCode: 'follow_review', verificationStatus: 'confirmed', reasonNote: '原因', movedIn: { city: '宁波', year: 2020, batch: 2 } })
+  expect(rows[0]!).toMatchObject({ titleCode: 'specialized_sme', direction: 'missing_in_miit', recordedAt: '2026-11-05', status: 'confirmed_reason', reasonCode: 'pending_review', measureCode: 'follow_review', verificationStatus: 'confirmed', reasonNote: '原因', movedIn: { city: '宁波', year: 2020, batch: 2 } })
   // Setup uses the existing lifecycle command owner; the rejection under test is public HTTP/core.
-  saveDecision102(db, { enterpriseId: id, titleCode: 'specialized_sme', direction: 'missing_in_miit', action: 'replace', expectedCurrentId: rows[0].explanationId, idempotencyKey: 'lifecycle-setup', actor: { type: 'agent', id: 'synthetic' }, basis: 'explicit review', ruleVersion: 'manual-1', effectiveAt: '2026-11-05T00:00:00Z', decision: { status: 'confirmed_reason', reasonCode: 'pending_review', measureCode: 'follow_review', verificationStatus: 'confirmed' } })
+  saveDecision102(db, { enterpriseId: id, titleCode: 'specialized_sme', direction: 'missing_in_miit', action: 'replace', expectedCurrentId: rows[0]!.explanationId, idempotencyKey: 'lifecycle-setup', actor: { type: 'agent', id: 'synthetic' }, basis: 'explicit review', ruleVersion: 'manual-1', effectiveAt: '2026-11-05T00:00:00Z', decision: { status: 'confirmed_reason', reasonCode: 'pending_review', measureCode: 'follow_review', verificationStatus: 'confirmed' } })
   const managed = getRosterEnterpriseDetail(db, id, Date.parse('2026-11-05'))!.differences
   await invalid({ differences: [{ ...difference, recordedAt: '2026-11-06' }] }, 'decision_lifecycle_required', 'differences')
   expect(getRosterEnterpriseDetail(db, id, Date.parse('2026-11-05'))!.differences).toEqual(managed)
@@ -167,14 +167,14 @@ it('resolves same batch query references and pending merge owners without losing
   })
   const target = listEnterprises(db, { q: '本批目标' }).rows
   expect(target).toHaveLength(1)
-  expect(listEnterprises(db, { q: '本批来源' }).rows.every((row: any) => row.enterpriseId === target[0].enterpriseId)).toBe(true)
-  const detail = getRosterEnterpriseDetail(db, target[0].enterpriseId)!
+  expect(listEnterprises(db, { q: '本批来源' }).rows.every((row: any) => row.enterpriseId === target[0]!.enterpriseId)).toBe(true)
+  const detail = getRosterEnterpriseDetail(db, target[0]!.enterpriseId)!
   const queries = listPlatformQueries(db, { includeRawResponse: true }).rows
   expect(queries).toHaveLength(1)
-  expect(queries[0]).toMatchObject({ query: { rawResponse: 'original-body' }, relations: [{ sequenceNo: 1, rawFields: { original: null } }] })
-  expect(detail.aliases).toEqual([expect.objectContaining({ name: '本批来源', sourceRefId: queries[0].relations[0].id })])
-  expect(detail.differences).toEqual([expect.objectContaining({ status: 'needs_review', recordedAt: '2026-11-05', evidence: expect.objectContaining({ queryId: queries[0].query.id, relationIds: [queries[0].relations[0].id] }) })])
+  expect(queries[0]!).toMatchObject({ query: { rawResponse: 'original-body' }, relations: [{ sequenceNo: 1, rawFields: { original: null } }] })
+  expect(detail.aliases).toEqual([expect.objectContaining({ name: '本批来源', sourceRefId: queries[0]!.relations[0]!.id })])
+  expect(detail.differences).toEqual([expect.objectContaining({ status: 'needs_review', recordedAt: '2026-11-05', evidence: expect.objectContaining({ queryId: queries[0]!.query.id, relationIds: [queries[0]!.relations[0]!.id] }) })])
   expect(detail.events).toHaveLength(1)
   expect(detail.evidence).toEqual([expect.objectContaining({ sourceFile: 'source.pdf', page: 1 })])
-  expect(result.items).toEqual(expect.arrayContaining([expect.objectContaining({ kind: 'merge', detail: expect.objectContaining({ lineage: expect.objectContaining({ evidenceQueryId: queries[0].query.id, eventsMoved: [detail.events[0].id], evidenceMoved: [detail.evidence[0].id] }) }) })]))
+  expect(result.items).toEqual(expect.arrayContaining([expect.objectContaining({ kind: 'merge', detail: expect.objectContaining({ lineage: expect.objectContaining({ evidenceQueryId: queries[0]!.query.id, eventsMoved: [detail.events[0]!.id], evidenceMoved: [detail.evidence[0]!.id] }) }) })]))
 }))
