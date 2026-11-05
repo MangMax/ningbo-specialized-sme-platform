@@ -1,8 +1,8 @@
 import type Database from 'better-sqlite3'
 
 /** Explicit read-path switch. `legacy` keeps the pre-#468 reader byte-for-byte;
- * `typed` prefers the recognized_list typed projection and falls back only when no
- * projection row exists. */
+ * `typed` requires captured recognized source-fidelity fields; unavailable
+ * history stays unknown until explicit source-owned completion. */
 export type RecognizedFactSource = 'typed' | 'legacy'
 
 /** Operational rollback without a code change. Any other/absent value keeps typed. */
@@ -25,11 +25,12 @@ const LEGACY_CONTENT = `json_extract(r.raw_fields,'$.rddqrq') as rawValid,
       json_extract(r.raw_fields,'$.whpcyear') as rawMaintenanceYear,
       json_extract(r.raw_fields,'$.whpc') as rawMaintenanceBatch`
 
-/** Explicit CASE, not COALESCE: an existing projection with a null field is the source
- * answer (unknown), and must not silently fall back to the original raw value. */
-const TYPED_CONTENT = `case when p.version_id is not null then p.validity_date_raw else json_extract(r.raw_fields,'$.rddqrq') end as rawValid,
-      case when p.version_id is not null then p.maintenance_year else json_extract(r.raw_fields,'$.whpcyear') end as rawMaintenanceYear,
-      case when p.version_id is not null then p.maintenance_batch else json_extract(r.raw_fields,'$.whpc') end as rawMaintenanceBatch`
+/** The exact untrimmed strings feed the unchanged grammar. The boolean only
+ * answers the grammar's absence test: false must remain nonmissing, even if the
+ * directory's normalized maintenance year is null. No original raw reads here. */
+const TYPED_CONTENT = `p.source_validity_date as rawValid,
+      case when p.source_maintenance_year_absent=1 then null else 0 end as rawMaintenanceYear,
+      p.source_maintenance_batch as rawMaintenanceBatch`
 
 const FILTER = `where r.id=@relationId and (r.enterprise_id=@enterpriseId or (r.enterprise_id is null and @uscc is not null and roster84_uscc(r.uscc_raw)=@uscc)) and r.verification_status='confirmed'
       and q.interface='recognized_list' and q.status='success'
@@ -48,9 +49,10 @@ export function recognizedFilterSourceSql(source: RecognizedFactSource): string 
   return `select ${QUERY_COLUMNS},
       ${TYPED_CONTENT}
       from platform_relation r join platform_query q on q.id=r.query_id
-      left join platform_business_observation o on o.relation_id=r.id
-      left join platform_recognized_projection p on p.version_id=o.version_id
-      ${FILTER}`
+      join platform_business_observation o on o.relation_id=r.id and o.identity_state='resolved' and o.content_state='verified'
+      join platform_business_record b on b.id=o.record_id and b.interface='recognized_list'
+      join platform_recognized_projection p on p.version_id=o.version_id and p.record_id=b.id
+      ${FILTER} and p.source_maintenance_year_absent is not null`
 }
 
 export interface RecognizedFilterSourceRow {

@@ -97,8 +97,8 @@
 | 步骤 | A（目录） | B（当前有效） | C（导出工作簿） | 理由与非结论边界 |
 |---|---|---|---|---|
 | 基线 + 三面只读 | 1 条，`rddqrq=2028-06-01`、`whpcyear=2024`、`titleRaw=1` | 1 条 eligible，`matchedValidYears=[2028]` | 有效企业 1 条 | 读前后全库 DDL+内容摘要一致 |
-| 改 typed 投影（有效期/维护年/属地） | 立即显示新原值，总数不变 | 分组/行集合/`qualificationAssessment` 深度相等（去掉 `asOf`/`snapshotId`/`snapshotStartedAt`）；`matchedValidYears` 随 typed 筛选见证变化 | **全量工作簿深度相等**（去掉「生成时间」行） | #468 后 typed 投影是当前资格**筛选见证**输入，不是正式资格/分组输入；工作簿只消费分组 |
-| 只删 typed 投影行 | 记录仍在、typed 字段为 null、`ruleVersion=null`，无冲突 | **全量相等** | **全量相等** | 历史版本可读，不猜填 |
+| 改 typed 投影（有效期/维护年/属地） | 立即显示新原值，总数不变 | 分组/行集合/`qualificationAssessment` 深度相等（去掉 `asOf`/`snapshotId`/`snapshotStartedAt`）；`matchedValidYears` 保持不变 | **全量工作簿深度相等**（去掉「生成时间」行） | 目录规范化列与资格来源保真列分开；工作簿只消费分组 |
+| 只删 typed 投影行 | 记录仍在、typed 字段为 null、`ruleVersion=null`，无冲突 | 正式资格/分组不变；筛选见证未知，不回读 raw | **全量相等** | 历史版本可读，不猜填 |
 | 删目录观察 + 投影 + relation/query（目录消失） | 记录消失（total 0） | 资格/分组不变（仍 eligible），`matchedValidYears` 变为 `[]`；`validYear=2028` 命中数 1→0 | 决策面相等；**仅「来源及页码」列不再引用该观察** | 允许差异：B 的 `qualificationAssessment` 与 C 的出处列本来就记录已归档平台观察；正式资格、分组、导出行与计数不变 |
 | 新增未确认目录行（无对应决定） | +1 | 资格/分组/行集合不变（`eligibility` 深度相等） | 决策面相等；出处列新增该观察引用 | 同上；未确认目录行不产生 Witness |
 | 新增行 `rdjb=3` 与查询范围 `1` 冲突 | +1，记录级 `conflicts=['title_conflict']`、`titleScopes=['1']` | 不变 | 决策面相等 | 行称号不写入查询范围，也不影响资格 |
@@ -106,7 +106,7 @@
 
 结论边界：以上证明的是「目录镜像的新增/消失/原值变化**不改变正式资格判定与导出的正式内容**」。它**不**证明目录值可推出资格，也**不**证明 B 的 `qualificationAssessment` 观察清单或导出的「来源及页码」出处文字不随平台归档变化——这两处按既有设计记录已归档观察，属已批准、有理由的差异。
 
-> #468 起，当前资格筛选见证改读同一 typed 投影：typed 值变化会移动 `matchedValidYears`/`matchedMaintenance` 与所选筛选的命中集合，但**不改变**正式资格分组、行集合或工作簿决策面。切换、回退与已批准 trim 差异见 [#468 证据评论](https://github.com/MangMax/ningbo-specialized-sme-platform/issues/468#issuecomment-6626332094)。
+> #468 来源保真修正：当前资格筛选见证使用 source-owned 未 trim 字符串和精确的年份缺失标记，目录继续显示既有 v1 规范化列。目录 trim 的许可不延伸到资格语法；带空白日期/批次和非空非法年份继续按原规则未知。旧 [#468 证据评论](https://github.com/MangMax/ningbo-specialized-sme-platform/issues/468#issuecomment-6626332094) 保留为历史记录，其中“approved trim-only difference”不作为资格规则授权。未补全 typed 来源事实时保留未知；补全和显式回退见 [来源契约](platform-business-record-contract.md#468-资格筛选来源保真补全)。
 
 对照测试：`tests/platform-recognized-directory-three-way.test.ts`（每步都断言 A 的精确变化、B 的资格面与 C 的决策面；不使用新 reader 作为 B/C 的 oracle）。
 

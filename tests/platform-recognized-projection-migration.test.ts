@@ -13,6 +13,7 @@ afterAll(() => dirs.forEach(dir => rmSync(dir, { recursive: true, force: true })
 const COLUMNS = [
   'version_id', 'record_id', 'validity_date_raw', 'maintenance_year', 'maintenance_batch',
   'district', 'award_note', 'title_raw', 'name_raw', 'uscc_raw', 'rule_version', 'created_at',
+  'source_validity_date', 'source_maintenance_batch', 'source_maintenance_year_absent',
 ]
 const INDEXES = [
   { name: 'platform_recognized_projection_batch_idx' },
@@ -85,4 +86,33 @@ describe('0035 platform recognized projection migration', () => {
       expect(sqlite.prepare('SELECT count(*) n FROM platform_query').get()).toEqual({ n: 1 })
     } finally { sqlite.close() }
   })
+})
+
+
+it('0039 leaves existing normalized rows and provenance intact and fidelity unknown until explicit capture', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'recognized-fidelity-migration-')); dirs.push(dir)
+  const fullMigrations = resolve(import.meta.dirname, '../db/migrations')
+  const preMigrations = join(dir, 'pre-migrations')
+  cpSync(fullMigrations, preMigrations, {recursive: true})
+  const journalPath = join(preMigrations, 'meta', '_journal.json')
+  const journal = JSON.parse(readFileSync(journalPath, 'utf8'))
+  journal.entries = journal.entries.filter((entry: {idx: number}) => entry.idx < 39)
+  writeFileSync(journalPath, JSON.stringify(journal))
+  const sqlite = new Database(join(dir, 'existing.sqlite'))
+  try {
+    const db = drizzle(sqlite, {schema})
+    migrate(db, {migrationsFolder: preMigrations})
+    sqlite.exec(`INSERT INTO platform_business_record(id,interface,platform_key,identity_rule_version,created_at) VALUES(101,'recognized_list','ORIGINAL','platform-observation-v1','original-time');
+      INSERT INTO platform_business_record_version(id,record_id,hash_algorithm,content_hash,canonical_raw_json,created_at) VALUES(201,101,'platform-row-json-v1','original-hash','{"id":"ORIGINAL"}','original-time');
+      INSERT INTO platform_recognized_projection(version_id,record_id,validity_date_raw,maintenance_year,maintenance_batch,rule_version,created_at) VALUES(201,101,'2028-11-20',NULL,'2026-1','platform-recognized-v1','original-time');`)
+    const before = sqlite.prepare('SELECT * FROM platform_recognized_projection').get() as object
+    const versions = sqlite.prepare('SELECT * FROM platform_business_record_version').all()
+    migrate(db, {migrationsFolder: fullMigrations})
+    expect(sqlite.prepare('SELECT * FROM platform_recognized_projection').get()).toEqual({...before, source_validity_date: null, source_maintenance_batch: null, source_maintenance_year_absent: null})
+    expect(sqlite.prepare('SELECT * FROM platform_business_record_version').all()).toEqual(versions)
+    expect(sqlite.pragma('foreign_key_check')).toEqual([])
+    migrate(db, {migrationsFolder: fullMigrations})
+    expect(sqlite.prepare('SELECT count(*) n FROM platform_recognized_projection').get()).toEqual({n: 1})
+    expect(() => sqlite.exec('UPDATE platform_recognized_projection SET source_maintenance_year_absent=2')).toThrow()
+  } finally {sqlite.close()}
 })

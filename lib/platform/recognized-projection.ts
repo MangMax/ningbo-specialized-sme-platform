@@ -61,3 +61,20 @@ export function parseRecognizedRecord(raw: unknown): RecognizedProjectionFields 
     usccRaw: text(row.tyshxydm),
   }
 }
+
+/** Additive source-fidelity v1, independent of normalized directory v1 fields.
+ * A null stored absence marker means capture has not happened, never absence.
+ * Only the source owner calls this with the immutable verified original row. */
+export interface RecognizedSourceFidelity {
+  sourceValidityDate: string | null
+  sourceMaintenanceBatch: string | null
+  sourceMaintenanceYearAbsent: boolean
+}
+
+export function parseRecognizedSourceFidelity(row: Record<string, unknown>): RecognizedSourceFidelity {
+  return {
+    sourceValidityDate: typeof row.rddqrq === 'string' ? row.rddqrq : null,
+    sourceMaintenanceBatch: typeof row.whpc === 'string' ? row.whpc : null,
+    sourceMaintenanceYearAbsent: row.whpcyear == null || row.whpcyear === '',
+  }
+}
