@@ -1,3 +1,4 @@
+import { initializeDb } from '../db/client'
 /**
  * RL-18 —— 写入侧**规模**用例：单批千条级平台查询不再随批内查询数平方增长。
  *
@@ -89,7 +90,7 @@ const dirs: string[] = []
 function makeDb() {
   const dir = mkdtempSync(join(tmpdir(), 'spztx-roster-scale-'))
   dirs.push(dir)
-  return useDb({ dbPath: join(dir, 'roster.db') })
+  return initializeDb({ create: true, dbPath: join(dir, 'roster.db') })
 }
 
 afterAll(() => {
