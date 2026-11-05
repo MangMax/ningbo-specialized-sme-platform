@@ -112,7 +112,7 @@ export function refreshDerivedFileParts(db: Executor, sourceFiles: Iterable<stri
  *  - 附件名按 `lib/attachment.ts` 归一后再聚合 —— 「附 件 1」与「附件1」必须并成同一段。
  *  - 同坐标已有代理段时保留代理行;行数不一致则标记冲突,相等表示两来源一致。
  */
-export function backfillFileParts(db: Db): PartsBackfillStats {
+export function backfillFileParts(db: Db, options: { preserveExisting?: boolean } = {}): PartsBackfillStats {
   const byPath = new Map<string, PartEvidence[]>()
   for (const row of readEvidencePartRows(db)) {
     const evidence: PartEvidence = {
@@ -154,6 +154,16 @@ export function backfillFileParts(db: Db): PartsBackfillStats {
     for (const file of files) {
       const parts = aggregateParts(byPath.get(file.relPath) ?? [])
       const preserved = preservedByFile.get(file.id) ?? new Map()
+
+      // Lazy reads may add missing coordinates, never revise or re-identify historical rows.
+      if (options.preserveExisting) {
+        const existing = new Set(tx.select().from(schema.storedFilePart).where(eq(schema.storedFilePart.fileId, file.id)).all().map(partKey))
+        for (const part of parts) {
+          if (!existing.has(partKey(part))) tx.insert(schema.storedFilePart).values({ fileId: file.id, ...part, origin: 'derived', hasConflict: false }).run()
+        }
+        if (parts.length) { stats.files++; stats.parts += parts.length }
+        continue
+      }
 
       // 每趟重新比较 evidence,所以冲突会随来源数据变化而清除或重现。
       tx.update(schema.storedFilePart)

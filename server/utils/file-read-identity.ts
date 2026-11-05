@@ -71,3 +71,17 @@ export async function verifyPageRead(db: Db, root: string, source: string, pageP
   }
   return identity
 }
+
+/** Historical readers keep their text even when the mutable current locator conflicts. */
+export async function describeFileRead(db: Db, root: string, locator: string) {
+  try { return await verifyFileRead(db, root, locator) } catch (error) {
+    const failure = error as { statusCode?: number; code?: string; data?: unknown }
+    if (failure.statusCode === 403) throw error
+    let status: 'file_content_conflict' | 'missing' | 'unavailable'
+    if (failure.statusCode === 409) status = 'file_content_conflict'
+    else if (failure.statusCode === 404 || failure.code === 'ENOENT' || failure.code === 'ENOTDIR') status = 'missing'
+    else if (failure.code === 'EACCES' || failure.code === 'EPERM') status = 'unavailable'
+    else throw error
+    return { registered: registeredFileAtLocator(db, locator), status, historical: 'unknown' as const, conflict: failure.data ?? null }
+  }
+}

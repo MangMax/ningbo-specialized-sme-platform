@@ -71,6 +71,8 @@ export interface StoredFileRow {
    * (尚无引用、留待票 11 解析时写入 —— **不是**「文件没有内容」)。
    */
   parts: StoredFilePart[]
+  partsBinding?: { historical: 'unknown'; inputLineage: { status: 'unknown' } | { status: 'bound'; inputRef: unknown } }
+  contentIdentity?: { registered: { fileId: number; relPath: string; sha256: string; bytes: number }; status: 'unknown'; historical: 'unknown' }
 }
 
 /** 列表查询条件(与 `/api/files` 的 query 参数一一对应)。 */
@@ -375,7 +377,19 @@ function withParts(db: Db, rows: StoredFileRow[]): StoredFileRow[] {
     db,
     rows.map((r) => r.id),
   )
-  return rows.map((row) => ({ ...row, parts: byFile.get(row.id) ?? [] }))
+  const audits = db.select({ fileId: schema.fileParseAudit105.fileId, inputLineage: sql<string | null>`json_extract(${schema.fileParseAudit105.after}, '$.inputLineage')` }).from(schema.fileParseAudit105)
+    .where(and(inArray(schema.fileParseAudit105.fileId, rows.map(row => row.id)), sql`${schema.fileParseAudit105.id} = (select max(a.id) from file_parse_audit_105 a where a.file_id = ${schema.fileParseAudit105.fileId})`)).all()
+  const lineage = new Map<number, NonNullable<StoredFileRow['partsBinding']>['inputLineage']>()
+  for (const audit of audits) {
+    if (!lineage.has(audit.fileId)) {
+      const input = (audit.inputLineage ? JSON.parse(audit.inputLineage) : undefined) as NonNullable<StoredFileRow['partsBinding']>['inputLineage'] | undefined
+      lineage.set(audit.fileId, input?.status === 'bound' ? input : { status: 'unknown' })
+    }
+  }
+  return rows.map((row) => ({ ...row, parts: byFile.get(row.id) ?? [],
+    contentIdentity: { registered: { fileId: row.id, relPath: row.relPath, sha256: row.sha256, bytes: row.bytes }, status: 'unknown', historical: 'unknown' },
+    partsBinding: { historical: 'unknown', inputLineage: lineage.get(row.id) ?? { status: 'unknown' } },
+  }))
 }
 
 /**

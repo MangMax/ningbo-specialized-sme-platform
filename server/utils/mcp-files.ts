@@ -198,7 +198,7 @@ export async function ensureFileStoreReady(
   filesReady = true
   return {
     ...fileStats,
-    parts: runParts ? backfillFileParts(db) : NO_PART_STATS,
+    parts: runParts ? backfillFileParts(db, { preserveExisting: true }) : NO_PART_STATS,
   }
 }
 
