@@ -19,6 +19,7 @@ describe('legacy alias import discovery', () => {
       expect(aliases.maxItems).toBeUndefined()
       const alias = aliases.items
       expect(alias.required).toEqual(['name', 'sourceKind'])
+      expect(alias.anyOf).toEqual([{ required: ['enterpriseName'] }, { required: ['uscc'] }])
       expect(alias.properties.sourceKind.enum).toEqual(['platform_business', 'platform_apply', 'announcement', 'manual'])
       expect(alias.properties.verificationStatus.anyOf[0].enum).toEqual(['confirmed', 'pending', 'withdrawn'])
       expect(alias.properties.sourceRelationRef.anyOf[0].required).toEqual(['interface', 'queryKey', 'sequenceNo'])
@@ -31,4 +32,20 @@ describe('legacy alias import discovery', () => {
     const payload = { aliases, unrelated: { raw: null } }
     expect(rosterImportMcpPayloadSchema.parse(payload)).toEqual(payload)
   })
+})
+
+it('discovers export snapshot identity and source row fields without inventing batch limits', () => {
+  for (const payload of payloads()) {
+    const snapshot = payload.properties.exportSnapshot
+    expect(snapshot.required).toEqual(['titleCode', 'year', 'collectedOn', 'originalFilename', 'sha256'])
+    expect(snapshot.properties.titleCode.enum).toEqual(['little_giant', 'specialized_sme', 'innovative_sme'])
+    expect(snapshot.properties.sha256.pattern).toBeUndefined()
+    expect(snapshot.properties.rows.items.required).toEqual(['sourceRowNo'])
+    expect(Object.keys(snapshot.properties.rows.items.properties)).toEqual(['sourceRowNo', 'usccRaw', 'nameRaw', 'district', 'province', 'city', 'regStatus', 'rawFields'])
+    expect(snapshot.properties.rows.maxItems).toBeUndefined()
+  }
+})
+
+it.each([null, false, {}, { titleCode: 'bad', year: 2026.9, rows: [null], extra: null }])('keeps legacy snapshot values unchanged for core validation', exportSnapshot => {
+  expect(rosterImportMcpPayloadSchema.parse({ exportSnapshot })).toEqual({ exportSnapshot })
 })

@@ -12,6 +12,7 @@ import { commitRosterImport, preflightRosterImport, readImportBatchOutcome } fro
 import { startRosterApi } from './helpers/roster-http-server'
 import { listEnterprises } from '../server/utils/mcp-roster'
 import { getRosterEnterpriseDetail } from '../lib/roster/enterprise-roster'
+import { getPlatformExportRows, listPlatformSnapshots } from '../lib/platform-snapshots'
 
 it('preserves legacy HTTP item errors, numeric normalization and idempotent receipts after MCP discovery parsing', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'issue315-'))
@@ -75,6 +76,7 @@ it('preserves alias core required-field errors and commits normalized aliases wi
     const invalidCases = [
       { alias: { ...valid, name: undefined }, error: { code: 'alias_name_required', field: 'aliases[].name', message: '别名缺少 name' } },
       { alias: { ...valid, sourceKind: undefined }, error: { code: 'alias_source_kind_unknown', field: 'sourceKind', message: 'sourceKind 不在字典内：undefined' } },
+      { alias: { ...valid, enterpriseName: undefined }, error: { code: 'enterprise_not_found', field: 'enterpriseName', message: '别名找不到归属企业：(空)' } },
       { alias: { ...valid, sourceRefId: undefined, sourceRelationRef: { queryKey: 'synthetic-query' } }, error: { code: 'ref_interface_unknown', field: 'aliases[].sourceRelationRef.interface', message: '引用缺少 interface 或取值不在字典内：undefined' } },
       { alias: { ...valid, sourceRefId: undefined, sourceRelationRef: { interface: 'business_list' } }, error: { code: 'ref_query_key_required', field: 'aliases[].sourceRelationRef.queryKey', message: '引用缺少 queryKey' } },
       { alias: { ...valid, sourceRefId: undefined, sourceRelationRef: { interface: 'business_list', queryKey: 'synthetic-query', relationKey: 'key-alone' } }, error: { code: 'ref_sequence_no_required', field: 'aliases[].sourceRelationRef.sequenceNo', message: '关系引用缺少 sequenceNo（同一次查询内第几条，从 1 起）' } },
@@ -101,6 +103,57 @@ it('preserves alias core required-field errors and commits normalized aliases wi
     const withdrawn = await post('commit', 'alias-withdrawn', rosterImportMcpPayloadSchema.parse({ aliases: [{ ...valid, name: '撤回别名', verificationStatus: 'withdrawn' }] }))
     expect(withdrawn.status).toBe('committed')
     expect(getRosterEnterpriseDetail(db, enterpriseId)!.aliases).toEqual(expect.arrayContaining([expect.objectContaining({ name: '撤回别名', verificationStatus: 'withdrawn' })]))
+  } finally {
+    await api.close()
+    sqlite.close()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+it('preserves snapshot core required-field errors and legacy numeric normalization with exact readback and replay', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'issue315b-export-'))
+  const sqlite = new Database(join(dir, 'synthetic.sqlite'))
+  const db = drizzle(sqlite, { schema })
+  migrate(db, { migrationsFolder: resolve('db/migrations') })
+  for (const title of TITLE_SEED) db.insert(schema.title).values(title).run()
+  const api = await startRosterApi({ db, apiToken: 'synthetic-315b', executeImport: async (database, action, request, errors, context) => action === 'preflight' ? preflightRosterImport(database, request, errors, context) : commitRosterImport(database, request, errors, context) })
+  async function post(action: string, key: string, payload: unknown) {
+    const response = await fetch(`${api.baseUrl}/api/roster/import/${action}`, { method: 'POST', headers: { authorization: 'Bearer synthetic-315b', 'content-type': 'application/json' }, body: JSON.stringify({ idempotencyKey: key, sourceKind: 'platform_export', sourceIdentity: 'synthetic-export', payload }) })
+    expect(response.status).toBe(200)
+    return response.json()
+  }
+  const snapshot = { titleCode: 'specialized_sme', year: 2026.9, collectedOn: '2026-11-05', originalFilename: 'synthetic.xlsx', sha256: 'legacy-nonempty-identity', rows: [{ sourceRowNo: 3.9, nameRaw: '  快照测试企业  ', usccRaw: null, district: null, rawFields: { preserved: null }, extra: true }] }
+  try {
+    for (const field of ['titleCode', 'year', 'collectedOn', 'originalFilename', 'sha256', 'sourceRowNo']) {
+      const invalid = JSON.parse(JSON.stringify(snapshot))
+      if (field === 'sourceRowNo') delete invalid.rows[0].sourceRowNo
+      else delete invalid[field]
+      const payload = { exportSnapshot: invalid }
+      const expected = field === 'titleCode'
+        ? { kind: 'export_batch', ref: 'export:snapshot', error: { code: 'title_unknown', field: 'titleCode', message: '称号不在字典内：undefined' } }
+        : field === 'sourceRowNo'
+          ? { kind: 'export_row', ref: 'export:row:0', error: { code: 'source_row_no_required', field: 'rows[].sourceRowNo', message: '快照行缺少 sourceRowNo' } }
+          : { kind: 'export_batch', ref: 'export:snapshot', error: { code: 'export_identity_incomplete', field: 'exportSnapshot', message: '快照缺少 year / collectedOn / originalFilename / sha256' } }
+      const before = await post('preflight', `export-invalid-${field}`, payload)
+      expect(before.preflight.conflicts).toEqual([{ ok: false, ...expected }])
+      expect(await post('preflight', `export-invalid-${field}`, rosterImportMcpPayloadSchema.parse(payload))).toEqual(before)
+      expect(listPlatformSnapshots(db)).toEqual([])
+    }
+    const payload = { exportSnapshot: snapshot }
+    const original = await post('preflight', 'export-valid', payload)
+    expect(original.preflight.conflicts).toEqual([])
+    expect(await post('preflight', 'export-valid', rosterImportMcpPayloadSchema.parse(payload))).toEqual(original)
+    const saved = await post('commit', 'export-valid', rosterImportMcpPayloadSchema.parse(payload))
+    expect(saved.status).toBe('committed')
+    expect(await post('commit', 'export-valid', payload)).toEqual(saved)
+    const batches = listPlatformSnapshots(db)
+    expect(batches).toHaveLength(1)
+    expect(batches[0]!.batch).toMatchObject({ titleCode: 'specialized_sme', year: 2026.9, collectedOn: '2026-11-05', originalFilename: 'synthetic.xlsx', sha256: 'legacy-nonempty-identity', rowCount: 1 })
+    expect(getPlatformExportRows(db, batches[0]!.batch.id)).toEqual([{ sourceRowNo: 3, nameRaw: '快照测试企业', usccRaw: null, district: null, province: null, city: null, regStatus: null }])
+    // Rows are optional at the actual core seam, despite the client TS interface.
+    const omittedRows = { ...snapshot, sha256: 'legacy-empty-snapshot', rows: undefined }
+    const empty = await post('preflight', 'export-empty', JSON.parse(JSON.stringify({ exportSnapshot: omittedRows })))
+    expect(empty.preflight.conflicts).toEqual([])
   } finally {
     await api.close()
     sqlite.close()

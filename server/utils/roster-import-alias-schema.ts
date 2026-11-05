@@ -28,5 +28,8 @@ const aliasDiscoverySchema = z.array(z.looseObject({
 } satisfies Record<keyof RosterImportAlias, z.ZodType>)).describe('企业别名证据；uscc 或 enterpriseName 定位已有或本批企业，sourceRefId 与 sourceRelationRef 不可同时给。confirmed 平台别名须有匹配主体及别名的原关系证据。旧字段归一化、缺失/null、附加字段与逐项错误由原导入核心处理。')
 
 const { $schema: _, ...aliasDiscovery } = z.toJSONSchema(aliasDiscoverySchema, { io: 'input' })
+// The core resolves an owner by name or USCC; neither a bare alias nor a new owner is a command.
+const aliasItemDiscovery = aliasDiscovery.items as { anyOf?: { required: string[] }[] }
+aliasItemDiscovery.anyOf = [{ required: ['enterpriseName'] }, { required: ['uscc'] }]
 // Discovery is additive: the legacy runtime input still reaches the domain core verbatim.
 export const aliasesMcpSchema = z.unknown().optional().meta(aliasDiscovery)

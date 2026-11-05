@@ -1933,9 +1933,123 @@ defineRouteMeta({
           "name",
           "sourceKind"
         ],
-        "additionalProperties": {}
+        "additionalProperties": {},
+        "anyOf": [
+          {
+            "required": [
+              "enterpriseName"
+            ]
+          },
+          {
+            "required": [
+              "uscc"
+            ]
+          }
+        ]
       },
       "description": "企业别名证据；uscc 或 enterpriseName 定位已有或本批企业，sourceRefId 与 sourceRelationRef 不可同时给。confirmed 平台别名须有匹配主体及别名的原关系证据。旧字段归一化、缺失/null、附加字段与逐项错误由原导入核心处理。"
+    },
+    "exportSnapshot": {
+      "type": "object",
+      "properties": {
+        "titleCode": {
+          "type": "string",
+          "enum": [
+            "little_giant",
+            "specialized_sme",
+            "innovative_sme"
+          ]
+        },
+        "year": {
+          "type": "number",
+          "description": "来源年度；沿用核心 optionalInt 非零判据，写入保留给定数值"
+        },
+        "collectedOn": {
+          "type": "string"
+        },
+        "originalFilename": {
+          "type": "string"
+        },
+        "sha256": {
+          "type": "string",
+          "description": "来源快照身份；原核心只要求非空，不新增 hash 格式拒绝"
+        },
+        "rows": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "sourceRowNo": {
+                "type": "number",
+                "description": "原行序；沿用 optionalInt，同批不得重复"
+              },
+              "usccRaw": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "nameRaw": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "district": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "province": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "city": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "regStatus": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "rawFields": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "additionalProperties": {}
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "sourceRowNo"
+            ],
+            "additionalProperties": {}
+          }
+        }
+      },
+      "required": [
+        "titleCode",
+        "year",
+        "collectedOn",
+        "originalFilename",
+        "sha256"
+      ],
+      "additionalProperties": {},
+      "description": "平台导出快照现状对照；省略 rows 可提交空快照，不重解释为正式公布历史；同 SHA 重放、源行冲突由原核心判定。"
     }
   },
   "additionalProperties": true
