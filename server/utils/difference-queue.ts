@@ -23,7 +23,7 @@ export function deriveSnapshotQueue(official: SnapshotOfficialCoordinate[], item
     const platform = new Set<string>()
     for (const item of observations) for (const segment of item.segments) for (const row of segment.rows) {
       // A filter is not a returned row title. Unknown titles/identity cannot prove absence.
-      const title = titles[row.rdjb as keyof typeof titles]
+      const title = Object.hasOwn(titles, row.rdjb ?? '') ? titles[row.rdjb as keyof typeof titles] : undefined
       const matches = row.tyshxydm ? group.some(e=>e.uscc===row.tyshxydm) : group.some(e=>e.name===row.qymc)
       if (!title || !matches) { complete=false; continue }
       platform.add(title)

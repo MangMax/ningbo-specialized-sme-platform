@@ -19,6 +19,9 @@ it('retains unfinished coverage without inventing absence or no_record', () => {
   expect(queue.rows).toEqual([])
   expect(queue.unfinished).toEqual([1])
 })
+it.each(['constructor','toString','__proto__'])('keeps unsupported returned title %s unfinished rather than proving absence', rdjb => {
+  expect(deriveSnapshotQueue(official, items([{rdjb,tyshxydm:official[0]!.uscc}]))).toEqual({rows:[],unfinished:[1]})
+})
 it('deduplicates rows and excludes both terminal states before stable count and pagination', () => {
   const rows = [{rdjb:'3',tyshxydm:official[0]!.uscc}]
   const queue = deriveSnapshotQueue(official, items([...rows,...rows]))
@@ -137,7 +140,9 @@ it('fresh collection persists literal candidates and approved export-shadow delt
   ]})
   const legacy=structuredClone(completed.result) as Record<string,unknown>
   delete legacy.official;delete legacy.queue
-  setJobResult(db,task.id,legacy)
+  db.$client.prepare('update job set result=? where id=?').run(JSON.stringify(legacy),task.id)
+  expect(getJob(db,task.id)!.result).not.toHaveProperty('official')
+  expect(getJob(db,task.id)!.result).not.toHaveProperty('queue')
   const retryTool=(await import('../server/mcp/tools/difference_snapshot')).default as unknown as {handler:(x:unknown)=>Promise<unknown>}
   await retryTool.handler({action:'retry',jobId:task.id})
   let resumed=getJob(db,task.id)!
