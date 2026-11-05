@@ -69,7 +69,7 @@ function gapResolvedBy(gap: QualificationEvent, facts: CycleFacts, originYear: n
 }
 
 /** Adjudicate an originating cycle using only applicable, unresolved evidence. */
-function adjudicateCycle(events: QualificationEvent[], originYear: number, batch: number | null, year: number, ambiguous: QualificationEvent[] = [], day?: string): CycleJudgment {
+function adjudicateCycle(events: QualificationEvent[], originYear: number, batch: number | null, year: number, ambiguous: QualificationEvent[] = [], day?: string, notesOnlyGaps = false): CycleJudgment {
   const facts = cycleFacts(events,ambiguous,originYear,year,day)
   // Only the latest actual grant can support a restored qualification. Older
   // grants remain in the adjudication and evidence history, but not filters.
@@ -81,9 +81,9 @@ function adjudicateCycle(events: QualificationEvent[], originYear: number, batch
     if (resolved) result.notes.push(`旧缺口 event:${gap.id}（日期/批次/结论）由${resolved}消解，历史及出处保留`)
     else unresolved.push(gap)
   }
-  if (day && [...events,...ambiguous].some(e => e.validityInvalid)) result.notes.push('正式有效期来源或原周期引用已失效，待核')
+  if (!notesOnlyGaps && day && [...events,...ambiguous].some(e => e.validityInvalid)) result.notes.push('正式有效期来源或原周期引用已失效，待核')
   else if (originYear > year) result.notes.push('原认定年份尚未生效，当前周期待确认')
-  else if (unresolved.length) {
+  else if (unresolved.length && !notesOnlyGaps) {
     for (const event of unresolved) result.notes.push(`event:${event.id} ${event.eventType === 'award' ? '认定日期/批次' : '复核结论/结论年份/批次'}不完整或无法证明被后续事实消解，当前周期待确认`)
   } else if (facts.lastFailure >= facts.lastAward && facts.failed.length && (!day || facts.lastFailure >= facts.lastPassed)) {
     if (day) { result.group='excluded'; result.notes.push('对应认定周期复核明确不通过') }
@@ -103,6 +103,7 @@ function adjudicateCycle(events: QualificationEvent[], originYear: number, batch
     else if (dueYear != null && (year === Infinity || dueYear > year)) result.group='eligible'
     else { result.group = day ? 'excluded' : 'pending'; result.notes.push(day ? '已到期，未见明确延续结果' : '已到复核年份，未见明确延续结果，待确认') }
   }
+  if (notesOnlyGaps) for (const event of unresolved) result.notes.push(`event:${event.id} 周期资料不完整，仅备注；保留已确认资格期间`)
   return result
 }
 
@@ -118,7 +119,9 @@ function hasUnresolvedRecovery(current: CycleJudgment[], history: CycleJudgment[
   return false
 }
 
-export function adjudicateQualificationCycles(formal: QualificationEvent[], year = Infinity, day?: string): { group: CurrentGroup; notes: string[]; originYear: number; cycles: CycleJudgment[] } {
+/** #475 effective reads retain established periods when applicability metadata is missing.
+ * Legacy callers keep the conservative pending policy by default. */
+export function adjudicateQualificationCycles(formal: QualificationEvent[], year = Infinity, day?: string, notesOnlyGaps = false): { group: CurrentGroup; notes: string[]; originYear: number; cycles: CycleJudgment[] } {
   const byYear = new Map<number, Map<number | null, QualificationEvent[]>>()
   const unknown: QualificationEvent[] = []
   // Dated current assessments ignore known future facts; undated legacy
@@ -152,10 +155,10 @@ export function adjudicateQualificationCycles(formal: QualificationEvent[], year
     // or unresolved separate grant keeps its effect instead of vanishing in the
     // latest known grant. Unknown reviews remain applicability gaps.
     const possible = [
-      ...known.map(([batch,events]) => adjudicateCycle([...events,...linked.filter(e => events.some(a => a.id === e.formalValidity!.originAwardEventId))],origin,batch,year,reviews,day)),
-      ...grants.map(grant => adjudicateCycle([grant,...linked.filter(e => e.formalValidity!.originAwardEventId === grant.id)],origin,null,year,reviews,day)),
+      ...known.map(([batch,events]) => adjudicateCycle([...events,...linked.filter(e => events.some(a => a.id === e.formalValidity!.originAwardEventId))],origin,batch,year,reviews,day,notesOnlyGaps)),
+      ...grants.map(grant => adjudicateCycle([grant,...linked.filter(e => e.formalValidity!.originAwardEventId === grant.id)],origin,null,year,reviews,day,notesOnlyGaps)),
     ]
-    return possible.length ? possible : [adjudicateCycle(reviews,origin,null,year,[],day)]
+    return possible.length ? possible : [adjudicateCycle(reviews,origin,null,year,[],day,notesOnlyGaps)]
   })
   // Selection follows adjudication, retains *every* batch of the current year,
   // and never uses the latest passed event to erase another batch or a failure.
@@ -176,5 +179,6 @@ export function adjudicateQualificationCycles(formal: QualificationEvent[], year
   // Preserve #116's same-year re-award ordering boundary, using actual award
   // dates and already partitioned older cycles, never a renewal's anchor year.
   if (hasUnresolvedRecovery(current,judgments)) { group='pending'; notes.push('同年认定恢复与旧周期失败结论顺序冲突，待确认') }
+  if (notesOnlyGaps && current.some(c => c.group === 'eligible')) group='eligible'
   return { group, notes, originYear, cycles: current }
 }
