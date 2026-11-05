@@ -2,6 +2,8 @@ import { z } from 'zod'
 import { officialAppendSchema } from './official-evidence-plan'
 import { evidenceCorrectionRequestSchema } from './roster-evidence-correction'
 import { announcementMcpSchema } from './roster-import-announcement-schema'
+import { aliasesMcpSchema } from './roster-import-alias-schema'
+import { exportSnapshotMcpSchema } from './roster-import-export-schema'
 
 const importCorrectionSchema = evidenceCorrectionRequestSchema.omit({ idempotencyKey: true }).optional()
 const { $schema: _correctionDialect, ...importCorrectionDiscovery } = z.toJSONSchema(importCorrectionSchema, { io: 'input' })
@@ -12,6 +14,8 @@ correctionOperationDiscovery.required = [...correctionOperationDiscovery.require
 /** Additive schema: preserve the legacy payload while strictly validating the new command. */
 export const rosterImportMcpPayloadSchema = z.object({
   announcement: announcementMcpSchema,
+  aliases: aliasesMcpSchema,
+  exportSnapshot: exportSnapshotMcpSchema,
   officialEvidenceAppends: z.array(officialAppendSchema).min(1).max(100).optional().describe('精确正式佐证追加；expectedVersion=当前event.revision，显式声明与publishedRow；须先preflight并在payload带回officialEvidencePlanHash'),
   officialEvidenceCorrections: importCorrectionSchema.meta(importCorrectionDiscovery).describe('复用精确更正DTO；导入采用外层幂等键，每项明确publishedRow和expectedRowRevision，与追加/capture共用最终计划'),
   officialEvidencePlanHash: z.string().regex(/^[a-f0-9]{64}$/).optional(),
@@ -20,3 +24,5 @@ export const rosterImportMcpPayloadSchema = z.object({
 
 const { announcement, officialEvidenceAppends, officialEvidenceCorrections, officialEvidencePlanHash } = z.toJSONSchema(rosterImportMcpPayloadSchema, { io: 'input' }).properties!
 export const rosterImportOfficialDiscovery = { announcement, officialEvidenceAppends, officialEvidenceCorrections, officialEvidencePlanHash }
+const legacyDiscovery = z.toJSONSchema(rosterImportMcpPayloadSchema, { io: 'input' }).properties!
+export const rosterImportLegacyDiscovery = { aliases: legacyDiscovery.aliases, exportSnapshot: legacyDiscovery.exportSnapshot }
