@@ -68,3 +68,19 @@ it('shows recovering and recovered states without automatically issuing recovery
   expect(document.body.textContent).toContain('已恢复')
   expect(fetch.mock.calls.every(call => !call[1]?.method)).toBe(true)
 })
+it('ignores a stale intent response after switching to another file', async () => {
+  let resolveOld!: (value: unknown) => void
+  const fetch = vi.fn(async (url: string) => {
+    if (url.endsWith('/maintenance')) return { revision: 3 }
+    if (url.includes('/41/')) return await new Promise(resolve => { resolveOld = resolve })
+    return { intent: { id: 'new-intent', fileId: 42, relPath: 'new.pdf', state: 'recovered' } }
+  })
+  vi.stubGlobal('$fetch', fetch)
+  wrapper = mount(DeleteFileDialog, { attachTo: document.body, props: { open: true, fileId: 41, filename: '旧公告', relPath: 'old.pdf' } })
+  await flushPromises()
+  await wrapper.setProps({ fileId: 42, filename: '新公告', relPath: 'new.pdf' }); await flushPromises()
+  expect(document.body.textContent).toContain('已恢复')
+  resolveOld({ intent: { id: 'old-intent', fileId: 41, relPath: 'old.pdf', state: 'quarantined' } }); await flushPromises()
+  expect(document.body.textContent).toContain('new.pdf')
+  expect(document.body.textContent).not.toContain('已隔离')
+})
