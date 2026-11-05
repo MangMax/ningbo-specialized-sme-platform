@@ -1,27 +1,27 @@
 import { appLog, requestLogContext } from '../../../lib/logging'
 import { requireApiToken } from '../../utils/api-guard'
+import { quarantineStoredFile } from '../../utils/file-physical'
 import { useDb } from '@db'
-import { removeStoredFileSync } from '../../utils/stored-files'
 import { hasFileMaintenanceControls, maintainStoredFileSync, splitFileMaintenanceBody } from '../../utils/file-maintenance'
 
 /**
  * 把一个文件移出库与索引。`DELETE /api/files/:id`
  *
  * **默认不删磁盘文件** —— 只打 `removed_at` 标(软删除),台账的出处仍指得到它。
- * 要真删磁盘必须显式 `?deleteDisk=1`,由界面上的二次确认负责发起(票 09)。
+ * 隔离磁盘文件必须显式 `?deleteDisk=1` 并提供完整版本封套。
  */
 defineRouteMeta({
   openAPI: {
     tags: ['文件库'],
     summary: '把一个文件移出库',
     description:
-      '默认**软删除**(只打 `removed_at` 标,磁盘文件保留)。`deleteDisk=1` 才真删磁盘 —— 不可撤销，正式出处引用数大于0时拒绝。旧载荷保留原本地入口与 blind-write 语义。版本化软移出必须同时给 expectedRevision/idempotencyKey/actor/basis 并使用 API token；显式磁盘删除不接受幂等键。',
+      '默认**软删除**(只打 `removed_at` 标,磁盘文件保留)。`deleteDisk=1` 将原字节移入可恢复隔离区；正式出处引用数大于0时拒绝。旧载荷保留原本地入口与 blind-write 语义。版本化软移出必须同时给 expectedRevision/idempotencyKey/actor/basis 并使用 API token；显式磁盘删除需要完整维护封套和 API token，返回 intent 和持久完成回执；diskDeleted=false，diskQuarantined=true。不永久擦除字节。',
     parameters: [
       {
         name: 'deleteDisk',
         in: 'query',
         schema: { type: 'string', enum: ['1', 'true'] },
-        description: '真删磁盘文件(默认不删)。',
+        description: '显式可恢复隔离(默认不隔离)。',
       },
     ],
     requestBody: { content: { 'application/json': { schema: {
@@ -34,7 +34,7 @@ defineRouteMeta({
       },
     } } } },
     responses: {
-      200: { description: '`{ removed, diskDeleted, referenceCount }`。' },
+      200: { description: '软移出返回 `{ removed, diskDeleted, referenceCount }`；显式隔离另带 diskQuarantined 与 intent，diskDeleted 始终 false。' },
       400: { description: 'id 非法 / 路径越界。' },
       404: { description: '文件不存在。' },
       401: { description: '版本化写入需要 API token。' },
@@ -59,12 +59,10 @@ export default defineEventHandler(async (event) => {
   try {
     if (deleteDisk) {
       const { options } = splitFileMaintenanceBody(body, 'remove')
-      if (options.idempotencyKey) throw createError({ statusCode: 400, message: '磁盘删除需要单独明确授权，不接受软移出幂等键' })
-      const db = useDb()
-      result = db.transaction((tx) => {
-        maintainStoredFileSync(tx, id, 'remove', {}, options)
-        return removeStoredFileSync(tx, useRuntimeConfig().filesDir, id, { deleteDisk: true })
-      }, { behavior: 'immediate' })
+      requireApiToken(event)
+      const receipt = quarantineStoredFile(useDb(), useRuntimeConfig().filesDir, id, options)
+      appLog({ source: 'file', operation: 'file.disk.remove', outcome: 'success', fileId: id }, requestLogContext(event))
+      return receipt
     }
     else {
       const { options } = splitFileMaintenanceBody(body, 'remove')

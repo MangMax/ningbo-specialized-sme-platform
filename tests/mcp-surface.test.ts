@@ -58,6 +58,8 @@ describe('mcp-auth 鉴权判据', () => {
       'update_file',
       'remove_file',
       'restore_file',
+      'quarantine_file',
+      'recover_file',
       'save_parse_result',
       'preflight_file_parse_result',
       'commit_file_parse_result',
