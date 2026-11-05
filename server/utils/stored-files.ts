@@ -27,6 +27,7 @@ import {
 import { scopeOf, siblingIndex, type StoreScopeReason } from '../../lib/file-store-scope'
 import type { StoredFilePart } from '../../lib/file-parts'
 import { listFileParts, type PartsBackfillStats } from './file-parts'
+import { compareFileContentIdentity, type FileContentConflict } from './file-content-identity'
 
 type Db = BetterSQLite3Database<typeof schema>
 
@@ -184,10 +185,12 @@ export async function scanFileStore(root: string): Promise<ScannedFile[]> {
 export interface BackfillStats {
   /** 新插入的行数。 */
   inserted: number
-  /** 已存在但磁盘事实变化的行数(尺寸/哈希等被刷新)。 */
+  /** 内容一致、仅文件名等元数据刷新的行数。 */
   updated: number
   /** 已存在且一致、跳过的行数。 */
   unchanged: number
+  /** 同路径字节与登记身份不符;保留原行,恢复原字节后可重扫。无冲突时省略。 */
+  conflicts?: FileContentConflict[]
   /**
    * 被跳过的路径(认不出分类,如不在 `<source>/<kind>/` 规则下的文件)。
    * 这些文件仍**不入表** —— 不猜。
@@ -232,7 +235,7 @@ export interface BackfillReport extends BackfillStats {
  *  3. 该 `rel_path` 已被**人工移出库**(`removed_at` 非空)→ 跳过 —— 否则回填会把
  *     用户刚移出的文件又插回来,那就不是幂等了。
  *
- * 已有的行:**只刷新磁盘事实**(filename/ext/bytes/sha256),不覆盖分类 ——
+ * 已有的行:内容身份不符时报冲突,内容一致才刷新 filename/ext,不覆盖分类 ——
  * 分类一旦被人改过(或由票 12 回写),回填不该把它冲回去。
  */
 export function backfillStoredFiles(
@@ -283,12 +286,17 @@ export function backfillStoredFiles(
     }
     // 已移出库的:不复活。
     if (row.removedAt) continue
+    const conflict = compareFileContentIdentity({ ...row, fileId: row.id }, f)
+    if (conflict) {
+      (stats.conflicts ??= []).push(conflict)
+      continue
+    }
     if (row.filename === f.filename && row.bytes === f.bytes && row.sha256 === f.sha256) {
       stats.unchanged += 1
       continue
     }
     db.update(schema.storedFile)
-      .set({ filename: f.filename, ext: f.ext, bytes: f.bytes, sha256: f.sha256 })
+      .set({ filename: f.filename, ext: f.ext })
       .where(eq(schema.storedFile.id, row.id))
       .run()
     stats.updated += 1
