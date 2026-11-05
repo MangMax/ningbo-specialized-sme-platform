@@ -95,6 +95,9 @@ describe('recognized_list typed projection through public import HTTP', () => {
       validity_date_raw: '2027-06-30',
       maintenance_year: 2024,
       maintenance_batch: '2',
+      source_validity_date: ' 2027-06-30 ',
+      source_maintenance_batch: ' 2 ',
+      source_maintenance_year_absent: 0,
       district: '33020000',
       award_note: '原认定说明',
       title_raw: '2',
@@ -106,6 +109,59 @@ describe('recognized_list typed projection through public import HTTP', () => {
     // The query title scope stays a query fact; the row-level raw title is separate.
     expect(db.get(sql`SELECT rdjb FROM platform_query`)).toEqual({ rdjb: '2' })
     expect(db.get<{ n: number }>(sql`SELECT count(*) n FROM platform_recognized_projection`)!.n).toBe(1)
+  }))
+
+  it('completes uncaptured fidelity with a new public command, replays idempotently and rolls back captured conflicts atomically', async () => fixture(async (db, post) => {
+    const a = seedArchived(db, {time: '2026-10-01T00:00:00Z', relationKey: 'COMPLETE-A', raw: {id: 'COMPLETE-A', rddqrq: ' 2028-11-20 ', whpc: '2026-1', whpcyear: false}})
+    const b = seedArchived(db, {time: '2026-10-02T00:00:00Z', relationKey: 'COMPLETE-B', raw: {id: 'COMPLETE-B', rddqrq: 2028, whpc: null}})
+    const payload = {platformRecordObservations: [{relationId: a.id}, {relationId: b.id}]}
+    const originalRequest = request('fidelity-original', payload)
+    expect((await post('commit', originalRequest)).status).toBe('committed')
+    const originals = () => Object.fromEntries(['platform_relation', 'platform_query', 'platform_business_record', 'platform_business_record_version', 'platform_business_observation'].map(table => [table, db.all(sql.raw('SELECT * FROM ' + table))]))
+    const original = originals()
+    const normalized = () => db.all(sql`SELECT version_id,record_id,validity_date_raw,maintenance_year,maintenance_batch,district,award_note,title_raw,name_raw,uscc_raw,rule_version,created_at FROM platform_recognized_projection ORDER BY version_id`)
+    const normalizedBefore = normalized()
+    const fidelity = () => db.all(sql`SELECT source_validity_date,source_maintenance_batch,source_maintenance_year_absent FROM platform_recognized_projection ORDER BY version_id`)
+    const captured = fidelity()
+    expect(captured).toEqual([
+      {source_validity_date: ' 2028-11-20 ', source_maintenance_batch: '2026-1', source_maintenance_year_absent: 0},
+      {source_validity_date: null, source_maintenance_batch: null, source_maintenance_year_absent: 1},
+    ])
+    db.run(sql`UPDATE platform_recognized_projection SET source_validity_date=NULL,source_maintenance_batch=NULL,source_maintenance_year_absent=NULL`)
+    const uncaptured = fidelity()
+    // A committed idempotency key returns its old receipt and cannot fill new facts.
+    expect((await post('commit', originalRequest)).status).toBe('committed')
+    expect(fidelity()).toEqual(uncaptured)
+    const completion = request('source-fidelity-v1/complete', payload)
+    expect((await post('preflight', completion)).http).toBe(200)
+    expect(fidelity()).toEqual(uncaptured)
+    expect((await post('commit', completion)).status).toBe('committed')
+    expect(fidelity()).toEqual(captured)
+    expect(originals()).toEqual(original)
+    expect(normalized()).toEqual(normalizedBefore)
+    const retry = await post('commit', completion)
+    expect(retry.status).toBe('committed')
+    expect(fidelity()).toEqual(captured)
+    expect((await post('commit', request('source-fidelity-v1/recheck', payload))).summary.canonicalProjection).toMatchObject({recognizedProjectionsCreated: 0, recognizedProjectionsReused: 2})
+    // Each captured scalar is independently protected. A prior completion in
+    // the same batch must roll back when the second row conflicts.
+    for (const [index, tamper] of [
+      'source_maintenance_year_absent=0',
+      "source_validity_date='tampered'",
+      "source_maintenance_batch='tampered'",
+      "source_maintenance_year_absent=NULL,source_validity_date='partial'",
+    ].entries()) {
+      db.run(sql`UPDATE platform_recognized_projection SET source_validity_date=NULL,source_maintenance_batch=NULL,source_maintenance_year_absent=NULL WHERE version_id=(SELECT min(version_id) FROM platform_recognized_projection)`)
+      db.run(sql`UPDATE platform_recognized_projection SET source_validity_date=NULL,source_maintenance_batch=NULL,source_maintenance_year_absent=1 WHERE version_id=(SELECT max(version_id) FROM platform_recognized_projection)`)
+      db.run(sql.raw('UPDATE platform_recognized_projection SET ' + tamper + ' WHERE version_id=(SELECT max(version_id) FROM platform_recognized_projection)'))
+      const beforeConflict = fidelity()
+      const failed = await post('commit', request('source-fidelity-v1/conflict/' + index, payload))
+      expect(failed.status).toBe('failed')
+      expect(failed.items.some((item: any) => item.error?.code === 'recognized_projection_conflict')).toBe(true)
+      expect(fidelity()).toEqual(beforeConflict)
+      expect(originals()).toEqual(original)
+      expect(normalized()).toEqual(normalizedBefore)
+    }
   }))
 
   it('preserves validity value precision, accepts number/string maintenance years and never parses a date', async () => fixture(async (db, post) => {

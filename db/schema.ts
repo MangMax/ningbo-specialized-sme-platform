@@ -905,6 +905,11 @@ export const platformRecognizedProjection = sqliteTable('platform_recognized_pro
   maintenanceYear: integer('maintenance_year'),
   /** Raw whpc (维护批次) after trimming. */
   maintenanceBatch: text('maintenance_batch'),
+  /** Untrimmed strings for qualification's existing exact grammar; nonstrings are null. */
+  sourceValidityDate: text('source_validity_date'),
+  sourceMaintenanceBatch: text('source_maintenance_batch'),
+  /** null = uncaptured; true = original whpcyear missing/null/exact empty string. */
+  sourceMaintenanceYearAbsent: integer('source_maintenance_year_absent', { mode: 'boolean' }),
   /** Raw szq (属地) after trimming. */
   district: text('district'),
   /** Raw rdxx (平台认定说明) after trimming. */
