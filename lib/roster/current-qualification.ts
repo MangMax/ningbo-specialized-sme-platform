@@ -387,7 +387,10 @@ function createCurrentCandidateEvaluationReader(db: Database.Database, receiptRu
   const headIds=sql.join(CURRENT_TITLES.flatMap(titleCode => (['missing_in_miit','extra_in_miit'] as const).map(direction =>
     sql`select (select id from difference_reason where enterprise_id=${sql.placeholder('enterpriseId')}
       and title_code=${titleCode} and direction=${direction} order by recorded_at desc,id desc limit 1)`)),sql` union all `)
-  const headsQuery=reader.select().from(d).where(sql`${d.id} in (${headIds})`).prepare()
+  // Prepare only when an explicit legacy assessment requests this dependency.
+  const prepareLegacyHeads = () => reader.select().from(d).where(sql`${d.id} in (${headIds})`).prepare()
+  let headsQuery: ReturnType<typeof prepareLegacyHeads> | undefined
+  const legacyHeads = () => headsQuery ??= prepareLegacyHeads()
   return function readCandidate(enterpriseId: number, title: CurrentTitle, year: number, executionTime = Date.now(), keys?: { queries: IdentityKeyVariants; relations: IdentityKeyVariants }, includeFilterFacts = false, includeReferences = true, assessmentOptions?: QualificationAssessmentReadOptions, includePendingFilterFacts = false, suppliedPlatformRefs?: readonly CurrentPlatformReference[], preparedCorrespondences?: ReturnType<typeof createEnterpriseTitleCorrespondenceRefsReader>, observePublishedForCurrent?: CurrentPublishedNameObservation, observeCycles?: CurrentCycleObservation): { row: CurrentRow; group: CurrentGroup; effectiveStatus: import('./current-status').CurrentStatus } {
   const enterprise = statement('select id,name,name_norm,uscc_norm,district,city from enterprise where id=?').get(enterpriseId) as any
   const events = statement(`select e.id,e.event_type as eventType,e.year,e.decided_year as decidedYear,e.batch_seq as batchSeq,e.review_outcome as reviewOutcome,e.revision,r.name_raw as nameRaw,r.uscc_raw as usccRaw,r.source from record r join record_event e on e.record_id=r.id where r.enterprise_id=? and r.title_code=? order by e.id`).all(enterpriseId,title) as (LifecycleEvent & { batchSeq: number|null; nameRaw: string|null; usccRaw: string|null; source: string; revision: number; formalValidity?: FormalValidity; validityInvalid?: boolean; formalValidityInputHash?: string; recordId?: number })[]
@@ -448,7 +451,7 @@ function createCurrentCandidateEvaluationReader(db: Database.Database, receiptRu
   row.references.push(...platformRefs.map(r => 'platform-relation:' + r.id + ' query:' + r.queryId))
   // Default effective reads never execute legacy difference/assessment/receipt decisions.
   // Explicit prior versions retain those diagnostics and their historical behavior.
-  const headRows = effectiveMode ? [] : headsQuery.all({enterpriseId})
+  const headRows = effectiveMode ? [] : legacyHeads().all({enterpriseId})
   const heads = CURRENT_TITLES.flatMap(titleCode => (['missing_in_miit','extra_in_miit'] as const).flatMap(direction => headRows.filter(d => d.titleCode === titleCode && d.direction === direction))).map(d => ({...d,queryId:d.evidenceQueryId,relationId:d.evidenceRelationId,movedTitle:d.movedInTitleCode,movedCity:d.movedInCity,movedYear:d.movedInYear,movedBatch:d.movedInBatch}))
   const correspondences=preparedCorrespondences ? preparedCorrespondences(enterpriseId, title) : listRecordCorrespondenceRefs(reader,{enterpriseId,titleCode:title})
   row.references.push(...correspondences.map(c => 'correspondence:' + c.id + '@' + c.revision + ' ' + c.status + (c.requiresRevalidation ? ' 来源需重新核实' : '')))
