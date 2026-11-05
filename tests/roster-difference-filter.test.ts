@@ -1,3 +1,4 @@
+import { initializeDb } from '../db/client'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -7,7 +8,7 @@ import { allRosterEnterprises, listRosterEnterprises } from '../lib/roster/enter
 import { parseRosterEnterpriseQuery } from '../server/utils/roster-read-query'
 
 const directory=mkdtempSync(join(tmpdir(),'rl20-reason-filter-'))
-const db=useDb({dbPath:join(directory,'test.db')})
+const db=initializeDb({ create: true,dbPath:join(directory,'test.db')})
 const ids: Record<string,number>={}
 function company(key:string) {
   const name=`宁波${key}企业`
