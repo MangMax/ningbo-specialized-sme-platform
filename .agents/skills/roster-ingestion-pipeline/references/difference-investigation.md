@@ -12,7 +12,7 @@
 4. 按下节对应正式事件与平台记录。先读任务详情中的全部历史行和公布出处，必要时查看当前公开对应证明与记录级对比契约，复用已确认对应；候选对应仍需独立确认，读取/对比不会自动确立对应或业务原因。
 5. 先确认是否真正存在差异，再按判断表分类。历史一致性与后续流程状态分别保留；主体、称号、年度批次、业务类型有歧义时具体说明，不能只取最新一行代替。
 6. 写清观察事实、对应记录、判断及出处，只列真正缺失的事实。`other` 必须是已经确立的具体原因，不能装入尚未完成的调查。记录主体、公布依据、属地或对应关系未明确时，面向用户统一列为“待人工审查”，并写具体问题。
-7. 仅在用户写入授权范围内交接已确认结论。只要求报告时，完成报告即停止。单一写入者核对在线契约，通过统一 REST/MCP 预检、提交和读回。名称/别名、原因与正式事件分别有依据、分别写入。采集输出或脚本字段映射不能冒充代理决定。
+7. 仅在用户写入授权范围内交接已确认结论。只要求报告时，完成报告即停止。单一写入者核对在线契约，任务判断按下节 current/token 覆盖写回，其他独立入库协议各自预检、提交和读回。名称/别名、原因与正式事件分别有依据、分别写入。采集输出或脚本字段映射不能冒充代理决定。
 
 ## 对应具体记录
 
@@ -68,7 +68,7 @@
 
 明确确认后记录 `reasonCode=pending_review`、`status=confirmed_reason`、`measureCode=follow_review`（保留正式公布历史并跟进审核）。这里 confirmed 表示分类已确认，不表示正在审核的申请已通过；它与 `needs_review`（待核实）、复核失败、称号到期、平台未更新分别处理。用户已确认的分类，不因未知内部根因而撤回；该授权分支无需额外正式文件/PDF/网络证明。未知时间或字段为 null。
 
-保留正式事件、原流程号/类型/提交时间/状态、三个接口引用和用户决定；使用新 `recordedAt` 追加时态解释并保留旧审计。通过统一 API 预检、提交和读回。线上契约尚不支持 `pending_review` 时准备请求并说明部署阻塞，上线后用独立分类写入。
+保留正式事件、原流程号/类型/提交时间/状态、三个接口引用和用户决定；任务判断按下节读取 current/token、覆盖写回并读回操作记录。
 
 [合成判断示例](adjudication-examples.md)覆盖无差异、待审核、失败流程和来源缺口。不得擅自把授权批次扩大到其他企业或状态。
 
@@ -78,7 +78,11 @@
 
 选择全表分页或逐企批量前先看能力，不假设允许空筛选。保留每个 batchId/itemId、实际条件、称号/页范围、原始时间、分段和未完成位置。按 `platform-query.md` 限制只补缺口。单一写入者对支持的证据逐批预检、提交、读回，之后才能称该行已入库。
 
-采集后用 `GET /api/roster/record-comparison` / `list_record_comparison`，显式固定 `queryIds/exportBatchIds/officialSourceDocumentIds`、适用的已确认 `proofIds` 及 `asOf`，保存实际对比结果及快照版本作为候选队列。正式事件与 scoped 业务/版本/观察分组分别核对；业务 `businessPage/businessPageSize` 独立分页，`businessCounts` 不混成事件数。未索引、缺编号、冲突或内容无法核实的观察保留 unknown/isolated；缺少对应证明不等于无差异，历史成员差集也不是已判断的业务差异。先对应事件与平台行，再分无差异和需调查记录。无差异不编原因；失败/部分证据、旧机器原因不能作为已确认结论。同企业跨称号一名负责人，复用证据。
+采集后以 difference-snapshot 任务快照及其任务队列领取坐标，按下节详情读取和覆盖写回。完整保留三接口分页、分段、失败与未完成范围；同企业跨称号一名负责人，复用证据。
+
+### 旧数据只读背景
+
+`GET /api/roster/record-comparison` / `list_record_comparison` 仅用于查阅旧事件对应和历史 scoped 观察，不能作为新任务队列或写回入口。旧解释、回执及版本审计只读，不执行追加解释、旧解释复核或预检提交旧决定流程。新任务使用冻结快照和当前判断，判断表与迁移查证仍适用。
 
 `queryBusList` 可作为独立 `recognized_list` 通过统一预检/提交转存，保留每个原批次分段、时间及分页/行对应。核对读回查询/行 ID 后才算入库完成。来源、条件、时间或结束证明缺失继续待处理，不能改标 `business_list` / `apply_list`。见[归档转存](../../../../docs/platform-recognized-evidence.md)。采集、证据入库、代理判断分别统计完成量和阻塞。
 
@@ -97,8 +101,8 @@
 
 1. 从任务快照队列领取非终结坐标。通过 `snapshot_difference_judgment`（参数 `input`）或 `POST /api/roster/difference-judgments` 的 `action: read` 读取 jobId、enterpriseId、titleCode、direction 对应详情；完整读取 platformHistory 的三接口全部历史行、officialSources 的冻结公布事件及出处，再按上面的判断表与迁移查证流程判断。skillReference 指向本文件。缺少出处单独说明，不作为有效资格 A 域的阻塞门。
 2. 能判定原因时写 `confirmed_reason`；确立无差异时写 `confirmed_no_diff`，两者离开待核队列。保留现有六状态、七原因；程序不自动分类。判不出写非终结状态（如 `needs_review`），在 searchedScope 列已查范围、gaps 列具体缺口，交人工通过代理补充决定。
-3. 写回前读取 current，将完整原值原样放入 expected；current 写 status、reasonCode、measureCode、notes、searchedScope、gaps、evidence。仅 confirmed_reason 携带原因；无差异及非终结原因设 null。evidence 可引用本坐标的 platform（itemId、segment 和 row，后两者从零计数）、official（evidenceId）或 external（http/https url、note）。actor 为已鉴权代理自报标签，不是权限证明；人工指令及依据写 notes。名称、别名和独立主体事实仍分别使用其公开协议。
-4. 用 `action: write` 覆盖本任务同一坐标；409 表示当前值已变或任务正在采集，重新读取并判断后再提交。读回 current 和 operations，核对任务、坐标、操作者、修改前后与时间。相同内容无操作日志增量；改判直接覆盖，不生成版本链，不写 previous_id、lifecycle_action 或 replace/withdraw。快照重试保留本任务判断与日志，新任务独立待核。
+3. 写回前读取 current 和 token，将完整原值原样放入 expected、token 放入 expectedToken（初始 0；独立最后操作 ID，仅作并发控制，不是业务版本）；current 写 status、reasonCode、measureCode、notes、searchedScope、gaps、evidence。仅 confirmed_reason 携带原因；无差异及非终结原因设 null。evidence 可引用本坐标的 platform（itemId、segment 和 row，后两者从零计数）、official（evidenceId）或 external（http/https url、note）。actor 为已鉴权代理自报标签，不是权限证明；人工指令及依据写 notes。名称、别名和独立主体事实仍分别使用其公开协议。
+4. 用 `action: write` 覆盖本任务同一坐标；409 表示当前值/token 已变或任务正在采集，重新读取并判断后再提交。读回 current 和 operations，核对任务、坐标、操作者、修改前后与时间。相同内容无操作日志增量；改判直接覆盖，不生成版本链，不写 previous_id、lifecycle_action 或 replace/withdraw。快照重试保留本任务判断与日志，新任务独立待核。
 
 历史机器结论须逐案按真实依据判断，技能修改本身不修改生产决定。旧 ID 和审计继续由原只读入口查询；旧结论不自动带入新任务。补码、别名、新查询或新来源带来冲突时，由代理核对具体坐标，明确人工兜底缺口，在授权内覆盖当前值，不设解释有效性或复核回执门。
 
