@@ -27,7 +27,7 @@ export interface CurrentFilterMatch {
 }
 export type CurrentPublishedPendingRow = CurrentQualifiedRow & { filterMatch: CurrentFilterMatch }
 export interface CurrentQualifiedResult {
-  responseVersion: 'current-qualified-408-v1'
+  responseVersion: 'current-qualified-478-v2' | 'current-qualified-408-v1'
   rows: CurrentQualifiedRow[]
   publishedPending: { requested: boolean; rows: CurrentPublishedPendingRow[]; total: number; page: number; pageSize: number }
   total: number
@@ -169,6 +169,6 @@ export function listCurrentQualified(db: Database.Database, filter: CurrentQuali
     })
     db.exec('COMMIT')
     const ascending = (values: Set<number>) => [...values].sort((a,b) => a-b)
-    return { responseVersion: 'current-qualified-408-v1', rows, publishedPending: { requested, rows: pendingRows, total: pendingTotal, page, pageSize }, total, uncertainTotal, options: { recognitionYears: ascending(recognitionYears), validYears: ascending(validYears), maintenanceYears: ascending(maintenanceYears), maintenanceBatchesByYear: Object.fromEntries([...maintenanceBatchesByYear].map(([year,batches]) => [year,ascending(batches)])) }, page, pageSize, titleCode: filter.titleCode, ruleVersion: CURRENT_RULE_VERSION, snapshotStartedAt }
+    return { responseVersion: 'current-qualified-478-v2', rows, publishedPending: { requested, rows: pendingRows, total: pendingTotal, page, pageSize }, total, uncertainTotal, options: { recognitionYears: ascending(recognitionYears), validYears: ascending(validYears), maintenanceYears: ascending(maintenanceYears), maintenanceBatchesByYear: Object.fromEntries([...maintenanceBatchesByYear].map(([year,batches]) => [year,ascending(batches)])) }, page, pageSize, titleCode: filter.titleCode, ruleVersion: CURRENT_RULE_VERSION, snapshotStartedAt }
   } catch (error) { if (db.inTransaction) db.exec('ROLLBACK'); throw error }
 }
