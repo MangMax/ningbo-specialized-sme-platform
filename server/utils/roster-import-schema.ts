@@ -12,7 +12,9 @@ import { mergesMcpSchema } from './roster-import-merge-schema'
 
 const importCorrectionSchema = evidenceCorrectionRequestSchema.omit({ idempotencyKey: true }).optional()
 const { $schema: _correctionDialect, ...importCorrectionDiscovery } = z.toJSONSchema(importCorrectionSchema, { io: 'input' })
-const correctionOperationDiscovery = importCorrectionDiscovery.properties!.operations!.items as { required: string[] }
+const correctionOperations = importCorrectionDiscovery.properties!.operations
+if (!correctionOperations || typeof correctionOperations !== 'object' || !('items' in correctionOperations)) throw new Error('Missing correction operations discovery')
+const correctionOperationDiscovery = correctionOperations.items as { required: string[] }
 // The import planner requires explicit row facts; standalone correction parsing retains its legacy form.
 correctionOperationDiscovery.required = [...correctionOperationDiscovery.required, 'publishedRow', 'expectedRowRevision']
 

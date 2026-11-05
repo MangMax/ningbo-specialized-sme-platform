@@ -3,6 +3,8 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { afterEach, expect, it, vi } from 'vitest'
 import DeleteFileDialog from '../components/files/DeleteFileDialog.vue'
 
+type DeferredRead = { revision: number } | { intent: { id: string; fileId: number; relPath: string; state: string } }
+
 let wrapper: ReturnType<typeof mount>
 afterEach(() => { wrapper?.unmount(); document.body.innerHTML = ''; vi.unstubAllGlobals() })
 const button = (text: string) => [...document.body.querySelectorAll('button')].find(el => el.textContent?.trim() === text)!
@@ -39,10 +41,10 @@ it('does not carry an uncertain command into another file when its post-write re
   const fetch = await setup()
   document.body.querySelector<HTMLButtonElement>('#delete-disk')!.click(); await flushPromises()
   await enter('physical-actor', '测试人员'); await enter('physical-basis', '仅隔离文件41'); await enter('physical-token', 'synthetic-token')
-  let resolveOld!: (value: unknown) => void
+  let resolveOld!: (value: DeferredRead) => void
   fetch.mockImplementation(async (url, opts) => {
     if (opts?.method) throw new Error('file41 completion unknown')
-    if (url === '/api/files/41/maintenance') return await new Promise(resolve => { resolveOld = resolve })
+    if (url === '/api/files/41/maintenance') return await new Promise<DeferredRead>(resolve => { resolveOld = resolve })
     if (url.endsWith('/maintenance')) return { revision: 7 }
     throw Object.assign(new Error('none'), { statusCode: 404 })
   })
@@ -121,10 +123,10 @@ it('shows recovering and recovered states without automatically issuing recovery
   expect(fetch.mock.calls.every(call => !call[1]?.method)).toBe(true)
 })
 it('ignores a stale intent response after switching to another file', async () => {
-  let resolveOld!: (value: unknown) => void
+  let resolveOld!: (value: DeferredRead) => void
   const fetch = vi.fn(async (url: string) => {
     if (url.endsWith('/maintenance')) return { revision: 3 }
-    if (url.includes('/41/')) return await new Promise(resolve => { resolveOld = resolve })
+    if (url.includes('/41/')) return await new Promise<DeferredRead>(resolve => { resolveOld = resolve })
     return { intent: { id: 'new-intent', fileId: 42, relPath: 'new.pdf', state: 'recovered' } }
   })
   vi.stubGlobal('$fetch', fetch)

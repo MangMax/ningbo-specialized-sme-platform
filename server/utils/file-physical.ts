@@ -17,7 +17,8 @@ function paths(root: string, intent: Intent) {
   if (!/^[0-9a-f-]{36}$/.test(intent.id)) fail('隔离意图 ID 非法')
   const base = realpathSync(root)
   const original = resolveInsideRoot(base, intent.relPath)
-  if (!original || original === base || intent.relPath.split(/[\\/]/).some(p => p.startsWith('.'))) fail('文件路径越界或属于保留目录')
+  if (!original) return fail('文件路径越界')
+  if (original === base || intent.relPath.split(/[\\/]/).some(p => p.startsWith('.'))) fail('文件路径越界或属于保留目录')
   if (!realpathSync(dirname(original)).startsWith(base + sep) && realpathSync(dirname(original)) !== base) fail('文件父目录越界')
   const quarantineDir = join(base, '.physical-quarantine')
   mkdirSync(quarantineDir, { recursive: true, mode: 0o700 })
@@ -53,9 +54,9 @@ function checkRevision(db: Db, id: number, options: FileMaintenanceOptions) {
 function requestHash(id: number, action: string, intentId: string | undefined, options: FileMaintenanceOptions) {
   return createHash('sha256').update(JSON.stringify([id, action, intentId ?? null, options.expectedRevision, options.actor, options.basis])).digest('hex')
 }
-function keyAvailable(db: Db, key: string, own?: string) {
+function keyAvailable(db: Db, key: string) {
   const row = db.select().from(table).where(or(eq(table.deleteKey, key), eq(table.recoverKey, key))).get()
-  if (row && row.id !== own) fail('幂等键已用于其他物理命令')
+  if (row) fail('幂等键已用于其他物理命令')
   if (db.select({ id: schema.fileMaintenanceAudit.id }).from(schema.fileMaintenanceAudit).where(eq(schema.fileMaintenanceAudit.idempotencyKey, key)).get()) fail('幂等键已用于普通维护命令')
 }
 function receipt(db: Db, intent: Intent) {
