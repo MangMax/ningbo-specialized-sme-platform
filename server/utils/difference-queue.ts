@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { differenceReason } from '../../db/schema'
 import type { PlatformRow } from '../../lib/platform/adapter'
 import type { useDb } from '../../db/client'
 export type SnapshotOfficialCoordinate = { enterpriseId: number; name: string; uscc: string | null; titleCode: string }
@@ -39,11 +40,11 @@ export function deriveSnapshotQueue(official: SnapshotOfficialCoordinate[], item
   result.unfinished.sort((a,b)=>a-b)
   return result
 }
-export function pageSnapshotQueue(queue: SnapshotQueue, page: number, pageSize: number) {
-  const rows = queue.rows.filter(r=>!['confirmed_no_diff','confirmed_reason'].includes(r.status))
+export function pageSnapshotQueue(queue: SnapshotQueue, page: number, pageSize: number, filters: {view?: string; status?: string; reasonCode?: string} = {}) {
+  const rows = queue.rows.filter(r=>(filters.view === 'judged' ? ['confirmed_no_diff','confirmed_reason'].includes(r.status) : !['confirmed_no_diff','confirmed_reason'].includes(r.status)) && (!filters.status || r.status === filters.status) && (!filters.reasonCode || r.reasonCode === filters.reasonCode))
   return { rows: rows.slice((page-1)*pageSize,page*pageSize),total:rows.length,page,pageSize,unfinished:queue.unfinished }
 }
-export const queueInput = z.object({ jobId:z.string().regex(/^[0-9A-HJKMNP-TV-Z]{26}$/),page:z.coerce.number().int().min(1).default(1),pageSize:z.coerce.number().int().min(1).max(200).default(50) })
+export const queueInput = z.object({ view:z.enum(['pending','judged']).default('pending'),status:z.enum(differenceReason.status.enumValues).optional(),reasonCode:z.enum(differenceReason.reasonCode.enumValues).optional(),jobId:z.string().regex(/^[0-9A-HJKMNP-TV-Z]{26}$/),page:z.coerce.number().int().min(1).default(1),pageSize:z.coerce.number().int().min(1).max(200).default(50) })
 export function readSnapshotQueue(db:ReturnType<typeof useDb>, raw:unknown) {
   const parsed=queueInput.safeParse(raw)
   if (!parsed.success) throw Object.assign(new Error('Invalid queue parameters'),{statusCode:400})
@@ -58,5 +59,5 @@ export function readSnapshotQueue(db:ReturnType<typeof useDb>, raw:unknown) {
     const saved=judgments.find(j=>j.enterprise_id===row.enterpriseId&&j.title_code===row.titleCode&&j.direction===row.direction)
     if(saved) Object.assign(row,JSON.parse(saved.current))
   }
-  return {jobId,...pageSnapshotQueue(queue,page,pageSize)}
+  return {jobId,...pageSnapshotQueue(queue,page,pageSize,parsed.data)}
 }

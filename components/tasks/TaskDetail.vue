@@ -147,6 +147,7 @@ async function act(action: 'cancel' | 'retry') {
         </div>
       </CardHeader>
       <CardContent class="flex min-w-0 flex-col gap-4 px-0 pb-0">
+        <NuxtLink v-if="data?.kind === 'difference-snapshot'" :to="`/comparison?snapshot=${id}`">打开差异清单</NuxtLink>
         <SnapshotDifferenceQueue v-if="current && data?.kind === 'difference-snapshot' && !inFlight" :key="id" :id="id" />
         <TableFailureState v-if="failed" title="详情加载失败或任务不存在" :compact="!!data" :pending="loading" description="已保留请求的任务编号。可重试；旧详情不会用于当前任务的操作。" @retry="refresh" />
         <p v-else-if="loading && !data" role="status">正在读取任务详情…</p>
