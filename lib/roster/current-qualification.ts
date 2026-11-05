@@ -1,3 +1,4 @@
+import { adjudicateQualificationCycles as adjudicate407Cycles } from './qualification-cycles-407'
 import { readEnterpriseFactEffects } from './enterprise-fact-effects'
 import { formalValiditySchema, type FormalValidity } from './formal-validity'
 import { readPlatformComparisonProcesses } from '../../server/utils/platform-comparison-input'
@@ -421,7 +422,7 @@ function createCurrentCandidateEvaluationReader(db: Database.Database, receiptRu
   const formal = events.filter(e => e.source === 'jxj' && ['award','review'].includes(e.eventType) && evidence.some(v => v.eventId === e.id))
   const lifecycle = computeTitleLifecycle(formal)
   const row: CurrentRow = { enterpriseId, name: enterprise.name, uscc: enterprise.uscc_norm, district: enterprise.district, publishedNames: [...new Set(formal.map(e => e.nameRaw).filter((n): n is string => !!n))], aliases: [], firstYear: lifecycle.firstRecognitionYear, basis: formal.map(e => `event:${e.id}@${e.revision} ${e.eventType} ${e.year ?? ''}/${e.batchSeq ?? ''} 结论年:${e.decidedYear ?? ''}`).join('\n'), reviews: formal.filter(e => e.eventType === 'review').map(e => `${e.year ?? '?'}年原认定批次；结论年${e.decidedYear ?? '?'}；${e.reviewOutcome ?? '未知'}`).join('\n'), publication: formal.length ? '已见本称号宁波公布记录' : '尚未完成公布匹配核实', notes: [], references: evidence.map(v => `evidence:${v.id} ${v.sourceFile} ${v.attachment ?? ''} 序号:${v.listNo ?? ''}`), group: 'pending' }
-  const qualification = adjudicateQualificationCycles(effectiveMode ? events.filter(e => e.source === 'jxj' && ['award','review'].includes(e.eventType)).map(e => ({...e, validityInvalid:false})) : formal, year, legacy ? undefined : qualificationDay(executionTime), effectiveMode)
+  const qualification: ReturnType<typeof adjudicateQualificationCycles> = (effectiveMode ? adjudicateQualificationCycles : adjudicate407Cycles)(effectiveMode ? events.filter(e => e.source === 'jxj' && ['award','review'].includes(e.eventType)).map(e => ({...e, validityInvalid:false})) : formal, year, legacy ? undefined : qualificationDay(executionTime), ...(effectiveMode ? [true] as const : []))
   let qualificationSource: 'formal' | 'migration' = 'formal'
   let migrationAwardYears: number[] = []
   row.group = qualification.group

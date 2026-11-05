@@ -49,7 +49,7 @@ export function currentExport409Fixture() {
     if (port === 3480 || port === 3481) throw new Error('Reserved business port refused')
     const args = mode === 'compiled' ? [join(cwd,'.output/server/index.mjs')] : [join(cwd,'node_modules/nuxt/bin/nuxt.mjs'),'dev','--dotenv',process.env.ISSUE409_EMPTY_DOTENV!,'--host','127.0.0.1','--port',String(port)]
     const child = spawn(process.execPath, args, {
-      cwd, stdio: ['ignore','pipe','pipe'], env: { ...process.env, ...(mode === 'compiled' ? { HOST: '127.0.0.1', PORT: String(port), NITRO_HOST: '127.0.0.1', NITRO_PORT: String(port) } : {}), NUXT_BUILD_DIR: join(dir,'build'), NUXT_DB_PATH: dbPath, NUXT_API_TOKEN: token, NUXT_FILES_DIR: join(dir,'files'), NUXT_INCOMING_DIR: join(dir,'incoming') },
+      cwd, stdio: ['ignore','pipe','pipe'], env: { ...process.env, ...(mode === 'compiled' ? { HOST: '127.0.0.1', PORT: String(port), NITRO_HOST: '127.0.0.1', NITRO_PORT: String(port) } : {}), NUXT_BUILD_DIR: join(dir,'build'), NUXT_DB_PATH: dbPath, NUXT_API_TOKEN: token, NUXT_MCP_TOKEN: token, NUXT_FILES_DIR: join(dir,'files'), NUXT_INCOMING_DIR: join(dir,'incoming') },
     })
     let output = ''
     for (const stream of [child.stdout,child.stderr]) stream.on('data', data => { output = (output + data).slice(-12000) })

@@ -169,7 +169,8 @@ export function adjudicateQualificationCycles(formal: QualificationEvent[], year
   // Selection follows adjudication, retains *every* batch of the current year,
   // and never uses the latest passed event to erase another batch or a failure.
   const originYear = Math.max(...judgments.map(c => c.originYear))
-  const current = judgments.filter(c => c.originYear === originYear)
+  const latestRecovery = Math.max(...judgments.map(c => c.anchor ? factTime(c.anchor)! : -Infinity))
+  const current = notesOnlyGaps ? judgments.filter(c => c.anchor && factTime(c.anchor) === latestRecovery) : judgments.filter(c => c.originYear === originYear)
   const notes = current.flatMap(c => c.notes.map(note => `${c.originYear}年/批次${c.batch ?? '?'}：${note}`))
   let group: CurrentGroup = current[0]?.group ?? 'pending'
   if (!current.length) notes.push('缺少已确认认定及资格依据；平台状态或候选对应不能单独证明资格')
@@ -190,7 +191,14 @@ export function adjudicateQualificationCycles(formal: QualificationEvent[], year
     const lastFailure = Math.max(...applicable.filter(e => e.eventType === 'review' && e.reviewOutcome === 'failed').map(e => factTime(e)!))
     const lastRecovery = Math.max(...applicable.filter(e => e.eventType === 'award' || e.reviewOutcome === 'passed').map(e => factTime(e)!))
     if (lastFailure >= lastRecovery && lastFailure !== -Infinity) { group='excluded'; notes.push('正式复核明确不通过，未见较晚通过或新认定恢复') }
-    else group = current.some(c => c.group === 'eligible') ? 'eligible' : 'excluded'
+    else {
+      // A dated official interval is independently usable when the recorded
+      // business year is absent. Never invent origin coordinates to admit it.
+      const undatedPeriods = unknown.filter(e => (e.eventType === 'award' || e.reviewOutcome === 'passed') && e.formalValidity?.interval)
+      const intervalEligible = undatedPeriods.some(e => e.formalValidity!.interval!.validFrom <= day! && day! <= e.formalValidity!.interval!.validThrough)
+      group = intervalEligible || current.some(c => c.group === 'eligible') ? 'eligible' : 'excluded'
+      for (const e of undatedPeriods) notes.push(`event:${e.id} 认定年份缺失，仅备注；正式文件有效期：${e.formalValidity!.interval!.validFrom} 至 ${e.formalValidity!.interval!.validThrough}（含首尾）`)
+    }
   }
   return { group, notes, originYear, cycles: current }
 }

@@ -31,7 +31,23 @@ it('switches judged results, labels no difference, and retains source rows after
  await flushPromises();expect(wrapper.text()).toContain('未查询');expect(wrapper.text()).toContain('1 家企业的覆盖或记录信息未完成')
  await wrapper.findAll('[role=tab]')[1]!.trigger('mousedown', {button:0});await flushPromises();expect(wrapper.text()).toContain('无差异');expect(wrapper.text()).not.toContain('暂无待核候选')
  fail=true
- await wrapper.findAll('[role=tab]')[0]!.trigger('mousedown', {button:0});await flushPromises();expect(wrapper.text()).toContain('队列暂不可读');expect(wrapper.text()).toContain('无差异');expect(wrapper.text()).toContain('上次成功读取：已判结果 / 全部状态 / 全部原因 / 第 1 页');expect(wrapper.text()).toContain('本次请求：待核队列 / 全部状态 / 全部原因 / 第 1 页读取失败。')
+ await wrapper.findAll('[role=tab]')[0]!.trigger('mousedown', {button:0});await flushPromises();expect(wrapper.text()).toContain('队列暂不可读');expect(wrapper.text()).toContain('无差异');expect(wrapper.text()).toContain('上次成功读取：已判结果 / 全部状态 / 全部原因 / 第 1 页');expect(wrapper.text()).toContain('本次请求：待核队列 / 全部状态 / 全部原因 / 第 1 页 / 每页 25 条读取失败。')
  fail=false
  await wrapper.findAll('button').find(b=>b.attributes('data-testid')==='table-retry')!.trigger('click');await flushPromises();expect(wrapper.text()).toContain('未查询');expect(wrapper.text()).not.toContain('队列暂不可读')
+})
+it.each([0,25])('retains successful page size and rows (%s) when resize fails, then retries target',async count=>{
+ let fail=false
+ vi.stubGlobal('$fetch',vi.fn(async(_url:string,options:any)=>{
+  if(fail)throw Error('resize failed')
+  return {page:options.query.page,pageSize:options.query.pageSize,total:count?75:0,unfinished:[],rows:Array.from({length:count},(_,i)=>({enterpriseId:i+1,titleCode:'innovative_sme',direction:'missing_in_miit',status:'not_queried'}))}
+ }))
+ const wrapper=mount(Queue,{props:{id:'01M5BEPVCXD5619ZW4C6CAT483'},global:{components:{TablePagination,TableFailureState},stubs:{NuxtLink:{template:'<a><slot /></a>'}}}});wrappers.push(wrapper)
+ await flushPromises();fail=true
+ wrapper.findComponent(TablePagination).vm.$emit('update:pageSize',50);await flushPromises()
+ expect(wrapper.findComponent(TablePagination).props()).toMatchObject({page:1,pageSize:25,total:count?75:0})
+ expect(wrapper.findAll('li')).toHaveLength(count)
+ expect(wrapper.text()).toContain('第 1 页 / 每页 25 条')
+ expect(wrapper.text()).toContain('第 1 页 / 每页 50 条读取失败')
+ fail=false;await wrapper.find('[data-testid=table-retry]').trigger('click');await flushPromises()
+ expect(wrapper.findComponent(TablePagination).props('pageSize')).toBe(50)
 })

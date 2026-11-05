@@ -14,8 +14,8 @@ const selected=ref< {enterpriseId:number;titleCode:string;direction:string} | nu
 watch([view,status,reasonCode],()=>{page.value=1;selected.value=null})
 const page=ref(1), pageSize=ref(25)
 const key=computed(()=>`${props.id}:${page.value}:${pageSize.value}:${view.value}:${status.value}:${reasonCode.value}`)
-const {data,sourceKey,loading,failed,refresh}=useTaskPolling(key,async signal=>{const selection={view:view.value,status:status.value,reasonCode:reasonCode.value,page:page.value};const result=await $fetch<ReturnType<typeof readSnapshotQueue>>(`/api/task-center/${encodeURIComponent(props.id)}/difference-queue`,{query:{page:page.value,pageSize:pageSize.value,view:view.value,status:status.value==='all'?undefined:status.value,reasonCode:reasonCode.value==='all'?undefined:reasonCode.value},headers:{'x-task-center-browser':'1'},signal}); if(!Array.isArray(result.rows)||!Array.isArray(result.unfinished)) throw new Error('Invalid queue response'); return {...result,selection} })
-function scopeLabel(scope:{view:string;status:string;reasonCode:string;page:number}) { return `${scope.view==='pending'?'待核队列':'已判结果'} / ${scope.status==='all'?'全部状态':scope.status==='confirmed_no_diff'?'无差异':DIFFERENCE_STATUSES[scope.status] ?? scope.status} / ${scope.reasonCode==='all'?'全部原因':DIFFERENCE_REASONS[scope.reasonCode] ?? scope.reasonCode} / 第 ${scope.page} 页` }
+const {data,sourceKey,loading,failed,refresh}=useTaskPolling(key,async signal=>{const selection={view:view.value,status:status.value,reasonCode:reasonCode.value,page:page.value,pageSize:pageSize.value};const result=await $fetch<ReturnType<typeof readSnapshotQueue>>(`/api/task-center/${encodeURIComponent(props.id)}/difference-queue`,{query:{page:page.value,pageSize:pageSize.value,view:view.value,status:status.value==='all'?undefined:status.value,reasonCode:reasonCode.value==='all'?undefined:reasonCode.value},headers:{'x-task-center-browser':'1'},signal}); if(!Array.isArray(result.rows)||!Array.isArray(result.unfinished)) throw new Error('Invalid queue response'); return {...result,selection} })
+function scopeLabel(scope:{view:string;status:string;reasonCode:string;page:number;pageSize:number}) { return `${scope.view==='pending'?'待核队列':'已判结果'} / ${scope.status==='all'?'全部状态':scope.status==='confirmed_no_diff'?'无差异':DIFFERENCE_STATUSES[scope.status] ?? scope.status} / ${scope.reasonCode==='all'?'全部原因':DIFFERENCE_REASONS[scope.reasonCode] ?? scope.reasonCode} / 第 ${scope.page} 页 / 每页 ${scope.pageSize} 条` }
 function resize(value:number) {pageSize.value=value;page.value=1}
 </script>
 <template>
@@ -31,7 +31,7 @@ function resize(value:number) {pageSize.value=value;page.value=1}
     <TableFailureState v-if="failed" title="队列暂不可读" description="采集尚未结束或读取失败，请重试。保留上次读取的页。" :pending="loading" @retry="refresh" />
     <p v-if="loading && !data" role="status">正在读取任务差异…</p>
     <template v-if="data">
-      <p v-if="sourceKey !== key" role="status">当前显示上次成功读取：{{ scopeLabel(data.selection) }}。本次请求：{{ scopeLabel({view,status,reasonCode,page}) }}{{ failed ? '读取失败。' : '正在读取。' }}</p>
+      <p v-if="sourceKey !== key" role="status">当前显示上次成功读取：{{ scopeLabel(data.selection) }}。本次请求：{{ scopeLabel({view,status,reasonCode,page,pageSize}) }}{{ failed ? '读取失败。' : '正在读取。' }}</p>
       <p v-if="data.unfinished.length" role="status">{{ data.unfinished.length }} 家企业的覆盖或记录信息未完成，尚未推导候选。</p>
       <p v-if="!data.total">{{ data.selection.view==='pending'?'暂无待核候选。':'暂无符合筛选的已判结果。' }}</p>
       <ul class="flex flex-col gap-2">
@@ -44,7 +44,7 @@ function resize(value:number) {pageSize.value=value;page.value=1}
           <Button variant="outline" size="sm" @click="selected=row">查看详情 · 企业 {{ row.enterpriseId }}</Button>
         </li>
       </ul>
-      <TablePagination :page="data.page" :page-size="pageSize" :total="data.total" :loading="loading" unit="条" @update:page="page=$event" @update:page-size="resize" />
+      <TablePagination :page="data.page" :page-size="data.pageSize" :total="data.total" :loading="loading" unit="条" @update:page="page=$event" @update:page-size="resize" />
       <SnapshotDifferenceDetail v-if="selected" :key="`${id}:${selected.enterpriseId}:${selected.titleCode}:${selected.direction}`" :id="id" :row="selected" />
     </template>
   </section>
