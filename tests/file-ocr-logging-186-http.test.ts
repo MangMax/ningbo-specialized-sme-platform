@@ -1,8 +1,9 @@
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, rmSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, rmSync, copyFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, expect, it } from 'vitest'
+import { initializeDb } from '../db/client'
 import { spawnOwnedChild as spawn, reserveLoopbackPort, stopOwnedChild, waitForHttp } from '../scripts/lib/isolated-local-services.mjs'
 import { minimalPdf } from './helpers/minimal-pdf'
 import { startMiniOcrApi, type ModelApiFixture } from './helpers/ocr-mini-api'
@@ -73,6 +74,7 @@ async function start(extra: Record<string, string> = {}) {
 }
 beforeAll(async () => {
   mkdirSync(files)
+  initializeDb({ dbPath: join(dir, 'business.db'), create: true }).$client.close()
   if (!process.env.TICKET_186_SKIP_BUILD) execFileSync('pnpm', ['build'], { timeout: 180_000, stdio: 'pipe' })
   api = await startMiniOcrApi(fixture)
   await start()
@@ -146,18 +148,23 @@ it('actual upload and render log once per semantic phase and retain idempotence 
   const first = await call('/api/pdf-pages', 'POST', { file: relPath })
   expect(first.body).toMatchObject({ written: 3, removed: 0 })
   expect((await call('/api/pdf-pages', 'POST', { file: relPath })).body).toMatchObject({ written: 0, skipped: 3 })
-  writeFileSync(join(files, relPath), minimalPdf({ pages: 1 }))
-  expect((await call('/api/pdf-pages', 'POST', { file: relPath })).body).toMatchObject({ written: 1, removed: 2 })
-  expect(readdirSync(join(files, relPath.replace(/[^/]+$/, name => `.${name}.pages`))).filter(n => n.endsWith('.png'))).toEqual(['p001.png'])
+  const pageDir = join(files, relPath.replace(/[^/]+$/, name => `.${name}.pages`))
+  for (const page of ['p004.png', 'p005.png']) copyFileSync(join(pageDir, 'p001.png'), join(pageDir, page))
+  expect((await call('/api/pdf-pages', 'POST', { file: relPath, force: true })).body).toMatchObject({ written: 3, removed: 2 })
+  expect(readdirSync(pageDir).filter(n => n.endsWith('.png'))).toEqual(['p001.png', 'p002.png', 'p003.png'])
+  expect(readFileSync(join(files, relPath))).toEqual(bytes)
   const rendered = await logs(`fileId=${fileId}`, 'file.render', 3)
   expect(rendered.filter(r => r.operation === 'file.render').map(r => r.outcome).sort()).toEqual(['skipped', 'success', 'success'])
-  expect(rendered.filter(r => r.operation === 'file.render.page').map(r => r.page).sort()).toEqual([1, 1, 2, 3])
+  expect(rendered.filter(r => r.operation === 'file.render.page').map(r => r.page).sort()).toEqual([1, 1, 2, 2, 3, 3])
   const uploadLogs = await logs(`requestId=${uploaded.headers.get('x-request-id')}`, 'file.upload')
   expect(uploadLogs.filter(r => r.operation === 'file.upload')).toMatchObject([{ outcome: 'success' }])
   for (let i = 0; i < 3; i++) await fetch(location, { method: 'HEAD', headers: { 'tus-resumable': '1.0.0' } })
   expect((await logs(`requestId=${uploaded.headers.get('x-request-id')}`)).filter(r => r.operation === 'file.upload')).toHaveLength(1)
-  const broken = await register(1)
-  writeFileSync(join(files, broken.relPath), 'PRIVATE186_BROKEN_PDF')
+  const brokenPath = `${++sequence}-${privatePath}`
+  writeFileSync(join(files, brokenPath), 'PRIVATE186_BROKEN_PDF')
+  const brokenRegistration = await call('/api/files/register', 'POST', { relPath: brokenPath })
+  expect(brokenRegistration.status).toBe(201)
+  const broken = { id: brokenRegistration.body.id, relPath: brokenPath }
   const badId = await job('render-pages', [broken.relPath])
   expect((await terminal(badId)).state).toBe('failed')
   expect((await logs(`taskId=${badId}`, 'file.render')).find(r => r.operation === 'file.render')).toMatchObject({ fileId: broken.id, outcome: 'failure' })

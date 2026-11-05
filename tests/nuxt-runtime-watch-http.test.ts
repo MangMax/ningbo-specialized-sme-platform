@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { expect, it } from 'vitest'
+import { initializeDb } from '../db/client'
 import { spawnOwnedChild as spawn, reserveLoopbackPort, stopOwnedChild, waitForHttp } from '../scripts/lib/isolated-local-services.mjs'
 
 it('does not scan changing runtime databases as icon source while real API errors and logging remain available', async () => {
@@ -25,6 +26,7 @@ it('does not scan changing runtime databases as icon source while real API error
     // Observe the real fs boundary used by Nuxt Icon, not a mocked watcher.
     writeFileSync(preload, `const fs=require('node:fs'),p=require('node:fs/promises');const read=p.readFile;fs.appendFileSync(${JSON.stringify(trace)},JSON.stringify({loaded:process.pid})+'\\n');p.readFile=function(file,...args){const path=String(file);if(path===${JSON.stringify(sentinel)}||path.startsWith(${JSON.stringify(cache + '/')}))fs.appendFileSync(${JSON.stringify(trace)},JSON.stringify({read:path})+'\\n');if([${JSON.stringify(component)},${JSON.stringify(route)}].includes(path))fs.appendFileSync(${JSON.stringify(trace)},JSON.stringify({source:path})+'\\n');return read.call(this,file,...args)};require('node:module').syncBuiltinESMExports();`)
     const port = await reserveLoopbackPort()
+    initializeDb({ dbPath: join(dir, 'business.db'), create: true }).$client.close()
     child = spawn(process.execPath, [join(root, 'node_modules/nuxt/bin/nuxt.mjs'), 'dev', '--host', '127.0.0.1', '--port', String(port)], {
       cwd: root, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env,
         NODE_OPTIONS: `--require=${preload}`, NUXT_BUILD_DIR: join(dir, 'build'),

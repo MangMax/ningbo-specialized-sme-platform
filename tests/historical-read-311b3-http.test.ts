@@ -27,6 +27,7 @@ beforeAll(async () => {
 afterAll(async () => { await service?.stop(); db.$client.close(); rmSync(dir, { recursive: true, force: true }) })
 const rest = (url: string, init?: RequestInit) => fetch(service.baseUrl + url, init)
 async function rpc(name: string, args: unknown) {
+  if (name === 'get_ocr_result') args = { ...(args as object), includeVersion: true }
   const res = await rest('/mcp', { method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream', 'mcp-protocol-version': '2025-06-18' }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } }) })
   const raw = await res.text()
   const body = JSON.parse(raw.startsWith('event:') ? raw.split('\n').find(line => line.startsWith('data: '))!.slice(6) : raw)
@@ -44,7 +45,7 @@ it('historical OCR stays readable and unknown through REST and MCP across replac
       expect(value.markdown).toContain('old paid text')
       expect(value.contentIdentity).toMatchObject({ status, historical: 'unknown', registered: { fileId: file.id, bytes: 3 } })
       expect(value.results[0].historicalBinding).toEqual({ status: 'unknown' })
-      const list = await (await rest(`/api/ocr-results?fileId=${file.id}&markdown=1`)).json()
+      const list = await (await rest(`/api/ocr-results?fileId=${file.id}&markdown=1&includeVersion=1`)).json()
       expect(list.contentIdentity.status).toBe(status)
       expect(list.pages[0]).toMatchObject({ markdown: 'old paid text', historicalBinding: { status: 'unknown' } })
       const exported = await rest(`/api/ocr-results/markdown?fileId=${file.id}`)
@@ -73,7 +74,7 @@ it.each(['unreadable', 'missing'] as const)('historical OCR and markdown remain 
       expect(value.contentIdentity).toMatchObject(expected)
       expect(value.results[0].historicalBinding).toEqual({ status: 'unknown' })
     }
-    const listResponse = await rest(`/api/ocr-results?fileId=${file.id}&markdown=1`)
+    const listResponse = await rest(`/api/ocr-results?fileId=${file.id}&markdown=1&includeVersion=1`)
     expect(listResponse.status).toBe(200)
     expect((await listResponse.json()).contentIdentity).toMatchObject(expected)
     const exported = await rest(`/api/ocr-results/markdown?fileId=${file.id}`)

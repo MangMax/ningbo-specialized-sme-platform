@@ -27,7 +27,7 @@ export default defineMcpTool({
     '返回 `markdown`(带 `<!-- page: N -->` 页标记)与 `results`(逐页元数据:page / engine / model / channel / createdAt / pageRelPath / url)。显式 includeVersion:true 才附 version,保留旧默认响应。',
     '给 `page` 只取那一页。**文件还没识别过**时返回 404 并说明可以走哪条通路。',
     'includeVersion:true 时 results[].version 是不透明页版本,可用于 save_ocr_result/delete_ocr_result 的 expectedVersion。删除后重做同页须重新读取,不能复用旧版本。',
-    'contentIdentity 只核当前文件;results[].historicalBinding 仅报告已有采集依据,unknown 不会由当前核验升级。冲突仍保留历史文本。',
+    'includeVersion:true 时 contentIdentity 只核当前文件;results[].historicalBinding 仅报告已有采集依据,unknown 不会由当前核验升级。冲突仍保留历史文本。',
     '这是**只读** tool;写入用 `save_ocr_result`(需鉴权)。',
   ].join('\n'),
   inputSchema: {

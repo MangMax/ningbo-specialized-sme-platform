@@ -52,7 +52,7 @@ export async function verifyPageRead(db: Db, root: string, source: string, pageP
   let manifest: { version?: number; file?: string; sourceSha256?: string; sourceBytes?: number; pages?: { relPath: string; bytes: number }[] } | null = null
   try { manifest = JSON.parse(await readFile(manifestAbs!, 'utf8')) } catch { /* Unknown lineage remains unknown. */ }
   if (!manifest || manifest.version !== 2 || manifest.file !== source || !Array.isArray(manifest.pages)) {
-    throw createError({ statusCode: 409, message: 'file_content_unknown', data: { code: 'file_content_unknown', historical: 'unknown' } })
+    return { ...identity, status: 'unknown' as const }
   }
   const expected = identity.registered
   // Unregistered compatibility sources still have to agree with their page manifest.

@@ -5,6 +5,7 @@ import { join, resolve } from 'node:path'
 import { createHash } from 'node:crypto'
 import Database from 'better-sqlite3'
 import { afterAll, beforeAll, expect, it } from 'vitest'
+import { initializeDb } from '../db/client'
 import { createRosterImportClient, type RosterImportRequest } from '../lib/roster-import-client'
 import { spawnOwnedChild as spawn, reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../scripts/lib/isolated-local-services.mjs'
 
@@ -15,6 +16,7 @@ let service: { baseUrl: string; stop: () => Promise<void> }
 let client: ReturnType<typeof createRosterImportClient>
 beforeAll(async () => {
   const cwd = resolve(import.meta.dirname, '..'), port = await reserveLoopbackPort()
+  initializeDb({ dbPath: join(dir, 'roster.db'), create: true }).$client.close()
   const child = spawn(process.execPath, [join(cwd, 'node_modules/nuxt/bin/nuxt.mjs'), 'dev', '--host', '127.0.0.1', '--port', String(port)], { cwd, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env,
     NUXT_BUILD_DIR: join(dir, 'build'), NUXT_DB_PATH: join(dir, 'roster.db'), NUXT_DB_READONLY: '0',
     NUXT_FILES_DIR: join(dir, 'files'), NUXT_INCOMING_DIR: join(dir, 'incoming'), NUXT_API_TOKEN: token, NUXT_MCP_TOKEN: token,

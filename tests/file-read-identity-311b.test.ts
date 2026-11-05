@@ -63,7 +63,7 @@ it('unregistered legacy paths stay readable with explicitly unknown history', as
   expect(db.select().from(schema.storedFile).all()).toEqual([])
 })
 
-it('raw page URLs reject same-size foreign manifest lineage without inventing history', async () => {
+it('raw page URLs reject foreign lineage and retain unknown legacy pages without accepting source replacement', async () => {
   writeFileSync(join(root, 'notice.pdf'), 'abc')
   const { row } = await registerStoredFile(db, root, parseUploadDeclaration({ relPath: 'notice.pdf' }))
   mkdirSync(join(root, '.notice.pdf.pages'))
@@ -72,12 +72,17 @@ it('raw page URLs reject same-size foreign manifest lineage without inventing hi
   const manifest = { version: 2, file: 'notice.pdf', sourceBytes: 3, sourceSha256: '3608bca1e44ea6c4d268eb6db02260269892c0b42b86bbf1e77a6fa16c3c9282', pages: [{ relPath: locator, bytes: 3 }] }
   writeFileSync(join(root, '.notice.pdf.pages/.pages.json'), JSON.stringify(manifest))
   vi.doMock('@db', () => ({ useDb: () => db }))
-  vi.stubGlobal('setHeader', () => {})
-  vi.stubGlobal('sendStream', async (_: unknown, stream: import('node:fs').ReadStream) => { for await (const _chunk of stream) { /* Drain denied baseline reads before fixture teardown. */ } return 'unexpected page' })
+  const headers = new Map<string, unknown>()
+  vi.stubGlobal('setHeader', (_: unknown, key: string, value: unknown) => headers.set(key, value))
+  vi.stubGlobal('sendStream', async (_: unknown, stream: import('node:fs').ReadStream) => { let text = ''; for await (const chunk of stream) text += chunk; return text })
   const route = (await import('../server/api/files/[id].get')).default
   await expect(route({} as never)).rejects.toMatchObject({ statusCode: 409, data: { code: 'file_content_conflict', fileId: row.id, reason: 'page_source_mismatch' } })
   rmSync(join(root, '.notice.pdf.pages/.pages.json'))
-  await expect(route({} as never)).rejects.toMatchObject({ statusCode: 409, data: { code: 'file_content_unknown', historical: 'unknown' } })
+  expect(await route({} as never)).toBe('png')
+  expect(headers.get('x-file-content-status')).toBe('unknown')
+  expect(headers.get('x-file-historical-identity')).toBe('unknown')
+  writeFileSync(join(root, 'notice.pdf'), 'xyz')
+  await expect(route({} as never)).rejects.toMatchObject({ statusCode: 409, data: { code: 'file_content_conflict', fileId: row.id } })
 })
 
 it('range requests cannot return replaced registered bytes', async () => {

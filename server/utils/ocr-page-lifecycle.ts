@@ -129,11 +129,11 @@ export async function getOcrResultForFile(db: Db, row: StoredFileRow, page?: num
   if (!results.length) throw createError({ statusCode: 404, message: page === undefined ? '这个文件还没有 OCR 结果' : `第 ${page} 页还没有 OCR 结果` })
   return {
     file: { id: row.id, relPath: row.relPath, filename: row.filename },
-    contentIdentity: root ? await describeFileRead(db, root, row.relPath) : { registered: null, status: 'unknown', historical: 'unknown' },
+    ...(includeVersion ? { contentIdentity: root ? await describeFileRead(db, root, row.relPath) : { registered: null, status: 'unknown', historical: 'unknown' } } : {}),
     page: page ?? null,
     pages: results.map(result => result.page),
     markdown: assembleMarkdown(results),
-    results: results.map(r => ({ page: r.page, historicalBinding: r.historicalBinding, ...(includeVersion ? { version: r.version } : {}), engine: r.engine, model: r.model, channel: r.channel, createdAt: r.createdAt, chars: r.markdown.length, pageRelPath: r.pageRelPath, url: r.pageRelPath ? `/api/files/${r.pageRelPath.split('/').map(encodeURIComponent).join('/')}` : null })),
+    results: results.map(r => ({ page: r.page, ...(includeVersion ? { version: r.version, historicalBinding: r.historicalBinding } : {}), engine: r.engine, model: r.model, channel: r.channel, createdAt: r.createdAt, chars: r.markdown.length, pageRelPath: r.pageRelPath, url: r.pageRelPath ? `/api/files/${r.pageRelPath.split('/').map(encodeURIComponent).join('/')}` : null })),
   }
 }
 
