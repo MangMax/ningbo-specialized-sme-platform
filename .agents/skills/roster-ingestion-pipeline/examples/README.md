@@ -36,3 +36,16 @@ MIIT_COOKIE='' MIIT_COOKIE_FILE='' pnpm test tests/platform-recognized-evidence.
 ```
 
 这只验证合成转存，不代表生产归档回填或 UI 验收。
+
+主体事实例子在 [enterprise-facts.mjs](enterprise-facts.mjs)，载荷与完成条件见[公开协议](../references/enterprise-facts.md)。调用者提供已初始化 SDK 客户端的 `call(name,args)`，它必须检查 `isError` 并解码 JSON，不能把 MCP 错误文本当正常返回。分别调用 `prepareFactCommand` → 持久保存 prepared → `commitPreparedFact`，每次确认/更正/撤回都是新的明确动作；`confirmedFactReferences` 选择多个当前确认版本，`saveReferencedDecision` 精确读回保存版本。函数不读取 Cookie，不启动任务，不自动重试或确认。
+
+真实工具发现/SDK传输验证需要先启动指向专用合成 SQLite 的应用，测试本身不构建、不启动服务。限定 loopback、`/tmp/issue-307-*`（macOS realpath 可为 `/private/tmp`）专用目录；同一服务须配置 `NUXT_DB_PATH` 为下面的合成库，`NUXT_API_TOKEN` 与 `NUXT_MCP_TOKEN` 为同一合成任务令牌。测试只用 SQLite 播种企业身份，其余生命周期/决定操作全部通过实际 `/mcp`，再用 REST 对照读回：
+
+```sh
+FACT_PROTOCOL_307_URL=http://127.0.0.1:43874 \
+FACT_PROTOCOL_307_DB_PATH=/tmp/issue-307-skill-consumers/synthetic.db \
+FACT_PROTOCOL_307_TOKEN=synthetic-fact-protocol-307 \
+pnpm exec vitest run tests/enterprise-fact-protocol-307-mcp.test.ts --no-file-parallelism --maxWorkers=1
+```
+
+未提供 URL/DB 时这三个传输测试明确 SKIP，不能报告 PASS。JSON 读回存到合成库旁的 `mcp-fact-protocol-readbacks.json`，不得提交；此验证不代表生产数据、真实平台、UI、导出或独立代理盲测验收。
