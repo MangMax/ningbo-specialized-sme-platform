@@ -55,6 +55,7 @@ const title = computed(() => props.name || props.src.split('/').pop() || props.s
 
 const status = ref<'loading' | 'ready' | 'error'>('loading')
 const errorMessage = ref('')
+let diagnosticGeneration = 0
 const viewport = ref<HTMLElement | null>(null)
 const img = ref<HTMLImageElement | null>(null)
 
@@ -153,15 +154,16 @@ async function onLoad(e: Event) {
   if (el === img.value && !userAdjusted.value) fit()
 }
 async function onError() {
-  const target = props.src
+  const target = props.src, generation = ++diagnosticGeneration
   status.value = 'error'
   errorMessage.value = '图片没能加载,文件可能已损坏或路径失效。'
   try {
     if (new URL(target, location.origin).origin !== location.origin) return
     const response = await fetch(target, { headers: { Range: 'bytes=0-0' }, cache: 'no-store' })
+    if (generation !== diagnosticGeneration) { await response.body?.cancel(); return }
     if (!response.ok) {
       const body = await response.json().catch(() => null)
-      if (props.src === target && status.value === 'error') errorMessage.value = describeLoadError(new Error(body?.data?.code ?? body?.message ?? String(response.status)))
+      if (generation === diagnosticGeneration && props.src === target && status.value === 'error') errorMessage.value = describeLoadError(new Error(body?.data?.code ?? body?.message ?? String(response.status)))
     } else await response.body?.cancel()
   } catch { /* Keep the image failure when the status cannot be read. */ }
 }
@@ -184,6 +186,7 @@ const imgSrc = computed(() => retrySrc(props.src, retryAttempt.value))
 /** 重试:清掉错误、回到加载中,并真的产生一次新的加载尝试。 */
 function retry() {
   if (status.value !== 'error') return
+  ++diagnosticGeneration
   errorMessage.value = ''
   status.value = 'loading'
   retryAttempt.value += 1
@@ -286,6 +289,7 @@ onMounted(() => {
   }
 })
 onBeforeUnmount(() => {
+  ++diagnosticGeneration
   document.removeEventListener('fullscreenchange', onFullscreenChange)
   ro?.disconnect()
 })
@@ -293,6 +297,7 @@ onBeforeUnmount(() => {
 watch(
   () => props.src,
   () => {
+    ++diagnosticGeneration
     status.value = 'loading'
     errorMessage.value = ''
     // 换图就重新计次:新图要从**原地址**开始,不该继承上一张的重试标记

@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { mount } from '@vue/test-utils'
+import { flushPromises, mount } from '@vue/test-utils'
 import { describe, expect, it, vi } from 'vitest'
 import ImagePreview from '../components/preview/ImagePreview.vue'
 import PageImageGallery from '../components/preview/PageImageGallery.vue'
@@ -41,6 +41,40 @@ function currentImg(wrapper: ReturnType<typeof mountPreview>) {
 function retryButton(wrapper: ReturnType<typeof mountPreview>) {
   return wrapper.findAll('button').find((b) => b.text().includes('重试'))
 }
+
+it.each(['retry', 'switch-back'] as const)('ignores an old image conflict after a newer diagnostic for the same URL: %s', async transition => {
+  const pending: ((value: Response) => void)[] = []
+  vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>(resolve => pending.push(resolve))))
+  const wrapper = mountPreview()
+  try {
+    await wrapper.find('img').trigger('error')
+    expect(pending).toHaveLength(1)
+    if (transition === 'retry') await retryButton(wrapper)!.trigger('click')
+    else { await wrapper.setProps({ src: '/api/files/another.png' }); await wrapper.setProps({ src: SRC }) }
+    await wrapper.find('img').trigger('error')
+    expect(pending).toHaveLength(2)
+    pending[1]!(new Response(JSON.stringify({ data: { code: 'file_content_unknown' } }), { status: 409 }))
+    await flushPromises()
+    expect(wrapper.text()).toContain('待核实')
+    pending[0]!(new Response(JSON.stringify({ data: { code: 'file_content_conflict' } }), { status: 409 }))
+    await flushPromises()
+    expect(wrapper.text()).toContain('待核实')
+    expect(wrapper.text()).not.toContain('内容已变化')
+  } finally { wrapper.unmount(); vi.unstubAllGlobals() }
+})
+it('releases a late image diagnostic body after the preview is unmounted', async () => {
+  let resolveDiagnostic!: (value: Response) => void
+  const cancel = vi.fn()
+  vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>(resolve => { resolveDiagnostic = resolve })))
+  const wrapper = mountPreview()
+  try {
+    await wrapper.find('img').trigger('error')
+    wrapper.unmount()
+    resolveDiagnostic(new Response(new ReadableStream({ cancel }), { status: 409 }))
+    await flushPromises()
+    expect(cancel).toHaveBeenCalledOnce()
+  } finally { vi.unstubAllGlobals() }
+})
 
 describe('retrySrc(纯规则:重试必须换一个地址)', () => {
   it('没重试过时**原样返回** —— 首次加载的地址一个字节都不变', () => {
