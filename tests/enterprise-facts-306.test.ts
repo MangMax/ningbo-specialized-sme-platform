@@ -1,3 +1,4 @@
+import { initializeDb } from '../db/client'
 import { afterAll, beforeAll, expect, it, vi } from 'vitest'
 import { createServer, type Server } from 'node:http'
 import { mkdtempSync, rmSync } from 'node:fs'
@@ -7,7 +8,7 @@ import * as h3 from 'h3'
 import { createApp, createRouter, defineEventHandler, toNodeListener } from 'h3'
 import { schema, useDb } from '../db'
 const dir = mkdtempSync(join(tmpdir(), 'facts-306-'))
-const db = useDb({ dbPath: join(dir, 'test.db') })
+const db = initializeDb({ create: true, dbPath: join(dir, 'test.db') })
 let server: Server, base: string, seq = 0
 let mcp: Record<string, any>
 beforeAll(async () => {

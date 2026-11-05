@@ -1,3 +1,4 @@
+import { initializeDb } from '../db/client'
 import { afterAll, beforeAll, expect, it, vi } from 'vitest'
 import { createServer, type Server } from 'node:http'
 import { mkdtempSync, rmSync } from 'node:fs'
@@ -8,7 +9,7 @@ import { createApp, createRouter, toNodeListener } from 'h3'
 import { schema as s, useDb } from '../db'
 
 const dir = mkdtempSync(join(tmpdir(), 'fact-reference-readback-307-'))
-const db = useDb({ dbPath: join(dir, 'isolated.db') })
+const db = initializeDb({ create: true, dbPath: join(dir, 'isolated.db') })
 let server: Server, base: string, sequence = 0
 let listDifferences: { handler: (input: object) => Promise<any> }
 beforeAll(async () => {
