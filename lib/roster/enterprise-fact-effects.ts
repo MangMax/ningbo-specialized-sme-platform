@@ -5,6 +5,7 @@ export function readEnterpriseFactEffects(db: Database.Database, enterpriseId: n
   const rows = prepare(`select fact_id as factId,revision,status,fact,basis from enterprise_fact_revision where enterprise_id=? order by id`).all(enterpriseId) as {factId:number;revision:number;status:string;fact:string;basis:string}[]
   if (!rows.length) return null
   const heads = new Map(rows.map(r => [r.factId,r]))
+  const statements: string[] = []
   const refs: string[] = [], locations: {kind:string;start:number;end:number}[] = []
   let terminated = false, pending = false
   for (const r of heads.values()) {
@@ -26,11 +27,12 @@ export function readEnterpriseFactEffects(db: Database.Database, enterpriseId: n
       end = Date.UTC(p.precision === 'year' ? y+1 : y,p.precision === 'year' ? 0 : m,1)-28800000
     }
     if (r.status !== 'confirmed' || !r.basis?.trim() || !f.source?.reference?.trim() || !f.source?.statement?.trim() || !Number.isFinite(end) || end > asOf) { pending = true; continue }
+    if (['cancelled','moved_out'].includes(f.kind)) statements.push(`${f.kind === 'cancelled' ? '注销/吊销' : '迁出'}；生效：${p.value}；来源：${f.source.reference}；${f.source.statement}；确认依据：${r.basis}`)
     if (f.kind === 'cancelled') terminated = true
     else locations.push({kind:f.kind,start,end})
   }
   // Only a definitely later nonoverlapping interval can supersede another.
   const latest = locations.filter(a => !locations.some(b => b !== a && b.start >= a.end && b.end > a.end))
   const conflict = new Set(latest.map(l => l.kind)).size > 1
-  return { refs, terminated, pending: pending || conflict, region: conflict || pending && !effectiveOnly ? 'unresolved' as const : latest[0]?.kind === 'moved_out' ? 'outside_ningbo' as const : latest[0]?.kind === 'moved_in' ? 'ningbo' as const : 'not_established' as const }
+  return { refs, statements, terminated, pending: pending || conflict, region: conflict || pending && !effectiveOnly ? 'unresolved' as const : latest[0]?.kind === 'moved_out' ? 'outside_ningbo' as const : latest[0]?.kind === 'moved_in' ? 'ningbo' as const : 'not_established' as const }
 }

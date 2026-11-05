@@ -8,6 +8,7 @@ import { readIdentityKeyVariants } from './current-identity-keys'
 
 export interface CurrentQualifiedFilter {
   titleCode: CurrentTitle
+  status?: import('./current-status').CurrentStatus
   q?: string
   district?: string
   recognitionFrom?: string
@@ -126,7 +127,7 @@ export function listCurrentQualified(db: Database.Database, filter: CurrentQuali
     const recognitionYears = new Set<number>(), validYears = new Set<number>(), maintenanceYears = new Set<number>()
     const maintenanceBatchesByYear = new Map<number, Set<number>>()
     for (const { id } of candidates.iterate(currentCandidateBindings(filter.titleCode)) as Iterable<{ id: number }>) {
-      const { row, group } = assessmentReader.readTitle(id, filter.titleCode, at, keys)
+      const { row, group, effectiveStatus } = assessmentReader.readTitle(id, filter.titleCode, at, keys)
       const identityMatch = (!filter.district || row.district === filter.district) && (!filter.q
         || Boolean(qName && [row.name, ...row.aliases].some(name => normalizeName(name).includes(qName)))
         || Boolean(qUscc && normalizeUscc(row.uscc).includes(qUscc)))
@@ -134,8 +135,7 @@ export function listCurrentQualified(db: Database.Database, filter: CurrentQuali
         if (pendingTotal >= (page - 1) * pageSize && pendingIds.length < pageSize) pendingIds.push(id)
         pendingTotal++
       }
-      if (group !== 'eligible') continue
-      for (const witness of row.qualificationWitnesses ?? []) {
+      for (const witness of (effectiveStatus === 'effective' ? row.qualificationWitnesses : []) ?? []) {
         recognitionYears.add(witness.recognition.year)
         if (witness.matchedValidYear != null) validYears.add(witness.matchedValidYear)
         if (witness.matchedMaintenance) {
@@ -146,6 +146,7 @@ export function listCurrentQualified(db: Database.Database, filter: CurrentQuali
           }
         }
       }
+      if (effectiveStatus !== (filter.status ?? 'effective')) continue
       if (!identityMatch) continue
       const { matching, uncertain, filterMatch } = selectFilterWitnesses(row.qualificationWitnesses ?? [], filter)
       if (filterMatch.status !== 'matched') { if (uncertain) uncertainTotal++; continue }

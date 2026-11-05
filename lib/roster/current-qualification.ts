@@ -79,7 +79,7 @@ export type QualificationAssessmentReadOptions = {
   recognizedFactSource?: RecognizedFactSource
 }
 export interface CurrentQualificationAssessment {
-  effectiveQualification?: { status: 'effective' | 'expired' | 'terminated' | 'moved_out' | 'unrecognized'; basis: string; notes: string[] }
+  effectiveQualification?: { status: 'effective' | 'expired' | 'terminated' | 'moved_out' | 'unrecognized'; basis: string; presentationBasis?: string[]; notes: string[] }
   titleCode: CurrentTitle
   group: CurrentGroup
   cycles: { originYear: number; batchSeq: number | null; precision: 'year' }[]
@@ -388,7 +388,7 @@ function createCurrentCandidateEvaluationReader(db: Database.Database, receiptRu
     sql`select (select id from difference_reason where enterprise_id=${sql.placeholder('enterpriseId')}
       and title_code=${titleCode} and direction=${direction} order by recorded_at desc,id desc limit 1)`)),sql` union all `)
   const headsQuery=reader.select().from(d).where(sql`${d.id} in (${headIds})`).prepare()
-  return function readCandidate(enterpriseId: number, title: CurrentTitle, year: number, executionTime = Date.now(), keys?: { queries: IdentityKeyVariants; relations: IdentityKeyVariants }, includeFilterFacts = false, includeReferences = true, assessmentOptions?: QualificationAssessmentReadOptions, includePendingFilterFacts = false, suppliedPlatformRefs?: readonly CurrentPlatformReference[], preparedCorrespondences?: ReturnType<typeof createEnterpriseTitleCorrespondenceRefsReader>, observePublishedForCurrent?: CurrentPublishedNameObservation, observeCycles?: CurrentCycleObservation): { row: CurrentRow; group: CurrentGroup } {
+  return function readCandidate(enterpriseId: number, title: CurrentTitle, year: number, executionTime = Date.now(), keys?: { queries: IdentityKeyVariants; relations: IdentityKeyVariants }, includeFilterFacts = false, includeReferences = true, assessmentOptions?: QualificationAssessmentReadOptions, includePendingFilterFacts = false, suppliedPlatformRefs?: readonly CurrentPlatformReference[], preparedCorrespondences?: ReturnType<typeof createEnterpriseTitleCorrespondenceRefsReader>, observePublishedForCurrent?: CurrentPublishedNameObservation, observeCycles?: CurrentCycleObservation): { row: CurrentRow; group: CurrentGroup; effectiveStatus: import('./current-status').CurrentStatus } {
   const enterprise = statement('select id,name,name_norm,uscc_norm,district,city from enterprise where id=?').get(enterpriseId) as any
   const events = statement(`select e.id,e.event_type as eventType,e.year,e.decided_year as decidedYear,e.batch_seq as batchSeq,e.review_outcome as reviewOutcome,e.revision,r.name_raw as nameRaw,r.uscc_raw as usccRaw,r.source from record r join record_event e on e.record_id=r.id where r.enterprise_id=? and r.title_code=? order by e.id`).all(enterpriseId,title) as (LifecycleEvent & { batchSeq: number|null; nameRaw: string|null; usccRaw: string|null; source: string; revision: number; formalValidity?: FormalValidity; validityInvalid?: boolean; formalValidityInputHash?: string; recordId?: number })[]
   const evidence = statement(`select v.id,v.record_event_id as eventId,v.source_file as sourceFile,v.attachment,v.list_no as listNo,v.page from record_evidence v join record_event e on e.id=v.record_event_id join record r on r.id=e.record_id where r.enterprise_id=? and r.title_code=? order by v.id`).all(enterpriseId,title) as (CurrentWorkbookFacts['evidence'][number] & {id:number})[]
@@ -701,7 +701,7 @@ function createCurrentCandidateEvaluationReader(db: Database.Database, receiptRu
     const formalBasis = events.filter(e => e.source === 'jxj').map(e => `event:${e.id}@${e.revision}`).join('\n')
     row.assessment = {
       titleCode:title,group,
-      ...(effectiveMode ? {effectiveQualification:{status:effectiveStatus,basis:[formalBasis,...(exclusions?.refs ?? [])].filter(Boolean).join('\n'),notes:[...row.notes,...effectiveFormal.notes]}} : {}),
+      ...(effectiveMode ? {effectiveQualification:{status:effectiveStatus,presentationBasis:[...effectiveFormal.cycles.flatMap(c => { const validity = c.anchor?.formalValidity; const source = validity && evidence.find(e => e.id === validity.evidenceId); return c.periodBasis ? [c.periodBasis + (source ? `；正式来源：${source.sourceFile}；第 ${validity!.statementPages.join('、')} 页` : '')] : [] }),...(exclusions?.statements ?? [])],basis:[formalBasis,...(exclusions?.refs ?? [])].filter(Boolean).join('\n'),notes:[...row.notes,...effectiveFormal.notes,...gaps.map(gap => ({missing_official_source:'正式公布出处缺失',missing_cycle_semantics:'认定或复核周期资料不完整',identity_unresolved:'主体身份对应尚未核实',published_name_not_retained:'公布名称未留档',published_name_unknown:'公布名称未知',published_name_read_unavailable:'公布名称读取不可用',source_version_unavailable:'来源文件版本不可用'}[gap] ?? '资料缺口待核实'))]}} : {}),
       cycles:qualification.cycles.map(c => ({originYear:c.originYear,batchSeq:c.batch,precision:'year'})),
       versions:{facts:assessmentDigest(independent ? [enterprise,events,aliases,independent] : [enterprise,events,aliases]),sources:assessmentDigest([evidence,sourceVersions,publishedNames]),decisions:assessmentDigest([versionHeads,decisionAssessments,correspondences]),observations:assessmentDigest([coverage,observedRows])},
       officialQualification:{group:officialGroup,message:officialGroup === 'eligible' ? '正式资格当前有效（按已录入的年份或已核实有效期间）' : officialGroup === 'excluded' ? '正式资格不纳入当前有效；历史依据保留' : '正式资格待核；已有公布及具体缺口保留',basis:effectiveMode ? formalBasis : [row.basis,...migrationBasis].filter(Boolean).join('\n'),notes:officialNotes},
@@ -715,6 +715,6 @@ function createCurrentCandidateEvaluationReader(db: Database.Database, receiptRu
     }
   }
   observeCycles?.(qualification.cycles, formal)
-  return { row, group }
+  return { row, group, effectiveStatus }
 }
 }
