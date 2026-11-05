@@ -27,12 +27,13 @@ import { comparePlatformComparison, COMPARISON_VERSION, type CandidateComparison
 export { CURRENT_TITLES }
 export type { CurrentTitle }
 
-export const CURRENT_RULE_VERSION = 'current-roster-116-v9'
+export const CURRENT_RULE_VERSION = 'current-roster-116-v10'
 export const LEGACY_CURRENT_RULE_VERSION = 'current-roster-116-v8'
 export const LEGACY_QUALIFICATION_ASSESSMENT_VERSION = 'enterprise-qualification-407-v1'
 export function qualificationDay(time: number) { return new Date(time + 8 * 60 * 60 * 1000).toISOString().slice(0, 10) }
 export type CurrentGroup = 'eligible' | 'pending' | 'excluded'
-export const QUALIFICATION_ASSESSMENT_VERSION = 'enterprise-qualification-407-v2'
+export const PREVIOUS_QUALIFICATION_ASSESSMENT_VERSION = 'enterprise-qualification-407-v2'
+export const QUALIFICATION_ASSESSMENT_VERSION = 'enterprise-qualification-478-v3'
 
 export interface OfficialEventFieldGap {
   field: 'year' | 'decidedYear' | 'batchSeq' | 'reviewOutcome'
@@ -70,7 +71,7 @@ type CurrentCycleObservation = (cycles: ReturnType<typeof adjudicateQualificatio
 type CurrentPublishedNameObservation = (scope: readonly OfficialPublishedScope[], presentationScope: readonly OfficialPublishedScope[], input: { readonly availability: 'available' | 'unavailable'; readonly facts: readonly OfficialPublishedFact[] }, sourceError?: unknown) => void
 export type QualificationAssessmentReadOptions = {
   /** Explicit compatibility boundary for published 407-v1 receipts. */
-  assessmentVersion?: typeof QUALIFICATION_ASSESSMENT_VERSION | typeof LEGACY_QUALIFICATION_ASSESSMENT_VERSION
+  assessmentVersion?: typeof QUALIFICATION_ASSESSMENT_VERSION | typeof PREVIOUS_QUALIFICATION_ASSESSMENT_VERSION | typeof LEGACY_QUALIFICATION_ASSESSMENT_VERSION
   ownQueryIds?: readonly number[]
   publishedNames?: PublishedNameAssessmentInput
   coverageForTitle?: (title: CurrentTitle) => ReturnType<typeof readQueryCoverage>
@@ -78,6 +79,7 @@ export type QualificationAssessmentReadOptions = {
   recognizedFactSource?: RecognizedFactSource
 }
 export interface CurrentQualificationAssessment {
+  effectiveQualification?: { status: 'effective' | 'expired' | 'terminated' | 'moved_out' | 'unrecognized'; basis: string; notes: string[] }
   titleCode: CurrentTitle
   group: CurrentGroup
   cycles: { originYear: number; batchSeq: number | null; precision: 'year' }[]
@@ -249,7 +251,7 @@ export function createCurrentQualificationAssessmentReader(db: Database.Database
       workbookPublished ??= readOfficialPublishedPresentation(prepareCurrentReader(db), workbookScope, undefined, receiptRuntime)
     }
     const titles = rows.map(row => row.assessment!)
-    const scope = { enterpriseId, asOf: new Date(asOf).toISOString(), ruleVersion: readOptions.assessmentVersion === LEGACY_QUALIFICATION_ASSESSMENT_VERSION ? LEGACY_CURRENT_RULE_VERSION : CURRENT_RULE_VERSION, assessmentVersion: readOptions.assessmentVersion ?? QUALIFICATION_ASSESSMENT_VERSION }
+    const scope = { enterpriseId, asOf: new Date(asOf).toISOString(), ruleVersion: readOptions.assessmentVersion === LEGACY_QUALIFICATION_ASSESSMENT_VERSION ? LEGACY_CURRENT_RULE_VERSION : readOptions.assessmentVersion === PREVIOUS_QUALIFICATION_ASSESSMENT_VERSION ? 'current-roster-116-v9' : CURRENT_RULE_VERSION, assessmentVersion: readOptions.assessmentVersion ?? QUALIFICATION_ASSESSMENT_VERSION }
     return { rows, snapshot: { ...scope, snapshotId: assessmentDigest([scope, titles]), titles }, ...(publishedPresentation === undefined ? {} : { publishedPresentation }), ...(workbookPublished === undefined ? {} : { workbookPublished }) }
   }
   // Preserve the original default wrapper, including caller-owned SAVEPOINT semantics.
@@ -391,6 +393,7 @@ function createCurrentCandidateEvaluationReader(db: Database.Database, receiptRu
   const events = statement(`select e.id,e.event_type as eventType,e.year,e.decided_year as decidedYear,e.batch_seq as batchSeq,e.review_outcome as reviewOutcome,e.revision,r.name_raw as nameRaw,r.uscc_raw as usccRaw,r.source from record r join record_event e on e.record_id=r.id where r.enterprise_id=? and r.title_code=? order by e.id`).all(enterpriseId,title) as (LifecycleEvent & { batchSeq: number|null; nameRaw: string|null; usccRaw: string|null; source: string; revision: number; formalValidity?: FormalValidity; validityInvalid?: boolean; formalValidityInputHash?: string; recordId?: number })[]
   const evidence = statement(`select v.id,v.record_event_id as eventId,v.source_file as sourceFile,v.attachment,v.list_no as listNo,v.page from record_evidence v join record_event e on e.id=v.record_event_id join record r on r.id=e.record_id where r.enterprise_id=? and r.title_code=? order by v.id`).all(enterpriseId,title) as (CurrentWorkbookFacts['evidence'][number] & {id:number})[]
   const legacy = assessmentOptions?.assessmentVersion === LEGACY_QUALIFICATION_ASSESSMENT_VERSION
+  const effectiveMode = !assessmentOptions?.assessmentVersion || assessmentOptions.assessmentVersion === QUALIFICATION_ASSESSMENT_VERSION
   if (!legacy) {
     const validityRows = statement(`select e.id,e.record_id as recordId,e.formal_validity as value from record_event e join record r on r.id=e.record_id where r.enterprise_id=? and r.title_code=? order by e.id`).all(enterpriseId,title) as {id:number;recordId:number;value:string|null}[]
     for (const raw of validityRows) {
@@ -407,13 +410,15 @@ function createCurrentCandidateEvaluationReader(db: Database.Database, receiptRu
       const originRecord = origin && validityRows.find(e => e.id === origin.id)?.recordId
       const originValid = fact.originAwardEventId == null || !!origin && originRecord === raw.recordId && origin.eventType === 'award' && origin.year != null && origin.year === event.year && !(origin.batchSeq != null && event.batchSeq != null && origin.batchSeq !== event.batchSeq)
       if (!file || file.removedAt || file.sha256 !== fact.sourceSha256 || !originValid) event.validityInvalid=true
-      else event.formalValidity=fact
+      // Source availability is diagnostic; it cannot replace a recorded business interval.
+      if (effectiveMode) event.formalValidity=originValid ? fact : { ...fact, originAwardEventId: undefined, continuation: undefined }
+      else if (!event.validityInvalid) event.formalValidity=fact
     }
   }
   const formal = events.filter(e => e.source === 'jxj' && ['award','review'].includes(e.eventType) && evidence.some(v => v.eventId === e.id))
   const lifecycle = computeTitleLifecycle(formal)
   const row: CurrentRow = { enterpriseId, name: enterprise.name, uscc: enterprise.uscc_norm, district: enterprise.district, publishedNames: [...new Set(formal.map(e => e.nameRaw).filter((n): n is string => !!n))], aliases: [], firstYear: lifecycle.firstRecognitionYear, basis: formal.map(e => `event:${e.id}@${e.revision} ${e.eventType} ${e.year ?? ''}/${e.batchSeq ?? ''} 结论年:${e.decidedYear ?? ''}`).join('\n'), reviews: formal.filter(e => e.eventType === 'review').map(e => `${e.year ?? '?'}年原认定批次；结论年${e.decidedYear ?? '?'}；${e.reviewOutcome ?? '未知'}`).join('\n'), publication: formal.length ? '已见本称号宁波公布记录' : '尚未完成公布匹配核实', notes: [], references: evidence.map(v => `evidence:${v.id} ${v.sourceFile} ${v.attachment ?? ''} 序号:${v.listNo ?? ''}`), group: 'pending' }
-  const qualification = adjudicateQualificationCycles(formal, year, legacy ? undefined : qualificationDay(executionTime))
+  const qualification = adjudicateQualificationCycles(effectiveMode ? events.filter(e => e.source === 'jxj' && ['award','review'].includes(e.eventType)).map(e => ({...e, validityInvalid:false})) : formal, year, legacy ? undefined : qualificationDay(executionTime), effectiveMode)
   let qualificationSource: 'formal' | 'migration' = 'formal'
   let migrationAwardYears: number[] = []
   row.group = qualification.group
@@ -441,7 +446,9 @@ function createCurrentCandidateEvaluationReader(db: Database.Database, receiptRu
   const unassigned=relationKeys ? 'r.uscc_raw in (select value from json_each(@relationKeys))' : 'roster84_uscc(r.uscc_raw)=@uscc'
   const platformRefs=includeReferences ? suppliedPlatformRefs ?? statement(`select r.id,r.query_id as queryId,q.interface,q.queried_at as queriedAt from platform_relation r join platform_query q on q.id=r.query_id where r.id in (select id from platform_relation where enterprise_id=@enterpriseId union select r.id from platform_relation r ${relationKeys ? 'indexed by platform_relation_uscc_query_idx' : ''} where r.enterprise_id is null and ${unassigned}) and ${relationScopeSql} order by r.id`).all({enterpriseId,...(relationKeys ? {relationKeys:JSON.stringify(relationKeys)} : {uscc:normalizeUscc(enterprise.uscc_norm)||null}),title,rdjb}) as ({id:number;queryId:number} & CurrentWorkbookFacts['platform'][number])[] : []
   row.references.push(...platformRefs.map(r => 'platform-relation:' + r.id + ' query:' + r.queryId))
-  const headRows = headsQuery.all({enterpriseId})
+  // Default effective reads never execute legacy difference/assessment/receipt decisions.
+  // Explicit prior versions retain those diagnostics and their historical behavior.
+  const headRows = effectiveMode ? [] : headsQuery.all({enterpriseId})
   const heads = CURRENT_TITLES.flatMap(titleCode => (['missing_in_miit','extra_in_miit'] as const).flatMap(direction => headRows.filter(d => d.titleCode === titleCode && d.direction === direction))).map(d => ({...d,queryId:d.evidenceQueryId,relationId:d.evidenceRelationId,movedTitle:d.movedInTitleCode,movedCity:d.movedInCity,movedYear:d.movedInYear,movedBatch:d.movedInBatch}))
   const correspondences=preparedCorrespondences ? preparedCorrespondences(enterpriseId, title) : listRecordCorrespondenceRefs(reader,{enterpriseId,titleCode:title})
   row.references.push(...correspondences.map(c => 'correspondence:' + c.id + '@' + c.revision + ' ' + c.status + (c.requiresRevalidation ? ' 来源需重新核实' : '')))
@@ -560,14 +567,33 @@ function createCurrentCandidateEvaluationReader(db: Database.Database, receiptRu
     row.notes.push(...qualification.notes)
     if (correspondences.length) row.notes.push('对应边不是已确认当前资格；需核实具体资格与公布匹配范围')
   }
+  const independent = readEnterpriseFactEffects(db, enterpriseId, executionTime, statement)
+  if (independent) row.references.push(...independent.refs)
+  // #478: one effective decision; legacy diagnostics remain readable but cannot
+  // supply eligibility. Only formal periods and complete typed exclusions enter.
+  const exclusions = effectiveMode ? readEnterpriseFactEffects(db, enterpriseId, executionTime, statement, true) : independent
+  const effectiveFormal = qualification
+  const effectiveStatus = exclusions?.terminated ? 'terminated' as const
+    : exclusions?.region === 'outside_ningbo' ? 'moved_out' as const
+    : effectiveFormal.group === 'eligible' ? 'effective' as const
+    : events.some(e => e.source === 'jxj' && e.eventType === 'award') ? 'expired' as const : 'unrecognized' as const
+  const legacyGroup = row.group
+  if (effectiveMode) {
+    row.notes = row.notes.map(note => '历史诊断（不参与有效判定）：' + note)
+    if (events.some(e => e.validityInvalid)) row.notes.push('正式有效期资料来源缺失或版本/周期引用需核实，仅备注；保留已录入业务期间')
+    if (exclusions?.pending) row.notes.push('排除事实证据或生效时间不完整，仅备注，不改变正式资格')
+    officialGroup = effectiveFormal.group === 'eligible' ? 'eligible' : 'excluded'
+    row.group = effectiveStatus === 'effective' ? 'eligible' : 'excluded'
+    qualificationSource = 'formal'
+  }
   if (includeFilterFacts && (row.group === 'eligible' || includePendingFilterFacts)) {
     // The selected adjudication already separates current cycles and feasible
     // unknown-batch grants. Never reconstruct them from basis/reviews strings.
-    const awards = qualificationSource === 'formal' ? qualification.cycles.flatMap(cycle => cycle.awardEventIds.map(awardEventId => ({ cycle, awardEventId }))) : []
+    const awards = qualificationSource === 'formal' ? (effectiveMode ? effectiveFormal : qualification).cycles.flatMap(cycle => cycle.awardEventIds.map(awardEventId => ({ cycle, awardEventId }))) : []
     const linked = correspondences.filter(ref => ref.type === 'event_recognized' && ref.role === 'recognized_corrob' && ref.status === 'confirmed' && !ref.requiresRevalidation && ref.eventId != null && ref.relationId != null)
     const filterSource = filterSourceReader(assessmentOptions?.recognizedFactSource)
     row.qualificationWitnesses = awards.flatMap<CurrentQualificationWitness>(({cycle,awardEventId}) => {
-      const event = formal.find(item => item.id === awardEventId)!
+      const event = events.find(item => item.id === awardEventId)!
       const base = { cycle: { originYear: cycle.originYear, batchSeq: cycle.batch }, awardEventId, recognition: { precision: 'year' as const, year: awardTime(event)! } }
       const matches = linked.filter(ref => ref.eventId === awardEventId).flatMap(ref => {
         const source = filterSource.read({relationId:ref.relationId!,enterpriseId,uscc:normalizeUscc(enterprise.uscc_norm)||null})
@@ -617,16 +643,14 @@ function createCurrentCandidateEvaluationReader(db: Database.Database, receiptRu
   } satisfies CurrentWorkbookFacts,enumerable:false})
   // One canonical assessment-group decision for both the scan projection and
   // full T2. Keep the legacy row.group unchanged for existing consumers.
-  const independent = readEnterpriseFactEffects(db, enterpriseId, executionTime, statement)
-  if (independent) row.references.push(...independent.refs)
-  const group: CurrentGroup = independent?.terminated || terminations.length ? 'excluded' : independent?.pending ? 'pending' : independent?.region === 'outside_ningbo' ? 'excluded' : row.group
+  const group: CurrentGroup = effectiveMode ? row.group : independent?.terminated || terminations.length ? 'excluded' : independent?.pending ? 'pending' : independent?.region === 'outside_ningbo' ? 'excluded' : row.group
   if (assessmentOptions) {
     // These dimensions reuse the facts and applicability decisions above. Platform
     // observations and correspondence confirmation never feed back into eligibility.
-    if (current.length) officialGroup='eligible'
-    if (identityGap || qualificationGap || currentSourceGap) officialGroup='pending'
+    if (!effectiveMode && current.length) officialGroup='eligible'
+    if (!effectiveMode && (identityGap || qualificationGap || currentSourceGap)) officialGroup='pending'
     const migrationBasis = current.map(a => `decision:${a.decision.id} ${a.qualification.basis} [${a.qualification.validFrom},${a.qualification.validUntil})`)
-    const officialNotes = current.length && qualification.group !== 'eligible' ? ['已复核本称号独立资格期间；地域和主体状态另行判断'] : [...qualification.notes]
+    const officialNotes = effectiveMode ? [...effectiveFormal.notes] : current.length && qualification.group !== 'eligible' ? ['已复核本称号独立资格期间；地域和主体状态另行判断'] : [...qualification.notes]
     let publishedFacts = assessmentOptions.publishedNames
     let publishedReadError: unknown
     if (!publishedFacts) {
@@ -674,18 +698,20 @@ function createCurrentCandidateEvaluationReader(db: Database.Database, receiptRu
     // A proven termination remains an exclusion even if another independent
     // dimension is unresolved. The old projection is retained explicitly below.
     const formalEvidence = events.filter(e => e.source === 'jxj').map(e => ({eventId:e.id,revision:e.revision,eventType:e.eventType,year:e.year,batchSeq:e.batchSeq,decidedYear:e.decidedYear,reviewOutcome:e.reviewOutcome,...(!legacy && (e.formalValidity || e.validityInvalid) ? {formalValidity:e.formalValidity ?? null,validityInvalid:e.validityInvalid ?? false} : {}),evidenceIds:evidence.filter(v => v.eventId === e.id).map(v => v.id)}))
+    const formalBasis = events.filter(e => e.source === 'jxj').map(e => `event:${e.id}@${e.revision}`).join('\n')
     row.assessment = {
       titleCode:title,group,
+      ...(effectiveMode ? {effectiveQualification:{status:effectiveStatus,basis:[formalBasis,...(exclusions?.refs ?? [])].filter(Boolean).join('\n'),notes:[...row.notes,...effectiveFormal.notes]}} : {}),
       cycles:qualification.cycles.map(c => ({originYear:c.originYear,batchSeq:c.batch,precision:'year'})),
       versions:{facts:assessmentDigest(independent ? [enterprise,events,aliases,independent] : [enterprise,events,aliases]),sources:assessmentDigest([evidence,sourceVersions,publishedNames]),decisions:assessmentDigest([versionHeads,decisionAssessments,correspondences]),observations:assessmentDigest([coverage,observedRows])},
-      officialQualification:{group:officialGroup,message:officialGroup === 'eligible' ? '正式资格当前有效（按已录入的年份或已核实有效期间）' : officialGroup === 'excluded' ? '正式资格不纳入当前有效；历史依据保留' : '正式资格待核；已有公布及具体缺口保留',basis:[row.basis,...migrationBasis].filter(Boolean).join('\n'),notes:officialNotes},
+      officialQualification:{group:officialGroup,message:officialGroup === 'eligible' ? '正式资格当前有效（按已录入的年份或已核实有效期间）' : officialGroup === 'excluded' ? '正式资格不纳入当前有效；历史依据保留' : '正式资格待核；已有公布及具体缺口保留',basis:effectiveMode ? formalBasis : [row.basis,...migrationBasis].filter(Boolean).join('\n'),notes:officialNotes},
       subject:{status:subjectStatus,message:subjectStatus === 'terminated' ? '已确认注销或主体终止，全部称号排除；迁回不恢复主体' : subjectStatus === 'unresolved' ? '主体事实适用性待核' : '未见可适用的已确认主体终止事实；不据此证明存续',decisionIds:terminations.map(d => d.id)},
       region:{status:regionStatus,message:regionStatus === 'outside_ningbo' ? '已确认迁出，不纳入宁波当前结果；不据此认定全国称号撤销' : regionStatus === 'ningbo' ? '已确认迁回或迁入宁波；主体及称号资格分别判断' : regionStatus === 'unresolved' ? '主体地域事实适用性或生效顺序待核' : '未见可适用的迁移决定；沿用正式公布地域范围',decisionIds:latest.map(d => d.id)},
       platform:{status:platformStatus,comparison:'not_established',message:platformStatus === 'not_queried' ? '截至评估时点尚无可适用平台查询；其它观察保留' : platformStatus === 'query_failed' ? '平台查询失败，不等于平台无记录，也不否定正式资格' : '平台观察已保留；同主体、称号、周期、时点及覆盖尚需核实，未自动确认一致或未同步',truncated:coverage.truncated,observations},
       correspondence:{status:correspondenceStatus,message:correspondenceStatus === 'requires_revalidation' ? '来源需重新核实，当前未确认仍适用；未自动确认' : correspondenceStatus === 'confirmed' ? '已确认来源对应；不代表正式资格成立或资料已齐' : correspondenceStatus === 'candidate' ? '存在对应候选，尚未确认' : '尚无已确认对应；不据此否定正式资格',refs:correspondences},
       completeness:{status:gaps.length ? 'incomplete' : 'recorded',message:gaps.length ? '资料仍有缺口；未留档名称或来源版本未知不等于资格无效' : '既有字段已记录；未推断具体有效日或未录入的政策条款',gaps,publishedNames,eventIds:events.filter(e => incomplete.some(v => v.id === e.id) || e.source === 'jxj' && e.eventType === 'review' && (e.year == null || e.batchSeq == null || e.decidedYear == null || e.reviewOutcome == null)).map(e => e.id),fieldGaps:events.filter(e => e.source === 'jxj').flatMap(e => diagnoseOfficialEventFields(e).fieldGaps.map(gap => ({eventId:e.id,...gap})))},
       evidence:formalEvidence,sourceVersions,references:[...row.references],notes:[...row.notes],
-      shadow:{legacyGroup:row.group,difference:group === row.group ? null : '已确认主体终止优先排除；旧投影的其它未决缺口保留'},
+      shadow:{legacyGroup,difference:group === legacyGroup ? null : '已确认主体终止优先排除；旧投影的其它未决缺口保留'},
     }
   }
   observeCycles?.(qualification.cycles, formal)
