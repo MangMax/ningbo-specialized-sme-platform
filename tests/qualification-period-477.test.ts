@@ -70,3 +70,15 @@ it('effective failure priority starts at publication rather than the unpublished
   const next = { ...review(2,2026,'failed'), formalValidity: { ...source, publishedOn: '2026-09-01', continuation: 'until_this_review_results' as const, originAwardEventId: 1 } }
   expect(['2026-08-31','2026-09-01'].map(day => adjudicateQualificationCycles([award,next],2026,day,true).group)).toEqual(['eligible','excluded'])
 })
+it('effective mode selects latest actual pass across origin cycles and retains history', () => {
+ const events=[award,{...award,id:4,year:2024,decidedYear:2024},review(3,2026)]
+ const result=adjudicateQualificationCycles(events,2027,'2027-06-01',true)
+ expect(result.group).toBe('eligible')
+ expect(result.cycles.map(c=>c.originYear)).toContain(2021)
+ expect(adjudicateQualificationCycles(events,2029,'2029-01-01',true).group).toBe('excluded')
+})
+it('effective mode honors an inclusive interval without fabricating missing award years',()=>{
+ const e={...award,year:null,decidedYear:null,formalValidity:{...source,interval:{validFrom:'2025-01-01',validThrough:'2028-12-31'}}}
+ expect(['2024-12-31','2025-01-01','2026-06-01','2028-12-31','2029-01-01'].map(day=>adjudicateQualificationCycles([e],Number(day.slice(0,4)),day,true).group)).toEqual(['excluded','eligible','eligible','eligible','excluded'])
+ expect(e.year).toBeNull()
+})

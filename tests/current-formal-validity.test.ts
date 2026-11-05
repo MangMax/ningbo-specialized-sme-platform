@@ -41,10 +41,10 @@ function fixture(kind: 'lanfan' | 'yayan' | 'yongchuang' = 'lanfan') {
 
 it.each(['lanfan', 'yayan', 'yongchuang'] as const)('consumes independent official facts for %s without rewriting original business coordinates', kind => {
   const f = fixture(kind)
-  expect(f.selected().group).toBe(kind === 'lanfan' ? 'excluded' : 'pending')
+  expect(f.selected().group).toBe(kind === 'lanfan' ? 'excluded' : 'eligible')
   f.install()
   expect(f.selected().group).toBe('eligible')
-  expect(f.read()).toMatchObject({ ruleVersion: 'current-roster-116-v9', assessmentVersion: 'enterprise-qualification-407-v2' })
+  expect(f.read()).toMatchObject({ ruleVersion: 'current-roster-116-v10', assessmentVersion: 'enterprise-qualification-478-v3' })
   expect(f.db.select().from(schema.recordEvent).where(eq(schema.recordEvent.id, f.award.id)).get()).toMatchObject({ year: kind === 'yongchuang' ? 2022 : 2023, batchSeq: kind === 'lanfan' ? 2 : null })
   expect(f.read('2026-10-31', { assessmentVersion: 'enterprise-qualification-407-v1' }).titles.find(t => t.titleCode === f.title)!.group).toBe('pending')
 })
@@ -60,11 +60,11 @@ it('uses Shanghai midnight rather than UTC day and changes the digest with forma
   expect(at('2026-10-31T16:00:00Z')).toBe('excluded')
 })
 it.each(['sha', 'removed', 'foreignEvidence'] as const)('does not retain certainty after %s source drift', change => {
-  const f = fixture(); f.install(); expect(f.selected().group).toBe('eligible')
+  const f = fixture(); const previous = (day='2026-10-31') => f.read(day,{assessmentVersion:'enterprise-qualification-407-v2'}).titles.find(t=>t.titleCode===f.title)!; f.install(); expect(previous().group).toBe('eligible')
   if (change === 'sha') f.db.update(schema.storedFile).set({ sha256: 'b'.repeat(64) }).run()
   if (change === 'removed') f.db.update(schema.storedFile).set({ removedAt: '2026-10-01' }).run()
   if (change === 'foreignEvidence') f.install({ ...f.fact, evidenceId: 999999 })
-  expect(f.selected().group).toBe('pending')
+  expect(previous().group).toBe('pending')
 })
 it.each(['failed', null] as const)('does not turn review outcome %s into a pass through dates', outcome => {
   const f = fixture('yongchuang'); f.install(); f.db.update(schema.recordEvent).set({ reviewOutcome: outcome }).where(eq(schema.recordEvent.id, f.review!.id)).run()
@@ -81,14 +81,14 @@ it('limits the this-result grace to publication and does not promise an indefini
   expect(f.selected('2026-02-27').group).not.toBe('eligible')
 })
 it('next-result continuation ends on a later published failure and unknown results stay unresolved', () => {
-  const f = fixture('yayan'); f.install(); expect(f.selected('2029-09-01').group).toBe('eligible')
-  f.addReview(null, 2029); expect(f.selected('2029-09-01').group).toBe('pending')
+  const f = fixture('yayan'); const previous = (day='2026-10-31') => f.read(day,{assessmentVersion:'enterprise-qualification-407-v2'}).titles.find(t=>t.titleCode===f.title)!; f.install(); expect(previous('2029-09-01').group).toBe('eligible')
+  f.addReview(null, 2029); expect(previous('2029-09-01').group).toBe('pending')
   f.db.update(schema.recordEvent).set({ reviewOutcome: 'failed', batchSeq: 1 }).where(eq(schema.recordEvent.id, f.db.select().from(schema.recordEvent).all().at(-1)!.id)).run()
-  expect(f.selected('2029-09-01').group).not.toBe('eligible')
+  expect(previous('2029-09-01').group).not.toBe('eligible')
 })
 it('keeps an unlinked ambiguous batch and known conflicting batch unresolved', () => {
-  const f = fixture('yayan'); f.install({ ...f.fact, originAwardEventId: undefined }); expect(f.selected().group).toBe('pending')
-  f.install(); f.db.update(schema.recordEvent).set({ batchSeq: 2 }).where(eq(schema.recordEvent.id, f.award.id)).run(); expect(f.selected().group).toBe('pending')
+  const f = fixture('yayan'); const previous=()=>f.read('2026-10-31',{assessmentVersion:'enterprise-qualification-407-v2'}).titles.find(t=>t.titleCode===f.title)!; f.install({ ...f.fact, originAwardEventId: undefined }); expect(previous().group).toBe('pending')
+  f.install(); f.db.update(schema.recordEvent).set({ batchSeq: 2 }).where(eq(schema.recordEvent.id, f.award.id)).run(); expect(previous().group).toBe('pending')
 })
 it('preserves a separate same-year opposite cycle and later failures over interval evidence', () => {
   const f = fixture(); f.install(); f.addReview('failed'); expect(f.selected().group).not.toBe('eligible')
@@ -97,13 +97,14 @@ it.each(['deregistered', 'moved_out'] as const)('preserves %s priority over an e
   const f = fixture(); f.install()
   const d = f.db.insert(schema.differenceReason).values({ enterpriseId: f.enterprise.id, titleCode: f.title, direction: 'missing_in_miit', status: 'confirmed_reason', reasonCode, verificationStatus: 'confirmed', lifecycleAction: 'replace', basis: 'owned subject proof', effectiveAt: '2026-01-01T00:00:00Z', recordedAt: '2026-01-02T00:00:00Z', measureCode: 'keep_history' }).returning().get()
   reviewCurrentExportDecision(f.db, d)
-  expect(f.selected().group).toBe('excluded')
+  expect(f.selected().group).toBe('eligible') // Old difference decisions are notes under v3.
+  expect(f.read('2026-10-31',{assessmentVersion:'enterprise-qualification-407-v2'}).titles.find(t=>t.titleCode===f.title)!.group).toBe('excluded')
 })
 it('current query and exported workbook consume the same default authority at the cutoff', async () => {
   vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(new Date('2026-10-31T04:00:00Z'))
   const f = fixture(); f.install()
   const query = listCurrentQualified(f.sqlite, { titleCode: f.title, q: 'lanfan' })
-  expect(query).toMatchObject({ total: 1, rows: [{ enterpriseId: f.enterprise.id, qualificationAssessment: { assessmentVersion: 'enterprise-qualification-407-v2' } }] })
+  expect(query).toMatchObject({ total: 1, rows: [{ enterpriseId: f.enterprise.id, qualificationAssessment: { assessmentVersion: 'enterprise-qualification-478-v3' } }] })
   const filename = join(mkdtempSync(join(tmpdir(), 'validity-workbook-')), 'owned.xlsx')
   const result = await writeCurrentWorkbook(f.sqlite, f.title, filename, () => {})
   expect(result.counts).toEqual({ eligible: 1, pending: 0, excluded: 0 })
@@ -113,13 +114,13 @@ it('current query and exported workbook consume the same default authority at th
 })
 
 it('keeps an independent ambiguous award unresolved and lets a later explicit new grant restore qualification', () => {
-  const f = fixture('yayan'); f.install()
+  const f = fixture('yayan'); const previous = (day='2026-10-31') => f.read(day,{assessmentVersion:'enterprise-qualification-407-v2'}).titles.find(t=>t.titleCode===f.title)!; f.install()
   const other = f.db.insert(schema.recordEvent).values({ recordId: f.record.id, eventType: 'award', year: 2023, batchSeq: 2 }).returning().get()
   f.db.insert(schema.recordEvidence).values({ recordEventId: other.id, sourceFile: f.file.relPath }).run()
-  expect(f.selected().group).toBe('pending')
+  expect(previous().group).toBe('pending')
   const newer = f.db.insert(schema.recordEvent).values({ recordId: f.record.id, eventType: 'award', year: 2025, batchSeq: 2 }).returning().get()
   f.db.insert(schema.recordEvidence).values({ recordEventId: newer.id, sourceFile: f.file.relPath }).run()
-  expect(f.selected().group).toBe('eligible')
+  expect(previous().group).toBe('eligible')
 })
 it('explicit document interval takes priority over a next-result clause', () => {
   const f = fixture(); f.install({ ...f.fact, continuation: 'until_next_review_results' })
@@ -146,4 +147,26 @@ it.each(['passed', 'failed', null] as const)('honors explicit interval over this
   expect(f.selected('2026-02-26').group).toBe('excluded')
   if (outcome === 'passed') expect(f.selected('2026-02-27').group).toBe('eligible')
   else expect(f.selected('2026-02-27').group).not.toBe('eligible')
+})
+
+it.each(['enterprise-qualification-407-v1','enterprise-qualification-407-v2'] as const)('freezes explicit %s cutoff with honest metadata', assessmentVersion=>{
+ const f=fixture();f.install()
+ const result=f.read('2026-11-01',{assessmentVersion})
+ expect(result).toMatchObject({assessmentVersion,ruleVersion:assessmentVersion.endsWith('v1')?'current-roster-116-v8':'current-roster-116-v9'})
+ expect(result.titles.find(t=>t.titleCode===f.title)!.group).toBe('pending')
+ expect(f.selected('2026-11-01').group).toBe('excluded')
+})
+it.each(['enterprise-qualification-407-v1','enterprise-qualification-407-v2'] as const)('preserves %s future-review and failure/recovery rules',assessmentVersion=>{
+ const f=fixture('yayan')
+ const old=(day:string)=>f.read(day,{assessmentVersion}).titles.find(t=>t.titleCode===f.title)!
+ expect(old('2025-06-01').group).toBe('pending')
+ expect(f.selected('2025-06-01').group).toBe('eligible')
+ f.addReview('failed',2024)
+ expect(old('2026-10-31').group).toBe('pending')
+ expect(f.selected().group).toBe('eligible')
+})
+it('explicit v2 retains interval continuation while v3 gives the interval priority',()=>{
+ const f=fixture();f.install({...f.fact,continuation:'until_next_review_results'})
+ expect(f.read('2026-11-01',{assessmentVersion:'enterprise-qualification-407-v2'}).titles.find(t=>t.titleCode===f.title)!.group).toBe('eligible')
+ expect(f.selected('2026-11-01').group).toBe('excluded')
 })
