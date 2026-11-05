@@ -1,3 +1,4 @@
+import { initializeDb } from '../db/client'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -7,7 +8,7 @@ import { getComparison } from '../lib/comparison'
 import { attachPlatformEvidence } from '../lib/comparison-platform'
 
 const dir = mkdtempSync(join(tmpdir(), 'spztx-comparison-platform-'))
-const db = useDb({ dbPath: join(dir, 'comparison-platform.db') })
+const db = initializeDb({ create: true, dbPath: join(dir, 'comparison-platform.db') })
 
 const USCC = '91330211255994457P'
 
@@ -199,7 +200,7 @@ describe('attachPlatformEvidence:库内证据挂在比对行上', () => {
 
 describe('attachPlatformEvidence:状态、原因、措施照库原样带出', () => {
   const dir2 = mkdtempSync(join(tmpdir(), 'spztx-comparison-platform-titles-'))
-  const db2 = useDb({ dbPath: join(dir2, 'titles.db') })
+  const db2 = initializeDb({ create: true, dbPath: join(dir2, 'titles.db') })
 
   function make(name: string, uscc: string | null, title: 'little_giant' | 'specialized_sme' | 'innovative_sme', source: 'jxj' | 'miit') {
     const id = db2.insert(schema.enterprise).values({ name, nameNorm: name, usccNorm: uscc }).returning({ id: schema.enterprise.id }).get().id
