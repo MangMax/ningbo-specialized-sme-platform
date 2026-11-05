@@ -21,6 +21,7 @@ const dialogOpen = computed({ get: () => open.value, set: value => { if (!busy.v
 const emit = defineEmits<{ confirm: [deleteDisk: boolean]; changed: [] }>()
 type Physical = { intent: { id: string; fileId: number; relPath: string; state: 'pending' | 'quarantined' | 'recovering' | 'recovered' } }
 type Envelope = { expectedRevision: number; idempotencyKey: string; actor: string; basis: string; intentId?: string }
+type Command = { fileId: number; action: 'quarantine' | 'recover'; body: Envelope }
 const deleteDisk = ref(false)
 const lookupId = ref('')
 const actor = ref('')
@@ -33,8 +34,8 @@ const physical = ref<Physical | null>(null)
 const revision = ref<number | null>(null)
 const ready = ref(false)
 // Retain immutable commands across closing/reopening and failed reads. Credentials stay in memory only.
-const commands = new Map<string, { action: 'quarantine' | 'recover'; body: Envelope }>()
-const command = ref<{ action: 'quarantine' | 'recover'; body: Envelope } | null>(null)
+const commands = new Map<string, Command>()
+const command = ref<Command | null>(null)
 let sequence = 0
 const id = computed(() => props.fileId ?? Number(lookupId.value))
 const locked = computed(() => busy.value || props.pending || reading.value)
@@ -64,7 +65,7 @@ async function readLatest() {
   } finally { if (turn === sequence) reading.value = false }
 }
 watch([open, id], () => {
-  ++sequence; ready.value = false; reading.value = false; physical.value = null; revision.value = null
+  ++sequence; ready.value = false; reading.value = false; busy.value = false; physical.value = null; revision.value = null; error.value = ''
   command.value = commands.get(requestKey('recover')) ?? commands.get(requestKey('quarantine')) ?? null
   if (open.value) { deleteDisk.value = false; void readLatest() }
   else credential.value = ''
@@ -72,16 +73,18 @@ watch([open, id], () => {
 
 async function execute(action: 'quarantine' | 'recover', retry = false) {
   if (locked.value || (!retry && !valid.value)) return
-  const target = id.value
   if (!retry) {
     if (action === 'recover' && !canRecover.value) return
     if (action === 'quarantine' && (!canQuarantine.value || props.referenceCount > 0)) return
-    command.value = { action, body: { expectedRevision: revision.value!, idempotencyKey: crypto.randomUUID(), actor: actor.value.trim(), basis: basis.value.trim(), ...(action === 'recover' ? { intentId: physical.value!.intent.id } : {}) } }
+    command.value = { fileId: id.value, action, body: { expectedRevision: revision.value!, idempotencyKey: crypto.randomUUID(), actor: actor.value.trim(), basis: basis.value.trim(), ...(action === 'recover' ? { intentId: physical.value!.intent.id } : {}) } }
     commands.set(requestKey(action), command.value)
   }
   const held = command.value
-  if (!held || !credential.value.trim()) return
-  busy.value = true; error.value = ''; ++sequence
+  if (!held || held.fileId !== id.value || !credential.value.trim()) return
+  const target = held.fileId, turn = ++sequence
+  const current = () => turn === sequence && target === id.value && open.value
+  busy.value = true; error.value = ''
+  let failure = ''
   try {
     await $fetch(`/api/files/${target}${held.action === 'recover' ? '/physical-recovery' : ''}`, {
       method: held.action === 'recover' ? 'POST' : 'DELETE',
@@ -90,13 +93,15 @@ async function execute(action: 'quarantine' | 'recover', retry = false) {
     })
     commands.delete(`${target}:${held.action}`)
     if (held.action === 'recover') commands.delete(`${target}:quarantine`)
-    command.value = null
-    emit('changed')
+    if (current()) { command.value = null; emit('changed') }
   } catch (cause) {
-    error.value = `操作结果尚未确认：${describeFetchError(cause)}。文件可能已移动；数据库失败不会自动还原字节。请读取状态或重试原请求。`
-  } finally { busy.value = false }
-  const failure = error.value
+    failure = `操作结果尚未确认：${describeFetchError(cause)}。文件可能已移动；数据库失败不会自动还原字节。请读取状态或重试原请求。`
+    if (current()) error.value = failure
+  } finally { if (current()) busy.value = false }
+  if (!current()) return
+  const refreshTurn = sequence + 1
   await readLatest()
+  if (refreshTurn !== sequence || target !== id.value || !open.value) return
   if (failure) error.value = failure + (error.value ? ` ${error.value}` : '')
   // readLatest must not discard the exact request after an uncertain response.
   command.value = commands.get(`${target}:${held.action}`) ?? command.value
@@ -135,7 +140,7 @@ async function execute(action: 'quarantine' | 'recover', retry = false) {
       </div>
       <DialogFooter class="flex-wrap">
         <Button variant="outline" :disabled="locked" @click="open = false">关闭</Button>
-        <Button v-if="fileId && !deleteDisk && !physical && !command" :disabled="locked" @click="emit('confirm', false)">移出文件库</Button>
+        <Button v-if="fileId && !deleteDisk && canQuarantine && !command" :disabled="locked" @click="emit('confirm', false)">移出文件库</Button>
         <Button v-if="deleteDisk && canQuarantine && !command" variant="destructive" :disabled="locked || !valid || referenceCount > 0" @click="execute('quarantine')">确认移出并隔离</Button>
         <Button v-if="canRecover && command?.action !== 'recover'" :disabled="locked || !valid" @click="execute('recover')">确认恢复原文件</Button>
         <Button v-if="command" :disabled="locked || !credential.trim()" @click="execute(command.action, true)">重试原请求</Button>

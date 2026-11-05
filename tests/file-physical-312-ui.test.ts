@@ -28,6 +28,35 @@ it('defaults to soft removal and does not submit a physical command', async () =
   expect(wrapper.emitted('confirm')).toEqual([[false]])
   expect(fetch.mock.calls.every(call => !call[1]?.method)).toBe(true)
 })
+it('keeps default soft removal available after an explicitly recovered file', async () => {
+  const fetch = await setup('recovered')
+  expect(button('移出文件库')).toBeDefined()
+  button('移出文件库').click(); await flushPromises()
+  expect(wrapper.emitted('confirm')).toEqual([[false]])
+  expect(fetch.mock.calls.every(call => !call[1]?.method)).toBe(true)
+})
+it('does not carry an uncertain command into another file when its post-write read completes late', async () => {
+  const fetch = await setup()
+  document.body.querySelector<HTMLButtonElement>('#delete-disk')!.click(); await flushPromises()
+  await enter('physical-actor', '测试人员'); await enter('physical-basis', '仅隔离文件41'); await enter('physical-token', 'synthetic-token')
+  let resolveOld!: (value: unknown) => void
+  fetch.mockImplementation(async (url, opts) => {
+    if (opts?.method) throw new Error('file41 completion unknown')
+    if (url === '/api/files/41/maintenance') return await new Promise(resolve => { resolveOld = resolve })
+    if (url.endsWith('/maintenance')) return { revision: 7 }
+    throw Object.assign(new Error('none'), { statusCode: 404 })
+  })
+  button('确认移出并隔离').click(); await flushPromises()
+  expect(resolveOld).toEqual(expect.any(Function))
+  await wrapper.setProps({ open: false }); await flushPromises()
+  await wrapper.setProps({ open: true, fileId: 42, filename: '另一文件', relPath: 'other.pdf' }); await flushPromises()
+  resolveOld({ revision: 7 }); await flushPromises()
+  expect(document.body.textContent).not.toContain('file41 completion unknown')
+  expect(button('重试原请求')).toBeUndefined()
+  expect(fetch.mock.calls.filter(call => call[1]?.method).map(call => call[0])).toEqual(['/api/files/41'])
+  button('移出文件库').click(); await flushPromises()
+  expect(wrapper.emitted('confirm')).toEqual([[false]])
+})
 it('retains the exact failed quarantine envelope and retries its original key despite edited revision readback', async () => {
   const fetch = await setup()
   document.body.querySelector<HTMLButtonElement>('#delete-disk')!.click(); await flushPromises()
