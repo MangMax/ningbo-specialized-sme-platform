@@ -46,8 +46,10 @@
 
 存储支持 `business_list`、`apply_list` 和独立 `recognized_list`（仅 queryBusList）。用 `recognizedResultToImport` 将每个完整原结果/每个批量分段转换后，经统一预检/提交转存，保留原时间、条件、分页和原始行。元数据或结束证明不足继续待处理，不改标来源、不编完整性。通过 `GET /api/platform/queries` 或 `list_platform_queries` 读回历史，核对每个查询/行 ID。
 
+归档后另查本地业务状态：`GET /api/platform/business-processes` / `list_platform_business_processes` 只读 `business_list` 办理记录，`view=records` 与 `view=isolated` 分别核对业务及无法并入的观察。用 `GET /api/platform/business-processes/{recordId}` / `get_platform_business_process` 读实际版本/观察，保留全部版本/观察计数、冲突和 `counts.*Truncated`；详情版本最多100、观察最多200，截断不能当完整。这里不提供 queryList/queryBusList 同等 typed 业务搜索。查询归档成功（collected）、业务记录/版本实际可读与尚未完成的迁移分别报告，不用查询/行 ID 或 kind 汇总冒充 migrated。
+
 转存详见[归档转存契约](../../../../docs/platform-recognized-evidence.md)；公开补充及 `cross_source` 当前条件见[身份查证](./uscc-recovery.md)。无凭据示例和行为校验见[示例说明](../examples/README.md)；完整 API 见[批量查询文档](../../../../docs/platform-batch-query.md)。
 
 需要保留原 JSON 时，单查对象或批量 `items[].query` 显式加 `rawDataVersion:1`；先确认 capabilities v3 / tools/list 支持。原样保留 `rawData.version=1`、typed rows、实际接受页正文与页位置；旧 `rows` 只是字符串投影，缺少 rawData 的历史类型保持未知，不互相回退。原文敏感或超预算时，保留失败/unfinished 后补查，不裁剪正文。
 
-封套归档可继续用 `recognizedResultToImport`，但 #326 仅把 typed 原文保存在 collectionEvidence，旧 relation.rawFields/业务版本 hash 尚未切换（后续 #327）；不能报告 #298 全链路完成。原型同名键的现存 HTTP 拒绝边界及 MCP 读回能力见[归档接缝](../../../../docs/platform-recognized-evidence.md#原json封套扩展与后续接缝326327)。
+封套归档可继续用 `recognizedResultToImport`。`collectionEvidence.rawData.version=1` 已显式选择 typed `rawData.rows` 作为 `relations[].rawFields` 与业务内容版本输入（#327）；封套版本、页/行、来源、解析、投影或关系冲突整批拒绝，不回退字符串行。无 rawData 的旧载荷仍按其原契约接受，历史类型未知，旧 ID/hash/raw/观察/决定不重算，不同接口业务身份独立。此接缝不代表 #298 或整条技能验收完成。原型同名键的现存 HTTP 拒绝边界及 MCP 读回能力见[归档接缝](../../../../docs/platform-recognized-evidence.md#原json封套扩展与后续接缝326327)。

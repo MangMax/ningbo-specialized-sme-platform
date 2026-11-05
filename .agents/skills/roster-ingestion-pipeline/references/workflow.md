@@ -17,6 +17,8 @@
 - 每份文件一名负责人。所有页均有结果后立即交接纠偏；失败页明确列出，文件保持部分完成，直到恢复或明确接受其为未解决项。
 - 交接包含源文件 ID/路径、附件、总页数、页图引用、每页 OCR 文字、失败页、预计名单行范围及当前状态。
 
+当前 OCR 修改先用 `get_ocr_result {includeVersion:true}` 读实际页的 `results[].version`，`save_ocr_result` 按页带 `expectedVersion`；REST 对等入口为 `/api/files/{id}/ocr-pages/{page}`。409 时重读核实，不覆盖新版。当前解析使用 `preflight_file_parse_result`（`kind=file` 或 `kind=ocr`；OCR 带实际读过的 `pages:[{page,version}]`）冻结输入，再用 `commit_file_parse_result` 带原 `inputRef`、独立 `expectedVersion`、全部 `parts`、`idempotencyKey/actor/reason` 提交；HTTP 为 `/api/files/{id}/parse-result/preflight`、`/commit`、`/history`，审计 MCP 为 `get_file_parse_history`。输入或输出版本冲突须重读/重新预检，不能换用兼容写口绕过。旧 `save_parse_result` 保留兼容载荷和状态更正；历史缺血缘记 unknown。交接同时保留采用的文件/页版本及解析输入引用，不以所选页成功声称全文件完成。
+
 ## 纠偏与核验
 
 1. 把 OCR 文字解析为企业行，每行保留准确源文件和页码。
@@ -50,6 +52,8 @@
 - 按[平台查询说明](./platform-query.md)通过应用 REST/MCP 查证三类平台来源。查询结果是只读证据候选，不自动写入。完整范围查询才可证明零记录；全部关系和原查询时间均保留。存储支持 `business_list`（businessList）、`apply_list`（queryList）及独立的 `recognized_list`（queryBusList）。原结果/每个批量分段只通过统一预检、提交转存，随后读回全部查询/行 ID，遵循[归档转存契约](../../../../docs/platform-recognized-evidence.md)。缺原始时间或分页证明时留待处理，不改标来源。
 - 公开来源和平台证据只使用当前契约支持的载荷。公开来源补码、合并结构见契约 §§8.4、8.10；遵循[身份查证说明](./uscc-recovery.md)中更严格的 `cross_source` 准入条件。
 - 同批提交具有原子性：失败不写业务行。不得改用直接 SQLite 写入或临时导入器。结果不确定时按[同键恢复流程](./orchestration.md)处理。
+
+提交后精确读回：`GET /api/roster/evidence/{id}` / `get_roster_evidence` 可选 `official=latest|history`，`GET /api/roster/events/{id}` / `get_official_event` 可选 `official=latest`；按当前 discovery 核对鉴权和分页，区分原始出处、当前正式值与别名。历史用 `beforeRevision`，事件列表用 `afterEvidenceId`，`pageSize` 默认20/最大50，`maxBytes` 默认16384/最大65536。需要当次不可变快照时，用 `/api/roster/import/receipts/items` / `list_roster_import_items` 的 `projection=snapshot|eventIds`，显式选 `source=private_batch` + `batchId` 或 `source=redacted_receipt` + `receiptId`，并固定 `itemIndex/oldRecordId`；eventIds 单独 cursor 分页。缺失、unavailable、not_retained 原样报告，不从当前详情重建或换源补齐。仍须由独立读取者确认字段和固定版本，回执成功本身不完成业务确认。
 
 ### 更正既有事件与出处（#34）
 
