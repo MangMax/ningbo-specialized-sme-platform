@@ -1,5 +1,5 @@
 import { createInitialDecisionState, initialDecisionNeedsGuard, type InitialDecisionState } from './useInitialDifferenceDecision'
-import type { ReviewScope } from '~~/lib/roster/evidence-review-ui'
+import type { ReviewDecisionDraft, ReviewScope } from '~~/lib/roster/evidence-review-ui'
 import { computed, onBeforeUnmount, reactive, type ComputedRef, type InjectionKey } from 'vue'
 
 /**
@@ -10,15 +10,7 @@ import { computed, onBeforeUnmount, reactive, type ComputedRef, type InjectionKe
  * “丢弃”动作清理；首次登记的请求/回执在收起、切换或丢弃时保留到宿主页面卸载。
  * 只含业务内容与提交进度，不含凭证、操作人或规则版本。
  */
-export interface ReviewDraftDecision {
-  status: string
-  reasonCode: string
-  reasonNote: string
-  measureCode: string
-  measureNote: string
-  evidenceQueryId: string
-  evidenceRelationId: string
-}
+export type ReviewDraftDecision = ReviewDecisionDraft
 
 export interface ReviewDraft {
   /** Initial registration only: host-memory business command/receipt, never credentials. */
@@ -65,7 +57,7 @@ export function reviewDraftIsDirty(draft: ReviewDraft): boolean {
   if (draft.initialSubmission) return initialDecisionNeedsGuard(draft.initialSubmission)
   if (draft.basis.trim()) return true
   if (draft.mode !== 'maintain') return true
-  return Object.entries(draft.decision).some(([key, value]) => key !== 'status' && String(value).trim() !== '')
+  return Object.entries(draft.decision).some(([key, value]) => key !== 'status' && key !== 'factReferences' && String(value).trim() !== '')
 }
 
 /**

@@ -34,6 +34,18 @@ defineRouteMeta({
                   measureNote: { type: 'string', nullable: true, description: '1–4000 characters when non-null' },
                   evidenceQueryId: { type: 'integer', nullable: true, minimum: 1 },
                   evidenceRelationId: { type: 'integer', nullable: true, minimum: 1 },
+                  factReferences: {
+                    type: 'array', maxItems: 100,
+                    items: {
+                      type: 'object', additionalProperties: false, required: ['enterpriseId', 'factId', 'revision', 'kind'],
+                      properties: {
+                        enterpriseId: { type: 'integer', minimum: 1, maximum: 9007199254740991 },
+                        factId: { type: 'integer', minimum: 1, maximum: 9007199254740991 },
+                        revision: { type: 'integer', minimum: 1, maximum: 9007199254740991 },
+                        kind: { type: 'string', enum: ['moved_in', 'moved_out', 'cancelled', 'registration_status'] },
+                      },
+                    },
+                  },
                   verificationStatus: { type: 'string', enum: ['confirmed','pending'] },
                   currentQualification: { type: 'object', additionalProperties: false, required: ['titleCode','validFrom','validUntil','basis','publicationCheck'], description: '仅确认同称号迁入决定；须引用现有证据并通过#108复核。日期区间为左闭右开；不是从平台状态推定资格。', properties: { titleCode: { type: 'string', enum: ['little_giant','specialized_sme','innovative_sme'] }, validFrom: { type: 'string', format: 'date-time' }, validUntil: { type: 'string', format: 'date-time' }, awardYear: { type: 'integer', minimum: 1900, maximum: 2200, description: '可选真实新授予年份，不由区间/维护/自由文本推定；不得晚于区间起点年份' }, basis: { type: 'string', description: '1–4000 characters' }, publicationCheck: { type: 'object', additionalProperties: false, required: ['status','scope'], properties: { status: { type: 'string', enum: ['not_found','not_checked'] }, scope: { type: 'string', description: '1–4000 characters' } } } } },
                   movedIn: { type: 'object', additionalProperties: false, properties: { city: { type: 'string', nullable: true, description: '1–4000 characters when non-null' }, titleCode: { type: 'string', nullable: true, enum: ['little_giant','specialized_sme','innovative_sme'] }, year: { type: 'integer', nullable: true, minimum: 1900, maximum: 2200 }, batch: { type: 'integer', nullable: true, minimum: 1 } } },

@@ -10,6 +10,7 @@ import { Button } from '@/components/ui/button'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import ReplacementDecisionFields from './ReplacementDecisionFields.vue'
+import EnterpriseFactReferences from '@/components/enterprise/EnterpriseFactReferences.vue'
 
 const props = defineProps<{ detail: ImpactDetail; refreshing?: boolean; footer?: boolean }>()
 const emit = defineEmits<{ saved: [{ action?: string; versionId?: number }?]; reload: [] }>()
@@ -36,7 +37,12 @@ const conflict = shallowRef(false)
 const committed = shallowRef(false)
 watch(() => props.detail, () => { if (conflict.value) failure.value = ''; conflict.value = false })
 
-const draft = ref({ ...emptyReviewDraftDecision(), ...(storedDraft?.decision ?? {}) })
+const inheritedReferences = props.detail.currentDecision?.current?.factReferences
+const draft = ref({ ...emptyReviewDraftDecision(), ...(storedDraft?.decision ?? {}),
+  ...(storedDraft?.decision.factReferences == null && inheritedReferences?.length ? { factReferences: [...inheritedReferences] } : {}) })
+const factReferencesReady = ref(true)
+const retry = shallowRef<{ signature: string; body: Record<string, unknown> } | null>(null)
+const canReplay = computed(() => !!retry.value && retry.value.signature === JSON.stringify(currentContent()))
 watch([basis, mode, draft], () => {
   if (!storedDraft) return
   storedDraft.basis = basis.value
@@ -80,19 +86,20 @@ const externalDraft = inject<Ref<boolean> | null>('enterprise-review-draft', nul
 const isDirty = computed(() =>
   !!basis.value.trim()
   || mode.value !== 'maintain'
-  || Object.entries(draft.value).some(([key, value]) => key !== 'status' && String(value).trim() !== ''),
+  || Object.entries(draft.value).some(([key, value]) => key !== 'status' && key !== 'factReferences' && String(value).trim() !== ''),
 )
 watch(isDirty, value => { if (externalDraft && !draftStore) externalDraft.value = value }, { immediate: true })
 const validId = (id: string) => !id || (/^[1-9]\d*$/.test(id) && Number.isSafeInteger(Number(id)))
 const replacementReady = computed(() => !!draft.value.measureCode && (draft.value.status === 'confirmed_no_diff' ? draft.value.measureCode === 'none' : !!draft.value.reasonCode && (draft.value.reasonCode !== 'pending_review' || draft.value.measureCode === 'follow_review')) && validId(draft.value.evidenceQueryId) && validId(draft.value.evidenceRelationId))
 const eligibility = computed(() => reviewEligibility(props.detail))
 const eligible = computed(() => eligibility.value.eligible)
-const canSubmit = computed(() => writeReady.value && eligible.value && !conflict.value && !committed.value && (mode.value === 'maintain' || replacementReady.value) && !pending.value && !props.refreshing && !!basis.value.trim())
+const canSubmit = computed(() => writeReady.value && eligible.value && !conflict.value && !committed.value && (mode.value === 'maintain' || replacementReady.value && (factReferencesReady.value || canReplay.value)) && !pending.value && !props.refreshing && !!basis.value.trim())
 
 /** 禁用主按钮时把缺项说出来；不在界面上留一个没有原因的灰按钮。 */
 const missingFields = computed(() => {
   const missing: string[] = []
   if (!basis.value.trim()) missing.push('复核依据')
+  if (mode.value === 'replace' && !factReferencesReady.value && !canReplay.value) missing.push('可用的主体事实引用')
   if (mode.value === 'replace' && !replacementReady.value) {
     if (draft.value.status === 'confirmed_reason' && !draft.value.reasonCode) missing.push('更正原因')
     if (!draft.value.measureCode) missing.push('更正措施')
@@ -116,7 +123,18 @@ const submitDescribedBy = computed(() => {
   return blockedReason.value ? 'review-submit-blocked-reason' : undefined
 })
 
-let retry: { signature: string; body: Record<string, unknown> } | null = null
+function currentContent() {
+  return { action: mode.value, enterpriseId: props.detail.enterpriseId, titleCode: props.detail.titleCode, direction: props.detail.direction,
+    expectedCurrentId: props.detail.currentDecision!.versionId,
+    reviewedEvidence: { latestRevisionId: props.detail.evidenceToken.latestRevisionId, projectionReady: true },
+    basis: basis.value.trim(),
+    ...(mode.value === 'replace' ? { decision: { status: draft.value.status, reasonCode: draft.value.status === 'confirmed_no_diff' ? null : draft.value.reasonCode,
+      reasonNote: draft.value.reasonNote.trim() || null, measureCode: draft.value.measureCode, measureNote: draft.value.measureNote.trim() || null,
+      verificationStatus: 'confirmed', evidenceQueryId: draft.value.evidenceQueryId ? Number(draft.value.evidenceQueryId) : null,
+      evidenceRelationId: draft.value.evidenceRelationId ? Number(draft.value.evidenceRelationId) : null,
+      ...(draft.value.factReferences?.length ? { factReferences: draft.value.factReferences } : {}) } } : {}) }
+}
+
 /**
  * 失败原因必须出现在当前屏：Sheet 的主操作在滚动区外，滚动正文里的旧错误
  * 用户看不到。focus 到 footer 内的错误本身，读屏和键盘用户也能立即知道结果。
@@ -134,28 +152,21 @@ async function revealFailure() {
 }
 onBeforeUnmount(() => {
   // 有宿主草稿仓库时，结构性卸载（收起/切换/翻页）不能清草稿；仓库自己处理卸载。
-  retry = null
+  retry.value = null
   if (externalDraft && !draftStore) externalDraft.value = false
 })
 
 async function save() {
   if (!canSubmit.value) return
   pending.value = true; failure.value = ''
-  const content = { action: mode.value, enterpriseId: props.detail.enterpriseId, titleCode: props.detail.titleCode, direction: props.detail.direction,
-    expectedCurrentId: props.detail.currentDecision!.versionId,
-    reviewedEvidence: { latestRevisionId: props.detail.evidenceToken.latestRevisionId, projectionReady: true },
-    basis: basis.value.trim(),
-    ...(mode.value === 'replace' ? { decision: { status: draft.value.status, reasonCode: draft.value.status === 'confirmed_no_diff' ? null : draft.value.reasonCode,
-      reasonNote: draft.value.reasonNote.trim() || null, measureCode: draft.value.measureCode, measureNote: draft.value.measureNote.trim() || null,
-      verificationStatus: 'confirmed', evidenceQueryId: draft.value.evidenceQueryId ? Number(draft.value.evidenceQueryId) : null,
-      evidenceRelationId: draft.value.evidenceRelationId ? Number(draft.value.evidenceRelationId) : null } } : {}) }
+  const content = currentContent()
   const signature = JSON.stringify(content)
-  const body = retry?.signature === signature ? retry.body : { ...content, effectiveAt: new Date().toISOString(), idempotencyKey: crypto.randomUUID() }
-  retry = { signature, body }
+  const body = retry.value?.signature === signature ? retry.value.body : { ...content, effectiveAt: new Date().toISOString(), idempotencyKey: crypto.randomUUID() }
+  retry.value = { signature, body }
   try {
     // 浏览器不携带 Authorization；部署能力与同源闸门由服务端判定。
     const saved = await $fetch<{ action?: string; versionId?: number }>(BROWSER_COMMAND_PATH, { method: 'POST', body })
-    retry = null
+    retry.value = null
     committed.value = true
     // 写请求已成功：草稿不再是未提交内容。
     draftStore?.discard(props.detail.id)
@@ -165,13 +176,15 @@ async function save() {
   } catch (error) {
     const code = (error as { data?: { error?: { code?: string } } })?.data?.error?.code
     // Only translate known codes. Raw responses can contain credentials and are never rendered.
-    failure.value = code === 'stale_version' ? '决定版本冲突。请重新读取当前决定，核对后再提交。'
+    failure.value = code === 'fact_reference_mismatch' ? '关联事实已变化，草稿保留。请刷新可关联事实并重新选择后提交。'
+      : code === 'stale_version' ? '决定版本冲突。请重新读取当前决定，核对后再提交。'
       : code === 'stale_evidence' ? '证据版本冲突或影响检查尚未完成。请重新读取后复核。'
       : ['unauthorized', 'origin_required', 'origin_mismatch', 'cross_site_request', 'unsupported_media_type', 'browser_review_disabled'].includes(code ?? '')
         ? '这次提交没被接受：页面提交未开启或授权已失效。依据还在，重新读取后再试。'
       : code === 'idempotency_conflict' ? '提交标识冲突。请重新读取并核对当前决定。'
       : '复核保存失败，待复核状态保留。请重试；同一请求会复用提交标识。'
     if (['stale_version', 'stale_evidence', 'idempotency_conflict'].includes(code ?? '')) conflict.value = true
+    if (code === 'fact_reference_mismatch') retry.value = null
     if (code === 'browser_review_disabled') writeState.value = 'readonly'
     await revealFailure()
   } finally { pending.value = false }
@@ -245,6 +258,7 @@ async function save() {
         </fieldset>
 
         <ReplacementDecisionFields v-if="mode === 'replace'" v-model="draft" />
+        <EnterpriseFactReferences v-if="mode === 'replace'" :enterprise-id="detail.enterpriseId" :model-value="draft.factReferences ?? []" editable @update:model-value="draft.factReferences = $event" @validity="factReferencesReady = $event" />
         <p v-else class="text-muted-foreground text-[13px] leading-5">
           明确维持原决定：不会改写原原因或措施，也不会新增业务决定版本。
         </p>

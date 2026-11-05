@@ -9,6 +9,7 @@ import {
 import { decisionOriginLabel, decisionVersionActionLabel, recordedActorLabel, recordedRuleVersionLabel, reviewTimeLabel } from '~~/lib/roster/review-display'
 import { Badge } from '@/components/ui/badge'
 import DisclosurePanel from '@/components/DisclosurePanel.vue'
+import EnterpriseFactReferences from '@/components/enterprise/EnterpriseFactReferences.vue'
 
 defineProps<{ decision: DecisionVersion; label?: string }>()
 </script>
@@ -45,6 +46,10 @@ defineProps<{ decision: DecisionVersion; label?: string }>()
       <template v-if="decision.evidenceQueryId || decision.evidenceRelationId">
         <dt class="text-muted-foreground">原证据</dt>
         <dd>查询 #{{ decision.evidenceQueryId ?? '未指定' }} · 原行 #{{ decision.evidenceRelationId ?? '未指定' }}</dd>
+      </template>
+      <template v-if="decision.factReferences?.length">
+        <dt class="text-muted-foreground">主体事实</dt>
+        <dd><EnterpriseFactReferences :enterprise-id="decision.enterpriseId" :model-value="decision.factReferences" /></dd>
       </template>
       <dt class="text-muted-foreground">操作人</dt>
       <dd>{{ recordedActorLabel(decision.actor) }}</dd>
