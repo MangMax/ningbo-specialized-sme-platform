@@ -1,3 +1,4 @@
+import { initializeDb } from '../db/client'
 /**
  * `scripts/reconcile-live.mjs` —— 无头长跑入口的**两个入口、一份核心**。
  *
@@ -97,7 +98,7 @@ describe('用法与参数', () => {
 describe('缺凭据:明确失败,一行不写', () => {
   it('有目标但只有旧凭据文件 ⇒ 1 退出,库里没有任何证据行', () => {
     const dbPath = join(dir, 'target.db')
-    const db = useDb({ dbPath })
+    const db = initializeDb({ create: true, dbPath })
     const enterpriseId = db
       .insert(schema.enterprise)
       .values({ name: '宁波无凭据科技有限公司', nameNorm: '宁波无凭据科技有限公司', usccNorm: '91330211000000012K' })

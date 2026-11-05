@@ -1,3 +1,4 @@
+import { initializeDb } from '../db/client'
 /**
  * RL-06：**缺统一社会信用代码企业的补录**。
  *
@@ -47,7 +48,7 @@ import { readImportBatchOutcome } from '../server/utils/roster-import'
 import { startEvidenceServer, type EvidenceServer } from './helpers/platform-evidence-server'
 
 const dir = mkdtempSync(join(tmpdir(), 'spztx-uscc-research-'))
-const db = useDb({ dbPath: join(dir, 'uscc-research.db') })
+const db = initializeDb({ create: true, dbPath: join(dir, 'uscc-research.db') })
 
 const TOKEN = 'rl06-token-value'
 const QUERIED_AT = '2026-10-16T03:33:51.280Z'
