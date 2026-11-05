@@ -1,4 +1,5 @@
 import { initializeDb } from '../db/client'
+import { createHash } from 'node:crypto'
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -23,8 +24,9 @@ it('公开任务 HTTP 受文件级背压约束,完成结果经 OCR REST/MCP 原�
   let releasePoll: (() => void) | undefined
   try {
     for (const file of files) {
-      writeFileSync(join(filesDir, file), minimalPdf({ pages: 1 }))
-      ids.push(db.insert(schema.storedFile).values({ relPath: file, filename: file, ext: 'pdf', bytes: 1, sha256: 'synthetic' }).returning({ id: schema.storedFile.id }).get().id)
+      const bytes = minimalPdf({ pages: 1 })
+      writeFileSync(join(filesDir, file), bytes)
+      ids.push(db.insert(schema.storedFile).values({ relPath: file, filename: file, ext: 'pdf', bytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') }).returning({ id: schema.storedFile.id }).get().id)
       await renderPdfPages(filesDir, file, { dpi: DEFAULT_DPI })
     }
     const gate = new Promise<void>(resolve => { releasePoll = resolve })
