@@ -202,3 +202,41 @@ it('keeps missing annual history unknown and does not authorize generic annual r
   const retry = await fetch(`${api.baseUrl}/api/task-center/${ids.batch}/retry`, { method: 'POST', headers: { authorization: 'Bearer fixture-key' } })
   expect(retry.status).toBe(409)
 })
+
+
+it('reads bounded snapshot results only with task-center authorization and keeps unfinished rows unknown', async () => {
+  db.update(schema.job).set({ kind: 'difference-snapshot', params: { backup: { path: '/PRIVATE_BACKUP' } }, result: {
+    counts: { enterprises: 2, requests: 3, rows: 5, unfinished: 1 },
+    items: [{ enterpriseId: 12, source: 'queryList', rdjb: null, complete: false, rows: null, segments: [] }], raw: 'PRIVATE_ARCHIVE',
+  } }).where(eq(schema.job.id, ids.batch)).run()
+  const url = `${api.baseUrl}/api/task-center/${ids.batch}`
+  const anonymous = await (await fetch(url)).json()
+  expect(anonymous.snapshot).toBeUndefined()
+  const response = await fetch(url, { headers: { authorization: 'Bearer fixture-key' } })
+  expect(response.headers.get('cache-control')).toBe('no-store')
+  const body = await response.json()
+  expect(body.snapshot).toMatchObject({ enterprises: 2, requests: 3, rows: 5, unfinished: 1, positions: [{ enterpriseId: 12, source: 'queryList', rdjb: null, rows: null }] })
+  expect(body.links).toContainEqual({ label: '快照范围、计数与未完成位置', to: `/tasks?tab=platform&job=${ids.batch}#snapshot-result` })
+  expect(JSON.stringify(body)).not.toContain('PRIVATE_')
+})
+
+it('accepts same-origin browser snapshot reads over HTTP but withholds details from unmarked and cross-origin reads', async () => {
+  const { createServer } = await import('node:http')
+  const { createApp, toNodeListener, defineEventHandler, getRequestURL, getHeader } = await import('h3')
+  const { taskCenterBrowserAccess } = await import('../server/utils/task-center-access')
+  db.update(schema.job).set({ kind: 'difference-snapshot', result: { counts: { enterprises: 1, requests: 0, rows: 0, unfinished: 7 }, items: [] } }).where(eq(schema.job.id, ids.batch)).run()
+  const server = createServer(toNodeListener(createApp().use(defineEventHandler(async event => {
+    const result = await handleTaskCenterRequest('detail', { method: 'GET', path: getRequestURL(event).pathname, headers: { authorization: getHeader(event,'authorization') } },
+      { db, apiToken: 'fixture-key', filesDir: dir, browserAuthorized: taskCenterBrowserAccess(event) })
+    return result.body
+  }))))
+  await new Promise<void>(resolve => server.listen(0,'127.0.0.1',resolve))
+  const origin = `http://127.0.0.1:${(server.address() as {port:number}).port}`
+  try {
+    const url = `${origin}/api/task-center/${ids.batch}`
+    const headers = { 'x-task-center-browser':'1', 'sec-fetch-site':'same-origin', referer:`${origin}/tasks` }
+    expect((await (await fetch(url,{headers})).json()).snapshot).toMatchObject({ enterprises:1, unfinished:7 })
+    expect((await (await fetch(url)).json()).snapshot).toBeUndefined()
+    expect((await (await fetch(url,{headers:{...headers,referer:'https://evil.invalid/tasks'}})).json()).snapshot).toBeUndefined()
+  } finally { await new Promise<void>(resolve=>server.close(()=>resolve())) }
+})
