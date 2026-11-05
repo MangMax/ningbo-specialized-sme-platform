@@ -60,4 +60,13 @@ describe('roster import announcement discovery', () => {
     expect(rosterImportMcpPayloadSchema.safeParse({ officialEvidencePlanHash: 'wrong' }).success).toBe(false)
     expect(rosterImportMcpPayloadSchema.parse({ officialEvidencePlanHash: 'a'.repeat(64) })).toEqual({ officialEvidencePlanHash: 'a'.repeat(64) })
   })
+
+  it('discovers explicit published row and revision requirements for every import correction without tightening legacy parsing', () => {
+    for (const payload of [discovery, httpPayload('preflight'), httpPayload('commit')]) {
+      const operation = (payload.properties!.officialEvidenceCorrections as any).properties.operations.items
+      expect(operation.required).toEqual(expect.arrayContaining(['publishedRow', 'expectedRowRevision']))
+    }
+    const command = { actor: { type: 'agent', id: 'discovery-test' }, basis: 'Coordinate-only legacy command', operations: [{ evidenceId: 1, eventId: 1, recordId: 1, enterpriseId: 1, expectedVersion: 'a'.repeat(64), coordinate: { sourceFile: 'notice.txt', attachment: null, listNo: 1, page: null } }] }
+    expect(rosterImportMcpPayloadSchema.parse({ officialEvidenceCorrections: command })).toEqual({ officialEvidenceCorrections: command })
+  })
 })

@@ -367,6 +367,16 @@ it('rejects repeated correction targets and unknown final binding overlap withou
   expect(overlap.body.preflight.conflicts[0].error.code).toBe('ambiguity')
 })
 
+it('import correction requires an explicit published row even when a legacy coordinate-only command parses', async () => {
+  const f = await fixture(); f.capture()
+  const { publishedRow: _row, expectedRowRevision: _revision, ...operation } = f.correction(1, f.row({ listNo: 10 }))
+  const before = f.sqlite.prepare('SELECT * FROM record_evidence ORDER BY id').all()
+  const plan = await f.post('preflight', f.request({ officialEvidenceCorrections: { actor: { type: 'agent', id: 'synthetic' }, basis: 'Coordinate-only legacy correction', operations: [operation] } }, 'discovery-coordinate-only'))
+  expect(plan.status).toBe(200)
+  expect(plan.body.preflight.conflicts).toEqual([expect.objectContaining({ error: expect.objectContaining({ code: 'ambiguity', message: 'A mixed typed correction batch requires explicit publishedRow for every target' }) })])
+  expect(f.sqlite.prepare('SELECT * FROM record_evidence ORDER BY id').all()).toEqual(before)
+})
+
 it('advances one event CAS for an opt-in append combined with legacy convergence losing a page', async () => {
   const f = await fixture()
   const bytes = 'synthetic official source\n'

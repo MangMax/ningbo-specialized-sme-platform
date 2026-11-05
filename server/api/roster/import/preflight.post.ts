@@ -1394,7 +1394,6 @@ defineRouteMeta({
       }
     },
     "officialEvidenceCorrections": {
-      "description": "复用精确更正DTO；导入采用外层幂等键，每项明确publishedRow和expectedRowRevision，与追加/capture共用最终计划",
       "type": "object",
       "properties": {
         "actor": {
@@ -1790,7 +1789,9 @@ defineRouteMeta({
               "recordId",
               "enterpriseId",
               "expectedVersion",
-              "coordinate"
+              "coordinate",
+              "publishedRow",
+              "expectedRowRevision"
             ],
             "additionalProperties": false
           }
@@ -1801,7 +1802,8 @@ defineRouteMeta({
         "basis",
         "operations"
       ],
-      "additionalProperties": false
+      "additionalProperties": false,
+      "description": "复用精确更正DTO；导入采用外层幂等键，每项明确publishedRow和expectedRowRevision，与追加/capture共用最终计划"
     },
     "officialEvidencePlanHash": {
       "type": "string",
