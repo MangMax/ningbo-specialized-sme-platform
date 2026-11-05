@@ -85,22 +85,23 @@ function adjudicateCycle(events: QualificationEvent[], originYear: number, batch
   else if (originYear > year) result.notes.push('原认定年份尚未生效，当前周期待确认')
   else if (unresolved.length) {
     for (const event of unresolved) result.notes.push(`event:${event.id} ${event.eventType === 'award' ? '认定日期/批次' : '复核结论/结论年份/批次'}不完整或无法证明被后续事实消解，当前周期待确认`)
-  } else if (facts.lastFailure >= facts.lastAward && facts.failed.length) {
-    if (facts.lastFailure === facts.lastAward || facts.lastPassed >= facts.lastFailure) result.notes.push('对应周期失败与通过/认定恢复冲突；未确认重新认定恢复，待确认')
+  } else if (facts.lastFailure >= facts.lastAward && facts.failed.length && (!day || facts.lastFailure >= facts.lastPassed)) {
+    if (day) { result.group='excluded'; result.notes.push('对应认定周期复核明确不通过') }
+    else if (facts.lastFailure === facts.lastAward || facts.lastPassed >= facts.lastFailure) result.notes.push('对应周期失败与通过/认定恢复冲突；未确认重新认定恢复，待确认')
     else { result.group='excluded'; result.notes.push('对应认定周期复核明确不通过，未见后续重新认定恢复') }
   } else {
-    // A pass only extends a settled cycle. Expiry is a current-qualification
-    // concern; planning omits its cutoff while retaining all recovery/gap guards.
+    // Current dated assessments restart the period on the latest pass.
+    // Undated legacy receipts and planning retain their historical rules.
     const dueYear = anchor ? factTime(anchor)! + 3 : null
     const fact = day ? anchor?.formalValidity : undefined
     const futureReviewGrace = day && anchor?.eventType === 'award' && events.some(e => e.eventType === 'review' && e.formalValidity?.continuation === 'until_this_review_results' && e.formalValidity.publishedOn && day < e.formalValidity.publishedOn && e.formalValidity.originAwardEventId === anchor.id)
-    if (futureReviewGrace && (!fact?.interval || fact.interval.validFrom <= day!)) result.group='eligible'
+    if (futureReviewGrace && !fact?.interval) result.group='eligible'
     else if (day && fact?.interval) {
-      if (fact.interval.validFrom <= day && (day <= fact.interval.validThrough || fact.continuation === 'until_next_review_results' && (!fact.publishedOn || fact.publishedOn <= day))) result.group='eligible'
-      else result.notes.push('不在正式来源明确有效日期闭区间内，待确认后续资格')
+      if (fact.interval.validFrom <= day && day <= fact.interval.validThrough) result.group='eligible'
+      else { result.group='excluded'; result.notes.push('不在正式来源明确有效日期闭区间内') }
     } else if (day && fact?.continuation === 'until_next_review_results' && (!fact.publishedOn || fact.publishedOn <= day)) result.group='eligible'
     else if (dueYear != null && (year === Infinity || dueYear > year)) result.group='eligible'
-    else result.notes.push('已到复核年份，未见明确延续结果，待确认')
+    else { result.group = day ? 'excluded' : 'pending'; result.notes.push(day ? '已到期，未见明确延续结果' : '已到复核年份，未见明确延续结果，待确认') }
   }
   return result
 }
@@ -120,6 +121,14 @@ function hasUnresolvedRecovery(current: CycleJudgment[], history: CycleJudgment[
 export function adjudicateQualificationCycles(formal: QualificationEvent[], year = Infinity, day?: string): { group: CurrentGroup; notes: string[]; originYear: number; cycles: CycleJudgment[] } {
   const byYear = new Map<number, Map<number | null, QualificationEvent[]>>()
   const unknown: QualificationEvent[] = []
+  // Dated current assessments ignore known future facts; undated legacy
+  // receipts/planning keep their original input semantics. A linked upcoming
+  // publication may still carry an explicit this-result continuation clause.
+  if (day && year !== Infinity) formal = formal.filter(e => {
+    const validity = e.formalValidity
+    if (e.eventType === 'review' && validity?.originAwardEventId && validity.continuation === 'until_this_review_results' && validity.publishedOn && validity.publishedOn > day) return true
+    return (factTime(e) == null || factTime(e)! <= year) && (!validity?.publishedOn || validity.publishedOn <= day)
+  })
   const linked = day ? formal.filter(e => e.eventType === 'review' && e.formalValidity?.originAwardEventId) : []
   for (const event of formal) {
     if (linked.includes(event)) continue

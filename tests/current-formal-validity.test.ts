@@ -41,7 +41,7 @@ function fixture(kind: 'lanfan' | 'yayan' | 'yongchuang' = 'lanfan') {
 
 it.each(['lanfan', 'yayan', 'yongchuang'] as const)('consumes independent official facts for %s without rewriting original business coordinates', kind => {
   const f = fixture(kind)
-  expect(f.selected().group).toBe('pending')
+  expect(f.selected().group).toBe(kind === 'lanfan' ? 'excluded' : 'pending')
   f.install()
   expect(f.selected().group).toBe('eligible')
   expect(f.read()).toMatchObject({ ruleVersion: 'current-roster-116-v9', assessmentVersion: 'enterprise-qualification-407-v2' })
@@ -49,7 +49,7 @@ it.each(['lanfan', 'yayan', 'yongchuang'] as const)('consumes independent offici
   expect(f.read('2026-10-31', { assessmentVersion: 'enterprise-qualification-407-v1' }).titles.find(t => t.titleCode === f.title)!.group).toBe('pending')
 })
 
-it.each([['2023-10-31', 'pending'], ['2023-11-01', 'eligible'], ['2026-10-31', 'eligible'], ['2026-11-01', 'pending']] as const)('uses inclusive official dates on %s', (day, group) => {
+it.each([['2023-10-31', 'excluded'], ['2023-11-01', 'eligible'], ['2026-10-31', 'eligible'], ['2026-11-01', 'excluded']] as const)('uses inclusive official dates on %s', (day, group) => {
   const f = fixture(); f.install(); expect(f.selected(day).group).toBe(group)
 })
 it('uses Shanghai midnight rather than UTC day and changes the digest with formal facts', () => {
@@ -57,7 +57,7 @@ it('uses Shanghai midnight rather than UTC day and changes the digest with forma
   expect(f.selected().versions.facts).not.toBe(before)
   const at = (time: string) => readCurrentQualificationAssessment(f.sqlite, f.enterprise.id, Date.parse(time)).titles.find(t => t.titleCode === f.title)!.group
   expect(at('2026-10-31T15:59:59Z')).toBe('eligible')
-  expect(at('2026-10-31T16:00:00Z')).toBe('pending')
+  expect(at('2026-10-31T16:00:00Z')).toBe('excluded')
 })
 it.each(['sha', 'removed', 'foreignEvidence'] as const)('does not retain certainty after %s source drift', change => {
   const f = fixture(); f.install(); expect(f.selected().group).toBe('eligible')
@@ -75,7 +75,7 @@ it('limits the this-result grace to publication and does not promise an indefini
   const f = fixture('yongchuang'); f.install({ ...f.fact, publishedOn: '2026-02-27' })
   expect(f.selected('2026-02-26').group).toBe('eligible')
   expect(f.selected('2026-02-27').group).toBe('eligible')
-  expect(f.selected('2029-02-28').group).toBe('pending')
+  expect(f.selected('2029-02-28').group).toBe('excluded')
   f.db.update(schema.recordEvent).set({ reviewOutcome: 'failed' }).where(eq(schema.recordEvent.id, f.review!.id)).run()
   expect(f.selected('2026-02-26').group).toBe('eligible')
   expect(f.selected('2026-02-27').group).not.toBe('eligible')
@@ -121,10 +121,10 @@ it('keeps an independent ambiguous award unresolved and lets a later explicit ne
   f.db.insert(schema.recordEvidence).values({ recordEventId: newer.id, sourceFile: f.file.relPath }).run()
   expect(f.selected().group).toBe('eligible')
 })
-it('next-result clause can sustain an explicitly dated period after its end without moving its start', () => {
+it('explicit document interval takes priority over a next-result clause', () => {
   const f = fixture(); f.install({ ...f.fact, continuation: 'until_next_review_results' })
-  expect(f.selected('2023-10-31').group).toBe('pending')
-  expect(f.selected('2026-11-01').group).toBe('eligible')
+  expect(f.selected('2023-10-31').group).toBe('excluded')
+  expect(f.selected('2026-11-01').group).toBe('excluded')
   f.addReview('failed', 2027)
   expect(f.selected('2027-11-01').group).not.toBe('eligible')
 })
@@ -137,13 +137,13 @@ it('keeps legacy snapshot input bytes stable when formal dates are added', () =>
 })
 
 
-it.each(['passed', 'failed', null] as const)('honors this-result grace over an expired explicit interval until publication of %s', outcome => {
+it.each(['passed', 'failed', null] as const)('honors explicit interval over this-result grace before publication of %s', outcome => {
   const f = fixture('yongchuang')
   f.db.update(schema.recordEvent).set({ formalValidity: { evidenceId: f.db.select().from(schema.recordEvidence).all().find(e => e.recordEventId === f.award.id)!.id, sourceSha256: f.file.sha256, statementPages: [2], interval: { validFrom: '2022-03-01', validThrough: '2025-12-31' } } }).where(eq(schema.recordEvent.id, f.award.id)).run()
   f.install({ ...f.fact, publishedOn: '2026-02-27' })
   f.db.update(schema.recordEvent).set({ reviewOutcome: outcome }).where(eq(schema.recordEvent.id, f.review!.id)).run()
-  expect(f.selected('2022-02-28').group).toBe('pending')
-  expect(f.selected('2026-02-26').group).toBe('eligible')
+  expect(f.selected('2022-02-28').group).toBe('excluded')
+  expect(f.selected('2026-02-26').group).toBe('excluded')
   if (outcome === 'passed') expect(f.selected('2026-02-27').group).toBe('eligible')
   else expect(f.selected('2026-02-27').group).not.toBe('eligible')
 })
