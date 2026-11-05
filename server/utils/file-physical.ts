@@ -133,7 +133,7 @@ export function recoverStoredFile(db: Db, root: string, id: number, intentId: st
     checkRevision(tx, id, options)
     const p = paths(root, current)
     if (existsSync(p.quarantine)) {
-      if (existsSync(p.original)) fail('原路径已存在，禁止覆盖')
+      if (lstatSync(p.original, { throwIfNoEntry: false })) fail('原路径已存在，禁止覆盖')
       verify(p.quarantine, current)
       renameSync(p.quarantine, p.original)
     } else verify(p.original, current)

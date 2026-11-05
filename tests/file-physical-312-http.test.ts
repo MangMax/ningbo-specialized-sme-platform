@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, existsSync, symlinkSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readlinkSync, lstatSync, rmSync, existsSync, symlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 
@@ -126,12 +126,13 @@ describe('#312 recoverable physical command', () => {
     expect((await rest(`${f.id}/maintenance`)).body).toMatchObject({ revision: 2, total: 2, file: { removedAt: null } })
   }, 90000)
   it('rejects changed SHA same-size bytes, changed size and occupied original paths during explicit recovery', async () => {
-    for (const kind of ['same-size', 'size', 'occupied', 'missing'] as const) {
+    for (const kind of ['same-size', 'size', 'occupied', 'dangling-symlink', 'missing'] as const) {
       const f = await file()
       const deleted = await rest(`${f.id}?deleteDisk=1`, 'DELETE', await modernControls(f.id))
       expect(deleted.status).toBe(200)
       const quarantined = join(root, '.physical-quarantine', deleted.body.intent.id)
       if (kind === 'occupied') writeFileSync(join(root, f.relPath), 'do not overwrite me')
+      else if (kind === 'dangling-symlink') symlinkSync(join(root, 'absent-recovery-target'), join(root, f.relPath))
       else if (kind === 'missing') rmSync(quarantined)
       else writeFileSync(quarantined, kind === 'size' ? 'short' : 'X'.repeat(f.bytes))
       const before = (await rest(`${f.id}/maintenance`)).body
@@ -140,6 +141,11 @@ describe('#312 recoverable physical command', () => {
       expect((await rest(`${f.id}/maintenance`)).body).toEqual(before)
       expect(existsSync(quarantined)).toBe(kind !== 'missing')
       if (kind === 'occupied') { expect(readFileSync(join(root, f.relPath), 'utf8')).toBe('do not overwrite me'); rmSync(join(root, f.relPath)) }
+      if (kind === 'dangling-symlink') {
+        expect(lstatSync(join(root, f.relPath)).isSymbolicLink()).toBe(true)
+        expect(readlinkSync(join(root, f.relPath))).toBe(join(root, 'absent-recovery-target'))
+        rmSync(join(root, f.relPath))
+      }
       writeFileSync(quarantined, 'original synthetic file bytes')
       expect((await rest(`${f.id}/physical-recovery`, 'POST', controls)).status).toBe(200)
     }
