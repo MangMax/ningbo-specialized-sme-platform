@@ -35,7 +35,10 @@ watch(() => [props.src, attempt.value, mounted.value] as const, async ([src, ret
     if (!sameOrigin || !['http:', 'https:', 'blob:'].includes(url.protocol) || url.username || url.password) throw new Error('只支持同源文件或当前页面创建的 blob 地址。')
     downloadSrc.value = url.href
     const response = await fetch(retrySrc(url.href, retry), { signal: controller.signal, credentials: 'same-origin', redirect: 'error', cache: retry ? 'reload' : 'default' })
-    if (!response.ok) throw new Error(String(response.status))
+    if (!response.ok) {
+      const body = await response.json().catch(() => null)
+      throw new Error(body?.data?.code ?? body?.message ?? String(response.status))
+    }
     if (Number(response.headers.get('content-length')) > 5_000_000) { await response.body?.cancel(); throw new Error('文本超过 5 MB，请下载原文查看。') }
     const reader = response.body?.getReader()
     const chunks: Uint8Array[] = []

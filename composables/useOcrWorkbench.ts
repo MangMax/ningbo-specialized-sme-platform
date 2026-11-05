@@ -1,3 +1,4 @@
+import { currentContentMessage, type ContentIdentity } from '~~/lib/file-content-status'
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useOcrNavigation } from './useOcrNavigation'
 import {
@@ -31,6 +32,7 @@ export function useOcrWorkbench() {
   }
 
   interface OcrListResponse {
+    contentIdentity?: ContentIdentity
     file: {
       id: number
       relPath: string
@@ -41,6 +43,7 @@ export function useOcrWorkbench() {
     channels: string[]
     pages: Array<{
       page: number
+      historicalBinding?: OcrResultRow['historicalBinding']
       version?: string
       engine: string
       model: string | null
@@ -137,6 +140,8 @@ export function useOcrWorkbench() {
    *  2. 一次写该写到哪儿 —— 见 `writeTarget()`。
    */
   const loadedPath = ref('')
+  const contentIdentity = ref<ContentIdentity | null>(null)
+  const contentMessage = computed(() => currentContentMessage(contentIdentity.value))
 
   /**
    * 行 = 页码为骨、页图与结果挂在上面。
@@ -264,13 +269,13 @@ export function useOcrWorkbench() {
    * 前者要把原因原样给人看(它决定用户去刷新还是去查数据),后者走 `describeFetchError`。
    */
   type ResultsRead =
-    { ok: true; rows: OcrResultRow[] } | { ok: false; message: string }
+    { ok: true; rows: OcrResultRow[]; identity?: ContentIdentity } | { ok: false; message: string }
 
   async function fetchResults(relPath: string): Promise<ResultsRead> {
     const meta = await api<OcrListResponse>('/api/ocr-results', {
       query: { file: relPath, markdown: '1', includeVersion: '1' },
     })
-    if (meta.count === 0) return { ok: true, rows: [] }
+    if (meta.count === 0) return { ok: true, rows: [], identity: meta.contentIdentity }
 
     const missing = meta.pages.find((p) => typeof p.markdown !== 'string')
     if (missing) {
@@ -290,8 +295,10 @@ export function useOcrWorkbench() {
 
     return {
       ok: true,
+      identity: meta.contentIdentity,
       rows: meta.pages.map((p) => ({
         page: p.page,
+        historicalBinding: p.historicalBinding,
         version: p.version,
         markdown: p.markdown as string,
         pageRelPath: p.pageRelPath,
@@ -319,7 +326,7 @@ export function useOcrWorkbench() {
     status.value = null
     try {
       const [state, read] = await Promise.all([
-        api<PdfPagesState>('/api/pdf-pages', { query: { file: relPath } }),
+        api<PdfPagesState>('/api/pdf-pages', { query: { file: relPath } }).then(state => ({ state, error: '' }), error => ({ state: null, error: describeFetchError(error, '读不到页图状态。') })),
         fetchResults(relPath),
       ])
       if (relPath !== selectedPath.value || generation !== detailGeneration)
@@ -330,7 +337,9 @@ export function useOcrWorkbench() {
         detailError.value = read.message
         return
       }
-      pagesState.value = state
+      pagesState.value = state.state
+      detailError.value = state.error
+      contentIdentity.value = read.identity ?? null
       results.value = read.rows
       loadedPath.value = relPath
       // A verified re-read is the recovery point: a stale "写入已提交,但读回失败"
@@ -365,12 +374,14 @@ export function useOcrWorkbench() {
       return null
     }
     detailError.value = ''
+    contentIdentity.value = read.identity ?? null
     results.value = read.rows
     loadedPath.value = relPath
     return read.rows
   }
 
   watch(selectedPath, (next) => {
+    contentIdentity.value = null
     detailGeneration += 1
     pagesState.value = null
     results.value = []
@@ -751,6 +762,7 @@ export function useOcrWorkbench() {
   }
 
   return {
+    contentMessage,
     refreshAll,
     detailLoading,
     filesLoading,
