@@ -72,12 +72,6 @@ const canCancel = computed(() => !!capabilities.value?.cancel && inFlight.value 
 const canRetry = computed(() => !!capabilities.value?.retry && !inFlight.value && current.value)
 const showActions = computed(() => canCancel.value || canRetry.value)
 const cancellationPendingLabel = computed(() => cancelRequested.value && inFlight.value)
-const outcomeLabel = computed(() => {
-  if (!data.value?.outcome) return null
-  return data.value.kind === 'reconcile'
-    ? { complete: '报告目标', partial: '待核实' }
-    : { complete: '完整', partial: '部分' }
-})
 const reconcileCollection = computed(() => data.value?.kind === 'reconcile' ? data.value.reconcileCollection : undefined)
 const itemStatus: Record<string, string> = { success: '查询成功', no_record: '完整查询无记录', auth_failed: '授权失败', failed: '查询失败', partial: '部分', not_queried: '未查询', complete: '完整' }
 const current = computed(() => data.value?.id === props.id && sourceKey.value === key.value && !failed.value)
@@ -178,9 +172,13 @@ async function act(action: 'cancel' | 'retry') {
           </section>
           <Alert v-if="data.error" variant="destructive"><AlertTitle>任务错误</AlertTitle><AlertDescription>{{ data.error }}</AlertDescription></Alert>
 
+          <template v-if="data.reconcile">
+            <p class="text-sm" data-testid="task-outcome">报告目标 {{ data.reconcile.targets ?? '未知' }} · 待核实 {{ data.reconcile.needsReview ?? '未知' }} · 查询失败 {{ data.reconcile.queryFailed ?? '未知' }} · 未查询 {{ data.reconcile.notQueried ?? '未知' }}</p>
+            <p class="text-muted-foreground text-sm">查询完整性与核查结论分开核对；任务完成不代表所有差异已有业务结论。</p>
+          </template>
           <template v-if="data.outcome">
             <p class="text-sm" data-testid="task-outcome">
-              {{ outcomeLabel?.complete }} {{ data.outcome.complete }} · {{ outcomeLabel?.partial }} {{ data.outcome.partial }} ·
+              完整 {{ data.outcome.complete }} · 部分 {{ data.outcome.partial }} ·
               查询失败 {{ data.outcome.failed }} · 未查询 {{ data.outcome.notQueried }}
               <template v-if="data.kind !== 'reconcile'"> · 未完成范围 {{ data.outcome.unfinished }}</template>
             </p>
