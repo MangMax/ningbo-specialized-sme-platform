@@ -49,3 +49,20 @@ it('does not borrow continuation from another award cycle or override a publishe
   expect(judge([award,review(2,2023),next,{ ...award,id:4,year:2022,decidedYear:2022 }],2026)).toBe('excluded')
   expect(judge([award,review(2,2023),next,review(4,2025,'failed')],2026)).toBe('excluded')
 })
+it('effective mode retains known failure across batches and missing batch, then permits later recovery', () => {
+ const a={...award,year:2025,decidedYear:2025}
+ const fail={...review(3,2026,'failed'),year:2025,batchSeq:2}
+ const effective=(events:QualificationEvent[],y=2026)=>adjudicateQualificationCycles(events,y,`${y}-11-05`,true).group
+ expect(effective([a,{...a,id:2,batchSeq:2},fail])).toBe('excluded')
+ expect(effective([a,{...fail,batchSeq:null}])).toBe('excluded')
+ expect(effective([a,{...fail,batchSeq:null,reviewOutcome:'passed'}])).toBe('eligible')
+ expect(effective([a,{...fail,batchSeq:null}],2025)).toBe('eligible')
+ expect(effective([a,{...fail,batchSeq:null},{...review(4,2027),year:2025,batchSeq:null}],2027)).toBe('eligible')
+ expect(effective([a,fail,{...a,id:5,year:2027,decidedYear:2027}],2027)).toBe('eligible')
+})
+it('effective mode accepts passed review without origin coordinates but never unknown or failed outcome',()=>{
+ for(const outcome of ['passed','failed',null] as const){
+ const e={...review(9,2026),year:null,batchSeq:null,reviewOutcome:outcome,formalValidity:{...source,continuation:'until_next_review_results' as const}}
+ expect(adjudicateQualificationCycles([e],2026,'2026-11-05',true).group).toBe(outcome==='passed'?'eligible':'excluded')
+ }
+})

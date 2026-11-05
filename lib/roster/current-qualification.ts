@@ -411,7 +411,8 @@ function createCurrentCandidateEvaluationReader(db: Database.Database, receiptRu
       const originValid = fact.originAwardEventId == null || !!origin && originRecord === raw.recordId && origin.eventType === 'award' && origin.year != null && origin.year === event.year && !(origin.batchSeq != null && event.batchSeq != null && origin.batchSeq !== event.batchSeq)
       if (!file || file.removedAt || file.sha256 !== fact.sourceSha256 || !originValid) event.validityInvalid=true
       // Source availability is diagnostic; it cannot replace a recorded business interval.
-      if ((effectiveMode && originValid) || !event.validityInvalid) event.formalValidity=fact
+      if (effectiveMode) event.formalValidity=originValid ? fact : { ...fact, originAwardEventId: undefined, continuation: undefined }
+      else if (!event.validityInvalid) event.formalValidity=fact
     }
   }
   const formal = events.filter(e => e.source === 'jxj' && ['award','review'].includes(e.eventType) && evidence.some(v => v.eventId === e.id))

@@ -10,7 +10,7 @@ beforeAll(async () => {
     const c=f.candidate(`boundary478-${kind}-${complete}`)
     f.db.insert(schema.enterpriseFactRevision).values({enterpriseId:c.enterprise.id,factId:1,revision:1,status:'confirmed',fact:{kind,source:{reference:complete ? 'official' : '',statement:'statement'},effective:{precision:'day',value:'2025-01-01'},observed:{precision:'day',value:'2025-01-01'},city:null},action:'assert',actor:{type:'agent',id:'478'},basis:'verified',createdAt:'2025-01-01T00:00:00Z'}).run()
   }
-  for (const [name, year, end] of [['short478',2025,'2025-12-31'],['long478',2021,'2027-12-31'],['short-drift478',2025,'2025-12-31'],['long-drift478',2021,'2027-12-31']] as const) {
+  for (const [name, year, end] of [['short478',2025,'2025-12-31'],['long478',2021,'2027-12-31'],['short-drift478',2025,'2025-12-31'],['long-drift478',2021,'2027-12-31'],['short-link478',2025,'2025-12-31'],['long-link478',2021,'2027-12-31']] as const) {
     const c=f.candidate(name,[{eventType:'award',year,batchSeq:1}])
     const event=f.db.$client.prepare('select id from record_event where record_id=?').get(c.record.id) as {id:number}
     const evidence=f.db.$client.prepare('select id from record_evidence where record_event_id=?').get(event.id) as {id:number}
@@ -18,9 +18,10 @@ beforeAll(async () => {
       f.db.$client.prepare('update record_evidence set source_file=? where id=?').run(name+'.xlsx',evidence.id)
       f.db.insert(schema.storedFile).values({relPath:name+'.xlsx',filename:name+'.xlsx',ext:'xlsx',bytes:1,sha256:'b'.repeat(64)}).run()
     }
-    f.db.$client.prepare('update record_event set formal_validity=? where id=?').run(JSON.stringify({evidenceId:evidence.id,sourceSha256:'a'.repeat(64),statementPages:[1],interval:{validFrom:`${year}-01-01`,validThrough:end}}),event.id)
+    f.db.$client.prepare('update record_event set formal_validity=? where id=?').run(JSON.stringify({evidenceId:evidence.id,sourceSha256:'a'.repeat(64),statementPages:[1],...(name.includes('link') ? {originAwardEventId:999999} : {}),interval:{validFrom:`${year}-01-01`,validThrough:end}}),event.id)
   }
   f.candidate('ambiguous478',[{eventType:'award',year:2025,batchSeq:1},{eventType:'review',year:2025,decidedYear:2026,batchSeq:null,reviewOutcome:'passed'}])
+  f.candidate('review-only478',[{eventType:'review',year:null,decidedYear:2026,batchSeq:null,reviewOutcome:'passed'}])
   await f.start()
 }, 60000)
 afterAll(() => f.close())
@@ -54,7 +55,7 @@ it.each(['cancelled','moved_out'])('HTTP excludes complete %s but retains incomp
  }
 },60000)
 
-it.each([['short478',0],['long478',1],['short-drift478',0],['long-drift478',1],['ambiguous478',1]])('HTTP and MCP retain official period despite gaps: %s',async (q,total) => {
+it.each([['short478',0],['long478',1],['short-drift478',0],['long-drift478',1],['ambiguous478',1],['short-link478',0],['long-link478',1],['review-only478',1]])('HTTP and MCP retain official period despite gaps: %s',async (q,total) => {
  const http=await fetch(f.url(`/api/roster/current-enterprises?titleCode=specialized_sme&q=${q}`)).then(r=>r.json())
  const response=await fetch(f.url('/mcp'),{method:'POST',headers:{'content-type':'application/json',accept:'application/json, text/event-stream','mcp-protocol-version':'2025-06-18'},body:JSON.stringify({jsonrpc:'2.0',id:2,method:'tools/call',params:{name:'list_current_qualified_enterprises',arguments:{titleCode:'specialized_sme',q}}})})
  const raw=await response.text()

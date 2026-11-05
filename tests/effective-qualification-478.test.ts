@@ -31,3 +31,9 @@ it('retains previous assessment behavior explicitly while source and identity ga
  expect(old.titles.find(t=>t.titleCode==='specialized_sme')!.group).toBe('pending')
  expect(old.assessmentVersion).toBe('enterprise-qualification-407-v2')
 })
+it.each(['passed','failed',null] as const)('formal review-only %s preserves missing origin coordinates', outcome=>{
+ const c=f.candidate('review-only-'+outcome,[{eventType:'review',year:null,decidedYear:2026,batchSeq:null,reviewOutcome:outcome}])
+ const result=read(c.enterprise.id)
+ expect(result.group).toBe(outcome==='passed'?'eligible':'excluded')
+ expect(result.evidence[0]).toMatchObject({year:null,batchSeq:null,decidedYear:2026,reviewOutcome:outcome})
+})
