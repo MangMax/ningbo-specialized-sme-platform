@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { useDb, schema } from '../db/client'
+import { initializeDb, schema } from '../db/client'
 import { spawnOwnedChild as spawn, reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../scripts/lib/isolated-local-services.mjs'
 
 const dir = mkdtempSync(join(tmpdir(), 'file-maintenance-104-'))
@@ -19,7 +19,7 @@ if (maintenanceIndex < 0) throw new Error('File maintenance migration is missing
 baselineJournal.entries = baselineJournal.entries.slice(0, maintenanceIndex)
 for (const entry of baselineJournal.entries) copyFileSync(join(process.cwd(), `db/migrations/${entry.tag}.sql`), join(baselineMigrations, `${entry.tag}.sql`))
 writeFileSync(join(baselineMigrations, 'meta/_journal.json'), JSON.stringify(baselineJournal))
-const db = useDb({ dbPath, migrationsFolder: baselineMigrations })
+const db = initializeDb({ create: true, dbPath, migrationsFolder: baselineMigrations })
 let service: { baseUrl: string; stop(): Promise<void> }
 let serverOutput = ''
 let seq = 0
