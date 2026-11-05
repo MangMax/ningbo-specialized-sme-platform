@@ -1,5 +1,5 @@
-import { readOfficialPublishedPresentation, projectOfficialPublishedNames, OfficialPublishedPresentationError, type OfficialPublishedScope } from './official-published-presentation'
-import type { ReceiptRedactor } from '../../server/utils/import-receipt-redaction'
+import { readPublicPublishedNames } from './official-published-presentation'
+export { readPublicPublishedNames } from './official-published-presentation'
 import type { PublishedPresentation } from './correspondence-view'
 import { readQueryAssessment, readQueryCoverage, type QueryAssessment } from './query-assessment'
 import { sourcePositionForSequence } from '../platform/recognized-evidence'
@@ -977,17 +977,6 @@ function differenceUniverse(db: Db, snap: Snapshot, derived: Array<{ enterpriseI
   })
 
   return rows
-}
-
-/** Anonymous name sidecar only, after the caller has selected and verified ownership.
- * DTO copies and rendered text copies are budgeted separately; no request data is cached. */
-export function readPublicPublishedNames(db: Db, scope: readonly OfficialPublishedScope[], copies: readonly OfficialPublishedScope[] = scope, envelopeCount = 1, textCopies = 1, redactor?: ReceiptRedactor): PublishedPresentation {
-  try {
-    const facts = readOfficialPublishedPresentation(db, scope, redactor)
-    return projectOfficialPublishedNames([...facts.values()], copies, envelopeCount, textCopies)
-  } catch (error) {
-    return { availability: 'unavailable', error: error instanceof OfficialPublishedPresentationError ? error.code : 'read_failed', facts: [] }
-  }
 }
 
 export function getRosterEnterpriseDetail(db: Db, id: number, asOf = Date.now()): RosterEnterpriseDetail | null {

@@ -1,3 +1,5 @@
+import { readPublicPublishedNames, type OfficialPublishedFact } from './roster/official-published-presentation'
+import { publishedNameText, type PublishedPresentation } from './roster/correspondence-view'
 import { and, count, desc, eq, exists, inArray, isNull, like, or, sql, type SQL } from 'drizzle-orm'
 import type { AnySQLiteColumn } from 'drizzle-orm/sqlite-core'
 import { compact, groupBy, minBy, orderBy } from 'es-toolkit'
@@ -457,6 +459,8 @@ function buildRecordRows(
 // ---------------------------------------------------------------------------
 
 export interface DetailEvent {
+  id: number
+  recordId: number
   type: string
   year: number | null
   seq: number | null
@@ -469,6 +473,7 @@ export interface DetailEvent {
    * 本来就没有页(Word、Excel)。
    */
   evidence: {
+    id: number
     sourceFile: string
     attachment: string | null
     listNo: number | null
@@ -476,12 +481,14 @@ export interface DetailEvent {
   }[]
 }
 export interface DetailRecord {
+  id: number
   titleCode: string
   source: string
   district: string | null
   events: DetailEvent[]
 }
 export interface EnterpriseDetail {
+  publishedPresentation?: PublishedPresentation
   id: number
   name: string
   uscc: string | null
@@ -492,6 +499,10 @@ export interface EnterpriseDetail {
 
 /** 某企业的全部记录、事件与出处。 */
 export function getEnterpriseDetail(db: Db, id: number): EnterpriseDetail | null {
+  return db.transaction(() => legacyEnterpriseDetail(db, id))
+}
+
+function legacyEnterpriseDetail(db: Db, id: number): EnterpriseDetail | null {
   const ent = db
     .select({
       id: schema.enterprise.id,
@@ -550,21 +561,29 @@ export function getEnterpriseDetail(db: Db, id: number): EnterpriseDetail | null
   const evByEvent = groupBy(evidence, (v) => v.recordEventId)
   const evByRecord = groupBy(events, (e) => e.recordId)
 
+  const publishedPresentation = process.env.LEGACY_LEDGER_PRESENTATION_SOURCE === 'legacy' ? undefined
+    : readPublicPublishedNames(db, evidence.map(v => ({ evidenceId: v.id, eventId: v.recordEventId })))
+
   return {
+    ...(publishedPresentation ? { publishedPresentation } : {}),
     id: ent.id,
     name: ent.name,
     uscc: ent.uscc,
     district: ent.district ?? anyRecord?.district ?? null,
     qualityFlags: ent.qualityFlags ?? [],
     records: records.map((r) => ({
+      id: r.id,
       titleCode: r.titleCode,
       source: r.source,
       district: r.district,
       events: (evByRecord[r.id] ?? []).map((e) => ({
+        id: e.id,
+        recordId: r.id,
         type: e.type,
         year: e.year,
         seq: e.seq,
         evidence: (evByEvent[e.id] ?? []).map((v) => ({
+          id: v.id,
           sourceFile: v.sourceFile,
           attachment: v.attachment,
           listNo: v.listNo,
@@ -795,6 +814,10 @@ function formatEvidence(v: {
  * 事件与出处合并该组合下全部事件,来源列出全部来源。
  */
 export function allRecords(db: Db, params: RecordFilterQuery): ExportRow[] {
+  return db.transaction(() => legacyLedgerRecords(db, params))
+}
+
+function legacyLedgerRecords(db: Db, params: RecordFilterQuery): ExportRow[] {
   const where = buildWhere(db, params)
 
   // 先按筛选挑出「企业 × 称号」组合,再取这些组合下的**全部**记录。
@@ -856,7 +879,20 @@ export function allRecords(db: Db, params: RecordFilterQuery): ExportRow[] {
   // 按「企业 × 称号」归并,保持 matched 的出现顺序(称号 → 企业名 → record.id)。
   const byKey = groupBy(matched, (r) => groupKey(r.enterpriseId, r.titleCode))
 
-  return Object.values(byKey).map((recs) => {
+  const recordGroups = Object.values(byKey)
+  const usePublished = process.env.LEGACY_LEDGER_PRESENTATION_SOURCE !== 'legacy'
+  const publishedByEvidence = new Map<number, OfficialPublishedFact>()
+  if (usePublished) for (let start = 0; start < recordGroups.length; start += 40) {
+    const scopes = recordGroups.slice(start, start + 40).map(recs => recs.flatMap(r =>
+      (evByRecord[r.recordId] ?? []).flatMap(e => (evByEvent[e.id] ?? []).map(v => ({ evidenceId: v.id, eventId: e.id }))),
+    ))
+    const batch = readPublicPublishedNames(db, scopes.flat())
+    // Keep the existing per-group budget/error boundary if a batch cannot be projected.
+    const results = batch.availability === 'available' ? [batch] : scopes.map(scope => readPublicPublishedNames(db, scope))
+    for (const result of results) for (const fact of result.facts) publishedByEvidence.set(fact.evidenceId, fact)
+  }
+
+  return recordGroups.map((recs) => {
     const head = minBy(recs, (r) => r.recordId)!
     // 组内 enterpriseId 恒定(分组键就是它),取 head 的即可。
     const enterpriseId = head.enterpriseId
@@ -877,9 +913,13 @@ export function allRecords(db: Db, params: RecordFilterQuery): ExportRow[] {
       [(e) => e.sortKey, (e) => e.id],
       ['asc', 'asc'],
     )
-    const evidenceText = evRows
-      .flatMap((e) => (evByEvent[e.id] ?? []).map(formatEvidence))
-      .join('; ')
+    const selectedEvidence = evRows.flatMap(e => evByEvent[e.id] ?? [])
+    const evidenceText = selectedEvidence.map(v => {
+      const locator = formatEvidence(v)
+      if (!usePublished) return locator
+      const fact = publishedByEvidence.get(v.id)
+      return locator + ' / ' + (fact ? publishedNameText(fact) : '公布名称暂不可用')
+    }).join('; ')
     return {
       enterpriseId,
       name: head.name,
