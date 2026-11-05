@@ -332,14 +332,13 @@ async function saveDisplayName(displayName: string) {
   }
 }
 
-async function confirmDelete(deleteDisk: boolean) {
+async function confirmDelete(_deleteDisk: boolean) {
   if (!deleting.value) return
   deletePending.value = true
   deleteFailure.value = ''
   try {
     await $fetch(`/api/files/${deleting.value.id}`, {
       method: 'DELETE',
-      query: deleteDisk ? { deleteDisk: '1' } : {},
     })
     deleteOpen.value = false
     await refresh()
@@ -858,8 +857,11 @@ function publishedYearBatch(row: StoredFileRow): string {
       @save="saveDisplayName"
     />
 
+    <Button variant="outline" @click="deleting = null; deleteFailure = ''; deleteOpen = true">恢复隔离文件</Button>
     <DeleteFileDialog
       v-model:open="deleteOpen"
+      :file-id="deleting?.id"
+      @changed="refresh"
       :filename="deleting?.displayName ?? ''"
       :rel-path="deleting?.relPath ?? ''"
       :reference-count="deleting?.referenceCount ?? 0"
