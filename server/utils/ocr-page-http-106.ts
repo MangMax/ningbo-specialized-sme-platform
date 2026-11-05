@@ -34,7 +34,7 @@ export async function ocrPageHttp106(event: H3Event, action: 'get' | 'save' | 'd
   const db = useDb()
   await ensureFileStoreReady(db, config.filesDir)
   const row = requireOcrFileRef(db, { fileId: Number(id) }, action === 'get')
-  if (action === 'get') return getOcrResultForFile(db, row, page.data)
+  if (action === 'get') return getOcrResultForFile(db, row, page.data, true, config.filesDir)
   if (action === 'save') return saveOcrImport({ ok: true, db, row, root: config.filesDir }, { ...body, page: page.data }, 'upload', requestLogContext(event))
   const out = deleteOcrPage(db, row.id, page.data, body.expectedVersion as string | null | undefined, requestLogContext(event))
   if (!out.ok) throw createError({ statusCode: out.statusCode, message: out.message })

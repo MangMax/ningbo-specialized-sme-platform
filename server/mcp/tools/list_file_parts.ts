@@ -1,3 +1,4 @@
+import { describeFileRead } from '../../utils/file-read-identity'
 import { defineMcpTool } from '@nuxtjs/mcp-toolkit/server'
 import { fileRefShape, openFileStore, requireFileRef } from '../../utils/mcp-files'
 
@@ -23,8 +24,8 @@ export default defineMcpTool({
   ].join('\n'),
   inputSchema: fileRefShape,
   handler: async (input) => {
-    const { db } = await openFileStore()
-    const { id, relPath, filename, parts } = requireFileRef(db, input, { allowRemoved: true })
-    return { file: { id, relPath, filename }, parts }
+    const { db, root } = await openFileStore()
+    const { id, relPath, filename, parts, partsBinding } = requireFileRef(db, input, { allowRemoved: true })
+    return { file: { id, relPath, filename }, parts, partsBinding, contentIdentity: await describeFileRead(db, root, relPath) }
   },
 })

@@ -232,6 +232,7 @@ export function writeOcrResult(db: Db, input: OcrWriteInput): OcrWriteResult {
 export interface OcrResultRow {
   /** 旧客户端可在本地构造无版本的临时行;所有服务端读回均带版本。 */
   version?: string
+  historicalBinding?: { status: 'unknown' } | { status: 'captured'; input: NonNullable<OcrPageWrite['capture']> }
   page: number
   markdown: string
   pageRelPath: string | null
@@ -249,6 +250,12 @@ export function listOcrResults(db: Db, fileId: number, pageNo?: number | null): 
       : and(eq(schema.ocrResult.fileId, fileId), eq(schema.ocrResult.pageNo, pageNo))
   return db
     .select({
+      provenance: sql<string | null>`case when json_valid(${schema.ocrResult.raw}) and json_extract(${schema.ocrResult.raw}, '$.format') = 'ocr-provenance-v1' then json_object(
+        'revision', json_extract(${schema.ocrResult.raw}, '$.revisions[#-1]'),
+        'capture', json_object(
+          'markdown', json_extract(${schema.ocrResult.raw}, '$.captures[' || json_extract(${schema.ocrResult.raw}, '$.revisions[#-1].capture') || '].markdown'),
+          'input', json_extract(${schema.ocrResult.raw}, '$.captures[' || json_extract(${schema.ocrResult.raw}, '$.revisions[#-1].capture') || '].input'))
+      ) else null end`,
       version: sql<string>`${schema.ocrResult.id} || ':' || ${schema.ocrResult.revision}`,
       page: schema.ocrResult.pageNo,
       markdown: schema.ocrResult.markdown,
@@ -261,7 +268,19 @@ export function listOcrResults(db: Db, fileId: number, pageNo?: number | null): 
     .from(schema.ocrResult)
     .where(where)
     .orderBy(asc(schema.ocrResult.pageNo))
-    .all()
+    .all().map(({ provenance, ...row }) => {
+      let historicalBinding: NonNullable<OcrResultRow['historicalBinding']> = { status: 'unknown' }
+      if (provenance) {
+        const history = JSON.parse(provenance)
+        const revision = history.revision
+        const capture = Number.isInteger(revision?.capture) ? history.capture : null
+        if (revision?.channel === 'api' && revision.markdown === row.markdown && capture?.markdown === row.markdown
+          && capture.input?.taskId && /^[a-f0-9]{64}$/i.test(capture.input.sourceSha256 ?? '')) {
+          historicalBinding = { status: 'captured', input: capture.input }
+        }
+      }
+      return { ...row, historicalBinding }
+    })
 }
 
 /** 某文件 OCR 结果覆盖了哪些页(升序)。页数一致性的核对点。 */

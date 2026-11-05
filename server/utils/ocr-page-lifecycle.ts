@@ -1,3 +1,4 @@
+import { describeFileRead } from './file-read-identity'
 import { appLog, type LogContext } from '../../lib/logging'
 import { z } from 'zod'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
@@ -123,15 +124,16 @@ export function requireOcrFileRef(db: Db, input: FileRefInput, allowRemoved = fa
 }
 
 /** 一次按文件/页定位的显式投影;从不读取 raw,不重复加载正文。 */
-export function getOcrResultForFile(db: Db, row: StoredFileRow, page?: number, includeVersion = true) {
+export async function getOcrResultForFile(db: Db, row: StoredFileRow, page?: number, includeVersion = true, root?: string) {
   const results = listOcrResults(db, row.id, page)
   if (!results.length) throw createError({ statusCode: 404, message: page === undefined ? '这个文件还没有 OCR 结果' : `第 ${page} 页还没有 OCR 结果` })
   return {
     file: { id: row.id, relPath: row.relPath, filename: row.filename },
+    contentIdentity: root ? await describeFileRead(db, root, row.relPath) : { registered: null, status: 'unknown', historical: 'unknown' },
     page: page ?? null,
     pages: results.map(result => result.page),
     markdown: assembleMarkdown(results),
-    results: results.map(r => ({ page: r.page, ...(includeVersion ? { version: r.version } : {}), engine: r.engine, model: r.model, channel: r.channel, createdAt: r.createdAt, chars: r.markdown.length, pageRelPath: r.pageRelPath, url: r.pageRelPath ? `/api/files/${r.pageRelPath.split('/').map(encodeURIComponent).join('/')}` : null })),
+    results: results.map(r => ({ page: r.page, historicalBinding: r.historicalBinding, ...(includeVersion ? { version: r.version } : {}), engine: r.engine, model: r.model, channel: r.channel, createdAt: r.createdAt, chars: r.markdown.length, pageRelPath: r.pageRelPath, url: r.pageRelPath ? `/api/files/${r.pageRelPath.split('/').map(encodeURIComponent).join('/')}` : null })),
   }
 }
 
