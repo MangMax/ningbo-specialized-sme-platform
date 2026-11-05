@@ -1,3 +1,4 @@
+import { verifyFileRead, verifyPageRead } from './file-read-identity'
 import { appLog, type LogContext } from '../../lib/logging'
 import { eq, sql } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
@@ -197,7 +198,7 @@ export async function ensureFileStoreReady(
   filesReady = true
   return {
     ...fileStats,
-    parts: runParts ? backfillFileParts(db) : NO_PART_STATS,
+    parts: runParts ? backfillFileParts(db, { preserveExisting: true }) : NO_PART_STATS,
   }
 }
 
@@ -254,10 +255,12 @@ export async function pageImagesForAgent(
     return { ok: false, statusCode: 403, message: '路径越界' }
   }
 
+  const contentIdentity = await verifyFileRead(db, root, relPath)
   const state = await listPdfPages(root, relPath, dpi)
+  if (state.pages.length) await verifyPageRead(db, root, relPath, undefined, contentIdentity)
   // `state.file` 本来是个字符串(相对路径);这里换成带 id 的对象,代理解析结果时
   // 不必再去 `list_files` 反查一次。
-  return { ok: true, value: { ...state, file: { id, relPath, filename } } }
+  return { ok: true, value: { ...state, file: { id, relPath, filename, contentIdentity } } }
 }
 
 /** 文件引用(tool 返回值里的那个小对象)。 */
@@ -265,6 +268,7 @@ export interface FileRef {
   id: number
   relPath: string
   filename: string
+  contentIdentity?: import('./file-read-identity').FileReadIdentity
 }
 
 // ---------------------------------------------------------------------------

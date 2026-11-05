@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { MAX_PAGE_SIZE } from '../query'
+import { MAX_PAGE_SIZE } from '../query-limits'
 
 /** Local declaration queries. These read the source-specific typed projection, never raw JSON. */
 export const DECLARATION_VIEWS = ['records', 'isolated'] as const

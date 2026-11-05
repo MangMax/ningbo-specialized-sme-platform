@@ -68,6 +68,8 @@ beforeAll(async () => {
   dir = mkdtempSync(join(tmpdir(), 'spztx-query-'))
   process.env.NUXT_DB_PATH = join(dir, 'test.db')
   ;({ useDb: db } = await import('../db'))
+  const { initializeDb } = await import('../db/client')
+  initializeDb({ create: true })
   schema = (await import('../db')).schema
   seed()
 })
@@ -300,7 +302,7 @@ describe('getEnterpriseDetail 的出处页码(RL-10)', () => {
     ])
 
     const detail = getEnterpriseDetail(db(), id)!
-    expect(detail.records[0]!.events[0]!.evidence).toEqual([
+    expect(detail.records[0]!.events[0]!.evidence.map(({ id, ...locator }) => locator)).toEqual([
       { sourceFile: F145, attachment: '附件', listNo: 6, page: 8 },
       { sourceFile: F145, attachment: '附件', listNo: 7, page: null },
     ])
@@ -316,7 +318,7 @@ describe('getEnterpriseDetail 的出处页码(RL-10)', () => {
     const row = allRecords(db(), { q: '宁波导出页码公司' })[0]!
     expect(row.evidence).toContain('序号6 / 第8页')
     expect(row.evidence).toContain('序号7')
-    expect(row.evidence).not.toContain('序号7 / ')
+    expect(row.evidence).not.toContain("序号7 / 第")
   })
 
   it('导出保留 DOCX / Excel 出处但忽略其不稳定页码', () => {

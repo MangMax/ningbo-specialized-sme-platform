@@ -257,7 +257,8 @@ function saveLegacyParseMcp105(db: Db, fileId: number, input: { parts?: z.infer<
     receiptId = receipt.receiptId
     // Preserve baseline semantics: top-level parts is the submitted normalized agent
     // collection (or [] for status-only); file.parts is the effective stored collection.
-    return { file: getStoredFile(scoped, fileId)!, parts: normalized?.ok ? normalized.parts : [], parseState: input.parseState ?? 'parsed' }
+    const { contentIdentity: _identity, partsBinding: _binding, ...file } = getStoredFile(scoped, fileId)!
+    return { file, parts: normalized?.ok ? normalized.parts : [], parseState: input.parseState ?? 'parsed' }
   }, { behavior: 'immediate' })
   appLog({ source: 'file', operation: 'file.parse.revise', outcome: 'success', fileId, receiptId }, context)
   return result

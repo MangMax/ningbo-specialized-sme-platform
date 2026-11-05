@@ -119,7 +119,7 @@ export default defineEventHandler(async (event) => {
   // That snapshot is already materialized, so skip the GET-side lazy backfill in this mode.
   if (process.env.NUXT_DB_READONLY !== '1' && (!backfilled || force)) {
     const files = await backfillFromDisk(db, useRuntimeConfig().filesDir)
-    backfill = { ...files, parts: backfillFileParts(db) }
+    backfill = { ...files, parts: backfillFileParts(db, { preserveExisting: true }) }
     backfilled = true
   }
 

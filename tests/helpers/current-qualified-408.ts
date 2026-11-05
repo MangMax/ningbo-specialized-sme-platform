@@ -66,6 +66,7 @@ import type { CurrentTitle } from '../../lib/roster/current-titles'
 import type { PlatformRow } from '../../lib/platform/types'
 import { reviewCurrentExportDecision } from './current-export-decisions'
 import { preflightRecordCorrespondences, commitRecordCorrespondences } from '../../server/utils/record-correspondence'
+import { ensurePlatformObservation } from '../../server/utils/platform-business-record'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -109,10 +110,12 @@ export function matrix408(sqlite: Database.Database) {
     // Different observations retain independent rows and event bindings.
     const ordinal = (sqlite.prepare('select count(*) n from platform_query').get() as { n: number }).n
     const stamp = `2026-05-01T00:00:${String(ordinal).padStart(2, '0')}Z`
+    rawFields = { id: `synthetic408-recognized-${ordinal}`, ...rawFields }
     const query = db.insert(schema.platformQuery).values({ interface: 'recognized_list', queryKey: enterprise.usccNorm ?? `name:${enterprise.nameNorm}`, titleCode, rdjb, queriedAt: stamp, status: 'success', collectionEvidence: {
       source: 'queryBusList', status: 'success', effectiveConditions: { combination: 'and' }, titleScope: { mode: 'selected', rdjb: [rdjb] }, queriedAt: stamp, completedAt: stamp, rows: [rawFields], pages: [{ source: 'queryBusList', rdjb, page: 1, status: 'success', fetchedCount: 1, declaredTotal: 1, maxPage: 1, error: null }], fetchedCount: 1, declaredTotal: 1, completeness: 'complete', fullRange: true, unfinished: [], error: null, limits: { maxRequests: 1, maxRows: 50, maxDurationMs: 1000, pageSize: 50 },
     } }).returning().get()
     const relation = db.insert(schema.platformRelation).values({ queryId: query.id, enterpriseId, sequenceNo: 1, nameRaw: enterprise.name, usccRaw: enterprise.usccNorm, rawFields, verificationStatus: 'confirmed', matchBasis: 'manual' }).returning().get()
+    ensurePlatformObservation(db, relation.id)
     const request = { idempotencyKey: `synthetic408-${relation.id}`, sourceIdentity: `synthetic/408/${relation.id}`, actor: { type: 'agent' as const, id: 'synthetic408' }, basis: 'synthetic_408_confirmed_row', ruleId: 'manual', ruleVersion: '1', operations: [{ action: 'create' as const, status: 'confirmed' as const, edge: { type: 'event_recognized' as const, eventId, relationId: relation.id, role: 'recognized_corrob' as const } }] }
     const plan = preflightRecordCorrespondences(db, request)
     commitRecordCorrespondences(db, request, plan.planHash)

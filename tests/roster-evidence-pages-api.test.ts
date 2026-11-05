@@ -1,3 +1,4 @@
+import { initializeDb } from '../db/client'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -21,7 +22,7 @@ import { startRosterApi, type RosterApiServer } from './helpers/roster-http-serv
  */
 
 const dir = mkdtempSync(join(tmpdir(), 'spztx-evidence-pages-'))
-const db = useDb({ dbPath: join(dir, 'roster.db') })
+const db = initializeDb({ create: true, dbPath: join(dir, 'roster.db') })
 const filesDir = join(dir, 'files')
 const TOKEN = 'evidence-pages-test-token'
 

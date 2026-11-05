@@ -4,12 +4,19 @@ import { schema as s } from '../db/client'
 import { commitRecordCorrespondences, preflightRecordCorrespondences } from '../server/utils/record-correspondence'
 import { readEvidenceToken113 } from '../server/utils/evidence-impact-113'
 import { currentExport118Fixture, year } from './helpers/current-export-118'
+import { ensurePlatformObservation } from '../server/utils/platform-business-record'
 
 const fixture = currentExport118Fixture()
 const f = { ...fixture, candidate: (name: string, events?: Parameters<typeof fixture.candidate>[1], title = 'innovative_sme') => fixture.candidate(name, events, title) }
 let linkOffset = 0
 beforeAll(f.start, 90000)
-beforeEach(f.resetBusiness)
+beforeEach(() => {
+  f.db.delete(s.platformRecognizedProjection).run()
+  f.db.delete(s.platformBusinessObservation).run()
+  f.db.delete(s.platformBusinessRecordVersion).run()
+  f.db.delete(s.platformBusinessRecord).run()
+  f.resetBusiness()
+})
 afterAll(f.close)
 
 async function query(params: Record<string, string>) {
@@ -30,10 +37,12 @@ function linkRecognized(enterpriseId: number, eventId: number, conditions: Recor
   const title = (f.db.$client.prepare('select r.title_code as title from record_event e join record r on r.id=e.record_id where e.id=?').get(eventId) as {title:string}).title
   const rdjb = {innovative_sme:'1',specialized_sme:'2',little_giant:'3'}[title]!
   const stamp = new Date(Date.now() + ++linkOffset * 1000).toISOString()
+  rawFields = { id: `synthetic-filter155-${linkOffset}`, ...rawFields }
   const query = f.db.insert(s.platformQuery).values({ interface: 'recognized_list', queryKey: enterprise.usccNorm!, rdjb: multiTitle ? '1,2,3' : rdjb, titleCode: multiTitle ? null : title, queriedAt: stamp, status: 'success', collectionEvidence: {
     source: 'queryBusList', status: 'success', effectiveConditions: { combination: 'and', ...conditions }, titleScope: { mode: 'selected', rdjb: multiTitle ? ['1','2','3'] : [rdjb] }, queriedAt: stamp, completedAt: stamp, rows: [rawFields], pages: [{ source:'queryBusList', rdjb, page:1, status:'success', fetchedCount:1, declaredTotal:1, maxPage:1 }], fetchedCount: 1, declaredTotal: 1, completeness: 'complete', fullRange: true, unfinished: [], error: null, limits: { maxRequests: 1, maxRows: 50, maxDurationMs: 1000, pageSize: 50 },
   } as any }).returning().get()
   const relation = f.db.insert(s.platformRelation).values({ queryId: query.id, sequenceNo: 1, enterpriseId, usccRaw: enterprise.usccNorm, nameRaw: enterprise.name, rawFields, verificationStatus: 'confirmed', matchBasis: 'uscc' }).returning().get()
+  ensurePlatformObservation(f.db, relation.id)
   const request = { idempotencyKey: `filter-155-${relation.id}`, sourceIdentity: `synthetic/filter-155/${relation.id}`, actor: { type: 'agent' as const, id: 'test' }, basis: 'synthetic confirmed event and recognized row', ruleId: 'manual', ruleVersion: '1', operations: [{ action: 'create' as const, status: 'confirmed' as const, edge: { type: 'event_recognized' as const, eventId, relationId: relation.id, role } }] }
   const plan = preflightRecordCorrespondences(f.db, request)
   commitRecordCorrespondences(f.db, request, plan.planHash)

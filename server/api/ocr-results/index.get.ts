@@ -1,3 +1,4 @@
+import { describeFileRead } from '../../utils/file-read-identity'
 import { MAX_PAGE_NO } from '../../../lib/ocr-markdown'
 import { fileRefFromQuery, resolveOcrFileTarget } from '../../utils/ocr-files'
 import { listOcrResults } from '../../utils/ocr-result'
@@ -86,6 +87,7 @@ defineRouteMeta({
 })
 
 export default defineEventHandler(async (event) => {
+  setHeader(event, 'cache-control', 'no-store')
   const q = getQuery(event) as Record<string, unknown>
   const ref = fileRefFromQuery(q)
   if (!ref.ok) throw createError({ statusCode: ref.statusCode, message: ref.message })
@@ -115,10 +117,11 @@ export default defineEventHandler(async (event) => {
       ext: target.row.ext,
       parseState: target.row.parseState,
     },
+    ...(withVersion ? { contentIdentity: await describeFileRead(target.db, target.root, target.row.relPath) } : {}),
     channels: [...new Set(rows.map((r) => r.channel))].sort(),
     pages: rows.map((r) => ({
       page: r.page,
-      ...(withVersion ? { version: r.version } : {}),
+      ...(withVersion ? { version: r.version, historicalBinding: r.historicalBinding } : {}),
       engine: r.engine,
       model: r.model,
       channel: r.channel,

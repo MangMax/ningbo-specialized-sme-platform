@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { MAX_PAGE_SIZE } from '../query'
+import { MAX_PAGE_SIZE } from '../query-limits'
 
 /** Read-only local queries over the recognized_list (upstream queryBusList, 平台认定目录)
  * source-specific typed projection. Never raw JSON, never a second qualification model. */

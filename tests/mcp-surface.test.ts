@@ -58,6 +58,8 @@ describe('mcp-auth 鉴权判据', () => {
       'update_file',
       'remove_file',
       'restore_file',
+      'quarantine_file',
+      'recover_file',
       'save_parse_result',
       'preflight_file_parse_result',
       'commit_file_parse_result',
@@ -276,7 +278,7 @@ beforeAll(async () => {
   process.env.NUXT_DB_PATH = join(dir, 'test.db')
   const mod = await import('../db')
   schema = mod.schema
-  db = mod.useDb()
+  db = mod.initializeDb({ create: true })
 
   // 三个基线文件:192号(PDF,公布 2024/2)、工信部导出(非 PDF)、一份已移出库的。
   seedFile(REL_PDF, { year: 2024, batch: 2 })
@@ -543,7 +545,7 @@ describe('ensureFileStoreReady 懒回填', () => {
     const other = mkdtempSync(join(tmpdir(), 'spztx-mcp-db-'))
     process.env.NUXT_DB_PATH = join(other, 'mcp.db')
     const mod = await import('../db')
-    const fresh = mod.useDb()
+    const fresh = mod.initializeDb({ create: true })
     const f = mod.schema
 
     // 192号:认定 2024/2(附件1,389 行)+ 复核 2021/2(附件2,67 行)。
@@ -663,9 +665,13 @@ describe('pageImagesForAgent 页图取值', () => {
     // 造一份最小可打开的 PDF(与 pdf-pages 的夹具同一手法)。
     const { minimalPdf } = await import('./helpers/minimal-pdf')
     mkdirSync(join(root, 'jxj/announcement/2024/2'), { recursive: true })
-    writeFileSync(join(root, REL_PDF), minimalPdf({ pages: 3 }))
+    // Use a separately registered real PDF; the shared metadata-only fixture has a synthetic digest.
+    const { registerStoredFile, parseUploadDeclaration } = await import('../server/utils/stored-files-upload')
+    const realPath = 'jxj/announcement/2024/2/unrendered-identity.pdf'
+    writeFileSync(join(root, realPath), minimalPdf({ pages: 3 }))
+    await registerStoredFile(db, root, parseUploadDeclaration({ relPath: realPath }))
 
-    const r = await pageImagesForAgent(db, root, { relPath: REL_PDF })
+    const r = await pageImagesForAgent(db, root, { relPath: realPath })
     expect(r.ok).toBe(true)
     if (!r.ok) return
     expect(r.value.pageCount).toBe(3)
@@ -674,7 +680,7 @@ describe('pageImagesForAgent 页图取值', () => {
     // 目录里不该多出任何页图(本 tool 不渲染)。
     const { readdirSync } = await import('node:fs')
     const entries = readdirSync(join(root, 'jxj/announcement/2024/2'))
-    expect(entries).toEqual([REL_PDF.split('/').pop()])
+    expect(entries).toEqual([realPath.split('/').pop()])
 
     rmSync(root, { recursive: true, force: true })
   })

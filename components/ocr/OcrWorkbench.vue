@@ -76,6 +76,7 @@ import { PAGE_IMAGE_ZOOM_MIN, pageLabel } from '~~/lib/page-gallery'
 import type { OcrView } from '@/composables/useOcrNavigation'
 
 const {
+  contentMessage,
   refreshAll,
   detailLoading,
   filesLoading,
@@ -984,6 +985,7 @@ const fileSheetBlockedReason = computed(() =>
             </Tabs>
           </div>
 
+          <p v-if="loadedPath && contentMessage !== detailError" role="status" class="py-2 text-sm break-words">{{ contentMessage }}</p>
           <Alert
             v-if="detailError && loadedPath"
             variant="destructive"

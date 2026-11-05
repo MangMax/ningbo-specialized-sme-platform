@@ -1,3 +1,4 @@
+import { initializeDb } from '../db/client'
 import { createServer } from 'node:http'
 import { createHash } from 'node:crypto'
 import type { AddressInfo } from 'node:net'
@@ -23,7 +24,7 @@ import { importExecutor } from '../server/utils/import-execution'
 import { readMcpToken, resolveMcpAuth } from '../server/utils/mcp-auth'
 
 const dir = mkdtempSync(join(tmpdir(), 'issue327-typed-archive-'))
-const db = useDb({ dbPath: join(dir, 'test.sqlite') })
+const db = initializeDb({ create: true, dbPath: join(dir, 'test.sqlite') })
 const nativeFetch = globalThis.fetch
 const token = 'synthetic-raw-archive-token'
 const input = { source: 'queryBusList', name: '合成', rdjb: ['2'], pageSize: 1, rawDataVersion: 1 }
@@ -266,7 +267,7 @@ it('public REST metadata and MCP discovery describe typed selection while preser
   for (const action of ['preflight', 'commit']) {
     const payload = importMetadata[action].requestBody.content['application/json'].schema.properties.payload
     expect(payload.description).toContain('rawData.version=1')
-    expect(payload.properties.platformQueries.items.properties.collectionEvidence.properties.rawData).toMatchObject({ required: ['version', 'rows', 'pages'], properties: { version: { enum: [1] }, rows: { items: { additionalProperties: {} } } } })
+    expect(payload.properties.platformQueries.items.properties.collectionEvidence.anyOf.find((branch: any) => branch.type === 'object').properties.rawData).toMatchObject({ required: ['version', 'rows', 'pages'], properties: { version: { const: 1 }, rows: { items: { additionalProperties: {} } } } })
   }
   const discovered = await client.listTools()
   for (const name of ['preflight_roster_batch', 'save_roster_batch']) expect(discovered.tools.find(t => t.name === name)?.description).toContain('rawData.version=1')
@@ -296,7 +297,9 @@ it('typed apply_list archive feeds the declaration projection without rewriting 
   expect(saved.status).toBe('committed')
   const stored = await readSaved(saved)
   expect(stored.row.relations[0].rawFields).toEqual(typedRow)
-  const listed: any = await (await nativeFetch(`${base}/api/platform/declarations?platformKey=SQ-DECL-TYPED`)).json()
+  const response = await nativeFetch(`${base}/api/platform/declarations?platformKey=SQ-DECL-TYPED`)
+  const listed: any = await response.json()
+  expect(response.status, JSON.stringify(listed)).toBe(200)
   expect(listed.rows).toHaveLength(1)
   expect(listed.rows[0].matchedVersion).toMatchObject({ declareKind: 'apply', declarationYear: 2024, appliedAt: '2024-03-01 09:00:00', status: '待审核', nameRaw: '合成申报企业', usccRaw: '91330211255994457P' })
   expect(stored.row.relations[0].rawFields).toEqual(typedRow)

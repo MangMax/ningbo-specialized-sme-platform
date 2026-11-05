@@ -1,3 +1,4 @@
+import { describeFileRead } from '../../utils/file-read-identity'
 import { MAX_PAGE_NO } from '../../../lib/ocr-markdown'
 import { fileRefFromQuery, resolveOcrFileTarget } from '../../utils/ocr-files'
 import { ocrMarkdown } from '../../utils/ocr-result'
@@ -71,6 +72,12 @@ export default defineEventHandler(async (event) => {
     `attachment; filename*=UTF-8''${encodeURIComponent(`${base}.${suffix}`)}`,
   )
   // 顺带把「这份导出覆盖了哪几页」放进头里,便于脚本核对(不必解析正文)。
+  const identity = await describeFileRead(target.db, target.root, target.row.relPath)
+  setHeader(event, 'cache-control', 'no-store')
+  setHeader(event, 'x-file-content-status', identity.status)
+  setHeader(event, 'x-file-historical-identity', 'unknown')
+  setHeader(event, 'x-file-id', String(target.row.id))
+  setHeader(event, 'x-file-sha256', target.row.sha256)
   setHeader(event, 'x-ocr-pages', out.pages.join(','))
   return out.markdown
 })

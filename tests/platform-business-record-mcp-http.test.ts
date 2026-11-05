@@ -1,3 +1,4 @@
+import { initializeDb } from '../db/client'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -8,7 +9,7 @@ import { schema, useDb } from '../db'
 import { spawnOwnedChild as spawn, reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../scripts/lib/isolated-local-services.mjs'
 
 const dir = mkdtempSync(join(tmpdir(), 'identity244-mcp-http-'))
-const db = useDb({ dbPath: join(dir, 'roster.db') })
+const db = initializeDb({ create: true, dbPath: join(dir, 'roster.db') })
 const originalQuery = db.insert(schema.platformQuery).values({ interface: 'business_list', queryKey: 'synthetic', queriedAt: 'old-time', status: 'success' }).returning().get()
 const original = db.insert(schema.platformRelation).values({ queryId: originalQuery.id, sequenceNo: 1, relationKey: 'SQ1', rawFields: { id: 'SQ1', year: '2022' }, year: null }).returning().get()
 let service: { baseUrl: string; stop: () => Promise<void> }

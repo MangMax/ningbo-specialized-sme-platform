@@ -1,3 +1,4 @@
+import { initializeDb } from '../db/client'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -11,7 +12,7 @@ const dirs: string[] = []
 function fixture() {
   const dir = mkdtempSync(join(tmpdir(), 'spztx-record-comparison-'))
   dirs.push(dir)
-  const db = useDb({ dbPath: join(dir, 'fixture.db') })
+  const db = initializeDb({ create: true, dbPath: join(dir, 'fixture.db') })
   const doc = db.insert(schema.sourceDocument).values({ source: 'jxj', title: 'Synthetic official', path: 'synthetic/official.pdf' }).returning().get()
   const makeEnterprise = (name: string, uscc: string) => db.insert(schema.enterprise).values({ name, nameNorm: name, usccNorm: uscc }).returning().get()
   const makeEvent = (enterpriseId: number, type: 'award' | 'review', year: number, batchSeq: number, reviewOutcome: 'passed' | 'failed' | null = null, titleCode = 'specialized_sme') => {

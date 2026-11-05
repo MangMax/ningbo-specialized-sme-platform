@@ -1,3 +1,4 @@
+import { registeredFileAtLocator } from './file-read-identity'
 import { sql } from 'drizzle-orm'
 import type { useDb } from '../../db/client'
 import { fileNameOf } from '../../lib/preview'
@@ -33,5 +34,5 @@ export function readOfficialSourceDocuments(db: ReturnType<typeof useDb>, ids: n
     select * from ${officialSourceDirectory} where id < 0 and id in (${sql.join(ids.map(id => sql`${id}`), sql`,`)})
     order by id
   `)
-  return rows.map(row => ({ ...row, title: row.title ?? fileNameOf(row.path) }))
+  return rows.map(row => ({ ...row, title: row.title ?? fileNameOf(row.path), contentIdentity: { registered: registeredFileAtLocator(db, row.path), status: 'unknown' as const, historical: 'unknown' as const } }))
 }

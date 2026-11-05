@@ -5,7 +5,7 @@ import type { Executor } from './roster-import'
 import type { PlatformApplyProjectionPreview, PlatformBusinessProjectionPreview, PlatformObservationProjection, PlatformProjectionResult, PlatformRecognizedProjectionPreview } from '../../lib/platform/business-record'
 import { APPLY_PROJECTION_RULE, parseApplyRecord, type ApplyProjectionFields } from '../../lib/platform/apply-record'
 import { BUSINESS_PROJECTION_RULE, parseBusinessProcess, type BusinessProjectionFields } from '../../lib/platform/business-projection'
-import { RECOGNIZED_PROJECTION_RULE, parseRecognizedRecord, type RecognizedProjectionFields } from '../../lib/platform/recognized-projection'
+import { RECOGNIZED_PROJECTION_RULE, parseRecognizedRecord, parseRecognizedSourceFidelity, type RecognizedSourceFidelity, type RecognizedProjectionFields } from '../../lib/platform/recognized-projection'
 
 export const PLATFORM_PROJECTION_RULE = 'platform-observation-v1'
 export const PLATFORM_RAW_HASH_RULE = 'platform-row-json-v1'
@@ -46,6 +46,7 @@ export function planPlatformObservation(input: Input) {
     applyRecord: input.interface === 'apply_list' && canonicalRawJson ? parseApplyRecord(raw) : null,
     businessProjection: input.interface === 'business_list' && canonicalRawJson ? parseBusinessProcess(raw) : null,
     recognizedProjection: input.interface === 'recognized_list' && canonicalRawJson ? parseRecognizedRecord(raw) : null,
+    recognizedSourceFidelity: input.interface === 'recognized_list' && canonicalRawJson ? parseRecognizedSourceFidelity(raw!) : null,
   } as const
 }
 
@@ -137,14 +138,27 @@ const RECOGNIZED_FIELDS = ['validityDateRaw', 'maintenanceYear', 'maintenanceBat
 
 /** One typed row per immutable content version. Rejects a same-version drift instead of
  * silently reinterpreting historical content under a newer rule. */
-function ensureRecognizedProjection(db: Executor, versionId: number, recordId: number, fields: RecognizedProjectionFields): { created: boolean; reused: boolean } {
+function ensureRecognizedProjection(db: Executor, versionId: number, recordId: number, fields: RecognizedProjectionFields, fidelity: RecognizedSourceFidelity): { created: boolean; reused: boolean } {
   const existing = db.select().from(schema.platformRecognizedProjection).where(eq(schema.platformRecognizedProjection.versionId, versionId)).get()
   if (existing) {
     if (existing.ruleVersion !== RECOGNIZED_PROJECTION_RULE) throw new PlatformProjectionError('recognized_projection_conflict', 'Recognized projection rule differs')
     if (RECOGNIZED_FIELDS.some(field => existing[field] !== fields[field])) throw new PlatformProjectionError('recognized_projection_conflict', 'Recognized projection fields differ for the same content version')
+    // This is the explicit additive completion path for a new relationId command.
+    // Normalized v1 content, ownership, IDs, timestamps and fingerprints never change.
+    if (existing.recordId !== recordId) throw new PlatformProjectionError('recognized_projection_conflict', 'Recognized projection owner differs')
+    if (existing.sourceMaintenanceYearAbsent === null) {
+      if (existing.sourceValidityDate !== null || existing.sourceMaintenanceBatch !== null) {
+        throw new PlatformProjectionError('recognized_projection_conflict', 'Partial recognized source-fidelity capture')
+      }
+      db.update(schema.platformRecognizedProjection).set(fidelity).where(eq(schema.platformRecognizedProjection.versionId, versionId)).run()
+    } else if (existing.sourceValidityDate !== fidelity.sourceValidityDate
+      || existing.sourceMaintenanceBatch !== fidelity.sourceMaintenanceBatch
+      || existing.sourceMaintenanceYearAbsent !== fidelity.sourceMaintenanceYearAbsent) {
+      throw new PlatformProjectionError('recognized_projection_conflict', 'Recognized source-fidelity capture differs')
+    }
     return { created: false, reused: true }
   }
-  db.insert(schema.platformRecognizedProjection).values({ versionId, recordId, ...fields, ruleVersion: RECOGNIZED_PROJECTION_RULE }).run()
+  db.insert(schema.platformRecognizedProjection).values({ versionId, recordId, ...fields, ...fidelity, ruleVersion: RECOGNIZED_PROJECTION_RULE }).run()
   return { created: true, reused: false }
 }
 
@@ -177,7 +191,7 @@ export function ensurePlatformObservation(db: Executor, relationId: number, batc
     ? ensureBusinessProjection(db, versionId, recordId, plan.businessProjection)
     : null
   const recognizedProjectionResult = plan.recognizedProjection && recordId != null && versionId != null
-    ? ensureRecognizedProjection(db, versionId, recordId, plan.recognizedProjection)
+    ? ensureRecognizedProjection(db, versionId, recordId, plan.recognizedProjection, plan.recognizedSourceFidelity!)
     : null
   return {
     ...projection, recordCreated, versionCreated, observationCreated: !!created,

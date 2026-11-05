@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { createReadStream, lstatSync, realpathSync, rmSync } from 'node:fs'
+import { createReadStream } from 'node:fs'
 import { lstat, readdir, realpath, stat } from 'node:fs/promises'
 import { join, resolve, sep } from 'node:path'
 import { and, desc, eq, inArray, isNull, like, or, sql, type SQL } from 'drizzle-orm'
@@ -27,6 +27,7 @@ import {
 import { scopeOf, siblingIndex, type StoreScopeReason } from '../../lib/file-store-scope'
 import type { StoredFilePart } from '../../lib/file-parts'
 import { listFileParts, type PartsBackfillStats } from './file-parts'
+import { compareFileContentIdentity, type FileContentConflict } from './file-content-identity'
 
 type Db = BetterSQLite3Database<typeof schema>
 
@@ -70,6 +71,8 @@ export interface StoredFileRow {
    * (尚无引用、留待票 11 解析时写入 —— **不是**「文件没有内容」)。
    */
   parts: StoredFilePart[]
+  partsBinding?: { historical: 'unknown'; inputLineage: { status: 'unknown' } | { status: 'bound'; inputRef: unknown } }
+  contentIdentity?: { registered: { fileId: number; relPath: string; sha256: string; bytes: number }; status: 'unknown'; historical: 'unknown' }
 }
 
 /** 列表查询条件(与 `/api/files` 的 query 参数一一对应)。 */
@@ -184,10 +187,12 @@ export async function scanFileStore(root: string): Promise<ScannedFile[]> {
 export interface BackfillStats {
   /** 新插入的行数。 */
   inserted: number
-  /** 已存在但磁盘事实变化的行数(尺寸/哈希等被刷新)。 */
+  /** 内容一致、仅文件名等元数据刷新的行数。 */
   updated: number
   /** 已存在且一致、跳过的行数。 */
   unchanged: number
+  /** 同路径字节与登记身份不符;保留原行,恢复原字节后可重扫。无冲突时省略。 */
+  conflicts?: FileContentConflict[]
   /**
    * 被跳过的路径(认不出分类,如不在 `<source>/<kind>/` 规则下的文件)。
    * 这些文件仍**不入表** —— 不猜。
@@ -232,7 +237,7 @@ export interface BackfillReport extends BackfillStats {
  *  3. 该 `rel_path` 已被**人工移出库**(`removed_at` 非空)→ 跳过 —— 否则回填会把
  *     用户刚移出的文件又插回来,那就不是幂等了。
  *
- * 已有的行:**只刷新磁盘事实**(filename/ext/bytes/sha256),不覆盖分类 ——
+ * 已有的行:内容身份不符时报冲突,内容一致才刷新 filename/ext,不覆盖分类 ——
  * 分类一旦被人改过(或由票 12 回写),回填不该把它冲回去。
  */
 export function backfillStoredFiles(
@@ -283,12 +288,17 @@ export function backfillStoredFiles(
     }
     // 已移出库的:不复活。
     if (row.removedAt) continue
+    const conflict = compareFileContentIdentity({ ...row, fileId: row.id }, f)
+    if (conflict) {
+      (stats.conflicts ??= []).push(conflict)
+      continue
+    }
     if (row.filename === f.filename && row.bytes === f.bytes && row.sha256 === f.sha256) {
       stats.unchanged += 1
       continue
     }
     db.update(schema.storedFile)
-      .set({ filename: f.filename, ext: f.ext, bytes: f.bytes, sha256: f.sha256 })
+      .set({ filename: f.filename, ext: f.ext })
       .where(eq(schema.storedFile.id, row.id))
       .run()
     stats.updated += 1
@@ -367,7 +377,19 @@ function withParts(db: Db, rows: StoredFileRow[]): StoredFileRow[] {
     db,
     rows.map((r) => r.id),
   )
-  return rows.map((row) => ({ ...row, parts: byFile.get(row.id) ?? [] }))
+  const audits = db.select({ fileId: schema.fileParseAudit105.fileId, inputLineage: sql<string | null>`json_extract(${schema.fileParseAudit105.after}, '$.inputLineage')` }).from(schema.fileParseAudit105)
+    .where(and(inArray(schema.fileParseAudit105.fileId, rows.map(row => row.id)), sql`${schema.fileParseAudit105.id} = (select max(a.id) from file_parse_audit_105 a where a.file_id = ${schema.fileParseAudit105.fileId})`)).all()
+  const lineage = new Map<number, NonNullable<StoredFileRow['partsBinding']>['inputLineage']>()
+  for (const audit of audits) {
+    if (!lineage.has(audit.fileId)) {
+      const input = (audit.inputLineage ? JSON.parse(audit.inputLineage) : undefined) as NonNullable<StoredFileRow['partsBinding']>['inputLineage'] | undefined
+      lineage.set(audit.fileId, input?.status === 'bound' ? input : { status: 'unknown' })
+    }
+  }
+  return rows.map((row) => ({ ...row, parts: byFile.get(row.id) ?? [],
+    contentIdentity: { registered: { fileId: row.id, relPath: row.relPath, sha256: row.sha256, bytes: row.bytes }, status: 'unknown', historical: 'unknown' },
+    partsBinding: { historical: 'unknown', inputLineage: lineage.get(row.id) ?? { status: 'unknown' } },
+  }))
 }
 
 /**
@@ -655,27 +677,8 @@ export function removeStoredFileSync(
 
     const refs = getStoredFile(tx, id)?.referenceCount ?? 0
 
-    let diskDeleted = false
-    if (options.deleteDisk) {
-      if (refs > 0) throw new FileMaintenanceError(409, '文件仍被正式出处引用,禁止删除磁盘文件')
-      // 锁根:路径解析后必须仍在文件库内,不能删到库外。
-      const abs = resolveInsideRoot(filesRoot, current.relPath)
-      if (!abs) throw new FileMaintenanceError(400, '路径越界')
-      try {
-        const info = lstatSync(abs)
-        if (info.isFile()) {
-          const physical = realpathSync(abs)
-          if (!physical.startsWith(realpathSync(filesRoot) + sep)) {
-            throw new FileMaintenanceError(409, '磁盘文件路径越界')
-          }
-          rmSync(abs, { force: true })
-          diskDeleted = true
-        }
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
-        // 磁盘上已经不在了 —— 移出库照样完成,不因为文件缺失而失败。
-      }
-    }
+    const diskDeleted = false
+    if (options.deleteDisk) throw new FileMaintenanceError(400, '物理删除必须通过带版本封套的隔离命令执行')
 
     softRemoveStoredFile(tx, id)
 

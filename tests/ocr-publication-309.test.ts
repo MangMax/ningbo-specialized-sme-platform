@@ -1,3 +1,4 @@
+import { initializeDb } from '../db/client'
 import { createHash } from 'node:crypto'
 import { createServer } from 'node:http'
 import { spawn, type ChildProcess } from 'node:child_process'
@@ -10,7 +11,7 @@ import { afterAll, afterEach, beforeAll, expect, it, vi } from 'vitest'
 import { useDb, schema } from '../db'
 import { whenIdle } from '../server/utils/job-runner'
 import { DEFAULT_DPI } from '../lib/pdf-page'
-import { pageImageRelPath } from '../lib/pdf-page'
+import { pageDirRelPath, PAGES_MANIFEST_NAME, pageImageRelPath } from '../lib/pdf-page'
 import { renderPdfPages } from '../server/utils/pdf-pages'
 import { minimalPdf } from './helpers/minimal-pdf'
 import { startMiniOcrApi } from './helpers/ocr-mini-api'
@@ -29,7 +30,7 @@ const dir = mkdtempSync(join(tmpdir(), 'issue309-public-'))
 const filesDir = join(dir, 'files')
 mkdirSync(filesDir)
 const dbPath = join(dir, 'synthetic.sqlite')
-const db = useDb({ dbPath })
+const db = initializeDb({ create: true, dbPath })
 let server: ReturnType<typeof createServer>, base: string
 let api: Awaited<ReturnType<typeof startMiniOcrApi>> | undefined
 let gate: (() => void) | undefined
@@ -82,7 +83,7 @@ async function request(path: string, method = 'GET', body?: unknown) {
 async function seed(pages = 1) {
   const file = `synthetic-${++sequence}.pdf`
   writeFileSync(join(filesDir, file), minimalPdf({ pages }))
-  const row = db.insert(schema.storedFile).values({ relPath: file, filename: file, ext: 'pdf', bytes: 1, sha256: createHash('sha256').update(readFileSync(join(filesDir, file))).digest('hex') }).returning().get()
+  const row = db.insert(schema.storedFile).values({ relPath: file, filename: file, ext: 'pdf', bytes: readFileSync(join(filesDir, file)).length, sha256: createHash('sha256').update(readFileSync(join(filesDir, file))).digest('hex') }).returning().get()
   await renderPdfPages(filesDir, file, { dpi: DEFAULT_DPI })
   return { file, row, pagePath: `/api/files/${row.id}/ocr-pages/1` }
 }
@@ -867,4 +868,154 @@ it('R2 legacy cache with unknown capture time retains null provenance without in
   expect(raw).toMatchObject({ captures: [{ raw: legacy.raw, source: { createdAt: null }, input: { createdAt: null, taskId: null } }] })
   expect(JSON.parse(readFileSync(cachePath, 'utf8'))).toEqual(legacy)
   expect(api!.stats.submits).toBe(0)
+})
+
+
+it('B2 changed source with freshly matching pages is rejected before any paid OCR and original recovery keeps the ID', async () => {
+  const { file, row, pagePath } = await setup()
+  const original = readFileSync(join(filesDir, file))
+  const replacement = Buffer.from(original.toString('latin1').replace('0 0 0 rg', '1 0 0 rg'), 'latin1')
+  expect(replacement.length).toBe(original.length)
+  expect(replacement.equals(original)).toBe(false)
+  writeFileSync(join(filesDir, file), replacement)
+  await renderPdfPages(filesDir, file, { dpi: DEFAULT_DPI, force: true })
+  gate!()
+  const rejected = await submit(file)
+  await whenIdle()
+  expect((await status(rejected)).state).toBe('failed')
+  expect((await status(rejected)).result.files[0].error).toContain('内容身份冲突')
+  expect(api!.stats.submits).toBe(0)
+  expect((await request(pagePath)).status).toBe(404)
+  expect(db.select().from(schema.storedFile).where(eq(schema.storedFile.id, row.id)).get()).toEqual(row)
+  writeFileSync(join(filesDir, file), original)
+  await renderPdfPages(filesDir, file, { dpi: DEFAULT_DPI, force: true })
+  gate!()
+  const restored = await submit(file)
+  await whenIdle()
+  expect((await status(restored)).state).toBe('done')
+  expect((await status(restored)).result.files[0].fileId).toBe(row.id)
+  expect(api!.stats.submits).toBe(1)
+})
+
+it('B2 incorrect registered byte size blocks paid OCR even when the digest matches', async () => {
+  const { file, row } = await setup()
+  gate!()
+  db.update(schema.storedFile).set({ bytes: row.bytes + 1 }).where(eq(schema.storedFile.id, row.id)).run()
+  const id = await submit(file)
+  await whenIdle()
+  expect((await status(id)).state).toBe('failed')
+  expect((await status(id)).result.files[0].error).toContain('内容身份冲突')
+  expect(api!.stats.submits).toBe(0)
+})
+
+it('B2 replacement after provider acceptance preserves paid raw but cannot publish or pay again on resume', async () => {
+  const { file, pagePath } = await setup()
+  const id = await submit(file)
+  await vi.waitFor(() => expect(api!.stats.submits).toBe(1))
+  const original = readFileSync(join(filesDir, file))
+  writeFileSync(join(filesDir, file), Buffer.from(original.toString('latin1').replace('0 0 0 rg', '1 0 0 rg'), 'latin1'))
+  gate!(); await whenIdle()
+  const failed = await status(id)
+  expect(failed.state).toBe('failed')
+  expect(failed.result.publication.files[0].captures[0]).toMatchObject({ raw: { markdown: { text: 'paid original' } } })
+  expect((await request(pagePath)).status).toBe(404)
+  const resumed = await submit(file, id)
+  await whenIdle()
+  expect((await status(resumed)).state).toBe('failed')
+  expect(api!.stats.submits).toBe(1)
+  expect((await status(id)).result).toEqual(failed.result)
+})
+
+it('B2 historical checkpoint without byte identity stays unknown and retains its paid capture on resume', async () => {
+  const { file, pagePath } = await setup()
+  const id = await submit(file)
+  await vi.waitFor(() => expect(api!.stats.submits).toBe(1))
+  expect((await request(pagePath, 'PUT', { markdown: 'human retained', expectedVersion: null })).status).toBe(200)
+  gate!(); await whenIdle()
+  const old = await status(id)
+  expect(old.state).toBe('failed')
+  expect(old.result.publication.files[0].captures[0].raw).toEqual({ markdown: { text: 'paid original' } })
+  const legacy = structuredClone(old.result)
+  delete legacy.publication.files[0].registeredBytes
+  delete legacy.publication.files[0].sourceBytes
+  db.update(schema.job).set({ result: legacy }).where(eq(schema.job.id, id)).run()
+  const resumed = await submit(file, id)
+  await whenIdle()
+  const result = await status(resumed)
+  expect(result.state).toBe('failed')
+  expect(result.result.files[0].error).toContain('内容身份未知')
+  expect(result.result.publication.files[0].captures).toEqual(legacy.publication.files[0].captures)
+  expect((await status(id)).result).toEqual(legacy)
+  expect((await (await request(pagePath)).json()).markdown).toContain('human retained')
+  expect(api!.stats.submits).toBe(1)
+})
+
+async function submitRender(files: string[]) {
+  const response = await request('/api/jobs', 'POST', { kind: 'render-pages', params: { files, force: true } })
+  expect(response.status).toBe(202)
+  return (await response.json()).jobId as string
+}
+
+it('B2 async rendering rejects replacement without touching pages and restores the registered identity', async () => {
+  const { file, row } = await setup()
+  const manifestPath = join(filesDir, pageDirRelPath(file), PAGES_MANIFEST_NAME)
+  const manifest = readFileSync(manifestPath)
+  const original = readFileSync(join(filesDir, file))
+  writeFileSync(join(filesDir, file), Buffer.from(original.toString('latin1').replace('0 0 0 rg', '1 0 0 rg'), 'latin1'))
+  const bad = await submitRender([file])
+  await whenIdle()
+  expect((await status(bad)).state).toBe('failed')
+  expect((await status(bad)).result.files[0].error).toContain('file_content_conflict')
+  expect(readFileSync(manifestPath)).toEqual(manifest)
+  writeFileSync(join(filesDir, file), original)
+  const recovered = await submitRender([file])
+  await whenIdle()
+  expect((await status(recovered)).state).toBe('done')
+  expect((await status(recovered)).result.files[0].contentIdentity).toEqual({ fileId: row.id, relPath: file, sha256: row.sha256, bytes: original.length })
+})
+
+it('B2 queued render cannot rebind its locator to a different registered ID', async () => {
+  const { file, row } = await setup()
+  const blocking = await submit(file)
+  await vi.waitFor(() => expect(api!.stats.submits).toBe(1))
+  const queued = await submitRender([file])
+  expect((await status(queued)).state).toBe('queued')
+  db.update(schema.storedFile).set({ relPath: file + '.old' }).where(eq(schema.storedFile.id, row.id)).run()
+  db.insert(schema.storedFile).values({ relPath: file, filename: file, ext: 'pdf', bytes: row.bytes, sha256: row.sha256 }).run()
+  gate!(); await whenIdle()
+  expect((await status(blocking)).state).toBe('failed')
+  expect((await status(queued)).state).toBe('failed')
+  expect((await status(queued)).result.files[0].error).toContain('file_content_conflict')
+})
+
+it('B2 async render leaves unregistered input pending unknown without publishing pages', async () => {
+  const file = `unregistered-${++sequence}.pdf`
+  writeFileSync(join(filesDir, file), minimalPdf({ pages: 1 }))
+  const id = await submitRender([file])
+  await whenIdle()
+  expect((await status(id)).state).toBe('failed')
+  expect((await status(id)).result.files[0].error).toContain('file_content_unknown')
+  expect(() => readFileSync(join(filesDir, pageDirRelPath(file), PAGES_MANIFEST_NAME))).toThrow()
+})
+
+
+it('B2 replacement during an awaited cache lookup is rejected at the paid POST boundary', async () => {
+  const { file, pagePath } = await setup()
+  expect((await request('/api/jobs/00000000000000000000000000')).status).toBe(404)
+  const hit = join(dir, `issue311-cache-hit-${sequence}.json`)
+  const release = join(dir, `issue311-cache-release-${sequence}`)
+  const host = await childHost({ ISSUE309_CACHE_GATE_HIT: hit, ISSUE309_CACHE_GATE_RELEASE: release })
+  try {
+    const id = await submitAt(host.base, file)
+    await vi.waitFor(() => expect(JSON.parse(readFileSync(hit, 'utf8')).cacheMiss).toBe(true))
+    const original = readFileSync(join(filesDir, file))
+    writeFileSync(join(filesDir, file), Buffer.from(original.toString('latin1').replace('0 0 0 rg', '1 0 0 rg'), 'latin1'))
+    writeFileSync(release, 'release'); gate!()
+    expect(await (await at(host.base, '/issue309/idle')).json()).toEqual({ idle: true })
+    expect((await status(id)).state).toBe('failed')
+    expect((await status(id)).result.files[0].error).toContain('内容身份冲突')
+    expect((await status(id)).result.publication.files[0].requests).toEqual({})
+    expect(api!.stats.submits).toBe(0)
+    expect((await request(pagePath)).status).toBe(404)
+  } finally { writeFileSync(release, 'release'); gate!(); await stopChild(host.child) }
 })

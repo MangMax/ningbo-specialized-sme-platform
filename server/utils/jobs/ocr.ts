@@ -297,6 +297,7 @@ export async function runOcr(
               resumeJobId: remote?.state === 'accepted' ? remote.jobId : undefined,
               expectedImageSha256: imageSha256,
               onSubmissionStarted: () => {
+                verifyOcrInput(ctx.db, ctx.filesDir, receipt)
                 receipt.requests[image.page] = { state: 'unknown', taskId: ctx.jobId, ...(remote ? { previous: [...(remote.previous ?? []), { state: remote.state, ...(remote.jobId ? { jobId: remote.jobId } : {}), ...(remote.taskId ? { taskId: remote.taskId } : {}) }] } : {}) }
                 persistAttempt({ state: 'unknown' })
                 if (shared) receipt.claims![image.page]!.state = 'unknown'

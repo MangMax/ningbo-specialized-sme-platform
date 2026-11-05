@@ -905,6 +905,11 @@ export const platformRecognizedProjection = sqliteTable('platform_recognized_pro
   maintenanceYear: integer('maintenance_year'),
   /** Raw whpc (维护批次) after trimming. */
   maintenanceBatch: text('maintenance_batch'),
+  /** Untrimmed strings for qualification's existing exact grammar; nonstrings are null. */
+  sourceValidityDate: text('source_validity_date'),
+  sourceMaintenanceBatch: text('source_maintenance_batch'),
+  /** null = uncaptured; true = original whpcyear missing/null/exact empty string. */
+  sourceMaintenanceYearAbsent: integer('source_maintenance_year_absent', { mode: 'boolean' }),
   /** Raw szq (属地) after trimming. */
   district: text('district'),
   /** Raw rdxx (平台认定说明) after trimming. */
@@ -1463,3 +1468,19 @@ export const enterpriseFactReceipt = sqliteTable('enterprise_fact_receipt', {
   requestHash: text('request_hash').notNull(),
   receipt: text('receipt', { mode: 'json' }).$type<{ factId: number; version: string; committedAt: string }>().notNull(),
 })
+
+export const filePhysicalIntent = sqliteTable('file_physical_intent', {
+  id: text('id').primaryKey(),
+  fileId: integer('file_id').notNull().references(() => storedFile.id),
+  relPath: text('rel_path').notNull(),
+  sha256: text('sha256').notNull(),
+  bytes: integer('bytes').notNull(),
+  state: text('state', { enum: ['pending', 'quarantined', 'recovering', 'recovered'] }).notNull(),
+  deleteKey: text('delete_key').notNull(),
+  deleteHash: text('delete_hash').notNull(),
+  deleteReceipt: text('delete_receipt', { mode: 'json' }).$type<Record<string, unknown>>(),
+  recoverKey: text('recover_key'),
+  recoverHash: text('recover_hash'),
+  recoverReceipt: text('recover_receipt', { mode: 'json' }).$type<Record<string, unknown>>(),
+  createdAt: text('created_at').notNull(),
+}, t => [index('file_physical_history_idx').on(t.fileId, t.createdAt, t.id), uniqueIndex('file_physical_active_uq').on(t.fileId).where(sql`${t.state} != 'recovered'`), uniqueIndex('file_physical_delete_key_uq').on(t.deleteKey), uniqueIndex('file_physical_recover_key_uq').on(t.recoverKey)])

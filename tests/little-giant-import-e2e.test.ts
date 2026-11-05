@@ -1,3 +1,4 @@
+import { initializeDb } from '../db/client'
 import { existsSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -68,7 +69,7 @@ describe('RL-02 端到端:经真实 HTTP 提交小巨人工作簿', () => {
 
   beforeAll(async () => {
     dir = mkdtempSync(join(tmpdir(), 'rl02-e2e-'))
-    db = useDb({ dbPath: join(dir, 'roster.db') })
+    db = initializeDb({ create: true, dbPath: join(dir, 'roster.db') })
     server = await startRosterApi({ db, apiToken: TOKEN })
 
     source = await loadLittleGiantSource()

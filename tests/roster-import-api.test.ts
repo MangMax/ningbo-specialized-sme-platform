@@ -1,3 +1,4 @@
+import { initializeDb } from '../db/client'
 /**
  * RL-11 —— 名录统一写入 API 的验收（契约 §8 写接口 / §9 MCP tool）。
  *
@@ -49,7 +50,7 @@ const dirs: string[] = []
 function makeDb() {
   const dir = mkdtempSync(join(tmpdir(), 'spztx-roster-'))
   dirs.push(dir)
-  return useDb({ dbPath: join(dir, 'roster.db') })
+  return initializeDb({ create: true, dbPath: join(dir, 'roster.db') })
 }
 
 afterAll(() => {

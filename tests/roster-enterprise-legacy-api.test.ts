@@ -1,3 +1,4 @@
+import { initializeDb } from '../db/client'
 import { decodeJsonRead } from './helpers/json-read-adapter'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { mkdtempSync, rmSync } from 'node:fs'
@@ -65,7 +66,7 @@ let db: ReturnType<typeof useDb>
 const tempDir = mkdtempSync(join(tmpdir(), 'roster-enterprise-legacy-api-'))
 
 beforeAll(async () => {
-  db = useDb({ dbPath: join(tempDir, 'roster.db') })
+  db = initializeDb({ create: true, dbPath: join(tempDir, 'roster.db') })
   db.insert(schema.enterprise).values(enterprise).run()
   db.insert(schema.record).values(record).run()
   db.insert(schema.recordEvent).values(event).run()

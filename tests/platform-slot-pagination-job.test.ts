@@ -1,3 +1,4 @@
+import { initializeDb } from '../db/client'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -11,7 +12,7 @@ import { updateCredential } from '../server/utils/credential-state'
 import type { TaskList, TaskSummary } from '../lib/task-center'
 
 const dir = mkdtempSync(join(tmpdir(), 'issue299-pagination-'))
-const db = useDb({ dbPath: join(dir, 'tasks.db') })
+const db = initializeDb({ create: true, dbPath: join(dir, 'tasks.db') })
 const USCC = '91330211255994457P'
 const nativeFetch = globalThis.fetch
 let server: Server, baseUrl: string
@@ -110,7 +111,7 @@ it('public job retains both sources’ unique row 51 and exact page evidence; co
   const summary = await api(`/api/jobs/${job.jobId}?view=summary`)
   expect(summary).toMatchObject({ kind: 'reconcile', state: 'done' })
   const task = await api(`/api/task-center/${job.jobId}`)
-  expect(task).toMatchObject({ kind: 'reconcile', state: 'done', outcome: { complete: 1, partial: 1, failed: 0 }, capabilities: { retry: false } })
+  expect(task).toMatchObject({ kind: 'reconcile', state: 'done', outcome: null, reconcile: { targets: 1, needsReview: 1, queryFailed: 0 }, capabilities: { retry: false } })
   expect(task.reconcileCollection).toMatchObject({ complete: 4, partial: 0, failed: 0, unknown: 0, unfinished: 0, positions: [], positionsTruncated: false })
   expect((await api('/api/task-center?tab=platform')).rows.find((t: { id: string }) => t.id === job.jobId).reconcileCollection).toEqual(task.reconcileCollection)
   expect((await api(`/api/task-center/${second.id}`)).reconcileCollection).toEqual(task.reconcileCollection)
@@ -125,8 +126,8 @@ it('later-page inconsistency keeps first-page rows, original total, unfinished p
   expect(partial.relations).toHaveLength(50)
   expect(JSON.parse(partial.query.rawResponse)).toMatchObject({ completeness: 'partial', declaredTotal: 51, unfinished: [{ page: 2 }] })
   expect(done.result.collection).toMatchObject({ complete: 3, partial: 1, failed: 0, unknown: 0 })
-  expect(await api(`/api/task-center/${job.jobId}`)).toMatchObject({ outcome: { partial: 1 }, capabilities: { retry: false } })
-  expect(await api(`/api/task-center/${job.jobId}`)).toMatchObject({ outcome: { complete: 1, partial: 1, unfinished: 1 }, reconcileCollection: { complete: 3, partial: 1, failed: 0, unknown: 0, unfinished: 1, positions: [{ source: 'businessList', rdjb: '3', page: 2 }] } })
+  expect(await api(`/api/task-center/${job.jobId}`)).toMatchObject({ outcome: null, reconcile: { needsReview: 1 }, capabilities: { retry: false } })
+  expect(await api(`/api/task-center/${job.jobId}`)).toMatchObject({ outcome: null, reconcile: { targets: 1, needsReview: 1 }, reconcileCollection: { complete: 3, partial: 1, failed: 0, unknown: 0, unfinished: 1, positions: [{ source: 'businessList', rdjb: '3', page: 2 }] } })
   const oldId = partial.query.id
   reply = normalReply
   const retry = await finish((await submit()).jobId)
@@ -149,7 +150,7 @@ it('cancel between pages stops requests, returns unfinished position and atomica
   release()
   const cancelled = await finish(job.jobId)
   expect(cancelled.state).toBe('cancelled')
-  expect(await api(`/api/task-center/${job.jobId}`)).toMatchObject({ outcome: { complete: 1, unfinished: 2 }, reconcileCollection: { complete: 2, partial: 1, failed: 0, unknown: 1, unfinished: 2, positions: [{ source: 'businessList', rdjb: '3', page: 2 }, { source: 'queryList', rdjb: null, page: 1 }] } })
+  expect(await api(`/api/task-center/${job.jobId}`)).toMatchObject({ outcome: null, reconcile: { targets: 1 }, reconcileCollection: { complete: 2, partial: 1, failed: 0, unknown: 1, unfinished: 2, positions: [{ source: 'businessList', rdjb: '3', page: 2 }, { source: 'queryList', rdjb: null, page: 1 }] } })
   expect(cancelled.result.collection.positions).toEqual(expect.arrayContaining([expect.objectContaining({ interface: 'business_list', rdjb: '3', unfinished: [{ source: 'businessList', rdjb: '3', page: 2 }] })]))
   expect(calls.some(c => c.page === 2)).toBe(false)
   expect(await archives()).toHaveLength(0)
@@ -273,7 +274,8 @@ it('four failed slots remain four failed collection slots through public task li
   const job = await submit(), done = await finish(job.jobId)
   expect(done.result.collection).toMatchObject({ complete: 0, partial: 0, failed: 4, unknown: 0 })
   const detail = await api(`/api/task-center/${job.jobId}`)
-  expect(detail.outcome).toMatchObject({ complete: 1, partial: 0, failed: 1, unfinished: 4 })
+  expect(detail.outcome).toBeNull()
+  expect(detail.reconcile).toMatchObject({ targets: 1, needsReview: 0, queryFailed: 1 })
   expect(detail.reconcileCollection).toEqual({ complete: 0, partial: 0, failed: 4, unknown: 0, unfinished: 4, positions: [
     { source: 'businessList', rdjb: '1', page: 1 }, { source: 'businessList', rdjb: '2', page: 1 },
     { source: 'businessList', rdjb: '3', page: 1 }, { source: 'queryList', rdjb: null, page: 1 },
@@ -289,7 +291,8 @@ it('historical task reports without collection stay explicitly unknown through p
   const { collection: _collection, ...historicalReport } = done.result
   db.update(schema.job).set({ result: historicalReport }).where(eq(schema.job.id, job.jobId)).run()
   const detail = await api(`/api/task-center/${job.jobId}`)
-  expect(detail.outcome).toMatchObject({ complete: 1, partial: 1, unfinished: null })
+  expect(detail.outcome).toBeNull()
+  expect(detail.reconcile).toMatchObject({ targets: 1, needsReview: 1 })
   expect(detail.reconcileCollection).toEqual({ complete: null, partial: null, failed: null, unknown: null, unfinished: null, positions: [], positionsTruncated: false })
   expect((await api('/api/task-center?tab=platform')).rows.find((t: { id: string }) => t.id === job.jobId).reconcileCollection).toEqual(detail.reconcileCollection)
 })
@@ -302,7 +305,8 @@ it('task summary bounds locations to 50 while retaining the actual unfinished to
     positions: Array.from({ length: 61 }, (_, index) => ({ unfinished: [{ source: 'businessList', rdjb: '3', page: index + 1 }], pages: [{ raw: 'PRIVATE_PAGE_RAW' }] })),
   } } }).where(eq(schema.job.id, job.jobId)).run()
   const detail = await api(`/api/task-center/${job.jobId}`)
-  expect(detail.outcome).toMatchObject({ complete: 1, partial: 1, unfinished: 61 })
+  expect(detail.outcome).toBeNull()
+  expect(detail.reconcile).toMatchObject({ targets: 1, needsReview: 1 })
   expect(detail.reconcileCollection).toMatchObject({ complete: 0, failed: 61, unfinished: 61, positionsTruncated: true })
   expect(detail.reconcileCollection.positions).toHaveLength(50)
   expect(detail.reconcileCollection.positions[0]).toEqual({ source: 'businessList', rdjb: '3', page: 1 })
@@ -321,7 +325,8 @@ it('malformed historical collection scalars stay unknown without transporting ne
   } } }).where(eq(schema.job.id, job.jobId)).run()
   const detail = await api(`/api/task-center/${job.jobId}`)
   expect(detail.reconcileCollection).toEqual({ complete: null, partial: null, failed: null, unknown: null, unfinished: null, positions: [], positionsTruncated: false })
-  expect(detail.outcome).toMatchObject({ complete: 1, partial: 1, unfinished: null })
+  expect(detail.outcome).toBeNull()
+  expect(detail.reconcile).toMatchObject({ targets: 1, needsReview: 1 })
   expect(JSON.stringify(detail)).not.toContain('PRIVATE_')
   expect(JSON.stringify(detail).length).toBeLessThan(12000)
 })
@@ -369,7 +374,8 @@ it.each(invalidHistoricalCollections)('historical $name stays unknown through pu
   const before = db.select({ result: schema.job.result }).from(schema.job).where(eq(schema.job.id, job.jobId)).get()?.result
   const detail = await publicSummaryPair(job.jobId)
   expect(detail.reconcileCollection).toEqual(unknownCollection)
-  expect(detail.outcome).toMatchObject({ complete: 1, partial: 1, unfinished: null })
+  expect(detail.outcome).toBeNull()
+  expect(detail.reconcile).toMatchObject({ targets: 1, needsReview: 1 })
   expect(db.select({ result: schema.job.result }).from(schema.job).where(eq(schema.job.id, job.jobId)).get()?.result).toEqual(before)
 })
 
@@ -383,7 +389,8 @@ it.each([
   const detail = await publicSummaryPair(job.jobId)
   const { positions: _positions, ...counts } = collection
   expect(detail.reconcileCollection).toEqual({ ...counts, unfinished: 0, positions: [], positionsTruncated: false })
-  expect(detail.outcome).toMatchObject({ complete: 1, partial: 1, unfinished: 0 })
+  expect(detail.outcome).toBeNull()
+  expect(detail.reconcile).toMatchObject({ targets: 1, needsReview: 1 })
 })
 
 it.each([50, 51])('validated %i ranges preserve the full count and at most 50 scopes through public list and detail', async count => {
@@ -397,5 +404,6 @@ it.each([50, 51])('validated %i ranges preserve the full count and at most 50 sc
   expect(detail.reconcileCollection).toMatchObject({ complete: 0, partial: 1, unfinished: count, positionsTruncated: count > 50 })
   expect(detail.reconcileCollection?.positions).toHaveLength(50)
   expect(detail.reconcileCollection?.positions[49]).toEqual({ ...pendingRange, page: 50 })
-  expect(detail.outcome).toMatchObject({ complete: 1, partial: 1, unfinished: count })
+  expect(detail.outcome).toBeNull()
+  expect(detail.reconcile).toMatchObject({ targets: 1, needsReview: 1 })
 })

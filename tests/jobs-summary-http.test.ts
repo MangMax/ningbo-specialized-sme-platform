@@ -1,3 +1,4 @@
+import { initializeDb } from '../db/client'
 import { createServer } from 'node:http'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -10,7 +11,7 @@ import { createJob, finishJob, markJobRunning, setJobProgress, setJobResult } fr
 import { ensureJobRunnerReady } from '../server/utils/job-runner'
 
 const dir = mkdtempSync(join(tmpdir(), 'jobs-summary-http-'))
-const db = useDb({ dbPath: join(dir, 'test.sqlite') })
+const db = initializeDb({ create: true, dbPath: join(dir, 'test.sqlite') })
 let server: ReturnType<typeof createServer>, base: string
 const id = newJobId()
 const result = { files: [{ path: 'jxj/synthetic.pdf', pages: [{ page: 2, text: 'second' }, { page: 1, text: 'first' }] }], raw: 'x'.repeat(1024 * 1024) }
@@ -174,7 +175,7 @@ it('full reads redact credentials and host paths while preserving business field
 
 it('a fresh read-only connection can list and poll a terminal-only snapshot without recovery writes', async () => {
   const path = join(dir, 'terminal.sqlite')
-  const fixture = useDb({ dbPath: path })
+  const fixture = initializeDb({ create: true, dbPath: path })
   const jobId = newJobId()
   createJob(fixture, { id: jobId, kind: 'summary-terminal', params: {} })
   finishJob(fixture, jobId, { state: 'done', result: { receipt: 'synthetic-terminal' } })

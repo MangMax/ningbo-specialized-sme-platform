@@ -112,3 +112,23 @@ REST `POST /api/roster/correspondences/candidates` 与 MCP `find_record_correspo
 `multiple_candidate_rows` 仅在实际平台业务版本候选组多于一个时加入，重复观察不构成多候选；不同版本/接口/角色仍独立。导出候选维持原行粒度、证据和既有对应语义。`total/page/pageSize` 在平台分组后与导出行合并计算；查询覆盖及导出批次仍按原来源返回。原候选入口不支持 `asOf`，本项不新增它；未来详情/comparison 应先按自己的时间/来源契约过滤再使用共享读模块。
 
 本项不接入企业详情 UI 或 record comparison（#246 其余两项），不改 PR245 的存储写入、原归档列表、旧指纹、裁决、差异引用，也不执行生产迁移/写入。业务版本候选去重不表示已完成全用户需求或全档数据验收。
+
+
+## #468 资格筛选来源保真补全
+
+`0039_recognized_source_fidelity` 只给 recognized 投影增加三个 nullable 列，不重建原表、不回填默认值：
+
+- `source_validity_date` / `source_maintenance_batch`：原 `rddqrq` / `whpc` 未 trim 的字符串。所有非字符串为 null，既有精确日期/composite 语法本就拒绝这些类型。
+- `source_maintenance_year_absent`：原 `whpcyear` 缺键、null、精确空串为 true；其他类型/值（包括空白、非法文本、0、false、非空有效年份）均 false。存储 null 表示三项尚未捕获，不能推成“原年份缺失”。该 marker 非 null 才代表 source-fidelity-v1 完成。
+
+目录的 `platform-recognized-v1` 规则和八个规范化字段不改，公开 preflight/receipt 形状不扩展；补充字段保持内部来源元数据。来源 owner 从原 relationId 读取原文，复验已有 observation 的 frozen fingerprint、record/version/内容哈希与 canonical JSON 后，在原导入事务中同时捕获三项。新投影一并写入；旧投影只有三项均未捕获才可 additive completion。已有捕获不一致或部分捕获不一致均报 `recognized_projection_conflict`，整批回滚，不覆盖原值。原 raw/hash/query/relation/record/version/observation ID、指纹、时间、v1 字段均保留。
+
+历史补全仍使用统一 HTTP preflight/commit 或 MCP preflight_roster_batch/save_roster_batch，payload 仍只有 `platformRecordObservations:[{relationId}]`（每批 1..100）。必须给本轮 source-fidelity-v1 补全冻结新的 manifest、sourceIdentity 和 idempotencyKey，例如 `source-fidelity-v1/<source-manifest-hash>/recognized/0001`。旧 compiled d419 backfill A 的成功回执只证明原投影；旧 committed key 返回旧回执，不能证明新字段已填。新命令再次执行时 `recognizedProjectionsReused` 包含对既有投影的补全/核验，不增加一套公开计数；用下面覆盖检查单独证明完成度，不把 reused 计数当作捕获证明。
+
+父集成应针对已确认的 10,065 条 recognized 观察单独执行新命令（数量来自独立历史审计，本次实现未扫描或写入该数据集），分批留存请求/预检/回执/失败/重试记录。接受前用 observation 的 resolved+verified 与接口限定，按 version_id **和** record_id 连接投影，分别统计 missing projection、marker null、marker nonnull。只有前两项为零才是完整 typed capture；再核对原始 ID/raw/hash/fingerprint/规范化列未变。apply/business 历史补全和 317 个 unverifiable 例外仍由父任务分别报告。
+
+默认资格 reader 只读这些 typed 标量，并沿用 `recognizedFilterFacts` 的原语法和 query/page/title/条件限域。marker null 或缺投影时不产生平台年/批次见证，不回读 raw，不借用已规范化字段，也不从内容版本 JSON 临时重解释。正式资格周期/分组、候选企业归属、proof/audit 引用、三称号工作簿列与排序不改。候选的旧归属/未解析或冲突身份兼容路径仍保留；候选行数本身不能证明 typed 覆盖，必须结合上述 anti-join 检查。
+
+显式回退：`ROSTER_RECOGNIZED_FILTER_SOURCE=legacy`，或内部 reader option `recognizedFactSource:'legacy'`，选择独立保留的原 SQL。迁移前 schema、尚未完成捕获、或父集成影子对照失败时可显式使用它；不把 legacy 返回值宣称为 typed 验收。查询级 pages/collection_evidence 仍是查询来源事实，其他 process/详情兼容 reader 的职责不在本次改动范围。
+
+定向测试：`current-qualified-recognized-typed-468.test.ts`（HTTP/MCP 边界、显式回退、未知/补全、工作簿）、`platform-recognized-projection-http.test.ts`（公开补全/幂等/冲突回滚与原数据保护）、`platform-recognized-projection-migration.test.ts`（旧 schema 迁移保留未知）、`platform-recognized-directory-three-way.test.ts`（规范化目录列独立）。这些合成数据测试不替代父任务的完整真实副本 HTTP/异步下载/桌面/390px 验收，不标记 #468 全阶段完成。

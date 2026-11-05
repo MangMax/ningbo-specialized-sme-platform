@@ -1,3 +1,4 @@
+import { initializeDb } from '../db/client'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -47,7 +48,7 @@ async function previewBytes(): Promise<Buffer> {
 beforeAll(async () => {
   mkdirSync(join(sourceAbs, '..'), { recursive: true })
   writeFileSync(sourceAbs, minimalPdf({ pages: 2 }))
-  db = useDb({ dbPath: join(tempRoot, 'roster.db') })
+  db = initializeDb({ create: true, dbPath: join(tempRoot, 'roster.db') })
 
   const registered = await registerStoredFile(db, filesRoot, {
     relPath: sourceFile,

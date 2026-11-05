@@ -1,4 +1,5 @@
 import { commitRecordCorrespondences, preflightRecordCorrespondences } from '../server/utils/record-correspondence'
+import { ensurePlatformObservation } from '../server/utils/platform-business-record'
 import Database from 'better-sqlite3'
 import { afterEach, expect, it, vi } from 'vitest'
 import { mkdtempSync, rmSync, readFileSync } from 'node:fs'
@@ -330,14 +331,16 @@ it('C34 both consumers read an old readonly file without changing database bytes
 it('C35 confirmed recognized witness preserves positive options filters and source pointers', () => {
   vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(new Date('2026-10-26T00:00:00Z'))
   const f = consumerFixture(), db = drizzle(f.db, { schema: s }), stamp = '2026-10-25T00:00:00Z'
+  const rawFields = { id: 'synthetic363-recognized', rddqrq: '2028-11-20', whpc: '2025-2' }
   db.insert(s.platformQuery).values({ id: 1, interface: 'recognized_list', queryKey: '000000000000000001', rdjb: '1', titleCode: 'innovative_sme', queriedAt: stamp, status: 'success', collectionEvidence: {
     source: 'queryBusList', status: 'success', effectiveConditions: { combination: 'and', rddqrq: '2028', whpcyear: '2025', whpc: '2' },
     titleScope: { mode: 'selected', rdjb: ['1'] }, queriedAt: stamp, completedAt: stamp,
-    rows: [{ rddqrq: '2028-11-20', whpc: '2025-2' }], pages: [{ source: 'queryBusList', rdjb: '1', page: 1, status: 'success', fetchedCount: 1, declaredTotal: 1, maxPage: 1 }],
+    rows: [rawFields], pages: [{ source: 'queryBusList', rdjb: '1', page: 1, status: 'success', fetchedCount: 1, declaredTotal: 1, maxPage: 1 }],
     fetchedCount: 1, declaredTotal: 1, completeness: 'complete', fullRange: true, unfinished: [], error: null,
     limits: { maxRequests: 1, maxRows: 50, maxDurationMs: 1000, pageSize: 50 },
   } as never }).run()
-  db.insert(s.platformRelation).values({ id: 1, queryId: 1, sequenceNo: 1, enterpriseId: 1, usccRaw: '000000000000000001', nameRaw: '=1+1', rawFields: { rddqrq: '2028-11-20', whpc: '2025-2' }, verificationStatus: 'confirmed', matchBasis: 'uscc' }).run()
+  db.insert(s.platformRelation).values({ id: 1, queryId: 1, sequenceNo: 1, enterpriseId: 1, usccRaw: '000000000000000001', nameRaw: '=1+1', rawFields, verificationStatus: 'confirmed', matchBasis: 'uscc' }).run()
+  ensurePlatformObservation(db, 1)
   const request = { idempotencyKey: 'cover363-recognized', sourceIdentity: 'synthetic/cover363', actor: { type: 'agent' as const, id: 'synthetic363' }, basis: 'Synthetic confirmed event and recognized row', ruleId: 'manual', ruleVersion: '1', operations: [{ action: 'create' as const, status: 'confirmed' as const, edge: { type: 'event_recognized' as const, eventId: 1, relationId: 1, role: 'recognized_corrob' as const } }] }
   const plan = preflightRecordCorrespondences(db, request)
   commitRecordCorrespondences(db, request, plan.planHash)

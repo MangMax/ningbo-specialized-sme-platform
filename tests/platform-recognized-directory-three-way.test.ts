@@ -1,3 +1,4 @@
+import { initializeDb } from '../db/client'
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { createHash } from 'node:crypto'
@@ -33,7 +34,7 @@ function setup() {
   const dbPath = join(dir, 'three-way.sqlite')
   // The public routes resolve their handle from the same environment variable.
   vi.stubEnv('NUXT_DB_PATH', dbPath)
-  const db = useDb({ dbPath })
+  const db = initializeDb({ create: true, dbPath })
   return { dir, dbPath, db, matrix: matrix408(db.$client) }
 }
 
@@ -202,9 +203,8 @@ it('keeps formal qualification eligibility and the export decision surface ident
       expect(C0.counts.eligible).toBe(1)
       expect(eligibleIdentities(C0)).toEqual([[name, uscc]])
 
-      // #468: the typed projection is now the current-qualification filter source.
-      // A typed-only change moves the filter witness but never the formal group or
-      // workbook decision surface (the workbook consumes groups, not filter facts).
+      // Directory normalization is independent of captured qualification source strings.
+      // Changing directory fields cannot move qualification filter witnesses.
       db.update(schema.platformRecognizedProjection).set({ validityDateRaw: '2031-12-31', maintenanceYear: 2031, district: '99999999' })
         .where(eq(schema.platformRecognizedProjection.recordId, seeded.recordId)).run()
       const A1 = await readA(base, { q: name })
@@ -213,7 +213,7 @@ it('keeps formal qualification eligibility and the export decision surface ident
       expect(A1.total).toBe(1)
       expect(A1.rows[0]).toMatchObject({ matchedVersion: { validityDateRaw: '2031-12-31', maintenanceYear: 2031, district: '99999999' } })
       expect(eligibility(B1)).toEqual(eligibility(B0))
-      expect((B1.rows[0] as { matchedValidYears: number[] }).matchedValidYears).toEqual([])
+      expect((B1.rows[0] as { matchedValidYears: number[] }).matchedValidYears).toEqual([...validYears])
       expect(strip(B1.rows.map(row => (row as { qualificationAssessment: unknown }).qualificationAssessment)))
         .toEqual(strip(B0.rows.map(row => (row as { qualificationAssessment: unknown }).qualificationAssessment)))
       expect(C1).toEqual(C0)
@@ -226,7 +226,10 @@ it('keeps formal qualification eligibility and the export decision surface ident
       expect(A2.total).toBe(1)
       expect(A2.rows[0]).toMatchObject({ matchedVersion: { validityDateRaw: null, maintenanceYear: null, maintenanceBatch: null, district: null, ruleVersion: null } })
       expect(A2.rows[0]).toMatchObject({ conflicts: [] })
-      expect(strip(B2)).toEqual(strip(B0))
+      expect(eligibility(B2)).toEqual(eligibility(B0))
+      expect((B2.rows[0] as { matchedValidYears: number[] }).matchedValidYears).toEqual([])
+      expect(strip(B2.rows.map(row => (row as { qualificationAssessment: unknown }).qualificationAssessment)))
+        .toEqual(strip(B0.rows.map(row => (row as { qualificationAssessment: unknown }).qualificationAssessment)))
       expect(C2).toEqual(C0)
     }
   } finally {

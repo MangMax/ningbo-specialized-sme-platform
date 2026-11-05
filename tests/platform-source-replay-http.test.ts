@@ -1,3 +1,4 @@
+import { initializeDb } from '../db/client'
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { mkdtempSync, rmSync } from 'node:fs'
@@ -27,7 +28,7 @@ const protocol = realTransport ? 'MCP' : 'HTTP'
 const dir = mkdtempSync('/tmp/issue300-http-')
 const transports = new Set<StreamableHTTPServerTransport>()
 let mcpClient: Client
-const db = useDb({ dbPath: join(dir, 'test.sqlite') })
+const db = initializeDb({ create: true, dbPath: join(dir, 'test.sqlite') })
 const token = 'synthetic-issue300'
 let server: ReturnType<typeof createServer>, base: string, serial = 0
 const metadata: Record<string, any> = {}
@@ -262,7 +263,7 @@ it(`${protocol} rechecks query and export source identity inside the write trans
 })
 
 it(`${protocol} discovery explains the existing reuseExisting field and immutable replay boundary`, async () => {
-  for (const action of ['preflight', 'commit']) expect(metadata[action].requestBody.content['application/json'].schema.properties.payload.properties.platformQueries.items.properties.reuseExisting).toMatchObject({ type: 'boolean', enum: [true] })
+  for (const action of ['preflight', 'commit']) expect(metadata[action].requestBody.content['application/json'].schema.properties.payload.properties.platformQueries.items.properties.reuseExisting).toMatchObject({ type: 'boolean', const: true })
   if (realTransport) for (const tool of (await mcpClient.listTools()).tools.filter(tool => ['preflight_roster_batch', 'save_roster_batch'].includes(tool.name))) expect(tool.description).toContain('reuseExisting:true')
 })
 it(`${protocol} preflight and commit reject adding a sequence through another same-payload query`, async () => {

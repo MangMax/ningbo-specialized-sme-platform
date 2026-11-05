@@ -1,3 +1,4 @@
+import { initializeDb } from '../db/client'
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { mkdtempSync, rmSync } from 'node:fs'
@@ -55,7 +56,7 @@ function observeReads() {
 
 beforeEach(async () => {
   const dbPath = join(dir, `synthetic-${++fixture}.sqlite`)
-  db = useDb({ dbPath })
+  db = initializeDb({ create: true, dbPath })
   vi.stubEnv('NUXT_DB_PATH', dbPath)
   vi.stubGlobal('defineEventHandler', defineEventHandler)
   vi.stubGlobal('getQuery', getQuery)

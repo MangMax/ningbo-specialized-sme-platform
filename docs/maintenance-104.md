@@ -40,8 +40,13 @@ REST PATCH 在同一对象附上元数据字段；MCP `update_file` 把字段放
 
 恢复流式计算原路径 SHA-256，并核对字节数、普通文件、根内真实路径及哈希期间 inode/mtime/ctime；缺失、目录、目标文件为符号链接、内容变更均拒绝。提交事务再次核对维护修订、已移出状态和登记磁盘事实。原文件已处于有效状态时仍核验磁盘事实；相同状态重试不重导事件。恢复不刷新登记哈希来迁就不匹配的磁盘文件，也不重建解析或 OCR。
 
-软移出仅标记 `removed_at`，磁盘字节及正式出处仍可读取，扫描不会自动复活。MCP `remove_file` 没有磁盘删除参数或能力。既有独立 `?deleteDisk=1|true` 仍须调用方明确请求；只在旧独立删除协议下支持，不接受现代维护幂等键，不与软移出键混用。正式出处引用数大于0时409拒绝。引用检查和短小的文件系统元数据删除在 SQLite 写锁内执行，避免数据库引用写入在检查后插入。磁盘物理删除不可撤销；文件系统删除和数据库最终提交无法构成跨介质原子事务，不把它描述为可恢复操作。
+软移出仅标记 `removed_at`，磁盘字节及正式出处仍可读取，扫描不会自动复活。MCP `remove_file` 仍仅软移出。显式 `DELETE /api/files/{id}?deleteDisk=1|true` 现要求 API token 和完整版本封套，对等 MCP 为 `quarantine_file`；旧无封套物理删除请求拒绝，不再永久擦除字节。正式出处引用数大于0仍409拒绝。响应 `diskDeleted=false`，`diskQuarantined=true`，另带 `intent`（id、fileId、relPath、登记 SHA/bytes、state）。文件页删除确认对话框已接入隔离、状态读回及恢复；恢复失败保留原命令供显式重试。
 
+`0038_file_physical_intent` 先独立提交 pending 意图，再在 SQLite 写锁内复核引用、登记身份和磁盘字节并改名到文件根内 `.physical-quarantine/{intentId}`，最后在同一事务提交软移出审计与 quarantined 完成回执。隔离目录由既有点目录扫描排除规则忽略。最终 SQL 失败不撤销改名：状态保持 pending，原路径可能不可用，原字节保留隔离区，不能把数据库回滚描述成字节已恢复。同键同完整请求可继续 pending 命令，已完成则返回原回执；同键异请求拒绝。原删除回执在之后恢复后仍原样重放，不重新隔离。
+
+`GET /api/files/{id}/physical-recovery?intentId=...` / MCP `get_file_physical_intent` 精确读回一条状态与回执，省略 intentId 取该文件最新一条。`POST` 同路径 / MCP `recover_file` 必须给 intentId、完整维护封套和对应 token。先提交 recovering 请求，再核验隔离副本登记 SHA+bytes 并改回原路径，最后同事务写恢复审计与 recovered 回执。原路径被占用、普通文件/根边界不符、登记身份变化或字节缺失/不匹配均拒绝，不覆盖已有字节。恢复改名后 SQL 失败时保持 recovering，原路径可能已有原字节但数据库仍 removed；同键重试重新验证后完成。pending 在改名前失败且原路径仍有原字节，也可显式恢复完成。新命令不更新文件 ID、路径、登记哈希或出处坐标。
+
+本协议保留隔离字节，不提供自动恢复、定时清理或永久 purge。它处理进程退出/SQL 失败的可恢复状态，不是数据库与文件系统原子事务，也不能恢复被外部覆盖/删除的字节。已有路径组件被外部进程并发替换、存储设备损坏、整库灾难恢复属于独立边界；磁盘不可用时保留显式待处理状态。执行中的原字节验证与文件系统动作仍须使用受应用管理的文件根。
 迁移 `0020_file_maintenance` 增加独立、追加式维护审计/幂等回执；合入 #105/#106 后，将本票 journal 条目追加到现有0021/0022之后（集成idx20、when1792400021001；在本轮新增0017之后），不改已存在条目的时间戳，确保已应用当前 integration 迁移的库也会执行0020。不能按文件名前缀把新条目重新排到已应用迁移之前；原 `stored_file_audit` 显示名历史保留。元数据、旧显示名审计与新维护审计在同一事务内提交，追加失败则全部回滚。新历史只保存有界元数据快照，不存 OCR、来源原文或凭据。
 
 ## 验证与证据
@@ -61,7 +66,7 @@ REST PATCH 在同一对象附上元数据字段；MCP `update_file` 把字段放
 | 恢复磁盘失败分区 | `rejects missing, modified, directory and symlink restore targets without changing removed state or audit` |
 | 白名单、非法目标、审计故障原子回滚 | `rejects protected fields and invalid targets and rolls back display audit if maintenance audit fails` |
 | 出处/OCR/解析段和引用保护 | `protects referenced disk bytes and preserves formal evidence, OCR and file parts across the lifecycle` |
-| 独立明确磁盘删除 | `requires explicit disk deletion, records the soft removal and refuses restoration once bytes are gone` |
+| 独立明确磁盘删除 | `requires versioned quarantine, records soft removal and keeps normal restoration unavailable until explicit recovery` |
 | 有界历史及无关数据增长 | `bounds history pages and preserves exact read size when unrelated audit and OCR data grow` |
 
 Git 外日志 `/tmp/ningbo-spec98/ticket-104/` 保存 red/green、回归、类型检查及最终源码 SHA。初始 restore 夹具有路径声明不符，修正后 `red-restore-valid.log`/`green-restore-valid.log` 才是有效红绿；不使用最初错误夹具证明功能缺失。移除“部分封套拒绝”校验的定向 mutation 在真实 HTTP 返回200，测试按预期转红（`red-partial-envelope-mutation.log`）；恢复校验后重新运行完整目标矩阵。另将0020时间戳回退到0021之前，真实应用在已有0021的库上跳过本票迁移，基线载荷回归按预期转红（`red-integration-tip-upgrade.log`）；保留追加顺序后转绿。兼容提醒后的最终契约以上述 legacy/versioned 区分为准，早期 `green-auth.log` 等仅为历史过程，不是最终鉴权验收。

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { historicalContentMessage } from '~~/lib/file-content-status'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useMediaQuery } from '@vueuse/core'
 import {
@@ -448,6 +449,7 @@ onBeforeUnmount(() => {
             </Button>
           </div>
         </header>
+        <p v-if="result" role="status" class="shrink-0 border-b px-3 py-2 text-sm break-words">{{ historicalContentMessage(result.historicalBinding) }}</p>
         <div
           :key="`${filePath}:${row.page}:image`"
           class="flex min-h-0 flex-1 items-center justify-center overflow-auto p-2 lg:p-3"
@@ -617,6 +619,7 @@ onBeforeUnmount(() => {
             </div>
           </template>
         </header>
+        <p v-if="result" role="status" class="shrink-0 border-b px-3 py-2 text-sm break-words">{{ historicalContentMessage(result.historicalBinding) }}</p>
 
         <p
           v-if="copyMessage"
