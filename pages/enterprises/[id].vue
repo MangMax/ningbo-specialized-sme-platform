@@ -615,6 +615,7 @@ function openPreview(e: Evidence) {
                 <section v-for="item in qualificationRows" :key="item.titleCode" class="flex min-w-0 flex-col gap-2 break-words">
                   <h3 class="flex flex-wrap items-center gap-2"><TitleBadge :code="item.titleCode" /><span>{{ item.effectiveQualification ? CURRENT_STATUS_LABELS[item.effectiveQualification.status] : qualificationGroupLabel[item.group] }}</span></h3>
                   <p v-if="item.effectiveQualification">当前有效状态：{{ CURRENT_STATUS_LABELS[item.effectiveQualification.status] }}；{{ item.officialQualification.message }}</p>
+                  <p v-for="basis in item.effectiveQualification?.presentationBasis ?? []" :key="basis">{{ basis }}</p>
                   <p v-for="note in item.effectiveQualification?.notes ?? []" :key="note">资料与来源备注：{{ note }}</p>
                   <p>正式资格：{{ item.officialQualification.message }}</p>
                   <p v-for="note in item.officialQualification.notes" :key="note">{{ note }}</p>

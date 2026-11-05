@@ -127,7 +127,7 @@ const conditionSummary = (row: CurrentRow) => {
 const publishedHints = (row: CurrentRow) => row.publishedPresentation?.facts ?? []
 const publishedDetailUrl = (row: CurrentRow, eventId: number) => { const target = detailUrl(row.enterpriseId); return { ...target, query: { ...target.query, eventId: String(eventId) } } }
 const statusSummary = (row: CurrentRow) => { const effective = selectedAssessment(row)?.effectiveQualification; return effective ? `${CURRENT_STATUS_LABELS[effective.status]}；${selectedAssessment(row)?.officialQualification.message}` : '旧版响应未提供有效状态' }
-const statusNotes = (row: CurrentRow) => [...new Set([...(selectedAssessment(row)?.effectiveQualification?.notes ?? []), ...row.notes])]
+const statusNotes = (row: CurrentRow) => [...new Set([...(selectedAssessment(row)?.effectiveQualification?.presentationBasis ?? []), ...(selectedAssessment(row)?.effectiveQualification?.notes ?? []), ...row.notes])]
 const movedInSummary = (row: CurrentRow) => row.notes.find(note => note.startsWith('已确认迁入宁波'))
 useHead({ title: '优质中小企业查询' })
 </script>

@@ -116,7 +116,7 @@ export async function writeCurrentWorkbook(db: Database.Database, title: Current
           if (row.assessment!.effectiveQualification?.status !== group) throw new Error('Workbook scan and full assessment group differ')
           // Keep the original row and its non-enumerable workbookFacts.
           const effective = row.assessment!.effectiveQualification!
-          const values = [...currentWorkbookValues(title,row,++written,workbookPublished), name, effective.basis, effective.notes.join('；')]
+          const values = [...currentWorkbookValues(title,row,++written,workbookPublished), name, (effective.presentationBasis ?? []).join('；'), effective.notes.join('；')]
           const { titles: _titles, snapshotId, ...scope } = snapshot
           hash.update(JSON.stringify([group,id,scope,snapshotId,values]) + '\n')
           styledRow(sheet,values)

@@ -13,6 +13,7 @@ export interface CycleJudgment {
   lastAwardYear: number
   failureYears: number[]
   group: CurrentGroup
+  periodBasis?: string
   notes: string[]
   awardEventIds: number[]
 }
@@ -95,6 +96,11 @@ function adjudicateCycle(events: QualificationEvent[], originYear: number, batch
     const dueYear = anchor ? factTime(anchor)! + 3 : null
     const fact = day ? anchor?.formalValidity : undefined
     const futureReviewGrace = day && anchor && events.some(e => e.eventType === 'review' && e.formalValidity?.continuation === 'until_this_review_results' && e.formalValidity.publishedOn && day < e.formalValidity.publishedOn && facts.awards.some(a => a.id === e.formalValidity!.originAwardEventId))
+    result.periodBasis = fact?.interval
+      ? `正式文件有效期：${fact.interval.validFrom} 至 ${fact.interval.validThrough}（含首尾）`
+      : futureReviewGrace || fact?.continuation === 'until_next_review_results'
+        ? '正式文件延续规则：至下次复核结果公布前有效'
+        : dueYear != null ? `默认年度规则：最近一次认定或复核通过 ${factTime(anchor!)} 年 + 3 = ${dueYear} 年；自 ${dueYear} 年起到期（仅年份精度）` : '正式资格期间未记录'
     if (futureReviewGrace && !fact?.interval) result.group='eligible'
     else if (day && fact?.interval) {
       if (fact.interval.validFrom <= day && day <= fact.interval.validThrough) result.group='eligible'
