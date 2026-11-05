@@ -1,3 +1,4 @@
+import { MAX_PAGE_SIZE } from './query-limits'
 import { readPublicPublishedNames, type OfficialPublishedFact } from './roster/official-published-presentation'
 import { publishedNameText, type PublishedPresentation } from './roster/correspondence-view'
 import { and, count, desc, eq, exists, inArray, isNull, like, or, sql, type SQL } from 'drizzle-orm'
@@ -109,7 +110,7 @@ export interface RecordRow {
   flags: string[]
 }
 
-export const MAX_PAGE_SIZE = 200
+export { MAX_PAGE_SIZE } from './query-limits'
 
 /**
  * 把一组来源代号按展示顺序(经信局 → 工信部)去重排序,

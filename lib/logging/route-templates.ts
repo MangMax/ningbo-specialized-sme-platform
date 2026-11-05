@@ -18,6 +18,7 @@ export const APPLICATION_LOG_ROUTES: ReadonlySet<string> = new Set([
   "/api/files/:id/parse-result/commit",
   "/api/files/:id/parse-result/history",
   "/api/files/:id/parse-result/preflight",
+  "/api/files/:id/physical-recovery",
   "/api/files/:id/restore",
   "/api/files/register",
   "/api/health",

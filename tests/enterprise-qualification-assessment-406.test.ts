@@ -288,7 +288,7 @@ it.each([
     ? { evidenceId: evidence.id, eventId: event.id, availability, revision: 1, nameRaw, sourceBindingKnown: true }
     : { evidenceId: evidence.id, eventId: event.id, availability, revision: null, nameRaw: null, sourceBindingKnown: null }
   // Isolate the completeness consumer; capture/SQL semantics have their own public tests.
-  vi.spyOn(publishedReads, 'readOfficialPublishedPresentation').mockReturnValue(new Map([[evidence.id, fact]]))
+  vi.spyOn(publishedReads, 'readPublicPublishedNames').mockReturnValue({ availability: 'available', error: null, facts: [fact] })
   const detail = getRosterEnterpriseDetail(db, enterprise.id, AS_OF)!
   const value = detail.qualificationAssessment.titles.find(t => t.titleCode === 'innovative_sme')!
   expect(detail.publishedPresentation).toMatchObject({ availability: 'available', facts: [fact] })
@@ -317,7 +317,7 @@ it.each([false, true])('keeps verified migration qualification independent of la
 
 it('keeps published-name read failure distinct from missing capture and reuses one read', () => {
   const { enterprise, evidence } = formalEnterprise()
-  const read = vi.spyOn(publishedReads, 'readOfficialPublishedPresentation').mockImplementation(() => { throw new publishedReads.OfficialPublishedPresentationError('response_limit') })
+  const read = vi.spyOn(publishedReads, 'readPublicPublishedNames').mockReturnValue({ availability: 'unavailable', error: 'response_limit', facts: [] })
   const detail = getRosterEnterpriseDetail(db, enterprise.id, AS_OF)!
   const value = detail.qualificationAssessment.titles.find(t => t.titleCode === 'innovative_sme')!
   expect(detail.publishedPresentation).toMatchObject({ availability: 'unavailable', error: 'response_limit' })

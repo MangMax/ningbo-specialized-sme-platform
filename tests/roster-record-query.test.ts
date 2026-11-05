@@ -60,9 +60,9 @@ function event(
 }
 
 function evidence(recordEventId: number, sourceFile: string, page: number | null = null) {
-  db.insert(schema.recordEvidence)
+  return db.insert(schema.recordEvidence)
     .values({ recordEventId, sourceFile, attachment: '附件2', listNo: 19, page })
-    .run()
+    .returning({ id: schema.recordEvidence.id }).get().id
 }
 
 const reassessed = enterprise('宁波重授科技有限公司', '91330200555001234A')
@@ -155,11 +155,11 @@ event(nurtureRecord, { type: 'nurture', year: 2024, seq: 1 })
 const legacyDocx = enterprise('宁波旧版 Word 页码企业', null)
 const legacyDocxRecord = record(legacyDocx)
 const legacyDocxEvent = event(legacyDocxRecord, { type: 'award', year: 2020, seq: 1 })
-evidence(legacyDocxEvent, 'jxj/announcement/legacy.docx', 12)
+const legacyDocxEvidence = evidence(legacyDocxEvent, 'jxj/announcement/legacy.docx', 12)
 const legacyXlsx = enterprise('宁波旧版 Excel 页码企业', null)
 const legacyXlsxRecord = record(legacyXlsx)
 const legacyXlsxEvent = event(legacyXlsxRecord, { type: 'award', year: 2020, seq: 1 })
-evidence(legacyXlsxEvent, 'jxj/announcement/legacy.xlsx', 9)
+const legacyXlsxEvidence = evidence(legacyXlsxEvent, 'jxj/announcement/legacy.xlsx', 9)
 
 let routeQuery: Record<string, unknown> = {}
 let routeId: unknown = null
@@ -533,12 +533,12 @@ describe('REST / MCP 共用记录查询与企业详情读模型', () => {
       records: { events: { evidence: { sourceFile: string; page: number | null }[] }[] }[]
     }
     expect(detail.records.flatMap((item) => item.events.flatMap((entry) => entry.evidence))).toEqual([
-      { sourceFile: 'jxj/announcement/legacy.docx', attachment: '附件2', listNo: 19, page: null },
+      { id: legacyDocxEvidence, sourceFile: 'jxj/announcement/legacy.docx', attachment: '附件2', listNo: 19, page: null },
     ])
     routeId = String(legacyXlsx)
     const xlsxDetail = enterpriseDetailHandler({}) as typeof detail
     expect(xlsxDetail.records.flatMap((item) => item.events.flatMap((entry) => entry.evidence))).toEqual([
-      { sourceFile: 'jxj/announcement/legacy.xlsx', attachment: '附件2', listNo: 19, page: null },
+      { id: legacyXlsxEvidence, sourceFile: 'jxj/announcement/legacy.xlsx', attachment: '附件2', listNo: 19, page: null },
     ])
   })
 

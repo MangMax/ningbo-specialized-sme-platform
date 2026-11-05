@@ -75,6 +75,7 @@ it('explicit initializer upgrades an old database, survives reopen and remains i
   const dbPath = path(), folder = join(dbPath, '..', 'old-migrations')
   mkdirSync(join(folder, 'meta'), { recursive: true })
   const journal = JSON.parse(readFileSync('db/migrations/meta/_journal.json', 'utf8'))
+  const expectedMigrationCount = journal.entries.length
   journal.entries = journal.entries.slice(0, -1)
   writeFileSync(join(folder, 'meta/_journal.json'), JSON.stringify(journal))
   for (const entry of journal.entries) copyFileSync(`db/migrations/${entry.tag}.sql`, join(folder, `${entry.tag}.sql`))
@@ -90,7 +91,7 @@ it('explicit initializer upgrades an old database, survives reopen and remains i
     expect(restarted.$client.prepare('SELECT name FROM enterprise').all()).toEqual([{ name: '保留旧库' }])
     expect(restarted.$client.prepare('SELECT count(*) AS n FROM title').get()).toEqual({ n: 3 })
     expect(restarted.$client.prepare('SELECT * FROM __drizzle_migrations').all()).toEqual(before)
-    expect(before).toHaveLength(38)
+    expect(before).toHaveLength(expectedMigrationCount)
   } finally { restarted.$client.close() }
 })
 

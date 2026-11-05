@@ -49,6 +49,7 @@ import { parseRenderPagesParams } from '../server/utils/jobs/render-pages'
 import { shouldHideOpenApiPath } from '../server/utils/openapi-guard'
 import { registerJobSpecs } from '../server/utils/job-specs'
 import { minimalPdf } from './helpers/minimal-pdf'
+import { parseUploadDeclaration, registerStoredFile } from '../server/utils/stored-files-upload'
 
 /**
  * 票 19 —— 面向代理的 HTTP 能力面(异步任务)+ Nitro 内建 OpenAPI。
@@ -937,6 +938,8 @@ describe('render-pages 的 run(真 pdfium + sharp)', () => {
     await writeFile(join(root, rel), minimalPdf({ pages: 3 }))
     // 一份不是 PDF 的「PDF」:pdfium 打不开 → 这一项失败,但不该拖垮整批。
     await writeFile(join(root, badRel), Buffer.from('这不是 PDF'))
+    await registerStoredFile(db, root, parseUploadDeclaration({ relPath: rel }))
+    await registerStoredFile(db, root, parseUploadDeclaration({ relPath: badRel }))
 
     const parsed = renderPagesSpec.parse({ files: [rel, badRel], dpi: 100 })
     expect(parsed.ok).toBe(true)
@@ -1030,6 +1033,7 @@ describe('render-pages 的 run(真 pdfium + sharp)', () => {
     const rel = 'jxj/announcement/2024/1/idem.pdf'
     await mkdir(join(root, 'jxj/announcement/2024/1'), { recursive: true })
     await writeFile(join(root, rel), minimalPdf({ pages: 2 }))
+    await registerStoredFile(db, root, parseUploadDeclaration({ relPath: rel }))
 
     const parsed = renderPagesSpec.parse({ files: [rel], dpi: 100 })
     if (!parsed.ok) throw new Error('参数本应通过')
