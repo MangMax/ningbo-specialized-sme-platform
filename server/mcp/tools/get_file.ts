@@ -1,3 +1,4 @@
+import { verifyFileRead } from '../../utils/file-read-identity'
 import { defineMcpTool } from '@nuxtjs/mcp-toolkit/server'
 import { fileRefShape, openFileStore, requireFileRef } from '../../utils/mcp-files'
 
@@ -19,11 +20,17 @@ export default defineMcpTool({
   ].join('\n'),
   inputSchema: fileRefShape,
   handler: async (input) => {
-    const { db } = await openFileStore()
+    const { db, root } = await openFileStore()
     // 读 tool:已移出库的文件也认(见上)。
     const row = requireFileRef(db, input, { allowRemoved: true })
     // 摊平成对象字面量再返回:tool handler 的返回类型是 `Record<string, unknown>`,
     // 而 `StoredFileRow` 是 interface(没有隐式索引签名),直接返回过不了类型检查。
-    return { ...row }
+    let contentIdentity
+    try { contentIdentity = await verifyFileRead(db, root, row.relPath) } catch (error) {
+      const failure = error as { statusCode?: number; data?: unknown }
+      if (failure.statusCode !== 404 && failure.statusCode !== 409) throw error
+      contentIdentity = { status: failure.statusCode === 409 ? 'file_content_conflict' : 'missing', historical: 'unknown', conflict: failure.data ?? null }
+    }
+    return { ...row, contentIdentity }
   },
 })

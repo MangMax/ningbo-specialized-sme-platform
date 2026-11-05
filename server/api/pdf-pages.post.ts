@@ -1,3 +1,4 @@
+import { verifyFileRead } from '../utils/file-read-identity'
 import { requestLogContext } from '../../lib/logging'
 import { useDb } from '@db'
 import { findFileIdByRelPath } from '../utils/mcp-files'
@@ -45,6 +46,7 @@ defineRouteMeta({
       400: { description: '缺 `file` 字段 / 分辨率越界。' },
       403: { description: '路径越界。' },
       404: { description: '文件不存在。' },
+      409: { description: 'file_content_conflict: 不以替换后的源字节渲染旧文件身份。' },
       415: { description: '不是 PDF。' },
       422: { description: '渲染失败(加密 / 损坏),消息带原因。' },
     },
@@ -86,11 +88,15 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 404, message: `文件不存在:${file}` })
   }
 
+  const contentIdentity = await verifyFileRead(useDb(), root, file)
   const logContext = requestLogContext(event)
   try { const id = findFileIdByRelPath(useDb(), file); if (id !== null) logContext.fileId = id } catch { /* Optional log identity cannot stop rendering. */ }
   try {
-    return await renderPdfPages(root, file, { dpi, force: body?.force === true, logContext })
+    const outcome = await renderPdfPages(root, file, { dpi, force: body?.force === true, logContext })
+    await verifyFileRead(useDb(), root, file)
+    return { ...outcome, contentIdentity }
   } catch (error) {
+    if ((error as { statusCode?: number }).statusCode === 409) throw error
     // 渲染失败(加密 / 损坏 / 裁切异常)不吞:400 带上原因,让页面能显示给人看。
     throw createError({ statusCode: 422, message: `渲染失败:${(error as Error).message}` })
   }
