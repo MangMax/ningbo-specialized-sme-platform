@@ -157,3 +157,9 @@ investigation uses these app APIs/MCP and never needs a Cookie read/reveal.
 HTML 原文另有保守准入边界：仅接受一个 `type="application/json"` 数据脚本，或仅将 JSON 传入空 `function(data){}` 的既有包装；数据区按完整 JSON 检查，不只检查网格。数据脚本之外仅允许有限惰性标签（html/head/title/body/div/span/p/br/table/thead/tbody/tr/th/td）和 id/class、表格网格名、数字分页属性。额外或非空可执行脚本、表单控件、未知标签/属性以及非数据区的实体、百分号、反斜线编码均视为无法核实，整页以 sensitive_response 拒收；不执行上游 JS、不修改原页，也不退回旧投影冒充保真。失败页保持 unfinished，先前已接受的页仍原样保留。table typed 行直接从表头/单元格安全构造，自有原型同名列完整保留，旧字符串投影的行为不变。
 
 认定归档详见[封套转存](platform-recognized-evidence.md#原json封套扩展与后续接缝326327)。#327 由统一 importer 按 rawData.version=1 选择真实原行进入 relation.rawFields/业务内容版本；旧格式保持字符串，不回推历史类型或重算旧hash。capabilities.rawData.archiveRelationHash=rawData_v1_or_explicit_legacy_rows。#298 仍须父组合验收，不表示生产迁移完成。
+
+## #480 差异快照任务
+
+每个新的 clientRequestId 先备份并冻结公布名单全部企业，然后逐企业新查 queryList、businessList、queryBusList。历史任务或外部查询归档仅属历史证据，不能填充新任务完成状态或断点。相同 clientRequestId 返回原任务；retry 只续用同一 snapshot job 的成功页，失败尝试和原始位置继续保留。collectionPolicy 为 per_enterprise_fresh_same_job_resume。
+
+未知总数遵循 provider 有效空页结束协议，允许此前存在短尾页。重试从所有保留的成功页恢复可靠声明总数；合并后的连续页覆盖必须满足已知总数和最大页约束，矛盾或缺口保持未完成、覆盖行数 null。
