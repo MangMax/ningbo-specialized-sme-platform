@@ -410,3 +410,114 @@ it.each([{ case: 'escaped-below', repeats: 48, available: true }, { case: 'escap
     expect(current.rows[0].group).toBe('eligible'); expect(current.total).toBe(1)
   },
 )
+
+it('L303 detail and ledger preserve each published name and original coordinates after filtering', async () => {
+  const { getEnterpriseDetail, allRecords } = await import('../lib/query')
+  const f = await paired()
+  const detail = getEnterpriseDetail(f.db, 1)!
+  expect(detail.name).toBe('现用名')
+  expect(detail.publishedPresentation).toEqual({ availability: 'available', error: null, facts: [minimal(1,1,'2021旧名'),minimal(2,2,'2024新名')] })
+  expect(detail.records[0]!.events.map(e => e.evidence)).toEqual([
+    [{ id: 1, sourceFile: '2021公布.pdf', attachment: null, listNo: 1, page: 1 }],
+    [{ id: 2, sourceFile: '2024公布.pdf', attachment: null, listNo: 1, page: 1 }],
+  ])
+  expect(allRecords(f.db, { eventType: ['award'] })).toEqual([{
+    enterpriseId: 1, name: '现用名', uscc, district: null, titleCode: 'specialized_sme', sources: ['jxj'],
+    events: '认定 2021-1; 复核 2021-1',
+    evidence: '2021公布.pdf / 序号1 / 第1页 / 公布名称："2021旧名"; 2024公布.pdf / 序号1 / 第1页 / 公布名称："2024新名"',
+  }])
+})
+
+it('L303 uncaptured and captured unknown names stay distinct from unavailable and explicit rollback', async () => {
+  const { getEnterpriseDetail, allRecords } = await import('../lib/query')
+  const f = await fixture()
+  await f.commit(f.announcement([f.record('specialized_sme', [{ eventType: 'award', year: 2024, batchSeq: 1, evidence: [
+    f.evidence(f.published(null)), { sourceFile: '2024公布.pdf', page: 1, listNo: 9 },
+  ] }])]), 'legacy-mixed')
+  expect(getEnterpriseDetail(f.db, 1)!.publishedPresentation).toEqual({ availability: 'available', error: null, facts: [
+    minimal(1,1,null), { evidenceId: 2, eventId: 1, revision: null, availability: 'unknown_legacy', nameRaw: null, sourceBindingKnown: null },
+  ] })
+  expect(allRecords(f.db, {})[0]!.evidence).toBe('2021公布.pdf / 序号1 / 第1页 / 已捕获出处，名称原值未知; 2024公布.pdf / 序号9 / 第1页 / 未逐出处核实')
+  // Corrupt historical storage is intentionally outside the valid command contract.
+  f.sqlite.prepare('UPDATE official_evidence_row_revision SET name_raw=? WHERE evidence_id=1').run('x'.repeat(4001))
+  expect(getEnterpriseDetail(f.db, 1)!.publishedPresentation).toEqual({ availability: 'unavailable', error: 'field_limit', facts: [] })
+  expect(allRecords(f.db, {})[0]!.evidence).toBe('2021公布.pdf / 序号1 / 第1页 / 公布名称暂不可用; 2024公布.pdf / 序号9 / 第1页 / 公布名称暂不可用')
+  vi.stubEnv('LEGACY_LEDGER_PRESENTATION_SOURCE', 'legacy')
+  try {
+    expect(getEnterpriseDetail(f.db, 1)!.publishedPresentation).toBeUndefined()
+    expect(allRecords(f.db, {})).toEqual([{
+      enterpriseId: 1, name: '现用名', uscc, district: null, titleCode: 'specialized_sme', sources: ['jxj'],
+      events: '认定 2024-1', evidence: '2021公布.pdf / 序号1 / 第1页; 2024公布.pdf / 序号9 / 第1页',
+    }])
+  } finally { vi.unstubAllEnvs() }
+})
+
+it('L303 actual legacy HTTP detail and sync XLSX retain a literal matrix with per-source names', async () => {
+  const f = await paired()
+  routeContext.db = f.db
+  const { createServer } = await import('node:http')
+  const h3 = await import('h3')
+  for (const [name, value] of Object.entries({ defineEventHandler: h3.defineEventHandler, getQuery: h3.getQuery, setHeader: h3.setHeader, createError: h3.createError, getRouterParam: h3.getRouterParam })) vi.stubGlobal(name, value)
+  const app = h3.createApp(), router = h3.createRouter()
+  router.get('/api/enterprises/:id', (await import('../server/api/enterprises/[id].get')).default)
+  router.get('/api/export', (await import('../server/api/export.get')).default)
+  app.use(router)
+  const server = createServer(h3.toNodeListener(app))
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
+  closes.push(() => new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())))
+  const baseUrl = `http://127.0.0.1:${(server.address() as { port: number }).port}`
+  const response = await fetch(baseUrl + '/api/enterprises/1')
+  expect(response.status).toBe(200)
+  const detail = await response.json()
+  expect(detail.publishedPresentation.facts).toEqual([minimal(1,1,'2021旧名'),minimal(2,2,'2024新名')])
+  expect(detail.records.map((r: any) => [r.id, r.events.map((e: any) => [e.id,e.recordId,e.evidence.map((v: any) => [v.id,v.sourceFile,v.page])])])).toEqual([[1,[[1,1,[[1,'2021公布.pdf',1]]],[2,1,[[2,'2024公布.pdf',1]]]]]])
+  const { readExportWorkbook } = await import('./helpers/read-export-workbook')
+  for (const legacy of [false, true]) {
+    if (legacy) vi.stubEnv('LEGACY_LEDGER_PRESENTATION_SOURCE', 'legacy')
+    try {
+      const download = await fetch(baseUrl + '/api/export?eventType=award')
+      expect(download.status).toBe(200)
+      expect(download.headers.get('content-type')).toContain('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+      const workbook = await readExportWorkbook(new Uint8Array(await download.arrayBuffer()))
+      const sheet = workbook.worksheets[0]!
+      expect(sheet.name).toBe('台账')
+      expect(sheet.rowCount).toBe(3)
+      expect(sheet.getRow(2).values).toEqual([, '企业名称','统一社会信用代码','区县','称号','来源','事件','出处'])
+      expect(sheet.getRow(3).values).toEqual([, '现用名',uscc,'','专精特新中小企业','经信局','认定 2021-1; 复核 2021-1', legacy
+        ? '2021公布.pdf / 序号1 / 第1页; 2024公布.pdf / 序号1 / 第1页'
+        : '2021公布.pdf / 序号1 / 第1页 / 公布名称："2021旧名"; 2024公布.pdf / 序号1 / 第1页 / 公布名称："2024新名"'])
+    } finally { vi.unstubAllEnvs() }
+  }
+})
+
+it('L303 ledger batches selected groups and isolates an unavailable group without changing rows', async () => {
+  const { allRecords } = await import('../lib/query')
+  const f = await paired()
+  await f.commit(f.announcement([f.record('specialized_sme', [{ eventType: 'award', year: 2024, batchSeq: 1, evidence: [
+    f.evidence(f.published('第二公布名', 3, 2, { usccRaw: null })),
+  ] }], '第二企业', null)]), 'ledger-second')
+  const read = vi.spyOn(official, 'listEventsOfficialEvidencePages')
+  expect(allRecords(f.db, {}).map(row => [row.name,row.evidence])).toEqual([
+    ['现用名','2021公布.pdf / 序号1 / 第1页 / 公布名称："2021旧名"; 2024公布.pdf / 序号1 / 第1页 / 公布名称："2024新名"'],
+    ['第二企业','独立佐证.pdf / 序号2 / 第1页 / 公布名称："第二公布名"'],
+  ])
+  expect(read).toHaveBeenCalledTimes(1)
+  f.sqlite.prepare('UPDATE official_evidence_row_revision SET name_raw=? WHERE evidence_id=1').run('x'.repeat(4001))
+  expect(allRecords(f.db, {}).map(row => [row.name,row.evidence])).toEqual([
+    ['现用名','2021公布.pdf / 序号1 / 第1页 / 公布名称暂不可用; 2024公布.pdf / 序号1 / 第1页 / 公布名称暂不可用'],
+    ['第二企业','独立佐证.pdf / 序号2 / 第1页 / 公布名称："第二公布名"'],
+  ])
+})
+
+it('L303 large display batches retain names in independently bounded groups', async () => {
+  const { allRecords } = await import('../lib/query')
+  const f = await fixture(), names = ['A'.repeat(1500), 'B'.repeat(1500)]
+  await f.commit(f.announcement(names.map((name, index) => f.record('specialized_sme', [{
+    eventType: 'award', year: 2024, batchSeq: 1,
+    evidence: Array.from({ length: 10 }, (_, n) => f.evidence(f.published(name, index + 1, n + 1, { usccRaw: null }))),
+  }], index === 0 ? '甲企业' : '乙企业', null))), 'ledger-batch-budget')
+  const rows = allRecords(f.db, {})
+  expect(rows.map(row => row.name)).toEqual(['乙企业','甲企业'])
+  expect(rows[0]!.evidence.split('; ').map(text => text.slice(text.indexOf(' / 公布名称')))).toEqual(Array(10).fill(' / 公布名称："' + names[1] + '"'))
+  expect(rows[1]!.evidence.split('; ').map(text => text.slice(text.indexOf(' / 公布名称')))).toEqual(Array(10).fill(' / 公布名称："' + names[0] + '"'))
+})
