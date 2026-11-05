@@ -27,7 +27,6 @@ beforeAll(async () => {
 afterAll(async () => { await service?.stop(); db.$client.close(); rmSync(dir, { recursive: true, force: true }) })
 const rest = (url: string, init?: RequestInit) => fetch(service.baseUrl + url, init)
 async function rpc(name: string, args: unknown) {
-  if (name === 'get_ocr_result') args = { ...(args as object), includeVersion: true }
   const res = await rest('/mcp', { method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream', 'mcp-protocol-version': '2025-06-18' }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } }) })
   const raw = await res.text()
   const body = JSON.parse(raw.startsWith('event:') ? raw.split('\n').find(line => line.startsWith('data: '))!.slice(6) : raw)
@@ -41,7 +40,7 @@ it('historical OCR stays readable and unknown through REST and MCP across replac
   const before = db.select().from(schema.ocrResult).all()
   for (const [bytes, status] of [['abc', 'verified'], ['xyz', 'file_content_conflict'], ['abc', 'verified']]) {
     writeFileSync(join(root, 'history.pdf'), bytes!)
-    for (const value of [await (await rest(`/api/files/${file.id}/ocr-pages/1`)).json(), (await rpc('get_ocr_result', { fileId: file.id })).value]) {
+    for (const value of [await (await rest(`/api/files/${file.id}/ocr-pages/1`)).json(), (await rpc('get_ocr_result', { fileId: file.id, includeVersion: true })).value]) {
       expect(value.markdown).toContain('old paid text')
       expect(value.contentIdentity).toMatchObject({ status, historical: 'unknown', registered: { fileId: file.id, bytes: 3 } })
       expect(value.results[0].historicalBinding).toEqual({ status: 'unknown' })
@@ -69,7 +68,7 @@ it.each(['unreadable', 'missing'] as const)('historical OCR and markdown remain 
     const expected = { status: kind === 'unreadable' ? 'unavailable' : 'missing', historical: 'unknown', registered: { fileId: file.id, bytes: 3, sha256: 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad' } }
     const response = await rest(`/api/files/${file.id}/ocr-pages/1`)
     expect(response.status).toBe(200)
-    for (const value of [await response.json(), (await rpc('get_ocr_result', { fileId: file.id })).value]) {
+    for (const value of [await response.json(), (await rpc('get_ocr_result', { fileId: file.id, includeVersion: true })).value]) {
       expect(value.markdown).toContain('retained unavailable-source text')
       expect(value.contentIdentity).toMatchObject(expected)
       expect(value.results[0].historicalBinding).toEqual({ status: 'unknown' })
@@ -150,11 +149,11 @@ it('known capture and parse inputRef remain distinct from legacy provenance and 
     expect(value.rows[0].contentIdentity).toMatchObject({ status: 'unknown', historical: 'unknown', registered: { fileId: file.id } })
   }
   writeFileSync(join(root, 'captured.pdf'), 'xyz')
-  const changed = (await rpc('get_ocr_result', { fileId: file.id })).value
+  const changed = (await rpc('get_ocr_result', { fileId: file.id, includeVersion: true })).value
   expect(changed.contentIdentity.status).toBe('file_content_conflict')
   expect(changed.results[0].historicalBinding).toEqual({ status: 'captured', input })
   writeOcrResult(db, { fileId: file.id, channel: 'upload', pages: [{ page: 1, markdown: 'human revision' }] })
-  const edited = (await rpc('get_ocr_result', { fileId: file.id })).value
+  const edited = (await rpc('get_ocr_result', { fileId: file.id, includeVersion: true })).value
   expect(edited.markdown).toContain('human revision')
   expect(edited.results[0].historicalBinding).toEqual({ status: 'unknown' })
   const raw = db.select().from(schema.ocrResult).all().find(row => row.fileId === file.id)!.raw as any

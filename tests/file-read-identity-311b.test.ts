@@ -77,6 +77,8 @@ it('raw page URLs reject foreign lineage and retain unknown legacy pages without
   vi.stubGlobal('sendStream', async (_: unknown, stream: import('node:fs').ReadStream) => { let text = ''; for await (const chunk of stream) text += chunk; return text })
   const route = (await import('../server/api/files/[id].get')).default
   await expect(route({} as never)).rejects.toMatchObject({ statusCode: 409, data: { code: 'file_content_conflict', fileId: row.id, reason: 'page_source_mismatch' } })
+  writeFileSync(join(root, '.notice.pdf.pages/.pages.json'), JSON.stringify({ ...manifest, file: 'another.pdf', sourceSha256: ABC }))
+  await expect(route({} as never)).rejects.toMatchObject({ statusCode: 409, data: { code: 'file_content_conflict', fileId: row.id, reason: 'page_source_mismatch' } })
   rmSync(join(root, '.notice.pdf.pages/.pages.json'))
   expect(await route({} as never)).toBe('png')
   expect(headers.get('x-file-content-status')).toBe('unknown')

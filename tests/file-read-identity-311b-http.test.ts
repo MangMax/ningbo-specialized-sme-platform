@@ -1,6 +1,6 @@
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, join, resolve } from 'node:path'
+import { basename, dirname, join, resolve } from 'node:path'
 import { afterAll, beforeAll, expect, it } from 'vitest'
 import { minimalPdf } from './helpers/minimal-pdf'
 import { useDb } from '../db/client'
@@ -87,6 +87,19 @@ it.each(['render.pdf', 'render.v1.pdf', 'nested.v1/render.final.pdf'])('public r
   expect(page.status).toBe(200)
   const png = Buffer.from(await page.arrayBuffer())
   expect(png.subarray(0, 8).toString('hex')).toBe('89504e470d0a1a0a')
+  const manifestPath = join(root, dirname(fileName), `.${basename(fileName)}.pages`, '.pages.json')
+  const originalManifest = readFileSync(manifestPath, 'utf8')
+  writeFileSync(manifestPath, JSON.stringify({ ...JSON.parse(originalManifest), file: 'foreign.pdf' }))
+  const foreign = await rest(pageUrl)
+  expect(foreign.status).toBe(409)
+  expect(await foreign.json()).toMatchObject({ data: { code: 'file_content_conflict', reason: 'page_source_mismatch' } })
+  expect(readFileSync(join(root, fileName))).toEqual(original)
+  rmSync(manifestPath)
+  const legacyPage = await rest(pageUrl)
+  expect(legacyPage.status).toBe(200)
+  expect(legacyPage.headers.get('x-file-content-status')).toBe('unknown')
+  expect(Buffer.from(await legacyPage.arrayBuffer())).toEqual(png)
+  writeFileSync(manifestPath, originalManifest)
   const listed = await rpc('list_page_images', { fileId: file.id, dpi: 72 })
   expect(listed.value).toMatchObject({ upToDate: true, file: { id: file.id, contentIdentity: { status: 'verified', historical: 'unknown' } } })
   writeFileSync(join(root, fileName), replacement)

@@ -51,10 +51,16 @@ export async function verifyPageRead(db: Db, root: string, source: string, pageP
   const manifestAbs = resolveInsideRoot(root, manifestRelPath(source))
   let manifest: { version?: number; file?: string; sourceSha256?: string; sourceBytes?: number; pages?: { relPath: string; bytes: number }[] } | null = null
   try { manifest = JSON.parse(await readFile(manifestAbs!, 'utf8')) } catch { /* Unknown lineage remains unknown. */ }
-  if (!manifest || manifest.version !== 2 || manifest.file !== source || !Array.isArray(manifest.pages)) {
+  if (!manifest || manifest.version !== 2) {
     return { ...identity, status: 'unknown' as const }
   }
   const expected = identity.registered
+  if (manifest.file !== source) {
+    throw createError({ statusCode: 409, message: 'file_content_conflict', data: { code: 'file_content_conflict', fileId: expected?.fileId ?? null, reason: 'page_source_mismatch' } })
+  }
+  if (!Array.isArray(manifest.pages)) {
+    throw createError({ statusCode: 409, message: 'file_content_unknown', data: { code: 'file_content_unknown', historical: 'unknown' } })
+  }
   // Unregistered compatibility sources still have to agree with their page manifest.
   const abs = resolveInsideRoot(root, source)!
   const sha256 = expected && identity.status === 'verified' ? expected.sha256 : await sha256Of(abs)
