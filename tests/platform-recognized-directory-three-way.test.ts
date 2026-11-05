@@ -1,3 +1,4 @@
+import { initializeDb } from '../db/client'
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { createHash } from 'node:crypto'
@@ -33,7 +34,7 @@ function setup() {
   const dbPath = join(dir, 'three-way.sqlite')
   // The public routes resolve their handle from the same environment variable.
   vi.stubEnv('NUXT_DB_PATH', dbPath)
-  const db = useDb({ dbPath })
+  const db = initializeDb({ create: true, dbPath })
   return { dir, dbPath, db, matrix: matrix408(db.$client) }
 }
 

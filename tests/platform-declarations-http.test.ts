@@ -1,3 +1,4 @@
+import { initializeDb } from '../db/client'
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { mkdtempSync, rmSync } from 'node:fs'
@@ -12,7 +13,7 @@ import type { RosterImportPlatformQuery, RosterImportRequest } from '../lib/rost
 const dir = mkdtempSync(join(tmpdir(), 'declarations-http-'))
 const dbPath = join(dir, 'declarations.sqlite')
 vi.stubEnv('NUXT_DB_PATH', dbPath)
-const db = useDb({ dbPath })
+const db = initializeDb({ create: true, dbPath })
 const token = 'synthetic-declarations-token'
 let server: ReturnType<typeof createServer>, base: string
 

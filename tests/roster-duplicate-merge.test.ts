@@ -1,3 +1,4 @@
+import { initializeDb } from '../db/client'
 /**
  * RL-14 端到端：**重名候选显式化 + 有证据的归并**。
  *
@@ -37,7 +38,7 @@ import {
 import { startEvidenceServer, type EvidenceServer } from './helpers/platform-evidence-server'
 
 const dir = mkdtempSync(join(tmpdir(), 'spztx-duplicate-merge-'))
-const db = useDb({ dbPath: join(dir, 'dup-merge.db') })
+const db = initializeDb({ create: true, dbPath: join(dir, 'dup-merge.db') })
 
 const TOKEN = 'rl14-token-value'
 const QUERIED_AT = '2026-10-15T17:11:21.514Z'

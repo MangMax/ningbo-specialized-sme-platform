@@ -214,10 +214,10 @@ async function runLocal() {
     process.stderr.write(`✗ 数据库不存在:${dbPath}(用 --db 指定)\n`)
     process.exit(2)
   }
-  const { useDb } = await import('../db/client.ts')
+  const { initializeDb } = await import('../db/client.ts')
   const { runPlatformReconcile } = await import('../server/utils/platform-reconcile.ts')
   const { resolveCookie } = await import('../lib/platform/client.ts')
-  const db = useDb({ dbPath })
+  const db = initializeDb({ dbPath })
   return runPlatformReconcile({
     db,
     cookie: () => resolveCookie(undefined),

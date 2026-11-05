@@ -1,6 +1,6 @@
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import { eq } from 'drizzle-orm'
-import { useDb } from '../../db/client'
+import { useDb } from '../../db'
 import { serviceCredential } from '../../db/schema'
 
 export type CredentialKey = 'ocrToken' | 'miitCookie'

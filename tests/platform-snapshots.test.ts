@@ -1,3 +1,4 @@
+import { initializeDb } from '../db/client'
 /**
  * RL-05 —— 快照读侧(`GET /api/platform/snapshots`,契约 §7.7)与**版本比较**的单元层。
  *
@@ -110,7 +111,7 @@ describe('diffPlatformSnapshots:新增 / 消失 / 字段变化,都能追到源�
 const dbPath = join(dir, 'snapshots.db')
 process.env.NUXT_DB_PATH = dbPath
 const { schema, useDb } = await import('../db')
-const db = useDb({ dbPath })
+const db = initializeDb({ create: true, dbPath })
 
 function seedBatch(over: {
   titleCode: string

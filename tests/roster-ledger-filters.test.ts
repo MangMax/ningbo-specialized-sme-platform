@@ -1,3 +1,4 @@
+import { initializeDb } from '../db/client'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -32,7 +33,7 @@ import {
  */
 
 const dir = mkdtempSync(join(tmpdir(), 'spztx-ledger-filters-'))
-const db = useDb({ dbPath: join(dir, 'ledger.db') })
+const db = initializeDb({ create: true, dbPath: join(dir, 'ledger.db') })
 
 interface EventSpec {
   eventType: 'award' | 'review' | 'maintain' | 'nurture'

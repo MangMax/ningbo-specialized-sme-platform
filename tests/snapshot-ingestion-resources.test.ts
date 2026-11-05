@@ -1,3 +1,4 @@
+import { initializeDb } from '../db/client'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -21,7 +22,7 @@ afterEach(() => {
 function database() {
   const dir = mkdtempSync(join(tmpdir(), 'snapshot-ingestion-'))
   dirs.push(dir)
-  const db = useDb({ dbPath: join(dir, 'roster.db') })
+  const db = initializeDb({ create: true, dbPath: join(dir, 'roster.db') })
   clients.push(db.$client)
   // SQLite driver telemetry is supplemental resource evidence; behavior is observed via HTTP.
   const inserts: { bytes: number; rows: number }[] = []

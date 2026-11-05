@@ -1,3 +1,4 @@
+import { initializeDb } from '../db/client'
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { mkdtempSync, rmSync } from 'node:fs'
@@ -12,7 +13,7 @@ import { ensurePlatformObservation } from '../server/utils/platform-business-rec
 const dir = mkdtempSync(join(tmpdir(), 'recognized-directory-http-'))
 const dbPath = join(dir, 'recognized.sqlite')
 vi.stubEnv('NUXT_DB_PATH', dbPath)
-const db = useDb({ dbPath })
+const db = initializeDb({ create: true, dbPath })
 let server: ReturnType<typeof createServer>, base: string
 
 interface SeedOptions {

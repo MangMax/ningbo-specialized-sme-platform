@@ -45,6 +45,8 @@ beforeAll(async () => {
   await mkdir(incomingDir, { recursive: true })
   process.env.NUXT_DB_PATH = join(dir, 'test.db')
   ;({ useDb } = await import('../db'))
+  const { initializeDb } = await import('../db/client')
+  initializeDb({ create: true })
   schema = (await import('../db')).schema
 })
 

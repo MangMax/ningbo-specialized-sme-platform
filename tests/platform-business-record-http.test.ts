@@ -1,3 +1,4 @@
+import { initializeDb } from '../db/client'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -24,7 +25,7 @@ function counts(db: Db) {
 }
 async function fixture(run: (db: Db, post: (action: string, body: unknown) => Promise<any>) => Promise<void>) {
   const dir = mkdtempSync(join(tmpdir(), 'identity244-')); dirs.push(dir)
-  const db = useDb({ dbPath: join(dir, 'roster.db') })
+  const db = initializeDb({ create: true, dbPath: join(dir, 'roster.db') })
   const server = await startRosterApi({ db, apiToken: 'synthetic-test-token' })
   try {
     await run(db, async (action, body) => {

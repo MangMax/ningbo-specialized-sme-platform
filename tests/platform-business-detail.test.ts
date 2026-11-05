@@ -1,3 +1,4 @@
+import { initializeDb } from '../db/client'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -12,7 +13,7 @@ const cleanup: Array<() => void | Promise<void>> = []
 afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close(); vi.unstubAllEnvs(); vi.unstubAllGlobals(); vi.useRealTimers() })
 function fixture() {
   const dir = mkdtempSync(join(tmpdir(), 'business-detail246-'))
-  const db = useDb({ dbPath: join(dir, 'roster.db') })
+  const db = initializeDb({ create: true, dbPath: join(dir, 'roster.db') })
   cleanup.push(() => { db.$client.close(); rmSync(dir, { recursive: true, force: true }) })
   const enterprise = db.insert(schema.enterprise).values({ name: '合成详情企业', nameNorm: '合成详情企业', usccNorm: 'SYN246' }).returning().get()
   let counter = 0

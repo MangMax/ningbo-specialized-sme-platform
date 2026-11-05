@@ -47,7 +47,7 @@ beforeAll(async () => {
   process.env.NUXT_FILES_DIR = filesDir
   await mkdir(filesDir, { recursive: true })
   const mod = await import('../db')
-  db = mod.useDb()
+  db = mod.initializeDb({ create: true })
   schema = mod.schema
 })
 

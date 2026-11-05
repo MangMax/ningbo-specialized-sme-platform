@@ -1,3 +1,4 @@
+import { initializeDb } from '../db/client'
 import { decodeJsonRead } from './helpers/json-read-adapter'
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -21,7 +22,7 @@ import { FIRST_RECOGNITION_STATUS_VALUES } from '../lib/roster/first-recognition
  */
 
 const dir = mkdtempSync(join(tmpdir(), 'spztx-recognitions-api-'))
-let db = useDb({ dbPath: join(dir, 'api.db') })
+let db = initializeDb({ create: true, dbPath: join(dir, 'api.db') })
 
 const FILE_2022 = 'jxj/announcement/2022/甬经信中小〔2022〕145号关于公布宁波市“专精特新”中小企业名单的通知.pdf'
 
@@ -317,7 +318,7 @@ describe('总表与导出继承首次认定筛选(筛选状态能进 URL、也�
   it('仅有 decidedYear 的 award 可在首次年份选项中选择,列表和导出按同一 firstYear 语义返回', async () => {
     const previousDb = db
     try {
-      db = useDb({ dbPath: join(dir, 'decided-year-only.db') })
+      db = initializeDb({ create: true, dbPath: join(dir, 'decided-year-only.db') })
       const decidedYearOnlyId = seed('宁波仅结论年份接口测试有限公司', '91330211AAAAAAA103X', null, 'specialized_sme', [
         {
           eventType: 'award',
@@ -361,7 +362,7 @@ describe('总表与导出继承首次认定筛选(筛选状态能进 URL、也�
   it('首页统计年份不读取无关平台原文，保留结论年份口径', () => {
     const previousDb = db
     try {
-      db = useDb({ dbPath: join(dir, 'stats-scoped.db') })
+      db = initializeDb({ create: true, dbPath: join(dir, 'stats-scoped.db') })
       seed('统计范围合成企业', '91330211STATS00001X', null, 'specialized_sme', [
         { eventType: 'award', year: 2022, decidedYear: 2024 },
         { eventType: 'review', year: 2022, decidedYear: 2025 },
@@ -379,7 +380,7 @@ describe('总表与导出继承首次认定筛选(筛选状态能进 URL、也�
   it('空库返回空的首次认定、企业列表、统计桶和导出', async () => {
     const previousDb = db
     try {
-      db = useDb({ dbPath: join(dir, 'empty.db') })
+      db = initializeDb({ create: true, dbPath: join(dir, 'empty.db') })
       query = {}
 
       const recognitions = await handlerRecognitions({})

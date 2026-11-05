@@ -227,7 +227,7 @@ beforeAll(async () => {
   dbDir = mkdtempSync(join(tmpdir(), 'spztx-jobs-'))
   process.env.NUXT_DB_PATH = join(dbDir, 'test.db')
   const mod = await import('../db')
-  db = mod.useDb()
+  db = mod.initializeDb({ create: true })
   schema = mod.schema
 })
 
@@ -438,7 +438,7 @@ describe('reconcileInterruptedJobs:重启对账', () => {
     const prev = process.env.NUXT_DB_PATH
     process.env.NUXT_DB_PATH = join(other, 'other.db')
     const mod = await import('../db')
-    const fresh = mod.useDb()
+    const fresh = mod.initializeDb({ create: true })
 
     const id = newJobId(1_800_003_000_000)
     createJob(fresh, { id, kind: 'unit', params: {} })

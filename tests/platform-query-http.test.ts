@@ -1,3 +1,4 @@
+import { initializeDb } from '../db/client'
 import { createServer } from 'node:http'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -7,7 +8,7 @@ import { afterAll, beforeAll, expect, it, vi } from 'vitest'
 import { useDb, schema } from '../db'
 import { platformSummaryCache } from '../server/utils/platform-summary-cache'
 const dir = mkdtempSync(join(tmpdir(), 'platform-query-http-'))
-const db = useDb({ dbPath: join(dir, 'test.sqlite') })
+const db = initializeDb({ create: true, dbPath: join(dir, 'test.sqlite') })
 let server: ReturnType<typeof createServer>, base: string
 const id = db.insert(schema.platformQuery).values({ interface: 'recognized_list', queryKey: 'synthetic:http', queriedAt: '2026-10-19', status: 'partial', rawResponse: '完整原文🙂', collectionEvidence: { titleScope: { rdjb: ['2'] }, pages: [] } as never }).returning().get().id
 beforeAll(async () => {

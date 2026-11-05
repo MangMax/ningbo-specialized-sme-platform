@@ -1,3 +1,4 @@
+import { initializeDb } from '../db/client'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -10,7 +11,7 @@ import { spawnOwnedChild as spawn, reserveLoopbackPort, waitForHttp, stopOwnedCh
 // Legacy archive state is seeded before startup. Decisions are made only over
 // the real public HTTP/MCP routes; no live business database is used.
 const dir = mkdtempSync(join(tmpdir(), 'normalization-correspondence-http-'))
-const db = useDb({ dbPath: join(dir, 'roster.db') })
+const db = initializeDb({ create: true, dbPath: join(dir, 'roster.db') })
 const enterprise = db.insert(schema.enterprise).values({ name: '流程事实测试', nameNorm: '流程事实测试', usccNorm: '91330211000000001A' }).returning().get()
 const doc = db.insert(schema.sourceDocument).values({ source: 'jxj', title: '合成公布', path: 'synthetic/notice.pdf', issueDate: '2025-12-01' }).returning().get()
 const record = db.insert(schema.record).values({ enterpriseId: enterprise.id, source: 'jxj', titleCode: 'innovative_sme', usccRaw: enterprise.usccNorm }).returning().get()
