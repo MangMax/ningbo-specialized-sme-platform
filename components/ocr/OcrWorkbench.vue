@@ -985,7 +985,7 @@ const fileSheetBlockedReason = computed(() =>
             </Tabs>
           </div>
 
-          <p v-if="loadedPath" role="status" class="py-2 text-sm break-words">{{ contentMessage }}</p>
+          <p v-if="loadedPath && contentMessage !== detailError" role="status" class="py-2 text-sm break-words">{{ contentMessage }}</p>
           <Alert
             v-if="detailError && loadedPath"
             variant="destructive"
