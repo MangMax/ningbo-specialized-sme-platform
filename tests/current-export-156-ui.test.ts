@@ -48,7 +48,7 @@ it.each(['q', 'district'] as const)('default URL pending export keeps failure vi
   await submit().trigger('click')
   const body = fetcher.raw.mock.calls[0]![1].body
   if (filter === 'q') await wrapper.get('input[aria-label="搜索企业名称、已确认曾用名或统一社会信用代码"]').setValue('宁波')
-  else wrapper.findComponent(Select).vm.$emit('update:modelValue', '鄞州区')
+  else wrapper.findAllComponents(Select).find(select => select.find('[aria-label="按区县筛选"]').exists())!.vm.$emit('update:modelValue', '鄞州区')
   await vi.waitFor(() => expect(router.currentRoute.value.query).toEqual({ titleCode: 'little_giant', [filter]: filter === 'q' ? '宁波' : '鄞州区' }))
   reject(new Error('lost export receipt')); await flushPromises()
   expect(wrapper.get('[role="alert"]').text()).toContain('提交尚未确认')
@@ -66,7 +66,7 @@ it.each(['q', 'district'] as const)('default URL pending export opens accepted t
   expect(submit().attributes('aria-label')).toBe('导出当前称号名单：专精特新“小巨人”')
   await submit().trigger('click')
   if (filter === 'q') await wrapper.get('input[aria-label="搜索企业名称、已确认曾用名或统一社会信用代码"]').setValue('宁波')
-  else wrapper.findComponent(Select).vm.$emit('update:modelValue', '鄞州区')
+  else wrapper.findAllComponents(Select).find(select => select.find('[aria-label="按区县筛选"]').exists())!.vm.$emit('update:modelValue', '鄞州区')
   await vi.waitFor(() => expect(router.currentRoute.value.query).toEqual({ titleCode: 'little_giant', [filter]: filter === 'q' ? '宁波' : '鄞州区' }))
   resolve({ status: 202, _data: { jobId: JOB } }); await flushPromises()
   expect(router.currentRoute.value).toMatchObject({ path: '/tasks', query: { tab: 'export', titleCode: 'little_giant', page: '1', job: JOB } })

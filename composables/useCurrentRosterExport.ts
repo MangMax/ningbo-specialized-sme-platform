@@ -51,7 +51,11 @@ export function useCurrentRosterExport(readOnlyReason?: Readonly<Ref<string>>) {
         // not turn its real receipt into an ambiguous submission or discard its UUID.
       }
       return { jobId: intent.jobId }
-    } catch {
+    } catch (error) {
+      const failure = error as { statusCode?: number; status?: number; response?: { status?: number } }
+      if ([401, 403].includes(failure.statusCode ?? failure.status ?? failure.response?.status ?? 0)) {
+        return { error: '无权限提交导出。请确认当前访问权限及服务是否允许导出后重试。' }
+      }
       return { error: '提交尚未确认（没有拿到完整的 202 受理回执）。请求标识已保留，重提沿用同一标识，不会重复建任务。' }
     } finally { submitting.value = false }
   }
