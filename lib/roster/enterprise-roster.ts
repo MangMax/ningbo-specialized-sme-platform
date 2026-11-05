@@ -784,6 +784,8 @@ interface LegacyRosterDifferenceRow {
   measureCode: string | null
   measureNote: string | null
   movedIn: MovedIn | null
+  /** Explicit stored revision pins; absence preserves the legacy response shape. */
+  factReferences?: NonNullable<typeof schema.differenceReason.$inferSelect.factReferences>
   verificationStatus: string
   recordedAt: string | null
   /** 该 (企业 × 称号 × 方向) 当前是否**确实是**差异(对照 §7.3 的差异口径)。 */
@@ -957,6 +959,7 @@ function differenceUniverse(db: Db, snap: Snapshot, derived: Array<{ enterpriseI
       measureCode: explanation?.measureCode ?? null,
       measureNote: explanation?.measureNote ?? null,
       movedIn: explanation ? movedInOf(explanation) : null,
+      ...(explanation?.factReferences?.length ? { factReferences: explanation.factReferences } : {}),
       verificationStatus: explanation?.verificationStatus ?? 'pending',
       recordedAt: explanation?.recordedAt ?? null,
       inCurrentDifference: derivedKeys.has(key),

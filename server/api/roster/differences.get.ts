@@ -28,7 +28,7 @@ defineRouteMeta({
     tags: ['名录'],
     summary: '差异与解释',
     description:
-      '增量返回 queryCoverage/currentDecision/explanationValidity/assessment（docs/query-coverage-contract-108.md）；当前决定复用 #102，撤回后 current=null 且保留 versionId；旧 status 保持原义。每 (企业 × 称号 × 方向) 一条当前解释;`status` 是契约 §3.2 的六态,`reasonCode` 与 `measureCode` **成对**;`movedIn` 承载迁入的原城市/称号/年份/批次(缺项留空待核)。',
+      '显式关联主体事实时额外返回 factReferences（enterpriseId/factId/revision/kind）；按存储版本原样读回，不跟随之后更正或撤回；旧空引用不新增空字段。增量返回 queryCoverage/currentDecision/explanationValidity/assessment（docs/query-coverage-contract-108.md）；当前决定复用 #102，撤回后 current=null 且保留 versionId；旧 status 保持原义。每 (企业 × 称号 × 方向) 一条当前解释;`status` 是契约 §3.2 的六态,`reasonCode` 与 `measureCode` **成对**;`movedIn` 承载迁入的原城市/称号/年份/批次(缺项留空待核)。',
     parameters: [
       {
         name: 'q',
