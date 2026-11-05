@@ -388,7 +388,7 @@ function createCurrentCandidateEvaluationReader(db: Database.Database, receiptRu
     sql`select (select id from difference_reason where enterprise_id=${sql.placeholder('enterpriseId')}
       and title_code=${titleCode} and direction=${direction} order by recorded_at desc,id desc limit 1)`)),sql` union all `)
   const headsQuery=reader.select().from(d).where(sql`${d.id} in (${headIds})`).prepare()
-  return function readCandidate(enterpriseId: number, title: CurrentTitle, year: number, executionTime = Date.now(), keys?: { queries: IdentityKeyVariants; relations: IdentityKeyVariants }, includeFilterFacts = false, includeReferences = true, assessmentOptions?: QualificationAssessmentReadOptions, includePendingFilterFacts = false, suppliedPlatformRefs?: readonly CurrentPlatformReference[], preparedCorrespondences?: ReturnType<typeof createEnterpriseTitleCorrespondenceRefsReader>, observePublishedForCurrent?: CurrentPublishedNameObservation, observeCycles?: CurrentCycleObservation): { row: CurrentRow; group: CurrentGroup } {
+  return function readCandidate(enterpriseId: number, title: CurrentTitle, year: number, executionTime = Date.now(), keys?: { queries: IdentityKeyVariants; relations: IdentityKeyVariants }, includeFilterFacts = false, includeReferences = true, assessmentOptions?: QualificationAssessmentReadOptions, includePendingFilterFacts = false, suppliedPlatformRefs?: readonly CurrentPlatformReference[], preparedCorrespondences?: ReturnType<typeof createEnterpriseTitleCorrespondenceRefsReader>, observePublishedForCurrent?: CurrentPublishedNameObservation, observeCycles?: CurrentCycleObservation): { row: CurrentRow; group: CurrentGroup; effectiveStatus: import('./current-status').CurrentStatus } {
   const enterprise = statement('select id,name,name_norm,uscc_norm,district,city from enterprise where id=?').get(enterpriseId) as any
   const events = statement(`select e.id,e.event_type as eventType,e.year,e.decided_year as decidedYear,e.batch_seq as batchSeq,e.review_outcome as reviewOutcome,e.revision,r.name_raw as nameRaw,r.uscc_raw as usccRaw,r.source from record r join record_event e on e.record_id=r.id where r.enterprise_id=? and r.title_code=? order by e.id`).all(enterpriseId,title) as (LifecycleEvent & { batchSeq: number|null; nameRaw: string|null; usccRaw: string|null; source: string; revision: number; formalValidity?: FormalValidity; validityInvalid?: boolean; formalValidityInputHash?: string; recordId?: number })[]
   const evidence = statement(`select v.id,v.record_event_id as eventId,v.source_file as sourceFile,v.attachment,v.list_no as listNo,v.page from record_evidence v join record_event e on e.id=v.record_event_id join record r on r.id=e.record_id where r.enterprise_id=? and r.title_code=? order by v.id`).all(enterpriseId,title) as (CurrentWorkbookFacts['evidence'][number] & {id:number})[]
@@ -715,6 +715,6 @@ function createCurrentCandidateEvaluationReader(db: Database.Database, receiptRu
     }
   }
   observeCycles?.(qualification.cycles, formal)
-  return { row, group }
+  return { row, group, effectiveStatus }
 }
 }

@@ -3,6 +3,7 @@ import { CURRENT_TITLES } from '../../lib/roster/current-titles'
 
 export const currentQualifiedFilterSchema = z.strictObject({
   titleCode: z.enum(CURRENT_TITLES),
+  status: z.enum(['effective','expired','terminated','moved_out','unrecognized']).optional(),
   q: z.string().trim().min(1).max(120).optional(),
   district: z.string().trim().min(1).max(40).optional(),
   recognitionFrom: z.string().regex(/^[1-9]\d{3}-\d{2}-\d{2}$/).refine(realDate).optional(),

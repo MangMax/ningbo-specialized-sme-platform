@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { CURRENT_STATUS_LABELS } from '~~/lib/roster/current-status'
 import { useQuery } from '@pinia/colada'
 import { computed, nextTick, onMounted, provide, ref, shallowRef, watch } from 'vue'
 import { onBeforeRouteLeave, useRouter } from 'vue-router'
@@ -612,7 +613,9 @@ function openPreview(e: Evidence) {
               <div class="flex min-w-0 flex-col gap-4 px-4 pb-4 text-base leading-6">
                 <p class="text-muted-foreground text-sm">评估时点：{{ data?.qualificationAssessment?.asOf }}。下次复核年份用于安排复核，当前资格以下列评估为准。</p>
                 <section v-for="item in qualificationRows" :key="item.titleCode" class="flex min-w-0 flex-col gap-2 break-words">
-                  <h3 class="flex flex-wrap items-center gap-2"><TitleBadge :code="item.titleCode" /><span>{{ qualificationGroupLabel[item.group] }}</span></h3>
+                  <h3 class="flex flex-wrap items-center gap-2"><TitleBadge :code="item.titleCode" /><span>{{ item.effectiveQualification ? CURRENT_STATUS_LABELS[item.effectiveQualification.status] : qualificationGroupLabel[item.group] }}</span></h3>
+                  <p v-if="item.effectiveQualification">当前有效状态：{{ CURRENT_STATUS_LABELS[item.effectiveQualification.status] }}；{{ item.officialQualification.message }}</p>
+                  <p v-for="note in item.effectiveQualification?.notes ?? []" :key="note">资料与来源备注：{{ note }}</p>
                   <p>正式资格：{{ item.officialQualification.message }}</p>
                   <p v-for="note in item.officialQualification.notes" :key="note">{{ note }}</p>
                   <p>主体：{{ item.subject.message }}</p>
