@@ -1,3 +1,4 @@
+import { contentFailureMessage } from './file-content-status'
 import type { UploadMetadata } from './upload'
 
 /**
@@ -50,6 +51,8 @@ export function toRegisterBody(file: UploadedFile): {
 
 /** `$fetch` 抛出的错误里那句服务端说明;认不出来用 `fallback` 兜底。 */
 export function describeFetchError(error: unknown, fallback = '操作失败,请重试。'): string {
+  const contentFailure = contentFailureMessage(error)
+  if (contentFailure) return contentFailure
   const err = error as {
     statusMessage?: string
     data?: { message?: string; statusMessage?: string }

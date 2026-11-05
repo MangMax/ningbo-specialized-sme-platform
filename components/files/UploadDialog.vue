@@ -8,6 +8,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
+import { Button } from '@/components/ui/button'
 import UploadPanel from '@/components/upload/UploadPanel.vue'
 import { describeFetchError, toRegisterBody, type UploadedFile } from '@/lib/upload-register'
 
@@ -34,25 +35,31 @@ const emit = defineEmits<{
 const failure = ref('')
 /** 已经因登记失败而滞留的落位路径(它们停在磁盘上,库里还没有)。 */
 const stranded = ref<string[]>([])
+const retryFiles = ref<Record<string, UploadedFile>>({})
+const registering = ref<string[]>([])
 
 watch(open, (value) => {
   if (!value) {
     failure.value = ''
-    stranded.value = []
+    // Failed registration snapshots remain available when the dialog reopens.
   }
 })
 
 async function onUploaded(file: UploadedFile) {
+  if (registering.value.includes(file.relPath)) return
+  registering.value.push(file.relPath)
   failure.value = ''
   try {
     await $fetch('/api/files/register', { method: 'POST', body: toRegisterBody(file) })
     stranded.value = stranded.value.filter((p) => p !== file.relPath)
+    delete retryFiles.value[file.relPath]
     emit('registered')
   } catch (error) {
     // 文件已落盘、库里没有 —— 不能假装成功,也不能把它藏起来。
     if (!stranded.value.includes(file.relPath)) stranded.value.push(file.relPath)
+    retryFiles.value[file.relPath] = file
     failure.value = describeFetchError(error, '登记失败,请重试。')
-  }
+  } finally { registering.value = registering.value.filter(path => path !== file.relPath) }
 }
 </script>
 
@@ -79,8 +86,8 @@ async function onUploaded(file: UploadedFile) {
         <span class="text-muted-foreground text-xs">
           {{
             stranded.length === 1
-              ? '它已经在文件库里,只是还没进列表。'
-              : '它们已经在文件库里,只是还没进列表。'
+              ? '文件已落盘，但登记未成功。请核对内容后重试登记。'
+              : '文件已落盘，但登记未成功。请逐份核对内容后重试登记。'
           }}
         </span>
         <code
@@ -90,6 +97,8 @@ async function onUploaded(file: UploadedFile) {
           >{{ path }}</code
         >
       </div>
+
+      <Button v-for="file in Object.values(retryFiles)" :key="file.relPath" variant="outline" :disabled="registering.includes(file.relPath)" @click="onUploaded(file)">重试登记 {{ file.name }}</Button>
 
       <!-- 面板自带无外壳布局:弹窗已经有标题,再套一层卡片就成了卡片套卡片。 -->
       <UploadPanel @uploaded="onUploaded" />

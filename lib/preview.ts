@@ -1,3 +1,4 @@
+import { contentFailureMessage, currentContentMessage } from './file-content-status'
 /**
  * 预览要处理的文件类型。
  *
@@ -183,7 +184,10 @@ export function describeUnsupported(path: string): string {
  * 认不出来时保留原文,方便排查。
  */
 export function describeLoadError(err: unknown): string {
+  const contentFailure = contentFailureMessage(err)
+  if (contentFailure) return contentFailure
   const raw = err instanceof Error ? err.message : String(err)
+  if (/\b409\b/.test(raw)) return currentContentMessage({ status: 'file_content_conflict' })
 
   // Excel 工作簿超过查看器的单元格上限(见 describeCellLimit)。这条要单独认,
   // 因为它不是「坏文件」,而是「文件太大」,处置方式完全不同。

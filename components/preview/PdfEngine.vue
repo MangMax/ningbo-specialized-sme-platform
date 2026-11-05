@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { inject, onMounted, onBeforeUnmount, shallowRef, useTemplateRef } from 'vue'
+import { describeLoadError } from '~~/lib/preview'
 import { createEmbedPdfLogger } from '~~/lib/client-logging/embedpdf'
 import { clientLibraryReporterKey, ignoreClientLibrarySignal, safeLibraryReporter } from '~~/lib/client-logging/library-reporter'
 import { EmbedPDF } from '@embedpdf/core/vue'
@@ -38,6 +39,15 @@ const plugins = [
 ]
 onMounted(async () => {
   try {
+    if (new URL(props.src, window.location.origin).origin === window.location.origin) {
+      const source = await fetch(props.src, { headers: { Range: 'bytes=0-0' }, signal: startup.signal, cache: 'no-store' })
+      if (!source.ok) {
+        const body = await source.json().catch(() => null)
+        if (alive) emit('error', describeLoadError(new Error(body?.data?.code ?? body?.message ?? String(source.status))))
+        return
+      }
+      await source.body?.cancel()
+    }
     const wasmUrl = new URL('/pdfium.wasm', window.location.origin).href
     // In 2.15.1 a rejected worker WASM initialization can leave document tasks pending.
     // Validate the same-origin asset before creating the worker. Its subsequent fetch

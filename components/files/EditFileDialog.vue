@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { currentContentMessage } from "~~/lib/file-content-status"
 import { computed, ref, watch } from 'vue'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
@@ -110,6 +111,8 @@ const canSave = computed(
       </DialogHeader>
 
       <div class="flex flex-col gap-4">
+        <p role="status" class="text-sm break-words">{{ currentContentMessage(file?.contentIdentity) }}</p>
+        <p v-if="file?.parts.length" class="text-sm">已有文件段的历史出处绑定未知。{{ file?.partsBinding?.inputLineage.status === 'bound' ? '已记录解析输入引用；这不能证明历史文件段来自该输入。' : '解析输入引用未记录。' }}</p>
         <!-- 只读:路径是磁盘事实,不由这里改。 -->
         <div class="bg-muted/60 flex flex-col gap-1 rounded-md border px-2.5 py-2">
           <span class="text-muted-foreground text-xs">库内路径(只读)</span>
