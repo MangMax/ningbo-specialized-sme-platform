@@ -123,7 +123,7 @@ export default defineMcpHandler({
     '- 企业别名维护：`list_enterprise_aliases` / `get_enterprise_alias` 读取版本，再用需 token 的 `maintain_enterprise_alias` 显式确认、更正、撤回或恢复；历史用 `get_enterprise_alias_history` 分页核对。保留原名与原来源，withdrawn 不自动恢复。详见 docs/maintenance-99.md。',
     '',
     '- `get_file_maintenance` 读维护修订和有界历史；`update_file` 更新分类或显示名，`remove_file` 软移出，`restore_file` 核验原字节后恢复。',
-    '  三个新增维护写工具需要 MCP token，必须同时提供 expectedRevision/idempotencyKey/actor/basis。原 set_file_category 载荷保留 legacy 适配。没有磁盘删除能力；详见 docs/maintenance-104.md。',
+    '  三个新增维护写工具需要 MCP token，必须同时提供 expectedRevision/idempotencyKey/actor/basis。原 set_file_category 载荷保留 legacy 适配。quarantine_file 显式隔离原字节，recover_file 按 intentId 验证 SHA+bytes 恢复；两者需完整版本封套。get_file_physical_intent 读取待处理状态/完成回执。隔离不永久擦除；详见 docs/maintenance-104.md。',
     '边界(重要):',
     '- **写入前需要 token**:`save_ocr_result` / `delete_ocr_result` / `set_file_category` / `save_parse_result` /',
     '  `save_roster_batch` / `submit_platform_batch` / `retry_platform_batch` 需要 `Authorization: Bearer <NUXT_MCP_TOKEN>`,未带时这几个 tool',

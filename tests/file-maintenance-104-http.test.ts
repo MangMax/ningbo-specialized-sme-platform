@@ -112,12 +112,13 @@ describe('#104 file maintenance public transports', () => {
     }
     expect((await rest(`${f.id}/maintenance`)).body).toMatchObject({ revision: 0, total: 0 })
   })
-  it('requires explicit disk deletion, records the soft removal and refuses restoration once bytes are gone', async () => {
+  it('requires versioned quarantine, records soft removal and keeps normal restoration unavailable until explicit recovery', async () => {
     const f = await file()
     expect((await modernRest(`${f.id}?deleteDisk=1`, 'DELETE', {}, false)).status).toBe(401)
     expect(existsSync(join(root, f.relPath))).toBe(true)
-    const result = await rest(`${f.id}?deleteDisk=1`, 'DELETE', {})
-    expect(result.body).toMatchObject({ removed: true, diskDeleted: true, referenceCount: 0 })
+    expect((await rest(`${f.id}?deleteDisk=1`, 'DELETE', {})).status).toBe(400)
+    const result = await modernRest(`${f.id}?deleteDisk=1`, 'DELETE', {})
+    expect(result.body).toMatchObject({ removed: true, diskDeleted: false, diskQuarantined: true, referenceCount: 0 })
     expect(existsSync(join(root, f.relPath))).toBe(false)
     expect((await rest(`${f.id}/maintenance`)).body).toMatchObject({ total: 1, revision: 1, rows: [{ action: 'remove' }] })
     expect((await modernRest(`${f.id}/restore`, 'POST', {})).status).toBe(409)
@@ -191,7 +192,7 @@ describe('#104 file maintenance public transports', () => {
     const detailBefore = await publicJson(`/api/enterprises/${enterprise.id}`)
     const ocrBefore = await publicJson(`/api/ocr-results?fileId=${f.id}&markdown=1`)
     const before = (await rest(`${f.id}/maintenance`)).body.file
-    expect((await rest(`${f.id}?deleteDisk=1`, 'DELETE')).status).toBe(409)
+    expect((await modernRest(`${f.id}?deleteDisk=1`, 'DELETE')).status).toBe(409)
     expect(existsSync(join(root, f.relPath))).toBe(true)
     expect((await writeRpc('update_file', { fileId: f.id, patch: { displayName: '校正显示名称.txt' } })).value.file.referenceCount).toBe(1)
     expect((await writeRpc('remove_file', { fileId: f.id, deleteDisk: true })).value.diskDeleted).toBe(false)
