@@ -115,3 +115,14 @@ export function projectOfficialPublishedNames(facts: readonly OfficialPublishedF
   if (bytes > 65536) throw new OfficialPublishedPresentationError('response_limit')
   return { availability: 'available', error: null, facts: [...facts] }
 }
+
+/** Anonymous name sidecar only, after the caller has selected and verified ownership.
+ * DTO copies and rendered text copies are budgeted separately; no request data is cached. */
+export function readPublicPublishedNames(db: Parameters<typeof readOfficialPublishedPresentation>[0], scope: readonly OfficialPublishedScope[], copies: readonly OfficialPublishedScope[] = scope, envelopeCount = 1, textCopies = 1, redactor?: ReceiptRedactor): PublishedPresentation {
+  try {
+    const facts = readOfficialPublishedPresentation(db, scope, redactor)
+    return projectOfficialPublishedNames([...facts.values()], copies, envelopeCount, textCopies)
+  } catch (error) {
+    return { availability: 'unavailable', error: error instanceof OfficialPublishedPresentationError ? error.code : 'read_failed', facts: [] }
+  }
+}

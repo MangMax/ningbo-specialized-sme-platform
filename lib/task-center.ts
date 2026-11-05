@@ -17,6 +17,7 @@ export interface TaskSummary {
   progress: { done: number; total: number | null; unit: string; stage: string }
   error: string | null
   outcome: { complete: number; partial: number; failed: number; notQueried: number; unfinished: number | null; attempt: number } | null
+  reconcile?: { targets: number | null; needsReview: number | null; queryFailed: number | null; notQueried: number | null }
   /** Reconcile-only collection coverage, counted in slots/ranges, separate from target decisions.
    * Historical reports without coverage retain null counts (unknown), never inferred completion. */
   reconcileCollection?: {

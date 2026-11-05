@@ -788,7 +788,7 @@ describe('平台结果完整性与业务待核分开表述', () => {
   })
 
   it('核查任务用待核实口径，不与取回完整性混为一谈', async () => {
-    state.detail = platformTask({ kind: 'reconcile', label: '平台核查', outcome: { complete: 2, partial: 3, failed: 0, notQueried: 0, unfinished: 0, attempt: 1 } })
+    state.detail = platformTask({ kind: 'reconcile', label: '平台核查', outcome: null, reconcile: { targets: 2, needsReview: 3, queryFailed: 0, notQueried: 0 } })
     installFetch(({ url }) => url.startsWith('/api/task-center/') ? json(state.detail) : json(listOf(state.list.rows, true)))
     state.query = { job: jobId('PLT') }
     const wrapper = await mountPage({ attach: true })
@@ -806,7 +806,7 @@ describe('平台结果完整性与业务待核分开表述', () => {
     { name: '完整缓存', complete: 4, partial: 0, failed: 0, unknown: 0, unfinished: 0 },
   ])('核查采集$name单独使用槽位与范围单位，报告目标与待核实保持原义', async collection => {
     state.detail = platformTask({ kind: 'reconcile', label: '平台核查',
-      outcome: { complete: 2, partial: 3, failed: 0, notQueried: 0, unfinished: collection.unfinished, attempt: 1 },
+      outcome: null, reconcile: { targets: 2, needsReview: 3, queryFailed: 0, notQueried: 0 },
       reconcileCollection: { ...collection, positions: [], positionsTruncated: false },
     })
     installFetch(({ url }) => url.startsWith('/api/task-center/') ? json(state.detail) : json(listOf(state.list.rows, true)))
@@ -840,7 +840,7 @@ describe('平台结果完整性与业务待核分开表述', () => {
   })
 
   it('核查旧报告缺采集信息明确未知，不补零或冒充完整', async () => {
-    state.detail = platformTask({ kind: 'reconcile', label: '平台核查', items: [], outcome: { complete: 2, partial: 3, failed: 0, notQueried: 0, unfinished: null, attempt: 1 } })
+    state.detail = platformTask({ kind: 'reconcile', label: '平台核查', items: [], outcome: null, reconcile: { targets: 2, needsReview: 3, queryFailed: 0, notQueried: 0 } })
     installFetch(({ url }) => url.startsWith('/api/task-center/') ? json(state.detail) : json(listOf(state.list.rows, true)))
     state.query = { job: jobId('PLT') }
     await mountPage({ attach: true })
