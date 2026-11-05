@@ -12,6 +12,7 @@ import {
 import { getStoredFile, resolveInsideRoot, sha256Of, type StoredFileRow } from './stored-files'
 import { recordLegacyFileMaintenanceWrite } from './file-maintenance'
 import { landingSegments } from './tus'
+import { compareFileContentIdentity, type FileContentConflict } from './file-content-identity'
 
 /**
  * 上传完成后的**登记**(票 10):把 tus 已经落位的文件写进 `stored_file`(票 09 的表)。
@@ -30,11 +31,13 @@ import { landingSegments } from './tus'
 /** 登记被拒时抛的错。`statusCode` 由路由翻成 HTTP 码(默认 400)。 */
 export class UploadRegistrationError extends Error {
   readonly statusCode: number
+  readonly conflict?: FileContentConflict
 
-  constructor(message: string, statusCode = 400) {
+  constructor(message: string, statusCode = 400, conflict?: FileContentConflict) {
     super(message)
     this.name = 'UploadRegistrationError'
     this.statusCode = statusCode
+    this.conflict = conflict
   }
 }
 
@@ -94,7 +97,7 @@ function splitRelPath(relPath: string): string[] {
 
 /**
  * 把一次已完成的上传登记进 `stored_file`。**幂等**:以 `rel_path` 为键,
- * 重复登记只刷新磁盘事实与分类,不产生第二行。
+ * 相同内容重复登记只刷新元数据与分类;同路径换字节返回 409,保留登记身份。
  *
  * 校验链(任何一步不过都**不落库**):
  *  1. `source` / `kind` **要么都给、要么都不给** —— 只给一个是不表达语义的状态;
@@ -184,35 +187,36 @@ async function registerStoredFileUnlogged(
   const categoryState =
     source && kind ? categoryStateOf({ source, kind, year, batch }) : 'unset'
 
-  const existing = db
-    .select()
-    .from(schema.storedFile)
-    .where(eq(schema.storedFile.relPath, facts.relPath))
-    .get()
+  return db.transaction((tx) => {
+    const existing = tx
+      .select()
+      .from(schema.storedFile)
+      .where(eq(schema.storedFile.relPath, facts.relPath))
+      .get()
 
-  if (existing) {
-    // 已有的行(同一路径重新登记,或回填先插过):刷新磁盘事实与分类。
-    // `parse_state` 不重置 —— 已解析的文件不该因为重传一次变回未解析。
-    // `removed_at` 清空:用户主动把这份文件重新传了进来,就该在列表里。
-    return db.transaction((tx) => {
+    if (existing) {
+      const conflict = compareFileContentIdentity({ ...existing, fileId: existing.id }, facts)
+      if (conflict) {
+        throw new UploadRegistrationError('文件内容与登记身份不符,请恢复原文件或使用新路径登记', 409, conflict)
+      }
       const before = getStoredFile(tx, existing.id)!
       tx.update(schema.storedFile)
-        .set({ ...facts, source, kind, year, batch, categoryState, removedAt: null })
+        .set({ filename, ext: facts.ext, source, kind, year, batch, categoryState, removedAt: null })
         .where(eq(schema.storedFile.id, existing.id))
         .run()
       const row = getStoredFile(tx, existing.id)!
       recordLegacyFileMaintenanceWrite(tx, before, row)
       return { row, created: false }
-    }, { behavior: 'immediate' })
-  }
+    }
 
-  const inserted = db
-    .insert(schema.storedFile)
-    .values({ ...facts, source, kind, year, batch, categoryState })
-    .returning({ id: schema.storedFile.id })
-    .get()
+    const inserted = tx
+      .insert(schema.storedFile)
+      .values({ ...facts, source, kind, year, batch, categoryState })
+      .returning({ id: schema.storedFile.id })
+      .get()
 
-  return { row: getStoredFile(db, inserted.id)!, created: true }
+    return { row: getStoredFile(tx, inserted.id)!, created: true }
+  }, { behavior: 'immediate' })
 }
 
 /** Registration is a semantic write; file names and declarations never enter runtime logs. */

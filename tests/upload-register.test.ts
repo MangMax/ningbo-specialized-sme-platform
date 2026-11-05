@@ -270,7 +270,7 @@ describe('registerStoredFile', () => {
     ).rejects.toThrow('落位文件不存在')
   })
 
-  it('重复登记同一路径**幂等**:只刷新,不产生第二行', async () => {
+  it('重复登记同内容**幂等**:保留身份,不产生第二行', async () => {
     const rel = await putFile('jxj/announcement/2024/2/丁.pdf', 'one')
     await registerStoredFile(useDb(), filesDir, {
       relPath: rel,
@@ -281,8 +281,6 @@ describe('registerStoredFile', () => {
     })
     const afterFirst = rows().length
 
-    // 内容变了(同路径重传):磁盘事实刷新,分类按新声明走,仍是一行。
-    await writeFile(join(filesDir, rel), 'two')
     const { row, created } = await registerStoredFile(useDb(), filesDir, {
       relPath: rel,
       source: 'jxj',
@@ -294,7 +292,7 @@ describe('registerStoredFile', () => {
     expect(created).toBe(false)
     expect(rows()).toHaveLength(afterFirst)
     expect(row.bytes).toBe(3)
-    expect(row.sha256).toBe(createHash('sha256').update('two').digest('hex'))
+    expect(row.sha256).toBe(createHash('sha256').update('one').digest('hex'))
   })
 
   it('重新登记已移出库的文件 → 清掉 `removed_at`,回到列表', async () => {

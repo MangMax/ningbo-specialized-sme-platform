@@ -232,15 +232,17 @@ describe('stored_file 回填', () => {
     expect(db.select().from(schema.storedFile).all().length).toBe(before)
   })
 
-  it('回填不覆盖已被人工改过的分类(只刷新磁盘事实)', () => {
+  it('回填遇到内容冲突保留身份与人工分类', () => {
     const row = db.select().from(schema.storedFile).all().find((r) => r.relPath.includes('58号'))!
     updateStoredFile(db, row.id, { year: 2019 })
-    backfillStoredFiles(db, [
+    const stats = backfillStoredFiles(db, [
       { relPath: row.relPath, filename: row.filename, ext: row.ext, bytes: 999, sha256: 'x'.repeat(64) },
     ])
     const after = db.select().from(schema.storedFile).all().find((r) => r.id === row.id)!
     expect(after.year).toBe(2019) // 分类保住了
-    expect(after.bytes).toBe(999) // 磁盘事实刷新了
+    expect(after.bytes).toBe(row.bytes)
+    expect(after.sha256).toBe(row.sha256)
+    expect(stats.conflicts).toMatchObject([{ fileId: row.id, code: 'file_content_conflict' }])
   })
 
   it('认不出分类的路径跳过并报出,不入表', () => {
