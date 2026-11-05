@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { afterAll, beforeAll, expect, it } from 'vitest'
@@ -56,6 +56,34 @@ it('historical OCR stays readable and unknown through REST and MCP across replac
   expect(db.select().from(schema.ocrResult).all()).toEqual(before)
 })
 
+it.each(['unreadable', 'missing'] as const)('historical OCR and markdown remain available when the current source is %s', async kind => {
+  const relPath = `${kind}-history.pdf`, path = join(root, relPath)
+  writeFileSync(path, 'abc')
+  const file = await (await rest('/api/files/register', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ relPath }) })).json()
+  writeOcrResult(db, { fileId: file.id, channel: 'upload', sourceRelPath: relPath, pages: [{ page: 1, markdown: 'retained unavailable-source text', raw: { paid: 'retained' } }] })
+  const before = db.select().from(schema.ocrResult).all()
+  if (kind === 'unreadable') chmodSync(path, 0)
+  else rmSync(path)
+  try {
+    const expected = { status: kind === 'unreadable' ? 'unavailable' : 'missing', historical: 'unknown', registered: { fileId: file.id, bytes: 3, sha256: 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad' } }
+    const response = await rest(`/api/files/${file.id}/ocr-pages/1`)
+    expect(response.status).toBe(200)
+    for (const value of [await response.json(), (await rpc('get_ocr_result', { fileId: file.id })).value]) {
+      expect(value.markdown).toContain('retained unavailable-source text')
+      expect(value.contentIdentity).toMatchObject(expected)
+      expect(value.results[0].historicalBinding).toEqual({ status: 'unknown' })
+    }
+    const listResponse = await rest(`/api/ocr-results?fileId=${file.id}&markdown=1`)
+    expect(listResponse.status).toBe(200)
+    expect((await listResponse.json()).contentIdentity).toMatchObject(expected)
+    const exported = await rest(`/api/ocr-results/markdown?fileId=${file.id}`)
+    expect(exported.status).toBe(200)
+    expect(exported.headers.get('x-file-content-status')).toBe(expected.status)
+    expect(await exported.text()).toContain('retained unavailable-source text')
+    expect(db.select().from(schema.ocrResult).all()).toEqual(before)
+  } finally { if (kind === 'unreadable') chmodSync(path, 0o644) }
+})
+
 it('lazy public parts preserve legacy row IDs and catalog registration never certifies historical evidence', async () => {
   const relPath = 'jxj/announcement/2024/2/legacy.pdf'
   mkdirSync(join(root, 'jxj/announcement/2024/2'), { recursive: true })
@@ -85,10 +113,17 @@ it('lazy public parts preserve legacy row IDs and catalog registration never cer
 })
 
 it('comparison REST and MCP evidence retain stable registration alongside old path and unknown binding', async () => {
+  const relPath = 'directory-only.pdf'
+  writeFileSync(join(root, relPath), 'abc')
+  const file = await (await rest('/api/files/register', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ relPath }) })).json()
+  const enterprise = db.insert(schema.enterprise).values({ name: 'Independent directory fixture', nameNorm: 'Independent directory fixture' }).returning().get()
+  const record = db.insert(schema.record).values({ enterpriseId: enterprise.id, source: 'jxj', titleCode: 'specialized_sme' }).returning().get()
+  const event = db.insert(schema.recordEvent).values({ recordId: record.id, eventType: 'award', year: 2024 }).returning().get()
+  const evidence = db.insert(schema.recordEvidence).values({ recordEventId: event.id, sourceFile: relPath, listNo: 1 }).returning().get()
   const query = db.insert(schema.platformQuery).values({ interface: 'business_list', queryKey: 'B3', queriedAt: '2026-11-05T00:00:00Z', status: 'success' }).returning().get()
-  const evidence = db.select().from(schema.recordEvidence).all()[0]!
   const value = await (await rest(`/api/roster/record-comparison?queryIds=${query.id}&exportBatchIds=&officialSourceDocumentIds=${-evidence.id}`)).json()
-  expect(value.rows[0].evidence[0]).toMatchObject({ sourceFile: evidence.sourceFile, contentIdentity: { registered: { fileId: 2, bytes: 3 }, status: 'unknown', historical: 'unknown' } })
+  const selectedRow = value.rows.find((row: { event: { id: number } }) => row.event.id === event.id)
+  expect(selectedRow.evidence).toContainEqual(expect.objectContaining({ id: evidence.id, sourceFile: relPath, inSelectedSource: true, contentIdentity: { registered: expect.objectContaining({ fileId: file.id, bytes: 3 }), status: 'unknown', historical: 'unknown' } }))
   expect((await rpc('list_record_comparison', { queryIds: [query.id], exportBatchIds: [], officialSourceDocumentIds: [-evidence.id] })).value).toEqual(value)
 })
 
