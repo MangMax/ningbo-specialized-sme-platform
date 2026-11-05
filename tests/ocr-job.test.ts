@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { mkdir, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -83,7 +84,8 @@ afterEach(async () => {
 async function seedPdf(relPath: string, pages = 3): Promise<number> {
   const abs = join(filesDir, relPath)
   await mkdir(dirname(abs), { recursive: true })
-  await writeFile(abs, minimalPdf({ pages }))
+  const bytes = minimalPdf({ pages })
+  await writeFile(abs, bytes)
   const base = relPath.split('/').pop()!
   return db
     .insert(schema.storedFile)
@@ -91,8 +93,8 @@ async function seedPdf(relPath: string, pages = 3): Promise<number> {
       relPath,
       filename: base,
       ext: 'pdf',
-      bytes: 1,
-      sha256: '0'.repeat(64),
+      bytes: bytes.length,
+      sha256: createHash('sha256').update(bytes).digest('hex'),
       source: 'jxj',
       kind: 'announcement',
       categoryState: 'set',
