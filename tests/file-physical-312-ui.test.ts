@@ -77,6 +77,29 @@ it('retains the exact failed quarantine envelope and retries its original key de
   expect(first.body.idempotencyKey).toEqual(expect.any(String))
   expect(writes[1]).toEqual(writes[0])
 })
+it('keeps the original uncertain request after absent intent reads and closing then reopening the same file', async () => {
+  const fetch = await setup()
+  document.body.querySelector<HTMLButtonElement>('#delete-disk')!.click(); await flushPromises()
+  await enter('physical-actor', '测试人员'); await enter('physical-basis', '保留未确认请求'); await enter('physical-token', 'synthetic-token')
+  fetch.mockImplementation(async (url, opts) => {
+    if (opts?.method) throw new Error('request outcome unknown')
+    if (url.endsWith('/maintenance')) return { revision: 8 }
+    throw Object.assign(new Error('none'), { statusCode: 404 })
+  })
+  button('确认移出并隔离').click(); await flushPromises()
+  const original = fetch.mock.calls.find(call => call[1]?.method)!
+  button('读取最新状态').click(); await flushPromises()
+  expect(button('重试原请求')).toBeDefined()
+  button('重试原请求').click(); await flushPromises()
+  await wrapper.setProps({ open: false }); await flushPromises()
+  await wrapper.setProps({ open: true }); await flushPromises()
+  expect(button('重试原请求')).toBeDefined()
+  await enter('physical-token', 'synthetic-token')
+  button('重试原请求').click(); await flushPromises()
+  const writes = fetch.mock.calls.filter(call => call[1]?.method)
+  expect(writes).toHaveLength(3)
+  expect(writes).toEqual([original, original, original])
+})
 it('requires explicit confirmation and fresh revision to recover the read-back intent', async () => {
   const fetch = await setup('quarantined')
   expect(document.body.textContent).toContain('已隔离')

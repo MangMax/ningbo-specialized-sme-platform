@@ -58,8 +58,7 @@ async function readLatest() {
     }
     if (turn !== sequence || target !== id.value || !open.value) return
     revision.value = maintenance.revision; physical.value = latest; ready.value = true
-    const action = latest?.intent.state === 'recovering' ? 'recover' : latest?.intent.state === 'pending' ? 'quarantine' : null
-    command.value = action ? commands.get(requestKey(action)) ?? null : null
+    command.value = commands.get(`${target}:recover`) ?? commands.get(`${target}:quarantine`) ?? null
   } catch (cause) {
     if (turn === sequence) error.value = `状态读取失败：${describeFetchError(cause)}。保留上次结果，请重新读取。`
   } finally { if (turn === sequence) reading.value = false }
