@@ -1,3 +1,4 @@
+import { initializeDb } from '../db/client'
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { mkdtempSync, rmSync } from 'node:fs'
@@ -27,7 +28,7 @@ const protocol = realTransport ? 'MCP' : 'HTTP'
 const dir = mkdtempSync('/tmp/issue300-http-')
 const transports = new Set<StreamableHTTPServerTransport>()
 let mcpClient: Client
-const db = useDb({ dbPath: join(dir, 'test.sqlite') })
+const db = initializeDb({ create: true, dbPath: join(dir, 'test.sqlite') })
 const token = 'synthetic-issue300'
 let server: ReturnType<typeof createServer>, base: string, serial = 0
 const metadata: Record<string, any> = {}

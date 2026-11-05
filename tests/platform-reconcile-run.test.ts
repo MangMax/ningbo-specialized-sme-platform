@@ -1,3 +1,4 @@
+import { initializeDb } from '../db/client'
 /**
  * `server/utils/platform-reconcile.ts` —— **可运行的平台比对与原因回写**的端到端。
  *
@@ -44,7 +45,7 @@ const THIRD = '宁波第三甲科技有限公司'
 const THIRD_USCC = '91330211000000009Z'
 
 const dir = mkdtempSync(join(tmpdir(), 'spztx-platform-reconcile-'))
-const db = useDb({ dbPath: join(dir, 'run.db') })
+const db = initializeDb({ create: true, dbPath: join(dir, 'run.db') })
 
 // ---------------------------------------------------------------------------
 // 场景数据:两家 miit 侧企业 + 一家无统代的 jxj 侧企业

@@ -1,3 +1,4 @@
+import { initializeDb } from '../db/client'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -10,7 +11,7 @@ import { getPlatformRecognizedRecord, listPlatformRecognizedDirectory } from '..
 import { hasKnownPlatformBusiness } from '../lib/roster/platform-business-detail'
 
 const dir = mkdtempSync(join(tmpdir(), 'recognized-directory-shadow-'))
-const db = useDb({ dbPath: join(dir, 'shadow.sqlite') })
+const db = initializeDb({ create: true, dbPath: join(dir, 'shadow.sqlite') })
 afterAll(() => { db.$client.close(); rmSync(dir, { recursive: true, force: true }) })
 
 function recognizedEvidence(rdjb: string, queriedAt: string, rows: Record<string, unknown>[], scope: string[] = [rdjb]) {

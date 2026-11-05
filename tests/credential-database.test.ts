@@ -1,3 +1,4 @@
+import { initializeDb } from '../db/client'
 import { execFileSync } from 'node:child_process'
 import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -35,7 +36,7 @@ it('upgrades an existing database without changing business rows', () => {
   expect(sqlite.pragma('integrity_check', { simple: true })).toBe('ok')
 })
 it('keeps credential values out of ordinary roster export rows', () => {
-  const db = useDb({ dbPath: join(dir, 'export.sqlite') }); connections.push(db.$client)
+  const db = initializeDb({ create: true, dbPath: join(dir, 'export.sqlite') }); connections.push(db.$client)
   const enterprise = db.insert(schema.enterprise).values({ name: 'Synthetic export enterprise', nameNorm: 'synthetic export enterprise' }).returning().get()
   db.insert(schema.record).values({ enterpriseId: enterprise.id, titleCode: 'specialized_sme', source: 'jxj' }).run()
   updateCredentials({ ocrToken: 'synthetic-not-exported-ocr', miitCookie: 'session=synthetic-not-exported-cookie' }, { db, env: {} })
@@ -47,7 +48,7 @@ it('keeps credential values out of ordinary roster export rows', () => {
 })
 it('removes credentials and their raw bytes from demo database copies without changing the source', () => {
   const source = join(dir, 'source.sqlite'), out = join(dir, 'demo.sqlite')
-  const db = useDb({ dbPath: source }); connections.push(db.$client)
+  const db = initializeDb({ create: true, dbPath: source }); connections.push(db.$client)
   for (const name of ['宁波上航测绘股份有限公司', '宁波上航测绘有限公司']) db.insert(schema.enterprise).values({ name, nameNorm: name }).run()
   updateCredentials({ ocrToken: 'synthetic-demo-secret-ocr', miitCookie: 'session=synthetic-demo-secret-cookie' }, { db, env: {} })
   const before = db.$client.serialize()

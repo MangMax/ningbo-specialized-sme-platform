@@ -1,3 +1,4 @@
+import { initializeDb } from '../db/client'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -17,7 +18,7 @@ type Source = 'apply_list' | 'business_list' | 'recognized_list'
 
 function fixture() {
   const dir = mkdtempSync(join(tmpdir(), 'enterprise-detail-455-'))
-  const db = useDb({ dbPath: join(dir, 'roster.db') })
+  const db = initializeDb({ create: true, dbPath: join(dir, 'roster.db') })
   cleanup.push(() => { db.$client.close(); rmSync(dir, { recursive: true, force: true }) })
   const enterprise = db.insert(schema.enterprise).values({ name: '合成企业详情', nameNorm: '合成企业详情', usccNorm: 'SYN455' }).returning().get()
   let counter = 0

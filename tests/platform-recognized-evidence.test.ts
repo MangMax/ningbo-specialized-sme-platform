@@ -1,3 +1,4 @@
+import { initializeDb } from '../db/client'
 import { assertEnterpriseDetailSnapshotEqual } from './helpers/enterprise-detail-snapshot'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -11,7 +12,7 @@ import { startEvidenceServer } from './helpers/platform-evidence-server'
 import { getRosterEnterpriseDetail } from '../lib/roster/enterprise-roster'
 
 const dir = mkdtempSync(join(tmpdir(), 'recognized-evidence-'))
-const db = useDb({ dbPath: join(dir, 'test.sqlite') })
+const db = initializeDb({ create: true, dbPath: join(dir, 'test.sqlite') })
 const USCC = '913300000000000004'
 const time = '2025-02-03T01:02:03.000Z'
 const token = 'synthetic-recognized-import-token'

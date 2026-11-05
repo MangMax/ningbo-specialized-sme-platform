@@ -1,3 +1,4 @@
+import { initializeDb } from '../db/client'
 import { mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync, mkdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -12,7 +13,7 @@ import { getComparisonB42 } from './helpers/comparison-b42-reference'
 
 it('actual Nuxt preserves full summary differences and MCP evidence with canonical matches, legacy sources and acknowledged commits', async () => {
   const root = resolve(import.meta.dirname, '..'), dir = mkdtempSync(join(tmpdir(), 'comparison-canonical-http-'))
-  const dbPath = join(dir, 'synthetic.db'), db = useDb({ dbPath })
+  const dbPath = join(dir, 'synthetic.db'), db = initializeDb({ create: true, dbPath })
   const nativeLog = join(dir, 'native-pids.jsonl'), manifest = join(dir, 'owned.json')
   let child: ChildProcess | undefined, output = ''
   try {

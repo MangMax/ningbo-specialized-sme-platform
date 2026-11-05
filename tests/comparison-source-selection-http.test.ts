@@ -1,3 +1,4 @@
+import { initializeDb } from '../db/client'
 import { createServer, type Server } from 'node:http'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -10,7 +11,7 @@ import { createRosterImportClient, type RosterImportRecord } from '../lib/roster
 import { startRosterApi } from './helpers/roster-http-server'
 
 const dir = mkdtempSync(join(tmpdir(), 'comparison-source-selection-'))
-const db = useDb({ dbPath: join(dir, 'fixture.db') })
+const db = initializeDb({ create: true, dbPath: join(dir, 'fixture.db') })
 let imports: Awaited<ReturnType<typeof startRosterApi>>
 let server: Server
 let base: string
@@ -191,7 +192,7 @@ it('keeps distinct stored USCC identities and title scopes separate while retain
 })
 
 it('returns all zero title buckets for an empty source set', () => {
-  const empty = useDb({ dbPath: join(dir, 'empty.db') })
+  const empty = initializeDb({ create: true, dbPath: join(dir, 'empty.db') })
   try {
     expect(getComparison(empty)).toEqual({ rows: [], counts: {
       little_giant: { missing_in_miit: 0, extra_in_miit: 0 },

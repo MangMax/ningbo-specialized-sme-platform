@@ -1,3 +1,4 @@
+import { initializeDb } from '../db/client'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -24,7 +25,7 @@ import { listRosterEnterprises } from '../lib/roster/enterprise-roster'
  */
 
 const dir = mkdtempSync(join(tmpdir(), 'spztx-roster-state-'))
-const db = useDb({ dbPath: join(dir, 'roster.db') })
+const db = initializeDb({ create: true, dbPath: join(dir, 'roster.db') })
 
 const ids: Record<string, number> = {}
 

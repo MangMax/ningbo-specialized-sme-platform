@@ -1,3 +1,4 @@
+import { initializeDb } from '../db/client'
 /**
  * RL-05 收尾 —— **写侧端到端闭环**(真实导出表 → §8.3 payload → 真实 HTTP 提交 → 读侧)。
  *
@@ -38,7 +39,7 @@ const dirs: string[] = []
 function makeDb() {
   const dir = mkdtempSync(join(tmpdir(), 'spztx-export-e2e-'))
   dirs.push(dir)
-  return useDb({ dbPath: join(dir, 'roster.db') })
+  return initializeDb({ create: true, dbPath: join(dir, 'roster.db') })
 }
 afterAll(() => {
   for (const dir of dirs) rmSync(dir, { recursive: true, force: true })

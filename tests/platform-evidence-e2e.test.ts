@@ -1,3 +1,4 @@
+import { initializeDb } from '../db/client'
 /**
  * RL-03 的**真实端到端**(写入 → 读回):
  *
@@ -33,7 +34,7 @@ import { readMergeLineage, searchEnterpriseIdsByName } from '../server/utils/ros
 import { startEvidenceServer, type EvidenceServer } from './helpers/platform-evidence-server'
 
 const dir = mkdtempSync(join(tmpdir(), 'spztx-platform-e2e-'))
-const db = useDb({ dbPath: join(dir, 'e2e.db') })
+const db = initializeDb({ create: true, dbPath: join(dir, 'e2e.db') })
 
 const TOKEN = 'e2e-platform-token'
 const USCC = '91330211255994457P'

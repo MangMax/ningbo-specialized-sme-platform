@@ -1,3 +1,4 @@
+import { initializeDb } from '../db/client'
 /**
  * RL-16(票 #17)—— **来源文件入库后,出处指针怎么收敛**。
  *
@@ -49,7 +50,7 @@ const dirs: string[] = []
 function makeDb() {
   const dir = mkdtempSync(join(tmpdir(), 'spztx-repoint-'))
   dirs.push(dir)
-  return useDb({ dbPath: join(dir, 'roster.db') })
+  return initializeDb({ create: true, dbPath: join(dir, 'roster.db') })
 }
 
 afterAll(() => {
