@@ -51,7 +51,7 @@ async function startService() {
   const port = await reserveLoopbackPort()
   const child = spawn(process.execPath, [join(cwd, 'node_modules/nuxt/bin/nuxt.mjs'), 'dev', '--host', '127.0.0.1', '--port', String(port)], { cwd, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, NUXT_BUILD_DIR: join(dir, 'nuxt-build'), NUXT_DB_PATH: dbPath, NUXT_API_TOKEN: 'synthetic-api-token', NUXT_MCP_TOKEN: 'synthetic-mcp-token', NUXT_FILES_DIR: root, NUXT_INCOMING_DIR: join(dir, 'incoming') } })
   for (const stream of [child.stdout, child.stderr]) stream.on('data', data => { serverOutput = (serverOutput + data).slice(-12000) })
-  service = { baseUrl: `http://127.0.0.1:${port}`, stop: () => stopOwnedChild(child), crash: async () => { process.kill(-child.pid!, 'SIGKILL'); await stopOwnedChild(child) } }
+  service = { baseUrl: `http://127.0.0.1:${port}`, stop: () => stopOwnedChild(child), crash: async () => { const exited = new Promise<void>(resolveExit => child.once('exit', () => resolveExit())); process.kill(-child.pid!, 'SIGKILL'); await exited; await stopOwnedChild(child) } }
   try { await waitForHttp(`${service.baseUrl}/api/health`, { timeoutMs: 60000, child }) } catch (error) { await service.stop(); throw new Error(`${String(error)}\n${serverOutput}`) }
 }
 beforeAll(startService, 90000)
@@ -81,6 +81,8 @@ describe('#312 recoverable physical command', () => {
     expect((await rest(`${f.id}/physical-recovery`, 'POST', { intentId: deleted.body.intent.id, ...recovery })).body).toEqual(restored.value)
     expect((await rest(`${f.id}?deleteDisk=1`, 'DELETE', controls)).body).toEqual(deleted.body)
     expect(existsSync(join(root, f.relPath))).toBe(true)
+    expect(await (await fetch(`${service.baseUrl}/api/files/${f.relPath}`)).text()).toBe('original synthetic file bytes')
+    expect((await rpc('get_file_physical_intent', { fileId: f.id })).value).toEqual((await rest(`${f.id}/physical-recovery`)).body)
   })
   it('retains original bytes after quarantine rename and DB failure and explicitly recovers pending intent', async () => {
     const f = await file(), controls = await modernControls(f.id)
@@ -124,18 +126,19 @@ describe('#312 recoverable physical command', () => {
     expect((await rest(`${f.id}/maintenance`)).body).toMatchObject({ revision: 2, total: 2, file: { removedAt: null } })
   }, 90000)
   it('rejects changed SHA same-size bytes, changed size and occupied original paths during explicit recovery', async () => {
-    for (const kind of ['same-size', 'size', 'occupied'] as const) {
+    for (const kind of ['same-size', 'size', 'occupied', 'missing'] as const) {
       const f = await file()
       const deleted = await rest(`${f.id}?deleteDisk=1`, 'DELETE', await modernControls(f.id))
       expect(deleted.status).toBe(200)
       const quarantined = join(root, '.physical-quarantine', deleted.body.intent.id)
       if (kind === 'occupied') writeFileSync(join(root, f.relPath), 'do not overwrite me')
+      else if (kind === 'missing') rmSync(quarantined)
       else writeFileSync(quarantined, kind === 'size' ? 'short' : 'X'.repeat(f.bytes))
       const before = (await rest(`${f.id}/maintenance`)).body
       const controls = { ...await modernControls(f.id), intentId: deleted.body.intent.id }
       expect((await rest(`${f.id}/physical-recovery`, 'POST', controls)).status).toBe(409)
       expect((await rest(`${f.id}/maintenance`)).body).toEqual(before)
-      expect(existsSync(quarantined)).toBe(true)
+      expect(existsSync(quarantined)).toBe(kind !== 'missing')
       if (kind === 'occupied') { expect(readFileSync(join(root, f.relPath), 'utf8')).toBe('do not overwrite me'); rmSync(join(root, f.relPath)) }
       writeFileSync(quarantined, 'original synthetic file bytes')
       expect((await rest(`${f.id}/physical-recovery`, 'POST', controls)).status).toBe(200)

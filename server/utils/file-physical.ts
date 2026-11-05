@@ -25,6 +25,7 @@ function paths(root: string, intent: Intent) {
   return { original: original!, quarantine: join(quarantineDir, intent.id), base }
 }
 function verify(path: string, intent: Intent) {
+  if (!existsSync(path)) fail('原字节不可用；不能恢复或隔离')
   if (!lstatSync(path).isFile() || lstatSync(path).isSymbolicLink()) fail('恢复或隔离对象必须是原始普通文件')
   const fd = openSync(path, 'r')
   try {

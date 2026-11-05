@@ -514,6 +514,7 @@ describe('列表与筛选', () => {
 
 describe('DELETE 默认不删磁盘', () => {
   it('移出只打标;旧 deleteDisk helper 拒绝绕过持久隔离命令', async () => {
+    await backfillFromDisk(db, filesRoot)
     const keep = db.select().from(schema.storedFile).all().find((r) => r.relPath.includes('58号'))!
     const keepAbs = join(filesRoot, keep.relPath)
 
