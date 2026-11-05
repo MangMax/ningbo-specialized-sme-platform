@@ -119,7 +119,7 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 404, statusMessage: '不是一个文件' })
   }
 
-  const pageSource = /^(.*)\.([^/]+\.pdf)\.pages\/p\d+\.png$/i.exec(decoded)
+  const pageSource = /^((?:[^/]+\/)*)\.([^/]+\.pdf)\.pages\/p\d+\.png$/i.exec(decoded)
   const identity = pageSource
     ? await verifyPageRead(db, root, `${pageSource[1]}${pageSource[2]}`, decoded)
     : await verifyFileRead(db, root, decoded)

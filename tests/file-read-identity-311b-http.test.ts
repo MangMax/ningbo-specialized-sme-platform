@@ -1,6 +1,6 @@
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { afterAll, beforeAll, expect, it } from 'vitest'
 import { minimalPdf } from './helpers/minimal-pdf'
 import { useDb } from '../db/client'
@@ -67,17 +67,18 @@ it('public raw ID/path Range HEAD and PDF/MCP reads retain registration across r
 })
 
 
-it('public rendered pages preserve source lineage and reject equal-size replacement before cache reuse', async () => {
+it.each(['render.pdf', 'render.v1.pdf', 'nested.v1/render.final.pdf'])('public rendered pages preserve source lineage and reject equal-size replacement before cache reuse: %s', async fileName => {
   const original = minimalPdf({ pages: 1 })
   const replacement = Buffer.from(original)
   const marker = replacement.indexOf('400 200')
   expect(marker).toBeGreaterThan(0)
   replacement.write('401 200', marker, 'ascii')
-  writeFileSync(join(root, 'render.pdf'), original)
-  const registered = await rest('/api/files/register', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ relPath: 'render.pdf' }) })
+  mkdirSync(dirname(join(root, fileName)), { recursive: true })
+  writeFileSync(join(root, fileName), original)
+  const registered = await rest('/api/files/register', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ relPath: fileName }) })
   expect(registered.status).toBe(201)
   const file = await registered.json() as { id: number }
-  const rendered = await rest('/api/pdf-pages', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ file: 'render.pdf', dpi: 72 }) })
+  const rendered = await rest('/api/pdf-pages', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ file: fileName, dpi: 72 }) })
   expect(rendered.status).toBe(200)
   const state = await rendered.json() as { pages: { url: string }[] }
   expect(state.pages).toHaveLength(1)
@@ -88,9 +89,9 @@ it('public rendered pages preserve source lineage and reject equal-size replacem
   expect(png.subarray(0, 8).toString('hex')).toBe('89504e470d0a1a0a')
   const listed = await rpc('list_page_images', { fileId: file.id, dpi: 72 })
   expect(listed.value).toMatchObject({ upToDate: true, file: { id: file.id, contentIdentity: { status: 'verified', historical: 'unknown' } } })
-  writeFileSync(join(root, 'render.pdf'), replacement)
-  for (const url of [pageUrl, '/api/pdf-pages?file=render.pdf&page=1', `/api/pdf-pages?fileId=${file.id}`]) expect((await rest(url)).status, url).toBe(409)
-  writeFileSync(join(root, 'render.pdf'), original)
+  writeFileSync(join(root, fileName), replacement)
+  for (const url of [pageUrl, `/api/pdf-pages?file=${fileName}&page=1`, `/api/pdf-pages?fileId=${file.id}`]) expect((await rest(url)).status, url).toBe(409)
+  writeFileSync(join(root, fileName), original)
   const recovered = await rest(pageUrl)
   expect(recovered.status).toBe(200)
   expect(Buffer.from(await recovered.arrayBuffer())).toEqual(png)
