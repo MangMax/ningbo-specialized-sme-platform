@@ -14,15 +14,15 @@ description: '用于本应用的宁波专精特新名录清洗与入库：分类
 - **平台采集**：先查看 `GET /api/platform/capabilities` 或 MCP `get_platform_capabilities`，再按[平台查询说明](references/platform-query.md)使用应用 REST/MCP 单条或批量查询。保留全部关系、分页和未完成范围。凭据由服务端管理；代理不得读取 Cookie 或直调平台网址。
 - **差异、待审核与全量刷新**：遵循[差异调查与判断](references/difference-investigation.md)。先对应具体认定事件和平台流程，再判断是否有差异；名称出现地名变化或属地冲突时，进入其中的“地名变化与迁移查证”，主动搜索名称沿革及迁入迁出。仅凭历年公布与最新导出集合不同，不能认定业务差异。在用户限定范围内复用归档证据。代理判断原因与措施，软件保存查询事实和明确决定；可用[合成判断示例](references/adjudication-examples.md)核对理解。
 
-- **主体事实与解释引用**：查证迁入、迁出、注销/登记状态，确认、更正、撤回事实，或为首次/追加差异解释关联多个事实时，遵循[主体事实公开协议](references/enterprise-facts.md)。逐条固定 enterpriseId/factId/revision/kind；读回来源与审计后独立确认，旧解释不随事实 head 漂移。
+- **主体事实与解释引用**：查证迁入、迁出、注销/登记状态，确认、更正、撤回事实，或核对历史解释所引用的多个事实时，遵循[主体事实公开协议](references/enterprise-facts.md)。逐条固定 enterpriseId/factId/revision/kind；读回来源与审计后独立确认，旧解释不随事实 head 漂移。
 
 ## 编排与写入
 
 **接到整批任务时，先读[负载编排](references/orchestration.md)，再开始各阶段处理。**未被分配具体工作片的执行者就是本批协调者，即使它本身是子代理。协调者按规模、证据体积、工具额度和当前资源决定直接处理或使用有界工作者池；任务数、每片大小和活跃代理数分别控制。所有阶段共享资源预算，同一企业跨文件、跨称号一名负责人。收到具体工作片的代理不继续拆派。复用已完成证据，只补缺口。
 
-补码、身份归并、新增查询或更新快照后，执行[旧解释复核](references/difference-investigation.md#新证据后的旧解释复核)，分开查询覆盖、解释有效性和待复核任务，不能以采集完成代替判断完成。
+补码、身份归并、新增查询或更新快照后，执行[代理判断与覆盖写回](references/difference-investigation.md#默认待核代理判断与覆盖写回)，核对当前任务坐标和证据变化，判不出记录已查范围与缺口交人工通过代理处理。
 
-写入前查看当前 OpenAPI 或 MCP `tools/list`。通过统一应用 API/MCP 预检、提交和读回，禁止直接写 SQLite；重试保持幂等键。`queryBusList` 明确按 `recognized_list` 入库，按[平台查询说明](references/platform-query.md)保留分段、时间和页码并核对 ID。不支持的写入留待处理，不伪造来源类型绕过校验。
+写入前查看当前 OpenAPI 或 MCP `tools/list`。任务差异读取 current/token，以 expected/expectedToken 覆盖写回并读回操作记录；其他入库按各自统一应用 API/MCP 预检、提交和读回，禁止直接写 SQLite；重试保持其幂等键。`queryBusList` 明确按 `recognized_list` 入库，按[平台查询说明](references/platform-query.md)保留分段、时间和页码并核对 ID。不支持的写入留待处理，不伪造来源类型绕过校验。
 
 [业务规则](references/decisions.md)定义事件和来源语义；载荷以仓库 `docs/roster-lifecycle-contract.md` 为准。正式公布确立称号历史，导出表代表平台快照。未匹配平台的正式行仍须保留，未知字段留空。issue #35 中的企业名称只是查证线索，不是已确认的身份依据。
 

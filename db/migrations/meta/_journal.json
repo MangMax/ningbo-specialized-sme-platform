@@ -281,6 +281,13 @@
       "when": 1793722864501,
       "tag": "0039_recognized_source_fidelity",
       "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "6",
+      "when": 1793722864502,
+      "tag": "0040_snapshot_judgment",
+      "breakpoints": true
     }
   ]
 }
