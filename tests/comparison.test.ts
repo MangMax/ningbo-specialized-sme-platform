@@ -1,3 +1,4 @@
+import { initializeDb } from '../db/client'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -8,7 +9,7 @@ import { getComparison, type ComparisonDirection } from '../lib/comparison'
 import type { EventType } from '../lib/query'
 
 const dir = mkdtempSync(join(tmpdir(), 'spztx-comparison-'))
-const db = useDb({ dbPath: join(dir, 'test.db') })
+const db = initializeDb({ create: true, dbPath: join(dir, 'test.db') })
 const ids: Record<string, number> = {}
 
 function enterprise(key: string, uscc: string | null, name = key, city: string | null = null, regStatus: string | null = null) {

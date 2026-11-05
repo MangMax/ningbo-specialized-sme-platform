@@ -1,3 +1,4 @@
+import { initializeDb } from '../db/client'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -11,7 +12,7 @@ import { updateCredential } from '../server/utils/credential-state'
 import type { TaskList, TaskSummary } from '../lib/task-center'
 
 const dir = mkdtempSync(join(tmpdir(), 'issue299-pagination-'))
-const db = useDb({ dbPath: join(dir, 'tasks.db') })
+const db = initializeDb({ create: true, dbPath: join(dir, 'tasks.db') })
 const USCC = '91330211255994457P'
 const nativeFetch = globalThis.fetch
 let server: Server, baseUrl: string

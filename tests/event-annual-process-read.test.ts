@@ -1,3 +1,4 @@
+import { initializeDb } from '../db/client'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -17,7 +18,7 @@ const fixtures: Array<{ dir: string; db: ReturnType<typeof useDb> }> = []
 afterAll(() => fixtures.forEach(({ dir, db }) => { db.$client.close(); rmSync(dir, { recursive: true, force: true }) }))
 function fixture() {
   const dir = mkdtempSync(join(tmpdir(), 'annual-250-'))
-  const db = useDb({ dbPath: join(dir, 'isolated.db') }); fixtures.push({ dir, db })
+  const db = initializeDb({ create: true, dbPath: join(dir, 'isolated.db') }); fixtures.push({ dir, db })
   const enterprise = db.insert(schema.enterprise).values({ name: '年度过程合成企业', nameNorm: '年度过程合成企业', usccNorm: '91330211255994457P' }).returning().get()
   const record = db.insert(schema.record).values({ enterpriseId: enterprise.id, titleCode: 'specialized_sme', source: 'jxj', usccRaw: enterprise.usccNorm }).returning().get()
   const event = db.insert(schema.recordEvent).values({ recordId: record.id, eventType: 'award', year: 2024 }).returning().get()
@@ -41,7 +42,7 @@ function fixture() {
 
 it('discovers unbound raw USCC variants archived through HTTP before the official enterprise exists', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'annual-292-'))
-  const db = useDb({ dbPath: join(dir, 'isolated.db') }); fixtures.push({ dir, db })
+  const db = initializeDb({ create: true, dbPath: join(dir, 'isolated.db') }); fixtures.push({ dir, db })
   let eventId = 0
   const app = await startHttpFixture({ routes: {
     '/import': request => handleRosterImportRequest('commit', request, { db, apiToken: 'isolated292' }),

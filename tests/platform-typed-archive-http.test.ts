@@ -1,3 +1,4 @@
+import { initializeDb } from '../db/client'
 import { createServer } from 'node:http'
 import { createHash } from 'node:crypto'
 import type { AddressInfo } from 'node:net'
@@ -23,7 +24,7 @@ import { importExecutor } from '../server/utils/import-execution'
 import { readMcpToken, resolveMcpAuth } from '../server/utils/mcp-auth'
 
 const dir = mkdtempSync(join(tmpdir(), 'issue327-typed-archive-'))
-const db = useDb({ dbPath: join(dir, 'test.sqlite') })
+const db = initializeDb({ create: true, dbPath: join(dir, 'test.sqlite') })
 const nativeFetch = globalThis.fetch
 const token = 'synthetic-raw-archive-token'
 const input = { source: 'queryBusList', name: '合成', rdjb: ['2'], pageSize: 1, rawDataVersion: 1 }

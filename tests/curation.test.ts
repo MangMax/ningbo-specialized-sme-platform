@@ -1,3 +1,4 @@
+import { initializeDb } from '../db/client'
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -7,7 +8,7 @@ import { getCuratedComparison } from '../lib/curation'
 
 const dir = mkdtempSync(join(tmpdir(), 'spztx-curation-'))
 const path = join(dir, 'nested', 'annotations.json')
-const db = useDb({ dbPath: join(dir, 'test.db') })
+const db = initializeDb({ create: true, dbPath: join(dir, 'test.db') })
 vi.doMock('@db', () => ({ useDb: () => db }))
 let query: Record<string, unknown> = {}
 let body: unknown

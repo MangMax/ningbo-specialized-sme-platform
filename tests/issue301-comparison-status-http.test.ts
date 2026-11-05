@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { afterAll, beforeAll, expect, it } from 'vitest'
 import { schema, useDb } from '../db'
+import { initializeDb } from '../db/client'
 import { seedIssue301 } from './helpers/issue301-fixture'
 import { spawnOwnedChild, reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../scripts/lib/isolated-local-services.mjs'
 
@@ -11,7 +12,8 @@ import { spawnOwnedChild, reserveLoopbackPort, waitForHttp, stopOwnedChild } fro
 // one dev compilation. Normal test runs still own and clean up their service.
 const external = process.env.ISSUE301_BASE_URL
 const dir = external ? process.env.ISSUE301_DIR! : mkdtempSync(join(tmpdir(), 'issue301-http-'))
-const db = useDb({ dbPath: join(dir, 'fixture.db') })
+const dbPath = join(dir, 'fixture.db')
+const db = external ? useDb({ dbPath }) : initializeDb({ dbPath, create: true })
 const fixture = external ? JSON.parse(readFileSync(join(dir, 'fixture.json'), 'utf8')) as ReturnType<typeof seedIssue301> : seedIssue301(db)
 let base = external ?? ''
 let stop: (() => Promise<void>) | undefined

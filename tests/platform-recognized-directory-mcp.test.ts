@@ -1,3 +1,4 @@
+import { initializeDb } from '../db/client'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -11,7 +12,7 @@ vi.mock('@nuxtjs/mcp-toolkit/server', () => ({ defineMcpTool: (tool: unknown) =>
 const dir = mkdtempSync(join(tmpdir(), 'recognized-directory-mcp-'))
 const dbPath = join(dir, 'recognized.sqlite')
 vi.stubEnv('NUXT_DB_PATH', dbPath)
-const db = useDb({ dbPath })
+const db = initializeDb({ create: true, dbPath })
 let listTool: typeof import('../server/mcp/tools/list_platform_recognized_directory').default
 let detailTool: typeof import('../server/mcp/tools/get_platform_recognized_record').default
 let recordId = 0

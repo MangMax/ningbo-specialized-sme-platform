@@ -1,3 +1,4 @@
+import { initializeDb } from '../db/client'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -25,7 +26,7 @@ it('uses case-sensitive interface keys without numeric or name identity guesses'
 
 it('database constraints prevent mismatched versions orphan mappings and deletion of old evidence', () => {
   const dir = mkdtempSync(join(tmpdir(), 'identity244-fk-')); dirs.push(dir)
-  const db = useDb({ dbPath: join(dir, 'roster.db') })
+  const db = initializeDb({ create: true, dbPath: join(dir, 'roster.db') })
   const queryId = db.insert(schema.platformQuery).values({ interface: 'business_list', queryKey: 'test', queriedAt: 'test' }).returning().get().id
   for (const [sequenceNo, id] of [[1, 'one'], [2, 'two']] as const) db.insert(schema.platformRelation).values({ queryId, sequenceNo, relationKey: id, rawFields: { id } }).run()
   const first = db.transaction(tx => ensurePlatformObservation(tx, 1)), second = db.transaction(tx => ensurePlatformObservation(tx, 2))

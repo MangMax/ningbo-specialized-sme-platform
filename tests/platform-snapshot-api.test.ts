@@ -1,3 +1,4 @@
+import { initializeDb } from '../db/client'
 /**
  * RL-05 —— 平台导出快照**读接口**(契约 §7.7 与版本比较)。
  *
@@ -23,7 +24,7 @@ const dir = mkdtempSync(join(tmpdir(), 'spztx-snapshot-api-'))
 afterAll(() => rmSync(dir, { recursive: true, force: true }))
 
 const { schema, useDb } = await import('../db')
-const db = useDb({ dbPath: join(dir, 'api.db') })
+const db = initializeDb({ create: true, dbPath: join(dir, 'api.db') })
 
 // --- 夹具:一个称号两版(第二版替换第一版)+ 另一个称号一版 ---------------------
 

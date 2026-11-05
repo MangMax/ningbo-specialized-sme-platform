@@ -1,3 +1,4 @@
+import { initializeDb } from '../db/client'
 import { afterAll, beforeAll, expect, it, vi } from 'vitest'
 import { createServer, type Server } from 'node:http'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
@@ -7,7 +8,7 @@ import { createApp, createRouter, defineEventHandler, getQuery, getRouterParam, 
 import { schema, useDb } from '../db'
 
 const dir = mkdtempSync(join(tmpdir(), 'enterprise-profile-96-'))
-const db = useDb({ dbPath: join(dir, 'roster.db') })
+const db = initializeDb({ create: true, dbPath: join(dir, 'roster.db') })
 let server: Server
 let base: string
 let sequence = 0

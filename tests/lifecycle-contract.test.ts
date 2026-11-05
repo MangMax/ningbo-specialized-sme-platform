@@ -1,3 +1,4 @@
+import { initializeDb } from '../db/client'
 /**
  * 名录生命周期**冻结契约**的验收样例(RL-01)。
  *
@@ -15,7 +16,7 @@ import { afterAll, describe, expect, it } from 'vitest'
 import { schema, useDb } from '../db'
 
 const dir = mkdtempSync(join(tmpdir(), 'spztx-lifecycle-contract-'))
-const db = useDb({ dbPath: join(dir, 'contract.db') })
+const db = initializeDb({ create: true, dbPath: join(dir, 'contract.db') })
 
 afterAll(() => rmSync(dir, { recursive: true, force: true }))
 

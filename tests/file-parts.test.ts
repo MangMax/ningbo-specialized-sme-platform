@@ -262,7 +262,7 @@ beforeAll(async () => {
   process.env.NUXT_DB_PATH = join(dir, 'test.db')
   const mod = await import('../db')
   schema = mod.schema
-  db = mod.useDb()
+  db = mod.initializeDb({ create: true })
 
   seedFile(FILE_192, { year: 2024, batch: 2 })
   seedFile(FILE_145, { year: 2022 })

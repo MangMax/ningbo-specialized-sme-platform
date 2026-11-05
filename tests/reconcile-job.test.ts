@@ -1,3 +1,4 @@
+import { initializeDb } from '../db/client'
 /**
  * `reconcile` 这个 **job kind**(`POST /api/jobs {kind:'reconcile'}`)。
  *
@@ -20,7 +21,7 @@ import { runPlatformReconcile } from '../server/utils/platform-reconcile'
 import { EMPTY_APPLY_RESPONSE, platformFixture as fixture, platformReplay, type PlatformCall } from './helpers/platform-replay'
 
 const dir = mkdtempSync(join(tmpdir(), 'spztx-reconcile-job-'))
-const db = useDb({ dbPath: join(dir, 'job.db') })
+const db = initializeDb({ create: true, dbPath: join(dir, 'job.db') })
 const USCC = '91330211255994457P'
 
 const enterpriseId = db

@@ -68,6 +68,8 @@ beforeAll(async () => {
   dir = mkdtempSync(join(tmpdir(), 'spztx-query-'))
   process.env.NUXT_DB_PATH = join(dir, 'test.db')
   ;({ useDb: db } = await import('../db'))
+  const { initializeDb } = await import('../db/client')
+  initializeDb({ create: true })
   schema = (await import('../db')).schema
   seed()
 })

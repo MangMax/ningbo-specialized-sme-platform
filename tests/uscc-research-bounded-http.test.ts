@@ -1,3 +1,4 @@
+import { initializeDb } from '../db/client'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -7,7 +8,7 @@ import { createRosterImportClient } from '../lib/roster-import-client'
 import { startEvidenceServer, type EvidenceServer } from './helpers/platform-evidence-server'
 
 const dir = mkdtempSync(join(tmpdir(), 'uscc-131-'))
-const db = useDb({ dbPath: join(dir, 'roster.db') })
+const db = initializeDb({ create: true, dbPath: join(dir, 'roster.db') })
 const name = '宁波合成查证机械有限公司'
 const canonicalName = '宁波合成查证机械股份有限公司'
 const uscc = '91330211255994457P'

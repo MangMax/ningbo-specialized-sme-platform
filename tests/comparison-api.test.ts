@@ -1,3 +1,4 @@
+import { initializeDb } from '../db/client'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -14,7 +15,7 @@ import { reconcileKey } from '../lib/reconcile'
  *  2. **新的库内平台证据** `platform` 段随行返回(曾用名 / 已核验处置 / 关系条数)。
  */
 const dir = mkdtempSync(join(tmpdir(), 'spztx-comparison-api-'))
-const db = useDb({ dbPath: join(dir, 'api.db') })
+const db = initializeDb({ create: true, dbPath: join(dir, 'api.db') })
 const reconcilePath = join(dir, 'platform-reconcile.json')
 const curatedPath = join(dir, 'curated.json')
 
