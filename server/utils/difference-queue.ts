@@ -53,5 +53,10 @@ export function readSnapshotQueue(db:ReturnType<typeof useDb>, raw:unknown) {
   if (!job || job.kind!=='difference-snapshot') throw Object.assign(new Error('Snapshot not found'),{statusCode:404})
   const queue=job.queue ? JSON.parse(job.queue) as SnapshotQueue : null
   if (!queue || ['queued','running'].includes(job.state)) throw Object.assign(new Error('Snapshot queue not finalized; wait for collection or retry the same snapshot to prepare its queue'),{statusCode:409})
+  const judgments=db.$client.prepare('select enterprise_id,title_code,direction,current from snapshot_judgment where job_id=?').all(jobId) as {enterprise_id:number;title_code:string;direction:string;current:string}[]
+  for(const row of queue.rows) {
+    const saved=judgments.find(j=>j.enterprise_id===row.enterpriseId&&j.title_code===row.titleCode&&j.direction===row.direction)
+    if(saved) Object.assign(row,JSON.parse(saved.current))
+  }
   return {jobId,...pageSnapshotQueue(queue,page,pageSize)}
 }
