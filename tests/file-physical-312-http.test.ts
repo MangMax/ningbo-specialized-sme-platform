@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readlinkSync, lstatSync, rmSync, existsSync, symlinkSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readlinkSync, lstatSync, renameSync, rmSync, existsSync, symlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 
@@ -140,14 +140,40 @@ describe('#312 recoverable physical command', () => {
       expect((await rest(`${f.id}/physical-recovery`, 'POST', controls)).status).toBe(409)
       expect((await rest(`${f.id}/maintenance`)).body).toEqual(before)
       expect(existsSync(quarantined)).toBe(kind !== 'missing')
+      if (kind === 'occupied' || kind === 'dangling-symlink') expect(readFileSync(quarantined, 'utf8')).toBe('original synthetic file bytes')
       if (kind === 'occupied') { expect(readFileSync(join(root, f.relPath), 'utf8')).toBe('do not overwrite me'); rmSync(join(root, f.relPath)) }
       if (kind === 'dangling-symlink') {
         expect(lstatSync(join(root, f.relPath)).isSymbolicLink()).toBe(true)
         expect(readlinkSync(join(root, f.relPath))).toBe(join(root, 'absent-recovery-target'))
         rmSync(join(root, f.relPath))
       }
-      writeFileSync(quarantined, 'original synthetic file bytes')
+      if (kind === 'same-size' || kind === 'size' || kind === 'missing') writeFileSync(quarantined, 'original synthetic file bytes')
       expect((await rest(`${f.id}/physical-recovery`, 'POST', controls)).status).toBe(200)
+    }
+  })
+  it('same-key quarantine retries preserve dangling destination and original entries without changing bytes or audit', async () => {
+    for (const obstruction of ['quarantine', 'original'] as const) {
+      const f = await file(), controls = await modernControls(f.id)
+      const before = (await rest(`${f.id}/maintenance`)).body
+      db.$client.exec(`CREATE TRIGGER fail312entry BEFORE INSERT ON file_maintenance_audit WHEN NEW.file_id = ${f.id} BEGIN SELECT RAISE(ABORT, 'pending entry fixture'); END`)
+      try { expect((await rest(`${f.id}?deleteDisk=1`, 'DELETE', controls)).status).toBe(500) }
+      finally { db.$client.exec('DROP TRIGGER fail312entry') }
+      const pending = (await rest(`${f.id}/physical-recovery`)).body
+      const original = join(root, f.relPath), quarantine = join(root, '.physical-quarantine', pending.intent.id)
+      const destination = obstruction === 'quarantine' ? quarantine : original
+      const bytesPath = obstruction === 'quarantine' ? original : quarantine
+      if (obstruction === 'quarantine') renameSync(quarantine, original)
+      const absentTarget = join(root, `absent-${f.id}`)
+      symlinkSync(absentTarget, destination)
+      expect((await rest(`${f.id}?deleteDisk=1`, 'DELETE', controls)).status).toBe(409)
+      expect(lstatSync(destination).isSymbolicLink()).toBe(true)
+      expect(readlinkSync(destination)).toBe(absentTarget)
+      expect(existsSync(absentTarget)).toBe(false)
+      expect(readFileSync(bytesPath, 'utf8')).toBe('original synthetic file bytes')
+      expect((await rest(`${f.id}/maintenance`)).body).toEqual(before)
+      rmSync(destination)
+      expect((await rest(`${f.id}?deleteDisk=1`, 'DELETE', controls)).status).toBe(200)
+      expect(readFileSync(quarantine, 'utf8')).toBe('original synthetic file bytes')
     }
   })
   it('preserves default soft remove and official source pointers and rejects physical reference and root escapes', async () => {

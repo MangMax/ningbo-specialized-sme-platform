@@ -94,8 +94,8 @@ export function quarantineStoredFile(db: Db, root: string, id: number, rawOption
     checkRevision(tx, id, options)
     if (getStoredFile(tx, id)!.referenceCount) fail('文件仍被正式出处引用,禁止删除磁盘文件')
     const p = paths(root, current)
-    if (existsSync(p.quarantine)) {
-      if (existsSync(p.original)) fail('原路径和隔离副本同时存在，保留两者等待处理')
+    if (lstatSync(p.quarantine, { throwIfNoEntry: false })) {
+      if (lstatSync(p.original, { throwIfNoEntry: false })) fail('原路径和隔离副本同时存在，保留两者等待处理')
       verify(p.quarantine, current)
     } else {
       verify(p.original, current)
@@ -132,7 +132,7 @@ export function recoverStoredFile(db: Db, root: string, id: number, intentId: st
     registered(tx, current)
     checkRevision(tx, id, options)
     const p = paths(root, current)
-    if (existsSync(p.quarantine)) {
+    if (lstatSync(p.quarantine, { throwIfNoEntry: false })) {
       if (lstatSync(p.original, { throwIfNoEntry: false })) fail('原路径已存在，禁止覆盖')
       verify(p.quarantine, current)
       renameSync(p.quarantine, p.original)
