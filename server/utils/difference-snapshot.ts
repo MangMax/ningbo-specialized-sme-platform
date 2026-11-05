@@ -13,6 +13,8 @@ import { resolvePlatformCookie } from './credential-state'
 import { createJob, getJob, setJobResult } from './job-store'
 import { enqueuePersistedJob, ensureJobRunnerReady, getJobSpec, registerJob, requeueFinishedJob, type JobSpec } from './job-runner'
 
+import { deriveSnapshotQueue, type SnapshotOfficialCoordinate, type SnapshotQueue } from './difference-queue'
+
 type Db = ReturnType<typeof useDb>
 export const SNAPSHOT_KIND = 'difference-snapshot'
 export const snapshotInput = z.discriminatedUnion('action', [
@@ -22,7 +24,7 @@ export const snapshotInput = z.discriminatedUnion('action', [
 type Scope = { enterpriseId: number; name: string; uscc: string | null; recordIds: number[] }
 type Archive = { origin?: Record<string, unknown>; queryId: number | null; batchId: string | null; itemId: string | null; result: PlatformLiveQueryResult }
 type Item = { itemId: string; batchId: string; enterpriseId: number; source: string; rdjb: string | null; complete: boolean; rows: number | null; archives: Archive[]; segments: PlatformLiveQueryResult[]; reason: string | null }
-type Receipt = { scope: Scope[]; items: Item[]; attempt: number; completeness: string; counts: { enterprises: number; requests: number; rows: number; unfinished: number; bySource?: Record<string, { requests: number; rows: number; failed: number; unfinished: number }> }; collectionPolicy: string }
+type Receipt = { official?: SnapshotOfficialCoordinate[]; queue?: SnapshotQueue; scope: Scope[]; items: Item[]; attempt: number; completeness: string; counts: { enterprises: number; requests: number; rows: number; unfinished: number; bySource?: Record<string, { requests: number; rows: number; failed: number; unfinished: number }> }; collectionPolicy: string }
 const fail = (statusCode: number, message: string): never => { throw Object.assign(new Error(message), { statusCode }) }
 function provenPages(pages: PlatformLiveQueryResult['pages'], size: number) {
   const sorted = [...pages].sort((a,b)=>a.page-b.page)
@@ -66,6 +68,16 @@ const spec: JobSpec = {
     const row = getJob(ctx.db, ctx.jobId)!
     const result = structuredClone(row.result) as Receipt
     result.attempt++
+    // Existing #480 jobs can materialize the queue via the same-job retry;
+    // completed collection slots remain untouched and official rows come from its backup.
+    if (!result.official) {
+      const receipt = row.params.backup as { path: string; sha256: string }
+      if (createHash('sha256').update(readFileSync(receipt.path)).digest('hex') !== receipt.sha256) fail(409, 'Backup checksum mismatch')
+      const frozen = new Database(receipt.path, { readonly: true })
+      try {
+        result.official = frozen.prepare(`select e.id enterpriseId,e.name,e.uscc_norm uscc,r.title_code titleCode from record r join enterprise e on e.id=r.enterprise_id where r.source='jxj' order by e.id,r.id`).all() as SnapshotOfficialCoordinate[]
+      } finally { frozen.close() }
+    }
     let cookie = ''
     try { cookie = resolvePlatformCookie(undefined, { db: ctx.db }) } catch { /* provider reports credential failure */ }
     for (const item of result.items) {
@@ -101,6 +113,14 @@ const spec: JobSpec = {
       ctx.progress(result.items.length-result.counts.unfinished, result.items.length)
     }
     result.completeness = result.counts.unfinished ? 'unfinished' : 'complete'
+    if (result.official) {
+      const prior = new Map(result.queue?.rows.map(row => [JSON.stringify([row.enterpriseId,row.titleCode,row.direction]),row]) ?? [])
+      result.queue = deriveSnapshotQueue(result.official, result.items)
+      for (const row of result.queue.rows) {
+        const existing = prior.get(JSON.stringify([row.enterpriseId,row.titleCode,row.direction]))
+        if (existing) { row.status=existing.status; row.reasonCode=existing.reasonCode }
+      }
+    }
     return { result, progress: { done: result.items.length-result.counts.unfinished, total: result.items.length }, ...(result.counts.unfinished ? { error: 'Snapshot unfinished: identity, provider failure or pagination coverage gaps' } : {}) }
   },
 }
@@ -134,12 +154,14 @@ export async function snapshotOperation(db: Db, filesDir: string, raw: unknown) 
     const sha256 = createHash('sha256').update(readFileSync(path)).digest('hex')
     const backup = new Database(path, { readonly: true })
     let scope: Scope[]
+    let official: SnapshotOfficialCoordinate[]
     try {
       if (backup.pragma('integrity_check', { simple: true }) !== 'ok') fail(500, 'Backup integrity check failed')
+      official = backup.prepare(`select e.id enterpriseId,e.name,e.uscc_norm uscc,r.title_code titleCode from record r join enterprise e on e.id=r.enterprise_id where r.source='jxj' order by e.id,r.id`).all() as SnapshotOfficialCoordinate[]
       scope = backup.prepare(`select e.id enterpriseId, e.name, e.uscc_norm uscc, json_group_array(r.id) recordIds from record r join enterprise e on e.id=r.enterprise_id where r.source='jxj' group by e.id order by e.id`).all().map(v => { const row = v as Scope & { recordIds: string }; return { ...row, uscc: /^[0-9A-Z]{18}$/.test(row.uscc ?? '') ? row.uscc : null, recordIds: JSON.parse(row.recordIds) as number[] } })
     } finally { backup.close() }
     const items: Item[] = scope.flatMap(e => ['queryList', 'businessList', 'queryBusList'].flatMap(source => (source === 'queryList' ? [null] : ['1','2','3']).map(rdjb => ({ itemId: newJobId(), batchId: id, enterpriseId: e.enterpriseId, source, rdjb, complete: false, rows: null, archives: [], segments: [], reason: 'not_processed' }))))
-    const result: Receipt = { scope, items, attempt: 0, completeness: 'unfinished', counts: { enterprises: scope.length, requests: 0, rows: 0, unfinished: items.length }, collectionPolicy: 'per_enterprise_fresh_same_job_resume' }
+    const result: Receipt = { official, scope, items, attempt: 0, completeness: 'unfinished', counts: { enterprises: scope.length, requests: 0, rows: 0, unfinished: items.length }, collectionPolicy: 'per_enterprise_fresh_same_job_resume' }
     ensureJobRunnerReady(db)
     db.$client.transaction(() => {
       createJob(db, { id, kind: SNAPSHOT_KIND, params: { clientRequestId: input.clientRequestId, snapshotAt: startedAt, backup: { path, sha256, verifiedAt: new Date().toISOString() } }, progress: { done: 0, total: items.length } })
