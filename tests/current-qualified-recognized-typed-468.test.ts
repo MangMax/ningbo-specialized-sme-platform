@@ -1,3 +1,4 @@
+import { initializeDb } from '../db/client'
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
@@ -29,7 +30,7 @@ function setup() {
   dirs.push(dir)
   const dbPath = join(dir, 'typed.sqlite')
   vi.stubEnv('NUXT_DB_PATH', dbPath)
-  const db = useDb({ dbPath })
+  const db = initializeDb({ create: true, dbPath })
   return { dir, dbPath, db, matrix: matrix408(db.$client) }
 }
 

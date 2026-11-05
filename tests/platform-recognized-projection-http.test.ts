@@ -1,3 +1,4 @@
+import { initializeDb } from '../db/client'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -56,7 +57,7 @@ function seedArchived(db: Db, options: { time: string; relationKey: string | nul
 
 async function fixture(run: (db: Db, post: (action: string, body: unknown) => Promise<Record<string, any>>) => Promise<void>) {
   const dir = mkdtempSync(join(tmpdir(), 'recognized461-')); dirs.push(dir)
-  const db = useDb({ dbPath: join(dir, 'roster.db') })
+  const db = initializeDb({ create: true, dbPath: join(dir, 'roster.db') })
   const server = await startRosterApi({ db, apiToken: 'synthetic-apply-token' })
   try {
     await run(db, async (action, body) => {

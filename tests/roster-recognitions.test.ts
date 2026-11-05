@@ -1,3 +1,4 @@
+import { initializeDb } from '../db/client'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -19,7 +20,7 @@ import { handleRosterImportRequest } from '../server/utils/roster-import-http'
  */
 
 const dir = mkdtempSync(join(tmpdir(), 'spztx-roster-recognitions-'))
-const db = useDb({ dbPath: join(dir, 'recognitions.db') })
+const db = initializeDb({ create: true, dbPath: join(dir, 'recognitions.db') })
 
 const ids: Record<string, number> = {}
 
@@ -315,7 +316,7 @@ describe('§7.1 总表的首次认定筛选取自**同一处计算**', () => {
 
 it('first recognition uses the earliest populated record district even on a different title without events', async () => {
   const isolatedDir = mkdtempSync(join(tmpdir(), 'recognition-district-130-'))
-  const isolated = useDb({ dbPath: join(isolatedDir, 'fixture.sqlite') })
+  const isolated = initializeDb({ create: true, dbPath: join(isolatedDir, 'fixture.sqlite') })
   try {
     const out = await handleRosterImportRequest('commit', { method: 'POST', headers: { authorization: 'Bearer synthetic-130' }, body: {
       idempotencyKey: 'synthetic-district-130', sourceKind: 'announcement', sourceIdentity: 'synthetic/district-130', payload: {

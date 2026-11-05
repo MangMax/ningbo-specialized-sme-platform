@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import Database from 'better-sqlite3'
 import { afterEach, expect, it } from 'vitest'
-import { schema, useDb } from '../db'
+import { schema, useDb } from '../db/client'
 import { listPlatformQueries, type PlatformQueryFilter } from '../lib/platform/read'
 import { createPlatformSummaryCache } from '../server/utils/platform-summary-cache'
 

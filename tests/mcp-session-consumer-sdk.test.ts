@@ -675,8 +675,11 @@ async function start445ActualApp(options: App445Options = {}) {
   for (const name of ['curated.json', 'reconcile.json']) await fs.writeFile(join(directory, name), '{}')
   const businessBytes = Buffer.from('445 business file literal\n'); if (!shared) await fs.writeFile(join(files, '445-owned.txt'), businessBytes); else expect(await fs.readFile(join(files, '445-owned.txt'))).toEqual(businessBytes)
   const { useDb, schema } = await import('../db')
+  const { initializeDb } = await import('../db/client')
   const dbPath = shared?.dbPath ?? join(directory, 'business.sqlite')
-  const db = options.mode === 'compiled' ? await fresh445FixtureDB(dbPath, join(project, 'db/migrations')) : useDb({ dbPath, migrationsFolder: join(project, 'db/migrations') })
+  const db = options.mode === 'compiled' ? await fresh445FixtureDB(dbPath, join(project, 'db/migrations'))
+    : shared ? useDb({ dbPath, migrationsFolder: join(project, 'db/migrations') })
+      : initializeDb({ dbPath, migrationsFolder: join(project, 'db/migrations'), create: true })
   const businessState: Business445 = shared ?? { directory, dbPath, files, incoming, grantId: grant.grantId, nonce: grant.nonce }
   let child: ReturnType<typeof spawnOwnedChild> | undefined
   let childExitReceipt: { pid?: number; exitCode?: number | null; signalCode?: NodeJS.Signals | null; spawnError?: boolean } | undefined

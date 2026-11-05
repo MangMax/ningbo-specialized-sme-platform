@@ -1,3 +1,4 @@
+import { initializeDb } from '../db/client'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -30,7 +31,7 @@ async function serve() {
 }
 async function start() {
   dir = mkdtempSync(join(tmpdir(), 'credential-api-'))
-  db = useDb({ dbPath: join(dir, 'roster.sqlite') })
+  db = initializeDb({ create: true, dbPath: join(dir, 'roster.sqlite') })
   connections.push(db.$client)
   await serve()
 }

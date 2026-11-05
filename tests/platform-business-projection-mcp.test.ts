@@ -1,3 +1,4 @@
+import { initializeDb } from '../db/client'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -34,7 +35,7 @@ const input = { idempotencyKey: 'mcp-business-projection', sourceKind: 'platform
 
 describe('business_list typed projection through public MCP import tools', () => {
   it('plans only, then commits typed fields and returns typed receipt counts', async () => {
-    const db = useDb({ dbPath })
+    const db = initializeDb({ create: true, dbPath })
     const plan = await preflight.handler(input as never, {} as never) as { preflight: { canonicalProjection: unknown[] } }
     expect(plan.preflight.canonicalProjection[0]).toMatchObject({
       businessProjection: { declareKind: 'review', businessYear: 2023, status: '终审通过', batch: '2023-2', awardBatchLabel: '第三批', province: '浙江省', ruleVersion: 'platform-business-v1' },

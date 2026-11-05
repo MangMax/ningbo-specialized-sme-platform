@@ -278,7 +278,7 @@ beforeAll(async () => {
   process.env.NUXT_DB_PATH = join(dir, 'test.db')
   const mod = await import('../db')
   schema = mod.schema
-  db = mod.useDb()
+  db = mod.initializeDb({ create: true })
 
   // 三个基线文件:192号(PDF,公布 2024/2)、工信部导出(非 PDF)、一份已移出库的。
   seedFile(REL_PDF, { year: 2024, batch: 2 })
@@ -545,7 +545,7 @@ describe('ensureFileStoreReady 懒回填', () => {
     const other = mkdtempSync(join(tmpdir(), 'spztx-mcp-db-'))
     process.env.NUXT_DB_PATH = join(other, 'mcp.db')
     const mod = await import('../db')
-    const fresh = mod.useDb()
+    const fresh = mod.initializeDb({ create: true })
     const f = mod.schema
 
     // 192号:认定 2024/2(附件1,389 行)+ 复核 2021/2(附件2,67 行)。

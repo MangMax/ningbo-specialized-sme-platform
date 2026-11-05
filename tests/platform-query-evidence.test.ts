@@ -1,3 +1,4 @@
+import { initializeDb } from '../db/client'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -6,7 +7,7 @@ import { useDb, schema } from '../db'
 import { listPlatformQueries, MAX_FULL_QUERY_BYTES } from '../lib/platform/read'
 import { readPlatformQueryEvidence } from '../lib/platform/evidence-read'
 const dir = mkdtempSync(join(tmpdir(), 'platform-query-evidence-'))
-const db = useDb({ dbPath: join(dir, 'test.sqlite') })
+const db = initializeDb({ create: true, dbPath: join(dir, 'test.sqlite') })
 const raw = '完整原文🙂\n\\"尾部'
 const id = db.insert(schema.platformQuery).values({ interface: 'recognized_list', queryKey: 'synthetic-evidence', queriedAt: '2026-10-19', status: 'partial', rawResponse: raw, collectionEvidence: { pages: [{ status: 'success', rdjb: '2', page: 3, fetchedCount: 2 }], rows: [{ original: '完整🙂' }] } as never }).returning().get().id
 const ids = [2, 1].map(sequenceNo => db.insert(schema.platformRelation).values({ queryId: id, sequenceNo, relationKey: 'same-key', rawFields: { original: `原行${sequenceNo}🙂` }, sourceText: `原文${sequenceNo}` }).returning().get().id)

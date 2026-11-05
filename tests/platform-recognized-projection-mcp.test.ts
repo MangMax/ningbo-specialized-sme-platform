@@ -1,3 +1,4 @@
+import { initializeDb } from '../db/client'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -22,7 +23,7 @@ beforeAll(async () => {
   vi.stubGlobal('useRuntimeConfig', () => ({ filesDir: join(dir, 'files'), mcpToken: 'synthetic-mcp-token' }))
   preflight = (await import('../server/mcp/tools/preflight_roster_batch')).default
   commit = (await import('../server/mcp/tools/save_roster_batch')).default
-  const db = useDb({ dbPath })
+  const db = initializeDb({ create: true, dbPath })
   const query = db.insert(schema.platformQuery).values({
     interface: 'recognized_list', queryKey: '91330200RECOGNIZEDMCP', rdjb: '3', titleCode: 'little_giant', queriedAt: '2026-09-01T00:00:00Z', status: 'success',
   }).returning().get()

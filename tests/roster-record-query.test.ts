@@ -1,3 +1,4 @@
+import { initializeDb } from '../db/client'
 import { assertEnterpriseDetailSnapshotEqual } from './helpers/enterprise-detail-snapshot'
 import { decodeJsonRead } from './helpers/json-read-adapter'
 import { mkdtempSync, rmSync } from 'node:fs'
@@ -10,7 +11,7 @@ import { getRosterEnterpriseDetail } from '../lib/roster/enterprise-roster'
 import { parseRecordQuery } from '../server/utils/roster-read-query'
 
 const dir = mkdtempSync(join(tmpdir(), 'spztx-record-query-'))
-const db = useDb({ dbPath: join(dir, 'records.db') })
+const db = initializeDb({ create: true, dbPath: join(dir, 'records.db') })
 
 function enterprise(name: string, uscc: string | null): number {
   return db

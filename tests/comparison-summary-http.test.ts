@@ -1,3 +1,4 @@
+import { initializeDb } from '../db/client'
 import { createServer, type Server } from 'node:http'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -13,7 +14,7 @@ import { saveDecision102 } from '../server/utils/decision-lifecycle-102'
 import { readQueryAssessment } from '../lib/roster/query-assessment'
 
 const dir = mkdtempSync(join(tmpdir(), 'comparison-summary-http-'))
-const db = useDb({ dbPath: join(dir, 'fixture.db') })
+const db = initializeDb({ create: true, dbPath: join(dir, 'fixture.db') })
 const curatedPath = join(dir, 'curated.json')
 const reconcilePath = join(dir, 'reconcile.json')
 const uscc = '91330211255994457P'
