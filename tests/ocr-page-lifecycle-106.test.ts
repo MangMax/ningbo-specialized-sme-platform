@@ -1,3 +1,4 @@
+import { initializeDb } from '../db/client'
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -11,7 +12,7 @@ const dir = mkdtempSync(join(tmpdir(), 'ocr-lifecycle-106-'))
 const dbPath = join(dir, 'test.sqlite')
 const root = join(dir, 'files')
 mkdirSync(root)
-const db = useDb({ dbPath })
+const db = initializeDb({ create: true, dbPath })
 const file = db.insert(schema.storedFile).values({ relPath: 'synthetic.pdf', filename: 'synthetic.pdf', ext: 'pdf', bytes: 12, sha256: 'synthetic' }).returning().get()
 writeFileSync(join(root, file.relPath), minimalPdf({ pages: 6 }))
 let app: { baseUrl: string; stop(): Promise<void> }
