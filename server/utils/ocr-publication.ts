@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { closeSync, openSync, readSync, readFileSync } from 'node:fs'
+import { closeSync, openSync, readSync, readFileSync, statSync } from 'node:fs'
 import { and, eq, inArray, sql } from 'drizzle-orm'
 import type { JobContext } from './job-runner'
 import { getJob, setJobResult } from './job-store'
@@ -7,6 +7,7 @@ import { isJobId } from '../../lib/job'
 import { pageDirRelPath, PAGES_MANIFEST_NAME } from '../../lib/pdf-page'
 import * as schema from '../../db/schema'
 import { resolveWithinRoot } from './pdf-pages'
+import { compareFileContentIdentity, readStoredFileContentIdentity } from './file-content-identity'
 
 type Db = JobContext['db']
 export interface OcrCapture {
@@ -25,6 +26,8 @@ export interface OcrPublicationFile {
   file: string
   fileId: number | null
   registeredSha256: string | null
+  registeredBytes?: number | null
+  sourceBytes?: number | null
   sourceSha256: string | null
   targets: Record<number, string | null>
   images: Record<number, { relPath: string; sha256: string }>
@@ -87,16 +90,21 @@ export function prepareOcrPublication(db: Db, filesDir: string, files: string[],
     return { ...structuredClone(publication), resumedFrom: resumeJobId, recovery: { sourceJobId: source.id, anchorJobId: prior.id } }
   }
   return { version: 1, model, variant, providerFingerprint, files: files.map(file => {
-    const row = db.select({ id: schema.storedFile.id, sha256: schema.storedFile.sha256, removedAt: schema.storedFile.removedAt })
+    const row = db.select({ id: schema.storedFile.id, sha256: schema.storedFile.sha256, bytes: schema.storedFile.bytes, removedAt: schema.storedFile.removedAt })
       .from(schema.storedFile).where(eq(schema.storedFile.relPath, file)).get()
-    const entry: OcrPublicationFile = { file, fileId: row?.id ?? null, registeredSha256: row?.sha256 ?? null, sourceSha256: null, targets: {}, images: {}, captures: [], requests: {}, state: 'pending' }
+    const entry: OcrPublicationFile = { file, fileId: row?.id ?? null, registeredSha256: row?.sha256 ?? null, registeredBytes: row?.bytes ?? null, sourceBytes: null, sourceSha256: null, targets: {}, images: {}, captures: [], requests: {}, state: 'pending' }
     try {
       if (!row || row.removedAt) throw new Error('stored_file 中没有这个文件或已移出库')
-      entry.sourceSha256 = ocrInputHash(resolveWithinRoot(filesDir, file))
+      const source = resolveWithinRoot(filesDir, file)
+      entry.sourceSha256 = ocrInputHash(source)
+      entry.sourceBytes = statSync(source).size
+      const registered = readStoredFileContentIdentity(db, row.id)!
+      if (!/^[a-f0-9]{64}$/i.test(registered.sha256)) throw new Error('OCR 输入文件内容身份未知;待核实登记')
+      if (compareFileContentIdentity(registered, { sha256: entry.sourceSha256, bytes: entry.sourceBytes })) throw new Error('OCR 输入文件内容身份冲突;原采集结果保留待处理')
       const versions = db.select({ page: schema.ocrResult.pageNo, id: schema.ocrResult.id, revision: schema.ocrResult.revision })
         .from(schema.ocrResult).where(eq(schema.ocrResult.fileId, row.id)).all()
       const manifest = JSON.parse(readFileSync(resolveWithinRoot(filesDir, `${pageDirRelPath(file)}/${PAGES_MANIFEST_NAME}`), 'utf8'))
-      if (!Array.isArray(manifest.pages) || manifest.sourceSha256 !== entry.sourceSha256) throw new Error('页图输入不匹配,请先渲染最新页图')
+      if (!Array.isArray(manifest.pages) || manifest.sourceSha256 !== entry.sourceSha256 || manifest.sourceBytes !== entry.sourceBytes) throw new Error('页图输入不匹配,请先渲染最新页图')
       for (const page of manifest.pages) {
         const existing = versions.find(v => v.page === page.page)
         entry.targets[page.page] = existing ? `${existing.id}:${existing.revision}` : null
@@ -271,10 +279,13 @@ export function recordSharedOcrPublication(db: Db, publication: OcrPublication, 
 }
 
 export function verifyOcrInput(db: Db, filesDir: string, file: OcrPublicationFile): void {
-  const row = db.select({ id: schema.storedFile.id, sha256: schema.storedFile.sha256, removedAt: schema.storedFile.removedAt })
+  const row = db.select({ id: schema.storedFile.id, sha256: schema.storedFile.sha256, bytes: schema.storedFile.bytes, removedAt: schema.storedFile.removedAt })
     .from(schema.storedFile).where(eq(schema.storedFile.relPath, file.file)).get()
+  if (file.registeredBytes == null || file.sourceBytes == null || !file.registeredSha256 || !/^[a-f0-9]{64}$/i.test(file.registeredSha256)) throw new Error('OCR 输入文件内容身份未知;原采集结果保留待核实,禁止付费或发布')
   if (!row || row.removedAt || row.id !== file.fileId || row.sha256 !== file.registeredSha256
-    || ocrInputHash(resolveWithinRoot(filesDir, file.file)) !== file.sourceSha256) throw new Error('OCR 输入文件内容身份冲突;原采集结果保留待处理')
+    || row.bytes !== file.registeredBytes || file.sourceSha256 !== file.registeredSha256 || file.sourceBytes !== file.registeredBytes
+    || statSync(resolveWithinRoot(filesDir, file.file)).size !== file.registeredBytes
+    || ocrInputHash(resolveWithinRoot(filesDir, file.file)) !== file.registeredSha256) throw new Error('OCR 输入文件内容身份冲突;原采集结果保留待处理')
   for (const image of Object.values(file.images)) {
     if (ocrInputHash(resolveWithinRoot(filesDir, image.relPath)) !== image.sha256) throw new Error('OCR 输入页图内容冲突;原采集结果保留待处理')
   }

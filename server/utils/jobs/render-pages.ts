@@ -1,5 +1,6 @@
 import { appLog } from '../../../lib/logging'
-import { findFileIdByRelPath } from '../mcp-files'
+import { registeredFileAtLocator, verifyFileRead, verifyPageRead } from '../file-read-identity'
+import type { StoredFileContentIdentity } from '../file-content-identity'
 import { isPdfPath, normalizeDpi } from '../../../lib/pdf-page'
 import type { RenderOutcome } from '../pdf-pages'
 import { renderPdfPages } from '../pdf-pages'
@@ -28,6 +29,7 @@ export type RenderedFileOutcome =
   | {
       file: string
       ok: true
+      contentIdentity: StoredFileContentIdentity
       /** 源 PDF 的页数(打开失败时为 null,但那种情况会走 ok:false)。 */
       pageCount: number | null
       /** 渲染后磁盘上的页图数。 */
@@ -117,8 +119,10 @@ export function parseRenderPagesParams(raw: Record<string, unknown>): JobParseRe
 export async function runRenderPages(
   ctx: JobContext,
   params: Record<string, unknown>,
+  registeredInputs?: Array<StoredFileContentIdentity | null>,
 ): Promise<JobCompletion> {
   const { files, dpi, force } = params as unknown as RenderPagesParams
+  const inputs = registeredInputs ?? files.map(file => registeredFileAtLocator(ctx.db, file))
   const logContext = { ...ctx.logContext, taskId: ctx.jobId }
   const outcomes: RenderedFileOutcome[] = []
   let failed = 0
@@ -144,12 +148,25 @@ export async function runRenderPages(
 
     const file = files[i]!
     const fileContext = { ...logContext }
-    try { const id = findFileIdByRelPath(ctx.db, file); if (id !== null) fileContext.fileId = id } catch { /* Optional log identity cannot stop rendering. */ }
     try {
+      const expected = inputs[i]
+      if (!expected) throw new Error('file_content_unknown: 待核实登记,禁止渲染发布')
+      fileContext.fileId = expected.fileId
+      const checkInput = async () => {
+        const identity = await verifyFileRead(ctx.db, ctx.filesDir, file)
+        const current = identity.registered
+        if (identity.status !== 'verified') throw new Error('file_content_unknown: 待核实登记,禁止渲染发布')
+        if (!current || current.fileId !== expected.fileId || current.sha256 !== expected.sha256 || current.bytes !== expected.bytes) throw new Error('file_content_conflict: 渲染输入登记已变化')
+        return identity
+      }
+      await checkInput()
       const out = await renderPdfPages(ctx.filesDir, file, { dpi, force, logContext: fileContext })
+      const verified = await checkInput()
+      await verifyPageRead(ctx.db, ctx.filesDir, file, undefined, verified)
       outcomes.push({
         file,
         ok: true,
+        contentIdentity: expected,
         pageCount: out.pageCount,
         rendered: out.rendered,
         written: out.written,
@@ -183,5 +200,9 @@ export const renderPagesSpec: JobSpec = {
   parse: parseRenderPagesParams,
   // 分母提交时就知道 —— 轮询方一上来就能看到「一共 3 份」。
   total: (params) => (params.files as string[]).length,
+  prepare: (params, db) => {
+    const inputs = (params.files as string[]).map(file => registeredFileAtLocator(db, file))
+    return (ctx, input) => runRenderPages(ctx, input, inputs)
+  },
   run: runRenderPages,
 }
