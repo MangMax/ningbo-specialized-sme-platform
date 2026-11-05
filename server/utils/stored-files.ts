@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { createReadStream, lstatSync, realpathSync, rmSync } from 'node:fs'
+import { createReadStream } from 'node:fs'
 import { lstat, readdir, realpath, stat } from 'node:fs/promises'
 import { join, resolve, sep } from 'node:path'
 import { and, desc, eq, inArray, isNull, like, or, sql, type SQL } from 'drizzle-orm'
@@ -663,27 +663,8 @@ export function removeStoredFileSync(
 
     const refs = getStoredFile(tx, id)?.referenceCount ?? 0
 
-    let diskDeleted = false
-    if (options.deleteDisk) {
-      if (refs > 0) throw new FileMaintenanceError(409, '文件仍被正式出处引用,禁止删除磁盘文件')
-      // 锁根:路径解析后必须仍在文件库内,不能删到库外。
-      const abs = resolveInsideRoot(filesRoot, current.relPath)
-      if (!abs) throw new FileMaintenanceError(400, '路径越界')
-      try {
-        const info = lstatSync(abs)
-        if (info.isFile()) {
-          const physical = realpathSync(abs)
-          if (!physical.startsWith(realpathSync(filesRoot) + sep)) {
-            throw new FileMaintenanceError(409, '磁盘文件路径越界')
-          }
-          rmSync(abs, { force: true })
-          diskDeleted = true
-        }
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
-        // 磁盘上已经不在了 —— 移出库照样完成,不因为文件缺失而失败。
-      }
-    }
+    const diskDeleted = false
+    if (options.deleteDisk) throw new FileMaintenanceError(400, '物理删除必须通过带版本封套的隔离命令执行')
 
     softRemoveStoredFile(tx, id)
 
