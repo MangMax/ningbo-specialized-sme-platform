@@ -21,7 +21,7 @@ beforeEach(async () => {
     db.insert(schema.job).values({ id: ids[name as keyof typeof ids], kind, state: 'failed', params: { cookie: 'PRIVATE_COOKIE', files: ['/Users/private/secret.pdf'] }, progress: { done: 1, total: 3 }, result: { raw: 'PRIVATE_RAW'.repeat(100000), token: 'PRIVATE_TOKEN' }, error: 'PRIVATE_TOKEN /Users/private/secret.pdf', createdAt: '2026-10-19T00:00:00Z' }).run()
   }
   const route = (action: 'list' | 'detail' | 'cancel' | 'retry') => (request: FixtureRequest) => handleTaskCenterRequest(action, request, { db, apiToken: 'fixture-key', filesDir: dir })
-  api = await startHttpFixture({ routes: { '/api/task-center': route('list'), [`/api/task-center/${ids.ocr}`]: route('detail'), [`/api/task-center/${ids.ocr}/cancel`]: route('cancel'), [`/api/task-center/${ids.batch}`]: route('detail'), [`/api/task-center/${ids.batch}/retry`]: route('retry') } })
+  api = await startHttpFixture({ routes: { '/api/task-center': route('list'), [`/api/task-center/${ids.ocr}`]: route('detail'), [`/api/task-center/${ids.ocr}/cancel`]: route('cancel'), [`/api/task-center/${ids.batch}`]: route('detail'), [`/api/task-center/${ids.reconcile}`]: route('detail'), [`/api/task-center/${ids.batch}/retry`]: route('retry') } })
 })
 afterEach(async () => { __resetJobRunner(); clearJobSpecs(); await api?.close(); rmSync(dir, { recursive: true, force: true }) })
 
@@ -145,4 +145,33 @@ it('导出任务摘要兼容历史v1至v7并识别当前v8规则而拒绝未知�
   expect(body.total).toBe(versions.length)
   for(let i=0;i<versions.length;i++) expect(body.rows.find((r:any)=>r.id===exportIds[i]).export.ruleVersion).toBe(i===versions.length-1?null:versions[i])
   expect(db.select().from(schema.job).all()).toEqual(before)
+})
+
+it('keeps reconcile report targets distinct from collection completeness and missing counts unknown', async () => {
+  db.update(schema.job).set({ result: { counts: { total: 7, needsReview: 3, queryFailed: 2, notQueried: 1 }, raw: 'PRIVATE_RAW' } }).where(eq(schema.job.id, ids.reconcile)).run()
+  const before = db.select().from(schema.job).all()
+  const list = await (await fetch(`${api.baseUrl}/api/task-center?tab=platform`)).json()
+  const report = list.rows.find((row: any) => row.id === ids.reconcile)
+  expect(report.outcome).toBeNull()
+  expect(report.reconcile).toEqual({ targets: 7, needsReview: 3, queryFailed: 2, notQueried: 1 })
+  const detail = await (await fetch(`${api.baseUrl}/api/task-center/${ids.reconcile}`)).json()
+  expect(detail.reconcile).toEqual(report.reconcile)
+  expect(detail.reconcileCollection).toEqual(report.reconcileCollection)
+  expect(db.select().from(schema.job).all()).toEqual(before)
+  db.update(schema.job).set({ result: { counts: { total: '7', needsReview: -1 } } }).where(eq(schema.job.id, ids.reconcile)).run()
+  const history = await (await fetch(`${api.baseUrl}/api/task-center?tab=platform`)).json()
+  expect(history.rows.find((row: any) => row.id === ids.reconcile).reconcile).toEqual({ targets: null, needsReview: null, queryFailed: null, notQueried: null })
+})
+
+it('bounds domain metadata and unknown historical results without forwarding extra count payloads', async () => {
+  const candidate = newJobId()
+  db.insert(schema.job).values({ id: candidate, kind: 'event-archive-candidates', state: 'failed', params: { eventIds: [1] }, progress: { done: 1, total: 1 }, result: { counts: { succeeded: 1, needsReview: 0, failed: 0, created: 2, existing: 0, raw: 'PRIVATE_RAW'.repeat(100000) }, items: [] }, createdAt: '2026-10-19T00:00:00Z' }).run()
+  const response = await fetch(`${api.baseUrl}/api/task-center?pageSize=200`)
+  expect(response.status).toBe(200)
+  const text = await response.text()
+  expect(text).not.toContain('PRIVATE_')
+  expect(text.length).toBeLessThan(14000)
+  const body = JSON.parse(text)
+  expect(body.rows.find((row: any) => row.id === candidate).discovery.counts).toEqual({ succeeded: 1, needsReview: 0, failed: 0, created: 2, existing: 0 })
+  expect(body.rows.find((row: any) => row.id === ids.unknown)).toMatchObject({ group: 'all', outcome: null, capabilities: { retry: false } })
 })
