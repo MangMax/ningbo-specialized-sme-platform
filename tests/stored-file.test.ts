@@ -1,3 +1,4 @@
+import { initializeDb } from '../db/client'
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -176,7 +177,7 @@ beforeAll(async () => {
   process.env.NUXT_DB_PATH = join(dir, 'test.db')
   ;({ useDb } = await import('../db'))
   schema = (await import('../db')).schema
-  db = useDb()
+  db = initializeDb({ create: true })
   await seedDisk()
 })
 
@@ -290,7 +291,7 @@ describe('入库范围:不该入库的文件不进表,并带原因报出', () =>
       await mkdir(join(abs, '..'), { recursive: true })
       await writeFile(abs, `body:${rel}`)
     }
-    scopeDb = useDb({ dbPath: join(scopeDir, 'scope.db') })
+    scopeDb = initializeDb({ create: true, dbPath: join(scopeDir, 'scope.db') })
   })
 
   afterAll(() => rmSync(scopeDir, { recursive: true, force: true }))
