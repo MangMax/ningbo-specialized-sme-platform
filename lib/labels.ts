@@ -130,9 +130,6 @@ export const REVIEW_OUTCOMES: Record<string, string> = {
   failed: '复核未通过',
 }
 
-/** 复核结论展示顺序。 */
-export const REVIEW_OUTCOME_ORDER: string[] = ['passed', 'failed']
-
 /** 别名来源类别(`enterprise_alias.source_kind`)→ 中文名。 */
 export const ALIAS_SOURCE_KINDS: Record<string, string> = {
   platform_business: '平台业务接口',
@@ -140,14 +137,6 @@ export const ALIAS_SOURCE_KINDS: Record<string, string> = {
   announcement: '公布文件',
   manual: '人工登记',
 }
-
-/** 别名来源类别展示顺序。 */
-export const ALIAS_SOURCE_KIND_ORDER: string[] = [
-  'platform_business',
-  'platform_apply',
-  'announcement',
-  'manual',
-]
 
 /**
  * 核验状态展示标签(`enterprise_alias` / `platform_relation` / `difference_reason` 共用)。
@@ -228,18 +217,12 @@ export const RELATION_MATCH_BASES: Record<string, string> = {
   none: '未匹配',
 }
 
-/** 关系匹配依据展示顺序。 */
-export const RELATION_MATCH_BASE_ORDER: string[] = ['uscc', 'alias', 'manual', 'none']
-
 /** 平台申报类型(`platform_relation.declare_kind`,接口字段 `sblx`)→ 中文名。 */
 export const RELATION_DECLARE_KINDS: Record<string, string> = {
   apply: '申请',
   update: '更新',
   review: '复核',
 }
-
-/** 平台申报类型展示顺序。 */
-export const RELATION_DECLARE_KIND_ORDER: string[] = ['apply', 'update', 'review']
 
 /**
  * `businessList` 的 `rdjb`(认定级别)= 称号。腔调与 `TITLES` 同源(取 `TITLE_SEED` 的中文名)。
@@ -250,9 +233,6 @@ export const PLATFORM_RDJBS: Record<string, string> = {
   '2': '专精特新中小企业',
   '3': '专精特新“小巨人”',
 }
-
-/** `rdjb` 展示顺序(等级由低到高,与接口取值一致)。 */
-export const PLATFORM_RDJB_ORDER: string[] = ['1', '2', '3']
 
 /**
  * 差异状态(`difference_reason.status`)→ 中文名。
@@ -392,19 +372,6 @@ export const DIFFERENCE_MEASURES: Record<string, string> = {
   none: '无需措施',
 }
 
-/** 后续措施展示顺序。 */
-export const DIFFERENCE_MEASURE_ORDER: string[] = [
-  'keep_history',
-  'mark_platform_snapshot',
-  'follow_review',
-  'mark_moved_out',
-  'mark_deregistered',
-  'update_current_name',
-  'record_moved_in',
-  'manual_review',
-  'none',
-]
-
 /** 导出批次导入状态(`platform_export_batch.import_status`)→ 中文名。 */
 export const EXPORT_IMPORT_STATUSES: Record<string, string> = {
   pending: '待导入',
@@ -412,18 +379,12 @@ export const EXPORT_IMPORT_STATUSES: Record<string, string> = {
   failed: '导入失败',
 }
 
-/** 导出批次导入状态展示顺序。 */
-export const EXPORT_IMPORT_STATUS_ORDER: string[] = ['pending', 'imported', 'failed']
-
 /** 统一导入批次状态(`import_batch.status`)→ 中文名。预检与提交是两个不同状态。 */
 export const IMPORT_BATCH_STATUSES: Record<string, string> = {
   preflight: '预检',
   committed: '已提交',
   failed: '提交失败',
 }
-
-/** 统一导入批次状态展示顺序。 */
-export const IMPORT_BATCH_STATUS_ORDER: string[] = ['preflight', 'committed', 'failed']
 
 /** 导入来源类别(`import_batch.source_kind`)→ 中文名。 */
 export const IMPORT_SOURCE_KINDS: Record<string, string> = {
