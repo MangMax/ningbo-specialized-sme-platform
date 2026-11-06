@@ -58,13 +58,15 @@ const visibleView = computed(() => props.view && (props.readFailed || !['read-on
 
 <template>
   <section class="relative flex min-w-0 flex-col gap-4 border-t p-4 text-base leading-6 sm:px-5" aria-label="年度过程核对" data-testid="annual-process-review">
+    <h3 class="text-base font-semibold">年度过程与最终结果</h3>
     <TableLoadingStatus :loading="!!pending" kind="ledger" label="正在读取年度过程…" />
     <div class="flex flex-wrap items-start justify-between gap-2">
-      <div class="flex min-w-0 flex-col gap-1 text-sm leading-6" role="status" aria-live="polite">
+      <div class="flex min-w-0 flex-col gap-1 text-base leading-6" role="status" aria-live="polite">
         <p>{{ phaseText[phase] }}</p><p v-if="progress && phase !== 'synced'" class="text-muted-foreground">{{ progress }}</p>
       </div>
-      <Button variant="ghost" size="sm" :disabled="pending" @click="emit('refresh')">刷新年度过程</Button>
+      <Button variant="ghost" size="sm" :disabled="pending" @click="emit('refresh')">{{ phase === 'read-only' || phase === 'checking' ? '刷新年度过程' : '刷新并核对年度过程' }}</Button>
     </div>
+    <p v-if="phase !== 'read-only' && phase !== 'checking'" class="text-muted-foreground text-sm leading-6">年度核对会保存平台对应与最终结果；正式公布事实保持原样。</p>
     <div v-if="phase === 'unknown' || phase === 'sync-failed' || canCancel || canRetry" class="flex flex-wrap gap-2">
       <Button v-if="phase === 'unknown'" variant="outline" size="sm" :disabled="pending" @click="emit('retry-submit')">重试同一请求</Button>
       <Button v-if="phase === 'sync-failed'" variant="outline" size="sm" :disabled="pending" @click="emit('retry-readback')">重试读回</Button>
@@ -74,7 +76,7 @@ const visibleView = computed(() => props.view && (props.readFailed || !['read-on
     <p v-for="reason in businessReasons" :key="reason" class="text-base leading-6">{{ reason }}</p>
     <p v-if="actionError" role="status" class="text-base">{{ actionError }}</p>
     <TableFailureState v-if="taskReadFailed" compact title="年度任务状态读取失败" description="原任务和请求保留，尚不能判断任务已完成。" @retry="emit('retry-task-read')" />
-    <TableFailureState v-if="readFailed" compact :pending="pending" title="年度过程读取失败" :description="view ? '保留已加载的年度过程及其来源；重试继续读取本次失败的过程。' : '尚未取得年度过程，不能据此判断无业务或已确认。'" @retry="emit('retry-read')" />
+    <TableFailureState v-if="readFailed" compact :pending="pending" title="年度过程读取失败" :description="`读取目标：当前事项的年度过程第 ${targetPage} 页。${view ? '保留已加载的年度过程及其来源；重试继续读取本次失败的过程。' : '尚未取得年度过程，不能据此判断无业务或已确认。'}`" @retry="emit('retry-read')" />
     <AnnualProcessTimeline v-if="visibleView" :view="visibleView" :back="back" :pending="pending" :has-more="hasMore" :read-failed="readFailed" @load-more="emit('load-more')" @page="emit('page', $event)" @page-size="emit('page-size', $event)" @event-navigate="emit('event-navigate', $event)" />
     <DisclosurePanel v-if="auditReadback.length" title="本次读回的对应与审计" :heading-level="4">
       <ul class="flex flex-col gap-1 text-sm"><li v-for="point in auditReadback" :key="point.id">对应 #{{ point.id }} · 读回修订 {{ point.revision }} · 已读回该修订审计</li></ul>

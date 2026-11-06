@@ -17,7 +17,8 @@ const record = { id: 1, enterpriseId: 91, titleCode: 'specialized_sme', source: 
 const event = { id: 10, recordId: 1, eventType: 'review', year: 2021, batchSeq: 1, decidedYear: 2024, reviewOutcome: 'failed', record, evidence: [], correspondences: [] }
 const edge = { id: 1, type: 'event_process', role: 'supports_review', status: 'confirmed', revision: 1, requiresRevalidation: false, eventId: 10, predecessorEventId: null, relationId: 30, exportRowId: null, enterpriseId: 91, titleCode: 'specialized_sme', ruleId: 'fixture', ruleVersion: '1', decidedAt: null, event, relation, exportRow: null }
 const detail = { enterprise: { enterpriseId: 91, name: '合成企业', uscc: null }, aliases: [], records: [record], events: [event, { ...event, id: 11 }], evidence: [], platform: { queries: [query], relations: [relation] } }
-vi.mock('@pinia/colada', () => ({ useQuery: () => ({ data: ref(detail), isLoading: ref(false), error: ref(null) }) }))
+const pendingState = { data: ref<any>(undefined), isLoading: ref(false), error: ref<Error | null>(null), refetch: vi.fn() }
+vi.mock('@pinia/colada', () => ({ useQuery: (options: any) => options.key()[0] === 'evidence-impacts' ? pendingState : ({ data: ref(detail), isLoading: ref(false), error: ref(null) }) }))
 const returnTo = '/comparison?mode=record&queryIds=20&exportBatchIds=6&page=2'
 const startTo = (eventId: number, withReturn = true) => ({ path: '/enterprises/91', query: { eventId: String(eventId), ...(withReturn ? { returnTo } : {}) } })
 const stubs = { NuxtLink: RouterLink, PageHeader: { template: '<header><slot name="breadcrumb" /></header>' }, FilePreviewDialog: true, EnterpriseLaterProcesses: true, TitleBadge: true }
@@ -25,6 +26,7 @@ const preventNativeNavigation = (event: Event) => event.preventDefault()
 let wrapper: VueWrapper | undefined
 let originalAnimate: PropertyDescriptor | undefined
 beforeEach(() => {
+  pendingState.data.value = undefined; pendingState.isLoading.value = false; pendingState.error.value = null; pendingState.refetch.mockReset()
   vi.stubGlobal('useState', () => ref(false))
   originalAnimate = Object.getOwnPropertyDescriptor(Element.prototype, 'animate')
   Reflect.deleteProperty(Element.prototype, 'animate')
@@ -35,6 +37,26 @@ beforeEach(() => {
   vi.stubGlobal('useHead', vi.fn())
   vi.stubGlobal('definePageMeta', vi.fn())
   vi.stubGlobal('$fetch', vi.fn(async (url: string) => ({ source: url.includes('/events/') ? event : relation, correspondences: [edge] })))
+})
+
+it('keeps source-change loading empty and failed states distinct and retries only that list', async () => {
+  pendingState.isLoading.value = true
+  const router = await enterprise(10)
+  await router.push({ path: '/enterprises/91', query: { tab: 'review' } }); await flushPromises()
+  const sourceChanges = () => wrapper!.get('[aria-label="待处理证据变化"]')
+  expect(sourceChanges().text()).toContain('正在读取来源变化')
+  expect(sourceChanges().text()).not.toContain('暂无待处理来源变化')
+  pendingState.isLoading.value = false; pendingState.error.value = new Error('offline'); await flushPromises()
+  expect(sourceChanges().text()).toContain('来源变化清单读取失败')
+  expect(sourceChanges().text()).not.toContain('暂无待处理来源变化')
+  await sourceChanges().findAll('button').find(b => b.text() === '重新加载')!.trigger('click')
+  expect(pendingState.refetch).toHaveBeenCalledTimes(1)
+  pendingState.error.value = null; pendingState.data.value = { rows: [], nextCursor: null, projectionReady: false }; await flushPromises()
+  expect(sourceChanges().text()).toContain('来源变化尚未整理完成')
+  expect(sourceChanges().text()).not.toContain('暂无待处理来源变化')
+  pendingState.data.value = { rows: [], nextCursor: null, projectionReady: true }; await flushPromises()
+  expect(sourceChanges().text()).toContain('暂无待处理来源变化')
+  expect(sourceChanges().text()).not.toContain('核对这一项')
 })
 afterEach(async () => {
   document.removeEventListener('click', preventNativeNavigation)

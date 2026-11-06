@@ -69,3 +69,20 @@ it('keeps process facts but withholds final success while accepted work is still
   await wrapper.setProps({ phase: 'synced', readFailed: false })
   expect(wrapper.findAll('[data-final-result]')).toHaveLength(1)
 })
+
+it('identifies the failed annual page and keeps refresh separate from a save result', async () => {
+  wrapper = mount(AnnualProcessReview, { props: { back: '/enterprises/1', view: null, phase: 'read-only', readFailed: true, targetPage: 3 } })
+  expect(wrapper.text()).toContain('读取目标：当前事项的年度过程第 3 页')
+  expect(wrapper.text()).toContain('尚未取得年度过程')
+  await wrapper.findAll('button').find(button => button.text() === '刷新年度过程')!.trigger('click')
+  expect(wrapper.emitted('refresh')).toEqual([[]])
+  expect(wrapper.emitted('retry-submit')).toBeUndefined()
+  expect(wrapper.text()).not.toContain('已保存')
+})
+
+it('names refresh as annual verification when writes are enabled without changing the recovery action', async () => {
+  wrapper = mount(AnnualProcessReview, { props: { back: '/enterprises/1', view: null, phase: 'synced' } })
+  await wrapper.findAll('button').find(button => button.text() === '刷新并核对年度过程')!.trigger('click')
+  expect(wrapper.emitted('refresh')).toEqual([[]])
+  expect(wrapper.text()).toContain('年度核对会保存平台对应与最终结果；正式公布事实保持原样。')
+})

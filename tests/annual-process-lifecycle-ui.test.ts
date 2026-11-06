@@ -148,7 +148,7 @@ it('freezes an unknown submission key across refresh and remount and resolves th
   mountReview(7); await flushPromises()
   expect(wrapper.text()).toContain('提交结果尚未确认')
   const firstKey = posts(fetch)[0]![1].body.clientRequestId
-  await click('刷新年度过程')
+  await click('刷新并核对年度过程')
   expect(posts(fetch)).toHaveLength(1)
   wrapper.unmount(); mountReview(7); await flushPromises()
   expect(wrapper.text()).toContain('提交结果尚未确认')
@@ -287,7 +287,7 @@ it('keeps an unknown original key through a new source until the original receip
     return undefined
   })
   mountReview(7); await flushPromises(); generation = 'scope-b'
-  await click('刷新年度过程')
+  await click('刷新并核对年度过程')
   expect(posts(fetch)).toHaveLength(1)
   expect(wrapper.findAll('[data-final-result]')).toHaveLength(0)
   await click('重试同一请求')
@@ -402,7 +402,7 @@ it('withholds a previous final when an explicit annual refresh fails then restor
   const fetch = fixture(url=>url.endsWith('/annual-process')&&fail?Promise.reject(new Error('service offline')):undefined)
   mountReview(7); await flushPromises()
   expect(wrapper.findAll('[data-final-result]')).toHaveLength(1)
-  fail=true; await click('刷新年度过程')
+  fail=true; await click('刷新并核对年度过程')
   expect(wrapper.text()).toContain('已提交，但同步读回失败')
   expect(wrapper.findAll('[data-final-result]')).toHaveLength(0)
   expect(wrapper.findAll('[data-annual-step]')).toHaveLength(2)

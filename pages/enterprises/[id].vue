@@ -770,13 +770,13 @@ function openPreview(e: Evidence) {
             @preview="openPreview" @event-navigate="arriveAtEvent" @page-open="rememberPagePreviewReturn"
           />
           <!-- 待处理是核对页的入口摘要，不是企业结论卡；不使用彩色单侧边线。 -->
-          <section v-if="pendingRows.length || pendingError" class="bg-card overflow-hidden rounded-lg border" aria-label="待处理证据变化">
+          <section class="bg-card overflow-hidden rounded-lg border" aria-label="待处理证据变化">
             <header class="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 border-b px-4 py-3">
               <div class="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-                <h2 class="text-sm font-semibold">待处理证据变化</h2>
-                <span class="text-muted-foreground text-[13px]">{{ pendingRows.length }}{{ pendingHasMore ? '+' : '' }} 项</span>
+                <h2 class="text-base font-semibold">来源变化处理</h2>
+                <span v-if="pendingData && (pendingRows.length || pendingData.projectionReady)" class="text-muted-foreground text-sm">{{ pendingRows.length }}{{ pendingHasMore ? '+' : '' }} 项</span>
               </div>
-              <p class="text-muted-foreground max-w-[46ch] text-[13px] leading-5">原决定保留；核对后明确维持或更正。</p>
+              <p class="text-base leading-6">核实变化依据后，维持或更正原差异决定；历史决定保留。</p>
             </header>
             <ul v-if="pendingRows.length" class="divide-y">
               <li
@@ -786,23 +786,25 @@ function openPreview(e: Evidence) {
               >
                 <div class="min-w-0">
                   <div class="flex flex-wrap items-center gap-1.5">
-                    <span class="text-sm font-medium">{{ impactScopeLabel(row) }}</span>
+                    <span class="text-base font-medium">{{ impactScopeLabel(row) }}</span>
                     <AssessmentStatusBadge kind="impact" :value="row.classification" />
-                    <span class="text-muted-foreground text-[13px]">{{ row.pending ? '待复核' : '已登记复核' }}</span>
+                    <span class="text-muted-foreground text-sm">{{ row.pending ? '待处理来源变化' : '已处理来源变化' }}</span>
                   </div>
-                  <p class="text-muted-foreground mt-0.5 text-[13px] leading-5">{{ impactOldDecisionText(row) }}</p>
+                  <p class="mt-1 text-base leading-6">{{ impactOldDecisionText(row) }}</p>
                 </div>
                 <Button variant="outline" size="sm" class="shrink-0 self-start sm:self-center" @click="onOpenImpact(row)">
-                  核对这一项
+                  处理这一来源变化
                 </Button>
               </li>
             </ul>
-            <p v-if="pendingHasMore" class="text-muted-foreground border-t px-4 py-2 text-[13px]">
+            <p v-if="pendingHasMore || pendingRows.length > 3" class="text-muted-foreground border-t px-4 py-2 text-sm">
               另有未显示的待处理项，可在复核队列中查看。
             </p>
-            <p v-if="pendingError" class="text-destructive border-t px-4 py-2 text-[13px] leading-5">
-              待复核清单读取失败；这不代表没有待处理项。
-            </p>
+            <TableFailureState v-if="pendingError" compact title="来源变化清单读取失败" :description="`读取目标：${detail.name}的待处理来源变化。保留上次成功清单；这不代表没有待处理项。`" :pending="pendingLoading" @retry="refetchPending()" />
+            <p v-else-if="pendingLoading" role="status" class="px-4 py-3 text-base leading-6">正在读取来源变化…</p>
+            <p v-else-if="!pendingData" class="px-4 py-3 text-base leading-6">来源变化尚未读取。</p>
+            <p v-else-if="!pendingData.projectionReady" class="px-4 py-3 text-base leading-6">来源变化尚未整理完成，当前清单不能代表全部待处理项。</p>
+            <p v-else-if="!pendingRows.length" class="px-4 py-3 text-base leading-6">暂无待处理来源变化。</p>
           </section>
 
           <EnterpriseFacts :key="`facts-${detail.id}`" :enterprise-id="detail.id" @saved="onReviewSaved" />
