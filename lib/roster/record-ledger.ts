@@ -58,16 +58,6 @@ export function groupEventEdges<T extends EventEdge & Pick<CorrespondenceDetail,
   }
 }
 
-/** 记录行右侧的一句话状态；不比较字段，只陈述目前已登记的事实。 */
-export function eventSourceState(groups: { sources: readonly unknown[]; candidates: readonly unknown[]; revalidation?: readonly unknown[] }, hasOfficialFile: boolean): string {
-  if (groups.sources.length && hasOfficialFile) return '公布文件与接口已登记对应'
-  if (groups.sources.length) return '仅有接口对应'
-  if (groups.candidates.length) return '候选待确认'
-  if (groups.revalidation?.length) return '对应待重新核验'
-  if (hasOfficialFile) return '仅有公布文件'
-  return '尚无已登记出处'
-}
-
 /** 日期 / 时间统一成人能读的写法：纯日期保持原样，时刻去掉 ISO 的 T、毫秒和 Z。 */
 export function humanRecordTime(value: string | null | undefined): string {
   if (!value) return '时间未记录'
