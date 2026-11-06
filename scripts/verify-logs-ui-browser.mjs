@@ -15,8 +15,9 @@
  * Usage: node scripts/verify-logs-ui-browser.mjs
  */
 import assert from 'node:assert/strict'
-import { execFileSync, spawn } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { spawnOwnedChild, stopOwnedChild, waitForChromeDevTools } from './lib/isolated-local-services.mjs'
+import { execFileSync } from 'node:child_process'
+import { closeSync, openSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 
@@ -38,12 +39,82 @@ const fixtureLogPath = join(outDir, 'fixture.log')
 const chromePath = process.env.CHROME_PATH || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
-const fixture = spawn(process.execPath, ['scripts/verify-logs-ui-usability.mjs', '--serve'], {
+// Keep startup, assertions and signal exits inside the same owned closeout.
+let chrome, profile, ws, chromeClosed, chromePort
+const chromeStderrPath = join(outDir, 'chrome-stderr.log')
+let cleanupPromise
+const lifecycle = { errors: [] }
+let fixture, fixtureClosed, fixtureError, manifest
+let fixtureLog = ''
+async function cleanup() {
+  if (cleanupPromise) return cleanupPromise
+  cleanupPromise = (async () => {
+    ws?.close()
+    try {
+      if (chrome) {
+        await stopOwnedChild(chrome)
+        await chromeClosed
+      }
+      if (profile) rmSync(profile, { recursive: true, force: true })
+    } catch (error) {
+      lifecycle.errors.push(String(error.stack || error))
+    }
+    // Give the producer time to stop its separately owned Nuxt group and
+    // write its closeout. A forced stop is a failure, never successful cleanup.
+    try {
+      if (fixture) {
+        if (fixture.exitCode === null && fixture.signalCode === null && fixture.pid) fixture.kill('SIGTERM')
+        let timer
+        try {
+          await Promise.race([
+            fixtureClosed,
+            new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('fixture closeout timeout')), 30_000) })
+          ])
+        } finally {
+          clearTimeout(timer)
+          await stopOwnedChild(fixture)
+          await fixtureClosed
+        }
+        assert.equal(fixture.exitCode, 0, 'fixture closeout failed')
+        if (manifest) {
+          const closeout = JSON.parse(readFileSync(join(manifest.root, 'closeout.json'), 'utf8'))
+          lifecycle.fixtureCloseout = closeout
+          assert.equal(closeout.businessUnchanged, true, 'fixture business bytes changed')
+          assert.equal(closeout.outputPrivacy, true, 'fixture output privacy failed')
+        }
+      }
+    } catch (error) {
+      lifecycle.errors.push(String(error.stack || error))
+    }
+    writeFileSync(fixtureLogPath, fixtureLog)
+    lifecycle.fixtureExit = fixture && { code: fixture.exitCode, signal: fixture.signalCode }
+    Object.assign(lifecycle, {
+      chromePort, chromePid: chrome?.pid,
+      chromeExit: chrome && { code: chrome.exitCode, signal: chrome.signalCode },
+      profile, profileRemoved: profile ? !existsSync(profile) : true
+    })
+    if (lifecycle.errors.length) process.exitCode = 1
+    writeFileSync(join(outDir, 'browser-closeout.json'), JSON.stringify(lifecycle, null, 2))
+  })()
+  return cleanupPromise
+}
+let signalExitStarted = false
+for (const signal of ['SIGTERM', 'SIGINT']) {
+  process.on(signal, () => {
+    if (signalExitStarted) return
+    signalExitStarted = true
+    lifecycle.errors.push(`Interrupted by ${signal}`)
+    process.exitCode = 1
+    void cleanup().then(() => process.exit(1), error => { console.error(error); process.exit(1) })
+  })
+}
+
+async function run() {
+fixture = spawnOwnedChild(process.execPath, ['scripts/verify-logs-ui-usability.mjs', '--serve'], {
   cwd: worktree,
   env: { ...process.env, LOGS_UI_MANIFEST_PATH: manifestPath },
   stdio: ['ignore', 'pipe', 'pipe']
 })
-let fixtureLog = ''
 fixture.stdout.setEncoding('utf8')
 fixture.stderr.setEncoding('utf8')
 const collectFixtureLog = (chunk) => {
@@ -52,18 +123,9 @@ const collectFixtureLog = (chunk) => {
 }
 fixture.stdout.on('data', collectFixtureLog)
 fixture.stderr.on('data', collectFixtureLog)
-let fixtureError
 fixture.on('error', (error) => { fixtureError = error })
 const fixtureRunning = () => !fixtureError && fixture.pid && fixture.exitCode === null && fixture.signalCode === null
-function stopFixture() {
-  // Only signal the ChildProcess we spawned, never a PID supplied by a manifest.
-  if (fixtureRunning()) fixture.kill('SIGTERM')
-}
-process.on('exit', stopFixture)
-process.on('SIGINT', () => {
-  stopFixture()
-  process.exit(1)
-})
+fixtureClosed = new Promise(resolve => fixture.once('close', resolve))
 
 // The producer's pid is its Nuxt child, not the producer itself. It has no
 // nonce: the private output path plus direct parent/command ownership binds it
@@ -122,7 +184,7 @@ async function readManifest(timeoutMs = fixtureTimeoutMs) {
   throw new Error(`fixture manifest timeout: ${lastError.message}\n${fixtureLog.slice(-3000)}`)
 }
 
-const manifest = await readManifest()
+manifest = await readManifest()
 const base = manifest.base
 const syntheticUrl = new URL(manifest.pagePath, base)
 const from = syntheticUrl.searchParams.get('from')
@@ -136,13 +198,16 @@ const filterUrl = (extra = {}) => {
 }
 
 // ---------- headless Chrome + CDP ----------
-const chromePort = 9300 + Math.floor(Math.random() * 400)
-const profile = mkdtempSync(join(tmpdir(), 'logs-ui-chrome-'))
-const chrome = spawn(
+profile = mkdtempSync(join(tmpdir(), 'logs-ui-chrome-'))
+// A file keeps stderr even when Chrome updaters inherit its descriptor;
+// inherited pipes would keep ChildProcess.close pending after the group exits.
+const chromeStderr = openSync(chromeStderrPath, 'a')
+try {
+chrome = spawnOwnedChild(
   chromePath,
   [
     '--headless=new',
-    `--remote-debugging-port=${chromePort}`,
+    '--remote-debugging-port=0',
     `--user-data-dir=${profile}`,
     '--no-first-run',
     '--no-default-browser-check',
@@ -155,39 +220,31 @@ const chrome = spawn(
     '--window-size=1280,800',
     'about:blank'
   ],
-  { stdio: ['ignore', 'pipe', 'pipe'] }
+  { stdio: ['ignore', 'ignore', chromeStderr] }
 )
-let chromeErr = ''
-chrome.stderr.setEncoding('utf8')
-chrome.stderr.on('data', (chunk) => (chromeErr += chunk))
-function stopChrome() {
-  if (chrome.exitCode === null) chrome.kill('SIGTERM')
+} finally {
+  closeSync(chromeStderr)
 }
-process.on('exit', stopChrome)
-
-async function devtools() {
-  for (let i = 0; i < 100; i++) {
-    try {
-      const response = await fetch(`http://127.0.0.1:${chromePort}/json/version`)
-      if (response.ok) return response.json()
-    } catch {}
-    await sleep(100)
-  }
-  throw new Error(`headless Chrome did not start\n${chromeErr.slice(-1000)}`)
-}
-await devtools()
+chromeClosed = new Promise(resolve => chrome.once('close', resolve))
+const version = await waitForChromeDevTools(chrome, profile)
+chromePort = Number(new URL(version.webSocketDebuggerUrl).port)
 const target = await (
   await fetch(`http://127.0.0.1:${chromePort}/json/new?${encodeURIComponent('about:blank')}`, {
     method: 'PUT'
   })
 ).json()
-const ws = new WebSocket(target.webSocketDebuggerUrl)
+ws = new WebSocket(target.webSocketDebuggerUrl)
 await new Promise((resolve, reject) => {
   ws.onopen = resolve
   ws.onerror = reject
+  ws.onclose = () => reject(new Error('Owned Chrome closed before CDP connected'))
 })
 let serial = 0
 const pending = new Map()
+ws.onclose = () => {
+  for (const entry of pending.values()) entry.reject(new Error('Owned Chrome CDP connection closed'))
+  pending.clear()
+}
 const network = []
 let gateMode = 'continue'
 let held = []
@@ -224,6 +281,7 @@ ws.onmessage = (event) => {
 }
 const send = (method, params = {}) =>
   new Promise((resolve, reject) => {
+    if (ws.readyState !== WebSocket.OPEN) return reject(new Error('Owned Chrome CDP connection is not open'))
     const id = ++serial
     pending.set(id, { resolve, reject })
     ws.send(JSON.stringify({ id, method, params }))
@@ -1182,6 +1240,14 @@ writeFileSync(fixtureLogPath, fixtureLog)
 console.log(JSON.stringify({ outDir, resultsPath, passed: summary.passed, failed: summary.failed, checks: checks.map((entry) => ({ name: entry.name, result: entry.result, error: entry.error })) }, null, 2))
 
 ws.close()
-stopChrome()
-stopFixture()
 if (failedChecks.length) process.exitCode = 1
+}
+try {
+  await run()
+} catch (error) {
+  lifecycle.errors.push(String(error.stack || error))
+  console.error(error)
+  process.exitCode = 1
+} finally {
+  await cleanup()
+}
