@@ -98,7 +98,7 @@ function clearAll() {
 
 <template>
   <Sheet v-model:open="open">
-    <SheetContent :side="side" class="flex flex-col gap-0 p-0 sm:max-w-md">
+    <SheetContent :side="side" floating-size="compact" class="flex flex-col gap-0 p-0">
       <SheetHeader class="border-b px-4 py-4">
         <SheetTitle class="flex items-center gap-2">
           <Filter class="size-4" />
