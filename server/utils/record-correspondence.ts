@@ -22,6 +22,7 @@ export type CorrespondenceEdge =
   | { type: 'process_export_context'; relationId: number; exportRowId: number; role: 'current_snapshot_context' }
   | { type: 'recognized_export'; relationId: number; exportRowId: number; role: 'same_current_row' | 'candidate_same_current_row' }
 export type CorrespondenceOperation =
+  | { action: 'revalidate'; correspondenceId: number; expectedRevision: number }
   | { action: 'create'; edge: CorrespondenceEdge; status: 'candidate' | 'confirmed' | 'rejected' }
   | { action: 'decide'; correspondenceId: number; expectedRevision: number; status: 'confirmed' | 'rejected' | 'unlinked' }
   | { action: 'correct'; correspondenceId: number; expectedRevision: number; edge: CorrespondenceEdge }
@@ -264,6 +265,18 @@ function buildPlan(db: Executor, request: CorrespondenceRequest) {
   const touched = new Set<number>()
   const created = new Set<string>()
   for (const op of request.operations) {
+    if (op.action === 'revalidate') {
+      if (!positive(op.correspondenceId) || !positive(op.expectedRevision)) fail('invalid_endpoint_type', 'Correspondence ID and expected revision required')
+      if (touched.has(op.correspondenceId)) fail('ambiguous_candidate', 'One plan cannot mutate the same decision twice')
+      touched.add(op.correspondenceId)
+      const row = db.select().from(schema.recordCorrespondence).where(eq(schema.recordCorrespondence.id, op.correspondenceId)).get()
+      if (!row || row.status !== 'candidate') fail('invalid_endpoint_type', 'Only a candidate can rebind source evidence')
+      if (row.revision !== op.expectedRevision) fail('stale_revision', 'Correspondence revision changed')
+      const source = sourceForEdge(db, storedEdge(row), false, effectiveProofIds(request, row))
+      if (source.sourceFingerprint === row.sourceFingerprint) fail('ambiguous_candidate', 'Same edge has no changed source evidence to revalidate')
+      targets.push({ correspondenceId: row.id, revision: row.revision, status: row.status, sourceFingerprint: row.sourceFingerprint, observedSourceFingerprint: source.sourceFingerprint, targetIdentity: source.targetIdentity })
+      impact.audit++
+    }
     if (op.action === 'create' || op.action === 'correct') {
       const source = sourceForEdge(db, op.edge, op.action === 'correct' || op.status === 'confirmed', request.proofIds)
       const key = edgeKey(op.edge)
@@ -405,6 +418,17 @@ export function commitRecordCorrespondences(db: Db, request: CorrespondenceReque
         correspondenceIds.push(existing ? reproposeEdge(tx, op.edge, request, batch.id, at) : insertEdge(tx, op.edge, request, batch.id, op.status, at))
       } else {
         const row = tx.select().from(schema.recordCorrespondence).where(eq(schema.recordCorrespondence.id, op.correspondenceId)).get()!
+        if (op.action === 'revalidate') {
+          const source = sourceForEdge(tx, storedEdge(row), false, effectiveProofIds(request, row))
+          const updated = tx.update(schema.recordCorrespondence).set({ revision: row.revision + 1,
+            provenance: source.provenance, sourceFingerprint: source.sourceFingerprint, targetIdentity: source.targetIdentity,
+            enterpriseId: source.enterpriseId, titleCode: source.titleCode, ruleId: request.ruleId, ruleVersion: request.ruleVersion,
+          }).where(and(eq(schema.recordCorrespondence.id, row.id), eq(schema.recordCorrespondence.revision, row.revision), eq(schema.recordCorrespondence.status, 'candidate'))).run()
+          if (updated.changes !== 1) fail('stale_revision', 'Correspondence revision changed')
+          addAudit(tx, { ...row, provenance: source.provenance }, batch.id, request, 'candidate', 'candidate', row.revision, at)
+          correspondenceIds.push(row.id)
+          continue
+        }
         if (op.action === 'correct' && row.edgeKey === edgeKey(op.edge)) {
           correspondenceIds.push(reconfirmEdge(tx, row, op.edge, request, batch.id, at))
           continue
@@ -461,7 +485,7 @@ function idChunks(values: Array<number | null>) {
   return Array.from({ length: Math.ceil(ids.length / 400) }, (_, i) => ids.slice(i * 400, (i + 1) * 400))
 }
 function observeReadSources(db: Db, rows: StoredCorrespondence[]): ReadSources {
-  const confirmed = rows.filter(row => row.status === 'confirmed')
+  const confirmed = rows.filter(row => row.status === 'confirmed' || row.status === 'candidate')
   const events = idChunks(confirmed.flatMap(r => [r.eventId, r.predecessorEventId])).flatMap(ids => db.select({ event: schema.recordEvent, record: schema.record, enterprise: schema.enterprise }).from(schema.recordEvent).innerJoin(schema.record, eq(schema.recordEvent.recordId, schema.record.id)).innerJoin(schema.enterprise, eq(schema.record.enterpriseId, schema.enterprise.id)).where(inArray(schema.recordEvent.id, ids)).all())
   const relations = idChunks(confirmed.map(r => r.relationId)).flatMap(ids => db.select().from(schema.platformRelation).where(inArray(schema.platformRelation.id, ids)).all())
   const queries = idChunks(relations.map(r => r.queryId)).flatMap(ids => db.select().from(schema.platformQuery).where(inArray(schema.platformQuery.id, ids)).all())
@@ -482,8 +506,8 @@ function readCorrespondences(db: Db, rows: StoredCorrespondence[]) {
 }
 function readCorrespondence(db: Db, row: StoredCorrespondence, observed: ReadSources): CorrespondenceRead {
   let requiresRevalidation = false
-  if (row.status === 'confirmed') {
-    try { requiresRevalidation = sourceForEdge(db, storedEdge(row), true, (row.provenance.comparisonProofIds as number[] | undefined) ?? [], observed).sourceFingerprint !== row.sourceFingerprint }
+  if (row.status === 'confirmed' || row.status === 'candidate') {
+    try { requiresRevalidation = sourceForEdge(db, storedEdge(row), row.status === 'confirmed', (row.provenance.comparisonProofIds as number[] | undefined) ?? [], observed).sourceFingerprint !== row.sourceFingerprint }
     catch { requiresRevalidation = true }
   }
   return { ...row, requiresRevalidation }

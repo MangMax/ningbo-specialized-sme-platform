@@ -24,6 +24,7 @@ const edge = z.discriminatedUnion('type', [
   z.strictObject({ type: z.literal('recognized_export'), relationId: positive, exportRowId: positive, role: z.enum(['same_current_row', 'candidate_same_current_row']) }),
 ])
 const operation = z.discriminatedUnion('action', [
+  z.strictObject({ action: z.literal('revalidate'), correspondenceId: positive, expectedRevision: positive }),
   z.strictObject({ action: z.literal('create'), edge, status: z.enum(['candidate', 'confirmed', 'rejected']) }),
   z.strictObject({ action: z.literal('decide'), correspondenceId: positive, expectedRevision: positive, status: z.enum(['confirmed', 'rejected', 'unlinked']) }),
   z.strictObject({ action: z.literal('correct'), correspondenceId: positive, expectedRevision: positive, edge }),
