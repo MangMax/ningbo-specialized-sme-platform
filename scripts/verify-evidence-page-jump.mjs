@@ -303,6 +303,35 @@ async function checkChain(width) {
     await wait('returned selected enterprise drawer',`!!${fullDetail} && document.querySelector('[role="dialog"]')?.textContent.includes('${NAME}')`)
     assert(await ev(`document.querySelectorAll('[data-testid="enterprise-name-trigger"]').length>=20 && !document.body.innerText.includes('合成待核企业') && !document.body.innerText.includes('合成Word企业')`),'returned actual filter results')
     await wait('list nonzero position restored',`${tableScroll}?.scrollTop>100 && Math.abs(${tableScroll}.scrollTop-${listPosition.top})<5 && Math.abs(scrollY-${listPosition.y})<5`)
+    // A returned drawer enters with a transform. Measure the settled layout,
+    // not a scheduler-dependent frame during its native enter animation.
+    const drawerLayout = await ev(`(async () => {
+      const drawer=document.querySelector('[role="dialog"][data-testid="enterprise-drawer"]');
+      if(!drawer) throw new Error('returned drawer missing before layout gate');
+      const sample=()=>({scrollWidth:document.documentElement.scrollWidth,clientWidth:document.documentElement.clientWidth,right:drawer.getBoundingClientRect().right});
+      const before=sample(); let timer;
+      const sameDrawer=()=>{if(!drawer.isConnected || document.querySelector('[role="dialog"][data-testid="enterprise-drawer"]')!==drawer) throw new Error('returned drawer replaced during layout gate')};
+      try {
+        await Promise.race([
+          (async()=>{
+            await new Promise(requestAnimationFrame); await new Promise(requestAnimationFrame);
+            sameDrawer();
+            const animations=drawer.getAnimations();
+            await Promise.all(animations.map(a=>a.finished));
+            await new Promise(requestAnimationFrame);
+            sameDrawer();
+            if(drawer.getAnimations().some(a=>a.pending || a.playState==='running')) throw new Error('returned drawer animation changed during layout gate');
+          })(),
+          new Promise((_,reject)=>{timer=setTimeout(()=>reject(new Error('returned drawer layout gate timed out')),3000)})
+        ]);
+        return {before,after:sample()};
+      } finally {clearTimeout(timer)}
+    })()`)
+    console.log('RETURNED DRAWER LAYOUT',JSON.stringify({width,...drawerLayout}))
+    assert(await ev(`location.pathname+location.search===${JSON.stringify(listReturn)}`),'settled list URL exact')
+    assert(await ev(`!!${fullDetail} && document.querySelector('[role="dialog"]')?.textContent.includes('${NAME}')`),'settled selected enterprise drawer')
+    assert(await ev(`document.querySelectorAll('[data-testid="enterprise-name-trigger"]').length>=20 && !document.body.innerText.includes('合成待核企业') && !document.body.innerText.includes('合成Word企业')`),'settled actual filter results')
+    assert(await ev(`${tableScroll}?.scrollTop>100 && Math.abs(${tableScroll}.scrollTop-${listPosition.top})<5 && Math.abs(scrollY-${listPosition.y})<5`),'settled list nonzero position restored')
     assert(await ev(noOverflow),'returned list no horizontal overflow')
     console.log('CHAIN POSITIONS',JSON.stringify({width,expectedDetail,listReturn,listPosition,position}))
   })
