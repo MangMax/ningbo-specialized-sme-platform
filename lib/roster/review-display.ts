@@ -261,12 +261,6 @@ export function impactScopeLabel(row: ImpactRow): string {
   return `${titleLabel(row.titleCode)} · ${directionLabel(row.direction)}`
 }
 
-export function impactTone(row: ImpactRow): CaseTone {
-  if (row.pending) return 'action'
-  if (row.lineage === 'withdrawn' || row.lineage === 'historical' || row.lineage === 'merged') return 'muted'
-  return 'done'
-}
-
 /**
  * 一个影响行所指向决定的角色。
  *
@@ -343,9 +337,4 @@ export function impactOldDecisionText(row: ImpactRow): string {
     : '措施未填写'
   const note = decision.reasonNote ? ` · ${decision.reasonNote}` : ''
   return `${coordinate}：${status} · ${reason}${note} · ${measure}`
-}
-
-/** 待复核清单的标题（不含内部 ID 时也能读）。 */
-export function impactQueueTitle(row: ImpactRow): string {
-  return impactScopeLabel(row)
 }
