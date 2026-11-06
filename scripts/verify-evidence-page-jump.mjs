@@ -21,557 +21,355 @@
  *     换回 `<span>第 {{ v.page }} 页</span>`,`①` 的 href 断言立刻红。
  *  没做这一步的验收,绿灯只说明「页面打开了」,不说明「这个功能在」。
  *
- * 用法:
- *   NUXT_DB_PATH=<真库> node scripts/verify-evidence-page-jump.mjs [--port 3492] [--skip-build]
- * 退出码:0 = 全部通过;1 = 有一条不符合预期(并打印实测数字);2 = 用法/环境问题。
+ * 上述为历史作者陈述，pin bc764574 / blob 229ec5be，本次未复跑历史库。
+ * 历史复原须从该 pin 提取脚本，并另行提供隔离来源根和 SQLite 一致快照；
+ * 当前入口不再接受 --db 或环境业务路径，不执行历史库复原。
+ * 当前用法: node scripts/verify-evidence-page-jump.mjs [--skip-build] [--port 0]
+ * 当前默认原文 reader 与派生页图是两个独立 oracle。
+ * --oracle-control 仅运行合成 DOM 灵敏度控制，不代表应用通过。
+ * --fault 为受控反例（见 faults）；预期非零，不能充当正常验收。
+ * 退出码:0 = 所选 lane 通过;1 = 断言/环境失败;130/143 = 信号退出。
  */
-import { spawn } from 'node:child_process'
-import { copyFileSync, existsSync, mkdtempSync, rmSync } from 'node:fs'
+import assert from 'node:assert/strict'
+import { execFileSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
+import { createWriteStream, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
+import Database from 'better-sqlite3'
+import archiver from 'archiver'
+import { drizzle } from 'drizzle-orm/better-sqlite3'
+import { migrate } from 'drizzle-orm/better-sqlite3/migrator'
+import { reserveLoopbackPort, spawnOwnedChild, stopOwnedChild, waitForHttp, waitForChromeDevTools } from './lib/isolated-local-services.mjs'
 
 const args = process.argv.slice(2)
-const flag = (name, fallback) => {
-  const i = args.indexOf(`--${name}`)
-  return i >= 0 && args[i + 1] ? args[i + 1] : fallback
+const option = (key, fallback) => {
+  const i = args.indexOf(`--${key}`)
+  if (i < 0) return fallback
+  assert(args[i + 1] && !args[i + 1].startsWith('--'), `Missing --${key} value`)
+  return args[i + 1]
 }
-const PORT = Number(flag('port', '3492'))
-const DEBUG_PORT = PORT + 1
-const SKIP_BUILD = args.includes('--skip-build')
-const BASE = `http://127.0.0.1:${PORT}`
-
-/**
- * 验收用的库。worktree 里的 `data/roster.db` 是**空**的(已 gitignore),
- * 必须显式指向真库,否则面板上一条出处都没有 —— 量不到东西,断言会被「跳过」,
- * 而跳过看起来跟通过一样。所以下面**先拷一份**(连 `-wal` 一起,只拷主文件会看不见
- * WAL 里未 checkpoint 的行),再拿这份拷贝起服务。
- */
-const DB_SOURCE = flag('db', process.env.NUXT_DB_PATH ?? '')
-const WORK_DB = join(mkdtempSync(join(tmpdir(), 'rl10-verify-')), 'roster.db')
-
-const F145 = 'jxj/announcement/2022/甬经信中小〔2022〕145号关于公布宁波市“专精特新”中小企业名单的通知.pdf'
-const F_DOCX = 'jxj/announcement/2023/1/关于公布2023年宁波市“专精特新”中小企业名单的通知.docx'
-
-/** 夹具(真库里的真行):204 = 补过页码的开诚(附件二 序号 6 → 第 8 页);
- *  6 = 同序号同文件但**没有页码**的培源(该显示「页码待核」);
- *  715 = 出处是 .docx 的立华制药(Word 没有可靠分页)。 */
-const KAICHENG = 204
-const PEIYUAN = 6
-const LIHUA = 715
-const KAICHENG_PAGE = 8
-
-const DESKTOP = { width: 1440, height: 900 }
-const NARROW = { width: 390, height: 844 }
-
-const problems = []
-const ok = (msg) => console.log(`✓ ${msg}`)
-const bad = (msg) => {
-  console.log(`✗ ${msg}`)
-  problems.push(msg)
+const PDF = 'jxj/announcement/2026/evidence-eight.pdf'
+const WORD = 'jxj/announcement/2026/evidence-word.docx'
+const NAME = '合成跳页企业'
+const RETURN = '/?q=%E5%90%88%E6%88%90%E8%B7%B3%E9%A1%B5%E4%BC%81%E4%B8%9A&expand=204'
+const hash = data => createHash('sha256').update(data).digest('hex')
+const fault = option('fault', '')
+const faults = ['wrong-file', 'page80', 'span', 'return-collapsed', 'word-failed', 'before-start', 'attach', 'chrome-exit']
+assert(!fault || faults.includes(fault), 'Unknown fault')
+let root, server, chrome, builder, cdp, db, baseline, sourceHashes, base, interrupted
+const failures = []
+const children = []
+const abort = new AbortController()
+for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => {
+  interrupted = signal
+  abort.abort(new Error(signal))
+  cdp?.close()
+})
+function alive(child) { return child && child.exitCode === null && child.signalCode === null }
+async function until(label, probe, timeout = 30_000) {
+  const end = Date.now() + timeout
+  do {
+    if (interrupted) throw new Error(interrupted)
+    if (await probe()) return
+    await sleep(100, undefined, { signal: abort.signal })
+  } while (Date.now() < end)
+  throw new Error(`Timed out: ${label}`)
 }
-
-function run(cmd, argv) {
-  return new Promise((resolve, reject) => {
-    const child = spawn(cmd, argv, { stdio: 'inherit' })
-    child.on('error', reject)
-    child.on('exit', (code) => (code === 0 ? resolve() : reject(new Error(`${cmd} 退出码 ${code}`))))
-  })
+function own(cmd, argv, env) {
+  const child = spawnOwnedChild(cmd, argv, { env, stdio: ['ignore', 'pipe', 'pipe'] })
+  children.push(child)
+  child.on('error', error => { failures.push(`spawn: ${error.message}`) })
+  child.stdout.on('data', data => process.stdout.write(data))
+  child.stderr.on('data', data => process.stderr.write(data))
+  console.log(JSON.stringify({ resource: 'child', pid: child.pid, cmd, argv }))
+  return child
 }
-
-async function waitForHttp(url, timeoutMs = 60_000) {
-  const deadline = Date.now() + timeoutMs
-  while (Date.now() < deadline) {
-    try {
-      if ((await fetch(url)).ok) return
-    } catch {
-      /* 还没起来 */
-    }
-    await sleep(300)
+// A legal PDF with xref offsets, eight distinct pages, and an independently
+// recognizable magenta square only on page 8. No PDF production helper oracle.
+function pdfBytes() {
+  const objects = ['<< /Type /Catalog /Pages 2 0 R >>', `<< /Type /Pages /Count 8 /Kids [${Array.from({length:8}, (_, i) => `${4+i*2} 0 R`).join(' ')}] >>`, '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>']
+  for (let page = 1; page <= 8; page++) {
+    const stream = `1 1 1 rg 0 0 400 400 re f\n${page === 8 ? '1 0 1' : '0 1 1'} rg 100 100 200 200 re f\n${page === 8 ? '0 0 0 rg 20 20 40 40 re f' : ''}\n0 0 0 rg BT /F1 20 Tf 30 350 Td (SYNTHETIC PAGE ${page} OF 8) Tj ET\n`
+    objects.push(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 400 400] /Resources << /Font << /F1 3 0 R >> >> /Contents ${5+(page-1)*2} 0 R >>`, `<< /Length ${Buffer.byteLength(stream)} >>\nstream\n${stream}endstream`)
   }
-  throw new Error(`等不到 ${url}`)
+  let text = '%PDF-1.4\n'; const offsets = [0]
+  objects.forEach((value, i) => { offsets.push(Buffer.byteLength(text)); text += `${i+1} 0 obj\n${value}\nendobj\n` })
+  const xref = Buffer.byteLength(text)
+  text += `xref\n0 ${objects.length+1}\n0000000000 65535 f \n` + offsets.slice(1).map(n => `${String(n).padStart(10,'0')} 00000 n \n`).join('')
+  return Buffer.from(text + `trailer\n<< /Size ${objects.length+1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`)
 }
-
-// ---------------------------------------------------------------------------
-// 极简 CDP 客户端(navigate / evaluate / click)
-// ---------------------------------------------------------------------------
-
+async function fixture() {
+  mkdirSync(join(root, 'files/jxj/announcement/2026'), { recursive: true })
+  mkdirSync(join(root, 'incoming'))
+  writeFileSync(join(root, 'curated.json'), '{}')
+  writeFileSync(join(root, 'reconcile.json'), '{}')
+  writeFileSync(join(root, 'files', PDF), pdfBytes())
+  const zip = archiver('zip'); const out = createWriteStream(join(root, 'files', WORD))
+  const finished = new Promise((res, rej) => { out.on('close', res); out.on('error', rej); zip.on('error', rej) })
+  zip.pipe(out)
+  zip.append('<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>', { name: '[Content_Types].xml' })
+  zip.append('<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>', {name:'_rels/.rels'})
+  zip.append('<?xml version="1.0"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>SYNTHETIC WORD EVIDENCE</w:t></w:r></w:p><w:sectPr><w:pgSz w:w="11906" w:h="16838"/></w:sectPr></w:body></w:document>', {name:'word/document.xml'})
+  await zip.finalize(); await finished
+  db = new Database(join(root, 'roster.db'))
+  migrate(drizzle(db), { migrationsFolder: 'db/migrations' })
+  db.exec("INSERT INTO title VALUES ('little_giant','专精特新“小巨人”','national',1),('specialized_sme','专精特新中小企业','municipal',2),('innovative_sme','创新型中小企业','municipal',3)")
+  for (const [id, name, file, page] of [[204, NAME, PDF, 8], [6, '合成待核企业', PDF, null], [715, '合成Word企业', WORD, null]]) {
+    db.prepare('INSERT INTO enterprise(id,name,name_norm) VALUES(?,?,?)').run(id,name,name)
+    db.prepare("INSERT INTO record(id,enterprise_id,title_code,source) VALUES(?,?,'specialized_sme','jxj')").run(id,id)
+    db.prepare("INSERT INTO record_event(id,record_id,event_type,year) VALUES(?,?,'award',2026)").run(id,id)
+    db.prepare('INSERT INTO record_evidence(id,record_event_id,source_file,attachment,list_no,page) VALUES(?,?,?,\'合成附件\',6,?)').run(id,id,file,page)
+  }
+  for (const [index, file] of [PDF, WORD].entries()) {
+    const data = readFileSync(join(root, 'files', file))
+    db.prepare('INSERT INTO stored_file(id,rel_path,filename,ext,bytes,sha256,source,kind,year,created_at) VALUES(?,?,?,?,?,?,\'jxj\',\'announcement\',2026,\'2026-11-07T00:00:00Z\')').run(index+1,file,file.split('/').at(-1),file.split('.').at(-1),data.length,hash(data))
+  }
+  assert.deepEqual(db.pragma('foreign_key_check'), [])
+  assert.equal(db.pragma('integrity_check', {simple:true}), 'ok')
+  sourceHashes = [PDF, WORD].map(file => hash(readFileSync(join(root, 'files', file))))
+  baseline = snapshot()
+}
+function snapshot() {
+  return db.prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").all().map(({name}) => [name, db.prepare(`SELECT * FROM "${name.replaceAll('"','""')}" ORDER BY rowid`).all()])
+}
 class Cdp {
   constructor(ws) {
-    this.ws = ws
-    this.seq = 0
-    this.pending = new Map()
-    ws.addEventListener('message', (event) => {
-      const msg = JSON.parse(event.data)
-      const waiter = this.pending.get(msg.id)
-      if (waiter) {
-        this.pending.delete(msg.id)
-        msg.error ? waiter.reject(new Error(JSON.stringify(msg.error))) : waiter.resolve(msg.result)
-      }
+    this.ws = ws; this.pending = new Map(); this.seq = 0
+    ws.addEventListener('message', ({data}) => {
+      const msg = JSON.parse(data); const p = this.pending.get(msg.id)
+      if (p) { clearTimeout(p.timer); this.pending.delete(msg.id); msg.error ? p.reject(new Error(JSON.stringify(msg.error))) : p.resolve(msg.result) }
     })
+    ws.addEventListener('close', () => this.rejectAll())
+    ws.addEventListener('error', () => this.rejectAll())
   }
-
+  rejectAll() { for (const p of this.pending.values()) { clearTimeout(p.timer); p.reject(new Error('CDP closed')) } this.pending.clear() }
+  close() { this.rejectAll(); this.ws.close() }
   send(method, params = {}, sessionId) {
-    const id = ++this.seq
     return new Promise((resolve, reject) => {
-      this.pending.set(id, { resolve, reject })
-      this.ws.send(JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) }))
-      setTimeout(() => {
-        if (this.pending.delete(id)) reject(new Error(`CDP ${method} 超时`))
-      }, 30_000)
+      const id = ++this.seq
+      const timer = setTimeout(() => { this.pending.delete(id); reject(new Error(`CDP timeout ${method}`)) }, 10_000)
+      this.pending.set(id, {resolve,reject,timer})
+      try { this.ws.send(JSON.stringify({id,method,params,...(sessionId ? {sessionId} : {})})) }
+      catch (err) { clearTimeout(timer); this.pending.delete(id); reject(err) }
     })
   }
 }
-
-async function connect(wsUrl) {
-  const ws = new WebSocket(wsUrl)
-  await new Promise((resolve, reject) => {
-    ws.addEventListener('open', resolve, { once: true })
-    ws.addEventListener('error', reject, { once: true })
-  })
-  return new Cdp(ws)
-}
-
-async function evaluate(cdp, sessionId, expression) {
-  const res = await cdp.send('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true }, sessionId)
-  if (res.exceptionDetails) throw new Error(res.exceptionDetails.text)
-  return res.result.value
-}
-
-/**
- * 轮询到就绪。**等不到就判失败**,不静默跳过 —— 静默跳过给出的是假的安心。
- *
- * 默认给到 **120s**:`/api/roster/enterprises` 每次要把整份名录快照读进内存
- * (静机实测单次 **6.3s**),冷启动的生产实例上第一次进页面会连着等好几个查询;
- * 而本机在多个 worktree 并行跑测试时 **load 会到 48–76**(实测 69),同一次等待会被拉长
- * 好几倍。等不到按失败算,但**超时要给得比负载抖动更宽** —— 否则红的是负载,不是代码。
- */
-async function waitUntil(cdp, sessionId, expression, timeoutMs = 120_000) {
-  const deadline = Date.now() + timeoutMs
-  while (Date.now() < deadline) {
-    if (await evaluate(cdp, sessionId, expression)) return true
-    await sleep(300)
-  }
-  return false
-}
-
-/**
- * 开一个**新 target**、按给定视口打开、等就绪、求值一次。
- * 每次新 target:复用 target 会带上上一页的滚动位置与文档状态,量出来的东西串味。
- */
-async function openAndMeasure(cdp, url, expression, readyExpression, viewport) {
-  const { targetId } = await cdp.send('Target.createTarget', { url: 'about:blank' })
-  const { sessionId } = await cdp.send('Target.attachToTarget', { targetId, flatten: true })
+async function attach(url) {
+  const ws = new WebSocket(url)
   try {
-    await cdp.send(
-      'Emulation.setDeviceMetricsOverride',
-      { ...viewport, deviceScaleFactor: 1, mobile: false },
-      sessionId,
-    )
-    await cdp.send('Page.enable', {}, sessionId)
-    await cdp.send('Page.navigate', { url }, sessionId)
-    if (readyExpression && !(await waitUntil(cdp, sessionId, readyExpression))) {
-      throw new Error(`${url} 没有渲染出要等的东西 —— 量不出东西,按失败算`)
-    }
-    return await evaluate(cdp, sessionId, expression)
-  } finally {
-    await cdp.send('Target.closeTarget', { targetId }).catch(() => {})
-  }
-}
-
-/** 在一个 target 里做一串动作(点击 → 等 → 再量),用于「点进去再退回来」。 */
-async function openAndDrive(cdp, url, readyExpression, steps, viewport) {
-  const { targetId } = await cdp.send('Target.createTarget', { url: 'about:blank' })
-  const { sessionId } = await cdp.send('Target.attachToTarget', { targetId, flatten: true })
-  try {
-    await cdp.send(
-      'Emulation.setDeviceMetricsOverride',
-      { ...viewport, deviceScaleFactor: 1, mobile: false },
-      sessionId,
-    )
-    await cdp.send('Page.enable', {}, sessionId)
-    await cdp.send('Page.navigate', { url }, sessionId)
-    if (readyExpression && !(await waitUntil(cdp, sessionId, readyExpression))) {
-      throw new Error(`${url} 没有就绪 —— 量不出东西,按失败算`)
-    }
-    return await steps({
-      evaluate: (expr) => evaluate(cdp, sessionId, expr),
-      waitUntil: (expr, timeoutMs) => waitUntil(cdp, sessionId, expr, timeoutMs),
-      navigate: async (to) => {
-        await cdp.send('Page.navigate', { url: to }, sessionId)
-      },
-      location: () => evaluate(cdp, sessionId, `(() => ({ path: location.pathname, search: location.search, href: location.href }))()`),
-      sleep,
+    await new Promise((res, rej) => {
+      const timer = setTimeout(() => { ws.close(); rej(new Error('CDP attach timeout')) }, 5000)
+      ws.addEventListener('open', () => { clearTimeout(timer); res() }, {once:true})
+      ws.addEventListener('error', () => { clearTimeout(timer); rej(new Error('CDP attach failed')) }, {once:true})
     })
-  } finally {
-    await cdp.send('Target.closeTarget', { targetId }).catch(() => {})
-  }
+    return new Cdp(ws)
+  } catch (error) { ws.close(); throw error }
 }
-
-// ---------------------------------------------------------------------------
-// 页面探针
-// ---------------------------------------------------------------------------
-
-/**
- * 一个**页码链接**的判据:文本 `第 N 页`、`<a>`,且 `href` 指向 `/preview`。
- * 用 `closest('a')` 而不是「找 a 再读文本」:后者会把旁边的「预览」按钮一起捞进来。
- */
-const PAGE_LINK_PROBE = `(() => {
-  const anchors = [...document.querySelectorAll('a')];
-  const hits = anchors
-    .map((a) => ({ text: (a.textContent ?? '').trim(), href: a.getAttribute('href') ?? '', abs: a.href }))
-    .filter((a) => /^第\\s*\\d+\\s*页$/.test(a.text) && a.href.includes('/preview'));
-  return {
-    hits,
-    // 「页码待核」/ 「—」这两种**没有页码**的说法,用来证明「留空待核」真的画出来了。
-    pendingWords: [...document.querySelectorAll('span,div')]
-      .map((el) => (el.textContent ?? '').trim())
-      .filter((t) => t === '页码待核' || t === '—').length,
-    // 页码那一行的标签也算一个锚点:面板上到底有没有「页码」这一项。
-    hasPageLabel: [...document.querySelectorAll('span,div')].some((el) => (el.textContent ?? '').trim() === '页码'),
-    scrollWidth: document.documentElement.scrollWidth,
-    clientWidth: document.documentElement.clientWidth,
-  };
-})()`
-
-/** 在详情页把某条事件的「出处 N」展开(按钮文本可能是 出处 N / 收起出处)。 */
-const EXPAND_EVIDENCE = `(() => {
-  const btn = [...document.querySelectorAll('button')]
-    .find((b) => /^(出处|收起出处)/.test((b.textContent ?? '').trim()));
-  if (!btn) return false;
-  btn.click();
-  return true;
-})()`
-
-/**
- * 「这一条出处已经画出来了」的判据 —— 用**来源文件名带扩展名**当锚点。
- *
- * ⚠️ 这里**绝不能**拿「页码链接在不在」当就绪判据:那是**被测的那个东西**。用被测物当
- * ready 判据,缺陷一复原就变成「等不到 → 抛错退出」,而不是一条说得清的 ✗。
- * 固定 sleep 也可能让慢环境里的分页断言静默跳过;出处行不管有没有页码都会显示
- * 来源文件名,所以它是可靠的「已渲染」锚点。
- */
-const EVIDENCE_ROWS_READY = `(() => /\\.(pdf|docx|xlsx|doc)\\b/i.test(document.body.innerText))()`
-
-/** 预览页:落点是不是真的那一页。`img` 的 naturalWidth > 0 == 图真的解码出来了。 */
-function previewProbe(pageNo) {
-  return `(() => {
-    const imgs = [...document.querySelectorAll('img')]
-      .map((i) => ({ src: i.currentSrc || i.src, w: i.naturalWidth, h: i.naturalHeight }));
-    const text = document.body.innerText;
-    return {
-      path: location.pathname,
-      search: location.search,
-      imgs,
-      // 页图文件名是零填充的 pNNN.png(见 lib/pdf-page.ts 的 pageFileName)。
-      wanted: ${JSON.stringify(`p${String(pageNo).padStart(3, '0')}.png`)},
-      hasPageBadge: text.includes('第 ${pageNo} 页'),
-      hasNotRenderedNote: text.includes('还没有渲染'),
-      scrollWidth: document.documentElement.scrollWidth,
-      clientWidth: document.documentElement.clientWidth,
-    };
-  })()`
-}
-
-/** 页图真的解码出来了(而不是只有一个空 `<img>`)。 */
-const pageImageLoaded = (probe) =>
-  probe.imgs.some((i) => i.src.includes(probe.wanted) && i.w > 0 && i.h > 0)
-
-// ---------------------------------------------------------------------------
-// 各项检查
-// ---------------------------------------------------------------------------
-
-async function checkEvidencePanel(cdp) {
-  // ① 台账展开面板:按企业视图 + 展开开诚那一行。
-  //
-  // 就绪判据是「页码链接真的出现」,**不是**「页面里有『页码』两个字」—— 台账的展开面板是
-  // 一行紧凑的徽章条,页码在那里就是一个「第 N 页」链接,没有单独的字段名标签
-  // (字段名标签那一版在完整企业详情页,见 ②)。
-  const ledgerUrl = `${BASE}/?view=enterprise&q=%E5%BC%80%E8%AF%9A&expand=${KAICHENG}`
-  const panel = await openAndDrive(cdp, ledgerUrl, EVIDENCE_ROWS_READY, async ({ evaluate: ev }) => ev(PAGE_LINK_PROBE), DESKTOP)
-
-  const hit = panel.hits.find((h) => h.text === `第 ${KAICHENG_PAGE} 页`)
-  if (!hit) {
-    bad(`台账展开面板:没找到「第 ${KAICHENG_PAGE} 页」链接 —— 量到 ${JSON.stringify(panel.hits)}`)
-  } else if (!hit.href.includes(`page=${KAICHENG_PAGE}`) || !hit.href.includes('file=')) {
-    bad(`台账展开面板:href 没带页号/文件 —— ${hit.href}`)
-  } else {
-    ok(`台账展开面板:「第 ${KAICHENG_PAGE} 页」是可点链接 —— ${hit.href}`)
-  }
-
-  if (panel.scrollWidth > panel.clientWidth) {
-    bad(`台账展开面板(桌面):横向溢出 ${panel.scrollWidth - panel.clientWidth}px`)
-  }
-
-  // ② 企业详情页:同一个页码也要在「出处」展开里有,且可点。
-  const detail = await openAndDrive(
-    cdp,
-    `${BASE}/enterprises/${KAICHENG}`,
-    `(() => !document.querySelector('[data-slot=skeleton]') && document.body.innerText.includes('出处'))()`,
-    async ({ evaluate: ev, waitUntil: wu }) => {
-      if (!(await ev(EXPAND_EVIDENCE))) throw new Error('详情页没有「出处」展开按钮')
-      await wu(EVIDENCE_ROWS_READY, 60_000)
-      return ev(PAGE_LINK_PROBE)
-    },
-    DESKTOP,
-  )
-
-  const detailHit = detail.hits.find((h) => h.text === `第 ${KAICHENG_PAGE} 页`)
-  if (!detailHit) {
-    bad(`企业详情:没找到「第 ${KAICHENG_PAGE} 页」链接 —— 量到 ${JSON.stringify(detail.hits)}`)
-  } else {
-    ok(`企业详情:「第 ${KAICHENG_PAGE} 页」可点 —— ${detailHit.href}`)
-  }
-
-  // ③ 没有页码的两条:PDF 但没核对 ⇒「页码待核」;.docx ⇒ 没有可跳的页。
-  const pending = await openAndDrive(
-    cdp,
-    `${BASE}/enterprises/${PEIYUAN}`,
-    `(() => !document.querySelector('[data-slot=skeleton]') && document.body.innerText.includes('出处'))()`,
-    async ({ evaluate: ev, waitUntil: wu }) => {
-      await ev(EXPAND_EVIDENCE)
-      await wu(EVIDENCE_ROWS_READY, 60_000)
-      return ev(PAGE_LINK_PROBE)
-    },
-    DESKTOP,
-  )
-  if (pending.hits.length !== 0) {
-    bad(`未补页码的 PDF 出处不该有页码链接 —— 量到 ${JSON.stringify(pending.hits)}`)
-  } else if (!pending.pendingWords) {
-    bad('未补页码的 PDF 出处没有画出「页码待核」')
-  } else {
-    ok('未补页码的 PDF 出处:写「页码待核」,不给链接')
-  }
-
-  const wordDoc = await openAndDrive(
-    cdp,
-    `${BASE}/enterprises/${LIHUA}`,
-    `(() => !document.querySelector('[data-slot=skeleton]') && document.body.innerText.includes('出处'))()`,
-    async ({ evaluate: ev, waitUntil: wu }) => {
-      await ev(EXPAND_EVIDENCE)
-      await wu(EVIDENCE_ROWS_READY, 60_000)
-      return ev(PAGE_LINK_PROBE)
-    },
-    DESKTOP,
-  )
-  if (wordDoc.hits.length !== 0) {
-    bad(`Word 出处不该有页码链接 —— 量到 ${JSON.stringify(wordDoc.hits)}`)
-  } else {
-    ok('Word 出处:留空,不给页码链接(不跳到猜测页)')
-  }
-
-  return hit?.href ?? ''
-}
-
-async function checkJump(cdp, href) {
-  if (!href) {
-    bad('没有拿到跳转链接,后续跳转检查全部跳过不了 —— 按失败记')
-    return
-  }
-  const url = new URL(href, BASE).toString()
-
-  for (const [label, viewport] of [
-    ['桌面 1440', DESKTOP],
-    ['窄屏 390', NARROW],
-  ]) {
-    const probe = await openAndDrive(
-      cdp,
-      url,
-      `(() => document.body.innerText.includes('第 ${KAICHENG_PAGE} 页'))()`,
-      async ({ evaluate: ev, waitUntil: wu }) => {
-        await wu(`(() => [...document.querySelectorAll('img')].some((i) => i.naturalWidth > 0))()`, 60_000)
-        return ev(previewProbe(KAICHENG_PAGE))
-      },
-      viewport,
-    )
-
-    if (probe.path !== '/preview') {
-      bad(`${label}:跳转落点不是 /preview —— ${probe.path}`)
-    } else {
-      ok(`${label}:跳转落点 /preview(带 page=${KAICHENG_PAGE})`)
-    }
-    if (!probe.hasPageBadge) {
-      bad(`${label}:预览页看不出在看哪一页(没有「第 ${KAICHENG_PAGE} 页」)`)
-    } else {
-      ok(`${label}:预览页写明「第 ${KAICHENG_PAGE} 页」`)
-    }
-    if (!pageImageLoaded(probe)) {
-      bad(`${label}:第 ${KAICHENG_PAGE} 页的页图没加载出来 —— 量到 ${JSON.stringify(probe.imgs)}`)
-    } else {
-      ok(`${label}:第 ${KAICHENG_PAGE} 页页图真的解码了(${probe.wanted})`)
-    }
-    if (probe.scrollWidth > probe.clientWidth) {
-      bad(`${label}:预览页横向溢出 ${probe.scrollWidth - probe.clientWidth}px`)
-    }
-  }
-
-  // 超范围页号(145号 只有 23 页):说清没渲染,**不静默降级成第 1 页**。
-  const outOfRange = await openAndDrive(
-    cdp,
-    `${BASE}/preview?file=${encodeURIComponent(F145)}&page=999`,
-    `(() => document.body.innerText.includes('还没有渲染'))()`,
-    async ({ evaluate: ev }) => ev(previewProbe(999)),
-    DESKTOP,
-  )
-  if (!outOfRange.hasNotRenderedNote) {
-    bad('页号超出已渲染范围时没有说明「还没有渲染」——可能会被误读成定位成功')
-  } else if (pageImageLoaded(outOfRange)) {
-    bad('页号超出范围却加载出了页图 —— 说明落点错了')
-  } else {
-    ok('页号超出已渲染范围:明说「还没有渲染」,不假装定位成功')
-  }
-
-  // Word 来源即使被手工塞了 page 参数,也不该显示页码(它没有可复核的「第 N 页」)。
-  const wordPreview = await openAndDrive(
-    cdp,
-    `${BASE}/preview?file=${encodeURIComponent(F_DOCX)}&page=5`,
-    `(() => !document.querySelector('[data-slot=skeleton]'))()`,
-    async ({ evaluate: ev, sleep: wait }) => {
-      await wait(1500)
-      return ev(`(() => ({ text: document.body.innerText, imgs: [...document.querySelectorAll('img')].length }))()`)
-    },
-    DESKTOP,
-  )
-  if (wordPreview.text.includes('第 5 页')) {
-    bad('Word 来源被塞了 page=5 就显示了页码 —— 不该给没有可靠分页的文件定位')
-  } else {
-    ok('Word 来源带 page 参数也不显示页码(不跳到猜测页)')
-  }
-}
-
-async function checkBackContext(cdp) {
-  // 从台账(带筛选 + 展开)点进预览,再点「返回」——筛选与展开位置必须原样回来。
-  const ledgerUrl = `${BASE}/?view=enterprise&q=%E5%BC%80%E8%AF%9A&expand=${KAICHENG}`
-  const result = await openAndDrive(
-    cdp,
-    ledgerUrl,
-    EVIDENCE_ROWS_READY,
-    async ({ evaluate: ev, navigate, location, waitUntil: wu }) => {
-      const href = await ev(`(() => {
-        const a = [...document.querySelectorAll('a')].find((el) => /^第\\s*\\d+\\s*页$/.test((el.textContent ?? '').trim()));
-        return a ? a.href : '';
-      })()`)
-      if (!href) return { href: '', beforeSearch: '', after: null }
-      const before = await location()
-      await navigate(href)
-      await wu(`(() => location.pathname === '/preview')()`, 60_000)
-      // 页面上那颗「返回」是 NuxtLink(`<a href="/?…">`),点它。
-      const backHref = await ev(`(() => {
-        const a = [...document.querySelectorAll('a')].find((el) => (el.getAttribute('href') ?? '').startsWith('/?'));
-        return a ? a.getAttribute('href') : '';
-      })()`)
-      if (!backHref) return { href, beforeSearch: before.search, after: null, backHref: '' }
-      await navigate(new URL(backHref, BASE).toString())
-      await wu(`(() => location.pathname === '/' && !!document.querySelector('tbody tr'))()`, 60_000)
-      const after = await location()
-      return { href, beforeSearch: before.search, after, backHref }
-    },
-    DESKTOP,
-  )
-
-  if (!result.after) {
-    bad(`返回上下文:没能走完「台账 → 预览 → 返回」(${JSON.stringify(result)})`)
-    return
-  }
-  const before = new URLSearchParams(result.beforeSearch)
-  const after = new URLSearchParams(result.after.search)
-  const lost = ['view', 'q', 'expand'].filter((k) => before.get(k) !== after.get(k))
-  if (lost.length) {
-    bad(`返回后筛选/展开丢了 ${JSON.stringify(lost)}:前 ${result.beforeSearch} → 后 ${result.after.search}`)
-  } else {
-    ok(`返回后台账筛选与展开位置原样保留 —— ${result.after.search}`)
-  }
-}
-
-// ---------------------------------------------------------------------------
-
-async function main() {
-  if (!DB_SOURCE) {
-    console.error('要给 --db <真库路径>(或设 NUXT_DB_PATH)—— worktree 里的 data/roster.db 是空的。')
-    process.exit(2)
-  }
-  if (!existsSync(DB_SOURCE)) {
-    console.error(`库不存在:${DB_SOURCE}`)
-    process.exit(2)
-  }
-  copyFileSync(DB_SOURCE, WORK_DB)
-  for (const suffix of ['-wal', '-shm']) {
-    if (existsSync(DB_SOURCE + suffix)) copyFileSync(DB_SOURCE + suffix, WORK_DB + suffix)
-  }
-
-  if (!SKIP_BUILD) {
-    console.log('▶ pnpm build')
-    await run('pnpm', ['build'])
-  }
-  if (!existsSync('.output/server/index.mjs')) throw new Error('没有 .output/server/index.mjs —— 先 build')
-
-  console.log(`▶ 起生产产物:PORT=${PORT},库=${DB_SOURCE}`)
-  const server = spawn('node', ['.output/server/index.mjs'], {
-    stdio: 'ignore',
-    env: { ...process.env, PORT: String(PORT), NITRO_PORT: String(PORT), NUXT_DB_PATH: WORK_DB },
-  })
-  const userDataDir = mkdtempSync(join(tmpdir(), 'rl10-chrome-'))
-  let chrome
-  let cdp
-
+// Scope is the exact source label's evidence container, never a whole-page match.
+const row = file => `([...document.querySelectorAll('[data-testid="official-evidence"]')].find(e => [...e.querySelectorAll('p')].some(p => p.textContent.trim() === '原路径：' + ${JSON.stringify(file)})) ?? [...document.querySelectorAll('[data-testid="enterprise-evidence"] li')].find(e => e.querySelector('p[title]')?.getAttribute('title') === ${JSON.stringify(file)}) ?? [...document.querySelectorAll('span')].find(e => e.textContent.trim() === ${JSON.stringify(file)})?.parentElement)`
+const link = file => `([...(${row(file)}?.querySelectorAll('a') || [])].filter(a => a.textContent.trim() === '第 8 页'))`
+async function page(width, url, task) {
+  const {targetId} = await cdp.send('Target.createTarget', {url:'about:blank'})
+  let sessionId
   try {
-    await waitForHttp(`${BASE}/api/health`)
-
-    const chromeBin =
-      process.env.CHROME_BIN ??
-      ['/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', '/usr/bin/google-chrome'].find((p) =>
-        existsSync(p),
-      )
-    if (!chromeBin) throw new Error('找不到 Chrome(可用 CHROME_BIN 指定)')
-
-    console.log(`▶ 起 Chrome(--headless)调试端口 ${DEBUG_PORT}`)
-    chrome = spawn(
-      chromeBin,
-      [
-        '--headless=new',
-        `--remote-debugging-port=${DEBUG_PORT}`,
-        `--user-data-dir=${userDataDir}`,
-        '--no-first-run',
-        '--no-default-browser-check',
-        '--disable-gpu',
-        'about:blank',
-      ],
-      { stdio: 'ignore' },
-    )
-    await waitForHttp(`http://127.0.0.1:${DEBUG_PORT}/json/version`)
-    const version = await (await fetch(`http://127.0.0.1:${DEBUG_PORT}/json/version`)).json()
-    cdp = await connect(version.webSocketDebuggerUrl)
-
-    const href = await checkEvidencePanel(cdp)
-    await checkJump(cdp, href)
-    await checkBackContext(cdp)
-  } finally {
-    try {
-      await cdp?.send('Browser.close')
-    } catch {
-      /* ignore */
+    ;({sessionId} = await cdp.send('Target.attachToTarget', {targetId,flatten:true}))
+    const send = (method, params) => cdp.send(method,params,sessionId)
+    const ev = async expression => {
+      const result = await send('Runtime.evaluate', {expression,returnByValue:true,awaitPromise:true})
+      if (result.exceptionDetails) throw new Error(JSON.stringify(result.exceptionDetails))
+      return result.result.value
     }
-    chrome?.kill()
-    server.kill()
-    await sleep(1000)
-    for (let i = 0; i < 5; i++) {
+    const wait = (label, expression) => until(label, () => ev(expression))
+    const click = async expression => {
+      let point, previous, stable = 0
+      await until('click visible and stable', async () => {
+      point = await ev(`(() => { const e = ${expression}; if (!e || !e.matches('a,button,[role=tab]')) throw Error('Expected clickable element'); e.scrollIntoView({block:'center'}); const r=e.getBoundingClientRect(); if(!r.width || !r.height) throw Error('Not visible'); const x=r.x+r.width/2,y=r.y+r.height/2; return {x,y,hit:e.contains(document.elementFromPoint(x,y))}; })()`)
+      stable = point.hit && previous && Math.abs(previous.x-point.x)<0.5 && Math.abs(previous.y-point.y)<0.5 ? stable+1 : 0
+      previous=point; return stable>=3
+      })
+      delete point.hit
+      await send('Input.dispatchMouseEvent',{type:'mousePressed',button:'left',clickCount:1,...point})
+      await send('Input.dispatchMouseEvent',{type:'mouseReleased',button:'left',clickCount:1,...point})
+    }
+    await send('Emulation.setDeviceMetricsOverride', {width,height:width===390?844:900,deviceScaleFactor:1,mobile:false})
+    await send('Page.enable', {})
+    await send('Page.navigate', {url:base+url})
+    await task({ev,wait,click,send})
+  } catch (error) {
+    if (sessionId && alive(chrome)) {
       try {
-        rmSync(userDataDir, { recursive: true, force: true })
-        break
-      } catch {
-        await sleep(500)
-      }
+        const screen = await cdp.send('Page.captureScreenshot', {format:'png'},sessionId)
+        writeFileSync(join(root, `failure-${width}-${Date.now()}.png`),Buffer.from(screen.data,'base64'))
+        const state = await cdp.send('Runtime.evaluate', {expression:'document.body.innerText',returnByValue:true},sessionId)
+        console.error('PAGE STATE',state.result.value)
+      } catch (captureError) { console.error('Capture failure',captureError.message) }
     }
+    throw error
+  } finally {
+    if (alive(chrome) && cdp.ws.readyState === WebSocket.OPEN) await cdp.send('Target.closeTarget', {targetId})
   }
-
-  if (problems.length) {
-    console.log(`\n✗ ${problems.length} 条不符合预期`)
-    process.exit(1)
-  }
-  console.log('\n✓ 面板画出可点页码 · 点进去真的打开那一页 · 无页码留空待核 · 返回保留筛选')
 }
-
-main().catch((err) => {
-  console.error(err)
-  process.exit(1)
-})
+async function assertLink(ev, expectedReturn) {
+  const hits = await ev(`${link(PDF)}.map(a => ({href:a.href,text:a.textContent.trim()}))`)
+  assert.equal(hits.length,1,'unique source-scoped clickable page link')
+  const url = new URL(hits[0].href)
+  assert.equal(url.origin,base); assert.equal(url.pathname,'/preview')
+  assert.deepEqual(url.searchParams.getAll('file'),[PDF], 'exact source file')
+  assert.deepEqual(url.searchParams.getAll('page'),['8'], 'exact page 8')
+  assert.deepEqual(url.searchParams.getAll('back'),[expectedReturn], 'exact return URL')
+}
+async function original({ev,wait,send}) {
+  await wait('original actual 8 / 8', `document.querySelector('[aria-label="当前实际页"]')?.textContent.trim() === '8 / 8'`)
+  await wait('original page 8 decoded', `document.querySelector('[aria-label="PDF 第 8 页"] img')?.naturalWidth > 0`)
+  assert(await ev(`(() => { const i=document.querySelector('[aria-label="PDF 第 8 页"] img'); const r=i.getBoundingClientRect(); const c=document.createElement('canvas'); c.width=i.naturalWidth;c.height=i.naturalHeight; const x=c.getContext('2d');x.drawImage(i,0,0);const p=x.getImageData(c.width/2,c.height/2,1,1).data; return r.bottom>0 && r.top<innerHeight && r.right>0 && r.left<innerWidth && p[0]>240 && p[1]<15 && p[2]>240; })()`),'visible page 8 has independent magenta center')
+  const shot = await send('Page.captureScreenshot',{format:'png'})
+  writeFileSync(join(root,`original-direct-${await ev('innerWidth')}.png`),Buffer.from(shot.data,'base64'))
+}
+async function checkChain(width) {
+  await page(width,RETURN,async api => {
+    const {ev,wait,click,send} = api
+    await wait('drawer evidence disclosure', `!!document.querySelector('[data-testid=enterprise-evidence] button')`)
+    await click(`document.querySelector('[data-testid=enterprise-evidence] button')`)
+    await wait('target evidence ready',`${row(PDF)}?.textContent.includes('合成附件')`)
+    assert(await ev(`document.body.innerText.includes('${NAME}') && !document.body.innerText.includes('合成待核企业') && !document.body.innerText.includes('合成Word企业')`),'actual filtered result')
+    if (fault === 'wrong-file' || fault === 'page80') await ev(`(() => { const a=${link(PDF)}[0]; const u=new URL(a.href); u.searchParams.set('${fault === 'wrong-file' ? 'file' : 'page'}','${fault === 'wrong-file' ? 'wrong/p008.pdf' : '80'}'); a.href=u.href; })()`)
+    if (fault === 'span') await ev(`(() => {const a=${link(PDF)}[0];const s=document.createElement('span');s.textContent=a.textContent;a.replaceWith(s)})()`)
+    await assertLink(ev,RETURN)
+    await ev(`${link(PDF)}[0].scrollIntoView({block:'center'})`)
+    const top = await ev(`${link(PDF)}[0].getBoundingClientRect().top`)
+    await click(`${link(PDF)}[0]`)
+    await wait('clicked preview',`location.pathname === '/preview'`)
+    assert(await ev(`JSON.parse(sessionStorage.getItem('roster:evidence-preview-return') || '[]').some(x=>x.back===${JSON.stringify(RETURN)})`),'real click executed return position handler')
+    await original(api)
+    const shot = await send('Page.captureScreenshot',{format:'png'})
+    writeFileSync(join(root,`original-${width}.png`),Buffer.from(shot.data,'base64'))
+    await click(`[...document.querySelectorAll('a')].find(a=>a.textContent.trim()==='返回企业列表')`)
+    await wait('return URL exact',`location.pathname+location.search === ${JSON.stringify(RETURN)}`)
+    await wait('returned expansion',`${row(PDF)}?.textContent.includes('合成附件')`)
+    if (fault === 'return-collapsed') await ev(`${row(PDF)}.remove()`)
+    await assertLink(ev,RETURN)
+    assert(await ev(`document.body.innerText.includes('${NAME}') && !document.body.innerText.includes('合成待核企业')`),'returned actual filter/enterprise')
+    await wait('return visible position',`Math.abs((${link(PDF)}[0]?.getBoundingClientRect().top ?? -9999)-${top}) < 5`)
+    assert(await ev('document.documentElement.scrollWidth <= document.documentElement.clientWidth'),'no horizontal overflow')
+  })
+}
+async function detail(api, file) {
+  const {wait,click} = api
+  await wait('detail event', `[...document.querySelectorAll('button')].some(b=>b.textContent.trim()==='来源记录')`)
+  await click(`[...document.querySelectorAll('button')].find(b=>b.textContent.trim()==='来源记录')`)
+  await wait('official disclosure', `[...document.querySelectorAll('button')].some(b=>b.textContent.trim()==='正式文件与已登记出处')`)
+  await click(`[...document.querySelectorAll('button')].find(b=>b.textContent.trim()==='正式文件与已登记出处')`)
+  await wait('exact evidence row', `${row(file)}?.textContent.includes('合成附件')`)
+}
+async function checkDetail() {
+  await page(1440,'/enterprises/204',async api => { await detail(api, PDF); await assertLink(api.ev,'/enterprises/204') })
+  for (const [id,file] of [[6,PDF],[715,WORD]]) await page(1440,`/enterprises/${id}`,async api => {
+    await detail(api, file)
+    assert.equal(await api.ev(`([...(${row(file)}?.querySelectorAll('a') || [])].filter(a=>/^第\\s*\\d+\\s*页$/.test(a.textContent.trim()))).length`),0)
+    if(id===6) assert(await api.ev(`${row(file)}.textContent.includes('页码待核')`))
+  })
+}
+async function checkOther() {
+  await page(1440,`/preview?file=${encodeURIComponent(PDF)}`,async ({ev,wait}) => {
+    await wait('pending PDF content ready',`document.querySelector('[aria-label="PDF 第 1 页"] img')?.naturalWidth>0`)
+    assert(await ev(`document.body.innerText.includes('来源页码待核')`))
+  })
+  await page(1440,`/preview?file=${encodeURIComponent(PDF)}&page=999`,async ({ev,wait}) => {
+    await wait('out of range notice',`document.body.innerText.includes('来源第 999 页不存在。该 PDF 共 8 页')`)
+    assert(await ev(`!document.body.innerText.includes('已定位来源第 999 页') && document.querySelector('[aria-label="当前实际页"]')?.textContent.trim() !== '999 / 8'`))
+  })
+  await page(1440,`/preview?file=${encodeURIComponent(WORD)}&page=5`,async ({ev,wait}) => {
+    await wait('Word content ready (not error/loading)',`!!document.querySelector('.preview-ready canvas')`)
+    assert(await ev(`document.querySelector('.preview-ready canvas').width > 0 && !document.body.innerText.includes('来源第 5 页') && !document.body.innerText.includes('第 5 页')`),'Word ready without fictional source page')
+  })
+}
+async function oracleControls() {
+  await page(1440,'/',async ({ev,send,wait}) => {
+    await wait('synthetic control document ready', `location.pathname==='/' && document.readyState==='complete'`)
+    const href = '/preview?file=jxj%2Fannouncement%2F2026%2Fevidence-eight.pdf&page=8&back=%2F%3Fq%3D%25E5%2590%2588%25E6%2588%2590%25E8%25B7%25B3%25E9%25A1%25B5%25E4%25BC%2581%25E4%25B8%259A%26expand%3D204'
+    const html = `<div data-testid="official-evidence"><p>原路径：jxj/announcement/2026/evidence-eight.pdf</p><p>合成附件</p><a href="${href}">第 8 页</a></div>`
+    // DOM-only oracle sensitivity; this is NOT an application acceptance pass.
+    await send('Page.stopLoading',{})
+    await ev(`document.body.innerHTML=${JSON.stringify(html)}`)
+    await assertLink(ev,RETURN)
+    if(fault==='wrong-file' || fault==='page80') await ev(`(() => {const a=document.querySelector('a');const u=new URL(a.href);u.searchParams.set('${fault==='wrong-file'?'file':'page'}','${fault==='wrong-file'?'wrong/p008.pdf':'80'}');a.href=u.href})()`)
+    if(fault==='span') await ev(`document.querySelector('a').outerHTML='<span>第 8 页</span>'`)
+    if(fault==='return-collapsed') {
+      await ev(`history.replaceState(null,'',${JSON.stringify(RETURN)}); document.querySelector('[data-testid=official-evidence]').remove()`)
+      assert.equal(await ev('location.pathname+location.search'), RETURN, 'negative control preserves exact URL')
+    }
+    await assertLink(ev,RETURN)
+    console.log('PASS synthetic DOM literal link control (not product)')
+  })
+}
+async function derived() {
+  const response = await fetch(base+'/api/pdf-pages',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({file:PDF,dpi:72}),signal:AbortSignal.timeout(30000)})
+  assert.equal(response.status,200,await response.text())
+  await page(1440,`/preview?file=${encodeURIComponent(PDF)}&page=8&view=pages`,async ({ev,wait}) => {
+    await wait('derived page8 decoded', `[...document.images].some(i=>new URL(i.src).pathname === '/api/files/jxj/announcement/2026/.evidence-eight.pdf.pages/p008.png' && i.naturalWidth>0)`)
+    assert(await ev(`(() => {const i=[...document.images].find(i=>new URL(i.src).pathname === '/api/files/jxj/announcement/2026/.evidence-eight.pdf.pages/p008.png');const c=document.createElement('canvas');c.width=i.naturalWidth;c.height=i.naturalHeight;const x=c.getContext('2d');x.drawImage(i,0,0);const p=x.getImageData(c.width*0.1,c.height*0.9,1,1).data;return p[0]<20&&p[1]<20&&p[2]<20})()`),'derived page8 independent black corner marker (cache is grayscale)')
+  })
+}
+async function main() {
+  assert(!args.includes('--db'), '--db historical reproduction is not current acceptance; use historical pin only with isolated sources and a consistent SQLite snapshot')
+  root = mkdtempSync(join(tmpdir(),'issue-576-'))
+  console.log(JSON.stringify({resource:'root',root,mode:args.includes('--oracle-control')?'synthetic DOM oracle control':'synthetic application acceptance',fault}))
+  const env = {...process.env, HOST:'127.0.0.1', NITRO_HOST:'127.0.0.1', NUXT_DB_PATH:join(root,'roster.db'), NUXT_DB_READONLY:'1', NUXT_FILES_DIR:join(root,'files'), NUXT_INCOMING_DIR:join(root,'incoming'), NUXT_CURATED_PATH:join(root,'curated.json'), NUXT_RECONCILE_PATH:join(root,'reconcile.json'), NUXT_API_TOKEN:'', NUXT_MCP_TOKEN:''}
+  await fixture()
+  if (fault === 'before-start') throw new Error('Injected failure before startup')
+  if (!args.includes('--skip-build')) {
+    builder = own('pnpm',['build'],env)
+    await until('build exits',()=>!alive(builder),300_000)
+    assert.equal(builder.exitCode,0,'build exit')
+  }
+  assert(existsSync('.output/server/index.mjs'),'Build required')
+  const port = await reserveLoopbackPort(Number(option('port','0')))
+  base = `http://127.0.0.1:${port}`
+  server = own(process.execPath,['.output/server/index.mjs'],{...env,PORT:String(port),NITRO_PORT:String(port)})
+  await until('own server listener',()=> {
+    assert(alive(server),'server exited before listener')
+    try { return execFileSync('lsof',['-nP','-a','-p',String(server.pid),'-iTCP:'+port,'-sTCP:LISTEN'],{encoding:'utf8'}).includes(`127.0.0.1:${port}`) } catch { return false }
+  })
+  await waitForHttp(base+'/api/health',{child:server,timeoutMs:15000})
+  console.log(JSON.stringify({resource:'listener',pid:server.pid,base}))
+  const profile = join(root,'chrome'); mkdirSync(profile)
+  const bin = process.env.CHROME_BIN || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
+  chrome = own(bin,['--headless=new','--remote-debugging-address=127.0.0.1','--remote-debugging-port=0',`--user-data-dir=${profile}`,'--no-first-run','--no-default-browser-check','--disable-background-networking','--disable-component-update','--disable-gpu','about:blank'],env)
+  const version = await waitForChromeDevTools(chrome,profile)
+  console.log(JSON.stringify({resource:'private-marker',pid:chrome.pid,marker:readFileSync(join(profile,'DevToolsActivePort'),'utf8')}))
+  if(fault==='chrome-exit') { await stopOwnedChild(chrome); await waitForChromeDevTools(chrome,profile) }
+  cdp = await attach(fault==='attach' ? new URL('/json/version',version.webSocketDebuggerUrl).href : version.webSocketDebuggerUrl)
+  if(args.includes('--oracle-control')) { await oracleControls(); return }
+  if(fault==='word-failed') rmSync(join(root,'files',WORD))
+  // Each independent scenario reports its own failure; no timeout can become green.
+  for(const [name,run] of [['desktop chain',()=>checkChain(1440)],['390 chain',()=>checkChain(390)],['detail evidence',checkDetail],['original reader direct (not click chain)',()=>page(1440,`/preview?file=${encodeURIComponent(PDF)}&page=8`,original)],['390 original reader direct (not click chain)',()=>page(390,`/preview?file=${encodeURIComponent(PDF)}&page=8`,original)],['negative previews',checkOther],['derived cache (separate oracle)',derived]]) {
+    try { await run(); console.log('PASS',name) } catch(error) { failures.push(`${name}: ${error.stack}`); console.error('FAIL',name,error.message) }
+    if(interrupted) break
+  }
+}
+try { await main() } catch(error) { failures.push(error.stack); console.error(error) }
+finally {
+  cdp?.close()
+  // Nonempty child contract; independent cleanup, including failed startup.
+  for(const child of children.reverse()) {
+    try { await stopOwnedChild(child); console.log('CLEAN child',child.pid) } catch(error) { failures.push(`cleanup: ${error.stack}`) }
+  }
+  if(db) {
+    try {
+      assert.deepEqual(snapshot(),baseline,'all synthetic DB rows unchanged')
+      assert.deepEqual([PDF,WORD].map(file=>existsSync(join(root,'files',file)) ? hash(readFileSync(join(root,'files',file))) : null), fault==='word-failed' ? [sourceHashes[0],null] : sourceHashes, 'source bytes unchanged (only explicit Word-failure deletion permitted)')
+      console.log('PASS immutable synthetic DB/source')
+    } catch(error) { failures.push(error.stack) }
+    db.close()
+  }
+  if(root) {
+    try { rmSync(join(root,'chrome'),{recursive:true,force:true}) } catch(error) { failures.push(`profile cleanup: ${error.stack}`) }
+    // Retained synthetic artifacts and screenshots are explicitly outside Git.
+    writeFileSync(join(root,'result.json'),JSON.stringify({fault,interrupted,failures,children:children.map(c=>({pid:c.pid,exit:c.exitCode,signal:c.signalCode}))},null,2))
+    console.log('ARTIFACTS',root)
+  }
+}
+if(failures.length) console.error(failures.join('\n'))
+process.exitCode = interrupted ? (interrupted==='SIGINT' ? 130 : 143) : failures.length ? 1 : 0
