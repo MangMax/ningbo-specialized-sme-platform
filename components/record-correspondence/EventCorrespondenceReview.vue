@@ -1,5 +1,8 @@
 <script setup lang="ts">
-import { computed, reactive, shallowRef, watch } from 'vue'
+import { computed, inject, nextTick, reactive, shallowRef, watch } from 'vue'
+import { REVIEW_DRAFTS_KEY } from '~/composables/useReviewDrafts'
+import { Button } from '@/components/ui/button'
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog'
 import { useEnterpriseCorrespondences } from '~/composables/useEnterpriseCorrespondences'
 import { useAnnualProcessReview } from '~/composables/useAnnualProcessReview'
 import { confirmedAnnualStep } from '~~/lib/roster/annual-process-presentation'
@@ -37,8 +40,28 @@ const relationSummaries = computed(() => {
 watch([selected, ready, rows], () => {
   if (selected.value != null && events.value.some(event => event.id === selected.value)) void loadEvent(selected.value)
 }, { immediate: true })
+watch(selected, async (eventId) => {
+  await nextTick()
+  if (eventId == null || selected.value !== eventId) return
+  const target = document.getElementById(`review-event-${eventId}`)
+  target?.scrollIntoView({ block: 'start' })
+  target?.focus({ preventScroll: true })
+}, { immediate: true, flush: 'post' })
+const draftStore = inject(REVIEW_DRAFTS_KEY, null)
+const pendingSelection = shallowRef<{ eventId: number | null } | null>(null)
 function select(eventId: number, open: boolean) {
+  if (draftStore?.hasDirty.value) {
+    pendingSelection.value = { eventId: open ? eventId : null }
+    return
+  }
   selected.value = open ? eventId : null
+  emit('select', selected.value)
+}
+function discardAndSelect() {
+  if (!pendingSelection.value || draftStore?.hasLocked.value) return
+  draftStore?.discardAll()
+  selected.value = pendingSelection.value.eventId
+  pendingSelection.value = null
   emit('select', selected.value)
 }
 </script>
@@ -57,7 +80,7 @@ function select(eventId: number, open: boolean) {
           :event="event" :evidence="event.evidence" :edges="rows.filter(edge => edge.eventId === event.id)"
           :full-edges="detailsForEvent(event.id)" :links-ready="ready"
           :relation-summaries="relationSummaries" :details-loading="detailLoadingForEvent(event.id)" :details-error="detailErrorForEvent(event.id)"
-          :back="back" :open="selected === event.id" review
+          :back="back" :open="selected === event.id" :highlighted="selected === event.id" review
           @update:open="select(event.id, $event)" @preview="emit('preview', $event)"
           @event-navigate="emit('event-navigate', $event)" @page-open="(id, mouse) => emit('page-open', id, mouse)"
           @retry-detail="loadEvent(event.id, true)"
@@ -77,5 +100,12 @@ function select(eventId: number, open: boolean) {
         </RecordEventRow>
       </li>
     </ul>
+    <Dialog :open="pendingSelection !== null" @update:open="!$event && (pendingSelection = null)">
+      <DialogContent>
+        <DialogHeader><DialogTitle>切换会丢弃未提交内容</DialogTitle><DialogDescription>当前事项的核对依据还未保存。</DialogDescription></DialogHeader>
+        <p v-if="draftStore?.hasLocked.value" role="status">决定仍在提交或尚未确认结果，请先完成读回。</p>
+        <DialogFooter><Button variant="outline" @click="pendingSelection = null">继续填写</Button><Button :disabled="draftStore?.hasLocked.value" @click="discardAndSelect">切换并丢弃</Button></DialogFooter>
+      </DialogContent>
+    </Dialog>
   </section>
 </template>
