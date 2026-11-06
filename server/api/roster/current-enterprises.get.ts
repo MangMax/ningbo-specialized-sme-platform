@@ -7,12 +7,12 @@ import { admitEnterpriseResponse } from '../../utils/enterprise-read-response'
 import { withEnterpriseReadSignal } from '../../utils/enterprise-read-signal'
 
 defineRouteMeta({ openAPI: {
-  tags: ['当前有效称号查询'], summary: '分页查询指定称号当前有效及搜索定位的已公布待核企业',
-  description: '#484：旧解释有效性、回执、查询覆盖与决定生命周期退出默认有效判定；仅显式旧评估版本保留历史语义。#479：可选 status 按五类状态返回 rows/total；省略 status 保持有效企业。旧 responseVersion/字段保留，publishedPending 仅兼容。#478：有效资格仅由正式认定/复核期间及已确认、证据完整的注销/吊销或迁出事实决定；差异决定、身份、来源、解释有效性和平台缺口只作备注。effectiveQualification 包含 status（effective/expired/terminated/moved_out/unrecognized）、basis、notes；旧字段及旧评估版本可读。responseVersion=current-qualified-478-v2。资格统一消费共享 T2 enterprise-qualification-478-v3（规则 current-roster-116-v10），不以平台无记录、不通过或查询失败单独否定正式有效资格，不借其他称号状态。一企业一行；rows 为所选称号所选 status 且确定匹配筛选的企业（省略 status 默认为 effective），total 为分页前完整确定计数。仅通过原参数校验且名称/信用代码规范化后非空 q 时，publishedPending.requested=true：按现名、统一社会信用代码、已确认曾用名及 district 定位本称号有适用正式公布依据且 T2 pending 的企业，excluded 不进入；独立 total、rows、page、pageSize，复用同一 sort/ID 稳定排序及请求 page/pageSize。未请求时 requested=false、rows=[]、total=0，不是全库待核总量。pending 不计入 total 或 uncertainTotal；每行 filterMatch.status 为 matched/not_matched/not_established，checks 仅含实际选定字段，使用同周期同来源行 AND 见证，不跨行拼接；后两态仍可作为身份定位事实显示，不属于确定有效筛选命中。两组每页行均附完整 qualificationAssessment，保留三称号 titles、enterpriseId/asOf/ruleVersion/assessmentVersion scope、各输入版本及 snapshotId digest。asOf=snapshotStartedAt，资格评价日为执行时点 Asia/Shanghai 日历日，明确来源有效期含首尾；无明确日期仍保留年精度，不推造日期。资格评价年为该日所在年，与来源 validYear、认定窗口及首次认定年份不同；当前事实评估不是历史数据库回放。计数先于分页，各有效条件在同一当前授予事件及已确认对应的归档平台来源行上按 AND 命中。认定时间取该授予的真实决定年，闭区间完整包含该年才确定命中；部分重叠计入 uncertainTotal，不补造月日。仅 observed innovative_sme 的 queryBusList schema：date-only rddqrq 投影有效年，返回 whpcyear 为空时 YYYY-N 型 whpc 只投影维护年；批次后缀、datetime、非空 whpcyear/plain batch、其他称号及格式均未知。归档查询条件仅用于冲突校验，不作为行事实；缺失、格式不符或矛盾保持未知，不推断本地 dueYear。无证据不匹配已设条件，未设条件保留有效企业。options 仍来自该称号当前有效行可查询见证。读取独立执行器中的同一只读快照；不返回原始平台字段。400/503、预算、输入边界及重试语义不变。',
+  tags: ['当前有效称号查询'], summary: '分页查询指定称号的当前资格状态',
+  description: '#484：旧解释有效性、回执、查询覆盖与决定生命周期退出默认有效判定；仅显式旧评估版本保留历史语义。#479：可选 status 按五类状态返回 rows/total；省略 status 保持有效企业。旧 responseVersion/字段保留，publishedPending 仅兼容。#478：有效资格仅由正式认定/复核期间及已确认、证据完整的注销/吊销或迁出事实决定；差异决定、身份、来源、解释有效性和平台缺口只作备注。effectiveQualification 包含 status（effective/expired/terminated/moved_out/unrecognized）、basis、notes；旧字段及旧评估版本可读。responseVersion=current-qualified-478-v2。资格统一消费共享 T2 enterprise-qualification-478-v3（规则 current-roster-116-v10），不以平台无记录、不通过或查询失败单独否定正式有效资格，不借其他称号状态。一企业一行；rows 为所选称号所选 status 且确定匹配筛选的企业（省略 status 默认为 effective），total 为分页前完整确定计数。publishedPending={requested,rows,total,page,pageSize} 仅保留兼容结构：当前五状态查询不提供独立待核结果，rows 始终为 []、total 始终为 0。requested 仅表示已通过参数校验的 q 在名称/信用代码规范化后是否非空；它不表示执行了待核检索，不能据该兼容 total 推断待核企业总量。page/pageSize 与主请求一致。主 rows 按所选 status 返回确定匹配的有界页，保留完整 qualificationAssessment 三称号 titles、enterpriseId/asOf/ruleVersion/assessmentVersion scope、各输入版本及 snapshotId digest。外层 responseVersion=current-qualified-478-v2 与默认 assessmentVersion=enterprise-qualification-478-v3、ruleVersion=current-roster-116-v10 是不同层次的版本；历史评估版本属于内部兼容入口，不是本接口的可选参数。asOf=snapshotStartedAt，资格评价日为执行时点 Asia/Shanghai 日历日，明确来源有效期含首尾；无明确日期仍保留年精度，不推造日期。资格评价年为该日所在年，与来源 validYear、认定窗口及首次认定年份不同；当前事实评估不是历史数据库回放。计数先于分页，各有效条件在同一当前授予事件及已确认对应的归档平台来源行上按 AND 命中。认定时间取该授予的真实决定年，闭区间完整包含该年才确定命中；部分重叠计入 uncertainTotal，不补造月日。仅 observed innovative_sme 的 queryBusList schema：date-only rddqrq 投影有效年，返回 whpcyear 为空时 YYYY-N 型 whpc 只投影维护年；批次后缀、datetime、非空 whpcyear/plain batch、其他称号及格式均未知。归档查询条件仅用于冲突校验，不作为行事实；缺失、格式不符或矛盾保持未知，不推断本地 dueYear。无证据不匹配已设条件，未设条件保留有效企业。options 仍来自该称号当前有效行可查询见证。读取独立执行器中的同一只读快照；不返回原始平台字段。400/503、预算、输入边界及重试语义不变。',
   parameters: [
     { name: 'status', in: 'query', schema: { type: 'string', enum: ['effective','expired','terminated','moved_out','unrecognized'], default: 'effective' }, description: '#479：按共享有效状态筛选；省略时保留旧版默认有效结果。其它筛选与分页不变。' },
     { name: 'titleCode', in: 'query', required: true, schema: { type: 'string', enum: ['little_giant', 'specialized_sme', 'innovative_sme'] } },
-    { name: 'q', in: 'query', schema: { type: 'string' }, description: '最长120字符。搜索现名、统一社会信用代码及已确认曾用名；规范化后非空才请求独立 publishedPending 定位。空白输入仍按原参数校验拒绝。' },
+    { name: 'q', in: 'query', schema: { type: 'string' }, description: '最长120字符。搜索现名、统一社会信用代码及已确认曾用名；规范化后非空时兼容 publishedPending.requested 为 true，但不产生待核结果。空白输入仍按原参数校验拒绝。' },
     { name: 'district', in: 'query', schema: { type: 'string' }, description: '最长40字符。' },
     { name: 'recognitionFrom', in: 'query', schema: { type: 'string', format: 'date' }, description: '认定闭区间起点，必须与 recognitionTo 同时给出；年份精度仅完整覆盖才确定命中。' },
     { name: 'recognitionTo', in: 'query', schema: { type: 'string', format: 'date' }, description: '认定闭区间终点，必须与 recognitionFrom 同时给出。' },
@@ -25,7 +25,7 @@ defineRouteMeta({ openAPI: {
   ],
   responses: {
     200: {
-      description: '兼容保留 rows、确定匹配 total、日期精度不确定 uncertainTotal、全称号有效行 options、page/pageSize/titleCode/ruleVersion/snapshotStartedAt；新增 responseVersion、publishedPending 以及两组行的完整 qualificationAssessment。以下仅描述响应扩展结构，不裁剪既有行字段或完整 T2。',
+      description: '返回所选状态且确定匹配的 rows/total、日期精度 uncertainTotal、该称号有效行 options 和既有分页、版本、时点字段。主 rows 保留完整 qualificationAssessment；publishedPending 为空兼容结构。以下仅描述响应扩展结构，不裁剪既有字段或完整 T2。',
       content: { 'application/json': { schema: {
         type: 'object', required: ['responseVersion', 'rows', 'publishedPending', 'total', 'uncertainTotal', 'options', 'page', 'pageSize', 'titleCode', 'ruleVersion', 'snapshotStartedAt'],
         properties: {
@@ -36,13 +36,13 @@ defineRouteMeta({ openAPI: {
             } },
           } } },
           publishedPending: { type: 'object', required: ['requested', 'rows', 'total', 'page', 'pageSize'], properties: {
-            requested: { type: 'boolean', description: '仅规范化非空 q 请求；false 的 total=0 不是待核总量。' }, total: { type: 'integer', minimum: 0, description: '本次身份/区县/本称号定位的完整 pending 数，独立于 eligible 及 uncertainTotal。' }, page: { type: 'integer', minimum: 1 }, pageSize: { type: 'integer', minimum: 1, maximum: 200 },
-            rows: { type: 'array', description: '有界定位页，保留既有行字段及完整三称号 qualificationAssessment；not_matched/not_established 仍可显示公布事实。', items: { type: 'object', required: ['qualificationAssessment', 'filterMatch'], properties: {
-              qualificationAssessment: { type: 'object', description: '与 rows 完全相同的完整 T2 scope、三称号、输入版本与 digest 契约。', required: ['enterpriseId', 'asOf', 'ruleVersion', 'assessmentVersion', 'snapshotId', 'titles'], properties: {
+            requested: { type: 'boolean', description: '兼容请求标记：通过校验的 q 在名称/信用代码规范化后非空时为 true；不代表执行待核检索。' }, total: { type: 'integer', minimum: 0, description: '当前始终为0；兼容值，不是待核企业总量。' }, page: { type: 'integer', minimum: 1 }, pageSize: { type: 'integer', minimum: 1, maximum: 200 },
+            rows: { type: 'array', description: '当前始终为空数组；items 仅保留兼容结构，不承诺返回待核定位行。', items: { type: 'object', required: ['qualificationAssessment', 'filterMatch'], properties: {
+              qualificationAssessment: { type: 'object', description: '历史兼容行的完整 T2 形状说明；当前 publishedPending.rows 为空。', required: ['enterpriseId', 'asOf', 'ruleVersion', 'assessmentVersion', 'snapshotId', 'titles'], properties: {
                 enterpriseId: { type: 'integer' }, asOf: { type: 'string', format: 'date-time' }, ruleVersion: { type: 'string', enum: ['current-roster-116-v10'] }, assessmentVersion: { type: 'string', enum: ['enterprise-qualification-478-v3'] }, snapshotId: { type: 'string' }, titles: { type: 'array', minItems: 3, maxItems: 3, items: { type: 'object', additionalProperties: true } },
               } },
               filterMatch: { type: 'object', required: ['status', 'checks'], properties: {
-                status: { type: 'string', enum: ['matched', 'not_matched', 'not_established'], description: '同周期同来源行 AND 见证；只解释已选筛选，不是资格结论。无选定字段时 matched/checks=[]。' },
+                status: { type: 'string', enum: ['matched', 'not_matched', 'not_established'], description: '历史兼容定位行的筛选见证状态；当前 publishedPending.rows 为空。该字段不作为当前资格结论。' },
                 checks: { type: 'array', items: { type: 'object', required: ['field', 'status'], properties: { field: { type: 'string', enum: ['recognitionRange', 'validYear', 'maintenanceYear', 'maintenanceBatch'] }, status: { type: 'string', enum: ['matched', 'not_matched', 'not_established'] } } } },
               } },
             } } },
