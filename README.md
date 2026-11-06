@@ -49,7 +49,7 @@ pnpm check:doctor:structure        # 死代码、依赖图、重复代码和复�
 不要直接删除被标记为未使用的模块，或批量执行 `--fix`。本次接入不新增 CI 阻断规则。
 首次体检的历史记录见 [Vite Doctor 体检报告](docs/reports/vite-doctor-2026-10-22.md)，不代表当前版本验收。
 
-SQLite 数据库默认位于 `data/roster.db`，可用 `NUXT_DB_PATH` 覆盖；来源文件默认位于 `files/`，可用 `NUXT_FILES_DIR` 覆盖。新克隆仓库不含数据库、公布文件、平台导出表或上传件，首次使用时应从本机安全备份恢复，或通过应用文件管理页上传。真实 OCR、HTTP 写入和 MCP 写入凭证只放在本地 `.env` 或运行环境密钥中；不要提交凭证。
+SQLite 数据库默认位于 `data/roster.db`，可用 `NUXT_DB_PATH` 覆盖；来源文件默认位于 `files/`，可用 `NUXT_FILES_DIR` 覆盖。新克隆仓库不含数据库、公布文件、平台导出表或上传件，首次使用时应从本机安全备份恢复，或通过应用文件管理页上传。API/MCP 访问 token 使用本地 `.env` 或运行环境配置（`NUXT_API_TOKEN`、`NUXT_MCP_TOKEN`）；外部 OCR token 和工信部平台 Cookie 可由应用保存到 SQLite，无显式 override 时保存值优先、环境变量回退。显式 override 的优先级及独立 CLI 例外见[外部服务凭据配置](docs/credential-settings.md#生效规则)。完整数据库备份包含已保存的外部凭据，应按敏感数据保护；不要提交凭证。
 
 任务页面不收集或保存 API 密钥。同源页面默认可提交导出、下载、取消及安全局部重试，无需配置 API token；请求须通过浏览器标记、Fetch Metadata 及 Origin/Referer 校验，POST 还须使用 JSON。同源检查不识别用户；外部 REST/MCP 调用仍使用各自的 token。
 
