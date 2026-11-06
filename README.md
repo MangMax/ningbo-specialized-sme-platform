@@ -27,10 +27,19 @@
 ```bash
 pnpm install
 cp .env.example .env
+```
+
+新克隆仓库不含数据库、公布文件、平台导出表或上传件。启动前，须从经授权的一致备份恢复有效的应用 SQLite 数据库及配套文件库，并配置对应路径：数据库默认位于 `data/roster.db`，可用 `NUXT_DB_PATH` 覆盖；来源文件默认位于 `files/`，可用 `NUXT_FILES_DIR` 覆盖。备份恢复的一致性与隔离要求见 [DEPLOYMENT.md](DEPLOYMENT.md#升级前备份与回滚)。
+
+默认启动要求数据库文件已存在，且包含应用的迁移账本（`__drizzle_migrations`）；不会自动创建新库，空 SQLite 文件也不能代替有效的应用数据库。本指引不提供新库初始化流程。完成上述准备后再启动：
+
+```bash
 pnpm dev
 ```
 
 开发服务默认运行在 `http://localhost:3000`。`pnpm typecheck`、`pnpm test` 和 `pnpm build` 分别用于类型检查、测试和生产构建。
+
+应用已可运行后，可通过文件管理页上传并补充来源材料；上传来源文件不能替代首次启动前的数据库准备。
 
 ### 框架与结构体检
 
@@ -49,7 +58,7 @@ pnpm check:doctor:structure        # 死代码、依赖图、重复代码和复�
 不要直接删除被标记为未使用的模块，或批量执行 `--fix`。本次接入不新增 CI 阻断规则。
 首次体检的历史记录见 [Vite Doctor 体检报告](docs/reports/vite-doctor-2026-10-22.md)，不代表当前版本验收。
 
-SQLite 数据库默认位于 `data/roster.db`，可用 `NUXT_DB_PATH` 覆盖；来源文件默认位于 `files/`，可用 `NUXT_FILES_DIR` 覆盖。新克隆仓库不含数据库、公布文件、平台导出表或上传件，首次使用时应从本机安全备份恢复，或通过应用文件管理页上传。API/MCP 访问 token 使用本地 `.env` 或运行环境配置（`NUXT_API_TOKEN`、`NUXT_MCP_TOKEN`）；外部 OCR token 和工信部平台 Cookie 可由应用保存到 SQLite，无显式 override 时保存值优先、环境变量回退。显式 override 的优先级及独立 CLI 例外见[外部服务凭据配置](docs/credential-settings.md#生效规则)。完整数据库备份包含已保存的外部凭据，应按敏感数据保护；不要提交凭证。
+API/MCP 访问 token 使用本地 `.env` 或运行环境配置（`NUXT_API_TOKEN`、`NUXT_MCP_TOKEN`）；外部 OCR token 和工信部平台 Cookie 可由应用保存到 SQLite，无显式 override 时保存值优先、环境变量回退。显式 override 的优先级及独立 CLI 例外见[外部服务凭据配置](docs/credential-settings.md#生效规则)。完整数据库备份包含已保存的外部凭据，应按敏感数据保护；不要提交凭证。
 
 任务页面不收集或保存 API 密钥。同源页面默认可提交导出、下载、取消及安全局部重试，无需配置 API token；请求须通过浏览器标记、Fetch Metadata 及 Origin/Referer 校验，POST 还须使用 JSON。同源检查不识别用户；外部 REST/MCP 调用仍使用各自的 token。
 
