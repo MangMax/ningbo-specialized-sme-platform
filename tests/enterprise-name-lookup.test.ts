@@ -67,6 +67,27 @@ describe('bounded enterprise name lookup', () => {
     expect(second.names.get(9)).toBe('缓存企业')
   })
 
+  it('evicts the oldest name when a 400-entry cache receives a new enterprise', async () => {
+    const cache = new Map<number, string>(
+      Array.from({ length: 400 }, (_, index) => [index + 1, `缓存企业 ${index + 1}`]),
+    )
+    const fetchName = vi.fn(async (_id: number) => '新企业401')
+    const result = await lookupEnterpriseNames([401], { fetchName, cache, concurrency: 1 })
+
+    expect(fetchName).toHaveBeenCalledTimes(1)
+    expect(fetchName.mock.calls.map(call => call[0])).toEqual([401])
+    expect([...result.names]).toEqual([[401, '新企业401']])
+    expect(result.failed).toEqual(new Set())
+    expect(result.aborted).toBe(false)
+    expect.soft(cache.size).toBe(400)
+    expect.soft(cache.has(1)).toBe(false)
+    expect.soft([...cache.keys()]).toEqual(Array.from({ length: 400 }, (_, index) => index + 2))
+    expect.soft([...cache]).toEqual([
+      ...Array.from({ length: 399 }, (_, index) => [index + 2, `缓存企业 ${index + 2}`]),
+      [401, '新企业401'],
+    ])
+  })
+
   it('drops stale-page results and reports failures without inventing names', async () => {
     let current = true
     const fetchName = vi.fn(async (id: number) => {
