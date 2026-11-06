@@ -101,7 +101,7 @@ function fileMeta(file: StoredFileRow) {
 
 <template>
   <Sheet v-model:open="open">
-    <SheetContent :side="side" class="flex flex-col gap-0 p-0 sm:max-w-md">
+    <SheetContent :side="side" floating-size="standard" class="flex flex-col gap-0 p-0">
       <SheetHeader class="border-b px-4 py-4">
         <SheetTitle>选择 PDF</SheetTitle>
         <SheetDescription>
@@ -204,7 +204,7 @@ function fileMeta(file: StoredFileRow) {
           >
             <Check class="mt-0.5 size-4 shrink-0" />
             <div class="min-w-0 flex-1">
-              <p class="truncate text-sm font-medium" :title="display(selected)">
+              <p class="text-sm font-medium break-words" :title="display(selected)">
                 {{ display(selected) }}
               </p>
               <p class="text-muted-foreground mt-0.5 truncate text-[11px]">
@@ -245,10 +245,9 @@ function fileMeta(file: StoredFileRow) {
             >
               <FileText class="text-muted-foreground mt-0.5 size-4 shrink-0" />
               <span class="min-w-0 flex-1">
-                <!-- Full name is available on hover/focus (title) and wraps on
-                     narrow screens; truncation must not hide the distinguishing
+                <!-- Full names wrap; truncation must not hide the distinguishing
                      tail of two similarly named files. -->
-                <span class="block text-sm break-words sm:truncate">{{
+                <span class="block text-sm break-words">{{
                   display(file)
                 }}</span>
                 <span class="text-muted-foreground mt-0.5 block truncate text-[11px]">
