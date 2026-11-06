@@ -29,7 +29,7 @@ interface LedgerEvent {
   district: string | null
 }
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   event: LedgerEvent
   evidence: OfficialEvidence[]
   edges: CorrespondenceSummary[]
@@ -41,12 +41,14 @@ const props = defineProps<{
   back: string
   returnTo?: string | null
   open: boolean
+  sourceOpen?: boolean | null
   review?: boolean
   /** 深链定位到的行短暂高亮；不是常驻装饰。 */
   highlighted?: boolean
-}>()
+}>(), { sourceOpen: null })
 const emit = defineEmits<{
   'update:open': [open: boolean]
+  'update:sourceOpen': [open: boolean]
   preview: [evidence: OfficialEvidence]
   'event-navigate': [eventId: number]
   'page-open': [eventId: number, event: MouseEvent]
@@ -146,7 +148,7 @@ const interfaceSummary = computed(() => {
       </template>
       <slot v-if="open" name="annual-review" />
       <p v-if="detailsLoading" role="status" class="px-4 text-sm sm:px-5">正在读取对应出处…</p>
-      <DisclosurePanel title="正式文件与已登记出处" class="border-t px-4 sm:px-5" :open="detailsError || groups.revalidation.length ? true : null">
+      <DisclosurePanel title="正式文件与已登记出处" class="border-t px-4 sm:px-5" :open="detailsError || groups.revalidation.length ? true : sourceOpen" @update:open="emit('update:sourceOpen', $event)">
       <RecordEventSource :event="event" :evidence="evidence" :edges="fullEdges ?? []" :edges-ready="linksReady && fullEdges !== null && fullEdges !== undefined" :edges-loading="detailsLoading" :edges-error="detailsError" :back="back" :return-to="returnTo" @preview="emit('preview', $event)" @event-navigate="emit('event-navigate', $event)" @page-open="(eventId: number, event: MouseEvent) => emit('page-open', eventId, event)" @retry-detail="emit('retry-detail')" />
       </DisclosurePanel>
       <EventArchiveCandidates v-if="open && event.source === 'jxj' && ['award', 'review'].includes(event.type)" :key="event.id" :event-id="event.id" :back="back" :auto-load="review" />
