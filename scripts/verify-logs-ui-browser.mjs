@@ -812,6 +812,10 @@ await check('failed filter navigation retains old rows and offers an explicit re
   await setViewport(1280, 800)
   await navigate(syntheticUrl.href, `document.querySelectorAll('[data-log-detail]').length > 0`)
   const oldRow = await evaluate(`document.querySelector('[data-testid="log-table-scroll"] .data-table tbody tr').textContent`)
+  const rowIdsExpr = `[...document.querySelectorAll('[data-testid="log-table-scroll"] .data-table tbody tr')].map((row) => row.querySelector('[data-log-detail]')?.getAttribute('data-log-detail'))`
+  const oldRowIds = await evaluate(rowIdsExpr)
+  assert.ok(oldRowIds.length > 0 && oldRowIds.every((id) => typeof id === 'string' && id.length > 0))
+  assert.equal(new Set(oldRowIds).size, oldRowIds.length, 'loaded row IDs must be unique')
   const before = await waitStable(measureExpr)
   gateMode = 'hold'
   await evaluate(`(() => {
@@ -823,7 +827,9 @@ await check('failed filter navigation retains old rows and offers an explicit re
   await clickButtonText('应用筛选')
   await waitFor(`[...document.querySelectorAll('[role="status"]')].some((el) => el.textContent.includes('正在读取当前筛选'))`)
   const retained = await evaluate(`document.querySelector('[data-testid="log-table-scroll"] .data-table tbody tr').textContent`)
-  assert.ok(retained.length > 0)
+  assert.ok(held.length > 0, 'the changed filter request must still be held')
+  const retainedRowIds = await evaluate(rowIdsExpr)
+  assert.deepEqual(retainedRowIds, oldRowIds, 'held filter must retain the same ordered row IDs')
   await failHeld()
   gateMode = 'continue'
   await waitFor(`!!document.querySelector('[data-testid="table-failure-state"]')`)
@@ -841,14 +847,31 @@ await check('failed filter navigation retains old rows and offers an explicit re
     })()
   }))()`)
   const failureShot = await shot('browser-desktop-retained-failure-1280x800.png')
+  const failedRowIds = await evaluate(rowIdsExpr)
   assert.ok(failed.failure.includes('task.finished'))
-  assert.ok(failed.firstRow.length > 0)
+  assert.match(failed.failure, /已保留第 1 页的 25 条旧结果（[^）]+）；当前筛选（[^）]*操作 task\.finished）未能读取/)
+  assert.ok(!failed.failure.split('；当前筛选')[0].includes('task.finished'), 'retained filter must not claim the requested operation')
+  assert.deepEqual(failedRowIds, oldRowIds, 'failed filter must retain the same ordered row IDs')
   assert.ok(Math.abs(failed.after.managementTop - before.managementTop) <= 4)
   await click('[data-testid=table-retry]')
   await waitFor(`!document.querySelector('[data-testid="table-failure-state"]')`)
   await waitFor(`document.querySelector('[data-testid="log-table-scroll"] .data-table tbody tr')?.textContent.includes('task.finished')`)
   const recovered = await evaluate(`document.querySelector('[data-testid="log-table-scroll"] .data-table tbody tr').textContent`)
-  return { oldRow, retained, failed, failureShot, recovered }
+  const recoveredRows = await evaluate(`(() => [...document.querySelectorAll('[data-testid="log-table-scroll"] .data-table tbody tr')].map((row) => {
+    const cells = [...row.querySelectorAll('td')]
+    return {
+      operation: cells[3].querySelector('[title="task.finished"]')?.getAttribute('title'),
+      target: cells[4].querySelector('[title]')?.getAttribute('title'),
+      outcome: cells[5].querySelector('[title]')?.getAttribute('title')
+    }
+  }))()`)
+  // Independent literals from the two synthetic task.finished records; never
+  // derive the expected identity from the response or the presentation helper.
+  assert.deepEqual(recoveredRows, [
+    { operation: 'task.finished', target: '任务 task-181 · 已处理 4/9', outcome: 'cancelled' },
+    { operation: 'task.finished', target: '任务 task-180 · 已处理 8/10 · 失败 2', outcome: 'failure' }
+  ])
+  return { oldRow, oldRowIds, retained, retainedRowIds, failed, failedRowIds, failureShot, recovered, recoveredRows }
 })
 
 // ---------- 8) clear/policy cancel writes nothing ----------
