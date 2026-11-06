@@ -1,3 +1,6 @@
+> **历史阶段说明（#591）**：下文保留 2026-10-14/15 阶段材料及验收记录。本地草稿不是当前 published tracker；当前工单见 [GitHub Issues](https://github.com/MangMax/ningbo-specialized-sme-platform/issues/591)，使用规则见[仓库 tracker 规范](../../../docs/agents/issue-tracker.md)。原文中的完成状态、数字及成功/失败记录仅对应当时输入，本次文档注记不构成重跑或当前运行保证。
+> 后继读取契约见 [comparison-summary-contract](../../../docs/comparison-summary-contract.md)及 [#133](https://github.com/MangMax/ningbo-specialized-sme-platform/issues/133)：`view=summary` 为显式 opt-in，省略 `view` 或使用 `view=full` 保持完整 DTO 兼容。此导航不声明当前响应大小、延迟或其他性能预算达标。
+
 # 02 — Nitro 接口 `GET /api/comparison`
 
 **What to build:** 把票 01 的 `getComparison` 薄封装成一个只读 Nitro 路由,供页面与导出取数。**接口只做参数解析、调用、分页/筛选,不含口径逻辑。**

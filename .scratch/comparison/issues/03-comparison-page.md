@@ -1,3 +1,7 @@
+> **历史阶段说明（#591）**：下文保留 2026-10-14/15 阶段材料及验收记录。本地草稿不是当前 published tracker；当前工单见 [GitHub Issues](https://github.com/MangMax/ningbo-specialized-sme-platform/issues/591)，使用规则见[仓库 tracker 规范](../../../docs/agents/issue-tracker.md)。原文中的完成状态、数字及成功/失败记录仅对应当时输入，本次文档注记不构成重跑或当前运行保证。
+> 呈现方向后继见 [#22](https://github.com/MangMax/ningbo-specialized-sme-platform/issues/22)及其[关闭说明](https://github.com/MangMax/ningbo-specialized-sme-platform/issues/22#issuecomment-6262788708)：该说明继承既有验收、未重新运行测试，并删除旧 `verify:ledger-ui` 像素门禁，本次不恢复该门禁。[#440 的关闭说明](https://github.com/MangMax/ningbo-specialized-sme-platform/issues/440#issuecomment-6681620212)明确“不再计划”，不代表原 AC 全部完成，也不是本历史材料的已完成替代。Tabs/tooltip 漏检、tus 失败后通过及真实漂移未通过等原有记录仍按各自输入保留，不以 fixture 替代真实数据验收。
+> 读取后继另见[历史差集 summary/full 契约](../../../docs/comparison-summary-contract.md)；本次未复验页面或导出。
+
 # 03 — 比对页面 `/comparison` + 侧栏入口 + 导出
 
 **What to build:** 新增只读页面 `/comparison`,按称号分 tab,每个 tab 下分「应纳未纳 / 应出未出」两个方向,各一张差异清单;可导出当前方向。侧栏加入口。

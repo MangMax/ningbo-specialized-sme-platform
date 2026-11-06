@@ -1,3 +1,8 @@
+> **历史阶段说明（#591）**：下文保留 2026-10-14/15 阶段材料及验收记录。本地草稿不是当前 published tracker；当前工单见 [GitHub Issues](https://github.com/MangMax/ningbo-specialized-sme-platform/issues/591)，使用规则见[仓库 tracker 规范](../../../docs/agents/issue-tracker.md)。原文中的完成状态、数字及成功/失败记录仅对应当时输入，本次文档注记不构成重跑或当前运行保证。
+> 下方“全部完成”仅指历史交付范围。后继入口分别见[历史差集读取契约](../../../docs/comparison-summary-contract.md)、[差异决定与旧标注兼容](../../../docs/maintenance-102.md)和 [#22 继承验收说明](https://github.com/MangMax/ningbo-specialized-sme-platform/issues/22#issuecomment-6262788708)；不代表当前功能、性能或母票全部验收完成。
+>
+> **验收输入分界**：[UI-ACCEPTANCE](../UI-ACCEPTANCE.md) 的非零标注等场景使用浏览器只读响应替身，未发送 PATCH；[04](04-curation.md) 则读取真实库、实际写入隔离 JSON 并验证 PATCH/UI，不是写真实本地标注文件；[03](03-comparison-page.md) 的真实漂移徽标验收未通过、checkbox 保持未勾，fixture 只证明渲染。三个事实分别成立，不能互相替代或合称真实数据全部 PASS。
+
 # 两侧名录比对 — 工单
 
 来自 [SPEC.md](../SPEC.md)。前沿 = 阻塞项已完成的票。
