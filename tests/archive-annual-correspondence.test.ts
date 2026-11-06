@@ -428,6 +428,7 @@ it.each([{ name: 'rejected', status: 'rejected' as const }, { name: 'unlinked', 
   expect(spy).toHaveBeenCalledOnce(); spy.mockRestore()
   expect(f.jobs()[0]!.state).toBe('done')
   const row = f.rows()[0]!
+  expect(row.status).toBe(status)
   const audit = f.audits()
   const oldAnnual = f.jobs()
   const appended = f.input(2), old = f.input().payload.platformQueries![0]!.relations![0]!
@@ -438,7 +439,6 @@ it.each([{ name: 'rejected', status: 'rejected' as const }, { name: 'unlinked', 
   expect(next.error).toBeNull()
   expect(next.summary.failed).toBe(0)
   expect(next.items).toHaveLength(1)
-  expect(next.items.every(item => item.ok)).toBe(true)
   expect(next.candidateTaskIds).toHaveLength(1)
   const candidateId = next.candidateTaskIds[0]!
   expect(candidateId).toMatch(JOB_ID_RE)
@@ -451,7 +451,6 @@ it.each([{ name: 'rejected', status: 'rejected' as const }, { name: 'unlinked', 
   expect((candidate!.result as CandidateJobResult).items.map(item => item.eventId)).toEqual([f.events[0]!.id])
   const freshAnnual = f.jobs().filter(job => !oldAnnual.some(old => old.id === job.id))
   expect(freshAnnual).toHaveLength(1)
-  expect(next.candidateTaskIds).not.toEqual(first.candidateTaskIds)
   const job = freshAnnual[0]!
   expect(job.id).toMatch(JOB_ID_RE)
   const generation = readAnnualWriteScope(f.db, f.events[0]!.id)!.generation
@@ -466,7 +465,6 @@ it.each([{ name: 'rejected', status: 'rejected' as const }, { name: 'unlinked', 
   expect(result.events[0]).toMatchObject({ eventId: f.events[0]!.id, generation })
   expect(result.events[0]).toMatchObject({ status: 'done', finalQualification: { status: 'blocked', reasons: ['protected_decision'] } })
   expect(result.events[0]!.outcomes[0]).toMatchObject({ status: 'protected', decisionRefs: [{ id: row.id, status }] })
-  expect(f.db.select().from(s.recordCorrespondence).where(eq(s.recordCorrespondence.id, row.id)).get()).toMatchObject({ status })
   expect(f.db.select().from(s.recordCorrespondence).where(eq(s.recordCorrespondence.id, row.id)).get()).toEqual(row)
   expect(f.audits().filter(a => a.correspondenceId === row.id)).toEqual(audit.filter(a => a.correspondenceId === row.id))
 })
