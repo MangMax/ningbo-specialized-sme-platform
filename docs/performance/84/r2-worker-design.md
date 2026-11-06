@@ -1,5 +1,7 @@
 # R2 worker resource and request ownership freeze
 
+> Historical configuration: [R3](r3-raw-generation-design.md) supersedes only the old128/semi64 generation split below after repeated 96MiB reads reproduced an OOM. The OS-process isolation, request ownership and bounded IPC rationale remain relevant. Retain the R2 measurements and the later failure separately; neither finite result establishes arbitrary-size or sustained-load support.
+
 Base: `69b8e54adb7c8026ba2b016e00e9affebc637540`. R2-01 and R2-02 only.
 No business reader, comparison module, schema, migration, cache, global heap or
 request/startup timeout changes. Frozen #82 budgets still apply.
