@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { motion, useReducedMotion } from 'motion-v'
+const reducedMotion = useReducedMotion()
 import { computed, onBeforeUnmount, ref, shallowRef, watch } from 'vue'
 import type { DistrictStatistics } from '~~/lib/roster/district-statistics'
 import { TITLES, TITLE_ORDER } from '~~/lib/labels'
@@ -34,7 +36,7 @@ const districtMax=computed(()=>Math.max(1,...districtRows.value.map(b=>b.n)))
   <div v-if="result" class="stats-district-total"><strong>{{ result.titles.find(t=>t.titleCode===selectedTitle)?.effective.toLocaleString('zh-CN') }}</strong><span>家有效企业<small>含未知属地</small></span></div>
   <Skeleton v-if="!result && loading" class="h-60 w-full" />
   <div v-if="result" class="stats-district-bars">
-    <button v-for="(bucket,i) in districtRows" :key="bucket.district??'unknown'" class="stats-district-bar" :aria-label="`${bucket.district??'未知属地'}${TITLES[selectedTitle]}明细 ${bucket.n}家`" @click="select(selectedTitle,bucket.district)"><span class="stats-district-rank">{{ String(i+1).padStart(2,'0') }}</span><span class="stats-district-bar-body"><span class="stats-district-bar-label"><span>{{ bucket.district??'未知属地' }}</span><strong>{{ bucket.n }}<small>家</small></strong></span><span class="stats-bar-track"><span :style="{width:`${bucket.n/districtMax*100}%`}" /></span></span></button>
+    <button v-for="(bucket,i) in districtRows" :key="bucket.district??'unknown'" class="stats-district-bar" :aria-label="`${bucket.district??'未知属地'}${TITLES[selectedTitle]}明细 ${bucket.n}家`" @click="select(selectedTitle,bucket.district)"><span class="stats-district-rank">{{ String(i+1).padStart(2,'0') }}</span><span class="stats-district-bar-body"><span class="stats-district-bar-label"><span>{{ bucket.district??'未知属地' }}</span><strong>{{ bucket.n }}<small>家</small></strong></span><span class="stats-bar-track"><motion.span :initial="{ width: '0%' }" :animate="{ width: `${bucket.n/districtMax*100}%` }" :transition="{ duration: reducedMotion ? 0 : 0.28, ease: 'easeOut' }" /></span></span></button>
     <p v-if="!districtRows.length" class="stats-empty">暂无当前有效企业</p>
   </div>
   <TableFailureState v-if="failed" :title="`${target}加载失败`" :compact="!!result" :pending="loading" :description="result?'已保留上次区县结果，请重试。':'尚无区县结果，请重试。'" @retry="load" />

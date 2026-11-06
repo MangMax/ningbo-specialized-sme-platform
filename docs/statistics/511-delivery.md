@@ -38,3 +38,9 @@
 上一轮手写 SVG 使用 `preserveAspectRatio="none"`，导致图形拉伸且缺少悬停。现改用项目已安装的 nuxt-charts 3.1.0 `LineChart`，按实际容器宽度绘图，固定250px图高，不再通过 CSS 拉伸 SVG。保留直线表达年度离散数值；悬停显示年份与各称号精确数量，图例按钮可隐藏/恢复曲线（至少保留一条），年份与企业下钻按钮仍可键盘操作。最右年份标签裁切也已修复，无新增表格。
 
 本轮 typecheck、diff-check PASS。真实副本桌面1440×900与390×844看图通过，无页面横向溢出；2022悬停数值278/714/1566与已有统计结果一致；图例切换实际曲线3→2→3。截图位于 `/tmp/statistics-chart-desktop-final.png`、`/tmp/statistics-chart-mobile-390.png`。T3预览navigate/evaluate连续超时后改用Ego Browser验证，测试页已关闭，用户原预览页及3511服务保留。首轮类型错误（类别可空类型、点样式枚举、索引签名）修正后typecheck通过。仅展示层修改，未重跑业务套件。
+
+### 已安装包与动效补齐（2026-11-07）
+
+统计页使用 Nuxt Charts LineChart、Reka/shadcn 的 Select/Sheet/Button/Skeleton、Lucide 图标；服务端聚合沿用 es-toolkit。新增 motion-v 卡片错峰入场、明细入口箭头悬停反馈、区县条形宽度过渡，移除相应手写 CSS transition。useReducedMotion 将页面新增动效时长归零；数字直接展示真实值。共享 Sheet 的原有动效与焦点管理保持组件统一实现，无新增依赖。
+
+本轮 pnpm typecheck、git diff --check PASS。Docker 3482 真实副本的 localhost:3511/stats：1440px 悬停反馈、区县切换至小巨人159家及条形更新 PASS；390px 抽屉打开/Escape关闭、无横向溢出 PASS；模拟 prefers-reduced-motion: reduce，箭头 transform=none、首条宽度100% PASS。截图 /tmp/statistics-motion-desktop.png、/tmp/statistics-motion-mobile.png。共享预览 snapshot/navigate 各超时15秒后使用 Ego Browser，临时检查页已关闭；原用户预览保留。

@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, shallowRef, watch } from 'vue'
+import { motion, useReducedMotion } from 'motion-v'
+const reducedMotion = useReducedMotion()
 import StatisticsMovementsSection from '@/components/statistics/StatisticsMovementsSection.vue'
 import type { PublishedStatistics } from '~~/lib/roster/published-statistics'
 import { TITLES, TITLE_ORDER } from '~~/lib/labels'
@@ -40,11 +42,11 @@ import { ArrowUpRight, ArrowRight } from '@lucide/vue'
   <section aria-labelledby="published-title" class="stats-published">
     <div class="stats-section-heading"><div><h2 id="published-title">累计正式公布</h2><p>同一企业同一称号计一次，保留历年公布事实</p></div><Button variant="ghost" size="sm" :disabled="loading" @click="load">刷新</Button></div>
     <div class="stats-metric-grid">
-      <article v-for="(code,index) in TITLE_ORDER" :key="code" class="stats-metric" :class="`stats-metric--${index}`">
+      <motion.article :initial="{ opacity: 0, y: 8 }" :animate="{ opacity: 1, y: 0 }" :transition="{ duration: reducedMotion ? 0 : 0.22, delay: reducedMotion ? 0 : index * 0.04, ease: 'easeOut' }" v-for="(code,index) in TITLE_ORDER" :key="code" class="stats-metric" :class="`stats-metric--${index}`">
         <div class="stats-metric-label"><span>{{ TITLES[code] }}</span><span class="stats-tier-mark" /></div>
-        <button class="stats-number-button" :aria-label="`${TITLES[code]}累计公布明细`" :disabled="!result" @click="select(code,'confirmed')"><strong>{{ result ? result.titles.find(t=>t.titleCode===code)?.confirmed.toLocaleString('zh-CN') : '—' }}</strong><span>家</span><ArrowUpRight class="stats-number-arrow" aria-hidden="true" /></button>
+        <motion.button :while-hover="reducedMotion ? undefined : 'hover'" class="stats-number-button" :aria-label="`${TITLES[code]}累计公布明细`" :disabled="!result" @click="select(code,'confirmed')"><strong>{{ result ? result.titles.find(t=>t.titleCode===code)?.confirmed.toLocaleString('zh-CN') : '—' }}</strong><span>家</span><motion.span class="stats-number-arrow" :variants="{ hover: { x: 2, y: -2 } }" :transition="{ duration: reducedMotion ? 0 : 0.15 }" aria-hidden="true"><ArrowUpRight /></motion.span></motion.button>
         <div class="stats-metric-footer"><span>历年累计公布</span><button v-if="result" class="stats-pending-link" @click="select(code,'pending')">身份待核 {{ result.titles.find(t=>t.titleCode===code)?.pending }} <ArrowRight class="size-3" aria-hidden="true" /></button></div>
-      </article>
+      </motion.article>
     </div>
     <TableFailureState v-if="failed" :title="`${target}加载失败`" :compact="!!result" :pending="loading" :description="result ? '上次成功数据已保留，可重新加载。' : '尚未加载公布数据，请重试。'" @retry="load" />
   </section>
