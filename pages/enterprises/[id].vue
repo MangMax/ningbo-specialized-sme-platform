@@ -308,10 +308,21 @@ const EVIDENCE_DISCLOSURE_RETURN_KEY = 'roster:enterprise-detail-open-evidence'
 const openEvidenceKeys = ref<string[]>([])
 const openSourceKeys = ref<string[]>([])
 const disclosureReturnReady = ref(false)
+const returnLayoutRoot = ref<HTMLElement | null>(null)
+const returnLayoutKeys = ref<string[]>([])
+const returnLayoutReady = ref(false)
+const returnCancelled = ref(false)
+
+function cancelDisclosureReturn() {
+  returnCancelled.value = true
+  returnLayoutReady.value = false
+  pendingDisclosureReturn.value = null
+}
 const pendingDisclosureReturn = shallowRef<{ keys: string[]; sourceKeys: string[] } | null>(null)
 
 // A reused page must not carry disclosure intent across a different return route or tab.
-watch([() => route.fullPath, tab], () => {
+watch([() => route.fullPath, id, tab], () => {
+  cancelDisclosureReturn()
   openEvidenceKeys.value = []
   openSourceKeys.value = []
   pendingDisclosureReturn.value = null
@@ -322,11 +333,18 @@ watch([detail, pendingDisclosureReturn], () => {
   if (!pending || !detail.value) return
   const valid = new Set(ledgerEvents.value.map(event => evidenceDisclosureKey(event.id)))
   openEvidenceKeys.value = pending.keys.filter(key => valid.has(key))
+  returnLayoutKeys.value = [...openEvidenceKeys.value]
   openSourceKeys.value = pending.sourceKeys.filter(key => valid.has(key))
   pendingDisclosureReturn.value = null
 }, { flush: 'sync' })
 
+// Removing a return target invalidates this attempt even if later data brings it back.
+watch(() => ledgerEvents.value.map(event => evidenceDisclosureKey(event.id)), keys => {
+  if (returnLayoutKeys.value.some(key => !keys.includes(key))) cancelDisclosureReturn()
+}, { flush: 'sync' })
+
 function setSourceDisclosureOpen(key: string, open: boolean): void {
+  cancelDisclosureReturn()
   const next = new Set(openSourceKeys.value)
   if (open) next.add(key)
   else next.delete(key)
@@ -353,9 +371,52 @@ const detailRendered = computed(() => disclosureReturnReady.value && pendingDisc
   && (detail.value !== null || error.value != null) && !correspondenceLoading.value
   && (correspondenceError.value || ledgerEvents.value.every(event => !evidenceDisclosureOpen(evidenceDisclosureKey(event.id))
     || detailsForEvent(event.id) !== null || detailErrorForEvent(event.id))))
-useEvidencePreviewScrollRestore(detailRendered)
+// Reka restores animation styles after measuring its content. Cross the render
+// boundary before asking the actual restored rows for their animation completion.
+// This is a single wait, not a scroll retry or a guessed animation duration.
+watch([detailRendered, returnLayoutKeys, returnCancelled, () => ledgerEvents.value.map(event => event.id).join(',')], async ([ready], _old, onCleanup) => {
+  returnLayoutReady.value = false
+  if (!ready || returnCancelled.value) return
+  let active = true
+  let frame: number | undefined
+  let release: (() => void) | undefined
+  onCleanup(() => {
+    active = false
+    if (frame !== undefined) cancelAnimationFrame(frame)
+    release?.()
+  })
+  if (returnLayoutKeys.value.length) {
+    const renderedFrame = () => new Promise<void>(resolve => {
+      release = resolve
+      frame = requestAnimationFrame(() => { frame = undefined; resolve() })
+    })
+    await nextTick()
+    if (!active) return
+    await renderedFrame()
+    if (!active) return
+    await nextTick()
+    if (!active) return
+    await renderedFrame()
+    if (!active) return
+    const rows = [...(returnLayoutRoot.value?.querySelectorAll<HTMLElement>('[data-return-event]') ?? [])]
+      .filter(row => returnLayoutKeys.value.includes(row.dataset.returnEvent!))
+    if (rows.length !== returnLayoutKeys.value.length) return
+    const animations = rows.flatMap(row => [...row.querySelectorAll<HTMLElement>('[data-slot="accordion-content"]')]
+      .flatMap(content => content.getAnimations()))
+    const cancelled = new Promise<void>(resolve => { release = resolve })
+    try {
+      await Promise.race([Promise.all(animations.map(animation => animation.finished)), cancelled])
+    } catch {
+      // A cancelled/replaced animation is not proof that this layout completed.
+      return
+    }
+  }
+  if (active && !returnCancelled.value) returnLayoutReady.value = true
+}, { flush: 'post' })
+useEvidencePreviewScrollRestore(computed(() => detailRendered.value && returnLayoutReady.value && !returnCancelled.value))
 
 function setEvidenceDisclosureOpen(key: string, open: boolean): void {
+  cancelDisclosureReturn()
   const next = new Set(openEvidenceKeys.value)
   if (open) next.add(key)
   else next.delete(key)
@@ -689,8 +750,8 @@ function openPreview(e: Evidence) {
                 <span>出处</span>
                 <span class="sr-only">展开</span>
               </header>
-              <ul class="divide-y">
-                <li v-for="event in ledgerEvents" :key="event.id">
+              <ul ref="returnLayoutRoot" class="divide-y">
+                <li v-for="event in ledgerEvents" :key="event.id" :data-return-event="evidenceDisclosureKey(event.id)">
                   <RecordEventRow
                     :event="event"
                     :evidence="event.evidence"

@@ -308,7 +308,7 @@ describe('出处预览返回滚动恢复', () => {
     expect(returnedReady.value).toBe(true)
     expect(returned.findAll('a').some((link) => link.text().includes('第 8 页'))).toBe(true)
     expect(frames).toHaveLength(1)
-    frames[0]!(0)
+    for (let i = 0; i < 5; i++) { frames.splice(0).forEach(frame => frame(0)); await flushPromises() }
     expect(scrollTo).toHaveBeenCalledWith({ top: windowTop, behavior: 'instant' })
     expect(returnedScroller!.scrollTop).toBe(tableTop)
     expect(returnedScroller!.scrollLeft).toBe(tableLeft)
@@ -515,7 +515,7 @@ describe('出处预览返回滚动恢复', () => {
     mocks.setLoading?.(false)
     await flushPromises()
     expect(frames).toHaveLength(1)
-    frames[0]!(0)
+    for (let i = 0; i < 5; i++) { frames.splice(0).forEach(frame => frame(0)); await flushPromises() }
     expect(scrollTo).toHaveBeenCalledWith({ top: detailWindowTop, behavior: 'instant' })
     expect(JSON.parse(sessionStorage.getItem('roster:evidence-preview-return')!)).toEqual([
       { back: safeBack, scrollY: listWindowTop, scrollTop: listTableTop, scrollLeft: listTableLeft },
@@ -665,7 +665,7 @@ describe('出处预览返回滚动恢复', () => {
     mocks.setLoading?.(false)
     await flushPromises()
     expect(detailFrames).toHaveLength(1)
-    detailFrames[0]!(0)
+    for (let i = 0; i < 5; i++) { detailFrames.splice(0).forEach(frame => frame(0)); await flushPromises() }
     expect(window.scrollY).toBe(detailWindowTop)
     expect(JSON.parse(sessionStorage.getItem('roster:evidence-preview-return')!)).toEqual([
       { back: ledgerPath, scrollY: ledgerWindowTop, scrollTop: ledgerTableTop, scrollLeft: ledgerTableLeft },
@@ -758,7 +758,7 @@ describe('出处预览返回滚动恢复', () => {
     mocks.setLoading?.(false)
     await flushPromises()
     expect(frames).toHaveLength(1)
-    frames[0]!(0)
+    for (let i = 0; i < 5; i++) { frames.splice(0).forEach(frame => frame(0)); await flushPromises() }
     expect(scrollTo).toHaveBeenCalledWith({ top: windowTop, behavior: 'instant' })
     expect(returned.findAll('button').some((button) => button.text().includes('来源记录'))).toBe(true)
     expect(sessionStorage.getItem('roster:evidence-preview-return')).toBeNull()
@@ -884,6 +884,53 @@ describe('出处预览返回滚动恢复', () => {
     }] })
     expect(inner().attributes('aria-expanded')).toBe('true')
     page.unmount()
+  })
+
+  it.each(['complete', 'inner collapse', 'outer collapse', 'route', 'enterprise', 'event removed', 'unmount', 'no animation', 'animation cancelled'])('waits for restored disclosure animations and handles %s', async outcome => {
+    history.replaceState(null, '', '/enterprises/91')
+    currentRoute = reactive({ params: { id: '91' }, query: {}, fullPath: '/enterprises/91' })
+    mocks.detail = fullDetail
+    Object.defineProperty(window, 'scrollY', { configurable: true, value: 420 })
+    rememberEvidencePreviewReturn('/enterprises/91')
+    sessionStorage.setItem(DETAIL_OPEN_EVIDENCE_STATE_KEY, JSON.stringify({
+      back: '/enterprises/91', keys: ['["91",10]'], sourceKeys: ['["91",10]'],
+    }))
+    let finish!: () => void
+    let cancel!: () => void
+    const finished = new Promise<void>((resolve, reject) => { finish = resolve; cancel = () => reject(new Error("animation cancelled")) })
+    const animations = vi.spyOn(Element.prototype, 'getAnimations').mockReturnValue(outcome === 'no animation' ? [] : [{ finished } as Animation])
+    const frames: FrameRequestCallback[] = []
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => { frames.push(callback); return frames.length })
+    const scrollTo = vi.fn()
+    vi.stubGlobal('scrollTo', scrollTo)
+    const pump = async () => {
+      for (let i = 0; i < 5; i++) {
+        frames.splice(0).forEach(frame => frame(0))
+        await flushPromises()
+      }
+    }
+    const page = mount(EnterprisePage, { attachTo: document.body, global: { stubs: globalStubs } })
+    await flushPromises()
+    await pump()
+    if (outcome !== 'no animation') expect(scrollTo).not.toHaveBeenCalled()
+    if (outcome.endsWith('collapse')) {
+      const title = outcome === 'inner collapse' ? '正式文件与已登记出处' : '来源记录'
+      await page.find('#record-event-10').findAll('button').find(button => button.text() === title)!.trigger('click')
+    }
+    if (outcome === 'route') currentRoute.fullPath = '/enterprises/91?back=changed'
+    if (outcome === 'enterprise') currentRoute.params.id = '92'
+    if (outcome === 'event removed') mocks.setDetail?.({ ...fullDetail, records: [] })
+    if (outcome === 'unmount') page.unmount()
+    await flushPromises()
+    if (outcome === 'event removed') mocks.setDetail?.(fullDetail)
+    if (outcome === 'animation cancelled') cancel()
+    else finish()
+    await flushPromises()
+    await pump()
+    if (outcome === 'complete' || outcome === 'no animation') expect(scrollTo).toHaveBeenCalledExactlyOnceWith({ top: 420, behavior: 'instant' })
+    else expect(scrollTo).not.toHaveBeenCalled()
+    if (outcome !== 'unmount') page.unmount()
+    animations.mockRestore()
   })
 
   it('waits for event source rows to settle before restoring an enterprise preview return', async () => {
