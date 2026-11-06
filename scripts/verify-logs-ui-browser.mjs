@@ -884,37 +884,104 @@ await check('clear and policy review cancel without any write request', async ()
   return { writesBefore, writesAfter, clearWrites: clearWrites.length, policyWrites: policyWrites.length, policyShot }
 })
 
-// ---------- 9) dual-axis collection settings ----------
-await check('dual-axis settings review and save only changed rules across the new groups', async () => {
+// ---------- 9) module index and draft-only Sheets ----------
+// Client log ingestion is unrelated to policy/clear writes and remains enabled.
+const managementWrites = () => network.filter((entry) =>
+  ['POST', 'PATCH', 'PUT', 'DELETE'].includes(entry.method) &&
+  ['/api/logs/policy', '/api/logs/clear'].includes(new URL(entry.url).pathname)
+)
+const moduleRow = (key) => `[data-testid="log-module-row-${key}"]`
+const moduleSheet = (key) => `[data-testid="log-module-sheet-${key}"]`
+async function openModule(key) {
+  await pointerClick(moduleRow(key))
+  await waitFor(`document.querySelectorAll('[data-slot="sheet-content"]').length === 1 && !!document.querySelector(${JSON.stringify(moduleSheet(key))})`)
+  await waitFor(`(() => {
+    const r = document.querySelector(${JSON.stringify(moduleSheet(key))}).getBoundingClientRect()
+    return r.left >= -1 && r.right <= innerWidth + 1
+  })()`)
+  await waitFor(`document.querySelector(${JSON.stringify(moduleSheet(key))}).getAnimations().every((animation) => animation.playState === 'finished')`)
+}
+async function closeModule(key, method = 'Done') {
+  if (method === 'Escape') {
+    await send('Input.dispatchKeyEvent', { type: 'rawKeyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 })
+    await send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 })
+  } else {
+    await pointerClick('[data-testid="log-module-sheet-done"]')
+  }
+  await waitFor(`!document.querySelector(${JSON.stringify(moduleSheet(key))})`)
+  await waitFor(`document.activeElement === document.querySelector(${JSON.stringify(moduleRow(key))})`)
+}
+async function measureModule(key) {
+  return waitStable(`(() => {
+    const sheet = document.querySelector(${JSON.stringify(moduleSheet(key))})
+    const body = sheet.querySelector('[data-testid="log-module-sheet-body"]')
+    const done = sheet.querySelector('[data-testid="log-module-sheet-done"]')
+    const rect = (el) => {
+      const r = el.getBoundingClientRect()
+      return { left: r.left, right: r.right, top: r.top, bottom: r.bottom, width: r.width, height: r.height }
+    }
+    const bounds = sheet.getBoundingClientRect()
+    return {
+      viewport: { width: innerWidth, height: innerHeight },
+      page: { scrollWidth: document.documentElement.scrollWidth, clientWidth: document.documentElement.clientWidth },
+      sheet: { ...rect(sheet), scrollWidth: sheet.scrollWidth, clientWidth: sheet.clientWidth },
+      body: { ...rect(body), scrollWidth: body.scrollWidth, clientWidth: body.clientWidth },
+      done: rect(done),
+      switches: sheet.querySelectorAll('[data-slot="switch"]').length,
+      overflow: [...sheet.querySelectorAll('*')].filter((el) => {
+        const r = el.getBoundingClientRect()
+        return r.width > 0 && (r.left < bounds.left - 1 || r.right > bounds.right + 1)
+      }).length
+    }
+  })()`)
+}
+function assertModuleFits(measured, width, height) {
+  assert.deepEqual(measured.viewport, { width, height })
+  assert.equal(measured.page.scrollWidth, measured.page.clientWidth)
+  assert.ok(measured.sheet.width > 300 && measured.sheet.width <= width)
+  assert.ok(measured.sheet.left >= -1 && measured.sheet.right <= width + 1)
+  assert.equal(measured.sheet.scrollWidth, measured.sheet.clientWidth)
+  assert.equal(measured.body.scrollWidth, measured.body.clientWidth)
+  assert.ok(measured.body.height > 0)
+  assert.ok(measured.done.top >= 0 && measured.done.bottom <= height + 1)
+  assert.ok(measured.done.height > 0)
+  assert.equal(measured.overflow, 0)
+}
+
+await check('module Sheets keep drafts local and confirm exactly the changed source rules', async () => {
   await setViewport(1280, 800)
   await navigate(syntheticUrl.href, `document.querySelectorAll('[data-log-detail]').length > 0`)
   await clickButtonText('日志配置')
   await waitFor(`!!document.querySelector('[data-testid="log-collection-sources"]')`)
   await waitFor(`!!document.querySelector('[data-testid="log-collection-integrations"]')`)
+  const policyWrites = () => network.filter((entry) => entry.method === 'PATCH' && new URL(entry.url).pathname === '/api/logs/policy')
+  const assertNoWrites = () => assert.equal(managementWrites().length, 0)
+  assertNoWrites()
   const layout = await evaluate(`(() => {
     const count = (selector) => document.querySelectorAll(selector).length
     const text = (selector) => document.querySelector(selector)?.textContent ?? ''
     return {
-      switches: count('[data-slot="switch"]'),
+      rows: count('[data-testid^="log-module-row-"]'),
+      inlineSwitches: count('[data-slot="switch"]'),
       checkboxes: count('input[type="checkbox"]'),
       nativeSelects: count('select'),
       details: count('details'),
       sources: (() => {
-        const group = (id) => count('[data-testid="' + id + '"] [data-slot="switch"]')
+        const group = (id) => count('[data-testid="' + id + '"] [data-testid^="log-module-row-"]')
         return group('log-business-node') + group('log-business-browser')
       })(),
       integrations: (() => {
-        const group = (id) => count('[data-testid="' + id + '"] [data-slot="switch"]')
+        const group = (id) => count('[data-testid="' + id + '"] [data-testid^="log-module-row-"]')
         return group('log-technical-node') + group('log-technical-browser') + group('log-business-shared')
       })(),
-      technicalSwitches: count('[data-testid="log-collection-integrations"] [data-slot="switch"]'),
-      businessSwitches: count('[data-testid="log-collection-sources"] [data-slot="switch"]'),
-      technicalNode: count('[data-testid="log-technical-node"] [data-slot="switch"]'),
-      technicalBrowser: count('[data-testid="log-technical-browser"] [data-slot="switch"]'),
-      businessShared: count('[data-testid="log-business-shared"] [data-slot="switch"]'),
-      businessNode: count('[data-testid="log-business-node"] [data-slot="switch"]'),
-      businessBrowser: count('[data-testid="log-business-browser"] [data-slot="switch"]'),
-      applicationSwitches: count('#log-integration-application-enabled'),
+      technicalRows: count('[data-testid="log-collection-integrations"] [data-testid^="log-module-row-"]'),
+      businessRows: count('[data-testid="log-collection-sources"] [data-testid^="log-module-row-"]'),
+      technicalNode: count('[data-testid="log-technical-node"] [data-testid^="log-module-row-"]'),
+      technicalBrowser: count('[data-testid="log-technical-browser"] [data-testid^="log-module-row-"]'),
+      businessShared: count('[data-testid="log-business-shared"] [data-testid^="log-module-row-"]'),
+      businessNode: count('[data-testid="log-business-node"] [data-testid^="log-module-row-"]'),
+      businessBrowser: count('[data-testid="log-business-browser"] [data-testid^="log-module-row-"]'),
+      applicationRows: count('[data-testid="log-module-row-integration-application"]'),
       headings: (() => {
         const settings = document.querySelector('[data-testid="log-collection-integrations"]')?.closest('[data-slot="tabs-content"]')
         return settings ? [...settings.querySelectorAll('h2')].map((el) => el.textContent.trim()) : []
@@ -927,30 +994,53 @@ await check('dual-axis settings review and save only changed rules across the ne
     }
   })()`)
   // 真实目录：技术 10 + 业务来源 11 + 跨端共享 application 1 = 22；不再有未接入项。
-  assert.equal(layout.switches, 22)
+  assert.equal(layout.rows, 22)
+  assert.equal(layout.inlineSwitches, 0)
   assert.equal(layout.checkboxes, 0)
   assert.equal(layout.nativeSelects, 0)
   assert.equal(layout.details, 0)
   assert.equal(layout.sources, 11)
   assert.equal(layout.integrations, 11)
-  assert.equal(layout.technicalSwitches, 10)
-  assert.equal(layout.businessSwitches, 12)
+  assert.equal(layout.technicalRows, 10)
+  assert.equal(layout.businessRows, 12)
   assert.equal(layout.technicalNode, 4)
   assert.equal(layout.technicalBrowser, 6)
   assert.equal(layout.businessShared, 1)
   assert.equal(layout.businessNode, 10)
   assert.equal(layout.businessBrowser, 1)
-  assert.equal(layout.applicationSwitches, 1)
+  assert.equal(layout.applicationRows, 1)
   assert.deepEqual(layout.headings, ['技术集成', '业务埋点', '保留策略', '范围清理'])
-  assert.ok(layout.sharedText.includes('服务端和客户端共用'))
-  assert.ok(layout.businessText.includes('也包括技术集成采集的事件'))
+  assert.ok(layout.sharedText.includes('服务端与客户端共用这一条规则'))
+  assert.ok(layout.businessText.includes('来源维度独立生效，也可被技术集成条件收窄'))
   assert.ok(!layout.technicalText.includes('应用手动埋点'))
   assert.equal(layout.hasUnwired, false)
   assert.equal(layout.page.scrollWidth, layout.page.clientWidth)
 
-  // 改一条来源开关和一条最低级别，均通过共享 Reka 控件。
-  await click('#log-source-http-enabled')
+  // Opening/closing an unchanged drawer is not a save, including a no-change review attempt.
+  assert.equal(await evaluate(`document.querySelector('[data-testid="log-policy-review"]').disabled`), true)
+  await openModule('source-http')
+  const desktopSheet = await measureModule('source-http')
+  assertModuleFits(desktopSheet, 1280, 800)
+  const desktopSheetShot = await shot('browser-desktop-log-config-sheet-1280x800.png')
+  await closeModule('source-http')
+  await openModule('source-mcp')
+  await closeModule('source-mcp', 'Escape')
+  await click('[data-testid="log-policy-review"]')
+  assert.equal(await evaluate(`!!document.querySelector('[role="dialog"]')`), false)
+  assertNoWrites()
+
+  // Each drawer edits the same global draft; Done and Escape retain it without PATCH.
+  await openModule('source-http')
+  await pointerClick('#log-source-http-enabled')
   await waitFor(`document.querySelector('#log-source-http-enabled')?.dataset.state === 'unchecked'`)
+  assertNoWrites()
+  await closeModule('source-http')
+  assertNoWrites()
+  await waitFor(`document.querySelector('[data-testid="log-module-row-source-http"]').textContent.includes('未保存')`)
+  await openModule('source-http')
+  assert.equal(await evaluate(`document.querySelector('#log-source-http-enabled').dataset.state`), 'unchecked')
+  await closeModule('source-http', 'Escape')
+  await openModule('source-mcp')
   await pointerClick('[aria-label="MCP 调用的最低日志级别"]')
   await waitFor(`!![...document.querySelectorAll('[role="option"]')].find((el) => el.textContent.includes('警告'))`)
   await sleep(150)
@@ -963,6 +1053,12 @@ await check('dual-axis settings review and save only changed rules across the ne
   await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: levelPoint.x, y: levelPoint.y, button: 'left', clickCount: 1 })
   await waitFor(`[...document.querySelectorAll('[aria-label="MCP 调用的最低日志级别"]')].some((el) => el.textContent.includes('警告'))`)
 
+  await waitFor(`!document.querySelector('[role="listbox"]')`)
+  assertNoWrites()
+  await closeModule('source-mcp', 'Escape')
+  assertNoWrites()
+  await waitFor(`document.querySelector('[data-testid="log-module-row-source-mcp"]').textContent.includes('未保存')`)
+
   // 采集配置截图先取，避免把核对对话框叠在页面上；滚动发生在 settings tab 内部。
   await evaluate(`(() => {
     const panel = [...document.querySelectorAll('[data-slot="tabs-content"]')].find((el) => el.textContent?.includes('业务埋点'))
@@ -972,7 +1068,7 @@ await check('dual-axis settings review and save only changed rules across the ne
   await sleep(150)
   const settingsShot = await shot('browser-desktop-log-config-1280x800.png')
 
-  const writesBefore = network.filter((entry) => entry.method === 'PATCH').length
+  assertNoWrites()
   await clickButtonText('核对日志配置修改')
   await waitFor(`[...document.querySelectorAll('[role="dialog"]')].some((el) => el.textContent.includes('核对日志配置修改'))`)
   await sleep(300)
@@ -980,20 +1076,24 @@ await check('dual-axis settings review and save only changed rules across the ne
   assert.ok(reviewText.includes('来源采集 · HTTP 接口'))
   assert.ok(reviewText.includes('来源采集 · MCP 调用'))
   assert.ok(!reviewText.includes('后台任务'))
-  assert.equal(network.filter((entry) => entry.method === 'PATCH').length, writesBefore)
+  assertNoWrites()
   const reviewShot = await shot('browser-desktop-log-config-review-1280x800.png')
   await clickButtonText('取消')
   await waitFor(`!document.querySelector('[role="dialog"]')`)
-  assert.equal(network.filter((entry) => entry.method === 'PATCH').length, writesBefore)
+  assertNoWrites()
 
   // 重新核对并保存：payload 只含变化规则，不重置其他规则，也不回传 GET 的 catalog/revision。
   await clickButtonText('核对日志配置修改')
   await waitFor(`!!document.querySelector('[data-testid="log-policy-confirm"]')`)
+  assertNoWrites()
   await click('[data-testid="log-policy-confirm"]')
   await waitFor(`!document.querySelector('[data-testid="log-policy-confirm"]')`)
   await waitFor(`document.body.textContent.includes('日志配置已保存')`)
+  await openModule('source-http')
   await waitFor(`document.querySelector('#log-source-http-enabled')?.dataset.state === 'unchecked'`)
-  const patch = network.find((entry) => entry.method === 'PATCH' && new URL(entry.url).pathname === '/api/logs/policy')
+  await closeModule('source-http')
+  assert.equal(policyWrites().length, 1, 'confirmation sends exactly one policy PATCH')
+  const patch = policyWrites()[0]
   assert.ok(patch)
   assert.ok(patch.postData)
   const body = JSON.parse(patch.postData)
@@ -1008,23 +1108,40 @@ await check('dual-axis settings review and save only changed rules across the ne
     }
   })
   assert.ok(!('integrations' in body.collection))
-  return { layout, reviewText, body, settingsShot, reviewShot }
+  return { layout, desktopSheet, desktopSheetShot, reviewText, body, policyPatchCount: policyWrites().length, settingsShot, reviewShot }
 })
 
-// ---------- 10) settings at 390 ----------
-await check('390 settings stay full width with no horizontal scroll', async () => {
+// ---------- 10) settings and explicitly open module Sheet at 390 ----------
+await check('390 module index and open Sheet fit without horizontal scroll or writes', async () => {
   await setViewport(390, 844)
   await navigate(`${base}/logs?tab=settings`, `!!document.querySelector('[data-testid="log-collection-sources"]')`)
+  const writesBefore = managementWrites().length
   const mobile = await evaluate(`(() => ({
     page: { scrollWidth: document.documentElement.scrollWidth, clientWidth: document.documentElement.clientWidth },
-    switchCount: document.querySelectorAll('[data-slot="switch"]').length,
-    settingsWidth: Math.round(document.querySelector('[data-testid="log-collection-sources"]')?.getBoundingClientRect().width ?? 0)
+    rows: document.querySelectorAll('[data-testid^="log-module-row-"]').length,
+    inlineSwitches: document.querySelectorAll('[data-slot="switch"]').length,
+    settingsWidth: Math.round(document.querySelector('[data-testid="log-collection-sources"]').getBoundingClientRect().width)
   }))()`)
-  const shotPath = await shot('browser-mobile-log-config-390x844.png')
   assert.equal(mobile.page.scrollWidth, mobile.page.clientWidth)
-  assert.equal(mobile.switchCount, 22)
+  assert.equal(mobile.rows, 22)
+  assert.equal(mobile.inlineSwitches, 0)
   assert.ok(mobile.settingsWidth > 300)
-  return { ...mobile, shotPath }
+  // The collector drawer includes field controls; measure the actual open surface.
+  await openModule('integration-nuxt-nitro')
+  const sheet = await measureModule('integration-nuxt-nitro')
+  assertModuleFits(sheet, 390, 844)
+  assert.ok(Math.abs(sheet.sheet.width - 390) <= 1)
+  assert.equal(sheet.switches, 5)
+  const shotPath = await shot('browser-mobile-log-config-sheet-390x844.png')
+  await closeModule('integration-nuxt-nitro')
+  await openModule('source-mcp')
+  await closeModule('source-mcp', 'Escape')
+  assert.equal(await evaluate(`document.querySelector('[data-testid="log-policy-review"]').disabled`), true)
+  await click('[data-testid="log-policy-review"]')
+  assert.equal(await evaluate(`!!document.querySelector('[role="dialog"]')`), false)
+  const writesAfter = managementWrites().length
+  assert.equal(writesAfter, writesBefore)
+  return { ...mobile, sheet, writesBefore, writesAfter, shotPath }
 })
 
 const failedChecks = checks.filter((entry) => entry.result === 'FAIL')
