@@ -11,7 +11,9 @@ const { useDb } = await jiti.import('../db/client.ts')
 const { getRecordComparison, listRecordComparisonSources } = await jiti.import(process.env.PERF_SOURCE_ROOT ? process.env.PERF_SOURCE_ROOT + '/server/utils/record-comparison.ts' : '../server/utils/record-comparison.ts')
 const [path, mode='comparison', roundsText='20', pageText='1']=process.argv.slice(2)
 if(!path?.startsWith('/') || !['sources','comparison'].includes(mode) || path.includes('/full-snapshot/')) throw Error('Use an isolated copy and sources|comparison')
-const db=useDb({dbPath:path,readOnly:true}), rounds=Number(roundsText), catalogPage=Number(pageText)
+const rounds=Number(roundsText)
+if(!Number.isSafeInteger(rounds)||rounds<1)throw Error('rounds must be a positive safe integer')
+const db=useDb({dbPath:path,readOnly:true}), catalogPage=Number(pageText)
 if(!Number.isSafeInteger(catalogPage)||catalogPage<1)throw Error('invalid catalog page')
 const q=Number(process.env.PERF_QUERY_ID ?? db.$client.prepare('select id from platform_query order by id limit 1').get().id)
 const d=db.$client.prepare("select id from source_document where source='jxj' order by id limit 1").get().id
@@ -31,6 +33,7 @@ for(let i=0;i<=rounds;i++){
  const result=mode==='sources'?listRecordComparisonSources(db,{kind:catalogKind,page:catalogPage,pageSize}):getRecordComparison(db,input)
  const serializeStart=performance.now(),body=JSON.stringify(result),serializationMs=performance.now()-serializeStart
  sample();samples.push({phase:i?'hot':'cold-process',ms:performance.now()-start,sqlMs,serializationMs,sqlBytes,sqlRows,sqlCalls,responseBytes:Buffer.byteLength(body),sha256:createHash('sha256').update(body).digest('hex'),heapStart,peakHeap,incrementalHeap:peakHeap-heapStart,peakRss})
+ if(i&&samples[i].sha256!==samples[0].sha256)throw Error(`result drift at sample ${i}`)
 }
 const hot=samples.slice(1).map(x=>x.ms).sort((a,b)=>a-b),pct=p=>hot[Math.ceil(hot.length*p)-1]
 console.log(JSON.stringify({mode,node:process.version,head:(await import('node:child_process')).execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim(),dirty:(await import('node:child_process')).execFileSync('git',['status','--porcelain'],{encoding:'utf8'}).trim()!=='',input:mode==='comparison'?input:{kind:catalogKind,page:catalogPage,pageSize},samples,hot:{p50:pct(.5),p95:pct(.95),p99:pct(.99)},maxRss:process.resourceUsage().maxRSS*1024,containerLimited:false}))
