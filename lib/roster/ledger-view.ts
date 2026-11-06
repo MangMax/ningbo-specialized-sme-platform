@@ -80,9 +80,6 @@ export const LEDGER_FILTER_KEYS = [
   'diffStatus',
 ] as const satisfies readonly (keyof LedgerState)[]
 
-/** 多值键(逗号分隔)。其余是单值。 */
-export const LEDGER_MULTI_KEYS = ['title', 'source', 'eventType', 'year', 'firstYear', 'firstStatus', 'diffStatus'] as const
-
 /** 从地址栏读回筛选状态(刷新、分享、前进后退都靠它)。 */
 export function ledgerStateFromQuery(query: Record<string, unknown>): LedgerState {
   const str = (v: unknown) => (typeof v === 'string' ? v.trim() : '')
