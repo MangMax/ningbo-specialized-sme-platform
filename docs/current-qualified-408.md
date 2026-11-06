@@ -1,5 +1,22 @@
 # 当前资格查询兼容契约（#408）
 
+## 当前默认查询（#478 / #479 / #484）
+
+当前 HTTP `GET /api/roster/current-enterprises`、MCP `list_current_qualified_enterprises` 与页面共享查询。响应版本为 `current-qualified-478-v2`，内部共享评估为 `enterprise-qualification-478-v3`、规则为 `current-roster-116-v10`；响应 v2 与评估 v3 属于不同命名空间。资格评价取执行时点 Asia/Shanghai 日历日，完整三称号 T2、scope、输入版本及 snapshotId 随分页行保留。
+
+`status` 支持 effective、expired、terminated、moved_out、unrecognized，省略默认 effective。`rows` 是所选状态且确定匹配筛选的有界页，`total` 是分页前计数。`options` 仍来自本称号有效行的查询见证；`uncertainTotal` 仍表达认定日期精度，不是资格 pending。日期/维护筛选的来源匹配与资格有效性分开，不从缺失资料推造筛选事实。
+
+`publishedPending` 仅保留兼容结构：`requested` 取规范化非空 q，`rows=[]`、`total=0`，page/pageSize 沿用请求；requested=true 不意味着执行了旧 pending 定位。当前页面展示单一状态结果及分页，不承诺旧待核分组。旧响应类型兼容与旧回执保留不等于当前服务仍生成旧版本响应。
+
+默认资格规则、显式 v1/v2 兼容及回执边界见[生命周期当前默认资格](roster-lifecycle-contract.md#qualification-current-v3)。内部版本选择不构成公开查询参数。读取失败不是零记录；保留现有输入校验和失败重试语义。本节是源码边界说明，本次没有新增 HTTP/MCP、浏览器、构建或测试验收。
+
+依据：[共享查询](../lib/roster/current-qualified-query.ts)、[查询参数](../server/utils/current-qualified-filter.ts)、[页面](../pages/current-enterprises.vue)。HTTP/MCP 元数据中旧 pending 定位描述尚有残留，需另票对齐，不能据它覆盖共享查询实际行为。
+
+## #408 历史协议与原始收据
+
+> 以下至文件末尾逐字保留 #408 及其后置补记的历史协议、候选范围和证据。其“当前”“本次”“fresh”均限原收据版本/时点，不描述上节当前默认。原 FAIL、UNKNOWN、UNRUN、继承范围及缺失 body 均不重写、不补签。
+
+
 当前资格 HTTP、MCP 与页面消费同一共享评估；本片范围为 M／高、一个纵向 PR。本文描述候选实现与已有证据边界，不表示整片验收完成或生产已修复。导出由 #409 继续负责，差异引擎、对应页、全库审计及母组合验收分别留给 #410–#413。
 
 ## 资格与执行范围
