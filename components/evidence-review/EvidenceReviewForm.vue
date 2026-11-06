@@ -12,7 +12,7 @@ import { Badge } from '@/components/ui/badge'
 import ReplacementDecisionFields from './ReplacementDecisionFields.vue'
 import EnterpriseFactReferences from '@/components/enterprise/EnterpriseFactReferences.vue'
 
-const props = defineProps<{ detail: ImpactDetail; refreshing?: boolean; footer?: boolean }>()
+const props = defineProps<{ detail: ImpactDetail; refreshing?: boolean; readFailed?: boolean; footer?: boolean }>()
 const emit = defineEmits<{ saved: [{ action?: string; versionId?: number }?]; reload: [] }>()
 const refreshAffected = useEvidenceReviewRefresh()
 const BROWSER_CONTEXT_PATH = '/api/roster/evidence-review/browser-context'
@@ -93,7 +93,7 @@ const validId = (id: string) => !id || (/^[1-9]\d*$/.test(id) && Number.isSafeIn
 const replacementReady = computed(() => !!draft.value.measureCode && (draft.value.status === 'confirmed_no_diff' ? draft.value.measureCode === 'none' : !!draft.value.reasonCode && (draft.value.reasonCode !== 'pending_review' || draft.value.measureCode === 'follow_review')) && validId(draft.value.evidenceQueryId) && validId(draft.value.evidenceRelationId))
 const eligibility = computed(() => reviewEligibility(props.detail))
 const eligible = computed(() => eligibility.value.eligible)
-const canSubmit = computed(() => writeReady.value && eligible.value && !conflict.value && !committed.value && (mode.value === 'maintain' || replacementReady.value && (factReferencesReady.value || canReplay.value)) && !pending.value && !props.refreshing && !!basis.value.trim())
+const canSubmit = computed(() => writeReady.value && eligible.value && !conflict.value && !committed.value && !props.readFailed && (mode.value === 'maintain' || replacementReady.value && (factReferencesReady.value || canReplay.value)) && !pending.value && !props.refreshing && !!basis.value.trim())
 
 /** 禁用主按钮时把缺项说出来；不在界面上留一个没有原因的灰按钮。 */
 const missingFields = computed(() => {
@@ -114,6 +114,7 @@ const blockedReason = computed(() => {
   if (!writeReady.value) return ''
   if (conflict.value) return '当前决定或证据版本已变化。请先重新读取当前状态，再提交。'
   if (committed.value) return '复核已提交，正在等待读回当前状态；请重新读取确认。'
+  if (props.readFailed) return '来源变化详情读取失败；草稿保留，请重新读取当前状态后再保存。'
   if (pending.value || props.refreshing) return '正在读取或保存，请稍候。'
   if (!missingFields.value.length) return ''
   return `提交前还需填写：${missingFields.value.join('、')}。`
