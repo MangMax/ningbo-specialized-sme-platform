@@ -44,3 +44,9 @@
 统计页使用 Nuxt Charts LineChart、Reka/shadcn 的 Select/Sheet/Button/Skeleton、Lucide 图标；服务端聚合沿用 es-toolkit。新增 motion-v 卡片错峰入场、明细入口箭头悬停反馈、区县条形宽度过渡，移除相应手写 CSS transition。useReducedMotion 将页面新增动效时长归零；数字直接展示真实值。共享 Sheet 的原有动效与焦点管理保持组件统一实现，无新增依赖。
 
 本轮 pnpm typecheck、git diff --check PASS。Docker 3482 真实副本的 localhost:3511/stats：1440px 悬停反馈、区县切换至小巨人159家及条形更新 PASS；390px 抽屉打开/Escape关闭、无横向溢出 PASS；模拟 prefers-reduced-motion: reduce，箭头 transform=none、首条宽度100% PASS。截图 /tmp/statistics-motion-desktop.png、/tmp/statistics-motion-mobile.png。共享预览 snapshot/navigate 各超时15秒后使用 Ego Browser，临时检查页已关闭；原用户预览保留。
+
+### 区县 Tab 即时反馈（2026-11-07）
+
+修正区县称号高亮跟随请求结果导致的迟滞：共享 Tabs 直接绑定用户选择，复用现有 motion-v 滑块与 TabsContent 过渡。新称号等待响应时展示总量及五行区县排名骨架，数据到达后淡入；旧响应仍受 sequence 隔离。失败时保留旧结果并明确标注所属称号，支持重试。
+
+本轮 typecheck、diff-check PASS。真实副本浏览器验证：人为延迟小巨人响应6秒，响应前已选中小巨人且骨架可见、无旧数字；连续切到创新型，两个响应全部到达后仍为创新型4186家。390px 骨架、无横向溢出、方向键切换、模拟500失败后的旧结果来源提示、重试恢复159家、减少动态效果下内容 transform=none 均 PASS。截图 /tmp/statistics-tabs-loading-desktop.png、/tmp/statistics-tabs-loading-mobile.png。延迟与失败只在临时浏览器页模拟，未改业务数据/服务端；测试页已关闭。
