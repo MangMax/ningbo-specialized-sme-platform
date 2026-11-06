@@ -8,7 +8,7 @@
  * usage: node scripts/verify-log-sheet-ui-180.mjs <baseUrl> <outDir>
  */
 import assert from 'node:assert/strict'
-import { spawn } from 'node:child_process'
+import { spawnOwnedChild, stopOwnedChild, waitForChromeDevTools } from './lib/isolated-local-services.mjs'
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -20,13 +20,50 @@ mkdirSync(outDir, { recursive: true })
 const chromePath =
   process.env.CHROME_PATH || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
-const chromePort = 9600 + Math.floor(Math.random() * 200)
-const profile = mkdtempSync(join(tmpdir(), 'sheet-ui-chrome-'))
-const chrome = spawn(
+// Keep startup, assertions and signal exits inside the same owned closeout.
+let chrome, profile, ws, chromeClosed, chromePort
+let chromeErr = ''
+let cleanupPromise
+const lifecycle = { errors: [] }
+async function cleanup() {
+  if (cleanupPromise) return cleanupPromise
+  cleanupPromise = (async () => {
+    ws?.close()
+    try {
+      if (chrome) {
+        await stopOwnedChild(chrome)
+        await chromeClosed
+      }
+      if (profile) rmSync(profile, { recursive: true, force: true })
+    } catch (error) {
+      lifecycle.errors.push(String(error.stack || error))
+    }
+    writeFileSync(join(outDir, 'chrome-stderr.log'), chromeErr)
+    Object.assign(lifecycle, {
+      chromePort, chromePid: chrome?.pid,
+      chromeExit: chrome && { code: chrome.exitCode, signal: chrome.signalCode },
+      profile, profileRemoved: profile ? !existsSync(profile) : true
+    })
+    if (lifecycle.errors.length) process.exitCode = 1
+    writeFileSync(join(outDir, 'sheet-browser-closeout.json'), JSON.stringify(lifecycle, null, 2))
+  })()
+  return cleanupPromise
+}
+for (const signal of ['SIGTERM', 'SIGINT']) {
+  process.once(signal, () => {
+    lifecycle.errors.push(`Interrupted by ${signal}`)
+    process.exitCode = 1
+    void cleanup().then(() => process.exit(1), error => { console.error(error); process.exit(1) })
+  })
+}
+
+async function run() {
+profile = mkdtempSync(join(tmpdir(), 'sheet-ui-chrome-'))
+chrome = spawnOwnedChild(
   chromePath,
   [
     '--headless=new',
-    '--remote-debugging-port=' + chromePort,
+    '--remote-debugging-port=0',
     '--user-data-dir=' + profile,
     '--no-first-run',
     '--no-default-browser-check',
@@ -41,50 +78,32 @@ const chrome = spawn(
   ],
   { stdio: ['ignore', 'pipe', 'pipe'] }
 )
-let chromeErr = ''
 chrome.stderr.setEncoding('utf8')
-chrome.stderr.on('data', (chunk) => (chromeErr += chunk))
-let cleaned = false
-const stopChrome = () => {
-  if (cleaned) return
-  cleaned = true
-  if (chrome.exitCode === null) chrome.kill('SIGKILL')
-  try {
-    rmSync(profile, { recursive: true, force: true })
-  } catch {}
-}
-process.on('exit', stopChrome)
-for (const signal of ['SIGTERM', 'SIGINT']) {
-  process.once(signal, () => {
-    stopChrome()
-    process.exit(1)
-  })
-}
-
-async function devtools() {
-  for (let i = 0; i < 150; i++) {
-    try {
-      const response = await fetch('http://127.0.0.1:' + chromePort + '/json/version')
-      if (response.ok) return response.json()
-    } catch {}
-    await sleep(100)
-  }
-  throw new Error('headless Chrome did not start\n' + chromeErr.slice(-800))
-}
-await devtools()
+chrome.stderr.on('data', (chunk) => {
+  chromeErr += chunk
+  writeFileSync(join(outDir, 'chrome-stderr.log'), chromeErr)
+})
+chromeClosed = new Promise(resolve => chrome.once('close', resolve))
+const version = await waitForChromeDevTools(chrome, profile)
+chromePort = Number(new URL(version.webSocketDebuggerUrl).port)
 const target = await (
   await fetch(
     'http://127.0.0.1:' + chromePort + '/json/new?' + encodeURIComponent('about:blank'),
     { method: 'PUT' }
   )
 ).json()
-const ws = new WebSocket(target.webSocketDebuggerUrl)
+ws = new WebSocket(target.webSocketDebuggerUrl)
 await new Promise((resolve, reject) => {
   ws.onopen = resolve
   ws.onerror = reject
+  ws.onclose = () => reject(new Error('Owned Chrome closed before CDP connected'))
 })
 let serial = 0
 const pending = new Map()
+ws.onclose = () => {
+  for (const entry of pending.values()) entry.reject(new Error('Owned Chrome CDP connection closed'))
+  pending.clear()
+}
 const network = []
 const responses = []
 ws.onmessage = (event) => {
@@ -103,6 +122,7 @@ ws.onmessage = (event) => {
 }
 const send = (method, params = {}) =>
   new Promise((resolve, reject) => {
+    if (ws.readyState !== WebSocket.OPEN) return reject(new Error('Owned Chrome CDP connection is not open'))
     const id = ++serial
     pending.set(id, { resolve, reject })
     ws.send(JSON.stringify({ id, method, params }))
@@ -765,20 +785,14 @@ try {
   )
   console.error('SHEET BROWSER FAILURE', error)
   process.exitCode = 1
+}
+}
+try {
+  await run()
+} catch (error) {
+  lifecycle.errors.push(String(error.stack || error))
+  console.error(error)
+  process.exitCode = 1
 } finally {
-  stopChrome()
-  writeFileSync(
-    join(outDir, 'sheet-browser-closeout.json'),
-    JSON.stringify(
-      {
-        chromePort,
-        chromePid: chrome.pid,
-        chromeExit: { code: chrome.exitCode, signal: chrome.signalCode },
-        profile,
-        profileRemoved: !existsSync(profile)
-      },
-      null,
-      2
-    )
-  )
+  await cleanup()
 }
