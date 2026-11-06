@@ -105,6 +105,8 @@ it('pushes every existing target predicate before validity without changing null
 
 it('keeps full qualification receipt and enrichment responses while validating current-target rows only', () => {
   const f = fixture(), source = f.add(), id = f.decide(source.relation.id)
+  // Explicit confirmed creation has revision 2; only identity comes from the fixture.
+  const confirmedRef = { id, relationId: source.relation.id, revision: 2, status: 'confirmed', requiresRevalidation: false }
   const scope = f.scope(), before = qualifyAnnualFinal(f.db, scope)
   const task = stageAnnualCorrespondence(f.db, readAnnualWriteScope, { clientRequestId: 'scope-readback', eventIds: [f.event.id] })
   const receipt = readAnnualTask(f.db, readAnnualWriteScope, task.jobId, false)
@@ -113,13 +115,22 @@ it('keeps full qualification receipt and enrichment responses while validating c
   expect(fresh.generation).toBe(scope.generation)
   const expectedRefs = legacyRefs(f.db, [source.relation.id], fresh)
   const expectedQualification = { ...before, decisionRefs: expectedRefs.map(({ id, relationId, revision, status, requiresRevalidation }) => ({ id, relationId, revision, status, requiresRevalidation })) }
+  // Keep these extra reads outside the measured consumer calls below.
+  expect.soft(readAnnualDecisionRefs(f.db, [source.relation.id], fresh), 'scoped confirmed revision').toMatchObject([confirmedRef])
+  expect.soft(readAnnualDecisionRefs(f.db, [source.relation.id]).find(ref => ref.id === id), 'unscoped confirmed revision').toMatchObject(confirmedRef)
   const observed = meter()
   try {
-    expect(qualifyAnnualFinal(f.db, fresh)).toEqual(expectedQualification)
+    const qualification = qualifyAnnualFinal(f.db, fresh)
+    expect(qualification).toEqual(expectedQualification)
+    expect.soft(qualification, 'qualification confirmed revision').toMatchObject({ status: 'confirmed', decisionRefs: [confirmedRef] })
     expect(observed.ids()).toEqual([id]); observed.batches.length = 0
-    expect(readAnnualTask(f.db, readAnnualWriteScope, task.jobId, false)).toEqual(receipt)
+    const readback = readAnnualTask(f.db, readAnnualWriteScope, task.jobId, false)
+    expect(readback).toEqual(receipt)
+    expect.soft(readback?.result?.events.find(event => event.eventId === f.event.id)?.finalQualification, 'task confirmed revision').toMatchObject({ status: 'confirmed', decisionRefs: [confirmedRef] })
     expect(observed.ids()).toEqual([id]); observed.batches.length = 0
-    expect(enrichAnnualProcessFinalQualification(f.db, raw)).toEqual({ ...raw, process: { ...raw.process, finalQualification: { ...expectedQualification, decisionRefs: expectedRefs } } })
+    const enriched = enrichAnnualProcessFinalQualification(f.db, raw)
+    expect(enriched).toEqual({ ...raw, process: { ...raw.process, finalQualification: { ...expectedQualification, decisionRefs: expectedRefs } } })
+    expect.soft(enriched.process.finalQualification, 'enrichment confirmed revision').toMatchObject({ status: 'confirmed', decisionRefs: [confirmedRef] })
     expect(observed.ids()).toEqual([id, id]); observed.batches.length = 0
     expect(reconcileAnnualStep(f.db, readAnnualWriteScope, { eventId: f.event.id, generation: fresh.generation, stepId: fresh.steps[0]!.stepId })).toEqual({ stepId: fresh.steps[0]!.stepId, status: 'existing', relationId: source.relation.id, decisionRefs: expectedQualification.decisionRefs, reasons: [] })
     expect(observed.ids()).toEqual([id])
@@ -136,9 +147,13 @@ it.each(['rejected', 'unlinked'] as const)('retains same-event historical %s pro
   expect(scope.steps[0]!.protectionRelationIds).toContain(old.relation.id)
   const observed = meter()
   try {
-    expect(reconcileAnnualStep(f.db, readAnnualWriteScope, { eventId: f.event.id, generation: scope.generation, stepId: scope.steps[0]!.stepId })).toMatchObject({ status: 'protected', decisionRefs: [{ id, status }] })
+    const protectedStep = reconcileAnnualStep(f.db, readAnnualWriteScope, { eventId: f.event.id, generation: scope.generation, stepId: scope.steps[0]!.stepId })
+    expect(protectedStep).toMatchObject({ status: 'protected', decisionRefs: [{ id, status }] })
+    if (status === 'unlinked') expect.soft(protectedStep.decisionRefs, 'protected unlinked revision').toMatchObject([{ id, relationId: old.relation.id, revision: 3, status: 'unlinked' }])
     expect(observed.ids()).toEqual([id]); observed.batches.length = 0
-    expect(qualifyAnnualFinal(f.db, scope)).toMatchObject({ status: 'blocked', reasons: ['protected_decision'], decisionRefs: [{ id, status }] })
+    const qualification = qualifyAnnualFinal(f.db, scope)
+    expect(qualification).toMatchObject({ status: 'blocked', reasons: ['protected_decision'], decisionRefs: [{ id, status }] })
+    if (status === 'unlinked') expect.soft(qualification.decisionRefs, 'qualification unlinked revision').toMatchObject([{ id, relationId: old.relation.id, revision: 3, status: 'unlinked' }])
     expect(observed.ids()).toEqual([id])
   } finally { observed.restore() }
   expect(f.db.select().from(s.recordCorrespondenceAudit).all()).toEqual(before)
