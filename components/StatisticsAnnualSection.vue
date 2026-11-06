@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
 import { ArrowUpRight } from '@lucide/vue'
+import { CurveType } from 'nuxt-charts/enums'
 const year = ref('today'), title = ref('specialized_sme'), status = ref('effective'), page = ref(1), pageSize = ref(25)
 const result = shallowRef<AnnualStatistics>()
 const loading = ref(false), failed = ref(false)
@@ -25,27 +26,48 @@ async function load() {
 watch([year, title, status], () => { page.value = 1 })
 watch([year, title, status, page, pageSize], load, { immediate: true })
 const target = computed(() => `${year.value === 'today' ? '本年' : year.value + '年'} · ${TITLES[title.value]} · ${status.value === 'effective' ? '有效' : '待核'} · 第 ${page.value} 页`)
-const maximum = computed(() => Math.max(1,...(result.value?.years.flatMap(y=>y.titles.map(t=>t.effective))??[])))
 const colors=['var(--chart-1)','var(--chart-2)','var(--chart-3)']
-const x=(index:number)=>44+index*632/Math.max(1,(result.value?.years.length??1)-1)
-const y=(value:number)=>212-value*174/maximum.value
-const lines=computed(()=>TITLE_ORDER.map((code,index)=>({code,color:colors[index],points:result.value?.years.map((row,i)=>`${x(i)},${y(row.titles.find(t=>t.titleCode===code)?.effective??0)}`).join(' ')??''})))
-const axisYears=computed(()=>{const years=result.value?.years??[];return years.filter((_,i)=>i===0||i===years.length-1)})
+const hiddenTitles = ref<string[]>([])
+const lines = computed(() => TITLE_ORDER.map((code, index) => ({ code, color: colors[index] })))
+const chartData = computed<Array<{ year: number; [key: string]: number }>>(() => (result.value?.years ?? []).map(row => ({
+  year: row.year,
+  ...Object.fromEntries(row.titles.map(count => [count.titleCode, count.effective])),
+})))
+const categories = computed(() => Object.fromEntries(lines.value.map(line => [line.code, {
+  name: TITLES[line.code] ?? line.code, color: line.color ?? colors[0]!, hidden: hiddenTitles.value.includes(line.code),
+}])))
+function toggleTitle(code: string) {
+  if (hiddenTitles.value.includes(code)) hiddenTitles.value = hiddenTitles.value.filter(item => item !== code)
+  else if (hiddenTitles.value.length < TITLE_ORDER.length - 1) hiddenTitles.value = [...hiddenTitles.value, code]
+}
+const formatYear = (index: number) => String(chartData.value[index]?.year ?? '')
+const formatCount = (value: number) => value.toLocaleString('zh-CN')
 const selectedYear=computed(()=>result.value?.years.find(row=>row.year===result.value?.year))
 function select(selected:number,code:string,state:string){year.value=String(selected);title.value=code;status.value=state;page.value=1;open.value=true}
 </script>
 <template>
 <section class="stats-chart-panel" aria-labelledby="annual-title" :aria-busy="loading">
   <header class="stats-panel-heading"><div><p class="stats-eyebrow">有效存量</p><h2 id="annual-title">各称号年度变化</h2></div><Button variant="ghost" size="sm" :disabled="loading" @click="load">刷新</Button></header>
-  <div class="stats-chart-legend"><span v-for="line in lines" :key="line.code"><i :style="{background:line.color}" />{{ TITLES[line.code] }}</span></div>
+  <div class="stats-chart-legend"><button v-for="line in lines" :key="line.code" type="button" :aria-pressed="!hiddenTitles.includes(line.code)" :aria-label="`${TITLES[line.code]}趋势线`" @click="toggleTitle(line.code)"><i :style="{background:line.color}" />{{ TITLES[line.code] }}</button></div>
   <Skeleton v-if="!result && loading" class="h-64 w-full" />
   <template v-if="result">
     <div class="stats-trend-canvas">
-      <svg viewBox="0 0 720 250" preserveAspectRatio="none" role="img" aria-label="各称号年度有效企业数趋势，按年份选择可查看精确数量">
-        <g v-for="n in [0,1,2,3]" :key="n"><line x1="44" x2="676" :y1="y(maximum*n/3)" :y2="y(maximum*n/3)" stroke="var(--border)" stroke-dasharray="3 5" /></g>
-        <g v-for="line in lines" :key="line.code"><polygon :points="`44,212 ${line.points} ${x(result.years.length-1)},212`" :fill="line.color" opacity=".045" /><polyline :points="line.points" fill="none" :stroke="line.color" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" /><g v-for="(row,i) in result.years" :key="row.year"><circle :cx="x(i)" :cy="y(row.titles.find(t=>t.titleCode===line.code)?.effective??0)" r="4.5" :fill="line.color" stroke="var(--card)" stroke-width="2" /></g></g>
-
-      </svg><span class="stats-chart-max">{{ maximum }}</span><span class="stats-chart-zero">0</span><div class="stats-chart-xlabels"><span v-for="row in axisYears" :key="row.year">{{ row.year }}</span></div>
+      <LineChart
+        :data="chartData" :categories="categories" :height="250"
+        :curve-type="CurveType.Linear" :line-width="2" dot-variant="default" :dot-size="3"
+        :x-formatter="formatYear" :y-formatter="formatCount" :x-num-ticks="4" :y-num-ticks="5"
+        :y-grid-line="true" :x-domain-line="false" :y-domain-line="false"
+        :hide-legend="true" :hide-tooltip="false" :duration="0" :accessible-data-table="false"
+        aria-label="各称号年度有效企业数趋势"
+        aria-description="悬停查看年份与企业数，图例切换趋势线；下方年份按钮和数量按钮可查看企业明细。"
+      >
+        <template #tooltip="{ values }">
+          <div v-if="values" class="stats-trend-tooltip">
+            <strong>{{ values.year }}年{{ values.year===Number(result.evaluationDay.slice(0,4))?' · 截至评价日':' · 年末' }}</strong>
+            <div v-for="line in lines.filter(item => !hiddenTitles.includes(item.code))" :key="line.code"><i :style="{background:line.color}" /><span>{{ TITLES[line.code] }}</span><b>{{ formatCount(values[line.code] ?? 0) }} 家</b></div>
+          </div>
+        </template>
+      </LineChart>
     </div>
     <div class="stats-year-switch" aria-label="选择统计年度"><button v-for="row in result.years" :key="row.year" :aria-pressed="row.year===result.year" @click="year=String(row.year)">{{ row.year }}<span v-if="row===result.years.at(-1)">截至今日</span></button></div>
     <div v-if="selectedYear" class="stats-year-counts">
