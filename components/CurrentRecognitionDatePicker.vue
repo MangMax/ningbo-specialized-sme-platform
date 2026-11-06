@@ -27,7 +27,7 @@ function selectDate(next: DateValue | undefined) {
       </Button>
     </PopoverTrigger>
     <PopoverContent align="start" class="w-auto p-0" :aria-label="label">
-      <Calendar :model-value="value" locale="zh-CN" :calendar-label="label" :week-starts-on="1" :prevent-deselect="true" @update:model-value="selectDate" />
+      <Calendar layout="month-and-year" :model-value="value" locale="zh-CN" :calendar-label="label" :week-starts-on="1" :prevent-deselect="true" @update:model-value="selectDate" />
     </PopoverContent>
   </Popover>
 </template>

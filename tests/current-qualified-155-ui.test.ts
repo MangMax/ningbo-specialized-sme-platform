@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { flushPromises, mount } from '@vue/test-utils'
+import { DOMWrapper, flushPromises, mount } from '@vue/test-utils'
 import { afterEach, expect, it, vi } from 'vitest'
 import { createPinia } from 'pinia'
 import { PiniaColada } from '@pinia/colada'
@@ -74,8 +74,17 @@ it('applies a complete recognition range to the URL, removes its chip, and reset
   expect(wrapper.find('input[type="date"]').exists()).toBe(false)
   const pickers=wrapper.findAllComponents(CurrentRecognitionDatePicker)
   expect(pickers).toHaveLength(2)
-  pickers[0]!.vm.$emit('update:modelValue','2024-01-01')
-  pickers[1]!.vm.$emit('update:modelValue','2024-12-31')
+  for (const [index, month, date] of [[0, '1', '2024-01-01'], [1, '12', '2024-12-31']] as const) {
+    await pickers[index]!.get('button').trigger('click'); await flushPromises()
+    await new DOMWrapper(document.querySelector<HTMLSelectElement>('select[aria-label="年份"]')!).setValue('2024')
+    await new DOMWrapper(document.querySelector<HTMLSelectElement>('select[aria-label="月份"]')!).setValue(month)
+    await flushPromises()
+    expect(router.currentRoute.value.query.recognitionFrom).toBeUndefined()
+    expect(router.currentRoute.value.query.recognitionTo).toBeUndefined()
+    expect(calls.at(-1).recognitionFrom).toBeFalsy()
+    document.querySelector<HTMLElement>(`[data-value="${date}"]`)!.click()
+    await flushPromises()
+  }
   await flushPromises()
   const apply=wrapper.findAll('button').find(button => button.text()==='应用时间')!
   await apply.trigger('click'); await flushPromises()
