@@ -1,5 +1,7 @@
 # Enterprise asynchronous execution design — R1 freeze
 
+> Historical design: this file records the R1 freeze and its amendments. The execution boundary was subsequently revised in [R2](r2-worker-design.md), followed by the measured allocation correction in [R3](r3-raw-generation-design.md). The original worker configuration, failed raw-memory samples and readiness failures below remain historical evidence; they are not the current executor configuration or a current performance guarantee.
+
 Frozen before worker/query implementation, base `8bb163fe63d1e2a6615fb04d7731502c863b7f78`.
 Owns R1 F2 only: enterprise list/detail public HTTP and MCP, same business readers.
 F1 exceptional UTF-16 fix and STD-01/02 are separate changes. No schema/migration,
