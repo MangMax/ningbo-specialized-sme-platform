@@ -1,4 +1,7 @@
 <script setup lang="ts">
+import { motion, useReducedMotion } from 'motion-v'
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
+const reducedMotion = useReducedMotion()
 import { computed, onBeforeUnmount, ref, shallowRef, watch } from 'vue'
 import type { AnnualStatistics } from '~~/lib/roster/annual-statistics'
 import { TITLES, TITLE_ORDER } from '~~/lib/labels'
@@ -42,6 +45,9 @@ function toggleTitle(code: string) {
 }
 const formatYear = (index: number) => String(chartData.value[index]?.year ?? '')
 const formatCount = (value: number) => value.toLocaleString('zh-CN')
+const requestedYear = computed(() => year.value === 'today' ? Number(result.value?.evaluationDay.slice(0,4)) : Number(year.value))
+const activeYear = computed({ get: () => String(requestedYear.value), set: value => { year.value = value } })
+const switchingYear = computed(() => !failed.value && result.value?.year !== requestedYear.value)
 const selectedYear=computed(()=>result.value?.years.find(row=>row.year===result.value?.year))
 function select(selected:number,code:string,state:string){year.value=String(selected);title.value=code;status.value=state;page.value=1;open.value=true}
 </script>
@@ -69,13 +75,24 @@ function select(selected:number,code:string,state:string){year.value=String(sele
         </template>
       </LineChart>
     </div>
-    <div class="stats-year-switch" aria-label="选择统计年度"><button v-for="row in result.years" :key="row.year" :aria-pressed="row.year===result.year" @click="year=String(row.year)">{{ row.year }}<span v-if="row===result.years.at(-1)">截至今日</span></button></div>
+    <Tabs v-model="activeYear" class="gap-4">
+      <TabsList class="stats-year-tabs" aria-label="选择统计年度"><TabsTrigger v-for="row in result.years" :key="row.year" :value="String(row.year)">{{ row.year }}<span v-if="row===result.years.at(-1)" class="text-[10px]">截至今日</span></TabsTrigger></TabsList>
+      <TabsContent v-for="row in result.years" :key="row.year" :value="String(row.year)">
+        <div v-if="switchingYear" role="status" :aria-label="`正在加载${requestedYear}年统计`">
+          <span class="sr-only">正在加载{{ requestedYear }}年统计</span>
+          <div class="stats-year-counts" aria-hidden="true"><div v-for="(code,i) in TITLE_ORDER" :key="code" class="stats-year-count"><span><i :style="{background:colors[i]}" />{{ TITLES[code] }}</span><Skeleton class="h-8 w-20 max-w-full" /><Skeleton class="h-4 w-14" /></div></div>
+        </div>
+        <motion.div v-else :initial="reducedMotion ? false : { opacity: 0, y: 4 }" :animate="{ opacity: 1, y: 0 }" :transition="{ duration: reducedMotion ? 0 : 0.18 }">
+          <p v-if="result.year !== requestedYear" class="stats-source" role="status">当前查询失败，以下保留{{ result.year }}年的上次结果。</p>
     <div v-if="selectedYear" class="stats-year-counts">
-      <div v-for="(count,i) in selectedYear.titles" :key="count.titleCode" class="stats-year-count"><span><i :style="{background:colors[i]}" />{{ TITLES[count.titleCode] }}</span><button :aria-label="`${selectedYear.year}年${TITLES[count.titleCode]}有效明细 ${count.effective}家`" @click="select(selectedYear.year,count.titleCode,'effective')"><strong>{{ count.effective.toLocaleString('zh-CN') }}</strong><small>家</small><ArrowUpRight class="size-3" aria-hidden="true" /></button><button class="stats-small-link" :aria-label="`${selectedYear.year}年${TITLES[count.titleCode]}待核明细 ${count.pending}家`" @click="select(selectedYear.year,count.titleCode,'pending')">待核 {{ count.pending }} 家</button></div>
+      <div v-for="(count,i) in selectedYear.titles" :key="count.titleCode" class="stats-year-count"><span><i :style="{background:colors[i]}" />{{ TITLES[count.titleCode] }}</span><button :aria-label="`${selectedYear.year}年${TITLES[count.titleCode]}有效明细 ${count.effective}家`" @click="select(selectedYear.year,count.titleCode,'effective')"><strong><StatsAnimatedNumber :value="count.effective" /></strong><small>家</small><ArrowUpRight class="size-3" aria-hidden="true" /></button><button class="stats-small-link" :aria-label="`${selectedYear.year}年${TITLES[count.titleCode]}待核明细 ${count.pending}家`" @click="select(selectedYear.year,count.titleCode,'pending')">待核 <StatsAnimatedNumber :value="count.pending" /> 家</button></div>
     </div>
+        </motion.div>
+      </TabsContent>
+    </Tabs>
   </template>
   <TableFailureState v-if="failed" :title="`${target}加载失败`" :compact="!!result" :pending="loading" :description="result ? `已保留${result.year}年的上次结果，请重试。` : '尚未加载年度数据，请重试。'" @retry="load" />
-  <div class="stats-panel-foot"><span>{{ result?.year===Number(result?.evaluationDay.slice(0,4))?'本年截至评价日':'历史年末存量' }} · {{ selectedYear?.evaluationDay ?? '—' }}</span><DisclosurePanel title="统计口径" compact><p>按当前已录入证据重算，非当年系统归档；各称号独立统计。历史取上海年末，本年取评价日。迁入本身不授予称号，也不抵消现行规则中的迁出排除。未确定的历史状态单列待核。</p></DisclosurePanel></div>
+  <div class="stats-panel-foot"><span v-if="switchingYear">{{ requestedYear || '本年' }}年统计加载中…</span><span v-else>{{ result?.year===Number(result?.evaluationDay.slice(0,4))?'本年截至评价日':'历史年末存量' }} · {{ selectedYear?.evaluationDay ?? '—' }}</span><DisclosurePanel title="统计口径" compact><p>按当前已录入证据重算，非当年系统归档；各称号独立统计。历史取上海年末，本年取评价日。迁入本身不授予称号，也不抵消现行规则中的迁出排除。未确定的历史状态单列待核。</p></DisclosurePanel></div>
   <StatsDetailSheet v-model:open="open" title="年度企业明细" :target="target" :source="result ? `${result.year}年 · ${TITLES[result.title??'']} · ${result.status==='effective'?'有效':'待核'} · 第${result.page}页` : undefined" :loading="loading" :failed="failed" @retry="load">
     <div class="grid gap-3 sm:grid-cols-3"><Select v-model="year"><SelectTrigger aria-label="年度"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="today">本年截至评价日</SelectItem><SelectItem v-for="row in result?.years" :key="row.year" :value="String(row.year)">{{ row.year }}年</SelectItem></SelectContent></Select><Select v-model="title"><SelectTrigger aria-label="年度称号"><SelectValue /></SelectTrigger><SelectContent><SelectItem v-for="code in TITLE_ORDER" :key="code" :value="code">{{ TITLES[code] }}</SelectItem></SelectContent></Select><Select v-model="status"><SelectTrigger aria-label="年度资格状态"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="effective">有效</SelectItem><SelectItem value="pending">待核</SelectItem></SelectContent></Select></div>
     <p v-if="result && !result.rows.length" class="stats-empty">此年度与口径暂无企业</p>
