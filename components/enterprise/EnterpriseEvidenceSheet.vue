@@ -46,7 +46,11 @@ const queuedScope = shallowRef<typeof displayed.value | null>(null)
 const draftState = inject<Ref<boolean> | null>('enterprise-review-draft', null)
 const draftStore = inject<ReviewDraftStore | null>(REVIEW_DRAFTS_KEY, null) ?? useReviewDrafts()
 provide(REVIEW_DRAFTS_KEY, draftStore)
-const protectedSubmission = computed(() => resolvedImpactId.value == null && !!draftStore.drafts[initialKey.value]?.initialSubmission?.request)
+const protectedSubmission = computed(() => {
+  if (resolvedImpactId.value == null) return !!draftStore.drafts[initialKey.value]?.initialSubmission?.request
+  const review = draftStore.drafts[String(resolvedImpactId.value)]?.reviewSubmission
+  return !!review && (review.pending || review.unknown || review.committed)
+})
 const hasDirtyDraft = computed(() => resolvedImpactId.value == null
   ? initialDirty.value
   : draftStore ? draftStore.hasDraft(resolvedImpactId.value) : !!draftState?.value)

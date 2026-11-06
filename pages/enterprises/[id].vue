@@ -169,10 +169,12 @@ const qualificationGapLabel: Record<string, string> = {
 const pendingRows = computed(() => pendingData.value?.rows ?? [])
 const pendingHasMore = computed(() => !!pendingData.value?.nextCursor)
 const focusedImpactId = ref<number | undefined>()
+const openImpactRequest = ref<{ id: number; titleCode: string; direction: string } | null>(null)
 const openScopeRequest = ref<{ titleCode: string; direction: string } | null>(null)
 
 function onOpenImpact(row: ImpactRow) {
   focusedImpactId.value = row.id
+  openImpactRequest.value = { id: row.id, titleCode: row.titleCode, direction: row.direction }
   syncReviewDeepLink(row.titleCode, row.direction, row.id)
 }
 function onOpenScope(assessment: ReviewAssessment & ReviewScope) {
@@ -817,6 +819,7 @@ function openPreview(e: Evidence) {
             :direction="explanationDirection"
             :impact-id="focusedImpactId ?? impactId"
             :open-scope-request="openScopeRequest"
+            :open-impact-request="openImpactRequest"
             :pending="pendingRows"
             :locate="focusedEventId == null && !correspondenceLoading"
             @saved="onReviewSaved"

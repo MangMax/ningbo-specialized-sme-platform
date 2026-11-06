@@ -27,14 +27,19 @@ const failed = ref(false)
 const target = ref({ page: 1, pageSize: 50, queryPage: 1, queryPageSize: 25 })
 const sourceId = ref<number | null>(null)
 const candidateOpened = ref(false)
+const protectedRows = ref<Record<number, boolean>>({})
+const navigationBlocked = ref(false)
 let sequence = 0
 watch(() => props.eventId, () => {
+  protectedRows.value = {}; navigationBlocked.value = false
   sequence++; candidateOpened.value = false; result.value = null; pending.value = false; failed.value = false; sourceId.value = null
   target.value = { page: 1, pageSize: 50, queryPage: 1, queryPageSize: 25 }
   if (props.autoLoad) void discover()
 }, { immediate: true })
 onBeforeUnmount(() => { sequence++ })
 async function discover(patch: Partial<typeof target.value> = {}) {
+  if (Object.values(protectedRows.value).some(Boolean)) { navigationBlocked.value = true; return false }
+  navigationBlocked.value = false
   target.value = { ...target.value, ...patch }
   const request = { ...target.value }, token = ++sequence
   pending.value = true; failed.value = false
@@ -42,18 +47,31 @@ async function discover(patch: Partial<typeof target.value> = {}) {
     const next = await $fetch<ArchivePage>('/api/roster/correspondences/discover', { method: 'POST', body: { eventId: props.eventId, ...request } })
     if (token !== sequence) return
     if (next.event.id !== props.eventId || next.page !== request.page || next.coverage.page !== request.queryPage) throw new Error('Discovery page mismatch')
+    // A user can start editing while discovery is in flight; protect at application time too.
+    if (Object.values(protectedRows.value).some(Boolean)) { navigationBlocked.value = true; return false }
     result.value = next
     return true
   } catch { if (token === sequence) failed.value = true; return false }
   finally { if (token === sequence) pending.value = false }
 }
-useCorrespondenceReadback(async () => result.value ? discover() : true)
+let deferredReadback = false
+useCorrespondenceReadback(async () => {
+  if (Object.values(protectedRows.value).some(Boolean)) { deferredReadback = true; return true }
+  return result.value ? discover() : true
+})
+watch(protectedRows, rows => {
+  if (deferredReadback && !Object.values(rows).some(Boolean)) {
+    deferredReadback = false
+    if (result.value) void discover()
+  }
+}, { deep: true })
 const queryStateText = (item: EventArchivePage['interfaces'][number]) => item.states.length ? item.states.map(state => `${PLATFORM_QUERY_STATUSES[state.status] ?? state.status} ${state.count} 次`).join('；') : '尚无查询归档（未查询）'
 const statusLabel = (status: string | null) => ({ confirmed: '已有确认记录（有效性见原行）', rejected: '已标为不对应', unlinked: '已取消对应', candidate: '已登记候选' })[status ?? ''] ?? '未确认候选'
 </script>
 
 <template>
   <section class="relative min-w-0 border-t p-4 text-base leading-6 sm:px-5" aria-label="查找平台对应候选" data-testid="event-archive-candidates">
+    <p v-if="navigationBlocked" role="status">请先处理本页对应草稿或待确认的提交，再翻页、改变页大小或重新查找。保留的草稿可从原操作重新打开。</p>
     <TableLoadingStatus :loading="pending" kind="ledger" label="正在查找归档候选…" />
     <TableFailureState v-if="failed" compact :pending="pending" :title="`候选第 ${target.page} 页读取失败（查询归档第 ${target.queryPage} 页）`" :description="result ? `保留第 ${result.page} 页候选和第 ${result.coverage.page} 页查询归档；目标页面未更新。` : '尚未取得查询结果，不能据此判断无记录。'" @retry="discover()" />
     <p v-if="result?.interfaces.some(item => item.states.some(state => ['failed', 'partial'].includes(state.status)))" class="text-sm" role="status">查询归档含失败或部分结果，请查看查询覆盖。</p>
@@ -85,7 +103,7 @@ const statusLabel = (status: string | null) => ({ confirmed: '已有确认记录
                 </li>
               </ul>
             </DisclosurePanel>
-            <EventCorrespondenceDecision :edge="row.edge" :event="result.event" :candidate="row" :back="back" :existing="row.existingCorrespondenceId && row.revision && row.existingStatus ? { id: row.existingCorrespondenceId, revision: row.revision, status: row.existingStatus } : null" />
+            <EventCorrespondenceDecision check-revalidation @protected="protectedRows[row.edge.relationId] = $event" :edge="row.edge" :event="result.event" :candidate="row" :back="back" :existing="row.existingCorrespondenceId && row.revision && row.existingStatus ? { id: row.existingCorrespondenceId, revision: row.revision, status: row.existingStatus } : null" />
           </li>
         </ul>
         <TablePagination class="mt-3" :page="result.page" :page-size="result.pageSize" :total="result.total" unit="条来源记录" :loading="pending" @update:page="discover({ page: $event })" @update:page-size="discover({ page: 1, pageSize: $event })" />

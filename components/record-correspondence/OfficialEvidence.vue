@@ -11,10 +11,11 @@ const props = defineProps<{
   previewInPlace?: boolean
 }>()
 const emit = defineEmits<{ preview: []; 'page-open': [event: MouseEvent] }>()
+const checkAttempt = ref(0)
 const availability = ref<'checking' | 'available' | 'missing' | 'unknown'>('checking')
 const pageState = computed(() => evidencePageState(props.evidence.sourceFile, props.evidence.page))
 const previewHref = computed(() => evidencePreviewHref({ ...props.evidence, back: props.back }))
-onMounted(() => watch(() => props.evidence.sourceFile, async (path, _previous, onCleanup) => {
+onMounted(() => watch([() => props.evidence.sourceFile, checkAttempt], async ([path], _previous, onCleanup) => {
   const controller = new AbortController()
   let current = true
   onCleanup(() => { current = false; controller.abort() })
@@ -44,6 +45,7 @@ onMounted(() => watch(() => props.evidence.sourceFile, async (path, _previous, o
     <p v-if="availability === 'checking'" role="status" class="text-muted-foreground text-sm">正在确认文件可用性…</p>
     <p v-if="availability === 'missing'" class="text-muted-foreground">文件不可用；出处与已记录页码保留。</p>
     <p v-else-if="availability === 'unknown'" class="text-muted-foreground">暂无法确认文件是否可用。</p>
+    <Button v-if="availability === 'unknown'" variant="outline" size="sm" @click="checkAttempt++">重新检查文件</Button>
     <div v-if="availability === 'available'" class="flex flex-wrap items-center gap-2">
       <template v-if="isPreviewable(evidence.sourceFile)">
         <Button v-if="previewInPlace" variant="outline" size="sm" @click="emit('preview')">查看原文件</Button>

@@ -281,3 +281,43 @@ it('keeps the inline page-submit failure and retry action in the same form witho
   expect((view.get('[aria-label="复核依据"]').element as HTMLTextAreaElement).value).toContain('核对新查询')
   view.unmount()
 })
+
+it('freezes an accepted command after response loss across close and structural remount and never writes after receipt', async () => {
+  const accepted: any[] = []
+  command.mockImplementation(async (_url: string, options: any) => {
+    const body = JSON.parse(JSON.stringify(options.body))
+    if (!accepted.length) { accepted.push(body); throw new Error('response lost after acceptance') }
+    expect(body).toEqual(accepted[0])
+    return { action: 'maintain', versionId: 82 }
+  })
+  const Host = defineComponent({
+    components: { EvidenceReviewForm },
+    setup() { const store = useReviewDrafts(); provide(REVIEW_DRAFTS_KEY, store); return { detail, shown: ref(true), discard: () => store.discard(4) } },
+    template: '<div><button @click="shown = !shown">关闭或重开</button><button @click="discard">丢弃草稿</button><EvidenceReviewForm v-if="shown" :detail="detail" /></div>',
+  })
+  const view = mount(Host, { global: { plugins: [createPinia(), PiniaColada] } })
+  await flushPromises(); await fill(view); await view.get('form').trigger('submit'); await flushPromises()
+  expect(view.text()).toContain('提交结果未知')
+  expect(view.text()).not.toContain('保存失败，待复核状态保留')
+  expect(view.get('[aria-label="复核依据"]').element.closest('fieldset')!.disabled).toBe(true)
+  const toggle = async () => { await view.findAll('button').find(b => b.text() === '关闭或重开')!.trigger('click'); await flushPromises() }
+  await toggle(); await view.findAll('button').find(b => b.text() === '丢弃草稿')!.trigger('click'); await toggle()
+  expect(view.text()).toContain('提交结果未知')
+  expect((view.get('[aria-label="复核依据"]').element as HTMLTextAreaElement).value).toBe('核对新查询并保留原业务判断')
+  await view.get('form').trigger('submit'); await flushPromises()
+  expect(command).toHaveBeenCalledTimes(2)
+  await toggle(); await toggle()
+  expect(view.text()).toContain('复核已提交')
+  await view.get('form').trigger('submit'); await flushPromises()
+  expect(command).toHaveBeenCalledTimes(2)
+})
+
+it('allows reviewing a later evidence revision without reopening the already committed revision', async () => {
+  const view = await render(); await fill(view); await view.get('form').trigger('submit'); await flushPromises()
+  expect(view.get('button[type="submit"]').attributes('disabled')).toBeDefined()
+  await view.setProps({ detail: { ...detail, evidenceToken: { ...detail.evidenceToken, latestRevisionId: 10 } } as any })
+  await fill(view); await view.get('form').trigger('submit'); await flushPromises()
+  expect(command).toHaveBeenCalledTimes(2)
+  expect(command.mock.calls[1]![1].body.reviewedEvidence.latestRevisionId).toBe(10)
+  expect(command.mock.calls[1]![1].body.idempotencyKey).not.toBe(command.mock.calls[0]![1].body.idempotencyKey)
+})
