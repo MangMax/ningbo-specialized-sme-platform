@@ -148,7 +148,7 @@ const interfaceSummary = computed(() => {
         <section v-if="!review" aria-label="正式公布文件" class="flex min-w-0 flex-col gap-3 px-4 pt-3 sm:px-5">
           <h4 class="text-sm font-medium">正式出处</h4>
           <p v-if="!evidence.length" class="text-muted-foreground text-sm">此事件未记录公布文件出处。</p>
-          <ul v-else class="flex min-w-0 flex-col gap-3">
+          <ul v-else class="grid min-w-0 gap-3 xl:grid-cols-2">
             <li v-for="(item, index) in evidence" :key="index" class="min-w-0">
               <OfficialEvidenceView :evidence="item" :back="back" preview-in-place @preview="emit('preview', item)" @page-open="emit('page-open', event.id, $event)" />
             </li>

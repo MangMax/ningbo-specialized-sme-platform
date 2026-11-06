@@ -651,15 +651,11 @@ function openPreview(e: Evidence) {
                 class="grid gap-x-4 gap-y-1 px-4 py-3 sm:grid-cols-[12rem_minmax(0,1fr)] sm:items-baseline"
               >
                 <dt class="min-w-0"><TitleBadge :code="item.code" /></dt>
-                <dd class="flex min-w-0 flex-col gap-2 text-base leading-6">
-                  <p>当前资格：{{ item.qualification?.effectiveQualification ? CURRENT_STATUS_LABELS[item.qualification.effectiveQualification.status] : item.qualification ? qualificationGroupLabel[item.qualification.group] : '未知（尚无评估结果）' }}</p>
-                  <p class="text-muted-foreground text-sm">评估时点：{{ item.qualification ? data?.qualificationAssessment?.asOf ?? '未知' : '未知' }}</p>
-                  <p>
-                  <span>首次认定 {{ item.year ?? '年份待核' }}<template v-if="item.batchSeq != null"> · 第 {{ item.batchSeq }} 批</template></span>
-                  <span class="text-muted-foreground"> · </span>
-                  <span>下次复核 {{ item.dueYear ?? '年份待核' }}</span>
-                  <span v-if="item.needsReview" class="text-warning"> · 待核</span>
-                  </p>
+                <dd class="grid min-w-0 grid-cols-2 gap-4 text-base leading-6 sm:grid-cols-3">
+                  <div class="col-span-2 sm:col-span-1"><p class="text-muted-foreground text-sm">当前资格：</p><p class="mt-1 font-semibold">{{ item.qualification?.effectiveQualification ? CURRENT_STATUS_LABELS[item.qualification.effectiveQualification.status] : item.qualification ? qualificationGroupLabel[item.qualification.group] : '未知（尚无评估结果）' }}</p></div>
+                  <div><p class="text-muted-foreground text-sm">首次认定</p><p class="mt-1 font-semibold tabular-nums">{{ item.year ?? '年份待核' }}<span v-if="item.batchSeq != null" class="text-muted-foreground ml-2 text-sm font-normal">第 {{ item.batchSeq }} 批</span></p></div>
+                  <div><p class="text-muted-foreground text-sm">下次复核</p><p class="mt-1 font-semibold tabular-nums">{{ item.dueYear ?? '年份待核' }}<span v-if="item.needsReview" class="text-warning ml-2 text-sm font-normal">待核</span></p></div>
+                  <p class="text-muted-foreground border-t pt-2 text-sm break-words col-span-2 sm:col-span-3">评估时点：{{ item.qualification ? data?.qualificationAssessment?.asOf ?? '未知' : '未知' }}</p>
                 </dd>
               </div>
             </dl>

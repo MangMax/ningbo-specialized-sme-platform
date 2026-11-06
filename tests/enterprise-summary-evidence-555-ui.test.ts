@@ -57,8 +57,8 @@ it('shows assessed qualification and time beside recognition and review arrangem
   const summary = view!.get('[aria-label="称号与复核安排"]')
   expect(summary.text()).toContain('当前资格：已到期')
   expect(summary.text()).toContain('评估时点：2026-11-06T00:00:00.000Z')
-  expect(summary.text()).toContain('首次认定 2021')
-  expect(summary.text()).toContain('下次复核 2027')
+  expect(summary.text()).toMatch(/首次认定\s*2021/)
+  expect(summary.text()).toMatch(/下次复核\s*2027/)
   expect(summary.text()).not.toContain('正式复核未通过')
   await summary.findAll('button').find(button => button.text() === '资格依据')!.trigger('click')
   await flushPromises()
@@ -70,7 +70,7 @@ it('keeps qualification unknown without assessment despite a future review arran
   const summary = view!.get('[aria-label="称号与复核安排"]')
   expect(summary.text()).toContain('当前资格：未知（尚无评估结果）')
   expect(summary.text()).toContain('评估时点：未知')
-  expect(summary.text()).toContain('下次复核 2027')
+  expect(summary.text()).toMatch(/下次复核\s*2027/)
 })
 it('exposes each official source before platform loading and navigates to its exact page', async () => {
   state.detail.evidence = [
