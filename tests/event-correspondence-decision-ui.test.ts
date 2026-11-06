@@ -42,7 +42,7 @@ async function submitPagedDecision(options: { total: number; missing?: boolean; 
   vi.stubGlobal('$fetch', fetch)
   wrapper = mountControl(); await flushPromises(); button('确认对应').click(); await flushPromises()
   const area = document.querySelector('textarea')!; area.value = '分页读回原行依据'; area.dispatchEvent(new Event('input', { bubbles: true })); await flushPromises()
-  button('预检决定').click(); await flushPromises(); button('提交决定').click(); await flushPromises()
+  button('提交决定').click(); await flushPromises()
   return { fetch, key, refreshed }
 }
 
@@ -138,9 +138,8 @@ it('requires basis and retains the bound draft after commit failure then retries
   vi.stubGlobal('$fetch', fetch)
   wrapper = mountControl(); await flushPromises()
   button('确认对应').click(); await flushPromises()
-  expect(button('预检决定').disabled).toBe(true)
+  expect(button('提交决定').disabled).toBe(true)
   const basis = document.querySelector('textarea')!; basis.value = '核对附件一原行'; basis.dispatchEvent(new Event('input', { bubbles: true })); await flushPromises()
-  button('预检决定').click(); await flushPromises()
   button('提交决定').click(); await flushPromises()
   expect(document.body.textContent).toContain('草稿和预检保留')
   expect(document.body.textContent).toContain('提交结果尚待确认，请使用原请求重试')
@@ -176,11 +175,11 @@ it('keeps a stale draft and requires a fresh preflight after refreshing the curr
   wrapper = mountControl({ id: 9, revision: 2, status: 'confirmed' }); await flushPromises()
   button('取消对应').click(); await flushPromises()
   const basis = document.querySelector('textarea')!; basis.value = '保留并发核对草稿'; basis.dispatchEvent(new Event('input', { bubbles: true })); await flushPromises()
-  button('预检决定').click(); await flushPromises(); button('提交决定').click(); await flushPromises()
+  button('提交决定').click(); await flushPromises()
   expect(document.body.textContent).toContain('没有覆盖新决定')
   button('刷新后重新核对').click(); await flushPromises()
   expect(basis.value).toBe('保留并发核对草稿')
-  button('预检决定').click(); await flushPromises()
+  button('提交决定').click(); await flushPromises()
   const requests = fetch.mock.calls.filter(([url]) => url.endsWith('browser-preflight')).map(([, options]) => options.body)
   expect(requests[0].operations[0].expectedRevision).toBe(2)
   expect(requests[1].operations[0].expectedRevision).toBe(4)
@@ -198,7 +197,7 @@ it('retains a committed receipt when readback fails and retries only the public 
   }); vi.stubGlobal('$fetch', fetch)
   wrapper = mountControl(); await flushPromises(); button('确认对应').click(); await flushPromises()
   const basis = document.querySelector('textarea')!; basis.value = '原行确认依据'; basis.dispatchEvent(new Event('input', { bubbles: true })); await flushPromises()
-  button('预检决定').click(); await flushPromises(); button('提交决定').click(); await flushPromises()
+  button('提交决定').click(); await flushPromises()
   expect(document.body.textContent).toContain('决定已提交，但同步读回失败')
   button('重试读回').click(); await flushPromises()
   expect(document.body.textContent).toContain('已提交并读回对应与审计')
@@ -228,7 +227,7 @@ it('corrects to the registered candidate role rather than replacing its historic
   ;(document.querySelector('[role="dialog"] [role="combobox"]') as HTMLButtonElement).dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, ctrlKey: false })); await flushPromises()
   ;(document.querySelector('[role="option"]') as HTMLElement).dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); await flushPromises()
   const basis = document.querySelector('textarea')!; basis.value = '已核对B原有支持角色'; basis.dispatchEvent(new Event('input', { bubbles: true })); await flushPromises()
-  button('预检决定').click(); await flushPromises()
+  button('提交决定').click(); await flushPromises()
   const submitted = fetch.mock.calls.find(([url]) => url.endsWith('browser-preflight'))![1].body
   expect(submitted.operations).toEqual([{ action: 'correct', correspondenceId: 9, expectedRevision: 2, edge: { type: 'event_process', eventId: 7, relationId: 11, role: 'supports_award' } }])
 })
@@ -240,7 +239,7 @@ it('keeps formal evidence missing fields support scope and basis together while 
   wrapper = mount(EventCorrespondenceDecision, { props: {
     edge,
     event: { id: 7, eventType: 'award', year: 2026, batchSeq: 1, record: { titleCode: 'specialized_sme', usccRaw: '91330201062904769K' }, evidence: [{ sourceFile: 'notice.pdf', attachment: '附件一', page: 7, listNo: 122 }] },
-    candidate: { edge, conflicts: ['platform_year_missing', 'multiple_candidate_rows'] },
+    candidate: { edge, conflicts: ['platform_year_missing', 'multiple_candidate_rows'], evidence: { identity: { officialUsccRaw: '91330201062904769K', rowUsccRaw: '91330201062904769K' }, title: { official: 'specialized_sme', row: 'specialized_sme' }, temporal: { eventYear: 2026, relationYear: null, eventBatchSeq: 1, relationBatch: null }, process: { eventType: 'award', declareKind: 'apply' }, source: { interface: 'business_list' } } },
   } as any, attachTo: document.body, global: { stubs: { NuxtLink: true } } })
   button('确认对应').click(); await flushPromises()
   const dialog = document.querySelector('[role="dialog"]')!
@@ -283,27 +282,23 @@ it('clears the previous event draft and preflight when switching business object
   capability(); const fetch = vi.fn().mockResolvedValue({ planHash: 'a'.repeat(64), impact: { created: 1, unlinked: 0, audit: 2 } }); vi.stubGlobal('$fetch', fetch)
   wrapper = mountControl(); await flushPromises(); button('确认对应').click(); await flushPromises()
   const basis = document.querySelector('textarea')!; basis.value = '旧事项依据'; basis.dispatchEvent(new Event('input', { bubbles: true })); await flushPromises()
-  button('预检决定').click(); await flushPromises()
-  expect(document.body.textContent).toContain('预检通过，尚未提交')
+  expect(fetch).not.toHaveBeenCalled()
   await wrapper.setProps({ edge: { ...edge, eventId: 8 } }); await flushPromises()
   expect(document.querySelector('[role="dialog"]')).toBeNull()
   button('确认对应').click(); await flushPromises()
   expect((document.querySelector('textarea') as HTMLTextAreaElement).value).toBe('')
-  expect(button('预检决定').disabled).toBe(true)
-  expect(button('提交决定')).toBeUndefined()
+  expect(button('提交决定').disabled).toBe(true)
 })
 
-it('invalidates preflight when basis is cleared and never commits the previous nonempty request', async () => {
+it('blocks submission after clearing the basis and never commits the previous nonempty draft', async () => {
   capability()
   const fetch = vi.fn().mockResolvedValue({ planHash: 'a'.repeat(64), impact: { created: 1, unlinked: 0, audit: 2 } }); vi.stubGlobal('$fetch', fetch)
   wrapper = mountControl(); await flushPromises(); button('确认对应').click(); await flushPromises()
   const area = document.querySelector('textarea')!
   area.value = '预检依据'; area.dispatchEvent(new Event('input', { bubbles: true })); await flushPromises()
-  button('预检决定').click(); await flushPromises()
-  expect(button('提交决定')).toBeDefined()
+  expect(button('提交决定').disabled).toBe(false)
   area.value = ''; area.dispatchEvent(new Event('input', { bubbles: true })); await flushPromises()
-  expect(button('提交决定')).toBeUndefined()
-  expect(button('预检决定').disabled).toBe(true)
+  expect(button('提交决定').disabled).toBe(true)
   expect(fetch.mock.calls.filter(([url]) => url.endsWith('browser-commit'))).toHaveLength(0)
 })
 
@@ -316,7 +311,7 @@ it('isolates unknown requests across event switches and restores each original f
   }); vi.stubGlobal('$fetch', fetch)
   wrapper = mountControl(); await flushPromises(); button('确认对应').click(); await flushPromises()
   const enter = async (text: string) => { const area = document.querySelector('textarea')!; area.value = text; area.dispatchEvent(new Event('input', { bubbles: true })); await flushPromises() }
-  await enter('A冻结依据'); button('预检决定').click(); await flushPromises(); button('提交决定').click(); await flushPromises()
+  await enter('A冻结依据'); button('提交决定').click(); await flushPromises()
   const first = fetch.mock.calls.find(([url]) => url.endsWith('browser-commit'))![1].body
   button('保留草稿并关闭').click(); await flushPromises(); button('不对应').click(); await flushPromises()
   expect(document.querySelector('textarea')!.disabled).toBe(true)
@@ -325,7 +320,7 @@ it('isolates unknown requests across event switches and restores each original f
   button('确认对应').click(); await flushPromises()
   expect(document.querySelector('textarea')!.disabled).toBe(false)
   expect(document.querySelector('textarea')!.value).toBe('')
-  await enter('B独立依据'); button('预检决定').click(); await flushPromises()
+  await enter('B独立依据'); button('提交决定').click(); await flushPromises()
   const requests = fetch.mock.calls.filter(([url]) => url.endsWith('browser-preflight')).map(([, options]) => options.body)
   expect(requests[1].operations[0].edge.eventId).toBe(8)
   expect(requests[1].basis).toBe('B独立依据')
@@ -334,10 +329,10 @@ it('isolates unknown requests across event switches and restores each original f
   expect(document.querySelector('textarea')!.value).toBe('A冻结依据')
   expect(document.querySelector('textarea')!.disabled).toBe(true)
   button('重试提交').click(); await flushPromises()
-  expect(fetch.mock.calls.filter(([url]) => url.endsWith('browser-commit')).map(([, options]) => options.body)).toEqual([first, first, first])
+  expect(fetch.mock.calls.filter(([url, options]) => url.endsWith('browser-commit') && options.body.request.operations[0].edge.eventId === 7).map(([, options]) => options.body)).toEqual([first, first, first])
   await wrapper.setProps({ edge: { ...edge, eventId: 8 } }); await flushPromises(); button('确认对应').click(); await flushPromises()
   expect(document.querySelector('textarea')!.value).toBe('B独立依据')
-  expect(button('提交决定')).toBeDefined()
+  expect(button('重试提交')).toBeDefined()
 })
 
 it('explains an empty eligible replacement page without offering protected or current records', async () => {
@@ -349,7 +344,7 @@ it('explains an empty eligible replacement page without offering protected or cu
   expect(document.body.textContent).toContain('本页无可改选记录')
   expect(document.body.textContent).toContain('保留已有人工决定')
   expect(document.querySelector('#replacement-record')!.getAttribute('disabled')).not.toBeNull()
-  expect(button('预检决定').disabled).toBe(true)
+  expect(button('提交决定').disabled).toBe(true)
   expect(document.body.textContent).toContain('共 2 条归档记录')
 })
 
@@ -365,7 +360,7 @@ it('ignores a late commit response after switching objects and retries the origi
   }); vi.stubGlobal('$fetch', fetch)
   wrapper = mountControl(); await flushPromises(); button('确认对应').click(); await flushPromises()
   const area = document.querySelector('textarea')!; area.value = 'A在途依据'; area.dispatchEvent(new Event('input', { bubbles: true })); await flushPromises()
-  button('预检决定').click(); await flushPromises(); button('提交决定').click(); await flushPromises()
+  button('提交决定').click(); await flushPromises()
   const first = fetch.mock.calls.find(([url]) => url.endsWith('browser-commit'))![1].body
   await wrapper.setProps({ edge: { ...edge, eventId: 8 } }); await flushPromises(); button('确认对应').click(); await flushPromises()
   finish({ correspondenceIds: [11] }); await flushPromises()
@@ -374,8 +369,8 @@ it('ignores a late commit response after switching objects and retries the origi
   expect(button('重试读回')).toBeUndefined()
   await wrapper.setProps({ edge }); await flushPromises(); button('确认对应').click(); await flushPromises()
   expect(document.querySelector('textarea')!.disabled).toBe(true)
-  expect(button('提交决定')).toBeDefined()
-  button('提交决定').click()
+  expect(button('重试提交')).toBeDefined()
+  button('重试提交').click()
   await flushPromises()
   expect(fetch.mock.calls.filter(([url]) => url.endsWith('browser-commit')).map(([, options]) => options.body)).toEqual([first, first])
 })
@@ -388,5 +383,58 @@ it('keeps the only required basis field in the action area while preserving the 
   expect(footer.textContent).toContain('核对依据（必填）')
   expect(document.querySelector('[aria-label="待核平台原行"]')).not.toBeNull()
   expect(wrapper.findComponent({ name: 'SourceReader' }).props('presentation')).toBe('business')
-  expect(button('预检决定').disabled).toBe(true)
+  expect(button('提交决定').disabled).toBe(true)
+})
+
+it('submits one business action through preflight and waits for public readback before reporting saved', async () => {
+  capability()
+  let resolvePlan!: (value: unknown) => void
+  let resolveAudit!: (value: unknown) => void
+  let key = ''
+  const fetch = vi.fn((url: string, options?: any) => {
+    if (url.endsWith('browser-preflight')) { key = options.body.idempotencyKey; return new Promise(resolve => { resolvePlan = resolve }) }
+    if (url.endsWith('browser-commit')) return Promise.resolve({ correspondenceIds: [11] })
+    if (url.endsWith('/audit')) return new Promise(resolve => { resolveAudit = resolve })
+    return Promise.resolve({ id: 11, status: 'confirmed' })
+  })
+  vi.stubGlobal('$fetch', fetch)
+  wrapper = mountControl(); await flushPromises(); button('确认对应').click(); await flushPromises()
+  expect(button('预检决定')).toBeUndefined()
+  const area = document.querySelector('textarea')!
+  area.value = '核对两侧原始依据'; area.dispatchEvent(new Event('input', { bubbles: true })); await flushPromises()
+  button('提交决定').click(); await flushPromises()
+  expect(button('正在保存…').disabled).toBe(true)
+  expect(fetch.mock.calls.filter(([url]) => url.endsWith('browser-commit'))).toHaveLength(0)
+  resolvePlan({ planHash: 'a'.repeat(64), impact: { created: 1, unlinked: 0, audit: 2 } }); await flushPromises()
+  expect(fetch.mock.calls.filter(([url]) => url.endsWith('browser-commit'))).toHaveLength(1)
+  expect(document.body.textContent).not.toContain('已保存平台对应决定')
+  resolveAudit({ rows: [{ idempotencyKey: key }], total: 1, page: 1, pageSize: 50 }); await flushPromises()
+  expect(document.body.textContent).toContain('已保存平台对应决定')
+  expect(document.body.textContent).toContain('年度最终结果与来源变化处理仍需分别核对')
+})
+
+it.each([409, 503])('keeps the basis after preflight failure %i and commits only after a successful retry', async statusCode => {
+  capability()
+  let attempts = 0, key = ''
+  const fetch = vi.fn((url: string, options?: any) => {
+    if (url.endsWith('browser-preflight')) {
+      if (++attempts === 1) return Promise.reject({ statusCode })
+      key = options.body.idempotencyKey
+      return Promise.resolve({ planHash: 'a'.repeat(64), impact: { created: 1, unlinked: 0, audit: 2 } })
+    }
+    if (url.endsWith('browser-commit')) return Promise.resolve({ correspondenceIds: [11] })
+    if (url.endsWith('/audit')) return Promise.resolve({ rows: [{ idempotencyKey: key }], total: 1, page: 1, pageSize: 50 })
+    return Promise.resolve({ id: 11, status: 'confirmed' })
+  })
+  vi.stubGlobal('$fetch', fetch)
+  wrapper = mountControl(); await flushPromises(); button('确认对应').click(); await flushPromises()
+  const area = document.querySelector('textarea')!; area.value = '失败后保留核对依据'; area.dispatchEvent(new Event('input', { bubbles: true })); await flushPromises()
+  button('提交决定').click(); await flushPromises()
+  expect(fetch.mock.calls.filter(([url]) => url.endsWith('browser-commit'))).toHaveLength(0)
+  expect(document.body.textContent).not.toContain('已保存平台对应决定')
+  expect(area.value).toBe('失败后保留核对依据'); expect(area.disabled).toBe(false)
+  if (statusCode === 409) { button('刷新后重新核对').click(); await flushPromises() }
+  button('提交决定').click(); await flushPromises()
+  expect(fetch.mock.calls.filter(([url]) => url.endsWith('browser-commit'))).toHaveLength(1)
+  expect(document.body.textContent).toContain('已保存平台对应决定')
 })

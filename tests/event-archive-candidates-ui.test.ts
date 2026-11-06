@@ -144,3 +144,32 @@ it('mounts manual controls only after first opening and retains their draft when
   expect(wrapper.get('input').element.value).toBe('保留当前人工依据')
   expect(fetch).toHaveBeenCalledTimes(1)
 })
+
+it('compares official and platform fields with explicit missing and difference text while keeping time and multiple candidates separate', async () => {
+  const page = result()
+  const first = page.rows[0]!
+  first.evidence.temporal = { eventYear: 2021, relationYear: 2025, eventBatchSeq: 1, relationBatch: '2025-2', decisionYear: 2024 } as any
+  first.evidence.process = { eventType: 'review', declareKind: 'review', appliedAt: '2025-03-01' } as any
+  first.conflicts = ['year_mismatch', 'batch_mismatch', 'application_after_decision', 'multiple_candidate_rows']
+  const second = structuredClone(first)
+  second.edge.relationId = 11
+  second.evidence.temporal.relationYear = null
+  second.conflicts = ['platform_year_missing', 'multiple_candidate_rows']
+  page.rows.push(second)
+  vi.stubGlobal('$fetch', vi.fn().mockResolvedValue(page))
+  wrapper = mountPanel()
+  await wrapper.get('[data-testid="candidate-disclosure"] button').trigger('click')
+  await wrapper.get('[data-testid="discover-event-archives"]').trigger('click'); await flushPromises()
+  const comparisons = wrapper.findAll('[aria-label="正式公布与平台记录对照"]')
+  expect(comparisons).toHaveLength(2)
+  const fields = comparisons[0]!.findAll('dl > div')
+  expect(fields.find(field => field.text().includes('统一社会信用代码'))!.text()).toContain('一致')
+  const year = fields.find(field => field.text().includes('年份'))!.text()
+  expect(year).toContain('公布结论年：2024'); expect(year).toContain('办理业务年：2025'); expect(year).toContain('差异')
+  expect(comparisons[1]!.text()).toContain('未提供')
+  expect(comparisons[0]!.text()).toContain('平台记录 · 申报时间：2025-03-01')
+  expect(wrapper.text()).toContain('事项差异'); expect(wrapper.text()).toContain('资料缺失'); expect(wrapper.text()).toContain('时间关系')
+  expect(wrapper.text()).toContain('时间先后不代表业务错误')
+  expect(wrapper.text().match(/存在多条候选，需逐条核对/g)).toHaveLength(1)
+  expect(wrapper.text()).toContain('未确认候选')
+})
