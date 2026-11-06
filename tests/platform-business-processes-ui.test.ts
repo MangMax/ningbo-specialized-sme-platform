@@ -63,12 +63,16 @@ describe('关联办理表格', () => {
       expect(view.text()).toContain('补录')
       expect(view.get('[data-testid=platform-business-process-isolated-row]').text()).toContain('unknown-title')
       expect(view.get('[data-testid="platform-business-process-isolated-row"] a').attributes('href')).toBe('/platform-queries')
+      for (const presentation of ['row', 'card']) {
+        const link = view.get(`[data-testid="platform-business-process-isolated-${presentation}"]`).getComponent(stubs.NuxtLink)
+        expect(link.props('to')).toEqual({ path: '/platform-queries', query: { queryKey: 'name:无编号' } })
+      }
     } finally { view.unmount() }
   })
 })
 
 describe('关联办理详情', () => {
-  it('renders versions and title scopes without observation rows or raw JSON', async () => {
+  it('renders versions and row titles without observation rows or raw JSON', async () => {
     const fetch = vi.fn(async () => detail)
     vi.stubGlobal('$fetch', fetch)
     const view = mount(PlatformBusinessProcessDetailDialog, { attachTo: document.body, props: { recordId: 7, open: true }, global: { stubs } })
@@ -79,12 +83,14 @@ describe('关联办理详情', () => {
       expect(dialog.text()).not.toContain('办理编号')
       expect(dialog.text()).not.toContain('SQ-2023-1')
       expect(dialog.text()).toContain('版本 #12')
+      expect(dialog.text()).toContain('专精特新中小企业')
       expect(dialog.text()).not.toContain('称号范围')
       expect(dialog.text()).toContain('最近')
       expect(dialog.text()).not.toContain('实际观察')
       expect(dialog.text()).toContain('第三批')
       expect(dialog.findAll('button').some(button => button.text().includes('原行与对应'))).toBe(false)
-      expect(dialog.text()).not.toContain('secretRaw')
+      expect(dialog.text()).not.toContain('"versionId"')
+      expect(dialog.text()).not.toContain('"awardBatchLabel"')
     } finally { view.unmount(); vi.unstubAllGlobals() }
   })
 })
