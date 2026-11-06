@@ -382,7 +382,7 @@ it('browses cutoff years without querying and commits a real leap day only on co
   const before = calls.query.length
   await wrapper.get('#record-as-of').trigger('click'); await flushPromises()
   for (const [index, value] of [[1, '2024'], [0, '2']] as const) {
-    const select = document.querySelectorAll('select')[index]!
+    const select = document.querySelector<HTMLSelectElement>(`select[aria-label="${index === 1 ? '年份' : '月份'}"]`)!
     select.value = value; select.dispatchEvent(new Event('change', { bubbles: true })); await flushPromises()
   }
   expect(calls.query).toHaveLength(before)

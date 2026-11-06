@@ -1958,7 +1958,7 @@ it('navigates both log time calendars without applying and submits chosen month 
   for (const [id, year, month, day] of [['log-from', '2024', '2', '2024-02-29'], ['log-to', '2024', '4', '2024-04-30']]) {
     await wrapper.get(`#${id}`).trigger('click'); await flushPromises()
     for (const [index, value] of [[1, year], [0, month]] as const) {
-      const select = document.querySelectorAll('select')[index]!
+      const select = document.querySelector<HTMLSelectElement>(`select[aria-label="${index === 1 ? '年份' : '月份'}"]`)!
       select.value = value!; select.dispatchEvent(new Event('change', { bubbles: true })); await flushPromises()
     }
     expect(wrapper.emitted('apply')).toBeUndefined()

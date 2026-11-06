@@ -54,11 +54,11 @@ describe('comparison calendar and segmented time picker', () => {
 })
 
 async function navigate(year: string, month: string) {
-  // Temporary native-select lookup until #505 supplies Chinese accessible names.
   const selects = document.querySelectorAll('select')
   expect(selects).toHaveLength(2)
-  for (const [select, next] of [[selects[1], year], [selects[0], month]] as const) {
-    select!.value = next
+  for (const [label, next] of [['年份', year], ['月份', month]] as const) {
+    const select = document.querySelector<HTMLSelectElement>(`select[aria-label="${label}"]`)!
+    select.value = next
     select!.dispatchEvent(new Event('change', { bubbles: true }))
     await flushPromises()
   }
