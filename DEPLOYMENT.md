@@ -22,7 +22,7 @@ docker compose --project-directory "$BUILD_CONTEXT" -f "$BUILD_CONTEXT/compose.y
 
 `ROSTER_STATE_DIR` 必须是绝对路径且已存在；目录由容器内 UID 1000 的 `node` 用户可写。它承载 `data/roster.db`、`files/`、`incoming/` 和两份 reconciliation JSON。将正式 seed 放在此目录前，应先完成独立备份与复制。
 
-密钥只放在仓库外的 `ROSTER_ENV_FILE`；文件可包含 `NUXT_MCP_TOKEN`、`NUXT_API_TOKEN`、`NUXT_OCR_TOKEN` 等运行时变量。Compose 默认使用空的 `/dev/null`，不会从仓库读取 `.env`。密钥不参与镜像构建。
+API/MCP 访问 token 通过仓库外的 `ROSTER_ENV_FILE` 配置为 `NUXT_API_TOKEN`、`NUXT_MCP_TOKEN` 等运行时变量。外部 OCR token 和工信部平台 Cookie 可由应用保存到 SQLite，无显式 override 时保存值优先、环境变量回退；环境回退值也可通过 `ROSTER_ENV_FILE` 提供。显式 override 的优先级及独立 CLI 例外见[外部服务凭据配置](docs/credential-settings.md#生效规则)。Compose 默认使用空的 `/dev/null`，不会从仓库读取 `.env`。密钥不参与镜像构建。
 
 构建阶段只安装编译 `better-sqlite3` 所需的 `python3`、`make`、`g++`；运行阶段不带编译工具。PDF 页图走 PDFium WASM 与 sharp，DOCX 预览由浏览器内的 `@silurus/ooxml` 绘制，未发现 Poppler、LibreOffice 等外部命令依赖。最小 Debian 镜像未加 CJK 字体包；空 state 验证无法证明所有未嵌入字体的 PDF 在生产 seed 上都能正确显示，需用代表性文件做后续验收。
 
@@ -30,7 +30,7 @@ docker compose --project-directory "$BUILD_CONTEXT" -f "$BUILD_CONTEXT/compose.y
 
 ## 升级前备份与回滚
 
-1. 保存当前应用镜像 ID、基础镜像 digest、完整源码 SHA、部署配置和密钥文件位置；保留旧镜像，不覆盖旧标签。停写并停止应用后，归档整个 state（数据库、文件库、任务产物及配置 JSON）。若使用在线 SQLite backup API，只能读取已授权备份源并同时协调文件库一致性，不能直接复制活跃 DB/WAL 作为一致备份。
+1. 保存当前应用镜像 ID、基础镜像 digest、完整源码 SHA、部署配置和密钥文件位置；保留旧镜像，不覆盖旧标签。停写并停止应用后，归档整个 state（数据库、文件库、任务产物及配置 JSON）。若使用在线 SQLite backup API，只能读取已授权备份源并同时协调文件库一致性，不能直接复制活跃 DB/WAL 作为一致备份。完整数据库备份包含已保存的外部 OCR token 和工信部平台 Cookie，应按敏感数据保护并限制访问。
 2. 先将一致备份恢复到本次独占的 Docker native volume，UID/GID 1000 可写。不要挂载宿主活跃生产 DB/WAL。新进程首次打开可写库会自动执行已有迁移；本票不新增或逆转迁移。
 3. 用实际生产镜像检查 HTTP health、原生 SQLite 读写与一致备份、迁移 ledger 幂等、重启持久化、`PRAGMA integrity_check` 和 `foreign_key_check`。同一备份上对比升级前后的 HTTP 导出业务内容，并以真实工作簿验证现有解析行为；空库烟测不能代替真实数据验收。
 4. 回滚时先停写、停止新容器，对升级后的整个 state 再做独立备份并保留。此票无 schema 变化时，可用保留的旧镜像连接同一 state，先在隔离副本检查兼容性；若需恢复升级前备份，应恢复到另一个目录或新卷，经核对完整性、外键、ID 和审计后切换挂载。保留升级后的卷与备份供对账，不混用不同时点的主库和 WAL，不逆迁移，不删卷、不用 `docker compose down -v`，不覆盖原数据。
