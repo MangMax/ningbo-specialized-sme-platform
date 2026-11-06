@@ -451,10 +451,11 @@ function highlightEvent(eventId: number) {
 }
 async function arriveAtEvent(eventId: number | null) {
   if (typeof document === 'undefined') return
-  if (!detail.value || eventId == null || !detail.value.records.some(record => record.events.some(event => event.id === eventId))) return
+  if (eventId == null) return
+  const record = detail.value?.records.find(record => record.events.some(event => event.id === eventId))
+  if (!record) return
   const enterpriseId = id.value
-  const record = detail.value.records.find(record => record.events.some(event => event.id === eventId))
-  if (record) historySource.value = record.source
+  historySource.value = record.source
   tab.value = 'records'
   setEvidenceDisclosureOpen(evidenceDisclosureKey(eventId), true)
   await nextTick()
