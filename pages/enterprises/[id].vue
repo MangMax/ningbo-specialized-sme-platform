@@ -219,9 +219,7 @@ const detail = computed<EnterpriseDetail | null>(() => {
 const confirmedAliasNames = computed(() => data.value?.aliases.filter(alias => alias.verificationStatus === 'confirmed').map(alias => alias.name) ?? [])
 const formalSourceEventId = ref<number | null>(null)
 
-const EVENT_TYPE_ORDER: Record<string, number> = { award: 0, review: 1, maintain: 2, nurture: 3 }
-
-/** 全部认定 / 复核记录摊平成同一张台账：年份是主序，称号与来源只是行内标签。 */
+/** 保留每个事件身份；复核按公布结论年排列，同年以事件身份稳定排列。 */
 const ledgerEvents = computed<LedgerEvent[]>(() => {
   const source = detail.value
   if (!source) return []
@@ -234,8 +232,14 @@ const ledgerEvents = computed<LedgerEvent[]>(() => {
       district: record.district,
     })))
     .sort((a, b) => ((a.type === 'review' ? a.decidedYear : a.year) ?? 9999) - ((b.type === 'review' ? b.decidedYear : b.year) ?? 9999)
-      || (EVENT_TYPE_ORDER[a.type] ?? 9) - (EVENT_TYPE_ORDER[b.type] ?? 9)
       || a.id - b.id)
+})
+
+/** 记录决定区域是否存在，即使记录尚无事件也保留空状态。 */
+const titleHistories = computed(() => {
+  const present = new Set(detail.value?.records.map(record => record.titleCode) ?? [])
+  return [...TITLE_ORDER.filter(code => present.has(code)), ...[...present].filter(code => !TITLE_ORDER.includes(code))]
+    .map(code => ({ code, events: ledgerEvents.value.filter(event => event.titleCode === code) }))
 })
 
 /** 称号与复核安排：只陈述首次认定、批次和下一次复核，不复制核对矩阵。 */
@@ -644,38 +648,46 @@ function openPreview(e: Evidence) {
               该企业暂无记录。
             </div>
             <section v-else aria-label="记录台账">
-              <header class="bg-muted/40 text-muted-foreground hidden border-b px-5 py-2 text-xs sm:grid sm:grid-cols-[6.5rem_minmax(0,1fr)_18rem_auto] sm:gap-4">
-                <span>年度 / 事项</span>
-                <span>结论</span>
-                <span>出处</span>
-                <span class="sr-only">展开</span>
-              </header>
-              <ul class="divide-y">
-                <li v-for="event in ledgerEvents" :key="event.id">
-                  <RecordEventRow
-                    :event="event"
-                    :evidence="event.evidence"
-                    :edges="edgesFor(event.id)"
-                    :full-edges="detailsForEvent(event.id)"
-                    :links-ready="correspondenceReady"
-                    :details-loading="detailLoadingForEvent(event.id)"
-                    :details-error="detailErrorForEvent(event.id)"
-                    :relation-summaries="relationSummaries"
-                    :back="route.fullPath"
-                    :return-to="sourceReturnTarget(route.query.returnTo)"
-                    :open="evidenceDisclosureOpen(evidenceDisclosureKey(event.id))"
-                    :highlighted="highlightedEventId === event.id"
-                    @update:open="setEvidenceDisclosureOpen(evidenceDisclosureKey(event.id), $event)"
-                    @preview="openPreview"
-                    @event-navigate="arriveAtEvent"
-                    @page-open="rememberPagePreviewReturn"
-                    @retry-detail="loadEvent(event.id, true)"
-                  />
-                  <div v-if="event.source === 'jxj' && ['award', 'review'].includes(event.type) && evidenceDisclosureOpen(evidenceDisclosureKey(event.id))" class="px-4 pb-3 sm:px-5">
-                    <Button variant="outline" size="sm" @click="formalSourceEventId = event.id">查看正式来源</Button>
-                  </div>
-                </li>
-              </ul>
+              <p class="text-muted-foreground border-b px-4 py-2 text-sm">按已知年份升序；同年及未知时点不表示精确先后。排列不代表当前有效资格。</p>
+              <section v-for="history in titleHistories" :key="history.code" :aria-label="`${titleLabel(history.code)}历史`" class="min-w-0 border-b last:border-b-0">
+                <header class="bg-muted/40 flex flex-wrap items-baseline gap-3 border-b px-4 py-3">
+                  <h3 class="text-sm font-semibold">{{ titleLabel(history.code) }}</h3>
+                  <span class="text-muted-foreground text-sm">{{ history.events.length }} 条事件</span>
+                </header>
+                <p v-if="!history.events.length" class="text-muted-foreground px-4 py-6 text-sm">该称号暂无事件。</p>
+                <ol v-else :aria-label="`${titleLabel(history.code)}事件顺序`" class="divide-y">
+                  <li v-for="(event, index) in history.events" :key="event.id" class="min-w-0">
+                    <p v-if="(event.type === 'review' ? event.decidedYear : event.year) == null && (index === 0 || (history.events[index - 1]!.type === 'review' ? history.events[index - 1]!.decidedYear : history.events[index - 1]!.year) != null)" class="bg-muted/40 text-muted-foreground border-b px-4 py-2 text-sm">年份待核 · 未知时点</p>
+                    <RecordEventRow
+                      :event="event"
+                      :evidence="event.evidence"
+                      :edges="edgesFor(event.id)"
+                      :full-edges="detailsForEvent(event.id)"
+                      :links-ready="correspondenceReady"
+                      :details-loading="detailLoadingForEvent(event.id)"
+                      :details-error="detailErrorForEvent(event.id)"
+                      :relation-summaries="relationSummaries"
+                      :back="route.fullPath"
+                      :return-to="sourceReturnTarget(route.query.returnTo)"
+                      :open="evidenceDisclosureOpen(evidenceDisclosureKey(event.id))"
+                      :highlighted="highlightedEventId === event.id"
+                      @update:open="setEvidenceDisclosureOpen(evidenceDisclosureKey(event.id), $event)"
+                      @preview="openPreview"
+                      @event-navigate="arriveAtEvent"
+                      @page-open="rememberPagePreviewReturn"
+                      @retry-detail="loadEvent(event.id, true)"
+                    >
+                      <template #annual-summary>
+                        <p v-if="event.seq != null" class="text-muted-foreground mt-1 text-sm">{{ event.type === 'review' ? '原认定批次' : '批次' }}：第 {{ event.seq }} 批</p>
+                        <p v-if="event.type === 'nurture'" class="text-muted-foreground mt-1 text-sm">入库培育不表示已持有称号。</p>
+                      </template>
+                    </RecordEventRow>
+                    <div v-if="event.source === 'jxj' && ['award', 'review'].includes(event.type) && evidenceDisclosureOpen(evidenceDisclosureKey(event.id))" class="px-4 pb-3 sm:px-5">
+                      <Button variant="outline" size="sm" @click="formalSourceEventId = event.id">查看正式来源</Button>
+                    </div>
+                  </li>
+                </ol>
+              </section>
             </section>
           </section>
 
