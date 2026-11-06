@@ -7,7 +7,8 @@ import type { AnnualStatistics } from '~~/lib/roster/annual-statistics'
 import { TITLES, TITLE_ORDER } from '~~/lib/labels'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
-import { ArrowUpRight } from '@lucide/vue'
+import { Button } from '@/components/ui/button'
+import { ArrowUpRight, ChartNoAxesCombined, CircleAlert } from '@lucide/vue'
 import { CurveType } from 'nuxt-charts/enums'
 const year = ref('today'), title = ref('specialized_sme'), status = ref('effective'), page = ref(1), pageSize = ref(25)
 const result = shallowRef<AnnualStatistics>()
@@ -34,6 +35,7 @@ const chartData = computed<Array<{ year: number; [key: string]: number }>>(() =>
   year: row.year,
   ...Object.fromEntries(row.titles.map(count => [count.titleCode, count.effective])),
 })))
+const hasTrendData = computed(() => chartData.value.some(row => TITLE_ORDER.some(code => (row[code] ?? 0) > 0)))
 const categories = computed(() => Object.fromEntries(lines.value.map(line => [line.code, {
   name: TITLES[line.code] ?? line.code, color: line.color ?? colors[0]!, hidden: hiddenTitles.value.includes(line.code),
 }])))
@@ -52,10 +54,15 @@ function select(selected:number,code:string,state:string){year.value=String(sele
 <template>
 <section class="stats-chart-panel" aria-labelledby="annual-title" :aria-busy="loading">
   <header class="stats-panel-heading"><div><p class="stats-eyebrow">有效存量</p><h2 id="annual-title">各称号年度变化</h2></div></header>
-  <div class="stats-chart-legend"><button v-for="line in lines" :key="line.code" type="button" :aria-pressed="!hiddenTitles.includes(line.code)" :aria-label="`${TITLES[line.code]}趋势线`" @click="toggleTitle(line.code)"><i :style="{background:line.color}" />{{ TITLES[line.code] }}</button></div>
-  <Skeleton v-if="!result && loading" class="h-64 w-full" />
-  <template v-if="result">
-    <div class="stats-trend-canvas">
+  <div class="stats-chart-legend"><button v-for="line in lines" :key="line.code" type="button" :disabled="!hasTrendData" :aria-pressed="!hiddenTitles.includes(line.code)" :aria-label="`${TITLES[line.code]}趋势线`" @click="toggleTitle(line.code)"><i :style="{background:line.color}" />{{ TITLES[line.code] }}</button></div>
+  <div class="stats-trend-frame">
+    <Skeleton v-if="!result && loading" class="h-full w-full" aria-label="正在加载年度趋势" />
+    <div v-else-if="!hasTrendData" class="stats-trend-state" role="status" aria-live="polite">
+      <component :is="failed ? CircleAlert : ChartNoAxesCombined" class="size-7 text-muted-foreground" aria-hidden="true" />
+      <div><h3>{{ failed ? '年度趋势暂时无法加载' : '暂无年度趋势数据' }}</h3><p>{{ failed ? '未能取得年度统计，请重试。属地分布仍可独立查看。' : '当前统计范围内没有有效企业数量，暂无趋势可展示。' }}</p></div>
+      <Button v-if="failed" variant="outline" size="sm" :disabled="loading" @click="load">{{ loading ? '正在重试…' : '重新加载趋势' }}</Button>
+    </div>
+    <div v-else-if="result" class="stats-trend-canvas">
       <LineChart
         :data="chartData" :categories="categories" :height="250"
         :curve-type="CurveType.Linear" :line-width="2" dot-variant="default" :dot-size="3"
@@ -73,7 +80,9 @@ function select(selected:number,code:string,state:string){year.value=String(sele
         </template>
       </LineChart>
     </div>
-    <Tabs v-model="activeYear" class="gap-4">
+  </div>
+  <div class="stats-annual-summary">
+    <Tabs v-if="result && chartData.length" v-model="activeYear" class="gap-4">
       <TabsList class="stats-year-tabs" aria-label="选择统计年度"><TabsTrigger v-for="row in result.years" :key="row.year" :value="String(row.year)">{{ row.year }}<span v-if="row===result.years.at(-1)" class="text-[10px]">截至今日</span></TabsTrigger></TabsList>
       <TabsContent v-for="row in result.years" :key="row.year" :value="String(row.year)">
         <div v-if="switchingYear" role="status" :aria-label="`正在加载${requestedYear}年统计`">
@@ -88,8 +97,11 @@ function select(selected:number,code:string,state:string){year.value=String(sele
         </motion.div>
       </TabsContent>
     </Tabs>
-  </template>
-  <TableFailureState v-if="failed" :title="`${target}加载失败`" :compact="!!result" :pending="loading" :description="result ? `已保留${result.year}年的上次结果，请重试。` : '尚未加载年度数据，请重试。'" @retry="load" />
+    <div v-else class="stats-year-counts stats-year-counts-unavailable" aria-label="年度数量尚不可用">
+      <div v-for="(code,i) in TITLE_ORDER" :key="code" class="stats-year-count"><span><i :style="{background:colors[i]}" />{{ TITLES[code] }}</span><Skeleton v-if="loading" class="h-8 w-20 max-w-full" /><strong v-else>—</strong><small>{{ loading ? '正在加载' : '暂无统计' }}</small></div>
+    </div>
+  </div>
+  <TableFailureState v-if="failed && hasTrendData" :title="`${target}加载失败`" :compact="!!result" :pending="loading" :description="result ? `已保留${result.year}年的上次结果，请重试。` : '尚未加载年度数据，请重试。'" @retry="load" />
   <div class="stats-panel-foot"><span v-if="switchingYear">{{ requestedYear ? `${requestedYear}年` : '本年' }}统计加载中…</span><span v-else>{{ result?.year===Number(result?.evaluationDay.slice(0,4))?'本年截至评价日':'历史年末存量' }} · {{ selectedYear?.evaluationDay ?? '—' }}</span><DisclosurePanel title="统计口径" compact><p>按当前已录入证据重算，非当年系统归档；各称号独立统计。历史取上海年末，本年取评价日。迁入本身不授予称号，也不抵消现行规则中的迁出排除。未确定的历史状态单列待核。</p></DisclosurePanel></div>
   <StatsDetailSheet v-model:open="open" title="年度企业明细" :target="target" :source="result ? `${result.year}年 · ${TITLES[result.title??'']} · ${result.status==='effective'?'有效':'待核'} · 第${result.page}页` : undefined" :loading="loading" :failed="failed" @retry="load">
     <div class="grid gap-3 sm:grid-cols-3"><Select v-model="year"><SelectTrigger aria-label="年度"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="today">本年截至评价日</SelectItem><SelectItem v-for="row in result?.years" :key="row.year" :value="String(row.year)">{{ row.year }}年</SelectItem></SelectContent></Select><Select v-model="title"><SelectTrigger aria-label="年度称号"><SelectValue /></SelectTrigger><SelectContent><SelectItem v-for="code in TITLE_ORDER" :key="code" :value="code">{{ TITLES[code] }}</SelectItem></SelectContent></Select><Select v-model="status"><SelectTrigger aria-label="年度资格状态"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="effective">有效</SelectItem><SelectItem value="pending">待核</SelectItem></SelectContent></Select></div>

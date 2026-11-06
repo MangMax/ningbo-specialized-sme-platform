@@ -66,3 +66,11 @@
   .stats-district-panel .stats-district-placeholder{flex:1;min-height:0}
   .stats-district-panel .stats-district-bars{flex:1;min-height:0;max-height:none}
 }
+
+.stats-trend-frame{height:250px;flex-shrink:0;min-width:0}
+.stats-trend-state{height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;padding:24px;text-align:center;border:1px dashed var(--border);border-radius:8px;background:var(--muted)}
+.stats-trend-state h3{font-size:15px;font-weight:600;color:var(--foreground)}
+.stats-trend-state p{margin-top:6px;max-width:320px;font-size:13px;line-height:1.6;color:var(--muted-foreground)}
+.stats-annual-summary{min-height:140px}
+.stats-year-counts-unavailable{padding-top:48px}
+.stats-chart-legend button:disabled{cursor:default;opacity:.6}
