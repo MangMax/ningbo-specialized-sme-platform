@@ -56,7 +56,7 @@ const NAME = '合成跳页企业'
 const RETURN = '/?q=%E5%90%88%E6%88%90%E8%B7%B3%E9%A1%B5%E4%BC%81%E4%B8%9A&expand=204'
 const hash = data => createHash('sha256').update(data).digest('hex')
 const fault = option('fault', '')
-const faults = ['wrong-file', 'page80', 'span', 'return-collapsed', 'word-failed', 'before-start', 'attach', 'chrome-exit']
+const faults = ['wrong-file', 'page80', 'span', 'return-collapsed', 'return-scroll', 'list-scroll', 'drawer-focus', 'word-failed', 'before-start', 'attach', 'chrome-exit']
 assert(!fault || faults.includes(fault), 'Unknown fault')
 let root, server, chrome, builder, cdp, db, baseline, sourceHashes, base, interrupted
 const failures = []
@@ -121,6 +121,15 @@ async function fixture() {
     db.prepare("INSERT INTO record(id,enterprise_id,title_code,source) VALUES(?,?,'specialized_sme','jxj')").run(id,id)
     db.prepare("INSERT INTO record_event(id,record_id,event_type,year) VALUES(?,?,'award',2026)").run(id,id)
     db.prepare('INSERT INTO record_evidence(id,record_event_id,source_file,attachment,list_no,page) VALUES(?,?,?,\'合成附件\',6,?)').run(id,id,file,page)
+  }
+  // Real, valid business rows provide scroll extent; no spacer DOM is injected.
+  for (let i = 0; i < 24; i++) {
+    const id = 1000 + i
+    const name = `${NAME}${String(i).padStart(2, '0')}`
+    db.prepare('INSERT INTO enterprise(id,name,name_norm) VALUES(?,?,?)').run(id,name,name)
+    db.prepare("INSERT INTO record(id,enterprise_id,title_code,source) VALUES(?,?,'specialized_sme','jxj')").run(id,id)
+    db.prepare("INSERT INTO record_event(id,record_id,event_type,year) VALUES(?,?,'award',2026)").run(id,id)
+    db.prepare("INSERT INTO record_event(id,record_id,event_type,year) VALUES(?,204,'award',?)").run(2000+i,2000+i)
   }
   for (const [index, file] of [PDF, WORD].entries()) {
     const data = readFileSync(join(root, 'files', file))
@@ -204,6 +213,9 @@ async function page(width, url, task) {
         writeFileSync(join(root, `failure-${width}-${Date.now()}.png`),Buffer.from(screen.data,'base64'))
         const state = await cdp.send('Runtime.evaluate', {expression:'document.body.innerText',returnByValue:true},sessionId)
         console.error('PAGE STATE',state.result.value)
+        const observed = await cdp.send('Runtime.evaluate', {expression:`JSON.stringify({url:location.href,scrollY,tableScroll:document.querySelector('[data-testid="enterprise-table-scroll"]')?.scrollTop,active:{tag:document.activeElement?.tagName,id:document.activeElement?.id},disclosures:[...document.querySelectorAll('#record-event-204 button')].map(b=>({text:b.textContent.trim(),expanded:b.getAttribute('aria-expanded')})),saved:sessionStorage.getItem('roster:evidence-preview-return')})`,returnByValue:true},sessionId)
+        writeFileSync(join(root, `failure-state-${width}-${Date.now()}.json`),observed.result.value)
+        console.error('FAILURE OBSERVATION',observed.result.value)
       } catch (captureError) { console.error('Capture failure',captureError.message) }
     }
     throw error
@@ -227,44 +239,81 @@ async function original({ev,wait,send}) {
   const shot = await send('Page.captureScreenshot',{format:'png'})
   writeFileSync(join(root,`original-direct-${await ev('innerWidth')}.png`),Buffer.from(shot.data,'base64'))
 }
+const trigger = `[...document.querySelectorAll('[data-testid="enterprise-name-trigger"]')].find(b=>b.textContent.trim()===${JSON.stringify(NAME)})`
+const tableScroll = `document.querySelector('[data-testid="enterprise-table-scroll"]')`
+const fullDetail = `[...document.querySelectorAll('a')].find(a=>a.textContent.trim()==='完整企业页')`
+const noOverflow = 'document.documentElement.scrollWidth <= document.documentElement.clientWidth'
 async function checkChain(width) {
-  await page(width,RETURN,async api => {
+  await page(width,RETURN.replace('&expand=204',''),async api => {
     const {ev,wait,click,send} = api
-    await wait('drawer evidence disclosure', `!!document.querySelector('[data-testid=enterprise-evidence] button')`)
-    await click(`document.querySelector('[data-testid=enterprise-evidence] button')`)
-    await wait('target evidence ready',`${row(PDF)}?.textContent.includes('合成附件')`)
-    assert(await ev(`document.body.innerText.includes('${NAME}') && !document.body.innerText.includes('合成待核企业') && !document.body.innerText.includes('合成Word企业')`),'actual filtered result')
+    await wait('real list trigger', `!!${trigger}`)
+    assert(await ev(`document.querySelectorAll('[data-testid="enterprise-name-trigger"]').length >= 20 && !document.body.innerText.includes('合成待核企业') && !document.body.innerText.includes('合成Word企业')`),'actual nontrivial filtered result')
+    await click(trigger)
+    await wait('drawer ready', `!!${fullDetail}`)
+    await send('Input.dispatchKeyEvent',{type:'keyDown',key:'Escape',code:'Escape',windowsVirtualKeyCode:27})
+    await send('Input.dispatchKeyEvent',{type:'keyUp',key:'Escape',code:'Escape',windowsVirtualKeyCode:27})
+    await wait('drawer closed', `!document.querySelector('[role="dialog"]')`)
+    if (fault === 'drawer-focus') await ev('document.activeElement.blur()')
+    await wait('drawer close restores actual list button focus', `document.activeElement === ${trigger}`)
+    await click(trigger)
+    await wait('drawer reopened', `!!${fullDetail} && new URL(location.href).searchParams.get('expand')==='204'`)
+    // Background list scroll is independently saved by the existing drawer link.
+    await ev(`${tableScroll}.scrollTop = 360`)
+    const listPosition = await ev(`({y:scrollY,top:${tableScroll}.scrollTop})`)
+    assert(listPosition.top > 100, 'nonzero list scroll precondition')
+    const listReturn = await ev('location.pathname+location.search')
+    const expectedDetail = '/enterprises/204?back=' + encodeURIComponent(listReturn.slice(2))
+    assert.equal(await ev(`new URL(${fullDetail}.href).pathname+new URL(${fullDetail}.href).search`),expectedDetail)
+    await click(fullDetail)
+    await wait('clicked exact detail',`location.pathname+location.search===${JSON.stringify(expectedDetail)}`)
+    await detail(api, PDF, 204)
     if (fault === 'wrong-file' || fault === 'page80') await ev(`(() => { const a=${link(PDF)}[0]; const u=new URL(a.href); u.searchParams.set('${fault === 'wrong-file' ? 'file' : 'page'}','${fault === 'wrong-file' ? 'wrong/p008.pdf' : '80'}'); a.href=u.href; })()`)
     if (fault === 'span') await ev(`(() => {const a=${link(PDF)}[0];const s=document.createElement('span');s.textContent=a.textContent;a.replaceWith(s)})()`)
-    await assertLink(ev,RETURN)
+    await assertLink(ev,expectedDetail)
     await ev(`${link(PDF)}[0].scrollIntoView({block:'center'})`)
-    const top = await ev(`${link(PDF)}[0].getBoundingClientRect().top`)
+    const position = await ev(`({y:scrollY,top:${link(PDF)}[0].getBoundingClientRect().top})`)
+    assert(position.y > 100, 'nonzero detail scroll precondition')
+    console.log('CHAIN PRECONDITIONS',JSON.stringify({width,listReturn,expectedDetail,listPosition,position}))
     await click(`${link(PDF)}[0]`)
     await wait('clicked preview',`location.pathname === '/preview'`)
-    assert(await ev(`JSON.parse(sessionStorage.getItem('roster:evidence-preview-return') || '[]').some(x=>x.back===${JSON.stringify(RETURN)})`),'real click executed return position handler')
+    const previewUrl = new URL(await ev('location.href'))
+    assert.deepEqual(previewUrl.searchParams.getAll('file'),[PDF])
+    assert.deepEqual(previewUrl.searchParams.getAll('page'),['8'])
+    assert.deepEqual(previewUrl.searchParams.getAll('back'),[expectedDetail])
+    assert(await ev(`JSON.parse(sessionStorage.getItem('roster:evidence-preview-return') || '[]').some(x=>x.back===${JSON.stringify(expectedDetail)} && x.scrollY>100)`),'real detail click saved nonzero return position')
     await original(api)
+    assert(await ev(noOverflow), 'preview no horizontal overflow')
     const shot = await send('Page.captureScreenshot',{format:'png'})
     writeFileSync(join(root,`original-${width}.png`),Buffer.from(shot.data,'base64'))
-    await click(`[...document.querySelectorAll('a')].find(a=>a.textContent.trim()==='返回企业列表')`)
-    await wait('return URL exact',`location.pathname+location.search === ${JSON.stringify(RETURN)}`)
-    await wait('returned expansion',`${row(PDF)}?.textContent.includes('合成附件')`)
-    if (fault === 'return-collapsed') await ev(`${row(PDF)}.remove()`)
-    await assertLink(ev,RETURN)
-    assert(await ev(`document.body.innerText.includes('${NAME}') && !document.body.innerText.includes('合成待核企业')`),'returned actual filter/enterprise')
-    await wait('return visible position',`Math.abs((${link(PDF)}[0]?.getBoundingClientRect().top ?? -9999)-${top}) < 5`)
-    assert(await ev('document.documentElement.scrollWidth <= document.documentElement.clientWidth'),'no horizontal overflow')
+    if (fault === 'return-collapsed') await ev(`sessionStorage.removeItem('roster:enterprise-detail-open-evidence')`)
+    if (fault === 'return-scroll' || fault === 'list-scroll') await ev(`(() => {const key='roster:evidence-preview-return'; const states=JSON.parse(sessionStorage.getItem(key)); sessionStorage.setItem(key,JSON.stringify(states.map(s=>s.back===${JSON.stringify(fault === 'return-scroll' ? expectedDetail : listReturn)}?{...s,scrollY:0,scrollTop:0}:s)))})()`)
+    await click(`[...document.querySelectorAll('a')].find(a=>a.textContent.trim()==='返回企业详情')`)
+    await wait('return detail URL exact',`location.pathname+location.search === ${JSON.stringify(expectedDetail)}`)
+    await wait('returned detail expansion',`${row(PDF)}?.textContent.includes('合成附件')`)
+    await assertLink(ev,expectedDetail)
+    await wait('detail nonzero position restored',`scrollY>100 && Math.abs(scrollY-${position.y})<5 && Math.abs((${link(PDF)}[0]?.getBoundingClientRect().top ?? -9999)-${position.top})<5`)
+    assert(await ev(noOverflow),'returned detail no horizontal overflow')
+    // There is no route-return anchor-focus contract. Only drawer close has one.
+    await click(`[...document.querySelectorAll('a')].find(a=>a.textContent.trim()==='企业列表' && new URL(a.href).pathname+new URL(a.href).search===${JSON.stringify(listReturn)})`)
+    await wait('return list URL exact',`location.pathname+location.search===${JSON.stringify(listReturn)}`)
+    await wait('returned selected enterprise drawer',`!!${fullDetail} && document.querySelector('[role="dialog"]')?.textContent.includes('${NAME}')`)
+    assert(await ev(`document.querySelectorAll('[data-testid="enterprise-name-trigger"]').length>=20 && !document.body.innerText.includes('合成待核企业') && !document.body.innerText.includes('合成Word企业')`),'returned actual filter results')
+    await wait('list nonzero position restored',`${tableScroll}?.scrollTop>100 && Math.abs(${tableScroll}.scrollTop-${listPosition.top})<5 && Math.abs(scrollY-${listPosition.y})<5`)
+    assert(await ev(noOverflow),'returned list no horizontal overflow')
+    console.log('CHAIN POSITIONS',JSON.stringify({width,expectedDetail,listReturn,listPosition,position}))
   })
 }
-async function detail(api, file) {
+async function detail(api, file, eventId) {
   const {wait,click} = api
-  await wait('detail event', `[...document.querySelectorAll('button')].some(b=>b.textContent.trim()==='来源记录')`)
-  await click(`[...document.querySelectorAll('button')].find(b=>b.textContent.trim()==='来源记录')`)
+  const scope = eventId ? `document.querySelector('#record-event-${eventId}')` : 'document'
+  await wait('detail event', `[...(${scope}?.querySelectorAll('button') || [])].some(b=>b.textContent.trim()==='来源记录')`)
+  await click(`[...${scope}.querySelectorAll('button')].find(b=>b.textContent.trim()==='来源记录')`)
   await wait('official disclosure', `[...document.querySelectorAll('button')].some(b=>b.textContent.trim()==='正式文件与已登记出处')`)
   await click(`[...document.querySelectorAll('button')].find(b=>b.textContent.trim()==='正式文件与已登记出处')`)
   await wait('exact evidence row', `${row(file)}?.textContent.includes('合成附件')`)
 }
 async function checkDetail() {
-  await page(1440,'/enterprises/204',async api => { await detail(api, PDF); await assertLink(api.ev,'/enterprises/204') })
+  await page(1440,'/enterprises/204',async api => { await detail(api, PDF, 204); await assertLink(api.ev,'/enterprises/204') })
   for (const [id,file] of [[6,PDF],[715,WORD]]) await page(1440,`/enterprises/${id}`,async api => {
     await detail(api, file)
     assert.equal(await api.ev(`([...(${row(file)}?.querySelectorAll('a') || [])].filter(a=>/^第\\s*\\d+\\s*页$/.test(a.textContent.trim()))).length`),0)
