@@ -1,9 +1,8 @@
 <script setup lang="ts">
 import { computed, ref, shallowRef, watch } from 'vue'
 import { MOVEMENT_KINDS, type MovementStatistics, type MovementKind } from '~~/lib/roster/movement-statistics'
-import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { ArrowDownLeft, ArrowUpRight, Minus, RefreshCw } from '@lucide/vue'
+import { ArrowDownLeft, ArrowUpRight, Minus } from '@lucide/vue'
 const labels = { moved_in: '迁入', moved_out: '迁出', cancelled: '注销' }
 const year = ref('all')
 const kind = ref<MovementKind>('moved_in')
@@ -35,7 +34,7 @@ function select(k: MovementKind, s: string) { year.value = result.value?.year ??
 </script>
 <template>
 <section class="stats-movement-panel" aria-labelledby="movements-title" :aria-busy="loading">
-  <div class="stats-movement-heading"><div><h2 id="movements-title">企业流动与注销</h2><p>已确认的主体事实</p></div><div class="flex items-center gap-1"><Select :model-value="year" @update:model-value="year=String($event);page=1"><SelectTrigger aria-label="发生年" class="w-36"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">全部发生年</SelectItem><SelectItem value="unknown">发生年未知</SelectItem><SelectItem v-for="y in result?.years ?? []" :key="y" :value="y">{{ y }} 年</SelectItem></SelectContent></Select><Button variant="ghost" size="icon" aria-label="刷新主体事实" :disabled="loading" @click="load"><RefreshCw class="size-3.5" /></Button></div></div>
+  <div class="stats-movement-heading"><div><h2 id="movements-title">企业流动与注销</h2><p>已确认的主体事实</p></div><div class="flex items-center gap-1"><Select :model-value="year" @update:model-value="year=String($event);page=1"><SelectTrigger aria-label="发生年" class="w-36"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">全部发生年</SelectItem><SelectItem value="unknown">发生年未知</SelectItem><SelectItem v-for="y in result?.years ?? []" :key="y" :value="y">{{ y }} 年</SelectItem></SelectContent></Select></div></div>
   <div class="stats-movement-metrics">
     <article v-for="bucket in buckets" :key="bucket.kind" class="stats-movement-item">
       <div class="stats-movement-label"><span class="stats-movement-icon" :class="`stats-movement-icon--${bucket.kind}`" aria-hidden="true"><component :is="bucket.kind==='moved_in'?ArrowDownLeft:bucket.kind==='moved_out'?ArrowUpRight:Minus" class="size-4" /></span><span>{{ labels[bucket.kind] }}</span></div>

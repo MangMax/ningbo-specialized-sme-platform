@@ -5,7 +5,6 @@ const reducedMotion = useReducedMotion()
 import StatisticsMovementsSection from '@/components/statistics/StatisticsMovementsSection.vue'
 import type { PublishedStatistics } from '~~/lib/roster/published-statistics'
 import { TITLES, TITLE_ORDER } from '~~/lib/labels'
-import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 const title = ref('')
 const status = ref('confirmed')
@@ -40,7 +39,7 @@ import { ArrowUpRight, ArrowRight } from '@lucide/vue'
     <div class="stats-header-note"><span class="stats-live-dot" />公布规模 · 有效存量</div>
   </header>
   <section aria-labelledby="published-title" class="stats-published">
-    <div class="stats-section-heading"><div><h2 id="published-title">累计正式公布</h2><p>同一企业同一称号计一次，保留历年公布事实</p></div><Button variant="ghost" size="sm" :disabled="loading" @click="load">刷新</Button></div>
+    <div class="stats-section-heading"><div><h2 id="published-title">累计正式公布</h2><p>同一企业同一称号计一次，保留历年公布事实</p></div></div>
     <div class="stats-metric-grid">
       <motion.article :initial="{ opacity: 0, y: 8 }" :animate="{ opacity: 1, y: 0 }" :transition="{ duration: reducedMotion ? 0 : 0.22, delay: reducedMotion ? 0 : index * 0.04, ease: 'easeOut' }" v-for="(code,index) in TITLE_ORDER" :key="code" class="stats-metric" :class="`stats-metric--${index}`">
         <div class="stats-metric-label"><span>{{ TITLES[code] }}</span><span class="stats-tier-mark" /></div>

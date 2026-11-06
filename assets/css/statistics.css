@@ -64,3 +64,11 @@
 .stats-district-content,.stats-district-placeholder{display:flex;flex-direction:column;gap:16px}.stats-district-content[data-state=inactive]{display:none}.stats-district-content{min-height:277px}
 
 .stats-year-tabs{width:100%;justify-content:flex-start;overflow-x:auto;flex-shrink:0}.stats-year-tabs [role=tab]{flex-shrink:0;flex-grow:1}
+
+/* Let the annual chart determine the row height; use the district card's remaining space. */
+@media(min-width:768px){
+  .stats-district-panel>[data-slot=tabs]{flex:1;min-height:0;contain:size}
+  .stats-district-panel .stats-district-content{flex:1;min-height:0}
+  .stats-district-panel .stats-district-placeholder{flex:1;min-height:0}
+  .stats-district-panel .stats-district-bars{flex:1;min-height:0;max-height:none}
+}

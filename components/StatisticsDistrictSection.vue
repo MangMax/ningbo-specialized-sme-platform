@@ -4,7 +4,6 @@ const reducedMotion = useReducedMotion()
 import { computed, onBeforeUnmount, ref, shallowRef, watch } from 'vue'
 import type { DistrictStatistics } from '~~/lib/roster/district-statistics'
 import { TITLES, TITLE_ORDER } from '~~/lib/labels'
-import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
@@ -33,7 +32,7 @@ const districtMax=computed(()=>Math.max(1,...districtRows.value.map(b=>b.n)))
 </script>
 <template>
 <section class="stats-chart-panel stats-district-panel" aria-labelledby="district-title" :aria-busy="loading">
-  <header class="stats-panel-heading"><div><p class="stats-eyebrow">属地分布</p><h2 id="district-title">当前有效企业</h2></div><Button variant="ghost" size="sm" :disabled="loading" @click="load">刷新</Button></header>
+  <header class="stats-panel-heading"><div><p class="stats-eyebrow">属地分布</p><h2 id="district-title">当前有效企业</h2></div></header>
   <Tabs v-model="title" class="gap-4" @update:model-value="district='all'; page=1">
     <TabsList class="w-full" aria-label="区县统计称号">
       <TabsTrigger v-for="code in TITLE_ORDER" :key="code" :value="code" class="text-xs">{{ code==='little_giant'?'小巨人':code==='specialized_sme'?'专精特新':'创新型' }}</TabsTrigger>

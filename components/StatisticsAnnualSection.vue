@@ -5,7 +5,6 @@ const reducedMotion = useReducedMotion()
 import { computed, onBeforeUnmount, ref, shallowRef, watch } from 'vue'
 import type { AnnualStatistics } from '~~/lib/roster/annual-statistics'
 import { TITLES, TITLE_ORDER } from '~~/lib/labels'
-import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
 import { ArrowUpRight } from '@lucide/vue'
@@ -53,7 +52,7 @@ function select(selected:number,code:string,state:string){year.value=String(sele
 </script>
 <template>
 <section class="stats-chart-panel" aria-labelledby="annual-title" :aria-busy="loading">
-  <header class="stats-panel-heading"><div><p class="stats-eyebrow">有效存量</p><h2 id="annual-title">各称号年度变化</h2></div><Button variant="ghost" size="sm" :disabled="loading" @click="load">刷新</Button></header>
+  <header class="stats-panel-heading"><div><p class="stats-eyebrow">有效存量</p><h2 id="annual-title">各称号年度变化</h2></div></header>
   <div class="stats-chart-legend"><button v-for="line in lines" :key="line.code" type="button" :aria-pressed="!hiddenTitles.includes(line.code)" :aria-label="`${TITLES[line.code]}趋势线`" @click="toggleTitle(line.code)"><i :style="{background:line.color}" />{{ TITLES[line.code] }}</button></div>
   <Skeleton v-if="!result && loading" class="h-64 w-full" />
   <template v-if="result">
@@ -92,7 +91,7 @@ function select(selected:number,code:string,state:string){year.value=String(sele
     </Tabs>
   </template>
   <TableFailureState v-if="failed" :title="`${target}加载失败`" :compact="!!result" :pending="loading" :description="result ? `已保留${result.year}年的上次结果，请重试。` : '尚未加载年度数据，请重试。'" @retry="load" />
-  <div class="stats-panel-foot"><span v-if="switchingYear">{{ requestedYear || '本年' }}年统计加载中…</span><span v-else>{{ result?.year===Number(result?.evaluationDay.slice(0,4))?'本年截至评价日':'历史年末存量' }} · {{ selectedYear?.evaluationDay ?? '—' }}</span><DisclosurePanel title="统计口径" compact><p>按当前已录入证据重算，非当年系统归档；各称号独立统计。历史取上海年末，本年取评价日。迁入本身不授予称号，也不抵消现行规则中的迁出排除。未确定的历史状态单列待核。</p></DisclosurePanel></div>
+  <div class="stats-panel-foot"><span v-if="switchingYear">{{ requestedYear ? `${requestedYear}年` : '本年' }}统计加载中…</span><span v-else>{{ result?.year===Number(result?.evaluationDay.slice(0,4))?'本年截至评价日':'历史年末存量' }} · {{ selectedYear?.evaluationDay ?? '—' }}</span><DisclosurePanel title="统计口径" compact><p>按当前已录入证据重算，非当年系统归档；各称号独立统计。历史取上海年末，本年取评价日。迁入本身不授予称号，也不抵消现行规则中的迁出排除。未确定的历史状态单列待核。</p></DisclosurePanel></div>
   <StatsDetailSheet v-model:open="open" title="年度企业明细" :target="target" :source="result ? `${result.year}年 · ${TITLES[result.title??'']} · ${result.status==='effective'?'有效':'待核'} · 第${result.page}页` : undefined" :loading="loading" :failed="failed" @retry="load">
     <div class="grid gap-3 sm:grid-cols-3"><Select v-model="year"><SelectTrigger aria-label="年度"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="today">本年截至评价日</SelectItem><SelectItem v-for="row in result?.years" :key="row.year" :value="String(row.year)">{{ row.year }}年</SelectItem></SelectContent></Select><Select v-model="title"><SelectTrigger aria-label="年度称号"><SelectValue /></SelectTrigger><SelectContent><SelectItem v-for="code in TITLE_ORDER" :key="code" :value="code">{{ TITLES[code] }}</SelectItem></SelectContent></Select><Select v-model="status"><SelectTrigger aria-label="年度资格状态"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="effective">有效</SelectItem><SelectItem value="pending">待核</SelectItem></SelectContent></Select></div>
     <p v-if="result && !result.rows.length" class="stats-empty">此年度与口径暂无企业</p>
