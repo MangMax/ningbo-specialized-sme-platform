@@ -3,6 +3,7 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { afterEach, describe, expect, it } from 'vitest'
 import { CalendarDate } from '@internationalized/date'
 import { TimeFieldRoot } from 'reka-ui'
+import { calendarSelectValue, calendarYearOptions, chooseCalendarSelect } from './helpers/calendar-select'
 import { Calendar } from '../components/ui/calendar'
 import ComparisonDateTimePicker from '../components/record-correspondence/ComparisonDateTimePicker.vue'
 
@@ -54,14 +55,8 @@ describe('comparison calendar and segmented time picker', () => {
 })
 
 async function navigate(year: string, month: string) {
-  const selects = document.querySelectorAll('select')
-  expect(selects).toHaveLength(2)
-  for (const [label, next] of [['年份', year], ['月份', month]] as const) {
-    const select = document.querySelector<HTMLSelectElement>(`select[aria-label="${label}"]`)!
-    select.value = next
-    select!.dispatchEvent(new Event('change', { bubbles: true }))
-    await flushPromises()
-  }
+  await chooseCalendarSelect('年份', year)
+  await chooseCalendarSelect('月份', month)
 }
 async function clickDay(day: string) {
   const cell = document.querySelector<HTMLElement>(`[data-value="${day}"]`)
@@ -86,9 +81,8 @@ it('discards month-only browsing on close and reopens at the selected month end'
   done.click(); await flushPromises()
   expect(view.emitted('update:modelValue')).toBeUndefined()
   await view.get('#cutoff').trigger('click'); await flushPromises()
-  const selects = document.querySelectorAll('select')
-  expect(selects[0]!.value).toBe('1')
-  expect(selects[1]!.value).toBe('2024')
+  expect(calendarSelectValue('月份')).toBe('1')
+  expect(calendarSelectValue('年份')).toBe('2024')
   await navigate('2024', '4')
   await clickDay('2024-04-30')
   expect(view.emitted('update:modelValue')?.at(-1)).toEqual(['2024-04-30T23:59:58.987'])
@@ -97,9 +91,8 @@ it('discards month-only browsing on close and reopens at the selected month end'
 it('opens empty at the local current month without filling and selects midnight through a real day', async () => {
   const view = await start('')
   const now = new Date()
-  const selects = document.querySelectorAll('select')
-  expect(selects[0]!.value).toBe(String(now.getMonth() + 1))
-  expect(selects[1]!.value).toBe(String(now.getFullYear()))
+  expect(calendarSelectValue('月份')).toBe(String(now.getMonth() + 1))
+  expect(calendarSelectValue('年份')).toBe(String(now.getFullYear()))
   expect(view.emitted('update:modelValue')).toBeUndefined()
   await navigate('2024', '2')
   await clickDay('2024-02-29')
@@ -108,10 +101,10 @@ it('opens empty at the local current month without filling and selects midnight 
 
 it('keeps an old selected year and supports adjacent-month arrows and day selection', async () => {
   const view = await start('1800-12-31T12:34:56.789')
-  expect(document.querySelectorAll('select')[1]!.value).toBe('1800')
+  expect(calendarSelectValue('年份')).toBe('1800')
   document.querySelector<HTMLButtonElement>('[aria-label="下一月"]')!.click(); await flushPromises()
-  expect(document.querySelectorAll('select')[0]!.value).toBe('1')
-  expect(document.querySelectorAll('select')[1]!.value).toBe('1801')
+  expect(calendarSelectValue('月份')).toBe('1')
+  expect(calendarSelectValue('年份')).toBe('1801')
   expect(view.emitted('update:modelValue')).toBeUndefined()
   const day = document.querySelector<HTMLElement>('[data-value="1801-01-31"]')!
   day.click()
@@ -124,21 +117,20 @@ it.each(['', '1800-12-31T12:34:56.789'])('keeps default years reachable while br
   const currentYear = new Date().getFullYear()
   const earliestYear = String(currentYear - 100)
   const latestYear = String(currentYear + 10)
-  const years = () => document.querySelector<HTMLSelectElement>('select[aria-label="年份"]')!
-  const options = () => [...years().options].map(option => option.value)
-  expect(options()).toContain(earliestYear)
-  expect(options()).toContain(latestYear)
-  if (cutoff) expect(years().value).toBe('1800')
+  const options = calendarYearOptions
+  expect(await options()).toContain(earliestYear)
+  expect(await options()).toContain(latestYear)
+  if (cutoff) expect(calendarSelectValue('年份')).toBe('1800')
   await navigate(earliestYear, '1')
-  expect(years().value).toBe(earliestYear)
-  expect(options()).toContain(latestYear)
+  expect(calendarSelectValue('年份')).toBe(earliestYear)
+  expect(await options()).toContain(latestYear)
   await navigate(latestYear, '12')
-  expect(years().value).toBe(latestYear)
-  expect(options()).toContain(earliestYear)
+  expect(calendarSelectValue('年份')).toBe(latestYear)
+  expect(await options()).toContain(earliestYear)
   if (cutoff) {
-    expect(options()).toContain('1800')
+    expect(await options()).toContain('1800')
     await navigate('1800', '12')
-    expect(years().value).toBe('1800')
+    expect(calendarSelectValue('年份')).toBe('1800')
   }
   expect(view.emitted('update:modelValue')).toBeUndefined()
 })
@@ -155,11 +147,11 @@ it.each([false, true])('preserves caller date limits with custom year range %s',
     attachTo: document.body,
   })
   await flushPromises()
-  const years = () => [...document.querySelector<HTMLSelectElement>('select[aria-label="年份"]')!.options].map(option => option.value)
+  const years = calendarYearOptions
   const expectedYears = customRange ? ['2023', '2024', '2025'] : ['2024']
-  expect(years()).toEqual(expectedYears)
+  expect(await years()).toEqual(expectedYears)
   await navigate('2024', '3')
-  expect(years()).toEqual(expectedYears)
+  expect(await years()).toEqual(expectedYears)
   expect(wrapper.emitted('update:modelValue')).toBeUndefined()
   expect(document.querySelector('[data-value="2024-03-21"]')!.hasAttribute('data-disabled')).toBe(true)
   await clickDay('2024-03-21')

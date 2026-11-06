@@ -8,7 +8,7 @@ import { cn } from "@/lib/utils"
 import { CalendarRoot, useDateFormatter, useForwardPropsEmits } from "reka-ui"
 import { createYear, createYearRange, toDate } from "reka-ui/date"
 import { computed } from "vue"
-import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
+import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { CalendarCell, CalendarCellTrigger, CalendarGrid, CalendarGridBody, CalendarGridHead, CalendarGridRow, CalendarHeadCell, CalendarHeader, CalendarHeading, CalendarNextButton, CalendarPrevButton } from "."
 
 const props = withDefaults(defineProps<CalendarRootProps & { class?: HTMLAttributes["class"], layout?: LayoutTypes, yearRange?: DateValue[] }>(), {
@@ -51,54 +51,36 @@ const forwarded = useForwardPropsEmits(delegatedProps, emits)
 
 <template>
   <DefineMonthTemplate v-slot="{ date }">
-    <div class="**:data-[slot=native-select-icon]:right-1">
-      <div class="relative">
-        <div class="absolute inset-0 flex h-full items-center text-sm pl-2 pointer-events-none">
-          {{ formatter.custom(toDate(date), { month: 'short' }) }}
-        </div>
-        <NativeSelect
-          class="text-xs h-8 pr-6 pl-2 text-transparent relative"
-          aria-label="月份"
-          :model-value="date.month"
-          @change="(e: Event) => {
-            placeholder = placeholder.set({
-              month: Number((e?.target as any)?.value),
-            })
-          }"
-        >
-          <NativeSelectOption v-for="(month) in createYear({ dateObj: date })" :key="month.toString()" :value="month.month" :selected="date.month === month.month">
+    <Select :model-value="String(date.month)" @update:model-value="value => placeholder = placeholder.set({ month: Number(value) })">
+      <SelectTrigger size="sm" class="gap-1 px-2" aria-label="月份">
+        <SelectValue>{{ formatter.custom(toDate(date), { month: 'short' }) }}</SelectValue>
+      </SelectTrigger>
+      <SelectContent>
+        <SelectGroup>
+          <SelectItem v-for="month in createYear({ dateObj: date })" :key="month.toString()" :value="String(month.month)">
             {{ formatter.custom(toDate(month), { month: 'short' }) }}
-          </NativeSelectOption>
-        </NativeSelect>
-      </div>
-    </div>
+          </SelectItem>
+        </SelectGroup>
+      </SelectContent>
+    </Select>
   </DefineMonthTemplate>
 
   <DefineYearTemplate v-slot="{ date }">
-    <div class="**:data-[slot=native-select-icon]:right-1">
-      <div class="relative">
-        <div class="absolute inset-0 flex h-full items-center text-sm pl-2 pointer-events-none">
-          {{ formatter.custom(toDate(date), { year: 'numeric' }) }}
-        </div>
-        <NativeSelect
-          class="text-xs h-8 pr-6 pl-2 text-transparent relative"
-          aria-label="年份"
-          :model-value="date.year"
-          @change="(e: Event) => {
-            placeholder = placeholder.set({
-              year: Number((e?.target as any)?.value),
-            })
-          }"
-        >
-          <NativeSelectOption v-if="!yearRange.some(year => year.year === date.year)" :value="date.year" :selected="true">
+    <Select :model-value="String(date.year)" @update:model-value="value => placeholder = placeholder.set({ year: Number(value) })">
+      <SelectTrigger size="sm" class="gap-1 px-2" aria-label="年份">
+        <SelectValue>{{ formatter.custom(toDate(date), { year: 'numeric' }) }}</SelectValue>
+      </SelectTrigger>
+      <SelectContent>
+        <SelectGroup>
+          <SelectItem v-if="!yearRange.some(year => year.year === date.year)" :value="String(date.year)">
             {{ formatter.custom(toDate(date), { year: 'numeric' }) }}
-          </NativeSelectOption>
-          <NativeSelectOption v-for="(year) in yearRange" :key="year.toString()" :value="year.year" :selected="date.year === year.year">
+          </SelectItem>
+          <SelectItem v-for="year in yearRange" :key="year.toString()" :value="String(year.year)">
             {{ formatter.custom(toDate(year), { year: 'numeric' }) }}
-          </NativeSelectOption>
-        </NativeSelect>
-      </div>
-    </div>
+          </SelectItem>
+        </SelectGroup>
+      </SelectContent>
+    </Select>
   </DefineYearTemplate>
 
   <CalendarRoot

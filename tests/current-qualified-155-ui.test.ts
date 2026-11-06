@@ -1,5 +1,6 @@
 // @vitest-environment happy-dom
-import { DOMWrapper, flushPromises, mount } from '@vue/test-utils'
+import { chooseCalendarSelect } from './helpers/calendar-select'
+import { flushPromises, mount } from '@vue/test-utils'
 import { afterEach, expect, it, vi } from 'vitest'
 import { createPinia } from 'pinia'
 import { PiniaColada } from '@pinia/colada'
@@ -76,8 +77,8 @@ it('applies a complete recognition range to the URL, removes its chip, and reset
   expect(pickers).toHaveLength(2)
   for (const [index, month, date] of [[0, '1', '2024-01-01'], [1, '12', '2024-12-31']] as const) {
     await pickers[index]!.get('button').trigger('click'); await flushPromises()
-    await new DOMWrapper(document.querySelector<HTMLSelectElement>('select[aria-label="年份"]')!).setValue('2024')
-    await new DOMWrapper(document.querySelector<HTMLSelectElement>('select[aria-label="月份"]')!).setValue(month)
+    await chooseCalendarSelect('年份', '2024')
+    await chooseCalendarSelect('月份', month)
     await flushPromises()
     expect(router.currentRoute.value.query.recognitionFrom).toBeUndefined()
     expect(router.currentRoute.value.query.recognitionTo).toBeUndefined()
