@@ -10,19 +10,28 @@
  *   retaining old rows, and clear/policy cancel writing nothing.
  *
  * It never touches the parent service or business data. Raw results are written to
- * LOGS_UI_BROWSER_OUT/browser-results.json (default: a fresh temp dir).
+ * LOGS_UI_BROWSER_OUT/<fresh-run>/browser-results.json (default: a fresh temp dir).
  *
  * Usage: node scripts/verify-logs-ui-browser.mjs
  */
 import assert from 'node:assert/strict'
-import { spawn } from 'node:child_process'
+import { execFileSync, spawn } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 
 const worktree = resolve('.')
-const outDir = process.env.LOGS_UI_BROWSER_OUT || mkdtempSync(join(tmpdir(), 'logs-ui-browser-'))
-mkdirSync(outDir, { recursive: true })
+const evidenceRoot = resolve(process.env.LOGS_UI_BROWSER_OUT || tmpdir())
+mkdirSync(evidenceRoot, { recursive: true })
+// Never read or overwrite a previous run's manifest, logs, or results.
+const outDir = mkdtempSync(join(evidenceRoot, 'run-'))
+const source = {
+  sha: execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(),
+  tree: execFileSync('git', ['rev-parse', 'HEAD^{tree}'], { encoding: 'utf8' }).trim()
+}
+const fixtureTimeoutMs = Number(process.env.LOGS_UI_BROWSER_FIXTURE_TIMEOUT_MS || 180000)
+assert.ok(Number.isSafeInteger(fixtureTimeoutMs) && fixtureTimeoutMs > 0, 'invalid fixture timeout')
+console.log(JSON.stringify({ outDir }))
 const manifestPath = join(outDir, 'fixture-manifest.json')
 const resultsPath = join(outDir, 'browser-results.json')
 const fixtureLogPath = join(outDir, 'fixture.log')
@@ -37,10 +46,18 @@ const fixture = spawn(process.execPath, ['scripts/verify-logs-ui-usability.mjs',
 let fixtureLog = ''
 fixture.stdout.setEncoding('utf8')
 fixture.stderr.setEncoding('utf8')
-fixture.stdout.on('data', (chunk) => (fixtureLog += chunk))
-fixture.stderr.on('data', (chunk) => (fixtureLog += chunk))
+const collectFixtureLog = (chunk) => {
+  fixtureLog += chunk
+  writeFileSync(fixtureLogPath, fixtureLog)
+}
+fixture.stdout.on('data', collectFixtureLog)
+fixture.stderr.on('data', collectFixtureLog)
+let fixtureError
+fixture.on('error', (error) => { fixtureError = error })
+const fixtureRunning = () => !fixtureError && fixture.pid && fixture.exitCode === null && fixture.signalCode === null
 function stopFixture() {
-  if (fixture.exitCode === null) fixture.kill('SIGTERM')
+  // Only signal the ChildProcess we spawned, never a PID supplied by a manifest.
+  if (fixtureRunning()) fixture.kill('SIGTERM')
 }
 process.on('exit', stopFixture)
 process.on('SIGINT', () => {
@@ -48,25 +65,61 @@ process.on('SIGINT', () => {
   process.exit(1)
 })
 
-async function readManifest(timeoutMs = 180000) {
+// The producer's pid is its Nuxt child, not the producer itself. It has no
+// nonce: the private output path plus direct parent/command ownership binds it
+// to this invocation. Fail closed if the OS cannot establish that relationship.
+function validateManifest(manifest) {
+  assert.equal(manifest?.synthetic, true, 'manifest is not synthetic')
+  assert.equal(manifest.source?.sha, source.sha, 'manifest source SHA mismatch')
+  assert.equal(manifest.source?.tree, source.tree, 'manifest source tree mismatch')
+  assert.ok(Number.isSafeInteger(manifest.port) && manifest.port > 0 && manifest.port <= 65535, 'invalid manifest port')
+  assert.equal(manifest.base, `http://127.0.0.1:${manifest.port}`, 'manifest base/port mismatch')
+  assert.ok(typeof manifest.pagePath === 'string' && manifest.pagePath.startsWith('/logs?'), 'invalid manifest page path')
+  const page = new URL(manifest.pagePath, manifest.base)
+  assert.equal(page.origin, manifest.base, 'manifest page origin mismatch')
+  assert.ok(page.searchParams.get('from') && page.searchParams.get('to'), 'incomplete manifest time range')
+  assert.ok(Number.isSafeInteger(manifest.pid) && manifest.pid > 0, 'invalid manifest child PID')
+  const processRow = execFileSync('ps', ['-p', String(manifest.pid), '-o', 'ppid=,stat=,command='], {
+    encoding: 'utf8', timeout: 2000
+  }).trim()
+  const [, parent, state, command] = processRow.match(/^(\d+)\s+(\S+)\s+(.+)$/) || []
+  assert.equal(Number(parent), fixture.pid, 'manifest child is not owned by current fixture')
+  assert.ok(state && !state.includes('Z'), 'manifest child has exited')
+  assert.equal(command, `${process.execPath} ${join(worktree, 'node_modules/nuxt/bin/nuxt.mjs')} dev --host 127.0.0.1 --port ${manifest.port}`, 'manifest child command/port mismatch')
+  assert.ok(manifest.realEvent?.requestId, 'incomplete manifest real event')
+  assert.equal(manifest.realNormalEvent?.operation, 'http.request', 'incomplete manifest health event')
+  assert.equal(manifest.realNormalEvent.httpMethod, 'GET', 'invalid manifest health method')
+  assert.equal(manifest.realNormalEvent.httpRoute, '/api/health', 'invalid manifest health route')
+  assert.equal(manifest.realNormalEvent.statusCode, 200, 'manifest health not ready')
+  assert.equal(manifest.realNormalEvent.synthetic, false, 'manifest health is synthetic')
+  assert.ok(manifest.realNormalEvent.requestId, 'incomplete manifest health request')
+  // realNormalEvent is written BEFORE the remaining fixture assertions. Only
+  // this stdout marker confirms that the current producer completed them.
+  assert.ok(fixtureLog.split(/\r?\n/).includes(`Serving synthetic logs fixture at ${manifest.base}${manifest.pagePath}`), 'fixture has not completed readiness checks')
+}
+
+async function readManifest(timeoutMs = fixtureTimeoutMs) {
   const deadline = Date.now() + timeoutMs
+  let lastError = new Error('manifest not written')
   while (Date.now() < deadline) {
-    if (fixture.exitCode !== null) {
+    if (!fixtureRunning()) {
       writeFileSync(fixtureLogPath, fixtureLog)
-      throw new Error(`fixture exited ${fixture.exitCode}\n${fixtureLog.slice(-3000)}`)
+      throw new Error(`fixture exited before readiness (exit=${fixture.exitCode}, signal=${fixture.signalCode}, error=${fixtureError?.message ?? 'none'})\n${fixtureLog.slice(-3000)}`)
     }
     if (existsSync(manifestPath)) {
       try {
         const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
-        if (manifest.realNormalEvent) return manifest
-      } catch {
-        /* manifest may be mid-write */
+        validateManifest(manifest)
+        if (fixtureRunning()) return manifest
+      } catch (error) {
+        // A producer can be mid-write or not ready yet; retain the actual cause.
+        lastError = error
       }
     }
     await sleep(200)
   }
   writeFileSync(fixtureLogPath, fixtureLog)
-  throw new Error('fixture manifest timeout')
+  throw new Error(`fixture manifest timeout: ${lastError.message}\n${fixtureLog.slice(-3000)}`)
 }
 
 const manifest = await readManifest()
