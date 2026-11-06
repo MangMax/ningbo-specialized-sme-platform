@@ -84,6 +84,7 @@ export interface PlatformLiveQueryResult {
   completedAt: string
   rows: PlatformRow[]
   /** Additive raw observation v1. Absent on historical string-only results. */
+  dataRows?: PlatformRawRow[]
   rawData?: PlatformRawData
   pages: PlatformQueryPage[]
   fetchedCount: number
@@ -132,6 +133,7 @@ export const platformQueryResultShape = {
   effectiveConditions: z.object({ name: z.string().optional(), uscc: z.string().optional(), combination: z.literal('and'), sqsj: z.string().optional(), rddqrq: z.string().optional(), whpcyear: z.string().optional(), whpc: z.string().optional(), szq: z.string().optional(), orderField: z.string().optional(), orderDirection: z.string().optional() }),
   titleScope: z.object({ mode: z.enum(['source_default', 'selected']), rdjb: z.array(z.string()) }),
   queriedAt: z.string(), completedAt: z.string(), rows: z.array(z.record(z.string(), z.string())),
+  dataRows: z.array(rawRowSchema).optional(),
   rawData: z.strictObject({ version: z.literal(1), rows: z.array(rawRowSchema), pages: z.array(z.strictObject({ ...positionShape, format: z.enum(['json', 'html-script', 'html-table']), body: z.string() })) }).optional(),
   pages: z.array(z.object({ ...positionShape, maxPage: z.number().int().positive().nullable().optional(), status: z.enum(['success', 'auth_failed', 'failed']), fetchedCount: z.number().int().nonnegative(), declaredTotal: z.number().int().nonnegative().nullable(), error: queryErrorSchema })),
   fetchedCount: z.number().int().nonnegative(), declaredTotal: z.number().int().nonnegative().nullable(),

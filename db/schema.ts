@@ -644,6 +644,8 @@ export const platformQuery = sqliteTable(
     titleCode: text('title_code').references(() => title.code),
     /** 查询时点(ISO 时间)。 */
     queriedAt: text('queried_at').notNull(),
+    /** Latest successful collection with identical complete business content. */
+    lastCollectedAt: text('last_collected_at'),
     /** 四态见上;默认 `not_queried`(「还没查」而不是「没有」)。 */
     status: text('status', {
       enum: ['success', 'failed', 'no_record', 'not_queried', 'partial'],
@@ -729,6 +731,8 @@ export const platformRelation = sqliteTable(
     enterpriseId: integer('enterprise_id').references(() => enterprise.id),
     /** 原始字段(平台那一行/那一块的字段原样)。 */
     rawFields: text('raw_fields', { mode: 'json' }).$type<Record<string, unknown>>(),
+    /** Derived only from rawFields.rdjb by SQLite triggers. */
+    titleRaw: text('title_raw'),
     /** 源文本:关系里明确写出的经信局侧曾用名等原文。 */
     sourceText: text('source_text'),
     /** 统一社会信用代码(`tyshxydm`)。 */
@@ -772,6 +776,7 @@ export const platformRelation = sqliteTable(
     index('platform_relation_relation_key_idx').on(t.relationKey),
     // #83 USCC filtering discovers query IDs without scanning original relation bodies.
     index('platform_relation_uscc_query_idx').on(t.usccRaw, t.queryId),
+    index('platform_relation_title_query_idx').on(t.titleRaw, t.queryId),
     index('platform_relation_current_candidate_cover_idx').on(t.queryId, t.sequenceNo, t.enterpriseId, t.usccRaw),
   ],
 )
@@ -837,6 +842,8 @@ export const platformApplyProjection = sqliteTable('platform_apply_projection', 
   appliedAt: text('applied_at'),
   /** Raw cszt after trimming. */
   status: text('status'),
+  /** Raw row-level rdjb after trimming; never query title scope. */
+  titleRaw: text('title_raw'),
   nameRaw: text('name_raw'),
   usccRaw: text('uscc_raw'),
   ruleVersion: text('rule_version').notNull(),
@@ -849,6 +856,7 @@ export const platformApplyProjection = sqliteTable('platform_apply_projection', 
   index('platform_apply_projection_status_idx').on(t.status),
   index('platform_apply_projection_applied_idx').on(t.appliedAt),
   index('platform_apply_projection_uscc_idx').on(t.usccRaw),
+  index('platform_apply_projection_title_version_idx').on(t.titleRaw, t.versionId),
 ])
 
 /**
@@ -874,6 +882,8 @@ export const platformBusinessProjection = sqliteTable('platform_business_project
   awardBatchLabel: text('award_batch_label'),
   /** Raw szsfmc (属地) after trimming. */
   province: text('province'),
+  /** Raw row-level rdjb after trimming; never query title scope. */
+  titleRaw: text('title_raw'),
   nameRaw: text('name_raw'),
   usccRaw: text('uscc_raw'),
   ruleVersion: text('rule_version').notNull(),
@@ -887,6 +897,7 @@ export const platformBusinessProjection = sqliteTable('platform_business_project
   index('platform_business_projection_batch_idx').on(t.batch),
   index('platform_business_projection_applied_idx').on(t.appliedAt),
   index('platform_business_projection_uscc_idx').on(t.usccRaw),
+  index('platform_business_projection_title_version_idx').on(t.titleRaw, t.versionId),
 ])
 
 /**
@@ -928,6 +939,7 @@ export const platformRecognizedProjection = sqliteTable('platform_recognized_pro
   index('platform_recognized_projection_batch_idx').on(t.maintenanceBatch),
   index('platform_recognized_projection_district_idx').on(t.district),
   index('platform_recognized_projection_title_idx').on(t.titleRaw),
+  index('platform_recognized_projection_title_version_idx').on(t.titleRaw, t.versionId),
   index('platform_recognized_projection_uscc_idx').on(t.usccRaw),
 ])
 
@@ -1484,3 +1496,16 @@ export const filePhysicalIntent = sqliteTable('file_physical_intent', {
   recoverReceipt: text('recover_receipt', { mode: 'json' }).$type<Record<string, unknown>>(),
   createdAt: text('created_at').notNull(),
 }, t => [index('file_physical_history_idx').on(t.fileId, t.createdAt, t.id), uniqueIndex('file_physical_active_uq').on(t.fileId).where(sql`${t.state} != 'recovered'`), uniqueIndex('file_physical_delete_key_uq').on(t.deleteKey), uniqueIndex('file_physical_recover_key_uq').on(t.recoverKey)])
+
+/** Current enterprise/title comparison only. Never read by qualification rules. */
+export const enterpriseDifferenceComparison = sqliteTable('enterprise_difference_comparison', {
+  enterpriseId: integer('enterprise_id').notNull().references(() => enterprise.id, { onDelete: 'cascade' }),
+  titleCode: text('title_code').notNull().references(() => title.code),
+  comparisonState: text('comparison_state', { enum: ['synchronized', 'unsynchronized', 'not_established'] }).notNull(),
+  reasons: text('reasons', { mode: 'json' }).$type<string[]>().notNull(),
+  comparisonError: text('comparison_error'),
+  decisionCutoffId: integer('decision_cutoff_id').notNull().default(0),
+  businessFingerprint: text('business_fingerprint').notNull(),
+  changedAt: text('changed_at').notNull(),
+  refreshedAt: text('refreshed_at').notNull(),
+}, t => [primaryKey({ columns: [t.enterpriseId, t.titleCode] })])

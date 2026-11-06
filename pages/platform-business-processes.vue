@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, shallowRef, watch } from 'vue'
-import { Search, X } from '@lucide/vue'
+import { Search } from '@lucide/vue'
+import { PLATFORM_RDJBS, RELATION_DECLARE_KINDS } from '~~/lib/labels'
+import { watchDebounced } from '@vueuse/core'
 import type { BusinessProcessListResult } from '~~/lib/platform/business-processes'
-import { PLATFORM_RDJBS, PLATFORM_RDJB_ORDER } from '~~/lib/labels'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -10,6 +11,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Skeleton } from '@/components/ui/skeleton'
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/components/ui/empty'
 import PageHeader from '@/components/PageHeader.vue'
+import PlatformFilterSelect from '@/components/PlatformFilterSelect.vue'
+import { usePlatformFilterOptions } from '@/composables/usePlatformFilterOptions'
+import FilterChip from '@/components/FilterChip.vue'
 import TableFailureState from '@/components/TableFailureState.vue'
 import TableLoadingStatus from '@/components/TableLoadingStatus.vue'
 import TablePagination from '@/components/TablePagination.vue'
@@ -23,9 +27,12 @@ const initialQuery = (() => {
 })()
 
 const view = ref<'records' | 'isolated'>('records')
+const { options: filterOptions, loading: optionsLoading, error: optionsError, reload: reloadOptions } = usePlatformFilterOptions('business-processes', view)
+const declareKindLabel = (value: string) => RELATION_DECLARE_KINDS[value] ?? value
+const titleRaw = ref('')
+const titleLabel = (value: string) => PLATFORM_RDJBS[value] ?? value
 const enterpriseQuery = ref(typeof initialQuery.q === 'string' ? initialQuery.q : '')
 const platformKey = ref(typeof initialQuery.platformKey === 'string' ? initialQuery.platformKey : '')
-const rdjb = ref('all')
 const declareKind = ref('')
 const yearInput = ref('')
 const status = ref('')
@@ -38,20 +45,19 @@ const error = ref('')
 const selectedRecordId = ref<number | null>(null)
 const detailOpen = ref(false)
 let generation = 0
+let lastRequestKey = ''
+let disposed = false
 let controller: AbortController | undefined
 
-const year = computed(() => yearInput.value.trim())
-const yearError = computed(() => year.value && !/^\d+$/.test(year.value) ? '业务年必须是正整数' : '')
-const titleOptions = computed(() => PLATFORM_RDJB_ORDER.map(value => ({ value, label: PLATFORM_RDJBS[value] ?? value })))
 
 function requestParams() {
   return {
     view: view.value,
+    ...(titleRaw.value ? { titleRaw: titleRaw.value } : {}),
     ...(enterpriseQuery.value.trim() ? { q: enterpriseQuery.value.trim() } : {}),
     ...(platformKey.value.trim() ? { platformKey: platformKey.value.trim() } : {}),
-    ...(rdjb.value !== 'all' ? { rdjb: rdjb.value } : {}),
     ...(declareKind.value.trim() ? { declareKind: declareKind.value.trim() } : {}),
-    ...(year.value && !yearError.value ? { year: Number(year.value) } : {}),
+    ...(yearInput.value ? { year: Number(yearInput.value) } : {}),
     ...(status.value.trim() ? { status: status.value.trim() } : {}),
     ...(batch.value.trim() ? { batch: batch.value.trim() } : {}),
     page: page.value,
@@ -60,14 +66,15 @@ function requestParams() {
 }
 
 async function load() {
-  if (yearError.value) return
+  const query = requestParams()
+  lastRequestKey = JSON.stringify(query)
   const request = ++generation
   controller?.abort()
   controller = new AbortController()
   loading.value = true
   error.value = ''
   try {
-    const result = await $fetch<BusinessProcessListResult>('/api/platform/business-processes', { query: requestParams(), signal: controller.signal, retry: 0 })
+    const result = await $fetch<BusinessProcessListResult>('/api/platform/business-processes', { query, signal: controller.signal, retry: 0 })
     if (request === generation) data.value = result
   } catch (cause) {
     if (request === generation) error.value = cause instanceof Error ? cause.message : String(cause)
@@ -76,20 +83,20 @@ async function load() {
   }
 }
 
-function search() {
-  if (page.value !== 1) page.value = 1
-  else void load()
+const hasFilters = computed(() => [titleRaw.value, enterpriseQuery.value, declareKind.value, yearInput.value, status.value, batch.value, platformKey.value].some(value => value.trim() !== ''))
+
+function loadIfChanged() {
+  if (!disposed && JSON.stringify(requestParams()) !== lastRequestKey) void load()
 }
-function reset() {
-  enterpriseQuery.value = ''
-  platformKey.value = ''
-  rdjb.value = 'all'
-  declareKind.value = ''
-  yearInput.value = ''
-  status.value = ''
-  batch.value = ''
+function clearFilters() {
+  for (const field of [titleRaw, enterpriseQuery, declareKind, yearInput, status, batch, platformKey]) field.value = ''
+  lastRequestKey = ''
+  search()
+}
+function search() {
+  if (disposed) return
   if (page.value !== 1) page.value = 1
-  else void load()
+  else loadIfChanged()
 }
 function changeSize(size: number) {
   const sizeChanged = size !== pageSize.value
@@ -103,57 +110,49 @@ function openRecord(recordId: number) {
   detailOpen.value = true
 }
 
-watch([page, pageSize], () => { void load() })
-watch([view, rdjb], () => {
-  if (page.value !== 1) page.value = 1
-  else void load()
-})
-onBeforeUnmount(() => { ++generation; controller?.abort() })
+watch([page, pageSize], loadIfChanged)
+watchDebounced(enterpriseQuery, search, { debounce: 300 })
+watch([titleRaw, view, platformKey, declareKind, yearInput, status, batch], search)
+onBeforeUnmount(() => { disposed = true; ++generation; controller?.abort() })
 void load()
 
 const total = computed(() => data.value?.total ?? 0)
 const rows = computed(() => data.value?.rows ?? [])
 const emptyTitle = computed(() => view.value === 'records' ? '没有匹配的关联办理记录' : '没有隔离的办理观察')
 const emptyDescription = computed(() => view.value === 'records'
-  ? '当前条件下没有已建立 typed 投影的关联办理记录；未知事项、业务年、状态或批次不会猜填。'
+  ? '未找到符合筛选条件的关联办理记录。'
   : '缺编号、编号冲突或原文无法核实的办理观察会在此逐条保留，不并入任何业务记录。')
 </script>
 
 <template>
   <div class="flex min-w-0 flex-col gap-2 sm:gap-3" :aria-busy="loading">
-    <PageHeader title="关联办理" description="本地查询已归档的关联办理：按企业、办理编号、明确称号范围、事项、业务年、状态与维护批次筛选；称号范围来自原查询，不代表逐行称号事实。" />
+    <PageHeader title="关联办理" description="查询企业关联办理记录。" />
 
-    <form class="flex flex-col gap-2" @submit.prevent="search">
+    <div class="flex flex-col gap-2">
       <div class="flex flex-wrap items-center gap-2">
         <div class="relative w-full min-w-52 flex-1 sm:max-w-[13rem]">
           <Search class="text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2" aria-hidden="true" />
           <Input v-model="enterpriseQuery" class="bg-card h-8 pl-8" placeholder="搜索企业名称或信用代码" aria-label="企业名称或信用代码" />
         </div>
-        <Input v-model="platformKey" class="bg-card h-8 w-full sm:w-32" placeholder="办理编号" aria-label="办理编号" />
-        <Select :model-value="rdjb" @update:model-value="rdjb = String($event)">
-          <SelectTrigger class="bg-card h-8 w-full sm:w-40" aria-label="称号范围"><SelectValue /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">全部称号范围</SelectItem>
-            <SelectItem v-for="option in titleOptions" :key="option.value" :value="option.value">{{ option.label }}</SelectItem>
-          </SelectContent>
-        </Select>
-        <Input v-model="declareKind" class="bg-card h-8 w-full sm:w-24" placeholder="全部事项" aria-label="事项" />
-        <Input v-model="yearInput" inputmode="numeric" class="bg-card h-8 w-full sm:w-24" placeholder="全部业务年" aria-label="明确业务年" :aria-invalid="Boolean(yearError)" />
-        <Input v-model="status" class="bg-card h-8 w-full sm:w-28" placeholder="全部状态" aria-label="办理状态" />
-        <Input v-model="batch" class="bg-card h-8 w-full sm:w-24" placeholder="全部批次" aria-label="维护批次" />
+        <PlatformFilterSelect v-model="titleRaw" :options="filterOptions.titles" label="称号" placeholder="全部称号" :disabled="optionsLoading || optionsError" :format-label="titleLabel" class="w-full sm:w-48" />
+        <PlatformFilterSelect v-model="declareKind" :options="filterOptions.declareKinds" label="事项" placeholder="全部事项" :disabled="optionsLoading || optionsError" :format-label="declareKindLabel" class="w-full sm:w-28" />
+        <PlatformFilterSelect v-model="yearInput" :options="filterOptions.years" label="业务年" placeholder="全部业务年" :disabled="optionsLoading || optionsError" class="w-full sm:w-32" />
+        <PlatformFilterSelect v-model="status" :options="filterOptions.statuses" label="办理状态" placeholder="全部状态" :disabled="optionsLoading || optionsError" class="w-full sm:w-32" />
+        <PlatformFilterSelect v-model="batch" :options="filterOptions.batches" label="维护批次" placeholder="全部批次" :disabled="optionsLoading || optionsError" class="w-full sm:w-32" />
         <Select :model-value="view" @update:model-value="view = $event as 'records' | 'isolated'">
-          <SelectTrigger class="bg-card h-8 w-full sm:w-28" aria-label="关联办理视图"><SelectValue /></SelectTrigger>
+          <SelectTrigger size="sm" class="bg-card w-full sm:w-28" aria-label="关联办理视图"><SelectValue /></SelectTrigger>
           <SelectContent>
             <SelectItem value="records">业务记录</SelectItem>
             <SelectItem value="isolated">缺编号观察</SelectItem>
           </SelectContent>
         </Select>
-        <Button type="submit" variant="outline" size="sm" :disabled="loading || Boolean(yearError)"><Search data-icon="inline-start" />查询</Button>
-        <Button type="button" variant="ghost" size="sm" :disabled="loading" @click="reset"><X data-icon="inline-start" />重置</Button>
+        <FilterChip v-if="platformKey" label="已定位记录" @remove="platformKey = ''" />
+        <Button v-if="hasFilters" variant="ghost" size="sm" @click="clearFilters">清除筛选</Button>
         <span class="text-muted-foreground text-[13px] tabular-nums" aria-live="polite">共 {{ total.toLocaleString('zh-CN') }} {{ view === 'records' ? '条记录' : '条观察' }}</span>
       </div>
-      <p v-if="yearError" class="text-destructive text-[13px] leading-5">{{ yearError }}</p>
-    </form>
+    </div>
+
+    <p v-if="optionsError" role="alert" class="text-destructive flex items-center gap-2 text-sm">筛选选项加载失败<Button variant="ghost" size="sm" :disabled="optionsLoading" @click="reloadOptions">重试</Button></p>
 
     <Card class="gap-0 overflow-hidden py-0 shadow-none">
       <CardContent class="relative p-0">

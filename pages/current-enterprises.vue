@@ -7,7 +7,6 @@ import { CURRENT_STATUS_LABELS, type CurrentStatus } from '~~/lib/roster/current
 import { TITLES } from '~~/lib/labels'
 import { CURRENT_TITLES, type CurrentTitle } from '~~/lib/roster/current-titles'
 import type { CurrentQualifiedRow as CurrentRow, CurrentQualifiedResult } from '~~/lib/roster/current-qualified-query'
-import { publishedNameText } from '~~/lib/roster/correspondence-view'
 import { NINGBO_DISTRICTS, NINGBO_INDEPENDENT_ZONES } from '~~/lib/domain'
 import { captureQueryRequest, useRetainedQuerySnapshot } from '~/composables/useRetainedQuerySnapshot'
 import { Button } from '@/components/ui/button'
@@ -20,6 +19,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import PageHeader from '@/components/PageHeader.vue'
+import CurrentQualificationTimeline from '@/components/CurrentQualificationTimeline.vue'
 import DisclosurePanel from '@/components/DisclosurePanel.vue'
 import CurrentRosterExportEntry from '@/components/CurrentRosterExportEntry.vue'
 import CurrentRecognitionDatePicker from '@/components/CurrentRecognitionDatePicker.vue'
@@ -117,18 +117,6 @@ const detailUrl = (id: number) => ({ path: `/enterprises/${id}`, query: { curren
 const activeFilterCount = computed(() => [q.value, district.value, recognitionFrom.value || recognitionTo.value, validYear.value, maintenanceYear.value, maintenanceBatch.value].filter(Boolean).length)
 const hasFilters = computed(() => activeFilterCount.value > 0)
 function clearFilters() { search.value = ''; dateFrom.value=''; dateTo.value=''; update({ q: undefined, district: undefined, recognitionFrom: undefined, recognitionTo: undefined, validYear: undefined, maintenanceYear: undefined, maintenanceBatch: undefined, page: undefined }) }
-const recognitionSummary = (row: CurrentRow) => row.recognition ? `认定记录 ${row.recognition.year} 年（仅年份）` : '认定年份未记录'
-const sourceSummary = (row: CurrentRow) => row.publication === '已见本称号宁波公布记录' ? '已见宁波公布记录' : row.publication
-const conditionSummary = (row: CurrentRow) => {
-  const valid = row.matchedValidYears?.length ? `有效年份 ${row.matchedValidYears.join('、')} 年` : '有效年份未核实'
-  const maintenance = row.matchedMaintenance?.length ? `维护记录 ${row.matchedMaintenance.map(fact => `${fact.year} 年${fact.batch == null ? '' : `第 ${fact.batch} 批`}`).join('、')}` : '维护信息未核实'
-  return `${valid} · ${maintenance}`
-}
-const publishedHints = (row: CurrentRow) => row.publishedPresentation?.facts ?? []
-const publishedDetailUrl = (row: CurrentRow, eventId: number) => { const target = detailUrl(row.enterpriseId); return { ...target, query: { ...target.query, eventId: String(eventId) } } }
-const statusSummary = (row: CurrentRow) => { const effective = selectedAssessment(row)?.effectiveQualification; return effective ? `${CURRENT_STATUS_LABELS[effective.status]}；${selectedAssessment(row)?.officialQualification.message}` : '旧版响应未提供有效状态' }
-const statusNotes = (row: CurrentRow) => [...new Set([...(selectedAssessment(row)?.effectiveQualification?.presentationBasis ?? []), ...(selectedAssessment(row)?.effectiveQualification?.notes ?? []), ...row.notes])]
-const movedInSummary = (row: CurrentRow) => row.notes.find(note => note.startsWith('已确认迁入宁波'))
 useHead({ title: '优质中小企业查询' })
 </script>
 
@@ -169,20 +157,20 @@ useHead({ title: '优质中小企业查询' })
     <PageHeader title="优质中小企业查询" description="按本库资格判定查询当前有效企业。">
       <template #actions><CurrentRosterExportEntry :title-code="title" /></template>
     </PageHeader>
-    <Select v-model="statusModel">
-      <SelectTrigger class="w-48" aria-label="按有效状态筛选"><SelectValue /></SelectTrigger>
-      <SelectContent><SelectGroup><SelectItem v-for="(label, code) in CURRENT_STATUS_LABELS" :key="code" :value="code">{{ code === 'effective' ? '有效' : label }}</SelectItem></SelectGroup></SelectContent>
-    </Select>
     <Tabs v-model="titleModel">
       <TabsList class="h-auto max-w-full flex-wrap">
         <TabsTrigger v-for="code in CURRENT_TITLES" :key="code" :value="code">{{ TITLES[code] }}</TabsTrigger>
       </TabsList>
     </Tabs>
     <div class="flex flex-wrap items-center gap-2">
-      <div class="relative w-full sm:w-72">
+      <div class="relative min-w-40 flex-1 sm:w-72 sm:flex-none">
         <Search class="text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2" aria-hidden="true" />
         <Input v-model="search" class="bg-card h-8 pl-8 shadow-none" placeholder="名称、曾用名或信用代码" aria-label="搜索企业名称、已确认曾用名或统一社会信用代码" />
       </div>
+      <Select v-model="statusModel">
+        <SelectTrigger size="sm" class="bg-card w-36 shadow-none" aria-label="按有效状态筛选"><SelectValue /></SelectTrigger>
+        <SelectContent><SelectGroup><SelectItem v-for="(label, code) in CURRENT_STATUS_LABELS" :key="code" :value="code">{{ code === 'effective' ? '有效' : label }}</SelectItem></SelectGroup></SelectContent>
+      </Select>
       <ReuseFilters v-if="!isNarrow" />
       <Button v-if="hasFilters" variant="ghost" size="sm" @click="clearFilters">清除筛选</Button>
     </div>
@@ -211,20 +199,14 @@ useHead({ title: '优质中小企业查询' })
         <div v-if="!error || displayed" class="data-table-scroll hidden sm:block [&_[data-slot=table-container]]:overflow-visible">
           <Table class="data-table min-w-[850px] table-fixed">
             <TableHeader class="sticky top-0 z-10"><TableRow class="hover:bg-transparent">
-              <TableHead class="bg-muted w-[24%]">企业名称</TableHead><TableHead class="bg-muted w-[19%]">统一社会信用代码</TableHead><TableHead class="bg-muted w-[12%]">区县</TableHead><TableHead class="bg-muted w-[31%]">认定与资格依据</TableHead><TableHead class="bg-muted w-[14%]">详情与出处</TableHead>
+              <TableHead class="bg-muted w-[24%]">企业名称</TableHead><TableHead class="bg-muted w-[19%]">统一社会信用代码</TableHead><TableHead class="bg-muted w-[12%]">区县</TableHead><TableHead class="bg-muted w-[31%]">认定与复核</TableHead><TableHead class="bg-muted w-[14%]">详情与出处</TableHead>
             </TableRow></TableHeader>
             <TableBody>
               <TableRow v-for="row in rows" :key="row.enterpriseId">
                 <TableCell class="align-top whitespace-normal break-words [overflow-wrap:anywhere]"><span class="font-medium">{{ row.name }}</span><span v-if="row.aliases.length" class="text-muted-foreground mt-1 block text-xs">已确认曾用名：{{ row.aliases.join('、') }}</span></TableCell>
                 <TableCell class="align-top break-all font-mono text-xs">{{ row.uscc ?? '未记录' }}</TableCell>
                 <TableCell class="align-top">{{ row.district ?? '未记录' }}</TableCell>
-                <TableCell class="align-top break-words text-sm leading-5">
-                  <p><span class="text-muted-foreground">{{ recognitionSummary(row) }}</span><span class="mx-1 text-muted-foreground">·</span>{{ sourceSummary(row) }}</p>
-                  <p class="text-muted-foreground">{{ conditionSummary(row) }}</p>
-                  <p>{{ statusSummary(row) }}</p><p v-for="note in statusNotes(row)" :key="note">{{ note }}</p>
-                  <p v-for="fact in publishedHints(row)" :key="fact.evidenceId" class="text-muted-foreground break-words [overflow-wrap:anywhere]"><NuxtLink :to="publishedDetailUrl(row, fact.eventId)" class="underline underline-offset-2">{{ publishedNameText(fact) }}</NuxtLink></p>
-                  <p v-if="movedInSummary(row)" class="text-muted-foreground">{{ movedInSummary(row) }}</p>
-                </TableCell>
+                <TableCell class="align-top"><CurrentQualificationTimeline :events="selectedAssessment(row)?.evidence" /></TableCell>
                 <TableCell class="align-top"><Button as-child variant="outline" size="sm"><NuxtLink :to="detailUrl(row.enterpriseId)">查看详情与出处</NuxtLink></Button></TableCell>
               </TableRow>
               <TableRow v-if="isLoading && !displayed"><TableCell v-for="n in 5" :key="n"><Skeleton class="h-3 w-full" /></TableCell></TableRow>
@@ -245,11 +227,7 @@ useHead({ title: '优质中小企业查询' })
               <Button as-child variant="outline" size="sm" class="min-h-11 shrink-0"><NuxtLink :to="detailUrl(row.enterpriseId)" :aria-label="`查看 ${row.name} 详情与出处`">详情与出处</NuxtLink></Button>
             </div>
             <p v-if="row.aliases.length" class="text-muted-foreground break-words text-sm leading-5">已确认曾用名：{{ row.aliases.join('、') }}</p>
-            <p class="text-sm leading-5">{{ recognitionSummary(row) }} · {{ sourceSummary(row) }}</p>
-            <p class="text-muted-foreground text-sm leading-5">{{ conditionSummary(row) }}</p>
-            <p class="text-sm leading-5">{{ statusSummary(row) }}</p><p v-for="note in statusNotes(row)" :key="note" class="text-sm leading-5 [overflow-wrap:anywhere]">{{ note }}</p>
-            <p v-for="fact in publishedHints(row)" :key="fact.evidenceId" class="text-muted-foreground break-words text-sm leading-5 [overflow-wrap:anywhere]"><NuxtLink :to="publishedDetailUrl(row, fact.eventId)" class="underline underline-offset-2">{{ publishedNameText(fact) }}</NuxtLink></p>
-            <p v-if="movedInSummary(row)" class="text-muted-foreground text-sm leading-5">{{ movedInSummary(row) }}</p>
+            <CurrentQualificationTimeline :events="selectedAssessment(row)?.evidence" />
           </li>
         </ul>
         <Empty v-if="displayed && !rows.length" class="sm:hidden border-0"><EmptyHeader><EmptyTitle>没有符合条件的企业</EmptyTitle></EmptyHeader></Empty>

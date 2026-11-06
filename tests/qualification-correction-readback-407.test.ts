@@ -109,7 +109,7 @@ async function commit(body: EventCorrectionRequest, planHash: string) {
   return post('/api/roster/events/corrections/commit', { request: body, planHash })
 }
 function currentTitle() {
-  return getRosterEnterpriseDetail(db, enterprise.id, NOW)!.qualificationAssessment.titles.find(t => t.titleCode === 'innovative_sme')!
+  return qualification.readCurrentQualificationAssessment(db.$client, enterprise.id, NOW, { assessmentVersion: 'enterprise-qualification-407-v1' }).titles.find(t => t.titleCode === 'innovative_sme')!
 }
 function businessState() {
   return { events: db.select().from(schema.recordEvent).all(), evidence: db.select().from(schema.recordEvidence).all(),
@@ -414,7 +414,7 @@ it('public_safe_capture_keeps_complete_snapshot_and_digest', async () => {
   const detail = await get(`/api/roster/enterprises/${enterprise.id}`)
   expect(detail.status).toBe(200)
   expect(result.body.qualificationReadback.assessment).toEqual(qualification.readCurrentQualificationAssessment(db.$client, enterprise.id, Date.parse(detail.body.qualificationAssessment.asOf), { assessmentVersion: 'enterprise-qualification-407-v1' }))
-  expect(detail.body.qualificationAssessment.assessmentVersion).toBe('enterprise-qualification-407-v2')
+  expect(detail.body.qualificationAssessment.assessmentVersion).toBe('enterprise-qualification-478-v3')
 })
 
 it.each([

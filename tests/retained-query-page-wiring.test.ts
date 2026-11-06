@@ -4,7 +4,6 @@ import { describe, expect, it } from 'vitest'
 const pages = [
   { name: '企业列表', path: 'pages/index.vue', namespace: 'ledger-enterprises' },
   { name: '文件列表', path: 'pages/files.vue', namespace: 'files' },
-  { name: '比对列表', path: 'pages/comparison.vue', namespace: 'comparison' },
 ] as const
 
 describe('列表查询快照接入', () => {

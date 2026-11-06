@@ -5,7 +5,6 @@ import { useRouter } from 'vue-router'
 import type { TaskSummary } from '~~/lib/task-center'
 import { TASK_LABELS, TASK_STATES } from '~~/lib/task-center'
 import { useTaskPolling } from '~/composables/useTaskPolling'
-import SnapshotDifferenceQueue from './SnapshotDifferenceQueue.vue'
 import DisclosurePanel from '@/components/DisclosurePanel.vue'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -147,8 +146,6 @@ async function act(action: 'cancel' | 'retry') {
         </div>
       </CardHeader>
       <CardContent class="flex min-w-0 flex-col gap-4 px-0 pb-0">
-        <NuxtLink v-if="data?.kind === 'difference-snapshot'" :to="`/comparison?snapshot=${id}`">打开差异清单</NuxtLink>
-        <SnapshotDifferenceQueue v-if="current && data?.kind === 'difference-snapshot' && !inFlight" :key="id" :id="id" />
         <TableFailureState v-if="failed" title="详情加载失败或任务不存在" :compact="!!data" :pending="loading" description="已保留请求的任务编号。可重试；旧详情不会用于当前任务的操作。" @retry="refresh" />
         <p v-else-if="loading && !data" role="status">正在读取任务详情…</p>
 
@@ -166,11 +163,11 @@ async function act(action: 'cancel' | 'retry') {
           </div>
 
           <section v-if="data.snapshot" id="snapshot-result" ref="snapshotSection" tabindex="-1" aria-label="快照结果摘要" class="flex min-w-0 flex-col gap-2 text-sm">
-            <h3 class="font-medium">快照范围、计数与未完成位置</h3>
-            <p>范围：公布名单全部企业 · {{ data.snapshot.enterprises ?? '未知' }} 家</p>
+            <h3 class="font-medium">采集范围、计数与未完成位置</h3>
+            <p>范围：本任务选定公布企业 · {{ data.snapshot.enterprises ?? '未知' }} 家</p>
             <p>三接口请求 {{ data.snapshot.requests ?? '未知' }} 次 · 已确认完整行数 {{ data.snapshot.rows ?? '未知' }} · 未完成 {{ data.snapshot.unfinished ?? '未知' }} 范围</p>
             <p v-for="source in data.snapshot.sources" :key="source.source">{{ source.source }}：请求 {{ source.requests ?? '未知' }} 次 · 取回 {{ source.rows ?? '未知' }} 行 · 失败请求 {{ source.failed ?? '未知' }} · 未完成 {{ source.unfinished ?? '未知' }} 范围</p>
-            <p v-if="data.snapshot.unfinished !== 0" class="text-muted-foreground">未完成范围的行数未知，不代表零记录。已取回内容保留，尚不能作为完整快照使用。</p>
+            <p v-if="data.snapshot.unfinished !== 0" class="text-muted-foreground">未完成范围的行数未知，不代表零记录。已取回内容保留，尚未完成全部采集入库。</p>
             <ul aria-label="快照未完成位置" class="flex flex-col gap-2">
               <li v-for="(position, index) in data.snapshot.positions" :key="index" class="break-words">
                 企业 #{{ position.enterpriseId ?? '未知' }} · {{ position.source }} · {{ position.rdjb === null ? '全部称号' : ({'1':'创新型中小企业','2':'专精特新中小企业','3':'专精特新小巨人'} as Record<string,string>)[position.rdjb] }} · 第 {{ position.page ?? '未知' }} 页待续 · 行数 {{ position.rows ?? '未知' }}

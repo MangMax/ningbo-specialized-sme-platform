@@ -5,6 +5,6 @@ export function useEvidenceReviewRefresh() {
   return () => Promise.all([
     'evidence-impacts', 'evidence-impact', 'evidence-impact-sources', 'evidence-revision-events',
     'decision-history', 'decision-version', 'roster-enterprise', 'ledger-drawer',
-    'ledger-enterprises', 'roster-differences', 'comparison', 'stats',
+    'ledger-enterprises', 'stats',
   ].map(key => cache.invalidateQueries({ key: [key] })))
 }

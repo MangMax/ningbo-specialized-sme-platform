@@ -23,6 +23,7 @@ describe('business_list typed projection parser', () => {
       batch: '2025-1',
       awardBatchLabel: '第四批',
       province: '宁波市',
+      titleRaw: null,
       nameRaw: '合成办理企业',
       usccRaw: '91330211255994457P',
     })
@@ -67,6 +68,7 @@ describe('business_list typed projection parser', () => {
       batch: null,
       awardBatchLabel: null,
       province: null,
+      titleRaw: null,
       nameRaw: null,
       usccRaw: null,
     })

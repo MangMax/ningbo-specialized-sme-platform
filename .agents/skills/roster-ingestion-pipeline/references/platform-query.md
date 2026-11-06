@@ -1,6 +1,6 @@
 # 通过应用查证平台
 
-新增查询或更新快照后执行[旧解释复核](difference-investigation.md#新证据后的旧解释复核)；仅采集任务交接影响清单，查询事实不自动改变业务原因。
+采集入库后按用户选择刷新企业差异，再执行[代理判断](difference-investigation.md#默认待核代理判断与覆盖写回)；仅采集任务交接影响清单，查询事实不自动改变业务原因。
 
 1. 查看 `GET /api/platform/capabilities` 或 MCP `get_platform_capabilities`，再查看当前 OpenAPI / `tools/list` 的结构和鉴权。生产未明确开启时隐藏 OpenAPI，应使用 MCP 发现。
 2. 按[负载编排](orchestration.md)把企业 ID/已确认代码分配给唯一负责人，跨文件复用。调查者数量与平台请求额度分开控制：所有工作者共用应用的平台请求上限，不各建请求池。
@@ -50,6 +50,10 @@
 
 转存详见[归档转存契约](../../../../docs/platform-recognized-evidence.md)；公开补充及 `cross_source` 当前条件见[身份查证](./uscc-recovery.md)。无凭据示例和行为校验见[示例说明](../examples/README.md)；完整 API 见[批量查询文档](../../../../docs/platform-batch-query.md)。
 
-需要保留原 JSON 时，单查对象或批量 `items[].query` 显式加 `rawDataVersion:1`；先确认 capabilities v3 / tools/list 支持。原样保留 `rawData.version=1`、typed rows、实际接受页正文与页位置；旧 `rows` 只是字符串投影，缺少 rawData 的历史类型保持未知，不互相回退。原文敏感或超预算时，保留失败/unfinished 后补查，不裁剪正文。
+三接口业务采集任务使用 `difference_snapshot`，先备份，再按原编号入库全部业务字段；无需保留请求或响应原文。可选 `enterpriseIds` 测试少量公布企业。
+
+下述 `rawDataVersion:1` 是其他调用方显式保留原文的兼容协议，不是新采集任务的存储要求。需要保留原 JSON 时，单查对象或批量 `items[].query` 显式加 `rawDataVersion:1`；先确认 capabilities v3 / tools/list 支持。原样保留 `rawData.version=1`、typed rows、实际接受页正文与页位置；旧 `rows` 只是字符串投影，缺少 rawData 的历史类型保持未知，不互相回退。原文敏感或超预算时，保留失败/unfinished 后补查，不裁剪正文。
 
 封套归档可继续用 `recognizedResultToImport`。`collectionEvidence.rawData.version=1` 已显式选择 typed `rawData.rows` 作为 `relations[].rawFields` 与业务内容版本输入（#327）；封套版本、页/行、来源、解析、投影或关系冲突整批拒绝，不回退字符串行。无 rawData 的旧载荷仍按其原契约接受，历史类型未知，旧 ID/hash/raw/观察/决定不重算，不同接口业务身份独立。此接缝不代表 #298 或整条技能验收完成。原型同名键的现存 HTTP 拒绝边界及 MCP 读回能力见[归档接缝](../../../../docs/platform-recognized-evidence.md#原json封套扩展与后续接缝326327)。
+
+业务采集任务会复用同一查询范围内内容完全相同的最新完整结果，仅更新最近采集时间，不增加重复观察。任务仍实际请求供应商；失败和续页不按完整重复结果复用。三张业务表展示内容版本和采集时间，历史来源引用继续由原公开接口读取。

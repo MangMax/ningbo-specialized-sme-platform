@@ -39,7 +39,7 @@ it('bounds repeated preparation and display reference reads while counting every
   } finally { prepared.mockRestore() }
 })
 
-it('keeps all six latest scopes in their original order including withdrawals and out-of-order history', () => {
+it('ignores all six legacy decision scopes including withdrawals and out-of-order history', () => {
   f.resetBusiness()
   const c=f.candidate('Six scopes')
   const expected: number[]=[]
@@ -57,8 +57,9 @@ it('keeps all six latest scopes in their original order including withdrawals an
   const result=listCurrentQualified(f.db.$client,{titleCode:'specialized_sme'})
   expect(result.total).toBe(1)
   expect(result.rows[0]!.group).toBe('eligible')
-  expect(result.rows[0]!.references.filter(ref=>ref.startsWith('decision:'))).toEqual(expected.map(id=>'decision:'+id))
-  expect(result.rows[0]!.notes.filter(note=>note==='旧决定已撤回，不作为当前排除依据')).toHaveLength(6)
+  expect(result.rows[0]!.references.filter(ref=>ref.startsWith('decision:'))).toEqual([])
+  expect(result.rows[0]!.notes.filter(note=>note==='旧决定已撤回，不作为当前排除依据')).toHaveLength(0)
+  expect(f.db.$client.prepare("select id from difference_reason where recorded_at='2026-03-01T00:00:00Z' order by id").all()).toEqual(expected.map(id => ({ id })))
 })
 
 it('hydrates the page from the pinned snapshot and observes later writes only in the next request', () => {
@@ -93,6 +94,6 @@ it('hydrates the page from the pinned snapshot and observes later writes only in
     expect(pinned).toMatchObject({snapshotStartedAt:`${year}-06-01T00:00:00.000Z`,total:2,options:{recognitionYears:[year]},rows:[{enterpriseId:first.enterprise.id,name:'Pinned first',district:'鄞州区',group:'eligible'}]})
     vi.setSystemTime(new Date(`${year}-06-01T00:00:00Z`))
     const fresh=listCurrentQualified(db,{titleCode:'specialized_sme',pageSize:1})
-    expect(fresh).toMatchObject({total:1,rows:[{enterpriseId:first.enterprise.id,name:'Pinned first',district:'海曙区',group:'eligible'}]})
+    expect(fresh).toMatchObject({total:2,rows:[{enterpriseId:first.enterprise.id,name:'Pinned first',district:'海曙区',group:'eligible'}]})
   } finally { vi.useRealTimers(); prepared.mockRestore() }
 })

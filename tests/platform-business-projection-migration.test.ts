@@ -29,8 +29,9 @@ describe('0034 platform business projection migration', () => {
       const db = drizzle(sqlite, { schema })
       migrate(db, { migrationsFolder: preMigrations })
       const enterprise = db.insert(schema.enterprise).values({ name: '既有企业', nameNorm: '既有企业', usccNorm: '91330211255994457P' }).returning().get()
-      const query = db.insert(schema.platformQuery).values({ interface: 'business_list', queryKey: '91330211255994457P', rdjb: '2', queriedAt: '2026-09-01T00:00:00Z', status: 'success' }).returning().get()
-      const relation = db.insert(schema.platformRelation).values({ queryId: query.id, sequenceNo: 1, relationKey: 'SQ-LEGACY-B', rawFields: { id: 'SQ-LEGACY-B', qymc: '既有企业', sblx: '复核', whpc: '2025-1', personuuid: '第四批' } }).returning().get()
+      const query = sqlite.prepare("INSERT INTO platform_query(interface, query_key, rdjb, queried_at, status, created_at) VALUES('business_list', '91330211255994457P', '2', '2026-09-01T00:00:00Z', 'success', '2026-09-01T00:00:00Z') RETURNING id").get() as { id: number }
+      const originalFields = { id: 'SQ-LEGACY-B', qymc: '既有企业', sblx: '复核', whpc: '2025-1', personuuid: '第四批' }
+      const relation = sqlite.prepare('INSERT INTO platform_relation(query_id, sequence_no, relation_key, raw_fields, created_at) VALUES(?, 1, ?, ?, ?) RETURNING id').get(query.id, 'SQ-LEGACY-B', JSON.stringify(originalFields), '2026-09-01T00:00:00Z') as { id: number }
       expect(sqlite.prepare("SELECT count(*) n FROM sqlite_master WHERE type='table' AND name='platform_business_projection'").get()).toEqual({ n: 0 })
 
       migrate(db, { migrationsFolder: fullMigrations })
@@ -39,10 +40,10 @@ describe('0034 platform business projection migration', () => {
       expect(sqlite.prepare('SELECT count(*) n FROM platform_query').get()).toEqual({ n: 1 })
       const storedRelation = sqlite.prepare('SELECT relation_key, raw_fields FROM platform_relation WHERE id=?').get(relation.id) as { relation_key: string; raw_fields: string }
       expect(storedRelation.relation_key).toBe('SQ-LEGACY-B')
-      expect(JSON.parse(storedRelation.raw_fields)).toEqual(relation.rawFields)
+      expect(JSON.parse(storedRelation.raw_fields)).toEqual(originalFields)
       expect(sqlite.prepare('SELECT count(*) n FROM platform_business_projection').get()).toEqual({ n: 0 })
       expect((sqlite.prepare('PRAGMA table_info(platform_business_projection)').all() as { name: string }[]).map(column => column.name)).toEqual([
-        'version_id', 'record_id', 'declare_kind', 'business_year', 'applied_at', 'status', 'batch', 'award_batch_label', 'province', 'name_raw', 'uscc_raw', 'rule_version', 'created_at',
+        'version_id', 'record_id', 'declare_kind', 'business_year', 'applied_at', 'status', 'batch', 'award_batch_label', 'province', 'name_raw', 'uscc_raw', 'rule_version', 'created_at', 'title_raw',
       ])
       expect(sqlite.prepare("SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='platform_business_projection' ORDER BY name").all()).toEqual([
         { name: 'platform_business_projection_applied_idx' },
@@ -50,6 +51,7 @@ describe('0034 platform business projection migration', () => {
         { name: 'platform_business_projection_kind_idx' },
         { name: 'platform_business_projection_record_idx' },
         { name: 'platform_business_projection_status_idx' },
+        { name: 'platform_business_projection_title_version_idx' },
         { name: 'platform_business_projection_uscc_idx' },
         { name: 'platform_business_projection_year_idx' },
       ])

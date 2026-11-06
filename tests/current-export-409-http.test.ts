@@ -3,39 +3,54 @@ import { afterAll, beforeAll, expect, it } from 'vitest'
 import { createHash } from 'node:crypto'
 import { existsSync, statSync } from 'node:fs'
 import type ExcelJS from 'exceljs'
+import { schema } from '../db/client'
 import { currentExport409Fixture } from './helpers/current-export-409'
 import { B409, B409_TAIL_NAMES, HEADERS_409, X409 } from './fixtures/current-export-409'
 import { readCurrentQualificationAssessment } from '../lib/roster/current-qualification'
 
 const f = currentExport409Fixture()
+const headers409 = [...HEADERS_409,'有效状态','有效期及排除依据','资料缺口与来源备注']
+const sheets409 = ['有效企业','已到期','已注销（吊销）','已迁出','未认定','口径说明']
 beforeAll(() => f.start(), 60000)
 afterAll(() => f.close())
 it('X409 canonical termination overrides an independent unresolved subject fact in real Excel', async () => {
+  f.resetBusiness()
   const target = f.candidate(X409.name)
   f.decision(target.enterprise.id, 'deregistered')
   f.decision(target.enterprise.id, 'moved_out', { titleCode: 'innovative_sme', direction: 'missing_in_miit', basis: null })
+  // Legacy decisions remain diagnostic; complete typed facts own current exclusion.
+  const legacyOnly = readCurrentQualificationAssessment(f.db.$client,target.enterprise.id).titles.find(t => t.titleCode === 'specialized_sme')!
+  expect(legacyOnly).toMatchObject({ group:'eligible',effectiveQualification:{status:'effective'},subject:{status:'not_established'} })
+  expect(f.db.$client.prepare('select distinct reason_code as reasonCode from difference_reason where enterprise_id=? order by reason_code').all(target.enterprise.id)).toEqual([{reasonCode:'deregistered'},{reasonCode:'moved_out'}])
+  for (const [factId,kind,reference] of [[1,'cancelled','synthetic registry cancellation'],[2,'moved_out','']] as const) {
+    f.db.insert(schema.enterpriseFactRevision).values({enterpriseId:target.enterprise.id,factId,revision:1,status:'confirmed',fact:{kind,source:{reference,statement:'literal synthetic registry statement'},effective:{precision:'day',value:'2025-01-01'},observed:{precision:'day',value:'2025-01-01'},city:null},action:'assert',actor:{type:'agent',id:'X409'},basis:'independently verified synthetic fact',createdAt:'2025-01-01T00:00:00Z'}).run()
+  }
   f.candidate(X409.eligible)
   f.candidate(X409.pending, [{ eventType: 'award', year: null, batchSeq: 1 }])
   const before = f.businessDigest()
   const shared = readCurrentQualificationAssessment(f.db.$client, target.enterprise.id)
   expect(shared.titles.map(t => t.titleCode).sort()).toEqual(['innovative_sme','little_giant','specialized_sme'])
-  expect(shared.titles.find(t => t.titleCode === 'specialized_sme')).toMatchObject({group:'excluded',subject:{status:'terminated'}})
+  expect(shared.titles.find(t => t.titleCode === 'specialized_sme')).toMatchObject({group:'excluded',effectiveQualification:{status:'terminated'},subject:{status:'terminated'}})
   expect(f.businessDigest()).toBe(before)
   const { wb, job } = await f.workbook('X409-first-guarded-red')
-  expect(wb.worksheets.map(s => s.name)).toEqual(['有效企业','待确认','排除明细','口径说明'])
+  expect(wb.worksheets.map(s => s.name)).toEqual(sheets409)
   expect(job.result.total).toBe(3)
-  for (const sheet of wb.worksheets.slice(0,3)) expect(sheet.getRow(1).values).toEqual([undefined,...HEADERS_409])
+  for (const sheet of wb.worksheets.slice(0,5)) expect(sheet.getRow(1).values).toEqual([undefined,...headers409])
   const names = (sheet: string) => wb.getWorksheet(sheet)!.getRows(2,Math.max(0,wb.getWorksheet(sheet)!.rowCount-1))?.map(r => r.getCell(2).value) ?? []
   expect(names('有效企业')).toEqual([X409.eligible])
-  expect(names('待确认')).toContain(X409.pending)
+  expect(names('已到期')).toEqual([X409.pending])
+  expect(wb.getWorksheet('已到期')!.getCell('G2').value).toBe('原认定年份待核第1批认定')
+  expect(wb.getWorksheet('已到期')!.getCell('O2').value).toContain('认定或复核周期资料不完整')
   expect(f.businessDigest()).toBe(before)
-  // Unique intended RED: all real protocol/oracle/read-only controls above precede this assertion.
-  expect(names('排除明细'), 'X409_TARGET_CANONICAL_EXCLUDED').toEqual([X409.name])
-  expect(names('待确认')).toEqual([X409.pending])
-  expect(job.result.counts).toEqual({eligible:1,pending:1,excluded:1})
+  expect(names('已注销（吊销）'), 'X409_TARGET_CANONICAL_EXCLUDED').toEqual([X409.name])
+  expect(names('未认定')).toEqual([]); expect(names('已迁出')).toEqual([])
+  expect(wb.getWorksheet('已注销（吊销）')!.getCell('O2').value).toContain('排除事实证据或生效时间不完整，仅备注')
+  expect(job.result.counts).toEqual({eligible:1,pending:0,excluded:2})
+  expect(job.result.statusCounts).toEqual({effective:1,expired:1,terminated:1,moved_out:0,unrecognized:0})
 }, 30000)
 
-it('E409 full title exports retain platform failure missing records and pending beyond page one', async () => {
+it('E409 full title exports retain platform failures missing records and unrecognized reviews beyond page one', async () => {
+  f.resetBusiness()
   const titlePaths = {little_giant:'little-giant',specialized_sme:'specialized-sme',innovative_sme:'innovative-sme'} as const
   for (const [title,path] of Object.entries(titlePaths)) {
     const valid=f.candidate('E409-'+title,undefined,title)
@@ -60,12 +75,15 @@ it('E409 full title exports retain platform failure missing records and pending 
     const job=await f.terminal((await accepted.json()).jobId); expect(job.state,JSON.stringify(job)).toBe('done')
     const {wb}=await f.download(job)
     const names=(sheet:string)=>wb.getWorksheet(sheet)!.getRows(2,Math.max(0,wb.getWorksheet(sheet)!.rowCount-1))?.map(r=>r.getCell(2).value)??[]
-    expect(names('有效企业')).toEqual(expect.arrayContaining([valid.enterprise.name,absent.enterprise.name,'Q409-'+title+'-25']))
-    expect(names('待确认')).toContain(pending.enterprise.name)
-    expect(names('排除明细')).toContain(failed.enterprise.name)
+    expect(names('有效企业')).toEqual([valid.enterprise.name,absent.enterprise.name,...Array.from({length:26},(_,i)=>'Q409-'+title+'-'+i)])
+    for (const empty of ['已到期','已注销（吊销）','已迁出']) expect(names(empty)).toEqual([])
+    expect(names('未认定')).toEqual([pending.enterprise.name,failed.enterprise.name])
+    expect(wb.worksheets.map(sheet=>sheet.name)).toEqual(sheets409)
+    expect(job.result.counts).toEqual({eligible:28,pending:0,excluded:2})
+    expect(job.result.statusCounts).toEqual({effective:28,expired:0,terminated:0,moved_out:0,unrecognized:2})
     expect(job.result.total).toBe(Object.values(job.result.counts).reduce((a:any,b:any)=>a+b,0))
-    expect(wb.worksheets.slice(0,3).reduce((n,s)=>n+s.rowCount-1,0)).toBe(job.result.total)
-    expect(wb.worksheets.slice(0,3).every(s=>s.getRow(1).cellCount===12)).toBe(true)
+    expect(wb.worksheets.slice(0,5).reduce((n,s)=>n+s.rowCount-1,0)).toBe(job.result.total)
+    expect(wb.worksheets.slice(0,5).every(s=>s.getRow(1).cellCount===15)).toBe(true)
   }
 },30000)
 
@@ -79,7 +97,7 @@ it('L409 preserves idempotency rejected filters and authenticated artifact bound
   expect((await fetch(f.url('/api/roster/exports/current/innovative-sme'),{method:'POST',headers:f.headers,body:JSON.stringify({clientRequestId:'L409-dedup'})})).status).toBe(409)
 },30000)
 
-it('B409 separates three title groups and exhausts 201 public query and Excel members', async () => {
+it('B409 separates formal title states and exhausts 201 public query and Excel members', async () => {
   f.resetBusiness()
   const stable = f.candidate(B409.name, B409.award.map(event => ({ ...event })), 'little_giant')
   f.addRecord(stable.enterprise.id, B409.name, B409.pending.map(event => ({ ...event })), 'specialized_sme')
@@ -94,7 +112,7 @@ it('B409 separates three title groups and exhausts 201 public query and Excel me
   f.db.$client.pragma('query_only = ON')
   const literalSnapshot = readCurrentQualificationAssessment(f.db.$client, stable.enterprise.id, Date.parse(B409.asOf))
   expect(literalSnapshot.titles.map(title => [title.titleCode, title.group])).toEqual([
-    ['little_giant','eligible'], ['specialized_sme','pending'], ['innovative_sme','excluded'],
+    ['little_giant','eligible'], ['specialized_sme','excluded'], ['innovative_sme','excluded'],
   ])
   expect(literalSnapshot.titles[0]!.evidence).toContainEqual(expect.objectContaining({ eventType: 'award', year: 2026, batchSeq: 1 }))
   expect(literalSnapshot.titles[1]!.completeness.fieldGaps).toEqual([
@@ -115,17 +133,23 @@ it('B409 separates three title groups and exhausts 201 public query and Excel me
     for (const row of result.rows) expect(row.qualificationAssessment).toEqual(readCurrentQualificationAssessment(f.db.$client, row.enterpriseId, Date.parse(result.snapshotStartedAt)))
   }
   expect(queryIds).toEqual(expectedIds)
-  const locatedResponse = await fetch(f.url('/api/roster/current-enterprises?' + new URLSearchParams({ titleCode: 'specialized_sme', q: B409.name })), { headers: f.headers })
+  const locatedResponse = await fetch(f.url('/api/roster/current-enterprises?' + new URLSearchParams({ titleCode: 'specialized_sme', status: 'unrecognized', q: B409.name })), { headers: f.headers })
   expect(locatedResponse.status).toBe(200)
   const located = await locatedResponse.json()
-  expect(located).toMatchObject({ total: 0, rows: [], publishedPending: { requested: true, total: 1 } })
-  expect(located.publishedPending.rows.map((row: { enterpriseId: number }) => row.enterpriseId)).toEqual([stable.enterprise.id])
-  expect(located.publishedPending.rows[0].qualificationAssessment).toEqual(readCurrentQualificationAssessment(f.db.$client, stable.enterprise.id, Date.parse(located.snapshotStartedAt)))
+  expect(located).toMatchObject({ total: 1, publishedPending: { requested: true, total: 0, rows: [] } })
+  expect(located.rows.map((row: { enterpriseId: number }) => row.enterpriseId)).toEqual([stable.enterprise.id])
+  expect(located.rows[0].qualificationAssessment).toEqual(readCurrentQualificationAssessment(f.db.$client, stable.enterprise.id, Date.parse(located.snapshotStartedAt)))
   const unrequested = await fetch(f.url('/api/roster/current-enterprises?titleCode=specialized_sme'), { headers: f.headers })
   expect(unrequested.status).toBe(200)
   expect(await unrequested.json()).toMatchObject({ total: 0, rows: [], publishedPending: { requested: false, rows: [], total: 0 } })
 
-  for (const literal of B409.titles) {
+  // Original review-only records contain no award or passed review: neither establishes a current grant.
+  const titleOracles = [
+    {title:'little_giant',path:'little-giant',sheet:'有效企业',label:'专精特新“小巨人”',qualification:'2026年第1批认定',counts:{eligible:201,pending:0,excluded:0},statusCounts:{effective:201,expired:0,terminated:0,moved_out:0,unrecognized:0}},
+    {title:'specialized_sme',path:'specialized-sme',sheet:'未认定',label:'专精特新中小企业',qualification:'2022年第1批原认定批次，结论年份待核复核结论待核',counts:{eligible:0,pending:0,excluded:1},statusCounts:{effective:0,expired:0,terminated:0,moved_out:0,unrecognized:1}},
+    {title:'innovative_sme',path:'innovative-sme',sheet:'未认定',label:'创新型中小企业',qualification:'2022年第1批原认定批次，2025年复核未通过',counts:{eligible:0,pending:0,excluded:1},statusCounts:{effective:0,expired:0,terminated:0,moved_out:0,unrecognized:1}},
+  ]
+  for (const literal of titleOracles) {
     const accepted = await fetch(f.url('/api/roster/exports/current/' + literal.path), { method: 'POST', headers: f.headers, body: JSON.stringify({ clientRequestId: 'B409-' + literal.title }) })
     expect(accepted.status).toBe(202)
     const job = await f.terminal((await accepted.json()).jobId)
@@ -133,22 +157,23 @@ it('B409 separates three title groups and exhausts 201 public query and Excel me
     expect(job.params.titleCode).toBe(literal.title)
     expect(job.result.snapshotId).toBe(job.id)
     const { wb } = await f.download(job)
-    expect(wb.worksheets.map(sheet => sheet.name)).toEqual(['有效企业','待确认','排除明细','口径说明'])
+    expect(wb.worksheets.map(sheet => sheet.name)).toEqual(sheets409)
     expect(job.result.counts).toEqual(literal.counts)
+    expect(job.result.statusCounts).toEqual(literal.statusCounts)
     expect(job.result.total).toBe(literal.title === 'little_giant' ? 201 : 1)
-    for (const sheet of wb.worksheets.slice(0,3)) {
-      expect(sheet.getRow(1).values).toEqual([undefined, ...HEADERS_409])
+    for (const sheet of wb.worksheets.slice(0,5)) {
+      expect(sheet.getRow(1).values).toEqual([undefined, ...headers409])
       const names = Array.from({ length: sheet.rowCount - 1 }, (_, i) => sheet.getRow(i + 2).getCell(2).value)
       expect(names).toEqual(sheet.name === literal.sheet ? literal.title === 'little_giant' ? expectedNames : [B409.name] : [])
       for (let i = 2; i <= sheet.rowCount; i++) {
-        expect(sheet.getRow(i).cellCount).toBe(12)
+        expect(sheet.getRow(i).cellCount).toBe(15)
         expect(sheet.getRow(i).getCell(5).value).toBe(literal.label)
       }
     }
     const targetRow = wb.getWorksheet(literal.sheet)!.getRow(2)
     expect(targetRow.getCell(7).value).toBe(literal.qualification)
-    if (literal.title === 'specialized_sme') expect(targetRow.getCell(11).value).toContain('复核结论/结论年份/批次不完整')
-    if (literal.title === 'innovative_sme') expect(targetRow.getCell(11).value).toContain('对应认定周期复核明确不通过，未见后续重新认定恢复')
+    if (literal.title !== 'little_giant') expect(targetRow.getCell(11).value).toContain('缺少已确认认定及资格依据')
+    if (literal.title === 'specialized_sme') expect(targetRow.getCell(15).value).toContain('认定或复核周期资料不完整')
     expectIndependent409Digest(wb, job.result, literal.title, identityByName)
     expect(f.businessDigest()).toBe(businessBefore)
   }
@@ -160,10 +185,12 @@ function expectIndependent409Digest(wb: ExcelJS.Workbook, result: { generatedAt:
   const at = Date.parse(result.generatedAt)
   expect(new Date(at).getUTCFullYear()).toBe(2026)
   const digest = createHash('sha256').update(JSON.stringify(['current-export-assessment-409-v2',QUALIFICATION_ASSESSMENT_VERSION,CURRENT_RULE_VERSION,2026,title]) + '\n')
-  for (const [group, sheetName] of [['eligible','有效企业'],['pending','待确认'],['excluded','排除明细']] as const) {
+  for (const [group, sheetName] of [['effective','有效企业'],['expired','已到期'],['terminated','已注销（吊销）'],['moved_out','已迁出'],['unrecognized','未认定']] as const) {
     const sheet = wb.getWorksheet(sheetName)!
     for (let rowIndex = 2; rowIndex <= sheet.rowCount; rowIndex++) {
-      const values = Array.from({ length: 12 }, (_, c) => sheet.getRow(rowIndex).getCell(c + 1).value)
+      const values = Array.from({ length: 15 }, (_, c) => sheet.getRow(rowIndex).getCell(c + 1).value)
+      // These two added business-text columns are joined strings; OOXML reads an empty string cell as null.
+      values[13] ??= ''; values[14] ??= ''
       const id = identityByName.get(String(values[1]))!
       expect(id).toBeTypeOf('number')
       const snapshot = readCurrentQualificationAssessment(f.db.$client, id, at)

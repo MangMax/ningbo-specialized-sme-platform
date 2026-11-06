@@ -1003,7 +1003,7 @@ it('navigates the snapshot result link to the task section and shows unfinished 
   link.click(); await flushPromises()
   expect(routerRef.current!.currentRoute.value.fullPath).toBe(`/tasks?tab=platform&job=${state.detail.id}#snapshot-result`)
   const section = dialog.querySelector('#snapshot-result')!
-  expect(section.textContent).toContain('公布名单全部企业 · 2 家')
+  expect(section.textContent).toContain('本任务选定公布企业 · 2 家')
   expect(section.textContent).toContain('未完成 1 范围')
   expect(section.textContent).toContain('第 2 页待续 · 行数 未知')
 })

@@ -371,7 +371,7 @@ it.each([{ case: 'Spec25', count: 25, perEvent: 5 }, { case: 'Standards24', coun
     const current = await get(), { publishedPresentation, qualificationAssessment, ...old } = current.rows[0]
     // The additive complete T2 is checked before the unchanged legacy-row oracle.
     const scope = { enterpriseId: 1, asOf: new Date(executionTime).toISOString(), ruleVersion: CURRENT_RULE_VERSION, assessmentVersion: QUALIFICATION_ASSESSMENT_VERSION }
-    expect(current.responseVersion).toBe('current-qualified-408-v1')
+    expect(current.responseVersion).toBe('current-qualified-478-v2')
     expect(qualificationAssessment).toMatchObject(scope)
     expect(qualificationAssessment.titles.map((item: { titleCode: string }) => item.titleCode)).toEqual(['little_giant', 'specialized_sme', 'innovative_sme'])
     expect(qualificationAssessment.snapshotId).toBe(createHash('sha256').update(JSON.stringify([scope, qualificationAssessment.titles])).digest('hex'))

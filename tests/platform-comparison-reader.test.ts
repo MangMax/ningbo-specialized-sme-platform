@@ -22,18 +22,65 @@ const U = '91330211255994457P', T = 'specialized_sme' as const
 const AS_OF = Date.parse('2026-06-01T00:00:00Z')
 const Q_AT = '2026-05-31T00:00:00Z', SHA = 'a'.repeat(64)
 const hash = (value: string) => createHash('sha256').update(value).digest('hex')
-/**
- * The frozen oracles record the legacy scope (v8 / 407-v1). Plain `read()` now
- * stamps the live versions while the comparison seam still anchors on the legacy
- * snapshot, so both sides are derived from the same frozen facts instead of
- * duplicating a second oracle.
- */
-function restamp(snapshot: { titles: unknown[]; snapshotId: string; [key: string]: unknown }, ruleVersion: string, assessmentVersion: string) {
-  const { titles, snapshotId: _digest, ...scope } = structuredClone(snapshot) as Record<string, unknown> & { titles: unknown[] }
-  const stamped = { ...scope, ruleVersion, assessmentVersion }
+// Comparison receipts retain their frozen v8 / 407-v1 facts. The default v10 /
+// 478-v3 assessment has its own qualification semantics, not just a new stamp.
+// These patches are literal expectations for the synthetic facts below; they do
+// not call an evaluator or infer a verdict from the legacy/runtime verdict.
+type CurrentTitlePatch = {
+  group: 'eligible' | 'excluded'
+  effectiveQualification: { status: 'effective' | 'expired' | 'unrecognized'; presentationBasis: string[]; basis: string; notes: string[] }
+  officialQualification: { group: 'eligible' | 'excluded'; message: string; basis: string; notes: string[] }
+  notes: string[]
+  shadow: { legacyGroup: 'eligible' | 'excluded'; difference: null }
+  cycles?: { originYear: number; batchSeq: number | null; precision: string }[]
+}
+const MISSING_QUALIFICATION = '缺少已确认认定及资格依据；平台状态或候选对应不能单独证明资格'
+const EXCLUDED_QUALIFICATION = '正式资格不纳入当前有效；历史依据保留'
+const ELIGIBLE_QUALIFICATION = '正式资格当前有效（按已录入的年份或已核实有效期间）'
+const PERIOD_2024 = '默认年度规则：最近一次认定或复核通过 2024 年 + 3 = 2027 年；自 2027 年起到期（仅年份精度）'
+const PERIOD_2025 = '默认年度规则：最近一次认定或复核通过 2025 年 + 3 = 2028 年；自 2028 年起到期（仅年份精度）'
+const PERIOD_2026 = '默认年度规则：最近一次认定或复核通过 2026 年 + 3 = 2029 年；自 2029 年起到期（仅年份精度）'
+const CURRENT_ABSENT: CurrentTitlePatch = {
+  group: 'excluded',
+  effectiveQualification: { status: 'unrecognized', presentationBasis: [], basis: '', notes: [MISSING_QUALIFICATION] },
+  officialQualification: { group: 'excluded', message: EXCLUDED_QUALIFICATION, basis: '', notes: [MISSING_QUALIFICATION] },
+  notes: [], shadow: { legacyGroup: 'excluded', difference: null },
+}
+function currentAward(basis: string, presentationBasis: string[], effectiveNotes: string[] = []): CurrentTitlePatch {
+  return { group: 'eligible',
+    effectiveQualification: { status: 'effective', presentationBasis, basis, notes: effectiveNotes },
+    officialQualification: { group: 'eligible', message: ELIGIBLE_QUALIFICATION, basis, notes: [] },
+    notes: [], shadow: { legacyGroup: 'eligible', difference: null } }
+}
+const CURRENT_2024 = currentAward('event:1@1', [PERIOD_2024])
+const CURRENT_2026 = currentAward('event:1@1', [PERIOD_2026])
+function currentExcluded(basis: string, status: 'expired' | 'unrecognized', officialNotes: string[], extraNotes: string[] = []): CurrentTitlePatch {
+  const notes = officialNotes.map(note => '历史诊断（不参与有效判定）：' + note)
+  return { group: 'excluded',
+    effectiveQualification: { status, presentationBasis: [], basis, notes: [...notes, ...officialNotes, ...extraNotes] },
+    officialQualification: { group: 'excluded', message: EXCLUDED_QUALIFICATION, basis, notes: officialNotes },
+    notes, shadow: { legacyGroup: 'excluded', difference: null } }
+}
+const CURRENT_FAILED_REVIEW = currentExcluded('event:1@1\nevent:2@1', 'expired', [
+  '2024年/批次1：对应认定周期复核明确不通过', '正式复核明确不通过，未见较晚通过或新认定恢复',
+], ['公布名称未留档'])
+function currentSnapshot(snapshot: { titles: unknown[]; snapshotId: string; [key: string]: unknown }, patches: readonly CurrentTitlePatch[]) {
+  const { titles: legacyTitles, snapshotId: _digest, ...scope } = structuredClone(snapshot)
+  expect(legacyTitles).toHaveLength(patches.length)
+  const titles = legacyTitles.map((value, index) => {
+    const { titleCode, group: _group, cycles, ...facts } = value as Record<string, unknown>
+    const { cycles: newCycles, group, effectiveQualification, ...patch } = structuredClone(patches[index]!)
+    // Preserve the public serialization order too: snapshotId covers full bytes.
+    return { titleCode, group, effectiveQualification,
+      cycles: newCycles ?? cycles, ...facts, ...patch }
+  })
+  const stamped = { ...scope, ruleVersion: CURRENT_RULE_VERSION, assessmentVersion: QUALIFICATION_ASSESSMENT_VERSION }
   return { ...stamped, snapshotId: hash(JSON.stringify([stamped, titles])), titles }
 }
-const asCurrent = (snapshot: Parameters<typeof restamp>[0]) => restamp(snapshot, CURRENT_RULE_VERSION, QUALIFICATION_ASSESSMENT_VERSION)
+const current427 = (snapshot: Parameters<typeof currentSnapshot>[0], specialized = CURRENT_2024) => currentSnapshot(snapshot, [CURRENT_ABSENT, specialized, CURRENT_ABSENT])
+const current438 = (snapshot: Parameters<typeof currentSnapshot>[0]) => currentSnapshot(snapshot, [
+  currentAward('event:11@1', [PERIOD_2024]), currentAward('event:12@1', [PERIOD_2024]), currentAward('event:13@1', [PERIOD_2024]),
+])
 
 type ProposedReader = {
   readPlatformComparison(enterpriseId: number, asOf: number, title: typeof T): PlatformComparison
@@ -106,8 +153,8 @@ it('Z_2024_formal_2026_complete_zero_preserves_legacy', () => {
     expect(sqlite.inTransaction).toBe(false)
 
     const legacyBytes = JSON.stringify(old)
-    expect(old).toEqual(asCurrent(LEGACY_ORACLE))
-    expect(hash(legacyBytes)).toBe(hash(JSON.stringify(asCurrent(LEGACY_ORACLE))))
+    expect(old).toEqual(current427(LEGACY_ORACLE))
+    expect(hash(legacyBytes)).toBe(hash(JSON.stringify(current427(LEGACY_ORACLE))))
     // Missing method was the original guarded RED; now exercise the real interface.
     const proposed = reader as typeof reader & ProposedReader
     expect(proposed.readPlatformComparison).toBeTypeOf('function')
@@ -117,7 +164,7 @@ it('Z_2024_formal_2026_complete_zero_preserves_legacy', () => {
       expect(result.version).toBe('platform-comparison-410-v1')
       // Comparison is anchored on the legacy snapshot, not the live plain read.
       const legacyScope = { ...scope, ruleVersion: LEGACY_CURRENT_RULE_VERSION, assessmentVersion: LEGACY_QUALIFICATION_ASSESSMENT_VERSION }
-      expect(result.scope).toEqual({ ...legacyScope, titleCode: T, legacySnapshotId: hash(JSON.stringify([legacyScope, titles])) })
+      expect(result.scope).toEqual({ ...legacyScope, titleCode: T, legacySnapshotId: LEGACY_ORACLE.snapshotId })
       expect(result.observation.state).toBe('no_record') // independent literal, never core-generated expected
       expect(result.comparison.state).toBe('unsynchronized')
       expect(result.comparison.cycles).toEqual([{
@@ -128,6 +175,7 @@ it('Z_2024_formal_2026_complete_zero_preserves_legacy', () => {
       }])
       expect(compare).toHaveBeenCalledTimes(1)
       const input: CandidateComparisonInput = compare.mock.calls[0]![0]
+      expect(input.legacy).toEqual(LEGACY_ORACLE)
       expect(input.legacy).toEqual(reader.read(enterprise.id, AS_OF, { assessmentVersion: LEGACY_QUALIFICATION_ASSESSMENT_VERSION }).snapshot)
       expect(input.processes).toEqual([])
       expect(input.formal.cycles).toHaveLength(1)
@@ -210,7 +258,7 @@ it('legacy_null_origin_award_decided_year_preserves_null_after_430', () => {
     expect(actual.scope).toEqual(projection.scope)
     expect(actual.observation).toEqual(projection.observation)
     expect(actual.comparison).toEqual(projection.comparison)
-    expect(createCurrentQualificationAssessmentReader(sqlite).read(1, AS_OF).snapshot).toEqual(asCurrent(legacy))
+    expect(createCurrentQualificationAssessmentReader(sqlite).read(1, AS_OF).snapshot).toEqual(current427(legacy))
     expect(input).toEqual(original)
     expect(sqlite.prepare('select total_changes() as n').get()).toEqual(changes)
     expect(sqlite.pragma('query_only', { simple: true })).toBe(1)
@@ -266,7 +314,7 @@ function query427(f: Fixture427, options: {
     rawFields: { secret: 'SECRET_427_RAW' } }).run()
   return q
 }
-function read427(f: Fixture427, o: PlatformComparison['observation']['state'], c: PlatformComparison['comparison']['state'], reason: string) {
+function read427(f: Fixture427, o: PlatformComparison['observation']['state'], c: PlatformComparison['comparison']['state'], reason: string, current = CURRENT_2024) {
   f.sqlite.pragma('query_only=ON')
   const before = f.sqlite.prepare('select total_changes() as n').get()
   const legacy = f.reader.read(1, AS_OF, { assessmentVersion: LEGACY_QUALIFICATION_ASSESSMENT_VERSION }).snapshot
@@ -275,7 +323,7 @@ function read427(f: Fixture427, o: PlatformComparison['observation']['state'], c
   expect(projection.comparison.state).toBe(c)
   expect(projection.comparison.cycles[0]!.reasons).toContain(reason)
   expect(projection.scope.legacySnapshotId).toBe(legacy.snapshotId)
-  expect(f.reader.read(1, AS_OF).snapshot).toEqual(asCurrent(legacy))
+  expect(f.reader.read(1, AS_OF).snapshot).toEqual(current427(legacy, current))
   expect(f.sqlite.prepare('select total_changes() as n').get()).toEqual(before)
   expect(JSON.stringify(projection)).not.toMatch(/SECRET_427|synthetic\/|合成427/)
   return projection
@@ -347,7 +395,7 @@ it.each([
   ['null_batch', 2024, null, 'cycle_unresolved'],
 ] as const)('reader427 %s', (_name, year, batch, reason) => {
   const f = fixture427(':memory:', year, batch)
-  try { query427(f); read427(f, 'no_record', 'not_established', reason) } finally { f.sqlite.close() }
+  try { query427(f); read427(f, 'no_record', 'not_established', reason, _name === 'same_year' ? CURRENT_2026 : CURRENT_2024) } finally { f.sqlite.close() }
 })
 it('reader427 stale_hash_preserves_formal', () => {
   const f = fixture427()
@@ -364,7 +412,7 @@ it('reader427 current_failure_not_revived', () => {
     f.db.insert(schema.recordEvidence).values({ id: 2, recordEventId: 2, sourceFile: 'synthetic/427.pdf', listNo: 2 }).run()
     query427(f)
     expect(f.reader.read(1, AS_OF).snapshot.titles.find(t => t.titleCode === T)!.group).toBe('excluded')
-    read427(f, 'no_record', 'not_established', 'formal_unresolved')
+    read427(f, 'no_record', 'not_established', 'formal_unresolved', CURRENT_FAILED_REVIEW)
   } finally { f.sqlite.close() }
 })
 
@@ -2121,7 +2169,37 @@ const READER427_R2_CASES = [
   }
 ] as const
 
-it.each(READER427_R2_CASES)('$name', spec => {
+// #478 selects the latest applicable recovery for the current qualification;
+// the comparison below still retains every v1 possible-cycle binding. In
+// particular, a future award supplies no current cycle, and the two undated-
+// batch awards concluded in 2024/2025 select the 2025 recovery for default reads.
+const CURRENT_R2: Record<typeof READER427_R2_CASES[number]['name'], CurrentTitlePatch> = {
+  reader427_r2_failed_only_null_anchor: {
+    ...currentExcluded('event:1@1', 'unrecognized', [MISSING_QUALIFICATION, '正式复核明确不通过，未见较晚通过或新认定恢复']), cycles: [],
+  },
+  reader427_r2_future_known_batch_empty_award_ids: {
+    ...currentExcluded('event:1@1', 'expired', [MISSING_QUALIFICATION]), cycles: [],
+  },
+  reader427_r2_future_null_batch_empty_award_ids: {
+    ...currentExcluded('event:1@1', 'expired', [MISSING_QUALIFICATION]), cycles: [],
+  },
+  reader427_r2_double_null_batch_distinct_decided_year: {
+    ...currentAward('event:1@1\nevent:2@1', [PERIOD_2025]), cycles: [{ originYear: 2024, batchSeq: null, precision: 'year' }],
+  },
+  reader427_r2_known_unknown_awards_ambiguous_review_dependencies: currentAward('event:1@1\nevent:2@1\nevent:3@1\nevent:4@1',
+    [PERIOD_2026, PERIOD_2026, PERIOD_2026], ['认定或复核周期资料不完整']),
+  reader427_r2_reviews_only_null_batch: currentExcluded('event:1@1\nevent:2@1', 'unrecognized', [
+    '2024年/批次?：对应认定周期复核明确不通过', '正式复核明确不通过，未见较晚通过或新认定恢复',
+  ], ['认定或复核周期资料不完整']),
+  reader427_r2_identical_judgments_distinct_direct_forward: {
+    ...currentExcluded('event:1@1\nevent:2@1', 'expired', [MISSING_QUALIFICATION]), cycles: [],
+  },
+  reader427_r2_identical_judgments_distinct_direct_reverse_insert: {
+    ...currentExcluded('event:1@1\nevent:2@1', 'expired', [MISSING_QUALIFICATION]), cycles: [],
+  },
+}
+
+it.each(READER427_R2_CASES.map(spec => [spec.name, spec] as const))('%s', (_name, spec) => {
   const sqlite = new Database(':memory:')
   const compare = vi.spyOn(core, 'comparePlatformComparison') // actual core call-through; never stub a result
   try {
@@ -2187,7 +2265,7 @@ it.each(READER427_R2_CASES)('$name', spec => {
       const attempted = compare.mock.calls[0]?.[0]
       console.info('READER427_R2_ATTEMPT', JSON.stringify({ name: spec.name, actualBindings: attempted?.formal.cycles,
         expectedBindings: spec.expectedBindings, legacySnapshotId: snapshotId }))
-      expect(reader.read(1, AS_OF).snapshot).toEqual(asCurrent(legacy))
+      expect(reader.read(1, AS_OF).snapshot).toEqual(current427(legacy, CURRENT_R2[spec.name]))
       expect(sqlite.prepare('select total_changes() as n').get()).toEqual(changes)
       expect(sqlite.pragma('query_only', { simple: true })).toBe(1)
       expect(sqlite.inTransaction).toBe(false)
@@ -2309,8 +2387,8 @@ it('reader438_guarded_RED_entry_missing_after_full_legacy_guards', () => {
     expect(sqlite.inTransaction).toBe(false)
 
     const legacyBytes = JSON.stringify(old)
-    expect(old).toEqual(asCurrent(LEGACY_ORACLE))
-    expect(hash(legacyBytes)).toBe(hash(JSON.stringify(asCurrent(LEGACY_ORACLE))))
+    expect(old).toEqual(current427(LEGACY_ORACLE))
+    expect(hash(legacyBytes)).toBe(hash(JSON.stringify(current427(LEGACY_ORACLE))))
     const compare = vi.spyOn(core, 'comparePlatformComparison')
     try {
       expect(compare).not.toHaveBeenCalled()
@@ -2463,13 +2541,16 @@ function independent438(kinds: readonly Kind438[] = ['P','N','Z']) {
   return {snapshot:legacy,inputs,comparisons}
 }
 
-it.each([{name:'reader438_distinct_P_N_Z_complete_literals',kinds:['P','N','Z'] as const},{name:'reader438_rotated_Z_P_N_complete_literals',kinds:['Z','P','N'] as const}])('$name',({kinds})=>{
+it.each([
+  ['reader438_distinct_P_N_Z_complete_literals', ['P','N','Z']],
+  ['reader438_rotated_Z_P_N_complete_literals', ['Z','P','N']],
+] as const)('%s',(_name,kinds)=>{
   const expected=independent438(kinds),f=fixture438(kinds)
   const compare=vi.spyOn(core,'comparePlatformComparison'),process=vi.spyOn(processReads438,'readPlatformComparisonProcesses')
   try {
     f.sqlite.pragma('query_only=ON')
     const changes=f.sqlite.prepare('select total_changes() n').get()
-    expect(f.reader.read(1,AS_OF).snapshot).toEqual(asCurrent(expected.snapshot))
+    expect(f.reader.read(1,AS_OF).snapshot).toEqual(current438(expected.snapshot))
     expect(compare).not.toHaveBeenCalled();expect(process).not.toHaveBeenCalled()
     const actual=f.reader.readPlatformComparisons(1,AS_OF,['innovative_sme','little_giant','specialized_sme','little_giant'])
     expect(actual).toEqual({snapshot:expected.snapshot,comparisons:expected.comparisons})
@@ -2478,7 +2559,7 @@ it.each([{name:'reader438_distinct_P_N_Z_complete_literals',kinds:['P','N','Z'] 
     expect(process.mock.calls.map(([,request])=>request)).toEqual(TITLES438.map((titleCode,i)=>({enterpriseId:1,titleCode,eventIds:[11+i],selectedQueryIds:[101+i]})))
     // Supplemental parity only, after full independent input/output equality.
     expect(TITLES438.map(t=>f.reader.readPlatformComparison(1,AS_OF,t))).toEqual(actual.comparisons)
-    expect(f.reader.read(1,AS_OF).snapshot).toEqual(asCurrent(expected.snapshot))
+    expect(f.reader.read(1,AS_OF).snapshot).toEqual(current438(expected.snapshot))
     expect(f.sqlite.prepare('select total_changes() n').get()).toEqual(changes)
     expect(f.sqlite.inTransaction).toBe(false)
   } finally {compare.mockRestore();process.mockRestore();f.sqlite.close()}
@@ -2547,7 +2628,7 @@ it('reader438_all_legacy_entries_no_comparison_and_full_compatibility',()=>{
     const reads=()=>({read:f.reader.read(1,AS_OF),titles:TITLES438.map(t=>f.reader.readTitle(1,t,AS_OF)),current:TITLES438.map(t=>f.reader.readCurrent(1,AS_OF,t)),
       workbooks:TITLES438.map(t=>{const r=f.reader.readWorkbook(1,AS_OF,t);return {...r,workbookPublished:[...r.workbookPublished],facts:r.rows.map(row=>row.workbookFacts)}})})
     const before=reads()
-    expect(before.read.snapshot).toEqual(asCurrent(independent438().snapshot))
+    expect(before.read.snapshot).toEqual(current438(independent438().snapshot))
     expect(compare).not.toHaveBeenCalled();expect(process).not.toHaveBeenCalled()
     f.reader.readPlatformComparisons(1,AS_OF,TITLES438)
     expect(reads()).toEqual(before)

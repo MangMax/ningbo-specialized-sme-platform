@@ -41,9 +41,7 @@ export interface CurrentQualifiedResult {
   snapshotStartedAt: string
 }
 
-/** The existing current-grant / same-source-row AND witnesses serve both the
- * eligible filter and the pending explanation. Unknown facts never prove a hit.
- */
+/** Match filters against the same grant and source row; unknown facts do not prove a hit. */
 function selectFilterWitnesses(witnesses: CurrentQualificationWitness[], filter: CurrentQualifiedFilter) {
   type Check = { field: CurrentFilterMatch['checks'][number]['field']; test: (witness: CurrentQualificationWitness) => CurrentFilterMatchStatus }
   const equals = (actual: number | null | undefined, expected: number): CurrentFilterMatchStatus => actual == null ? 'not_established' : actual === expected ? 'matched' : 'not_matched'
@@ -78,11 +76,6 @@ function selectFilterWitnesses(witnesses: CurrentQualificationWitness[], filter:
   return { matching, uncertain, filterMatch }
 }
 
-function formalScope(row: CurrentRow) {
-  const formalIds = new Set(row.workbookFacts?.events.filter(event => event.source === 'jxj' && ['award', 'review'].includes(event.eventType)).map(event => event.id))
-  return (row.workbookFacts?.evidence ?? []).filter(evidence => formalIds.has(evidence.eventId)).map(evidence => ({ evidenceId: evidence.id, eventId: evidence.eventId }))
-}
-
 function retainFilterWitnesses(row: CurrentRow, matching: CurrentQualificationWitness[]) {
   row.qualificationWitnesses = matching
   row.recognition = matching[0]?.recognition ?? null
@@ -94,7 +87,7 @@ export interface CurrentQualifiedReadOptions {
   /** Explicit #468 rollback seam; absent follows the operational default. */
   recognizedFactSource?: RecognizedFactSource
 }
-/** Complete independent counts; at most two requested pages retain full T2. */
+/** Count all candidates in one snapshot; hydrate only the requested page. */
 export function listCurrentQualified(db: Database.Database, filter: CurrentQualifiedFilter, readOptions: CurrentQualifiedReadOptions = {}): CurrentQualifiedResult {
   const page = filter.page ?? 1, pageSize = filter.pageSize ?? 25
   const snapshotStartedAt = new Date().toISOString()
@@ -112,29 +105,22 @@ export function listCurrentQualified(db: Database.Database, filter: CurrentQuali
     const requested = Boolean(qName || qUscc)
     let total = 0
     let uncertainTotal = 0
-    let pendingTotal = 0
     const selected: { id: number; matching: CurrentQualificationWitness[] }[] = []
-    const pendingIds: number[] = []
     const hydrate = (id: number): CurrentQualifiedRow => {
-      const { rows: titleRows, snapshot, publishedPresentation } = assessmentReader.readCurrent(id, at, filter.titleCode)
+      const { rows: titleRows, snapshot, publishedPresentation } = assessmentReader.readCurrent(id, at, filter.titleCode, keys.queries)
       const row = titleRows.find(item => item.assessment!.titleCode === filter.titleCode)!
       const { assessment, ...publicRow } = row
-      // Preserve the public-name budget, complete default secrets and the two
-      // responsive text copies. T2 uses the unmodified shared default inputs.
+      // Preserve the public-name budget and the complete shared assessment.
       return { ...publicRow, group: assessment!.group, qualificationAssessment: snapshot,
         publishedPresentation }
     }
     const recognitionYears = new Set<number>(), validYears = new Set<number>(), maintenanceYears = new Set<number>()
     const maintenanceBatchesByYear = new Map<number, Set<number>>()
     for (const { id } of candidates.iterate(currentCandidateBindings(filter.titleCode)) as Iterable<{ id: number }>) {
-      const { row, group, effectiveStatus } = assessmentReader.readTitle(id, filter.titleCode, at, keys)
+      const { row, effectiveStatus } = assessmentReader.readTitle(id, filter.titleCode, at, keys)
       const identityMatch = (!filter.district || row.district === filter.district) && (!filter.q
         || Boolean(qName && [row.name, ...row.aliases].some(name => normalizeName(name).includes(qName)))
         || Boolean(qUscc && normalizeUscc(row.uscc).includes(qUscc)))
-      if (group === 'pending' && requested && identityMatch && formalScope(row).length) {
-        if (pendingTotal >= (page - 1) * pageSize && pendingIds.length < pageSize) pendingIds.push(id)
-        pendingTotal++
-      }
       for (const witness of (effectiveStatus === 'effective' ? row.qualificationWitnesses : []) ?? []) {
         recognitionYears.add(witness.recognition.year)
         if (witness.matchedValidYear != null) validYears.add(witness.matchedValidYear)
@@ -155,8 +141,7 @@ export function listCurrentQualified(db: Database.Database, filter: CurrentQuali
     }
     // Exhausting the candidate iterator releases its active SQLite statement
     // before read() opens a nested SAVEPOINT. The outer BEGIN is still active:
-    // counts, witnesses and full T2 hydration share the same read snapshot/time.
-    // Retain only the two requested pages, never all candidates or all T2s.
+    // Counts, witnesses and full T2 hydration share the same read snapshot/time.
     const rows = selected.map(({ id, matching }) => {
       const hydrated = hydrate(id)
       if (filter.recognitionFrom || filter.validYear != null || filter.maintenanceYear != null) {
@@ -164,12 +149,9 @@ export function listCurrentQualified(db: Database.Database, filter: CurrentQuali
       }
       return hydrated
     })
-    const pendingRows: CurrentPublishedPendingRow[] = pendingIds.map(id => {
-      const hydrated = hydrate(id)
-      return { ...hydrated, filterMatch: selectFilterWitnesses(hydrated.qualificationWitnesses ?? [], filter).filterMatch }
-    })
     db.exec('COMMIT')
     const ascending = (values: Set<number>) => [...values].sort((a,b) => a-b)
-    return { responseVersion: 'current-qualified-478-v2', rows, publishedPending: { requested, rows: pendingRows, total: pendingTotal, page, pageSize }, total, uncertainTotal, options: { recognitionYears: ascending(recognitionYears), validYears: ascending(validYears), maintenanceYears: ascending(maintenanceYears), maintenanceBatchesByYear: Object.fromEntries([...maintenanceBatchesByYear].map(([year,batches]) => [year,ascending(batches)])) }, page, pageSize, titleCode: filter.titleCode, ruleVersion: CURRENT_RULE_VERSION, snapshotStartedAt }
+    // Keep the old response field; the five-state reader has no pending bucket.
+    return { responseVersion: 'current-qualified-478-v2', rows, publishedPending: { requested, rows: [], total: 0, page, pageSize }, total, uncertainTotal, options: { recognitionYears: ascending(recognitionYears), validYears: ascending(validYears), maintenanceYears: ascending(maintenanceYears), maintenanceBatchesByYear: Object.fromEntries([...maintenanceBatchesByYear].map(([year,batches]) => [year,ascending(batches)])) }, page, pageSize, titleCode: filter.titleCode, ruleVersion: CURRENT_RULE_VERSION, snapshotStartedAt }
   } catch (error) { if (db.inTransaction) db.exec('ROLLBACK'); throw error }
 }

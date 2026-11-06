@@ -99,13 +99,12 @@
 
 ## 默认待核、代理判断与覆盖写回
 
-1. 从任务快照队列领取非终结坐标。通过 `snapshot_difference_judgment`（参数 `input`）或 `POST /api/roster/difference-judgments` 的 `action: read` 读取 jobId、enterpriseId、titleCode、direction 对应详情；完整读取 platformHistory 的三接口全部历史行、officialSources 的冻结公布事件及出处，再按上面的判断表与迁移查证流程判断。skillReference 指向本文件。缺少出处单独说明，不作为有效资格 A 域的阻塞门。
-2. 能判定原因时写 `confirmed_reason`；确立无差异时写 `confirmed_no_diff`，两者离开待核队列。保留现有六状态、七原因；程序不自动分类。判不出写非终结状态（如 `needs_review`），在 searchedScope 列已查范围、gaps 列具体缺口，交人工通过代理补充决定。
-3. 写回前读取 current 和 token，将完整原值原样放入 expected、token 放入 expectedToken（初始 0；独立最后操作 ID，仅作并发控制，不是业务版本）；current 写 status、reasonCode、measureCode、notes、searchedScope、gaps、evidence。仅 confirmed_reason 携带原因；无差异及非终结原因设 null。evidence 可引用本坐标的 platform（itemId、segment 和 row，后两者从零计数）、official（evidenceId）或 external（http/https url、note）。actor 为已鉴权代理自报标签，不是权限证明；人工指令及依据写 notes。名称、别名和独立主体事实仍分别使用其公开协议。
-4. 用 `action: write` 覆盖本任务同一坐标；409 表示当前值/token 已变或任务正在采集，重新读取并判断后再提交。读回 current 和 operations，核对任务、坐标、操作者、修改前后与时间。相同内容无操作日志增量；改判直接覆盖，不生成版本链，不写 previous_id、lifecycle_action 或 replace/withdraw。快照重试保留本任务判断与日志，新任务独立待核。
+1. 从企业列表读取待核企业。需要重算时调用 `POST /api/roster/differences/refresh`，可选 `enterpriseIds`；通过 GET 同路径读取逐称号的比较结果。该结果复用现有比较逻辑，不等于代理已确认的结论。
+2. 按用户指定范围读取三张业务表、正式事件及企业详情，使用上面的判断表逐案调查。能证明无差异时提交 `confirmed_no_diff`；能确定原因时提交 `confirmed_reason`。无法判断则保留待核并说明已查范围与缺口。
+3. 写回使用现有差异原因公开 API/MCP 的预检、提交和读回协议，以当前 OpenAPI / tools/list 为准。判断由代理和人工执行，不绑定采集任务、不创建独立候选队列。新采集记录不自动确认原因或无差异。
 
-历史机器结论须逐案按真实依据判断，技能修改本身不修改生产决定。旧 ID 和审计继续由原只读入口查询；旧结论不自动带入新任务。补码、别名、新查询或新来源带来冲突时，由代理核对具体坐标，明确人工兜底缺口，在授权内覆盖当前值，不设解释有效性或复核回执门。
+历史结论和来源保留。业务输入变化后刷新回待核；相同业务输入再次采集或刷新，已有判断保持。
 
 ## 主体事实写回与多事实解释
 
-迁入、迁出、注销/登记状态确立后，按[主体事实公开协议](enterprise-facts.md)分别预检、保存、读回和确认来源断言，独立事实继续走其协议；任务差异的依据放入当前判断 evidence 和 notes。独立主体事实固定引用版本；改写差异原因不撤销独立事实，更正/撤回事实不改写历史决定引用。更名继续走企业资料/曾用名接口。
+迁入、迁出、注销/登记状态确立后，按[主体事实公开协议](enterprise-facts.md)分别预检、保存、读回和确认来源断言，独立事实继续走其协议；差异依据按既有差异原因协议保存。独立主体事实固定引用版本；改写差异原因不撤销独立事实，更正/撤回事实不改写历史决定引用。更名继续走企业资料/曾用名接口。

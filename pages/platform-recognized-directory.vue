@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, shallowRef, watch } from 'vue'
-import { Search, X } from '@lucide/vue'
+import { Search } from '@lucide/vue'
+import { PLATFORM_RDJBS } from '~~/lib/labels'
+import { watchDebounced } from '@vueuse/core'
 import type { RecognizedDirectoryListResult } from '~~/lib/platform/recognized-directory'
-import { PLATFORM_RDJBS, PLATFORM_RDJB_ORDER } from '~~/lib/labels'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -10,22 +11,27 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Skeleton } from '@/components/ui/skeleton'
 import { Empty, EmptyHeader, EmptyMedia, EmptyTitle } from '@/components/ui/empty'
 import PageHeader from '@/components/PageHeader.vue'
+import PlatformFilterSelect from '@/components/PlatformFilterSelect.vue'
+import { usePlatformFilterOptions } from '@/composables/usePlatformFilterOptions'
+import FilterChip from '@/components/FilterChip.vue'
 import TableFailureState from '@/components/TableFailureState.vue'
 import TableLoadingStatus from '@/components/TableLoadingStatus.vue'
 import TablePagination from '@/components/TablePagination.vue'
 import PlatformRecognizedDirectoryTable from '@/components/PlatformRecognizedDirectoryTable.vue'
 import PlatformRecognizedDirectoryDetailDialog from '@/components/PlatformRecognizedDirectoryDetailDialog.vue'
 
-useHead({ title: '平台认定目录（镜像） · 专精特新' })
+useHead({ title: '平台认定目录 · 专精特新' })
 
 const initialQuery = (() => {
   try { return useRoute().query } catch { return {} }
 })()
 
 const view = ref<'records' | 'isolated'>('records')
+const { options: filterOptions, loading: optionsLoading, error: optionsError, reload: reloadOptions } = usePlatformFilterOptions('recognized-directory', view)
+const titleRaw = ref('')
+const titleLabel = (value: string) => PLATFORM_RDJBS[value] ?? value
 const enterpriseQuery = ref(typeof initialQuery.q === 'string' ? initialQuery.q : '')
 const platformKey = ref(typeof initialQuery.platformKey === 'string' ? initialQuery.platformKey : '')
-const rdjb = ref('all')
 const validityDateInput = ref('')
 const maintenanceBatch = ref('')
 const district = ref('')
@@ -37,16 +43,17 @@ const error = ref('')
 const selectedRecordId = ref<number | null>(null)
 const detailOpen = ref(false)
 let generation = 0
+let lastRequestKey = ''
+let disposed = false
 let controller: AbortController | undefined
 
-const titleOptions = computed(() => PLATFORM_RDJB_ORDER.map(value => ({ value, label: PLATFORM_RDJBS[value] ?? value })))
 
 function requestParams() {
   return {
     view: view.value,
+    ...(titleRaw.value ? { titleRaw: titleRaw.value } : {}),
     ...(enterpriseQuery.value.trim() ? { q: enterpriseQuery.value.trim() } : {}),
     ...(platformKey.value.trim() ? { platformKey: platformKey.value.trim() } : {}),
-    ...(rdjb.value !== 'all' ? { rdjb: rdjb.value } : {}),
     ...(validityDateInput.value.trim() ? { rddqrq: validityDateInput.value.trim() } : {}),
     ...(maintenanceBatch.value.trim() ? { whpc: maintenanceBatch.value.trim() } : {}),
     ...(district.value.trim() ? { szq: district.value.trim() } : {}),
@@ -56,13 +63,15 @@ function requestParams() {
 }
 
 async function load() {
+  const query = requestParams()
+  lastRequestKey = JSON.stringify(query)
   const request = ++generation
   controller?.abort()
   controller = new AbortController()
   loading.value = true
   error.value = ''
   try {
-    const result = await $fetch<RecognizedDirectoryListResult>('/api/platform/recognized-directory', { query: requestParams(), signal: controller.signal, retry: 0 })
+    const result = await $fetch<RecognizedDirectoryListResult>('/api/platform/recognized-directory', { query, signal: controller.signal, retry: 0 })
     if (request === generation) data.value = result
   } catch (cause) {
     if (request === generation) error.value = cause instanceof Error ? cause.message : String(cause)
@@ -71,19 +80,28 @@ async function load() {
   }
 }
 
-function search() {
-  if (page.value !== 1) page.value = 1
-  else void load()
+const hasFilters = computed(() => [titleRaw.value, enterpriseQuery.value, validityDateInput.value, maintenanceBatch.value, district.value, platformKey.value].some(value => value.trim() !== ''))
+
+function loadIfChanged() {
+  if (!disposed && JSON.stringify(requestParams()) !== lastRequestKey) void load()
 }
-function reset() {
-  enterpriseQuery.value = ''
-  platformKey.value = ''
-  rdjb.value = 'all'
-  validityDateInput.value = ''
-  maintenanceBatch.value = ''
-  district.value = ''
+function clearFilters() {
+  for (const field of [titleRaw, enterpriseQuery, validityDateInput, maintenanceBatch, district, platformKey]) field.value = ''
+  lastRequestKey = ''
+  search()
+}
+function search() {
+  if (disposed) return
   if (page.value !== 1) page.value = 1
-  else void load()
+  else loadIfChanged()
+}
+function changeView(next: 'records' | 'isolated') {
+  if (next === 'isolated') {
+    validityDateInput.value = ''
+    maintenanceBatch.value = ''
+    district.value = ''
+  }
+  view.value = next
 }
 function changeSize(size: number) {
   const sizeChanged = size !== pageSize.value
@@ -97,12 +115,10 @@ function openRecord(recordId: number) {
   detailOpen.value = true
 }
 
-watch([page, pageSize], () => { void load() })
-watch([view, rdjb], () => {
-  if (page.value !== 1) page.value = 1
-  else void load()
-})
-onBeforeUnmount(() => { ++generation; controller?.abort() })
+watch([page, pageSize], loadIfChanged)
+watchDebounced(enterpriseQuery, search, { debounce: 300 })
+watch([titleRaw, view, platformKey, validityDateInput, maintenanceBatch, district], search)
+onBeforeUnmount(() => { disposed = true; ++generation; controller?.abort() })
 void load()
 
 const total = computed(() => data.value?.total ?? 0)
@@ -112,38 +128,34 @@ const emptyTitle = computed(() => view.value === 'records' ? '没有匹配的目
 
 <template>
   <div class="flex min-w-0 flex-col gap-2 sm:gap-3" :aria-busy="loading">
-    <PageHeader title="平台认定目录（镜像）">
+    <PageHeader title="平台认定目录">
       <template #actions><NuxtLink to="/current-enterprises" class="text-muted-foreground inline-flex items-center gap-1 text-xs hover:underline">当前有效企业查询</NuxtLink></template>
     </PageHeader>
 
-    <form class="flex flex-col gap-2" @submit.prevent="search">
+    <div class="flex flex-col gap-2">
       <div class="flex flex-wrap items-center gap-2">
         <div class="relative w-full min-w-52 flex-1 sm:max-w-[13rem]">
           <Search class="text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2" aria-hidden="true" />
           <Input v-model="enterpriseQuery" class="bg-card h-8 pl-8" placeholder="搜索企业名称或信用代码" aria-label="企业名称或信用代码" />
         </div>
-        <Select :model-value="rdjb" @update:model-value="rdjb = String($event)">
-          <SelectTrigger class="bg-card h-8 w-full sm:w-40" aria-label="称号范围"><SelectValue /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">全部称号范围</SelectItem>
-            <SelectItem v-for="option in titleOptions" :key="option.value" :value="option.value">{{ option.label }}</SelectItem>
-          </SelectContent>
-        </Select>
-        <Input v-model="validityDateInput" class="bg-card h-8 w-full font-mono sm:w-36" placeholder="有效期" aria-label="有效期" />
-        <Input v-model="maintenanceBatch" class="bg-card h-8 w-full sm:w-28" placeholder="维护批次" aria-label="维护批次" />
-        <Input v-model="district" class="bg-card h-8 w-full sm:w-32" placeholder="属地" aria-label="属地" />
-        <Select :model-value="view" @update:model-value="view = $event as 'records' | 'isolated'">
-          <SelectTrigger class="bg-card h-8 w-full sm:w-28" aria-label="目录视图"><SelectValue /></SelectTrigger>
+        <PlatformFilterSelect v-model="titleRaw" :options="filterOptions.titles" label="称号" placeholder="全部称号" :disabled="optionsLoading || optionsError" :format-label="titleLabel" class="w-full sm:w-48" />
+        <PlatformFilterSelect v-model="validityDateInput" :options="filterOptions.validityDates" label="有效期" placeholder="全部有效期" :disabled="optionsLoading || optionsError" class="w-full sm:w-48" />
+        <PlatformFilterSelect v-model="maintenanceBatch" :options="filterOptions.batches" label="维护批次" placeholder="全部批次" :disabled="optionsLoading || optionsError" class="w-full sm:w-32" />
+        <PlatformFilterSelect v-model="district" :options="filterOptions.districts" label="属地" placeholder="全部属地" :disabled="optionsLoading || optionsError" class="w-full sm:w-36" />
+        <Select :model-value="view" @update:model-value="changeView($event as 'records' | 'isolated')">
+          <SelectTrigger size="sm" class="bg-card w-full sm:w-28" aria-label="目录视图"><SelectValue /></SelectTrigger>
           <SelectContent>
             <SelectItem value="records">目录记录</SelectItem>
             <SelectItem value="isolated">隔离观察</SelectItem>
           </SelectContent>
         </Select>
-        <Button type="submit" variant="outline" size="sm" :disabled="loading"><Search data-icon="inline-start" />查询</Button>
-        <Button type="button" variant="ghost" size="sm" :disabled="loading" @click="reset"><X data-icon="inline-start" />重置</Button>
+        <FilterChip v-if="platformKey" label="已定位记录" @remove="platformKey = ''" />
+        <Button v-if="hasFilters" variant="ghost" size="sm" @click="clearFilters">清除筛选</Button>
         <span class="text-muted-foreground text-[13px] tabular-nums" aria-live="polite">共 {{ total.toLocaleString('zh-CN') }} {{ view === 'records' ? '条记录' : '条观察' }}</span>
       </div>
-    </form>
+    </div>
+
+    <p v-if="optionsError" role="alert" class="text-destructive flex items-center gap-2 text-sm">筛选选项加载失败<Button variant="ghost" size="sm" :disabled="optionsLoading" @click="reloadOptions">重试</Button></p>
 
     <Card class="gap-0 overflow-hidden py-0 shadow-none">
       <CardContent class="relative p-0">

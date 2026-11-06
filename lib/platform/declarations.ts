@@ -10,6 +10,8 @@ export const declarationFilterSchema = z.strictObject({
   /** Enterprise name or USCC keyword; matched only through an assigned observation. */
   q: z.string().trim().min(1).max(200).optional(),
   enterpriseId: z.number().int().positive().optional(),
+  /** Exact archived row-level rdjb string, independent of query scope. */
+  titleRaw: z.string().min(1).max(200).optional(),
   /** Exact 申报编号 as archived; never normalized or merged across interfaces. */
   platformKey: z.string().trim().min(1).max(200).optional(),
   /** Known source values are normalized to apply/update/review; unknown values stay raw. */
@@ -42,6 +44,7 @@ export function declarationFilterFromQuery(raw: Record<string, unknown>): Declar
   try {
     return declarationFilterSchema.parse({
       ...(view ? { view } : {}),
+      ...(raw.titleRaw !== undefined ? { titleRaw: raw.titleRaw } : {}),
       ...(text(raw.q) ? { q: text(raw.q) } : {}),
       ...(enterpriseId != null ? { enterpriseId } : {}),
       ...(text(raw.platformKey) ? { platformKey: text(raw.platformKey) } : {}),
@@ -61,6 +64,7 @@ export function declarationFilterFromQuery(raw: Record<string, unknown>): Declar
 
 export interface DeclarationVersionFields {
   versionId: number
+  titleRaw?: string | null
   declareKind: string | null
   declarationYear: number | null
   appliedAt: string | null
@@ -86,6 +90,7 @@ export interface DeclarationRecordRow {
 }
 
 export interface DeclarationIsolatedRow {
+  titleRaw?: string | null
   kind: 'observation'
   relationId: number
   queryId: number

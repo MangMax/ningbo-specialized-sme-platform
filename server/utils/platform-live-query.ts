@@ -23,52 +23,13 @@ const sensitiveKey = /cookie|token|session|password|authorization|account|userna
 function hasSensitiveKey(value: unknown): boolean {
   return !!value && typeof value === 'object' && Object.entries(value).some(([key, item]) => sensitiveKey.test(key) || hasSensitiveKey(item))
 }
-/** Raw HTML is never executed. Only one JSON data island or an empty legacy
- * data wrapper can be verified; any other script makes the whole page inadmissible. */
-function originalHtmlData(raw: string): { envelope: unknown; markup: string } | null {
-  const scripts = /<script\b([^>]*)>([\s\S]*?)<\/script\s*>/gi
-  const script = scripts.exec(raw)
-  if (!script) return /<script\b/i.test(raw) ? null : { envelope: null, markup: raw }
-  if (scripts.exec(raw)) return null
-  const attributes = script[1]?.trim()
-  const content = script[2]
-  if (attributes === undefined || content === undefined) return null
-  const literal = /^type\s*=\s*(["'])application\/json\1$/i.test(attributes)
-    ? content
-    : attributes === '' ? /^\s*\(\s*function\s*\(\s*data\s*\)\s*\{\s*\}\s*\)\s*\(([\s\S]*)\)\s*;?\s*$/.exec(content)?.[1] : undefined
-  if (literal === undefined) return null
-  const markup = raw.slice(0, script.index) + raw.slice(script.index + script[0].length)
-  if (/<script\b/i.test(markup)) return null
-  try { return { envelope: JSON.parse(literal), markup } } catch { return null }
-}
-const inertTags = new Set(['html', 'head', 'title', 'body', 'div', 'span', 'p', 'br', 'table', 'thead', 'tbody', 'tr', 'th', 'td'])
-/** Admission only, never sanitization: unknown HTML, controls, attributes or
- * encoded non-data text are refused with the original page left unpublished. */
-function verifiableMarkup(markup: string): boolean {
-  const text = markup.replace(/<!doctype html>/gi, '')
-  if (/[\\&%]/.test(text) || sensitiveKey.test(text)) return false
-  let valid = true
-  const remaining = text.replace(/<(\/?)([a-z][a-z0-9]*)([^<>]*)>/gi, (_tag, closing: string, name: string, attributes: string) => {
-    if (!inertTags.has(name.toLowerCase()) || (closing && attributes.trim())) valid = false
-    let rest = attributes.trim().replace(/\/$/, '').trim()
-    // At most the four known inert attributes; no arbitrary HTML grammar walk.
-    for (let count = 0; rest && count < 4; count++) {
-      const attr = /^([a-z][a-z0-9]*)\s*=\s*(?:"([^"]*)"|'([^']*)'|([a-z0-9_-]+))/i.exec(rest)
-      if (!attr) { valid = false; break }
-      const key = attr[1]?.toLowerCase()
-      if (key === undefined) { valid = false; break }
-      const value = attr[2] ?? attr[3] ?? attr[4] ?? ''
-      if (!['id', 'class'].includes(key)
-        && !(key === 'name' && name.toLowerCase() === 'table' && ['applyGrid', 'businessListGrid', 'businessGrid'].includes(value))
-        && !(['currentpage', 'numperpage'].includes(key) && name.toLowerCase() === 'div' && /^\d+$/.test(value))) valid = false
-      rest = rest.slice(attr[0].length)
-      if (rest && !/^\s/.test(rest)) valid = false
-      rest = rest.trimStart()
-    }
-    if (rest) valid = false
-    return ''
-  })
-  return valid && !/[<>]/.test(remaining)
+/** Decode wire escapes only for credential detection; archived bytes stay unchanged. */
+function credentialText(raw: string): string {
+  return raw.replace(/\\u\{([0-9a-f]+)\}|\\u([0-9a-f]{4})|\\x([0-9a-f]{2})|&#x([0-9a-f]+);|&#([0-9]+);|%([0-9a-f]{2})/gi,
+    (match, wide, unicode, hex, entityHex, decimal, percent) => {
+      const code = Number.parseInt(decimal ?? wide ?? unicode ?? hex ?? entityHex ?? percent, decimal === undefined ? 16 : 10)
+      return code <= 0x10ffff ? String.fromCodePoint(code) : match
+    }).replace(/["']\s*\+\s*["']/g, '')
 }
 export async function runPlatformLiveQuery(input: unknown, ctx: PlatformLiveQueryContext = {}): Promise<PlatformLiveQueryResult> {
   const parsed = platformQueryInputSchema.safeParse(input)
@@ -146,24 +107,17 @@ export async function runPlatformLiveQuery(input: unknown, ctx: PlatformLiveQuer
         })
         const parsedPage = parsePlatformPage(raw, q.source === 'businessList' ? BUSINESS_GRID : q.source === 'queryBusList' ? RECOGNIZED_GRID : APPLY_GRID)
         const serialized = JSON.stringify(parsedPage.rows)
-        let sourceEnvelope: unknown = null
-        let unverifiableHtml = false
-        if (q.rawDataVersion === 1) {
-          if (parsedPage.source === 'json') sourceEnvelope = JSON.parse(raw)
-          else {
-            const html = originalHtmlData(raw)
-            unverifiableHtml = html === null || !verifiableMarkup(html.markup)
-            sourceEnvelope = html?.envelope ?? null
-          }
-        }
+        const sourceEnvelope = q.rawDataVersion === 1 && parsedPage.source === 'json' ? JSON.parse(raw) : null
         const sensitiveLegacyRows = JSON.stringify(sanitize(parsedPage.rows)) !== serialized || parsedPage.rows.some(row => Object.keys(row).some(key => sensitiveKey.test(key)))
-        const sensitiveOriginal = q.rawDataVersion === 1 && (unverifiableHtml || redactString(raw) !== raw
-          || /["'][^"']*(?:cookie|token|session|password|authorization|account|username)[^"']*["']\s*:/i.test(raw)
+        const wireText = q.rawDataVersion === 1 ? credentialText(raw) : ''
+        const sensitiveOriginal = q.rawDataVersion === 1 && (redactString(wireText) !== wireText
+          || /["'][^"']*(?:cookie|token|session|password|authorization|account|username)[^"']*["']\s*:/i.test(wireText)
+          || /\b(?:name|id)\s*=\s*["']?[^"'\s>]*(?:cookie|token|session|password|authorization|account|username)/i.test(wireText)
           || hasSensitiveKey(sourceEnvelope) || hasSensitiveKey(parsedPage.rawRows)
           || JSON.stringify(sanitize(sourceEnvelope)) !== JSON.stringify(sourceEnvelope)
           || JSON.stringify(sanitize(parsedPage.rawRows)) !== JSON.stringify(parsedPage.rawRows))
         if (sensitiveLegacyRows || sensitiveOriginal) {
-          throw error('sensitive_response', '平台响应含敏感资料或无法核实整页原文，已阻止返回。')
+          throw error('sensitive_response', '平台响应含会话凭据或敏感字段，已阻止返回。')
         }
         if ((parsedPage.responsePage !== null && parsedPage.responsePage !== page) || (parsedPage.declaredTotal !== null && parsedPage.rows.length > parsedPage.declaredTotal)) throw error('invalid_response', '平台分页信息不一致。')
         if (parsedPage.responsePageSize !== null && parsedPage.responsePageSize !== result.limits.pageSize) throw error('invalid_response', '平台分页大小与请求不一致。')

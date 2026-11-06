@@ -164,19 +164,28 @@ it.each([
   ['entity_text', '<p>&#115;ynthetic-raw-json-secret</p>'],
   ['percent_text', '<p>%73ynthetic-raw-json-secret</p>'],
   ['escaped_text', '<p>synthetic-raw-json-\\u0073ecret</p>'],
-  ['event_attribute', '<div onclick="window.config=1">合成页</div>'],
-  ['unknown_attribute', '<div data-private="opaque">合成页</div>'],
-])('unverifiable complete HTML is refused without decoding or executing it case %s', async (_label, prefix) => {
+])('credential echoes remain refused in encoded HTML case %s', async (_label, prefix) => {
   const raw = `${prefix}<script>(function(data){})(${body([{ id: 'safe' }]).trim()});</script>`
   const result = await runPlatformLiveQuery(query, context(raw))
   expect(result).toMatchObject({ status: 'failed', fetchedCount: 0, error: { code: 'sensitive_response' }, rawData: { rows: [], pages: [] }, unfinished: [{ page: 1 }] })
 })
 
-it('an executable grid wrapper is refused instead of running upstream JS or returning a legacy fallback', async () => {
+it('stores the actual DWZ wrapper unchanged without executing its scripts', async () => {
   const raw = `<script>(function(data){throw new Error('must not run')})(${body([{ id: 'safe' }]).trim()});</script>`
   const result = await runPlatformLiveQuery(query, context(raw))
-  expect(result).toMatchObject({ status: 'failed', error: { code: 'sensitive_response' }, rawData: { rows: [], pages: [] } })
-  expect(result.rows).toEqual([])
+  expect(result).toMatchObject({ status: 'success', rawData: { rows: [{ id: 'safe' }], pages: [{ body: raw }] } })
+  expect(result.rows).toEqual([{ id: 'safe' }])
+})
+
+it.each([
+  '<div onclick="globalThis.platformArchiveExecuted=true">合成页</div>',
+  '<div data-private="opaque" style="display:block">合成页 &amp; 数据</div>',
+  '<script>globalThis.platformArchiveExecuted=true</script>',
+])('preserves surrounding platform markup as data rather than requiring an HTML whitelist: %s', async prefix => {
+  const raw = `${prefix}<script>(function(data){})(${body([{ id: 'safe' }]).trim()});</script>`
+  const result = await runPlatformLiveQuery(query, context(raw))
+  expect(result).toMatchObject({ status: 'success', rawData: { rows: [{ id: 'safe' }], pages: [{ body: raw }] } })
+  expect(Object.hasOwn(globalThis, 'platformArchiveExecuted')).toBe(false)
 })
 
 it('safe HTML original bytes count in the complete result budget without silent truncation', async () => {

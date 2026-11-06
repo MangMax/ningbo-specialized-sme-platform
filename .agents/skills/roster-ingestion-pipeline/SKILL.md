@@ -20,9 +20,9 @@ description: '用于本应用的宁波专精特新名录清洗与入库：分类
 
 **接到整批任务时，先读[负载编排](references/orchestration.md)，再开始各阶段处理。**未被分配具体工作片的执行者就是本批协调者，即使它本身是子代理。协调者按规模、证据体积、工具额度和当前资源决定直接处理或使用有界工作者池；任务数、每片大小和活跃代理数分别控制。所有阶段共享资源预算，同一企业跨文件、跨称号一名负责人。收到具体工作片的代理不继续拆派。复用已完成证据，只补缺口。
 
-补码、身份归并、新增查询或更新快照后，执行[代理判断与覆盖写回](references/difference-investigation.md#默认待核代理判断与覆盖写回)，核对当前任务坐标和证据变化，判不出记录已查范围与缺口交人工通过代理处理。
+补码、身份归并、新增查询或更新快照后，执行[代理判断与覆盖写回](references/difference-investigation.md#默认待核代理判断与覆盖写回)，核对企业、称号和证据变化，判不出记录已查范围与缺口交人工通过代理处理。
 
-写入前查看当前 OpenAPI 或 MCP `tools/list`。任务差异读取 current/token，以 expected/expectedToken 覆盖写回并读回操作记录；其他入库按各自统一应用 API/MCP 预检、提交和读回，禁止直接写 SQLite；重试保持其幂等键。`queryBusList` 明确按 `recognized_list` 入库，按[平台查询说明](references/platform-query.md)保留分段、时间和页码并核对 ID。不支持的写入留待处理，不伪造来源类型绕过校验。
+写入前查看当前 OpenAPI 或 MCP `tools/list`。差异结论使用既有差异原因公开协议，读回核对；入库按统一应用 API/MCP 预检、提交和读回，禁止直接写 SQLite；重试保持其幂等键。`queryBusList` 明确按 `recognized_list` 入库，按[平台查询说明](references/platform-query.md)保留分段、时间和页码并核对 ID。不支持的写入留待处理，不伪造来源类型绕过校验。
 
 [业务规则](references/decisions.md)定义事件和来源语义；载荷以仓库 `docs/roster-lifecycle-contract.md` 为准。正式公布确立称号历史，导出表代表平台快照。未匹配平台的正式行仍须保留，未知字段留空。issue #35 中的企业名称只是查证线索，不是已确认的身份依据。
 
@@ -30,6 +30,8 @@ description: '用于本应用的宁波专精特新名录清洗与入库：分类
 
 ## 新流程与旧数据边界（#484）
 
-任务快照队列与代理覆盖写回只消费本任务冻结坐标、采集段和当前判断。解释有效性、复核回执、查询覆盖、旧决定生命周期退出新流程；不得以它们阻塞队列或写回，不把 unknown/valid 展示为差异状态。查询范围与证据只用于只读详情说明。改判使用 snapshot_difference_judgment 的 CAS 覆盖与操作日志，不调用旧 replace/withdraw，不产生 previous_id/lifecycle_action。新建任务先备份并全新采集；重试只恢复同一任务未完成项。
+先备份数据库，再用 `difference_snapshot` / `POST /api/roster/difference-snapshots` 采集三接口。可选 `enterpriseIds` 限定公布企业；省略为全部。按接口原编号更新已有业务记录，缺少则新增，保存全部业务字段和类型；采集任务不保存请求参数原文、响应正文或 HTML。同一任务重试只恢复未完成范围。
+
+采集后，由用户点击企业列表“刷新本页差异”，或调用 `POST /api/roster/differences/refresh` / `refresh_enterprise_differences`，可选 `enterpriseIds`。刷新复用已有比较逻辑，默认待核；相同业务输入保留已有结果与判断。用户要求筛除无差异时由代理判断，其余交代理与人工处理。程序不编排代理判断。
 
 默认有效资格只消费正式期间及证据完整的已确认注销/吊销、迁出事实。旧评估版本可显式读取历史语义；旧差异端点、ID和审计继续可读，不将其作为新任务或默认有效资格的输入。旧列与表保留，物理删除另票处理。

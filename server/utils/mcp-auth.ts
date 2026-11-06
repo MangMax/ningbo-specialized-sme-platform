@@ -44,7 +44,7 @@ export const MCP_WRITE_TOOLS = [
   'clear_runtime_logs',
   'save_difference_decision',
   'difference_snapshot',
-  'snapshot_difference_judgment',
+  'refresh_enterprise_differences',
   'process_evidence_impacts',
   'release_evidence_rule',
   'maintain_enterprise_alias',

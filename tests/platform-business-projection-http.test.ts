@@ -42,7 +42,7 @@ async function fixture(run: (db: Db, post: (action: string, body: unknown) => Pr
 }
 
 describe('business_list typed projection through public import HTTP', () => {
-  it('reads back typed source fields exactly and leaves the original archive identity intact', async () => fixture(async (db, post) => {
+  it.each([{ name: 'missing-row-title', title: null }, { name: 'source-row-title', title: '2' }])('reads back typed source fields exactly and leaves the original archive identity intact ($name)', async ({ title }) => fixture(async (db, post) => {
     const raw = {
       id: 'SQ-BUSINESS-1',
       qymc: ' 合成办理企业 ',
@@ -55,6 +55,7 @@ describe('business_list typed projection through public import HTTP', () => {
       personuuid: ' 第四批 ',
       szsfmc: ' 宁波市 ',
       unknownSourceField: '保留',
+      ...(title === null ? {} : { rdjb: ` ${title} ` }),
     }
     const saved = await post('commit', request('typed-readback', { platformQueries: [businessQuery('2026-10-01T00:00:00Z', raw)] }))
     expect(saved.status).toBe('committed')
@@ -77,6 +78,7 @@ describe('business_list typed projection through public import HTTP', () => {
       province: '宁波市',
       name_raw: '合成办理企业',
       uscc_raw: '91330211255994457P',
+      title_raw: title,
       rule_version: 'platform-business-v1',
       created_at: expect.any(String),
     })

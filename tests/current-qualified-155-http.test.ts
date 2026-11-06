@@ -192,7 +192,7 @@ it('retains eligible rows with missing metadata until a related filter is reques
   expect(a.enterprise.id).toBeLessThan(b.enterprise.id)
 })
 
-it('retains a confirmed migrant with no asserted award year without fabricating recognition from its validity interval', async () => {
+it('keeps a confirmed migrant without a formal award unrecognized without fabricating recognition from its validity interval', async () => {
   const candidate=f.candidate('迁入仅有有效区间',[])
   const source=f.db.insert(s.platformQuery).values({interface:'business_list',queryKey:candidate.enterprise.usccNorm!,rdjb:'1',titleCode:'innovative_sme',queriedAt:new Date().toISOString(),status:'success'}).returning().get()
   const relation=f.db.insert(s.platformRelation).values({queryId:source.id,enterpriseId:candidate.enterprise.id,sequenceNo:1,usccRaw:candidate.enterprise.usccNorm,nameRaw:candidate.enterprise.name,verificationStatus:'confirmed',matchBasis:'uscc'}).returning().get()
@@ -207,9 +207,12 @@ it('retains a confirmed migrant with no asserted award year without fabricating 
   const review=await api({...scope,action:'maintain',expectedCurrentId:command.body.versionId,idempotencyKey:'filter155-migrant-review',actor:{type:'agent',id:'synthetic-155'},basis:'Synthetic explicit review',ruleVersion:'synthetic-155',effectiveAt:`${year-1}-01-01T00:00:00Z`,reviewedEvidence:{latestRevisionId:token.latestRevisionId,projectionReady:true}})
   expect(review.status,JSON.stringify(review.body)).toBe(200)
   const unfiltered=await query({})
-  expect(unfiltered.body).toMatchObject({total:1,rows:[{enterpriseId:candidate.enterprise.id,recognition:null,matchedValidYears:[],qualificationWitnesses:[]}]})
+  expect(unfiltered.body).toMatchObject({total:0,rows:[],publishedPending:{rows:[],total:0}})
+  const unrecognized=await query({status:'unrecognized'})
+  expect(unrecognized.body).toMatchObject({total:1,rows:[{enterpriseId:candidate.enterprise.id,recognition:null,matchedValidYears:[],qualificationWitnesses:[],qualificationAssessment:{titles:[{titleCode:'little_giant',effectiveQualification:{status:'unrecognized'}},{titleCode:'specialized_sme',effectiveQualification:{status:'unrecognized'}},{titleCode:'innovative_sme',effectiveQualification:{status:'unrecognized'}}]}}]})
   const dated=await query({recognitionFrom:`${year}-01-01`,recognitionTo:`${year}-12-31`})
-  expect(dated.body).toMatchObject({total:0,uncertainTotal:1,rows:[]})
+  expect(dated.body).toMatchObject({total:0,uncertainTotal:0,rows:[]})
+  expect((await query({status:'unrecognized',recognitionFrom:`${year}-01-01`,recognitionTo:`${year}-12-31`})).body).toMatchObject({total:0,uncertainTotal:1,rows:[]})
 })
 
 it('rejects invalid dates and a maintenance batch without its year', async () => {

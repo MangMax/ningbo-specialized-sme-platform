@@ -131,8 +131,17 @@ function readTables(db: TestDb): RosterStateTables {
     recordEvent: canonical(db.select().from(schema.recordEvent).all()),
     recordEvidence: canonical(db.select().from(schema.recordEvidence).all()),
     enterpriseAlias: canonical(db.select().from(schema.enterpriseAlias).all()),
-    platformQuery: canonical(db.select().from(schema.platformQuery).all()),
-    platformRelation: canonical(db.select().from(schema.platformRelation).all()),
+    // 0042/0043 add nullable metadata only. This frozen legacy sequence has no
+    // collection stamp or row-owned rdjb; prove NULL independently and retain
+    // every byte of its original golden snapshot rather than re-recording it.
+    platformQuery: canonical(db.select().from(schema.platformQuery).all().map(({ lastCollectedAt, ...legacy }) => {
+      if (lastCollectedAt !== null) throw new Error('Legacy import unexpectedly recorded a collection stamp')
+      return legacy
+    })),
+    platformRelation: canonical(db.select().from(schema.platformRelation).all().map(({ titleRaw, ...legacy }) => {
+      if (titleRaw !== null) throw new Error('Legacy import unexpectedly acquired a row title')
+      return legacy
+    })),
     // The legacy import sequence never pins independent facts. Check the new
     // nullable column explicitly, then keep every old golden byte unchanged.
     differenceReason: canonical(db.select().from(schema.differenceReason).all().map(({ factReferences, ...legacy }) => {

@@ -10,6 +10,8 @@ export const businessProcessFilterSchema = z.strictObject({
   /** Enterprise name or USCC keyword; matched only through an assigned observation. */
   q: z.string().trim().min(1).max(200).optional(),
   enterpriseId: z.number().int().positive().optional(),
+  /** Exact archived row-level rdjb string, independent of query scope. */
+  titleRaw: z.string().min(1).max(200).optional(),
   /** Exact 办理编号 as archived; never normalized or merged across interfaces. */
   platformKey: z.string().trim().min(1).max(200).optional(),
   /** Explicit query title scope (rdjb 1/2/3) from the source query, never a per-row title fact. */
@@ -46,6 +48,7 @@ export function businessProcessFilterFromQuery(raw: Record<string, unknown>): Bu
   try {
     return businessProcessFilterSchema.parse({
       ...(view ? { view } : {}),
+      ...(raw.titleRaw !== undefined ? { titleRaw: raw.titleRaw } : {}),
       ...(text(raw.q) ? { q: text(raw.q) } : {}),
       ...(enterpriseId != null ? { enterpriseId } : {}),
       ...(text(raw.platformKey) ? { platformKey: text(raw.platformKey) } : {}),
@@ -67,6 +70,7 @@ export function businessProcessFilterFromQuery(raw: Record<string, unknown>): Bu
 
 export interface BusinessProcessVersionFields {
   versionId: number
+  titleRaw?: string | null
   declareKind: string | null
   businessYear: number | null
   appliedAt: string | null
@@ -97,6 +101,7 @@ export interface BusinessProcessRecordRow {
 }
 
 export interface BusinessProcessIsolatedRow {
+  titleRaw?: string | null
   kind: 'observation'
   relationId: number
   queryId: number

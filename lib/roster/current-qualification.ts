@@ -338,9 +338,12 @@ export function createCurrentQualificationAssessmentReader(db: Database.Database
     read(enterpriseId: number, asOf = Date.now(), options: QualificationAssessmentReadOptions = {}, filterTitle?: CurrentTitle) {
       return readSnapshot(enterpriseId, asOf, options, filterTitle)
     },
-    readCurrent(enterpriseId: number, asOf: number, title: CurrentTitle) {
-      // Fixed owned source read, no preloaded facts/callback/secret-context argument.
-      const read = readSnapshot(enterpriseId, asOf, {}, title, title)
+    readCurrent(enterpriseId: number, asOf: number, title: CurrentTitle, queryKeys?: IdentityKeyVariants) {
+      // Reuse this snapshot's complete key variants for indexed three-title coverage.
+      const options: QualificationAssessmentReadOptions = queryKeys === undefined ? {} : {
+        coverageForTitle: titleCode => readQueryCoverage(prepareCurrentReader(db), { enterpriseId, titleCode, direction: 'missing_in_miit' }, queryKeys),
+      }
+      const read = readSnapshot(enterpriseId, asOf, options, title, title)
       if (read.publishedPresentation === undefined) throw new Error('Current published-name presentation missing')
       return { ...read, publishedPresentation: read.publishedPresentation }
     },
@@ -422,7 +425,9 @@ function createCurrentCandidateEvaluationReader(db: Database.Database, receiptRu
   const formal = events.filter(e => e.source === 'jxj' && ['award','review'].includes(e.eventType) && evidence.some(v => v.eventId === e.id))
   const lifecycle = computeTitleLifecycle(formal)
   const row: CurrentRow = { enterpriseId, name: enterprise.name, uscc: enterprise.uscc_norm, district: enterprise.district, publishedNames: [...new Set(formal.map(e => e.nameRaw).filter((n): n is string => !!n))], aliases: [], firstYear: lifecycle.firstRecognitionYear, basis: formal.map(e => `event:${e.id}@${e.revision} ${e.eventType} ${e.year ?? ''}/${e.batchSeq ?? ''} 结论年:${e.decidedYear ?? ''}`).join('\n'), reviews: formal.filter(e => e.eventType === 'review').map(e => `${e.year ?? '?'}年原认定批次；结论年${e.decidedYear ?? '?'}；${e.reviewOutcome ?? '未知'}`).join('\n'), publication: formal.length ? '已见本称号宁波公布记录' : '尚未完成公布匹配核实', notes: [], references: evidence.map(v => `evidence:${v.id} ${v.sourceFile} ${v.attachment ?? ''} 序号:${v.listNo ?? ''}`), group: 'pending' }
-  const qualification: ReturnType<typeof adjudicateQualificationCycles> = (effectiveMode ? adjudicateQualificationCycles : adjudicate407Cycles)(effectiveMode ? events.filter(e => e.source === 'jxj' && ['award','review'].includes(e.eventType)).map(e => ({...e, validityInvalid:false})) : formal, year, legacy ? undefined : qualificationDay(executionTime), ...(effectiveMode ? [true] as const : []))
+  const qualification: ReturnType<typeof adjudicateQualificationCycles> = effectiveMode
+    ? adjudicateQualificationCycles(events.filter(e => e.source === 'jxj' && ['award','review'].includes(e.eventType)).map(e => ({...e, validityInvalid:false})), year, qualificationDay(executionTime), true)
+    : adjudicate407Cycles(formal, year, legacy ? undefined : qualificationDay(executionTime))
   let qualificationSource: 'formal' | 'migration' = 'formal'
   let migrationAwardYears: number[] = []
   row.group = qualification.group

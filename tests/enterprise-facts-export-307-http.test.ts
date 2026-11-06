@@ -39,7 +39,7 @@ async function workbook(key: string) {
   const bytes = Buffer.from(await download.arrayBuffer()), wb = new ExcelJS.Workbook()
   await wb.xlsx.load(bytes as any)
   expect(job.result.snapshotStartedAt).toBe('2026-11-04T12:00:00.000Z')
-  expect(wb.worksheets.map(sheet=>sheet.name)).toEqual(['有效企业','待确认','排除明细','口径说明'])
+  expect(wb.worksheets.map(sheet=>sheet.name)).toEqual(['有效企业','已到期','已注销（吊销）','已迁出','未认定','口径说明'])
   return { wb, job, bytes }
 }
 function candidate(name: string, events: Array<{ eventType: 'award'|'review'|'nurture'|'maintain'; year: number|null; decidedYear?: number|null; reviewOutcome?: 'passed'|'failed'|null; batchSeq?: number|null }> = [{ eventType: 'award', year: new Date().getFullYear(), batchSeq: 1 }], titleCode = 'little_giant') {
@@ -95,7 +95,7 @@ function sheetRows(wb: ExcelJS.Workbook, name: string) {
   return Array.from({length:sheet.rowCount-1},(_,i)=>sheet.getRow(i+2).values as any[])
 }
 function contents(wb: ExcelJS.Workbook) {
-  return Object.fromEntries(['有效企业','待确认','排除明细'].map(name=>[name,sheetRows(wb,name).map(r=>({name:r[2],note:r[11]}))]))
+  return Object.fromEntries(['有效企业','已到期','已注销（吊销）','已迁出','未认定'].map(name=>[name,sheetRows(wb,name).map(r=>({name:r[2],note:r[11]}))]))
 }
 it('independent facts survive HTTP async export and whole effect-reader legacy fallback with retained lifecycle readback', async () => {
   const cases = ['已迁出','已注销','待确认事实','未知生效','未来生效','已撤回','已替换']
@@ -115,12 +115,20 @@ it('independent facts survive HTTP async export and whole effect-reader legacy f
   expect(factsBefore[5].facts.map((f:any)=>f.status)).toEqual(['withdrawn'])
   expect(factsBefore[6].facts.map((f:any)=>f.status)).toEqual(['replaced','confirmed'])
   const fresh = await workbook('independent-facts')
-  expect(fresh.job.result.counts).toEqual({eligible:2,pending:3,excluded:2})
+  expect(fresh.job.result.counts).toEqual({eligible:5,pending:0,excluded:2})
+  const businessNote = '逐出处公布名见公布名称列；现用名见企业名称列；已确认曾用名仅见该列'
   expect(contents(fresh.wb)).toEqual({
-    有效企业:[{name:'已撤回',note:'逐出处公布名见公布名称列；现用名见企业名称列；已确认曾用名仅见该列'},{name:'已替换',note:'逐出处公布名见公布名称列；现用名见企业名称列；已确认曾用名仅见该列'}],
-    待确认:['待确认事实','未知生效','未来生效'].map(name=>({name,note:'逐出处公布名见公布名称列；现用名见企业名称列；已确认曾用名仅见该列'})),
-    排除明细:['已迁出','已注销'].map(name=>({name,note:'逐出处公布名见公布名称列；现用名见企业名称列；已确认曾用名仅见该列'})),
+    有效企业:[...['待确认事实','未知生效','未来生效'].map(name=>({name,note:'排除事实证据或生效时间不完整，仅备注，不改变正式资格；'+businessNote})),...['已撤回','已替换'].map(name=>({name,note:businessNote}))],
+    已到期:[], '已注销（吊销）':[{name:'已注销',note:businessNote}], 已迁出:[{name:'已迁出',note:businessNote}], 未认定:[],
   })
+  expect(fresh.job.result.statusCounts).toEqual({effective:5,expired:0,terminated:1,moved_out:1,unrecognized:0})
+  // Unconfirmed, unknown and future exclusions remain visible diagnostics only.
+  for (const name of ['待确认事实','未知生效','未来生效']) {
+    const row = sheetRows(fresh.wb,'有效企业').find(row=>row[2]===name)!
+    expect(row[13]).toBe('有效企业')
+    expect(row[15]).toContain('排除事实证据或生效时间不完整，仅备注，不改变正式资格')
+  }
+
   async function snapshot() {
     const list = await get('/api/roster/current-enterprises?titleCode=little_giant&q=已&pageSize=200')
     const details = await Promise.all(ids.map(id=>get(`/api/roster/enterprises/${id}`)))
@@ -131,13 +139,13 @@ it('independent facts survive HTTP async export and whole effect-reader legacy f
   for (const detail of modern.details) expect(detail.qualificationAssessment.asOf).toBe('2026-11-04T12:00:00.000Z')
   expect(modern.list.total).toBe(2)
   expect(modern.list.rows.map((r:any)=>r.enterpriseId ?? r.id)).toEqual([ids[5],ids[6]])
-  expect(modern.details.map(d=>d.qualificationAssessment.titles.find((t:any)=>t.titleCode==='little_giant').group)).toEqual(['excluded','excluded','pending','pending','pending','eligible','eligible'])
+  expect(modern.details.map(d=>d.qualificationAssessment.titles.find((t:any)=>t.titleCode==='little_giant').group)).toEqual(['excluded','excluded','eligible','eligible','eligible','eligible','eligible'])
   await service.stop(); mode='legacy'; await startService()
   const legacy = await workbook('legacy-facts')
   expect(contents(legacy.wb)).toEqual(contents(before.wb))
   expect(legacy.job.result.snapshotStartedAt).toBe(before.job.result.snapshotStartedAt)
   expect(legacy.job.result.counts).toEqual({eligible:7,pending:0,excluded:0})
-  expect(contents(legacy.wb)).toEqual({有效企业:cases.map(name=>({name,note:'逐出处公布名见公布名称列；现用名见企业名称列；已确认曾用名仅见该列'})),待确认:[],排除明细:[]})
+  expect(contents(legacy.wb)).toEqual({有效企业:cases.map(name=>({name,note:businessNote})),已到期:[],'已注销（吊销）':[],已迁出:[],未认定:[]})
   const fallback = await snapshot()
   expect(fallback).toEqual(baseline)
   expect(fallback.details.map(d=>d.qualificationAssessment.titles.find((t:any)=>t.titleCode==='little_giant').group)).toEqual(Array(7).fill('eligible'))

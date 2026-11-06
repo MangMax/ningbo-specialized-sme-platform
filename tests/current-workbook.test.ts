@@ -52,7 +52,7 @@ it.each([{ autoDestroy: false }, { emitClose: false }])('rejects non-filename de
   }
 })
 
-it('writes an empty four-sheet workbook to an owned file and waits for its close', async () => {
+it('writes an empty six-sheet workbook to an owned file and waits for its close', async () => {
   const { db, file } = fixture()
   const sink = createWriteStream(file, { highWaterMark: 1 })
   await once(sink, 'open')
@@ -63,13 +63,14 @@ it('writes an empty four-sheet workbook to an owned file and waits for its close
   expect(sink.closed).toBe(true)
   const workbook = new ExcelJS.Workbook()
   await workbook.xlsx.load(readFileSync(file) as any)
-  expect(workbook.worksheets.map(sheet => sheet.name)).toEqual(['有效企业', '待确认', '排除明细', '口径说明'])
-  const headers = ['序号','企业名称','统一社会信用代码','区县','称号','首次认定年份','认定及复核情况','公布名称','已确认曾用名','公布对应情况','情况说明','来源及页码']
-  for (const sheet of workbook.worksheets.slice(0, 3)) {
+  expect(workbook.worksheets.map(sheet => sheet.name)).toEqual(['有效企业', '已到期', '已注销（吊销）', '已迁出', '未认定', '口径说明'])
+  const headers = ['序号','企业名称','统一社会信用代码','区县','称号','首次认定年份','认定及复核情况','公布名称','已确认曾用名','公布对应情况','情况说明','来源及页码','有效状态','有效期及排除依据','资料缺口与来源备注']
+  for (const sheet of workbook.worksheets.slice(0, 5)) {
     expect(sheet.rowCount).toBe(1)
     expect(sheet.getRow(1).values).toEqual([undefined, ...headers])
   }
   expect(result.counts).toEqual({ eligible: 0, pending: 0, excluded: 0 })
+  expect(result.statusCounts).toEqual({effective:0,expired:0,terminated:0,moved_out:0,unrecognized:0})
   const explanation = workbook.getWorksheet('口径说明')!
   expect(explanation.getCell('B4').value).toBe('0')
   expect(explanation.getCell('B5').value).toBe('0')
@@ -92,8 +93,9 @@ it('preserves text identities, Chinese newlines, formula-looking strings and gro
   const result = await writeCurrentWorkbook(db.$client, 'little_giant', file, () => {})
   const workbook = new ExcelJS.Workbook()
   await workbook.xlsx.readFile(file)
-  expect(result.counts).toEqual({ eligible: 2, pending: 2, excluded: 1 })
-  for (const [group, sheet] of [['eligible', '有效企业'], ['pending', '待确认'], ['excluded', '排除明细']] as const) {
+  expect(result.counts).toEqual({ eligible: 2, pending: 0, excluded: 3 })
+  expect(result.statusCounts).toEqual({effective:2,expired:2,terminated:0,moved_out:0,unrecognized:1})
+  for (const [group, sheet] of [['eligible', '有效企业'], ['pending', '已到期'], ['excluded', '未认定']] as const) {
     const indices = examples.map((row, index) => row[1] === group ? index : -1).filter(index => index >= 0)
     const target = workbook.getWorksheet(sheet)!
     expect(target.rowCount).toBe(indices.length + 1)
@@ -135,7 +137,7 @@ it('renders recognition and review facts with real source pages and usable sheet
   expect(sheet.getCell('L2').alignment?.wrapText).toBe(true)
   expect(sheet.getColumn(2).width).toBeGreaterThan(25)
   expect(sheet.views[0]).toMatchObject({state:'frozen',xSplit:2,ySplit:1})
-  expect(sheet.autoFilter).toBe('A1:L2')
+  expect(sheet.autoFilter).toBe('A1:O2')
 })
 
 it('labels each award and review citation with its actual source and distinct document context', async () => {
@@ -177,7 +179,7 @@ it('uses the 2021 review event and full notice filename without treating its 202
 
   await writeCurrentWorkbook(db.$client,'specialized_sme',file,()=>{})
   const workbook = new ExcelJS.Workbook(); await workbook.xlsx.readFile(file)
-  const row = ['有效企业','待确认'].map(name => workbook.getWorksheet(name)!.getRow(2)).find(row => row.getCell(2).value === '到期复核主体')!
+  const row = ['有效企业','已到期'].map(name => workbook.getWorksheet(name)!.getRow(2)).find(row => row.getCell(2).value === '到期复核主体')!
   expect(row.getCell(7).value).toContain('2021年第1批原认定批次，2024年复核通过')
   expect(row.getCell(12).value).toContain(`2021年第1批原认定批次，2024年复核通过：宁波市经信局公布资料\n《${notice}》，附件：到期复核通过企业名单，PDF第12页，名单序号87`)
   expect(row.getCell(12).value).not.toContain(`2024年第1批《${notice}》`)
@@ -238,22 +240,22 @@ it('keeps technical audit values out of every visible workbook cell', async () =
   const {db,file} = fixture()
   candidate(db,'业务企业')
   const result = await writeCurrentWorkbook(db.$client,'little_giant',file,()=>{})
-  expect(result.ruleVersion).toBe('current-roster-116-v9')
+  expect(result.ruleVersion).toBe('current-roster-116-v10')
   expect(result.dataVersion).toMatch(/^sha256:[a-f0-9]{64}$/)
   const workbook = new ExcelJS.Workbook()
   await workbook.xlsx.readFile(file)
-  expect(workbook.worksheets).toHaveLength(4)
+  expect(workbook.worksheets).toHaveLength(6)
   for (const sheet of workbook.worksheets) {
     expect(sheet.state).toBe('visible')
     sheet.eachRow(row => row.eachCell(cell => {
       const value = String(cell.value ?? '')
-      expect(value).not.toMatch(/(?:event|evidence|decision|alias|correspondence|platform-relation|query):\d+|sha256:|current-roster-116-v9|jxj[\\/]announcement[\\/]|\b(?:award|review|passed|failed|evidence_changed)\b/)
+      expect(value).not.toMatch(/(?:event|evidence|decision|alias|correspondence|platform-relation|query):\d+|sha256:|current-roster-116-v10|jxj[\\/]announcement[\\/]|\b(?:award|review|passed|failed|evidence_changed)\b/)
       expect(cell.note ?? null).toBeNull()
     }))
   }
 })
 
-it('paces slow filesystem writes across all three groups without collecting a worksheet behind another ZIP entry', async () => {
+it('paces slow filesystem writes across effective expired and unrecognized sheets without collecting a worksheet behind another ZIP entry', async () => {
   const { db, file } = fixture()
   db.transaction(() => {
     for (let index = 0; index < 1200; index++) candidate(db, randomBytes(240).toString('base64'), (['pending','eligible','excluded'] as const)[index % 3]!, 'SYNTHETIC-' + index)
@@ -275,10 +277,11 @@ it('paces slow filesystem writes across all three groups without collecting a wo
   expect(peakQueued).toBeLessThan(256 * 1024)
   expect(progress).toContain(100)
   expect(progress).toEqual([0, 100, 200, 300, 400, 500, 600, 700, 800, 900, 1000, 1100, 1200])
-  expect(result.counts).toEqual({ eligible: 400, pending: 400, excluded: 400 })
+  expect(result.counts).toEqual({ eligible: 400, pending: 0, excluded: 800 })
+  expect(result.statusCounts).toEqual({effective:400,expired:400,terminated:0,moved_out:0,unrecognized:400})
   const workbook = new ExcelJS.Workbook()
   await workbook.xlsx.readFile(file)
-  for (const name of ['有效企业', '待确认', '排除明细']) {
+  for (const name of ['有效企业', '已到期', '未认定']) {
     const sheet = workbook.getWorksheet(name)!
     expect(sheet.rowCount).toBe(401)
     expect(sheet.getCell('A401').value).toBe('400')
@@ -352,10 +355,10 @@ it('D409 binds ordered complete three title scope digest and actual worksheet te
   expect(snapshot.titles).toHaveLength(3)
   expect(createCurrentQualificationAssessmentReader(db.$client).read(id,at,{},'little_giant').snapshot).toEqual(snapshot)
   const wb=new ExcelJS.Workbook();await wb.xlsx.readFile(file)
-  const values=Array.from({length:12},(_,i)=>wb.getWorksheet('有效企业')!.getRow(2).getCell(i+1).value)
+  const values=Array.from({length:15},(_,i)=>wb.getWorksheet('有效企业')!.getRow(2).getCell(i+1).value)
   const {titles:_titles,snapshotId,...scope}=snapshot
-  const expected=createHash('sha256').update(JSON.stringify(['current-export-assessment-409-v2','enterprise-qualification-407-v2','current-roster-116-v9',new Date(result.generatedAt).getUTCFullYear(),'little_giant'])+'\n')
-    .update(JSON.stringify(['eligible',id,scope,snapshotId,values])+'\n').digest('hex')
+  const expected=createHash('sha256').update(JSON.stringify(['current-export-assessment-409-v2','enterprise-qualification-478-v3','current-roster-116-v10',new Date(result.generatedAt).getUTCFullYear(),'little_giant'])+'\n')
+    .update(JSON.stringify(['effective',id,scope,snapshotId,values])+'\n').digest('hex')
   expect(result.dataVersion).toBe('sha256:'+expected)
   expect(result.counts).toEqual({eligible:1,pending:0,excluded:0})
 })
@@ -369,16 +372,18 @@ it('D409 v2 hashes mixed groups in sheet order then stable identity order', asyn
   const excluded=candidate(db,'mixed excluded','excluded')
   const eligibleTail=candidate(db,'mixed eligible tail','eligible')
   const result=await writeCurrentWorkbook(db.$client,'little_giant',file,()=>{})
-  expect(result.counts).toEqual({eligible:2,pending:1,excluded:1})
+  expect(result.counts).toEqual({eligible:2,pending:0,excluded:2})
   const wb=new ExcelJS.Workbook();await wb.xlsx.readFile(file)
-  const hash=createHash('sha256').update(JSON.stringify(['current-export-assessment-409-v2','enterprise-qualification-407-v2','current-roster-116-v9',new Date(result.generatedAt).getUTCFullYear(),'little_giant'])+'\n')
-  for (const [group,sheet,ids] of [['eligible','有效企业',[eligible,eligibleTail]],['pending','待确认',[pending]],['excluded','排除明细',[excluded]]] as const) {
+  const hash=createHash('sha256').update(JSON.stringify(['current-export-assessment-409-v2','enterprise-qualification-478-v3','current-roster-116-v10',new Date(result.generatedAt).getUTCFullYear(),'little_giant'])+'\n')
+  for (const [group,sheet,ids] of [['effective','有效企业',[eligible,eligibleTail]],['expired','已到期',[pending]],['unrecognized','未认定',[excluded]]] as const) {
     for (const [index,id] of ids.entries()) {
       const snapshot=readCurrentQualificationAssessment(db.$client,id,Date.parse(result.generatedAt))
-      expect(snapshot.titles.find(title=>title.titleCode==='little_giant')!.group).toBe(group)
+      expect(snapshot.titles.find(title=>title.titleCode==='little_giant')!.effectiveQualification!.status).toBe(group)
       const {titles:_titles,snapshotId,...scope}=snapshot
-      const values=Array.from({length:12},(_,c)=>wb.getWorksheet(sheet)!.getRow(index+2).getCell(c+1).value)
+      const values=Array.from({length:15},(_,c)=>wb.getWorksheet(sheet)!.getRow(index+2).getCell(c+1).value)
       expect(values[0]).toBe(String(index+1))
+      // The writer hashes empty business text as an empty string; XLSX reads blank cells as null.
+      values[13] ??= ''; values[14] ??= ''
       hash.update(JSON.stringify([group,id,scope,snapshotId,values])+'\n')
     }
   }
@@ -394,13 +399,13 @@ it('427 default_export_keeps_D409_digest_and_never_invokes_comparison', async ()
     const id = candidate(db, '427 default workbook')
     const result = await writeCurrentWorkbook(db.$client, 'little_giant', file, () => {})
     const snapshot = readCurrentQualificationAssessment(db.$client, id, Date.parse(result.generatedAt))
-    expect(snapshot.assessmentVersion).toBe('enterprise-qualification-407-v2')
+    expect(snapshot.assessmentVersion).toBe('enterprise-qualification-478-v3')
     expect(snapshot.titles.every(t => t.platform.comparison === 'not_established')).toBe(true)
     const workbook = new ExcelJS.Workbook(); await workbook.xlsx.readFile(file)
-    const values = Array.from({ length: 12 }, (_, i) => workbook.getWorksheet('有效企业')!.getRow(2).getCell(i + 1).value)
+    const values = Array.from({ length: 15 }, (_, i) => workbook.getWorksheet('有效企业')!.getRow(2).getCell(i + 1).value)
     const { titles: _titles, snapshotId, ...scope } = snapshot
-    const digest = createHash('sha256').update(JSON.stringify(['current-export-assessment-409-v2', 'enterprise-qualification-407-v2', 'current-roster-116-v9', new Date(result.generatedAt).getUTCFullYear(), 'little_giant']) + '\n')
-      .update(JSON.stringify(['eligible', id, scope, snapshotId, values]) + '\n').digest('hex')
+    const digest = createHash('sha256').update(JSON.stringify(['current-export-assessment-409-v2', 'enterprise-qualification-478-v3', 'current-roster-116-v10', new Date(result.generatedAt).getUTCFullYear(), 'little_giant']) + '\n')
+      .update(JSON.stringify(['effective', id, scope, snapshotId, values]) + '\n').digest('hex')
     expect(result.dataVersion).toBe('sha256:' + digest)
     expect(result.counts).toEqual({ eligible: 1, pending: 0, excluded: 0 })
     expect(spy).not.toHaveBeenCalled()

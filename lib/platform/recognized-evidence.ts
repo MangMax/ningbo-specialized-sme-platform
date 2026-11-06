@@ -56,6 +56,12 @@ export function platformEvidenceError(value: unknown): string | null {
   // Validate against the original value: schema validation must not rewrite own
   // prototype-named JSON keys, nor infer types from old string-only evidence.
   const original = value as PlatformLiveQueryResult
+  if (Object.hasOwn(original, 'dataRows')) {
+    if (original.rawData) return 'Choose dataRows or rawData, never both'
+    if (!original.dataRows || original.dataRows.length !== original.rows.length) return 'Typed business rows must cover every accepted row'
+    const projection = original.dataRows.map(row => Object.fromEntries(Object.entries(row).map(([key, value]) => [key, value == null ? '' : typeof value === 'string' ? value : typeof value === 'object' ? JSON.stringify(value) : String(value)])))
+    if (JSON.stringify(projection) !== JSON.stringify(original.rows)) return 'Typed business rows must match their string projection'
+  }
   if (Object.hasOwn(original, 'rawData')) {
     if (!original.rawData) return 'Raw observation requires explicit version 1'
     const successful = original.pages.filter(page => page.status === 'success')
@@ -87,7 +93,7 @@ export function platformEvidenceError(value: unknown): string | null {
   } else {
     // Historical process imports without collectionEvidence retain their old contract.
     // New envelopes must describe actual source-specific public query conditions.
-    if (!original.rawData) return 'Process collectionEvidence requires rawData version 1'
+    if (!original.rawData && !original.dataRows) return 'Process collectionEvidence requires typed business dataRows or rawData version 1'
     const rdjb = r.titleScope.rdjb.length === 1 ? r.titleScope.rdjb[0] : r.titleScope.rdjb.join(',') === '1,2,3' ? 'all' : undefined
     if (combination !== 'and' || !platformQueryInputSchema.safeParse({ source: r.source, ...conditions, ...(r.source === 'businessList' ? { rdjb } : {}), ...r.limits }).success
       || (r.source === 'queryList' ? r.titleScope.mode !== 'source_default' || r.titleScope.rdjb.length !== 0 : r.titleScope.mode !== 'selected')) return 'Invalid original process conditions or title scope'
@@ -162,7 +168,7 @@ function resultToImport(result: PlatformLiveQueryResult): RosterImportPlatformQu
     failureReason: result.error?.message ?? null, collectionEvidence: result,
     relations: result.rows.map((row, index) => ({
       sequenceNo: index + 1, relationKey: row.id ?? null, usccRaw: row.tyshxydm ?? null,
-      nameRaw: row.qymc ?? null, rawFields: result.rawData ? result.rawData.rows[index] : row,
+      nameRaw: row.qymc ?? null, rawFields: result.dataRows ? result.dataRows[index] : result.rawData ? result.rawData.rows[index] : row,
     })),
   }
 }

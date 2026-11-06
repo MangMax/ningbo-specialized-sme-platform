@@ -5,9 +5,9 @@ import PlatformBusinessProcessTable from '../components/PlatformBusinessProcessT
 import PlatformBusinessProcessDetailDialog from '../components/PlatformBusinessProcessDetailDialog.vue'
 import type { BusinessProcessRow } from '../lib/platform/business-processes'
 
-const stubs = { NuxtLink: { props: ['to'], template: '<a :href="typeof to === \'string\' ? to : to.path"><slot /></a>' }, RecordSourceReader: { template: '<div data-testid="source-reader-stub" />' } }
+const stubs = { NuxtLink: { props: ['to'], template: '<a :href="typeof to === \'string\' ? to : to.path"><slot /></a>' } }
 const version = {
-  versionId: 12, declareKind: 'review', businessYear: 2023, appliedAt: '2023-02-01 09:00:00', status: '终审通过',
+  versionId: 12, titleRaw: '2', declareKind: 'review', businessYear: 2023, appliedAt: '2023-02-01 09:00:00', status: '终审通过',
   batch: '2023-2', awardBatchLabel: '第三批', province: '浙江省', nameRaw: '甲办理企业', usccRaw: '91330211255994457P', ruleVersion: 'platform-business-v1',
 }
 const record: BusinessProcessRow = {
@@ -26,7 +26,7 @@ const record: BusinessProcessRow = {
 const isolated: BusinessProcessRow = {
   kind: 'observation', relationId: 9, queryId: 4, queriedAt: '2026-10-03T00:00:00Z', queryKey: 'name:无编号',
   queryStatus: 'success', sequenceNo: 1, identityState: 'missing_key', contentState: 'unverifiable',
-  nameRaw: '无编号办理企业', usccRaw: null, declareKind: '补录', businessYear: null, appliedAt: null,
+  titleRaw: 'unknown-title', nameRaw: '无编号办理企业', usccRaw: null, declareKind: '补录', businessYear: null, appliedAt: null,
   status: null, batch: null, awardBatchLabel: null, province: null, titleScopes: ['2'], enterpriseId: null, enterpriseName: null,
 }
 const detail = {
@@ -37,15 +37,18 @@ const detail = {
 }
 
 describe('关联办理表格', () => {
-  it('shows typed fields and the explicit query title scope, then opens the record', async () => {
+  it('shows the row title even when its query scopes differ, then opens the record', async () => {
     const view = mount(PlatformBusinessProcessTable, { props: { view: 'records', rows: [record] }, global: { stubs } })
     try {
-      expect(view.text()).toContain('SQ-2023-1')
+      expect(view.text()).not.toContain('SQ-2023-1')
       expect(view.text()).toContain('甲办理企业')
-      expect(view.text()).toContain('创新型中小企业、专精特新“小巨人”')
+      expect(view.get('[data-testid=platform-business-process-row]').text()).toContain('专精特新中小企业')
+      expect(view.get('[data-testid=platform-business-process-card]').text()).toContain('专精特新中小企业')
+      expect(view.text()).not.toContain('创新型中小企业、专精特新“小巨人”')
       expect(view.text()).toContain('终审通过')
       expect(view.text()).toContain('2023-2')
-      expect(view.text()).toContain('1 / 2')
+      expect(view.text()).toContain('版本 1')
+      expect(view.text()).not.toContain('1 / 2')
       await view.get('[data-testid="platform-business-process-row"] button').trigger('click')
       expect(view.emitted('open-record')?.[0]).toEqual([7])
       expect(view.find('[data-testid="platform-business-process-card"]').exists()).toBe(true)
@@ -58,13 +61,14 @@ describe('关联办理表格', () => {
       expect(view.text()).toContain('缺少平台业务编号')
       expect(view.text()).toContain('原文内容无法核实')
       expect(view.text()).toContain('补录')
+      expect(view.get('[data-testid=platform-business-process-isolated-row]').text()).toContain('unknown-title')
       expect(view.get('[data-testid="platform-business-process-isolated-row"] a').attributes('href')).toBe('/platform-queries')
     } finally { view.unmount() }
   })
 })
 
 describe('关联办理详情', () => {
-  it('renders versions, query title scope and explicit truncation without raw JSON', async () => {
+  it('renders versions and title scopes without observation rows or raw JSON', async () => {
     const fetch = vi.fn(async () => detail)
     vi.stubGlobal('$fetch', fetch)
     const view = mount(PlatformBusinessProcessDetailDialog, { attachTo: document.body, props: { recordId: 7, open: true }, global: { stubs } })
@@ -72,15 +76,14 @@ describe('关联办理详情', () => {
       await flushPromises()
       expect(fetch).toHaveBeenCalledWith('/api/platform/business-processes/7', { retry: 0 })
       const dialog = new DOMWrapper(document.body).get('[data-testid="platform-business-process-detail"]')
+      expect(dialog.text()).not.toContain('办理编号')
+      expect(dialog.text()).not.toContain('SQ-2023-1')
       expect(dialog.text()).toContain('版本 #12')
-      expect(dialog.text()).toContain('称号范围（查询事实）')
-      expect(dialog.text()).toContain('专精特新中小企业')
-      expect(dialog.text()).toContain('仅显示最近 1 次')
+      expect(dialog.text()).not.toContain('称号范围')
+      expect(dialog.text()).toContain('最近')
+      expect(dialog.text()).not.toContain('实际观察')
       expect(dialog.text()).toContain('第三批')
-      expect(dialog.text()).toContain('#1 · confirmed')
-      expect(dialog.find('[data-testid="source-reader-stub"]').exists()).toBe(false)
-      await dialog.findAll('button').find(button => button.text().includes('原行与对应'))!.trigger('click')
-      expect(dialog.find('[data-testid="source-reader-stub"]').exists()).toBe(true)
+      expect(dialog.findAll('button').some(button => button.text().includes('原行与对应'))).toBe(false)
       expect(dialog.text()).not.toContain('secretRaw')
     } finally { view.unmount(); vi.unstubAllGlobals() }
   })

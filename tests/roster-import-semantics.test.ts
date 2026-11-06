@@ -96,6 +96,10 @@ import { initializeDb } from '../db/client'
  * 0026 仅为原差异行追加 currentQualification:null；所有原字段、结果、行数及摘要不变。
  * 明确迁入资格的非空字段由 current-export-pr126-fixes-http.test.ts 通过公开API验证。
  *
+ * ── 0042/0043 nullable metadata（2026-11-06，PR492 集成修复）──────────
+ * 新鲜失败逐字段仅为两条 query 的 lastCollectedAt:null 与两条 relation 的 titleRaw:null。
+ * 记录器独立断言它们均为 null 后仍逐字比较原黄金，未重录任何既有业务结果或哈希。
+ *
  * ── #386 用户明确批准纯来源复用预检 update=0（2026-10-26）────────────────
  * 新裁定来自 #380 后的 issue380-user-count-decision.json；#300 旧批准仍 UNKNOWN。
  * 从旧规范 literal 独立复算 9e53e3ac40f484f6 命中后，仅 update:2→0 推导

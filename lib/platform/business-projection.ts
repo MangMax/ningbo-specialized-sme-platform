@@ -26,6 +26,8 @@ export interface BusinessProjectionFields {
   awardBatchLabel: string | null
   /** Raw szsfmc (属地) after trimming. */
   province: string | null
+  /** Raw row-level rdjb after trimming; never query title scope. */
+  titleRaw?: string | null
   nameRaw: string | null
   usccRaw: string | null
 }
@@ -58,6 +60,7 @@ export function parseBusinessProcess(raw: unknown): BusinessProjectionFields {
     batch: text(row.whpc),
     awardBatchLabel: text(row.personuuid),
     province: text(row.szsfmc),
+    titleRaw: text(row.rdjb),
     nameRaw: text(row.qymc),
     usccRaw: text(row.tyshxydm),
   }

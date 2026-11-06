@@ -14,7 +14,6 @@ afterAll(() => { if (nativeAnimate) Object.defineProperty(Element.prototype, 'an
 
 const stubs = {
   NuxtLink: { props: ['to'], template: '<a :href="typeof to === \'string\' ? to : to.path" :data-to="JSON.stringify(to)"><slot /></a>' },
-  RecordSourceReader: { template: '<div data-testid="source-reader-stub" />' },
 }
 const version = {
   versionId: 12, validityDateRaw: '2027-12-31', maintenanceYear: 2024, maintenanceBatch: '2024-2',
@@ -42,7 +41,7 @@ const conflict: RecognizedDirectoryRow = {
   conflicts: ['title_conflict'],
 }
 const isolated: RecognizedDirectoryRow = {
-  kind: 'observation', relationId: 9, queryId: 4, queriedAt: '2026-10-03T00:00:00Z', queryKey: 'name:无编号目录企业',
+  kind: 'observation', titleRaw: '3', relationId: 9, queryId: 4, queriedAt: '2026-10-03T00:00:00Z', queryKey: 'name:无编号目录企业',
   queryStatus: 'success', sequenceNo: 1, identityState: 'missing_key', contentState: 'unverifiable',
   nameRaw: '无编号目录企业', usccRaw: null, titleScopes: ['2'], enterpriseId: null, enterpriseName: null,
 }
@@ -60,7 +59,7 @@ const detail: RecognizedDirectoryDetail = {
 }
 
 describe('平台认定目录表格', () => {
-  it('shows the original directory values, the explicit query scope and the current-enterprises entry', async () => {
+  it('shows the response title and navigates by it instead of query scope', async () => {
     const view = mount(PlatformRecognizedDirectoryTable, { props: { view: 'records', rows: [record, conflict] }, global: { stubs } })
     try {
       const row = view.get('[data-testid="platform-recognized-directory-row"]')
@@ -69,25 +68,29 @@ describe('平台认定目录表格', () => {
       expect(row.text()).toContain('2024-2')
       expect(row.text()).toContain('33020000')
       expect(row.text()).toContain('专精特新中小企业')
-      expect(row.text()).toContain('1 / 2')
-      expect(view.text()).toContain('行称号与查询范围不一致')
+      expect(row.text()).not.toContain('1 / 2')
+      expect(row.text()).toContain('版本详情')
+      expect(view.text()).not.toContain('行称号与查询范围不一致')
       await row.get('button').trigger('click')
       expect(view.emitted('open-record')?.[0]).toEqual([7])
       expect(view.find('[data-testid="platform-recognized-directory-card"]').exists()).toBe(true)
 
       const link = row.get('[data-testid="platform-recognized-current-link"]')
       expect(JSON.parse(link.attributes('data-to')!)).toEqual({ path: '/current-enterprises', query: { titleCode: 'specialized_sme', q: '甲目录企业' } })
-      // The row-level title never becomes the navigation title; only the observed scope does.
-      const conflictLink = view.get('[data-testid="platform-recognized-directory-row"][data-record-id="8"] [data-testid="platform-recognized-current-link"]')
-      expect(JSON.parse(conflictLink.attributes('data-to')!).query).toEqual({ titleCode: 'innovative_sme', q: '甲目录企业' })
+      // The response row title wins over the query condition.
+      const conflictRow = view.get('[data-testid="platform-recognized-directory-row"][data-record-id="8"]')
+      expect(conflictRow.text()).toContain('专精特新“小巨人”')
+      expect(conflictRow.text()).not.toContain('创新型中小企业')
+      const conflictLink = conflictRow.get('[data-testid="platform-recognized-current-link"]')
+      expect(JSON.parse(conflictLink.attributes('data-to')!).query).toEqual({ titleCode: 'little_giant', q: '甲目录企业' })
     } finally { view.unmount() }
   })
 
-  it('omits an ambiguous title code from the navigation entry', () => {
+  it('uses the actual row title despite multiple query title scopes', () => {
     const view = mount(PlatformRecognizedDirectoryTable, { props: { view: 'records', rows: [{ ...record, titleScopes: ['1', '2'] }] }, global: { stubs } })
     try {
       const link = view.get('[data-testid="platform-recognized-current-link"]')
-      expect(JSON.parse(link.attributes('data-to')!).query).toEqual({ q: '甲目录企业' })
+      expect(JSON.parse(link.attributes('data-to')!).query).toEqual({ titleCode: 'specialized_sme', q: '甲目录企业' })
     } finally { view.unmount() }
   })
 
@@ -188,7 +191,7 @@ describe('真实消费者深链', () => {
 })
 
 describe('平台认定目录详情', () => {
-  it('renders versions, raw validity values, query scope, conflicts and explicit truncation without raw JSON', async () => {
+  it('renders versions, validity and scopes without observation rows or raw JSON', async () => {
     const fetch = vi.fn(async () => detail)
     vi.stubGlobal('$fetch', fetch)
     const view = mount(PlatformRecognizedDirectoryDetailDialog, { attachTo: document.body, props: { recordId: 7, open: true }, global: { stubs } })
@@ -196,25 +199,23 @@ describe('平台认定目录详情', () => {
       await flushPromises()
       expect(fetch).toHaveBeenCalledWith('/api/platform/recognized-directory/7', { retry: 0 })
       const dialog = new DOMWrapper(document.body).get('[data-testid="platform-recognized-directory-detail"]')
-      expect(dialog.text()).toContain('平台认定目录 #7 · 观察与版本')
+      expect(dialog.text()).toContain('平台认定目录 #7 · 版本详情')
       expect(dialog.text()).toContain('版本 #12')
       expect(dialog.text()).toContain('有效期')
       expect(dialog.text()).toContain('2027-12-31')
-      expect(dialog.text()).toContain('行称号')
-      expect(dialog.text()).toContain('称号范围')
+      expect(dialog.text()).toContain('称号')
+      expect(dialog.text()).not.toContain('称号范围')
       expect(dialog.text()).toContain('专精特新中小企业')
-      expect(dialog.text()).toContain('仅显示最近 1 次')
-      expect(dialog.text()).toContain('行称号与查询范围不一致')
-      expect(dialog.text()).toContain('#1 · confirmed')
-      expect(dialog.find('[data-testid="source-reader-stub"]').exists()).toBe(false)
-      await dialog.findAll('button').find(button => button.text().includes('原行与对应'))!.trigger('click')
-      expect(dialog.find('[data-testid="source-reader-stub"]').exists()).toBe(true)
+      expect(dialog.text()).toContain('最近')
+      expect(dialog.text()).not.toContain('实际观察')
+      expect(dialog.text()).not.toContain('行称号与查询范围不一致')
+      expect(dialog.findAll('button').some(button => button.text().includes('原行与对应'))).toBe(false)
       expect(dialog.text()).not.toContain('secretRaw')
       expect(dialog.text()).not.toContain('目录业务ID')
     } finally { view.unmount(); vi.unstubAllGlobals() }
   })
 
-  it('marks a historical version without a typed projection instead of guessing values', async () => {
+  it('shows missing historical fields without internal projection notices', async () => {
     const legacy = {
       ...detail,
       versions: [{ ...detail.versions[0]!, versionId: 3, ruleVersion: null, validityDateRaw: null, maintenanceYear: null, maintenanceBatch: null, district: null, awardNote: null, titleRaw: null }],
@@ -225,8 +226,9 @@ describe('平台认定目录详情', () => {
     try {
       await flushPromises()
       const dialog = new DOMWrapper(document.body).get('[data-testid="platform-recognized-directory-detail"]')
-      expect(dialog.text()).toContain('尚未建立 typed 投影')
-      expect(dialog.text()).toContain('未建立')
+      expect(dialog.text()).not.toContain('typed')
+      expect(dialog.text()).toContain('版本 #3')
+      expect(dialog.text()).toContain('未提供')
     } finally { view.unmount(); vi.unstubAllGlobals() }
   })
 })

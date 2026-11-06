@@ -9,7 +9,7 @@ export const TASK_EXPORTS = [
   { titleCode: 'innovative_sme', label: '创新型中小企业', path: '/api/roster/exports/current/innovative-sme' },
 ] as const
 export type TaskExportTitle = typeof TASK_EXPORTS[number]['titleCode']
-export const TASK_LABELS: Record<string, string> = { 'difference-snapshot': '公布名单归档快照（缺口见任务详情）', 'event-annual-correspondence': '年度过程对应', ocr: 'OCR 识别', 'render-pages': 'PDF 转图', 'platform-query-batch': '平台批量查询', reconcile: '平台核查', 'event-archive-candidates': '公布事件候选发现', 'current-roster-export': '当前名录导出' }
+export const TASK_LABELS: Record<string, string> = { 'difference-snapshot': '平台业务采集入库', 'event-annual-correspondence': '年度过程对应', ocr: 'OCR 识别', 'render-pages': 'PDF 转图', 'platform-query-batch': '平台批量查询', reconcile: '平台核查', 'event-archive-candidates': '公布事件候选发现', 'current-roster-export': '当前名录导出' }
 export const TASK_STATES: Record<JobState, string> = { queued: '排队中', running: '运行中', done: '已完成', failed: '失败', cancelled: '已取消' }
 export interface TaskSummary {
   id: string; kind: string; label: string; group: TaskTab; state: JobState

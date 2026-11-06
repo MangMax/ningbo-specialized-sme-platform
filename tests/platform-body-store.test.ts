@@ -259,8 +259,9 @@ it('upgrades pre-0029 SQLite without changing legacy schema data triggers or NOT
     writeFileSync(join(oldFolder, 'meta/_journal.json'), JSON.stringify({ ...journal, entries }))
     for (const entry of entries) copyFileSync(join(folder, `${entry.tag}.sql`), join(oldFolder, `${entry.tag}.sql`))
     const db = drizzle(sqlite, { schema }); migrate(db, { migrationsFolder: oldFolder })
-    db.insert(schema.platformQuery).values({ interface: 'business_list', queryKey: 'fixture', queriedAt: 'fixture', rawResponse: '\0原🙂', collectionEvidence: { titleScope: { rdjb: ['2'] } } as never }).run()
-    db.insert(schema.platformRelation).values({ queryId: 1, sequenceNo: 1, rawFields: { z: null, a: true }, sourceText: 'source' }).run()
+    // Pre-0029 fixture uses its historical columns, never the current ORM shape.
+    sqlite.prepare('INSERT INTO platform_query(interface,query_key,queried_at,raw_response,collection_evidence,created_at) VALUES(?,?,?,?,?,?)').run('business_list', 'fixture', 'fixture', '\0原🙂', JSON.stringify({ titleScope: { rdjb: ['2'] } }), 'fixture')
+    sqlite.prepare('INSERT INTO platform_relation(query_id,sequence_no,raw_fields,source_text,created_at) VALUES(?,?,?,?,?)').run(1, 1, JSON.stringify({ z: null, a: true }), 'source', 'fixture')
     db.insert(schema.platformBusinessRecord).values({ interface: 'business_list', platformKey: 'fixture', identityRuleVersion: 'fixture' }).run()
     db.insert(schema.platformBusinessRecordVersion).values({ recordId: 1, hashAlgorithm: 'fixture', contentHash: 'fixture', canonicalRawJson: ' {"z":1} ' }).run()
     const oldSchema = sqlite.prepare("SELECT type,name,sql FROM sqlite_master WHERE name NOT LIKE '__drizzle%' AND name NOT LIKE 'sqlite_%' ORDER BY name").all() as { name: string }[]

@@ -64,23 +64,6 @@ it('filters the bounded review view by exact enterprise title direction and even
   expect(view.get('[data-testid="review-enterprise-link"]').attributes('href')).toContain('eventId=33')
   view.unmount()
 })
-it('keeps queue filters in the URL and returns detail links to the same filtered queue', async () => {
-  const replace = vi.fn()
-  vi.stubGlobal('useRoute', () => ({ query: { mode: 'review', reviewState: 'reviewed' }, path: '/comparison' }))
-  vi.stubGlobal('useRouter', () => ({ replace }))
-  const view = mount(EvidenceReviewList, { props: { syncQuery: true }, global: { plugins: [createPinia(), PiniaColada], stubs } })
-  await flushPromises()
-  expect(fetcher).toHaveBeenCalledWith('/api/roster/evidence-impacts', { query: { view: 'current', state: 'reviewed', limit: 25 } })
-  const href = decodeURIComponent(view.get('[data-testid="review-enterprise-link"]').attributes('href')!)
-  expect(href).toContain('returnTo=/comparison?mode=review&reviewState=reviewed')
-  choose(view, '复核状态', 'all')
-  await view.get('form').trigger('submit'); await flushPromises()
-  const target = replace.mock.calls.at(-1)![0]
-  expect(target).toMatchObject({ path: '/comparison', query: { mode: 'review', reviewState: 'all' } })
-  const updated = decodeURIComponent(view.get('[data-testid="review-enterprise-link"]').attributes('href')!)
-  expect(updated).toContain('returnTo=/comparison?mode=review&reviewState=all')
-  view.unmount()
-})
 it('follows opaque cursor pages and retains the previous page with explicit retry on failure', async () => {
   const view = render(); await flushPromises()
   fetcher.mockRejectedValueOnce(new Error('private response must not be displayed'))

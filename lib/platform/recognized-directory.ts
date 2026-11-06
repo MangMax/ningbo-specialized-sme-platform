@@ -11,6 +11,8 @@ export const recognizedDirectoryFilterSchema = z.strictObject({
   /** Enterprise name or USCC keyword; matched only through an assigned observation. */
   q: z.string().trim().min(1).max(200).optional(),
   enterpriseId: z.number().int().positive().optional(),
+  /** Exact archived row-level rdjb string, independent of query scope. */
+  titleRaw: z.string().min(1).max(200).optional(),
   /** Exact directory business id (platform_business_record.platform_key); never merged across interfaces. */
   platformKey: z.string().trim().min(1).max(200).optional(),
   /** Explicit query title scope (rdjb 1/2/3) from the source query, never a per-row title fact. */
@@ -29,7 +31,7 @@ export const recognizedDirectoryFilterSchema = z.strictObject({
 export type RecognizedDirectoryFilter = z.infer<typeof recognizedDirectoryFilterSchema>
 
 const QUERY_KEYS = new Set([
-  'view', 'q', 'enterpriseId', 'platformKey', 'rdjb', 'rddqrq', 'whpcyear', 'whpc', 'szq', 'page', 'pageSize',
+  'view', 'q', 'enterpriseId', 'titleRaw', 'platformKey', 'rdjb', 'rddqrq', 'whpcyear', 'whpc', 'szq', 'page', 'pageSize',
 ])
 
 /** HTTP query strings are converted once, then validated by the same strict schema as MCP. */
@@ -51,6 +53,7 @@ export function recognizedDirectoryFilterFromQuery(raw: Record<string, unknown>)
   const page = positive(raw.page, 'page')
   const pageSize = positive(raw.pageSize, 'pageSize')
   const input: Record<string, unknown> = {}
+  if (raw.titleRaw !== undefined) input.titleRaw = raw.titleRaw
   const view = text(raw.view)
   if (view) input.view = view
   if (text(raw.q)) input.q = text(raw.q)
@@ -106,6 +109,7 @@ export interface RecognizedDirectoryRecordRow {
 }
 
 export interface RecognizedDirectoryIsolatedRow {
+  titleRaw: string | null
   kind: 'observation'
   relationId: number
   queryId: number

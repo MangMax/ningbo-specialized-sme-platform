@@ -1,5 +1,5 @@
 import { CURRENT_RULE_VERSION, QUALIFICATION_ASSESSMENT_VERSION } from '../lib/roster/current-qualification'
-import { afterEach, beforeEach, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from 'vitest'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -8,9 +8,10 @@ import { captureReceiptRuntimeContext, validateReceiptRuntimeContext } from '../
 import { importReceiptRedactor } from '../server/utils/import-receipt-redaction'
 import { createCurrentQualificationAssessmentReader, readCurrentQualificationAssessment } from '../lib/roster/current-qualification'
 import { readOfficialPublishedPresentation } from '../lib/roster/official-published-presentation'
-import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { pathToFileURL } from 'node:url'
+import { createRequire } from 'node:module'
 import { resolve } from 'node:path'
 import ExcelJS from 'exceljs'
 import { createCurrentExportWorker } from '../server/utils/current-export-worker-location'
@@ -24,6 +25,7 @@ let root: string, db: ReturnType<typeof useDb>
 beforeEach(() => {
   root = mkdtempSync(join(tmpdir(),'runtime-context-409-'))
   db = useDb({dbPath:join(root,'synthetic.db')})
+  vi.stubEnv('NUXT_LOG_DIR',join(root,'logs'))
   for (const key of ['NUXT_API_TOKEN','NUXT_MCP_TOKEN','MIIT_COOKIE','NUXT_OCR_TOKEN','PADDLEOCR_MCP_AISTUDIO_ACCESS_TOKEN']) vi.stubEnv(key,'')
 })
 afterEach(() => { vi.unstubAllEnvs(); db.$client.close(); rmSync(root,{recursive:true,force:true}) })
@@ -125,20 +127,31 @@ const ocrPartitions409 = [
   { id: 'paddle', runtimeOcr: '', envOcr: ' ', savedOcr: false, savedCookie: false, selectedOcr: W409.paddle },
 ] as const
 
+// Compile only this worker's current local dependency closure, never a previous app output.
+// The packaged-app/Nitro lane remains a separate integration check.
+const workerArtifactRoot409 = mkdtempSync(join(tmpdir(),'runtime-context-409-artifact-'))
+const workerArtifactEntry409 = join(workerArtifactRoot409,'current-export-worker.mjs')
+let artifactManifestSha409 = ''
+beforeAll(async () => {
+  const cwd = resolve(import.meta.dirname,'..')
+  const require = createRequire(import.meta.resolve('nitropack/package.json'))
+  const { build } = require('esbuild')
+  symlinkSync(join(cwd,'node_modules'),join(workerArtifactRoot409,'node_modules'),'dir')
+  const result = await build({ absWorkingDir: cwd, entryPoints: ['lib/roster/current-export-worker.ts'], outfile: workerArtifactEntry409, bundle: true, packages: 'external', platform: 'node', format: 'esm', target: 'node24', sourcemap: true, metafile: true })
+  const hash = (path: string) => createHash('sha256').update(readFileSync(path)).digest('hex')
+  const manifest = { inputs: Object.fromEntries(Object.keys(result.metafile!.inputs).map(path => [resolve(cwd,path),hash(resolve(cwd,path))])), outputs: Object.fromEntries([workerArtifactEntry409,workerArtifactEntry409 + '.map'].map(path => [path,hash(path)])) }
+  const raw = JSON.stringify(manifest)
+  artifactManifestSha409 = createHash('sha256').update(raw).digest('hex')
+  writeFileSync(join(workerArtifactRoot409,'inventory.json'),raw,{ mode: 0o600 })
+},30000)
+afterAll(() => rmSync(workerArtifactRoot409,{ recursive: true, force: true }))
 function assertWorkerArtifactPins409() {
-  const manifestPath = process.env.ISSUE409_COMPILED_INVENTORY
-  const expected = process.env.ISSUE409_COMPILED_INVENTORY_SHA256
-  if (!manifestPath || !expected) throw new Error('409 actual worker artifact grant required')
-  const raw = readFileSync(manifestPath)
-  expect(createHash('sha256').update(raw).digest('hex')).toBe(expected)
-  const inventory = JSON.parse(raw.toString()) as { files: Record<string, { sha256: string }> }
-  const cwd = resolve(import.meta.dirname, '..')
-  expect(inventory.files['.output/server/current-export-worker.mjs']).toBeDefined()
-  expect(inventory.files['.output/server/current-export-worker.mjs.map']).toBeDefined()
-  for (const [file, pin] of Object.entries(inventory.files)) {
-    expect(file.startsWith('.output/server/') && !file.includes('..')).toBe(true)
-    expect(createHash('sha256').update(readFileSync(join(cwd,file))).digest('hex')).toBe(pin.sha256)
-  }
+  const raw = readFileSync(join(workerArtifactRoot409,'inventory.json'))
+  expect(createHash('sha256').update(raw).digest('hex')).toBe(artifactManifestSha409)
+  const inventory = JSON.parse(raw.toString()) as { inputs: Record<string,string>; outputs: Record<string,string> }
+  expect(Object.keys(inventory.inputs)).toContain(resolve(import.meta.dirname,'../lib/roster/current-export-worker.ts'))
+  expect(Object.keys(inventory.outputs)).toEqual([workerArtifactEntry409,workerArtifactEntry409 + '.map'])
+  for (const [path,sha256] of Object.entries({ ...inventory.inputs, ...inventory.outputs })) expect(createHash('sha256').update(readFileSync(path)).digest('hex'),path).toBe(sha256)
 }
 
 function legalWorkerSeed409() {
@@ -186,11 +199,11 @@ function workerBusinessDigest409() {
 async function actualWorker409(mode: typeof workerModes409[number], context: unknown, caseId: string) {
   assertWorkerArtifactPins409()
   const temporaryPath = join(root,'private.part'), finalPath = join(root,'published.xlsx')
-  const worker = mode === 'source' ? createCurrentExportWorker() : createEnterpriseReadProcess(pathToFileURL(resolve('.output/server/current-export-worker.mjs')))
+  const worker = mode === 'source' ? createCurrentExportWorker() : createEnterpriseReadProcess(pathToFileURL(workerArtifactEntry409))
   const progress: Record<string, unknown>[] = []
   let timer: ReturnType<typeof setTimeout> | undefined
   let finalCount = 0
-  type Terminal = { type: 'done'; result: { counts: { eligible: number; pending: number; excluded: number }; total: number; generatedAt: string } } | { type: 'failure'; message: string }
+  type Terminal = { type: 'done'; result: { counts: { eligible: number; pending: number; excluded: number }; statusCounts: { effective: number; expired: number; terminated: number; moved_out: number; unrecognized: number }; total: number; generatedAt: string } } | { type: 'failure'; message: string }
   const terminal = new Promise<Terminal>((resolve, reject) => {
     worker.on('message', (message: Record<string, unknown>) => {
       if (message.type === 'progress') progress.push(message)
@@ -232,25 +245,35 @@ it.each(workerModes409.flatMap(mode => ocrPartitions409.map(partition => ({ mode
   const { message,progress,temporaryPath } = await actualWorker409(partition.mode,{ apiToken: W409.runtimeApi, mcpToken: W409.runtimeMcp, ocrToken: partition.runtimeOcr },'B3-' + partition.id)
   expect(message.type).toBe('done')
   if (message.type !== 'done') throw new Error('Expected actual workbook completion')
-  expect(message.result.counts).toEqual({ eligible: 1, pending: 1, excluded: 1 }); expect(message.result.total).toBe(3)
+  expect(message.result.statusCounts).toEqual({effective:1,expired:0,terminated:0,moved_out:0,unrecognized:2})
+  expect(message.result.counts).toEqual({ eligible: 1, pending: 0, excluded: 2 }); expect(message.result.total).toBe(3)
   expect(progress).toContainEqual(expect.objectContaining({ done: 0, total: 3, snapshotId: 'actual-worker-409', ruleVersion: CURRENT_RULE_VERSION }))
   const workbook = new ExcelJS.Workbook(); await workbook.xlsx.readFile(temporaryPath)
-  expect(workbook.worksheets.map(sheet => sheet.name)).toEqual(['有效企业','待确认','排除明细','口径说明'])
+  expect(workbook.worksheets.map(sheet => sheet.name)).toEqual(['有效企业','已到期','已注销（吊销）','已迁出','未认定','口径说明'])
   const selected = [W409.runtimeApi,W409.runtimeMcp,W409.envApi,W409.envMcp,partition.savedCookie ? W409.savedCookie : W409.envCookie,partition.selectedOcr]
   const expectedName = '合成公布 ' + Object.values(W409).map(value => selected.includes(value) ? '[REDACTED]' : value).join(' ') + ' 企业'
   const published = '2026年第1批认定，《B409合成公布.pdf》：公布名称：' + JSON.stringify(expectedName)
   expect(workbook.getWorksheet('有效企业')!.getCell('H2').value).toBe(published)
   expect(workbook.getWorksheet('有效企业')!.getCell('L2').value).toContain('公布名称：' + JSON.stringify(expectedName))
   const cells: unknown[] = []
-  for (const [sheetName,name] of [['有效企业',W409_NAMES.eligible],['待确认',W409_NAMES.pending],['排除明细',W409_NAMES.excluded]] as const) {
+  for (const [sheetName,names] of [['有效企业',[W409_NAMES.eligible]],['未认定',[W409_NAMES.pending,W409_NAMES.excluded]],['已到期',[]],['已注销（吊销）',[]],['已迁出',[]]] as const) {
     const sheet = workbook.getWorksheet(sheetName)!
-    expect(sheet.rowCount).toBe(2); expect(sheet.getRow(1).values).toEqual([undefined,...HEADERS_409])
-    expect(sheet.getRow(2).cellCount).toBe(12); expect(sheet.getCell('B2').value).toBe(name)
-    for (let c = 1; c <= 12; c++) cells.push(sheet.getRow(2).getCell(c).value)
+    expect(sheet.rowCount).toBe(names.length + 1)
+    expect(sheet.getRow(1).values).toEqual([undefined,...HEADERS_409,'有效状态','有效期及排除依据','资料缺口与来源备注'])
+    expect(Array.from({length:names.length},(_,i)=>sheet.getCell('B' + (i+2)).value)).toEqual(names)
+    for (let row = 2; row <= sheet.rowCount; row++) {
+      expect(sheet.getRow(row).cellCount).toBe(15)
+      for (let c = 1; c <= 15; c++) cells.push(sheet.getRow(row).getCell(c).value)
+    }
   }
   expect(workbook.getWorksheet('有效企业')!.getCell('G2').value).toBe('2026年第1批认定')
-  expect(workbook.getWorksheet('待确认')!.getCell('K2').value).toContain('复核结论/结论年份/批次不完整')
-  expect(workbook.getWorksheet('排除明细')!.getCell('K2').value).toContain('对应认定周期复核明确不通过')
+  expect(workbook.getWorksheet('未认定')!.getCell('G2').value).toBe('2022年第1批原认定批次，结论年份待核复核结论待核')
+  expect(workbook.getWorksheet('未认定')!.getCell('G3').value).toBe('2022年第1批原认定批次，2025年复核未通过')
+  expect(workbook.getWorksheet('未认定')!.getCell('K2').value).toContain('缺少已确认认定及资格依据')
+  expect(workbook.getWorksheet('未认定')!.getCell('K3').value).toContain('缺少已确认认定及资格依据')
+  expect(workbook.getWorksheet('未认定')!.getCell('O2').value).toContain('认定或复核周期资料不完整')
+  expect(workbook.getWorksheet('未认定')!.getCell('M2').value).toBe('未认定')
+  expect(workbook.getWorksheet('未认定')!.getCell('M3').value).toBe('未认定')
   for (const token of selected) expect(JSON.stringify(cells)).not.toContain(token)
   for (const token of Object.values(W409).filter(value => !selected.includes(value))) expect(String(workbook.getWorksheet('有效企业')!.getCell('H2').value)).toContain(token)
   expect(workerBusinessDigest409()).toBe(before)

@@ -214,7 +214,6 @@ const htmlReviewCases = [
   ['entity_form', '<input name="csrf&#84;oken" value="synthetic-review-other-token">'],
   ['single_quote_form', "<textarea name='username'>synthetic-review-user</textarea>"],
   ['encoded_text', '<p>%73ynthetic-raw-wire-secret</p>'],
-  ['unknown_script', '<script src="synthetic-unknown.js"></script>'],
 ]
 for (const transport of ['HTTP', 'MCP']) it.each(htmlReviewCases)(`real ${transport} refuses the entire sensitive HTML source case %s`, async (_label, prefix) => {
   raw = `${prefix}<script>(function(data){})(${source({ id: 'safe' }).trim()});</script>`
@@ -227,6 +226,12 @@ it.each(['HTTP', 'MCP'])('real %s accepts verifiable HTML and retains its exact 
   raw = `<html><body><script type="application/json">${source({ id: 'safe-html', x: null, n: 1 }).trim()}</script></body></html>`
   const result = transport === 'HTTP' ? await (await post('/api/platform/query', input)).json() : await call('query_platform', input)
   expect(result).toMatchObject({ status: 'success', rawData: { version: 1, rows: [{ id: 'safe-html', x: null, n: 1 }], pages: [{ format: 'html-script', body: raw }] } })
+})
+
+it.each(['HTTP', 'MCP'])('real %s archives platform scripts and markup unchanged as non-executed data', async transport => {
+  raw = `<script src="synthetic-unknown.js"></script><div data-platform="layout" style="display:block"></div><script>(function(data){throw new Error('must not execute')})(${source({ id: 'safe-dwz', n: 1 }).trim()});</script>`
+  const result = transport === 'HTTP' ? await (await post('/api/platform/query', input)).json() : await call('query_platform', input)
+  expect(result).toMatchObject({ status: 'success', rawData: { version: 1, rows: [{ id: 'safe-dwz', n: 1 }], pages: [{ format: 'html-script', body: raw }] } })
 })
 
 it.each(['HTTP', 'MCP'])('real %s table raw observation keeps own prototype keys while the old string rows stay compatible', async transport => {

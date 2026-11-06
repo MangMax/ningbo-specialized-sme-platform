@@ -89,7 +89,7 @@ it('C31 workbook count and eligible cursor share the covering candidate path', a
   vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(new Date('2026-10-26T00:00:00Z'))
   const f = consumerFixture()
   const result = await writeCurrentWorkbook(f.db, 'innovative_sme', join(f.dir, 'tiny.xlsx'), () => {})
-  expect(result).toMatchObject({ total: 4, counts: { eligible: 2, pending: 1, excluded: 1 } })
+  expect(result).toMatchObject({ total: 4, counts: { eligible: 2, pending: 0, excluded: 2 } })
   const counts = f.statements.filter(sql => sql.startsWith('select count(*) as n from (with owners'))
   const cursors = f.statements.filter(sql => sql.startsWith('select id from (with owners'))
   // One complete-set count plus at least one bounded cursor page; the cursor is
@@ -264,7 +264,7 @@ it.each(titles)('C32 fixed-time list literals preserve qualification filters opt
   const covered = read()
   expect(covered).toEqual(old)
   const all = covered[0]!
-  expect(all).toMatchObject({ total: 2, uncertainTotal: 0, titleCode: title, ruleVersion: 'current-roster-116-v9', snapshotStartedAt: '2026-10-26T00:00:00.000Z', options: { recognitionYears: [2026], validYears: [], maintenanceYears: [], maintenanceBatchesByYear: {} } })
+  expect(all).toMatchObject({ total: 2, uncertainTotal: 0, titleCode: title, ruleVersion: 'current-roster-116-v10', snapshotStartedAt: '2026-10-26T00:00:00.000Z', options: { recognitionYears: [2026], validYears: [], maintenanceYears: [], maintenanceBatchesByYear: {} } })
   expect(all.rows.map(row => row.enterpriseId)).toEqual([first, first + 1])
   expect(all.rows[0]).toMatchObject({ name: '=1+1', uscc: String(first).padStart(18, '0'), district: '鄞州区', group: 'eligible', firstYear: 2026, publishedNames: ['=1+1'], aliases: [], publication: '已见本称号宁波公布记录', basis: `event:${first}@1 award 2026/1 结论年:`, reviews: '', references: [`evidence:${first} jxj/announcement/synthetic363.pdf 名单\n附件 序号:${first}`], recognition: { precision: 'year', year: 2026 }, matchedValidYears: [], matchedMaintenance: [] })
   expect(all.rows[0]!.qualificationWitnesses).toEqual([{ cycle: { originYear: 2026, batchSeq: 1 }, awardEventId: first, recognition: { precision: 'year', year: 2026 }, matchedValidYear: null, matchedMaintenance: null, correspondenceId: null, conditionQueryId: null }])
@@ -295,14 +295,14 @@ it.each(titles)('C33 fixed-time workbook literals preserve all sheets columns te
   f.db.exec(indexSql)
   const covered = await run('cover.xlsx')
   expect(covered.result).toEqual(old.result)
-  expect(covered.result).toMatchObject({ total: 4, counts: { eligible: 2, pending: 1, excluded: 1 }, generatedAt: '2026-10-26T00:00:00.000Z', snapshotStartedAt: '2026-10-26T00:00:00.000Z', ruleVersion: 'current-roster-116-v9' })
+  expect(covered.result).toMatchObject({ total: 4, counts: { eligible: 2, pending: 0, excluded: 2 }, generatedAt: '2026-10-26T00:00:00.000Z', snapshotStartedAt: '2026-10-26T00:00:00.000Z', ruleVersion: 'current-roster-116-v10' })
   expect(covered.result.dataVersion).toMatch(/^sha256:[a-f0-9]{64}$/)
   expect(covered.progress).toEqual([[0, 4, '2026-10-26T00:00:00.000Z']])
   expect(covered.values).toEqual(old.values)
-  expect(covered.workbook.worksheets.map(sheet => sheet.name)).toEqual(['有效企业', '待确认', '排除明细', '口径说明'])
-  expect(covered.workbook.worksheets.map(sheet => sheet.rowCount)).toEqual([3, 2, 2, 7])
-  const headers = ['序号', '企业名称', '统一社会信用代码', '区县', '称号', '首次认定年份', '认定及复核情况', '公布名称', '已确认曾用名', '公布对应情况', '情况说明', '来源及页码']
-  for (const sheet of covered.workbook.worksheets.slice(0, 3)) {
+  expect(covered.workbook.worksheets.map(sheet => sheet.name)).toEqual(['有效企业', '已到期', '已注销（吊销）', '已迁出', '未认定', '口径说明'])
+  expect(covered.workbook.worksheets.map(sheet => sheet.rowCount)).toEqual([3, 2, 1, 1, 2, 9])
+  const headers = ['序号', '企业名称', '统一社会信用代码', '区县', '称号', '首次认定年份', '认定及复核情况', '公布名称', '已确认曾用名', '公布对应情况', '情况说明', '来源及页码', '有效状态', '有效期及排除依据', '资料缺口与来源备注']
+  for (const sheet of covered.workbook.worksheets.slice(0, 5)) {
     expect(sheet.getRow(1).values).toEqual([undefined, ...headers])
     expect(sheet.views[0]).toMatchObject({ state: 'frozen', xSplit: 2, ySplit: 1 })
     sheet.eachRow(row => row.eachCell(cell => { expect(cell.type).not.toBe(ExcelJS.ValueType.Formula); expect(typeof cell.value).toBe('string') }))
@@ -314,9 +314,9 @@ it.each(titles)('C33 fixed-time workbook literals preserve all sheets columns te
   expect(eligible.getCell('F2').value).toBe('2026')
   expect(eligible.getCell('L2').value).toContain('名单\n附件')
   expect(eligible.getCell('L2').value).toContain(`名单序号${first}`)
-  expect(eligible.autoFilter).toBe('A1:L3')
-  expect(covered.workbook.getWorksheet('待确认')!.getCell('B2').value).toBe(`候选${first + 2}`)
-  expect(covered.workbook.getWorksheet('排除明细')!.getCell('B2').value).toBe(`候选${first + 3}`)
+  expect(eligible.autoFilter).toBe('A1:O3')
+  expect(covered.workbook.getWorksheet('已到期')!.getCell('B2').value).toBe(`候选${first + 2}`)
+  expect(covered.workbook.getWorksheet('未认定')!.getCell('B2').value).toBe(`候选${first + 3}`)
   expect(f.db.inTransaction).toBe(false)
 })
 it('C34 both consumers read an old readonly file without changing database bytes', async () => {
@@ -325,7 +325,7 @@ it('C34 both consumers read an old readonly file without changing database bytes
   f.db.exec(`DROP INDEX ${relationIndex}; DROP INDEX ${queryIndex}`); f.db.close()
   const before = readFileSync(path), readonly = new Database(path, { readonly: true, fileMustExist: true }); handles.push(readonly)
   expect(listCurrentQualified(readonly, { titleCode: 'innovative_sme' })).toMatchObject({ total: 2, rows: [{ enterpriseId: 1 }, { enterpriseId: 2 }] })
-  expect(await writeCurrentWorkbook(readonly, 'innovative_sme', join(f.dir, 'readonly.xlsx'), () => {})).toMatchObject({ total: 4, counts: { eligible: 2, pending: 1, excluded: 1 } })
+  expect(await writeCurrentWorkbook(readonly, 'innovative_sme', join(f.dir, 'readonly.xlsx'), () => {})).toMatchObject({ total: 4, counts: { eligible: 2, pending: 0, excluded: 2 } })
   expect(readFileSync(path)).toEqual(before)
 })
 it('C35 confirmed recognized witness preserves positive options filters and source pointers', () => {

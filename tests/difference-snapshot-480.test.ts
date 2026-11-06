@@ -49,6 +49,11 @@ it('fresh tasks query all interfaces despite historical empty completion and reu
     const title=q.source==='queryList'?null:Array.isArray(q.rdjb)?q.rdjb[0]!:q.rdjb!
     r.pages=r.pages.filter(p=>p.rdjb===title).map(p=>({...p,fetchedCount:1,declaredTotal:1}))
     r.status='success'
+    r.titleScope={mode:q.source==='queryList'?'source_default':'selected',rdjb:title?[title]:[]}
+    r.rows=[{id:`${q.source}-${title}`,qymc:'fixture',tyshxydm:'91330200123456789X'}]
+    r.dataRows=r.rows
+    r.fetchedCount=1;r.declaredTotal=1
+    r.queriedAt=new Date(Date.now()+calls.length).toISOString();r.completedAt=r.queriedAt
     return r
   })
   for (const clientRequestId of ['fresh-one','fresh-two']) {
@@ -147,6 +152,11 @@ it('collects missing per-enterprise title pages and resumes only failed position
     r.fullRange=q.startPage===1
     r.pages=[1,2].filter(p=>p>=q.startPage).map(page=>({source:q.source,rdjb:title,page,maxPage:2,status:broken&&page===2?'failed':'success',fetchedCount:broken&&page===2?0:1,declaredTotal:2,error:null}))
     r.unfinished=broken?[{source:q.source,rdjb:title,page:2}]:[]
+    r.titleScope.mode=q.source==='queryList'?'source_default':'selected'
+    r.rows=r.pages.filter(p=>p.status==='success').map(p=>({id:`${q.source}-${title}-${p.page}`,qymc:'collect',tyshxydm:q.uscc!}))
+    r.dataRows=r.rows;r.fetchedCount=r.rows.length;r.declaredTotal=2
+    r.status=broken?'partial':'success';r.completeness=broken?'partial':'complete'
+    r.queriedAt=new Date(Date.now()+calls.length).toISOString();r.completedAt=r.queriedAt
     return r
   })
   const row=await publicHttp({action:'create',clientRequestId:'collect'})
@@ -158,14 +168,17 @@ it('collects missing per-enterprise title pages and resumes only failed position
   const later=db.insert(s.enterprise).values({name:'later',nameNorm:'later'}).returning().get()
   db.insert(s.record).values({enterpriseId:later.id,titleCode:'innovative_sme',source:'jxj'}).run()
   db.insert(s.platformQuery).values({interface:'business_list',queryKey:e.usccNorm!,queriedAt:'2099-01-01',status:'no_record',collectionEvidence:archive('businessList')}).run()
+  const beforeRetry=db.$client.prepare('select count(*) n from platform_business_observation').get() as {n:number}
   await publicHttp({action:'retry',jobId:row.id})
   const done=await settled(row.id,db)
+  expect((db.$client.prepare('select count(*) n from platform_business_observation').get() as {n:number}).n).toBe(beforeRetry.n+1)
   expect(calls).toHaveLength(8)
   expect(calls.at(-1)).toEqual({source:'businessList',rdjb:'2',startPage:2})
   expect((done.result as {items:{enterpriseId:number;complete:boolean;rows:number}[]}).items.filter(i=>i.enterpriseId===e.id).every(i=>i.complete&&i.rows===2)).toBe(true)
   await publicHttp({action:'retry',jobId:row.id})
   await settled(row.id,db)
   expect(calls).toHaveLength(8)
+  expect((db.$client.prepare('select count(*) n from platform_business_observation').get() as {n:number}).n).toBe(beforeRetry.n+1)
   expect(done.state).toBe('done')
   const tool=(await import('../server/mcp/tools/difference_snapshot')).default as unknown as {handler:(v:unknown)=>Promise<{content:{text:string}[]}>}
   const read=JSON.parse((await tool.handler({action:'read',jobId:row.id})).content[0]!.text)
@@ -187,7 +200,7 @@ async function publicHttp(body: unknown) {
     return await res.json()
   } finally { await new Promise<void>(r=>server.close(()=>r())) }
 }
-it('runs real provider pagination against fixture transport and exposes raw rows through the public snapshot', async () => {
+it('runs real provider pagination with metadata-only checkpoints and complete business rows', async () => {
   const db=initializeDb({create:true,dbPath:join(dir,'provider.db')}); activeDb=db
   const e=db.insert(s.enterprise).values({name:'fixture provider',nameNorm:'fixtureprovider',usccNorm:'91330200222222222X'}).returning().get()
   db.insert(s.record).values({enterpriseId:e.id,titleCode:'innovative_sme',source:'jxj'}).run()
@@ -198,7 +211,7 @@ it('runs real provider pagination against fixture transport and exposes raw rows
     const body=new URLSearchParams(String(init?.body)),page=Number(body.get('pageNum'))
     calls.push({source,page})
     const grid=source==='queryBusList'?'businessGrid':source==='businessList'?'businessListGrid':'applyGrid'
-    return {ok:true,status:200,text:async()=>JSON.stringify({zrarData:{grid:{[grid]:{page,pageSize:50,maxCount:51,maxPage:2,pageSet:Array.from({length:page===1?50:1},(_,i)=>({id:`${source}-${page}-${i}`,qymc:'fixture provider',tyshxydm:'91330200222222222X'}))}}}})}
+    return {ok:true,status:200,text:async()=>JSON.stringify({zrarData:{grid:{[grid]:{page,pageSize:50,maxCount:51,maxPage:2,pageSet:Array.from({length:page===1?50:1},(_,i)=>({id:`${source}-${page}-${i}`,qymc:'fixture provider',tyshxydm:'91330200222222222X',unknown:{nested:[null,false,17]},blank:null}))}}}})}
   }}}))
   try {
     const row=await publicHttp({action:'create',clientRequestId:'real-provider-fixture'})
@@ -208,7 +221,10 @@ it('runs real provider pagination against fixture transport and exposes raw rows
     expect(calls.filter(c=>c.page===2)).toHaveLength(7)
     expect(done.result).toMatchObject({counts:{enterprises:1,unfinished:0,rows:357,requests:14}})
     const result=done.result as {items:{segments:PlatformLiveQueryResult[]}[]}
-    expect(result.items.every(i=>i.segments[0]!.rawData!.rows.length===51)).toBe(true)
+    expect(result.items.every(i=>i.segments.every(segment=>!Object.hasOwn(segment,'rows')&&!Object.hasOwn(segment,'rawData')&&!Object.hasOwn(segment,'dataRows')))).toBe(true)
+    const versions=db.$client.prepare('select canonical_raw_json raw from platform_business_record_version').all() as {raw:string}[]
+    expect(versions.length).toBe(153)
+    expect(versions.every(v=>{const row=JSON.parse(v.raw);return row.qymc==='fixture provider'&&row.blank===null&&JSON.stringify(row.unknown)==='{"nested":[null,false,17]}'})).toBe(true)
   } finally {db.$client.close();activeDb=globalDb}
 })
 
@@ -253,4 +269,19 @@ it.each(['short-tail','retained-total'] as const)('real provider public snapshot
       expect(item.segments[1].unfinished).toContainEqual({source:'queryList',rdjb:null,page:3})
     }
   } finally {db.$client.close();activeDb=globalDb}
+})
+
+it('freezes exactly selected published enterprise IDs and rejects unknown IDs without creating a task', async()=>{
+ const store=initializeDb({create:true,dbPath:join(dir,'selected.db')})
+ try {
+  const ids=['selected','excluded'].map(name=>store.insert(s.enterprise).values({name,nameNorm:name}).returning().get().id)
+  for(const enterpriseId of ids)store.insert(s.record).values({enterpriseId,titleCode:'innovative_sme',source:'jxj'}).run()
+  const row=await snapshotOperation(store,dir,{action:'create',clientRequestId:'selected',enterpriseIds:[ids[0],ids[0]]})
+  const done=await settled(row.id,store)
+  expect((done.result as {scope:{enterpriseId:number}[]}).scope.map(e=>e.enterpriseId)).toEqual([ids[0]])
+  await expect(snapshotOperation(store,dir,{action:'create',clientRequestId:'selected',enterpriseIds:[ids[1]]})).rejects.toThrow('different enterprise scope')
+  const count=store.$client.prepare('select count(*) n from job').get()
+  await expect(snapshotOperation(store,dir,{action:'create',clientRequestId:'invalid',enterpriseIds:[99999]})).rejects.toThrow('published enterprises')
+  expect(store.$client.prepare('select count(*) n from job').get()).toEqual(count)
+ }finally{store.$client.close()}
 })
