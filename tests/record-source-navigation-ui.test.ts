@@ -76,12 +76,12 @@ describe('per-title complete history', () => {
     detail.records = [record, { ...record, id: 2, titleCode: 'innovative_sme' }, { ...record, id: 3, titleCode: 'little_giant' }, { ...record, id: 4, source: 'miit' }]
     const item = (id: number, recordId: number, eventType: string, year: number, decidedYear: number | null = null, reviewOutcome: string | null = null) => ({ ...event, id, recordId, eventType, year, decidedYear, reviewOutcome })
     detail.events = [item(21, 1, 'review', 2021, 2027, 'passed'), item(22, 1, 'award', 2021), item(23, 1, 'review', 2021, 2024, 'failed'), item(24, 1, 'review', 2021, 2024), item(25, 1, 'review', 2021), item(26, 2, 'nurture', 2020), item(27, 3, 'award', 2025), item(28, 4, 'maintain', 2022)] as typeof detail.events
-    await enterprise(25)
+    const router = await enterprise(25)
     const history = wrapper!.get('[aria-label="记录台账"]')
     expect(history.findAll('section > header > h3').map(h => h.text())).toEqual(['专精特新“小巨人”', '专精特新中小企业', '创新型中小企业'])
     const lists = history.findAll('ol')
     expect(lists.map(list => list.findAll('[id^="record-event-"]').map(row => row.attributes('id')))).toEqual([
-      ['record-event-27'], ['record-event-22', 'record-event-28', 'record-event-23', 'record-event-24', 'record-event-21', 'record-event-25'], ['record-event-26'],
+      ['record-event-27'], ['record-event-22', 'record-event-23', 'record-event-24', 'record-event-21', 'record-event-25'], ['record-event-26'],
     ])
     expect(history.text()).toContain('年份待核')
     expect(history.text()).toContain('同年及未知时点不表示精确先后')
@@ -91,10 +91,24 @@ describe('per-title complete history', () => {
     expect(history.get('#record-event-23').text()).toContain('原认定 2021 年')
     expect(history.get('#record-event-23').text()).toContain('第 1 批')
     expect(history.get('#record-event-22').text()).toContain('第 1 批')
-    expect(history.get('#record-event-28').text()).toContain('工信部')
+    expect(history.find('#record-event-28').exists()).toBe(false)
     expect(history.get('#record-event-23').text()).toContain('经信局')
     expect(history.get('#record-event-26').text()).toContain('不表示已持有称号')
     await vi.waitFor(() => expect(history.get('#record-event-25').attributes('data-highlighted')).toBe('true'))
+    const sources = wrapper!.get('[aria-label="记录来源"]')
+    expect(sources.findAll('[role="tab"]').map(tab => tab.text())).toEqual(['经信局', '工信部'])
+    await sources.findAll('[role="tab"]')[1]!.trigger('mousedown', { button: 0 })
+    await flushPromises()
+    expect(wrapper!.find('#record-event-22').exists()).toBe(false)
+    expect(wrapper!.get('#record-event-28').text()).toContain('工信部')
+    expect(wrapper!.findAll('[aria-label="记录台账"] ol').length).toBe(1)
+    await router.push(startTo(28))
+    await flushPromises()
+    await vi.waitFor(() => expect(wrapper!.get('#record-event-28').attributes('data-highlighted')).toBe('true'))
+    await router.push(startTo(23))
+    await flushPromises()
+    await vi.waitFor(() => expect(wrapper!.get('#record-event-23').attributes('data-highlighted')).toBe('true'))
+    expect(sources.findAll('[role="tab"]')[0]!.attributes('aria-selected')).toBe('true')
   })
 
   it('retains formal sources when a platform point fails and retries the selected event', async () => {

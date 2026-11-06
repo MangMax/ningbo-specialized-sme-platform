@@ -239,12 +239,15 @@ const ledgerEvents = computed<LedgerEvent[]>(() => {
       || a.id - b.id)
 })
 
-/** 记录决定区域是否存在，即使记录尚无事件也保留空状态。 */
-const titleHistories = computed(() => {
-  const present = new Set(detail.value?.records.map(record => record.titleCode) ?? [])
-  return [...TITLE_ORDER.filter(code => present.has(code)), ...[...present].filter(code => !TITLE_ORDER.includes(code))]
-    .map(code => ({ code, events: ledgerEvents.value.filter(event => event.titleCode === code) }))
-})
+const historySource = shallowRef('jxj')
+const historySources = [{ code: 'jxj', label: '经信局' }, { code: 'miit', label: '工信部' }]
+
+/** 来源分别展示；记录即使没有事件，也保留其称号空状态。 */
+const sourceHistories = computed(() => historySources.map(source => {
+  const present = new Set(detail.value?.records.filter(record => record.source === source.code).map(record => record.titleCode) ?? [])
+  const titles = [...TITLE_ORDER.filter(code => present.has(code)), ...[...present].filter(code => !TITLE_ORDER.includes(code))]
+  return { ...source, histories: titles.map(code => ({ code, events: ledgerEvents.value.filter(event => event.source === source.code && event.titleCode === code) })) }
+}))
 
 /** 称号与复核安排：只陈述首次认定、批次和下一次复核，不复制核对矩阵。 */
 const titleInfo = computed(() => {
@@ -450,6 +453,8 @@ async function arriveAtEvent(eventId: number | null) {
   if (typeof document === 'undefined') return
   if (!detail.value || eventId == null || !detail.value.records.some(record => record.events.some(event => event.id === eventId))) return
   const enterpriseId = id.value
+  const record = detail.value.records.find(record => record.events.some(event => event.id === eventId))
+  if (record) historySource.value = record.source
   tab.value = 'records'
   setEvidenceDisclosureOpen(evidenceDisclosureKey(eventId), true)
   await nextTick()
@@ -651,9 +656,15 @@ function openPreview(e: Evidence) {
             <div v-if="recordCount === 0" class="text-muted-foreground py-12 text-center text-sm">
               该企业暂无记录。
             </div>
-            <section v-else aria-label="记录台账">
+            <Tabs v-else v-model="historySource" class="min-w-0">
+              <TabsList aria-label="记录来源" class="mx-4 my-3">
+                <TabsTrigger v-for="source in historySources" :key="source.code" :value="source.code">{{ source.label }}</TabsTrigger>
+              </TabsList>
+              <TabsContent v-for="source in sourceHistories" :key="source.code" :value="source.code" class="mt-0">
+              <section aria-label="记录台账">
+              <p v-if="!source.histories.length" class="text-muted-foreground px-4 py-8 text-sm">该来源暂无记录。</p>
               <p class="text-muted-foreground border-b px-4 py-2 text-sm">按已知年份升序；同年及未知时点不表示精确先后。排列不代表当前有效资格。</p>
-              <section v-for="history in titleHistories" :key="history.code" :aria-label="`${titleLabel(history.code)}历史`" class="min-w-0 border-b last:border-b-0">
+              <section v-for="history in source.histories" :key="history.code" :aria-label="`${titleLabel(history.code)}历史`" class="min-w-0 border-b last:border-b-0">
                 <header class="bg-muted/40 flex flex-wrap items-baseline gap-3 border-b px-4 py-3">
                   <h3 class="text-sm font-semibold">{{ titleLabel(history.code) }}</h3>
                   <span class="text-muted-foreground text-sm">{{ history.events.length }} 条事件</span>
@@ -692,7 +703,9 @@ function openPreview(e: Evidence) {
                   </li>
                 </ol>
               </section>
-            </section>
+              </section>
+              </TabsContent>
+            </Tabs>
           </section>
 
           <p v-if="correspondenceLoading" class="text-muted-foreground text-[13px]">正在读取每条记录的平台接口出处…</p>
