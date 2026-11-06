@@ -191,13 +191,14 @@ async function page(width, url, task) {
       return result.result.value
     }
     const wait = (label, expression) => until(label, () => ev(expression))
-    const click = async expression => {
+    const click = async (expression, beforeDispatch) => {
       let point, previous, stable = 0
       await until('click visible and stable', async () => {
       point = await ev(`(() => { const e = ${expression}; if (!e || !e.matches('a,button,[role=tab]')) throw Error('Expected clickable element'); e.scrollIntoView({block:'center'}); const r=e.getBoundingClientRect(); if(!r.width || !r.height) throw Error('Not visible'); const x=r.x+r.width/2,y=r.y+r.height/2; return {x,y,hit:e.contains(document.elementFromPoint(x,y))}; })()`)
       stable = point.hit && previous && Math.abs(previous.x-point.x)<0.5 && Math.abs(previous.y-point.y)<0.5 ? stable+1 : 0
       previous=point; return stable>=3
       })
+      if (beforeDispatch) await beforeDispatch()
       delete point.hit
       await send('Input.dispatchMouseEvent',{type:'mousePressed',button:'left',clickCount:1,...point})
       await send('Input.dispatchMouseEvent',{type:'mouseReleased',button:'left',clickCount:1,...point})
@@ -270,17 +271,20 @@ async function checkChain(width) {
     if (fault === 'wrong-file' || fault === 'page80') await ev(`(() => { const a=${link(PDF)}[0]; const u=new URL(a.href); u.searchParams.set('${fault === 'wrong-file' ? 'file' : 'page'}','${fault === 'wrong-file' ? 'wrong/p008.pdf' : '80'}'); a.href=u.href; })()`)
     if (fault === 'span') await ev(`(() => {const a=${link(PDF)}[0];const s=document.createElement('span');s.textContent=a.textContent;a.replaceWith(s)})()`)
     await assertLink(ev,expectedDetail)
-    await ev(`${link(PDF)}[0].scrollIntoView({block:'center'})`)
-    const position = await ev(`({y:scrollY,top:${link(PDF)}[0].getBoundingClientRect().top})`)
-    assert(position.y > 100, 'nonzero detail scroll precondition')
-    console.log('CHAIN PRECONDITIONS',JSON.stringify({width,listReturn,expectedDetail,listPosition,position}))
-    await click(`${link(PDF)}[0]`)
+    let position
+    await click(`${link(PDF)}[0]`, async () => {
+      position = await ev(`({y:scrollY,top:${link(PDF)}[0].getBoundingClientRect().top})`)
+      assert(position.y > 100, 'nonzero detail scroll precondition')
+      console.log('CHAIN PRECONDITIONS',JSON.stringify({width,listReturn,expectedDetail,listPosition,position}))
+    })
     await wait('clicked preview',`location.pathname === '/preview'`)
     const previewUrl = new URL(await ev('location.href'))
     assert.deepEqual(previewUrl.searchParams.getAll('file'),[PDF])
     assert.deepEqual(previewUrl.searchParams.getAll('page'),['8'])
     assert.deepEqual(previewUrl.searchParams.getAll('back'),[expectedDetail])
-    assert(await ev(`JSON.parse(sessionStorage.getItem('roster:evidence-preview-return') || '[]').some(x=>x.back===${JSON.stringify(expectedDetail)} && x.scrollY>100)`),'real detail click saved nonzero return position')
+    const savedPosition = await ev(`JSON.parse(sessionStorage.getItem('roster:evidence-preview-return') || '[]').find(x=>x.back===${JSON.stringify(expectedDetail)})`)
+    assert(savedPosition && savedPosition.scrollY > 100, 'real detail click saved nonzero return position')
+    assert.equal(savedPosition.scrollY, position.y, 'handler saved independently measured click position')
     await original(api)
     assert(await ev(noOverflow), 'preview no horizontal overflow')
     const shot = await send('Page.captureScreenshot',{format:'png'})
