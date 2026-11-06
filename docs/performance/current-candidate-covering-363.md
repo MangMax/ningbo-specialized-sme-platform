@@ -1,5 +1,7 @@
 # 当前资格候选双覆盖索引（#363）
 
+> 阶段说明：下文保留 #363 初轮实现与当时的 UNRUN 边界。后续有界公开接口及工作簿验收、合入记录见 [#363 收尾评论](https://github.com/MangMax/ningbo-specialized-sme-platform/issues/363#issuecomment-6412122697)；该记录不证明旧 5 秒慢因、稳定性能或当前 HEAD 的全量验收。当前列表和工作簿入口使用 `currentCandidateReadSqlFor`，其 legacy 路径和索引可用判定仍复用 `currentCandidateSqlFor`；参见 [候选选择器](../../lib/roster/current-candidates.ts)。下文 SQL、测量、失败与初轮回执不因后续接线而改写。
+
 本票从 `b3bb4fad0f6ece1b7a0ea47d3a4097d263109240`（tree `a8600b0aa3f5f5c4e337bb22a2b7d73b5444a396`）增加两条物理索引。当前资格 list/count 与工作簿 count/eligible cursor 共用 `currentCandidateSqlFor(db)`；资格计算、公开 DTO、分页后 hydrate、工作簿列和原始业务值不变。
 
 ```sql
