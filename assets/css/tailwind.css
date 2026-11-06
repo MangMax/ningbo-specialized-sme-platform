@@ -412,3 +412,40 @@ html.theme-transition::view-transition-new(root) {
   max-height: max(320px, calc(100dvh - 17rem));
   overflow: auto;
 }
+
+/* Business side drawers opt in explicitly. Kept outside utilities so consumer
+ * width classes cannot bypass the viewport cap. Navigation and top/bottom
+ * sheets do not receive this attribute. EnterpriseDrawer shares this contract. */
+[data-floating-drawer] {
+  --drawer-gutter: 8px;
+  --drawer-width: 448px;
+  top: var(--drawer-gutter);
+  bottom: var(--drawer-gutter);
+  height: auto;
+  width: min(var(--drawer-width), calc(100vw - 2 * var(--drawer-gutter)));
+  max-width: calc(100vw - 2 * var(--drawer-gutter));
+  min-height: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.1);
+  overflow-wrap: anywhere;
+}
+[data-floating-drawer='compact'] { --drawer-width: 360px; }
+[data-floating-drawer='detail'] { --drawer-width: 560px; }
+[data-floating-drawer][data-drawer-side='right'] {
+  right: var(--drawer-gutter);
+  left: auto;
+}
+[data-floating-drawer][data-drawer-side='left'] {
+  left: var(--drawer-gutter);
+  right: auto;
+}
+@media (min-width: 640px) {
+  [data-floating-drawer] { --drawer-gutter: 16px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  [data-floating-drawer] {
+    animation: none;
+    transition: none;
+  }
+}

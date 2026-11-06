@@ -27,3 +27,10 @@ For Vue pages and components:
 - 人工候选、查询覆盖和审计为默认收起的次级入口；真实异常、来源变化、读取失败与恢复动作保留可见。折叠从共享 AccordionTrigger 去 hover 下划线，保留箭头和键盘 focus。
 - 候选标题区分“本页可核对项”和“来源记录”；分组后的本页项数不能替代全局来源观察 total，分页沿用来源记录口径，各观察仍可按需查看。
 - 平台业务详情按用户选中 relation 挂载单个 business SourceReader；内部查询、行、记录、版本与未知码留技术出处。已知编码只用现有字典，不从缩写猜业务含义，不自动读取所有观察。
+
+## Floating side business drawers (#559)
+
+- Opt in with `SheetContent floating-size="compact|standard|detail"` for left/right sheets. Omit it for navigation; top/bottom sheets ignore it.
+- Widths are 360/448/560px, capped to viewport minus gutters (8px below 640px; 16px otherwise). Do not add caller width or inset overrides.
+- The independent enterprise drawer uses the same `data-floating-drawer="detail"` and `data-drawer-side="right"` style contract while retaining its nonmodal Dialog behavior.
+- Keep headers/footers outside a `min-h-0 flex-1 overflow-y-auto` body; allow long names to wrap and technical content to scroll locally.
