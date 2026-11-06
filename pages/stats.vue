@@ -75,6 +75,7 @@ const districtMax = computed(() => Math.max(1, ...districts.value.map(b => b.n))
         <TablePagination v-if="result" :page="result.page" :page-size="result.pageSize" :total="result.total" unit="家·称号" :loading="loading || failed" @update:page="page = $event" @update:page-size="pageSize = $event; page = 1" />
       </CardContent>
     </Card>
+    <StatisticsAnnualSection />
     <Card>
       <CardHeader><CardTitle>区县分布（旧口径）</CardTitle><CardDescription>按记录属地统计，尚未替换为当前有效企业数。</CardDescription></CardHeader>
       <CardContent>
