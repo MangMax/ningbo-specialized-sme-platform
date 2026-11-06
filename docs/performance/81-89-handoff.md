@@ -1,5 +1,7 @@
 # #81–89 集成交付与验收边界
 
+> 历史交接说明：下文记录 `6016c05` 阶段的交付与当时未完成事项，“PR 保持草稿”“票据保持开放”不是当前 tracker 状态。后续按 [acceptance v2](82/acceptance-v2.md)及 [#81 收尾记录](https://github.com/MangMax/ningbo-specialized-sme-platform/issues/81#issuecomment-6320099421)完成了该轮交付；收尾不表示所有原始 v1 目标、整业务 5x、CI 或生产容量已证明。下文原始失败、缺失及未验收边界完整保留，不能当作当前 HEAD 的新运行结果。
+
 集成分支 `t3/implement-spec-81-89`，草稿 PR #92。应用执行代码与验证提交为 `6016c056ec71c141c5b590dbdd6a8834bf8d3e8c`；本收尾文档的后继提交不改变执行代码。未部署生产、合并 main 或关闭未完成票据。
 
 ## 已交付
