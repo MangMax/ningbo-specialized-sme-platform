@@ -47,7 +47,7 @@ pnpm check:doctor:structure        # 死代码、依赖图、重复代码和复�
 需要不使用缓存时追加 `--no-cache`。发现错误时命令返回非零，不代表工具启动失败。
 诊断是静态线索，需要结合项目的 SPA 配置、Nuxt 自动导入、测试目录和已有校验核实；
 不要直接删除被标记为未使用的模块，或批量执行 `--fix`。本次接入不新增 CI 阻断规则。
-首次体检记录见 [Vite Doctor 体检报告](docs/reports/vite-doctor-2026-10-22.md)。
+首次体检的历史记录见 [Vite Doctor 体检报告](docs/reports/vite-doctor-2026-10-22.md)，不代表当前版本验收。
 
 SQLite 数据库默认位于 `data/roster.db`，可用 `NUXT_DB_PATH` 覆盖；来源文件默认位于 `files/`，可用 `NUXT_FILES_DIR` 覆盖。新克隆仓库不含数据库、公布文件、平台导出表或上传件，首次使用时应从本机安全备份恢复，或通过应用文件管理页上传。真实 OCR、HTTP 写入和 MCP 写入凭证只放在本地 `.env` 或运行环境密钥中；不要提交凭证。
 
@@ -57,13 +57,11 @@ SQLite 数据库默认位于 `data/roster.db`，可用 `NUXT_DB_PATH` 覆盖；�
 
 公布文件及其名单附件是称号和认定/复核事件的依据；平台导出表只是当前状态的对照快照。企业总表应跨称号去重，同时保留每条称号历史、来源页码、平台关系与差异解释。导出表未匹配的公布名单条目仍须保留。
 
-当前应用已提供文件、页图、OCR 和部分解析结果的 API/MCP 能力。统一的企业、称号事件与年度平台快照写入 API 仍在路线图 RL-11 中；完成该接口前，不应把数据库直写或临时导入脚本当作正式流程。
+当前应用已提供文件、页图、OCR、解析结果及统一名录入库的 API/MCP 能力，入库载荷与调用约定见[名录生命周期契约](docs/roster-lifecycle-contract.md) §8（REST）和 §9（MCP）。`POST /api/roster/import/preflight` 与 MCP `preflight_roster_batch` 用于计算影响和报告冲突，不写业务数据，但可记录入库批次及预检结果，并非完全无副作用；确认预检结果后，通过 `POST /api/roster/import/commit` 或 MCP `save_roster_batch` 鉴权提交，以幂等键和单批事务写入企业、称号事件、出处及平台导出快照等数据。数据库直写或临时导入脚本不应替代这一正式流程。
 
 ## 交接入口
 
+- 当前契约、操作说明与历史证据：[文档导航](docs/README.md)。修改业务前先读对应契约；旧规格与验收回执用于追溯当时的设计和结果。
 - SVG 品牌资源与复现方法：[品牌资源说明](public/brand/README.md)
 - 代理清理与入库流程：[仓库自有技能](.agents/skills/roster-ingestion-pipeline/SKILL.md)
-- 名录生命周期、对比及用户功能路线图：[路线图与票据](.scratch/roster-lifecycle/SPEC.md)
-- 文件/OCR 工作台已交付范围与验收记录：[入库管线规格](.scratch/ingest-pipeline/SPEC.md)
 - 外部 OCR 凭据配置、持久卷与备份恢复：[docs/credential-settings.md](docs/credential-settings.md)
-- 业务词汇、数据模型与决策记录：[GLOSSARY.md](GLOSSARY.md)、[docs/data-model.md](docs/data-model.md)、[docs/adr/](docs/adr/)

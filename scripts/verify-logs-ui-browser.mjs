@@ -10,66 +10,181 @@
  *   retaining old rows, and clear/policy cancel writing nothing.
  *
  * It never touches the parent service or business data. Raw results are written to
- * LOGS_UI_BROWSER_OUT/browser-results.json (default: a fresh temp dir).
+ * LOGS_UI_BROWSER_OUT/<fresh-run>/browser-results.json (default: a fresh temp dir).
  *
  * Usage: node scripts/verify-logs-ui-browser.mjs
  */
 import assert from 'node:assert/strict'
-import { spawn } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { spawnOwnedChild, stopOwnedChild, waitForChromeDevTools } from './lib/isolated-local-services.mjs'
+import { execFileSync } from 'node:child_process'
+import { closeSync, openSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 
 const worktree = resolve('.')
-const outDir = process.env.LOGS_UI_BROWSER_OUT || mkdtempSync(join(tmpdir(), 'logs-ui-browser-'))
-mkdirSync(outDir, { recursive: true })
+const evidenceRoot = resolve(process.env.LOGS_UI_BROWSER_OUT || tmpdir())
+mkdirSync(evidenceRoot, { recursive: true })
+// Never read or overwrite a previous run's manifest, logs, or results.
+const outDir = mkdtempSync(join(evidenceRoot, 'run-'))
+const source = {
+  sha: execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(),
+  tree: execFileSync('git', ['rev-parse', 'HEAD^{tree}'], { encoding: 'utf8' }).trim()
+}
+const fixtureTimeoutMs = Number(process.env.LOGS_UI_BROWSER_FIXTURE_TIMEOUT_MS || 180000)
+assert.ok(Number.isSafeInteger(fixtureTimeoutMs) && fixtureTimeoutMs > 0, 'invalid fixture timeout')
+console.log(JSON.stringify({ outDir }))
 const manifestPath = join(outDir, 'fixture-manifest.json')
 const resultsPath = join(outDir, 'browser-results.json')
 const fixtureLogPath = join(outDir, 'fixture.log')
 const chromePath = process.env.CHROME_PATH || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
-const fixture = spawn(process.execPath, ['scripts/verify-logs-ui-usability.mjs', '--serve'], {
+// Keep startup, assertions and signal exits inside the same owned closeout.
+let chrome, profile, ws, chromeClosed, chromePort
+const chromeStderrPath = join(outDir, 'chrome-stderr.log')
+let cleanupPromise
+const lifecycle = { errors: [] }
+let fixture, fixtureClosed, fixtureError, manifest
+let fixtureLog = ''
+async function cleanup() {
+  if (cleanupPromise) return cleanupPromise
+  cleanupPromise = (async () => {
+    ws?.close()
+    try {
+      if (chrome) {
+        await stopOwnedChild(chrome)
+        await chromeClosed
+      }
+      if (profile) rmSync(profile, { recursive: true, force: true })
+    } catch (error) {
+      lifecycle.errors.push(String(error.stack || error))
+    }
+    // Give the producer time to stop its separately owned Nuxt group and
+    // write its closeout. A forced stop is a failure, never successful cleanup.
+    try {
+      if (fixture) {
+        if (fixture.exitCode === null && fixture.signalCode === null && fixture.pid) fixture.kill('SIGTERM')
+        let timer
+        try {
+          await Promise.race([
+            fixtureClosed,
+            new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('fixture closeout timeout')), 30_000) })
+          ])
+        } finally {
+          clearTimeout(timer)
+          await stopOwnedChild(fixture)
+          await fixtureClosed
+        }
+        assert.equal(fixture.exitCode, 0, 'fixture closeout failed')
+        if (manifest) {
+          const closeout = JSON.parse(readFileSync(join(manifest.root, 'closeout.json'), 'utf8'))
+          lifecycle.fixtureCloseout = closeout
+          assert.equal(closeout.businessUnchanged, true, 'fixture business bytes changed')
+          assert.equal(closeout.outputPrivacy, true, 'fixture output privacy failed')
+        }
+      }
+    } catch (error) {
+      lifecycle.errors.push(String(error.stack || error))
+    }
+    writeFileSync(fixtureLogPath, fixtureLog)
+    lifecycle.fixtureExit = fixture && { code: fixture.exitCode, signal: fixture.signalCode }
+    Object.assign(lifecycle, {
+      chromePort, chromePid: chrome?.pid,
+      chromeExit: chrome && { code: chrome.exitCode, signal: chrome.signalCode },
+      profile, profileRemoved: profile ? !existsSync(profile) : true
+    })
+    if (lifecycle.errors.length) process.exitCode = 1
+    writeFileSync(join(outDir, 'browser-closeout.json'), JSON.stringify(lifecycle, null, 2))
+  })()
+  return cleanupPromise
+}
+let signalExitStarted = false
+for (const signal of ['SIGTERM', 'SIGINT']) {
+  process.on(signal, () => {
+    if (signalExitStarted) return
+    signalExitStarted = true
+    lifecycle.errors.push(`Interrupted by ${signal}`)
+    process.exitCode = 1
+    void cleanup().then(() => process.exit(1), error => { console.error(error); process.exit(1) })
+  })
+}
+
+async function run() {
+fixture = spawnOwnedChild(process.execPath, ['scripts/verify-logs-ui-usability.mjs', '--serve'], {
   cwd: worktree,
   env: { ...process.env, LOGS_UI_MANIFEST_PATH: manifestPath },
   stdio: ['ignore', 'pipe', 'pipe']
 })
-let fixtureLog = ''
 fixture.stdout.setEncoding('utf8')
 fixture.stderr.setEncoding('utf8')
-fixture.stdout.on('data', (chunk) => (fixtureLog += chunk))
-fixture.stderr.on('data', (chunk) => (fixtureLog += chunk))
-function stopFixture() {
-  if (fixture.exitCode === null) fixture.kill('SIGTERM')
+const collectFixtureLog = (chunk) => {
+  fixtureLog += chunk
+  writeFileSync(fixtureLogPath, fixtureLog)
 }
-process.on('exit', stopFixture)
-process.on('SIGINT', () => {
-  stopFixture()
-  process.exit(1)
-})
+fixture.stdout.on('data', collectFixtureLog)
+fixture.stderr.on('data', collectFixtureLog)
+fixture.on('error', (error) => { fixtureError = error })
+const fixtureRunning = () => !fixtureError && fixture.pid && fixture.exitCode === null && fixture.signalCode === null
+fixtureClosed = new Promise(resolve => fixture.once('close', resolve))
 
-async function readManifest(timeoutMs = 180000) {
+// The producer's pid is its Nuxt child, not the producer itself. It has no
+// nonce: the private output path plus direct parent/command ownership binds it
+// to this invocation. Fail closed if the OS cannot establish that relationship.
+function validateManifest(manifest) {
+  assert.equal(manifest?.synthetic, true, 'manifest is not synthetic')
+  assert.equal(manifest.source?.sha, source.sha, 'manifest source SHA mismatch')
+  assert.equal(manifest.source?.tree, source.tree, 'manifest source tree mismatch')
+  assert.ok(Number.isSafeInteger(manifest.port) && manifest.port > 0 && manifest.port <= 65535, 'invalid manifest port')
+  assert.equal(manifest.base, `http://127.0.0.1:${manifest.port}`, 'manifest base/port mismatch')
+  assert.ok(typeof manifest.pagePath === 'string' && manifest.pagePath.startsWith('/logs?'), 'invalid manifest page path')
+  const page = new URL(manifest.pagePath, manifest.base)
+  assert.equal(page.origin, manifest.base, 'manifest page origin mismatch')
+  assert.ok(page.searchParams.get('from') && page.searchParams.get('to'), 'incomplete manifest time range')
+  assert.ok(Number.isSafeInteger(manifest.pid) && manifest.pid > 0, 'invalid manifest child PID')
+  const processRow = execFileSync('ps', ['-p', String(manifest.pid), '-o', 'ppid=,stat=,command='], {
+    encoding: 'utf8', timeout: 2000
+  }).trim()
+  const [, parent, state, command] = processRow.match(/^(\d+)\s+(\S+)\s+(.+)$/) || []
+  assert.equal(Number(parent), fixture.pid, 'manifest child is not owned by current fixture')
+  assert.ok(state && !state.includes('Z'), 'manifest child has exited')
+  assert.equal(command, `${process.execPath} ${join(worktree, 'node_modules/nuxt/bin/nuxt.mjs')} dev --host 127.0.0.1 --port ${manifest.port}`, 'manifest child command/port mismatch')
+  assert.ok(manifest.realEvent?.requestId, 'incomplete manifest real event')
+  assert.equal(manifest.realNormalEvent?.operation, 'http.request', 'incomplete manifest health event')
+  assert.equal(manifest.realNormalEvent.httpMethod, 'GET', 'invalid manifest health method')
+  assert.equal(manifest.realNormalEvent.httpRoute, '/api/health', 'invalid manifest health route')
+  assert.equal(manifest.realNormalEvent.statusCode, 200, 'manifest health not ready')
+  assert.equal(manifest.realNormalEvent.synthetic, false, 'manifest health is synthetic')
+  assert.ok(manifest.realNormalEvent.requestId, 'incomplete manifest health request')
+  // realNormalEvent is written BEFORE the remaining fixture assertions. Only
+  // this stdout marker confirms that the current producer completed them.
+  assert.ok(fixtureLog.split(/\r?\n/).includes(`Serving synthetic logs fixture at ${manifest.base}${manifest.pagePath}`), 'fixture has not completed readiness checks')
+}
+
+async function readManifest(timeoutMs = fixtureTimeoutMs) {
   const deadline = Date.now() + timeoutMs
+  let lastError = new Error('manifest not written')
   while (Date.now() < deadline) {
-    if (fixture.exitCode !== null) {
+    if (!fixtureRunning()) {
       writeFileSync(fixtureLogPath, fixtureLog)
-      throw new Error(`fixture exited ${fixture.exitCode}\n${fixtureLog.slice(-3000)}`)
+      throw new Error(`fixture exited before readiness (exit=${fixture.exitCode}, signal=${fixture.signalCode}, error=${fixtureError?.message ?? 'none'})\n${fixtureLog.slice(-3000)}`)
     }
     if (existsSync(manifestPath)) {
       try {
         const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
-        if (manifest.realNormalEvent) return manifest
-      } catch {
-        /* manifest may be mid-write */
+        validateManifest(manifest)
+        if (fixtureRunning()) return manifest
+      } catch (error) {
+        // A producer can be mid-write or not ready yet; retain the actual cause.
+        lastError = error
       }
     }
     await sleep(200)
   }
   writeFileSync(fixtureLogPath, fixtureLog)
-  throw new Error('fixture manifest timeout')
+  throw new Error(`fixture manifest timeout: ${lastError.message}\n${fixtureLog.slice(-3000)}`)
 }
 
-const manifest = await readManifest()
+manifest = await readManifest()
 const base = manifest.base
 const syntheticUrl = new URL(manifest.pagePath, base)
 const from = syntheticUrl.searchParams.get('from')
@@ -83,13 +198,16 @@ const filterUrl = (extra = {}) => {
 }
 
 // ---------- headless Chrome + CDP ----------
-const chromePort = 9300 + Math.floor(Math.random() * 400)
-const profile = mkdtempSync(join(tmpdir(), 'logs-ui-chrome-'))
-const chrome = spawn(
+profile = mkdtempSync(join(tmpdir(), 'logs-ui-chrome-'))
+// A file keeps stderr even when Chrome updaters inherit its descriptor;
+// inherited pipes would keep ChildProcess.close pending after the group exits.
+const chromeStderr = openSync(chromeStderrPath, 'a')
+try {
+chrome = spawnOwnedChild(
   chromePath,
   [
     '--headless=new',
-    `--remote-debugging-port=${chromePort}`,
+    '--remote-debugging-port=0',
     `--user-data-dir=${profile}`,
     '--no-first-run',
     '--no-default-browser-check',
@@ -102,39 +220,31 @@ const chrome = spawn(
     '--window-size=1280,800',
     'about:blank'
   ],
-  { stdio: ['ignore', 'pipe', 'pipe'] }
+  { stdio: ['ignore', 'ignore', chromeStderr] }
 )
-let chromeErr = ''
-chrome.stderr.setEncoding('utf8')
-chrome.stderr.on('data', (chunk) => (chromeErr += chunk))
-function stopChrome() {
-  if (chrome.exitCode === null) chrome.kill('SIGTERM')
+} finally {
+  closeSync(chromeStderr)
 }
-process.on('exit', stopChrome)
-
-async function devtools() {
-  for (let i = 0; i < 100; i++) {
-    try {
-      const response = await fetch(`http://127.0.0.1:${chromePort}/json/version`)
-      if (response.ok) return response.json()
-    } catch {}
-    await sleep(100)
-  }
-  throw new Error(`headless Chrome did not start\n${chromeErr.slice(-1000)}`)
-}
-await devtools()
+chromeClosed = new Promise(resolve => chrome.once('close', resolve))
+const version = await waitForChromeDevTools(chrome, profile)
+chromePort = Number(new URL(version.webSocketDebuggerUrl).port)
 const target = await (
   await fetch(`http://127.0.0.1:${chromePort}/json/new?${encodeURIComponent('about:blank')}`, {
     method: 'PUT'
   })
 ).json()
-const ws = new WebSocket(target.webSocketDebuggerUrl)
+ws = new WebSocket(target.webSocketDebuggerUrl)
 await new Promise((resolve, reject) => {
   ws.onopen = resolve
   ws.onerror = reject
+  ws.onclose = () => reject(new Error('Owned Chrome closed before CDP connected'))
 })
 let serial = 0
 const pending = new Map()
+ws.onclose = () => {
+  for (const entry of pending.values()) entry.reject(new Error('Owned Chrome CDP connection closed'))
+  pending.clear()
+}
 const network = []
 let gateMode = 'continue'
 let held = []
@@ -171,6 +281,7 @@ ws.onmessage = (event) => {
 }
 const send = (method, params = {}) =>
   new Promise((resolve, reject) => {
+    if (ws.readyState !== WebSocket.OPEN) return reject(new Error('Owned Chrome CDP connection is not open'))
     const id = ++serial
     pending.set(id, { resolve, reject })
     ws.send(JSON.stringify({ id, method, params }))
@@ -759,6 +870,10 @@ await check('failed filter navigation retains old rows and offers an explicit re
   await setViewport(1280, 800)
   await navigate(syntheticUrl.href, `document.querySelectorAll('[data-log-detail]').length > 0`)
   const oldRow = await evaluate(`document.querySelector('[data-testid="log-table-scroll"] .data-table tbody tr').textContent`)
+  const rowIdsExpr = `[...document.querySelectorAll('[data-testid="log-table-scroll"] .data-table tbody tr')].map((row) => row.querySelector('[data-log-detail]')?.getAttribute('data-log-detail'))`
+  const oldRowIds = await evaluate(rowIdsExpr)
+  assert.ok(oldRowIds.length > 0 && oldRowIds.every((id) => typeof id === 'string' && id.length > 0))
+  assert.equal(new Set(oldRowIds).size, oldRowIds.length, 'loaded row IDs must be unique')
   const before = await waitStable(measureExpr)
   gateMode = 'hold'
   await evaluate(`(() => {
@@ -770,7 +885,9 @@ await check('failed filter navigation retains old rows and offers an explicit re
   await clickButtonText('应用筛选')
   await waitFor(`[...document.querySelectorAll('[role="status"]')].some((el) => el.textContent.includes('正在读取当前筛选'))`)
   const retained = await evaluate(`document.querySelector('[data-testid="log-table-scroll"] .data-table tbody tr').textContent`)
-  assert.ok(retained.length > 0)
+  assert.ok(held.length > 0, 'the changed filter request must still be held')
+  const retainedRowIds = await evaluate(rowIdsExpr)
+  assert.deepEqual(retainedRowIds, oldRowIds, 'held filter must retain the same ordered row IDs')
   await failHeld()
   gateMode = 'continue'
   await waitFor(`!!document.querySelector('[data-testid="table-failure-state"]')`)
@@ -788,14 +905,31 @@ await check('failed filter navigation retains old rows and offers an explicit re
     })()
   }))()`)
   const failureShot = await shot('browser-desktop-retained-failure-1280x800.png')
+  const failedRowIds = await evaluate(rowIdsExpr)
   assert.ok(failed.failure.includes('task.finished'))
-  assert.ok(failed.firstRow.length > 0)
+  assert.match(failed.failure, /已保留第 1 页的 25 条旧结果（[^）]+）；当前筛选（[^）]*操作 task\.finished）未能读取/)
+  assert.ok(!failed.failure.split('；当前筛选')[0].includes('task.finished'), 'retained filter must not claim the requested operation')
+  assert.deepEqual(failedRowIds, oldRowIds, 'failed filter must retain the same ordered row IDs')
   assert.ok(Math.abs(failed.after.managementTop - before.managementTop) <= 4)
   await click('[data-testid=table-retry]')
   await waitFor(`!document.querySelector('[data-testid="table-failure-state"]')`)
   await waitFor(`document.querySelector('[data-testid="log-table-scroll"] .data-table tbody tr')?.textContent.includes('task.finished')`)
   const recovered = await evaluate(`document.querySelector('[data-testid="log-table-scroll"] .data-table tbody tr').textContent`)
-  return { oldRow, retained, failed, failureShot, recovered }
+  const recoveredRows = await evaluate(`(() => [...document.querySelectorAll('[data-testid="log-table-scroll"] .data-table tbody tr')].map((row) => {
+    const cells = [...row.querySelectorAll('td')]
+    return {
+      operation: cells[3].querySelector('[title="task.finished"]')?.getAttribute('title'),
+      target: cells[4].querySelector('[title]')?.getAttribute('title'),
+      outcome: cells[5].querySelector('[title]')?.getAttribute('title')
+    }
+  }))()`)
+  // Independent literals from the two synthetic task.finished records; never
+  // derive the expected identity from the response or the presentation helper.
+  assert.deepEqual(recoveredRows, [
+    { operation: 'task.finished', target: '任务 task-181 · 已处理 4/9', outcome: 'cancelled' },
+    { operation: 'task.finished', target: '任务 task-180 · 已处理 8/10 · 失败 2', outcome: 'failure' }
+  ])
+  return { oldRow, oldRowIds, retained, retainedRowIds, failed, failedRowIds, failureShot, recovered, recoveredRows }
 })
 
 // ---------- 8) clear/policy cancel writes nothing ----------
@@ -831,37 +965,104 @@ await check('clear and policy review cancel without any write request', async ()
   return { writesBefore, writesAfter, clearWrites: clearWrites.length, policyWrites: policyWrites.length, policyShot }
 })
 
-// ---------- 9) dual-axis collection settings ----------
-await check('dual-axis settings review and save only changed rules across the new groups', async () => {
+// ---------- 9) module index and draft-only Sheets ----------
+// Client log ingestion is unrelated to policy/clear writes and remains enabled.
+const managementWrites = () => network.filter((entry) =>
+  ['POST', 'PATCH', 'PUT', 'DELETE'].includes(entry.method) &&
+  ['/api/logs/policy', '/api/logs/clear'].includes(new URL(entry.url).pathname)
+)
+const moduleRow = (key) => `[data-testid="log-module-row-${key}"]`
+const moduleSheet = (key) => `[data-testid="log-module-sheet-${key}"]`
+async function openModule(key) {
+  await pointerClick(moduleRow(key))
+  await waitFor(`document.querySelectorAll('[data-slot="sheet-content"]').length === 1 && !!document.querySelector(${JSON.stringify(moduleSheet(key))})`)
+  await waitFor(`(() => {
+    const r = document.querySelector(${JSON.stringify(moduleSheet(key))}).getBoundingClientRect()
+    return r.left >= -1 && r.right <= innerWidth + 1
+  })()`)
+  await waitFor(`document.querySelector(${JSON.stringify(moduleSheet(key))}).getAnimations().every((animation) => animation.playState === 'finished')`)
+}
+async function closeModule(key, method = 'Done') {
+  if (method === 'Escape') {
+    await send('Input.dispatchKeyEvent', { type: 'rawKeyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 })
+    await send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 })
+  } else {
+    await pointerClick('[data-testid="log-module-sheet-done"]')
+  }
+  await waitFor(`!document.querySelector(${JSON.stringify(moduleSheet(key))})`)
+  await waitFor(`document.activeElement === document.querySelector(${JSON.stringify(moduleRow(key))})`)
+}
+async function measureModule(key) {
+  return waitStable(`(() => {
+    const sheet = document.querySelector(${JSON.stringify(moduleSheet(key))})
+    const body = sheet.querySelector('[data-testid="log-module-sheet-body"]')
+    const done = sheet.querySelector('[data-testid="log-module-sheet-done"]')
+    const rect = (el) => {
+      const r = el.getBoundingClientRect()
+      return { left: r.left, right: r.right, top: r.top, bottom: r.bottom, width: r.width, height: r.height }
+    }
+    const bounds = sheet.getBoundingClientRect()
+    return {
+      viewport: { width: innerWidth, height: innerHeight },
+      page: { scrollWidth: document.documentElement.scrollWidth, clientWidth: document.documentElement.clientWidth },
+      sheet: { ...rect(sheet), scrollWidth: sheet.scrollWidth, clientWidth: sheet.clientWidth },
+      body: { ...rect(body), scrollWidth: body.scrollWidth, clientWidth: body.clientWidth },
+      done: rect(done),
+      switches: sheet.querySelectorAll('[data-slot="switch"]').length,
+      overflow: [...sheet.querySelectorAll('*')].filter((el) => {
+        const r = el.getBoundingClientRect()
+        return r.width > 0 && (r.left < bounds.left - 1 || r.right > bounds.right + 1)
+      }).length
+    }
+  })()`)
+}
+function assertModuleFits(measured, width, height) {
+  assert.deepEqual(measured.viewport, { width, height })
+  assert.equal(measured.page.scrollWidth, measured.page.clientWidth)
+  assert.ok(measured.sheet.width > 300 && measured.sheet.width <= width)
+  assert.ok(measured.sheet.left >= -1 && measured.sheet.right <= width + 1)
+  assert.equal(measured.sheet.scrollWidth, measured.sheet.clientWidth)
+  assert.equal(measured.body.scrollWidth, measured.body.clientWidth)
+  assert.ok(measured.body.height > 0)
+  assert.ok(measured.done.top >= 0 && measured.done.bottom <= height + 1)
+  assert.ok(measured.done.height > 0)
+  assert.equal(measured.overflow, 0)
+}
+
+await check('module Sheets keep drafts local and confirm exactly the changed source rules', async () => {
   await setViewport(1280, 800)
   await navigate(syntheticUrl.href, `document.querySelectorAll('[data-log-detail]').length > 0`)
   await clickButtonText('日志配置')
   await waitFor(`!!document.querySelector('[data-testid="log-collection-sources"]')`)
   await waitFor(`!!document.querySelector('[data-testid="log-collection-integrations"]')`)
+  const policyWrites = () => network.filter((entry) => entry.method === 'PATCH' && new URL(entry.url).pathname === '/api/logs/policy')
+  const assertNoWrites = () => assert.equal(managementWrites().length, 0)
+  assertNoWrites()
   const layout = await evaluate(`(() => {
     const count = (selector) => document.querySelectorAll(selector).length
     const text = (selector) => document.querySelector(selector)?.textContent ?? ''
     return {
-      switches: count('[data-slot="switch"]'),
+      rows: count('[data-testid^="log-module-row-"]'),
+      inlineSwitches: count('[data-slot="switch"]'),
       checkboxes: count('input[type="checkbox"]'),
       nativeSelects: count('select'),
       details: count('details'),
       sources: (() => {
-        const group = (id) => count('[data-testid="' + id + '"] [data-slot="switch"]')
+        const group = (id) => count('[data-testid="' + id + '"] [data-testid^="log-module-row-"]')
         return group('log-business-node') + group('log-business-browser')
       })(),
       integrations: (() => {
-        const group = (id) => count('[data-testid="' + id + '"] [data-slot="switch"]')
+        const group = (id) => count('[data-testid="' + id + '"] [data-testid^="log-module-row-"]')
         return group('log-technical-node') + group('log-technical-browser') + group('log-business-shared')
       })(),
-      technicalSwitches: count('[data-testid="log-collection-integrations"] [data-slot="switch"]'),
-      businessSwitches: count('[data-testid="log-collection-sources"] [data-slot="switch"]'),
-      technicalNode: count('[data-testid="log-technical-node"] [data-slot="switch"]'),
-      technicalBrowser: count('[data-testid="log-technical-browser"] [data-slot="switch"]'),
-      businessShared: count('[data-testid="log-business-shared"] [data-slot="switch"]'),
-      businessNode: count('[data-testid="log-business-node"] [data-slot="switch"]'),
-      businessBrowser: count('[data-testid="log-business-browser"] [data-slot="switch"]'),
-      applicationSwitches: count('#log-integration-application-enabled'),
+      technicalRows: count('[data-testid="log-collection-integrations"] [data-testid^="log-module-row-"]'),
+      businessRows: count('[data-testid="log-collection-sources"] [data-testid^="log-module-row-"]'),
+      technicalNode: count('[data-testid="log-technical-node"] [data-testid^="log-module-row-"]'),
+      technicalBrowser: count('[data-testid="log-technical-browser"] [data-testid^="log-module-row-"]'),
+      businessShared: count('[data-testid="log-business-shared"] [data-testid^="log-module-row-"]'),
+      businessNode: count('[data-testid="log-business-node"] [data-testid^="log-module-row-"]'),
+      businessBrowser: count('[data-testid="log-business-browser"] [data-testid^="log-module-row-"]'),
+      applicationRows: count('[data-testid="log-module-row-integration-application"]'),
       headings: (() => {
         const settings = document.querySelector('[data-testid="log-collection-integrations"]')?.closest('[data-slot="tabs-content"]')
         return settings ? [...settings.querySelectorAll('h2')].map((el) => el.textContent.trim()) : []
@@ -874,30 +1075,53 @@ await check('dual-axis settings review and save only changed rules across the ne
     }
   })()`)
   // 真实目录：技术 10 + 业务来源 11 + 跨端共享 application 1 = 22；不再有未接入项。
-  assert.equal(layout.switches, 22)
+  assert.equal(layout.rows, 22)
+  assert.equal(layout.inlineSwitches, 0)
   assert.equal(layout.checkboxes, 0)
   assert.equal(layout.nativeSelects, 0)
   assert.equal(layout.details, 0)
   assert.equal(layout.sources, 11)
   assert.equal(layout.integrations, 11)
-  assert.equal(layout.technicalSwitches, 10)
-  assert.equal(layout.businessSwitches, 12)
+  assert.equal(layout.technicalRows, 10)
+  assert.equal(layout.businessRows, 12)
   assert.equal(layout.technicalNode, 4)
   assert.equal(layout.technicalBrowser, 6)
   assert.equal(layout.businessShared, 1)
   assert.equal(layout.businessNode, 10)
   assert.equal(layout.businessBrowser, 1)
-  assert.equal(layout.applicationSwitches, 1)
+  assert.equal(layout.applicationRows, 1)
   assert.deepEqual(layout.headings, ['技术集成', '业务埋点', '保留策略', '范围清理'])
-  assert.ok(layout.sharedText.includes('服务端和客户端共用'))
-  assert.ok(layout.businessText.includes('也包括技术集成采集的事件'))
+  assert.ok(layout.sharedText.includes('服务端与客户端共用这一条规则'))
+  assert.ok(layout.businessText.includes('来源维度独立生效，也可被技术集成条件收窄'))
   assert.ok(!layout.technicalText.includes('应用手动埋点'))
   assert.equal(layout.hasUnwired, false)
   assert.equal(layout.page.scrollWidth, layout.page.clientWidth)
 
-  // 改一条来源开关和一条最低级别，均通过共享 Reka 控件。
-  await click('#log-source-http-enabled')
+  // Opening/closing an unchanged drawer is not a save, including a no-change review attempt.
+  assert.equal(await evaluate(`document.querySelector('[data-testid="log-policy-review"]').disabled`), true)
+  await openModule('source-http')
+  const desktopSheet = await measureModule('source-http')
+  assertModuleFits(desktopSheet, 1280, 800)
+  const desktopSheetShot = await shot('browser-desktop-log-config-sheet-1280x800.png')
+  await closeModule('source-http')
+  await openModule('source-mcp')
+  await closeModule('source-mcp', 'Escape')
+  await click('[data-testid="log-policy-review"]')
+  assert.equal(await evaluate(`!!document.querySelector('[role="dialog"]')`), false)
+  assertNoWrites()
+
+  // Each drawer edits the same global draft; Done and Escape retain it without PATCH.
+  await openModule('source-http')
+  await pointerClick('#log-source-http-enabled')
   await waitFor(`document.querySelector('#log-source-http-enabled')?.dataset.state === 'unchecked'`)
+  assertNoWrites()
+  await closeModule('source-http')
+  assertNoWrites()
+  await waitFor(`document.querySelector('[data-testid="log-module-row-source-http"]').textContent.includes('未保存')`)
+  await openModule('source-http')
+  assert.equal(await evaluate(`document.querySelector('#log-source-http-enabled').dataset.state`), 'unchecked')
+  await closeModule('source-http', 'Escape')
+  await openModule('source-mcp')
   await pointerClick('[aria-label="MCP 调用的最低日志级别"]')
   await waitFor(`!![...document.querySelectorAll('[role="option"]')].find((el) => el.textContent.includes('警告'))`)
   await sleep(150)
@@ -910,6 +1134,12 @@ await check('dual-axis settings review and save only changed rules across the ne
   await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: levelPoint.x, y: levelPoint.y, button: 'left', clickCount: 1 })
   await waitFor(`[...document.querySelectorAll('[aria-label="MCP 调用的最低日志级别"]')].some((el) => el.textContent.includes('警告'))`)
 
+  await waitFor(`!document.querySelector('[role="listbox"]')`)
+  assertNoWrites()
+  await closeModule('source-mcp', 'Escape')
+  assertNoWrites()
+  await waitFor(`document.querySelector('[data-testid="log-module-row-source-mcp"]').textContent.includes('未保存')`)
+
   // 采集配置截图先取，避免把核对对话框叠在页面上；滚动发生在 settings tab 内部。
   await evaluate(`(() => {
     const panel = [...document.querySelectorAll('[data-slot="tabs-content"]')].find((el) => el.textContent?.includes('业务埋点'))
@@ -919,7 +1149,7 @@ await check('dual-axis settings review and save only changed rules across the ne
   await sleep(150)
   const settingsShot = await shot('browser-desktop-log-config-1280x800.png')
 
-  const writesBefore = network.filter((entry) => entry.method === 'PATCH').length
+  assertNoWrites()
   await clickButtonText('核对日志配置修改')
   await waitFor(`[...document.querySelectorAll('[role="dialog"]')].some((el) => el.textContent.includes('核对日志配置修改'))`)
   await sleep(300)
@@ -927,20 +1157,24 @@ await check('dual-axis settings review and save only changed rules across the ne
   assert.ok(reviewText.includes('来源采集 · HTTP 接口'))
   assert.ok(reviewText.includes('来源采集 · MCP 调用'))
   assert.ok(!reviewText.includes('后台任务'))
-  assert.equal(network.filter((entry) => entry.method === 'PATCH').length, writesBefore)
+  assertNoWrites()
   const reviewShot = await shot('browser-desktop-log-config-review-1280x800.png')
   await clickButtonText('取消')
   await waitFor(`!document.querySelector('[role="dialog"]')`)
-  assert.equal(network.filter((entry) => entry.method === 'PATCH').length, writesBefore)
+  assertNoWrites()
 
   // 重新核对并保存：payload 只含变化规则，不重置其他规则，也不回传 GET 的 catalog/revision。
   await clickButtonText('核对日志配置修改')
   await waitFor(`!!document.querySelector('[data-testid="log-policy-confirm"]')`)
+  assertNoWrites()
   await click('[data-testid="log-policy-confirm"]')
   await waitFor(`!document.querySelector('[data-testid="log-policy-confirm"]')`)
   await waitFor(`document.body.textContent.includes('日志配置已保存')`)
+  await openModule('source-http')
   await waitFor(`document.querySelector('#log-source-http-enabled')?.dataset.state === 'unchecked'`)
-  const patch = network.find((entry) => entry.method === 'PATCH' && new URL(entry.url).pathname === '/api/logs/policy')
+  await closeModule('source-http')
+  assert.equal(policyWrites().length, 1, 'confirmation sends exactly one policy PATCH')
+  const patch = policyWrites()[0]
   assert.ok(patch)
   assert.ok(patch.postData)
   const body = JSON.parse(patch.postData)
@@ -955,23 +1189,40 @@ await check('dual-axis settings review and save only changed rules across the ne
     }
   })
   assert.ok(!('integrations' in body.collection))
-  return { layout, reviewText, body, settingsShot, reviewShot }
+  return { layout, desktopSheet, desktopSheetShot, reviewText, body, policyPatchCount: policyWrites().length, settingsShot, reviewShot }
 })
 
-// ---------- 10) settings at 390 ----------
-await check('390 settings stay full width with no horizontal scroll', async () => {
+// ---------- 10) settings and explicitly open module Sheet at 390 ----------
+await check('390 module index and open Sheet fit without horizontal scroll or writes', async () => {
   await setViewport(390, 844)
   await navigate(`${base}/logs?tab=settings`, `!!document.querySelector('[data-testid="log-collection-sources"]')`)
+  const writesBefore = managementWrites().length
   const mobile = await evaluate(`(() => ({
     page: { scrollWidth: document.documentElement.scrollWidth, clientWidth: document.documentElement.clientWidth },
-    switchCount: document.querySelectorAll('[data-slot="switch"]').length,
-    settingsWidth: Math.round(document.querySelector('[data-testid="log-collection-sources"]')?.getBoundingClientRect().width ?? 0)
+    rows: document.querySelectorAll('[data-testid^="log-module-row-"]').length,
+    inlineSwitches: document.querySelectorAll('[data-slot="switch"]').length,
+    settingsWidth: Math.round(document.querySelector('[data-testid="log-collection-sources"]').getBoundingClientRect().width)
   }))()`)
-  const shotPath = await shot('browser-mobile-log-config-390x844.png')
   assert.equal(mobile.page.scrollWidth, mobile.page.clientWidth)
-  assert.equal(mobile.switchCount, 22)
+  assert.equal(mobile.rows, 22)
+  assert.equal(mobile.inlineSwitches, 0)
   assert.ok(mobile.settingsWidth > 300)
-  return { ...mobile, shotPath }
+  // The collector drawer includes field controls; measure the actual open surface.
+  await openModule('integration-nuxt-nitro')
+  const sheet = await measureModule('integration-nuxt-nitro')
+  assertModuleFits(sheet, 390, 844)
+  assert.ok(Math.abs(sheet.sheet.width - 390) <= 1)
+  assert.equal(sheet.switches, 5)
+  const shotPath = await shot('browser-mobile-log-config-sheet-390x844.png')
+  await closeModule('integration-nuxt-nitro')
+  await openModule('source-mcp')
+  await closeModule('source-mcp', 'Escape')
+  assert.equal(await evaluate(`document.querySelector('[data-testid="log-policy-review"]').disabled`), true)
+  await click('[data-testid="log-policy-review"]')
+  assert.equal(await evaluate(`!!document.querySelector('[role="dialog"]')`), false)
+  const writesAfter = managementWrites().length
+  assert.equal(writesAfter, writesBefore)
+  return { ...mobile, sheet, writesBefore, writesAfter, shotPath }
 })
 
 const failedChecks = checks.filter((entry) => entry.result === 'FAIL')
@@ -989,6 +1240,14 @@ writeFileSync(fixtureLogPath, fixtureLog)
 console.log(JSON.stringify({ outDir, resultsPath, passed: summary.passed, failed: summary.failed, checks: checks.map((entry) => ({ name: entry.name, result: entry.result, error: entry.error })) }, null, 2))
 
 ws.close()
-stopChrome()
-stopFixture()
 if (failedChecks.length) process.exitCode = 1
+}
+try {
+  await run()
+} catch (error) {
+  lifecycle.errors.push(String(error.stack || error))
+  console.error(error)
+  process.exitCode = 1
+} finally {
+  await cleanup()
+}

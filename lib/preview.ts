@@ -119,10 +119,9 @@ export function isQueriableUrl(src: string): boolean {
  * 所以本函数的职责是「把重试做成一次**新的**加载」,换地址是最直接的一种做法
  * (另一种是重建元素,见 `components/preview/ImagePreview.vue` 的 `:key`)。
  *
- * 换地址还有第二个**独立**的好处:文件回吐路由给来源文件发了
- * `cache-control: private, max-age=3600`(见 `server/api/files/[...path].get.ts`),
- * 同一个地址在一小时内会命中浏览器缓存;带上 `retry=N` 才能保证这次重试真的走到服务端
- * —— 上一轮 404 是这样,服务端**后来把文件补回来了**也是这样(否则会一直读缓存里的失败)。
+ * 当前文件回吐路由使用 `cache-control: private, no-store`
+ * (见 `server/api/files/[...path].get.ts`),让可变文件地址的每次读取重新经过内容身份校验。
+ * `retry=N` 的职责仍是触发一次新加载;服务端的 no-store 策略不会替调用方发起重试。
  *
  * `attempt <= 0`(还没重试过)时**原样返回**:首次加载的地址与请求一个字节都不变。
  * 不能加查询串的地址(`blob:` / `data:`)也原样返回 —— 那种情况由调用方重建元素兜底。
