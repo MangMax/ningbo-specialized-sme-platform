@@ -7,7 +7,7 @@ import { RDJB_TITLE_CODES, sourcePositionForSequence } from '../../lib/platform/
 import { normalizePlatformRelation } from '../../lib/platform/normalization'
 import { ensureBatchRow, findBatchByKey } from './roster-batch-ledger'
 import { versionedOfficialEvent } from './roster-event-version'
-import { correspondenceRefValidity } from './record-correspondence-ref-validity'
+import { correspondenceRefValidity, createCorrespondenceRefValidityReader } from './record-correspondence-ref-validity'
 import { currentProofCoversRows } from './comparison-scope-proof'
 import { correspondenceIdentityProblem } from './record-correspondence-identity'
 
@@ -516,8 +516,8 @@ function correspondenceRefColumns() {
   return { id: t.id, type: t.type, role: t.role, status: t.status, eventId: t.eventId, predecessorEventId: t.predecessorEventId, relationId: t.relationId, exportRowId: t.exportRowId, enterpriseId: t.enterpriseId, titleCode: t.titleCode, revision: t.revision }
 }
 type CorrespondenceRefRow = Pick<StoredCorrespondence, keyof ReturnType<typeof correspondenceRefColumns>>
-function refsWithCurrentValidity(db: Db, refs: CorrespondenceRefRow[]) {
-  const validity = new Map(idChunks(refs.filter(r => r.status === 'confirmed').map(r => r.id)).flatMap(ids => [...correspondenceRefValidity(db, ids)]))
+function refsWithCurrentValidity(db: Db, refs: CorrespondenceRefRow[], readValidity = (ids: number[]) => correspondenceRefValidity(db, ids)) {
+  const validity = new Map(idChunks(refs.filter(r => r.status === 'confirmed').map(r => r.id)).flatMap(ids => [...readValidity(ids)]))
   return refs.map(row => ({ ...row, requiresRevalidation: validity.get(row.id) ?? false }))
 }
 export function listRecordCorrespondenceRefs(db: Db, filter: CorrespondenceFilter, sources?: { eventIds: number[]; relationIds: number[]; exportRowIds: number[] }) {
@@ -534,7 +534,9 @@ export function createEnterpriseTitleCorrespondenceRefsReader(db: Db) {
   const prepared = db.select(correspondenceRefColumns()).from(t)
     .where(and(eq(t.enterpriseId, sql.placeholder('enterpriseId')), eq(t.titleCode, sql.placeholder('titleCode'))))
     .orderBy(asc(t.id)).prepare()
-  return (enterpriseId: number, titleCode: string) => refsWithCurrentValidity(db, prepared.all({ enterpriseId, titleCode }))
+  let validity: ReturnType<typeof createCorrespondenceRefValidityReader> | undefined
+  const readValidity = (ids: number[]) => (validity ??= createCorrespondenceRefValidityReader(db))(ids)
+  return (enterpriseId: number, titleCode: string) => refsWithCurrentValidity(db, prepared.all({ enterpriseId, titleCode }), readValidity)
 }
 export function getRecordCorrespondenceAudit(db: Db, correspondenceId: number): CorrespondenceAudit[] {
   return db.select().from(schema.recordCorrespondenceAudit).where(eq(schema.recordCorrespondenceAudit.correspondenceId, correspondenceId)).orderBy(asc(schema.recordCorrespondenceAudit.id)).all()

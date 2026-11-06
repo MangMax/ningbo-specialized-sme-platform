@@ -706,3 +706,37 @@ it.each<{ id: string; mutate: (rows: CurrentQualifiedRow[]) => void }>([
   expect(() => assertCurrentQualifiedRowsSnapshotEqual408(actual, expected)).toThrow()
   expect({ actual, expected }).toStrictEqual(before)
 })
+
+it('prepared_refs_reuse_compilation_without_caching_source_validity_511', () => {
+  const m = matrix408(fixture.sqlite), r = refLiterals408(fixture.sqlite)
+  const a = m.formal('statistics_compilation_budget', undefined, { uscc: '91330200000000408X' })
+  r.officialFile()
+  m.recognized(a.enterprise.id, a.events[0]!.id, { rddqrq: '2028-06-01' })
+  const prepare = vi.spyOn(fixture.sqlite, 'prepare')
+  try {
+    const read = createEnterpriseTitleCorrespondenceRefsReader(m.db)
+    for (let i = 0; i < 4; i++) expect(read(a.enterprise.id, 'innovative_sme').map(row => row.requiresRevalidation)).toEqual([false])
+    fixture.sqlite.prepare('update record_event set revision=revision+1 where id=?').run(a.events[0]!.id)
+    expect(read(a.enterprise.id, 'innovative_sme').map(row => row.requiresRevalidation)).toEqual([true])
+    // Guard the measured repeated compilation, not wall time on a CI machine.
+    expect(prepare.mock.calls.filter(([sql]) => sql.includes('ref_owner')).length).toBe(1)
+  } finally { prepare.mockRestore() }
+})
+
+it('effective_count_projection_preserves_status_and_basis_without_correspondence_reads_511', () => {
+  const m = matrix408(fixture.sqlite), r = refLiterals408(fixture.sqlite)
+  const a = m.formal('statistics_effective_projection', undefined, { uscc: '91330200000000408X' })
+  r.officialFile()
+  m.recognized(a.enterprise.id, a.events[0]!.id, { rddqrq: '2028-06-01' })
+  const reader = createCurrentQualificationAssessmentReader(fixture.sqlite)
+  const asOf = Date.parse(AS_OF_408)
+  for (const drift of [false, true]) {
+    if (drift) fixture.sqlite.prepare('update record_event set revision=revision+1 where id=?').run(a.events[0]!.id)
+    const full = reader.readTitle(a.enterprise.id, 'innovative_sme', asOf)
+    const prepare = vi.spyOn(fixture.sqlite, 'prepare')
+    try {
+      expect(createCurrentQualificationAssessmentReader(fixture.sqlite).readEffectiveTitle(a.enterprise.id, 'innovative_sme', asOf)).toEqual({ effectiveStatus: full.effectiveStatus, basis: full.row.basis })
+      expect(prepare.mock.calls.filter(([sql]) => sql.includes('record_correspondence'))).toEqual([])
+    } finally { prepare.mockRestore() }
+  }
+})
