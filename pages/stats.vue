@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, shallowRef, watch } from 'vue'
+import StatisticsMovementsSection from '@/components/statistics/StatisticsMovementsSection.vue'
 import type { PublishedStatistics } from '~~/lib/roster/published-statistics'
 import { TITLES, TITLE_ORDER } from '~~/lib/labels'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -75,6 +76,7 @@ const districtMax = computed(() => Math.max(1, ...districts.value.map(b => b.n))
         <TablePagination v-if="result" :page="result.page" :page-size="result.pageSize" :total="result.total" unit="家·称号" :loading="loading || failed" @update:page="page = $event" @update:page-size="pageSize = $event; page = 1" />
       </CardContent>
     </Card>
+    <StatisticsMovementsSection />
     <Card>
       <CardHeader><CardTitle>区县分布（旧口径）</CardTitle><CardDescription>按记录属地统计，尚未替换为当前有效企业数。</CardDescription></CardHeader>
       <CardContent>
