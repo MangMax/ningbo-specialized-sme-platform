@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, inject, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { ARCHIVE_CONFLICT_LABELS, type EventArchiveCandidate, type EventArchivePage } from '~~/lib/roster/event-archive-candidates'
 import { CORRESPONDENCE_ROLES, eventDecisionText, type CorrespondenceDetail, type EventSource } from '~~/lib/roster/correspondence-view'
 import { TITLES } from '~~/lib/labels'
+import { REVIEW_DRAFTS_KEY } from '~/composables/useReviewDrafts'
 import { refreshCorrespondenceViews } from '~/composables/useCorrespondenceReadback'
 import { DECISION_EFFECTS, platformDecisionSummary, replacementDecisionOptions } from './event-correspondence-presentation'
 import SourceReader from './SourceReader.vue'
@@ -50,6 +51,13 @@ const candidate = computed(() => action.value === 'correct' ? target.value : pro
 const supportRole = computed(() => action.value === 'correct' ? target.value?.edge.role : point.value?.role ?? props.edge.role)
 const conflicts = computed(() => candidate.value?.conflicts?.map(code => ARCHIVE_CONFLICT_LABELS[code] ?? code).join('；'))
 const title = computed(() => ({ confirm: '确认对应', reject: '不对应', unlink: '取消对应', correct: '改选记录', revalidate: '重新核验对应' })[action.value ?? 'confirm'])
+const draftStore = inject(REVIEW_DRAFTS_KEY, null)
+const unregisterDraft = draftStore?.register({
+  dirty: () => !success.value && (!!basis.value.trim() || !!selected.value || pending.value || attempted.value),
+  locked: () => pending.value || (attempted.value && !success.value),
+  discard: () => { basis.value = ''; selected.value = ''; plan.value = null; request.value = null; action.value = null; previousAction = null },
+})
+onBeforeUnmount(() => unregisterDraft?.())
 let generation = 0
 let previousAction: Action | null = null
 onBeforeUnmount(() => { generation++ })

@@ -21,6 +21,8 @@ export interface ReviewDraft {
 }
 
 export interface ReviewDraftStore {
+  register: (source: { dirty: () => boolean; locked: () => boolean; discard: () => void }) => () => void
+  hasLocked: ComputedRef<boolean>
   drafts: Record<string, ReviewDraft>
   draftFor: (impactId: number) => ReviewDraft
   hasDraft: (impactId: number) => boolean
@@ -67,6 +69,12 @@ export function reviewDraftIsDirty(draft: ReviewDraft): boolean {
  */
 export function useReviewDrafts(): ReviewDraftStore {
   const drafts = reactive<Record<string, ReviewDraft>>({})
+  const sources = reactive(new Set<{ dirty: () => boolean; locked: () => boolean; discard: () => void }>())
+  function register(source: { dirty: () => boolean; locked: () => boolean; discard: () => void }) {
+    sources.add(source)
+    return () => { sources.delete(source) }
+  }
+  const hasLocked = computed(() => [...sources].some(source => source.locked()))
   let alive = true
   const initialKey = (scope: ReviewScope) => `initial:${scope.enterpriseId}:${scope.titleCode}:${scope.direction}`
   function initialFor(scope: ReviewScope): InitialDecisionState {
@@ -99,14 +107,16 @@ export function useReviewDrafts(): ReviewDraftStore {
   }
 
   function discardAll() {
+    if (hasLocked.value) return
+    for (const source of sources) source.discard()
     // Discard editable fields, not an unresolved or receipted command. Reopening must recover its identity.
     for (const key of Object.keys(drafts)) if (!drafts[key]?.initialSubmission?.request) delete drafts[key]
   }
 
-  const hasDirty = computed(() => Object.values(drafts).some(reviewDraftIsDirty))
+  const hasDirty = computed(() => Object.values(drafts).some(reviewDraftIsDirty) || [...sources].some(source => source.dirty()))
 
   // The owner page is the lifetime boundary; no localStorage/sessionStorage or credential persistence.
-  onBeforeUnmount(() => { alive = false; for (const key of Object.keys(drafts)) delete drafts[key] })
+  onBeforeUnmount(() => { alive = false; sources.clear(); for (const key of Object.keys(drafts)) delete drafts[key] })
 
-  return { drafts, draftFor, hasDraft, hasDirty, discard, discardAll, initialFor, ownsInitial }
+  return { register, hasLocked, drafts, draftFor, hasDraft, hasDirty, discard, discardAll, initialFor, ownsInitial }
 }

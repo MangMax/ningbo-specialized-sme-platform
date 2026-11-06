@@ -2,7 +2,7 @@
 import { CURRENT_STATUS_LABELS } from '~~/lib/roster/current-status'
 import { useQuery } from '@pinia/colada'
 import { computed, nextTick, onMounted, provide, ref, shallowRef, watch } from 'vue'
-import { onBeforeRouteLeave, useRouter } from 'vue-router'
+import { onBeforeRouteLeave, onBeforeRouteUpdate, useRouter } from 'vue-router'
 import type { RosterEnterpriseDetail } from '~~/lib/roster/enterprise-roster'
 import type { ImpactRow, ReviewAssessment, ReviewScope } from '~~/lib/roster/evidence-review-ui'
 import {
@@ -272,7 +272,8 @@ const titleInfo = computed(() => {
 const focusedEventId = computed(() => typeof route.query.eventId === 'string' && /^\d+$/.test(route.query.eventId) ? Number(route.query.eventId) : null)
 const reviewEventId = computed(() => typeof route.query.reviewEventId === 'string' && /^[1-9]\d*$/.test(route.query.reviewEventId) ? Number(route.query.reviewEventId) : null)
 function selectReviewEvent(eventId: number | null) {
-  void router.replace({ path: route.path, query: { ...route.query, tab: 'review', reviewEventId: eventId == null ? undefined : String(eventId) } })
+  bypassLeaveGuard.value = true
+  void router.replace({ path: route.path, query: { ...route.query, eventId: undefined, tab: 'review', reviewEventId: eventId == null ? undefined : String(eventId) } }).finally(() => { bypassLeaveGuard.value = false })
 }
 
 /* ------------------------------------------------------------------ *
@@ -404,22 +405,35 @@ function requestTab(next: DetailTab) {
   applyTab(next)
 }
 
+function returnToRecord() {
+  if (reviewEventId.value == null) return
+  if (reviewDrafts.hasDirty.value) {
+    pendingTab.value = 'records'
+    return
+  }
+  applyTab('records')
+}
+
 function discardAndSwitchTab() {
+  if (reviewDrafts.hasLocked.value) return
   const next = pendingTab.value
   pendingTab.value = null
   reviewDrafts.discardAll()
   if (next) applyTab(next)
 }
 
-onBeforeRouteLeave((to) => {
+function guardLeave(to: { fullPath: string }) {
   if (bypassLeaveGuard.value || !reviewDrafts.hasDirty.value) return true
   // 已有 tab 确认框时不再叠第二个；先让用户处理当前确认。
   if (pendingTab.value != null) return false
   pendingLeave.value = to.fullPath
   return false
-})
+}
+onBeforeRouteLeave(guardLeave)
+onBeforeRouteUpdate(guardLeave)
 
 function discardAndLeave() {
+  if (reviewDrafts.hasLocked.value) return
   const target = pendingLeave.value
   pendingLeave.value = null
   if (!target) return
@@ -438,7 +452,11 @@ function applyTab(next: DetailTab) {
     query[key] = value
   }
   query.tab = next
-  void router.replace({ path: route.path, query })
+  if (next === 'records' && reviewEventId.value != null) query.eventId = String(reviewEventId.value)
+  // The controlled action already obtained consent. Retained initial receipts
+  // must not trigger a second route prompt while switching this page's tabs.
+  bypassLeaveGuard.value = true
+  void router.replace({ path: route.path, query }).finally(() => { bypassLeaveGuard.value = false })
 }
 
 /**
@@ -451,7 +469,7 @@ function highlightEvent(eventId: number) {
 }
 async function arriveAtEvent(eventId: number | null) {
   if (typeof document === 'undefined') return
-  if (eventId == null) return
+  if (eventId == null || focusedEventId.value !== eventId) return
   const record = detail.value?.records.find(record => record.events.some(event => event.id === eventId))
   if (!record) return
   const enterpriseId = id.value
@@ -466,6 +484,7 @@ async function arriveAtEvent(eventId: number | null) {
   if (id.value !== enterpriseId || focusedEventId.value !== eventId) return
   const target = document.getElementById(`record-event-${eventId}`)
   target?.scrollIntoView({ block: 'start' })
+  target?.focus({ preventScroll: true })
   if (target) highlightEvent(eventId)
 }
 watch([detail, focusedEventId], ([, eventId]) => arriveAtEvent(eventId), { immediate: true })
@@ -692,6 +711,7 @@ function openPreview(e: Evidence) {
                       @event-navigate="arriveAtEvent"
                       @page-open="rememberPagePreviewReturn"
                       @retry-detail="loadEvent(event.id, true)"
+                      @review-event="selectReviewEvent"
                     >
                       <template #annual-summary>
                         <p v-if="event.seq != null" class="text-muted-foreground mt-1 text-sm">{{ event.type === 'review' ? '原认定批次' : '批次' }}：第 {{ event.seq }} 批</p>
@@ -740,6 +760,7 @@ function openPreview(e: Evidence) {
         </TabsContent>
 
         <TabsContent value="review" class="flex min-w-0 flex-col gap-5">
+          <Button v-if="reviewEventId != null" variant="outline" class="self-start" @click="returnToRecord">返回认定记录</Button>
           <EventCorrespondenceReview
             v-if="tab === 'review'" :key="detail.id" :enterprise-id="detail.id" :events="ledgerEvents"
             :event-id="reviewEventId" :back="route.fullPath" @select="selectReviewEvent"
@@ -815,7 +836,8 @@ function openPreview(e: Evidence) {
         </DialogHeader>
         <DialogFooter>
           <Button variant="outline" @click="pendingTab = null">继续填写</Button>
-          <Button @click="discardAndSwitchTab">切换并丢弃</Button>
+          <p v-if="reviewDrafts.hasLocked.value" role="status">决定仍在提交或尚未确认结果，请继续核对并完成读回后再离开。</p>
+          <Button :disabled="reviewDrafts.hasLocked.value" @click="discardAndSwitchTab">切换并丢弃</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -830,7 +852,8 @@ function openPreview(e: Evidence) {
         </DialogHeader>
         <DialogFooter>
           <Button variant="outline" @click="pendingLeave = null">继续填写</Button>
-          <Button @click="discardAndLeave">离开并丢弃</Button>
+          <p v-if="reviewDrafts.hasLocked.value" role="status">决定仍在提交或尚未确认结果，请继续核对并完成读回后再离开。</p>
+          <Button :disabled="reviewDrafts.hasLocked.value" @click="discardAndLeave">离开并丢弃</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
