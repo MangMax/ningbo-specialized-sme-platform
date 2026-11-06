@@ -48,8 +48,11 @@ async function cleanup() {
   })()
   return cleanupPromise
 }
+let signalExitStarted = false
 for (const signal of ['SIGTERM', 'SIGINT']) {
-  process.once(signal, () => {
+  process.on(signal, () => {
+    if (signalExitStarted) return
+    signalExitStarted = true
     lifecycle.errors.push(`Interrupted by ${signal}`)
     process.exitCode = 1
     void cleanup().then(() => process.exit(1), error => { console.error(error); process.exit(1) })
