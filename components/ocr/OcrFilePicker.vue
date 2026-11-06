@@ -101,15 +101,15 @@ function fileMeta(file: StoredFileRow) {
 
 <template>
   <Sheet v-model:open="open">
-    <SheetContent :side="side" class="flex flex-col gap-0 p-0 sm:max-w-md">
-      <SheetHeader class="border-b px-4 py-4">
+    <SheetContent :side="side" floating-size="standard" class="flex min-h-0 flex-col gap-0 overflow-hidden p-0 max-sm:max-h-dvh">
+      <SheetHeader class="shrink-0 border-b px-4 py-4">
         <SheetTitle>选择 PDF</SheetTitle>
         <SheetDescription>
           只列已登记的 PDF；年份仅指文件公布年，不替代认定/复核年份。
         </SheetDescription>
       </SheetHeader>
 
-      <div class="flex flex-col gap-2 border-b px-4 py-3">
+      <div class="flex shrink-0 flex-col gap-2 border-b px-4 py-3">
         <div class="relative">
           <Search
             class="text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2"
@@ -204,7 +204,7 @@ function fileMeta(file: StoredFileRow) {
           >
             <Check class="mt-0.5 size-4 shrink-0" />
             <div class="min-w-0 flex-1">
-              <p class="truncate text-sm font-medium" :title="display(selected)">
+              <p class="text-sm font-medium break-words" :title="display(selected)">
                 {{ display(selected) }}
               </p>
               <p class="text-muted-foreground mt-0.5 truncate text-[11px]">
@@ -245,10 +245,9 @@ function fileMeta(file: StoredFileRow) {
             >
               <FileText class="text-muted-foreground mt-0.5 size-4 shrink-0" />
               <span class="min-w-0 flex-1">
-                <!-- Full name is available on hover/focus (title) and wraps on
-                     narrow screens; truncation must not hide the distinguishing
+                <!-- Full names wrap; truncation must not hide the distinguishing
                      tail of two similarly named files. -->
-                <span class="block text-sm break-words sm:truncate">{{
+                <span class="block text-sm break-words">{{
                   display(file)
                 }}</span>
                 <span class="text-muted-foreground mt-0.5 block truncate text-[11px]">
@@ -273,7 +272,7 @@ function fileMeta(file: StoredFileRow) {
         </p>
       </div>
 
-      <SheetFooter class="border-t px-4 py-3">
+      <SheetFooter class="shrink-0 border-t px-4 py-3">
         <p
           v-if="blockedReason"
           role="status"

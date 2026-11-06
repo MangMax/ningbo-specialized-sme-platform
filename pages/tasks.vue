@@ -252,12 +252,12 @@ watch(job, (next, previous) => { if (previous && !next) closingRow.value = previ
     </section>
 
     <Sheet :open="!!job" @update:open="value => { if (!value) void closeDetail() }">
-      <SheetContent class="w-full gap-0 sm:max-w-2xl" @close-auto-focus="restoreListFocus">
+      <SheetContent floating-size="standard" class="min-w-0 gap-0" @close-auto-focus="restoreListFocus">
         <SheetHeader class="shrink-0 border-b px-6 py-5 pr-12">
           <SheetTitle>任务详情</SheetTitle>
           <SheetDescription>查看进度、执行结果与可用操作。关闭详情不会停止后台任务。</SheetDescription>
         </SheetHeader>
-        <div class="min-h-0 flex-1 overflow-y-auto overscroll-contain px-6 pt-6 pb-[max(1.5rem,env(safe-area-inset-bottom))]" data-testid="task-detail-scroll">
+        <div class="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain px-6 pt-6 pb-[max(1.5rem,env(safe-area-inset-bottom))]" data-testid="task-detail-scroll">
         <p v-if="exportNotice" :role="exportNotice.tone" :aria-live="exportNotice.tone === 'status' ? 'polite' : 'assertive'" data-testid="export-notice" class="mb-4 text-sm break-words" :class="exportNotice.tone === 'alert' && 'text-destructive'">{{ exportNotice.text }}</p>
         <TaskDetail v-if="job" :id="job" :dated="dated" @close="closeDetail" @changed="refresh">
         <template #actions="{ task, current, refresh: refreshDetail }">
