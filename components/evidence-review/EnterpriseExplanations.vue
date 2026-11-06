@@ -25,6 +25,7 @@ const props = withDefaults(defineProps<{
   titleCode?: string
   direction?: string
   impactId?: number
+  openImpactRequest?: { id: number; titleCode: string; direction: string } | null
   locate?: boolean
   pending?: ImpactRow[]
   openScopeRequest?: { titleCode: string; direction: string } | null
@@ -149,6 +150,17 @@ watch(() => props.openScopeRequest, request => {
   selectedImpactId.value = pending?.id
   selectedTitle.value = assessment.titleCode
   selectedDirection.value = assessment.direction
+  sheetOpen.value = true
+}, { immediate: true })
+
+// Each explicit click is a new open request, including an unchanged deep-link coordinate.
+watch(() => props.openImpactRequest, request => {
+  if (!request) return
+  selectedImpact.value = props.pending.find(item => item.id === request.id) ?? null
+  selectedImpactId.value = request.id
+  selectedAssessment.value = props.assessments.find(item => item.titleCode === request.titleCode && item.direction === request.direction)
+  selectedTitle.value = request.titleCode
+  selectedDirection.value = request.direction
   sheetOpen.value = true
 }, { immediate: true })
 

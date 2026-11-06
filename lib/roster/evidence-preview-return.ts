@@ -15,6 +15,7 @@ interface EvidencePreviewReturnState {
   scrollTop: number | null
   scrollLeft: number | null
   anchor?: EvidencePreviewReturnAnchor
+  focusKey?: string
 }
 
 function validState(value: unknown): value is EvidencePreviewReturnState {
@@ -160,7 +161,8 @@ export function rememberEvidencePreviewReturn(back: unknown, source?: EventTarge
   const viewportTop = eventElement?.getBoundingClientRect().top
   const anchor = eventId && viewportTop !== undefined && Number.isFinite(viewportTop) ? { eventId, viewportTop } : undefined
   try {
-    const state: EvidencePreviewReturnState = { back, scrollY, scrollTop, scrollLeft, ...(anchor ? { anchor } : {}) }
+    const focusKey = sourceElement instanceof HTMLElement ? sourceElement.dataset.evidenceReturnFocus : undefined
+    const state: EvidencePreviewReturnState = { ...(focusKey ? { focusKey } : {}), back, scrollY, scrollTop, scrollLeft, ...(anchor ? { anchor } : {}) }
     const saved = readSavedReturns().filter((entry) => entry.back !== back)
     saved.push(state)
     writeSavedReturns(saved)
@@ -183,6 +185,7 @@ function takeEvidencePreviewScroll(currentPath: string): EvidencePreviewReturnSt
   return state
     ? {
         back: state.back,
+        ...(typeof state.focusKey === 'string' ? { focusKey: state.focusKey } : {}),
         scrollY: state.scrollY,
         scrollTop: state.scrollTop ?? null,
         scrollLeft: state.scrollLeft ?? null,
@@ -199,11 +202,14 @@ function takeEvidencePreviewScroll(currentPath: string): EvidencePreviewReturnSt
 export function useEvidencePreviewScrollRestore(
   ready: Readonly<Ref<boolean>>,
   resolveAnchor?: (anchor: EvidencePreviewReturnAnchor) => number | undefined,
+  destinationPath?: string,
 ): void {
   let active = true
-  onScopeDispose(() => { active = false })
+  let observer: MutationObserver | undefined
+  onScopeDispose(() => { active = false; observer?.disconnect() })
   onMounted(() => {
-    const path = `${window.location.pathname}${window.location.search}`
+    // Nuxt can mount the destination while the browser URL still names the preview.
+    const path = destinationPath ?? `${window.location.pathname}${window.location.search}`
     const state = takeEvidencePreviewScroll(path)
     if (state === null) return
 
@@ -230,6 +236,19 @@ export function useEvidencePreviewScrollRestore(
         window.scrollTo({ top, behavior: 'instant' })
         restored = true
         stop()
+        // HEAD availability can mount the source link after the surrounding event is ready.
+        const focusSource = () => {
+          if (!ownsRestore()) { observer?.disconnect(); return }
+          const link = [...document.querySelectorAll<HTMLElement>('[data-evidence-return-focus]')].find(element =>
+            element.dataset.evidenceReturnFocus === state.focusKey &&
+            (!state.anchor || element.closest<HTMLElement>('[data-event-id]')?.dataset.eventId === state.anchor.eventId))
+          if (link) { link.focus({ preventScroll: true }); observer?.disconnect() }
+          return !!link
+        }
+        if (state.focusKey && !focusSource()) {
+          observer = new MutationObserver(focusSource)
+          observer.observe(document.body, { childList: true, subtree: true })
+        }
       })
     }
 

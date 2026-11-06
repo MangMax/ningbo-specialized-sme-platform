@@ -90,3 +90,17 @@ it('locates the focused explanation only after the surrounding detail is ready',
     expect(view.get('[data-testid="assessment-scope"]').attributes('id')).toBe('explanation-specialized_sme-missing_in_miit')
   } finally { view.unmount(); HTMLElement.prototype.scrollIntoView = previous }
 })
+
+it('reopens the exact source change on repeated explicit requests even when the deep link is unchanged', async () => {
+  const fetcher = vi.fn(async () => ({ rows: [], total: 0 }))
+  vi.stubGlobal('$fetch', fetcher)
+  const request = { id: 4, titleCode: 'specialized_sme', direction: 'missing_in_miit' }
+  const view = mount(EnterpriseExplanations, { attachTo: document.body, props: { enterpriseId: 7, assessments: [], openImpactRequest: request } as any, global: { ...global(), stubs: { ...global().stubs, EvidenceReviewDetail: { props: ['impactId'], template: '<p>恢复来源变化 #{{ impactId }}</p>' } } } })
+  await flushPromises()
+  expect(document.body.textContent).toContain('恢复来源变化 #4')
+  ;(document.querySelector('[role="dialog"] button[aria-label="Close"]') ?? [...document.querySelectorAll('[role="dialog"] button')].find(b => b.textContent?.trim() === 'Close'))?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+  await flushPromises()
+  await view.setProps({ openImpactRequest: { ...request } } as any); await flushPromises()
+  expect(document.querySelector('[role="dialog"]')?.textContent).toContain('恢复来源变化 #4')
+  view.unmount()
+})

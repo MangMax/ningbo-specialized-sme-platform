@@ -12,7 +12,17 @@ import { computed, onBeforeUnmount, reactive, type ComputedRef, type InjectionKe
  */
 export type ReviewDraftDecision = ReviewDecisionDraft
 
+export interface EvidenceReviewSubmission {
+  retry: { signature: string; body: Record<string, unknown> } | null
+  pending: boolean
+  unknown: boolean
+  committed: boolean
+  failure: string
+  conflict: boolean
+}
+
 export interface ReviewDraft {
+  reviewSubmission?: EvidenceReviewSubmission
   /** Initial registration only: host-memory business command/receipt, never credentials. */
   initialSubmission?: InitialDecisionState
   basis: string
@@ -56,6 +66,8 @@ export function emptyReviewDraft(): ReviewDraft {
 }
 
 export function reviewDraftIsDirty(draft: ReviewDraft): boolean {
+  if (draft.reviewSubmission?.committed) return false
+  if (draft.reviewSubmission?.unknown || draft.reviewSubmission?.pending) return true
   if (draft.initialSubmission) return initialDecisionNeedsGuard(draft.initialSubmission)
   if (draft.basis.trim()) return true
   if (draft.mode !== 'maintain') return true
@@ -74,7 +86,7 @@ export function useReviewDrafts(): ReviewDraftStore {
     sources.add(source)
     return () => { sources.delete(source) }
   }
-  const hasLocked = computed(() => [...sources].some(source => source.locked()))
+  const hasLocked = computed(() => [...sources].some(source => source.locked()) || Object.values(drafts).some(draft => draft.reviewSubmission?.pending || draft.reviewSubmission?.unknown))
   let alive = true
   const initialKey = (scope: ReviewScope) => `initial:${scope.enterpriseId}:${scope.titleCode}:${scope.direction}`
   function initialFor(scope: ReviewScope): InitialDecisionState {
@@ -103,14 +115,15 @@ export function useReviewDrafts(): ReviewDraftStore {
 
   function discard(impactId: number | string) {
     const key = String(impactId)
-    if (!drafts[key]?.initialSubmission?.request) delete drafts[key]
+    const review = drafts[key]?.reviewSubmission
+    if (!drafts[key]?.initialSubmission?.request && !review?.pending && !review?.unknown && !review?.committed) delete drafts[key]
   }
 
   function discardAll() {
     if (hasLocked.value) return
     for (const source of sources) source.discard()
     // Discard editable fields, not an unresolved or receipted command. Reopening must recover its identity.
-    for (const key of Object.keys(drafts)) if (!drafts[key]?.initialSubmission?.request) delete drafts[key]
+    for (const key of Object.keys(drafts)) discard(key)
   }
 
   const hasDirty = computed(() => Object.values(drafts).some(reviewDraftIsDirty) || [...sources].some(source => source.dirty()))

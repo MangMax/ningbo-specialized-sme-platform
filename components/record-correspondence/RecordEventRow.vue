@@ -84,6 +84,7 @@ const interfaceSummary = computed(() => {
 
 <template>
   <section
+    :data-event-id="event.id"
     :id="`${review ? 'review' : 'record'}-event-${event.id}`"
     tabindex="-1"
     class="scroll-mt-20"

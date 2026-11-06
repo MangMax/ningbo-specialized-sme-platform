@@ -40,11 +40,11 @@ afterEach(() => {
   view?.unmount(); document.body.innerHTML = ''; vi.unstubAllGlobals()
   if (animate) Object.defineProperty(Element.prototype, 'animate', animate)
 })
-async function openDetail() {
+async function openDetail(path = '/enterprises/91') {
   const router = createRouter({ history: createMemoryHistory(), routes: [
     { path: '/enterprises/:id', component: EnterprisePage }, { path: '/preview', component: { template: '<p>原文件预览</p>' } },
   ] })
-  await router.push('/enterprises/91')
+  await router.push(path)
   view = mount(defineComponent({ render: () => h(RouterView) }), { attachTo: document.body, global: {
     plugins: [router], components: { TitleBadge, EventChip, SourceChip },
     stubs: { NuxtLink: RouterLink, PageHeader: true, FilePreviewDialog: true },
@@ -93,7 +93,7 @@ it('exposes each official source before platform loading and navigates to its ex
   await page.trigger('click', { button: 0 })
   await flushPromises()
   expect(router.currentRoute.value.path).toBe('/preview')
-  expect(router.currentRoute.value.query).toEqual({ file: 'jxj/2021/认定公布文件.pdf', page: '8', back: '/enterprises/91' })
+  expect(router.currentRoute.value.query).toEqual({ file: 'jxj/2021/认定公布文件.pdf', page: '8', back: '/enterprises/91?tab=records&eventId=10' })
   router.back()
   await flushPromises()
   expect(router.currentRoute.value.path).toBe('/enterprises/91')
@@ -127,7 +127,7 @@ it('keeps review source facts visible on platform failure and offers links only 
   expect(sources[2]!.findAll('a,button')).toHaveLength(0)
   expect(sources[3]!.text()).toContain('暂无法确认文件是否可用')
   expect(sources[3]!.text()).toContain('已记录第 6 页')
-  expect(sources[3]!.findAll('a,button')).toHaveLength(0)
+  expect(sources[3]!.findAll('a')).toHaveLength(0)
   expect(sources[4]!.get('a').text()).toBe('下载原文件')
   expect(sources[4]!.get('a').attributes('href')).toBe('/api/files/jxj/archive.doc')
 })
@@ -144,4 +144,15 @@ it('withholds navigation while file availability is being checked and enables it
   await flushPromises()
   expect(source.get('a').text()).toBe('第 3 页')
   expect(source.get('a').attributes('href')).toContain('page=3')
+})
+
+it('binds a source preview return to the clicked event despite an older event coordinate', async () => {
+  state.detail.evidence = [{ id: 101, eventId: 10, sourceFile: 'jxj/source.pdf', attachment: '附件一', listNo: 6, page: 2 }]
+  await openDetail('/enterprises/91?tab=records&reviewEventId=11&eventId=11')
+  const link = view!.get('#record-event-10').findAll('a').find(a => a.text() === '第 2 页')!
+  const preview = new URL(link.attributes('href')!, location.origin)
+  const back = new URL(preview.searchParams.get('back')!, location.origin)
+  expect(back.searchParams.get('eventId')).toBe('10')
+  await link.trigger('click', { button: 0 })
+  expect(sessionStorage.getItem('roster:evidence-preview-return')).toContain('"eventId":"10"')
 })

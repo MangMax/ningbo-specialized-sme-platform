@@ -173,3 +173,59 @@ it('compares official and platform fields with explicit missing and difference t
   expect(wrapper.text().match(/存在多条候选，需逐条核对/g)).toHaveLength(1)
   expect(wrapper.text()).toContain('未确认候选')
 })
+
+it.each(['下一页', '改变页大小', '重新查找平台候选'].flatMap(navigation => ['draft', 'accepted_response_lost'].map(state => ({ navigation, state }))))('protects $state before $navigation replaces rows', async ({ navigation, state }) => {
+  const { ref } = await import('vue')
+  vi.stubGlobal('useState', () => ref(true))
+  const writes: any[] = []
+  const fetcher = vi.fn(async (url: string, options?: any) => {
+    if (url.endsWith('/discover')) return { ...result(), event: { ...result().event, eventType: 'award', year: 2022, record: { titleCode: 'specialized_sme' } } }
+    if (url.endsWith('browser-preflight')) return { planHash: 'a'.repeat(64), impact: { created: 1, unlinked: 0, audit: 1 } }
+    if (url.endsWith('browser-commit')) {
+      writes.push(JSON.parse(JSON.stringify(options.body)))
+      if (writes.length === 1) throw new Error('accepted but response lost')
+      expect(writes[1]).toEqual(writes[0])
+      return { correspondenceIds: [91] }
+    }
+    if (url.endsWith('/audit')) return { rows: [{ idempotencyKey: writes[0].request.idempotencyKey }], total: 1, page: 1, pageSize: 50 }
+    return { id: 91, status: 'confirmed' }
+  })
+  vi.stubGlobal('$fetch', fetcher)
+  wrapper = mount(EventArchiveCandidates, { props: { eventId: 7, back: '/enterprises/1' }, attachTo: document.body, global: { stubs: { SourceReader: true, OfficialEvidence: true, TablePagination: { ...Pagination, template: '<div><button @click="$emit(\'update:page\', 2)">下一页</button><button @click="$emit(\'update:pageSize\', 25)">改变页大小</button></div>' } } } })
+  await wrapper.get('[data-testid="candidate-disclosure"] button').trigger('click')
+  await wrapper.get('[data-testid="discover-event-archives"]').trigger('click'); await flushPromises()
+  const click = async (label: string) => { [...document.querySelectorAll('button')].find(b => b.textContent?.trim() === label)!.click(); await flushPromises() }
+  await click('确认对应')
+  const area = document.querySelector('textarea')!; area.value = '保留第一页依据'; area.dispatchEvent(new Event('input', { bubbles: true })); await flushPromises()
+  if (state === 'accepted_response_lost') await click('提交决定')
+  await click('保留草稿并关闭'); await click(navigation)
+  expect(fetcher.mock.calls.filter(([url]) => url.endsWith('/discover'))).toHaveLength(1)
+  expect(wrapper.text()).toContain('请先处理本页对应草稿或待确认的提交')
+  await click('确认对应')
+  expect(document.querySelector('textarea')!.value).toBe('保留第一页依据')
+  if (state === 'accepted_response_lost') {
+    expect(document.querySelector('textarea')!.disabled).toBe(true)
+    await click('重试提交')
+    expect(writes).toHaveLength(2)
+    expect(fetcher.mock.calls.filter(([url]) => url.endsWith('browser-preflight'))).toHaveLength(1)
+    expect(document.body.textContent).toContain('已提交并读回对应与审计')
+  }
+})
+
+it('offers revalidation on first candidate display using the correspondence detail contract', async () => {
+  const { ref } = await import('vue')
+  vi.stubGlobal('useState', () => ref(true))
+  const page = result()
+  const row = { ...page.rows[0], existingCorrespondenceId: 91, existingStatus: 'confirmed', revision: 2 }
+  const fetcher = vi.fn(async (url: string) => {
+    if (url.endsWith('/discover')) return { ...page, rows: [row] }
+    if (url.endsWith('/91')) return { id: 91, status: 'confirmed', revision: 2, requiresRevalidation: true }
+    throw new Error(url)
+  })
+  vi.stubGlobal('$fetch', fetcher)
+  wrapper = mount(EventArchiveCandidates, { props: { eventId: 7, back: '/enterprises/1' }, global: { stubs: { SourceReader: true } } })
+  await wrapper.get('[data-testid="candidate-disclosure"] button').trigger('click')
+  await wrapper.get('[data-testid="discover-event-archives"]').trigger('click'); await flushPromises()
+  expect(wrapper.findAll('button').some(b => b.text() === '重新核验对应')).toBe(true)
+  expect(fetcher.mock.calls.filter(([url]) => url.endsWith('/91'))).toHaveLength(1)
+})

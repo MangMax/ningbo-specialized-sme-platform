@@ -18,7 +18,8 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 
 interface Edge { type: string; eventId: number; relationId: number; role: string }
 interface Existing { id: number; revision: number; status: string; requiresRevalidation?: boolean; type?: string; eventId?: number | null; relationId?: number | null; role?: string }
-const props = defineProps<{ edge: Edge; existing?: Existing | null; event?: EventSource; candidate?: EventArchiveCandidate; back?: string }>()
+const props = defineProps<{ edge: Edge; existing?: Existing | null; event?: EventSource; candidate?: EventArchiveCandidate; back?: string; checkRevalidation?: boolean }>()
+const emit = defineEmits<{ protected: [value: boolean] }>()
 const enabled = useState<boolean | null>('correspondence-browser-capability', () => null)
 onMounted(async () => {
   if (enabled.value !== null) return
@@ -30,11 +31,27 @@ const action = ref<Action | null>(null)
 const basis = ref('')
 const point = ref<Existing | null>(null)
 const pointLoaded = ref(false)
+const revalidationRequired = ref(false)
+const revalidationFailed = ref(false)
+const revalidationAttempt = ref(0)
+// Discovery exposes only stored status/revision. Validity belongs to the existing detail GET.
+onMounted(() => watch([() => props.existing?.id, () => props.existing?.revision, revalidationAttempt], async ([id], _old, onCleanup) => {
+  let current = true
+  onCleanup(() => { current = false })
+  revalidationRequired.value = false; revalidationFailed.value = false
+  if (!props.checkRevalidation || !id || props.existing?.status !== 'confirmed') return
+  try {
+    const detail = await $fetch<CorrespondenceDetail>(`/api/roster/correspondences/${id}`)
+    if (current) revalidationRequired.value = detail.status === 'confirmed' && detail.requiresRevalidation === true
+  } catch { if (current) revalidationFailed.value = true }
+}, { immediate: true }))
 const choicesLoaded = ref(false)
 const pending = ref(false)
 const attempted = ref(false)
 const error = ref('')
 const conflict = ref(false)
+const blockedCandidateRevision = ref<number | null>(null)
+const candidateSourceBlocked = computed(() => point.value?.status === 'candidate' && point.value.revision === blockedCandidateRevision.value)
 const receipt = ref<{ correspondenceIds: number[] } | null>(null)
 const success = ref('')
 const request = ref<{ idempotencyKey: string; basis: string; operations: Record<string, unknown>[] } | null>(null)
@@ -52,6 +69,8 @@ const candidate = computed(() => action.value === 'correct' ? target.value : pro
 const supportRole = computed(() => action.value === 'correct' ? target.value?.edge.role : point.value?.role ?? props.edge.role)
 const title = computed(() => ({ confirm: '确认对应', reject: '不对应', unlink: '取消对应', correct: '改选记录', revalidate: '重新核验对应' })[action.value ?? 'confirm'])
 const draftStore = inject(REVIEW_DRAFTS_KEY, null)
+const protectedDraft = computed(() => !success.value && (!!basis.value.trim() || !!selected.value || pending.value || attempted.value))
+watch(protectedDraft, value => emit('protected', value), { immediate: true, flush: 'sync' })
 const unregisterDraft = draftStore?.register({
   dirty: () => !success.value && (!!basis.value.trim() || !!selected.value || pending.value || attempted.value),
   locked: () => pending.value || (attempted.value && !success.value),
@@ -64,7 +83,7 @@ onBeforeUnmount(() => { generation++ })
 // Keep unresolved requests with their business object for this mounted session.
 // Switching objects never reuses another object's key, receipt or loading state.
 function captureContext() {
-  return { previousAction, pointLoaded: pointLoaded.value, choicesLoaded: choicesLoaded.value, basis: basis.value, point: point.value, attempted: attempted.value, error: error.value, conflict: conflict.value, receipt: receipt.value, success: success.value, request: request.value, plan: plan.value, replacements: replacements.value, replacementFailed: replacementFailed.value, replacementPage: replacementPage.value, selected: selected.value }
+  return { blockedCandidateRevision: blockedCandidateRevision.value, previousAction, pointLoaded: pointLoaded.value, choicesLoaded: choicesLoaded.value, basis: basis.value, point: point.value, attempted: attempted.value, error: error.value, conflict: conflict.value, receipt: receipt.value, success: success.value, request: request.value, plan: plan.value, replacements: replacements.value, replacementFailed: replacementFailed.value, replacementPage: replacementPage.value, selected: selected.value }
 }
 let restoringContext = false
 const contexts = new Map<string, ReturnType<typeof captureContext>>()
@@ -73,6 +92,7 @@ watch(() => `${props.edge.type}:${props.edge.eventId}:${props.edge.relationId}`,
   generation++; action.value = null; pending.value = false
   const saved = contexts.get(key)
   restoringContext = true
+  blockedCandidateRevision.value = saved?.blockedCandidateRevision ?? null
   previousAction = saved?.previousAction ?? null
   pointLoaded.value = saved?.pointLoaded ?? false; choicesLoaded.value = saved?.choicesLoaded ?? false
   basis.value = saved?.basis ?? ''; point.value = saved?.point ?? null; attempted.value = saved?.attempted ?? false
@@ -128,7 +148,7 @@ const statePermitsAction = computed(() => {
   if (!point.value) return !props.existing && ['confirm', 'reject'].includes(action.value ?? '')
   return ['confirm', 'reject'].includes(action.value ?? '') ? point.value.status === 'candidate' : point.value.status === 'confirmed'
 })
-const canPreflight = computed(() => statePermitsAction.value && !!basis.value.trim() && !pending.value && !attempted.value && !receipt.value && !conflict.value && (action.value !== 'correct' || !!target.value))
+const canPreflight = computed(() => !candidateSourceBlocked.value && statePermitsAction.value && !!basis.value.trim() && !pending.value && !attempted.value && !receipt.value && !conflict.value && (action.value !== 'correct' || !!target.value))
 async function preflight() {
   if (!canPreflight.value) return
   const token = generation
@@ -160,6 +180,12 @@ async function preflight() {
 function showError(cause: unknown) {
   const failure = cause as { statusCode?: number; status?: number; data?: { error?: { code?: string; message?: string } } }
   const code = failure.data?.error?.code
+  if (point.value?.status === 'candidate' && code === 'plan_mismatch' && failure.data?.error?.message === 'Source row changed since correspondence decision') {
+    blockedCandidateRevision.value = point.value.revision
+    conflict.value = true
+    error.value = ''
+    return
+  }
   conflict.value = failure.statusCode === 409 || failure.status === 409 || ['ambiguous_candidate', 'state_changed'].includes(code ?? (cause instanceof Error ? cause.message : ''))
   error.value = conflict.value ? '对应或来源已变化，本次没有覆盖新决定。草稿保留；刷新后重新核对并提交。' : `提交未完成，草稿和预检保留，可重试。${code ? `（${code}）` : ''}`
 }
@@ -226,9 +252,10 @@ async function refreshConflict() {
     <p v-if="enabled !== true" class="text-muted-foreground text-base">此页面当前只读，提交能力未开启或未能确认。</p>
     <div v-else class="flex flex-wrap gap-2">
       <template v-if="!existing || existing.status === 'candidate'"><Button variant="outline" size="sm" @click="open('confirm')">确认对应</Button><Button variant="ghost" size="sm" @click="open('reject')">不对应</Button></template>
-      <template v-else-if="existing.status === 'confirmed'"><Button variant="ghost" size="sm" @click="open('unlink')">取消对应</Button><Button variant="outline" size="sm" @click="open('correct')">改选记录</Button><Button v-if="existing.requiresRevalidation || point?.requiresRevalidation" variant="outline" size="sm" @click="open('revalidate')">重新核验对应</Button></template>
+      <template v-else-if="existing.status === 'confirmed'"><Button variant="ghost" size="sm" @click="open('unlink')">取消对应</Button><Button variant="outline" size="sm" @click="open('correct')">改选记录</Button><Button v-if="existing.requiresRevalidation || revalidationRequired || point?.requiresRevalidation" variant="outline" size="sm" @click="open('revalidate')">重新核验对应</Button></template>
       <p v-else class="text-muted-foreground text-base">{{ existing.status === 'rejected' ? '已否定候选' : '已取消对应' }}，保留历史决定；不自动重新推荐。</p>
     </div>
+    <p v-if="revalidationFailed" role="status">对应有效性读取失败。<Button variant="outline" size="sm" @click="revalidationAttempt++">重新读取对应有效性</Button></p>
     <Dialog :open="action !== null" @update:open="value => { if (!value && !pending) action = null }">
       <DialogContent class="flex max-h-[85dvh] min-w-0 flex-col overflow-hidden sm:max-w-4xl">
         <DialogHeader><DialogTitle>{{ title }}</DialogTitle><DialogDescription>核对正式事项与平台记录，填写依据后提交决定。系统会先检查来源与当前决定，保存后核实结果。</DialogDescription></DialogHeader>
@@ -271,8 +298,9 @@ async function refreshConflict() {
         <p v-if="attempted && !receipt && !pending && !success" role="status">提交结果尚待确认，请使用原请求重试。</p>
         <p v-if="error" role="alert">{{ error }}</p><p v-if="success" role="status">{{ success }}</p>
         <div class="flex flex-wrap gap-2">
-          <Button v-if="!conflict && !success" :disabled="pending || (!attempted && !receipt && !canPreflight)" @click="submit">{{ pending ? '正在保存…' : receipt ? '重试读回' : attempted ? '重试提交' : '提交决定' }}</Button>
-          <Button v-if="conflict" variant="outline" :disabled="pending" @click="refreshConflict">刷新后重新核对</Button>
+          <p v-if="candidateSourceBlocked" role="alert" class="text-base">候选来源已变化，当前服务暂不支持更新此候选的来源依据。原值、决定历史与本次草稿保留；刷新当前对应不能解决此问题，需先补充候选来源重新核验能力。</p>
+          <Button v-if="!candidateSourceBlocked && !conflict && !success" :disabled="pending || (!attempted && !receipt && !canPreflight)" @click="submit">{{ pending ? '正在保存…' : receipt ? '重试读回' : attempted ? '重试提交' : '提交决定' }}</Button>
+          <Button v-if="conflict && !candidateSourceBlocked" variant="outline" :disabled="pending" @click="refreshConflict">刷新后重新核对</Button>
           <Button variant="ghost" :disabled="pending" @click="action = null">{{ success ? '完成' : '保留草稿并关闭' }}</Button>
         </div>
         </div>

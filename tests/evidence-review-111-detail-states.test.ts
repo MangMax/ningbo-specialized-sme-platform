@@ -385,3 +385,29 @@ it('names the source-change object in save feedback separately from formal revie
   await fill(view); await submit(view)
   expect(view.get('[data-testid="review-save-notice"]').text()).toContain('来源变化 #4 · 专精特新中小企业 · 应纳未纳')
 })
+
+it('keeps original-request recovery reachable after a current-state read reports reviewed', async () => {
+  const { provide } = await import('vue')
+  const { REVIEW_DRAFTS_KEY, useReviewDrafts } = await import('../composables/useReviewDrafts')
+  let accepted = false
+  const bodies: unknown[] = []
+  vi.stubGlobal('$fetch', vi.fn(async (url: string, options?: any) => {
+    if (url.endsWith('/browser-context')) return { writeEnabled: true }
+    if (url.endsWith('/browser-commands')) {
+      bodies.push(JSON.parse(JSON.stringify(options.body)))
+      if (!accepted) { accepted = true; throw new Error('accepted response lost') }
+      return { action: 'maintain', versionId: 82 }
+    }
+    if (url.endsWith('/evidence-impacts/4')) return baseDetail({ pending: !accepted })
+    return { rows: [], total: 0, page: 1, pageSize: 25 }
+  }))
+  const Host = defineComponent({ components: { EvidenceReviewDetail }, setup() { provide(REVIEW_DRAFTS_KEY, useReviewDrafts()) }, template: '<EvidenceReviewDetail :impact-id="4" />' })
+  const view = mount(Host, { global: { plugins: [createPinia(), PiniaColada], stubs: { EvidenceImpactSources: true, DecisionHistory: true } } })
+  await flushPromises(); await fill(view); await submit(view)
+  await view.findAll('button').find(b => b.text() === '重新读取当前状态')!.trigger('click'); await flushPromises()
+  expect(view.findAll('button').some(b => b.text() === '使用原请求重试')).toBe(true)
+  await submit(view)
+  expect(bodies).toHaveLength(2); expect(bodies[1]).toEqual(bodies[0])
+  expect(view.text()).toContain('复核已登记')
+  expect(view.find('form').exists()).toBe(false)
+})

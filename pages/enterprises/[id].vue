@@ -27,6 +27,7 @@ import TitleBadge from '@/components/TitleBadge.vue'
 import { QUALITY_FLAGS, TITLE_ORDER } from '~~/lib/labels'
 import { fileUrl, fileNameOf } from '~~/lib/preview'
 import {
+  hasEvidencePreviewReturn,
   rememberEvidencePreviewReturn,
   shouldNuxtScrollToTop,
   useEvidencePreviewScrollRestore,
@@ -169,10 +170,12 @@ const qualificationGapLabel: Record<string, string> = {
 const pendingRows = computed(() => pendingData.value?.rows ?? [])
 const pendingHasMore = computed(() => !!pendingData.value?.nextCursor)
 const focusedImpactId = ref<number | undefined>()
+const openImpactRequest = ref<{ id: number; titleCode: string; direction: string } | null>(null)
 const openScopeRequest = ref<{ titleCode: string; direction: string } | null>(null)
 
 function onOpenImpact(row: ImpactRow) {
   focusedImpactId.value = row.id
+  openImpactRequest.value = { id: row.id, titleCode: row.titleCode, direction: row.direction }
   syncReviewDeepLink(row.titleCode, row.direction, row.id)
 }
 function onOpenScope(assessment: ReviewAssessment & ReviewScope) {
@@ -339,7 +342,9 @@ function evidenceDisclosureOpen(key: string): boolean {
 const detailRendered = computed(() => (detail.value !== null || error.value != null) && !correspondenceLoading.value
   && (correspondenceError.value || ledgerEvents.value.every(event => !evidenceDisclosureOpen(evidenceDisclosureKey(event.id))
     || detailsForEvent(event.id) !== null || detailErrorForEvent(event.id))))
-useEvidencePreviewScrollRestore(detailRendered)
+// Cached detail can refresh again after focus restoration; do not steal source-link focus.
+let previewReturnEventId = hasEvidencePreviewReturn(route.fullPath) ? focusedEventId.value : null
+useEvidencePreviewScrollRestore(detailRendered, undefined, route.fullPath)
 
 function setEvidenceDisclosureOpen(key: string, open: boolean): void {
   const next = new Set(openEvidenceKeys.value)
@@ -371,15 +376,22 @@ onMounted(() => {
 /**
  * 出处预览保留原有展开状态和滚动位置；默认出处不强行展开平台详情。
  */
-function rememberPagePreviewReturn(_eventId: number, event: MouseEvent) {
+function previewReturnPath(eventId: number): string {
+  const [path, search = ''] = route.fullPath.split('?')
+  const query = new URLSearchParams(search.split('#')[0])
+  query.set('tab', 'records')
+  query.set('eventId', String(eventId))
+  return `${path}?${query}`
+}
+function rememberPagePreviewReturn(eventId: number, event: MouseEvent) {
   if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
   const keys = new Set(openEvidenceKeys.value)
   try {
-    window.sessionStorage.setItem(EVIDENCE_DISCLOSURE_RETURN_KEY, JSON.stringify({ back: route.fullPath, keys: [...keys] }))
+    window.sessionStorage.setItem(EVIDENCE_DISCLOSURE_RETURN_KEY, JSON.stringify({ back: previewReturnPath(eventId), keys: [...keys] }))
   } catch {
     // Storage may be unavailable; ordinary preview navigation still works.
   }
-  rememberEvidencePreviewReturn(route.fullPath, event.currentTarget)
+  rememberEvidencePreviewReturn(previewReturnPath(eventId), event.currentTarget)
 }
 
 
@@ -486,7 +498,15 @@ async function arriveAtEvent(eventId: number | null) {
   target?.focus({ preventScroll: true })
   if (target) highlightEvent(eventId)
 }
-watch([detail, focusedEventId], ([, eventId]) => arriveAtEvent(eventId), { immediate: true })
+watch([detail, focusedEventId], ([, eventId]) => {
+  if (eventId !== null && eventId === previewReturnEventId) {
+    const record = detail.value?.records.find(record => record.events.some(event => event.id === eventId))
+    if (record) historySource.value = record.source
+    return
+  }
+  previewReturnEventId = null
+  void arriveAtEvent(eventId)
+}, { immediate: true })
 
 useHead({
   title: computed(() => (detail.value ? `${detail.value.name} · 企业详情` : '企业详情')),
@@ -705,7 +725,7 @@ function openPreview(e: Evidence) {
                       :details-loading="detailLoadingForEvent(event.id)"
                       :details-error="detailErrorForEvent(event.id)"
                       :relation-summaries="relationSummaries"
-                      :back="route.fullPath"
+                      :back="previewReturnPath(event.id)"
                       :return-to="sourceReturnTarget(route.query.returnTo)"
                       :open="evidenceDisclosureOpen(evidenceDisclosureKey(event.id))"
                       :highlighted="highlightedEventId === event.id"
@@ -817,6 +837,7 @@ function openPreview(e: Evidence) {
             :direction="explanationDirection"
             :impact-id="focusedImpactId ?? impactId"
             :open-scope-request="openScopeRequest"
+            :open-impact-request="openImpactRequest"
             :pending="pendingRows"
             :locate="focusedEventId == null && !correspondenceLoading"
             @saved="onReviewSaved"

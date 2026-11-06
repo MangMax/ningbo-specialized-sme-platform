@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, nextTick, shallowRef } from 'vue'
+import { computed, inject, nextTick, shallowRef } from 'vue'
+import { REVIEW_DRAFTS_KEY } from '~/composables/useReviewDrafts'
 import { useEvidenceReviewRefresh } from '~/composables/useEvidenceReviewRefresh'
 import { useQuery } from '@pinia/colada'
 import type { ImpactDetail } from '~~/lib/roster/evidence-review-ui'
@@ -18,6 +19,9 @@ const emit = defineEmits<{ saved: [{ action?: string; versionId?: number }?] }>(
 const refreshAffected = useEvidenceReviewRefresh()
 const props = defineProps<{ impactId: number; enterpriseId?: number; formFooter?: boolean }>()
 const { data, isLoading, error, refetch } = useQuery({ key: () => ['evidence-impact', props.impactId], query: () => $fetch<ImpactDetail>(`/api/roster/evidence-impacts/${props.impactId}`) })
+
+const drafts = inject(REVIEW_DRAFTS_KEY, null)
+const unresolvedSubmission = computed(() => !!drafts?.drafts[String(props.impactId)]?.reviewSubmission?.unknown)
 
 const showHistory = computed(() => !!data.value?.oldDecision && !data.value.gaps.decisionUnavailable && data.value.lineage !== 'merged')
 
@@ -191,6 +195,7 @@ async function reloadCurrent() {
         不再用整张禁用表单占首屏，也不提供再次提交的假入口。
       -->
       <template v-if="!data.pending">
+        <EvidenceReviewForm v-if="unresolvedSubmission" :detail="data" :refreshing="isLoading" :read-failed="!!error" :footer="formFooter" @reload="reloadCurrent" @saved="onSaved" />
         <section
           v-if="data.reviewedBaseline"
           data-testid="reviewed-baseline"
