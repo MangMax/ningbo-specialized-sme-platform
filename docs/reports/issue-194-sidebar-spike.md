@@ -1,5 +1,9 @@
 # #194：侧栏属性透传与键盘行为调查
 
+> 历史状态补注（#580）：下文保留 2026-10-22 固定基线的调查原文，历史 PASS/FAIL、工具失败、受控 cookie 观察与未运行范围均属 inherited 历史证据。后续[修复提交 `1591f08d357c5bd175243c34126239da7c31980f`](https://github.com/MangMax/ningbo-specialized-sme-platform/commit/1591f08d357c5bd175243c34126239da7c31980f) 是本次静态核对基线 `42e75f8cc165810d2fea9d55a501a2eccc313156` 的祖先；该基线的 `components/ui/sidebar/SidebarMenuButton.vue:38–40` 仍以 `v-if="state === 'collapsed' && !isMobile"` 仅在桌面折叠状态挂载 TooltipContent。`tests/sidebar-menu-button.test.ts:35–68` 存在首次 Escape 关闭移动 Sheet（`closes the mobile Sheet on the first Escape after its menu receives focus`）及桌面折叠提示、展开移除提示（`shows help for a focused collapsed desktop menu and removes it when expanded`）两项测试；这两个文件与该修复提交中的版本相同。
+>
+> 此补注仅提供后续代码定位与 fresh 静态核对，不表示本轮测试或浏览器通过，也不关闭受控 cookie 观察或其他未覆盖范围；本轮运行验证为 UNRUN。固定链接对应提交已通过已认证 GitHub API 核实可读取（匿名网页请求为 404），不等于完整远端归档已验证；旧 `/tmp/ningbo-spec190-handoff/issue-194/` 外部工件恢复能力仍为 UNKNOWN，原报告继续保留。
+
 关联：[#190](https://github.com/MangMax/ningbo-specialized-sme-platform/issues/190)、[#194](https://github.com/MangMax/ningbo-specialized-sme-platform/issues/194)。2026-10-22，45 分钟上限内完成；仅交付调查文档，无生产代码修复。
 
 ## 结论
