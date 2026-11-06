@@ -9,28 +9,63 @@
 
 1. 从文件目录拿稳定 `fileId`，读取 `GET /api/files/{id}/parse-result` 或 MCP
    `get_file_parse_result({fileId})`。返回
-   `{fileId,parseState,parts,version,removedAt}`；每段保留 `origin`、`hasConflict`。
-   这些入口只点读，不扫描磁盘、不回填文件，也不重建派生缓存。
-2. 替换全部代理声明用 `PUT /api/files/{id}/parse-result`，`parts` 必填。
-   MCP `save_parse_result` 提供 `parts` 时是同一操作。未列出的旧代理段撤回，
-   `[]` 清空全部代理段，但从现存出处恢复派生段；同坐标代理优先，代理行数与当前
-   出处聚合行数不等时 `hasConflict=true`。旧 `legacy` 段沿用既有全量替换行为，
-   修改前快照留在回执，不将其误称为来源历史删除。`parseState` 省略时置 `parsed`。
-3. 只改状态用 `PATCH /api/files/{id}/parse-result`，必须提供 `parseState`，禁止
-   `parts`。MCP 省略 `parts`、提供 `parseState` 对等；全部已有段逐项保留，
-   包括 origin/conflict。省略不等于 null：`parts:null`、`parseState:null` 均拒绝。
-4. 每次现代写入必须有 `expectedVersion`、`idempotencyKey`、`actor:{type,id}`、`reason`。
-   REST 写入使用 `NUXT_API_TOKEN`，MCP 使用 `NUXT_MCP_TOKEN`；Bearer 或已有对应
-   token header。未配置 token 时写入关闭。读入口不需要 token，所有响应 `no-store`。
-5. 现代响应为 `{receiptId,replayed,state}`。首次写入 `replayed=false`；超时/断线后以
-   同键、同规范载荷重试，返回原始回执及当时的 `state`，`replayed=true`。
-   这可能与当前状态不同；用 GET 确认当前状态，切勿把历史回执视为当前状态。
+   `{fileId,parseState,parts,version,removedAt,inputLineage}`；每段保留 `origin`、`hasConflict`。
+   `version` 是输出集合的并发版本，不随磁盘内容或 OCR 输入变化，不证明旧解析采用了
+   当前输入。`inputLineage` 为 `{status:"unknown"}` 或 `{status:"bound",inputRef}`；
+   bound 记录上次解析明确采用的输入，不承诺它现在仍有效。缺失历史依据保持 unknown，
+   不用当前文件哈希补造。读取只点读，不扫描磁盘、不回填文件，也不重建派生缓存。
+2. 读取实际输入后，以 `POST /api/files/{id}/parse-result/preflight` 或 MCP
+   `preflight_file_parse_result({fileId,kind,pages})` 冻结依据。直接读文件用 `kind:"file"`，
+   `pages` 省略或为 `[]`；采用 OCR 用 `kind:"ocr"`，必须给非空
+   `pages:[{page,version}]`，只列实际采用的页及读取时的版本，不自动选最新页。
+   MCP 读取 OCR 时显式传 `get_ocr_result({fileId,includeVersion:true})`，取
+   `results[].page/version`；页版本格式为 `id:revision`，两部分均为无前导零的十进制
+   正整数。页号为正安全整数、不得重复，最多10000页。
+   预检核实实际文件内容与登记哈希一致，并核对所选 OCR 页版本，返回
+   `{expectedVersion,inputRef:{format:1,fileId,relPath,sha256,kind,pages}}`。
+   `expectedVersion` 与输入依据独立；保留该次返回值和实际读取材料，不用后来的版本替换。
+3. 解析后用 `POST /api/files/{id}/parse-result/commit` 或 MCP
+   `commit_file_parse_result` 提交原预检 `inputRef`、`expectedVersion`、全部 `parts`，
+   以及 `idempotencyKey`、`actor:{type,id}`、`reason`。此入口必须带 `inputRef` 和 `parts`，
+   缺字段拒绝，不降级为旧盲写。`inputRef` 的所有字段必填：`format:1`，正整数 `fileId`，
+   非空 `relPath`，64位小写 SHA-256 `sha256`，`kind` 和 `pages`；file 的页列表必须为空，
+   ocr 的页列表必须非空。新提交再次核对输入与输出版本；冲突时保留原稿，重读、重新
+   预检并用新键提交，不替换为最新 OCR，也不换兼容入口绕过。
+   未列出的旧代理段撤回，`[]` 清空全部代理段，但从现存出处恢复派生段；同坐标代理优先，
+   代理行数与当前出处聚合行数不等时 `hasConflict=true`。旧 `legacy` 段沿用既有全量
+   替换行为，修改前快照留在回执，不将其误称为来源历史删除。`parseState` 省略时置 `parsed`。
+   预检只核所选页，不证明全部页或整份文件解析完成；交接保留采用的文件/页版本与
+   输入引用，口径见[文件解析工作流](../.agents/skills/roster-ingestion-pipeline/references/workflow.md)。
+4. 兼容入口仍保留：`PUT /api/files/{id}/parse-result` 必须提供 `parts`，MCP
+   `save_parse_result` 提供 `parts` 时对等。历史 unknown 结果可无 `inputRef` 替换，
+   成功后仍为 unknown；已有 bound 结果的任何新段替换（包括 `[]`）缺 `inputRef` 返回409，
+   不能降回 unknown。只改状态用 `PATCH /api/files/{id}/parse-result`，必须提供
+   `parseState`，禁止 `parts` 和 `inputRef`；MCP `save_parse_result` 省略 `parts`、提供
+   `parseState` 对等。全部已有段逐项保留，包括 origin/conflict，并保留原输入依据。
+   省略不等于 null：`parts:null`、`parseState:null` 均拒绝。
+5. 每次现代写入必须有 `expectedVersion`、`idempotencyKey`、`actor:{type,id}`、`reason`。
+   REST 预检/写入使用 `NUXT_API_TOKEN`，MCP 预检/写入使用 `NUXT_MCP_TOKEN`；Bearer
+   或已有对应 token header。未配置 token 时这些入口关闭。解析结果/历史读入口不需要
+   token，所有响应 `no-store`。
+6. 现代提交响应为 `{receiptId,replayed,state}`。首次写入 `replayed=false`；超时/断线后
+   以同键、同规范载荷重试，先返回原始回执及当时的 `state`，`replayed=true`，不重新
+   核验当前输入或输出、不覆盖后续结果。旧回执未含 `inputLineage` 时不补字段或改写
+   快照。这可能与当前状态不同；用 GET 确认当前状态，切勿把历史回执视为当前状态。
 
-示例（用实际 GET 返回的 version 替换占位符）：
+提交示例（HTTP `/commit` 请求体；占位值须替换，`expectedVersion` 与整个 `inputRef`
+均原样取自同次预检，以下展示直接读文件的形状）：
 
 ```json
 {
-  "expectedVersion": "<GET 返回的64位小写SHA-256版本>",
+  "expectedVersion": "<预检返回的64位小写SHA-256输出版本>",
+  "inputRef": {
+    "format": 1,
+    "fileId": 123,
+    "relPath": "<预检返回的文件库相对路径>",
+    "sha256": "<预检返回的64位小写SHA-256内容哈希>",
+    "kind": "file",
+    "pages": []
+  },
   "idempotencyKey": "file-105-parse-001",
   "actor": {"type": "agent", "id": "roster-cleanup"},
   "reason": "核对原页后更正段的家数",
@@ -41,7 +76,8 @@
 }
 ```
 
-MCP `save_parse_result` 在上述对象中加 `fileId`。既有精确 `relPath` 别名保留，
+MCP `commit_file_parse_result` 在上述对象中加同一 `fileId`；预检与提交均按稳定 ID 使用。
+兼容 MCP `save_parse_result` 的既有精确 `relPath` 别名保留，
 与 `fileId` 恰给一个；解析路径后仍绑定稳定 ID、版本及同一文件的幂等键。
 新读取/历史工具按稳定 ID 使用。旧载荷 `{fileId|relPath,parts?,parseState?}` 由显式
 legacy adapter继续接受并返回原 `{file,parts,parseState}`。顶层 `parts` 为本次提交的
@@ -49,18 +85,20 @@ legacy adapter继续接受并返回原 `{file,parts,parseState}`。顶层 `parts
 origin/conflict），`file` 沿用既有完整文件读投影，不额外嵌入现代回执字段。
 旧调用仍需MCP鉴权。不提供任何现代封套字段才走legacy；只要提供其中一个，就必须
 完整提供 `expectedVersion/idempotencyKey/actor/reason`，任何部分混用/非法值均拒绝，
-不得在toolkit清除字段后静默降级。REST始终要求完整现代封套。
+不得在toolkit清除字段后静默降级。`inputRef` 也只能随 `parts` 和完整现代封套提交，
+不能单独混入旧载荷。REST 段/状态写入始终要求完整现代封套；预检只需输入选择。
 
-legacy调用保留旧**盲写**语义，旧客户端没有预期版本检查、可重放客户端幂等键或
-用户确认依据。适配器在immediate事务内读取最新版本并调用同一写服务；这是内部原子
+在上述 unknown 段替换或仅状态更正边界内，legacy调用保留旧**盲写**语义。旧客户端
+没有预期版本检查、可重放客户端幂等键或用户确认依据。适配器在immediate事务内读取最新版本并调用同一写服务；这是内部原子
 记账，不构成客户端并发保护，也不会假称旧客户端确认过当前版本。每次成功调用（包括
 重复同内容）都追加新回执，使用随机内部键 `legacy-save-parse:<UUID>`、
 `actor={type:agent,id:legacy-adapter:save_parse_result}` 和固定原因
 `兼容旧 save_parse_result 盲写；客户端未提供版本、幂等键、操作者或确认依据`。
 该actor只指适配器，不推断实际用户身份；原因不是用户确认/业务裁决。
 每次旧写也推进维护修订，使之前的现代版本失效。旧客户端丢失响应后重试可能新增审计
-并覆盖期间其他修改；升级时先 `get_file_parse_result` 再完整提供现代封套即可获得
-预期版本及客户端幂等恢复。文件元数据继续使用既有入口，本能力不接收元数据字段。
+并覆盖期间其他修改（仍受 bound 段替换限制）；只补现代封套获得的是输出并发保护和
+客户端幂等恢复，不是输入绑定。当前解析应升级到上述预检/提交流程。文件元数据继续
+使用既有入口，本能力不接收元数据字段。
 
 ## 验证、并发与恢复
 
@@ -73,13 +111,15 @@ legacy调用保留旧**盲写**语义，旧客户端没有预期版本检查、�
   之前检查原始 tools/call 参数，保持与 REST 相同的拒绝语义。
 - `expectedVersion` 覆盖稳定ID、当前状态/全部段、当前来源派生坐标/行数、移出标志、
   最新维护修订。来源发生变化、回填改变段或同内容先改后恢复，都使旧版本失效。
-  展示冲突不作为名录业务判断或拒绝代理声明的依据。
+  这仍是输出 CAS，不绑定磁盘/OCR 输入；带 `inputRef` 的新提交另行核验实际文件内容
+  和所选 OCR 页版本。文件读前/读后身份核验不是文件系统锁，不保证最终核验后的外部
+  替换被阻止。展示冲突不作为名录业务判断或拒绝代理声明的依据。
 - SQLite immediate 事务内检查幂等键、读取/比较版本、重建段、修改状态并保存回执。
   两个同版本编辑只有一个提交；任何后续写入/审计失败整体回滚。跨进程恢复不依赖缓存。
 - 相同文件/幂等键异载荷返回409；同键同规范载荷优先恢复历史成功结果，即便当前版本
   已变化或文件后来移出。不同文件的幂等键互不冲突。规范化覆盖段排序、附件和缺省值。
 - REST 400为非法ID/字段/集合；401为未鉴权；404为文件/回执不存在；409为版本、
-  幂等键或已移出文件冲突。MCP 参数错误为JSON-RPC -32602，领域失败为工具错误；
+  幂等键、输入依据或已移出文件冲突。MCP 参数错误为JSON-RPC -32602，领域失败为工具错误；
   传输信封遵循各自协议，写入语义和成功载荷一致。
 
 ## 可读审计与数据演进
