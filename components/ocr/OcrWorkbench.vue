@@ -1398,6 +1398,36 @@ const fileSheetBlockedReason = computed(() =>
     min-height: 520px;
   }
 }
+/* Stacked compare needs room for the source notices as well as the 55/45 panes.
+ * Keep this minimum local to compare; main scrolls while the pager stays fixed. */
+@media (max-width: 1023.98px) {
+  .ocr-workspace-scroll:has([data-ocr-compare-row]) {
+    --ocr-compare-min-height: 37.5rem;
+    /* Markstream's ordinary paragraphs use 1rem × 1.75, larger than the
+     * preview wrapper's OCR leading. Reserve four actual lines plus p-4. */
+    --ocr-compare-line-height: max(calc(var(--ocr-prose-size) * var(--ocr-prose-leading)), 1.75rem);
+    --ocr-compare-reading-height: calc(4 * var(--ocr-compare-line-height) + 2rem);
+    overflow-y: auto;
+  }
+  .ocr-workspace-list:has([data-ocr-compare-row]),
+  .ocr-workbench :deep([data-ocr-page-row]:has([data-ocr-compare-row])) {
+    min-height: var(--ocr-compare-min-height);
+  }
+  /* Let notices contribute to intrinsic track sizing, still in the existing
+   * 55/45 ratio. Bound the reading body's contribution, not the notice height,
+   * so long documents scroll and extra feedback cannot consume its four lines. */
+  .ocr-workbench :deep([data-ocr-compare-row]) {
+    height: auto;
+    min-height: 100%;
+  }
+  .ocr-workbench :deep([data-ocr-compare-row] .ocr-text-pane > div:has(> .content-preview)),
+  .ocr-workbench :deep([data-ocr-compare-row] .ocr-text-pane > div:has(> textarea)) {
+    contain: size;
+    height: 0;
+    min-height: var(--ocr-compare-reading-height);
+  }
+}
+
 /*
  * Very short viewports (e.g. 720x450 ≈ 200% reflow): keep 8+ lines reachable by
  * collapsing secondary chrome. Counts stay available in the page-jump popover;
