@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 /** #182 actual built Nuxt public seam + isolated fixture for manual T3 preview.
- * No production paths, migrations or credentials. All business operations use HTTP. */
+ * No production paths or credentials. Migrations run only on a fresh synthetic DB.
+ * All business operations use HTTP. */
 import assert from 'node:assert/strict'
 
 import { mkdtempSync, writeFileSync, readFileSync } from 'node:fs'
@@ -76,14 +77,22 @@ const source = {
 }
 const manifest = { root, base, pid: child.pid, source }
 writeFileSync(join(root, 'manifest.json'), JSON.stringify(manifest, null, 2))
-async function stop() {
+let stopPromise
+function stop() {
+  return stopPromise ??= closeout().catch((error) => {
+    console.error(error)
+    process.exitCode = 1
+  })
+}
+async function closeout() {
   await stopOwnedChild(child)
+  const businessUnchanged = before.equals(readFileSync(business))
   writeFileSync(
     join(root, 'browser-closeout.json'),
     JSON.stringify(
       {
         source,
-        businessUnchanged: before.equals(readFileSync(business)),
+        businessUnchanged,
         outputPrivacy: !output.includes(marker)
       },
       null,
@@ -92,13 +101,17 @@ async function stop() {
   )
   writeFileSync(join(root, 'server-output.log'), output)
   writeFileSync(join(root, 'results.json'), JSON.stringify(results, null, 2))
+  assert.ok(businessUnchanged, 'Synthetic business DB bytes changed after owned child shutdown')
 }
-process.once('SIGTERM', () => {
-  void stop().then(() => process.exit(0))
+let endServing
+const servingEnded = new Promise((resolve) => {
+  endServing = resolve
 })
-process.once('SIGINT', () => {
-  void stop().then(() => process.exit(0))
-})
+const onSignal = () => {
+  void stop().then(endServing)
+}
+process.once('SIGTERM', onSignal)
+process.once('SIGINT', onSignal)
 try {
   await waitForHttp(base + '/api/health', { child })
   for (let i = 0; i < 65; i++)
@@ -174,8 +187,11 @@ try {
   console.log(JSON.stringify({ manifest, results }, null, 2))
   if (process.argv.includes('--serve')) {
     console.log('Serving isolated fixture; terminate this owned verifier to stop.')
-    await new Promise(() => {})
+    await servingEnded
   }
+} catch (error) {
+  console.error(error)
+  process.exitCode = 1
 } finally {
   await stop()
 }
