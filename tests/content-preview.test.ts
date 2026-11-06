@@ -1,7 +1,21 @@
 // @vitest-environment jsdom
-import { DOMWrapper, mount, flushPromises } from '@vue/test-utils'
-import { expect, it } from 'vitest'
+import { DOMWrapper, enableAutoUnmount, mount, flushPromises } from '@vue/test-utils'
+import { afterEach, beforeEach, expect, it } from 'vitest'
 import ContentPreview from '../components/preview/ContentPreview.vue'
+
+enableAutoUnmount(afterEach)
+
+let clipboardDescriptor: PropertyDescriptor | undefined
+beforeEach(() => {
+  clipboardDescriptor = Object.getOwnPropertyDescriptor(navigator, 'clipboard')
+})
+afterEach(() => {
+  if (clipboardDescriptor) {
+    Object.defineProperty(navigator, 'clipboard', clipboardDescriptor)
+  } else {
+    Reflect.deleteProperty(navigator, 'clipboard')
+  }
+})
 
 it('renders headings lists GFM and merged OCR tables while blocking active HTML and resources', async () => {
   const source = '# 名单\n\n- 企业甲\n\n| 企业 | 年份 |\n| --- | --- |\n| 宁波甲 | 2026 |\n\n<table><tr><td rowspan="2" colspan="3" onclick="alert(1)">合并</td></tr></table>\n\n<script>alert(1)</script><iframe src="https://evil.test"></iframe><img src="https://evil.test/x" onerror="alert(1)">\n\n![远程图](https://evil.test/a.png)\n\n[官网](https://example.com)\n\n<a href="javascript:alert(1)">危险</a>'
@@ -48,7 +62,6 @@ it('copies and downloads the exact source and switches source wrap and theme wit
   expect(await (create.mock.calls[0]![0] as Blob).text()).toBe(source)
   expect((anchor.mock.instances[0] as HTMLAnchorElement).download).toBe('名单.md')
   create.mockRestore(); revoke.mockRestore(); anchor.mockRestore()
-  wrapper.unmount()
 })
 
 it('keeps HTML source inert and shows unknown languages and empty or large content as readable text', async () => {
@@ -64,7 +77,6 @@ it('keeps HTML source inert and shows unknown languages and empty or large conte
   await flushPromises()
   expect(wrapper.text()).toContain('正文较大')
   expect(wrapper.find('pre').element.textContent).toBe(large)
-  wrapper.unmount()
 })
 
 it('keeps fenced code source copyable and confines overrides to each preview instance', async () => {
@@ -81,7 +93,6 @@ it('keeps fenced code source copyable and confines overrides to each preview ins
   await flushPromises()
   await second.findAll('button').find(button => button.text() === '复制代码')!.trigger('click')
   expect(writeText).toHaveBeenLastCalledWith('print("丙")\n')
-  second.unmount()
 })
 
 it('opens only explicitly mapped relative resources and never auto-loads images or optional renderers', async () => {
@@ -96,7 +107,6 @@ it('opens only explicitly mapped relative resources and never auto-loads images 
   expect(wrapper.text()).toContain('graph LR; A-->B')
   expect(wrapper.text()).toContain('保留文字')
   expect(wrapper.text()).toContain('保留代码')
-  wrapper.unmount()
 })
 
 it('rejects dangerous link protocols and nested active markup without changing copied source', async () => {
@@ -109,7 +119,6 @@ it('rejects dangerous link protocols and nested active markup without changing c
   expect(wrapper.findAll('a[href^="javascript:"], a[href^="data:"], svg, form, input, [onfocus]').map(node => node.element.parentElement?.outerHTML)).toEqual([])
   await wrapper.findAll('button').find(button => button.text() === '复制原文')!.trigger('click')
   expect(writeText).toHaveBeenCalledWith(source)
-  wrapper.unmount()
 })
 
 
@@ -132,5 +141,4 @@ it('shows caller context and keeps secondary preview actions reachable from the 
   await flushPromises()
   await wrapper.findAll('button').find(b => b.text() === '查看源码')!.trigger('click')
   expect(wrapper.find('.wrap-code').exists()).toBe(true)
-  wrapper.unmount()
 })

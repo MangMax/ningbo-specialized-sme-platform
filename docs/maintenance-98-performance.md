@@ -1,5 +1,7 @@
 # #98 性能对照记录
 
+本页保留 #98 当时的性能观察，不代表当前版本验收。完整的[最终交付回执](https://github.com/MangMax/ningbo-specialized-sme-platform/blob/bee8366d1847ad425cb408990fb5127f0dc73ede/docs/maintenance-98-final.md)与[阶段集成交接](https://github.com/MangMax/ningbo-specialized-sme-platform/blob/bee8366d1847ad425cb408990fb5127f0dc73ede/docs/maintenance-98-integration.md)固定在原 Git 版本，包含历史失败、未知、来源提交和未运行边界；其中外部日志路径的当前存续未由本次整理验证。
+
 功能审计基线为 `4f910f612cfdf6915758f39522f0ff9874f96d7a`；集成分支 `t3/implement-spec-98-perf`。执行源码不变的词汇校准提交 `a0e0164` 上取得下列性能基线。新增能力未完成，不代表规格验收。
 
 ## 冻结输入与预算

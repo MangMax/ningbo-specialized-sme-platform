@@ -12,7 +12,9 @@
 
 REST 与 MCP 调用同一个 `decision-lifecycle-102` 应用服务；`/_openapi.json` 声明当前 HTTP 字段，MCP `tools/list` 声明工具参数。
 
-- `POST /api/roster/decision-lifecycle/commands` ↔ `save_difference_decision`：单命令、单事务追加版本。REST 使用 `NUXT_API_TOKEN`（Bearer 或 X-API-Token）；MCP 使用独立的 `NUXT_MCP_TOKEN`。未配置、缺失、错误 token 均关闭写入。无 token 的 MCP 工具发现不列出写工具。
+现行复核增量见 [#114：Review completion through existing #102](evidence-review-contract-114.md#review-completion-through-existing-102)：复核沿用本页的 HTTP/MCP 命令入口与应用服务，增加 `maintain` 和 `reviewedEvidence`，不另建通用写入入口。下方历史验收和交接记录仍对应各自当时的候选，不代表后继契约已在本次文档修订中通过运行验收。
+
+- `POST /api/roster/decision-lifecycle/commands` ↔ `save_difference_decision`：单命令、单事务；`replace`/`withdraw` 追加版本，`maintain` 保留原版本并记录复核基线和回执。REST 使用 `NUXT_API_TOKEN`（Bearer 或 X-API-Token）；MCP 使用独立的 `NUXT_MCP_TOKEN`。未配置、缺失、错误 token 均关闭写入。无 token 的 MCP 工具发现不列出写工具。
 - `GET /api/roster/decision-lifecycle/{id}` ↔ `get_difference_decision`：稳定版本 ID 精确读取，含完整依据、原因说明和元数据，不包含平台原文。
 - `GET /api/roster/decision-lifecycle/current?enterpriseId=…&titleCode=…&direction=…` ↔ `get_current_difference_decision`：读取 `versionId` 和 `current`。无版本时两者均 null；撤回后 `versionId` 指向撤回标记、`current=null`。
 - `GET /api/roster/decision-lifecycle/history` ↔ `list_difference_decision_history`：给 `id`，或完整企业/称号/方向；不能混用两种范围。`page=1..1000000`，`pageSize=1..50`，默认 1/50。按 `recordedAt DESC,id DESC`，同事务返回 rows/total/page/pageSize。摘要省略 basis、reasonNote、measureNote、迁入细节和原始大字段，`detailsAvailable=true` 指引按 id 取完整版本。
@@ -47,6 +49,16 @@ REST 与 MCP 调用同一个 `decision-lifecycle-102` 应用服务；`/_openapi.
 ```
 
 首次无决定时 `expectedCurrentId=null`。后续必须使用当前查询的 **versionId**，包括已撤回坐标；不能把回执的 `currentId=null` 当成没有历史。`replace` 是完整新解释：未给的可选原因/证据/迁入字段设为 null，不隐式继承旧解释。`withdraw` 使用相同元数据，但必须省略整个 `decision`。重复撤回没有活动决定的坐标返回 409。
+
+上述 JSON 是 `replace` 示例。按 [#114 复核完成契约](evidence-review-contract-114.md#review-completion-through-existing-102)，三种动作的增量约束如下：
+
+- `maintain` 必须省略 `decision`，必须提供 `reviewedEvidence`；保留原版本、原因、措施、证据及原审计信息，只显式记录本次复核基线和回执。已撤回、历史或已归并主体的决定不能执行维持。
+- `replace` 必须提供完整 `decision`，可选提供 `reviewedEvidence`；带已审证据时，在同一事务中完成替代和复核。
+- `withdraw` 必须同时省略 `decision` 和 `reviewedEvidence`。
+
+`reviewedEvidence` 为严格对象 `{latestRevisionId, projectionReady:true}`，`latestRevisionId` 为 0 至 `Number.MAX_SAFE_INTEGER` 的整数。HTTP/MCP 仍须提供精确企业/称号/方向、`expectedCurrentId`、`idempotencyKey`、`actor`、`basis`、`ruleVersion`、`effectiveAt`。复核在既有 immediate 事务内核对当前决定、最新相关已提交证据修订及投影就绪状态；证据已变化或投影未完成返回 `409 stale_evidence`，冲突后需重新读取详情。没有复核基线仍是 unknown，不视为 valid。
+
+复核完成回执保留原 `{versionId,currentId,previousId,action,recordedAt}` 并增加 `reviewedRevisionId`。同键同请求在并发检查前返回原回执，不写入，也不能清除后来证据带来的待核状态；同键异请求仍为 `409 idempotency_conflict`，当前决定变化仍为 `409 stale_version`。旧回执与原幂等语义保留；详细复核语义以后继 #114 契约为准。对旧版本显式 `maintain` 会通过复核回执接管该坐标，既有导入、旧标注和受管身份归并守卫继续生效，不自动迁移旧解释。
 
 actor 必须给 type=user/agent 和非空 id；沿用单机 token 授权模型，actor 是显式操作者声明。idempotencyKey/actor.id/ruleVersion 最多 200 字符；basis、各说明和迁入城市最多 4000 字符，非空值会 trim。effectiveAt 必须为含时区的 ISO 时间，是业务时点；createdAt 是实际写入时点；recordedAt 是兼容旧读模型的单调登记排序键。旧导入可使用无毫秒/带偏移或未来时间，追加排序键会越过旧值，不把业务时点改成“现在”。无法解析的旧登记时点返回 422，要求明确核对，绝不悄悄覆盖。
 
