@@ -7,6 +7,7 @@ import { PLATFORM_INTERFACES } from '~~/lib/labels'
 import { fileNameOf } from '~~/lib/preview'
 import { evidencePageState } from '~~/lib/roster/evidence-page'
 import RecordEventSource from './RecordEventSource.vue'
+import OfficialEvidenceView from './OfficialEvidence.vue'
 import EventArchiveCandidates from './EventArchiveCandidates.vue'
 import DisclosurePanel from '@/components/DisclosurePanel.vue'
 
@@ -107,8 +108,8 @@ const interfaceSummary = computed(() => {
 
           <div class="flex min-w-0 flex-col gap-1.5 text-sm sm:max-w-80">
             <div class="grid min-w-0 grid-cols-[6.5rem_minmax(0,1fr)] items-start gap-x-2 gap-y-1">
-              <span class="text-muted-foreground">公布文件</span>
-              <span class="min-w-0 break-words">
+              <span v-if="review" class="text-muted-foreground">公布文件</span>
+              <span v-if="review" class="min-w-0 break-words">
                 <template v-if="fileLines.length"><span v-for="(line, index) in fileLines" :key="line" class="inline">{{ line }}<span v-if="index < fileLines.length - 1">；</span></span></template>
                 <span v-else class="text-muted-foreground">未记录</span>
               </span>
@@ -140,6 +141,15 @@ const interfaceSummary = computed(() => {
             </div>
           </div>
         </div>
+        <section v-if="!review" aria-label="正式公布文件" class="flex min-w-0 flex-col gap-3 px-4 pt-3 sm:px-5">
+          <h4 class="text-sm font-medium">正式出处</h4>
+          <p v-if="!evidence.length" class="text-muted-foreground text-sm">此事件未记录公布文件出处。</p>
+          <ul v-else class="flex min-w-0 flex-col gap-3">
+            <li v-for="(item, index) in evidence" :key="index" class="min-w-0">
+              <OfficialEvidenceView :evidence="item" :back="back" preview-in-place @preview="emit('preview', item)" @page-open="emit('page-open', event.id, $event)" />
+            </li>
+          </ul>
+        </section>
       </template>
       <template #trigger>
         <span class="w-full text-right text-sm">{{ review ? '查看年度过程与核对' : '来源记录' }}</span>
@@ -147,7 +157,7 @@ const interfaceSummary = computed(() => {
       <slot v-if="open" name="annual-review" />
       <p v-if="detailsLoading" role="status" class="px-4 text-sm sm:px-5">正在读取对应出处…</p>
       <DisclosurePanel title="正式文件与已登记出处" class="border-t px-4 sm:px-5" :open="detailsError || groups.revalidation.length ? true : null">
-      <RecordEventSource :event="event" :evidence="evidence" :edges="fullEdges ?? []" :edges-ready="linksReady && fullEdges !== null && fullEdges !== undefined" :edges-loading="detailsLoading" :edges-error="detailsError" :back="back" :return-to="returnTo" @preview="emit('preview', $event)" @event-navigate="emit('event-navigate', $event)" @page-open="(eventId: number, event: MouseEvent) => emit('page-open', eventId, event)" @retry-detail="emit('retry-detail')" />
+      <RecordEventSource :event="event" :evidence="evidence" :show-official="!!review" :edges="fullEdges ?? []" :edges-ready="linksReady && fullEdges !== null && fullEdges !== undefined" :edges-loading="detailsLoading" :edges-error="detailsError" :back="back" :return-to="returnTo" @preview="emit('preview', $event)" @event-navigate="emit('event-navigate', $event)" @page-open="(eventId: number, event: MouseEvent) => emit('page-open', eventId, event)" @retry-detail="emit('retry-detail')" />
       </DisclosurePanel>
       <EventArchiveCandidates v-if="open && event.source === 'jxj' && ['award', 'review'].includes(event.type)" :key="event.id" :event-id="event.id" :back="back" :auto-load="review" />
     </DisclosurePanel>

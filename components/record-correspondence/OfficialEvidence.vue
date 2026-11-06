@@ -28,22 +28,23 @@ onMounted(() => watch(() => props.evidence.sourceFile, async (path, _previous, o
 </script>
 
 <template>
-  <div class="flex min-w-0 flex-col gap-1 text-[13px] leading-5" data-testid="official-evidence">
+  <div class="flex min-w-0 flex-col gap-1 text-base leading-6" data-testid="official-evidence">
     <p v-if="evidence.publishedName" class="break-words [overflow-wrap:anywhere]" data-testid="published-name">{{ publishedNameText(evidence.publishedName) }}</p>
     <p class="font-medium break-words [overflow-wrap:anywhere]">{{ fileNameOf(evidence.sourceFile) }}</p>
     <p class="text-muted-foreground break-words [overflow-wrap:anywhere]">原路径：{{ evidence.sourceFile }}</p>
     <p v-if="evidence.attachment" class="break-words [overflow-wrap:anywhere]">附件 / 名单段：{{ evidence.attachment }}</p>
     <p class="text-muted-foreground">
       <span v-if="evidence.listNo != null">序号 {{ evidence.listNo }} · </span>
-      <NuxtLink v-if="pageState === 'assigned' && availability !== 'missing'" :to="previewHref" class="text-primary tabular-nums underline underline-offset-2" @click="emit('page-open', $event)">第 {{ evidence.page }} 页</NuxtLink>
+      <NuxtLink v-if="pageState === 'assigned' && availability === 'available'" :to="previewHref" class="text-primary tabular-nums underline underline-offset-2" @click="emit('page-open', $event)">第 {{ evidence.page }} 页</NuxtLink>
       <span v-else-if="pageState === 'assigned'">已记录第 {{ evidence.page }} 页</span>
       <span v-else-if="pageState === 'pending'">页码待核</span>
       <span v-else>这类文件没有可复核的页码</span>
       <span v-if="evidence.inSelectedSource === false"> · 未选入本次范围</span>
     </p>
+    <p v-if="availability === 'checking'" role="status" class="text-muted-foreground text-sm">正在确认文件可用性…</p>
     <p v-if="availability === 'missing'" class="text-muted-foreground">文件不可用；出处与已记录页码保留。</p>
     <p v-else-if="availability === 'unknown'" class="text-muted-foreground">暂无法确认文件是否可用。</p>
-    <div v-if="availability !== 'missing'" class="flex flex-wrap items-center gap-2">
+    <div v-if="availability === 'available'" class="flex flex-wrap items-center gap-2">
       <template v-if="isPreviewable(evidence.sourceFile)">
         <Button v-if="previewInPlace" variant="outline" size="sm" @click="emit('preview')">查看原文件</Button>
         <NuxtLink v-else :to="previewHref" class="text-primary underline underline-offset-2" @click="emit('page-open', $event)">查看原文件</NuxtLink>
