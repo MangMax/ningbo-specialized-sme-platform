@@ -372,3 +372,24 @@ it('refreshes correspondence badges without closing the open original row dialog
   expect(wrapper.text()).toContain('已解除')
   expect(document.querySelector('[role="dialog"]')?.textContent).toContain('原行已读取')
 })
+
+it('browses cutoff years without querying and commits a real leap day only on compare', async () => {
+  vi.stubEnv('TZ', 'Asia/Shanghai')
+  startWith({ queryIds: '7', officialSourceDocumentIds: '3', asOf: '2026-10-18T10:04:05.123Z' })
+  vi.stubGlobal('$fetch', vi.fn(async (_url: string, options: { query: Record<string, unknown> }) => { calls.query.push(options.query); return result() }))
+  wrapper = mount(RecordComparisonPanel, { attachTo: document.body, global: { stubs } })
+  await flushPromises()
+  const before = calls.query.length
+  await wrapper.get('#record-as-of').trigger('click'); await flushPromises()
+  for (const [index, value] of [[1, '2024'], [0, '2']] as const) {
+    const select = document.querySelector<HTMLSelectElement>(`select[aria-label="${index === 1 ? '年份' : '月份'}"]`)!
+    select.value = value; select.dispatchEvent(new Event('change', { bubbles: true })); await flushPromises()
+  }
+  expect(calls.query).toHaveLength(before)
+  expect(route.query.asOf).toBe('2026-10-18T10:04:05.123Z')
+  document.querySelector<HTMLElement>('[data-value="2024-02-29"]')!.click(); await flushPromises()
+  expect(calls.query).toHaveLength(before)
+  ;[...document.querySelectorAll('button')].find(button => button.textContent === '完成')!.click(); await flushPromises()
+  await wrapper.findAll('button').find(button => button.text() === '开始对比')!.trigger('click'); await flushPromises()
+  expect(calls.query.at(-1)?.asOf).toBe('2024-02-29T10:04:05.123Z')
+})
