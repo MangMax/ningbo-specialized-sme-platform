@@ -439,7 +439,7 @@ it.each([409, 503])('keeps the basis after preflight failure %i and commits only
   expect(document.body.textContent).toContain('已保存平台对应决定')
 })
 
-it('explains a stale candidate contract block without offering the impossible refresh-submit loop', async () => {
+it('offers explicit candidate revalidation after conflict while preserving the draft', async () => {
   capability()
   const fetch = vi.fn(async (url: string) => {
     if (url.endsWith('browser-preflight')) throw { statusCode: 409, data: { error: { code: 'plan_mismatch', message: 'Source row changed since correspondence decision' } } }
@@ -450,11 +450,44 @@ it('explains a stale candidate contract block without offering the impossible re
   button('不对应').click(); await flushPromises()
   const area = document.querySelector('textarea')!; area.value = '保留原候选的判断依据'; area.dispatchEvent(new Event('input', { bubbles: true })); await flushPromises()
   button('提交决定').click(); await flushPromises()
-  expect(document.body.textContent).toContain('候选来源已变化，当前服务暂不支持更新此候选的来源依据')
+  expect(document.body.textContent).toContain('候选来源已变化，请先重新核验当前来源')
   expect(button('刷新后重新核对')).toBeUndefined()
   expect(button('提交决定')).toBeUndefined()
+  expect(button('重新核验候选')).toBeDefined()
   expect(area.value).toBe('保留原候选的判断依据')
   area.value += '补充'; area.dispatchEvent(new Event('input', { bubbles: true })); await flushPromises()
   expect(button('提交决定')).toBeUndefined()
   expect(fetch.mock.calls.filter(([url]) => url.endsWith('browser-commit'))).toHaveLength(0)
+})
+
+it('revalidates a candidate with a frozen request after response loss then leaves confirmation explicit', async () => {
+  capability()
+  const writes: any[] = []; let key = '', revision = 1
+  const fetch = vi.fn(async (url: string, options?: any) => {
+    if (url.endsWith('browser-preflight')) {
+      expect(options.body.operations).toEqual([{ action: 'revalidate', correspondenceId: 4, expectedRevision: 1 }])
+      key = options.body.idempotencyKey
+      return { planHash: 'a'.repeat(64), impact: { created: 0, unlinked: 0, audit: 1 } }
+    }
+    if (url.endsWith('browser-commit')) {
+      writes.push(JSON.parse(JSON.stringify(options.body))); revision = 2
+      if (writes.length === 1) throw new Error('accepted response lost')
+      return { correspondenceIds: [4] }
+    }
+    if (url.endsWith('/audit')) return { rows: [{ idempotencyKey: key }], total: 1, page: 1, pageSize: 50 }
+    return { id: 4, revision, status: 'candidate', requiresRevalidation: revision === 1 }
+  })
+  vi.stubGlobal('$fetch', fetch)
+  wrapper = mountControl({ id: 4, revision: 1, status: 'candidate', requiresRevalidation: true }); await flushPromises()
+  button('重新核验候选').click(); await flushPromises()
+  const area = document.querySelector('textarea')!; area.value = '核对新来源'; area.dispatchEvent(new Event('input', { bubbles: true })); await flushPromises()
+  button('提交决定').click(); await flushPromises()
+  expect(area.disabled).toBe(true)
+  button('保留草稿并关闭').click(); await flushPromises()
+  button('确认对应').click(); await flushPromises()
+  expect(document.querySelector('textarea')!.value).toBe('核对新来源')
+  button('重试提交').click(); await flushPromises()
+  expect(writes).toHaveLength(2); expect(writes[1]).toEqual(writes[0])
+  expect(document.body.textContent).toContain('候选来源已重新核验，仍待确认')
+  expect(fetch.mock.calls.filter(([url]) => url.endsWith('browser-preflight'))).toHaveLength(1)
 })

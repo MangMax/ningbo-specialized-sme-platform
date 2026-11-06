@@ -74,7 +74,7 @@ describe('bounded correspondence public reads on real SQLite', () => {
       const summary = await response.json() as any
       expect(response.status).toBe(200)
       expect(summary).toMatchObject({ total: 20, page: 1, pageSize: 20 })
-      expect(summary.rows[0]).toMatchObject({ id: ids[0], type: 'event_process', role: 'context_only', status: 'candidate', revision: 1, relationId: f.relation.id, requiresRevalidation: false })
+      expect(summary.rows[0]).toMatchObject({ id: ids[0], type: 'event_process', role: 'context_only', status: 'candidate', revision: 1, relationId: f.relation.id, requiresRevalidation: true })
       expect(summary.rows.map((row: any) => row.id)).toEqual(ids)
       expect(summary.rows[0]).not.toHaveProperty('relation')
       expect(summary.rows[0]).not.toHaveProperty('event')
@@ -109,7 +109,7 @@ describe('bounded correspondence public reads on real SQLite', () => {
       const response = await fetch(app.baseUrl + '/api/roster/correspondences?page=100&pageSize=1&role=context_only&ruleVersion=1')
       const list = await response.json() as any
       expect(response.status).toBe(200)
-      expect(list).toMatchObject({ total: 120, page: 100, rows: [{ id: ids[99], status: 'candidate', revision: 1, requiresRevalidation: false, event: { id: events[99] } }] })
+      expect(list).toMatchObject({ total: 120, page: 100, rows: [{ id: ids[99], status: 'candidate', revision: 1, requiresRevalidation: true, event: { id: events[99] } }] })
       expect(response.headers.get('cache-control')).toBe('no-store')
       expect(meter.bytes).toBeLessThan(128 * 1024)
       meter.reset()
