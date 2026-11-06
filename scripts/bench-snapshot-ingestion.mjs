@@ -15,6 +15,19 @@ import { resetSnapshotFixture, stageSnapshotTemplate } from './lib/snapshot-benc
 import { qualifyMigrationAuthority, readBenchmarkAuthority } from './lib/benchmark-authority.mjs'
 import { forkOwnedChild as fork, reserveLoopbackPort, stopOwnedChild } from './lib/isolated-local-services.mjs'
 
+// Historical measurement matrix only; retained verbatim below, not a current benchmark.
+// Its authority pins 0027_platform_query_title_scope_83; the journal at #592 is
+// 0043_platform_row_title. Its same-SHA 150->300 workload now conflicts with the
+// immutable row-set contract. Requalification/current workload design needs a separate task.
+// Static imports only initialize JS modules; reject before argument handling, artifact
+// qualification, source access, preclone movement, output creation or child startup.
+throw new Error(
+  'Historical snapshot benchmark is not qualified for current normal runs: '
+  + '0027 migration authority does not match the 0043 journal at #592; '
+  + 'same-SHA 150->300 is a row-set conflict, not a valid normal write. '
+  + 'This historical matrix is not revalidated for current migrations or row-set contracts.'
+)
+
 const [sourceArg, outputArg, sha, scaleArg = '1,2,5', transportArg = 'http,mcp', readerArg = '1,2,5', inputMode = 'representative'] = process.argv.slice(2)
 assert.ok(sourceArg && outputArg && /^[a-f0-9]{7,40}$/.test(sha ?? ''))
 assert.ok(['representative', 'large'].includes(inputMode))
