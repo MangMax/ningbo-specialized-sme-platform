@@ -116,9 +116,6 @@ export const OCR_CHANNELS: Record<string, string> = {
   mcp: '代理写回',
 }
 
-/** 通路展示顺序(枚举顺序)。 */
-export const OCR_CHANNEL_ORDER: string[] = ['api', 'upload', 'mcp']
-
 
 // ---------------------------------------------------------------------------
 // 名录生命周期契约(RL-01)—— 新枚举的 code → 中文 映射

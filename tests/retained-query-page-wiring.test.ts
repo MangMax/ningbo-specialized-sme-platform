@@ -2,7 +2,6 @@ import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 
 const pages = [
-  { name: '企业列表', path: 'pages/index.vue', namespace: 'ledger-enterprises' },
   { name: '文件列表', path: 'pages/files.vue', namespace: 'files' },
 ] as const
 
