@@ -1,7 +1,8 @@
 // @vitest-environment happy-dom
-import { mount, flushPromises } from '@vue/test-utils'
+import { enableAutoUnmount, mount, flushPromises } from '@vue/test-utils'
 import { afterEach, expect, it, vi } from 'vitest'
 import TextFilePreview from '../components/preview/TextFilePreview.vue'
+enableAutoUnmount(afterEach)
 afterEach(() => vi.unstubAllGlobals())
 it('isolates late old responses, aborts the old request and retries the failed target', async () => {
   let resolveOld!: (value: Response) => void
@@ -21,7 +22,6 @@ it('isolates late old responses, aborts the old request and retries the failed t
   await flushPromises()
   expect(wrapper.find('h1').text()).toBe('新名单')
   expect(fetcher.mock.calls[2]![0]).toContain('/api/files/new.md?retry=1')
-  wrapper.unmount()
 })
 it('rejects cross-origin URLs before fetching', async () => {
   const fetcher = vi.fn()
@@ -43,7 +43,6 @@ it('retains a successful result with its own filename when the next target fails
   expect(wrapper.find('h1').text()).toBe('旧正文')
   expect(wrapper.text()).toContain('仍显示上次读取的 旧文件.md')
   expect(wrapper.text()).toContain('目标文件：新文件.md')
-  wrapper.unmount()
 })
 
 it('accepts same-origin blobs and rejects binary text payloads', async () => {
@@ -55,7 +54,6 @@ it('accepts same-origin blobs and rejects binary text payloads', async () => {
   await wrapper.setProps({ src: '/api/files/binary.txt' })
   await flushPromises()
   expect(wrapper.text()).toContain('二进制内容')
-  wrapper.unmount()
 })
 
 it('bounds text downloads even without content length and exposes failure without truncating success', async () => {
@@ -64,7 +62,6 @@ it('bounds text downloads even without content length and exposes failure withou
   await flushPromises()
   expect(wrapper.text()).toContain('超过 5 MB')
   expect(wrapper.find('pre').exists()).toBe(false)
-  wrapper.unmount()
 })
 
 it('content conflict retains the last text and retries without presenting replacement bytes', async () => {
@@ -81,5 +78,4 @@ it('content conflict retains the last text and retries without presenting replac
   await wrapper.findAll('button').find(b => b.text() === '重试')!.trigger('click')
   await flushPromises()
   expect(wrapper.text()).toContain('恢复原正文')
-  wrapper.unmount()
 })
