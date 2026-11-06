@@ -1,285 +1,90 @@
 <script setup lang="ts">
-import { useQuery } from '@pinia/colada'
-import { computed } from 'vue'
-import { orderBy } from 'es-toolkit'
-import { TITLES, TITLE_ORDER, TITLE_SHORT, SOURCES, SOURCE_ORDER, EVENTS, EVENT_ORDER } from '~~/lib/labels'
+import { computed, ref, shallowRef, watch } from 'vue'
+import type { PublishedStatistics } from '~~/lib/roster/published-statistics'
+import { TITLES, TITLE_ORDER } from '~~/lib/labels'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
-
-interface Bucket {
-  key: string
-  n: number
+const title = ref('')
+const status = ref('confirmed')
+const page = ref(1)
+const pageSize = ref(25)
+const result = shallowRef<PublishedStatistics>()
+const loading = ref(false)
+const failed = ref(false)
+let sequence = 0
+async function load() {
+  const current = ++sequence
+  const query = { title: title.value || undefined, status: status.value, page: page.value, pageSize: pageSize.value }
+  loading.value = true; failed.value = false
+  try {
+    const next = await $fetch<PublishedStatistics>('/api/statistics/published', { query })
+    if (current === sequence) result.value = next
+  } catch { if (current === sequence) failed.value = true }
+  finally { if (current === sequence) loading.value = false }
 }
-interface Stats {
-  totalRecords: number
-  totalEnterprises: number
-  byTitle: Bucket[]
-  bySource: Bucket[]
-  byEvent: Bucket[]
-  byDistrict: Bucket[]
-  byYear: Bucket[]
-}
-
+watch([title, status, page, pageSize], load, { immediate: true })
+function select(code: string, state: string) { title.value = code; status.value = state; page.value = 1 }
+const target = computed(() => `${TITLES[title.value] ?? '全部称号'} · ${status.value === 'pending' ? '身份待核' : '累计公布'} · 第 ${page.value} 页`)
 const apiGet = $fetch as unknown as <T>(url: string) => Promise<T>
-const { data, isLoading } = useQuery({
-  key: () => ['stats'],
-  query: () => apiGet<Stats>('/api/stats'),
-})
-
-/**
- * 称号系列色 —— 与台账里的称号徽章同一族:由高到低「藏青 → 中蓝 → 钢灰」。
- * 徽章本身是实心/浅底/描边三种,环图上不能照搬,所以取同族的三个色阶,
- * 保证「小巨人最深」这个直觉在列表和图表里一致。
- */
-const TITLE_COLORS: Record<string, string> = {
-  little_giant: 'var(--chart-1)',
-  specialized_sme: 'var(--chart-2)',
-  innovative_sme: 'var(--chart-4)',
-}
-/** 来源色沿用表格里的方标语义:经信局藏青,工信部金。 */
-const SOURCE_COLORS: Record<string, string> = {
-  jxj: 'var(--chart-1)',
-  miit: 'var(--chart-3)',
-}
-
-/** 按给定顺序排列,未知键置后并按计数降序。 */
-function ordered(buckets: Bucket[] | undefined, order: string[]): Bucket[] {
-  if (!buckets) return []
-  const rank = (b: Bucket) => {
-    const i = order.indexOf(b.key)
-    return i === -1 ? order.length : i
-  }
-  return orderBy(buckets, [rank, (b) => b.n], ['asc', 'desc'])
-}
-
-const titles = computed(() => ordered(data.value?.byTitle, TITLE_ORDER))
-const sources = computed(() => ordered(data.value?.bySource, SOURCE_ORDER))
-const events = computed(() => ordered(data.value?.byEvent, EVENT_ORDER))
-/** 区县按计数降序,全部列出(不截断成 Top 20 —— 清单本来就该看得全)。 */
-const districts = computed(() => orderBy(data.value?.byDistrict ?? [], [(b) => b.n], ['desc']))
-const years = computed(() => data.value?.byYear ?? [])
-
-const maxOf = (b: Bucket[]) => Math.max(1, ...b.map((x) => x.n))
-const titleMax = computed(() => maxOf(titles.value))
-const eventMax = computed(() => maxOf(events.value))
-const districtMax = computed(() => maxOf(districts.value))
-
-/** 称号环图:label 为展示文案,n 为计数,color 取称号色阶。 */
-const titleRows = computed(() =>
-  titles.value.map((b) => ({
-    key: b.key,
-    label: TITLES[b.key] ?? b.key,
-    n: b.n,
-    color: TITLE_COLORS[b.key] ?? 'var(--chart-4)',
-  })),
-)
-/** 多系列图(称号环图)的图例:键与数据行一一对应。 */
-const titleCats = computed(() =>
-  Object.fromEntries(titleRows.value.map((r) => [r.key, { name: r.label, color: r.color }])),
-)
-
-/** 年份趋势:单系列折线,只取可下钻的四位年份。 */
-const yearRows = computed(() =>
-  orderBy(
-    years.value.filter((b) => /^\d{4}$/.test(b.key)),
-    [(b) => b.key],
-    ['asc'],
-  ).map((b) => ({ key: b.key, label: b.key, n: b.n, color: 'var(--chart-1)' })),
-)
-const countCats = { n: { name: '记录数', color: 'var(--chart-1)' } }
-
-/**
- * 台账页的筛选链接,如 `/?title=little_giant&view=title`。
- *
- * `view=title` 不能省:这一页的每个桶计的都是**企业 × 称号**行数(`byEvent` / `byYear` /
- * `bySource` 全按记录侧聚合),而合并后的台账**默认落在「按企业」**上。少了这个参数,
- * 点「工信部 8,123 条」会落到一个「有工信部记录的企业」列表上 —— 数字与落到的行**对不上**,
- * 而且是静默的:页面看起来正常,只是口径已经不是刚才那个数了。
- */
-const drillTo = (param: string, value: string) =>
-  `/?${param}=${encodeURIComponent(value)}&view=title`
-
-/** 户均记录数,保留一位小数。 */
-const recordsPerEnterprise = computed(() => {
-  const e = data.value?.totalEnterprises ?? 0
-  if (!e) return '—'
-  return ((data.value?.totalRecords ?? 0) / e).toFixed(2)
-})
-
-const kpis = computed(() => [
-  {
-    label: '记录总数',
-    value: data.value?.totalRecords ?? 0,
-    hint: '每条 = 企业 × 称号 × 来源',
-  },
-  {
-    label: '企业总数',
-    value: data.value?.totalEnterprises ?? 0,
-    hint: `户均 ${recordsPerEnterprise.value} 条记录`,
-  },
-  {
-    label: '专精特新“小巨人”',
-    value: titles.value.find((t) => t.key === 'little_giant')?.n ?? 0,
-    hint: '国家级,仅工信部名单',
-  },
-  {
-    label: '覆盖区县',
-    value: districts.value.length,
-    hint: '含大榭、保税区等独立属地',
-  },
-])
+const { data: legacy, error: districtError, refresh: retryDistrict, status: districtStatus } = await useAsyncData('stats-legacy-districts', () => apiGet<{ byDistrict: { key: string; n: number }[] }>('/api/stats'))
+const districts = computed(() => legacy.value?.byDistrict ?? [])
+const districtMax = computed(() => Math.max(1, ...districts.value.map(b => b.n)))
 </script>
 
 <template>
   <div class="flex flex-col gap-5">
-    <PageHeader
-      title="统计概览"
-      description="按记录计数,点任意一项跳到台账页的对应筛选。"
-    />
-
-    <div class="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-      <template v-if="isLoading">
-        <Skeleton v-for="i in 4" :key="i" class="h-[104px] rounded-lg" />
-      </template>
-      <StatTile
-        v-for="k in kpis"
-        v-else
-        :key="k.label"
-        :label="k.label"
-        :value="k.value"
-        :hint="k.hint"
-      />
-    </div>
-
-    <div class="grid gap-5 lg:grid-cols-2">
-      <Card >
-        <CardHeader class="gap-1">
-          <CardTitle class="text-base">称号梯度</CardTitle>
-          <CardDescription>由高到低:小巨人 → 专精特新中小企业 → 创新型中小企业</CardDescription>
-        </CardHeader>
-        <CardContent class="flex flex-1 flex-col gap-4">
-          <DonutChart
-            :data="titleRows"
-            name-key="label"
-            value-key="n"
-            :categories="titleCats"
-            :height="200"
-            :loading="isLoading"
-            hide-legend
-            empty-label="暂无数据"
-            aria-label="称号梯度分布"
-          />
-          <div class="mt-auto flex flex-wrap gap-1.5 border-t pt-4">
-            <DrillChip
-              v-for="r in titleRows"
-              :key="r.key"
-              :to="drillTo('title', r.key)"
-              :label="TITLE_SHORT[r.key] ?? r.label"
-              :value="r.n"
-              :mark="r.color"
-            />
-            <span v-if="!isLoading && !titleRows.length" class="text-muted-foreground text-xs">
-              暂无数据
-            </span>
-          </div>
-        </CardContent>
-      </Card>
-
-      <Card >
-        <CardHeader class="gap-1">
-          <CardTitle class="text-base">来源与事件构成</CardTitle>
-          <CardDescription>两个来源并列记录;一条记录可含认定、复核等多个事件</CardDescription>
-        </CardHeader>
-        <CardContent class="grid flex-1 gap-x-8 gap-y-5 sm:grid-cols-2">
-          <section class="flex flex-col gap-1">
-            <h3 class="text-muted-foreground mb-1 text-xs font-medium">来源</h3>
-            <BarRow
-              v-for="b in sources"
-              :key="b.key"
-              :label="SOURCES[b.key] ?? b.key"
-              :value="b.n"
-              :max="maxOf(sources)"
-              :color="SOURCE_COLORS[b.key] ?? 'var(--chart-1)'"
-              :to="drillTo('source', b.key)"
-            />
-            <p class="text-muted-foreground mt-auto border-t pt-3 text-[13px] leading-relaxed">
-              同一企业同一称号可能两个来源各一条记录,是并列来源不是重复。
-            </p>
-          </section>
-          <section class="flex flex-col gap-1">
-            <h3 class="text-muted-foreground mb-1 text-xs font-medium">事件</h3>
-            <BarRow
-              v-for="b in events"
-              :key="b.key"
-              :label="EVENTS[b.key] ?? b.key"
-              :value="b.n"
-              :max="eventMax"
-              color="var(--chart-1)"
-              :to="drillTo('eventType', b.key)"
-            />
-            <p class="text-muted-foreground mt-auto border-t pt-3 text-[13px] leading-relaxed">
-              工信部名单只记「维护」,不分认定与复核;「入库培育」尚不构成称号。
-            </p>
-          </section>
-        </CardContent>
-      </Card>
-    </div>
-
-    <div class="grid gap-5 lg:grid-cols-2">
-      <Card >
-        <CardHeader class="gap-1">
-          <CardTitle class="text-base">区县分布</CardTitle>
-          <CardDescription>按记录属地计数,共 {{ districts.length }} 个属地</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div class="grid gap-x-8 gap-y-0.5 sm:grid-cols-2">
-            <BarRow
-              v-for="b in districts"
-              :key="b.key"
-              :label="b.key"
-              :value="b.n"
-              :max="districtMax"
-              color="var(--chart-1)"
-              :to="drillTo('district', b.key)"
-            />
-          </div>
-          <p v-if="!isLoading && !districts.length" class="text-muted-foreground text-xs">
-            暂无数据
-          </p>
-        </CardContent>
-      </Card>
-
-      <Card >
-        <CardHeader class="gap-1">
-          <CardTitle class="text-base">年份趋势</CardTitle>
-          <CardDescription>按记录事件的年份计数,缺失年份不计入</CardDescription>
-        </CardHeader>
-        <CardContent class="flex flex-1 flex-col gap-4">
-          <LineChart
-            :data="yearRows"
-            x-axis="label"
-            :categories="countCats"
-            :height="240"
-            :loading="isLoading"
-            dot-variant="default"
-            hide-legend
-            empty-label="暂无数据"
-            aria-label="年份趋势"
-          />
-          <div class="mt-auto flex flex-wrap gap-1.5 border-t pt-4">
-            <DrillChip
-              v-for="r in yearRows"
-              :key="r.key"
-              :to="drillTo('year', r.key)"
-              :label="r.label"
-              :value="r.n"
-            />
-            <span v-if="!isLoading && !yearRows.length" class="text-muted-foreground text-xs">
-              暂无数据
-            </span>
-          </div>
-        </CardContent>
-      </Card>
-    </div>
+    <PageHeader title="统计概览" description="按称号查看正式公布规模，数字可查看同口径企业与出处。" />
+    <section class="flex flex-col gap-4" aria-labelledby="published-title">
+      <div class="flex items-center justify-between gap-3"><h2 id="published-title" class="text-lg font-semibold">公布名单累计企业数</h2><Button variant="outline" :disabled="loading" @click="load">刷新</Button></div>
+      <p class="text-muted-foreground">同企业同称号只计一次，保留失效、迁出、注销及无平台匹配企业。不同称号可重叠，不能直接相加。</p>
+      <div class="grid gap-4 lg:grid-cols-3">
+        <Card v-for="code in TITLE_ORDER" :key="code">
+          <CardHeader><CardTitle>{{ TITLES[code] }}</CardTitle><CardDescription>正式认定依据支持的累计企业数</CardDescription></CardHeader>
+          <CardContent class="flex flex-col items-start gap-3">
+            <Skeleton v-if="!result && loading" class="h-10 w-24" />
+            <template v-else-if="result">
+              <Button variant="link" class="h-auto p-0 text-3xl tabular-nums" :aria-label="`${TITLES[code]}累计公布明细`" @click="select(code, 'confirmed')">{{ result.titles.find(t => t.titleCode === code)?.confirmed.toLocaleString('zh-CN') }}</Button>
+              <Button variant="ghost" @click="select(code, 'pending')">身份待核 {{ result.titles.find(t => t.titleCode === code)?.pending }} 家 · 查看明细</Button>
+            </template>
+            <span v-else>尚未加载</span>
+          </CardContent>
+        </Card>
+      </div>
+    </section>
+    <Card>
+      <CardHeader>
+        <CardTitle>公布企业明细</CardTitle>
+        <CardDescription>正在查询：{{ target }}。仅列有正式认定出处的企业；复核不单独增加企业。</CardDescription>
+        <p v-if="result" class="text-sm">显示：{{ TITLES[result.title ?? ''] ?? '全部称号' }} · {{ result.status === 'pending' ? '身份待核' : '累计公布' }} · 第 {{ result.page }} 页</p>
+      </CardHeader>
+      <CardContent class="relative flex flex-col gap-4" :aria-busy="loading">
+        <TableFailureState v-if="failed" :title="`${target}加载失败`" :compact="!!result" :pending="loading" :description="result ? '保留上次成功结果；请重试当前查询。' : '数据尚未加载，请重试。'" @retry="load" />
+        <TableLoadingStatus :loading="loading" kind="ledger" label="正在加载公布明细" />
+        <div v-if="result" class="flex flex-col divide-y">
+          <p v-if="!result.rows.length" class="py-6 text-muted-foreground">此口径暂无企业</p>
+          <article v-for="row in result.rows" :key="`${row.enterpriseId}/${row.titleCode}`" class="flex min-w-0 flex-col gap-2 py-4">
+            <NuxtLink :to="`/enterprises/${row.enterpriseId}`" class="font-medium underline underline-offset-4">{{ row.name }}</NuxtLink>
+            <p>{{ TITLES[row.titleCode] }} · {{ row.status === 'pending' ? '身份待核' : '正式公布' }}</p>
+            <p class="break-all text-muted-foreground">{{ row.uscc ?? '未记录统一社会信用代码' }}</p>
+            <ul class="flex flex-col gap-2">
+              <li v-for="evidence in row.evidence" :key="evidence.evidenceId" class="break-all text-sm">{{ evidence.sourceFile }} · {{ evidence.attachment ?? '附件未记录' }} · 序号 {{ evidence.listNo ?? '未记录' }} · 页码 {{ evidence.page ?? '未记录' }}</li>
+            </ul>
+          </article>
+        </div>
+        <TablePagination v-if="result" :page="result.page" :page-size="result.pageSize" :total="result.total" unit="家·称号" :loading="loading || failed" @update:page="page = $event" @update:page-size="pageSize = $event; page = 1" />
+      </CardContent>
+    </Card>
+    <Card>
+      <CardHeader><CardTitle>区县分布（旧口径）</CardTitle><CardDescription>按记录属地统计，尚未替换为当前有效企业数。</CardDescription></CardHeader>
+      <CardContent>
+        <TableFailureState v-if="districtError" title="旧口径区县分布加载失败" @retry="retryDistrict()" />
+        <Skeleton v-if="districtStatus === 'pending'" class="h-40 w-full" />
+        <div v-else class="grid gap-x-8 sm:grid-cols-2">
+          <BarRow v-for="bucket in districts" :key="bucket.key" :label="bucket.key" :value="bucket.n" :max="districtMax" color="var(--chart-1)" />
+          <p v-if="!districts.length && !districtError">暂无区县数据</p>
+        </div>
+      </CardContent>
+    </Card>
   </div>
 </template>
