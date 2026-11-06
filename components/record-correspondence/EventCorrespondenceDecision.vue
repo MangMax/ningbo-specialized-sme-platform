@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import { computed, inject, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { ARCHIVE_CONFLICT_LABELS, type EventArchiveCandidate, type EventArchivePage } from '~~/lib/roster/event-archive-candidates'
+import type { EventArchiveCandidate, EventArchivePage } from '~~/lib/roster/event-archive-candidates'
 import { CORRESPONDENCE_ROLES, eventDecisionText, type CorrespondenceDetail, type EventSource } from '~~/lib/roster/correspondence-view'
 import { TITLES } from '~~/lib/labels'
 import { REVIEW_DRAFTS_KEY } from '~/composables/useReviewDrafts'
 import { refreshCorrespondenceViews } from '~/composables/useCorrespondenceReadback'
 import { DECISION_EFFECTS, platformDecisionSummary, replacementDecisionOptions } from './event-correspondence-presentation'
 import SourceReader from './SourceReader.vue'
+import EventCandidateComparison from './EventCandidateComparison.vue'
 import OfficialEvidence from './OfficialEvidence.vue'
 import TablePagination from '@/components/TablePagination.vue'
 import { Button } from '@/components/ui/button'
@@ -49,7 +50,6 @@ const currentSummary = computed(() => platformDecisionSummary(props.candidate, (
 const official = computed(() => point.value && 'event' in point.value ? (point.value as CorrespondenceDetail).event ?? props.event : props.event)
 const candidate = computed(() => action.value === 'correct' ? target.value : props.candidate)
 const supportRole = computed(() => action.value === 'correct' ? target.value?.edge.role : point.value?.role ?? props.edge.role)
-const conflicts = computed(() => candidate.value?.conflicts?.map(code => ARCHIVE_CONFLICT_LABELS[code] ?? code).join('；'))
 const title = computed(() => ({ confirm: '确认对应', reject: '不对应', unlink: '取消对应', correct: '改选记录', revalidate: '重新核验对应' })[action.value ?? 'confirm'])
 const draftStore = inject(REVIEW_DRAFTS_KEY, null)
 const unregisterDraft = draftStore?.register({
@@ -153,7 +153,7 @@ async function preflight() {
     if (token !== generation) return
     request.value ??= { idempotencyKey: crypto.randomUUID(), basis: basis.value.trim(), operations: [operation] }
     const result = await $fetch<typeof plan.value>('/api/roster/correspondences/browser-preflight', { method: 'POST', body: request.value })
-    if (token === generation) plan.value = result
+    if (token === generation) { plan.value = result; return true }
   } catch (cause) { if (token === generation) showError(cause) }
   finally { if (token === generation) pending.value = false }
 }
@@ -161,7 +161,7 @@ function showError(cause: unknown) {
   const failure = cause as { statusCode?: number; status?: number; data?: { error?: { code?: string; message?: string } } }
   const code = failure.data?.error?.code
   conflict.value = failure.statusCode === 409 || failure.status === 409 || ['ambiguous_candidate', 'state_changed'].includes(code ?? (cause instanceof Error ? cause.message : ''))
-  error.value = conflict.value ? '对应或来源已变化，本次没有覆盖新决定。草稿保留；刷新后重新核对并预检。' : `提交未完成，草稿和预检保留，可重试。${code ? `（${code}）` : ''}`
+  error.value = conflict.value ? '对应或来源已变化，本次没有覆盖新决定。草稿保留；刷新后重新核对并提交。' : `提交未完成，草稿和预检保留，可重试。${code ? `（${code}）` : ''}`
 }
 async function readback(token: number, committed: { correspondenceIds: number[] }, key: string) {
   const points = await Promise.all(committed.correspondenceIds.map(async id => {
@@ -185,8 +185,16 @@ async function readback(token: number, committed: { correspondenceIds: number[] 
   if (token !== generation) return
   await refreshCorrespondenceViews()
   if (token !== generation) return
-  success.value = '已提交并读回对应与审计；详情、对比和原行按当前来源重新读取。'
+  success.value = '已保存平台对应决定。已提交并读回对应与审计；详情、对比和原行按当前来源重新读取。年度最终结果与来源变化处理仍需分别核对。'
   error.value = ''
+}
+async function submit() {
+  if (pending.value || conflict.value || success.value) return
+  const token = generation
+  if (!attempted.value && !receipt.value) {
+    if (!await preflight() || token !== generation) return
+  }
+  await commit()
 }
 async function commit() {
   if (!plan.value || !request.value || pending.value || conflict.value) return
@@ -215,17 +223,17 @@ async function refreshConflict() {
 
 <template>
   <div class="flex min-w-0 flex-col gap-2" data-testid="event-correspondence-decision">
-    <p v-if="enabled !== true" class="text-muted-foreground text-[13px]">此页面当前只读，提交能力未开启或未能确认。</p>
+    <p v-if="enabled !== true" class="text-muted-foreground text-base">此页面当前只读，提交能力未开启或未能确认。</p>
     <div v-else class="flex flex-wrap gap-2">
       <template v-if="!existing || existing.status === 'candidate'"><Button variant="outline" size="sm" @click="open('confirm')">确认对应</Button><Button variant="ghost" size="sm" @click="open('reject')">不对应</Button></template>
       <template v-else-if="existing.status === 'confirmed'"><Button variant="ghost" size="sm" @click="open('unlink')">取消对应</Button><Button variant="outline" size="sm" @click="open('correct')">改选记录</Button><Button v-if="existing.requiresRevalidation || point?.requiresRevalidation" variant="outline" size="sm" @click="open('revalidate')">重新核验对应</Button></template>
-      <p v-else class="text-muted-foreground text-[13px]">{{ existing.status === 'rejected' ? '已否定候选' : '已取消对应' }}，保留历史决定；不自动重新推荐。</p>
+      <p v-else class="text-muted-foreground text-base">{{ existing.status === 'rejected' ? '已否定候选' : '已取消对应' }}，保留历史决定；不自动重新推荐。</p>
     </div>
     <Dialog :open="action !== null" @update:open="value => { if (!value && !pending) action = null }">
       <DialogContent class="flex max-h-[85dvh] min-w-0 flex-col overflow-hidden sm:max-w-4xl">
-        <DialogHeader><DialogTitle>{{ title }}</DialogTitle><DialogDescription>核对正式事项与平台记录，填写依据，再预检和提交。由页面代理提交，未识别个人身份。</DialogDescription></DialogHeader>
+        <DialogHeader><DialogTitle>{{ title }}</DialogTitle><DialogDescription>核对正式事项与平台记录，填写依据后提交决定。系统会先检查来源与当前决定，保存后核实结果。</DialogDescription></DialogHeader>
         <div class="flex min-h-0 min-w-0 flex-col gap-4 overflow-y-auto">
-        <section class="flex min-w-0 flex-col gap-2 text-sm leading-6 [overflow-wrap:anywhere]" aria-label="本次操作与影响">
+        <section class="flex min-w-0 flex-col gap-2 text-base leading-6 [overflow-wrap:anywhere]" aria-label="本次操作与影响">
           <p><span class="font-medium">本次正式事项：</span>{{ official ? `${TITLES[official.record.titleCode] ?? official.record.titleCode} · ${eventDecisionText(official)}` : '事项信息未记录，请核对正式公布依据' }}</p>
           <p><span class="font-medium">{{ action === 'correct' ? '当前对应记录' : '本次平台记录' }}：</span>{{ currentSummary }}</p>
           <p>{{ DECISION_EFFECTS[action ?? 'confirm'] }}</p>
@@ -242,8 +250,9 @@ async function refreshConflict() {
           <p v-if="replacementFailed" role="alert">改选候选第 {{ replacementPage }} 页读取失败，保留已有结果。<Button variant="outline" size="sm" @click="loadReplacements(replacementPage)">重试候选</Button></p>
           <TablePagination v-if="replacements" :page="replacements.page" :page-size="replacements.pageSize" :total="replacements.total" unit="条归档记录" :loading="pending" @update:page="loadReplacements" />
         </template>
+        <EventCandidateComparison v-if="candidate?.evidence?.identity && candidate.evidence.temporal" :candidate="candidate" />
         <div class="grid min-w-0 gap-4 sm:grid-cols-2">
-          <section v-if="official" class="flex min-w-0 flex-col gap-2 text-[13px] leading-5" aria-label="正式公布依据">
+          <section v-if="official" class="flex min-w-0 flex-col gap-2 text-base leading-6" aria-label="正式公布依据">
             <h3 class="font-medium">正式公布依据</h3>
             <p>{{ TITLES[official.record.titleCode] ?? official.record.titleCode }} · {{ eventDecisionText(official) }} · 第 {{ official.batchSeq ?? '未记录' }} 批</p>
             <p class="break-words [overflow-wrap:anywhere]">公布信用代码：{{ official.record.usccRaw ?? '未提供' }}</p>
@@ -251,20 +260,18 @@ async function refreshConflict() {
             <p v-if="!official.evidence.length" class="text-muted-foreground">未记录正式文件出处。</p>
           </section>
           <section class="min-w-0" aria-label="待核平台原行">
-            <h3 class="mb-2 text-[13px] font-medium">待核平台原行</h3>
+            <h3 class="mb-2 text-base font-medium">待核平台原行</h3>
             <SourceReader v-if="action !== 'correct' || target" :key="action === 'correct' ? target!.edge.relationId : edge.relationId" kind="relation" :id="action === 'correct' ? target!.edge.relationId : edge.relationId" :return-to="back" presentation="business" compact read-only />
           </section>
         </div>
-        <p v-if="conflicts" class="text-[13px] leading-5">待核依据：{{ conflicts }}</p>
-        <p v-if="supportRole" class="text-muted-foreground text-[13px] leading-5">对应范围：{{ CORRESPONDENCE_ROLES[supportRole] ?? supportRole }}。<template v-if="supportRole === 'context_only'">仅说明流程背景，不代表平台结论与公布一致。</template></p>
+        <p v-if="supportRole" class="text-muted-foreground text-base leading-6">对应范围：{{ CORRESPONDENCE_ROLES[supportRole] ?? supportRole }}。<template v-if="supportRole === 'context_only'">仅说明流程背景，不代表平台结论与公布一致。</template></p>
         </div>
         <div class="flex shrink-0 flex-col gap-2 border-t pt-3 text-sm [overflow-wrap:anywhere]" data-testid="decision-footer">
         <div class="flex flex-col gap-2"><Label :for="`correspondence-basis-${edge.eventId}-${edge.relationId}`">核对依据（必填）</Label><Textarea class="max-h-24 overflow-y-auto resize-none" :id="`correspondence-basis-${edge.eventId}-${edge.relationId}`" v-model="basis" :disabled="pending || !!receipt || attempted" maxlength="4000" placeholder="说明双方原行、年份、批次及事项的核对依据" /></div>
-        <p v-if="plan && !receipt" role="status">{{ attempted ? '提交结果尚待确认，请使用原请求重试' : '预检通过，尚未提交' }}：新增对应 {{ plan.impact.created }} 条，解除对应 {{ plan.impact.unlinked }} 条，保留操作记录 {{ plan.impact.audit }} 条。</p>
+        <p v-if="attempted && !receipt && !pending && !success" role="status">提交结果尚待确认，请使用原请求重试。</p>
         <p v-if="error" role="alert">{{ error }}</p><p v-if="success" role="status">{{ success }}</p>
         <div class="flex flex-wrap gap-2">
-          <Button v-if="!plan && !conflict && !success" :disabled="!canPreflight" @click="preflight">预检决定</Button>
-          <Button v-if="plan && !conflict && !success" :disabled="pending" @click="commit">{{ receipt ? '重试读回' : error ? '重试提交' : '提交决定' }}</Button>
+          <Button v-if="!conflict && !success" :disabled="pending || (!attempted && !receipt && !canPreflight)" @click="submit">{{ pending ? '正在保存…' : receipt ? '重试读回' : attempted ? '重试提交' : '提交决定' }}</Button>
           <Button v-if="conflict" variant="outline" :disabled="pending" @click="refreshConflict">刷新后重新核对</Button>
           <Button variant="ghost" :disabled="pending" @click="action = null">{{ success ? '完成' : '保留草稿并关闭' }}</Button>
         </div>

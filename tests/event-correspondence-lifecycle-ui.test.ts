@@ -29,7 +29,7 @@ for (const [axis, other] of axes) for (const state of states) {
         if (reads === 1 && state === 'initial_read_failed') throw new Error('initial point unavailable')
         return point
       }
-      if (url.endsWith('browser-preflight')) { preflights.push(JSON.parse(JSON.stringify(options.body))); return { planHash: 'a'.repeat(64), impact: { created: 0, unlinked: 1, audit: 1 } } }
+      if (url.endsWith('browser-preflight')) { preflights.push(JSON.parse(JSON.stringify(options.body))); if (options.body.basis === 'B basis' || options.body.basis === 'A recovered basis') throw new Error('preflight unavailable'); return { planHash: 'a'.repeat(64), impact: { created: 0, unlinked: 1, audit: 1 } } }
       if (url.endsWith('browser-commit')) {
         writes.push(JSON.parse(JSON.stringify(options.body)))
         if (state === 'unknown_commit') throw { statusCode: 503 }
@@ -42,13 +42,15 @@ for (const [axis, other] of axes) for (const state of states) {
     if (state !== 'not_started') {
       await click('取消对应')
       if (['editable_draft', 'unknown_commit', 'receipt_readback_pending'].includes(state)) {
-        await enter('A basis'); await click('预检决定')
-        expect(preflights[0].operations).toEqual([{ action: 'decide', correspondenceId: 9, expectedRevision: 2, status: 'unlinked' }])
-        if (state !== 'editable_draft') await click('提交决定')
+        await enter('A basis')
+        if (state !== 'editable_draft') {
+          await click('提交决定')
+          expect(preflights[0].operations).toEqual([{ action: 'decide', correspondenceId: 9, expectedRevision: 2, status: 'unlinked' }])
+        }
       }
     }
     await wrapper.setProps({ edge: other, existing: null }); await flushPromises()
-    await click('确认对应'); await enter('B basis'); await click('预检决定')
+    await click('确认对应'); await enter('B basis'); await click('提交决定')
     const b = preflights.at(-1)
     expect(b.basis).toBe('B basis'); expect(b.operations).toEqual([{ action: 'create', edge: other, status: 'confirmed' }])
     if (preflights.length > 1) expect(b.idempotencyKey).not.toBe(preflights[0].idempotencyKey)
@@ -66,11 +68,11 @@ for (const [axis, other] of axes) for (const state of states) {
       // Failed reads may recover on reopening or explicit refresh; interrupted reads must resume.
       if (state === 'initial_read_failed' && button('刷新后重新核对')) await click('刷新后重新核对')
       await enter('A recovered basis')
-      console.info('lifecycle-observed', JSON.stringify({ axis, state, reads, preflightDisabled: button('预检决定')?.disabled, refresh: !!button('刷新后重新核对') }))
+      console.info('lifecycle-observed', JSON.stringify({ axis, state, reads, preflightDisabled: button('提交决定')?.disabled, refresh: !!button('刷新后重新核对') }))
       expect(document.querySelector('textarea')!.disabled).toBe(false)
       if (state === 'initial_read_inflight' || state === 'initial_read_failed') expect(reads).toBe(2)
-      expect(button('预检决定')!.disabled).toBe(false)
-      await click('预检决定')
+      expect(button('提交决定')!.disabled).toBe(false)
+      await click('提交决定')
       const a = preflights.at(-1)
       expect(a.basis).toBe('A recovered basis')
       expect(a.operations).toEqual([{ action: 'decide', correspondenceId: 9, expectedRevision: 2, status: 'unlinked' }])
@@ -80,7 +82,7 @@ for (const [axis, other] of axes) for (const state of states) {
         expect(document.querySelector('textarea')!.value).toBe('B basis')
         await wrapper.setProps({ edge, existing: point }); await flushPromises(); await click('取消对应')
         expect(document.querySelector('textarea')!.value).toBe('A recovered basis')
-        expect(button('提交决定')).toBeDefined()
+        expect(button('提交决定') ?? button('重试提交')).toBeDefined()
       }
       expect(reads).toBe(completedReads)
 
@@ -113,7 +115,7 @@ for (const [axis, other] of axes) for (const interrupted of ['point', 'choices']
     const trigger = document.querySelector('#replacement-record') as HTMLButtonElement
     trigger.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, ctrlKey: false })); await flushPromises()
     ;(document.querySelector('[role="option"]') as HTMLElement).dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); await flushPromises()
-    await enter('A correction checked'); await click('预检决定')
+    await enter('A correction checked'); await click('提交决定')
     expect(preflights[0].operations).toEqual([{ action: 'correct', correspondenceId: 9, expectedRevision: 2, edge: candidate.edge }])
     const first = preflights[0]
     for (let i = 0; i < 2; i++) {
@@ -121,7 +123,7 @@ for (const [axis, other] of axes) for (const interrupted of ['point', 'choices']
       expect(document.querySelector('textarea')!.value).toBe('B correction interruption draft')
       await wrapper.setProps({ edge, existing: point }); await flushPromises(); await click('改选记录')
       expect(document.querySelector('textarea')!.value).toBe('A correction checked')
-      expect(button('提交决定')).toBeDefined()
+      expect(button('提交决定') ?? button('重试提交')).toBeDefined()
     }
     expect(pointReads).toBe(interrupted === 'point' ? 2 : 1)
     expect(discoveries).toBe(interrupted === 'point' ? 1 : 2)

@@ -340,7 +340,7 @@ it('keeps an unresolved correspondence request bound when returning or leaving t
   await click('人工核对平台候选'); await click('确认对应')
   const input = document.querySelector('textarea')!
   input.value = '保留未知提交请求'; input.dispatchEvent(new Event('input', { bubbles: true })); await flushPromises()
-  await click('预检决定'); await click('提交决定'); await click('关闭'); await click('返回认定记录')
+  await click('提交决定'); await click('关闭'); await click('返回认定记录')
   expect(button('切换并丢弃').disabled).toBe(true)
   expect(router.currentRoute.value.query.reviewEventId).toBe('11')
   await click('继续填写'); await router.push('/'); await flushPromises()
