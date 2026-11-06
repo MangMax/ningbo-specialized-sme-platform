@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import { computed, nextTick, ref, shallowRef, watch } from 'vue'
+import { computed, ref, shallowRef, watch } from 'vue'
 import { MOVEMENT_KINDS, type MovementStatistics, type MovementKind } from '~~/lib/roster/movement-statistics'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { ArrowDownLeft, ArrowUpRight, Minus, RefreshCw } from '@lucide/vue'
 const labels = { moved_in: '迁入', moved_out: '迁出', cancelled: '注销' }
 const year = ref('all')
 const kind = ref<MovementKind>('moved_in')
@@ -18,13 +18,7 @@ const statusLabel = (s: string) => s === 'pending' ? '待核' : s === 'unknown' 
 const yearLabel = (y?: string) => !y || y === 'all' ? '全部发生年' : y === 'unknown' ? '发生年未知' : `${y} 年`
 const target = computed(() => `${yearLabel(year.value)} · ${labels[kind.value]} · ${statusLabel(status.value)} · 第 ${page.value} 页`)
 const open = ref(false)
-const detailRegion = ref<HTMLDivElement>()
-async function openDetail() {
-  open.value = true
-  await nextTick()
-  detailRegion.value?.focus({ preventScroll: true })
-  detailRegion.value?.scrollIntoView({ block: 'nearest' })
-}
+function openDetail() { open.value = true }
 let sequence = 0
 async function load() {
   const current = ++sequence
@@ -39,51 +33,20 @@ async function load() {
 watch([year, kind, status, page, pageSize], load, { immediate: true })
 function select(k: MovementKind, s: string) { year.value = result.value?.year ?? 'all'; kind.value = k; status.value = s; page.value = 1; void openDetail() }
 </script>
-
 <template>
-  <section class="flex flex-col gap-4" aria-labelledby="movements-title">
-    <div class="flex flex-wrap items-center justify-between gap-3">
-      <h2 id="movements-title" class="text-lg font-semibold">迁入、迁出及注销</h2>
-      <Button variant="outline" :disabled="loading" @click="load">刷新主体事实</Button>
-    </div>
-    <p>范围为全部已录入企业，不限于正式公布企业。每种事实按企业去重，是发生过的事实而非互斥当前状态，同企业可既迁出又迁入。</p>
-    <div class="flex flex-wrap items-center gap-3">
-      <span id="movement-year-label">发生年</span>
-      <Select :model-value="year" @update:model-value="year = String($event); page = 1">
-        <SelectTrigger class="w-44" aria-labelledby="movement-year-label"><SelectValue /></SelectTrigger>
-        <SelectContent>
-          <SelectItem value="all">全部发生年</SelectItem>
-          <SelectItem value="unknown">发生年未知</SelectItem>
-          <SelectItem v-for="y in result?.years ?? []" :key="y" :value="y">{{ y }} 年</SelectItem>
-        </SelectContent>
-      </Select>
-    </div>
-    <p class="text-muted-foreground">采用当前修订、已确认且证据完整的断言；未知发生年包含在累计中并单列。未确认、依据不完整及冲突单列待核，不用采集年代替发生年。</p>
-    <div class="grid gap-4 lg:grid-cols-3">
-      <Card v-for="bucket in buckets" :key="bucket.kind">
-        <CardHeader><CardTitle>{{ labels[bucket.kind] }}</CardTitle><CardDescription>{{ yearLabel(result?.year) }} · 企业数</CardDescription></CardHeader>
-        <CardContent class="flex flex-col items-start gap-2">
-          <Button variant="link" class="h-auto p-0 text-3xl tabular-nums" :aria-label="`${labels[bucket.kind]}已确认明细`" @click="select(bucket.kind, 'confirmed')">{{ bucket.confirmed ?? '—' }}</Button>
-          <Button variant="ghost" @click="select(bucket.kind, 'unknown')">其中发生年未知 {{ bucket.unknown ?? '—' }} 家</Button>
-          <Button variant="ghost" @click="select(bucket.kind, 'pending')">待核 {{ bucket.pending ?? '—' }} 家 · 查看明细</Button>
-        </CardContent>
-      </Card>
-    </div>
-    <p v-if="result">显示：{{ yearLabel(result.year) }} · {{ result.kind ? labels[result.kind] : '全部种类' }} · {{ statusLabel(result.status) }} · 第 {{ result.page }} 页</p>
-    <TableFailureState v-if="failed" :title="`${target}加载失败`" :compact="!!result" :pending="loading" :description="result ? '保留上次成功结果；请重试当前查询。' : '数据尚未加载，请重试。'" @retry="load" />
-    <div class="relative h-6">
-      <TableLoadingStatus :loading="loading" kind="ledger" label="正在加载主体事实" />
-    </div>
-    <div ref="detailRegion" tabindex="-1" aria-label="主体事实明细">
-      <DisclosurePanel v-model:open="open" title="主体事实明细">
-        <Card>
-          <CardHeader>
-            <CardDescription>正在查询：{{ target }}</CardDescription>
-          </CardHeader>
-          <CardContent class="relative flex min-h-40 flex-col gap-4" :aria-busy="loading">
-            <template v-if="result">
-              <p v-if="!result.rows.length">此口径暂无企业</p>
-              <article v-for="row in result.rows" :key="`${row.enterpriseId}/${row.kind}`" class="flex min-w-0 flex-col gap-2 border-b py-4">
+<section class="stats-movement-panel" aria-labelledby="movements-title" :aria-busy="loading">
+  <div class="stats-movement-heading"><div><h2 id="movements-title">企业流动与注销</h2><p>已确认的主体事实</p></div><div class="flex items-center gap-1"><Select :model-value="year" @update:model-value="year=String($event);page=1"><SelectTrigger aria-label="发生年" class="w-36"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">全部发生年</SelectItem><SelectItem value="unknown">发生年未知</SelectItem><SelectItem v-for="y in result?.years ?? []" :key="y" :value="y">{{ y }} 年</SelectItem></SelectContent></Select><Button variant="ghost" size="icon" aria-label="刷新主体事实" :disabled="loading" @click="load"><RefreshCw class="size-3.5" /></Button></div></div>
+  <div class="stats-movement-metrics">
+    <article v-for="bucket in buckets" :key="bucket.kind" class="stats-movement-item">
+      <div class="stats-movement-label"><span class="stats-movement-icon" :class="`stats-movement-icon--${bucket.kind}`" aria-hidden="true"><component :is="bucket.kind==='moved_in'?ArrowDownLeft:bucket.kind==='moved_out'?ArrowUpRight:Minus" class="size-4" /></span><span>{{ labels[bucket.kind] }}</span></div>
+      <button class="stats-movement-number" :aria-label="`${labels[bucket.kind]}已确认明细`" :disabled="!result" @click="select(bucket.kind,'confirmed')">{{ bucket.confirmed ?? '—' }}<small>家</small></button>
+      <div class="stats-movement-foot"><button :aria-label="`${labels[bucket.kind]}发生年未知明细`" @click="select(bucket.kind,'unknown')">年份未知 {{ bucket.unknown ?? '—' }}</button><button :aria-label="`${labels[bucket.kind]}待核明细`" @click="select(bucket.kind,'pending')">待核 {{ bucket.pending ?? '—' }}</button></div>
+    </article>
+  </div>
+  <div v-if="failed" class="stats-inline-failure"><TableFailureState :title="`${target}加载失败`" :compact="!!result" :pending="loading" :description="result ? `保留${yearLabel(result.year)}的上次结果，请重试。` : '尚未加载主体事实，请重试。'" @retry="load" /></div>
+  <StatsDetailSheet v-model:open="open" title="主体事实明细" :target="target" :source="result ? `${yearLabel(result.year)} · ${result.kind?labels[result.kind]:'全部种类'} · ${statusLabel(result.status)} · 第${result.page}页` : undefined" :loading="loading" :failed="failed" @retry="load">
+    <p class="stats-source">全部已录入企业，按每种事实去重；迁入、迁出可同时发生。</p><p v-if="result && !result.rows.length" class="stats-empty">此口径暂无企业</p>
+    <article v-for="row in result?.rows ?? []" :key="`${row.enterpriseId}/${row.kind}`" class="stats-enterprise">
                 <NuxtLink :to="`/enterprises/${row.enterpriseId}`" class="font-medium underline underline-offset-4">{{ row.name }} · {{ labels[row.kind] }}</NuxtLink>
                 <ul class="flex flex-col gap-3">
                   <li v-for="e in row.evidence" :key="`${e.factId}/${e.revision}`" class="break-words">
@@ -93,11 +56,7 @@ function select(k: MovementKind, s: string) { year.value = result.value?.year ??
                   </li>
                 </ul>
               </article>
-              <TablePagination :page="result.page" :page-size="result.pageSize" :total="result.total" unit="家" :loading="loading || failed" @update:page="page = $event" @update:page-size="pageSize = $event; page = 1" />
-            </template>
-          </CardContent>
-        </Card>
-      </DisclosurePanel>
-    </div>
-  </section>
+    <TablePagination v-if="result" :page="result.page" :page-size="result.pageSize" :total="result.total" unit="家" :loading="loading || failed" @update:page="page = $event" @update:page-size="pageSize = $event; page = 1" />
+  </StatsDetailSheet>
+</section>
 </template>

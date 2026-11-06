@@ -1,9 +1,8 @@
 <script setup lang="ts">
-import { computed, nextTick, ref, shallowRef, watch } from 'vue'
+import { computed, ref, shallowRef, watch } from 'vue'
 import StatisticsMovementsSection from '@/components/statistics/StatisticsMovementsSection.vue'
 import type { PublishedStatistics } from '~~/lib/roster/published-statistics'
 import { TITLES, TITLE_ORDER } from '~~/lib/labels'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 const title = ref('')
@@ -14,13 +13,7 @@ const result = shallowRef<PublishedStatistics>()
 const loading = ref(false)
 const failed = ref(false)
 const open = ref(false)
-const detailRegion = ref<HTMLDivElement>()
-async function openDetail() {
-  open.value = true
-  await nextTick()
-  detailRegion.value?.focus({ preventScroll: true })
-  detailRegion.value?.scrollIntoView({ block: 'nearest' })
-}
+function openDetail() { open.value = true }
 let sequence = 0
 async function load() {
   const current = ++sequence
@@ -35,44 +28,32 @@ async function load() {
 watch([title, status, page, pageSize], load, { immediate: true })
 function select(code: string, state: string) { title.value = code; status.value = state; page.value = 1; void openDetail() }
 const target = computed(() => `${TITLES[title.value] ?? '全部称号'} · ${status.value === 'pending' ? '身份待核' : '累计公布'} · 第 ${page.value} 页`)
+import '@/assets/css/statistics.css'
+import { ArrowUpRight, ArrowRight } from '@lucide/vue'
 </script>
-
 <template>
-  <div class="flex flex-col gap-5">
-    <PageHeader title="统计概览" description="按称号查看正式公布规模，数字可查看同口径企业与出处。" />
-    <section class="flex flex-col gap-4" aria-labelledby="published-title">
-      <div class="flex items-center justify-between gap-3"><h2 id="published-title" class="text-lg font-semibold">公布名单累计企业数</h2><Button variant="outline" :disabled="loading" @click="load">刷新</Button></div>
-      <p class="text-muted-foreground">同企业同称号只计一次，保留失效、迁出、注销及无平台匹配企业。不同称号可重叠，不能直接相加。</p>
-      <div class="grid gap-4 lg:grid-cols-3">
-        <Card v-for="code in TITLE_ORDER" :key="code">
-          <CardHeader><CardTitle>{{ TITLES[code] }}</CardTitle><CardDescription>正式认定依据支持的累计企业数</CardDescription></CardHeader>
-          <CardContent class="flex flex-col items-start gap-3">
-            <Skeleton v-if="!result && loading" class="h-10 w-24" />
-            <template v-else-if="result">
-              <Button variant="link" class="h-auto p-0 text-3xl tabular-nums" :aria-label="`${TITLES[code]}累计公布明细`" @click="select(code, 'confirmed')">{{ result.titles.find(t => t.titleCode === code)?.confirmed.toLocaleString('zh-CN') }}</Button>
-              <Button variant="ghost" @click="select(code, 'pending')">身份待核 {{ result.titles.find(t => t.titleCode === code)?.pending }} 家 · 查看明细</Button>
-            </template>
-            <span v-else>尚未加载</span>
-          </CardContent>
-        </Card>
-      </div>
-    </section>
-    <p v-if="result" class="text-sm">显示：{{ TITLES[result.title ?? ''] ?? '全部称号' }} · {{ result.status === 'pending' ? '身份待核' : '累计公布' }} · 第 {{ result.page }} 页</p>
-    <TableFailureState v-if="failed" :title="`${target}加载失败`" :compact="!!result" :pending="loading" :description="result ? '保留上次成功结果；请重试当前查询。' : '数据尚未加载，请重试。'" @retry="load" />
-    <div class="relative h-6">
-      <TableLoadingStatus :loading="loading" kind="ledger" label="正在加载公布明细" />
+<div class="stats-dashboard">
+  <header class="stats-page-header">
+    <div><p class="stats-eyebrow">宁波 · 优质中小企业</p><h1>称号统计</h1></div>
+    <div class="stats-header-note"><span class="stats-live-dot" />公布规模 · 有效存量</div>
+  </header>
+  <section aria-labelledby="published-title" class="stats-published">
+    <div class="stats-section-heading"><div><h2 id="published-title">累计正式公布</h2><p>同一企业同一称号计一次，保留历年公布事实</p></div><Button variant="ghost" size="sm" :disabled="loading" @click="load">刷新</Button></div>
+    <div class="stats-metric-grid">
+      <article v-for="(code,index) in TITLE_ORDER" :key="code" class="stats-metric" :class="`stats-metric--${index}`">
+        <div class="stats-metric-label"><span>{{ TITLES[code] }}</span><span class="stats-tier-mark" /></div>
+        <button class="stats-number-button" :aria-label="`${TITLES[code]}累计公布明细`" :disabled="!result" @click="select(code,'confirmed')"><strong>{{ result ? result.titles.find(t=>t.titleCode===code)?.confirmed.toLocaleString('zh-CN') : '—' }}</strong><span>家</span><ArrowUpRight class="stats-number-arrow" aria-hidden="true" /></button>
+        <div class="stats-metric-footer"><span>历年累计公布</span><button v-if="result" class="stats-pending-link" @click="select(code,'pending')">身份待核 {{ result.titles.find(t=>t.titleCode===code)?.pending }} <ArrowRight class="size-3" aria-hidden="true" /></button></div>
+      </article>
     </div>
-    <div ref="detailRegion" tabindex="-1" aria-label="公布企业明细">
-      <DisclosurePanel v-model:open="open" title="公布企业明细">
-        <Card>
-          <CardHeader>
-
-            <CardDescription>正在查询：{{ target }}。仅列有正式认定出处的企业；复核不单独增加企业。</CardDescription>
-          </CardHeader>
-          <CardContent class="relative flex flex-col gap-4" :aria-busy="loading">
-            <div v-if="result" class="flex flex-col divide-y">
-              <p v-if="!result.rows.length" class="py-6 text-muted-foreground">此口径暂无企业</p>
-              <article v-for="row in result.rows" :key="`${row.enterpriseId}/${row.titleCode}`" class="flex min-w-0 flex-col gap-2 py-4">
+    <TableFailureState v-if="failed" :title="`${target}加载失败`" :compact="!!result" :pending="loading" :description="result ? '上次成功数据已保留，可重新加载。' : '尚未加载公布数据，请重试。'" @retry="load" />
+  </section>
+  <StatisticsMovementsSection />
+  <div class="stats-analysis-grid"><StatisticsAnnualSection /><StatisticsDistrictSection /></div>
+  <footer class="stats-page-footer"><span>各称号独立统计，企业可重叠，不跨称号直接合计。</span><span>点击数字与图形查看企业依据</span></footer>
+  <StatsDetailSheet v-model:open="open" title="公布企业明细" :target="target" :source="result ? `${TITLES[result.title ?? ''] ?? '全部称号'} · ${result.status==='pending'?'身份待核':'累计公布'} · 第${result.page}页` : undefined" :loading="loading" :failed="failed" @retry="load">
+    <p v-if="result && !result.rows.length" class="stats-empty">此口径暂无企业</p>
+    <article v-for="row in result?.rows ?? []" :key="`${row.enterpriseId}/${row.titleCode}`" class="stats-enterprise">
                 <NuxtLink :to="`/enterprises/${row.enterpriseId}`" class="font-medium underline underline-offset-4">{{ row.name }}</NuxtLink>
                 <p>{{ TITLES[row.titleCode] }} · {{ row.status === 'pending' ? '身份待核' : '正式公布' }}</p>
                 <p class="break-all text-muted-foreground">{{ row.uscc ?? '未记录统一社会信用代码' }}</p>
@@ -80,14 +61,7 @@ const target = computed(() => `${TITLES[title.value] ?? '全部称号'} · ${sta
                   <li v-for="evidence in row.evidence" :key="evidence.evidenceId" class="break-all text-sm">{{ evidence.sourceFile }} · {{ evidence.attachment ?? '附件未记录' }} · 序号 {{ evidence.listNo ?? '未记录' }} · 页码 {{ evidence.page ?? '未记录' }}</li>
                 </ul>
               </article>
-            </div>
-            <TablePagination v-if="result" :page="result.page" :page-size="result.pageSize" :total="result.total" unit="家·称号" :loading="loading || failed" @update:page="page = $event" @update:page-size="pageSize = $event; page = 1" />
-          </CardContent>
-        </Card>
-      </DisclosurePanel>
-    </div>
-    <StatisticsMovementsSection />
-    <StatisticsAnnualSection />
-    <StatisticsDistrictSection />
-  </div>
+    <TablePagination v-if="result" :page="result.page" :page-size="result.pageSize" :total="result.total" unit="家·称号" :loading="loading || failed" @update:page="page = $event" @update:page-size="pageSize = $event; page = 1" />
+  </StatsDetailSheet>
+</div>
 </template>
