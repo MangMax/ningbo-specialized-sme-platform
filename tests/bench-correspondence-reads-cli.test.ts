@@ -164,3 +164,63 @@ it('rejects an unsupported synthetic version before opening the file', () => {
   expect(result.stderr).toContain('unverified synthetic fixture version')
   expect(existsSync(db)).toBe(false)
 })
+
+
+it.each(['-wal', '-shm'])('preserves a pre-existing prepare companion %s', suffix => {
+  const dir = temporary(), db = join(dir, 'synthetic.db'), bytes = Buffer.from('other owner companion')
+  writeFileSync(db + suffix, bytes)
+  const result = cli('prepare', db)
+  expect(result.status).not.toBe(0)
+  expect(readFileSync(db + suffix)).toEqual(bytes)
+  expect(readdirSync(dir)).toEqual(['synthetic.db' + suffix])
+})
+
+it('preserves a destination replaced during failed preparation (filesystem interleaving)', () => {
+  const { dir, db } = injected('prepare-failure')
+  rmSync(db)
+  rmSync(db + '.synthetic.json')
+  writeFileSync(join(dir, 'db/client.ts'), `
+    import { existsSync, renameSync, writeFileSync } from 'node:fs'
+    export const schema = {}
+    export function useDb() {
+      const destination = ${JSON.stringify(db)};
+      if (existsSync(destination)) renameSync(destination, destination + '.reserved');
+      writeFileSync(destination, 'replacement belongs to another owner');
+      throw new Error('injected failure after destination replacement');
+    }
+  `)
+  const result = cli('prepare', db, '1', '1', dir)
+  expect(result.status).not.toBe(0)
+  expect(result.stderr).toContain('injected failure after destination replacement')
+  expect(readFileSync(db, 'utf8')).toBe('replacement belongs to another owner')
+  expect(readdirSync(dir).filter(name => name.startsWith('.correspondence-prepare-'))).toEqual([])
+})
+
+
+it.each(['database', 'manifest'])('preserves a competing %s at exclusive publication (filesystem interleaving)', target => {
+  const dir = temporary(), db = join(dir, 'synthetic.db'), hook = join(dir, 'publication-hook.cjs')
+  const competing = target === 'database' ? db : db + '.synthetic.json'
+  writeFileSync(hook, `
+    const fs = require('node:fs');
+    const original = fs.linkSync;
+    fs.linkSync = function(source, destination, ...args) {
+      if (destination === ${JSON.stringify(competing)}) fs.writeFileSync(destination, 'competing owner bytes', {flag:'wx'});
+      return original.call(this, source, destination, ...args);
+    };
+    require('node:module').syncBuiltinESMExports();
+  `)
+  const result = spawnSync(process.execPath, ['--require', hook, script, 'prepare', db, '1', root], {
+    cwd: root, encoding: 'utf8', timeout: 20000, maxBuffer: 20 * 1024 * 1024,
+  })
+  expect(result.error, result.stderr).toBeUndefined()
+  expect(result.signal).toBeNull()
+  expect(result.status).not.toBe(0)
+  expect(result.stderr).toContain('EEXIST')
+  expect(readFileSync(competing, 'utf8')).toBe('competing owner bytes')
+  expect(readdirSync(dir).filter(name => name.startsWith('.correspondence-prepare-'))).toEqual([])
+  if (target === 'manifest') {
+    expect(result.stderr).toContain('destination paths were preserved for inspection')
+    const preserved = new Database(db, {readonly:true})
+    try { expect(preserved.prepare('SELECT count(*) AS n FROM record_correspondence').get()).toEqual({n:400}) } finally {preserved.close()}
+  } else expect(existsSync(db + '.synthetic.json')).toBe(false)
+}, 30000)

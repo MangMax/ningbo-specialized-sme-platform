@@ -3,6 +3,8 @@
  * node --expose-gc --max-old-space-size=2048 scripts/bench-correspondence-reads.mjs prepare /absolute/scratch.db [scale=1]
  * node --expose-gc --max-old-space-size=2048 scripts/bench-correspondence-reads.mjs read /absolute/scratch.db [scale=1] [source-root=cwd] [concurrency=1] [rounds=20]
  * prepare also creates a required .synthetic.json manifest; unmarked inputs are refused.
+ * Publication never overwrites or removes destination paths. A publication conflict
+ * may leave the new DB without its manifest; inspect it before retrying with a new path.
  * Source-root allows identical-input comparison against a detached baseline checkout.
  * Does not read production, publish raw data, or mutate an existing DB during measurement.
  */
@@ -10,8 +12,8 @@ import assert from 'node:assert/strict'
 import { createRequire } from 'node:module'
 import { createServer } from 'node:http'
 import { createHash } from 'node:crypto'
-import { existsSync, statSync, readFileSync, writeFileSync, openSync, closeSync, rmSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { existsSync, statSync, lstatSync, readFileSync, writeFileSync, mkdtempSync, linkSync, rmSync } from 'node:fs'
+import { resolve, dirname, join } from 'node:path'
 import { performance, monitorEventLoopDelay } from 'node:perf_hooks'
 import { execFileSync } from 'node:child_process'
 const canonical = value => Array.isArray(value) ? value.map(canonical) : value && typeof value === 'object' ? Object.fromEntries(Object.keys(value).sort().map(key => [key, canonical(value[key])])) : value
@@ -23,8 +25,11 @@ assert.ok(['prepare', 'read'].includes(action) && dbPath?.startsWith('/') && !db
 assert.ok(Number.isSafeInteger(rounds) && rounds > 0, 'rounds must be a finite positive safe integer')
 const fixturePath = `${dbPath}.synthetic.json`
 const fixtureVersion = 'correspondence-85-v1'
+const destinationPaths = [dbPath, `${dbPath}-wal`, `${dbPath}-shm`, `${dbPath}-journal`, fixturePath]
+const pathExists = path => { try { lstatSync(path); return true } catch (error) { if (error.code === 'ENOENT') return false; throw error } }
+const requireUnusedDestination = () => assert.ok(destinationPaths.every(path => !pathExists(path)), 'prepare requires a new isolated synthetic DB and absent companion paths')
 if (action === 'prepare') {
-  assert.ok(!existsSync(dbPath) && !existsSync(fixturePath), 'prepare requires a new isolated synthetic DB')
+  requireUnusedDestination()
 } else {
   assert.ok(existsSync(fixturePath), 'unverified input: synthetic fixture manifest required')
   const fixture = JSON.parse(readFileSync(fixturePath, 'utf8'))
@@ -32,14 +37,14 @@ if (action === 'prepare') {
   assert.equal(fixture.scale, scale, 'synthetic fixture scale mismatch')
 }
 const { useDb, schema } = await jiti.import(root + '/db/client.ts')
-let db, server, prepared = false, ownsPath = false, ownsManifest = false
+let db, server, stagingDir, publishedDb = false
 try {
   if (action === 'prepare') {
-    // Reserve exclusively; never remove or overwrite a caller's existing file.
-    closeSync(openSync(dbPath, 'wx'))
-    ownsPath = true
+    // SQLite only sees a private namespace, never the replaceable destination.
+    stagingDir = mkdtempSync(join(dirname(dbPath), '.correspondence-prepare-'))
   }
-  db = useDb({ dbPath, readOnly: action === 'read' })
+  const workingPath = stagingDir ? join(stagingDir, 'fixture.db') : dbPath
+  db = useDb({ dbPath: workingPath, readOnly: action === 'read' })
   if (action === 'prepare') {
     const raw = 'synthetic-source🙂'.repeat(2048), provenance = { syntheticOriginal: 'synthetic'.repeat(4096) }
     const at = '2026-10-19T00:00:00.000Z'
@@ -56,10 +61,15 @@ try {
       for (let i = 0; i < 500 * scale; i++) db.insert(schema.recordCorrespondenceAudit).values({ correspondenceId: 1, batchId: batch.id, idempotencyKey: `synthetic-audit-${i}`, toStatus: 'candidate', expectedRevision: i, resultingRevision: i + 1, actorType: 'agent', actorId: 'synthetic', basis: 'synthetic evidence', ruleId: 'manual', ruleVersion: '1', evidence: provenance, decidedAt: at }).run()
     })
     db.$client.pragma('wal_checkpoint(TRUNCATE)')
-    const manifest = openSync(fixturePath, 'wx')
-    ownsManifest = true
-    try { writeFileSync(manifest, JSON.stringify({ version: fixtureVersion, scale }) + '\n') } finally { closeSync(manifest) }
-    prepared = true
+    db.$client.close()
+    const stagedManifest = join(stagingDir, 'manifest.json')
+    writeFileSync(stagedManifest, JSON.stringify({ version: fixtureVersion, scale }) + '\n', { flag: 'wx' })
+    requireUnusedDestination()
+    // Hard-link publication is exclusive on this same filesystem. Never roll
+    // back by pathname: another owner may replace a published path at any time.
+    linkSync(workingPath, dbPath)
+    publishedDb = true
+    linkSync(stagedManifest, fixturePath)
     console.log(JSON.stringify({ action, scale, dbBytes: statSync(dbPath).size }))
   } else {
     assert.equal(db.$client.prepare('SELECT count(*) AS n FROM record_correspondence').get().n, 400 * scale, 'synthetic correspondence count')
@@ -166,9 +176,11 @@ try {
       }
     } finally { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)) }
   }
+} catch (error) {
+  if (publishedDb) console.error('prepare publication failed after DB publication; destination paths were preserved for inspection')
+  throw error
 } finally {
   if (server?.listening) await new Promise(resolve => server.close(resolve))
   if (db?.$client.open) db.$client.close()
-  if (ownsManifest && !prepared) rmSync(fixturePath, { force: true })
-  if (ownsPath && !prepared) for (const suffix of ['', '-wal', '-shm']) rmSync(dbPath + suffix, { force: true })
+  if (stagingDir) rmSync(stagingDir, { recursive: true, force: true })
 }
