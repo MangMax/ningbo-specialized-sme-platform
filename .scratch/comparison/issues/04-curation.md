@@ -1,3 +1,6 @@
+> **历史阶段说明（#591）**：下文保留 2026-10-14/15 阶段材料及验收记录。本地草稿不是当前 published tracker；当前工单见 [GitHub Issues](https://github.com/MangMax/ningbo-specialized-sme-platform/issues/591)，使用规则见[仓库 tracker 规范](../../../docs/agents/issue-tracker.md)。原文中的完成状态、数字及成功/失败记录仅对应当时输入，本次文档注记不构成重跑或当前运行保证。
+> 后继边界见 [maintenance-102](../../../docs/maintenance-102.md)及 [#102](https://github.com/MangMax/ningbo-specialized-sme-platform/issues/102)：旧 annotation 不生成正式差异决定，不等于 `confirmed_no_diff`；未显式接管的坐标保留旧 PATCH 写 JSON 兼容，显式接管后（包括撤回后）返回 `409 decision_lifecycle_required`，不改旧文件字节或正式决定。本注记不迁移旧标注，也不重做下方历史写入验收。
+
 # 04 — 人工标注 `curated`(范围可裁)
 
 **What to build:** 让经办人能把一条差异标注为「已核实、无需处理」,以后重算时**不再冒出来**(或在页面默认过滤掉,可切换显示)。这是本模块**唯一允许写盘**的地方。

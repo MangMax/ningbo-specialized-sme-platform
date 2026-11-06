@@ -1,3 +1,6 @@
+> **历史阶段说明（#591）**：下文保留 2026-10-14/15 阶段材料及验收记录。本地草稿不是当前 published tracker；当前工单见 [GitHub Issues](https://github.com/MangMax/ningbo-specialized-sme-platform/issues/591)，使用规则见[仓库 tracker 规范](../../docs/agents/issue-tracker.md)。原文中的完成状态、数字及成功/失败记录仅对应当时输入，本次文档注记不构成重跑或当前运行保证。
+> 后继导航：[词表](../../GLOSSARY.md)与[历史差集读取契约](../../docs/comparison-summary-contract.md)。旧文“小巨人无经信局来源”不是当前词表事实：小巨人由工信部认定，经信局公布的历年名单提供历史批次依据，工信部导出表反映采集时点平台现状，两种来源各自保留。本注记不改变旧阶段算法取舍，不启动小巨人比较；历史差集也不等于记录对应或当前有效资格裁定。
+
 # 两侧名录比对(应纳未纳 / 应出未出)— 设计规格
 
 > 追踪器:`.scratch/comparison/issues/`。词汇以 [GLOSSARY.md](../../GLOSSARY.md) 为准;数据模型见 [docs/data-model.md](../../docs/data-model.md);上游留白见 [roster-board 票 12](../roster-board/issues/12-reconciliation.md)。
