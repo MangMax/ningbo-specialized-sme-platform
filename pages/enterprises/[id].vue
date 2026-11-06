@@ -249,7 +249,7 @@ const sourceHistories = computed(() => historySources.map(source => {
   return { ...source, histories: titles.map(code => ({ code, events: ledgerEvents.value.filter(event => event.source === source.code && event.titleCode === code) })) }
 }))
 
-/** 称号与复核安排：只陈述首次认定、批次和下一次复核，不复制核对矩阵。 */
+/** 资格取自同一详情快照；首次认定与复核安排不推断当前资格。 */
 const titleInfo = computed(() => {
   const source = detail.value
   if (!source) return []
@@ -261,6 +261,7 @@ const titleInfo = computed(() => {
     const lifecycle = source.records.find(item => item.titleCode === code)?.lifecycle
     return {
       code,
+      qualification: qualificationRows.value.find(item => item.titleCode === code),
       year: first?.year ?? lifecycle?.firstRecognitionYear ?? null,
       batchSeq: award?.batchSeq ?? null,
       dueYear: lifecycle?.dueYear ?? null,
@@ -368,13 +369,11 @@ onMounted(() => {
 })
 
 /**
- * 出处页链接要记住「这次是从哪条事件打开的」。回到详情页时据此重新展开同一条出处，
- * 再把页面滚动恢复到原来的位置。
+ * 出处预览保留原有展开状态和滚动位置；默认出处不强行展开平台详情。
  */
-function rememberPagePreviewReturn(eventId: number, event: MouseEvent) {
+function rememberPagePreviewReturn(_eventId: number, event: MouseEvent) {
   if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
   const keys = new Set(openEvidenceKeys.value)
-  keys.add(evidenceDisclosureKey(eventId))
   try {
     window.sessionStorage.setItem(EVIDENCE_DISCLOSURE_RETURN_KEY, JSON.stringify({ back: route.fullPath, keys: [...keys] }))
   } catch {
@@ -632,17 +631,21 @@ function openPreview(e: Evidence) {
                 class="grid gap-x-4 gap-y-1 px-4 py-3 sm:grid-cols-[12rem_minmax(0,1fr)] sm:items-baseline"
               >
                 <dt class="min-w-0"><TitleBadge :code="item.code" /></dt>
-                <dd class="text-[13px] leading-5">
+                <dd class="flex min-w-0 flex-col gap-2 text-base leading-6">
+                  <p>当前资格：{{ item.qualification?.effectiveQualification ? CURRENT_STATUS_LABELS[item.qualification.effectiveQualification.status] : item.qualification ? qualificationGroupLabel[item.qualification.group] : '未知（尚无评估结果）' }}</p>
+                  <p class="text-muted-foreground text-sm">评估时点：{{ item.qualification ? data?.qualificationAssessment?.asOf ?? '未知' : '未知' }}</p>
+                  <p>
                   <span>首次认定 {{ item.year ?? '年份待核' }}<template v-if="item.batchSeq != null"> · 第 {{ item.batchSeq }} 批</template></span>
                   <span class="text-muted-foreground"> · </span>
                   <span>下次复核 {{ item.dueYear ?? '年份待核' }}</span>
                   <span v-if="item.needsReview" class="text-warning"> · 待核</span>
+                  </p>
                 </dd>
               </div>
             </dl>
             <p v-else class="text-muted-foreground px-4 py-6 text-[13px]">尚无正式称号记录。</p>
             <DisclosurePanel v-if="qualificationRows.length" trigger-class="px-4" class="border-t">
-              <template #title>当前资格与依据</template>
+              <template #title>资格依据</template>
               <div class="flex min-w-0 flex-col gap-4 px-4 pb-4 text-base leading-6">
                 <p class="text-muted-foreground text-sm">评估时点：{{ data?.qualificationAssessment?.asOf }}。下次复核年份用于安排复核，当前资格以下列评估为准。</p>
                 <section v-for="item in qualificationRows" :key="item.titleCode" class="flex min-w-0 flex-col gap-2 break-words">

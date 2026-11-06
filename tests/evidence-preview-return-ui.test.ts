@@ -232,6 +232,7 @@ describe('出处预览返回滚动恢复', () => {
     mocks.setLoading = null
     sessionStorage.clear()
     history.replaceState(null, '', '/')
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, status: 200 })))
     vi.stubGlobal('useHead', vi.fn())
     vi.stubGlobal('$fetch', vi.fn(async () => ({})))
     currentRoute = { params: { id: '91' }, query: {}, fullPath: '/enterprises/91' }
@@ -731,7 +732,7 @@ describe('出处预览返回滚动恢复', () => {
     expect(sessionStorage.getItem('roster:evidence-preview-return')).toContain(`"scrollY":${windowTop}`)
     expect(JSON.parse(sessionStorage.getItem(DETAIL_OPEN_EVIDENCE_STATE_KEY)!)).toEqual({
       back: detailPath,
-      keys: [JSON.stringify(['91', 10])],
+      keys: [],
     })
     source.unmount()
 
