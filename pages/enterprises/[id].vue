@@ -306,6 +306,50 @@ function edgesFor(eventId: number) {
 
 const EVIDENCE_DISCLOSURE_RETURN_KEY = 'roster:enterprise-detail-open-evidence'
 const openEvidenceKeys = ref<string[]>([])
+const openSourceKeys = ref<string[]>([])
+const disclosureReturnReady = ref(false)
+const returnLayoutRoot = ref<HTMLElement | null>(null)
+const returnLayoutKeys = ref<string[]>([])
+const returnLayoutReady = ref(false)
+const returnCancelled = ref(false)
+
+function cancelDisclosureReturn() {
+  returnCancelled.value = true
+  returnLayoutReady.value = false
+  pendingDisclosureReturn.value = null
+}
+const pendingDisclosureReturn = shallowRef<{ keys: string[]; sourceKeys: string[] } | null>(null)
+
+// A reused page must not carry disclosure intent across a different return route or tab.
+watch([() => route.fullPath, id, tab], () => {
+  cancelDisclosureReturn()
+  openEvidenceKeys.value = []
+  openSourceKeys.value = []
+  pendingDisclosureReturn.value = null
+}, { flush: 'sync' })
+
+watch([detail, pendingDisclosureReturn], () => {
+  const pending = pendingDisclosureReturn.value
+  if (!pending || !detail.value) return
+  const valid = new Set(ledgerEvents.value.map(event => evidenceDisclosureKey(event.id)))
+  openEvidenceKeys.value = pending.keys.filter(key => valid.has(key))
+  returnLayoutKeys.value = [...openEvidenceKeys.value]
+  openSourceKeys.value = pending.sourceKeys.filter(key => valid.has(key))
+  pendingDisclosureReturn.value = null
+}, { flush: 'sync' })
+
+// Removing a return target invalidates this attempt even if later data brings it back.
+watch(() => ledgerEvents.value.map(event => evidenceDisclosureKey(event.id)), keys => {
+  if (returnLayoutKeys.value.some(key => !keys.includes(key))) cancelDisclosureReturn()
+}, { flush: 'sync' })
+
+function setSourceDisclosureOpen(key: string, open: boolean): void {
+  cancelDisclosureReturn()
+  const next = new Set(openSourceKeys.value)
+  if (open) next.add(key)
+  else next.delete(key)
+  openSourceKeys.value = [...next]
+}
 
 watch([correspondenceRows, openEvidenceKeys, correspondenceReady], () => {
   if (!correspondenceReady.value) return
@@ -323,12 +367,56 @@ function evidenceDisclosureOpen(key: string): boolean {
 }
 
 // 原行摘要与展开的出处会改变页面高度，等它们成功或失败后再恢复预览前位置。
-const detailRendered = computed(() => (detail.value !== null || error.value != null) && !correspondenceLoading.value
+const detailRendered = computed(() => disclosureReturnReady.value && pendingDisclosureReturn.value === null
+  && (detail.value !== null || error.value != null) && !correspondenceLoading.value
   && (correspondenceError.value || ledgerEvents.value.every(event => !evidenceDisclosureOpen(evidenceDisclosureKey(event.id))
     || detailsForEvent(event.id) !== null || detailErrorForEvent(event.id))))
-useEvidencePreviewScrollRestore(detailRendered)
+// Reka restores animation styles after measuring its content. Cross the render
+// boundary before asking the actual restored rows for their animation completion.
+// This is a single wait, not a scroll retry or a guessed animation duration.
+watch([detailRendered, returnLayoutKeys, returnCancelled, () => ledgerEvents.value.map(event => event.id).join(',')], async ([ready], _old, onCleanup) => {
+  returnLayoutReady.value = false
+  if (!ready || returnCancelled.value) return
+  let active = true
+  let frame: number | undefined
+  let release: (() => void) | undefined
+  onCleanup(() => {
+    active = false
+    if (frame !== undefined) cancelAnimationFrame(frame)
+    release?.()
+  })
+  if (returnLayoutKeys.value.length) {
+    const renderedFrame = () => new Promise<void>(resolve => {
+      release = resolve
+      frame = requestAnimationFrame(() => { frame = undefined; resolve() })
+    })
+    await nextTick()
+    if (!active) return
+    await renderedFrame()
+    if (!active) return
+    await nextTick()
+    if (!active) return
+    await renderedFrame()
+    if (!active) return
+    const rows = [...(returnLayoutRoot.value?.querySelectorAll<HTMLElement>('[data-return-event]') ?? [])]
+      .filter(row => returnLayoutKeys.value.includes(row.dataset.returnEvent!))
+    if (rows.length !== returnLayoutKeys.value.length) return
+    const animations = rows.flatMap(row => [...row.querySelectorAll<HTMLElement>('[data-slot="accordion-content"]')]
+      .flatMap(content => content.getAnimations()))
+    const cancelled = new Promise<void>(resolve => { release = resolve })
+    try {
+      await Promise.race([Promise.all(animations.map(animation => animation.finished)), cancelled])
+    } catch {
+      // A cancelled/replaced animation is not proof that this layout completed.
+      return
+    }
+  }
+  if (active && !returnCancelled.value) returnLayoutReady.value = true
+}, { flush: 'post' })
+useEvidencePreviewScrollRestore(computed(() => detailRendered.value && returnLayoutReady.value && !returnCancelled.value))
 
 function setEvidenceDisclosureOpen(key: string, open: boolean): void {
+  cancelDisclosureReturn()
   const next = new Set(openEvidenceKeys.value)
   if (open) next.add(key)
   else next.delete(key)
@@ -342,16 +430,22 @@ onMounted(() => {
     if (!raw) return
     const state: unknown = JSON.parse(raw)
     if (!state || typeof state !== 'object') return
-    const candidate = state as { back?: unknown; keys?: unknown }
+    const candidate = state as { back?: unknown; keys?: unknown; sourceKeys?: unknown }
     if (
       candidate.back === route.fullPath &&
       Array.isArray(candidate.keys) &&
       candidate.keys.every((key) => typeof key === 'string')
     ) {
-      openEvidenceKeys.value = candidate.keys
+      pendingDisclosureReturn.value = {
+        keys: candidate.keys,
+        sourceKeys: Array.isArray(candidate.sourceKeys) && candidate.sourceKeys.every(key => typeof key === 'string')
+          ? candidate.sourceKeys : [],
+      }
     }
   } catch {
     // Storage may be unavailable; the page remains usable without disclosure restoration.
+  } finally {
+    disclosureReturnReady.value = true
   }
 })
 
@@ -361,10 +455,16 @@ onMounted(() => {
  */
 function rememberPagePreviewReturn(eventId: number, event: MouseEvent) {
   if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
+  if (tab.value !== 'records') {
+    rememberEvidencePreviewReturn(route.fullPath, event.currentTarget)
+    return
+  }
+  const sourceKeys = new Set(openSourceKeys.value)
+  sourceKeys.add(evidenceDisclosureKey(eventId))
   const keys = new Set(openEvidenceKeys.value)
   keys.add(evidenceDisclosureKey(eventId))
   try {
-    window.sessionStorage.setItem(EVIDENCE_DISCLOSURE_RETURN_KEY, JSON.stringify({ back: route.fullPath, keys: [...keys] }))
+    window.sessionStorage.setItem(EVIDENCE_DISCLOSURE_RETURN_KEY, JSON.stringify({ back: route.fullPath, keys: [...keys], sourceKeys: [...sourceKeys] }))
   } catch {
     // Storage may be unavailable; ordinary preview navigation still works.
   }
@@ -650,8 +750,8 @@ function openPreview(e: Evidence) {
                 <span>出处</span>
                 <span class="sr-only">展开</span>
               </header>
-              <ul class="divide-y">
-                <li v-for="event in ledgerEvents" :key="event.id">
+              <ul ref="returnLayoutRoot" class="divide-y">
+                <li v-for="event in ledgerEvents" :key="event.id" :data-return-event="evidenceDisclosureKey(event.id)">
                   <RecordEventRow
                     :event="event"
                     :evidence="event.evidence"
@@ -664,6 +764,8 @@ function openPreview(e: Evidence) {
                     :back="route.fullPath"
                     :return-to="sourceReturnTarget(route.query.returnTo)"
                     :open="evidenceDisclosureOpen(evidenceDisclosureKey(event.id))"
+                    :source-open="openSourceKeys.includes(evidenceDisclosureKey(event.id))"
+                    @update:source-open="setSourceDisclosureOpen(evidenceDisclosureKey(event.id), $event)"
                     :highlighted="highlightedEventId === event.id"
                     @update:open="setEvidenceDisclosureOpen(evidenceDisclosureKey(event.id), $event)"
                     @preview="openPreview"
