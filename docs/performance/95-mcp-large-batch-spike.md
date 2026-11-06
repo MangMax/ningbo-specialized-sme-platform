@@ -1,5 +1,7 @@
 # #95：大批 MCP 载荷边界与原子交付调查
 
+> 时点说明：本文的“当前公开契约”、方案比较和运行结果属于 2026-10-20 的调查及下文列明的源码提交。后续验收解释见 [acceptance v2](82/acceptance-v2.md)与 [#95 收尾记录](https://github.com/MangMax/ningbo-specialized-sme-platform/issues/95#issuecomment-6320113193)。该轮采用保留 MCP 4 MiB 边界并使用独立授权 HTTP 完整恢复的方案；负向 413 不等于大载荷性能通过，调用侧 6 MiB 包络也不是服务器保证。本文不授权提高入口容量、拆分原子批次或将历史结果当作当前 HEAD 的新验收；原始预算、失败和未运行范围继续保留。
+
 2026-10-20；调查起点 `fc37375eb35ecd175a5746d93dc22129d2a2ffe3`，合并集成分支后的公开接口复验源码 `b2877b593c582e9e48c5041d65cfe21f4409dfba`。对应 [#95](https://github.com/MangMax/ningbo-specialized-sme-platform/issues/95)、[#94](https://github.com/MangMax/ningbo-specialized-sme-platform/issues/94)、[#88](https://github.com/MangMax/ningbo-specialized-sme-platform/issues/88)。本票是 `scope:spike`：只交付契约、合成库公开接口复现和方案判断。运行脚本不会连接业务库；本票没有修改 SDK、生产处理代码、请求上限或 schema。
 
 ## 当前公开契约
