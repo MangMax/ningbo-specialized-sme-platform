@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { flushPromises, mount } from '@vue/test-utils'
-import { defineComponent, h, ref, type Ref } from 'vue'
+import { defineComponent, h, reactive, ref, type Ref } from 'vue'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import RosterEnterpriseTable, { type EnterpriseRow } from '../components/RosterEnterpriseTable.vue'
 import RosterTitleTable, { type TitleRow } from '../components/RosterTitleTable.vue'
@@ -11,6 +11,7 @@ import {
   useEvidencePreviewScrollRestore,
 } from '../lib/roster/evidence-preview-return'
 import EnterprisePage from '../pages/enterprises/[id].vue'
+import RecordEventRow from '../components/record-correspondence/RecordEventRow.vue'
 
 vi.mock('@tanstack/vue-virtual', async () => {
   const { computed } = await import('vue')
@@ -732,6 +733,7 @@ describe('出处预览返回滚动恢复', () => {
     expect(JSON.parse(sessionStorage.getItem(DETAIL_OPEN_EVIDENCE_STATE_KEY)!)).toEqual({
       back: detailPath,
       keys: [JSON.stringify(['91', 10])],
+      sourceKeys: [JSON.stringify(['91', 10])],
     })
     source.unmount()
 
@@ -762,6 +764,126 @@ describe('出处预览返回滚动恢复', () => {
     expect(sessionStorage.getItem('roster:evidence-preview-return')).toBeNull()
     expect(sessionStorage.getItem(DETAIL_OPEN_EVIDENCE_STATE_KEY)).toBeNull()
     returned.unmount()
+  })
+
+  it('restores the inner source disclosure once and respects a later user collapse', async () => {
+    mocks.detail = fullDetail
+    const mountPage = () => mount(EnterprisePage, { attachTo: document.body, global: { stubs: globalStubs } })
+    const source = mountPage()
+    await flushPromises()
+    const button = (page: ReturnType<typeof mountPage>, text: string) => page.find('#record-event-10').findAll('button').find(b => b.text() === text)!
+    await button(source, '来源记录').trigger('click')
+    await flushPromises()
+    expect(button(source, '正式文件与已登记出处').attributes('aria-expanded')).toBe('false')
+    await button(source, '正式文件与已登记出处').trigger('click')
+    await flushPromises()
+    expect(button(source, '正式文件与已登记出处').attributes('aria-expanded')).toBe('true')
+    await source.find('#record-event-10').findAll('a').find(a => a.text() === '第 8 页')!.trigger('click', { button: 0 })
+    source.unmount()
+    const returned = mountPage()
+    await flushPromises()
+    expect(button(returned, '正式文件与已登记出处').attributes('aria-expanded')).toBe('true')
+    expect(returned.find('#record-event-10 [data-testid="record-event-source"]').isVisible()).toBe(true)
+    expect(sessionStorage.getItem(DETAIL_OPEN_EVIDENCE_STATE_KEY)).toBeNull()
+    await button(returned, '正式文件与已登记出处').trigger('click')
+    await flushPromises()
+    mocks.setDetail?.({ ...fullDetail })
+    await flushPromises()
+    expect(button(returned, '正式文件与已登记出处').attributes('aria-expanded')).toBe('false')
+    returned.unmount()
+  })
+
+  it.each([
+    ['first visit', null],
+    ['malformed JSON', '{'],
+    ['different full back', JSON.stringify({ back: '/enterprises/91?back=page%3D2', keys: ['["91",10]'], sourceKeys: ['["91",10]'] })],
+    ['different enterprise', JSON.stringify({ back: '/enterprises/91', keys: ['["92",10]'], sourceKeys: ['["92",10]'] })],
+    ['absent event', JSON.stringify({ back: '/enterprises/91', keys: ['["91",99]'], sourceKeys: ['["91",99]'] })],
+    ['invalid source keys', JSON.stringify({ back: '/enterprises/91', keys: ['["91",10]'], sourceKeys: [10] })],
+  ])('keeps inner sources closed for %s', async (_label, saved) => {
+    mocks.detail = fullDetail
+    if (saved) sessionStorage.setItem(DETAIL_OPEN_EVIDENCE_STATE_KEY, saved)
+    const page = mount(EnterprisePage, { attachTo: document.body, global: { stubs: globalStubs } })
+    await flushPromises()
+    const row = page.find('#record-event-10')
+    const outer = row.findAll('button').find(b => b.text() === '来源记录')!
+    if (outer.attributes('aria-expanded') === 'false') await outer.trigger('click')
+    await flushPromises()
+    expect(row.findAll('button').find(b => b.text() === '正式文件与已登记出处')!.attributes('aria-expanded')).toBe('false')
+    expect(sessionStorage.getItem(DETAIL_OPEN_EVIDENCE_STATE_KEY)).toBeNull()
+    page.unmount()
+  })
+
+  it.each(['back', 'enterprise', 'tab'])('isolates restored sources and clears them on %s change', async change => {
+    currentRoute = reactive({ params: { id: '91' }, query: {}, fullPath: '/enterprises/91' })
+    mocks.detail = { ...fullDetail, events: [...fullDetail.events, { ...fullDetail.events[0], id: 11 }], evidence: [...fullDetail.evidence, { ...fullDetail.evidence[0], eventId: 11 }] }
+    sessionStorage.setItem(DETAIL_OPEN_EVIDENCE_STATE_KEY, JSON.stringify({ back: '/enterprises/91', keys: ['["91",10]', '["91",11]'], sourceKeys: ['["91",10]'] }))
+    const page = mount(EnterprisePage, { attachTo: document.body, global: { stubs: globalStubs } })
+    await flushPromises()
+    const inner = (id: number) => page.find(`#record-event-${id}`).findAll('button').find(b => b.text() === '正式文件与已登记出处')!
+    expect(inner(10).attributes('aria-expanded')).toBe('true')
+    expect(inner(11).attributes('aria-expanded')).toBe('false')
+    if (change === 'enterprise') currentRoute.params = { id: '92' }
+    if (change === 'tab') currentRoute.query = { tab: 'review' }
+    currentRoute.fullPath = change === 'enterprise' ? '/enterprises/92' : `/enterprises/91?${change}=other`
+    await flushPromises()
+    currentRoute.params = { id: '91' }
+    currentRoute.query = {}
+    currentRoute.fullPath = '/enterprises/91'
+    await flushPromises()
+    await page.find('#record-event-10').findAll('button').find(b => b.text() === '来源记录')!.trigger('click')
+    await flushPromises()
+    expect(inner(10).attributes('aria-expanded')).toBe('false')
+    page.unmount()
+  })
+
+  it('keeps source navigation usable when session storage throws', async () => {
+    mocks.detail = fullDetail
+    const get = vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => { throw new Error('storage denied') })
+    const set = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new Error('storage denied') })
+    const page = mount(EnterprisePage, { attachTo: document.body, global: { stubs: globalStubs } })
+    try {
+      await flushPromises()
+      const button = (text: string) => page.find('#record-event-10').findAll('button').find(b => b.text() === text)!
+      await button('来源记录').trigger('click')
+      await flushPromises()
+      await button('正式文件与已登记出处').trigger('click')
+      await flushPromises()
+      expect(button('正式文件与已登记出处').attributes('aria-expanded')).toBe('true')
+      const link = page.find('#record-event-10').findAll('a').find(a => a.text() === '第 8 页')!
+      expect(link.attributes('href')).toContain('/preview?')
+      await link.trigger('click', { button: 0 })
+    } finally { page.unmount(); get.mockRestore(); set.mockRestore() }
+  })
+
+  it('keeps the review consumer uncontrolled and preserves automatic error disclosure', async () => {
+    const page = mount(RecordEventRow, {
+      attachTo: document.body,
+      props: {
+        event: { id: 10, recordId: 1, type: 'award', year: 2022, seq: 1, decidedYear: null, reviewOutcome: null, titleCode: 'specialized_sme', source: 'jxj', district: null },
+        evidence: fullDetail.evidence, edges: [], back: '/enterprises/91?tab=review', open: true, review: true,
+      },
+      global: { stubs: globalStubs },
+    })
+    await flushPromises()
+    const inner = () => page.findAll('button').find(b => b.text() === '正式文件与已登记出处')!
+    expect(inner().attributes('aria-expanded')).toBe('false')
+    await inner().trigger('click')
+    await flushPromises()
+    expect(inner().attributes('aria-expanded')).toBe('true')
+    await inner().trigger('click')
+    await flushPromises()
+    expect(inner().attributes('aria-expanded')).toBe('false')
+    await page.setProps({ detailsError: true })
+    expect(inner().attributes('aria-expanded')).toBe('true')
+    await page.setProps({ detailsError: false, edges: [{
+      id: 1, type: 'event_process', role: 'source', status: 'confirmed', eventId: 10,
+      predecessorEventId: null, relationId: 1, exportRowId: null, enterpriseId: 91,
+      titleCode: 'specialized_sme', revision: 1, requiresRevalidation: true,
+      ruleId: 'synthetic', ruleVersion: '1', createdAt: '2026-01-01', decidedAt: null, endedAt: null,
+    }] })
+    expect(inner().attributes('aria-expanded')).toBe('true')
+    page.unmount()
   })
 
   it('waits for event source rows to settle before restoring an enterprise preview return', async () => {
