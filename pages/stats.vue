@@ -27,10 +27,6 @@ async function load() {
 watch([title, status, page, pageSize], load, { immediate: true })
 function select(code: string, state: string) { title.value = code; status.value = state; page.value = 1 }
 const target = computed(() => `${TITLES[title.value] ?? '全部称号'} · ${status.value === 'pending' ? '身份待核' : '累计公布'} · 第 ${page.value} 页`)
-const apiGet = $fetch as unknown as <T>(url: string) => Promise<T>
-const { data: legacy, error: districtError, refresh: retryDistrict, status: districtStatus } = await useAsyncData('stats-legacy-districts', () => apiGet<{ byDistrict: { key: string; n: number }[] }>('/api/stats'))
-const districts = computed(() => legacy.value?.byDistrict ?? [])
-const districtMax = computed(() => Math.max(1, ...districts.value.map(b => b.n)))
 </script>
 
 <template>
@@ -78,16 +74,6 @@ const districtMax = computed(() => Math.max(1, ...districts.value.map(b => b.n))
     </Card>
     <StatisticsMovementsSection />
     <StatisticsAnnualSection />
-    <Card>
-      <CardHeader><CardTitle>区县分布（旧口径）</CardTitle><CardDescription>按记录属地统计，尚未替换为当前有效企业数。</CardDescription></CardHeader>
-      <CardContent>
-        <TableFailureState v-if="districtError" title="旧口径区县分布加载失败" @retry="retryDistrict()" />
-        <Skeleton v-if="districtStatus === 'pending'" class="h-40 w-full" />
-        <div v-else class="grid gap-x-8 sm:grid-cols-2">
-          <BarRow v-for="bucket in districts" :key="bucket.key" :label="bucket.key" :value="bucket.n" :max="districtMax" color="var(--chart-1)" />
-          <p v-if="!districts.length && !districtError">暂无区县数据</p>
-        </div>
-      </CardContent>
-    </Card>
+    <StatisticsDistrictSection />
   </div>
 </template>
