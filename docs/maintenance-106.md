@@ -2,6 +2,8 @@
 
 实现范围：派生 OCR 页结果。文件稳定 ID 与显式页号定位；正式出处、台账、来源文件和页图不是本能力的修改对象。单页重做由调用方读取页图、识别/校对后按页写回；不调用整份在线 OCR、不清空其他页，不新增自动业务判断或 UI。
 
+本文继续说明既有页级 REST/MCP 的版本、鉴权、响应与 legacy 兼容协议。在线 OCR 任务的发布与恢复由[在线 OCR 发布与恢复（#309）](ocr-publication-309.md)承接：提交时冻结目标页输入与版本，发布前重核，全部目标可写才发布该文件，未列出的历史页保留；持久检查点 `job.result.publication` 与恢复账本 `job.result.ocrRecovery` 保留采集和尝试记录，unknown 不自动重复付费。具体恢复条件与边界见后继文档；#309 不替代本页的页级接口协议。
+
 ## 当前公开契约与代理用法
 
 代理 REST 入口：`/api/files/{id}/ocr-pages/{page}`，`id` 为 `stored_file.id`，`page` 为 1–2000 的整数。
@@ -25,13 +27,17 @@ OpenAPI 的新路径声明请求白名单、独立 token、安全响应及版本
 
 新 REST PUT/DELETE 与新 MCP `delete_ocr_result` 必须提供 `expectedVersion`，缺失即拒绝。仅既有 REST POST/DELETE 与 MCP `save_ocr_result` 的旧载荷适配允许省略，保留原来的较弱盲写语义；字符串必须使用读回值。显式 `null` 表示“预期这一页不存在”，可用于防覆盖创建。带预期版本的写入必须显式给 `page`，不能把它作用到整份 markdown/JSONL。版本不符（包括带旧版本访问已删除页）为 409，整次请求不变更；重新读取后决定是否重试。现代删除以 `null` 表示预期不存在，可重复返回 0；旧入口无条件删除不存在页也返回 0。旧入口无条件重传同页不新增重复行，并会推进修订，使此前读回的现代编辑版本失效。成功覆盖会推进版本，因此带旧版本重放不会静默覆盖后来结果。
 
-迁移 `0022_ocr_page_revision.sql` 仅为 `ocr_result` 添加 `revision INTEGER NOT NULL DEFAULT 1`，保留已有行、ID、正文、raw、约束和索引。版本由自增行 ID 与递增修订构成，调用方须当作不透明字符串。所有既有写入（包括完整在线 OCR 成功替换）沿用同一写服务，更新推进修订；删除重建产生新 ID，防止同页重建后旧版本重新命中。版本核对和修改在同一个 `BEGIN IMMEDIATE` 事务；多页替换失败整体回滚，覆盖时未提供 raw 保留原值。
+迁移 `0022_ocr_page_revision.sql` 仅为 `ocr_result` 添加 `revision INTEGER NOT NULL DEFAULT 1`，保留已有行、ID、正文、raw、约束和索引。版本由自增行 ID 与递增修订构成，调用方须当作不透明字符串。页级写入更新推进修订；删除重建产生新 ID，防止同页重建后旧版本重新命中。版本核对和修改在同一个 `BEGIN IMMEDIATE` 事务；多页写入失败整体回滚。历史上的“完整在线 OCR 成功替换”不再作为当前在线任务的发布说明，当前目标页校验、发布与恢复以 #309 为准。
+
+当前 `ocr_result.raw` 按 [#309 的来源封套说明](ocr-publication-309.md)使用 `ocr-provenance-v1` 保存 `captures` 与 `revisions`：原始载荷保留在 `captures[].raw`，文本修订引用采集。页覆盖未提供新 raw 时保留已有采集，不表示存储列仍是未封装的旧原 raw。旧行仅在被写入时封装，旧 raw 原值完整保留，采集来源和原 markdown 为 null（unknown），不从最后修改的 channel/model 倒填；行上的 markdown/channel/engine/model 仍表示当前文本修订。封套细节及直接 raw 消费者的回滚兼容边界见后继文档，既有页 DTO、页版本和 ID 保持。
 
 错误分类：400 为字段/引用/页号/版本形状错误或越出已知 PDF 页数，401 为写入未鉴权，404 为目标文件不存在/已移出（读取已移出文件仍允许）或精确读的 OCR 页不存在，409 为版本冲突，415 为写入非 PDF。MCP 业务错误通过 `isError` 文案保留同一状态分类，传输级未授权为 HTTP 401；MCP schema 校验使用框架标准参数错误。源页数探测失败时沿用原服务 warning/null 规则，不虚构页数。
 
 兼容入口：`GET/POST/DELETE /api/ocr-results` 与 markdown 导出保留；默认请求/响应键保持基线，REST GET 仅显式 `includeVersion=1` 才增加 `version`，MCP get 仅显式 `includeVersion:true` 才增加版本。旧 MCP save 通过适配器严格返回原 `file/channel/written/pages` 四个键，不附上传通路的 source/页数探测字段。POST 单页支持可选 `expectedVersion`，DELETE 在 query 支持版本字符串。既有写入口也可显式 `mode:"versioned"` 请求现代保护（REST POST/MCP save；旧 REST DELETE 的 query 也支持该模式），此时预期版本与显式页号必须齐备；字段形状非法、缺版本或仅有现代模式标记均拒绝，不回退盲写。没有新增必填幂等键、审计字段，亦不编造“用户已确认”的依据。页面原有 HTTP 写口按既有 ADR 保持本机页面直调政策；这不是新代理 REST 入口的鉴权策略。需要受 token 保护的程序使用新稳定 ID 页路径。文件路径别名歧义与非法页号统一为 400。没有新增物理删除文件或整份清空能力。
 
 ## 验收证据
+
+以下验收、性能边界与收尾记录保留 #106 各源码快照的历史证据，不代表本次文档澄清重新执行了 SDK、Paddle 或并发验收，也不代替 #309 的验收边界。本次仅做静态文档检查，运行时验证为 UNRUN。
 
 公开接缝：真实 Nuxt/Nitro HTTP、真实 MCP `tools/list` / `tools/call`，独立临时 SQLite 与合成 PDF/PNG。测试 `tests/ocr-page-lifecycle-106.test.ts` 不调用私有业务函数；DB 仅建合成夹具、注入事务故障和坏 raw。
 
