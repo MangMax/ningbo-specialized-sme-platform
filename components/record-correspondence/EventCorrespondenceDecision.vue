@@ -183,7 +183,12 @@ async function preflight() {
 function showError(cause: unknown) {
   const failure = cause as { statusCode?: number; status?: number; data?: { error?: { code?: string; message?: string } } }
   const code = failure.data?.error?.code
-  if (point.value?.status === 'candidate' && code === 'plan_mismatch' && failure.data?.error?.message === 'Source row changed since correspondence decision') {
+  if ((failure.statusCode === 409 || failure.status === 409) && point.value?.status === 'candidate' && code === 'plan_mismatch' && failure.data?.error?.message === 'Source row changed since correspondence decision') {
+    // This explicit rejection occurs before writes. Unknown transport failures
+    // keep their frozen request so retry cannot create a second decision.
+    attempted.value = false
+    request.value = null
+    plan.value = null
     blockedCandidateRevision.value = point.value.revision
     conflict.value = true
     error.value = ''

@@ -460,7 +460,44 @@ it('offers explicit candidate revalidation after conflict while preserving the d
   expect(fetch.mock.calls.filter(([url]) => url.endsWith('browser-commit'))).toHaveLength(0)
 })
 
-it('revalidates a candidate with a frozen request after response loss then leaves confirmation explicit', async () => {
+it.each(['确认对应', '不对应'])('recovers a definitive commit source conflict for %s with a new revalidation request and preserved draft', async (label) => {
+  capability()
+  const writes: any[] = []; let key = '', revision = 1
+  const fetch = vi.fn(async (url: string, options?: any) => {
+    if (url.endsWith('browser-preflight')) {
+      key = options.body.idempotencyKey
+      return { planHash: 'a'.repeat(64), impact: { created: 0, unlinked: 0, audit: 1 } }
+    }
+    if (url.endsWith('browser-commit')) {
+      writes.push(JSON.parse(JSON.stringify(options.body)))
+      if (writes.length === 1) throw { statusCode: 409, data: { error: { code: 'plan_mismatch', message: 'Source row changed since correspondence decision' } } }
+      revision = 2
+      return { correspondenceIds: [4] }
+    }
+    if (url.endsWith('/audit')) return { rows: [{ idempotencyKey: key }], total: 1, page: 1, pageSize: 50 }
+    return { id: 4, revision, status: 'candidate' }
+  })
+  vi.stubGlobal('$fetch', fetch)
+  wrapper = mountControl({ id: 4, revision: 1, status: 'candidate' }); await flushPromises()
+  button(label).click(); await flushPromises()
+  const area = document.querySelector('textarea')!; area.value = '保留提交时的核对依据'; area.dispatchEvent(new Event('input', { bubbles: true })); await flushPromises()
+  button('提交决定').click(); await flushPromises()
+  expect(button('重新核验候选').disabled).toBe(false)
+  expect(document.body.textContent).not.toContain('提交结果尚待确认')
+  expect(area.disabled).toBe(false)
+  button('保留草稿并关闭').click(); await flushPromises()
+  button(label).click(); await flushPromises()
+  button('重新核验候选').click(); await flushPromises()
+  expect(document.querySelector('textarea')!.value).toBe('保留提交时的核对依据')
+  button('提交决定').click(); await flushPromises()
+  expect(writes).toHaveLength(2)
+  expect(writes[1].request.idempotencyKey).not.toBe(writes[0].request.idempotencyKey)
+  expect(writes[1].request.basis).toBe('保留提交时的核对依据')
+  expect(writes[1].request.operations).toEqual([{ action: 'revalidate', correspondenceId: 4, expectedRevision: 1 }])
+  expect(document.body.textContent).toContain('候选来源已重新核验，仍待确认')
+})
+
+it.each(['connection loss', 'server failure'])('revalidates a candidate with a frozen request after %s then leaves confirmation explicit', async (failureKind) => {
   capability()
   const writes: any[] = []; let key = '', revision = 1
   const fetch = vi.fn(async (url: string, options?: any) => {
@@ -471,7 +508,10 @@ it('revalidates a candidate with a frozen request after response loss then leave
     }
     if (url.endsWith('browser-commit')) {
       writes.push(JSON.parse(JSON.stringify(options.body))); revision = 2
-      if (writes.length === 1) throw new Error('accepted response lost')
+      if (writes.length === 1) {
+        if (failureKind === 'server failure') throw { statusCode: 503, data: { error: { code: 'plan_mismatch', message: 'Source row changed since correspondence decision' } } }
+        throw new Error('accepted response lost')
+      }
       return { correspondenceIds: [4] }
     }
     if (url.endsWith('/audit')) return { rows: [{ idempotencyKey: key }], total: 1, page: 1, pageSize: 50 }
