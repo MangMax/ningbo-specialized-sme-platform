@@ -25,12 +25,11 @@ const props = withDefaults(defineProps<{
   titleCode?: string
   direction?: string
   impactId?: number
+  openImpactRequest?: { id: number; titleCode: string; direction: string } | null
   locate?: boolean
   pending?: ImpactRow[]
-  openScopeRequest?: { titleCode: string; direction: string } | null
 }>(), {
   pending: () => [],
-  openScopeRequest: null,
 })
 
 const emit = defineEmits<{ saved: [] }>()
@@ -115,15 +114,6 @@ function openScope(assessment: ReviewAssessment & ReviewScope) {
   sheetOpen.value = true
 }
 
-function openImpact(row: ImpactRow) {
-  selectedImpact.value = row
-  selectedImpactId.value = row.id
-  selectedAssessment.value = props.assessments.find(item => item.titleCode === row.titleCode && item.direction === row.direction)
-  selectedTitle.value = row.titleCode
-  selectedDirection.value = row.direction
-  sheetOpen.value = true
-}
-
 function onSaved() {
   reviewGeneration.value++
   emit('saved')
@@ -138,17 +128,14 @@ watch(() => [props.enterpriseId, props.titleCode, props.direction, props.assessm
   }
 }, { immediate: true })
 
-/** 首屏“查看尚未判断项 / 查看范围”打开对应范围的证据抽屉。 */
-watch(() => props.openScopeRequest, request => {
+// Each explicit click is a new open request, including an unchanged deep-link coordinate.
+watch(() => props.openImpactRequest, request => {
   if (!request) return
-  const assessment = props.assessments.find(item => item.titleCode === request.titleCode && item.direction === request.direction)
-  if (!assessment) return
-  const pending = pendingByScope.value.get(keyOf(assessment)) ?? null
-  selectedAssessment.value = assessment
-  selectedImpact.value = pending
-  selectedImpactId.value = pending?.id
-  selectedTitle.value = assessment.titleCode
-  selectedDirection.value = assessment.direction
+  selectedImpact.value = props.pending.find(item => item.id === request.id) ?? null
+  selectedImpactId.value = request.id
+  selectedAssessment.value = props.assessments.find(item => item.titleCode === request.titleCode && item.direction === request.direction)
+  selectedTitle.value = request.titleCode
+  selectedDirection.value = request.direction
   sheetOpen.value = true
 }, { immediate: true })
 

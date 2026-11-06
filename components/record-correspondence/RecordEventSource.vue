@@ -31,12 +31,13 @@ const props = withDefaults(defineProps<{
   event: LedgerEvent
   evidence: OfficialEvidence[]
   edges: CorrespondenceDetail[]
+  showOfficial?: boolean
   edgesReady?: boolean
   edgesLoading?: boolean
   edgesError?: boolean
   back: string
   returnTo?: string | null
-}>(), { edgesReady: true })
+}>(), { edgesReady: true, showOfficial: true })
 const emit = defineEmits<{
   preview: [evidence: OfficialEvidence]
   'event-navigate': [eventId: number]
@@ -96,8 +97,8 @@ const relationStatus = (edge: CorrespondenceDetail) => edge.relation
 
 <template>
   <div class="flex min-w-0 flex-col gap-4 border-t p-4 text-base leading-6 sm:px-5" data-testid="record-event-source">
-    <div class="grid min-w-0 gap-4 lg:grid-cols-2">
-      <section class="min-w-0" aria-label="正式公布文件">
+    <div class="grid min-w-0 gap-4" :class="showOfficial ? 'lg:grid-cols-2' : undefined">
+      <section v-if="showOfficial" class="min-w-0" aria-label="正式公布文件">
         <h4 class="text-muted-foreground mb-2 text-sm font-medium">正式公布文件</h4>
         <p v-if="!evidence.length" class="text-muted-foreground">此事件未记录公布文件出处。</p>
         <ul v-else class="flex flex-col gap-2">

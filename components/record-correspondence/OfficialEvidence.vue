@@ -4,6 +4,7 @@ import { fileNameOf, fileUrl, isPreviewable } from '~~/lib/preview'
 import { evidencePageState, evidencePreviewHref } from '~~/lib/roster/evidence-page'
 import { publishedNameText, type OfficialPublishedFact } from '~~/lib/roster/correspondence-view'
 import { Button } from '@/components/ui/button'
+import { FileText, ArrowUpRight, Download } from '@lucide/vue'
 
 const props = defineProps<{
   evidence: { publishedName?: OfficialPublishedFact; sourceFile: string; attachment: string | null; listNo: number | null; page: number | null; inSelectedSource?: boolean }
@@ -11,10 +12,12 @@ const props = defineProps<{
   previewInPlace?: boolean
 }>()
 const emit = defineEmits<{ preview: []; 'page-open': [event: MouseEvent] }>()
+const checkAttempt = ref(0)
 const availability = ref<'checking' | 'available' | 'missing' | 'unknown'>('checking')
 const pageState = computed(() => evidencePageState(props.evidence.sourceFile, props.evidence.page))
+const focusKey = computed(() => JSON.stringify([props.evidence.sourceFile, props.evidence.attachment, props.evidence.listNo, props.evidence.page]))
 const previewHref = computed(() => evidencePreviewHref({ ...props.evidence, back: props.back }))
-onMounted(() => watch(() => props.evidence.sourceFile, async (path, _previous, onCleanup) => {
+onMounted(() => watch([() => props.evidence.sourceFile, checkAttempt], async ([path], _previous, onCleanup) => {
   const controller = new AbortController()
   let current = true
   onCleanup(() => { current = false; controller.abort() })
@@ -28,27 +31,38 @@ onMounted(() => watch(() => props.evidence.sourceFile, async (path, _previous, o
 </script>
 
 <template>
-  <div class="flex min-w-0 flex-col gap-1 text-[13px] leading-5" data-testid="official-evidence">
-    <p v-if="evidence.publishedName" class="break-words [overflow-wrap:anywhere]" data-testid="published-name">{{ publishedNameText(evidence.publishedName) }}</p>
-    <p class="font-medium break-words [overflow-wrap:anywhere]">{{ fileNameOf(evidence.sourceFile) }}</p>
-    <p class="text-muted-foreground break-words [overflow-wrap:anywhere]">原路径：{{ evidence.sourceFile }}</p>
-    <p v-if="evidence.attachment" class="break-words [overflow-wrap:anywhere]">附件 / 名单段：{{ evidence.attachment }}</p>
-    <p class="text-muted-foreground">
-      <span v-if="evidence.listNo != null">序号 {{ evidence.listNo }} · </span>
-      <NuxtLink v-if="pageState === 'assigned' && availability !== 'missing'" :to="previewHref" class="text-primary tabular-nums underline underline-offset-2" @click="emit('page-open', $event)">第 {{ evidence.page }} 页</NuxtLink>
+  <div class="bg-muted/25 flex h-full min-w-0 flex-col gap-3 rounded-lg border p-4 text-base leading-6" data-testid="official-evidence">
+    <div class="flex items-start gap-3">
+      <span class="bg-card text-primary flex size-9 shrink-0 items-center justify-center rounded-md border"><FileText class="size-5" aria-hidden="true" /></span>
+      <div class="min-w-0 flex-1">
+        <p class="font-medium break-words [overflow-wrap:anywhere]">{{ fileNameOf(evidence.sourceFile) }}</p>
+        <p v-if="evidence.publishedName" class="text-muted-foreground mt-1 text-sm break-words [overflow-wrap:anywhere]" data-testid="published-name">{{ publishedNameText(evidence.publishedName) }}</p>
+      </div>
+    </div>
+    <dl v-if="evidence.attachment" class="grid min-w-0 gap-1 text-sm">
+      <dt class="text-muted-foreground">附件 / 名单段</dt>
+      <dd class="text-base break-words [overflow-wrap:anywhere]">{{ evidence.attachment }}</dd>
+    </dl>
+    <div class="mt-auto flex flex-wrap items-center gap-2 text-sm">
+      <span v-if="evidence.listNo != null" class="bg-card rounded-md border px-2.5 py-1 tabular-nums">序号 {{ evidence.listNo }}</span>
+      <Button v-if="pageState === 'assigned' && availability === 'available'" as-child variant="secondary" size="sm"><NuxtLink :to="previewHref" :data-evidence-return-focus="focusKey + 'page'" class="tabular-nums" @click="emit('page-open', $event)">第 {{ evidence.page }} 页<ArrowUpRight aria-hidden="true" /></NuxtLink></Button>
       <span v-else-if="pageState === 'assigned'">已记录第 {{ evidence.page }} 页</span>
       <span v-else-if="pageState === 'pending'">页码待核</span>
       <span v-else>这类文件没有可复核的页码</span>
       <span v-if="evidence.inSelectedSource === false"> · 未选入本次范围</span>
-    </p>
+      <div v-if="availability === 'available'" class="flex flex-wrap items-center gap-2">
+        <template v-if="isPreviewable(evidence.sourceFile)">
+          <Button v-if="previewInPlace" variant="outline" size="sm" @click="emit('preview')">查看原文件<ArrowUpRight aria-hidden="true" /></Button>
+          <Button v-else as-child variant="outline" size="sm"><NuxtLink :to="previewHref" :data-evidence-return-focus="focusKey + 'file'" @click="emit('page-open', $event)">查看原文件<ArrowUpRight aria-hidden="true" /></NuxtLink></Button>
+        </template>
+        <Button v-else as-child variant="outline" size="sm"><a :href="fileUrl(evidence.sourceFile)" target="_blank" rel="noopener">下载原文件<Download aria-hidden="true" /></a></Button>
+      </div>
+    </div>
+    <p v-if="availability === 'checking'" role="status" class="text-muted-foreground text-sm">正在确认文件可用性…</p>
     <p v-if="availability === 'missing'" class="text-muted-foreground">文件不可用；出处与已记录页码保留。</p>
     <p v-else-if="availability === 'unknown'" class="text-muted-foreground">暂无法确认文件是否可用。</p>
-    <div v-if="availability !== 'missing'" class="flex flex-wrap items-center gap-2">
-      <template v-if="isPreviewable(evidence.sourceFile)">
-        <Button v-if="previewInPlace" variant="outline" size="sm" @click="emit('preview')">查看原文件</Button>
-        <NuxtLink v-else :to="previewHref" class="text-primary underline underline-offset-2" @click="emit('page-open', $event)">查看原文件</NuxtLink>
-      </template>
-      <a v-else :href="fileUrl(evidence.sourceFile)" target="_blank" rel="noopener" class="text-primary underline underline-offset-2">下载原文件</a>
-    </div>
+    <Button v-if="availability === 'unknown'" variant="outline" size="sm" @click="checkAttempt++">重新检查文件</Button>
+
+    <p class="text-muted-foreground border-t pt-2 text-sm break-words [overflow-wrap:anywhere]">原路径：{{ evidence.sourceFile }}</p>
   </div>
 </template>

@@ -199,3 +199,27 @@ it('refreshes only summaries while no event is selected', async () => {
   expect(scenario.fetch.mock.calls.map(([url]) => url)).toEqual(['/api/roster/correspondences'])
   expect(wrapper.find('[data-testid="event-archive-candidates"]').exists()).toBe(false)
 })
+
+it('shows a concise matter selector and reads only the selected matter instead of repeating the history', async () => {
+  const fetch = vi.fn((url: string, options: any) => Promise.resolve(url.endsWith('/discover') ? page(options.body.eventId) : { rows: [], total: 0, page: 1, pageSize: 200 }))
+  installFetch(fetch); vi.stubGlobal('useState', () => ref(false))
+  wrapper = mount(EventCorrespondenceReview, { global: { components: { EventChip, TitleBadge, SourceChip } }, props: { enterpriseId: 1, events, back: '/enterprises/1?tab=review' } })
+  await flushPromises()
+  expect(wrapper.text()).toContain('选择正式事项')
+  expect(wrapper.text()).not.toContain('公布文件')
+  expect(wrapper.text()).not.toContain('尚无已确认关联记录')
+  await openEvent(7)
+  expect(wrapper.get('#review-event-7').text()).toContain('年度过程与最终结果')
+  expect(wrapper.get('#review-event-8').text()).not.toContain('公布文件')
+  expect(fetch.mock.calls.filter(([url]) => url.endsWith('/discover')).map(([, options]) => options.body.eventId)).toEqual([7])
+})
+
+it('keeps source revalidation visible in an unselected matter without loading its candidate form', async () => {
+  const fetch = vi.fn(() => Promise.resolve({ rows: [{ id: 17, eventId: 7, type: 'event_process', status: 'confirmed', role: 'context_only', revision: 2, relationId: 27, exportRowId: null, requiresRevalidation: true }], total: 1, page: 1, pageSize: 200 }))
+  installFetch(fetch); vi.stubGlobal('useState', () => ref(false))
+  wrapper = mount(EventCorrespondenceReview, { global: { components: { EventChip, TitleBadge, SourceChip } }, props: { enterpriseId: 1, events, back: '/enterprises/1?tab=review' } })
+  await flushPromises()
+  expect(wrapper.get('#review-event-7').text()).toContain('1 条对应待重新核验')
+  expect(wrapper.get('#review-event-8').text()).not.toContain('待重新核验')
+  expect(fetch.mock.calls).toHaveLength(1)
+})

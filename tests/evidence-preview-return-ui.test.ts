@@ -232,6 +232,7 @@ describe('出处预览返回滚动恢复', () => {
     mocks.setLoading = null
     sessionStorage.clear()
     history.replaceState(null, '', '/')
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, status: 200 })))
     vi.stubGlobal('useHead', vi.fn())
     vi.stubGlobal('$fetch', vi.fn(async () => ({})))
     currentRoute = { params: { id: '91' }, query: {}, fullPath: '/enterprises/91' }
@@ -471,7 +472,8 @@ describe('出处预览返回滚动恢复', () => {
     expect(evidenceLink).toBeDefined()
     await evidenceLink!.trigger('click', { button: 0 })
     const previewUrl = new URL(evidenceLink!.attributes('href')!, window.location.origin)
-    expect(previewUrl.searchParams.get('back')).toBe(detailPath)
+    const returnPath = detailPath + '&tab=records&eventId=10'
+    expect(previewUrl.searchParams.get('back')).toBe(returnPath)
     const chainedStates = JSON.parse(sessionStorage.getItem('roster:evidence-preview-return')!) as {
       back: string
       scrollY: number
@@ -485,15 +487,16 @@ describe('出处预览返回滚动恢复', () => {
       scrollTop: listTableTop,
       scrollLeft: listTableLeft,
     })
-    expect(chainedStates.find((state) => state.back === detailPath)).toEqual({
-      back: detailPath,
+    expect(chainedStates.find((state) => state.back === returnPath)).toMatchObject({
+      back: returnPath,
       scrollY: detailWindowTop,
       scrollTop: null,
       scrollLeft: null,
     })
     detailPage.unmount()
 
-    history.pushState(null, '', detailPath)
+    history.pushState(null, '', returnPath)
+    currentRoute.fullPath = returnPath
     Object.defineProperty(window, 'scrollY', { configurable: true, value: 0 })
     mocks.detail = null
     mocks.loading = true
@@ -631,14 +634,16 @@ describe('出处预览返回滚动恢复', () => {
     await evidenceLink!.trigger('click', { button: 0 })
     const previewUrl = new URL(evidenceLink!.attributes('href')!, window.location.origin)
     expect(previewUrl.pathname).toBe('/preview')
-    expect(previewUrl.searchParams.get('back')).toBe(detailPath)
+    const returnPath = detailPath + '&tab=records&eventId=10'
+    expect(previewUrl.searchParams.get('back')).toBe(returnPath)
     expect(JSON.parse(sessionStorage.getItem('roster:evidence-preview-return')!)).toEqual([
       { back: ledgerPath, scrollY: ledgerWindowTop, scrollTop: ledgerTableTop, scrollLeft: ledgerTableLeft },
-      { back: detailPath, scrollY: detailWindowTop, scrollTop: null, scrollLeft: null },
+      expect.objectContaining({ back: returnPath, scrollY: detailWindowTop, scrollTop: null, scrollLeft: null }),
     ])
     detailPage.unmount()
 
-    history.pushState(null, '', detailPath)
+    history.pushState(null, '', returnPath)
+    currentRoute.fullPath = returnPath
     Object.defineProperty(window, 'scrollY', { configurable: true, value: 0 })
     mocks.detail = null
     mocks.loading = true
@@ -710,6 +715,7 @@ describe('出处预览返回滚动恢复', () => {
     { label: '390×844 窄屏详情页', width: 390, height: 844, windowTop: 42 },
   ])('$label 从出处预览返回时在详情数据渲染后恢复页面位置', async ({ width, height, windowTop }) => {
     const detailPath = '/enterprises/91?back=view%3Denterprise%26q%3D%E5%BC%80%E8%AF%9A%26page%3D2%26expand%3D91'
+    const returnPath = detailPath + '&tab=records&eventId=10'
     Object.defineProperty(window, 'innerWidth', { configurable: true, value: width })
     Object.defineProperty(window, 'innerHeight', { configurable: true, value: height })
     Object.defineProperty(window, 'scrollY', { configurable: true, value: windowTop })
@@ -726,18 +732,18 @@ describe('出处预览返回滚动恢复', () => {
 
     const previewUrl = new URL(sourceLink!.attributes('href')!, window.location.origin)
     expect(previewUrl.pathname).toBe('/preview')
-    expect(previewUrl.searchParams.get('back')).toBe(detailPath)
-    expect(sessionStorage.getItem('roster:evidence-preview-return')).toContain(`"back":"${detailPath}"`)
+    expect(previewUrl.searchParams.get('back')).toBe(returnPath)
+    expect(sessionStorage.getItem('roster:evidence-preview-return')).toContain(`"back":"${returnPath}"`)
     expect(sessionStorage.getItem('roster:evidence-preview-return')).toContain(`"scrollY":${windowTop}`)
     expect(JSON.parse(sessionStorage.getItem(DETAIL_OPEN_EVIDENCE_STATE_KEY)!)).toEqual({
-      back: detailPath,
-      keys: [JSON.stringify(['91', 10])],
+      back: returnPath,
+      keys: [],
     })
     source.unmount()
 
-    history.pushState(null, '', detailPath)
+    history.pushState(null, '', returnPath)
     Object.defineProperty(window, 'scrollY', { configurable: true, value: 0 })
-    currentRoute = { params: { id: '91' }, query: { back: 'view=enterprise&q=%E5%BC%80%E8%AF%9A&page=2&expand=91' }, fullPath: detailPath }
+    currentRoute = { params: { id: '91' }, query: { tab: 'records', eventId: '10', back: 'view=enterprise&q=%E5%BC%80%E8%AF%9A&page=2&expand=91' }, fullPath: returnPath }
     mocks.detail = null
     mocks.loading = true
     const frames: FrameRequestCallback[] = []
@@ -759,6 +765,12 @@ describe('出处预览返回滚动恢复', () => {
     frames[0]!(0)
     expect(scrollTo).toHaveBeenCalledWith({ top: windowTop, behavior: 'instant' })
     expect(returned.findAll('button').some((button) => button.text().includes('来源记录'))).toBe(true)
+    await flushPromises()
+    mocks.setDetail?.(structuredClone(fullDetail))
+    await flushPromises()
+    expect(frames).toHaveLength(1)
+    expect(document.activeElement?.textContent).toBe('第 8 页')
+    expect(document.activeElement?.closest('[data-event-id]')?.getAttribute('data-event-id')).toBe('10')
     expect(sessionStorage.getItem('roster:evidence-preview-return')).toBeNull()
     expect(sessionStorage.getItem(DETAIL_OPEN_EVIDENCE_STATE_KEY)).toBeNull()
     returned.unmount()

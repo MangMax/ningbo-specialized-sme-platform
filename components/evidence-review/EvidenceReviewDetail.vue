@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, nextTick, shallowRef } from 'vue'
+import { computed, inject, nextTick, shallowRef } from 'vue'
+import { REVIEW_DRAFTS_KEY } from '~/composables/useReviewDrafts'
 import { useEvidenceReviewRefresh } from '~/composables/useEvidenceReviewRefresh'
 import { useQuery } from '@pinia/colada'
 import type { ImpactDetail } from '~~/lib/roster/evidence-review-ui'
@@ -19,11 +20,17 @@ const refreshAffected = useEvidenceReviewRefresh()
 const props = defineProps<{ impactId: number; enterpriseId?: number; formFooter?: boolean }>()
 const { data, isLoading, error, refetch } = useQuery({ key: () => ['evidence-impact', props.impactId], query: () => $fetch<ImpactDetail>(`/api/roster/evidence-impacts/${props.impactId}`) })
 
+const drafts = inject(REVIEW_DRAFTS_KEY, null)
+const unresolvedSubmission = computed(() => !!drafts?.drafts[String(props.impactId)]?.reviewSubmission?.unknown)
+
 const showHistory = computed(() => !!data.value?.oldDecision && !data.value.gaps.decisionUnavailable && data.value.lineage !== 'merged')
 
 type SaveNotice = { tone: 'success' | 'warning'; title: string; lines: string[] }
 const notice = shallowRef<SaveNotice | null>(null)
 const noticeEl = shallowRef<HTMLElement | null>(null)
+const feedbackTarget = computed(() => data.value
+  ? `来源变化 #${data.value.id} · ${titleLabel(data.value.titleCode)} · ${directionLabel(data.value.direction)}`
+  : `来源变化 #${props.impactId}`)
 
 /**
  * 只陈述服务端读回的决定坐标和本次回执动作；回执缺失时不把“提交返回”
@@ -77,6 +84,9 @@ async function onSaved(payload?: { action?: string }) {
   try { await refreshAffected() } catch { /* 仍显式尝试读回当前详情 */ }
   try {
     await refetch()
+    // Colada records request failures in the query error ref; refetch need not
+    // reject. Cached pending data is not a successful current-state readback.
+    readFailed = !!error.value
   } catch {
     readFailed = true
   }
@@ -130,13 +140,13 @@ async function reloadCurrent() {
     <template v-else-if="data">
       <header class="flex min-w-0 flex-col gap-1.5">
         <div class="flex flex-wrap items-center gap-1.5">
-          <h3 class="text-sm font-semibold">复核项 #{{ data.id }}</h3>
+          <h3 class="text-base font-semibold">来源变化 #{{ data.id }}</h3>
           <AssessmentStatusBadge kind="review" :value="data.pending ? 'pending' : 'reviewed'" />
           <AssessmentStatusBadge kind="impact" :value="data.classification" />
           <AssessmentStatusBadge v-if="impactEffectiveLineage(data) !== 'current'" kind="lineage" :value="impactEffectiveLineage(data)" />
           <span v-else class="text-muted-foreground text-[13px]">当前决定</span>
         </div>
-        <p class="text-muted-foreground text-[13px] leading-5">
+        <p class="text-base leading-6">
           {{ titleLabel(data.titleCode) }} · {{ directionLabel(data.direction) }} ·
           {{ impactClassificationLabels[data.classification] ?? '证据变化' }}
         </p>
@@ -158,6 +168,7 @@ async function reloadCurrent() {
             notice.tone === 'warning' ? 'border-warning/40 bg-warning/5' : 'border-primary/30 bg-primary/5',
           ]"
         >
+          <p class="font-medium">{{ feedbackTarget }}</p>
           <p class="font-medium">{{ notice.title }}</p>
           <p v-for="line in notice.lines" :key="line" class="text-muted-foreground">{{ line }}</p>
         </div>
@@ -174,6 +185,7 @@ async function reloadCurrent() {
           notice.tone === 'warning' ? 'border-warning/40 bg-warning/5' : 'border-primary/30 bg-primary/5',
         ]"
       >
+        <p class="font-medium">{{ feedbackTarget }}</p>
         <p class="font-medium">{{ notice.title }}</p>
         <p v-for="line in notice.lines" :key="line" class="text-muted-foreground">{{ line }}</p>
       </div>
@@ -183,6 +195,7 @@ async function reloadCurrent() {
         不再用整张禁用表单占首屏，也不提供再次提交的假入口。
       -->
       <template v-if="!data.pending">
+        <EvidenceReviewForm v-if="unresolvedSubmission" :detail="data" :refreshing="isLoading" :read-failed="!!error" :footer="formFooter" @reload="reloadCurrent" @saved="onSaved" />
         <section
           v-if="data.reviewedBaseline"
           data-testid="reviewed-baseline"
@@ -313,7 +326,8 @@ async function reloadCurrent() {
 
         <EvidenceReviewForm
           :detail="data"
-          :refreshing="isLoading || !!error"
+          :refreshing="isLoading"
+          :read-failed="!!error"
           :footer="formFooter"
           @reload="reloadCurrent"
           @saved="onSaved"

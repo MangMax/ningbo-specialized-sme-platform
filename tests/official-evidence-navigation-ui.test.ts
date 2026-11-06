@@ -37,3 +37,16 @@ it('keeps exact source coordinates and distinguishes unavailable files from pend
   expect(jump.attributes('href')).toContain('page=8')
   expect(decodeURIComponent(jump.attributes('href')!)).toContain('file=jxj/source.pdf')
 })
+
+it('recovers an unknown file check through explicit retry without remounting the source', async () => {
+  const head = vi.fn().mockResolvedValueOnce({ ok: false, status: 503 }).mockResolvedValueOnce({ ok: true, status: 200 })
+  vi.stubGlobal('fetch', head)
+  const view = render('jxj/retry.pdf', 3)
+  await flushPromises()
+  expect(view.text()).toContain('暂无法确认文件是否可用')
+  const retry = view.findAll('button').find(button => button.text() === '重新检查文件')
+  expect(retry).toBeDefined()
+  await retry!.trigger('click'); await flushPromises()
+  expect(head).toHaveBeenCalledTimes(2)
+  expect(view.findAll('a').find(link => link.text() === '第 3 页')?.attributes('href')).toContain('page=3')
+})

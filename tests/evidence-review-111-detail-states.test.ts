@@ -223,18 +223,27 @@ it('reads replace back with the new current decision and preserves the previous 
 })
 
 it('does not call a successful write registered when the current state cannot be read back', async () => {
-  const { view, fetcher } = mountDetail(baseDetail(), () => { throw new Error('readback unavailable') })
+  let unavailable = true
+  const { view, fetcher } = mountDetail(baseDetail(), () => { if (unavailable) throw new Error('readback unavailable'); return reviewedMaintain })
   await flushPromises()
   await fill(view)
   await submit(view)
   const notice = view.get('[data-testid="review-save-notice"]')
   expect(notice.text()).toContain('当前状态尚未确认')
+  expect(notice.text()).toContain('重新读取当前状态失败')
   expect(notice.text()).toContain('未确认前不视为已登记复核')
   expect(view.text()).not.toContain('复核已登记')
   expect(fetcher.mock.calls.filter(call => call[1]?.method === 'POST')).toHaveLength(1)
   expect(view.get('#review-sheet-footer button[type="submit"]').attributes('disabled')).toBeDefined()
   await view.get('form').trigger('submit')
   await flushPromises()
+  expect(fetcher.mock.calls.filter(call => call[1]?.method === 'POST')).toHaveLength(1)
+  const reload = view.findAll('button').find(button => button.text() === '重新读取当前状态')!
+  expect(reload.attributes('disabled')).toBeUndefined()
+  unavailable = false
+  await reload.trigger('click'); await flushPromises()
+  expect(view.find('form').exists()).toBe(false)
+  expect(view.get('[data-testid="reviewed-baseline"]').text()).toContain('复核至修订 #14')
   expect(fetcher.mock.calls.filter(call => call[1]?.method === 'POST')).toHaveLength(1)
 })
 
@@ -367,4 +376,38 @@ it('shows an unrecorded decision-version operator instead of hiding the row', as
   expect(versions[0]!.text()).toContain('操作人')
   expect(versions[0]!.text()).toContain('未记录')
   expect(versions[0]!.text()).toContain('业务规则版本')
+})
+
+it('names the source-change object in save feedback separately from formal review facts', async () => {
+  const { view } = mountDetail(baseDetail(), reviewedMaintain)
+  await flushPromises()
+  expect(view.text()).toContain('来源变化 #4')
+  await fill(view); await submit(view)
+  expect(view.get('[data-testid="review-save-notice"]').text()).toContain('来源变化 #4 · 专精特新中小企业 · 应纳未纳')
+})
+
+it('keeps original-request recovery reachable after a current-state read reports reviewed', async () => {
+  const { provide } = await import('vue')
+  const { REVIEW_DRAFTS_KEY, useReviewDrafts } = await import('../composables/useReviewDrafts')
+  let accepted = false
+  const bodies: unknown[] = []
+  vi.stubGlobal('$fetch', vi.fn(async (url: string, options?: any) => {
+    if (url.endsWith('/browser-context')) return { writeEnabled: true }
+    if (url.endsWith('/browser-commands')) {
+      bodies.push(JSON.parse(JSON.stringify(options.body)))
+      if (!accepted) { accepted = true; throw new Error('accepted response lost') }
+      return { action: 'maintain', versionId: 82 }
+    }
+    if (url.endsWith('/evidence-impacts/4')) return baseDetail({ pending: !accepted })
+    return { rows: [], total: 0, page: 1, pageSize: 25 }
+  }))
+  const Host = defineComponent({ components: { EvidenceReviewDetail }, setup() { provide(REVIEW_DRAFTS_KEY, useReviewDrafts()) }, template: '<EvidenceReviewDetail :impact-id="4" />' })
+  const view = mount(Host, { global: { plugins: [createPinia(), PiniaColada], stubs: { EvidenceImpactSources: true, DecisionHistory: true } } })
+  await flushPromises(); await fill(view); await submit(view)
+  await view.findAll('button').find(b => b.text() === '重新读取当前状态')!.trigger('click'); await flushPromises()
+  expect(view.findAll('button').some(b => b.text() === '使用原请求重试')).toBe(true)
+  await submit(view)
+  expect(bodies).toHaveLength(2); expect(bodies[1]).toEqual(bodies[0])
+  expect(view.text()).toContain('复核已登记')
+  expect(view.find('form').exists()).toBe(false)
 })

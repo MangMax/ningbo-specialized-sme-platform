@@ -17,7 +17,8 @@ const record = { id: 1, enterpriseId: 91, titleCode: 'specialized_sme', source: 
 const event = { id: 10, recordId: 1, eventType: 'review', year: 2021, batchSeq: 1, decidedYear: 2024, reviewOutcome: 'failed', record, evidence: [], correspondences: [] }
 const edge = { id: 1, type: 'event_process', role: 'supports_review', status: 'confirmed', revision: 1, requiresRevalidation: false, eventId: 10, predecessorEventId: null, relationId: 30, exportRowId: null, enterpriseId: 91, titleCode: 'specialized_sme', ruleId: 'fixture', ruleVersion: '1', decidedAt: null, event, relation, exportRow: null }
 const detail = { enterprise: { enterpriseId: 91, name: '合成企业', uscc: null }, aliases: [], records: [record], events: [event, { ...event, id: 11 }], evidence: [], platform: { queries: [query], relations: [relation] } }
-vi.mock('@pinia/colada', () => ({ useQuery: () => ({ data: ref(detail), isLoading: ref(false), error: ref(null) }) }))
+const pendingState = { data: ref<any>(undefined), isLoading: ref(false), error: ref<Error | null>(null), refetch: vi.fn() }
+vi.mock('@pinia/colada', () => ({ useQuery: (options: any) => options.key()[0] === 'evidence-impacts' ? pendingState : ({ data: ref(detail), isLoading: ref(false), error: ref(null) }) }))
 const returnTo = '/comparison?mode=record&queryIds=20&exportBatchIds=6&page=2'
 const startTo = (eventId: number, withReturn = true) => ({ path: '/enterprises/91', query: { eventId: String(eventId), ...(withReturn ? { returnTo } : {}) } })
 const stubs = { NuxtLink: RouterLink, PageHeader: { template: '<header><slot name="breadcrumb" /></header>' }, FilePreviewDialog: true, EnterpriseLaterProcesses: true, TitleBadge: true }
@@ -25,6 +26,7 @@ const preventNativeNavigation = (event: Event) => event.preventDefault()
 let wrapper: VueWrapper | undefined
 let originalAnimate: PropertyDescriptor | undefined
 beforeEach(() => {
+  pendingState.data.value = undefined; pendingState.isLoading.value = false; pendingState.error.value = null; pendingState.refetch.mockReset()
   vi.stubGlobal('useState', () => ref(false))
   originalAnimate = Object.getOwnPropertyDescriptor(Element.prototype, 'animate')
   Reflect.deleteProperty(Element.prototype, 'animate')
@@ -35,6 +37,26 @@ beforeEach(() => {
   vi.stubGlobal('useHead', vi.fn())
   vi.stubGlobal('definePageMeta', vi.fn())
   vi.stubGlobal('$fetch', vi.fn(async (url: string) => ({ source: url.includes('/events/') ? event : relation, correspondences: [edge] })))
+})
+
+it('keeps source-change loading empty and failed states distinct and retries only that list', async () => {
+  pendingState.isLoading.value = true
+  const router = await enterprise(10)
+  await router.push({ path: '/enterprises/91', query: { tab: 'review' } }); await flushPromises()
+  const sourceChanges = () => wrapper!.get('[aria-label="待处理证据变化"]')
+  expect(sourceChanges().text()).toContain('正在读取来源变化')
+  expect(sourceChanges().text()).not.toContain('暂无待处理来源变化')
+  pendingState.isLoading.value = false; pendingState.error.value = new Error('offline'); await flushPromises()
+  expect(sourceChanges().text()).toContain('来源变化清单读取失败')
+  expect(sourceChanges().text()).not.toContain('暂无待处理来源变化')
+  await sourceChanges().findAll('button').find(b => b.text() === '重新加载')!.trigger('click')
+  expect(pendingState.refetch).toHaveBeenCalledTimes(1)
+  pendingState.error.value = null; pendingState.data.value = { rows: [], nextCursor: null, projectionReady: false }; await flushPromises()
+  expect(sourceChanges().text()).toContain('来源变化尚未整理完成')
+  expect(sourceChanges().text()).not.toContain('暂无待处理来源变化')
+  pendingState.data.value = { rows: [], nextCursor: null, projectionReady: true }; await flushPromises()
+  expect(sourceChanges().text()).toContain('暂无待处理来源变化')
+  expect(sourceChanges().text()).not.toContain('核对这一项')
 })
 afterEach(async () => {
   document.removeEventListener('click', preventNativeNavigation)
@@ -262,4 +284,113 @@ describe('source modal reverse event navigation', () => {
     expect(document.querySelector('[role="dialog"]')).toBeNull()
     expect(router.currentRoute.value.query).toMatchObject({ eventId: '10', returnTo })
   })
+})
+
+describe('single event verification workspace', () => {
+  it('opens the same review event from records and returns with its source context and focus', async () => {
+    const router = await enterprise(11)
+    expect(wrapper!.text()).not.toContain('人工核对平台候选')
+    const entry = wrapper!.get('#record-event-11').findAll('button').find(button => button.text() === '核对这一事项')
+    expect(entry).toBeDefined()
+    await entry!.trigger('click'); await flushPromises()
+    expect(router.currentRoute.value.query).toMatchObject({ tab: 'review', reviewEventId: '11', returnTo })
+    expect(router.currentRoute.value.query.eventId).toBeUndefined()
+    expect(wrapper!.findAll('[aria-label="查找平台对应候选"]')).toHaveLength(1)
+    expect(wrapper!.get('#review-event-11').text()).toContain('原认定 2021 年 · 复核结论 2024 年')
+    await vi.waitFor(() => expect(document.activeElement?.id).toBe('review-event-11'))
+    await wrapper!.findAll('button').find(button => button.text() === '返回认定记录')!.trigger('click')
+    await flushPromises()
+    expect(router.currentRoute.value.query).toMatchObject({ tab: 'records', eventId: '11', returnTo })
+    await vi.waitFor(() => expect(document.activeElement?.id).toBe('record-event-11'))
+    expect(wrapper!.text()).not.toContain('人工核对平台候选')
+  })
+})
+
+it('protects a correspondence basis on tab, event reselection and same-page navigation without duplicate prompts', async () => {
+  installCorrespondenceFixture()
+  const router = await enterprise(11)
+  const click = async (text: string) => {
+    const button = [...document.querySelectorAll('button')].find(b => b.textContent?.trim() === text)
+    expect(button, text).toBeDefined(); button!.click(); await flushPromises()
+  }
+  await wrapper!.get('#record-event-11').findAll('button').find(b => b.text() === '核对这一事项')!.trigger('click'); await flushPromises()
+  await click('人工核对平台候选'); await click('确认对应')
+  const textarea = document.querySelector('textarea')!
+  textarea.value = '核对同一复核事项的依据'; textarea.dispatchEvent(new Event('input', { bubbles: true })); await flushPromises()
+  await click('关闭')
+  await click('返回认定记录')
+  expect(document.body.textContent).toContain('切换会关闭核对面板')
+  expect(document.querySelectorAll('[role="dialog"]')).toHaveLength(1)
+  await click('继续填写')
+  await click('确认对应')
+  expect(document.querySelector('textarea')!.value).toBe('核对同一复核事项的依据')
+  await click('关闭')
+  await wrapper!.get('#review-event-10 button[aria-expanded]').trigger('click'); await flushPromises()
+  expect(wrapper!.get('#review-event-11 button[aria-expanded]').attributes('aria-expanded')).toBe('true')
+  expect(document.body.textContent).toContain('切换会丢弃未提交内容')
+  await click('继续填写')
+  await router.push(startTo(10)); await flushPromises()
+  expect(router.currentRoute.value.query.reviewEventId).toBe('11')
+  expect(document.querySelectorAll('[role="dialog"]')).toHaveLength(1)
+  await click('继续填写')
+  await click('返回认定记录'); await click('切换并丢弃')
+  expect(router.currentRoute.value.query.eventId).toBe('11')
+})
+
+function installCorrespondenceFixture() {
+  vi.stubGlobal('useState', () => ref(true))
+  vi.stubGlobal('$fetch', vi.fn(async (url: string, options?: any) => {
+    if (url.endsWith('/discover')) return { event: { ...event, id: options.body.eventId }, rows: [{ edge: { type: 'event_process', eventId: options.body.eventId, relationId: 30, role: 'supports_review' }, evidence: { identity: {}, title: { official: 'specialized_sme', row: 'specialized_sme' }, temporal: {}, process: {}, source: { interface: 'business_list' } }, conflicts: [], existingStatus: null }], total: 1, page: 1, pageSize: 50, coverage: { rows: [], total: 0, page: 1, pageSize: 25 }, interfaces: [] }
+    if (url.endsWith('/correspondences')) return { rows: [], total: 0, page: 1, pageSize: 200 }
+    if (url.endsWith('/browser-context')) return { writeEnabled: true }
+    return { source: url.includes('/relations/') ? relation : event, correspondences: [] }
+  }))
+}
+
+it('keeps an unresolved correspondence request bound when returning or leaving the enterprise', async () => {
+  installCorrespondenceFixture()
+  const original = globalThis.$fetch
+  vi.stubGlobal('$fetch', vi.fn(async (url: string, options?: any) => {
+    if (url.endsWith('browser-preflight')) return { planHash: 'a'.repeat(64), impact: { created: 1, unlinked: 0, audit: 1 } }
+    if (url.endsWith('browser-commit')) throw { statusCode: 503 }
+    return original(url, options)
+  }))
+  const router = await enterprise(11)
+  const button = (text: string) => [...document.querySelectorAll('button')].find(b => b.textContent?.trim() === text)!
+  const click = async (text: string) => { expect(button(text), text).toBeDefined(); button(text).click(); await flushPromises() }
+  await wrapper!.get('#record-event-11').findAll('button').find(b => b.text() === '核对这一事项')!.trigger('click'); await flushPromises()
+  await click('人工核对平台候选'); await click('确认对应')
+  const input = document.querySelector('textarea')!
+  input.value = '保留未知提交请求'; input.dispatchEvent(new Event('input', { bubbles: true })); await flushPromises()
+  await click('提交决定'); await click('关闭'); await click('返回认定记录')
+  expect(button('切换并丢弃').disabled).toBe(true)
+  expect(router.currentRoute.value.query.reviewEventId).toBe('11')
+  await click('继续填写'); await router.push('/'); await flushPromises()
+  expect(button('离开并丢弃').disabled).toBe(true)
+  await click('继续填写'); await click('确认对应')
+  expect(document.querySelector('textarea')!.value).toBe('保留未知提交请求')
+  expect(button('重试提交')).toBeDefined()
+})
+
+it('keeps unsupported events out of verification and shows its empty state', async () => {
+  const originalEvents = detail.events
+  try {
+    detail.events = [{ ...event, eventType: 'nurture' }]
+    const router = await enterprise(10)
+    expect(wrapper!.text()).not.toContain('核对这一事项')
+    await router.push({ path: '/enterprises/91', query: { tab: 'review' } }); await flushPromises()
+    expect(wrapper!.text()).toContain('尚无可核对平台对应的正式公布事件')
+    expect(wrapper!.find('[aria-label="查找平台对应候选"]').exists()).toBe(false)
+  } finally { detail.events = originalEvents }
+})
+
+it('retains the selected review fact and return target when correspondence reads fail', async () => {
+  vi.stubGlobal('$fetch', vi.fn(async () => { throw new Error('offline') }))
+  const router = await enterprise(11)
+  await wrapper!.get('#record-event-11').findAll('button').find(b => b.text() === '核对这一事项')!.trigger('click'); await flushPromises()
+  expect(wrapper!.text()).toContain('已登记对应读取失败')
+  expect(wrapper!.get('#review-event-11').text()).toContain('复核结论 2024 年')
+  expect(wrapper!.get('#review-event-11 button[aria-expanded]').attributes('aria-expanded')).toBe('true')
+  expect(router.currentRoute.value.query.returnTo).toBe(returnTo)
+  expect(wrapper!.findAll('button').some(b => b.text() === '返回认定记录')).toBe(true)
 })
