@@ -4,6 +4,8 @@ import { defineComponent, h, nextTick, ref } from 'vue'
 import { createMemoryHistory, createRouter, RouterLink, RouterView, useRoute, useRouter } from 'vue-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import EnterprisePage from '../pages/enterprises/[id].vue'
+import SourceChip from '../components/SourceChip.vue'
+import EventChip from '../components/EventChip.vue'
 import SourceReader from '../components/record-correspondence/SourceReader.vue'
 import ComparisonEventRow from '../components/record-correspondence/ComparisonEventRow.vue'
 import ComparisonEvidence from '../components/record-correspondence/ComparisonEvidence.vue'
@@ -18,7 +20,7 @@ const detail = { enterprise: { enterpriseId: 91, name: '合成企业', uscc: nul
 vi.mock('@pinia/colada', () => ({ useQuery: () => ({ data: ref(detail), isLoading: ref(false), error: ref(null) }) }))
 const returnTo = '/comparison?mode=record&queryIds=20&exportBatchIds=6&page=2'
 const startTo = (eventId: number, withReturn = true) => ({ path: '/enterprises/91', query: { eventId: String(eventId), ...(withReturn ? { returnTo } : {}) } })
-const stubs = { NuxtLink: RouterLink, PageHeader: { template: '<header><slot name="breadcrumb" /></header>' }, FilePreviewDialog: true, EnterpriseLaterProcesses: true, TitleBadge: true, SourceChip: true, EventChip: true }
+const stubs = { NuxtLink: RouterLink, PageHeader: { template: '<header><slot name="breadcrumb" /></header>' }, FilePreviewDialog: true, EnterpriseLaterProcesses: true, TitleBadge: true }
 const preventNativeNavigation = (event: Event) => event.preventDefault()
 let wrapper: VueWrapper | undefined
 let originalAnimate: PropertyDescriptor | undefined
@@ -47,7 +49,7 @@ afterEach(async () => {
 async function enterprise(eventId: number, withReturn = true) {
   const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/enterprises/:id', component: EnterprisePage }, { path: '/:pathMatch(.*)*', component: { template: '<div />' } }] })
   await router.push(startTo(eventId, withReturn))
-  wrapper = mount(defineComponent({ render: () => h(RouterView) }), { attachTo: document.body, global: { plugins: [router], stubs } })
+  wrapper = mount(defineComponent({ render: () => h(RouterView) }), { attachTo: document.body, global: { plugins: [router], components: { SourceChip, EventChip }, stubs } })
   await flushPromises()
   return router
 }
@@ -65,6 +67,94 @@ async function settleDialog() {
   await nextTick()
   await flushPromises()
 }
+describe('per-title complete history', () => {
+  const originalRecords = detail.records
+  const originalEvents = detail.events
+  afterEach(() => { detail.records = originalRecords; detail.events = originalEvents })
+
+  it('groups titles in rank order and retains independent same-year and multi-review events', async () => {
+    detail.records = [record, { ...record, id: 2, titleCode: 'innovative_sme' }, { ...record, id: 3, titleCode: 'little_giant' }, { ...record, id: 4, source: 'miit' }]
+    const item = (id: number, recordId: number, eventType: string, year: number, decidedYear: number | null = null, reviewOutcome: string | null = null) => ({ ...event, id, recordId, eventType, year, decidedYear, reviewOutcome })
+    detail.events = [item(21, 1, 'review', 2021, 2027, 'passed'), item(22, 1, 'award', 2021), item(23, 1, 'review', 2021, 2024, 'failed'), item(24, 1, 'review', 2021, 2024), item(25, 1, 'review', 2021), item(26, 2, 'nurture', 2020), item(27, 3, 'award', 2025), item(28, 4, 'maintain', 2022)] as typeof detail.events
+    const router = await enterprise(25)
+    const history = wrapper!.get('[aria-label="记录台账"]')
+    expect(history.findAll('section > header > h3').map(h => h.text())).toEqual(['专精特新“小巨人”', '专精特新中小企业', '创新型中小企业'])
+    const lists = history.findAll('ol')
+    expect(lists.map(list => list.findAll('[id^="record-event-"]').map(row => row.attributes('id')))).toEqual([
+      ['record-event-27'], ['record-event-22', 'record-event-23', 'record-event-24', 'record-event-21', 'record-event-25'], ['record-event-26'],
+    ])
+    expect(history.text()).toContain('年份待核')
+    expect(history.text()).toContain('同年及未知时点不表示精确先后')
+    expect(history.get('#record-event-23').text()).toContain('复核不通过')
+    expect(history.get('#record-event-24').text()).toContain('复核结果待核')
+    expect(history.get('#record-event-21').text()).toContain('通过')
+    expect(history.get('#record-event-23').text()).toContain('原认定 2021 年')
+    expect(history.get('#record-event-23').text()).toContain('第 1 批')
+    expect(history.get('#record-event-22').text()).toContain('第 1 批')
+    expect(history.find('#record-event-28').exists()).toBe(false)
+    expect(history.get('#record-event-23').text()).toContain('经信局')
+    expect(history.get('#record-event-26').text()).toContain('不表示已持有称号')
+    await vi.waitFor(() => expect(history.get('#record-event-25').attributes('data-highlighted')).toBe('true'))
+    const sources = wrapper!.get('[aria-label="记录来源"]')
+    expect(sources.findAll('[role="tab"]').map(tab => tab.text())).toEqual(['经信局', '工信部'])
+    await sources.findAll('[role="tab"]')[1]!.trigger('mousedown', { button: 0 })
+    await flushPromises()
+    expect(wrapper!.find('#record-event-22').exists()).toBe(false)
+    expect(wrapper!.get('#record-event-28').text()).toContain('工信部')
+    expect(wrapper!.findAll('[aria-label="记录台账"] ol').length).toBe(1)
+    await router.push(startTo(28))
+    await flushPromises()
+    await vi.waitFor(() => expect(wrapper!.get('#record-event-28').attributes('data-highlighted')).toBe('true'))
+    await router.push(startTo(23))
+    await flushPromises()
+    await vi.waitFor(() => expect(wrapper!.get('#record-event-23').attributes('data-highlighted')).toBe('true'))
+    expect(sources.findAll('[role="tab"]')[0]!.attributes('aria-selected')).toBe('true')
+  })
+
+  it('retains formal sources when a platform point fails and retries the selected event', async () => {
+    const { event: _event, relation: _relation, ...summary } = edge
+    let pointCalls = 0
+    const fetch = vi.fn(async (url: string) => {
+      if (url === '/api/roster/correspondences') return { rows: [summary], total: 1, page: 1, pageSize: 200 }
+      if (url === '/api/roster/correspondences/1') {
+        if (++pointCalls === 1) throw new Error('offline')
+        return edge
+      }
+      return { source: event, correspondences: [edge] }
+    })
+    vi.stubGlobal('$fetch', fetch)
+    await enterprise(10)
+    const row = wrapper!.get('#record-event-10')
+    expect(row.text()).toContain('不能据此判断没有来源')
+    expect(wrapper!.findAll('button').some(button => button.text() === '查看正式来源')).toBe(true)
+    await row.findAll('button').find(button => button.text() === '重试读取')!.trigger('click')
+    await flushPromises()
+    expect(pointCalls).toBe(2)
+    expect(row.text()).not.toContain('不能据此判断没有来源')
+    expect(row.text()).toContain('原行 1 条')
+    await wrapper!.findAll('button').find(button => button.text() === '查看正式来源')!.trigger('click')
+    await flushPromises()
+    expect(document.querySelector('[role="dialog"]')).not.toBeNull()
+    expect(fetch).toHaveBeenCalledWith('/api/roster/correspondences/events/10')
+  })
+
+  it('shows a record without events without inventing a step', async () => {
+    detail.events = []
+    await enterprise(10)
+    const history = wrapper!.get('[aria-label="记录台账"]')
+    expect(history.get('h3').text()).toBe('专精特新中小企业')
+    expect(history.text()).toContain('该称号暂无事件')
+    expect(history.findAll('li')).toHaveLength(0)
+  })
+
+  it('shows the no-record state without inventing a title group', async () => {
+    detail.records = []; detail.events = []
+    await enterprise(10)
+    expect(wrapper!.text()).toContain('该企业暂无记录')
+    expect(wrapper!.find('[aria-label="记录台账"]').exists()).toBe(false)
+  })
+})
+
 describe('enterprise detail information architecture', () => {
   it('uses a summary list on the product route and opens the complete selected source after point hydration', async () => {
     const { event: _event, relation: _relation, ...summary } = edge
@@ -142,7 +232,7 @@ describe('source modal reverse event navigation', () => {
   it('keeps an inline source reader mounted after ordinary event navigation', async () => {
     const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/:pathMatch(.*)*', component: { template: '<div />' } }] })
     await router.push('/comparison')
-    wrapper = mount(SourceReader, { props: { kind: 'relation', id: 30, returnTo }, global: { plugins: [router], stubs } })
+    wrapper = mount(SourceReader, { props: { kind: 'relation', id: 30, returnTo }, global: { plugins: [router], components: { SourceChip, EventChip }, stubs } })
     await flushPromises()
     await wrapper.get('a').trigger('click', { button: 0 })
     await flushPromises()
@@ -157,8 +247,8 @@ describe('source modal reverse event navigation', () => {
     const row = { event, record, evidence: [], classification: 'historical_aligned', reasons: [], correspondences: [], platformRows: [{ ...relation, interface: 'business_list' }], laterProcesses: [] } as unknown as RecordComparisonResult['rows'][number]
     const result = { counts: {}, coverage: [], officialCoverage: { reasons: [] }, historicalDecisionUnavailable: [], currentSourceConsistency: { reasons: [], recognizedObservations: [], exportObservations: [] }, platformWithoutOfficial: { rows: [{ relation, qualification: 'unresolved', reasons: [] }], total: 1 }, laterProcessPlatformRows: [] } as unknown as RecordComparisonResult
     wrapper = owner === 'event row'
-      ? mount(ComparisonEventRow, { props: { row, returnTo }, attachTo: document.body, global: { plugins: [router], stubs } })
-      : mount(ComparisonEvidence, { props: { result, returnTo }, attachTo: document.body, global: { plugins: [router], stubs } })
+      ? mount(ComparisonEventRow, { props: { row, returnTo }, attachTo: document.body, global: { plugins: [router], components: { SourceChip, EventChip }, stubs } })
+      : mount(ComparisonEvidence, { props: { result, returnTo }, attachTo: document.body, global: { plugins: [router], components: { SourceChip, EventChip }, stubs } })
     if (owner === 'comparison evidence') {
       await wrapper.get('[data-testid="record-platform-unlinked"] [data-slot="accordion-trigger"]').trigger('click')
       await flushPromises()
