@@ -368,7 +368,7 @@ function refreshAfterSave() {
       </div>
     </header>
 
-    <form class="bg-card flex min-w-0 flex-col gap-3 rounded-lg border p-3 [&_[data-slot=native-select-wrapper]]:max-w-full" @submit.prevent="apply">
+    <form class="bg-card flex min-w-0 flex-col gap-3 rounded-lg border p-3" @submit.prevent="apply">
       <div class="grid min-w-0 grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4">
         <label class="flex min-w-0 flex-col gap-1 text-[13px]">
           称号

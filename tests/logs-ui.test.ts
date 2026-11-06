@@ -1,4 +1,5 @@
 // @vitest-environment happy-dom
+import { chooseCalendarSelect } from './helpers/calendar-select'
 // Component/composable seam only: these are not actual Nuxt/browser evidence.
 import { DOMWrapper, mount, flushPromises } from '@vue/test-utils'
 import { defineComponent, h, ref } from 'vue'
@@ -1947,4 +1948,23 @@ it('keeps the list status strip showing unknown writes and the missing-log cavea
   await flushPromises()
   expect(wrapper.text()).not.toContain('写入结果未知')
   vi.unstubAllGlobals()
+})
+
+it('navigates both log time calendars without applying and submits chosen month ends', async () => {
+  vi.stubEnv('TZ', 'Asia/Shanghai')
+  const { default: Filters } = await import('../components/logs/LogFilters.vue')
+  const wrapper = mount(Filters, { props: { filter: { from: '2026-10-18T10:04:05Z', to: '2026-10-19T11:06:07Z' } }, attachTo: document.body })
+  wrappers.push(wrapper)
+  await flushPromises()
+  for (const [id, year, month, day] of [['log-from', '2024', '2', '2024-02-29'], ['log-to', '2024', '4', '2024-04-30']]) {
+    await wrapper.get(`#${id}`).trigger('click'); await flushPromises()
+    await chooseCalendarSelect('年份', year!)
+    await chooseCalendarSelect('月份', month!)
+    expect(wrapper.emitted('apply')).toBeUndefined()
+    document.querySelector<HTMLElement>(`[data-value="${day}"]`)!.click(); await flushPromises()
+    ;[...document.querySelectorAll('button')].find(button => button.textContent === '完成')!.click(); await flushPromises()
+  }
+  await wrapper.get('form').trigger('submit')
+  expect(wrapper.emitted('apply')?.at(-1)).toEqual([{ from: '2024-02-29T10:04:05.000Z', to: '2024-04-30T11:06:07.000Z' }])
+  vi.unstubAllEnvs()
 })

@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, ref, shallowRef, watch } from 'vue'
 import { CalendarIcon } from '@lucide/vue'
-import { parseDateTime, Time, toCalendarDate, toCalendarDateTime, type DateValue } from '@internationalized/date'
+import { getLocalTimeZone, today, parseDateTime, Time, toCalendarDate, toCalendarDateTime, type DateValue } from '@internationalized/date'
 import { TimeFieldInput, TimeFieldRoot } from 'reka-ui'
 import { Button } from '@/components/ui/button'
 import { Calendar } from '@/components/ui/calendar'
@@ -15,6 +15,10 @@ const value = computed(() => {
   try { return props.modelValue ? parseDateTime(props.modelValue) : undefined } catch { return undefined }
 })
 const date = computed(() => value.value ? toCalendarDate(value.value) : undefined)
+const placeholder = shallowRef<DateValue>(today(getLocalTimeZone()))
+watch(open, (isOpen) => {
+  if (isOpen) placeholder.value = date.value ?? today(getLocalTimeZone())
+})
 const time = ref<Time>()
 watch(() => props.modelValue, () => {
   time.value = value.value ? new Time(value.value.hour, value.value.minute, value.value.second, value.value.millisecond) : undefined
@@ -48,7 +52,7 @@ function clear() { emit('validity-change', true); emit('update:modelValue', '');
       </Button>
     </PopoverTrigger>
     <PopoverContent align="start" class="w-auto p-0" :aria-label="label">
-      <Calendar :model-value="date" locale="zh-CN" :calendar-label="label" :week-starts-on="1" :prevent-deselect="true" @update:model-value="selectDate" />
+      <Calendar v-model:placeholder="placeholder" layout="month-and-year" :model-value="date" locale="zh-CN" :calendar-label="label" :week-starts-on="1" :prevent-deselect="true" @update:model-value="selectDate" />
       <div class="flex flex-col gap-2 border-t p-3">
         <Label :for="`${id}-time`">本地时间（时:分:秒）</Label>
         <TimeFieldRoot :id="`${id}-time`" v-slot="{ segments }" :model-value="time" :disabled="!value" locale="zh-CN" :hour-cycle="24" granularity="second" class="border-input flex h-9 items-center gap-1 rounded-md border px-3 text-sm" @update:model-value="selectTime">
