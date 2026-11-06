@@ -30,7 +30,8 @@ function select(code: string, bucket: string | null) { title.value = code; distr
 <section class="flex min-w-0 flex-col gap-4" aria-labelledby="district-title" :aria-busy="loading">
   <div class="flex flex-wrap items-center justify-between gap-3"><h2 id="district-title" class="text-lg font-semibold">当前有效企业区县分布</h2><Button variant="outline" :disabled="loading" @click="load">刷新区县数据</Button></div>
   <p>采用企业当前已确认属地，不重建历史属地。各称号独立统计，同企业同称号只计一次；未知属地纳入合计。</p>
-  <p v-if="result" class="break-words text-sm text-muted-foreground">评价日 {{ result.evaluationDay }}（上海） · 规则 {{ result.ruleVersion }} / {{ result.assessmentVersion }}</p>
+  <p v-if="result" class="break-words text-sm text-muted-foreground">评价日 {{ result.evaluationDay }}（上海）</p>
+    <DisclosurePanel v-if="result" title="统计口径"><p class="break-words text-sm text-muted-foreground">规则 {{ result.ruleVersion }} / {{ result.assessmentVersion }}</p></DisclosurePanel>
   <TableFailureState v-if="failed" :title="`${target}加载失败`" :compact="!!result" :pending="loading" description="保留上次成功结果及其筛选与页码，请重试当前查询。" @retry="load" />
   <Skeleton v-if="!result && loading" class="h-60 w-full" />
   <Card v-if="result"><CardHeader><CardTitle>各区县有效企业</CardTitle><CardDescription>点击数字查看该区县、该称号的企业。称号之间可重叠，不跨称号合计。</CardDescription></CardHeader>

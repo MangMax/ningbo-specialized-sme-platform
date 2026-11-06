@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, shallowRef, watch } from 'vue'
+import { computed, nextTick, ref, shallowRef, watch } from 'vue'
 import { MOVEMENT_KINDS, type MovementStatistics, type MovementKind } from '~~/lib/roster/movement-statistics'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -17,6 +17,14 @@ const failed = ref(false)
 const statusLabel = (s: string) => s === 'pending' ? '待核' : s === 'unknown' ? '发生年未知（已确认）' : '已确认累计'
 const yearLabel = (y?: string) => !y || y === 'all' ? '全部发生年' : y === 'unknown' ? '发生年未知' : `${y} 年`
 const target = computed(() => `${yearLabel(year.value)} · ${labels[kind.value]} · ${statusLabel(status.value)} · 第 ${page.value} 页`)
+const open = ref(false)
+const detailRegion = ref<HTMLDivElement>()
+async function openDetail() {
+  open.value = true
+  await nextTick()
+  detailRegion.value?.focus({ preventScroll: true })
+  detailRegion.value?.scrollIntoView({ block: 'nearest' })
+}
 let sequence = 0
 async function load() {
   const current = ++sequence
@@ -29,7 +37,7 @@ async function load() {
   finally { if (current === sequence) loading.value = false }
 }
 watch([year, kind, status, page, pageSize], load, { immediate: true })
-function select(k: MovementKind, s: string) { kind.value = k; status.value = s; page.value = 1 }
+function select(k: MovementKind, s: string) { year.value = result.value?.year ?? 'all'; kind.value = k; status.value = s; page.value = 1; void openDetail() }
 </script>
 
 <template>
@@ -61,29 +69,35 @@ function select(k: MovementKind, s: string) { kind.value = k; status.value = s; 
         </CardContent>
       </Card>
     </div>
-    <Card>
-      <CardHeader>
-        <CardTitle>主体事实明细</CardTitle><CardDescription>正在查询：{{ target }}</CardDescription>
-        <p v-if="result">显示：{{ yearLabel(result.year) }} · {{ result.kind ? labels[result.kind] : '全部种类' }} · {{ statusLabel(result.status) }} · 第 {{ result.page }} 页</p>
-      </CardHeader>
-      <CardContent class="relative flex min-h-40 flex-col gap-4" :aria-busy="loading">
-        <TableFailureState v-if="failed" :title="`${target}加载失败`" :compact="!!result" :pending="loading" :description="result ? '保留上次成功结果；请重试当前查询。' : '数据尚未加载，请重试。'" @retry="load" />
-        <TableLoadingStatus :loading="loading" kind="ledger" label="正在加载主体事实" />
-        <template v-if="result">
-          <p v-if="!result.rows.length">此口径暂无企业</p>
-          <article v-for="row in result.rows" :key="`${row.enterpriseId}/${row.kind}`" class="flex min-w-0 flex-col gap-2 border-b py-4">
-            <NuxtLink :to="`/enterprises/${row.enterpriseId}`" class="font-medium underline underline-offset-4">{{ row.name }} · {{ labels[row.kind] }}</NuxtLink>
-            <ul class="flex flex-col gap-3">
-              <li v-for="e in row.evidence" :key="`${e.factId}/${e.revision}`" class="break-words">
-                <p>发生时间：{{ e.effective.value ?? '未知' }} · {{ e.pending ? '待核' : '已确认' }}</p>
-                <p>来源：{{ e.source.reference || '未记录' }} · {{ e.source.statement || '未记录' }}</p>
-                <p>确认依据：{{ e.basis || '未记录' }}</p>
-              </li>
-            </ul>
-          </article>
-          <TablePagination :page="result.page" :page-size="result.pageSize" :total="result.total" unit="家" :loading="loading || failed" @update:page="page = $event" @update:page-size="pageSize = $event; page = 1" />
-        </template>
-      </CardContent>
-    </Card>
+    <p v-if="result">显示：{{ yearLabel(result.year) }} · {{ result.kind ? labels[result.kind] : '全部种类' }} · {{ statusLabel(result.status) }} · 第 {{ result.page }} 页</p>
+    <TableFailureState v-if="failed" :title="`${target}加载失败`" :compact="!!result" :pending="loading" :description="result ? '保留上次成功结果；请重试当前查询。' : '数据尚未加载，请重试。'" @retry="load" />
+    <div class="relative h-6">
+      <TableLoadingStatus :loading="loading" kind="ledger" label="正在加载主体事实" />
+    </div>
+    <div ref="detailRegion" tabindex="-1" aria-label="主体事实明细">
+      <DisclosurePanel v-model:open="open" title="主体事实明细">
+        <Card>
+          <CardHeader>
+            <CardDescription>正在查询：{{ target }}</CardDescription>
+          </CardHeader>
+          <CardContent class="relative flex min-h-40 flex-col gap-4" :aria-busy="loading">
+            <template v-if="result">
+              <p v-if="!result.rows.length">此口径暂无企业</p>
+              <article v-for="row in result.rows" :key="`${row.enterpriseId}/${row.kind}`" class="flex min-w-0 flex-col gap-2 border-b py-4">
+                <NuxtLink :to="`/enterprises/${row.enterpriseId}`" class="font-medium underline underline-offset-4">{{ row.name }} · {{ labels[row.kind] }}</NuxtLink>
+                <ul class="flex flex-col gap-3">
+                  <li v-for="e in row.evidence" :key="`${e.factId}/${e.revision}`" class="break-words">
+                    <p>发生时间：{{ e.effective.value ?? '未知' }} · {{ e.pending ? '待核' : '已确认' }}</p>
+                    <p>来源：{{ e.source.reference || '未记录' }} · {{ e.source.statement || '未记录' }}</p>
+                    <p>确认依据：{{ e.basis || '未记录' }}</p>
+                  </li>
+                </ul>
+              </article>
+              <TablePagination :page="result.page" :page-size="result.pageSize" :total="result.total" unit="家" :loading="loading || failed" @update:page="page = $event" @update:page-size="pageSize = $event; page = 1" />
+            </template>
+          </CardContent>
+        </Card>
+      </DisclosurePanel>
+    </div>
   </section>
 </template>
