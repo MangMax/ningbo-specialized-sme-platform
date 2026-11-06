@@ -87,8 +87,13 @@ export function readAnnualStatistics(db: BetterSQLite3Database<typeof schema>, f
         const exclusion = historicalExclusion(heads.filter(f => f.enterpriseId === pair.enterpriseId), cutoff)
         const applicable = formal.filter(e => (factTime(e) == null || factTime(e)! <= year) && (e.year == null || e.year <= year) && (!e.formalValidity?.publishedOn || e.formalValidity.publishedOn <= day))
         const witnesses = formal.filter(e => applicable.includes(e) || e.eventType === 'review' && e.formalValidity?.continuation === 'until_this_review_results' && e.formalValidity.publishedOn && e.formalValidity.publishedOn > day && applicable.some(a => a.id === e.formalValidity?.originAwardEventId))
-        const latestGrant = Math.max(...applicable.filter(e => e.eventType === 'award').map(e => factTime(e) ?? -Infinity))
-        const unknownQualification = applicable.some(e => (factTime(e) == null || e.eventType === 'review' && !e.reviewOutcome) && (e.eventType === 'award' || latestGrant === -Infinity || e.year == null || e.year >= latestGrant))
+        // Only temporal/conclusion gaps can create annual uncertainty. Let the
+        // adjudicator decide whether later definite facts already resolved them;
+        // source/batch diagnostics alone still do not override v10 periods.
+        const hasTemporalGap = applicable.some(e => factTime(e) == null || e.eventType === 'review' && !e.reviewOutcome)
+        const unknownQualification = hasTemporalGap && adjudicateQualificationCycles(
+          applicable.map(e => ({ ...e, validityInvalid: false })), year, day,
+        ).group === 'pending'
         const status = year === currentYear ? pair.status === 'effective' ? 'effective' : ['terminated', 'moved_out'].includes(pair.status) ? null : unknownQualification ? 'pending' : null
           : exclusion.excluded ? null : judgment.group === 'eligible' ? exclusion.pending ? 'pending' : 'effective' : unknownQualification ? 'pending' : null
         if (!status) return []

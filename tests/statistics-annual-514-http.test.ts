@@ -156,3 +156,16 @@ it('retains moved-out exclusion after reentry even while formal qualification re
   expect(response.status).toBe(200)
   expect((await response.json()).rows.map((r: any) => r.enterpriseId)).toContain(24)
 })
+it('keeps resolved older unknown-origin reviews out of pending after definite expiry', async () => {
+  enterprise(27)
+  const older = event(27, 'review', null, 2020, null)
+  db.$client.prepare('update record_event set batch_seq=null where id=?').run(older.e.id)
+  event(27, 'award', 2022)
+  // Literal HTTP rowsets: 27 holds the 2022 grant in 2024, expires in 2025,
+  // and its resolved 2020 gap never reappears. 7/14/16 remain genuine gaps.
+  expect(await ids(2024)).toEqual([1, 3, 4, 8, 9, 10, 11, 16, 17, 22, 23, 27])
+  expect(await ids(2025)).toEqual([1, 4, 9, 11, 13, 15, 18, 19, 25])
+  expect(await ids(2025, 'pending')).toEqual([7, 14, 16])
+  expect(await ids(2026)).toEqual([1, 2, 4, 9, 11, 13, 14, 15, 18, 19, 25])
+  expect(await ids(2026, 'pending')).toEqual([7, 16])
+})
