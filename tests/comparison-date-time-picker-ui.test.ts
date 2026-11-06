@@ -118,3 +118,58 @@ it('keeps an old selected year and supports adjacent-month arrows and day select
   await flushPromises()
   expect(view.emitted('update:modelValue')?.at(-1)).toEqual(['1801-01-31T12:34:56.789'])
 })
+
+it.each(['', '1800-12-31T12:34:56.789'])('keeps default years reachable while browsing from cutoff %s', async cutoff => {
+  const view = await start(cutoff)
+  const currentYear = new Date().getFullYear()
+  const earliestYear = String(currentYear - 100)
+  const latestYear = String(currentYear + 10)
+  const years = () => document.querySelector<HTMLSelectElement>('select[aria-label="年份"]')!
+  const options = () => [...years().options].map(option => option.value)
+  expect(options()).toContain(earliestYear)
+  expect(options()).toContain(latestYear)
+  if (cutoff) expect(years().value).toBe('1800')
+  await navigate(earliestYear, '1')
+  expect(years().value).toBe(earliestYear)
+  expect(options()).toContain(latestYear)
+  await navigate(latestYear, '12')
+  expect(years().value).toBe(latestYear)
+  expect(options()).toContain(earliestYear)
+  if (cutoff) {
+    expect(options()).toContain('1800')
+    await navigate('1800', '12')
+    expect(years().value).toBe('1800')
+  }
+  expect(view.emitted('update:modelValue')).toBeUndefined()
+})
+
+it.each([false, true])('preserves caller date limits with custom year range %s', async customRange => {
+  wrapper = mount(Calendar, {
+    props: {
+      layout: 'month-and-year', locale: 'zh-CN',
+      defaultPlaceholder: new CalendarDate(2024, 2, 29),
+      minValue: new CalendarDate(2024, 2, 10),
+      maxValue: new CalendarDate(2024, 3, 20),
+      ...(customRange ? { yearRange: [new CalendarDate(2023, 1, 1), new CalendarDate(2024, 1, 1), new CalendarDate(2025, 1, 1)] } : {}),
+    },
+    attachTo: document.body,
+  })
+  await flushPromises()
+  const years = () => [...document.querySelector<HTMLSelectElement>('select[aria-label="年份"]')!.options].map(option => option.value)
+  const expectedYears = customRange ? ['2023', '2024', '2025'] : ['2024']
+  expect(years()).toEqual(expectedYears)
+  await navigate('2024', '3')
+  expect(years()).toEqual(expectedYears)
+  expect(wrapper.emitted('update:modelValue')).toBeUndefined()
+  expect(document.querySelector('[data-value="2024-03-21"]')!.hasAttribute('data-disabled')).toBe(true)
+  await clickDay('2024-03-21')
+  expect(wrapper.emitted('update:modelValue')).toBeUndefined()
+  await clickDay('2024-03-20')
+  expect(String(wrapper.emitted('update:modelValue')?.at(-1)?.[0])).toBe('2024-03-20')
+  await navigate('2024', '2')
+  expect(document.querySelector('[data-value="2024-02-09"]')!.hasAttribute('data-disabled')).toBe(true)
+  await clickDay('2024-02-09')
+  expect(wrapper.emitted('update:modelValue')).toHaveLength(1)
+  await clickDay('2024-02-10')
+  expect(String(wrapper.emitted('update:modelValue')?.at(-1)?.[0])).toBe('2024-02-10')
+})

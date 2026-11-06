@@ -7,7 +7,7 @@ import { createReusableTemplate, reactiveOmit, useVModel } from "@vueuse/core"
 import { cn } from "@/lib/utils"
 import { CalendarRoot, useDateFormatter, useForwardPropsEmits } from "reka-ui"
 import { createYear, createYearRange, toDate } from "reka-ui/date"
-import { computed, toRaw } from "vue"
+import { computed } from "vue"
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
 import { CalendarCell, CalendarCellTrigger, CalendarGrid, CalendarGridBody, CalendarGridHead, CalendarGridRow, CalendarHeadCell, CalendarHeader, CalendarHeading, CalendarNextButton, CalendarPrevButton } from "."
 
@@ -29,13 +29,18 @@ const placeholder = useVModel(props, "placeholder", emits, {
 const formatter = useDateFormatter(props.locale ?? "en")
 
 const yearRange = computed(() => {
-  return props.yearRange ?? createYearRange({
-    start: props?.minValue ?? (toRaw(props.placeholder) ?? props.defaultPlaceholder ?? today(getLocalTimeZone()))
+  // Browsing the controlled placeholder must not move the available year window.
+  const range = props.yearRange ?? createYearRange({
+    start: props?.minValue ?? (props.defaultPlaceholder ?? today(getLocalTimeZone()))
       .cycle("year", -100),
 
-    end: props?.maxValue ?? (toRaw(props.placeholder) ?? props.defaultPlaceholder ?? today(getLocalTimeZone()))
+    end: props?.maxValue ?? (props.defaultPlaceholder ?? today(getLocalTimeZone()))
       .cycle("year", 10),
   })
+  const selectedDates = Array.isArray(props.modelValue) ? props.modelValue : [props.modelValue]
+  return [...range, ...selectedDates.filter((date): date is DateValue =>
+    !!date && !range.some(year => year.year === date.year),
+  )]
 })
 
 const [DefineMonthTemplate, ReuseMonthTemplate] = createReusableTemplate<{ date: DateValue }>()
@@ -85,7 +90,7 @@ const forwarded = useForwardPropsEmits(delegatedProps, emits)
             })
           }"
         >
-          <NativeSelectOption v-if="!yearRange.some(year => year.year === date.year)" :value="date.year">
+          <NativeSelectOption v-if="!yearRange.some(year => year.year === date.year)" :value="date.year" :selected="true">
             {{ formatter.custom(toDate(date), { year: 'numeric' }) }}
           </NativeSelectOption>
           <NativeSelectOption v-for="(year) in yearRange" :key="year.toString()" :value="year.year" :selected="date.year === year.year">

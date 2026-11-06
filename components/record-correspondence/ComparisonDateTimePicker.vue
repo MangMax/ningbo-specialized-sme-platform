@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, ref, shallowRef, watch } from 'vue'
 import { CalendarIcon } from '@lucide/vue'
 import { getLocalTimeZone, today, parseDateTime, Time, toCalendarDate, toCalendarDateTime, type DateValue } from '@internationalized/date'
 import { TimeFieldInput, TimeFieldRoot } from 'reka-ui'
@@ -15,7 +15,7 @@ const value = computed(() => {
   try { return props.modelValue ? parseDateTime(props.modelValue) : undefined } catch { return undefined }
 })
 const date = computed(() => value.value ? toCalendarDate(value.value) : undefined)
-const placeholder = ref<DateValue>(today(getLocalTimeZone()))
+const placeholder = shallowRef<DateValue>(today(getLocalTimeZone()))
 watch(open, (isOpen) => {
   if (isOpen) placeholder.value = date.value ?? today(getLocalTimeZone())
 })
