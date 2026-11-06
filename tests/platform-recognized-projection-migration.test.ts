@@ -20,6 +20,7 @@ const INDEXES = [
   { name: 'platform_recognized_projection_district_idx' },
   { name: 'platform_recognized_projection_record_idx' },
   { name: 'platform_recognized_projection_title_idx' },
+  { name: 'platform_recognized_projection_title_version_idx' },
   { name: 'platform_recognized_projection_uscc_idx' },
   { name: 'platform_recognized_projection_validity_idx' },
   { name: 'platform_recognized_projection_year_idx' },
@@ -41,6 +42,7 @@ describe('0035 platform recognized projection migration', () => {
       expect(tableExists(sqlite, 'platform_recognized_projection')).toBe(true)
       expect((sqlite.prepare('PRAGMA table_info(platform_recognized_projection)').all() as { name: string }[]).map(column => column.name)).toEqual(COLUMNS)
       expect(sqlite.prepare("SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='platform_recognized_projection' ORDER BY name").all()).toEqual(INDEXES)
+      expect((sqlite.pragma("index_info('platform_recognized_projection_title_version_idx')") as { name: string }[]).map(column => column.name)).toEqual(['title_raw', 'version_id'])
       expect(sqlite.pragma('foreign_key_check')).toEqual([])
       // Re-applying the same journal is a no-op, not a duplicate-table failure.
       migrate(db, { migrationsFolder: fullMigrations })
@@ -65,21 +67,24 @@ describe('0035 platform recognized projection migration', () => {
       const db = drizzle(sqlite, { schema })
       migrate(db, { migrationsFolder: preMigrations })
       const enterprise = db.insert(schema.enterprise).values({ name: '既有认定企业', nameNorm: '既有认定企业', usccNorm: '91330211255994457P' }).returning().get()
-      const query = db.insert(schema.platformQuery).values({ interface: 'recognized_list', queryKey: '91330211255994457P', rdjb: '1,2,3', queriedAt: '2026-09-01T00:00:00Z', status: 'success' }).returning().get()
-      const relation = db.insert(schema.platformRelation).values({ queryId: query.id, sequenceNo: 1, relationKey: 'UUID-LEGACY', rawFields: { id: 'UUID-LEGACY', qymc: '既有认定企业', rddqrq: '2027-06-30', whpcyear: '2024', whpc: '2', szq: '33020000' } }).returning().get()
+      // Freeze the actual pre-0035 shape; current ORM inserts include later columns.
+      const queryId = Number(sqlite.prepare('INSERT INTO platform_query(interface,query_key,rdjb,queried_at,status,created_at) VALUES(?,?,?,?,?,?)').run('recognized_list', '91330211255994457P', '1,2,3', '2026-09-01T00:00:00Z', 'success', 'original-time').lastInsertRowid)
+      const rawFields = { id: 'UUID-LEGACY', qymc: '既有认定企业', rddqrq: '2027-06-30', whpcyear: '2024', whpc: '2', szq: '33020000' }
+      const relationId = Number(sqlite.prepare('INSERT INTO platform_relation(query_id,sequence_no,relation_key,raw_fields,created_at) VALUES(?,?,?,?,?)').run(queryId, 1, 'UUID-LEGACY', JSON.stringify(rawFields), 'original-time').lastInsertRowid)
       expect(tableExists(sqlite, 'platform_recognized_projection')).toBe(false)
 
       migrate(db, { migrationsFolder: fullMigrations })
       expect(tableExists(sqlite, 'platform_recognized_projection')).toBe(true)
       expect(sqlite.prepare('SELECT count(*) n FROM enterprise').get()).toEqual({ n: 1 })
       expect(sqlite.prepare('SELECT count(*) n FROM platform_query').get()).toEqual({ n: 1 })
-      const stored = sqlite.prepare('SELECT relation_key, raw_fields FROM platform_relation WHERE id=?').get(relation.id) as { relation_key: string; raw_fields: string }
+      const stored = sqlite.prepare('SELECT relation_key, raw_fields FROM platform_relation WHERE id=?').get(relationId) as { relation_key: string; raw_fields: string }
       expect(stored.relation_key).toBe('UUID-LEGACY')
-      expect(JSON.parse(stored.raw_fields)).toEqual(relation.rawFields)
+      expect(JSON.parse(stored.raw_fields)).toEqual(rawFields)
       expect(enterprise.id).toBeGreaterThan(0)
       expect(sqlite.prepare('SELECT count(*) n FROM platform_recognized_projection').get()).toEqual({ n: 0 })
       expect((sqlite.prepare('PRAGMA table_info(platform_recognized_projection)').all() as { name: string }[]).map(column => column.name)).toEqual(COLUMNS)
       expect(sqlite.prepare("SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='platform_recognized_projection' ORDER BY name").all()).toEqual(INDEXES)
+      expect((sqlite.pragma("index_info('platform_recognized_projection_title_version_idx')") as { name: string }[]).map(column => column.name)).toEqual(['title_raw', 'version_id'])
       expect(sqlite.pragma('foreign_key_check')).toEqual([])
       // The same final migration set applies again as a journal no-op.
       migrate(db, { migrationsFolder: fullMigrations })

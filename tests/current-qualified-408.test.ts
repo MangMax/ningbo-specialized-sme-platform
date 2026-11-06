@@ -14,7 +14,7 @@ afterEach(() => {
   try { fixture?.close() } finally { vi.useRealTimers() }
 })
 
-it('published_pending_keeps_eligible_totals_408', () => {
+it('expired_review_keeps_current_and_legacy_pending_totals_empty_408', () => {
   const name = 'synthetic_408_pending_review'
   const { enterprise, review, reviewEvidence } = fixture.formalEnterprise(name, true)
   expect(review).toMatchObject({ year: 2022, batchSeq: 1, decidedYear: null, reviewOutcome: null })
@@ -31,12 +31,12 @@ it('published_pending_keeps_eligible_totals_408', () => {
   const shared = readCurrentQualificationAssessment(fixture.sqlite, enterprise.id, Date.parse(AS_OF_408))
   expect(shared).toMatchObject({
     enterpriseId: enterprise.id, asOf: AS_OF_408,
-    ruleVersion: 'current-roster-116-v9', assessmentVersion: 'enterprise-qualification-407-v2',
+    ruleVersion: 'current-roster-116-v10', assessmentVersion: 'enterprise-qualification-478-v3',
   })
   expect(shared.titles.map(title => title.titleCode).sort())
     .toEqual(['innovative_sme', 'little_giant', 'specialized_sme'])
   const innovative = shared.titles.find(title => title.titleCode === 'innovative_sme')!
-  expect(innovative.group).toBe('pending')
+  expect(innovative.group).toBe('excluded')
   expect(innovative.evidence).toContainEqual(expect.objectContaining({
     eventId: review!.id, eventType: 'review', evidenceIds: [reviewEvidence!.id],
     year: 2022, decidedYear: null, reviewOutcome: null,
@@ -50,22 +50,16 @@ it('published_pending_keeps_eligible_totals_408', () => {
   const result = listCurrentQualified(fixture.sqlite, {
     titleCode: 'innovative_sme', q: name, district: '鄞州区', page: 1, pageSize: 25,
   })
-  // These legacy and zero-write guards must pass BEFORE the intended new-field RED.
+  // Both current and retired pending channels remain empty, with zero writes.
   expect(result).toMatchObject({ rows: [], total: 0, uncertainTotal: 0, snapshotStartedAt: AS_OF_408 })
   expect(fixture.totalChanges()).toBe(changesBefore)
   expect(fixture.sqlite.pragma('query_only', { simple: true })).toBe(1)
 
-  // First intended business failure on 686c97bf: the additive field is absent.
-  expect(result).toHaveProperty('publishedPending')
-  expect(result).toMatchObject({
-    responseVersion: 'current-qualified-408-v1',
-    publishedPending: {
-      requested: true, total: 1, page: 1, pageSize: 25,
-      rows: [{ enterpriseId: enterprise.id, name, filterMatch: { status: 'matched', checks: [] } }],
-    },
-  })
-  expect(result).toHaveProperty('publishedPending.rows.length', 1)
-  expect(result).toHaveProperty('publishedPending.rows.0.qualificationAssessment', shared)
+  // Expired formal cycles remain excluded even when the review fields are incomplete.
+  expect(innovative.effectiveQualification).toMatchObject({ status: 'expired' })
+  expect(result).toMatchObject({ responseVersion: 'current-qualified-478-v2', publishedPending: {
+    requested: true, total: 0, page: 1, pageSize: 25, rows: [],
+  } })
 })
 
 it('formal_eligible_survives_platform_query_failure_408', () => {
@@ -99,7 +93,7 @@ it('formal_eligible_survives_platform_query_failure_408', () => {
   expect(fixture.sqlite.pragma('query_only', { simple: true })).toBe(1)
 })
 
-// Appended matrix controls. The original two cases above are frozen verbatim.
+// Current-contract matrix controls retain the original source facts.
 import { createHash } from 'node:crypto'
 import { createCurrentQualificationAssessmentReader } from '../lib/roster/current-qualification'
 import type { CurrentQualifiedFilter } from '../lib/roster/current-qualified-query'
@@ -124,14 +118,14 @@ function independentDigest408(snapshot: ReturnType<typeof readCurrentQualificati
 }
 
 it.each([
-  { id: 'unqueried', state: 'unqueried', groups: ['pending', 'pending', 'eligible'] },
-  { id: 'platform_absent', state: 'no_record', groups: ['pending', 'pending', 'eligible'] },
-  { id: 'platform_failed', state: 'failed', groups: ['pending', 'pending', 'eligible'] },
-  { id: 'platform_not_queried', state: 'not_queried', groups: ['pending', 'pending', 'eligible'] },
-  { id: 'platform_not_approved', state: 'not_approved', groups: ['pending', 'pending', 'eligible'] },
-  { id: 'moved_out', state: 'moved_out', groups: ['excluded', 'excluded', 'excluded'] },
-  { id: 'terminated_then_returned', state: 'terminated_then_returned', groups: ['excluded', 'excluded', 'excluded'] },
-  { id: 'review_failed', state: 'review_failed', groups: ['pending', 'pending', 'excluded'] },
+  { id: 'unqueried', state: 'unqueried', groups: ['excluded', 'excluded', 'eligible'] },
+  { id: 'platform_absent', state: 'no_record', groups: ['excluded', 'excluded', 'eligible'] },
+  { id: 'platform_failed', state: 'failed', groups: ['excluded', 'excluded', 'eligible'] },
+  { id: 'platform_not_queried', state: 'not_queried', groups: ['excluded', 'excluded', 'eligible'] },
+  { id: 'platform_not_approved', state: 'not_approved', groups: ['excluded', 'excluded', 'eligible'] },
+  { id: 'moved_out', state: 'moved_out', groups: ['excluded', 'excluded', 'eligible'] },
+  { id: 'terminated_then_returned', state: 'terminated_then_returned', groups: ['excluded', 'excluded', 'eligible'] },
+  { id: 'review_failed', state: 'review_failed', groups: ['excluded', 'excluded', 'excluded'] },
 ])('complete_t2_and_scan_parity_408_$id', ({ state, groups }) => {
   const m = matrix408(fixture.sqlite)
   const events: MatrixEvent408[] = state === 'review_failed' ? [
@@ -152,7 +146,7 @@ it.each([
   const factory = createCurrentQualificationAssessmentReader(fixture.sqlite)
   const optimized = factory.read(enterprise.id, Date.parse(AS_OF_408), {}, 'innovative_sme').snapshot
   expect(optimized).toEqual(defaults)
-  expect(defaults).toMatchObject({ enterpriseId: enterprise.id, asOf: AS_OF_408, ruleVersion: 'current-roster-116-v9', assessmentVersion: 'enterprise-qualification-407-v2' })
+  expect(defaults).toMatchObject({ enterpriseId: enterprise.id, asOf: AS_OF_408, ruleVersion: 'current-roster-116-v10', assessmentVersion: 'enterprise-qualification-478-v3' })
   expect(defaults.titles.map(t => t.titleCode)).toEqual(['little_giant', 'specialized_sme', 'innovative_sme'])
   expect(defaults.titles.map(t => t.group)).toEqual(groups)
   expect(defaults.snapshotId).toBe(independentDigest408(defaults))
@@ -178,17 +172,18 @@ it.each([
   { id: 'invisible', q: '\u200B\uFEFF', requested: false },
   { id: 'identity', q: 'synthetic_408_q', requested: true },
   { id: 'absent', q: 'synthetic_408_missing', requested: true },
-])('pending_request_scope_408_$id', ({ q, requested }) => {
+])('expired_cycles_keep_pending_channel_empty_with_request_scope_408_$id', ({ q, requested }) => {
   const m = matrix408(fixture.sqlite)
   const a = m.formal('synthetic_408_q', pendingEvents408)
   const result = query408({ q })
   expect(result).toMatchObject({ rows: [], total: 0, uncertainTotal: 0 })
-  const expectedIds = q === 'synthetic_408_q' ? [a.enterprise.id] : []
+  const expectedIds: number[] = []
+  expect(readCurrentQualificationAssessment(fixture.sqlite, a.enterprise.id).titles[2]!.effectiveQualification?.status).toBe('expired')
   expect(result.publishedPending).toMatchObject({ requested, total: expectedIds.length, page: 1, pageSize: 25 })
   expect(result.publishedPending.rows.map(row => row.enterpriseId)).toEqual(expectedIds)
 })
 
-it.each(['id_asc', 'name_asc', 'name_desc'] as const)('dual_pages_keep_complete_counts_and_stable_ties_408_%s', sort => {
+it.each(['id_asc', 'name_asc', 'name_desc'] as const)('eligible_pages_keep_complete_counts_and_stable_ties_while_expired_rows_stay_out_408_%s', sort => {
   const m = matrix408(fixture.sqlite)
   const e1 = m.formal('synthetic_408_tie'), p1 = m.formal('synthetic_408_tie', pendingEvents408)
   const e2 = m.formal('synthetic_408_tie'), p2 = m.formal('synthetic_408_tie', pendingEvents408)
@@ -196,29 +191,30 @@ it.each(['id_asc', 'name_asc', 'name_desc'] as const)('dual_pages_keep_complete_
   for (const page of [1, 2, 3, 100]) {
     const result = query408({ q: 'synthetic_408_tie', sort, page, pageSize: 1 })
     expect(result.total).toBe(2)
-    expect(result.publishedPending.total).toBe(2)
+    expect(result.publishedPending.total).toBe(0)
     expect(result.uncertainTotal).toBe(0)
     expect(result.rows.map(row => row.enterpriseId)).toEqual(page === 1 ? [e1.enterprise.id] : page === 2 ? [e2.enterprise.id] : [])
-    expect(result.publishedPending.rows.map(row => row.enterpriseId)).toEqual(page === 1 ? [p1.enterprise.id] : page === 2 ? [p2.enterprise.id] : [])
+    expect(result.publishedPending.rows.map(row => row.enterpriseId)).toEqual([])
     eligible.push(...result.rows.map(row => row.enterpriseId)); pending.push(...result.publishedPending.rows.map(row => row.enterpriseId))
   }
   expect(eligible).toEqual([e1.enterprise.id, e2.enterprise.id])
-  expect(pending).toEqual([p1.enterprise.id, p2.enterprise.id])
+  expect(pending).toEqual([])
+  expect([p1.enterprise.id, p2.enterprise.id].every(id => !eligible.includes(id))).toBe(true)
 })
 
 it('search_identity_alias_region_and_title_isolation_408', () => {
   const m = matrix408(fixture.sqlite)
   // Checksum-valid synthetic literals, not a claim of registered real enterprises.
-  const a = m.formal('synthetic_408_current', pendingEvents408, { uscc: '91330200000000408X' })
-  const b = m.formal('synthetic_408_null_identity', pendingEvents408, { district: '海曙区' })
+  const a = m.formal('synthetic_408_current', undefined, { uscc: '91330200000000408X' })
+  const b = m.formal('synthetic_408_null_identity', undefined, { district: '海曙区' })
   m.alias(a.enterprise.id, 'synthetic_408_confirmed_alias', 'confirmed')
   m.alias(a.enterprise.id, 'synthetic_408_unconfirmed_alias', 'pending')
   m.formal('unused', undefined, { enterpriseId: a.enterprise.id, title: 'specialized_sme' })
-  expect(query408({ q: 'synthetic_408_current' }).publishedPending.rows.map(row => row.enterpriseId)).toEqual([a.enterprise.id])
-  expect(query408({ q: ' 91330200000000408x ' }).publishedPending.rows.map(row => row.enterpriseId)).toEqual([a.enterprise.id])
-  expect(query408({ q: 'synthetic_408_confirmed_alias' }).publishedPending.rows.map(row => row.enterpriseId)).toEqual([a.enterprise.id])
-  expect(query408({ q: 'synthetic_408_unconfirmed_alias' }).publishedPending.total).toBe(0)
-  expect(query408({ q: 'synthetic_408', district: '海曙区' }).publishedPending.rows.map(row => row.enterpriseId)).toEqual([b.enterprise.id])
+  expect(query408({ q: 'synthetic_408_current' }).rows.map(row => row.enterpriseId)).toEqual([a.enterprise.id])
+  expect(query408({ q: ' 91330200000000408x ' }).rows.map(row => row.enterpriseId)).toEqual([a.enterprise.id])
+  expect(query408({ q: 'synthetic_408_confirmed_alias' }).rows.map(row => row.enterpriseId)).toEqual([a.enterprise.id])
+  expect(query408({ q: 'synthetic_408_unconfirmed_alias' }).total).toBe(0)
+  expect(query408({ q: 'synthetic_408', district: '海曙区' }).rows.map(row => row.enterpriseId)).toEqual([b.enterprise.id])
   const otherTitle = query408({ q: 'synthetic_408_current', titleCode: 'specialized_sme' })
   expect(otherTitle.rows.map(row => row.enterpriseId)).toEqual([a.enterprise.id])
   expect(otherTitle.publishedPending.total).toBe(0)
@@ -238,32 +234,40 @@ it.each([
   expect(result.options).toEqual({ recognitionYears: [2025], validYears: [], maintenanceYears: [], maintenanceBatchesByYear: {} })
 })
 
-it.each<{ id: string; filter: Partial<CurrentQualifiedFilter>; raw: PlatformRow; status: string; checks: { field: string; status: string }[] }>([
-  { id: 'no_selected_fields', filter: {}, raw: {}, status: 'matched', checks: [] },
-  { id: 'recognition_full', filter: { recognitionFrom: '2022-01-01', recognitionTo: '2022-12-31' }, raw: {}, status: 'matched', checks: [{ field: 'recognitionRange', status: 'matched' }] },
-  { id: 'recognition_partial', filter: { recognitionFrom: '2022-02-01', recognitionTo: '2022-12-31' }, raw: {}, status: 'not_established', checks: [{ field: 'recognitionRange', status: 'not_established' }] },
-  { id: 'recognition_disjoint', filter: { recognitionFrom: '2025-01-01', recognitionTo: '2025-12-31' }, raw: {}, status: 'not_matched', checks: [{ field: 'recognitionRange', status: 'not_matched' }] },
-  { id: 'valid_known', filter: { validYear: 2028 }, raw: { rddqrq: '2028-06-01' }, status: 'matched', checks: [{ field: 'validYear', status: 'matched' }] },
-  { id: 'valid_different', filter: { validYear: 2027 }, raw: { rddqrq: '2028-06-01' }, status: 'not_matched', checks: [{ field: 'validYear', status: 'not_matched' }] },
-  { id: 'valid_unknown', filter: { validYear: 2028 }, raw: {}, status: 'not_established', checks: [{ field: 'validYear', status: 'not_established' }] },
-  { id: 'maintenance_known', filter: { maintenanceYear: 2024 }, raw: { whpc: '2024-2' }, status: 'matched', checks: [{ field: 'maintenanceYear', status: 'matched' }] },
-  { id: 'maintenance_different', filter: { maintenanceYear: 2023 }, raw: { whpc: '2024-2' }, status: 'not_matched', checks: [{ field: 'maintenanceYear', status: 'not_matched' }] },
-  { id: 'maintenance_unknown', filter: { maintenanceYear: 2024 }, raw: {}, status: 'not_established', checks: [{ field: 'maintenanceYear', status: 'not_established' }] },
-  { id: 'batch_not_inferred', filter: { maintenanceYear: 2024, maintenanceBatch: 2 }, raw: { whpc: '2024-2' }, status: 'not_established', checks: [{ field: 'maintenanceYear', status: 'matched' }, { field: 'maintenanceBatch', status: 'not_established' }] },
-])('pending_filter_checks_408_$id', ({ filter, raw, status, checks }) => {
+it.each<{ id: string; filter: Partial<CurrentQualifiedFilter>; raw: PlatformRow; status: string }>([
+  { id: 'no_selected_fields', filter: {}, raw: {}, status: 'matched' },
+  { id: 'recognition_full', filter: { recognitionFrom: '2022-01-01', recognitionTo: '2022-12-31' }, raw: {}, status: 'matched' },
+  { id: 'recognition_partial', filter: { recognitionFrom: '2022-02-01', recognitionTo: '2022-12-31' }, raw: {}, status: 'not_established' },
+  { id: 'recognition_disjoint', filter: { recognitionFrom: '2025-01-01', recognitionTo: '2025-12-31' }, raw: {}, status: 'not_matched' },
+  { id: 'valid_known', filter: { validYear: 2028 }, raw: { rddqrq: '2028-06-01' }, status: 'matched' },
+  { id: 'valid_different', filter: { validYear: 2027 }, raw: { rddqrq: '2028-06-01' }, status: 'not_matched' },
+  { id: 'valid_unknown', filter: { validYear: 2028 }, raw: {}, status: 'not_established' },
+  { id: 'maintenance_known', filter: { maintenanceYear: 2024 }, raw: { whpc: '2024-2' }, status: 'matched' },
+  { id: 'maintenance_different', filter: { maintenanceYear: 2023 }, raw: { whpc: '2024-2' }, status: 'not_matched' },
+  { id: 'maintenance_unknown', filter: { maintenanceYear: 2024 }, raw: {}, status: 'not_established' },
+  { id: 'batch_not_inferred', filter: { maintenanceYear: 2024, maintenanceBatch: 2 }, raw: { whpc: '2024-2' }, status: 'not_established' },
+])('current_filter_checks_preserve_literal_witness_partitions_408_$id', ({ filter, raw, status }) => {
+  // At 2024 the 2022 formal cycle is current; incomplete review fields remain diagnostics.
+  vi.setSystemTime(new Date('2024-06-01T00:00:00.000Z'))
   const m = matrix408(fixture.sqlite)
-  const a = m.formal('synthetic_408_filter_pending', pendingEvents408, { uscc: '91330200000000408X' })
+  const a = m.formal('synthetic_408_filter_current', pendingEvents408, { uscc: '91330200000000408X' })
   if (Object.keys(raw).length) m.recognized(a.enterprise.id, a.events[0]!.id, raw)
   const result = query408({ q: a.enterprise.name, ...filter })
-  expect(result).toMatchObject({ rows: [], total: 0, uncertainTotal: 0, publishedPending: { total: 1 } })
-  expect(result.publishedPending.rows[0]!.filterMatch).toEqual({ status, checks })
-  expect(result.publishedPending.rows[0]!.qualificationAssessment.titles[2]!.group).toBe('pending')
+  expect(result).toMatchObject({ total: status === 'matched' ? 1 : 0,
+    uncertainTotal: filter.recognitionFrom === '2022-02-01' ? 1 : 0,
+    publishedPending: { rows: [], total: 0 } })
+  expect(result.rows.map(row => row.enterpriseId)).toEqual(status === 'matched' ? [a.enterprise.id] : [])
+  const assessment = readCurrentQualificationAssessment(fixture.sqlite, a.enterprise.id)
+  expect(assessment.titles[2]).toMatchObject({ group: 'eligible', completeness: { fieldGaps: [
+    { eventId: a.events[1]!.id, field: 'decidedYear', valueState: 'unknown', inputState: 'null' },
+    { eventId: a.events[1]!.id, field: 'reviewOutcome', valueState: 'unknown', inputState: 'null' },
+  ] } })
 })
 
 it.each([
-  { id: 'same_row', split: false, expected: 'matched' },
-  { id: 'different_rows', split: true, expected: 'not_established' },
-])('source_row_and_witnesses_do_not_cross_join_408_$id', ({ split, expected }) => {
+  { id: 'same_row', split: false },
+  { id: 'different_rows', split: true },
+])('source_row_and_witnesses_do_not_cross_join_408_$id', ({ split }) => {
   const m = matrix408(fixture.sqlite)
   const a = m.formal('synthetic_408_and_pending', pendingEvents408, { uscc: '91330200000000408X' })
   const e = m.formal('synthetic_408_and_eligible', undefined, { uscc: '913302000000004091' })
@@ -274,8 +278,8 @@ it.each([
   const result = query408({ q: 'synthetic_408_and', validYear: 2028, maintenanceYear: 2024 })
   expect(result.total).toBe(split ? 0 : 1)
   expect(result.rows.map(row => row.enterpriseId)).toEqual(split ? [] : [e.enterprise.id])
-  expect(result.publishedPending.total).toBe(1)
-  expect(result.publishedPending.rows[0]!.filterMatch).toEqual({ status: expected, checks: [{ field: 'validYear', status: 'matched' }, { field: 'maintenanceYear', status: 'matched' }] })
+  expect(result.publishedPending).toMatchObject({ total: 0, rows: [] })
+  expect(readCurrentQualificationAssessment(fixture.sqlite, a.enterprise.id).titles[2]!.effectiveQualification?.status).toBe('expired')
   expect(result.options).toEqual({ recognitionYears: [2025], validYears: [2028], maintenanceYears: [2024], maintenanceBatchesByYear: {} })
 })
 
@@ -338,7 +342,7 @@ it('wal_writer_changes_are_visible_only_on_next_current_snapshot_408', () => {
   } finally { restore?.(); file.close() }
 })
 
-it('name_order_and_id_ties_apply_before_each_independent_page_408', () => {
+it('name_order_and_id_ties_apply_before_eligible_pages_with_expired_controls_408', () => {
   const m = matrix408(fixture.sqlite)
   const ez = m.formal('synthetic_408_sort_z'), ea = m.formal('synthetic_408_sort_a')
   const pz = m.formal('synthetic_408_sort_z', pendingEvents408), pa = m.formal('synthetic_408_sort_a', pendingEvents408)
@@ -349,8 +353,9 @@ it('name_order_and_id_ties_apply_before_each_independent_page_408', () => {
     for (const page of [1, 2]) {
       const result = query408({ q: 'synthetic_408_sort', sort, page, pageSize: 1 })
       expect(result.rows.map(row => row.enterpriseId)).toEqual([expectedEligible[page - 1]])
-      expect(result.publishedPending.rows.map(row => row.enterpriseId)).toEqual([expectedPending[page - 1]])
-      expect(result.total).toBe(2); expect(result.publishedPending.total).toBe(2)
+      expect(result.publishedPending.rows.map(row => row.enterpriseId)).toEqual([])
+      expect(expectedPending.every(id => !result.rows.some(row => row.enterpriseId === id))).toBe(true)
+      expect(result.total).toBe(2); expect(result.publishedPending.total).toBe(0)
     }
   }
 })
@@ -371,11 +376,8 @@ it('old_cycle_and_other_title_cannot_supply_current_filter_facts_408', () => {
   const specialized = m.formal('unused', undefined, { enterpriseId: pending.enterprise.id, title: 'specialized_sme' })
   m.recognized(pending.enterprise.id, specialized.events[0]!.id, { rddqrq: '2028-06-01', whpc: '2024-2' })
   const result = query408({ q: 'synthetic_408_cycle', validYear: 2028, maintenanceYear: 2024 })
-  expect(result).toMatchObject({ rows: [], total: 0, uncertainTotal: 0, publishedPending: { total: 1 } })
-  expect(result.publishedPending.rows[0]!.enterpriseId).toBe(pending.enterprise.id)
-  expect(result.publishedPending.rows[0]!.filterMatch).toEqual({ status: 'not_established', checks: [
-    { field: 'validYear', status: 'not_established' }, { field: 'maintenanceYear', status: 'matched' },
-  ] })
+  expect(result).toMatchObject({ rows: [], total: 0, uncertainTotal: 0, publishedPending: { total: 0, rows: [] } })
+  expect(readCurrentQualificationAssessment(fixture.sqlite, pending.enterprise.id).titles[2]!.effectiveQualification?.status).toBe('expired')
   expect(result.options.validYears).toEqual([])
   expect(result.options.maintenanceYears).toEqual([2024])
 })
@@ -399,7 +401,7 @@ function assertRefSnapshot408(enterpriseId: number, refs: Record<'little_giant' 
   const defaults = readCurrentQualificationAssessment(fixture.sqlite, enterpriseId, Date.parse(AS_OF_408), options)
   const optimized = createCurrentQualificationAssessmentReader(fixture.sqlite).read(enterpriseId, Date.parse(AS_OF_408), options, 'innovative_sme').snapshot
   expect(optimized).toEqual(defaults)
-  expect(defaults).toMatchObject({ enterpriseId, asOf: AS_OF_408, ruleVersion: 'current-roster-116-v9', assessmentVersion: 'enterprise-qualification-407-v2' })
+  expect(defaults).toMatchObject({ enterpriseId, asOf: AS_OF_408, ruleVersion: 'current-roster-116-v10', assessmentVersion: 'enterprise-qualification-478-v3' })
   expect(defaults.titles.map(t => t.titleCode)).toEqual(['little_giant', 'specialized_sme', 'innovative_sme'])
   for (const title of defaults.titles) {
     const expected = refs[title.titleCode]
@@ -596,7 +598,7 @@ function crossRequestLiteralRows408(asOf: string): CurrentQualifiedRow[] {
       sourceVersions: [{ evidenceId: eventId + 100, eventId, sourceFile: 'synthetic/408/adapter-literal.pdf', storedFileId: null, sha256: null, bytes: null, removedAt: null, capturedRevision: 1, capturedSha256: '5'.repeat(64) }],
       references: [`evidence:${eventId + 100}`], notes: [], shadow: { legacyGroup: group, difference: null },
     }))
-    const scope = { enterpriseId, asOf, ruleVersion: 'current-roster-116-v9', assessmentVersion: 'enterprise-qualification-407-v2' }
+    const scope = { enterpriseId, asOf, ruleVersion: 'current-roster-116-v10', assessmentVersion: 'enterprise-qualification-478-v3' }
     return {
       enterpriseId, name: `synthetic_408_adapter_${enterpriseId}`, uscc: null, district: '鄞州区', publishedNames: [`synthetic_408_published_${enterpriseId}`], aliases: ['synthetic_408_confirmed_alias'], firstYear: 2025,
       basis: 'synthetic_408_basis', reviews: '', publication: '已见本称号宁波公布记录', notes: [], references: [`evidence:${enterpriseId * 10 + 103}`], group: 'eligible',

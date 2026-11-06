@@ -123,18 +123,23 @@ function sameCurrentFacts(left: CurrentQualifiedResult, right: CurrentQualifiedR
     .toEqual([right.total, right.uncertainTotal, right.publishedPending.total, right.publishedPending.requested, right.options])
 }
 
-it('real_http_and_sdk_share_additive_groups_without_platform_veto_408', async () => {
+it('real_http_and_sdk_share_effective_and_expired_states_without_platform_veto_408', async () => {
   const a = await http({ q: 'synthetic_408_public' }), b = await sdk({ q: 'synthetic_408_public' })
-  expect(a.responseVersion).toBe('current-qualified-408-v1')
+  expect(a.responseVersion).toBe('current-qualified-478-v2')
   expect(a.rows.map(row => row.enterpriseId)).toEqual([eligibleId])
-  expect(a.publishedPending.rows.map(row => row.enterpriseId)).toEqual([pendingId])
-  expect(a).toMatchObject({ total: 1, uncertainTotal: 0, publishedPending: { requested: true, total: 1 } })
+  expect(a.publishedPending.rows).toEqual([])
+  expect(a).toMatchObject({ total: 1, uncertainTotal: 0, publishedPending: { requested: true, total: 0 } })
   expect(a.rows[0]!.qualificationAssessment.titles[2]!.platform.status).toBe('query_failed')
-  expect(a.publishedPending.rows[0]!.qualificationAssessment.titles[2]!.completeness.fieldGaps).toEqual([
+  sameCurrentFacts(a, b)
+  const expired = await http({ q: 'synthetic_408_public', status: 'expired' })
+  expect(expired.rows.map(row => row.enterpriseId)).toEqual([pendingId])
+  expect(expired).toMatchObject({ total: 1, uncertainTotal: 0, publishedPending: { requested: true, rows: [], total: 0 } })
+  expect(expired.rows[0]!.qualificationAssessment.titles[2]!.effectiveQualification?.status).toBe('expired')
+  expect(expired.rows[0]!.qualificationAssessment.titles[2]!.completeness.fieldGaps).toEqual([
     { eventId: reviewId, field: 'decidedYear', valueState: 'unknown', inputState: 'null' },
     { eventId: reviewId, field: 'reviewOutcome', valueState: 'unknown', inputState: 'null' },
   ])
-  sameCurrentFacts(a, b)
+  sameCurrentFacts(expired, await sdk({ q: 'synthetic_408_public', status: 'expired' }))
 })
 
 it('real_transports_distinguish_unrequested_pending_and_requested_empty_408', async () => {
@@ -147,14 +152,20 @@ it('real_transports_distinguish_unrequested_pending_and_requested_empty_408', as
 })
 
 it.each([
-  { id: 'different_valid_year', args: { validYear: 2027 }, status: 'not_matched', checks: [{ field: 'validYear', status: 'not_matched' }] },
-  { id: 'unknown_batch', args: { maintenanceYear: 2024, maintenanceBatch: 2 }, status: 'not_established', checks: [{ field: 'maintenanceYear', status: 'matched' }, { field: 'maintenanceBatch', status: 'not_established' }] },
-])('real_pending_identity_is_not_a_definite_filter_hit_408_$id', async ({ args, status, checks }) => {
+  { id: 'different_valid_year', args: { validYear: 2027 } },
+  { id: 'unknown_batch', args: { maintenanceYear: 2024, maintenanceBatch: 2 } },
+])('real_expired_identity_is_not_a_definite_filter_hit_408_$id', async ({ args }) => {
+  const known = await http({ q: 'synthetic_408_public_pending', status: 'expired', validYear: '2028', maintenanceYear: '2024' })
+  expect(known.rows.map(row => row.enterpriseId)).toEqual([pendingId])
+  expect(known.rows[0]).toMatchObject({ matchedValidYears: [2028], matchedMaintenance: [{ year: 2024, batch: null }] })
+  sameCurrentFacts(known, await sdk({ q: 'synthetic_408_public_pending', status: 'expired', validYear: 2028, maintenanceYear: 2024 }))
   const query = Object.fromEntries(Object.entries(args).map(([key, value]) => [key, String(value)]))
   const a = await http({ q: 'synthetic_408_public_pending', ...query })
-  expect(a).toMatchObject({ rows: [], total: 0, uncertainTotal: 0, publishedPending: { total: 1 } })
-  expect(a.publishedPending.rows[0]!.filterMatch).toEqual({ status, checks })
+  expect(a).toMatchObject({ rows: [], total: 0, uncertainTotal: 0, publishedPending: { rows: [], total: 0 } })
   sameCurrentFacts(a, await sdk({ q: 'synthetic_408_public_pending', ...args }))
+  const expired = await http({ q: 'synthetic_408_public_pending', status: 'expired', ...query })
+  expect(expired).toMatchObject({ rows: [], total: 0, uncertainTotal: 0, publishedPending: { rows: [], total: 0 } })
+  sameCurrentFacts(expired, await sdk({ q: 'synthetic_408_public_pending', status: 'expired', ...args }))
 })
 
 it('real_date_precision_and_deep_pages_keep_legacy_totals_408', async () => {
@@ -164,7 +175,10 @@ it('real_date_precision_and_deep_pages_keep_legacy_totals_408', async () => {
   expect(partial).toMatchObject({ rows: [], total: 0, uncertainTotal: 1 })
   sameCurrentFacts(partial, await sdk({ recognitionFrom: `${year}-02-01`, recognitionTo: `${year}-12-31` }))
   const deep = await http({ q: 'synthetic_408_public', page: '9', pageSize: '1' })
-  expect(deep).toMatchObject({ rows: [], total: 1, publishedPending: { rows: [], total: 1 }, page: 9 })
+  expect(deep).toMatchObject({ rows: [], total: 1, publishedPending: { rows: [], total: 0 }, page: 9 })
+  const expired = await http({ q: 'synthetic_408_public', status: 'expired', page: '9', pageSize: '1' })
+  expect(expired).toMatchObject({ rows: [], total: 1, publishedPending: { rows: [], total: 0 }, page: 9 })
+  sameCurrentFacts(expired, await sdk({ q: 'synthetic_408_public', status: 'expired', page: 9, pageSize: 1 }))
   sameCurrentFacts(deep, await sdk({ q: 'synthetic_408_public', page: 9, pageSize: 1 }))
 })
 
@@ -195,7 +209,7 @@ it('real_executor_unavailable_is_503_then_retry_recovers_not_zero_408', async ()
   expect(databaseContent()).toBe(before)
 })
 
-it('dev_generated_openapi_and_actual_sdk_describe_pending_extension_408', async () => {
+it('dev_generated_openapi_and_actual_sdk_describe_five_states_and_empty_pending_408', async () => {
   // Actual dev-generated spec, not a static route string or compiled artifact claim.
   const response = await fetch(base + '/_openapi.json')
   expect(response.status).toBe(200)
@@ -203,10 +217,11 @@ it('dev_generated_openapi_and_actual_sdk_describe_pending_extension_408', async 
   const operation = spec.paths['/api/roster/current-enterprises'].get
   expect(operation.responses['400']).toBeDefined(); expect(operation.responses['503']).toBeDefined()
   expect(JSON.stringify(operation)).toContain('publishedPending')
-  expect(JSON.stringify(operation)).toContain('current-qualified-408-v1')
+  expect(JSON.stringify(operation)).toContain('current-qualified-478-v2')
+  expect(operation.parameters.find((parameter: { name: string }) => parameter.name === 'status').schema.enum).toEqual(['effective', 'expired', 'terminated', 'moved_out', 'unrecognized'])
   const tools = await client!.listTools()
   const tool = tools.tools.find(entry => entry.name === 'list_current_qualified_enterprises')!
   expect(tool.annotations?.readOnlyHint).toBe(true)
   expect(tool.description).toContain('publishedPending')
-  expect(tool.description).toContain('current-qualified-408-v1')
+  expect(tool.description).toContain('current-qualified-478-v2')
 })

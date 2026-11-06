@@ -129,20 +129,20 @@ async function renderCurrent(aliases: string[]) {
   await flushPromises(); return wrapper
 }
 
-it('U08 shows current confirmed alias and published name independently inside the mobile card with two mounted text branches', async () => {
+it('U08 keeps confirmed aliases and the detail entry while leaving published-source text on the detail page', async () => {
   const wrapper = await renderCurrent(['已确认旧名']), card = wrapper.get('[data-testid="current-enterprise-card"]')
   expect(card.text()).toContain('新名')
   expect(card.text()).toContain('已确认曾用名：已确认旧名')
-  expect(card.text()).toContain('公布名称："公告名"')
+  expect(card.text()).not.toContain('公布名称："公告名"')
   expect(card.text()).not.toContain('待核别名')
-  expect(card.findAll('a').filter(a => a.text() === '公布名称："公告名"')).toHaveLength(1)
-  expect(wrapper.findAll('a').filter(a => a.text() === '公布名称："公告名"')).toHaveLength(2)
+  expect(card.get('a').attributes('href')).toContain('/enterprises/21')
+  expect(wrapper.findAll('a').filter(a => a.text() === '公布名称："公告名"')).toHaveLength(0)
   expect(wrapper.get('table tbody tr').text()).toContain('已确认曾用名：已确认旧名')
 })
 
 it('U09 leaves the mobile confirmed alias label absent when no confirmed alias exists', async () => {
   const wrapper = await renderCurrent([]), card = wrapper.get('[data-testid="current-enterprise-card"]')
-  expect(card.text()).toContain('新名'); expect(card.text()).toContain('公布名称："公告名"')
+  expect(card.text()).toContain('新名'); expect(card.text()).not.toContain('公布名称："公告名"')
   expect(card.text()).not.toContain('已确认曾用名'); expect(card.text()).not.toContain('待核别名')
 })
 

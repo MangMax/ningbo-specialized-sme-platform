@@ -8,7 +8,7 @@ import { afterAll, beforeAll, expect, it, vi } from 'vitest'
 import { useDb, schema as s } from '../db/client'
 import { enterpriseReads } from '../server/utils/enterprise-read'
 import { writeCurrentWorkbook } from '../lib/roster/current-workbook'
-import { readCurrentCandidate } from '../lib/roster/current-qualification'
+import { createCurrentCandidateReader } from '../lib/roster/current-qualification'
 import { qualificationCasesR4 } from './fixtures/current-qualification-r4'
 import { qualificationCasesR5 } from './fixtures/current-qualification-r5'
 
@@ -101,26 +101,30 @@ it('keeps failed-pass, cross-batch and unknown facts out of a definite review pl
   }
 })
 
-it('keeps current HTTP and MCP qualification equal to all three real XLSX partitions', async () => {
+it('keeps current HTTP and MCP qualification equal to the five current status XLSX partitions', async () => {
   for (const title of titles) {
     const rest = await get('/api/roster/current-enterprises?' + new URLSearchParams({ titleCode: title, pageSize: '200' }))
     const mcp = JSON.parse(await currentTool.handler({ titleCode: title, pageSize: 200 }))
-    const expected = cases.filter(c => c.sheet === '有效企业').map(c => ids.get(`issue305-${title}-${c.id}`)).sort((a, b) => a! - b!)
+    const currentEligible = ['failed-pass', 'reaward', 'cross-batch', 'missing-result', 'missing-date', 'missing-batch', 'unknown-origin', 'passed']
+    const expected = cases.filter(c => currentEligible.includes(c.id)).map(c => ids.get(`issue305-${title}-${c.id}`)).sort((a, b) => a! - b!)
     expect(rest.rows.map((r: any) => r.enterpriseId)).toEqual(expected)
     expect(mcp.rows.map((r: any) => r.enterpriseId)).toEqual(expected)
     const file = join(dir, `issue305-${title}.xlsx`)
     const result = await writeCurrentWorkbook(db.$client, title, file, () => {})
-    expect(result.counts).toEqual({ eligible: 2, pending: 8, excluded: 1 })
+    expect(result.counts).toEqual({ eligible: 8, pending: 0, excluded: 3 })
     const wb = new ExcelJS.Workbook(); await wb.xlsx.readFile(file)
-    for (const sheet of ['有效企业', '待确认', '排除明细']) {
+    expect(wb.worksheets.map(sheet => sheet.name)).toEqual(['有效企业', '已到期', '已注销（吊销）', '已迁出', '未认定', '口径说明'])
+    for (const sheet of ['有效企业', '已到期', '已注销（吊销）', '已迁出', '未认定']) {
       const names: unknown[] = []
       wb.getWorksheet(sheet)!.eachRow((row, index) => { if (index > 1) names.push(row.getCell(2).value) })
-      expect(names.sort()).toEqual(cases.filter(c => c.sheet === sheet).map(c => `issue305-${title}-${c.id}`).sort())
+      const selected = sheet === '有效企业' ? cases.filter(c => currentEligible.includes(c.id))
+        : sheet === '已到期' ? cases.filter(c => !currentEligible.includes(c.id)) : []
+      expect(names.sort()).toEqual(selected.map(c => `issue305-${title}-${c.id}`).sort())
     }
-    const failed = wb.getWorksheet('待确认')!.getRows(2, 8)!.find(row => row.getCell(2).value === `issue305-${title}-failed-pass`)!
-    expect(failed.getCell(11).text).toContain('恢复冲突')
-    expect(failed.getCell(7).text).toContain('2023')
-    expect(failed.getCell(7).text).toContain('2024')
+    const recovered = wb.getWorksheet('有效企业')!.getRows(2, 8)!.find(row => row.getCell(2).value === `issue305-${title}-failed-pass`)!
+    expect(recovered.getCell(7).text).toContain('2023')
+    expect(recovered.getCell(7).text).toContain('2024')
+    expect(recovered.getCell(13).text).toBe('有效企业')
   }
 }, 30000)
 
@@ -135,7 +139,8 @@ it('preserves the existing R4 and R5 qualification decisions with real SQLite fa
       const event = db.insert(s.recordEvent).values({ recordId: record.id, ...input }).returning().get()
       if (!c.missing?.includes(index)) db.insert(s.recordEvidence).values({ recordEventId: event.id, sourceFile: 'issue305/historical.pdf', attachment: c.id, listNo: event.id, page: 1 }).run()
     }
-    const actual = readCurrentCandidate(db.$client, enterprise.id, title, year)
+    // R4/R5 are the frozen historical contract, rather than the default current consumer.
+    const actual = createCurrentCandidateReader(db.$client)(enterprise.id, title, year, Date.now(), undefined, false, true, { assessmentVersion: 'enterprise-qualification-407-v1' })
     expect.soft(actual.group, name).toBe(expectedGroup[c.sheet])
     expect.soft(actual.firstYear, name).toBe(c.first)
     if (c.note) expect.soft(actual.notes.join('\n'), name).toContain(c.note)

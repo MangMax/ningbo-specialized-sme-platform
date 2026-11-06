@@ -35,6 +35,7 @@ import { ROSTER_DIFFERENCE_FILTER_OPTIONS, rosterDifferenceFilterLabel } from '~
 import { captureQueryRequest, useRetainedQuerySnapshot } from '~/composables/useRetainedQuerySnapshot'
 import type { QueryRequestSnapshot } from '~/composables/useRetainedQuerySnapshot'
 import EnterpriseDrawer from '@/components/EnterpriseDrawer.vue'
+import EnterpriseDifferenceRefresh from '@/components/EnterpriseDifferenceRefresh.vue'
 import EnterpriseListTable, {
   type EnterpriseListRow,
 } from '@/components/EnterpriseListTable.vue'
@@ -224,7 +225,8 @@ const {
   paginationDisabled,
   failureDescription,
 } = useRetainedQuerySnapshot<LedgerListQueryParams, LedgerListQueryResult>(data, isLoading, error, activeRequest)
-const rows = computed(() => displayedResult.value?.rows ?? [])
+const rows = computed<EnterpriseListRow[]>(() => displayedResult.value?.rows ?? [])
+const displayedEnterpriseIds = computed(() => rows.value.map(row => row.enterpriseId))
 const returnRowsReady = computed(() => !isLoading.value && (displayedResult.value?.request.key === activeRequestKey.value || error.value != null))
 useEvidencePreviewScrollRestore(returnRowsReady)
 const counts = computed<Counts>(
@@ -432,6 +434,7 @@ useHead({
   <div class="ledger-page flex min-w-0 flex-col gap-2 sm:gap-3">
     <PageHeader :title="ENTERPRISE_LIST_TITLE">
       <template #actions>
+        <EnterpriseDifferenceRefresh :enterprise-ids="displayedEnterpriseIds" :disabled="isLoading || !!error" @refreshed="refetch()" />
         <Button as-child variant="outline" size="sm">
           <a :href="exportUrl"><ExternalLink class="size-3.5" />{{ LEDGER_EXPORT_LABEL }}</a>
         </Button>

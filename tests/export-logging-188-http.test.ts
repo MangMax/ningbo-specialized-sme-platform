@@ -112,7 +112,7 @@ it('exports an original XLSX with correlated summary workbook publish and downlo
   expect(job.state, JSON.stringify(job)).toBe('done')
   expect(job.result.counts).toEqual({ eligible: 1, pending: 0, excluded: 0 })
   const { wb, bytes, response } = await original(job.result.artifact.downloadUrl, 'async-original')
-  expect(wb.worksheets.map(sheet => sheet.name)).toEqual(['有效企业', '待确认', '排除明细', '口径说明'])
+  expect(wb.worksheets.map(sheet => sheet.name)).toEqual(['有效企业', '已到期', '已注销（吊销）', '已迁出', '未认定', '口径说明'])
   expect(wb.getWorksheet('有效企业')!.getRow(2).getCell(2).value).toBe(privateText)
   expect(createHash('sha256').update(bytes).digest('hex')).toBe(job.result.artifact.sha256)
   expect(bytes.length).toBe(job.result.artifact.size)

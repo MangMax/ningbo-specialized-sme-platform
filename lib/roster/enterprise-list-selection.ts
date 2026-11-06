@@ -80,7 +80,7 @@ function selectCoordinates(db: Db, filter: RosterEnterpriseFilter, limit?: numbe
       ${filter.diffStatus.every(x => x === 'none') ? sql`and 0` : sql``}) or ${inArray(sql`d.reason`, filter.diffStatus.filter(x => x !== 'none'))})` : sql`1`
   const generalQuery = sql`
     with scope as materialized (
-      select e.id from enterprise e where ${validText ? search : sql`0`} ${explainedOnly ? sql`and e.id in (select enterprise_id from difference_reason)` : sql``}
+      select e.id from enterprise e where ${validText ? search : sql`0`} ${explainedOnly ? sql`and e.id in (select enterprise_id from difference_reason union select enterprise_id from enterprise_difference_comparison)` : sql``}
         and ${filter.district ? sql`coalesce(nullif(e.district,''),(select district from record r where r.enterprise_id=e.id and r.district is not null and r.district!='' order by r.id limit 1))=${filter.district}` : sql`1`}
     ), fact_base as materialized (
       select r.enterprise_id,r.title_code,
@@ -117,13 +117,21 @@ function selectCoordinates(db: Db, filter: RosterEnterpriseFilter, limit?: numbe
         where title_code in ('little_giant','specialized_sme','innovative_sme') and platform and (uscc_norm is null or not official)
           and enterprise_id in (select enterprise_id from explanations)
     ), explanation_versions as (
-      select enterprise_id,title_code,direction,status,reason_code,row_number() over(partition by enterprise_id,title_code,direction order by recorded_at desc,id) as n
+      select enterprise_id,title_code,direction,status,reason_code,recorded_at,id,row_number() over(partition by enterprise_id,title_code,direction order by recorded_at desc,id) as n
       from difference_reason where enterprise_id in (select id from scope)
-    ), explanations as materialized (select * from explanation_versions where n=1), coordinates as materialized (
+    ), explanations as materialized (select * from explanation_versions where n=1), legacy_coordinates as materialized (
       select d.*,coalesce(x.status,'not_queried') as status,x.reason_code,1 as current from derived d left join explanations x
         on x.enterprise_id=d.enterprise_id and x.title_code=d.title_code and x.direction=d.direction
       union all select x.enterprise_id,x.title_code,x.direction,x.status,x.reason_code,0 from explanations x where not exists(
         select 1 from derived d where d.enterprise_id=x.enterprise_id and d.title_code=x.title_code and d.direction=x.direction)
+    ), refreshed_decisions as (
+      select x.*,row_number() over(partition by x.enterprise_id,x.title_code order by x.recorded_at desc,x.id desc) as latest
+      from explanations x join enterprise_difference_comparison c on c.enterprise_id=x.enterprise_id and c.title_code=x.title_code where x.id>c.decision_cutoff_id
+    ), coordinates as materialized (
+      select x.* from legacy_coordinates x where not exists(select 1 from enterprise_difference_comparison c where c.enterprise_id=x.enterprise_id and c.title_code=x.title_code)
+      union all select c.enterprise_id,c.title_code,'missing_in_miit',coalesce(d.status,'needs_review'),d.reason_code,1
+      from enterprise_difference_comparison c left join refreshed_decisions d on d.enterprise_id=c.enterprise_id and d.title_code=c.title_code and d.latest=1
+      where c.enterprise_id in (select id from scope)
     ), ranked_differences as (
       select *,row_number() over(partition by enterprise_id order by ${rank(sql`status`, DIFFERENCE_STATUS_ORDER)} desc,${rank(sql`title_code`, TITLE_ORDER)},direction) as n from coordinates
     ), explained_differences as (

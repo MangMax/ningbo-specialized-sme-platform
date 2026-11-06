@@ -9,7 +9,9 @@ import Page from '../pages/current-enterprises.vue'
 import TablePagination from '../components/TablePagination.vue'
 import type { CurrentTitle } from '../lib/roster/current-titles'
 import type { CurrentQualificationAssessment, CurrentQualificationSnapshot } from '../lib/roster/current-qualification'
-import type { CurrentQualifiedResult, CurrentQualifiedRow, CurrentFilterMatch } from '../lib/roster/current-qualified-query'
+import { Select } from '../components/ui/select'
+import type { CurrentStatus } from '../lib/roster/current-status'
+import type { CurrentQualifiedResult, CurrentQualifiedRow } from '../lib/roster/current-qualified-query'
 
 const digest = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex')
 const asOf = '2026-06-01T00:00:00.000Z'
@@ -17,14 +19,15 @@ const asOf = '2026-06-01T00:00:00.000Z'
 function snapshot(id: number, pending: boolean, selectedTitle: CurrentTitle = 'innovative_sme'): CurrentQualificationSnapshot {
   const titles: CurrentQualificationAssessment[] = (['little_giant', 'specialized_sme', 'innovative_sme'] as const).map((titleCode): CurrentQualificationAssessment => {
     const selected = titleCode === selectedTitle
-    const group = selected && !pending ? 'eligible' : 'pending'
+    const group = selected && !pending ? 'eligible' : 'excluded'
     const eventId = id + 1000, evidenceId = id + 2000
     const evidence: CurrentQualificationAssessment['evidence'] = selected ? [{ eventId, revision: 1, eventType: pending ? 'review' : 'award', year: pending ? 2022 : 2025, batchSeq: 1, decidedYear: pending ? null : 2025, reviewOutcome: null, evidenceIds: [evidenceId] }] : []
     const sourceVersions: CurrentQualificationAssessment['sourceVersions'] = selected ? [{ evidenceId, eventId, sourceFile: 'synthetic/ui408/formal.pdf', storedFileId: 71, sha256: digest('synthetic ui formal bytes'), bytes: 25, removedAt: null, capturedRevision: 1, capturedSha256: digest('synthetic ui row') }] : []
     return {
-      titleCode, group, cycles: selected ? [{ originYear: pending ? 2022 : 2025, batchSeq: 1, precision: 'year' }] : [],
+      titleCode, group, cycles: selected && !pending ? [{ originYear: 2025, batchSeq: 1, precision: 'year' }] : [],
+      effectiveQualification: { status: selected && !pending ? 'effective' : 'unrecognized', basis: selected ? '合成正式公布' : '', notes: [] },
       versions: { facts: digest([id, evidence]), sources: digest(sourceVersions), decisions: digest([]), observations: digest([]) },
-      officialQualification: { group, message: selected ? pending ? '正式资格待核，已保留公布事实' : '正式资格当前有效' : '尚无本称号正式依据', basis: selected ? '合成正式公布' : '', notes: [] },
+      officialQualification: { group, message: selected ? pending ? '缺少认定事实，复核事实保留' : '正式资格当前有效' : '尚无本称号正式依据', basis: selected ? '合成正式公布' : '', notes: [] },
       subject: { status: 'not_established', message: '未见主体终止事实', decisionIds: [] },
       region: { status: 'not_established', message: '沿用正式公布地域范围', decisionIds: [] },
       platform: { status: 'not_queried', comparison: 'not_established', message: '未查询不否定正式资格', truncated: false, observations: [] },
@@ -37,20 +40,40 @@ function snapshot(id: number, pending: boolean, selectedTitle: CurrentTitle = 'i
       evidence, sourceVersions, references: selected ? [`evidence:${evidenceId}`] : [], notes: [], shadow: { legacyGroup: group, difference: null },
     }
   })
-  const scope = { enterpriseId: id, asOf, ruleVersion: 'current-roster-116-v8', assessmentVersion: 'enterprise-qualification-407-v1' }
+  const scope = { enterpriseId: id, asOf, ruleVersion: 'current-roster-116-v10', assessmentVersion: 'enterprise-qualification-478-v3' }
   return { ...scope, titles, snapshotId: digest([scope, titles]) }
 }
 function row(id: number, name: string, pending: boolean, selectedTitle: CurrentTitle = 'innovative_sme'): CurrentQualifiedRow {
   return { enterpriseId: id, name, uscc: null, district: '鄞州区', publishedNames: [name], aliases: [], firstYear: pending ? 2022 : 2025,
-    basis: 'synthetic formal basis', reviews: pending ? '复核结论未知' : '', publication: '已见本称号宁波公布记录', notes: [], references: [], group: pending ? 'pending' : 'eligible',
+    basis: 'synthetic formal basis', reviews: pending ? '复核结论未知' : '', publication: '已见本称号宁波公布记录', notes: [], references: [], group: pending ? 'excluded' : 'eligible',
     recognition: pending ? null : { precision: 'year', year: 2025 }, qualificationWitnesses: pending ? [] : [{ cycle: { originYear: 2025, batchSeq: 1 }, awardEventId: id + 1000, recognition: { precision: 'year', year: 2025 }, matchedValidYear: null, matchedMaintenance: null, correspondenceId: null, conditionQueryId: null }], matchedValidYears: [], matchedMaintenance: [],
     publishedPresentation: { availability: 'available', error: null, facts: [{ evidenceId: id + 2000, eventId: id + 1000, revision: 1, availability: 'captured', nameRaw: name, sourceBindingKnown: true }] }, qualificationAssessment: snapshot(id, pending, selectedTitle) }
 }
-function wire(options: { titleCode?: CurrentTitle; requested?: boolean; eligible?: boolean; pending?: boolean; page?: number; total?: number; pendingTotal?: number; match?: CurrentFilterMatch; suffix?: string } = {}): CurrentQualifiedResult {
+// Five-state responses have one rowset. Each fixture is literal wire data;
+// qualification readers and presentation helpers never supply the oracle.
+function wire(options: { titleCode?: CurrentTitle; status?: CurrentStatus; empty?: boolean; page?: number; total?: number; suffix?: string } = {}): CurrentQualifiedResult {
+  const titleCode = options.titleCode ?? 'innovative_sme', status = options.status ?? 'effective'
+  const item = row(801, 'synthetic_408_' + status + (options.suffix ?? ''), false, titleCode)
+  const selected = item.qualificationAssessment.titles.find(title => title.titleCode === titleCode)!
+  selected.effectiveQualification = { status, basis: '合成正式依据', notes: [] }
+  selected.group = item.group = status === 'effective' ? 'eligible' : 'excluded'
+  if (status === 'terminated') selected.subject = { status: 'terminated', message: '已确认主体注销', decisionIds: [91] }
+  if (status === 'moved_out') selected.region = { status: 'outside_ningbo', message: '已确认迁出宁波', decisionIds: [92] }
+  if (status === 'expired') {
+    selected.evidence[0] = { ...selected.evidence[0]!, year: 2020, decidedYear: 2020 }
+    selected.cycles = [{ originYear: 2020, batchSeq: 1, precision: 'year' }]
+    item.firstYear = 2020
+  }
+  if (status !== 'effective') { item.qualificationWitnesses = []; item.recognition = null }
+  if (status === 'expired' || status === 'unrecognized') selected.officialQualification = { group: 'excluded', message: '本称号未纳入当前有效资格', basis: '合成正式依据', notes: [] }
+  if (status === 'unrecognized') { selected.evidence = []; selected.cycles = []; item.qualificationWitnesses = []; item.recognition = null }
+  selected.versions.facts = digest([item.enterpriseId, selected.evidence])
+  const { snapshotId: _, titles, ...scope } = item.qualificationAssessment
+  item.qualificationAssessment.snapshotId = digest([scope, titles])
   const page = options.page ?? 2
-  return { responseVersion: 'current-qualified-408-v1', titleCode: options.titleCode ?? 'innovative_sme', ruleVersion: 'current-roster-116-v8', snapshotStartedAt: asOf,
-    rows: options.eligible === false ? [] : [row(801, `synthetic_408_有效${options.suffix ?? ''}`, false, options.titleCode)], total: options.total ?? 3, uncertainTotal: 0,
-    publishedPending: { requested: options.requested ?? true, rows: options.pending === false ? [] : [{ ...row(802, `synthetic_408_公布待核${options.suffix ?? ''}`, true, options.titleCode), filterMatch: options.match ?? { status: 'matched', checks: [] } }], total: options.pendingTotal ?? 5, page, pageSize: 1 },
+  return { responseVersion: 'current-qualified-478-v2', titleCode, ruleVersion: 'current-roster-116-v10', snapshotStartedAt: asOf,
+    rows: options.empty ? [] : [item], total: options.total ?? 3, uncertainTotal: 0,
+    publishedPending: { requested: false, rows: [], total: 0, page, pageSize: 1 },
     options: { recognitionYears: [2025], validYears: [], maintenanceYears: [], maintenanceBatchesByYear: {} }, page, pageSize: 1 }
 }
 function deferred<T>() {
@@ -76,221 +99,216 @@ async function setup(query: Record<string, string> = {}, narrow = false) {
   views.push(view); await flushPromises()
   return { view, router, requests }
 }
-const pendingRegion = '[aria-label="已公布待核企业"]'
+function expectBack(view: ReturnType<typeof mount>, query: Record<string, string>) {
+  const links = view.findAll('a').filter(link => link.attributes('href')?.startsWith('/enterprises/801?'))
+  expect(links).toHaveLength(2)
+  for (const link of links) {
+    const back = new URL(link.attributes('href')!, 'http://localhost').searchParams.get('currentBack')!
+    expect(Object.fromEntries(new URLSearchParams(back))).toEqual(query)
+  }
+}
+const states: { id: CurrentStatus; label: string; timeline: string[] }[] = [
+  { id: 'effective', label: '有效企业', timeline: ['2025 认定'] },
+  { id: 'expired', label: '已到期', timeline: ['2020 认定'] },
+  { id: 'terminated', label: '已注销（吊销）', timeline: ['2025 认定'] },
+  { id: 'moved_out', label: '已迁出', timeline: ['2025 认定'] },
+  { id: 'unrecognized', label: '未认定', timeline: [] },
+]
 
-it('published_pending_region_after_legacy_guards_408', async () => {
-  const { view, requests } = await setup()
-  expect(view.find(pendingRegion).exists()).toBe(false)
+it.each(states)('single_table_status_and_timeline_408_$id', async ({ id, label, timeline }) => {
+  const { view, router, requests } = await setup()
+  expect(view.findAllComponents(TablePagination)).toHaveLength(0)
   expect(view.text()).not.toContain('共 0')
-  requests[0]!.result.resolve(wire()); await flushPromises()
-  // Legacy guards must reach PASS before the new-region business RED.
-  expect(view.text()).toContain('synthetic_408_有效')
-  expect(view.text()).toContain('共 3 家企业')
-  expect(view.text()).toContain('搜索：synthetic_408')
-  expect(view.text()).toContain('第 2 页，每页 1 家')
-  expect(requests[0]!.query).toMatchObject({ titleCode: 'innovative_sme', q: 'synthetic_408', page: 2, pageSize: 1 })
-  expect(view.findAllComponents(TablePagination)[0]!.props('total')).toBe(3)
-  // First intended failure: current page has no published-pending region.
-  expect(view.find(pendingRegion).exists()).toBe(true)
-  expect(view.get(pendingRegion).text()).toContain('synthetic_408_公布待核')
-  expect(view.get(pendingRegion).text()).toContain('复核结论')
-  expect(view.get(pendingRegion).text()).not.toContain('已确认有效')
-})
-
-it.each<{ id: string; match: CurrentFilterMatch; message: string; query: Record<string, string> }>([
-  { id: 'matched', query: {}, match: { status: 'matched', checks: [] }, message: '符合已选筛选' },
-  { id: 'not_matched', query: { recognitionFrom: '2025-01-01', recognitionTo: '2025-12-31' }, match: { status: 'not_matched', checks: [{ field: 'recognitionRange', status: 'not_matched' }] }, message: '不符合已选筛选' },
-  { id: 'not_established', query: { validYear: '2028' }, match: { status: 'not_established', checks: [{ field: 'validYear', status: 'not_established' }] }, message: '尚不能确认满足已选筛选' },
-])('pending_filter_explanation_is_not_qualification_408_$id', async ({ match, message, query }) => {
-  const { view, requests } = await setup(query)
-  requests[0]!.result.resolve(wire({ eligible: false, total: 0, match })); await flushPromises()
-  const section = view.get(pendingRegion)
-  expect(section.text()).toContain('synthetic_408_公布待核')
-  expect(section.text()).toContain(message)
-  expect(section.text()).toContain('复核结论')
-  expect(section.text()).not.toContain('已确认有效')
-})
-
-it('unrequested_pending_is_not_a_zero_published_census_408', async () => {
-  const { view, requests } = await setup({ q: '' })
-  requests[0]!.result.resolve(wire({ requested: false, pending: false, pendingTotal: 0 })); await flushPromises()
-  expect(view.find(pendingRegion).exists()).toBe(false)
-  expect(view.text()).not.toContain('没有正式公布')
-  expect(view.text()).not.toContain('待核企业共 0')
-  expect(view.text()).toContain('synthetic_408_有效')
+  // Exercise the actual select model: changing state resets page, preserving search.
+  view.findAllComponents(Select).find(select => select.find('[aria-label="按有效状态筛选"]').exists())!.vm.$emit('update:modelValue', id)
+  await flushPromises()
+  expect(router.currentRoute.value.query).toEqual({ titleCode: 'innovative_sme', status: id, q: 'synthetic_408', pageSize: '1' })
+  expect(requests.at(-1)!.query).toMatchObject({ titleCode: 'innovative_sme', status: id, q: 'synthetic_408', page: 1, pageSize: 1 })
+  const response = wire({ status: id, page: 1 }), before = JSON.stringify(response)
+  requests.at(-1)!.result.resolve(response); await flushPromises()
+  expect(view.findAll('table')).toHaveLength(1)
+  expect(view.findAll('tbody tr')).toHaveLength(1)
+  expect(view.get('tbody tr').text()).toContain('synthetic_408_' + id)
+  expect(view.get('[data-testid="current-enterprise-card"]').text()).toContain('synthetic_408_' + id)
+  expect(view.get('p[aria-live="polite"]').text()).toContain('创新型中小企业；' + label + '；搜索：synthetic_408')
+  expect(view.find('[aria-label="已公布待核企业"]').exists()).toBe(false)
+  const surfaces = [view.get('tbody tr'), view.get('[data-testid="current-enterprise-card"]')]
+  for (const surface of surfaces) {
+    expect(surface.findAll('ol li').map(step => step.text().replace(/^→/, '').trim())).toEqual(timeline)
+    if (!timeline.length) expect(surface.text()).toContain('暂无认定与复核记录')
+  }
+  expect(view.findComponent(TablePagination).props()).toMatchObject({ page: 1, pageSize: 1, total: 3, loading: false })
+  expectBack(view, { titleCode: 'innovative_sme', status: id, q: 'synthetic_408', sort: 'id_asc', page: '1', pageSize: '1' })
+  expect(JSON.stringify(response)).toBe(before)
 })
 
 it('initial_failure_and_settled_empty_are_distinct_408', async () => {
   const { view, requests } = await setup()
+  expect(requests[0]!.query.status).toBe('effective')
   expect(view.findAllComponents(TablePagination)).toHaveLength(0)
   requests[0]!.result.reject(new Error('synthetic initial unavailable')); await flushPromises()
   expect(view.text()).toContain('当前有效企业查询失败')
   expect(view.text()).not.toContain('共 0')
   await view.findAll('button').find(button => button.text().includes('重新加载'))!.trigger('click'); await flushPromises()
-  requests.at(-1)!.result.resolve(wire({ eligible: false, pending: false, total: 0, pendingTotal: 0 })); await flushPromises()
-  expect(view.text()).toContain('共 0 家企业')
-  expect(view.text()).toContain('没有符合条件的当前有效企业')
+  expect(requests.at(-1)!.query).toEqual(requests[0]!.query)
+  requests.at(-1)!.result.resolve(wire({ empty: true, total: 0 })); await flushPromises()
+  expect(view.findAll('[data-slot="empty-title"]').map(title => title.text())).toEqual(['没有符合条件的企业', '没有符合条件的企业'])
+  expect(view.findComponent(TablePagination).props()).toMatchObject({ page: 2, pageSize: 1, total: 0, loading: false })
+  expect(view.get('[data-testid="table-total"]').text()).toBe('共 0 家企业')
 })
 
-it.each([false, true])('both_groups_retain_request_through_loading_failure_retry_and_late_response_408_%s', async narrow => {
-  const q = 'synthetic_408_完整搜索条件与已确认曾用名'.repeat(2)
-  const source = { q, district: '鄞州区', recognitionFrom: '2025-01-01', recognitionTo: '2025-12-31', sort: 'name_desc', page: '2', pageSize: '1' }
-  const { view, router, requests } = await setup(source, narrow)
-  requests[0]!.result.resolve(wire()); await flushPromises()
-  await router.replace({ path: '/current-enterprises', query: { titleCode: 'innovative_sme', q: 'synthetic_408_slow' } }); await flushPromises()
-  const slow = requests.at(-1)!
-  expect(view.text()).toContain('synthetic_408_有效')
-  expect(view.get(pendingRegion).text()).toContain('synthetic_408_公布待核')
-  expect(view.findAllComponents(TablePagination).every(pager => pager.props('loading'))).toBe(true)
-  await router.replace({ path: '/current-enterprises', query: { titleCode: 'specialized_sme', q: 'synthetic_408_failed', validYear: '2028', maintenanceYear: '2024', maintenanceBatch: '2' } }); await flushPromises()
-  requests.at(-1)!.result.reject(new Error('synthetic failed target')); await flushPromises()
-  expect(view.text()).toContain(q)
-  expect(view.text()).toContain('2025-01-01 至 2025-12-31')
-  expect(view.text()).toContain('第 2 页')
-  expect(view.text()).toContain('synthetic_408_failed')
-  const href = view.get(pendingRegion).findAll('a').find(link => link.attributes('href')?.includes('/enterprises/802'))!.attributes('href')!
-  const back = new URL(href, 'http://localhost').searchParams.get('currentBack')!
-  expect(Object.fromEntries(new URLSearchParams(back))).toEqual({ titleCode: 'innovative_sme', ...source })
-  await view.findAll('button').find(button => button.text().includes('重新加载'))!.trigger('click'); await flushPromises()
-  requests.at(-1)!.result.resolve(wire({ titleCode: 'specialized_sme', page: 1, eligible: false, total: 0, suffix: '_retried', match: { status: 'not_established', checks: [{ field: 'validYear', status: 'not_established' }, { field: 'maintenanceYear', status: 'not_established' }, { field: 'maintenanceBatch', status: 'not_established' }] } })); await flushPromises()
-  expect(view.get(pendingRegion).text()).toContain('synthetic_408_公布待核_retried')
-  await router.replace({ path: '/current-enterprises', query: { titleCode: 'innovative_sme', q: 'synthetic_408_new', page: '2', pageSize: '1' } }); await flushPromises()
-  requests.at(-1)!.result.resolve(wire({ suffix: '_new' })); await flushPromises()
-  slow.result.resolve(wire({ suffix: '_late' })); await flushPromises()
-  expect(view.text()).toContain('synthetic_408_有效_new')
-  expect(view.get(pendingRegion).text()).toContain('synthetic_408_公布待核_new')
-  expect(view.text()).not.toContain('_late')
-  expect(view.findAllComponents(TablePagination).map(pager => pager.props('total'))).toEqual([3, 5])
-})
-
-it('each_group_pages_its_own_total_using_the_shared_request_408', async () => {
-  const { view, router, requests } = await setup()
-  requests[0]!.result.resolve(wire()); await flushPromises()
-  const pagers = view.findAllComponents(TablePagination)
-  expect(pagers).toHaveLength(2)
-  expect(pagers.map(pager => [pager.props('page'), pager.props('pageSize'), pager.props('total')])).toEqual([[2, 1, 3], [2, 1, 5]])
-  pagers[1]!.vm.$emit('update:page', 4); await flushPromises()
-  expect(router.currentRoute.value.query.page).toBe('4')
-  expect(requests.at(-1)!.query.page).toBe(4)
-  expect(view.findAllComponents(TablePagination).every(pager => pager.props('loading'))).toBe(true)
-  requests.at(-1)!.result.resolve(wire({ page: 4, eligible: false })); await flushPromises()
-  expect(view.findAllComponents(TablePagination).map(pager => pager.props('total'))).toEqual([3, 5])
-})
-
-it('legacy_response_keeps_eligible_and_marks_pending_unknown_408', async () => {
+it('effective_row_with_review_gaps_keeps_unknown_timeline_facts_without_pending_region_408', async () => {
   const { view, requests } = await setup()
-  const legacy = wire({ suffix: '_legacy', pending: false, pendingTotal: 0 })
-  // Model only the additive legacy-wire absence; keep every qualification field.
-  Reflect.deleteProperty(legacy, 'responseVersion')
-  Reflect.deleteProperty(legacy, 'publishedPending')
-  expect(Object.hasOwn(legacy, 'responseVersion')).toBe(false)
-  expect(Object.hasOwn(legacy, 'publishedPending')).toBe(false)
-  expect(legacy.rows[0]!.qualificationAssessment.titles.map(title => title.titleCode)).toEqual(['little_giant', 'specialized_sme', 'innovative_sme'])
+  const response = wire()
+  const selected = response.rows[0]!.qualificationAssessment.titles.find(title => title.titleCode === 'innovative_sme')!
+  selected.evidence.push({ eventId: 9002, revision: 1, eventType: 'review', year: 2022, decidedYear: null, batchSeq: 1, reviewOutcome: null, evidenceIds: [2002] })
+  selected.completeness = { ...selected.completeness, status: 'incomplete', gaps: ['missing_cycle_semantics'], eventIds: [9002], fieldGaps: [
+    { eventId: 9002, field: 'decidedYear', valueState: 'unknown', inputState: 'null' },
+    { eventId: 9002, field: 'reviewOutcome', valueState: 'unknown', inputState: 'null' },
+  ] }
+  selected.versions.facts = digest([801, selected.evidence])
+  const { snapshotId: _, titles, ...scope } = response.rows[0]!.qualificationAssessment
+  response.rows[0]!.qualificationAssessment.snapshotId = digest([scope, titles])
+  const before = JSON.stringify(response)
+  requests[0]!.result.resolve(response); await flushPromises()
+  expect(view.get('p[aria-live="polite"]').text()).toContain('创新型中小企业；有效企业；搜索：synthetic_408')
+  for (const surface of [view.get('tbody tr'), view.get('[data-testid="current-enterprise-card"]')]) {
+    expect(surface.findAll('ol li').map(step => step.text())).toEqual(['2025 认定', '→年份未记录 复核（结论待核）'])
+    expect(surface.text()).not.toContain('2022 复核')
+  }
+  expect(view.find('[aria-label="已公布待核企业"]').exists()).toBe(false)
+  expect(view.findAllComponents(TablePagination)).toHaveLength(1)
+  expect(JSON.stringify(response)).toBe(before)
+})
+
+it.each([{ id: 'desktop', narrow: false }, { id: 'mobile', narrow: true }])('single_table_retains_scope_retry_and_ignores_late_response_408_$id', async ({ narrow }) => {
+  const q = 'synthetic_408_完整搜索条件与已确认曾用名'.repeat(2)
+  const source = { status: 'expired', q, district: '鄞州区', recognitionFrom: '2025-01-01', recognitionTo: '2025-12-31', sort: 'name_desc', page: '2', pageSize: '1' }
+  const { view, router, requests } = await setup(source, narrow)
+  requests[0]!.result.resolve(wire({ status: 'expired' })); await flushPromises()
+  await router.replace({ path: '/current-enterprises', query: { titleCode: 'innovative_sme', status: 'moved_out', q: 'synthetic_408_slow' } }); await flushPromises()
+  const slow = requests.at(-1)!
+  expect(view.get('tbody tr').text()).toContain('synthetic_408_expired')
+  expect(view.findComponent(TablePagination).props()).toMatchObject({ page: 2, pageSize: 1, total: 3, loading: true })
+  const target = { titleCode: 'specialized_sme', status: 'terminated', q: 'synthetic_408_failed', validYear: '2028', maintenanceYear: '2024', maintenanceBatch: '2' }
+  await router.replace({ path: '/current-enterprises', query: target }); await flushPromises()
+  requests.at(-1)!.result.reject(new Error('synthetic failed target')); await flushPromises()
+  expect(view.text()).toContain('当前有效企业查询失败')
+  const description = view.get('p[aria-live="polite"]').text()
+  expect(description).toContain('创新型中小企业；已到期；搜索：' + q + '；区县：鄞州区；认定时间：2025-01-01 至 2025-12-31')
+  expect(description).toContain('第 2 页，每页 1 家')
+  expect(view.text()).toContain('请求目标：专精特新中小企业；已注销（吊销）；搜索：synthetic_408_failed；有效年份：2028；维护年份：2024 第 2 批')
+  expectBack(view, { titleCode: 'innovative_sme', ...source })
+  const requestCount = requests.length
+  view.findComponent(TablePagination).vm.$emit('update:page', 3); await flushPromises()
+  expect(requests).toHaveLength(requestCount)
+  expect(router.currentRoute.value.query).toEqual(target)
+  await view.findAll('button').find(button => button.text().includes('重新加载'))!.trigger('click'); await flushPromises()
+  expect(requests.at(-1)!.query).toEqual(requests.at(-2)!.query)
+  requests.at(-1)!.result.resolve(wire({ titleCode: 'specialized_sme', status: 'terminated', page: 1, suffix: '_retried' })); await flushPromises()
+  expect(view.get('tbody tr').text()).toContain('synthetic_408_terminated_retried')
+  expect(view.text()).not.toContain('当前有效企业查询失败')
+  await router.replace({ path: '/current-enterprises', query: { titleCode: 'innovative_sme', status: 'effective', q: 'synthetic_408_new', page: '2', pageSize: '1' } }); await flushPromises()
+  requests.at(-1)!.result.resolve(wire({ suffix: '_new' })); await flushPromises()
+  slow.result.resolve(wire({ status: 'moved_out', suffix: '_late' })); await flushPromises()
+  expect(view.get('tbody tr').text()).toContain('synthetic_408_effective_new')
+  expect(view.text()).not.toContain('_late')
+  expect(view.text()).not.toContain('_retried')
+  expect(view.findComponent(TablePagination).props()).toMatchObject({ page: 2, pageSize: 1, total: 3, loading: false })
+})
+
+it('single_table_pages_selected_status_and_preserves_filters_408', async () => {
+  const { view, router, requests } = await setup({ status: 'expired', district: '鄞州区', sort: 'name_desc' })
+  requests[0]!.result.resolve(wire({ status: 'expired', total: 5 })); await flushPromises()
+  expect(view.findAllComponents(TablePagination)).toHaveLength(1)
+  expect(view.findComponent(TablePagination).props()).toMatchObject({ page: 2, pageSize: 1, total: 5 })
+  view.findComponent(TablePagination).vm.$emit('update:page', 4); await flushPromises()
+  expect(router.currentRoute.value.query).toEqual({ titleCode: 'innovative_sme', status: 'expired', q: 'synthetic_408', district: '鄞州区', sort: 'name_desc', page: '4', pageSize: '1' })
+  expect(requests.at(-1)!.query).toMatchObject({ status: 'expired', district: '鄞州区', sort: 'name_desc', page: 4, pageSize: 1 })
+  expect(view.findComponent(TablePagination).props('loading')).toBe(true)
+  requests.at(-1)!.result.resolve(wire({ status: 'expired', page: 4, total: 5 })); await flushPromises()
+  expect(view.findComponent(TablePagination).props()).toMatchObject({ page: 4, pageSize: 1, total: 5, loading: false })
+  view.findComponent(TablePagination).vm.$emit('update:page-size', 2); await flushPromises()
+  expect(requests.at(-1)!.query).toMatchObject({ status: 'expired', district: '鄞州区', sort: 'name_desc', page: 1, pageSize: 2 })
+})
+
+it('legacy_effective_response_preserves_rows_and_marks_five_states_unknown_408', async () => {
+  const { view, requests } = await setup()
+  const legacy = wire({ suffix: '_legacy' })
+  Reflect.deleteProperty(legacy, 'responseVersion'); Reflect.deleteProperty(legacy, 'publishedPending')
   requests[0]!.result.resolve(legacy); await flushPromises()
-  expect(view.text()).toContain('synthetic_408_有效_legacy')
-  expect(view.text()).toContain('共 3 家企业')
-  expect(view.text()).toContain('搜索：synthetic_408')
-  expect(view.text()).toContain('第 2 页，每页 1 家')
+  expect(view.get('tbody tr').text()).toContain('synthetic_408_effective_legacy')
   expect(view.findAllComponents(TablePagination)).toHaveLength(1)
   expect(view.findComponent(TablePagination).props()).toMatchObject({ page: 2, pageSize: 1, total: 3, loading: false })
-  expect(view.find(pendingRegion).exists()).toBe(false)
-  expect(view.text()).toContain('本次响应未提供公布待核查询信息')
-  expect(view.text()).toContain('不能据此判断是否存在已公布待核企业')
-  expect(view.text()).not.toContain('待核企业共 0')
-  expect(view.text()).not.toContain('没有正式公布')
-  expect(view.text()).not.toContain('总量为零')
+  expect(view.findAll('[role="status"]').map(status => status.text())).toContain('旧版响应未提供五类有效状态；请刷新后核对，不能据此将资料缺口认作待核。')
+  expect(view.find('[aria-label="已公布待核企业"]').exists()).toBe(false)
+  expectBack(view, { titleCode: 'innovative_sme', status: 'effective', q: 'synthetic_408', sort: 'id_asc', page: '2', pageSize: '1' })
 })
 
-it('pending_names_unavailable_retains_both_groups_request_and_retry_408', async () => {
-  const source = { q: 'synthetic_408_public_names_source'.repeat(3), district: '鄞州区', recognitionFrom: '2025-01-01', recognitionTo: '2025-12-31', sort: 'name_desc', page: '2', pageSize: '1' }
-  const { view, router, requests } = await setup(source)
-  requests[0]!.result.resolve(wire({ suffix: '_source', match: { status: 'not_established', checks: [{ field: 'recognitionRange', status: 'not_established' }] } })); await flushPromises()
-  const expectBack = (id: number, query: Record<string, string>) => {
-    const links = view.findAll('a').filter(link => link.attributes('href')?.startsWith(`/enterprises/${id}?`))
-    expect(links.length).toBeGreaterThan(0)
-    for (const link of links) {
-      const back = new URL(link.attributes('href')!, 'http://localhost').searchParams.get('currentBack')!
-      expect(Object.fromEntries(new URLSearchParams(back))).toEqual(query)
-    }
-  }
-  expect(view.text()).toContain('synthetic_408_有效_source')
-  expect(view.get(pendingRegion).text()).toContain('synthetic_408_公布待核_source')
-  expectBack(801, { titleCode: 'innovative_sme', ...source })
-  expectBack(802, { titleCode: 'innovative_sme', ...source })
+it('legacy_non_effective_response_is_rejected_and_modern_retry_recovers_408', async () => {
+  const { view, requests } = await setup({ status: 'unrecognized' })
+  const legacy = wire({ status: 'unrecognized' }); legacy.responseVersion = 'current-qualified-408-v1'
+  requests[0]!.result.resolve(legacy); await flushPromises()
+  expect(view.text()).toContain('当前有效企业查询失败')
+  expect(view.findAll('tbody tr')).toHaveLength(0)
+  expect(view.findAllComponents(TablePagination)).toHaveLength(0)
+  expect(view.text()).not.toContain('共 0')
+  await view.findAll('button').find(button => button.text().includes('重新加载'))!.trigger('click'); await flushPromises()
+  expect(requests.at(-1)!.query).toEqual(requests[0]!.query)
+  requests.at(-1)!.result.resolve(wire({ status: 'unrecognized' })); await flushPromises()
+  expect(view.text()).not.toContain('当前有效企业查询失败')
+  expect(view.get('tbody tr').text()).toContain('synthetic_408_unrecognized')
+})
 
-  const target = { titleCode: 'specialized_sme', q: 'synthetic_408_public_names_target', district: '鄞州区', sort: 'name_asc', page: '1', pageSize: '1' }
+it.each([{ id: 'main_rows', pending: false }, { id: 'legacy_pending_wire', pending: true }])('unavailable_published_names_retain_scope_and_retry_408_$id', async ({ pending }) => {
+  const source = { status: 'expired', q: 'synthetic_408_public_names_source'.repeat(3), district: '鄞州区', recognitionFrom: '2025-01-01', recognitionTo: '2025-12-31', sort: 'name_desc', page: '2', pageSize: '1' }
+  const { view, router, requests } = await setup(source)
+  requests[0]!.result.resolve(wire({ status: 'expired', suffix: '_source' })); await flushPromises()
+  const target = { titleCode: 'specialized_sme', status: 'moved_out', q: 'synthetic_408_public_names_target', district: '鄞州区', sort: 'name_asc', page: '1', pageSize: '1' }
   await router.replace({ path: '/current-enterprises', query: target }); await flushPromises()
   const failedRequest = requests.at(-1)!
-  expect(failedRequest.query).toMatchObject({ titleCode: 'specialized_sme', q: target.q, district: '鄞州区', sort: 'name_asc', page: 1, pageSize: 1 })
-  expect(view.findAllComponents(TablePagination).every(pager => pager.props('loading'))).toBe(true)
-  const unavailable = wire({ titleCode: 'specialized_sme', page: 1, suffix: '_rejected_dto', total: 7, pendingTotal: 11 })
-  unavailable.publishedPending.rows[0]!.publishedPresentation = { availability: 'unavailable', error: 'read_failed', facts: [] }
-  // Fulfil transport successfully: the real page's pending-name guard must fail.
+  const unavailable = wire({ titleCode: 'specialized_sme', status: 'moved_out', page: 1, suffix: '_rejected_dto', total: 7 })
+  const bad = { ...row(802, 'synthetic_unavailable', true, 'specialized_sme'), publishedPresentation: { availability: 'unavailable' as const, error: 'read_failed' as const, facts: [] as [] } }
+  if (pending) unavailable.publishedPending = { requested: true, rows: [{ ...bad, filterMatch: { status: 'not_established', checks: [] } }], total: 1, page: 1, pageSize: 1 }
+  else unavailable.rows = [bad]
   failedRequest.result.resolve(unavailable); await flushPromises()
   expect(view.text()).toContain('当前有效企业查询失败')
-  expect(view.text()).toContain('synthetic_408_有效_source')
-  expect(view.get(pendingRegion).text()).toContain('synthetic_408_公布待核_source')
-  expect(view.text()).toContain(source.q)
-  expect(view.text()).toContain('2025-01-01 至 2025-12-31')
-  expect(view.text()).toContain(target.q)
-  expect(view.text()).toContain('第 2 页，每页 1 家')
-  expect(view.text()).not.toContain('synthetic_408_有效_rejected_dto')
-  expect(view.text()).not.toContain('synthetic_408_公布待核_rejected_dto')
-  expect(view.findAllComponents(TablePagination).map(pager => [pager.props('page'), pager.props('pageSize'), pager.props('total'), pager.props('loading')])).toEqual([[2, 1, 3, true], [2, 1, 5, true]])
-  expectBack(801, { titleCode: 'innovative_sme', ...source })
-  expectBack(802, { titleCode: 'innovative_sme', ...source })
-
+  expect(view.get('tbody tr').text()).toContain('synthetic_408_expired_source')
+  expect(view.text()).not.toContain('_rejected_dto')
+  expect(view.text()).not.toContain('synthetic_unavailable')
+  expect(view.findComponent(TablePagination).props()).toMatchObject({ page: 2, pageSize: 1, total: 3, loading: true })
+  expectBack(view, { titleCode: 'innovative_sme', ...source })
   await view.findAll('button').find(button => button.text().includes('重新加载'))!.trigger('click'); await flushPromises()
   expect(requests).toHaveLength(3)
   expect(requests.at(-1)!.query).toEqual(failedRequest.query)
-  requests.at(-1)!.result.resolve(wire({ titleCode: 'specialized_sme', page: 1, suffix: '_recovered', total: 7, pendingTotal: 11 })); await flushPromises()
+  requests.at(-1)!.result.resolve(wire({ titleCode: 'specialized_sme', status: 'moved_out', page: 1, suffix: '_recovered', total: 7 })); await flushPromises()
   expect(view.text()).not.toContain('当前有效企业查询失败')
-  expect(view.text()).not.toContain('synthetic_408_有效_source')
-  expect(view.text()).not.toContain('synthetic_408_公布待核_source')
-  expect(view.text()).toContain('synthetic_408_有效_recovered')
-  expect(view.get(pendingRegion).text()).toContain('synthetic_408_公布待核_recovered')
-  expect(view.text()).not.toContain('synthetic_408_有效_rejected_dto')
-  expect(view.text()).not.toContain('synthetic_408_公布待核_rejected_dto')
-  expect(view.findAllComponents(TablePagination).map(pager => [pager.props('page'), pager.props('pageSize'), pager.props('total'), pager.props('loading')])).toEqual([[1, 1, 7, false], [1, 1, 11, false]])
-  expectBack(801, target)
-  expectBack(802, target)
+  expect(view.get('tbody tr').text()).toContain('synthetic_408_moved_out_recovered')
+  expect(view.text()).not.toContain('_source')
+  expect(view.findComponent(TablePagination).props()).toMatchObject({ page: 1, pageSize: 1, total: 7, loading: false })
+  expectBack(view, target)
 })
 
-
-it.each([
-  { id: 'desktop_subject', narrow: false, dimension: 'subject' as const },
-  { id: 'mobile_subject', narrow: true, dimension: 'subject' as const },
-  { id: 'desktop_region', narrow: false, dimension: 'region' as const },
-  { id: 'mobile_region', narrow: true, dimension: 'region' as const },
-])('pending_shared_reason_visible_without_event_gaps_408_$id', async ({ narrow, dimension }) => {
-  const { view, requests } = await setup({}, narrow)
-  const response = wire()
-  const pendingRow = { ...row(802, 'synthetic_408_公布待核', false), group: 'pending' as const, filterMatch: { status: 'matched' as const, checks: [] } }
-  const qa = pendingRow.qualificationAssessment
-  const selected = qa.titles.find(title => title.titleCode === 'innovative_sme')!
-  selected.group = 'pending'
-  selected.subject = { status: dimension === 'subject' ? 'unresolved' : 'not_established', message: dimension === 'subject' ? '主体事实适用性待核' : '未见可适用的已确认主体终止事实；不据此证明存续', decisionIds: [] }
-  selected.region = { status: 'unresolved', message: '主体地域事实适用性或生效顺序待核', decisionIds: [] }
-  selected.notes = [dimension === 'subject' ? '主体事实尚未确认（decision:91）' : '迁移决定生效顺序尚未核实']
-  qa.titles[0]!.notes = ['other_title_reason_should_not_appear']
-  const { snapshotId: _, titles, ...scope } = qa
-  qa.snapshotId = digest([scope, titles])
-  response.publishedPending.rows = [pendingRow]
+it.each([{ id: 'little_giant', label: '专精特新“小巨人”' }, { id: 'specialized_sme', label: '专精特新中小企业' }, { id: 'innovative_sme', label: '创新型中小企业' }] as const)('timeline_uses_displayed_title_without_cross_title_facts_408_$id', async ({ id, label }) => {
+  const { view, requests } = await setup({ titleCode: id })
+  const response = wire({ titleCode: id })
+  const titles = response.rows[0]!.qualificationAssessment.titles
+  for (const title of titles) title.evidence = title.titleCode === id
+    ? [{ eventId: 9001, revision: 1, eventType: 'review', year: 2021, decidedYear: 2024, batchSeq: 1, reviewOutcome: 'passed', evidenceIds: [2001] }, { eventId: 9000, revision: 1, eventType: 'award', year: 2021, decidedYear: 2021, batchSeq: 1, reviewOutcome: null, evidenceIds: [2000] }]
+    : [{ eventId: 9999, revision: 1, eventType: 'award', year: 1999, decidedYear: 1999, batchSeq: 1, reviewOutcome: null, evidenceIds: [2999] }]
+  for (const title of titles) {
+    title.cycles = [{ originYear: title.titleCode === id ? 2021 : 1999, batchSeq: 1, precision: 'year' }]
+    if (title.titleCode !== id) title.effectiveQualification = { status: 'expired', basis: '合成其它称号历史认定', notes: [] }
+    title.versions.facts = digest([801, title.evidence])
+  }
+  const { snapshotId: _, titles: sealedTitles, ...scope } = response.rows[0]!.qualificationAssessment
+  response.rows[0]!.qualificationAssessment.snapshotId = digest([scope, sealedTitles])
   const before = JSON.stringify(response)
   requests[0]!.result.resolve(response); await flushPromises()
-  const section = view.get(pendingRegion)
-  const surface = narrow ? section.get('ul[aria-label="已公布待核企业列表"]') : section.get('table')
-  // Guard the exact public counterexample before asserting the omitted reason.
-  expect(selected.officialQualification.group).toBe('eligible')
-  expect(selected.completeness.status).toBe('recorded')
-  expect(selected.completeness.fieldGaps).toEqual([])
-  expect(surface.text()).toContain('synthetic_408_公布待核')
-  expect(surface.text()).toContain('正式资格当前有效')
-  expect(surface.text()).toContain('合成资料已记录')
-  expect(surface.text()).not.toContain('待核字段：')
-  expect(surface.text()).toContain(selected.region.message)
-  expect(surface.text()).toContain(selected.subject.message)
-  expect(surface.text()).toContain(selected.notes[0])
-  expect(surface.text()).not.toContain('other_title_reason_should_not_appear')
+  expect(view.get('p[aria-live="polite"]').text()).toContain(label)
+  for (const surface of [view.get('tbody tr'), view.get('[data-testid="current-enterprise-card"]')]) {
+    expect(surface.findAll('ol li').map(step => step.text())).toEqual(['2021 认定', '→2024 复核'])
+    expect(surface.text()).not.toContain('1999')
+  }
   expect(JSON.stringify(response)).toBe(before)
 })

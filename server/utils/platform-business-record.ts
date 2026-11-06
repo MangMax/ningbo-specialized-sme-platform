@@ -104,7 +104,7 @@ export function recognizedProjectionPreview(plan: { recognizedProjection: Recogn
   return plan.recognizedProjection ? { ...plan.recognizedProjection, ruleVersion: RECOGNIZED_PROJECTION_RULE } : null
 }
 
-const APPLY_FIELDS = ['declareKind', 'declarationYear', 'appliedAt', 'status', 'nameRaw', 'usccRaw'] as const
+const APPLY_FIELDS = ['titleRaw', 'declareKind', 'declarationYear', 'appliedAt', 'status', 'nameRaw', 'usccRaw'] as const
 
 /** One typed row per immutable content version. Rejects a same-version drift instead of
  * silently reinterpreting historical content under a newer rule. */
@@ -119,7 +119,7 @@ function ensureApplyProjection(db: Executor, versionId: number, recordId: number
   return { created: true, reused: false }
 }
 
-const BUSINESS_FIELDS = ['declareKind', 'businessYear', 'appliedAt', 'status', 'batch', 'awardBatchLabel', 'province', 'nameRaw', 'usccRaw'] as const
+const BUSINESS_FIELDS = ['titleRaw', 'declareKind', 'businessYear', 'appliedAt', 'status', 'batch', 'awardBatchLabel', 'province', 'nameRaw', 'usccRaw'] as const
 
 /** One typed row per immutable content version. Rejects a same-version drift instead of
  * silently reinterpreting historical content under a newer rule. */

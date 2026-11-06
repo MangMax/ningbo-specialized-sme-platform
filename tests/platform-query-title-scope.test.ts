@@ -26,9 +26,11 @@ it('keeps title scope history and status counts while avoiding an archive scan f
       db.insert(schema.title).values({ code, nameZh: code, level: 'municipal', rank }).run()
     }
     const insert = (key: string, titleCode: string | null, scope: string[] | null, status: 'success' | 'partial' | 'failed' = 'success') =>
-      db.insert(schema.platformQuery).values({ interface: 'recognized_list', queryKey: key, queriedAt: `2026-10-19T00:00:0${key.length}Z`, status,
-        titleCode, collectionEvidence: scope ? { titleScope: { rdjb: scope }, rows: [{ archived: '原档🙂' }] } as never : null,
-      }).returning({ id: schema.platformQuery.id }).get().id
+      // Explicit legacy columns work both before and after additive migrations.
+      Number(sqlite.prepare('INSERT INTO platform_query(interface,query_key,queried_at,status,title_code,collection_evidence,created_at) VALUES(?,?,?,?,?,?,?)').run(
+        'recognized_list', key, `2026-10-19T00:00:0${key.length}Z`, status, titleCode,
+        scope ? JSON.stringify({ titleScope: { rdjb: scope }, rows: [{ archived: '原档🙂' }] }) : null, '2026-10-19',
+      ).lastInsertRowid)
     const direct = insert('direct', 'specialized_sme', ['2'])
     const multi = insert('multi', null, ['1', '2'], 'partial')
     const other = insert('other', 'little_giant', ['3'])
@@ -137,7 +139,7 @@ it('matches the original title predicate for NULL, scalar, object, array and mal
     ]
     const expected = [] as Array<{ key: string; originalIds?: number[]; originalError?: string }>
     for (const [key, archived, titleCode] of cases) {
-      const id = db.insert(schema.platformQuery).values({ interface: 'recognized_list', queryKey: key, queriedAt: '2026-10-19', status: 'partial', titleCode, collectionEvidence: null }).returning({ id: schema.platformQuery.id }).get().id
+      const id = Number(sqlite.prepare('INSERT INTO platform_query(interface,query_key,queried_at,status,title_code,created_at) VALUES(?,?,?,?,?,?)').run('recognized_list', key, '2026-10-19', 'partial', titleCode, '2026-10-19').lastInsertRowid)
       sqlite.prepare('update platform_query set collection_evidence = ? where id = ?').run(archived, id)
       let originalIds: number[] | undefined
       let originalError: string | undefined

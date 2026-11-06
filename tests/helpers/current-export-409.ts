@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 
@@ -14,7 +14,7 @@ export const route = '/api/roster/exports/current/specialized-sme'
 export const year = new Date().getFullYear()
 export type Event = { eventType: 'award'|'review'|'nurture'|'maintain'; year: number|null; decidedYear?: number|null; reviewOutcome?: 'passed'|'failed'|null; batchSeq?: number|null }
 export const fresh: Event[] = [{ eventType: 'award', year, batchSeq: 1 }]
-export const businessTables = ['record_correspondence','difference_reason','platform_relation','platform_query','enterprise_alias','record_evidence','record_event','record','enterprise']
+export const businessTables = ['enterprise_fact_revision','record_correspondence','difference_reason','platform_relation','platform_query','enterprise_alias','record_evidence','record_event','record','enterprise']
 
 // Synthetic setup only. All assertions on export behavior use actual Nitro HTTP and XLSX bytes.
 export function currentExport409Fixture() {
@@ -47,9 +47,11 @@ export function currentExport409Fixture() {
     assertCompiledPins()
     const cwd = resolve(import.meta.dirname, '../..'), port = await reserveLoopbackPort()
     if (port === 3480 || port === 3481) throw new Error('Reserved business port refused')
-    const args = mode === 'compiled' ? [join(cwd,'.output/server/index.mjs')] : [join(cwd,'node_modules/nuxt/bin/nuxt.mjs'),'dev','--dotenv',process.env.ISSUE409_EMPTY_DOTENV!,'--host','127.0.0.1','--port',String(port)]
+    const emptyDotenv = process.env.ISSUE409_EMPTY_DOTENV ?? join(dir,'empty.env')
+    if (!process.env.ISSUE409_EMPTY_DOTENV) writeFileSync(emptyDotenv,'',{ mode: 0o600 })
+    const args = mode === 'compiled' ? [join(cwd,'.output/server/index.mjs')] : [join(cwd,'node_modules/nuxt/bin/nuxt.mjs'),'dev','--dotenv',emptyDotenv,'--host','127.0.0.1','--port',String(port)]
     const child = spawn(process.execPath, args, {
-      cwd, stdio: ['ignore','pipe','pipe'], env: { ...process.env, ...(mode === 'compiled' ? { HOST: '127.0.0.1', PORT: String(port), NITRO_HOST: '127.0.0.1', NITRO_PORT: String(port) } : {}), NUXT_BUILD_DIR: join(dir,'build'), NUXT_DB_PATH: dbPath, NUXT_API_TOKEN: token, NUXT_FILES_DIR: join(dir,'files'), NUXT_INCOMING_DIR: join(dir,'incoming') },
+      cwd, stdio: ['ignore','pipe','pipe'], env: { ...process.env, ...(mode === 'compiled' ? { HOST: '127.0.0.1', PORT: String(port), NITRO_HOST: '127.0.0.1', NITRO_PORT: String(port) } : {}), NUXT_BUILD_DIR: join(dir,'build'), NUXT_LOG_DIR: join(dir,'logs'), NUXT_DB_PATH: dbPath, NUXT_API_TOKEN: token, NUXT_MCP_TOKEN: token, NUXT_FILES_DIR: join(dir,'files'), NUXT_INCOMING_DIR: join(dir,'incoming') },
     })
     let output = ''
     for (const stream of [child.stdout,child.stderr]) stream.on('data', data => { output = (output + data).slice(-12000) })

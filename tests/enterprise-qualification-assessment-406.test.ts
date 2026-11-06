@@ -47,7 +47,8 @@ it('binds detail assessment to stable identity cycle time and read-only fact ver
 })
 
 function assessment(id: number, asOf = AS_OF, title = 'innovative_sme') {
-  return getRosterEnterpriseDetail(db, id, asOf)!.qualificationAssessment.titles.find(t => t.titleCode === title)!
+  // Historical #406/#407 semantics are an explicit compatibility contract.
+  return readCurrentQualificationAssessment(sqlite, id, asOf, { assessmentVersion: 'enterprise-qualification-407-v1' }).titles.find(t => t.titleCode === title)!
 }
 
 function observation(enterprise: typeof schema.enterprise.$inferSelect, status: 'success' | 'no_record' | 'failed', rowStatus: string | null = null, titleCode = 'innovative_sme', rdjb = '1') {
@@ -262,7 +263,7 @@ it('reads a deterministic snapshot under query-only SQLite and keeps legacy proj
   const { enterprise } = formalEnterprise()
   observation(enterprise, 'no_record')
   subjectDecision(enterprise.id, 'moved_out')
-  const legacy = readCurrentCandidate(sqlite, enterprise.id, 'innovative_sme', 2026, AS_OF)
+  const legacy = createCurrentCandidateReader(sqlite)(enterprise.id, 'innovative_sme', 2026, AS_OF, undefined, false, true, { assessmentVersion: 'enterprise-qualification-407-v1' })
   const before = sqlite.prepare('select total_changes() as n').get()
   sqlite.pragma('query_only = ON')
   const first = getRosterEnterpriseDetail(db, enterprise.id, AS_OF)!
@@ -274,7 +275,7 @@ it('reads a deterministic snapshot under query-only SQLite and keeps legacy proj
   expect(sqlite.prepare('select count(*) as n from job').get()).toEqual({ n: 0 })
   expect(sqlite.prepare('select count(*) as n from difference_reason').get()).toEqual({ n: 1 })
   expect(sqlite.prepare('select count(*) as n from evidence_review_receipt_114').get()).toEqual({ n: 1 })
-  expect(legacy.assessment).toBeUndefined()
+  expect(legacy.assessment).toMatchObject({ titleCode: 'innovative_sme', group: 'excluded' })
 })
 
 it.each([
@@ -341,9 +342,9 @@ it('does not claim changed sources when correspondence revalidation is incomplet
   expect(value.group).toBe('eligible')
 })
 
-// #407 additive detail controls. All preceding #406 test bytes remain frozen.
+// #406/#407 historical literal behavior uses explicit v1; default detail controls below use the current version.
 import { createHash } from 'node:crypto'
-import { diagnoseOfficialEventFields, readCurrentQualificationAssessment } from '../lib/roster/current-qualification'
+import { diagnoseOfficialEventFields, readCurrentQualificationAssessment, createCurrentCandidateReader } from '../lib/roster/current-qualification'
 
 it('field_gaps_review_raw_states_407', () => {
   // Pure field helper assertion; the shared file fixture is not qualification evidence here.
@@ -382,7 +383,7 @@ it('field_gaps_nonreview_keeps_groups_407', () => {
   const maintain = assessment(enterprise.id)
   expect(maintain).toMatchObject({ group: 'pending', subject: { status: 'not_established' } })
   expect(maintain.completeness.fieldGaps).toEqual([])
-  expect(readCurrentCandidate(sqlite, enterprise.id, 'innovative_sme', 2026, AS_OF).group).toBe('pending')
+  expect(readCurrentCandidate(sqlite, enterprise.id, 'innovative_sme', 2026, AS_OF).group).toBe('excluded')
 })
 
 it('detail_snapshot_scope_and_field_gaps_407', () => {
@@ -393,7 +394,7 @@ it('detail_snapshot_scope_and_field_gaps_407', () => {
   // Both are real API/MCP-shared function seams, not a started transport or historical-asOf API.
   const shared = readCurrentQualificationAssessment(sqlite, enterprise.id, AS_OF)
   const detail = getRosterEnterpriseDetail(db, enterprise.id, AS_OF)!
-  const scope = { enterpriseId: enterprise.id, asOf: '2026-06-01T00:00:00.000Z', ruleVersion: 'current-roster-116-v9', assessmentVersion: 'enterprise-qualification-407-v2' }
+  const scope = { enterpriseId: enterprise.id, asOf: '2026-06-01T00:00:00.000Z', ruleVersion: 'current-roster-116-v10', assessmentVersion: 'enterprise-qualification-478-v3' }
   expect(detail.qualificationAssessment).toEqual(shared)
   expect(shared).toMatchObject(scope)
   expect(shared.titles.map(title => title.titleCode).sort()).toEqual(['innovative_sme', 'little_giant', 'specialized_sme'])
@@ -405,19 +406,19 @@ it('detail_snapshot_scope_and_field_gaps_407', () => {
   })
   const review = shared.titles.find(title => title.titleCode === 'innovative_sme')
   if (!review) throw new Error('Synthetic innovative assessment required')
-  expect(review.group).toBe('pending')
+  expect(review.group).toBe('excluded')
   expect(review.completeness.fieldGaps).toEqual([
     { eventId: event.id, field: 'year', valueState: 'unknown', inputState: 'null' },
     { eventId: event.id, field: 'decidedYear', valueState: 'unknown', inputState: 'null' },
     { eventId: event.id, field: 'batchSeq', valueState: 'unknown', inputState: 'null' },
     { eventId: event.id, field: 'reviewOutcome', valueState: 'unknown', inputState: 'null' },
   ])
-  expect(readCurrentCandidate(sqlite, enterprise.id, 'innovative_sme', 2026, AS_OF).group).toBe('pending')
+  expect(readCurrentCandidate(sqlite, enterprise.id, 'innovative_sme', 2026, AS_OF).group).toBe('excluded')
   expect(sqlite.prepare('select total_changes() as n').get()).toEqual(before)
 })
 
 
-it('427 default_read_current_workbook_preserve_complete_frozen_legacy_without_core', async () => {
+it('427 explicit_prior_versions_preserve_frozen_legacy_and_current_consumers_share_default_without_core', async () => {
   const core = await import('../lib/roster/platform-comparison')
   const { createCurrentQualificationAssessmentReader } = await import('../lib/roster/current-qualification')
   const spy = vi.spyOn(core, 'comparePlatformComparison')
@@ -437,13 +438,16 @@ it('427 default_read_current_workbook_preserve_complete_frozen_legacy_without_co
   sqlite.pragma('query_only=ON')
   const changes = sqlite.prepare('select total_changes() as n').get()
   const reader = createCurrentQualificationAssessmentReader(sqlite)
-  // Published v1 remains byte-reproducible; current defaults deliberately publish v2.
+  // Published receipts stay byte-reproducible under explicit prior versions.
   expect(reader.read(1, AS_OF, { assessmentVersion: 'enterprise-qualification-407-v1' }).snapshot).toEqual(DEFAULT_427_LEGACY)
   const scope = { enterpriseId: 1, asOf: DEFAULT_427_LEGACY.asOf, ruleVersion: 'current-roster-116-v9', assessmentVersion: 'enterprise-qualification-407-v2' }
   const expected = { ...DEFAULT_427_LEGACY, ...scope, snapshotId: createHash('sha256').update(JSON.stringify([scope, DEFAULT_427_LEGACY.titles])).digest('hex') }
-  expect(reader.read(1, AS_OF).snapshot).toEqual(expected)
-  expect(reader.readCurrent(1, AS_OF, 'specialized_sme').snapshot).toEqual(expected)
-  expect(reader.readWorkbook(1, AS_OF, 'specialized_sme').snapshot).toEqual(expected)
+  expect(reader.read(1, AS_OF, { assessmentVersion: 'enterprise-qualification-407-v2' }).snapshot).toEqual(expected)
+  const current = reader.read(1, AS_OF).snapshot
+  expect(current).toMatchObject({ ruleVersion: 'current-roster-116-v10', assessmentVersion: 'enterprise-qualification-478-v3' })
+  expect(current.titles.map(t => [t.titleCode, t.group])).toEqual([['little_giant', 'excluded'], ['specialized_sme', 'eligible'], ['innovative_sme', 'excluded']])
+  expect(reader.readCurrent(1, AS_OF, 'specialized_sme').snapshot).toEqual(current)
+  expect(reader.readWorkbook(1, AS_OF, 'specialized_sme').snapshot).toEqual(current)
   expect(reader.readTitle(1, 'specialized_sme', AS_OF).group).toBe('eligible')
   expect(spy).not.toHaveBeenCalled()
   expect(sqlite.prepare('select total_changes() as n').get()).toEqual(changes)

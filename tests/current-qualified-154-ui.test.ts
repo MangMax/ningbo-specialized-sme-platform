@@ -45,7 +45,7 @@ it('does not invent an initial zero count through failure and retry and shows a 
   expect(view.find('[data-testid="current-mobile-loading"]').exists()).toBe(true)
   requests.at(-1)!.result.resolve({ rows: [], total: 0, page: 2, pageSize: 1 }); await flushPromises()
   expect(view.text()).toContain('共 0 家企业')
-  expect(view.text()).toContain('没有符合条件的当前有效企业')
+  expect(view.findAll('[data-slot="empty-title"]').map(title => title.text())).toEqual(['没有符合条件的企业', '没有符合条件的企业'])
   expect(view.find('[data-testid="current-mobile-loading"]').exists()).toBe(false)
 })
 
@@ -64,11 +64,12 @@ it('identifies retained title filters and page and returns detail to the display
   expect(view.text()).toContain('搜索：乙')
   const link = view.findAll('a').find(a => a.text() === '查看详情与出处')!
   const back = new URL(link.attributes('href')!, 'http://localhost').searchParams.get('currentBack')!
-  expect(Object.fromEntries(new URLSearchParams(back))).toEqual({ titleCode: 'little_giant', q: '甲', district: '鄞州区', sort: 'name_desc', page: '2', pageSize: '1' })
+  expect(Object.fromEntries(new URLSearchParams(back))).toEqual({ titleCode: 'little_giant', status: 'effective', q: '甲', district: '鄞州区', sort: 'name_desc', page: '2', pageSize: '1' })
   await link.trigger('click'); await flushPromises()
   expect(router.currentRoute.value.path).toBe('/enterprises/154')
   await router.push('/current-enterprises?' + back); await flushPromises()
   expect(router.currentRoute.value.query.titleCode).toBe('little_giant')
+  expect(router.currentRoute.value.query.status).toBe('effective')
 })
 
 it('keeps retained table rows stable while loading and ignores an out of order response', async () => {
@@ -90,7 +91,7 @@ it('retains a successful empty result without replacing it with a skeleton durin
   const { view, router, requests } = await setup()
   requests[0]!.result.resolve({ rows: [], total: 0, page: 2, pageSize: 1 }); await flushPromises()
   await router.replace('/current-enterprises?titleCode=specialized_sme'); await flushPromises()
-  expect(view.text()).toContain('没有符合条件的当前有效企业')
+  expect(view.findAll('[data-slot="empty-title"]').map(title => title.text())).toEqual(['没有符合条件的企业', '没有符合条件的企业'])
   expect(view.findAll('tbody tr')).toHaveLength(1)
   expect(view.find('[data-slot="skeleton"]').exists()).toBe(false)
   expect(view.text()).toContain('共 0 家企业')

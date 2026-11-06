@@ -37,7 +37,7 @@ async function fixture(run: (db: Db, post: (action: string, body: unknown) => Pr
 }
 
 describe('apply_list typed projection through public import HTTP', () => {
-  it('reads back typed source fields exactly and leaves the original archive identity intact', async () => fixture(async (db, post) => {
+  it.each([{ name: 'missing-row-title', title: null }, { name: 'source-row-title', title: '2' }])('reads back typed source fields exactly and leaves the original archive identity intact ($name)', async ({ title }) => fixture(async (db, post) => {
     const raw = {
       id: 'SQ-APPLY-1',
       qymc: ' 合成申报企业 ',
@@ -48,6 +48,7 @@ describe('apply_list typed projection through public import HTTP', () => {
       cszt: ' 终审通过 ',
       szsfmc: ' 宁波市 ',
       unknownSourceField: '保留',
+      ...(title === null ? {} : { rdjb: ` ${title} ` }),
     }
     const saved = await post('commit', request('typed-readback', { platformQueries: [applyQuery('2026-10-01T00:00:00Z', raw)] }))
     expect(saved.status).toBe('committed')
@@ -67,6 +68,7 @@ describe('apply_list typed projection through public import HTTP', () => {
       status: '终审通过',
       name_raw: '合成申报企业',
       uscc_raw: '91330211255994457P',
+      title_raw: title,
       rule_version: 'platform-apply-v1',
       created_at: expect.any(String),
     })

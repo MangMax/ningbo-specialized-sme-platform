@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { clientRequestReference } from '~~/lib/client-logging/request-reference'
-import { computed, ref, watch } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import type { TaskSummary } from '~~/lib/task-center'
 import { TASK_LABELS, TASK_STATES } from '~~/lib/task-center'
@@ -42,6 +42,13 @@ const pending = ref(false)
 const cancelRequested = ref(false)
 const notice = ref('')
 const showTechnical = ref(false)
+const snapshotSection = ref<HTMLElement | null>(null)
+async function revealResult(to: string) {
+  if (!to.endsWith('#snapshot-result')) return
+  await nextTick()
+  snapshotSection.value?.scrollIntoView({ block: 'start' })
+  snapshotSection.value?.focus({ preventScroll: true })
+}
 
 // A cancel request is only a request: only the server can say whether the task
 // reached the cancelled terminal state. The card's report therefore follows the
@@ -155,6 +162,19 @@ async function act(action: 'cancel' | 'retry') {
             </dl>
           </div>
 
+          <section v-if="data.snapshot" id="snapshot-result" ref="snapshotSection" tabindex="-1" aria-label="快照结果摘要" class="flex min-w-0 flex-col gap-2 text-sm">
+            <h3 class="font-medium">采集范围、计数与未完成位置</h3>
+            <p>范围：本任务选定公布企业 · {{ data.snapshot.enterprises ?? '未知' }} 家</p>
+            <p>三接口请求 {{ data.snapshot.requests ?? '未知' }} 次 · 已确认完整行数 {{ data.snapshot.rows ?? '未知' }} · 未完成 {{ data.snapshot.unfinished ?? '未知' }} 范围</p>
+            <p v-for="source in data.snapshot.sources" :key="source.source">{{ source.source }}：请求 {{ source.requests ?? '未知' }} 次 · 取回 {{ source.rows ?? '未知' }} 行 · 失败请求 {{ source.failed ?? '未知' }} · 未完成 {{ source.unfinished ?? '未知' }} 范围</p>
+            <p v-if="data.snapshot.unfinished !== 0" class="text-muted-foreground">未完成范围的行数未知，不代表零记录。已取回内容保留，尚未完成全部采集入库。</p>
+            <ul aria-label="快照未完成位置" class="flex flex-col gap-2">
+              <li v-for="(position, index) in data.snapshot.positions" :key="index" class="break-words">
+                企业 #{{ position.enterpriseId ?? '未知' }} · {{ position.source }} · {{ position.rdjb === null ? '全部称号' : ({'1':'创新型中小企业','2':'专精特新中小企业','3':'专精特新小巨人'} as Record<string,string>)[position.rdjb] }} · 第 {{ position.page ?? '未知' }} 页待续 · 行数 {{ position.rows ?? '未知' }}
+              </li>
+            </ul>
+            <p v-if="data.snapshot.truncated">仅展示前 20 个未完成位置，其余仍计入未完成范围。</p>
+          </section>
           <section v-if="data.discovery" aria-label="候选发现结果" class="flex min-w-0 flex-col gap-3 text-sm">
             <p class="break-words">范围：{{ data.discovery.scope }}</p>
             <p>成功 {{ data.discovery.counts.succeeded }} · 待核 {{ data.discovery.counts.needsReview }} · 失败 {{ data.discovery.counts.failed }}</p>
@@ -228,7 +248,7 @@ async function act(action: 'cancel' | 'retry') {
 
           <div class="flex flex-wrap gap-3">
             <NuxtLink v-if="current && data.id" :to="{ path: '/logs', query: { taskId: data.id } }" class="text-primary text-sm underline underline-offset-4">查看关联运行日志</NuxtLink>
-            <NuxtLink v-for="link in links" :key="link.to" :to="link.to" class="text-primary text-sm underline underline-offset-4">{{ link.label }}</NuxtLink>
+            <NuxtLink v-for="link in links" :key="link.to" :to="link.to" @click="revealResult(link.to)" class="text-primary text-sm underline underline-offset-4">{{ link.label }}</NuxtLink>
           </div>
 
           <Separator />

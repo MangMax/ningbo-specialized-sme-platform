@@ -61,6 +61,7 @@ function isolatedTitleScope(filter: RecognizedDirectoryFilter): SQL | null {
 function recordConditions(filter: RecognizedDirectoryFilter): SQL[] {
   const conditions: SQL[] = [sql`b.interface = 'recognized_list'`]
   if (filter.platformKey) conditions.push(sql`b.platform_key = ${filter.platformKey}`)
+  if (filter.titleRaw !== undefined) conditions.push(sql`p.title_raw = ${filter.titleRaw}`)
   if (filter.rddqrq) conditions.push(sql`p.validity_date_raw = ${filter.rddqrq}`)
   if (filter.whpcyear != null) conditions.push(sql`p.maintenance_year = ${filter.whpcyear}`)
   if (filter.whpc) conditions.push(sql`p.maintenance_batch = ${filter.whpc}`)
@@ -85,6 +86,7 @@ function isolatedConditions(filter: RecognizedDirectoryFilter): SQL[] {
   }
   // Unprojected observations have no directory business id; match the original archived row key.
   if (filter.platformKey) conditions.push(sql`r.relation_key = ${filter.platformKey}`)
+  if (filter.titleRaw !== undefined) conditions.push(sql`r.title_raw = ${filter.titleRaw}`)
   const title = isolatedTitleScope(filter)
   if (title) conditions.push(title)
   return conditions
@@ -173,7 +175,7 @@ function listRecordRows(db: Db, filter: RecognizedDirectoryFilter, total: number
       m.rule_version as ruleVersion, m.matched_version_count as matchedVersionCount,
       (select count(*) from platform_business_record_version v where v.record_id = m.record_id) as versionCount,
       (select count(*) from platform_business_observation o where o.record_id = m.record_id) as observationCount,
-      (select max(q.queried_at) from platform_business_observation o
+      (select max(coalesce(q.last_collected_at,q.queried_at)) from platform_business_observation o
         join platform_relation r on r.id = o.relation_id
         join platform_query q on q.id = r.query_id
         where o.record_id = m.record_id) as latestObservationAt
@@ -221,7 +223,7 @@ function listIsolatedRows(db: Db, filter: RecognizedDirectoryFilter, total: numb
     select o.relation_id as relationId, r.query_id as queryId, q.queried_at as queriedAt,
       q.query_key as queryKey, q.status as queryStatus, r.sequence_no as sequenceNo,
       o.identity_state as identityState, o.content_state as contentState,
-      r.name_raw as nameRaw, r.uscc_raw as usccRaw, r.enterprise_id as enterpriseId, e.name as enterpriseName
+      r.title_raw as titleRaw, r.name_raw as nameRaw, r.uscc_raw as usccRaw, r.enterprise_id as enterpriseId, e.name as enterpriseName
     from platform_business_observation o
     join platform_relation r on r.id = o.relation_id
     join platform_query q on q.id = r.query_id
@@ -295,7 +297,7 @@ export function getPlatformRecognizedRecord(db: Db, recordId: number): Recognize
       (select min(q.queried_at) from platform_business_observation o
         join platform_relation r on r.id = o.relation_id join platform_query q on q.id = r.query_id
         where o.version_id = v.id) as firstObservedAt,
-      (select max(q.queried_at) from platform_business_observation o
+      (select max(coalesce(q.last_collected_at,q.queried_at)) from platform_business_observation o
         join platform_relation r on r.id = o.relation_id join platform_query q on q.id = r.query_id
         where o.version_id = v.id) as lastObservedAt
     from platform_business_record_version v

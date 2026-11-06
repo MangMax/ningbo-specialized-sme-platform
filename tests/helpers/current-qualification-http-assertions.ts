@@ -4,7 +4,8 @@ import { rows, businessIdentity, expectedBusinessIdentity, matchesBusinessIdenti
 import type { QualificationCase } from '../fixtures/current-qualification-r4'
 
 type ExportFixture = ReturnType<typeof currentExport118Fixture>
-type ExportCase = QualificationCase & ReturnType<ExportFixture['candidate']>
+export type EffectiveQualificationCase = Omit<QualificationCase, 'sheet' | 'note'> & { sheet: '有效企业' | '已到期' | '未认定' }
+type ExportCase = EffectiveQualificationCase & ReturnType<ExportFixture['candidate']>
 type ReferenceAssertion = (c: ExportCase, title: string, row: ReturnType<typeof rows>[number]) => void
 
 const titles = [
@@ -15,7 +16,7 @@ const titles = [
 // R4 checks reference counts; R5 checks exact IDs. Keep each suite's assertion
 // at the same HTTP/XLSX seam while sharing the complete export driver.
 export function currentQualificationHttpAssertions(f: ExportFixture, assertReferences: ReferenceAssertion) {
-  return async function assertCases(cases: QualificationCase[], key: string, permute = false) {
+  return async function assertCases(cases: EffectiveQualificationCase[], key: string, permute = false) {
     const entries = cases.map(c => {
       const events = permute ? [...c.events].reverse() : c.events
       const candidate = f.candidate(key+'-'+c.id,events,'little_giant')
@@ -52,7 +53,7 @@ export function currentQualificationHttpAssertions(f: ExportFixture, assertRefer
       expect(summary.export.ruleVersion).toBe(CURRENT_RULE_VERSION)
       const observations=[]
       for (const c of entries) {
-        const actual=wb.worksheets.slice(0,3).flatMap(sheet=>rows(wb,sheet.name).filter(row=>matchesBusinessIdentity(f.db, row, c.enterprise.id)).map(row=>({sheet:sheet.name,row})))
+        const actual=wb.worksheets.slice(0,5).flatMap(sheet=>rows(wb,sheet.name).filter(row=>matchesBusinessIdentity(f.db, row, c.enterprise.id)).map(row=>({sheet:sheet.name,row})))
         expect.soft(actual.map(r=>r.sheet),c.id+' '+title).toEqual([c.sheet])
         const row=actual[0]!.row
         expect.soft(row[5],c.id).toBe(label)
@@ -60,14 +61,22 @@ export function currentQualificationHttpAssertions(f: ExportFixture, assertRefer
         assertReferences(c,title,row)
         expect.soft(row[12]?.match(/synthetic-118\.xlsx/g)?.length??0,c.id).toBe(c.events.length-(c.missing?.length??0))
         expect.soft(row[7]?.match(/正式出处待核/g)?.length??0,c.id).toBe(c.missing?.length??0)
-        if(c.note) expect.soft(row[11]??'',c.id).toContain(c.note)
+        expect.soft(row[13],c.id).toBe(c.sheet)
+        if(c.missing?.length) expect.soft(row[15],c.id).toContain('正式公布出处缺失')
+        expect.soft(row[7]?.split('\n').length??0,c.id).toBe(c.events.length)
+        expect.soft(row[7]?.match(/原认定年份待核/g)?.length??0,c.id).toBe(c.events.filter(e=>e.year==null).length)
+        expect.soft(row[7]?.match(/结论年份待核/g)?.length??0,c.id).toBe(c.events.filter(e=>e.eventType==='review'&&e.decidedYear==null).length)
+        expect.soft(row[7]?.match(/复核结论待核/g)?.length??0,c.id).toBe(c.events.filter(e=>e.eventType==='review'&&e.reviewOutcome==null).length)
         observations.push({id:c.id,expected:c.sheet,actual:actual.map(r=>r.sheet),first:row[6]??null,notes:row[11]??''})
       }
-      for (const [sheet,group] of [['有效企业','eligible'],['待确认','pending'],['排除明细','excluded']] as const) {
-        const expected=entries.filter(c=>c.sheet===sheet).length
-        expect.soft(rows(wb,sheet).length,group).toBe(expected)
-        expect.soft(job.result.counts[group],group).toBe(expected)
+      expect(wb.worksheets.map(sheet=>sheet.name)).toEqual(['有效企业','已到期','已注销（吊销）','已迁出','未认定','口径说明'])
+      for (const sheet of ['有效企业','已到期','已注销（吊销）','已迁出','未认定']) {
+        const expected=entries.filter(c=>c.sheet===sheet)
+        expect.soft(rows(wb,sheet).map(row=>businessIdentity(row)),sheet).toEqual(expected.map(c=>expectedBusinessIdentity(f.db,c.enterprise.id)))
       }
+      const eligible=entries.filter(c=>c.sheet==='有效企业').length
+      expect(job.result.counts).toEqual({eligible,pending:0,excluded:entries.length-eligible})
+      expect(job.result.statusCounts).toEqual({effective:eligible,expired:entries.filter(c=>c.sheet==='已到期').length,terminated:0,moved_out:0,unrecognized:entries.filter(c=>c.sheet==='未认定').length})
       console.log(JSON.stringify({matrix:key,title,observations}))
     }
     expect(f.businessDigest()).toBe(before)

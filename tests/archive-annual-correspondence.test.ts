@@ -312,7 +312,7 @@ it('legacy-only same-query historical source state creates two complete 401-even
   expect(plan.preflight.conflicts).toEqual([])
   expect(plan.preflight.canonicalProjection).toEqual([{ relationId: row2.id, identityState: 'resolved', contentState: 'verified', keySource: 'both',
     projectionRuleVersion: 'platform-observation-v1', inputFingerprint: expectedInputFingerprint,
-    businessProjection: { declareKind: 'apply', businessYear: 2024, appliedAt: '2024-12-01', status: '终审通过', batch: null, awardBatchLabel: null, province: null, nameRaw: null, usccRaw: null, ruleVersion: 'platform-business-v1' } }])
+    businessProjection: { declareKind: 'apply', businessYear: 2024, appliedAt: '2024-12-01', status: '终审通过', batch: null, awardBatchLabel: null, province: null, titleRaw: null, nameRaw: null, usccRaw: null, ruleVersion: 'platform-business-v1' } }])
   const projected = commitRosterImport(f.db, projection)
   expect(projected.status).toBe('committed')
   expect(projected.error).toBeNull()

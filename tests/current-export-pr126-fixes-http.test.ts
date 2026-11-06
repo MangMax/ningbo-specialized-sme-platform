@@ -19,7 +19,7 @@ async function maintain(id:number, version:number) {
   const r = await api('/api/roster/decision-lifecycle/commands',{...scope(id),action:'maintain',expectedCurrentId:version,idempotencyKey:'pr126-maintain-'+(++serial),actor,basis:'Explicitly reviewed all committed evidence',ruleVersion:'synthetic-pr126',effectiveAt:'2025-01-01T00:00:00Z',reviewedEvidence:{latestRevisionId:token.latestRevisionId,projectionReady:true}})
   expect(r.status,JSON.stringify(r.body)).toBe(200)
 }
-const occurrences = (wb:any,id:number): Array<{sheet:string;row:any[]}> => wb.worksheets.slice(0,3).flatMap((sheet:any) => rows(wb,sheet.name).filter(r => matchesBusinessIdentity(f.db, r, id)).map(row => ({sheet:sheet.name,row})))
+const occurrences = (wb:any,id:number): Array<{sheet:string;row:any[]}> => wb.worksheets.slice(0,5).flatMap((sheet:any) => rows(wb,sheet.name).filter(r => matchesBusinessIdentity(f.db, r, id)).map(row => ({sheet:sheet.name,row})))
 function relation(id:number, rdjb='2', evidence?:any, sequenceNo=1, assigned=true) {
   const e = f.db.select().from(s.enterprise).all().find(e=>e.id===id)!
   const q = f.db.insert(s.platformQuery).values({interface:'recognized_list',queryKey:e.usccNorm!,rdjb,titleCode:rdjb==='2'?'specialized_sme':null,queriedAt:new Date(Date.now()+(++serial)).toISOString(),status:'success',collectionEvidence:evidence}).returning().get()
@@ -35,7 +35,7 @@ it('keeps sourced stable enterprises eligible without inventing missing publishe
   const expectedDisplay = Object.freeze({
     8: `${year}年第1批认定，《synthetic-118.xlsx》：未逐出处核实`,
     9: null,
-    11: '公布名未留档；未将现名补作公布名；逐出处公布名见公布名称列；现用名见企业名称列；已确认曾用名仅见该列',
+    11: '历史诊断（不参与有效判定）：公布名未留档；未将现名补作公布名；逐出处公布名见公布名称列；现用名见企业名称列；已确认曾用名仅见该列',
     12: `${year}年第1批认定：宁波市经信局公布资料\n《synthetic-118.xlsx》，附件：专精特新中小企业名单，名单序号${c.enterprise.id}，未逐出处核实`,
   })
   const {wb}=await f.workbook('pr126-null-name')
@@ -47,10 +47,11 @@ it('keeps sourced stable enterprises eligible without inventing missing publishe
   expect(row[10]).toContain('已见本称号宁波公布')
   expect(row[11]).toContain('公布名未留档')
   expect(row[12]).toContain('synthetic-118.xlsx')
-  expect(occurrences(wb,unknown.enterprise.id).map(x=>x.sheet)).toEqual(['待确认'])
-  expect(occurrences(wb,conflict.enterprise.id).map(x=>x.sheet)).toEqual(['待确认'])
+  expect(occurrences(wb,unknown.enterprise.id).map(x=>x.sheet)).toEqual(['有效企业'])
+  expect(occurrences(wb,conflict.enterprise.id).map(x=>x.sheet)).toEqual(['有效企业'])
+  for(const id of [unknown.enterprise.id,conflict.enterprise.id]) expect(occurrences(wb,id)[0]!.row[15]).toContain('主体身份对应尚未核实')
 },60000)
-it('uses explanation validity and accepts explicitly maintained legacy subject decisions', async () => {
+it('keeps explanation validity readable while legacy subject decisions do not alter formal eligibility', async () => {
   const c=f.candidate('Changed departure evidence'), legacy=f.candidate('Maintained legacy termination')
   const d=f.decision(c.enterprise.id,'moved_out')
   await maintain(c.enterprise.id,d.id)
@@ -62,10 +63,10 @@ it('uses explanation validity and accepts explicitly maintained legacy subject d
   expect(readQueryAssessment(f.db,scope(c.enterprise.id)).explanationValidity.status).toBe('evidence_changed')
   expect(readQueryAssessment(f.db,scope(legacy.enterprise.id)).explanationValidity.status).toBe('valid')
   const {wb}=await f.workbook('pr126-validity')
-  expect(occurrences(wb,c.enterprise.id).map(x=>x.sheet)).toEqual(['待确认'])
-  expect(occurrences(wb,c.enterprise.id)[0]!.row[11]).toContain('解释依据：证据已变化；查询覆盖：尚未查询')
-  expect(occurrences(wb,legacy.enterprise.id).map(x=>x.sheet)).toEqual(['排除明细'])
-  expect(occurrences(wb,legacy.enterprise.id)[0]!.row[11]).toContain('解释依据：适用；查询覆盖：尚未查询')
+  expect(occurrences(wb,c.enterprise.id).map(x=>x.sheet)).toEqual(['有效企业'])
+  expect(occurrences(wb,c.enterprise.id)[0]!.row[11]??'').not.toContain('解释依据：')
+  expect(occurrences(wb,legacy.enterprise.id).map(x=>x.sheet)).toEqual(['有效企业'])
+  expect(occurrences(wb,legacy.enterprise.id)[0]!.row[11]??'').not.toContain('解释依据：')
 },60000)
 it('excludes query attempts from candidates while keeping positive unassigned platform rows', async () => {
   const empty=f.candidate('Only no record query',[]), failed=f.candidate('Only failed query',[]), positive=f.candidate('Positive unassigned current row',[])
@@ -75,7 +76,7 @@ it('excludes query attempts from candidates while keeping positive unassigned pl
   const {wb}=await f.workbook('pr126-positive-candidate')
   expect(occurrences(wb,empty.enterprise.id)).toEqual([])
   expect(occurrences(wb,failed.enterprise.id)).toEqual([])
-  expect(occurrences(wb,positive.enterprise.id).map(x=>x.sheet)).toEqual(['待确认'])
+  expect(occurrences(wb,positive.enterprise.id).map(x=>x.sheet)).toEqual(['未认定'])
 },60000)
 it('assigns multi title recognized candidates by original page segments without reading raw bodies', async () => {
   const c=f.candidate('Only segmented specialized row',[])
@@ -87,10 +88,10 @@ it('assigns multi title recognized candidates by original page segments without 
     const accepted=await response.json(), job=await f.terminal(accepted.jobId)
     expect(job.state,JSON.stringify(job)).toBe('done')
     const {wb}=await f.download(job)
-    expect(occurrences(wb,c.enterprise.id).map(x=>x.sheet)).toEqual(title==='specialized_sme'?['待确认']:[])
+    expect(occurrences(wb,c.enterprise.id).map(x=>x.sheet)).toEqual(title==='specialized_sme'?['未认定']:[])
   }
 },60000)
-it('includes reviewed inbound qualification without local publication and retains rename and scope notes', async () => {
+it('keeps reviewed inbound assertions outside formal eligibility while retaining confirmed aliases', async () => {
   const c=f.candidate('Inbound renamed current enterprise',[])
   const {q,r}=relation(c.enterprise.id)
   f.db.insert(s.enterpriseAlias).values({enterpriseId:c.enterprise.id,name:'Confirmed old inbound name',nameNorm:'Confirmed old inbound name',verificationStatus:'confirmed',sourceKind:'manual'} as any).run()
@@ -99,19 +100,19 @@ it('includes reviewed inbound qualification without local publication and retain
   await maintain(c.enterprise.id,result.body.versionId)
   const {wb}=await f.workbook('pr126-qualified-inbound-http')
   const actual=occurrences(wb,c.enterprise.id)
-  expect(actual.map(x=>x.sheet)).toEqual(['有效企业'])
+  expect(actual.map(x=>x.sheet)).toEqual(['未认定'])
   expect(actual[0]!.row[6]??'').toBe('')
-  expect(actual[0]!.row[10]).toContain('未见宁波该称号公布记录')
-  expect(actual[0]!.row[11]).toContain('迁入')
-  expect(actual[0]!.row[11]).toContain('Confirmed old inbound name')
-  expect(actual[0]!.row[11]).toContain('All ingested Ningbo')
-  expect(actual[0]!.row[11]).not.toContain('缺少已确认认定及资格依据')
-  expect(actual[0]!.row[11]).not.toContain('需核实具体资格与公布匹配范围')
+  expect(actual[0]!.row[10]).toBe('尚未完成公布匹配核实')
+  expect(actual[0]!.row[11]??'').not.toContain('迁入')
+  expect(actual[0]!.row[9]).toBe('Confirmed old inbound name')
+  expect(actual[0]!.row[11]??'').not.toContain('All ingested Ningbo')
+  expect(actual[0]!.row[11]??'').not.toContain('缺少已确认认定及资格依据')
+  expect(actual[0]!.row[11]??'').not.toContain('需核实具体资格与公布匹配范围')
   expect(actual[0]!.row[12]).toContain('工信部已认定企业名单')
   expect(actual[0]!.row.join(' ')).not.toContain('decision:'+result.body.versionId)
 },60000)
 
-it('keeps expired future unreviewed and unchecked inbound attestations pending and rejects wrong scope', async () => {
+it('keeps inbound attestations unrecognized across expired future unreviewed and unchecked partitions and rejects wrong scope', async () => {
   const decision=(queryId:number,relationId:number,qualification:any)=>({status:'confirmed_reason',reasonCode:'moved_in',measureCode:'record_moved_in',verificationStatus:'confirmed',evidenceQueryId:queryId,evidenceRelationId:relationId,currentQualification:qualification})
   const base={titleCode:'specialized_sme',validFrom:`${year-1}-01-01T00:00:00Z`,validUntil:`${year+1}-01-01T00:00:00Z`,basis:'Synthetic independently verified external qualification',publicationCheck:{status:'not_found',scope:'Ingested Ningbo announcements and all confirmed names'}}
   const pending:number[]=[]
@@ -133,7 +134,7 @@ it('keeps expired future unreviewed and unchecked inbound attestations pending a
     expect(result.status).toBe(400)
   }
   const {wb}=await f.workbook('pr126-inbound-boundaries')
-  for(const id of pending)expect(occurrences(wb,id).map(x=>x.sheet),String(id)).toEqual(['待确认'])
+  for(const id of pending)expect(occurrences(wb,id).map(x=>x.sheet),String(id)).toEqual(['未认定'])
 },60000)
 
 it('preserves premise invalid and unknown decisions without treating failed coverage as no record', async () => {
@@ -146,8 +147,8 @@ it('preserves premise invalid and unknown decisions without treating failed cove
   expect(a.queryCoverage.status).toBe('failed')
   expect(a.queryCoverage.sources.every(s=>s.outcome==='unknown')).toBe(true)
   const {wb}=await f.workbook('pr126-invalid-unknown')
-  for(const id of [invalid.enterprise.id,unknown.enterprise.id])expect(occurrences(wb,id).map(x=>x.sheet)).toEqual(['待确认'])
-  expect(occurrences(wb,invalid.enterprise.id)[0]!.row[11]).toContain('尚未确认')
+  for(const id of [invalid.enterprise.id,unknown.enterprise.id])expect(occurrences(wb,id).map(x=>x.sheet)).toEqual(['有效企业'])
+  expect(occurrences(wb,invalid.enterprise.id)[0]!.row[11]??'').not.toContain('解释依据：')
   expect(occurrences(wb,invalid.enterprise.id)[0]!.row.join(' ')).not.toContain('decision:'+d.id)
 },60000)
 
@@ -169,15 +170,15 @@ it('keeps unknown multi title positions visible and projects no archived raw bod
   }) as any
   try {
     const row=readCurrentCandidate(f.db.$client,c.enterprise.id,'specialized_sme',year)
-    expect(row.group).toBe('pending');expect(row.references).toContain('platform-relation:'+r.id+' query:'+q.id)
+    expect(row.group).toBe('excluded');expect(row.references).toContain('platform-relation:'+r.id+' query:'+q.id)
     expect(rawBytes).toBe(0)
   } finally {f.db.$client.prepare=prepare}
   const {wb}=await f.workbook('pr126-unknown-segment')
-  expect(occurrences(wb,c.enterprise.id).map(x=>x.sheet)).toEqual(['待确认'])
+  expect(occurrences(wb,c.enterprise.id).map(x=>x.sheet)).toEqual(['未认定'])
 },60000)
 
-it('requires confirmed source ownership and honors exact qualification interval boundaries', async () => {
-  const {readCurrentCandidate}=await import('../lib/roster/current-qualification')
+it('requires confirmed source ownership and preserves explicit prior-version interval boundaries', async () => {
+  const {createCurrentCandidateReader,PREVIOUS_QUALIFICATION_ASSESSMENT_VERSION}=await import('../lib/roster/current-qualification')
   const c=f.candidate('Exact inbound interval',[]),{q,r}=relation(c.enterprise.id)
   const qualification={titleCode:'specialized_sme',validFrom:'2026-01-01T00:00:00Z',validUntil:'2027-01-01T00:00:00Z',basis:'Verified external award',publicationCheck:{status:'not_found',scope:'Ingested Ningbo announcements including confirmed former names'}}
   const command={...scope(c.enterprise.id),action:'replace',expectedCurrentId:null,actor,basis:'Synthetic independent qualification verification',ruleVersion:'synthetic-pr126',effectiveAt:'2025-01-01T00:00:00Z',decision:{status:'confirmed_reason',reasonCode:'moved_in',measureCode:'record_moved_in',verificationStatus:'confirmed',evidenceQueryId:q.id,evidenceRelationId:r.id,currentQualification:qualification}}
@@ -190,11 +191,13 @@ it('requires confirmed source ownership and honors exact qualification interval 
   const replay=await api('/api/roster/decision-lifecycle/commands',{...command,idempotencyKey:'pr126-exact-interval'})
   expect(replay.body).toEqual(result.body)
   await maintain(c.enterprise.id,result.body.versionId)
-  const at=(instant:string)=>readCurrentCandidate(f.db.$client,c.enterprise.id,'specialized_sme',year,Date.parse(instant))
+  const at=(instant:string)=>createCurrentCandidateReader(f.db.$client)(c.enterprise.id,'specialized_sme',year,Date.parse(instant),undefined,false,true,{assessmentVersion:PREVIOUS_QUALIFICATION_ASSESSMENT_VERSION})
   expect(at('2025-12-31T23:59:59.999Z').group).toBe('pending')
   expect(at(qualification.validFrom).group).toBe('eligible')
   expect(at('2026-12-31T23:59:59.999Z').group).toBe('eligible')
   expect(at(qualification.validUntil).group).toBe('pending')
+  const current=await f.workbook('pr126-prior-interval-default-consumer')
+  expect(occurrences(current.wb,c.enterprise.id).map(x=>x.sheet)).toEqual(['未认定'])
   const changed=await api('/api/roster/decision-lifecycle/commands',{...command,idempotencyKey:'pr126-exact-interval',decision:{...command.decision,currentQualification:{...qualification,basis:'Changed attestation'}}})
   expect(changed.status).toBe(409)
 },60000)

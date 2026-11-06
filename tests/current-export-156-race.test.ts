@@ -55,6 +55,14 @@ async function regeneration() {
   return { wrapper, click: () => wrapper.get('button').trigger('click') }
 }
 
+it.each([401, 403])('reports export permission refusal %s separately from an uncertain receipt', async status => {
+  mockFetch(async () => { throw Object.assign(new Error('Forbidden'), { statusCode: status }) })
+  const query = await queryEntry()
+  await query.click(); await flushPromises()
+  expect(query.wrapper.get('[role="alert"]').text()).toContain('无权限')
+  expect(query.wrapper.get('[role="alert"]').text()).not.toContain('提交尚未确认')
+})
+
 it('an optional lifecycle reason blocks submission until the current read completes', async () => {
   const raw = mockFetch(async () => ({ status: 202, _data: { jobId: SME_JOB } }))
   const reason = ref('正在读取当前筛选，读完即可操作。')

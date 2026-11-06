@@ -3,7 +3,7 @@ import { computed } from 'vue'
 import { ExternalLink, History } from '@lucide/vue'
 import type { DeclarationRow } from '~~/lib/platform/declarations'
 import { formatFetchTime } from '~~/lib/reconcile-time'
-import { RELATION_DECLARE_KINDS } from '~~/lib/labels'
+import { PLATFORM_RDJBS, RELATION_DECLARE_KINDS } from '~~/lib/labels'
 import { Button } from '@/components/ui/button'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 
@@ -13,6 +13,7 @@ const emit = defineEmits<{ 'open-record': [recordId: number] }>()
 const records = computed(() => props.rows.filter((row): row is Extract<DeclarationRow, { kind: 'record' }> => row.kind === 'record'))
 const isolated = computed(() => props.rows.filter((row): row is Extract<DeclarationRow, { kind: 'observation' }> => row.kind === 'observation'))
 const missing = (value: string | number | null | undefined) => value === null || value === undefined || value === '' ? '未提供' : String(value)
+const titleLabel = (value: string | null | undefined) => PLATFORM_RDJBS[value ?? ''] ?? missing(value)
 const declareKind = (value: string | null) => value ? RELATION_DECLARE_KINDS[value] ?? value : '未提供'
 const time = (value: string | null) => value ? formatFetchTime(value) ?? value : '未提供'
 const enterprise = (row: Extract<DeclarationRow, { kind: 'record' }>) => {
@@ -30,38 +31,38 @@ const conflictLabel: Record<string, string> = {
 <template>
   <div class="min-w-0" data-testid="platform-declaration-table">
     <template v-if="view === 'records'">
-      <p v-if="records.length" class="text-muted-foreground mb-2 text-[13px] leading-5 sm:hidden">点开「观察与版本」查看完整字段、内容版本与实际采集记录。</p>
+      <p v-if="records.length" class="text-muted-foreground mb-2 text-[13px] leading-5 sm:hidden">点开「版本详情」查看完整字段、内容版本。</p>
       <div v-if="records.length" class="data-table-scroll hidden sm:block [&_[data-slot=table-container]]:overflow-visible">
         <Table class="data-table min-w-[980px] table-fixed 2xl:min-w-[1080px]" aria-label="申报记录">
           <TableHeader>
             <TableRow class="hover:bg-transparent">
-              <TableHead class="w-[11%]">申报编号</TableHead>
               <TableHead class="w-[19%]">企业</TableHead>
+              <TableHead class="w-[14%] whitespace-nowrap">称号</TableHead>
               <TableHead class="w-[8%] whitespace-nowrap">事项</TableHead>
               <TableHead class="w-[6%] whitespace-nowrap">年度</TableHead>
               <TableHead class="w-[9%] whitespace-nowrap">状态</TableHead>
               <TableHead class="w-[13%] whitespace-nowrap">申报时间</TableHead>
-              <TableHead class="w-[9%] whitespace-nowrap">版本 / 观察</TableHead>
+              <TableHead class="w-[9%] whitespace-nowrap">版本</TableHead>
               <TableHead class="hidden w-[12%] whitespace-nowrap 2xl:table-cell">最近采集</TableHead>
               <TableHead class="sticky right-0 z-20 w-[13%] border-l bg-muted">详情</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             <TableRow v-for="row in records" :key="row.record.id" class="align-top" data-testid="platform-declaration-row" :data-record-id="row.record.id">
-              <TableCell class="break-all font-mono text-xs">{{ row.record.platformKey }}</TableCell>
               <TableCell class="whitespace-normal break-words [overflow-wrap:anywhere]">
                 <NuxtLink v-if="enterpriseId(row) != null" :to="`/enterprises/${enterpriseId(row)}`" class="font-medium hover:underline">{{ enterprise(row) }}</NuxtLink>
                 <span v-else class="font-medium">{{ enterprise(row) }}</span>
                 <span class="text-muted-foreground mt-1 block break-all font-mono text-xs">{{ missing(row.matchedVersion.usccRaw) }}</span>
               </TableCell>
+              <TableCell class="whitespace-normal">{{ titleLabel(row.matchedVersion.titleRaw) }}</TableCell>
               <TableCell class="whitespace-nowrap">{{ declareKind(row.matchedVersion.declareKind) }}</TableCell>
               <TableCell class="tabular-nums">{{ missing(row.matchedVersion.declarationYear) }}</TableCell>
               <TableCell class="whitespace-nowrap">{{ missing(row.matchedVersion.status) }}</TableCell>
               <TableCell class="whitespace-nowrap tabular-nums">{{ time(row.matchedVersion.appliedAt) }}</TableCell>
-              <TableCell class="tabular-nums">{{ row.versionCount }} / {{ row.observationCount }}<span v-if="row.matchedVersionCount > 1" class="text-muted-foreground block text-xs">匹配 {{ row.matchedVersionCount }} 个版本</span><span v-if="row.matchedVersion.ruleVersion == null" class="text-muted-foreground block text-xs">尚未建立 typed 投影</span></TableCell>
+              <TableCell class="tabular-nums">{{ row.versionCount }}<span v-if="row.matchedVersionCount > 1" class="text-muted-foreground block text-xs">匹配 {{ row.matchedVersionCount }} 个版本</span></TableCell>
               <TableCell class="hidden whitespace-nowrap tabular-nums 2xl:table-cell">{{ time(row.latestObservationAt) }}</TableCell>
               <TableCell class="sticky right-0 z-10 border-l bg-card">
-                <Button variant="ghost" size="sm" :disabled="loading" @click="emit('open-record', row.record.id)"><History data-icon="inline-start" />观察与版本</Button>
+                <Button variant="ghost" size="sm" :disabled="loading" @click="emit('open-record', row.record.id)"><History data-icon="inline-start" />版本详情</Button>
                 <span v-for="conflict in row.conflicts" :key="conflict" class="text-muted-foreground mt-1 block text-xs">{{ conflictLabel[conflict] ?? conflict }}</span>
               </TableCell>
             </TableRow>
@@ -72,16 +73,16 @@ const conflictLabel: Record<string, string> = {
         <li v-for="row in records" :key="row.record.id" class="flex min-w-0 flex-col gap-1.5 p-3" data-testid="platform-declaration-card" :data-record-id="row.record.id">
           <div class="flex items-start justify-between gap-2">
             <div class="min-w-0">
-              <p class="break-all font-mono text-xs">{{ row.record.platformKey }}</p>
               <NuxtLink v-if="enterpriseId(row) != null" :to="`/enterprises/${enterpriseId(row)}`" class="font-medium break-words hover:underline">{{ enterprise(row) }}</NuxtLink>
               <p v-else class="font-medium break-words">{{ enterprise(row) }}</p>
               <p class="text-muted-foreground break-all font-mono text-xs">{{ missing(row.matchedVersion.usccRaw) }}</p>
             </div>
-            <Button variant="outline" size="sm" class="min-h-11 shrink-0" :disabled="loading" @click="emit('open-record', row.record.id)"><History data-icon="inline-start" />观察与版本</Button>
+            <Button variant="outline" size="sm" class="min-h-11 shrink-0" :disabled="loading" @click="emit('open-record', row.record.id)"><History data-icon="inline-start" />版本详情</Button>
           </div>
+          <p class="text-sm font-medium leading-5">{{ titleLabel(row.matchedVersion.titleRaw) }}</p>
           <p class="text-sm leading-5">{{ declareKind(row.matchedVersion.declareKind) }} · 年度 {{ missing(row.matchedVersion.declarationYear) }} · {{ missing(row.matchedVersion.status) }}</p>
-          <p class="text-muted-foreground text-sm leading-5">申报时间 {{ time(row.matchedVersion.appliedAt) }} · 版本 {{ row.versionCount }} / 观察 {{ row.observationCount }}</p>
-          <p class="text-muted-foreground text-sm leading-5">最近采集 {{ time(row.latestObservationAt) }}<template v-if="row.matchedVersion.ruleVersion == null"> · 尚未建立 typed 投影</template></p>
+          <p class="text-muted-foreground text-sm leading-5">申报时间 {{ time(row.matchedVersion.appliedAt) }} · 版本 {{ row.versionCount }}</p>
+          <p class="text-muted-foreground text-sm leading-5">最近采集 {{ time(row.latestObservationAt) }}</p>
           <p v-for="conflict in row.conflicts" :key="conflict" class="text-muted-foreground text-xs">{{ conflictLabel[conflict] ?? conflict }}</p>
         </li>
       </ul>
@@ -95,6 +96,7 @@ const conflictLabel: Record<string, string> = {
             <TableRow class="hover:bg-transparent">
               <TableHead class="w-[14%]">原行 / 查询</TableHead>
               <TableHead class="w-[21%]">企业原值</TableHead>
+              <TableHead class="w-[14%] whitespace-nowrap">称号</TableHead>
               <TableHead class="w-[8%] whitespace-nowrap">事项</TableHead>
               <TableHead class="w-[6%] whitespace-nowrap">年度</TableHead>
               <TableHead class="w-[9%] whitespace-nowrap">状态</TableHead>
@@ -108,6 +110,7 @@ const conflictLabel: Record<string, string> = {
             <TableRow v-for="row in isolated" :key="row.relationId" class="align-top" data-testid="platform-declaration-isolated-row" :data-relation-id="row.relationId">
               <TableCell class="whitespace-nowrap">行 #{{ row.relationId }} · 查询 #{{ row.queryId }}</TableCell>
               <TableCell class="whitespace-normal break-words [overflow-wrap:anywhere]">{{ missing(row.nameRaw) }}<span class="text-muted-foreground mt-1 block break-all font-mono text-xs">{{ missing(row.usccRaw) }}</span><span v-if="row.enterpriseName" class="text-muted-foreground mt-1 block text-xs">已归属 {{ row.enterpriseName }}</span></TableCell>
+              <TableCell class="whitespace-normal">{{ titleLabel(row.titleRaw) }}</TableCell>
               <TableCell class="whitespace-nowrap">{{ declareKind(row.declareKind) }}</TableCell>
               <TableCell class="tabular-nums">{{ missing(row.declarationYear) }}</TableCell>
               <TableCell class="whitespace-nowrap">{{ missing(row.status) }}</TableCell>
@@ -135,6 +138,7 @@ const conflictLabel: Record<string, string> = {
             </div>
             <span class="text-muted-foreground shrink-0 text-xs">行 #{{ row.relationId }} · 查询 #{{ row.queryId }}</span>
           </div>
+          <p class="text-sm font-medium leading-5">{{ titleLabel(row.titleRaw) }}</p>
           <p class="text-sm leading-5">{{ declareKind(row.declareKind) }} · 年度 {{ missing(row.declarationYear) }} · {{ missing(row.status) }}</p>
           <p class="text-muted-foreground text-sm leading-5">申报时间 {{ time(row.appliedAt) }} · 采集 {{ time(row.queriedAt) }}</p>
           <p class="text-xs">

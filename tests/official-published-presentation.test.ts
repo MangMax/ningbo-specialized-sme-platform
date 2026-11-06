@@ -88,7 +88,7 @@ async function fixture() {
   return { dir, db, sqlite, commit, published, evidence, record, announcement, ids, exact, correct }
 }
 
-it('pairs old and new published names with every independent event and file in twelve columns', async () => {
+it('pairs old and new published names with every independent event and file in fifteen columns', async () => {
   const f = await fixture()
   await f.commit(f.announcement([f.record('specialized_sme', [
     { eventType: 'award', year: 2021, batchSeq: 1, evidence: [f.evidence(f.published('2021旧名'))] },
@@ -102,8 +102,10 @@ it('pairs old and new published names with every independent event and file in t
   const workbook = new ExcelJS.Workbook(); await workbook.xlsx.readFile(filename)
   const row = workbook.getWorksheet('有效企业')!.getRow(2)
   expect(result.counts, JSON.stringify(readCurrentCandidate(f.sqlite, newer.enterpriseId, 'specialized_sme', qualificationYear, executionTime))).toEqual({ eligible: 1, pending: 0, excluded: 0 })
-  expect(workbook.worksheets.map(s => s.name)).toEqual(['有效企业', '待确认', '排除明细', '口径说明'])
-  expect(row.cellCount).toBe(12)
+  expect(workbook.worksheets.map(s => s.name)).toEqual(['有效企业', '已到期', '已注销（吊销）', '已迁出', '未认定', '口径说明'])
+  expect(row.cellCount).toBe(15)
+  expect(row.getCell(13).value).toBe('有效企业')
+  expect(row.getCell(14).value).toBe('默认年度规则：最近一次认定或复核通过 2024 年 + 3 = 2027 年；自 2027 年起到期（仅年份精度）')
   expect(row.getCell(2).value).toBe('现用名')
   const names = String(row.getCell(8).value)
   expect(names.split('\n')).toEqual([
@@ -165,26 +167,30 @@ it('labels every all-legacy source and an unknown review conclusion year explici
   expect([...facts.values()].map(fact => fact.availability)).toEqual(['unknown_legacy', 'unknown_legacy'])
   const filename = join(f.dir, 'legacy.xlsx'); await writeCurrentWorkbook(f.sqlite, 'specialized_sme', filename, () => {})
   const workbook = new ExcelJS.Workbook(); await workbook.xlsx.readFile(filename)
-  const row = workbook.getWorksheet('待确认')!.getRow(2)
+  const row = workbook.getWorksheet('已到期')!.getRow(2)
+  expect(row.getCell(13).value).toBe('已到期')
+  expect(row.getCell(14).value).toBe('默认年度规则：最近一次认定或复核通过 2021 年 + 3 = 2024 年；自 2024 年起到期（仅年份精度）')
   expect(String(row.getCell(8).value).match(/未逐出处核实/g)).toHaveLength(2)
   expect(row.getCell(8).value).toContain('2021年第1批原认定批次，结论年份待核复核通过')
   expect(row.getCell(8).value).not.toContain('2024年复核')
   expect(row.getCell(12).value).toContain('PDF第1页，名单序号2，未逐出处核实')
 })
 
-it('removes only the inherited first-name rename sentence from Excel while preserving qualifier inputs', async () => {
+it.each([{ id: 'plain', prefix: '' }, { id: 'historical_diagnostic', prefix: '历史诊断（不参与有效判定）：' }])('removes only inherited rename and migration-scope sentences from Excel while preserving qualifier inputs $id', async ({ prefix }) => {
   const f = await fixture(); await seed(f, ['独立出处原名'])
   const row = readCurrentCandidate(f.sqlite, 1, 'specialized_sme', qualificationYear, executionTime)
   // Formatter input representing the existing qualifier's legacy rename branch.
   // No sidecar/domain fixture is fabricated or written here.
   row.publishedNames = ['旧容器首名']
-  row.notes.push('已公布，公布名称为旧容器首名；现已更名为现用名', '仍需保留的业务说明')
+  row.notes.push(prefix + '已公布，公布名称为旧容器首名；现已更名为现用名', prefix + '迁入资格断言；公布核对范围：synthetic-private-trace', prefix + '仍需保留的业务说明')
   const before = JSON.stringify(row)
   const values = currentWorkbookValues('specialized_sme', row, 1, readOfficialPublishedPresentation(f.db, scope(f)))
   expect(values[7]).toContain('公布名称："独立出处原名"')
   expect(values[7]).not.toContain('旧容器首名')
   expect(values[8]).toBeNull()
   expect(values[10]).not.toContain('现已更名为')
+  expect(values[10]).not.toContain('synthetic-private-trace')
+  expect(values[10]).not.toContain('迁入资格断言')
   expect(values[10]).toContain('仍需保留的业务说明')
   expect(JSON.stringify(row)).toBe(before)
 })
@@ -267,9 +273,14 @@ it('isolates sidecar-only changes from enumerable qualification and dataVersion 
   expect(afterCells).toEqual(beforeCells) // H2/L2 alone may change, including all explanation cells.
   const independentVersion = (book: ExcelJS.Workbook, snapshot: typeof beforeT2) => {
     const {titles:_titles,snapshotId,...scope}=snapshot
-    const values=Array.from({length:12},(_,c)=>book.getWorksheet('有效企业')!.getRow(2).getCell(c+1).value)
+    const values=Array.from({length:15},(_,c)=>book.getWorksheet('有效企业')!.getRow(2).getCell(c+1).value)
+    // This source-complete fixture has no diagnostic notes. The new O column
+    // hashes the empty joined string, which ExcelJS reads as a blank/null cell.
+    expect(snapshot.titles.find(title => title.titleCode === 'specialized_sme')!.effectiveQualification!.notes).toEqual([])
+    expect(values[14]).toBeNull()
+    values[14]=''
     return 'sha256:'+createHash('sha256').update(JSON.stringify(['current-export-assessment-409-v2',QUALIFICATION_ASSESSMENT_VERSION,CURRENT_RULE_VERSION,2026,'specialized_sme'])+'\n')
-      .update(JSON.stringify(['eligible',exact.enterpriseId,scope,snapshotId,values])+'\n').digest('hex')
+      .update(JSON.stringify(['effective',exact.enterpriseId,scope,snapshotId,values])+'\n').digest('hex')
   }
   expect(first.dataVersion).toBe(independentVersion(beforeBook,beforeT2))
   expect(second.dataVersion).toBe(independentVersion(afterBook,expectedT2))
@@ -279,7 +290,7 @@ it('isolates sidecar-only changes from enumerable qualification and dataVersion 
   expect(workbook.getWorksheet('有效企业')!.getCell('H2').value).not.toContain('原捕获名')
 })
 
-it('keeps a public 2021 award without review pending in the 2026 reader and workbook', async () => {
+it('keeps a public 2021 award without review expired in the 2026 reader and workbook', async () => {
   const f = await fixture()
   await f.commit(f.announcement([f.record('specialized_sme', [
     { eventType: 'award', year: 2021, batchSeq: 1, evidence: [f.evidence(f.published('2021独立公布名'))] },
@@ -287,20 +298,22 @@ it('keeps a public 2021 award without review pending in the 2026 reader and work
   const evidence = f.ids()[0]!, exact = await f.exact(evidence.id)
   expect(exact.official.row.nameRaw).toBe('2021独立公布名')
   const row = readCurrentCandidate(f.sqlite, exact.enterpriseId, 'specialized_sme', qualificationYear, executionTime)
-  expect(row.group).toBe('pending')
+  expect(row.group).toBe('excluded')
   expect(row.firstYear).toBe(2021)
   const filename = join(f.dir, '2021-pending-control.xlsx')
   const result = await writeCurrentWorkbook(f.sqlite, 'specialized_sme', filename, () => {})
   expect(result.generatedAt).toBe('2026-10-25T08:00:00.000Z')
-  expect(result.counts).toEqual({ eligible: 0, pending: 1, excluded: 0 })
+  expect(result.counts).toEqual({ eligible: 0, pending: 0, excluded: 1 })
   const workbook = new ExcelJS.Workbook(); await workbook.xlsx.readFile(filename)
   expect(workbook.getWorksheet('有效企业')!.rowCount).toBe(1)
-  expect(workbook.getWorksheet('排除明细')!.rowCount).toBe(1)
-  const pending = workbook.getWorksheet('待确认')!
+  for (const name of ['已注销（吊销）','已迁出','未认定']) expect(workbook.getWorksheet(name)!.rowCount).toBe(1)
+  const pending = workbook.getWorksheet('已到期')!
   expect(pending.rowCount).toBe(2)
   expect(pending.getCell('B2').value).toBe('现用名')
   expect(pending.getCell('F2').value).toBe('2021')
   expect(pending.getCell('H2').value).toBe('2021年第1批认定，《2021公布.pdf》：公布名称："2021独立公布名"')
+  expect(pending.getCell('M2').value).toBe('已到期')
+  expect(pending.getCell('N2').value).toBe('默认年度规则：最近一次认定或复核通过 2021 年 + 3 = 2024 年；自 2024 年起到期（仅年份精度）')
 })
 
 it('redacts only minimal display values and rejects unavailable facts instead of exporting them as legacy', async () => {
@@ -383,7 +396,8 @@ it('hydrates only the matched sheet after hashing and never repeats deferred-row
     expect(workbookRead.rows.find(row=>row.assessment!.titleCode==='specialized_sme')!.assessment!.group).toBe(owned.readTitle(enterpriseId,'specialized_sme',executionTime).group)
     expect(Object.getOwnPropertyDescriptor(workbookRead.rows.find(row=>row.assessment!.titleCode==='specialized_sme')!,'workbookFacts')?.enumerable).toBe(false)
     const selected=defaultT2.titles.find(title=>title.titleCode==='specialized_sme')!
-    expect(selected.group).toBe(['eligible','pending','excluded'][index])
+    expect(selected.group).toBe(['eligible','excluded','excluded'][index])
+    expect(selected.effectiveQualification?.status).toBe(['effective','expired','unrecognized'][index])
     expect(selected.sourceVersions.map(source=>source.eventId)).toEqual([item.recordEventId])
     expect(workbookRead.workbookPublished).toEqual(index===2 ? new Map() : new Map([[item.id,{
       evidenceId:item.id,eventId:item.recordEventId,revision:1,availability:'captured',
@@ -397,13 +411,15 @@ it('hydrates only the matched sheet after hashing and never repeats deferred-row
   // Only this measured workbook run contributes to the page trace below.
   const page = observePublishedPages(), filename = join(f.dir, 'groups.xlsx')
   const result = await writeCurrentWorkbook(f.sqlite, 'specialized_sme', filename, () => {})
-  expect(result.counts).toEqual({ eligible: 1, pending: 1, excluded: 1 })
+  expect(result.counts).toEqual({ eligible: 1, pending: 0, excluded: 2 })
   expect(page.mock.calls.map(call => call[1])).toEqual(f.ids().map(item=>item.recordEventId))
   for (const call of page.mock.calls) expect(call[2]).toEqual({pageSize:50,maxBytes:65536})
   const workbook = new ExcelJS.Workbook(); await workbook.xlsx.readFile(filename)
   expect(workbook.getWorksheet('有效企业')!.getCell('H2').value).toContain('公布名称："有效公布名"')
-  expect(workbook.getWorksheet('待确认')!.getCell('H2').value).toContain('公布名称："待核公布名"')
-  expect(workbook.getWorksheet('排除明细')!.getCell('H2').value).toBeNull()
+  expect(workbook.getWorksheet('已到期')!.getCell('H2').value).toContain('公布名称："待核公布名"')
+  expect(workbook.getWorksheet('已到期')!.getCell('M2').value).toBe('已到期')
+  expect(workbook.getWorksheet('未认定')!.getCell('H2').value).toBeNull()
+  expect(workbook.getWorksheet('未认定')!.getCell('M2').value).toBe('未认定')
 })
 
 it('fails a later event page without returning a partial or legacy map', async () => {
@@ -426,7 +442,10 @@ it.each(['little_giant', 'specialized_sme', 'innovative_sme'] as const)('writes 
   const filename = join(f.dir, title + '.xlsx'), result = await writeCurrentWorkbook(f.sqlite, title, filename, () => {})
   const workbook = new ExcelJS.Workbook(); await workbook.xlsx.readFile(filename)
   expect(result.counts).toEqual({ eligible: 1, pending: 0, excluded: 0 })
-  for (const sheet of workbook.worksheets.slice(0, 3)) expect(sheet.getRow(1).cellCount).toBe(12)
+  for (const sheet of workbook.worksheets.slice(0, 5)) {
+    expect(sheet.getRow(1).cellCount).toBe(15)
+    expect([13,14,15].map(column => sheet.getRow(1).getCell(column).value)).toEqual(['有效状态','有效期及排除依据','资料缺口与来源备注'])
+  }
   const cell = workbook.getWorksheet('有效企业')!.getCell('H2')
   expect(cell.type).toBe(ExcelJS.ValueType.String); expect(cell.value).toContain('公布名称："=1+1"')
 })

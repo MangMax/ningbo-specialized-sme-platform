@@ -20,6 +20,7 @@ describe('apply_list typed projection parser', () => {
       declarationYear: 2024,
       appliedAt: '2024-03-01 09:00:00',
       status: '终审通过',
+      titleRaw: null,
       nameRaw: '合成企业',
       usccRaw: '91330211255994457P',
     })
@@ -40,6 +41,7 @@ describe('apply_list typed projection parser', () => {
       declarationYear: 2024,
       appliedAt: null,
       status: null,
+      titleRaw: null,
       nameRaw: null,
       usccRaw: null,
     })

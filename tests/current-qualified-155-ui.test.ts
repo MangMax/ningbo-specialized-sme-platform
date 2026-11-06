@@ -19,6 +19,10 @@ const row = {
   recognition: { precision: 'year', year: 2024 }, matchedValidYears: [2027], matchedMaintenance: [{ year: 2023, batch: 2 }],
   basis: 'event:21555@1 award 2024/6 结论年:2024', reviews: '', publication: '已见本称号宁波公布记录',
   notes: ['已确认迁入宁波；原城市：杭州'], references: ['evidence:1'], group: 'eligible',
+  qualificationAssessment: { titles: [{ titleCode: 'specialized_sme', evidence: [
+    { eventId: 1, eventType: 'award', year: 2021, decidedYear: 2021, batchSeq: 1, reviewOutcome: null },
+    { eventId: 2, eventType: 'review', year: 2021, decidedYear: 2024, batchSeq: 1, reviewOutcome: 'passed' },
+  ] }] },
 }
 async function setup(query: Record<string,string> = {}, failOn?: (query: Record<string,string>) => boolean, narrow = false, metadata = true) {
   vi.spyOn(window, 'matchMedia').mockImplementation(query => ({
@@ -41,15 +45,16 @@ async function setup(query: Record<string,string> = {}, failOn?: (query: Record<
   return {wrapper,router,calls}
 }
 
-it('shows the same readable qualification and source link in desktop and mobile rows without parsing raw basis', async () => {
+it('shows a concise recognition and review timeline in desktop and mobile rows with details one click away', async () => {
   const {wrapper}=await setup()
-  expect(wrapper.get('[data-testid="current-enterprise-card"]').text()).toContain('认定记录 2024 年（仅年份） · 已见宁波公布记录')
-  expect(wrapper.get('[data-testid="current-enterprise-card"]').text()).toContain('有效年份 2027 年 · 维护记录 2023 年第 2 批')
+  expect(wrapper.get('[data-testid="current-enterprise-card"]').text()).toContain('2021 认定')
+  expect(wrapper.get('[data-testid="current-enterprise-card"]').text()).toContain('2024 复核')
   expect(wrapper.get('[data-testid="current-enterprise-card"] a').attributes('href')).toContain('/enterprises/21')
   expect(wrapper.text()).not.toContain('event:21555')
   expect(wrapper.text()).not.toContain('公布名：宁波现名企业')
-  expect(wrapper.text()).toContain('已确认迁入宁波')
-  expect(wrapper.findAll('table tbody tr').some(item => item.text().includes('认定记录 2024 年'))).toBe(true)
+  expect(wrapper.text()).not.toContain('已确认迁入宁波')
+  expect(wrapper.text()).not.toContain('有效年份 2027 年 · 维护记录')
+  expect(wrapper.findAll('table tbody tr').some(item => item.text().includes('2021 认定') && item.text().includes('2024 复核'))).toBe(true)
 })
 
 it.each([false, true])('retains new-filter source identity and detail return params after the target fails (narrow: %s)', async narrow => {
@@ -57,8 +62,8 @@ it.each([false, true])('retains new-filter source identity and detail return par
   const {wrapper,router}=await setup(source, query => query.validYear === '2028', narrow)
   await router.replace({path:'/current-enterprises',query:{titleCode:'specialized_sme',recognitionFrom:'2023-01-01',recognitionTo:'2023-12-31',validYear:'2028',maintenanceYear:'2025',maintenanceBatch:'1'}})
   await flushPromises()
-  expect(wrapper.text()).toContain('当前显示：专精特新中小企业；认定时间：2024-01-01 至 2024-12-31；有效年份：2027；维护年份：2023 第 2 批')
-  expect(wrapper.text()).toContain('请求目标：专精特新中小企业；认定时间：2023-01-01 至 2023-12-31；有效年份：2028；维护年份：2025 第 1 批')
+  expect(wrapper.text()).toContain('当前显示：专精特新中小企业；有效企业；认定时间：2024-01-01 至 2024-12-31；有效年份：2027；维护年份：2023 第 2 批')
+  expect(wrapper.text()).toContain('请求目标：专精特新中小企业；有效企业；认定时间：2023-01-01 至 2023-12-31；有效年份：2028；维护年份：2025 第 1 批')
   const href=wrapper.get('[data-testid="current-enterprise-card"] a').attributes('href')!
   const back=new URL(href,'http://localhost').searchParams.get('currentBack')!
   expect(Object.fromEntries(new URLSearchParams(back))).toMatchObject({titleCode:'specialized_sme',...source,sort:'id_asc'})
@@ -100,7 +105,7 @@ it('selects a date through the shared calendar popover and emits a date-only val
 
 it('clears the dependent batch when the existing maintenance-year select changes', async () => {
   const {wrapper,router}=await setup({maintenanceYear:'2023',maintenanceBatch:'2'})
-  wrapper.findAllComponents(Select)[2]!.vm.$emit('update:modelValue','2025')
+  wrapper.findAllComponents(Select).find(select => select.find('[aria-label="按维护年份筛选"]').exists())!.vm.$emit('update:modelValue','2025')
   await flushPromises()
   expect(router.currentRoute.value.query).toMatchObject({maintenanceYear:'2025'})
   expect(router.currentRoute.value.query.maintenanceBatch).toBeUndefined()
@@ -109,7 +114,8 @@ it('clears the dependent batch when the existing maintenance-year select changes
 it('keeps current eligibility distinct from unverified validity and maintenance metadata', async () => {
   const { wrapper } = await setup({}, undefined, false, false)
   expect(wrapper.text()).toContain('按本库资格判定查询当前有效企业')
-  expect(wrapper.get('[data-testid="current-enterprise-card"]').text()).toContain('有效年份未核实 · 维护信息未核实')
+  expect(wrapper.get('[data-testid="current-enterprise-card"]').text()).toContain('2021 认定→2024 复核')
+  expect(wrapper.get('[data-testid="current-enterprise-card"]').text()).not.toContain('有效年份未核实 · 维护信息未核实')
   expect(wrapper.text()).not.toContain('返回字段')
   expect(wrapper.text()).not.toContain('有效性：未证实')
 })
@@ -122,19 +128,19 @@ it('discloses mobile filters, applies date and option URLs, keeps chips on colla
   expect(wrapper.find('[aria-label="按有效年份筛选"]').exists()).toBe(false)
   expect(wrapper.findAllComponents(CurrentRecognitionDatePicker)).toHaveLength(0)
   expect(wrapper.find('input[placeholder="名称、曾用名或信用代码"]').exists()).toBe(true)
-  expect(wrapper.text()).toContain('未设筛选')
+  expect(wrapper.text()).toContain('当前显示：专精特新中小企业；有效企业')
   expect(wrapper.text()).toContain('排序：稳定企业标识')
   await advanced().trigger('click'); await flushPromises()
   expect(advanced().attributes('aria-expanded')).toBe('true')
-  expect(wrapper.findAll('[aria-label^="按"]').length).toBe(4)
+  expect(wrapper.findAll('[aria-label^="按"]').length).toBe(5)
   expect(wrapper.get('[aria-label="排序方式"]').text()).toBe('排序：稳定企业标识')
-  wrapper.findAllComponents(Select)[1]!.vm.$emit('update:modelValue', '2027')
+  wrapper.findAllComponents(Select).find(select => select.find('[aria-label="按有效年份筛选"]').exists())!.vm.$emit('update:modelValue', '2027')
   await flushPromises()
-  wrapper.findAllComponents(Select)[2]!.vm.$emit('update:modelValue', '2023')
+  wrapper.findAllComponents(Select).find(select => select.find('[aria-label="按维护年份筛选"]').exists())!.vm.$emit('update:modelValue', '2023')
   await flushPromises()
-  wrapper.findAllComponents(Select)[3]!.vm.$emit('update:modelValue', '2')
+  wrapper.findAllComponents(Select).find(select => select.find('[aria-label="按维护批次筛选"]').exists())!.vm.$emit('update:modelValue', '2')
   await flushPromises()
-  wrapper.findAllComponents(Select)[4]!.vm.$emit('update:modelValue', 'name_asc')
+  wrapper.findAllComponents(Select).find(select => select.find('[aria-label="排序方式"]').exists())!.vm.$emit('update:modelValue', 'name_asc')
   const pickers = wrapper.findAllComponents(CurrentRecognitionDatePicker)
   pickers[0]!.vm.$emit('update:modelValue', '2024-01-01')
   pickers[1]!.vm.$emit('update:modelValue', '2024-12-31')
@@ -158,7 +164,7 @@ it('discloses mobile filters, applies date and option URLs, keeps chips on colla
   expect(chips().text()).toContain('有效年份：2027')
   expect(advanced().attributes('aria-expanded')).toBe('false')
   await advanced().trigger('click'); await flushPromises()
-  expect(wrapper.findAllComponents(Select)[1]!.props('modelValue')).toBe('2027')
+  expect(wrapper.findAllComponents(Select).find(select => select.find('[aria-label="按有效年份筛选"]').exists())!.props('modelValue')).toBe('2027')
   expect(wrapper.findAllComponents(CurrentRecognitionDatePicker)[0]!.props('modelValue')).toBe('2024-01-01')
   await wrapper.findAll('button').find(button => button.text() === '清除筛选')!.trigger('click')
   await flushPromises()

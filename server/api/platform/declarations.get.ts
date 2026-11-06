@@ -10,6 +10,7 @@ defineRouteMeta({
     description:
       '只读本地 apply_list（queryList）申报投影，不访问外部平台。view=records 按业务编号组织，返回匹配内容版本、全部版本/观察计数、企业归属与冲突；view=isolated 单独返回缺编号/编号冲突/原文不可核实且无法并入任何记录的观察。未知事项、年度或状态保持 null，不猜填称号或年份。筛选条件在 typed 投影与既有 observation/relation 上执行，不读取或解析 raw JSON。分页最多 200。',
     parameters: [
+      { name: 'titleRaw', in: 'query', schema: { type: 'string' }, description: '每条原始 rdjb 的字符串原值，精确匹配；独立于来源查询 rdjb 范围，未知值保留，缺失不匹配。' },
       { name: 'view', in: 'query', schema: { type: 'string', enum: ['records', 'isolated'], default: 'records' } },
       { name: 'q', in: 'query', schema: { type: 'string' }, description: '企业名称关键词或统一社会信用代码关键词；只通过已归属观察匹配。' },
       { name: 'enterpriseId', in: 'query', schema: { type: 'integer', minimum: 1 } },

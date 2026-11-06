@@ -1,4 +1,4 @@
-import { CURRENT_RULE_VERSION, QUALIFICATION_ASSESSMENT_VERSION } from '../../lib/roster/current-qualification'
+import { CURRENT_RULE_VERSION } from '../../lib/roster/current-qualification'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -114,15 +114,21 @@ export function expectedBusinessIdentity(db: ReturnType<typeof useDb>, id: numbe
 export function matchesBusinessIdentity(db: ReturnType<typeof useDb>, row: any[], id: number) {
   return JSON.stringify(businessIdentity(row)) === JSON.stringify(expectedBusinessIdentity(db,id))
 }
-export function expectCounts(wb: ExcelJS.Workbook, job: any, counts: {eligible:number;pending:number;excluded:number}) {
-  expect(wb.worksheets.map(sheet => sheet.name)).toEqual(['有效企业','待确认','排除明细','口径说明'])
+export const currentSheetNames = ['有效企业','已到期','已注销（吊销）','已迁出','未认定','口径说明']
+export const currentStatusSheets = [['有效企业','effective'],['已到期','expired'],['已注销（吊销）','terminated'],['已迁出','moved_out'],['未认定','unrecognized']] as const
+export function expectCounts(wb: ExcelJS.Workbook, job: any, counts: {eligible:number;pending:number;excluded:number}, expectedStatusCounts?: {effective:number;expired:number;terminated:number;moved_out:number;unrecognized:number}) {
+  expect(wb.worksheets.map(sheet => sheet.name)).toEqual(currentSheetNames)
   expect(job.result.counts).toEqual(counts)
-  expect(job.result.total).toBe(counts.eligible + counts.pending + counts.excluded)
+  expect(counts.pending).toBe(0)
+  expect(job.result.total).toBe(counts.eligible + counts.excluded)
+  if (expectedStatusCounts) expect(job.result.statusCounts).toEqual(expectedStatusCounts)
   const notes = Object.fromEntries(rows(wb,'口径说明').map(row => [row[1],row[2]]))
-  for (const [sheet,key] of [['有效企业','eligible'],['待确认','pending'],['排除明细','excluded']] as const) {
-    expect(rows(wb,sheet)).toHaveLength(counts[key]); expect(notes[sheet]).toBe(String(counts[key]))
+  for (const [sheet,key] of currentStatusSheets) {
+    expect(rows(wb,sheet)).toHaveLength(job.result.statusCounts[key]); expect(notes[sheet]).toBe(String(job.result.statusCounts[key]))
     expect(rows(wb,sheet).every(row => row[5] === '专精特新中小企业')).toBe(true)
   }
+  expect(job.result.statusCounts.effective).toBe(counts.eligible)
+  expect(Object.values(job.result.statusCounts).reduce((sum:number,count:any) => sum + count,0)).toBe(job.result.total)
   expect(notes['规则版本']).toBeUndefined()
   expect(notes['数据版本']).toBeUndefined()
   expect(job.result.ruleVersion).toBe(CURRENT_RULE_VERSION)

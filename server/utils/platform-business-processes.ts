@@ -32,20 +32,8 @@ function normalizedFilter(input: unknown): BusinessProcessFilter {
 
 /** Title scope is a query fact: match the explicit rdjb on the query or its scope index.
  * The scope index is populated by the 0027 trigger from collectionEvidence; the direct
- * rdjb membership fallback keeps legacy/import rows that predate or omit that evidence. */
-function titleScopeExists(rdjb: string): SQL {
-  return sql`exists (
-    select 1 from platform_business_observation o
-    join platform_relation r on r.id = o.relation_id
-    join platform_query q on q.id = r.query_id
-    where o.record_id = b.id and (
-      instr(',' || q.rdjb || ',', ',' || ${rdjb} || ',') > 0
-      or exists (select 1 from platform_query_title_scope s where s.query_id = q.id and s.rdjb = ${rdjb})
-    )
-  )`
-}
-
-/** Restrict matched content versions to those actually observed under the selected title scope. */
+ * rdjb membership fallback keeps legacy/import rows that predate or omit that evidence.
+ * Restrict matched content versions to those observed under the selected query scope. */
 function versionTitleScopeExists(rdjb: string): SQL {
   return sql`exists (
     select 1 from platform_business_observation o
@@ -67,12 +55,13 @@ function isolatedTitleScope(filter: BusinessProcessFilter): SQL | null {
 function recordConditions(filter: BusinessProcessFilter): SQL[] {
   const conditions: SQL[] = [sql`b.interface = 'business_list'`]
   if (filter.platformKey) conditions.push(sql`b.platform_key = ${filter.platformKey}`)
+  if (filter.titleRaw !== undefined) conditions.push(sql`p.title_raw = ${filter.titleRaw}`)
   const declareKind = filter.declareKind ? normalizeDeclareKind(filter.declareKind) : null
   if (declareKind) conditions.push(sql`p.declare_kind = ${declareKind}`)
   if (filter.year != null) conditions.push(sql`p.business_year = ${filter.year}`)
   if (filter.status) conditions.push(sql`p.status = ${filter.status}`)
   if (filter.batch) conditions.push(sql`p.batch = ${filter.batch}`)
-  if (filter.rdjb) conditions.push(titleScopeExists(filter.rdjb))
+  if (filter.rdjb) conditions.push(versionTitleScopeExists(filter.rdjb))
   const enterprise = businessEnterpriseExists(filter)
   if (enterprise) conditions.push(enterprise)
   return conditions
@@ -90,6 +79,7 @@ function isolatedConditions(filter: BusinessProcessFilter): SQL[] {
     conditions.push(sql`(e.name_norm LIKE ${name} or e.uscc_norm LIKE ${uscc})`)
   }
   if (filter.platformKey) conditions.push(sql`r.relation_key = ${filter.platformKey}`)
+  if (filter.titleRaw !== undefined) conditions.push(sql`r.title_raw = ${filter.titleRaw}`)
   const declareKind = filter.declareKind ? normalizeDeclareKind(filter.declareKind) : null
   if (declareKind) conditions.push(sql`r.declare_kind = ${declareKind}`)
   if (filter.year != null) conditions.push(sql`r.year = ${filter.year}`)
@@ -113,16 +103,15 @@ function recordsTitleScopes(rows: { recordId: number; queryId: number }[], scope
 function listRecordRows(db: Db, filter: BusinessProcessFilter, total: number): BusinessProcessListResult {
   const { page, pageSize, offset } = pageOf(filter)
   const conditions = recordConditions(filter)
-  if (filter.rdjb) conditions.push(versionTitleScopeExists(filter.rdjb))
   const where = sql.join(conditions, sql` and `)
   const rows = db.all<{
-    recordId: number; platformKey: string; versionId: number; declareKind: string | null; businessYear: number | null;
+    recordId: number; platformKey: string; versionId: number; titleRaw: string | null; declareKind: string | null; businessYear: number | null;
     appliedAt: string | null; status: string | null; batch: string | null; awardBatchLabel: string | null; province: string | null;
     nameRaw: string | null; usccRaw: string | null; ruleVersion: string | null;
     matchedVersionCount: number; versionCount: number; observationCount: number; latestObservationAt: string | null
   }>(sql`
     with matched as (
-      select v.id as version_id, v.record_id, p.declare_kind, p.business_year, p.applied_at, p.status, p.batch,
+      select v.id as version_id, v.record_id, p.title_raw, p.declare_kind, p.business_year, p.applied_at, p.status, p.batch,
         p.award_batch_label, p.province, p.name_raw, p.uscc_raw, p.rule_version, b.platform_key,
         count(*) over (partition by v.record_id) as matched_version_count,
         row_number() over (partition by v.record_id order by (p.applied_at is null), p.applied_at desc, v.id desc) as rn
@@ -131,13 +120,13 @@ function listRecordRows(db: Db, filter: BusinessProcessFilter, total: number): B
       join platform_business_record b on b.id = v.record_id
       where ${where}
     )
-    select m.record_id as recordId, m.platform_key as platformKey, m.version_id as versionId,
+    select m.record_id as recordId, m.platform_key as platformKey, m.version_id as versionId, m.title_raw as titleRaw,
       m.declare_kind as declareKind, m.business_year as businessYear, m.applied_at as appliedAt, m.status,
       m.batch, m.award_batch_label as awardBatchLabel, m.province, m.name_raw as nameRaw, m.uscc_raw as usccRaw,
       m.rule_version as ruleVersion, m.matched_version_count as matchedVersionCount,
       (select count(*) from platform_business_record_version v where v.record_id = m.record_id) as versionCount,
       (select count(*) from platform_business_observation o where o.record_id = m.record_id) as observationCount,
-      (select max(q.queried_at) from platform_business_observation o
+      (select max(coalesce(q.last_collected_at,q.queried_at)) from platform_business_observation o
         join platform_relation r on r.id = o.relation_id
         join platform_query q on q.id = r.query_id
         where o.record_id = m.record_id) as latestObservationAt
@@ -173,7 +162,7 @@ function listRecordRows(db: Db, filter: BusinessProcessFilter, total: number): B
       kind: 'record',
       record: { id: row.recordId, platformKey: row.platformKey, interface: 'business_list' },
       matchedVersion: {
-        versionId: row.versionId, declareKind: row.declareKind, businessYear: row.businessYear,
+        versionId: row.versionId, titleRaw: row.titleRaw, declareKind: row.declareKind, businessYear: row.businessYear,
         appliedAt: row.appliedAt, status: row.status, batch: row.batch, awardBatchLabel: row.awardBatchLabel,
         province: row.province, nameRaw: row.nameRaw, usccRaw: row.usccRaw, ruleVersion: row.ruleVersion,
       },
@@ -197,7 +186,7 @@ function listIsolatedRows(db: Db, filter: BusinessProcessFilter, total: number):
     select o.relation_id as relationId, r.query_id as queryId, q.queried_at as queriedAt,
       q.query_key as queryKey, q.status as queryStatus, r.sequence_no as sequenceNo,
       o.identity_state as identityState, o.content_state as contentState,
-      r.name_raw as nameRaw, r.uscc_raw as usccRaw, r.declare_kind as declareKind, r.year as businessYear,
+      r.title_raw as titleRaw, r.name_raw as nameRaw, r.uscc_raw as usccRaw, r.declare_kind as declareKind, r.year as businessYear,
       r.applied_at as appliedAt, r.status, r.batch, r.award_batch_label as awardBatchLabel, r.province,
       r.enterprise_id as enterpriseId, e.name as enterpriseName
     from platform_business_observation o
@@ -243,12 +232,12 @@ export function listPlatformBusinessProcesses(input: unknown, db: Db): BusinessP
 }
 
 function versionFields(row: {
-  versionId: number; declareKind: string | null; businessYear: number | null; appliedAt: string | null; status: string | null;
+  versionId: number; titleRaw: string | null; declareKind: string | null; businessYear: number | null; appliedAt: string | null; status: string | null;
   batch: string | null; awardBatchLabel: string | null; province: string | null; nameRaw: string | null; usccRaw: string | null;
   ruleVersion: string | null
 }): BusinessProcessVersionFields {
   return {
-    versionId: row.versionId, declareKind: row.declareKind, businessYear: row.businessYear, appliedAt: row.appliedAt,
+    versionId: row.versionId, titleRaw: row.titleRaw, declareKind: row.declareKind, businessYear: row.businessYear, appliedAt: row.appliedAt,
     status: row.status, batch: row.batch, awardBatchLabel: row.awardBatchLabel, province: row.province,
     nameRaw: row.nameRaw, usccRaw: row.usccRaw, ruleVersion: row.ruleVersion,
   }
@@ -265,14 +254,14 @@ export function getPlatformBusinessProcess(db: Db, recordId: number): BusinessPr
   const versionTotal = db.get<{ total: number }>(sql`select count(*) as total from platform_business_record_version where record_id = ${recordId}`)!.total
   const versions = db.all<Omit<BusinessProcessVersion, 'titleScopes'>>(sql`
     select v.id as versionId, v.hash_algorithm as hashAlgorithm, v.content_hash as contentHash, v.created_at as createdAt,
-      p.declare_kind as declareKind, p.business_year as businessYear, p.applied_at as appliedAt, p.status,
+      p.title_raw as titleRaw, p.declare_kind as declareKind, p.business_year as businessYear, p.applied_at as appliedAt, p.status,
       p.batch, p.award_batch_label as awardBatchLabel, p.province, p.name_raw as nameRaw, p.uscc_raw as usccRaw,
       p.rule_version as ruleVersion,
       (select count(*) from platform_business_observation o where o.version_id = v.id) as observationCount,
       (select min(q.queried_at) from platform_business_observation o
         join platform_relation r on r.id = o.relation_id join platform_query q on q.id = r.query_id
         where o.version_id = v.id) as firstObservedAt,
-      (select max(q.queried_at) from platform_business_observation o
+      (select max(coalesce(q.last_collected_at,q.queried_at)) from platform_business_observation o
         join platform_relation r on r.id = o.relation_id join platform_query q on q.id = r.query_id
         where o.version_id = v.id) as lastObservedAt
     from platform_business_record_version v
@@ -288,7 +277,7 @@ export function getPlatformBusinessProcess(db: Db, recordId: number): BusinessPr
       q.status as queryStatus, r.sequence_no as sequenceNo, r.enterprise_id as enterpriseId, e.name as enterpriseName,
       o.identity_state as identityState, o.content_state as contentState, o.key_source as keySource,
       o.projection_rule_version as projectionRuleVersion, o.version_id as versionId,
-      p.declare_kind as declareKind, p.business_year as businessYear, p.applied_at as appliedAt, p.status,
+      p.title_raw as titleRaw, p.declare_kind as declareKind, p.business_year as businessYear, p.applied_at as appliedAt, p.status,
       p.batch, p.award_batch_label as awardBatchLabel, p.province, p.name_raw as nameRaw, p.uscc_raw as usccRaw,
       p.rule_version as ruleVersion
     from platform_business_observation o
@@ -329,11 +318,11 @@ export function getPlatformBusinessProcess(db: Db, recordId: number): BusinessPr
   return {
     record,
     versions: versions.map(version => ({ ...version, titleScopes: orderedScopes(versionScopes.get(version.versionId) ?? []) })),
-    observations: observations.map(({ declareKind, businessYear, appliedAt, status, batch, awardBatchLabel, province, nameRaw, usccRaw, ruleVersion, ...observation }) => ({
+    observations: observations.map(({ titleRaw, declareKind, businessYear, appliedAt, status, batch, awardBatchLabel, province, nameRaw, usccRaw, ruleVersion, ...observation }) => ({
       ...observation,
       titleScopes: scopesByQuery.get(observation.queryId) ?? [],
       correspondenceRefs: correspondenceByRelation.get(observation.relationId) ?? [],
-      version: observation.versionId == null ? null : versionFields({ versionId: observation.versionId, declareKind, businessYear, appliedAt, status, batch, awardBatchLabel, province, nameRaw, usccRaw, ruleVersion }),
+      version: observation.versionId == null ? null : versionFields({ versionId: observation.versionId, titleRaw: titleRaw ?? null, declareKind, businessYear, appliedAt, status, batch, awardBatchLabel, province, nameRaw, usccRaw, ruleVersion }),
     })),
     counts: {
       versions: versionTotal,

@@ -106,7 +106,10 @@ export function currentWorkbookValues(title: CurrentTitle, row: CurrentRow, seri
   const missing = formal.filter(event => !evidenceByEvent.has(event.id))
   const references = [...citations,...platform,...(missing.length ? [`${missing.length}条认定或复核记录正式出处待核`] : [])]
   const legacyRenameNotes = new Set(row.publishedNames.map(name => '已公布，公布名称为' + name + '；现已更名为' + row.name))
-  const notes = row.notes.filter(note => !note.startsWith('迁入资格断言；公布核对范围：') && !legacyRenameNotes.has(note)).map(businessNote)
+  const notes = row.notes.filter(note => {
+    const business = note.replace(/^历史诊断（不参与有效判定）：/, '')
+    return !business.startsWith('迁入资格断言；公布核对范围：') && !legacyRenameNotes.has(business)
+  }).map(businessNote)
   const displayNote = publishedNames.length ? '逐出处公布名见公布名称列；现用名见企业名称列；已确认曾用名仅见该列' : null
   if (displayNote) { notes.push(displayNote); addedText.push(displayNote) }
   for (const scope of facts.migration.map(fact => safeBusinessReason(fact.publicationScope)).filter((value): value is string => !!value)) notes.push('迁入资格断言；公布核对范围：' + scope)

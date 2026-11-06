@@ -57,8 +57,9 @@ function oldDatabase(dir: string) {
   d.insert(s.recordEvidence).values({ id: 29, recordEventId: 19, sourceFile: 'synthetic/original.pdf', attachment: '附件\n一', page: 3, listNo: 7 }).run()
   d.insert(s.importBatch).values({ id: 31, idempotencyKey: 'legacy-key', sourceKind: 'platform_archive', sourceIdentity: 'synthetic-original', sourceSha256: 'legacy-hash-kept', status: 'committed', createdAt }).run()
   d.insert(s.importReceipt).values({ id: 37, batchId: 31, operation: 'commit', requestHash: 'legacy-request-hash', requestBody: '{ "original": "原文\\n🙂" }', status: 'committed', createdAt, completedAt: createdAt }).run()
-  d.insert(s.platformQuery).values({ id: 41, interface: 'business_list', queryKey: '000000000000000023', rdjb: '1', queriedAt: createdAt, status: 'success', rawResponse: '原响应\n🙂\u0000尾', collectionEvidence: { pages: [] } as never, createdAt }).run()
-  d.insert(s.platformRelation).values({ id: 43, queryId: 41, sequenceNo: 1, enterpriseId: 23, usccRaw: '000000000000000023', relationKey: 'legacy-relation-key', rawFields: { original: '原字段\n🙂', number: '0001' }, createdAt }).run()
+  // Bind only columns present in the 0030 database; preserve original bytes.
+  db.prepare('insert into platform_query (id, interface, query_key, rdjb, queried_at, status, raw_response, collection_evidence, created_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?)').run(41, 'business_list', '000000000000000023', '1', createdAt, 'success', '原响应\n🙂\u0000尾', JSON.stringify({ pages: [] }), createdAt)
+  db.prepare('insert into platform_relation (id, query_id, sequence_no, enterprise_id, uscc_raw, relation_key, raw_fields, created_at) values (?, ?, ?, ?, ?, ?, ?, ?)').run(43, 41, 1, 23, '000000000000000023', 'legacy-relation-key', JSON.stringify({ original: '原字段\n🙂', number: '0001' }), createdAt)
   d.insert(s.platformBusinessRecord).values({ id: 47, interface: 'business_list', platformKey: 'old-business-id', identityRuleVersion: 'old-v1', createdAt }).run()
   d.insert(s.platformBusinessRecordVersion).values({ id: 53, recordId: 47, hashAlgorithm: 'legacy-hash-v1', contentHash: 'unrecomputed-hash', canonicalRawJson: '{ "raw": "old🙂" }', createdAt }).run()
   d.insert(s.platformBusinessObservation).values({ relationId: 43, recordId: 47, versionId: 53, identityState: 'resolved', contentState: 'verified', keySource: 'relation_key', projectionRuleVersion: 'old-v1', inputFingerprint: 'old-input-fingerprint', indexedAt: createdAt, batchId: 31 }).run()
@@ -91,6 +92,8 @@ it('M02 old file upgrade preserves all rows IDs hashes proofs audits jobs receip
     expect(currentCandidateSqlFor(db)).toBe(currentCandidateSql)
     migrate(drizzle(db), { migrationsFolder: folder })
     expect(contents(db, baseline)).toEqual(before)
+    expect(db.prepare('select id,last_collected_at from platform_query').all()).toEqual([{ id: 41, last_collected_at: null }])
+    expect(db.prepare('select id,title_raw from platform_relation').all()).toEqual([{ id: 43, title_raw: null }])
     // Every baseline object must survive; later migrations may only add objects.
     const afterObjects = schemaObjects(db) as { name: string; type: string }[]
     const afterKeys = new Set(afterObjects.map(row => `${row.type}:${row.name}`))

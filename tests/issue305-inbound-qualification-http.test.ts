@@ -12,6 +12,7 @@ import { useDb, schema as s } from '../db/client'
 import { enterpriseReads } from '../server/utils/enterprise-read'
 import { readEvidenceToken113 } from '../server/utils/evidence-impact-113'
 import { writeCurrentWorkbook } from '../lib/roster/current-workbook'
+import { createCurrentCandidateReader } from '../lib/roster/current-qualification'
 import type { CurrentQualifiedResult } from '../lib/roster/current-qualified-query'
 import type { CurrentQualifiedFilter } from '../lib/roster/current-qualified-query'
 import type { currentQualifiedFilterSchema } from '../server/utils/current-qualified-filter'
@@ -24,7 +25,7 @@ const db = useDb({ dbPath: join(dir, 'issue305.sqlite') }); active.db = db
 const titles = ['little_giant', 'specialized_sme', 'innovative_sme'] as const
 const year = new Date().getFullYear(), reawardYear = year - 1
 type Review = { decidedYear: number | null; reviewOutcome: 'failed' | null }
-const cases: { id: string; eligible: boolean; review?: Review; explicitAward: boolean }[] = [
+const cases: { id: string; eligible: boolean; review?: Review; explicitAward: boolean; formalAward?: boolean }[] = [
   { id: 'settled-history-explicit-reaward', eligible: true, explicitAward: true },
   { id: 'failed-history-later-explicit-reaward', eligible: true, review: { decidedYear: year - 3, reviewOutcome: 'failed' }, explicitAward: true },
   { id: 'same-year-failure-reaward', eligible: false, review: { decidedYear: reawardYear, reviewOutcome: 'failed' }, explicitAward: true },
@@ -32,6 +33,7 @@ const cases: { id: string; eligible: boolean; review?: Review; explicitAward: bo
   // A validity interval cannot restore a failed cycle without an explicit grant.
   { id: 'failed-history-interval-only', eligible: false, review: { decidedYear: year - 3, reviewOutcome: 'failed' }, explicitAward: false },
   { id: 'later-review-result-unknown', eligible: false, review: { decidedYear: year, reviewOutcome: null }, explicitAward: true },
+  { id: 'formal-reaward-positive-control', eligible: true, explicitAward: true, formalAward: true },
 ]
 const actor = { type: 'agent', id: 'issue305-inbound' } as const
 const headers = { authorization: 'Bearer issue305-synthetic', 'content-type': 'application/json' }
@@ -70,7 +72,8 @@ beforeAll(async () => {
     ids.set(name, enterprise.id)
     const record = db.insert(s.record).values({ enterpriseId: enterprise.id, titleCode: title, source: 'jxj', nameRaw: name }).returning().get()
     const events = [{ eventType: 'award' as const, year: 2020, decidedYear: 2020, batchSeq: 1 },
-      ...(c.review ? [{ eventType: 'review' as const, year: 2020, batchSeq: 1, ...c.review }] : [])]
+      ...(c.review ? [{ eventType: 'review' as const, year: 2020, batchSeq: 1, ...c.review }] : []),
+      ...(c.formalAward ? [{ eventType: 'award' as const, year: reawardYear, decidedYear: reawardYear, batchSeq: 1 }] : [])]
     for (const input of events) {
       const event = db.insert(s.recordEvent).values({ recordId: record.id, ...input }).returning().get()
       db.insert(s.recordEvidence).values({ recordEventId: event.id, sourceFile: 'issue305/inbound-history.pdf', attachment: c.id, listNo: event.id, page: 1 }).run()
@@ -101,40 +104,51 @@ afterAll(async () => {
   if (server) await new Promise<void>(resolve => server.close(() => resolve()))
   await enterpriseReads.close(); db.$client.close(); vi.unstubAllGlobals(); rmSync(dir, { recursive: true, force: true })
 })
-function assertEligible(result: CurrentQualifiedResult, title: typeof titles[number]) {
-  const expected = cases.filter(c => c.eligible).map(c => ids.get(`issue305-inbound-${title}-${c.id}`))
-  expect(result.total).toBe(2)
-  expect(result.rows.map(row => row.enterpriseId)).toEqual(expected)
-  for (const row of result.rows) expect(row).toMatchObject({ group: 'eligible', firstYear: 2020, recognition: { precision: 'year', year: reawardYear } })
+function assertFormalQualification(result: CurrentQualifiedResult, title: typeof titles[number]) {
+  // This positive control has a formal new award; the other six only have legacy intervals.
+  const formalId = ids.get(`issue305-inbound-${title}-formal-reaward-positive-control`)!
+  expect(result).toMatchObject({ total: 1, uncertainTotal: 0, responseVersion: 'current-qualified-478-v2',
+    rows: [{ enterpriseId: formalId, group: 'eligible', firstYear: 2020, recognition: { precision: 'year', year: reawardYear } }],
+    publishedPending: { rows: [], total: 0 } })
+  expect(result.rows.map(row => row.enterpriseId)).toEqual([formalId])
 }
-it.each(titles)('keeps reviewed inbound reaward and unresolved controls correct over current HTTP for %s', async title => {
+it.each(titles)('keeps legacy inbound intervals from reviving expired formal cycles over current HTTP for %s', async title => {
   const response = await fetch(base + '/api/roster/current-enterprises?' + new URLSearchParams({ titleCode: title, pageSize: '200' }))
   expect(response.status, await response.clone().text()).toBe(200)
-  assertEligible(await response.json(), title)
+  assertFormalQualification(await response.json(), title)
 })
-it.each(titles)('keeps reviewed inbound reaward and unresolved controls correct over SDK MCP for %s', async title => {
+it.each(titles)('keeps legacy inbound intervals from reviving expired formal cycles over SDK MCP for %s', async title => {
   const response = await client.callTool({ name: 'list_current_qualified_enterprises', arguments: { titleCode: title, pageSize: 200 } })
   expect(response.isError).not.toBe(true)
   const content = response.content
   if (!Array.isArray(content) || content[0]?.type !== 'text') throw new Error('Expected MCP text result')
-  assertEligible(JSON.parse(content[0].text), title)
+  assertFormalQualification(JSON.parse(content[0].text), title)
 })
-it.each(titles)('retains first award and pending controls in qualified XLSX for %s', async title => {
+it.each(titles)('retains all six expired formal histories and first awards in current XLSX for %s', async title => {
   const file = join(dir, `issue305-inbound-${title}.xlsx`)
   const result = await writeCurrentWorkbook(db.$client, title, file, () => {})
-  expect(result.counts).toEqual({ eligible: 2, pending: 4, excluded: 0 })
+  expect(result.counts).toEqual({ eligible: 1, pending: 0, excluded: 6 })
   const workbook = new ExcelJS.Workbook(); await workbook.xlsx.readFile(file)
-  for (const [eligible, sheet] of [[true, '有效企业'], [false, '待确认']] as const) {
+  for (const sheet of ['有效企业', '已到期', '已注销（吊销）', '已迁出', '未认定'] as const) {
     const actual: string[] = []
     workbook.getWorksheet(sheet)!.eachRow((row, index) => {
       if (index === 1) return
       actual.push(row.getCell(2).text); expect(row.getCell(6).text).toBe('2020')
       expect(row.getCell(7).text).toContain('2020年')
     })
-    expect(actual.sort()).toEqual(cases.filter(c => c.eligible === eligible).map(c => `issue305-inbound-${title}-${c.id}`).sort())
+    expect(actual.sort()).toEqual(cases.filter(c => sheet === '有效企业' ? c.formalAward : sheet === '已到期' ? !c.formalAward : false).map(c => `issue305-inbound-${title}-${c.id}`).sort())
   }
 })
-it('review probe: pending fact cannot undo reviewed legacy termination', async () => {
+it('preserves reviewed inbound historical outcomes through the explicit v1 compatibility reader', () => {
+  const read = createCurrentCandidateReader(db.$client)
+  for (const title of titles) for (const c of cases) {
+    const id = ids.get(`issue305-inbound-${title}-${c.id}`)!
+    const row = read(id, title, year, Date.now(), undefined, false, true, { assessmentVersion: 'enterprise-qualification-407-v1' })
+    expect(row.group, `${title}/${c.id}`).toBe(c.eligible ? 'eligible' : 'pending')
+    expect(row.firstYear).toBe(2020)
+  }
+})
+it('incomplete typed fact and legacy termination cannot change the expired formal status', async () => {
  const id = ids.values().next().value!
  const scope = {enterpriseId:id,titleCode:'little_giant',direction:'extra_in_miit'}
  const cur = await (await fetch(base+'/api/roster/decision-lifecycle/current?'+new URLSearchParams({...scope,enterpriseId:String(id)}))).json()
@@ -142,10 +156,10 @@ it('review probe: pending fact cannot undo reviewed legacy termination', async (
  const token=readEvidenceToken113(db,scope as any)
  await post({...scope,action:'maintain',expectedCurrentId:r.versionId,idempotencyKey:'probe-maintain',actor,basis:'Verified termination',ruleVersion:'probe',effectiveAt:'2024-01-01T00:00:00Z',reviewedEvidence:{latestRevisionId:token.latestRevisionId,projectionReady:token.projectionReady}})
  const read=async()=> (await (await fetch(base+`/api/roster/enterprises/${id}`)).json()).qualificationAssessment.titles.find((t:any)=>t.titleCode==='little_giant')
- expect(await read()).toMatchObject({group:'excluded',subject:{status:'terminated'}})
+ expect(await read()).toMatchObject({group:'excluded',effectiveQualification:{status:'expired'}})
  const {getEnterpriseFacts,preflightEnterpriseFact,commitEnterpriseFact}=await import('../server/utils/enterprise-facts')
  const request={action:'assert',expectedVersion:getEnterpriseFacts(db,id).version,idempotencyKey:'probe-pending',actor,basis:'Unknown registration observation',fact:{kind:'registration_status',source:{reference:'probe',statement:'Unknown'},observed:{precision:'year',value:'2024'},effective:{precision:'unknown',value:null},city:null}}
  const plan=preflightEnterpriseFact(db,id,request)
  commitEnterpriseFact(db,id,{request,planHash:plan.planHash})
- expect(await read(), JSON.stringify(await read())).toMatchObject({group:'excluded',subject:{status:'terminated'}})
+ expect(await read(), JSON.stringify(await read())).toMatchObject({group:'excluded',effectiveQualification:{status:'expired'}})
 })

@@ -987,3 +987,23 @@ describe('caught task interaction reports', () => {
     expect(document.body.textContent).toContain('下载未完成或文件校验失败')
   })
 })
+
+it('navigates the snapshot result link to the task section and shows unfinished as unknown rows', async () => {
+  state.detail = platformTask({ kind: 'difference-snapshot', label: '公布名单归档快照', outcome: null,
+    snapshot: { enterprises: 2, requests: 3, rows: 5, unfinished: 1, truncated: false,
+      positions: [{ enterpriseId: 12, source: 'queryList', rdjb: null, rows: null, page: 2 }] },
+    links: [{ label: '快照范围、计数与未完成位置', to: `/tasks?tab=platform&job=${platformTask().id}#snapshot-result` }],
+  })
+  state.query = { tab: 'platform', job: state.detail.id }
+  installFetch(({ url }) => url.startsWith('/api/task-center/') ? json(state.detail) : json(listOf([state.detail], true)))
+  await mountPage({ attach: true })
+  const dialog = await waitForSheet()
+  const link = Array.from(dialog.querySelectorAll('a')).find(a => a.textContent === '快照范围、计数与未完成位置')!
+  expect(link).toBeTruthy()
+  link.click(); await flushPromises()
+  expect(routerRef.current!.currentRoute.value.fullPath).toBe(`/tasks?tab=platform&job=${state.detail.id}#snapshot-result`)
+  const section = dialog.querySelector('#snapshot-result')!
+  expect(section.textContent).toContain('本任务选定公布企业 · 2 家')
+  expect(section.textContent).toContain('未完成 1 范围')
+  expect(section.textContent).toContain('第 2 页待续 · 行数 未知')
+})
