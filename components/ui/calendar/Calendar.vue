@@ -21,7 +21,9 @@ const delegatedProps = reactiveOmit(props, "class", "layout", "placeholder")
 
 const placeholder = useVModel(props, "placeholder", emits, {
   passive: true,
-  defaultValue: props.defaultPlaceholder ?? today(getLocalTimeZone()),
+  defaultValue: props.defaultPlaceholder
+    ?? (Array.isArray(props.modelValue) ? props.modelValue[0] : props.modelValue)
+    ?? today(getLocalTimeZone()),
 }) as Ref<DateValue>
 
 const formatter = useDateFormatter(props.locale ?? "en")
@@ -51,6 +53,7 @@ const forwarded = useForwardPropsEmits(delegatedProps, emits)
         </div>
         <NativeSelect
           class="text-xs h-8 pr-6 pl-2 text-transparent relative"
+          aria-label="月份"
           :model-value="date.month"
           @change="(e: Event) => {
             placeholder = placeholder.set({
@@ -74,6 +77,7 @@ const forwarded = useForwardPropsEmits(delegatedProps, emits)
         </div>
         <NativeSelect
           class="text-xs h-8 pr-6 pl-2 text-transparent relative"
+          aria-label="年份"
           :model-value="date.year"
           @change="(e: Event) => {
             placeholder = placeholder.set({
@@ -81,6 +85,9 @@ const forwarded = useForwardPropsEmits(delegatedProps, emits)
             })
           }"
         >
+          <NativeSelectOption v-if="!yearRange.some(year => year.year === date.year)" :value="date.year">
+            {{ formatter.custom(toDate(date), { year: 'numeric' }) }}
+          </NativeSelectOption>
           <NativeSelectOption v-for="(year) in yearRange" :key="year.toString()" :value="year.year" :selected="date.year === year.year">
             {{ formatter.custom(toDate(year), { year: 'numeric' }) }}
           </NativeSelectOption>
