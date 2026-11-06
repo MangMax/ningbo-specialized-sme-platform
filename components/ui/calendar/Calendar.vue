@@ -31,10 +31,10 @@ const formatter = useDateFormatter(props.locale ?? "en")
 const yearRange = computed(() => {
   // Browsing the controlled placeholder must not move the available year window.
   const range = props.yearRange ?? createYearRange({
-    start: props?.minValue ?? (props.defaultPlaceholder ?? today(getLocalTimeZone()))
+    start: props.minValue ?? (props.defaultPlaceholder ?? today(getLocalTimeZone()))
       .cycle("year", -100),
 
-    end: props?.maxValue ?? (props.defaultPlaceholder ?? today(getLocalTimeZone()))
+    end: props.maxValue ?? (props.defaultPlaceholder ?? today(getLocalTimeZone()))
       .cycle("year", 10),
   })
   const selectedDates = Array.isArray(props.modelValue) ? props.modelValue : [props.modelValue]
