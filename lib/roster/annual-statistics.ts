@@ -1,4 +1,4 @@
-import { groupBy } from 'es-toolkit'
+import { countBy, groupBy } from 'es-toolkit'
 import type Database from 'better-sqlite3'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import type * as schema from '../../db/schema'
@@ -80,10 +80,11 @@ export function readAnnualStatistics(db: BetterSQLite3Database<typeof schema>, f
     const facts = client.prepare('select enterprise_id enterpriseId,fact_id factId,revision,status,fact,basis from enterprise_fact_revision order by id').all() as Fact[]
     const heads = [...new Map(facts.map(f => [`${f.enterpriseId}/${f.factId}`, f])).values()]
     const pairKey = (row: { enterpriseId: number; titleCode: string }) => `${row.enterpriseId}/${row.titleCode}`
-    const formalByPair = groupBy(events.filter(e => e.source === 'jxj' && ['award', 'review'].includes(e.eventType)), pairKey)
+    const formalEvents = events.filter(e => e.source === 'jxj' && ['award', 'review'].includes(e.eventType))
+    const formalByPair = groupBy(formalEvents, pairKey)
     const evidenceByPair = groupBy(evidence, pairKey)
     const factsByEnterprise = groupBy(heads, f => f.enterpriseId)
-    const knownYears = events.filter(e => e.source === 'jxj' && ['award', 'review'].includes(e.eventType)).flatMap(e => [factTime(e), e.formalValidity?.interval ? Number(e.formalValidity.interval.validFrom.slice(0, 4)) : null]).filter((y): y is number => y != null && y >= 1900 && y <= currentYear)
+    const knownYears = formalEvents.flatMap(e => [factTime(e), e.formalValidity?.interval ? Number(e.formalValidity.interval.validFrom.slice(0, 4)) : null]).filter((y): y is number => y != null && y >= 1900 && y <= currentYear)
     const start = Math.min(currentYear, ...knownYears)
     const selectedYear = filter.year ?? currentYear
     const project = (year: number) => {
@@ -112,7 +113,8 @@ export function readAnnualStatistics(db: BetterSQLite3Database<typeof schema>, f
           witnessIds: witnesses.map(e => e.id),
         }]
       })
-      return { year, evaluationDay: day, rows, titles: TITLE_ORDER.map(titleCode => ({ titleCode, effective: rows.filter(r => r.titleCode === titleCode && r.status === 'effective').length, pending: rows.filter(r => r.titleCode === titleCode && r.status === 'pending').length })) }
+      const counts: Record<string, number> = countBy(rows, row => `${row.titleCode}/${row.status}`)
+      return { year, evaluationDay: day, rows, titles: TITLE_ORDER.map(titleCode => ({ titleCode, effective: counts[`${titleCode}/effective`] ?? 0, pending: counts[`${titleCode}/pending`] ?? 0 })) }
     }
     const projections = Array.from({ length: currentYear - start + 1 }, (_, i) => project(start + i))
     const selected = (projections.find(p => p.year === selectedYear) ?? project(selectedYear)).rows.filter(r => (!filter.title || r.titleCode === filter.title) && r.status === filter.status)

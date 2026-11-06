@@ -1,3 +1,4 @@
+import { statisticsInteger } from '../../utils/statistics-query'
 import { useDb } from '@db'
 import { TITLE_ORDER } from '~~/lib/labels'
 import { readPublishedStatistics } from '~~/lib/roster/published-statistics'
@@ -11,10 +12,5 @@ defineRouteMeta({ openAPI: { tags: ['统计'], summary: '正式公布累计企�
 export default defineEventHandler(event => {
   const q = getQuery(event)
   if (q.title !== undefined && (typeof q.title !== 'string' || !TITLE_ORDER.includes(q.title)) || q.status !== undefined && !['confirmed', 'pending'].includes(q.status as string)) throw createError({ statusCode: 400, statusMessage: 'Invalid published statistics scope' })
-  const integer = (value: unknown, fallback: number, max: number) => {
-    if (value === undefined) return fallback
-    if (typeof value !== 'string' || !/^\d+$/.test(value) || Number(value) < 1 || Number(value) > max) throw createError({ statusCode: 400, statusMessage: 'Invalid pagination' })
-    return Number(value)
-  }
-  return readPublishedStatistics(useDb(), { title: q.title as string | undefined, status: (q.status as string) ?? 'confirmed', page: integer(q.page, 1, Number.MAX_SAFE_INTEGER), pageSize: integer(q.pageSize, 25, 200) })
+  return readPublishedStatistics(useDb(), { title: q.title as string | undefined, status: (q.status as string) ?? 'confirmed', page: statisticsInteger(q.page, 1, Number.MAX_SAFE_INTEGER, 'Invalid pagination'), pageSize: statisticsInteger(q.pageSize, 25, 200, 'Invalid pagination') })
 })

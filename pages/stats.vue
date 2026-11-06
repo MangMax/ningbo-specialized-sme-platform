@@ -5,7 +5,6 @@ const reducedMotion = useReducedMotion()
 import StatisticsMovementsSection from '@/components/statistics/StatisticsMovementsSection.vue'
 import type { PublishedStatistics } from '~~/lib/roster/published-statistics'
 import { TITLES, TITLE_ORDER } from '~~/lib/labels'
-import { Skeleton } from '@/components/ui/skeleton'
 const title = ref('')
 const status = ref('confirmed')
 const page = ref(1)
@@ -14,7 +13,6 @@ const result = shallowRef<PublishedStatistics>()
 const loading = ref(false)
 const failed = ref(false)
 const open = ref(false)
-function openDetail() { open.value = true }
 let sequence = 0
 async function load() {
   const current = ++sequence
@@ -27,7 +25,7 @@ async function load() {
   finally { if (current === sequence) loading.value = false }
 }
 watch([title, status, page, pageSize], load, { immediate: true })
-function select(code: string, state: string) { title.value = code; status.value = state; page.value = 1; void openDetail() }
+function select(code: string, state: string) { title.value = code; status.value = state; page.value = 1; open.value = true }
 const target = computed(() => `${TITLES[title.value] ?? '全部称号'} · ${status.value === 'pending' ? '身份待核' : '累计公布'} · 第 ${page.value} 页`)
 import '@/assets/css/statistics.css'
 import { ArrowUpRight, ArrowRight } from '@lucide/vue'

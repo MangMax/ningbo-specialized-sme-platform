@@ -13,7 +13,6 @@ const year = ref('today'), title = ref('specialized_sme'), status = ref('effecti
 const result = shallowRef<AnnualStatistics>()
 const loading = ref(false), failed = ref(false)
 const open = ref(false)
-function openDetail() { open.value = true }
 let sequence = 0
 onBeforeUnmount(() => { sequence++ })
 async function load() {

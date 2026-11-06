@@ -1,10 +1,9 @@
+import { countBy } from 'es-toolkit'
 import type Database from 'better-sqlite3'
 import { createCurrentQualificationAssessmentReader, CURRENT_RULE_VERSION, QUALIFICATION_ASSESSMENT_VERSION, qualificationDay } from './current-qualification'
 import { CURRENT_TITLES, type CurrentTitle } from './current-titles'
 
-/** Resolved once inside the caller's read transaction. No global row cache.
- * #515 can group rows by current district and select detail from these same rows.
- * The caller owns the transaction for summary, detail and any annual projection. */
+/** Summary and detail share the caller’s read transaction and evaluation time. */
 export function readStatisticsEffectiveSnapshot(db: Database.Database, asOf: number) {
   const reader = createCurrentQualificationAssessmentReader(db)
   const pairs = db.prepare(`select distinct r.enterprise_id enterpriseId,r.title_code titleCode,e.name,e.uscc_norm uscc,e.district
@@ -13,9 +12,10 @@ export function readStatisticsEffectiveSnapshot(db: Database.Database, asOf: num
     const assessed = reader.readEffectiveTitle(pair.enterpriseId, pair.titleCode, asOf)
     return { ...pair, status: assessed.effectiveStatus, notes: [] as string[], basis: assessed.basis, references: [] as string[] }
   })
+  const counts = countBy(rows.filter(row => row.status === 'effective'), row => row.titleCode)
   return { asOf: new Date(asOf).toISOString(), evaluationDay: qualificationDay(asOf), timeZone: 'Asia/Shanghai' as const,
     ruleVersion: CURRENT_RULE_VERSION, assessmentVersion: QUALIFICATION_ASSESSMENT_VERSION, grain: 'enterprise_title' as const,
-    rows, titles: CURRENT_TITLES.map(titleCode => ({ titleCode, effective: rows.filter(r => r.titleCode === titleCode && r.status === 'effective').length })) }
+    rows, titles: CURRENT_TITLES.map(titleCode => ({ titleCode, effective: counts[titleCode] ?? 0 })) }
 }
 
 /** Hydrate diagnostics only after the caller has counted, filtered and paginated.

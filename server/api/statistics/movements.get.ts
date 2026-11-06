@@ -1,3 +1,4 @@
+import { statisticsInteger } from '../../utils/statistics-query'
 import { useDb } from '@db'
 import { MOVEMENT_KINDS, type MovementKind, readMovementStatistics } from '~~/lib/roster/movement-statistics'
 
@@ -11,10 +12,5 @@ defineRouteMeta({ openAPI: { tags: ['统计'], summary: '全部已录入企业�
 export default defineEventHandler(event => {
   const q = getQuery(event)
   if (q.kind !== undefined && !MOVEMENT_KINDS.includes(q.kind as MovementKind) || q.status !== undefined && !['confirmed', 'unknown', 'pending'].includes(q.status as string) || q.year !== undefined && (typeof q.year !== 'string' || !/^(unknown|[0-9]{4})$/.test(q.year))) throw createError({ statusCode: 400, statusMessage: 'Invalid movement scope' })
-  const integer = (value: unknown, fallback: number, max: number) => {
-    if (value === undefined) return fallback
-    if (typeof value !== 'string' || !/^\d+$/.test(value) || Number(value) < 1 || Number(value) > max) throw createError({ statusCode: 400, statusMessage: 'Invalid pagination' })
-    return Number(value)
-  }
-  return readMovementStatistics(useDb(), { kind: q.kind as MovementKind | undefined, year: q.year as string | undefined, status: (q.status as string) ?? 'confirmed', page: integer(q.page, 1, Number.MAX_SAFE_INTEGER), pageSize: integer(q.pageSize, 25, 200) })
+  return readMovementStatistics(useDb(), { kind: q.kind as MovementKind | undefined, year: q.year as string | undefined, status: (q.status as string) ?? 'confirmed', page: statisticsInteger(q.page, 1, Number.MAX_SAFE_INTEGER, 'Invalid pagination'), pageSize: statisticsInteger(q.pageSize, 25, 200, 'Invalid pagination') })
 })

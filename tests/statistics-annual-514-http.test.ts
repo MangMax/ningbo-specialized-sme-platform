@@ -124,8 +124,15 @@ it('agrees with current effective HTTP while deduplicating titles and retaining 
     const current = await fetch(base.replace('/api/statistics/annual', '/api/roster/current-enterprises') + `?titleCode=${title}&pageSize=200`)
     expect(current.status).toBe(200)
     const body = await current.json()
-    expect(body.rows.map((r: any) => r.enterpriseId).sort((a: number,b: number) => a-b)).toEqual(await ids(2026, 'effective', title))
-    expect(body.total).toBe((await ids(2026, 'effective', title)).length)
+    const fixtureTime = Date.now()
+    try {
+      // The independent reader worker does not inherit Vitest's fake Date.
+      vi.setSystemTime(new Date(body.snapshotStartedAt))
+      const annual = (await read(`?title=${title}&pageSize=200`)).body
+      expect(annual.asOf).toBe(body.snapshotStartedAt)
+      expect(body.rows.map((r: any) => r.enterpriseId).sort((a: number,b: number) => a-b)).toEqual(annual.rows.map((r: any) => r.enterpriseId))
+      expect(body.total).toBe(annual.total)
+    } finally { vi.setSystemTime(fixtureTime) }
   }
 })
 it('keeps an instant at next-year midnight outside the preceding stock', async () => {

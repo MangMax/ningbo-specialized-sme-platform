@@ -1,3 +1,4 @@
+import { statisticsInteger } from '../../utils/statistics-query'
 import { useDb } from '@db'
 import { TITLE_ORDER } from '~~/lib/labels'
 import { readDistrictStatistics } from '~~/lib/roster/district-statistics'
@@ -11,11 +12,6 @@ defineRouteMeta({ openAPI: { tags: ['统计'], summary: '当前有效企业按�
 ], responses: { 200: { description: 'districts/titles 全量汇总；rows/total 为相同有效行集按称号及属地筛选，先计数后分页；含时点及规则版本。' } } } })
 export default defineEventHandler(event => {
   const q = getQuery(event), asOf = Date.now()
-  const integer = (value: unknown, fallback: number, max: number, min = 1) => {
-    if (value === undefined) return fallback
-    if (typeof value !== 'string' || !/^\d+$/.test(value) || Number(value) < min || Number(value) > max) throw createError({ statusCode: 400, statusMessage: 'Invalid district statistics scope' })
-    return Number(value)
-  }
   if (q.title !== undefined && (typeof q.title !== 'string' || !TITLE_ORDER.includes(q.title)) || q.district !== undefined && (typeof q.district !== 'string' || !q.district.trim() || q.district.length > 100 || q.district !== q.district.trim())) throw createError({ statusCode: 400, statusMessage: 'Invalid district statistics scope' })
-  return readDistrictStatistics(useDb(), { title: q.title as string | undefined, district: q.district as string | undefined, page: integer(q.page, 1, Number.MAX_SAFE_INTEGER), pageSize: integer(q.pageSize, 25, 200) }, asOf)
+  return readDistrictStatistics(useDb(), { title: q.title as string | undefined, district: q.district as string | undefined, page: statisticsInteger(q.page, 1, Number.MAX_SAFE_INTEGER, 'Invalid district statistics scope'), pageSize: statisticsInteger(q.pageSize, 25, 200, 'Invalid district statistics scope') }, asOf)
 })

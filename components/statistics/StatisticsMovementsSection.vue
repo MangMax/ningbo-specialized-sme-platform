@@ -17,7 +17,6 @@ const statusLabel = (s: string) => s === 'pending' ? '待核' : s === 'unknown' 
 const yearLabel = (y?: string) => !y || y === 'all' ? '全部发生年' : y === 'unknown' ? '发生年未知' : `${y} 年`
 const target = computed(() => `${yearLabel(year.value)} · ${labels[kind.value]} · ${statusLabel(status.value)} · 第 ${page.value} 页`)
 const open = ref(false)
-function openDetail() { open.value = true }
 let sequence = 0
 async function load() {
   const current = ++sequence
@@ -30,7 +29,7 @@ async function load() {
   finally { if (current === sequence) loading.value = false }
 }
 watch([year, kind, status, page, pageSize], load, { immediate: true })
-function select(k: MovementKind, s: string) { year.value = result.value?.year ?? 'all'; kind.value = k; status.value = s; page.value = 1; void openDetail() }
+function select(k: MovementKind, s: string) { year.value = result.value?.year ?? 'all'; kind.value = k; status.value = s; page.value = 1; open.value = true }
 </script>
 <template>
 <section class="stats-movement-panel" aria-labelledby="movements-title" :aria-busy="loading">

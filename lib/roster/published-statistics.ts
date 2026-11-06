@@ -1,6 +1,7 @@
+import { countBy } from 'es-toolkit'
 import type { Database } from 'better-sqlite3'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
-import * as schema from '../../db/schema'
+import type * as schema from '../../db/schema'
 import { TITLE_ORDER } from '../labels'
 
 /** Formal award history only. Current qualification, platform maintenance and reviews
@@ -16,15 +17,17 @@ export function readPublishedStatistics(db: BetterSQLite3Database<typeof schema>
       or exists(select 1 from record rr,json_each(coalesce(rr.quality_flags,'[]')) f where rr.enterprise_id=e.id and rr.title_code=r.title_code and f.value='name_ambiguous') then 'pending' else 'confirmed' end status
       from enterprise e join record r on r.enterprise_id=e.id join record_event v on v.record_id=r.id
       where ${predicate} group by e.id,r.title_code order by e.id,r.title_code`).all() as { enterpriseId: number; name: string; uscc: string | null; titleCode: string; status: string }[]
+    const counts = countBy(pairs, row => `${row.titleCode}/${row.status}`)
     const titles = TITLE_ORDER.map(titleCode => ({ titleCode,
-      confirmed: pairs.filter(r => r.titleCode === titleCode && r.status === 'confirmed').length,
-      pending: pairs.filter(r => r.titleCode === titleCode && r.status === 'pending').length,
+      confirmed: counts[`${titleCode}/confirmed`] ?? 0,
+      pending: counts[`${titleCode}/pending`] ?? 0,
     }))
     const selected = pairs.filter(r => (!filter.title || r.titleCode === filter.title) && r.status === filter.status)
-    const rows = selected.slice((filter.page - 1) * filter.pageSize, filter.page * filter.pageSize).map(row => ({ ...row,
-      evidence: client.prepare(`select v.id eventId,ev.id evidenceId,ev.source_file sourceFile,ev.attachment,ev.list_no listNo,ev.page
+    const evidenceQuery = client.prepare(`select v.id eventId,ev.id evidenceId,ev.source_file sourceFile,ev.attachment,ev.list_no listNo,ev.page
         from record r join record_event v on v.record_id=r.id join record_evidence ev on ev.record_event_id=v.id
-        where r.enterprise_id=? and r.title_code=? and v.event_type='award' order by ev.id`).all(row.enterpriseId, row.titleCode) as { eventId: number; evidenceId: number; sourceFile: string; attachment: string | null; listNo: number | null; page: number | null }[],
+        where r.enterprise_id=? and r.title_code=? and v.event_type='award' order by ev.id`)
+    const rows = selected.slice((filter.page - 1) * filter.pageSize, filter.page * filter.pageSize).map(row => ({ ...row,
+      evidence: evidenceQuery.all(row.enterpriseId, row.titleCode) as { eventId: number; evidenceId: number; sourceFile: string; attachment: string | null; listNo: number | null; page: number | null }[],
     }))
     return { grain: 'enterprise_title' as const, basis: 'formal_award_evidence' as const, titles, rows, total: selected.length, ...filter }
   })
