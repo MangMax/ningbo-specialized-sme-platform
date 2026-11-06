@@ -438,3 +438,23 @@ it.each([409, 503])('keeps the basis after preflight failure %i and commits only
   expect(fetch.mock.calls.filter(([url]) => url.endsWith('browser-commit'))).toHaveLength(1)
   expect(document.body.textContent).toContain('已保存平台对应决定')
 })
+
+it('explains a stale candidate contract block without offering the impossible refresh-submit loop', async () => {
+  capability()
+  const fetch = vi.fn(async (url: string) => {
+    if (url.endsWith('browser-preflight')) throw { statusCode: 409, data: { error: { code: 'plan_mismatch', message: 'Source row changed since correspondence decision' } } }
+    return { id: 4, revision: 1, status: 'candidate' }
+  })
+  vi.stubGlobal('$fetch', fetch)
+  wrapper = mountControl({ id: 4, revision: 1, status: 'candidate' }); await flushPromises()
+  button('不对应').click(); await flushPromises()
+  const area = document.querySelector('textarea')!; area.value = '保留原候选的判断依据'; area.dispatchEvent(new Event('input', { bubbles: true })); await flushPromises()
+  button('提交决定').click(); await flushPromises()
+  expect(document.body.textContent).toContain('候选来源已变化，当前服务暂不支持更新此候选的来源依据')
+  expect(button('刷新后重新核对')).toBeUndefined()
+  expect(button('提交决定')).toBeUndefined()
+  expect(area.value).toBe('保留原候选的判断依据')
+  area.value += '补充'; area.dispatchEvent(new Event('input', { bubbles: true })); await flushPromises()
+  expect(button('提交决定')).toBeUndefined()
+  expect(fetch.mock.calls.filter(([url]) => url.endsWith('browser-commit'))).toHaveLength(0)
+})

@@ -50,6 +50,8 @@ const pending = ref(false)
 const attempted = ref(false)
 const error = ref('')
 const conflict = ref(false)
+const blockedCandidateRevision = ref<number | null>(null)
+const candidateSourceBlocked = computed(() => point.value?.status === 'candidate' && point.value.revision === blockedCandidateRevision.value)
 const receipt = ref<{ correspondenceIds: number[] } | null>(null)
 const success = ref('')
 const request = ref<{ idempotencyKey: string; basis: string; operations: Record<string, unknown>[] } | null>(null)
@@ -81,7 +83,7 @@ onBeforeUnmount(() => { generation++ })
 // Keep unresolved requests with their business object for this mounted session.
 // Switching objects never reuses another object's key, receipt or loading state.
 function captureContext() {
-  return { previousAction, pointLoaded: pointLoaded.value, choicesLoaded: choicesLoaded.value, basis: basis.value, point: point.value, attempted: attempted.value, error: error.value, conflict: conflict.value, receipt: receipt.value, success: success.value, request: request.value, plan: plan.value, replacements: replacements.value, replacementFailed: replacementFailed.value, replacementPage: replacementPage.value, selected: selected.value }
+  return { blockedCandidateRevision: blockedCandidateRevision.value, previousAction, pointLoaded: pointLoaded.value, choicesLoaded: choicesLoaded.value, basis: basis.value, point: point.value, attempted: attempted.value, error: error.value, conflict: conflict.value, receipt: receipt.value, success: success.value, request: request.value, plan: plan.value, replacements: replacements.value, replacementFailed: replacementFailed.value, replacementPage: replacementPage.value, selected: selected.value }
 }
 let restoringContext = false
 const contexts = new Map<string, ReturnType<typeof captureContext>>()
@@ -90,6 +92,7 @@ watch(() => `${props.edge.type}:${props.edge.eventId}:${props.edge.relationId}`,
   generation++; action.value = null; pending.value = false
   const saved = contexts.get(key)
   restoringContext = true
+  blockedCandidateRevision.value = saved?.blockedCandidateRevision ?? null
   previousAction = saved?.previousAction ?? null
   pointLoaded.value = saved?.pointLoaded ?? false; choicesLoaded.value = saved?.choicesLoaded ?? false
   basis.value = saved?.basis ?? ''; point.value = saved?.point ?? null; attempted.value = saved?.attempted ?? false
@@ -145,7 +148,7 @@ const statePermitsAction = computed(() => {
   if (!point.value) return !props.existing && ['confirm', 'reject'].includes(action.value ?? '')
   return ['confirm', 'reject'].includes(action.value ?? '') ? point.value.status === 'candidate' : point.value.status === 'confirmed'
 })
-const canPreflight = computed(() => statePermitsAction.value && !!basis.value.trim() && !pending.value && !attempted.value && !receipt.value && !conflict.value && (action.value !== 'correct' || !!target.value))
+const canPreflight = computed(() => !candidateSourceBlocked.value && statePermitsAction.value && !!basis.value.trim() && !pending.value && !attempted.value && !receipt.value && !conflict.value && (action.value !== 'correct' || !!target.value))
 async function preflight() {
   if (!canPreflight.value) return
   const token = generation
@@ -177,6 +180,12 @@ async function preflight() {
 function showError(cause: unknown) {
   const failure = cause as { statusCode?: number; status?: number; data?: { error?: { code?: string; message?: string } } }
   const code = failure.data?.error?.code
+  if (point.value?.status === 'candidate' && code === 'plan_mismatch' && failure.data?.error?.message === 'Source row changed since correspondence decision') {
+    blockedCandidateRevision.value = point.value.revision
+    conflict.value = true
+    error.value = ''
+    return
+  }
   conflict.value = failure.statusCode === 409 || failure.status === 409 || ['ambiguous_candidate', 'state_changed'].includes(code ?? (cause instanceof Error ? cause.message : ''))
   error.value = conflict.value ? '对应或来源已变化，本次没有覆盖新决定。草稿保留；刷新后重新核对并提交。' : `提交未完成，草稿和预检保留，可重试。${code ? `（${code}）` : ''}`
 }
@@ -289,8 +298,9 @@ async function refreshConflict() {
         <p v-if="attempted && !receipt && !pending && !success" role="status">提交结果尚待确认，请使用原请求重试。</p>
         <p v-if="error" role="alert">{{ error }}</p><p v-if="success" role="status">{{ success }}</p>
         <div class="flex flex-wrap gap-2">
-          <Button v-if="!conflict && !success" :disabled="pending || (!attempted && !receipt && !canPreflight)" @click="submit">{{ pending ? '正在保存…' : receipt ? '重试读回' : attempted ? '重试提交' : '提交决定' }}</Button>
-          <Button v-if="conflict" variant="outline" :disabled="pending" @click="refreshConflict">刷新后重新核对</Button>
+          <p v-if="candidateSourceBlocked" role="alert" class="text-base">候选来源已变化，当前服务暂不支持更新此候选的来源依据。原值、决定历史与本次草稿保留；刷新当前对应不能解决此问题，需先补充候选来源重新核验能力。</p>
+          <Button v-if="!candidateSourceBlocked && !conflict && !success" :disabled="pending || (!attempted && !receipt && !canPreflight)" @click="submit">{{ pending ? '正在保存…' : receipt ? '重试读回' : attempted ? '重试提交' : '提交决定' }}</Button>
+          <Button v-if="conflict && !candidateSourceBlocked" variant="outline" :disabled="pending" @click="refreshConflict">刷新后重新核对</Button>
           <Button variant="ghost" :disabled="pending" @click="action = null">{{ success ? '完成' : '保留草稿并关闭' }}</Button>
         </div>
         </div>

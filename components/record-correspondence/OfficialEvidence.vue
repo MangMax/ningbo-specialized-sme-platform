@@ -14,6 +14,7 @@ const emit = defineEmits<{ preview: []; 'page-open': [event: MouseEvent] }>()
 const checkAttempt = ref(0)
 const availability = ref<'checking' | 'available' | 'missing' | 'unknown'>('checking')
 const pageState = computed(() => evidencePageState(props.evidence.sourceFile, props.evidence.page))
+const focusKey = computed(() => JSON.stringify([props.evidence.sourceFile, props.evidence.attachment, props.evidence.listNo, props.evidence.page]))
 const previewHref = computed(() => evidencePreviewHref({ ...props.evidence, back: props.back }))
 onMounted(() => watch([() => props.evidence.sourceFile, checkAttempt], async ([path], _previous, onCleanup) => {
   const controller = new AbortController()
@@ -36,7 +37,7 @@ onMounted(() => watch([() => props.evidence.sourceFile, checkAttempt], async ([p
     <p v-if="evidence.attachment" class="break-words [overflow-wrap:anywhere]">附件 / 名单段：{{ evidence.attachment }}</p>
     <p class="text-muted-foreground">
       <span v-if="evidence.listNo != null">序号 {{ evidence.listNo }} · </span>
-      <NuxtLink v-if="pageState === 'assigned' && availability === 'available'" :to="previewHref" class="text-primary tabular-nums underline underline-offset-2" @click="emit('page-open', $event)">第 {{ evidence.page }} 页</NuxtLink>
+      <NuxtLink v-if="pageState === 'assigned' && availability === 'available'" :to="previewHref" :data-evidence-return-focus="focusKey + 'page'" class="text-primary tabular-nums underline underline-offset-2" @click="emit('page-open', $event)">第 {{ evidence.page }} 页</NuxtLink>
       <span v-else-if="pageState === 'assigned'">已记录第 {{ evidence.page }} 页</span>
       <span v-else-if="pageState === 'pending'">页码待核</span>
       <span v-else>这类文件没有可复核的页码</span>
@@ -49,7 +50,7 @@ onMounted(() => watch([() => props.evidence.sourceFile, checkAttempt], async ([p
     <div v-if="availability === 'available'" class="flex flex-wrap items-center gap-2">
       <template v-if="isPreviewable(evidence.sourceFile)">
         <Button v-if="previewInPlace" variant="outline" size="sm" @click="emit('preview')">查看原文件</Button>
-        <NuxtLink v-else :to="previewHref" class="text-primary underline underline-offset-2" @click="emit('page-open', $event)">查看原文件</NuxtLink>
+        <NuxtLink v-else :to="previewHref" :data-evidence-return-focus="focusKey + 'file'" class="text-primary underline underline-offset-2" @click="emit('page-open', $event)">查看原文件</NuxtLink>
       </template>
       <a v-else :href="fileUrl(evidence.sourceFile)" target="_blank" rel="noopener" class="text-primary underline underline-offset-2">下载原文件</a>
     </div>
