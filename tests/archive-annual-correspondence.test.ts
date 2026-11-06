@@ -428,17 +428,44 @@ it.each([{ name: 'rejected', status: 'rejected' as const }, { name: 'unlinked', 
   expect(spy).toHaveBeenCalledOnce(); spy.mockRestore()
   expect(f.jobs()[0]!.state).toBe('done')
   const row = f.rows()[0]!
+  expect(row.status).toBe(status)
   const audit = f.audits()
+  const oldAnnual = f.jobs()
   const appended = f.input(2), old = f.input().payload.platformQueries![0]!.relations![0]!
+  appended.payload.platformQueries![0]!.queriedAt = '2026-10-24T00:00:01Z'
   appended.payload.platformQueries![0]!.relations = [{ ...old, sequenceNo: 2 }]
   const next = commitRosterImport(f.db, appended); await whenIdle()
-  expect(next.candidateTaskIds).not.toEqual(first.candidateTaskIds)
-  const job = f.jobs().at(-1)!
+  expect(next.status).toBe('committed')
+  expect(next.error).toBeNull()
+  expect(next.summary.failed).toBe(0)
+  expect(next.items).toHaveLength(1)
+  expect(next.candidateTaskIds).toHaveLength(1)
+  const candidateId = next.candidateTaskIds[0]!
+  expect(candidateId).toMatch(JOB_ID_RE)
+  expect(first.candidateTaskIds).not.toContain(candidateId)
+  const query = f.db.select().from(s.platformQuery).where(eq(s.platformQuery.queriedAt, '2026-10-24T00:00:01Z')).get()
+  expect(query).toBeDefined()
+  const candidate = getJob(f.db, candidateId)
+  expect(candidate).toMatchObject({ kind: 'event-archive-candidates', state: 'done', params: { queryId: query!.id } })
+  expect(next.items).toContainEqual(expect.objectContaining({ kind: 'platform_query', ref: `query:${query!.id}`, ok: true }))
+  expect((candidate!.result as CandidateJobResult).items.map(item => item.eventId)).toEqual([f.events[0]!.id])
+  const freshAnnual = f.jobs().filter(job => !oldAnnual.some(old => old.id === job.id))
+  expect(freshAnnual).toHaveLength(1)
+  const job = freshAnnual[0]!
+  expect(job.id).toMatch(JOB_ID_RE)
+  const generation = readAnnualWriteScope(f.db, f.events[0]!.id)!.generation
+  expect(generation).not.toBe((oldAnnual[0]!.result as AnnualTaskResult).events[0]!.generation)
+  const identity = createHash('sha256').update(JSON.stringify({ archiveGeneration: candidateId, candidateJobId: candidateId,
+    throughEventId: (candidate!.result as CandidateJobResult).throughEventId, eventIds: [f.events[0]!.id] })).digest('hex')
+  expect(job.params).toMatchObject({ eventIds: [f.events[0]!.id], clientRequestIds: [`archive-annual:${identity}`],
+    sourceGenerations: [{ eventId: f.events[0]!.id, generation }] })
   expect(job.state).toBe('done')
   const result = job.result as AnnualTaskResult
+  expect(result.events).toHaveLength(1)
+  expect(result.events[0]).toMatchObject({ eventId: f.events[0]!.id, generation })
   expect(result.events[0]).toMatchObject({ status: 'done', finalQualification: { status: 'blocked', reasons: ['protected_decision'] } })
   expect(result.events[0]!.outcomes[0]).toMatchObject({ status: 'protected', decisionRefs: [{ id: row.id, status }] })
-  expect(f.db.select().from(s.recordCorrespondence).where(eq(s.recordCorrespondence.id, row.id)).get()).toMatchObject({ status })
+  expect(f.db.select().from(s.recordCorrespondence).where(eq(s.recordCorrespondence.id, row.id)).get()).toEqual(row)
   expect(f.audits().filter(a => a.correspondenceId === row.id)).toEqual(audit.filter(a => a.correspondenceId === row.id))
 })
 
