@@ -9,7 +9,7 @@
  */
 import assert from 'node:assert/strict'
 import { spawnOwnedChild, stopOwnedChild, waitForChromeDevTools } from './lib/isolated-local-services.mjs'
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { closeSync, openSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -22,7 +22,7 @@ const chromePath =
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 // Keep startup, assertions and signal exits inside the same owned closeout.
 let chrome, profile, ws, chromeClosed, chromePort
-let chromeErr = ''
+const chromeStderrPath = join(outDir, 'chrome-stderr.log')
 let cleanupPromise
 const lifecycle = { errors: [] }
 async function cleanup() {
@@ -38,7 +38,6 @@ async function cleanup() {
     } catch (error) {
       lifecycle.errors.push(String(error.stack || error))
     }
-    writeFileSync(join(outDir, 'chrome-stderr.log'), chromeErr)
     Object.assign(lifecycle, {
       chromePort, chromePid: chrome?.pid,
       chromeExit: chrome && { code: chrome.exitCode, signal: chrome.signalCode },
@@ -59,6 +58,10 @@ for (const signal of ['SIGTERM', 'SIGINT']) {
 
 async function run() {
 profile = mkdtempSync(join(tmpdir(), 'sheet-ui-chrome-'))
+// A file keeps stderr even when Chrome updaters inherit its descriptor;
+// inherited pipes would keep ChildProcess.close pending after the group exits.
+const chromeStderr = openSync(chromeStderrPath, 'a')
+try {
 chrome = spawnOwnedChild(
   chromePath,
   [
@@ -76,13 +79,11 @@ chrome = spawnOwnedChild(
     '--window-size=1280,900',
     'about:blank'
   ],
-  { stdio: ['ignore', 'pipe', 'pipe'] }
+  { stdio: ['ignore', 'ignore', chromeStderr] }
 )
-chrome.stderr.setEncoding('utf8')
-chrome.stderr.on('data', (chunk) => {
-  chromeErr += chunk
-  writeFileSync(join(outDir, 'chrome-stderr.log'), chromeErr)
-})
+} finally {
+  closeSync(chromeStderr)
+}
 chromeClosed = new Promise(resolve => chrome.once('close', resolve))
 const version = await waitForChromeDevTools(chrome, profile)
 chromePort = Number(new URL(version.webSocketDebuggerUrl).port)

@@ -17,7 +17,7 @@
 import assert from 'node:assert/strict'
 import { spawnOwnedChild, stopOwnedChild, waitForChromeDevTools } from './lib/isolated-local-services.mjs'
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { closeSync, openSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 
@@ -41,7 +41,7 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
 // Keep startup, assertions and signal exits inside the same owned closeout.
 let chrome, profile, ws, chromeClosed, chromePort
-let chromeErr = ''
+const chromeStderrPath = join(outDir, 'chrome-stderr.log')
 let cleanupPromise
 const lifecycle = { errors: [] }
 let fixture, fixtureClosed, fixtureError, manifest
@@ -88,7 +88,6 @@ async function cleanup() {
     }
     writeFileSync(fixtureLogPath, fixtureLog)
     lifecycle.fixtureExit = fixture && { code: fixture.exitCode, signal: fixture.signalCode }
-    writeFileSync(join(outDir, 'chrome-stderr.log'), chromeErr)
     Object.assign(lifecycle, {
       chromePort, chromePid: chrome?.pid,
       chromeExit: chrome && { code: chrome.exitCode, signal: chrome.signalCode },
@@ -197,6 +196,10 @@ const filterUrl = (extra = {}) => {
 
 // ---------- headless Chrome + CDP ----------
 profile = mkdtempSync(join(tmpdir(), 'logs-ui-chrome-'))
+// A file keeps stderr even when Chrome updaters inherit its descriptor;
+// inherited pipes would keep ChildProcess.close pending after the group exits.
+const chromeStderr = openSync(chromeStderrPath, 'a')
+try {
 chrome = spawnOwnedChild(
   chromePath,
   [
@@ -214,13 +217,11 @@ chrome = spawnOwnedChild(
     '--window-size=1280,800',
     'about:blank'
   ],
-  { stdio: ['ignore', 'pipe', 'pipe'] }
+  { stdio: ['ignore', 'ignore', chromeStderr] }
 )
-chrome.stderr.setEncoding('utf8')
-chrome.stderr.on('data', (chunk) => {
-  chromeErr += chunk
-  writeFileSync(join(outDir, 'chrome-stderr.log'), chromeErr)
-})
+} finally {
+  closeSync(chromeStderr)
+}
 chromeClosed = new Promise(resolve => chrome.once('close', resolve))
 const version = await waitForChromeDevTools(chrome, profile)
 chromePort = Number(new URL(version.webSocketDebuggerUrl).port)
