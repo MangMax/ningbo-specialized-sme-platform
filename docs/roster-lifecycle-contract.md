@@ -1,5 +1,7 @@
 # 名录生命周期契约(冻结)
 
+> 资格版本导航：本文保留历次冻结协议；当前默认读侧以[当前默认资格](#qualification-current-v3)为准。§6/§7.4 的历史共享周期表述不应扩展为 v3 默认规则。其余接口须按各自增量与版本理解。
+
 > **状态:冻结(2026-10-16,RL-01)。** 本文件是并行实现票(RL-02…RL-11)**唯一**的实现依据:
 > 表名列名、枚举取值、接口形状以此为准,照此写代码不必回头再问。
 > 决策与理由见 [`docs/adr/2026-10-16-roster-lifecycle-model.md`](adr/2026-10-16-roster-lifecycle-model.md);
@@ -591,6 +593,8 @@
 
 ## 6. 生命周期语义(读侧必须实现的判定)
 
+> 版本边界：本节保留原生命周期/计划语义。当前 v3 资格使用下文独立默认规则，正式通过可恢复、到期不再 pending；不得把以下“共用”或失败后不恢复的历史限制套用到 v3。计划口径不在此轮修改。
+
 1. **首次认定** = 该(企业 × 称号)下**最早的 `award` 事件**年份。
    数据源以公布文件为准;该称号无公布来源时(如小巨人的历史工作簿)用其唯一来源。
 2. **复核通过不算新的首次认定**:`review` + `reviewOutcome='passed'` 不改变首次认定。
@@ -720,6 +724,8 @@
 ```
 
 ### 7.4 `GET /api/records` — 通用企业×称号记录查询(RL-09)
+
+> 本节描述记录/复核计划。以下“共享周期裁定”保留历史上下文，不代表当前 v3 资格沿用计划裁定；见[当前默认资格](#qualification-current-v3)。
 
 查询参数:`title`、`source`、`district`、`eventType`、`year`、`firstYear`、`firstStatus`、`dueYear`、`q`、`flags`、`page`、`pageSize`。
 多值参数可用逗号分隔或重复传入。`year` 过滤事件的**所涉年份**；`firstYear` 过滤首次正式认定年份
@@ -1812,6 +1818,8 @@ REST `/api/platform/batches` 与 MCP `submit_platform_batch` 提交后按稳定 
 
 ## #407 增量：候选字段、提交时资格快照与精确历史读回
 
+> 此节保留 #407 协议及原收据；显式 v1 回执边界仍适用。下文“当前读取默认版本”链接到旧 v2 的表述属于发布时上下文，现默认见[当前默认资格](#qualification-current-v3)。
+
 本节补充既有接口，不改前文业务数、审批结论、周期判定、权限和原默认投影。
 历史 407-v1 回执的资格规则固定为 `current-roster-116-v8`；当前读取默认版本见本文末“正式有效期消费”。
 `enterprise-qualification-406-v1` 是 #406 发布时版本，历史说明及已保存快照按原版本保留。
@@ -1934,6 +1942,8 @@ MCP沿既有tool content和ImportReceiptError的isError/structuredContent包装�
 
 ## 正式事件有效期事实（纠偏增量；尚不改变资格裁定）
 
+> 本节“尚不改变/第一步”是事实承载初期说明，标题及原文保留。后续消费已经发布；当前支持 until_this_review_results 与 until_next_review_results 两种 continuation，当前默认读取见下文。写入来源校验与读取诊断不能混为一谈。
+
 REST `POST /api/roster/events/corrections/preflight` 的 `operations[].patch.formalValidity`
 可省略（保留）、为 null（明确撤回该事实），或为严格对象：
 
@@ -1950,7 +1960,34 @@ REST `POST /api/roster/events/corrections/preflight` 的 `operations[].patch.for
 单独发布规则/assessment 版本并验证 current-qualified 与导出同一 authority。
 
 
+<a id="qualification-current-v3"></a>
+## 当前默认资格（#475–#484）
+
+以下描述默认读侧；不改写历史协议、已保存快照或回执，也不把历史验证升格为本版本验收。
+
+| 调用 | assessmentVersion | ruleVersion | 资格时间口径 |
+| --- | --- | --- | --- |
+| 显式 v1 兼容 | enterprise-qualification-407-v1 | current-roster-116-v8 | UTC 年界，冻结旧周期裁定 |
+| 显式 v2 兼容 | enterprise-qualification-407-v2 | current-roster-116-v9 | Asia/Shanghai 日历日，冻结旧周期裁定与正式有效期消费 |
+| 未指定版本的默认读取 | enterprise-qualification-478-v3 | current-roster-116-v10 | Asia/Shanghai 日历日，当前有效资格裁定 |
+
+版本选择是内部读函数边界，不是新增 HTTP/MCP 参数。详情、当前资格查询及当前工作簿使用默认读取；平台比较、导入和事件纠偏中的既有资格回执调用仍显式选择 v1。不能将所有消费者一概改成 v3。
+
+默认资格按本称号正式认定/复核期间裁定，已确认且证据完整、执行时点适用的注销/吊销或迁出事实可以排除。主体、地域、出处、平台覆盖及旧差异解释/决定生命周期缺口保留为说明，不作为默认资格门禁；兼容维度仍可能显示未决，不等于默认资格 pending。旧门禁退出默认路径不等于删除其事实或历史消费者。
+
+正式复核通过可以恢复资格，并按实际结论年份更新锚点；较晚或同年明确失败优先于此前恢复。默认路径跨原认定周期选取最新实际认定/通过锚点。未到执行日的复核结论或公布不能提前生效；明确 until_this_review_results、公布日和原认定引用满足条件时，公布前宽限单独处理。不得把普通平台业务更新当成正式复核通过。
+
+来源记录的明确 interval 是含首尾的闭区间，优先于 continuation；同时提供 until_next_review_results 也不能越过 interval 截止日。没有 interval 时，明确 until_next_review_results 可延续至后续结果；否则按实际认定/通过年 + 3，进入到期年不再有效，不新增到期 pending。原认定年、结论年和公布日保持各自含义；缺年仍为空，不伪造日期。记录有效区间的来源文件缺失/SHA 漂移在默认读取中保留诊断，不能直接等同于区间未记录；非法载荷与原认定引用冲突仍分别解析处理。写入校验不因此放宽。
+
+默认 effectiveQualification.status 为 effective、expired、terminated、moved_out、unrecognized；只有 effective 对应 eligible，其余 excluded。没有 award 的失败复核记录可能映射 unrecognized，不能把全部排除统称 expired。三称号、原始空值、来源版本和事实摘要仍保留；snapshotId 绑定 scope（含 asOf 和版本）与 titles。当前事实按 asOf 评估不等于重放历史数据库。
+
+显式 v1/v2 继续使用冻结的 qualification-cycles-407.ts。既有导入/纠偏 v1 回执、历史 snapshotId、原 FAIL/UNKNOWN/UNRUN 逐字保留；当前 v3 结果不要求与历史回执字节相等。这里仅声明代码和历史协议边界，不补签运行验收。
+
+依据：[当前版本与默认分支](../lib/roster/current-qualification.ts)、[当前周期](../lib/roster/qualification-cycles.ts)、[兼容周期](../lib/roster/qualification-cycles-407.ts)、[查询](../lib/roster/current-qualified-query.ts)；产品规则见 [#475](https://github.com/MangMax/ningbo-specialized-sme-platform/issues/475)、[#477](https://github.com/MangMax/ningbo-specialized-sme-platform/issues/477)、[#478](https://github.com/MangMax/ningbo-specialized-sme-platform/issues/478)、[#484](https://github.com/MangMax/ningbo-specialized-sme-platform/issues/484)。#480–#483 的独立队列/判断/页面方案已被后续简化方案取代，不能由其早期评论恢复为当前默认要求。
+
 ## 正式有效期消费（current-roster-116-v9 / enterprise-qualification-407-v2）
+
+> 以下至“平台业务采集与企业差异刷新”标题之前，限定为显式 v2/发布时历史说明。其中“当前”“默认”不再指现默认 v3。原标题锚点、规则文字与回执边界保留；该下一节不纳入本历史限定。
 
 当前详情、current-qualified 及当前导出默认共享 v2 evaluator。执行时点转换为 Asia/Shanghai 日历日；
 来源明确的 interval 含起止日，不把认定年/文号年/维护年互换，不由三年规则生成起止日期。
