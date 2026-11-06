@@ -219,6 +219,10 @@ const detail = computed<EnterpriseDetail | null>(() => {
 const confirmedAliasNames = computed(() => data.value?.aliases.filter(alias => alias.verificationStatus === 'confirmed').map(alias => alias.name) ?? [])
 const formalSourceEventId = ref<number | null>(null)
 
+function historyYear(event: LedgerEvent): number | null {
+  return event.type === 'review' ? event.decidedYear : event.year
+}
+
 /** 保留每个事件身份；复核按公布结论年排列，同年以事件身份稳定排列。 */
 const ledgerEvents = computed<LedgerEvent[]>(() => {
   const source = detail.value
@@ -231,7 +235,7 @@ const ledgerEvents = computed<LedgerEvent[]>(() => {
       source: record.source,
       district: record.district,
     })))
-    .sort((a, b) => ((a.type === 'review' ? a.decidedYear : a.year) ?? 9999) - ((b.type === 'review' ? b.decidedYear : b.year) ?? 9999)
+    .sort((a, b) => (historyYear(a) ?? 9999) - (historyYear(b) ?? 9999)
       || a.id - b.id)
 })
 
@@ -657,7 +661,7 @@ function openPreview(e: Evidence) {
                 <p v-if="!history.events.length" class="text-muted-foreground px-4 py-6 text-sm">该称号暂无事件。</p>
                 <ol v-else :aria-label="`${titleLabel(history.code)}事件顺序`" class="divide-y">
                   <li v-for="(event, index) in history.events" :key="event.id" class="min-w-0">
-                    <p v-if="(event.type === 'review' ? event.decidedYear : event.year) == null && (index === 0 || (history.events[index - 1]!.type === 'review' ? history.events[index - 1]!.decidedYear : history.events[index - 1]!.year) != null)" class="bg-muted/40 text-muted-foreground border-b px-4 py-2 text-sm">年份待核 · 未知时点</p>
+                    <p v-if="historyYear(event) == null && (index === 0 || historyYear(history.events[index - 1]!) != null)" class="bg-muted/40 text-muted-foreground border-b px-4 py-2 text-sm">年份待核 · 未知时点</p>
                     <RecordEventRow
                       :event="event"
                       :evidence="event.evidence"
