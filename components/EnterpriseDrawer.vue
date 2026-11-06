@@ -27,7 +27,7 @@ import { Skeleton } from '@/components/ui/skeleton'
  * **企业抽屉**(RL-20)—— 方向卡里的「事实三行 + 竖向时间轴 + 差异块」。
  *
  * ── 为什么不是模态弹窗 ──────────────────────────────────────────────────
- * 方向卡写的是「抽屉占右侧 420–480px,**覆盖在表之上**,不挤压表格列宽」,而设计稿里
+ * 企业抽屉按 #559 使用共享详情尺寸,**覆盖在表之上**,不挤压表格列宽,而设计稿里
  * 被选中那一行仍然高亮着、表格仍可读 —— 也就是说**开着抽屉还得能继续看表**。
  * 所以这里用 `DialogRoot :modal="false"`:没有遮罩层、不锁滚动、焦点不困在抽屉里,
  * 但**保留**了对话框该有的可达性(有标题、Esc 关闭、点关闭按钮回到原位)。
@@ -345,8 +345,10 @@ function eventSuffix(item: TimelineItem): string {
   <DialogRoot :open="open" :modal="false" @update:open="(v: boolean) => { if (!v) emit('close') }">
     <DialogContent
       data-testid="enterprise-drawer"
+      data-floating-drawer="detail"
+      data-drawer-side="right"
       :aria-describedby="undefined"
-      class="enterprise-drawer bg-card shadow-none data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=open]:slide-in-from-right data-[state=closed]:slide-out-to-right ease-snap fixed inset-y-0 right-0 z-40 flex w-full sm:w-[min(720px,calc(100vw-2rem))] max-w-full flex-col border-l duration-200 outline-none motion-reduce:animate-none"
+      class="enterprise-drawer bg-card data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=open]:slide-in-from-right data-[state=closed]:slide-out-to-right ease-snap fixed z-40 flex flex-col duration-200 outline-none motion-reduce:animate-none"
       @interact-outside="onInteractOutside"
       @open-auto-focus="onOpenAutoFocus"
       @close-auto-focus="onCloseAutoFocus"
@@ -355,7 +357,7 @@ function eventSuffix(item: TimelineItem): string {
         <!-- 抬头:企业名 + 统代。`DialogTitle` 就是企业名本身,不另造一个标题层。 -->
         <header class="flex items-start gap-3 border-b px-5 py-4">
           <div class="min-w-0 flex-1">
-            <DialogTitle class="text-[15px] leading-6 font-semibold">{{ detail.enterprise.name }}</DialogTitle>
+            <DialogTitle class="wrap-anywhere text-[15px] leading-6 font-semibold">{{ detail.enterprise.name }}</DialogTitle>
             <p class="text-muted-foreground mt-1 font-mono text-xs tabular-nums">
               {{ detail.enterprise.uscc ?? '无统一社会信用代码' }}
             </p>
@@ -367,9 +369,9 @@ function eventSuffix(item: TimelineItem): string {
           </DialogClose>
         </header>
 
-        <div class="min-h-0 flex-1 overflow-y-auto px-5 py-4">
+        <div class="min-h-0 flex-1 overflow-y-auto px-5 py-4 wrap-anywhere">
           <!-- 事实三行 -->
-          <dl class="grid grid-cols-[70px_1fr] items-baseline gap-y-2">
+          <dl class="grid grid-cols-[70px_minmax(0,1fr)] items-baseline gap-y-2">
             <dt class="text-muted-foreground text-xs">属地</dt>
             <dd class="text-[13px]">{{ detail.enterprise.district ?? '属地未知' }}</dd>
             <dt class="text-muted-foreground text-xs">曾用名</dt>

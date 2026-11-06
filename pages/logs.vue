@@ -729,7 +729,7 @@ function restoreFocus(event: Event) {
           if (!value) selected = ''
         }
       "
-      ><SheetContent class="w-full gap-0 sm:max-w-lg" @close-auto-focus="restoreFocus"
+      ><SheetContent floating-size="standard" class="min-w-0 gap-0" @close-auto-focus="restoreFocus"
         ><SheetHeader class="shrink-0 border-b px-6 py-5 pr-12"
           ><SheetTitle>运行日志详情</SheetTitle
           ><SheetDescription
@@ -737,7 +737,7 @@ function restoreFocus(event: Event) {
           ></SheetHeader
         >
         <div
-          class="min-h-0 flex-1 overflow-y-auto overscroll-contain px-6 pt-6 pb-[max(1.5rem,env(safe-area-inset-bottom))]"
+          class="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain px-6 pt-6 pb-[max(1.5rem,env(safe-area-inset-bottom))]"
         ><LogDetail v-if="selected" :id="selected" /></div></SheetContent
     ></Sheet>
   </div>

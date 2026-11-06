@@ -199,7 +199,7 @@ const sourceFollow = computed(() => props.sourceFollowLabel ?? '')
     </SheetTrigger>
 
     <SheetContent
-      class="w-full gap-0 sm:max-w-md"
+      floating-size="standard" class="min-w-0 gap-0"
       :data-testid="sheetTestId"
       @close-auto-focus="onCloseAutoFocus"
     >
@@ -215,7 +215,7 @@ const sourceFollow = computed(() => props.sourceFollowLabel ?? '')
           >
             <Icon :name="icon" class="size-[18px]" aria-hidden="true" />
           </span>
-          <span class="min-w-0 truncate">{{ row.label }}</span>
+          <span class="min-w-0 wrap-anywhere">{{ row.label }}</span>
         </SheetTitle>
         <SheetDescription class="text-[13px] leading-5" data-testid="log-module-sheet-summary">
           {{ summary }}
@@ -223,7 +223,7 @@ const sourceFollow = computed(() => props.sourceFollowLabel ?? '')
       </SheetHeader>
 
       <div
-        class="min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 py-4"
+        class="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain px-5 py-4"
         data-testid="log-module-sheet-body"
       >
         <div class="flex min-w-0 flex-col gap-4">

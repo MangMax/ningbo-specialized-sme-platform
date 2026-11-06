@@ -88,15 +88,15 @@ function discardAndClose() {
 
 <template>
   <Sheet :open="open" @update:open="requestOpen">
-    <SheetContent side="right" class="w-full gap-0 p-0 sm:max-w-[560px]">
-      <SheetHeader class="border-b px-5 py-4 pr-12">
+    <SheetContent side="right" floating-size="standard" class="min-w-0 gap-0 p-0">
+      <SheetHeader class="shrink-0 border-b px-5 py-4 pr-12">
         <SheetTitle class="text-base">{{ titleLabel(displayed.titleCode) }} · {{ directionLabel(displayed.direction) }}</SheetTitle>
         <SheetDescription class="text-[13px] leading-5">
           核对依据、当前决定与证据复核。查询覆盖、业务决定和解释有效性分别保留。
         </SheetDescription>
       </SheetHeader>
 
-      <div class="min-h-0 flex-1 overflow-y-auto px-5 py-4">
+      <div class="min-h-0 min-w-0 flex-1 overflow-y-auto px-5 py-4">
         <template v-if="resolvedImpactId">
           <EvidenceReviewDetail
             :key="resolvedImpactId"
@@ -129,7 +129,7 @@ function discardAndClose() {
         </template>
       </div>
 
-      <!-- 主操作固定在滚动区外，390 全宽 Sheet 也不会压住表单或键盘。已复核/只读详情没有表单时，空 footer 不占位。 -->
+      <!-- 主操作固定在滚动区外，390px 悬浮 Sheet 也不会压住表单或键盘。已复核/只读详情没有表单时，空 footer 不占位。 -->
       <div id="review-sheet-footer" class="bg-card shrink-0 border-t px-5 py-3 [&:empty]:hidden" />
     </SheetContent>
   </Sheet>
