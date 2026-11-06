@@ -98,8 +98,8 @@ function clearAll() {
 
 <template>
   <Sheet v-model:open="open">
-    <SheetContent :side="side" floating-size="compact" class="flex flex-col gap-0 p-0">
-      <SheetHeader class="border-b px-4 py-4">
+    <SheetContent :side="side" floating-size="compact" class="flex min-h-0 flex-col gap-0 overflow-hidden p-0 max-sm:max-h-dvh">
+      <SheetHeader class="shrink-0 border-b px-4 py-4">
         <SheetTitle class="flex items-center gap-2">
           <Filter class="size-4" />
           筛选当前文件
@@ -163,7 +163,7 @@ function clearAll() {
         </p>
       </form>
 
-      <SheetFooter class="flex-row flex-wrap items-center gap-2 border-t px-4 py-3">
+      <SheetFooter class="shrink-0 flex-row flex-wrap items-center gap-2 border-t px-4 py-3">
         <Button
           variant="ghost"
           size="sm"
