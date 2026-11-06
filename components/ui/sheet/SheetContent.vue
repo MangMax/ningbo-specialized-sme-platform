@@ -15,6 +15,8 @@ import SheetOverlay from "./SheetOverlay.vue"
 interface SheetContentProps extends DialogContentProps {
   class?: HTMLAttributes["class"]
   side?: "top" | "right" | "bottom" | "left"
+  /** Opt in only for side business drawers; top/bottom sheets stay unchanged. */
+  floatingSize?: "compact" | "standard" | "detail"
 }
 
 defineOptions({
@@ -26,7 +28,7 @@ const props = withDefaults(defineProps<SheetContentProps>(), {
 })
 const emits = defineEmits<DialogContentEmits>()
 
-const delegatedProps = reactiveOmit(props, "class", "side")
+const delegatedProps = reactiveOmit(props, "class", "side", "floatingSize")
 
 const forwarded = useForwardPropsEmits(delegatedProps, emits)
 </script>
@@ -36,6 +38,8 @@ const forwarded = useForwardPropsEmits(delegatedProps, emits)
     <SheetOverlay />
     <DialogContent
       data-slot="sheet-content"
+      :data-floating-drawer="side === 'left' || side === 'right' ? floatingSize : undefined"
+      :data-drawer-side="side"
       :class="cn(
         'bg-background data-[state=open]:animate-in data-[state=closed]:animate-out fixed z-50 flex flex-col gap-4 shadow-lg transition ease-in-out data-[state=closed]:duration-300 data-[state=open]:duration-500',
         side === 'right'
