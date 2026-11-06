@@ -1,5 +1,7 @@
 # #84 residual 5x detail cold read: pinned investigation
 
+> 历史调查说明：下文“remains open”记录本次诊断时点，不是当前 tracker 状态。#84 后来按 [acceptance v2](../82/acceptance-v2.md)及[收尾记录](https://github.com/MangMax/ningbo-specialized-sme-platform/issues/84#issuecomment-6320101770)结束该轮交付。812.347458ms 原失败、原因未确认和原始 trace 不可用仍保留；本文的小型合成样本没有消除原 5x 冷读缺口，后续关闭也不构成当前性能保证。
+
 Base source: `fc37375eb35ecd175a5746d93dc22129d2a2ffe3` (2026-10-20). The
 outstanding observation in [the integration handoff](../81-89-handoff.md) is one
 **default heap / 5x / HTTP detail cold** response at **812.347458ms**, above the

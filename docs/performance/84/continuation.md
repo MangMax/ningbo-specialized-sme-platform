@@ -1,5 +1,7 @@
 # #84 第二轮实施与验收证据
 
+> 历史证据说明：下文的“当前状态”和验收结论分别绑定各节所列源码，不代表当前 HEAD。R2 之后的原文重复读取失败与代际分配修订见 [R3 设计](r3-raw-generation-design.md)，冷读诊断见 [后续调查](cold-detail-followup.md)。#84 后来按 [acceptance v2](../82/acceptance-v2.md)及[收尾记录](https://github.com/MangMax/ningbo-specialized-sme-platform/issues/84#issuecomment-6320101770)结束该轮交付；原始失败、未测范围和各轮测量身份完整保留，不改为通过，也不作为当前性能保证。
+
 本轮从集成点 `5c9ab8e482b28b47dbeb7f947f450f40336c86ce` 的独立工作树继续。没有委派、生产请求/写入、schema/迁移修改、企业查询结果缓存、堆或超时上调；没有创建 PR、修改 main 或关闭 issue。冻结目标仍为 [#82 budgets](../82/budgets.md)。第一轮失败测量和真实源码 SHA 保留在 [原报告](../../enterprise-read-performance.md) 及原 scratch 文件，不能用本轮结果覆盖它们。
 
 ## 实现与语义边界
