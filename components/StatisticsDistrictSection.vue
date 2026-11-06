@@ -32,7 +32,7 @@ function select(code: string, bucket: string | null) { title.value = code; distr
   <p>采用企业当前已确认属地，不重建历史属地。各称号独立统计，同企业同称号只计一次；未知属地纳入合计。</p>
   <p v-if="result" class="break-words text-sm text-muted-foreground">评价日 {{ result.evaluationDay }}（上海）</p>
     <DisclosurePanel v-if="result" title="统计口径"><p class="break-words text-sm text-muted-foreground">规则 {{ result.ruleVersion }} / {{ result.assessmentVersion }}</p></DisclosurePanel>
-  <TableFailureState v-if="failed" :title="`${target}加载失败`" :compact="!!result" :pending="loading" description="保留上次成功结果及其筛选与页码，请重试当前查询。" @retry="load" />
+  <TableFailureState v-if="failed" :title="`${target}加载失败`" :compact="!!result" :pending="loading" :description="result ? '保留上次成功结果及其筛选与页码，请重试当前查询。' : '尚无区县结果，请重试。'" @retry="load" />
   <Skeleton v-if="!result && loading" class="h-60 w-full" />
   <Card v-if="result"><CardHeader><CardTitle>各区县有效企业</CardTitle><CardDescription>点击数字查看该区县、该称号的企业。称号之间可重叠，不跨称号合计。</CardDescription></CardHeader>
   <CardContent class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -57,7 +57,6 @@ function select(code: string, bucket: string | null) { title.value = code; distr
         <article v-for="row in result.rows" :key="`${row.enterpriseId}/${row.titleCode}`" class="flex min-w-0 flex-col gap-2 border-b py-4">
           <NuxtLink :to="`/enterprises/${row.enterpriseId}`" class="font-medium underline underline-offset-4">{{ row.name }}</NuxtLink>
           <p>{{ TITLES[row.titleCode] }} · {{ row.district ?? '未知属地' }}</p>
-          <p class="whitespace-pre-line break-words">{{ row.basis }}</p>
           <NuxtLink :to="`/enterprises/${row.enterpriseId}`" class="underline">查看资格依据与出处</NuxtLink>
           <ul><li v-for="e in row.evidence" :key="e.evidenceId" class="break-all text-sm">{{ e.sourceFile }} · {{ e.attachment ?? '附件未记录' }} · 序号 {{ e.listNo ?? '未记录' }} · 页码 {{ e.page ?? '未记录' }}</li></ul>
         </article>
