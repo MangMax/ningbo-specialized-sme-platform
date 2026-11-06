@@ -35,7 +35,7 @@ REST 写入使用 `NUXT_API_TOKEN`，MCP 使用独立的 `NUXT_MCP_TOKEN`。未�
 
 ## 字段与业务约束
 
-- 严格白名单：eventType=`award|review|nurture`、year、decidedYear、batchSeq、reviewOutcome=`passed|failed|null`。未知字段（包括 event/record/enterprise ID、sortKey、出处坐标、平台状态等进入 patch）拒绝；MCP 原 RPC 参数另校验，避免 SDK 静默剥离顶层未知字段。
+- 严格白名单：eventType=`award|review|nurture`、year、decidedYear、batchSeq、reviewOutcome=`passed|failed|null`、formalValidity。formalValidity 可省略（保留）、为 null（明确撤回该事实），或为严格对象；见[正式事件有效期事实](roster-lifecycle-contract.md#正式事件有效期事实纠偏增量尚不改变资格裁定)及紧随其后的[正式有效期消费（v2）说明](roster-lifecycle-contract.md#正式有效期消费current-roster-116-v9--enterprise-qualification-407-v2)。显式 407-v1 兼容调用仍不消费该字段；事实写入成功不等于资格已判为 eligible。未知字段（包括 event/record/enterprise ID、sortKey、出处坐标、平台状态等进入 patch）拒绝；MCP 原 RPC 参数另校验，避免 SDK 静默剥离顶层未知字段。
 - 省略字段保留；显式 null 表示未知。年份为 1900–9999 整数或 null；批次为正安全整数或 null。结论年不早于已知所涉年；非 review 的复核结果必须为空。复核结果未知保留未知，不推定通过；不强制推算三年结论或批次。
 - 只接受既有 jxj 事件，不改平台 maintain 事实；nurture 仍不构成称号。变更 year 同步原派生 sortKey。空 patch、无变化、空依据、无正式出处、重复目标拒绝。
 - 所属企业、记录、预期 revision 必须匹配。自然键按同记录的 `(eventType, year, batchSeq)`（含 null）检查，结论不同也不能借更正叠加同坐标事件；同批目标汇聚冲突一并检查。整批失败，不合并或新增替代事件。
