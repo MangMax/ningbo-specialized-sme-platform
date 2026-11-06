@@ -34,7 +34,6 @@ const choiceId = useId()
 /** Sheet 模式把主操作放进独立 footer；button[form] 仍提交同一张表单。 */
 const formId = useId()
 const writeStatusId = useId()
-/** 写请求已成功返回，读回尚未完成时也不能再生成新的提交标识。 */
 watch(() => props.detail, () => { if (conflict.value) failure.value = ''; conflict.value = false })
 
 const inheritedReferences = props.detail.currentDecision?.current?.factReferences
@@ -176,9 +175,7 @@ async function save() {
     const saved = await $fetch<{ action?: string; versionId?: number }>(BROWSER_COMMAND_PATH, { method: 'POST', body })
     unknown.value = false
     committed.value = true
-    // 写请求已成功：草稿不再是未提交内容。
-    // Retain the receipt envelope: reopening stale cached detail must not submit again.
-    // 先让宿主开始读回；写请求已成功时，刷新失败不能反报成保存失败。
+    // 保留已提交请求，避免重开旧详情再次写入；读回失败不反报为保存失败。
     emit('saved', { action: saved?.action, versionId: saved?.versionId })
     try { await refreshAffected() } catch { /* 宿主详情仍会显式读回并说明状态 */ }
   } catch (error) {

@@ -163,7 +163,7 @@ const interfaceSummary = computed(() => {
       <DisclosurePanel title="正式文件与已登记出处" class="border-t px-4 sm:px-5" :open="detailsError || groups.revalidation.length ? true : null">
       <RecordEventSource :event="event" :evidence="evidence" :show-official="!!review" :edges="fullEdges ?? []" :edges-ready="linksReady && fullEdges !== null && fullEdges !== undefined" :edges-loading="detailsLoading" :edges-error="detailsError" :back="back" :return-to="returnTo" @preview="emit('preview', $event)" @event-navigate="emit('event-navigate', $event)" @page-open="(eventId: number, event: MouseEvent) => emit('page-open', eventId, event)" @retry-detail="emit('retry-detail')" />
       </DisclosurePanel>
-      <EventArchiveCandidates v-if="review && open && event.source === 'jxj' && ['award', 'review'].includes(event.type)" :key="event.id" :event-id="event.id" :back="back" :auto-load="review" />
+      <EventArchiveCandidates v-if="review && open && event.source === 'jxj' && ['award', 'review'].includes(event.type)" :key="event.id" :event-id="event.id" :back="back" />
     </DisclosurePanel>
     <div v-if="!review && event.source === 'jxj' && ['award', 'review'].includes(event.type)" class="px-4 pb-3 sm:px-5">
       <Button variant="outline" size="sm" @click="emit('review-event', event.id)">核对这一事项</Button>

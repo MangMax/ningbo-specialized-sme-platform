@@ -72,7 +72,7 @@ const draftStore = inject(REVIEW_DRAFTS_KEY, null)
 const protectedDraft = computed(() => !success.value && (!!basis.value.trim() || !!selected.value || pending.value || attempted.value))
 watch(protectedDraft, value => emit('protected', value), { immediate: true, flush: 'sync' })
 const unregisterDraft = draftStore?.register({
-  dirty: () => !success.value && (!!basis.value.trim() || !!selected.value || pending.value || attempted.value),
+  dirty: () => protectedDraft.value,
   locked: () => pending.value || (attempted.value && !success.value),
   discard: () => { basis.value = ''; selected.value = ''; plan.value = null; request.value = null; action.value = null; previousAction = null },
 })

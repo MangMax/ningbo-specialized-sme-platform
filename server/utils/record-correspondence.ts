@@ -485,14 +485,14 @@ function idChunks(values: Array<number | null>) {
   return Array.from({ length: Math.ceil(ids.length / 400) }, (_, i) => ids.slice(i * 400, (i + 1) * 400))
 }
 function observeReadSources(db: Db, rows: StoredCorrespondence[]): ReadSources {
-  const confirmed = rows.filter(row => row.status === 'confirmed' || row.status === 'candidate')
-  const events = idChunks(confirmed.flatMap(r => [r.eventId, r.predecessorEventId])).flatMap(ids => db.select({ event: schema.recordEvent, record: schema.record, enterprise: schema.enterprise }).from(schema.recordEvent).innerJoin(schema.record, eq(schema.recordEvent.recordId, schema.record.id)).innerJoin(schema.enterprise, eq(schema.record.enterpriseId, schema.enterprise.id)).where(inArray(schema.recordEvent.id, ids)).all())
-  const relations = idChunks(confirmed.map(r => r.relationId)).flatMap(ids => db.select().from(schema.platformRelation).where(inArray(schema.platformRelation.id, ids)).all())
+  const sourceBound = rows.filter(row => row.status === 'confirmed' || row.status === 'candidate')
+  const events = idChunks(sourceBound.flatMap(r => [r.eventId, r.predecessorEventId])).flatMap(ids => db.select({ event: schema.recordEvent, record: schema.record, enterprise: schema.enterprise }).from(schema.recordEvent).innerJoin(schema.record, eq(schema.recordEvent.recordId, schema.record.id)).innerJoin(schema.enterprise, eq(schema.record.enterpriseId, schema.enterprise.id)).where(inArray(schema.recordEvent.id, ids)).all())
+  const relations = idChunks(sourceBound.map(r => r.relationId)).flatMap(ids => db.select().from(schema.platformRelation).where(inArray(schema.platformRelation.id, ids)).all())
   const queries = idChunks(relations.map(r => r.queryId)).flatMap(ids => db.select().from(schema.platformQuery).where(inArray(schema.platformQuery.id, ids)).all())
   const queriesById = new Map(queries.map(r => [r.id, r]))
-  const exports = idChunks(confirmed.map(r => r.exportRowId)).flatMap(ids => db.select({ exportRow: schema.platformExportRow, exportBatch: schema.platformExportBatch }).from(schema.platformExportRow).innerJoin(schema.platformExportBatch, eq(schema.platformExportRow.batchId, schema.platformExportBatch.id)).where(inArray(schema.platformExportRow.id, ids)).all())
-  const enterprises = idChunks([...confirmed.map(r => r.enterpriseId), ...relations.map(r => r.enterpriseId)]).flatMap(ids => db.select().from(schema.enterprise).where(inArray(schema.enterprise.id, ids)).all())
-  const titles = [...new Set(confirmed.map(r => r.titleCode))]
+  const exports = idChunks(sourceBound.map(r => r.exportRowId)).flatMap(ids => db.select({ exportRow: schema.platformExportRow, exportBatch: schema.platformExportBatch }).from(schema.platformExportRow).innerJoin(schema.platformExportBatch, eq(schema.platformExportRow.batchId, schema.platformExportBatch.id)).where(inArray(schema.platformExportRow.id, ids)).all())
+  const enterprises = idChunks([...sourceBound.map(r => r.enterpriseId), ...relations.map(r => r.enterpriseId)]).flatMap(ids => db.select().from(schema.enterprise).where(inArray(schema.enterprise.id, ids)).all())
+  const titles = [...new Set(sourceBound.map(r => r.titleCode))]
   const storedTitles = titles.length ? db.select({ code: schema.title.code }).from(schema.title).where(inArray(schema.title.code, titles)).all() : []
   const evidence = idChunks(events.map(r => r.event.id)).flatMap(ids => db.select().from(schema.recordEvidence).where(inArray(schema.recordEvidence.recordEventId, ids)).orderBy(asc(schema.recordEvidence.id)).all())
   const paths = [...new Set(evidence.map(r => r.sourceFile))]

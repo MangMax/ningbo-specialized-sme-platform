@@ -18,7 +18,7 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 
-const props = defineProps<{ eventId: number; back: string; autoLoad?: boolean }>()
+const props = defineProps<{ eventId: number; back: string }>()
 type ArchiveRow = EventArchiveCandidate & Partial<Pick<PlatformBusinessGroup, 'observationRefs'>>
 type ArchivePage = Omit<EventArchivePage, 'rows'> & { rows: ArchiveRow[] }
 const result = ref<ArchivePage | null>(null)
@@ -34,7 +34,7 @@ watch(() => props.eventId, () => {
   protectedRows.value = {}; navigationBlocked.value = false
   sequence++; candidateOpened.value = false; result.value = null; pending.value = false; failed.value = false; sourceId.value = null
   target.value = { page: 1, pageSize: 50, queryPage: 1, queryPageSize: 25 }
-  if (props.autoLoad) void discover()
+  void discover()
 }, { immediate: true })
 onBeforeUnmount(() => { sequence++ })
 async function discover(patch: Partial<typeof target.value> = {}) {

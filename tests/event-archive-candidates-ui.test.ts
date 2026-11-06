@@ -9,12 +9,12 @@ const result = (page = 1) => ({ event: { id: 7, evidence: [{ sourceFile: 'synthe
 const Pagination = { name: 'TablePagination', props: ['page', 'total'], emits: ['update:page', 'update:pageSize'], template: '<div><span>来源页 {{page}}</span><button @click="$emit(\'update:page\', 2)">下一页</button></div>' }
 function mountPanel(id = 7) { return mount(EventArchiveCandidates, { props: { eventId: id, back: '/enterprises/1' }, global: { stubs: { EventCorrespondenceDecision: true, TablePagination: Pagination, SourceReader: { name: 'SourceReader', props: ['id', 'presentation'], template: '<div>原始记录 {{id}}</div>' } } } }) }
 
-it('discovers on demand and retains the source page after a failed page request then retries that target', async () => {
+it('loads the selected event and retains the source page after a failed page request then retries that target', async () => {
   const fetch = vi.fn().mockResolvedValueOnce(result()).mockRejectedValueOnce(new Error('offline')).mockResolvedValueOnce(result(2))
   vi.stubGlobal('$fetch', fetch)
   wrapper = mountPanel(); await wrapper.get('[data-testid="candidate-disclosure"] button').trigger('click')
-  expect(fetch).not.toHaveBeenCalled()
-  await wrapper.get('[data-testid="discover-event-archives"]').trigger('click'); await flushPromises()
+  expect(fetch).toHaveBeenCalledTimes(1)
+  await flushPromises()
   expect(fetch).toHaveBeenCalledWith('/api/roster/correspondences/discover', { method: 'POST', body: { eventId: 7, page: 1, pageSize: 50, queryPage: 1, queryPageSize: 25 } })
   expect(wrapper.text()).toContain('平台年份缺失')
   await wrapper.get('[data-testid="candidate-coverage"] button').trigger('click')
@@ -30,16 +30,17 @@ it('discovers on demand and retains the source page after a failed page request 
 
 it('ignores a late previous-event response and clears the previous event facts before a new request', async () => {
   let old!: (value: unknown) => void
-  vi.stubGlobal('$fetch', vi.fn().mockImplementationOnce(() => new Promise(resolve => { old = resolve })).mockResolvedValue({ ...result(), event: { ...result().event, id: 8 } }))
+  let current!: (value: unknown) => void
+  vi.stubGlobal('$fetch', vi.fn().mockImplementationOnce(() => new Promise(resolve => { old = resolve })).mockImplementationOnce(() => new Promise(resolve => { current = resolve })))
   wrapper = mountPanel(); await wrapper.get('[data-testid="candidate-disclosure"] button').trigger('click')
-  await wrapper.get('[data-testid="discover-event-archives"]').trigger('click')
   await wrapper.setProps({ eventId: 8 })
   old(result()); await flushPromises()
-  expect(wrapper.findComponent({ name: 'EventCorrespondenceDecision' }).exists()).toBe(false)
   expect(wrapper.get('[data-testid="candidate-disclosure"] button').attributes('aria-expanded')).toBe('false')
   await wrapper.get('[data-testid="candidate-disclosure"] button').trigger('click')
-  await wrapper.get('[data-testid="discover-event-archives"]').trigger('click'); await flushPromises()
-  expect(wrapper.findComponent({ name: 'EventCorrespondenceDecision' }).props('edge').relationId).toBe(10)
+  expect(wrapper.findComponent({ name: 'EventCorrespondenceDecision' }).exists()).toBe(false)
+  current({ ...result(), rows: result(2).rows, event: { ...result().event, id: 8 } })
+  await flushPromises()
+  expect(wrapper.findComponent({ name: 'EventCorrespondenceDecision' }).props('edge').relationId).toBe(20)
   expect(wrapper.text()).not.toContain('读取失败')
 })
 
@@ -47,7 +48,7 @@ it('opens the original row without archive ID input and keeps coverage paginatio
   const fetch = vi.fn().mockResolvedValueOnce(result()).mockResolvedValueOnce({ ...result(), coverage: { ...result().coverage, page: 2, rows: [] } })
   vi.stubGlobal('$fetch', fetch)
   wrapper = mountPanel(); await wrapper.get('[data-testid="candidate-disclosure"] button').trigger('click')
-  await wrapper.get('[data-testid="discover-event-archives"]').trigger('click'); await flushPromises()
+  await flushPromises()
   await wrapper.findAll('button').find(b => b.text() === '查看平台业务详情')!.trigger('click'); await flushPromises()
   expect(document.body.textContent).toContain('原始记录 10')
   await wrapper.get('[data-testid="candidate-coverage"] button').trigger('click')
@@ -60,7 +61,7 @@ it('automatically reads only the opened event first page and ignores its late re
   let old!: (value: unknown) => void
   const fetch = vi.fn().mockImplementationOnce(() => new Promise(resolve => { old = resolve })).mockResolvedValue({ ...result(), event: { ...result().event, id: 8 } })
   vi.stubGlobal('$fetch', fetch)
-  wrapper = mount(EventArchiveCandidates, { props: { eventId: 7, back: '/enterprises/1?tab=review', autoLoad: true }, global: { stubs: { EventCorrespondenceDecision: true, TablePagination: Pagination } } })
+  wrapper = mount(EventArchiveCandidates, { props: { eventId: 7, back: '/enterprises/1?tab=review' }, global: { stubs: { EventCorrespondenceDecision: true, TablePagination: Pagination } } })
   await flushPromises()
   expect(fetch).toHaveBeenCalledTimes(1)
   expect(fetch.mock.calls[0]![1].body).toEqual({ eventId: 7, page: 1, pageSize: 50, queryPage: 1, queryPageSize: 25 })
@@ -76,7 +77,7 @@ it('automatically reads only the opened event first page and ignores its late re
 it('keeps an empty candidate page distinct from failed partial and complete no record query coverage', async () => {
   const empty = { ...result(), rows: [], total: 0, coverage: { ...result().coverage, rows: ['failed', 'partial', 'no_record', 'no_candidate'].map((outcome, i) => ({ id: i + 1, interface: 'business_list', outcome, failureReason: outcome === 'failed' ? '归档查询失败原因' : null, relationCount: 0, candidateCount: 0 })) } }
   vi.stubGlobal('$fetch', vi.fn().mockResolvedValue(empty))
-  wrapper = mountPanel(); await wrapper.get('[data-testid="candidate-disclosure"] button').trigger('click'); await wrapper.get('[data-testid="discover-event-archives"]').trigger('click'); await flushPromises()
+  wrapper = mountPanel(); await wrapper.get('[data-testid="candidate-disclosure"] button').trigger('click'); await flushPromises()
   expect(wrapper.text()).toContain('本页无对应候选')
   await wrapper.get('[data-testid="candidate-coverage"] button').trigger('click')
   expect(wrapper.text()).toContain('查询失败')
@@ -99,9 +100,9 @@ it('separates grouped page items from global source totals and opens every obser
   wrapper = mountPanel()
   expect(wrapper.get('[data-testid="candidate-disclosure"] button').attributes('aria-expanded')).toBe('false')
   expect(wrapper.find('[data-testid="discover-event-archives"]').exists()).toBe(false)
-  expect(fetch).not.toHaveBeenCalled()
+  expect(fetch).toHaveBeenCalledTimes(1)
   await wrapper.get('[data-testid="candidate-disclosure"] button').trigger('click')
-  await wrapper.get('[data-testid="discover-event-archives"]').trigger('click'); await flushPromises()
+  await flushPromises()
   expect(wrapper.text()).toContain('本页可核对项 · 1 项')
   expect(wrapper.text()).toContain('来源记录共 105 条')
   expect(wrapper.findComponent({ name: 'TablePagination' }).props('total')).toBe(105)
@@ -121,7 +122,7 @@ it('keeps the failed target and retry visible after closing the secondary candid
   vi.stubGlobal('$fetch', vi.fn().mockResolvedValueOnce(result()).mockRejectedValueOnce(new Error('offline')))
   wrapper = mountPanel()
   await wrapper.get('[data-testid="candidate-disclosure"] button').trigger('click')
-  await wrapper.get('[data-testid="discover-event-archives"]').trigger('click'); await flushPromises()
+  await flushPromises()
   await wrapper.findAll('button').find(button => button.text() === '下一页')!.trigger('click'); await flushPromises()
   await wrapper.get('[data-testid="candidate-disclosure"] button').trigger('click'); await flushPromises()
   expect(wrapper.get('[data-testid="table-retry"]').isVisible()).toBe(true)
@@ -132,7 +133,7 @@ it('keeps the failed target and retry visible after closing the secondary candid
 it('mounts manual controls only after first opening and retains their draft when the secondary area is collapsed', async () => {
   const fetch = vi.fn().mockResolvedValue(result())
   vi.stubGlobal('$fetch', fetch)
-  wrapper = mount(EventArchiveCandidates, { props: { eventId: 7, back: '/enterprises/1', autoLoad: true }, global: { stubs: { TablePagination: Pagination, EventCorrespondenceDecision: { name: 'EventCorrespondenceDecision', data: () => ({ basis: '' }), template: '<input aria-label="核对草稿" v-model="basis" />' } } } })
+  wrapper = mount(EventArchiveCandidates, { props: { eventId: 7, back: '/enterprises/1' }, global: { stubs: { TablePagination: Pagination, EventCorrespondenceDecision: { name: 'EventCorrespondenceDecision', data: () => ({ basis: '' }), template: '<input aria-label="核对草稿" v-model="basis" />' } } } })
   await flushPromises()
   expect(wrapper.find('input').exists()).toBe(false)
   await wrapper.get('[data-testid="candidate-disclosure"] button').trigger('click')
@@ -159,7 +160,7 @@ it('compares official and platform fields with explicit missing and difference t
   vi.stubGlobal('$fetch', vi.fn().mockResolvedValue(page))
   wrapper = mountPanel()
   await wrapper.get('[data-testid="candidate-disclosure"] button').trigger('click')
-  await wrapper.get('[data-testid="discover-event-archives"]').trigger('click'); await flushPromises()
+  await flushPromises()
   const comparisons = wrapper.findAll('[aria-label="正式公布与平台记录对照"]')
   expect(comparisons).toHaveLength(2)
   const fields = comparisons[0]!.findAll('dl > div')
@@ -193,7 +194,7 @@ it.each(['下一页', '改变页大小', '重新查找平台候选'].flatMap(nav
   vi.stubGlobal('$fetch', fetcher)
   wrapper = mount(EventArchiveCandidates, { props: { eventId: 7, back: '/enterprises/1' }, attachTo: document.body, global: { stubs: { SourceReader: true, OfficialEvidence: true, TablePagination: { ...Pagination, template: '<div><button @click="$emit(\'update:page\', 2)">下一页</button><button @click="$emit(\'update:pageSize\', 25)">改变页大小</button></div>' } } } })
   await wrapper.get('[data-testid="candidate-disclosure"] button').trigger('click')
-  await wrapper.get('[data-testid="discover-event-archives"]').trigger('click'); await flushPromises()
+  await flushPromises()
   const click = async (label: string) => { [...document.querySelectorAll('button')].find(b => b.textContent?.trim() === label)!.click(); await flushPromises() }
   await click('确认对应')
   const area = document.querySelector('textarea')!; area.value = '保留第一页依据'; area.dispatchEvent(new Event('input', { bubbles: true })); await flushPromises()
@@ -225,7 +226,7 @@ it('offers revalidation on first candidate display using the correspondence deta
   vi.stubGlobal('$fetch', fetcher)
   wrapper = mount(EventArchiveCandidates, { props: { eventId: 7, back: '/enterprises/1' }, global: { stubs: { SourceReader: true } } })
   await wrapper.get('[data-testid="candidate-disclosure"] button').trigger('click')
-  await wrapper.get('[data-testid="discover-event-archives"]').trigger('click'); await flushPromises()
+  await flushPromises()
   expect(wrapper.findAll('button').some(b => b.text() === '重新核验对应')).toBe(true)
   expect(fetcher.mock.calls.filter(([url]) => url.endsWith('/91'))).toHaveLength(1)
 })
