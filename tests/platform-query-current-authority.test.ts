@@ -4,6 +4,7 @@ import { execFileSync } from 'node:child_process'
 import { readFileSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { migrate } from 'drizzle-orm/better-sqlite3/migrator'
@@ -11,17 +12,23 @@ import { expect, it } from 'vitest'
 import { compareCurrentReadAuthority } from '../scripts/lib/benchmark-authority.mjs'
 
 // This file checks a frozen input contract, NOT the product reader or D3 responses.
-// Override this directory with the independently accepted delivery on another host.
-const delivery = process.env.H1B_ARTIFACT_DELIVERY_DIR ?? '/Users/mang/Workfile/ningbo-cleanup-516/current-read-artifact-delivery'
+// Ordinary tests use tracked canonical migrations and never need a local delivery.
+// External artifact acceptance is a separately named, explicit opt-in test below.
+const delivery = process.env.H1B_ARTIFACT_DELIVERY_DIR
+const migrations = fileURLToPath(new URL('../db/migrations', import.meta.url))
 const bytes = readFileSync(new URL('../scripts/fixtures/platform-query-current-authority.json', import.meta.url))
 const document = JSON.parse(bytes.toString())
 const sha = (value: string | Buffer) => createHash('sha256').update(value).digest('hex')
 const digest = (value: unknown) => sha(JSON.stringify(value))
-const load = (file: string) => JSON.parse(readFileSync(join(delivery, file), 'utf8'))
+const load = (file: string) => {
+  assert.ok(delivery, 'External artifact delivery requires H1B_ARTIFACT_DELIVERY_DIR')
+  return JSON.parse(readFileSync(join(delivery, file), 'utf8'))
+}
 const copy = <T>(value: T): T => structuredClone(value)
 const quote = (name: string) => '"' + name.replaceAll('"', '""') + '"'
 
 function artifactInput() {
+  assert.ok(delivery, 'External artifact delivery requires H1B_ARTIFACT_DELIVERY_DIR')
   const raw = readFileSync(join(delivery, 'artifact-manifest.json'))
   assert.equal(sha(raw), document.artifactManifestSha256)
   const artifact = JSON.parse(raw.toString())
@@ -47,7 +54,7 @@ function withSeed<T>(doc: any, check: (db: Database.Database) => T): T {
   const db = new Database(join(dir, 'synthetic.sqlite'))
   try {
     db.pragma('foreign_keys = ON')
-    migrate(drizzle(db), { migrationsFolder: join(delivery, 'migrations') })
+    migrate(drizzle(db), { migrationsFolder: migrations })
     for (const [table, rows] of Object.entries(doc.seed) as [string, any[]][]) {
       for (const row of rows) {
         const columns = Object.keys(row)
@@ -158,10 +165,26 @@ it('freezes six modes for each transport before any public request', () => {
   withSeed(document, db => validate(document, db))
 })
 
-it('binds all 44 canonical migrations and the entire logical fixture without qualifying runtime', () => {
-  const artifact = artifactInput()
+// Deliberately synthetic comparison carrier. These labelled test-only digests are
+// NOT delivered build receipts or artifact evidence. Ordinary unit tests cannot
+// authenticate the external artifact, even when this carrier compares equal.
+function comparisonFixture() {
+  const hash = (label: string) => sha('unit-comparison-fixture:' + label)
+  const journal = JSON.parse(readFileSync(join(migrations, 'meta/_journal.json'), 'utf8')).entries
+    .map((e: any) => ({ tag: e.tag, when: e.when, sqlSha256: sha(readFileSync(join(migrations, e.tag + '.sql'))) }))
+  return { lane: 'current-read', schemaVersion: 1, receiptId: 'unit-comparison-only-not-a-build-receipt',
+    manifestSha256: document.artifactManifestSha256,
+    identity: { sourceSha: hash('source').slice(0, 40), sourceTree: hash('tree').slice(0, 40),
+      buildReceiptSha256: hash('receipt'), outputManifestSha256: hash('output'), dependencyManifestSha256: hash('dependencies'),
+      serverIndexSha256: hash('server'), journalSha256: sha(readFileSync(join(migrations, 'meta/_journal.json'))),
+      files: [{ path: 'server/index.mjs', sha256: hash('server') }, { path: 'unit-only-chunk', sha256: hash('chunk') }], journal },
+    runtime: { nodeVersion: 'unit-comparison-only', platform: 'unit-comparison-only', arch: 'unit-comparison-only', nativeSha256: hash('native') } }
+}
+
+function checkBindings(artifact: ReturnType<typeof comparisonFixture> | any, exportHandoff = false) {
   withSeed(document, db => {
     const ledger = db.prepare('select hash, created_at from __drizzle_migrations order by created_at').all()
+    assert.equal(artifact.identity.journal.length, 44)
     assert.deepEqual(ledger, artifact.identity.journal.map((e: any) => ({ hash: e.sqlSha256, created_at: e.when })))
     expect(digest(ledger)).toBe(document.bindings.ledgerReceiptSha256)
     for (const transport of ['http', 'mcp']) {
@@ -169,12 +192,23 @@ it('binds all 44 canonical migrations and the entire logical fixture without qua
       // Reconstructed comparison carrier only, NOT a runtime observation receipt.
       const observation = { lane: 'current-read', schemaVersion: 1, artifact: copy(artifact), workload: copy(workload) }
       expect(compareCurrentReadAuthority(artifact, workload, observation)).toMatchObject({ status: 'COMPARED_UNVALIDATED', qualified: false, runtimeQualified: false })
-      if (process.env.H1B_HANDOFF_DIR) {
+      if (exportHandoff && process.env.H1B_HANDOFF_DIR) {
         writeFileSync(join(process.env.H1B_HANDOFF_DIR, `workload-${transport}.json`), JSON.stringify(workload, null, 2) + '\n')
       }
     }
-    if (process.env.H1B_HANDOFF_DIR) writeFileSync(join(process.env.H1B_HANDOFF_DIR, 'artifact-envelope.json'), JSON.stringify(artifact, null, 2) + '\n')
+    if (exportHandoff && process.env.H1B_HANDOFF_DIR) writeFileSync(join(process.env.H1B_HANDOFF_DIR, 'artifact-envelope.json'), JSON.stringify(artifact, null, 2) + '\n')
   })
+}
+
+it('binds 44 tracked canonical migrations and the logical fixture using a comparison-only unit carrier', () => {
+  checkBindings(comparisonFixture())
+})
+
+// An explicit path opts into full external delivery verification. Missing or bad
+// supplied input FAILS; absence skips only this named external acceptance, never
+// the ordinary seed/semantic/ledger/mutation tests or their assertions.
+it.skipIf(!delivery)('verifies the explicitly supplied independent artifact delivery without qualifying runtime', () => {
+  checkBindings(artifactInput(), true)
 })
 
 // Reseal altered subdocuments deliberately: rejection must survive internally
@@ -203,7 +237,7 @@ it.each(mutations)('rejects independently altered contract %s', (_name, mutate) 
 })
 
 it.each(['artifact', 'version', 'workload version', 'artifact binding', 'migration middle', 'mode', 'expected digest', 'seed digest'])('rejects stale binding %s through the 620 seam', kind => {
-  const artifact = artifactInput()
+  const artifact = comparisonFixture()
   withSeed(document, db => {
     const workload = workloadInput(document, 'http', db.prepare('select hash, created_at from __drizzle_migrations order by created_at').all())
     const observation = { lane: 'current-read', schemaVersion: 1, artifact: copy(artifact), workload: copy(workload) }
