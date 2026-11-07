@@ -241,7 +241,7 @@ it.each(['artifact', 'version', 'workload version', 'artifact binding', 'migrati
   withSeed(document, db => {
     const workload = workloadInput(document, 'http', db.prepare('select hash, created_at from __drizzle_migrations order by created_at').all())
     const observation = { lane: 'current-read', schemaVersion: 1, artifact: copy(artifact), workload: copy(workload) }
-    if (kind === 'artifact') observation.artifact.identity.files[1].sha256 = sha('changed compiled chunk')
+    if (kind === 'artifact') observation.artifact.identity.files[1]!.sha256 = sha('changed compiled chunk')
     if (kind === 'version') observation.schemaVersion = 2
     if (kind === 'workload version') observation.workload.schemaVersion = 2
     if (kind === 'artifact binding') observation.workload.artifactManifestSha256 = sha('different detached artifact')

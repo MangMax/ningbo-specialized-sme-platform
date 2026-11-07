@@ -888,7 +888,8 @@ describe('出处预览返回滚动恢复', () => {
 
   it.each(['complete', 'inner collapse', 'outer collapse', 'route', 'enterprise', 'event removed', 'unmount', 'no animation', 'animation cancelled'])('waits for restored disclosure animations and handles %s', async outcome => {
     history.replaceState(null, '', '/enterprises/91')
-    currentRoute = reactive({ params: { id: '91' }, query: {}, fullPath: '/enterprises/91' })
+    const animationRoute = reactive({ params: { id: '91' }, query: {}, fullPath: '/enterprises/91' })
+    currentRoute = animationRoute
     mocks.detail = fullDetail
     Object.defineProperty(window, 'scrollY', { configurable: true, value: 420 })
     rememberEvidencePreviewReturn('/enterprises/91')
@@ -898,7 +899,7 @@ describe('出处预览返回滚动恢复', () => {
     let finish!: () => void
     let cancel!: () => void
     const finished = new Promise<void>((resolve, reject) => { finish = resolve; cancel = () => reject(new Error("animation cancelled")) })
-    const animations = vi.spyOn(Element.prototype, 'getAnimations').mockReturnValue(outcome === 'no animation' ? [] : [{ finished } as Animation])
+    const animations = vi.spyOn(Element.prototype, 'getAnimations').mockReturnValue(outcome === 'no animation' ? [] : [{ finished } as unknown as Animation])
     const frames: FrameRequestCallback[] = []
     vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => { frames.push(callback); return frames.length })
     const scrollTo = vi.fn()
@@ -918,7 +919,7 @@ describe('出处预览返回滚动恢复', () => {
       await page.find('#record-event-10').findAll('button').find(button => button.text() === title)!.trigger('click')
     }
     if (outcome === 'route') currentRoute.fullPath = '/enterprises/91?back=changed'
-    if (outcome === 'enterprise') currentRoute.params.id = '92'
+    if (outcome === 'enterprise') animationRoute.params.id = '92'
     if (outcome === 'event removed') mocks.setDetail?.({ ...fullDetail, records: [] })
     if (outcome === 'unmount') page.unmount()
     await flushPromises()
