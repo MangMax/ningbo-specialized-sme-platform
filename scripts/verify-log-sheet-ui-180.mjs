@@ -8,7 +8,7 @@
  * usage: node scripts/verify-log-sheet-ui-180.mjs <baseUrl> <outDir>
  */
 import assert from 'node:assert/strict'
-import { spawnOwnedChild, stopOwnedChild, waitForChromeDevTools } from './lib/isolated-local-services.mjs'
+import { spawnOwnedChild, getOwnedChildStartFailure, stopOwnedChild, waitForChromeDevTools } from './lib/isolated-local-services.mjs'
 import { closeSync, openSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -25,26 +25,99 @@ let chrome, profile, ws, chromeClosed, chromePort
 const chromeStderrPath = join(outDir, 'chrome-stderr.log')
 let cleanupPromise
 const lifecycle = { errors: [] }
+
+// Acquisition attempts remain accountable even when the native launcher throws.
+const owned = {}
+function errorDetail(error) {
+  return { message: String(error?.stack || error), code: error?.code,
+    cause: error?.cause && errorDetail(error.cause),
+    errors: error?.errors && Array.from(error.errors, errorDetail),
+    startResult: error?.startResult, stopResult: error?.stopResult }
+}
+async function cleanupStep(name, action) {
+  try { await action() }
+  catch (error) {
+    lifecycle.errors.push({ name, error: errorDetail(error) })
+    console.error('Cleanup failure:', name, error)
+    process.exitCode = 1
+  }
+}
+function acquire(name, start) {
+  const state = owned[name] = { attempted: true, confirmed: false }
+  const register = child => {
+    state.child = child
+    state.closed = child.exitCode !== null || child.signalCode !== null
+      ? Promise.resolve() : new Promise(resolve => child.once('close', resolve))
+    child.on('error', error => {
+      lifecycle.errors.push({ name: name + ' event', error: errorDetail(error) })
+      process.exitCode = 1
+    })
+    for (const stream of new Set(child.stdio ?? [])) {
+      stream?.on?.('error', error => {
+        lifecycle.errors.push({ name: name + ' stream', error: errorDetail(error) })
+        process.exitCode = 1
+      })
+      stream?.resume?.()
+    }
+    return child
+  }
+  try { return register(start()) }
+  catch (error) {
+    const partial = getOwnedChildStartFailure(error)
+    if (partial) register(partial.child)
+    throw error
+  }
+}
+async function stopResource(name) {
+  const state = owned[name]
+  if (!state?.child) return
+  state.stopAttempted = true
+  // Let already queued native exit/error events settle before stop observes identity.
+  await new Promise(resolve => setImmediate(resolve))
+  try { await stopOwnedChild(state.child); state.confirmed = true }
+  catch (error) {
+    const result = state.stopResult = error?.stopResult
+    state.confirmed = result?.brand === 'isolated-local-services.stop' && result.version === 1 &&
+      result.termination === 'confirmed' && result.groupId === state.child.pid
+    throw error
+  }
+}
+async function releaseUnknown() {
+  for (const [name, state] of Object.entries(owned)) {
+    const child = state.child
+    if (!child || state.confirmed) continue
+    await cleanupStep(name + ' IPC', () => { if (child.connected) child.disconnect() })
+    for (const [index, stream] of [...new Set(child.stdio ?? [])].entries()) {
+      await cleanupStep(name + ' stdio ' + index, () => stream?.destroy?.())
+    }
+    await cleanupStep(name + ' unref', () => child.unref())
+  }
+  await new Promise(resolve => setImmediate(resolve))
+}
+function ownershipReceipt() {
+  return Object.fromEntries(Object.entries(owned).map(([name, state]) => [name, {
+    attempted: state.attempted, pid: state.child?.pid, stopAttempted: state.stopAttempted,
+    confirmed: state.confirmed, stopResult: state.stopResult
+  }]))
+}
+
 async function cleanup() {
   if (cleanupPromise) return cleanupPromise
   cleanupPromise = (async () => {
-    ws?.close()
-    try {
-      if (chrome) {
-        await stopOwnedChild(chrome)
-        await chromeClosed
-      }
-      if (profile) rmSync(profile, { recursive: true, force: true })
-    } catch (error) {
-      lifecycle.errors.push(String(error.stack || error))
-    }
+    await cleanupStep('CDP', () => ws?.close())
+    await cleanupStep('chrome', () => stopResource('chrome'))
+    await cleanupStep('profile', () => {
+      if (profile && (!owned.chrome || owned.chrome.confirmed)) rmSync(profile, { recursive: true, force: true })
+    })
+    await releaseUnknown()
     Object.assign(lifecycle, {
+      owned: ownershipReceipt(),
       chromePort, chromePid: chrome?.pid,
       chromeExit: chrome && { code: chrome.exitCode, signal: chrome.signalCode },
       profile, profileRemoved: profile ? !existsSync(profile) : true
     })
     if (lifecycle.errors.length) process.exitCode = 1
-    writeFileSync(join(outDir, 'sheet-browser-closeout.json'), JSON.stringify(lifecycle, null, 2))
+    await cleanupStep('closeout receipt', () => writeFileSync(join(outDir, 'sheet-browser-closeout.json'), JSON.stringify(lifecycle, null, 2)))
   })()
   return cleanupPromise
 }
@@ -65,7 +138,7 @@ profile = mkdtempSync(join(tmpdir(), 'sheet-ui-chrome-'))
 // inherited pipes would keep ChildProcess.close pending after the group exits.
 const chromeStderr = openSync(chromeStderrPath, 'a')
 try {
-chrome = spawnOwnedChild(
+chrome = acquire('chrome', () => spawnOwnedChild(
   chromePath,
   [
     '--headless=new',
@@ -83,11 +156,11 @@ chrome = spawnOwnedChild(
     'about:blank'
   ],
   { stdio: ['ignore', 'ignore', chromeStderr] }
-)
+))
 } finally {
   closeSync(chromeStderr)
 }
-chromeClosed = new Promise(resolve => chrome.once('close', resolve))
+chromeClosed = owned.chrome.closed
 const version = await waitForChromeDevTools(chrome, profile)
 chromePort = Number(new URL(version.webSocketDebuggerUrl).port)
 const target = await (
@@ -794,7 +867,7 @@ try {
 try {
   await run()
 } catch (error) {
-  lifecycle.errors.push(String(error.stack || error))
+  lifecycle.errors.push({ name: 'primary', error: errorDetail(error) })
   console.error(error)
   process.exitCode = 1
 } finally {
