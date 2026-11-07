@@ -110,7 +110,8 @@ if (action === 'prepare') {
     samples.push({kind:i?'hot':'cold-process',ms:elapsed,sqlMs,sqlReturnedBytes,responseBytes:bytes,heapUsed:memory.heapUsed,rss:memory.rss,fsRead:process.resourceUsage().fsRead-before.fsRead})
   }
   const sorted=samples.slice(1).map(x=>x.ms).sort((a,b)=>a-b)
-  console.log(JSON.stringify({action,scale,mode,dbBytes:statSync(dbPath).size,heapLimit:(await import('node:v8')).getHeapStatistics().heap_size_limit,samples,hot:{p50:sorted[2],p95:sorted[4],p99:sorted[4]},peakHeap,peakRss,processMaxRssBytes:process.resourceUsage().maxRSS*1024}))
+  // Successful reads are diagnostic measurements, not qualification or SLO acceptance.
+  console.log(JSON.stringify({action,status:'MEASURED_UNVALIDATED',qualified:false,runtimeQualified:false,reason:'This direct-read lane lacks independent artifact, workload and semantic expected evidence. Scale is only a CLI label; samples and percentiles are unvalidated diagnostics, not valid performance samples or SLO acceptance. Exit 0 means diagnostic execution completed, not acceptance PASS.',scale,mode,dbBytes:statSync(dbPath).size,heapLimit:(await import('node:v8')).getHeapStatistics().heap_size_limit,samples,hot:{p50:sorted[2],p95:sorted[4],p99:sorted[4]},peakHeap,peakRss,processMaxRssBytes:process.resourceUsage().maxRSS*1024}))
 }
 } catch (error) {
   if (stagingDir) console.error(`Prepare failed; staging and destination paths preserved (ownership must be inspected): ${stagingDir}`)
