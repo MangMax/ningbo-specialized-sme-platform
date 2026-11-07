@@ -208,7 +208,7 @@ export function ensurePlatformObservation(db: Executor, relationId: number, batc
 }
 
 /** Read-only completion check, after all writers and inside the same business transaction. */
-export function verifyPlatformFields(db: Executor, results: PlatformProjectionResult[]) {
+export function verifyPlatformFields(db: Executor, results: PlatformProjectionResult[], referenceParticipated: boolean) {
   const observations = new Map(results.filter(row => row.syncRequested).map(row => [row.relationId, row]))
   const versions = new Set<number>()
   let quarantinedObservations = 0
@@ -226,7 +226,6 @@ export function verifyPlatformFields(db: Executor, results: PlatformProjectionRe
     else throw new PlatformProjectionError('projection_missing', 'Unsupported source projection')
     versions.add(row.versionId)
   }
-  const references = results.some(row => !row.syncRequested)
   const created = new Set(results.filter(row => row.syncRequested && row.versionId !== null && versions.has(row.versionId) && (row.applyProjectionCreated || row.businessProjectionCreated || row.recognizedProjectionCreated)).map(row => row.versionId)).size
-  return { status: quarantinedObservations || references ? 'partial' as const : observations.size ? 'ready' as const : 'not_performed' as const, eligibleVersions: versions.size, projectionsCreated: created, projectionsReused: versions.size - created, projectionsChecked: versions.size, observationsChecked: observations.size, quarantinedObservations }
+  return { status: quarantinedObservations || referenceParticipated ? 'partial' as const : observations.size ? 'ready' as const : 'not_performed' as const, eligibleVersions: versions.size, projectionsCreated: created, projectionsReused: versions.size - created, projectionsChecked: versions.size, observationsChecked: observations.size, quarantinedObservations }
 }
