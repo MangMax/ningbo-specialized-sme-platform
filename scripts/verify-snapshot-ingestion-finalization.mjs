@@ -52,7 +52,7 @@ async function verify(phase) {
       cleanupReceipt('stopped', { pid: owned.pid, exit: owned.exitCode, signal: owned.signalCode })
     } catch (error) {
       const result = error?.stopResult
-      confirmed = result?.brand === 'isolated-local-services.stop' && result.version === 1 && result.termination === 'confirmed'
+      confirmed = result?.brand === 'isolated-local-services.stop' && result.version === 1 && result.termination === 'confirmed' && result.groupId === owned.pid
       cleanupReceipt('stop-error', { pid: owned.pid, termination: confirmed ? 'confirmed' : 'unconfirmed', reason: result?.reason })
       throw error
     } finally {

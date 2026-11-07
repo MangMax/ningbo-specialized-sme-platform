@@ -223,7 +223,7 @@ finally {
      const result=error?.stopResult
      // Only this helper's versioned terminal receipt can authorize root deletion.
      const known=result?.brand==='isolated-local-services.stop' && result.version===1
-     childStopped=known && result.termination==='confirmed'
+     childStopped=known && result.termination==='confirmed' && result.groupId === child.pid
      stopState=known?`${result.termination}/${result.reason} (group=${result.groupId}, members=${JSON.stringify(result.finalMembers)}, observedAt=${result.observedAt})`:'unknown stop receipt'
    }
  }

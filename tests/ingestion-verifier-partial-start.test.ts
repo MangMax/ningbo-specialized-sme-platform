@@ -33,7 +33,7 @@ process.on('uncaughtExceptionMonitor',e=>{const includes=(value,target)=>Boolean
 function start(fn,args){try{return fn(...args)}catch(e){original=e;partial=h.getOwnedChildStartFailure(e);log({event:'partial',pid:partial?.child.pid,causeSame:partial?.cause===e.cause});if(${JSON.stringify(mode)}==='clone')throw Object.assign(new Error('cloned startup failure'),{startResult:e.startResult,cause:e.cause});throw e}}
 export const spawnOwnedChild=(...a)=>start(h.spawnOwnedChild,a);export const forkOwnedChild=(...a)=>start(h.forkOwnedChild,a);
 export function getOwnedChildStartFailure(e){log({event:'recover',original:e===original});return h.getOwnedChildStartFailure(e)}
-export async function stopOwnedChild(c){if(${JSON.stringify(mode)}==='early-exit'&&c.exitCode===null&&c.signalCode===null)await new Promise((resolve,reject)=>{const timer=setTimeout(()=>reject(new Error('native leader did not exit')),2000);c.once('exit',()=>{clearTimeout(timer);resolve()})});log({event:'stop',pid:c.pid,same:partial?c===partial.child:true});try{const out=await h.stopOwnedChild(c);log({event:'terminal',termination:'confirmed'});if(${JSON.stringify(mode)}==='unsupported-stop')throw Object.assign(new Error('unsupported stop version'),{stopResult:{brand:'isolated-local-services.stop',version:2,termination:'confirmed'}});return out}catch(e){log({event:'terminal',result:e.stopResult});throw e}}
+export async function stopOwnedChild(c){if(${JSON.stringify(mode)}==='early-exit'&&c.exitCode===null&&c.signalCode===null)await new Promise((resolve,reject)=>{const timer=setTimeout(()=>reject(new Error('native leader did not exit')),2000);c.once('exit',()=>{clearTimeout(timer);resolve()})});log({event:'stop',pid:c.pid,same:partial?c===partial.child:true});try{const out=await h.stopOwnedChild(c);log({event:'terminal',termination:'confirmed'});if(${JSON.stringify(mode)}==='wrong-group-stop')throw Object.assign(new Error('simulated foreign-group stop receipt'),{stopResult:{brand:'isolated-local-services.stop',version:1,termination:'confirmed',groupId:c.pid+1000000}});if(${JSON.stringify(mode)}==='unsupported-stop')throw Object.assign(new Error('unsupported stop version'),{stopResult:{brand:'isolated-local-services.stop',version:2,termination:'confirmed'}});return out}catch(e){log({event:'terminal',result:e.stopResult});throw e}}
 `)
   writeFileSync(join(dir, 'fs.mjs'), `export * from 'node:fs';import * as fs from 'node:fs';export function rmSync(...args){if(${JSON.stringify(mode)}.startsWith('root-error'))throw Object.assign(new Error('native root removal EIO'),{code:'EIO'});return fs.rmSync(...args)}`)
   writeFileSync(join(dir, 'hook.mjs'), `
@@ -94,12 +94,12 @@ if(url.endsWith('/scripts/verify-${owner}.mjs'))return {...r,source:String(r.sou
   expect(output).toContain(mode.startsWith('established') ? 'native IPC EIO' : mode === 'clone' ? 'cloned startup failure' : 'OwnedChildStartError')
   if (!mode.startsWith('established') && mode !== 'clone') expect(events.find(e => e.event === 'primary-identity')).toMatchObject({ same: true, causeSame: true })
   expect(output).not.toContain('\"passed\":true')
-  if (['unknown', 'established-unknown', 'clone', 'early-exit', 'unsupported-stop'].includes(mode)) {
-    if (mode !== 'unsupported-stop') expect(events.filter(e => e.event === 'signal')).toEqual([])
-    if (mode === 'unsupported-stop') expect(before.members).toEqual([])
+  if (['unknown', 'established-unknown', 'clone', 'early-exit', 'unsupported-stop', 'wrong-group-stop'].includes(mode)) {
+    if (!['unsupported-stop','wrong-group-stop'].includes(mode)) expect(events.filter(e => e.event === 'signal')).toEqual([])
+    if (['unsupported-stop','wrong-group-stop'].includes(mode)) expect(before.members).toEqual([])
     else expect(before.members.length).toBeGreaterThan(0)
     expect(before.rootExists).toBe(true)
-    if (!['clone','unsupported-stop'].includes(mode)) expect(events.find(e => e.event === 'terminal').result).toMatchObject({ version: 1, termination: 'unconfirmed', finalMembers: null })
+    if (!['clone','unsupported-stop','wrong-group-stop'].includes(mode)) expect(events.find(e => e.event === 'terminal').result).toMatchObject({ version: 1, termination: 'unconfirmed', finalMembers: null })
   } else {
     expect(before.members).toEqual([])
     expect(before.rootExists).toBe(mode.startsWith('root-error') || mode === 'oracle-error')
@@ -111,7 +111,7 @@ if(url.endsWith('/scripts/verify-${owner}.mjs'))return {...r,source:String(r.sou
 }
 for (const owner of owners) {
   if (owner !== 'platform-query-read') for (const mode of ['oracle-error','receipt-error']) it(`${owner} lifecycle carrier ${mode} attempts remaining cleanup`, async () => { await probe(owner, mode) }, 40000)
-  for (const mode of ['initialization', 'root-error', 'root-error-combined', 'clone', 'early-exit', 'unsupported-stop', 'established', 'established-unknown']) it(`${owner} lifecycle carrier ${mode} preserves failure and resource gates`, async () => { await probe(owner, mode) }, 40000)
+  for (const mode of ['initialization', 'root-error', 'root-error-combined', 'clone', 'early-exit', 'unsupported-stop', 'wrong-group-stop', 'established', 'established-unknown']) it(`${owner} lifecycle carrier ${mode} preserves failure and resource gates`, async () => { await probe(owner, mode) }, 40000)
   it(`${owner} recovers authentic partial after actual native timeout and stops same child once`, async () => { await probe(owner, 'confirmed') }, 40000)
   it(`${owner} retains unknown root with zero signals and exits finitely`, async () => { await probe(owner, 'unknown') }, 40000)
   it(`${owner} retains primary and confirmed cleanup errors independently`, async () => { await probe(owner, 'confirmed-error') }, 40000)

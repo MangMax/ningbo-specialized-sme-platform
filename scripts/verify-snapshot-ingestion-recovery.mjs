@@ -36,7 +36,7 @@ async function stop() {
     cleanupReceipt('stopped', { pid: child.pid, exit: child.exitCode, signal: child.signalCode })
   } catch (error) {
     const result = error?.stopResult
-    confirmed = result?.brand === 'isolated-local-services.stop' && result.version === 1 && result.termination === 'confirmed'
+    confirmed = result?.brand === 'isolated-local-services.stop' && result.version === 1 && result.termination === 'confirmed' && result.groupId === child.pid
     cleanupReceipt('stop-error', { pid: child.pid, termination: confirmed ? 'confirmed' : 'unconfirmed', reason: result?.reason })
     throw error
   } finally {
