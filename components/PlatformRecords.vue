@@ -57,8 +57,10 @@ const rows = computed(() => props.relations.map(record => {
   const titles = new Set(props.relations
     .filter(other => record.relationKey && other.relationKey === record.relationKey && queryById.value.get(other.queryId)?.interface === 'business_list')
     .map(other => platformRowTitle(queryById.value.get(other.queryId)?.rdjb, other.rawFields)).filter(Boolean))
-  const title = query?.interface === 'recognized_list' ? record.sourceRdjb ?? (query.rdjb.split(',').length === 1 ? query.rdjb : '') : platformRowTitle(query?.rdjb, record.rawFields) || (titles.size === 1 ? [...titles][0]! : '')
-  return { record, query, title, inferredTitle: query?.interface === 'apply_list' && !query.rdjb && Boolean(title) }
+  const directTitle = query?.interface === 'recognized_list' ? record.sourceRdjb ?? (query.rdjb.split(',').length === 1 ? query.rdjb : '') : platformRowTitle(query?.rdjb, record.rawFields)
+  const inferredTitle = !directTitle && query?.interface === 'apply_list' && !query.rdjb && titles.size === 1
+  const title = directTitle || (inferredTitle ? [...titles][0]! : '')
+  return { record, query, title, inferredTitle }
 }))
 const titles = computed(() => {
   const values = new Set([...props.queries.flatMap(query => query.rdjb.split(',')).filter(Boolean), ...rows.value.map(row => row.title)])

@@ -264,3 +264,14 @@ it('does not flatten nonscalar unknown platform information into the default vie
   expect(wrapper.find('[data-testid="platform-related-raw"]').exists()).toBe(false)
   expect(wrapper.text()).not.toMatch(/nested|object|array|zsrxm|cz/)
 })
+
+it('source presentation folds empty raw fields and preserves their exact values on request',async()=>{
+ const value={...relation,rawFields:{rdjb:'2',qymc:'企业原名',rdsj:'',rdrq:null,sfty:false,zyzb:0}}
+ const before=JSON.stringify(value)
+ const wrapper=mount(SourceRowDetail,{props:{relation:value,presentation:'source'},global:{stubs}});mounted.push(wrapper)
+ expect(wrapper.text()).toContain('平台返回的空字段 · 2 项')
+ expect(wrapper.text()).toContain('false');expect(wrapper.text()).not.toContain('平台认定时间')
+ await wrapper.get('[data-testid="platform-empty-fields"] button').trigger('click');await flushPromises()
+ expect(wrapper.text()).toContain('""（空字符串）');expect(wrapper.text()).toContain('null（原值）')
+ expect(JSON.stringify(value)).toBe(before)
+})

@@ -100,7 +100,328 @@ defineRouteMeta({
           },
           "collection": {
             "type": "object",
-            "description": "完整原businessList legacy采集结果：source/status/effectiveConditions/titleScope/queriedAt/completedAt/rows/pages/fetchedCount/declaredTotal/completeness/fullRange/unfinished/error/limits。rows只保留原字符串，不接受rawData/dataRows，不补造响应正文。",
+            "properties": {
+              "source": {
+                "type": "string",
+                "enum": [
+                  "businessList"
+                ]
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "success",
+                  "no_record",
+                  "auth_failed",
+                  "failed",
+                  "partial",
+                  "not_queried"
+                ]
+              },
+              "effectiveConditions": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "uscc": {
+                    "type": "string"
+                  },
+                  "combination": {
+                    "type": "string",
+                    "const": "and"
+                  },
+                  "sqsj": {
+                    "type": "string"
+                  },
+                  "rddqrq": {
+                    "type": "string"
+                  },
+                  "whpcyear": {
+                    "type": "string"
+                  },
+                  "whpc": {
+                    "type": "string"
+                  },
+                  "szq": {
+                    "type": "string"
+                  },
+                  "orderField": {
+                    "type": "string"
+                  },
+                  "orderDirection": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "combination"
+                ]
+              },
+              "titleScope": {
+                "type": "object",
+                "properties": {
+                  "mode": {
+                    "type": "string",
+                    "enum": [
+                      "source_default",
+                      "selected"
+                    ]
+                  },
+                  "rdjb": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "required": [
+                  "mode",
+                  "rdjb"
+                ]
+              },
+              "queriedAt": {
+                "type": "string"
+              },
+              "completedAt": {
+                "type": "string"
+              },
+              "rows": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "propertyNames": {
+                    "type": "string"
+                  },
+                  "additionalProperties": {
+                    "type": "string"
+                  }
+                }
+              },
+              "pages": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "source": {
+                      "type": "string",
+                      "enum": [
+                        "queryList",
+                        "businessList",
+                        "queryBusList"
+                      ]
+                    },
+                    "rdjb": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "page": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "maxPage": {
+                      "anyOf": [
+                        {
+                          "type": "integer",
+                          "exclusiveMinimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "success",
+                        "auth_failed",
+                        "failed"
+                      ]
+                    },
+                    "fetchedCount": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "declaredTotal": {
+                      "anyOf": [
+                        {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "error": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "code": {
+                              "type": "string",
+                              "enum": [
+                                "invalid_input",
+                                "unsupported_source",
+                                "credential_unavailable",
+                                "auth_failed",
+                                "upstream_failed",
+                                "timeout",
+                                "rate_limited",
+                                "safety_limit",
+                                "invalid_response",
+                                "sensitive_response"
+                              ]
+                            },
+                            "message": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "code",
+                            "message"
+                          ]
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "source",
+                    "rdjb",
+                    "page",
+                    "status",
+                    "fetchedCount",
+                    "declaredTotal",
+                    "error"
+                  ]
+                }
+              },
+              "fetchedCount": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "declaredTotal": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "completeness": {
+                "type": "string",
+                "enum": [
+                  "complete",
+                  "partial",
+                  "not_queried"
+                ]
+              },
+              "fullRange": {
+                "type": "boolean"
+              },
+              "unfinished": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "source": {
+                      "type": "string",
+                      "enum": [
+                        "queryList",
+                        "businessList",
+                        "queryBusList"
+                      ]
+                    },
+                    "rdjb": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "page": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0,
+                      "maximum": 9007199254740991
+                    }
+                  },
+                  "required": [
+                    "source",
+                    "rdjb",
+                    "page"
+                  ]
+                }
+              },
+              "error": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "code": {
+                        "type": "string",
+                        "enum": [
+                          "invalid_input",
+                          "unsupported_source",
+                          "credential_unavailable",
+                          "auth_failed",
+                          "upstream_failed",
+                          "timeout",
+                          "rate_limited",
+                          "safety_limit",
+                          "invalid_response",
+                          "sensitive_response"
+                        ]
+                      },
+                      "message": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "code",
+                      "message"
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "limits": {
+                "type": "object",
+                "properties": {
+                  "maxRequests": {
+                    "type": "number"
+                  },
+                  "maxRows": {
+                    "type": "number"
+                  },
+                  "maxDurationMs": {
+                    "type": "number"
+                  },
+                  "pageSize": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "maxRequests",
+                  "maxRows",
+                  "maxDurationMs",
+                  "pageSize"
+                ]
+              }
+            },
             "required": [
               "source",
               "status",
@@ -117,7 +438,9 @@ defineRouteMeta({
               "unfinished",
               "error",
               "limits"
-            ]
+            ],
+            "description": "完整原businessList legacy采集结果：source/status/effectiveConditions/titleScope/queriedAt/completedAt/rows/pages/fetchedCount/declaredTotal/completeness/fullRange/unfinished/error/limits。rows只保留原字符串，不接受rawData/dataRows，不补造响应正文。",
+            "additionalProperties": false
           },
           "relations": {
             "type": "array",
@@ -147,7 +470,8 @@ defineRouteMeta({
                   }
                 }
               }
-            }
+            },
+            "maxItems": 5000
           }
         }
       }

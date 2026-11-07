@@ -143,7 +143,7 @@ function selected(db: Db, input: RecordComparisonInput) {
   const queryMap = new Map(queries.map(row => [row.id, row]))
   const batchMap = new Map(batches.map(row => [row.id, row]))
   const r = schema.platformRelation
-  // Match the candidate reader's seven-key projection. Unrelated archived row
+  // Keep the bounded process/title projection. Unrelated archived row
   // bytes must stay inside SQLite; multi-path extraction retains JSON value types.
   const processRaw = sql`case when json_valid(${r.rawFields}) then json_extract(${r.rawFields}, ${sql.join(PLATFORM_PROCESS_RAW_KEYS.map(key => sql`${`$.${key}`}`), sql`, `)}) else null end`.mapWith(platformProcessRawFromJson)
   const relations = db.select({ ...getTableColumns(r), rawFields: processRaw, sourceText: sql<null>`null` }).from(r).where(inArray(r.queryId, parsed.queryIds)).orderBy(r.id).all().map(row => ({ relation: normalizePlatformRelation(queryMap.get(row.queryId)!.interface, row), query: queryMap.get(row.queryId)! }))

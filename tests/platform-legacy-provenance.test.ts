@@ -1,3 +1,4 @@
+import { sourceReader } from '../server/utils/record-correspondence-read'
 import { createHash } from 'node:crypto'
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -75,6 +76,9 @@ describe('independent legacy provenance', () => {
     expect(detail.platform.queries[0]?.collectionEvidence).toBeNull()
     expect(detail.platform.queries[0]?.legacyProvenance?.kind).toBe('legacy_pagination')
     expect(detail.platform.relations.map(row => [row.sourceRdjb, row.sourcePage])).toEqual([['2', 1], ['2', 1], ['3', 1]])
+    const source=sourceReader(db, [], {kind:'relation', id:query.relations[2]!.id}).read('relation', query.relations[2]!.id) as any
+    expect(source).toMatchObject({sourceRdjb:'3',sourcePage:1,query:{collectionEvidence:null,legacyProvenance:{kind:'legacy_pagination'}}})
+    expect(source.query.legacyProvenance.collection).not.toHaveProperty('rows')
   })
 
   it('keeps original second-page positions and exposes full legacy rows only through exact evidence reads', () => {
@@ -249,6 +253,13 @@ describe('independent legacy provenance', () => {
     const rest = ['preflight', 'commit'].map(action => JSON.parse(readFileSync(new URL(`../server/api/roster/import/${action}.post.ts`, import.meta.url), 'utf8').match(/payload: (\{\n[\s\S]*?\n\}),/)![1]!))
     for (const payload of [mcp, ...rest]) {
       expect(payload.properties.platformLegacyProvenance).toMatchObject({ type: 'array', minItems: 1, maxItems: 100, items: { additionalProperties: false, required: expect.arrayContaining(['queryId', 'interface', 'queryKey', 'rdjb', 'queriedAt', 'sourceSha256', 'segmentIndex', 'collection', 'relations']) } })
+    }
+    for (const payload of [mcp, ...rest]) {
+      const fields=payload.properties.platformLegacyProvenance.items.properties
+      expect(fields.collection.properties.source.enum ?? [fields.collection.properties.source.const]).toEqual(['businessList'])
+      expect(fields.collection.properties).not.toHaveProperty('rawData')
+      expect(fields.collection.properties).not.toHaveProperty('dataRows')
+      expect(fields.relations.maxItems).toBe(5000)
     }
     expect(legacyPlatformProvenanceItemsSchema.safeParse([fixture().input]).success).toBe(true)
   })

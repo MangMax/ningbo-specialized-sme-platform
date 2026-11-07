@@ -171,3 +171,12 @@ it('legacy provenance shows pagination without claiming typed original evidence'
   expect(view.text()).not.toContain('完整性未知')
  }finally{view.unmount()}
 })
+
+it('mixed business rows with missing titles never borrow an older observation title',async()=>{
+ const view=mount(PlatformRecords,{props:{queries:[query,{...query,id:2,rdjb:'1,2,3'}],relations:[record,{...record,id:2,queryId:2,rawFields:{id:'SQ001'}}]}})
+ try{
+  expect(view.findAll('tbody[data-record-title=""] [data-testid="platform-relation"]').map(x=>x.attributes('data-record-id'))).toEqual(['2'])
+  await view.findAll('[role="tab"]').find(tab=>tab.text()==='专精特新中小企业')!.trigger('keydown',{key:'Enter'})
+  expect(view.findAll('[data-testid="platform-relation"]').map(x=>x.attributes('data-record-id'))).toEqual(['1'])
+ }finally{view.unmount()}
+})

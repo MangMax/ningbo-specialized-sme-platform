@@ -88,6 +88,7 @@ export interface RelationSource {
     failureReason: string | null
     relationCount: number
     collectionEvidence: import('../platform/live-query').PlatformLiveQueryResult | null
+    legacyProvenance?: import('./enterprise-roster').RosterPlatformQueryRow['legacyProvenance']
   }
   correspondences: CorrespondenceRef[]
 }
