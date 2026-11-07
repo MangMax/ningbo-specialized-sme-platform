@@ -41,7 +41,7 @@ import Database from 'better-sqlite3'
 import archiver from 'archiver'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { migrate } from 'drizzle-orm/better-sqlite3/migrator'
-import { reserveLoopbackPort, spawnOwnedChild, stopOwnedChild, waitForHttp, waitForChromeDevTools } from './lib/isolated-local-services.mjs'
+import { getOwnedChildStartFailure, reserveLoopbackPort, spawnOwnedChild, stopOwnedChild, waitForHttp, waitForChromeDevTools } from './lib/isolated-local-services.mjs'
 
 const args = process.argv.slice(2)
 const option = (key, fallback) => {
@@ -63,28 +63,86 @@ const failures = []
 const children = []
 const abort = new AbortController()
 for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => {
+  if (interrupted) return
   interrupted = signal
   abort.abort(new Error(signal))
-  cdp?.close()
+  try { cdp?.close() } catch(error) { failures.push(`signal CDP cleanup: ${error.stack}`) }
 })
 function alive(child) { return child && child.exitCode === null && child.signalCode === null }
 async function until(label, probe, timeout = 30_000) {
   const end = Date.now() + timeout
   do {
     if (interrupted) throw new Error(interrupted)
+    abort.signal.throwIfAborted()
     if (await probe()) return
     await sleep(100, undefined, { signal: abort.signal })
   } while (Date.now() < end)
   throw new Error(`Timed out: ${label}`)
 }
+// Attempts are journalled before native acquisition; missing handles are unknown.
 function own(cmd, argv, env) {
-  const child = spawnOwnedChild(cmd, argv, { env, stdio: ['ignore', 'pipe', 'pipe'] })
-  children.push(child)
-  child.on('error', error => { failures.push(`spawn: ${error.message}`) })
-  child.stdout.on('data', data => process.stdout.write(data))
-  child.stderr.on('data', data => process.stderr.write(data))
-  console.log(JSON.stringify({ resource: 'child', pid: child.pid, cmd, argv }))
-  return child
+  abort.signal.throwIfAborted()
+  const resource = { cmd, argv, child: undefined, termination: 'unconfirmed', stop: undefined }
+  children.push(resource)
+  const register = child => {
+    resource.child = child
+    const fail = (label, error) => {
+      failures.push(`${label}: ${error.stack}`)
+      abort.abort(error)
+      try { cdp?.close() } catch(closeError) { failures.push(`child failure CDP cleanup: ${closeError.stack}`) }
+    }
+    child.on('error', error => fail('spawn', error))
+    child.stdout?.on('error', error => fail('stdout', error))
+    child.stderr?.on('error', error => fail('stderr', error))
+    child.stdout?.on('data', data => process.stdout.write(data))
+    child.stderr?.on('data', data => process.stderr.write(data))
+    console.log(JSON.stringify({ resource: 'child', pid: child.pid, cmd, argv }))
+    return child
+  }
+  try { return register(spawnOwnedChild(cmd, argv, { env, stdio: ['ignore', 'pipe', 'pipe'] })) }
+  catch(error) {
+    const partial = getOwnedChildStartFailure(error)
+    if (partial) register(partial.child)
+    throw error
+  }
+}
+function releaseUnconfirmed(child) {
+  const release = action => { try { action() } catch(error) { failures.push(`release: ${error.stack}`) } }
+  if (child.connected) release(() => child.disconnect())
+  for (const stream of new Set(child.stdio ?? [])) {
+    if (stream && typeof stream.destroy === 'function') release(() => stream.destroy())
+  }
+  release(() => child.unref())
+}
+function stop(child) {
+  const resource = children.find(resource => resource.child === child)
+  assert(resource, 'stop requires journalled acquisition')
+  return resource.stop ??= (async () => {
+    try {
+      await stopOwnedChild(child)
+      resource.termination = 'confirmed'
+      console.log('CLEAN child',child.pid)
+    } catch(error) {
+      resource.stopResult = error.stopResult
+      const result = error.stopResult
+      if (result?.brand === 'isolated-local-services.stop' && result.version === 1 && result.termination === 'confirmed' && result.groupId === child.pid) resource.termination = 'confirmed'
+      throw error
+    } finally {
+      if (resource.termination !== 'confirmed') releaseUnconfirmed(child)
+    }
+  })()
+}
+// Cancel readiness on a recorded native error; the original bounded helper
+// remains responsible for its own polling and observes the child stopped below.
+async function startup(task) {
+  abort.signal.throwIfAborted()
+  let onAbort
+  try {
+    return await Promise.race([task(), new Promise((_, reject) => {
+      onAbort = () => reject(abort.signal.reason)
+      abort.signal.addEventListener('abort', onAbort, { once: true })
+    })])
+  } finally { abort.signal.removeEventListener('abort', onAbort) }
 }
 // A legal PDF with xref offsets, eight distinct pages, and an independently
 // recognizable magenta square only on page 8. No PDF production helper oracle.
@@ -414,14 +472,14 @@ async function main() {
     assert(alive(server),'server exited before listener')
     try { return execFileSync('lsof',['-nP','-a','-p',String(server.pid),'-iTCP:'+port,'-sTCP:LISTEN'],{encoding:'utf8'}).includes(`127.0.0.1:${port}`) } catch { return false }
   })
-  await waitForHttp(base+'/api/health',{child:server,timeoutMs:15000})
+  await startup(() => waitForHttp(base+'/api/health',{child:server,timeoutMs:15000}))
   console.log(JSON.stringify({resource:'listener',pid:server.pid,base}))
   const profile = join(root,'chrome'); mkdirSync(profile)
   const bin = process.env.CHROME_BIN || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
   chrome = own(bin,['--headless=new','--remote-debugging-address=127.0.0.1','--remote-debugging-port=0',`--user-data-dir=${profile}`,'--no-first-run','--no-default-browser-check','--disable-background-networking','--disable-component-update','--disable-gpu','about:blank'],env)
-  const version = await waitForChromeDevTools(chrome,profile)
+  const version = await startup(() => waitForChromeDevTools(chrome,profile))
   console.log(JSON.stringify({resource:'private-marker',pid:chrome.pid,marker:readFileSync(join(profile,'DevToolsActivePort'),'utf8')}))
-  if(fault==='chrome-exit') { await stopOwnedChild(chrome); await waitForChromeDevTools(chrome,profile) }
+  if(fault==='chrome-exit') { await stop(chrome); await waitForChromeDevTools(chrome,profile) }
   cdp = await attach(fault==='attach' ? new URL('/json/version',version.webSocketDebuggerUrl).href : version.webSocketDebuggerUrl)
   if(args.includes('--oracle-control')) { await oracleControls(); return }
   if(fault==='word-failed') rmSync(join(root,'files',WORD))
@@ -433,10 +491,11 @@ async function main() {
 }
 try { await main() } catch(error) { failures.push(error.stack); console.error(error) }
 finally {
-  cdp?.close()
+  try { cdp?.close() } catch(error) { failures.push(`CDP cleanup: ${error.stack}`); console.error(error) }
   // Nonempty child contract; independent cleanup, including failed startup.
-  for(const child of children.reverse()) {
-    try { await stopOwnedChild(child); console.log('CLEAN child',child.pid) } catch(error) { failures.push(`cleanup: ${error.stack}`) }
+  for(const resource of [...children].reverse()) {
+    if (!resource.child) { failures.push(`cleanup: unconfirmed acquisition ${resource.cmd}`); continue }
+    try { await stop(resource.child) } catch(error) { failures.push(`cleanup: ${error.stack}`); console.error(error) }
   }
   if(db) {
     try {
@@ -444,12 +503,16 @@ finally {
       assert.deepEqual([PDF,WORD].map(file=>existsSync(join(root,'files',file)) ? hash(readFileSync(join(root,'files',file))) : null), fault==='word-failed' ? [sourceHashes[0],null] : sourceHashes, 'source bytes unchanged (only explicit Word-failure deletion permitted)')
       console.log('PASS immutable synthetic DB/source')
     } catch(error) { failures.push(error.stack) }
-    db.close()
+    try { db.close() } catch(error) { failures.push(`DB cleanup: ${error.stack}`); console.error(error) }
   }
   if(root) {
-    try { rmSync(join(root,'chrome'),{recursive:true,force:true}) } catch(error) { failures.push(`profile cleanup: ${error.stack}`) }
+    if (children.every(resource => resource.termination === 'confirmed')) {
+      try { rmSync(join(root,'chrome'),{recursive:true,force:true}) } catch(error) { failures.push(`profile cleanup: ${error.stack}`); console.error(error) }
+    } else console.error('RETAIN unconfirmed resources',root)
     // Retained synthetic artifacts and screenshots are explicitly outside Git.
-    writeFileSync(join(root,'result.json'),JSON.stringify({fault,interrupted,failures,children:children.map(c=>({pid:c.pid,exit:c.exitCode,signal:c.signalCode}))},null,2))
+    try {
+      writeFileSync(join(root,'result.json'),JSON.stringify({fault,interrupted,failures,children:children.map(r=>({cmd:r.cmd,argv:r.argv,pid:r.child?.pid,exit:r.child?.exitCode,signal:r.child?.signalCode,termination:r.termination,stopResult:r.stopResult}))},null,2))
+    } catch(error) { failures.push(`result cleanup: ${error.stack}`); console.error(error) }
     console.log('ARTIFACTS',root)
   }
 }
