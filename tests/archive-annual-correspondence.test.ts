@@ -429,17 +429,49 @@ it.each([{ name: 'rejected', status: 'rejected' as const }, { name: 'unlinked', 
   expect(f.jobs()[0]!.state).toBe('done')
   const row = f.rows()[0]!
   const audit = f.audits()
-  const appended = f.input(2), old = f.input().payload.platformQueries![0]!.relations![0]!
+  const oldJobs = f.jobs()
+  expect(oldJobs).toHaveLength(1)
+  const oldQuery = f.db.select().from(s.platformQuery).get()!
+  const appended = f.input(2)
+  const old = f.input().payload.platformQueries![0]!.relations![0]!
+  // New observation of the same business/version, not a source append.
+  appended.payload.platformQueries![0]!.queriedAt = '2026-10-24T00:00:01Z'
   appended.payload.platformQueries![0]!.relations = [{ ...old, sequenceNo: 2 }]
-  const next = commitRosterImport(f.db, appended); await whenIdle()
-  expect(next.candidateTaskIds).not.toEqual(first.candidateTaskIds)
-  const job = f.jobs().at(-1)!
+  const next = commitRosterImport(f.db, appended)
+  expect(next.status).toBe('committed')
+  expect(next.error).toBeNull()
+  expect(next.summary.failed).toBe(0)
+  expect(next.candidateTaskIds).toHaveLength(1)
+  expect(first.candidateTaskIds).not.toContain(next.candidateTaskIds[0])
+  await whenIdle()
+  const query = f.db.select().from(s.platformQuery)
+    .where(eq(s.platformQuery.queriedAt, '2026-10-24T00:00:01Z')).get()!
+  expect(query).toBeDefined()
+  expect(query.id).not.toBe(oldQuery.id)
+  expect(getJob(f.db, next.candidateTaskIds[0]!)).toMatchObject({
+    kind: 'event-archive-candidates', state: 'done', params: { queryId: query.id },
+  })
+  const freshJobs = f.jobs().filter(job => !oldJobs.some(oldJob => oldJob.id === job.id))
+  expect(freshJobs).toHaveLength(1)
+  const job = freshJobs[0]!
   expect(job.state).toBe('done')
   const result = job.result as AnnualTaskResult
-  expect(result.events[0]).toMatchObject({ status: 'done', finalQualification: { status: 'blocked', reasons: ['protected_decision'] } })
-  expect(result.events[0]!.outcomes[0]).toMatchObject({ status: 'protected', decisionRefs: [{ id: row.id, status }] })
-  expect(f.db.select().from(s.recordCorrespondence).where(eq(s.recordCorrespondence.id, row.id)).get()).toMatchObject({ status })
-  expect(f.audits().filter(a => a.correspondenceId === row.id)).toEqual(audit.filter(a => a.correspondenceId === row.id))
+  expect(result.events).toHaveLength(1)
+  expect(result.events[0]!.generation).not.toBe(
+    (oldJobs[0]!.result as AnnualTaskResult).events[0]!.generation,
+  )
+  expect(result.events[0]).toMatchObject({
+    eventId: f.events[0]!.id, status: 'done',
+    finalQualification: { status: 'blocked', reasons: ['protected_decision'] },
+  })
+  expect(result.events[0]!.outcomes[0]).toMatchObject({
+    status: 'protected', decisionRefs: [{ id: row.id, relationId: row.relationId, status }],
+  })
+  expect(f.db.select().from(s.recordCorrespondence)
+    .where(eq(s.recordCorrespondence.id, row.id)).get()).toEqual(row)
+  expect(f.audits().filter(a => a.correspondenceId === row.id))
+    .toEqual(audit.filter(a => a.correspondenceId === row.id))
+  expect(f.jobs().filter(job => oldJobs.some(oldJob => oldJob.id === job.id))).toEqual(oldJobs)
 })
 
 it('queued annual cancellation wins over repeated archive dispatch', async () => {
