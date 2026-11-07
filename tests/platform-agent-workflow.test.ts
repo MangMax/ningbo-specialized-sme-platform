@@ -236,3 +236,20 @@ it('retry active checkpoint preserves previous batch and raw server completeness
     ])
   })
 })
+
+it.each(['receipt', 'lastBatch', 'previousBatch'])('nested historical checkpoint %s mismatch rejects before GET or POST', async field => {
+  const wrong = { ...terminal, batchId: '01ARZ3NDEKTSV4RRFFQ69G5FAY' }
+  const nested = { ...checkpoint, previousBatch: { ...terminal, checkpoint: { previousBatch: { ...terminal, checkpoint: { [field]: wrong } } } } }
+  await withTransport([], async requests => {
+    await expect(workflow.collectBatch({ ...options, batchId: B, checkpoint: nested })).rejects.toThrow('Checkpoint batchId mismatch')
+    await expect(workflow.retryUnfinishedBatch({ ...options, batch: { ...terminal, checkpoint: nested } })).rejects.toThrow('Checkpoint batchId mismatch')
+    expect(requests).toEqual([])
+  })
+})
+it.each([undefined, null, 'unknown'])('terminal item completeness %s rejects before retry POST', async completeness => {
+  const input = { ...terminal, items: [completeItem, { ...partialItem, completeness }] }
+  await withTransport([], async requests => {
+    await expect(workflow.retryUnfinishedBatch({ ...options, batch: input, itemIds: [P] })).rejects.toThrow('Retry requires terminal batch with item data')
+    expect(requests).toEqual([])
+  })
+})

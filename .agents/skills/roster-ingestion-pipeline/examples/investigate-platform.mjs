@@ -12,8 +12,16 @@ export async function querySingle({ baseUrl, query }) {
   return appJson(baseUrl, '/api/platform/query', { method: 'POST', body: query })
 }
 function validateCheckpoint(batchId, checkpoint = {}) {
-  for (const observation of [checkpoint.receipt, checkpoint.lastBatch, checkpoint.previousBatch]) {
-    if (observation && observation.batchId !== batchId) throw new Error('Checkpoint batchId mismatch')
+  const pending = [checkpoint]
+  const visited = new Set()
+  while (pending.length) {
+    const current = pending.pop()
+    if (!current || visited.has(current)) continue
+    visited.add(current)
+    for (const observation of [current.receipt, current.lastBatch, current.previousBatch]) {
+      if (observation && observation.batchId !== batchId) throw new Error('Checkpoint batchId mismatch')
+      if (observation?.checkpoint) pending.push(observation.checkpoint)
+    }
   }
 }
 export async function collectBatch({ baseUrl, batchId, maxPolls = 480, pollIntervalMs = 250, checkpoint = {} }) {
@@ -44,7 +52,8 @@ export async function retryUnfinishedBatch({ baseUrl, apiToken, batch, itemIds, 
     return collectBatch({ ...polling, baseUrl, batchId: batch.batchId, checkpoint: batch.checkpoint })
   }
   if (!['done', 'failed', 'cancelled'].includes(batch.state) || !Array.isArray(batch.items)
-    || !Array.isArray(batch.itemIds) || batch.itemIds.some(id => !batch.items.some(item => item.itemId === id))) {
+    || !Array.isArray(batch.itemIds) || batch.itemIds.some(id => !batch.items.some(item => item.itemId === id))
+    || batch.items.some(item => !['complete', 'partial', 'not_queried'].includes(item.completeness))) {
     throw new Error('Retry requires terminal batch with item data')
   }
   const selected = batch.items.filter(item => item.completeness !== 'complete' && (!itemIds || itemIds.includes(item.itemId))).map(item => item.itemId)
