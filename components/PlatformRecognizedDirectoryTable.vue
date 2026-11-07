@@ -18,10 +18,6 @@ const isolated = computed(() => props.rows.filter((row): row is Extract<Recogniz
 const projectionTitle = (rawCode: string) => PLATFORM_RDJBS[rawCode] ?? rawCode
 const missing = (value: string | number | null | undefined) => value === null || value === undefined || value === '' ? '未提供' : String(value)
 const time = (value: string | null) => value ? formatFetchTime(value) ?? value : '未提供'
-const title = (row: RecordRow) => {
-  const raw = row.matchedVersion.titleRaw
-  return raw ? PLATFORM_RDJBS[raw] ?? raw : '未提供'
-}
 const enterprise = (row: RecordRow) => {
   if (row.enterpriseNames.length === 1) return row.enterpriseNames[0]!
   if (row.enterpriseNames.length > 1) return `${row.enterpriseNames.length} 家企业归属冲突`
