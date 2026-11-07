@@ -356,6 +356,12 @@ export function createCurrentQualificationAssessmentReader(db: Database.Database
       if (read.workbookPublished === undefined) throw new Error('Workbook published-name facts missing')
       return { ...read, workbookPublished: read.workbookPublished }
     },
+    /** Count projection: correspondence diagnostics and platform filter witnesses
+     * never participate in v10 eligibility. Full detail still uses readTitle. */
+    readEffectiveTitle(enterpriseId: number, title: CurrentTitle, asOf: number) {
+      const assessed = evaluate(enterpriseId, title, Number(qualificationDay(asOf).slice(0,4)), asOf, undefined, false, false, undefined, false, undefined, () => [])
+      return { effectiveStatus: assessed.effectiveStatus, basis: assessed.row.basis }
+    },
     readTitle(enterpriseId: number, title: CurrentTitle, asOf: number, keys?: { queries: IdentityKeyVariants; relations: IdentityKeyVariants }) {
       return evaluate(enterpriseId, title, Number(qualificationDay(asOf).slice(0,4)), asOf, keys, true, false, undefined, true, undefined, preparedCorrespondences)
     },

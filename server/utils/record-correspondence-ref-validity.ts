@@ -52,18 +52,28 @@ const target = alias(s.enterprise,'ref_target')
  * a larger proof is explicitly unknown/requiresRevalidation, never assumed valid.
  */
 export function correspondenceRefValidity(db: Db, ids: number[]): Map<number, boolean> {
+  return createCorrespondenceRefValidityReader(db)(ids)
+}
+
+/** Reuse compilation only. Each invocation revalidates live source rows and proofs;
+ * no validity result, archive or source fingerprint survives the call. */
+export function createCorrespondenceRefValidityReader(db: Db) {
   const checks = and(
     sql`case when ${t.eventId} is null then ${value('$.event')} is null else ${eventMatches(sql`${t.eventId}`,'')} end`,
     sql`case when ${t.predecessorEventId} is null then ${value('$.predecessor')} is null else ${eventMatches(sql`${t.predecessorEventId}`,'$.predecessor')} end`,
     sql`case when ${t.relationId} is null then ${value('$.relation')} is null and ${value('$.query')} is null else ${rowMatches(s.platformRelation,'$.relation',sql`${t.relationId}`)} and ${rowMatches(s.platformQuery,'$.query',sql`(select ${s.platformRelation.queryId} from ${s.platformRelation} where ${s.platformRelation.id} = ${t.relationId})`)} end`,
     sql`case when ${t.exportRowId} is null then ${value('$.exportRow')} is null and ${value('$.exportBatch')} is null else ${rowMatches(s.platformExportRow,'$.exportRow',sql`${t.exportRowId}`)} and ${rowMatches(s.platformExportBatch,'$.exportBatch',sql`(select ${s.platformExportRow.batchId} from ${s.platformExportRow} where ${s.platformExportRow.id} = ${t.exportRowId})`)} end`,
   )!
-  const rows = db.select({ id:t.id, relationUscc:relation.usccRaw, relationEnterpriseId:relation.enterpriseId, relationStatus:relation.verificationStatus, ownerId:owner.id, ownerUscc:owner.usccNorm, targetId:target.id, targetUscc:target.usccNorm, targetTitle:s.title.code, matches: sql<number>`${checks}`, type:t.type, role:t.role, enterpriseId:t.enterpriseId, titleCode:t.titleCode, relationId:t.relationId, exportRowId:t.exportRowId,
+  const prepared = db.select({ id:t.id, relationUscc:relation.usccRaw, relationEnterpriseId:relation.enterpriseId, relationStatus:relation.verificationStatus, ownerId:owner.id, ownerUscc:owner.usccNorm, targetId:target.id, targetUscc:target.usccNorm, targetTitle:s.title.code, matches: sql<number>`${checks}`, type:t.type, role:t.role, enterpriseId:t.enterpriseId, titleCode:t.titleCode, relationId:t.relationId, exportRowId:t.exportRowId,
     proofIds: sql`json_extract(${t.provenance}, '$.comparisonProofIds')`.mapWith({mapFromDriverValue:(v: string|null) => v ? JSON.parse(v) as number[] : []}),
-  }).from(t).leftJoin(relation,eq(relation.id,t.relationId)).leftJoin(owner,eq(owner.id,relation.enterpriseId)).leftJoin(target,eq(target.id,t.enterpriseId)).leftJoin(s.title,eq(s.title.code,t.titleCode)).where(inArray(t.id,ids)).all()
-  return new Map(rows.map(row => [row.id, needsRevalidation(row)]))
+  }).from(t).leftJoin(relation,eq(relation.id,t.relationId)).leftJoin(owner,eq(owner.id,relation.enterpriseId)).leftJoin(target,eq(target.id,t.enterpriseId)).leftJoin(s.title,eq(s.title.code,t.titleCode)).where(sql`${t.id} in (select value from json_each(${sql.placeholder('ids')}))`).prepare()
+  return (ids: number[]): Map<number, boolean> => {
+    if (!ids.length) return new Map()
+    const rows = prepared.all({ ids: JSON.stringify(ids) })
+    return new Map(rows.map(row => [row.id, needsRevalidation(row)]))
+  }
 
-  function needsRevalidation(row: typeof rows[number]): boolean {
+  function needsRevalidation(row: ReturnType<typeof prepared.all>[number]): boolean {
     if (!row.matches) return true
     if (row.relationEnterpriseId && row.relationUscc && (!row.ownerId || row.ownerUscc && normalizeUscc(row.ownerUscc) !== normalizeUscc(row.relationUscc))) return true
     if (row.type === 'later_process') {
