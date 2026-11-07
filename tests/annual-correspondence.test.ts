@@ -12,10 +12,10 @@ import { activateAnnualCorrespondence, initializeAnnualCorrespondenceRunner, sta
 import { __resetJobRunner, clearJobSpecs, ensureJobRunnerReady, requestJobCancel, whenIdle } from '../server/utils/job-runner'
 import { getJob } from '../server/utils/job-store'
 import { dispatchAnnualTaskMcp, handleAnnualTaskRequest, readAnnualTask } from '../server/utils/annual-correspondence-api'
-const dirs: string[] = []
+const resources: {dir:string;db?:ReturnType<typeof useDb>}[]=[]
 function fixture() {
-  const dir = mkdtempSync(join(tmpdir(),'annual-251-')); dirs.push(dir)
-  const db = useDb({dbPath:join(dir,'synthetic.db')})
+  const dir = mkdtempSync(join(tmpdir(),'annual-251-')); const owned:{dir:string;db?:ReturnType<typeof useDb>}={dir}; resources.push(owned)
+  const db = useDb({dbPath:join(dir,'synthetic.db')}); owned.db=db
   __resetJobRunner(); clearJobSpecs(); ensureJobRunnerReady(db)
   const enterprise = db.insert(s.enterprise).values({name:'合成年度企业',nameNorm:'合成年度企业',usccNorm:'91330211255994457P'}).returning().get()
   const record = db.insert(s.record).values({enterpriseId:enterprise.id,titleCode:'specialized_sme',source:'jxj',usccRaw:enterprise.usccNorm}).returning().get()
@@ -41,7 +41,16 @@ function fixture() {
   const audits = ()=>db.select().from(s.recordCorrespondenceAudit).all()
   return {db,dir,event,query,early,late,add,scope,read,reconcile,save,manual,rows,audits,setFinal:(id:string)=>{final=id},excludePreferred:()=>{excludePreferred=true}}
 }
-afterEach(async()=>{await whenIdle();__resetJobRunner();clearJobSpecs();for(const dir of dirs.splice(0))rmSync(dir,{recursive:true,force:true})})
+afterEach(async()=>{
+ const errors:unknown[]=[]
+ try{await whenIdle()}catch(error){errors.push(error)}
+ for(const reset of [__resetJobRunner,clearJobSpecs])try{reset()}catch(error){errors.push(error)}
+ for(const owned of resources.splice(0)){
+  try{if(owned.db?.$client.open)owned.db.$client.close()}catch(error){errors.push(error)}
+  try{rmSync(owned.dir,{recursive:true,force:true})}catch(error){errors.push(error)}
+ }
+ if(errors.length)throw new AggregateError(errors,'Annual fixture cleanup failed')
+})
 it('commits early failed and late passed process edges with one qualified final and unchanged source facts',()=>{
  const f=fixture(), before=f.scope().sourceRefs
  expect(qualifyAnnualFinal(f.db,f.scope()).status).toBe('eligible')
