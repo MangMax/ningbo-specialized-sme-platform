@@ -11,9 +11,11 @@ const batch = await investigatePlatform({ baseUrl, apiToken, queries: scenarios.
 const recovered = await retryUnfinishedBatch({ baseUrl, apiToken, batch })
 ```
 
+本文件现有 scenarios 是兼容流程样例，未请求 `rawDataVersion:1`；`rows` 是兼容字符串投影，不证明原 JSON 类型或接受页原文保真。需要 v1 原档时，在明确的新查询输入中选择 `rawDataVersion:1`，检查每个结果或批量 `segments[]` 的 `rawData.version`、`rawData.rows`、`rawData.pages`，并按下文的[转存契约](../../../../docs/platform-recognized-evidence.md)处理。旧结果缺少 `rawData` 时原始类型未知，不重新采集补造旧时间，不修改旧 hash 或历史证据。
+
 各情形的预期处理：
 
-- `single`：保留候选、全部原始行、分页范围及时间。
+- `single`：保留候选、全部兼容字符串投影行、分页范围及时间。
 - `batch`：每个回执 itemId 对应唯一企业调查者，保留三个来源身份及其不同称号参数约定。
 - `expired`：返回 `auth_failed`，若前页已成功也可能为部分完成；保留全部未完成范围，请运维在服务端维护凭据。不自动反复鉴权，不认定为零记录。
 - `secondPageFailure`：保留第一页行和原 `queriedAt`/`completedAt`，明确批量重试只查第二页以后。`queued`/`running`/`poll_limit` 不等于批次完成。
