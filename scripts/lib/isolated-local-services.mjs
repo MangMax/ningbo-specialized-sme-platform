@@ -20,11 +20,70 @@ function processTable(timeout) {
       return { pid: Number(pid), group: Number(group), started: started.join(' ') }
     })
 }
+const startFailures = new WeakMap()
+
+/** Only the original helper-issued error conveys a partially acquired handle. */
+export function getOwnedChildStartFailure(error) {
+  return startFailures.get(error)
+}
+
+function retainStartFailure(child, owner, cause) {
+  const events = []
+  let droppedErrors = 0
+  const record = error => {
+    if (events.length < 32) events.push(error)
+    else droppedErrors++
+  }
+  const streams = [...new Set(child.stdio ?? [])].filter(stream => stream && typeof stream.on === 'function')
+  const onClose = () => {
+    for (const stream of streams) stream.off('error', record)
+    child.off('error', record)
+    child.off('close', onClose)
+  }
+  for (const stream of streams) stream.on('error', record)
+  child.on('error', record)
+  child.once('close', onClose)
+  owner.partial = { events, record, detach: onClose, get droppedErrors() { return droppedErrors } }
+  const reason = cause.reason ?? 'observation-failed'
+  const error = new Error('Owned service startup failed: ' + reason, { cause })
+  error.name = 'OwnedChildStartError'
+  error.startResult = Object.freeze({
+    brand: 'isolated-local-services.start', version: 1,
+    acquisition: 'partial', termination: 'unconfirmed', reason, groupId: owner.id,
+  })
+  startFailures.set(error, Object.freeze({
+    child, cause, reason,
+    get errors() { return Object.freeze([...events]) },
+    get droppedErrors() { return droppedErrors },
+  }))
+  return error
+}
+
+function startupIdentity(child, table) {
+  const leader = table.find(row => row.pid === child.pid)
+  let reason
+  if (!childIsRunning(child)) reason = 'early-exit'
+  else if (!leader) reason = 'leader-missing'
+  else if (leader.group !== child.pid) reason = 'leader-group-mismatch'
+  else if (!leader.started) reason = 'leader-start-missing'
+  if (reason) throw Object.assign(new Error('Cannot establish owned service identity: ' + reason), { reason })
+  return leader.started
+}
+
 function inOwnedGroup(start) {
   if (process.platform === 'win32') throw new Error('Isolated process-group services require POSIX')
   const child = start()
-  if (child.pid) ownedGroups.set(child, { id: child.pid, started: processTable().find(row => row.pid === child.pid)?.started })
-  return child
+  // Register the native handle before any observation can fail.
+  const owner = { id: child.pid, phase: 'provisional', started: undefined }
+  ownedGroups.set(child, owner)
+  if (!child.pid) { owner.phase = 'no-process'; return child }
+  try {
+    owner.started = startupIdentity(child, processTable(250))
+    owner.phase = 'established'
+    return child
+  } catch (cause) {
+    throw retainStartFailure(child, owner, cause)
+  }
 }
 /** Preserve Node's stdio-specific return types and all call overloads. @type {typeof spawn} */
 export const spawnOwnedChild = (command, args = [], options = {}) => {
@@ -150,9 +209,13 @@ export async function stopOwnedChild(child) {
     throw new AggregateError([new Error('Use spawnOwnedChild or forkOwnedChild to establish service ownership')],
       'Use spawnOwnedChild or forkOwnedChild to establish service ownership')
   }
+  if (owner.phase === 'no-process' && !child.pid) {
+    ownedGroups.delete(child)
+    return
+  }
   const group = owner.id
   // Preserve the 3s TERM / 1s KILL grace, reserving 500ms for final observation.
-  // All stop-only ps calls share this budget; startup observations are unchanged.
+  // All stop-only ps calls share this budget; startup has its own independent 250ms observation.
   const deadline = Date.now() + CHILD_EXIT_GRACE_MS + 1_000 + 500
   const failures = []
   let lastObservation
@@ -161,15 +224,31 @@ export async function stopOwnedChild(child) {
   const observe = () => {
     const remaining = deadline - Date.now()
     if (remaining <= 0) throw new Error('Owned service stop observation deadline exceeded')
+    if (!Number.isInteger(group) || group <= 0 || (owner.phase !== 'established' && child.pid !== group)) {
+      observationFailureReason = 'identity-unverified'
+      throw new Error('Cannot verify native service pid identity')
+    }
     const table = processTable(Math.max(1, Math.min(250, remaining)))
     const leader = table.find(row => row.pid === group)
+    const members = table.filter(row => row.group === group).map(row => row.pid)
+    if (owner.phase !== 'established') {
+      if (!leader && !members.length) {
+        lastObservation = { observedAt: Date.now(), members, reason: 'group-absent' }
+        return true
+      }
+      if (!childIsRunning(child) || !leader || leader.group !== group || !leader.started) {
+        observationFailureReason = 'identity-unverified'
+        throw new Error('Cannot verify exited service group identity')
+      }
+      owner.started = leader.started
+      owner.phase = 'established'
+    }
     // Keep the existing identity and group-continuity policy.
     const replaced = leader && owner.started && leader.started !== owner.started
     if (leader && !owner.started && !childIsRunning(child)) {
       observationFailureReason = 'identity-unverified'
       throw new Error('Cannot verify exited service group identity')
     }
-    const members = table.filter(row => row.group === group).map(row => row.pid)
     lastObservation = { observedAt: Date.now(), members,
       reason: replaced ? 'identity-replaced' : members.length ? 'members-remain' : 'group-absent' }
     return lastObservation.reason !== 'members-remain'
@@ -212,6 +291,22 @@ export async function stopOwnedChild(child) {
   const confirmed = final?.confirmed === true
   if (confirmed) ownedGroups.delete(child)
   else record('final-verification', new Error('Owned service process group did not exit: ' + group))
+  // Partial acquisition owns its native local handles too. Releasing those
+  // handles never proves the service group absent or discards its owner.
+  if (owner.partial) {
+    const release = action => { try { action() } catch (error) { owner.partial.record(error) } }
+    if (child.connected) release(() => child.disconnect())
+    for (const stream of new Set(child.stdio ?? [])) {
+      if (stream && typeof stream.destroy === 'function') release(() => stream.destroy())
+    }
+    release(() => child.unref())
+    // Allow native release errors to reach the collector before snapshotting.
+    await new Promise(resolve => setImmediate(resolve))
+    owner.partial.detach()
+    for (const error of owner.partial.events) record('partial-event', error)
+    if (owner.partial.droppedErrors) record('partial-event-overflow',
+      new Error('Additional partial child errors: ' + owner.partial.droppedErrors))
+  }
   if (failures.length) {
     const error = new AggregateError(failures.map(failure => failure.error),
       'Owned service stop failed: ' + group)
@@ -234,25 +329,27 @@ export async function startIsolatedNuxt({ cwd, portHint = 0, env = {} }) {
   const port = await reserveLoopbackPort(portHint)
   const baseUrl = `http://127.0.0.1:${port}`
   const nuxtCli = join(cwd, 'node_modules/nuxt/bin/nuxt.mjs')
-  const child = spawnOwnedChild(process.execPath, [nuxtCli, 'dev', '--host', '127.0.0.1', '--port', String(port)], {
-    cwd,
-    stdio: ['ignore', 'pipe', 'pipe'],
-    env: { ...process.env, ...env },
-  })
+  let child
   let output = ''
-  child.stdout.setEncoding('utf8')
-  child.stderr.setEncoding('utf8')
-  const collect = (chunk) => { output += chunk }
-  child.stdout.on('data', collect)
-  child.stderr.on('data', collect)
-
+  const collect = (chunk) => { output = (output + chunk).slice(-64_000) }
   try {
+    child = spawnOwnedChild(process.execPath, [nuxtCli, 'dev', '--host', '127.0.0.1', '--port', String(port)], {
+      cwd,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: { ...process.env, ...env },
+    })
+    child.stdout.setEncoding('utf8')
+    child.stderr.setEncoding('utf8')
+    child.stdout.on('data', collect)
+    child.stderr.on('data', collect)
     await waitForNuxtListener(child, () => output, port, 60_000)
     if (!childIsRunning(child)) throw new Error('Nuxt exited after announcing its listener')
     await waitForHttp(`${baseUrl}/`, { child })
     if (!childIsRunning(child)) throw new Error('Nuxt exited before startup verification completed')
     return { child, port, baseUrl, stop: () => stopOwnedChild(child) }
   } catch (error) {
+    child ??= getOwnedChildStartFailure(error)?.child
+    if (!child) throw error
     try { await stopOwnedChild(child) }
     catch (cleanupError) {
       const combined = new AggregateError([error, cleanupError], 'Nuxt startup and owned service cleanup failed', { cause: error })
@@ -260,6 +357,9 @@ export async function startIsolatedNuxt({ cwd, portHint = 0, env = {} }) {
       throw combined
     }
     throw error
+  } finally {
+    child?.stdout?.off('data', collect)
+    child?.stderr?.off('data', collect)
   }
 }
 
