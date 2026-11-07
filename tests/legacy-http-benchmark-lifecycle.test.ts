@@ -13,7 +13,9 @@ const owners = ['bench-correspondence-http.mjs', 'bench-record-comparison-http.m
 function run(fault: string) {
  const root = mkdtempSync(join(tmpdir(), 'd5-test-'))
  const events = join(root, 'events'), db = join(root, 'input.sqlite')
- const Database = createRequire(import.meta.url)('better-sqlite3'); const database = new Database(db); database.exec("create table platform_query(id integer);insert into platform_query values(1);create table source_document(id integer,source text);insert into source_document values(1,'jxj');create table enterprise(id integer);insert into enterprise values(1);"); database.close(); const originalInput = readFileSync(db)
+ let database: any, recovered = false, primary: unknown
+ try {
+ const Database = createRequire(import.meta.url)('better-sqlite3'); database = new Database(db); database.exec("create table platform_query(id integer);insert into platform_query values(1);create table source_document(id integer,source text);insert into source_document values(1,'jxj');create table enterprise(id integer);insert into enterprise values(1);"); database.close(); const originalInput = readFileSync(db)
  writeFileSync(join(root, 'server.mjs'), `import http from 'node:http';
  const f=process.env.D5_FAULT;
  process.on('message',m=>process.send(m==='reset'?'reset':{heap:100,rss:200,heapStart:50,baseHeap:50,combinedHeap:100,combinedHeapStart:50,workerHeap:0,maxRss:200,heapLimit:1000,lagP95Ms:1,lagMaxMs:1,lagSamples:1}));
@@ -83,8 +85,29 @@ function run(fault: string) {
  if(runtime)rmSync(runtime,{recursive:true,force:true})
  const afterTable=execFileSync('ps',['-A','-o','pid=,pgid='],{encoding:'utf8'})
  if(process.env.D5_EVIDENCE_DIR)writeFileSync(join(process.env.D5_EVIDENCE_DIR,`recovery-${owner.split('/').at(-1)}-${fault}.json`),JSON.stringify({actor:'harness-only',pid,runtime,rootAbsent:!runtime||!existsSync(runtime),ps:afterTable},null,2))
- const input=readFileSync(db).equals(originalInput);rmSync(root,{recursive:true,force:true})
+ const input=readFileSync(db).equals(originalInput);rmSync(root,{recursive:true,force:true}); recovered=true
  return {...result,journal,beforeHarness,input,elapsed:Date.now()-started}
+ } catch (error) { primary=error; throw error }
+ finally {
+  if (!recovered) {
+   // Harness-only recovery also owns setup/observation failures; never candidate credit.
+   const failures: unknown[] = []
+   const attempt = (cleanup: () => void) => { try { cleanup() } catch (error) { failures.push(error) } }
+   if (database?.open) attempt(() => database.close())
+   let recoveryJournal: any[] = []
+   attempt(() => {
+    if (existsSync(events)) for (const line of readFileSync(events,'utf8').split('\n').filter(Boolean)) {
+     try { recoveryJournal.push(JSON.parse(line)) } catch (error) { failures.push(error) }
+    }
+   })
+   const childPid = recoveryJournal.find(event => event.type==='child')?.pid
+   const runtimeRoot = recoveryJournal.find(event => event.type==='root')?.path
+   if (childPid) attempt(() => { try { process.kill(-childPid,'SIGKILL') } catch (error: any) { if (error.code!=='ESRCH') throw error } })
+   if (runtimeRoot) attempt(() => rmSync(runtimeRoot,{recursive:true,force:true}))
+   attempt(() => rmSync(root,{recursive:true,force:true}))
+   if (failures.length) throw new AggregateError(primary===undefined ? failures : [primary,...failures], 'Lifecycle fixture recovery failed', {cause:primary})
+  }
+ }
 }
 
 for (const name of owners) {
