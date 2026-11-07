@@ -10,16 +10,74 @@ import { join, resolve } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { forkOwnedChild as fork, reserveLoopbackPort, stopOwnedChild } from './lib/isolated-local-services.mjs'
 
+let root, useDb, driver
+let allStopped = true
+const cleanupErrors = []
+let primaryError
+const results = []
+
+async function run() {
 const { createJiti } = createRequire(import.meta.resolve('nuxt/package.json'))('jiti')
-const { useDb } = await createJiti(import.meta.url).import('../db/client.ts')
-const driver = createRequire(resolve('.output/server/index.mjs')).resolve('better-sqlite3')
+;({ useDb } = await createJiti(import.meta.url).import('../db/client.ts'))
+driver = createRequire(resolve('.output/server/index.mjs')).resolve('better-sqlite3')
 const phases = ['batch-finalized', 'receipt-finalized', 'commit-returned']
-const root = mkdtempSync(join(tmpdir(), 'snapshot-finalization-'))
+root = mkdtempSync(join(tmpdir(), 'snapshot-finalization-'))
+
+  for (const phase of phases) await verify(phase)
+}
 
 async function verify(phase) {
   const dir = join(root, phase), dbPath = join(dir, 'roster.db'), marker = join(dir, 'paused')
   const hook = join(dir, 'fault-hook.mjs')
-  useDb({ dbPath }).$client.close()
+  let db, child, base, childError, primary
+  const errors = []
+  const pending = new Set()
+  const deadline = Date.now() + 90_000
+  const receipt = (state, extra = {}) => console.log(JSON.stringify({ phase, state, ...extra }))
+  async function stop() {
+    if (!child) return
+    const owned = child
+    let confirmed = false
+    try {
+      await stopOwnedChild(owned)
+      confirmed = true
+      receipt('stopped', { pid: owned.pid, exit: owned.exitCode, signal: owned.signalCode })
+    } catch (error) {
+      const result = error?.stopResult
+      confirmed = result?.brand === 'isolated-local-services.stop' && result.version === 1 && result.termination === 'confirmed'
+      receipt('stop-error', { pid: owned.pid, termination: confirmed ? 'confirmed' : 'unconfirmed', reason: result?.reason })
+      throw error
+    } finally {
+      if (confirmed) child = undefined
+      else {
+        allStopped = false
+        owned.stdout?.destroy(); owned.stderr?.destroy()
+        if (owned.connected) owned.disconnect()
+        owned.unref()
+        errors.push(new Error(`Owned termination unconfirmed; pid=${owned.pid}; private root retained at ${root}`))
+      }
+    }
+  }
+  async function request(path, options, consume, timeout = 20_000) {
+    const controller = new AbortController()
+    pending.add(controller)
+    const timer = setTimeout(() => controller.abort(new Error('Request deadline exceeded')), Math.max(1, Math.min(timeout, deadline - Date.now())))
+    let response
+    try {
+      response = await fetch(base + path, { ...options, signal: controller.signal })
+      return await consume(response)
+    } finally {
+      controller.abort()
+      clearTimeout(timer)
+      pending.delete(controller)
+      if (response?.body && !response.bodyUsed) try { await response.body.cancel() }
+      catch (error) { errors.push(new Error('Response cleanup failed', { cause: error })) }
+    }
+  }
+  try {
+  db = useDb({ dbPath })
+  db.$client.close()
+  db = undefined
   // Observe driver statements only. The production import, ledger, and transaction
   // implementation remain unchanged; each marker is written after native run returns.
   writeFileSync(hook, `import {createRequire} from 'node:module';import {writeFileSync} from 'node:fs';
@@ -40,31 +98,41 @@ const original=proto.run;proto.run=function(...args){const out=original.apply(th
       rows: Array.from({ length: 300 }, (_, index) => ({ sourceRowNo: index + 3, rawFields: { original: `  原文🙂\n${index}  ` } })),
     } },
   }
-  let child, base
   async function start(interrupt = false) {
+    assert.equal(child, undefined, 'old owned group must be settled before restart')
     const port = await reserveLoopbackPort()
     base = `http://127.0.0.1:${port}`
     child = fork('.output/server/index.mjs', [], { execArgv: ['--max-old-space-size=2048', ...(interrupt ? ['--import', hook] : [])], env: {
-      ...process.env, HOST: '127.0.0.1', PORT: String(port), NUXT_DB_PATH: dbPath, NUXT_DB_READONLY: '0', NUXT_FILES_DIR: dir, NUXT_INCOMING_DIR: dir,
+      ...process.env,
+      // Import execution is a nested OS process with explicit argv. Carry the
+      // same driver observer through its inherited environment as well.
+      ...(interrupt ? { NODE_OPTIONS: `${process.env.NODE_OPTIONS ?? ''} --import ${JSON.stringify(hook)}` } : {}),
+      HOST: '127.0.0.1', PORT: String(port), NUXT_DB_PATH: dbPath, NUXT_DB_READONLY: '0', NUXT_FILES_DIR: dir, NUXT_INCOMING_DIR: dir,
       NUXT_API_TOKEN: 'synthetic-only', NUXT_MCP_TOKEN: 'synthetic-only', MIIT_COOKIE: '', NUXT_OCR_TOKEN: '', PADDLEOCR_MCP_AISTUDIO_ACCESS_TOKEN: '',
     }, stdio: ['ignore', 'ignore', 'ignore', 'ipc'] })
-    for (let index = 0; index < 120; index++) {
+    childError = undefined
+    child.on('error', error => { childError = error })
+    const readyDeadline = Math.min(deadline, Date.now() + 8_000)
+    let lastError
+    while (Date.now() < readyDeadline) {
+      if (childError) throw childError
       assert.equal(child.exitCode, null, 'owned server exited before readiness')
+      assert.equal(child.signalCode, null, 'owned server signaled before readiness')
       try {
-        if ((await fetch(`${base}/api/health`, { signal: AbortSignal.timeout(1000), headers: { connection: 'close' } })).ok) return
-      } catch {}
+        if (await request('/api/health', { headers: { connection: 'close' } }, async response => { await response.arrayBuffer(); return response.ok }, Math.min(1000, readyDeadline - Date.now()))) return
+      } catch (error) { lastError = error }
       await sleep(50)
     }
-    assert.fail('built artifact did not become ready')
+    throw new Error('built artifact did not become ready', { cause: lastError })
   }
   async function post(action) {
-    const response = await fetch(`${base}/api/roster/import/${action}`, { method: 'POST', signal: AbortSignal.timeout(20_000), headers: { connection: 'close', authorization: 'Bearer synthetic-only', 'content-type': 'application/json' }, body: JSON.stringify(input) })
-    assert.equal(response.status, 200, `${action} status`)
-    return response.json()
+    return request(`/api/roster/import/${action}`, { method: 'POST', headers: { connection: 'close', authorization: 'Bearer synthetic-only', 'content-type': 'application/json' }, body: JSON.stringify(input) }, async response => {
+      assert.equal(response.status, 200, `${action} status`)
+      return response.json()
+    })
   }
   async function get(path) {
-    const response = await fetch(base + path, { signal: AbortSignal.timeout(20_000), headers: { connection: 'close', authorization: 'Bearer synthetic-only' } })
-    return { status: response.status, body: await response.json() }
+    return request(path, { headers: { connection: 'close', authorization: 'Bearer synthetic-only' } }, async response => ({ status: response.status, body: await response.json() }))
   }
   const receiptPath = `/api/roster/import/receipts?idempotencyKey=${encodeURIComponent(input.idempotencyKey)}`
   const historyPath = `/api/roster/import/receipts/history?idempotencyKey=${encodeURIComponent(input.idempotencyKey)}`
@@ -78,18 +146,34 @@ const original=proto.run;proto.run=function(...args){const out=original.apply(th
       assert.deepEqual(result.body.source.rawFields, input.payload.exportSnapshot.rows[index].rawFields)
     }
   }
-  try {
     await start(true)
     const preflight = await post('preflight')
     assert.equal(preflight.preflight.add, 1)
-    const interrupted = post('commit').catch(() => null)
-    for (let index = 0; index < 200 && !existsSync(marker); index++) await sleep(25)
+    let interruptedError
+    const interrupted = post('commit').catch(error => {
+      if (error instanceof TypeError && ['UND_ERR_SOCKET', 'ECONNRESET'].includes(error.cause?.code)) return null
+      interruptedError = error
+      throw error
+    })
+    // Attach immediately: the request can fail while the marker is still awaited.
+    void interrupted.catch(error => { interruptedError ??= error })
+    for (let index = 0; index < 200 && !existsSync(marker); index++) {
+      if (interruptedError) throw interruptedError
+      await sleep(25)
+    }
+    if (interruptedError) throw interruptedError
     assert.ok(existsSync(marker), `${phase} hook reached`)
-    const exited = new Promise(resolveExit => child.once('exit', resolveExit))
-    child.kill('SIGKILL')
-    await exited
+    await new Promise((resolveExit, rejectExit) => {
+      const owned = child
+      const finish = error => { clearTimeout(timer); owned.off('exit', onExit); error ? rejectExit(error) : resolveExit() }
+      const onExit = () => finish()
+      const timer = setTimeout(() => finish(new Error('SIGKILL exit deadline exceeded')), 3_000)
+      owned.once('exit', onExit)
+      try { assert.ok(owned.kill('SIGKILL'), 'owned SIGKILL sent') } catch (error) { finish(error) }
+    })
     assert.equal(child.signalCode, 'SIGKILL')
     assert.equal(await interrupted, null, 'interrupted HTTP response has no success body')
+    await stop()
     await start()
     const receipt = await get(receiptPath), history = await get(historyPath)
     assert.equal(receipt.status, 200)
@@ -109,7 +193,7 @@ const original=proto.run;proto.run=function(...args){const out=original.apply(th
       await readAllRows(replay.items[0].detail.rows)
       assert.deepEqual(await post('commit'), replay)
       assert.equal((await get(historyPath)).body.total, 2, 'lost response creates no duplicate receipt')
-      await stopOwnedChild(child)
+      await stop()
       await start()
       assert.deepEqual(await post('commit'), replay, 'same receipt survives another restart')
       assert.equal((await get(historyPath)).body.total, 2)
@@ -126,10 +210,32 @@ const original=proto.run;proto.run=function(...args){const out=original.apply(th
       assert.deepEqual(await post('commit'), committed)
       assert.deepEqual((await get(historyPath)).body.rows.map(row => row.status), ['preflight', 'processing', 'preflight', 'committed'])
     }
-    console.log(JSON.stringify({ phase, passed: true, batchId: preflight.batchId, history: (await get(historyPath)).body.rows.map(row => row.status) }))
-  } finally { await stopOwnedChild(child) }
+    results.push({ phase, batchId: preflight.batchId, history: (await get(historyPath)).body.rows.map(row => row.status) })
+  } catch (error) { primary = error }
+  finally {
+    for (const controller of pending) controller.abort(new Error('Phase cleanup cancelled request'))
+    if (db) try { if (db.$client.open) db.$client.close() } catch (error) { errors.push(new Error('Database cleanup failed', { cause: error })) }
+    // A failed stop has already consumed this handle's single public stop attempt.
+    if (child && allStopped) try { await stop() } catch (error) { errors.push(new Error('Child cleanup failed', { cause: error })) }
+    receipt('finished', { primary: Boolean(primary), cleanupErrors: errors.length, rootRetained: !allStopped })
+  }
+  if (primary || errors.length) throw new AggregateError([...(primary ? [primary] : []), ...errors], `${phase} failed (primary first, cleanup retained)`)
 }
 
-try {
-  for (const phase of phases) await verify(phase)
-} finally { rmSync(root, { recursive: true, force: true }) }
+try { await run() } catch (error) { primaryError = error }
+finally {
+  if (root && allStopped) try { rmSync(root, { recursive: true, force: true }) }
+  catch (error) { cleanupErrors.push(new Error(`Private root cleanup failed; retained at ${root}`, { cause: error })) }
+}
+if (primaryError || cleanupErrors.length) {
+  const failure = new AggregateError([...(primaryError ? [primaryError] : []), ...cleanupErrors], 'Finalization verifier failed (primary first, cleanup retained)')
+  // Node's default exception inspection truncates deeply nested cleanup causes.
+  // These synthetic-run diagnostics contain no request bodies or credentials.
+  const describe = error => ({ name: error.name, message: error.message, code: error.code,
+    ...(error.errors ? { errors: error.errors.map(describe) } : {}),
+    ...(error.cause ? { cause: describe(error.cause) } : {}),
+  })
+  console.error(JSON.stringify({ failed: true, diagnostic: describe(failure) }))
+  throw failure
+}
+console.log(JSON.stringify({ passed: true, phases: results, cleanup: 'complete' }))
