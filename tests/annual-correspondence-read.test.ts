@@ -15,9 +15,9 @@ import {getJob} from '../server/utils/job-store'
 let active:ReturnType<typeof useDb>
 vi.mock('@nuxtjs/mcp-toolkit/server',()=>({defineMcpTool:(definition:unknown)=>definition}))
 vi.mock('@db',()=>({useDb:()=>active}))
-const dirs:string[]=[]
+const resources: {dir:string;db?:ReturnType<typeof useDb>}[]=[]
 function fixture(){
- const dir=mkdtempSync(join(tmpdir(),'annual-read-251-'));dirs.push(dir);const db=useDb({dbPath:join(dir,'synthetic.db')});active=db;clearJobSpecs();__resetJobRunner()
+ const dir=mkdtempSync(join(tmpdir(),'annual-read-251-'));const owned:{dir:string;db?:ReturnType<typeof useDb>}={dir};resources.push(owned);const db=useDb({dbPath:join(dir,'synthetic.db')});owned.db=db;active=db;clearJobSpecs();__resetJobRunner()
  vi.stubGlobal('useRuntimeConfig',()=>({apiToken:'rest-251',mcpToken:'mcp-251',filesDir:dir,browserReviewEnabled:true}))
  const enterprise=db.insert(s.enterprise).values({name:'合成年份互证企业',nameNorm:'合成年份互证企业',usccNorm:'91330211255994457P'}).returning().get()
  const record=db.insert(s.record).values({enterpriseId:enterprise.id,titleCode:'specialized_sme',source:'jxj',usccRaw:enterprise.usccNorm}).returning().get()
@@ -36,7 +36,16 @@ function fixture(){
  const manual=(key:string,operations:CorrespondenceRequest['operations'])=>{const request:CorrespondenceRequest={idempotencyKey:key,sourceIdentity:'synthetic/'+key,actor:{type:'user',id:'reviewer'},basis:'explicit actual observation',ruleId:'manual',ruleVersion:'1',operations};const plan=preflightRecordCorrespondences(db,request);return commitRecordCorrespondences(db,request,plan.planHash)}
  return{db,dir,event,enterprise,record,add,scope,reconcile,manual}
 }
-afterEach(async()=>{await whenIdle();__resetJobRunner();clearJobSpecs();vi.unstubAllGlobals();for(const dir of dirs.splice(0))rmSync(dir,{recursive:true,force:true})})
+afterEach(async()=>{
+ const errors:unknown[]=[]
+ try{await whenIdle()}catch(error){errors.push(error)}
+ for(const reset of [__resetJobRunner,clearJobSpecs,()=>vi.unstubAllGlobals()])try{reset()}catch(error){errors.push(error)}
+ for(const owned of resources.splice(0)){
+  try{if(owned.db?.$client.open)owned.db.$client.close()}catch(error){errors.push(error)}
+  try{rmSync(owned.dir,{recursive:true,force:true})}catch(error){errors.push(error)}
+ }
+ if(errors.length)throw new AggregateError(errors,'Annual fixture cleanup failed')
+})
 it('writes native-title business endpoints using annual year lineage and retains early failure with unique late final',()=>{
  const f=fixture();const early=f.add({key:'EARLY',year:null,status:'终审不通过',appliedAt:'2024-01-01'});f.add({key:'EARLY',source:'apply_list',year:2024,status:'终审不通过',appliedAt:'2024-01-01'})
  const late=f.add({key:'LATE',year:null});f.add({key:'LATE',source:'apply_list',year:2024})
