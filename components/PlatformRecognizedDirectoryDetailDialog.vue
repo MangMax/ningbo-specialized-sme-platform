@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { projectionDisplay } from '~~/lib/platform/projection-display'
 import { ref, watch } from 'vue'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Badge } from '@/components/ui/badge'
@@ -62,15 +63,15 @@ const conflictLabel: Record<string, string> = {
             <article v-for="version in data.versions" :key="version.versionId" class="rounded-sm border p-3" data-testid="platform-recognized-directory-version">
               <div class="flex flex-wrap items-baseline gap-2">
                 <span class="text-sm font-medium">版本 #{{ version.versionId }}</span>
-                <Badge variant="outline">有效期 {{ missing(version.validityDateRaw) }}</Badge>
+                <Badge variant="outline">有效期 {{ projectionDisplay(version, version.validityDateRaw) }}</Badge>
               </div>
               <dl class="mt-2 grid grid-cols-1 gap-x-3 gap-y-1 text-[13px] sm:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">
-                <dt class="text-muted-foreground">有效期</dt><dd class="font-mono break-all">{{ missing(version.validityDateRaw) }}</dd>
-                <dt class="text-muted-foreground">维护批次</dt><dd>{{ missing(version.maintenanceBatch) }}</dd>
-                <dt class="text-muted-foreground">属地</dt><dd class="font-mono break-all">{{ missing(version.district) }}</dd>
-                <dt class="text-muted-foreground">平台认定说明</dt><dd class="whitespace-pre-wrap break-words">{{ missing(version.awardNote) }}</dd>
-                <dt class="text-muted-foreground">称号</dt><dd>{{ PLATFORM_RDJBS[version.titleRaw ?? ''] ?? missing(version.titleRaw) }}</dd>
-                <dt class="text-muted-foreground">企业</dt><dd>{{ missing(version.nameRaw) }} · {{ missing(version.usccRaw) }}</dd>
+                <dt class="text-muted-foreground">有效期</dt><dd class="font-mono break-all">{{ projectionDisplay(version, version.validityDateRaw) }}</dd>
+                <dt class="text-muted-foreground">维护批次</dt><dd>{{ projectionDisplay(version, version.maintenanceBatch) }}</dd>
+                <dt class="text-muted-foreground">属地</dt><dd class="font-mono break-all">{{ projectionDisplay(version, version.district) }}</dd>
+                <dt class="text-muted-foreground">平台认定说明</dt><dd class="whitespace-pre-wrap break-words">{{ projectionDisplay(version, version.awardNote) }}</dd>
+                <dt class="text-muted-foreground">称号</dt><dd>{{ projectionDisplay(version, version.titleRaw, rawCode => PLATFORM_RDJBS[rawCode] ?? rawCode) }}</dd>
+                <dt class="text-muted-foreground">企业</dt><dd>{{ projectionDisplay(version, version.nameRaw) }} · {{ projectionDisplay(version, version.usccRaw) }}</dd>
                 <dt class="text-muted-foreground">最近采集</dt><dd>{{ time(version.lastObservedAt) }}</dd>
               </dl>
             </article>
