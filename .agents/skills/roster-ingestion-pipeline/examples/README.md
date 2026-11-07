@@ -3,13 +3,22 @@
 `platform-scenarios.json` 提供单条查询、混合来源批量、会话过期、第二页失败、同代码多关系的合成输入。`investigate-platform.mjs` 只通过应用执行。批量提交/重试需要应用 API 任务令牌，与平台凭据无关。
 
 ```js
-import { querySingle, investigatePlatform, retryUnfinishedBatch } from './investigate-platform.mjs'
+import { querySingle, investigatePlatform, collectBatch, retryUnfinishedBatch } from './investigate-platform.mjs'
 const single = await querySingle({ baseUrl, query: scenarios.single })
 const batch = await investigatePlatform({ baseUrl, apiToken, queries: scenarios.batch })
-// 先检查每项的状态、分段、分页范围和未完成位置。
-// 服务端会话维护完成或临时故障恢复后：
-const recovered = await retryUnfinishedBatch({ baseUrl, apiToken, batch })
+// 每次调用前在外部持久保存完整 batch（含 checkpoint、回执和历史观察）。
+// poll_limit / queued / running 先续读同一批，仅 GET：
+const observed = await collectBatch({ baseUrl, batchId: batch.batchId, checkpoint: batch.checkpoint })
+// 保存 observed；核实终态、真实 items、全部 segments/时间与 unfinished。
+// 服务端维护完成，调用者另一次明确授权后，才补查所选未完成项：
+const recovered = await retryUnfinishedBatch({ baseUrl, apiToken, batch: observed, itemIds: selectedUnfinishedIds })
 ```
+
+`poll_limit` 是本地观察上限，不是服务端状态；任务可能仍 queued/running 或已终结。截止结果的 `serverState` 与 `checkpoint.receipt` / `checkpoint.lastBatch` 分别保留已知状态、原回执和最后成功 GET 原对象；没有 GET 时不推测进度、attempt 或时间。没有取得项时 `items:[]` 表示未知，不能宣布已完成、无未完成项或无记录。
+
+`collectBatch` 继续 GET 同一批，不提交、不补查；收到 poll_limit/queued/running 的 `retryUnfinishedBatch` 也只续读，即使读到 terminal partial，本次仍不 POST，返回供调用者审查。只有另一次明确调用、终态 done/failed/cancelled 且真实 items 可用时，retry 才提交所选未完成项（省略 itemIds 表示全部未完成项）。新 retry 回执保存在 checkpoint.receipt，当前 lastBatch 从 null 开始，旧完整观察单列 previousBatch；新 queued 回执不被旧终态覆盖。恢复观察不代表恢复执行。
+
+HTTP/JSON 首次错误原样抛出，不自动重新 submit/retry；调用前外部保存检查点，以便错误后继续追溯。保留全部原时间、分段、历史失败和同 USCC 的不同关系，不重新采集补造旧证据。
 
 本文件现有 scenarios 是兼容流程样例，未请求 `rawDataVersion:1`；`rows` 是兼容字符串投影，不证明原 JSON 类型或接受页原文保真。需要 v1 原档时，在明确的新查询输入中选择 `rawDataVersion:1`，检查每个结果或批量 `segments[]` 的 `rawData.version`、`rawData.rows`、`rawData.pages`，并按下文的[转存契约](../../../../docs/platform-recognized-evidence.md)处理。旧结果缺少 `rawData` 时原始类型未知，不重新采集补造旧时间，不修改旧 hash 或历史证据。
 
