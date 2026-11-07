@@ -32,7 +32,8 @@ it('stops native descendants after the launcher exits without stopping an unrela
 it('accepts an already exited owned child without signalling the current process', async () => {
   const child: ChildProcess = spawn(process.execPath, ['-e', 'process.exit(0)'])
   await once(child, 'exit')
-  await stopOwnedChild(child)
+  expect(await stopOwnedChild(child)).toBeUndefined()
+  expect(await stopOwnedChild(child)).toBeUndefined()
   expect(child.exitCode).toBe(0)
   expect(alive(process.pid)).toBe(true)
 })
