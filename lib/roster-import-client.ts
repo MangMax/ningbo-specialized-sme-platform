@@ -369,6 +369,8 @@ export interface RosterImportPayload {
   platformQueries?: RosterImportPlatformQuery[]
   /** Server reads original observations; 1..100 per request, no client hashes/raw. */
   platformRecordObservations?: { relationId: number }[]
+  /** Explicit immutable legacy pagination metadata; never typed collectionEvidence. */
+  platformLegacyProvenance?: import('./platform/legacy-provenance').LegacyPlatformProvenanceInput[]
   exportSnapshot?: RosterImportExportSnapshot
   differences?: RosterImportDifference[]
   /** 归并与回填（RL-11 增量扩展，见 `RosterImportMerge`）。 */
@@ -463,6 +465,7 @@ export type RosterImportAfterQualificationReadback =
 
 /** 预检的影响计数；`conflicts` 是**逐项冲突**（不静默丢行）。 */
 export interface RosterImportPreflight {
+  platformLegacyProvenanceSources?: { queryId: number; inputFingerprint: string }[]
   qualificationDiagnostics?: RosterImportQualificationDiagnostic[]
   /** Current stored facts only. No after/historical capture is implied by this field. */
   qualificationReadback?: RosterImportBeforeQualificationReadback

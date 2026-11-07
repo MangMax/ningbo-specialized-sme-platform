@@ -1979,3 +1979,7 @@ continuation 有两个不同值：
 `POST /api/roster/differences/refresh`（MCP `refresh_enterprise_differences`）接受 `{enterpriseIds?:number[]}`，省略为全部公布企业。`GET` 同路径支持逗号分隔enterpriseIds，MCP读取工具为 `list_enterprise_difference_comparisons`。刷新仅消费已入库数据并复用既有平台比较逻辑，存企业×称号当前结果，默认待核。相同业务输入保留结果与已有判断；采集时间和query/version ID不作为业务变化。输入变化使受影响称号回到待核，既有判断历史保留。用户按钮刷新本页范围；无差异和原因由代理或人工经既有差异原因协议判断、提交，程序不调度代理或另建候选队列。
 
 采集存储去重：同一接口、企业条件和称号范围的最新完整结果，所有业务行字段及类型相同时，仅更新 `platform_query.last_collected_at`；不追加查询、关系、观察或版本。逐行内容、查询状态或范围变化时按原入库协议处理；失败、缺页、断点尾段和未建立 typed 投影的数据仍走入库验证。原查询时间与既有来源引用保持，三业务页面仅展示内容版本和首次/最近采集时间。
+
+## 旧采集分页来源补证增量
+
+统一预检/提交支持显式 `payload.platformLegacyProvenance`；已有原查询和原关系保持不可变，独立 metadata 保留 legacy/typed unknown。字段、来源文件 SHA/段序号锁定、事务重核、精确读回及合成示例见[旧采集分页来源补证](platform-legacy-provenance.md)。

@@ -64,6 +64,8 @@ import { ensureBatchRow, findBatchByKey } from './roster-batch-ledger'
 import { captureIdentityRevision113, captureQueryRevision113, identityMaterial113, selectedSnapshot113, captureSnapshotRevision113, captureOfficialEventRevision113 } from './evidence-impact-113'
 import { recordImportReceipt } from './import-receipt-ledger'
 import { refreshDerivedFileParts } from './file-parts'
+import { legacyPlatformProvenanceItemsSchema } from '../../lib/platform/legacy-provenance'
+import { inspectLegacyPlatformProvenance, writeLegacyPlatformProvenance, LegacyProvenanceError } from './platform-legacy-provenance'
 
 type Db = BetterSQLite3Database<typeof schema>
 /** Internal persistence only; the public summary keeps its existing counts/projection shape. */
@@ -210,6 +212,11 @@ export function validateImportRequest(raw: unknown): ValidateResult {
 
 /** Strict additive field validation: malformed/empty projection commands cannot silently succeed. */
 function validatePlatformProjectionPayload(payload: Record<string, unknown>, sourceKind: string): string | null {
+  if (Object.hasOwn(payload, 'platformLegacyProvenance')) {
+    if (sourceKind !== 'platform_archive') return 'platformLegacyProvenance requires sourceKind=platform_archive'
+    const parsed = legacyPlatformProvenanceItemsSchema.safeParse(payload.platformLegacyProvenance)
+    if (!parsed.success) return `platformLegacyProvenance: ${parsed.error.issues.map(issue => issue.message).join('; ')}`
+  }
   if (Object.hasOwn(payload, 'platformRecordObservations')) {
     const rows = payload.platformRecordObservations
     if (sourceKind !== 'platform_archive') return 'platformRecordObservations requires sourceKind=platform_archive'
@@ -221,7 +228,7 @@ function validatePlatformProjectionPayload(payload: Record<string, unknown>, sou
       seen.add(row.relationId as number)
     }
   }
-  if (sourceKind === 'platform_archive' && !Object.hasOwn(payload, 'platformRecordObservations') && (!Array.isArray(payload.platformQueries) || !payload.platformQueries.length)) return 'platform_archive requires platformQueries or platformRecordObservations'
+  if (sourceKind === 'platform_archive' && !Object.hasOwn(payload, 'platformLegacyProvenance') && !Object.hasOwn(payload, 'platformRecordObservations') && (!Array.isArray(payload.platformQueries) || !payload.platformQueries.length)) return 'platform_archive requires platformQueries, platformRecordObservations or platformLegacyProvenance'
   return null
 }
 
@@ -971,6 +978,7 @@ interface EvidenceRepointPlan {
 type AnnouncementPlanMode = 'write' | 'converge'
 
 interface Plan {
+  platformLegacyProvenanceSources?: RosterImportPreflight['platformLegacyProvenanceSources']
   items: PlannedItem[]
   conflicts: RosterImportItemResult[]
   platformObservationSources?: RosterImportPreflight['platformObservationSources']
@@ -997,7 +1005,7 @@ function summarizePlan(plan: Plan): RosterImportPreflight {
     }
   }
   const canonicalProjection = plan.items.flatMap(p => (p.item.detail?.canonicalProjection as NonNullable<RosterImportPreflight['canonicalProjection']> | undefined) ?? [])
-  return { ...(plan.officialEvidencePlanHash ? { officialEvidencePlanHash: plan.officialEvidencePlanHash } : {}), add, update, remove, review, conflicts: plan.conflicts, evidenceRepoints, duplicateCandidates, ...(canonicalProjection.length ? { canonicalProjection } : {}), ...(plan.platformObservationSources ? { platformObservationSources: plan.platformObservationSources } : {}) }
+  return { ...(plan.platformLegacyProvenanceSources ? { platformLegacyProvenanceSources: plan.platformLegacyProvenanceSources } : {}), ...(plan.officialEvidencePlanHash ? { officialEvidencePlanHash: plan.officialEvidencePlanHash } : {}), add, update, remove, review, conflicts: plan.conflicts, evidenceRepoints, duplicateCandidates, ...(canonicalProjection.length ? { canonicalProjection } : {}), ...(plan.platformObservationSources ? { platformObservationSources: plan.platformObservationSources } : {}) }
 }
 
 /**
@@ -1508,6 +1516,29 @@ export function planRosterImport(
     }
   }
 
+  const previousLegacySources = context.batchId ? (db.select({ value: schema.importBatch.preflightResult }).from(schema.importBatch).where(eq(schema.importBatch.id, context.batchId)).get()?.value as RosterImportPreflight | null)?.platformLegacyProvenanceSources : undefined
+  const platformLegacyProvenanceSources: NonNullable<RosterImportPreflight['platformLegacyProvenanceSources']> = []
+  for (const input of payload.platformLegacyProvenance ?? []) {
+    const ref = `query:${input.queryId}`
+    const expected = previousLegacySources?.find(row => row.queryId === input.queryId)?.inputFingerprint
+    try {
+      const state = inspectLegacyPlatformProvenance(db, input, expected)
+      platformLegacyProvenanceSources.push({ queryId: input.queryId, inputFingerprint: expected ?? state.inputFingerprint })
+      push({ item: success('platform_legacy_provenance', ref, { queryId: input.queryId, provenanceKind: 'legacy_pagination', typedState: 'unknown', relationCount: state.relationCount }),
+        action: state.exists ? 'skip' : 'add', review: false, run: tx => {
+          try { return success('platform_legacy_provenance', ref, writeLegacyPlatformProvenance(tx, input, context.batchId!, expected ?? state.inputFingerprint)) }
+          catch (error) {
+            if (!(error instanceof LegacyProvenanceError)) throw error
+            return failure('platform_legacy_provenance', ref, error.code, error.message)
+          }
+        } })
+    } catch (error) {
+      if (!(error instanceof LegacyProvenanceError)) throw error
+      if (expected && !platformLegacyProvenanceSources.some(row => row.queryId === input.queryId)) platformLegacyProvenanceSources.push({ queryId: input.queryId, inputFingerprint: expected })
+      push({ item: failure('platform_legacy_provenance', ref, error.code, error.message), action: 'skip', review: false })
+    }
+  }
+
   // ---- 曾用名 / 别名 -------------------------------------------------------
   const aliases = Array.isArray(payload.aliases) ? payload.aliases : []
   aliases.forEach((alias, index) => planAlias(db, pending, pendingEnterpriseCreates, pendingRefs, alias, index, push))
@@ -1545,7 +1576,7 @@ export function planRosterImport(
       push({ item, action: 'skip', review: false })
     }
   }
-  return { items, conflicts, officialEvidencePlanHash, ...(platformObservationSources.length ? { platformObservationSources } : {}) }
+  return { items, conflicts, officialEvidencePlanHash, ...(platformLegacyProvenanceSources.length ? { platformLegacyProvenanceSources } : {}), ...(platformObservationSources.length ? { platformObservationSources } : {}) }
 }
 
 function projectionItem(tx: Executor, relationId: number, batchId?: number, expected?: string): RosterImportItemResult {

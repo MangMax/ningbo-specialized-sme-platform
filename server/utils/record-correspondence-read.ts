@@ -1,3 +1,4 @@
+import { readLegacyPlatformProvenance, legacySourcePositionForSequence } from './platform-legacy-provenance'
 import { readPublicPublishedNames } from '../../lib/roster/enterprise-roster'
 import { asc, eq, getTableColumns, inArray, sql } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
@@ -101,9 +102,11 @@ export function sourceReader(db: Db, rows: CorrespondenceRead[], extra?: { kind:
     const eventLinks = [...new Map([...(byEvent.get(id) ?? []), ...(byPredecessor.get(id) ?? [])].map(r => [r.id, r])).values()].sort((a, b) => a.id - b.id)
     return [id, { ...joined.event, publishedPresentation: presentation.availability === 'unavailable' ? presentation : { ...presentation, facts: presentation.facts.filter(fact => fact.eventId === id) }, record: { id: joined.record.id, enterpriseId: joined.record.enterpriseId, titleCode: joined.record.titleCode, source: joined.record.source, usccRaw: joined.record.usccRaw }, evidence: evidence.map(item => ({ ...sanitizeEvidence(item) as typeof item, ...(facts.has(item.id) ? { publishedName: facts.get(item.id) } : {}) })), officialEvidence, correspondences: eventLinks }] as const
   }))
+  const legacyById = readLegacyPlatformProvenance(db, relations.map(row => row.query.id))
   const relationSources = new Map(relations.map(({ relation, query }) => {
-    const position = sourcePositionForSequence(query.collectionEvidence, relation.sequenceNo)
-    return [relation.id, { ...normalizePlatformRelation(query.interface, relation), sourceRdjb: position.sourceRdjb, sourcePage: position.sourcePage, rawFields: sanitizeEvidence(relation.rawFields), query: { ...query, failureReason: sanitizeEvidence(query.failureReason), collectionEvidence: safeCollectionEvidence(query.collectionEvidence) }, correspondences: byRelation.get(relation.id) ?? [] }] as const
+    const legacy = legacyById.get(query.id)
+    const position = legacy ? legacySourcePositionForSequence(legacy.collection, relation.sequenceNo) : sourcePositionForSequence(query.collectionEvidence, relation.sequenceNo)
+    return [relation.id, { ...normalizePlatformRelation(query.interface, relation), sourceRdjb: position.sourceRdjb, sourcePage: position.sourcePage, rawFields: sanitizeEvidence(relation.rawFields), query: { ...query, ...(legacy ? { legacyProvenance: sanitizeEvidence(legacy) as typeof legacy } : {}), failureReason: sanitizeEvidence(query.failureReason), collectionEvidence: safeCollectionEvidence(query.collectionEvidence) }, correspondences: byRelation.get(relation.id) ?? [] }] as const
   }))
   const exportSources = new Map(exports.map(({ row, batch }) => [row.id, { ...row, rawFields: sanitizeEvidence(row.rawFields), batch: sanitizeEvidence(batch), correspondences: byExport.get(row.id) ?? [] }] as const))
   const read = (kind: SourceKind, id: number) => kind === 'event' ? eventSources.get(id) ?? null : kind === 'relation' ? relationSources.get(id) ?? null : exportSources.get(id) ?? null

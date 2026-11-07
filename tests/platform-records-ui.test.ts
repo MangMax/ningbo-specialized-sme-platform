@@ -139,3 +139,44 @@ it('单称号Tab不显示树分组，序号从1连续排列且不改原始查询
   view.unmount()
  })
 })
+
+it('mixed legacy query groups rows by their explicit titles and filters each title', async()=>{
+ const view=mount(PlatformRecords,{props:{queries:[{...query,rdjb:'1,2,3',relationCount:3}],relations:['1','2','3'].map((rdjb,i)=>({...record,id:i+1,rawFields:{rdjb},nameRaw:`企业${rdjb}`}))}})
+ try {
+  expect(view.findAll('[data-testid="platform-title-group"]').map(x=>x.text())).toEqual(['创新型中小企业 1 条','专精特新中小企业 1 条','专精特新“小巨人” 1 条'])
+  await view.findAll('[role="tab"]').find(tab=>tab.text()==='专精特新中小企业')!.trigger('keydown',{key:'Enter'})
+  expect(view.findAll('[data-testid="platform-relation"]').map(x=>x.attributes('data-record-id'))).toEqual(['2'])
+ } finally {view.unmount()}
+})
+it('raw details collapse blank fields while retaining zero false and original empty values',async()=>{
+ const view=mount(PlatformRecords,{attachTo:document.body,props:{queries:[query],relations:[{...record,rawFields:{rdjb:'2',qymc:'平台原名',empty:'',nil:null,spaces:'  ',zero:0,bool:false}}]}})
+ try {
+  await view.get('[data-testid="platform-row-details-toggle"]').trigger('click');await flushPromises()
+  const dialog=new DOMWrapper(document.body).get('[data-testid="platform-row-details"]')
+  expect(dialog.text()).toContain('平台返回的空字段 · 3 项')
+  expect(dialog.text()).toContain('zero'); expect(dialog.text()).toContain('false')
+  expect(dialog.text()).not.toContain('（空字符串）')
+  await dialog.get('[data-testid="platform-empty-fields"] button').trigger('click');await flushPromises()
+  expect(dialog.text()).toContain('null（原值）');expect(dialog.text()).toContain('""（空字符串）')
+ } finally {view.unmount()}
+})
+
+it('legacy provenance shows pagination without claiming typed original evidence', async()=>{
+ const {default:Provenance}=await import('../components/PlatformQueryProvenance.vue')
+ const view=mount(Provenance,{props:{sourceLabel:'关联记录',queries:[{...query,collectionEvidence:null,legacyProvenance:{kind:'legacy_pagination',collection:{completedAt:'2026-11-06T02:08:47.038Z',completeness:'complete',fullRange:true,fetchedCount:7,declaredTotal:7,titleScope:{mode:'selected',rdjb:['1','2','3']},effectiveConditions:{uscc:query.queryKey,combination:'and'},pages:[{rdjb:'3',page:2,status:'success',fetchedCount:7,declaredTotal:7}],unfinished:[],error:null}}} as any]}})
+ try {
+  await view.get('button').trigger('click');await flushPromises()
+  expect(view.text()).toContain('旧采集分页来源已补证；原始字段类型仍未记录')
+  expect(view.text()).toContain('第 2 页');expect(view.text()).toContain('已采集 7 条')
+  expect(view.text()).not.toContain('完整性未知')
+ }finally{view.unmount()}
+})
+
+it('mixed business rows with missing titles never borrow an older observation title',async()=>{
+ const view=mount(PlatformRecords,{props:{queries:[query,{...query,id:2,rdjb:'1,2,3'}],relations:[record,{...record,id:2,queryId:2,rawFields:{id:'SQ001'}}]}})
+ try{
+  expect(view.findAll('tbody[data-record-title=""] [data-testid="platform-relation"]').map(x=>x.attributes('data-record-id'))).toEqual(['2'])
+  await view.findAll('[role="tab"]').find(tab=>tab.text()==='专精特新中小企业')!.trigger('keydown',{key:'Enter'})
+  expect(view.findAll('[data-testid="platform-relation"]').map(x=>x.attributes('data-record-id'))).toEqual(['1'])
+ }finally{view.unmount()}
+})

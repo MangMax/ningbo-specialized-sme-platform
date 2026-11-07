@@ -265,3 +265,14 @@ it('keeps legacy JavaScript asOf semantics for fractional milliseconds, offsets 
   expect(unfiltered.counts.legacyRows).toBe(times.length)
   expect(bytes()).toBeLessThan(65536)
 })
+
+it('mixed legacy titles survive bounded SQLite extraction and title filtering', () => {
+ const db=fixture()
+ const doc=db.insert(schema.sourceDocument).values({source:'jxj',title:'Selected empty source',path:'mixed-empty.pdf'}).returning().get()
+ const q=db.insert(schema.platformQuery).values({interface:'business_list',queryKey:'SYN-MIX',rdjb:'1,2,3',status:'success',queriedAt:'2026-11-06T02:08:45.928Z'}).returning().get()
+ const ids=['1','2','3'].map((rdjb,i)=>db.insert(schema.platformRelation).values({queryId:q.id,sequenceNo:i+1,relationKey:`MIX${i}`,rawFields:{id:`MIX${i}`,rdjb,cszt:'终审通过',sblx:'申请',unrelated:'x'.repeat(50000)}}).returning().get().id)
+ const result=getRecordComparison(db,{queryIds:[q.id],exportBatchIds:[],officialSourceDocumentIds:[doc.id],titleCode:'specialized_sme',page:1,pageSize:25})
+ expect(result.platformWithoutOfficial.rows.map(row=>[row.relation.id,row.relation.titleCode])).toEqual(ids.map((id,i)=>[id,['innovative_sme','specialized_sme','little_giant'][i]]))
+ expect(result.businessCounts.observations).toBe(1)
+ expect(result.businessGroups.rows.flatMap(group=>group.unknownObservations.map(o=>[o.relation.id,o.relation.titleCode]))).toEqual([[ids[1],'specialized_sme']])
+})

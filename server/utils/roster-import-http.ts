@@ -96,6 +96,7 @@ export async function handleRosterImportRequest(
   }
   if (action === 'replay' && hasOfficialFactInput(validated.value)) return json(400, { message: 'Replay cannot capture, append or correct official facts' })
   if (action === 'replay' && validated.value.payload.platformRecordObservations) return json(400, { message: 'Historical projection uses preflight/commit with its original idempotency key; replay only converges announcement evidence' })
+  if (action === 'replay' && validated.value.payload.platformLegacyProvenance) return json(400, { message: 'Legacy provenance uses preflight/commit with its original idempotency key' })
 
   try {
     const pageCountErrors =

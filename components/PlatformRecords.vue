@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
+import { platformRowTitle } from '~~/lib/platform/row-title'
 import { PLATFORM_QUERY_STATUS_ORDER, PLATFORM_RDJBS, RELATION_DECLARE_KINDS } from '~~/lib/labels'
 import { formatFetchTime } from '~~/lib/reconcile-time'
 import AssessmentStatusBadge from '@/components/evidence-review/AssessmentStatusBadge.vue'
@@ -55,9 +56,11 @@ const rows = computed(() => props.relations.map(record => {
   const query = queryById.value.get(record.queryId)
   const titles = new Set(props.relations
     .filter(other => record.relationKey && other.relationKey === record.relationKey && queryById.value.get(other.queryId)?.interface === 'business_list')
-    .map(other => queryById.value.get(other.queryId)?.rdjb).filter(Boolean))
-  const title = query?.interface === 'recognized_list' ? record.sourceRdjb ?? (query.rdjb.split(',').length === 1 ? query.rdjb : '') : query?.rdjb || (titles.size === 1 ? [...titles][0]! : '')
-  return { record, query, title, inferredTitle: query?.interface === 'apply_list' && !query.rdjb && Boolean(title) }
+    .map(other => platformRowTitle(queryById.value.get(other.queryId)?.rdjb, other.rawFields)).filter(Boolean))
+  const directTitle = query?.interface === 'recognized_list' ? record.sourceRdjb ?? (query.rdjb.split(',').length === 1 ? query.rdjb : '') : platformRowTitle(query?.rdjb, record.rawFields)
+  const inferredTitle = !directTitle && query?.interface === 'apply_list' && !query.rdjb && titles.size === 1
+  const title = directTitle || (inferredTitle ? [...titles][0]! : '')
+  return { record, query, title, inferredTitle }
 }))
 const titles = computed(() => {
   const values = new Set([...props.queries.flatMap(query => query.rdjb.split(',')).filter(Boolean), ...rows.value.map(row => row.title)])

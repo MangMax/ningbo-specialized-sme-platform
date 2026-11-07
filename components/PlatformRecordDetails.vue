@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import { platformRowTitle } from '~~/lib/platform/row-title'
+import DisclosurePanel from './DisclosurePanel.vue'
 import { platformBusinessFields } from '~~/lib/roster/platform-records'
 import type { PlatformRecord, PlatformRecordQuery } from '~~/lib/roster/platform-records'
 import { PLATFORM_RDJBS } from '~~/lib/labels'
@@ -8,7 +10,15 @@ import PlatformFieldConflicts from './PlatformFieldConflicts.vue'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
 const props = defineProps<{ record: PlatformRecord; query?: PlatformRecordQuery }>()
-const fields = computed(() => platformBusinessFields(props.record.rawFields))
+const allFields = computed(() => platformBusinessFields(props.record.rawFields))
+const isEmpty = (key: string) => {
+  const value = props.record.rawFields?.[key]
+  return value == null || typeof value === 'string' && value.trim() === ''
+}
+const fields = computed(() => allFields.value.filter(field => !isEmpty(field.key)))
+const emptyFields = computed(() => allFields.value.filter(field => isEmpty(field.key)))
+const emptyValue = (key: string) => props.record.rawFields?.[key] === null ? 'null（原值）' : JSON.stringify(props.record.rawFields?.[key]) + '（空字符串）'
+const sourceTitle = computed(() => props.record.sourceRdjb ?? platformRowTitle(props.query?.rdjb, props.record.rawFields))
 </script>
 <template>
   <Dialog>
@@ -24,10 +34,15 @@ const fields = computed(() => platformBusinessFields(props.record.rawFields))
       <dt class="text-muted-foreground">主体归属</dt><dd>{{ record.enterpriseId === undefined ? '未提供' : record.enterpriseId === null ? '未匹配主体' : `已关联主档 #${record.enterpriseId}` }}</dd>
       <dt class="text-muted-foreground">原行序号</dt><dd>{{ record.sequenceNo }}</dd>
       <dt class="text-muted-foreground">来源页</dt><dd>{{ record.sourcePage ?? '未提供' }}</dd>
-      <dt class="text-muted-foreground">来源称号</dt><dd>{{ PLATFORM_RDJBS[record.sourceRdjb ?? query?.rdjb ?? ''] ?? '未标注' }}</dd>
+      <dt class="text-muted-foreground">来源称号</dt><dd>{{ PLATFORM_RDJBS[sourceTitle] ?? '未标注' }}</dd>
       <template v-for="field in fields" :key="field.key"><dt class="text-muted-foreground">{{ field.label }}（{{ field.key }}）</dt><dd>{{ field.value }}</dd></template>
     </dl>
-    <p v-if="!fields.length" class="text-muted-foreground mt-2">旧记录未保留原始业务字段。</p>
+    <DisclosurePanel v-if="emptyFields.length" compact :title="`平台返回的空字段 · ${emptyFields.length} 项`" data-testid="platform-empty-fields">
+      <dl class="text-sm grid grid-cols-1 sm:grid-cols-2 gap-2 break-words">
+        <template v-for="field in emptyFields" :key="field.key"><dt>{{ field.label }}（{{ field.key }}）</dt><dd>{{ emptyValue(field.key) }}</dd></template>
+      </dl>
+    </DisclosurePanel>
+    <p v-if="!allFields.length" class="text-muted-foreground mt-2">旧记录未保留原始业务字段。</p>
   </DialogContent>
   </Dialog>
 </template>

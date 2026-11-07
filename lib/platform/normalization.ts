@@ -2,7 +2,7 @@ import { processFactsFromRow, type PlatformRelationRecord } from './identity'
 import type { PlatformRow } from './types'
 
 /** Allowlist for readers that must avoid materializing unrelated archived payloads. */
-export const PLATFORM_PROCESS_RAW_KEYS = ['szsfmc', 'cszt', 'whpc', 'sblx', 'sqsj', 'personuuid', 'year'] as const
+export const PLATFORM_PROCESS_RAW_KEYS = ['szsfmc', 'cszt', 'whpc', 'sblx', 'sqsj', 'personuuid', 'year', 'rdjb'] as const
 
 /** Decode SQLite's multi-path json_extract array, retaining JSON value types. */
 export function platformProcessRawFromJson(value: string): Record<string, unknown> {

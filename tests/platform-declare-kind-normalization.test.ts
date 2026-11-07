@@ -58,11 +58,11 @@ it('recognized snapshots retain stored meaning and never borrow process-like raw
   }
 })
 
-it('seven-field SQL projection and full raw rows share known, unknown and conflict semantics', () => {
-  expect(PLATFORM_PROCESS_RAW_KEYS).toEqual(['szsfmc', 'cszt', 'whpc', 'sblx', 'sqsj', 'personuuid', 'year'])
+it('bounded SQL projection and full raw rows share known, unknown and conflict semantics', () => {
+  expect(PLATFORM_PROCESS_RAW_KEYS).toEqual(['szsfmc', 'cszt', 'whpc', 'sblx', 'sqsj', 'personuuid', 'year', 'rdjb'])
   for (const source of ['apply_list', 'business_list', 'recognized_list']) {
     for (const kind of ['apply', '申请', '更新', '复核', '新事项', '__proto__', 'constructor', null]) {
-      const rawFields = { szsfmc: ' 宁波市 ', cszt: '终审通过', whpc: '2025-2', sblx: kind, sqsj: '2025-01-01', personuuid: '第一批', year: '2025', unrelated: '不参与流程投影' }
+      const rawFields = { szsfmc: ' 宁波市 ', cszt: '终审通过', whpc: '2025-2', sblx: kind, sqsj: '2025-01-01', personuuid: '第一批', year: '2025', rdjb: '3', unrelated: '不参与流程投影' }
       const projected = platformProcessRawFromJson(JSON.stringify(PLATFORM_PROCESS_RAW_KEYS.map(key => rawFields[key])))
       for (const stored of ['申请', 'review', 'constructor', null]) {
         const relation = { declareKind: stored, rawFields }

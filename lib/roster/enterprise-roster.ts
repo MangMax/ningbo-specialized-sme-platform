@@ -3,6 +3,7 @@ export { readPublicPublishedNames } from './official-published-presentation'
 import type { PublishedPresentation } from './correspondence-view'
 import { readQueryAssessment, readQueryCoverage, type QueryAssessment } from './query-assessment'
 import { sourcePositionForSequence } from '../platform/recognized-evidence'
+import { readLegacyPlatformProvenance, legacySourcePositionForSequence } from '../../server/utils/platform-legacy-provenance'
 import { normalizePlatformRelation, type PlatformNormalizationConflict } from '../platform/normalization'
 import { readEnterpriseSnapshot, readEnterpriseHistories, enterpriseComparisonCoordinates } from './enterprise-read-snapshot'
 import { readPlatformBusinessDetails } from '../../server/utils/platform-business-detail-read'
@@ -801,6 +802,7 @@ interface LegacyRosterDifferenceRow {
 }
 
 export interface RosterPlatformQueryRow {
+  legacyProvenance?: ReturnType<typeof readLegacyPlatformProvenance> extends Map<number, infer Value> ? Value : never
   id: number
   interface: string
   queryKey: string
@@ -1023,6 +1025,7 @@ function enterpriseDetail(db: Db, id: number, asOf: number): RosterEnterpriseDet
   const relationCounts = new Map<number, number>()
   for (const relation of relations) relationCounts.set(relation.queryId, (relationCounts.get(relation.queryId) ?? 0) + 1)
   const queriesById = new Map(includedQueries.map(q => [q.id, q]))
+  const legacyById = readLegacyPlatformProvenance(db, includedQueries.map(q => q.id))
   const queries = includedQueries
     .sort((a, b) => (a.queriedAt < b.queriedAt ? -1 : a.queriedAt > b.queriedAt ? 1 : 0) || a.id - b.id)
     .map((q): RosterPlatformQueryRow => ({
@@ -1032,6 +1035,7 @@ function enterpriseDetail(db: Db, id: number, asOf: number): RosterEnterpriseDet
       rdjb: q.rdjb,
       queriedAt: q.queriedAt,
       collectionEvidence: q.collectionEvidence,
+      ...(legacyById.has(q.id) ? { legacyProvenance: legacyById.get(q.id)! } : {}),
       titleCode: q.titleCode,
       status: q.status,
       failureReason: q.failureReason,
@@ -1121,7 +1125,8 @@ function enterpriseDetail(db: Db, id: number, asOf: number): RosterEnterpriseDet
         sequenceNo: r.sequenceNo,
         relationKey: r.relationKey,
         rawFields: r.rawFields,
-        ...sourcePositionForSequence(queriesById.get(r.queryId)?.collectionEvidence, r.sequenceNo),
+        ...(legacyById.has(r.queryId) ? legacySourcePositionForSequence(legacyById.get(r.queryId)!.collection, r.sequenceNo)
+          : sourcePositionForSequence(queriesById.get(r.queryId)?.collectionEvidence, r.sequenceNo)),
         usccRaw: r.usccRaw,
         nameRaw: r.nameRaw,
         province: r.province,

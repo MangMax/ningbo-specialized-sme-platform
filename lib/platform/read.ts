@@ -17,6 +17,7 @@ import { MAX_PAGE_SIZE } from '../query'
 import { sourcePositionForSequence, RDJB_TITLE_CODES } from './recognized-evidence'
 import type { PlatformInterface } from '../labels'
 import { normalizePlatformRelation, type PlatformNormalizationConflict } from './normalization'
+import { readLegacyPlatformProvenance, legacySourcePositionForSequence } from '../../server/utils/platform-legacy-provenance'
 
 export interface PlatformQueryFilter {
   queryId?: number
@@ -76,6 +77,7 @@ export interface PlatformQueryRow {
     failureReason: string | null
     rawResponse?: string | null
     collectionEvidence?: import('./live-query').PlatformLiveQueryResult | null
+    legacyProvenance?: ReturnType<typeof readLegacyPlatformProvenance> extends Map<number, infer Value> ? Value : never
     createdAt: string
     relationCount: number
   }
@@ -171,6 +173,7 @@ function listPlatformQueriesSnapshot(
       relationCount: sql<number>`(select count(*) from platform_relation r where r.query_id = platform_query.id)`,
       ...(!summary ? { evidenceBytes: sql<number>`
         coalesce(length(cast(collection_evidence as blob)), 0) +
+        coalesce((select length(cast(json_remove(collection, '$.rows') as blob)) from platform_query_legacy_provenance p where p.query_id = platform_query.id), 0) +
         ${filter.includeRawResponse ? sql`coalesce(length(cast(raw_response as blob)), 0)` : sql`0`} +
         coalesce((select sum(1024 + coalesce(length(cast(raw_fields as blob)), 0) +
           coalesce(length(cast(source_text as blob)), 0) + coalesce(length(cast(name_raw as blob)), 0) +
@@ -196,7 +199,8 @@ function listPlatformQueriesSnapshot(
     collectionEvidence: schema.platformQuery.collectionEvidence,
     ...(filter.includeRawResponse ? { rawResponse: schema.platformQuery.rawResponse } : {}),
   }).from(schema.platformQuery).where(inArray(schema.platformQuery.id, ids)).all().map(q => [q.id, q]) : [])
-  const pageQueries = pageMeta.map(({ evidenceBytes: _bytes, ...q }) => ({ ...q, ...evidenceById.get(q.id) }))
+  const legacyById = readLegacyPlatformProvenance(db, summary ? [] : ids)
+  const pageQueries = pageMeta.map(({ evidenceBytes: _bytes, ...q }) => ({ ...q, ...evidenceById.get(q.id), ...(legacyById.has(q.id) ? { legacyProvenance: legacyById.get(q.id)! } : {}) }))
   const relations = ids.length && !summary
     ? db
         .select({
@@ -214,7 +218,8 @@ function listPlatformQueriesSnapshot(
   for (const { relation: archivedRelation, matchedName } of relations) {
     const relation = normalizePlatformRelation(pageQueries.find(q => q.id === archivedRelation.queryId)!.interface, archivedRelation)
     const row: PlatformRelationRow = {
-      ...sourcePositionForSequence(pageQueries.find(q => q.id === relation.queryId)?.collectionEvidence, relation.sequenceNo),
+      ...(legacyById.has(relation.queryId) ? legacySourcePositionForSequence(legacyById.get(relation.queryId)!.collection, relation.sequenceNo)
+        : sourcePositionForSequence(pageQueries.find(q => q.id === relation.queryId)?.collectionEvidence, relation.sequenceNo)),
       id: relation.id,
       queryId: relation.queryId,
       sequenceNo: relation.sequenceNo,

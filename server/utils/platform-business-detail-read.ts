@@ -1,3 +1,4 @@
+import { platformRowTitle } from '../../lib/platform/row-title'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import type * as schema from '../../db/schema'
 import type { RosterPlatformQueryRow } from '../../lib/roster/enterprise-roster'
@@ -50,7 +51,7 @@ export function readPlatformBusinessDetails(db: Db, enterpriseId: number, querie
   const groups = readPlatformBusinessGroups(db, relations.map(archived => {
     const query = byQuery.get(archived.queryId)!
     const row = normalizePlatformRelation(query.interface, archived)
-    const rdjb = query.interface === 'recognized_list' ? sourcePositionForSequence(query.collectionEvidence, row.sequenceNo).sourceRdjb ?? '' : query.rdjb
+    const rdjb = query.interface === 'recognized_list' ? sourcePositionForSequence(query.collectionEvidence, row.sequenceNo).sourceRdjb ?? '' : platformRowTitle(query.rdjb, row.rawFields)
     const titleCode = (query.interface === 'recognized_list' ? RDJB_TITLE_CODES[rdjb] ?? query.titleCode : query.titleCode ?? RDJB_TITLE_CODES[rdjb]) ?? ''
     const conflicts: string[] = row.normalizationConflicts.length ? ['platform_field_conflict'] : []
     const rawRdjb = typeof row.rawFields?.rdjb === 'string' ? row.rawFields.rdjb : ''

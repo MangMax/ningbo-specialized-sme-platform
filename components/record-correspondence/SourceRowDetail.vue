@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import { platformRowTitle } from '~~/lib/platform/row-title'
 import { PLATFORM_INTERFACES, PLATFORM_QUERY_STATUSES, PLATFORM_RDJBS, RELATION_DECLARE_KINDS, TITLES } from '~~/lib/labels'
 import { platformBusinessFields, platformPresentationFields, platformRelatedRawFields } from '~~/lib/roster/platform-records'
 import { formatFetchTime } from '~~/lib/reconcile-time'
@@ -11,8 +12,15 @@ import { Badge } from '@/components/ui/badge'
 
 const props = defineProps<{ relation?: RelationSource | null; exportRow?: ExportRowSource | null; compact?: boolean; presentation?: 'source' | 'business' }>()
 const source = computed(() => props.relation?.query.interface ?? '')
-const fields = computed(() => platformBusinessFields(props.relation?.rawFields ?? props.exportRow?.rawFields))
-const sourceTitle = computed(() => PLATFORM_RDJBS[props.relation?.sourceRdjb ?? props.relation?.query.rdjb ?? ''] ?? '未标注')
+const allFields = computed(() => platformBusinessFields(props.relation?.rawFields ?? props.exportRow?.rawFields))
+const isEmpty = (key: string) => {
+  const value = props.relation?.rawFields?.[key]
+  return value == null || typeof value === 'string' && value.trim() === ''
+}
+const fields = computed(() => props.relation ? allFields.value.filter(field => !isEmpty(field.key)) : allFields.value)
+const emptyFields = computed(() => props.relation ? allFields.value.filter(field => isEmpty(field.key)) : [])
+const emptyValue = (key: string) => props.relation?.rawFields?.[key] === null ? 'null（原值）' : JSON.stringify(props.relation?.rawFields?.[key]) + '（空字符串）'
+const sourceTitle = computed(() => PLATFORM_RDJBS[props.relation?.sourceRdjb ?? platformRowTitle(props.relation?.query.rdjb, props.relation?.rawFields)] ?? '未标注')
 const providedBusinessFields = computed(() => platformPresentationFields(props.relation?.rawFields))
 const hasVerifiedBusinessFields = computed(() => providedBusinessFields.value.some(field => field.key !== 'rdjb' || Boolean(PLATFORM_RDJBS[field.value])))
 const businessFields = computed(() => providedBusinessFields.value.flatMap(field => {
@@ -79,7 +87,7 @@ const completeRaw = computed(() => JSON.stringify(props.relation?.rawFields ?? n
         <dt class="text-muted-foreground">企业原名</dt><dd>{{ relation.nameRaw ?? '未提供' }}</dd>
         <dt class="text-muted-foreground">信用代码原值</dt><dd>{{ relation.usccRaw ?? '未提供' }}</dd>
         <dt class="text-muted-foreground">业务编号</dt><dd>{{ relation.relationKey ?? '未提供' }}</dd>
-        <dt class="text-muted-foreground">来源称号</dt><dd>{{ PLATFORM_RDJBS[relation.sourceRdjb ?? relation.query.rdjb] ?? '未标注' }}</dd>
+        <dt class="text-muted-foreground">来源称号</dt><dd>{{ sourceTitle }}</dd>
         <dt v-if="relation.declareKind" class="text-muted-foreground">申报类型</dt><dd v-if="relation.declareKind">{{ RELATION_DECLARE_KINDS[relation.declareKind] ?? relation.declareKind }}</dd>
         <dt v-if="relation.status" class="text-muted-foreground">原办理状态</dt><dd v-if="relation.status">{{ relation.status }}</dd>
         <dt v-if="relation.appliedAt" class="text-muted-foreground">原申报时间</dt><dd v-if="relation.appliedAt">{{ relation.appliedAt }}</dd>
@@ -110,5 +118,10 @@ const completeRaw = computed(() => JSON.stringify(props.relation?.rawFields ?? n
       </dl>
       <p class="text-muted-foreground mt-2">此行说明指定版本的当前快照，不代替正式公布结论。</p>
     </template>
+    <DisclosurePanel v-if="relation && presentation !== 'business' && emptyFields.length" compact :title="`平台返回的空字段 · ${emptyFields.length} 项`" data-testid="platform-empty-fields">
+      <dl class="grid grid-cols-1 gap-2 break-words sm:grid-cols-2">
+        <template v-for="field in emptyFields" :key="field.key"><dt>{{ field.label }}（{{ field.key }}）</dt><dd>{{ emptyValue(field.key) }}</dd></template>
+      </dl>
+    </DisclosurePanel>
   </div>
 </template>

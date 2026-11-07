@@ -9,6 +9,7 @@ import { platformQueriesMcpSchema } from './roster-import-platform-schema'
 import { differencesMcpSchema } from './roster-import-difference-schema'
 import { usccBackfillsMcpSchema } from './roster-import-uscc-schema'
 import { mergesMcpSchema } from './roster-import-merge-schema'
+import { legacyPlatformProvenanceItemsSchema } from '../../lib/platform/legacy-provenance'
 
 const importCorrectionSchema = evidenceCorrectionRequestSchema.omit({ idempotencyKey: true }).optional()
 const { $schema: _correctionDialect, ...importCorrectionDiscovery } = z.toJSONSchema(importCorrectionSchema, { io: 'input' })
@@ -23,6 +24,7 @@ export const rosterImportMcpPayloadSchema = z.object({
   announcement: announcementMcpSchema,
   aliases: aliasesMcpSchema,
   platformQueries: platformQueriesMcpSchema,
+  platformLegacyProvenance: legacyPlatformProvenanceItemsSchema.optional().describe('独立 legacy 采集分页补证，typedState=unknown；queryId/自然键/文件SHA/segmentIndex锁定，完整原行核对，绝不改collectionEvidence或内容版本'),
   differences: differencesMcpSchema,
   usccBackfills: usccBackfillsMcpSchema,
   merges: mergesMcpSchema,
