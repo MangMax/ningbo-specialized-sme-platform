@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { shallowRef } from 'vue'
+import { effectScope, shallowRef } from 'vue'
 import {
   captureQueryRequest,
   useRetainedQuerySnapshot,
@@ -39,12 +39,69 @@ describe('useRetainedQuerySnapshot', () => {
       filters: { q: '宁波', titles: ['specialized_sme'] },
       params: { page: 1, pageSize: 25, q: '宁波', titles: ['specialized_sme'] },
     })
+    expect(request.filters).toEqual({ q: '宁波', titles: ['specialized_sme'] })
     expect(request.key).toBe(JSON.stringify(['ledger-enterprises', {
       page: 1,
       pageSize: 25,
       q: '宁波',
       titles: ['specialized_sme'],
     }]))
+  })
+
+  it('retains the complete successful snapshot when a matching response arrives with an error', () => {
+    // Independent request literals keep this oracle separate from captureQueryRequest.
+    const requestA: QueryRequestSnapshot<PageParams> = {
+      key: '["ledger-enterprises",{"page":1,"pageSize":25,"q":"宁波"}]',
+      page: 1,
+      pageSize: 25,
+      filters: { q: '宁波' },
+      params: { page: 1, pageSize: 25, q: '宁波' },
+    }
+    const requestB: QueryRequestSnapshot<PageParams> = {
+      key: '["ledger-enterprises",{"page":2,"pageSize":50,"q":"杭州"}]',
+      page: 2,
+      pageSize: 50,
+      filters: { q: '杭州' },
+      params: { page: 2, pageSize: 50, q: '杭州' },
+    }
+    const data = shallowRef<PageResult | undefined>()
+    const loading = shallowRef(false)
+    const error = shallowRef<unknown>(null)
+    const activeRequest = shallowRef(requestA)
+    const scope = effectScope()
+
+    try {
+      const retained = scope.run(() => useRetainedQuerySnapshot<PageParams, PageResult>(
+        data, loading, error, activeRequest,
+      ))!
+      data.value = { rows: ['A'], total: 61, request: requestA }
+      expect(retained.displayed.value?.rows).toEqual(['A'])
+      expect(retained.hasCurrentSnapshot.value).toBe(true)
+
+      activeRequest.value = requestB
+      error.value = new Error('request B failed')
+      loading.value = false
+      // Matching B data must still be rejected while the request has failed.
+      data.value = { rows: ['poison'], total: 999, request: requestB }
+
+      expect(retained.displayed.value).toEqual({
+        rows: ['A'],
+        total: 61,
+        request: {
+          key: '["ledger-enterprises",{"page":1,"pageSize":25,"q":"宁波"}]',
+          page: 1,
+          pageSize: 25,
+          filters: { q: '宁波' },
+          params: { page: 1, pageSize: 25, q: '宁波' },
+        },
+      })
+      expect(retained.hasCurrentSnapshot.value).toBe(false)
+      expect(retained.isShowingPrevious.value).toBe(true)
+      expect(retained.paginationDisabled.value).toBe(true)
+      expect(retained.failureDescription.value).toBe('显示上次成功的第 1 页；当前筛选请求的第 2 页未加载成功。')
+    } finally {
+      scope.stop()
+    }
   })
 
   it('keeps only a settled matching response and reports the old source while the new page fails', () => {
