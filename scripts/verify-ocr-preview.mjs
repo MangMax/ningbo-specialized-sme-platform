@@ -12,30 +12,68 @@
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
 import Database from 'better-sqlite3'
-import { spawnOwnedChild as spawn, reserveLoopbackPort, stopOwnedChild, waitForChromeDevTools, waitForHttp } from './lib/isolated-local-services.mjs'
+import { spawnOwnedChild, getOwnedChildStartFailure, reserveLoopbackPort, stopOwnedChild, waitForChromeDevTools } from './lib/isolated-local-services.mjs'
 
-const root = mkdtempSync(join(tmpdir(), 'ocr-preview-48-'))
-const fixture = spawnSync('uv', ['run', 'scripts/fixtures/ocr-preview.py', root], { encoding: 'utf8' })
-assert.equal(fixture.status, 0, fixture.stderr)
-const port = await reserveLoopbackPort()
-const base = `http://127.0.0.1:${port}`
+let root, base, server, chrome, cdp, db, source, profile, sessionId
 const log = []
-const server = spawn(process.execPath, ['.output/server/index.mjs'], {
-  env: { ...process.env, HOST: '127.0.0.1', PORT: String(port), NUXT_DB_PATH: join(root, 'roster.db'),
-    NUXT_DB_READONLY: '0', NUXT_FILES_DIR: join(root, 'files'), NUXT_INCOMING_DIR: join(root, 'incoming'),
-    NUXT_CURATED_PATH: join(root, 'curated.json'), NUXT_RECONCILE_PATH: join(root, 'reconcile.json') },
-  stdio: ['ignore', 'pipe', 'pipe'],
-})
-server.stdout.on('data', b => log.push(String(b)))
-server.stderr.on('data', b => log.push(String(b)))
-let chrome, cdp
-const db = new Database(join(root, 'roster.db'))
-const source = readFileSync(join(root, 'source.md'), 'utf8')
+let primaryError
+const cleanupErrors = []
+// Acquisition attempts are distinct from absent handles. Only the helper's
+// original error can authenticate a partially acquired child.
+const owned = new Map()
+function spawn(name, command, args, options) {
+  const state = { attempted: true, confirmed: false, child: undefined, stopAttempted: false }
+  owned.set(name, state)
+  try { return state.child = spawnOwnedChild(command, args, options) }
+  catch (error) {
+    state.child = getOwnedChildStartFailure(error)?.child
+    throw error
+  }
+}
+function errorDetail(error) {
+  if (!error) return undefined
+  return { name: error.name, message: error.message, stack: error.stack, code: error.code,
+    cause: error.cause && errorDetail(error.cause), errors: error.errors?.map(errorDetail),
+    startResult: error.startResult, stopResult: error.stopResult }
+}
+// Keep handlers installed through finally: repeated serve signals must not
+// restore the default termination action halfway through owned cleanup.
+let serveResolve, serveSignalled = false
+const serveSignal = () => { serveSignalled = true; serveResolve?.() }
+if (process.argv.includes('--serve')) {
+  process.on('SIGINT', serveSignal)
+  process.on('SIGTERM', serveSignal)
+}
+// Explicit complete-body deadlines: readiness remains 60s with 2s attempts;
+// files and PDF rendering each receive 60s including headers AND body.
+async function httpText(url, options = {}, timeoutMs = 60000) {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(new Error('HTTP complete-body deadline: ' + url)), timeoutMs)
+  try {
+    const response = await fetch(url, { ...options, signal: controller.signal })
+    return { status: response.status, body: await response.text() }
+  } finally { clearTimeout(timer) }
+}
+async function ready() {
+  const deadline = Date.now() + 60000
+  let lastError
+  while (Date.now() < deadline) {
+    assert.equal(server.exitCode, null, 'server exited before readiness')
+    assert.equal(server.signalCode, null, 'server signalled before readiness')
+    try {
+      const response = await httpText(`${base}/ocr`, {}, Math.min(2000, deadline - Date.now()))
+      if (response.status >= 200 && response.status < 300) return
+      lastError = new Error('HTTP ' + response.status)
+    } catch (error) { lastError = error }
+    await sleep(200)
+  }
+  throw new Error('HTTP readiness deadline', { cause: lastError })
+}
 function fileDigests(dir = join(root, 'files')) {
   return readdirSync(dir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name)).flatMap(entry => {
     const path = join(dir, entry.name)
@@ -46,10 +84,45 @@ function snapshot() {
   return Object.fromEntries(db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name").all()
     .map(({ name }) => [name, db.prepare(`SELECT * FROM "${name}" ORDER BY rowid`).all()]))
 }
+function assertTargetHistory(before, after, source, edits, startedAt, endedAt) {
+  const oldTarget = before.ocr_result.find(r => r.file_id === 1 && r.page_no === 1)
+  const target = after.ocr_result.find(r => r.file_id === 1 && r.page_no === 1)
+  assert.ok(oldTarget && target, 'target identity missing')
+  assert.equal(oldTarget.raw, '{"original": "workbench-97.pdf", "page": 1}')
+  assert.equal(oldTarget.revision, 1)
+  assert.equal(oldTarget.markdown, source)
+  const history = JSON.parse(target.raw)
+  assert.deepEqual(Object.keys(history).sort(), ['captures', 'format', 'revisions'])
+  assert.equal(history.format, 'ocr-provenance-v1')
+  assert.deepEqual(history.captures, [{ raw: { original: 'workbench-97.pdf', page: 1 }, source: null, markdown: null }])
+  assert.equal(history.revisions.length, edits.length + 1)
+  assert.deepEqual(history.revisions[0], { markdown: source, channel: 'api', engine: 'paddleocr', model: '合成引擎', createdAt: '2026-10-17T00:00:00Z', capture: null })
+  for (const [i, markdown] of edits.entries()) {
+    const revision = history.revisions[i + 1]
+    assert.match(revision.createdAt, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/)
+    assert.ok(Date.parse(revision.createdAt) >= startedAt && Date.parse(revision.createdAt) <= endedAt, 'revision time outside run')
+    assert.deepEqual(revision, { markdown, channel: 'upload', engine: 'paddleocr', model: null, createdAt: revision.createdAt, capture: 0 })
+  }
+  assert.equal(target.markdown, edits.at(-1))
+  assert.equal(target.revision, 1 + edits.length)
+  assert.equal(target.engine, 'paddleocr')
+  assert.equal(target.model, null)
+  assert.equal(target.channel, 'upload')
+  assert.equal(target.created_at, history.revisions.at(-1).createdAt)
+  assert.equal(target.page_rel_path, '.workbench-97.pdf.pages/p001.png')
+  // Only these checked fields may differ. Identity, unknown columns, and every
+  // other row/table remain in the full comparison; never replace a whole row.
+  const normalized = structuredClone(after)
+  const row = normalized.ocr_result.find(r => r.file_id === 1 && r.page_no === 1)
+  for (const field of ['markdown', 'revision', 'raw', 'engine', 'model', 'channel', 'created_at', 'page_rel_path']) row[field] = oldTarget[field]
+  assert.deepEqual(normalized, before)
+}
 class Cdp {
   seq = 0; pending = new Map(); onEvent = () => {}
   constructor(socket) {
     this.socket = socket
+    socket.addEventListener('close', () => this.rejectPending(new Error('CDP socket closed')))
+    socket.addEventListener('error', () => this.rejectPending(new Error('CDP socket error')))
     socket.addEventListener('message', event => {
       const m = JSON.parse(event.data)
       if (!m.id) { this.onEvent(m); return }
@@ -59,42 +132,105 @@ class Cdp {
       m.error ? p.reject(new Error(JSON.stringify(m.error))) : p.resolve(m.result)
     })
   }
+  rejectPending(error) {
+    for (const p of this.pending.values()) { clearTimeout(p.timer); p.reject(error) }
+    this.pending.clear()
+  }
+  close() {
+    this.rejectPending(new Error('CDP disposed'))
+    this.socket.close()
+  }
   send(method, params = {}, sessionId) {
     const id = ++this.seq
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => { this.pending.delete(id); reject(new Error(`${method} timed out`)) }, 30000)
       this.pending.set(id, { resolve, reject, timer })
-      this.socket.send(JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) }))
+      try { this.socket.send(JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) })) }
+      catch (error) { clearTimeout(timer); this.pending.delete(id); reject(error) }
     })
   }
 }
 try {
-  await waitForHttp(`${base}/ocr`, { child: server })
+  root = mkdtempSync(join(tmpdir(), 'ocr-preview-48-'))
+  const fixture = spawnSync('uv', ['run', 'scripts/fixtures/ocr-preview.py', root], { encoding: 'utf8' })
+  assert.equal(fixture.status, 0, fixture.stderr)
+  const port = await reserveLoopbackPort()
+  base = `http://127.0.0.1:${port}`
+  server = spawn('server', process.execPath, ['.output/server/index.mjs'], {
+    env: { ...process.env, HOST: '127.0.0.1', PORT: String(port), NUXT_DB_PATH: join(root, 'roster.db'),
+      NUXT_DB_READONLY: '0', NUXT_FILES_DIR: join(root, 'files'), NUXT_INCOMING_DIR: join(root, 'incoming'),
+      NUXT_CURATED_PATH: join(root, 'curated.json'), NUXT_RECONCILE_PATH: join(root, 'reconcile.json') },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  })
+  server.stdout.on('data', b => log.push(String(b)))
+  server.stderr.on('data', b => log.push(String(b)))
+  console.log(JSON.stringify({ root, base, serverPid: server.pid }))
+  let serverError
+  server.on('error', error => { serverError = error })
+  db = new Database(join(root, 'roster.db'))
+  source = readFileSync(join(root, 'source.md'), 'utf8')
+  console.log(JSON.stringify({ root, base, serverPid: server.pid, policy: 'retain synthetic root and logs; remove Chrome profile after group exit' }))
+  // Do not probe an unrelated listener if another process won the released port.
+  const listenerDeadline = Date.now() + 60000
+  while (!log.join('').includes(`Listening on ${base}`)) {
+    if (serverError) throw serverError
+    assert.equal(server.exitCode, null, 'server exited before announcing listener')
+    assert.equal(server.signalCode, null, 'server signalled before announcing listener')
+    assert.ok(Date.now() < listenerDeadline, 'server did not announce owned listener')
+    await sleep(50)
+  }
+  await ready()
   // Warm app migrations/reference seeds before measuring read-only interactions.
-  const files = await fetch(`${base}/api/files`)
-  assert.equal(files.status, 200, await files.text())
+  const files = await httpText(`${base}/api/files`)
+  assert.equal(files.status, 200, files.body)
   // Derived page images only. No OCR job or import is invoked.
   // 200 DPI is an existing API option (72–600) and gives the A4 fixture enough
   // pixels for a 2x display without changing the server contract.
   for (const file of ['workbench-97.pdf', 'second.pdf']) {
-    const response = await fetch(`${base}/api/pdf-pages`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ file, dpi: 200 }) })
-    assert.equal(response.status, 200, await response.text())
+    const response = await httpText(`${base}/api/pdf-pages`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ file, dpi: 200 }) })
+    assert.equal(response.status, 200, response.body)
   }
   console.log(JSON.stringify({ base, root, manual: `${base}/ocr?file=workbench-97.pdf&page=1` }))
   if (process.argv.includes('--serve')) {
-    await new Promise(resolve => { process.once('SIGINT', resolve); process.once('SIGTERM', resolve) })
+    await new Promise(resolve => { serveResolve = resolve; if (serveSignalled) resolve() })
   } else {
     const before = snapshot()
     const filesBefore = fileDigests()
+    // Planned from the user actions below, not from requests or stored history.
+    const expectedEdits = [source + '\n已校对', source + '\n缺失读回校对', '', source,
+      ...Array.from({ length: 8 }, () => ['修订完成', source]).flat()]
+    const startedAt = Date.now()
+    let committed = 0
+    const checkCommit = () => {
+      committed++
+      assertTargetHistory(before, snapshot(), source, expectedEdits.slice(0, committed), startedAt, Date.now())
+      console.log(JSON.stringify({ targetCommit: committed, revision: committed + 1 }))
+    }
     const chromePath = process.env.CHROME_BIN ?? ['/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', '/usr/bin/google-chrome', '/usr/bin/chromium'].find(existsSync)
     assert.ok(chromePath, 'Set CHROME_BIN')
-    const profile = mkdtempSync(join(tmpdir(), 'ocr-preview-chrome-'))
-    chrome = spawn(chromePath, ['--headless=new', '--remote-debugging-port=0', `--user-data-dir=${profile}`, '--no-first-run', '--no-default-browser-check', '--disable-gpu', '--no-sandbox', 'about:blank'], { stdio: 'ignore' })
+    profile = mkdtempSync(join(tmpdir(), 'ocr-preview-chrome-'))
+    chrome = spawn('chrome', chromePath, ['--headless=new', '--remote-debugging-port=0', `--user-data-dir=${profile}`, '--no-first-run', '--no-default-browser-check', '--disable-gpu', '--no-sandbox', 'about:blank'], { stdio: 'ignore' })
+    console.log(JSON.stringify({ chromePid: chrome.pid, profile }))
     const version = await waitForChromeDevTools(chrome, profile)
     cdp = new Cdp(new WebSocket(version.webSocketDebuggerUrl))
-    await new Promise((resolve, reject) => { cdp.socket.addEventListener('open', resolve, { once: true }); cdp.socket.addEventListener('error', reject, { once: true }) })
+    await new Promise((resolve, reject) => {
+      const finish = error => {
+        clearTimeout(timer)
+        cdp.socket.removeEventListener('open', onOpen)
+        cdp.socket.removeEventListener('error', onError)
+        cdp.socket.removeEventListener('close', onError)
+        error ? reject(error) : resolve()
+      }
+      const onOpen = () => finish()
+      const onError = () => finish(new Error('CDP connection failed'))
+      const timer = setTimeout(() => finish(new Error('CDP connection timed out')), 10000)
+      cdp.socket.addEventListener('open', onOpen, { once: true })
+      cdp.socket.addEventListener('error', onError, { once: true })
+      cdp.socket.addEventListener('close', onError, { once: true })
+    })
     const { targetId } = await cdp.send('Target.createTarget', { url: 'about:blank' })
     const { sessionId: sid } = await cdp.send('Target.attachToTarget', { targetId, flatten: true })
+    sessionId = sid
     const ev = async expression => {
       const result = await cdp.send('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true }, sid)
       if (result.exceptionDetails) throw new Error(JSON.stringify(result.exceptionDetails))
@@ -106,7 +242,7 @@ try {
         if (await ev(expression)) return
         await sleep(60)
       }
-      console.error('Timeout state', await ev(`JSON.stringify({active:document.activeElement?.outerHTML.slice(0,700),rows:[...document.querySelectorAll('ul[role="list"]>li')].map(e=>e.id),page:document.querySelector('[aria-label="当前文件与页号"]')?.innerText,dialogs:[...document.querySelectorAll('[role="dialog"]')].map(d=>d.innerText.slice(0,500)),buttons:[...document.querySelectorAll('[role="dialog"] button')].map(b=>({text:b.textContent.trim(),aria:b.getAttribute('aria-label'),disabled:b.disabled})),alerts:[...document.querySelectorAll('[role="alert"],[role="status"]')].map(e=>e.textContent)})`))
+      console.error('Timeout state', await ev(`JSON.stringify({viewport:{width:innerWidth,height:innerHeight},readRetry:{noTextarea:!document.querySelector('textarea'),savedText:document.body.innerText.includes('保存完成')},textareas:[...document.querySelectorAll('textarea')].map(e=>({html:e.outerHTML.slice(0,1000),visible:e.getClientRects().length>0,pane:e.closest('section')?.getAttribute('aria-label'),disabled:e.disabled,readOnly:e.readOnly})),active:document.activeElement?.outerHTML.slice(0,700),rows:[...document.querySelectorAll('ul[role="list"]>li')].map(e=>e.id),page:document.querySelector('[aria-label="当前文件与页号"]')?.innerText,dialogs:[...document.querySelectorAll('[role="dialog"]')].map(d=>d.innerText.slice(0,500)),buttons:[...document.querySelectorAll('[role="dialog"] button')].map(b=>({text:b.textContent.trim(),aria:b.getAttribute('aria-label'),disabled:b.disabled})),alerts:[...document.querySelectorAll('[role="alert"],[role="status"]')].map(e=>e.textContent)})`))
       throw new Error(`Condition timed out: ${expression}`)
     }
     // Scope repeated navigation controls by their user-visible region, never by first match.
@@ -533,9 +669,11 @@ try {
     await save()
     await wait("document.body.innerText.includes('保存失败') && !!document.querySelector('textarea') && !document.querySelector('textarea').readOnly")
     assert.equal(await ev("document.querySelector('textarea').value"), source + '\n已校对')
+    assert.deepEqual(snapshot(), before, 'failed POST changed data')
     failWrite = false; failRead = true
     await save()
     await wait("document.body.innerText.includes('已提交') && document.body.innerText.includes('读回失败') && !!document.querySelector('textarea') && !document.querySelector('textarea').readOnly && !document.querySelector('textarea').disabled")
+    checkCommit()
     const postsBeforeReadRetry = requests.filter(r => r.method === 'POST').length
     failRead = false
     // A committed write whose readback failed retries with GET only.
@@ -551,6 +689,7 @@ try {
     await save()
     await wait("document.body.innerText.includes('写入已提交,但读回失败') && !!document.querySelector('textarea') && !document.querySelector('textarea').disabled && !document.querySelector('textarea').readOnly")
     assert.equal(await ev("document.querySelector('textarea').value"), source + '\n缺失读回校对')
+    checkCommit()
     const postsBeforeMissingRetry = requests.filter(r => r.method === 'POST').length
     missingMarkdown = false
     await click('重试读取', 'section[aria-label="当前页识别文本"]')
@@ -561,11 +700,13 @@ try {
 
     await edit(); await fill('textarea', ''); await save()
     await wait("!document.querySelector('textarea') && document.body.innerText.includes('空结果') && document.body.innerText.includes('正文为空')")
+    checkCommit()
     await navigate()
     await wait("document.body.innerText.includes('正文为空')")
     // Restore the synthetic target so final before/after comparison covers every other field.
     await edit(); await fill('textarea', source); await save()
     await wait("!document.querySelector('textarea') && document.body.innerText.includes('宁波甲企业')")
+    checkCommit()
 
     // A saved row can leave its filter. Focus must survive both remaining and empty matches.
     for (const [width, motion] of [[1440, 'no-preference'], [1440, 'reduce'], [390, 'no-preference'], [390, 'reduce']]) {
@@ -581,6 +722,7 @@ try {
         assert.equal(await ev("[...document.querySelectorAll('[aria-label=\"翻页与页操作\"] button')].filter(b => /上一页|下一页/.test(b.textContent)).every(b => b.disabled)"), true)
         await save()
         await wait("!document.querySelector('textarea')")
+        checkCommit()
         await wait("document.activeElement?.closest('[aria-label=\"翻页与页操作\"]') !== null")
         assert.equal(await ev("!!document.querySelector('ul[role=list] li')"), another)
         if (another) {
@@ -593,6 +735,7 @@ try {
         await navigate()
         await edit(); await fill('textarea', source); await save()
         await wait("!document.querySelector('textarea') && document.body.innerText.includes('宁波甲企业')")
+        checkCommit()
         // Create then delete only the originally unrecognized page; all existing raw rows stay intact.
         await navigate('workbench-97.pdf', 3)
         await click('手工录入')
@@ -635,13 +778,52 @@ try {
     // does not scroll; the workspace keeps a readable minimum and scrolls inside
     // `main`, with the fixed bottom bar reachable.
     for (const [width, height] of [[1280, 600], [720, 450]]) {
+      for (const motion of ['no-preference', 'reduce']) {
       await cdp.send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: false }, sid)
-      await cdp.send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'no-preference' }] }, sid)
+      await cdp.send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: motion }] }, sid)
       await navigate()
       await wait("document.querySelector('td[rowspan=\"2\"]')")
       assert.equal(await ev('document.documentElement.scrollWidth <= innerWidth + 1'), true, `${width}x${height} horizontal overflow`)
       assert.equal(await ev('document.documentElement.scrollHeight <= innerHeight + 1'), true, `${width}x${height} document scroll`)
       assert.equal(await ev(`(() => { const r=document.querySelector('footer[aria-label="翻页与页操作"]').getBoundingClientRect(); return r.bottom <= innerHeight + 1 && r.top < innerHeight })()`), true, `${width}x${height} bottom bar off-screen`)
+      // The short-height contract is eight visible lines reachable by internal
+      // scrolling. Preserve the initial geometry, then use one real wheel action
+      // on the workspace gutter; never scroll programmatically or until green.
+      const initialReading = await ev(`(() => {
+        const main=document.querySelector('main[aria-label="校对内容"]');
+        const body=document.querySelector('.preview-content');
+        const mr=main.getBoundingClientRect(), br=body.getBoundingClientRect();
+        const lh=parseFloat(getComputedStyle(body).lineHeight)||parseFloat(getComputedStyle(body).fontSize)*1.5;
+        const y=Math.max(mr.top, 0)+Math.min(mr.height, innerHeight-mr.top)/2;
+        const x=[mr.left+2,mr.right-2].find(x=>{
+          const hit=document.elementFromPoint(x,y);
+          return hit && main.contains(hit) && !hit.closest('.preview-content,section,button,input,textarea');
+        });
+        return {url:location.href,page:document.querySelector('[aria-label="当前文件与页号"]').innerText,
+          notices:[...main.querySelectorAll('[role="status"],[role="alert"]')].map(e=>e.textContent),
+          documentY:scrollY,scrollTop:main.scrollTop,bodyTop:br.top,mainTop:mr.top,
+          lines:Math.max(0,Math.min(br.bottom,mr.bottom)-Math.max(br.top,mr.top))/lh,
+          x,y,deltaY:Math.min(Math.max(0,br.top-mr.top),main.scrollHeight-main.clientHeight-main.scrollTop)};
+      })()`)
+      console.log(JSON.stringify({shortViewportInitial: `${width}x${height}`, motion, ...initialReading}))
+      if (initialReading.lines < 8 && initialReading.deltaY > 0) {
+        assert.ok(Number.isFinite(initialReading.x), 'no visible workspace gutter for trusted wheel input')
+        await cdp.send('Input.dispatchMouseEvent', {type:'mouseWheel',x:initialReading.x,y:initialReading.y,deltaX:0,deltaY:initialReading.deltaY}, sid)
+        await wait(`document.querySelector('main[aria-label="校对内容"]').scrollTop > ${initialReading.scrollTop}`)
+        await ev(`new Promise((resolve,reject)=>{
+          const main=document.querySelector('main[aria-label="校对内容"]');
+          const deadline=performance.now()+3000; let previous=null,stable=0;
+          const frame=()=>{const state=[main.scrollTop,document.querySelector('.preview-content').getBoundingClientRect().top].join(':');
+            stable=state===previous?stable+1:0; previous=state;
+            if(stable>=3) return resolve(true);
+            if(performance.now()>deadline) return reject(new Error('reading geometry did not settle'));
+            requestAnimationFrame(frame);}; requestAnimationFrame(frame);
+        })`)
+      }
+      assert.equal(await ev('location.href'), initialReading.url, 'reading positioning changed file/page route')
+      assert.equal(await ev(`document.querySelector('[aria-label="当前文件与页号"]').innerText`), initialReading.page, 'reading positioning changed file/page label')
+      assert.equal(await ev('scrollY'), initialReading.documentY, 'reading positioning scrolled the document')
+      assert.equal(await ev(`(() => {const r=document.querySelector('footer[aria-label="翻页与页操作"]').getBoundingClientRect();return r.top>=0 && r.bottom<=innerHeight+1})()`), true, 'reading positioning hid the footer')
       const readable = await ev(`(() => { const el=document.querySelector('.preview-content'); const lh=parseFloat(getComputedStyle(el).lineHeight)||parseFloat(getComputedStyle(el).fontSize)*1.5; const main=document.querySelector('main[aria-label="校对内容"]'); const mr=main.getBoundingClientRect(); const er=el.getBoundingClientRect(); const visible=Math.max(0, Math.min(er.bottom, mr.bottom) - Math.max(er.top, mr.top)); return { lines: visible/lh, pane: visible, workspaceScrolls: main.scrollHeight > main.clientHeight } })()`)
       assert.ok(readable.lines >= 8, `${width}x${height} text collapsed to ${readable.lines.toFixed(1)} lines`)
       if (height <= 560) {
@@ -690,8 +872,10 @@ try {
       }
       await key('Escape', 'Escape')
       await wait("!document.querySelector('[role=dialog]')")
-      console.log(JSON.stringify({ shortViewport: `${width}x${height}`, readableLines: Number(readable.lines.toFixed(1)), editorLines: Number(editorLines.toFixed(1)), workspaceScrolls: readable.workspaceScrolls }))
+      console.log(JSON.stringify({ shortViewport: `${width}x${height}`, motion, readableLines: Number(readable.lines.toFixed(1)), editorLines: Number(editorLines.toFixed(1)), workspaceScrolls: readable.workspaceScrolls }))
     }
+      }
+    await cdp.send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'no-preference' }] }, sid)
 
     // Real keyboard input on a focused horizontal scroller: it scrolls the table
     // and does not page; a non-interactive focus still pages.
@@ -744,22 +928,75 @@ try {
     assert.deepEqual(failures, [])
     assert.deepEqual(external, [])
     const after = snapshot()
-    const oldTarget = before.ocr_result.find(r => r.file_id === 1 && r.page_no === 1)
-    const newTarget = after.ocr_result.find(r => r.file_id === 1 && r.page_no === 1)
-    assert.equal(newTarget.raw, oldTarget.raw)
-    assert.equal(newTarget.markdown, oldTarget.markdown)
-    // Explicit save updates channel/time, while every other row/table remains byte-for-byte equal.
-    after.ocr_result[after.ocr_result.indexOf(newTarget)] = oldTarget
-    assert.deepEqual(after, before)
+    assert.equal(committed, expectedEdits.length)
+    assert.equal(expectedEdits.at(-1), source)
+    assertTargetHistory(before, after, source, expectedEdits, startedAt, Date.now())
     assert.deepEqual(fileDigests(), filesBefore)
     assert.equal(db.pragma('integrity_check', { simple: true }), 'ok')
     assert.deepEqual(db.pragma('foreign_key_check'), [])
-    console.log(JSON.stringify({ writesAndReadback: 'passed', emptyReload: 'passed', lateFile: 'passed', rawAndOtherData: 'unchanged', root }))
+    console.log(JSON.stringify({ writesAndReadback: 'passed', emptyReload: 'passed', lateFile: 'passed', capturesAndOtherData: 'unchanged', revisions: committed + 1, root }))
   }
+} catch (error) {
+  primaryError = error
+  console.error('Primary failure:', error)
 } finally {
-  cdp?.socket.close()
-  await stopOwnedChild(chrome)
-  await stopOwnedChild(server)
-  db.close()
-  writeFileSync(join(root, 'server.log'), log.join(''))
+  // Each acquired resource gets its own cleanup attempt. Never pass absent
+  // handles to the shared helper, and never mask the original assertion.
+  const cleanup = async (name, action) => {
+    try { await action() }
+    catch (error) { cleanupErrors.push({ name, error: errorDetail(error) }); console.error('Cleanup failure:', name, error) }
+  }
+  await cleanup('failure screenshot', async () => {
+    if (primaryError && sessionId && cdp?.socket.readyState === WebSocket.OPEN) {
+      const shot = await cdp.send('Page.captureScreenshot', { format: 'png' }, sessionId)
+      writeFileSync(join(root, 'failure.png'), Buffer.from(shot.data, 'base64'))
+    }
+  })
+  await cleanup('cdp', () => cdp?.close())
+  const stop = async name => {
+    const state = owned.get(name)
+    if (!state?.child) return
+    assert.equal(state.stopAttempted, false, 'stop once per acquired handle')
+    state.stopAttempted = true
+    try { await stopOwnedChild(state.child); state.confirmed = true }
+    catch (error) {
+      const result = error.stopResult
+      state.stopResult = result
+      state.confirmed = result?.brand === 'isolated-local-services.stop' && result.version === 1 && result.termination === 'confirmed'
+      throw error
+    }
+  }
+  await cleanup('chrome', () => stop('chrome'))
+  const chromeStopped = !owned.has('chrome') || owned.get('chrome').confirmed
+  await cleanup('profile', () => { if (profile && chromeStopped) rmSync(profile, { recursive: true, force: true }) })
+  await cleanup('server', () => stop('server'))
+  // Release local references independently even when termination is unknown.
+  // This neither signals nor retries ownership and never earns exit credit.
+  for (const [name, state] of owned) {
+    const child = state.child
+    if (!child || state.confirmed) continue
+    const releaseErrors = []
+    const record = error => releaseErrors.push(error)
+    child.on('error', record)
+    const streams = [...new Set(child.stdio ?? [])].filter(Boolean)
+    for (const stream of streams) stream.on('error', record)
+    await cleanup(name + ' IPC', () => { if (child.connected) child.disconnect() })
+    for (const [index, stream] of streams.entries()) await cleanup(name + ' stdio ' + index, () => stream.destroy())
+    await cleanup(name + ' unref', () => child.unref())
+    await new Promise(resolve => setImmediate(resolve))
+    for (const error of releaseErrors) cleanupErrors.push({ name: name + ' release event', error: errorDetail(error) })
+    // Leave collectors on released handles until close; they hold no loop ref.
+    child.once('close', () => {
+      child.off('error', record)
+      for (const stream of streams) stream.off('error', record)
+    })
+  }
+  await cleanup('database', () => db?.close())
+  await cleanup('log', () => { if (root) {
+    writeFileSync(join(root, 'server.log'), log.join(''))
+    writeFileSync(join(root, 'outcome.json'), JSON.stringify({ primaryError: primaryError?.stack, primary: errorDetail(primaryError), cleanupErrors, root, profile, chromeStopped, policy: 'retain synthetic root/logs for external archive; reclaim only after all attempted acquisitions confirmed', owned: Object.fromEntries([...owned].map(([name, state]) => [name, { attempted: state.attempted, pid: state.child?.pid, stopAttempted: state.stopAttempted, confirmed: state.confirmed, stopResult: state.stopResult }])) }, null, 2))
+  } })
+  process.off('SIGINT', serveSignal)
+  process.off('SIGTERM', serveSignal)
 }
+if (primaryError || cleanupErrors.length) process.exitCode = 1
