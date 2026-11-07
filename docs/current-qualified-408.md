@@ -10,7 +10,7 @@
 
 默认资格规则、显式 v1/v2 兼容及回执边界见[生命周期当前默认资格](roster-lifecycle-contract.md#qualification-current-v3)。内部版本选择不构成公开查询参数。读取失败不是零记录；保留现有输入校验和失败重试语义。本节是源码边界说明，本次没有新增 HTTP/MCP、浏览器、构建或测试验收。
 
-依据：[共享查询](../lib/roster/current-qualified-query.ts)、[查询参数](../server/utils/current-qualified-filter.ts)、[页面](../pages/current-enterprises.vue)。HTTP/MCP 元数据中旧 pending 定位描述尚有残留，需另票对齐，不能据它覆盖共享查询实际行为。
+依据：[共享查询](../lib/roster/current-qualified-query.ts)、[查询参数](../server/utils/current-qualified-filter.ts)、[页面](../pages/current-enterprises.vue)。HTTP/MCP 元数据已与上述兼容结构对齐，分别见 [HTTP 接口说明](../server/api/roster/current-enterprises.get.ts) 与 [MCP 工具说明](../server/mcp/tools/list_current_qualified_enterprises.ts)。
 
 ## #408 历史协议与原始收据
 
