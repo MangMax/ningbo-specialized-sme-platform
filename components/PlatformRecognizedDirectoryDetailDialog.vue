@@ -36,6 +36,7 @@ watch(() => [props.open, props.recordId] as const, ([open, id]) => {
   void load(id)
 }, { immediate: true })
 
+const projectionTitle = (rawCode: string) => PLATFORM_RDJBS[rawCode] ?? rawCode
 const missing = (value: string | number | null | undefined) => value === null || value === undefined || value === '' ? '未提供' : String(value)
 const time = (value: string | null) => value ? formatFetchTime(value) ?? value : '未提供'
 const conflictLabel: Record<string, string> = {
@@ -70,7 +71,7 @@ const conflictLabel: Record<string, string> = {
                 <dt class="text-muted-foreground">维护批次</dt><dd>{{ projectionDisplay(version, version.maintenanceBatch) }}</dd>
                 <dt class="text-muted-foreground">属地</dt><dd class="font-mono break-all">{{ projectionDisplay(version, version.district) }}</dd>
                 <dt class="text-muted-foreground">平台认定说明</dt><dd class="whitespace-pre-wrap break-words">{{ projectionDisplay(version, version.awardNote) }}</dd>
-                <dt class="text-muted-foreground">称号</dt><dd>{{ projectionDisplay(version, version.titleRaw, rawCode => PLATFORM_RDJBS[rawCode] ?? rawCode) }}</dd>
+                <dt class="text-muted-foreground">称号</dt><dd>{{ projectionDisplay(version, version.titleRaw, projectionTitle) }}</dd>
                 <dt class="text-muted-foreground">企业</dt><dd>{{ projectionDisplay(version, version.nameRaw) }} · {{ projectionDisplay(version, version.usccRaw) }}</dd>
                 <dt class="text-muted-foreground">最近采集</dt><dd>{{ time(version.lastObservedAt) }}</dd>
               </dl>

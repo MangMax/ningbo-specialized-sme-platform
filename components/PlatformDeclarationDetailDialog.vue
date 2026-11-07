@@ -36,6 +36,7 @@ watch(() => [props.open, props.recordId] as const, ([open, id]) => {
   void load(id)
 }, { immediate: true })
 
+const projectionTitle = (rawCode: string) => PLATFORM_RDJBS[rawCode] ?? rawCode
 const missing = (value: string | number | null | undefined) => value === null || value === undefined || value === '' ? '未提供' : String(value)
 const time = (value: string | null) => value ? formatFetchTime(value) ?? value : '未提供'
 const declareKind = (value: string | null) => value ? RELATION_DECLARE_KINDS[value] ?? value : '事项未提供'
@@ -69,7 +70,7 @@ const declareKind = (value: string | null) => value ? RELATION_DECLARE_KINDS[val
                 <span class="text-muted-foreground text-xs">年度 {{ projectionDisplay(version, version.declarationYear) }} · 状态 {{ projectionDisplay(version, version.status) }}</span>
               </div>
               <dl class="mt-2 grid grid-cols-1 gap-x-3 gap-y-1 text-[13px] sm:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">
-                <dt class="text-muted-foreground">称号</dt><dd>{{ projectionDisplay(version, version.titleRaw, rawCode => PLATFORM_RDJBS[rawCode] ?? rawCode) }}</dd>
+                <dt class="text-muted-foreground">称号</dt><dd>{{ projectionDisplay(version, version.titleRaw, projectionTitle) }}</dd>
                 <dt class="text-muted-foreground">企业原值</dt><dd>{{ projectionDisplay(version, version.nameRaw) }} · {{ projectionDisplay(version, version.usccRaw) }}</dd>
                 <dt class="text-muted-foreground">申报时间</dt><dd>{{ projectionDisplay(version, version.appliedAt, time) }}</dd>
                 <dt class="text-muted-foreground">规则版本</dt><dd>{{ missing(version.ruleVersion) }}</dd>
