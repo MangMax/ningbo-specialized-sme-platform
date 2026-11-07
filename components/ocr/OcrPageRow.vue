@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { historicalContentMessage } from '~~/lib/file-content-status'
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, useTemplateRef, watch } from 'vue'
 import { useMediaQuery } from '@vueuse/core'
 import {
   Check,
@@ -98,6 +98,26 @@ function failureRetryLabel() {
 /** Keep the actual trigger so Esc can return focus even after a programmatic click. */
 function openPreview(event: MouseEvent) {
   emit('preview', props.row.page, event.currentTarget as HTMLElement)
+}
+
+const compareEntry = useTemplateRef<{ $el?: HTMLButtonElement }>('compareEntry')
+const imageEntry = useTemplateRef<HTMLButtonElement>('imageEntry')
+
+/** Only this row's real entries can authorize compare restoration. */
+function focusCompareEntry(file: string, page: number, preferred?: HTMLElement | null) {
+  if (file !== props.filePath || page !== props.row.page) return false
+  const header = compareEntry.value?.$el
+  const target = preferred && (preferred === header || preferred === imageEntry.value)
+    ? preferred : header
+  if (!target?.isConnected || target.matches(':disabled') || target.closest('[inert]')) return false
+  // A leaving row remains connected under Transition's display:none ancestor.
+  // Check ancestors as well as the control; connection alone is not readiness.
+  for (let node: HTMLElement | null = target; node; node = node.parentElement) {
+    const style = getComputedStyle(node)
+    if (node.hidden || style.display === 'none' || style.visibility === 'hidden') return false
+  }
+  target.focus()
+  return document.activeElement === target
 }
 
 const sourceMode = ref<'rendered' | 'source'>('rendered')
@@ -235,7 +255,7 @@ function focusEditor(reset = true) {
   })
 }
 
-defineExpose({ focusEditor })
+defineExpose({ focusEditor, focusCompareEntry })
 
 async function copyText() {
   const text = markdown.value
@@ -431,6 +451,7 @@ onBeforeUnmount(() => {
               v-if="image"
               variant="ghost"
               size="sm"
+              ref="compareEntry"
               aria-label="打开当前页对照"
               @click="openPreview"
             >
@@ -469,6 +490,7 @@ onBeforeUnmount(() => {
           />
           <button
             v-else-if="image"
+            ref="imageEntry"
             type="button"
             class="group focus-visible:border-ring focus-visible:ring-ring/50 relative flex h-full w-full items-center justify-center rounded-sm transition-shadow hover:ring-2 hover:ring-primary/20 focus-visible:ring-3 focus-visible:outline-none motion-reduce:transition-none"
             :aria-label="`放大看${pageLabel(row.page)}`"

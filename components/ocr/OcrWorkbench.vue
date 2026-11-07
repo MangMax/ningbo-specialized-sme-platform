@@ -135,6 +135,7 @@ const {
 const isNarrow = useMediaQuery('(max-width: 1023px)')
 const pageRow = useTemplateRef<{
   focusEditor: (reset?: boolean) => void
+  focusCompareEntry: (file: string, page: number, preferred?: HTMLElement | null) => boolean
 }>('pageRow')
 const bottomBar = useTemplateRef<{
   focusEdit: () => Promise<void>
@@ -145,6 +146,20 @@ const fileOpen = ref(false)
 const filterOpen = ref(false)
 const compareOpen = ref(false)
 const compareTrigger = ref<HTMLElement | null>(null)
+let restoringCompareFocus = false
+let compareGeneration = 0
+let compareOrigin: { file: string; page: number | null } | null = null
+let compareRestore: { generation: number; file: string; page: number; trigger: HTMLElement | null } | null = null
+
+function cancelCompareRestore() {
+  compareGeneration += 1
+  compareRestore = null
+}
+
+watch([selectedPath, currentPage], cancelCompareRestore, { flush: 'sync' })
+watch(compareOpen, (open) => { if (open) cancelCompareRestore() }, { flush: 'sync' })
+onBeforeUnmount(cancelCompareRestore)
+
 const compareMode = ref<'rendered' | 'source'>('rendered')
 const compareWrap = ref(true)
 const compareMessage = ref('')
@@ -454,6 +469,8 @@ function closePageNav() {
 
 function openCompare(trigger?: HTMLElement) {
   if (!currentRow.value) return
+  cancelCompareRestore()
+  compareOrigin = { file: selectedPath.value, page: currentPage.value }
   compareTrigger.value =
     trigger ??
     (document.activeElement instanceof HTMLElement
@@ -469,24 +486,49 @@ function preventAutoFocus(event: Event) {
   event.preventDefault()
 }
 
+/** Attempts only at close's DOM update and the keyed row's completed enter.
+ * No timer/retry acknowledges readiness: Row checks identity and actual focus.
+ */
+function restoreCompareFocus() {
+  const intent = compareRestore
+  if (!intent || compareOpen.value || intent.generation !== compareGeneration ||
+    intent.file !== selectedPath.value || intent.page !== currentPage.value) return
+  restoringCompareFocus = true
+  try {
+    if (pageRow.value?.focusCompareEntry(intent.file, intent.page, intent.trigger) &&
+      compareRestore === intent) compareRestore = null
+  } finally {
+    restoringCompareFocus = false
+  }
+}
+
+/** A newer focus owner supersedes an outstanding close, including other dialogs. */
+function onCompareFocusIn(event: FocusEvent) {
+  if (!compareRestore || restoringCompareFocus) return
+  if (event.target instanceof HTMLElement && event.target.closest('[data-ocr-comparison]')) return
+  cancelCompareRestore()
+}
+onMounted(() => document.addEventListener('focusin', onCompareFocusIn))
+onBeforeUnmount(() => document.removeEventListener('focusin', onCompareFocusIn))
+
 function onCompareOpen(value: boolean) {
   compareOpen.value = value
   if (value) return
-  const trigger = compareTrigger.value
+  cancelCompareRestore()
+  const page = currentPage.value
+  if (page === null) return
+  const intent = {
+    generation: compareGeneration,
+    file: selectedPath.value,
+    page,
+    trigger: compareOrigin?.file === selectedPath.value && compareOrigin.page === page
+      ? compareTrigger.value : null,
+  }
   compareTrigger.value = null
+  compareOrigin = null
+  compareRestore = intent
   void nextTick(() => {
-    if (trigger?.isConnected) {
-      trigger.focus()
-      return
-    }
-    // In-dialog paging remounts the keyed page row, so the original click target
-    // can be gone. Fall back to the current page's own compare entry (the pane
-    // header control exists at every width, including the mobile image viewer).
-    if (currentPage.value === null) return
-    const current = document.querySelector(
-      '[aria-label="打开当前页对照"]',
-    )
-    if (current instanceof HTMLElement) current.focus()
+    if (compareRestore === intent) restoreCompareFocus()
   })
 }
 
@@ -1008,6 +1050,7 @@ const fileSheetBlockedReason = computed(() =>
               enter-active-class="transition duration-150 ease-snap motion-reduce:transition-none"
               enter-from-class="translate-y-1 opacity-0"
               leave-active-class="hidden"
+              @after-enter="restoreCompareFocus"
             >
               <OcrPageRow
                 v-if="currentRow"
