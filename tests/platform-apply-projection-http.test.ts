@@ -201,3 +201,38 @@ it('does not invent fresh completion evidence on an old committed receipt', asyn
   expect(replay.summary).not.toHaveProperty('platformFields')
   expect(db.get<{ n: number }>(sql`SELECT count(*) n FROM platform_apply_projection`)!.n).toBe(0)
 }))
+
+it.each(['omitted', 'empty', 'legacy-unmapped', 'legacy-implicit-unmapped'] as const)('keeps %s reference participation partial beside a normal row without repairing the reference', async mode => fixture(async (db, post) => {
+  const seed = applyQuery('2026-10-01T00:00:00Z', { id: 'SQ-REF-GAP', year: '2024' })
+  expect((await post('commit', request('ref-gap-seed', { platformQueries: [seed] }))).status).toBe('committed')
+  db.run(sql`DELETE FROM platform_apply_projection`)
+  if (mode.endsWith('unmapped')) db.run(sql`DELETE FROM platform_business_observation`)
+  const before = db.all(sql`SELECT * FROM platform_relation`)
+  const versions = db.all(sql`SELECT * FROM platform_business_record_version`)
+  const reference: RosterImportPlatformQuery = { interface: seed.interface, queryKey: seed.queryKey, queriedAt: seed.queriedAt, ...(mode === 'legacy-implicit-unmapped' ? {} : { reuseExisting: true as const }),
+    ...(mode === 'omitted' ? {} : { relations: mode === 'empty' ? [] : [{ sequenceNo: 1 }] }),
+  }
+  const pure = await post('commit', request('ref-gap-pure', { platformQueries: [reference] }))
+  expect(pure.status).toBe('committed')
+  expect(db.all(sql`SELECT * FROM platform_relation`)).toEqual(before)
+  expect(db.all(sql`SELECT * FROM platform_business_record_version`)).toEqual(versions)
+  expect(db.all(sql`SELECT * FROM platform_apply_projection`)).toEqual([])
+  const req = request('ref-gap-mixed', { platformQueries: [reference, applyQuery('2026-10-02T00:00:00Z', { id: 'SQ-FRESH', year: '2025', cszt: '待审核' })] })
+  expect((await post('preflight', req)).preflight.conflicts).toEqual([])
+  const saved = await post('commit', req)
+  expect(saved.status).toBe('committed')
+  expect(saved.summary.platformFields).toEqual({ status: 'partial', eligibleVersions: 1, projectionsCreated: 1, projectionsReused: 0, projectionsChecked: 1, observationsChecked: 1, quarantinedObservations: 0 })
+  expect(db.all(sql`SELECT declaration_year AS year, status FROM platform_apply_projection`)).toEqual([{ year: 2025, status: '待审核' }])
+  expect(db.all(sql`SELECT * FROM platform_relation ORDER BY id LIMIT 1`)).toEqual(before)
+  expect(db.all(sql`SELECT * FROM platform_business_record_version ORDER BY id LIMIT 1`)).toEqual(versions)
+  expect(pure.summary.platformFields).toEqual({ status: 'partial', eligibleVersions: 0, projectionsCreated: 0, projectionsReused: 0, projectionsChecked: 0, observationsChecked: 0, quarantinedObservations: 0 })
+  expect((await post('commit', req)).summary).toEqual(saved.summary)
+}))
+
+it('keeps a normal zero-row query not performed rather than treating it as a reference', async () => fixture(async (_db, post) => {
+  const saved = await post('commit', request('zero-row', { platformQueries: [{ interface: 'apply_list', queryKey: 'empty', queriedAt: '2026-10-01T00:00:00Z', status: 'success', relations: [] }] }))
+  expect(saved.status).toBe('committed')
+  const replay = await post('commit', request('zero-row-replay', { platformQueries: [{ interface: 'apply_list', queryKey: 'empty', queriedAt: '2026-10-01T00:00:00Z', status: 'success', relations: [] }] }))
+  expect(replay.summary.platformFields).toEqual(saved.summary.platformFields)
+  expect(saved.summary.platformFields).toEqual({ status: 'not_performed', eligibleVersions: 0, projectionsCreated: 0, projectionsReused: 0, projectionsChecked: 0, observationsChecked: 0, quarantinedObservations: 0 })
+}))
