@@ -83,3 +83,69 @@ T3 preview 对这五家实际 raw 重建的三张列表分别在 1280px/390px �
 完整失败分组：comparison-input 六项、annual-process-load-more 两项、logging-field-policy HTTP 一项、logging-usability HTTP 一项、business-record-candidates 一项、record-comparison-evidence-ui 一项、declarations-ui 一项。最后一项已按上述窄修并在定稿后重跑通过；其余 **12 项仍未解决**，不推断重跑全套后的通过数。未再次运行 25 分钟全套，最终提交全套绿色认证 **UNRUN/阻断**。全套发现的日志 route catalog 差异、资源费用常量/上限、年度 reset 和对应证据链接均未在本票扩大修改。
 
 最终新增/修正测试验收：15 文件 / 100 PASS 的定向批次，加定稿后 3 文件 / 8 PASS（有重叠，不相加冒称唯一项数）。生产源码未变，typecheck/build/生产 OpenAPI 退出 0 的证据来自本轮相同生产源码；没有把后续文档/测试提交伪称重建产物。
+
+## 续作：固定候选与独立基线（2026-11-07）
+
+在干净的 `/Users/mang/.t3/worktrees/app/t3-c4309b86` 从 integration `68121750` 快进到 PR605 `111568886a3ffed9b4a04a9db9be90c9eae589a7`（tree `b5c5af6f0a4e1362d0645b9c445cf208eabeec06`），再合入远程 integration，结果 Already up to date；未丢弃先前候选。续作证据目录 `/tmp/598-acceptance/completion`。先前报告中的 PASS 均为继承证据，以下才是本次新鲜运行。
+
+- `normal replay and retained relationId repair expose the same literal fields without changing archived identities` 新增非空差异、人工对应及对应审计各一行，明确为独立受控决定，绝非原生产决定。正常重放、relationId 修复、同键重试及故障后逐行核对全快照；成功重试后再次核对三个决定表。非空断言先 RED（`nonempty-red.log`），夹具最初遗漏 audit.batch_id、故障封套时点未同步的 FAIL 均保留，未修改生产约束。
+- 同用例把**实际提交的完整失败请求**保留为外部 `original-submission.json`；第三来源投影触发硬失败，验证新查询/关系/版本/观察无部分提交，三投影表均为零，数据库失败回执仍在。去掉隔离触发器后原键重试成功；外部原档逐字节不变、外部 failed-receipt 保持原失败内容。`final-controlled/` 保留 SQLite、一致备份、原档、失败回执及最终回执。它是本批受控采集原档保留证明，不冒称厂商原采集文件或 TUS 上传链证明。
+- 最终定向 10 文件 / 68 PASS（`final-focused.log`）；typecheck、生产 build 和隔离产物 OpenAPI 检查 PASS（`final-typecheck.log`、`build.log`、`prod-openapi-2.log`）。OpenAPI 初次因不存在的隔离 DB 路径失败，保留 `prod-openapi.log`；改用已初始化隔离 DB 后重跑通过。没有改测试或生产校验。
+
+### 实际样本与受控多版本浏览器
+
+只读 SQLite backup API 将已有实际原文重建样本备份到独立 `browser.sqlite`，保留原验收库不变。五家企业 × 三来源各追加一个**明确标识的受控第二版本**，原始厂商版本保持；新增状态/有效期 `598-controlled-second-version`、年度 2027、事项复核是受控测试输入，不能当真实厂商事实。新增请求及 HTTP preflight/commit 均在外部 `second-version-*.json`。独立字面期望通过 30 个组合查询，核对每条业务两个版本、原版本与受控版本各自字段（`check-filters.mjs`、`combined-filter-http.json`）；初次用了错误的目录查询参数得到 400，未改生产契约，按现有 rddqrq/whpc/szq 契约重跑。
+
+T3 preview 独立操作三页面、1280/390：逐项操作申报称号/事项/年度/状态，办理称号/事项/业务年/办理状态/维护批次，目录称号/有效期/维护批次/属地；打开各自版本详情，核对两个版本与不同字段原值。当前详情是同时列出各版本，未虚构不存在的版本下拉切换。各页又组合四个筛选：申报命中固安力/德业两条，办理命中固安力一条，目录命中固安力一条；窄屏卡片和桌面结果一致、无整页横溢。`browser-multiversion.json`、`browser-combined.json`。
+
+在隔离样本再作一致备份 `browser-before-gap.sqlite` 后移除投影，三页各自1280/390均明确显示“业务字段未同步”（`browser-missing-projection.json`）；随后经公开 relationId 提交恢复（`browser-maintenance.json`），不是页面自动写回。真实原空字段及原版本见原始 expected 和详情证据。未改原生产库、原档、原15行验收库；无厂商重新采集。
+
+### 十二项全套失败的独立对照
+
+规格前主线固定 `c14ccb339c19b606b70c14c52a4d01fb859802ac` 独立 git archive 到外部 baseline（依赖复用，但源码、数据库及运行独立），先 nuxt prepare；首次缺生成 tsconfig 的基础设施失败保留。主线与 PR605 分别运行相同六文件，均 **12 FAIL / 231 PASS / 1 SKIP**（`baseline-failures-2.log`、`candidate-failures.log`）。未放宽断言或修改范围外生产代码；已有原票编号足够定位，本轮不制造重复跟进票。
+
+| 文件/精确用例 | 两对象均复现的有界原因 |
+| --- | --- |
+| platform-comparison-input: budget428_raw7_4096；fee428_source_U_65536；fee428_policy_W_16777216；closure441_remaining_ID_M_isolated_A_W_charge；closure441_remaining_W_exact_16777216；closure441_remaining_W_one_over_16777217 | 相同计费边界漂移/资源上限；67517 对67487、7521对7491及两个W边界差额均在规格前主线存在 |
+| annual-process-load-more-266: independent review: readback retry preserves refresh reset intent；keeps reset intent through repeated readback failures without submitting another job | 同一 undefined.trigger，年度 reset/readback 路径，不是三来源字段同步 |
+| logging-field-policy-http: uses policy argument budget rather than the JSONRPC envelope and preserves production OpenAPI guards | 同一四条 /api/statistics/{annual,districts,movements,published} route catalog 差异 |
+| logging-usability-180-http: accepts exactly the built application route templates and no other spelling | 同一 route catalog 集合差异 |
+| platform-business-record-candidates: handles malformed raw and empty selection without reading unrelated archives | 同一候选查询 malformed JSON 异常 |
+| record-comparison-evidence-ui: links the actual stored PDF page and saves comparison scroll before detail navigation | 同一 undefined link 断言，PDF出处跳转路径 |
+
+### 整库备份容量阻断
+
+本次只读核实 `/state/data/roster.db`：page_count=2833035、page_size=4096、freelist_count=1，即 11,604,111,360 字节。宿主初始仅余4.7GiB，后续约4.1GiB；无外接可写卷（只有 Macintosh HD/Recovery）。Docker df 的366GiB为虚拟磁盘可增长上限，不能据此认为宿主有足够物理空间。容器总内存约8GB，亦不能容纳完整内存备份。不尝试可能耗尽宿主的11.6GB写入，不删除用户文件，不修改源库。**仍需要提供至少12GiB可用的外部隔离目标路径，或释放足够容量，才能通过 readonly SQLite backup API 完成整库一致备份及完整原ID核对。**已有有界提取及小样本备份不替代此项。
+
+### 每项 AC 当前处置
+
+| #598 AC（按票面顺序） | 处置 |
+| --- | --- |
+| 1 有备份隔离旧版本缺投影 | 小样本 PASS；完整原库备份仍因容量 BLOCKED |
+| 2 正常入库三来源/API/列表/筛选/版本 | 继承15行双入口事实；新鲜30组合API及六种页面视口 PASS |
+| 3 relationId 原契约/上限/鉴权/重试与ID不变 | 继承原契约覆盖；新鲜双入口及浏览器恢复 PASS |
+| 4 同组字面预期/幂等/漂移冲突 | 继承已冻结原预期及冲突回归；新鲜定向 PASS |
+| 5 硬失败回滚与外部原档/失败回执/重试 | 新鲜受控批次 PASS，原文件逐字节保留，不等同厂商重采/TUS证据 |
+| 6 并发重复/纯引用/旧回执 | 先前相应 focused 证据继承，最终回归另记，不冒称新鲜并发浏览器 |
+| 7 身份/历史/非空人工决定不变 | 新鲜独立非空受控决定 PASS；原生产非空决定完整副本核对 BLOCKED于AC1 |
+| 8 五家反例三页desktop390/多版本/关键筛选 | 新鲜实际原版本+明确受控第二版本 PASS；不是实际厂商多次采集证明 |
+| 9 精确SHA/tree、证据及历史FAIL/UNRUN | 本报告和外部 final-test-input/final-candidate 回执；历史失败不删除 |
+| 10 最终受影响/全套/typecheck/build/OpenAPI | 定向/typecheck/build/OpenAPI PASS；全套结果另记，不能称全套PASS |
+| 11 如部署先备份/版本读回 | 未部署、未受控生产写入，条件未触发 |
+| 12 操作者完成检查 | 上文清单保留，补齐入口继续存在 |
+
+CI、厂商重新采集、生产写入/部署、父代理独立审查均 UNRUN。未 merge、close、改main或启动子代理。
+
+进一步将受控非空决定明确复制进**实际五家原文与受控第二版本同一隔离库**，一致备份后构造缺投影，经公开 preflight/relationId commit 修复；查询/关系/raw/canonical/hash/业务ID/版本/观察、企业/正式事件/别名、人工对应/差异及审计完整快照前后相同（`actual-decisions-before.json`、`actual-decisions-after.json`）。这些决定仍明确来自 independent controlled fixture，不能宣称为生产既有决定。脚本 `actual-with-decisions.mjs` 和回执、修复前一致备份留在外部目录。
+
+新增并发/MCP定向回归：`import-writer-contention`、`import-mcp-submission`、`platform-business-record-mcp-http`、`mcp-surface`、`platform-business-projection-mcp`、`platform-recognized-projection-mcp`，6文件/46 PASS，`additional-focused-2.log`。与10文件/68项分开计数。首次命令误用不存在的文件名得到 No test files found，`additional-focused.log` 保留，不计PASS。原始容量与哈希回执：`original-backup-capacity.json`、`host-capacity.txt`、`invariant-hashes.txt`。
+
+最终全套固定测试输入提交 `b8b35b4c0e480724b6e8a65010f1d18c8fba8f03`、tree `9546ea1c4e64a259afe421f036f58eeba273d9ac`；后续仅报告变化，不冒称该提交包含未来报告。修改期间的诊断全套以130终止，`full-suite.log`保留；最终完整运行另存`final-full-suite.log`。
+
+实际原文封套又执行同批外部文件硬失败链：`actual-file-failure.mjs` 将五家15行受控第二版本的完整请求先落外部原档，SQLite一致备份后注入第三来源硬失败，逐行核对业务快照不变、三投影零部分提交、失败回执仍在；移除隔离触发器后从**同一文件**以原键重试成功，文件与外部失败回执逐字不变，非空决定仍未改。`actual-original-submission.json`、`actual-original-failed-receipt.json`、`actual-original-success-receipt.json`。文件是含实际原文的受控回放封套，绝非重新从厂商下载的文件。
+
+### 最终全套的实际结果与容量阻断
+
+固定输入全套第一次退出1，但没有正常汇总，尾部大量文件为0 test，且额外报告 comparison-offmain HTTP FAIL；不能据此编造通过数。该HTTP及一个0-test文件 `file-parts` 定向重跑2文件/30PASS（`final-runner-diagnostic.log/json`），未复现，根因仍UNKNOWN，不能抹去全套FAIL。
+
+随后同固定输入、同单worker、不排除测试，改JSON报告器再跑（`final-full-suite-2.log`）。运行约6分钟时宿主余量降至约434MiB，而本轮外部completion目录仅141MiB。为防止继续测试耗尽宿主磁盘，向本轮精确Vitest进程56992发送SIGINT，保留原日志；不删除用户文件。该次完整套件完成状态为**BLOCKED/未完整执行**，不是PASS。最终全套完整汇总与整库备份都需要先有足够可用容量；提供至少12GiB的外部备份目标并恢复测试磁盘余量后可续跑。`final-host-capacity.txt`保留容量证据。上轮6927PASS/13FAIL及其后窄修一项的历史事实原样保留；12项相同基线失败已有本轮独立对照，不推算最终全套通过数。
