@@ -1,3 +1,4 @@
+import { platformRowTitle } from '../../lib/platform/row-title'
 import { registeredFileAtLocator } from './file-read-identity'
 import { createHash } from 'node:crypto'
 import { and, eq, getTableColumns, inArray, isNull, or, sql } from 'drizzle-orm'
@@ -49,8 +50,8 @@ const publicExport = (row: typeof schema.platformExportRow.$inferSelect, batch: 
 const rdjbFor = (title: string) => Object.entries(RDJB_TITLE_CODES).find(([, value]) => value === title)?.[0]
 function relationTitle(relation: Relation, query: Query): string | null {
   const source = query.interface === 'recognized_list' ? sourcePositionForSequence(query.collectionEvidence, relation.sequenceNo).sourceRdjb : null
-  const sole = query.rdjb.split(',').filter(Boolean)
-  return (source ? RDJB_TITLE_CODES[source] : null) ?? query.titleCode ?? (sole.length === 1 ? RDJB_TITLE_CODES[sole[0]!] : null) ?? null
+  const rowTitle = platformRowTitle(query.rdjb, relation.rawFields)
+  return (source ? RDJB_TITLE_CODES[source] : null) ?? query.titleCode ?? RDJB_TITLE_CODES[rowTitle] ?? null
 }
 function queryCoverage(query: Query) {
   const evidence = query.collectionEvidence

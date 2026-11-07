@@ -1,3 +1,4 @@
+import { platformRowTitle } from '../../lib/platform/row-title'
 import { createHash } from 'node:crypto'
 import { and, asc, count, eq, getTableColumns, inArray, or, sql } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
@@ -133,8 +134,7 @@ function relationTitle(source: ReturnType<typeof relationSource>): string | null
   const fromPosition = query.interface === 'recognized_list'
     ? RDJB_TITLE_CODES[sourcePositionForSequence(query.collectionEvidence, relation.sequenceNo).sourceRdjb ?? '']
     : undefined
-  const scopes = query.rdjb.split(',').filter(Boolean)
-  const fromScope = scopes.length === 1 ? RDJB_TITLE_CODES[scopes[0]!] : undefined
+  const fromScope = RDJB_TITLE_CODES[platformRowTitle(query.rdjb, relation.rawFields)]
   if (query.titleCode && fromPosition && query.titleCode !== fromPosition) fail('title_conflict', 'Query and row title differ')
   if (query.titleCode && fromScope && query.titleCode !== fromScope) fail('title_conflict', 'Query title and rdjb differ')
   return fromPosition ?? query.titleCode ?? fromScope ?? null

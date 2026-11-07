@@ -43,6 +43,115 @@ defineRouteMeta({
   "type": "object",
   "description": "统一写入载荷；recognized_list 必填 collectionEvidence。三来源 rawData.version=1 显式选择 typed 原行，relations.rawFields 必须逐行相等；缺省保留 legacy，冲突整批拒绝。见 docs/platform-recognized-evidence.md。",
   "properties": {
+    "platformLegacyProvenance": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 100,
+      "description": "独立legacy采集分页补证，保留typedState=unknown；queryId/自然键/源文件SHA/segmentIndex绑定，完整原行及事务重核，不更新collectionEvidence或版本。",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "queryId",
+          "interface",
+          "queryKey",
+          "rdjb",
+          "queriedAt",
+          "sourceIdentity",
+          "sourceSha256",
+          "segmentIndex",
+          "collection",
+          "relations"
+        ],
+        "properties": {
+          "queryId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "interface": {
+            "type": "string",
+            "enum": [
+              "business_list"
+            ]
+          },
+          "queryKey": {
+            "type": "string",
+            "minLength": 1
+          },
+          "rdjb": {
+            "type": "string",
+            "minLength": 1
+          },
+          "queriedAt": {
+            "type": "string"
+          },
+          "sourceIdentity": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          },
+          "sourceSha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "segmentIndex": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "collection": {
+            "type": "object",
+            "description": "完整原businessList legacy采集结果：source/status/effectiveConditions/titleScope/queriedAt/completedAt/rows/pages/fetchedCount/declaredTotal/completeness/fullRange/unfinished/error/limits。rows只保留原字符串，不接受rawData/dataRows，不补造响应正文。",
+            "required": [
+              "source",
+              "status",
+              "effectiveConditions",
+              "titleScope",
+              "queriedAt",
+              "completedAt",
+              "rows",
+              "pages",
+              "fetchedCount",
+              "declaredTotal",
+              "completeness",
+              "fullRange",
+              "unfinished",
+              "error",
+              "limits"
+            ]
+          },
+          "relations": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "sequenceNo",
+                "relationKey",
+                "rawFields"
+              ],
+              "properties": {
+                "sequenceNo": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "relationKey": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "rawFields": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "platformRecordObservations": {
       "type": "array",
       "minItems": 1,

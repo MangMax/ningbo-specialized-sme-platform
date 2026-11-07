@@ -109,3 +109,13 @@ it('HTTP detail reads scoped lightweight canonical mappings inside the offmain d
   const body = await response.json() as any, strip = (detail: any) => { const copy = structuredClone(detail); delete copy.qualificationAssessment?.asOf; delete copy.qualificationAssessment?.snapshotId; return copy }
   expect(strip(body)).toEqual(strip(direct))
 })
+
+it('detail keeps mixed legacy observation titles without changing query scopes or raw evidence', () => {
+ const f = fixture()
+ const rows = ['1','2','3'].map((rdjb,i)=>f.row({rdjb:'1,2,3',key:`MIX${i}`,raw:{id:`MIX${i}`,rdjb,cszt:'终审通过',sblx:'申请',sqsj:'2026-04-14 14:41:49',whpc:'2026-1'}}))
+ const detail=f.detail()
+ expect(detail.platform.businessRecords.flatMap((b:any)=>b.observationRefs.map((o:any)=>o.titleCode))).toEqual(['innovative_sme','specialized_sme','little_giant'])
+ expect(detail.platform.queries.map((q:any)=>q.rdjb)).toEqual(['1,2,3','1,2,3','1,2,3'])
+ expect(detail.platform.relations.map((r:any)=>[r.rawFields.rdjb,r.status,r.appliedAt,r.batch])).toEqual(['1','2','3'].map(rdjb=>[rdjb,'终审通过','2026-04-14 14:41:49','2026-1']))
+ expect(f.db.select().from(schema.platformRelation).all().map(r=>r.rawFields)).toEqual(rows.map(r=>r.relation.rawFields))
+})

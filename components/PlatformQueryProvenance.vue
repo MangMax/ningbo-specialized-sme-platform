@@ -11,12 +11,13 @@ const title = (value: string | null) => PLATFORM_RDJBS[value ?? ''] ?? '称号�
 const conditions: Record<string, string> = { name: '企业名称条件', uscc: '信用代码条件', sqsj: '申报时间范围', rddqrq: '有效年份条件', whpcyear: '维护年份条件', whpc: '维护批次条件', szq: '属地筛选代码（原值）', orderField: '排序字段', orderDirection: '排序方向' }
 const conditionValue = (key: string, value: string) => key === 'orderField' && value === 'qymc' ? '企业名称' : key === 'orderDirection' ? ({asc:'升序',desc:'降序'}[value] ?? value) : value
 const history = computed(() => [...props.queries].sort((a,b) => b.queriedAt.localeCompare(a.queriedAt) || b.id - a.id).map(query => {
-  const evidence = query.collectionEvidence
+  const evidence = query.collectionEvidence ?? query.legacyProvenance?.collection
   const failures = [...new Set([...(evidence?.pages.map(page => page.error?.message) ?? []), evidence?.error?.message, query.failureReason]
     .map(platformFailureForDisplay).filter((message): message is string => !!message))]
   const samePosition = (a: {rdjb: string | null; page: number}, b: {rdjb: string | null; page: number}) => a.rdjb === b.rdjb && a.page === b.page
   return {
     query,
+    evidence,
     failures,
     queryTitlesDiffer: evidence && [...query.rdjb.split(',')].sort().join(',') !== [...evidence.titleScope.rdjb].sort().join(','),
     pages: evidence?.pages.map(page => ({ ...page,
@@ -33,16 +34,17 @@ const history = computed(() => [...props.queries].sort((a,b) => b.queriedAt.loca
       <article v-for="item in history" :key="item.query.id" class="mt-3 min-w-0 border-t pt-3 break-words [overflow-wrap:anywhere]" data-testid="platform-query-provenance">
         <p class="font-medium">查询 #{{ item.query.id }} · {{ sourceLabel }} · {{ PLATFORM_QUERY_STATUSES[item.query.status] ?? '状态待核' }} · {{ item.query.relationCount }} 条来源行</p>
         <p>原查询时点：{{ time(item.query.queriedAt) }}</p>
-        <template v-if="item.query.collectionEvidence">
-          <p>完成时点：{{ time(item.query.collectionEvidence.completedAt) }}</p>
-          <p>完整性：{{ { complete: '所请求范围完整', partial: '部分', not_queried: '未查询' }[item.query.collectionEvidence.completeness] }} · {{ item.query.collectionEvidence.fullRange ? '从首页查询' : '续页范围，非全范围' }}</p>
-          <p>已采集 {{ item.query.collectionEvidence.fetchedCount }} 条 · 平台总数：{{ item.query.collectionEvidence.declaredTotal ?? '未知' }}</p>
-          <p>称号范围：{{ item.query.collectionEvidence.titleScope.mode === 'selected' ? '指定称号' : '来源默认称号' }} · {{ item.query.collectionEvidence.titleScope.rdjb.map(value => `${title(value)}（${value}）`).join('、') }}</p>
+        <p v-if="item.query.legacyProvenance" class="text-muted-foreground">旧采集分页来源已补证；原始字段类型仍未记录。</p>
+        <template v-if="item.evidence">
+          <p>完成时点：{{ time(item.evidence.completedAt) }}</p>
+          <p>完整性：{{ { complete: '所请求范围完整', partial: '部分', not_queried: '未查询' }[item.evidence.completeness] }} · {{ item.evidence.fullRange ? '从首页查询' : '续页范围，非全范围' }}</p>
+          <p>已采集 {{ item.evidence.fetchedCount }} 条 · 平台总数：{{ item.evidence.declaredTotal ?? '未知' }}</p>
+          <p>称号范围：{{ item.evidence.titleScope.mode === 'selected' ? '指定称号' : '来源默认称号' }} · {{ item.evidence.titleScope.rdjb.map(value => `${title(value)}（${value}）`).join('、') }}</p>
           <p v-if="item.queryTitlesDiffer">查询标注称号：{{ item.query.rdjb.split(',').map(title).join('、') }}</p>
           <dl class="my-2 grid min-w-0 grid-cols-[minmax(0,1fr)] gap-x-3 gap-y-1 sm:grid-cols-[auto_minmax(0,1fr)]">
             <template v-for="(label,key) in conditions" :key="key">
-              <template v-if="item.query.collectionEvidence.effectiveConditions[key as keyof typeof item.query.collectionEvidence.effectiveConditions] != null">
-                <dt class="text-muted-foreground">{{ label }}</dt><dd>{{ conditionValue(key, item.query.collectionEvidence.effectiveConditions[key as keyof typeof item.query.collectionEvidence.effectiveConditions]!) }}</dd>
+              <template v-if="item.evidence.effectiveConditions[key as keyof typeof item.evidence.effectiveConditions] != null">
+                <dt class="text-muted-foreground">{{ label }}</dt><dd>{{ conditionValue(key, item.evidence.effectiveConditions[key as keyof typeof item.evidence.effectiveConditions]!) }}</dd>
               </template>
             </template>
           </dl>

@@ -674,6 +674,18 @@ export const platformQuery = sqliteTable(
   ],
 )
 
+/** Explicit supplementation only: never a typed collectionEvidence or content version. */
+export const platformQueryLegacyProvenance = sqliteTable('platform_query_legacy_provenance', {
+  queryId: integer('query_id').primaryKey().references(() => platformQuery.id, { onDelete: 'restrict' }),
+  sourceIdentity: text('source_identity').notNull(),
+  sourceSha256: text('source_sha256').notNull(),
+  segmentIndex: integer('segment_index').notNull(),
+  collection: text('collection', { mode: 'json' }).notNull().$type<import('../lib/platform/legacy-provenance').LegacyPlatformCollection>(),
+  inputFingerprint: text('input_fingerprint').notNull(),
+  importBatchId: integer('import_batch_id').notNull().references(() => importBatch.id),
+  createdAt: text('created_at').notNull().$defaultFn(() => new Date().toISOString()),
+}, t => [uniqueIndex('platform_query_legacy_source_uq').on(t.sourceSha256, t.segmentIndex)])
+
 /** Indexed title membership extracted from archived collection evidence; triggers keep it current. */
 export const platformQueryTitleScope = sqliteTable(
   'platform_query_title_scope',

@@ -7,13 +7,13 @@ import * as schema from '../../db/schema'
 type Db = BetterSQLite3Database<typeof schema>
 export const MAX_EVIDENCE_CHUNK_BYTES = 65536
 export const platformEvidenceInputSchema = z.object({
-  queryId: z.number().int().positive(), field: z.enum(['rawResponse', 'collectionEvidence', 'relations', 'relation']),
+  queryId: z.number().int().positive(), field: z.enum(['rawResponse', 'collectionEvidence', 'legacyProvenance', 'relations', 'relation']),
   relationId: z.number().int().positive().optional(), offset: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER - MAX_EVIDENCE_CHUNK_BYTES).optional(),
   length: z.number().int().min(1).max(MAX_EVIDENCE_CHUNK_BYTES).optional(), page: z.number().int().positive().optional(), pageSize: z.number().int().min(1).max(200).optional(),
 }).strict().refine(input => input.field !== 'relation' || input.relationId != null)
 export interface PlatformEvidenceInput {
   queryId: number
-  field: 'rawResponse' | 'collectionEvidence' | 'relations' | 'relation'
+  field: 'rawResponse' | 'collectionEvidence' | 'legacyProvenance' | 'relations' | 'relation'
   relationId?: number
   offset?: number
   length?: number
@@ -36,7 +36,7 @@ function readEvidenceSnapshot(db: Pick<Db, 'select'>, input: PlatformEvidenceInp
   const length = integer(input.length, MAX_EVIDENCE_CHUNK_BYTES, 1, MAX_EVIDENCE_CHUNK_BYTES)
   const page = integer(input.page, 1, 1, Number.MAX_SAFE_INTEGER)
   const pageSize = integer(input.pageSize, 100, 1, 200)
-  if (!['rawResponse', 'collectionEvidence', 'relations', 'relation'].includes(input.field)) invalid()
+  if (!['rawResponse', 'collectionEvidence', 'legacyProvenance', 'relations', 'relation'].includes(input.field)) invalid()
   const q = schema.platformQuery
   if (input.field === 'relations') {
     if (!db.select({ id: q.id }).from(q).where(eq(q.id, queryId)).get()) missing()
@@ -49,7 +49,8 @@ function readEvidenceSnapshot(db: Pick<Db, 'select'>, input: PlatformEvidenceInp
   // Decode base64 chunks only after concatenating them; null and empty remain different.
   const expression = input.field === 'relation'
     ? sql`json_object(${sql.join(Object.entries(getTableColumns(schema.platformRelation)).flatMap(([name, column]) => [sql`${name}`, name === 'rawFields' ? sql`json(${column})` : sql`${column}`]), sql`, `)})`
-    : input.field === 'rawResponse' ? sql`${q.rawResponse}` : sql`${q.collectionEvidence}`
+    : input.field === 'legacyProvenance' ? sql`(select collection from platform_query_legacy_provenance where query_id = platform_query.id)`
+      : input.field === 'rawResponse' ? sql`${q.rawResponse}` : sql`${q.collectionEvidence}`
   const projection = {
     data: sql<Buffer | null>`substr(cast(${expression} as blob), ${offset + 1}, ${length})`,
     totalBytes: sql<number | null>`length(cast(${expression} as blob))`,
