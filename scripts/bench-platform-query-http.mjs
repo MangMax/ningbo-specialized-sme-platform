@@ -18,7 +18,7 @@ import { performance } from 'node:perf_hooks'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { performanceController } from './lib/performance-controller.mjs'
 import { compareCurrentReadAuthority, readSqliteNativeIdentity, readBenchmarkAuthority } from './lib/benchmark-authority.mjs'
-import { forkOwnedChild as fork, reserveLoopbackPort, stopOwnedChild } from './lib/isolated-local-services.mjs'
+import { forkOwnedChild as fork, reserveLoopbackPort, stopOwnedChild, getOwnedChildStartFailure } from './lib/isolated-local-services.mjs'
 const sha = bytes => createHash('sha256').update(bytes).digest('hex')
 const digest = value => sha(JSON.stringify(value))
 const equal = (actual, expected, label) => assert.deepEqual(actual, expected, `REJECTED current-read: ${label}`)
@@ -179,6 +179,17 @@ function collectCurrentInputs(o, dbPath, transport, mode) {
   verifyAfter: () => { equal(verifyDb(), before, 'DB logical/ledger/physical unchanged'); return before }, runtime }
 }
 
+// A single real abort covers both headers and body; health bodies are consumed too.
+async function readResponse(url, options={}, timeoutMs=2000) {
+ const abort=new AbortController()
+ const timer=setTimeout(()=>abort.abort(new Error('HTTP headers/body deadline exceeded')),timeoutMs)
+ try {
+  const response=await fetch(url,{...options,signal:abort.signal})
+  const text=await response.text()
+  return {response,text}
+ } finally {clearTimeout(timer)}
+}
+
 export async function main() {
 const [dbPath,transport='http',mode='summary',concurrencyText='1']=process.argv.slice(2)
 const concurrency=Number(concurrencyText)
@@ -187,7 +198,24 @@ const lane=process.env.PERF_BENCHMARK_LANE ?? 'legacy'
 need(['legacy','current-read'].includes(lane), 'unknown lane')
 const current=lane==='current-read'?verifyCurrentInputs({ concurrency, samples:Number(process.env.PERF_SAMPLES ?? 20), postvalidation:process.env.PERF_POSTVALIDATION==='1', artifactPath:process.env.PERF_CURRENT_ARTIFACT, envelopePath:process.env.PERF_CURRENT_ENVELOPE, workloadPath:process.env.PERF_CURRENT_WORKLOAD, fixturePath:process.env.PERF_CURRENT_FIXTURE, deliveryDir:process.env.PERF_CURRENT_DELIVERY, outputDir:process.env.PERF_CURRENT_OUTPUT },dbPath,transport,mode):null
 const artifactAuthority=current?.artifactAuthority ?? readBenchmarkAuthority(process.env.PERF_BENCHMARK_SOURCE_SHA)
-const dir=mkdtempSync(join(tmpdir(),'platform-read-telemetry-')), telemetry=join(dir,'telemetry.mjs')
+let dir, server, phases, receipt, primaryError, childError
+const cleanupErrors=[]
+let base, forkAttempted=false, startFailure
+const childErrors=[]
+const onChildError=error=>{childError=error;childErrors.push(error)}
+let output=''
+function observeChild() {
+ server.on('error',onChildError)
+ for(const stream of new Set(server.stdio ?? [])) {
+  if(stream && typeof stream.on==='function') {
+   stream.on('error',onChildError)
+   if(typeof stream.resume==='function')stream.on('data',b=>{output=(output+b).slice(-2000)})
+  }
+ }
+}
+try {
+dir=mkdtempSync(join(tmpdir(),'platform-read-telemetry-'))
+const telemetry=join(dir,'telemetry.mjs')
 writeFileSync(telemetry, `import ${JSON.stringify(new URL('./lib/performance-preload.mjs', import.meta.url).href)};` + (current ? `
 import {createRequire} from 'node:module';
 import {writeFileSync} from 'node:fs';
@@ -197,10 +225,17 @@ writeFileSync(${JSON.stringify(join(dir,'runtime-identity.json'))}, JSON.stringi
 ` : ''))
 if(current){mkdirSync(join(dir,'db'));symlinkSync(current.migrations,join(dir,'db/migrations'))}
 const port=await reserveLoopbackPort()
-const base=`http://127.0.0.1:${port}`
-const server=fork(current?join(process.env.PERF_CURRENT_OUTPUT,'server/index.mjs'):'.output/server/index.mjs',[],{...(current?{cwd:dir}:{}),execArgv:['--max-old-space-size=2048','--import',telemetry],env:{...process.env,PORT:String(port),HOST:'127.0.0.1',NUXT_DB_PATH:dbPath,NUXT_DB_READONLY:'1',NUXT_FILES_DIR:dir,MIIT_COOKIE:'',MIIT_COOKIE_FILE:''},stdio:['ignore','pipe','pipe','ipc']})
-const phases=performanceController(server)
-let output='';for(const stream of [server.stdout,server.stderr])stream.on('data',b=>{output=(output+b).slice(-2000)})
+base=`http://127.0.0.1:${port}`
+forkAttempted=true
+try {
+server=fork(current?join(process.env.PERF_CURRENT_OUTPUT,'server/index.mjs'):'.output/server/index.mjs',[],{...(current?{cwd:dir}:{}),execArgv:['--max-old-space-size=2048','--import',telemetry],env:{...process.env,PORT:String(port),HOST:'127.0.0.1',NUXT_DB_PATH:dbPath,NUXT_DB_READONLY:'1',NUXT_FILES_DIR:dir,MIIT_COOKIE:'',MIIT_COOKIE_FILE:''},stdio:['ignore','pipe','pipe','ipc']})
+} catch(error) {
+ startFailure=getOwnedChildStartFailure(error)
+ if(startFailure){server=startFailure.child;observeChild()}
+ throw error
+}
+observeChild()
+phases=performanceController(server)
 let id=0
 function validate(text, sent, status=200, requestId=id, response) {
  if(current)return phases.driver.measure('currentSemanticValidation',()=>validateCurrentResponse(current.scenario,sent,{status,text,url:response.url,redirected:response.redirected},requestId))
@@ -215,18 +250,26 @@ async function request(deferValidation=false) {
  const requestId=current?++id:undefined, sent=current?currentRequest(current.scenario,requestId):null
  const start=performance.now()
  if(current){
-  const response=transport==='http'?await fetch(`${base}${sent.path}?${new URLSearchParams(sent.query)}`):await fetch(`${base}${sent.path}`,{method:'POST',headers:{'content-type':'application/json',accept:'application/json, text/event-stream','mcp-protocol-version':'2025-06-18'},body:JSON.stringify(Object.fromEntries(Object.entries(sent).filter(([key])=>key!=='path')))})
-  const text=await response.text(),ms=performance.now()-start
+  const {response,text}=transport==='http'?await readResponse(`${base}${sent.path}?${new URLSearchParams(sent.query)}`):await readResponse(`${base}${sent.path}`,{method:'POST',headers:{'content-type':'application/json',accept:'application/json, text/event-stream','mcp-protocol-version':'2025-06-18'},body:JSON.stringify(Object.fromEntries(Object.entries(sent).filter(([key])=>key!=='path')))})
+  const ms=performance.now()-start
   return {ms,responseBytes:Buffer.byteLength(text),resultHash:validate(text,sent,response.status,requestId,response),scenarioId:current.scenario.id,requestId,requestSha256:digest(current.scenario.request),expectedSha256:digest(current.scenario.expected)}
  }
- const response=transport==='http'?await fetch(`${base}${mode==='chunk'?'/api/platform/queries/1000/evidence':'/api/platform/queries'}?${new URLSearchParams(Object.entries(args).filter(([key])=>mode!=='chunk'||key!=='queryId').map(([k,v])=>[k,String(v)]))}`):await fetch(`${base}/mcp`,{method:'POST',headers:{'content-type':'application/json',accept:'application/json, text/event-stream','mcp-protocol-version':'2025-06-18'},body:JSON.stringify({jsonrpc:'2.0',id:++id,method:'tools/call',params:{name:mode==='chunk'?'get_platform_query_evidence':'list_platform_queries',arguments:args}})})
- const text=await response.text(), ms=performance.now()-start
+ const {response,text}=transport==='http'?await readResponse(`${base}${mode==='chunk'?'/api/platform/queries/1000/evidence':'/api/platform/queries'}?${new URLSearchParams(Object.entries(args).filter(([key])=>mode!=='chunk'||key!=='queryId').map(([k,v])=>[k,String(v)]))}`):await readResponse(`${base}/mcp`,{method:'POST',headers:{'content-type':'application/json',accept:'application/json, text/event-stream','mcp-protocol-version':'2025-06-18'},body:JSON.stringify({jsonrpc:'2.0',id:++id,method:'tools/call',params:{name:mode==='chunk'?'get_platform_query_evidence':'list_platform_queries',arguments:args}})})
+ const ms=performance.now()-start
  assert.equal(response.status,200)
  return {ms,responseBytes:Buffer.byteLength(text),...(deferValidation?{capturedBody:text}:{resultHash:validate(text)})}
 }
-try {
- let ready=false
- for(let i=0;i<120;i++){if(server.exitCode!==null)throw Error(output);try{ready=(await fetch(`${base}/api/health`)).ok}catch{}if(ready)break;await sleep(100)}
+ let ready=false, lastReadyError
+ const readyDeadline=performance.now()+12_000
+ while(performance.now()<readyDeadline){
+  if(childError)throw childError
+  if(server.exitCode!==null || server.signalCode!==null)throw Error(`Application exited before readiness: ${output}`)
+  try{ready=(await readResponse(`${base}/api/health`,{},Math.min(2000,Math.max(1,readyDeadline-performance.now())))).response.ok}
+  catch(error){lastReadyError=error}
+  if(ready)break
+  await sleep(Math.min(100,Math.max(0,readyDeadline-performance.now())))
+ }
+ if(!ready && lastReadyError)output+=` ${lastReadyError.message}`
  assert.ok(ready,`production artifact readiness: ${output}`)
  if(current)equal(JSON.parse(readFileSync(join(dir,'runtime-identity.json'))),current.runtime,'actual child loaded runtime identity')
  await phases.begin('cold')
@@ -238,10 +281,52 @@ try {
  let validationPhases
  if(deferredValidation){await phases.begin('postvalidation');for(const sample of hot){sample.resultHash=validate(sample.capturedBody);delete sample.capturedBody}validationPhases=await phases.end('postvalidation')}
  assert.ok(hot.every(sample=>sample.resultHash===cold.resultHash),'public result changed between cold and hot requests')
- if(current)current.artifactAuthority.after=current.verifyAfter()
  const sorted=hot.map(x=>x.ms).sort((a,b)=>a-b), percentile=p=>sorted[Math.ceil(p*sorted.length)-1]
- console.log(JSON.stringify({artifactAuthority,...(current?{status:'SAMPLE_PROJECTION_VERIFIED',runtimeIdentity:current.runtime,serverPid:server.pid,runtimeDirectory:dir,base,scope:'621 small synthetic frozen projection only; unrelated DTO fields and original scale/SLO UNVALIDATED',lane}:{}),driverScheduling:current?'inline frozen projection validation; wall timing ends after full body read, before validation':deferredValidation?'postvalidation diagnostic; every full body validated after timing':'inline semantic validation; original shared quota workload',validationPhases,transport,mode,concurrency,dbPath,coldLabel:'fresh server process; OS cache not purged',cold,warmup,retainedSamples:hot,hotSamples:hot.length,hot:{p50:percentile(.5),p95:percentile(.95),p99:percentile(.99)},responseBytes:hot[0].responseBytes,coldPhases,warmupPhases,hotPhases,peakHeap:hotPhases.app.peakHeap,peakRss:hotPhases.app.peakRss,osPeakRss:hotPhases.app.osPeakRss,heapLimit:hotPhases.app.heapLimit,eventLoopP95Ms:hotPhases.app.loopP95Ms,eventLoopMaxMs:hotPhases.app.loopMaxMs}))
-} finally {phases.close();await stopOwnedChild(server);rmSync(dir,{recursive:true,force:true})}
+ receipt={artifactAuthority,...(current?{status:'SAMPLE_PROJECTION_VERIFIED',runtimeIdentity:current.runtime,serverPid:server.pid,runtimeDirectory:dir,base,scope:'621 small synthetic frozen projection only; unrelated DTO fields and original scale/SLO UNVALIDATED',lane}:{}),driverScheduling:current?'inline frozen projection validation; wall timing ends after full body read, before validation':deferredValidation?'postvalidation diagnostic; every full body validated after timing':'inline semantic validation; original shared quota workload',validationPhases,transport,mode,concurrency,dbPath,coldLabel:'fresh server process; OS cache not purged',cold,warmup,retainedSamples:hot,hotSamples:hot.length,hot:{p50:percentile(.5),p95:percentile(.95),p99:percentile(.99)},responseBytes:hot[0].responseBytes,coldPhases,warmupPhases,hotPhases,peakHeap:hotPhases.app.peakHeap,peakRss:hotPhases.app.peakRss,osPeakRss:hotPhases.app.osPeakRss,heapLimit:hotPhases.app.heapLimit,eventLoopP95Ms:hotPhases.app.loopP95Ms,eventLoopMaxMs:hotPhases.app.loopMaxMs}
+} catch(error) {primaryError=error}
+finally {
+ if(phases)try{phases.close()}catch(error){cleanupErrors.push(new Error('Controller close failed',{cause:error}))}
+ let confirmed=!forkAttempted, stopState=forkAttempted?'unknown acquisition':'not-acquired'
+ if(server) {
+  try{await stopOwnedChild(server);confirmed=true;stopState='resolved'}
+  catch(error){
+   cleanupErrors.push(new Error('Public stop failed',{cause:error}))
+   const result=error?.stopResult
+   const known=result?.brand==='isolated-local-services.stop' && result.version===1
+   confirmed=known && result.termination==='confirmed'
+   stopState=known?JSON.stringify(result):'unknown stop receipt'
+  }
+ }
+ // Read-only full logical/ledger/physical witness is attempted on failure as well.
+ if(current)try{current.artifactAuthority.after=current.verifyAfter()}
+ catch(error){cleanupErrors.push(new Error('DB verifyAfter failed',{cause:error}))}
+ if(!confirmed) {
+  cleanupErrors.push(new Error(`UNCONFIRMED owned service pid=${server?.pid ?? 'unknown'}; root retained at ${dir}; start=${startFailure?.reason ?? (forkAttempted?'unknown':'not-attempted')}; state=${stopState}`))
+  // These release caller handles only; they are never evidence of service termination.
+  if(server) {
+   const releases=[
+    ...[...new Set(server.stdio ?? [])].filter(stream=>stream && typeof stream.destroy==='function').map(stream=>()=>stream.destroy()),
+    ()=>{if(server.connected)server.disconnect()},()=>server.unref(),
+   ]
+   for(const release of releases)try{release()}catch(error){cleanupErrors.push(new Error('Caller handle release failed',{cause:error}))}
+  }
+ }
+ if(dir && confirmed)try{rmSync(dir,{recursive:true,force:true})}
+ catch(error){cleanupErrors.push(new Error(`Private root cleanup failed; retained at ${dir}`,{cause:error}))}
+ // Release events can arrive asynchronously; retain listeners through that turn.
+ await new Promise(resolve=>setImmediate(resolve))
+ const asynchronous=[...new Set([...childErrors,...(startFailure?.errors ?? [])])]
+ for(const error of asynchronous)cleanupErrors.push(new Error('Owned child asynchronous error',{cause:error}))
+ if(startFailure?.droppedErrors)cleanupErrors.push(new Error(`Owned child droppedErrors=${startFailure.droppedErrors}`))
+ if(server){
+  server.off('error',onChildError)
+  for(const stream of new Set(server.stdio ?? []))stream?.off?.('error',onChildError)
+ }
+}
+if(primaryError || cleanupErrors.length)throw new AggregateError([
+ ...(primaryError?[primaryError]:[]),...cleanupErrors,
+],'Benchmark failed (primary/controller/stop/verifyAfter/root diagnostics retained)')
+console.log(JSON.stringify(receipt))
 
 }
 if(process.argv[1] && import.meta.url===pathToFileURL(resolve(process.argv[1])).href) await main()
