@@ -1,0 +1,904 @@
+{
+  "lane": "current-read",
+  "schemaVersion": 1,
+  "workloadId": "h1b-small-synthetic-v1",
+  "artifactManifestSha256": "6c47126bb02235ca79d39e1bb1a9714ee693726629056c61fb158dd67dc429d2",
+  "qualification": {
+    "runtimeQualified": false,
+    "originalScale": "UNVALIDATED/rejected",
+    "originalQueryRows": 39303,
+    "originalRelationRows": 58310
+  },
+  "contract": {
+    "ordering": "queried_at DESC, id DESC; relations sequence_no ASC",
+    "fixtureSha256": "logical whole SQLite: SHA256(JSON.stringify of [tableName, columns, rows] arrays); table names/column names ascending UTF-16 code units; rows are column-value arrays sorted by JSON.stringify ascending UTF-16 code units; every table except names starting sqlite_, including ledger and derived tables. NOT physical SQLite bytes.",
+    "digests": "SHA256 of UTF-8 JSON.stringify of specified subdocument in stored property order; manifestSha256 hashes exact detached fixture file bytes",
+    "generatorBlob": "git blob SHA1 of exact detached literal manifest bytes (manual seed and oracle authoring source, not an executable generator); no placeholder hash",
+    "summary": "every row has relationsIncluded false, empty relations, relationCount preserved and rawResponse/collectionEvidence absent",
+    "chunk": "byte slicing before UTF-8 decode; selected range crosses two codepoints; decodedHex means decoded base64 bytes, not UTF-8 text",
+    "projection": "D3 checks listed business projection, all IDs/order/counts and relations for each row, key raw bytes, every summary omission; unrelated DTO metadata is outside this oracle",
+    "ledger": "ordered [{hash,created_at}] from all delivered journal entries; no ledger patching"
+  },
+  "seed": {
+    "title": [
+      {
+        "code": "specialized_sme",
+        "name_zh": "合成专精特新",
+        "level": "synthetic",
+        "rank": 2
+      }
+    ],
+    "platform_query": [
+      {
+        "id": 11,
+        "interface": "recognized_list",
+        "query_key": "synthetic:甲",
+        "rdjb": "2",
+        "title_code": "specialized_sme",
+        "queried_at": "2026-01-05T00:00:00Z",
+        "last_collected_at": null,
+        "status": "success",
+        "failure_reason": null,
+        "raw_response": "甲😀é\r\n乙",
+        "collection_evidence": "{\"note\":\"合成😀\"}",
+        "created_at": "2026-01-01T00:00:00Z"
+      },
+      {
+        "id": 12,
+        "interface": "apply_list",
+        "query_key": "synthetic:乙",
+        "rdjb": "",
+        "title_code": null,
+        "queried_at": "2026-01-04T00:00:00Z",
+        "last_collected_at": null,
+        "status": "partial",
+        "failure_reason": null,
+        "raw_response": "",
+        "collection_evidence": null,
+        "created_at": "2026-01-01T00:00:00Z"
+      },
+      {
+        "id": 13,
+        "interface": "business_list",
+        "query_key": "synthetic:丙",
+        "rdjb": "",
+        "title_code": null,
+        "queried_at": "2026-01-03T00:00:00Z",
+        "last_collected_at": null,
+        "status": "failed",
+        "failure_reason": "synthetic failure",
+        "raw_response": null,
+        "collection_evidence": null,
+        "created_at": "2026-01-01T00:00:00Z"
+      },
+      {
+        "id": 14,
+        "interface": "recognized_list",
+        "query_key": "synthetic:丁",
+        "rdjb": "",
+        "title_code": null,
+        "queried_at": "2026-01-02T00:00:00Z",
+        "last_collected_at": null,
+        "status": "no_record",
+        "failure_reason": null,
+        "raw_response": null,
+        "collection_evidence": null,
+        "created_at": "2026-01-01T00:00:00Z"
+      },
+      {
+        "id": 15,
+        "interface": "business_list",
+        "query_key": "synthetic:戊",
+        "rdjb": "",
+        "title_code": null,
+        "queried_at": "2026-01-02T00:00:00Z",
+        "last_collected_at": null,
+        "status": "not_queried",
+        "failure_reason": null,
+        "raw_response": null,
+        "collection_evidence": null,
+        "created_at": "2026-01-01T00:00:00Z"
+      }
+    ],
+    "platform_relation": [
+      {
+        "id": 101,
+        "query_id": 11,
+        "sequence_no": 1,
+        "relation_key": "synthetic:r1",
+        "raw_fields": null,
+        "source_text": "合成关系一",
+        "match_basis": "none",
+        "verification_status": "pending",
+        "created_at": "2026-01-01T00:00:00Z"
+      },
+      {
+        "id": 102,
+        "query_id": 11,
+        "sequence_no": 2,
+        "relation_key": "synthetic:r2",
+        "raw_fields": null,
+        "source_text": "合成关系二",
+        "match_basis": "none",
+        "verification_status": "pending",
+        "created_at": "2026-01-01T00:00:00Z"
+      },
+      {
+        "id": 103,
+        "query_id": 12,
+        "sequence_no": 1,
+        "relation_key": "synthetic:r3",
+        "raw_fields": null,
+        "source_text": "部分采集关系",
+        "match_basis": "none",
+        "verification_status": "pending",
+        "created_at": "2026-01-01T00:00:00Z"
+      }
+    ]
+  },
+  "rawWitness": {
+    "queryId": 11,
+    "field": "rawResponse",
+    "hex": "e794b2f09f988065cc810d0ae4b999",
+    "byteLength": 15
+  },
+  "relationWitness": [
+    {
+      "id": 101,
+      "queryId": 11,
+      "sequenceNo": 1,
+      "relationKey": "synthetic:r1",
+      "sourceText": "合成关系一"
+    },
+    {
+      "id": 102,
+      "queryId": 11,
+      "sequenceNo": 2,
+      "relationKey": "synthetic:r2",
+      "sourceText": "合成关系二"
+    },
+    {
+      "id": 103,
+      "queryId": 12,
+      "sequenceNo": 1,
+      "relationKey": "synthetic:r3",
+      "sourceText": "部分采集关系"
+    }
+  ],
+  "scenarios": [
+    {
+      "id": "http-full",
+      "transport": "http",
+      "mode": "full",
+      "request": {
+        "method": "GET",
+        "path": "/api/platform/queries",
+        "query": {
+          "page": "1",
+          "pageSize": "5"
+        }
+      },
+      "expected": {
+        "total": 5,
+        "page": 1,
+        "pageSize": 5,
+        "counts": {
+          "success": 1,
+          "partial": 1,
+          "failed": 1,
+          "not_queried": 1,
+          "no_record": 1
+        },
+        "rows": [
+          {
+            "id": 11,
+            "queryKey": "synthetic:甲",
+            "status": "success",
+            "relationCount": 2,
+            "relationIds": [
+              101,
+              102
+            ],
+            "collectionEvidence": {
+              "note": "合成😀"
+            }
+          },
+          {
+            "id": 12,
+            "queryKey": "synthetic:乙",
+            "status": "partial",
+            "relationCount": 1,
+            "relationIds": [
+              103
+            ],
+            "collectionEvidence": null
+          },
+          {
+            "id": 13,
+            "queryKey": "synthetic:丙",
+            "status": "failed",
+            "relationCount": 0,
+            "relationIds": [],
+            "collectionEvidence": null
+          },
+          {
+            "id": 15,
+            "queryKey": "synthetic:戊",
+            "status": "not_queried",
+            "relationCount": 0,
+            "relationIds": [],
+            "collectionEvidence": null
+          },
+          {
+            "id": 14,
+            "queryKey": "synthetic:丁",
+            "status": "no_record",
+            "relationCount": 0,
+            "relationIds": [],
+            "collectionEvidence": null
+          }
+        ]
+      }
+    },
+    {
+      "id": "http-summary",
+      "transport": "http",
+      "mode": "summary",
+      "request": {
+        "method": "GET",
+        "path": "/api/platform/queries",
+        "query": {
+          "page": "1",
+          "pageSize": "5",
+          "view": "summary"
+        }
+      },
+      "expected": {
+        "total": 5,
+        "page": 1,
+        "pageSize": 5,
+        "counts": {
+          "success": 1,
+          "partial": 1,
+          "failed": 1,
+          "not_queried": 1,
+          "no_record": 1
+        },
+        "rows": [
+          {
+            "id": 11,
+            "queryKey": "synthetic:甲",
+            "status": "success",
+            "relationCount": 2,
+            "relationIds": [],
+            "relationsIncluded": false,
+            "omittedQueryFields": [
+              "rawResponse",
+              "collectionEvidence"
+            ]
+          },
+          {
+            "id": 12,
+            "queryKey": "synthetic:乙",
+            "status": "partial",
+            "relationCount": 1,
+            "relationIds": [],
+            "relationsIncluded": false,
+            "omittedQueryFields": [
+              "rawResponse",
+              "collectionEvidence"
+            ]
+          },
+          {
+            "id": 13,
+            "queryKey": "synthetic:丙",
+            "status": "failed",
+            "relationCount": 0,
+            "relationIds": [],
+            "relationsIncluded": false,
+            "omittedQueryFields": [
+              "rawResponse",
+              "collectionEvidence"
+            ]
+          },
+          {
+            "id": 15,
+            "queryKey": "synthetic:戊",
+            "status": "not_queried",
+            "relationCount": 0,
+            "relationIds": [],
+            "relationsIncluded": false,
+            "omittedQueryFields": [
+              "rawResponse",
+              "collectionEvidence"
+            ]
+          },
+          {
+            "id": 14,
+            "queryKey": "synthetic:丁",
+            "status": "no_record",
+            "relationCount": 0,
+            "relationIds": [],
+            "relationsIncluded": false,
+            "omittedQueryFields": [
+              "rawResponse",
+              "collectionEvidence"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "http-interface",
+      "transport": "http",
+      "mode": "interface",
+      "request": {
+        "method": "GET",
+        "path": "/api/platform/queries",
+        "query": {
+          "page": "1",
+          "pageSize": "5",
+          "view": "summary",
+          "interface": "recognized_list"
+        }
+      },
+      "expected": {
+        "total": 2,
+        "page": 1,
+        "pageSize": 5,
+        "counts": {
+          "success": 1,
+          "no_record": 1
+        },
+        "rows": [
+          {
+            "id": 11,
+            "queryKey": "synthetic:甲",
+            "status": "success",
+            "relationCount": 2,
+            "relationIds": [],
+            "relationsIncluded": false,
+            "omittedQueryFields": [
+              "rawResponse",
+              "collectionEvidence"
+            ]
+          },
+          {
+            "id": 14,
+            "queryKey": "synthetic:丁",
+            "status": "no_record",
+            "relationCount": 0,
+            "relationIds": [],
+            "relationsIncluded": false,
+            "omittedQueryFields": [
+              "rawResponse",
+              "collectionEvidence"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "http-title",
+      "transport": "http",
+      "mode": "title",
+      "request": {
+        "method": "GET",
+        "path": "/api/platform/queries",
+        "query": {
+          "page": "1",
+          "pageSize": "5",
+          "view": "summary",
+          "titleCode": "specialized_sme"
+        }
+      },
+      "expected": {
+        "total": 1,
+        "page": 1,
+        "pageSize": 5,
+        "counts": {
+          "success": 1
+        },
+        "rows": [
+          {
+            "id": 11,
+            "queryKey": "synthetic:甲",
+            "status": "success",
+            "relationCount": 2,
+            "relationIds": [],
+            "relationsIncluded": false,
+            "omittedQueryFields": [
+              "rawResponse",
+              "collectionEvidence"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "http-key",
+      "transport": "http",
+      "mode": "key",
+      "request": {
+        "method": "GET",
+        "path": "/api/platform/queries",
+        "query": {
+          "page": "1",
+          "pageSize": "1",
+          "queryKey": "synthetic:甲",
+          "includeRawResponse": "true"
+        }
+      },
+      "expected": {
+        "total": 1,
+        "page": 1,
+        "pageSize": 1,
+        "counts": {
+          "success": 1
+        },
+        "rows": [
+          {
+            "id": 11,
+            "queryKey": "synthetic:甲",
+            "status": "success",
+            "relationCount": 2,
+            "relationIds": [
+              101,
+              102
+            ],
+            "rawResponse": "甲😀é\r\n乙",
+            "rawHex": "e794b2f09f988065cc810d0ae4b999",
+            "collectionEvidence": {
+              "note": "合成😀"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "http-chunk",
+      "transport": "http",
+      "mode": "chunk",
+      "request": {
+        "method": "GET",
+        "path": "/api/platform/queries/11/evidence",
+        "query": {
+          "field": "rawResponse",
+          "offset": "2",
+          "length": "4"
+        }
+      },
+      "expected": {
+        "queryId": 11,
+        "field": "rawResponse",
+        "encoding": "base64",
+        "offset": 2,
+        "byteLength": 4,
+        "totalBytes": 15,
+        "isNull": false,
+        "hasMore": true,
+        "data": "svCfmA==",
+        "decodedHex": "b2f09f98"
+      }
+    },
+    {
+      "id": "mcp-full",
+      "transport": "mcp",
+      "mode": "full",
+      "request": {
+        "path": "/mcp",
+        "jsonrpc": "2.0",
+        "id": 621,
+        "method": "tools/call",
+        "params": {
+          "name": "list_platform_queries",
+          "arguments": {
+            "page": 1,
+            "pageSize": 5
+          }
+        }
+      },
+      "expected": {
+        "total": 5,
+        "page": 1,
+        "pageSize": 5,
+        "counts": {
+          "success": 1,
+          "partial": 1,
+          "failed": 1,
+          "not_queried": 1,
+          "no_record": 1
+        },
+        "rows": [
+          {
+            "id": 11,
+            "queryKey": "synthetic:甲",
+            "status": "success",
+            "relationCount": 2,
+            "relationIds": [
+              101,
+              102
+            ],
+            "collectionEvidence": {
+              "note": "合成😀"
+            }
+          },
+          {
+            "id": 12,
+            "queryKey": "synthetic:乙",
+            "status": "partial",
+            "relationCount": 1,
+            "relationIds": [
+              103
+            ],
+            "collectionEvidence": null
+          },
+          {
+            "id": 13,
+            "queryKey": "synthetic:丙",
+            "status": "failed",
+            "relationCount": 0,
+            "relationIds": [],
+            "collectionEvidence": null
+          },
+          {
+            "id": 15,
+            "queryKey": "synthetic:戊",
+            "status": "not_queried",
+            "relationCount": 0,
+            "relationIds": [],
+            "collectionEvidence": null
+          },
+          {
+            "id": 14,
+            "queryKey": "synthetic:丁",
+            "status": "no_record",
+            "relationCount": 0,
+            "relationIds": [],
+            "collectionEvidence": null
+          }
+        ]
+      }
+    },
+    {
+      "id": "mcp-summary",
+      "transport": "mcp",
+      "mode": "summary",
+      "request": {
+        "path": "/mcp",
+        "jsonrpc": "2.0",
+        "id": 621,
+        "method": "tools/call",
+        "params": {
+          "name": "list_platform_queries",
+          "arguments": {
+            "page": 1,
+            "pageSize": 5,
+            "view": "summary"
+          }
+        }
+      },
+      "expected": {
+        "total": 5,
+        "page": 1,
+        "pageSize": 5,
+        "counts": {
+          "success": 1,
+          "partial": 1,
+          "failed": 1,
+          "not_queried": 1,
+          "no_record": 1
+        },
+        "rows": [
+          {
+            "id": 11,
+            "queryKey": "synthetic:甲",
+            "status": "success",
+            "relationCount": 2,
+            "relationIds": [],
+            "relationsIncluded": false,
+            "omittedQueryFields": [
+              "rawResponse",
+              "collectionEvidence"
+            ]
+          },
+          {
+            "id": 12,
+            "queryKey": "synthetic:乙",
+            "status": "partial",
+            "relationCount": 1,
+            "relationIds": [],
+            "relationsIncluded": false,
+            "omittedQueryFields": [
+              "rawResponse",
+              "collectionEvidence"
+            ]
+          },
+          {
+            "id": 13,
+            "queryKey": "synthetic:丙",
+            "status": "failed",
+            "relationCount": 0,
+            "relationIds": [],
+            "relationsIncluded": false,
+            "omittedQueryFields": [
+              "rawResponse",
+              "collectionEvidence"
+            ]
+          },
+          {
+            "id": 15,
+            "queryKey": "synthetic:戊",
+            "status": "not_queried",
+            "relationCount": 0,
+            "relationIds": [],
+            "relationsIncluded": false,
+            "omittedQueryFields": [
+              "rawResponse",
+              "collectionEvidence"
+            ]
+          },
+          {
+            "id": 14,
+            "queryKey": "synthetic:丁",
+            "status": "no_record",
+            "relationCount": 0,
+            "relationIds": [],
+            "relationsIncluded": false,
+            "omittedQueryFields": [
+              "rawResponse",
+              "collectionEvidence"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "mcp-interface",
+      "transport": "mcp",
+      "mode": "interface",
+      "request": {
+        "path": "/mcp",
+        "jsonrpc": "2.0",
+        "id": 621,
+        "method": "tools/call",
+        "params": {
+          "name": "list_platform_queries",
+          "arguments": {
+            "page": 1,
+            "pageSize": 5,
+            "view": "summary",
+            "interface": "recognized_list"
+          }
+        }
+      },
+      "expected": {
+        "total": 2,
+        "page": 1,
+        "pageSize": 5,
+        "counts": {
+          "success": 1,
+          "no_record": 1
+        },
+        "rows": [
+          {
+            "id": 11,
+            "queryKey": "synthetic:甲",
+            "status": "success",
+            "relationCount": 2,
+            "relationIds": [],
+            "relationsIncluded": false,
+            "omittedQueryFields": [
+              "rawResponse",
+              "collectionEvidence"
+            ]
+          },
+          {
+            "id": 14,
+            "queryKey": "synthetic:丁",
+            "status": "no_record",
+            "relationCount": 0,
+            "relationIds": [],
+            "relationsIncluded": false,
+            "omittedQueryFields": [
+              "rawResponse",
+              "collectionEvidence"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "mcp-title",
+      "transport": "mcp",
+      "mode": "title",
+      "request": {
+        "path": "/mcp",
+        "jsonrpc": "2.0",
+        "id": 621,
+        "method": "tools/call",
+        "params": {
+          "name": "list_platform_queries",
+          "arguments": {
+            "page": 1,
+            "pageSize": 5,
+            "view": "summary",
+            "titleCode": "specialized_sme"
+          }
+        }
+      },
+      "expected": {
+        "total": 1,
+        "page": 1,
+        "pageSize": 5,
+        "counts": {
+          "success": 1
+        },
+        "rows": [
+          {
+            "id": 11,
+            "queryKey": "synthetic:甲",
+            "status": "success",
+            "relationCount": 2,
+            "relationIds": [],
+            "relationsIncluded": false,
+            "omittedQueryFields": [
+              "rawResponse",
+              "collectionEvidence"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "mcp-key",
+      "transport": "mcp",
+      "mode": "key",
+      "request": {
+        "path": "/mcp",
+        "jsonrpc": "2.0",
+        "id": 621,
+        "method": "tools/call",
+        "params": {
+          "name": "list_platform_queries",
+          "arguments": {
+            "page": 1,
+            "pageSize": 1,
+            "queryKey": "synthetic:甲",
+            "includeRawResponse": true
+          }
+        }
+      },
+      "expected": {
+        "total": 1,
+        "page": 1,
+        "pageSize": 1,
+        "counts": {
+          "success": 1
+        },
+        "rows": [
+          {
+            "id": 11,
+            "queryKey": "synthetic:甲",
+            "status": "success",
+            "relationCount": 2,
+            "relationIds": [
+              101,
+              102
+            ],
+            "rawResponse": "甲😀é\r\n乙",
+            "rawHex": "e794b2f09f988065cc810d0ae4b999",
+            "collectionEvidence": {
+              "note": "合成😀"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "mcp-chunk",
+      "transport": "mcp",
+      "mode": "chunk",
+      "request": {
+        "path": "/mcp",
+        "jsonrpc": "2.0",
+        "id": 621,
+        "method": "tools/call",
+        "params": {
+          "name": "get_platform_query_evidence",
+          "arguments": {
+            "queryId": 11,
+            "field": "rawResponse",
+            "offset": 2,
+            "length": 4
+          }
+        }
+      },
+      "expected": {
+        "queryId": 11,
+        "field": "rawResponse",
+        "encoding": "base64",
+        "offset": 2,
+        "byteLength": 4,
+        "totalBytes": 15,
+        "isNull": false,
+        "hasMore": true,
+        "data": "svCfmA==",
+        "decodedHex": "b2f09f98"
+      }
+    }
+  ],
+  "tables": [
+    "__drizzle_migrations",
+    "comparison_scope_proof",
+    "comparison_scope_proof_audit",
+    "difference_reason",
+    "enterprise",
+    "enterprise_alias",
+    "enterprise_alias_audit",
+    "enterprise_difference_comparison",
+    "enterprise_fact_receipt",
+    "enterprise_fact_revision",
+    "enterprise_profile_audit",
+    "event_correction_audit",
+    "evidence_correction_audit",
+    "evidence_correction_batch",
+    "evidence_impact_link_113",
+    "evidence_impact_progress_113",
+    "evidence_review_receipt_114",
+    "evidence_revision_113",
+    "evidence_revision_event_113",
+    "evidence_rule_release_114",
+    "evidence_scope_version_113",
+    "evidence_semantic_head_113",
+    "explanation_impact_113",
+    "file_maintenance_audit",
+    "file_parse_audit_105",
+    "file_physical_intent",
+    "import_batch",
+    "import_receipt",
+    "job",
+    "ocr_result",
+    "official_evidence_row_revision",
+    "platform_apply_projection",
+    "platform_body_leaf",
+    "platform_body_part",
+    "platform_body_root",
+    "platform_business_observation",
+    "platform_business_projection",
+    "platform_business_record",
+    "platform_business_record_version",
+    "platform_export_batch",
+    "platform_export_row",
+    "platform_query",
+    "platform_query_body_ref",
+    "platform_query_title_scope",
+    "platform_query_title_scope_error",
+    "platform_recognized_projection",
+    "platform_relation",
+    "platform_relation_body_ref",
+    "platform_version_body_ref",
+    "reconciliation_result",
+    "record",
+    "record_correspondence",
+    "record_correspondence_audit",
+    "record_event",
+    "record_evidence",
+    "service_credential",
+    "snapshot_judgment",
+    "snapshot_judgment_operation",
+    "source_document",
+    "stored_file",
+    "stored_file_audit",
+    "stored_file_part",
+    "title"
+  ],
+  "bindings": {
+    "seedSha256": "a340fa3bd470ee6db580474d76dab0dafd1de5cb6292e4ed87e61e44bdd431f4",
+    "parametersSha256": "a760e1fabae72daa11594dfd7923225b9d3c82c2ae3a91be162896ad83a56f56",
+    "semanticExpectedSha256": "d6098e6c570411398161262f04acaf189fc158f52d3f72cb67bbbb25041991ac",
+    "contractSha256": "c0e7cc9c2e90b6befaacf74e85244e95e7ec1f0e1a3cebc8a187ca4799a6c04c",
+    "fixtureSha256": "3441e19b612dd77ecd0941837f1f9c7066402b4cb013a3be8152dc6e78fcdf31",
+    "ledgerReceiptSha256": "9a1b84f2db9a428efdb5e87cbafff0b756d9de20636b18e8451f9e129c98b5da"
+  }
+}
