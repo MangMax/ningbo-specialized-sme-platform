@@ -97,3 +97,39 @@ it.each(['spawn', 'fork'] as const)('collects a descendant born just before %s l
     rmSync(dir, { recursive: true, force: true })
   }
 }, 12000)
+
+
+it('preserves native spawn and fork overloads, silent IPC, extra pipes and caller fd ownership', async () => {
+  const fs = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const { join } = await import('node:path')
+  const dir = fs.mkdtempSync(join(tmpdir(), 'owned-overloads-'))
+  const entry = join(dir, 'timer.cjs')
+  fs.writeFileSync(entry, 'setInterval(()=>{},1000)')
+  const fd = fs.openSync(join(dir, 'stderr'), 'w')
+  const children: ChildProcess[] = []
+  try {
+    // args omitted and supplied are separate Node public overloads.
+    children.push(spawn(process.execPath, { stdio: 'pipe' }))
+    children.push(spawn(process.execPath, [entry], { stdio: ['ignore', 'pipe', fd, 'pipe'] }))
+    children.push(fork(entry, { silent: true }))
+    children.push(fork(entry, [], { stdio: ['ignore', 'ignore', fd, 'ipc'] }))
+    expect(children[0]!.stdin).toBeTruthy()
+    expect(children[0]!.stdout).toBeTruthy()
+    expect(children[1]!.stderr).toBeNull()
+    expect(children[1]!.stdio[3]).toBeTruthy()
+    expect(children[2]!.connected).toBe(true)
+    expect(children[2]!.stderr).toBeTruthy()
+    expect(children[3]!.connected).toBe(true)
+    expect(children[3]!.stderr).toBeNull()
+    for (const child of children) expect(await stopOwnedChild(child)).toBeUndefined()
+    expect(fs.writeSync(fd, 'caller fd still open')).toBeGreaterThan(0)
+  } finally {
+    for (const child of children) {
+      if (child.pid && alive(child.pid)) process.kill(-child.pid, 'SIGKILL')
+      child.stdin?.destroy()
+    }
+    fs.closeSync(fd)
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+}, 12000)

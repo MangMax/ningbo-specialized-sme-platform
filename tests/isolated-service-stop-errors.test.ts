@@ -10,7 +10,8 @@ async function nativeCase(body: string) {
     import timers from 'node:timers/promises';
     import {syncBuiltinESMExports} from 'node:module';
     import {once} from 'node:events';
-    import {spawnOwnedChild,stopOwnedChild,startIsolatedNuxt} from ${JSON.stringify(new URL('../scripts/lib/isolated-local-services.mjs', import.meta.url).href)};
+    import * as helper from ${JSON.stringify(new URL('../scripts/lib/isolated-local-services.mjs', import.meta.url).href)};
+    const {spawnOwnedChild,forkOwnedChild,stopOwnedChild,startIsolatedNuxt,getOwnedChildStartFailure}=helper;
     const realKill=process.kill.bind(process), realPs=cp.execFileSync, realSleep=timers.setTimeout;
     const table=()=>realPs('ps',['-A','-o','pid=,pgid=,lstart='],{encoding:'utf8'});
     const live=p=>{try{realKill(p,0);return true}catch{return false}};
@@ -21,7 +22,11 @@ async function nativeCase(body: string) {
     const check=(error,termination)=>{assert(error instanceof AggregateError);assert.equal(error.stopResult.brand,'isolated-local-services.stop');assert.equal(error.stopResult.version,1);assert.equal(error.stopResult.termination,termination);assert.deepEqual(error.errors,errors);assert.deepEqual(error.stopResult.failures.map(f=>f.error),errors);for(let i=0;i<errors.length;i++){assert.equal(error.errors[i],errors[i]);assert.equal(error.errors[i].cause,errors[i].cause);assert(error.stopResult.failures[i].phase)}};
     const absent=c=>!table().split('\\n').some(l=>Number(l.trim().split(/\\s+/)[1])===c.pid);
     try { ${body} }
-    finally { process.kill=realKill;cp.execFileSync=realPs;timers.setTimeout=realSleep;syncBuiltinESMExports(); for(const c of children){try{realKill(-c.pid,'SIGKILL')}catch{} } await realSleep(100); }
+    finally { process.kill=realKill;cp.execFileSync=realPs;timers.setTimeout=realSleep;syncBuiltinESMExports(); const fs=await import('node:fs');
+      const journal=phase=>{if(process.env.OWNED_TEST_JOURNAL)fs.appendFileSync(process.env.OWNED_TEST_JOURNAL,JSON.stringify({phase,pids:children.map(c=>c.pid),table:table()})+'\\n')};
+      journal('before-harness');
+      for(const c of children){if(c.pid)try{realKill(-c.pid,'SIGKILL')}catch{};if(c.connected)c.disconnect();for(const s of c.stdio??[])s?.destroy?.();c.unref()}
+      await realSleep(150);journal('after-harness'); }
   `
   const child = spawn(process.execPath, ['--input-type=module', '-e', code], { stdio: ['ignore', 'pipe', 'pipe'] })
   let output = ''
@@ -133,8 +138,10 @@ it('fake identity replacement confirms only retirement of the original identity 
 it('fake unknown exited identity forbids signals and retains an unconfirmed receipt', async () => {
   await nativeCase(`
     let starting=true, group;
-    cp.execFileSync=(...args)=>starting?'':String(group)+' '+String(group)+' UNKNOWN';syncBuiltinESMExports();
-    const child=await start();group=child.pid;starting=false;
+    cp.execFileSync=()=>'';syncBuiltinESMExports();
+    let partial;try{await start()}catch(e){partial=e}
+    const child=getOwnedChildStartFailure(partial).child;children.push(child);group=child.pid;
+    cp.execFileSync=()=>String(group)+' '+String(group)+' UNKNOWN';syncBuiltinESMExports();
     const exit=once(child,'exit');realKill(-child.pid,'SIGKILL');await exit;
     process.kill=(pid,sig)=>{signals.push(sig);return realKill(pid,sig)};
     const {error}=await capture(child);assert.equal(error.stopResult.termination,'unconfirmed');assert.equal(error.stopResult.reason,'identity-unverified');assert.deepEqual(signals,[]);
@@ -166,5 +173,176 @@ it('retains final observation errors even when the real group has already disapp
     const child=await start();let gone=false, injected=false;
     cp.execFileSync=(...args)=>{if(gone&&!injected){injected=true;throw fault('FINAL')}const raw=realPs(...args);if(!raw.split('\\n').some(l=>Number(l.trim().split(/\\s+/)[1])===child.pid))gone=true;return raw};syncBuiltinESMExports();
     const {error}=await capture(child);check(error,'confirmed');assert(absent(child));assert.equal(errors.length,1);assert.equal(error.stopResult.failures[0].phase,'final-observe');
+  `)
+}, 12000)
+
+
+it.each(['spawn', 'fork'])('authenticates the original partial %s handle and preserves EIO after successful cleanup', async mode => {
+  await nativeCase(`
+    const fs=await import('node:fs'), os=await import('node:os'), path=await import('node:path');
+    const dir=fs.mkdtempSync(path.join(os.tmpdir(),'owned-partial-'));
+    try {
+      const entry=path.join(dir,'timer.cjs');fs.writeFileSync(entry,'setInterval(()=>{},1000)');
+      const unrelated=await start(); const realStart=cp.${mode};let native;
+      cp.${mode}=(...args)=>{native=realStart(...args);children.push(native);return native};
+      const original=fault('START_EIO');cp.execFileSync=()=>{throw original};syncBuiltinESMExports();
+      let error;try{${mode === 'spawn' ? "spawnOwnedChild(process.execPath,[entry],{stdio:'pipe'})" : "forkOwnedChild(entry,{silent:true})"}}catch(e){error=e}
+      assert(error);assert.equal(error.cause,original);
+      const receipt=getOwnedChildStartFailure(error);assert.equal(receipt.child,native);assert.equal(receipt.cause,original);assert(Object.isFrozen(receipt));assert(Object.isFrozen(error.startResult));
+      assert.deepEqual(error.startResult,{brand:'isolated-local-services.start',version:1,acquisition:'partial',termination:'unconfirmed',reason:'observation-failed',groupId:native.pid});
+      for(const fake of [new Error(),{...error},Object.create(error),Object.assign(new Error(),{startResult:{...error.startResult,version:2}})])assert.equal(getOwnedChildStartFailure(fake),undefined);
+      const asyncError=fault('ASYNC');native.emit('error',asyncError);assert.equal(receipt.errors[0],asyncError);assert(Object.isFrozen(receipt.errors));
+      cp.execFileSync=realPs;syncBuiltinESMExports();
+      const result=await capture(native);assert.equal(result.error.stopResult.termination,'confirmed');assert(result.error.errors.includes(asyncError));assert(absent(native));assert(live(unrelated.pid));assert.equal(error.cause,original);await realSleep(50);assert.equal(native.listenerCount('error'),0);
+    } finally {fs.rmSync(dir,{recursive:true,force:true})}
+  `)
+}, 12000)
+
+
+it.each(['spawn', 'fork'])('recovers partial %s after transient observation failure with undefined stop and strict cause', async mode => {
+  await nativeCase(`
+    const realStart=cp.${mode};let native;
+    cp.${mode}=(...args)=>{native=realStart(...args);children.push(native);return native};
+    const original=fault('START_EIO');cp.execFileSync=()=>{throw original};syncBuiltinESMExports();
+    let error;try{${mode === 'spawn' ? "spawnOwnedChild(process.execPath,['-e','setInterval(()=>{},1000)'],{stdio:'ignore'})" : "forkOwnedChild('unused.cjs',{execArgv:['-e','setInterval(()=>{},1000)'],silent:true})"}}catch(e){error=e}
+    assert.equal(error.cause,original);assert.equal(getOwnedChildStartFailure(error).child,native);
+    cp.execFileSync=realPs;syncBuiltinESMExports();
+    assert.equal(await stopOwnedChild(native),undefined);assert(absent(native));assert.equal(error.cause,original);
+  `)
+}, 12000)
+
+it.each(['leader-missing','leader-group-mismatch','leader-start-missing','early-exit'])('rejects startup %s with a registered partial handle', async reason => {
+  await nativeCase(`
+    const realSpawn=cp.spawn;let native;
+    cp.spawn=(...args)=>{native=realSpawn(...args);children.push(native);return native};
+    cp.execFileSync=(...args)=>{assert.equal(args[2].timeout,250);
+      ${reason === 'leader-missing' ? "return ''" : reason === 'leader-group-mismatch' ? "return native.pid+' '+process.pid+' Nov 8 2026'" : reason === 'leader-start-missing' ? "return native.pid+' '+native.pid" : "Object.defineProperty(native,'exitCode',{value:0,writable:true});return realPs(...args)"}
+    };syncBuiltinESMExports();
+    let error;try{spawnOwnedChild(process.execPath,['-e','setInterval(()=>{},1000)'],{stdio:'ignore'})}catch(e){error=e}
+    assert.equal(error.startResult.reason,${JSON.stringify(reason)});assert.equal(error.cause.reason,${JSON.stringify(reason)});assert.equal(getOwnedChildStartFailure(error).child,native);
+    // These are fake table/handle identity probes, not real PID reuse.
+    native.exitCode=null;cp.execFileSync=realPs;syncBuiltinESMExports();assert.equal(await stopOwnedChild(native),undefined);assert(absent(native));
+  `)
+}, 12000)
+
+it('bounds the actual startup exec timeout and retains its original ETIMEDOUT', async () => {
+  await nativeCase(`
+    const realSpawn=cp.spawn;let native,original;
+    cp.spawn=(...args)=>{native=realSpawn(...args);children.push(native);return native};
+    cp.execFileSync=(...args)=>{assert.equal(args[2].timeout,250);try{return realPs(process.execPath,['-e','setTimeout(()=>{},2000)'],args[2])}catch(e){original=e;throw e}};syncBuiltinESMExports();
+    const began=Date.now();let error;try{spawnOwnedChild(process.execPath,['-e','setInterval(()=>{},1000)'],{stdio:'ignore'})}catch(e){error=e}
+    assert(Date.now()-began<1500);assert.equal(original.code,'ETIMEDOUT');assert.equal(error.cause,original);assert.equal(getOwnedChildStartFailure(error).child,native);
+    cp.execFileSync=realPs;syncBuiltinESMExports();await stopOwnedChild(native);assert(absent(native));
+  `)
+}, 12000)
+
+it('never signals a provisional group during persistent ps failure and releases every local pipe and IPC handle', async () => {
+  await nativeCase(`
+    const unrelated=await start(),realSpawn=cp.spawn;let native;
+    cp.spawn=(...args)=>{native=realSpawn(...args);children.push(native);return native};
+    const original=fault('START_EIO');cp.execFileSync=()=>{throw original};syncBuiltinESMExports();
+    let error;try{spawnOwnedChild(process.execPath,['-e',"setInterval(()=>process.stderr.write('x'.repeat(8192)),1)"],{stdio:['pipe','pipe','pipe','ipc','pipe']})}catch(e){error=e}
+    const receipt=getOwnedChildStartFailure(error);for(let i=0;i<40;i++)native.emit('error',new Error('event '+i));assert.equal(receipt.errors.length,32);assert.equal(receipt.droppedErrors,8);
+    const snapshot=receipt.errors;native.emit('error',original);assert.equal(snapshot.length,32);
+    process.kill=(pid,sig)=>{signals.push([pid,sig]);return realKill(pid,sig)};
+    const {error:stop}=await capture(native);assert.equal(stop.stopResult.termination,'unconfirmed');assert.equal(stop.stopResult.finalMembers,null);assert.deepEqual(signals,[]);assert(live(native.pid));assert(live(unrelated.pid));assert.equal(native.connected,false);assert(native.stdio.filter(Boolean).every(s=>s.destroyed));assert.equal(error.cause,original);
+    cp.execFileSync=realPs;syncBuiltinESMExports();
+    const retry=await capture(native);assert.equal(retry.error.stopResult.termination,'confirmed');assert(absent(native));assert(live(unrelated.pid));
+  `)
+}, 12000)
+
+it('keeps native no-pid async errors and synchronous pre-acquisition throws distinct', async () => {
+  await nativeCase(`
+    let ps=0;cp.execFileSync=()=>{ps++;throw Error('must not observe no pid')};syncBuiltinESMExports();
+    process.kill=(pid,sig)=>{signals.push([pid,sig]);return realKill(pid,sig)};
+    for(const create of [()=>spawnOwnedChild('/not-an-executable-625'),()=>forkOwnedChild('unused.cjs',{execPath:'/not-an-executable-625',silent:true})]){const child=create();
+      children.push(child);assert.equal(child.pid,undefined);let original,closed=false;
+      child.on('error',e=>{original=e});child.on('close',()=>{closed=true});
+      await realSleep(50);assert.equal(original.code,'ENOENT');assert.equal(getOwnedChildStartFailure(original),undefined);assert(closed);assert.equal(await stopOwnedChild(child),undefined);
+    }
+    const realSpawn=cp.spawn,original=fault('SYNC');cp.spawn=()=>{throw original};syncBuiltinESMExports();
+    assert.throws(()=>spawnOwnedChild('unused'),e=>e===original);assert.equal(getOwnedChildStartFailure(original),undefined);assert.equal(ps,0);assert.deepEqual(signals,[]);
+  `)
+}, 12000)
+
+it.each([false,true])('keeps authenticated startup primary through wrapper partial catch (persistent=%s)', async persistent => {
+  await nativeCase(`
+    const realSpawn=cp.spawn;let native,count=0;const original=fault('START_EIO');
+    cp.spawn=(command,args,options)=>{native=realSpawn(process.execPath,['-e','setInterval(()=>{},1000)'],options);children.push(native);return native};
+    cp.execFileSync=(...args)=>{if(${persistent}||count++===0)throw original;return realPs(...args)};syncBuiltinESMExports();
+    process.kill=(pid,sig)=>{signals.push(sig);return realKill(pid,sig)};
+    let error;try{await startIsolatedNuxt({cwd:process.cwd()})}catch(e){error=e}
+    const primary=error instanceof AggregateError?error.errors[0]:error;
+    assert.equal(primary.cause,original);assert.equal(getOwnedChildStartFailure(primary).child,native);
+    if(${persistent}){assert.equal(error.cause,primary);assert.equal(error.stopResult.termination,'unconfirmed');assert(live(native.pid));assert.deepEqual(signals,[])}else{assert.equal(error,primary);assert(absent(native));assert.deepEqual(signals,['SIGTERM'])}
+  `)
+}, 12000)
+
+
+it('refuses to signal unestablished early-exit descendants then confirms only a valid empty group', async () => {
+  await nativeCase(`
+    const fs=await import('node:fs'),os=await import('node:os'),path=await import('node:path');
+    const dir=fs.mkdtempSync(path.join(os.tmpdir(),'owned-early-')),marker=path.join(dir,'ready');
+    let native;const realSpawn=cp.spawn;
+    cp.spawn=(...args)=>{native=realSpawn(...args);children.push(native);return native};
+    cp.execFileSync=(...args)=>{
+      // Block this runtime only, allowing the real launcher to create its child and exit.
+      for(let i=0;i<100&&!fs.existsSync(marker);i++)Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,10);
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,100);
+      throw fault('EARLY_START_EIO')
+    };syncBuiltinESMExports();
+    let error;try{spawnOwnedChild(process.execPath,['-e',
+      "const cp=require('node:child_process');cp.spawn(process.execPath,['-e',"+JSON.stringify('setInterval(()=>{},1000)')+"],{stdio:'ignore'});require('node:fs').writeFileSync("+JSON.stringify(marker)+",'ready');process.exit(0)"],{stdio:'ignore'})}catch(e){error=e}
+    const receipt=getOwnedChildStartFailure(error);assert.equal(receipt.child,native);assert.equal(error.startResult.reason,'observation-failed');
+    cp.execFileSync=realPs;syncBuiltinESMExports();await realSleep(100);assert.equal(native.exitCode,0);
+    assert(!absent(native));process.kill=(pid,sig)=>{signals.push(sig);return realKill(pid,sig)};
+    const result=await capture(native);assert.equal(result.error.stopResult.termination,'unconfirmed');assert.equal(result.error.stopResult.reason,'identity-unverified');assert.deepEqual(signals,[]);assert(!absent(native));
+    // Explicit harness recovery, never candidate cleanup credit.
+    realKill(-native.pid,'SIGKILL');await realSleep(100);
+    assert.equal(await stopOwnedChild(native),undefined);assert(absent(native));fs.rmSync(dir,{recursive:true,force:true});
+  `)
+}, 12000)
+
+
+it.each(['spawn-options','spawn-args','fork-options','fork-args'])('returns the identical native handle for %s', async mode => {
+  await nativeCase(`
+    const kind=${JSON.stringify(mode)}.startsWith('spawn')?'spawn':'fork',real=cp[kind];let native;
+    cp[kind]=(...args)=>{native=real(...args);children.push(native);return native};syncBuiltinESMExports();
+    let child;
+    if(${JSON.stringify(mode)}==='spawn-options')child=spawnOwnedChild(process.execPath,{stdio:'pipe'});
+    if(${JSON.stringify(mode)}==='spawn-args')child=spawnOwnedChild(process.execPath,['-e','setInterval(()=>{},1000)'],{stdio:'ignore'});
+    if(${JSON.stringify(mode)}==='fork-options')child=forkOwnedChild('unused.cjs',{silent:true,execArgv:['-e','setInterval(()=>{},1000)']});
+    if(${JSON.stringify(mode)}==='fork-args')child=forkOwnedChild('unused.cjs',[],{stdio:['ignore','ignore','pipe','ipc'],execArgv:['-e','setInterval(()=>{},1000)']});
+    assert.equal(child,native);assert.equal(await stopOwnedChild(child),undefined);assert(absent(child));
+  `)
+}, 12000)
+
+
+it('retains real native IPC error objects on a partial handle through confirmed stop and removes its temporary listener on close', async () => {
+  await nativeCase(`
+    const realSpawn=cp.spawn;let native;
+    cp.spawn=(...args)=>{native=realSpawn(...args);children.push(native);return native};
+    cp.execFileSync=()=>{throw fault('START_EIO')};syncBuiltinESMExports();
+    let error;try{spawnOwnedChild(process.execPath,['-e','setInterval(()=>{},1000)'],{stdio:['ignore','pipe','pipe','ipc']})}catch(e){error=e}
+    const receipt=getOwnedChildStartFailure(error);let event;
+    const external=e=>{event=e};native.on('error',external);
+    native.disconnect();native.send('after disconnect');await realSleep(25);
+    assert.equal(event.code,'ERR_IPC_CHANNEL_CLOSED');assert.equal(receipt.errors[0],event);
+    cp.execFileSync=realPs;syncBuiltinESMExports();const result=await capture(native);
+    assert.equal(result.error.stopResult.termination,'confirmed');assert(result.error.errors.includes(event));assert(absent(native));
+    await realSleep(25);assert.equal(native.listenerCount('error'),1);native.off('error',external);assert.equal(native.listenerCount('error'),0);
+  `)
+}, 12000)
+
+it.each(['missing', 'wrong-group', 'empty-start'])('refuses provisional stop authority for a live native leader with %s observation', async mode => {
+  await nativeCase(`
+    const realSpawn=cp.spawn;let native;
+    cp.spawn=(...args)=>{native=realSpawn(...args);children.push(native);return native};
+    cp.execFileSync=()=>${mode === 'missing' ? "(process.pid+' '+native.pid+' MEMBER')" : mode === 'wrong-group' ? "(native.pid+' '+process.pid+' WRONG')" : "(native.pid+' '+native.pid)"};syncBuiltinESMExports();
+    let error;try{spawnOwnedChild(process.execPath,['-e','setInterval(()=>{},1000)'],{stdio:'ignore'})}catch(e){error=e}
+    assert.equal(getOwnedChildStartFailure(error).child,native);
+    process.kill=(pid,sig)=>{signals.push(sig);return realKill(pid,sig)};
+    const result=await capture(native);assert.equal(result.error.stopResult.termination,'unconfirmed');assert.equal(result.error.stopResult.reason,'identity-unverified');assert.deepEqual(signals,[]);assert(live(native.pid));
+    cp.execFileSync=realPs;syncBuiltinESMExports();assert.equal(await stopOwnedChild(native),undefined);assert(absent(native));
   `)
 }, 12000)
