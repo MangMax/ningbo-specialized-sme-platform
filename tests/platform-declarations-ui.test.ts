@@ -59,9 +59,14 @@ describe('申报记录表格', () => {
     try {
       const row = view.get('[data-testid="platform-declaration-row"]')
       const cells = row.findAll('td').map(cell => cell.text())
-      expect(cells[1]).toBe('未提供')
-      expect(cells[2]).toBe('未提供')
-      expect(cells[3]).toBe('未提供')
+      expect(cells[1]).toBe('原文未提供')
+      expect(cells[2]).toBe('原文未提供')
+      expect(cells[3]).toBe('原文未提供')
+      expect(cells[4]).toBe('原文未提供')
+      expect(row.text()).not.toContain('业务字段未同步')
+      const card = view.get('[data-testid="platform-declaration-card"]')
+      expect(card.text()).toContain('原文未提供')
+      expect(card.text()).not.toContain('业务字段未同步')
     } finally { view.unmount() }
   })
 

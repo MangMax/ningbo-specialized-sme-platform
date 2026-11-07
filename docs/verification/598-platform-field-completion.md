@@ -66,3 +66,9 @@ ACCEPTANCE_598_DIR=/absolute/new-empty-directory pnpm exec vitest run --root "$P
 隔离样本使用 SQLite backup API 生成 `real-before-gap.sqlite`，SHA-256 `e661b750a9168e63f2dd5ecc455658983e9ff475236d4312cd752eaaeb88220d`。隔离库 query/relation/业务身份/内容版本/观察的前后完整快照 SHA-256 同为 `2a3cc0fd0cb9a8c30f35b5001a0433231a38b391caa44c3d515687d568136679`。重建样本获得新本地 ID；原 relation/version/hash 只在提取清单中保留追溯，不宣称已证明原库非空人工决定不变。
 
 T3 preview 对这五家实际 raw 重建的三张列表分别在 1280px/390px 查看并操作称号筛选，证据 `real-browser.json`；单版本局限仍在。原库整库备份/原 ID 与非空人工决定的完整不变量、真实多版本浏览器、故障时外部原档保留、完整筛选组合仍阻断最终 AC 签收。
+
+## 全套发现的范围内窄修
+
+全套发现 `platform-declarations-ui.test.ts` 的 `keeps unknown values explicit instead of guessing a year or declaration kind` 仍精确要求旧文案“未提供”。独立复现 1 FAIL / 3 PASS：实际“原文未提供”，夹具 ruleVersion 非空，符合 #597。将三项精确断言更新为新契约，并增加状态列、移动卡片及排除“业务字段未同步”的断言，未降低覆盖或修改生产行为。最终重跑双入口 HTTP、申报 UI 与投影详情 UI：3 文件 / 8 项 PASS（`final-ui-fix.log`）。
+
+全套还发现 logging-usability/field-policy HTTP、platform-business-record-candidates、record-comparison-evidence-ui 等范围外失败，具体用例和错误保留 `full-suite.log`。全套在验收文件增补期间启动，不能作为最终提交的不可变绿灯；最终定稿用例另有单独重跑证据。不将工作区诊断签成最终 SHA 全绿。
