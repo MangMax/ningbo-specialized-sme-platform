@@ -283,6 +283,7 @@ it('refuses to signal unestablished early-exit descendants then confirms only a 
   await nativeCase(`
     const fs=await import('node:fs'),os=await import('node:os'),path=await import('node:path');
     const dir=fs.mkdtempSync(path.join(os.tmpdir(),'owned-early-')),marker=path.join(dir,'ready');
+    try {
     let native;const realSpawn=cp.spawn;
     cp.spawn=(...args)=>{native=realSpawn(...args);children.push(native);return native};
     cp.execFileSync=(...args)=>{
@@ -299,7 +300,8 @@ it('refuses to signal unestablished early-exit descendants then confirms only a 
     const result=await capture(native);assert.equal(result.error.stopResult.termination,'unconfirmed');assert.equal(result.error.stopResult.reason,'identity-unverified');assert.deepEqual(signals,[]);assert(!absent(native));
     // Explicit harness recovery, never candidate cleanup credit.
     realKill(-native.pid,'SIGKILL');await realSleep(100);
-    assert.equal(await stopOwnedChild(native),undefined);assert(absent(native));fs.rmSync(dir,{recursive:true,force:true});
+    assert.equal(await stopOwnedChild(native),undefined);assert(absent(native));
+    } finally { fs.rmSync(dir,{recursive:true,force:true}) }
   `)
 }, 12000)
 
