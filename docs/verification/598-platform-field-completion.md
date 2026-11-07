@@ -149,3 +149,33 @@ CI、厂商重新采集、生产写入/部署、父代理独立审查均 UNRUN�
 固定输入全套第一次退出1，但没有正常汇总，尾部大量文件为0 test，且额外报告 comparison-offmain HTTP FAIL；不能据此编造通过数。该HTTP及一个0-test文件 `file-parts` 定向重跑2文件/30PASS（`final-runner-diagnostic.log/json`），未复现，根因仍UNKNOWN，不能抹去全套FAIL。
 
 随后同固定输入、同单worker、不排除测试，改JSON报告器再跑（`final-full-suite-2.log`）。运行约6分钟时宿主余量降至约434MiB，而本轮外部completion目录仅141MiB。为防止继续测试耗尽宿主磁盘，向本轮精确Vitest进程56992发送SIGINT，保留原日志；不删除用户文件。该次完整套件完成状态为**BLOCKED/未完整执行**，不是PASS。最终全套完整汇总与整库备份都需要先有足够可用容量；提供至少12GiB的外部备份目标并恢复测试磁盘余量后可续跑。`final-host-capacity.txt`保留容量证据。上轮6927PASS/13FAIL及其后窄修一项的历史事实原样保留；12项相同基线失败已有本轮独立对照，不推算最终全套通过数。
+
+## 磁盘恢复后最终续作（2026-11-07）
+
+本轮在 `/Users/mang/.t3/worktrees/app/t3-558b83c8` 干净隔离 checkout，将 `68121750` 安全快进到既有 PR605 `aa297387b7a806ebe11e8205dce46e6419b484d4`，tree `59448105138460281d6d32eaae94f799bb34d05d`；fetch/merge 最新 integration 为 Already up to date。未丢弃旧候选。原报告及 `/tmp/598-acceptance/completion` 均存活；外部 `evidence-inventory.json` 登记现存非数据库证据字节数与 SHA-256。浏览器 JSON 可解析，多版本38条、组合筛选6条、缺投影6条，均覆盖三页面1280/390；本轮无生产源码、UI或测试变更，沿用前轮准确对象和受控第二版本边界，不重跑浏览器、不冒称新鲜交互。
+
+新证据目录：`/Users/mang/Workfile/598-resume-20261107`，在 Git 外。磁盘初始58GiB可用，解除上轮容量阻断，不抹去其 FAIL/UNKNOWN/中断事实。
+
+### 完整原库一致备份及原ID核对
+
+原源容器 `spztx-main-49133834-app`，卷 `spztx-import-repair-20261107-state`，路径 `/state/data/roster.db`。Node `node:sqlite` 的 `DatabaseSync(...,{readOnly:true})` + `backup()`，UTC `2026-11-07T13:18:47.622Z` 至 `13:20:17.781Z`，2833035页；导出为外部 `original-consistent.sqlite`，11,604,111,360字节。宿主只读 `PRAGMA integrity_check` = ok，SHA-256 `e7c36cba6b2afc3b424b0322756c4454c4dd69a8aa5daf43d28b5e41204f570b`；验证时间13:21:30–13:23:15 UTC，逐表行数保留 `backup-integrity.json`，包括 difference_reason=1449、record_correspondence=46682、record_correspondence_audit=58139。未写原源或生产服务，未复制裸活动DB替代备份API。
+
+以 APFS `cp -c` 建立独立 `repair-isolated.sqlite`；已验证备份保留不变。`full-original-repair.mjs` 冻结前述五家15个原 relationId/versionId，按这些版本仅删除隔离副本投影，再通过 loopback 生产产物公开 preflight/relationId commit、同键重试恢复。原ID映射与请求/回执见 `full-original-mappings.json`、`full-original-{request,preflight,commit,commit-retry}.json`。12张表全部按 rowid 流式 JSON 行加换行计算 SHA-256 和行数，前后逐表完全一致：query、relation、business record/version/observation、enterprise、record/event、alias、correspondence、difference、correspondence audit（`full-original-before.json` / `full-original-after.json`）。本轮因此覆盖真实非空既有决定与完整原ID，不再仅靠受控决定夹具。入库批次/维护回执是预期新增，不在不变量表中。
+
+`full-original-readback.mjs` 从三独立查询API及版本详情定位原 versionId，对原 `expected.json` 的15条独立字面预期逐字段核对 PASS（`full-original-readbacks.json`）。初次脚本把 DTO versionId 误写为 version.id 的 TypeError 保留 `full-original-readback-initial-fail.log`，修正脚本后通过；未改生产契约。没有将这一历史补齐操作冒称正常采集或厂商重新采集；日常完整原行双入口/失败回滚仍由前述固定样本证据支持。
+
+### 本轮检查与AC处置增量
+
+同一固定 aa297387 源码新鲜 typecheck/build 退出0（`typecheck.log`、`build.log`）。生产 OpenAPI 首次误用 DATABASE_URL，启动因目录不存在失败（`openapi.log`）；改用既有隔离库 NUXT_DB_PATH 重跑退出0（`openapi-2.log`）：三文档端点404、health/jobs kinds 200。未访问生产HTTP。
+
+AC1 的全库备份容量阻断已解除，原ID隔离副本负例和修复PASS；AC7 新鲜全量不变量含真实非空决定PASS。AC2–6沿用已冻结的实际/受控双入口、并发、MCP、失败回滚证据，原ID维护入口与精确版本读回为本轮新增PASS。AC8沿用前轮三页六视口的实际原文+明确受控第二版本交互；AC9证据存活与精确对象如上；AC11未部署/未生产写入，条件未触发；AC12操作者清单继续有效。AC10最终全套结果在下文单列，不把已知基线失败签成全套绿色。
+
+### 最终全套正常完成与有界交付
+
+命令：`pnpm exec vitest run --root /Users/mang/.t3/worktrees/app/t3-558b83c8 --maxWorkers=1 --reporter=default --reporter=json --outputFile=/Users/mang/Workfile/598-resume-20261107/full-suite.json`。固定生产/测试输入 aa297387 / tree59448105；运行期间仅追加本报告。退出 **1**，1564.60s，**6 failed / 457 passed / 2 skipped files（465）；12 failed / 6928 passed / 52 skipped / 60 todo tests（7052）**。`full-suite.log/json/exit` 和精确 `final-failures.json` 保留。双入口HTTP与申报UI本轮全套均PASS。先前 comparison-offmain 额外全套FAIL本轮PASS，不追溯抹除其UNKNOWN或中断历史。
+
+精确12项与上文独立规格前基线 `c14ccb339c19b606b70c14c52a4d01fb859802ac` 的六文件12FAIL逐项一致：comparison六项、annual两项、logging-field-policy一项、logging-usability一项、business-record-candidates一项、record-comparison-evidence-ui一项。本轮未引入新测试失败；不是全仓绿色保证。保持原错误/断言，未修范围外资源预算、年度读回、日志路由目录或PDF链接。前轮baseline与candidate各12FAIL/231PASS/1SKIP为继承证据，本轮全套为新鲜证据，不混称baseline全套也重跑。
+
+AC10 规定检查均已执行完成；全套红灯由上述确认的基线失败阻断无条件绿色签收，交父代理决定是否按有界已知失败接受，不由实现者豁免。其余本票可执行验收已具证据：AC1/7原容量和原ID/真实非空决定缺口已补齐；AC8保留实际原文加受控第二版本的真实浏览器边界。厂商重采、CI、父代理独立审查、生产写入/部署仍UNRUN；后两项不在本轮授权。没有merge/close/main/deploy，也未启动子代理。
+
+收尾再次 fetch并merge `origin/integration/595-atomic-platform-fields`，仍 `681217505fe9a13c4bc26b4d539e86aa2277d0d4` / Already up to date。最终新提交仅本报告；最终head/tree写入外部 `final-candidate.txt` 并随PR605交付，不把报告提交冒称已重新执行所有测试。操作者仍须逐批按前述清单读回，不能把本次选定15版本维护或历史整库备份当未来批次完成证明。
