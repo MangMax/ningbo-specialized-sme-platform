@@ -11,17 +11,145 @@ import { execFileSync } from 'node:child_process'
 import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { migrate } from 'drizzle-orm/better-sqlite3/migrator'
-import { spawnOwnedChild as spawn, reserveLoopbackPort, waitForHttp, stopOwnedChild } from './lib/isolated-local-services.mjs'
+import { spawnOwnedChild as spawn, reserveLoopbackPort, waitForHttp, getOwnedChildStartFailure, stopOwnedChild } from './lib/isolated-local-services.mjs'
 const root = mkdtempSync(join(tmpdir(), 'logs182-public-'))
 const business = join(root, 'synthetic.db')
-const db = new Database(business)
-migrate(drizzle(db), { migrationsFolder: resolve('db/migrations') })
-db.close()
-const before = readFileSync(business)
-const port = await reserveLoopbackPort(),
-  base = `http://127.0.0.1:${port}`
 const token = 'fixture-api-182',
   marker = 'PRIVATE182_RAW_NONCE'
+let db, before, port, base, child, source, manifest
+let output = ''
+const results = []
+const lifecycle = { errors: [] }
+
+// Acquisition attempts remain accountable even when the native launcher throws.
+const owned = {}
+function errorDetail(error) {
+  return { message: String(error?.stack || error), code: error?.code,
+    cause: error?.cause && errorDetail(error.cause),
+    errors: error?.errors && Array.from(error.errors, errorDetail),
+    startResult: error?.startResult, stopResult: error?.stopResult }
+}
+async function cleanupStep(name, action) {
+  try { await action() }
+  catch (error) {
+    lifecycle.errors.push({ name, error: errorDetail(error) })
+    console.error('Cleanup failure:', name, error)
+    process.exitCode = 1
+  }
+}
+function acquire(name, start) {
+  const state = owned[name] = { attempted: true, confirmed: false }
+  const register = child => {
+    state.child = child
+    state.closed = child.exitCode !== null || child.signalCode !== null
+      ? Promise.resolve() : new Promise(resolve => child.once('close', resolve))
+    child.on('error', error => {
+      lifecycle.errors.push({ name: name + ' event', error: errorDetail(error) })
+      process.exitCode = 1
+    })
+    for (const stream of new Set(child.stdio ?? [])) {
+      stream?.on?.('error', error => {
+        lifecycle.errors.push({ name: name + ' stream', error: errorDetail(error) })
+        process.exitCode = 1
+      })
+      stream?.resume?.()
+    }
+    return child
+  }
+  try { return register(start()) }
+  catch (error) {
+    const partial = getOwnedChildStartFailure(error)
+    if (partial) register(partial.child)
+    throw error
+  }
+}
+async function stopResource(name) {
+  const state = owned[name]
+  if (!state?.child) return
+  state.stopAttempted = true
+  // Let already queued native exit/error events settle before stop observes identity.
+  await new Promise(resolve => setImmediate(resolve))
+  try { await stopOwnedChild(state.child); state.confirmed = true }
+  catch (error) {
+    const result = state.stopResult = error?.stopResult
+    state.confirmed = result?.brand === 'isolated-local-services.stop' && result.version === 1 &&
+      result.termination === 'confirmed' && result.groupId === state.child.pid
+    throw error
+  }
+}
+async function releaseUnknown() {
+  for (const [name, state] of Object.entries(owned)) {
+    const child = state.child
+    if (!child || state.confirmed) continue
+    await cleanupStep(name + ' IPC', () => { if (child.connected) child.disconnect() })
+    for (const [index, stream] of [...new Set(child.stdio ?? [])].entries()) {
+      await cleanupStep(name + ' stdio ' + index, () => stream?.destroy?.())
+    }
+    await cleanupStep(name + ' unref', () => child.unref())
+  }
+  await new Promise(resolve => setImmediate(resolve))
+}
+function ownershipReceipt() {
+  return Object.fromEntries(Object.entries(owned).map(([name, state]) => [name, {
+    attempted: state.attempted, pid: state.child?.pid, stopAttempted: state.stopAttempted,
+    confirmed: state.confirmed, stopResult: state.stopResult
+  }]))
+}
+let stopPromise
+function stop() {
+  return stopPromise ??= closeout().catch((error) => {
+    console.error(error)
+    process.exitCode = 1
+  })
+}
+async function closeout() {
+  await cleanupStep('server', () => stopResource('server'))
+  await releaseUnknown()
+  await cleanupStep('database', () => db?.close())
+  await cleanupStep('business bytes', async () => {
+  const businessUnchanged = before.equals(readFileSync(business))
+  writeFileSync(
+    join(root, 'browser-closeout.json'),
+    JSON.stringify(
+      {
+        source,
+        owned: ownershipReceipt(),
+        errors: lifecycle.errors,
+        businessUnchanged,
+        outputPrivacy: !output.includes(marker)
+      },
+      null,
+      2
+    )
+  )
+  assert.ok(businessUnchanged, 'Synthetic business DB bytes changed after owned child shutdown')
+  })
+  await cleanupStep('output', () => writeFileSync(join(root, 'server-output.log'), output))
+  await cleanupStep('results', () => writeFileSync(join(root, 'results.json'), JSON.stringify(results, null, 2)))
+  await cleanupStep('lifecycle receipt', () => writeFileSync(join(root, 'lifecycle.json'), JSON.stringify({ root, source, owned: ownershipReceipt(), errors: lifecycle.errors }, null, 2)))
+}
+let endServing
+const servingEnded = new Promise((resolve) => {
+  endServing = resolve
+})
+let signalExitStarted = false
+const onSignal = () => {
+  if (signalExitStarted) return
+  signalExitStarted = true
+  void stop().then(endServing)
+}
+process.on('SIGTERM', onSignal)
+process.on('SIGINT', onSignal)
+async function run() {
+db = new Database(business)
+migrate(drizzle(db), { migrationsFolder: resolve('db/migrations') })
+db.close()
+db = undefined
+before = readFileSync(business)
+port = await reserveLoopbackPort()
+base = `http://127.0.0.1:${port}`
+if (signalExitStarted) throw new Error('Interrupted before server acquisition')
+
 const env = {
   ...process.env,
   NODE_ENV: 'production',
@@ -41,18 +169,16 @@ const env = {
   NUXT_OCR_TOKEN: '',
   NUXT_PLATFORM_COOKIE: ''
 }
-const child = spawn(process.execPath, ['.output/server/index.mjs'], {
+child = acquire('server', () => spawn(process.execPath, ['.output/server/index.mjs'], {
   env,
   stdio: ['ignore', 'pipe', 'pipe']
-})
-let output = ''
+}))
 child.stdout.on('data', (b) => {
   output += b
 })
 child.stderr.on('data', (b) => {
   output += b
 })
-const results = []
 const check = (name, fn) => {
   fn()
   results.push({ name, result: 'PASS' })
@@ -70,49 +196,13 @@ async function settle(minimum = 1) {
   }
   throw Error('real drain readback timed out')
 }
-const source = {
+source = {
   sha: execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(),
   tree: execFileSync('git', ['rev-parse', 'HEAD^{tree}'], { encoding: 'utf8' }).trim(),
   dirty: !!execFileSync('git', ['status', '--porcelain'], { encoding: 'utf8' }).trim()
 }
-const manifest = { root, base, pid: child.pid, source }
+manifest = { root, base, pid: child.pid, source }
 writeFileSync(join(root, 'manifest.json'), JSON.stringify(manifest, null, 2))
-let stopPromise
-function stop() {
-  return stopPromise ??= closeout().catch((error) => {
-    console.error(error)
-    process.exitCode = 1
-  })
-}
-async function closeout() {
-  await stopOwnedChild(child)
-  const businessUnchanged = before.equals(readFileSync(business))
-  writeFileSync(
-    join(root, 'browser-closeout.json'),
-    JSON.stringify(
-      {
-        source,
-        businessUnchanged,
-        outputPrivacy: !output.includes(marker)
-      },
-      null,
-      2
-    )
-  )
-  writeFileSync(join(root, 'server-output.log'), output)
-  writeFileSync(join(root, 'results.json'), JSON.stringify(results, null, 2))
-  assert.ok(businessUnchanged, 'Synthetic business DB bytes changed after owned child shutdown')
-}
-let endServing
-const servingEnded = new Promise((resolve) => {
-  endServing = resolve
-})
-const onSignal = () => {
-  void stop().then(endServing)
-}
-process.once('SIGTERM', onSignal)
-process.once('SIGINT', onSignal)
-try {
   await waitForHttp(base + '/api/health', { child })
   for (let i = 0; i < 65; i++)
     await request('/api/health?raw=' + marker, {
@@ -189,9 +279,9 @@ try {
     console.log('Serving isolated fixture; terminate this owned verifier to stop.')
     await servingEnded
   }
-} catch (error) {
+}
+try { await run() } catch (error) {
+  lifecycle.errors.push({ name: 'primary', error: errorDetail(error) })
   console.error(error)
   process.exitCode = 1
-} finally {
-  await stop()
-}
+} finally { await stop() }
