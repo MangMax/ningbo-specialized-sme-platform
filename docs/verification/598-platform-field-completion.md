@@ -72,3 +72,14 @@ T3 preview 对这五家实际 raw 重建的三张列表分别在 1280px/390px �
 全套发现 `platform-declarations-ui.test.ts` 的 `keeps unknown values explicit instead of guessing a year or declaration kind` 仍精确要求旧文案“未提供”。独立复现 1 FAIL / 3 PASS：实际“原文未提供”，夹具 ruleVersion 非空，符合 #597。将三项精确断言更新为新契约，并增加状态列、移动卡片及排除“业务字段未同步”的断言，未降低覆盖或修改生产行为。最终重跑双入口 HTTP、申报 UI 与投影详情 UI：3 文件 / 8 项 PASS（`final-ui-fix.log`）。
 
 全套还发现 logging-usability/field-policy HTTP、platform-business-record-candidates、record-comparison-evidence-ui 等范围外失败，具体用例和错误保留 `full-suite.log`。全套在验收文件增补期间启动，不能作为最终提交的不可变绿灯；最终定稿用例另有单独重跑证据。不将工作区诊断签成最终 SHA 全绿。
+
+## 全套最终结果
+
+`pnpm exec vitest run --root /Users/mang/.t3/worktrees/app/t3-683b7ec8 --maxWorkers=1` 最终退出 **1**，耗时 1496.66s：
+
+- Test Files：7 failed / 456 passed / 2 skipped（465）。
+- Tests：13 failed / 6927 passed / 52 skipped / 60 todo（7052）。
+
+完整失败分组：comparison-input 六项、annual-process-load-more 两项、logging-field-policy HTTP 一项、logging-usability HTTP 一项、business-record-candidates 一项、record-comparison-evidence-ui 一项、declarations-ui 一项。最后一项已按上述窄修并在定稿后重跑通过；其余 **12 项仍未解决**，不推断重跑全套后的通过数。未再次运行 25 分钟全套，最终提交全套绿色认证 **UNRUN/阻断**。全套发现的日志 route catalog 差异、资源费用常量/上限、年度 reset 和对应证据链接均未在本票扩大修改。
+
+最终新增/修正测试验收：15 文件 / 100 PASS 的定向批次，加定稿后 3 文件 / 8 PASS（有重叠，不相加冒称唯一项数）。生产源码未变，typecheck/build/生产 OpenAPI 退出 0 的证据来自本轮相同生产源码；没有把后续文档/测试提交伪称重建产物。
