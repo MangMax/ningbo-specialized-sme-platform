@@ -33,11 +33,12 @@ async function runCase(target: number, mode: string) {
       const kind=cmd==='pnpm'?'builder':args[0]==='.output/server/index.mjs'?'server':'chrome';active={builder:1,server:2,chrome:3}[kind];
       const child=cp.spawn(process.execPath,[${JSON.stringify(join(dir, 'child.cjs'))}],{...options,env:{...options.env,CARRIER_KIND:kind,CASE_MODE:${JSON.stringify(mode)},PROFILE:args.find(x=>x.startsWith('--user-data-dir='))?.slice(16)}});
       log({event:'native',pid:child.pid,index:active,kind,port:options.env.NITRO_PORT,profile:args.find(x=>x.startsWith('--user-data-dir='))?.slice(16)});
+      if(active===${target} && ${JSON.stringify(mode)}.startsWith('stream-'))setTimeout(()=>child[${JSON.stringify(mode)}==='stream-stdout'?'stdout':'stderr'].emit('error',Object.assign(new Error('native '+${JSON.stringify(mode)}+' EIO'),{code:'EIO'})),80);
       return child;
     }
     export function execFileSync(cmd,args,options){
       if(cmd==='ps' && active===${target}) {
-        if(!failed && ${JSON.stringify(!['normal', 'signals', 'profile-error', 'result-error', 'db-error', 'init'].includes(mode))}) {
+        if(!failed && ${JSON.stringify(!['normal', 'signals', 'profile-error', 'result-error', 'db-error', 'init', 'stream-stdout', 'stream-stderr'].includes(mode))}) {
           failed=true;
           try {return cp.execFileSync(process.execPath,['-e','setTimeout(()=>{},350)'],options)}
           catch(error){log({event:'timeout',code:error.code,timeout:options.timeout,timeoutPid:error.pid});if(${JSON.stringify(mode === 'early')})cp.execFileSync(process.execPath,['-e','setTimeout(()=>{},1000)']);throw error}
@@ -55,7 +56,7 @@ async function runCase(target: number, mode: string) {
     let native, original;
     export function spawnOwnedChild(...args){try{native=real.spawnOwnedChild(...args);return native}catch(error){original=error;native=real.getOwnedChildStartFailure(error)?.child;log({event:'partial',pid:native?.pid,cause:error.cause?.code,authenticated:!!native,clone:!!real.getOwnedChildStartFailure({...error}),forged:!!real.getOwnedChildStartFailure(Object.assign(new Error(),{startResult:{...error.startResult,version:2}}))});throw error}}
     export function getOwnedChildStartFailure(error){const value=real.getOwnedChildStartFailure(error);log({event:'recover',sameError:error===original,sameChild:value?.child===native});return value}
-    export async function stopOwnedChild(child){if(${JSON.stringify(mode === 'early')})await new Promise(r=>setTimeout(r,25));log({event:'stop',pid:child.pid,sameChild:child===native});try {await real.stopOwnedChild(child);log({event:'stopped',pid:child.pid})}catch(error){log({event:'stop-error',pid:child.pid,result:error.stopResult});throw error}}
+    export async function stopOwnedChild(child){if(${JSON.stringify(mode === 'early')})await new Promise(r=>setTimeout(r,25));log({event:'stop',pid:child.pid,sameChild:child===native});try {await real.stopOwnedChild(child);log({event:'stopped',pid:child.pid});if(${JSON.stringify(mode === 'wrong-group-stop')})throw Object.assign(new Error('simulated foreign-group stop receipt'),{stopResult:{brand:'isolated-local-services.stop',version:1,termination:'confirmed',groupId:child.pid+1000000}})}catch(error){log({event:'stop-error',pid:child.pid,result:error.stopResult});throw error}}
   `)
   writeFileSync(join(dir, 'hook.mjs'), `
     import {registerHooks,syncBuiltinESMExports} from 'node:module';import fs from 'node:fs';
@@ -234,4 +235,33 @@ it('stops all three normal acquired groups while the synthetic CDP business lane
   expect(r.events.filter(x => x.event === 'stopped')).toHaveLength(3)
   expect(r.before).toEqual([])
   expect(r.profileExists).toBe(false)
+}, 12000)
+
+// Receipt substitution exercises the caller gate; it is not native authentication evidence.
+it('retains the profile for a simulated confirmed receipt from another group', async () => {
+  const r = await runCase(3, 'wrong-group-stop')
+  expect(r.hung).toBe(false)
+  expect(r.code).toBe(1)
+  expect(r.output).toContain('simulated foreign-group stop receipt')
+  expect(r.profileExists).toBe(true)
+  expect(r.result.children.every((x: any) => x.termination === 'unconfirmed')).toBe(true)
+  expect(r.before).toEqual([]) // Actual stop succeeded before receipt substitution.
+}, 12000)
+it.each([1, 2, 3])('cleans callsite %s after an actual stdout error event', async target => {
+  const r = await runCase(target, 'stream-stdout')
+  expect(r.hung).toBe(false)
+  expect(r.code).toBe(1)
+  expect(r.output).toContain('native stream-stdout EIO')
+  expect(r.output).not.toContain("Unhandled 'error' event")
+  expect(r.before).toEqual([])
+  expect(r.events.filter(x => x.event === 'stop').map(x => x.pid).sort()).toEqual(r.events.filter(x => x.event === 'native').map(x => x.pid).sort())
+  expect(r.result.failures.join('\n')).toContain('native stream-stdout EIO')
+}, 12000)
+it('cleans a builder after an actual stderr error event', async () => {
+  const r = await runCase(1, 'stream-stderr')
+  expect(r.hung).toBe(false)
+  expect(r.code).toBe(1)
+  expect(r.output).toContain('native stream-stderr EIO')
+  expect(r.before).toEqual([])
+  expect(r.events.filter(x => x.event === 'stop')).toHaveLength(1)
 }, 12000)

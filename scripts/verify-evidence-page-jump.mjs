@@ -73,6 +73,7 @@ async function until(label, probe, timeout = 30_000) {
   const end = Date.now() + timeout
   do {
     if (interrupted) throw new Error(interrupted)
+    abort.signal.throwIfAborted()
     if (await probe()) return
     await sleep(100, undefined, { signal: abort.signal })
   } while (Date.now() < end)
@@ -80,11 +81,19 @@ async function until(label, probe, timeout = 30_000) {
 }
 // Attempts are journalled before native acquisition; missing handles are unknown.
 function own(cmd, argv, env) {
+  abort.signal.throwIfAborted()
   const resource = { cmd, argv, child: undefined, termination: 'unconfirmed', stop: undefined }
   children.push(resource)
   const register = child => {
     resource.child = child
-    child.on('error', error => { failures.push(`spawn: ${error.stack}`) })
+    const fail = (label, error) => {
+      failures.push(`${label}: ${error.stack}`)
+      abort.abort(error)
+      try { cdp?.close() } catch(closeError) { failures.push(`child failure CDP cleanup: ${closeError.stack}`) }
+    }
+    child.on('error', error => fail('spawn', error))
+    child.stdout?.on('error', error => fail('stdout', error))
+    child.stderr?.on('error', error => fail('stderr', error))
     child.stdout?.on('data', data => process.stdout.write(data))
     child.stderr?.on('data', data => process.stderr.write(data))
     console.log(JSON.stringify({ resource: 'child', pid: child.pid, cmd, argv }))
@@ -116,12 +125,24 @@ function stop(child) {
     } catch(error) {
       resource.stopResult = error.stopResult
       const result = error.stopResult
-      if (result?.brand === 'isolated-local-services.stop' && result.version === 1 && result.termination === 'confirmed') resource.termination = 'confirmed'
+      if (result?.brand === 'isolated-local-services.stop' && result.version === 1 && result.termination === 'confirmed' && result.groupId === child.pid) resource.termination = 'confirmed'
       throw error
     } finally {
       if (resource.termination !== 'confirmed') releaseUnconfirmed(child)
     }
   })()
+}
+// Cancel readiness on a recorded native error; the original bounded helper
+// remains responsible for its own polling and observes the child stopped below.
+async function startup(task) {
+  abort.signal.throwIfAborted()
+  let onAbort
+  try {
+    return await Promise.race([task(), new Promise((_, reject) => {
+      onAbort = () => reject(abort.signal.reason)
+      abort.signal.addEventListener('abort', onAbort, { once: true })
+    })])
+  } finally { abort.signal.removeEventListener('abort', onAbort) }
 }
 // A legal PDF with xref offsets, eight distinct pages, and an independently
 // recognizable magenta square only on page 8. No PDF production helper oracle.
@@ -451,12 +472,12 @@ async function main() {
     assert(alive(server),'server exited before listener')
     try { return execFileSync('lsof',['-nP','-a','-p',String(server.pid),'-iTCP:'+port,'-sTCP:LISTEN'],{encoding:'utf8'}).includes(`127.0.0.1:${port}`) } catch { return false }
   })
-  await waitForHttp(base+'/api/health',{child:server,timeoutMs:15000})
+  await startup(() => waitForHttp(base+'/api/health',{child:server,timeoutMs:15000}))
   console.log(JSON.stringify({resource:'listener',pid:server.pid,base}))
   const profile = join(root,'chrome'); mkdirSync(profile)
   const bin = process.env.CHROME_BIN || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
   chrome = own(bin,['--headless=new','--remote-debugging-address=127.0.0.1','--remote-debugging-port=0',`--user-data-dir=${profile}`,'--no-first-run','--no-default-browser-check','--disable-background-networking','--disable-component-update','--disable-gpu','about:blank'],env)
-  const version = await waitForChromeDevTools(chrome,profile)
+  const version = await startup(() => waitForChromeDevTools(chrome,profile))
   console.log(JSON.stringify({resource:'private-marker',pid:chrome.pid,marker:readFileSync(join(profile,'DevToolsActivePort'),'utf8')}))
   if(fault==='chrome-exit') { await stop(chrome); await waitForChromeDevTools(chrome,profile) }
   cdp = await attach(fault==='attach' ? new URL('/json/version',version.webSocketDebuggerUrl).href : version.webSocketDebuggerUrl)
