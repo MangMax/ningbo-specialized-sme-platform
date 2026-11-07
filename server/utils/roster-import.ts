@@ -1,6 +1,6 @@
 import { enqueueArchivedCandidates } from './jobs/candidate-discovery'
 import { managedDecision102 } from './decision-lifecycle-102'
-import { applyProjectionPreview, assertPlatformObservationReplay, businessProjectionPreview, ensurePlatformObservation, planPlatformObservation, platformObservationPayload, PlatformProjectionError, projectionPreview, readPlatformObservationPlan, recognizedProjectionPreview } from './platform-business-record'
+import { verifyPlatformFields, applyProjectionPreview, assertPlatformObservationReplay, businessProjectionPreview, ensurePlatformObservation, planPlatformObservation, platformObservationPayload, PlatformProjectionError, projectionPreview, readPlatformObservationPlan, recognizedProjectionPreview } from './platform-business-record'
 import type { PlatformProjectionResult, PlatformProjectionSummary } from '../../lib/platform/business-record'
 import { isDeepStrictEqual } from 'node:util'
 import { archiveQueryKey, platformEvidenceError, PLATFORM_PERSISTED_SOURCE, recognizedEvidenceError, recognizedStoredStatus, RDJB_TITLE_CODES, sourcePositionForSequence } from '../../lib/platform/recognized-evidence'
@@ -4550,6 +4550,7 @@ function commitRosterImportCore(
   }
 
   let items: RosterImportItemResult[]
+  let platformFields: RosterImportSummary['platformFields']
   try {
     items = db.transaction((tx) => {
       const out: RosterImportItemResult[] = []
@@ -4560,6 +4561,7 @@ function commitRosterImportCore(
         // 抛出去回滚整批 —— 绝不部分提交。
         if (!result.ok) throw new ExecStageFailure(out)
       }
+      if (request.sourceKind === 'platform_archive') platformFields = verifyPlatformFields(tx, out.flatMap(item => (item.detail?.canonicalProjection as PlatformProjectionResult[] | undefined) ?? []))
       return out
     })
   } catch (cause) {
@@ -4602,6 +4604,7 @@ function commitRosterImportCore(
   }
 
   const summary: StoredImportSummary = summarizeCommit(plan, items)
+  if (platformFields) summary.platformFields = platformFields
   // This is inside recordImportReceipt's business transaction, after every write closure
   // succeeded and before either the batch or durable receipt JSON is saved.
   const qualificationReadback = request.sourceKind === 'announcement' ? captureAnnouncementQualification(db, request, items) : undefined
@@ -4877,6 +4880,7 @@ function readSummaryOf(raw: unknown): RosterImportSummary | null {
     skipped: num(raw.skipped),
     failed: num(raw.failed),
     evidenceRepointed: num(raw.evidenceRepointed),
+    ...(isObject(raw.platformFields) ? { platformFields: raw.platformFields as unknown as RosterImportSummary['platformFields'] } : {}),
     ...(isObject(raw.canonicalProjection) ? { canonicalProjection: raw.canonicalProjection as unknown as PlatformProjectionSummary } : {}),
   }
 }
