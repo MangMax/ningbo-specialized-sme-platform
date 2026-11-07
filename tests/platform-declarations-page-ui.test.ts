@@ -37,6 +37,27 @@ describe('申报记录页面', () => {
   })
   afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals() })
 
+  it('distinguishes missing projection from empty source even with assigned enterprise names', async () => {
+    fetch.mockResolvedValueOnce({ ...response, rows: [
+      { ...row, matchedVersion: { ...row.matchedVersion, ruleVersion: null, titleRaw: null, status: null, declarationYear: null, businessYear: null, validityDateRaw: null } },
+      { ...row, record: { ...row.record, id: 999 }, matchedVersion: { ...row.matchedVersion, titleRaw: null, status: null, declarationYear: null, businessYear: null, validityDateRaw: null } },
+    ] })
+    const view = mountPage()
+    try {
+      await flushPromises()
+      for (const kind of ['row', 'card']) {
+        const items = view.findAll(`[data-record-id][data-testid$="-${kind}"]`)
+        expect(items).toHaveLength(2)
+        expect(items[0]!.text()).toContain(row.enterpriseNames[0])
+        expect(items[0]!.text()).toContain('业务字段未同步')
+        expect(items[0]!.text()).not.toContain('原文未提供')
+        expect(items[1]!.text()).toContain('原文未提供')
+        expect(items[1]!.text()).not.toContain('业务字段未同步')
+      }
+      expect(fetch.mock.calls.every(([, options]) => !('method' in options))).toBe(true)
+    } finally { view.unmount() }
+  })
+
   it('selects actual filter candidates immediately while text search stays debounced', async () => {
     const view = mountPage()
     try {

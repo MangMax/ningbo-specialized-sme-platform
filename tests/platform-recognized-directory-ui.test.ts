@@ -215,7 +215,7 @@ describe('平台认定目录详情', () => {
     } finally { view.unmount(); vi.unstubAllGlobals() }
   })
 
-  it('shows missing historical fields without internal projection notices', async () => {
+  it('shows missing projection for the exact historical version', async () => {
     const legacy = {
       ...detail,
       versions: [{ ...detail.versions[0]!, versionId: 3, ruleVersion: null, validityDateRaw: null, maintenanceYear: null, maintenanceBatch: null, district: null, awardNote: null, titleRaw: null }],
@@ -228,7 +228,7 @@ describe('平台认定目录详情', () => {
       const dialog = new DOMWrapper(document.body).get('[data-testid="platform-recognized-directory-detail"]')
       expect(dialog.text()).not.toContain('typed')
       expect(dialog.text()).toContain('版本 #3')
-      expect(dialog.text()).toContain('未提供')
+      expect(dialog.text()).toContain('业务字段未同步')
     } finally { view.unmount(); vi.unstubAllGlobals() }
   })
 })

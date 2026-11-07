@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { projectionDisplay } from '~~/lib/platform/projection-display'
 import { computed } from 'vue'
 import { ExternalLink, History } from '@lucide/vue'
 import type { BusinessProcessRow } from '~~/lib/platform/business-processes'
@@ -53,14 +54,14 @@ const conflictLabel: Record<string, string> = {
               <TableCell class="whitespace-normal break-words [overflow-wrap:anywhere]">
                 <NuxtLink v-if="enterpriseId(row) != null" :to="`/enterprises/${enterpriseId(row)}`" class="font-medium hover:underline">{{ enterprise(row) }}</NuxtLink>
                 <span v-else class="font-medium">{{ enterprise(row) }}</span>
-                <span class="text-muted-foreground mt-1 block break-all font-mono text-xs">{{ missing(row.matchedVersion.usccRaw) }}</span>
+                <span class="text-muted-foreground mt-1 block break-all font-mono text-xs">{{ projectionDisplay(row.matchedVersion, row.matchedVersion.usccRaw) }}</span>
               </TableCell>
-              <TableCell class="whitespace-normal">{{ titleLabel(row.matchedVersion.titleRaw) }}</TableCell>
-              <TableCell class="whitespace-nowrap">{{ declareKind(row.matchedVersion.declareKind) }}</TableCell>
-              <TableCell class="tabular-nums">{{ missing(row.matchedVersion.businessYear) }}</TableCell>
-              <TableCell class="whitespace-nowrap">{{ missing(row.matchedVersion.status) }}</TableCell>
-              <TableCell class="whitespace-nowrap">{{ missing(row.matchedVersion.batch) }}</TableCell>
-              <TableCell class="whitespace-nowrap tabular-nums">{{ date(row.matchedVersion.appliedAt) }}</TableCell>
+              <TableCell class="whitespace-normal">{{ projectionDisplay(row.matchedVersion, row.matchedVersion.titleRaw, titleLabel) }}</TableCell>
+              <TableCell class="whitespace-normal break-words">{{ projectionDisplay(row.matchedVersion, row.matchedVersion.declareKind, declareKind) }}</TableCell>
+              <TableCell class="break-words tabular-nums">{{ projectionDisplay(row.matchedVersion, row.matchedVersion.businessYear) }}</TableCell>
+              <TableCell class="whitespace-normal break-words">{{ projectionDisplay(row.matchedVersion, row.matchedVersion.status) }}</TableCell>
+              <TableCell class="whitespace-normal break-words">{{ projectionDisplay(row.matchedVersion, row.matchedVersion.batch) }}</TableCell>
+              <TableCell class="whitespace-normal break-words tabular-nums">{{ projectionDisplay(row.matchedVersion, row.matchedVersion.appliedAt, date) }}</TableCell>
               <TableCell class="tabular-nums">{{ row.versionCount }}<span v-if="row.matchedVersionCount > 1" class="text-muted-foreground block text-xs">匹配 {{ row.matchedVersionCount }} 个版本</span></TableCell>
               <TableCell class="sticky right-0 z-10 border-l bg-card">
                 <Button variant="ghost" size="sm" :disabled="loading" @click="emit('open-record', row.record.id)"><History data-icon="inline-start" />版本详情</Button>
@@ -76,13 +77,13 @@ const conflictLabel: Record<string, string> = {
             <div class="min-w-0">
               <NuxtLink v-if="enterpriseId(row) != null" :to="`/enterprises/${enterpriseId(row)}`" class="font-medium break-words hover:underline">{{ enterprise(row) }}</NuxtLink>
               <p v-else class="font-medium break-words">{{ enterprise(row) }}</p>
-              <p class="text-muted-foreground break-all font-mono text-xs">{{ missing(row.matchedVersion.usccRaw) }}</p>
+              <p class="text-muted-foreground break-all font-mono text-xs">{{ projectionDisplay(row.matchedVersion, row.matchedVersion.usccRaw) }}</p>
             </div>
             <Button variant="outline" size="sm" class="min-h-11 shrink-0" :disabled="loading" @click="emit('open-record', row.record.id)"><History data-icon="inline-start" />版本详情</Button>
           </div>
-          <p class="text-sm font-medium leading-5">{{ titleLabel(row.matchedVersion.titleRaw) }}</p>
-          <p class="text-sm leading-5">{{ declareKind(row.matchedVersion.declareKind) }} · 业务年 {{ missing(row.matchedVersion.businessYear) }} · {{ missing(row.matchedVersion.status) }}</p>
-          <p class="text-muted-foreground text-sm leading-5">批次 {{ missing(row.matchedVersion.batch) }} · 办理时间 {{ time(row.matchedVersion.appliedAt) }}</p>
+          <p class="text-sm font-medium leading-5">{{ projectionDisplay(row.matchedVersion, row.matchedVersion.titleRaw, titleLabel) }}</p>
+          <p class="text-sm leading-5">{{ projectionDisplay(row.matchedVersion, row.matchedVersion.declareKind, declareKind) }} · 业务年 {{ projectionDisplay(row.matchedVersion, row.matchedVersion.businessYear) }} · {{ projectionDisplay(row.matchedVersion, row.matchedVersion.status) }}</p>
+          <p class="text-muted-foreground text-sm leading-5">批次 {{ projectionDisplay(row.matchedVersion, row.matchedVersion.batch) }} · 办理时间 {{ projectionDisplay(row.matchedVersion, row.matchedVersion.appliedAt, time) }}</p>
           <p class="text-muted-foreground text-sm leading-5">版本 {{ row.versionCount }}</p>
           <p v-for="conflict in row.conflicts" :key="conflict" class="text-muted-foreground text-xs">{{ conflictLabel[conflict] ?? conflict }}</p>
         </li>

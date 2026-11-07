@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { projectionDisplay } from '~~/lib/platform/projection-display'
 import { ref, watch } from 'vue'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Badge } from '@/components/ui/badge'
@@ -35,6 +36,7 @@ watch(() => [props.open, props.recordId] as const, ([open, id]) => {
   void load(id)
 }, { immediate: true })
 
+const projectionTitle = (rawCode: string) => PLATFORM_RDJBS[rawCode] ?? rawCode
 const missing = (value: string | number | null | undefined) => value === null || value === undefined || value === '' ? '未提供' : String(value)
 const time = (value: string | null) => value ? formatFetchTime(value) ?? value : '未提供'
 const declareKind = (value: string | null) => value ? RELATION_DECLARE_KINDS[value] ?? value : '事项未提供'
@@ -64,16 +66,16 @@ const declareKind = (value: string | null) => value ? RELATION_DECLARE_KINDS[val
             <article v-for="version in data.versions" :key="version.versionId" class="rounded-sm border p-3" data-testid="platform-business-process-version">
               <div class="flex flex-wrap items-baseline gap-2">
                 <span class="text-sm font-medium">版本 #{{ version.versionId }}</span>
-                <Badge variant="outline">{{ declareKind(version.declareKind) }}</Badge>
-                <span class="text-muted-foreground text-xs">业务年 {{ missing(version.businessYear) }} · 状态 {{ missing(version.status) }}</span>
+                <Badge variant="outline">{{ projectionDisplay(version, version.declareKind, declareKind) }}</Badge>
+                <span class="text-muted-foreground text-xs">业务年 {{ projectionDisplay(version, version.businessYear) }} · 状态 {{ projectionDisplay(version, version.status) }}</span>
               </div>
               <dl class="mt-2 grid grid-cols-1 gap-x-3 gap-y-1 text-[13px] sm:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">
-                <dt class="text-muted-foreground">称号</dt><dd>{{ PLATFORM_RDJBS[version.titleRaw ?? ''] ?? missing(version.titleRaw) }}</dd>
-                <dt class="text-muted-foreground">企业原值</dt><dd>{{ missing(version.nameRaw) }} · {{ missing(version.usccRaw) }}</dd>
-                <dt class="text-muted-foreground">事项 / 批次</dt><dd>{{ declareKind(version.declareKind) }} · {{ missing(version.batch) }}</dd>
-                <dt class="text-muted-foreground">原认定批次标签</dt><dd>{{ missing(version.awardBatchLabel) }}</dd>
-                <dt class="text-muted-foreground">属地</dt><dd>{{ missing(version.province) }}</dd>
-                <dt class="text-muted-foreground">办理时间</dt><dd>{{ time(version.appliedAt) }}</dd>
+                <dt class="text-muted-foreground">称号</dt><dd>{{ projectionDisplay(version, version.titleRaw, projectionTitle) }}</dd>
+                <dt class="text-muted-foreground">企业原值</dt><dd>{{ projectionDisplay(version, version.nameRaw) }} · {{ projectionDisplay(version, version.usccRaw) }}</dd>
+                <dt class="text-muted-foreground">事项 / 批次</dt><dd>{{ projectionDisplay(version, version.declareKind, declareKind) }} · {{ projectionDisplay(version, version.batch) }}</dd>
+                <dt class="text-muted-foreground">原认定批次标签</dt><dd>{{ projectionDisplay(version, version.awardBatchLabel) }}</dd>
+                <dt class="text-muted-foreground">属地</dt><dd>{{ projectionDisplay(version, version.province) }}</dd>
+                <dt class="text-muted-foreground">办理时间</dt><dd>{{ projectionDisplay(version, version.appliedAt, time) }}</dd>
                 <dt class="text-muted-foreground">规则版本</dt><dd>{{ missing(version.ruleVersion) }}</dd>
                 <dt class="text-muted-foreground">采集时间</dt><dd>首次 {{ time(version.firstObservedAt) }} · 最近 {{ time(version.lastObservedAt) }}</dd>
                 <dt class="text-muted-foreground">内容哈希</dt><dd class="break-all font-mono text-xs">{{ version.hashAlgorithm }} · {{ version.contentHash }}</dd>
