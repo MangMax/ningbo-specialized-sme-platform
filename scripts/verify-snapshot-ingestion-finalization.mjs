@@ -8,7 +8,7 @@ import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join, resolve, relative, isAbsolute } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
-import { forkOwnedChild as fork, reserveLoopbackPort, stopOwnedChild } from './lib/isolated-local-services.mjs'
+import { forkOwnedChild as fork, reserveLoopbackPort, stopOwnedChild, getOwnedChildStartFailure } from './lib/isolated-local-services.mjs'
 
 let root, useDb, driver
 let allStopped = true
@@ -31,30 +31,38 @@ async function verify(phase) {
   const dir = join(root, phase), dbPath = join(dir, 'roster.db'), marker = join(dir, 'paused')
   const hook = join(dir, 'fault-hook.mjs')
   let db, oracle, child, base, childError, primary
+  let attempted = false, stopAttempted = false
   const errors = []
   const pending = new Set()
   const deadline = Date.now() + 90_000
   const emitReceipt = (state, extra = {}) => console.log(JSON.stringify({ phase, state, ...extra }))
+  const cleanupReceipt = (...args) => { try { emitReceipt(...args) } catch (error) { errors.push(new Error('Cleanup receipt failed', { cause: error })) } }
   async function stop() {
-    if (!child) return
+    if (stopAttempted) return
+    stopAttempted = true
+    if (!child) {
+      if (attempted) { allStopped = false; throw new Error('Acquisition attempted without authenticated child; private root retained at '+root) }
+      return
+    }
     const owned = child
     let confirmed = false
     try {
       await stopOwnedChild(owned)
       confirmed = true
-      emitReceipt('stopped', { pid: owned.pid, exit: owned.exitCode, signal: owned.signalCode })
+      cleanupReceipt('stopped', { pid: owned.pid, exit: owned.exitCode, signal: owned.signalCode })
     } catch (error) {
       const result = error?.stopResult
-      confirmed = result?.brand === 'isolated-local-services.stop' && result.version === 1 && result.termination === 'confirmed'
-      emitReceipt('stop-error', { pid: owned.pid, termination: confirmed ? 'confirmed' : 'unconfirmed', reason: result?.reason })
+      confirmed = result?.brand === 'isolated-local-services.stop' && result.version === 1 && result.termination === 'confirmed' && result.groupId === owned.pid
+      cleanupReceipt('stop-error', { pid: owned.pid, termination: confirmed ? 'confirmed' : 'unconfirmed', reason: result?.reason })
       throw error
     } finally {
       if (confirmed) child = undefined
       else {
         allStopped = false
-        owned.stdout?.destroy(); owned.stderr?.destroy()
-        if (owned.connected) owned.disconnect()
-        owned.unref()
+        for (const action of [
+          ...[...new Set(owned.stdio ?? [])].filter(Boolean).map(stream => () => stream.destroy?.()),
+          () => { if (owned.connected) owned.disconnect() }, () => owned.unref(),
+        ]) try { action() } catch (error) { errors.push(new Error('Local handle release failed', { cause: error })) }
         errors.push(new Error(`Owned termination unconfirmed; pid=${owned.pid}; private root retained at ${root}`))
       }
     }
@@ -104,10 +112,21 @@ const original=proto.run;proto.run=function(...args){const out=original.apply(th
       rows: Array.from({ length: 300 }, (_, index) => ({ sourceRowNo: index + 3, rawFields: { original: `  原文🙂\n${index}  ` } })),
     } },
   }
+  function registerChild(handle) {
+    handle.on('error', error => { childError ??= error })
+    for (const stream of new Set(handle.stdio ?? [])) {
+      stream?.on?.('error', error => { childError ??= error })
+      stream?.resume?.()
+    }
+  }
   async function start(interrupt = false) {
     assert.equal(child, undefined, 'old owned group must be settled before restart')
     const port = await reserveLoopbackPort()
     base = `http://127.0.0.1:${port}`
+    childError = undefined
+    attempted = true
+    stopAttempted = false
+    try {
     child = fork('.output/server/index.mjs', [], { execArgv: ['--max-old-space-size=2048', ...(interrupt ? ['--import', hook] : [])], env: {
       ...process.env,
       // Import execution is a nested OS process with explicit argv. Carry the
@@ -116,8 +135,12 @@ const original=proto.run;proto.run=function(...args){const out=original.apply(th
       HOST: '127.0.0.1', PORT: String(port), NUXT_DB_PATH: dbPath, NUXT_DB_READONLY: '0', NUXT_FILES_DIR: dir, NUXT_INCOMING_DIR: dir,
       NUXT_API_TOKEN: 'synthetic-only', NUXT_MCP_TOKEN: 'synthetic-only', MIIT_COOKIE: '', NUXT_OCR_TOKEN: '', PADDLEOCR_MCP_AISTUDIO_ACCESS_TOKEN: '',
     }, stdio: ['ignore', 'ignore', 'ignore', 'ipc'] })
-    childError = undefined
-    child.on('error', error => { childError = error })
+    } catch (error) {
+      child = getOwnedChildStartFailure(error)?.child
+      if (child) try { registerChild(child) } catch (registrationError) { errors.push(new Error('Partial child registration failed', { cause: registrationError })) }
+      throw error
+    }
+    registerChild(child)
     const readyDeadline = Math.min(deadline, Date.now() + 8_000)
     let lastError
     while (Date.now() < readyDeadline) {
@@ -363,11 +386,11 @@ const original=proto.run;proto.run=function(...args){const out=original.apply(th
   } catch (error) { primary = error }
   finally {
     for (const controller of pending) controller.abort(new Error('Phase cleanup cancelled request'))
-    if (db) try { if (db.$client.open) db.$client.close() } catch (error) { errors.push(new Error('Database cleanup failed', { cause: error })) }
+    if (db) try { if (db.$client.open) db.$client.close() } catch (error) { allStopped = false; errors.push(new Error('Database cleanup failed', { cause: error })) }
     if (oracle) try { oracle.close(); openOracles-- } catch (error) { errors.push(new Error('Oracle cleanup failed', { cause: error })) }
     // A failed stop has already consumed this handle's single public stop attempt.
-    if (child && allStopped) try { await stop() } catch (error) { errors.push(new Error('Child cleanup failed', { cause: error })) }
-    emitReceipt('finished', { primary: Boolean(primary), cleanupErrors: errors.length, rootRetained: !allStopped || openOracles > 0 })
+    try { await stop() } catch (error) { errors.push(new Error('Child cleanup failed', { cause: error })) }
+    cleanupReceipt('finished', { primary: Boolean(primary), cleanupErrors: errors.length, rootRetained: !allStopped || openOracles > 0 })
   }
   if (primary || errors.length) throw new AggregateError([...(primary ? [primary] : []), ...errors], `${phase} failed (primary first, cleanup retained)`)
 }

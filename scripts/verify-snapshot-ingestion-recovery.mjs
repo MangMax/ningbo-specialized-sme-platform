@@ -7,18 +7,25 @@ import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join, resolve, relative, isAbsolute } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
-import { forkOwnedChild as fork, reserveLoopbackPort, stopOwnedChild } from './lib/isolated-local-services.mjs'
+import { forkOwnedChild as fork, reserveLoopbackPort, stopOwnedChild, getOwnedChildStartFailure } from './lib/isolated-local-services.mjs'
 
-let dir, db, owned, base, rpcId = 0, primaryError
+let dir, db, owned, base, childError, rpcId = 0, primaryError
 let oracle
+let attempted = false, stopAttempted = false
 let allStopped = true
 const cleanupErrors = []
 const pending = new Set()
 // One small synthetic fixture, at most four sequential launchers. No benchmark.
 const deadline = Date.now() + 90_000
 const receipt = (state, extra = {}) => console.log(JSON.stringify({ phase: 'recovery', state, ...extra }))
+const cleanupReceipt = (...args) => { try { receipt(...args) } catch (error) { cleanupErrors.push(new Error('Cleanup receipt failed', { cause: error })) } }
 async function stop() {
-  if (!owned) return
+  if (stopAttempted) return
+  stopAttempted = true
+  if (!owned) {
+    if (attempted) { allStopped = false; throw new Error('Acquisition attempted without authenticated child; private root retained at '+dir) }
+    return
+  }
   const child = owned
   // Consume the handle once even if the public stop rejects.
   owned = undefined
@@ -26,18 +33,19 @@ async function stop() {
   try {
     await stopOwnedChild(child)
     confirmed = true
-    receipt('stopped', { pid: child.pid, exit: child.exitCode, signal: child.signalCode })
+    cleanupReceipt('stopped', { pid: child.pid, exit: child.exitCode, signal: child.signalCode })
   } catch (error) {
     const result = error?.stopResult
-    confirmed = result?.brand === 'isolated-local-services.stop' && result.version === 1 && result.termination === 'confirmed'
-    receipt('stop-error', { pid: child.pid, termination: confirmed ? 'confirmed' : 'unconfirmed', reason: result?.reason })
+    confirmed = result?.brand === 'isolated-local-services.stop' && result.version === 1 && result.termination === 'confirmed' && result.groupId === child.pid
+    cleanupReceipt('stop-error', { pid: child.pid, termination: confirmed ? 'confirmed' : 'unconfirmed', reason: result?.reason })
     throw error
   } finally {
     if (!confirmed) {
       allStopped = false
-      child.stdout?.destroy(); child.stderr?.destroy()
-      if (child.connected) child.disconnect()
-      child.unref()
+      for (const action of [
+        ...[...new Set(child.stdio ?? [])].filter(Boolean).map(stream => () => stream.destroy?.()),
+        () => { if (child.connected) child.disconnect() }, () => child.unref(),
+      ]) try { action() } catch (error) { cleanupErrors.push(new Error('Local handle release failed', { cause: error })) }
       cleanupErrors.push(new Error(`Owned termination unconfirmed; pid=${child.pid}; private root retained at ${dir}`))
     }
   }
@@ -212,10 +220,21 @@ collection(initial, {}, [])
 writeFileSync(hook, `import {createRequire} from 'node:module';import {writeFileSync} from 'node:fs';
 const Database=createRequire(import.meta.url)(${JSON.stringify(driver)});const probe=new Database(':memory:');const proto=Object.getPrototypeOf(probe.prepare('select 1'));probe.close();let armed=true;
 for(const method of ['all','run']){const original=proto[method];proto[method]=function(...args){const out=original.apply(this,args);if(armed&&this.source.startsWith('insert into "platform_export_row"')){armed=false;writeFileSync(${JSON.stringify(marker)},'transaction-open');Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,60000)}return out}}`)
+function registerChild(handle) {
+  handle.on('error', error => { childError ??= error })
+  for (const stream of new Set(handle.stdio ?? [])) {
+    stream?.on?.('error', error => { childError ??= error })
+    stream?.resume?.()
+  }
+}
 async function start(interrupt = false) {
   assert.equal(owned, undefined, 'old owned group must be settled before restart')
   const port = await reserveLoopbackPort()
   base = `http://127.0.0.1:${port}`
+  childError = undefined
+  attempted = true
+  stopAttempted = false
+  try {
   owned = fork('.output/server/index.mjs', [], { execArgv: ['--max-old-space-size=2048', ...(interrupt ? ['--import', hook] : [])], env: {
     ...process.env,
     // The native import worker inherits this observer through NODE_OPTIONS.
@@ -223,8 +242,14 @@ async function start(interrupt = false) {
     HOST: '127.0.0.1', PORT: String(port), NUXT_DB_PATH: dbPath, NUXT_DB_READONLY: '0', NUXT_FILES_DIR: dir, NUXT_INCOMING_DIR: dir,
     NUXT_API_TOKEN: 'synthetic-only', NUXT_MCP_TOKEN: 'synthetic-only', MIIT_COOKIE: '', NUXT_OCR_TOKEN: '', PADDLEOCR_MCP_AISTUDIO_ACCESS_TOKEN: '',
   }, stdio: ['ignore', 'ignore', 'ignore', 'ipc'] })
-  let childError, lastError
-  owned.on('error', error => { childError = error })
+  } catch (error) {
+    owned = getOwnedChildStartFailure(error)?.child
+    if (owned) try { registerChild(owned) } catch (registrationError) { cleanupErrors.push(new Error('Partial child registration failed', { cause: registrationError })) }
+    throw error
+  }
+
+  let lastError
+  registerChild(owned)
   receipt('started', { pid: owned.pid, port })
   const readyDeadline = Math.min(deadline, Date.now() + 8_000)
   while (Date.now() < readyDeadline) {
@@ -352,7 +377,7 @@ finally {
   catch (error) { cleanupErrors.push(new Error('Readonly oracle close failed; private root retained', { cause: error })) }
   if (dir && allStopped && !oracle) try { rmSync(dir, { recursive: true, force: true }) }
   catch (error) { cleanupErrors.push(new Error(`Private root cleanup failed; retained at ${dir}`, { cause: error })) }
-  receipt('finished', { primary: Boolean(primaryError), cleanupErrors: cleanupErrors.length, rootRetained: Boolean(dir && existsSync(dir)) })
+  cleanupReceipt('finished', { primary: Boolean(primaryError), cleanupErrors: cleanupErrors.length, rootRetained: Boolean(dir && existsSync(dir)) })
 }
 if (primaryError || cleanupErrors.length) {
   const failure = new AggregateError([...(primaryError ? [primaryError] : []), ...cleanupErrors], 'Recovery verifier failed (primary first, cleanup retained)')

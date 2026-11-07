@@ -7,9 +7,11 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { createRequire } from 'node:module'
 import { setTimeout as sleep } from 'node:timers/promises'
-import { spawnOwnedChild as spawn, reserveLoopbackPort, stopOwnedChild } from './lib/isolated-local-services.mjs'
+import { spawnOwnedChild as spawn, reserveLoopbackPort, stopOwnedChild, getOwnedChildStartFailure } from './lib/isolated-local-services.mjs'
 // Every acquired handle belongs to this invocation; failures clean the private root.
 let dir, db, child, childError, receipt
+let attempted = false
+let dbClosed = true
 let primaryError
 const cleanupErrors=[]
 try {
@@ -37,10 +39,22 @@ const otherRelationId=db.insert(schema.platformRelation).values({queryId:otherId
 db.$client.close()
 const port=await reserveLoopbackPort()
 const base=`http://127.0.0.1:${port}`
+attempted=true
+try {
 child=spawn(process.execPath,['--max-old-space-size=2048','.output/server/index.mjs'],{env:{...process.env,PORT:String(port),HOST:'127.0.0.1',NUXT_DB_PATH:dbPath,NUXT_FILES_DIR:dir,NUXT_API_TOKEN:'synthetic-only',NUXT_MCP_TOKEN:'synthetic-only',MIIT_COOKIE:'',MIIT_COOKIE_FILE:''},stdio:['ignore','pipe','pipe']})
-child.on('error',error=>{childError=error})
-// Drain the synthetic server output without echoing response bodies or environment.
-child.stdout.resume();child.stderr.resume()
+} catch(error) {
+ child=getOwnedChildStartFailure(error)?.child
+ if(child)try{registerChild()}catch(registrationError){cleanupErrors.push(new Error('Partial child registration failed',{cause:registrationError}))}
+ throw error
+}
+registerChild()
+function registerChild() {
+ child.on('error',error=>{childError=error})
+ for(const stream of new Set(child.stdio??[])) {
+   stream?.on?.('error',error=>{childError??=error})
+   stream?.resume?.()
+ }
+}
 // One deadline covers both headers and complete body consumption. Abort also
 // releases bodies on status-only assertions and parse/transport failures.
 async function request(url,options={},timeoutMs=2_000) {
@@ -199,8 +213,8 @@ let ready=false
 } catch(error) {primaryError=error}
 finally {
  // Attempt every cleanup independently, retaining both primary and cleanup errors.
- if(db)try{if(db.$client.open)db.$client.close()}catch(error){cleanupErrors.push(new Error('Database cleanup failed',{cause:error}))}
- let childStopped=!child
+ if(db)try{if(db.$client.open)db.$client.close()}catch(error){dbClosed=false;cleanupErrors.push(new Error('Database cleanup failed',{cause:error}))}
+ let childStopped=!attempted
  let stopState='not-acquired'
  if(child) {
    try{await stopOwnedChild(child);childStopped=true;stopState='resolved'}
@@ -209,16 +223,19 @@ finally {
      const result=error?.stopResult
      // Only this helper's versioned terminal receipt can authorize root deletion.
      const known=result?.brand==='isolated-local-services.stop' && result.version===1
-     childStopped=known && result.termination==='confirmed'
+     childStopped=known && result.termination==='confirmed' && result.groupId === child.pid
      stopState=known?`${result.termination}/${result.reason} (group=${result.groupId}, members=${JSON.stringify(result.finalMembers)}, observedAt=${result.observedAt})`:'unknown stop receipt'
    }
  }
  // Never remove a live service's private files after failed termination.
  if(!childStopped) {
-   cleanupErrors.push(new Error(`Owned service termination unconfirmed (pid=${child.pid}, state=${stopState}); private root retained at ${dir}`))
-   child.stdout?.destroy();child.stderr?.destroy();child.unref()
+   cleanupErrors.push(new Error(`Owned service termination unconfirmed (pid=${child?.pid??'unknown'}, state=${stopState}); private root retained at ${dir}`))
+   for(const action of [
+     ...[...new Set(child?.stdio??[])].filter(Boolean).map(stream=>()=>stream.destroy?.()),
+     ()=>{if(child?.connected)child.disconnect()},()=>child?.unref(),
+   ])try{action()}catch(error){cleanupErrors.push(new Error('Local handle release failed',{cause:error}))}
  }
- if(dir && childStopped)try{rmSync(dir,{recursive:true,force:true})}catch(error){cleanupErrors.push(new Error(`Private root cleanup failed; retained at ${dir}`,{cause:error}))}
+ if(dir && childStopped && dbClosed)try{rmSync(dir,{recursive:true,force:true})}catch(error){cleanupErrors.push(new Error(`Private root cleanup failed; retained at ${dir}`,{cause:error}))}
 }
 if(primaryError || cleanupErrors.length)throw new AggregateError([
  ...(primaryError?[primaryError]:[]),...cleanupErrors,
