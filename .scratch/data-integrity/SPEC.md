@@ -1,5 +1,7 @@
 # 数据正确性重整 — 规格
 
+> 历史材料（2026-10-14–15）：下文设计、数量与“当前”用语均按各自日期阅读；末尾“历史说明”保留后续更正。节序推页码是当时方法记录，扫描 PDF 的后续输入与校验取舍见 [07 收口说明](issues/07-source-integrity.md)及[解析源与校验闸 ADR](../../docs/adr/2026-10-15-parse-source-stays-ocr-with-gate.md)；现有文件/解析边界与输入血缘目标见[数据模型总览](../../docs/data-model.md)。本文不授予重新导入或修数据权限，原文“未经用户点名不开工”边界保留。
+
 > 追踪器:`.scratch/data-integrity/issues/`。词汇见 [GLOSSARY.md](../../GLOSSARY.md);清洗准则见 `pipeline/.claude/skills/spztx-data-cleaning/`。
 
 ## 起因
