@@ -1983,3 +1983,11 @@ continuation 有两个不同值：
 ## 旧采集分页来源补证增量
 
 统一预检/提交支持显式 `payload.platformLegacyProvenance`；已有原查询和原关系保持不可变，独立 metadata 保留 legacy/typed unknown。字段、来源文件 SHA/段序号锁定、事务重核、精确读回及合成示例见[旧采集分页来源补证](platform-legacy-provenance.md)。
+
+### 平台字段完成证明（#596）
+
+正常 `platform_archive` 提交在同一业务事务内，逐观察核对原文指纹、业务归属和不可变版本，逐来源核对规则与投影字段；收尾缺投影或冲突使整批业务变化回滚。完整原行重放也补齐旧版本的缺失投影，不改变 raw、hash、原 ID 或人工决定。保留 `platformRecordObservations` 定向补齐入口。
+
+新提交回执的 `summary.platformFields` 包含 `status`、`eligibleVersions`、`projectionsCreated`、`projectionsReused`、`projectionsChecked`、`observationsChecked`、`quarantinedObservations`。版本计数按本批实际涉及的版本去重；观察按 relationId 去重；原始行 `written` 仍单独计数。`ready` 仅表示本批全部适格版本的字段核对完成，不要求源字段非空。隔离观察或纯引用参与时为 `partial`；无同步范围为 `not_performed`。显式 `reuseExisting` 不触发字段补齐，也不提供新的核验证明。
+
+同键重放返回既有回执，绝不再次同步。历史回执没有 `platformFields` 表示“历史未记录”，不得推定为当前就绪；修复使用新键或原补齐命令。REST 与 MCP 共用此完成语义、原鉴权及批量限制。

@@ -108,13 +108,15 @@ const APPLY_FIELDS = ['titleRaw', 'declareKind', 'declarationYear', 'appliedAt',
 
 /** One typed row per immutable content version. Rejects a same-version drift instead of
  * silently reinterpreting historical content under a newer rule. */
-function ensureApplyProjection(db: Executor, versionId: number, recordId: number, fields: ApplyProjectionFields): { created: boolean; reused: boolean } {
+function ensureApplyProjection(db: Executor, versionId: number, recordId: number, fields: ApplyProjectionFields, verifyOnly = false): { created: boolean; reused: boolean } {
   const existing = db.select().from(schema.platformApplyProjection).where(eq(schema.platformApplyProjection.versionId, versionId)).get()
   if (existing) {
+    if (existing.recordId !== recordId) throw new PlatformProjectionError('apply_projection_conflict', 'Projection owner differs')
     if (existing.ruleVersion !== APPLY_PROJECTION_RULE) throw new PlatformProjectionError('apply_projection_conflict', 'Apply projection rule differs')
     if (APPLY_FIELDS.some(field => existing[field] !== fields[field])) throw new PlatformProjectionError('apply_projection_conflict', 'Apply projection fields differ for the same content version')
     return { created: false, reused: true }
   }
+  if (verifyOnly) throw new PlatformProjectionError('projection_missing', 'Required source projection missing')
   db.insert(schema.platformApplyProjection).values({ versionId, recordId, ...fields, ruleVersion: APPLY_PROJECTION_RULE }).run()
   return { created: true, reused: false }
 }
@@ -123,13 +125,15 @@ const BUSINESS_FIELDS = ['titleRaw', 'declareKind', 'businessYear', 'appliedAt',
 
 /** One typed row per immutable content version. Rejects a same-version drift instead of
  * silently reinterpreting historical content under a newer rule. */
-function ensureBusinessProjection(db: Executor, versionId: number, recordId: number, fields: BusinessProjectionFields): { created: boolean; reused: boolean } {
+function ensureBusinessProjection(db: Executor, versionId: number, recordId: number, fields: BusinessProjectionFields, verifyOnly = false): { created: boolean; reused: boolean } {
   const existing = db.select().from(schema.platformBusinessProjection).where(eq(schema.platformBusinessProjection.versionId, versionId)).get()
   if (existing) {
+    if (existing.recordId !== recordId) throw new PlatformProjectionError('business_projection_conflict', 'Projection owner differs')
     if (existing.ruleVersion !== BUSINESS_PROJECTION_RULE) throw new PlatformProjectionError('business_projection_conflict', 'Business projection rule differs')
     if (BUSINESS_FIELDS.some(field => existing[field] !== fields[field])) throw new PlatformProjectionError('business_projection_conflict', 'Business projection fields differ for the same content version')
     return { created: false, reused: true }
   }
+  if (verifyOnly) throw new PlatformProjectionError('projection_missing', 'Required source projection missing')
   db.insert(schema.platformBusinessProjection).values({ versionId, recordId, ...fields, ruleVersion: BUSINESS_PROJECTION_RULE }).run()
   return { created: true, reused: false }
 }
@@ -138,7 +142,7 @@ const RECOGNIZED_FIELDS = ['validityDateRaw', 'maintenanceYear', 'maintenanceBat
 
 /** One typed row per immutable content version. Rejects a same-version drift instead of
  * silently reinterpreting historical content under a newer rule. */
-function ensureRecognizedProjection(db: Executor, versionId: number, recordId: number, fields: RecognizedProjectionFields, fidelity: RecognizedSourceFidelity): { created: boolean; reused: boolean } {
+function ensureRecognizedProjection(db: Executor, versionId: number, recordId: number, fields: RecognizedProjectionFields, fidelity: RecognizedSourceFidelity, verifyOnly = false): { created: boolean; reused: boolean } {
   const existing = db.select().from(schema.platformRecognizedProjection).where(eq(schema.platformRecognizedProjection.versionId, versionId)).get()
   if (existing) {
     if (existing.ruleVersion !== RECOGNIZED_PROJECTION_RULE) throw new PlatformProjectionError('recognized_projection_conflict', 'Recognized projection rule differs')
@@ -147,6 +151,7 @@ function ensureRecognizedProjection(db: Executor, versionId: number, recordId: n
     // Normalized v1 content, ownership, IDs, timestamps and fingerprints never change.
     if (existing.recordId !== recordId) throw new PlatformProjectionError('recognized_projection_conflict', 'Recognized projection owner differs')
     if (existing.sourceMaintenanceYearAbsent === null) {
+      if (verifyOnly) throw new PlatformProjectionError('projection_missing', 'Recognized source fidelity missing')
       if (existing.sourceValidityDate !== null || existing.sourceMaintenanceBatch !== null) {
         throw new PlatformProjectionError('recognized_projection_conflict', 'Partial recognized source-fidelity capture')
       }
@@ -158,6 +163,7 @@ function ensureRecognizedProjection(db: Executor, versionId: number, recordId: n
     }
     return { created: false, reused: true }
   }
+  if (verifyOnly) throw new PlatformProjectionError('projection_missing', 'Required source projection missing')
   db.insert(schema.platformRecognizedProjection).values({ versionId, recordId, ...fields, ...fidelity, ruleVersion: RECOGNIZED_PROJECTION_RULE }).run()
   return { created: true, reused: false }
 }
@@ -194,9 +200,33 @@ export function ensurePlatformObservation(db: Executor, relationId: number, batc
     ? ensureRecognizedProjection(db, versionId, recordId, plan.recognizedProjection, plan.recognizedSourceFidelity!)
     : null
   return {
-    ...projection, recordCreated, versionCreated, observationCreated: !!created,
+    ...projection, syncRequested: true, recordCreated, versionCreated, observationCreated: !!created,
     ...(applyProjectionResult ? { applyProjectionCreated: applyProjectionResult.created, applyProjectionReused: applyProjectionResult.reused } : {}),
     ...(businessProjectionResult ? { businessProjectionCreated: businessProjectionResult.created, businessProjectionReused: businessProjectionResult.reused } : {}),
     ...(recognizedProjectionResult ? { recognizedProjectionCreated: recognizedProjectionResult.created, recognizedProjectionReused: recognizedProjectionResult.reused } : {}),
   }
+}
+
+/** Read-only completion check, after all writers and inside the same business transaction. */
+export function verifyPlatformFields(db: Executor, results: PlatformProjectionResult[]) {
+  const observations = new Map(results.filter(row => row.syncRequested).map(row => [row.relationId, row]))
+  const versions = new Set<number>()
+  let quarantinedObservations = 0
+  for (const row of observations.values()) {
+    const plan = readPlatformObservationPlan(db, row.relationId)
+    const stored = db.select().from(schema.platformBusinessObservation).where(eq(schema.platformBusinessObservation.relationId, row.relationId)).get()
+    if (!stored || stored.recordId !== row.recordId || stored.versionId !== row.versionId || stored.inputFingerprint !== row.inputFingerprint || Object.entries(projectionPreview(plan)).some(([field, value]) => stored[field as keyof typeof stored] !== value)) throw new PlatformProjectionError('projection_mapping_conflict', 'Completion observation differs')
+    if (row.versionId === null || row.recordId === null) { quarantinedObservations++; continue }
+    const record = db.select().from(schema.platformBusinessRecord).where(eq(schema.platformBusinessRecord.id, row.recordId)).get()
+    const version = db.select().from(schema.platformBusinessRecordVersion).where(eq(schema.platformBusinessRecordVersion.id, row.versionId)).get()
+    if (!record || record.interface !== plan.interface || record.platformKey !== plan.platformKey || record.identityRuleVersion !== PLATFORM_PROJECTION_RULE || !version || version.recordId !== row.recordId || version.hashAlgorithm !== PLATFORM_RAW_HASH_RULE || version.contentHash !== plan.contentHash || version.canonicalRawJson !== plan.canonicalRawJson) throw new PlatformProjectionError('projection_mapping_conflict', 'Completion version owner or original differs')
+    if (plan.applyRecord) ensureApplyProjection(db, row.versionId, row.recordId, plan.applyRecord, true)
+    else if (plan.businessProjection) ensureBusinessProjection(db, row.versionId, row.recordId, plan.businessProjection, true)
+    else if (plan.recognizedProjection) ensureRecognizedProjection(db, row.versionId, row.recordId, plan.recognizedProjection, plan.recognizedSourceFidelity!, true)
+    else throw new PlatformProjectionError('projection_missing', 'Unsupported source projection')
+    versions.add(row.versionId)
+  }
+  const references = results.some(row => !row.syncRequested)
+  const created = new Set(results.filter(row => row.syncRequested && row.versionId !== null && versions.has(row.versionId) && (row.applyProjectionCreated || row.businessProjectionCreated || row.recognizedProjectionCreated)).map(row => row.versionId)).size
+  return { status: quarantinedObservations || references ? 'partial' as const : observations.size ? 'ready' as const : 'not_performed' as const, eligibleVersions: versions.size, projectionsCreated: created, projectionsReused: versions.size - created, projectionsChecked: versions.size, observationsChecked: observations.size, quarantinedObservations }
 }

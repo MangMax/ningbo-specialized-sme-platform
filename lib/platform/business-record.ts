@@ -26,6 +26,7 @@ export interface PlatformRecognizedProjectionPreview extends RecognizedProjectio
   ruleVersion: string
 }
 export interface PlatformProjectionResult extends PlatformObservationProjection {
+  syncRequested?: boolean
   recordCreated: boolean
   versionCreated: boolean
   observationCreated: boolean
