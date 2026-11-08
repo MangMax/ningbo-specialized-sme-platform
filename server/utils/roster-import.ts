@@ -1,6 +1,6 @@
 import { enqueueArchivedCandidates } from './jobs/candidate-discovery'
 import { managedDecision102 } from './decision-lifecycle-102'
-import { applyProjectionPreview, assertPlatformObservationReplay, businessProjectionPreview, ensurePlatformObservation, planPlatformObservation, platformObservationPayload, PlatformProjectionError, projectionPreview, readPlatformObservationPlan, recognizedProjectionPreview } from './platform-business-record'
+import { verifyPlatformFields, applyProjectionPreview, assertPlatformObservationReplay, businessProjectionPreview, ensurePlatformObservation, planPlatformObservation, platformObservationPayload, PlatformProjectionError, projectionPreview, readPlatformObservationPlan, recognizedProjectionPreview } from './platform-business-record'
 import type { PlatformProjectionResult, PlatformProjectionSummary } from '../../lib/platform/business-record'
 import { isDeepStrictEqual } from 'node:util'
 import { archiveQueryKey, platformEvidenceError, PLATFORM_PERSISTED_SOURCE, recognizedEvidenceError, recognizedStoredStatus, RDJB_TITLE_CODES, sourcePositionForSequence } from '../../lib/platform/recognized-evidence'
@@ -938,6 +938,8 @@ export function platformAliasEvidenceMismatch(
 /** 计划中的一项动作。 */
 interface PlannedItem {
   item: RosterImportItemResult
+  /** Reference participation, including commands that return no observation mapping. */
+  platformFieldReference?: boolean
   /** Frozen by the same identity resolution as the write closure; never re-guessed on readback. */
   qualificationCandidate?: { ref: string; targetKey: string; enterpriseId: number | null; diagnostics: RosterImportQualificationDiagnostic[] }
   /** 预检的影响归类。`note` = **只记录、不计入任何影响计数**（如重名候选）。 */
@@ -3172,6 +3174,8 @@ function planPlatformQuery(
       const recognized = recognizedProjectionPreview(projection)
       return { relationId: archived?.id ?? null, identityState: projection.identityState, contentState: projection.contentState, keySource: projection.keySource, ...(apply ? { applyProjection: apply } : {}), ...(business ? { businessProjection: business } : {}), ...(recognized ? { recognizedProjection: recognized } : {}) }
     }) }),
+    // Accepted references participate even when no stored observation can be returned.
+    platformFieldReference: !!originalSource && (query.reuseExisting === true || (!query.relations?.length && originalSource.relationCount > 0) || query.relations?.some(row => !isObject(row.rawFields))),
     action: originalSource ? 'note' : 'add',
     review: query.status === 'failed',
     run: (tx) => writePlatformQuery(tx, query, batchId),
@@ -4550,6 +4554,7 @@ function commitRosterImportCore(
   }
 
   let items: RosterImportItemResult[]
+  let platformFields: RosterImportSummary['platformFields']
   try {
     items = db.transaction((tx) => {
       const out: RosterImportItemResult[] = []
@@ -4560,6 +4565,7 @@ function commitRosterImportCore(
         // 抛出去回滚整批 —— 绝不部分提交。
         if (!result.ok) throw new ExecStageFailure(out)
       }
+      if (request.sourceKind === 'platform_archive') platformFields = verifyPlatformFields(tx, out.flatMap(item => (item.detail?.canonicalProjection as PlatformProjectionResult[] | undefined) ?? []), plan.items.some(item => item.platformFieldReference))
       return out
     })
   } catch (cause) {
@@ -4602,6 +4608,7 @@ function commitRosterImportCore(
   }
 
   const summary: StoredImportSummary = summarizeCommit(plan, items)
+  if (platformFields) summary.platformFields = platformFields
   // This is inside recordImportReceipt's business transaction, after every write closure
   // succeeded and before either the batch or durable receipt JSON is saved.
   const qualificationReadback = request.sourceKind === 'announcement' ? captureAnnouncementQualification(db, request, items) : undefined
@@ -4877,6 +4884,7 @@ function readSummaryOf(raw: unknown): RosterImportSummary | null {
     skipped: num(raw.skipped),
     failed: num(raw.failed),
     evidenceRepointed: num(raw.evidenceRepointed),
+    ...(isObject(raw.platformFields) ? { platformFields: raw.platformFields as unknown as RosterImportSummary['platformFields'] } : {}),
     ...(isObject(raw.canonicalProjection) ? { canonicalProjection: raw.canonicalProjection as unknown as PlatformProjectionSummary } : {}),
   }
 }

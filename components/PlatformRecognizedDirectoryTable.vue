@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { projectionDisplay } from '~~/lib/platform/projection-display'
 import { computed } from 'vue'
 import { ExternalLink, History } from '@lucide/vue'
 import type { RecognizedDirectoryRow } from '~~/lib/platform/recognized-directory'
@@ -14,12 +15,9 @@ const emit = defineEmits<{ 'open-record': [recordId: number] }>()
 type RecordRow = Extract<RecognizedDirectoryRow, { kind: 'record' }>
 const records = computed(() => props.rows.filter((row): row is RecordRow => row.kind === 'record'))
 const isolated = computed(() => props.rows.filter((row): row is Extract<RecognizedDirectoryRow, { kind: 'observation' }> => row.kind === 'observation'))
+const projectionTitle = (rawCode: string) => PLATFORM_RDJBS[rawCode] ?? rawCode
 const missing = (value: string | number | null | undefined) => value === null || value === undefined || value === '' ? '未提供' : String(value)
 const time = (value: string | null) => value ? formatFetchTime(value) ?? value : '未提供'
-const title = (row: RecordRow) => {
-  const raw = row.matchedVersion.titleRaw
-  return raw ? PLATFORM_RDJBS[raw] ?? raw : '未提供'
-}
 const enterprise = (row: RecordRow) => {
   if (row.enterpriseNames.length === 1) return row.enterpriseNames[0]!
   if (row.enterpriseNames.length > 1) return `${row.enterpriseNames.length} 家企业归属冲突`
@@ -59,12 +57,12 @@ const conflictLabel: Record<string, string> = {
               <TableCell class="whitespace-normal break-words [overflow-wrap:anywhere]">
                 <NuxtLink v-if="enterpriseId(row) != null" :to="`/enterprises/${enterpriseId(row)}`" class="font-medium hover:underline">{{ enterprise(row) }}</NuxtLink>
                 <span v-else class="font-medium">{{ enterprise(row) }}</span>
-                <span class="text-muted-foreground mt-1 block break-all font-mono text-xs">{{ missing(row.matchedVersion.usccRaw) }}</span>
+                <span class="text-muted-foreground mt-1 block break-all font-mono text-xs">{{ projectionDisplay(row.matchedVersion, row.matchedVersion.usccRaw) }}</span>
               </TableCell>
-              <TableCell class="break-all font-mono text-xs">{{ missing(row.matchedVersion.validityDateRaw) }}</TableCell>
-              <TableCell class="whitespace-normal break-all font-mono text-xs">{{ missing(row.matchedVersion.maintenanceBatch) }}</TableCell>
-              <TableCell class="whitespace-normal break-all font-mono text-xs">{{ missing(row.matchedVersion.district) }}</TableCell>
-              <TableCell class="whitespace-normal text-xs leading-5">{{ title(row) }}</TableCell>
+              <TableCell class="break-all font-mono text-xs">{{ projectionDisplay(row.matchedVersion, row.matchedVersion.validityDateRaw) }}</TableCell>
+              <TableCell class="whitespace-normal break-all font-mono text-xs">{{ projectionDisplay(row.matchedVersion, row.matchedVersion.maintenanceBatch) }}</TableCell>
+              <TableCell class="whitespace-normal break-all font-mono text-xs">{{ projectionDisplay(row.matchedVersion, row.matchedVersion.district) }}</TableCell>
+              <TableCell class="whitespace-normal text-xs leading-5">{{ projectionDisplay(row.matchedVersion, row.matchedVersion.titleRaw, projectionTitle) }}</TableCell>
               <TableCell class="whitespace-nowrap tabular-nums">{{ row.versionCount }}<span v-if="row.matchedVersionCount > 1" class="text-muted-foreground block text-xs">匹配 {{ row.matchedVersionCount }} 个版本</span></TableCell>
               <TableCell class="sticky right-0 z-10 border-l bg-card">
                 <Button variant="ghost" size="sm" :disabled="loading" @click="emit('open-record', row.record.id)"><History data-icon="inline-start" />版本详情</Button>
@@ -81,13 +79,13 @@ const conflictLabel: Record<string, string> = {
             <div class="min-w-0">
               <NuxtLink v-if="enterpriseId(row) != null" :to="`/enterprises/${enterpriseId(row)}`" class="font-medium break-words hover:underline">{{ enterprise(row) }}</NuxtLink>
               <p v-else class="font-medium break-words">{{ enterprise(row) }}</p>
-              <p class="text-muted-foreground break-all font-mono text-xs">{{ missing(row.matchedVersion.usccRaw) }}</p>
+              <p class="text-muted-foreground break-all font-mono text-xs">{{ projectionDisplay(row.matchedVersion, row.matchedVersion.usccRaw) }}</p>
             </div>
             <Button variant="outline" size="sm" class="min-h-11 shrink-0" :disabled="loading" @click="emit('open-record', row.record.id)"><History data-icon="inline-start" />版本详情</Button>
           </div>
-          <p class="font-mono text-sm leading-5">有效期 {{ missing(row.matchedVersion.validityDateRaw) }}</p>
-          <p class="text-sm leading-5">批次 {{ missing(row.matchedVersion.maintenanceBatch) }} · 属地 {{ missing(row.matchedVersion.district) }}</p>
-          <p class="text-sm leading-5">称号 {{ title(row) }}</p>
+          <p class="font-mono text-sm leading-5">有效期 {{ projectionDisplay(row.matchedVersion, row.matchedVersion.validityDateRaw) }}</p>
+          <p class="text-sm leading-5">批次 {{ projectionDisplay(row.matchedVersion, row.matchedVersion.maintenanceBatch) }} · 属地 {{ projectionDisplay(row.matchedVersion, row.matchedVersion.district) }}</p>
+          <p class="text-sm leading-5">称号 {{ projectionDisplay(row.matchedVersion, row.matchedVersion.titleRaw, projectionTitle) }}</p>
           <p class="text-muted-foreground text-sm leading-5">版本 {{ row.versionCount }}</p>
           <NuxtLink v-if="currentQuery(row).titleCode || currentQuery(row).q" :to="{ path: '/current-enterprises', query: { ...(currentQuery(row).titleCode ? { titleCode: currentQuery(row).titleCode } : {}), ...(currentQuery(row).q ? { q: currentQuery(row).q } : {}) } }" class="text-xs hover:underline" data-testid="platform-recognized-current-link">当前有效资格（既有查询）</NuxtLink>
           <p v-for="conflict in row.conflicts.filter(value => value !== 'title_conflict')" :key="conflict" class="text-muted-foreground text-xs">{{ conflictLabel[conflict] ?? conflict }}</p>

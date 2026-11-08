@@ -143,3 +143,96 @@ describe('apply_list typed projection through public import HTTP', () => {
     expect(db.get<{ n: number }>(sql`SELECT count(*) n FROM platform_apply_projection`)!.n).toBe(1)
   }))
 })
+it('certifies unique eligible versions after shared observations and repairs missing projections on full replay', async () => fixture(async (db, post) => {
+  const raw = { id: 'SQ-COMPLETE', qymc: '完成企业', year: '2024', cszt: '待审核' }
+  const queries = [applyQuery('2026-10-01T00:00:00Z', raw), applyQuery('2026-10-02T00:00:00Z', raw)]
+  const req = request('completion-first', { platformQueries: queries })
+  expect((await post('preflight', req)).preflight.conflicts).toEqual([])
+  const first = await post('commit', req)
+  expect(first.summary.platformFields).toEqual({ status: 'ready', eligibleVersions: 1, projectionsCreated: 1, projectionsReused: 0, projectionsChecked: 1, observationsChecked: 2, quarantinedObservations: 0 })
+  db.run(sql`DELETE FROM platform_apply_projection`)
+  expect((await post('commit', req)).summary).toEqual(first.summary)
+  expect(db.get<{ n: number }>(sql`SELECT count(*) n FROM platform_apply_projection`)!.n).toBe(0)
+  const replay = await post('commit', request('completion-repair', { platformQueries: queries }))
+  expect(replay.summary.written).toBe(0)
+  expect(replay.summary.platformFields).toEqual(first.summary.platformFields)
+  expect(db.get(sql`SELECT declaration_year AS year, status FROM platform_apply_projection`)).toEqual({ year: 2024, status: '待审核' })
+}))
+
+it('rejects a projection deleted after its writer before reporting completion and retains the failed receipt', async () => fixture(async (db, post) => {
+  db.run(sql.raw('CREATE TRIGGER remove_projection AFTER INSERT ON platform_apply_projection BEGIN DELETE FROM platform_apply_projection WHERE version_id = NEW.version_id; END'))
+  const result = await post('commit', request('completion-missing', { platformQueries: [applyQuery('2026-10-01T00:00:00Z', { id: 'SQ-MISSING', year: '2024' })] }))
+  expect(result.status).toBe('failed')
+  expect(result.error).toContain('Required source projection missing')
+  expect(db.get<{ n: number }>(sql`SELECT count(*) n FROM platform_relation`)!.n).toBe(0)
+  expect(db.get<{ status: string }>(sql`SELECT status FROM import_batch`)!.status).toBe('failed')
+}))
+
+it('reports quarantines and explicit references without claiming full readiness or repairing references', async () => fixture(async (db, post) => {
+  const query = applyQuery('2026-10-01T00:00:00Z', { id: 'SQ-REFERENCE', year: '2024' })
+  await post('commit', request('reference-seed', { platformQueries: [query] }))
+  db.run(sql`DELETE FROM platform_apply_projection`)
+  const reference = await post('commit', request('reference-only', { platformQueries: [{ ...query, reuseExisting: true }] }))
+  expect(reference.summary.platformFields).toMatchObject({ status: 'partial', eligibleVersions: 0, projectionsChecked: 0 })
+  expect(db.get<{ n: number }>(sql`SELECT count(*) n FROM platform_apply_projection`)!.n).toBe(0)
+  const quarantine = await post('commit', request('quarantine-only', { platformQueries: [applyQuery('2026-10-02T00:00:00Z', { year: '2024' })] }))
+  expect(quarantine.summary.platformFields).toMatchObject({ status: 'partial', eligibleVersions: 0, quarantinedObservations: 1, observationsChecked: 1 })
+}))
+
+it('rejects immutable projection field conflicts and rolls back the other rows', async () => fixture(async (db, post) => {
+  const first = applyQuery('2026-10-01T00:00:00Z', { id: 'SQ-OWNER', year: '2024' })
+  await post('commit', request('owner-first', { platformQueries: [first] }))
+  await post('commit', request('owner-other', { platformQueries: [applyQuery('2026-10-02T00:00:00Z', { id: 'SQ-OTHER', year: '2023' })] }))
+  db.run(sql`UPDATE platform_apply_projection SET status = 'conflicting stored value' WHERE version_id = (SELECT min(id) FROM platform_business_record_version)`)
+  const result = await post('commit', request('owner-conflict', { platformQueries: [applyQuery('2026-10-03T00:00:00Z', { id: 'SQ-ROLLBACK', year: '2025' }), first] }))
+  expect(result.status).toBe('failed')
+  expect(db.get<{ n: number }>(sql`SELECT count(*) n FROM platform_business_record`)!.n).toBe(2)
+  expect(db.get<{ n: number }>(sql`SELECT count(*) n FROM platform_relation`)!.n).toBe(2)
+}))
+
+it('does not invent fresh completion evidence on an old committed receipt', async () => fixture(async (db, post) => {
+  const req = request('legacy-receipt', { platformQueries: [applyQuery('2026-10-01T00:00:00Z', { id: 'SQ-LEGACY', year: '2024' })] })
+  const saved = await post('commit', req)
+  const legacySummary = { ...saved.summary }; delete legacySummary.platformFields
+  db.run(sql`UPDATE import_batch SET summary = ${JSON.stringify(legacySummary)} WHERE id = ${saved.batchId}`)
+  db.run(sql`DELETE FROM platform_apply_projection`)
+  const replay = await post('commit', req)
+  expect(replay.summary).toEqual(legacySummary)
+  expect(replay.summary).not.toHaveProperty('platformFields')
+  expect(db.get<{ n: number }>(sql`SELECT count(*) n FROM platform_apply_projection`)!.n).toBe(0)
+}))
+
+it.each(['omitted', 'empty', 'legacy-unmapped', 'legacy-implicit-unmapped'] as const)('keeps %s reference participation partial beside a normal row without repairing the reference', async mode => fixture(async (db, post) => {
+  const seed = applyQuery('2026-10-01T00:00:00Z', { id: 'SQ-REF-GAP', year: '2024' })
+  expect((await post('commit', request('ref-gap-seed', { platformQueries: [seed] }))).status).toBe('committed')
+  db.run(sql`DELETE FROM platform_apply_projection`)
+  if (mode.endsWith('unmapped')) db.run(sql`DELETE FROM platform_business_observation`)
+  const before = db.all(sql`SELECT * FROM platform_relation`)
+  const versions = db.all(sql`SELECT * FROM platform_business_record_version`)
+  const reference: RosterImportPlatformQuery = { interface: seed.interface, queryKey: seed.queryKey, queriedAt: seed.queriedAt, ...(mode === 'legacy-implicit-unmapped' ? {} : { reuseExisting: true as const }),
+    ...(mode === 'omitted' ? {} : { relations: mode === 'empty' ? [] : [{ sequenceNo: 1 }] }),
+  }
+  const pure = await post('commit', request('ref-gap-pure', { platformQueries: [reference] }))
+  expect(pure.status).toBe('committed')
+  expect(db.all(sql`SELECT * FROM platform_relation`)).toEqual(before)
+  expect(db.all(sql`SELECT * FROM platform_business_record_version`)).toEqual(versions)
+  expect(db.all(sql`SELECT * FROM platform_apply_projection`)).toEqual([])
+  const req = request('ref-gap-mixed', { platformQueries: [reference, applyQuery('2026-10-02T00:00:00Z', { id: 'SQ-FRESH', year: '2025', cszt: '待审核' })] })
+  expect((await post('preflight', req)).preflight.conflicts).toEqual([])
+  const saved = await post('commit', req)
+  expect(saved.status).toBe('committed')
+  expect(saved.summary.platformFields).toEqual({ status: 'partial', eligibleVersions: 1, projectionsCreated: 1, projectionsReused: 0, projectionsChecked: 1, observationsChecked: 1, quarantinedObservations: 0 })
+  expect(db.all(sql`SELECT declaration_year AS year, status FROM platform_apply_projection`)).toEqual([{ year: 2025, status: '待审核' }])
+  expect(db.all(sql`SELECT * FROM platform_relation ORDER BY id LIMIT 1`)).toEqual(before)
+  expect(db.all(sql`SELECT * FROM platform_business_record_version ORDER BY id LIMIT 1`)).toEqual(versions)
+  expect(pure.summary.platformFields).toEqual({ status: 'partial', eligibleVersions: 0, projectionsCreated: 0, projectionsReused: 0, projectionsChecked: 0, observationsChecked: 0, quarantinedObservations: 0 })
+  expect((await post('commit', req)).summary).toEqual(saved.summary)
+}))
+
+it('keeps a normal zero-row query not performed rather than treating it as a reference', async () => fixture(async (_db, post) => {
+  const saved = await post('commit', request('zero-row', { platformQueries: [{ interface: 'apply_list', queryKey: 'empty', queriedAt: '2026-10-01T00:00:00Z', status: 'success', relations: [] }] }))
+  expect(saved.status).toBe('committed')
+  const replay = await post('commit', request('zero-row-replay', { platformQueries: [{ interface: 'apply_list', queryKey: 'empty', queriedAt: '2026-10-01T00:00:00Z', status: 'success', relations: [] }] }))
+  expect(replay.summary.platformFields).toEqual(saved.summary.platformFields)
+  expect(saved.summary.platformFields).toEqual({ status: 'not_performed', eligibleVersions: 0, projectionsCreated: 0, projectionsReused: 0, projectionsChecked: 0, observationsChecked: 0, quarantinedObservations: 0 })
+}))

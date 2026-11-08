@@ -363,3 +363,22 @@ describe('recognized_list typed projection through public import HTTP', () => {
     expect(after.rows.map(row => row.enterpriseId)).toEqual([enterprise.id])
   }))
 })
+
+it('completes a mixed batch with the same platform key kept separate across all three interfaces', async () => fixture(async (db, post) => {
+  const base = { queryKey: 'name:混合企业', queriedAt: '2026-10-01T00:00:00Z', status: 'success' as const }
+  const queries: RosterImportPlatformQuery[] = [
+    { ...base, interface: 'apply_list', relations: [{ sequenceNo: 1, relationKey: 'SHARED', rawFields: { id: 'SHARED', year: '2024', cszt: '待审核' } }] },
+    { ...base, interface: 'business_list', relations: [{ sequenceNo: 1, relationKey: 'SHARED', rawFields: { id: 'SHARED', year: '2023', cszt: '终审通过' } }] },
+    recognizedQuery(base.queriedAt, [{ id: 'SHARED', qymc: '混合企业', rddqrq: '原样日期', whpcyear: '2025', whpc: '2' }]),
+  ]
+  const req = request('mixed-completion', { platformQueries: queries })
+  expect((await post('preflight', req)).preflight.conflicts).toEqual([])
+  const saved = await post('commit', req)
+  expect(saved.status).toBe('committed')
+  expect(saved.summary.platformFields).toEqual({ status: 'ready', eligibleVersions: 3, projectionsCreated: 3, projectionsReused: 0, projectionsChecked: 3, observationsChecked: 3, quarantinedObservations: 0 })
+  expect(db.get(sql`SELECT declaration_year AS year, status FROM platform_apply_projection`)).toEqual({ year: 2024, status: '待审核' })
+  expect(db.get(sql`SELECT business_year AS year, status FROM platform_business_projection`)).toEqual({ year: 2023, status: '终审通过' })
+  expect(db.get(sql`SELECT validity_date_raw AS date, maintenance_year AS year, maintenance_batch AS batch FROM platform_recognized_projection`)).toEqual({ date: '原样日期', year: 2025, batch: '2' })
+  const repeated = await post('commit', request('mixed-reused', { platformQueries: queries }))
+  expect(repeated.summary.platformFields).toMatchObject({ status: 'ready', eligibleVersions: 3, projectionsCreated: 0, projectionsReused: 3, projectionsChecked: 3 })
+}))

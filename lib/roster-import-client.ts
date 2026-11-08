@@ -509,6 +509,8 @@ export interface RosterImportPreflightResponse {
 }
 
 export interface RosterImportSummary {
+  /** Absent on historical receipts; never inferred on replay. */
+  platformFields?: { status: 'ready' | 'partial' | 'not_performed'; eligibleVersions: number; projectionsCreated: number; projectionsReused: number; projectionsChecked: number; observationsChecked: number; quarantinedObservations: number }
   /** Separate from the legacy query/relation rowsWritten count. */
   canonicalProjection?: import('./platform/business-record').PlatformProjectionSummary
   written: number
