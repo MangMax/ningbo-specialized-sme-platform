@@ -80,6 +80,38 @@ db.insert(schema.fileDeclaration669)
     pageRanges: [{ start: 1, end: 1 }],
   })
   .run()
+const sourceBatch = db
+  .insert(schema.importBatch)
+  .values({
+    idempotencyKey: 'raw-history-671',
+    sourceKind: 'announcement',
+    sourceIdentity: 'notice.pdf',
+  })
+  .returning()
+  .get()
+const originalPublishedRow = db
+  .insert(schema.officialEvidenceRowRevision)
+  .values({
+    evidenceId: evidence.id,
+    revision: 1,
+    eventId: event.id,
+    capturedRecordId: record.id,
+    capturedEnterpriseId: enterprise.id,
+    nameRaw: '历史公布原名',
+    usccRaw: '原文未知',
+    districtRaw: '原始属地写法',
+    path: 'notice.pdf',
+    attachment: '附件1',
+    page: 1,
+    sourceBindingKnown: false,
+    actor: { type: 'agent', id: 'original-import' },
+    basis: '原公布行字面值',
+    commandKind: 'import',
+    importBatchId: sourceBatch.id,
+    createdAt: '2025-01-01T00:00:00Z',
+  })
+  .returning()
+  .get()
 let server: ReturnType<typeof createServer>
 async function service() {
   vi.stubGlobal('defineEventHandler', defineEventHandler)
@@ -143,6 +175,7 @@ it('preflights and atomically fills only unknown formal coordinates over public 
   expect(receipt.status).toBe(200)
   expect(receipt.body.counts).toMatchObject({ updated: 1, unexecuted: 0 })
   expect(await post('commit', commit)).toEqual(receipt)
+  expect((await post('preflight', { ...request, basis: '同键不同依据' })).status).toBe(409)
   expect(db.select().from(schema.recordEvent).get()).toMatchObject({
     id: event.id,
     year: 2025,
@@ -150,6 +183,7 @@ it('preflights and atomically fills only unknown formal coordinates over public 
     revision: 2,
   })
   expect(db.select().from(schema.recordEvidence).get()).toEqual(evidence)
+  expect(db.select().from(schema.officialEvidenceRowRevision).get()).toEqual(originalPublishedRow)
   expect(db.select().from(schema.eventCorrectionAudit).all()).toHaveLength(1)
 })
 

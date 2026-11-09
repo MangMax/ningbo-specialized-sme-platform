@@ -70,3 +70,21 @@ HTTP响应时刻不完全相同，不宣称同一个数据库历史快照；资�
 - 浏览器真实断网/响应丢失注入 UNRUN；公共HTTP原键重放及实际SQL失败回滚/续跑 fresh PASS。
 - 全仓测试、远端CI、独立审核、生产数据/生产回填与部署 UNRUN；本票未写生产。
 - #670 的页码编辑页面不在本票；本次通过公共API登记范围，不代表母票整体验收完成。
+
+## 冻结代码复验补充
+
+`browser-frozen.json` 绑定实现 head `1e46ed23228fe312cbc1604b6ed532ff0a29185f`，
+保存最终390px与1280px的预检、成功回执及关闭重开实际页面文字。
+事件129/130是分别为最终窄屏/桌面新增的独立合成未知年月样本（不重置已有事件或抹掉历史），
+两端分别 updated1，既有2025/2、2022/1无需变更，跨称号和缺页两项仍冲突。
+最终390px clientWidth=scrollWidth=372，桌面558；重开仍保留成功回执。
+本次后续变化仅为测试增加出处原始公布行逐字段不变与同键不同依据拒绝断言，以及证据文档。
+业务实现与该浏览器绑定 head 相同；没有把前一个热更新期间409当成功。
+
+frozen-tests / raw-history-tests 均5文件124项 PASS；后者额外独立保存并比较
+`official_evidence_row_revision` 的历史原名、原统代、原属地、unknown绑定及来源，不通过现用企业资料回填。
+frozen-typecheck PASS；frozen-build PASS（14.4s）；frozen-prod-openapi 本地生产产物
+验证三个文档端点404、health/job kinds 200。这不是生产部署。
+frozen-workbook-oracle 为冻结代码重新下载工作簿后独立解析的 PASS。
+最终文档提交后的精确HEAD gate 日志继续保存在 `/tmp/671-evidence/final-head-*`，
+最终报告提供确切 SHA 和结果；此处旧日志的候选身份与历史 FAIL 保持不变。
