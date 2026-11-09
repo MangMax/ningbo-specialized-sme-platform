@@ -9,26 +9,32 @@ import * as schema from '../../db/schema'
 import { EVENT_ORDER, TITLE_ORDER } from '../../lib/labels'
 import { derivedPartsForFile, listFileParts } from './file-parts'
 import { applyParseResult, normalizeParseParts } from './parse-result'
+import { partKey } from '../../lib/file-parts'
+import { readPdfPageCount } from './pdf-pages'
 import { getStoredFile } from './stored-files'
 
 type Db = BetterSQLite3Database<typeof schema>
 const ocrPage310 = z.strictObject({ page: z.number().int().positive().max(Number.MAX_SAFE_INTEGER), version: z.string().regex(/^[1-9]\d*:[1-9]\d*$/) })
 const pages310 = z.array(ocrPage310).max(10000).refine(pages => new Set(pages.map(p => p.page)).size === pages.length, 'OCR 页不得重复')
 export const parsePreflight310 = z.strictObject({
-  kind: z.enum(['file', 'ocr']), pages: pages310.default([]),
+  kind: z.enum(['file', 'ocr']), pages: pages310.default([]), verifyPhysicalPages: z.boolean().optional(),
 }).refine(v => v.kind === 'ocr' ? v.pages.length > 0 : v.pages.length === 0, 'OCR 必须指定实际采用页及读取版本;文件输入不得带 OCR 页')
 export const parseInputRef310 = z.strictObject({
   format: z.literal(1), fileId: z.number().int().positive(), relPath: z.string().min(1),
+  physicalSource: z.strictObject({ pageCount: z.number().int().positive(), contentVersion: z.string().min(1) }).optional(),
   sha256: z.string().regex(/^[a-f0-9]{64}$/), kind: z.enum(['file', 'ocr']), pages: pages310,
 }).refine(v => v.kind === 'ocr' ? v.pages.length > 0 : v.pages.length === 0, '输入类型与 OCR 页不一致')
 type InputRef310 = z.infer<typeof parseInputRef310>
 type InputLineage310 = { status: 'unknown' } | { status: 'bound'; inputRef: InputRef310 }
+const pageRange669 = z.strictObject({ start: z.number().int().positive().max(Number.MAX_SAFE_INTEGER), end: z.number().int().positive().max(Number.MAX_SAFE_INTEGER) }).refine(r => r.start <= r.end, '页码范围逆序')
 export const parsePart105 = z.strictObject({
   titleCode: z.enum(TITLE_ORDER as [string, ...string[]]),
   eventKind: z.enum(EVENT_ORDER as [string, ...string[]]),
   year: z.number().int().min(1900).max(2100).nullish(),
   batch: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).nullish(),
   attachment: z.string().max(500).nullish(),
+  declarationId: z.string().uuid().optional(),
+  pageRanges: z.array(pageRange669).max(1000).optional(),
   rowCount: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).optional(),
 })
 export const parseWrite105 = z.strictObject({
@@ -72,12 +78,13 @@ const hash = (value: unknown) => createHash('sha256').update(JSON.stringify(valu
 const inputFileStamp310 = (stat: BigIntStats) => [stat.dev, stat.ino, stat.mode, stat.size, stat.mtimeNs, stat.ctimeNs].join(':')
 
 /** Local to parse maintenance: inspect one real source, never scan/backfill the store. */
-function currentInput310(db: Db, fileId: number, selection: z.infer<typeof parsePreflight310>, filesDir: string): InputRef310 {
+function currentInput310(db: Db, fileId: number, selection: z.infer<typeof parsePreflight310>, filesDir: string, physicalSource?: InputRef310['physicalSource']): InputRef310 {
   const file = db.select({ id: schema.storedFile.id, relPath: schema.storedFile.relPath, sha256: schema.storedFile.sha256, removedAt: schema.storedFile.removedAt })
     .from(schema.storedFile).where(eq(schema.storedFile.id, fileId)).get()
   if (!file) return fail(404, '文件不存在')
   if (file.removedAt) return fail(409, '已移出文件不允许解析预检')
   let sha256: string
+  let contentVersion: string
   try {
     const root = realpathSync(filesDir), path = realpathSync(resolve(root, file.relPath))
     if (!path.startsWith(root + sep)) return fail(409, '文件路径越界')
@@ -91,6 +98,7 @@ function currentInput310(db: Db, fileId: number, selection: z.infer<typeof parse
       let n: number
       while ((n = readSync(fd, chunk)) > 0) digest.update(chunk.subarray(0, n))
       sha256 = digest.digest('hex')
+      contentVersion = inputFileStamp310(opened)
       // An open fd can still yield the old digest after rename/unlink, and an
       // already-read prefix can be overwritten without changing that digest.
       // Reconcile the fd with the configured pathname after the full read.
@@ -114,18 +122,48 @@ function currentInput310(db: Db, fileId: number, selection: z.infer<typeof parse
       .where(and(eq(schema.ocrResult.fileId, fileId), eq(schema.ocrResult.pageNo, page.page))).get()
     if (!current || `${current.id}:${current.revision}` !== page.version) return fail(409, '解析 OCR 输入已变化,请重新读取实际采用页后预检')
   }
-  return { format: 1, fileId, relPath: file.relPath, sha256, kind: selection.kind, pages }
+  return { format: 1, fileId, relPath: file.relPath, sha256, kind: selection.kind, pages, ...(physicalSource ? { physicalSource: { pageCount: physicalSource.pageCount, contentVersion } } : {}) }
 }
 
 /** The caller supplies versions from the OCR it actually read; never choose newer pages. */
 export function preflightParse310(db: Db, fileId: number, raw: unknown, filesDir: string) {
   const parsed = parsePreflight310.safeParse(raw)
   if (!parsed.success) return fail(400, parsed.error.message)
-  return db.transaction(tx => ({ expectedVersion: readParse105(tx as Db, fileId).version,
-    inputRef: currentInput310(tx as Db, fileId, parsed.data, filesDir) }))
+  return { expectedVersion: readParse105(db, fileId).version, inputRef: currentInput310(db, fileId, parsed.data, filesDir) }
+}
+export async function preflightRanges669(db: Db, fileId: number, raw: unknown, filesDir: string) {
+  const parsed = parsePreflight310.safeParse(raw)
+  if (!parsed.success) return fail(400, parsed.error.message)
+  const plan = preflightParse310(db, fileId, raw, filesDir)
+  if (!parsed.data.verifyPhysicalPages) return plan
+  const inputRef = await physicalInput669(db, fileId, plan.inputRef, filesDir)
+  if (plan.expectedVersion !== readParse105(db, fileId).version) return fail(409, '解析版本已变化,请重新预检')
+  return { expectedVersion: plan.expectedVersion, inputRef }
 }
 
-/** The recommended current writer cannot fall back to the compatibility adapter. */
+async function physicalInput669(db: Db, fileId: number, ref: InputRef310, filesDir: string) {
+  const file = db.select().from(schema.storedFile).where(eq(schema.storedFile.id, fileId)).get()!
+  if (file.ext.toLowerCase() !== 'pdf') return fail(409, '不支持页码定位: Office等文件无可靠物理页数')
+  const before = currentInput310(db, fileId, ref, filesDir, { pageCount: 1, contentVersion: '' })
+  const pageCount = await readPdfPageCount(filesDir, ref.relPath)
+  if (!pageCount) return fail(409, '无法核实实际PDF物理页数,不支持页码定位')
+  const after = currentInput310(db, fileId, ref, filesDir, { pageCount, contentVersion: '' })
+  if (before.physicalSource!.contentVersion !== after.physicalSource!.contentVersion) return fail(409, '文件内容版本已变化,请重新预检')
+  return after
+}
+
+/** Replay precedes disk verification, including immutable receipts after content drift. */
+export async function commitRanges669(db: Db, fileId: number, raw: unknown, filesDir: string, context: LogContext = {}) {
+  const parsed = parseFrozenCommit310.safeParse(raw)
+  if (!parsed.success) return fail(400, parsed.error.message)
+  const input = parsed.data
+  const replay = db.select().from(schema.fileParseAudit105).where(and(eq(schema.fileParseAudit105.fileId, fileId), eq(schema.fileParseAudit105.idempotencyKey, input.idempotencyKey))).get()
+  if (!replay && input.inputRef.physicalSource) {
+    const verified = await physicalInput669(db, fileId, input.inputRef, filesDir)
+    if (hash(verified) !== hash({ format: input.inputRef.format, fileId: input.inputRef.fileId, relPath: input.inputRef.relPath, sha256: input.inputRef.sha256, kind: input.inputRef.kind, pages: input.inputRef.pages, physicalSource: input.inputRef.physicalSource })) return fail(409, '文件内容版本已变化,请重新预检')
+  }
+  return saveParse105(db, fileId, input, undefined, context, filesDir, true)
+}
 export function commitParse310(db: Db, fileId: number, raw: unknown, filesDir: string, context: LogContext = {}) {
   const parsed = parseFrozenCommit310.safeParse(raw)
   if (!parsed.success) return fail(400, parsed.error.message)
@@ -139,21 +177,22 @@ function lineage310(snapshot: Record<string, unknown> | undefined): InputLineage
 
 /** Exact-ID projection. Source-derived coordinates participate in the edit version too. */
 export function readParse105(db: Db, fileId: number) {
-  const file = db.select({ id: schema.storedFile.id, parseState: schema.storedFile.parseState, removedAt: schema.storedFile.removedAt })
+  const file = db.select({ id: schema.storedFile.id, parseState: schema.storedFile.parseState, sha256: schema.storedFile.sha256, removedAt: schema.storedFile.removedAt })
     .from(schema.storedFile).where(eq(schema.storedFile.id, fileId)).get()
   if (!file) return fail(404, '文件不存在')
   const parts = listFileParts(db, [fileId]).get(fileId) ?? []
   const last = db.select({ id: schema.fileParseAudit105.id, after: schema.fileParseAudit105.after }).from(schema.fileParseAudit105)
     .where(eq(schema.fileParseAudit105.fileId, fileId)).orderBy(desc(schema.fileParseAudit105.id)).limit(1).get()
-  const version = hash({ fileId, parseState: file.parseState, removedAt: file.removedAt, parts, derived: derivedPartsForFile(db, fileId), revision: last?.id ?? 0 })
-  return { fileId, parseState: file.parseState, parts, version, removedAt: file.removedAt, inputLineage: lineage310(last?.after) }
+  const declarations = db.select().from(schema.fileDeclaration669).where(and(eq(schema.fileDeclaration669.fileId, fileId), eq(schema.fileDeclaration669.active, true))).all()
+  const version = hash({ sha256: file.sha256, declarations, fileId, parseState: file.parseState, removedAt: file.removedAt, parts, derived: derivedPartsForFile(db, fileId), revision: last?.id ?? 0 })
+  return { fileId, parseState: file.parseState, parts, declarations, version, removedAt: file.removedAt, inputLineage: lineage310(last?.after) }
 }
 export function getParse105(db: Db, fileId: number) {
   return db.transaction(tx => readParse105(tx as Db, fileId))
 }
 
 /** One atomic parse resource write, shared by REST and MCP. Replay precedes version checks. */
-function saveParse105Unlogged(db: Db, fileId: number, raw: unknown, mode?: 'replace' | 'status', filesDir?: string) {
+function saveParse105Unlogged(db: Db, fileId: number, raw: unknown, mode?: 'replace' | 'status', filesDir?: string, verifiedPhysical = false) {
   const parsed = parseWrite105.safeParse(raw)
   if (!parsed.success) return fail(400, parsed.error.message)
   const input = parsed.data
@@ -165,7 +204,7 @@ function saveParse105Unlogged(db: Db, fileId: number, raw: unknown, mode?: 'repl
   const parseState = input.parseState ?? 'parsed'
   const inputRef = input.inputRef && { ...input.inputRef, pages: [...input.inputRef.pages].sort((a, b) => a.page - b.page) }
   // Omit absent lineage to preserve old request hashes and immutable receipt replay.
-  const requestHash = hash({ expectedVersion: input.expectedVersion, parts, parseState, actor: input.actor, reason: input.reason, ...(inputRef ? { inputRef } : {}) })
+  const requestHash = hash({ expectedVersion: input.expectedVersion, parts, parseState, actor: input.actor, reason: input.reason, ...(inputRef ? { inputRef } : {}), ...(input.parts?.some(p => p.declarationId !== undefined || p.pageRanges !== undefined) ? { rangeEdits: input.parts.map(p => ({ declarationId: p.declarationId, pageRanges: p.pageRanges })) } : {}) })
   return db.transaction(tx => {
     const scoped = tx as Db
     const receipt = tx.select({ id: schema.fileParseAudit105.id, requestHash: schema.fileParseAudit105.requestHash, after: schema.fileParseAudit105.after }).from(schema.fileParseAudit105)
@@ -182,15 +221,18 @@ function saveParse105Unlogged(db: Db, fileId: number, raw: unknown, mode?: 'repl
     if (parts !== undefined && !inputRef && before.inputLineage.status === 'bound') {
       return fail(409, '解析已绑定输入依据,请重新读取并预检后携完整 inputRef 提交;不得降级覆盖')
     }
+    if (inputRef?.physicalSource && !verifiedPhysical) return fail(409, '物理页码输入必须经冻结commit提交')
+    if (input.parts?.some(p => p.pageRanges?.length) && !inputRef?.physicalSource) return fail(409, '页码范围必须先verifyPhysicalPages预检')
     if (inputRef) {
       if (!filesDir) return fail(409, '无法核实解析输入,请重新读取并预检')
       try {
-        if (hash(currentInput310(scoped, fileId, inputRef, filesDir)) !== hash(inputRef)) return fail(409, '解析输入已变化,请重新读取并预检后提交')
+        if (hash(currentInput310(scoped, fileId, inputRef, filesDir, inputRef.physicalSource)) !== hash({ format: inputRef.format, fileId: inputRef.fileId, relPath: inputRef.relPath, sha256: inputRef.sha256, kind: inputRef.kind, pages: inputRef.pages, ...(inputRef.physicalSource ? { physicalSource: inputRef.physicalSource } : {}) })) return fail(409, '解析输入已变化,请重新读取并预检后提交')
       } catch (error) {
         if (error instanceof ParseMaintenanceError) return fail(409, '解析输入已变化,请重新读取并预检后提交')
         throw error
       }
     }
+    if (parts !== undefined) writeDeclarations669(scoped, fileId, input.parts!, before.declarations, inputRef)
     const written = applyParseResult(scoped, fileId, { parts, parseState })
     if (!written.ok) return fail(400, written.message)
     const audit = tx.insert(schema.fileParseAudit105).values({
@@ -265,14 +307,45 @@ function saveLegacyParseMcp105(db: Db, fileId: number, input: { parts?: z.infer<
 }
 
 /** Emit only after the receipt transaction returns; runtime retention never owns the receipt. */
-export function saveParse105(db: Db, fileId: number, raw: unknown, mode?: 'replace' | 'status', context: LogContext = {}, filesDir?: string) {
+export function saveParse105(db: Db, fileId: number, raw: unknown, mode?: 'replace' | 'status', context: LogContext = {}, filesDir?: string, verifiedPhysical = false) {
   const startedAt = Date.now()
   try {
-    const result = saveParse105Unlogged(db, fileId, raw, mode, filesDir)
+    const result = saveParse105Unlogged(db, fileId, raw, mode, filesDir, verifiedPhysical)
     appLog({ source: 'file', operation: result.replayed ? 'file.parse.replay' : 'file.parse.revise', outcome: 'success', fileId, receiptId: result.receiptId, durationMs: Date.now() - startedAt }, context)
     return result
   } catch (error) {
     appLog({ source: 'file', operation: 'file.parse.revise', outcome: error instanceof ParseMaintenanceError ? 'denied' : 'failure', level: 'error', ...(error instanceof ParseMaintenanceError && error.statusCode === 409 ? { fileId } : {}), errorCode: error instanceof ParseMaintenanceError && error.statusCode === 409 ? 'file_parse_conflict' : 'file_parse_failed', durationMs: Date.now() - startedAt }, context)
     throw error
   }
+}
+
+function writeDeclarations669(db: Db, fileId: number, raw: z.infer<typeof parsePart105>[], previous: (typeof schema.fileDeclaration669.$inferSelect)[], inputRef?: InputRef310) {
+  const sha256 = db.select().from(schema.storedFile).where(eq(schema.storedFile.id, fileId)).get()!.sha256
+  const used = new Set<string>()
+  const next = raw.map(item => {
+    const normalized = normalizeParseParts([item])
+    if (!normalized.ok) return fail(400, normalized.message)
+    const part = normalized.parts[0]!
+    const old = item.declarationId ? previous.find(p => p.declarationId === item.declarationId) : previous.find(p => partKey(p.part) === partKey(part))
+    if (item.declarationId && !old) return fail(409, '声明不属于当前文件或已撤回')
+    const declarationId = old?.declarationId ?? randomUUID()
+    if (used.has(declarationId)) return fail(400, '声明身份重复')
+    used.add(declarationId)
+    let pageRanges = old?.pageRanges ?? null
+    if (item.pageRanges !== undefined) {
+      pageRanges = []
+      for (const range of [...item.pageRanges].sort((a, b) => a.start - b.start || a.end - b.end)) {
+        if (range.end > (inputRef?.physicalSource?.pageCount ?? 0)) return fail(400, '页码范围超出实际物理页数')
+        const last = pageRanges.at(-1)
+        if (last && range.start <= last.end) last.end = Math.max(last.end, range.end)
+        else pageRanges.push({ ...range })
+      }
+    }
+    if (old && old.sha256 !== sha256 && pageRanges?.length && item.pageRanges === undefined) return fail(409, '文件内容已变化,必须重新核实范围或显式清空')
+    if (old?.pageRanges?.length && item.pageRanges === undefined && inputRef?.physicalSource && old.contentVersion !== inputRef.physicalSource.contentVersion) return fail(409, '范围依据内容版本已变化,必须重新核实范围或显式清空')
+    const contentVersion = item.pageRanges !== undefined ? inputRef?.physicalSource?.contentVersion ?? null : old?.contentVersion ?? null
+    return { contentVersion, declarationId, fileId, revision: (old?.revision ?? 0) + 1, active: true, sha256, part, pageRanges }
+  })
+  for (const old of previous) if (!used.has(old.declarationId)) db.update(schema.fileDeclaration669).set({ active: false, revision: old.revision + 1 }).where(eq(schema.fileDeclaration669.declarationId, old.declarationId)).run()
+  for (const declaration of next) db.insert(schema.fileDeclaration669).values(declaration).onConflictDoUpdate({ target: schema.fileDeclaration669.declarationId, set: declaration }).run()
 }
