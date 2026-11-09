@@ -312,7 +312,7 @@ it('survives short filesystem writes and rejects final file close errors', async
   expect(db.$client.inTransaction).toBe(false)
 })
 
-it('rejects a row that cannot display its full text and enforces the cell character limit', async () => {
+it('moves overheight text to the full-text appendix and still enforces the cell character limit', async () => {
   const { db, file, dir } = fixture()
   const maximum = '字'.repeat(250)
   candidate(db, maximum, 'eligible', 'SYNTHETIC-LIMIT')
@@ -321,7 +321,12 @@ it('rejects a row that cannot display its full text and enforces the cell charac
   await workbook.xlsx.readFile(file)
   expect(workbook.getWorksheet('有效企业')!.getCell('B2').value).toBe(maximum)
   candidate(db, '字'.repeat(32767), 'pending', 'SYNTHETIC-TALL')
-  await expect(writeCurrentWorkbook(db.$client, 'little_giant', join(dir, 'tall.part'), () => {})).rejects.toThrow('行高不足')
+  const tall = join(dir, 'tall.part')
+  await writeCurrentWorkbook(db.$client, 'little_giant', tall, () => {})
+  const parsed = new ExcelJS.Workbook(); await parsed.xlsx.readFile(tall)
+  const fullText: string[] = []
+  parsed.getWorksheet('长文本全文')!.eachRow((row,n) => { if(n>1 && row.getCell(2).value === 'B2') fullText.push(String(row.getCell(12).value)) })
+  expect(fullText.join('')).toBe('字'.repeat(32767))
   const other = fixture()
   candidate(other.db, '字'.repeat(32768), 'pending', 'SYNTHETIC-OVER-LIMIT')
   await expect(writeCurrentWorkbook(other.db.$client, 'little_giant', join(other.dir, 'overflow.part'), () => {})).rejects.toThrow('32767')
@@ -410,4 +415,40 @@ it('427 default_export_keeps_D409_digest_and_never_invokes_comparison', async ()
     expect(result.counts).toEqual({ eligible: 1, pending: 0, excluded: 0 })
     expect(spy).not.toHaveBeenCalled()
   } finally { spy.mockRestore() }
+})
+
+it('publishes long multiple sources without duplicate business identities and reconstructs every source byte', async () => {
+  const { db, file } = fixture()
+  const id = candidate(db, 'overflow synthetic')
+  const record = db.select().from(s.record).get()!
+  const event = db.select().from(s.recordEvent).get()!
+  const sources = ['首段\n'.repeat(24), '第二来源😀'.repeat(180)]
+  for (const [index, attachment] of sources.entries()) db.insert(s.recordEvidence).values({recordEventId:event.id,sourceFile:`jxj/announcement/overflow-${index}.xlsx`,attachment,listNo:index+10}).run()
+  const row = readCurrentCandidate(db.$client,id,'little_giant',new Date().getFullYear())
+  const expected = currentWorkbookValues('little_giant',row,1,readOfficialPublishedPresentation(db,row.workbookFacts!.evidence.map(item=>({evidenceId:item.id,eventId:item.eventId}))))[11]
+  await writeCurrentWorkbook(db.$client,'little_giant',file,()=>{})
+  const workbook = new ExcelJS.Workbook(); await workbook.xlsx.readFile(file)
+  const business = workbook.getWorksheet('有效企业')!
+  expect(business.rowCount).toBe(2)
+  expect(business.getCell('B2').value).toBe('overflow synthetic')
+  expect(business.getCell('L2').value).toBe('全文见「长文本全文」：有效企业!L2')
+  const appendix = workbook.getWorksheet('长文本全文')!
+  const chunks: string[] = []
+  appendix.eachRow((r,n)=>{ if(n>1){expect(r.getCell(1).value).toBe('有效企业');expect(r.getCell(2).value).toBe('L2');chunks.push(String(r.getCell(12).value));expect(r.height).toBeLessThanOrEqual(409)} })
+  expect(chunks.join('')).toBe(expected)
+  expect(chunks.join('')).toContain(sources[0])
+  expect(chunks.join('')).toContain(sources[1])
+  expect(business.autoFilter).toBe('A1:O2')
+  expect(record.enterpriseId).toBe(id)
+})
+
+it.each([23,24])('keeps 23 display lines inline and redirects 24 lines at the 409pt boundary (%i)', async lines => {
+  const {db,file} = fixture()
+  const text = Array.from({length:lines},()=> '界').join('\n')
+  candidate(db,text,'eligible','BOUNDARY-TEXT')
+  await writeCurrentWorkbook(db.$client,'little_giant',file,()=>{})
+  const parsed = new ExcelJS.Workbook(); await parsed.xlsx.readFile(file)
+  const sheet = parsed.getWorksheet('有效企业')!
+  if(lines===23){expect(sheet.getCell('B2').value).toBe(text);expect(sheet.getRow(2).height).toBe(399);expect(parsed.getWorksheet('长文本全文')).toBeUndefined()}
+  else {expect(sheet.getCell('B2').value).toBe('全文见「长文本全文」：有效企业!B2');const chunks:string[]=[];parsed.getWorksheet('长文本全文')!.eachRow((r,n)=>{if(n>1)chunks.push(String(r.getCell(12).value))});expect(chunks.join('')).toBe(text)}
 })

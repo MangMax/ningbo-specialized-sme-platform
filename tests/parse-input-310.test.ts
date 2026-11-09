@@ -4,7 +4,7 @@ import { join, resolve } from 'node:path'
 import { afterAll, expect, it, vi } from 'vitest'
 import { eq } from 'drizzle-orm'
 import { useDb, schema } from '../db/client'
-import { getParse105, historyParse105, saveParse105, saveParseMcp105, preflightParse310, commitParse310 } from '../server/utils/parse-maintenance-105'
+import { getParse105, historyParse105, saveParse105, saveParseMcp105, preflightParse310, commitRanges669 } from '../server/utils/parse-maintenance-105'
 
 // Schedule physical mutations after real filesystem calls, without replacing
 // their results, the production input checker, digest or database.
@@ -63,7 +63,7 @@ const readDriftCases = [
   { name: 'canonical symlink target switch with identical bytes', kind: 'symlink' },
 ] as const
 
-it.each(readDriftCases)('rejects $name during hashing and preserves bound output audit evidence and nonempty OCR raw', ({ kind }) => {
+it.each(readDriftCases)('rejects $name during hashing and preserves bound output audit evidence and nonempty OCR raw', async ({ kind }) => {
   const original = Buffer.alloc(128 * 1024, 'A')
   const { f, pages } = fixture(original)
   const path = join(root, f.relPath)
@@ -77,7 +77,7 @@ it.each(readDriftCases)('rejects $name during hashing and preserves bound output
   db.insert(schema.recordEvidence).values({ recordEventId: ev.id, sourceFile: f.relPath, page: 7, attachment: '人工确认分节', listNo: 12 }).run()
   const plan = preflightParse310(db, f.id, { kind: 'ocr', pages }, root)
   const firstBody = command(plan.expectedVersion, `bound-${f.id}`, plan.inputRef)
-  const saved = commitParse310(db, f.id, firstBody, root)
+  const saved = await commitRanges669(db, f.id, firstBody, root)
   const next = preflightParse310(db, f.id, { kind: 'ocr', pages }, root)
   const snapshot = () => ({
     state: getParse105(db, f.id),
@@ -113,7 +113,7 @@ it.each(readDriftCases)('rejects $name during hashing and preserves bound output
   }
   let failure: unknown
   try {
-    commitParse310(db, f.id, { ...command(next.expectedVersion, `drift-${f.id}`, next.inputRef), parts: [{ ...part, rowCount: 99 }], parseState: 'failed' }, root)
+    await commitRanges669(db, f.id, { ...command(next.expectedVersion, `drift-${f.id}`, next.inputRef), parts: [{ ...part, rowCount: 99 }], parseState: 'failed' }, root)
   } catch (error) { failure = error }
   finally { readBoundary.afterRead = null }
   expect(mutated).toBe(true)
@@ -124,7 +124,7 @@ it.each(readDriftCases)('rejects $name during hashing and preserves bound output
   expect(snapshot()).toEqual(before)
   // Already committed receipts and status edits remain independent of disk drift;
   // a compatibility replacement still cannot erase the bound basis.
-  expect(commitParse310(db, f.id, firstBody, root)).toEqual({ ...saved, replayed: true })
+  expect(await commitRanges669(db, f.id, firstBody, root)).toEqual({ ...saved, replayed: true })
   expect(() => saveParseMcp105(db, { fileId: f.id, parts: [] })).toThrow('预检')
   const status = saveParse105(db, f.id, { expectedVersion: before.state.version, idempotencyKey: `status-${f.id}`, actor, reason: 'status only after physical drift', parseState: 'failed' })
   expect(status.state.inputLineage).toEqual(before.state.inputLineage)
@@ -157,10 +157,10 @@ it('rejects same-size path replacement during preflight without publishing a fal
   expect(historyParse105(db, { fileId: f.id }).rows).toEqual([])
 })
 
-it('commits an unchanged multi-chunk source while retaining its selected OCR basis and nonempty raw', () => {
+it('commits an unchanged multi-chunk source while retaining its selected OCR basis and nonempty raw', async () => {
   const { f, p, pages } = fixture(Buffer.alloc(128 * 1024, 'A'))
   const plan = preflightParse310(db, f.id, { kind: 'ocr', pages }, root)
-  const saved = commitParse310(db, f.id, command(plan.expectedVersion, 'unchanged-multi-chunk', plan.inputRef), root)
+  const saved = await commitRanges669(db, f.id, command(plan.expectedVersion, 'unchanged-multi-chunk', plan.inputRef), root)
   expect(saved.replayed).toBe(false)
   expect(saved.state.inputLineage).toEqual({ status: 'bound', inputRef: plan.inputRef })
   expect(saved.state.parts).toMatchObject([{ titleCode: part.titleCode, rowCount: 2 }])
@@ -170,7 +170,7 @@ it('commits an unchanged multi-chunk source while retaining its selected OCR bas
 })
 
 it.each(['file link at commit', 'root link at commit', 'file link at preflight'] as const)(
-  'rejects a late switch after final realpath for %s without partial parse or source writes', (scenario) => {
+  'rejects a late switch after final realpath for %s without partial parse or source writes', async (scenario) => {
     const original = Buffer.alloc(128 * 1024, 'A')
     const { f, pages } = fixture(original)
     const source = join(root, f.relPath), replacement = source + '.B'
@@ -192,7 +192,7 @@ it.each(['file link at commit', 'root link at commit', 'file link at preflight']
     db.insert(schema.recordEvidence).values({ recordEventId: ev.id, sourceFile: f.relPath, page: 7, attachment: '已确认人工分节', listNo: 12 }).run()
     const plan = preflightParse310(db, f.id, { kind: 'ocr', pages }, configuredRoot)
     const body = command(plan.expectedVersion, `late-bound-${f.id}`, plan.inputRef)
-    const saved = commitParse310(db, f.id, body, configuredRoot)
+    const saved = await commitRanges669(db, f.id, body, configuredRoot)
     const snapshot = () => ({
       state: getParse105(db, f.id),
       file: db.select().from(schema.storedFile).where(eq(schema.storedFile.id, f.id)).get(),
@@ -217,7 +217,7 @@ it.each(['file link at commit', 'root link at commit', 'file link at preflight']
     let failure: unknown
     try {
       if (scenario === 'file link at preflight') preflightParse310(db, f.id, { kind: 'ocr', pages }, configuredRoot)
-      else commitParse310(db, f.id, { ...command(before.state.version, `late-drift-${f.id}`, plan.inputRef), parts: [{ ...part, rowCount: 99 }], parseState: 'failed' }, configuredRoot)
+      else await commitRanges669(db, f.id, { ...command(before.state.version, `late-drift-${f.id}`, plan.inputRef), parts: [{ ...part, rowCount: 99 }], parseState: 'failed' }, configuredRoot)
     } catch (error) { failure = error }
     finally { readBoundary.afterRealpath = null }
     expect(calls).toBe(2)
@@ -227,20 +227,20 @@ it.each(['file link at commit', 'root link at commit', 'file link at preflight']
     if (scenario !== 'root link at commit') expect(createHash('sha256').update(readFileSync(changedSource)).digest('hex')).not.toBe(f.sha256)
     expect(failure).toMatchObject({ statusCode: 409, message: expect.stringContaining('重新读取') })
     expect(snapshot()).toEqual(before)
-    expect(commitParse310(db, f.id, body, configuredRoot)).toEqual({ ...saved, replayed: true })
+    expect(await commitRanges669(db, f.id, body, configuredRoot)).toEqual({ ...saved, replayed: true })
     expect(() => saveParseMcp105(db, { fileId: f.id, parts: [] })).toThrow('预检')
   },
 )
 
 it.each(['file link', 'root link', 'root and file links'] as const)(
-  'accepts an unchanged 128KiB source through %s', scenario => {
+  'accepts an unchanged 128KiB source through %s', async scenario => {
     const { f, pages } = fixture(Buffer.alloc(128 * 1024, 'A'))
     const source = join(root, f.relPath), rootLink = source + '.stable-root-link'
     if (scenario !== 'root link') { renameSync(source, source + '.A'); symlinkSync(source + '.A', source) }
     if (scenario !== 'file link') symlinkSync(root, rootLink)
     const configuredRoot = scenario === 'file link' ? root : rootLink
     const plan = preflightParse310(db, f.id, { kind: 'ocr', pages }, configuredRoot)
-    const saved = commitParse310(db, f.id, command(plan.expectedVersion, `stable-links-${f.id}`, plan.inputRef), configuredRoot)
+    const saved = await commitRanges669(db, f.id, command(plan.expectedVersion, `stable-links-${f.id}`, plan.inputRef), configuredRoot)
     expect(saved.replayed).toBe(false)
     expect(saved.state.inputLineage).toEqual({ status: 'bound', inputRef: plan.inputRef })
     expect(saved.state.parts).toMatchObject([{ rowCount: 2 }])
@@ -266,22 +266,22 @@ it('rejects a file symlink escaping the configured root before publishing input 
   } finally { rmSync(outside, { recursive: true, force: true }) }
 })
 
-it('keeps runtime hash and OCR version validation strict independently of OpenAPI descriptions', () => {
+it('keeps runtime hash and OCR version validation strict independently of OpenAPI descriptions', async () => {
   const { f, pages } = fixture()
   const plan = preflightParse310(db, f.id, { kind: 'ocr', pages }, root)
-  const expectInvalid = (action: () => unknown) => {
-    try { action() }
+  const expectInvalid = async (action: () => unknown) => {
+    try { await action() }
     catch (error) { expect(error).toMatchObject({ statusCode: 400 }); return }
     expect.fail('invalid request must fail before publication')
   }
   for (const version of ['01:1', '1:0', '1e2:1', '1:1x']) {
-    expectInvalid(() => preflightParse310(db, f.id, { kind: 'ocr', pages: [{ page: 1, version }] }, root))
+    await expectInvalid(() => preflightParse310(db, f.id, { kind: 'ocr', pages: [{ page: 1, version }] }, root))
   }
   for (const sha256 of ['A'.repeat(64), 'a'.repeat(63), 'g'.repeat(64)]) {
-    expectInvalid(() => commitParse310(db, f.id, command(plan.expectedVersion, 'invalid-input-hash', { ...plan.inputRef, sha256 }), root))
+    await expectInvalid(() => commitRanges669(db, f.id, command(plan.expectedVersion, 'invalid-input-hash', { ...plan.inputRef, sha256 }), root))
   }
-  expectInvalid(() => commitParse310(db, f.id, { ...command(plan.expectedVersion, 'invalid-output-hash', plan.inputRef), expectedVersion: 'A'.repeat(64) }, root))
-  expectInvalid(() => commitParse310(db, f.id, command(plan.expectedVersion, 'invalid-file-id', { ...plan.inputRef, fileId: 1.5 }), root))
+  await expectInvalid(() => commitRanges669(db, f.id, { ...command(plan.expectedVersion, 'invalid-output-hash', plan.inputRef), expectedVersion: 'A'.repeat(64) }, root))
+  await expectInvalid(() => commitRanges669(db, f.id, command(plan.expectedVersion, 'invalid-file-id', { ...plan.inputRef, fileId: 1.5 }), root))
   expect(historyParse105(db, { fileId: f.id }).rows).toEqual([])
 })
 it('rejects changed disk bytes without a file registry refresh and retains the frozen plan', () => {
@@ -342,12 +342,12 @@ it('rejects duplicate missing and cross-file input references without publishing
   expect(historyParse105(db, { fileId: other.f.id }).rows).toEqual([])
 })
 
-it('refuses frozen commit downgrade and protects output CAS independently of unchanged input', () => {
+it('refuses frozen commit downgrade and protects output CAS independently of unchanged input', async () => {
   const { f } = fixture()
   const plan = preflightParse310(db, f.id, { kind: 'file' }, root)
-  expect(() => commitParse310(db, f.id, command(plan.expectedVersion, 'missing-ref'), root)).toThrow()
+  await expect(commitRanges669(db, f.id, command(plan.expectedVersion, 'missing-ref'), root)).rejects.toThrow()
   const current = saveParse105(db, f.id, { expectedVersion: plan.expectedVersion, idempotencyKey: 'interleaved-status', actor, reason: 'status edit', parseState: 'failed' })
-  expect(() => commitParse310(db, f.id, command(plan.expectedVersion, 'stale-output', plan.inputRef), root)).toThrow('解析版本冲突')
+  await expect(commitRanges669(db, f.id, command(plan.expectedVersion, 'stale-output', plan.inputRef), root)).rejects.toThrow('解析版本冲突')
   expect(getParse105(db, f.id)).toEqual(current.state)
   expect(historyParse105(db, { fileId: f.id }).rows).toHaveLength(1)
 })
@@ -363,11 +363,11 @@ it('reads old audit lineage as unknown without rewriting snapshots or inventing 
   expect(JSON.stringify(receipt)).not.toContain(f.sha256)
 })
 
-it('blocks legacy replacements of a bound result while allowing status edits and genuine replay', () => {
+it('blocks legacy replacements of a bound result while allowing status edits and genuine replay', async () => {
   const { f, p, pages } = fixture()
   const plan = preflightParse310(db, f.id, { kind: 'ocr', pages }, root)
   const body = command(plan.expectedVersion, 'bound-first', plan.inputRef)
-  const saved = commitParse310(db, f.id, body, root)
+  const saved = await commitRanges669(db, f.id, body, root)
   const before = getParse105(db, f.id)
   const history = historyParse105(db, { fileId: f.id })
   db.update(schema.ocrResult).set({ markdown: 'newer source', revision: 2 }).where(eq(schema.ocrResult.id, p.id)).run()
@@ -377,7 +377,7 @@ it('blocks legacy replacements of a bound result while allowing status edits and
   expect(() => saveParseMcp105(db, { fileId: f.id, parts: [] })).toThrow('预检')
   expect(getParse105(db, f.id)).toEqual(before)
   expect(historyParse105(db, { fileId: f.id })).toEqual(history)
-  expect(commitParse310(db, f.id, body, root)).toEqual({ ...saved, replayed: true })
+  expect(await commitRanges669(db, f.id, body, root)).toEqual({ ...saved, replayed: true })
   const status = saveParse105(db, f.id, { expectedVersion: before.version, idempotencyKey: 'bound-status', actor, reason: 'status only', parseState: 'failed' })
   expect(status.state.inputLineage).toEqual(before.inputLineage)
   expect(status.state.parts).toEqual(before.parts)

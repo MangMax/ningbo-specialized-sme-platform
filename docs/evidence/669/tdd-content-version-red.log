@@ -1,0 +1,40 @@
+
+ RUN  v4.1.11 /Users/mang/.t3/worktrees/app/t3-02eb55ae-553bdc35b51993ee
+
+ ❯ tests/parse-maintenance-105-http.test.ts (21 tests | 1 failed | 20 skipped) 6613ms
+   × 669 preserves omitted ranges across coordinate edits clears explicitly and invalidates ABA and withdrawal plans 53ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/parse-maintenance-105-http.test.ts > 669 preserves omitted ranges across coordinate edits clears explicitly and invalidates ABA and withdrawal plans
+AssertionError: expected { …(7) } to match object { …(4) }
+(10 matching properties omitted from actual)
+
+- Expected
++ Received
+
+@@ -1,7 +1,6 @@
+  {
+-   "contentVersion": "16777234:343226271:33188:620:1794203958912506792:1794203958912506792",
+    "declarationId": "a54965e9-5854-4c45-869c-b22c5bc22132",
+    "pageRanges": [
+      {
+        "end": 2,
+        "start": 1,
+
+ ❯ tests/parse-maintenance-105-http.test.ts:659:41
+    657|   const frozen = await rangePlan669(f.id)
+    658|   const changed = await commit('669-identity-b', [{ ...part, year: 202…
+    659|   expect(changed.state.declarations[0]).toMatchObject({ declarationId,…
+       |                                         ^
+    660|   const restored = await commit('669-identity-a2', [{ ...part, declara…
+    661|   expect(restored.state.version).not.toBe(first.state.version)
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 20 skipped (21)
+   Start at  13:59:12
+   Duration  6.95s (transform 73ms, setup 14ms, import 271ms, tests 6.61s, environment 0ms)
+

@@ -6,6 +6,8 @@ defineRouteMeta({ openAPI: {
   requestBody: { required: true, content: { 'application/json': { schema: {
     type: 'object', additionalProperties: false, required: ['parts','expectedVersion','idempotencyKey','actor','reason'], properties: {
       parts: { type: 'array', maxItems: 1000, items: { type: 'object', additionalProperties: false, required: ['titleCode','eventKind'], properties: {
+        declarationId: { type: 'string', format: 'uuid', description: '稳定声明身份;修改坐标时携带,不得引用别的文件或已撤回声明' },
+        pageRanges: { type: 'array', maxItems: 1000, description: '1起物理页闭区间;省略保留,[]显式清空;非空必须verifyPhysicalPages预检后commit', items: { type: 'object', additionalProperties: false, required: ['start','end'], properties: { start: { type: 'integer', minimum: 1 }, end: { type: 'integer', minimum: 1 } } } },
         titleCode: { type: 'string', enum: ['little_giant','specialized_sme','innovative_sme'] }, eventKind: { type: 'string', enum: ['award','review','maintain','nurture'] },
         year: { type: 'integer', minimum: 1900, maximum: 2100, nullable: true }, batch: { type: 'integer', minimum: 1, nullable: true }, attachment: { type: 'string', description: '最多500字符', nullable: true }, rowCount: { type: 'integer', minimum: 0 },
       } } },
