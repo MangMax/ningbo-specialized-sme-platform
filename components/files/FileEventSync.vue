@@ -98,10 +98,16 @@ async function commit() {
       emit('synced')
     }
   } catch (e) {
+    const progress = (e as { data?: { progress?: Plan } }).data?.progress
+    if (progress && progress.planHash === plan.value?.planHash) plan.value = progress
     failure.value = message(e)
   } finally {
     busy.value = false
   }
+}
+function changePageSize(value: number) {
+  pageSize.value = value
+  page.value = 1
 }
 function reset() {
   page.value = 1
@@ -135,7 +141,7 @@ function reset() {
             {{ plan.counts.conflicts }}；失败 {{ plan.counts.failed }}；未执行
             {{ plan.counts.unexecuted }}
           </p>
-          <p v-if="plan.counts.unexecuted === 0">
+          <p v-if="plan.completed.length === plan.chunks">
             本计划无剩余可更新项。待核项仍须核实；请重新读取企业名单、详情及导出。
           </p>
           <p v-else>确认后按每块100条顺序执行。中断会保留已完成块，可重试继续。</p>
@@ -158,10 +164,7 @@ function reset() {
             :loading="busy"
             unit="个事件"
             @update:page="page = $event"
-            @update:page-size="
-              pageSize = $event
-              page = 1
-            "
+            @update:page-size="changePageSize"
           />
         </template>
       </div>
@@ -170,7 +173,7 @@ function reset() {
           busy ? '处理中…' : '预检 / 重试预检'
         }}</Button>
         <Button
-          v-if="plan && plan.counts.unexecuted > 0"
+          v-if="plan && plan.completed.length < plan.chunks"
           :disabled="!enabled || busy"
           @click="commit"
           >确认同步 / 继续</Button

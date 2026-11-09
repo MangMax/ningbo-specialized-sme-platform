@@ -17,8 +17,8 @@ defineRouteMeta({
             additionalProperties: false,
             required: ['idempotencyKey', 'basis'],
             properties: {
-              idempotencyKey: { type: 'string', minLength: 1, maxLength: 120 },
-              basis: { type: 'string', minLength: 1, maxLength: 4000 },
+              idempotencyKey: { type: 'string' },
+              basis: { type: 'string' },
             },
           },
         },

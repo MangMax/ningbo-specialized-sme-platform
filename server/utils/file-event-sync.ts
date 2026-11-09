@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import { statSync, realpathSync } from 'node:fs'
 import { resolve, sep } from 'node:path'
-import { asc, eq, inArray } from 'drizzle-orm'
+import { asc, eq, inArray, or } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import { z } from 'zod'
 import * as schema from '../../db/schema'
@@ -59,6 +59,7 @@ function snapshot(db: Db, id: number, dir: string, request: SyncRequest) {
     .from(schema.fileDeclaration669)
     .where(eq(schema.fileDeclaration669.fileId, id))
     .orderBy(asc(schema.fileDeclaration669.declarationId))
+    .limit(1001)
     .all()
   const refs = db
     .select()
@@ -98,6 +99,7 @@ function snapshot(db: Db, id: number, dir: string, request: SyncRequest) {
       .from(schema.recordEvent)
       .where(eq(schema.recordEvent.recordId, record.id))
       .orderBy(asc(schema.recordEvent.id))
+      .limit(LIMIT + 1)
       .all()
     const official = evidence.length
       ? db
@@ -118,7 +120,20 @@ function snapshot(db: Db, id: number, dir: string, request: SyncRequest) {
       : []
     if (official.length > LIMIT || siblings.length > LIMIT)
       fail('capacity', '事件历史或同记录事件超过3000；须先缩小维护范围', 413)
-    sources.push({ event, record, evidence, siblings, official })
+    const correspondences = db
+      .select()
+      .from(schema.recordCorrespondence)
+      .where(
+        or(
+          eq(schema.recordCorrespondence.eventId, eventId),
+          eq(schema.recordCorrespondence.predecessorEventId, eventId),
+        ),
+      )
+      .orderBy(asc(schema.recordCorrespondence.id))
+      .limit(301)
+      .all()
+    if (correspondences.length > 300) fail('capacity', '事件对应影响超过300', 413)
+    sources.push({ event, record, evidence, siblings, official, correspondences })
     const enterprise = db
       .select()
       .from(schema.enterprise)
@@ -277,11 +292,13 @@ type Plan = {
   requestHash: string
   planHash: string
   fingerprint: string
+  expectedFingerprint: string
   rows: Row[]
   operations: EventCorrectionRequest['operations']
   chunks: number
   completed: number[]
   updated: number
+  failedEvents?: number
   receipts: Record<number, ReturnType<typeof result>>
 }
 function bound(db: Db, id: number, request: SyncRequest) {
@@ -312,8 +329,8 @@ function result(plan: Plan) {
       updated: plan.updated,
       unchanged: plan.rows.filter((r) => r.status === 'unchanged').length,
       conflicts: plan.rows.filter((r) => r.status === 'conflict').length,
-      failed: 0,
-      unexecuted: plan.operations.length - plan.updated,
+      failed: plan.failedEvents ?? 0,
+      unexecuted: plan.operations.length - plan.updated - (plan.failedEvents ?? 0),
     },
   }
 }
@@ -337,6 +354,7 @@ export async function preflightFileEventSync(
         requestHash,
         planHash: hash({ requestHash, ...s }),
         ...s,
+        expectedFingerprint: s.fingerprint,
         chunks: Math.ceil(s.operations.length / CHUNK),
         completed: [],
         updated: 0,
@@ -367,39 +385,73 @@ export async function commitFileEventSync(
   if (!old.plan || old.plan.planHash !== planHash) fail('plan_mismatch', '需要原始预检计划')
   if (old.plan.completed.includes(chunk)) return old.plan.receipts[chunk]!
   await preflightRanges669(db, id, { kind: 'file', verifyPhysicalPages: true }, dir)
-  return db.transaction(
-    () => {
-      const { batch, plan } = bound(db, id, request)
-      if (!batch || !plan || plan.planHash !== planHash) fail('plan_mismatch', '预检计划不存在')
-      if (plan.completed.includes(chunk)) return plan.receipts[chunk]!
-      if (chunk !== plan.completed.length || chunk >= plan.chunks)
-        fail('chunk_order', '必须顺序执行未完成块')
-      if (snapshot(db, id, dir, request).fingerprint !== plan.fingerprint)
-        fail('stale_membership', '完整候选成员、事件或出处已变化；请重新预检')
-      const correction: EventCorrectionRequest = {
-        ...request,
-        idempotencyKey: `${old.key}:${chunk}`,
-        sourceIdentity: `file-event-sync:${id}:${planHash}`,
-        operations: plan.operations.slice(chunk * CHUNK, (chunk + 1) * CHUNK),
-      }
-      const preflight = preflightEventCorrections(db, correction)
-      commitEventCorrections(db, correction, (preflight as { planHash: string }).planHash)
-      // Rebase the full membership only after our own atomic correction, never after external edits.
-      plan.fingerprint = snapshot(db, id, dir, request).fingerprint
-      plan.updated += correction.operations.length
-      plan.completed.push(chunk)
-      const receipt = structuredClone(result(plan))
-      plan.receipts[chunk] = receipt
-      db.update(schema.importBatch)
-        .set({
-          preflightResult: plan,
-          status: plan.completed.length === plan.chunks ? 'committed' : 'preflight',
-          summary: result(plan),
-        })
-        .where(eq(schema.importBatch.id, batch.id))
-        .run()
-      return receipt
-    },
-    { behavior: 'immediate' },
-  )
+  try {
+    return db.transaction(
+      () => {
+        const { batch, plan } = bound(db, id, request)
+        if (!batch || !plan || plan.planHash !== planHash) fail('plan_mismatch', '预检计划不存在')
+        if (plan.completed.includes(chunk)) return plan.receipts[chunk]!
+        if (chunk !== plan.completed.length || chunk >= plan.chunks)
+          fail('chunk_order', '必须顺序执行未完成块')
+        if (
+          snapshot(db, id, dir, request).fingerprint !==
+          (plan.expectedFingerprint ?? plan.fingerprint)
+        )
+          fail('stale_membership', '完整候选成员、事件或出处已变化；请重新预检')
+        const correction: EventCorrectionRequest = {
+          ...request,
+          idempotencyKey: `${old.key}:${chunk}`,
+          sourceIdentity: `file-event-sync:${id}:${planHash}`,
+          operations: plan.operations.slice(chunk * CHUNK, (chunk + 1) * CHUNK),
+        }
+        const preflight = preflightEventCorrections(db, correction)
+        commitEventCorrections(db, correction, (preflight as { planHash: string }).planHash)
+        // Rebase the full membership only after our own atomic correction, never after external edits.
+        plan.expectedFingerprint = snapshot(db, id, dir, request).fingerprint
+        plan.failedEvents = 0
+        plan.updated += correction.operations.length
+        plan.completed.push(chunk)
+        const receipt = structuredClone(result(plan))
+        plan.receipts[chunk] = receipt
+        db.update(schema.importBatch)
+          .set({
+            preflightResult: plan,
+            status: plan.completed.length === plan.chunks ? 'committed' : 'preflight',
+            summary: result(plan),
+          })
+          .where(eq(schema.importBatch.id, batch.id))
+          .run()
+        return receipt
+      },
+      { behavior: 'immediate' },
+    )
+  } catch (error) {
+    // The correction transaction has rolled back. Retain only progress about this
+    // failed attempt, never any partially written event or correction audit.
+    if (!(error as { statusCode?: number }).statusCode) {
+      const progress = db.transaction(
+        () => {
+          const current = bound(db, id, request)
+          if (!current.batch || !current.plan || current.plan.completed.includes(chunk))
+            return undefined
+          current.plan.failedEvents = current.plan.operations.slice(
+            chunk * CHUNK,
+            (chunk + 1) * CHUNK,
+          ).length
+          db.update(schema.importBatch)
+            .set({ preflightResult: current.plan, summary: result(current.plan) })
+            .where(eq(schema.importBatch.id, current.batch.id))
+            .run()
+          return result(current.plan)
+        },
+        { behavior: 'immediate' },
+      )
+      throw Object.assign(new Error('同步失败，本块已回滚；已完成块保留，可用原请求续跑'), {
+        statusCode: 500,
+        code: 'transaction_failed',
+        progress,
+      })
+    }
+    throw error
+  }
 }

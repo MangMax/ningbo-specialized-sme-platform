@@ -5,6 +5,7 @@ import type { AddressInfo } from 'node:net'
 import { createApp, createRouter, toNodeListener, defineEventHandler } from 'h3'
 import { afterAll, expect, it, vi } from 'vitest'
 import { useDb, schema } from '../db/client'
+const oldDbPath = process.env.NUXT_DB_PATH
 const dir = mkdtempSync('/tmp/sync671-'),
   db = useDb({ dbPath: `${dir}/test.db` })
 const pdf = Buffer.from(
@@ -105,6 +106,8 @@ afterAll(async () => {
   db.$client.close()
   if (process.env.KEEP_671) console.log('RETAINED_671=' + dir)
   else rmSync(dir, { recursive: true, force: true })
+  if (oldDbPath == null) delete process.env.NUXT_DB_PATH
+  else process.env.NUXT_DB_PATH = oldDbPath
   vi.unstubAllGlobals()
 })
 it('preflights and atomically fills only unknown formal coordinates over public HTTP, preserving IDs and replay', async () => {
@@ -328,6 +331,7 @@ it.each([
   'ambiguous',
   'missing-page',
   'multi-source',
+  'contradictory-sources',
   'coordinate',
   'origin',
   'unknown-segment',
@@ -360,6 +364,23 @@ it.each([
         attachment: '附件1',
       })
       .run()
+  if (kind === 'contradictory-sources') {
+    db.insert(schema.fileDeclaration669)
+      .values({
+        ...f.declaration,
+        declarationId: randomUUID(),
+        part: { ...f.declaration.part, year: 2022, attachment: '附件2' },
+      })
+      .run()
+    db.insert(schema.recordEvidence)
+      .values({
+        recordEventId: f.event.id,
+        sourceFile: f.file.relPath,
+        page: 1,
+        attachment: '附件2',
+      })
+      .run()
+  }
   if (kind === 'coordinate')
     db.insert(schema.recordEvent)
       .values({
@@ -496,6 +517,7 @@ it('rolls back a whole chunk on a storage failure and safely resumes the same re
   )
   try {
     expect((await f.post('commit', payload)).status).toBe(500)
+    expect((await f.post('preflight')).body.counts).toMatchObject({ failed: 1, unexecuted: 0 })
     expect(
       db.select().from(schema.recordEvent).where(eq(schema.recordEvent.id, f.event.id)).get(),
     ).toMatchObject({ year: null, batchSeq: null, revision: 1 })

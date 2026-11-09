@@ -18,15 +18,15 @@ defineRouteMeta({
             additionalProperties: false,
             required: ['idempotencyKey', 'basis', 'actor'],
             properties: {
-              idempotencyKey: { type: 'string', minLength: 1, maxLength: 120 },
-              basis: { type: 'string', minLength: 1, maxLength: 4000 },
+              idempotencyKey: { type: 'string' },
+              basis: { type: 'string' },
               actor: {
                 type: 'object',
                 additionalProperties: false,
                 required: ['type', 'id'],
                 properties: {
                   type: { type: 'string', enum: ['user', 'agent'] },
-                  id: { type: 'string', minLength: 1, maxLength: 200 },
+                  id: { type: 'string' },
                 },
               },
             },

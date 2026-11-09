@@ -73,9 +73,11 @@ export function fileEventSyncRoute(action: 'preflight' | 'commit', browser = fal
         statusCode?: number
         code?: string
         message?: string
+        progress?: unknown
       }
       setResponseStatus(event, e.statusCode ?? 500)
       return {
+        progress: e.progress,
         error: {
           code: e.code ?? (e.statusCode ? 'source_unavailable' : 'transaction_failed'),
           message: e.statusCode ? e.message : '同步失败，本块未提交；可用原请求重试',
