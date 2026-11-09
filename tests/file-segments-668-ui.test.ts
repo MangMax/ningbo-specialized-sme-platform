@@ -47,3 +47,19 @@ it('keeps a lost-response payload and key for retry, uses a new key for changed 
   expect(wrapper.text()).toContain('已保存并读回当前分段')
   wrapper.unmount()
 })
+it('sends the saved declaration ID on coordinate edits while omitting untouched page ranges', async () => {
+  const part = { titleCode: 'specialized_sme', eventKind: 'award', year: 2022, batch: 1, attachment: null, rowCount: 2, origin: 'agent', hasConflict: false }
+  const current = { ...state, parts: [part], declarations: [{ declarationId: 'saved-stable-id', part, pageRanges: [{ start: 2, end: 3 }] }] }
+  const fetch = vi.fn(async (url: string) => url.endsWith('/preflight') ? { expectedVersion: state.version, inputRef: { kind: 'file', pages: [] }, parseState: 'unparsed' } : url.endsWith('/commit') ? {} : { state: current, writeEnabled: true })
+  vi.stubGlobal('$fetch', fetch)
+  const wrapper = mount(EditSegmentsDialog, { props: { open: false, file: { id: 1, displayName: 'controlled' } as StoredFileRow, refreshList: async () => {} }, global: { stubs: { Dialog: passthrough, DialogContent: passthrough, DialogHeader: passthrough, DialogTitle: passthrough, DialogDescription: passthrough, DialogFooter: passthrough, Button: button, Input: input, Label: passthrough, Select: passthrough, SelectTrigger: passthrough, SelectValue: passthrough, SelectContent: passthrough, SelectItem: passthrough } } })
+  await wrapper.setProps({ open: true }); await flushPromises()
+  await wrapper.get('#segment-year-0').setValue('2025')
+  await wrapper.findAll('button').find(b => b.text() === '保存分段')!.trigger('click'); await flushPromises()
+  const submitted = fetch.mock.calls.find(call => call[0].endsWith('/commit'))
+  expect(submitted).toBeDefined()
+  expect(fetch).toHaveBeenCalledWith('/api/files/1/segments/commit', expect.objectContaining({ body: expect.objectContaining({ parts: [expect.objectContaining({ declarationId: 'saved-stable-id', year: 2025 })] }) }))
+  const serialized = JSON.stringify(submitted)
+  expect(serialized).not.toContain('pageRanges')
+  wrapper.unmount()
+})

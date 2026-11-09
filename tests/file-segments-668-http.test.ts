@@ -98,3 +98,16 @@ it('withdraws declarations to reveal source-derived rows and preserves official 
   writeFileSync(join(root, f.relPath), 'changed')
   expect((await http(f.id, '/preflight', { expectedVersion: (await http(f.id)).body.state.version })).status).toBe(409)
 })
+it('retains #669 declaration identity and ranges when changing coordinates through the compatibility description payload', async () => {
+  const f = fixture()
+  const declared = { titleCode: 'specialized_sme', eventKind: 'award' as const, year: 2022, batch: 1, attachment: null, rowCount: 1 }
+  // An existing saved range is fixture state owned by #669; this editor does
+  // not claim to have physically verified pages or re-register their source.
+  const declarationId = crypto.randomUUID()
+  db.insert(schema.storedFilePart).values({ fileId: f.id, ...declared, origin: 'agent' }).run()
+  db.insert(schema.fileDeclaration669).values({ declarationId, fileId: f.id, sha256: f.sha256, revision: 1, active: true, contentVersion: 'controlled-existing-epoch', part: declared, pageRanges: [{ start: 1, end: 2 }, { start: 4, end: 4 }] }).run()
+  const state = (await http(f.id)).body.state
+  const plan = (await http(f.id, '/preflight', { expectedVersion: state.version })).body
+  expect((await http(f.id, '/commit', { ...plan, parts: [{ ...declared, declarationId, year: 2025 }], idempotencyKey: 'preserve-range', reason: '仅编辑描述坐标' })).status).toBe(200)
+  expect((await http(f.id)).body.state.declarations).toMatchObject([{ declarationId, revision: 2, contentVersion: 'controlled-existing-epoch', part: { year: 2025 }, pageRanges: [{ start: 1, end: 2 }, { start: 4, end: 4 }] }])
+})

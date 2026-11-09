@@ -5,13 +5,14 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select'
+import { partKey } from '~~/lib/file-parts'
 import { TITLES, TITLE_ORDER, EVENTS, EVENT_ORDER } from '~~/lib/labels'
 import { describeFetchError } from '~~/lib/upload-register'
 import type { getParse105, preflightParse310 } from '~~/server/utils/parse-maintenance-105'
 import type { StoredFileRow } from '~~/server/utils/stored-files'
 type State = ReturnType<typeof getParse105>
 type Part = State['parts'][number]
-type Draft = Omit<Part, 'year' | 'batch' | 'rowCount' | 'attachment'> & { year: string; batch: string; rowCount: string; attachment: string }
+type Draft = { declarationId?: string } & Omit<Part, 'year' | 'batch' | 'rowCount' | 'attachment'> & { year: string; batch: string; rowCount: string; attachment: string }
 const props = defineProps<{ file: StoredFileRow | null; refreshList: () => Promise<unknown> }>()
 const open = defineModel<boolean>('open', { default: false })
 const state = ref<State | null>(null), drafts = ref<Draft[]>([])
@@ -23,7 +24,8 @@ type Submission = ReturnType<typeof preflightParse310> & { parts: object[]; pars
 let attempt: { fingerprint: string; body: Submission } | null = null
 const url = () => `/api/files/${props.file!.id}/segments`
 function toDraft(p: Part): Draft {
-  return { ...p, year: p.year === null ? '' : String(p.year), batch: p.batch === null ? '' : String(p.batch), attachment: p.attachment ?? '', rowCount: String(p.rowCount) }
+  const declaration = state.value?.declarations?.find(d => partKey(d.part) === partKey(p))
+  return { ...p, ...(declaration ? { declarationId: declaration.declarationId } : {}), year: p.year === null ? '' : String(p.year), batch: p.batch === null ? '' : String(p.batch), attachment: p.attachment ?? '', rowCount: String(p.rowCount) }
 }
 async function load() {
   pending.value = true; failure.value = ''; notice.value = ''
