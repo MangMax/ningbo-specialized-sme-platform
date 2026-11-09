@@ -53,7 +53,6 @@ async function save() {
   try {
     if (drafts.value.length > 1000) throw Error('最多登记1000段，不会截断保存')
     const parts = drafts.value.map(p => {
-      // Preserve additional contract fields (including ranges owned by #669).
       const { origin: _origin, hasConflict: _conflict, ranges, rangesEdited, ...fields } = p
       const pageRanges = ranges.map(r => {
         const start = integer(r.start, '起页', 1), end = integer(r.end, '止页', 1)

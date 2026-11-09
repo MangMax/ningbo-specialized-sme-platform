@@ -8,6 +8,9 @@ const business = syncRequestSchema.omit({ actor: true })
 const hash = z.string().regex(/^[a-f0-9]{64}$/),
   chunk = z.number().int().min(0).max(29)
 export function fileEventSyncRoute(action: 'preflight' | 'commit', browser = false) {
+  const requestSchema = browser
+    ? business.transform(input => ({ ...input, actor: { type: 'agent' as const, id: 'same-origin-file-event-sync-adapter' } }))
+    : syncRequestSchema
   return defineEventHandler(async (event) => {
     setHeader(event, 'cache-control', 'no-store')
     const config = useRuntimeConfig()
@@ -28,11 +31,9 @@ export function fileEventSyncRoute(action: 'preflight' | 'commit', browser = fal
       const raw = await readBody(event),
         schema =
           action === 'preflight'
-            ? browser
-              ? business
-              : syncRequestSchema
+            ? requestSchema
             : z.strictObject({
-                request: browser ? business : syncRequestSchema,
+                request: requestSchema,
                 planHash: hash,
                 chunk,
               })
@@ -48,16 +49,7 @@ export function fileEventSyncRoute(action: 'preflight' | 'commit', browser = fal
           code: 'invalid_request',
         })
       const input = parsed.data,
-        body = 'request' in input ? input.request : input
-      const request = browser
-        ? {
-            ...body,
-            actor: {
-              type: 'agent' as const,
-              id: 'same-origin-file-event-sync-adapter',
-            },
-          }
-        : syncRequestSchema.parse(body)
+        request = 'request' in input ? input.request : input
       return 'request' in input
         ? await commitFileEventSync(
             useDb(),

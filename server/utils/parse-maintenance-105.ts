@@ -134,7 +134,7 @@ export function preflightParse310(db: Db, fileId: number, raw: unknown, filesDir
 export async function preflightRanges669(db: Db, fileId: number, raw: unknown, filesDir: string) {
   const parsed = parsePreflight310.safeParse(raw)
   if (!parsed.success) return fail(400, parsed.error.message)
-  const plan = preflightParse310(db, fileId, raw, filesDir)
+  const plan = { expectedVersion: readParse105(db, fileId).version, inputRef: currentInput310(db, fileId, parsed.data, filesDir) }
   if (!parsed.data.verifyPhysicalPages) return plan
   const inputRef = await physicalInput669(db, fileId, plan.inputRef, filesDir)
   if (plan.expectedVersion !== readParse105(db, fileId).version) return fail(409, '解析版本已变化,请重新预检')
@@ -163,11 +163,6 @@ export async function commitRanges669(db: Db, fileId: number, raw: unknown, file
     if (hash(verified) !== hash({ format: input.inputRef.format, fileId: input.inputRef.fileId, relPath: input.inputRef.relPath, sha256: input.inputRef.sha256, kind: input.inputRef.kind, pages: input.inputRef.pages, physicalSource: input.inputRef.physicalSource })) return fail(409, '文件内容版本已变化,请重新预检')
   }
   return saveParse105(db, fileId, input, undefined, context, filesDir, true)
-}
-export function commitParse310(db: Db, fileId: number, raw: unknown, filesDir: string, context: LogContext = {}) {
-  const parsed = parseFrozenCommit310.safeParse(raw)
-  if (!parsed.success) return fail(400, parsed.error.message)
-  return saveParse105(db, fileId, parsed.data, undefined, context, filesDir)
 }
 
 function lineage310(snapshot: Record<string, unknown> | undefined): InputLineage310 {
