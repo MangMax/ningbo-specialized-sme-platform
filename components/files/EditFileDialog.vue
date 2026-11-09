@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { currentContentMessage } from "~~/lib/file-content-status"
+import FileDisplayNameEditor from './FileDisplayNameEditor.vue'
 import { computed, ref, watch } from 'vue'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
@@ -38,8 +39,10 @@ const props = withDefaults(
     file: StoredFileRow | null
     pending?: boolean
     failure?: string
+    namePending?: boolean
+    nameFailure?: string
   }>(),
-  { pending: false, failure: '' },
+  { pending: false, failure: '', namePending: false, nameFailure: '' },
 )
 
 export interface MetadataForm {
@@ -50,7 +53,7 @@ export interface MetadataForm {
   titleCode: string
 }
 
-const emit = defineEmits<{ save: [form: MetadataForm] }>()
+const emit = defineEmits<{ save: [form: MetadataForm]; rename: [displayName: string] }>()
 
 /** 下拉里表示「清空该字段」的哨兵值(reka-ui 的 SelectItem 不接受空串 value)。 */
 const NONE = '__none__'
@@ -104,21 +107,16 @@ const canSave = computed(
   <Dialog v-model:open="open">
     <DialogContent class="sm:max-w-lg">
       <DialogHeader>
-        <DialogTitle>编辑文件元数据</DialogTitle>
+        <DialogTitle>文件信息</DialogTitle>
         <DialogDescription class="break-all">
           {{ file?.filename }}
         </DialogDescription>
       </DialogHeader>
 
       <div class="flex flex-col gap-4">
+        <FileDisplayNameEditor :open="open" :file="file" :pending="namePending" :failure="nameFailure" @save="emit('rename', $event)" />
         <p role="status" class="text-sm break-words">{{ currentContentMessage(file?.contentIdentity) }}</p>
         <p v-if="file?.parts.length" class="text-sm">已有文件段的历史出处绑定未知。{{ file?.partsBinding?.inputLineage.status === 'bound' ? '已记录解析输入引用；这不能证明历史文件段来自该输入。' : '解析输入引用未记录。' }}</p>
-        <!-- 只读:路径是磁盘事实,不由这里改。 -->
-        <div class="bg-muted/60 flex flex-col gap-1 rounded-md border px-2.5 py-2">
-          <span class="text-muted-foreground text-xs">库内路径(只读)</span>
-          <code class="font-mono text-xs break-all">{{ file?.relPath }}</code>
-        </div>
-
         <div class="grid gap-x-4 gap-y-3.5 sm:grid-cols-2">
           <div class="flex flex-col gap-1.5">
             <Label for="file-source" class="text-xs">来源</Label>

@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { flushPromises, mount } from '@vue/test-utils'
 import { afterEach, describe, expect, it } from 'vitest'
-import RenameFileDialog from '../components/files/RenameFileDialog.vue'
+import FileDisplayNameEditor from '../components/files/FileDisplayNameEditor.vue'
 import type { StoredFileRow } from '../server/utils/stored-files'
 
 const mounted: ReturnType<typeof mount>[] = []
@@ -34,9 +34,9 @@ afterEach(() => {
   document.body.innerHTML = ''
 })
 
-describe('文件管理显示名称对话框', () => {
+describe('文件管理文件信息内的显示名称编辑', () => {
   it('只读展示磁盘文件名与路径,并提交修订后的用户可见名称', async () => {
-    const wrapper = mount(RenameFileDialog, {
+    const wrapper = mount(FileDisplayNameEditor, {
       attachTo: document.body,
       props: { open: true, file: file() },
     })
@@ -58,7 +58,7 @@ describe('文件管理显示名称对话框', () => {
   })
 
   it('未修改名称时不允许提交', async () => {
-    const wrapper = mount(RenameFileDialog, {
+    const wrapper = mount(FileDisplayNameEditor, {
       attachTo: document.body,
       props: { open: true, file: file() },
     })

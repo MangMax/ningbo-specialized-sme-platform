@@ -46,7 +46,6 @@ import {
 import FileEventSync from '@/components/files/FileEventSync.vue'
 import FileSegmentsEditor from '@/components/files/FileSegmentsEditor.vue'
 import EditFileDialog, { type MetadataForm } from '@/components/files/EditFileDialog.vue'
-import RenameFileDialog from '@/components/files/RenameFileDialog.vue'
 import DeleteFileDialog from '@/components/files/DeleteFileDialog.vue'
 import UploadDialog from '@/components/files/UploadDialog.vue'
 import PdfViewDialog from '@/components/files/PdfViewDialog.vue'
@@ -251,8 +250,6 @@ const editOpen = ref(false)
 const editPending = ref(false)
 const editFailure = ref('')
 
-const renaming = ref<StoredFileRow | null>(null)
-const renameOpen = ref(false)
 const renamePending = ref(false)
 const renameFailure = ref('')
 
@@ -274,12 +271,6 @@ function openDelete(row: StoredFileRow) {
   deleting.value = row
   deleteFailure.value = ''
   deleteOpen.value = true
-}
-
-function openRename(row: StoredFileRow) {
-  renaming.value = row
-  renameFailure.value = ''
-  renameOpen.value = true
 }
 
 function openPreview(row: StoredFileRow) {
@@ -317,15 +308,15 @@ async function saveMetadata(form: MetadataForm) {
 
 /** 只提交用户可见名称;从不把它作为磁盘文件名或路径。 */
 async function saveDisplayName(displayName: string) {
-  if (!renaming.value) return
+  if (!editing.value) return
   renamePending.value = true
   renameFailure.value = ''
   try {
-    await $fetch(`/api/files/${renaming.value.id}`, {
+    await $fetch(`/api/files/${editing.value.id}`, {
       method: 'PATCH',
       body: { displayName },
     })
-    renameOpen.value = false
+    editing.value = { ...editing.value, displayName }
     await refresh()
   } catch (error) {
     renameFailure.value = describeFetchError(error)
@@ -586,7 +577,6 @@ function publishedYearBatch(row: StoredFileRow): string {
                   <TableRow class="group hover:bg-accent/70">
                     <TableCell class="pr-0">
                       <Button
-                        v-if="row.parts.length"
                         variant="ghost"
                         size="icon"
                         class="size-7"
@@ -600,12 +590,7 @@ function publishedYearBatch(row: StoredFileRow): string {
                         />
                         <span class="sr-only">展开段明细</span>
                       </Button>
-                      <span
-                        v-else
-                        class="text-muted-foreground/60 inline-block w-6 text-center text-xs"
-                        title="还没有段(尚未解析)"
-                        >—</span
-                      >
+
                     </TableCell>
                     <TableCell class="w-[209px]">
                       <!-- 只写文件名。先前下面还压了一行 `rel_path`,但它对每行都截在同一个
@@ -710,7 +695,6 @@ function publishedYearBatch(row: StoredFileRow): string {
                     <TableCell :class="ACTION_TD">
                       <div class="flex flex-wrap items-center gap-1">
                         <FileEventSync :file-id="row.id" @synced="refresh()" />
-                        <Button variant="ghost" size="sm" class="h-7 px-1.5 text-xs" @click="toggleParts(row.id)">管理分段</Button>
                         <Button
                           variant="ghost"
                           size="sm"
@@ -718,16 +702,6 @@ function publishedYearBatch(row: StoredFileRow): string {
                           @click="openEdit(row)"
                         >
                           文件信息
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          class="h-7 px-1.5 text-xs"
-                          :aria-label="`修改 ${row.displayName} 的用户可见名称`"
-                          title="只改用户可见名称"
-                          @click="openRename(row)"
-                        >
-                          改名
                         </Button>
                         <Button
                           variant="ghost"
@@ -794,16 +768,12 @@ function publishedYearBatch(row: StoredFileRow): string {
       :file="editing"
       :pending="editPending"
       :failure="editFailure"
+      :name-pending="renamePending"
+      :name-failure="renameFailure"
+      @rename="saveDisplayName"
       @save="saveMetadata"
     />
 
-    <RenameFileDialog
-      v-model:open="renameOpen"
-      :file="renaming"
-      :pending="renamePending"
-      :failure="renameFailure"
-      @save="saveDisplayName"
-    />
 
     <Button variant="outline" @click="deleting = null; deleteFailure = ''; deleteOpen = true">恢复隔离文件</Button>
     <DeleteFileDialog

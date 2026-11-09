@@ -12,14 +12,14 @@ import type { getParse105, preflightParse310 } from '~~/server/utils/parse-maint
 import type { StoredFileRow } from '~~/server/utils/stored-files'
 type State = ReturnType<typeof getParse105>
 type Part = State['parts'][number]
-type Draft = { declarationId?: string; ranges: { start: string; end: string }[]; rangesEdited: boolean } & Omit<Part, 'year' | 'batch' | 'rowCount' | 'attachment'> & { year: string; batch: string; rowCount: string; attachment: string }
+type Draft = { sourceKey?: string; declarationId?: string; ranges: { start: string; end: string }[]; rangesEdited: boolean } & Omit<Part, 'year' | 'batch' | 'rowCount' | 'attachment'> & { year: string; batch: string; rowCount: string; attachment: string }
 const props = defineProps<{ file: StoredFileRow | null; refreshList: () => Promise<unknown> }>()
 const open = defineModel<boolean>('open', { default: false })
 const state = ref<State | null>(null), drafts = ref<Draft[]>([])
 const enabled = ref(false), pending = ref(false), failure = ref(''), notice = ref('')
 const reason = ref('维护文件内容分段描述')
 const editing = ref<number | null>(null)
-const derived = computed(() => state.value?.parts.filter(p => p.origin === 'derived') ?? [])
+const derived = computed(() => state.value?.parts.filter(p => p.origin === 'derived' && !drafts.value.some(d => d.sourceKey === partKey(p))) ?? [])
 const locked = computed(() => pending.value || !enabled.value || !state.value)
 type Submission = ReturnType<typeof preflightParse310> & { parts: object[]; parseState: string; idempotencyKey: string; reason: string }
 let attempt: { fingerprint: string; body: Submission } | null = null
@@ -40,7 +40,14 @@ async function load() {
 }
 watch(open, value => { if (value) { state.value = null; enabled.value = false; drafts.value = []; attempt = null; void load() } }, { immediate: true })
 function add(source?: Part) {
-  if (source) { drafts.value.push({ ...toDraft(source), origin: 'agent', hasConflict: false }); editing.value = drafts.value.length - 1; return }
+  if (source) {
+    const key = partKey(source)
+    const existing = drafts.value.findIndex(d => d.sourceKey === key)
+    if (existing >= 0) { editing.value = existing; return }
+    drafts.value.push({ ...toDraft(source), sourceKey: key, origin: 'agent', hasConflict: false })
+    editing.value = drafts.value.length - 1
+    return
+  }
   drafts.value.push({ ranges: [], rangesEdited: false, titleCode: 'specialized_sme', eventKind: 'award', year: '', batch: '', attachment: '', rowCount: '0', origin: 'agent', hasConflict: false })
   editing.value = drafts.value.length - 1
 }
@@ -56,7 +63,7 @@ async function save() {
   try {
     if (drafts.value.length > 1000) throw Error('最多登记1000段，不会截断保存')
     const parts = drafts.value.map(p => {
-      const { origin: _origin, hasConflict: _conflict, ranges, rangesEdited, ...fields } = p
+      const { origin: _origin, hasConflict: _conflict, sourceKey: _sourceKey, ranges, rangesEdited, ...fields } = p
       const pageRanges = ranges.map(r => {
         const start = integer(r.start, '起页', 1), end = integer(r.end, '止页', 1)
         if (start === null || end === null || end < start) throw Error('请填写完整起止页，止页不得小于起页')
@@ -69,11 +76,12 @@ async function save() {
       const plan = await $fetch<ReturnType<typeof preflightParse310> & { parseState: string }>(url() + '/preflight', { method: 'POST', body: { expectedVersion: state.value.version, ...(parts.some(p => p.pageRanges?.length) ? { verifyPhysicalPages: true } : {}) } })
       attempt = { fingerprint, body: { ...plan, parts, reason: reason.value, idempotencyKey: crypto.randomUUID() } }
     }
+    const origins = new Map(parts.map((part, i) => [partKey(part), drafts.value[i]?.sourceKey]))
     await $fetch(url() + '/commit', { method: 'POST', body: attempt.body })
     // Always read current state; replayed receipts can describe an older state.
     const current = await $fetch<{ state: State; writeEnabled: boolean }>(url())
     state.value = current.state; enabled.value = current.writeEnabled
-    drafts.value = current.state.parts.filter(p => p.origin !== 'derived').map(toDraft)
+    drafts.value = current.state.parts.filter(p => p.origin !== 'derived').map(p => ({ ...toDraft(p), sourceKey: origins.get(partKey(p)) }))
     attempt = null
     await props.refreshList()
     editing.value = null
@@ -121,7 +129,7 @@ async function save() {
       <p class="text-muted-foreground text-xs">已入库记录中的分段</p>
       <div v-for="(part, i) in derived" :key="i" class="flex flex-wrap items-center justify-between gap-2 rounded-md border border-dashed p-3 text-sm">
         <div class="min-w-0"><span class="font-medium">{{ TITLES[part.titleCode] }} · {{ EVENTS[part.eventKind] }}</span><span class="ml-2">{{ part.year ?? '年份未知' }} / {{ part.batch ?? '批次未知' }}</span><span class="text-muted-foreground ml-2">{{ part.attachment ?? '附件未知' }} · {{ part.rowCount }} 行</span></div>
-        <Button variant="outline" size="sm" :disabled="locked" @click="add(part)">修改描述</Button>
+        <Button variant="outline" size="sm" :disabled="locked" @click="add(part)">修改</Button>
       </div>
     </div>
     <p v-if="state && !drafts.length && !derived.length" class="text-muted-foreground py-4 text-center text-sm">还没有分段，点击「新增分段」填写年份和批次。</p>
