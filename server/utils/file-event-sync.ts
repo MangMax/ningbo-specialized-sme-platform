@@ -400,7 +400,10 @@ export async function commitFileEventSync(
           fail('stale_membership', '完整候选成员、事件或出处已变化；请重新预检')
         const correction: EventCorrectionRequest = {
           ...request,
-          idempotencyKey: `${old.key}:${chunk}`,
+          // Public plan keys keep their existing namespace for persisted-plan replay.
+          // A distinct prefix prevents every accepted client string (including colons)
+          // from aliasing a correction chunk in the shared import_batch ledger.
+          idempotencyKey: `file-event-sync-chunk:${id}:${request.idempotencyKey}:${chunk}`,
           sourceIdentity: `file-event-sync:${id}:${planHash}`,
           operations: plan.operations.slice(chunk * CHUNK, (chunk + 1) * CHUNK),
         }
