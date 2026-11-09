@@ -99,3 +99,10 @@ pages/files.vue 的 import，保留 FileEventSync 与 SegmentRangesSummary，两
 原始记录存于 `/tmp/671-evidence/head-e5f7a2e4/`，不再当作最终集成候选证据。
 最终合并后的精确HEAD重新执行受影响HTTP/UI测试、typecheck、build及本地生产OpenAPI，
 并在实际生产构建的隔离实例复验页面，日志见最终报告。
+
+`33e492cd508e3c62bbd1bed4b7dc5bc98c20a0bf`（含8877 integration）的新鲜 gate：
+6文件129项 PASS（增加已合入 #670 的实际 UI 测试）、typecheck PASS、build PASS（13.0s）、
+本地生产OpenAPI PASS。原始日志为 integrated-8877-*.log。
+相对最新integration，pages/files.vue恰好只增加 FileEventSync 的 import 与行内入口两行，
+EditSegmentsDialog、SegmentRangesSummary、browser-file-segments及其测试没有本票差异。
+最终证据提交后的精确HEAD再次运行同一gate，原始最终日志仍保留Git外路径，避免自引用改写历史日志。
