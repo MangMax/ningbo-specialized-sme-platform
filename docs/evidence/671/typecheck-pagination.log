@@ -1,0 +1,30 @@
+$ nuxt typecheck
+[nuxt:icon] ✔ Nuxt Icon loaded local collection project with 2 icons
+ℹ Nuxt Icon client bundle consist of 31 icons with 28.38KB(uncompressed) in size
+server/api/files/[id]/event-sync/browser-commit.post.ts(25,53): error TS2322: Type '{ type: "object"; additionalProperties: false; required: string[]; properties: { request: { type: "object"; additionalProperties: false; required: string[]; properties: { idempotencyKey: { type: "string"; minLength: number; maxLength: number; }; basis: { ...; }; }; }; planHash: { ...; }; chunk: { ...; }; }; }' is not assignable to type 'ReferenceObject | SchemaObject | undefined'.
+  Types of property 'properties' are incompatible.
+    Property 'request' is incompatible with index signature.
+      Type '{ type: "object"; additionalProperties: false; required: string[]; properties: { idempotencyKey: { type: "string"; minLength: number; maxLength: number; }; basis: { type: "string"; minLength: number; maxLength: number; }; }; }' is not assignable to type 'ReferenceObject | SchemaObject'.
+        Types of property 'properties' are incompatible.
+          Type '{ idempotencyKey: { type: "string"; minLength: number; maxLength: number; }; basis: { type: "string"; minLength: number; maxLength: number; }; }' is not assignable to type '{ [name: string]: ReferenceObject | SchemaObject; }'.
+            Property 'idempotencyKey' is incompatible with index signature.
+              Object literal may only specify known properties, and 'minLength' does not exist in type 'ReferenceObject | ({ [key: `x-${string}`]: any; discriminator?: DiscriminatorObject | undefined; xml?: XMLObject | undefined; externalDocs?: ExternalDocumentationObject | undefined; ... 15 more ...; required?: string[] | undefined; } & StringSubtype)'.
+server/api/files/[id]/event-sync/browser-preflight.post.ts(20,49): error TS2322: Type '{ type: "object"; additionalProperties: false; required: string[]; properties: { idempotencyKey: { type: "string"; minLength: number; maxLength: number; }; basis: { type: "string"; minLength: number; maxLength: number; }; }; }' is not assignable to type 'ReferenceObject | SchemaObject | undefined'.
+  Types of property 'properties' are incompatible.
+    Type '{ idempotencyKey: { type: "string"; minLength: number; maxLength: number; }; basis: { type: "string"; minLength: number; maxLength: number; }; }' is not assignable to type '{ [name: string]: ReferenceObject | SchemaObject; }'.
+      Property 'idempotencyKey' is incompatible with index signature.
+        Object literal may only specify known properties, and 'minLength' does not exist in type 'ReferenceObject | ({ [key: `x-${string}`]: any; discriminator?: DiscriminatorObject | undefined; xml?: XMLObject | undefined; externalDocs?: ExternalDocumentationObject | undefined; ... 15 more ...; required?: string[] | undefined; } & StringSubtype)'.
+server/api/files/[id]/event-sync/commit.post.ts(26,53): error TS2322: Type '{ type: "object"; additionalProperties: false; required: string[]; properties: { request: { type: "object"; additionalProperties: false; required: string[]; properties: { idempotencyKey: { type: "string"; minLength: number; maxLength: number; }; basis: { ...; }; actor: { ...; }; }; }; planHash: { ...; }; chunk: { .....' is not assignable to type 'ReferenceObject | SchemaObject | undefined'.
+  Types of property 'properties' are incompatible.
+    Property 'request' is incompatible with index signature.
+      Type '{ type: "object"; additionalProperties: false; required: string[]; properties: { idempotencyKey: { type: "string"; minLength: number; maxLength: number; }; basis: { type: "string"; minLength: number; maxLength: number; }; actor: { ...; }; }; }' is not assignable to type 'ReferenceObject | SchemaObject'.
+        Types of property 'properties' are incompatible.
+          Type '{ idempotencyKey: { type: "string"; minLength: number; maxLength: number; }; basis: { type: "string"; minLength: number; maxLength: number; }; actor: { type: "object"; additionalProperties: false; required: string[]; properties: { ...; }; }; }' is not assignable to type '{ [name: string]: ReferenceObject | SchemaObject; }'.
+            Property 'idempotencyKey' is incompatible with index signature.
+              Object literal may only specify known properties, and 'minLength' does not exist in type 'ReferenceObject | ({ [key: `x-${string}`]: any; discriminator?: DiscriminatorObject | undefined; xml?: XMLObject | undefined; externalDocs?: ExternalDocumentationObject | undefined; ... 15 more ...; required?: string[] | undefined; } & StringSubtype)'.
+server/api/files/[id]/event-sync/preflight.post.ts(21,49): error TS2322: Type '{ type: "object"; additionalProperties: false; required: string[]; properties: { idempotencyKey: { type: "string"; minLength: number; maxLength: number; }; basis: { type: "string"; minLength: number; maxLength: number; }; actor: { ...; }; }; }' is not assignable to type 'ReferenceObject | SchemaObject | undefined'.
+  Types of property 'properties' are incompatible.
+    Type '{ idempotencyKey: { type: "string"; minLength: number; maxLength: number; }; basis: { type: "string"; minLength: number; maxLength: number; }; actor: { type: "object"; additionalProperties: false; required: string[]; properties: { ...; }; }; }' is not assignable to type '{ [name: string]: ReferenceObject | SchemaObject; }'.
+      Property 'idempotencyKey' is incompatible with index signature.
+        Object literal may only specify known properties, and 'minLength' does not exist in type 'ReferenceObject | ({ [key: `x-${string}`]: any; discriminator?: DiscriminatorObject | undefined; xml?: XMLObject | undefined; externalDocs?: ExternalDocumentationObject | undefined; ... 15 more ...; required?: string[] | undefined; } & StringSubtype)'.
+[ELIFECYCLE] Command failed with exit code 2.
