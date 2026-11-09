@@ -56,7 +56,7 @@ export function readEventCorrectionAudit(db: Db, id: number, page: number, pageS
     return { total, page, pageSize, rows: tx.select().from(t).where(where).orderBy(asc(t.id)).limit(pageSize).offset((page - 1) * pageSize).all() }
   })
 }
-function buildPlan(db: Executor, request: EventCorrectionRequest) {
+export function buildPlan(db: Executor, request: EventCorrectionRequest) {
   const ids = request.operations.map(op => op.eventId)
   if (new Set(ids).size !== ids.length) fail(422, 'duplicate_target', 'Each event may be corrected only once per batch')
   const titleEvents = new Map<string, ReturnType<typeof lifecycleEvents>>()

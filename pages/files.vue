@@ -43,6 +43,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
+import FileEventSync from '@/components/files/FileEventSync.vue'
 import SegmentRangesSummary from '@/components/files/SegmentRangesSummary.vue'
 import EditSegmentsDialog from '@/components/files/EditSegmentsDialog.vue'
 import EditFileDialog, { type MetadataForm } from '@/components/files/EditFileDialog.vue'
@@ -713,6 +714,7 @@ function publishedYearBatch(row: StoredFileRow): string {
                     </TableCell>
                     <TableCell :class="ACTION_TD">
                       <div class="flex flex-wrap items-center gap-1">
+                        <FileEventSync :file-id="row.id" @synced="refresh()" />
                         <Button variant="ghost" size="sm" class="h-7 px-1.5 text-xs" @click="segmentFile = row; segmentsOpen = true">编辑内容分段</Button>
                         <Button
                           variant="ghost"

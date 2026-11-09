@@ -1,0 +1,14 @@
+✖ SyntaxError: Error parsing JavaScript expression: Unexpected token, expected "," (3:14)
+
+    160 │             @update:page="page = $event"
+    161 │             @update:page-size="
+  › 162 │               pageSize = $event
+        │ ^
+    163 │               page = 1
+    164 │             "
+
+  at <anonymous> components/files/FileEventSync.vue:162:1
+[nitro] ✔ Nuxt Nitro server built in 3451ms
+{"id":"d8ce3073-5bfe-4195-8c18-22a16c93a2ad","timestamp":"2026-11-09T06:19:06.291Z","source":"system","operation":"db.query.select","outcome":"started","level":"debug","origin":{"runtime":"node","integration":"drizzle","capture":"hook"},"resourceType":"database_connection","resourceId":"primary","counts":{"total":2}}
+{"id":"17af0564-4c9d-4795-8fd3-a02fdd1a8061","timestamp":"2026-11-09T06:19:06.679Z","source":"worker","operation":"enterprise_read.process.ready","outcome":"success","level":"info","origin":{"runtime":"node","integration":"application","capture":"manual","execution":"worker"}}
+[nitr
