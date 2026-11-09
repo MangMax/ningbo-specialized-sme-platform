@@ -151,7 +151,7 @@ const canSave = computed(
           </div>
 
           <div class="flex flex-col gap-1.5">
-            <Label for="file-year" class="text-xs">公布年份</Label>
+            <Label for="file-year" class="text-xs">文件发布年份</Label>
             <Input
               id="file-year"
               v-model="form.year"
@@ -162,12 +162,12 @@ const canSave = computed(
               :aria-invalid="yearInvalid || needsYear || undefined"
             />
             <p class="text-muted-foreground text-[13px] leading-relaxed">
-              目录给出的公布年份;留空表示未定。
+              这份文件的发布年份，不是认定或复核年份。
             </p>
           </div>
 
           <div class="flex flex-col gap-1.5">
-            <Label for="file-batch" class="text-xs">公布批次</Label>
+            <Label for="file-batch" class="text-xs">文件发布批次</Label>
             <Input
               id="file-batch"
               v-model="form.batch"
@@ -180,7 +180,7 @@ const canSave = computed(
               class="text-[13px] leading-relaxed"
               :class="needsYear ? 'text-destructive' : 'text-muted-foreground'"
             >
-              {{ needsYear ? '填了批次就要同时填年份。' : '目录给出的公布批次;没有就留空。' }}
+              {{ needsYear ? '填了批次就要同时填年份。' : '文件发布批次；内容批次请在分段中修改。' }}
             </p>
           </div>
 

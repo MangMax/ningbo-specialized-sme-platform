@@ -44,8 +44,7 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import FileEventSync from '@/components/files/FileEventSync.vue'
-import SegmentRangesSummary from '@/components/files/SegmentRangesSummary.vue'
-import EditSegmentsDialog from '@/components/files/EditSegmentsDialog.vue'
+import FileSegmentsEditor from '@/components/files/FileSegmentsEditor.vue'
 import EditFileDialog, { type MetadataForm } from '@/components/files/EditFileDialog.vue'
 import RenameFileDialog from '@/components/files/RenameFileDialog.vue'
 import DeleteFileDialog from '@/components/files/DeleteFileDialog.vue'
@@ -60,7 +59,7 @@ import PdfViewDialog from '@/components/files/PdfViewDialog.vue'
  *
  * **年份 / 批次两列显示的是文件内容里的段**(票 17:一份文件常含多年份、多事件,
  * 如 192号 同时含「认定 2024/2」与「复核 2021/2」),所以列头写「内容年份」「内容批次」,
- * 与旁边文件级的**「公布年份/批次」**(目录给的、单值)一眼分得开。值多时列里只平铺前两个、
+ * 与旁边文件级的**「文件发布年份/批次」**(目录给的、单值)一眼分得开。值多时列里只平铺前两个、
  * 其余折成 `+N 年`,完整清单在展开的段明细里。行可展开看段(称号 / 事件 / 年份 / 批次 / 附件 / 行数)。
  *
  * 筛选全部走**多选**(与台账页同一套 `MultiSelectFilter`),因为「同时看经信局的
@@ -171,9 +170,7 @@ const parseOptions = computed(() =>
   PARSE_STATE_ORDER.map((k) => ({ value: k, label: PARSE_STATES[k] ?? k })),
 )
 
-const rangeRefresh = ref(0)
 function refresh() {
-  rangeRefresh.value++
   return queryCache.invalidateQueries({ key: ['files'] })
 }
 
@@ -249,8 +246,6 @@ const activeFilters = computed<ActiveFilter[]>(() => [
 ])
 
 // —— 行操作 ——
-const segmentFile = ref<StoredFileRow | null>(null)
-const segmentsOpen = ref(false)
 const editing = ref<StoredFileRow | null>(null)
 const editOpen = ref(false)
 const editPending = ref(false)
@@ -431,7 +426,7 @@ const contentBatches = (row: StoredFileRow) => seriesCell(partBatches(row.parts)
 /** 完整清单进 `title` —— 列里只平铺前两个,悬停能看到全部。 */
 const contentYearsTitle = (row: StoredFileRow) => joinSeries(partYears(row.parts)) ?? undefined
 const contentBatchesTitle = (row: StoredFileRow) => joinSeries(partBatches(row.parts)) ?? undefined
-/** 「公布年份/批次」列:文件级**单值**(目录给的),形如 `2024 / 2`、`2024`、`—`。 */
+/** 「文件发布年份/批次」列:文件级**单值**(目录给的),形如 `2024 / 2`、`2024`、`—`。 */
 function publishedYearBatch(row: StoredFileRow): string {
   if (row.year == null) return '—'
   return row.batch == null ? String(row.year) : `${row.year} / ${row.batch}`
@@ -524,7 +519,7 @@ function publishedYearBatch(row: StoredFileRow): string {
           v-if="!error || rows.length > 0"
           ref="tableScroller"
           data-testid="files-table-scroll"
-          class="data-table-scroll [&_[data-slot=table-container]]:overflow-visible"
+          class="data-table-scroll [container-type:inline-size] [&_[data-slot=table-container]]:overflow-visible"
           :aria-busy="isLoading"
         >
           <!-- 12 列。恢复改名操作后,表格总宽为 1154px。
@@ -546,9 +541,9 @@ function publishedYearBatch(row: StoredFileRow): string {
                 <TableHead :class="[TH_CLASS, 'w-[80px]']">类别</TableHead>
                 <TableHead
                   :class="[TH_CLASS, 'w-[92px]']"
-                  title="目录给出的公布年份/批次 —— 这份文件是哪一批公布的(单值)"
+                  title="目录给出的文件发布年份/批次 —— 这份文件是哪一批公布的(单值)"
                 >
-                  公布年份/批次
+                  文件发布年份/批次
                 </TableHead>
                 <TableHead
                   :class="[TH_CLASS, 'w-[132px]']"
@@ -636,7 +631,7 @@ function publishedYearBatch(row: StoredFileRow): string {
                            一行里已经有来源方标 + 两个状态徽章,再挂一个同形的徽章只是噪音。 -->
                       <span class="block truncate">{{ row.kind ? KINDS[row.kind] : '—' }}</span>
                     </TableCell>
-                    <!-- 公布年份/批次:文件级单值(目录给的),退到次级色 —— 内容年份才是要读的信息。 -->
+                    <!-- 文件发布年份/批次:文件级单值(目录给的),退到次级色 —— 内容年份才是要读的信息。 -->
                     <TableCell class="text-muted-foreground text-xs tabular-nums">
                       {{ publishedYearBatch(row) }}
                     </TableCell>
@@ -715,14 +710,14 @@ function publishedYearBatch(row: StoredFileRow): string {
                     <TableCell :class="ACTION_TD">
                       <div class="flex flex-wrap items-center gap-1">
                         <FileEventSync :file-id="row.id" @synced="refresh()" />
-                        <Button variant="ghost" size="sm" class="h-7 px-1.5 text-xs" @click="segmentFile = row; segmentsOpen = true">编辑内容分段</Button>
+                        <Button variant="ghost" size="sm" class="h-7 px-1.5 text-xs" @click="toggleParts(row.id)">管理分段</Button>
                         <Button
                           variant="ghost"
                           size="sm"
                           class="h-7 px-1.5 text-xs"
                           @click="openEdit(row)"
                         >
-                          编辑
+                          文件信息
                         </Button>
                         <Button
                           variant="ghost"
@@ -756,70 +751,12 @@ function publishedYearBatch(row: StoredFileRow): string {
 
                   <!-- 段明细(票 17):称号 / 事件 / 年份 / 批次 / 附件 / 行数。 -->
                   <TableRow
-                    v-if="isExpanded(row.id) && row.parts.length"
+                    v-if="isExpanded(row.id)"
                     class="hover:bg-transparent"
                     data-testid="file-parts-row"
                   >
                     <TableCell :colspan="12" class="bg-muted/40 p-0">
-                      <!-- 缩进 + 一条竖线,让这段明细读起来属于上面那一行(与详情页用竖线
-                           分隔两侧来源是同一种手法),而不是又一张浮在里面的表。
-                           段数放在表**下面**当注脚 —— 先前放在右端与列头同一行,读成了第七个
-                           列头(「共 2 段」和「称号/事件/…」并排),要读两遍才分得清。 -->
-                      <div class="border-border/70 ml-5 flex flex-col gap-1.5 border-l-2 py-3 pr-4 pl-4">
-                        <Table class="w-auto text-xs">
-                          <TableHeader>
-                            <TableRow class="hover:bg-transparent">
-                              <TableHead class="text-muted-foreground h-7 w-48 text-xs font-medium">
-                                称号
-                              </TableHead>
-                              <TableHead class="text-muted-foreground h-7 w-24 text-xs font-medium">
-                                事件
-                              </TableHead>
-                              <TableHead class="text-muted-foreground h-7 w-20 text-xs font-medium">
-                                年份
-                              </TableHead>
-                              <TableHead class="text-muted-foreground h-7 w-16 text-xs font-medium">
-                                批次
-                              </TableHead>
-                              <TableHead class="text-muted-foreground h-7 w-24 text-xs font-medium">
-                                附件
-                              </TableHead>
-                              <TableHead
-                                class="text-muted-foreground h-7 pr-3 text-right text-xs font-medium"
-                              >
-                                行数
-                              </TableHead>
-                            </TableRow>
-                          </TableHeader>
-                          <TableBody>
-                            <TableRow
-                              v-for="(part, i) in row.parts"
-                              :key="i"
-                              class="hover:bg-transparent"
-                            >
-                              <TableCell class="py-1.5">
-                                <TitleBadge :code="part.titleCode" />
-                              </TableCell>
-                              <TableCell class="py-1.5">
-                                <!-- 年份/批次在右边各有一列,这里只出事件类型,不重复写一遍。 -->
-                                <EventChip :type="part.eventKind" hide-batch />
-                              </TableCell>
-                              <TableCell class="py-1.5 tabular-nums">{{ part.year ?? '—' }}</TableCell>
-                              <TableCell class="py-1.5 tabular-nums">{{ part.batch ?? '—' }}</TableCell>
-                              <TableCell class="py-1.5">{{ part.attachment ?? '—' }}</TableCell>
-                              <TableCell class="py-1.5 text-right tabular-nums">
-                                {{ part.rowCount.toLocaleString('zh-CN') }}
-                              </TableCell>
-                            </TableRow>
-                          </TableBody>
-                        </Table>
-                        <SegmentRangesSummary :key="`${row.id}-${rangeRefresh}`" :file-id="row.id" :sha256="row.sha256" />
-                        <!-- 只留段数。原先还有一句解释「年份是段的内容年份、公布年份/批次与段无关」
-                             的话 —— 列头已经分别写着「公布年份/批次」和「内容年份」,不必再讲一遍模型。 -->
-                        <p class="text-muted-foreground text-xs tabular-nums">
-                          共 {{ row.parts.length }} 段
-                        </p>
-                      </div>
+                      <div class="sticky left-0 w-[100cqw] p-3 sm:p-4"><FileSegmentsEditor :open="true" :file="row" :refresh-list="refresh" /></div>
                     </TableCell>
                   </TableRow>
                 </template>
@@ -851,7 +788,6 @@ function publishedYearBatch(row: StoredFileRow): string {
 
     <UploadDialog v-model:open="uploadOpen" @registered="refresh()" />
 
-    <EditSegmentsDialog v-model:open="segmentsOpen" :file="segmentFile" :refresh-list="refresh" />
 
     <EditFileDialog
       v-model:open="editOpen"

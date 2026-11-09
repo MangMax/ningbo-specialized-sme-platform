@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog'
+import { Plus, Minus, Pencil } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -18,6 +18,7 @@ const open = defineModel<boolean>('open', { default: false })
 const state = ref<State | null>(null), drafts = ref<Draft[]>([])
 const enabled = ref(false), pending = ref(false), failure = ref(''), notice = ref('')
 const reason = ref('维护文件内容分段描述')
+const editing = ref<number | null>(null)
 const derived = computed(() => state.value?.parts.filter(p => p.origin === 'derived') ?? [])
 const locked = computed(() => pending.value || !enabled.value || !state.value)
 type Submission = ReturnType<typeof preflightParse310> & { parts: object[]; parseState: string; idempotencyKey: string; reason: string }
@@ -37,9 +38,11 @@ async function load() {
   } catch (error) { failure.value = `读取失败，草稿保留。${describeFetchError(error, error instanceof Error ? error.message : '操作失败')}` }
   finally { pending.value = false }
 }
-watch(open, value => { if (value) { state.value = null; enabled.value = false; drafts.value = []; attempt = null; void load() } })
-function add() {
+watch(open, value => { if (value) { state.value = null; enabled.value = false; drafts.value = []; attempt = null; void load() } }, { immediate: true })
+function add(source?: Part) {
+  if (source) { drafts.value.push({ ...toDraft(source), origin: 'agent', hasConflict: false }); editing.value = drafts.value.length - 1; return }
   drafts.value.push({ ranges: [], rangesEdited: false, titleCode: 'specialized_sme', eventKind: 'award', year: '', batch: '', attachment: '', rowCount: '0', origin: 'agent', hasConflict: false })
+  editing.value = drafts.value.length - 1
 }
 function integer(text: string, name: string, min: number, max = Number.MAX_SAFE_INTEGER): number | null {
   if (!text.trim()) return null
@@ -73,55 +76,59 @@ async function save() {
     drafts.value = current.state.parts.filter(p => p.origin !== 'derived').map(toDraft)
     attempt = null
     await props.refreshList()
-    notice.value = '已保存并读回当前分段，列表已刷新。来源派生段不会因撤回声明而删除。'
+    editing.value = null
+    notice.value = '已保存并读回当前分段，列表已刷新。'
   } catch (error) { failure.value = `${describeFetchError(error, error instanceof Error ? error.message : '操作失败')}。草稿保留；版本冲突请重新加载。结果不确定可原稿重试，修改草稿将使用新的提交。` }
   finally { pending.value = false }
 }
 </script>
 
 <template>
-  <Dialog v-model:open="open">
-    <DialogContent class="flex max-h-[90dvh] flex-col sm:max-w-3xl" :show-close-button="!pending" @interact-outside="pending && $event.preventDefault()" @escape-key-down="pending && $event.preventDefault()">
-      <DialogHeader>
-        <DialogTitle>编辑内容分段</DialogTitle>
-        <DialogDescription class="break-all">{{ file?.displayName }} · 公布年份、公布批次仍是文件级单值，在原“编辑”中维护。</DialogDescription>
-      </DialogHeader>
-      <div class="flex min-h-0 flex-col gap-4 overflow-y-auto">
-        <p class="text-sm">每行是一个明确年份—批次组合。复核的内容年份指原认定年；未知可留空。只维护描述，保存不会更改正式事件或企业资格。</p>
-        <p class="text-muted-foreground text-sm">预检仅核实当前文件身份，不读取OCR，不证明历史段的来源已核实。解析状态保持原值。</p>
-        <p class="text-sm">页码采用预览中的1起物理页码（含止页），不是正文印刷页码。未知可不填，清空会显式撤回范围。共用页可如实登记；仅页码不足以唯一定位企业，不保证可自动同步。文件变化后须重新核实范围，保存不会同步正式事件。</p>
-        <p v-if="!enabled && state" role="status">当前只读：部署未开启浏览器写能力，无需任务令牌。</p>
-        <p v-if="failure" role="alert" class="text-destructive break-words">{{ failure }}</p>
-        <p v-if="notice" role="status">{{ notice }}</p>
-        <Button variant="outline" :disabled="pending" @click="load">重新加载（替换草稿）</Button>
-        <h3 class="font-medium">手工登记 / 旧兼容声明 · {{ drafts.length }} 段</h3>
-        <fieldset v-for="(part, i) in drafts" :key="i" :disabled="locked" class="grid min-w-0 gap-3 rounded-md border p-3 sm:grid-cols-2">
-          <legend class="px-1 text-sm">分段 {{ i + 1 }}{{ part.origin === 'legacy' ? ' · 旧兼容声明' : '' }}</legend>
-          <div class="min-w-0"><Label :for="`segment-title-${i}`">称号</Label><Select v-model="part.titleCode"><SelectTrigger :id="`segment-title-${i}`" class="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem v-for="t in TITLE_ORDER" :key="t" :value="t">{{ TITLES[t] }}</SelectItem></SelectContent></Select></div>
-          <div><Label :for="`segment-event-${i}`">事件</Label><Select v-model="part.eventKind"><SelectTrigger :id="`segment-event-${i}`" class="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem v-for="e in EVENT_ORDER" :key="e" :value="e">{{ EVENTS[e] }}</SelectItem></SelectContent></Select></div>
-          <div><Label :for="`segment-year-${i}`">内容年份</Label><Input :id="`segment-year-${i}`" v-model="part.year" inputmode="numeric" placeholder="未知" /></div>
-          <div><Label :for="`segment-batch-${i}`">批次</Label><Input :id="`segment-batch-${i}`" v-model="part.batch" inputmode="numeric" placeholder="未知" /></div>
-          <div><Label :for="`segment-attachment-${i}`">附件</Label><Input :id="`segment-attachment-${i}`" v-model="part.attachment" placeholder="未知" /></div>
-          <div><Label :for="`segment-count-${i}`">行数</Label><Input :id="`segment-count-${i}`" v-model="part.rowCount" inputmode="numeric" placeholder="0 表示未知" /></div>
+  <section v-if="open" class="min-w-0 space-y-4" aria-label="内容分段管理">
+    <header class="flex flex-wrap items-center justify-between gap-2">
+      <div><h3 class="font-medium">内容分段</h3><p class="text-muted-foreground text-xs">每段对应一组认定或复核年份与批次。</p></div>
+      <Button variant="outline" size="sm" :disabled="locked || drafts.length >= 1000" @click="add()"><Plus class="mr-1 size-4" />新增分段</Button>
+    </header>
+    <p v-if="!state && pending" role="status" class="text-muted-foreground text-sm">正在加载分段…</p>
+    <p v-if="!enabled && state" role="status" class="text-sm">当前实例未开放修改，请联系管理员开启浏览器写入。</p>
+    <p v-if="failure" role="alert" class="text-destructive break-words text-sm">{{ failure }} <Button variant="link" size="sm" :disabled="pending" @click="load">重新加载（替换草稿）</Button></p>
+    <p v-if="notice" role="status" class="text-sm">{{ notice }}</p>
+    <div v-for="(part, i) in drafts" :key="i" class="min-w-0 rounded-md border bg-background">
+      <div class="flex flex-wrap items-center justify-between gap-2 p-3">
+        <div class="min-w-0 text-sm"><span class="font-medium">{{ TITLES[part.titleCode] }} · {{ EVENTS[part.eventKind] }}</span><span class="ml-2">{{ part.year || '年份未知' }} / {{ part.batch || '批次未知' }}</span><span class="text-muted-foreground ml-2">{{ part.attachment || '附件未填' }}</span></div>
+        <div class="flex shrink-0 gap-1"><Button variant="ghost" size="sm" :disabled="locked" @click="editing = editing === i ? null : i"><Pencil class="mr-1 size-3.5" />{{ editing === i ? '收起' : '修改' }}</Button><Button variant="ghost" size="icon" :disabled="locked" :aria-label="`撤回分段 ${i + 1}`" @click="drafts.splice(i, 1); editing = null"><Minus class="size-4" /></Button></div>
+      </div>
+      <fieldset v-if="editing === i" :disabled="locked" class="grid min-w-0 gap-3 border-t p-3 sm:grid-cols-3">
+          <div class="min-w-0"><Label :for="`segment-title-${file?.id}-${i}`">称号</Label><Select v-model="part.titleCode"><SelectTrigger :id="`segment-title-${file?.id}-${i}`" class="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem v-for="t in TITLE_ORDER" :key="t" :value="t">{{ TITLES[t] }}</SelectItem></SelectContent></Select></div>
+          <div><Label :for="`segment-event-${file?.id}-${i}`">事件</Label><Select v-model="part.eventKind"><SelectTrigger :id="`segment-event-${file?.id}-${i}`" class="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem v-for="e in EVENT_ORDER" :key="e" :value="e">{{ EVENTS[e] }}</SelectItem></SelectContent></Select></div>
+          <div><Label :for="`segment-year-${file?.id}-${i}`">内容年份</Label><Input :id="`segment-year-${file?.id}-${i}`" v-model="part.year" inputmode="numeric" placeholder="未知" /></div>
+          <div><Label :for="`segment-batch-${file?.id}-${i}`">内容批次</Label><Input :id="`segment-batch-${file?.id}-${i}`" v-model="part.batch" inputmode="numeric" placeholder="未知" /></div>
+          <div><Label :for="`segment-attachment-${file?.id}-${i}`">附件</Label><Input :id="`segment-attachment-${file?.id}-${i}`" v-model="part.attachment" placeholder="未知" /></div>
+          <div><Label :for="`segment-count-${file?.id}-${i}`">行数</Label><Input :id="`segment-count-${file?.id}-${i}`" v-model="part.rowCount" inputmode="numeric" placeholder="0 表示未知" /></div>
           <div class="min-w-0 space-y-2 sm:col-span-2">
             <p class="text-sm">物理页码范围 · {{ part.ranges.length ? '' : (part.rangesEdited ? '将显式清空' : '未登记或已清空') }}</p>
             <div v-for="(range, j) in part.ranges" :key="j" class="grid min-w-0 grid-cols-2 gap-2">
-              <div><Label :for="`range-start-${i}-${j}`">起页 {{ j + 1 }}</Label><Input :id="`range-start-${i}-${j}`" v-model="range.start" inputmode="numeric" @update:model-value="part.rangesEdited = true" /></div>
-              <div><Label :for="`range-end-${i}-${j}`">止页 {{ j + 1 }}</Label><Input :id="`range-end-${i}-${j}`" v-model="range.end" inputmode="numeric" @update:model-value="part.rangesEdited = true" /></div>
+              <div><Label :for="`range-start-${file?.id}-${i}-${j}`">起页 {{ j + 1 }}</Label><Input :id="`range-start-${file?.id}-${i}-${j}`" v-model="range.start" inputmode="numeric" @update:model-value="part.rangesEdited = true" /></div>
+              <div><Label :for="`range-end-${file?.id}-${i}-${j}`">止页 {{ j + 1 }}</Label><Input :id="`range-end-${file?.id}-${i}-${j}`" v-model="range.end" inputmode="numeric" @update:model-value="part.rangesEdited = true" /></div>
               <Button variant="outline" @click="part.ranges.splice(j, 1); part.rangesEdited = true">移除范围 {{ j + 1 }}</Button>
             </div>
             <div class="flex flex-wrap gap-2"><Button variant="outline" :disabled="part.ranges.length >= 1000" @click="part.ranges.push({ start: '', end: '' }); part.rangesEdited = true">新增页码范围</Button><Button variant="outline" @click="part.ranges = []; part.rangesEdited = true">清空页码范围</Button></div>
           </div>
           <p v-if="part.hasConflict" role="status" class="text-sm sm:col-span-2">行数与正式出处派生值冲突，保留差异待核，不是资格结论。</p>
-          <Button variant="outline" @click="drafts.splice(i, 1)">撤回分段 {{ i + 1 }}</Button>
-        </fieldset>
-        <Button variant="outline" :disabled="locked || drafts.length >= 1000" @click="add">新增分段</Button>
-        <Label for="segments-reason">维护说明</Label><Input id="segments-reason" v-model="reason" :disabled="locked" />
-        <h3 class="font-medium">来源派生段（只读） · {{ derived.length }} 段</h3>
-        <p class="text-muted-foreground text-sm">来自已有正式出处及事件；须通过正式事实更正流程修正，撤回手工声明不会删除它们。</p>
-        <p v-for="(part, i) in derived" :key="i" class="rounded-md border p-3 text-sm break-words">{{ TITLES[part.titleCode] }} · {{ EVENTS[part.eventKind] }} · {{ part.year ?? '年份未知' }} · {{ part.batch ?? '批次未知' }} · {{ part.attachment ?? '附件未知' }} · {{ part.rowCount }} 行</p>
+      </fieldset>
+    </div>
+    <div v-if="derived.length" class="space-y-2">
+      <p class="text-muted-foreground text-xs">已入库记录中的分段</p>
+      <div v-for="(part, i) in derived" :key="i" class="flex flex-wrap items-center justify-between gap-2 rounded-md border border-dashed p-3 text-sm">
+        <div class="min-w-0"><span class="font-medium">{{ TITLES[part.titleCode] }} · {{ EVENTS[part.eventKind] }}</span><span class="ml-2">{{ part.year ?? '年份未知' }} / {{ part.batch ?? '批次未知' }}</span><span class="text-muted-foreground ml-2">{{ part.attachment ?? '附件未知' }} · {{ part.rowCount }} 行</span></div>
+        <Button variant="outline" size="sm" :disabled="locked" @click="add(part)">修改描述</Button>
       </div>
-      <DialogFooter><Button variant="outline" :disabled="pending" @click="open = false">关闭</Button><Button :disabled="locked" @click="save">{{ pending ? '处理中…' : '保存分段' }}</Button></DialogFooter>
-    </DialogContent>
-  </Dialog>
+    </div>
+    <p v-if="state && !drafts.length && !derived.length" class="text-muted-foreground py-4 text-center text-sm">还没有分段，点击「新增分段」填写年份和批次。</p>
+    <details class="text-muted-foreground text-xs"><summary class="cursor-pointer">页码与修改说明</summary><p class="mt-2">页码使用文件预览中的物理页码。修改描述不会自动修改已入库企业；保存后可用「同步到企业」补齐未知年份、批次，已有不同值须另行核实。</p></details>
+    <footer v-if="state && enabled" class="flex flex-wrap items-center justify-between gap-2 border-t pt-3">
+      <p class="text-muted-foreground text-xs">同一文件可有多个年份、多个批次；按分段逐条登记。</p>
+      <div class="flex gap-2"><Button variant="outline" :disabled="pending" @click="load">取消修改</Button><Button :disabled="locked" @click="save">{{ pending ? '正在保存…' : '保存分段' }}</Button></div>
+    </footer>
+  </section>
 </template>
