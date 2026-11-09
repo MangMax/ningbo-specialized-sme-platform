@@ -8,3 +8,5 @@
 选择附表而非业务表续行，是为了保留企业行数和筛选范围；代价是长来源须跨表阅读。全文分段暂存于独立临时目录并逐行流式写入，成功失败均清理；不增加整份文本内存缓存。不变更资格、DB、API或原来源文本。
 
 验证：新增独立 ExcelJS 解析测试首先在旧实现产生行高 FAIL（18 PASS / 1 FAIL），原始日志在私有证据目录保留。覆盖 23/24 显示行边界、多个长来源逐字重组、业务身份不重复、短导出原布局与 32767 字符 guard。原“高行必须失败”断言按新附表语义调整，未修改业务集合预期。实际 HTTP / 真实副本验收状态另行记录，不由 builder 测试代签。
+
+公开产物回归 `publishes and downloads complete multiple-source text through the HTTP export job` 使用既有隔离 HTTP fixture 完成 202→done→200 下载，校验产物哈希、完整 literal 来源、单一企业行及业务摘要不变（1/1 PASS）。此为合成 SQLite/HTTP 证据，与真实快照 Docker 验收分列。类型检查和构建 PASS；全量回归由独立 worker 负责，本分支未运行。
