@@ -40,12 +40,12 @@ function save() {
 <template>
   <section v-if="open" class="space-y-3" aria-label="文件名称">
       <div class="flex flex-col gap-4">
-        <div class="bg-muted/60 flex flex-col gap-1 rounded-md border px-2.5 py-2">
+        <details class="bg-muted/60 rounded-md border px-2.5 py-2 text-xs"><summary class="cursor-pointer">原始文件与路径</summary><div class="mt-2 flex flex-col gap-1">
           <span class="text-muted-foreground text-xs">磁盘文件名(只读)</span>
           <code class="font-mono text-xs break-all">{{ file?.filename }}</code>
           <span class="text-muted-foreground mt-1 text-xs">库内路径(只读)</span>
           <code class="font-mono text-xs break-all">{{ file?.relPath }}</code>
-        </div>
+        </div></details>
 
         <div class="flex flex-col gap-1.5">
           <Label for="file-display-name" class="text-xs">用户可见名称</Label>

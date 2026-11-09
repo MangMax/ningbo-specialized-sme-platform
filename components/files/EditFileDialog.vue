@@ -105,7 +105,7 @@ const canSave = computed(
 
 <template>
   <Dialog v-model:open="open">
-    <DialogContent class="sm:max-w-lg">
+    <DialogContent class="max-h-[90svh] grid-rows-[auto_minmax(0,1fr)_auto] sm:max-w-lg">
       <DialogHeader>
         <DialogTitle>文件信息</DialogTitle>
         <DialogDescription class="break-all">
@@ -113,10 +113,12 @@ const canSave = computed(
         </DialogDescription>
       </DialogHeader>
 
-      <div class="flex flex-col gap-4">
+      <div class="flex min-h-0 flex-col gap-4 overflow-y-auto">
         <FileDisplayNameEditor :open="open" :file="file" :pending="namePending" :failure="nameFailure" @save="emit('rename', $event)" />
+        <details class="text-muted-foreground text-xs"><summary class="cursor-pointer">文件来源核验信息</summary><div class="mt-2 space-y-2">
         <p role="status" class="text-sm break-words">{{ currentContentMessage(file?.contentIdentity) }}</p>
         <p v-if="file?.parts.length" class="text-sm">已有文件段的历史出处绑定未知。{{ file?.partsBinding?.inputLineage.status === 'bound' ? '已记录解析输入引用；这不能证明历史文件段来自该输入。' : '解析输入引用未记录。' }}</p>
+        </div></details>
         <div class="grid gap-x-4 gap-y-3.5 sm:grid-cols-2">
           <div class="flex flex-col gap-1.5">
             <Label for="file-source" class="text-xs">来源</Label>
