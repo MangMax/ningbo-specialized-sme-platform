@@ -203,3 +203,5 @@ Node24.22.0/macOS27.0.1/Apple M4，无容器限额、存在其他并行工作。
 `rolls back segment and status writes when audit persistence fails and permits a clean retry`：
 与现代写共同触发SQLite回执存储故障，段、状态和既有审计均读回原样，清除故障后重试成功。
 全部原始日志与JSON样本仍位于Git外 `/tmp/ningbo-spec98/ticket-105/`。
+
+分段物理页码范围扩展见 [#669 维护契约](file-segment-ranges-669.md)。

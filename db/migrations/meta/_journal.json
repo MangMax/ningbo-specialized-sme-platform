@@ -316,6 +316,13 @@
       "when": 1793722864506,
       "tag": "0044_platform_legacy_provenance",
       "breakpoints": true
+    },
+    {
+      "idx": 45,
+      "version": "6",
+      "when": 1793722864507,
+      "tag": "0045_file_declaration_ranges",
+      "breakpoints": true
     }
   ]
 }

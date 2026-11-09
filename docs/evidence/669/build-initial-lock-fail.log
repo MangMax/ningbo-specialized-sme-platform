@@ -1,0 +1,22 @@
+$ nuxt build
+Building Nuxt for production...
+● Loading Nuxt config
+● Nuxt 4.6.1 (with Nitro 2.13.4, Vite 8.3.4 and Vue 3.5.43)
+● Setting up modules
+● Preparing app
+
+ ERROR 
+Another Nuxt dev server is already running:
+
+  PID:     19253
+  Dir:     /Users/mang/.t3/worktrees/app/t3-02eb55ae-553bdc35b51993ee
+  Started: 11/9/2026, 2:00:57 PM
+
+Run kill 19253 to stop it.
+Set NUXT_IGNORE_LOCK=1 to bypass this check.
+
+
+   
+
+
+[ELIFECYCLE] Command failed with exit code 1.
