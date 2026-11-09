@@ -611,3 +611,134 @@ it('310 exposes frozen contracts and cannot downgrade missing input while retain
   const status = await call('save_parse_result', { fileId: f.id, ...write(old.state.version, '310-status-only', { parseState: 'failed' }) })
   expect(status.state.inputLineage).toEqual({ status: 'unknown' })
 })
+
+// A controlled four-page PDF; no source documents are copied into this fixture.
+function rangeFile669(ext = 'pdf') {
+  serial++
+  const objects = ['<< /Type /Catalog /Pages 2 0 R >>', '<< /Type /Pages /Kids [3 0 R 4 0 R 5 0 R 6 0 R] /Count 4 >>', ...Array.from({ length: 4 }, () => '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] >>')]
+  let pdf = '%PDF-1.4\n'
+  const offsets = [0]
+  objects.forEach((object, i) => { offsets.push(Buffer.byteLength(pdf)); pdf += `${i + 1} 0 obj\n${object}\nendobj\n` })
+  const xref = Buffer.byteLength(pdf)
+  pdf += `xref\n0 7\n0000000000 65535 f \n${offsets.slice(1).map(n => `${String(n).padStart(10, '0')} 00000 n \n`).join('')}trailer\n<< /Size 7 /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`
+  const relPath = `range-669-${serial}.${ext}`
+  writeFileSync(join(dir, 'files', relPath), pdf)
+  return db.insert(schema.storedFile).values({ relPath, filename: relPath, ext, bytes: Buffer.byteLength(pdf), sha256: createHash('sha256').update(pdf).digest('hex') }).returning().get()
+}
+async function rangePlan669(id: number) {
+  const response = await http(id, 'POST', { kind: 'file', verifyPhysicalPages: true }, '/preflight')
+  expect(response.status).toBe(200)
+  return response.json()
+}
+it('669 persists normalized physical ranges with stable declaration identity and immutable replay', async () => {
+  const f = rangeFile669()
+  const plan = await rangePlan669(f.id)
+  const body = { ...write(plan.expectedVersion, '669-create', { parts: [{ ...part, pageRanges: [{ start: 4, end: 4 }, { start: 1, end: 2 }, { start: 2, end: 2 }] }], parseState: 'unparsed' }), inputRef: plan.inputRef }
+  const response = await http(f.id, 'POST', body, '/commit')
+  expect(response.status).toBe(200)
+  const saved = await response.json()
+  expect(saved.state.parseState).toBe('unparsed')
+  expect(saved.state.declarations).toEqual([expect.objectContaining({ declarationId: expect.any(String), revision: 1, sha256: f.sha256, pageRanges: [{ start: 1, end: 2 }, { start: 4, end: 4 }] })])
+  expect(await state(f.id)).toEqual(saved.state)
+  expect(await call('commit_file_parse_result', { fileId: f.id, ...body })).toEqual({ ...saved, replayed: true })
+  expect((await call('get_file_parse_history', { fileId: f.id, receiptId: saved.receiptId })).after).toEqual(saved.state)
+})
+
+it('669 preserves omitted ranges across coordinate edits clears explicitly and invalidates ABA and withdrawal plans', async () => {
+  const f = rangeFile669()
+  async function commit(key: string, parts: object[], plan?: any) {
+    plan ??= await rangePlan669(f.id)
+    const response = await http(f.id, 'POST', { ...write(plan.expectedVersion, key, { parts, parseState: 'failed' }), inputRef: plan.inputRef }, '/commit')
+    expect(response.status, await response.clone().text()).toBe(200)
+    return response.json()
+  }
+  const first = await commit('669-identity-a', [{ ...part, pageRanges: [{ start: 1, end: 2 }] }])
+  const declarationId = first.state.declarations[0].declarationId
+  const frozen = await rangePlan669(f.id)
+  const changed = await commit('669-identity-b', [{ ...part, year: 2025, declarationId }])
+  expect(changed.state.declarations[0]).toMatchObject({ declarationId, revision: 2, pageRanges: [{ start: 1, end: 2 }], contentVersion: frozen.inputRef.physicalSource.contentVersion })
+  const restored = await commit('669-identity-a2', [{ ...part, declarationId }])
+  expect(restored.state.version).not.toBe(first.state.version)
+  expect((await http(f.id, 'POST', { ...write(frozen.expectedVersion, '669-stale-aba', { parts: [] }), inputRef: frozen.inputRef }, '/commit')).status).toBe(409)
+  const clear = await commit('669-clear', [{ ...part, declarationId, pageRanges: [] }])
+  expect(clear.state.declarations[0].pageRanges).toEqual([])
+  expect(clear.state.parseState).toBe('failed')
+  const withdrawn = await commit('669-withdraw', [])
+  expect(withdrawn.state.declarations).toEqual([])
+  const plan = await rangePlan669(f.id)
+  expect((await http(f.id, 'POST', { ...write(plan.expectedVersion, '669-resurrect', { parts: [{ ...part, declarationId }] }), inputRef: plan.inputRef }, '/commit')).status).toBe(409)
+  expect((await call('get_file_parse_history', { fileId: f.id, receiptId: first.receiptId })).after).toEqual(first.state)
+})
+
+it('669 rejects invalid unverified cross-file and removed ranges atomically without inventing OCR lineage', async () => {
+  const f = rangeFile669()
+  const plan = await rangePlan669(f.id)
+  expect(plan.inputRef).toMatchObject({ kind: 'file', pages: [], physicalSource: { pageCount: 4 } })
+  const before = await state(f.id)
+  for (const [i, pageRanges] of [[{ start: 0, end: 1 }], [{ start: 2, end: 1 }], [{ start: 1, end: 5 }], [{ start: 1.5, end: 2 }]].entries()) {
+    const response = await http(f.id, 'POST', { ...write(plan.expectedVersion, `669-invalid-${i}`, { parts: [part, { ...part, year: 2025, pageRanges }] }), inputRef: plan.inputRef }, '/commit')
+    expect(response.status).toBe(400)
+    expect(await state(f.id)).toEqual(before)
+  }
+  const unverified = await (await http(f.id, 'POST', { kind: 'file' }, '/preflight')).json()
+  expect((await http(f.id, 'POST', { ...write(unverified.expectedVersion, '669-no-count', { parts: [{ ...part, pageRanges: [{ start: 1, end: 1 }] }] }), inputRef: unverified.inputRef }, '/commit')).status).toBe(409)
+  const body = { ...write(plan.expectedVersion, '669-source', { parts: [{ ...part, pageRanges: [{ start: 1, end: 1 }] }] }), inputRef: plan.inputRef }
+  const saved = await (await http(f.id, 'POST', body, '/commit')).json()
+  const other = rangeFile669()
+  const otherPlan = await rangePlan669(other.id)
+  const cross = { ...write(otherPlan.expectedVersion, '669-cross-file', { parts: [{ ...part, declarationId: saved.state.declarations[0].declarationId }] }), inputRef: otherPlan.inputRef }
+  expect((await http(other.id, 'POST', cross, '/commit')).status).toBe(409)
+  const office = rangeFile669('docx')
+  const officeResponse = await http(office.id, 'POST', { kind: 'file', verifyPhysicalPages: true }, '/preflight')
+  expect(officeResponse.status).toBe(409)
+  expect(await officeResponse.text()).toContain('不支持页码定位')
+  db.$client.prepare('UPDATE stored_file SET removed_at = ? WHERE id = ?').run('2026-11-09', other.id)
+  expect((await http(other.id, 'POST', cross, '/commit')).status).toBe(409)
+  expect((await call('get_file_parse_history', { fileId: other.id })).rows).toEqual([])
+})
+
+it('669 rejects physical content ABA and preserves frozen receipts after source replacement', async () => {
+  const f = rangeFile669()
+  const plan = await rangePlan669(f.id)
+  const body = { ...write(plan.expectedVersion, '669-before-disk-aba', { parts: [{ ...part, pageRanges: [{ start: 1, end: 2 }] }] }), inputRef: plan.inputRef }
+  const saved = await (await http(f.id, 'POST', body, '/commit')).json()
+  const pending = await rangePlan669(f.id)
+  const { readFileSync } = await import('node:fs')
+  const path = join(dir, 'files', f.relPath)
+  const original = readFileSync(path)
+  writeFileSync(path, 'different content')
+  expect((await http(f.id, 'POST', { ...body, expectedVersion: pending.expectedVersion, idempotencyKey: '669-disk-change' }, '/commit')).status).toBe(409)
+  writeFileSync(path, original)
+  expect((await http(f.id, 'POST', { ...body, expectedVersion: pending.expectedVersion, idempotencyKey: '669-disk-aba' }, '/commit')).status).toBe(409)
+  expect(await call('commit_file_parse_result', { fileId: f.id, ...body })).toEqual({ ...saved, replayed: true })
+  expect(await state(f.id)).toEqual(saved.state)
+})
+
+it('669 verifies supplied counts edits ranges and keeps omission compatibility without false source rebinding', async () => {
+  const f = rangeFile669()
+  const plan = await rangePlan669(f.id)
+  const fields = { parts: [{ ...part, pageRanges: [{ start: 1, end: 2 }] }], parseState: 'unparsed' }
+  const forged = { ...write(plan.expectedVersion, '669-forged-count', fields), inputRef: { ...plan.inputRef, physicalSource: { ...plan.inputRef.physicalSource, pageCount: 999 } } }
+  expect((await http(f.id, 'POST', forged, '/commit')).status).toBe(409)
+  const created = await http(f.id, 'POST', { ...write(plan.expectedVersion, '669-edit-create', fields), inputRef: plan.inputRef }, '/commit')
+  expect(created.status).toBe(200)
+  const first = await created.json()
+  const declarationId = first.state.declarations[0].declarationId
+  const current = await rangePlan669(f.id)
+  const edited = await http(f.id, 'POST', { ...write(current.expectedVersion, '669-edit-range', { parts: [{ ...part, declarationId, pageRanges: [{ start: 3, end: 4 }] }], parseState: 'unparsed' }), inputRef: current.inputRef }, '/commit')
+  expect(edited.status).toBe(200)
+  const second = await edited.json()
+  expect(second.state.declarations[0]).toMatchObject({ declarationId, revision: 2, pageRanges: [{ start: 3, end: 4 }] })
+  // Old-shaped modern call omits both new fields, using existing PUT input protection.
+  const ordinaryPlan = await (await http(f.id, 'POST', { kind: 'file' }, '/preflight')).json()
+  const omitted = await http(f.id, 'PUT', { ...write(ordinaryPlan.expectedVersion, '669-old-fields', { parts: [part], parseState: 'unparsed' }), inputRef: ordinaryPlan.inputRef })
+  expect(omitted.status).toBe(200)
+  const third = await omitted.json()
+  expect(third.state.declarations[0]).toMatchObject({ declarationId, revision: 3, pageRanges: [{ start: 3, end: 4 }], contentVersion: first.state.declarations[0].contentVersion })
+  const history = await call('get_file_parse_history', { fileId: f.id })
+  expect(history.rows).toHaveLength(3)
+  const spec = await (await fetch(`${service.baseUrl}/_openapi.json`)).json()
+  expect(spec.paths['/api/files/{id}/parse-result'].put.requestBody.content['application/json'].schema.properties.parts.items.properties.pageRanges).toBeTruthy()
+  const tools = (await rpc('tools/list', {})).body.result.tools
+  expect(tools.find((t: any) => t.name === 'commit_file_parse_result').inputSchema.properties.parts.items.properties.pageRanges).toBeTruthy()
+})

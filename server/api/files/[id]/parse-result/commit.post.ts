@@ -7,6 +7,7 @@ defineRouteMeta({ openAPI: {
     parts: { $ref: '#/paths/~1api~1files~1{id}~1parse-result/put/requestBody/content/application~1json/schema/properties/parts' },
     parseState: { type: 'string', enum: ['unparsed','parsed','failed'] }, expectedVersion: { type: 'string', description: '64位小写十六进制SHA-256输出版本,必须符合 ^[a-f0-9]{64}$' },
     inputRef: { type: 'object', additionalProperties: false, required: ['format','fileId','relPath','sha256','kind','pages'], properties: {
+      physicalSource: { type: 'object', additionalProperties: false, required: ['pageCount','contentVersion'], description: '#669 verifyPhysicalPages预检返回原样提交;服务端重检,禁止客户端猜填', properties: { pageCount: { type: 'integer', minimum: 1 }, contentVersion: { type: 'string' } } },
       format: { type: 'integer', enum: [1] }, fileId: { type: 'integer', minimum: 1 }, relPath: { type: 'string', description: '非空文件库相对路径' }, sha256: { type: 'string', description: '实际文件内容的64位小写十六进制SHA-256,必须符合 ^[a-f0-9]{64}$' }, kind: { type: 'string', enum: ['file','ocr'] }, pages: { $ref: '#/paths/~1api~1files~1{id}~1parse-result~1preflight/post/requestBody/content/application~1json/schema/properties/pages' },
     } },
     idempotencyKey: { type: 'string', description: '去空白后1–200字符' }, actor: { $ref: '#/paths/~1api~1files~1{id}~1parse-result/put/requestBody/content/application~1json/schema/properties/actor' }, reason: { type: 'string', description: '去空白后1–2000字符' },

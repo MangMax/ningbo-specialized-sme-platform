@@ -1,6 +1,6 @@
 import { requestLogContext } from '../../lib/logging'
 import { useDb } from '@db'
-import { getParse105, historyParse105, saveParse105, preflightParse310, commitParse310, ParseMaintenanceError } from './parse-maintenance-105'
+import { getParse105, historyParse105, saveParse105, preflightRanges669, commitRanges669, ParseMaintenanceError } from './parse-maintenance-105'
 import { requireApiToken } from './api-guard'
 
 export function parseRoute105(action: 'read' | 'replace' | 'status' | 'history' | 'preflight' | 'commit') {
@@ -26,8 +26,8 @@ export function parseRoute105(action: 'read' | 'replace' | 'status' | 'history' 
         return historyParse105(db, input)
       }
       const body = await readBody(event).catch(() => null)
-      if (action === 'preflight') return preflightParse310(db, fileId, body, useRuntimeConfig().filesDir)
-      if (action === 'commit') return commitParse310(db, fileId, body, useRuntimeConfig().filesDir, requestLogContext(event))
+      if (action === 'preflight') return await preflightRanges669(db, fileId, body, useRuntimeConfig().filesDir)
+      if (action === 'commit') return await commitRanges669(db, fileId, body, useRuntimeConfig().filesDir, requestLogContext(event))
       return saveParse105(db, fileId, body, action, requestLogContext(event), useRuntimeConfig().filesDir)
     } catch (error) {
       if (error instanceof ParseMaintenanceError) throw createError({ statusCode: error.statusCode, message: error.message })

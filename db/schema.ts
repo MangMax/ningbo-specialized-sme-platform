@@ -1521,3 +1521,15 @@ export const enterpriseDifferenceComparison = sqliteTable('enterprise_difference
   changedAt: text('changed_at').notNull(),
   refreshedAt: text('refreshed_at').notNull(),
 }, t => [primaryKey({ columns: [t.enterpriseId, t.titleCode] })])
+
+/** #669: stable declarations, independent of rebuilt display parts. History is in parse receipts. */
+export const fileDeclaration669 = sqliteTable('file_declaration_669', {
+  declarationId: text('declaration_id').primaryKey(),
+  fileId: integer('file_id').notNull().references(() => storedFile.id),
+  revision: integer('revision').notNull(),
+  active: integer('active', { mode: 'boolean' }).notNull(),
+  sha256: text('sha256').notNull(),
+  contentVersion: text('content_version'),
+  part: text('part', { mode: 'json' }).$type<import('../lib/file-parts').FilePart>().notNull(),
+  pageRanges: text('page_ranges', { mode: 'json' }).$type<{ start: number; end: number }[] | null>(),
+}, t => [index('file_declaration_669_file_idx').on(t.fileId)])
