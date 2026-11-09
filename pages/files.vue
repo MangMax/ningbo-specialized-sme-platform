@@ -541,9 +541,9 @@ function publishedYearBatch(row: StoredFileRow): string {
                 <TableHead :class="[TH_CLASS, 'w-[80px]']">类别</TableHead>
                 <TableHead
                   :class="[TH_CLASS, 'w-[92px]']"
-                  title="目录给出的文件发布年份/批次 —— 这份文件是哪一批公布的(单值)"
+                  title="文件发布年份 / 批次；内容年份和批次在分段中维护"
                 >
-                  文件发布年份/批次
+                  文件发布
                 </TableHead>
                 <TableHead
                   :class="[TH_CLASS, 'w-[132px]']"
