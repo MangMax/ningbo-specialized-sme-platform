@@ -43,6 +43,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
+import SegmentRangesSummary from '@/components/files/SegmentRangesSummary.vue'
 import EditSegmentsDialog from '@/components/files/EditSegmentsDialog.vue'
 import EditFileDialog, { type MetadataForm } from '@/components/files/EditFileDialog.vue'
 import RenameFileDialog from '@/components/files/RenameFileDialog.vue'
@@ -169,7 +170,9 @@ const parseOptions = computed(() =>
   PARSE_STATE_ORDER.map((k) => ({ value: k, label: PARSE_STATES[k] ?? k })),
 )
 
+const rangeRefresh = ref(0)
 function refresh() {
+  rangeRefresh.value++
   return queryCache.invalidateQueries({ key: ['files'] })
 }
 
@@ -808,6 +811,7 @@ function publishedYearBatch(row: StoredFileRow): string {
                             </TableRow>
                           </TableBody>
                         </Table>
+                        <SegmentRangesSummary :key="`${row.id}-${rangeRefresh}`" :file-id="row.id" :sha256="row.sha256" />
                         <!-- 只留段数。原先还有一句解释「年份是段的内容年份、公布年份/批次与段无关」
                              的话 —— 列头已经分别写着「公布年份/批次」和「内容年份」,不必再讲一遍模型。 -->
                         <p class="text-muted-foreground text-xs tabular-nums">

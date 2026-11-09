@@ -63,3 +63,24 @@ it('sends the saved declaration ID on coordinate edits while omitting untouched 
   expect(serialized).not.toContain('pageRanges')
   wrapper.unmount()
 })
+it('edits multiple physical ranges and explicitly clears them without changing coordinates', async () => {
+  const part = { titleCode: 'specialized_sme', eventKind: 'award', year: 2022, batch: 1, attachment: null, rowCount: 2, origin: 'agent', hasConflict: false }
+  const current = { ...state, parts: [part], declarations: [{ declarationId: 'range-id', part, pageRanges: null }] }
+  const fetch = vi.fn(async (url: string) => url.endsWith('/preflight') ? { expectedVersion: state.version, inputRef: { kind: 'file', pages: [], physicalSource: { pageCount: 4 } }, parseState: 'unparsed' } : url.endsWith('/commit') ? {} : { state: current, writeEnabled: true })
+  vi.stubGlobal('$fetch', fetch)
+  const wrapper = mount(EditSegmentsDialog, { props: { open: false, file: { id: 1, displayName: 'controlled' } as StoredFileRow, refreshList: async () => {} }, global: { stubs: { Dialog: passthrough, DialogContent: passthrough, DialogHeader: passthrough, DialogTitle: passthrough, DialogDescription: passthrough, DialogFooter: passthrough, Button: button, Input: input, Label: passthrough, Select: passthrough, SelectTrigger: passthrough, SelectValue: passthrough, SelectContent: passthrough, SelectItem: passthrough } } })
+  await wrapper.setProps({ open: true }); await flushPromises()
+  const click = async (text: string) => { await wrapper.findAll('button').find(b => b.text() === text)!.trigger('click'); await flushPromises() }
+  await click('新增页码范围')
+  await wrapper.get('#range-start-0-0').setValue('1'); await wrapper.get('#range-end-0-0').setValue('2')
+  await click('新增页码范围')
+  await wrapper.get('#range-start-0-1').setValue('4'); await wrapper.get('#range-end-0-1').setValue('4')
+  await click('保存分段')
+  expect(fetch).toHaveBeenCalledWith('/api/files/1/segments/preflight', expect.objectContaining({ body: { expectedVersion: state.version, verifyPhysicalPages: true } }))
+  expect(fetch).toHaveBeenCalledWith('/api/files/1/segments/commit', expect.objectContaining({ body: expect.objectContaining({ parts: [expect.objectContaining({ year: 2022, batch: 1, declarationId: 'range-id', pageRanges: [{ start: 1, end: 2 }, { start: 4, end: 4 }] })] }) }))
+  await click('清空页码范围'); await click('保存分段')
+  expect(fetch).toHaveBeenLastCalledWith('/api/files/1/segments')
+  expect(fetch.mock.calls.filter(c => c[0].endsWith('/commit')).at(-1)).toBeDefined()
+  expect(fetch).toHaveBeenCalledWith('/api/files/1/segments/commit', expect.objectContaining({ body: expect.objectContaining({ parts: [expect.objectContaining({ pageRanges: [] })] }) }))
+  wrapper.unmount()
+})
