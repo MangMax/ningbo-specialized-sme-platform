@@ -88,3 +88,14 @@ frozen-typecheck PASS；frozen-build PASS（14.4s）；frozen-prod-openapi 本�
 frozen-workbook-oracle 为冻结代码重新下载工作簿后独立解析的 PASS。
 最终文档提交后的精确HEAD gate 日志继续保存在 `/tmp/671-evidence/final-head-*`，
 最终报告提供确切 SHA 和结果；此处旧日志的候选身份与历史 FAIL 保持不变。
+
+## integration 后续推进
+
+发布 draft PR676 前后，integration 又合入 #670 / PR675，tip推进到
+`8877c3d42ebfb11c8a5b821401a4e1a999710d74`。本分支随后合入该 tip；唯一冲突是
+pages/files.vue 的 import，保留 FileEventSync 与 SegmentRangesSummary，两者入口与显示均保留。
+没有修改 #670/#668 的组件、writer 或测试；这些文件来自 integration 的原样合入。
+先前 e5f7a2e480fc18a993f52845f91980338faa65bb 的124项/typecheck/build/OpenAPI完整PASS
+原始记录存于 `/tmp/671-evidence/head-e5f7a2e4/`，不再当作最终集成候选证据。
+最终合并后的精确HEAD重新执行受影响HTTP/UI测试、typecheck、build及本地生产OpenAPI，
+并在实际生产构建的隔离实例复验页面，日志见最终报告。

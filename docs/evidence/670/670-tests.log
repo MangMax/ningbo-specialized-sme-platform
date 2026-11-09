@@ -1,0 +1,64 @@
+
+ RUN  v4.1.11 /Users/mang/.t3/worktrees/app/t3-a7a65330-c76336ce52d18a26
+
+ ❯ tests/parse-maintenance-105-http.test.ts (24 tests | 24 skipped) 566ms
+ ❯ tests/file-segments-668-http.test.ts (5 tests | 1 failed) 175ms
+   × rejects range writes without reliable physical pages and keeps the entire draft uncommitted 6ms
+
+⎯⎯⎯⎯⎯⎯ Failed Suites 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/parse-maintenance-105-http.test.ts [ tests/parse-maintenance-105-http.test.ts ]
+Error: Error: Service child exited before http://127.0.0.1:62034/api/health became ready (exit=1, signal=null)
+▲ Changing NODE_ENV from test to development, to avoid unintended behavior.
+● Starting Nuxt...
+[error] 
+Another Nuxt build is already running:
+
+  PID:     72280
+  Dir:     /Users/mang/.t3/worktrees/app/t3-a7a65330-c76336ce52d18a26
+  Started: 11/9/2026, 2:18:06 PM
+
+Run `kill 72280` to stop it.
+Set NUXT_IGNORE_LOCK=1 to bypass this check.
+
+   
+
+
+ ❯ startService tests/parse-maintenance-105-http.test.ts:54:47
+     52|   service = { baseUrl: `http://127.0.0.1:${port}`, stop: () => stopOwn…
+     53|   try { await waitForHttp(`${service.baseUrl}/api/health`, { timeoutMs…
+     54|   catch (error) { await service.stop(); throw new Error(`${error}\n${o…
+       |                                               ^
+     55| }
+     56| beforeAll(startService, 90000)
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/file-segments-668-http.test.ts > rejects range writes without reliable physical pages and keeps the entire draft uncommitted
+AssertionError: expected 200 to be 409 // Object.is equality
+
+- Expected
++ Received
+
+- 409
++ 200
+
+ ❯ tests/file-segments-668-http.test.ts:117:23
+    115|   const f = fixture(), initial = (await http(f.id)).body.state
+    116|   const plan = await http(f.id, '/preflight', { expectedVersion: initi…
+    117|   expect(plan.status).toBe(409)
+       |                       ^
+    118|   expect((await http(f.id)).body.state).toEqual(initial)
+    119| })
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  2 failed | 3 passed (5)
+      Tests  1 failed | 59 passed | 24 skipped (84)
+   Start at  14:18:13
+   Duration  4.48s (transform 737ms, setup 55ms, import 2.73s, tests 1.13s, environment 176ms)
+

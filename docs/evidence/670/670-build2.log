@@ -1,0 +1,682 @@
+$ nuxt build
+Building Nuxt for production...
+● Loading Nuxt config
+● Nuxt 4.6.1 (with Nitro 2.13.4, Vite 8.3.4 and Vue 3.5.43)
+● Setting up modules
+● Preparing app
+● Nitro preset: node-server
+● Generating types
+[nuxt:icon] ✔ Nuxt Icon loaded local collection project with 2 icons
+ℹ Nuxt Icon client bundle consist of 31 icons with 28.38KB(uncompressed) in size
+● Bundling client
+ℹ Building client...
+ℹ vite v8.3.4 building client environment for production...
+transforming...
+
+ WARN  [plugin rolldown:vite-resolve] Module "crypto" has been externalized for browser compatibility, imported by "/Users/mang/.t3/worktrees/app/t3-a7a65330-c76336ce52d18a26/node_modules/.pnpm/@embedpdf+models@2.15.1/node_modules/@embedpdf/models/dist/index.js". See https://vite.dev/guide/troubleshooting.html#module-externalized-for-browser-compatibility for more details.
+
+
+ WARN 
+new URL("assets/render-worker-CzmiJfFL.js", import.meta.url) doesn't exist at build time, it will remain unchanged to be resolved at runtime. If this is intended, you can use the /* @vite-ignore */ comment to suppress this warning.
+
+
+ WARN 
+new URL("assets/render-worker-BlvJybji.js", import.meta.url) doesn't exist at build time, it will remain unchanged to be resolved at runtime. If this is intended, you can use the /* @vite-ignore */ comment to suppress this warning.
+
+
+ WARN 
+new URL("assets/render-worker-1uPAxMZr.js", import.meta.url) doesn't exist at build time, it will remain unchanged to be resolved at runtime. If this is intended, you can use the /* @vite-ignore */ comment to suppress this warning.
+
+✓ 5995 modules transformed.
+rendering chunks...
+computing gzip size...
+ℹ .nuxt/dist/client/manifest.json                             53.04 kB │ gzip:   6.16 kB
+.nuxt/dist/client/_nuxt/xlsx_parser_bg.CH75MyUw.wasm     1,725.51 kB │ gzip: 714.92 kB
+.nuxt/dist/client/_nuxt/pptx_parser_bg.DGvhgRDg.wasm     1,826.62 kB │ gzip: 724.59 kB
+.nuxt/dist/client/_nuxt/docx_parser_bg.Bv5LdJhP.wasm     1,947.09 kB │ gzip: 813.88 kB
+.nuxt/dist/client/_nuxt/DisclosurePanel.BBVW3sOQ.css         0.09 kB │ gzip:   0.10 kB
+.nuxt/dist/client/_nuxt/files.DiUpmG1D.css                   0.23 kB │ gzip:   0.15 kB
+.nuxt/dist/client/_nuxt/pages.DhAWFBw_.css                   0.28 kB │ gzip:   0.15 kB
+.nuxt/dist/client/_nuxt/TableLoadingStatus.BOgclTpM.css      0.28 kB │ gzip:   0.17 kB
+.nuxt/dist/client/_nuxt/_id_.CZJ1_FOg.css                    0.30 kB │ gzip:   0.18 kB
+.nuxt/dist/client/_nuxt/FilePreview.BrxczTEq.css             1.80 kB │ gzip:   0.60 kB
+.nuxt/dist/client/_nuxt/error-500.BH8fbr4S.css               1.95 kB │ gzip:   0.72 kB
+.nuxt/dist/client/_nuxt/error-404.DTti5bBO.css               2.70 kB │ gzip:   0.92 kB
+.nuxt/dist/client/_nuxt/ocr.heyEIMTU.css                     2.96 kB │ gzip:   0.79 kB
+.nuxt/dist/client/_nuxt/stats.UpmutSNF.css                  13.55 kB │ gzip:   2.99 kB
+.nuxt/dist/client/_nuxt/ImagePreview.BSbMQ7nZ.css           88.52 kB │ gzip:  15.32 kB
+.nuxt/dist/client/_nuxt/entry.yUwJmu08.css                 142.49 kB │ gzip:  25.51 kB
+.nuxt/dist/client/_nuxt/DrObVOsN.js                          0.03 kB │ gzip:   0.05 kB
+.nuxt/dist/client/_nuxt/ckFireLq.js                          0.03 kB │ gzip:   0.05 kB
+.nuxt/dist/client/_nuxt/51XqSdo1.js                          0.04 kB │ gzip:   0.06 kB
+.nuxt/dist/client/_nuxt/BBr3nYME.js                          0.04 kB │ gzip:   0.06 kB
+.nuxt/dist/client/_nuxt/Dos6hg_W.js                          0.04 kB │ gzip:   0.06 kB
+.nuxt/dist/client/_nuxt/yxz0_CXX.js                          0.04 kB │ gzip:   0.06 kB
+.nuxt/dist/client/_nuxt/BcK9S32k.js                          0.05 kB │ gzip:   0.07 kB
+.nuxt/dist/client/_nuxt/BDNMzG2s.js                          0.08 kB │ gzip:   0.09 kB
+.nuxt/dist/client/_nuxt/BExECJg6.js                          0.09 kB │ gzip:   0.10 kB
+.nuxt/dist/client/_nuxt/Bg9-FXxr.js                          0.11 kB │ gzip:   0.12 kB
+.nuxt/dist/client/_nuxt/CYtOvKjB.js                          0.12 kB │ gzip:   0.13 kB
+.nuxt/dist/client/_nuxt/cPZl55sA.js                          0.12 kB │ gzip:   0.12 kB
+.nuxt/dist/client/_nuxt/CvhB61-v.js                          0.12 kB │ gzip:   0.11 kB
+.nuxt/dist/client/_nuxt/xMoF3M5G.js                          0.12 kB │ gzip:   0.13 kB
+.nuxt/dist/client/_nuxt/Bj0UewdV.js                          0.13 kB │ gzip:   0.13 kB
+.nuxt/dist/client/_nuxt/tp86PqxG.js                          0.13 kB │ gzip:   0.13 kB
+.nuxt/dist/client/_nuxt/Bbg6RfXk.js                          0.15 kB │ gzip:   0.16 kB
+.nuxt/dist/client/_nuxt/zK4VKnNS.js                          0.15 kB │ gzip:   0.14 kB
+.nuxt/dist/client/_nuxt/BerCXtia.js                          0.15 kB │ gzip:   0.15 kB
+.nuxt/dist/client/_nuxt/ClRoqbcS.js                          0.15 kB │ gzip:   0.15 kB
+.nuxt/dist/client/_nuxt/tOci4PI7.js                          0.15 kB │ gzip:   0.15 kB
+.nuxt/dist/client/_nuxt/fG0BMC_3.js                          0.17 kB │ gzip:   0.16 kB
+.nuxt/dist/client/_nuxt/DhZ84bCL.js                          0.17 kB │ gzip:   0.17 kB
+.nuxt/dist/client/_nuxt/CrHdNE-v.js                          0.19 kB │ gzip:   0.17 kB
+.nuxt/dist/client/_nuxt/CiftlCE7.js                          0.21 kB │ gzip:   0.18 kB
+.nuxt/dist/client/_nuxt/oVCWDEy5.js                          0.23 kB │ gzip:   0.18 kB
+.nuxt/dist/client/_nuxt/vHfvad_o.js                          0.23 kB │ gzip:   0.21 kB
+.nuxt/dist/client/_nuxt/2Stm6asg.js                          0.24 kB │ gzip:   0.18 kB
+.nuxt/dist/client/_nuxt/BY9nrK9K.js                          0.25 kB │ gzip:   0.20 kB
+.nuxt/dist/client/_nuxt/CZusUFRk.js                          0.29 kB │ gzip:   0.22 kB
+.nuxt/dist/client/_nuxt/CB4aAJMd.js                          0.37 kB │ gzip:   0.28 kB
+.nuxt/dist/client/_nuxt/DTsRF742.js                          0.40 kB │ gzip:   0.33 kB
+.nuxt/dist/client/_nuxt/BDp3SJMs.js                          0.40 kB │ gzip:   0.18 kB
+.nuxt/dist/client/_nuxt/DC9TTEr5.js                          0.54 kB │ gzip:   0.31 kB
+.nuxt/dist/client/_nuxt/C3tYbHrn.js                          0.63 kB │ gzip:   0.39 kB
+.nuxt/dist/client/_nuxt/HIIwMnS4.js                          0.72 kB │ gzip:   0.51 kB
+.nuxt/dist/client/_nuxt/BDgf3dsD.js                          0.82 kB │ gzip:   0.51 kB
+.nuxt/dist/client/_nuxt/IHsFBf2K.js                          0.82 kB │ gzip:   0.43 kB
+.nuxt/dist/client/_nuxt/CwpSV6mX.js                          0.86 kB │ gzip:   0.47 kB
+.nuxt/dist/client/_nuxt/CbVyUslL.js                          0.87 kB │ gzip:   0.63 kB
+.nuxt/dist/client/_nuxt/g9k3N9cR.js                          0.93 kB │ gzip:   0.53 kB
+.nuxt/dist/client/_nuxt/CQAoNwwR.js                          1.01 kB │ gzip:   0.62 kB
+.nuxt/dist/client/_nuxt/LczgkNfS.js                          1.01 kB │ gzip:   0.60 kB
+.nuxt/dist/client/_nuxt/CdhQwYwO.js                          1.02 kB │ gzip:   0.54 kB
+.nuxt/dist/client/_nuxt/CLlG9Oku.js                          1.03 kB │ gzip:   0.62 kB
+.nuxt/dist/client/_nuxt/BAyIphKG.js                          1.03 kB │ gzip:   0.51 kB
+.nuxt/dist/client/_nuxt/CnCbaKEg.js                          1.04 kB │ gzip:   0.60 kB
+.nuxt/dist/client/_nuxt/JmZ4lOT4.js                          1.08 kB │ gzip:   0.50 kB
+.nuxt/dist/client/_nuxt/DsbWo-f_.js                          1.50 kB │ gzip:   0.53 kB
+.nuxt/dist/client/_nuxt/B-UC8c_u.js                          1.52 kB │ gzip:   0.65 kB
+.nuxt/dist/client/_nuxt/DYKyRvBO.js                          1.57 kB │ gzip:   0.75 kB
+.nuxt/dist/client/_nuxt/SRJJl8WB.js                          1.64 kB │ gzip:   0.65 kB
+.nuxt/dist/client/_nuxt/Bg0-FA3o.js                          1.88 kB │ gzip:   0.82 kB
+.nuxt/dist/client/_nuxt/DS8EMQ4P.js                          2.13 kB │ gzip:   1.07 kB
+.nuxt/dist/client/_nuxt/Cpt_U01j.js                          2.16 kB │ gzip:   1.11 kB
+.nuxt/dist/client/_nuxt/BkcXlav3.js                          2.43 kB │ gzip:   1.31 kB
+.nuxt/dist/client/_nuxt/Dl6e2c4y.js                          2.46 kB │ gzip:   0.79 kB
+.nuxt/dist/client/_nuxt/D1sKmRJX.js                          2.59 kB │ gzip:   1.02 kB
+.nuxt/dist/client/_nuxt/SRioLGRi.js                          2.62 kB │ gzip:   1.23 kB
+.nuxt/dist/client/_nuxt/Dy2-Err3.js                          2.62 kB │ gzip:   1.26 kB
+.nuxt/dist/client/_nuxt/Cy9d_W_E.js                          2.72 kB │ gzip:   1.19 kB
+.nuxt/dist/client/_nuxt/qhed-kSA.js                          2.81 kB │ gzip:   0.77 kB
+.nuxt/dist/client/_nuxt/Dh7Xs67Q.js                          2.82 kB │ gzip:   1.25 kB
+.nuxt/dist/client/_nuxt/CmCQp5Yx.js                          3.00 kB │ gzip:   0.78 kB
+.nuxt/dist/client/_nuxt/B_sjs7o9.js                          3.08 kB │ gzip:   1.42 kB
+.nuxt/dist/client/_nuxt/bW6NxFOP.js                          3.15 kB │ gzip:   1.36 kB
+.nuxt/dist/client/_nuxt/KhE9Whah.js                          3.16 kB │ gzip:   0.90 kB
+.nuxt/dist/client/_nuxt/ZiU1HbhL.js                          3.19 kB │ gzip:   1.38 kB
+.nuxt/dist/client/_nuxt/TJ_3sMNl.js                          3.24 kB │ gzip:   1.35 kB
+.nuxt/dist/client/_nuxt/DWM5p8Eh.js                          3.34 kB │ gzip:   1.31 kB
+.nuxt/dist/client/_nuxt/gsFSkTsk.js                          3.50 kB │ gzip:   1.58 kB
+.nuxt/dist/client/_nuxt/9Nox3uy9.js                          3.70 kB │ gzip:   1.86 kB
+.nuxt/dist/client/_nuxt/DqavnTdb.js                          3.76 kB │ gzip:   2.05 kB
+.nuxt/dist/client/_nuxt/Ds1a0E1X.js                          4.09 kB │ gzip:   1.74 kB
+.nuxt/dist/client/_nuxt/DwUbm-Dz.js                          4.18 kB │ gzip:   1.84 kB
+.nuxt/dist/client/_nuxt/Cx3Bhnal.js                          4.45 kB │ gzip:   2.25 kB
+.nuxt/dist/client/_nuxt/cQnVFGi-.js                          4.45 kB │ gzip:   1.90 kB
+.nuxt/dist/client/_nuxt/B9drWBNP.js                          4.46 kB │ gzip:   1.90 kB
+.nuxt/dist/client/_nuxt/15d1MCuO.js                          4.89 kB │ gzip:   1.48 kB
+.nuxt/dist/client/_nuxt/CA4-dGxw.js                          4.92 kB │ gzip:   2.33 kB
+.nuxt/dist/client/_nuxt/BLiC1jcg.js                          5.17 kB │ gzip:   2.23 kB
+.nuxt/dist/client/_nuxt/B7cEcitU.js                          5.31 kB │ gzip:   2.34 kB
+.nuxt/dist/client/_nuxt/CQGfRO6L.js                          6.12 kB │ gzip:   1.81 kB
+.nuxt/dist/client/_nuxt/BNTX79BX.js                          6.42 kB │ gzip:   1.81 kB
+.nuxt/dist/client/_nuxt/CNRN45i6.js                          6.76 kB │ gzip:   3.08 kB
+.nuxt/dist/client/_nuxt/7Uy1CUp-.js                          7.87 kB │ gzip:   2.94 kB
+.nuxt/dist/client/_nuxt/CZeDp5UU.js                          7.93 kB │ gzip:   3.28 kB
+.nuxt/dist/client/_nuxt/Cw4Izkci.js                          9.25 kB │ gzip:   3.74 kB
+.nuxt/dist/client/_nuxt/CwycVBJ0.js                          9.37 kB │ gzip:   4.01 kB
+.nuxt/dist/client/_nuxt/8IlhJcuN.js                          9.94 kB │ gzip:   3.89 kB
+.nuxt/dist/client/_nuxt/BIEHFXBV.js                         10.00 kB │ gzip:   3.16 kB
+.nuxt/dist/client/_nuxt/rwi0_p6S.js                         10.49 kB │ gzip:   2.26 kB
+.nuxt/dist/client/_nuxt/EUqPIrTm.js                         11.18 kB │ gzip:   2.49 kB
+.nuxt/dist/client/_nuxt/C-LZuMrd.js                         11.40 kB │ gzip:   2.53 kB
+.nuxt/dist/client/_nuxt/Dnj6X1xo.js                         11.69 kB │ gzip:   4.62 kB
+.nuxt/dist/client/_nuxt/Cn-2wj2l.js                         12.13 kB │ gzip:   2.64 kB
+.nuxt/dist/client/_nuxt/Cump92zI.js                         12.37 kB │ gzip:   5.26 kB
+.nuxt/dist/client/_nuxt/C2MS7OgA.js                         12.44 kB │ gzip:   4.02 kB
+.nuxt/dist/client/_nuxt/CQst7WJh.js                         12.98 kB │ gzip:   4.94 kB
+.nuxt/dist/client/_nuxt/BhTUpOqS.js                         13.37 kB │ gzip:   5.11 kB
+.nuxt/dist/client/_nuxt/C2lkSFqN.js                         13.69 kB │ gzip:   4.74 kB
+.nuxt/dist/client/_nuxt/VRQlYeWU.js                         14.15 kB │ gzip:   5.63 kB
+.nuxt/dist/client/_nuxt/To3kSPBD.js                         15.60 kB │ gzip:   6.30 kB
+.nuxt/dist/client/_nuxt/Fl8OXnDh.js                         16.07 kB │ gzip:   4.55 kB
+.nuxt/dist/client/_nuxt/CQe2b9Ao.js                         19.87 kB │ gzip:   5.49 kB
+.nuxt/dist/client/_nuxt/BP0HZdSW.js                         21.09 kB │ gzip:   8.31 kB
+.nuxt/dist/client/_nuxt/D2Ts28Gz.js                         21.51 kB │ gzip:   6.21 kB
+.nuxt/dist/client/_nuxt/BFGA8G2H.js                         22.21 kB │ gzip:   6.38 kB
+.nuxt/dist/client/_nuxt/BKsBGqBE.js                         23.36 kB │ gzip:   6.70 kB
+.nuxt/dist/client/_nuxt/CEbI0hMM.js                         23.66 kB │ gzip:   7.51 kB
+.nuxt/dist/client/_nuxt/o9ZqYpXn.js                         23.86 kB │ gzip:   7.71 kB
+.nuxt/dist/client/_nuxt/DxcDKHh_.js                         26.67 kB │ gzip:   9.00 kB
+.nuxt/dist/client/_nuxt/BRaVzWEA.js                         30.88 kB │ gzip:   9.26 kB
+.nuxt/dist/client/_nuxt/Dkl_TD5_.js                         32.45 kB │ gzip:  10.94 kB
+.nuxt/dist/client/_nuxt/BccAQ1_t.js                         35.95 kB │ gzip:  10.12 kB
+.nuxt/dist/client/_nuxt/BYd7epA3.js                         36.46 kB │ gzip:  10.70 kB
+.nuxt/dist/client/_nuxt/CcIk2KTc.js                         37.96 kB │ gzip:  12.48 kB
+.nuxt/dist/client/_nuxt/B0GzyD2s.js                         40.24 kB │ gzip:  10.28 kB
+.nuxt/dist/client/_nuxt/CXK5zyFI.js                         40.80 kB │ gzip:  13.98 kB
+.nuxt/dist/client/_nuxt/CKB1JQGh.js                         40.98 kB │ gzip:   7.74 kB
+.nuxt/dist/client/_nuxt/WkJZUa6B.js                         41.56 kB │ gzip:  15.37 kB
+.nuxt/dist/client/_nuxt/CwwvmvTi.js                         43.04 kB │ gzip:  13.43 kB
+.nuxt/dist/client/_nuxt/BLQoyK6-.js                         43.70 kB │ gzip:  15.74 kB
+.nuxt/dist/client/_nuxt/VTVwTHFL.js                         43.95 kB │ gzip:  13.72 kB
+.nuxt/dist/client/_nuxt/98MJQmvh.js                         46.15 kB │ gzip:  16.26 kB
+.nuxt/dist/client/_nuxt/BHkwdQ6Z.js                         52.52 kB │ gzip:  16.16 kB
+.nuxt/dist/client/_nuxt/BGIxQoYs.js                         53.35 kB │ gzip:  12.47 kB
+.nuxt/dist/client/_nuxt/BIKswZcF.js                         54.73 kB │ gzip:  20.11 kB
+.nuxt/dist/client/_nuxt/sCyI6IBP.js                         57.23 kB │ gzip:  11.73 kB
+.nuxt/dist/client/_nuxt/BYOwaDjH.js                         59.32 kB │ gzip:   5.66 kB
+.nuxt/dist/client/_nuxt/DvJjwDmR.js                         63.34 kB │ gzip:  18.57 kB
+.nuxt/dist/client/_nuxt/CWhuv-hY.js                         67.85 kB │ gzip:  20.96 kB
+.nuxt/dist/client/_nuxt/gzcpVVnB.js                         69.94 kB │ gzip:   9.09 kB
+.nuxt/dist/client/_nuxt/CRJ5Bkf6.js                         84.01 kB │ gzip:  25.94 kB
+.nuxt/dist/client/_nuxt/DbE8asTU.js                         92.00 kB │ gzip:  28.59 kB
+.nuxt/dist/client/_nuxt/DG7j9no2.js                         93.75 kB │ gzip:  26.82 kB
+.nuxt/dist/client/_nuxt/ByZQ0P0n.js                        113.72 kB │ gzip:  43.54 kB
+.nuxt/dist/client/_nuxt/CJPpmIBT.js                        133.87 kB │ gzip:  39.16 kB
+.nuxt/dist/client/_nuxt/CAEd3Ohk.js                        136.13 kB │ gzip:  40.09 kB
+.nuxt/dist/client/_nuxt/BNQyj4qN.js                        152.37 kB │ gzip:  54.28 kB
+.nuxt/dist/client/_nuxt/BzbQS41l.js                        174.81 kB │ gzip:  16.62 kB
+.nuxt/dist/client/_nuxt/udAQXfEw.js                        175.52 kB │ gzip:  16.62 kB
+.nuxt/dist/client/_nuxt/Bz0zcwM4.js                        177.78 kB │ gzip:  16.71 kB
+.nuxt/dist/client/_nuxt/bsJCZSQ-.js                        181.07 kB │ gzip:  16.23 kB
+.nuxt/dist/client/_nuxt/BcD37-d_.js                        211.27 kB │ gzip:  57.51 kB
+.nuxt/dist/client/_nuxt/DM_i-RtL.js                        260.20 kB │ gzip:  89.03 kB
+.nuxt/dist/client/_nuxt/BRHMlibn.js                        270.18 kB │ gzip:  77.11 kB
+.nuxt/dist/client/_nuxt/A8fusigE.js                        280.59 kB │ gzip:  85.74 kB
+.nuxt/dist/client/_nuxt/BB9KPSSr.js                        297.51 kB │ gzip:  85.59 kB
+.nuxt/dist/client/_nuxt/fkJtU8Ds.js                        708.73 kB │ gzip: 123.57 kB
+.nuxt/dist/client/_nuxt/D9BB2T_h.js                        726.65 kB │ gzip: 204.63 kB
+.nuxt/dist/client/_nuxt/DmqxQz1C.js                        795.90 kB │ gzip: 234.02 kB
+.nuxt/dist/client/_nuxt/DF7GKimW.js                        908.79 kB │ gzip: 298.08 kB
+
+ℹ ✓ built in 3.31s
+
+ WARN  [plugin builtin:vite-reporter] 
+(!) Some chunks are larger than 500 kB after minification. Consider:
+- Using dynamic import() to code-split the application
+- Use build.rolldownOptions.output.codeSplitting to improve chunking: https://rolldown.rs/reference/OutputOptions.codeSplitting
+- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
+
+
+ WARN  [33m[PLUGIN_TIMINGS] [0mJavaScript callbacks ran for 2.9s of this 3.3s build (87%).
+2 callbacks are listed without a time. Their calls overlapped, so the time inside one call includes work from other calls. To find their cost, profile the build with node --cpu-prof:
+  - plugin nuxt:resolve-bare-imports resolveId (29 calls)
+  - plugin vite:asset-import-meta-url transform (6 calls)
+See https://rolldown.rs/reference/InputOptions.checks#bundlertimings for more details.
+
+
+✔ Client built in 3326ms
+● Bundling server
+ℹ Building server...
+ℹ vite v8.3.4 building ssr environment for production...
+transforming...
+✓ 2 modules transformed.
+rendering chunks...
+ℹ ✓ built in 8ms
+✔ Server built in 20ms
+● Building Nitro server
+[nitro] ✔ Generated public .output/public
+[nitro] ℹ Building Nuxt Nitro server (preset: node-server, compatibility date: 2026-10-13)
+[plugin esbuild] server/utils/mcp-session-admission.ts: [esbuild] (server/utils/mcp-session-admission.ts:30:19) Big integer literals are not available in the configured target environment ("es2019") and may crash at run-time
+node_modules/.pnpm/zod@4.6.7/node_modules/zod/v4/core/util.js (400:0): A comment
+
+"// Wrapped in a `@__PURE__` IIFE: esbuild never tree-shakes a top-level initializer that contains a member access on `Number`, so the bare object literal survived into every bundle."
+
+in "node_modules/.pnpm/zod@4.6.7/node_modules/zod/v4/core/util.js" contains an annotation that Rollup cannot interpret due to the position of the comment. The comment will be removed to avoid issues.
+node_modules/.pnpm/zod@4.6.7/node_modules/zod/v4/core/regexes.js (74:0): A comment
+
+"/** Anchors a pattern source. The interpolation lives here rather than at the call site because
+ * esbuild will not drop a `@__PURE__` call whose own argument interpolates a variable, but it
+ * will drop `anchor(dateSource)`. Keeping it inline pinned `date` into every bundle. */"
+
+in "node_modules/.pnpm/zod@4.6.7/node_modules/zod/v4/core/regexes.js" contains an annotation that Rollup cannot interpret due to the position of the comment. The comment will be removed to avoid issues.
+● Bundling Nitro server (5.18s · 9.97s)
+[nitro] ✔ Nuxt Nitro server built
+  ├─ .output/server/chunks/_/annual-correspondence-route.mjs (2.73 kB) (1.12 kB gzip)
+  ├─ .output/server/chunks/_/annual-correspondence-route.mjs.map (2.54 kB) (841 B gzip)
+  ├─ .output/server/chunks/_/api-guard.mjs (954 B) (485 B gzip)
+  ├─ .output/server/chunks/_/api-guard.mjs.map (781 B) (371 B gzip)
+  ├─ .output/server/chunks/_/browser-correspondence.mjs (2.41 kB) (1 kB gzip)
+  ├─ .output/server/chunks/_/browser-correspondence.mjs.map (2.35 kB) (731 B gzip)
+  ├─ .output/server/chunks/_/browser-enterprise-facts.mjs (2.25 kB) (941 B gzip)
+  ├─ .output/server/chunks/_/browser-enterprise-facts.mjs.map (2 kB) (674 B gzip)
+  ├─ .output/server/chunks/_/browser-file-segments.mjs (3.47 kB) (1.4 kB gzip)
+  ├─ .output/server/chunks/_/browser-file-segments.mjs.map (2.8 kB) (894 B gzip)
+  ├─ .output/server/chunks/_/browser-review-102.mjs (2.38 kB) (938 B gzip)
+  ├─ .output/server/chunks/_/browser-review-102.mjs.map (2.28 kB) (746 B gzip)
+  ├─ .output/server/chunks/_/comparison-platform.mjs (9.35 kB) (2.51 kB gzip)
+  ├─ .output/server/chunks/_/comparison-platform.mjs.map (9.66 kB) (2.38 kB gzip)
+  ├─ .output/server/chunks/_/comparison-scope-proof-route.mjs (1.52 kB) (703 B gzip)
+  ├─ .output/server/chunks/_/comparison-scope-proof-route.mjs.map (1.35 kB) (525 B gzip)
+  ├─ .output/server/chunks/_/core-route.mjs (1.88 kB) (850 B gzip)
+  ├─ .output/server/chunks/_/core-route.mjs.map (1.57 kB) (582 B gzip)
+  ├─ .output/server/chunks/_/credentials-route.mjs (2.63 kB) (1.09 kB gzip)
+  ├─ .output/server/chunks/_/credentials-route.mjs.map (2.54 kB) (793 B gzip)
+  ├─ .output/server/chunks/_/current-export-model.mjs (921 kB) (220 kB gzip)
+  ├─ .output/server/chunks/_/current-export-model.mjs.map (9.89 kB) (2.21 kB gzip)
+  ├─ .output/server/chunks/_/current-export-route.mjs (2.57 kB) (1.1 kB gzip)
+  ├─ .output/server/chunks/_/current-export-route.mjs.map (2.18 kB) (717 B gzip)
+  ├─ .output/server/chunks/_/decision-lifecycle-102-route.mjs (2.85 kB) (1.16 kB gzip)
+  ├─ .output/server/chunks/_/decision-lifecycle-102-route.mjs.map (2.35 kB) (791 B gzip)
+  ├─ .output/server/chunks/_/enterprise-facts-route.mjs (1.62 kB) (711 B gzip)
+  ├─ .output/server/chunks/_/enterprise-facts-route.mjs.map (1.37 kB) (542 B gzip)
+  ├─ .output/server/chunks/_/enterprise-profile-route.mjs (1.68 kB) (720 B gzip)
+  ├─ .output/server/chunks/_/enterprise-profile-route.mjs.map (1.4 kB) (557 B gzip)
+  ├─ .output/server/chunks/_/enterprise-read-model.mjs (38.7 kB) (9.98 kB gzip)
+  ├─ .output/server/chunks/_/enterprise-read-model.mjs.map (44.1 kB) (9.42 kB gzip)
+  ├─ .output/server/chunks/_/error-template.mjs (4.36 kB) (1.7 kB gzip)
+  ├─ .output/server/chunks/_/error-template.mjs.map (246 B) (195 B gzip)
+  ├─ .output/server/chunks/_/evidence-review-114-route.mjs (2.73 kB) (1.09 kB gzip)
+  ├─ .output/server/chunks/_/evidence-review-114-route.mjs.map (2.35 kB) (745 B gzip)
+  ├─ .output/server/chunks/_/executor.mjs (14.6 kB) (4.49 kB gzip)
+  ├─ .output/server/chunks/_/executor.mjs.map (570 B) (269 B gzip)
+  ├─ .output/server/chunks/_/file-physical-route.mjs (1.83 kB) (797 B gzip)
+  ├─ .output/server/chunks/_/file-physical-route.mjs.map (1.53 kB) (588 B gzip)
+  ├─ .output/server/chunks/_/import-execution-model.mjs (381 kB) (87.8 kB gzip)
+  ├─ .output/server/chunks/_/import-execution-model.mjs.map (377 kB) (72.1 kB gzip)
+  ├─ .output/server/chunks/_/import-receipts-route.mjs (1.52 kB) (649 B gzip)
+  ├─ .output/server/chunks/_/import-receipts-route.mjs.map (1.18 kB) (512 B gzip)
+  ├─ .output/server/chunks/_/index.mjs (16.6 kB) (4.85 kB gzip)
+  ├─ .output/server/chunks/_/index.mjs.map (555 B) (262 B gzip)
+  ├─ .output/server/chunks/_/job-read.mjs (1.96 kB) (908 B gzip)
+  ├─ .output/server/chunks/_/job-read.mjs.map (1.77 kB) (625 B gzip)
+  ├─ .output/server/chunks/_/legacy-export-xlsx.mjs (7.98 kB) (2.5 kB gzip)
+  ├─ .output/server/chunks/_/legacy-export-xlsx.mjs.map (8.75 kB) (1.99 kB gzip)
+  ├─ .output/server/chunks/_/logging-access.mjs (1.18 kB) (547 B gzip)
+  ├─ .output/server/chunks/_/logging-access.mjs.map (952 B) (394 B gzip)
+  ├─ .output/server/chunks/_/logging-route.mjs (3.59 kB) (1.33 kB gzip)
+  ├─ .output/server/chunks/_/logging-route.mjs.map (3.56 kB) (1 kB gzip)
+  ├─ .output/server/chunks/_/ocr-files.mjs (2.15 kB) (872 B gzip)
+  ├─ .output/server/chunks/_/ocr-files.mjs.map (2.06 kB) (661 B gzip)
+  ├─ .output/server/chunks/_/ocr-page-http-106.mjs (3.33 kB) (1.35 kB gzip)
+  ├─ .output/server/chunks/_/ocr-page-http-106.mjs.map (3.01 kB) (823 B gzip)
+  ├─ .output/server/chunks/_/parse-maintenance-105-route.mjs (2.33 kB) (988 B gzip)
+  ├─ .output/server/chunks/_/parse-maintenance-105-route.mjs.map (2.03 kB) (698 B gzip)
+  ├─ .output/server/chunks/_/platform-batch-route.mjs (2.91 kB) (1.11 kB gzip)
+  ├─ .output/server/chunks/_/platform-batch-route.mjs.map (2.83 kB) (834 B gzip)
+  ├─ .output/server/chunks/_/platform-snapshots-http.mjs (3.27 kB) (1.29 kB gzip)
+  ├─ .output/server/chunks/_/platform-snapshots-http.mjs.map (3.76 kB) (1.07 kB gzip)
+  ├─ .output/server/chunks/_/platform-snapshots.mjs (4.03 kB) (1.32 kB gzip)
+  ├─ .output/server/chunks/_/platform-snapshots.mjs.map (4.84 kB) (1.28 kB gzip)
+  ├─ .output/server/chunks/_/record-correspondence-route.mjs (1.54 kB) (711 B gzip)
+  ├─ .output/server/chunks/_/record-correspondence-route.mjs.map (1.39 kB) (541 B gzip)
+  ├─ .output/server/chunks/_/roster-duplicate-merge.mjs (9.09 kB) (2.92 kB gzip)
+  ├─ .output/server/chunks/_/roster-duplicate-merge.mjs.map (8.78 kB) (2.35 kB gzip)
+  ├─ .output/server/chunks/_/roster-event-correction-route.mjs (1.67 kB) (735 B gzip)
+  ├─ .output/server/chunks/_/roster-event-correction-route.mjs.map (1.38 kB) (535 B gzip)
+  ├─ .output/server/chunks/_/roster-evidence-correction-route.mjs (1.92 kB) (836 B gzip)
+  ├─ .output/server/chunks/_/roster-evidence-correction-route.mjs.map (1.63 kB) (597 B gzip)
+  ├─ .output/server/chunks/_/roster-import-route.mjs (712 B) (345 B gzip)
+  ├─ .output/server/chunks/_/roster-import-route.mjs.map (475 B) (276 B gzip)
+  ├─ .output/server/chunks/_/statistics-effective-snapshot.mjs (1.92 kB) (832 B gzip)
+  ├─ .output/server/chunks/_/statistics-effective-snapshot.mjs.map (1.58 kB) (585 B gzip)
+  ├─ .output/server/chunks/_/statistics-query.mjs (448 B) (291 B gzip)
+  ├─ .output/server/chunks/_/statistics-query.mjs.map (495 B) (274 B gzip)
+  ├─ .output/server/chunks/_/task-center-access.mjs (807 B) (406 B gzip)
+  ├─ .output/server/chunks/_/task-center-access.mjs.map (596 B) (309 B gzip)
+  ├─ .output/server/chunks/_/task-center-browser-auth.mjs (685 B) (392 B gzip)
+  ├─ .output/server/chunks/_/task-center-browser-auth.mjs.map (859 B) (381 B gzip)
+  ├─ .output/server/chunks/_/task-center-route.mjs (1.37 kB) (609 B gzip)
+  ├─ .output/server/chunks/_/task-center-route.mjs.map (1 kB) (428 B gzip)
+  ├─ .output/server/chunks/_/uscc-research-query.mjs (66.3 kB) (16.2 kB gzip)
+  ├─ .output/server/chunks/_/uscc-research-query.mjs.map (62.4 kB) (12 kB gzip)
+  ├─ .output/server/chunks/nitro/nitro.mjs (1.42 MB) (335 kB gzip)
+  ├─ .output/server/chunks/nitro/nitro.mjs.map (32.5 kB) (4.53 kB gzip)
+  ├─ .output/server/chunks/routes/api/comparison.get.mjs (7.09 kB) (2.54 kB gzip)
+  ├─ .output/server/chunks/routes/api/comparison.get.mjs.map (5.73 kB) (1.49 kB gzip)
+  ├─ .output/server/chunks/routes/api/comparison/curated.patch.mjs (3.55 kB) (1.35 kB gzip)
+  ├─ .output/server/chunks/routes/api/comparison/curated.patch.mjs.map (2.17 kB) (760 B gzip)
+  ├─ .output/server/chunks/routes/api/enterprises/_id_.get.mjs (1.79 kB) (679 B gzip)
+  ├─ .output/server/chunks/routes/api/enterprises/_id_.get.mjs.map (607 B) (285 B gzip)
+  ├─ .output/server/chunks/routes/api/export.get.mjs (8.9 kB) (2.93 kB gzip)
+  ├─ .output/server/chunks/routes/api/export.get.mjs.map (7.28 kB) (1.68 kB gzip)
+  ├─ .output/server/chunks/routes/api/files/_id_.delete.mjs (3.7 kB) (1.32 kB gzip)
+  ├─ .output/server/chunks/routes/api/files/_id_.delete.mjs.map (2.27 kB) (719 B gzip)
+  ├─ .output/server/chunks/routes/api/files/_id_.head.mjs (5.28 kB) (1.92 kB gzip)
+  ├─ .output/server/chunks/routes/api/files/_id_.head.mjs.map (4.18 kB) (1.17 kB gzip)
+  ├─ .output/server/chunks/routes/api/files/_id_.patch.mjs (3.12 kB) (1.21 kB gzip)
+  ├─ .output/server/chunks/routes/api/files/_id_.patch.mjs.map (1.87 kB) (662 B gzip)
+  ├─ .output/server/chunks/routes/api/files/_id/maintenance.get.mjs (2.08 kB) (831 B gzip)
+  ├─ .output/server/chunks/routes/api/files/_id/maintenance.get.mjs.map (907 B) (383 B gzip)
+  ├─ .output/server/chunks/routes/api/files/_id/ocr-pages/_page_.delete.mjs (1.53 kB) (545 B gzip)
+  ├─ .output/server/chunks/routes/api/files/_id/ocr-pages/_page_.delete.mjs.map (278 B) (176 B gzip)
+  ├─ .output/server/chunks/routes/api/files/_id/ocr-pages/_page_.get.mjs (1.51 kB) (543 B gzip)
+  ├─ .output/server/chunks/routes/api/files/_id/ocr-pages/_page_.get.mjs.map (271 B) (171 B gzip)
+  ├─ .output/server/chunks/routes/api/files/_id/ocr-pages/_page_.put.mjs (1.51 kB) (544 B gzip)
+  ├─ .output/server/chunks/routes/api/files/_id/ocr-pages/_page_.put.mjs.map (272 B) (174 B gzip)
+  ├─ .output/server/chunks/routes/api/files/_id/parse-result.get.mjs (1.49 kB) (526 B gzip)
+  ├─ .output/server/chunks/routes/api/files/_id/parse-result.get.mjs.map (224 B) (144 B gzip)
+  ├─ .output/server/chunks/routes/api/files/_id/parse-result.patch.mjs (1.5 kB) (530 B gzip)
+  ├─ .output/server/chunks/routes/api/files/_id/parse-result.patch.mjs.map (228 B) (146 B gzip)
+  ├─ .output/server/chunks/routes/api/files/_id/parse-result.put.mjs (1.5 kB) (529 B gzip)
+  ├─ .output/server/chunks/routes/api/files/_id/parse-result.put.mjs.map (225 B) (144 B gzip)
+  ├─ .output/server/chunks/routes/api/files/_id/parse-result/commit.post.mjs (1.5 kB) (523 B gzip)
+  ├─ .output/server/chunks/routes/api/files/_id/parse-result/commit.post.mjs.map (231 B) (149 B gzip)
+  ├─ .output/server/chunks/routes/api/files/_id/parse-result/history.get.mjs (1.5 kB) (524 B gzip)
+  ├─ .output/server/chunks/routes/api/files/_id/parse-result/history.get.mjs.map (230 B) (150 B gzip)
+  ├─ .output/server/chunks/routes/api/files/_id/parse-result/preflight.post.mjs (1.51 kB) (527 B gzip)
+  ├─ .output/server/chunks/routes/api/files/_id/parse-result/preflight.post.mjs.map (236 B) (151 B gzip)
+  ├─ .output/server/chunks/routes/api/files/_id/physical-recovery.get.mjs (1.52 kB) (520 B gzip)
+  ├─ .output/server/chunks/routes/api/files/_id/physical-recovery.get.mjs.map (236 B) (151 B gzip)
+  ├─ .output/server/chunks/routes/api/files/_id/physical-recovery.post.mjs (1.52 kB) (520 B gzip)
+  ├─ .output/server/chunks/routes/api/files/_id/physical-recovery.post.mjs.map (238 B) (151 B gzip)
+  ├─ .output/server/chunks/routes/api/files/_id/restore.post.mjs (2.42 kB) (949 B gzip)
+  ├─ .output/server/chunks/routes/api/files/_id/restore.post.mjs.map (1 kB) (415 B gzip)
+  ├─ .output/server/chunks/routes/api/files/_id/segments.get.mjs (1.51 kB) (525 B gzip)
+  ├─ .output/server/chunks/routes/api/files/_id/segments.get.mjs.map (218 B) (142 B gzip)
+  ├─ .output/server/chunks/routes/api/files/_id/segments/commit.post.mjs (1.52 kB) (528 B gzip)
+  ├─ .output/server/chunks/routes/api/files/_id/segments/commit.post.mjs.map (228 B) (148 B gzip)
+  ├─ .output/server/chunks/routes/api/files/_id/segments/preflight.post.mjs (1.53 kB) (532 B gzip)
+  ├─ .output/server/chunks/routes/api/files/_id/segments/preflight.post.mjs.map (234 B) (150 B gzip)
+  ├─ .output/server/chunks/routes/api/files/register.post.mjs (8.49 kB) (2.93 kB gzip)
+  ├─ .output/server/chunks/routes/api/files/register.post.mjs.map (7.16 kB) (1.93 kB gzip)
+  ├─ .output/server/chunks/routes/api/health.get.mjs (1.69 kB) (659 B gzip)
+  ├─ .output/server/chunks/routes/api/health.get.mjs.map (604 B) (297 B gzip)
+  ├─ .output/server/chunks/routes/api/index.delete.mjs (3.28 kB) (1.37 kB gzip)
+  ├─ .output/server/chunks/routes/api/index.delete.mjs.map (1.82 kB) (578 B gzip)
+  ├─ .output/server/chunks/routes/api/index.get.mjs (3.08 kB) (1.33 kB gzip)
+  ├─ .output/server/chunks/routes/api/index.get.mjs.map (2.21 kB) (703 B gzip)
+  ├─ .output/server/chunks/routes/api/index.post.mjs (3.51 kB) (1.38 kB gzip)
+  ├─ .output/server/chunks/routes/api/index.post.mjs.map (2.29 kB) (705 B gzip)
+  ├─ .output/server/chunks/routes/api/index2.get.mjs (2.66 kB) (1.22 kB gzip)
+  ├─ .output/server/chunks/routes/api/index2.get.mjs.map (1.21 kB) (479 B gzip)
+  ├─ .output/server/chunks/routes/api/index2.post.mjs (2.8 kB) (1.04 kB gzip)
+  ├─ .output/server/chunks/routes/api/index2.post.mjs.map (1.5 kB) (519 B gzip)
+  ├─ .output/server/chunks/routes/api/index3.get.mjs (1.49 kB) (532 B gzip)
+  ├─ .output/server/chunks/routes/api/index3.get.mjs.map (202 B) (140 B gzip)
+  ├─ .output/server/chunks/routes/api/index4.get.mjs (3.7 kB) (1.58 kB gzip)
+  ├─ .output/server/chunks/routes/api/index4.get.mjs.map (2.52 kB) (795 B gzip)
+  ├─ .output/server/chunks/routes/api/index5.get.mjs (1.54 kB) (540 B gzip)
+  ├─ .output/server/chunks/routes/api/index5.get.mjs.map (210 B) (145 B gzip)
+  ├─ .output/server/chunks/routes/api/job-artifacts/_id_.get.mjs (4.23 kB) (1.62 kB gzip)
+  ├─ .output/server/chunks/routes/api/job-artifacts/_id_.get.mjs.map (2.78 kB) (858 B gzip)
+  ├─ .output/server/chunks/routes/api/jobs/_id_.delete.mjs (2.48 kB) (966 B gzip)
+  ├─ .output/server/chunks/routes/api/jobs/_id_.delete.mjs.map (1.1 kB) (431 B gzip)
+  ├─ .output/server/chunks/routes/api/jobs/_id_.get.mjs (2.48 kB) (938 B gzip)
+  ├─ .output/server/chunks/routes/api/jobs/_id_.get.mjs.map (1.2 kB) (422 B gzip)
+  ├─ .output/server/chunks/routes/api/jobs/kinds.get.mjs (1.76 kB) (642 B gzip)
+  ├─ .output/server/chunks/routes/api/jobs/kinds.get.mjs.map (611 B) (292 B gzip)
+  ├─ .output/server/chunks/routes/api/logs/_id_.get.mjs (1.51 kB) (534 B gzip)
+  ├─ .output/server/chunks/routes/api/logs/_id_.get.mjs.map (202 B) (139 B gzip)
+  ├─ .output/server/chunks/routes/api/logs/clear.post.mjs (1.51 kB) (533 B gzip)
+  ├─ .output/server/chunks/routes/api/logs/clear.post.mjs.map (206 B) (136 B gzip)
+  ├─ .output/server/chunks/routes/api/logs/client.post.mjs (11 kB) (2.98 kB gzip)
+  ├─ .output/server/chunks/routes/api/logs/client.post.mjs.map (10.2 kB) (2.25 kB gzip)
+  ├─ .output/server/chunks/routes/api/logs/policy.get.mjs (1.52 kB) (533 B gzip)
+  ├─ .output/server/chunks/routes/api/logs/policy.get.mjs.map (207 B) (137 B gzip)
+  ├─ .output/server/chunks/routes/api/logs/policy.patch.mjs (1.52 kB) (538 B gzip)
+  ├─ .output/server/chunks/routes/api/logs/policy.patch.mjs.map (211 B) (140 B gzip)
+  ├─ .output/server/chunks/routes/api/ocr-results/markdown.get.mjs (3.29 kB) (1.26 kB gzip)
+  ├─ .output/server/chunks/routes/api/ocr-results/markdown.get.mjs.map (2.27 kB) (670 B gzip)
+  ├─ .output/server/chunks/routes/api/pdf-pages.get.mjs (4.22 kB) (1.62 kB gzip)
+  ├─ .output/server/chunks/routes/api/pdf-pages.get.mjs.map (2.83 kB) (829 B gzip)
+  ├─ .output/server/chunks/routes/api/pdf-pages.post.mjs (3.32 kB) (1.23 kB gzip)
+  ├─ .output/server/chunks/routes/api/pdf-pages.post.mjs.map (2.14 kB) (654 B gzip)
+  ├─ .output/server/chunks/routes/api/platform/batches/_batchId_.get.mjs (1.47 kB) (519 B gzip)
+  ├─ .output/server/chunks/routes/api/platform/batches/_batchId_.get.mjs.map (226 B) (152 B gzip)
+  ├─ .output/server/chunks/routes/api/platform/batches/_batchId/items/_itemId_.get.mjs (1.49 kB) (519 B gzip)
+  ├─ .output/server/chunks/routes/api/platform/batches/_batchId/items/_itemId_.get.mjs.map (245 B) (164 B gzip)
+  ├─ .output/server/chunks/routes/api/platform/batches/_batchId/retry.post.mjs (1.47 kB) (514 B gzip)
+  ├─ .output/server/chunks/routes/api/platform/batches/_batchId/retry.post.mjs.map (232 B) (154 B gzip)
+  ├─ .output/server/chunks/routes/api/platform/business-processes.get.mjs (1.98 kB) (758 B gzip)
+  ├─ .output/server/chunks/routes/api/platform/business-processes.get.mjs.map (656 B) (317 B gzip)
+  ├─ .output/server/chunks/routes/api/platform/business-processes/_recordId_.get.mjs (1.92 kB) (751 B gzip)
+  ├─ .output/server/chunks/routes/api/platform/business-processes/_recordId_.get.mjs.map (670 B) (325 B gzip)
+  ├─ .output/server/chunks/routes/api/platform/capabilities.get.mjs (1.55 kB) (570 B gzip)
+  ├─ .output/server/chunks/routes/api/platform/capabilities.get.mjs.map (308 B) (190 B gzip)
+  ├─ .output/server/chunks/routes/api/platform/declarations.get.mjs (1.94 kB) (747 B gzip)
+  ├─ .output/server/chunks/routes/api/platform/declarations.get.mjs.map (644 B) (313 B gzip)
+  ├─ .output/server/chunks/routes/api/platform/declarations/_recordId_.get.mjs (1.96 kB) (756 B gzip)
+  ├─ .output/server/chunks/routes/api/platform/declarations/_recordId_.get.mjs.map (731 B) (340 B gzip)
+  ├─ .output/server/chunks/routes/api/platform/filter-options.get.mjs (4.72 kB) (1.67 kB gzip)
+  ├─ .output/server/chunks/routes/api/platform/filter-options.get.mjs.map (3.17 kB) (1.02 kB gzip)
+  ├─ .output/server/chunks/routes/api/platform/index.post.mjs (1.45 kB) (515 B gzip)
+  ├─ .output/server/chunks/routes/api/platform/index.post.mjs.map (216 B) (147 B gzip)
+  ├─ .output/server/chunks/routes/api/platform/queries.get.mjs (9.08 kB) (3.09 kB gzip)
+  ├─ .output/server/chunks/routes/api/platform/queries.get.mjs.map (9.24 kB) (2.28 kB gzip)
+  ├─ .output/server/chunks/routes/api/platform/queries/_queryId/evidence.get.mjs (1.95 kB) (744 B gzip)
+  ├─ .output/server/chunks/routes/api/platform/queries/_queryId/evidence.get.mjs.map (796 B) (349 B gzip)
+  ├─ .output/server/chunks/routes/api/platform/query.post.mjs (1.94 kB) (758 B gzip)
+  ├─ .output/server/chunks/routes/api/platform/query.post.mjs.map (710 B) (342 B gzip)
+  ├─ .output/server/chunks/routes/api/platform/recognized-directory.get.mjs (2 kB) (759 B gzip)
+  ├─ .output/server/chunks/routes/api/platform/recognized-directory.get.mjs.map (660 B) (316 B gzip)
+  ├─ .output/server/chunks/routes/api/platform/recognized-directory/_recordId_.get.mjs (1.93 kB) (754 B gzip)
+  ├─ .output/server/chunks/routes/api/platform/recognized-directory/_recordId_.get.mjs.map (672 B) (325 B gzip)
+  ├─ .output/server/chunks/routes/api/platform/snapshots.get.mjs (1.96 kB) (731 B gzip)
+  ├─ .output/server/chunks/routes/api/platform/snapshots.get.mjs.map (634 B) (309 B gzip)
+  ├─ .output/server/chunks/routes/api/platform/snapshots/diff.get.mjs (1.96 kB) (736 B gzip)
+  ├─ .output/server/chunks/routes/api/platform/snapshots/diff.get.mjs.map (637 B) (313 B gzip)
+  ├─ .output/server/chunks/routes/api/quality.get.mjs (1.62 kB) (615 B gzip)
+  ├─ .output/server/chunks/routes/api/quality.get.mjs.map (465 B) (247 B gzip)
+  ├─ .output/server/chunks/routes/api/records.get.mjs (1.55 kB) (576 B gzip)
+  ├─ .output/server/chunks/routes/api/records.get.mjs.map (305 B) (187 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/annual-correspondence-tasks/_id_.get.mjs (1.54 kB) (546 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/annual-correspondence-tasks/_id_.get.mjs.map (245 B) (163 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/annual-correspondence-tasks/_id/cancel.post.mjs (1.56 kB) (545 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/annual-correspondence-tasks/_id/cancel.post.mjs.map (259 B) (168 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/annual-correspondence-tasks/_id/retry.post.mjs (1.56 kB) (544 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/annual-correspondence-tasks/_id/retry.post.mjs.map (257 B) (169 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/comparison-scope-proofs.get.mjs (1.54 kB) (519 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/comparison-scope-proofs.get.mjs.map (241 B) (151 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/comparison-scope-proofs/_id_.get.mjs (1.5 kB) (524 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/comparison-scope-proofs/_id_.get.mjs.map (240 B) (164 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/comparison-scope-proofs/_id/audit.get.mjs (1.52 kB) (524 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/comparison-scope-proofs/_id/audit.get.mjs.map (250 B) (168 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/comparison-scope-proofs/batches/_idempotencyKey_.get.mjs (1.56 kB) (534 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/comparison-scope-proofs/batches/_idempotencyKey_.get.mjs.map (275 B) (181 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/comparison-scope-proofs/commit.post.mjs (1.51 kB) (519 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/comparison-scope-proofs/commit.post.mjs.map (236 B) (155 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/comparison-scope-proofs/preflight.post.mjs (1.52 kB) (521 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/comparison-scope-proofs/preflight.post.mjs.map (242 B) (157 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/correspondences.get.mjs (1.5 kB) (511 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/correspondences.get.mjs.map (225 B) (145 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/correspondences/_id_.get.mjs (1.5 kB) (522 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/correspondences/_id_.get.mjs.map (252 B) (168 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/correspondences/_id/audit.get.mjs (1.52 kB) (522 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/correspondences/_id/audit.get.mjs.map (262 B) (172 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/correspondences/batches/_idempotencyKey_.get.mjs (1.55 kB) (532 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/correspondences/batches/_idempotencyKey_.get.mjs.map (287 B) (187 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/correspondences/browser-commit.post.mjs (1.53 kB) (531 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/correspondences/browser-commit.post.mjs.map (244 B) (154 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/correspondences/browser-preflight.post.mjs (1.55 kB) (534 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/correspondences/browser-preflight.post.mjs.map (250 B) (159 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/correspondences/candidates.post.mjs (1.51 kB) (516 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/correspondences/candidates.post.mjs.map (237 B) (151 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/correspondences/commit.post.mjs (1.5 kB) (513 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/correspondences/commit.post.mjs.map (228 B) (147 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/correspondences/discover.post.mjs (1.5 kB) (514 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/correspondences/discover.post.mjs.map (232 B) (149 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/correspondences/events/_id_.get.mjs (1.53 kB) (533 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/correspondences/events/_id_.get.mjs.map (272 B) (177 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/correspondences/export-rows/_id_.get.mjs (1.54 kB) (535 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/correspondences/export-rows/_id_.get.mjs.map (277 B) (183 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/correspondences/index.post.mjs (2.95 kB) (1.11 kB gzip)
+  ├─ .output/server/chunks/routes/api/roster/correspondences/index.post.mjs.map (1.42 kB) (571 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/correspondences/preflight.post.mjs (1.51 kB) (515 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/correspondences/preflight.post.mjs.map (234 B) (151 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/correspondences/relations/_id_.get.mjs (1.53 kB) (535 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/correspondences/relations/_id_.get.mjs.map (275 B) (179 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/current-enterprises.get.mjs (2.21 kB) (849 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/current-enterprises.get.mjs.map (813 B) (368 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/decision-lifecycle/_id_.get.mjs (1.48 kB) (519 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/decision-lifecycle/_id_.get.mjs.map (225 B) (152 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/decision-lifecycle/commands.post.mjs (1.5 kB) (521 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/decision-lifecycle/commands.post.mjs.map (236 B) (154 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/decision-lifecycle/current.get.mjs (1.49 kB) (520 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/decision-lifecycle/current.get.mjs.map (231 B) (153 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/decision-lifecycle/history.get.mjs (1.49 kB) (521 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/decision-lifecycle/history.get.mjs.map (231 B) (153 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/decision-lifecycle/legacy-preview.get.mjs (1.52 kB) (528 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/decision-lifecycle/legacy-preview.get.mjs.map (247 B) (157 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/difference-snapshots/_id_.get.mjs (1.73 kB) (645 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/difference-snapshots/_id_.get.mjs.map (437 B) (255 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/differences.get.mjs (6 kB) (2.29 kB gzip)
+  ├─ .output/server/chunks/routes/api/roster/differences.get.mjs.map (2.94 kB) (824 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/differences/refresh.get.mjs (1.93 kB) (691 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/differences/refresh.get.mjs.map (410 B) (234 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/differences/refresh.post.mjs (1.85 kB) (671 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/differences/refresh.post.mjs.map (410 B) (234 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/enterprises.get.mjs (2.01 kB) (760 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/enterprises.get.mjs.map (649 B) (316 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/enterprises/_id_.get.mjs (2.23 kB) (864 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/enterprises/_id_.get.mjs.map (938 B) (392 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/enterprises/_id_.patch.mjs (1.53 kB) (521 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/enterprises/_id_.patch.mjs.map (224 B) (150 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/enterprises/_id/aliases/_aliasId_.get.mjs (1.76 kB) (635 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/enterprises/_id/aliases/_aliasId_.get.mjs.map (448 B) (246 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/enterprises/_id/aliases/_aliasId_.patch.mjs (1.92 kB) (689 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/enterprises/_id/aliases/_aliasId_.patch.mjs.map (516 B) (275 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/enterprises/_id/aliases/_aliasId/history.get.mjs (1.81 kB) (654 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/enterprises/_id/aliases/_aliasId/history.get.mjs.map (482 B) (256 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/enterprises/_id/facts.get.mjs (1.54 kB) (524 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/enterprises/_id/facts.get.mjs.map (229 B) (150 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/enterprises/_id/facts/browser-commit.post.mjs (1.57 kB) (539 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/enterprises/_id/facts/browser-commit.post.mjs.map (257 B) (161 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/enterprises/_id/facts/browser-preflight.post.mjs (1.58 kB) (542 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/enterprises/_id/facts/browser-preflight.post.mjs.map (263 B) (163 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/enterprises/_id/facts/commit.post.mjs (1.57 kB) (525 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/enterprises/_id/facts/commit.post.mjs.map (242 B) (154 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/enterprises/_id/facts/preflight.post.mjs (1.58 kB) (528 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/enterprises/_id/facts/preflight.post.mjs.map (248 B) (157 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/enterprises/_id/index.get.mjs (1.74 kB) (645 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/enterprises/_id/index.get.mjs.map (417 B) (241 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/enterprises/_id/profile-history.get.mjs (1.58 kB) (530 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/enterprises/_id/profile-history.get.mjs.map (249 B) (156 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/enterprises/_id/profile.get.mjs (1.55 kB) (520 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/enterprises/_id/profile.get.mjs.map (233 B) (150 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/events/_id_.get.mjs (1.49 kB) (514 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/events/_id_.get.mjs.map (214 B) (146 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/events/_id/annual-correspondence-tasks.post.mjs (1.65 kB) (574 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/events/_id/annual-correspondence-tasks.post.mjs.map (306 B) (184 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/events/_id/annual-process.get.mjs (1.93 kB) (736 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/events/_id/annual-process.get.mjs.map (681 B) (326 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/events/_id/audit.get.mjs (1.51 kB) (516 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/events/_id/audit.get.mjs.map (223 B) (148 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/events/corrections/commit.post.mjs (1.51 kB) (516 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/events/corrections/commit.post.mjs.map (234 B) (152 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/events/corrections/preflight.post.mjs (1.53 kB) (519 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/events/corrections/preflight.post.mjs.map (240 B) (154 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/evidence-impacts/_id_.get.mjs (1.43 kB) (513 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/evidence-impacts/_id_.get.mjs.map (220 B) (149 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/evidence-impacts/_id/sources.get.mjs (1.46 kB) (512 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/evidence-impacts/_id/sources.get.mjs.map (234 B) (152 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/evidence-impacts/commands.post.mjs (1.45 kB) (515 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/evidence-impacts/commands.post.mjs.map (230 B) (149 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/evidence-impacts/preview.get.mjs (1.45 kB) (513 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/evidence-impacts/preview.get.mjs.map (226 B) (149 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/evidence-impacts/revisions/_revisionId/events.get.mjs (1.47 kB) (512 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/evidence-impacts/revisions/_revisionId/events.get.mjs.map (253 B) (161 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/evidence-review/browser-commands.post.mjs (2.63 kB) (1 kB gzip)
+  ├─ .output/server/chunks/routes/api/roster/evidence-review/browser-commands.post.mjs.map (1.18 kB) (489 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/evidence-review/browser-context.get.mjs (1.69 kB) (621 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/evidence-review/browser-context.get.mjs.map (382 B) (230 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/evidence/_id_.get.mjs (1.5 kB) (518 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/evidence/_id_.get.mjs.map (216 B) (148 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/evidence/_id/audit.get.mjs (1.52 kB) (519 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/evidence/_id/audit.get.mjs.map (225 B) (149 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/evidence/corrections/batches/_key_.get.mjs (1.53 kB) (522 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/evidence/corrections/batches/_key_.get.mjs.map (243 B) (162 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/evidence/corrections/commit.post.mjs (1.52 kB) (520 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/evidence/corrections/commit.post.mjs.map (237 B) (153 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/evidence/corrections/preflight.post.mjs (1.54 kB) (523 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/evidence/corrections/preflight.post.mjs.map (243 B) (158 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/evidence/pages.post.mjs (7.89 kB) (3.04 kB gzip)
+  ├─ .output/server/chunks/routes/api/roster/evidence/pages.post.mjs.map (6.53 kB) (1.79 kB gzip)
+  ├─ .output/server/chunks/routes/api/roster/export.get.mjs (7.69 kB) (2.68 kB gzip)
+  ├─ .output/server/chunks/routes/api/roster/export.get.mjs.map (4.78 kB) (1.32 kB gzip)
+  ├─ .output/server/chunks/routes/api/roster/exports/current/capabilities.get.mjs (2.01 kB) (754 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/exports/current/capabilities.get.mjs.map (541 B) (286 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/exports/current/innovative-sme.post.mjs (1.64 kB) (544 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/exports/current/innovative-sme.post.mjs.map (251 B) (155 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/exports/current/little-giant.post.mjs (1.63 kB) (544 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/exports/current/little-giant.post.mjs.map (245 B) (153 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/exports/current/specialized-sme.post.mjs (1.64 kB) (544 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/exports/current/specialized-sme.post.mjs.map (253 B) (156 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/import/commit.post.mjs (1.5 kB) (516 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/import/commit.post.mjs.map (221 B) (145 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/import/duplicate-candidates.get.mjs (2.16 kB) (846 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/import/duplicate-candidates.get.mjs.map (766 B) (353 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/import/index.get.mjs (1.44 kB) (506 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/import/index.get.mjs.map (224 B) (150 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/import/preflight.post.mjs (1.51 kB) (519 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/import/preflight.post.mjs.map (227 B) (149 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/import/receipts/history.get.mjs (1.46 kB) (507 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/import/receipts/history.get.mjs.map (231 B) (152 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/import/receipts/items.get.mjs (1.45 kB) (507 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/import/receipts/items.get.mjs.map (227 B) (148 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/import/receipts/request.get.mjs (1.46 kB) (507 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/import/receipts/request.get.mjs.map (231 B) (150 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/import/replay.post.mjs (1.5 kB) (516 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/import/replay.post.mjs.map (220 B) (145 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/index.get.mjs (1.43 kB) (513 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/index.get.mjs.map (219 B) (149 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/index.post.mjs (1.53 kB) (546 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/index.post.mjs.map (246 B) (164 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/index2.post.mjs (1.77 kB) (661 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/index2.post.mjs.map (477 B) (262 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/recognitions.get.mjs (3.04 kB) (1.07 kB gzip)
+  ├─ .output/server/chunks/routes/api/roster/recognitions.get.mjs.map (1.57 kB) (572 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/record-comparison.get.mjs (2.52 kB) (907 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/record-comparison.get.mjs.map (1.37 kB) (477 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/record-comparison/legacy-impact.get.mjs (2.16 kB) (822 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/record-comparison/legacy-impact.get.mjs.map (793 B) (368 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/record-comparison/sources.get.mjs (2.74 kB) (1.01 kB gzip)
+  ├─ .output/server/chunks/routes/api/roster/record-comparison/sources.get.mjs.map (1.8 kB) (557 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/uscc-research.get.mjs (2.37 kB) (881 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/uscc-research.get.mjs.map (945 B) (417 B gzip)
+  ├─ .output/server/chunks/routes/api/roster/uscc-research.post.mjs (26.4 kB) (7.95 kB gzip)
+  ├─ .output/server/chunks/routes/api/roster/uscc-research.post.mjs.map (20.1 kB) (4.46 kB gzip)
+  ├─ .output/server/chunks/routes/api/settings/credentials/miitCookie/reveal.post.mjs (1.52 kB) (526 B gzip)
+  ├─ .output/server/chunks/routes/api/settings/credentials/miitCookie/reveal.post.mjs.map (250 B) (164 B gzip)
+  ├─ .output/server/chunks/routes/api/settings/credentials/ocrToken/reveal.post.mjs (1.51 kB) (515 B gzip)
+  ├─ .output/server/chunks/routes/api/settings/credentials/ocrToken/reveal.post.mjs.map (238 B) (156 B gzip)
+  ├─ .output/server/chunks/routes/api/settings/index.delete.mjs (1.48 kB) (515 B gzip)
+  ├─ .output/server/chunks/routes/api/settings/index.delete.mjs.map (226 B) (150 B gzip)
+  ├─ .output/server/chunks/routes/api/settings/index.get.mjs (1.47 kB) (513 B gzip)
+  ├─ .output/server/chunks/routes/api/settings/index.get.mjs.map (220 B) (149 B gzip)
+  ├─ .output/server/chunks/routes/api/settings/index.patch.mjs (1.48 kB) (514 B gzip)
+  ├─ .output/server/chunks/routes/api/settings/index.patch.mjs.map (224 B) (150 B gzip)
+  ├─ .output/server/chunks/routes/api/statistics/annual.get.mjs (12.3 kB) (4.12 kB gzip)
+  ├─ .output/server/chunks/routes/api/statistics/annual.get.mjs.map (12 kB) (2.95 kB gzip)
+  ├─ .output/server/chunks/routes/api/statistics/districts.get.mjs (4.46 kB) (1.63 kB gzip)
+  ├─ .output/server/chunks/routes/api/statistics/districts.get.mjs.map (3.46 kB) (1.06 kB gzip)
+  ├─ .output/server/chunks/routes/api/statistics/movements.get.mjs (6.48 kB) (2.38 kB gzip)
+  ├─ .output/server/chunks/routes/api/statistics/movements.get.mjs.map (6.42 kB) (1.59 kB gzip)
+  ├─ .output/server/chunks/routes/api/statistics/published.get.mjs (4.29 kB) (1.61 kB gzip)
+  ├─ .output/server/chunks/routes/api/statistics/published.get.mjs.map (2.37 kB) (785 B gzip)
+  ├─ .output/server/chunks/routes/api/stats.get.mjs (1.87 kB) (704 B gzip)
+  ├─ .output/server/chunks/routes/api/stats.get.mjs.map (687 B) (316 B gzip)
+  ├─ .output/server/chunks/routes/api/task-center/_id_.get.mjs (1.56 kB) (541 B gzip)
+  ├─ .output/server/chunks/routes/api/task-center/_id_.get.mjs.map (210 B) (144 B gzip)
+  ├─ .output/server/chunks/routes/api/task-center/_id/cancel.post.mjs (1.59 kB) (542 B gzip)
+  ├─ .output/server/chunks/routes/api/task-center/_id/cancel.post.mjs.map (224 B) (147 B gzip)
+  ├─ .output/server/chunks/routes/api/task-center/_id/retry.post.mjs (1.58 kB) (540 B gzip)
+  ├─ .output/server/chunks/routes/api/task-center/_id/retry.post.mjs.map (222 B) (147 B gzip)
+  ├─ .output/server/chunks/routes/mcp-session.mjs (4.89 kB) (1.78 kB gzip)
+  ├─ .output/server/chunks/routes/mcp-session.mjs.map (3.81 kB) (1.09 kB gzip)
+  ├─ .output/server/chunks/routes/renderer.mjs (21.3 kB) (7.2 kB gzip)
+  ├─ .output/server/chunks/routes/renderer.mjs.map (2.22 kB) (390 B gzip)
+  ├─ .output/server/chunks/virtual/entry.mjs (224 B) (187 B gzip)
+  ├─ .output/server/chunks/virtual/entry.mjs.map (212 B) (179 B gzip)
+  ├─ .output/server/chunks/virtual/precomputed.mjs (127 kB) (12.3 kB gzip)
+  ├─ .output/server/chunks/virtual/precomputed.mjs.map (114 kB) (3.38 kB gzip)
+  ├─ .output/server/current-export-worker.mjs (2.44 kB) (1.11 kB gzip)
+  ├─ .output/server/enterprise-read-worker.mjs (7.82 kB) (2.31 kB gzip)
+  ├─ .output/server/import-execution-worker.mjs (3.59 kB) (1.34 kB gzip)
+  ├─ .output/server/index.mjs (1.38 kB) (497 B gzip)
+  └─ .output/server/package.json (1.5 kB) (612 B gzip)
+Σ Total size: 55.7 MB (23.6 MB gzip)
+[nitro] ✔ You can preview this build using node .output/server/index.mjs
+config 130ms · modules 125ms · app 437ms · types 345ms · client 3.74s · server 20ms · nitro 9.12s
+◆ ✨ Build complete in 13.9s!

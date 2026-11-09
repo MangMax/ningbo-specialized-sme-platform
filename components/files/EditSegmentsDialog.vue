@@ -12,7 +12,7 @@ import type { getParse105, preflightParse310 } from '~~/server/utils/parse-maint
 import type { StoredFileRow } from '~~/server/utils/stored-files'
 type State = ReturnType<typeof getParse105>
 type Part = State['parts'][number]
-type Draft = { declarationId?: string } & Omit<Part, 'year' | 'batch' | 'rowCount' | 'attachment'> & { year: string; batch: string; rowCount: string; attachment: string }
+type Draft = { declarationId?: string; ranges: { start: string; end: string }[]; rangesEdited: boolean } & Omit<Part, 'year' | 'batch' | 'rowCount' | 'attachment'> & { year: string; batch: string; rowCount: string; attachment: string }
 const props = defineProps<{ file: StoredFileRow | null; refreshList: () => Promise<unknown> }>()
 const open = defineModel<boolean>('open', { default: false })
 const state = ref<State | null>(null), drafts = ref<Draft[]>([])
@@ -25,7 +25,7 @@ let attempt: { fingerprint: string; body: Submission } | null = null
 const url = () => `/api/files/${props.file!.id}/segments`
 function toDraft(p: Part): Draft {
   const declaration = state.value?.declarations?.find(d => partKey(d.part) === partKey(p))
-  return { ...p, ...(declaration ? { declarationId: declaration.declarationId } : {}), year: p.year === null ? '' : String(p.year), batch: p.batch === null ? '' : String(p.batch), attachment: p.attachment ?? '', rowCount: String(p.rowCount) }
+  return { ...p, ranges: (declaration?.pageRanges ?? []).map(r => ({ start: String(r.start), end: String(r.end) })), rangesEdited: false, ...(declaration ? { declarationId: declaration.declarationId } : {}), year: p.year === null ? '' : String(p.year), batch: p.batch === null ? '' : String(p.batch), attachment: p.attachment ?? '', rowCount: String(p.rowCount) }
 }
 async function load() {
   pending.value = true; failure.value = ''; notice.value = ''
@@ -39,7 +39,7 @@ async function load() {
 }
 watch(open, value => { if (value) { state.value = null; enabled.value = false; drafts.value = []; attempt = null; void load() } })
 function add() {
-  drafts.value.push({ titleCode: 'specialized_sme', eventKind: 'award', year: '', batch: '', attachment: '', rowCount: '0', origin: 'agent', hasConflict: false })
+  drafts.value.push({ ranges: [], rangesEdited: false, titleCode: 'specialized_sme', eventKind: 'award', year: '', batch: '', attachment: '', rowCount: '0', origin: 'agent', hasConflict: false })
 }
 function integer(text: string, name: string, min: number, max = Number.MAX_SAFE_INTEGER): number | null {
   if (!text.trim()) return null
@@ -54,12 +54,17 @@ async function save() {
     if (drafts.value.length > 1000) throw Error('最多登记1000段，不会截断保存')
     const parts = drafts.value.map(p => {
       // Preserve additional contract fields (including ranges owned by #669).
-      const { origin: _origin, hasConflict: _conflict, ...fields } = p
-      return { ...fields, year: integer(p.year, '内容年份', 1900, 2100), batch: integer(p.batch, '批次', 1), rowCount: integer(p.rowCount, '行数', 0) ?? 0, attachment: p.attachment || null }
+      const { origin: _origin, hasConflict: _conflict, ranges, rangesEdited, ...fields } = p
+      const pageRanges = ranges.map(r => {
+        const start = integer(r.start, '起页', 1), end = integer(r.end, '止页', 1)
+        if (start === null || end === null || end < start) throw Error('请填写完整起止页，止页不得小于起页')
+        return { start, end }
+      })
+      return { ...fields, ...(rangesEdited ? { pageRanges } : {}), year: integer(p.year, '内容年份', 1900, 2100), batch: integer(p.batch, '批次', 1), rowCount: integer(p.rowCount, '行数', 0) ?? 0, attachment: p.attachment || null }
     })
     const fingerprint = JSON.stringify({ parts, reason: reason.value, version: state.value.version })
     if (!attempt || attempt.fingerprint !== fingerprint) {
-      const plan = await $fetch<ReturnType<typeof preflightParse310> & { parseState: string }>(url() + '/preflight', { method: 'POST', body: { expectedVersion: state.value.version } })
+      const plan = await $fetch<ReturnType<typeof preflightParse310> & { parseState: string }>(url() + '/preflight', { method: 'POST', body: { expectedVersion: state.value.version, ...(parts.some(p => p.pageRanges?.length) ? { verifyPhysicalPages: true } : {}) } })
       attempt = { fingerprint, body: { ...plan, parts, reason: reason.value, idempotencyKey: crypto.randomUUID() } }
     }
     await $fetch(url() + '/commit', { method: 'POST', body: attempt.body })
@@ -85,6 +90,7 @@ async function save() {
       <div class="flex min-h-0 flex-col gap-4 overflow-y-auto">
         <p class="text-sm">每行是一个明确年份—批次组合。复核的内容年份指原认定年；未知可留空。只维护描述，保存不会更改正式事件或企业资格。</p>
         <p class="text-muted-foreground text-sm">预检仅核实当前文件身份，不读取OCR，不证明历史段的来源已核实。解析状态保持原值。</p>
+        <p class="text-sm">页码采用预览中的1起物理页码（含止页），不是正文印刷页码。未知可不填，清空会显式撤回范围。共用页可如实登记；仅页码不足以唯一定位企业，不保证可自动同步。文件变化后须重新核实范围，保存不会同步正式事件。</p>
         <p v-if="!enabled && state" role="status">当前只读：部署未开启浏览器写能力，无需任务令牌。</p>
         <p v-if="failure" role="alert" class="text-destructive break-words">{{ failure }}</p>
         <p v-if="notice" role="status">{{ notice }}</p>
@@ -98,6 +104,15 @@ async function save() {
           <div><Label :for="`segment-batch-${i}`">批次</Label><Input :id="`segment-batch-${i}`" v-model="part.batch" inputmode="numeric" placeholder="未知" /></div>
           <div><Label :for="`segment-attachment-${i}`">附件</Label><Input :id="`segment-attachment-${i}`" v-model="part.attachment" placeholder="未知" /></div>
           <div><Label :for="`segment-count-${i}`">行数</Label><Input :id="`segment-count-${i}`" v-model="part.rowCount" inputmode="numeric" placeholder="0 表示未知" /></div>
+          <div class="min-w-0 space-y-2 sm:col-span-2">
+            <p class="text-sm">物理页码范围 · {{ part.ranges.length ? '' : (part.rangesEdited ? '将显式清空' : '未登记或已清空') }}</p>
+            <div v-for="(range, j) in part.ranges" :key="j" class="grid min-w-0 grid-cols-2 gap-2">
+              <div><Label :for="`range-start-${i}-${j}`">起页 {{ j + 1 }}</Label><Input :id="`range-start-${i}-${j}`" v-model="range.start" inputmode="numeric" @update:model-value="part.rangesEdited = true" /></div>
+              <div><Label :for="`range-end-${i}-${j}`">止页 {{ j + 1 }}</Label><Input :id="`range-end-${i}-${j}`" v-model="range.end" inputmode="numeric" @update:model-value="part.rangesEdited = true" /></div>
+              <Button variant="outline" @click="part.ranges.splice(j, 1); part.rangesEdited = true">移除范围 {{ j + 1 }}</Button>
+            </div>
+            <div class="flex flex-wrap gap-2"><Button variant="outline" :disabled="part.ranges.length >= 1000" @click="part.ranges.push({ start: '', end: '' }); part.rangesEdited = true">新增页码范围</Button><Button variant="outline" @click="part.ranges = []; part.rangesEdited = true">清空页码范围</Button></div>
+          </div>
           <p v-if="part.hasConflict" role="status" class="text-sm sm:col-span-2">行数与正式出处派生值冲突，保留差异待核，不是资格结论。</p>
           <Button variant="outline" @click="drafts.splice(i, 1)">撤回分段 {{ i + 1 }}</Button>
         </fieldset>
