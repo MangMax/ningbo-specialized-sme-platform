@@ -43,6 +43,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
+import FileEventSync from '@/components/files/FileEventSync.vue'
 import EditFileDialog, { type MetadataForm } from '@/components/files/EditFileDialog.vue'
 import RenameFileDialog from '@/components/files/RenameFileDialog.vue'
 import DeleteFileDialog from '@/components/files/DeleteFileDialog.vue'
@@ -706,7 +707,8 @@ function publishedYearBatch(row: StoredFileRow): string {
                       {{ sizeOf(row) }}
                     </TableCell>
                     <TableCell :class="ACTION_TD">
-                      <div class="flex items-center gap-1">
+                      <div class="flex flex-wrap items-center gap-1">
+                        <FileEventSync :file-id="row.id" @synced="refresh()" />
                         <Button
                           variant="ghost"
                           size="sm"
