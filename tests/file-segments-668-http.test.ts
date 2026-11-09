@@ -111,3 +111,38 @@ it('retains #669 declaration identity and ranges when changing coordinates throu
   expect((await http(f.id, '/commit', { ...plan, parts: [{ ...declared, declarationId, year: 2025 }], idempotencyKey: 'preserve-range', reason: '仅编辑描述坐标' })).status).toBe(200)
   expect((await http(f.id)).body.state.declarations).toMatchObject([{ declarationId, revision: 2, contentVersion: 'controlled-existing-epoch', part: { year: 2025 }, pageRanges: [{ start: 1, end: 2 }, { start: 4, end: 4 }] }])
 })
+it('rejects range writes without reliable physical pages and keeps the entire draft uncommitted', async () => {
+  const f = fixture(), initial = (await http(f.id)).body.state
+  const plan = await http(f.id, '/preflight', { expectedVersion: initial.version, verifyPhysicalPages: true })
+  expect(plan.status).toBe(409)
+  expect((await http(f.id)).body.state).toEqual(initial)
+})
+it('round trips disjoint ranges, rejects out of bounds atomically, edits and clears through the browser HTTP adapter', async () => {
+  const f = fixture()
+  const objects = ['<< /Type /Catalog /Pages 2 0 R >>', '<< /Type /Pages /Kids [3 0 R 4 0 R 5 0 R 6 0 R] /Count 4 >>', ...Array.from({ length: 4 }, () => '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] >>')]
+  let pdf = '%PDF-1.4\n'; const offsets = [0]
+  objects.forEach((object, i) => { offsets.push(Buffer.byteLength(pdf)); pdf += `${i + 1} 0 obj\n${object}\nendobj\n` })
+  const xref = Buffer.byteLength(pdf)
+  pdf += `xref\n0 7\n0000000000 65535 f \n${offsets.slice(1).map(n => `${String(n).padStart(10, '0')} 00000 n \n`).join('')}trailer\n<< /Size 7 /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`
+  writeFileSync(join(root, f.relPath), pdf)
+  const { eq } = await import('drizzle-orm')
+  db.update(schema.storedFile).set({ sha256: createHash('sha256').update(pdf).digest('hex'), bytes: Buffer.byteLength(pdf) }).where(eq(schema.storedFile.id, f.id)).run()
+  const part = { titleCode: 'specialized_sme', eventKind: 'award', year: 2022, batch: 1, rowCount: 2 }
+  const save = async (parts: unknown[]) => {
+    const state = (await http(f.id)).body.state
+    const plan = (await http(f.id, '/preflight', { expectedVersion: state.version, verifyPhysicalPages: true })).body
+    expect(plan.inputRef.physicalSource.pageCount).toBe(4)
+    return http(f.id, '/commit', { ...plan, parts, idempotencyKey: crypto.randomUUID(), reason: '范围验收' })
+  }
+  expect((await save([{ ...part, pageRanges: [{ start: 1, end: 2 }, { start: 4, end: 4 }] }])).status).toBe(200)
+  const first = (await http(f.id)).body.state
+  const id = first.declarations[0].declarationId
+  expect(first.declarations[0].pageRanges).toEqual([{ start: 1, end: 2 }, { start: 4, end: 4 }])
+  expect((await save([{ ...part, declarationId: id, pageRanges: [{ start: 1, end: 5 }] }])).status).toBe(400)
+  expect((await http(f.id)).body.state).toEqual(first)
+  expect((await save([{ ...part, declarationId: id, pageRanges: [{ start: 2, end: 3 }] }])).status).toBe(200)
+  expect((await http(f.id)).body.state.declarations[0].pageRanges).toEqual([{ start: 2, end: 3 }])
+  expect((await save([{ ...part, declarationId: id, pageRanges: [] }])).status).toBe(200)
+  expect((await http(f.id)).body.state.declarations[0]).toMatchObject({ declarationId: id, part: { year: 2022, batch: 1 }, pageRanges: [] })
+  expect(readFileSync(join(root, f.relPath), 'utf8')).toBe(pdf)
+})
