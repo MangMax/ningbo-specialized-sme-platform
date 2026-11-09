@@ -235,14 +235,19 @@ it('replays each completed chunk as its original immutable receipt after later c
     return { status: r.status, body: await r.json() }
   }
   const request = {
-    idempotencyKey: 'two-chunks',
+    idempotencyKey: 'run',
     actor: { type: 'agent', id: 'test' },
     basis: '核实完整分段',
   }
+  // A valid public plan must not reserve the first internal correction key.
+  const sibling = { ...request, idempotencyKey: 'run:0' }
+  expect((await post('preflight', sibling)).status).toBe(200)
   const plan = await post('preflight', request)
+  expect(plan.status).toBe(200)
   expect(plan.body.chunks).toBe(2)
   const first = { request, planHash: plan.body.planHash, chunk: 0 }
   const receipt = await post('commit', first)
+  expect(receipt.status).toBe(200)
   expect(receipt.body.counts).toMatchObject({ updated: 100, unexecuted: 1 })
   db.$client.exec(
     "CREATE TRIGGER fail671chunk BEFORE INSERT ON event_correction_audit BEGIN SELECT RAISE(ABORT,'second chunk failure'); END",
@@ -258,7 +263,13 @@ it('replays each completed chunk as its original immutable receipt after later c
   }
   const last = await post('commit', { ...first, chunk: 1 })
   expect(last.body.counts).toMatchObject({ updated: 101, unexecuted: 0 })
+  expect(last.status).toBe(200)
   expect(await post('commit', first)).toEqual(receipt)
+  expect(await post('commit', { ...first, chunk: 1 })).toEqual(last)
+  expect((await post('preflight', request)).body.completed).toEqual([0, 1])
+  const audits = db.select().from(schema.eventCorrectionAudit).all()
+  expect(audits).toHaveLength(102)
+  expect(new Set(audits.map((a) => a.eventId)).size).toBe(102)
 })
 
 let seq = 0
@@ -644,3 +655,26 @@ it('fills only the missing batch without overwriting known year or formal validi
     formalValidity: fact,
   })
 })
+
+it.each(['run', 'run:0', 'a:b:0', '中文/任意:0', 'x'.repeat(120)])(
+  'accepts public key %s after a correction without namespace aliasing',
+  async (key) => {
+    const f = sample()
+    const request = { ...f.request, idempotencyKey: key }
+    const plan = await f.post('preflight', request)
+    expect(plan.status).toBe(200)
+    const commit = { request, planHash: plan.body.planHash, chunk: 0 }
+    const receipt = await f.post('commit', commit)
+    expect(receipt.status).toBe(200)
+    expect(receipt.body.counts).toMatchObject({ updated: 1, unexecuted: 0 })
+    // Reverse ordering: create the suffix public plan after the internal chunk exists.
+    const suffix = { ...request, idempotencyKey: key.length < 119 ? `${key}:0` : `${key.slice(0, 118)}:0` }
+    const later = await f.post('preflight', suffix)
+    expect(later.status).toBe(200)
+    expect(later.body.counts).toMatchObject({ updated: 0, unchanged: 1 })
+    expect(await f.post('commit', commit)).toEqual(receipt)
+    expect(await f.post('preflight', suffix)).toEqual(later)
+    expect((await f.post('preflight', { ...request, basis: 'different' })).status).toBe(409)
+    expect(db.select().from(schema.eventCorrectionAudit).where(eq(schema.eventCorrectionAudit.eventId, f.event.id)).all()).toHaveLength(1)
+  },
+)
