@@ -43,6 +43,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
+import EditSegmentsDialog from '@/components/files/EditSegmentsDialog.vue'
 import EditFileDialog, { type MetadataForm } from '@/components/files/EditFileDialog.vue'
 import RenameFileDialog from '@/components/files/RenameFileDialog.vue'
 import DeleteFileDialog from '@/components/files/DeleteFileDialog.vue'
@@ -244,6 +245,8 @@ const activeFilters = computed<ActiveFilter[]>(() => [
 ])
 
 // —— 行操作 ——
+const segmentFile = ref<StoredFileRow | null>(null)
+const segmentsOpen = ref(false)
 const editing = ref<StoredFileRow | null>(null)
 const editOpen = ref(false)
 const editPending = ref(false)
@@ -706,7 +709,8 @@ function publishedYearBatch(row: StoredFileRow): string {
                       {{ sizeOf(row) }}
                     </TableCell>
                     <TableCell :class="ACTION_TD">
-                      <div class="flex items-center gap-1">
+                      <div class="flex flex-wrap items-center gap-1">
+                        <Button variant="ghost" size="sm" class="h-7 px-1.5 text-xs" @click="segmentFile = row; segmentsOpen = true">编辑内容分段</Button>
                         <Button
                           variant="ghost"
                           size="sm"
@@ -840,6 +844,8 @@ function publishedYearBatch(row: StoredFileRow): string {
     <TablePagination v-if="!error || rows.length > 0" :page="displayedPage" :page-size="displayedPageSize" :total="total" :loading="paginationDisabled" unit="个文件" @update:page="setPage" @update:page-size="setPageSize" />
 
     <UploadDialog v-model:open="uploadOpen" @registered="refresh()" />
+
+    <EditSegmentsDialog v-model:open="segmentsOpen" :file="segmentFile" :refresh-list="refresh" />
 
     <EditFileDialog
       v-model:open="editOpen"
