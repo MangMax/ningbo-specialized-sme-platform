@@ -2,7 +2,10 @@ import type { ReceiptRuntimeContext } from '../../server/utils/receipt-runtime-c
 import { Stream } from 'documonster/excel'
 import type Database from 'better-sqlite3'
 import { createHash } from 'node:crypto'
-import { createWriteStream } from 'node:fs'
+import { createWriteStream, createReadStream, mkdtempSync, appendFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { createInterface } from 'node:readline'
 import { once } from 'node:events'
 import { finished } from 'node:stream/promises'
 import { CURRENT_RULE_VERSION, qualificationDay, prepareCurrentReader, createCurrentQualificationAssessmentReader, QUALIFICATION_ASSESSMENT_VERSION, type CurrentTitle } from './current-qualification'
@@ -57,6 +60,36 @@ export async function writeCurrentWorkbook(db: Database.Database, title: Current
     }
     if (output.errored) throw output.errored
     if (output.destroyed && !output.writableFinished) await completed
+  }
+  const overflowDir = mkdtempSync(join(tmpdir(), 'current-export-full-text-'))
+  const overflowFile = join(overflowDir, 'rows.jsonl')
+  let overflowCount = 0
+  function overflowValues(values: (string | null)[], sheet: string, row: number) {
+    return values.map((value, index) => {
+      textCell(value) // Preserve the existing cell-size guard before changing layout.
+      const isolated = Array<string | null>(widths.length).fill(null)
+      isolated[index] = value
+      try { rowHeight(isolated); return value } catch (error) {
+        if (!(error instanceof CurrentWorkbookLimitError)) throw error
+      }
+      const address = `${String.fromCharCode(65 + index)}${row}`
+      let chunk = '', part = 0
+      function save() {
+        if (++overflowCount > 1048575) throw new CurrentWorkbookLimitError('Excel 全文附表超过行数上限，未发布文件')
+        appendFileSync(overflowFile, JSON.stringify([sheet,address,String(++part),null,null,null,null,null,null,null,null,chunk]) + '\n')
+      }
+      for (const char of value ?? '') {
+        const probe = Array<string | null>(widths.length).fill(null)
+        probe[11] = chunk + char
+        try { rowHeight(probe) } catch (error) {
+          if (!(error instanceof CurrentWorkbookLimitError)) throw error
+          save(); chunk = ''
+        }
+        chunk += char
+      }
+      if (chunk) save()
+      return `全文见「长文本全文」：${sheet}!${address}`
+    })
   }
   const startedAt = Date.now()
   let summaryComplete = false, workbookStarted = false
@@ -119,7 +152,7 @@ export async function writeCurrentWorkbook(db: Database.Database, title: Current
           const values = [...currentWorkbookValues(title,row,++written,workbookPublished), name, (effective.presentationBasis ?? []).join('；'), effective.notes.join('；')]
           const { titles: _titles, snapshotId, ...scope } = snapshot
           hash.update(JSON.stringify([group,id,scope,snapshotId,values]) + '\n')
-          styledRow(sheet,values)
+          styledRow(sheet,overflowValues(values,name,written + 1))
           await drain()
         }
         if (++scanned % 100 === 0) {
@@ -139,6 +172,18 @@ export async function writeCurrentWorkbook(db: Database.Database, title: Current
       }
       if (group !== 'effective') deferred[group].length = 0
     }
+    if (overflowCount) {
+      const appendix = workbook.addWorksheet('长文本全文',sheetOptions())
+      appendix.columns = widths.map(width => ({width}))
+      styledRow(appendix,['业务表','原单元格','分段序号',null,null,null,null,null,null,null,null,'全文（按分段序号直接拼接）'],true)
+      const lines = createInterface({input:createReadStream(overflowFile),crlfDelay:Infinity})
+      for await (const line of lines) {
+        styledRow(appendix,JSON.parse(line) as (string | null)[])
+        await drain()
+      }
+      appendix.commit()
+      await drain()
+    }
     const dataVersion = 'sha256:' + hash.digest('hex')
     const explanation = workbook.addWorksheet('口径说明')
     explanation.columns = [{width:18},{width:100}]
@@ -154,5 +199,7 @@ export async function writeCurrentWorkbook(db: Database.Database, title: Current
     if (!summaryComplete) appLog({ source: 'export', operation: 'export.current.summary', outcome: 'failure', level: 'error', errorCode: 'summary_failed' }, logContext)
     if (workbookStarted) appLog({ source: 'export', operation: 'export.current.workbook', outcome: 'failure', level: 'error', errorCode: error instanceof CurrentWorkbookLimitError ? 'workbook_limit' : 'workbook_failed' }, logContext)
     output.destroy(); await completed.catch(() => {}); if (db.inTransaction) db.exec('ROLLBACK'); throw error
+  } finally {
+    rmSync(overflowDir,{recursive:true,force:true})
   }
 }
