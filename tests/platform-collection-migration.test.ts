@@ -82,7 +82,7 @@ it('preserves the independent 0027 oracle and old insert update delete triggers 
     }
     expect(legacyScope(s)).toEqual(expected); expect(legacyErrors(s)).toEqual(errors)
     expect(s.prepare('select * from platform_query order by id').all()).toEqual(before)
-    expect(s.prepare("select name,sql from sqlite_schema where type='trigger' order by name").all()).toEqual(triggers)
+    expect(s.prepare("select name,sql from sqlite_schema where type='trigger' AND tbl_name NOT LIKE 'platform_archive%' AND tbl_name NOT LIKE 'platform_%archive_ref' AND tbl_name NOT LIKE 'platform_legacy_%' order by name").all()).toEqual(triggers)
     assertOracle()
     const id = Number(insert.run('post-upgrade', 'success', '{titleScope:{rdjb:["3"]}}').lastInsertRowid)
     assertOracle()
@@ -204,19 +204,19 @@ it('rolls back DDL data and migration registration if a later statement fails', 
     const staged = oldMigrations(root)
     migrate(drizzle(s), { migrationsFolder: staged })
     const before = catalog(s), registrations = s.prepare('select * from __drizzle_migrations').all()
-    const latest = journal.entries.at(-1)
+    const latest = journal.entries.find((e: { idx: number }) => e.idx === 47)
     expect(latest.idx).toBe(47)
     const sql = readFileSync(join(folder, `${latest.tag}.sql`), 'utf8')
     // A later invalid row must roll back all preceding CREATE/ALTER and the valid row.
     writeFileSync(join(staged, `${latest.tag}.sql`), sql + `\n--> statement-breakpoint\nINSERT INTO platform_collection(interface,query_key,rdjb,queried_at,created_at,status,completeness,provenance_state,parse_state,rule_version) VALUES('recognized_list','rollback','2','raw','raw','partial','unknown','unknown','absent','fixture');\n--> statement-breakpoint\nINSERT INTO platform_collection_page(collection_id,ordinal,page_no,position_state) VALUES(1,0,-1,'unknown');`)
-    writeFileSync(join(staged, 'meta/_journal.json'), JSON.stringify(journal))
+    writeFileSync(join(staged, 'meta/_journal.json'), JSON.stringify({ ...journal, entries: journal.entries.filter((e: { idx: number }) => e.idx <= 47) }))
     expect(() => migrate(drizzle(s), { migrationsFolder: staged })).toThrow(/Failed to run/)
     expect(catalog(s)).toEqual(before)
     expect(s.prepare('select * from __drizzle_migrations').all()).toEqual(registrations)
     expect(s.pragma('foreign_key_check')).toEqual([])
     migrate(drizzle(s), { migrationsFolder: folder })
     expect(s.prepare('select * from platform_collection').all()).toEqual([])
-    expect(s.prepare('select count(*) n from __drizzle_migrations').get()).toEqual({ n: 48 })
+    expect(s.prepare('select count(*) n from __drizzle_migrations').get()).toEqual({ n: journal.entries.length })
   } finally { s.close(); rmSync(root, { recursive: true, force: true }) }
 })
 
