@@ -674,6 +674,105 @@ export const platformQuery = sqliteTable(
   ],
 )
 
+/** T01 expand only. Missing source facts remain NULL; no runtime writer owns these yet. */
+export const platformCollection = sqliteTable('platform_collection', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  interface: text('interface', { enum: ['business_list', 'apply_list', 'recognized_list'] }).notNull(),
+  queryKey: text('query_key').notNull(),
+  rdjb: text('rdjb').notNull(),
+  titleCode: text('title_code').references(() => title.code, { onDelete: 'restrict' }),
+  queriedAt: text('queried_at').notNull(),
+  createdAt: text('created_at').notNull(),
+  lastCollectedAt: text('last_collected_at'),
+  status: text('status', { enum: ['success', 'failed', 'no_record', 'not_queried', 'partial'] }).notNull(),
+  failureReason: text('failure_reason'),
+  source: text('source'),
+  evidenceStatus: text('evidence_status'),
+  completedAt: text('completed_at'),
+  completeness: text('completeness', { enum: ['complete', 'partial', 'not_queried', 'unknown'] }).notNull(),
+  fullRange: integer('full_range'),
+  fetchedCount: integer('fetched_count'),
+  declaredTotal: integer('declared_total'),
+  scopeMode: text('scope_mode'),
+  provenanceState: text('provenance_state', { enum: ['captured', 'legacy_supplement', 'unknown', 'conflict'] }).notNull(),
+  parseState: text('parse_state', { enum: ['valid', 'invalid', 'absent'] }).notNull(),
+  ruleVersion: text('rule_version').notNull(),
+  errorCode: text('error_code'),
+  errorMessage: text('error_message'),
+  maxRequests: integer('max_requests'),
+  maxRows: integer('max_rows'),
+  maxDurationMs: integer('max_duration_ms'),
+  pageSize: integer('page_size'),
+}, t => [
+  uniqueIndex('platform_collection_identity_uq').on(t.interface, t.queryKey, t.rdjb, t.queriedAt),
+  index('platform_collection_key_idx').on(t.queryKey, t.id),
+  index('platform_collection_status_time_idx').on(t.status, t.queriedAt, t.id),
+  index('platform_collection_title_idx').on(t.titleCode, t.id),
+  check('platform_collection_interface_ck', sql`${t.interface} IN ('business_list','apply_list','recognized_list')`),
+  check('platform_collection_status_ck', sql`${t.status} IN ('success','failed','no_record','not_queried','partial')`),
+  check('platform_collection_completeness_ck', sql`${t.completeness} IN ('complete','partial','not_queried','unknown')`),
+  check('platform_collection_provenance_ck', sql`${t.provenanceState} IN ('captured','legacy_supplement','unknown','conflict')`),
+  check('platform_collection_parse_ck', sql`${t.parseState} IN ('valid','invalid','absent')`),
+  check('platform_collection_full_range_ck', sql`${t.fullRange} IS NULL OR (typeof(${t.fullRange}) = 'integer' AND ${t.fullRange} IN (0,1))`),
+  ...[t.fetchedCount, t.declaredTotal].map(c => check(`platform_collection_${c.name}_ck`, sql`${c} IS NULL OR (typeof(${c}) = 'integer' AND ${c} BETWEEN 0 AND 9007199254740991)`)),
+  ...[t.maxRequests, t.maxRows, t.maxDurationMs, t.pageSize].map(c => check(`platform_collection_${c.name}_ck`, sql`${c} IS NULL OR (typeof(${c}) = 'integer' AND ${c} BETWEEN 1 AND 9007199254740991)`)),
+])
+
+export const platformCollectionPage = sqliteTable('platform_collection_page', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  collectionId: integer('collection_id').notNull().references(() => platformCollection.id, { onDelete: 'restrict' }),
+  ordinal: integer('ordinal').notNull(),
+  source: text('source'),
+  rdjb: text('rdjb'),
+  pageNo: integer('page_no'),
+  maxPage: integer('max_page'),
+  fetchedCount: integer('fetched_count'),
+  declaredTotal: integer('declared_total'),
+  status: text('status'),
+  errorCode: text('error_code'),
+  errorMessage: text('error_message'),
+  sequenceStart: integer('sequence_start'),
+  sequenceEnd: integer('sequence_end'),
+  positionState: text('position_state', { enum: ['verified', 'unknown', 'conflict'] }).notNull(),
+}, t => [
+  uniqueIndex('platform_collection_page_ordinal_uq').on(t.collectionId, t.ordinal),
+  index('platform_collection_page_title_idx').on(t.collectionId, t.rdjb, t.pageNo),
+  check('platform_collection_page_position_ck', sql`${t.positionState} IN ('verified','unknown','conflict')`),
+  check('platform_collection_page_ordinal_ck', sql`typeof(${t.ordinal}) = 'integer' AND ${t.ordinal} BETWEEN 0 AND 9007199254740991`),
+  ...[t.pageNo, t.maxPage, t.sequenceStart, t.sequenceEnd].map(c => check(`platform_collection_page_${c.name}_ck`, sql`${c} IS NULL OR (typeof(${c}) = 'integer' AND ${c} BETWEEN 1 AND 9007199254740991)`)),
+  ...[t.fetchedCount, t.declaredTotal].map(c => check(`platform_collection_page_${c.name}_ck`, sql`${c} IS NULL OR (typeof(${c}) = 'integer' AND ${c} BETWEEN 0 AND 9007199254740991)`)),
+  check('platform_collection_page_sequence_ck', sql`(${t.sequenceStart} IS NULL AND ${t.sequenceEnd} IS NULL) OR (${t.sequenceStart} IS NOT NULL AND ${t.sequenceEnd} IS NOT NULL AND ${t.sequenceEnd} >= ${t.sequenceStart})`),
+])
+
+export const platformCollectionUnfinished = sqliteTable('platform_collection_unfinished', {
+  collectionId: integer('collection_id').notNull().references(() => platformCollection.id, { onDelete: 'restrict' }),
+  ordinal: integer('ordinal').notNull(),
+  source: text('source'),
+  rdjb: text('rdjb'),
+  pageNo: integer('page_no'),
+}, t => [
+  primaryKey({ columns: [t.collectionId, t.ordinal] }),
+  check('platform_collection_unfinished_ordinal_ck', sql`typeof(${t.ordinal}) = 'integer' AND ${t.ordinal} BETWEEN 0 AND 9007199254740991`),
+  check('platform_collection_unfinished_page_ck', sql`${t.pageNo} IS NULL OR (typeof(${t.pageNo}) = 'integer' AND ${t.pageNo} BETWEEN 1 AND 9007199254740991)`),
+])
+
+export const platformCollectionCondition = sqliteTable('platform_collection_condition', {
+  collectionId: integer('collection_id').notNull().references(() => platformCollection.id, { onDelete: 'restrict' }),
+  name: text('name', { enum: ['name', 'uscc', 'combination', 'sqsj', 'rddqrq', 'whpcyear', 'whpc', 'szq', 'orderField', 'orderDirection'] }).notNull(),
+  valueKind: text('value_kind', { enum: ['absent', 'null', 'text', 'integer', 'real', 'boolean', 'array', 'object'] }).notNull(),
+  textValue: text('text_value'),
+  integerValue: integer('integer_value'),
+}, t => [
+  primaryKey({ columns: [t.collectionId, t.name] }),
+  check('platform_collection_condition_name_ck', sql`${t.name} IN ('name','uscc','combination','sqsj','rddqrq','whpcyear','whpc','szq','orderField','orderDirection')`),
+  check('platform_collection_condition_value_ck', sql`
+    (${t.valueKind} = 'text' AND ${t.textValue} IS NOT NULL AND ${t.integerValue} IS NULL) OR
+    (${t.valueKind} = 'integer' AND ${t.textValue} IS NULL AND ${t.integerValue} IS NOT NULL AND typeof(${t.integerValue}) = 'integer' AND ${t.integerValue} BETWEEN -9007199254740991 AND 9007199254740991) OR
+    (${t.valueKind} = 'boolean' AND ${t.textValue} IS NULL AND ${t.integerValue} IS NOT NULL AND typeof(${t.integerValue}) = 'integer' AND ${t.integerValue} IN (0,1)) OR
+    (${t.valueKind} IN ('absent','null','real','array','object') AND ${t.textValue} IS NULL AND ${t.integerValue} IS NULL)
+  `),
+])
+
 /** Explicit supplementation only: never a typed collectionEvidence or content version. */
 export const platformQueryLegacyProvenance = sqliteTable('platform_query_legacy_provenance', {
   queryId: integer('query_id').primaryKey().references(() => platformQuery.id, { onDelete: 'restrict' }),
@@ -692,9 +791,12 @@ export const platformQueryTitleScope = sqliteTable(
   {
     queryId: integer('query_id').notNull().references(() => platformQuery.id, { onDelete: 'cascade' }),
     rdjb: text('rdjb').notNull(),
+    collectionId: integer('collection_id').references(() => platformCollection.id, { onDelete: 'restrict' }),
   },
   (t) => [
     primaryKey({ columns: [t.queryId, t.rdjb] }),
+    uniqueIndex('platform_query_title_scope_collection_uq').on(t.collectionId, t.rdjb),
+    index('platform_query_title_scope_rdjb_collection_idx').on(t.rdjb, t.collectionId),
     index('platform_query_title_scope_rdjb_query_idx').on(t.rdjb, t.queryId),
   ],
 )
@@ -702,7 +804,8 @@ export const platformQueryTitleScope = sqliteTable(
 /** Rows whose archived title JSON would make the legacy title predicate fail. */
 export const platformQueryTitleScopeError = sqliteTable('platform_query_title_scope_error', {
   queryId: integer('query_id').primaryKey().references(() => platformQuery.id, { onDelete: 'cascade' }),
-})
+  collectionId: integer('collection_id').references(() => platformCollection.id, { onDelete: 'restrict' }),
+}, t => [uniqueIndex('platform_query_title_scope_error_collection_uq').on(t.collectionId)])
 
 /**
  * **平台接口关系记录**(契约 2)。一次查询返回的**每一条关联关系**各占一行。

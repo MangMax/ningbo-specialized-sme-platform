@@ -330,6 +330,13 @@
       "when": 1793722864508,
       "tag": "0046_declaration_order",
       "breakpoints": true
+    },
+    {
+      "idx": 47,
+      "version": "6",
+      "when": 1794325073484,
+      "tag": "0047_platform_collection_expand",
+      "breakpoints": true
     }
   ]
 }

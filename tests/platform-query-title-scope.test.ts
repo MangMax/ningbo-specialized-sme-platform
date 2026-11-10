@@ -192,7 +192,7 @@ it('maintains readable JSON5 through writes and rollback without masking a later
     sqlite.prepare('delete from platform_query where id = ?').run(second)
     expect(listPlatformQueries(db, filter).total).toBe(0)
     expect(sqlite.prepare('select * from platform_query_title_scope_error').all()).toEqual([])
-    expect(sqlite.prepare('select * from platform_query_title_scope').all()).toEqual([{ query_id: first, rdjb: '3' }])
+    expect(sqlite.prepare('select * from platform_query_title_scope').all()).toEqual([{ query_id: first, rdjb: '3', collection_id: null }])
   } finally { sqlite.close() }
 })
 
