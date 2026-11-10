@@ -45,4 +45,3 @@ export function planPlatformObservation(input: Input) {
     recognizedSourceFidelity: input.interface === 'recognized_list' && canonicalRawJson ? parseRecognizedSourceFidelity(raw!) : null,
   } as const
 }
-

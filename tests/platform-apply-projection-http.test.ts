@@ -58,7 +58,8 @@ describe('apply_list typed projection through public import HTTP', () => {
     expect(JSON.parse(relation!.rawText)).toEqual(raw)
     const observation = db.get<{ relationId: number; recordId: number; versionId: number; projectionRuleVersion: string }>(sql`SELECT relation_id AS relationId, record_id AS recordId, version_id AS versionId, projection_rule_version AS projectionRuleVersion FROM platform_business_observation`)
     expect(observation).toMatchObject({ relationId: relation!.id })
-    const projection = db.get(sql`SELECT * FROM platform_apply_projection`)
+    // Assert this source-version contract independently of additive observation metadata.
+    const projection = db.get(sql`SELECT version_id,record_id,declare_kind,declaration_year,applied_at,status,name_raw,uscc_raw,title_raw,rule_version,created_at FROM platform_apply_projection`)
     expect(projection).toEqual({
       version_id: observation!.versionId,
       record_id: observation!.recordId,
