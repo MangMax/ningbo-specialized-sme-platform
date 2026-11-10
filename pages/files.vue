@@ -415,6 +415,7 @@ watch([sources, categoryStates, parseStates, q, page, pageSize], async (values, 
   queryGuardPending=true
   const allowed=await guardEditors()
   queryGuardPending=false
+  if(!allowed) search.value=q.value
   if(allowed && queuedQuery) {
     changingQuery=true
     const [ss,cs,ps,query,pg,size]=queuedQuery
