@@ -1637,3 +1637,51 @@ export const fileDeclaration669 = sqliteTable('file_declaration_669', {
   part: text('part', { mode: 'json' }).$type<import('../lib/file-parts').FilePart>().notNull(),
   pageRanges: text('page_ranges', { mode: 'json' }).$type<{ start: number; end: number }[] | null>(),
 }, t => [index('file_declaration_669_file_idx').on(t.fileId)])
+
+/** Original SQLite storage class and bytes; never a business-query payload. */
+export const platformArchiveValue = sqliteTable('platform_archive_value', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  storageClass: text('storage_class', { enum: ['null', 'text', 'blob'] }).notNull(),
+  bytes: blob('bytes', { mode: 'buffer' }),
+  byteLength: integer('byte_length'),
+  sha256: text('sha256'),
+  createdAt: text('created_at'),
+}, t => [
+  check('platform_archive_value_ck', sql`(${t.storageClass} = 'null' AND ${t.bytes} IS NULL AND ${t.byteLength} IS NULL AND ${t.sha256} IS NULL) OR (${t.storageClass} IN ('text','blob') AND typeof(${t.bytes}) = 'blob' AND typeof(${t.byteLength}) = 'integer' AND ${t.byteLength} = length(${t.bytes}) AND ${t.sha256} IS NOT NULL AND length(${t.sha256}) = 64 AND ${t.sha256} NOT GLOB '*[^0-9a-f]*')`),
+])
+
+export const platformCollectionArchiveRef = sqliteTable('platform_collection_archive_ref', {
+  ownerId: integer('owner_id').notNull().references(() => platformCollection.id, { onDelete: 'restrict' }),
+  field: text('field', { enum: ['rawResponse', 'collectionEvidence', 'legacyProvenance', 'request'] }).notNull(),
+  archiveId: integer('archive_id').notNull().unique().references(() => platformArchiveValue.id, { onDelete: 'restrict' }),
+  sealed: integer('sealed').notNull().default(0),
+}, t => [primaryKey({ columns: [t.ownerId, t.field] }), check('platform_collection_archive_ref_ck', sql`${t.field} IN ('rawResponse','collectionEvidence','legacyProvenance','request') AND ${t.sealed} IN (0,1)`)])
+
+/** Transitional FK to the existing observation PK. T03 replaces relation_id ownership. */
+export const platformObservationArchiveRef = sqliteTable('platform_observation_archive_ref', {
+  ownerId: integer('owner_id').notNull().references(() => platformBusinessObservation.relationId, { onDelete: 'restrict' }),
+  field: text('field', { enum: ['rawFields', 'sourceText', 'legacyRowSnapshot'] }).notNull(),
+  archiveId: integer('archive_id').notNull().unique().references(() => platformArchiveValue.id, { onDelete: 'restrict' }),
+  sealed: integer('sealed').notNull().default(0),
+}, t => [primaryKey({ columns: [t.ownerId, t.field] }), check('platform_observation_archive_ref_ck', sql`${t.field} IN ('rawFields','sourceText','legacyRowSnapshot') AND ${t.sealed} IN (0,1)`)])
+
+export const platformVersionArchiveRef = sqliteTable('platform_version_archive_ref', {
+  ownerId: integer('owner_id').notNull().references(() => platformBusinessRecordVersion.id, { onDelete: 'restrict' }),
+  field: text('field', { enum: ['canonicalRawJson'] }).notNull(),
+  archiveId: integer('archive_id').notNull().unique().references(() => platformArchiveValue.id, { onDelete: 'restrict' }),
+  sealed: integer('sealed').notNull().default(0),
+}, t => [primaryKey({ columns: [t.ownerId, t.field] }), check('platform_version_archive_ref_ck', sql`${t.field} = 'canonicalRawJson' AND ${t.sealed} IN (0,1)`)])
+
+export const platformLegacyQueryAlias = sqliteTable('platform_legacy_query_alias', {
+  oldId: integer('old_id').primaryKey(),
+  collectionId: integer('collection_id').notNull().unique().references(() => platformCollection.id, { onDelete: 'restrict' }),
+}, t => [check('platform_legacy_query_alias_id_ck', sql`${t.oldId} > 0 AND ${t.oldId} <= 9007199254740991`)])
+export const platformLegacyRelationAlias = sqliteTable('platform_legacy_relation_alias', {
+  oldId: integer('old_id').primaryKey(),
+  observationId: integer('observation_id').notNull().unique().references(() => platformBusinessObservation.relationId, { onDelete: 'restrict' }),
+}, t => [check('platform_legacy_relation_alias_id_ck', sql`${t.oldId} > 0 AND ${t.oldId} <= 9007199254740991`)])
+/** Explicitly initialized from the frozen source maxima before allocating any new aliases. */
+export const platformLegacyAliasSequence = sqliteTable('platform_legacy_alias_sequence', {
+  namespace: text('namespace', { enum: ['query', 'relation'] }).primaryKey(),
+  highWater: integer('high_water').notNull(),
+}, t => [check('platform_legacy_alias_sequence_ck', sql`${t.namespace} IN ('query','relation') AND typeof(${t.highWater}) = 'integer' AND ${t.highWater} BETWEEN 0 AND 9007199254740991`)])
