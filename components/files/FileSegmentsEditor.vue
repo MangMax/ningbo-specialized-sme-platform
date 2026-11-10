@@ -1,117 +1,162 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
-import { Plus, Minus, Pencil } from '@lucide/vue'
+import { computed, ref, watch, onMounted, onBeforeUnmount } from 'vue'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select'
-import { partKey } from '~~/lib/file-parts'
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import DisclosurePanel from '@/components/DisclosurePanel.vue'
+import FileEventSync from './FileEventSync.vue'
 import { TITLES, TITLE_ORDER, EVENTS, EVENT_ORDER } from '~~/lib/labels'
 import { describeFetchError } from '~~/lib/upload-register'
 import type { getParse105, preflightParse310 } from '~~/server/utils/parse-maintenance-105'
 import type { StoredFileRow } from '~~/server/utils/stored-files'
 type State = ReturnType<typeof getParse105>
-type Part = State['parts'][number]
-type Draft = { sourceKey?: string; declarationId?: string; ranges: { start: string; end: string }[]; rangesEdited: boolean } & Omit<Part, 'year' | 'batch' | 'rowCount' | 'attachment'> & { year: string; batch: string; rowCount: string; attachment: string }
+type Declaration = State['declarations'][number]
+type Draft = { declarationId?: string; titleCode: string; eventKind: string; year: string; batch: string; attachment: string; rowCount: string; ranges: {start:string;end:string}[]; rangesEdited:boolean }
 const props = defineProps<{ file: StoredFileRow | null; refreshList: () => Promise<unknown> }>()
 const open = defineModel<boolean>('open', { default: false })
+const emit = defineEmits<{ busy: [value:boolean] }>()
 const state = ref<State | null>(null), drafts = ref<Draft[]>([])
 const enabled = ref(false), pending = ref(false), failure = ref(''), notice = ref('')
-const reason = ref('维护文件内容分段描述')
-const editing = ref<number | null>(null)
-const derived = computed(() => state.value?.parts.filter(p => p.origin === 'derived' && !drafts.value.some(d => d.sourceKey === partKey(p))) ?? [])
-const locked = computed(() => pending.value || !enabled.value || !state.value)
+const editing = ref<number | null>(null), deleting = ref(false), committed = ref(false), syncing = ref(false)
+let snapshot: Draft | null = null
+const active = computed(() => editing.value !== null || pending.value || committed.value || syncing.value)
+watch(active, value => emit('busy', value))
+const locked = computed(() => pending.value || committed.value || syncing.value || !enabled.value || !state.value)
 type Submission = ReturnType<typeof preflightParse310> & { parts: object[]; parseState: string; idempotencyKey: string; reason: string }
 let attempt: { fingerprint: string; body: Submission } | null = null
 const url = () => `/api/files/${props.file!.id}/segments`
-function toDraft(p: Part): Draft {
-  const declaration = state.value?.declarations?.find(d => partKey(d.part) === partKey(p))
-  return { ...p, ranges: (declaration?.pageRanges ?? []).map(r => ({ start: String(r.start), end: String(r.end) })), rangesEdited: false, ...(declaration ? { declarationId: declaration.declarationId } : {}), year: p.year === null ? '' : String(p.year), batch: p.batch === null ? '' : String(p.batch), attachment: p.attachment ?? '', rowCount: String(p.rowCount) }
+function toDraft(d: Declaration): Draft {
+  const p = d.part
+  return { declarationId: d.declarationId, titleCode:p.titleCode, eventKind:p.eventKind, year:p.year === null ? '' : String(p.year), batch:p.batch === null ? '' : String(p.batch), attachment:p.attachment ?? '', rowCount:String(p.rowCount), ranges:(d.pageRanges ?? []).map(r => ({start:String(r.start),end:String(r.end)})), rangesEdited:false }
+}
+function accept(result: {state:State;writeEnabled:boolean}) {
+  state.value = result.state; enabled.value = result.writeEnabled
+  drafts.value = [...result.state.declarations].sort((a,b) => a.displaySequence-b.displaySequence || a.declarationId.localeCompare(b.declarationId)).map(toDraft)
+  editing.value = null; deleting.value = false; snapshot = null; attempt = null; committed.value = false
 }
 async function load() {
-  pending.value = true; failure.value = ''; notice.value = ''
-  try {
-    const result = await $fetch<{ state: State; writeEnabled: boolean }>(url())
-    state.value = result.state; enabled.value = result.writeEnabled
-    drafts.value = result.state.parts.filter(p => p.origin !== 'derived').map(toDraft)
-    attempt = null
-  } catch (error) { failure.value = `读取失败，草稿保留。${describeFetchError(error, error instanceof Error ? error.message : '操作失败')}` }
+  pending.value = true; failure.value = ''
+  try { accept(await $fetch<{state:State;writeEnabled:boolean}>(url())) }
+  catch(error) { failure.value = `读取失败，当前内容保留。${describeFetchError(error, '读取失败')}` }
   finally { pending.value = false }
 }
-watch(open, value => { if (value) { state.value = null; enabled.value = false; drafts.value = []; attempt = null; void load() } }, { immediate: true })
-function add(source?: Part) {
-  if (source) {
-    const key = partKey(source)
-    const existing = drafts.value.findIndex(d => d.sourceKey === key)
-    if (existing >= 0) { editing.value = existing; return }
-    drafts.value.push({ ...toDraft(source), sourceKey: key, origin: 'agent', hasConflict: false })
-    editing.value = drafts.value.length - 1
-    return
-  }
-  drafts.value.push({ ranges: [], rangesEdited: false, titleCode: 'specialized_sme', eventKind: 'award', year: '', batch: '', attachment: '', rowCount: '0', origin: 'agent', hasConflict: false })
-  editing.value = drafts.value.length - 1
+watch(open, value => { if(value && !state.value) void load() }, {immediate:true})
+function begin(i:number, remove=false) {
+  if(active.value || locked.value) return
+  editing.value=i; deleting.value=remove; snapshot=JSON.parse(JSON.stringify(drafts.value[i])); failure.value=''; notice.value=''
 }
-function integer(text: string, name: string, min: number, max = Number.MAX_SAFE_INTEGER): number | null {
-  if (!text.trim()) return null
-  const value = Number(text)
-  if (!/^\d+$/.test(text.trim()) || !Number.isSafeInteger(value) || value < min || value > max) throw Error(`${name}必须为 ${min}–${max} 的整数；未知请留空`)
+function add() {
+  if(active.value || locked.value) return
+  drafts.value.push({titleCode:'',eventKind:'',year:'',batch:'',attachment:'',rowCount:'0',ranges:[],rangesEdited:false})
+  editing.value=drafts.value.length-1; snapshot=null; failure.value=''; notice.value=''
+}
+function cancel() {
+  if(pending.value || committed.value) return
+  if(editing.value !== null) {
+    if(snapshot) drafts.value[editing.value]=snapshot
+    else drafts.value.splice(editing.value,1)
+  }
+  editing.value=null; deleting.value=false; snapshot=null; attempt=null; failure.value=''
+}
+function integer(text:string,name:string,min:number,max=Number.MAX_SAFE_INTEGER):number|null {
+  if(!text.trim()) return null
+  const value=Number(text)
+  if(!/^\d+$/.test(text.trim()) || !Number.isSafeInteger(value) || value<min || value>max) throw Error(`${name}必须为 ${min}–${max} 的整数；未知请留空`)
   return value
 }
-async function save() {
-  if (locked.value || !state.value) return
-  pending.value = true; failure.value = ''; notice.value = ''
+const draftFingerprint = computed(() => JSON.stringify(drafts.value))
+watch(draftFingerprint, () => { if(!pending.value && !committed.value) { failure.value=''; attempt=null } })
+async function readCommitted() {
+  pending.value=true; failure.value=''
   try {
-    if (drafts.value.length > 1000) throw Error('最多登记1000段，不会截断保存')
-    const parts = drafts.value.map(p => {
-      const { origin: _origin, hasConflict: _conflict, sourceKey: _sourceKey, ranges, rangesEdited, ...fields } = p
-      const pageRanges = ranges.map(r => {
-        const start = integer(r.start, '起页', 1), end = integer(r.end, '止页', 1)
-        if (start === null || end === null || end < start) throw Error('请填写完整起止页，止页不得小于起页')
-        return { start, end }
-      })
-      return { ...fields, ...(rangesEdited ? { pageRanges } : {}), year: integer(p.year, '内容年份', 1900, 2100), batch: integer(p.batch, '批次', 1), rowCount: integer(p.rowCount, '行数', 0) ?? 0, attachment: p.attachment || null }
-    })
-    const fingerprint = JSON.stringify({ parts, reason: reason.value, version: state.value.version })
-    if (!attempt || attempt.fingerprint !== fingerprint) {
-      const plan = await $fetch<ReturnType<typeof preflightParse310> & { parseState: string }>(url() + '/preflight', { method: 'POST', body: { expectedVersion: state.value.version, ...(parts.some(p => p.pageRanges?.length) ? { verifyPhysicalPages: true } : {}) } })
-      attempt = { fingerprint, body: { ...plan, parts, reason: reason.value, idempotencyKey: crypto.randomUUID() } }
-    }
-    const origins = new Map(parts.map((part, i) => [partKey(part), drafts.value[i]?.sourceKey]))
-    await $fetch(url() + '/commit', { method: 'POST', body: attempt.body })
-    // Always read current state; replayed receipts can describe an older state.
-    const current = await $fetch<{ state: State; writeEnabled: boolean }>(url())
-    state.value = current.state; enabled.value = current.writeEnabled
-    drafts.value = current.state.parts.filter(p => p.origin !== 'derived').map(p => ({ ...toDraft(p), sourceKey: origins.get(partKey(p)) }))
-    attempt = null
-    await props.refreshList()
-    editing.value = null
-    notice.value = '已保存并读回当前分段，列表已刷新。'
-  } catch (error) { failure.value = `${describeFetchError(error, error instanceof Error ? error.message : '操作失败')}。草稿保留；版本冲突请重新加载。结果不确定可原稿重试，修改草稿将使用新的提交。` }
-  finally { pending.value = false }
+    const result=await $fetch<{state:State;writeEnabled:boolean}>(url())
+    accept(result)
+    notice.value='已保存并读回当前分段。'
+    try { await props.refreshList() } catch { notice.value+='列表刷新失败，请重试刷新列表。' }
+  } catch(error) { failure.value=`提交已确认，读取最新内容失败。${describeFetchError(error, '读取失败')}` }
+  finally { pending.value=false }
 }
+async function save() {
+  if(locked.value || editing.value === null || !state.value) return false
+  pending.value=true; failure.value=''; notice.value=''
+  try {
+    const target=drafts.value[editing.value]!
+    const parts = state.value.declarations.map(d => ({...d.part,declarationId:d.declarationId})) as object[]
+    const index=target.declarationId ? state.value.declarations.findIndex(d=>d.declarationId===target.declarationId) : -1
+    if(target.declarationId && index<0) throw Error('声明身份不存在，草稿保留，请查看最新内容')
+    if(deleting.value) parts.splice(index,1)
+    else {
+      if(!target.titleCode || !target.eventKind) throw Error('请选择称号和事件')
+      const pageRanges=target.ranges.map(r=> {
+        const start=integer(r.start,'起页',1),end=integer(r.end,'止页',1)
+        if(start===null || end===null || end<start) throw Error('请填写完整起止页，止页不得小于起页')
+        return {start,end}
+      })
+      const part={ titleCode:target.titleCode,eventKind:target.eventKind,year:integer(target.year,'内容年份',1900,2100),batch:integer(target.batch,'批次',1),attachment:target.attachment || null,rowCount:integer(target.rowCount,'行数',0) ?? 0,...(target.declarationId ? {declarationId:target.declarationId}:{}),...(target.rangesEdited ? {pageRanges}: {}) }
+      if(index<0) parts.push(part); else parts[index]=part
+    }
+    const fingerprint=JSON.stringify({parts,version:state.value.version})
+    if(!attempt || attempt.fingerprint!==fingerprint) {
+      const plan=await $fetch<ReturnType<typeof preflightParse310> & {parseState:string}>(url()+'/preflight',{method:'POST',body:{expectedVersion:state.value.version,...(!deleting.value && target.rangesEdited && target.ranges.length ? {verifyPhysicalPages:true}:{})}})
+      attempt={fingerprint,body:{...plan,parts,reason:'维护文件内容分段描述',idempotencyKey:crypto.randomUUID()}}
+    }
+    await $fetch(url()+'/commit',{method:'POST',body:attempt.body})
+    committed.value=true
+    await readCommitted()
+    return !committed.value
+  } catch(error) { failure.value=`${describeFetchError(error,error instanceof Error ? error.message:'操作失败')}。当前草稿保留；结果不确定可原稿重试，修改草稿将作为新提交。` ; return false }
+  finally { pending.value=false }
+}
+const leaveOpen=ref(false)
+let leaveRequest: Promise<boolean> | null = null
+let resolveLeave: ((value:boolean)=>void) | null=null
+function requestLeave():Promise<boolean> {
+  if(!active.value) return Promise.resolve(true)
+  if(leaveRequest) return leaveRequest
+  leaveOpen.value=true
+  leaveRequest=new Promise(resolve=>{resolveLeave=resolve})
+  return leaveRequest
+}
+async function leave(action:'save'|'discard'|'stay') {
+  let allowed=false
+  if(action==='save') allowed=committed.value ? (await readCommitted(),!committed.value) : await save()
+  if(action==='discard' && !pending.value && !committed.value && !syncing.value) { cancel(); allowed=true }
+  leaveOpen.value=false; resolveLeave?.(allowed); resolveLeave=null; leaveRequest=null
+}
+function beforeUnload(event:BeforeUnloadEvent) { if(active.value) { event.preventDefault(); event.returnValue='' } }
+onMounted(()=>window.addEventListener('beforeunload',beforeUnload))
+onBeforeUnmount(()=>window.removeEventListener('beforeunload',beforeUnload))
+defineExpose({requestLeave})
 </script>
-
 <template>
-  <section v-if="open" class="min-w-0 space-y-4" aria-label="内容分段管理">
+  <section v-if="open" class="min-w-0 space-y-4 text-base" aria-label="文件内容分段">
     <header class="flex flex-wrap items-center justify-between gap-2">
-      <div><h3 class="font-medium">内容分段</h3><p class="text-muted-foreground text-xs">每段对应一组认定或复核年份与批次。</p></div>
-      <Button variant="outline" size="sm" :disabled="locked || drafts.length >= 1000" @click="add()"><Plus class="mr-1 size-4" />新增分段</Button>
+      <div><h3 class="font-medium">文件内容分段 · {{ state?.registeredSummary.count ?? '…' }} 段已登记</h3><p class="text-muted-foreground text-sm">文件发布：{{ file?.year ?? '年份未知' }} / {{ file?.batch ?? '批次未知' }}。下方登记名单内容。</p></div>
+      <Button variant="outline" :disabled="locked || active || drafts.length >= 1000" @click="add">新增分段</Button>
     </header>
-    <p v-if="!state && pending" role="status" class="text-muted-foreground text-sm">正在加载分段…</p>
-    <p v-if="!enabled && state" role="status" class="text-sm">当前实例未开放修改，请联系管理员开启浏览器写入。</p>
-    <p v-if="failure" role="alert" class="text-destructive break-words text-sm">{{ failure }} <Button variant="link" size="sm" :disabled="pending" @click="load">重新加载（替换草稿）</Button></p>
-    <p v-if="notice" role="status" class="text-sm">{{ notice }}</p>
-    <div v-for="(part, i) in drafts" :key="i" class="min-w-0 rounded-md border bg-background">
+    <p v-if="!state && pending" role="status">正在加载分段…</p>
+    <p v-if="!enabled && state" role="status">当前实例只读，未开放修改。</p>
+    <p v-if="active && !pending && !committed" role="status" class="text-muted-foreground text-sm">先保存或取消当前操作，再修改其他分段或同步。</p>
+    <div v-if="failure" role="alert" class="text-destructive break-words text-sm">{{ failure }}
+      <Button v-if="committed" variant="outline" :disabled="pending" @click="readCommitted">重试读取</Button>
+      <Button v-else-if="!state" variant="outline" :disabled="pending" @click="load">重试读取</Button>
+    </div>
+    <p v-if="notice" role="status">{{ notice }}</p>
+    <div v-for="(part,i) in drafts" :key="part.declarationId ?? 'new-draft'" class="min-w-0 rounded-md border bg-background">
       <div class="flex flex-wrap items-center justify-between gap-2 p-3">
-        <div class="min-w-0 text-sm"><span class="font-medium">{{ TITLES[part.titleCode] }} · {{ EVENTS[part.eventKind] }}</span><span class="ml-2">{{ part.year || '年份未知' }} / {{ part.batch || '批次未知' }}</span><span class="text-muted-foreground ml-2">{{ part.attachment || '附件未填' }}</span></div>
-        <div class="flex shrink-0 gap-1"><Button variant="ghost" size="sm" :disabled="locked" @click="editing = editing === i ? null : i"><Pencil class="mr-1 size-3.5" />{{ editing === i ? '收起' : '修改' }}</Button><Button variant="ghost" size="icon" :disabled="locked" :aria-label="`撤回分段 ${i + 1}`" @click="drafts.splice(i, 1); editing = null"><Minus class="size-4" /></Button></div>
+        <div class="min-w-0 break-words"><p class="font-medium">{{ part.declarationId ? (EVENTS[part.eventKind] ?? '事件待选') : '新分段' }} · {{ TITLES[part.titleCode] ?? '称号待选' }}</p><p>内容年份 {{ part.year || '未知' }} · 批次 {{ part.batch || '未知' }}</p><p class="text-muted-foreground text-sm">{{ part.attachment || '附件未填' }} · {{ part.rowCount }} 行 · {{ part.ranges.map(r=>`第${r.start}–${r.end}页`).join('、') || '页码未登记' }}</p></div>
+        <div v-if="editing !== i" class="flex flex-wrap gap-2"><Button variant="outline" :disabled="locked || active" @click="begin(i)">修改</Button><Button variant="ghost" :disabled="locked || active" @click="begin(i,true)">删除分段</Button></div>
       </div>
-      <fieldset v-if="editing === i" :disabled="locked" class="grid min-w-0 gap-3 border-t p-3 sm:grid-cols-3">
-          <div class="min-w-0"><Label :for="`segment-title-${file?.id}-${i}`">称号</Label><Select v-model="part.titleCode"><SelectTrigger :id="`segment-title-${file?.id}-${i}`" class="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem v-for="t in TITLE_ORDER" :key="t" :value="t">{{ TITLES[t] }}</SelectItem></SelectContent></Select></div>
-          <div><Label :for="`segment-event-${file?.id}-${i}`">事件</Label><Select v-model="part.eventKind"><SelectTrigger :id="`segment-event-${file?.id}-${i}`" class="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem v-for="e in EVENT_ORDER" :key="e" :value="e">{{ EVENTS[e] }}</SelectItem></SelectContent></Select></div>
-          <div><Label :for="`segment-year-${file?.id}-${i}`">内容年份</Label><Input :id="`segment-year-${file?.id}-${i}`" v-model="part.year" inputmode="numeric" placeholder="未知" /></div>
+      <div v-if="editing===i && deleting" class="space-y-3 border-t p-3"><p>从文件内容分段中删除？已入库企业记录不会删除。</p><div class="flex gap-2"><Button variant="destructive" :disabled="locked" @click="save">确认删除</Button><Button variant="outline" :disabled="pending || committed" @click="cancel">取消</Button></div></div>
+      <fieldset v-if="editing === i && !deleting" :disabled="locked" class="grid min-w-0 gap-3 border-t p-3 sm:grid-cols-2">
+          <div class="min-w-0"><Label :for="`segment-title-${file?.id}-${i}`">称号</Label><Select v-model="part.titleCode"><SelectTrigger :id="`segment-title-${file?.id}-${i}`" class="w-full"><SelectValue placeholder="请选择" /></SelectTrigger><SelectContent><SelectItem v-for="t in TITLE_ORDER" :key="t" :value="t">{{ TITLES[t] }}</SelectItem></SelectContent></Select></div>
+          <div><Label :for="`segment-event-${file?.id}-${i}`">事件</Label><Select v-model="part.eventKind"><SelectTrigger :id="`segment-event-${file?.id}-${i}`" class="w-full"><SelectValue placeholder="请选择" /></SelectTrigger><SelectContent><SelectItem v-for="e in EVENT_ORDER" :key="e" :value="e">{{ EVENTS[e] }}</SelectItem></SelectContent></Select></div>
+          <div class="grid min-w-0 grid-cols-2 gap-3 sm:col-span-2"><p class="col-span-2 font-medium">名单内容年份与批次（各自可未知）</p><div><Label :for="`segment-year-${file?.id}-${i}`">内容年份</Label><Input :id="`segment-year-${file?.id}-${i}`" v-model="part.year" inputmode="numeric" placeholder="未知" /></div>
           <div><Label :for="`segment-batch-${file?.id}-${i}`">内容批次</Label><Input :id="`segment-batch-${file?.id}-${i}`" v-model="part.batch" inputmode="numeric" placeholder="未知" /></div>
-          <div><Label :for="`segment-attachment-${file?.id}-${i}`">附件</Label><Input :id="`segment-attachment-${file?.id}-${i}`" v-model="part.attachment" placeholder="未知" /></div>
+          </div><div><Label :for="`segment-attachment-${file?.id}-${i}`">附件</Label><Input :id="`segment-attachment-${file?.id}-${i}`" v-model="part.attachment" placeholder="未知" /></div>
           <div><Label :for="`segment-count-${file?.id}-${i}`">行数</Label><Input :id="`segment-count-${file?.id}-${i}`" v-model="part.rowCount" inputmode="numeric" placeholder="0 表示未知" /></div>
           <div class="min-w-0 space-y-2 sm:col-span-2">
             <p class="text-sm">物理页码范围 · {{ part.ranges.length ? '' : (part.rangesEdited ? '将显式清空' : '未登记或已清空') }}</p>
@@ -122,21 +167,19 @@ async function save() {
             </div>
             <div class="flex flex-wrap gap-2"><Button variant="outline" :disabled="part.ranges.length >= 1000" @click="part.ranges.push({ start: '', end: '' }); part.rangesEdited = true">新增页码范围</Button><Button variant="outline" @click="part.ranges = []; part.rangesEdited = true">清空页码范围</Button></div>
           </div>
-          <p v-if="part.hasConflict" role="status" class="text-sm sm:col-span-2">行数与正式出处派生值冲突，保留差异待核，不是资格结论。</p>
       </fieldset>
+
+      <div v-if="editing===i && !deleting" class="flex flex-wrap gap-2 border-t p-3"><Button :disabled="locked" @click="save">{{ pending ? '正在保存…' : failure && attempt ? '重试保存' : part.declarationId ? '保存修改' : '保存分段' }}</Button><Button variant="outline" :disabled="pending || committed" @click="cancel">{{ part.declarationId ? '取消' : '取消新增' }}</Button></div>
     </div>
-    <div v-if="derived.length" class="space-y-2">
-      <p class="text-muted-foreground text-xs">已入库记录中的分段</p>
-      <div v-for="(part, i) in derived" :key="i" class="flex flex-wrap items-center justify-between gap-2 rounded-md border border-dashed p-3 text-sm">
-        <div class="min-w-0"><span class="font-medium">{{ TITLES[part.titleCode] }} · {{ EVENTS[part.eventKind] }}</span><span class="ml-2">{{ part.year ?? '年份未知' }} / {{ part.batch ?? '批次未知' }}</span><span class="text-muted-foreground ml-2">{{ part.attachment ?? '附件未知' }} · {{ part.rowCount }} 行</span></div>
-        <Button variant="outline" size="sm" :disabled="locked" @click="add(part)">修改</Button>
-      </div>
-    </div>
-    <p v-if="state && !drafts.length && !derived.length" class="text-muted-foreground py-4 text-center text-sm">还没有分段，点击「新增分段」填写年份和批次。</p>
-    <details class="text-muted-foreground text-xs"><summary class="cursor-pointer">页码与修改说明</summary><p class="mt-2">页码使用文件预览中的物理页码。修改描述不会自动修改已入库企业；保存后可用「同步到企业」补齐未知年份、批次，已有不同值须另行核实。</p></details>
-    <footer v-if="state && enabled" class="flex flex-wrap items-center justify-between gap-2 border-t pt-3">
-      <p class="text-muted-foreground text-xs">同一文件可有多个年份、多个批次；按分段逐条登记。</p>
-      <div class="flex gap-2"><Button variant="outline" :disabled="pending" @click="load">取消修改</Button><Button :disabled="locked" @click="save">{{ pending ? '正在保存…' : '保存分段' }}</Button></div>
-    </footer>
+    <p v-if="state && !drafts.length" class="py-4 text-muted-foreground">尚未登记文件内容分段</p>
+    <DisclosurePanel v-if="state" title="入库情况统计" :description="`${state.ingestionStatistics.rowCount} 条企业记录`">
+      <p class="mb-3 text-muted-foreground">这反映企业记录的填写情况，不表示文件有几个名单段。</p>
+      <Table><TableHeader><TableRow><TableHead>企业记录内容分布</TableHead><TableHead>记录数</TableHead></TableRow></TableHeader><TableBody><TableRow v-for="(part,i) in state.ingestionStatistics.parts" :key="i"><TableCell class="whitespace-normal">{{ TITLES[part.titleCode] }} · {{ EVENTS[part.eventKind] }} · {{ part.year ?? '年份未知' }} / {{ part.batch ?? '批次未知' }}</TableCell><TableCell>{{ part.rowCount }}</TableCell></TableRow></TableBody></Table>
+    </DisclosurePanel>
+    <footer v-if="state" class="space-y-2 border-t pt-3"><p class="text-muted-foreground text-sm">保存描述不会自动修改已入库企业记录。</p><FileEventSync v-if="state.declarations.length" :file-id="file!.id" :disabled="active" @active="syncing=$event" @synced="refreshList()" /><p v-else class="text-muted-foreground">没有已保存分段可同步。</p></footer>
+    <Dialog :open="leaveOpen" @update:open="value=>{if(!value) void leave('stay')}"><DialogContent><DialogHeader><DialogTitle>当前分段操作尚未完成</DialogTitle><DialogDescription>保存后离开、放弃本次修改，或留在当前继续。提交已确认时只能重试读取。</DialogDescription></DialogHeader><DialogFooter><Button :disabled="pending || syncing" @click="leave('save')">{{ committed ? '重试读取后离开' : '保存后离开' }}</Button><Button variant="outline" :disabled="pending || committed || syncing" @click="leave('discard')">放弃修改并离开</Button><Button variant="outline" @click="leave('stay')">留在当前</Button></DialogFooter></DialogContent></Dialog>
   </section>
 </template>
+<style scoped>
+section :deep(button), section :deep(input), section :deep([role=combobox]) { min-height: 44px; }
+</style>
