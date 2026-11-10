@@ -11,6 +11,8 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import xml.etree.ElementTree as ET
+from zipfile import ZipFile
 
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font
@@ -30,9 +32,9 @@ class WorkbookLayoutCli(unittest.TestCase):
             "rowHeight": 40, "headerAlignment": {"horizontal": "center", "vertical": "center"},
             "freezePanes": "A2", "autoFilter": "A1:B3"}}}
 
-    def book(self):
+    def book(self, default_font="微软雅黑"):
         book = Workbook()
-        book._fonts[0] = Font(name="微软雅黑", size=12)
+        book._fonts[0] = Font(name=default_font, size=12)
         sheet = book.active
         sheet.title = "名单"
         sheet.append(["企业名称", "统一社会信用代码"])
@@ -50,7 +52,8 @@ class WorkbookLayoutCli(unittest.TestCase):
         return book
 
     def run_cli(self, book, contract=None, extra=()):
-        book.save(self.path)
+        if book is not None:
+            book.save(self.path)
         spec = self.root/"contract.json"
         spec.write_text(json.dumps(self.contract if contract is None else contract), encoding="utf-8")
         before = hashlib.sha256(self.path.read_bytes()).hexdigest()
@@ -67,8 +70,7 @@ class WorkbookLayoutCli(unittest.TestCase):
         self.assertEqual((code, report["status"], report["failureCount"]), (0, "pass", 0))
 
     def test_default_font_mismatch_is_caught_despite_matching_filled_cells(self):
-        book = self.book()
-        book._fonts[0] = Font(name="Calibri", size=11)
+        book = self.book("Calibri")
         code, report = self.run_cli(book)
         self.assertEqual(code, 1)
         self.assertTrue(any(f["target"] == "workbook:default" and f["rule"] == "font.name" for f in report["findings"]))
@@ -141,6 +143,102 @@ class WorkbookLayoutCli(unittest.TestCase):
     def test_unwritable_output_returns_structured_error(self):
         code, report = self.run_cli(self.book(), extra=("--output", str(self.root/"missing"/"result.json")))
         self.assertEqual((code, report["status"]), (2, "error"))
+        self.assertIn("checks", report)
+        self.assertIn("outputError", report)
+
+    def test_failure_and_missing_coverage_exit_two_with_separate_findings(self):
+        book = self.book()
+        book.active["A1"] = "不匹配表头"
+        book.create_sheet("附表")
+        self.contract["sheets"]["附表"] = {"range": "A1:Z100", "rowHeight": 40}
+        code, report = self.run_cli(book, extra=("--max-cells", "100"))
+        self.assertEqual((code, report["status"], report["uncoveredCount"]), (2, "not_covered", 1))
+        self.assertEqual(report["failureCount"], len(report["findings"]))
+        self.assertEqual(report["coverageFindings"][0]["rule"], "coverage")
+        self.assertTrue(all(f["rule"] != "coverage" for f in report["findings"]))
+
+    def test_width_only_column_does_not_claim_explicit_font_override(self):
+        book = self.book("Calibri")
+        book.active.column_dimensions["A"].width = 20
+        code, report = self.run_cli(book)
+        self.assertEqual(code, 1)
+        self.assertEqual({f["target"] for f in report["findings"]}, {"workbook:default"})
+
+    def test_explicit_theme_roles_allow_different_latin_and_chinese_fonts(self):
+        from openpyxl.writer.theme import theme_xml
+        book = self.book()
+        ns = {"a": "http://schemas.openxmlformats.org/drawingml/2006/main"}
+        root = ET.fromstring(theme_xml)
+        minor = root.find(".//a:minorFont", ns)
+        minor.find("a:latin", ns).set("typeface", "Calibri")
+        minor.find("a:ea", ns).set("typeface", "微软雅黑")
+        minor.find("a:cs", ns).set("typeface", "Times New Roman")
+        minor.find("a:font[@script='Hans']", ns).set("typeface", "微软雅黑")
+        book.loaded_theme = ET.tostring(root)
+        book.active["A3"].font = Font(name="Calibri", size=12, scheme="minor")
+        self.contract["sheets"]["名单"]["font"] = {"size": 12, "theme": {"latin": "Calibri", "ea": "微软雅黑", "Hans": "微软雅黑"}}
+        code, report = self.run_cli(book)
+        self.assertEqual((code, report["status"]), (0, "pass"))
+
+    def test_theme_relationship_can_name_another_part(self):
+        book = self.book()
+        book.active["A3"].font = Font(name="微软雅黑", size=12, scheme="minor")
+        self.contract["sheets"]["名单"]["font"] = {"size": 12, "theme": {"latin": "Calibri"}}
+        book.save(self.path)
+        with ZipFile(self.path) as source:
+            entries = [(info.filename, source.read(info.filename)) for info in source.infolist()]
+        with ZipFile(self.path, "w") as target:
+            for name, data in entries:
+                if name == "xl/theme/theme1.xml":
+                    name = "xl/theme/theme2.xml"
+                if name == "xl/_rels/workbook.xml.rels":
+                    data = data.replace(b"theme/theme1.xml", b"theme/theme2.xml")
+                target.writestr(name, data)
+        code, report = self.run_cli(None)
+        self.assertEqual((code, report["status"]), (0, "pass"))
+
+    def test_alignment_typo_is_contract_error(self):
+        self.contract["sheets"]["名单"]["headerAlignment"] = {"horizontal": "Centre"}
+        code, report = self.run_cli(self.book())
+        self.assertEqual((code, report["status"]), (2, "error"))
+
+    def test_extra_sheet_policy_and_null_controls(self):
+        book = self.book()
+        book.create_sheet("额外表")
+        code, report = self.run_cli(book)
+        self.assertEqual(code, 1)
+        self.assertIn("sheet.names", {f["rule"] for f in report["findings"]})
+        del self.contract["allowExtraSheets"]
+        code, report = self.run_cli(book)
+        self.assertEqual(code, 0)
+        self.contract["sheets"]["名单"].update(freezePanes=None, autoFilter=None)
+        code, report = self.run_cli(book)
+        self.assertEqual(code, 1)
+        self.assertTrue({"freeze.split", "filter.range"} <= {f["rule"] for f in report["findings"]})
+
+    def test_detail_limit_keeps_full_count_and_exact_cell_budget_passes(self):
+        book = self.book()
+        book.active["A1"] = "错表头"
+        book.active.row_dimensions[2].height = 24
+        code, report = self.run_cli(book, extra=("--max-details", "1", "--max-cells", "6"))
+        self.assertEqual((code, report["failureCount"], report["omittedFindings"]), (1, 2, 1))
+        code, report = self.run_cli(self.book(), extra=("--max-cells", "6"))
+        self.assertEqual(code, 0)
+
+    def test_output_receipt_matches_stdout_and_reported_input_hash(self):
+        target = self.root/"receipt.json"
+        code, report = self.run_cli(self.book(), extra=("--output", str(target)))
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(target.read_text()), report)
+        expected = hashlib.sha256(self.path.read_bytes()).hexdigest()
+        self.assertEqual((report["sha256Before"], report["sha256After"]), (expected, expected))
+
+    def test_partial_font_contract_does_not_check_undeclared_field(self):
+        for font in ({"size": 12}, {"name": "微软雅黑"}):
+            with self.subTest(font=font):
+                self.contract["sheets"]["名单"]["font"] = font
+                code, report = self.run_cli(self.book())
+                self.assertEqual(code, 0)
 
 
 if __name__ == "__main__":

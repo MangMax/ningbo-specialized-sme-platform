@@ -8,6 +8,7 @@ import argparse
 import hashlib
 import json
 import math
+import posixpath
 from pathlib import Path
 import sys
 import xml.etree.ElementTree as ET
@@ -70,11 +71,15 @@ def validate_contract(contract):
             raise ValueError(f"{name}: invalid dataRows")
         if "font" in spec:
             font = spec["font"]
-            reject_unknown(font, {"name", "size"}, name+".font")
+            reject_unknown(font, {"name", "size", "theme"}, name+".font")
             if not font or "name" in font and (not isinstance(font["name"], str) or not font["name"]):
                 raise ValueError("font name must be nonempty")
             if "size" in font and not positive(font["size"]):
                 raise ValueError("font size must be positive")
+            if "theme" in font:
+                reject_unknown(font["theme"], {"latin", "ea", "cs", "Hans"}, name+".font.theme")
+                if not font["theme"] or not all(isinstance(v, str) and v for v in font["theme"].values()):
+                    raise ValueError("font.theme must contain nonempty font role names")
         if "rowHeight" in spec and not positive(spec["rowHeight"]):
             raise ValueError("rowHeight must be positive")
         if "headerAlignment" in spec:
@@ -82,6 +87,10 @@ def validate_contract(contract):
             reject_unknown(align, {"horizontal", "vertical"}, name+".headerAlignment")
             if not align or not all(isinstance(v, str) and v for v in align.values()):
                 raise ValueError("headerAlignment must specify named alignment values")
+            allowed = {"horizontal": {"general", "left", "center", "right", "fill", "justify", "centerContinuous", "distributed"},
+                       "vertical": {"top", "center", "bottom", "justify", "distributed"}}
+            if any(v not in allowed[k] for k, v in align.items()):
+                raise ValueError("headerAlignment contains an unsupported alignment value")
         for key in ("freezePanes", "autoFilter"):
             if key in spec and spec[key] is not None:
                 if key == "freezePanes":
@@ -98,10 +107,14 @@ def font_metadata(path):
         fonts = styles.find("s:fonts", NS)
         xfs = styles.find("s:cellXfs", NS)
         default = fonts[int(xfs[0].get("fontId", "0"))]
-        if "xl/theme/theme1.xml" in archive.namelist():
-            theme = ET.fromstring(archive.read("xl/theme/theme1.xml"))
-        else:
-            theme = None
+        theme = None
+        relationships = ET.fromstring(archive.read("xl/_rels/workbook.xml.rels"))
+        for relationship in relationships:
+            if relationship.get("Type", "").endswith("/theme") and relationship.get("TargetMode") != "External":
+                target = relationship.get("Target", "")
+                member = target.lstrip("/") if target.startswith("/") else posixpath.normpath(posixpath.join("xl", target))
+                theme = ET.fromstring(archive.read(member))
+                break
     name = default.find("s:name", NS)
     size = default.find("s:sz", NS)
     scheme = default.find("s:scheme", NS)
@@ -133,7 +146,7 @@ def check(path, contract, max_cells, max_details):
     before = digest(path)
     workbook = load_workbook(path, data_only=False, read_only=False, keep_links=True)
     default, theme = font_metadata(path)
-    findings, checks, missing, omitted = [], 0, 0, 0
+    findings, coverage_findings, checks, omitted = [], [], 0, 0
 
     def compare(sheet, target, rule, actual, expected):
         nonlocal checks, omitted
@@ -150,12 +163,16 @@ def check(path, contract, max_cells, max_details):
         for field in ("name", "size"):
             if field in expected:
                 compare(name, target, "font."+field, actual.get(field), expected[field])
-        if "name" in expected and actual.get("scheme"):
+        if ("name" in expected or "theme" in expected) and actual.get("scheme"):
             resolved = theme_names(theme, actual["scheme"])
             if not resolved:
-                compare(name, target, "font.theme", None, expected["name"])
-            for role, family in resolved.items():
-                compare(name, target, "font.theme."+role, family, expected["name"])
+                compare(name, target, "font.theme", None, expected.get("theme", expected.get("name")))
+            if "theme" in expected:
+                for role, family in expected["theme"].items():
+                    compare(name, target, "font.theme."+role, resolved.get(role), family)
+            else:
+                for role, family in resolved.items():
+                    compare(name, target, "font.theme."+role, family, expected["name"])
 
     try:
         if not contract.get("allowExtraSheets", True):
@@ -168,12 +185,8 @@ def check(path, contract, max_cells, max_details):
             left, top, right, bottom = rectangle(spec["range"])
             count = (right-left+1)*(bottom-top+1)
             if count > max_cells:
-                missing += 1
-                if len(findings) < max_details:
-                    findings.append({"sheet": name, "target": spec["range"], "rule": "coverage",
-                                     "actual": "not_covered", "expected": f"at most {max_cells} cells; requested {count}"})
-                else:
-                    omitted += 1
+                coverage_findings.append({"sheet": name, "target": spec["range"], "rule": "coverage",
+                                          "actual": "not_covered", "expected": f"at most {max_cells} cells; requested {count}"})
                 continue
             if "headers" in spec:
                 compare(name, f"row:{top}", "headers", [sheet.cell(top, c).value for c in range(left, right+1)], spec["headers"])
@@ -194,7 +207,7 @@ def check(path, contract, max_cells, max_details):
             if "font" in spec:
                 compare_font(name, "workbook:default", default, spec["font"])
                 for col, dimension in sheet.column_dimensions.items():
-                    if dimension.min <= right and dimension.max >= left:
+                    if dimension.has_style and dimension.min <= right and dimension.max >= left:
                         font = dimension.font
                         compare_font(name, "column:"+col, {"name": font.name, "size": font.sz, "scheme": font.scheme}, spec["font"])
                 for r, dimension in sheet.row_dimensions.items():
@@ -217,11 +230,11 @@ def check(path, contract, max_cells, max_details):
         workbook.close()
     after = digest(path)
     compare(None, "workbook", "input.sha256", after, before)
-    failures = len(findings)+omitted-missing
-    status = "fail" if failures else "not_covered" if missing else "pass"
+    failures = len(findings)+omitted
+    status = "not_covered" if coverage_findings else "fail" if failures else "pass"
     return {"status": status, "sha256Before": before, "sha256After": after,
-            "checks": checks, "failureCount": failures, "uncoveredCount": missing,
-            "findings": findings, "omittedFindings": omitted,
+            "checks": checks, "failureCount": failures, "uncoveredCount": len(coverage_findings),
+            "findings": findings, "coverageFindings": coverage_findings, "omittedFindings": omitted,
             "coverage": "declared rectangles and their defaults; no rendering or business qualification validation"}
 
 
@@ -249,8 +262,8 @@ def main():
         try:
             args.output.write_text(encoded, encoding="utf-8")
         except OSError as error:
-            report = {"status": "error", "error": str(error)}
-            encoded = json.dumps(report, ensure_ascii=False, indent=2)+"\n"
+            report = {**report, "status": "error", "outputError": str(error)}
+            encoded = json.dumps(report, ensure_ascii=False, indent=2, default=str)+"\n"
     sys.stdout.write(encoded)
     return {"pass": 0, "fail": 1, "not_covered": 2, "error": 2}[report["status"]]
 
