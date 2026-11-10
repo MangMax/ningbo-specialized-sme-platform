@@ -105,7 +105,23 @@ export async function writeCurrentWorkbook(db: Database.Database, title: Current
     const assessmentReader = createCurrentQualificationAssessmentReader(db, receiptRuntime, { recognizedFactSource })
     const bindings=currentCandidateBindings(title)
     const currentCandidateSql=currentCandidateReadSqlFor(db, recognizedFactSource)
-    const total = (db.prepare(`select count(*) as n from (${currentCandidateSql})`).get(bindings) as {n:number}).n
+    // Exhaust this one ordered SELECT before full assessments open SAVEPOINTs.
+    // Five sheets can hold at most 5 * 1048575 IDs: Float64 chunks cap this
+    // narrow projection at 40MiB, without a workbook-sized array of row objects.
+    // Consume/release chunks during the canonical pass; deferred IDs keep the
+    // existing per-sheet bounds. No temporary ID file survives worker cancellation.
+    const candidateChunks: Float64Array[] = []
+    let total = 0
+    for (const { id } of db.prepare(`select id from (${currentCandidateSql}) order by id`).iterate(bindings) as Iterable<{ id: number }>) {
+      if (total >= 5 * 1048575) throw new CurrentWorkbookLimitError('Excel 五个状态表超过总行数上限，未发布文件；请拆分数据范围')
+      const offset = total % 4096
+      if (offset === 0) candidateChunks.push(new Float64Array(4096))
+      candidateChunks[candidateChunks.length - 1]![offset] = id
+      if (++total % 100 === 0) {
+        await new Promise<void>(resolve => setImmediate(resolve))
+        await drain()
+      }
+    }
     const snapshotStartedAt = new Date().toISOString()
     workbookStarted = true
     appLog({ source: 'export', operation: 'export.current.workbook', outcome: 'started' }, logContext)
@@ -123,15 +139,15 @@ export async function writeCurrentWorkbook(db: Database.Database, title: Current
       sheet.columns = widths.map(width => ({width}))
       styledRow(sheet,CURRENT_HEADERS,true)
       let scanned = 0, written = 0
-      // Exhaust each bounded SELECT before full T2 opens its nested SAVEPOINT.
+      // Reuse only stable ordered IDs; full evidence is still read in this transaction.
       function* candidateIds() {
-        let after = -1
-        const statement = db.prepare(`select id from (${currentCandidateSql}) where id > @after order by id limit 100`)
-        while (true) {
-          const batch = statement.all({...bindings,after}) as {id:number}[]
-          if (!batch.length) return
-          for (const item of batch) yield item.id
-          after = batch[batch.length-1]!.id
+        let remaining = total
+        while (candidateChunks.length) {
+          const chunk = candidateChunks.shift()!
+          for (const id of chunk) {
+            if (remaining-- === 0) return
+            yield id
+          }
         }
       }
       const ids = group === 'effective' ? candidateIds() : deferred[group]
