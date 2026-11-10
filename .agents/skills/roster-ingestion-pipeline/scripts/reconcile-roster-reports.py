@@ -9,10 +9,13 @@ from collections import defaultdict
 import csv
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
 import sys
+import tempfile
 import unicodedata
+import uuid
 
 from openpyxl import load_workbook
 
@@ -28,7 +31,9 @@ def strict_object(value, fields, label):
 
 
 def input_spec(value, label):
-    strict_object(value, {"sheet", "headerRow", "identityColumn", "nameColumn", "noteColumns", "metadata"}, label)
+    strict_object(value, {"sheet", "headerRow", "identityColumn", "nameColumn", "noteColumns", "metadata", "allowEmpty"}, label)
+    if "allowEmpty" in value and type(value["allowEmpty"]) is not bool:
+        raise ValueError(label+": allowEmpty must be boolean")
     if not isinstance(value.get("identityColumn"), str) or not value["identityColumn"]:
         raise ValueError(label+": identityColumn is required")
     if value.get("nameColumn") is not None and (not isinstance(value["nameColumn"], str) or not value["nameColumn"]):
@@ -115,9 +120,9 @@ def identity(value, kind):
         normalized = unicodedata.normalize("NFKC", value).upper()
         normalized = re.sub(r"[\s\u200b-\u200d\ufeff]", "", normalized)
         return normalized if re.fullmatch(r"[0-9A-Z]{18}", normalized) else None
-    if isinstance(value, str) and value.strip():
+    if isinstance(value, str) and value.strip() and not value.strip().startswith("="):
         return value.strip()
-    if type(value) is int and value > 0:
+    if type(value) is int:
         return str(value)
     return None
 
@@ -140,6 +145,7 @@ def reconcile(before, after, contract, reasons):
         if not all(isinstance(v, str) for v in value.values()):
             raise ValueError("reason claims must be strings")
     source_rows = {"before": records(before, contract["before"]), "after": records(after, contract["after"])}
+    empty_sides = [side for side, rows in source_rows.items() if not rows and not contract[side].get("allowEmpty", False)]
     groups = {side: defaultdict(list) for side in source_rows}
     invalid = []
     for side, rows in source_rows.items():
@@ -163,11 +169,13 @@ def reconcile(before, after, contract, reasons):
         claim = reasons.get(key, {})
         if claim:
             used_reasons.add(key)
-        changed = change != "retained" or left["name"] != right["name"]
+        normalized_name = lambda row: str(row["name"]).strip() if row and row["name"] is not None else ""
+        name_changed = bool(left and right and normalized_name(left) != normalized_name(right))
+        changed = change != "retained" or name_changed
         explained = bool(claim.get("reason", "").strip())
         if changed and not explained:
             unexplained.append(key)
-        return {"identity": key, "change": change, "nameChanged": bool(left and right and left["name"] != right["name"]),
+        return {"identity": key, "change": change, "nameChanged": name_changed,
                 "before": left, "after": right, "explanationStatus": "provided_not_verified" if explained else "unexplained" if changed else "not_required",
                 "claims": claim, "investigation": claim.get("investigation", "unknown"),
                 "systemCorrection": claim.get("systemCorrection", "unknown"), "externalAction": claim.get("externalAction", "unknown")}
@@ -178,19 +186,25 @@ def reconcile(before, after, contract, reasons):
     metadata = {side: contract[side]["metadata"] for side in source_rows}
     context_changes = {k: {side: metadata[side][k] for side in metadata}
                        for k in metadata["before"] if metadata["before"][k] != metadata["after"][k]}
-    status = "identity_issues" if invalid or blocked else "needs_explanation" if unexplained else "ok"
+    status = "identity_issues" if invalid or blocked else "empty_input" if empty_sides else "needs_explanation" if unexplained else "ok"
+    mappings = {side: {k: contract[side].get(k, 1 if k == "headerRow" else [] if k == "noteColumns" else None)
+                       for k in ("sheet", "headerRow", "identityColumn", "nameColumn", "noteColumns")}
+                for side in source_rows}
     return {"status": status, "metadata": metadata, "contextChanges": context_changes,
+            "keyKind": contract["keyKind"], "mappings": mappings,
+            "nameComparison": "strip; null and empty are equivalent; raw names retained", "emptySides": empty_sides,
             "contextNote": "different rule/time/snapshot is not itself a data repair" if context_changes else "same declared context",
             "counts": {side: {"inputRows": len(source_rows[side]), "validDistinctIdentities": len(groups[side]), "comparableIdentities": len(unique[side])} for side in source_rows},
             "changes": changes, "invalidRows": invalid, "ambiguousIdentities": blocked,
             "unexplainedChanges": unexplained, "unusedReasons": {k: v for k, v in reasons.items() if k not in used_reasons},
-            "businessDecisionsMade": False}
+            "businessDecisionsMade": False, "completionClaimsVerified": False}
 
 
 def readable(report):
     if report["status"] == "error":
         return "输入错误："+report["error"]+"\n"
     lines = ["名录成员变化对账", "工具状态："+report["status"],
+             "身份口径："+report["keyKind"]+"；列映射："+json.dumps(report["mappings"], ensure_ascii=False),
              "口径变化："+json.dumps(report["contextChanges"], ensure_ascii=False),
              "原因和办理状态均为输入主张，工具没有确认或执行业务决定。"]
     for change, label in (("added", "新增"), ("removed", "移除"), ("retained", "保留")):
@@ -203,7 +217,36 @@ def readable(report):
             reason = item["claims"].get("reason") or "未解释"
             lines.append(f"  {item['identity']} {name}：{reason}；调查={item['investigation']}；系统更正={item['systemCorrection']}；外部办理={item['externalAction']}")
     lines.append(f"无效/缺失标识行：{len(report['invalidRows'])}；歧义标识组：{len(report['ambiguousIdentities'])}")
+    for row in report["invalidRows"]:
+        lines.append(f"  无效标识：{row['side']}，行{row['row']}，原值={row['rawIdentity']!r}")
+    for item in report["ambiguousIdentities"]:
+        lines.append(f"  歧义标识：{item['identity']}；原行="+json.dumps({side: [r['row'] for r in item[side]] for side in ('before', 'after')}))
+    if report["emptySides"]:
+        lines.append("空输入未声明允许："+", ".join(report["emptySides"]))
     return "\n".join(lines)+"\n"
+
+
+def publish(outputs):
+    """Stage every new artifact before publishing; never replace old receipts."""
+    staged, created = [], []
+    try:
+        if any(target.exists() for target, _ in outputs):
+            raise ValueError("output already exists; use a new path for this run")
+        for target, text in outputs:
+            fd, temporary = tempfile.mkstemp(prefix=".roster-reconcile-", dir=target.parent)
+            staged.append((Path(temporary), target))
+            with os.fdopen(fd, "w", encoding="utf-8") as stream:
+                stream.write(text)
+        for temporary, target in staged:
+            os.link(temporary, target)  # Atomic creation without overwriting races.
+            created.append(target)
+    except Exception:
+        for target in created:
+            target.unlink(missing_ok=True)
+        raise
+    finally:
+        for temporary, _ in staged:
+            temporary.unlink(missing_ok=True)
 
 
 def main():
@@ -214,6 +257,7 @@ def main():
     parser.add_argument("--output", type=Path)
     parser.add_argument("--report", type=Path)
     args = parser.parse_args()
+    run_id, result = uuid.uuid4().hex, {}
     try:
         inputs = [args.before, args.after, args.contract]+([args.reasons] if args.reasons else [])
         outputs = [p for p in (args.output, args.report) if p]
@@ -225,18 +269,21 @@ def main():
         contract = json.loads(args.contract.read_text(encoding="utf-8"))
         reasons = json.loads(args.reasons.read_text(encoding="utf-8")) if args.reasons else {}
         result = reconcile(args.before, args.after, contract, reasons)
+        result["runId"] = run_id
         after = {str(path): sha(path) for path in inputs}
         if after != hashes:
             raise ValueError("input hashes changed during reconciliation")
         result["inputHashes"] = hashes
+        artifacts = []
         if args.output:
-            args.output.write_text(json.dumps(result, ensure_ascii=False, indent=2, default=str)+"\n", encoding="utf-8")
+            artifacts.append((args.output, json.dumps(result, ensure_ascii=False, indent=2, default=str)+"\n"))
         if args.report:
-            args.report.write_text(readable(result), encoding="utf-8")
+            artifacts.append((args.report, readable(result)))
+        publish(artifacts)
     except Exception as error:
-        result = {"status": "error", "error": str(error)}
+        result = {**result, "status": "error", "error": str(error), "runId": run_id}
     sys.stdout.write(json.dumps(result, ensure_ascii=False, default=str)+"\n")
-    return {"ok": 0, "needs_explanation": 1, "identity_issues": 2, "error": 2}[result["status"]]
+    return {"ok": 0, "needs_explanation": 1, "identity_issues": 2, "empty_input": 2, "error": 2}[result["status"]]
 
 
 if __name__ == "__main__":

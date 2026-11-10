@@ -4,6 +4,7 @@
 # ///
 import hashlib
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -72,6 +73,8 @@ class ReconciliationCli(unittest.TestCase):
         self.assertEqual(report["changes"]["added"], [])
         self.assertEqual(report["changes"]["removed"], [])
         self.assertTrue(report["changes"]["retained"][0]["nameChanged"])
+        self.assertEqual(report["changes"]["retained"][0]["explanationStatus"], "unexplained")
+        self.assertEqual(report["unexplainedChanges"], ["1"])
 
     def test_duplicate_id_blocks_both_sides_and_keeps_all_row_coordinates(self):
         code, report = self.run_cli([self.row("1"), self.row("1"), self.row("")], [self.row("1")])
@@ -81,6 +84,8 @@ class ReconciliationCli(unittest.TestCase):
         self.assertEqual(len(blocked["after"]), 1)
         self.assertEqual(len(report["invalidRows"]), 1)
         self.assertEqual(report["changes"]["added"], [])
+        self.assertEqual(report["changes"]["removed"], [])
+        self.assertEqual(report["changes"]["retained"], [])
 
     def test_explicit_claims_and_three_completion_states_remain_distinct(self):
         claims = {"2": {"reason": "人工排除，具体原因为原文说明", "source": "用户说明", "investigation": "completed", "systemCorrection": "not_requested", "externalAction": "pending", "note": "备注原文"}}
@@ -147,6 +152,89 @@ class ReconciliationCli(unittest.TestCase):
         self.assertIn("移除：0", text.read_text())
         code, report = self.invoke(extra=("--output", str(self.before)))
         self.assertEqual((code, report["status"]), (2, "error"))
+
+    def test_empty_sides_need_explicit_permission(self):
+        code, report = self.run_cli([], [])
+        self.assertEqual((code, report["status"], report["emptySides"]), (2, "empty_input", ["before", "after"]))
+        self.contract["before"]["allowEmpty"] = True
+        self.contract["after"]["allowEmpty"] = True
+        code, report = self.run_cli([], [])
+        self.assertEqual((code, report["status"]), (0, "ok"))
+        del self.contract["before"]["allowEmpty"]
+        code, report = self.run_cli([], [self.row("1")])
+        self.assertEqual((code, report["status"]), (2, "empty_input"))
+
+    def test_report_write_failure_does_not_publish_ok_receipt(self):
+        self.run_cli([self.row("1")], [self.row("1")])
+        target = self.root/"receipt.json"
+        code, report = self.invoke(extra=("--output", str(target), "--report", str(self.root/"missing"/"report.txt")))
+        self.assertEqual((code, report["status"]), (2, "error"))
+        self.assertFalse(target.exists())
+        self.assertIn("changes", report)
+        self.assertFalse(list(self.root.glob(".roster-reconcile-*")))
+
+    def test_old_receipt_is_not_overwritten_and_has_another_run_id(self):
+        self.run_cli([self.row("1")], [self.row("1")])
+        target = self.root/"receipt.json"
+        code, first = self.invoke(extra=("--output", str(target)))
+        self.assertEqual(code, 0)
+        old = target.read_bytes()
+        code, second = self.invoke(extra=("--output", str(target)))
+        self.assertEqual((code, second["status"]), (2, "error"))
+        self.assertNotEqual(first["runId"], second["runId"])
+        self.assertEqual(target.read_bytes(), old)
+
+    def test_csv_header_offset_and_xlsx_empty_name_are_equivalent(self):
+        self.before = self.root/"before.csv"
+        self.after = self.root/"after.xlsx"
+        self.before.write_bytes("\ufeff说明\r\nID,名称,备注\r\n1,,人工原文\r\n".encode("utf-8"))
+        self.contract["before"]["headerRow"] = 2
+        self.contract["after"]["sheet"] = "名单"
+        book = Workbook()
+        book.active.title = "名单"
+        book.active.append(["ID", "名称", "备注"])
+        book.active.append(["1", None, "人工原文"])
+        book.save(self.after)
+        code, report = self.invoke()
+        self.assertEqual((code, report["status"]), (0, "ok"))
+        self.assertFalse(report["changes"]["retained"][0]["nameChanged"])
+        self.assertEqual(report["changes"]["retained"][0]["before"]["row"], 3)
+        self.assertEqual(report["mappings"]["before"]["headerRow"], 2)
+
+    def test_uscc_normalization_and_effective_mapping_are_in_receipt(self):
+        self.contract["keyKind"] = "uscc"
+        canonical = "91300000000000000A"
+        self.assertEqual(len(canonical), 18)
+        fullwidth = "".join(chr(ord(c)+0xFEE0) for c in canonical.lower())
+        code, report = self.run_cli([self.row("\ufeff "+fullwidth+"\u200b")], [self.row(canonical)])
+        self.assertEqual((code, report["status"], report["keyKind"]), (0, "ok", "uscc"))
+        self.assertEqual(report["changes"]["retained"][0]["identity"], canonical)
+        self.assertEqual(report["mappings"]["after"]["identityColumn"], "ID")
+
+    def test_integer_and_text_ids_agree_including_zero_and_negative(self):
+        code, report = self.run_cli([self.row(0), self.row(-1)], [self.row("0"), self.row("-1")])
+        self.assertEqual(code, 0)
+        self.assertEqual({r["identity"] for r in report["changes"]["retained"]}, {"0", "-1"})
+
+    def test_unused_claims_are_preserved_and_invalid_claims_are_rejected(self):
+        claims = {"99": {"reason": "保留原文"}}
+        code, report = self.run_cli([self.row("1")], [self.row("1")], claims)
+        self.assertEqual(code, 0)
+        self.assertEqual(report["unusedReasons"], claims)
+        for claims in ({" 1": {"reason": "原文"}}, {"1": {"reason": 1}}, {"1": {"unsupported": "原文"}}):
+            with self.subTest(claims=claims):
+                code, report = self.run_cli([self.row("1")], [self.row("1")], claims)
+                self.assertEqual((code, report["status"]), (2, "error"))
+
+    def test_report_collisions_and_hardlinks_do_not_modify_inputs(self):
+        self.run_cli([self.row("1")], [self.row("1")])
+        link = self.root/"same-inode.json"
+        os.link(self.before, link)
+        for args in (("--report", str(link)), ("--report", str(self.after)),
+                     ("--output", str(self.root/"same.json"), "--report", str(self.root/"same.json"))):
+            with self.subTest(args=args):
+                code, report = self.invoke(extra=args)
+                self.assertEqual((code, report["status"]), (2, "error"))
 
 
 if __name__ == "__main__":
