@@ -128,3 +128,5 @@ T03a 准备 source_relation_key 列，T05 原样转移；T03b/T05 必须按契�
 ## 文档检查与执行证据
 
 本轮可执行检查限 Git diff --check、Markdown本地路径存在性、依赖图节点/环与14组覆盖静态核对、docs-only diff，以及合并最新本地integration后 clean SHA/tree。记录在仓外 `a0/DOC-CHECKS.txt`。这些不是独立审核，也不是运行验证。所有数据库、迁移、build、测试、性能、HTTP/MCP、浏览器、工作簿和生产执行均UNRUN。历史B409、705性能FAIL保留；#691/#702为接受的继承结果，本轮未重跑。
+
+#714 is the bounded schema prerequisite for T05/#713, not historical transfer acceptance. [Uncaptured indexing](t05-prerequisite.md) defines the paired not_indexed branch, unchanged indexed-writer default, six incoming FK owners and populated 0051 rollback oracle. T05b source extraction and T05c final PK/FK promotion remain separate.
