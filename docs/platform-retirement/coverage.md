@@ -59,7 +59,7 @@ T02 归档及别名 schema 可与 T01 并行，不依赖 page、observation 扩�
 
 ## A0 独立审查修正后的必验反例
 
-T03/T05必须按契约实现source_relation_key、未trim的行称号类型和值，以及**所有观察**的本源stored/source/reconciled/conflict字段，不能仅为无版本行建立观察分支。W1–W3和R1–R3同步生成/读取；H1/H3验收具体消费者。三个独立oracle为：相同relationKey但raw.id不同的冲突观察年度闭包；多称号范围下数字2与空白字符串“ 2 ”不同的归属；共享verified版本但旧stored.status不同的两个观察仅一方platform_field_conflict。T05也须覆盖raw-only无版本值。原blocked评审保留，文档修改不代表运行验收或独立复核已通过。
+T03/T05必须按契约实现source_relation_key、未trim的行称号类型和值，以及**所有观察**的本源stored/source/reconciled/conflict字段，不能仅为无版本行建立观察分支。W1–W3和R1–R3同步生成/读取；H1/H3验收具体消费者。三个独立oracle为：相同relationKey但raw.id不同的冲突观察年度闭包；多称号范围下数字2与空白字符串“ 2 ”不同的归属，以及query=1,2下true/false在SQL整数1/0入口与直接JS拒绝布尔入口的差异；共享verified版本但旧stored.status不同的两个观察仅一方platform_field_conflict。T05也须覆盖raw-only无版本值。原blocked评审保留，文档修改不代表运行验收或独立复核已通过。
 
 ## 原14组与新增消费者覆盖
 
