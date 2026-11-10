@@ -609,7 +609,7 @@ function createCurrentCandidateEvaluationReader(db: Database.Database, receiptRu
   let giant: CurrentRow | undefined
   if (inheritanceMode && title !== 'little_giant') {
     giant = readCandidate(enterpriseId, 'little_giant', year, executionTime, keys, false, true,
-      { ...assessmentOptions, assessmentVersion: INDEPENDENT_QUALIFICATION_ASSESSMENT_VERSION }).row
+      { ...assessmentOptions, assessmentVersion: INDEPENDENT_QUALIFICATION_ASSESSMENT_VERSION }, false, undefined, preparedCorrespondences).row
     if (history.length && giant.group === 'eligible' && effectiveStatus !== 'terminated' && effectiveStatus !== 'moved_out') {
       effectiveStatus = 'effective'
       const explanation = '按有效小巨人资格计入；本称号正式历史：' + history.map(e => `event:${e.id}`).join('、')
