@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { currentContentMessage } from "~~/lib/file-content-status"
+import FileDisplayNameEditor from './FileDisplayNameEditor.vue'
+import DisclosurePanel from '@/components/DisclosurePanel.vue'
 import { computed, ref, watch } from 'vue'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
@@ -25,8 +27,7 @@ import type { StoredFileRow } from '~~/server/utils/stored-files'
 /**
  * 编辑一个文件的**元数据**(票 09)。
  *
- * 只改分类(`source` / `kind` / `year` / `batch` / `title_code`):
- * **不动 `rel_path`、不动磁盘文件** —— 所以文件名那一行是**只读**展示,让人看清在改谁。
+ * 分类与显示名分别保存，不动 `rel_path` 和磁盘文件。
  *
  * 「清空」用下拉里的一项显式表达,而不是靠输入框留空 —— 空串要区分「没填」还是
  * 「就是要清掉」,显式一项不会含糊。
@@ -38,8 +39,10 @@ const props = withDefaults(
     file: StoredFileRow | null
     pending?: boolean
     failure?: string
+    namePending?: boolean
+    nameFailure?: string
   }>(),
-  { pending: false, failure: '' },
+  { pending: false, failure: '', namePending: false, nameFailure: '' },
 )
 
 export interface MetadataForm {
@@ -50,7 +53,7 @@ export interface MetadataForm {
   titleCode: string
 }
 
-const emit = defineEmits<{ save: [form: MetadataForm] }>()
+const emit = defineEmits<{ save: [form: MetadataForm]; rename: [displayName: string] }>()
 
 /** 下拉里表示「清空该字段」的哨兵值(reka-ui 的 SelectItem 不接受空串 value)。 */
 const NONE = '__none__'
@@ -102,23 +105,20 @@ const canSave = computed(
 
 <template>
   <Dialog v-model:open="open">
-    <DialogContent class="sm:max-w-lg">
+    <DialogContent class="max-h-[90svh] grid-rows-[auto_minmax(0,1fr)_auto] sm:max-w-lg">
       <DialogHeader>
-        <DialogTitle>编辑文件元数据</DialogTitle>
+        <DialogTitle>文件信息</DialogTitle>
         <DialogDescription class="break-all">
           {{ file?.filename }}
         </DialogDescription>
       </DialogHeader>
 
-      <div class="flex flex-col gap-4">
+      <div class="flex min-h-0 flex-col gap-4 overflow-y-auto">
+        <FileDisplayNameEditor :open="open" :file="file" :pending="namePending" :failure="nameFailure" @save="emit('rename', $event)" />
+        <DisclosurePanel compact title="文件来源核验信息"><div class="space-y-2">
         <p role="status" class="text-sm break-words">{{ currentContentMessage(file?.contentIdentity) }}</p>
         <p v-if="file?.parts.length" class="text-sm">已有文件段的历史出处绑定未知。{{ file?.partsBinding?.inputLineage.status === 'bound' ? '已记录解析输入引用；这不能证明历史文件段来自该输入。' : '解析输入引用未记录。' }}</p>
-        <!-- 只读:路径是磁盘事实,不由这里改。 -->
-        <div class="bg-muted/60 flex flex-col gap-1 rounded-md border px-2.5 py-2">
-          <span class="text-muted-foreground text-xs">库内路径(只读)</span>
-          <code class="font-mono text-xs break-all">{{ file?.relPath }}</code>
-        </div>
-
+        </div></DisclosurePanel>
         <div class="grid gap-x-4 gap-y-3.5 sm:grid-cols-2">
           <div class="flex flex-col gap-1.5">
             <Label for="file-source" class="text-xs">来源</Label>
@@ -151,7 +151,7 @@ const canSave = computed(
           </div>
 
           <div class="flex flex-col gap-1.5">
-            <Label for="file-year" class="text-xs">公布年份</Label>
+            <Label for="file-year" class="text-xs">文件发布年份</Label>
             <Input
               id="file-year"
               v-model="form.year"
@@ -162,12 +162,12 @@ const canSave = computed(
               :aria-invalid="yearInvalid || needsYear || undefined"
             />
             <p class="text-muted-foreground text-[13px] leading-relaxed">
-              目录给出的公布年份;留空表示未定。
+              这份文件的发布年份，不是认定或复核年份。
             </p>
           </div>
 
           <div class="flex flex-col gap-1.5">
-            <Label for="file-batch" class="text-xs">公布批次</Label>
+            <Label for="file-batch" class="text-xs">文件发布批次</Label>
             <Input
               id="file-batch"
               v-model="form.batch"
@@ -180,7 +180,7 @@ const canSave = computed(
               class="text-[13px] leading-relaxed"
               :class="needsYear ? 'text-destructive' : 'text-muted-foreground'"
             >
-              {{ needsYear ? '填了批次就要同时填年份。' : '目录给出的公布批次;没有就留空。' }}
+              {{ needsYear ? '填了批次就要同时填年份。' : '文件发布批次；内容批次请在分段中修改。' }}
             </p>
           </div>
 

@@ -1,3 +1,4 @@
+import { listRegisteredDeclarations681, registeredSummary681 } from './registered-declarations'
 import { createHash } from 'node:crypto'
 import { createReadStream } from 'node:fs'
 import { lstat, readdir, realpath, stat } from 'node:fs/promises'
@@ -70,6 +71,7 @@ export interface StoredFileRow {
    * 文件里的**段**(票 17)。按 `compareParts` 排好序;没有段时是空数组
    * (尚无引用、留待票 11 解析时写入 —— **不是**「文件没有内容」)。
    */
+  registeredSummary?: ReturnType<typeof registeredSummary681>
   parts: StoredFilePart[]
   partsBinding?: { historical: 'unknown'; inputLineage: { status: 'unknown' } | { status: 'bound'; inputRef: unknown } }
   contentIdentity?: { registered: { fileId: number; relPath: string; sha256: string; bytes: number }; status: 'unknown'; historical: 'unknown' }
@@ -377,6 +379,7 @@ function withParts(db: Db, rows: StoredFileRow[]): StoredFileRow[] {
     db,
     rows.map((r) => r.id),
   )
+  const declarations = listRegisteredDeclarations681(db, rows.map(row => row.id))
   const audits = db.select({ fileId: schema.fileParseAudit105.fileId, inputLineage: sql<string | null>`json_extract(${schema.fileParseAudit105.after}, '$.inputLineage')` }).from(schema.fileParseAudit105)
     .where(and(inArray(schema.fileParseAudit105.fileId, rows.map(row => row.id)), sql`${schema.fileParseAudit105.id} = (select max(a.id) from file_parse_audit_105 a where a.file_id = ${schema.fileParseAudit105.fileId})`)).all()
   const lineage = new Map<number, NonNullable<StoredFileRow['partsBinding']>['inputLineage']>()
@@ -386,7 +389,7 @@ function withParts(db: Db, rows: StoredFileRow[]): StoredFileRow[] {
       lineage.set(audit.fileId, input?.status === 'bound' ? input : { status: 'unknown' })
     }
   }
-  return rows.map((row) => ({ ...row, parts: byFile.get(row.id) ?? [],
+  return rows.map((row) => ({ ...row, registeredSummary: registeredSummary681(declarations.get(row.id) ?? []), parts: byFile.get(row.id) ?? [],
     contentIdentity: { registered: { fileId: row.id, relPath: row.relPath, sha256: row.sha256, bytes: row.bytes }, status: 'unknown', historical: 'unknown' },
     partsBinding: { historical: 'unknown', inputLineage: lineage.get(row.id) ?? { status: 'unknown' } },
   }))

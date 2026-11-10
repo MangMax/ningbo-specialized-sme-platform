@@ -10,8 +10,8 @@ import {
 } from '@/components/ui/sheet'
 import TablePagination from '@/components/TablePagination.vue'
 import { Textarea } from '@/components/ui/textarea'
-const props = defineProps<{ fileId: number }>()
-const emit = defineEmits<{ synced: [] }>()
+const props = defineProps<{ fileId: number; disabled?: boolean }>()
+const emit = defineEmits<{ synced: []; active: [value:boolean] }>()
 const open = ref(false),
   enabled = ref(false),
   busy = ref(false),
@@ -47,6 +47,7 @@ const visibleRows = computed(
   () =>
     plan.value?.rows.slice((page.value - 1) * pageSize.value, page.value * pageSize.value) ?? [],
 )
+watch(open, value => emit('active', value))
 watch(open, async (value) => {
   if (!value) return
   failure.value = ''
@@ -117,8 +118,8 @@ function reset() {
 }
 </script>
 <template>
-  <Button variant="ghost" size="sm" @click="open = true">同步到企业</Button>
-  <Sheet v-model:open="open">
+  <Button variant="outline" class="whitespace-normal" :disabled="disabled" @click="open = true">按本文件全部已保存分段预检</Button>
+  <Sheet :open="open" @update:open="value => { if(!busy) open=value }">
     <SheetContent floating-size="detail" class="flex flex-col">
       <SheetHeader
         ><SheetTitle>同步到企业</SheetTitle

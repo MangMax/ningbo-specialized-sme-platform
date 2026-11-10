@@ -2,7 +2,7 @@ import { appLog, type LogContext } from '../../lib/logging'
 import { createHash, randomUUID } from 'node:crypto'
 import { closeSync, fstatSync, openSync, readSync, realpathSync, statSync, type BigIntStats } from 'node:fs'
 import { resolve, sep } from 'node:path'
-import { and, desc, eq, gt } from 'drizzle-orm'
+import { and, desc, eq, gt, sql } from 'drizzle-orm'
 import { z } from 'zod'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../db/schema'
@@ -11,6 +11,7 @@ import { derivedPartsForFile, listFileParts } from './file-parts'
 import { applyParseResult, normalizeParseParts } from './parse-result'
 import { partKey } from '../../lib/file-parts'
 import { readPdfPageCount } from './pdf-pages'
+import { listRegisteredDeclarations681, registeredSummary681 } from './registered-declarations'
 import { getStoredFile } from './stored-files'
 
 type Db = BetterSQLite3Database<typeof schema>
@@ -178,9 +179,10 @@ export function readParse105(db: Db, fileId: number) {
   const parts = listFileParts(db, [fileId]).get(fileId) ?? []
   const last = db.select({ id: schema.fileParseAudit105.id, after: schema.fileParseAudit105.after }).from(schema.fileParseAudit105)
     .where(eq(schema.fileParseAudit105.fileId, fileId)).orderBy(desc(schema.fileParseAudit105.id)).limit(1).get()
-  const declarations = db.select().from(schema.fileDeclaration669).where(and(eq(schema.fileDeclaration669.fileId, fileId), eq(schema.fileDeclaration669.active, true))).all()
-  const version = hash({ sha256: file.sha256, declarations, fileId, parseState: file.parseState, removedAt: file.removedAt, parts, derived: derivedPartsForFile(db, fileId), revision: last?.id ?? 0 })
-  return { fileId, parseState: file.parseState, parts, declarations, version, removedAt: file.removedAt, inputLineage: lineage310(last?.after) }
+  const declarations = listRegisteredDeclarations681(db, [fileId]).get(fileId) ?? []
+  const derived = derivedPartsForFile(db, fileId)
+  const version = hash({ sha256: file.sha256, declarations, fileId, parseState: file.parseState, removedAt: file.removedAt, parts, derived, revision: last?.id ?? 0 })
+  return { fileId, parseState: file.parseState, parts, declarations, registeredSummary: registeredSummary681(declarations), ingestionStatistics: { parts: derived, rowCount: derived.reduce((sum, part) => sum + part.rowCount, 0) }, version, removedAt: file.removedAt, inputLineage: lineage310(last?.after) }
 }
 export function getParse105(db: Db, fileId: number) {
   return db.transaction(tx => readParse105(tx as Db, fileId))
@@ -294,7 +296,7 @@ function saveLegacyParseMcp105(db: Db, fileId: number, input: { parts?: z.infer<
     receiptId = receipt.receiptId
     // Preserve baseline semantics: top-level parts is the submitted normalized agent
     // collection (or [] for status-only); file.parts is the effective stored collection.
-    const { contentIdentity: _identity, partsBinding: _binding, ...file } = getStoredFile(scoped, fileId)!
+    const { contentIdentity: _identity, partsBinding: _binding, registeredSummary: _summary, ...file } = getStoredFile(scoped, fileId)!
     return { file, parts: normalized?.ok ? normalized.parts : [], parseState: input.parseState ?? 'parsed' }
   }, { behavior: 'immediate' })
   appLog({ source: 'file', operation: 'file.parse.revise', outcome: 'success', fileId, receiptId }, context)
@@ -316,6 +318,7 @@ export function saveParse105(db: Db, fileId: number, raw: unknown, mode?: 'repla
 
 function writeDeclarations669(db: Db, fileId: number, raw: z.infer<typeof parsePart105>[], previous: (typeof schema.fileDeclaration669.$inferSelect)[], inputRef?: InputRef310) {
   const sha256 = db.select().from(schema.storedFile).where(eq(schema.storedFile.id, fileId)).get()!.sha256
+  let sequence = db.select({ maximum: sql<number>`coalesce(max(${schema.fileDeclaration669.displaySequence}), 0)` }).from(schema.fileDeclaration669).where(eq(schema.fileDeclaration669.fileId, fileId)).get()!.maximum
   const used = new Set<string>()
   const next = raw.map(item => {
     const normalized = normalizeParseParts([item])
@@ -339,7 +342,7 @@ function writeDeclarations669(db: Db, fileId: number, raw: z.infer<typeof parseP
     if (old && old.sha256 !== sha256 && pageRanges?.length && item.pageRanges === undefined) return fail(409, '文件内容已变化,必须重新核实范围或显式清空')
     if (old?.pageRanges?.length && item.pageRanges === undefined && inputRef?.physicalSource && old.contentVersion !== inputRef.physicalSource.contentVersion) return fail(409, '范围依据内容版本已变化,必须重新核实范围或显式清空')
     const contentVersion = item.pageRanges !== undefined ? inputRef?.physicalSource?.contentVersion ?? null : old?.contentVersion ?? null
-    return { contentVersion, declarationId, fileId, revision: (old?.revision ?? 0) + 1, active: true, sha256, part, pageRanges }
+    return { displaySequence: old?.displaySequence ?? ++sequence, contentVersion, declarationId, fileId, revision: (old?.revision ?? 0) + 1, active: true, sha256, part, pageRanges }
   })
   for (const old of previous) if (!used.has(old.declarationId)) db.update(schema.fileDeclaration669).set({ active: false, revision: old.revision + 1 }).where(eq(schema.fileDeclaration669.declarationId, old.declarationId)).run()
   for (const declaration of next) db.insert(schema.fileDeclaration669).values(declaration).onConflictDoUpdate({ target: schema.fileDeclaration669.declarationId, set: declaration }).run()
