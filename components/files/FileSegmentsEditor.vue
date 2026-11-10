@@ -132,7 +132,7 @@ onBeforeUnmount(()=>window.removeEventListener('beforeunload',beforeUnload))
 defineExpose({requestLeave})
 </script>
 <template>
-  <section v-if="open" class="min-w-0 space-y-4 text-base" aria-label="文件内容分段">
+  <section v-if="open" class="min-w-0 space-y-4 text-sm" aria-label="文件内容分段">
     <header class="flex flex-wrap items-center justify-between gap-2">
       <div><h3 class="font-medium">文件内容分段 · {{ state?.registeredSummary.count ?? '…' }} 段已登记</h3><p class="text-muted-foreground text-sm">文件发布：{{ file?.year ?? '年份未知' }} / {{ file?.batch ?? '批次未知' }}。下方登记名单内容。</p></div>
       <Button variant="outline" :disabled="locked || active || drafts.length >= 1000" @click="add">新增分段</Button>
@@ -181,5 +181,7 @@ defineExpose({requestLeave})
   </section>
 </template>
 <style scoped>
-section :deep(button), section :deep(input), section :deep([role=combobox]) { min-height: 44px; }
+@media (max-width: 639px) {
+  section :deep(button), section :deep(input), section :deep([role=combobox]) { min-height: 44px; }
+}
 </style>

@@ -610,7 +610,7 @@ function publishedYearBatch(row: StoredFileRow): string {
                       <Button
                         variant="ghost"
                         size="icon"
-                        class="size-11"
+                        class="size-11 sm:size-8"
                         :aria-expanded="isExpanded(row.id)"
                         :title="`展开 ${row.registeredSummary?.count} 段明细`"
                         @click="toggleParts(row.id)"
