@@ -34,7 +34,7 @@ flowchart LR
 
 来源读写模块分别拥有申报、关联办理、认定目录的字段和解析规则，不造共享 status/year/batch 字典。共用基础设施只负责事务、身份版本、归档、采集、观察与归属修订。业务 JSON 仅在导入边界解析一次；运行过滤、资格、候选、年度闭包和聚合均读结构化事实。证据接口与历史指纹核验可以按明确 owner 读取原档，不能成为业务 fallback。
 
-未解析或冲突身份仍是观察，不进入按业务 ID 去重的集合。没有版本的历史来源字段落入现有各源投影的 observation-owner 分支，不能塞回通用 observation 的 nullable 业务列。详细约束、字段与迁移见[契约](../platform-retirement/contract.md)。
+未解析或冲突身份仍是观察，不进入按业务 ID 去重的集合。每个观察的来源称号类型和stored/source字段对照（包括已有verified版本的观察）落入现有各源投影的 observation-owner 分支；共享版本内容仍独立保留，无版本历史也按同源规则保留raw-only事实，不能塞回通用 observation 的 nullable 业务列。详细约束、字段与迁移见[契约](../platform-retirement/contract.md)。
 
 ## 三种称号范围不得混同
 
