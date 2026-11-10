@@ -140,3 +140,7 @@ T03a 准备 source_relation_key 列，T05 原样转移；T03b/T05 必须按契�
 ## T05c offline finalization seam
 
 See [T05c operation and phase boundary](t05c-finalization.md). `upgrade/finalize-observations.ts` uses the accepted catalog/PRAGMA/byte-manifest infrastructure exception for same-name populated DDL, explicit column copies and sqlite_sequence watermarks, with independent literal/SQLite-cell/rollback oracles. It is not a registered startup migration. Shared Drizzle builders keep expand registration unchanged; target declarations and archive resolver are offline only. Version refusal is the only runtime behavior change (db/client and three worker open boundaries); W/R/H/C/Z still own actual cutover and final cleanup. H1 references, scope/error transition and canonical inline writer dependencies explicitly remain.
+
+## W1a explicit apply transaction seam
+
+[W1a writer boundary](w1a-apply-writer.md) implements apply-only writes into an explicitly supplied finalized-target transaction and existing collection. Target declarations/archive resolution and pure source extraction now have shared `lib/platform` owners; upgrade paths re-export/use them. Current runtime finalized-target refusal stays in place. Public import/collection/page/scope creation, receipts/113 and deletion of the legacy apply branch remain W1b/W4; no public API switch or full W1 acceptance is claimed.
