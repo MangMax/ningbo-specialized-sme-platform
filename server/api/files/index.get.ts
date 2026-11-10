@@ -77,7 +77,7 @@ defineRouteMeta({
                 total: { type: 'integer', description: '符合筛选条件的文件总数。' },
                 backfill: {
                   type: 'object',
-                  description: '仅本次请求执行惰性回填或兼容参数，已停用；读取不执行维护时出现。',
+                  description: '历史兼容字段；只读列表不再返回回填统计。',
                 },
               },
             },
@@ -119,7 +119,5 @@ export default defineEventHandler(async (event) => {
   return {
     rows: result.rows,
     total: result.total,
-    /** 回填统计只在真的跑过回填时出现,便于验收时核对「22 个」。 */
-
   }
 })

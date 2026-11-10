@@ -22,7 +22,7 @@ export default defineMcpTool({
     '**没有**类别(announcement / export)筛选 —— 查询层(`listStoredFiles`)没有这一维,`/api/files` 也没有;',
     '需要按类别收窄时,用 `source` 筛(经信局公布文件与工信部导出表的类别是固定的)或自己按 `kind` 过滤返回的 `rows`。',
     'registeredSummary={count,declarations}仅登记声明，按displaySequence升序；每个声明含declarationId/part/pageRanges。0声明count=0；parts保留兼容用途，不是登记摘要。读取不回填。',
-    '`year` `batch` 是**公布**年份/批次(单值,目录给的);文件**内容**里的年份/批次看 `parts`。',
+    '`year` `batch` 是**公布**年份/批次(单值,目录给的);已登记的文件**内容**年份/批次看 `registeredSummary.declarations[].part`。',
     '想拿某个文件本身用 `get_file`,只看段用 `list_file_parts`。',
   ].join('\n'),
   inputSchema: {
