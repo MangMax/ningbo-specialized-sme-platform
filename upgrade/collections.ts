@@ -180,7 +180,7 @@ export type UpgradeOptions = { source: string, target: string, runId: string, ba
 /** Caller supplies frozen offline source and a separate isolated copy at current schema. */
 export function upgradeCollections(options: UpgradeOptions, frozenSource?: FrozenSource): {
   lastOldId: number, copiedCount: number, batchDigest: string,
-  sourceManifest: ReturnType<typeof manifest>, inheritedForeignKeys: unknown[],
+  sourceManifest: ReturnType<typeof manifest>, inheritedForeignKeys: unknown,
   unresolved: { kind: string, oldQueryId: number, reason: string }[],
 } {
   if (options.transformVersion !== undefined && options.transformVersion !== TRANSFORM_VERSION) throw new Error('Source/schema/transform binding changed; resume refused')
