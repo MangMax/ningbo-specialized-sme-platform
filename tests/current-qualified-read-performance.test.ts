@@ -3,9 +3,50 @@ import { afterAll, expect, it, vi } from 'vitest'
 import { currentExport118Fixture, year } from './helpers/current-export-118'
 import { listCurrentQualified } from '../lib/roster/current-qualified-query'
 import { schema as s } from '../db/client'
+import { readCurrentQualificationAssessment } from '../lib/roster/current-qualification'
 
 const f = currentExport118Fixture()
 afterAll(() => f.close())
+
+it('counts independently effective titles while retaining full giant evidence and fresh inherited eligibility', () => {
+  f.resetBusiness()
+  vi.useFakeTimers({ toFake: ['Date'] })
+  vi.setSystemTime(new Date(`${year}-06-01T00:00:00Z`))
+  const candidates = Array.from({ length: 30 }, (_, i) => f.candidate('Independent ' + i))
+  for (const { enterprise } of candidates) f.addRecord(enterprise.id, enterprise.name, [{ eventType: 'award', year, batchSeq: 1 }], 'little_giant')
+  const inherited = f.candidate('Inherited', [{ eventType: 'award', year: year - 8, batchSeq: 1 }])
+  const giant = f.addRecord(inherited.enterprise.id, inherited.enterprise.name, [{ eventType: 'award', year, batchSeq: 1 }], 'little_giant')
+  const db = f.db.$client, prepare = db.prepare.bind(db)
+  let giantEventReads = 0
+  const spy = vi.spyOn(db, 'prepare').mockImplementation((sql: string) => {
+    const statement = prepare(sql)
+    if (sql.startsWith('select e.id,e.event_type as eventType,')) {
+      const all = statement.all.bind(statement)
+      statement.all = ((...args: any[]) => {
+        if (args[1] === 'little_giant') giantEventReads++
+        return all(...args)
+      }) as any
+    }
+    return statement
+  })
+  try {
+    const result = listCurrentQualified(db, { titleCode: 'specialized_sme', pageSize: 1 })
+    const diagnosticReads = giantEventReads
+    expect(result.total).toBe(31)
+    expect(result.options.recognitionYears).toEqual([year - 8, year])
+    expect(result.rows.map(row => row.enterpriseId)).toEqual([candidates[0]!.enterprise.id])
+    const full = readCurrentQualificationAssessment(db, candidates[0]!.enterprise.id, Date.now())
+    expect(result.rows[0]!.qualificationAssessment).toEqual(full)
+    expect(full.titles[0]!.evidence).toEqual([expect.objectContaining({ eventType: 'award', year })])
+    expect(result.rows[0]!.notes.join(' ')).toContain('按有效小巨人资格计入')
+    db.prepare('update record_event set year=? where record_id=?').run(year - 8, giant.id)
+    const next = listCurrentQualified(db, { titleCode: 'specialized_sme', pageSize: 200 })
+    expect(next.total).toBe(30)
+    expect(next.rows.map(row => row.enterpriseId)).toEqual(candidates.map(c => c.enterprise.id))
+    // Diagnostic budget only; the independent assertions above establish behavior.
+    expect(diagnosticReads).toBeLessThan(10)
+  } finally { spy.mockRestore(); vi.useRealTimers() }
+})
 
 it('bounds repeated preparation and display reference reads while counting every candidate', () => {
   f.resetBusiness()
