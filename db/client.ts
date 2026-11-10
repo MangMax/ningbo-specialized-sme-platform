@@ -6,6 +6,7 @@ import { createDrizzleLogger } from '../lib/logging/drizzle'
 import { migrate } from 'drizzle-orm/better-sqlite3/migrator'
 import { readMigrationFiles } from 'drizzle-orm/migrator'
 import * as schema from './schema'
+import { assertExpandRuntime } from './schema-phase'
 import { TITLE_SEED } from './titles'
 import { readOwnerIdentity, sameReadOwner, type ReadOwnerIdentity } from '../lib/roster/offmain-read-protocol'
 
@@ -73,6 +74,7 @@ export function useRuntimeDb(opts: DbOptions = {}) {
 }
 
 function validateDatabase(sqlite: Database.Database, opts: DbOptions) {
+  assertExpandRuntime(sqlite)
   const expected = readMigrationFiles({ migrationsFolder: resolveMigrations(opts) }).at(-1)
   if (!expected) throw new Error('Database migrations are empty')
   const actual = sqlite.prepare('SELECT hash, created_at FROM __drizzle_migrations ORDER BY created_at DESC LIMIT 1').get() as { hash: string; created_at: number } | undefined
@@ -96,6 +98,7 @@ export function initializeDb(opts: DbOptions & { create?: boolean } = {}) {
   if (opts.create) mkdirSync(dirname(path), { recursive: true })
   const sqlite = new Database(path, { fileMustExist: !opts.create })
   try {
+    assertExpandRuntime(sqlite)
     // An existing unrelated/empty file is not an upgrade target.
     if (!opts.create) sqlite.prepare('SELECT hash, created_at FROM __drizzle_migrations LIMIT 1').all()
     sqlite.pragma('journal_mode = WAL')

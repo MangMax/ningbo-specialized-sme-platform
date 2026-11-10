@@ -4,14 +4,13 @@ import { and, eq, max, sql } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../db/schema'
 
-type Db = BetterSQLite3Database<typeof schema>
 export const ARCHIVE_CHUNK_BYTES = 65536
 export type ArchiveInput = { storageClass: 'null', bytes: null, createdAt: string | null } | { storageClass: 'text' | 'blob', bytes: Buffer, createdAt: string | null }
 function positiveId(id: number) {
   if (!Number.isSafeInteger(id) || id < 1) throw new Error('Invalid archive identity')
   return id
 }
-export function insertArchiveValue(db: Db, input: ArchiveInput, expected?: { byteLength?: number | null, sha256?: string | null }) {
+export function insertArchiveValue<S extends Record<string, unknown>>(db: BetterSQLite3Database<S>, input: ArchiveInput, expected?: { byteLength?: number | null, sha256?: string | null }) {
   if (!['null', 'text', 'blob'].includes(input.storageClass) || (input.storageClass === 'null' ? input.bytes !== null : !Buffer.isBuffer(input.bytes))) throw new Error('Invalid archive storage class')
   const bytes = input.bytes
   const byteLength = bytes === null ? null : bytes.length
@@ -19,7 +18,7 @@ export function insertArchiveValue(db: Db, input: ArchiveInput, expected?: { byt
   if ((expected?.byteLength !== undefined && expected.byteLength !== byteLength) || (expected?.sha256 !== undefined && expected.sha256 !== sha256)) throw new Error('Archive byte length or hash mismatch')
   return db.insert(schema.platformArchiveValue).values({ storageClass: input.storageClass, bytes, byteLength, sha256, createdAt: input.createdAt }).returning({ id: schema.platformArchiveValue.id }).get().id
 }
-export function readArchiveValue(db: Db, input: { archiveId: number, offset?: number, length?: number }) {
+export function readArchiveValue<S extends Record<string, unknown>>(db: BetterSQLite3Database<S>, input: { archiveId: number, offset?: number, length?: number }) {
   const id = positiveId(input.archiveId), offset = input.offset ?? 0, length = input.length ?? ARCHIVE_CHUNK_BYTES
   if (!Number.isSafeInteger(offset) || offset < 0 || offset > Number.MAX_SAFE_INTEGER - ARCHIVE_CHUNK_BYTES || !Number.isSafeInteger(length) || length < 1 || length > ARCHIVE_CHUNK_BYTES) throw new Error('Invalid archive range')
   const a = schema.platformArchiveValue
@@ -49,7 +48,7 @@ function validateField(owner: ArchiveField) {
   refTable(owner)
   if (!fields[owner.kind].includes(owner.field)) throw new Error('Invalid archive owner field')
 }
-export function bindArchive(db: Db, input: ArchiveField & { archiveId: number }) {
+export function bindArchive<S extends Record<string, unknown>>(db: BetterSQLite3Database<S>, input: ArchiveField & { archiveId: number }) {
   validateField(input); positiveId(input.archiveId)
   // Branches preserve the schema's owner-field discriminants at the insert boundary.
   switch (input.kind) {
@@ -59,19 +58,19 @@ export function bindArchive(db: Db, input: ArchiveField & { archiveId: number })
   }
 }
 /** Append all fields in one enclosing transaction, then seal. Empty owners cannot be sealed. */
-export function sealArchiveOwner(db: Db, owner: ArchiveOwner) {
+export function sealArchiveOwner<S extends Record<string, unknown>>(db: BetterSQLite3Database<S>, owner: ArchiveOwner) {
   const table = refTable(owner)
   const result = db.update(table).set({ sealed: 1 }).where(eq(table.ownerId, owner.ownerId)).run()
   if (result.changes === 0) throw new Error('No archive bindings to seal')
 }
-export function writeOwnerArchive(db: Db, owner: ArchiveField, input: ArchiveInput) {
+export function writeOwnerArchive<S extends Record<string, unknown>>(db: BetterSQLite3Database<S>, owner: ArchiveField, input: ArchiveInput) {
   return db.transaction(tx => {
     const id = insertArchiveValue(tx, input)
     bindArchive(tx, { ...owner, archiveId: id })
     return id
   })
 }
-export function readOwnerArchive(db: Db, owner: ArchiveField, range: { offset?: number, length?: number } = {}) {
+export function readOwnerArchive<S extends Record<string, unknown>>(db: BetterSQLite3Database<S>, owner: ArchiveField, range: { offset?: number, length?: number } = {}) {
   validateField(owner)
   const t = refTable(owner)
   const ref = db.select({ archiveId: t.archiveId }).from(t).where(and(eq(t.ownerId, owner.ownerId), eq(t.field, owner.field))).get()
@@ -79,7 +78,7 @@ export function readOwnerArchive(db: Db, owner: ArchiveField, range: { offset?: 
 }
 
 type AliasBinding = { kind: 'query', oldId: number, collectionId: number } | { kind: 'relation', oldId: number, observationId: number }
-export function bindLegacyAlias(db: Db, input: AliasBinding) {
+export function bindLegacyAlias<S extends Record<string, unknown>>(db: BetterSQLite3Database<S>, input: AliasBinding) {
   positiveId(input.oldId)
   switch (input.kind) {
     case 'query': positiveId(input.collectionId); db.insert(schema.platformLegacyQueryAlias).values({ oldId: input.oldId, collectionId: input.collectionId }).run(); break
@@ -88,7 +87,7 @@ export function bindLegacyAlias(db: Db, input: AliasBinding) {
   }
 }
 /** Caller supplies frozen old maxima, not a sample or the count of rows. No historical scan at runtime. */
-export function reserveLegacyIds(db: Db, maxima: { query: number, relation: number }) {
+export function reserveLegacyIds<S extends Record<string, unknown>>(db: BetterSQLite3Database<S>, maxima: { query: number, relation: number }) {
   db.transaction(tx => {
     for (const namespace of ['query', 'relation'] as const) {
       const value = maxima[namespace]
@@ -103,7 +102,7 @@ export function reserveLegacyIds(db: Db, maxima: { query: number, relation: numb
     }
   })
 }
-export function allocateLegacyAlias(db: Db, target: { kind: 'query', collectionId: number } | { kind: 'relation', observationId: number }) {
+export function allocateLegacyAlias<S extends Record<string, unknown>>(db: BetterSQLite3Database<S>, target: { kind: 'query', collectionId: number } | { kind: 'relation', observationId: number }) {
   return db.transaction(tx => {
     const t = schema.platformLegacyAliasSequence, namespace = target.kind
     const sequence = tx.select().from(t).where(eq(t.namespace, namespace)).get()
@@ -118,7 +117,7 @@ export function allocateLegacyAlias(db: Db, target: { kind: 'query', collectionI
 }
 export type LegacyReference = { version: 1, kind: 'query', queryId: number } | { version: 1, kind: 'relation', queryId: number, relationId: number }
 export type ArchiveReference = { version: 2, kind: 'collection', collectionId: number } | { version: 2, kind: 'observation', observationId: number, collectionId: number }
-export function resolveLegacyReference(db: Db, input: LegacyReference): ArchiveReference | null {
+export function resolveLegacyReference<S extends Record<string, unknown>>(db: BetterSQLite3Database<S>, input: LegacyReference): ArchiveReference | null {
   if (input.version !== 1 || !['query', 'relation'].includes(input.kind)) throw new Error('Invalid legacy namespace')
   positiveId(input.queryId)
   const q = schema.platformLegacyQueryAlias
