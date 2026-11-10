@@ -117,7 +117,7 @@ export function listCurrentQualified(db: Database.Database, filter: CurrentQuali
     const recognitionYears = new Set<number>(), validYears = new Set<number>(), maintenanceYears = new Set<number>()
     const maintenanceBatchesByYear = new Map<number, Set<number>>()
     for (const { id } of candidates.iterate(currentCandidateBindings(filter.titleCode)) as Iterable<{ id: number }>) {
-      const { row, effectiveStatus } = assessmentReader.readTitle(id, filter.titleCode, at, keys)
+      const { row, effectiveStatus } = assessmentReader.readFilterCandidate(id, filter.titleCode, at, keys)
       const identityMatch = (!filter.district || row.district === filter.district) && (!filter.q
         || Boolean(qName && [row.name, ...row.aliases].some(name => normalizeName(name).includes(qName)))
         || Boolean(qUscc && normalizeUscc(row.uscc).includes(qUscc)))

@@ -372,6 +372,12 @@ export function createCurrentQualificationAssessmentReader(db: Database.Database
     readTitle(enterpriseId: number, title: CurrentTitle, asOf: number, keys?: { queries: IdentityKeyVariants; relations: IdentityKeyVariants }) {
       return evaluate(enterpriseId, title, Number(qualificationDay(asOf).slice(0,4)), asOf, keys, true, false, undefined, true, undefined, preparedCorrespondences)
     },
+    readFilterCandidate(enterpriseId: number, title: CurrentTitle, asOf: number, keys: { queries: IdentityKeyVariants; relations: IdentityKeyVariants }) {
+      const { row, effectiveStatus } = evaluate(enterpriseId, title, Number(qualificationDay(asOf).slice(0,4)), asOf, keys, true, false, undefined, true, undefined, preparedCorrespondences, undefined, undefined, { qualificationOnly: true })
+      // This projection cannot publish explanations or dependency versions.
+      const { name, aliases, uscc, district, qualificationWitnesses } = row
+      return { row: { name, aliases, uscc, district, qualificationWitnesses }, effectiveStatus }
+    },
   }
 }
 
@@ -408,7 +414,7 @@ function createCurrentCandidateEvaluationReader(db: Database.Database, receiptRu
   const prepareLegacyHeads = () => reader.select().from(d).where(sql`${d.id} in (${headIds})`).prepare()
   let headsQuery: ReturnType<typeof prepareLegacyHeads> | undefined
   const legacyHeads = () => headsQuery ??= prepareLegacyHeads()
-  return function readCandidate(enterpriseId: number, title: CurrentTitle, year: number, executionTime = Date.now(), keys?: { queries: IdentityKeyVariants; relations: IdentityKeyVariants }, includeFilterFacts = false, includeReferences = true, assessmentOptions?: QualificationAssessmentReadOptions, includePendingFilterFacts = false, suppliedPlatformRefs?: readonly CurrentPlatformReference[], preparedCorrespondences?: ReturnType<typeof createEnterpriseTitleCorrespondenceRefsReader>, observePublishedForCurrent?: CurrentPublishedNameObservation, observeCycles?: CurrentCycleObservation, detail: { expandAssessment?: boolean; giant?: CurrentRow } = {}): { row: CurrentRow; group: CurrentGroup; effectiveStatus: import('./current-status').CurrentStatus } {
+  return function readCandidate(enterpriseId: number, title: CurrentTitle, year: number, executionTime = Date.now(), keys?: { queries: IdentityKeyVariants; relations: IdentityKeyVariants }, includeFilterFacts = false, includeReferences = true, assessmentOptions?: QualificationAssessmentReadOptions, includePendingFilterFacts = false, suppliedPlatformRefs?: readonly CurrentPlatformReference[], preparedCorrespondences?: ReturnType<typeof createEnterpriseTitleCorrespondenceRefsReader>, observePublishedForCurrent?: CurrentPublishedNameObservation, observeCycles?: CurrentCycleObservation, detail: { expandAssessment?: boolean; giant?: CurrentRow; qualificationOnly?: boolean } = {}): { row: CurrentRow; group: CurrentGroup; effectiveStatus: import('./current-status').CurrentStatus } {
   const expandAssessment = detail.expandAssessment ?? assessmentOptions != null
   const enterprise = statement('select id,name,name_norm,uscc_norm,district,city from enterprise where id=?').get(enterpriseId) as any
   const events = statement(`select e.id,e.event_type as eventType,e.year,e.decided_year as decidedYear,e.batch_seq as batchSeq,e.review_outcome as reviewOutcome,e.revision,r.name_raw as nameRaw,r.uscc_raw as usccRaw,r.source from record r join record_event e on e.record_id=r.id where r.enterprise_id=? and r.title_code=? order by e.id`).all(enterpriseId,title) as (LifecycleEvent & { batchSeq: number|null; nameRaw: string|null; usccRaw: string|null; source: string; revision: number; formalValidity?: FormalValidity; validityInvalid?: boolean; formalValidityInputHash?: string; recordId?: number })[]
@@ -614,7 +620,8 @@ function createCurrentCandidateEvaluationReader(db: Database.Database, receiptRu
   if (inheritanceMode && title !== 'little_giant' && formal.some(event => !historyTimeKnown(event))) row.notes.push('本称号正式历史发生时点未知，不能用作小巨人规则前提')
   const localRuleBasis: string[] = []
   let giant: CurrentRow | undefined
-  if (inheritanceMode && title !== 'little_giant' && (history.length || expandAssessment)) {
+  const needsGiant = !detail.qualificationOnly || effectiveStatus === 'expired' || effectiveStatus === 'unrecognized'
+  if (inheritanceMode && title !== 'little_giant' && (history.length || expandAssessment) && needsGiant) {
     giant = detail.giant ?? readCandidate(enterpriseId, 'little_giant', year, executionTime, keys, false, includeReferences,
       { ...assessmentOptions, assessmentVersion: INDEPENDENT_QUALIFICATION_ASSESSMENT_VERSION }, false, undefined, preparedCorrespondences, undefined, undefined, { expandAssessment }).row
     if (history.length && giant.group === 'eligible' && effectiveStatus !== 'terminated' && effectiveStatus !== 'moved_out') {
