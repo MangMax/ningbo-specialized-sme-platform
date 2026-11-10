@@ -49,7 +49,7 @@ it('maps observations and current assignment preserving original fields and byte
   expect(t.prepare('select * from platform_legacy_relation_alias order by old_id').all()).toEqual([{old_id:55,observation_id:55},{old_id:56,observation_id:56}])
   expect(t.pragma('foreign_key_check')).toEqual([]); t.close()
   expect(readFileSync(f.source)).toEqual(original)
-  expect(upgradeObservations({...f,transformVersion:'t05a-observation-v2'})).toEqual(result)
+  expect(upgradeObservations({...f,transformVersion:'t05a-observation-v3'})).toEqual(result)
 })
 
 it('transfers an unindexed relation with genuine NULL indexing facts and exact source PK coverage', () => {
@@ -218,7 +218,7 @@ it('completes an empty source with exact zero PK coverage',()=>{
   s.exec('delete from platform_business_observation;delete from platform_relation;delete from platform_query');s.close();copyFileSync(f.source,f.target);upgradeCollections({...f,runId:'t04'})
   const result=upgradeObservations(f)
   expect(result).toMatchObject({state:'complete',copiedCount:0,lastOldId:0,batchDigest:''})
-  expect(upgradeObservations({...f,transformVersion:'t05a-observation-v2'})).toEqual(result)
+  expect(upgradeObservations({...f,transformVersion:'t05a-observation-v3'})).toEqual(result)
 })
 it('preserves an exact existing revision1 and rejects a conflicting sealed archive atomically',()=>{
   const f=fixture(),t=new Database(f.target)
@@ -340,12 +340,51 @@ it('preserves a preexisting uncaptured observation without inventing metadata on
   expect(upgradeObservations(f)).toEqual(result)
 })
 
-it('transfers a wholly unindexed source and rejects a v1 transform resume',()=>{
+it('transfers a wholly unindexed source and rejects old transform resumes',()=>{
   const f=fixture(true),s=new Database(f.source)
   s.exec('delete from platform_business_observation');s.close();copyFileSync(f.source,f.target);upgradeCollections({...f,runId:'t04'})
   const result=upgradeObservations(f),t=new Database(f.target)
   expect(result).toMatchObject({state:'complete',copiedCount:2,unresolved:[]})
   expect(t.prepare('select id,identity_state,content_state,indexed_at from platform_business_observation order by id').all()).toEqual([{id:55,identity_state:'not_indexed',content_state:'not_indexed',indexed_at:null},{id:56,identity_state:'not_indexed',content_state:'not_indexed',indexed_at:null}]);t.close()
   expect(upgradeObservations(f)).toEqual(result)
-  expect(()=>upgradeObservations({...f,transformVersion:'t05a-observation-v1'})).toThrow('Source/schema/transform binding changed')
+  for(const transformVersion of ['t05a-observation-v1','t05a-observation-v2']) expect(()=>upgradeObservations({...f,transformVersion})).toThrow('Source/schema/transform binding changed')
+})
+
+it.each(['control','sha256','created_at','archive_id','invalid_source_digest'] as const)('reconciles original sealed archive identity and metadata for %s', mutation => {
+  const f=fixture(), s=new Database(f.source)
+  const fields=(s.prepare('pragma table_info(platform_relation)').all() as {name:string}[]).map(({name})=>({name,...s.prepare(`select typeof("${name}") storageClass,hex(cast("${name}" as blob)) hex from platform_relation where id=55`).get() as object}))
+  for(const [i,field] of ['rawFields','sourceText','legacyRowSnapshot'].entries()) {
+    const cell=field==='legacyRowSnapshot'?{kind:'blob',bytes:Buffer.from(JSON.stringify({encoding:'t05a-sqlite-cells-v1',fields}))}:s.prepare(`select typeof(${field==='rawFields'?'raw_fields':'source_text'}) kind,cast(${field==='rawFields'?'raw_fields':'source_text'} as blob) bytes from platform_relation where id=55`).get() as {kind:string,bytes:Buffer|null}
+    const sha=cell.bytes===null?null:createHash('sha256').update(cell.bytes).digest('hex')
+    s.prepare('insert into platform_archive_value(id,storage_class,bytes,byte_length,sha256,created_at) values(?,?,?,?,?,?)').run(91+i,cell.kind,cell.bytes,cell.bytes?.length??null,mutation==='invalid_source_digest'&&i===0?'0'.repeat(64):sha,'original-time')
+    s.prepare('insert into platform_observation_archive_ref(owner_id,field,archive_id) values(55,?,?)').run(field,91+i)
+  }
+  s.exec('update platform_observation_archive_ref set sealed=1');s.close()
+  copyFileSync(f.source,f.target);upgradeCollections({source:f.source,target:f.target,runId:'t04',batchSize:1})
+  const t=new Database(f.target)
+  const before=t.prepare('select r.*,a.* from platform_observation_archive_ref r join platform_archive_value a on a.id=r.archive_id order by r.field').all()
+  if(mutation==='sha256'||mutation==='created_at') {
+    const trigger=t.prepare("select sql from sqlite_schema where name='platform_archive_no_update'").get() as {sql:string}
+    t.exec('drop trigger platform_archive_no_update')
+    t.prepare(`update platform_archive_value set ${mutation}=? where id=91`).run(mutation==='sha256'?'0'.repeat(64):'invented-time')
+    t.exec(trigger.sql)
+  } else if(mutation==='archive_id') {
+    const triggers=t.prepare("select name,sql from sqlite_schema where type='trigger' and tbl_name='platform_observation_archive_ref'").all() as {name:string,sql:string}[]
+    for(const tr of triggers)t.exec(`drop trigger ${tr.name}`)
+    t.exec('insert into platform_archive_value(id,storage_class,bytes,byte_length,sha256,created_at) select 999,storage_class,bytes,byte_length,sha256,created_at from platform_archive_value where id=91;update platform_observation_archive_ref set archive_id=999 where archive_id=91')
+    for(const tr of triggers)t.exec(tr.sql)
+  }
+  expect(t.pragma('foreign_key_check')).toEqual([]);t.close()
+  if(mutation==='control') {
+    expect(upgradeObservations(f).state).toBe('complete');expect(upgradeObservations(f).state).toBe('complete')
+    const result=new Database(f.target)
+    expect(result.prepare('select r.*,a.* from platform_observation_archive_ref r join platform_archive_value a on a.id=r.archive_id where r.owner_id=55 order by r.field').all()).toEqual(before);result.close()
+  } else {
+    expect(()=>upgradeObservations(f)).toThrow(/archive/i)
+    const result=new Database(f.target)
+    expect(result.prepare("select * from platform_migration_run where run_id='t05a'").all()).toEqual([])
+    expect(result.prepare('select * from platform_observation_assignment').all()).toEqual([])
+    expect(result.prepare('select * from platform_legacy_relation_alias').all()).toEqual([])
+    expect(result.prepare('select id from platform_business_observation where id is not null').all()).toEqual([]);result.close()
+  }
 })

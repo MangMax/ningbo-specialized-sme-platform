@@ -10,12 +10,13 @@ import * as schema from '../db/schema'
 import { bindArchive, bindLegacyAlias, insertArchiveValue, type ArchiveInput } from '../lib/platform/immutable-archive'
 import { assertFrozenSource, fileHash, schemaHash, withFrozenSource, upgradeCollections, type FrozenSource } from './collections'
 
-export const OBSERVATION_TRANSFORM = 't05a-observation-v2'
+export const OBSERVATION_TRANSFORM = 't05a-observation-v3'
 const phase = 'observations', sourceTable = 'platform_relation'
 const digest = (v: string | Buffer) => createHash('sha256').update(v).digest('hex')
 const mapped = ['id','collection_id','sequence_no','page_id','page_row_no','position_state','source_relation_key']
 // Complete source identity/assignment/reference domains, not just T04's query manifest.
-const domains = ['platform_query','platform_query_legacy_provenance','platform_query_title_scope','platform_query_title_scope_error','platform_relation','platform_business_observation','platform_business_record','platform_business_record_version','platform_observation_assignment','platform_apply_projection','platform_business_projection','platform_recognized_projection','enterprise','enterprise_alias','import_batch']
+const archiveDomains = ['platform_observation_archive_ref','platform_archive_value']
+const domains = [...archiveDomains,'platform_query','platform_query_legacy_provenance','platform_query_title_scope','platform_query_title_scope_error','platform_relation','platform_business_observation','platform_business_record','platform_business_record_version','platform_observation_assignment','platform_apply_projection','platform_business_projection','platform_recognized_projection','enterprise','enterprise_alias','import_batch']
 type Db = BetterSQLite3Database<typeof schema>
 function columns(s: Database.Database, table: string) {
   return (s.prepare(`pragma table_info("${table}")`).all() as {name:string}[]).map(c => c.name)
@@ -41,7 +42,7 @@ export function observationManifest(s: Database.Database, emit?: (line:string) =
     const order = info.filter(c=>c.pk).sort((a,b)=>a.pk-b.pk).map(c=>`"${c.name}"`).join(',')
     if (!order) throw new Error(`No source PK: ${table}`)
     let count = 0
-    for (const row of s.prepare(`select ${fields.flatMap((c,i)=>[`typeof("${c}") k${i}`,`hex(cast("${c}" as blob)) b${i}`,`case when typeof("${c}")='real' then "${c}" end n${i}`]).join(',')} from "${table}" order by ${order}`).iterate()) {
+    for (const row of s.prepare(`select ${fields.flatMap((c,i)=>[`typeof("${c}") k${i}`,`hex(cast("${c}" as blob)) b${i}`,`case when typeof("${c}")='real' then "${c}" end n${i}`]).join(',')} from "${table}" ${table==='platform_archive_value'?'where exists (select 1 from platform_observation_archive_ref where archive_id=platform_archive_value.id)':''} order by ${order}`).iterate()) {
       const cells = row as Record<string,string>
       const line = JSON.stringify({table,fields:fields.map((name,i)=>{
         const storageClass=cells[`k${i}`]!,hex=cells[`b${i}`]!,bytes=Buffer.from(hex,'hex')
@@ -78,6 +79,25 @@ function targetRow(t:Database.Database,db:Db,id:number) {
     alias:db.select().from(l).where(eq(l.oldId,id)).get(),
   }
 }
+function validateArchive(value: typeof schema.platformArchiveValue.$inferSelect) {
+  if (value.storageClass==='null') {
+    if(value.bytes!==null || value.byteLength!==null || value.sha256!==null) throw new Error('Invalid archive null metadata')
+  } else if(!Buffer.isBuffer(value.bytes) || value.byteLength!==value.bytes.length || value.sha256!==digest(value.bytes)) throw new Error('Invalid archive length or digest')
+}
+function reconcileSourceArchives(s:Database.Database,t:Database.Database,sd:Db,db:Db,last:number) {
+  const ref=schema.platformObservationArchiveRef, archive=schema.platformArchiveValue
+  for(const sourceRef of sd.select().from(ref).orderBy(asc(ref.ownerId),asc(ref.field)).all()) {
+    const targetRef=db.select().from(ref).where(and(eq(ref.ownerId,sourceRef.ownerId),eq(ref.field,sourceRef.field))).get()
+    // Only a checkpointed transfer may have sealed a previously unsealed source binding.
+    const expected={...sourceRef,sealed:sourceRef.ownerId<=last?1:sourceRef.sealed}
+    if(!isDeepStrictEqual(targetRef,expected)) throw new Error('Original archive reference drift')
+    const sourceValue=sd.select().from(archive).where(eq(archive.id,sourceRef.archiveId)).get()
+    const targetValue=db.select().from(archive).where(eq(archive.id,sourceRef.archiveId)).get()
+    if(!sourceValue || !targetValue) throw new Error('Missing original archive value')
+    validateArchive(sourceValue);validateArchive(targetValue)
+    if(!isDeepStrictEqual(rowSnapshot(s,'platform_archive_value','id',sourceRef.archiveId),rowSnapshot(t,'platform_archive_value','id',sourceRef.archiveId))) throw new Error('Original archive metadata drift')
+  }
+}
 function transfer(s:Database.Database,t:Database.Database,db:Db,r:Pick<typeof schema.platformRelation.$inferSelect,'id'|'queryId'|'sequenceNo'|'enterpriseId'|'matchBasis'|'verificationStatus'>) {
   const o=schema.platformBusinessObservation,a=schema.platformObservationAssignment,p=schema.platformCollectionPage
   const pages=db.select().from(p).where(and(eq(p.collectionId,r.queryId),sql`${p.sequenceStart} <= ${r.sequenceNo} AND ${p.sequenceEnd} >= ${r.sequenceNo}`)).all()
@@ -110,6 +130,7 @@ function transfer(s:Database.Database,t:Database.Database,db:Db,r:Pick<typeof sc
     const ref=db.select().from(schema.platformObservationArchiveRef).innerJoin(schema.platformArchiveValue,eq(schema.platformArchiveValue.id,schema.platformObservationArchiveRef.archiveId)).where(and(eq(schema.platformObservationArchiveRef.ownerId,r.id),eq(schema.platformObservationArchiveRef.field,field))).get()
     if (ref) {
       const value=ref.platform_archive_value
+      validateArchive(value)
       if (value.storageClass!==input.storageClass || !isDeepStrictEqual(value.bytes,input.bytes)) throw new Error(`Existing archive binding conflict ${r.id}:${field}`)
     } else bindArchive(db,{kind:'observation',ownerId:r.id,field,archiveId:insertArchiveValue(db,input)})
   }
@@ -157,11 +178,12 @@ export function upgradeObservations(options:ObservationUpgradeOptions,frozen?:Fr
 
     const c=schema.platformMigrationCheckpoint,key=and(eq(c.runId,options.runId),eq(c.phase,phase),eq(c.sourceTable,sourceTable)),cp=db.select().from(c).where(key).get()
     let last=cp?.lastOldId??0,count=0,chain='',validatedLast=0
+    reconcileSourceArchives(s,t,sd,db,last)
     const advance=(value:unknown)=>{chain=digest(chain+'\n'+JSON.stringify(value))}
     for(const row of sd.select({id:r.id}).from(r).where(lte(r.id,last)).orderBy(asc(r.id)).all()) {advance(targetRow(t,db,row.id));count++;validatedLast=row.id}
     if(cp && (cp.copiedCount!==count || cp.batchDigest!==chain || validatedLast!==last)) throw new Error('Target checkpoint drift or lost PK')
     // Source domains in the copied target must remain byte-identical, including original observation fields.
-    for(const table of domains.filter(x=>x!=='platform_observation_assignment')) {
+    for(const table of domains.filter(x=>x!=='platform_observation_assignment'&&!archiveDomains.includes(x))) {
       const fields=columns(s,table).filter(x=>!(table==='platform_business_observation'&&mapped.includes(x))&&x!=='collection_id')
       const pk=(s.prepare(`pragma table_info("${table}")`).all() as {name:string,pk:number}[]).filter(x=>x.pk).sort((a,b)=>a.pk-b.pk).map(x=>`"${x.name}"`).join(',')
       const projection=fields.flatMap(x=>[`typeof("${x}")`,`hex(cast("${x}" as blob))`,`case when typeof("${x}")='real' then "${x}" end`]).join(',')
