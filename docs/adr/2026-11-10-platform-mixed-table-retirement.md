@@ -1,6 +1,6 @@
 # 三来源业务完整迁移与混合表物理退役
 
-状态：**proposed，待独立架构审查**。这是 [#707](https://github.com/MangMax/ningbo-specialized-sme-platform/issues/707) 的 implement-spec 文档候选，父票 [#706](https://github.com/MangMax/ningbo-specialized-sme-platform/issues/706)。文档提交、自查和父票分票均不表示审核接受。生产切换及删除仍需最终单独批准。
+状态：[#707 已独立静态接受](https://github.com/MangMax/ningbo-specialized-sme-platform/issues/707#issuecomment-6771581483)。接受范围仅架构与契约；运行迁移及完整退役尚未接受，按后续各票独立验收。生产切换及删除仍需最终单独批准。
 
 代码依据为 `331345e0a264a1c654b397c82efb5caef885af2d`，tree `463f74fcc5635ec8143881c182ad645115e085eb`，分支 `integration/690-current-roster-performance`。保留 #691 请求内依赖复用、#702 单次候选枚举和 #687 资格规则。#705 JSON 物化候选未合入，其性能 FAIL 不变。ES 指 ES6+，不引入 Elasticsearch。
 

@@ -1,6 +1,6 @@
 # 完整退役的数据与迁移契约
 
-状态：#707 proposed，所有新表、字段及模块名均为待审实施目标，不是现有能力。决策见 [ADR](../adr/2026-11-10-platform-mixed-table-retirement.md)。本契约不改变比较 membership、资格规则、对应角色或授权范围。
+状态：[#707 已独立静态接受](https://github.com/MangMax/ningbo-specialized-sme-platform/issues/707#issuecomment-6771581483)。接受范围仅架构与契约；运行迁移及完整退役尚未接受，按后续各票独立验收。生产切换及删除仍需最终单独批准。
 
 ## 标识与存储
 

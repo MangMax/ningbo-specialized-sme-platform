@@ -1,6 +1,6 @@
 # 退役覆盖、分票与验收计划
 
-状态：#707 待审候选。以下均为本地票草案，未写 tracker。≤M 是单候选的范围上限，不是承诺把全仓改动压成一个提交。父线程安排独立审查，接受 [ADR](../adr/2026-11-10-platform-mixed-table-retirement.md) 后才进入实现。旧研究中的 A/P 编号不是本表的票号：研究发现用 **F01–F12** 对应原 PERFORMANCE-FINDINGS P1–P12；本表 **Txx** 只表示交付票。
+状态：[#707 已独立静态接受](https://github.com/MangMax/ningbo-specialized-sme-platform/issues/707#issuecomment-6771581483)。接受范围仅架构与契约；运行迁移及完整退役尚未接受，按后续各票独立验收。生产切换及删除仍需最终单独批准。
 
 ## 第一实施前沿
 
