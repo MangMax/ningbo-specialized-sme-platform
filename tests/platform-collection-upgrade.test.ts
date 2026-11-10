@@ -1,7 +1,8 @@
 import Database from 'better-sqlite3'
+import { spawnSync } from 'node:child_process'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { migrate } from 'drizzle-orm/better-sqlite3/migrator'
-import { mkdtempSync, copyFileSync, readFileSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, copyFileSync, readFileSync, mkdirSync, readdirSync, writeFileSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { expect, it } from 'vitest'
@@ -202,4 +203,71 @@ it('keeps missing invalid and contradictory page positions explicitly unknown an
   const active = new Database(f.source)
   active.pragma('journal_mode=WAL'); active.prepare("update platform_query set failure_reason='active'").run()
   try { expect(() => upgradeCollections(f)).toThrow('WAL') } finally { active.close() }
+})
+
+it('rejects mixed nonpositive query and relation identities before any migration writes', () => {
+  for (const table of ['platform_query', 'platform_relation']) {
+    const f = fixture(), s = new Database(f.source)
+    for (const bad of [-1, 0]) {
+      if (table === 'platform_query') s.prepare("insert into platform_query(id,interface,query_key,rdjb,queried_at,status,created_at) values(?,'recognized_list',?,'2','time','failed','time')").run(bad, String(bad))
+      else s.prepare("insert into platform_relation(id,query_id,sequence_no,created_at) values(?,7,?,'time')").run(bad, bad + 3)
+    }
+    s.close(); copyTarget(f.source, f.target)
+    expect(() => upgradeCollections(f)).toThrow(/Unsafe source identity/)
+    const t = new Database(f.target)
+    for (const name of ['platform_migration_run','platform_migration_checkpoint','platform_collection','platform_archive_value','platform_legacy_query_alias']) expect(t.prepare(`select count(*) n from ${name}`).get()).toEqual({ n: 0 })
+    t.close()
+  }
+})
+
+it('rejects persistent WAL without sidecars before a concurrent writer can commit', () => {
+  const f = fixture(), s = new Database(f.source)
+  s.pragma('journal_mode=WAL'); s.close(); copyTarget(f.source, f.target)
+  let reached = false
+  expect(() => upgradeCollections({ ...f, beforeCheckpoint() { reached = true } })).toThrow(/WAL/)
+  expect(reached).toBe(false)
+})
+
+it('holds the rollback journal read lock against writes and WAL switches through checkpoints', () => {
+  const f = fixture(), before = readFileSync(f.source)
+  const result = upgradeCollections({ ...f, beforeCheckpoint() {
+    const writer = new Database(f.source, { timeout: 0 })
+    try {
+      expect(() => writer.prepare("update platform_query set failure_reason='drift'").run()).toThrow(/locked/)
+      expect(() => writer.pragma('journal_mode=WAL')).toThrow(/locked/)
+    } finally { writer.close() }
+  } })
+  expect(result.copiedCount).toBe(1)
+  expect(readFileSync(f.source)).toEqual(before)
+})
+
+it('CLI rejects invalid identities and persistent WAL before copying a target', () => {
+  for (const mode of ['identity', 'wal']) {
+    const f = fixture(), source = new Database(f.source)
+    if (mode === 'wal') source.pragma('journal_mode=WAL')
+    else source.prepare("insert into platform_query(id,interface,query_key,rdjb,queried_at,status,created_at) values(0,'recognized_list','zero','2','time','failed','time')").run()
+    source.close()
+    const target = join(f.root, 'not-created.sqlite'), evidence = join(f.root, 'cli-evidence')
+    mkdirSync(evidence)
+    const result = spawnSync(process.execPath, ['upgrade/run.mjs', 'isolated-upgrade', f.source, target, evidence, 'cli-test'], { encoding: 'utf8' })
+    expect(result.status).not.toBe(0)
+    expect(result.stderr).toMatch(mode === 'wal' ? /WAL/ : /Unsafe source identity/)
+    expect(existsSync(target)).toBe(false)
+    expect(readdirSync(evidence)).toEqual([])
+  }
+})
+
+it('CLI keeps a frozen source through copy and resumes in a separate process', () => {
+  const f = fixture(), before = readFileSync(f.source), target = join(f.root, 'cli-target.sqlite')
+  const receipts = []
+  for (const attempt of ['first', 'resume']) {
+    const evidence = join(f.root, attempt); mkdirSync(evidence)
+    const result = spawnSync(process.execPath, ['upgrade/run.mjs', 'isolated-upgrade', f.source, target, evidence, 'cli-test', '1'], { encoding: 'utf8' })
+    expect(result.stderr).toBe('')
+    expect(result.status).toBe(0)
+    receipts.push(readFileSync(join(evidence, 'receipt.json'), 'utf8'))
+  }
+  expect(receipts[0]).toBe(receipts[1])
+  expect(JSON.parse(receipts[0]!).copiedCount).toBe(1)
+  expect(readFileSync(f.source)).toEqual(before)
 })

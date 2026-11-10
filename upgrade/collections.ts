@@ -16,6 +16,18 @@ function id(value: number) {
   if (!Number.isSafeInteger(value) || value < 1) throw new Error('Unsafe source identity')
   return value
 }
+/** Read-only rollback-journal shared lock; never change the source journal mode. */
+export function beginFrozenSource(s: Database.Database) {
+  s.exec('BEGIN')
+  s.prepare('select count(*) from sqlite_schema').get()
+  const mode = s.pragma('journal_mode', { simple: true })
+  if (mode !== 'delete' && mode !== 'truncate' && mode !== 'persist') throw new Error('Frozen rollback-journal source required; WAL is unsupported')
+  const db = drizzle(s, { schema })
+  for (const table of [schema.platformQuery, schema.platformRelation]) {
+    const invalid = db.select({ id: table.id }).from(table).where(sql`typeof(${table.id}) <> 'integer' OR ${table.id} <= 0 OR ${table.id} > ${Number.MAX_SAFE_INTEGER}`).limit(1).get()
+    if (invalid) throw new Error('Unsafe source identity')
+  }
+}
 function fileHash(path: string) {
   const fd = openSync(path, 'r'), h = createHash('sha256'), chunk = Buffer.alloc(1024 * 1024)
   try {
@@ -165,7 +177,7 @@ export function upgradeCollections(options: UpgradeOptions) {
   }
   const s = new Database(source, { readonly: true, fileMustExist: true }), t = new Database(target, { fileMustExist: true })
   try {
-    s.exec('BEGIN'); s.prepare('select count(*) from sqlite_schema').get()
+    beginFrozenSource(s)
     if (existsSync(source + '-wal') && statSync(source + '-wal').size > 0) throw new Error('Source WAL appeared')
     const initialSnapshotHash = fileHash(source)
     t.pragma('foreign_keys=ON')
@@ -222,6 +234,13 @@ export function upgradeCollections(options: UpgradeOptions) {
     }
     if (fileHash(source) !== binding.sourceSnapshotSha256 || manifest(s).digest !== frozen.digest || schemaHash(s) !== sourceSchemaHash) throw new Error('Source drift')
     if (!isDeepStrictEqual(t.pragma('foreign_key_check'), inheritedForeignKeys) || !isDeepStrictEqual(t.pragma('integrity_check'), [{ integrity_check: 'ok' }])) throw new Error('Target integrity failure')
+    const query = schema.platformQuery, alias = schema.platformLegacyQueryAlias, collection = schema.platformCollection
+    const missing = db.select({ id: query.id }).from(query)
+      .leftJoin(alias, eq(alias.oldId, query.id)).leftJoin(collection, eq(collection.id, alias.collectionId))
+      .where(sql`${alias.oldId} IS NULL OR ${collection.id} IS NULL OR ${alias.collectionId} <> ${query.id}`).limit(1).get()
+    const aliasCount = db.select({ n: sql<number>`count(*)` }).from(alias).get()!.n
+    const collectionCount = db.select({ n: sql<number>`count(*)` }).from(collection).get()!.n
+    if (missing || copiedCount !== frozen.counts.platform_query || aliasCount !== copiedCount || collectionCount !== copiedCount) throw new Error('Incomplete source PK coverage')
     db.update(schema.platformMigrationRun).set({ state: 'complete' }).where(eq(schema.platformMigrationRun.runId, options.runId)).run()
     return { lastOldId, copiedCount, batchDigest: digest, sourceManifest: frozen, inheritedForeignKeys, unresolved }
   } finally { s.close(); t.close() }
