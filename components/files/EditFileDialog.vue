@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { currentContentMessage } from "~~/lib/file-content-status"
 import FileDisplayNameEditor from './FileDisplayNameEditor.vue'
+import DisclosurePanel from '@/components/DisclosurePanel.vue'
 import { computed, ref, watch } from 'vue'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
@@ -26,8 +27,7 @@ import type { StoredFileRow } from '~~/server/utils/stored-files'
 /**
  * 编辑一个文件的**元数据**(票 09)。
  *
- * 只改分类(`source` / `kind` / `year` / `batch` / `title_code`):
- * **不动 `rel_path`、不动磁盘文件** —— 所以文件名那一行是**只读**展示,让人看清在改谁。
+ * 分类与显示名分别保存，不动 `rel_path` 和磁盘文件。
  *
  * 「清空」用下拉里的一项显式表达,而不是靠输入框留空 —— 空串要区分「没填」还是
  * 「就是要清掉」,显式一项不会含糊。
@@ -115,10 +115,10 @@ const canSave = computed(
 
       <div class="flex min-h-0 flex-col gap-4 overflow-y-auto">
         <FileDisplayNameEditor :open="open" :file="file" :pending="namePending" :failure="nameFailure" @save="emit('rename', $event)" />
-        <details class="text-muted-foreground text-xs"><summary class="cursor-pointer">文件来源核验信息</summary><div class="mt-2 space-y-2">
+        <DisclosurePanel compact title="文件来源核验信息"><div class="space-y-2">
         <p role="status" class="text-sm break-words">{{ currentContentMessage(file?.contentIdentity) }}</p>
         <p v-if="file?.parts.length" class="text-sm">已有文件段的历史出处绑定未知。{{ file?.partsBinding?.inputLineage.status === 'bound' ? '已记录解析输入引用；这不能证明历史文件段来自该输入。' : '解析输入引用未记录。' }}</p>
-        </div></details>
+        </div></DisclosurePanel>
         <div class="grid gap-x-4 gap-y-3.5 sm:grid-cols-2">
           <div class="flex flex-col gap-1.5">
             <Label for="file-source" class="text-xs">来源</Label>

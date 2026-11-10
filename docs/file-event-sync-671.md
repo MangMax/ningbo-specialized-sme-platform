@@ -1,8 +1,7 @@
 # 按已保存分段补齐正式事件（#671 / #667）
 
 文件管理的独立「同步到企业」抽屉消费 #669 声明，不保存描述或范围。
-`FileEventSync.vue` 与 #668 的 `EditSegmentsDialog.vue` 各自拥有状态、请求和保存流程；
-共同修改仅限 `pages/files.vue` 的导入及相邻入口，合入 #668 时保留两者。
+`FileEventSync.vue` 与 `FileSegmentsEditor.vue` 各自拥有请求和保存流程；编辑器协调同步与分段编辑的互斥状态。
 不增加表或迁移，不修改范围 writer、企业模型或资格规则。
 
 ## 公共契约

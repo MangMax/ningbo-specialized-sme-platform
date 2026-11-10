@@ -182,7 +182,7 @@ const NO_PART_STATS: PartsBackfillStats = { files: 0, parts: 0, orphanPaths: [] 
  * 路由,所以它自己入口也要有一次。返回**本次是否真的跑了**(没跑返回 `null`),便于验收时
  * 核对「第一次调用会回填出 22 个文件」(RL-16 后的应有集合,见 `files/README.md`)。
  *
- * `force`(对应 `/api/files?rescan=1`)只强制**文件行**那一趟;段那一趟仍守 `needParts`
+ * `force` 只强制文件行回填；段回填仍守 `needParts`。
  * 的判据,不因为 `force` 就去覆盖已有段。
  */
 export async function ensureFileStoreReady(
@@ -275,26 +275,15 @@ export interface FileRef {
 // 读 tool 的统一入口
 // ---------------------------------------------------------------------------
 
-/**
- * 读 tool 的开场白:**取库 + 保证已回填**。
- *
- * 顺序是有讲究的 —— `ensureFileStoreReady` 必须**先**跑,`resolveFileRef` 才有东西可查
- * (冷启动时库里一行都没有,先查就是一片 404)。把这个顺序收在一处,四个读 tool 就不必
- * 各自记得它;写 tool 不用回填(它们按 id/relPath 指向一个已经存在的文件)。
- *
- * 返回 `backfill`:本次真的跑了回填时是统计,没跑(库已就绪)时是 `null`。只读 tool 里
- * 只有 `list_files` 会把它放进返回值(与 `/api/files` 同形,便于验收核对「22 个」),
- * 其余几个丢掉即可。
- */
+/** 默认保证文件库已回填；只读列表跳过维护。 */
 export async function openFileStore(options: { readOnly?: boolean } = {}): Promise<{
   db: Db
   root: string
-  backfill: BackfillReport | null
 }> {
   const db = useDb()
   const root = useRuntimeConfig().filesDir
-  const backfill = options.readOnly ? null : await ensureFileStoreReady(db, root)
-  return { db, root, backfill }
+  if (!options.readOnly) await ensureFileStoreReady(db, root)
+  return { db, root }
 }
 
 /**

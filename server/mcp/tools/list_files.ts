@@ -38,7 +38,7 @@ export default defineMcpTool({
     includeRemoved: z.boolean().optional().describe('是否含已移出库的文件(removed_at 非空),默认不含'),
   },
   handler: async (input) => {
-    const { db, backfill } = await openFileStore({ readOnly: true })
+    const { db } = await openFileStore({ readOnly: true })
     const { rows, total } = listStoredFiles(db, {
       source: input.source ? [input.source] : undefined,
       categoryState: input.categoryState ? [input.categoryState] : undefined,
@@ -55,8 +55,6 @@ export default defineMcpTool({
       // 摊平成对象字面量再返回:`StoredFileRow` 是 interface(无隐式索引签名),
       // 直接放进 `Record<string, unknown>` 过不了类型检查。
       rows: rows.map((row) => ({ ...row })),
-      // 只在真的跑过回填时出现(与 `/api/files` 同形),便于验收核对。
-      ...(backfill ? { backfill } : {}),
     }
   },
 })

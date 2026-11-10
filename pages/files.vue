@@ -19,7 +19,7 @@ import { isPdfPath } from '~~/lib/pdf-page'
 import { joinSeries, partBatches, partYears } from '~~/lib/file-parts'
 import { captureQueryRequest, useRetainedQuerySnapshot } from '~/composables/useRetainedQuerySnapshot'
 import type { QueryRequestSnapshot } from '~/composables/useRetainedQuerySnapshot'
-import type { BackfillReport, StoredFileRow } from '~~/server/utils/stored-files'
+import type { StoredFileRow } from '~~/server/utils/stored-files'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
@@ -73,8 +73,6 @@ const apiGet = $fetch as unknown as <T>(
 interface FilesResponse {
   rows: StoredFileRow[]
   total: number
-  /** 只在真的跑过回填的那一次请求里出现(形状与接口共用一处)。 */
-  backfill?: BackfillReport
 }
 
 const queryCache = useQueryCache()
@@ -264,6 +262,7 @@ const previewFile = ref<StoredFileRow | null>(null)
 function openEdit(row: StoredFileRow) {
   editing.value = row
   editFailure.value = ''
+  renameFailure.value = ''
   editOpen.value = true
 }
 
@@ -406,7 +405,14 @@ let queryGuardPending = false
 let queuedQuery: [string[], string[], string[], string, number, number] | null = null
 watch([sources, categoryStates, parseStates, q, page, pageSize], async (values, previous) => {
   if(changingQuery || !editors.size) return
-  queuedQuery=values
+  queuedQuery=queryGuardPending && queuedQuery ? [
+    values[0] === previous[0] ? queuedQuery[0] : values[0],
+    values[1] === previous[1] ? queuedQuery[1] : values[1],
+    values[2] === previous[2] ? queuedQuery[2] : values[2],
+    values[3] === previous[3] ? queuedQuery[3] : values[3],
+    values[4] === previous[4] ? queuedQuery[4] : values[4],
+    values[5] === previous[5] ? queuedQuery[5] : values[5],
+  ] : values
   changingQuery=true
   const [ss,cs,ps,query,pg,size]=previous
   sources.value=ss; categoryStates.value=cs; parseStates.value=ps; q.value=query; page.value=pg; pageSize.value=size
@@ -610,7 +616,7 @@ function publishedYearBatch(row: StoredFileRow): string {
                       <Button
                         variant="ghost"
                         size="icon"
-                        class="size-11 sm:size-8"
+                        class="size-8"
                         :aria-expanded="isExpanded(row.id)"
                         :title="`展开 ${row.registeredSummary?.count} 段明细`"
                         @click="toggleParts(row.id)"

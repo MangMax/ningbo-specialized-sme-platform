@@ -43,6 +43,8 @@ describe('文件管理文件信息内的显示名称编辑', () => {
     mounted.push(wrapper)
     await flushPromises()
 
+    await wrapper.get('button[data-slot="accordion-trigger"]').trigger('click')
+    await flushPromises()
     expect(document.body.textContent).toContain('original-notice.pdf')
     expect(document.body.textContent).toContain('jxj/announcement/2024/1/original-notice.pdf')
     const input = document.body.querySelector<HTMLInputElement>('[data-testid="file-display-name-input"]')!
