@@ -146,3 +146,30 @@ it('round trips disjoint ranges, rejects out of bounds atomically, edits and cle
   expect((await http(f.id)).body.state.declarations[0]).toMatchObject({ declarationId: id, part: { year: 2022, batch: 1 }, pageRanges: [] })
   expect(readFileSync(join(root, f.relPath), 'utf8')).toBe(pdf)
 })
+it('#681 persists display order across edits, reversed legacy payloads, deletion and append with shared summaries', async () => {
+  const f = fixture()
+  const save = async (parts: unknown[], key = crypto.randomUUID()) => {
+    const state = (await http(f.id)).body.state
+    const plan = (await http(f.id, '/preflight', { expectedVersion: state.version })).body
+    const request = { ...plan, parts, idempotencyKey: key, reason: '681 order' }
+    const result = await http(f.id, '/commit', request)
+    expect(result.status).toBe(200)
+    return { request, result: result.body }
+  }
+  const a = { titleCode: 'specialized_sme', eventKind: 'award', year: null, batch: 1, rowCount: 7 }
+  const b = { ...a, year: 2020, batch: null }
+  const first = await save([a, b])
+  const declarations = (await http(f.id)).body.state.declarations
+  expect(declarations.map((d: {displaySequence: number}) => d.displaySequence)).toEqual([1, 2])
+  const [da, db] = declarations
+  await save([{ ...b, declarationId: db.declarationId }, { ...a, year: 2025, declarationId: da.declarationId }])
+  const state = (await http(f.id)).body.state
+  expect(state.declarations.map((d: {declarationId: string}) => d.declarationId)).toEqual([da.declarationId, db.declarationId])
+  expect(state.registeredSummary).toEqual({ count: 2, declarations: state.declarations })
+  await save([{ ...b }])
+  await save([{ ...b }, { ...a, year: 2026 }])
+  expect((await http(f.id)).body.state.declarations.map((d: {displaySequence: number}) => d.displaySequence)).toEqual([2, 3])
+  const replay = await http(f.id, '/commit', first.request)
+  expect(replay.body).toEqual({ ...first.result, replayed: true })
+  expect((await http(f.id, '/commit', { ...first.request, idempotencyKey: 'stale681' })).status).toBe(409)
+})

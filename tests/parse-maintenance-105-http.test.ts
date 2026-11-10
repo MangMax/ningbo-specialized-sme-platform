@@ -742,3 +742,28 @@ it('669 verifies supplied counts edits ranges and keeps omission compatibility w
   const tools = (await rpc('tools/list', {})).body.result.tools
   expect(tools.find((t: any) => t.name === 'commit_file_parse_result').inputSchema.properties.parts.items.properties.pageRanges).toBeTruthy()
 })
+
+it('#681 list and expanded registered summaries agree without deriving declarations from 489 events', async () => {
+  const f = file()
+  // Explicit source facts fixture: an empty registration must stay empty.
+  const e = db.insert(schema.enterprise).values({ name: 'controlled681', nameNorm: 'controlled681' }).returning().get()
+  const r = db.insert(schema.record).values({ enterpriseId: e.id, source: 'jxj', titleCode: 'specialized_sme' }).returning().get()
+  for (let i = 0; i < 489; i++) {
+    const event = db.insert(schema.recordEvent).values({ recordId: r.id, eventType: 'award', year: i < 484 ? 2023 : null, batchSeq: i < 484 ? 1 : null }).returning().get()
+    db.insert(schema.recordEvidence).values({ recordEventId: event.id, sourceFile: f.relPath }).run()
+  }
+  const facts = () => [db.select().from(schema.storedFile).all(), db.select().from(schema.storedFilePart).all(), db.select().from(schema.fileDeclaration669).all(), db.select().from(schema.recordEvent).all(), db.select().from(schema.recordEvidence).all()]
+  const before = facts()
+  const expanded = await state(f.id)
+  expect(expanded.declarations).toEqual([])
+  expect(expanded.registeredSummary).toEqual({ count: 0, declarations: [] })
+  const response = await fetch(`${service.baseUrl}/api/files?q=${f.filename}`, { headers: { authorization: `Bearer ${token}` } })
+  expect(response.status).toBe(200)
+  const list = await response.json()
+  expect(list.rows.find((row: {id: number}) => row.id === f.id)).toMatchObject({ referenceCount: 489, registeredSummary: expanded.registeredSummary })
+  expect(facts()).toEqual(before)
+  const tools = (await rpc('tools/list', {})).body.result.tools
+  expect(tools.find((t: {name: string}) => t.name === 'get_file_parse_result').description).toContain('displaySequence')
+  const spec = await (await fetch(`${service.baseUrl}/_openapi.json`)).json()
+  expect(spec.paths['/api/files/{id}/parse-result'].get.description).toContain('registeredSummary')
+})

@@ -1,39 +1,18 @@
 import { useDb } from '@db'
 import {
-  backfillFromDisk,
   CATEGORY_STATES,
   listStoredFiles,
   PARSE_STATES,
-  type BackfillReport,
 } from '../../utils/stored-files'
-import { backfillFileParts } from '../../utils/file-parts'
 import type { CategoryState, FileSource, ParseState } from '~~/lib/stored-file'
 import { SOURCE_ORDER } from '~~/lib/labels'
 
-/**
- * 文件库列表。`GET /api/files?source=&categoryState=&parseState=&q=&page=&pageSize=`
- *
- * **首次请求懒回填**,两趟:
- *  1. 扫 `files/` 反推分类写 `stored_file`(票 09)—— 要算 22 个文件的 SHA-256
- *     (**入库范围之外**的文件不进表,在 `backfill.excluded` 里带原因列出 —— RL-16);
- *  2. 从 `record_evidence` 聚合出**段**写 `stored_file_part`(票 17,必须先有第 1 趟,
- *     段要挂到 `stored_file.id` 上)。
- * 之后每请求只查表。`?rescan=1` 强制两趟都重跑(验收与排查用;**幂等**)。
- */
-let backfilled = false
-
-/**
- * 文件库列表。
- *
- * **首次请求会懒回填**(要算 22 个文件的 SHA-256),所以第一次可能比之后慢 ——
- * 这一点写进 spec,免得代理以为接口不稳定。`rescan=1` 强制重跑(幂等)。
- */
 defineRouteMeta({
   openAPI: {
     tags: ['文件库'],
     summary: '列出文件库',
     description:
-      '首次请求会做一次惰性回填(扫盘 + 算哈希),可能偏慢;`rescan=1` 强制重跑(幂等)。多值参数用逗号分隔。',
+      '只读列表，不扫盘或回填；rescan兼容参数不再执行维护。registeredSummary={count,declarations}仅来自已登记声明；declarations按displaySequence升序；part.year/batch各自可空。parts仍为旧兼容读模型，不是登记摘要。多值参数用逗号分隔。',
     parameters: [
       {
         name: 'source',
@@ -65,12 +44,12 @@ defineRouteMeta({
         name: 'rescan',
         in: 'query',
         schema: { type: 'string', enum: ['1', 'true'] },
-        description: '强制重跑回填(幂等;验收与排查用)。',
+        description: '兼容保留；不再触发扫盘或回填。',
       },
     ],
     responses: {
       200: {
-        description: '分页的文件列表(含段与引用数);跑过回填时带 `backfill`。',
+        description: '分页只读文件列表，含registeredSummary、兼容parts与引用数。',
         content: {
           'application/json': {
             schema: {
@@ -98,7 +77,7 @@ defineRouteMeta({
                 total: { type: 'integer', description: '符合筛选条件的文件总数。' },
                 backfill: {
                   type: 'object',
-                  description: '仅本次请求执行惰性回填或强制重扫时出现。',
+                  description: '仅本次请求执行惰性回填或兼容参数，已停用；读取不执行维护时出现。',
                 },
               },
             },
@@ -112,16 +91,6 @@ defineRouteMeta({
 export default defineEventHandler(async (event) => {
   const db = useDb()
   const q = getQuery(event)
-
-  const force = q.rescan === '1' || q.rescan === 'true'
-  let backfill: BackfillReport | undefined
-  // `NUXT_DB_READONLY=1` is used to inspect a production snapshot without changing it.
-  // That snapshot is already materialized, so skip the GET-side lazy backfill in this mode.
-  if (process.env.NUXT_DB_READONLY !== '1' && (!backfilled || force)) {
-    const files = await backfillFromDisk(db, useRuntimeConfig().filesDir)
-    backfill = { ...files, parts: backfillFileParts(db, { preserveExisting: true }) }
-    backfilled = true
-  }
 
   const csv = (v: unknown): string[] | undefined => {
     if (v == null) return undefined
@@ -151,6 +120,6 @@ export default defineEventHandler(async (event) => {
     rows: result.rows,
     total: result.total,
     /** 回填统计只在真的跑过回填时出现,便于验收时核对「22 个」。 */
-    ...(backfill ? { backfill } : {}),
+
   }
 })

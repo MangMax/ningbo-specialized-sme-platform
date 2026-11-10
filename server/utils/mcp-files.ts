@@ -286,14 +286,14 @@ export interface FileRef {
  * 只有 `list_files` 会把它放进返回值(与 `/api/files` 同形,便于验收核对「22 个」),
  * 其余几个丢掉即可。
  */
-export async function openFileStore(): Promise<{
+export async function openFileStore(options: { readOnly?: boolean } = {}): Promise<{
   db: Db
   root: string
   backfill: BackfillReport | null
 }> {
   const db = useDb()
   const root = useRuntimeConfig().filesDir
-  const backfill = await ensureFileStoreReady(db, root)
+  const backfill = options.readOnly ? null : await ensureFileStoreReady(db, root)
   return { db, root, backfill }
 }
 
