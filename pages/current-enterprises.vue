@@ -85,7 +85,7 @@ const { data, isLoading, error, refetch } = useQuery<Result>({
 const { displayed, isShowingPrevious, paginationDisabled } = useRetainedQuerySnapshot(data, isLoading, error, activeRequest)
 const rows = computed(() => displayed.value?.rows ?? [])
 const selectedAssessment = (row: CurrentRow) => row.qualificationAssessment?.titles.find(item => item.titleCode === displayed.value?.request.params.titleCode)
-const localRuleBasis = (row: CurrentRow) => (selectedAssessment(row)?.effectiveQualification?.presentationBasis ?? []).filter(basis => basis.includes('按有效小巨人资格计入') || basis.includes('小巨人实际来源')).join('；')
+const localRuleBasis = (row: CurrentRow) => (selectedAssessment(row)?.effectiveQualification?.localRuleBasis ?? []).join('；')
 function updatePagination(changes: Record<string, string | undefined>) {
   if (!displayed.value || paginationDisabled.value) return
   const query: Record<string, string | undefined> = Object.fromEntries(Object.entries(displayed.value.request.params).filter(([, value]) => value != null).map(([key, value]) => [key, String(value)]))

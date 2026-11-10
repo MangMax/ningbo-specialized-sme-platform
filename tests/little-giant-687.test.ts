@@ -66,3 +66,27 @@ it('revokes inheritance when own official evidence is removed without changing t
  expect(after.titles.find(t=>t.titleCode==='specialized_sme')!.versions.sources).not.toBe(before.titles.find(t=>t.titleCode==='specialized_sme')!.versions.sources)
  expect(after.titles.find(t=>t.titleCode==='little_giant')).toEqual(before.titles.find(t=>t.titleCode==='little_giant'))
 })
+it.each(['award', 'review'] as const)('uses verified publication for undated %s history without filling business years', eventType => {
+ const c=f.candidate('published-'+eventType,[{eventType:'award',year:2025,batchSeq:1}],'little_giant')
+ const lower=f.addRecord(c.enterprise.id,'published-'+eventType,[{eventType,year:null,decidedYear:null,reviewOutcome:eventType==='review'?'passed':null}],'specialized_sme')
+ const event=f.db.$client.prepare('select id from record_event where record_id=?').get(lower.id) as {id:number}
+ const evidence=f.db.$client.prepare('select id,source_file as path from record_evidence where record_event_id=?').get(event.id) as {id:number;path:string}
+ evidence.path='owned/history-'+event.id+'.pdf'
+ f.db.$client.prepare('update record_evidence set source_file=? where id=?').run(evidence.path,evidence.id)
+ const sha='a'.repeat(64)
+ f.db.$client.prepare('insert into stored_file (rel_path,filename,ext,bytes,sha256,created_at) values (?,?,?,?,?,0)').run(evidence.path,'history.pdf','pdf',1,sha)
+ const install=(publishedOn?:string,sourceSha256=sha)=>f.db.$client.prepare('update record_event set formal_validity=? where id=?').run(JSON.stringify({evidenceId:evidence.id,sourceSha256,statementPages:[1],...(publishedOn?{publishedOn}:{}),interval:{validFrom:'2018-06-01',validThrough:'2021-05-31'}}),event.id)
+ const read=(day='2026-06-01')=>readCurrentQualificationAssessment(f.db.$client,c.enterprise.id,Date.parse(day+'T00:00:00Z')).titles.find(t=>t.titleCode==='specialized_sme')!
+ install('2018-06-01')
+ const before=f.businessDigest()
+ expect(read().group).toBe('eligible')
+ expect(read().evidence[0]).toMatchObject({year:null,decidedYear:null})
+ expect(f.businessDigest()).toBe(before)
+ install('2026-06-02'); expect(read().group).toBe('excluded')
+ install('2026-06-01'); expect(read().group).toBe('eligible')
+ install(); expect(read().group).toBe('excluded')
+ install('2018-06-01','b'.repeat(64)); expect(read().group).toBe('excluded')
+ install('2018-06-01')
+ f.db.$client.prepare('update stored_file set removed_at=? where rel_path=?').run('2026-01-01',evidence.path)
+ expect(read().group).toBe('excluded')
+})
