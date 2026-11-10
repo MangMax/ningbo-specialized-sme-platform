@@ -1525,6 +1525,7 @@ export const enterpriseDifferenceComparison = sqliteTable('enterprise_difference
 /** #669: stable declarations, independent of rebuilt display parts. History is in parse receipts. */
 export const fileDeclaration669 = sqliteTable('file_declaration_669', {
   declarationId: text('declaration_id').primaryKey(),
+  displaySequence: integer('display_sequence').notNull().default(0),
   fileId: integer('file_id').notNull().references(() => storedFile.id),
   revision: integer('revision').notNull(),
   active: integer('active', { mode: 'boolean' }).notNull(),

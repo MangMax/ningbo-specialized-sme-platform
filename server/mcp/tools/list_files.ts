@@ -10,8 +10,7 @@ import { listStoredFiles } from '../../utils/stored-files'
  * (来源 → 公布年份倒序 → 公布批次倒序 → 文件名)、同一个「被记录引用数」。所以代理看到的
  * 就是 `/files` 页上那一份列表,不另立一套口径。
  *
- * 首次调用会顺带做一次**懒回填**(扫 `files/` 补 `stored_file`、按需补段),返回里的
- * `backfill` 就是这次的统计 —— 冷启动时用它核对「22 个文件」(RL-16 后的应有集合;**入库范围之外的文件在 `excluded` 里带原因列出**,不进列表)。
+ * 本工具只读，不在查询时扫盘或回填。
  */
 export default defineMcpTool({
   name: 'list_files',
@@ -22,6 +21,7 @@ export default defineMcpTool({
     '筛选:来源 / 分类状态 / 解析状态 / 用户可见名称或磁盘文件名关键词;分页 page(从 1 起)、pageSize(默认 50,上限 200)。',
     '**没有**类别(announcement / export)筛选 —— 查询层(`listStoredFiles`)没有这一维,`/api/files` 也没有;',
     '需要按类别收窄时,用 `source` 筛(经信局公布文件与工信部导出表的类别是固定的)或自己按 `kind` 过滤返回的 `rows`。',
+    'registeredSummary={count,declarations}仅登记声明，按displaySequence升序；每个声明含declarationId/part/pageRanges。0声明count=0；parts保留兼容用途，不是登记摘要。读取不回填。',
     '`year` `batch` 是**公布**年份/批次(单值,目录给的);文件**内容**里的年份/批次看 `parts`。',
     '想拿某个文件本身用 `get_file`,只看段用 `list_file_parts`。',
   ].join('\n'),
@@ -38,7 +38,7 @@ export default defineMcpTool({
     includeRemoved: z.boolean().optional().describe('是否含已移出库的文件(removed_at 非空),默认不含'),
   },
   handler: async (input) => {
-    const { db, backfill } = await openFileStore()
+    const { db, backfill } = await openFileStore({ readOnly: true })
     const { rows, total } = listStoredFiles(db, {
       source: input.source ? [input.source] : undefined,
       categoryState: input.categoryState ? [input.categoryState] : undefined,
