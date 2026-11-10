@@ -264,7 +264,7 @@ it.each(titles)('C32 fixed-time list literals preserve qualification filters opt
   const covered = read()
   expect(covered).toEqual(old)
   const all = covered[0]!
-  expect(all).toMatchObject({ total: 2, uncertainTotal: 0, titleCode: title, ruleVersion: 'current-roster-116-v10', snapshotStartedAt: '2026-10-26T00:00:00.000Z', options: { recognitionYears: [2026], validYears: [], maintenanceYears: [], maintenanceBatchesByYear: {} } })
+  expect(all).toMatchObject({ total: 2, uncertainTotal: 0, titleCode: title, ruleVersion: 'current-roster-116-v11', snapshotStartedAt: '2026-10-26T00:00:00.000Z', options: { recognitionYears: [2026], validYears: [], maintenanceYears: [], maintenanceBatchesByYear: {} } })
   expect(all.rows.map(row => row.enterpriseId)).toEqual([first, first + 1])
   expect(all.rows[0]).toMatchObject({ name: '=1+1', uscc: String(first).padStart(18, '0'), district: '鄞州区', group: 'eligible', firstYear: 2026, publishedNames: ['=1+1'], aliases: [], publication: '已见本称号宁波公布记录', basis: `event:${first}@1 award 2026/1 结论年:`, reviews: '', references: [`evidence:${first} jxj/announcement/synthetic363.pdf 名单\n附件 序号:${first}`], recognition: { precision: 'year', year: 2026 }, matchedValidYears: [], matchedMaintenance: [] })
   expect(all.rows[0]!.qualificationWitnesses).toEqual([{ cycle: { originYear: 2026, batchSeq: 1 }, awardEventId: first, recognition: { precision: 'year', year: 2026 }, matchedValidYear: null, matchedMaintenance: null, correspondenceId: null, conditionQueryId: null }])
@@ -295,7 +295,7 @@ it.each(titles)('C33 fixed-time workbook literals preserve all sheets columns te
   f.db.exec(indexSql)
   const covered = await run('cover.xlsx')
   expect(covered.result).toEqual(old.result)
-  expect(covered.result).toMatchObject({ total: 4, counts: { eligible: 2, pending: 0, excluded: 2 }, generatedAt: '2026-10-26T00:00:00.000Z', snapshotStartedAt: '2026-10-26T00:00:00.000Z', ruleVersion: 'current-roster-116-v10' })
+  expect(covered.result).toMatchObject({ total: 4, counts: { eligible: 2, pending: 0, excluded: 2 }, generatedAt: '2026-10-26T00:00:00.000Z', snapshotStartedAt: '2026-10-26T00:00:00.000Z', ruleVersion: 'current-roster-116-v11' })
   expect(covered.result.dataVersion).toMatch(/^sha256:[a-f0-9]{64}$/)
   expect(covered.progress).toEqual([[0, 4, '2026-10-26T00:00:00.000Z']])
   expect(covered.values).toEqual(old.values)

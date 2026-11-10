@@ -85,6 +85,7 @@ const { data, isLoading, error, refetch } = useQuery<Result>({
 const { displayed, isShowingPrevious, paginationDisabled } = useRetainedQuerySnapshot(data, isLoading, error, activeRequest)
 const rows = computed(() => displayed.value?.rows ?? [])
 const selectedAssessment = (row: CurrentRow) => row.qualificationAssessment?.titles.find(item => item.titleCode === displayed.value?.request.params.titleCode)
+const localRuleBasis = (row: CurrentRow) => (selectedAssessment(row)?.effectiveQualification?.localRuleBasis ?? []).join('；')
 function updatePagination(changes: Record<string, string | undefined>) {
   if (!displayed.value || paginationDisabled.value) return
   const query: Record<string, string | undefined> = Object.fromEntries(Object.entries(displayed.value.request.params).filter(([, value]) => value != null).map(([key, value]) => [key, String(value)]))
@@ -206,7 +207,7 @@ useHead({ title: '优质中小企业查询' })
                 <TableCell class="align-top whitespace-normal break-words [overflow-wrap:anywhere]"><span class="font-medium">{{ row.name }}</span><span v-if="row.aliases.length" class="text-muted-foreground mt-1 block text-xs">已确认曾用名：{{ row.aliases.join('、') }}</span></TableCell>
                 <TableCell class="align-top break-all font-mono text-xs">{{ row.uscc ?? '未记录' }}</TableCell>
                 <TableCell class="align-top">{{ row.district ?? '未记录' }}</TableCell>
-                <TableCell class="align-top"><CurrentQualificationTimeline :events="selectedAssessment(row)?.evidence" /></TableCell>
+                <TableCell class="align-top"><CurrentQualificationTimeline :events="selectedAssessment(row)?.evidence" /><p v-if="localRuleBasis(row)" class="mt-2 break-words text-sm leading-6 [overflow-wrap:anywhere]">{{ localRuleBasis(row) }}</p></TableCell>
                 <TableCell class="align-top"><Button as-child variant="outline" size="sm"><NuxtLink :to="detailUrl(row.enterpriseId)">查看详情与出处</NuxtLink></Button></TableCell>
               </TableRow>
               <TableRow v-if="isLoading && !displayed"><TableCell v-for="n in 5" :key="n"><Skeleton class="h-3 w-full" /></TableCell></TableRow>
@@ -227,7 +228,7 @@ useHead({ title: '优质中小企业查询' })
               <Button as-child variant="outline" size="sm" class="min-h-11 shrink-0"><NuxtLink :to="detailUrl(row.enterpriseId)" :aria-label="`查看 ${row.name} 详情与出处`">详情与出处</NuxtLink></Button>
             </div>
             <p v-if="row.aliases.length" class="text-muted-foreground break-words text-sm leading-5">已确认曾用名：{{ row.aliases.join('、') }}</p>
-            <CurrentQualificationTimeline :events="selectedAssessment(row)?.evidence" />
+            <CurrentQualificationTimeline :events="selectedAssessment(row)?.evidence" /><p v-if="localRuleBasis(row)" class="mt-2 break-words text-sm leading-6 [overflow-wrap:anywhere]">{{ localRuleBasis(row) }}</p>
           </li>
         </ul>
         <Empty v-if="displayed && !rows.length" class="sm:hidden border-0"><EmptyHeader><EmptyTitle>没有符合条件的企业</EmptyTitle></EmptyHeader></Empty>

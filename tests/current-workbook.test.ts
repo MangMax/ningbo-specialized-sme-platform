@@ -240,7 +240,7 @@ it('keeps technical audit values out of every visible workbook cell', async () =
   const {db,file} = fixture()
   candidate(db,'业务企业')
   const result = await writeCurrentWorkbook(db.$client,'little_giant',file,()=>{})
-  expect(result.ruleVersion).toBe('current-roster-116-v10')
+  expect(result.ruleVersion).toBe('current-roster-116-v11')
   expect(result.dataVersion).toMatch(/^sha256:[a-f0-9]{64}$/)
   const workbook = new ExcelJS.Workbook()
   await workbook.xlsx.readFile(file)
@@ -249,7 +249,7 @@ it('keeps technical audit values out of every visible workbook cell', async () =
     expect(sheet.state).toBe('visible')
     sheet.eachRow(row => row.eachCell(cell => {
       const value = String(cell.value ?? '')
-      expect(value).not.toMatch(/(?:event|evidence|decision|alias|correspondence|platform-relation|query):\d+|sha256:|current-roster-116-v10|jxj[\\/]announcement[\\/]|\b(?:award|review|passed|failed|evidence_changed)\b/)
+      expect(value).not.toMatch(/(?:event|evidence|decision|alias|correspondence|platform-relation|query):\d+|sha256:|current-roster-116-v11|jxj[\\/]announcement[\\/]|\b(?:award|review|passed|failed|evidence_changed)\b/)
       expect(cell.note ?? null).toBeNull()
     }))
   }
@@ -362,7 +362,7 @@ it('D409 binds ordered complete three title scope digest and actual worksheet te
   const wb=new ExcelJS.Workbook();await wb.xlsx.readFile(file)
   const values=Array.from({length:15},(_,i)=>wb.getWorksheet('有效企业')!.getRow(2).getCell(i+1).value)
   const {titles:_titles,snapshotId,...scope}=snapshot
-  const expected=createHash('sha256').update(JSON.stringify(['current-export-assessment-409-v2','enterprise-qualification-478-v3','current-roster-116-v10',new Date(result.generatedAt).getUTCFullYear(),'little_giant'])+'\n')
+  const expected=createHash('sha256').update(JSON.stringify(['current-export-assessment-409-v2','enterprise-qualification-687-v4','current-roster-116-v11',new Date(result.generatedAt).getUTCFullYear(),'little_giant'])+'\n')
     .update(JSON.stringify(['effective',id,scope,snapshotId,values])+'\n').digest('hex')
   expect(result.dataVersion).toBe('sha256:'+expected)
   expect(result.counts).toEqual({eligible:1,pending:0,excluded:0})
@@ -379,7 +379,7 @@ it('D409 v2 hashes mixed groups in sheet order then stable identity order', asyn
   const result=await writeCurrentWorkbook(db.$client,'little_giant',file,()=>{})
   expect(result.counts).toEqual({eligible:2,pending:0,excluded:2})
   const wb=new ExcelJS.Workbook();await wb.xlsx.readFile(file)
-  const hash=createHash('sha256').update(JSON.stringify(['current-export-assessment-409-v2','enterprise-qualification-478-v3','current-roster-116-v10',new Date(result.generatedAt).getUTCFullYear(),'little_giant'])+'\n')
+  const hash=createHash('sha256').update(JSON.stringify(['current-export-assessment-409-v2','enterprise-qualification-687-v4','current-roster-116-v11',new Date(result.generatedAt).getUTCFullYear(),'little_giant'])+'\n')
   for (const [group,sheet,ids] of [['effective','有效企业',[eligible,eligibleTail]],['expired','已到期',[pending]],['unrecognized','未认定',[excluded]]] as const) {
     for (const [index,id] of ids.entries()) {
       const snapshot=readCurrentQualificationAssessment(db.$client,id,Date.parse(result.generatedAt))
@@ -404,12 +404,12 @@ it('427 default_export_keeps_D409_digest_and_never_invokes_comparison', async ()
     const id = candidate(db, '427 default workbook')
     const result = await writeCurrentWorkbook(db.$client, 'little_giant', file, () => {})
     const snapshot = readCurrentQualificationAssessment(db.$client, id, Date.parse(result.generatedAt))
-    expect(snapshot.assessmentVersion).toBe('enterprise-qualification-478-v3')
+    expect(snapshot.assessmentVersion).toBe('enterprise-qualification-687-v4')
     expect(snapshot.titles.every(t => t.platform.comparison === 'not_established')).toBe(true)
     const workbook = new ExcelJS.Workbook(); await workbook.xlsx.readFile(file)
     const values = Array.from({ length: 15 }, (_, i) => workbook.getWorksheet('有效企业')!.getRow(2).getCell(i + 1).value)
     const { titles: _titles, snapshotId, ...scope } = snapshot
-    const digest = createHash('sha256').update(JSON.stringify(['current-export-assessment-409-v2', 'enterprise-qualification-478-v3', 'current-roster-116-v10', new Date(result.generatedAt).getUTCFullYear(), 'little_giant']) + '\n')
+    const digest = createHash('sha256').update(JSON.stringify(['current-export-assessment-409-v2', 'enterprise-qualification-687-v4', 'current-roster-116-v11', new Date(result.generatedAt).getUTCFullYear(), 'little_giant']) + '\n')
       .update(JSON.stringify(['effective', id, scope, snapshotId, values]) + '\n').digest('hex')
     expect(result.dataVersion).toBe('sha256:' + digest)
     expect(result.counts).toEqual({ eligible: 1, pending: 0, excluded: 0 })

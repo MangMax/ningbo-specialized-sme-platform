@@ -40,7 +40,7 @@ function snapshot(id: number, pending: boolean, selectedTitle: CurrentTitle = 'i
       evidence, sourceVersions, references: selected ? [`evidence:${evidenceId}`] : [], notes: [], shadow: { legacyGroup: group, difference: null },
     }
   })
-  const scope = { enterpriseId: id, asOf, ruleVersion: 'current-roster-116-v10', assessmentVersion: 'enterprise-qualification-478-v3' }
+  const scope = { enterpriseId: id, asOf, ruleVersion: 'current-roster-116-v11', assessmentVersion: 'enterprise-qualification-687-v4' }
   return { ...scope, titles, snapshotId: digest([scope, titles]) }
 }
 function row(id: number, name: string, pending: boolean, selectedTitle: CurrentTitle = 'innovative_sme'): CurrentQualifiedRow {
@@ -71,7 +71,7 @@ function wire(options: { titleCode?: CurrentTitle; status?: CurrentStatus; empty
   const { snapshotId: _, titles, ...scope } = item.qualificationAssessment
   item.qualificationAssessment.snapshotId = digest([scope, titles])
   const page = options.page ?? 2
-  return { responseVersion: 'current-qualified-478-v2', titleCode, ruleVersion: 'current-roster-116-v10', snapshotStartedAt: asOf,
+  return { responseVersion: 'current-qualified-478-v2', titleCode, ruleVersion: 'current-roster-116-v11', snapshotStartedAt: asOf,
     rows: options.empty ? [] : [item], total: options.total ?? 3, uncertainTotal: 0,
     publishedPending: { requested: false, rows: [], total: 0, page, pageSize: 1 },
     options: { recognitionYears: [2025], validYears: [], maintenanceYears: [], maintenanceBatchesByYear: {} }, page, pageSize: 1 }
