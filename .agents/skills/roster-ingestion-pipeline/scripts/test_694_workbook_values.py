@@ -3,6 +3,7 @@
 # dependencies = ["openpyxl>=3.1,<4"]
 # ///
 from copy import deepcopy
+from datetime import datetime, time, timedelta
 import hashlib
 import json
 import os
@@ -99,6 +100,56 @@ class ValuesCli(unittest.TestCase):
         code, r = self.invoke()
         self.assertEqual(code, 1)
         self.assertEqual((r["differences"][0]["before"]["type"], r["differences"][0]["after"]["type"]), ("s", "n"))
+
+    def test_duration_difference_is_json_with_and_without_output(self):
+        self.book(self.before, [[self.rows[0][0], timedelta(hours=1)]])
+        self.book(self.after, [[self.rows[0][0], timedelta(hours=2)]])
+        for extra in [(), ("--output", self.root/"duration.json")]:
+            code, r = self.invoke(extra)
+            self.assertEqual((code, r["status"]), (1, "fail"))
+            self.assertEqual(r["differences"][0]["after"], {"type": "d", "pythonType": "timedelta", "value": {"days": 0, "seconds": 7200, "microseconds": 0}})
+
+    def test_unmapped_date_header_has_json_native_evidence(self):
+        self.edit(lambda w: setattr(w.active["C1"], "value", datetime(2026, 11, 10)))
+        code, r = self.invoke()
+        self.assertEqual((code, r["status"]), (2, "not_covered"))
+        self.assertEqual(r["uncovered"][0]["header"], "2026-11-10T00:00:00")
+
+    def test_id_header_offset_removed_field_and_reordered_preserved_styles(self):
+        self.contract["keyKind"] = "id"
+        spec = self.contract["sheets"]["名单"]
+        spec["preserve"] = ["font", "numberFormat", "rowHeight"]
+        for side in ("before", "after"):
+            spec[side]["headerRow"] = 2
+        self.book(self.before, [["1", "甲", "旧备注"], ["2", "乙", "旧备注"]], ("代码", "名称", "备注"))
+        self.book(self.after, [["2", "乙"], ["1", "甲"]])
+        spec["before"]["fields"]["备注"] = "备注"
+        spec["allow"] = {"removedFields": ["备注"]}
+        for path in (self.before, self.after):
+            w = load_workbook(path)
+            w.active.insert_rows(1)
+            w.active["A1"] = "说明"
+            for row in (3, 4):
+                identity = w.active.cell(row, 1).value
+                w.active.row_dimensions[row].height = 30 if identity == "1" else 40
+                w.active.cell(row, 2).font = Font(name="微软雅黑", size=12 if identity == "1" else 14)
+                w.active.cell(row, 2).number_format = "@"
+            w.save(path)
+            w.close()
+        code, r = self.invoke()
+        self.assertEqual((code, r["status"]), (0, "pass"))
+        self.assertEqual([c["kind"] for c in r["permittedChanges"]], ["removed_field"])
+        self.assertEqual(r["differences"], [])
+
+    def test_date_time_fields_and_formula_key(self):
+        self.book(self.before, [[self.rows[0][0], datetime(2026, 11, 10)], [self.rows[1][0], time(8, 30)]])
+        self.book(self.after, [[self.rows[0][0], datetime(2026, 11, 11)], [self.rows[1][0], time(9, 30)]])
+        code, r = self.invoke()
+        self.assertEqual(code, 1)
+        self.assertEqual([d["after"]["value"] for d in r["differences"]], ["2026-11-11T00:00:00", "09:30:00"])
+        self.contract["keyKind"] = "id"
+        self.edit(lambda w: setattr(w.active["A2"], "value", '=A3'))
+        self.assertEqual(self.invoke()[1]["identityIssues"][0]["actual"]["type"], "f")
 
     def test_duplicate_blocks_both_sides_and_empty_key_is_explicit(self):
         self.book(self.after, [self.rows[0], self.rows[0], [None, "缺码"]])

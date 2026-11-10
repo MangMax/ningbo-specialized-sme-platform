@@ -6,7 +6,7 @@
 """Compare saved XLSX values/types and explicitly declared edit boundaries."""
 import argparse
 from collections import defaultdict
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta
 import hashlib
 import json
 import os
@@ -46,10 +46,20 @@ def key(cell, kind):
     return str(value) if type(value) is int else None
 
 
+def json_value(value):
+    if isinstance(value, (date, datetime, time)):
+        return value.isoformat()
+    if isinstance(value, timedelta):
+        return {"days": value.days, "seconds": value.seconds, "microseconds": value.microseconds}
+    if value is None or type(value) in (str, int, float, bool):
+        return value
+    raise ValueError("unsupported native value type: "+type(value).__name__)
+
+
 def native(cell):
     value = cell.value
     return {"type": cell.data_type, "pythonType": type(value).__name__,
-            "value": value.isoformat() if isinstance(value, (date, datetime, time)) else value}
+            "value": json_value(value)}
 
 
 def freeze(sheet):
@@ -90,7 +100,7 @@ def read_sheet(workbook, spec, kind, max_cells):
     for col, name in enumerate(headers, 1):
         populated = name not in (None, "") or any(sheet.cell(r, col).value not in (None, "") for r in range(header+1, sheet.max_row+1))
         if populated and name not in fields.values():
-            uncovered.append({"sheet": sheet.title, "column": col, "header": name, "problem": "unmapped_field"})
+            uncovered.append({"sheet": sheet.title, "column": col, "header": json_value(name), "problem": "unmapped_field"})
     groups, invalid = defaultdict(list), []
     for r in range(header+1, sheet.max_row+1):
         if all(sheet.cell(r, c).value in (None, "") for c in range(1, sheet.max_column+1)):
@@ -224,10 +234,11 @@ def main():
             raise ValueError("input changed during comparison")
         report["inputHashes"] = hashes
         report["inputHashesAfter"] = final
+        payload = json.dumps(report, ensure_ascii=False, allow_nan=False)
         if args.output:
             fd, temporary = tempfile.mkstemp(prefix=".workbook-values-", dir=args.output.parent)
             with os.fdopen(fd, "w", encoding="utf-8") as stream:
-                stream.write(json.dumps(report, ensure_ascii=False, allow_nan=False)+"\n")
+                stream.write(payload+"\n")
             os.link(temporary, args.output)
     except Exception as error:
         report.update(status="error", error=str(error))
@@ -236,7 +247,12 @@ def main():
             book.close()
         if temporary:
             Path(temporary).unlink(missing_ok=True)
-    print(json.dumps(report, ensure_ascii=False, allow_nan=False))
+    try:
+        payload = json.dumps(report, ensure_ascii=False, allow_nan=False)
+    except (TypeError, ValueError) as error:
+        report = {"runId": report["runId"], "status": "error", "error": "report serialization failed: "+str(error)}
+        payload = json.dumps(report, ensure_ascii=False)
+    print(payload)
     return {"pass": 0, "fail": 1, "not_covered": 2, "error": 2}[report["status"]]
 
 
