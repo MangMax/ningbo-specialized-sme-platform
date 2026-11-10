@@ -10,7 +10,7 @@ import * as schema from '../db/schema'
 import { bindArchive, bindLegacyAlias, insertArchiveValue, type ArchiveInput } from '../lib/platform/immutable-archive'
 import { assertFrozenSource, fileHash, schemaHash, withFrozenSource, upgradeCollections, type FrozenSource } from './collections'
 
-export const OBSERVATION_TRANSFORM = 't05a-observation-v1'
+export const OBSERVATION_TRANSFORM = 't05a-observation-v2'
 const phase = 'observations', sourceTable = 'platform_relation'
 const digest = (v: string | Buffer) => createHash('sha256').update(v).digest('hex')
 const mapped = ['id','collection_id','sequence_no','page_id','page_row_no','position_state','source_relation_key']
@@ -83,7 +83,12 @@ function transfer(s:Database.Database,t:Database.Database,db:Db,r:Pick<typeof sc
   const pages=db.select().from(p).where(and(eq(p.collectionId,r.queryId),sql`${p.sequenceStart} <= ${r.sequenceNo} AND ${p.sequenceEnd} >= ${r.sequenceNo}`)).all()
   const verified=pages.length===1 && pages[0]!.positionState==='verified'
   const mapping={id:r.id,collectionId:r.queryId,sequenceNo:r.sequenceNo,pageId:verified?pages[0]!.id:null,pageRowNo:verified?r.sequenceNo-pages[0]!.sequenceStart!+1:null,positionState:pages.length>1?'conflict' as const:verified?'verified' as const:'unknown' as const,sourceRelationKey:exact(s,r.id,'relation_key')}
-  const old=db.select().from(o).where(eq(o.relationId,r.id)).get()!
+  let old=db.select().from(o).where(eq(o.relationId,r.id)).get()
+  if (!old) {
+    // Accepted #714 branch: omission would invoke the indexed writer's ORM timestamp default.
+    db.insert(o).values({relationId:r.id,recordId:null,versionId:null,identityState:'not_indexed',contentState:'not_indexed',keySource:null,projectionRuleVersion:null,inputFingerprint:null,indexedAt:null,batchId:null,...mapping}).run()
+    old=db.select().from(o).where(eq(o.relationId,r.id)).get()!
+  }
   if (old.id!==null) {
     const actual=rowSnapshot(t,'platform_business_observation','relation_id',r.id,mapped)
     // Existing mappings must match independently derived expected bytes below; update only an unmapped row.
@@ -139,7 +144,6 @@ export function upgradeObservations(options:ObservationUpgradeOptions,frozen?:Fr
     }
     const invalid=sd.select({id:r.id}).from(r).where(sql`${r.sequenceNo} <= 0 OR typeof(${r.sequenceNo}) <> 'integer' OR ${r.sequenceNo} > ${Number.MAX_SAFE_INTEGER}`).all()
     for(const row of invalid) unresolved.push({kind:'invalid_sequence',oldId:row.id,reason:'Positive safe source sequence required'})
-    for(const row of sd.select({id:r.id,observation:o.relationId}).from(r).leftJoin(o,eq(o.relationId,r.id)).orderBy(asc(r.id)).all()) if(row.observation===null) unresolved.push({kind:'unindexed_relation',oldId:row.id,reason:'Schema prerequisite: unknown identity/content/keySource/rule/fingerprint/indexedAt cannot be represented; no invented historical facts'})
     // Report every inherited FK fault; block rather than discard or fabricate an owner.
     for(const fault of inheritedForeignKeys as {table:string,rowid:number,parent:string}[]) unresolved.push({kind:'source_foreign_key',oldId:fault.rowid,reason:`${fault.table} -> ${fault.parent}`})
     if(unresolved.length) return {state:'blocked' as const,copiedCount:0,unresolved,sourceManifest:sm,inheritedForeignKeys}
@@ -161,7 +165,20 @@ export function upgradeObservations(options:ObservationUpgradeOptions,frozen?:Fr
       const fields=columns(s,table).filter(x=>!(table==='platform_business_observation'&&mapped.includes(x))&&x!=='collection_id')
       const pk=(s.prepare(`pragma table_info("${table}")`).all() as {name:string,pk:number}[]).filter(x=>x.pk).sort((a,b)=>a.pk-b.pk).map(x=>`"${x.name}"`).join(',')
       const projection=fields.flatMap(x=>[`typeof("${x}")`,`hex(cast("${x}" as blob))`,`case when typeof("${x}")='real' then "${x}" end`]).join(',')
-      if(!isDeepStrictEqual(s.prepare(`select ${projection} from "${table}" order by ${pk}`).all(),t.prepare(`select ${projection} from "${table}" order by ${pk}`).all())) throw new Error(`Target source domain drift: ${table}`)
+      const sourceRows=s.prepare(`select ${projection} from "${table}" order by ${pk}`).all()
+      let targetRows=t.prepare(`select ${projection} from "${table}" order by ${pk}`).all()
+      if(table==='platform_business_observation') {
+        const originalIds=new Set(sd.select({id:o.relationId}).from(o).all().map(x=>x.id))
+        const targetObservations=db.select().from(o).orderBy(asc(o.relationId)).all()
+        const extra=targetObservations.filter(x=>!originalIds.has(x.relationId))
+        for(const row of extra) {
+          if(row.relationId>last || row.id!==row.relationId || row.identityState!=='not_indexed' || row.contentState!=='not_indexed' || [row.recordId,row.versionId,row.keySource,row.projectionRuleVersion,row.inputFingerprint,row.indexedAt,row.batchId].some(x=>x!==null)) throw new Error(`Target generated observation drift: ${row.relationId}`)
+        }
+        // The only new original-field rows allowed are checkpointed uncaptured observations.
+        // Source-indexed observations still compare byte-for-byte in their original PK order.
+        targetRows=targetRows.filter((_,i)=>originalIds.has(targetObservations[i]!.relationId))
+      }
+      if(!isDeepStrictEqual(sourceRows,targetRows)) throw new Error(`Target source domain drift: ${table}`)
     }
     if(!run) db.insert(schema.platformMigrationRun).values({...binding,state:'running'}).run()
     while(true) {

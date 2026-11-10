@@ -23,7 +23,7 @@ T02 归档及别名 schema 可与 T01 并行，不依赖 page、observation 扩�
 | T03a M / #710 | 同表 observation nullable 目标身份/位置及 assignment append-only schema expand；保留旧 PK/FK/读写/T02 refs | T01,T02 | populated0048 与 fresh schema/invariant oracle；无 collection 映射仍可升级；不转移数据、不切入口 |
 | T03b M | 三投影 owner 分支、source title/normalization/reconciliation 字段及版本 archive FK | T03a | 三来源独立字段与类型/CHECK oracle；不夹带历史转移 |
 | T04 M | source-bound collection/page/scope/condition/原字节转移工具 | T01,T02 | 旧自然键/JSON5表达式及逐字段bytes；source漂移拒绝续跑；仅升级工具读旧query |
-| T05a M / #713 | 离线 observation 身份/位置/原键、当前 assignment revision1、观察 archive/alias 与 checkpoint；见 [边界及结构前置](t05a-observations.md) | T03a,T03b,T04 | 原SQL字节/DTO、全PK、重复观察、回滚/漂移；未索引缺失事实不能猜填，逐项阻塞；保留过渡 relation_id PK/FK |
+| T05a M / #713 | 离线 observation 身份/位置/原键、当前 assignment revision1、观察 archive/alias 与 checkpoint；见 [边界及已接受结构前置](t05a-observations.md) | T03a,T03b,T04,#714（已接受） | 原SQL字节/DTO、全PK、重复观察、回滚/漂移；未索引以 paired not_indexed/SQL NULL 转移；真实悬空引用逐项阻塞；保留过渡 relation_id PK/FK |
 | T05b M | 三源逐观察投影与 canonical 版本原文转移，包含 verified/shared-version 及 raw-only | T05a | 每来源独立字段/类型及原版本/hash/bytes oracle；不得用 snapshot 作业务 fallback |
 | T05c M | 最终独立 observation PK、全部 FK/NOT NULL 重建、双向映射及旧 relation_id/T02 ownership JOIN 清除 | T05a,T05b | T05原最终全PK/归属/hash/引用门槛不降低；后续 W/R/H/C/Z 依赖完整 T05，不以 T05a 切片替代 |
 | W1 M | apply source writer 与统一导入事务接缝 | T05 | 申报公开命令、year空白/类型oracle；same-key异payload回滚；只移除apply旧写分支 |

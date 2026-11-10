@@ -49,22 +49,28 @@ it('maps observations and current assignment preserving original fields and byte
   expect(t.prepare('select * from platform_legacy_relation_alias order by old_id').all()).toEqual([{old_id:55,observation_id:55},{old_id:56,observation_id:56}])
   expect(t.pragma('foreign_key_check')).toEqual([]); t.close()
   expect(readFileSync(f.source)).toEqual(original)
-  expect(upgradeObservations({...f,transformVersion:'t05a-observation-v1'})).toEqual(result)
+  expect(upgradeObservations({...f,transformVersion:'t05a-observation-v2'})).toEqual(result)
 })
 
-it('reports every unindexed source PK without inventing historical facts or writing a run', () => {
-  const f=fixture(true),before=readFileSync(f.target)
+it('transfers an unindexed relation with genuine NULL indexing facts and exact source PK coverage', () => {
+  const f=fixture(true), sourceBytes=readFileSync(f.source)
   const result=upgradeObservations(f)
-  expect(result.state).toBe('blocked')
-  expect(result.unresolved).toEqual([{kind:'unindexed_relation',oldId:56,reason:'Schema prerequisite: unknown identity/content/keySource/rule/fingerprint/indexedAt cannot be represented; no invented historical facts'}])
-  expect(readFileSync(f.target)).toEqual(before)
+  expect(result).toMatchObject({state:'complete',copiedCount:2,unresolved:[]})
+  const t=new Database(f.target)
+  expect(t.prepare('select relation_id,id,collection_id,sequence_no,page_row_no,position_state,source_relation_key,identity_state,content_state,record_id,version_id,key_source,projection_rule_version,input_fingerprint,indexed_at,batch_id from platform_business_observation where relation_id=56').get()).toEqual({relation_id:56,id:56,collection_id:7,sequence_no:2,page_row_no:2,position_state:'verified',source_relation_key:null,identity_state:'not_indexed',content_state:'not_indexed',record_id:null,version_id:null,key_source:null,projection_rule_version:null,input_fingerprint:null,indexed_at:null,batch_id:null})
+  expect(t.prepare('select id from platform_business_observation order by id').all()).toEqual([{id:55},{id:56}])
+  expect(t.prepare('select observation_id,revision,origin,actor,recorded_at,command_receipt_id from platform_observation_assignment where observation_id=56').get()).toEqual({observation_id:56,revision:1,origin:'migrated_current',actor:null,recorded_at:null,command_receipt_id:null})
+  expect(t.prepare('select * from platform_legacy_relation_alias order by old_id').all()).toEqual([{old_id:55,observation_id:55},{old_id:56,observation_id:56}])
+  expect(t.pragma('foreign_key_check')).toEqual([]);t.close()
+  expect(readFileSync(f.source)).toEqual(sourceBytes)
+  expect(upgradeObservations(f)).toEqual(result)
 })
-it('rolls back a whole batch and resumes with no duplicate archives or assignments', () => {
-  const f=fixture()
+it.each([false,true])('rolls back a whole batch and resumes with no duplicate archives or assignments (unindexed=%s)', (unindexed) => {
+  const f=fixture(unindexed)
   expect(()=>upgradeObservations({...f,beforeCheckpoint:id=>{if(id===56) throw new Error('injected')}})).toThrow('injected')
   const t=new Database(f.target)
   expect(t.prepare("select last_old_id,copied_count from platform_migration_checkpoint where phase='observations'").all()).toEqual([{last_old_id:55,copied_count:1}])
-  expect(t.prepare('select id from platform_business_observation where relation_id=56').get()).toEqual({id:null})
+  expect(t.prepare('select id from platform_business_observation where relation_id=56').get()).toEqual(unindexed?undefined:{id:null})
   expect(t.prepare('select observation_id from platform_observation_assignment').all()).toEqual([{observation_id:55}]);t.close()
   expect(upgradeObservations(f).copiedCount).toBe(2)
 })
@@ -147,16 +153,16 @@ it.each(['blob','invalid-text','empty-text'] as const)('archives original SQLite
   const raw=cells.find(c=>c.name==='raw_fields')!
   expect({storage_class:raw.storageClass,bytes:Buffer.from(raw.hex,'hex')}).toEqual(expected);t.close()
 })
-it('holds the source lock against a separate process through library checkpoint commit',()=>{
-  const f=fixture()
+it.each([false,true])('holds the source lock against a separate process through library checkpoint commit (unindexed=%s)',(unindexed)=>{
+  const f=fixture(unindexed)
   expect(upgradeObservations({...f,beforeCheckpoint:()=>{
     const probe=spawnSync(process.execPath,['-e',`const D=require(${JSON.stringify(join(process.cwd(),'node_modules/better-sqlite3'))}); const d=new D(process.argv[1],{timeout:0}); for(const sql of ["update platform_relation set name_raw='external'",'pragma journal_mode=WAL']){try{d.exec(sql);process.exitCode=2}catch(e){if(e.code!=='SQLITE_BUSY')throw e}}d.close()`,f.source],{encoding:'utf8'})
     expect(probe.status).toBe(0);expect(probe.stderr).toBe('')
   }}).state).toBe('complete')
   const released=new Database(f.source,{timeout:0});expect(()=>released.exec("update platform_relation set name_raw='released'")).not.toThrow();released.close()
 })
-it('CLI restart retains exclusion at hash manifest receipt mapping and stdout boundaries',()=>{
-  const f=fixture(),preload=join(f.root,'observe.cjs'),log=join(f.root,'stages.jsonl')
+it.each([false,true])('CLI restart retains exclusion at hash manifest receipt mapping and stdout boundaries (unindexed=%s)',(unindexed)=>{
+  const f=fixture(unindexed),preload=join(f.root,'observe.cjs'),log=join(f.root,'stages.jsonl')
   writeFileSync(preload,`
     const fs=require('node:fs'),{spawnSync}=require('node:child_process'),source=fs.realpathSync(${JSON.stringify(f.source)}),log=${JSON.stringify(log)};
     const open=fs.openSync,read=fs.readSync,write=fs.writeSync,close=fs.closeSync,wf=fs.writeFileSync,sourceFds=new Set(),outputs=new Map(),seen=new Set();
@@ -212,7 +218,7 @@ it('completes an empty source with exact zero PK coverage',()=>{
   s.exec('delete from platform_business_observation;delete from platform_relation;delete from platform_query');s.close();copyFileSync(f.source,f.target);upgradeCollections({...f,runId:'t04'})
   const result=upgradeObservations(f)
   expect(result).toMatchObject({state:'complete',copiedCount:0,lastOldId:0,batchDigest:''})
-  expect(upgradeObservations({...f,transformVersion:'t05a-observation-v1'})).toEqual(result)
+  expect(upgradeObservations({...f,transformVersion:'t05a-observation-v2'})).toEqual(result)
 })
 it('preserves an exact existing revision1 and rejects a conflicting sealed archive atomically',()=>{
   const f=fixture(),t=new Database(f.target)
@@ -229,4 +235,117 @@ it('preserves an exact existing revision1 and rejects a conflicting sealed archi
   expect(check.prepare('select id from platform_business_observation where relation_id=55').get()).toEqual({id:null})
   expect(check.prepare('select * from platform_observation_assignment').all()).toEqual([])
   expect(check.prepare("select * from platform_migration_checkpoint where phase='observations'").all()).toEqual([]);check.close()
+})
+
+it('independently covers every mixed indexed duplicate and unindexed source PK byte cell and target reference',()=>{
+  const f=fixture(),s=new Database(f.source)
+  s.exec(`insert into platform_business_record(id,interface,platform_key,identity_rule_version,created_at) values(9,'apply_list','duplicate','old-rule','old-created');
+    insert into platform_business_record_version(id,record_id,hash_algorithm,content_hash,canonical_raw_json,created_at) values(10,9,'old-algorithm','old-hash','{}','old-version');
+    update platform_business_observation set record_id=9,version_id=10,identity_state='resolved',content_state='verified';
+    update platform_query set collection_evidence='{"pages":[{"page":3,"status":"success","fetchedCount":7}]}' where id=7;
+    insert into platform_relation(id,query_id,sequence_no,relation_key,raw_fields,source_text,name_raw,created_at) values
+    (57,7,3,NULL,NULL,NULL,' null ','legacy'),
+    (58,7,4,'','','',' empty ','legacy'),
+    (59,7,5,'  ',x'ff007b',x'00ff',' blob ','legacy'),
+    (60,7,6,'duplicate',cast(x'ff007b' as text),cast(x'ff' as text),' invalid ','legacy'),
+    (61,7,7,'duplicate','{"id":"other"}',' source ',' text ','legacy');`)
+  // Independent original SQLite oracle: no migration manifest/snapshot/extractor generates expectations.
+  const columns=s.prepare('pragma table_info(platform_relation)').all() as {name:string}[]
+  const ids=(s.prepare('select id from platform_relation order by id').all() as {id:number}[]).map(x=>x.id)
+  expect(ids).toEqual([55,56,57,58,59,60,61])
+  const originals=s.prepare('select * from platform_business_observation order by relation_id').all()
+  const versions=s.prepare('select * from platform_business_record_version order by id').all()
+  const cells=new Map(ids.map(id=>[id,columns.map(({name})=>({name,...s.prepare(`select typeof("${name}") storageClass,hex(cast("${name}" as blob)) hex from platform_relation where id=?`).get(id) as {storageClass:string,hex:string}}))]))
+  s.close();copyFileSync(f.source,f.target);upgradeCollections({...f,runId:'t04'})
+  const result=upgradeObservations({...f,batchSize:3})
+  expect(result).toMatchObject({state:'complete',copiedCount:7,unresolved:[]})
+  const t=new Database(f.target)
+  expect(t.prepare('select relation_id,id from platform_business_observation order by id').all()).toEqual(ids.map(id=>({relation_id:id,id})))
+  expect(t.prepare('select * from platform_business_record_version order by id').all()).toEqual(versions)
+  for(const old of originals as Record<string,unknown>[]) {
+    const now=t.prepare('select * from platform_business_observation where relation_id=?').get(old.relation_id) as Record<string,unknown>
+    for(const field of ['relation_id','record_id','version_id','identity_state','content_state','key_source','projection_rule_version','input_fingerprint','indexed_at','batch_id']) expect(now[field]).toEqual(old[field])
+  }
+  for(const id of ids) {
+    const expected=cells.get(id)!
+    expect(t.prepare('select collection_id,sequence_no,page_row_no,position_state from platform_business_observation where id=?').get(id)).toEqual({collection_id:7,sequence_no:id-54,page_row_no:id-54,position_state:'verified'})
+    const key=expected.find(c=>c.name==='relation_key')!
+    expect(t.prepare('select typeof(source_relation_key) storageClass,hex(cast(source_relation_key as blob)) hex from platform_business_observation where id=?').get(id)).toEqual({storageClass:key.storageClass,hex:key.hex})
+    const refs=t.prepare('select r.field,r.sealed,a.storage_class,a.bytes,a.sha256,a.created_at from platform_observation_archive_ref r join platform_archive_value a on a.id=r.archive_id where r.owner_id=? order by r.field').all(id) as {field:string,sealed:number,storage_class:string,bytes:Buffer|null,sha256:string|null,created_at:string|null}[]
+    expect(refs.map(x=>x.field)).toEqual(['legacyRowSnapshot','rawFields','sourceText'])
+    for(const ref of refs) {
+      expect(ref.sealed).toBe(1);expect(ref.created_at).toBeNull()
+      expect(ref.sha256).toBe(ref.bytes===null?null:createHash('sha256').update(ref.bytes).digest('hex'))
+      if(ref.field==='legacyRowSnapshot') expect(JSON.parse(ref.bytes!.toString())).toEqual({encoding:'t05a-sqlite-cells-v1',fields:expected})
+      else {const cell=expected.find(c=>c.name===(ref.field==='rawFields'?'raw_fields':'source_text'))!;expect(ref.storage_class).toBe(cell.storageClass);expect(ref.bytes).toEqual(cell.storageClass==='null'?null:Buffer.from(cell.hex,'hex'))}
+    }
+    expect(t.prepare('select * from platform_legacy_relation_alias where old_id=?').get(id)).toEqual({old_id:id,observation_id:id})
+    expect(t.prepare('select revision,enterprise_id,match_basis,verification_status,origin,actor,basis,recorded_at,command_receipt_id from platform_observation_assignment where observation_id=?').all(id)).toEqual([{revision:1,enterprise_id:null,match_basis:'none',verification_status:'pending',origin:'migrated_current',actor:null,basis:null,recorded_at:null,command_receipt_id:null}])
+    for(const column of ['name_raw','uscc_raw','alias_name_raw']) {const cell=expected.find(c=>c.name===column)!;expect(t.prepare(`select typeof(${column}) storageClass,hex(cast(${column} as blob)) hex from platform_observation_assignment where observation_id=?`).get(id)).toEqual({storageClass:cell.storageClass,hex:cell.hex})}
+    if(id>=57) expect(t.prepare('select identity_state,content_state,record_id,version_id,key_source,projection_rule_version,input_fingerprint,indexed_at,batch_id from platform_business_observation where id=?').get(id)).toEqual({identity_state:'not_indexed',content_state:'not_indexed',record_id:null,version_id:null,key_source:null,projection_rule_version:null,input_fingerprint:null,indexed_at:null,batch_id:null})
+  }
+  expect(t.pragma('foreign_key_check')).toEqual([]);t.close()
+  expect(upgradeObservations({...f,batchSize:2})).toEqual(result)
+})
+
+it('rolls back inserted unindexed observations archives assignments aliases and checkpoint as one batch',()=>{
+  const f=fixture(true)
+  expect(()=>upgradeObservations({...f,batchSize:2,beforeCheckpoint:()=>{throw Error('batch-fault')}})).toThrow('batch-fault')
+  const t=new Database(f.target)
+  expect(t.prepare('select relation_id,id from platform_business_observation').all()).toEqual([{relation_id:55,id:null}])
+  for(const table of ['platform_observation_assignment','platform_observation_archive_ref','platform_legacy_relation_alias']) expect(t.prepare(`select * from ${table}`).all()).toEqual([])
+  expect(t.prepare("select * from platform_migration_checkpoint where phase='observations'").all()).toEqual([]);t.close()
+  expect(upgradeObservations(f).copiedCount).toBe(2)
+})
+
+it.each(['mapping','metadata','lost','extra'] as const)('rejects generated unindexed target drift for case %s',kind=>{
+  const f=fixture(true);upgradeObservations(f)
+  const t=new Database(f.target)
+  if(kind==='mapping') t.exec("update platform_business_observation set source_relation_key='invented' where relation_id=56")
+  if(kind==='metadata') t.exec("update platform_business_observation set identity_state='missing_key',content_state='unverifiable',key_source='none',projection_rule_version='fake',input_fingerprint='fake',indexed_at='fake' where relation_id=56")
+  if(kind==='lost') {t.pragma('foreign_keys=OFF');t.exec('delete from platform_business_observation where relation_id=56')}
+  if(kind==='extra') {t.pragma('foreign_keys=OFF');t.exec("insert into platform_business_observation(relation_id,identity_state,content_state) values(99,'not_indexed','not_indexed')")}
+  t.close();expect(()=>upgradeObservations(f)).toThrow(/drift|Missing|integrity/)
+})
+
+it('reports all true orphan source references even for unindexed relations without target writes',()=>{
+  const f=fixture(true),s=new Database(f.source)
+  s.pragma('foreign_keys=OFF');s.exec('update platform_relation set enterprise_id=987,query_id=999 where id=56');s.close()
+  const before=readFileSync(f.target),result=upgradeObservations(f)
+  expect(result.state).toBe('blocked')
+  expect(result.unresolved.map(x=>x.reason).sort()).toEqual(['platform_relation -> enterprise','platform_relation -> platform_query'])
+  expect(result.unresolved.every(x=>x.oldId===56)).toBe(true)
+  expect(readFileSync(f.target)).toEqual(before)
+})
+
+it('keeps unknown page positions empty keys and confirmed ownership for unindexed history',()=>{
+  const f=fixture(true),s=new Database(f.source)
+  s.exec(`update platform_query set collection_evidence=NULL;
+    insert into enterprise(id,name,name_norm) values(9,'企业','企业');
+    update platform_relation set relation_key='',enterprise_id=9,match_basis='manual',verification_status='confirmed',uscc_raw=' 原码 ',alias_name_raw=' 原别名 ' where id=56;`)
+  s.close();copyFileSync(f.source,f.target);upgradeCollections({...f,runId:'t04'})
+  expect(upgradeObservations(f).state).toBe('complete')
+  const t=new Database(f.target)
+  expect(t.prepare('select page_id,page_row_no,position_state,source_relation_key,indexed_at from platform_business_observation where id=56').get()).toEqual({page_id:null,page_row_no:null,position_state:'unknown',source_relation_key:'',indexed_at:null})
+  expect(t.prepare('select enterprise_id,match_basis,verification_status,uscc_raw,alias_name_raw,actor,recorded_at,command_receipt_id from platform_observation_assignment where observation_id=56').get()).toEqual({enterprise_id:9,match_basis:'manual',verification_status:'confirmed',uscc_raw:' 原码 ',alias_name_raw:' 原别名 ',actor:null,recorded_at:null,command_receipt_id:null});t.close()
+})
+
+it('preserves a preexisting uncaptured observation without inventing metadata on replay',()=>{
+  const f=fixture(true),s=new Database(f.source)
+  s.exec("insert into platform_business_observation(relation_id,identity_state,content_state) values(56,'not_indexed','not_indexed')")
+  const old=s.prepare('select record_id,version_id,identity_state,content_state,key_source,projection_rule_version,input_fingerprint,indexed_at,batch_id from platform_business_observation where relation_id=56').get()
+  s.close();copyFileSync(f.source,f.target);upgradeCollections({...f,runId:'t04'})
+  const result=upgradeObservations(f),t=new Database(f.target)
+  expect(t.prepare('select record_id,version_id,identity_state,content_state,key_source,projection_rule_version,input_fingerprint,indexed_at,batch_id from platform_business_observation where relation_id=56').get()).toEqual(old);t.close()
+  expect(upgradeObservations(f)).toEqual(result)
+})
+
+it('transfers a wholly unindexed source and rejects a v1 transform resume',()=>{
+  const f=fixture(true),s=new Database(f.source)
+  s.exec('delete from platform_business_observation');s.close();copyFileSync(f.source,f.target);upgradeCollections({...f,runId:'t04'})
+  const result=upgradeObservations(f),t=new Database(f.target)
+  expect(result).toMatchObject({state:'complete',copiedCount:2,unresolved:[]})
+  expect(t.prepare('select id,identity_state,content_state,indexed_at from platform_business_observation order by id').all()).toEqual([{id:55,identity_state:'not_indexed',content_state:'not_indexed',indexed_at:null},{id:56,identity_state:'not_indexed',content_state:'not_indexed',indexed_at:null}]);t.close()
+  expect(upgradeObservations(f)).toEqual(result)
+  expect(()=>upgradeObservations({...f,transformVersion:'t05a-observation-v1'})).toThrow('Source/schema/transform binding changed')
 })
