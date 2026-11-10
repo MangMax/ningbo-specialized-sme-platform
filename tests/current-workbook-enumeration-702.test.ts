@@ -6,10 +6,17 @@ import { useDb } from '../db/client'
 import * as candidates from '../lib/roster/current-candidates'
 import { CurrentWorkbookLimitError, writeCurrentWorkbook } from '../lib/roster/current-workbook'
 
+vi.mock('node:os', async importOriginal => {
+  const actual = await importOriginal<typeof import('node:os')>()
+  return { ...actual, tmpdir: vi.fn(actual.tmpdir) }
+})
+
+const systemTempDir = tmpdir()
 const close: (() => void)[] = []
-afterEach(() => { vi.restoreAllMocks(); for (const cleanup of close.splice(0)) cleanup() })
+afterEach(() => { vi.restoreAllMocks(); vi.mocked(tmpdir).mockReturnValue(systemTempDir); for (const cleanup of close.splice(0)) cleanup() })
 function universe(size: number) {
-  const dir = mkdtempSync(join(tmpdir(), 'enumeration-702-'))
+  const dir = mkdtempSync(join(systemTempDir, 'enumeration-702-'))
+  vi.mocked(tmpdir).mockReturnValue(dir)
   const db = useDb({ dbPath: join(dir, 'synthetic.db') })
   close.push(() => { db.$client.close(); rmSync(dir, { recursive: true, force: true }) })
   // Synthetic input at the candidate boundary: real SQLite iterator, no count or SQL-call oracle.
