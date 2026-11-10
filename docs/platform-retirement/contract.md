@@ -20,6 +20,16 @@ SQLite ID 使用 INTEGER，应用边界要求正 safe integer。时间保留原 
 
 collection 原 request、rawResponse、collectionEvidence、legacy supplementation、sourceText 和业务 rawFields 都进归档。源字段与传输字段不能装进一个可空混合 relation。除显式集合 metadata 外，运行代码不解析上述归档来筛选企业、称号、条件或完整性。
 
+## T03a expand 与最终契约的责任边界（#710）
+
+上表是最终目标，不是 0049 已完成状态。T03a 只在**同一张** observation 添加 nullable UNIQUE `id`、nullable `collection_id/sequence_no/page_id/page_row_no/position_state/source_relation_key`。旧 `relation_id` PK/FK、旧组合 FK/CHECK、identity/content/keySource/rule/fingerprint/indexedAt/batch 原样保留。未映射分支的全部新增列均 NULL，表示尚未转移；不根据旧 raw.id 或 record.platformKey 猜填原键，不造 collection。已映射分支必须有正 safe integer id/collection/sequence 和显式 position_state；pageRow 必须有 page，page 必须属于同 collection，collection/sequence 与 id 分别唯一。NULL source key 是合法原值；分支由 id 是否非空区分，不能用该键判断是否捕获。目标字段是后续升级工具的结构准备，本票没有历史填充或新业务 writer。
+
+`platform_observation_assignment` 本阶段 FK 指向旧 observation.relation_id；PK(observation_id,revision)，修订从1连续追加，禁止 UPDATE/DELETE 和 REPLACE/upsert 覆写。enterprise_id 可 NULL，原名称/统代/别名不 trim。migrated_current 只能 revision1，actor/recorded_at/command_receipt_id 均 NULL，无时间默认值；command 使用现有 `{type:'user'|'agent',id:string}` actor 类型和 TEXT basis，可显式未知。command_receipt_id 是 nullable 正 safe integer 预留引用，尚未指定未来命令回执 owner，**不擅自绑定 import_receipt**；命令 writer 的具体回执 FK 由其切换票按实际契约补齐。本票不生成任何 assignment 数据。
+
+T03b 单独负责三来源 projection owner 分支、source title 类型/布尔/归一化/对照字段及 version archive FK。T04 负责有来源的 collection/page 映射。T05 必须逐观察填充原键/位置/归属、保留已有 id=旧 relation_id、为未索引旧关系建观察、冻结 maxima 并推进最终 id 分配，独立核对原版本/hash/引用。随后重建 observation 为独立 id PK，collection_id/sequence_no/position_state NOT NULL，重建 assignment、T02 observation archive ref/alias FK 到 id，改 T02 ownership JOIN 为 observation.collection_id，**移除 relation_id FK/列及旧 relation JOIN**。当前旧入口只存在于 expand，不能作为最终 fallback。W/R 各票切换运行读写；物理删除仍须最终门禁。T03a 不能代表整体 T03 或完整退役完成。
+
+迁移 0049 用 ALTER ADD COLUMN，避免在已填充 T02 refs 的 0048 上 drop/rebuild observation；列级 CHECK 表达与 Drizzle 声明相同的不变量。跨表 page-owner 与 append-only 使用显式 DDL triggers，属于 schema 基础设施例外；常规 fixture 写入使用 typed Drizzle，原始 SQL 仅用于冻结旧库、schema/invariant/恶意写入 oracle。T05 最终重建须重新提交真实填充库与 FK manifest 验收，不能继承本票结果。
+
 ## 复用三来源投影
 
 现有 record、version ID、identityRuleVersion、hashAlgorithm、contentHash 和三投影 ruleVersion 原样保留。版本 `canonical_raw_json` 改为 `canonical_archive_id` 外键，正文完整转存 BLOB；旧 contentHash 不改。唯一约束仍是 (record_id,hash_algorithm,content_hash)，命中后比对长度与原 bytes，不以摘要相同省略内容核对。
@@ -44,7 +54,7 @@ collection 原 request、rawResponse、collectionEvidence、legacy supplementati
 - reconciliation严格复现旧算法：stored侧文本trim/空变NULL，declareKind按原allowlist；两侧非空且不等则conflict=true、reconciled=NULL，并分别保留storedValue/rawValue；否则取stored或parsed-source。`withArchiveProcessFacts` 仅在该字段被version模型拥有、版本值非空且该观察无该字段冲突时补充。`normalizationConflicts` 与 `platform_field_conflict` 从typed列生成，不解码legacyRowSnapshot。source-specific版本字段按原source parser解析，不能用process parser替代来源parser。
 - 无版本观察也从可验证原输入提取raw-only值，再按同一stored/source规则对照，不能只复制旧列。无法解析的历史保留parse_state和unknown、原错误边界；recognized保真未捕获不变已验证。新writer同一事务生成这些观察事实，回放/更正绑定原输入和提取规则版本；旧观察不可借新parser默默重新解释。可变企业归属仍独立走assignment修订。
 
-T03定义上述各源字段及CHECK、T05逐观察转移；W1–W3生成并验证观察事实，R1–R3/H1/H3使用它们。必须固定三个独立反例：①同USCC、relationKey=A且raw.id分别B/C的两冲突观察仍属于原年度闭包；②query=2,3下raw.rdjb数字2可命中而字符串“ 2 ”不命中，NULL/缺失及页行冲突分别保留；query=1,2下raw.rdjb=true时旧SQL入口得到1可命中创新型、直接JS入口拒绝，false时SQL得到0不命中且JS拒绝，二者必须分别固定期待值；③两观察共享同一verified版本、raw.status均“终审通过”，旧stored.status分别“退回”和“终审通过”，仅前者保留status冲突与platform_field_conflict。这些是未来实现oracle，不是本轮运行PASS。
+T03b定义上述各源字段及CHECK、T05逐观察转移；W1–W3生成并验证观察事实，R1–R3/H1/H3使用它们。必须固定三个独立反例：①同USCC、relationKey=A且raw.id分别B/C的两冲突观察仍属于原年度闭包；②query=2,3下raw.rdjb数字2可命中而字符串“ 2 ”不命中，NULL/缺失及页行冲突分别保留；query=1,2下raw.rdjb=true时旧SQL入口得到1可命中创新型、直接JS入口拒绝，false时SQL得到0不命中且JS拒绝，二者必须分别固定期待值；③两观察共享同一verified版本、raw.status均“终审通过”，旧stored.status分别“退回”和“终审通过”，仅前者保留status冲突与platform_field_conflict。这些是未来实现oracle，不是本轮运行PASS。
 
 `platform_business_observation` 只保存身份断言、位置和规则状态，不增加 status/batch/year 等通用业务字段。三投影 owner 分支扩展单独成票，不作为第一采集 schema 票的前置条件。原始bytes、source字段、normalized display及观察对照分别命名，不能通过archive业务fallback弥补缺列。
 

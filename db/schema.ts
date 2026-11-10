@@ -924,6 +924,15 @@ export const platformBusinessRecordVersion = sqliteTable('platform_business_reco
 /** Additive mapping. All evidence/decisions continue to reference the original relation. */
 export const platformBusinessObservation = sqliteTable('platform_business_observation', {
   relationId: integer('relation_id').primaryKey().references(() => platformRelation.id, { onDelete: 'restrict' }),
+  /** T03a reserved target identity. T05 fills mappings and promotes id to PK. */
+  id: integer('id'),
+  collectionId: integer('collection_id').references(() => platformCollection.id, { onDelete: 'restrict' }),
+  sequenceNo: integer('sequence_no'),
+  pageId: integer('page_id').references(() => platformCollectionPage.id, { onDelete: 'restrict' }),
+  pageRowNo: integer('page_row_no'),
+  positionState: text('position_state', { enum: ['verified', 'unknown', 'conflict'] }),
+  /** Original relation_key, never canonical platformKey/raw.id. NULL before transfer is uncaptured. */
+  sourceRelationKey: text('source_relation_key'),
   recordId: integer('record_id').references(() => platformBusinessRecord.id, { onDelete: 'restrict' }),
   versionId: integer('version_id'),
   identityState: text('identity_state', { enum: ['resolved', 'missing_key', 'conflict'] }).notNull(),
@@ -934,11 +943,45 @@ export const platformBusinessObservation = sqliteTable('platform_business_observ
   indexedAt: text('indexed_at').notNull().$defaultFn(() => new Date().toISOString()),
   batchId: integer('batch_id').references(() => importBatch.id, { onDelete: 'restrict' }),
 }, t => [
+  uniqueIndex('platform_observation_id_uq').on(t.id),
+  uniqueIndex('platform_observation_collection_sequence_uq').on(t.collectionId, t.sequenceNo),
+  index('platform_observation_position_idx').on(t.collectionId, t.pageId, t.sequenceNo),
+  ...[t.id, t.collectionId, t.sequenceNo, t.pageId, t.pageRowNo].map(c => check(`platform_observation_${c.name}_ck`, sql`${c} IS NULL OR (typeof(${c}) = 'integer' AND ${c} BETWEEN 1 AND 9007199254740991)`)),
+  check('platform_observation_position_state_ck', sql`${t.positionState} IS NULL OR ${t.positionState} IN ('verified','unknown','conflict')`),
+  check('platform_observation_source_key_ck', sql`${t.sourceRelationKey} IS NULL OR typeof(${t.sourceRelationKey}) = 'text'`),
+  check('platform_observation_mapping_ck', sql`(${t.id} IS NULL AND ${t.collectionId} IS NULL AND ${t.sequenceNo} IS NULL AND ${t.pageId} IS NULL AND ${t.pageRowNo} IS NULL AND ${t.positionState} IS NULL AND ${t.sourceRelationKey} IS NULL) OR (${t.id} IS NOT NULL AND ${t.collectionId} IS NOT NULL AND ${t.sequenceNo} IS NOT NULL AND ${t.positionState} IS NOT NULL AND (${t.pageRowNo} IS NULL OR ${t.pageId} IS NOT NULL))`),
   foreignKey({ columns: [t.versionId, t.recordId], foreignColumns: [platformBusinessRecordVersion.id, platformBusinessRecordVersion.recordId] }).onDelete('restrict'),
   check('platform_business_observation_state_ck', sql`(${t.identityState} = 'resolved' AND ${t.recordId} IS NOT NULL) OR (${t.identityState} IN ('missing_key','conflict') AND ${t.recordId} IS NULL)`),
   check('platform_business_observation_content_ck', sql`(${t.contentState} = 'verified' AND ${t.versionId} IS NOT NULL AND ${t.recordId} IS NOT NULL) OR (${t.contentState} = 'unverifiable' AND ${t.versionId} IS NULL)`),
   index('platform_business_observation_record_idx').on(t.recordId, t.versionId, t.relationId),
   index('platform_business_observation_version_idx').on(t.versionId, t.relationId),
+])
+
+/** T03a append-only schema; no runtime assignment writer or historical transfer. */
+export const platformObservationAssignment = sqliteTable('platform_observation_assignment', {
+  // T05 must rebind this FK to independent observation.id, preserving values.
+  observationId: integer('observation_id').notNull().references(() => platformBusinessObservation.relationId, { onDelete: 'restrict' }),
+  revision: integer('revision').notNull(),
+  enterpriseId: integer('enterprise_id').references(() => enterprise.id, { onDelete: 'restrict' }),
+  matchBasis: text('match_basis', { enum: ['uscc', 'alias', 'manual', 'none'] }).notNull(),
+  verificationStatus: text('verification_status', { enum: ['confirmed', 'pending'] }).notNull(),
+  usccRaw: text('uscc_raw'),
+  nameRaw: text('name_raw'),
+  aliasNameRaw: text('alias_name_raw'),
+  actor: text('actor', { mode: 'json' }).$type<{ type: 'user' | 'agent'; id: string } | null>(),
+  basis: text('basis'),
+  commandReceiptId: integer('command_receipt_id'),
+  recordedAt: text('recorded_at'),
+  origin: text('origin', { enum: ['migrated_current', 'command'] }).notNull(),
+}, t => [
+  primaryKey({ columns: [t.observationId, t.revision] }),
+  index('platform_assignment_enterprise_idx').on(t.enterpriseId, t.observationId, t.revision),
+  index('platform_assignment_uscc_idx').on(t.usccRaw, t.observationId),
+  ...[t.observationId, t.revision, t.enterpriseId, t.commandReceiptId].map(c => check(`platform_assignment_${c.name}_ck`, sql`${c} IS NULL OR (typeof(${c}) = 'integer' AND ${c} BETWEEN 1 AND 9007199254740991)`)),
+  ...[t.usccRaw, t.nameRaw, t.aliasNameRaw, t.actor, t.basis, t.recordedAt].map(c => check(`platform_assignment_${c.name}_ck`, sql`${c} IS NULL OR typeof(${c}) = 'text'`)),
+  check('platform_assignment_match_ck', sql`${t.matchBasis} IN ('uscc','alias','manual','none')`),
+  check('platform_assignment_verification_ck', sql`${t.verificationStatus} IN ('confirmed','pending')`),
+  check('platform_assignment_origin_ck', sql`(${t.origin} = 'migrated_current' AND ${t.revision} = 1 AND ${t.actor} IS NULL AND ${t.recordedAt} IS NULL AND ${t.commandReceiptId} IS NULL) OR ${t.origin} = 'command'`),
 ])
 
 /**

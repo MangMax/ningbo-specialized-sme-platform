@@ -82,7 +82,7 @@ it('preserves the independent 0027 oracle and old insert update delete triggers 
     }
     expect(legacyScope(s)).toEqual(expected); expect(legacyErrors(s)).toEqual(errors)
     expect(s.prepare('select * from platform_query order by id').all()).toEqual(before)
-    expect(s.prepare("select name,sql from sqlite_schema where type='trigger' AND tbl_name NOT LIKE 'platform_archive%' AND tbl_name NOT LIKE 'platform_%archive_ref' AND tbl_name NOT LIKE 'platform_legacy_%' order by name").all()).toEqual(triggers)
+    expect(s.prepare("select name,sql from sqlite_schema where type='trigger' AND tbl_name NOT LIKE 'platform_archive%' AND tbl_name NOT LIKE 'platform_%archive_ref' AND tbl_name NOT LIKE 'platform_legacy_%' AND name NOT IN ('platform_assignment_no_update','platform_assignment_no_delete','platform_assignment_append','platform_observation_page_insert','platform_observation_page_update','platform_observation_page_owner_update') order by name").all()).toEqual(triggers)
     assertOracle()
     const id = Number(insert.run('post-upgrade', 'success', '{titleScope:{rdjb:["3"]}}').lastInsertRowid)
     assertOracle()
