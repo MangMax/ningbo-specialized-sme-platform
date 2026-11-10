@@ -43,7 +43,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
-import FileEventSync from '@/components/files/FileEventSync.vue'
+import { onBeforeRouteLeave } from 'vue-router'
 import FileSegmentsEditor from '@/components/files/FileSegmentsEditor.vue'
 import EditFileDialog, { type MetadataForm } from '@/components/files/EditFileDialog.vue'
 import DeleteFileDialog from '@/components/files/DeleteFileDialog.vue'
@@ -387,11 +387,41 @@ const isComplete = (row: StoredFileRow) => row.source !== null && row.kind !== n
  */
 const expandedIds = ref<number[]>([])
 const isExpanded = (id: number) => expandedIds.value.includes(id)
-function toggleParts(id: number) {
+const editors = new Map<number, InstanceType<typeof FileSegmentsEditor>>()
+async function guardEditors() {
+  for (const editor of editors.values()) if(!await editor.requestLeave()) return false
+  return true
+}
+onBeforeRouteLeave(guardEditors)
+async function toggleParts(id: number) {
+  if(isExpanded(id) && !await editors.get(id)?.requestLeave()) return
   expandedIds.value = isExpanded(id)
     ? expandedIds.value.filter((x) => x !== id)
     : [...expandedIds.value, id]
 }
+
+// Keep the displayed query fixed until the current declaration operation is resolved.
+let changingQuery = false
+let queryGuardPending = false
+let queuedQuery: [string[], string[], string[], string, number, number] | null = null
+watch([sources, categoryStates, parseStates, q, page, pageSize], async (values, previous) => {
+  if(changingQuery || !editors.size) return
+  queuedQuery=values
+  changingQuery=true
+  const [ss,cs,ps,query,pg,size]=previous
+  sources.value=ss; categoryStates.value=cs; parseStates.value=ps; q.value=query; page.value=pg; pageSize.value=size
+  changingQuery=false
+  if(queryGuardPending) return
+  queryGuardPending=true
+  const allowed=await guardEditors()
+  queryGuardPending=false
+  if(allowed && queuedQuery) {
+    changingQuery=true
+    const [ss,cs,ps,query,pg,size]=queuedQuery
+    sources.value=ss; categoryStates.value=cs; parseStates.value=ps; q.value=query; page.value=pg; pageSize.value=size
+    changingQuery=false
+  }
+}, {flush:'sync'})
 
 /**
  * 「内容年份 / 内容批次」列的展示值:**文件内容**里各段去重后的年份(如 `2021、2024`)。
@@ -412,11 +442,11 @@ function seriesCell(values: readonly number[], unit: string) {
     more: rest > 0 ? `+${rest}${unit}` : '',
   }
 }
-const contentYears = (row: StoredFileRow) => seriesCell(partYears(row.parts), '年')
-const contentBatches = (row: StoredFileRow) => seriesCell(partBatches(row.parts), '批')
+const contentYears = (row: StoredFileRow) => seriesCell(partYears((row.registeredSummary?.declarations.map(d => d.part) ?? [])), '年')
+const contentBatches = (row: StoredFileRow) => seriesCell(partBatches((row.registeredSummary?.declarations.map(d => d.part) ?? [])), '批')
 /** 完整清单进 `title` —— 列里只平铺前两个,悬停能看到全部。 */
-const contentYearsTitle = (row: StoredFileRow) => joinSeries(partYears(row.parts)) ?? undefined
-const contentBatchesTitle = (row: StoredFileRow) => joinSeries(partBatches(row.parts)) ?? undefined
+const contentYearsTitle = (row: StoredFileRow) => joinSeries(partYears((row.registeredSummary?.declarations.map(d => d.part) ?? []))) ?? undefined
+const contentBatchesTitle = (row: StoredFileRow) => joinSeries(partBatches((row.registeredSummary?.declarations.map(d => d.part) ?? []))) ?? undefined
 /** 「文件发布年份/批次」列:文件级**单值**(目录给的),形如 `2024 / 2`、`2024`、`—`。 */
 function publishedYearBatch(row: StoredFileRow): string {
   if (row.year == null) return '—'
@@ -579,9 +609,9 @@ function publishedYearBatch(row: StoredFileRow): string {
                       <Button
                         variant="ghost"
                         size="icon"
-                        class="size-7"
+                        class="size-11"
                         :aria-expanded="isExpanded(row.id)"
-                        :title="`展开 ${row.parts.length} 段明细`"
+                        :title="`展开 ${row.registeredSummary?.count} 段明细`"
                         @click="toggleParts(row.id)"
                       >
                         <ChevronRight
@@ -634,7 +664,7 @@ function publishedYearBatch(row: StoredFileRow): string {
                           {{ contentYears(row)!.more }}</span
                         >
                       </template>
-                      <span v-else class="text-muted-foreground font-normal">—</span>
+                      <span v-else class="text-muted-foreground font-normal">{{ row.registeredSummary?.count ? '未知' : (row.registeredSummary ? '未登记' : '读取未确认') }}</span>
                     </TableCell>
                     <TableCell class="truncate text-xs tabular-nums" :title="contentBatchesTitle(row)">
                       <template v-if="contentBatches(row)">
@@ -694,7 +724,7 @@ function publishedYearBatch(row: StoredFileRow): string {
                     </TableCell>
                     <TableCell :class="ACTION_TD">
                       <div class="flex flex-wrap items-center gap-1">
-                        <FileEventSync :file-id="row.id" @synced="refresh()" />
+
                         <Button
                           variant="ghost"
                           size="sm"
@@ -730,7 +760,7 @@ function publishedYearBatch(row: StoredFileRow): string {
                     data-testid="file-parts-row"
                   >
                     <TableCell :colspan="12" class="bg-muted/40 p-0">
-                      <div class="sticky left-0 w-[100cqw] p-3 sm:p-4"><FileSegmentsEditor :open="true" :file="row" :refresh-list="refresh" /></div>
+                      <div class="sticky left-0 w-[100cqw] p-3 sm:p-4"><FileSegmentsEditor :ref="el => { if(el) editors.set(row.id, el as InstanceType<typeof FileSegmentsEditor>); else editors.delete(row.id) }" :open="true" :file="row" :refresh-list="refresh" /></div>
                     </TableCell>
                   </TableRow>
                 </template>
