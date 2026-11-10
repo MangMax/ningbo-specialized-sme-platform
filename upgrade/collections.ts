@@ -28,7 +28,7 @@ export function beginFrozenSource(s: Database.Database) {
     if (invalid) throw new Error('Unsafe source identity')
   }
 }
-type FrozenSource = { path: string, database: Database.Database, fd: number }
+export type FrozenSource = { path: string, database: Database.Database, fd: number }
 const activeSources = new WeakSet<FrozenSource>()
 /** Keep every source descriptor open: POSIX close on the inode releases process locks. */
 export function withFrozenSource<T>(path: string, action: (source: FrozenSource) => T): T {
@@ -42,7 +42,7 @@ export function withFrozenSource<T>(path: string, action: (source: FrozenSource)
     try { return action(source) } finally { activeSources.delete(source) }
   } finally { try { database?.close() } finally { closeSync(fd) } }
 }
-function fileHash(fd: number) {
+export function fileHash(fd: number) {
   const h = createHash('sha256'), chunk = Buffer.alloc(1024 * 1024)
   let size: number, offset = 0
   while ((size = readSync(fd, chunk, 0, chunk.length, offset)) > 0) {
@@ -50,7 +50,7 @@ function fileHash(fd: number) {
   }
   return h.digest('hex')
 }
-function schemaHash(s: Database.Database) {
+export function schemaHash(s: Database.Database) {
   return hash(JSON.stringify(s.prepare("select type,name,tbl_name,sql from sqlite_schema where name not like 'sqlite_%' order by type,name").all()))
 }
 const legacyTables = ['platform_query', 'platform_query_legacy_provenance', 'platform_query_title_scope', 'platform_query_title_scope_error'] as const
@@ -263,4 +263,9 @@ export function upgradeCollections(options: UpgradeOptions, frozenSource?: Froze
     db.update(schema.platformMigrationRun).set({ state: 'complete' }).where(eq(schema.platformMigrationRun.runId, options.runId)).run()
     return { lastOldId, copiedCount, batchDigest: digest, sourceManifest: frozen, inheritedForeignKeys, unresolved }
   } finally { t.close() }
+}
+
+/** Guard validation shared only by offline upgrade phases. */
+export function assertFrozenSource(source: FrozenSource, path: string) {
+  if (!activeSources.has(source) || source.path !== realpathSync(path) || !source.database.inTransaction) throw new Error('Inactive frozen source')
 }
