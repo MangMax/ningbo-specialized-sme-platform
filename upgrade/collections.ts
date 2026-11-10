@@ -28,13 +28,27 @@ export function beginFrozenSource(s: Database.Database) {
     if (invalid) throw new Error('Unsafe source identity')
   }
 }
-function fileHash(path: string) {
-  const fd = openSync(path, 'r'), h = createHash('sha256'), chunk = Buffer.alloc(1024 * 1024)
+type FrozenSource = { path: string, database: Database.Database, fd: number }
+const activeSources = new WeakSet<FrozenSource>()
+/** Keep every source descriptor open: POSIX close on the inode releases process locks. */
+export function withFrozenSource<T>(path: string, action: (source: FrozenSource) => T): T {
+  const resolved = realpathSync(path), fd = openSync(resolved, 'r')
+  let database: Database.Database | undefined
   try {
-    let size: number
-    while ((size = readSync(fd, chunk, 0, chunk.length, null)) > 0) h.update(chunk.subarray(0, size))
-    return h.digest('hex')
-  } finally { closeSync(fd) }
+    database = new Database(resolved, { readonly: true, fileMustExist: true })
+    beginFrozenSource(database)
+    const source = { path: resolved, database, fd }
+    activeSources.add(source)
+    try { return action(source) } finally { activeSources.delete(source) }
+  } finally { try { database?.close() } finally { closeSync(fd) } }
+}
+function fileHash(fd: number) {
+  const h = createHash('sha256'), chunk = Buffer.alloc(1024 * 1024)
+  let size: number, offset = 0
+  while ((size = readSync(fd, chunk, 0, chunk.length, offset)) > 0) {
+    h.update(chunk.subarray(0, size)); offset += size
+  }
+  return h.digest('hex')
 }
 function schemaHash(s: Database.Database) {
   return hash(JSON.stringify(s.prepare("select type,name,tbl_name,sql from sqlite_schema where name not like 'sqlite_%' order by type,name").all()))
@@ -164,7 +178,11 @@ function transfer(s: Database.Database, db: Db, q: Omit<typeof schema.platformQu
 
 export type UpgradeOptions = { source: string, target: string, runId: string, batchSize: number, transformVersion?: string, beforeCheckpoint?: (lastOldId: number) => void }
 /** Caller supplies frozen offline source and a separate isolated copy at current schema. */
-export function upgradeCollections(options: UpgradeOptions) {
+export function upgradeCollections(options: UpgradeOptions, frozenSource?: FrozenSource): {
+  lastOldId: number, copiedCount: number, batchDigest: string,
+  sourceManifest: ReturnType<typeof manifest>, inheritedForeignKeys: unknown[],
+  unresolved: { kind: string, oldQueryId: number, reason: string }[],
+} {
   if (options.transformVersion !== undefined && options.transformVersion !== TRANSFORM_VERSION) throw new Error('Source/schema/transform binding changed; resume refused')
   const source = realpathSync(options.source), target = realpathSync(options.target)
   const a = statSync(source), b = statSync(target)
@@ -175,11 +193,12 @@ export function upgradeCollections(options: UpgradeOptions) {
     const disk = statfsSync(resolve(path, '..'))
     if (disk.bavail * disk.bsize < 8 * 1024 ** 3) throw new Error('Disk floor 8GiB')
   }
-  const s = new Database(source, { readonly: true, fileMustExist: true }), t = new Database(target, { fileMustExist: true })
+  if (!frozenSource) return withFrozenSource(source, frozen => upgradeCollections(options, frozen))
+  if (!activeSources.has(frozenSource) || frozenSource.path !== source || !frozenSource.database.inTransaction) throw new Error('Inactive frozen source')
+  const s = frozenSource.database, t = new Database(target, { fileMustExist: true })
   try {
-    beginFrozenSource(s)
     if (existsSync(source + '-wal') && statSync(source + '-wal').size > 0) throw new Error('Source WAL appeared')
-    const initialSnapshotHash = fileHash(source)
+    const initialSnapshotHash = fileHash(frozenSource.fd)
     t.pragma('foreign_keys=ON')
     const db = drizzle(t, { schema }), sourceDb = drizzle(s, { schema })
     const inheritedForeignKeys = s.pragma('foreign_key_check')
@@ -188,7 +207,7 @@ export function upgradeCollections(options: UpgradeOptions) {
     const frozen = manifest(s), sourceSchemaHash = schemaHash(s), targetSchemaVersion = schemaHash(t)
     // The transitional scope FK requires the untouched old owners in the isolated target copy.
     if (manifest(t).digest !== frozen.digest) throw new Error('Target legacy copy differs from frozen source')
-    if (fileHash(source) !== initialSnapshotHash) throw new Error('Source snapshot drift during binding')
+    if (fileHash(frozenSource.fd) !== initialSnapshotHash) throw new Error('Source snapshot drift during binding')
     const binding = { runId: options.runId, sourceSnapshotSha256: initialSnapshotHash, sourceSchemaHash, sourceManifestSha256: frozen.digest, targetSchemaVersion, transformVersion: TRANSFORM_VERSION }
     const run = db.select().from(schema.platformMigrationRun).where(eq(schema.platformMigrationRun.runId, options.runId)).get()
     if (run) {
@@ -224,7 +243,7 @@ export function upgradeCollections(options: UpgradeOptions) {
         for (const q of rows) { transfer(s, tx, q); nextDigest = chain(nextDigest, targetRow(tx, q.id)) }
         const nextId = rows.at(-1)!.id
         options.beforeCheckpoint?.(nextId)
-        if (fileHash(source) !== binding.sourceSnapshotSha256) throw new Error('Source snapshot drift before checkpoint')
+        if (fileHash(frozenSource.fd) !== binding.sourceSnapshotSha256) throw new Error('Source snapshot drift before checkpoint')
         const values = { runId: options.runId, phase, sourceTable, lastOldId: nextId, copiedCount: copiedCount + rows.length, batchDigest: nextDigest }
         if (tx.select().from(schema.platformMigrationCheckpoint).where(key).get()) tx.update(schema.platformMigrationCheckpoint).set(values).where(key).run()
         else tx.insert(schema.platformMigrationCheckpoint).values(values).run()
@@ -232,7 +251,7 @@ export function upgradeCollections(options: UpgradeOptions) {
       }, { behavior: 'immediate' })
       lastOldId = result.nextId; digest = result.nextDigest; copiedCount += rows.length
     }
-    if (fileHash(source) !== binding.sourceSnapshotSha256 || manifest(s).digest !== frozen.digest || schemaHash(s) !== sourceSchemaHash) throw new Error('Source drift')
+    if (fileHash(frozenSource.fd) !== binding.sourceSnapshotSha256 || manifest(s).digest !== frozen.digest || schemaHash(s) !== sourceSchemaHash) throw new Error('Source drift')
     if (!isDeepStrictEqual(t.pragma('foreign_key_check'), inheritedForeignKeys) || !isDeepStrictEqual(t.pragma('integrity_check'), [{ integrity_check: 'ok' }])) throw new Error('Target integrity failure')
     const query = schema.platformQuery, alias = schema.platformLegacyQueryAlias, collection = schema.platformCollection
     const missing = db.select({ id: query.id }).from(query)
@@ -243,5 +262,5 @@ export function upgradeCollections(options: UpgradeOptions) {
     if (missing || copiedCount !== frozen.counts.platform_query || aliasCount !== copiedCount || collectionCount !== copiedCount) throw new Error('Incomplete source PK coverage')
     db.update(schema.platformMigrationRun).set({ state: 'complete' }).where(eq(schema.platformMigrationRun.runId, options.runId)).run()
     return { lastOldId, copiedCount, batchDigest: digest, sourceManifest: frozen, inheritedForeignKeys, unresolved }
-  } finally { s.close(); t.close() }
+  } finally { t.close() }
 }

@@ -271,3 +271,52 @@ it('CLI keeps a frozen source through copy and resumes in a separate process', (
   expect(JSON.parse(receipts[0]!).copiedCount).toBe(1)
   expect(readFileSync(f.source)).toEqual(before)
 })
+
+it('blocks independent process writers after source hashing through the final checkpoint', () => {
+  const f = fixture()
+  const result = upgradeCollections({ ...f, beforeCheckpoint() {
+    const probe = spawnSync(process.execPath, ['-e', `
+      const Database = require('better-sqlite3');
+      const db = new Database(process.argv[1], {timeout: 0});
+      for (const statement of ["update platform_query set failure_reason='external drift'", 'pragma journal_mode=WAL']) {
+        try { db.exec(statement); process.exitCode=2; }
+        catch (e) { if(e.code !== 'SQLITE_BUSY') throw e; }
+      }
+      db.close();
+    `, f.source], { encoding: 'utf8' })
+    expect(probe.stderr).toBe('')
+    expect(probe.status).toBe(0)
+  } })
+  expect(result.copiedCount).toBe(1)
+})
+
+it('CLI excludes external writers after copying every hash manifest and receipt boundary', () => {
+  const f = fixture(), evidence = join(f.root, 'boundaries'), target = join(f.root, 'boundary-target.sqlite')
+  mkdirSync(evidence)
+  const preload = join(f.root, 'observe.cjs'), log = join(f.root, 'stages.jsonl')
+  writeFileSync(preload, `
+    const fs=require('node:fs'), {spawnSync}=require('node:child_process');
+    const source=fs.realpathSync(${JSON.stringify(f.source)}), log=${JSON.stringify(log)};
+    const open=fs.openSync, read=fs.readSync, write=fs.writeSync, writeFile=fs.writeFileSync;
+    const sourceFds=new Set(), manifestFds=new Set(); let manifestObserved=false;
+    const writer=${JSON.stringify(`const D=require(${JSON.stringify(join(process.cwd(), 'node_modules/better-sqlite3'))});const d=new D(process.argv[1],{timeout:0});for(const sql of ["update platform_query set failure_reason='external'",'pragma journal_mode=WAL']){try{d.exec(sql);process.exitCode=2}catch(e){if(e.code!=='SQLITE_BUSY')throw e}}d.close();`)};
+    function probe(stage) {
+      const r=spawnSync(process.execPath,['-e',writer,source],{encoding:'utf8'});
+      fs.appendFileSync(log,JSON.stringify({stage,status:r.status,stderr:r.stderr})+'\\n');
+      if(r.status!==0)throw new Error('External writer escaped at '+stage+': '+r.stderr);
+    }
+    fs.openSync=function(path,...args){const fd=open(path,...args);if(path===source)sourceFds.add(fd);if(String(path).endsWith('source-manifest.jsonl'))manifestFds.add(fd);return fd};
+    fs.readSync=function(fd,...args){const n=read(fd,...args);if(sourceFds.has(fd)&&n===0)probe('source-read-complete');return n};
+    fs.writeSync=function(fd,...args){if(manifestFds.has(fd)&&!manifestObserved){manifestObserved=true;probe('manifest')}return write(fd,...args)};
+    fs.writeFileSync=function(path,...args){if(String(path).endsWith('receipt.json'))probe('receipt');return writeFile(path,...args)};
+    require('node:module').syncBuiltinESMExports();
+  `)
+  const result = spawnSync(process.execPath, ['--require', preload, 'upgrade/run.mjs', 'isolated-upgrade', f.source, target, evidence, 'boundary'], { encoding: 'utf8' })
+  expect(result.stderr).toBe('')
+  expect(result.status).toBe(0)
+  const stages = readFileSync(log, 'utf8').trim().split('\n').map(line => JSON.parse(line))
+  expect(stages.filter(s => s.stage === 'source-read-complete')).toHaveLength(5)
+  expect(stages.map(s => s.stage)).toContain('manifest')
+  expect(stages.map(s => s.stage)).toContain('receipt')
+  expect(stages.every(s => s.status === 0 && s.stderr === '')).toBe(true)
+})
