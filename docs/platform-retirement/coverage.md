@@ -8,7 +8,7 @@ T01 是第一 schema 票，仅依赖 A0 独立接受。允许改 schema、生成
 
 过渡 schema 不能破坏旧 writer：expand 阶段暂保留 scope/error 的 query_id FK，新增 nullable collection_id 与目标唯一索引；旧触发器继续只写旧列。升级工具填好一一映射后原子重建为目标 collection_id PK/FK，再由目标 writer 接管，撤除旧 trigger。不得在首张票把历史 query 删除，或启动新旧 scope 双 writer。T01 的 fixture 覆盖空库、旧 query success/no_record/failed/not_queried/partial、重复/0行/失败页、多 title、JSON5二次解析和 malformed error；独立 oracle 直接沿用 migration0027 的旧表达式，不调用新提取器生成期待值。新结构失败必须整笔 schema 迁移回滚；旧写入仍可工作。
 
-T02 归档及别名 schema 可与 T01 并行，不依赖 page、observation 扩展或整套消费者审计。别名→observation FK 的最终重建在 T03 完成，初始用尚存旧 relation 验证，不提前宣称无旧 FK。T03–T05 才负责旧数据传输。这样 T01 不承担原研究 A2/A3/A4/A5 的所有工作。
+T02 归档及别名 schema 可与 T01 并行，不依赖 page、observation 扩展或整套消费者审计。别名→observation FK 的最终重建在 T05 完成（T03a 仅 expand），初始用尚存旧 relation 验证，不提前宣称无旧 FK。T04/T05 才负责旧数据传输。这样 T01 不承担原研究 A2/A3/A4/A5 的所有工作。
 
 ## 每票共同的门槛
 
@@ -20,9 +20,10 @@ T02 归档及别名 schema 可与 T01 并行，不依赖 page、observation 扩�
 |---|---|---|---|
 | T01 M | collection/page/conditions/unfinished/limits + scope/error FK 过渡，schema-only | A0 | 第一前沿所列旧SQL oracle；故意非法页整批回滚；不删旧实体 |
 | T02 M | BLOB archive、类型化字段 refs、两 namespace aliases；bounded evidence 原文读取 | A0 | 原SQL cast字节及旧DTO；NULL/空/非法/Unicode截断/错owner；不删原正文 |
-| T03 M | 重建现有 observation、assignment revision、三投影 owner 分支和版本 archive FK | T01,T02 | PK/FK manifest + 独立字段表；missing_key/conflict/unverifiable不丢，迁移失败整批回滚；不删 relation |
+| T03a M / #710 | 同表 observation nullable 目标身份/位置及 assignment append-only schema expand；保留旧 PK/FK/读写/T02 refs | T01,T02 | populated0048 与 fresh schema/invariant oracle；无 collection 映射仍可升级；不转移数据、不切入口 |
+| T03b M | 三投影 owner 分支、source title/normalization/reconciliation 字段及版本 archive FK | T03a | 三来源独立字段与类型/CHECK oracle；不夹带历史转移 |
 | T04 M | source-bound collection/page/scope/condition/原字节转移工具 | T01,T02 | 旧自然键/JSON5表达式及逐字段bytes；source漂移拒绝续跑；仅升级工具读旧query |
-| T05 M | observation/assignment/投影转移与双向映射 | T03,T04 | 源PK集、归属和原hash独立比对；同业务重复观察/源悬空refs明确报告；不删原行 |
+| T05 M | observation/assignment/投影转移、双向映射及最终 PK/FK/NOT NULL 重建；移除旧 relation FK/JOIN | T03a,T03b,T04 | 源PK集、归属和原hash独立比对；同业务重复观察/源悬空refs明确报告；不删原行 |
 | W1 M | apply source writer 与统一导入事务接缝 | T05 | 申报公开命令、year空白/类型oracle；same-key异payload回滚；只移除apply旧写分支 |
 | W2 M | process source writer | T05 | 业务year/personuuid/whpc独立原行期待；跨接口同key不合并；只移除process旧写分支 |
 | W3 M | recognized source writer | T05 | false/NULL/空白/未捕获保真oracle；源保真冲突回滚；只移除recognized旧写分支 |
@@ -59,7 +60,7 @@ T02 归档及别名 schema 可与 T01 并行，不依赖 page、observation 扩�
 
 ## A0 独立审查修正后的必验反例
 
-T03/T05必须按契约实现source_relation_key、未trim的行称号类型和值，以及**所有观察**的本源stored/source/reconciled/conflict字段，不能仅为无版本行建立观察分支。W1–W3和R1–R3同步生成/读取；H1/H3验收具体消费者。三个独立oracle为：相同relationKey但raw.id不同的冲突观察年度闭包；多称号范围下数字2与空白字符串“ 2 ”不同的归属，以及query=1,2下true/false在SQL整数1/0入口与直接JS拒绝布尔入口的差异；共享verified版本但旧stored.status不同的两个观察仅一方platform_field_conflict。T05也须覆盖raw-only无版本值。原blocked评审保留，文档修改不代表运行验收或独立复核已通过。
+T03a 准备 source_relation_key 列，T05 原样转移；T03b/T05 必须按契约实现未trim的行称号类型和值，以及**所有观察**的本源stored/source/reconciled/conflict字段，不能仅为无版本行建立观察分支。W1–W3和R1–R3同步生成/读取；H1/H3验收具体消费者。三个独立oracle为：相同relationKey但raw.id不同的冲突观察年度闭包；多称号范围下数字2与空白字符串“ 2 ”不同的归属，以及query=1,2下true/false在SQL整数1/0入口与直接JS拒绝布尔入口的差异；共享verified版本但旧stored.status不同的两个观察仅一方platform_field_conflict。T05也须覆盖raw-only无版本值。原blocked评审保留，文档修改不代表运行验收或独立复核已通过。
 
 ## 原14组与新增消费者覆盖
 
