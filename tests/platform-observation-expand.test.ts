@@ -48,7 +48,7 @@ it('upgrades populated 0048 without inventing identity collection assignment or 
     const original = facts()
     migrate(f.db, { migrationsFolder: folder })
     expect(catalog(f.s)).toEqual(catalog(fresh.s))
-    expect(facts()).toEqual(original)
+    expect(facts()).toEqual(original.map((rows,i) => i === 3 ? rows.map(row => ({...row as object,canonical_archive_id:null})) : rows))
     const rows = f.s.prepare('SELECT * FROM platform_business_observation ORDER BY relation_id').all()
     expect(rows).toEqual(before.map(row => ({ ...row as object, id: null, collection_id: null, sequence_no: null, page_id: null, page_row_no: null, position_state: null, source_relation_key: null })))
     expect(f.s.prepare('SELECT * FROM platform_observation_assignment').all()).toEqual([])

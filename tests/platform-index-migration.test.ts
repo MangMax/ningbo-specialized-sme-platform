@@ -39,7 +39,7 @@ it('upgrades an archived SQLite database without changing evidence, IDs, audit o
     db.insert(schema.recordCorrespondenceAudit).values({ correspondenceId: edge.id, batchId: batch.id, idempotencyKey: 'synthetic:replay', toStatus: 'candidate', expectedRevision: 0, resultingRevision: 1, actorType: 'agent', actorId: 'synthetic', basis: 'fixture', ruleId: 'fixture', ruleVersion: '1', evidence: { original: '追加审计🙂' }, decidedAt: '2026-10-19' }).run()
     const tables = sqlite.prepare("select name from sqlite_master where type='table' and name not like '__drizzle%' order by name").all() as { name: string }[]
     const baselineColumns = new Map(tables.map(({ name }) => [name, (sqlite.pragma(`table_info('${name}')`) as { name: string }[]).map(column => column.name)]))
-    const contents = () => tables.map(({ name }) => [name, sqlite.prepare(`select ${baselineColumns.get(name)!.map(column => `"${column}"`).join(',')} from "${name}" order by rowid`).all()])
+    const contents = () => tables.map(({ name }) => [name, sqlite.prepare(`select ${baselineColumns.get(name)!.map(column => `"${column}"`).join(',')} from "${name}" ${name === 'sqlite_sequence' ? "where name not in ('platform_apply_projection','platform_business_projection','platform_recognized_projection')" : ''} order by rowid`).all()])
     const before = contents()
     const filters = [{ view: 'summary' as const }, { status: 'partial' as const }, { uscc: 'synthetic:uscc' }, { enterpriseId: enterprise.id }, { queryKey: 'synthetic:0', includeRawResponse: true }, { page: 2, pageSize: 2 }]
     // Independent historical SQL oracle: do not call a modern full-row ORM
@@ -52,6 +52,7 @@ it('upgrades an archived SQLite database without changing evidence, IDs, audit o
       queryIds('where query_key = ?', 'synthetic:0'), queryIds('').slice(2, 4),
     ]
     migrate(db, { migrationsFolder: folder })
+    expect(sqlite.prepare("select name,seq from sqlite_sequence where name in ('platform_apply_projection','platform_business_projection','platform_recognized_projection') order by name").all()).toEqual([{name:'platform_apply_projection',seq:0},{name:'platform_business_projection',seq:0},{name:'platform_recognized_projection',seq:0}])
     const plan = (sql: string) => (sqlite.prepare(`explain query plan ${sql}`).all() as { detail: string }[]).map(r => r.detail).join('\n')
     expect(plan('select status,count(*) from platform_query group by status')).toContain('COVERING INDEX')
     expect(plan('select status,count(*) from platform_query group by status')).not.toContain('TEMP B-TREE')

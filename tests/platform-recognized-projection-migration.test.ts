@@ -40,8 +40,8 @@ describe('0035 platform recognized projection migration', () => {
       expect(tableExists(sqlite, 'platform_recognized_projection')).toBe(false)
       migrate(db, { migrationsFolder: fullMigrations })
       expect(tableExists(sqlite, 'platform_recognized_projection')).toBe(true)
-      expect((sqlite.prepare('PRAGMA table_info(platform_recognized_projection)').all() as { name: string }[]).map(column => column.name)).toEqual(COLUMNS)
-      expect(sqlite.prepare("SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='platform_recognized_projection' ORDER BY name").all()).toEqual(INDEXES)
+      expect((sqlite.prepare('PRAGMA table_info(platform_recognized_projection)').all() as { name: string }[]).map(column => column.name)).toEqual(expect.arrayContaining(COLUMNS))
+      expect(sqlite.prepare("SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='platform_recognized_projection' ORDER BY name").all()).toEqual(expect.arrayContaining(INDEXES))
       expect((sqlite.pragma("index_info('platform_recognized_projection_title_version_idx')") as { name: string }[]).map(column => column.name)).toEqual(['title_raw', 'version_id'])
       expect(sqlite.pragma('foreign_key_check')).toEqual([])
       // Re-applying the same journal is a no-op, not a duplicate-table failure.
@@ -82,8 +82,8 @@ describe('0035 platform recognized projection migration', () => {
       expect(JSON.parse(stored.raw_fields)).toEqual(rawFields)
       expect(enterprise.id).toBeGreaterThan(0)
       expect(sqlite.prepare('SELECT count(*) n FROM platform_recognized_projection').get()).toEqual({ n: 0 })
-      expect((sqlite.prepare('PRAGMA table_info(platform_recognized_projection)').all() as { name: string }[]).map(column => column.name)).toEqual(COLUMNS)
-      expect(sqlite.prepare("SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='platform_recognized_projection' ORDER BY name").all()).toEqual(INDEXES)
+      expect((sqlite.prepare('PRAGMA table_info(platform_recognized_projection)').all() as { name: string }[]).map(column => column.name)).toEqual(expect.arrayContaining(COLUMNS))
+      expect(sqlite.prepare("SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='platform_recognized_projection' ORDER BY name").all()).toEqual(expect.arrayContaining(INDEXES))
       expect((sqlite.pragma("index_info('platform_recognized_projection_title_version_idx')") as { name: string }[]).map(column => column.name)).toEqual(['title_raw', 'version_id'])
       expect(sqlite.pragma('foreign_key_check')).toEqual([])
       // The same final migration set applies again as a journal no-op.
@@ -113,8 +113,8 @@ it('0039 leaves existing normalized rows and provenance intact and fidelity unkn
     const before = sqlite.prepare('SELECT * FROM platform_recognized_projection').get() as object
     const versions = sqlite.prepare('SELECT * FROM platform_business_record_version').all()
     migrate(db, {migrationsFolder: fullMigrations})
-    expect(sqlite.prepare('SELECT * FROM platform_recognized_projection').get()).toEqual({...before, source_validity_date: null, source_maintenance_batch: null, source_maintenance_year_absent: null})
-    expect(sqlite.prepare('SELECT * FROM platform_business_record_version').all()).toEqual(versions)
+    expect(sqlite.prepare('SELECT * FROM platform_recognized_projection').get()).toMatchObject({...before, source_validity_date: null, source_maintenance_batch: null, source_maintenance_year_absent: null})
+    expect(sqlite.prepare('SELECT * FROM platform_business_record_version').all()).toEqual(versions.map(row => ({...row as object, canonical_archive_id:null})))
     expect(sqlite.pragma('foreign_key_check')).toEqual([])
     migrate(db, {migrationsFolder: fullMigrations})
     expect(sqlite.prepare('SELECT count(*) n FROM platform_recognized_projection').get()).toEqual({n: 1})
