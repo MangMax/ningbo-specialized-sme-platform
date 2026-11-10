@@ -923,13 +923,8 @@ export const platformBusinessRecordVersion = sqliteTable('platform_business_reco
   uniqueIndex('platform_business_version_owner_uq').on(t.id, t.recordId),
 ])
 
-/** Additive mapping. All evidence/decisions continue to reference the original relation. */
-export const platformBusinessObservation = sqliteTable('platform_business_observation', {
-  relationId: integer('relation_id').primaryKey().references(() => platformRelation.id, { onDelete: 'restrict' }),
-  /** T03a reserved target identity. T05 fills mappings and promotes id to PK. */
-  id: integer('id'),
-  collectionId: integer('collection_id').references(() => platformCollection.id, { onDelete: 'restrict' }),
-  sequenceNo: integer('sequence_no'),
+/** Shared declarations for the temporary expand schema and explicit offline target. Z removes expand. */
+export function observationFields() { return {
   pageId: integer('page_id').references(() => platformCollectionPage.id, { onDelete: 'restrict' }),
   pageRowNo: integer('page_row_no'),
   positionState: text('position_state', { enum: ['verified', 'unknown', 'conflict'] }),
@@ -944,7 +939,8 @@ export const platformBusinessObservation = sqliteTable('platform_business_observ
   inputFingerprint: text('input_fingerprint'),
   indexedAt: text('indexed_at').$defaultFn(() => new Date().toISOString()),
   batchId: integer('batch_id').references(() => importBatch.id, { onDelete: 'restrict' }),
-}, t => [
+} }
+export function observationConstraints(t: { [K in keyof ReturnType<typeof observationFields>]: AnySQLiteColumn } & { id: AnySQLiteColumn, collectionId: AnySQLiteColumn, sequenceNo: AnySQLiteColumn }, identity: AnySQLiteColumn) { return [
   uniqueIndex('platform_observation_id_uq').on(t.id),
   uniqueIndex('platform_observation_collection_sequence_uq').on(t.collectionId, t.sequenceNo),
   index('platform_observation_position_idx').on(t.collectionId, t.pageId, t.sequenceNo),
@@ -957,14 +953,21 @@ export const platformBusinessObservation = sqliteTable('platform_business_observ
   check('platform_business_observation_content_ck', sql`(${t.contentState} = 'verified' AND ${t.versionId} IS NOT NULL AND ${t.recordId} IS NOT NULL) OR (${t.contentState} IN ('unverifiable','not_indexed') AND ${t.versionId} IS NULL)`),
   // Explicit two-branch capture contract: IS/typeof make NULL CHECK outcomes impossible.
   check('platform_observation_capture_ck', sql`(${t.identityState} = 'not_indexed' AND ${t.contentState} = 'not_indexed' AND ${t.recordId} IS NULL AND ${t.versionId} IS NULL AND ${t.keySource} IS NULL AND ${t.projectionRuleVersion} IS NULL AND ${t.inputFingerprint} IS NULL AND ${t.indexedAt} IS NULL) OR (${t.identityState} IN ('resolved','missing_key','conflict') AND ${t.contentState} IN ('verified','unverifiable') AND ${t.keySource} IS NOT NULL AND ${t.keySource} IN ('relation_key','raw_id','both','none') AND typeof(${t.projectionRuleVersion}) = 'text' AND typeof(${t.inputFingerprint}) = 'text' AND typeof(${t.indexedAt}) = 'text')`),
-  index('platform_business_observation_record_idx').on(t.recordId, t.versionId, t.relationId),
-  index('platform_business_observation_version_idx').on(t.versionId, t.relationId),
-])
+  index('platform_business_observation_record_idx').on(t.recordId, t.versionId, identity),
+  index('platform_business_observation_version_idx').on(t.versionId, identity),
+] }
+export const platformBusinessObservation = sqliteTable('platform_business_observation', {
+  relationId: integer('relation_id').primaryKey().references(() => platformRelation.id, { onDelete: 'restrict' }),
+  id: integer('id'),
+  collectionId: integer('collection_id').references(() => platformCollection.id, { onDelete: 'restrict' }),
+  sequenceNo: integer('sequence_no'),
+  ...observationFields(),
+}, t => observationConstraints(t, t.relationId))
 
 /** T03a append-only schema; no runtime assignment writer or historical transfer. */
-export const platformObservationAssignment = sqliteTable('platform_observation_assignment', {
-  // T05 must rebind this FK to independent observation.id, preserving values.
-  observationId: integer('observation_id').notNull().references(() => platformBusinessObservation.relationId, { onDelete: 'restrict' }),
+export function definePlatformObservationAssignment(observationId: () => AnySQLiteColumn) { return sqliteTable('platform_observation_assignment', {
+  // The expand registration binds relationId; the offline target binds id.
+  observationId: integer('observation_id').notNull().references(observationId, { onDelete: 'restrict' }),
   revision: integer('revision').notNull(),
   enterpriseId: integer('enterprise_id').references(() => enterprise.id, { onDelete: 'restrict' }),
   matchBasis: text('match_basis', { enum: ['uscc', 'alias', 'manual', 'none'] }).notNull(),
@@ -987,15 +990,17 @@ export const platformObservationAssignment = sqliteTable('platform_observation_a
   check('platform_assignment_verification_ck', sql`${t.verificationStatus} IN ('confirmed','pending')`),
   check('platform_assignment_origin_ck', sql`(${t.origin} = 'migrated_current' AND ${t.revision} = 1 AND ${t.actor} IS NULL AND ${t.recordedAt} IS NULL AND ${t.commandReceiptId} IS NULL) OR ${t.origin} = 'command'`),
 ])
+}
+export const platformObservationAssignment = definePlatformObservationAssignment(() => platformBusinessObservation.relationId)
 
 /**
  * Source-specific typed projection for apply_list (upstream queryList). One row per
  * immutable content version; the composite owner FK prevents a version/record mismatch.
  * Fields are copied from the archived raw row only (null when absent), never inferred.
  */
-export const platformApplyProjection = sqliteTable('platform_apply_projection', {
+export function definePlatformApplyProjection(observationId: () => AnySQLiteColumn) { return sqliteTable('platform_apply_projection', {
   id: integer('id').primaryKey({ autoIncrement: true }),
-  observationId: integer('observation_id').references(() => platformBusinessObservation.relationId, { onDelete: 'restrict' }),
+  observationId: integer('observation_id').references(observationId, { onDelete: 'restrict' }),
   basis: text('basis', { enum: ['verified_raw', 'observation_reconciliation', 'unavailable'] }).notNull().default('verified_raw'),
   versionId: integer('version_id').references(() => platformBusinessRecordVersion.id, { onDelete: 'restrict' }),
   recordId: integer('record_id').references(() => platformBusinessRecord.id, { onDelete: 'restrict' }),
@@ -1127,6 +1132,8 @@ export const platformApplyProjection = sqliteTable('platform_apply_projection', 
   index('platform_apply_projection_uscc_idx').on(t.usccRaw),
   index('platform_apply_projection_title_version_idx').on(t.titleRaw, t.versionId),
 ])
+}
+export const platformApplyProjection = definePlatformApplyProjection(() => platformBusinessObservation.relationId)
 
 /**
  * Source-specific typed projection for business_list (upstream businessList). One row
@@ -1134,9 +1141,9 @@ export const platformApplyProjection = sqliteTable('platform_apply_projection', 
  * mismatch. Fields are copied from the archived raw row only (null when absent),
  * never inferred. Query title scope is not a row fact and is not stored here.
  */
-export const platformBusinessProjection = sqliteTable('platform_business_projection', {
+export function definePlatformBusinessProjection(observationId: () => AnySQLiteColumn) { return sqliteTable('platform_business_projection', {
   id: integer('id').primaryKey({ autoIncrement: true }),
-  observationId: integer('observation_id').references(() => platformBusinessObservation.relationId, { onDelete: 'restrict' }),
+  observationId: integer('observation_id').references(observationId, { onDelete: 'restrict' }),
   basis: text('basis', { enum: ['verified_raw', 'observation_reconciliation', 'unavailable'] }).notNull().default('verified_raw'),
   versionId: integer('version_id').references(() => platformBusinessRecordVersion.id, { onDelete: 'restrict' }),
   recordId: integer('record_id').references(() => platformBusinessRecord.id, { onDelete: 'restrict' }),
@@ -1275,6 +1282,8 @@ export const platformBusinessProjection = sqliteTable('platform_business_project
   index('platform_business_projection_uscc_idx').on(t.usccRaw),
   index('platform_business_projection_title_version_idx').on(t.titleRaw, t.versionId),
 ])
+}
+export const platformBusinessProjection = definePlatformBusinessProjection(() => platformBusinessObservation.relationId)
 
 /**
  * Source-specific typed projection for recognized_list (upstream queryBusList, 平台认定目录).
@@ -1283,9 +1292,9 @@ export const platformBusinessProjection = sqliteTable('platform_business_project
  * inferred from query conditions, queriedAt, batch or name. Query title scope is not a row
  * fact and is not stored here; a row-level rdjb is retained verbatim as its own raw field.
  */
-export const platformRecognizedProjection = sqliteTable('platform_recognized_projection', {
+export function definePlatformRecognizedProjection(observationId: () => AnySQLiteColumn) { return sqliteTable('platform_recognized_projection', {
   id: integer('id').primaryKey({ autoIncrement: true }),
-  observationId: integer('observation_id').references(() => platformBusinessObservation.relationId, { onDelete: 'restrict' }),
+  observationId: integer('observation_id').references(observationId, { onDelete: 'restrict' }),
   basis: text('basis', { enum: ['verified_raw', 'observation_reconciliation', 'unavailable'] }).notNull().default('verified_raw'),
   versionId: integer('version_id').references(() => platformBusinessRecordVersion.id, { onDelete: 'restrict' }),
   recordId: integer('record_id').references(() => platformBusinessRecord.id, { onDelete: 'restrict' }),
@@ -1427,6 +1436,8 @@ export const platformRecognizedProjection = sqliteTable('platform_recognized_pro
   index('platform_recognized_projection_uscc_idx').on(t.usccRaw),
   check('platform_recognized_projection_fidelity_ck', sql`((${t.sourceMaintenanceYearAbsent} IS NULL OR (typeof(${t.sourceMaintenanceYearAbsent}) = 'integer' AND ${t.sourceMaintenanceYearAbsent} IN (0,1))) AND (${t.observationId} IS NULL OR ((${t.sourceValidityDate} IS NULL OR typeof(${t.sourceValidityDate}) = 'text') AND (${t.sourceMaintenanceBatch} IS NULL OR typeof(${t.sourceMaintenanceBatch}) = 'text'))))`),
 ])
+}
+export const platformRecognizedProjection = definePlatformRecognizedProjection(() => platformBusinessObservation.relationId)
 
 /**
  * **差异原因与后续措施**(契约 4)——**成对**记录的一行。
@@ -2027,13 +2038,15 @@ export const platformCollectionArchiveRef = sqliteTable('platform_collection_arc
   sealed: integer('sealed').notNull().default(0),
 }, t => [primaryKey({ columns: [t.ownerId, t.field] }), check('platform_collection_archive_ref_ck', sql`${t.field} IN ('rawResponse','collectionEvidence','legacyProvenance','request') AND ${t.sealed} IN (0,1)`)])
 
-/** Transitional FK to the existing observation PK. T03 replaces relation_id ownership. */
-export const platformObservationArchiveRef = sqliteTable('platform_observation_archive_ref', {
-  ownerId: integer('owner_id').notNull().references(() => platformBusinessObservation.relationId, { onDelete: 'restrict' }),
+/** Shared owner fields; expand and target registrations supply their actual observation PK. */
+export function definePlatformObservationArchiveRef(observationId: () => AnySQLiteColumn) { return sqliteTable('platform_observation_archive_ref', {
+  ownerId: integer('owner_id').notNull().references(observationId, { onDelete: 'restrict' }),
   field: text('field', { enum: ['rawFields', 'sourceText', 'legacyRowSnapshot'] }).notNull(),
   archiveId: integer('archive_id').notNull().unique().references(() => platformArchiveValue.id, { onDelete: 'restrict' }),
   sealed: integer('sealed').notNull().default(0),
 }, t => [primaryKey({ columns: [t.ownerId, t.field] }), check('platform_observation_archive_ref_ck', sql`${t.field} IN ('rawFields','sourceText','legacyRowSnapshot') AND ${t.sealed} IN (0,1)`)])
+}
+export const platformObservationArchiveRef = definePlatformObservationArchiveRef(() => platformBusinessObservation.relationId)
 
 export const platformVersionArchiveRef = sqliteTable('platform_version_archive_ref', {
   ownerId: integer('owner_id').notNull().references(() => platformBusinessRecordVersion.id, { onDelete: 'restrict' }),
@@ -2046,10 +2059,12 @@ export const platformLegacyQueryAlias = sqliteTable('platform_legacy_query_alias
   oldId: integer('old_id').primaryKey(),
   collectionId: integer('collection_id').notNull().unique().references(() => platformCollection.id, { onDelete: 'restrict' }),
 }, t => [check('platform_legacy_query_alias_id_ck', sql`${t.oldId} > 0 AND ${t.oldId} <= 9007199254740991`)])
-export const platformLegacyRelationAlias = sqliteTable('platform_legacy_relation_alias', {
+export function definePlatformLegacyRelationAlias(observationId: () => AnySQLiteColumn) { return sqliteTable('platform_legacy_relation_alias', {
   oldId: integer('old_id').primaryKey(),
-  observationId: integer('observation_id').notNull().unique().references(() => platformBusinessObservation.relationId, { onDelete: 'restrict' }),
+  observationId: integer('observation_id').notNull().unique().references(observationId, { onDelete: 'restrict' }),
 }, t => [check('platform_legacy_relation_alias_id_ck', sql`${t.oldId} > 0 AND ${t.oldId} <= 9007199254740991`)])
+}
+export const platformLegacyRelationAlias = definePlatformLegacyRelationAlias(() => platformBusinessObservation.relationId)
 /** Explicitly initialized from the frozen source maxima before allocating any new aliases. */
 export const platformLegacyAliasSequence = sqliteTable('platform_legacy_alias_sequence', {
   namespace: text('namespace', { enum: ['query', 'relation'] }).primaryKey(),

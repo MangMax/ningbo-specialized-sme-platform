@@ -1,3 +1,4 @@
+import { assertExpandRuntime } from '../../db/schema-phase'
 import { deserialize } from 'node:v8'
 import { realpathSync, statSync } from 'node:fs'
 import Database from 'better-sqlite3'
@@ -32,6 +33,7 @@ process.on('message', async (message: ImportExecutionMessage | { type: 'shutdown
     }
     const migration = connection!.prepare('SELECT hash,created_at FROM __drizzle_migrations ORDER BY created_at DESC LIMIT 1').get()
     if (connection!.pragma('schema_version', { simple: true }) !== message.identity.schemaVersion || JSON.stringify(migration) !== JSON.stringify(message.identity.migration)) throw new ImportReceiptError(503, 'import_source_changed', 'Import database schema or migration identity changed before execution')
+    assertExpandRuntime(connection!)
     const db = drizzle(connection!, { schema, logger: createDrizzleLogger({ connection: 'import_execution', execution: 'worker', context: message.logContext }) })
     const request = deserialize(message.payload)
     const result = message.action === 'preflight' ? preflightRosterImport(db, request, message.pageCountErrors, { ...message.logContext, filesDir: message.filesDir }) : commitRosterImport(db, request, message.pageCountErrors, { ...message.logContext, deferCandidateTasks: true, filesDir: message.filesDir })
