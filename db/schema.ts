@@ -2053,3 +2053,24 @@ export const platformLegacyAliasSequence = sqliteTable('platform_legacy_alias_se
   namespace: text('namespace', { enum: ['query', 'relation'] }).primaryKey(),
   highWater: integer('high_water').notNull(),
 }, t => [check('platform_legacy_alias_sequence_ck', sql`${t.namespace} IN ('query','relation') AND typeof(${t.highWater}) = 'integer' AND ${t.highWater} BETWEEN 0 AND 9007199254740991`)])
+
+/** Upgrade-only source binding. Runtime never creates or resumes migration runs. */
+export const platformMigrationRun = sqliteTable('platform_migration_run', {
+  runId: text('run_id').primaryKey(),
+  sourceSnapshotSha256: text('source_snapshot_sha256').notNull(),
+  sourceSchemaHash: text('source_schema_hash').notNull(),
+  sourceManifestSha256: text('source_manifest_sha256').notNull(),
+  targetSchemaVersion: text('target_schema_version').notNull(),
+  transformVersion: text('transform_version').notNull(),
+  state: text('state', { enum: ['running', 'complete'] }).notNull(),
+}, t => [check('platform_migration_run_state_ck', sql`${t.state} IN ('running','complete')`)])
+export const platformMigrationCheckpoint = sqliteTable('platform_migration_checkpoint', {
+  runId: text('run_id').notNull().references(() => platformMigrationRun.runId, { onDelete: 'restrict' }),
+  phase: text('phase').notNull(),
+  sourceTable: text('source_table').notNull(),
+  lastOldId: integer('last_old_id').notNull(),
+  copiedCount: integer('copied_count').notNull(),
+  batchDigest: text('batch_digest').notNull(),
+}, t => [primaryKey({ columns: [t.runId, t.phase, t.sourceTable] }),
+  ...[t.lastOldId, t.copiedCount].map(c => check(`platform_migration_checkpoint_${c.name}_ck`, sql`typeof(${c}) = 'integer' AND ${c} BETWEEN 0 AND 9007199254740991`)),
+])
