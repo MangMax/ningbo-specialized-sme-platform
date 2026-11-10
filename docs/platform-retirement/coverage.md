@@ -132,3 +132,7 @@ T03a 准备 source_relation_key 列，T05 原样转移；T03b/T05 必须按契�
 本轮可执行检查限 Git diff --check、Markdown本地路径存在性、依赖图节点/环与14组覆盖静态核对、docs-only diff，以及合并最新本地integration后 clean SHA/tree。记录在仓外 `a0/DOC-CHECKS.txt`。这些不是独立审核，也不是运行验证。所有数据库、迁移、build、测试、性能、HTTP/MCP、浏览器、工作簿和生产执行均UNRUN。历史B409、705性能FAIL保留；#691/#702为接受的继承结果，本轮未重跑。
 
 #714 is the bounded schema prerequisite for T05/#713, not historical transfer acceptance. [Uncaptured indexing](t05-prerequisite.md) defines the paired not_indexed branch, unchanged indexed-writer default, six incoming FK owners and populated 0051 rollback oracle. T05b source extraction and T05c final PK/FK promotion remain separate.
+
+## T05b upgrade-only SQL infrastructure
+
+`upgrade/projections.ts` uses native SQLite only for schema/PK discovery, all-cell storage/byte manifests, original archive metadata snapshots, canonical_raw_json CAST bytes and integrity/FK PRAGMAs. Drizzle cannot represent dynamic sqlite_schema/PRAGMA column inventories or SQLite storage-class byte manifests as ordinary typed entities. The independent full-PK/cell, literal field, archive metadata, rollback and subprocess oracles are in platform-projection-upgrade.test.ts. Ordinary projection/version/ref/run/checkpoint CRUD and source-specific joins use typed Drizzle. These upgrade-only inventories cease to be used after offline retirement acceptance; they are not a business mixed helper or runtime fallback. See [T05b operation and boundaries](t05b-projections.md). No schema delta; T05c final FKs remain separate.
