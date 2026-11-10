@@ -30,6 +30,10 @@ T03b 单独负责三来源 projection owner 分支、source title 类型/布尔/
 
 迁移 0049 用 ALTER ADD COLUMN，避免在已填充 T02 refs 的 0048 上 drop/rebuild observation；列级 CHECK 表达与 Drizzle 声明相同的不变量。跨表 page-owner 与 append-only 使用显式 DDL triggers，属于 schema 基础设施例外；常规 fixture 写入使用 typed Drizzle，原始 SQL 仅用于冻结旧库、schema/invariant/恶意写入 oracle。T05 最终重建须重新提交真实填充库与 FK manifest 验收，不能继承本票结果。
 
+## T05 prerequisite: uncaptured indexing (#714)
+
+The missing indexing facts use the existing paired `not_indexed` state in the same observation table. Both states are required; record/version/keySource/rule/fingerprint/indexedAt must all be NULL. Indexed states retain their original identity/content/FK constraints. This is schema preparation only, with no historical transfer or runtime selection. See [the branch, ORM-default and populated-rebuild contract](t05-prerequisite.md). #713 continues only after independent acceptance of this prerequisite.
+
 ## 复用三来源投影
 
 现有 record、version ID、identityRuleVersion、hashAlgorithm、contentHash 和三投影 ruleVersion 原样保留。版本 `canonical_raw_json` 改为 `canonical_archive_id` 外键，正文完整转存 BLOB；旧 contentHash 不改。唯一约束仍是 (record_id,hash_algorithm,content_hash)，命中后比对长度与原 bytes，不以摘要相同省略内容核对。
