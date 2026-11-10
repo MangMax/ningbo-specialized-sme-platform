@@ -55,7 +55,7 @@ CREATE TABLE `platform_collection_condition` (
 	FOREIGN KEY (`collection_id`) REFERENCES `platform_collection`(`id`) ON UPDATE no action ON DELETE restrict,
 	CONSTRAINT "platform_collection_condition_name_ck" CHECK("platform_collection_condition"."name" IN ('name','uscc','combination','sqsj','rddqrq','whpcyear','whpc','szq','orderField','orderDirection')),
 	CONSTRAINT "platform_collection_condition_value_ck" CHECK(
-    ("platform_collection_condition"."value_kind" = 'text' AND "platform_collection_condition"."text_value" IS NOT NULL AND "platform_collection_condition"."integer_value" IS NULL) OR
+    ("platform_collection_condition"."value_kind" = 'text' AND "platform_collection_condition"."text_value" IS NOT NULL AND typeof("platform_collection_condition"."text_value") = 'text' AND "platform_collection_condition"."integer_value" IS NULL) OR
     ("platform_collection_condition"."value_kind" = 'integer' AND "platform_collection_condition"."text_value" IS NULL AND "platform_collection_condition"."integer_value" IS NOT NULL AND typeof("platform_collection_condition"."integer_value") = 'integer' AND "platform_collection_condition"."integer_value" BETWEEN -9007199254740991 AND 9007199254740991) OR
     ("platform_collection_condition"."value_kind" = 'boolean' AND "platform_collection_condition"."text_value" IS NULL AND "platform_collection_condition"."integer_value" IS NOT NULL AND typeof("platform_collection_condition"."integer_value") = 'integer' AND "platform_collection_condition"."integer_value" IN (0,1)) OR
     ("platform_collection_condition"."value_kind" IN ('absent','null','real','array','object') AND "platform_collection_condition"."text_value" IS NULL AND "platform_collection_condition"."integer_value" IS NULL)

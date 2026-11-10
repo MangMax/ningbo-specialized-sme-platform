@@ -766,7 +766,7 @@ export const platformCollectionCondition = sqliteTable('platform_collection_cond
   primaryKey({ columns: [t.collectionId, t.name] }),
   check('platform_collection_condition_name_ck', sql`${t.name} IN ('name','uscc','combination','sqsj','rddqrq','whpcyear','whpc','szq','orderField','orderDirection')`),
   check('platform_collection_condition_value_ck', sql`
-    (${t.valueKind} = 'text' AND ${t.textValue} IS NOT NULL AND ${t.integerValue} IS NULL) OR
+    (${t.valueKind} = 'text' AND ${t.textValue} IS NOT NULL AND typeof(${t.textValue}) = 'text' AND ${t.integerValue} IS NULL) OR
     (${t.valueKind} = 'integer' AND ${t.textValue} IS NULL AND ${t.integerValue} IS NOT NULL AND typeof(${t.integerValue}) = 'integer' AND ${t.integerValue} BETWEEN -9007199254740991 AND 9007199254740991) OR
     (${t.valueKind} = 'boolean' AND ${t.textValue} IS NULL AND ${t.integerValue} IS NOT NULL AND typeof(${t.integerValue}) = 'integer' AND ${t.integerValue} IN (0,1)) OR
     (${t.valueKind} IN ('absent','null','real','array','object') AND ${t.textValue} IS NULL AND ${t.integerValue} IS NULL)

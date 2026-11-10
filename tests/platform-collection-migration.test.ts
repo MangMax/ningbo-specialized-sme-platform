@@ -128,7 +128,7 @@ it('retains every typed condition branch without coercing archived real array or
     for (const row of cases) insert.run(c.id, ...row)
     expect(s.prepare('select name,value_kind,text_value,integer_value from platform_collection_condition order by rowid').all()).toEqual(cases.map(([name, value_kind, text_value, integer_value]) => ({ name, value_kind, text_value, integer_value })))
     const update = s.prepare('update platform_collection_condition set value_kind=?,text_value=?,integer_value=? where name=?')
-    for (const [kind, text, integer] of [['text', null, null], ['text', 'x', 1], ['integer', null, null], ['integer', null, 1.5], ['integer', null, 9007199254740992], ['integer', '1', 1], ['boolean', null, 2], ['boolean', null, null], ['array', '[]', null], ['object', null, 1], ['null', 'null', null], ['absent', '', null], ['real', null, 1], ['invented', null, null]]) {
+    for (const [kind, text, integer] of [['text', Buffer.from([0xff, 0x00, 0x32]), null], ['text', Buffer.alloc(0), null], ['text', null, null], ['text', 'x', 1], ['integer', null, null], ['integer', null, 1.5], ['integer', null, 9007199254740992], ['integer', '1', 1], ['boolean', null, 2], ['boolean', null, null], ['array', '[]', null], ['object', null, 1], ['null', 'null', null], ['absent', '', null], ['real', null, 1], ['invented', null, null]]) {
       expect(() => update.run(kind, text, integer, 'name'), `${kind}/${text}/${integer}`).toThrow(/CHECK/)
     }
     expect(() => insert.run(c.id, 'status', 'text', '通过', null)).toThrow(/CHECK/)
