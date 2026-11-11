@@ -31,7 +31,7 @@ function fixture(seed?: (old: Database.Database) => void) {
   finalizeFingerprintBasis({source:predecessor,target,runId:'basis',predecessorRunId:'s',legacySource:source})
   const statements: string[] = []
   const sqlite = new Database(target, { verbose: text => statements.push(String(text)) }); sqlite.pragma('foreign_keys=ON'); sqlite.exec("insert into title(code,name_zh,level,rank) values('specialized_sme','专精特新中小企业','municipal',2),('little_giant','小巨人','national',3),('innovative_sme','创新型中小企业','municipal',1)")
-  return { sqlite, db: drizzle(sqlite, { schema: targetSchema }), statements, frozenSource:source,
+  return { sqlite, db: drizzle(sqlite, { schema: targetSchema }), statements, frozenSource:source, predecessor,
     get source() {
       const oracle = join(root,'public-oracle.sqlite')
       if(!existsSync(oracle))copyFileSync(source,oracle)
@@ -179,7 +179,7 @@ function seedOriginal(old:Database.Database,input:NewCollectionTargetCommand){
 }
 it.each(['queryList','businessList','queryBusList'] as const)('replays migrated %s against independent public preflight commit and original SQL aliases',source=>{
   const input=command(evidence(source))
-  const {sqlite,db,source:sourcePath,statements,frozenSource}=fixture(old=>seedOriginal(old,input))
+  const {sqlite,db,source:sourcePath,statements,frozenSource,predecessor}=fixture(old=>seedOriginal(old,input))
   const frozenHash=createHash('sha256').update(readFileSync(frozenSource)).digest('hex')
   const old=new Database(sourcePath), publicDb=drizzle(old,{schema:expand})
   const reference=replay(input,q=>{delete q.collectionEvidence;delete q.status;delete q.titleCode;delete q.rawResponse;q.reuseExisting=true;q.relations=[{sequenceNo:1}]})
@@ -206,7 +206,9 @@ it.each(['queryList','businessList','queryBusList'] as const)('replays migrated 
   expect(sqlite.prepare('select * from platform_observation_assignment').all()).toEqual(assignment)
   expect(statements.filter(text=>/\b(platform_query|platform_relation)\b/i.test(text))).toEqual([])
   expect(createHash('sha256').update(readFileSync(frozenSource)).digest('hex')).toBe(frozenHash)
-  expect(sqlite.prepare('select distinct source_snapshot_sha256 h from platform_migration_run').all()).toEqual([{h:frozenHash}])
+  expect(sqlite.prepare("select distinct source_snapshot_sha256 h from platform_migration_run where run_id<>'basis'").all()).toEqual([{h:frozenHash}])
+  const predecessorHash=createHash('sha256').update(readFileSync(predecessor)).digest('hex')
+  expect(sqlite.prepare("select source_snapshot_sha256 h from platform_migration_run where run_id='basis'").all()).toEqual([{h:predecessorHash}])
   old.close();sqlite.close()
 })
 it('requires exact ordinary fullset and preserves empty legacy metadata assertions',()=>{
