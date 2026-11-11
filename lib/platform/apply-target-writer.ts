@@ -1,4 +1,5 @@
 /** W1a explicit finalized-target transaction seam. No public import routing. */
+import { capturePhase, nextObservationId, captureFingerprintBasis, assertCapturedInput } from './fingerprint-capture'
 import { createHash } from 'node:crypto'
 import { and, eq } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
@@ -18,13 +19,13 @@ export type ApplyTargetInput = {
   /** Explicit decision provenance; no inferred owner or historical confirmation time. */
   assignment: Assignment
 }
-const digest = (text: string) => createHash('sha256').update(text).digest('hex')
 function positive(value: number) {
   if (!Number.isSafeInteger(value) || value < 1) throw new Error('Invalid target identity')
 }
 
 /** A nested SQLite savepoint makes any failure atomic even if an outer caller catches it. */
 export function writeApplyTarget<S extends Record<string, unknown>>(db: BetterSQLite3Database<S>, input: ApplyTargetInput) {
+  const capturing = capturePhase(db)
   return db.transaction(tx => {
     positive(input.collectionId); positive(input.position.sequenceNo)
     if (input.assignment.origin !== 'command' || !input.assignment.actor || !input.assignment.basis) throw new Error('Explicit command provenance required')
@@ -39,14 +40,18 @@ export function writeApplyTarget<S extends Record<string, unknown>>(db: BetterSQ
     const plan = planPlatformObservation({ interface: 'apply_list', relationKey: input.row.relationKey, rawFields: raw })
     // Payload identity includes explicit stored facts and provenance, not just version bytes.
     // Callers supply materialized validated rows, rather than partial reference commands.
-    const fingerprint = digest(canonicalPlatformJson({ collectionId: collection.id, position: input.position, row: input.row, assignment: input.assignment }))
+    const inputBytes = Buffer.from(canonicalPlatformJson({ collectionId: collection.id, position: input.position, row: input.row, assignment: input.assignment }))
+    const fingerprint = createHash('sha256').update(inputBytes).digest('hex')
     const existing = tx.select().from(s.platformBusinessObservation).where(and(eq(s.platformBusinessObservation.collectionId, collection.id), eq(s.platformBusinessObservation.sequenceNo, input.position.sequenceNo))).get()
     if (existing) {
+      if (capturing) assertCapturedInput(tx, existing.id, inputBytes)
       if (existing.inputFingerprint !== fingerprint || existing.projectionRuleVersion !== PLATFORM_PROJECTION_RULE) throw new Error('observation_payload_conflict')
       const alias = tx.select().from(s.platformLegacyRelationAlias).where(eq(s.platformLegacyRelationAlias.observationId, existing.id)).get()
       if (!alias) throw new Error('Missing observation alias')
       return { observationId: existing.id, recordId: existing.recordId, versionId: existing.versionId, relationAlias: alias.oldId, reused: true }
     }
+    const observationId = capturing ? nextObservationId(tx) : undefined
+    if (capturing) captureFingerprintBasis(tx, observationId!, 'target-command-v1', inputBytes)
     let recordId: number | null = null, versionId: number | null = null
     const now = new Date().toISOString()
     if (plan.platformKey) {
@@ -76,7 +81,7 @@ export function writeApplyTarget<S extends Record<string, unknown>>(db: BetterSQ
         } else tx.insert(s.platformApplyProjection).values({ versionId, recordId, ...fields, ruleVersion: APPLY_PROJECTION_RULE }).run()
       }
     }
-    const observation = tx.insert(s.platformBusinessObservation).values({ collectionId: collection.id, ...input.position, sourceRelationKey: input.row.relationKey ?? null, recordId, versionId, identityState: plan.identityState, contentState: plan.contentState, keySource: plan.keySource, projectionRuleVersion: PLATFORM_PROJECTION_RULE, inputFingerprint: fingerprint, indexedAt: now }).returning().get()
+    const observation = tx.insert(s.platformBusinessObservation).values({ id: observationId, collectionId: collection.id, ...input.position, sourceRelationKey: input.row.relationKey ?? null, recordId, versionId, identityState: plan.identityState, contentState: plan.contentState, keySource: plan.keySource, projectionRuleVersion: PLATFORM_PROJECTION_RULE, inputFingerprint: fingerprint, indexedAt: now }).returning().get()
     const assignment = { ...input.assignment, observationId: observation.id, revision: 1 }
     tx.insert(s.platformObservationAssignment).values(assignment).run()
     const rawText = raw === null ? null : JSON.stringify(raw)
