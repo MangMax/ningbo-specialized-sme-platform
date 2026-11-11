@@ -130,3 +130,7 @@ validated 71605 target to collection_id PK/FK RESTRICT with marker 71606.
 receipt/replay boundary. Ordinary expand remains unchanged; W4a's collection
 command is the next consumer. No public writer/reader, 113 or runtime guard
 switch is included; historical T05c receipts retain their original schema hash.
+
+## #723 观察索引证据补充（待独立接受）
+
+[观察 fingerprint 输入保全契约](fingerprint-basis.md)与[专属 owner ADR](../adr/2026-11-11-observation-fingerprint-basis.md)限定原 canonical 输入、生命周期、不可恢复历史、双向验证及 S/C 切片。只追加索引证据 owner，不改变本契约其他 H2 算法或原 hash/bytes，不扩充已 seal 的旧 observation ref。本段不表示 schema 或 #722 实现已接受。

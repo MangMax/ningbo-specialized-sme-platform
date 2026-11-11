@@ -11,3 +11,5 @@ Source validation is the current platformEvidenceError plus the import identity/
 Existing natural keys are explicitly rejected with `collection_already_exists`; this does not implement or change public reuseExisting. W1b/W2b/W3b own preflight/preview/ref/result adapters; W4b/W4c own natural-key partial/reference reuse and last_collected_at updates, assignment revisions/merge, 113 material and receipt composition. Those owners must retain original query/evidence text at their ingestion boundary, supply explicit decisions and consume the output references. Public compatible routing still waits for W/R/H/C/X acceptance. No source writer or existing import branch is deleted, and no schema is added.
 
 Real history, public cutover, complete W4 and #706 remain unaccepted/UNRUN. Three inherited HTTP baseline FAIL and #705/B409 remain unchanged.
+
+#723 的[待审输入保全契约](fingerprint-basis.md)要求未来 capture 同步保存三来源 writer 实际 hash 的 canonical 输入。现有 request 仍仅是 queryText，不改成完整调用回执。S/C 接受前，不能宣称现有 command-indexed 历史均可独立重算。#722 的原 F1/F2 接受仍单独负责。

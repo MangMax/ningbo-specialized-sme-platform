@@ -63,3 +63,7 @@ flowchart LR
 切换前暂停新提交并排空任务、保存一致 DB 和文件备份，再迁移与验证。切换后采用支持目标 schema 的回滚二进制；旧二进制不得打开已删表 DB。若需要恢复旧 schema，必须先验证保留切换后新提交的逆向迁移，不能用旧备份覆盖新回执。生产执行另行批准。
 
 本次仅文档静态核对。测试、typecheck、build、迁移、DB 查询、性能、HTTP/MCP、工作簿及浏览器均 **UNRUN**。独立审查由父线程安排。仓外研究 `/Users/mang/.t3/acceptance/platform-complete-migration/` 是未审输入，新增 `a0/` 保留本轮证据指针；不提交业务数据或研究原件。
+
+## #723 待审补充
+
+[观察 fingerprint 原输入与生命周期](2026-11-11-observation-fingerprint-basis.md)提出专属索引证据 owner，解决 target writer 输入到存储投影多对一的问题。该补充待独立接受，不变更本 ADR 的已接受状态或整体迁移门槛，不代表 #722 已接受或已集成。
