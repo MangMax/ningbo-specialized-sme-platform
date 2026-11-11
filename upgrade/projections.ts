@@ -1,3 +1,4 @@
+import { sourceValueKind, sourceFieldComparison } from '../lib/platform/source-extraction'
 /** Offline T05b only. Source parsing ends here; no runtime consumer imports this module. */
 import Database from 'better-sqlite3'
 import { createHash } from 'node:crypto'
@@ -11,9 +12,6 @@ import * as schema from '../db/schema'
 import { parseApplyRecord } from '../lib/platform/apply-record'
 import { parseBusinessProcess } from '../lib/platform/business-projection'
 import { parseRecognizedRecord } from '../lib/platform/recognized-projection'
-import { processFactsFromRow } from '../lib/platform/identity'
-import { normalizePlatformRelation } from '../lib/platform/normalization'
-import type { PlatformRow } from '../lib/platform/types'
 import { bindArchive, insertArchiveValue, type ArchiveInput } from '../lib/platform/immutable-archive'
 import { assertFrozenSource, fileHash, schemaHash, withFrozenSource, type FrozenSource } from './collections'
 import { upgradeObservations, rowSnapshot } from './observations'
@@ -63,13 +61,6 @@ function originalVersionArchives(s:Database.Database,t:Database.Database,sd:Db,d
     if(!isDeepStrictEqual(rowSnapshot(s,'platform_archive_value','id',ref.archiveId),rowSnapshot(t,'platform_archive_value','id',ref.archiveId))) throw new Error('Original version archive metadata drift')
   }
 }
-type Kind=NonNullable<typeof schema.platformApplyProjection.$inferInsert.sourceTitleKind>
-function kind(v:unknown):Kind {
-  if(v===undefined)return 'absent'
-  if(v===null)return 'null'
-  if(Array.isArray(v))return 'array'
-  switch(typeof v) {case 'string':return 'text';case 'number':return Number.isFinite(v)?'number':'invalid';case 'boolean':return 'boolean';case 'object':return 'object';default:return 'invalid'}
-}
 function decode(a:typeof schema.platformArchiveValue.$inferSelect) {
   if(a.storageClass==='null') return {state:'absent' as const,row:null}
   try {
@@ -78,39 +69,14 @@ function decode(a:typeof schema.platformArchiveValue.$inferSelect) {
     return {state:'valid' as const,row:parsed as Record<string,unknown>}
   }catch{return {state:'invalid' as const,row:null}}
 }
-const fieldKeys={province:'szsfmc',status:'cszt',batch:'whpc',declareKind:'sblx',appliedAt:'sqsj',awardBatchLabel:'personuuid',year:'year'} as const
-// These seven fields are the accepted normalization contract, not a mixed business table.
-function comparison(source:string,stored:Pick<typeof schema.platformRelation.$inferSelect,keyof typeof fieldKeys>,row:Record<string,unknown>|null,state:'valid'|'invalid'|'absent') {
-  const process=source==='apply_list'||source==='business_list'
-  // Legacy PlatformRow declares strings, but this parser intentionally checks unknown JSON
-  // scalar types itself (as normalizePlatformRelation does); never stringify its inputs.
-  const parsed=process&&row?processFactsFromRow(row as PlatformRow):null
-  const normalized=normalizePlatformRelation(source,{...stored,rawFields:row})
-  const entries=Object.entries(fieldKeys).flatMap(([field,key])=>{
-    const f=field as keyof typeof fieldKeys,v=stored[f]
-    const storedValue=process&&f==='declareKind'?processFactsFromRow({sblx:typeof v==='string'?v:''}).declareKind:typeof v==='string'?v.trim()||null:v
-    const parsedValue=parsed?.[f]??null
-    for(const value of [storedValue,parsedValue]) if(typeof value==='number'&&!Number.isSafeInteger(value))throw new Error('Unrepresentable legacy process year')
-    const cap=f[0]!.toUpperCase()+f.slice(1)
-    return [[`stored${cap}Kind`,kind(v)],[`stored${cap}`,storedValue],[`parsed${cap}Kind`,process?(state==='valid'?kind(row?.[key]):state==='invalid'?'invalid':'absent'):'absent'],[`parsed${cap}`,parsedValue],[`reconciled${cap}`,normalized[f]],[`${f}Conflict`,Number(normalized.normalizationConflicts.some(c=>c.field===f))]]
-  })
-  return Object.fromEntries(entries) as Pick<typeof schema.platformApplyProjection.$inferInsert,
-    'storedProvinceKind'|'storedProvince'|'parsedProvinceKind'|'parsedProvince'|'reconciledProvince'|'provinceConflict'|
-    'storedStatusKind'|'storedStatus'|'parsedStatusKind'|'parsedStatus'|'reconciledStatus'|'statusConflict'|
-    'storedBatchKind'|'storedBatch'|'parsedBatchKind'|'parsedBatch'|'reconciledBatch'|'batchConflict'|
-    'storedDeclareKindKind'|'storedDeclareKind'|'parsedDeclareKindKind'|'parsedDeclareKind'|'reconciledDeclareKind'|'declareKindConflict'|
-    'storedAppliedAtKind'|'storedAppliedAt'|'parsedAppliedAtKind'|'parsedAppliedAt'|'reconciledAppliedAt'|'appliedAtConflict'|
-    'storedAwardBatchLabelKind'|'storedAwardBatchLabel'|'parsedAwardBatchLabelKind'|'parsedAwardBatchLabel'|'reconciledAwardBatchLabel'|'awardBatchLabelConflict'|
-    'storedYearKind'|'storedYear'|'parsedYearKind'|'parsedYear'|'reconciledYear'|'yearConflict'>
-}
 function transferObservation(db:Db,id:number) {
   const o=schema.platformBusinessObservation,r=schema.platformRelation,c=schema.platformCollection,a=schema.platformArchiveValue,ref=schema.platformObservationArchiveRef
   const input=db.select({source:c.interface,province:r.province,status:r.status,batch:r.batch,declareKind:r.declareKind,appliedAt:r.appliedAt,awardBatchLabel:r.awardBatchLabel,year:r.year,createdAt:r.createdAt,versionId:o.versionId}).from(o).innerJoin(r,eq(r.id,o.relationId)).innerJoin(c,eq(c.id,o.collectionId)).where(eq(o.relationId,id)).get()
   const raw=db.select({value:a,ref}).from(ref).innerJoin(a,eq(a.id,ref.archiveId)).where(and(eq(ref.ownerId,id),eq(ref.field,'rawFields'))).get()
   if(!input||!raw||raw.ref.sealed!==1)throw new Error('Missing mapped source or sealed raw owner')
   archiveValid(raw.value)
-  const decoded=decode(raw.value),title=decoded.row?.rdjb,titleKind=decoded.state==='valid'?kind(title):decoded.state==='invalid'?'invalid':'absent'
-  const common={createdAt:input.createdAt,observationId:id,versionId:null,recordId:null,basis:decoded.state==='valid'?'observation_reconciliation' as const:'unavailable' as const,parseState:decoded.state,sourceArchiveId:raw.ref.archiveId,sourceTitleKind:titleKind,sourceTitleText:typeof title==='string'?title:null,sourceTitleNumberText:typeof title==='number'&&Number.isFinite(title)?String(title):null,sourceTitleBoolean:typeof title==='boolean'?Number(title):null,sourceTitleRuleVersion:PROJECTION_TRANSFORM,...comparison(input.source,input,decoded.row,decoded.state)}
+  const decoded=decode(raw.value),title=decoded.row?.rdjb,titleKind=decoded.state==='valid'?sourceValueKind(title):decoded.state==='invalid'?'invalid':'absent'
+  const common={createdAt:input.createdAt,observationId:id,versionId:null,recordId:null,basis:decoded.state==='valid'?'observation_reconciliation' as const:'unavailable' as const,parseState:decoded.state,sourceArchiveId:raw.ref.archiveId,sourceTitleKind:titleKind,sourceTitleText:typeof title==='string'?title:null,sourceTitleNumberText:typeof title==='number'&&Number.isFinite(title)?String(title):null,sourceTitleBoolean:typeof title==='boolean'?Number(title):null,sourceTitleRuleVersion:PROJECTION_TRANSFORM,...sourceFieldComparison(input.source,input,decoded.row,decoded.state)}
   switch(input.source) {
     case 'apply_list':db.insert(schema.platformApplyProjection).values({...common,...parseApplyRecord(decoded.row),ruleVersion:'platform-apply-v1'}).run();break
     case 'business_list':db.insert(schema.platformBusinessProjection).values({...common,...parseBusinessProcess(decoded.row),ruleVersion:'platform-business-v1'}).run();break
