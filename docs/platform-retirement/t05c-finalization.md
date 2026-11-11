@@ -19,3 +19,38 @@ Finalization sets user_version=71605 atomically. db/client runtime/initializatio
 Old platform_query/platform_relation physical deletion is Z ownership. Scope/error's old keys/triggers and old canonical inline column remain pending their actual writer/reader transition and Z cleanup. H1's correspondence/difference/other historical refs remain outside this boundary and still reference old entities. No historical IDs/namespaces/hash/audit/receipt or archived data are deleted. This slice does not claim complete T05, #706 or real-history migration acceptance.
 
 Native SQL is limited to PRAGMA/catalog, temporary DDL/rebuild/copy, sqlite_sequence preservation and byte manifests. The source/target schema binding is checked before transforming accepted catalog DDL; unexpected incoming owners refuse. Ordinary migration receipts/checkpoints and target CRUD/archive/alias joins use Drizzle. Synthetic literal/cell/byte, populated rollback/restart, typed CRUD, owner/REPLACE and source-lock oracles are in platform-observation-finalize.test.ts. Existing performance #705 FAIL, B409 and all raw failures remain. Actual history/business DBs, production3482/historical3497, complete migration, full build/suite, Docker, live public HTTP/MCP, workbooks and deployment are UNRUN. Independent parent review is required.
+
+## #720 W4a-pre: explicit collection scope successor
+
+After completed T05c **71605**, run the same launcher with an explicit phase and
+its predecessor run ID. The old invocation remains T05c only:
+
+```sh
+node upgrade/run-finalize-observations.mjs --collection-scopes FROZEN_SOURCE EXISTING_71605_TARGET NEW_EVIDENCE_DIRECTORY SUCCESSOR_RUN_ID T05B_RUN_ID T05A_RUN_ID T04_RUN_ID T05C_RUN_ID
+```
+
+The successor validates completed T05c before first DDL, checks frozen scope/error
+PKs and raw SQLite bytes and every query alias/collection owner, and rejects
+unknown incoming FK, index, trigger or view owners. With FK ON, one immediate
+transaction rebuilds only the same two scope/error tables with collection PK/FK
+(RESTRICT), removes query_id and its transitional indexes, and drops exactly the
+three migration0027 scope triggers. Safe positive IDs and explicit NOT NULL apply.
+Other facts, triggers, archives, aliases and historical phase receipts remain.
+`lib/platform/target-schema.ts` overrides these two final declarations;
+ordinary `db/schema.ts` and startup migrations remain expand-only.
+
+Successor **71606** has its own transform, run and checkpoint. Its replay binds
+source, predecessor receipts/checkpoints, catalog and complete target byte
+manifest without re-running old query_id-dependent phases. T05c replay on 71606
+rejects; historical 71605 receipts are never rewritten to claim a new schema.
+Failures at drop/create/copy/index/receipt roll back DDL, bytes, triggers, marker
+and receipts together. Retain source, target and evidence; use a new evidence
+directory for CLI replay (exclusive-create outputs).
+
+T04 cannot continue against either finalized target. Current runtime, initialization
+and all three direct workers still reject every nonzero phase before business
+access; no runtime selector or public switch is added. The next **W4a collection
+command writer** consumes these final scope declarations. This does not connect
+roster-import, 113/receipt or readers, nor complete T05/W4/#706. Real history,
+public cutover and production remain UNRUN; three baseline HTTP FAILs and
+#705/B409 are unchanged.

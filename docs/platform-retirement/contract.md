@@ -121,3 +121,12 @@ collection、observation、version 使用各自类型化 archive FK 附表，PK(
 7. 目标副本 `sqlite_schema` 无旧表、view、trigger 或 FK；`foreign_key_check` 无新增违例；执行公开入口、重启、取消重试、三份完整下载工作簿、受影响桌面/390px 和受控性能验收后才提交生产切换审批。详见覆盖表各票门槛。
 
 切换前回滚使用一致原 DB/文件备份和原 binary，前提是未开放目标写入。切换后先暂停写入，默认回滚到支持目标 schema 的上一稳定 binary，仍用当前 DB/回执。若该 binary 不存在则停止恢复流量并前向修复；不得启动旧 binary。只有经独立验证的逆向工具完整搬回新 collection/observation/assignment/三投影及 receipt/ref，并通过同样双向 oracle，才允许恢复旧 schema。升级 backup 是事故恢复资料，不是覆盖切换后提交的授权。post-cutover rollback 的实际演练是 Z3 的硬门槛，当前 UNRUN。
+
+### #720 offline scope successor
+
+The explicit W4a-pre phase finalizes the existing two scope/error tables on a
+validated 71605 target to collection_id PK/FK RESTRICT with marker 71606.
+[t05c-finalization.md](t05c-finalization.md) defines the CLI and immutable phase
+receipt/replay boundary. Ordinary expand remains unchanged; W4a's collection
+command is the next consumer. No public writer/reader, 113 or runtime guard
+switch is included; historical T05c receipts retain their original schema hash.

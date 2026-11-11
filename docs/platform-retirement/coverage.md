@@ -144,3 +144,10 @@ See [T05c operation and phase boundary](t05c-finalization.md). `upgrade/finalize
 ## W1a explicit apply transaction seam
 
 [W1a writer boundary](w1a-apply-writer.md) implements apply-only writes into an explicitly supplied finalized-target transaction and existing collection. Target declarations/archive resolution and pure source extraction now have shared `lib/platform` owners; upgrade paths re-export/use them. Current runtime finalized-target refusal stays in place. Public import/collection/page/scope creation, receipts/113 and deletion of the legacy apply branch remain W1b/W4; no public API switch or full W1 acceptance is claimed.
+
+#720 W4a-pre owns only the explicit 71605→71606 offline same-table scope/error
+finalization, final target declarations and CLI consumption, including PK/byte,
+FK-ON rollback, phase replay and runtime-refusal oracles. Next consumer: W4a
+collection command writer. W4 orchestration/reuse/assignment/113/receipt and
+R/H/C/X/Z remain separate, as do real-history and public-cutover acceptance.
+Three inherited HTTP baseline FAILs and #705/B409 retain their status.
