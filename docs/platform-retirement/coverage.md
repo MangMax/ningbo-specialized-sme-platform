@@ -151,3 +151,7 @@ FK-ON rollback, phase replay and runtime-refusal oracles. Next consumer: W4a
 collection command writer. W4 orchestration/reuse/assignment/113/receipt and
 R/H/C/X/Z remain separate, as do real-history and public-cutover acceptance.
 Three inherited HTTP baseline FAILs and #705/B409 retain their status.
+
+## #723 单一 fingerprint 缺口（待独立接受）
+
+[契约补充](fingerprint-basis.md)只覆盖 observation input_fingerprint 的原输入与生命周期。[ADR](../adr/2026-11-11-observation-fingerprint-basis.md)逐项列出原承诺影响。后续依赖为 #723→S(schema/offline)→C(capture/replay)，已接受71606→S；各片≤M，尚未实施或创建新票。#722 migrated F1、rule 和完整 mapping F2 仍由其本票修复与独立接受，不能算成本补充新增前置。H2其他算法、C3公开接口与快照、W4整体接线、真实迁移和Z终态门槛仍按原分票，不宣称关闭。
