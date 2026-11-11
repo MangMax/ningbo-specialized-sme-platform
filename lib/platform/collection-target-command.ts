@@ -1,4 +1,5 @@
 /** W4a: explicit offline 71606 complete-new-collection command. No public routing. */
+import { requireCaptureForeignKeys } from './fingerprint-capture'
 import { isDeepStrictEqual } from 'node:util'
 import { and, eq, sql } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
@@ -69,8 +70,9 @@ function queryInput(input: NewCollectionTargetCommand): RosterImportPlatformQuer
 
 /** Savepoint remains atomic when composed inside a caller transaction which catches errors. */
 export function writeNewCollectionTarget<S extends Record<string, unknown>>(db: BetterSQLite3Database<S>, input: NewCollectionTargetCommand) {
+  requireCaptureForeignKeys(db)
   return db.transaction(tx => {
-    if (tx.get<{ user_version: number }>(sql`PRAGMA user_version`)?.user_version !== FINAL_COLLECTION_SCOPE_VERSION) throw new Error('Explicit 71606 target required')
+    if (tx.get<{ user_version: number }>(sql`PRAGMA user_version`)?.user_version !== FINAL_COLLECTION_SCOPE_VERSION && tx.get<{ user_version: number }>(sql`PRAGMA user_version`)?.user_version !== 71607) throw new Error('Explicit 71606 target required')
     const q = queryInput(input), e = q.collectionEvidence
     const existing = tx.select({ id: s.platformCollection.id }).from(s.platformCollection).where(and(eq(s.platformCollection.interface, q.interface), eq(s.platformCollection.queryKey, q.queryKey), eq(s.platformCollection.rdjb, q.rdjb ?? ''), eq(s.platformCollection.queriedAt, q.queriedAt))).get()
     if (existing) throw new Error('collection_already_exists: new-only command; public reuse is deferred')

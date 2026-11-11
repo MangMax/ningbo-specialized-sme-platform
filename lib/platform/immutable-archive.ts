@@ -4,6 +4,10 @@ import { and, eq, max, sql } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../db/schema'
 
+/** Successor helpers must reject FK-OFF even when an outer transaction already exists. */
+function requireTargetForeignKeys<S extends Record<string,unknown>>(db:BetterSQLite3Database<S>) {
+  if(db.get<{user_version:number}>(sql`PRAGMA user_version`)?.user_version===71607 && db.get<{foreign_keys:number}>(sql`PRAGMA foreign_keys`)?.foreign_keys!==1)throw new Error('fingerprint writes require foreign_keys=ON before entry')
+}
 export const ARCHIVE_CHUNK_BYTES = 65536
 export type ArchiveInput = { storageClass: 'null', bytes: null, createdAt: string | null } | { storageClass: 'text' | 'blob', bytes: Buffer, createdAt: string | null }
 function positiveId(id: number) {
@@ -11,12 +15,17 @@ function positiveId(id: number) {
   return id
 }
 export function insertArchiveValue<S extends Record<string, unknown>>(db: BetterSQLite3Database<S>, input: ArchiveInput, expected?: { byteLength?: number | null, sha256?: string | null }) {
+  requireTargetForeignKeys(db)
   if (!['null', 'text', 'blob'].includes(input.storageClass) || (input.storageClass === 'null' ? input.bytes !== null : !Buffer.isBuffer(input.bytes))) throw new Error('Invalid archive storage class')
   const bytes = input.bytes
   const byteLength = bytes === null ? null : bytes.length
   const sha256 = bytes === null ? null : createHash('sha256').update(bytes).digest('hex')
   if ((expected?.byteLength !== undefined && expected.byteLength !== byteLength) || (expected?.sha256 !== undefined && expected.sha256 !== sha256)) throw new Error('Archive byte length or hash mismatch')
-  return db.insert(schema.platformArchiveValue).values({ storageClass: input.storageClass, bytes, byteLength, sha256, createdAt: input.createdAt }).returning({ id: schema.platformArchiveValue.id }).get().id
+  const values = { storageClass: input.storageClass, bytes, byteLength, sha256, createdAt: input.createdAt }
+  if(db.get<{user_version:number}>(sql`PRAGMA user_version`)?.user_version===71607) {
+    return db.transaction(tx=>positiveId(tx.insert(schema.platformArchiveValue).values(values).returning({id:schema.platformArchiveValue.id}).get().id))
+  }
+  return db.insert(schema.platformArchiveValue).values(values).returning({id:schema.platformArchiveValue.id}).get().id
 }
 export function readArchiveValue<S extends Record<string, unknown>>(db: BetterSQLite3Database<S>, input: { archiveId: number, offset?: number, length?: number }) {
   const id = positiveId(input.archiveId), offset = input.offset ?? 0, length = input.length ?? ARCHIVE_CHUNK_BYTES
@@ -49,6 +58,7 @@ function validateField(owner: ArchiveField) {
   if (!fields[owner.kind].includes(owner.field)) throw new Error('Invalid archive owner field')
 }
 export function bindArchive<S extends Record<string, unknown>>(db: BetterSQLite3Database<S>, input: ArchiveField & { archiveId: number }) {
+  requireTargetForeignKeys(db)
   validateField(input); positiveId(input.archiveId)
   // Branches preserve the schema's owner-field discriminants at the insert boundary.
   switch (input.kind) {
@@ -59,11 +69,13 @@ export function bindArchive<S extends Record<string, unknown>>(db: BetterSQLite3
 }
 /** Append all fields in one enclosing transaction, then seal. Empty owners cannot be sealed. */
 export function sealArchiveOwner<S extends Record<string, unknown>>(db: BetterSQLite3Database<S>, owner: ArchiveOwner) {
+  requireTargetForeignKeys(db)
   const table = refTable(owner)
   const result = db.update(table).set({ sealed: 1 }).where(eq(table.ownerId, owner.ownerId)).run()
   if (result.changes === 0) throw new Error('No archive bindings to seal')
 }
 export function writeOwnerArchive<S extends Record<string, unknown>>(db: BetterSQLite3Database<S>, owner: ArchiveField, input: ArchiveInput) {
+  requireTargetForeignKeys(db)
   return db.transaction(tx => {
     const id = insertArchiveValue(tx, input)
     bindArchive(tx, { ...owner, archiveId: id })
@@ -79,6 +91,7 @@ export function readOwnerArchive<S extends Record<string, unknown>>(db: BetterSQ
 
 type AliasBinding = { kind: 'query', oldId: number, collectionId: number } | { kind: 'relation', oldId: number, observationId: number }
 export function bindLegacyAlias<S extends Record<string, unknown>>(db: BetterSQLite3Database<S>, input: AliasBinding) {
+  requireTargetForeignKeys(db)
   positiveId(input.oldId)
   switch (input.kind) {
     case 'query': positiveId(input.collectionId); db.insert(schema.platformLegacyQueryAlias).values({ oldId: input.oldId, collectionId: input.collectionId }).run(); break
@@ -88,6 +101,7 @@ export function bindLegacyAlias<S extends Record<string, unknown>>(db: BetterSQL
 }
 /** Caller supplies frozen old maxima, not a sample or the count of rows. No historical scan at runtime. */
 export function reserveLegacyIds<S extends Record<string, unknown>>(db: BetterSQLite3Database<S>, maxima: { query: number, relation: number }) {
+  requireTargetForeignKeys(db)
   db.transaction(tx => {
     for (const namespace of ['query', 'relation'] as const) {
       const value = maxima[namespace]
@@ -103,6 +117,7 @@ export function reserveLegacyIds<S extends Record<string, unknown>>(db: BetterSQ
   })
 }
 export function allocateLegacyAlias<S extends Record<string, unknown>>(db: BetterSQLite3Database<S>, target: { kind: 'query', collectionId: number } | { kind: 'relation', observationId: number }) {
+  requireTargetForeignKeys(db)
   return db.transaction(tx => {
     const t = schema.platformLegacyAliasSequence, namespace = target.kind
     const sequence = tx.select().from(t).where(eq(t.namespace, namespace)).get()

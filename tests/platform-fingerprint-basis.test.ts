@@ -152,7 +152,7 @@ it('keeps source lock during schema and receipt writes and replays in another pr
   writeFileSync(f.target+'.replay.stdout',result.stdout);writeFileSync(f.target+'.replay.stderr',result.stderr)
   expect(result.status,result.stderr).toBe(0)
 })
-it('preserves runtime initialization and old command guard on the successor',async()=>{
+it('preserves runtime initialization guards and rejects malformed C-capable successor commands',async()=>{
   const f=fixture();f.t.close();const source=f.target+'.71606';copyFileSync(f.target,source)
   finalizeFingerprintBasis({source,target:f.target,runId:'basis',predecessorRunId:'scopes'})
   const {useRuntimeDb,initializeDb}=await import('../db/client')
@@ -160,7 +160,7 @@ it('preserves runtime initialization and old command guard on the successor',asy
   expect(()=>initializeDb({dbPath:f.target})).toThrow(/finalized/i)
   const {writeNewCollectionTarget}=await import('../lib/platform/collection-target-command')
   const t=new Database(f.target);t.pragma('foreign_keys=ON');const before=t.serialize()
-  expect(()=>writeNewCollectionTarget(drizzle(t),{queryText:'{}',evidenceText:null,createdAt:'c',assignments:[]})).toThrow(/71606/)
+  expect(()=>writeNewCollectionTarget(drizzle(t),{queryText:'{}',evidenceText:null,createdAt:'c',assignments:[]})).toThrow(/Invalid input/)
   expect(t.serialize()).toEqual(before);t.close()
 })
 
