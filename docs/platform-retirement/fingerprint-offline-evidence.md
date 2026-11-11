@@ -43,6 +43,8 @@ predecessor 之后有索引事件时，调用方还须提供 `eventSource: { pat
 
 bootstrap 事件使用 `{ "observationId": 11, "lifecycle": "legacy-bootstrap" }`。必须有 predecessor 的 paired not_indexed、原 full-raw owner、独立 bootstrap 执行证据和完整 after-state；同时提供原 legacySource，核对原 alias、cells、raw/source bytes、原 envelope 和新索引 mapping。不根据 request 存在或 digest 选择生命周期。未索引观察继续无 basis；未知事件、冲突或缺来源均拒绝。
 
+原 recognized writer 可能在复用旧 version 时，将原本三项均未捕获的 source-fidelity 字段做追加捕获。事件校验只允许这三个字段的原有转换：新观察必须由独立事件证明，sealed raw 的 canonical 内容须等于该 version，三个值须精确等于原 parser 的结果，其他旧字段全部相同。S 只核对冻结的 after-state，不执行该业务更新；任意额外漂移均拒绝。
+
 来源与 after-state 在整个 successor 事务期间冻结。目标完整 manifest、旧 receipt 和 highwater 同新 run/checkpoint 绑定。恢复只追加 basis/archive；DDL、barrier、phase、receipt、恢复行在一个 immediate 事务中提交，任何错误回滚。CLI 写独占 evidence 目录并保留失败目标 manifest、catalog 和逐观察拒绝原因。
 
 CLI 参数：

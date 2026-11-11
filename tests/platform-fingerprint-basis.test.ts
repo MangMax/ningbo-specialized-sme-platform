@@ -271,11 +271,12 @@ it.each(['recovered','receipt'])('rolls back actual recovered command rows inclu
   expect(finalizeFingerprintBasis({source,target:f.target,runId:'basis',predecessorRunId:'scopes',eventSource}).recoveryManifest).toContainEqual(expect.objectContaining({observationId:row.observationId,scheme:'target-command-v1'}))
 })
 
-it.each([null,'null','{bad','42','true','"word"','[1,null]','{"id":"A"}'])('recovers legacy original SQL raw partition %j preserving literal bytes and hash',raw=>{
+it.each([null,'null','{bad','42','true','"word"','[1,null]','{"id":"A"}'].flatMap(raw=>(Object.keys(writers) as (keyof typeof writers)[]).map(sourceInterface=>({raw,sourceInterface}))))('recovers legacy original SQL raw partition $raw for $sourceInterface preserving literal bytes and hash',({raw,sourceInterface})=>{
   let value:unknown=null;try{value=raw===null?null:JSON.parse(raw)}catch{}
-  const literal='{"interface":"apply_list","invalidRaw":'+JSON.stringify(value===null?raw:null)+',"queriedAt":"t","queryId":1,"queryKey":"Q","rawFields":'+JSON.stringify(value)+',"rdjb":"2","relationKey":"A","sequenceNo":1}'
+  const literal='{"interface":'+JSON.stringify(sourceInterface)+',"invalidRaw":'+JSON.stringify(value===null?raw:null)+',"queriedAt":"t","queryId":1,"queryKey":"Q","rawFields":'+JSON.stringify(value)+',"rdjb":"2","relationKey":"A","sequenceNo":1}'
   const fingerprint=createHash('sha256').update(literal).digest('hex')
   const f=fixture(s=>{
+    s.prepare('UPDATE platform_query SET interface=?').run(sourceInterface)
     s.prepare('UPDATE platform_relation SET raw_fields=?').run(raw)
     ensurePlatformObservation(drizzle(s,{schema:expandSchema}),11,undefined,fingerprint)
   });f.t.close();const source=f.target+'.71606';copyFileSync(f.target,source)
@@ -419,4 +420,22 @@ it('CLI persists every observation refusal reason and original aliases after rec
   const failure=JSON.parse(readFileSync(join(dir,'failure.json'),'utf8'))
   expect(failure.recoveryManifest).toHaveLength(2)
   expect(failure.recoveryManifest).toContainEqual(expect.objectContaining({observationId:row.observationId,scheme:'rejected',certification:'rejected',oldAlias:row.relationAlias,queryAlias:1,reason:'Command fingerprint conflict'}))
+})
+
+it.each([false,true])('checks proven recognized additive fidelity event with conflicting fields %s',drift=>{
+  const f=fixture(s=>{
+    s.prepare('UPDATE platform_query SET interface=?').run('recognized_list')
+    s.prepare('UPDATE platform_relation SET raw_fields=?').run('{"id":"A","rdjb":"2"}')
+    ensurePlatformObservation(drizzle(s,{schema:expandSchema}),11)
+    s.exec('UPDATE platform_recognized_projection SET source_validity_date=NULL,source_maintenance_batch=NULL,source_maintenance_year_absent=NULL')
+  });f.t.close();const source=f.target+'.71606';copyFileSync(f.target,source)
+  const t=new Database(f.target);t.pragma('foreign_keys=ON')
+  const input={collectionId:1,position:{sequenceNo:2,positionState:'unknown' as const},row:{sequenceNo:2,relationKey:'A',rawFields:{id:'A',rdjb:'2'}},assignment:{enterpriseId:null,matchBasis:'none' as const,verificationStatus:'pending' as const,origin:'command' as const,actor:{type:'agent' as const,id:'original'},basis:'original',recordedAt:null}}
+  const row=writeRecognizedTarget(drizzle(t),input)
+  if(drift)t.exec("UPDATE platform_recognized_projection SET source_validity_date='invented' WHERE version_id IS NOT NULL")
+  t.close()
+  const eventSource=eventEvidence(source,f.target,[{observationId:row.observationId,lifecycle:'command',originalInput:input}])
+  const before=readFileSync(f.target),run=()=>finalizeFingerprintBasis({source,target:f.target,runId:'basis',predecessorRunId:'scopes',legacySource:f.source,eventSource})
+  if(drift){expect(run).toThrow(/predecessor facts/);expect(readFileSync(f.target)).toEqual(before)}
+  else expect(run().recoveryManifest).toContainEqual(expect.objectContaining({observationId:row.observationId,scheme:'target-command-v1'}))
 })
