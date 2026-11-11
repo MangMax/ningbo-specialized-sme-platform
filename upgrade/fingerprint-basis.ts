@@ -193,7 +193,7 @@ export function finalizeFingerprintBasis(options:FingerprintBasisOptions,frozen?
           try {rawFields=rawText===null?null:JSON.parse(rawText)}catch {/* Original public oracle keeps invalid raw text. */}
           {
             const plan=planPlatformObservation({interface:collection.interface,relationKey:observation.sourceRelationKey,rawFields})
-            if(observation.identityState!==plan.identityState||observation.contentState!==plan.contentState||observation.keySource!==plan.keySource||!observation.indexedAt||(indexEvent?.lifecycle==='legacy-bootstrap'&&observation.batchId!==null))throw new Error('Legacy original index fact conflict')
+            if(observation.identityState!==plan.identityState||observation.contentState!==plan.contentState||observation.keySource!==plan.keySource||!observation.indexedAt)throw new Error('Legacy original index fact conflict')
             const record=observation.recordId===null?undefined:tx.select().from(s.platformBusinessRecord).where(eq(s.platformBusinessRecord.id,observation.recordId)).get()
             if(plan.platformKey?(record?.platformKey!==plan.platformKey||record.interface!==collection.interface||record.identityRuleVersion!==PLATFORM_PROJECTION_RULE):observation.recordId!==null)throw new Error('Bootstrap record conflict')
             const version=observation.versionId===null?undefined:tx.select().from(s.platformBusinessRecordVersion).where(eq(s.platformBusinessRecordVersion.id,observation.versionId)).get()

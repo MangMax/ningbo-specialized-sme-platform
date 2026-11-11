@@ -223,16 +223,17 @@ function eventEvidence(source:string,target:string,events:unknown[]) {
   writeFileSync(path,JSON.stringify({predecessorSha256:digest(source),targetSha256:digest(snapshot),events}))
   return {path,sha256:digest(path),snapshot}
 }
-it('recovers a proven bootstrap from original full raw without inferring lifecycle from request or hash',()=>{
-  const f=fixture();f.t.close();const source=f.target+'.71606';copyFileSync(f.target,source)
+it.each([null,7])('recovers a proven bootstrap with captured batch %s without inferring lifecycle from request or hash',batchId=>{
+  const f=fixture(s=>{if(batchId!==null)s.prepare("INSERT INTO import_batch(id,idempotency_key,source_kind,source_identity,created_at) VALUES(?,'bootstrap','platform_archive','original','c')").run(batchId)});f.t.close();const source=f.target+'.71606';copyFileSync(f.target,source)
   const literal='{"interface":"apply_list","invalidRaw":"null","queriedAt":"t","queryId":1,"queryKey":"Q","rawFields":null,"rdjb":"2","relationKey":"A","sequenceNo":1}'
   const hash=createHash('sha256').update(literal).digest('hex')
   const t=new Database(f.target)
   t.exec("INSERT INTO platform_business_record(id,interface,platform_key,identity_rule_version,created_at) VALUES(9,'apply_list','A','platform-observation-v1','c')")
-  t.prepare("UPDATE platform_business_observation SET record_id=9,identity_state='resolved',content_state='unverifiable',key_source='relation_key',projection_rule_version='platform-observation-v1',input_fingerprint=?,indexed_at='bootstrap event time' WHERE id=11").run(hash);t.close()
+  t.prepare("UPDATE platform_business_observation SET record_id=9,identity_state='resolved',content_state='unverifiable',key_source='relation_key',projection_rule_version='platform-observation-v1',input_fingerprint=?,indexed_at='bootstrap event time',batch_id=? WHERE id=11").run(hash,batchId);t.close()
   const eventSource=eventEvidence(source,f.target,[{observationId:11,lifecycle:'legacy-bootstrap'}])
   const result=finalizeFingerprintBasis({source,target:f.target,runId:'basis',predecessorRunId:'scopes',legacySource:f.source,eventSource})
   expect(result.recoveryManifest).toContainEqual(expect.objectContaining({observationId:11,oldAlias:11,queryAlias:1,scheme:'legacy-bootstrap-v1',reason:null}))
+  const db=new Database(f.target);expect(db.prepare('SELECT batch_id FROM platform_business_observation WHERE id=11').get()).toEqual({batch_id:batchId});db.close()
 })
 
 import { writeProcessTarget } from '../lib/platform/process-target-writer'
