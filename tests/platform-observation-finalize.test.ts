@@ -188,3 +188,200 @@ it('refuses finalized checkpoint metadata tampering',()=>{
   const t=new Database(f.target);t.exec("update platform_migration_checkpoint set copied_count=99 where phase='t05c-final'");t.close()
   expect(()=>finalizeObservations(f)).toThrow(/drift/)
 })
+
+import { finalizeCollectionScopes } from '../upgrade/finalize-observations'
+function scopeFixture() {
+  const f=fixture(s=>{
+    const values=[`{titleScope:{rdjb:['2','3','2',4,null,'','  ']}}`,JSON.stringify({titleScope:{rdjb:'["1","2"]'}}),'{bad',JSON.stringify({titleScope:{rdjb:'plain'}}),null,JSON.stringify({titleScope:{rdjb:'"2"'}}),JSON.stringify({titleScope:{rdjb:''}}),JSON.stringify({titleScope:{rdjb:'  '}}),null,null]
+    for(let i=0;i<values.length;i++)s.prepare("insert into platform_query(id,interface,query_key,rdjb,queried_at,status,collection_evidence,created_at) values(?,'apply_list',?,'','t',?,?, 'c')").run(10+i,'scope'+i,i===4?'not_queried':i===8?'no_record':'failed',values[i])
+  });finalizeObservations(f)
+  return {...f,runId:'w4pre',finalizationRunId:f.runId}
+}
+it('finalizes collection scopes against frozen legacy SQL and complete PK byte oracle without changing other tables',()=>{
+  const f=scopeFixture(),t=new Database(f.target)
+  const rows=t.prepare('select collection_id,typeof(rdjb) kind,hex(cast(rdjb as blob)) bytes from platform_query_title_scope order by collection_id,rdjb').all()
+  const errors=t.prepare('select collection_id from platform_query_title_scope_error order by collection_id').all()
+  t.close()
+  expect(finalizeCollectionScopes(f).state).toBe('complete')
+  const a=new Database(f.target)
+  expect(a.prepare('select collection_id,typeof(rdjb) kind,hex(cast(rdjb as blob)) bytes from platform_query_title_scope order by collection_id,rdjb').all()).toEqual(rows)
+  expect(a.prepare('select collection_id from platform_query_title_scope_error order by collection_id').all()).toEqual(errors)
+  expect(a.pragma('user_version',{simple:true})).toBe(71606)
+  expect(a.pragma('foreign_key_check')).toEqual([]);a.close()
+  const bytes=readFileSync(f.target);finalizeCollectionScopes(f);expect(readFileSync(f.target)).toEqual(bytes)
+})
+
+// Independent SQL oracle: frozen migration0027 expressions, no extractor/finalizer expectations.
+function legacyScopeOracle(s:Database.Database) {
+  return {
+    scopes:s.prepare(`SELECT DISTINCT q.id collection_id,typeof(scope.value) kind,hex(cast(scope.value as blob)) bytes FROM platform_query q,json_each(CASE WHEN json_valid(q.collection_evidence,2) THEN CASE WHEN json_valid(json_extract(q.collection_evidence,'$.titleScope.rdjb'),2) THEN json_extract(q.collection_evidence,'$.titleScope.rdjb') ELSE 'null' END ELSE 'null' END) scope WHERE scope.type='text' ORDER BY q.id,scope.value`).all(),
+    errors:s.prepare(`SELECT q.id collection_id FROM platform_query q WHERE CASE WHEN q.collection_evidence IS NULL THEN 0 WHEN NOT json_valid(q.collection_evidence,2) THEN 1 WHEN json_extract(q.collection_evidence,'$.titleScope.rdjb') IS NULL THEN 0 WHEN NOT json_valid(json_extract(q.collection_evidence,'$.titleScope.rdjb'),2) THEN 1 ELSE 0 END=1 ORDER BY q.id`).all(),
+  }
+}
+// Full independent named-cell oracle, ordered by every physical PK (no production manifest).
+function independentCells(t:Database.Database,excluded:string[]=[]) {
+  const result:Record<string,unknown>={}
+  for(const {name} of t.prepare("select name from sqlite_schema where type='table' and name not like 'sqlite_%' order by name").all() as {name:string}[]) {
+    if(excluded.includes(name))continue
+    const cols=t.pragma(`table_info("${name}")`) as {name:string,pk:number}[]
+    const pk=cols.filter(c=>c.pk).sort((a,b)=>a.pk-b.pk).map(c=>`"${c.name}"`).join(',')||'rowid'
+    result[name]=t.prepare(`select ${cols.flatMap(c=>[`typeof("${c.name}") "${c.name}:type"`,`hex(cast("${c.name}" as blob)) "${c.name}:hex"`]).join(',')} from "${name}" order by ${pk}`).all()
+  }
+  return result
+}
+it('matches populated frozen migration0027 oracle and preserves every unrelated table cell and historical receipt',()=>{
+  const f=scopeFixture(),s=new Database(f.source),t=new Database(f.target),oracle=legacyScopeOracle(s)
+  expect(oracle.scopes).toEqual([{collection_id:10,kind:'text',bytes:''},{collection_id:10,kind:'text',bytes:'2020'},{collection_id:10,kind:'text',bytes:'32'},{collection_id:10,kind:'text',bytes:'33'},{collection_id:11,kind:'text',bytes:'31'},{collection_id:11,kind:'text',bytes:'32'},{collection_id:15,kind:'text',bytes:'32'}])
+  expect(oracle.errors).toEqual([{collection_id:12},{collection_id:13},{collection_id:16},{collection_id:17}])
+  const excluded=['platform_query_title_scope','platform_query_title_scope_error','platform_migration_run','platform_migration_checkpoint']
+  const watermarks=t.prepare('select * from sqlite_sequence order by name').all()
+  const before=independentCells(t,excluded),runs=t.prepare('select * from platform_migration_run order by run_id').all(),cp=t.prepare('select * from platform_migration_checkpoint order by run_id,phase,source_table').all(),catalog=finalizationCatalog(t)
+  s.close();t.close();finalizeCollectionScopes(f)
+  const a=new Database(f.target)
+  expect(a.prepare('select collection_id,typeof(rdjb) kind,hex(cast(rdjb as blob)) bytes from platform_query_title_scope order by collection_id,rdjb').all()).toEqual(oracle.scopes)
+  expect(a.prepare('select collection_id from platform_query_title_scope_error order by collection_id').all()).toEqual(oracle.errors)
+  expect(independentCells(a,excluded)).toEqual(before)
+  expect(a.prepare('select * from sqlite_sequence order by name').all()).toEqual(watermarks)
+  expect(a.prepare("select * from platform_migration_run where run_id<>'w4pre' order by run_id").all()).toEqual(runs)
+  expect(a.prepare("select * from platform_migration_checkpoint where run_id<>'w4pre' order by run_id,phase,source_table").all()).toEqual(cp)
+  const unrelated=(c:ReturnType<typeof finalizationCatalog>)=>c.filter(x=>!x.name.startsWith('platform_query_title_scope')&&!x.tbl_name.startsWith('platform_query_title_scope'))
+  expect(unrelated(finalizationCatalog(a))).toEqual(unrelated(catalog));a.close()
+})
+it.each(['dropped','created','copied','indexed','receipt'])('successor rolls back all DDL bytes triggers marker and receipt at %s then retries',stage=>{
+  const f=scopeFixture(),before=readFileSync(f.target)
+  expect(()=>finalizeCollectionScopes({...f,beforeCommit:s=>{if(s===stage)throw new Error('successor fault')}})).toThrow('successor fault')
+  expect(readFileSync(f.target)).toEqual(before)
+  expect(finalizeCollectionScopes(f).state).toBe('complete')
+})
+it.each(['source','fact','null-owner','wrong-owner','missing-alias','incoming','trigger','index','missing-t04','missing-t05a','missing-t05b','missing-t05c','wrong-run','inode'])('successor refuses %s before writing',mode=>{
+  const f=scopeFixture(),t=new Database(mode==='source'?f.source:f.target)
+  if(mode==='source')t.exec("update platform_query set query_key='changed' where id=1")
+  if(mode==='fact')t.exec("update platform_query_title_scope set rdjb='changed' where query_id=10 and rdjb='2'")
+  if(mode==='null-owner')t.exec('update platform_query_title_scope set collection_id=NULL where query_id=10')
+  if(mode==='wrong-owner')t.exec('update platform_query_title_scope_error set collection_id=1 where query_id=12')
+
+  if(mode==='missing-alias')t.exec('drop trigger platform_legacy_query_alias_no_delete; delete from platform_legacy_query_alias where old_id=10')
+
+  if(mode==='incoming')t.exec('create table unknown_owner(collection_id integer references platform_query_title_scope_error(query_id))')
+  if(mode==='trigger')t.exec('create trigger unknown_scope after insert on platform_query_title_scope begin select 1;end')
+  if(mode==='index')t.exec('create index unknown_scope_idx on platform_query_title_scope(rdjb)')
+  if(mode.startsWith('missing-t'))t.prepare('update platform_migration_run set state=? where run_id=?').run('running',mode.slice(8))
+  t.close();const before=readFileSync(f.target)
+  expect(()=>finalizeCollectionScopes({...f,...(mode==='wrong-run'?{finalizationRunId:'wrong'}:{}),...(mode==='inode'?{source:f.target}:{})})).toThrow()
+  expect(readFileSync(f.target)).toEqual(before)
+})
+it.each(['source','source-schema','fact','schema','receipt','checkpoint','predecessor-receipt','predecessor-checkpoint','wrong-predecessor'])('completed successor replay rejects %s binding drift without writing',mode=>{
+  const f=scopeFixture();finalizeCollectionScopes(f)
+  const t=new Database(mode==='source'||mode==='source-schema'?f.source:f.target)
+  if(mode==='source-schema')t.exec('create table unexpected_source(id integer)')
+  if(mode==='source')t.exec("update platform_query set query_key='changed' where id=1")
+  if(mode==='fact')t.exec("update platform_query_title_scope set rdjb='changed' where collection_id=10 and rdjb='2'")
+  if(mode==='schema')t.exec('create table unexpected(id integer)')
+  if(mode==='receipt'||mode==='predecessor-receipt')t.prepare('update platform_migration_run set transform_version=? where run_id=?').run('changed',mode==='receipt'?'w4pre':'t05c')
+  if(mode==='checkpoint'||mode==='predecessor-checkpoint')t.prepare('update platform_migration_checkpoint set copied_count=999 where run_id=?').run(mode==='checkpoint'?'w4pre':'t05c')
+  t.close();const before=readFileSync(f.target)
+  expect(()=>finalizeCollectionScopes({...f,...(mode==='wrong-predecessor'?{finalizationRunId:'other'}:{})})).toThrow(/drift/)
+  expect(readFileSync(f.target)).toEqual(before)
+})
+it('successor catalog matches final declarations and permits typed collection-only scope CRUD with FK safe IDs and PK enforcement',()=>{
+  const f=scopeFixture();finalizeCollectionScopes(f);const t=new Database(f.target);t.pragma('foreign_keys=ON')
+  const queries:string[]=[],db=drizzle(t,{schema:final,logger:{logQuery:q=>queries.push(q)}})
+  db.insert(final.platformCollection).values({id:1001,interface:'apply_list',queryKey:'new',rdjb:'',queriedAt:'now',createdAt:'now',status:'failed',completeness:'unknown',provenanceState:'unknown',parseState:'absent',ruleVersion:'test'}).run()
+  db.insert(final.platformQueryTitleScope).values({collectionId:1001,rdjb:' 2 '}).run()
+  db.insert(final.platformQueryTitleScopeError).values({collectionId:1001}).run()
+  expect(db.select().from(final.platformQueryTitleScope).where(eq(final.platformQueryTitleScope.collectionId,1001)).all()).toEqual([{collectionId:1001,rdjb:' 2 '}])
+  expect(db.select().from(final.platformQueryTitleScopeError).where(eq(final.platformQueryTitleScopeError.collectionId,1001)).all()).toEqual([{collectionId:1001}])
+  expect(queries.join('\n')).not.toMatch(/"platform_(query|relation)"/)
+  db.insert(final.platformCollection).values({id:9007199254740992,interface:'apply_list',queryKey:'unsafe-owner',rdjb:'',queriedAt:'now',createdAt:'now',status:'failed',completeness:'unknown',provenanceState:'unknown',parseState:'absent',ruleVersion:'test'}).run()
+  for(const id of [9999,9007199254740992,0]){
+    expect(()=>db.insert(final.platformQueryTitleScope).values({collectionId:id,rdjb:'x'}).run()).toThrow()
+    expect(()=>db.insert(final.platformQueryTitleScopeError).values({collectionId:id}).run()).toThrow()
+  }
+  expect(()=>db.insert(final.platformQueryTitleScope).values({collectionId:1001,rdjb:' 2 '}).run()).toThrow()
+  expect(()=>db.insert(final.platformQueryTitleScopeError).values({collectionId:1001}).run()).toThrow()
+  expect(()=>db.delete(final.platformCollection).where(eq(final.platformCollection.id,1001)).run()).toThrow()
+  expect(t.prepare('select id from platform_query where id=1001').all()).toEqual([])
+  for(const table of [final.platformQueryTitleScope,final.platformQueryTitleScopeError]){
+    const c=getTableConfig(table),actual=t.pragma(`table_info(${c.name})`) as {name:string,notnull:number,pk:number}[]
+    expect(actual.map(x=>x.name)).toEqual(c.columns.map(x=>x.name))
+    for(const col of c.columns)expect(actual.find(x=>x.name===col.name)?.notnull).toBe(Number(col.notNull))
+    expect(actual.filter(x=>x.pk).sort((a,b)=>a.pk-b.pk).map(x=>x.name)).toEqual(c.name.endsWith('_error')?['collection_id']:['collection_id','rdjb'])
+    expect(t.pragma(`foreign_key_list(${c.name})`)).toEqual([expect.objectContaining({table:'platform_collection',from:'collection_id',to:'id',on_delete:'RESTRICT'})])
+  }
+  expect((t.pragma('index_info(platform_query_title_scope_rdjb_collection_idx)') as {name:string}[]).map(x=>x.name)).toEqual(['rdjb','collection_id'])
+  expect(t.prepare("select name from sqlite_schema where type='trigger' and name like 'platform_query_title_scope_%'").all()).toEqual([])
+  expect(t.prepare("select name from sqlite_schema where type='index' and name like 'platform_query_title_scope_%' order by name").all()).toEqual([{name:'platform_query_title_scope_rdjb_collection_idx'}])
+  t.close()
+})
+it('successor CLI emits exclusive manifests and replays in a new process while old phase refuses',()=>{
+  const f=scopeFixture(),e=join(f.root,'scope-cli');mkdirSync(e)
+  const args=['upgrade/run-finalize-observations.mjs','--collection-scopes',f.source,f.target,e,f.runId,f.projectionRunId,f.observationRunId,f.collectionRunId,f.finalizationRunId]
+  const run=spawnSync(process.execPath,args,{encoding:'utf8'});expect(run.status,run.stderr).toBe(0)
+  expect(JSON.parse(readFileSync(join(e,'receipt.json'),'utf8')).state).toBe('complete')
+  expect(readFileSync(join(e,'schema-manifest.json'),'utf8')).toContain('platform_query_title_scope_safe_id')
+  const next=join(f.root,'scope-replay');mkdirSync(next);args[4]=next
+  const replay=spawnSync(process.execPath,args,{encoding:'utf8'});expect(replay.status,replay.stderr).toBe(0)
+  expect(readFileSync(join(e,'target-manifest.jsonl'))).toEqual(readFileSync(join(next,'target-manifest.jsonl')))
+  expect(spawnSync(process.execPath,args,{encoding:'utf8'}).status).not.toBe(0)
+  const before=readFileSync(f.target);expect(()=>finalizeObservations({...f,runId:f.finalizationRunId})).toThrow();expect(()=>upgradeCollections({...f,runId:f.collectionRunId,batchSize:2})).toThrow();expect(readFileSync(f.target)).toEqual(before)
+})
+it('successor retains frozen source lock through every DDL and receipt stage',()=>{
+  const f=scopeFixture(),observed:string[]=[]
+  finalizeCollectionScopes({...f,beforeCommit:stage=>{
+    const run=spawnSync(process.execPath,['--input-type=module','-e',`import Database from 'better-sqlite3';const t=new Database(process.argv[1]);t.pragma('busy_timeout=1');try{t.exec("update platform_query set query_key='drift' where id=1")}catch(e){process.stdout.write(e.code)}finally{t.close()}`,f.source],{encoding:'utf8'})
+    expect(run.stdout,run.stderr).toBe('SQLITE_BUSY');observed.push(stage)
+  }})
+  expect(observed).toEqual(['dropped','created','copied','indexed','receipt'])
+})
+it('empty and populated successor catalogs agree while ordinary expand remains unchanged',()=>{
+  const f=scopeFixture(),empty=fixture(s=>s.exec('delete from platform_relation;delete from platform_query'))
+  finalizeObservations(empty);finalizeCollectionScopes({...empty,runId:'empty-scopes',finalizationRunId:'t05c'});finalizeCollectionScopes(f)
+  const p=new Database(f.target),e=new Database(empty.target),s=new Database(f.source)
+  expect(finalizationCatalog(p)).toEqual(finalizationCatalog(e))
+  expect((s.pragma('table_info(platform_query_title_scope)') as {name:string}[]).map(c=>c.name)).toEqual(['query_id','rdjb','collection_id'])
+  expect(s.pragma('user_version',{simple:true})).toBe(0)
+  expect(s.prepare("select name from sqlite_schema where type='trigger' and name like 'platform_query_title_scope_%'").all()).toHaveLength(3)
+  p.close();e.close();s.close()
+})
+import { linkSync, statSync } from 'node:fs'
+import { serialize } from 'node:v8'
+it.each([71605,71606])('runtime initialize and all three source workers reject phase %i before business access',async version=>{
+  const f=scopeFixture();if(version===71606)finalizeCollectionScopes(f)
+  const {useRuntimeDb,initializeDb}=await import('../db/client')
+  const before=readFileSync(f.target)
+  for(const readOnly of [false,true])expect(()=>useRuntimeDb({dbPath:f.target,readOnly})).toThrow(/finalized/i)
+  expect(()=>initializeDb({dbPath:f.target})).toThrow(/finalized/i)
+  const {createImportExecutionWorker}=await import('../server/utils/import-execution-worker-location')
+  const {createCurrentExportWorker}=await import('../server/utils/current-export-worker-location')
+  const {createEnterpriseWorker}=await import('../server/utils/enterprise-read-worker-location')
+  const t=new Database(f.target),st=statSync(f.target)
+  const identity={dev:st.dev,ino:st.ino,schemaVersion:t.pragma('schema_version',{simple:true}),migration:t.prepare('select hash,created_at from __drizzle_migrations order by created_at desc limit 1').get()};t.close()
+  for(const [kind,create] of [['import',createImportExecutionWorker],['export',createCurrentExportWorker],['read',createEnterpriseWorker]] as const){
+    const w=create()
+    try{
+      const result=await new Promise<Record<string,unknown>>((resolve,reject)=>{
+        const timer=setTimeout(()=>reject(new Error('worker timeout '+kind)),15000)
+        w.on('error',reject)
+        w.on('message',(m:Record<string,unknown>)=>{if(m.type!=='ready'&&m.type!=='progress'){clearTimeout(timer);resolve(m)}})
+        w.postMessage({dbPath:f.target,id:'guard',identity,readonly:false,action:'preflight',payload:serialize({}),operation:'list',filter:{},title:'specialized_sme',temporaryPath:join(f.root,'never.xlsx'),jobId:'guard'})
+      })
+      if(kind==='import')expect(result).toMatchObject({type:'failure',error:{message:expect.stringMatching(/finalized/i)}})
+      if(kind==='export')expect(result).toEqual({type:'failure',message:'当前名录导出执行失败；请核对数据或资源限制后重新提交'})
+      if(kind==='read')expect(result).toMatchObject({type:'failure',code:'enterprise_read_failed'})
+    }finally{await w.terminate()}
+  }
+  expect(readFileSync(f.target)).toEqual(before)
+},30000)
+it('FK ON refuses absent collection and unsafe unmapped owner mutations before finalization',()=>{
+  const f=scopeFixture(),t=new Database(f.target);expect(t.pragma('foreign_keys',{simple:true})).toBe(1)
+  expect(()=>t.exec('delete from platform_collection where id=14')).toThrow(/FOREIGN KEY/)
+  expect(()=>t.exec('update platform_query_title_scope_error set collection_id=9007199254740992 where query_id=12')).toThrow(/FOREIGN KEY/)
+  t.close();expect(finalizeCollectionScopes(f).state).toBe('complete')
+})
+
+it('successor rejects distinct paths sharing a source inode without changing either file',()=>{
+  const f=scopeFixture(),alias=join(f.root,'source-hardlink.sqlite'),source=readFileSync(f.source),target=readFileSync(f.target)
+  linkSync(f.source,alias)
+  expect(()=>finalizeCollectionScopes({...f,target:alias})).toThrow(/Distinct isolated target/)
+  expect(readFileSync(f.source)).toEqual(source);expect(readFileSync(f.target)).toEqual(target)
+})

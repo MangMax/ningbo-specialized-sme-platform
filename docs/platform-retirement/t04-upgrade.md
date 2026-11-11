@@ -33,3 +33,9 @@ T01 still has query_id PK/FK plus nullable collection_id on the existing scope/e
 Normal CRUD, ordering, joins and checkpoints use Drizzle. Native SQLite is limited to schema/PRAGMA/file integrity, original storage/byte manifests, fixed source-field reads and JSON5 normalization at this upgrade boundary. `CAST`/`typeof`/hex byte expressions cannot be replaced by JS strings without losing bytes; regression tests include this counterexample. No new dependency or generic migration framework is introduced.
 
 T05 still owns all observation/assignment/source projection transfer and final FK work. Public writers/readers, runtime selectors, historical hash algorithms and business decisions are untouched. Real historical datasets, production, full build/full suite/public HTTP/MCP/workbooks/performance remain UNRUN. Fixture success is not historical migration completion; #705/B409 inherited FAIL remains unchanged.
+
+#720 successor note: T04 is an expand-phase input only and must not continue on
+71605 or 71606 finalized targets. The explicit `--collection-scopes` command in
+[t05c-finalization.md](t05c-finalization.md) validates its completed receipt before
+rebuilding the existing scope/error keys. It leaves T04 queryId manifests and all
+historical receipts unchanged. The next consumer is the W4a collection command.

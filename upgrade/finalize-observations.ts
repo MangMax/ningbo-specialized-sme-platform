@@ -103,3 +103,87 @@ export function finalizeObservations(options:FinalizationOptions,frozen?:FrozenS
     return {state:'complete',sourceManifest,targetManifest:projectionManifest(t),schemaHash:schemaHash(t)}
   } finally {t.close()}
 }
+
+import { FINAL_COLLECTION_SCOPE_VERSION } from '../db/schema-phase'
+import { targetSchema } from './target-schema'
+export const FINAL_COLLECTION_SCOPE_TRANSFORM='w4a-pre-collection-scopes-v1'
+const scopeTables=['platform_query_title_scope','platform_query_title_scope_error'] as const
+const scopeTriggers=['platform_query_title_scope_insert','platform_query_title_scope_update','platform_query_title_scope_delete']
+export type CollectionScopeFinalizationOptions=FinalizationOptions & {finalizationRunId:string}
+/** Explicit successor. Historical T05c receipts are read and bound, never rewritten. */
+export function finalizeCollectionScopes(options:CollectionScopeFinalizationOptions,frozen?:FrozenSource):ReturnType<typeof finalizeObservations> & {phase:'collection-scopes',runId:string,predecessorRunId:string,transformVersion:string,schemaVersion:number} {
+  if(!frozen)return withFrozenSource(options.source,f=>finalizeCollectionScopes(options,f))
+  assertFrozenSource(frozen,options.source)
+  const ids=[options.runId,options.finalizationRunId,options.projectionRunId,options.observationRunId,options.collectionRunId]
+  if(ids.some(x=>!x)||new Set(ids).size!==5)throw new Error('Invalid successor phase run IDs')
+  const source=realpathSync(options.source),target=realpathSync(options.target),ss=statSync(source),ts=statSync(target)
+  if(source===target||(ss.dev===ts.dev&&ss.ino===ts.ino))throw new Error('Distinct isolated target required')
+  for(const path of [source,target]) {
+    for(const suffix of ['-wal','-journal'])if(existsSync(path+suffix)&&statSync(path+suffix).size>0)throw new Error('Frozen offline files required')
+    const d=statfsSync(dirname(path));if(d.bavail*d.bsize<8*1024**3)throw new Error('Disk floor 8GiB')
+  }
+  const t=new Database(target,{fileMustExist:true})
+  try {
+    t.pragma('foreign_keys=ON')
+    const db=drizzle(t,{schema:targetSchema}),r=schema.platformMigrationRun,cp=schema.platformMigrationCheckpoint
+    const sourceHash=fileHash(frozen.fd),sourceManifest=hash(JSON.stringify({source:projectionManifest(frozen.database),phases:ids.slice(1)}))
+    const digest=()=>hash(JSON.stringify({manifest:projectionManifest(t),runs:db.select().from(r).where(sql`${r.runId} <> ${options.runId}`).orderBy(asc(r.runId)).all(),checkpoints:db.select().from(cp).where(sql`${cp.runId} <> ${options.runId}`).orderBy(asc(cp.runId),asc(cp.phase),asc(cp.sourceTable)).all()}))
+    const checkpoint=()=>({runId:options.runId,phase:'w4a-pre-scopes',sourceTable:'scope/error',lastOldId:0,copiedCount:0,batchDigest:digest()})
+    const existing=db.select().from(r).where(eq(r.runId,options.runId)).get()
+    if(existing) {
+      if(existing.state!=='complete'||existing.sourceSnapshotSha256!==sourceHash||existing.sourceSchemaHash!==schemaHash(frozen.database)||existing.sourceManifestSha256!==sourceManifest||existing.transformVersion!==FINAL_COLLECTION_SCOPE_TRANSFORM||existing.targetSchemaVersion!==schemaHash(t)||t.pragma('user_version',{simple:true})!==FINAL_COLLECTION_SCOPE_VERSION||!isDeepStrictEqual(db.select().from(cp).where(eq(cp.runId,options.runId)).all(),[checkpoint()]))throw new Error('Successor source/target/predecessor/checkpoint binding drift')
+    } else {
+      if(t.pragma('user_version',{simple:true})!==FINAL_OBSERVATION_VERSION)throw new Error('Completed 71605 target required')
+      finalizeObservations({...options,runId:options.finalizationRunId,beforeCommit:undefined},frozen)
+      const validated=digest(),catalog=finalizationCatalog(t)
+      if(catalog.some(x=>x.type==='view'&&scopeTables.some(n=>x.sql.includes(n))))throw new Error('Unexpected scope view owner')
+      const affected=(c:Catalog[])=>c.filter(x=>scopeTables.some(n=>x.tbl_name===n)||(x.type==='trigger'&&scopeTables.some(n=>x.sql.includes(n))))
+      if(!isDeepStrictEqual(affected(catalog),affected(finalizationCatalog(frozen.database))))throw new Error('Unexpected scope index/trigger/catalog owner inventory')
+      for(const x of catalog.filter(x=>x.type==='table')) {
+        const incoming=t.pragma(`foreign_key_list(${quote(x.name)})`) as {table:string}[]
+        if(incoming.some(f=>scopeTables.some(n=>n===f.table)))throw new Error('Unexpected incoming scope FK owner: '+x.name)
+      }
+      for(const name of scopeTables) {
+        const invalid=t.prepare(`SELECT s.query_id,s.collection_id FROM ${quote(name)} s LEFT JOIN platform_legacy_query_alias a ON a.old_id=s.query_id LEFT JOIN platform_collection c ON c.id=s.collection_id WHERE s.collection_id IS NULL OR typeof(s.collection_id)<>'integer' OR s.collection_id<=0 OR s.collection_id>9007199254740991 OR a.collection_id IS NULL OR a.collection_id<>s.collection_id OR c.id IS NULL`).all()
+        if(invalid.length)throw new Error('Unresolved scope owner: '+JSON.stringify(invalid))
+        const fields=name===scopeTables[0]?',typeof(rdjb) kind,hex(cast(rdjb as blob)) bytes':''
+        if(!isDeepStrictEqual(t.prepare(`select query_id${fields} from ${quote(name)} order by query_id${fields?',rdjb':''}`).all(),frozen.database.prepare(`select query_id${fields} from ${quote(name)} order by query_id${fields?',rdjb':''}`).all()))throw new Error('Scope source PK/byte mismatch')
+      }
+      db.transaction(tx=>{
+        if(digest()!==validated)throw new Error('Target drift before successor transaction')
+        const preserved=()=>{
+          const h=createHash('sha256');projectionManifest(t,line=>{if(!scopeTables.some(n=>(JSON.parse(line) as {table:string}).table===n))h.update(line+'\n')});return h.digest('hex')
+        }
+        const scopeBytes=()=>{
+          const h=createHash('sha256');projectionManifest(t,line=>{
+            const row=JSON.parse(line) as {table:string,fields:{name:string}[]}
+            if(scopeTables.some(n=>row.table===n)){row.fields=row.fields.filter(c=>c.name!=='query_id').sort((a,b)=>a.name.localeCompare(b.name));h.update(JSON.stringify(row)+'\n')}
+          });return h.digest('hex')
+        }
+        const before=preserved(),beforeScope=scopeBytes()
+        const scopes=tx.select().from(targetSchema.platformQueryTitleScope).orderBy(asc(targetSchema.platformQueryTitleScope.collectionId),asc(targetSchema.platformQueryTitleScope.rdjb)).all()
+        const errors=tx.select().from(targetSchema.platformQueryTitleScopeError).orderBy(asc(targetSchema.platformQueryTitleScopeError.collectionId)).all()
+        for(const name of scopeTables)t.exec(`CREATE TEMP TABLE ${quote('w4pre_'+name)} AS SELECT * FROM ${quote(name)}`)
+        for(const name of scopeTriggers)t.exec(`DROP TRIGGER ${quote(name)}`)
+        for(const name of scopeTables)t.exec(`DROP TABLE ${quote(name)}`)
+        options.beforeCommit?.('dropped')
+        t.exec(`CREATE TABLE platform_query_title_scope(collection_id integer NOT NULL REFERENCES platform_collection(id) ON DELETE RESTRICT,rdjb text NOT NULL,PRIMARY KEY(collection_id,rdjb),CONSTRAINT platform_query_title_scope_safe_id CHECK(collection_id>0 AND collection_id<=9007199254740991));
+          CREATE TABLE platform_query_title_scope_error(collection_id integer PRIMARY KEY NOT NULL REFERENCES platform_collection(id) ON DELETE RESTRICT,CONSTRAINT platform_query_title_scope_error_safe_id CHECK(collection_id>0 AND collection_id<=9007199254740991));`)
+        options.beforeCommit?.('created')
+        t.exec('INSERT INTO platform_query_title_scope(collection_id,rdjb) SELECT collection_id,rdjb FROM w4pre_platform_query_title_scope; INSERT INTO platform_query_title_scope_error(collection_id) SELECT collection_id FROM w4pre_platform_query_title_scope_error')
+        options.beforeCommit?.('copied')
+        t.exec('CREATE INDEX platform_query_title_scope_rdjb_collection_idx ON platform_query_title_scope(rdjb,collection_id)')
+        options.beforeCommit?.('indexed')
+        if(!isDeepStrictEqual(scopes,tx.select().from(targetSchema.platformQueryTitleScope).orderBy(asc(targetSchema.platformQueryTitleScope.collectionId),asc(targetSchema.platformQueryTitleScope.rdjb)).all())||!isDeepStrictEqual(errors,tx.select().from(targetSchema.platformQueryTitleScopeError).orderBy(asc(targetSchema.platformQueryTitleScopeError.collectionId)).all())||before!==preserved()||beforeScope!==scopeBytes())throw new Error('Successor preserved cell/byte manifest mismatch')
+        for(const name of scopeTables)t.exec(`DROP TABLE ${quote('w4pre_'+name)}`)
+        if(!isDeepStrictEqual(t.pragma('foreign_key_check'),[])||!isDeepStrictEqual(t.pragma('integrity_check'),[{integrity_check:'ok'}]))throw new Error('Successor target integrity failure')
+        if(fileHash(frozen.fd)!==sourceHash)throw new Error('Source drift')
+        t.pragma(`user_version=${FINAL_COLLECTION_SCOPE_VERSION}`)
+        tx.insert(r).values({runId:options.runId,state:'complete',sourceSnapshotSha256:sourceHash,sourceSchemaHash:schemaHash(frozen.database),sourceManifestSha256:sourceManifest,targetSchemaVersion:schemaHash(t),transformVersion:FINAL_COLLECTION_SCOPE_TRANSFORM}).run()
+        tx.insert(cp).values(checkpoint()).run()
+        options.beforeCommit?.('receipt')
+      },{behavior:'immediate'})
+    }
+    return {state:'complete',phase:'collection-scopes',runId:options.runId,predecessorRunId:options.finalizationRunId,transformVersion:FINAL_COLLECTION_SCOPE_TRANSFORM,schemaVersion:FINAL_COLLECTION_SCOPE_VERSION,sourceManifest,targetManifest:projectionManifest(t),schemaHash:schemaHash(t)}
+  } finally {t.close()}
+}
