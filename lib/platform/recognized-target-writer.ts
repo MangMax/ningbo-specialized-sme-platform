@@ -59,10 +59,31 @@ export function writeRecognizedTarget<S extends Record<string, unknown>>(db: Bet
     }
     const observationId = capturing ? nextObservationId(tx) : undefined
     if (capturing) captureFingerprintBasis(tx, observationId!, 'target-command-v1', inputBytes)
+    const { recordId, versionId, now } = ensureRecognizedTargetContent(tx, plan)
+    const observation = tx.insert(s.platformBusinessObservation).values({ id: observationId, collectionId: collection.id, ...input.position, sourceRelationKey: input.row.relationKey ?? null, recordId, versionId, identityState: plan.identityState, contentState: plan.contentState, keySource: plan.keySource, projectionRuleVersion: PLATFORM_PROJECTION_RULE, inputFingerprint: fingerprint, indexedAt: now }).returning().get()
+    positive(observation.id)
+    const assignment = { ...input.assignment, observationId: observation.id, revision: 1 }
+    tx.insert(s.platformObservationAssignment).values(assignment).run()
+    const rawText = raw === null ? null : JSON.stringify(raw)
+    const rawArchive = insertArchiveValue(tx, rawText === null ? { storageClass: 'null', bytes: null, createdAt: now } : { storageClass: 'text', bytes: Buffer.from(rawText), createdAt: now })
+    bindArchive(tx, { kind: 'observation', ownerId: observation.id, field: 'rawFields', archiveId: rawArchive })
+    const sourceArchive = insertArchiveValue(tx, input.row.sourceText == null ? { storageClass: 'null', bytes: null, createdAt: now } : { storageClass: 'text', bytes: Buffer.from(input.row.sourceText), createdAt: now })
+    bindArchive(tx, { kind: 'observation', ownerId: observation.id, field: 'sourceText', archiveId: sourceArchive })
+    sealArchiveOwner(tx, { kind: 'observation', ownerId: observation.id })
+    const title = raw?.rdjb
+    const observationProjection = tx.insert(s.platformRecognizedProjection).values({ observationId: observation.id, basis: raw === null ? 'unavailable' : 'observation_reconciliation', parseState: raw === null ? 'absent' : 'valid', sourceArchiveId: rawArchive, ...(plan.recognizedProjection ?? parseRecognizedRecord(raw)), ...(raw === null ? { sourceValidityDate: null, sourceMaintenanceBatch: null, sourceMaintenanceYearAbsent: null } : parseRecognizedSourceFidelity(raw)), ruleVersion: RECOGNIZED_PROJECTION_RULE, sourceTitleKind: sourceValueKind(title), sourceTitleText: typeof title === 'string' ? title : null, sourceTitleNumberText: typeof title === 'number' ? String(title) : null, sourceTitleBoolean: typeof title === 'boolean' ? Number(title) : null, sourceTitleRuleVersion: 't05b-source-projections-v1', ...sourceFieldComparison('recognized_list', { province: input.row.province ?? null, status: input.row.status ?? null, batch: input.row.batch ?? null, declareKind: input.row.declareKind ?? null, appliedAt: input.row.appliedAt ?? null, awardBatchLabel: input.row.awardBatchLabel ?? null, year: input.row.year ?? null }, raw, raw === null ? 'absent' : 'valid') }).returning({ id: s.platformRecognizedProjection.id }).get()
+    positive(observationProjection.id)
+    const relationAlias = allocateLegacyAlias(tx, { kind: 'relation', observationId: observation.id })
+    return { observationId: observation.id, recordId, versionId, relationAlias, reused: false }
+  })
+}
+
+/** Source-owned content completion shared with ordinary full-row target replay. */
+export function ensureRecognizedTargetContent<S extends Record<string, unknown>>(tx: BetterSQLite3Database<S>, plan: ReturnType<typeof planPlatformObservation>, replay = false) {
     let recordId: number | null = null, versionId: number | null = null
     const now = new Date().toISOString()
     if (plan.platformKey) {
-      tx.insert(s.platformBusinessRecord).values({ interface: 'recognized_list', platformKey: plan.platformKey, identityRuleVersion: PLATFORM_PROJECTION_RULE }).onConflictDoNothing().run()
+      if (!replay || !tx.select({id:s.platformBusinessRecord.id}).from(s.platformBusinessRecord).where(and(eq(s.platformBusinessRecord.interface, 'recognized_list'),eq(s.platformBusinessRecord.platformKey,plan.platformKey))).get()) tx.insert(s.platformBusinessRecord).values({ interface: 'recognized_list', platformKey: plan.platformKey, identityRuleVersion: PLATFORM_PROJECTION_RULE }).onConflictDoNothing().run()
       const record = tx.select().from(s.platformBusinessRecord).where(and(eq(s.platformBusinessRecord.interface, 'recognized_list'), eq(s.platformBusinessRecord.platformKey, plan.platformKey))).get()!
       positive(record.id)
       if (record.identityRuleVersion !== PLATFORM_PROJECTION_RULE) throw new Error('projection_rule_conflict')
@@ -97,20 +118,5 @@ export function writeRecognizedTarget<S extends Record<string, unknown>>(db: Bet
         } else positive(tx.insert(s.platformRecognizedProjection).values({ versionId, recordId, ...fields, ...fidelity, ruleVersion: RECOGNIZED_PROJECTION_RULE }).returning({ id: s.platformRecognizedProjection.id }).get().id)
       }
     }
-    const observation = tx.insert(s.platformBusinessObservation).values({ id: observationId, collectionId: collection.id, ...input.position, sourceRelationKey: input.row.relationKey ?? null, recordId, versionId, identityState: plan.identityState, contentState: plan.contentState, keySource: plan.keySource, projectionRuleVersion: PLATFORM_PROJECTION_RULE, inputFingerprint: fingerprint, indexedAt: now }).returning().get()
-    positive(observation.id)
-    const assignment = { ...input.assignment, observationId: observation.id, revision: 1 }
-    tx.insert(s.platformObservationAssignment).values(assignment).run()
-    const rawText = raw === null ? null : JSON.stringify(raw)
-    const rawArchive = insertArchiveValue(tx, rawText === null ? { storageClass: 'null', bytes: null, createdAt: now } : { storageClass: 'text', bytes: Buffer.from(rawText), createdAt: now })
-    bindArchive(tx, { kind: 'observation', ownerId: observation.id, field: 'rawFields', archiveId: rawArchive })
-    const sourceArchive = insertArchiveValue(tx, input.row.sourceText == null ? { storageClass: 'null', bytes: null, createdAt: now } : { storageClass: 'text', bytes: Buffer.from(input.row.sourceText), createdAt: now })
-    bindArchive(tx, { kind: 'observation', ownerId: observation.id, field: 'sourceText', archiveId: sourceArchive })
-    sealArchiveOwner(tx, { kind: 'observation', ownerId: observation.id })
-    const title = raw?.rdjb
-    const observationProjection = tx.insert(s.platformRecognizedProjection).values({ observationId: observation.id, basis: raw === null ? 'unavailable' : 'observation_reconciliation', parseState: raw === null ? 'absent' : 'valid', sourceArchiveId: rawArchive, ...(plan.recognizedProjection ?? parseRecognizedRecord(raw)), ...(raw === null ? { sourceValidityDate: null, sourceMaintenanceBatch: null, sourceMaintenanceYearAbsent: null } : parseRecognizedSourceFidelity(raw)), ruleVersion: RECOGNIZED_PROJECTION_RULE, sourceTitleKind: sourceValueKind(title), sourceTitleText: typeof title === 'string' ? title : null, sourceTitleNumberText: typeof title === 'number' ? String(title) : null, sourceTitleBoolean: typeof title === 'boolean' ? Number(title) : null, sourceTitleRuleVersion: 't05b-source-projections-v1', ...sourceFieldComparison('recognized_list', { province: input.row.province ?? null, status: input.row.status ?? null, batch: input.row.batch ?? null, declareKind: input.row.declareKind ?? null, appliedAt: input.row.appliedAt ?? null, awardBatchLabel: input.row.awardBatchLabel ?? null, year: input.row.year ?? null }, raw, raw === null ? 'absent' : 'valid') }).returning({ id: s.platformRecognizedProjection.id }).get()
-    positive(observationProjection.id)
-    const relationAlias = allocateLegacyAlias(tx, { kind: 'relation', observationId: observation.id })
-    return { observationId: observation.id, recordId, versionId, relationAlias, reused: false }
-  })
+    return { recordId, versionId, now }
 }

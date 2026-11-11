@@ -1,3 +1,5 @@
+import { PlatformProjectionError } from '../../lib/platform/projection-error'
+export { PlatformProjectionError } from '../../lib/platform/projection-error'
 import { createHash } from 'node:crypto'
 import { and, eq, sql } from 'drizzle-orm'
 import * as schema from '../../db/schema'
@@ -11,10 +13,6 @@ import { PLATFORM_PROJECTION_RULE, PLATFORM_RAW_HASH_RULE, canonicalPlatformJson
 export { PLATFORM_PROJECTION_RULE, PLATFORM_RAW_HASH_RULE, canonicalPlatformJson, platformObservationPayload, planPlatformObservation } from '../../lib/platform/observation-plan'
 const hash = (value: string) => createHash('sha256').update(value).digest('hex')
 type Input = Parameters<typeof planPlatformObservation>[0]
-
-export class PlatformProjectionError extends Error {
-  constructor(public code: string, message: string) { super(message) }
-}
 
 /** Read native raw TEXT: malformed historical JSON must remain unverifiable, not crash decoding. */
 export function readPlatformObservationPlan(db: Executor, relationId: number) {
