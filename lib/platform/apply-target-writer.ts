@@ -52,6 +52,7 @@ export function writeApplyTarget<S extends Record<string, unknown>>(db: BetterSQ
     if (plan.platformKey) {
       tx.insert(s.platformBusinessRecord).values({ interface: 'apply_list', platformKey: plan.platformKey, identityRuleVersion: PLATFORM_PROJECTION_RULE }).onConflictDoNothing().run()
       const record = tx.select().from(s.platformBusinessRecord).where(and(eq(s.platformBusinessRecord.interface, 'apply_list'), eq(s.platformBusinessRecord.platformKey, plan.platformKey))).get()!
+      positive(record.id)
       if (record.identityRuleVersion !== PLATFORM_PROJECTION_RULE) throw new Error('projection_rule_conflict')
       recordId = record.id
       if (plan.canonicalRawJson && plan.contentHash) {

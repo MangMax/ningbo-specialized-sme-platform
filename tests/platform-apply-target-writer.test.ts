@@ -112,6 +112,30 @@ it('rejects canonical byte drift on a hash hit before creating another observati
   expect(() => writeApplyTarget(db, { ...input, position: { ...input.position, sequenceNo: 2 }, row: { ...input.row, sequenceNo: 2 } })).toThrow('platform_content_hash_conflict')
   expect(sqlite.serialize()).toEqual(before); sqlite.close()
 })
+it('accepts the last safe record ID and atomically rejects exhausted record IDs for distinct keys', () => {
+  const { db, sqlite, input } = fixture()
+  sqlite.exec("insert into sqlite_sequence(name,seq) values('platform_business_record',9007199254740990)")
+  const row = (key: string, sequenceNo: number): ApplyTargetInput => ({ ...input, position: { ...input.position, sequenceNo }, row: { sequenceNo, relationKey: key, rawFields: null } })
+  const last = writeApplyTarget(db, row('LAST-SAFE', 1))
+  expect(last.recordId).toBe(Number.MAX_SAFE_INTEGER)
+  expect(writeApplyTarget(db, row('LAST-SAFE', 2)).recordId).toBe(last.recordId)
+  const before = sqlite.serialize()
+  for (const [index, key] of ['EXHAUST-1', 'EXHAUST-2'].entries()) {
+    expect(() => writeApplyTarget(db, row(key, index + 3))).toThrow('Invalid target identity')
+    expect(sqlite.serialize()).toEqual(before)
+  }
+  expect(sqlite.prepare('select cast(id as text) id,platform_key from platform_business_record').all()).toEqual([{ id: '9007199254740991', platform_key: 'LAST-SAFE' }])
+  expect(sqlite.pragma('foreign_key_check')).toEqual([])
+  sqlite.close()
+})
+it('rejects an existing unsafe record ID before writing an observation', () => {
+  const { db, sqlite, input } = fixture()
+  sqlite.exec("insert into platform_business_record(id,interface,platform_key,identity_rule_version,created_at) values(9007199254740993,'apply_list','A','platform-observation-v1','fixture')")
+  const before = sqlite.serialize()
+  expect(() => writeApplyTarget(db, input)).toThrow('Invalid target identity')
+  expect(sqlite.serialize()).toEqual(before)
+  sqlite.close()
+})
 it('keeps absent raw content as an unavailable observation without fabricating a version', () => {
   const { db, sqlite, input } = fixture()
   const result = writeApplyTarget(db, { ...input, row: { sequenceNo: 1, relationKey: 'A', rawFields: null } })
