@@ -155,3 +155,7 @@ Three inherited HTTP baseline FAILs and #705/B409 retain their status.
 ## #723 单一 fingerprint 缺口（待独立接受）
 
 [契约补充](fingerprint-basis.md)只覆盖 observation input_fingerprint 的原输入与生命周期。[ADR](../adr/2026-11-11-observation-fingerprint-basis.md)逐项列出原承诺影响。后续依赖为 #723→S(schema/offline)→C(capture/replay)，已接受71606→S；各片≤M，尚未实施或创建新票。#722 migrated F1、rule 和完整 mapping F2 仍由其本票修复与独立接受，不能算成本补充新增前置。H2其他算法、C3公开接口与快照、W4整体接线、真实迁移和Z终态门槛仍按原分票，不宣称关闭。
+
+## #727 apply 原列前置（待独立接受）
+
+[字段矩阵与 S/W 切片](apply-stored-query.md)只补 R1 的 isolated 原列查询缺口，不改变其它 R/H/C/Z 责任。S（≤M）依赖 #727 接受和71607，拥有 apply projection 五个 exact cell/状态、71608 schema/offline 恢复与旧 writer commit-time 屏障；W（≤M）依赖 S 和已接受 #725，拥有 apply 新输入真实物化和 replay/verifier exact 校验。`S→W`、`S→R1a只读实现`、`S+W→R1a最终接受→R1b`，无 R1a→S/W 反向边。#722 的原 F1/F2 不转交本补充。R2/R3 有原列消费者风险但未授权扩其实现。R1a 原 FAIL 不变，本轮 runtime/tests/build/DB UNRUN。

@@ -134,3 +134,7 @@ switch is included; historical T05c receipts retain their original schema hash.
 ## #723 观察索引证据补充（待独立接受）
 
 [观察 fingerprint 输入保全契约](fingerprint-basis.md)与[专属 owner ADR](../adr/2026-11-11-observation-fingerprint-basis.md)限定原 canonical 输入、生命周期、不可恢复历史、双向验证及 S/C 切片。只追加索引证据 owner，不改变本契约其他 H2 算法或原 hash/bytes，不扩充已 seal 的旧 observation ref。本段不表示 schema 或 #722 实现已接受。
+
+## #727 申报 exact-stored 原列补充（待独立接受）
+
+[申报原列查询契约](apply-stored-query.md)与[补充 ADR](../adr/2026-11-11-apply-exact-stored-query.md)明确：本页“原列归档＋normalized stored 比较值”不足以覆盖旧 isolated list/count/options/DTO。apply observation-owner 另有五个 exact 原列及捕获状态；name/uscc 复用已验证 revision1，key 复用 source_relation_key。原 stored/parsed/reconciled/conflict、版本/detail/fact 语义保持，旧 hash/ID/bytes/time/alias 不变。未捕获不能当 NULL 或被过滤掉。S 离线恢复与 W 实际旧写物化/重放认证分开接受，R1a 再消费；原 R1a status-pair FAIL 保留。本段是待审契约修正，不声称 schema 或运行已实现。
