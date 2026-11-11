@@ -95,13 +95,17 @@ source projection 仍按三个来源原 parser、规则版本与 conflict 语义
 
 一个 FK-ON immediate 事务安装新结构、分类恢复历史、安装写屏障、核对双向原事实不变、写 successor receipt/checkpoint，最后推进 phase。失败连 DDL/trigger/marker/receipt 一并回滚，保留失败副本及证据。重启只重放本 successor 的 source/schema/transform/完整目标 manifest 绑定，不能修改旧 receipt 让旧阶段在新 schema 重跑。
 
-屏障必须在 S 交付就生效，不能等 C 才补。具体采用 basis-first：新 indexed observation INSERT 要求同 ID 已存在 captured target-command basis；paired not_indexed→indexed UPDATE 要求同 ID 已存在 captured legacy-bootstrap basis。普通新写不能插 uncaptured，不能以 legacy-indexed 冒充新 capture；这两种历史分类只在离线升级安装屏障前执行。basis FK 延迟至 commit，允许新 writer 在同步事务内先分配安全 observation ID、写 archive/basis，再插 observation。C 必须显式安全分配 ID，保持 sqlite_sequence 高水位与回滚，不改旧 ID/alias。basis 的 deferred FK 阻止提交孤儿，basis 存在性 guard 阻止无 basis indexed 提交；既有 indexed 原字段仍不可借本切片改写。
+屏障必须在 S 交付就生效，不能等 C 才补。具体采用 basis-first：新 indexed observation INSERT 要求同 ID 已存在 captured target-command basis；paired not_indexed→indexed UPDATE 要求同 ID 已存在 captured legacy-bootstrap basis。普通新写不能插 uncaptured，不能以 legacy-indexed 冒充新 capture；这两种历史分类只在离线升级安装屏障前执行。basis FK 延迟至 commit，允许新 writer 在同步事务内先分配安全 observation ID、写 archive/basis，再插 observation。C 必须显式安全分配 ID，保持 sqlite_sequence 高水位与回滚，不改旧 ID/alias。在写连接持续开启 foreign_keys 的前提下，basis 的 deferred FK 在最外层 COMMIT 检查并拒绝孤儿；嵌套 savepoint 的 RELEASE 不代表此检查已通过。basis 存在性 guard 阻止无 basis indexed 提交；既有 indexed 原字段仍不可借本切片改写。
 
 旧直接 writer 即使绕开 phase 检查，也因其未写 basis 而在 INSERT/首次索引 UPDATE 被拒绝，嵌套 savepoint 回滚其先写内容与 alias。旧 command/replay 只接受 71606，面对 71607 必须拒绝。已存在行的只读旧 seam 不能用作认证入口。普通 expand runtime、初始化与三个 worker 的非零 user_version 拒绝保持，不通过环境 selector 放行。C 接受前 71607 只用于离线验证，所有 target 新提交暂停。
 
 ### C 的原子边界与未来验证
 
+S 的离线入口及 C 的所有受支持写入口（含可直接调用的 writer、bootstrap、archive/basis helper 与重放补建路径）必须在任何写入之前读取当前连接的 `PRAGMA foreign_keys`，仅值为 1 时继续，否则拒绝且不产生写入。外层 caller 已开启事务也必须检查，不能在事务内尝试设置 PRAGMA 后假定生效。连接初始化开启 FK 不能替代入口检查；不承诺绕过这些入口的任意 FK-OFF SQL 安全。持有最外层事务的调用方负责 COMMIT 及失败回滚；savepoint 返回只是事务内操作完成，不能作为整体提交成功或认证通过的回执。
+
 archive、basis、observation、assignment revision1、source/version projections、aliases/highwater 在同一个现有嵌套 savepoint 内提交。先保存真实 canonical bytes，再从同一 buffer 计算原 digest；不得留有 hash 无 basis 的新行。bootstrap 先写 basis 再更新原 not_indexed 分支。任何错误即使被外层 caller catch，也须恢复全部 before facts 与分配高水位。重放只能验证同一不可变 basis，不插第二份或偷偷换 scheme。
+
+未来 S/C 的独立验收必须覆盖每类受支持写入口在 FK-OFF（包括外层事务已开启）时写前拒绝、全部 before facts 与分配高水位不变；独立 SQLite oracle 须证明 FK-ON 下未闭合的 basis 可以经过嵌套 RELEASE，但最外层 COMMIT 必须失败，显式回滚后原事实不变，而完整 basis/observation 配对可正常提交。不能将 savepoint RELEASE 的成功当作 deferred FK 验收。
 
 未来 C 的独立验证必须覆盖研究原始 A/B bytes 的 literal hash、extra own key、direct position 省略/null、带 request 的 bootstrap、malformed/null/primitive/array、三源 parser、两次 owner 选择、explicit reference 不 bootstrap、uncaptured/未知 scheme/缺档/坐标与 revision1 漂移拒绝。回放错误保留原 kind、relation alias、code 与 field=`relations`；source/rule/hash 漂移保持 `projection_source_drift`，mapping 漂移保持 `projection_mapping_conflict`。不得以派生 expectedHash 或新实现自身输出作唯一 oracle。
 
