@@ -32,7 +32,7 @@ const inputShape=z.object({
  * including observation-owned projection and revision1. Actual owner IDs are remapped;
  * generated timestamps come from the independently frozen event snapshot.
  */
-export function verifyOriginalCommand(target:Database.Database,predecessor:Database.Database,event:{observationId:number, originalInput?:unknown}):Buffer {
+export function verifyOriginalCommand(target:Database.Database,predecessor:Database.Database,event:{observationId:number, originalInput?:unknown},options: {allowMissingVersionProjection?:boolean} = {}):Buffer {
   const original=event.originalInput
   inputShape.parse(original)
   // Validated above; retain the original, not Zod's cloned DTO (own keys/order matter).
@@ -119,8 +119,8 @@ export function verifyOriginalCommand(target:Database.Database,predecessor:Datab
       }
       if(planned.versionId!==null) {
         const ep=expected.select().from(table).where(eq(table.versionId,planned.versionId)).all(),ap=actual.select().from(table).where(eq(table.versionId,observation.versionId!)).all()
-        if(ep.length!==ap.length)throw new Error('Command version projection inventory conflict')
-        for(let i=0;i<ep.length;i++){const e=ep[i]!,v=ap[i]!;if(!isDeepStrictEqual({...e,id:v.id,versionId:observation.versionId,recordId:observation.recordId,createdAt:v.createdAt},v))throw new Error('Command version projection conflict')}
+        if(ep.length!==ap.length&&!(options.allowMissingVersionProjection&&ap.length===0))throw new Error('Command version projection inventory conflict')
+        for(let i=0;i<ap.length;i++){const e=ep[i]!,v=ap[i]!;if(!isDeepStrictEqual({...e,id:v.id,versionId:observation.versionId,recordId:observation.recordId,createdAt:v.createdAt},v))throw new Error('Command version projection conflict')}
       }
     }
     return bytes

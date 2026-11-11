@@ -31,7 +31,7 @@ export function emptyFingerprintTarget(t:Database.Database) {
   return scratch
 }
 const hash=(v:Buffer)=>createHash('sha256').update(v).digest('hex')
-export function verifyFingerprint(t:Database.Database,owner:FingerprintOwner) {
+export function verifyFingerprint(t:Database.Database,owner:FingerprintOwner, options: {allowMissingVersionProjection?:boolean} = {}) {
  if(t.pragma('user_version',{simple:true})!==71607)throw new FingerprintVerificationError('projection_source_drift',owner,'Explicit 71607 verifier target required')
  return t.transaction(()=>{
   const db=drizzle(t,{schema:s}),o=db.select().from(s.platformBusinessObservation).where(eq(s.platformBusinessObservation.id,owner.observationId)).get()
@@ -64,10 +64,10 @@ export function verifyFingerprint(t:Database.Database,owner:FingerprintOwner) {
      const raw=ref.a.storageClass==='null'?null:ref.a.storageClass==='text'&&ref.a.bytes?JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(ref.a.bytes)):undefined
      if(canonicalPlatformJson(raw)!==canonicalPlatformJson(command.row.rawFields??null))throw new Error('Command raw source conflict')
      const restored=Object.hasOwn(command.row,'rawFields')?{...command,row:{...command.row,rawFields:raw}}:command
-     verifyOriginalCommand(t,scratch,{observationId:o.id,originalInput:restored})
+     verifyOriginalCommand(t,scratch,{observationId:o.id,originalInput:restored},options)
     }finally{scratch.close()}
    } else if(b.scheme==='legacy-indexed-v1'||b.scheme==='legacy-bootstrap-v1') {
-    verifyLegacyFacts(t,owner,a.bytes)
+    verifyLegacyFacts(t,owner,a.bytes,false,options)
    } else throw new Error('Unknown fingerprint scheme')
    return {scheme:b.scheme,observationId:o.id}
   } catch(error) {
@@ -107,7 +107,7 @@ export function legacyFingerprintInput(t:Database.Database,owner:FingerprintOwne
  const bytes=Buffer.from(canonicalPlatformJson({interface:c.interface,relationKey:o.sourceRelationKey,queryId:q.oldId,sequenceNo:o.sequenceNo,queryKey:c.queryKey,rdjb:c.rdjb,queriedAt:c.queriedAt,rawFields,invalidRaw:rawFields===null?rawText:null}))
  return {db,o,c,raw,rawFields,stored,bytes,createdAt:text('created_at')}
 }
-export function verifyLegacyFacts(t:Database.Database,owner:FingerprintOwner,bytes:Buffer,notIndexed=false) {
+export function verifyLegacyFacts(t:Database.Database,owner:FingerprintOwner,bytes:Buffer,notIndexed=false,options: {allowMissingVersionProjection?:boolean} = {}) {
  const {db,o,c,raw,rawFields,stored,createdAt,bytes:expected}=legacyFingerprintInput(t,owner)
  if(!expected.equals(bytes))throw new Error('Legacy source coordinates drift')
  const plan=planPlatformObservation({interface:c.interface,relationKey:o.sourceRelationKey,rawFields})
@@ -135,6 +135,6 @@ export function verifyLegacyFacts(t:Database.Database,owner:FingerprintOwner,byt
   const vf=o.versionId!==null&&source===c.interface?source==='apply_list'?plan.applyRecord:source==='business_list'?plan.businessProjection:plan.recognizedProjection:null
   if(versions[0]){const current=versions[0];if(current.basis!=='verified_raw'||current.observationId!==null)throw new Error('Legacy version projection owner drift');for(const [k,v] of Object.entries(current))if(!Object.hasOwn(vf??{},k)&&!['id','createdAt','recordId','versionId','basis','ruleVersion','sourceValidityDate','sourceMaintenanceBatch','sourceMaintenanceYearAbsent'].includes(k)&&v!==null)throw new Error('Legacy extra version projection field drift: '+k)}
   if(source==='recognized_list'&&versions[0]){const fidelity=parseRecognizedSourceFidelity(row??{});for(const [k,v] of Object.entries(fidelity)){const current=Object.fromEntries(Object.entries(versions[0]))[k];if(current!==null&&current!==v)throw new Error('Legacy version source fidelity drift')}}
-  if(vf?(versions.length!==1||versions[0]!.recordId!==o.recordId||versions[0]!.ruleVersion!==rule||Object.entries(vf).some(([k,v])=>!isDeepStrictEqual(Object.fromEntries(Object.entries(versions[0]!))[k],v))):versions.length!==0)throw new Error('Legacy version projection drift')
+  if(vf?(!(options.allowMissingVersionProjection&&versions.length===0)&&(versions.length!==1||versions[0]!.recordId!==o.recordId||versions[0]!.ruleVersion!==rule||Object.entries(vf).some(([k,v])=>!isDeepStrictEqual(Object.fromEntries(Object.entries(versions[0]!))[k],v)))):versions.length!==0)throw new Error('Legacy version projection drift')
  }
 }
