@@ -16,7 +16,7 @@ import { platformResultToImport } from '../lib/platform/recognized-evidence'
 import type { PlatformLiveQueryResult, PlatformQuerySource } from '../lib/platform/live-query'
 
 function fixture() {
-  const root = mkdtempSync('/Users/mang/.t3/acceptance/platform-complete-migration/w4a/raw/fixture-')
+  const root = mkdtempSync(join(process.env.W4A_EVIDENCE_DIR ?? '/Users/mang/.t3/acceptance/platform-complete-migration/w4a/raw', 'fixture-'))
   const source = join(root, 'source.sqlite'), target = join(root, 'target.sqlite')
   const old = new Database(source)
   migrate(drizzle(old), { migrationsFolder: 'db/migrations' }); old.close(); copyFileSync(source, target)
