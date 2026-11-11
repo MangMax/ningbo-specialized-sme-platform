@@ -3,6 +3,7 @@ import { isDeepStrictEqual } from 'node:util'
 import { and, eq, sql } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import { normalizeUscc } from '../domain'
+import { normalizePlatformRelation } from './normalization'
 import type { RosterImportPlatformQuery } from '../roster-import-client'
 import { platformQueriesInputSchema } from '../../server/utils/roster-import-platform-schema'
 import { FINAL_COLLECTION_SCOPE_VERSION } from '../../db/schema-phase'
@@ -40,7 +41,9 @@ function queryInput(input: NewCollectionTargetCommand): RosterImportPlatformQuer
     const error = platformEvidenceError(e)
     if (error) throw new Error(error)
     const title = e.titleScope.rdjb.length === 1 ? RDJB_TITLE_CODES[e.titleScope.rdjb[0]!] : null
-    if (q.interface !== PLATFORM_PERSISTED_SOURCE[e.source] || q.queryKey !== archiveQueryKey(e) || q.queriedAt !== e.queriedAt || (q.rdjb ?? '') !== e.titleScope.rdjb.join(',') || (q.titleCode ?? null) !== title || q.status !== recognizedStoredStatus(e)) throw new Error('Collection identity/status/title/source mismatch')
+    const subjectKey = e.effectiveConditions.uscc ?? (e.effectiveConditions.name ? `name:${e.effectiveConditions.name}` : null)
+    const keyMismatch = (subjectKey !== null && q.queryKey !== subjectKey) || ((e.rawData || e.dataRows) && q.queryKey !== archiveQueryKey(e))
+    if (q.interface !== PLATFORM_PERSISTED_SOURCE[e.source] || keyMismatch || q.queriedAt !== e.queriedAt || (q.rdjb ?? '') !== e.titleScope.rdjb.join(',') || (q.titleCode ?? null) !== title || q.status !== recognizedStoredStatus(e)) throw new Error('Collection identity/status/title/source mismatch')
     if ((q.relations ?? []).length !== e.rows.length) throw new Error('Every original source row requires one relation')
     for (const [i, row] of (q.relations ?? []).entries()) {
       const raw = e.rows[i]!
@@ -52,6 +55,8 @@ function queryInput(input: NewCollectionTargetCommand): RosterImportPlatformQuer
   const rows = q.relations ?? []
   if (rows.length !== input.assignments.length) throw new Error('Explicit assignment required for every row')
   for (const [i, row] of rows.entries()) {
+    const normalized = normalizePlatformRelation(q.interface, row)
+    if (normalized.normalizationConflicts.length) throw new Error('platform_field_conflict')
     positive(row.sequenceNo)
     if (row.sequenceNo !== i + 1) throw new Error('Complete materialized sequence required')
     const a = input.assignments[i]!

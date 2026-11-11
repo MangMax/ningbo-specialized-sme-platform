@@ -258,3 +258,25 @@ it('keeps query failure reason independent of top-level collection error and pre
   expect(sqlite.prepare('select source_title_text from platform_business_projection where observation_id is not null').get()).toEqual({ source_title_text: '2' })
   sqlite.close()
 })
+
+it('accepts original title-wide custom query keys without typed rows or a subject', () => {
+  const { sqlite, db } = fixture()
+  const e = evidence('queryBusList')
+  e.effectiveConditions = { combination: 'and' }
+  delete e.dataRows
+  const input = changed(command(e), q => { q.queryKey = 'synthetic-title-wide-archive' })
+  writeNewCollectionTarget(db, input)
+  expect(sqlite.prepare('select query_key from platform_collection').get()).toEqual({ query_key: 'synthetic-title-wide-archive' })
+  sqlite.close()
+})
+it.each(['queryList', 'businessList'] as const)('rejects fresh %s stored raw conflicts with complete rollback', source => {
+  const { sqlite, db } = fixture()
+  const e = evidence(source)
+  e.rows[0]!.cszt = '终审通过'
+  e.dataRows![0]!.cszt = '终审通过'
+  const input = changed(command(e), q => { q.relations![0]!.status = '退回' })
+  const before = normalizedBytes(sqlite)
+  db.transaction(tx => { expect(() => writeNewCollectionTarget(tx, input)).toThrow('platform_field_conflict') })
+  expect(normalizedBytes(sqlite)).toEqual(before)
+  sqlite.close()
+})
