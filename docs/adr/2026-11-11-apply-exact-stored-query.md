@@ -10,6 +10,8 @@
 
 在现有 apply observation-owner projection 追加 exact_status、exact_declare_kind、exact_applied_at、exact_year、exact_title_raw 和捕获状态/规则/来源。保留旧 SQLite affinity、storage class、NULL、空白和实际类型。复用 source_relation_key 和已验证的 assignment revision1 原名/统代，避免重复存储；当前 owner 仍取最大 revision。
 
+另追加独立 `sql_fact_title` 与捕获状态/规则，保留旧 SQLite JSON 提取再 legacyRowTitle 的语法。重复键可能使它不同于 JSON.parse 投影；历史 title_raw 也可独立修改。原五列与该事实不互相替代，两个捕获分支都受完整配对和请求域捕获门槛约束。
+
 不新建表：现有 observation-owner 已提供唯一行、来源 FK、封存原档和逐观察比较字段；新增事实仍属于该观察的申报字段。不得把它放通用 observation 或共享 version。observation 上只允许为 commit-time 配对约束增加内部引用，不承载业务值。
 
 [具体契约](../platform-retirement/apply-stored-query.md)冻结字段/消费者矩阵、literal/SQL 旧 oracle、五列类型与捕获状态、71608 successor、T05/71607 恢复、真实旧插入 materialization、新 writer 与 replay 原输入认证、完整回滚及无环 S/W/R1a 顺序。schema/offline 与 writer/replay 各≤M，后续独立授权和接受。

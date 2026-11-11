@@ -1,6 +1,6 @@
 # 申报 exact-stored 查询分支（#727）
 
-状态：scope:M、docs-only 候选，待独立接受。固定 LOCAL `integration/690-current-roster-performance` 为 `a54afbe2c48c3ea085102dfdceada4bab27c94c9`，tree `fdd11672fcd61c0efe5993ee2fdde8ef4a973c8f`。本补充修正[原契约](contract.md#复用三来源投影)“原列归档＋normalized stored 比较值足够”的缺口；不改变原 parser/reconciled/conflict 语义。不代表 #726、#722 或完整退役通过。runtime/tests/build/DB 全部 UNRUN。
+状态：scope:M、docs-only 候选，待独立接受。固定 LOCAL `integration/690-current-roster-performance` 为 `a54afbe2c48c3ea085102dfdceada4bab27c94c9`，tree `fdd11672fcd61c0efe5993ee2fdde8ef4a973c8f`。本补充修正[原契约](contract.md#复用三来源投影)“原列归档＋normalized stored 比较值足够”的缺口；不改变原 parser/reconciled/conflict 语义。不代表 #726 或完整退役通过；#722 的 71607 接线已接受，本 successor 的适配仍须新鲜验收。runtime/tests/build/DB 全部 UNRUN。
 
 ## 已证反例与适用范围
 
@@ -23,9 +23,19 @@
 | query/row IDs、顺序、时间 | isolated 按 q.queried_at DESC、旧 relationId DESC；detail first/last、记录计数原语义 | collection、observation 坐标及两个 namespace alias 足够；旧 IDs/time/alias 不改，不拿 target 新 ID 替代 |
 | province/batch/awardBatchLabel | applyFactBase 仍返回 normalized 字段，但不在 APPLY_MODELED_FIELDS；不是 isolated filter/options/DTO 字段 | 现有 observation stored/parsed/reconciled/conflict 足够；本票不再加 exact 列 |
 
-[旧 facts](../../server/utils/platform-declarations.ts) 的 readPlatformDeclarationFacts 必须分别复现：typed 时 declareKind/year/appliedAt/status/name/uscc 来自 **version projection**；无版本时取 observation 的 reconciled（name/uscc 用 revision1），modeledFields=[]；normalizationConflicts 总是逐观察。title 来自 [legacyRawRdjb](../../server/utils/platform-legacy-relation-read.ts) 的严格 json_valid/text-only 提取，再 legacyRowTitle trim，不用 query scope、数字/布尔；顶层数组路径亦不会产生 text。withArchiveProcessFacts 只在 version 字段非空、被模型拥有且本观察无冲突时补值，否则 reconciled。不得把 exact_status 当 fact.status，亦不得把 version.status 当 isolated.status。
+[旧 facts](../../server/utils/platform-declarations.ts) 的 readPlatformDeclarationFacts 必须分别复现：typed 时 declareKind/year/appliedAt/status/name/uscc 来自 **version projection**；无版本时取 observation 的 reconciled（name/uscc 用 revision1），modeledFields=[]；normalizationConflicts 总是逐观察。title 读取下节独立捕获的 sql_fact_title，其旧规则来自 [legacyRawRdjb](../../server/utils/platform-legacy-relation-read.ts) 的严格 json_valid/text-only 提取，再 legacyRowTitle trim，不用 query scope、数字/布尔；顶层数组路径亦不会产生 text。withArchiveProcessFacts 只在 version 字段非空、被模型拥有且本观察无冲突时补值，否则 reconciled。不得把 exact_status 当 fact.status，亦不得把 version.status 当 isolated.status。
 
 getPlatformDeclaration 的 observation.version 来自版本投影，versionId NULL 则 version=NULL；它没有新增 exact 字段的公开 DTO。records 过滤/options/匹配版本、全版本计数、观察计数、detail 100/200 截断和 400/404 错误继续原服务语义。共享 version 的两个观察 raw.status=通过、原列分别退回/通过：exact 分支保留各自列，只有前者 normalization conflict；版本字段仍共同指通过。此处不通过改业务 DTO 解决缺口。
+
+## 独立 SQL 语法 fact-title
+
+五个 exact cell 只保存旧存储列，不能证明 facts 的称号。另在同一 apply observation-owner 增加 `sql_fact_title TEXT` 与 `sql_fact_title_state`（captured/uncaptured）、`sql_fact_title_rule`、`sql_fact_title_reason`。规则固定 `apply-legacy-sql-fact-title-v1`：对实际原 raw_fields SQLite cell 执行旧 `legacyRawRdjb` 的完整 json_valid/json_type/json_extract 表达式，再执行原 `legacyRowTitle`；不得先 JSON.parse 后重新序列化。captured 的值可为真实 NULL，rule 必填且 reason=NULL；uncaptured 的值/rule=NULL、reason非空；version-owner 全部新列 NULL。值只允许 TEXT/NULL，原输入无法按旧入口重现时报告 uncaptured/阻塞，不能拿 exact_title_raw、source_title_text 或 version.titleRaw 代替。
+
+S 从可信冻结源原 raw_fields 或同 owner sealed rawFields 的原字节和 storage class 按旧 SQL 表达式捕获，来源冲突拒绝；snapshot 五列不提供 fact-title 的替代证据。W 对真实将写入 rawFields archive 的 serialized bytes 按同一旧表达式捕获，不使用传入对象属性直接取值；原 fingerprint envelope 与 parser 不改。ordinary/reference 认证分别对同 owner 原档执行该有界旧语法，独立比对 fact-title 值、state/rule，而非仅核 archive hash。此 SQL 只在离线捕获、新写捕获或明确 owner 认证使用，R1a 业务 facts 直接读结构化 sql_fact_title，不在筛选、计数、分页或事实批量读取时解析归档。
+
+独立未来 literal oracle：原文本 `{"rdjb":"2","rdjb":"3"}` 与 `{"rdjb":"1","rdjb":"3"}`，历史 exact_title_raw 均改为 `X`；旧 SQL facts 分别为 `2`、`1`，JSON.parse 投影均为 `3`，三者必须独立保留。再测反序重复键、首项非 text/后项 text、转义键名 `rd\u006ab` 与普通键混用、顶层数组、NULL/非法 JSON、空白文本，严格由冻结旧 SQL 和 literal 对照验证，不由新实现生成唯一期待。转义键名的匹配期待须以原 SQLite 版本实测固定，不能假定与 JSON.parse 等价。以上是静态反例与未来验收，尚无 runtime PASS。
+
+该分支与 exact 分支一同 INSERT-only/不可变、全 owner 覆盖与请求域 captured gate；新 apply observation 的配对 guard 要求引用的 projection 两个 state 都 captured。S 的复合 FK/UNIQUE 配对键包含 exact_stored_state 和 sql_fact_title_state（observation 内部状态引用同步成对），防止只有 exact captured 而 fact-title 缺失仍提交。历史引用真实状态，uncaptured 阻塞 R1a 完整接受。REPLACE/upsert、遗漏 projection、缺任一 capture、外层 COMMIT、DDL 回滚与 W 篡改拒绝均须覆盖两个分支。所有新列纳入 successor manifest 和 verifier 白名单逐项认证，不能放宽原额外字段漂移检查。
 
 ## 最窄物理选择与类型边界
 
@@ -35,7 +45,7 @@ getPlatformDeclaration 的 observation.version 来自版本投影，versionId NU
 
 列沿用旧 TEXT/INTEGER affinity、BINARY collation，禁止 STRICT 或强制 text-only CHECK 把旧合法 BLOB/REAL 削掉。TEXT-affinity 列的普通数字输入已由 SQLite 存成 TEXT，不能声称数字原 JSON 是数字原列。exact_year 允许 SQLite 的 NULL/INTEGER/REAL/TEXT/BLOB；其余四列保留旧 SQLite 可存类型，经绑定后必须逐 cell 再核 typeof/bytes/REAL bits。不允许通过 String/Number/parseInt 将 BLOB、非数文本或 REAL 修好。JS number 无法无损表达的 INTEGER、非可逆 TEXT 解码或绑定后 cell 不同：保留原档并标 uncaptured，拒绝该目标的完整读取接受，不丢观察或静默近似。S 用原 SQLite cell 复制，runtime typed 解码不能以 number|string DTO 标注伪造其实际类型；遇既有 DTO 不能表示的原 cell，保留独立旧服务的实际输出/错误 oracle，无法复现则拒绝 R1a 接受。
 
-revision1/source_relation_key 复用有前提：T05a 在 `exact()` 中已要求这些旧 TEXT 字段为 text/null，assignment CHECK 也如此。可验证的 text/null 不新增重复列；若历史 BLOB/非法文本不被现结构表示，S 必须逐 owner 报 uncaptured/阻塞，不能宣称这类旧值已覆盖。新 command 需核 revision1 name/uscc 等于真实 materialization 的原列。revision2+ 原名字段可能随更正变化，不能回头改变 revision1 或 exact 来源。
+revision1/source_relation_key 复用有前提：T05a 的 `exact()` 负责构造原 cell 复制表达式（包括 BLOB），目标 assignment CHECK 才限定这些字段为 text/null。可验证的 text/null 不新增重复列；若历史 BLOB/非法文本不被现结构表示，S 必须逐 owner 报 uncaptured/阻塞，不能宣称这类旧值已覆盖。新 command 需核 revision1 name/uscc 等于真实 materialization 的原列。revision2+ 原名字段可能随更正变化，不能回头改变 revision1 或 exact 来源。
 
 候选索引只限 apply observation 过滤键（exact_status/declare_kind/year/title 与 observation_id），S 不预设四个都值得建；R1a 根据实际 Drizzle 查询 EXPLAIN 决定组合/partial 索引及 catalog，禁止未测量声称加速。count/options 的全域 captured gate 必须在过滤和分页**之前**执行；不能仅检查返回页或用 inner join 隐藏缺投影观察。
 
@@ -89,7 +99,7 @@ W 独立验收：原输入 literal bytes/hash 不变、直接 writer/完整 comm
 
 ## 依赖与 R1a 恢复顺序
 
-依赖边：`#727接受 → S → W`；`71607已接受 → S`；`#725已接受 → W`；`S → R1a隔离只读实现`；`S+W → R1a最终兼容验收 → R1b公开接线`。S 不调用 W，W 可用直接 seam 独立验收，不要求 #722 接受；#722 自身 F1/F2 和最终 replay 接线仍是其原任务，不能以本契约替代。
+依赖边：`#727接受 → S → W`；`71607已接受 → S`；`#725已接受 → W`；`S → R1a隔离只读实现`；`S+W → R1a最终兼容验收 → R1b公开接线`。S 不调用 W，W 可用直接 seam 独立验收，不要求 #722 接受；#722 的 F1/F2 与71607最终 replay 接线已独立接受；W负责本 successor 的适配与新鲜回归，不重开历史接受结论。
 
 S 接受后，先在保留的 R1a status-pair 隔离副本生成 successor（不改原71607失败副本）；旧独立 oracle 仍 total1/options2，exact 列逐 cell 固定期待。再实现 #726 的 Drizzle list/count/options/detail/fact，过滤/聚合在DB、分页后水合；明确 seam 从71607输入升级为本 successor，原71607拒绝不能默默回退。W 接受后补新写/replay再读的同输入矩阵，最终 exact SHA 运行 #726 所有限定验收；原首 FAIL 和历史 HTTP FAIL/#705 B409 不改。未获授权前不执行任何一步。
 
