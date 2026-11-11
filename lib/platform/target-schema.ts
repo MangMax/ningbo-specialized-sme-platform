@@ -29,4 +29,15 @@ export const platformQueryTitleScopeError = sqliteTable('platform_query_title_sc
   collectionId: integer('collection_id').primaryKey().notNull().references(()=>expand.platformCollection.id,{onDelete:'restrict'}),
 }, t=>[check('platform_query_title_scope_error_safe_id',sql`${t.collectionId} > 0 AND ${t.collectionId} <= 9007199254740991`)])
 
-export const targetSchema={...expand,platformBusinessObservation,platformObservationAssignment,platformObservationArchiveRef,platformLegacyRelationAlias,platformApplyProjection,platformBusinessProjection,platformRecognizedProjection,platformQueryTitleScope,platformQueryTitleScopeError}
+/** Physical deferred FK is installed only by the offline 71607 DDL (Drizzle has no deferred FK option). */
+export const platformObservationFingerprintBasis = sqliteTable('platform_observation_fingerprint_basis', {
+  observationId: integer('observation_id').primaryKey().notNull().references(()=>platformBusinessObservation.id,{onDelete:'restrict'}),
+  scheme: text('scheme',{enum:['legacy-indexed-v1','legacy-bootstrap-v1','target-command-v1','uncaptured']}).notNull(),
+  inputArchiveId: integer('input_archive_id').unique().references(()=>expand.platformArchiveValue.id,{onDelete:'restrict'}),
+},t=>[
+  check('platform_fingerprint_basis_safe_id',sql`typeof(${t.observationId})='integer' AND ${t.observationId} BETWEEN 1 AND 9007199254740991`),
+  check('platform_fingerprint_basis_scheme',sql`${t.scheme} IN ('legacy-indexed-v1','legacy-bootstrap-v1','target-command-v1','uncaptured')`),
+  check('platform_fingerprint_basis_input',sql`(${t.scheme}='uncaptured' AND ${t.inputArchiveId} IS NULL) OR (${t.scheme}<>'uncaptured' AND ${t.inputArchiveId} IS NOT NULL)`),
+])
+
+export const targetSchema={...expand,platformObservationFingerprintBasis,platformBusinessObservation,platformObservationAssignment,platformObservationArchiveRef,platformLegacyRelationAlias,platformApplyProjection,platformBusinessProjection,platformRecognizedProjection,platformQueryTitleScope,platformQueryTitleScopeError}
