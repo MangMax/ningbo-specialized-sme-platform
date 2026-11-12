@@ -1,3 +1,4 @@
+import { inheritRecognizedStoredCatalog } from './recognized-stored-catalog'
 import { verifyRecognizedStored } from './recognized-stored'
 import { verifyApplyStored, APPLY_STORED_KEYS } from './apply-stored-verifier'
 import type { ApplyTargetInput } from './apply-target-writer'
@@ -32,6 +33,7 @@ export function emptyFingerprintTarget(t:Database.Database) {
   for(const row of catalog)scratch.exec(row.sql)
   scratch.pragma('user_version='+t.pragma('user_version',{simple:true}))
   scratch.exec("insert into platform_legacy_alias_sequence(namespace,high_water) values('query',0),('relation',0)")
+  inheritRecognizedStoredCatalog(t,scratch)
   return scratch
 }
 const hash=(v:Buffer)=>createHash('sha256').update(v).digest('hex')

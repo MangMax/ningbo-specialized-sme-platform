@@ -119,7 +119,8 @@ it('refuses exact title drift during writer reuse and fingerprint certification 
  const f=await ready();finalizeRecognizedStored(f);const t=new Database(f.target);t.pragma('foreign_keys=ON');const db=drizzle(t,{schema:targetSchema})
  try{
  const input=command(6,'2'),r=writeRecognizedTarget(db,input)
- t.exec("DROP TRIGGER recognized_stored_update;UPDATE platform_recognized_projection SET exact_title_raw='3' WHERE observation_id=6")
+ const barrier=t.prepare("SELECT sql FROM sqlite_schema WHERE name='recognized_stored_update'").get() as {sql:string}
+ t.exec("DROP TRIGGER recognized_stored_update;UPDATE platform_recognized_projection SET exact_title_raw='3' WHERE observation_id=6");t.exec(barrier.sql)
  const before=projectionManifest(t)
  expect(()=>writeRecognizedTarget(db,input)).toThrow('recognized_stored_cell_conflict')
  expect(()=>verifyFingerprint(t,{observationId:r.observationId,collectionId:1,relationAlias:r.relationAlias})).toThrow('recognized_stored_cell_conflict')
@@ -146,3 +147,62 @@ it('recovers pre-capture 71609 command title from bound original input without b
  const upgraded=new Database(f.target)
  try{expect(upgraded.prepare('SELECT exact_title_raw title,exact_title_origin origin,title_raw display FROM platform_recognized_projection WHERE observation_id=?').get(r.observationId)).toEqual({title:'3',origin:'commandInput',display:'3'});verifyRecognizedStored(upgraded,r.observationId)}finally{upgraded.close()}
 })
+
+import { fingerprintArchiveInventory } from '../lib/platform/fingerprint-schema-inventory'
+it('rejects partial and unfinished exact catalogs before writer verifier or inventory can accept them',async()=>{
+ const f=await ready()
+ const mutations=[
+  "ALTER TABLE platform_recognized_projection ADD COLUMN exact_title_raw BLOB",
+  "ALTER TABLE platform_recognized_projection ADD COLUMN exact_title_state TEXT",
+  "ALTER TABLE platform_recognized_projection ADD COLUMN exact_title_raw BLOB;ALTER TABLE platform_recognized_projection ADD COLUMN exact_title_state TEXT;ALTER TABLE platform_recognized_projection ADD COLUMN exact_title_origin TEXT;ALTER TABLE platform_recognized_projection ADD COLUMN exact_title_archive_id INTEGER REFERENCES platform_archive_value(id);ALTER TABLE platform_recognized_projection ADD COLUMN exact_title_sha256 TEXT",
+ ]
+ for(const [i,ddl] of mutations.entries()){
+  const path=join(f.root,`partial-${i}.sqlite`);copyFileSync(f.source,path)
+  const t=new Database(path);t.pragma('foreign_keys=ON');t.exec(ddl)
+  try{
+   const before=t.serialize(),db=drizzle(t,{schema:targetSchema})
+   expect(()=>writeRecognizedTarget(db,command(6,'3'))).toThrow('recognized_stored_schema')
+   expect(()=>verifyFingerprint(t,{observationId:1,collectionId:1,relationAlias:1})).toThrow('recognized_stored_schema')
+   expect(()=>fingerprintArchiveInventory(t)).toThrow('recognized_stored_schema')
+   expect(t.serialize()).toEqual(before)
+  }finally{t.close()}
+ }
+})
+it('authenticates unindexed reference exact cells bindings and uncaptured state without repair',async()=>{
+ const f=await ready();finalizeRecognizedStored(f)
+ for(const change of ["exact_title_raw='BAD'","exact_title_sha256='BAD'","exact_title_state='uncaptured'"]){
+  const path=join(f.root,`reference-${change.split('=')[0]}.sqlite`);copyFileSync(f.target,path)
+  const t=new Database(path);t.pragma('foreign_keys=ON');const db=drizzle(t,{schema:targetSchema})
+  const input={queryText:JSON.stringify({interface:'recognized_list',queryKey:'Q',rdjb:'1,2,3',queriedAt:'t',reuseExisting:true,relations:[{sequenceNo:3}]}),evidenceText:null,createdAt:'c',assignments:[]}
+  try{
+   expect(writeCollectionTarget(db,input)).toMatchObject({reused:true,observations:[{relationAlias:3,reused:true}]})
+   const trigger=t.prepare("SELECT sql FROM sqlite_schema WHERE name='recognized_stored_update'").get() as {sql:string}
+   t.exec(`DROP TRIGGER recognized_stored_update;UPDATE platform_recognized_projection SET ${change} WHERE observation_id=3`);t.exec(trigger.sql)
+   const before=projectionManifest(t),sequences=t.prepare('SELECT * FROM sqlite_sequence ORDER BY name').all()
+   let caught:unknown
+   try{writeCollectionTarget(db,input)}catch(error){caught=error}
+   expect(caught).toMatchObject({result:{ok:false,kind:'platform_relation',ref:'relation:3',error:{code:'projection_source_drift',field:'relations'}}})
+   expect(projectionManifest(t)).toEqual(before);expect(t.prepare('SELECT * FROM sqlite_sequence ORDER BY name').all()).toEqual(sequences)
+  }finally{t.close()}
+ }
+})
+it('rejects incomplete receipts malformed barriers and wrong phase without changing facts',async()=>{
+ const f=await ready();finalizeRecognizedStored(f)
+ for(const [i,ddl] of [
+  "DELETE FROM platform_migration_checkpoint WHERE run_id='recognized-stored'",
+  "UPDATE platform_migration_run SET state='running' WHERE run_id='recognized-stored'",
+  "DROP TRIGGER recognized_stored_insert",
+  "DROP TRIGGER recognized_stored_update;CREATE TRIGGER recognized_stored_update BEFORE UPDATE ON platform_recognized_projection BEGIN SELECT 1;END",
+  'PRAGMA user_version=71608',
+ ].entries()){
+  const path=join(f.root,`invalid-completion-${i}.sqlite`);copyFileSync(f.target,path)
+  const t=new Database(path);t.pragma('foreign_keys=ON');t.exec(ddl)
+  try{
+   const before=t.serialize()
+   expect(()=>writeRecognizedTarget(drizzle(t,{schema:targetSchema}),command(6,'3'))).toThrow()
+   expect(()=>verifyRecognizedStored(t,1)).toThrow('recognized_stored_schema')
+   expect(()=>fingerprintArchiveInventory(t)).toThrow('recognized_stored_schema')
+   expect(t.serialize()).toEqual(before)
+  }finally{t.close()}
+ }
+},30000)

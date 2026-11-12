@@ -1,3 +1,4 @@
+import { verifyRecognizedStored } from './recognized-stored'
 /** Ordinary first indexing only. Reference consumers never create an index or basis. */
 import type Database from 'better-sqlite3'
 import { and, eq } from 'drizzle-orm'
@@ -19,6 +20,8 @@ export function bootstrapFingerprint(t:Database.Database,owner:FingerprintOwner,
   if(!o||o.collectionId!==owner.collectionId||alias?.observationId!==o.id)throw new FingerprintVerificationError('projection_source_drift',owner,'Bootstrap owner conflict')
   if(o.identityState!=='not_indexed')return verifyFingerprint(t,owner)
   if(o.contentState!=='not_indexed'||[o.recordId,o.versionId,o.keySource,o.projectionRuleVersion,o.inputFingerprint,o.indexedAt,o.batchId].some(v=>v!==null))throw new FingerprintVerificationError('projection_mapping_conflict',owner,'Invalid paired not_indexed')
+  const collection=tx.select({interface:s.platformCollection.interface}).from(s.platformCollection).where(eq(s.platformCollection.id,owner.collectionId)).get()
+  if(collection?.interface==='recognized_list')verifyRecognizedStored(t,owner.observationId)
   if(mode==='reference'){
    if([71608,71609].includes(Number(t.pragma('user_version',{simple:true})))){const {bytes}=legacyFingerprintInput(t,owner);verifyLegacyFacts(t,owner,bytes,true)}
    return null

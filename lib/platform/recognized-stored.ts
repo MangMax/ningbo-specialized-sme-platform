@@ -8,13 +8,11 @@ import { createHash } from 'node:crypto'
 import { z } from 'zod'
 import { rowSnapshot } from './sqlite-row-cells'
 import { captureSqlFactTitle } from './apply-stored-cells'
-export const RECOGNIZED_STORED_RULE = 'recognized-stored-title-v1'
+export { RECOGNIZED_STORED_RULE, recognizedStoredInstalled } from './recognized-stored-catalog'
+import { recognizedStoredInstalled } from './recognized-stored-catalog'
 const hash = (b: Buffer) => createHash('sha256').update(b).digest('hex')
 const cellSchema = z.object({ name: z.string(), storageClass: z.enum(['text','blob','integer','real','null']), hex: z.string().regex(/^(?:[a-fA-F0-9]{2})*$/), real64be: z.string().optional() })
 export type TitleCell = z.infer<typeof cellSchema>
-export function recognizedStoredInstalled(t: Database.Database) {
-  return t.prepare("SELECT 1 FROM pragma_table_info('platform_recognized_projection') WHERE name='exact_title_state'").get() !== undefined
-}
 const archiveSchema = z.object({ id: z.number().int().positive().safe(), storage_class: z.enum(['blob','text']), bytes: z.instanceof(Buffer), byte_length: z.number(), sha256: z.string() })
 export function recognizedTitleEvidence(t: Database.Database, id: number) {
   const db=drizzle(t,{schema:s})

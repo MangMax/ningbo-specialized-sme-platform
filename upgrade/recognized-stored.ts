@@ -1,3 +1,4 @@
+import { recognizedStoredTriggers } from '../lib/platform/recognized-stored-catalog'
 /** #732 A only. Explicit additive offline 71609 upgrade; never a startup migration. */
 import Database from 'better-sqlite3'
 import { existsSync, realpathSync, statSync, statfsSync } from 'node:fs'
@@ -52,18 +53,12 @@ export function finalizeRecognizedStored(options:RecognizedStoredOptions,frozen?
  for(const r of recovered){const e=r.evidence;const change=t.prepare(`UPDATE platform_recognized_projection SET exact_title_raw=${e?titleCellExpression(e.cell):'NULL'},exact_title_state=?,exact_title_origin=?,exact_title_archive_id=?,exact_title_sha256=? WHERE observation_id=?`).run(e?'captured':'uncaptured',e?.exactTitleOrigin??null,e?.exactTitleArchiveId??null,e?.exactTitleSha256??null,r.id);if(change.changes!==1)throw new Error('Missing recognized observation projection')}
  options.beforeCommit?.('recovered')
  // Immutable exact fields, while existing fidelity owners retain their update rights.
- t.exec(`CREATE TRIGGER recognized_stored_update BEFORE UPDATE ON platform_recognized_projection WHEN
- NEW.exact_title_raw IS NOT OLD.exact_title_raw OR typeof(NEW.exact_title_raw)<>typeof(OLD.exact_title_raw) OR NEW.exact_title_state IS NOT OLD.exact_title_state OR NEW.exact_title_origin IS NOT OLD.exact_title_origin OR NEW.exact_title_archive_id IS NOT OLD.exact_title_archive_id OR NEW.exact_title_sha256 IS NOT OLD.exact_title_sha256 OR NEW.observation_id IS NOT OLD.observation_id
- BEGIN SELECT RAISE(ABORT,'immutable recognized stored title'); END;
- CREATE TRIGGER recognized_stored_insert BEFORE INSERT ON platform_recognized_projection WHEN
- CASE WHEN NEW.observation_id IS NULL THEN NEW.exact_title_raw IS NOT NULL OR NEW.exact_title_state IS NOT NULL OR NEW.exact_title_origin IS NOT NULL OR NEW.exact_title_archive_id IS NOT NULL OR NEW.exact_title_sha256 IS NOT NULL
- ELSE NEW.exact_title_state IS NOT 'captured' OR NEW.exact_title_origin IS NOT 'commandInput' OR NEW.exact_title_archive_id IS NULL OR NEW.exact_title_sha256 IS NULL OR NOT EXISTS(SELECT 1 FROM platform_observation_fingerprint_basis b JOIN platform_archive_value a ON a.id=b.input_archive_id WHERE b.observation_id=NEW.observation_id AND b.scheme='target-command-v1' AND a.id=NEW.exact_title_archive_id AND a.sha256=NEW.exact_title_sha256) END
- BEGIN SELECT RAISE(ABORT,'captured recognized stored title required'); END;`)
+ t.exec(recognizedStoredTriggers)
  if(digest(t,options.runId,true)!==sourceManifest)throw new Error('Original facts/bytes/receipt drift')
  if(!isDeepStrictEqual(t.pragma('foreign_key_check'),[])||t.pragma('integrity_check',{simple:true})!=='ok')throw new Error('Recognized stored integrity failure')
- for(const r of recovered)if(r.evidence)verifyRecognizedStored(t,r.id)
  t.prepare('INSERT INTO platform_migration_run(run_id,state,source_snapshot_sha256,source_schema_hash,source_manifest_sha256,target_schema_version,transform_version) VALUES(?,?,?,?,?,?,?)').run(options.runId,'complete',sourceHash,sourceSchema,sourceManifest,schemaHash(t),RECOGNIZED_STORED_RULE)
  const c=checkpoint();t.prepare('INSERT INTO platform_migration_checkpoint(run_id,phase,source_table,last_old_id,copied_count,batch_digest) VALUES(@run_id,@phase,@source_table,@last_old_id,@copied_count,@batch_digest)').run(c)
+ for(const r of recovered)if(r.evidence)verifyRecognizedStored(t,r.id)
  options.beforeCommit?.('receipt');assertFrozenSource(frozen,options.source);if(fileHash(frozen.fd)!==sourceHash)throw new Error('Frozen source drift')
  }).immediate()
  }

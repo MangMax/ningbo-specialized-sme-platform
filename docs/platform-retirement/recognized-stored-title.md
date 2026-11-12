@@ -33,3 +33,11 @@ version 分支这些列全部 NULL。原 `title_raw`、source title 类型/原�
 业务查询不得调用证据解析函数。B 接受后读取这些结构化列；相关读取必须先检查捕获状态，不能以新 helper 作为测试 oracle。
 
 底层 SQL 仅用于 schema/PRAGMA、全表字节 manifest、SQLite cell 无损恢复与已接受旧 SQL trigger 语法的边界物化。新 writer 的业务插入使用 Drizzle；没有手写业务列表查询、在线锁 owner 或通用捕获框架。
+
+## 写入与认证的完成状态
+
+writer、指纹认证和归档 FK inventory 共用同一个 catalog 判定。无新增列、屏障或回执残留的既有阶段保持原行为；任何部分列集、错误列类型/FK、缺失或改变的屏障、错误 phase、未完成或缺 checkpoint 的升级均拒绝。完成后的正常写入不要求历史迁移数据摘要继续等于当前数据。
+
+指纹验证的空内存库由已通过上述判定的源显式授权，并独立检查复制的 catalog；该授权仅与内存连接对象绑定，不持久化，也不允许任意文件库省略完成回执。迁移在同一事务中建立回执/checkpoint 后认证原列，失败仍整体回滚。
+
+paired not_indexed 的 reference 路径同样认证 exact cell、原归档绑定和 captured 状态。它不执行 bootstrap、不修复原值，失败仍映射为原 relation alias 的 projection_source_drift。
