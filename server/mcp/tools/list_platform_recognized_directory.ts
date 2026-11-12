@@ -1,7 +1,7 @@
 import { defineMcpTool } from '@nuxtjs/mcp-toolkit/server'
 import { useDb } from '@db'
 import { recognizedDirectoryFilterSchema } from '../../../lib/platform/recognized-directory'
-import { listPlatformRecognizedDirectory } from '../../utils/platform-recognized-directory'
+import { listTargetRecognizedDirectory } from '../../utils/platform-recognized-target'
 
 export default defineMcpTool({
   name: 'list_platform_recognized_directory',
@@ -11,7 +11,7 @@ export default defineMcpTool({
   annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   inputSchema: recognizedDirectoryFilterSchema.shape,
   handler: async input => {
-    const result = listPlatformRecognizedDirectory(input, useDb())
+    const result = listTargetRecognizedDirectory(input, useDb())
     return { structuredContent: { ...result }, content: [{ type: 'text' as const, text: JSON.stringify(result) }] }
   },
 })
