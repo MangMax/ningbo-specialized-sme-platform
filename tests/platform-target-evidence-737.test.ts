@@ -5,6 +5,7 @@ import * as legacySchema from '../db/schema'
 import { afterAll, beforeAll, expect, it, vi } from 'vitest'
 import { processReaderFixture } from './helpers/process-target-734'
 import { readPlatformQueryEvidence } from '../lib/platform/evidence-read'
+import { writeNewCollectionTarget } from '../lib/platform/collection-target-command'
 import { writeApplyTarget } from '../lib/platform/apply-target-writer'
 import { writeProcessTarget } from '../lib/platform/process-target-writer'
 import { writeRecognizedTarget } from '../lib/platform/recognized-target-writer'
@@ -132,4 +133,13 @@ it('rejects missing or unsealed archive bindings and missing assignments without
       read({queryId:11,relationId:1,field:'relation'})
     })).toThrow(/Missing/)
   }
+})
+
+it('resolves external query aliases independently of target collection IDs and rejects target integers',()=>{
+  f.t.exec("UPDATE platform_legacy_alias_sequence SET high_water=900 WHERE namespace='query'")
+  const result=writeNewCollectionTarget(f.db,{queryText:JSON.stringify({interface:'apply_list',queryKey:'alias-only',rdjb:'2',queriedAt:'t',status:'no_record',rawResponse:'x'}),evidenceText:null,createdAt:'c',assignments:[]})
+  expect(result.queryAlias).toBe(901)
+  expect(result.collectionId).not.toBe(result.queryAlias)
+  expect(read({queryId:result.queryAlias,field:'rawResponse'})).toMatchObject({data:'eA==',totalBytes:1})
+  expect(()=>read({queryId:result.collectionId,field:'rawResponse'})).toThrowError(expect.objectContaining({statusCode:404}))
 })
