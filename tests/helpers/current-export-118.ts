@@ -19,7 +19,7 @@ export const businessTables = ['record_correspondence','difference_reason','plat
 
 // Synthetic setup only. All assertions on export behavior use actual Nitro HTTP and XLSX bytes.
 export function currentExport118Fixture() {
-  const dir = mkdtempSync(join(tmpdir(), 'export-118-'))
+  const dir = mkdtempSync(join(process.env.CURRENT_CANDIDATE_READER_EVIDENCE_DIR ?? tmpdir(), 'export-118-'))
   const dbPath = join(dir, 'synthetic.db'), db = useDb({ dbPath })
   const token = 'synthetic-export-118-token'
   const headers = { 'content-type': 'application/json', authorization: `Bearer ${token}` }
@@ -98,7 +98,7 @@ export function currentExport118Fixture() {
     return hash.digest('hex')
   }
   return { dir, dbPath, db, headers, token, url, json, submit, start, terminal, download, workbook, candidate, addRecord, decision, resetBusiness, businessDigest,
-    async close() { try { await stop?.() } finally { db.$client.close(); rmSync(dir,{recursive:true,force:true}) } },
+    async close() { try { await stop?.() } finally { db.$client.close(); if (!process.env.CURRENT_CANDIDATE_READER_EVIDENCE_DIR) rmSync(dir,{recursive:true,force:true}) } },
   }
 }
 export function rows(wb: ExcelJS.Workbook, sheet: string) {

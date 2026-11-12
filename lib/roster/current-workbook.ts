@@ -16,6 +16,7 @@ import { TITLES } from '../labels'
 import { CURRENT_STATUS_LABELS, type CurrentStatus } from './current-status'
 import { CURRENT_COLUMNS, currentWorkbookValues } from './current-workbook-presentation'
 import { appLog, type LogContext } from '../logging'
+import type { CurrentCandidateReader } from './current-candidate-reader'
 
 export class CurrentWorkbookLimitError extends Error {}
 function textCell(value: unknown): string | null {
@@ -46,6 +47,18 @@ function sheetOptions() {
 }
 /** Streaming rows in one pinned SQLite read transaction, owned by the independent executor. */
 export async function writeCurrentWorkbook(db: Database.Database, title: CurrentTitle, filename: string, progress: (done: number,total: number,snapshotStartedAt: string) => void, logContext?: LogContext, receiptRuntime?: ReceiptRuntimeContext, readOptions: { recognizedFactSource?: RecognizedFactSource } = {}) {
+  return writeCurrentWorkbookWithCandidates(db, title, filename, progress, {
+    connection:db,
+    iterate(candidateTitle) {
+      return db.prepare(`select id from (${currentCandidateReadSqlFor(db, readOptions.recognizedFactSource)}) order by id`)
+        .iterate(currentCandidateBindings(candidateTitle)) as Iterable<{ id: number }>
+    },
+  }, logContext, receiptRuntime, readOptions)
+}
+
+/** Explicit R4 dependency seam; target qualification and coverage remain R5/X1. */
+export async function writeCurrentWorkbookWithCandidates(db: Database.Database, title: CurrentTitle, filename: string, progress: (done: number,total: number,snapshotStartedAt: string) => void, candidateReader: CurrentCandidateReader, logContext?: LogContext, receiptRuntime?: ReceiptRuntimeContext, readOptions: { recognizedFactSource?: RecognizedFactSource } = {}) {
+  if(candidateReader.connection!==db)throw new Error('Candidate reader must use the caller connection')
   const generatedAt = new Date().toISOString(), year = Number(qualificationDay(Date.parse(generatedAt)).slice(0,4))
   const output = createWriteStream(filename)
   const completed = finished(output, { cleanup: true })
@@ -103,8 +116,6 @@ export async function writeCurrentWorkbook(db: Database.Database, title: Current
     const queryKeys = readIdentityKeyVariants(db, 'queries')
     const recognizedFactSource = resolveRecognizedFactSource(readOptions.recognizedFactSource)
     const assessmentReader = createCurrentQualificationAssessmentReader(db, receiptRuntime, { recognizedFactSource })
-    const bindings=currentCandidateBindings(title)
-    const currentCandidateSql=currentCandidateReadSqlFor(db, recognizedFactSource)
     // Exhaust this one ordered SELECT before full assessments open SAVEPOINTs.
     // Five sheets can hold at most 5 * 1048575 IDs: Float64 chunks cap this
     // narrow projection at 40MiB, without a workbook-sized array of row objects.
@@ -112,7 +123,7 @@ export async function writeCurrentWorkbook(db: Database.Database, title: Current
     // existing per-sheet bounds. No temporary ID file survives worker cancellation.
     const candidateChunks: Float64Array[] = []
     let total = 0
-    for (const { id } of db.prepare(`select id from (${currentCandidateSql}) order by id`).iterate(bindings) as Iterable<{ id: number }>) {
+    for (const { id } of candidateReader.iterate(title)) {
       if (total >= 5 * 1048575) throw new CurrentWorkbookLimitError('Excel 五个状态表超过总行数上限，未发布文件；请拆分数据范围')
       const offset = total % 4096
       if (offset === 0) candidateChunks.push(new Float64Array(4096))
