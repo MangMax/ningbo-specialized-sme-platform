@@ -1,3 +1,4 @@
+import { differenceEvidenceColumns } from './platform/difference-reference-target'
 import { identityFunctions } from './roster/enterprise-read-snapshot'
 import { inArray, sql } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
@@ -93,8 +94,7 @@ export function readComparisonSummary(
     measureCode: schema.differenceReason.measureCode,
     verificationStatus: schema.differenceReason.verificationStatus,
     recordedAt: schema.differenceReason.recordedAt,
-    evidenceQueryId: schema.differenceReason.evidenceQueryId,
-    evidenceRelationId: schema.differenceReason.evidenceRelationId,
+    ...differenceEvidenceColumns(db),
   }).from(schema.differenceReason).where(inArray(schema.differenceReason.enterpriseId, ids)).all() : []
   const current = new Map<string, ComparisonSummaryDisposition>()
   for (const { enterpriseId, titleCode, direction, ...disposition } of dispositions) {

@@ -1,3 +1,4 @@
+import { differencePublicColumns } from '../platform/difference-reference-target'
 import { readPublicPublishedNames } from './official-published-presentation'
 export { readPublicPublishedNames } from './official-published-presentation'
 import type { PublishedPresentation } from './correspondence-view'
@@ -109,7 +110,7 @@ function readSnapshot(db: Db): Snapshot {
     exportBatches: db.select().from(schema.platformExportBatch).all(),
     relations: db.select().from(schema.platformRelation).all(),
     queries: db.select().from(schema.platformQuery).all(),
-    differences: db.select().from(schema.differenceReason).all(),
+    differences: db.select(differencePublicColumns(db)).from(schema.differenceReason).all(),
     recordsByEnterprise,
     eventsByRecord,
   }
@@ -120,7 +121,7 @@ function readDifferenceSnapshot(db: Db, ids?: number[]): Snapshot {
   const d = schema.differenceReason
   // Global counts/sort use only narrow current-coordinate metadata. Large notes,
   // actors and evidence are hydrated for the selected page only.
-  const differences = db.select({ ...getTableColumns(d),
+  const differences = db.select({ ...differencePublicColumns(db),
     ...(ids == null ? { reasonNote: sql<null>`null`, measureNote: sql<null>`null`, movedInCity: sql<null>`null`, movedInTitleCode: sql<null>`null`, movedInYear: sql<null>`null`, movedInBatch: sql<null>`null`, basis: sql<null>`null`, actor: sql<null>`null`, requestHash: sql<null>`null`, idempotencyKey: sql<null>`null` } : {}),
   }).from(d).where(and(ids == null ? undefined : inArray(d.enterpriseId, ids), sql`not exists (select 1 from difference_reason newer where newer.enterprise_id=${d.enterpriseId} and newer.title_code=${d.titleCode} and newer.direction=${d.direction} and (newer.recorded_at>${d.recordedAt} or (newer.recorded_at=${d.recordedAt} and newer.id>${d.id})))`)).all()
   const queryIds = [...new Set(differences.flatMap(d => d.evidenceQueryId == null ? [] : [d.evidenceQueryId]))]

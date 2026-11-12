@@ -1,3 +1,4 @@
+import { differencePublicColumns } from './platform/difference-reference-target'
 import { readPlatformObservationFacts } from '../server/utils/platform-source-facts'
 import type { PlatformObservationFact } from './platform/observation-facts'
 import { sourcePositionForSequence } from './platform/recognized-evidence'
@@ -162,7 +163,7 @@ function attachPlatformEvidenceSnapshot<T extends RowKey>(
     .all()
 
   const dispositions = db
-    .select()
+    .select(differencePublicColumns(db))
     .from(schema.differenceReason)
     .where(inArray(schema.differenceReason.enterpriseId, enterpriseIds))
     .all()

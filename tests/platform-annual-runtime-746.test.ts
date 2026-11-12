@@ -1,8 +1,9 @@
+import { transferDifferenceReferences } from '../upgrade/difference-references'
 import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { copyFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, beforeEach, expect, it, describe } from 'vitest'
 import * as schema from '../db/schema'
 import { processReaderFixture } from './helpers/process-target-734'
 import { ensurePlatformObservation } from '../server/utils/platform-business-record'
@@ -26,6 +27,7 @@ let fixture: Awaited<ReturnType<typeof processReaderFixture>>
 let sqlite: Database.Database
 let db: ReturnType<typeof drizzle<typeof schema>>
 const statements: string[] = []
+describe.each([71611,71612])('completed target %i', phase => {
 beforeAll(async () => {
   fixture = await processReaderFixture(false, source => {
     const old = drizzle(source, { schema })
@@ -71,6 +73,10 @@ beforeAll(async () => {
   await createOfflineSnapshot(fixture.target, source)
   copyFileSync(source, target)
   transferCorrespondence({ source, target, runId: 'annual746' })
+  if (phase === 71612) {
+    const fixed = join(fixture.root,'difference-fixed-71611.sqlite'); copyFileSync(target,fixed)
+    transferDifferenceReferences({source:fixed,target:target,runId:'difference749'})
+  }
   sqlite = new Database(target, { verbose: query => statements.push(String(query)) })
   sqlite.pragma('foreign_keys=ON')
   db = drizzle(sqlite, { schema })
@@ -292,4 +298,6 @@ it('serves migrated annual reads and background task submission over real HTTP w
     expect(await detail.json()).toMatchObject({ status: 'done', result: { events: [{ finalQualification: { status: 'confirmed' } }] } })
     expect(await dispatchAnnualTaskMcp('detail', { id: taskId }, { ...context, authorized: true })).toMatchObject({ status: 'done', result: { events: [{ finalQualification: { status: 'confirmed' } }] } })
   } finally { await app.close() }
+})
+
 })

@@ -1,3 +1,4 @@
+import { differencePublicColumns, differenceEvidenceColumns } from '../../lib/platform/difference-reference-target'
 import { readEvidenceToken113 } from './evidence-impact-113'
 import { readLatestDecisionHead102 as latestDecisionHead102, whereDecisionScope102 as whereScope } from './decision-lifecycle-102/head'
 export { readLatestDecisionHead102 as latestDecisionHead102 } from './decision-lifecycle-102/head'
@@ -122,13 +123,13 @@ function requireEnterprise(db: DecisionDb, enterpriseId: number) {
   return enterprise
 }
 export function readDecision102(db: DecisionDb, id: number) {
-  const row = db.select().from(s.differenceReason).where(eq(s.differenceReason.id, id)).get()
+  const row = db.select(differencePublicColumns(db)).from(s.differenceReason).where(eq(s.differenceReason.id, id)).get()
   if (!row) throw new DecisionError102(404, 'not_found', 'Decision version not found')
   return publicVersion(row, latestDecisionHead102(db, row)?.id ?? null)
 }
 export function currentDecision102(db: DecisionDb, scope: Scope) {
   requireEnterprise(db, scope.enterpriseId)
-  const state = decisionState102(latestDecision102(db, scope))
+  const state = decisionState102(db.select(differencePublicColumns(db)).from(s.differenceReason).where(whereScope(scope)).orderBy(desc(s.differenceReason.recordedAt), desc(s.differenceReason.id)).limit(1).get())
   return { ...scope, versionId: state.versionId, current: state.current ? publicVersion(state.current, state.current.id) : null }
 }
 function decisionState102<T extends { id: number; lifecycleAction: string | null }>(row: T | undefined) {
@@ -256,7 +257,7 @@ export function historyDecision102(db: DecisionDb, input: z.infer<typeof decisio
     status: s.differenceReason.status, reasonCode: s.differenceReason.reasonCode, measureCode: s.differenceReason.measureCode,
     verificationStatus: s.differenceReason.verificationStatus, recordedAt: s.differenceReason.recordedAt, lifecycleAction: s.differenceReason.lifecycleAction,
     previousId: s.differenceReason.previousId, actor: s.differenceReason.actor, ruleVersion: s.differenceReason.ruleVersion, effectiveAt: s.differenceReason.effectiveAt,
-    evidenceQueryId: s.differenceReason.evidenceQueryId, evidenceRelationId: s.differenceReason.evidenceRelationId,
+    ...differenceEvidenceColumns(db),
   }).from(s.differenceReason).where(whereScope(scope)).orderBy(desc(s.differenceReason.recordedAt), desc(s.differenceReason.id)).limit(input.pageSize).offset((input.page - 1) * input.pageSize).all()
   return { rows: rows.map(row => ({ ...row, origin: row.lifecycleAction ? 'lifecycle' : 'legacy_import', isCurrent: row.id === current?.id, detailsAvailable: true })), total, page: input.page, pageSize: input.pageSize }
 }

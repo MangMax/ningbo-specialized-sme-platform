@@ -32,3 +32,7 @@
 废止的运行要求是任意catalog/receipt篡改防御、递归scratch认证、来源receipt存在证明。历史报告及FAIL原件保留。业务原档hash、fingerprint/去重、原字段语义、事务/FK/备份与离线数据核对继续有效。
 
 更大迁移尚余：普通 correspondence decision/read/write、年度/范围证明/其他旧relation/query消费者，以及全项目旧表移除、公开入口切换和生产执行。本切片的两个detail读者可用不代表这些消费者已兼容71611。
+
+## #749 difference reference successor
+
+完整 71611 的独立副本可由 [差异引用离线工具](difference-references-offline.md) 转为 71612。同一 difference_reason 的两列物理证据 FK 转向 collection/observation；公开读回仍使用外部别名。既有接受的 explicit target 服务延续至完成的 71612，按必要列与相关完成状态就绪。完整 schema/FK/PK/行/sequence/业务字节核对在离线完成时执行。原 migration 日志不改写。普通 declarations、runtime 和三个 worker 边界保持原状；decision-lifecycle、113/114、refresh 写业务及旧表 DROP 仍由后续 owner 承接。

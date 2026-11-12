@@ -1,3 +1,4 @@
+import { differencePublicColumns } from '../platform/difference-reference-target'
 /** Enterprise-only reads. No raw platform archives enter a list aggregation. */
 import { eq, getTableColumns, inArray, sql, asc, or } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
@@ -47,7 +48,7 @@ export function readEnterpriseHistories(db: Db, ids?: number[]) {
   const events = db.select().from(s.recordEvent).where(eventScope).all()
   const evidence = db.select().from(s.recordEvidence).where(ids == null ? undefined : inArray(s.recordEvidence.recordEventId, eventIds)).all().map(row => isPageCapable(row.sourceFile) ? row : { ...row, page: null })
   const aliases = db.select().from(s.enterpriseAlias).where(scope(s.enterpriseAlias.enterpriseId)).all()
-  const differences = db.select().from(s.differenceReason).where(scope(s.differenceReason.enterpriseId)).all()
+  const differences = db.select(differencePublicColumns(db)).from(s.differenceReason).where(scope(s.differenceReason.enterpriseId)).all()
   const recordsByEnterprise = new Map<number, typeof records>()
   for (const record of records) {
     const list = recordsByEnterprise.get(record.enterpriseId) ?? []
@@ -64,7 +65,7 @@ export function readEnterpriseHistories(db: Db, ids?: number[]) {
 export function readEnterpriseSnapshot(db: Db, id?: number) {
   const enterprises = db.select().from(s.enterprise).where(id == null ? undefined : eq(s.enterprise.id, id)).orderBy(asc(s.enterprise.id)).all()
   const history = readEnterpriseHistories(db, id == null ? [] : [id])
-  const differences = id == null ? db.select().from(s.differenceReason).all() : history.differences
+  const differences = id == null ? db.select(differencePublicColumns(db)).from(s.differenceReason).all() : history.differences
   // Only identity and membership are used; export raw_fields are never needed here.
   const exportColumns = { ...getTableColumns(s.platformExportRow), rawFields: sql<null>`null`, district: sql<null>`null`, province: sql<null>`null`, city: sql<null>`null`, regStatus: sql<null>`null`, createdAt: sql<string>`''` }
   const batchColumns = getTableColumns(s.platformExportBatch)

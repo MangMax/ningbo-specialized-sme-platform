@@ -126,12 +126,12 @@ function targetReplaySource<S extends Record<string, unknown>>(tx: BetterSQLite3
         const a = tx.select().from(s.platformLegacyRelationAlias).where(eq(s.platformLegacyRelationAlias.observationId,o.id)).get()
         if (!a) throw new Error('Missing observation alias')
         const rawText = archive(tx,{kind:'observation',id:o.id,field:'rawFields'})
-        const sourceText = archive(tx,{kind:'observation',id:o.id,field:'sourceText'},collection.interface==='business_list'&&[71610,71611].includes(Number(sqlite.pragma('user_version',{simple:true}))))
+        const sourceText = archive(tx,{kind:'observation',id:o.id,field:'sourceText'},collection.interface==='business_list'&&[71610,71611,71612].includes(Number(sqlite.pragma('user_version',{simple:true}))))
         const rawFields: unknown = parseOriginalRaw(rawText)
-        const values = commandOriginal?.relations?.find(row => row.sequenceNo === o.sequenceNo) ?? legacyOriginal(archive(tx,{kind:'observation',id:o.id,field:'legacyRowSnapshot'})!,o.sequenceNo,collection.interface==='business_list'&&[71610,71611].includes(Number(sqlite.pragma('user_version',{simple:true}))))
+        const values = commandOriginal?.relations?.find(row => row.sequenceNo === o.sequenceNo) ?? legacyOriginal(archive(tx,{kind:'observation',id:o.id,field:'legacyRowSnapshot'})!,o.sequenceNo,collection.interface==='business_list'&&[71610,71611,71612].includes(Number(sqlite.pragma('user_version',{simple:true}))))
         if ((values.sourceText ?? null) !== sourceText) throw new PlatformProjectionError('projection_source_drift','Original source text differs')
         // Original command bytes remain authenticated separately from the stored key.
-        const originalKey = commandOriginal && collection.interface==='business_list' && [71610,71611].includes(Number(sqlite.pragma('user_version',{simple:true}))) ? optionalString(values.relationKey) : values.relationKey
+        const originalKey = commandOriginal && collection.interface==='business_list' && [71610,71611,71612].includes(Number(sqlite.pragma('user_version',{simple:true}))) ? optionalString(values.relationKey) : values.relationKey
         if (platformObservationPayload({interface:collection.interface,relationKey:originalKey,rawFields:values.rawFields}) !== platformObservationPayload({interface:collection.interface,relationKey:o.sourceRelationKey,rawFields})) throw new PlatformProjectionError('projection_source_drift','Original observation archive differs')
         // The typed row owns original position/key; archive data only supplies payload assertions.
         return { id:a.oldId,ref:`relation:${a.oldId}`,values:{...values,relationKey:o.sourceRelationKey,rawFields:rawFields as RosterImportRelation['rawFields']},
@@ -160,7 +160,7 @@ export function writeCollectionTarget<S extends Record<string, unknown>>(db: Bet
   requireCaptureForeignKeys(db)
   const sqlite = replayConnection(db)
   return db.transaction(tx => {
-    if (tx.get<{ user_version: number }>(sql`PRAGMA user_version`)?.user_version !== FINGERPRINT_BASIS_VERSION && tx.get<{ user_version: number }>(sql`PRAGMA user_version`)?.user_version !== 71608 && tx.get<{user_version:number}>(sql`PRAGMA user_version`)?.user_version !== 71609 && tx.get<{user_version:number}>(sql`PRAGMA user_version`)?.user_version !==71610 && tx.get<{user_version:number}>(sql`PRAGMA user_version`)?.user_version !==71611) throw new Error('Explicit 71607 target required')
+    if (tx.get<{ user_version: number }>(sql`PRAGMA user_version`)?.user_version !== FINGERPRINT_BASIS_VERSION && tx.get<{ user_version: number }>(sql`PRAGMA user_version`)?.user_version !== 71608 && tx.get<{user_version:number}>(sql`PRAGMA user_version`)?.user_version !== 71609 && tx.get<{user_version:number}>(sql`PRAGMA user_version`)?.user_version !==71610 && tx.get<{user_version:number}>(sql`PRAGMA user_version`)?.user_version!==71611 && tx.get<{user_version:number}>(sql`PRAGMA user_version`)?.user_version!==71612) throw new Error('Explicit 71607 target required')
     ensureProcessStoredReady(sqlite)
     const q = originalQuery(input.queryText)
     if(tx.get<{user_version:number}>(sql`PRAGMA user_version`)?.user_version===71608 && q.interface!=='apply_list')throw new Error('71608 command supports apply_list only')

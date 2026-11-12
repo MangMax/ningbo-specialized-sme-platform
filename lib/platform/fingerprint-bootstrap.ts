@@ -23,7 +23,7 @@ export function bootstrapFingerprint(t:Database.Database,owner:FingerprintOwner,
   const collection=tx.select({interface:s.platformCollection.interface}).from(s.platformCollection).where(eq(s.platformCollection.id,owner.collectionId)).get()
   if(collection?.interface==='recognized_list')verifyRecognizedStored(t,owner.observationId)
   if(mode==='reference'){
-   if([71608,71609,71610,71611].includes(Number(t.pragma('user_version',{simple:true})))){const {bytes}=legacyFingerprintInput(t,owner);verifyLegacyFacts(t,owner,bytes,true)}
+   if([71608,71609,71610,71611,71612].includes(Number(t.pragma('user_version',{simple:true})))){const {bytes}=legacyFingerprintInput(t,owner);verifyLegacyFacts(t,owner,bytes,true)}
    return null
   }
   const {c,rawFields,stored,bytes}=legacyFingerprintInput(t,owner)

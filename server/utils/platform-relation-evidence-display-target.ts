@@ -59,8 +59,8 @@ export function readTargetRelationEvidenceDisplay<S extends Record<string, unkno
   }
   return db.transaction(tx => {
     const phase = tx.get<{ user_version: number }>(sql`PRAGMA user_version`)?.user_version
-    if (phase !== 71610 && phase !== 71611) throw new Error('Explicit 71610 evidence display target required')
-    if (phase === 71611) requireH1cReady(sqliteConnection(tx))
+    if (phase !== 71610 && phase !== 71611 && phase !== 71612) throw new Error('Explicit 71610 evidence display target required')
+    if ((phase === 71611 || phase === 71612)) requireH1cReady(sqliteConnection(tx))
     const sources = new Map<number, RelationEvidenceDisplay>([...selected.keys()].map(id => [id, null]))
     const a = s.platformObservationAssignment, original = alias(a, 'display_original_assignment'), newer = alias(a, 'display_newer_assignment')
     const o = s.platformBusinessObservation, ra = s.platformLegacyRelationAlias, qa = s.platformLegacyQueryAlias, c = s.platformCollection

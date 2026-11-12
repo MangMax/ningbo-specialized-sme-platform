@@ -1,3 +1,4 @@
+import { requireH1cReady } from '../../lib/platform/h1c-catalog'
 import { sqliteConnection } from '../../lib/platform/target-connection'
 /** Correspondence's explicit successor binding; ordinary startup remains guarded. */
 import { getTableColumns, sql } from 'drizzle-orm'
@@ -21,7 +22,10 @@ export function correspondenceTarget(db: Db) {
   const connection = sqliteConnection(db)
   const known = targetConnections.get(connection)
   if (known !== undefined) return known
-  const target = db.get<{ user_version: number }>(sql`PRAGMA user_version`)?.user_version === 71611
+  const phase = Number(connection.pragma('user_version', { simple: true }))
+  if (![0,71605,71606,71607,71608,71609,71610,71611,71612].includes(phase)) throw new Error('Unsupported correspondence target schema version')
+  const target = phase === 71611 || phase === 71612
+  if (target) requireH1cReady(connection)
   targetConnections.set(connection, target)
   return target
 }
