@@ -4,7 +4,7 @@
 
 候选服务在已完成离线迁移的 71611 SQLite 上使用 collection、observation、当前 assignment、三来源结构化投影和外部 query/relation 别名。公开 ID 仍是别名；任务参数、行检查点、幂等键及 archiveGeneration 不改为内部主键。普通 expand schema 的既有分支保留，全局 runtime、worker、importer 门禁继续关闭。
 
-`generateCandidates` 按原业务内容版本分组，在 SQLite 内筛选、计数及选择业务组后，读取所选组的全部观察。`discoverEventArchives` 则保留原行分页和独立 coverage 分页/计数：认定目录按成功页称号分区，关联办理和申报按既有查询称号规则。两入口不共用猜测的 effectiveTitle。候选字段来自各来源 reader；原档仅用于证据展示、既有指纹及资源字节核算。来源 reader 的 capture 检查限定在所选观察，避免每个事件重扫整个来源。
+`generateCandidates` 按原业务内容版本分组，在 SQLite 内筛选、计数及选择业务组后，读取所选组的全部观察。`discoverEventArchives` 则保留原行分页和独立 coverage 分页/计数：认定目录按成功页称号分区，关联办理和申报按既有查询称号规则。两入口不共用猜测的 effectiveTitle。候选字段来自各来源 reader；原档仅用于证据展示、既有指纹及资源字节核算。候选调用显式将 reader 的 capture 检查限定在所选观察，避免每个事件重扫整个来源；关联办理 reader 的默认全来源检查契约保留。
 
 目标结构的单来源 4 MiB 检查合计 collection 所属 rawResponse、collectionEvidence 与所选 observation 所属 rawFields 的原存储字节。request、legacyRowSnapshot、canonicalRawJson 不重复计费。逐行事务、已有决定保护、25 行检查点、200 事件续片、取消/重启后的显式重试及 #746 年度接力沿用既有实现。
 

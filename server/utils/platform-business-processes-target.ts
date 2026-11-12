@@ -161,13 +161,14 @@ export function getTargetBusinessProcess(db: Db, recordId: number): BusinessProc
 const vp = alias(p, 'version_projection');
 const comparisonFields = ['province', 'status', 'batch', 'declareKind', 'appliedAt', 'awardBatchLabel', 'year'] as const;
 const modeledFields = ['declareKind', 'year', 'appliedAt', 'status', 'batch', 'awardBatchLabel', 'province', 'nameRaw', 'usccRaw'] as const;
-export function readTargetBusinessProcessFacts(db: Db, relationIds: number[]): Map<number, PlatformObservationFact> {
+export function readTargetBusinessProcessFacts(db: Db, relationIds: number[], options: { scope?: 'selected' } = {}): Map<number, PlatformObservationFact> {
     const result = new Map<number, PlatformObservationFact>();
     return db.transaction(tx => {
+        if (options.scope !== 'selected') gate(tx);
         const original = alias(a, 'original_assignment');
         for (let start = 0; start < relationIds.length; start += 400) {
             const ids = relationIds.slice(start, start + 400);
-            gate(tx, inArray(o.id, tx.select({ id: ra.observationId }).from(ra).where(inArray(ra.oldId, ids))));
+            if (options.scope === 'selected') gate(tx, inArray(o.id, tx.select({ id: ra.observationId }).from(ra).where(inArray(ra.oldId, ids))));
             const rows = tx.select({ relationId: ra.oldId, source: p, version: vp, originalName: original.nameRaw, originalUscc: original.usccRaw })
                 .from(ra).innerJoin(o, eq(o.id, ra.observationId)).innerJoin(c, eq(c.id, o.collectionId)).innerJoin(p, eq(p.observationId, o.id))
                 .leftJoin(vp, and(eq(vp.versionId, o.versionId), eq(vp.recordId, o.recordId)))

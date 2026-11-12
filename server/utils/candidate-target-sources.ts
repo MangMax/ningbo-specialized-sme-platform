@@ -36,7 +36,7 @@ export function targetCandidateTitle(db: Db) {
 export function readCandidateTargetFacts(db: Db, source: PlatformFactInterface, ids: number[]) {
   switch (source) {
     case 'apply_list': return readTargetDeclarationFacts(db, ids)
-    case 'business_list': return readTargetBusinessProcessFacts(db, ids)
+    case 'business_list': return readTargetBusinessProcessFacts(db, ids, { scope: 'selected' })
     case 'recognized_list': return readTargetRecognizedFacts(db, ids)
   }
 }
