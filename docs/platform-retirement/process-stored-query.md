@@ -1,6 +1,6 @@
-# #734：关联办理精确原列捕获契约与同票 A 分割
+# #734：关联办理精确原列捕获与显式目标读取
 
-状态：父级已独立接受 A1（含 ba2bc9e7 的 BOM 窄修），本地集成为 `efc26f3f91069c660b19779eafcf2f109bd3ff2c` / tree `61db129e9b4a0d1bc345b3de552cd32c04cf78f7`。A2 writer/replay/认证现为待 fresh 独立接受的实现候选；**B reader 未开始**。不新开前置票，原顺序仍为 A1→独立接受→A2→独立接受→B。
+状态：父级已 fresh 独立接受 A1/A2（含 BOM、optionalString key 和 private scratch 窄修），本地集成为 `90290c79c2ae23e6b93c92bacc4391ef01a8e9e1` / tree `2e39fea6c93037671885efa877590ab84e874d54`。**B 是待 fresh 独立接受的显式 process ORM reader 候选**。不新开前置票，不改公开接线或 global guard。
 
 固定基线 `5c3aa8757fc8d8c4c20e885ab2a4d256eeed3adb`，tree `072ca65c626d7b247740f74c7ff2ed8681742230`。`0790e121` 仅为完整迁移缺口诊断。当前旧接口源码是 [process reader](../../server/utils/platform-business-processes.ts)、[options](../../server/utils/platform-filter-options.ts)、[旧 SQL 原行](../../server/utils/platform-legacy-relation-read.ts)、[原写入](../../server/utils/roster-import.ts)。复用现有 [target schema](../../lib/platform/target-schema.ts)、[source extraction](../../lib/platform/source-extraction.ts)、assignment、alias 与 archive owner，不新造业务表、通用模型或新的归档 owner。
 
@@ -101,10 +101,30 @@ JITI_FS_CACHE=false node upgrade/run-process-stored.mjs SOURCE_71609 TARGET EXCL
 
 ordinary/reference仍先按typed坐标选观察，再按原来源比对和上述认证；reference不bootstrap，ordinary只走原legacy-bootstrap生命周期。process71610的两个实际BOM反例已固定测试：SQL title仍按BOM-preserving严格解码得到NULL；snapshot用于canonical输入断言时按既有fingerprint decoder解析，避免与archive canonical语义误冲突。plain sourceText在本source认证读取中保留BOM/NUL原文本。它们都是限定于process71610的源认证适配，不改变全局canonical/fingerprint decoder、serializer或其它来源语义。
 
-对三来源的显式successor写入需要保留同一已认证catalog链：apply继续其exact分支，recognized继续其原collectionEvidence/SQLtitle/witness认证，不转用process字段。global runtime/init/worker非零guard仍拒绝；没有HTTP/MCP/worker公开切换，B也没有新reader。原A1“旧writer拒绝”测试在其历史SHA保持，本候选仅将当前断言改为“认证writer可写captured，降级marker的未捕获旧路径仍受SQL屏障拒绝”。
+对三来源的显式successor写入需要保留同一已认证catalog链：apply继续其exact分支，recognized继续其原collectionEvidence/SQLtitle/witness认证，不转用process字段。global runtime/init/worker非零guard仍拒绝；没有HTTP/MCP/worker公开切换。A2交付时不含B reader。原A1“旧writer拒绝”测试在其历史SHA保持，A2将当前断言改为“认证writer可写captured，降级marker的未捕获旧路径仍受SQL屏障拒绝”。
 
 A2新增精确测试映射、所有firstFAIL、实际逐cell漂移/回滚/私有catalog/跨来源矩阵及fresh/inherited/UNRUN证据位于仓外 `r2a/capture/a2/`。A2候选不等于A总项、B、完整R2或生产接受；fullaffected145、REAL-year历史拒绝状态不变。
 
-A1/A2都不做reader、公开HTTP/MCP/worker切换、global guard解除、H3/H/C/X、物理删表、生产/真实DB/Docker/fullbuild/UI或性能压测。B仍需独立旧服务/literal的列表/详情/options/filters/count/order、snapshot freshness和bounded hydration。fullaffected145历史UNRUN不被本轮新测试数覆盖。
+A1/A2都不做reader、公开HTTP/MCP/worker切换、global guard解除、H3/H/C/X、物理删表、生产/真实DB/Docker/fullbuild/UI或性能压测。fullaffected145历史UNRUN不被本轮新测试数覆盖。
+
+## B ≤M：显式 process ORM reader 候选
+
+[platform-business-processes-target.ts](../../server/utils/platform-business-processes-target.ts) 提供 `listTargetBusinessProcesses`、`getTargetBusinessProcess`、`readTargetBusinessProcessOptions` 和 `readTargetBusinessProcessFacts`。没有 environment selector、公开接线或新 schema。事务中先核71610实际catalog及全域process观察的capture/assignment/revision1/aliases，之后才筛选、计数和分页；缺capture不因空结果、深页或INNER JOIN被丢掉。真实NULL可读。isolated的8个原SQLite cell在显式边界保留unknown类型，不把BLOB/REAL假称为string/integer；years options仍只接受JS positive safe integer。
+
+| B字段/行为 | 实际读取owner与分支 |
+|---|---|
+| records/detail版本、事项/业务年/personuuid/whpc | version-owner process projection；同version谓词。personuuid→awardBatchLabel，whpc→batch，二者不推断year |
+| isolated DTO/filter/options | observation-owner exact8cells；declareKind仅归一化输入，SQL比较原列。SQLite trim/BINARY/DISTINCT排序保留 |
+| facts title / stored / display | sqlFactTitle独立字段；typed版本、逐观察stored/parsed/reconciled/conflict各自读取，`withArchiveProcessFacts`保持原补值/冲突规则，无JSON/v8读取 |
+| 原名/归属 | isolated和untyped facts用assignment revision1；过滤/列表企业/详情用最高revision，整次请求同snapshot，下次请求见新revision |
+| scope | filter是原未trim CSV membership OR index；display是CSV split/trim与index的ordered union。rdjb EXISTS限制匹配version，企业EXISTS仍限制整个record |
+| counts/order/hydration | whole-record版本/观察计数和activity；代表版本按appliedAt NULL-last、日期DESC、version ID DESC；数据库分页后仅水合选页record，详情limit100/200；facts按400个外部alias分批 |
+| 对应关系与ID | query/relation外部alias；correspondence只按选定具体观察的relation alias，不能复制给同version其它观察 |
+
+[platform-process-target-734.test.ts](../../tests/platform-process-target-734.test.ts) 从独立旧schema实际通过全部已接受迁移到71610，使用旧service与literal对照完整DTO、options、filter/count/order、normalization冲突、SQL重复键/BOM、raw-only/not_indexed、缺version projection、capture拒绝、snapshot freshness、实际截断和SQL trace/EXPLAIN。独立未索引旧行原先不在旧observation查询结果内，目标迁移生成not_indexed后以literal验证；不把二者伪称完全等价。历史REAL-year完整迁移仍T05b rejected，表示层矩阵不等于完整链支持。
+
+精确旧consumer接缝仍保留：`server/api/platform/business-processes.get.ts` / `[recordId].get.ts`，MCP `list_platform_business_processes` / `get_platform_business_process`，`server/api/platform/filter-options.get.ts` 的business-processes分支，以及`platform-source-facts.ts`的business_list分派。后者仍供business-detail、record-correspondence-candidates、event-annual-process-read和comparison-platform使用。页面仍调用旧HTTP。只有这些消费者分别完成所属接线后，才能删除旧process服务及options分支；`platform-business-read`的legacy assignment/scope/enterprise helper和`platform-legacy-relation-read`还有其它source消费者，不能在B删除。H3/H/C/X与公开切换由各自owner处理。
+
+B仓外交付证据为 `r2a/reader/implementation/{REPORT.md,HANDOFF.md,VALIDATION.json}`，保留原`r2a/reader/REPORT.md`诊断。fresh、inherited、FAIL、UNRUN分别列出；合latest LOCALintegration后以clean SHA/tree重验，交父fresh merger，不自行合入integration或启动后继。
 
 仓外证据 `/Users/mang/.t3/acceptance/platform-complete-migration/r2a/capture/`；原诊断 `/r2a/reader/` 保持。first-red同时保留了误假定TEXT列2024.0会变为2024的断言失败，以及SQL首键与JSON末键确实不等的RED；后续修正期待不抹掉它。各小批自有synthetic逐成员路径/type/mode/length/SHA256/link验证归档后释放，保留restore manifest。没有安装依赖、改共享缓存、子代理、远端写、primary写或业务卷操作。
