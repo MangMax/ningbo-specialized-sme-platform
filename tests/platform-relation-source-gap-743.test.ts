@@ -8,6 +8,8 @@ import * as schema from '../db/schema'
 import { readSource } from '../server/utils/record-correspondence-read'
 import { witnessReaderFixture } from './helpers/recognized-witness-target-733'
 import { finalizeProcessStored } from '../upgrade/process-stored'
+import { targetSchema } from '../lib/platform/target-schema'
+import { readTargetRelationEvidenceDisplay } from '../server/utils/platform-relation-evidence-display-target'
 
 async function migrated(page: number) {
   const fixture = await witnessReaderFixture(old => {
@@ -32,6 +34,11 @@ async function migrated(page: number) {
   const target = new Database(fixture.target, { readonly: true })
   try {
     const dto = readSource(drizzle(legacy, { schema }), 'relation', 1)
+    if (!dto) throw new Error('Expected old source')
+    const { correspondences: _links, ...expected } = dto
+    const display = readTargetRelationEvidenceDisplay(drizzle(target, { schema: targetSchema }), [{ relationId: 1, queryId: 1 }])
+    expect(display.purpose).toBe('platform_relation_evidence_display')
+    expect(display.sources.get(1)).toEqual(expected)
     // Complete rows of every possible structured source DTO owner, not selected matching columns.
     const tables = [
       'platform_collection', 'platform_collection_page', 'platform_collection_condition', 'platform_collection_unfinished',
