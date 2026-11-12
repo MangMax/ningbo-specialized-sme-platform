@@ -1144,7 +1144,7 @@ export const platformApplyProjection = definePlatformApplyProjection(() => platf
  * mismatch. Fields are copied from the archived raw row only (null when absent),
  * never inferred. Query title scope is not a row fact and is not stored here.
  */
-export function definePlatformBusinessProjection(observationId: () => AnySQLiteColumn) { return sqliteTable('platform_business_projection', {
+export function businessProjectionFields(observationId: () => AnySQLiteColumn) { return {
   id: integer('id').primaryKey({ autoIncrement: true }),
   observationId: integer('observation_id').references(observationId, { onDelete: 'restrict' }),
   basis: text('basis', { enum: ['verified_raw', 'observation_reconciliation', 'unavailable'] }).notNull().default('verified_raw'),
@@ -1219,7 +1219,8 @@ export function definePlatformBusinessProjection(observationId: () => AnySQLiteC
   yearConflict: integer('year_conflict'),
   ruleVersion: text('rule_version').notNull(),
   createdAt: text('created_at').notNull().$defaultFn(() => new Date().toISOString()),
-}, t => [
+} }
+export function definePlatformBusinessProjection(observationId: () => AnySQLiteColumn) { return sqliteTable('platform_business_projection', businessProjectionFields(observationId), t => [
   uniqueIndex('platform_business_projection_version_uq').on(t.versionId),
   uniqueIndex('platform_business_projection_observation_uq').on(t.observationId),
   check('platform_business_projection_owner_ck', sql`( ${t.versionId} IS NOT NULL AND ${t.recordId} IS NOT NULL AND ${t.observationId} IS NULL AND ${t.basis} = 'verified_raw') OR (${t.versionId} IS NULL AND ${t.recordId} IS NULL AND ${t.observationId} IS NOT NULL AND ${t.basis} IN ('observation_reconciliation','unavailable'))`),

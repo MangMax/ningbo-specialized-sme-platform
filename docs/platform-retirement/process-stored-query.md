@@ -1,12 +1,12 @@
 # #734：关联办理精确原列捕获契约与同票 A 分割
 
-状态：父级已裁决保留旧接口原语义。本文件冻结已实测字段矩阵，并提交 A1/A2 最窄分割；**尚无 process exact schema、离线捕获、writer/replay 或 reader 实现接受**。不新开前置票。原 A/B 顺序不变，B 必须等整个 A 独立接受。
+状态：父级已裁决保留旧接口原语义，并在 #734 确认 A1/A2 最窄分割。A1 schema/离线捕获候选与本契约一并待 fresh 独立接受；**A2 writer/replay 和 B reader 未开始**。不新开前置票。A1→独立接受→A2→独立接受→B。
 
 固定基线 `5c3aa8757fc8d8c4c20e885ab2a4d256eeed3adb`，tree `072ca65c626d7b247740f74c7ff2ed8681742230`。`0790e121` 仅为完整迁移缺口诊断。当前旧接口源码是 [process reader](../../server/utils/platform-business-processes.ts)、[options](../../server/utils/platform-filter-options.ts)、[旧 SQL 原行](../../server/utils/platform-legacy-relation-read.ts)、[原写入](../../server/utils/roster-import.ts)。复用现有 [target schema](../../lib/platform/target-schema.ts)、[source extraction](../../lib/platform/source-extraction.ts)、assignment、alias 与 archive owner，不新造业务表、通用模型或新的归档 owner。
 
 ## 原列、查询和可用事实
 
-下表的“exact”是待实现结构字段，不是当前已存在接口。八列只能在 `platform_business_projection` 的 observation-owner 保存；version-owner 的全部新增字段必须 SQL NULL。
+下表的“exact”在显式71610候选schema中提供，不是公开接口。八列只能在 `platform_business_projection` 的 observation-owner 保存；version-owner 的全部新增字段必须 SQL NULL。
 
 | 原 SQLite cell / affinity | 待捕获字段 | 旧 consumer 和语义 | 不可替代它的现有字段 |
 |---|---|---|---|
@@ -62,16 +62,34 @@ records/detail 的内容字段仍用 version-owner process projection。记录�
 8. 原predecessor verifier在加列前认证并冻结结果；successor的catalog检查必须真实绑定新增列/约束/trigger/FK和完成receipt，不可仅认phase/rowcount，不可重写旧receipt迎合新schemaHash。恢复补证据用新的显式离线successor，不UPDATE已有capture或复用旧run。正常runtime/三个worker的非零phase拒绝继续保持。
 9. ordinary replay保留既有legacy-bootstrap流程，reference不bootstrap；均先typed owner坐标选择，再认证原来源/规则/归档/映射及exact八cell和fact-title。exact缺失不借replay修复。后续revision正常可见，原输入仍对revision1认证；篡改一cell也必须拒绝，不能只看input hash。原legacy source conflict错误/normalize比较不全局改成exact。
 
-## A 实际超 M：最窄同票分割（待父级确认清单）
+## A 实际超 M：已获父级确认的最窄同票分割
 
-不是另起前置链，也不是重复架构调查。A 同时包含两个已有同类独立接受单元：apply S 的 populated DDL/offline 与 W 的运行物化/replay。这里实际还要保持已接受 R3/R5 catalog successor 链，不能把它们折叠进“加八列”的提交。具体接缝见下表；按本次授权先交拆分，不将未实现部分称PASS。
+不是另起前置链，也不是重复架构调查。A 同时包含两个已有同类独立接受单元：apply S 的 populated DDL/offline 与 W 的运行物化/replay。这里实际还要保持已接受 R3/R5 catalog successor 链，不能把它们折叠进“加八列”的提交。具体接缝见下表；A1 已获实施授权，不将 A2/B 未实现部分称PASS。
 
 | 同票单元 | 最窄代码/事务owner | 独立验收与出界限制 |
 |---|---|---|
 | A1 ≤M，高难度：schema/固定快照转移/屏障 | process-only stored schema/cells/offline schema+transfer；db/schema-phase显式successor注册；仅必要的target projection声明；process catalog完成绑定；现有recognized-stored/witness catalog对新successor的明确predecessor hash解包，不放宽旧catalog；有界可信旧源/封存snapshot/原command恢复所需纯物化 | 八cell+独立fact-title全矩阵、原源完整链（REAL保持reject）、snapshot/映射冲突、旧run/manifest/receipt不变、FK-OFF零写、遗漏projection/REPLACE/upsert/DELETE/跨owner/outerCOMMIT拒绝、populated DDL多阶段回滚、恢复/重跑绑定、uncaptured清单；旧runtime guard仍拒绝，process新writer在A2前明确停用。只接这个schema/offline seam，不实现新写或replay切换 |
 | A2 ≤M，高难度：新writer及认证 | process-target-writer、纯materialization、fingerprint-verifier的process精确白名单+独立cell认证、collection-target-command/replay的process分支、scratch catalog继承和capture phase明确允许已认证successor | direct writer/完整command/ordinary/reference，原bytes/hash不变，真实8cell物化，rev1/rev2、same raw不同stored input、单cell drift、source-rule/alias/assignment漂移、caller-caught rollback、safe-ID耗尽、FK-OFF和deferred COMMIT；其它source原行为不变。不能跳过整个extra-field认证，不能重审/重写已接受R1/R3/R5业务实现 |
 
-A1→独立接受→A2→独立接受，二者共同构成 A；然后才允许 B。successor phase 71610 在当前基线代码中未占用，但只是候选号，实施/集成前须再核最新integration，不在本文宣称已分配。A1的旧catalog兼容仅由新successor绑定解包，不接受未知schema或改写旧receipt。A1成品是离线受屏障保护的target，不是可继续接收旧process写的运行版本。
+A1→独立接受→A2→独立接受，二者共同构成 A；然后才允许 B。开工已核最新LOCALintegration仍为5c3aa875，71610未占用，本候选显式使用71610。A1不接受未知schema或改写旧receipt。A1成品是离线受屏障保护的target，不是可继续接收旧process写的运行版本。
+
+## A1 候选的调用、catalog 与 A2 接缝
+
+显式入口 [finalizeProcessStored](../../upgrade/process-stored.ts) 只接受完整71609 + 已接受 recognized-stored/witness catalog 链。先由原predecessor verifier认证可信来源；随后在FK-ON immediate事务重建固定incoming owner图、转移原cell并核逐cell可逆、安装屏障、比较全部原数据/sequence/旧receipt manifest，再写唯一successor receipt/checkpoint。移植保留原ordinal顺序，字段inventory按完整唯一名称集合认证，不能拿Drizzle声明序替代旧ALTER后的列序。失败连DDL一同回滚。source-only恢复必须通过原receipt绑定的legacy custody；目标残留旧业务表不作源事实依据。
+
+Node24.22.2下可离线调用（SOURCE必须是停写后已有工具取得的固定独立快照，TARGET为其独立副本；不对活库提供写排除保证）：
+
+```sh
+JITI_FS_CACHE=false node upgrade/run-process-stored.mjs SOURCE_71609 TARGET EXCLUSIVE_EVIDENCE RUN_ID WITNESS_PREDECESSOR_RUN_ID [FROZEN_LEGACY_SOURCE]
+```
+
+证据目录必须尚不存在；CLI保留source/before/target或failure的完整cell manifest、catalog/FK及来源指针。`queryReady=false`与逐owner recovery原因清单是合法诊断产物，不是reader可用。缺值不由重放修复。固定源/原legacy变更、target数据或checkpoint漂移均拒绝原run重放；正常同owner重复执行保持原捕获不变。正常首次schema配对允许提交；新写入的真实input认证留A2。
+
+[processStoredInstalled](../../lib/platform/process-stored-catalog.ts)核明确列/trigger/延迟配对形状、实际target schema hash、唯一完成receipt/checkpoint及原witness receipt指向；source阶段同时调用已接受R3/R5实际catalog认证。原R3/R5和fingerprint运行gate仍按其原phase拒绝71610，不放宽、不重写旧receipt。A2才为显式71610添加经过认证的predecessor解包、scratch继承和process白名单cell认证；A1的installed gate只证明catalog完成，不认证任意新command或使旧reader可运行。
+
+新process观察配对需先有revision1和target-command basis；沿既有apply策略，低层首次插入实验在事务中用`defer_foreign_keys=ON`容纳原immediate assignment FK，但始终保持`foreign_keys=ON`。物理process复合FK为DEFERRABLE INITIALLY DEFERRED。遗漏整个projection/任一captured分支可RELEASE savepoint而不能outer COMMIT；失败后由caller回滚。捕获冻结同时拦截INSERT/UPDATE OR REPLACE目标、upsert、DELETE和跨owner移动；oldwriter即便在受控实验中降phase绕过JS，SQL屏障也拒绝缺capture提交。globalguard、三个worker拒绝不变。
+
+既有target-command恢复仅在离线原来源认证后物化8cell。例如输入空白pending实际旧写得pending；raw year `2e3`在原process normalization可得2000，而版本parser仍保持NULL。旧comparison/version列不因此改写。legacy-indexed、已证明legacy-bootstrap、not_indexed、command、source-only和snapshot-only都按各自来源处理；不凭当前归属/请求猜生命周期。历史REAL-year完整链仍按T05b拒绝；下层schema表示REAL并不证明能绕过该拒绝迁移。
 
 A1/A2都不做reader、公开HTTP/MCP/worker切换、global guard解除、H3/H/C/X、物理删表、生产/真实DB/Docker/fullbuild/UI或性能压测。B仍需独立旧服务/literal的列表/详情/options/filters/count/order、snapshot freshness和bounded hydration。fullaffected145历史UNRUN不被本轮新测试数覆盖。
 
