@@ -42,8 +42,9 @@ export interface PlatformQueryFilter {
 
 export interface PlatformRelationRow {
   normalizationConflicts?: PlatformNormalizationConflict[]
-  sourceRdjb?: string | null
-  sourcePage?: number | null
+  /** Historical page values are displayed as captured, including noncanonical types. */
+  sourceRdjb?: unknown
+  sourcePage?: unknown
   id: number
   queryId: number
   sequenceNo: number

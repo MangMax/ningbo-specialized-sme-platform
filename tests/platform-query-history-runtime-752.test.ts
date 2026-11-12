@@ -70,6 +70,31 @@ const scope = { enterpriseId: 1, titleCode: 'specialized_sme' as const, directio
 
 afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); t?.close() })
 afterAll(() => vi.unstubAllGlobals())
+it('preserves historical page scalar types through the complete migration and generic full history', async () => {
+ const pages = [
+  { status: 'success', rdjb: false, page: '09', fetchedCount: 1 },
+  { status: 'success', rdjb: 2, page: false, fetchedCount: 1 },
+  { status: 'success', rdjb: ' 2 ', page: 0, fetchedCount: 1 },
+ ]
+ const fixture = await targetFixture(old => {
+  old.exec("INSERT INTO platform_query(id,interface,query_key,rdjb,queried_at,status,created_at) VALUES(41,'business_list','historical','2','2026-10-01','success','2026-10-01')")
+  old.prepare('UPDATE platform_query SET collection_evidence=? WHERE id=41').run(JSON.stringify({ pages }))
+  for (let i = 1; i <= pages.length; i++)
+   old.prepare("INSERT INTO platform_relation(id,query_id,sequence_no,relation_key,name_raw,raw_fields,created_at) VALUES(?,41,?,?,?,?,'2026-10-01')")
+    .run(70+i,i,`history-${i}`,'Historical',JSON.stringify({id:`history-${i}`,rdjb:'2'}))
+ })
+ const target = new Database(fixture.target), legacy = new Database(fixture.legacySource)
+ try {
+  const old = listPlatformQueries(drizzle(legacy,{schema}),{queryId:41})
+  const actual = listPlatformQueries(drizzle(target,{schema}),{queryId:41})
+  expect(actual).toEqual(old)
+  expect(actual.rows[0]!.relations.map(row => [row.sourceRdjb,row.sourcePage]))
+   .toEqual([[false,'09'],[2,false],[' 2 ',0]])
+  expect(listPlatformQueries(drizzle(target,{schema}),{queryId:41,view:'summary'}))
+   .toMatchObject({total:1,rows:[{query:{id:41,relationCount:3},relations:[],relationsIncluded:false}]})
+ } finally { target.close(); legacy.close() }
+})
+
 it('reads ordinary target imports through the generic history entry with literal public IDs and counts', () => {
  const input=request(); expect(preflightRosterImport(db,input).preflight.conflicts).toEqual([])
  expect(commit(input).status).toBe('committed'); expect(replayRosterImport(db,input).status).toBe('replayed')

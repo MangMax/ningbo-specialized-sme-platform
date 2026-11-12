@@ -22,7 +22,7 @@ const relationShape = z.object({
   province: text, status: text, batch: text, declareKind: text, appliedAt: text, awardBatchLabel: text,
   year: z.number().nullable(), matchBasis: z.string(), verificationStatus: z.string(),
   rawFields: z.record(z.string(), z.unknown()).nullable(),
-  sourceRdjb: text.optional(), sourcePage: z.number().nullable().optional(),
+  sourceRdjb: z.unknown().optional(), sourcePage: z.unknown().optional(),
   normalizationConflicts: z.array(z.object({
     field: z.enum(['province', 'status', 'batch', 'declareKind', 'appliedAt', 'awardBatchLabel', 'year']),
     storedValue: z.union([z.string(), z.number()]), rawValue: z.union([z.string(), z.number()]),
