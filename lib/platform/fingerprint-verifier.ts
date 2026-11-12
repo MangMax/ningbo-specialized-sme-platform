@@ -1,3 +1,5 @@
+import { inheritRecognizedStoredCatalog } from './recognized-stored-catalog'
+import { verifyRecognizedStored } from './recognized-stored'
 import { verifyApplyStored, APPLY_STORED_KEYS } from './apply-stored-verifier'
 import type { ApplyTargetInput } from './apply-target-writer'
 /** Offline read-snapshot verifier, separately callable for planned and exact-original owners. */
@@ -31,10 +33,13 @@ export function emptyFingerprintTarget(t:Database.Database) {
   for(const row of catalog)scratch.exec(row.sql)
   scratch.pragma('user_version='+t.pragma('user_version',{simple:true}))
   scratch.exec("insert into platform_legacy_alias_sequence(namespace,high_water) values('query',0),('relation',0)")
+  inheritRecognizedStoredCatalog(t,scratch)
   return scratch
 }
 const hash=(v:Buffer)=>createHash('sha256').update(v).digest('hex')
 export function verifyFingerprint(t:Database.Database,owner:FingerprintOwner, options: {allowMissingVersionProjection?:boolean, legacyCustody?:LegacyFingerprintCustody} = {}) {
+ const recognized=drizzle(t).select({id:s.platformBusinessObservation.id}).from(s.platformBusinessObservation).innerJoin(s.platformCollection,eq(s.platformCollection.id,s.platformBusinessObservation.collectionId)).where(and(eq(s.platformBusinessObservation.id,owner.observationId),eq(s.platformCollection.interface,'recognized_list'))).get()
+ if(recognized)try{verifyRecognizedStored(t,owner.observationId)}catch(error){throw new FingerprintVerificationError('projection_source_drift',owner,error instanceof Error?error.message:String(error))}
  if(Object.hasOwn(options,'offlineLegacyCells'))throw new Error('Untrusted plain-cell override rejected')
  if(![71607,71608,71609].includes(Number(t.pragma('user_version',{simple:true}))))throw new FingerprintVerificationError('projection_source_drift',owner,'Explicit 71607 verifier target required')
  return t.transaction(()=>{

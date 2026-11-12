@@ -1,3 +1,6 @@
+import { recognizedStoredInstalled, recognizedTitleEvidence, verifyRecognizedStored } from './recognized-stored'
+import { storedRecognizedProjection } from './recognized-stored-schema'
+import { sqliteConnection } from './target-connection'
 import { candidateObservationValues, verifyCandidateObservation } from './candidate-scope-write'
 import { candidateScopeObservation } from './candidate-scope-schema'
 /** W3a explicit finalized-target transaction seam. No public import routing. */
@@ -28,6 +31,7 @@ function positive(value: number) {
 /** A nested SQLite savepoint makes any failure atomic even if an outer caller catches it. */
 export function writeRecognizedTarget<S extends Record<string, unknown>>(db: BetterSQLite3Database<S>, input: RecognizedTargetInput) {
   const capturing = capturePhase(db)
+  const stored = recognizedStoredInstalled(sqliteConnection(db))
   return db.transaction(tx => {
     positive(input.collectionId); positive(input.position.sequenceNo)
     for (const id of [input.position.pageId, input.position.pageRowNo, input.assignment.enterpriseId, input.assignment.commandReceiptId, input.row.enterpriseId]) if (id != null) positive(id)
@@ -57,6 +61,7 @@ export function writeRecognizedTarget<S extends Record<string, unknown>>(db: Bet
       const alias = tx.select().from(s.platformLegacyRelationAlias).where(eq(s.platformLegacyRelationAlias.observationId, existing.id)).get()
       if (!alias) throw new Error('Missing observation alias')
       verifyCandidateObservation(tx, existing.id)
+      if(stored) verifyRecognizedStored(sqliteConnection(tx),existing.id)
       positive(alias.oldId)
       return { observationId: existing.id, recordId: existing.recordId, versionId: existing.versionId, relationAlias: alias.oldId, reused: true }
     }
@@ -75,7 +80,10 @@ export function writeRecognizedTarget<S extends Record<string, unknown>>(db: Bet
     bindArchive(tx, { kind: 'observation', ownerId: observation.id, field: 'sourceText', archiveId: sourceArchive })
     sealArchiveOwner(tx, { kind: 'observation', ownerId: observation.id })
     const title = raw?.rdjb
-    const observationProjection = tx.insert(s.platformRecognizedProjection).values({ observationId: observation.id, basis: raw === null ? 'unavailable' : 'observation_reconciliation', parseState: raw === null ? 'absent' : 'valid', sourceArchiveId: rawArchive, ...(plan.recognizedProjection ?? parseRecognizedRecord(raw)), ...(raw === null ? { sourceValidityDate: null, sourceMaintenanceBatch: null, sourceMaintenanceYearAbsent: null } : parseRecognizedSourceFidelity(raw)), ruleVersion: RECOGNIZED_PROJECTION_RULE, sourceTitleKind: sourceValueKind(title), sourceTitleText: typeof title === 'string' ? title : null, sourceTitleNumberText: typeof title === 'number' ? String(title) : null, sourceTitleBoolean: typeof title === 'boolean' ? Number(title) : null, sourceTitleRuleVersion: 't05b-source-projections-v1', ...sourceFieldComparison('recognized_list', { province: input.row.province ?? null, status: input.row.status ?? null, batch: input.row.batch ?? null, declareKind: input.row.declareKind ?? null, appliedAt: input.row.appliedAt ?? null, awardBatchLabel: input.row.awardBatchLabel ?? null, year: input.row.year ?? null }, raw, raw === null ? 'absent' : 'valid') }).returning({ id: s.platformRecognizedProjection.id }).get()
+    const exact = stored ? recognizedTitleEvidence(sqliteConnection(tx),observation.id) : null
+    if(stored && !exact) throw new Error('recognized_stored_uncaptured')
+    const exactTitle = exact?.cell.storageClass === 'null' ? null : exact ? Buffer.from(exact.cell.hex,'hex').toString('utf8') : null
+    const observationProjection = tx.insert(stored ? storedRecognizedProjection : s.platformRecognizedProjection).values({ ...(exact ? {exactTitleRaw:exactTitle,exactTitleState:exact.exactTitleState,exactTitleOrigin:exact.exactTitleOrigin,exactTitleArchiveId:exact.exactTitleArchiveId,exactTitleSha256:exact.exactTitleSha256}:{}), observationId: observation.id, basis: raw === null ? 'unavailable' : 'observation_reconciliation', parseState: raw === null ? 'absent' : 'valid', sourceArchiveId: rawArchive, ...(plan.recognizedProjection ?? parseRecognizedRecord(raw)), ...(raw === null ? { sourceValidityDate: null, sourceMaintenanceBatch: null, sourceMaintenanceYearAbsent: null } : parseRecognizedSourceFidelity(raw)), ruleVersion: RECOGNIZED_PROJECTION_RULE, sourceTitleKind: sourceValueKind(title), sourceTitleText: typeof title === 'string' ? title : null, sourceTitleNumberText: typeof title === 'number' ? String(title) : null, sourceTitleBoolean: typeof title === 'boolean' ? Number(title) : null, sourceTitleRuleVersion: 't05b-source-projections-v1', ...sourceFieldComparison('recognized_list', { province: input.row.province ?? null, status: input.row.status ?? null, batch: input.row.batch ?? null, declareKind: input.row.declareKind ?? null, appliedAt: input.row.appliedAt ?? null, awardBatchLabel: input.row.awardBatchLabel ?? null, year: input.row.year ?? null }, raw, raw === null ? 'absent' : 'valid') }).returning({ id: s.platformRecognizedProjection.id }).get()
     positive(observationProjection.id)
     const relationAlias = allocateLegacyAlias(tx, { kind: 'relation', observationId: observation.id })
     return { observationId: observation.id, recordId, versionId, relationAlias, reused: false }

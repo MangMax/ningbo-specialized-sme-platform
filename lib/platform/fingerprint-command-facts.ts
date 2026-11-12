@@ -1,3 +1,4 @@
+import { inheritRecognizedStoredCatalog } from './recognized-stored-catalog'
 import Database from 'better-sqlite3'
 import { createHash } from 'node:crypto'
 import { isDeepStrictEqual } from 'node:util'
@@ -47,6 +48,7 @@ export function verifyOriginalCommand(target:Database.Database,predecessor:Datab
   if(hash(bytes)!==observation.inputFingerprint)throw new Error('Command fingerprint conflict')
   const scratch=new Database(predecessor.serialize());scratch.pragma('foreign_keys=ON')
   try {
+    inheritRecognizedStoredCatalog(predecessor,scratch)
     const expected=drizzle(scratch,{schema:s})
     const collection=actual.select().from(s.platformCollection).where(eq(s.platformCollection.id,input.collectionId)).get()
     if(!collection)throw new Error('Command collection missing')
