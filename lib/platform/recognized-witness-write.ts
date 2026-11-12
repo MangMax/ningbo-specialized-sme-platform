@@ -8,7 +8,6 @@ import { targetSchema as s } from './target-schema'
 import { captureWitnessInputs,captureWitnessPosition,WITNESS_RULE,witnessConditionNames } from './recognized-witness-capture'
 import { witnessCollection as c,witnessCondition as k,witnessObservation as o } from './recognized-witness-schema'
 import { witnessInstalled } from './recognized-witness-catalog'
-import { assertH1cFingerprintSource } from './h1c-fingerprint-context'
 function original(t:Database.Database,id:number) {
  const db=drizzle(t,{schema:s})
  const ref=db.select().from(s.platformCollectionArchiveRef).where(and(eq(s.platformCollectionArchiveRef.ownerId,id),eq(s.platformCollectionArchiveRef.field,'collectionEvidence'))).get()
@@ -55,10 +54,7 @@ export function verifyWitnessObservation(t:Database.Database,id:number) {
 /** Verifier's private empty in-memory reconstruction: copy authenticated original,
  * not derived witness values. No runtime reader or arbitrary catalog inheritance. */
 export function reconstructWitnessCollectionSource(source:Database.Database,scratch:Database.Database,id:number) {
- if(source.pragma('user_version',{simple:true})===71611)return source.transaction(()=>{
-  assertH1cFingerprintSource(source,scratch);reconstructInSnapshot(source,scratch,id)
- }).deferred()
- return reconstructInSnapshot(source,scratch,id)
+ return source.transaction(()=>reconstructInSnapshot(source,scratch,id)).deferred()
 }
 function reconstructInSnapshot(source:Database.Database,scratch:Database.Database,id:number) {
  if(!witnessInstalled(source))return

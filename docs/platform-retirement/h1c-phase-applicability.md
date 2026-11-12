@@ -1,49 +1,13 @@
-# #744 A2 fixed successor applicability
+# #744 简化迁移就绪检查
 
-Accepted A1 is c7d739bd, locally integrated as 0a6cba0d. A1 is catalog proof only; controlled successors below are not C migration acceptance. A2 exceeds one M owner unit, so this candidate is **A2a primary catalog inheritance and the existing read seams**. A2b fingerprint/private staging, A2c writer/replay/candidate, A2d display remain deferred. B correspondence typed/detail mapping and C offline FK transfer remain unimplemented. No runtime/public activation.
+用户最新裁定替代先前 A1/A2 防篡改契约，不再按 A2a/b/c/d 逐层拆分。旧报告/FAIL/提交是历史证据，不删除也不重新定性。
 
-| Exact callsite | Current accepted phase/behavior | A2a action / later owner |
-|---|---|---|
-| process-stored-catalog processStoredInstalled | 71610 complete process schema/receipt; verifier private inherited catalog | 71611 primary handle calls full A1 proof per call; original71610 path unchanged |
-| process-stored-catalog processPredecessorSchema | 71610 process source-schema hash | 71611 returns exact preserved process source-schema hash only after full A1 proof, in same read snapshot |
-| recognized-witness-catalog witnessCatalogPresent/witnessPredecessorSchema/witnessInstalled | 71609 or authenticated71610 inheritance | primary71611 follows authenticated process chain; complete gate/receipt reads wrapped in one read snapshot |
-| recognized-stored-catalog recognizedStoredInstalled | 71609 / witness+process inheritance | primary71611 authenticates full chain in one read snapshot; old phases/errors unchanged |
-| process/witness/recognized inherit*Catalog | private verifier empty memory transfer | 71611 explicitly rejects until A2b supports complete fingerprint staging; old71610 inheritance unchanged |
-| platform-business-processes-target list/options/facts | gate processStoredInstalled, caller read transaction | inherits authenticated71611 primary gate; compare complete old71610 DTOs/facts including original cells |
-| platform-recognized-target list/options | gate recognizedStoredInstalled, caller read transaction | inherits authenticated71611 primary gate; compare old71610 DTOs including stored title/NULL |
-| both target detail functions reading correspondence.relationId | current typed relation_id | **B**; 71611 detail remains rejected (missing old column), not mapped or claimed usable |
-| fingerprint-capture capturePhase; verifier phase and stored projections; bootstrap; schema-inventory | explicit71610 branches and earlier phases | **A2b UNWIRED**; no71611 capture/verify/bootstrap/inventory acceptance |
-| fingerprint-command-facts and inherit*Catalog scratch consumers | process stored selection and source-authenticated private scratch | **A2b UNWIRED**; no bypass or partially populated inherited target |
-| collection-target-command / collection-target-replay | exact supported phases +71608 source restriction +71610 process materialization | **A2c UNWIRED** |
-| apply-target-writer/process-target-writer/recognized-target-writer/candidate-scope-write | phase-specific stored fields/capture | **A2c UNWIRED**; no new71611 writer support |
-| H1a target-evidence-read dependencies / H1b relation-evidence-display-target guard | existing evidence ownership, explicit71610 display guard | **A2d UNWIRED**; no71611 DTO acceptance claim |
-| platform-declarations-target gate | exact71608 only | unchanged; do not extend to71610/71611 |
-| db runtime /3 source workers | reject all nonzero phases | unchanged; regression exercised via A1 focused matrix |
-| recognized-witness-write verifyWitnessCollection/verifyWitnessObservation; recognized-stored verifyRecognizedStored | selected-owner certification calls the catalog gates | transitively sees authenticated71611 primary catalog; full fingerprint/staging certification remains **A2b UNRUN**; capture* implementations are unchanged |
-| lib/roster/recognized-witness-target createTargetRecognizedWitnessReader | explicit typed witness source uses witnessInstalled | catalog gate now inherits71611; complete71611 qualification/H3 behavior is **UNRUN**, no qualification rule or public selector changed |
-| historical offline upgrade executors | own source/target phase + immutable receipt | unchanged; do not replay old DDL on successor |
+- H1c71611：必要 correspondence.observation_id、observation.id/collection_id 存在，H1c迁移状态完成。
+- process71610/71611、recognized/witness71609–71611：各自必要列存在，相关迁移状态完成；无递归 catalog/receipt/hash 验证。
+- 查询只读必要表列和小型 migration 状态，不枚举整库schema或逐条比较trigger文本。
+- 来源writer、capture、业务fingerprint、bootstrap、collection command/replay支持完成的71611目标；原输入、原字段、去重及失败回滚沿用现有业务实现。
+- 临时空DB仅用于独立重算业务指纹。复制实际schema和迁移状态使现有writer可执行；无权限注册、catalog/ledger认证或反向DDL重建。
+- FK/schema/完整性/行数/关键字段/原字节核对归离线迁移完成步骤。fingerprintArchiveInventory保留为离线检查，不再放在普通指纹请求路径。
+- 普通runtime及三worker guard不放宽，declarations仍为71608。H1b display和两correspondence detail消费者未全面接线；实际离线FK转接未实施。
 
-A2a uses A1's exact fixed71611 catalog/receipt proof, never only a marker, hash length or phase list. Historical receipt bytes and the fixed predecessor trust root remain unchanged. Calls on71611 execute in one SQLite transaction, including downstream receipt queries. A1's reconstructed71610 validation never enters the71611 branch, so the narrow static module dependency does not recurse on the same target. No success cache is added.
-
-A2a acceptance: populated and empty controlled successors; all catalog primary entrypoints and process/recognized list/options/process-facts; old71610 complete DTO equivalence and literal original cells; standalone process/witness/recognized catalog calls use one snapshot during a second connection's receipt mutation; next request must reject; missing/forged receipt, marker-only, unrelated schema and sqliteX prefix, same-connection mutation refuse without writes; wrong phase retains old errors; declarations and private staging/new writer/capture/display remain closed; detail rejection belongs B. Exact focused/affected/typecheck/catalog/diff and resources are in h1c/a2. C mapping/data migration/rollback/replay are UNRUN.
-
-`readTargetPlatformEvidence` has selected raw/evidence branches without an explicit71610 marker gate already on the accepted base. A2a does not certify or close all such H1a branches; H1b display still explicitly refuses71611. Transitive catalog readiness is not whole-H1a/H2/H3 acceptance. The complete direct-catalog-consumer scan is retained in h1c/a2/direct-catalog-consumers-exact.txt.
-
-## A2b-S original-command reconstruction owner
-
-A2b-S is one independent original-command proof unit spanning authenticated private scratch, inventory, source witness reconstruction and necessary scratch-only writer/candidate dependencies. Main legacy fingerprint verify/capture/bootstrap remains A2b-R UNIMPLEMENTED; A2c collection command/full replay/public writers, A2d display, B/C remain unimplemented. No helper-by-helper ticket split or schema change.
-
-`h1c-fingerprint-context` registers only a genuine FK-ON71611 memory DB with the literal complete source catalog, every table empty (including sqlite_sequence), except exactly query/relation alias highwaters0. Source is full A1 authenticated in one snapshot, or an already registered private context with matching current header/catalog. Context keeps exact source run/checkpoint ledger digest and process71609 predecessor binding. No receipt is copied into memory or rewritten on source. Serializing memory does not copy the capability; each clone must pass fresh empty inheritance. Registered memory is revalidated for phase/FK/catalog at every capability use, including sqliteX user objects. Marker or schema hash alone never authorizes scratch. Primary catalogs still execute full A1 authentication.
-
-| A2b-S actual entry |71611 behavior|
-|---|---|
-| fingerprintArchiveInventory | full A1/context authentication and all archive owners in one snapshot |
-| emptyFingerprintTarget / inherit*Catalog | authenticate source, exact complete catalog and fully empty memory registration; no marker downgrade |
-| verifyOriginalCommand | full target proof and exact source-ledger/context binding before original input/owner/alias/revision/archive/stored projection comparison; one target snapshot |
-| reconstructWitnessCollectionSource | same source-ledger binding and snapshot before copying exact selected original witness archive and conditions |
-| capturePhase / source apply/process writer / candidate helpers | registered scratch only, needed to materialize independent expected command result; **main71611 remains rejected/unsupported** |
-| recognized writer/catalog private gate | existing writer via capturePhase on registered memory only; no main writer activation |
-| process stored projection selection | command-proof comparison uses stored process projection and rejects original stored/uncaptured drift; no new general reader predicate |
-| verifyFingerprint / bootstrapFingerprint main | existing unsupported71611 refusal retained; full legacy/ordinary/reference lane A2b-R not accepted here |
-
-Controlled successor fixtures are test-owned and not C production migration. Source proof and reference identity cannot fold same-version observations, discard original payload keys/order/bytes or repair uncaptured state. Ordinary runtime and three workers still reject all nonzero phases. Original71610 behavior and original baseline FAIL are separate evidence lanes. Follow-up acceptance must cover main verify/bootstrap/capture and its source-specific projection branches before claiming full A2b.
+本候选保留业务 archive byte/hash、source identity、assignment/revision、stored/uncaptured、replay冲突与SQL约束；这些不属于被移除的任意DB篡改防御。

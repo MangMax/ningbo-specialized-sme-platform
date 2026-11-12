@@ -1,8 +1,5 @@
 import { storedProcessProjection } from './process-stored-schema'
-import { inheritProcessStoredCatalog } from './process-stored-catalog'
-import { inheritWitnessCatalog } from './recognized-witness-catalog'
 import { reconstructWitnessCollectionSource } from './recognized-witness-write'
-import { inheritRecognizedStoredCatalog } from './recognized-stored-catalog'
 import Database from 'better-sqlite3'
 import { createHash } from 'node:crypto'
 import { isDeepStrictEqual } from 'node:util'
@@ -14,7 +11,6 @@ import { canonicalPlatformJson, PLATFORM_PROJECTION_RULE } from './observation-p
 import { writeApplyTarget, type ApplyTargetInput } from './apply-target-writer'
 import { writeProcessTarget } from './process-target-writer'
 import { writeRecognizedTarget } from './recognized-target-writer'
-import { authenticateH1cFingerprintCatalog, assertH1cFingerprintSource } from './h1c-fingerprint-context'
 import { verifyProcessStored } from './process-stored-verifier'
 import { verifyRecognizedStored } from './recognized-stored'
 const hash=(v:Buffer|string)=>createHash('sha256').update(v).digest('hex')
@@ -43,12 +39,7 @@ const inputShape=z.object({
 type CommandEvent={observationId:number, originalInput?:unknown}
 type CommandOptions={allowMissingVersionProjection?:boolean}
 export function verifyOriginalCommand(target:Database.Database,predecessor:Database.Database,event:CommandEvent,options:CommandOptions = {}):Buffer {
-  if(target.pragma('user_version',{simple:true})===71611)return target.transaction(()=>{
-    authenticateH1cFingerprintCatalog(target)
-    assertH1cFingerprintSource(target,predecessor)
-    return verifyCommandInSnapshot(target,predecessor,event,options)
-  }).deferred()
-  return verifyCommandInSnapshot(target,predecessor,event,options)
+  return target.transaction(()=>verifyCommandInSnapshot(target,predecessor,event,options)).deferred()
 }
 function verifyCommandInSnapshot(target:Database.Database,predecessor:Database.Database,event:CommandEvent,options:CommandOptions):Buffer {
   const original=event.originalInput
@@ -65,9 +56,6 @@ function verifyCommandInSnapshot(target:Database.Database,predecessor:Database.D
   if(hash(bytes)!==observation.inputFingerprint)throw new Error('Command fingerprint conflict')
   const scratch=new Database(predecessor.serialize());scratch.pragma('foreign_keys=ON')
   try {
-    inheritProcessStoredCatalog(predecessor,scratch)
-    inheritRecognizedStoredCatalog(predecessor,scratch)
-    inheritWitnessCatalog(predecessor,scratch)
     const expected=drizzle(scratch,{schema:s})
     const collection=actual.select().from(s.platformCollection).where(eq(s.platformCollection.id,input.collectionId)).get()
     if(!collection)throw new Error('Command collection missing')

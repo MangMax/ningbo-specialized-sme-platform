@@ -1,4 +1,3 @@
-import { isH1cFingerprintScratch } from './h1c-fingerprint-context'
 import { captureRelationEvidence } from './relation-evidence-snapshot'
 import { candidateObservationValues, verifyCandidateObservation } from './candidate-scope-write'
 import { candidateScopeObservation } from './candidate-scope-schema'
@@ -34,7 +33,7 @@ function positive(value: number) {
 /** A nested SQLite savepoint makes any failure atomic even if an outer caller catches it. */
 export function writeApplyTarget<S extends Record<string, unknown>>(db: BetterSQLite3Database<S>, input: ApplyTargetInput) {
   const capturing = capturePhase(db,true)
-  const stored = db.get<{user_version:number}>(sql`PRAGMA user_version`)?.user_version===71608 || db.get<{user_version:number}>(sql`PRAGMA user_version`)?.user_version===71609 || db.get<{user_version:number}>(sql`PRAGMA user_version`)?.user_version===71610 || isH1cFingerprintScratch(sqliteConnection(db))
+  const stored = db.get<{user_version:number}>(sql`PRAGMA user_version`)?.user_version===71608 || db.get<{user_version:number}>(sql`PRAGMA user_version`)?.user_version===71609 || db.get<{user_version:number}>(sql`PRAGMA user_version`)?.user_version===71610 || db.get<{user_version:number}>(sql`PRAGMA user_version`)?.user_version===71611
   const rawText = input.row.rawFields == null ? null : JSON.stringify(input.row.rawFields)
   const materialized = stored ? applyMaterialization(db,input.row,rawText) : null
   if(materialized && ((input.assignment.nameRaw??null)!==materialized.nameRaw || (input.assignment.usccRaw??null)!==materialized.usccRaw)) throw new Error('apply_stored_conflict: revision1 materialization mismatch')
