@@ -150,8 +150,9 @@ export function writeCollectionTarget<S extends Record<string, unknown>>(db: Bet
   requireCaptureForeignKeys(db)
   const sqlite = replayConnection(db)
   return db.transaction(tx => {
-    if (tx.get<{ user_version: number }>(sql`PRAGMA user_version`)?.user_version !== FINGERPRINT_BASIS_VERSION) throw new Error('Explicit 71607 target required')
+    if (tx.get<{ user_version: number }>(sql`PRAGMA user_version`)?.user_version !== FINGERPRINT_BASIS_VERSION && tx.get<{ user_version: number }>(sql`PRAGMA user_version`)?.user_version !== 71608) throw new Error('Explicit 71607 target required')
     const q = originalQuery(input.queryText)
+    if(tx.get<{user_version:number}>(sql`PRAGMA user_version`)?.user_version===71608 && q.interface!=='apply_list')throw new Error('71608 command supports apply_list only')
     if (!isDeepStrictEqual(q.collectionEvidence ?? null,input.evidenceText === null ? null : JSON.parse(input.evidenceText))) throw new Error('Evidence bytes do not match command')
     const queryKey = optionalString(q.queryKey), queriedAt = optionalString(q.queriedAt)
     if (!queryKey) reject('platform_query','query:0','query_key_required','平台查询缺少 queryKey','queryKey')

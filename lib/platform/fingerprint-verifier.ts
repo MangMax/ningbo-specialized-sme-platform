@@ -1,3 +1,5 @@
+import { verifyApplyStored, APPLY_STORED_KEYS } from './apply-stored-verifier'
+import type { ApplyTargetInput } from './apply-target-writer'
 /** Offline read-snapshot verifier, separately callable for planned and exact-original owners. */
 import {legacyCustodyCells,type LegacyFingerprintCustody} from './legacy-fingerprint-custody'
 import { fingerprintArchiveInventory } from './fingerprint-schema-inventory'
@@ -20,21 +22,21 @@ export class FingerprintVerificationError extends Error {
   readonly kind='platform_relation'
   readonly field='relations'
   readonly ref:string
-  constructor(readonly code:'projection_source_drift'|'projection_mapping_conflict',owner:FingerprintOwner,reason:string){super(reason);this.ref=`relation:${owner.relationAlias}`}
+  constructor(readonly code:'projection_source_drift'|'projection_mapping_conflict'|'apply_stored_conflict'|'apply_stored_uncaptured',owner:FingerprintOwner,reason:string){super(reason);this.ref=`relation:${owner.relationAlias}`}
 }
 export function emptyFingerprintTarget(t:Database.Database) {
   fingerprintArchiveInventory(t)
   const scratch=new Database(':memory:');scratch.pragma('foreign_keys=ON')
   const catalog=t.prepare("select type,sql from sqlite_schema where sql is not null and name not like 'sqlite_%' order by case type when 'table' then 0 when 'index' then 1 else 2 end").all() as {type:string,sql:string}[]
   for(const row of catalog)scratch.exec(row.sql)
-  scratch.pragma('user_version=71607')
+  scratch.pragma('user_version='+t.pragma('user_version',{simple:true}))
   scratch.exec("insert into platform_legacy_alias_sequence(namespace,high_water) values('query',0),('relation',0)")
   return scratch
 }
 const hash=(v:Buffer)=>createHash('sha256').update(v).digest('hex')
 export function verifyFingerprint(t:Database.Database,owner:FingerprintOwner, options: {allowMissingVersionProjection?:boolean, legacyCustody?:LegacyFingerprintCustody} = {}) {
  if(Object.hasOwn(options,'offlineLegacyCells'))throw new Error('Untrusted plain-cell override rejected')
- if(t.pragma('user_version',{simple:true})!==71607)throw new FingerprintVerificationError('projection_source_drift',owner,'Explicit 71607 verifier target required')
+ if(![71607,71608].includes(Number(t.pragma('user_version',{simple:true}))))throw new FingerprintVerificationError('projection_source_drift',owner,'Explicit 71607 verifier target required')
  return t.transaction(()=>{
   const db=drizzle(t,{schema:s}),o=db.select().from(s.platformBusinessObservation).where(eq(s.platformBusinessObservation.id,owner.observationId)).get()
   const alias=db.select().from(s.platformLegacyRelationAlias).where(eq(s.platformLegacyRelationAlias.oldId,owner.relationAlias)).get()
@@ -66,6 +68,7 @@ export function verifyFingerprint(t:Database.Database,owner:FingerprintOwner, op
      const raw=ref.a.storageClass==='null'?null:ref.a.storageClass==='text'&&ref.a.bytes?JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(ref.a.bytes)):undefined
      if(canonicalPlatformJson(raw)!==canonicalPlatformJson(command.row.rawFields??null))throw new Error('Command raw source conflict')
      const restored=Object.hasOwn(command.row,'rawFields')?{...command,row:{...command.row,rawFields:raw}}:command
+     if(t.pragma('user_version',{simple:true})===71608&&db.select().from(s.platformCollection).where(eq(s.platformCollection.id,o.collectionId)).get()?.interface==='apply_list')verifyApplyStored(t,o.id,{kind:'command',input:restored as ApplyTargetInput})
      verifyOriginalCommand(t,scratch,{observationId:o.id,originalInput:restored},options)
     }finally{scratch.close()}
    } else if(b.scheme==='legacy-indexed-v1'||b.scheme==='legacy-bootstrap-v1') {
@@ -75,7 +78,7 @@ export function verifyFingerprint(t:Database.Database,owner:FingerprintOwner, op
   } catch(error) {
    if(error instanceof FingerprintVerificationError)throw error
    const reason=error instanceof Error?error.message:String(error)
-   throw new FingerprintVerificationError(/mapping|record conflict|version conflict|revision1/.test(reason)?'projection_mapping_conflict':'projection_source_drift',owner,reason)
+   throw new FingerprintVerificationError(reason.startsWith('apply_stored_uncaptured')?'apply_stored_uncaptured':reason.startsWith('apply_stored_conflict')?'apply_stored_conflict':/mapping|record conflict|version conflict|revision1/.test(reason)?'projection_mapping_conflict':'projection_source_drift',owner,reason)
   }
  })()
 }
@@ -114,10 +117,11 @@ export function legacyFingerprintInput(t:Database.Database,owner:FingerprintOwne
  let rawFields:unknown=null;try{rawFields=rawText===null?null:JSON.parse(rawText)}catch{}
  const stored={province:text('province'),status:text('status'),batch:text('batch'),declareKind:text('declare_kind'),appliedAt:text('applied_at'),awardBatchLabel:text('award_batch_label'),year:cell('year').storageClass==='null'?null:number('year')}
  const bytes=Buffer.from(canonicalPlatformJson({interface:c.interface,relationKey:o.sourceRelationKey,queryId:q.oldId,sequenceNo:o.sequenceNo,queryKey:c.queryKey,rdjb:c.rdjb,queriedAt:c.queriedAt,rawFields,invalidRaw:rawFields===null?rawText:null}))
- return {db,o,c,raw,rawFields,stored,bytes,createdAt:text('created_at')}
+ return {db,o,c,raw,cells,rawFields,stored,bytes,createdAt:text('created_at')}
 }
 export function verifyLegacyFacts(t:Database.Database,owner:FingerprintOwner,bytes:Buffer,notIndexed=false,options: {allowMissingVersionProjection?:boolean} = {},legacyCustody?:LegacyFingerprintCustody) {
- const {db,o,c,raw,rawFields,stored,createdAt,bytes:expected}=legacyFingerprintInput(t,owner,legacyCustody)
+ const {db,o,c,raw,cells,rawFields,stored,createdAt,bytes:expected}=legacyFingerprintInput(t,owner,legacyCustody)
+ if(c.interface==='apply_list'&&t.pragma('user_version',{simple:true})===71608)verifyApplyStored(t,o.id,{kind:'legacy',cells})
  if(!expected.equals(bytes))throw new Error('Legacy source coordinates drift')
  const plan=planPlatformObservation({interface:c.interface,relationKey:o.sourceRelationKey,rawFields})
  if(!notIndexed&&(o.identityState!==plan.identityState||o.contentState!==plan.contentState||o.keySource!==plan.keySource||!o.indexedAt))throw new FingerprintVerificationError('projection_mapping_conflict',owner,'Legacy indexed mapping conflict')
@@ -138,7 +142,7 @@ export function verifyLegacyFacts(t:Database.Database,owner:FingerprintOwner,byt
   const rows=db.select().from(table).where(eq(table.observationId,o.id)).all(),p=rows[0]
   const wanted={...fields,createdAt,observationId:o.id,versionId:null,recordId:null,ruleVersion:rule,sourceArchiveId:raw.id,basis:state==='valid'?'observation_reconciliation':'unavailable',parseState:state,sourceTitleKind:state==='valid'?sourceValueKind(title):state==='invalid'?'invalid':'absent',sourceTitleText:typeof title==='string'?title:null,sourceTitleNumberText:typeof title==='number'?String(title):null,sourceTitleBoolean:typeof title==='boolean'?Number(title):null,sourceTitleRuleVersion:'t05b-source-projections-v1',...sourceFieldComparison(c.interface,stored,row,state)}
   if(source===c.interface?(rows.length!==1||!p||Object.entries(wanted).some(([k,v])=>!isDeepStrictEqual(Object.fromEntries(Object.entries(p))[k],v))):rows.length!==0)throw new Error('Legacy observation projection drift')
-  if(p)for(const [k,v] of Object.entries(p))if(!Object.hasOwn(wanted,k)&&!['id','sourceValidityDate','sourceMaintenanceBatch','sourceMaintenanceYearAbsent'].includes(k)&&v!==null)throw new Error('Legacy extra observation projection field drift: '+k)
+  if(p)for(const [k,v] of Object.entries(p))if(!Object.hasOwn(wanted,k)&&!['id','sourceValidityDate','sourceMaintenanceBatch','sourceMaintenanceYearAbsent',...(source==='apply_list'&&t.pragma('user_version',{simple:true})===71608?APPLY_STORED_KEYS:[])].includes(k)&&v!==null)throw new Error('Legacy extra observation projection field drift: '+k)
   if(source==='recognized_list'&&p){const fidelity=parseRecognizedSourceFidelity(row??{});for(const [k,v] of Object.entries(fidelity)){const current=Object.fromEntries(Object.entries(p))[k];if(current!==null&&current!==v)throw new Error('Legacy source fidelity drift')}}
   const versions=o.versionId===null?[]:db.select().from(table).where(eq(table.versionId,o.versionId)).all()
   const vf=o.versionId!==null&&source===c.interface?source==='apply_list'?plan.applyRecord:source==='business_list'?plan.businessProjection:plan.recognizedProjection:null
