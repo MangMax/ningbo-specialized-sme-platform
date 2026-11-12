@@ -146,3 +146,17 @@ switch is included; historical T05c receipts retain their original schema hash.
 ## #733 A 见证专用捕获（候选，待独立接受）
 
 参见 [见证输入字段、原语法与 catalog successor](recognized-witness-capture.md)。父级接受实际 fullRange/重复键/页 ordinal 缺口后，授权 collection 的见证专用 gate/state/rule/archive binding、三 condition 的 SQLite-first 类型和值、observation 的见证专用 JS 页原值/ordinal/sequence/source binding。它们与已有 boolean full_range、page_id/position_state、candidate mask 分开，无新业务表、无资格结论。仅显式#732实际catalog后的窄71609 successor安装；旧receipt不改写，writer/replay认证同步，普通runtime guard不变。A候选不代表B reader或全局接受。
+
+## #744 H1c 顺序单元与 catalog 认证（A1）
+
+父级限定同票顺序：A phase/catalog inheritance，B target correspondence typed seam 与 process/recognized 两个 detail 引用消费者，C 固定源→独立目标的实际离线 FK 转接。B/C 等 A 独立接受；A 不构成对应命令、有效性、proof 或公共切换。A 再分 A1 catalog 认证和 A2 必要 phase/capture/fingerprint/replay 接线；本候选仅 A1，不改变现有 phase 适用性。
+
+A1 固定目标 `71611` / `h1c-correspondence-observation-v1`，前驱为完整 `71610` process-stored catalog。只允许 `record_correspondence` 的 nullable `relation_id` 改为 nullable `observation_id`，其 NO ACTION FK 改指 `platform_business_observation(id)`；现有 `record_correspondence_relation_idx` 名称保留、索引列改为 observation_id。其余 catalog（包括 audit 入向 FK、索引、触发器、checks 和全部无关表）必须精确继承前驱；不允许宽泛字符串替换或忽略其他 schema 差异。
+
+认证从实际 sqlite_schema 完整读取并核对两个固定 DDL，反向恢复这两个条目，重建仅驻内存的71610 catalog及保留的历史 run/checkpoint，执行既有 processStoredInstalled 验证。还原 catalog hash 必须同时等于后继 receipt.source_schema_hash 和精确 process receipt.target_schema_version；后继 receipt.target_schema_version 必须等于实际后继 catalog hash。只允许一个完成后继 run 和一个匹配 checkpoint：phase=`h1c-correspondence-fk`、source_table=`record_correspondence`、last_old_id=0。checkpoint.batch_digest 为 SHA256(JSON.stringify({version:1,predecessorRun,predecessorCheckpoints,sourceSchemaHash,targetSchemaHash,copiedCount}))，对象键次序如上；predecessorRun 为完整原 SQL 行，predecessorCheckpoints 按 phase,source_table 排序，copiedCount 为该 checkpoint 的 copied_count。绑定须匹配唯一 process-stored run 的精确原行与 checkpoint，不能仅凭64位长度或 phase 白名单。认证不写当前DB或历史回执，不缓存跨调用判断。
+
+A1 返回 catalog binding，不代表 C 的行迁移/字节/alias/rollback/replay验收，不授权打开运行目标；受控测试后继不是已接受的 C 产物。A2 尚未接线，既有 reader/writer/capture/replay 仍按原 phase 边界拒绝71611，71610保持原行为，declarations原71608-only边界保留。runtime与三worker非零phase拒绝不放宽。
+
+A1 精确验收矩阵：真实完整合成迁移的 populated/空71610前驱；独立测试DDL构造的完整71611 catalog正例；原历史run/checkpoint逐cell bytes不变；marker-only、缺表/错FK/额外列或索引/触发器、错误或重复或未完成run/checkpoint、错误前驱run/源hash/目标hash/digest、71610或其它phase冒充后继均拒绝；每次调用 source/target catalog及facts与回执零写；同连接认证后篡改必须再次拒绝。A1不声称数据转接完成。A2需另验收原各支持phase与真实后继捕获/指纹/写入/full replay及拒绝矩阵；B/C完整验收仍依原票面。
+
+A1 的信任根是本票固定接受前驱完整 catalog SHA256 `a9af200fe3a21866bf65d9138b9b01be6738fb681f9e2bc512cd2bfa700d2776`，须由完整迁移fixture（空与populated）独立重现。数据库内可修改的receipt不是任意新catalog的信任根；即使同时伪造前驱/后继hash和binding digest也不得接受额外schema差异。未来其它schema改动不自动适用本票71611契约，需显式重新核定，不能扩展允许列表绕过。
