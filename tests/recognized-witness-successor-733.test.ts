@@ -89,6 +89,7 @@ it('rejects forged partial catalogs altered barriers or corrupted successor rece
  try{
   const receipts=t.prepare("SELECT * FROM platform_migration_run WHERE run_id<>'witness'").all()
   expect(()=>t.prepare('UPDATE platform_collection SET witness_gate=1 WHERE id=1').run()).toThrow(/immutable/)
+  expect(()=>t.prepare("DELETE FROM platform_collection_condition WHERE collection_id=1 AND name='rddqrq'").run()).toThrow(/immutable/)
   expect(()=>t.prepare("UPDATE platform_business_observation SET witness_rdjb_value='3' WHERE id=1").run()).toThrow(/immutable/)
   t.prepare("UPDATE platform_migration_checkpoint SET batch_digest='bad' WHERE run_id='witness'").run()
   expect(()=>witnessInstalled(t)).toThrow(/receipt/)

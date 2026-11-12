@@ -24,6 +24,8 @@ CREATE TRIGGER recognized_witness_condition_insert BEFORE INSERT ON platform_col
 CREATE TRIGGER recognized_witness_condition_update BEFORE UPDATE ON platform_collection_condition WHEN
  OLD.witness_kind IS NOT NULL AND (${changed('platform_collection_condition')} OR NEW.collection_id<>OLD.collection_id OR NEW.name<>OLD.name)
  BEGIN SELECT RAISE(ABORT,'immutable recognized witness condition'); END;
+CREATE TRIGGER recognized_witness_condition_delete BEFORE DELETE ON platform_collection_condition WHEN OLD.witness_kind IS NOT NULL
+ BEGIN SELECT RAISE(ABORT,'immutable recognized witness condition'); END;
 CREATE TRIGGER recognized_witness_condition_shape BEFORE UPDATE ON platform_collection_condition WHEN
  NEW.witness_kind IS NOT NULL AND (NEW.name NOT IN ('rddqrq','whpcyear','whpc') OR NOT (
  (NEW.witness_kind IN ('absent','null') AND NEW.witness_value IS NULL) OR

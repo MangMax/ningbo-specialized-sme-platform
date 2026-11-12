@@ -15,7 +15,7 @@
 
 ## 完整新增字段矩阵
 
-所有字段前缀 `witness_`，仅显式 successor 注册，普通 `db/schema.ts`/startup migration 不变。已有列、IDs、hash、run/checkpoint、page_id/position_state、candidate mask 不改写。无新业务表。
+所有字段前缀 `witness_`，仅显式 successor 注册，普通 `db/schema.ts`/startup migration 不变。已有列、IDs、hash、run/checkpoint、page_id/position_state、candidate mask 不改写。无新业务表。已捕获的三条件新事实禁止更新或删除，避免通过删行丢失捕获。
 
 | Owner | 新字段 | 类型与含义 |
 |---|---|---|
