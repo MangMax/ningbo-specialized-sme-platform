@@ -110,7 +110,7 @@ collection、observation、version 使用各自类型化 archive FK 附表，PK(
 
 ## 迁移检查点与切换
 
-升级工具位于独立 upgrade 目录，不导入进 server/lib runtime。新增 `platform_migration_run` 保存 run_id、source_snapshot_sha256、source_schema_hash、source_manifest_sha256、target_schema_version、transform_version、state。`platform_migration_checkpoint` PK(run_id,phase,source_table)，含 last_old_id、copied_count、batch_digest。source manifest 包含每表 PK 集、每字段 storage class/字节长度/摘要、引用与页范围，连同一致备份放 Git 外。不能直接 hash 正在写入的 DB 主文件当一致源。
+升级工具位于独立 upgrade 目录，不导入进 server/lib runtime。新增 `platform_migration_run` 保存 run_id、source_snapshot_sha256、source_schema_hash、source_manifest_sha256、target_schema_version、transform_version、state。`platform_migration_checkpoint` PK(run_id,phase,source_table)，含 last_old_id、copied_count、batch_digest。source manifest 包含每表 PK 集、每字段 storage class/字节长度/摘要、引用与页范围，连同一致备份放 Git 外。不能直接 hash 正在写入的 DB 主文件当一致源。S 采用维护窗口停写排空后 SQLite backup 获取独立固定快照（覆盖 WAL 已提交内容），迁移只读快照、写独立 target。无并发写由操作者维持，hash/只读连接不构成写者排除机制；不要求持续锁住活库或独立 lock-owner。原 receipt 绑定的 legacy 快照必须原样保留。见 [操作步骤](apply-stored-offline.md)。
 
 1. 在隔离一致副本冻结源 manifest。先迁 archive+aliases+collection/pages/scope/error/conditions/unfinished，再迁 observation/assignment/三投影 owner 分支，最后转接 references。每批 target insert、映射与 checkpoint 同一事务提交；失败无半批，重放比较原 bytes 和既有映射，不使用 replace。
 2. 继续运行前校验 source snapshot/schema/manifest 和 transform_version 完全相同。不同即拒绝并新建 run，不从旧 cursor 继续。源是有序 PK，不能靠 offset；批次范围和 digest 可独立重算。schema expand 必须容许旧 writer，直到切换，不提前启用新 scope writer 与旧 trigger 双写。

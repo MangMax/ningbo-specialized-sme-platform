@@ -1,4 +1,5 @@
 /** Offline read-snapshot verifier, separately callable for planned and exact-original owners. */
+import {legacyCustodyCells,type LegacyFingerprintCustody} from './legacy-fingerprint-custody'
 import { fingerprintArchiveInventory } from './fingerprint-schema-inventory'
 import Database from 'better-sqlite3'
 import { createHash } from 'node:crypto'
@@ -31,7 +32,8 @@ export function emptyFingerprintTarget(t:Database.Database) {
   return scratch
 }
 const hash=(v:Buffer)=>createHash('sha256').update(v).digest('hex')
-export function verifyFingerprint(t:Database.Database,owner:FingerprintOwner, options: {allowMissingVersionProjection?:boolean} = {}) {
+export function verifyFingerprint(t:Database.Database,owner:FingerprintOwner, options: {allowMissingVersionProjection?:boolean, legacyCustody?:LegacyFingerprintCustody} = {}) {
+ if(Object.hasOwn(options,'offlineLegacyCells'))throw new Error('Untrusted plain-cell override rejected')
  if(t.pragma('user_version',{simple:true})!==71607)throw new FingerprintVerificationError('projection_source_drift',owner,'Explicit 71607 verifier target required')
  return t.transaction(()=>{
   const db=drizzle(t,{schema:s}),o=db.select().from(s.platformBusinessObservation).where(eq(s.platformBusinessObservation.id,owner.observationId)).get()
@@ -67,7 +69,7 @@ export function verifyFingerprint(t:Database.Database,owner:FingerprintOwner, op
      verifyOriginalCommand(t,scratch,{observationId:o.id,originalInput:restored},options)
     }finally{scratch.close()}
    } else if(b.scheme==='legacy-indexed-v1'||b.scheme==='legacy-bootstrap-v1') {
-    verifyLegacyFacts(t,owner,a.bytes,false,options)
+    verifyLegacyFacts(t,owner,a.bytes,false,options,options.legacyCustody)
    } else throw new Error('Unknown fingerprint scheme')
    return {scheme:b.scheme,observationId:o.id}
   } catch(error) {
@@ -79,7 +81,7 @@ export function verifyFingerprint(t:Database.Database,owner:FingerprintOwner, op
 }
 
 const cellsShape=z.object({encoding:z.literal('t05a-sqlite-cells-v1'),fields:z.array(z.object({name:z.string(),storageClass:z.enum(['null','text','integer','real','blob']),hex:z.string(),real64be:z.string().optional()}))})
-export function legacyFingerprintInput(t:Database.Database,owner:FingerprintOwner) {
+export function legacyFingerprintInput(t:Database.Database,owner:FingerprintOwner,legacyCustody?:LegacyFingerprintCustody) {
  const db=drizzle(t,{schema:s}),o=db.select().from(s.platformBusinessObservation).where(eq(s.platformBusinessObservation.id,owner.observationId)).get()!
  const c=db.select().from(s.platformCollection).where(eq(s.platformCollection.id,o.collectionId)).get()!
  const q=db.select().from(s.platformLegacyQueryAlias).where(eq(s.platformLegacyQueryAlias.collectionId,c.id)).get()
@@ -90,10 +92,17 @@ export function legacyFingerprintInput(t:Database.Database,owner:FingerprintOwne
   if(!r||r.sealed!==1||!a||(a.storageClass==='null'?(a.bytes!==null||a.sha256!==null||a.byteLength!==null):(!a.bytes||a.byteLength!==a.bytes.length||a.sha256!==hash(a.bytes))))throw new Error('Legacy archive source conflict')
   return a
  }
- if(db.select().from(s.platformObservationArchiveRef).where(eq(s.platformObservationArchiveRef.ownerId,o.id)).all().length!==3)throw new Error('Legacy archive owner inventory conflict')
- const raw=archive('rawFields'),source=archive('sourceText'),snapshot=archive('legacyRowSnapshot')
- if(snapshot.storageClass!=='blob'||!snapshot.bytes)throw new Error('Legacy cells missing')
- const cells=cellsShape.parse(JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(snapshot.bytes))).fields
+ // Offline S may authenticate a missing snapshot against independently frozen source cells.
+ // Never synthesize a ref or seal. Default runtime/replay still requires the original snapshot.
+ const refs=db.select().from(s.platformObservationArchiveRef).where(eq(s.platformObservationArchiveRef.ownerId,o.id)).all()
+ const hasSnapshot=refs.some(r=>r.field==='legacyRowSnapshot')
+ if(refs.length!==(hasSnapshot?3:2))throw new Error('Legacy archive owner inventory conflict')
+ const raw=archive('rawFields'),source=archive('sourceText'),snapshot=hasSnapshot?archive('legacyRowSnapshot'):null
+ if(snapshot&&(snapshot.storageClass!=='blob'||!snapshot.bytes))throw new Error('Legacy cells missing')
+ if(legacyCustody===undefined&&!snapshot)throw new Error('Legacy cells missing')
+ const archived=snapshot?cellsShape.parse(JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(snapshot.bytes!))).fields:null
+ const cells=legacyCustody===undefined?archived!:cellsShape.parse({encoding:'t05a-sqlite-cells-v1',fields:legacyCustodyCells(legacyCustody!,t,owner.relationAlias)}).fields
+ if(archived&&legacyCustody!==undefined&&!isDeepStrictEqual(cells,archived))throw new Error('Legacy frozen source/snapshot conflict')
  if(new Set(cells.map(c=>c.name)).size!==cells.length)throw new Error('Duplicate legacy cell')
  const cell=(name:string)=>{const v=cells.find(c=>c.name===name);if(!v)throw new Error('Legacy cell missing '+name);return v}
  const text=(name:string)=>{const v=cell(name);if(v.storageClass==='null')return null;if(v.storageClass!=='text')throw new Error('Legacy text class conflict');return new TextDecoder('utf-8',{fatal:true}).decode(Buffer.from(v.hex,'hex'))}
@@ -107,8 +116,8 @@ export function legacyFingerprintInput(t:Database.Database,owner:FingerprintOwne
  const bytes=Buffer.from(canonicalPlatformJson({interface:c.interface,relationKey:o.sourceRelationKey,queryId:q.oldId,sequenceNo:o.sequenceNo,queryKey:c.queryKey,rdjb:c.rdjb,queriedAt:c.queriedAt,rawFields,invalidRaw:rawFields===null?rawText:null}))
  return {db,o,c,raw,rawFields,stored,bytes,createdAt:text('created_at')}
 }
-export function verifyLegacyFacts(t:Database.Database,owner:FingerprintOwner,bytes:Buffer,notIndexed=false,options: {allowMissingVersionProjection?:boolean} = {}) {
- const {db,o,c,raw,rawFields,stored,createdAt,bytes:expected}=legacyFingerprintInput(t,owner)
+export function verifyLegacyFacts(t:Database.Database,owner:FingerprintOwner,bytes:Buffer,notIndexed=false,options: {allowMissingVersionProjection?:boolean} = {},legacyCustody?:LegacyFingerprintCustody) {
+ const {db,o,c,raw,rawFields,stored,createdAt,bytes:expected}=legacyFingerprintInput(t,owner,legacyCustody)
  if(!expected.equals(bytes))throw new Error('Legacy source coordinates drift')
  const plan=planPlatformObservation({interface:c.interface,relationKey:o.sourceRelationKey,rawFields})
  if(!notIndexed&&(o.identityState!==plan.identityState||o.contentState!==plan.contentState||o.keySource!==plan.keySource||!o.indexedAt))throw new FingerprintVerificationError('projection_mapping_conflict',owner,'Legacy indexed mapping conflict')
