@@ -15,10 +15,10 @@ const systemTempDir = tmpdir()
 const close: (() => void)[] = []
 afterEach(() => { vi.restoreAllMocks(); vi.mocked(tmpdir).mockReturnValue(systemTempDir); for (const cleanup of close.splice(0)) cleanup() })
 function universe(size: number) {
-  const dir = mkdtempSync(join(systemTempDir, 'enumeration-702-'))
+  const dir = mkdtempSync(join(process.env.CURRENT_CANDIDATE_READER_EVIDENCE_DIR ?? systemTempDir, 'enumeration-702-'))
   vi.mocked(tmpdir).mockReturnValue(dir)
   const db = useDb({ dbPath: join(dir, 'synthetic.db') })
-  close.push(() => { db.$client.close(); rmSync(dir, { recursive: true, force: true }) })
+  close.push(() => { db.$client.close(); if (!process.env.CURRENT_CANDIDATE_READER_EVIDENCE_DIR) rmSync(dir, { recursive: true, force: true }) })
   // Synthetic input at the candidate boundary: real SQLite iterator, no count or SQL-call oracle.
   vi.spyOn(candidates, 'currentCandidateReadSqlFor').mockReturnValue(`with recursive ids(id) as (select 1 where @title is not null and @rdjb is not null union all select id+1 from ids where id<${size}) select id from ids`)
   return { db: db.$client, file: join(dir, 'out.xlsx') }

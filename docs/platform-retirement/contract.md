@@ -69,7 +69,7 @@ T03b定义上述各源字段及CHECK、T05逐观察转移；W1–W3生成并验�
 | 消费者 | 保留的判据 | 目标读取 |
 |---|---|---|
 | 通用归档 title membership | migration0027 的 `json_valid(...,2)` 和嵌套 json_each/json_extract 两次解析；只收 text 值，保留 error 行 | 原 scope/error 表转 FK；rdjb 本身仍按各消费者原规则使用 |
-| 当前候选 | `current-platform-scope.ts`：单 title 用 title_code/rdjb；多 title 按成功页 fetchedCount 前缀定位，失败页不贡献；无页 title 时回退 query.title_code，仍未知时才按 query.rdjb token membership | 有序 page 的 sequence_start/end，collection title_code 与 rdjb；不以行 title 替代。为旧规则保存命中的 page_id，未知/冲突原样保留 |
+| 当前候选 | `current-platform-scope.ts`：单 title 用 title_code/rdjb；多 title 按成功页 fetchedCount 前缀定位，失败页不贡献；无页 title 时回退 query.title_code，仍未知时才按 query.rdjb token membership | A在原证据边界按旧谓词捕获候选专用mask/state及上下文绑定；B显式71609只消费这些结构化结果，不重算page或以行title替代。见[候选reader](current-candidate-reader.md) |
 | 认定目录列表/选项 | row title 与 query.rdjb/scope 的组合，含已存在 trimmed display 判据和源 scope 冲突 | 来源投影 titleRaw、collection scope/error。逐个保留列表、选项及冲突不同谓词，不能用候选 effectiveTitle 代替 |
 | 差异决定 | `decision-lifecycle-102.ts:202-227` 的 confirmed、企业归属、query key、query rdjb 和多 title 页定位 | assignment、collection、page；多 title 缺页仍拒绝，与候选允许未知 membership 不同 |
 | 范围证明 | `comparison-scope-proof-source.ts:64-73` 完整、fullRange、unfinished空、无窄条件，所选 title 页从1连续到末页 | typed conditions/pages/unfinished；原 source fingerprint 输入见下节 |

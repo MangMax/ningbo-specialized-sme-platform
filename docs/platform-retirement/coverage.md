@@ -163,3 +163,5 @@ Three inherited HTTP baseline FAILs and #705/B409 retain their status.
 ### #731 R4 同票 A/B
 
 实际迁移反例证明页输入不足后，#731 调整为 scope:L 跟踪 A Sourcecapture 与 B R4reader 两个 ≤M 接受项。A 的 [候选专用捕获契约](current-candidate-scope-capture.md)承接原始 SQLite 范围输入；B 仍保留 R4 的独立 PK union/count/page/trace/EXPLAIN、#702/#691 验收。A 不替 B/R5 或全局退役签收，不新增前置票链。
+
+#731 B 的[显式71609候选reader](current-candidate-reader.md)实现typed union/count/order/page/iterator接缝；R5/identity/H/C/X及全局启用仍不由B承接。独立接受仍由父级安排。

@@ -5,6 +5,7 @@ import { CURRENT_RULE_VERSION, prepareCurrentReader, createCurrentQualificationA
 import { resolveRecognizedFactSource, type RecognizedFactSource } from './recognized-filter-source'
 import { currentCandidateBindings, currentCandidateReadSqlFor } from './current-candidates'
 import { readIdentityKeyVariants } from './current-identity-keys'
+import type { CurrentCandidateReader } from './current-candidate-reader'
 
 export interface CurrentQualifiedFilter {
   titleCode: CurrentTitle
@@ -89,6 +90,21 @@ export interface CurrentQualifiedReadOptions {
 }
 /** Count all candidates in one snapshot; hydrate only the requested page. */
 export function listCurrentQualified(db: Database.Database, filter: CurrentQualifiedFilter, readOptions: CurrentQualifiedReadOptions = {}): CurrentQualifiedResult {
+  return listCurrentQualifiedWithCandidates(db, filter, {
+    connection:db,
+    iterate(title, sort) {
+      const order = sort === 'name_asc' ? 'e.name collate nocase asc, c.id asc'
+        : sort === 'name_desc' ? 'e.name collate nocase desc, c.id asc' : 'c.id asc'
+      return db.prepare(`select c.id from (${currentCandidateReadSqlFor(db, readOptions.recognizedFactSource)}) c join enterprise e on e.id=c.id order by ${order}`)
+        .iterate(currentCandidateBindings(title)) as Iterable<{ id: number }>
+    },
+  }, readOptions)
+}
+
+/** Explicit candidate dependency for target integration. R5 assessment/keys below
+ * still require migration before this can serve a finalized target publicly. */
+export function listCurrentQualifiedWithCandidates(db: Database.Database, filter: CurrentQualifiedFilter, candidateReader: CurrentCandidateReader, readOptions: CurrentQualifiedReadOptions = {}): CurrentQualifiedResult {
+  if(candidateReader.connection!==db)throw new Error('Candidate reader must use the caller connection')
   const page = filter.page ?? 1, pageSize = filter.pageSize ?? 25
   const snapshotStartedAt = new Date().toISOString()
   const at = Date.parse(snapshotStartedAt)
@@ -98,9 +114,6 @@ export function listCurrentQualified(db: Database.Database, filter: CurrentQuali
     const recognizedFactSource = resolveRecognizedFactSource(readOptions.recognizedFactSource)
     const assessmentReader = createCurrentQualificationAssessmentReader(db, undefined, { recognizedFactSource })
     const keys = { queries: readIdentityKeyVariants(db, 'queries'), relations: readIdentityKeyVariants(db, 'unassignedRelations') }
-    const order = filter.sort === 'name_asc' ? 'e.name collate nocase asc, c.id asc'
-      : filter.sort === 'name_desc' ? 'e.name collate nocase desc, c.id asc' : 'c.id asc'
-    const candidates = db.prepare(`select c.id from (${currentCandidateReadSqlFor(db, recognizedFactSource)}) c join enterprise e on e.id=c.id order by ${order}`)
     const qName = normalizeName(filter.q ?? ''), qUscc = normalizeUscc(filter.q ?? '')
     const requested = Boolean(qName || qUscc)
     let total = 0
@@ -116,7 +129,7 @@ export function listCurrentQualified(db: Database.Database, filter: CurrentQuali
     }
     const recognitionYears = new Set<number>(), validYears = new Set<number>(), maintenanceYears = new Set<number>()
     const maintenanceBatchesByYear = new Map<number, Set<number>>()
-    for (const { id } of candidates.iterate(currentCandidateBindings(filter.titleCode)) as Iterable<{ id: number }>) {
+    for (const { id } of candidateReader.iterate(filter.titleCode, filter.sort)) {
       const { row, effectiveStatus } = assessmentReader.readFilterCandidate(id, filter.titleCode, at, keys)
       const identityMatch = (!filter.district || row.district === filter.district) && (!filter.q
         || Boolean(qName && [row.name, ...row.aliases].some(name => normalizeName(name).includes(qName)))

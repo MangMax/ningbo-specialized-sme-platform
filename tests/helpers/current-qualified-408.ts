@@ -126,7 +126,7 @@ export function matrix408(sqlite: Database.Database) {
 
 /** Isolated file DB for the later two-connection snapshot control, never a business DB copy. */
 export function fileMatrix408() {
-  const dir = mkdtempSync(join(tmpdir(), 'synthetic408-snapshot-'))
+  const dir = mkdtempSync(join(process.env.CURRENT_CANDIDATE_READER_EVIDENCE_DIR ?? tmpdir(), 'synthetic408-snapshot-'))
   const path = join(dir, 'synthetic.sqlite')
   const sqlite = new Database(path)
   try {
@@ -135,8 +135,8 @@ export function fileMatrix408() {
     const db = drizzle(sqlite, { schema })
     migrate(db, { migrationsFolder: 'db/migrations' })
     db.insert(schema.title).values([...TITLE_SEED]).run()
-    return { sqlite, ...matrix408(sqlite), writer: () => new Database(path), close() { sqlite.close(); rmSync(dir, { recursive: true, force: true }) } }
-  } catch (error) { sqlite.close(); rmSync(dir, { recursive: true, force: true }); throw error }
+    return { sqlite, ...matrix408(sqlite), writer: () => new Database(path), close() { sqlite.close(); if (!process.env.CURRENT_CANDIDATE_READER_EVIDENCE_DIR) rmSync(dir, { recursive: true, force: true }) } }
+  } catch (error) { sqlite.close(); if (!process.env.CURRENT_CANDIDATE_READER_EVIDENCE_DIR) rmSync(dir, { recursive: true, force: true }); throw error }
 }
 
 // Appended after the frozen 41-case fixture prefix: literal reference/scope controls.
