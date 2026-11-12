@@ -41,3 +41,5 @@ writer、指纹认证和归档 FK inventory 共用同一个 catalog 判定。无
 指纹验证的空内存库由已通过上述判定的源显式授权，并独立检查复制的 catalog；该授权仅与内存连接对象绑定，不持久化，也不允许任意文件库省略完成回执。迁移在同一事务中建立回执/checkpoint 后认证原列，失败仍整体回滚。
 
 paired not_indexed 的 reference 路径同样认证 exact cell、原归档绑定和 captured 状态。它不执行 bootstrap、不修复原值，失败仍映射为原 relation alias 的 projection_source_drift。
+
+完成回执的 target_schema_version 必须等于当前实际 catalog 摘要；不能仅按摘要长度放行。该绑定只覆盖结构，不比较会随合法写入变化的历史数据摘要。后续结构升级须显式更新对应接缝，不能继续沿用旧结构回执。

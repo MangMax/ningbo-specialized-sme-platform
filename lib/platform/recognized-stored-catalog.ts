@@ -1,3 +1,4 @@
+import { schemaHash } from './sqlite-row-cells'
 import type Database from 'better-sqlite3'
 import { isDeepStrictEqual } from 'node:util'
 export const RECOGNIZED_STORED_RULE = 'recognized-stored-title-v1'
@@ -33,7 +34,7 @@ function catalogPresent(t:Database.Database) {
 export function recognizedStoredInstalled(t:Database.Database) {
  if(!catalogPresent(t))return false
  if(scratchCatalogs.has(t))return true
- const receipts=t.prepare("SELECT r.run_id FROM platform_migration_run r JOIN platform_migration_checkpoint c ON c.run_id=r.run_id WHERE r.transform_version=? AND r.state='complete' AND length(r.target_schema_version)=64 AND c.phase='recognized-stored' AND c.source_table='platform_recognized_projection' AND c.last_old_id=0 AND c.copied_count>=0 AND length(c.batch_digest)=64").all(RECOGNIZED_STORED_RULE)
+ const receipts=t.prepare("SELECT r.run_id FROM platform_migration_run r JOIN platform_migration_checkpoint c ON c.run_id=r.run_id WHERE r.transform_version=? AND r.state='complete' AND r.target_schema_version=? AND c.phase='recognized-stored' AND c.source_table='platform_recognized_projection' AND c.last_old_id=0 AND c.copied_count>=0 AND length(c.batch_digest)=64").all(RECOGNIZED_STORED_RULE,schemaHash(t))
  const runs=t.prepare('SELECT run_id FROM platform_migration_run WHERE transform_version=?').all(RECOGNIZED_STORED_RULE)
  if(receipts.length!==1||runs.length!==1)throw new Error('recognized_stored_schema_receipt')
  return true

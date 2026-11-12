@@ -75,8 +75,7 @@ it('rejects wrong target bytes and changed successor cells on migration replay',
 it('rolls back new writer effects caught by outer savepoint and refuses immutable exact cell mutation',async()=>{
  const f=await ready();finalizeRecognizedStored(f);const t=new Database(f.target);t.pragma('foreign_keys=ON');const db=drizzle(t,{schema:targetSchema})
  try{
- t.exec("CREATE TRIGGER injected_recognized BEFORE INSERT ON platform_recognized_projection WHEN NEW.observation_id>5 BEGIN SELECT RAISE(ABORT,'injected');END")
- const before=projectionManifest(t);const sequences=t.prepare('SELECT * FROM sqlite_sequence ORDER BY name').all();db.transaction(tx=>expect(()=>writeRecognizedTarget(tx,command(6,'2'))).toThrow('injected'));expect(projectionManifest(t)).toEqual(before);expect(t.prepare('SELECT * FROM sqlite_sequence ORDER BY name').all()).toEqual(sequences)
+ const before=projectionManifest(t);const sequences=t.prepare('SELECT * FROM sqlite_sequence ORDER BY name').all();db.transaction(tx=>expect(()=>tx.transaction(inner=>{writeRecognizedTarget(inner,command(6,'2'));throw new Error('injected')})).toThrow('injected'));expect(projectionManifest(t)).toEqual(before);expect(t.prepare('SELECT * FROM sqlite_sequence ORDER BY name').all()).toEqual(sequences)
  expect(()=>t.exec("UPDATE platform_recognized_projection SET exact_title_raw='drift' WHERE observation_id=1")).toThrow('immutable recognized stored title')
  }finally{t.close()}
 })
@@ -205,4 +204,18 @@ it('rejects incomplete receipts malformed barriers and wrong phase without chang
    expect(t.serialize()).toEqual(before)
   }finally{t.close()}
  }
+},30000)
+it('binds completion receipt to actual catalog while permitting future data writes',async()=>{
+ const f=await ready();finalizeRecognizedStored(f)
+ const t=new Database(f.target);t.pragma('foreign_keys=ON');const db=drizzle(t,{schema:targetSchema})
+ try{
+  const good=writeRecognizedTarget(db,command(6,'2'))
+  verifyFingerprint(t,{observationId:good.observationId,collectionId:1,relationAlias:good.relationAlias})
+  t.prepare('UPDATE platform_migration_run SET target_schema_version=? WHERE run_id=?').run('0'.repeat(64),'recognized-stored')
+  const before=t.serialize()
+  expect(()=>writeRecognizedTarget(db,command(7,'3'))).toThrow('recognized_stored_schema_receipt')
+  expect(()=>verifyFingerprint(t,{observationId:good.observationId,collectionId:1,relationAlias:good.relationAlias})).toThrow('recognized_stored_schema_receipt')
+  expect(()=>fingerprintArchiveInventory(t)).toThrow('recognized_stored_schema_receipt')
+  expect(t.serialize()).toEqual(before)
+ }finally{t.close()}
 },30000)
