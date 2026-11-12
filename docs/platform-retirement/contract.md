@@ -160,3 +160,5 @@ A1 返回 catalog binding，不代表 C 的行迁移/字节/alias/rollback/repla
 A1 精确验收矩阵：真实完整合成迁移的 populated/空71610前驱；独立测试DDL构造的完整71611 catalog正例；原历史run/checkpoint逐cell bytes不变；marker-only、缺表/错FK/额外列或索引/触发器、错误或重复或未完成run/checkpoint、错误前驱run/源hash/目标hash/digest、71610或其它phase冒充后继均拒绝；每次调用 source/target catalog及facts与回执零写；同连接认证后篡改必须再次拒绝。A1不声称数据转接完成。A2需另验收原各支持phase与真实后继捕获/指纹/写入/full replay及拒绝矩阵；B/C完整验收仍依原票面。
 
 A1 的信任根是本票固定接受前驱完整 catalog SHA256 `a9af200fe3a21866bf65d9138b9b01be6738fb681f9e2bc512cd2bfa700d2776`，须由完整迁移fixture（空与populated）独立重现。数据库内可修改的receipt不是任意新catalog的信任根；即使同时伪造前驱/后继hash和binding digest也不得接受额外schema差异。未来其它schema改动不自动适用本票71611契约，需显式重新核定，不能扩展允许列表绕过。
+
+#744 A2a 接线边界与完整 callsite 适用矩阵见 [H1c phase applicability](h1c-phase-applicability.md)。该独立 owner 单元仅认证主连接的 process/witness/recognized catalog 继承和依赖它们的列表/选项/facts 读接缝；A2 其它 owner、B typed/detail 和 C 实际迁移仍待独立接受。A1 的原 catalog 认证边界不变。

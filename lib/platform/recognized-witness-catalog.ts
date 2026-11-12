@@ -1,4 +1,5 @@
 import { processPredecessorSchema } from './process-stored-catalog'
+import { authenticateH1cCatalog, H1C_CATALOG_VERSION } from './h1c-catalog'
 /** Exact #733 A catalog successor to the accepted #732 receipt, not a reader exemption. */
 import type Database from 'better-sqlite3'
 import { isDeepStrictEqual } from 'node:util'
@@ -46,6 +47,12 @@ CREATE TRIGGER recognized_witness_observation_insert BEFORE INSERT ON platform_b
  BEGIN SELECT RAISE(ABORT,'recognized witness capture follows observation'); END;`
 const scratch=new WeakSet<Database.Database>()
 export function witnessCatalogPresent(t:Database.Database) {
+ if(t.pragma('user_version',{simple:true})===H1C_CATALOG_VERSION)return t.transaction(()=>{
+  authenticateH1cCatalog(t);return witnessCatalogInSnapshot(t)
+ }).deferred()
+ return witnessCatalogInSnapshot(t)
+}
+function witnessCatalogInSnapshot(t:Database.Database) {
  const all=t.prepare("SELECT name FROM pragma_table_info('platform_collection') WHERE name LIKE 'witness_%'").all()
  if(!all.length) {
   if(t.prepare("SELECT 1 FROM sqlite_schema WHERE name LIKE 'recognized_witness_%'").get() || t.prepare('SELECT 1 FROM platform_migration_run WHERE transform_version=?').get(WITNESS_TRANSFORM))throw new Error('witness_partial_catalog')
@@ -67,6 +74,12 @@ export function witnessCatalogPresent(t:Database.Database) {
 }
 /** Returns only this one authenticated predecessor's actual catalog hash. */
 export function witnessPredecessorSchema(t:Database.Database):string|null {
+ if(t.pragma('user_version',{simple:true})===H1C_CATALOG_VERSION)return t.transaction(()=>{
+  authenticateH1cCatalog(t);return witnessPredecessorInSnapshot(t)
+ }).deferred()
+ return witnessPredecessorInSnapshot(t)
+}
+function witnessPredecessorInSnapshot(t:Database.Database):string|null {
  if(!witnessCatalogPresent(t))return null
  const rows=t.prepare("SELECT r.source_schema_hash FROM platform_migration_run r JOIN platform_migration_checkpoint c ON c.run_id=r.run_id WHERE r.transform_version=? AND r.state='complete' AND r.target_schema_version=? AND c.phase='recognized-witness' AND c.source_table='platform_collection' AND c.last_old_id=0 AND c.copied_count>=0 AND length(c.batch_digest)=64").all(WITNESS_TRANSFORM,processPredecessorSchema(t)??schemaHash(t)) as {source_schema_hash:string}[]
  const all=t.prepare('SELECT 1 FROM platform_migration_run WHERE transform_version=?').all(WITNESS_TRANSFORM)
@@ -76,11 +89,18 @@ export function witnessPredecessorSchema(t:Database.Database):string|null {
  return rows[0]!.source_schema_hash
 }
 export function witnessInstalled(t:Database.Database) {
+ if(t.pragma('user_version',{simple:true})===H1C_CATALOG_VERSION)return t.transaction(()=>{
+  authenticateH1cCatalog(t);return witnessInstalledInSnapshot(t)
+ }).deferred()
+ return witnessInstalledInSnapshot(t)
+}
+function witnessInstalledInSnapshot(t:Database.Database) {
  if(!witnessCatalogPresent(t))return false
  if(scratch.has(t))return true
  witnessPredecessorSchema(t);return true
 }
 export function inheritWitnessCatalog(source:Database.Database,target:Database.Database) {
+ if(source.pragma('user_version',{simple:true})===H1C_CATALOG_VERSION)throw new Error('h1c_verifier_staging_unwired')
  if(!witnessInstalled(source))return
  if(!target.memory||!witnessCatalogPresent(target)||(target.prepare('SELECT count(*) n FROM platform_business_observation').get() as {n:number}).n!==0)throw new Error('witness_scratch_catalog')
  scratch.add(target)
