@@ -169,3 +169,5 @@ Three inherited HTTP baseline FAILs and #705/B409 retain their status.
 ### #733 R5 同票 A/B
 
 父级接受实际迁移的 fullRange 事实丢失，并授权一次性见证输入捕获：A与B各≤M，先独立接受A再实施B。[A字段矩阵及显式 catalog successor](recognized-witness-capture.md)保存 SQLite-first 门槛/条件与 JS-last 页定位的不同语法；不偷换 full_range、不虚构 page FK、不使用 candidate mask 或目录 display 代替资格见证。A实现候选及fresh/历史FAIL证据位于 r5/capture；尚未独立接受，B、固定asOf全fields、整体公开切换和 fullaffected145 未完成状态不变。
+
+#733 B 的[显式见证 reader 与依赖接缝](recognized-witness-reader.md)候选只读取已接受 A 的结构化门槛/条件/观察绑定，按 UTF16LE hex 恢复 JS property key，不解析 v8/JSON原值。R4/R5组合只做依赖注入；current identity、H/C/X及默认公开路径仍旧读，全局guard保持。独立接受由父级执行，本候选不代表完整名单或生产切换。
