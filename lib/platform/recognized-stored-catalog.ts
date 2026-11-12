@@ -1,4 +1,5 @@
 import { processPredecessorSchema } from './process-stored-catalog'
+import { authenticateH1cCatalog, H1C_CATALOG_VERSION } from './h1c-catalog'
 import { witnessPredecessorSchema } from './recognized-witness-catalog'
 import { schemaHash } from './sqlite-row-cells'
 import type Database from 'better-sqlite3'
@@ -34,6 +35,12 @@ function catalogPresent(t:Database.Database) {
  return true
 }
 export function recognizedStoredInstalled(t:Database.Database) {
+ if(t.pragma('user_version',{simple:true})===H1C_CATALOG_VERSION)return t.transaction(()=>{
+  authenticateH1cCatalog(t);return recognizedStoredInSnapshot(t)
+ }).deferred()
+ return recognizedStoredInSnapshot(t)
+}
+function recognizedStoredInSnapshot(t:Database.Database) {
  if(!catalogPresent(t))return false
  if(scratchCatalogs.has(t))return true
  const receipts=t.prepare("SELECT r.run_id FROM platform_migration_run r JOIN platform_migration_checkpoint c ON c.run_id=r.run_id WHERE r.transform_version=? AND r.state='complete' AND r.target_schema_version=? AND c.phase='recognized-stored' AND c.source_table='platform_recognized_projection' AND c.last_old_id=0 AND c.copied_count>=0 AND length(c.batch_digest)=64").all(RECOGNIZED_STORED_RULE,witnessPredecessorSchema(t)??schemaHash(t))
@@ -43,6 +50,7 @@ export function recognizedStoredInstalled(t:Database.Database) {
 }
 /** Only the verifier's empty in-memory catalog may inherit its validated source state. */
 export function inheritRecognizedStoredCatalog(source:Database.Database,scratch:Database.Database) {
+ if(source.pragma('user_version',{simple:true})===H1C_CATALOG_VERSION)throw new Error('h1c_verifier_staging_unwired')
  if(!recognizedStoredInstalled(source))return
  if(!scratch.memory||!catalogPresent(scratch)|| (scratch.prepare('SELECT count(*) n FROM platform_business_observation').get() as {n:number}).n!==0)throw new Error('recognized_stored_schema_scratch')
  scratchCatalogs.add(scratch)
