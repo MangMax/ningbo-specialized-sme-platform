@@ -178,13 +178,14 @@ function schemaName(value: unknown): string {
   if(!value || typeof value!=='object' || !('name' in value) || typeof value.name!=='string')throw new Error('Expected trigger')
   return value.name
 }
-it.each(['queryList','businessList','queryBusList'] as const)('matches independent public legacy insertion for new %s writer and full replay with divergent target aliases', source => {
+it.each((['queryList','businessList','queryBusList'] as const).flatMap(source => [undefined, '  原文\t', ' \t '].map((sourceText,index)=>({source,sourceText,index}))))('matches independent public legacy insertion for new $source writer sourceText=$sourceText and full replay with divergent target aliases', ({source,sourceText,index}) => {
   const old=new Database(':memory:');migrate(drizzle(old),{migrationsFolder:'db/migrations'})
   const db=drizzle(old,{schema})
   old.exec("INSERT INTO title(code,name_zh,level,rank) VALUES('specialized_sme','专精特新中小企业','municipal',2)")
   const row={id:'fresh-'+source,qymc:'Original',tyshxydm:'91330200712345678A',rdjb:'2',cszt:'pending',year:'2024',whpc:'B',sblx:'申请'}
-  const evidence={source,status:'success' as const,effectiveConditions:{uscc:'91330200712345678A',combination:'and' as const},titleScope:{mode:source==='queryList'?'source_default' as const:'selected' as const,rdjb:source==='queryList'?[]:['2']},queriedAt:'2026-11-12T00:00:00Z',completedAt:'2026-11-12T00:01:00Z',rows:[row],dataRows:[row],pages:[{source,rdjb:source==='queryList'?null:'2',page:1,maxPage:1,status:'success' as const,fetchedCount:1,declaredTotal:1,error:null}],fetchedCount:1,declaredTotal:1,completeness:'complete' as const,fullRange:true,unfinished:[],error:null,limits:{maxRequests:1,maxRows:50,maxDurationMs:1000,pageSize:50}}
+  const evidence={source,status:'success' as const,effectiveConditions:{uscc:'91330200712345678A',combination:'and' as const},titleScope:{mode:source==='queryList'?'source_default' as const:'selected' as const,rdjb:source==='queryList'?[]:['2']},queriedAt:`2026-11-12T00:00:0${index}Z`,completedAt:'2026-11-12T00:01:00Z',rows:[row],dataRows:[row],pages:[{source,rdjb:source==='queryList'?null:'2',page:1,maxPage:1,status:'success' as const,fetchedCount:1,declaredTotal:1,error:null}],fetchedCount:1,declaredTotal:1,completeness:'complete' as const,fullRange:true,unfinished:[],error:null,limits:{maxRequests:1,maxRows:50,maxDurationMs:1000,pageSize:50}}
   const q=platformResultToImport(evidence)
+  if(sourceText!==undefined)q.relations![0]!.sourceText=sourceText
   const request={idempotencyKey:'new-'+source,sourceKind:'platform_archive' as const,sourceIdentity:'synthetic',payload:{platformQueries:[q]}}
   vi.useFakeTimers({toFake:['Date']});vi.setSystemTime(new Date('2026-11-12T01:02:03Z'))
   try{
@@ -207,7 +208,7 @@ it.each(['queryList','businessList','queryBusList'] as const)('matches independe
     expect(readTargetRelationEvidenceDisplay(f.db,selected).sources.get(observation.relationAlias)).toEqual(actual)
     expect(archiveRows()).toEqual(before)
     expect(readTargetRelationEvidenceDisplay(f.db,[{relationId:observation.relationAlias,queryId:result.collectionId}]).sources.get(observation.relationAlias)).toBeNull()
-    save('new-'+source+'.json',{actual,expected})
+    save('new-'+source+'-'+index+'.json',{actual,expected})
   }finally{vi.useRealTimers();old.close()}
 })
 it('has no production consumer and keeps explicit display-only exports separate from sourceReader', () => {

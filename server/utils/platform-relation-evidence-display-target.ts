@@ -139,22 +139,24 @@ export function readTargetRelationEvidenceDisplay<S extends Record<string, unkno
       if (!created) throw new Error('Missing original relation cell: created_at')
       const sourceAlias = snapshots.get(owner.observation.id)!.find(cell => cell.name === 'alias_name_raw')
       if (!sourceAlias) throw new Error('Missing original relation cell: alias_name_raw')
+      const sourceText = snapshots.get(owner.observation.id)!.find(cell => cell.name === 'source_text')
+      if (!sourceText) throw new Error('Missing original relation cell: source_text')
       // The source alias is original evidence text, not the assignment command's alias assertion.
-      return sql`SELECT ${owner.observation.id} AS id, ${cellExpression(created)} AS createdAt, ${cellExpression(sourceAlias)} AS aliasNameRaw`
+      return sql`SELECT ${owner.observation.id} AS id, ${cellExpression(created)} AS createdAt, ${cellExpression(sourceAlias)} AS aliasNameRaw, ${cellExpression(sourceText)} AS sourceText`
     })
-    const originalDisplayById = new Map(chunks(originalDisplayJobs).flatMap(jobs => tx.all<{id: number; createdAt: unknown; aliasNameRaw: unknown}>(sql.join(jobs, sql` UNION ALL `))).map(row => [row.id, row]))
+    const originalDisplayById = new Map(chunks(originalDisplayJobs).flatMap(jobs => tx.all<{id: number; createdAt: unknown; aliasNameRaw: unknown; sourceText: unknown}>(sql.join(jobs, sql` UNION ALL `))).map(row => [row.id, row]))
     for (const owner of owners) {
       const id = owner.observation.id, projection = projections.get(id), archives = observationById.get(id) ?? []
       if (!owner.assignment || !owner.original) throw new Error('Missing observation assignment')
       if (!projection || projection.source !== owner.collection.interface || !projection.captured || projection.row.sourceTitleRuleVersion !== 't05b-source-projections-v1') throw new Error('Missing required source display capture')
       const raw = authenticatedBytes(archives.find(ref => ref.field === 'rawFields'))
-      const sourceText = authenticatedBytes(archives.find(ref => ref.field === 'sourceText'))
+      authenticatedBytes(archives.find(ref => ref.field === 'sourceText'))
       const display = collectionDisplays.get(owner.collection.id)!, facts = projection.row
       const normalizationConflicts = fields.flatMap(([field, , conflict, stored, parsed]) => facts[conflict] && facts[stored] !== null && facts[parsed] !== null ? [{ field, storedValue: facts[stored], rawValue: facts[parsed] }] : [])
       const normalized = Object.fromEntries(fields.map(([field, reconciled]) => [field, facts[reconciled]]))
       const dto = { id: owner.relationId, queryId: owner.queryId, sequenceNo: owner.observation.sequenceNo, relationKey: owner.observation.sourceRelationKey,
         enterpriseId: owner.assignment.enterpriseId, rawFields: raw.bytes === null ? null : JSON.parse(raw.bytes.toString('utf8')), titleRaw: projection.title,
-        sourceText: sourceText.storageClass === 'blob' ? sourceText.bytes : sourceText.bytes?.toString('utf8') ?? null,
+        sourceText: originalDisplayById.get(id)!.sourceText,
         usccRaw: owner.original.usccRaw, nameRaw: owner.original.nameRaw, aliasNameRaw: originalDisplayById.get(id)!.aliasNameRaw,
         ...normalized, matchBasis: owner.assignment.matchBasis, verificationStatus: owner.assignment.verificationStatus,
         createdAt: originalDisplayById.get(id)!.createdAt,
