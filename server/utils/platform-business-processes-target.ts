@@ -1,4 +1,5 @@
-/** Explicit 71610 process reader. Public routing remains separate. */
+/** Explicit 71610/71611 process reader. Public routing remains separate. */
+import {readObservationCorrespondenceRefs} from '../../lib/platform/correspondence-target';
 import { and, count, countDistinct, desc, eq, exists, inArray, isNull, max, min, ne, or, sql } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/sqlite-core';
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3';
@@ -145,7 +146,7 @@ export function getTargetBusinessProcess(db: Db, recordId: number): BusinessProc
         const scopes = scopesByCollection(tx, [...new Set([...queries.map(r => r.collectionId), ...observations.map(r => r.collectionId)])]);
         const byVersion = groupBy(queries, r => String(r.versionId));
         const relations = observations.map(r => r.relationId);
-        const refs = relations.length ? tx.select({ relationId: correspondence.relationId, id: correspondence.id, status: correspondence.status, revision: correspondence.revision }).from(correspondence).where(inArray(correspondence.relationId, relations)).orderBy(correspondence.relationId, correspondence.id).all() : [];
+        const refs = sqliteConnection(tx).pragma('user_version',{simple:true}) === 71611 ? readObservationCorrespondenceRefs(tx,relations) : relations.length ? tx.select({ relationId: correspondence.relationId, id: correspondence.id, status: correspondence.status, revision: correspondence.revision }).from(correspondence).where(inArray(correspondence.relationId, relations)).orderBy(correspondence.relationId, correspondence.id).all() : [];
         const byRelation = groupBy(refs, r => String(r.relationId));
         return { record: { ...record, interface: 'business_list' }, versions: versions.map(r => ({ ...r, titleScopes: orderedScopes((byVersion[String(r.versionId)] ?? []).flatMap(q => scopes.get(q.collectionId) ?? [])) })),
             observations: observations.map(({ collectionId, version, ...r }) => {

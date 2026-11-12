@@ -153,4 +153,4 @@ switch is included; historical T05c receipts retain their original schema hash.
 
 离线迁移完成时统一核对 schema/FK、完整性、行数、PK 与关键字段/原字节；这些检查不因简化运行时而取消。正常业务 fingerprint、原输入/原列语义、replay 去重、事务/FK、备份及数据核对继续保留。计算业务指纹所需的临时空数据库保留，但不复制认证链或维护内存权限/ledger 绑定。
 
-显式 target 的71610/71611来源写入和正常重放共用现有业务代码；未完成迁移应清楚报错。普通 runtime/worker 非零phase guard不变，declarations 原71608边界不扩大。record_correspondence 的实际离线转接和两 detail 消费者仍待完成，不以受控测试目标冒充生产迁移。
+显式 target 的71610/71611来源写入和正常重放共用现有业务代码；未完成迁移应清楚报错。普通 runtime/worker 非零phase guard不变，declarations 原71608边界不扩大。record_correspondence 的实际离线转接、两 detail 消费者和显示接线见 [H1c实际转接契约](h1c-phase-applicability.md#744-实际转接候选)；验收使用实际工具生成的合成目标，不代表生产执行。
