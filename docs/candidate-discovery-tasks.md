@@ -1,5 +1,17 @@
 # 公布事件归档候选任务（#214）
 
+## 71611 目标结构接缝（#747）
+
+候选服务在已完成离线迁移的 71611 SQLite 上使用 collection、observation、当前 assignment、三来源结构化投影和外部 query/relation 别名。公开 ID 仍是别名；任务参数、行检查点、幂等键及 archiveGeneration 不改为内部主键。普通 expand schema 的既有分支保留，全局 runtime、worker、importer 门禁继续关闭。
+
+`generateCandidates` 按原业务内容版本分组，在 SQLite 内筛选、计数及选择业务组后，读取所选组的全部观察。`discoverEventArchives` 则保留原行分页和独立 coverage 分页/计数：认定目录按成功页称号分区，关联办理和申报按既有查询称号规则。两入口不共用猜测的 effectiveTitle。候选字段来自各来源 reader；原档仅用于证据展示、既有指纹及资源字节核算。来源 reader 的 capture 检查限定在所选观察，避免每个事件重扫整个来源。
+
+目标结构的单来源 4 MiB 检查合计 collection 所属 rawResponse、collectionEvidence 与所选 observation 所属 rawFields 的原存储字节。request、legacyRowSnapshot、canonicalRawJson 不重复计费。逐行事务、已有决定保护、25 行检查点、200 事件续片、取消/重启后的显式重试及 #746 年度接力沿用既有实现。
+
+`enqueueArchivedCandidates(..., true)` 可在目标 collection writer 的事务中独立 staging；事务提交后调用 `activateCandidateDiscoveryTasks`。按外部 query ID、最后一条外部 relation ID 和原规则版本去重。此接缝不全局切换采集导入，也不许可向同一采集坐标追加原行。完整 record-comparison/discovery catalog、资格、其它 job 引用外键及旧表退役仍属后续消费者。
+
+## 既有任务与资源契约
+
 `POST /api/roster/correspondences/tasks` 返回 202 和 `jobId`。沿用 API token；同源任务页沿用任务中心浏览器来源检查，不接收浏览器凭据或自由输入操作人。后台行为记录为 agent / candidate-discovery-job，不冒充真实用户。
 
 请求必须有 `clientRequestId`，范围恰选一种：`eventIds`（1–200 个正式事件）、`titleCode`（little_giant/specialized_sme/innovative_sme）或 `queryId`（已归档查询）。可用 `afterEventId` / `throughEventId` 指定有界续片。首次执行冻结最高事件 ID 和最多200个匹配事件，逐页25条候选，单行事务串行提交，逐行让出事件循环。称号范围需显式继续下一片；归档影响范围超过200条时以相同任务类型继续，回执保留后续任务入口。事件与候选页检查点使用既有 job.result，不新增表或迁移。

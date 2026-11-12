@@ -5,6 +5,8 @@ import { and, asc, eq, gt, inArray, sql } from 'drizzle-orm'
 import { z } from 'zod'
 import * as schema from '../../../db/schema'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
+import { correspondenceTarget, correspondenceTable, externalRelationColumn } from '../record-correspondence-store'
+import { candidateTargetSourceBytes, targetCandidateTables } from '../candidate-target-sources'
 import {
   discoverEventArchives,
   EVENT_ARCHIVE_RULE_VERSION,
@@ -83,11 +85,9 @@ function fail(message: string, statusCode = 400): never {
   throw Object.assign(new Error(message), { statusCode })
 }
 /** A query targets only verified identity/name coverage, never every event. No raw columns. */
-function affectedWhere(queryId: number) {
-  const q = schema.platformQuery,
-    r = schema.record,
-    e = schema.enterprise,
-    p = schema.platformRelation
+function affectedWhere(db: Db, queryId: number) {
+  const { q, r: p } = correspondenceTarget(db) ? targetCandidateTables(db) : { q: schema.platformQuery, r: schema.platformRelation }
+  const r = schema.record, e = schema.enterprise
   return sql`exists (select 1 from ${q} where ${q.id} = ${queryId}
     and (coalesce(${q.titleCode}, case ${q.rdjb} when '1' then 'innovative_sme' when '2' then 'specialized_sme' when '3' then 'little_giant' end) = ${r.titleCode}
       or (${q.interface} = 'recognized_list' and ${q.titleCode} is null and instr(',' || ${q.rdjb} || ',', ',' || case ${r.titleCode} when 'innovative_sme' then '1' when 'specialized_sme' then '2' when 'little_giant' then '3' end || ',') > 0))
@@ -120,7 +120,7 @@ function initialize(db: Db, params: Params): CandidateJobResult {
         sql`${v.id} <= ${high}`,
         params.eventIds ? inArray(v.id, params.eventIds) : undefined,
         params.titleCode ? eq(r.titleCode, params.titleCode) : undefined,
-        params.queryId ? affectedWhere(params.queryId) : undefined,
+        params.queryId ? affectedWhere(db, params.queryId) : undefined,
       ),
     )
     .orderBy(asc(v.id))
@@ -173,7 +173,7 @@ const MAX_SOURCE_BYTES = 4 * 1024 * 1024
 /** The existing domain hydrates one selected source for its fingerprint and
  * audit. Bound that work before hydration; discovery never loads the corpus. */
 function checkSourceBudget(db: Db, relationId: number) {
-  const bytes = db
+  const bytes = correspondenceTarget(db) ? candidateTargetSourceBytes(db, relationId) : db
     .select({
       n: sql<number>`length(cast(coalesce(${schema.platformQuery.rawResponse},'') as blob)) + length(cast(coalesce(${schema.platformQuery.collectionEvidence},'') as blob)) + length(cast(coalesce(${schema.platformRelation.rawFields},'') as blob))`,
     })
@@ -250,17 +250,18 @@ async function run(ctx: JobContext, raw: Record<string, unknown>) {
               () => {
                 // All roles count as an existing decision. This check and domain commit
                 // share the immediate lock, closing discovery -> manual-decision races.
+                const correspondence = correspondenceTable(ctx.db)
                 const prior = ctx.db
-                  .select({ status: schema.recordCorrespondence.status })
-                  .from(schema.recordCorrespondence)
+                  .select({ status: correspondence.status })
+                  .from(correspondence)
                   .where(
                     and(
-                      eq(schema.recordCorrespondence.eventId, item.eventId),
+                      eq(correspondence.eventId, item.eventId),
                       eq(
-                        schema.recordCorrespondence.relationId,
+                        externalRelationColumn(ctx.db),
                         edge.relationId,
                       ),
-                      eq(schema.recordCorrespondence.type, edge.type),
+                      eq(correspondence.type, edge.type),
                     ),
                   )
                   .get()
@@ -475,7 +476,7 @@ export function enqueueArchivedCandidates(
 ) {
   const ids: string[] = []
   for (const query of queries) {
-    const q = schema.platformQuery
+    const { q, r } = correspondenceTarget(db) ? targetCandidateTables(db) : { q: schema.platformQuery, r: schema.platformRelation }
     const row = db
       .select({ id: q.id })
       .from(q)
@@ -495,10 +496,10 @@ export function enqueueArchivedCandidates(
       if (!deferDispatch) ensureJobRunnerReady(db)
       const lastRelationId = db
         .select({
-          id: sql<number>`coalesce(max(${schema.platformRelation.id}),0)`,
+          id: sql<number>`coalesce(max(${r.id}),0)`,
         })
-        .from(schema.platformRelation)
-        .where(eq(schema.platformRelation.queryId, row.id))
+        .from(r)
+        .where(eq(sql<number>`${r.queryId}`, row.id))
         .get()!.id
       const clientRequestId = `archive:${row.id}:${lastRelationId}:${EVENT_ARCHIVE_RULE_VERSION}`
       const existing = db

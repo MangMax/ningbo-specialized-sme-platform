@@ -34,11 +34,11 @@ function current(db: Db) { return and(eq(a.observationId, o.id), eq(a.revision, 
 const isolated = or(ne(o.identityState, 'resolved'), ne(o.contentState, 'verified'), isNull(o.versionId));
 /** Capture readiness covers every process observation before business predicates.
  * NULL facts remain readable; absent capture, assignment or aliases never disappear in a join. */
-function gate(db: Db) {
+function gate(db: Db, selected?: ReturnType<typeof inArray>) {
     if (!processStoredInstalled(sqliteConnection(db)))
         fail(409, 'process_target_capture', 'Process reader requires completed 71610 stored capture');
     const missing = db.select({ id: o.id }).from(o).innerJoin(c, eq(c.id, o.collectionId)).leftJoin(p, eq(p.observationId, o.id)).leftJoin(a, current(db)).leftJoin(original, and(eq(original.observationId, o.id), eq(original.revision, 1))).leftJoin(ra, eq(ra.observationId, o.id)).leftJoin(qa, eq(qa.collectionId, c.id))
-        .where(and(eq(c.interface, 'business_list'), or(isNull(p.id), isNull(p.exactStoredState), ne(p.exactStoredState, 'captured'), isNull(p.sqlFactTitleState), ne(p.sqlFactTitleState, 'captured'), isNull(p.exactStoredRule), ne(p.exactStoredRule, 'process-stored-cells-v1'), isNull(p.sqlFactTitleRule), ne(p.sqlFactTitleRule, 'process-legacy-sql-fact-title-v1'), isNull(a.observationId), isNull(original.observationId), isNull(ra.oldId), isNull(qa.oldId)))).limit(1).get();
+        .where(and(selected, eq(c.interface, 'business_list'), or(isNull(p.id), isNull(p.exactStoredState), ne(p.exactStoredState, 'captured'), isNull(p.sqlFactTitleState), ne(p.sqlFactTitleState, 'captured'), isNull(p.exactStoredRule), ne(p.exactStoredRule, 'process-stored-cells-v1'), isNull(p.sqlFactTitleRule), ne(p.sqlFactTitleRule, 'process-legacy-sql-fact-title-v1'), isNull(a.observationId), isNull(original.observationId), isNull(ra.oldId), isNull(qa.oldId)))).limit(1).get();
     if (missing)
         fail(409, 'process_target_uncaptured', 'Process observation has uncaptured original facts or assignment');
 }
@@ -164,10 +164,10 @@ const modeledFields = ['declareKind', 'year', 'appliedAt', 'status', 'batch', 'a
 export function readTargetBusinessProcessFacts(db: Db, relationIds: number[]): Map<number, PlatformObservationFact> {
     const result = new Map<number, PlatformObservationFact>();
     return db.transaction(tx => {
-        gate(tx);
         const original = alias(a, 'original_assignment');
         for (let start = 0; start < relationIds.length; start += 400) {
             const ids = relationIds.slice(start, start + 400);
+            gate(tx, inArray(o.id, tx.select({ id: ra.observationId }).from(ra).where(inArray(ra.oldId, ids))));
             const rows = tx.select({ relationId: ra.oldId, source: p, version: vp, originalName: original.nameRaw, originalUscc: original.usccRaw })
                 .from(ra).innerJoin(o, eq(o.id, ra.observationId)).innerJoin(c, eq(c.id, o.collectionId)).innerJoin(p, eq(p.observationId, o.id))
                 .leftJoin(vp, and(eq(vp.versionId, o.versionId), eq(vp.recordId, o.recordId)))
