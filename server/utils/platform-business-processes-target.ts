@@ -15,7 +15,9 @@ import { businessProcessFilterSchema, BUSINESS_PROCESS_VERSION_LIMIT, BUSINESS_P
 import { withArchiveProcessFacts, type PlatformObservationFact } from '../../lib/platform/observation-facts';
 import type { PlatformNormalizationConflict } from '../../lib/platform/normalization';
 import type { PlatformFilterOptions } from '../../lib/platform/filter-options';
-type Db = BetterSQLite3Database<typeof targetSchema>;
+// Explicit table queries use the injected session/logger, never db.query.
+// Match R1b's connection seam; gate() still requires the actual 71610 catalog.
+type Db = BetterSQLite3Database<typeof targetSchema> | BetterSQLite3Database<typeof import('../../db/schema')>;
 // SQLite's original non-STRICT cells can be BLOB/REAL; keep that explicit here.
 type TargetIsolatedRow = Omit<BusinessProcessIsolatedRow, 'titleRaw' | 'declareKind' | 'businessYear' | 'appliedAt' | 'status' | 'batch' | 'awardBatchLabel' | 'province'> & {
     titleRaw: unknown; declareKind: unknown; businessYear: unknown; appliedAt: unknown; status: unknown; batch: unknown; awardBatchLabel: unknown; province: unknown;

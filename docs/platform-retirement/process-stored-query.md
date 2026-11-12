@@ -128,3 +128,12 @@ A1/A2都不做reader、公开HTTP/MCP/worker切换、global guard解除、H3/H/C
 B仓外交付证据为 `r2a/reader/implementation/{REPORT.md,HANDOFF.md,VALIDATION.json}`，保留原`r2a/reader/REPORT.md`诊断。fresh、inherited、FAIL、UNRUN分别列出；合latest LOCALintegration后以clean SHA/tree重验，交父fresh merger，不自行合入integration或启动后继。
 
 仓外证据 `/Users/mang/.t3/acceptance/platform-complete-migration/r2a/capture/`；原诊断 `/r2a/reader/` 保持。first-red同时保留了误假定TEXT列2024.0会变为2024的断言失败，以及SQL首键与JSON末键确实不等的RED；后续修正期待不抹掉它。各小批自有synthetic逐成员路径/type/mode/length/SHA256/link验证归档后释放，保留restore manifest。没有安装依赖、改共享缓存、子代理、远端写、primary写或业务卷操作。
+
+
+## R2b #735：关联办理 handler 集成
+
+HTTP `business-processes` list/detail、MCP `list_platform_business_processes` / `get_platform_business_process` 和 filter-options 的 business-processes 分支接入上述显式 target reader。沿用原输入 schema、HTTP 参数转换、错误映射和 no-store，不新增 selector/fallback，不改变全局启动及 worker 非零 phase 拒绝。页面继续调用相同 URL；这是集成候选，不能提前部署或视作生产启用。
+
+[handler 测试](../../tests/platform-process-target-http-735.test.ts) 在测试专用 DB 注入下，从真实合成旧源经完整已接受迁移到71610，运行实际 H3 HTTP 与 MCP handler；数据不使用服务返回值 mock。旧 service 和 literal 独立对照 DTO、records/isolated、筛选、分页、全局 options、错误、截断、8cell 原类型及 W 新写/ordinary/reference replay 后读取。SDK transport 未执行，保持 UNRUN。
+
+剩余旧路径：`platform-source-facts.ts` 的 business_list 分派仍调用 `readPlatformBusinessProcessFacts`；其消费者 `platform-business-detail-read.ts`、`record-correspondence-candidates.ts`、`event-annual-process-read.ts`、`lib/comparison-platform.ts` 由 H/C/H3 等 owner 负责。`platform-filter-options.ts` 的旧 business-processes 分支继续保留为旧服务契约，公开 handler 已接 target。`platform-business-read.ts` 的 assignment/scope/enterprise helper 和 `platform-legacy-relation-read.ts` 仍有其他来源消费者，不删除共享模块。recognized handler、worker、导出及全局切换不属本票。完整 W/R/H/C/X 闭合与最终切换验证之前仍禁止生产启用。历史 fullaffected145 UNRUN、REAL-year T05b rejected 与 B409/HTTP/filter-options 证据不改判。交接与新鲜证据在仓外 `r2b/{REPORT.md,HANDOFF.md,VALIDATION.json}`，由父级独立 merger 接受。
