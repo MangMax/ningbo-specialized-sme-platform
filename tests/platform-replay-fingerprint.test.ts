@@ -70,7 +70,7 @@ it.each(['fingerprint','rule','identity','reference-fingerprint'] as const)('ind
   let targetResult:unknown,targetError:unknown
   try{targetResult=writeCollectionTarget(db,ordinary)}catch(e){targetError=e}
   const record={mode,publicResult,publicCommit,targetResult,targetError:targetError instanceof Error?targetError.message:targetError,frozenHash,frozenHashAfter:createHash('sha256').update(readFileSync(frozenSource)).digest('hex'),source,unchanged:before.equals(bytes(sqlite))}
-  writeFileSync('/Users/mang/.t3/acceptance/platform-complete-migration/w4b-replay/post-capture/certified-counterexample-'+mode+'.json',JSON.stringify(record,null,2))
+  writeFileSync(join(process.env.FINGERPRINT_REPLAY_EVIDENCE_DIR ?? '/Users/mang/.t3/acceptance/platform-complete-migration/w4b-replay/post-capture','certified-counterexample-'+mode+'.json'),JSON.stringify(record,null,2))
   old.close();sqlite.close()
   expect(record.frozenHashAfter).toBe(frozenHash)
   expect(publicResult.preflight.conflicts.length>0 || publicCommit?.status==='failed').toBe(true)

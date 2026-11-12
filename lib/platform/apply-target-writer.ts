@@ -1,7 +1,11 @@
+import { sqliteConnection } from './target-connection'
+import { platformApplyStoredObservation as storedObservation, storedApplyProjection } from './apply-stored-schema'
+import { applyMaterialization, capturedApplyValues, APPLY_MATERIALIZATION_RULE } from './apply-materialization'
+import { verifyFingerprint } from './fingerprint-verifier'
 /** W1a explicit finalized-target transaction seam. No public import routing. */
 import { capturePhase, nextObservationId, captureFingerprintBasis, assertCapturedInput } from './fingerprint-capture'
 import { createHash } from 'node:crypto'
-import { and, eq } from 'drizzle-orm'
+import { and, eq, sql } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import type { RosterImportRelation } from '../roster-import-client'
 import { targetSchema as s } from './target-schema'
@@ -25,8 +29,15 @@ function positive(value: number) {
 
 /** A nested SQLite savepoint makes any failure atomic even if an outer caller catches it. */
 export function writeApplyTarget<S extends Record<string, unknown>>(db: BetterSQLite3Database<S>, input: ApplyTargetInput) {
-  const capturing = capturePhase(db)
+  const capturing = capturePhase(db,true)
+  const stored = db.get<{user_version:number}>(sql`PRAGMA user_version`)?.user_version===71608
+  const rawText = input.row.rawFields == null ? null : JSON.stringify(input.row.rawFields)
+  const materialized = stored ? applyMaterialization(db,input.row,rawText) : null
+  if(materialized && ((input.assignment.nameRaw??null)!==materialized.nameRaw || (input.assignment.usccRaw??null)!==materialized.usccRaw)) throw new Error('apply_stored_conflict: revision1 materialization mismatch')
   return db.transaction(tx => {
+    // S requires revision1 before observation INSERT; its incoming FK is immediate.
+    // Defer within this transaction, never disable FK enforcement or reset before COMMIT.
+    if(stored) tx.run(sql`PRAGMA defer_foreign_keys=ON`)
     positive(input.collectionId); positive(input.position.sequenceNo)
     if (input.assignment.origin !== 'command' || !input.assignment.actor || !input.assignment.basis) throw new Error('Explicit command provenance required')
     if (input.row.sequenceNo !== input.position.sequenceNo) throw new Error('Observation position mismatch')
@@ -48,24 +59,25 @@ export function writeApplyTarget<S extends Record<string, unknown>>(db: BetterSQ
       if (existing.inputFingerprint !== fingerprint || existing.projectionRuleVersion !== PLATFORM_PROJECTION_RULE) throw new Error('observation_payload_conflict')
       const alias = tx.select().from(s.platformLegacyRelationAlias).where(eq(s.platformLegacyRelationAlias.observationId, existing.id)).get()
       if (!alias) throw new Error('Missing observation alias')
-      return { observationId: existing.id, recordId: existing.recordId, versionId: existing.versionId, relationAlias: alias.oldId, reused: true }
+      if(stored) verifyFingerprint(sqliteConnection(tx),{observationId:existing.id,collectionId:existing.collectionId,relationAlias:alias.oldId})
+      return { observationId: existing.id, recordId: existing.recordId, versionId: existing.versionId, relationAlias: alias.oldId, reused: true, ...(stored?{materializationRule:APPLY_MATERIALIZATION_RULE}:{}) }
     }
     const observationId = capturing ? nextObservationId(tx) : undefined
     if (capturing) captureFingerprintBasis(tx, observationId!, 'target-command-v1', inputBytes)
     const { recordId, versionId, now } = ensureApplyTargetContent(tx, plan)
-    const observation = tx.insert(s.platformBusinessObservation).values({ id: observationId, collectionId: collection.id, ...input.position, sourceRelationKey: input.row.relationKey ?? null, recordId, versionId, identityState: plan.identityState, contentState: plan.contentState, keySource: plan.keySource, projectionRuleVersion: PLATFORM_PROJECTION_RULE, inputFingerprint: fingerprint, indexedAt: now }).returning().get()
+    if(stored) tx.insert(s.platformObservationAssignment).values({...input.assignment,observationId:observationId!,revision:1}).run()
+    const observation = tx.insert(stored ? storedObservation : s.platformBusinessObservation).values({ ...(stored ? {applyExactOwnerId:observationId,applyExactState:'captured' as const,applySqlFactTitleState:'captured' as const}:{}), id: observationId, collectionId: collection.id, ...input.position, sourceRelationKey: materialized ? materialized.sourceRelationKey : input.row.relationKey ?? null, recordId, versionId, identityState: plan.identityState, contentState: plan.contentState, keySource: plan.keySource, projectionRuleVersion: PLATFORM_PROJECTION_RULE, inputFingerprint: fingerprint, indexedAt: now }).returning().get()
     const assignment = { ...input.assignment, observationId: observation.id, revision: 1 }
-    tx.insert(s.platformObservationAssignment).values(assignment).run()
-    const rawText = raw === null ? null : JSON.stringify(raw)
+    if(!stored) tx.insert(s.platformObservationAssignment).values(assignment).run()
     const rawArchive = insertArchiveValue(tx, rawText === null ? { storageClass: 'null', bytes: null, createdAt: now } : { storageClass: 'text', bytes: Buffer.from(rawText), createdAt: now })
     bindArchive(tx, { kind: 'observation', ownerId: observation.id, field: 'rawFields', archiveId: rawArchive })
     const sourceArchive = insertArchiveValue(tx, input.row.sourceText == null ? { storageClass: 'null', bytes: null, createdAt: now } : { storageClass: 'text', bytes: Buffer.from(input.row.sourceText), createdAt: now })
     bindArchive(tx, { kind: 'observation', ownerId: observation.id, field: 'sourceText', archiveId: sourceArchive })
     sealArchiveOwner(tx, { kind: 'observation', ownerId: observation.id })
     const title = raw?.rdjb
-    tx.insert(s.platformApplyProjection).values({ observationId: observation.id, basis: raw === null ? 'unavailable' : 'observation_reconciliation', parseState: raw === null ? 'absent' : 'valid', sourceArchiveId: rawArchive, ...(plan.applyRecord ?? parseApplyRecord(raw)), ruleVersion: APPLY_PROJECTION_RULE, sourceTitleKind: sourceValueKind(title), sourceTitleText: typeof title === 'string' ? title : null, sourceTitleNumberText: typeof title === 'number' ? String(title) : null, sourceTitleBoolean: typeof title === 'boolean' ? Number(title) : null, sourceTitleRuleVersion: 't05b-source-projections-v1', ...sourceFieldComparison('apply_list', { province: input.row.province ?? null, status: input.row.status ?? null, batch: input.row.batch ?? null, declareKind: input.row.declareKind ?? null, appliedAt: input.row.appliedAt ?? null, awardBatchLabel: input.row.awardBatchLabel ?? null, year: input.row.year ?? null }, raw, raw === null ? 'absent' : 'valid') }).run()
+    tx.insert(stored ? storedApplyProjection : s.platformApplyProjection).values({ ...(materialized ? capturedApplyValues(materialized):{}), observationId: observation.id, basis: raw === null ? 'unavailable' : 'observation_reconciliation', parseState: raw === null ? 'absent' : 'valid', sourceArchiveId: rawArchive, ...(plan.applyRecord ?? parseApplyRecord(raw)), ruleVersion: APPLY_PROJECTION_RULE, sourceTitleKind: sourceValueKind(title), sourceTitleText: typeof title === 'string' ? title : null, sourceTitleNumberText: typeof title === 'number' ? String(title) : null, sourceTitleBoolean: typeof title === 'boolean' ? Number(title) : null, sourceTitleRuleVersion: 't05b-source-projections-v1', ...sourceFieldComparison('apply_list', { province: input.row.province ?? null, status: input.row.status ?? null, batch: input.row.batch ?? null, declareKind: input.row.declareKind ?? null, appliedAt: input.row.appliedAt ?? null, awardBatchLabel: input.row.awardBatchLabel ?? null, year: input.row.year ?? null }, raw, raw === null ? 'absent' : 'valid') }).run()
     const relationAlias = allocateLegacyAlias(tx, { kind: 'relation', observationId: observation.id })
-    return { observationId: observation.id, recordId, versionId, relationAlias, reused: false }
+    return { observationId: observation.id, recordId, versionId, relationAlias, reused: false, ...(stored?{materializationRule:APPLY_MATERIALIZATION_RULE}:{}) }
   })
 }
 

@@ -998,7 +998,7 @@ export const platformObservationAssignment = definePlatformObservationAssignment
  * immutable content version; the composite owner FK prevents a version/record mismatch.
  * Fields are copied from the archived raw row only (null when absent), never inferred.
  */
-export function definePlatformApplyProjection(observationId: () => AnySQLiteColumn) { return sqliteTable('platform_apply_projection', {
+export function applyProjectionFields(observationId: () => AnySQLiteColumn) { return {
   id: integer('id').primaryKey({ autoIncrement: true }),
   observationId: integer('observation_id').references(observationId, { onDelete: 'restrict' }),
   basis: text('basis', { enum: ['verified_raw', 'observation_reconciliation', 'unavailable'] }).notNull().default('verified_raw'),
@@ -1067,6 +1067,9 @@ export function definePlatformApplyProjection(observationId: () => AnySQLiteColu
   yearConflict: integer('year_conflict'),
   ruleVersion: text('rule_version').notNull(),
   createdAt: text('created_at').notNull().$defaultFn(() => new Date().toISOString()),
+} }
+export function definePlatformApplyProjection(observationId: () => AnySQLiteColumn) { return sqliteTable('platform_apply_projection', {
+  ...applyProjectionFields(observationId),
 }, t => [
   uniqueIndex('platform_apply_projection_version_uq').on(t.versionId),
   uniqueIndex('platform_apply_projection_observation_uq').on(t.observationId),

@@ -12,14 +12,17 @@ import { insertArchiveValue, bindArchive, sealArchiveOwner } from './target-arch
 import { PLATFORM_PROJECTION_RULE } from './observation-plan'
 export function bootstrapFingerprint(t:Database.Database,owner:FingerprintOwner,mode:'ordinary'|'reference') {
  const db=drizzle(t,{schema:s})
- if(!capturePhase(db))throw new Error('Explicit 71607 bootstrap target required')
+ if(!capturePhase(db,true))throw new Error('Explicit 71607 bootstrap target required')
  try {return db.transaction(tx=>{
   const o=tx.select().from(s.platformBusinessObservation).where(eq(s.platformBusinessObservation.id,owner.observationId)).get()
   const alias=tx.select().from(s.platformLegacyRelationAlias).where(eq(s.platformLegacyRelationAlias.oldId,owner.relationAlias)).get()
   if(!o||o.collectionId!==owner.collectionId||alias?.observationId!==o.id)throw new FingerprintVerificationError('projection_source_drift',owner,'Bootstrap owner conflict')
   if(o.identityState!=='not_indexed')return verifyFingerprint(t,owner)
   if(o.contentState!=='not_indexed'||[o.recordId,o.versionId,o.keySource,o.projectionRuleVersion,o.inputFingerprint,o.indexedAt,o.batchId].some(v=>v!==null))throw new FingerprintVerificationError('projection_mapping_conflict',owner,'Invalid paired not_indexed')
-  if(mode==='reference')return null
+  if(mode==='reference'){
+   if(t.pragma('user_version',{simple:true})===71608){const {bytes}=legacyFingerprintInput(t,owner);verifyLegacyFacts(t,owner,bytes,true)}
+   return null
+  }
   const {c,rawFields,stored,bytes}=legacyFingerprintInput(t,owner)
   verifyLegacyFacts(t,owner,bytes,true)
   const scratch=emptyFingerprintTarget(t)

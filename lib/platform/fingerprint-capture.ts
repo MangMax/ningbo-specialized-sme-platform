@@ -8,11 +8,11 @@ import { insertArchiveValue } from './target-archive'
 export function requireCaptureForeignKeys<S extends Record<string,unknown>>(db:BetterSQLite3Database<S>) {
   if(db.get<{foreign_keys:number}>(sql`PRAGMA foreign_keys`)?.foreign_keys!==1)throw new Error('fingerprint writes require foreign_keys=ON before entry')
 }
-export function capturePhase<S extends Record<string,unknown>>(db:BetterSQLite3Database<S>) {
+export function capturePhase<S extends Record<string,unknown>>(db:BetterSQLite3Database<S>, allowApplyStored=false) {
   requireCaptureForeignKeys(db)
   const phase=db.get<{user_version:number}>(sql`PRAGMA user_version`)?.user_version
-  if(![71605,71606,71607].includes(phase!))throw new Error('Explicit finalized target required')
-  return phase===71607
+  if(![71605,71606,71607,...(allowApplyStored?[71608]:[])].includes(phase!))throw new Error('Explicit finalized target required')
+  return phase===71607||phase===71608
 }
 /** Must run inside the writer savepoint, serialized by its write transaction. */
 export function nextObservationId<S extends Record<string,unknown>>(db:BetterSQLite3Database<S>) {
@@ -24,7 +24,7 @@ export function nextObservationId<S extends Record<string,unknown>>(db:BetterSQL
 }
 /** A RELEASE is provisional; caller owning the outer transaction must COMMIT/rollback. */
 export function captureFingerprintBasis<S extends Record<string,unknown>>(db:BetterSQLite3Database<S>, observationId:number, scheme:'target-command-v1'|'legacy-bootstrap-v1', bytes:Buffer) {
-  if(!capturePhase(db))throw new Error('Explicit 71607 capture target required')
+  if(!capturePhase(db,true))throw new Error('Explicit 71607 capture target required')
   return db.transaction(tx=>{
     const fingerprint=createHash('sha256').update(bytes).digest('hex')
     const archiveId=insertArchiveValue(tx,{storageClass:'blob',bytes,createdAt:null},{sha256:fingerprint})
