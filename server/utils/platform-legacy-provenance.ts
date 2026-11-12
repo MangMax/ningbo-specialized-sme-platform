@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { isDeepStrictEqual } from 'node:util'
-import { and, eq, getTableColumns, inArray, sql } from 'drizzle-orm'
+import { and, eq, sql } from 'drizzle-orm'
 import * as schema from '../../db/schema'
 import { legacyPlatformProvenanceSchema, type LegacyPlatformCollection, type LegacyPlatformProvenanceInput } from '../../lib/platform/legacy-provenance'
 import { recognizedStoredStatus } from '../../lib/platform/recognized-evidence'
@@ -13,18 +13,7 @@ export class LegacyProvenanceError extends Error {
 }
 function reject(code: string, message: string): never { throw new LegacyProvenanceError(code, message) }
 
-/** Bounded metadata read; callers must keep this distinct from collectionEvidence. */
-export function readLegacyPlatformProvenance(db: Pick<Executor, 'select'>, queryIds: readonly number[]) {
-  const { collection: _collection, ...columns } = getTableColumns(schema.platformQueryLegacyProvenance)
-  const ids = [...new Set(queryIds)]
-  const result = new Map<number, { kind: 'legacy_pagination' } & Omit<typeof schema.platformQueryLegacyProvenance.$inferSelect, 'collection'> & { collection: Omit<LegacyPlatformCollection, 'rows'> }>()
-  for (let start = 0; start < ids.length; start += 400) {
-    const rows = db.select({ ...columns, collection: sql<string>`json_remove(${schema.platformQueryLegacyProvenance.collection}, '$.rows')` })
-      .from(schema.platformQueryLegacyProvenance).where(inArray(schema.platformQueryLegacyProvenance.queryId, ids.slice(start, start + 400))).all()
-    for (const row of rows) result.set(row.queryId, { ...row, kind: 'legacy_pagination', collection: JSON.parse(row.collection) })
-  }
-  return result
-}
+export { readLegacyPlatformProvenance } from '../../lib/platform/legacy-provenance'
 
 /** Both planning and execution read the original rows. No projection or normalized fallback. */
 export function inspectLegacyPlatformProvenance(db: Executor, input: LegacyPlatformProvenanceInput, expectedFingerprint?: string) {

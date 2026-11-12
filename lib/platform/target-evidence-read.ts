@@ -5,7 +5,7 @@ import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import { z } from 'zod'
 import { targetSchema as s } from './target-schema'
 import { resolveLegacyReference, readOwnerArchive } from './target-archive'
-import { MAX_EVIDENCE_CHUNK_BYTES, type PlatformEvidenceInput } from './evidence-read'
+import { MAX_EVIDENCE_CHUNK_BYTES, type PlatformEvidenceInput } from './evidence-contract'
 
 import { platformQueryResultShape } from './live-query'
 import { relationEvidenceColumns } from './relation-evidence-snapshot'
@@ -115,8 +115,10 @@ export function readTargetPlatformEvidence<S extends Record<string,unknown>>(db:
     if(input.field==='relations') {
       const total=tx.select({n:sql<number>`count(*)`}).from(o).where(eq(o.collectionId,ref.collectionId)).get()!.n
       const rows=tx.select({id:a.oldId,sequenceNo:o.sequenceNo}).from(o).leftJoin(a,eq(a.observationId,o.id)).where(eq(o.collectionId,ref.collectionId)).orderBy(o.sequenceNo).limit(pageSize).offset(Math.min(Number.MAX_SAFE_INTEGER,(page-1)*pageSize)).all()
-      if(rows.some(row=>row.id===null))throw new Error('Missing observation alias')
-      return {queryId,field:input.field,total,page,pageSize,rows}
+      return {queryId,field:input.field,total,page,pageSize,rows:rows.map(row=>{
+        if(row.id===null)throw new Error('Missing observation alias')
+        return {...row,id:row.id}
+      })}
     }
     if(ref.kind==='collection') {
       if(input.field==='relation')throw new Error('Observation reference required')

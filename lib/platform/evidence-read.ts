@@ -3,23 +3,17 @@ import { eq, getTableColumns, sql } from 'drizzle-orm'
 import { z } from 'zod'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../db/schema'
+import { readTargetPlatformEvidence } from './target-evidence-read'
+import { queryHistoryTarget } from './query-history-target'
+import { MAX_EVIDENCE_CHUNK_BYTES, type PlatformEvidenceInput, type PlatformEvidenceResult } from './evidence-contract'
+export { MAX_EVIDENCE_CHUNK_BYTES, type PlatformEvidenceInput } from './evidence-contract'
 
 type Db = BetterSQLite3Database<typeof schema>
-export const MAX_EVIDENCE_CHUNK_BYTES = 65536
 export const platformEvidenceInputSchema = z.object({
   queryId: z.number().int().positive(), field: z.enum(['rawResponse', 'collectionEvidence', 'legacyProvenance', 'relations', 'relation']),
   relationId: z.number().int().positive().optional(), offset: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER - MAX_EVIDENCE_CHUNK_BYTES).optional(),
   length: z.number().int().min(1).max(MAX_EVIDENCE_CHUNK_BYTES).optional(), page: z.number().int().positive().optional(), pageSize: z.number().int().min(1).max(200).optional(),
 }).strict().refine(input => input.field !== 'relation' || input.relationId != null)
-export interface PlatformEvidenceInput {
-  queryId: number
-  field: 'rawResponse' | 'collectionEvidence' | 'legacyProvenance' | 'relations' | 'relation'
-  relationId?: number
-  offset?: number
-  length?: number
-  page?: number
-  pageSize?: number
-}
 function invalid(): never { throw Object.assign(new Error('Invalid platform evidence parameters'), { statusCode: 400, statusMessage: 'Invalid platform evidence parameters' }) }
 function integer(value: number | undefined, fallback: number, min: number, max: number): number {
   const n = value ?? fallback
@@ -27,7 +21,8 @@ function integer(value: number | undefined, fallback: number, min: number, max: 
   return n
 }
 function missing(): never { throw Object.assign(new Error('Platform evidence not found'), { statusCode: 404, statusMessage: 'Platform evidence not found' }) }
-export function readPlatformQueryEvidence(db: Db, input: PlatformEvidenceInput) {
+export function readPlatformQueryEvidence(db: Db, input: PlatformEvidenceInput): PlatformEvidenceResult {
+  if (queryHistoryTarget(db)) return readTargetPlatformEvidence(db, input)
   return db.transaction(tx => readEvidenceSnapshot(tx, input))
 }
 function readEvidenceSnapshot(db: Pick<Db, 'select'>, input: PlatformEvidenceInput) {
