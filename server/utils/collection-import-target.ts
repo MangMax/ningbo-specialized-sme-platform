@@ -1,14 +1,17 @@
 /** Explicit caller-owned import composition. Ordinary runtime/worker guards stay closed. */
 import { and, eq } from 'drizzle-orm'
+import { createHash } from 'node:crypto'
 import type { Executor } from './roster-import'
 import { targetSchema as s } from '../../lib/platform/target-schema'
 import { sqliteConnection } from '../../lib/platform/target-connection'
 import { targetReplaySource, writeCollectionTarget, CollectionReplayError } from '../../lib/platform/collection-target-replay'
 import { readDifferenceCollection } from '../../lib/platform/difference-sources'
-import { verifyFingerprint } from '../../lib/platform/fingerprint-verifier'
+import { verifyFingerprint, legacyFingerprintInput, FingerprintVerificationError } from '../../lib/platform/fingerprint-verifier'
+import { bootstrapFingerprint } from '../../lib/platform/fingerprint-bootstrap'
+import { queryHistoryTarget } from '../../lib/platform/query-history-target'
 import { normalizeUscc } from '../../lib/domain'
 import { normalizePlatformRelation } from '../../lib/platform/normalization'
-import { planPlatformObservation, PLATFORM_RAW_HASH_RULE, PlatformProjectionError } from './platform-business-record'
+import { planPlatformObservation, PLATFORM_PROJECTION_RULE, PLATFORM_RAW_HASH_RULE, PlatformProjectionError } from './platform-business-record'
 import { captureQueryRevision113 } from './evidence-impact-113'
 import type { RosterImportPlatformQuery, RosterImportItemResult } from '../../lib/roster-import-client'
 import type { PlatformProjectionResult } from '../../lib/platform/business-record'
@@ -35,6 +38,68 @@ export function collectionImportProjection(db: Executor, relationId: number) {
   const result = collectionProjection(db, relationId)
   verifyFingerprint(sqliteConnection(db), { observationId: result.row.id, collectionId: result.row.collectionId, relationAlias: relationId })
   return result
+}
+/** Explicit historical command: reference admission is read-only, including first indexing. */
+export function historicalObservationPlan(db: Executor, relationId: number) {
+  if (!queryHistoryTarget(db)) throw new Error('Historical target command requires a complete 71612 target')
+  const { row, interface: source } = collectionProjection(db, relationId)
+  const connection = sqliteConnection(db)
+  const owner = { observationId: row.id, collectionId: row.collectionId, relationAlias: relationId }
+  try {
+    let inputFingerprint: string
+    let rawFields: unknown = null
+    if (row.identityState === 'not_indexed') {
+      // An existing sealed lifecycle is never an invitation to capture another input.
+      const basis = s.platformObservationFingerprintBasis
+      if (db.select({ id: basis.observationId }).from(basis).where(eq(basis.observationId, row.id)).get()) verifyFingerprint(connection, owner)
+      bootstrapFingerprint(connection, owner, 'reference')
+      const original = legacyFingerprintInput(connection, owner)
+      rawFields = original.rawFields
+      inputFingerprint = createHash('sha256').update(original.bytes).digest('hex')
+    } else {
+      verifyFingerprint(connection, owner)
+      // Certification above validates this sealed source, its original scheme and mapping.
+      const ref = s.platformObservationArchiveRef, archive = s.platformArchiveValue
+      const original = db.select({ bytes: archive.bytes }).from(ref).innerJoin(archive, eq(archive.id, ref.archiveId))
+        .where(and(eq(ref.ownerId, row.id), eq(ref.field, 'rawFields'))).get()
+      try { rawFields = original?.bytes == null ? null : JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(original.bytes)) } catch { /* original malformed bytes remain unverifiable */ }
+      if (row.inputFingerprint == null) throw new PlatformProjectionError('projection_source_drift', 'Original fingerprint missing')
+      inputFingerprint = row.inputFingerprint
+    }
+    return { ...planPlatformObservation({ interface: source, relationKey: row.sourceRelationKey, rawFields }),
+      relationId, interface: source, inputFingerprint, projectionRuleVersion: PLATFORM_PROJECTION_RULE }
+  } catch (error) {
+    if (error instanceof FingerprintVerificationError) throw new PlatformProjectionError(error.code, error.message)
+    throw error
+  }
+}
+
+/** The import caller owns indexing, basis and receipt in the same transaction. */
+export function ensureHistoricalObservation(db: Executor, relationId: number, expected?: string): PlatformProjectionResult {
+  const plan = historicalObservationPlan(db, relationId)
+  if (expected && expected !== plan.inputFingerprint) throw new PlatformProjectionError('projection_source_drift', `Original relation ${relationId} changed since preflight`)
+  const before = collectionProjection(db, relationId)
+  const record = plan.platformKey == null ? undefined : db.select().from(s.platformBusinessRecord)
+    .where(and(eq(s.platformBusinessRecord.interface, plan.interface), eq(s.platformBusinessRecord.platformKey, plan.platformKey))).get()
+  const version = !record || !plan.contentHash ? undefined : db.select().from(s.platformBusinessRecordVersion)
+    .where(and(eq(s.platformBusinessRecordVersion.recordId, record.id), eq(s.platformBusinessRecordVersion.hashAlgorithm, PLATFORM_RAW_HASH_RULE), eq(s.platformBusinessRecordVersion.contentHash, plan.contentHash))).get()
+  const table = plan.interface === 'apply_list' ? s.platformApplyProjection : plan.interface === 'business_list' ? s.platformBusinessProjection : s.platformRecognizedProjection
+  const projection = version ? db.select({ id: table.id }).from(table).where(eq(table.versionId, version.id)).get() : undefined
+  try {
+    bootstrapFingerprint(sqliteConnection(db), { observationId: before.row.id, collectionId: before.row.collectionId, relationAlias: relationId }, 'ordinary')
+  } catch (error) {
+    if (error instanceof FingerprintVerificationError) throw new PlatformProjectionError(error.code, error.message)
+    throw error
+  }
+  const { row } = collectionImportProjection(db, relationId)
+  if (row.identityState === 'not_indexed' || row.contentState === 'not_indexed' || row.keySource == null || row.projectionRuleVersion == null || row.inputFingerprint == null) throw new PlatformProjectionError('projection_missing', 'Historical observation was not indexed')
+  const created = row.versionId != null && !projection
+  return { relationId, recordId: row.recordId, versionId: row.versionId, identityState: row.identityState, contentState: row.contentState, keySource: row.keySource,
+    projectionRuleVersion: row.projectionRuleVersion, inputFingerprint: row.inputFingerprint, syncRequested: true,
+    recordCreated: row.recordId != null && !record, versionCreated: row.versionId != null && !version, observationCreated: before.row.identityState === 'not_indexed',
+    ...(row.versionId == null ? {} : plan.interface === 'apply_list' ? { applyProjectionCreated: created, applyProjectionReused: !created }
+      : plan.interface === 'business_list' ? { businessProjectionCreated: created, businessProjectionReused: !created }
+        : { recognizedProjectionCreated: created, recognizedProjectionReused: !created }) }
 }
 /** Preflight business fields come from source-owned projections after original admission. */
 export function collectionImportPreview(db: Executor, relationId: number) {

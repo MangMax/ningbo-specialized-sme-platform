@@ -1,4 +1,5 @@
-import { collectionImportTarget, collectionImportSource, collectionImportPreview, writeImportedCollection, verifyImportedCollectionFields } from './collection-import-target'
+import { collectionImportTarget, collectionImportSource, collectionImportPreview, writeImportedCollection, verifyImportedCollectionFields, historicalObservationPlan, ensureHistoricalObservation } from './collection-import-target'
+import { queryHistoryTarget } from '../../lib/platform/query-history-target'
 import { targetCandidateTables } from './candidate-target-sources'
 import { targetDifferenceReason } from '../../lib/platform/difference-reference-target'
 import { readDifferenceCollection, readDifferenceCollectionScope, readDifferenceObservation } from '../../lib/platform/difference-sources'
@@ -1519,7 +1520,7 @@ export function planRosterImport(
   for (const { relationId } of payload.platformRecordObservations ?? []) {
     const expected = previousSources?.find(row => row.relationId === relationId)?.inputFingerprint
     try {
-      const projection = readPlatformObservationPlan(db, relationId)
+      const projection = queryHistoryTarget(db) ? historicalObservationPlan(db, relationId) : readPlatformObservationPlan(db, relationId)
       platformObservationSources.push({ relationId, inputFingerprint: expected ?? projection.inputFingerprint })
       if (expected && projection.inputFingerprint !== expected) throw new PlatformProjectionError('projection_source_drift', `Original relation ${relationId} changed since preflight`)
       const apply = applyProjectionPreview(projection)
@@ -1598,7 +1599,7 @@ export function planRosterImport(
 
 function projectionItem(tx: Executor, relationId: number, batchId?: number, expected?: string): RosterImportItemResult {
   try {
-    return success('platform_observation', `relation:${relationId}`, { canonicalProjection: [ensurePlatformObservation(tx, relationId, batchId, expected)], rowsWritten: 0 })
+    return success('platform_observation', `relation:${relationId}`, { canonicalProjection: [queryHistoryTarget(tx) ? ensureHistoricalObservation(tx, relationId, expected) : ensurePlatformObservation(tx, relationId, batchId, expected)], rowsWritten: 0 })
   } catch (error) {
     if (!(error instanceof PlatformProjectionError)) throw error
     return failure('platform_observation', `relation:${relationId}`, error.code, error.message)

@@ -1,0 +1,17 @@
+# Explicit historical observation indexing (#753)
+
+The existing `platformRecordObservations:[{relationId}]` command accepts an explicitly injected, completed 71612 database. The existing history readiness owner checks phase, necessary columns and migration completion. Schema0 keeps its original implementation; global database and worker guards remain closed.
+
+`roster-import.ts` selects this command's target adapter in `collection-import-target.ts`. External relation aliases resolve the observation and its actual collection. Physical observation IDs do not substitute for absent aliases.
+
+Preflight verifies indexed observations with the accepted fingerprint verifier, retaining their original scheme, input hash and mapping. For paired `not_indexed`, reference admission and the existing legacy input owner plan the original hash without indexing or capturing a basis. An existing sealed lifecycle must pass verification; `uncaptured` cannot become a new input. Preview fields retain the original source parser and public projection semantics.
+
+Commit rechecks the frozen input. Only this ordinary command invokes the accepted `bootstrapFingerprint` owner. Source writers and recognized witness staging remain inside that owner. Indexed observations undergo verification without recapture. Current assignment revision2+ stays separate from original identity and fingerprint input. Source observation projections retain each observation's fields even when the content version is shared.
+
+The caller retains the transaction containing source indexing, basis, import batch and receipt. The existing completion verifier checks the target mapping and projections. `rowsWritten` remains zero for this repair command; record/version/observation and source projection flags retain their original public counting meanings. First indexing counts as `observationCreated` even though migration already materialized the physical observation.
+
+Same-key commit returns the original receipt. The service's evidence-convergence replay remains unchanged, and the HTTP replay endpoint retains its explicit 400 rejection of historical projection commands. References never bootstrap.
+
+`tests/platform-historical-observation-753.test.ts` seeds synthetic history before the complete offline chain through71612. It compares schema0 public results and independent literal fingerprints, raw bytes and counts; exercises three sources, first indexing, indexed confirmation, shared versions, source conflicts, aliases, assignment revisions, bounded input, freeze, rollback/retry, populated historical receipts/113/decisions/audits, and existing H3/MCP handlers on the same injected database. SQL traces cover the actual target connection. Private scratch reconstruction belongs to the accepted fingerprint/bootstrap owners and is separate from that trace.
+
+Sealed source/capture damage and absent derived projections rejected by offline owners remain repair boundaries. This command does not rebuild migration evidence or alter source constraints. Provenance supplementation, enterprise merge/attribution correction, fresh live reuse, transport/jobs/workers, remaining FKs/DROP and global activation retain their separate owners. Qualification #738–742, schema/API/UI/hash changes, real databases and production are outside this slice. Handler execution does not establish compiled Nuxt, served OpenAPI, MCP dispatcher/auth, full suite/build/browser/CI or complete #706/#690 acceptance.

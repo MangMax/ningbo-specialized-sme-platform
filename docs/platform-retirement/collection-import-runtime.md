@@ -22,7 +22,7 @@ The generic `/api/platform/queries` and its evidence route still use `lib/platfo
 
 | Owner | Remaining implementation |
 | --- | --- |
-| Historical `platformRecordObservations` repair | `roster-import.ts` historical planning and `projectionItem`; `platform-business-record.ts` legacy original/index routines |
+| Schema0 historical `platformRecordObservations` repair | `platform-business-record.ts` retains legacy original/index routines; explicit completed target command uses [the #753 adapter](historical-observation-runtime.md) |
 | `platformLegacyProvenance` supplementation | `roster-import.ts` provenance planning; `platform-legacy-provenance.ts` |
 | Enterprise merge/attribution correction commands | `roster-import.ts` merge planning/execution, legacy relation transfer and lifecycle conflict readers; their separate correction owners |
 | Schema0 collection imports | Original `writePlatformQuery`, `reusedPlatformQuery`, legacy original adapter and schema0 field verifier |
