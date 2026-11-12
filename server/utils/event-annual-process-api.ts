@@ -1,8 +1,7 @@
 import { z } from 'zod'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../db/schema'
-import { readEventAnnualProcess } from './event-annual-process-read'
-import { enrichAnnualProcessFinalQualification } from './annual-correspondence-read'
+import { readQualifiedAnnualProcess } from './annual-correspondence-read'
 
 const id = z.coerce.number().int().positive().max(Number.MAX_SAFE_INTEGER)
 const pagination = z.strictObject({ page: id.default(1), pageSize: id.max(200).default(50) })
@@ -19,10 +18,7 @@ export function handleEventAnnualProcessRequest(request: { method: string; id: u
   if (!parsedId.success || !parsedPage.success) return error(400, 'invalid_request', 'Invalid event or pagination')
   try {
     const db = context.db
-    const result = db.transaction(() => {
-      const read = readEventAnnualProcess(db, parsedId.data)
-      return read ? enrichAnnualProcessFinalQualification(db, read) : null
-    })
+    const result = readQualifiedAnnualProcess(db, parsedId.data)
     if (!result) return error(404, 'not_found', 'Official award/review event not found')
     const { page, pageSize } = parsedPage.data
     const total = result.process.steps.length

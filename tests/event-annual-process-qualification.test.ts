@@ -97,7 +97,7 @@ it('blocks independent enrichment of an old read after another connection commit
   expect(old).toEqual(original)
 })
 
-it.each(['later-business', 'manual-unlink'])('keeps read and enrichment in one outer read snapshot while another WAL connection commits %s between them', change => {
+it.each(['later-business', 'manual-unlink'])('keeps annual source and decision qualification in one snapshot while another WAL connection commits %s after source read', change => {
   const f = fixture(); const original = f.add(); const receipt = f.confirm()
   const before = annualReader.readEventAnnualProcess(f.readonly, f.event.id)!
   const actualRead = annualReader.readEventAnnualProcess, transactions: boolean[] = [], generations: string[] = []
@@ -114,12 +114,13 @@ it.each(['later-business', 'manual-unlink'])('keeps read and enrichment in one o
     return result
   })
   const body = f.read()
-  // Keep #251's independent generation recheck; both reads share the API snapshot.
-  expect(spy).toHaveBeenCalledTimes(2)
+  // The public adapter owns one snapshot; independent enrichment still rechecks
+  // its generation, while this path reuses its already-read annual source.
+  expect(spy).toHaveBeenCalledTimes(1)
   spy.mockRestore()
   expect(body.process.finalQualification).toMatchObject({ status: 'confirmed', decisionRefs: [{ relationId: original.id, requiresRevalidation: false }] })
-  expect(transactions).toEqual([true, true])
-  expect(generations).toEqual([before.sourceGeneration, before.sourceGeneration])
+  expect(transactions).toEqual([true])
+  expect(generations).toEqual([before.sourceGeneration])
   expect(body.sourceGeneration).toBe(before.sourceGeneration); expect(body.sourceRefs).toEqual(before.sourceRefs)
   const after = f.read()
   if (change === 'later-business') {

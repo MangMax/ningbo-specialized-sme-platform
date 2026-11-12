@@ -2,6 +2,7 @@ import { identityFunctions } from '../../lib/roster/enterprise-read-snapshot'
 import type Database from 'better-sqlite3'
 import { createHash } from 'node:crypto'
 import { and, asc, eq, inArray, or, sql } from 'drizzle-orm'
+import { alias } from 'drizzle-orm/sqlite-core'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../db/schema'
 import { normalizeUscc } from '../../lib/domain'
@@ -13,6 +14,9 @@ import { readPlatformBusinessGroups, readPlatformBusinessMetadata } from './plat
 import { readPlatformObservationFacts } from './platform-source-facts'
 import { normalizedUscc } from './event-archive-discovery'
 import { platformQueryResultShape } from '../../lib/platform/live-query'
+import { correspondenceTable, correspondenceTarget, externalRelationColumn } from './record-correspondence-store'
+import { ANNUAL_COMPARISON_RAW_LIMIT, readTargetAnnualSources, readTargetAnnualHistory } from './annual-process-target-sources'
+import { targetSchema } from '../../lib/platform/target-schema'
 
 type Db = BetterSQLite3Database<typeof schema>
 const hash = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex')
@@ -27,10 +31,15 @@ export function readEventAnnualProcess(db: Db, eventId: number): EventAnnualProc
 }
 type ScalarQuery = { toSQL(): { sql: string; params: unknown[] } }
 type Scope = NonNullable<ReturnType<typeof sourceScope>>
-type Rows = ReturnType<Scope['rowsQuery']['all']>
+type Rows = Array<Omit<ReturnType<Scope['rowsQuery']['all']>[number], 'declareKind' | 'rawFields' | 'sourcePage' | 'sourceRdjb'> & {
+  declareKind: string | null
+  rawFields: Record<string, unknown> | null
+  sourcePage: number | null
+  sourceRdjb: string | null
+}>
 type Titles = ReturnType<Scope['titlesQuery']['all']>
 type Queries = ReturnType<Scope['queriesQuery']['all']>
-function sourceScope(db: Db, eventId: number, admitHeader?: (query: ScalarQuery, keys: string[]) => void, includeUnknownBusinessTitle = false) {
+function eventScope(db: Db, eventId: number, admitHeader?: (query: ScalarQuery, keys: string[]) => void) {
   const v = schema.recordEvent, rec = schema.record, ent = schema.enterprise
   // Explicit event projection: the admitted header has a fixed arity, so a new
   // record_event column must not widen it or silently change the source digest.
@@ -45,6 +54,12 @@ function sourceScope(db: Db, eventId: number, admitHeader?: (query: ScalarQuery,
   const identity = normalizeUscc(event.record.usccRaw)
   const businessYear = event.eventType === 'review' ? event.decidedYear : event.year
   const kind: 'review' | 'apply' = event.eventType === 'review' ? 'review' : 'apply'
+  return { headerQuery, joined, event, owner, titleCode, businessYear, kind, identity }
+}
+function sourceScope(db: Db, eventId: number, admitHeader?: (query: ScalarQuery, keys: string[]) => void, includeUnknownBusinessTitle = false) {
+  const header = eventScope(db, eventId, admitHeader)
+  if (!header) return null
+  const { headerQuery, joined, event, owner, titleCode, businessYear, kind, identity } = header
   const q = schema.platformQuery, r = schema.platformRelation, a = schema.enterpriseAlias
   const subjectKeys = [...(identity ? [identity] : []), `name:${joined.enterprise.nameNorm}`]
   const aliasKeys = db.select({ key: sql<string>`'name:' || ${a.nameNorm}` }).from(a).where(and(eq(a.enterpriseId, owner), eq(a.verificationStatus, 'confirmed')))
@@ -66,7 +81,13 @@ function sourceScope(db: Db, eventId: number, admitHeader?: (query: ScalarQuery,
   // Legacy columns remain in the scoped row projection for the explicit comparison
   // admission/resource contract. Annual facts themselves come from the source-specific
   // readPlatformObservationFacts seam, never from this raw extraction.
-  const processRaw = sql`case when json_valid(${r.rawFields}) then json_extract(${r.rawFields}, ${sql.join(PLATFORM_PROCESS_RAW_KEYS.map(key => sql`${`$.${key}`}`), sql`, `)}) else null end`.mapWith(platformProcessRawFromJson)
+  // The annual comparison admission owns seven process fields. Row rdjb is not
+  // consumed by this algorithm; including it silently widens its frozen raw7 fee.
+  const annualRawKeys = PLATFORM_PROCESS_RAW_KEYS.filter(key => key !== 'rdjb')
+  const processRaw = sql`case when json_valid(${r.rawFields}) then json_extract(${r.rawFields}, ${sql.join(annualRawKeys.map(key => sql`${`$.${key}`}`), sql`, `)}) else null end`.mapWith(value => {
+    const { rdjb: _rowTitle, ...facts } = platformProcessRawFromJson(value)
+    return facts
+  })
   const matchingIdentity = and(or(eq(r.enterpriseId, owner), sql`${r.enterpriseId} is null`),
     or(identity ? sql`${normalizedUscc(r.usccRaw)} = ${identity}` : and(eq(r.enterpriseId, owner), eq(r.verificationStatus, 'confirmed')), and(sql`${normalizedUscc(r.usccRaw)} = ''`, or(eq(r.enterpriseId, owner), inArray(q.queryKey, subjectKeys), inArray(q.queryKey, aliasKeys)))))!
   const pagePosition = (field: 'page' | 'rdjb') => sql`(select json_extract(value, ${`$.${field}`}) from (
@@ -87,9 +108,9 @@ function sourceScope(db: Db, eventId: number, admitHeader?: (query: ScalarQuery,
   // ID-only private projections let admission prove existence without touching
   // raw7/page metadata or allocating annual DTOs. Default reads never execute it.
   const rowIdsQuery = db.select({ relationId: r.id }).from(q).innerJoin(r, eq(r.queryId, q.id)).where(and(queryScope, matchingIdentity))
-  return { headerQuery, joined, event, owner, titleCode, businessYear, kind, queriesQuery, rowsQuery, titlesQuery, relatedIds, rowIdsQuery }
+  return { ...header, queriesQuery, rowsQuery, titlesQuery, relatedIds, rowIdsQuery }
 }
-function prepareObservations(db: Db, scope: Scope, rows: Rows, titleScopeRows: Titles, queries: Queries, metadata: ReturnType<typeof readPlatformBusinessMetadata>, useSourceFacts = true) {
+function prepareObservations(db: Db, scope: NonNullable<ReturnType<typeof eventScope>>, rows: Rows, titleScopeRows: Titles, queries: Queries, metadata: ReturnType<typeof readPlatformBusinessMetadata>, useSourceFacts = true, suppliedFacts?: Map<number, PlatformObservationFact>) {
   const { joined, event, owner, titleCode, businessYear, kind } = scope
   const eventId = event.id
   const coverage: AnnualProcessCoverage[] = queries.map(row => ({ queryId: row.queryId, interface: row.interface, queriedAt: row.queriedAt, status: row.status, completeness: row.completeness, fullRange: row.fullRangeValue == null ? null : row.fullRangeValue === 1 }))
@@ -100,8 +121,8 @@ function prepareObservations(db: Db, scope: Scope, rows: Rows, titleScopeRows: T
   // contract does not change; the default annual read uses the source-specific seam.
   let normalizedRows: Array<{ row: Rows[number]; query: Queries[number]; facts: PlatformObservationFact | ReturnType<typeof normalizePlatformRelation> }>
   if (useSourceFacts) {
-    const factsByRelation = new Map<number, PlatformObservationFact>()
-    for (const [interfaceName, scopedRows] of Map.groupBy(rows, row => queryMap.get(row.queryId)!.interface)) {
+    const factsByRelation = suppliedFacts ?? new Map<number, PlatformObservationFact>()
+    if (!suppliedFacts) for (const [interfaceName, scopedRows] of Map.groupBy(rows, row => queryMap.get(row.queryId)!.interface)) {
       for (const [relationId, fact] of readPlatformObservationFacts(db, interfaceName, scopedRows.map(row => row.id))) factsByRelation.set(relationId, fact)
     }
     normalizedRows = rows.map(row => {
@@ -190,6 +211,7 @@ function finishRead(prepared: ReturnType<typeof prepareObservations>, groups: Pl
   return { input: { event, groups, coverage, scopeGaps }, read: { process, sourceRefs, sourceGeneration: hash(sourceRefs) } }
 }
 function readSnapshot(db: Db, eventId: number): EventAnnualProcessRead | null {
+  if (correspondenceTarget(db)) return readAnnualProcessBatch(db, [eventId]).get(eventId)?.read ?? null
   const scope = sourceScope(db, eventId)
   if (!scope) return null
   const queries = scope.queriesQuery.all()
@@ -201,9 +223,44 @@ function readSnapshot(db: Db, eventId: number): EventAnnualProcessRead | null {
   return finishRead(prepared, groups, () => evidenceQuery(db, eventId).all()).read
 }
 
+/** One source context for a request, shared by events of the same enterprise/title.
+ * No context survives the transaction or supplies facts to another request. */
+export function readAnnualProcessBatch(db: Db, eventIds: readonly number[], includeUnknownBusinessTitle = false) {
+  if (!correspondenceTarget(db)) return new Map(eventIds.flatMap(id => {
+    const scope = sourceScope(db, id)
+    if (!scope) return []
+    const rows = scope.rowsQuery.all(), titles = scope.titlesQuery.all(), queries = scope.queriesQuery.all()
+    const metadata = readPlatformBusinessMetadata(db, [...rows.map(r => r.id), ...titles.map(r => r.relationId)])
+    const prepared = prepareObservations(db, scope, rows, titles, queries, metadata)
+    return [[id, finishRead(prepared, readPlatformBusinessGroups(db, prepared.observations, metadata), () => evidenceQuery(db, id).all())] as const]
+  }))
+  const scopes = [...new Set(eventIds)].flatMap(id => {
+    const scope = eventScope(db, id)
+    return scope ? [scope] : []
+  })
+  const sources = readTargetAnnualSources(db, scopes, includeUnknownBusinessTitle)
+  const metadata = readPlatformBusinessMetadata(db, [...new Set([...sources.values()].flatMap(s => [...s.rows.map(r => r.id), ...s.titles.map(t => t.relationId)]))])
+  const prepared = scopes.map(scope => {
+    const source = sources.get(scope.event.id)!
+    // The comparison seam historically reconciles stored/raw observation fields;
+    // the annual read uses version facts. Preserve that existing distinction.
+    const facts = includeUnknownBusinessTitle ? new Map([...source.facts].map(([id, f]) => [id, { ...f, ...f.archiveProcessFacts }])) : source.facts
+    return prepareObservations(db, scope, source.rows, source.titles, source.queries, metadata, true, facts)
+  })
+  const groups = readPlatformBusinessGroups(db, prepared.flatMap(p => p.observations), metadata)
+  const e = schema.recordEvidence, file = schema.storedFile
+  const evidence = eventIds.length ? db.select({ ...evidenceFields(), eventId: e.recordEventId }).from(e).leftJoin(file, eq(file.relPath, e.sourceFile)).where(inArray(e.recordEventId, [...eventIds])).orderBy(e.id).all() : []
+  const byEvent = Map.groupBy(evidence, e => e.eventId)
+  return new Map(prepared.map(p => [p.event.id, finishRead(p, groups.filter(g => g.observationRefs[0]?.target.eventId === p.event.id),
+    () => (byEvent.get(p.event.id) ?? []).map(({ eventId: _eventId, ...row }) => row))]))
+}
+
+export type AnnualEventScope = NonNullable<ReturnType<typeof eventScope>>
+export type AnnualSourceRows = { rows: Rows; titles: Titles; queries: Queries; facts: Map<number, PlatformObservationFact> }
+
 /** Stricter admission for the explicit comparison only. W is a policy charge,
  * not an output, heap or RSS bound. All SQL scans remain data dependent. */
-const comparisonCaps = { rows: 64, titles: 64, history: 128, decisions: 128, evidence: 160, raw: 4096, proof: 4096, proofElements: 100, scalar: 1048576, source: 65536, charge: 16777216 } as const
+const comparisonCaps = { rows: 64, titles: 64, history: 128, decisions: 128, evidence: 160, raw: ANNUAL_COMPARISON_RAW_LIMIT, proof: 4096, proofElements: 100, scalar: 1048576, source: 65536, charge: 16777216 } as const
 const unavailable = (): never => { throw new Error('platform_comparison_scope_unavailable') }
 const resource = (): never => { throw new Error('input_resource_limit') }
 const quoted = (name: string) => `"${name}"`
@@ -257,12 +314,13 @@ function comparisonZeroMask() {
 type ClosureMetadata = ReturnType<typeof readPlatformBusinessMetadata> extends Map<number, infer M> ? M : never
 type ClosureNode = ClosureMetadata & { queryId: number; relationKey: string | null; usccRaw: string | null; isAnnualRow: number }
 type ClosureHistory = { recordId: number; relationId: number; queryId: number }
-type ClosureQuery = { id: number; interface: string; title_code: string | null; rdjb: string; metadata: string | null }
+type ClosureQuery = { id: number; interface: string; title_code: string | null; rdjb: string; metadata: string | null; structuredTitle?: string | null }
 type ClosureDecision = { relationId: number; eventId: number | null; predecessorEventId: number | null; enterpriseId: number | null; titleCode: string }
 const closureTitles: Record<string, string> = { '1': 'innovative_sme', '2': 'specialized_sme', '3': 'little_giant' }
 const closurePageTitle = platformQueryResultShape.pages.element.pick({ rdjb: true })
 /** Applicability only. Collection completion remains with the original validators/core. */
 function closureQueryTitle(query: ClosureQuery): string | null {
+  if (query.structuredTitle !== undefined) return query.structuredTitle
   if (query.interface !== 'business_list') return null
   const levels = query.rdjb.split(',').filter(Boolean)
   const fallback = levels.length === 1 ? closureTitles[levels[0]!] : undefined
@@ -344,6 +402,7 @@ function classifyComparisonClosure(nodes: ClosureNode[], history: ClosureHistory
 /** ID-only internal seam. No external facts, normalizer, eligibility or loader. */
 export function readAnnualComparisonBatch(sqlite: Database.Database, db: Db, request: { enterpriseId: number; titleCode: string; eventIds: readonly number[]; selectedQueryIds: readonly number[] }) {
   if (!sqlite.inTransaction) unavailable()
+  if (correspondenceTarget(db)) return readTargetAnnualComparisonBatch(db, request)
   identityFunctions(db)
   const ids = [...new Set(request.eventIds)], selected = [...new Set(request.selectedQueryIds)]
   if (ids.length > 40 || selected.length > 50) resource()
@@ -620,4 +679,77 @@ export function readAnnualComparisonBatch(sqlite: Database.Database, db: Db, req
   const actualSourceBytes = entries.map(e=>Buffer.byteLength(JSON.stringify(e.read.sourceRefs),'utf8'))
   if (actualSourceBytes.some((n,i)=>n>sourceUpperBytes[i]!)) unavailable()
   return {kind:'present' as const,entries,history,admission:{kind:'annual' as const,uniqueScalarBytes:uniqueBytes,expandedCharge,sourceUpperBytes,actualSourceBytes}}
+}
+
+/** Target annual-input seam only. General comparison discovery remains its own
+ * consumer. Keep the existing annual row/source limits and explicit query closure. */
+function readTargetAnnualComparisonBatch(db: Db, request: { enterpriseId: number; titleCode: string; eventIds: readonly number[]; selectedQueryIds: readonly number[] }) {
+  identityFunctions(db)
+  const ids = [...new Set(request.eventIds)], selected = new Set(request.selectedQueryIds)
+  if (ids.length > 40 || selected.size > 50) resource()
+  if ([...ids, ...selected].some(id => !Number.isSafeInteger(id) || id <= 0)) unavailable()
+  const scopes = ids.map(id => eventScope(db, id))
+  if (scopes.some(scope => !scope || scope.owner !== request.enterpriseId || scope.titleCode !== request.titleCode)) unavailable()
+  const c = correspondenceTable(db), relation = externalRelationColumn(db)
+  const decisions = db.select({ relationId: relation, eventId: c.eventId, predecessorEventId: c.predecessorEventId, enterpriseId: c.enterpriseId, titleCode: c.titleCode }).from(c).where(or(inArray(c.eventId, ids), inArray(c.predecessorEventId, ids), and(eq(c.enterpriseId, request.enterpriseId), eq(c.titleCode, request.titleCode)))).all()
+  if (decisions.length > comparisonCaps.decisions) resource()
+  const reads = readAnnualProcessBatch(db, ids, true)
+  const entries = [...reads.values()]
+  const refs = entries.flatMap(e => e.read.sourceRefs.observations)
+  const titleRefs = entries.flatMap(e => e.read.sourceRefs.titleScopeRefs)
+  const recordIds = [...new Set([...refs, ...titleRefs].flatMap(r => r.recordId === null ? [] : [r.recordId]))]
+  const history = readTargetAnnualHistory(db, recordIds)
+  const protectedIds = new Set([...refs.map(r => r.relationId), ...titleRefs.map(r => r.relationId), ...[...history.values()].flat()])
+  if (decisions.some(d => d.relationId === null || !protectedIds.has(d.relationId))) unavailable()
+  if (new Set(refs.map(r => r.relationId)).size > comparisonCaps.rows || new Set(titleRefs.map(r => r.relationId)).size > comparisonCaps.titles || [...history.values()].flat().length > comparisonCaps.history) resource()
+  const ra = targetSchema.platformLegacyRelationAlias, o = targetSchema.platformBusinessObservation, qa = schema.platformLegacyQueryAlias
+  const historicalQueries = protectedIds.size ? db.select({ recordId: o.recordId, relationId: ra.oldId, queryId: qa.oldId }).from(ra).innerJoin(o, eq(o.id, ra.observationId)).innerJoin(qa, eq(qa.collectionId, o.collectionId)).where(inArray(ra.oldId, [...protectedIds])).all() : []
+  const requiredQueries = new Set([...entries.flatMap(e => e.read.sourceRefs.coverage.map(c => c.queryId)), ...titleRefs.map(r => r.queryId), ...historicalQueries.map(q => q.queryId)])
+  const collection = schema.platformCollection
+  const queryRows = requiredQueries.size ? db.select({ id: qa.oldId, collection }).from(qa).innerJoin(collection, eq(collection.id, qa.collectionId)).where(inArray(qa.oldId, [...requiredQueries])).all() : []
+  const collectionIds = queryRows.map(q => q.collection.id)
+  const pages = collectionIds.length ? db.select().from(schema.platformCollectionPage).where(inArray(schema.platformCollectionPage.collectionId, collectionIds)).all() : []
+  const titleScope = targetSchema.platformQueryTitleScope
+  const titleScopes = collectionIds.length ? db.select().from(titleScope).where(inArray(titleScope.collectionId, collectionIds)).all() : []
+  const queries: ClosureQuery[] = queryRows.map(({ id, collection: q }) => {
+    const levels = q.rdjb.split(',').filter(Boolean)
+    const title = q.titleCode ?? (levels.length === 1 ? closureTitles[levels[0]!] : null)
+    const valid = q.interface === 'business_list' && title && levels.every(level => closureTitles[level] === title) &&
+      (q.parseState === 'absent' || q.scopeMode === 'selected' && titleScopes.some(s => s.collectionId === q.id) &&
+        titleScopes.filter(s => s.collectionId === q.id).every(s => closureTitles[s.rdjb] === title) &&
+        pages.filter(p => p.collectionId === q.id).every(p => p.rdjb !== null && closureTitles[p.rdjb] === title))
+    return { id, interface: q.interface, title_code: q.titleCode, rdjb: q.rdjb, metadata: null, structuredTitle: valid ? title : null }
+  })
+  const metadata = readPlatformBusinessMetadata(db, [...protectedIds])
+  const queryByRelation = new Map(historicalQueries.map(row => [row.relationId, row.queryId]))
+  const titlesByRelation = new Map(titleRefs.map(row => [row.relationId, row]))
+  const annualIds = new Set(refs.map(r => r.relationId))
+  const nodes: ClosureNode[] = [...metadata.values()].map(row => ({ ...row, queryId: queryByRelation.get(row.relationId)!, relationKey: titlesByRelation.get(row.relationId)?.platformKey ?? row.platformKey,
+    usccRaw: titlesByRelation.get(row.relationId)?.usccNorm ?? null, isAnnualRow: annualIds.has(row.relationId) ? 1 : 0 }))
+  const classification = classifyComparisonClosure(nodes, historicalQueries.flatMap(row => row.recordId === null ? [] : [{ ...row, recordId: row.recordId }]), queries, decisions.flatMap(d => d.relationId === null ? [] : [{ ...d, relationId: d.relationId }]), request)
+  if ([...requiredQueries].some(id => !selected.has(id) && !classification.metadataOnly.has(id))) unavailable()
+  if (pages.length > 50 * Math.max(1, queryRows.length) || queryRows.some(q => pages.filter(p => p.collectionId === q.collection.id).length > 50)) resource()
+  if (entries.some(e => e.read.sourceRefs.evidence.length > comparisonCaps.evidence)) resource()
+  const actualSourceBytes = entries.map(e => Buffer.byteLength(JSON.stringify(e.read.sourceRefs)))
+  if (actualSourceBytes.some(n => n > comparisonCaps.source)) resource()
+  const uniqueScalarBytes = Buffer.byteLength(JSON.stringify({ sources: entries.map(e => e.read.sourceRefs), history: [...history], decisions }))
+  if (uniqueScalarBytes > comparisonCaps.scalar) resource()
+  const expandedCharge = uniqueScalarBytes * (1 + 16 * ids.length)
+  if (expandedCharge > comparisonCaps.charge) resource()
+  if (!refs.length && !titleRefs.length) {
+    if (entries.some(e => e.read.sourceRefs.coverage.some(c => c.completeness !== 'complete' || c.fullRange !== true || !['success', 'no_record'].includes(c.status)))) unavailable()
+    if (!ids.length) {
+      const owner = db.select().from(schema.enterprise).where(eq(schema.enterprise.id, request.enterpriseId)).get()
+      if (!owner) return unavailable()
+      const a = targetSchema.platformObservationAssignment, original = alias(a, 'annual_empty_original')
+      const related = db.select({ id: o.collectionId }).from(o).innerJoin(a, eq(a.observationId, o.id)).innerJoin(original, and(eq(original.observationId, o.id), eq(original.revision, 1)))
+        .where(or(eq(a.enterpriseId, request.enterpriseId), owner.usccNorm ? sql`roster84_uscc(${original.usccRaw}) = ${owner.usccNorm}` : sql`0`))
+      const collection = schema.platformCollection
+      const aliases = db.select({ name: schema.enterpriseAlias.nameNorm }).from(schema.enterpriseAlias).where(and(eq(schema.enterpriseAlias.enterpriseId, owner.id), eq(schema.enterpriseAlias.verificationStatus, 'confirmed'))).all()
+      const keys = [owner.usccNorm ?? '', `name:${owner.nameNorm}`, ...aliases.map(a => `name:${a.name}`)]
+      if (db.select({ id: collection.id }).from(collection).where(and(inArray(collection.interface, ['apply_list', 'business_list']), or(inArray(collection.queryKey, keys), inArray(collection.id, related)))).limit(1).get()) unavailable()
+    }
+    return { kind: 'absent' as const, entries: [], history, admission: { kind: 'scope_closure' as const, uniqueScalarBytes, expandedCharge: null, sourceUpperBytes: [] as number[], actualSourceBytes: [] as number[] } }
+  }
+  return { kind: 'present' as const, entries, history, admission: { kind: 'annual' as const, uniqueScalarBytes, expandedCharge, sourceUpperBytes: actualSourceBytes, actualSourceBytes } }
 }
