@@ -22,7 +22,10 @@ export type TargetDeclarationListResult = Omit<DeclarationListResult, 'rows'> & 
 export type TargetDeclarationOptions = Omit<PlatformFilterOptions, 'titles' | 'declareKinds' | 'statuses'> & {
     titles: unknown[]; declareKinds: unknown[]; statuses: unknown[];
 };
-type Db = BetterSQLite3Database<typeof targetSchema>;
+// Queries use explicit target table declarations, never relational db.query.
+// Accept the existing connection injection seam without rebuilding its session/logger.
+// The 71608 gate below still owns schema compatibility; this is not a selector.
+type Db = BetterSQLite3Database<typeof targetSchema> | BetterSQLite3Database<typeof import('../../db/schema')>;
 const previous = alias(a, 'newer_assignment');
 const vp = alias(p, 'version_projection');
 function current(db: Db) { return and(eq(a.observationId, o.id), eq(a.revision, db.select({ revision: max(previous.revision) }).from(previous).where(eq(previous.observationId, o.id)))); }

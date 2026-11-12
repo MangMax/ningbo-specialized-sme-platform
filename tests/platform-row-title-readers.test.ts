@@ -85,7 +85,7 @@ for (const target of cases) {
     if (target.source === 'recognized-directory') expect(options).toEqual({ titles: ['outside-dictionary'], declareKinds: [], years: [], statuses: [], batches: [], districts: [], validityDates: [] })
   })
 
-  it(`${target.source} HTTP and MCP share exact title filters DTOs and invalid-value rejection`, async () => {
+  it(`${target.source} HTTP and MCP preserve title validation and their required schema phase`, async () => {
     const route = target.source === 'declarations' ? await import('../server/api/platform/declarations.get') : target.source === 'business-processes' ? await import('../server/api/platform/business-processes.get') : await import('../server/api/platform/recognized-directory.get')
     const tool = target.source === 'declarations' ? await import('../server/mcp/tools/list_platform_declarations') : target.source === 'business-processes' ? await import('../server/mcp/tools/list_platform_business_processes') : await import('../server/mcp/tools/list_platform_recognized_directory')
     const request = toWebHandler(createApp().use('/', route.default))
@@ -96,8 +96,15 @@ for (const target of cases) {
       const expected = target.read(input, db)
       expect(expected.total).toBe(1)
       const response = await request(new Request(`http://localhost/?${new URLSearchParams({ view, titleRaw })}`))
-      expect(response.status).toBe(200)
       expect(response.headers.get('cache-control')).toBe('no-store')
+      if (target.source === 'declarations') {
+        // Declarations is target-only now. The actual 71608 HTTP/MCP DTO oracle
+        // lives in platform-declarations-target-http.test.ts; expand cannot fallback.
+        expect(response.status).toBe(409)
+        await expect(Reflect.apply(tool.default.handler!, undefined, [input])).rejects.toMatchObject({ statusCode: 409, code: 'apply_target_phase' })
+        continue
+      }
+      expect(response.status).toBe(200)
       expect(await response.json()).toEqual(expected)
       const mcp = await tool.default.handler(input as never, {} as never) as any
       expect(mcp.structuredContent).toEqual(expected)

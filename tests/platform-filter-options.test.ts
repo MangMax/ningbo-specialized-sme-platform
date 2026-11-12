@@ -102,17 +102,17 @@ it('strict query validation rejects missing unknown repeated empty and non-strin
 
 it('h3 route reads publicly with no-store and returns direct DTO while invalid queries return 400', async () => {
   const { db, record } = fixture()
-  db.insert(schema.platformApplyProjection).values({ ...record('apply_list'), declarationYear: 2025, status: 'public-status' }).run()
+  db.insert(schema.platformBusinessProjection).values({ ...record('business_list'), businessYear: 2025, status: 'public-status' }).run()
   const useDb = vi.fn(() => db)
   vi.doMock('@db', () => ({ useDb }))
   const handler = (await import('../server/api/platform/filter-options.get')).default
   const request = toWebHandler(createApp().use('/api/platform/filter-options', handler))
-  const response = await request(new Request('http://localhost/api/platform/filter-options?source=declarations'))
+  const response = await request(new Request('http://localhost/api/platform/filter-options?source=business-processes'))
   expect(response.status).toBe(200)
   expect(response.headers.get('cache-control')).toBe('no-store')
   expect(await response.json()).toEqual({ ...empty, years: [2025], statuses: ['public-status'] })
   expect(useDb).toHaveBeenCalledTimes(1)
-  for (const query of ['', 'source=bad', 'source=declarations&view=', 'source=declarations&view=records&view=isolated', 'source=declarations&source=business-processes', 'source=declarations&page=2']) {
+  for (const query of ['', 'source=bad', 'source=business-processes&view=', 'source=business-processes&view=records&view=isolated', 'source=business-processes&source=declarations', 'source=business-processes&page=2']) {
     const bad = await request(new Request(`http://localhost/api/platform/filter-options?${query}`))
     expect(bad.status).toBe(400)
     expect(bad.headers.get('cache-control')).toBe('no-store')
