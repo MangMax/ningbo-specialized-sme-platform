@@ -1,11 +1,11 @@
 import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
-import { readFileSync, statSync } from 'node:fs'
+import { readFileSync, statSync, copyFileSync } from 'node:fs'
 import { serialize } from 'node:v8'
 import { join } from 'node:path'
 import { beforeAll, afterAll, expect, it } from 'vitest'
 import { processReaderFixture } from './helpers/process-target-734'
-import { controlledH1cSuccessor } from './helpers/h1c-catalog-target'
+import {transferCorrespondence} from '../upgrade/correspondence'
 import { targetSchema } from '../lib/platform/target-schema'
 import { requireH1cReady } from '../lib/platform/h1c-catalog'
 import { processStoredInstalled } from '../lib/platform/process-stored-catalog'
@@ -20,7 +20,7 @@ import { writeCollectionTarget } from '../lib/platform/collection-target-command
 import { projectionManifest } from '../upgrade/projections'
 
 let f:Awaited<ReturnType<typeof processReaderFixture>>,target:Database.Database
-beforeAll(async()=>{f=await processReaderFixture(false,old=>old.exec("INSERT INTO platform_query(id,interface,query_key,rdjb,queried_at,status,created_at) VALUES(21,'apply_list','apply','2','t','success','c'),(22,'recognized_list','recognized','2','t','success','c')"));target=controlledH1cSuccessor(f)})
+beforeAll(async()=>{f=await processReaderFixture(false,old=>old.exec("INSERT INTO platform_query(id,interface,query_key,rdjb,queried_at,status,created_at) VALUES(21,'apply_list','apply','2','t','success','c'),(22,'recognized_list','recognized','2','t','success','c')"));const source=join(f.root,'actual-h1c-source.sqlite'),path=join(f.root,'actual-h1c-target.sqlite');copyFileSync(f.target,source);copyFileSync(source,path);transferCorrespondence({source,target:path,runId:'actual-h1c'});target=new Database(path);target.pragma('foreign_keys=ON')})
 afterAll(()=>{target?.close();f?.close()})
 const db=()=>drizzle(target,{schema:targetSchema})
 const input=(sequenceNo:number):ProcessTargetInput=>({collectionId:11,position:{sequenceNo,positionState:'unknown'},row:{sequenceNo,nameRaw:'New',relationKey:'N'+sequenceNo,rawFields:{id:'N'+sequenceNo,rdjb:'2',cszt:'pending',year:2024}},assignment:{nameRaw:'New',matchBasis:'none',verificationStatus:'pending',origin:'command',actor:{type:'agent',id:'compatibility'},basis:'original'}})
@@ -80,7 +80,7 @@ it('reports an unfinished column transfer and does not scan full catalog or rece
  const trace:string[]=[],reader=new Database(target.name,{readonly:true,verbose:q=>trace.push(String(q))})
  try{listTargetBusinessProcesses({},drizzle(reader,{schema:targetSchema}));expect(trace.join('\n')).not.toMatch(/sqlite_schema|platform_migration_checkpoint|CREATE TABLE|source_schema_hash|target_schema_version/)}finally{reader.close()}
 })
-it('keeps ordinary runtime and three source worker guards closed on the controlled successor',async()=>{
+it('keeps ordinary runtime and three source worker guards closed on the migrated successor',async()=>{
   const {useRuntimeDb,initializeDb}=await import('../db/client')
   const path=target.name, before=readFileSync(path)
   for(const readOnly of [false,true])expect(()=>useRuntimeDb({dbPath:path,readOnly})).toThrow(/finalized/i)
@@ -105,3 +105,10 @@ it('keeps ordinary runtime and three source worker guards closed on the controll
   }
   expect(readFileSync(path)).toEqual(before)
 },30000)
+
+it('replays the completed offline transfer without overwriting subsequent normal business writes',()=>{
+ const before=projectionManifest(target),bytes=readFileSync(target.name)
+ expect(transferCorrespondence({source:join(f.root,'actual-h1c-source.sqlite'),target:target.name,runId:'actual-h1c'})).toMatchObject({state:'complete'})
+ expect(projectionManifest(target)).toBe(before)
+ expect(readFileSync(target.name)).toEqual(bytes)
+})

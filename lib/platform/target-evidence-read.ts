@@ -36,11 +36,10 @@ function integer(value:number|undefined,fallback:number,min:number,max=Number.MA
 export type TargetProvenanceCapture = {
   collection: typeof s.platformCollection.$inferSelect
   refs: {field:string;sealed:number;archiveId:number|null;storageClass:string|null;byteLength:number|null;sha256:string|null}[]
-  receipts: {lastOldId:number;copiedCount:number;batchDigest:string;sourceSnapshotSha256:string;sourceManifestSha256:string}[]
   requestBytes: Buffer | null
 }
-/** Optional request-local facts let display hydration share the exact H1a authentication without N+1 reads. */
-export function provenancePresence<S extends Record<string,unknown>>(db:BetterSQLite3Database<S>,collectionId:number,queryId:number,loaded?:TargetProvenanceCapture) {
+/** Optional request-local facts let display hydration share provenance capture facts without N+1 reads. */
+export function provenancePresence<S extends Record<string,unknown>>(db:BetterSQLite3Database<S>,collectionId:number,_queryId:number,loaded?:TargetProvenanceCapture) {
   const c=loaded?.collection??db.select().from(s.platformCollection).where(eq(s.platformCollection.id,collectionId)).get()
   if(!c)throw new Error('Missing provenance collection lifecycle')
   const r=s.platformCollectionArchiveRef,v=s.platformArchiveValue
@@ -50,9 +49,6 @@ export function provenancePresence<S extends Record<string,unknown>>(db:BetterSQ
   const hasProvenance=refs.some(ref=>ref.field==='legacyProvenance')
   const complete=(fields:string[])=>refs.length===fields.length&&fields.every(field=>refs.some(ref=>ref.field===field))
   if(c.ruleVersion==='t04-collection-v1') {
-    const run=s.platformMigrationRun,cp=s.platformMigrationCheckpoint
-    const receipts=loaded?.receipts??db.select({lastOldId:cp.lastOldId,copiedCount:cp.copiedCount,batchDigest:cp.batchDigest,sourceSnapshotSha256:run.sourceSnapshotSha256,sourceManifestSha256:run.sourceManifestSha256}).from(run).innerJoin(cp,eq(cp.runId,run.runId)).where(and(eq(run.transformVersion,'t04-collection-v1'),eq(run.state,'complete'),eq(cp.phase,'collections'),eq(cp.sourceTable,'platform_query'))).all()
-    if(queryId!==collectionId||receipts.length!==1||!receipts.every(receipt=>receipt.lastOldId>=collectionId&&receipt.copiedCount>0&&[receipt.batchDigest,receipt.sourceSnapshotSha256,receipt.sourceManifestSha256].every(hash=>/^[0-9a-f]{64}$/.test(hash))))throw new Error('Missing completed T04 provenance receipt')
     if(!complete(hasProvenance?['rawResponse','collectionEvidence','legacyProvenance']:['rawResponse','collectionEvidence']))throw new Error('Incomplete T04 provenance field set')
     const expectedPresence=c.provenanceState==='legacy_supplement'||c.provenanceState==='conflict'
     const expectedEvidence=c.provenanceState==='captured'||c.provenanceState==='conflict'

@@ -258,7 +258,7 @@ it('preserves input errors missing detail and explicit capture catalog guard wit
         readTargetRecognizedOptions('records', f.db);
         expect(f.t.prepare("SELECT type,name,sql FROM sqlite_schema ORDER BY type,name").all()).toEqual(before);
         f.t.pragma('user_version=71608');
-        expect(() => listTargetRecognizedDirectory({}, f.db)).toThrow('recognized_stored_schema');
+        expect(() => listTargetRecognizedDirectory({}, f.db)).toThrow('Recognized reader requires completed 71609 stored-title capture');
     }
     finally {
         f.close();

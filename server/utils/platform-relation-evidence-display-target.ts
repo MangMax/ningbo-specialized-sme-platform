@@ -3,6 +3,8 @@
  * Selection and attribution use structured owners; archives are decoded only after selection.
  * This is not sourceReader: correspondence links and their authorization closure stay with H1.
  */
+import {requireH1cReady} from '../../lib/platform/h1c-catalog'
+import {sqliteConnection} from '../../lib/platform/target-connection'
 import { createHash } from 'node:crypto'
 import { and, eq, inArray, max, sql } from 'drizzle-orm'
 import { alias } from 'drizzle-orm/sqlite-core'
@@ -56,7 +58,9 @@ export function readTargetRelationEvidenceDisplay<S extends Record<string, unkno
     selected.set(selection.relationId, selection)
   }
   return db.transaction(tx => {
-    if (tx.get<{ user_version: number }>(sql`PRAGMA user_version`)?.user_version !== 71610) throw new Error('Explicit 71610 evidence display target required')
+    const phase = tx.get<{ user_version: number }>(sql`PRAGMA user_version`)?.user_version
+    if (phase !== 71610 && phase !== 71611) throw new Error('Explicit 71610 evidence display target required')
+    if (phase === 71611) requireH1cReady(sqliteConnection(tx))
     const sources = new Map<number, RelationEvidenceDisplay>([...selected.keys()].map(id => [id, null]))
     const a = s.platformObservationAssignment, original = alias(a, 'display_original_assignment'), newer = alias(a, 'display_newer_assignment')
     const o = s.platformBusinessObservation, ra = s.platformLegacyRelationAlias, qa = s.platformLegacyQueryAlias, c = s.platformCollection
@@ -81,9 +85,6 @@ export function readTargetRelationEvidenceDisplay<S extends Record<string, unkno
       .from(ar).leftJoin(v, eq(v.id, ar.archiveId)).where(inArray(ar.ownerId, ids)).all())
     const collectionById = Map.groupBy(collectionArchives, row => row.ownerId)
     const observationById = Map.groupBy(observationArchives, row => row.ownerId)
-    const run = s.platformMigrationRun, cp = s.platformMigrationCheckpoint
-    const receipts = owners.some(owner => owner.collection.ruleVersion === 't04-collection-v1') ? tx.select({ lastOldId: cp.lastOldId, copiedCount: cp.copiedCount, batchDigest: cp.batchDigest, sourceSnapshotSha256: run.sourceSnapshotSha256, sourceManifestSha256: run.sourceManifestSha256 })
-      .from(run).innerJoin(cp, eq(cp.runId, run.runId)).where(and(eq(run.transformVersion, 't04-collection-v1'), eq(run.state, 'complete'), eq(cp.phase, 'collections'), eq(cp.sourceTable, 'platform_query'))).all() : []
     const projections = new Map(chunks(observationIds).flatMap(ids => [
       ...tx.select().from(storedApplyProjection).where(inArray(storedApplyProjection.observationId, ids)).all().map(row => ({ source: 'apply_list', row, title: row.exactTitleRaw, captured: row.exactStoredState === 'captured' })),
       ...tx.select().from(storedProcessProjection).where(inArray(storedProcessProjection.observationId, ids)).all().map(row => ({ source: 'business_list', row, title: row.exactTitleRaw, captured: row.exactStoredState === 'captured' })),
@@ -95,7 +96,7 @@ export function readTargetRelationEvidenceDisplay<S extends Record<string, unkno
     const distinctOwners = [...new Map(owners.map(owner => [owner.collection.id, owner])).values()]
     const metadataJobs = distinctOwners.map(owner => {
       const collection = owner.collection, refs = collectionById.get(collection.id) ?? []
-      const hasLegacy = provenancePresence(tx, collection.id, owner.queryId!, { collection, refs, receipts, requestBytes: refs.find(ref => ref.field === 'request')?.bytes ?? null })
+      const hasLegacy = provenancePresence(tx, collection.id, owner.queryId!, { collection, refs, requestBytes: refs.find(ref => ref.field === 'request')?.bytes ?? null })
       const evidence = authenticatedBytes(refs.find(ref => ref.field === 'collectionEvidence'))
       const envelope = hasLegacy ? authenticatedBytes(refs.find(ref => ref.field === 'legacyProvenance')) : null
       if (hasLegacy && !envelope?.bytes) throw new Error('Missing original provenance envelope')
