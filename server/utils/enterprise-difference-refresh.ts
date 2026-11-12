@@ -4,7 +4,7 @@ import { createError } from 'h3'
 import type { useDb } from '../../db/client'
 import { createCurrentQualificationAssessmentReader } from '../../lib/roster/current-qualification'
 import { CURRENT_TITLES } from '../../lib/roster/current-titles'
-import { eq, getTableColumns } from 'drizzle-orm'
+import { eq, getTableColumns, sql } from 'drizzle-orm'
 import { targetSchema } from '../../lib/platform/target-schema'
 import { differenceTargetSources, selectDifferenceCollections } from '../../lib/platform/difference-sources'
 import { readDifferenceRefreshRows, readDifferenceRefreshMetadata } from '../../lib/platform/difference-hash-inputs'
@@ -37,6 +37,14 @@ function canonical(value: unknown): string {
 const sortedRows = (rows: unknown[]) => rows.map(canonical).sort()
 const setRows = (rows: unknown[]) => [...new Set(sortedRows(rows))]
 const scopeFields = (value: unknown): unknown => Array.isArray(value) ? value.map(scopeFields).sort((a,b)=>canonical(a).localeCompare(canonical(b))) : value && typeof value==='object' ? Object.fromEntries(Object.entries(value).map(([k,v])=>[k,scopeFields(v)])) : value
+// Freeze the original refresh inputs from before the observation-owner expansion.
+// Internal projection IDs, archive references and reconciliation columns were
+// added later and must not change a business fingerprint.
+const refreshProjectionColumns = {
+  platform_apply_projection: ['declare_kind','declaration_year','applied_at','status','name_raw','uscc_raw'],
+  platform_business_projection: ['declare_kind','business_year','applied_at','status','batch','award_batch_label','province','name_raw','uscc_raw'],
+  platform_recognized_projection: ['validity_date_raw','maintenance_year','maintenance_batch','source_validity_date','source_maintenance_batch','source_maintenance_year_absent','district','award_note','title_raw','name_raw','uscc_raw'],
+} satisfies Record<string, string[]>
 type TargetFingerprintPlan = {
   collections: ReturnType<typeof selectDifferenceCollections>
   rows: Map<number, Record<string, unknown>[]>
@@ -69,15 +77,14 @@ function businessFingerprint(db: Db, enterpriseId: number, title: string, plan?:
     if (collectionId !== null) plan?.rows.set(collectionId, rows)
     const typed = (collectionId !== null ? plan?.typed.get(collectionId) : undefined) ?? projections.map((table,index)=>{
       const projection = [targetSchema.platformApplyProjection,targetSchema.platformBusinessProjection,targetSchema.platformRecognizedProjection][index]!
-      const fields = Object.fromEntries(Object.values(getTableColumns(projection)).map(column => [column.name,column]))
+      const columns = refreshProjectionColumns[table]
+      // SQL expressions preserve the original SQLite scalar types, including
+      // recognized source-maintenance flags that the ORM decodes as booleans.
+      const fields = Object.fromEntries(Object.values(getTableColumns(projection)).filter(column => columns.includes(column.name)).map(column => [column.name,sql`${column}`]))
       const versionRows = collectionId !== null ? db.select(fields).from(projection).innerJoin(targetSchema.platformBusinessObservation,eq(targetSchema.platformBusinessObservation.versionId,projection.versionId)).where(eq(targetSchema.platformBusinessObservation.collectionId,collectionId)).all()
-        : sqlite.prepare(`select p.* from ${table} p join platform_business_observation o on o.version_id=p.version_id join platform_relation r on r.id=o.relation_id where r.query_id=?`).all(q.id)
-      return versionRows.map(row=>{
-      const {version_id:_v,record_id:_r,rule_version:_rule,created_at:_at,...fields}=row as Record<string,unknown>
-      // Newly projected titles duplicate sourceBusiness.rdjb; preserve existing comparison fingerprints.
-      if (table !== 'platform_recognized_projection') delete fields.title_raw
-      return fields
-    })})
+        : sqlite.prepare(`select ${columns.map(column => `p.${column}`).join(',')} from ${table} p join platform_business_observation o on o.version_id=p.version_id join platform_relation r on r.id=o.relation_id where r.query_id=?`).all(q.id)
+      return versionRows
+    })
     if (collectionId !== null) plan?.typed.set(collectionId, typed)
     // Unindexed/legacy relations still have their original typed business columns;
     // raw_fields is an archive container and can include execution metadata.

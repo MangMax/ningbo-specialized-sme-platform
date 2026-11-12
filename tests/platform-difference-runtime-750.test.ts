@@ -164,20 +164,43 @@ it('retains old normal revision envelopes digests source versions and business f
     expect(readQueryCoverage(db,scope)).toEqual(readQueryCoverage(old,scope))
   } finally { vi.useRealTimers(); legacy.close() }
 })
-it('preserves the old refresh hash after an ordinary second content version with the same business values', () => {
+it.each(['queryList','businessList','queryBusList'] as const)('preserves the old refresh hash after an ordinary second content version with the same business values for %s', source => {
   const path=join(f.root,'second-version-oracle.sqlite');copyFileSync(f.legacySource,path)
   const legacy=new Database(path),old=drizzle(legacy,{schema})
   try {
+    let initial: ReturnType<typeof refreshEnterpriseDifferences> | undefined
     for(const [index,time] of ['2026-11-13T00:00:00Z','2026-11-13T01:00:00Z'].entries()) {
       const evidence=collection(time)
+      evidence.source=source; evidence.pages[0]!.source=source
+      if(source==='queryList') {evidence.titleScope={mode:'source_default',rdjb:[]};evidence.pages[0]!.rdjb=null;evidence.effectiveConditions={name:'Alpha',combination:'and'}}
       evidence.rows[0]!.transportAnnotation=String(index)
       evidence.dataRows=evidence.rows
-      const source=submit(evidence)
-      legacySource(old,evidence,source.queryAlias,source.observations[0]!.relationAlias)
+      const written=submit(evidence)
+      legacySource(old,evidence,written.queryAlias,written.observations[0]!.relationAlias)
+      if(index===0) {
+        initial=refreshEnterpriseDifferences(db,{enterpriseIds:[1]},'2026-11-13T00:30:00Z')
+        saveDecision102(db,command('stable-refresh',{status:'confirmed_no_diff',measureCode:'none',verificationStatus:'confirmed'}))
+      }
     }
     const actual=refreshEnterpriseDifferences(db,{enterpriseIds:[1]},'2026-11-13T02:00:00Z')
     const expected=refreshEnterpriseDifferences(old,{enterpriseIds:[1]},'2026-11-13T02:00:00Z')
     expect(actual.enterprises[0]!.comparisons.map(c=>c.businessFingerprint)).toEqual(expected.enterprises[0]!.comparisons.map(c=>c.businessFingerprint))
+    expect(actual.enterprises[0]!.comparisons.map(c=>c.businessFingerprint)).toEqual(initial?.enterprises[0]!.comparisons.map(c=>c.businessFingerprint))
+    expect(actual).toMatchObject({refreshed:0,unchanged:3})
+    expect(actual.enterprises[0]!.comparisons.find(c=>c.titleCode==='specialized_sme')?.status).toBe('confirmed_no_diff')
+    // Independently obtained with the unmodified 49f31949 refresh algorithm and
+    // its original projection column layout, before the 0050 expansion.
+    if(source==='businessList') expect(actual.enterprises[0]!.comparisons.find(c=>c.titleCode==='specialized_sme')?.businessFingerprint).toBe('badcaf0f9435f92a12a391981aba09dc3b50a426e306aef464c20c8585351025')
+    const changed=collection('2026-11-13T03:00:00Z')
+    changed.source=source; changed.pages[0]!.source=source
+    if(source==='queryList') {changed.titleScope={mode:'source_default',rdjb:[]};changed.pages[0]!.rdjb=null;changed.effectiveConditions={name:'Alpha',combination:'and'}}
+    changed.rows[0]!.cszt='已退回'; changed.rows[0]!.whpc='2025-2'
+    changed.dataRows=changed.rows
+    submit(changed)
+    const refreshed=refreshEnterpriseDifferences(db,{enterpriseIds:[1]},'2026-11-13T04:00:00Z')
+    expect(refreshed).toMatchObject(source==='queryList'?{refreshed:3,unchanged:0}:{refreshed:1,unchanged:2})
+    expect(refreshed.enterprises[0]!.comparisons.find(c=>c.titleCode==='specialized_sme')?.status).toBe('needs_review')
+    expect(trace.filter(q => /\b(?:from|join)\s+["`]?platform_(?:query|relation)["`]?\b/i.test(q))).toEqual([])
   } finally {legacy.close()}
 })
 it('keeps query-only relation-only confirmed identity and successful multi-title page validation stricter than candidate scope', () => {
