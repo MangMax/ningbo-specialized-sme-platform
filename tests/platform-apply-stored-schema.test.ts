@@ -131,19 +131,27 @@ it.each([['captured','uncaptured'],['uncaptured','captured'],['uncaptured','unca
 
 import { writeApplyTarget } from '../lib/platform/apply-target-writer'
 import { targetSchema } from '../lib/platform/target-schema'
-it('recovers authenticated 71607 command materialization with original input hash and bytes retained',()=>{
+it.each(['missing','different'])('records command materialization profile and rejects %s profile on replay without rewriting original input',drift=>{
  const f=fixture();const t=new Database(f.target);t.pragma('foreign_keys=ON')
  const result=writeApplyTarget(drizzle(t,{schema:targetSchema}),{collectionId:1,position:{sequenceNo:3,positionState:'unknown'},row:{sequenceNo:3,status:' pending ',year:2024,rawFields:{id:'A',cszt:'pending',rdjb:' 2 '}},assignment:{matchBasis:'none',verificationStatus:'pending',origin:'command',actor:{type:'agent',id:'S-test'},basis:'explicit'}})
  const original=t.prepare('SELECT input_fingerprint,indexed_at FROM platform_business_observation WHERE id=?').get(result.observationId)
  t.close();copyFileSync(f.target,f.source)
  const receipt=finalizeApplyStored(f)
- expect(receipt.recovery).toContainEqual(expect.objectContaining({observationId:result.observationId,origin:'command_materialized',exactState:'captured'}))
+ expect(receipt.recovery).toContainEqual(expect.objectContaining({observationId:result.observationId,origin:'command_materialized',exactState:'captured',materializationRule:'legacy-apply-insert-v1'}))
  const next=new Database(f.target)
  expect(next.prepare('SELECT exact_status,exact_year,exact_title_raw,sql_fact_title FROM platform_apply_projection WHERE observation_id=?').get(result.observationId)).toEqual({exact_status:'pending',exact_year:2024,exact_title_raw:'2',sql_fact_title:'2'})
  expect(next.prepare('SELECT input_fingerprint,indexed_at FROM platform_business_observation WHERE id=?').get(result.observationId)).toEqual(original)
  expect(next.prepare('SELECT exact_stored_state,sql_fact_title_state,exact_status FROM platform_apply_projection WHERE version_id IS NOT NULL').all()).toEqual([{exact_stored_state:null,sql_fact_title_state:null,exact_status:null}])
  expect(()=>writeApplyTarget(drizzle(next,{schema:targetSchema}),{collectionId:1,position:{sequenceNo:4,positionState:'unknown'},row:{sequenceNo:4},assignment:{matchBasis:'none',verificationStatus:'pending',origin:'command',actor:{type:'agent',id:'S-test'},basis:'explicit'}})).toThrow()
- next.close()
+ expect(next.prepare("SELECT source_table,copied_count FROM platform_migration_checkpoint WHERE run_id=? AND phase='apply-materialization'").get(f.runId)).toEqual({source_table:'legacy-apply-insert-v1',copied_count:1})
+ const beforeReplay=next.serialize();next.close()
+ expect(finalizeApplyStored(f)).toEqual(receipt)
+ const changed=new Database(f.target);expect(changed.serialize()).toEqual(beforeReplay)
+ if(drift==='missing')changed.prepare("DELETE FROM platform_migration_checkpoint WHERE run_id=? AND phase='apply-materialization'").run(f.runId)
+ else changed.prepare("UPDATE platform_migration_checkpoint SET source_table='other-rule' WHERE run_id=? AND phase='apply-materialization'").run(f.runId)
+ const beforeRefusal=changed.serialize();changed.close()
+ expect(()=>finalizeApplyStored(f)).toThrow(/checkpoint drift/)
+ const refused=new Database(f.target);expect(refused.serialize()).toEqual(beforeRefusal);refused.close()
 })
 it('recovers sealed snapshot alone and refuses source/snapshot contradiction atomically',()=>{
  const f=fixture();expect(finalizeApplyStored({...f,legacySource:undefined}).queryReady).toBe(true)

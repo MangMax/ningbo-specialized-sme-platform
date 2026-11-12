@@ -15,6 +15,7 @@ import { installApplyStoredSchema, installApplyStoredBarrier, applyStoredColumns
 import {withLegacyFingerprintCustody,assertLegacyFingerprintCustody,type LegacyFingerprintCustody} from '../lib/platform/legacy-fingerprint-custody'
 import { captureSqlFactTitle } from './apply-stored-cells'
 export const APPLY_STORED_TRANSFORM='apply-exact-stored-offline-v1'
+const COMMAND_MATERIALIZATION_RULE='legacy-apply-insert-v1' as const
 const hash=(v:string|Buffer)=>createHash('sha256').update(v).digest('hex')
 const decode=(bytes:Buffer)=>new TextDecoder('utf-8',{fatal:true}).decode(bytes)
 const cellShape=z.object({name:z.string(),storageClass:z.enum(['null','text','blob','integer','real']),hex:z.string().regex(/^(?:[0-9a-fA-F]{2})*$/),real64be:z.string().regex(/^[0-9a-fA-F]{16}$/).optional()})
@@ -22,7 +23,7 @@ type Cell=z.infer<typeof cellShape>
 const fields=['status','declare_kind','applied_at','year','title_raw'] as const
 const ownerShape=z.object({id:z.number().int().positive().safe(),collection_id:z.number().int().positive().safe(),sequence_no:z.number().int(),identity_state:z.string(),source_relation_key:z.string().nullable(),old_id:z.number().int().positive().safe(),query_id:z.number().int().positive().safe(),scheme:z.string().nullable()})
 type Owner=z.infer<typeof ownerShape>
-type Recovery={observationId:number,exactState:'captured'|'uncaptured',titleState:'captured'|'uncaptured',origin:'legacy_source'|'sealed_snapshot'|'command_materialized'|null,reason:string|null,titleReason:string|null,cells:Cell[],title:string|null}
+type Recovery={observationId:number,materializationRule:typeof COMMAND_MATERIALIZATION_RULE|null,exactState:'captured'|'uncaptured',titleState:'captured'|'uncaptured',origin:'legacy_source'|'sealed_snapshot'|'command_materialized'|null,reason:string|null,titleReason:string|null,cells:Cell[],title:string|null}
 const archiveShape=z.object({storage_class:z.enum(['null','text','blob']),bytes:z.instanceof(Buffer).nullable(),byte_length:z.number().nullable(),sha256:z.string().nullable(),sealed:z.literal(1)})
 function archive(t:Database.Database,owner:number,field:string) {
  const result=t.prepare('SELECT a.*,r.sealed FROM platform_observation_archive_ref r JOIN platform_archive_value a ON a.id=r.archive_id WHERE r.owner_id=? AND r.field=?').get(owner,field)
@@ -51,7 +52,7 @@ function expression(c:Cell) {
 }
 function sameCell(a:Cell,b:Cell){return a.storageClass===b.storageClass&&a.hex.toUpperCase()===b.hex.toUpperCase()&&a.real64be===b.real64be}
 function recover(t:Database.Database,o:Owner,legacy?:Database.Database,custody?:LegacyFingerprintCustody):Recovery {
- const r:Recovery={observationId:o.id,exactState:'uncaptured',titleState:'uncaptured',origin:null,reason:'missing-trusted-stored-cells',titleReason:'missing-trusted-raw-cell',cells:[],title:null}
+ const r:Recovery={observationId:o.id,materializationRule:null,exactState:'uncaptured',titleState:'uncaptured',origin:null,reason:'missing-trusted-stored-cells',titleReason:'missing-trusted-raw-cell',cells:[],title:null}
  const raw=archive(t,o.id,'rawFields'),snapshot=archive(t,o.id,'legacyRowSnapshot')
  let cells:Cell[]|null=null
  if(snapshot?.storage_class==='blob'&&snapshot.bytes) {
@@ -119,7 +120,7 @@ function recover(t:Database.Database,o:Owner,legacy?:Database.Database,custody?:
    try {
     t.prepare('INSERT INTO s728_materialize VALUES(?,?,?,?,?)').run(...values)
     r.cells=rowSnapshot(t,'s728_materialize','rowid',1).map(c=>cellShape.parse(c));r.cells.forEach(expression)
-    r.exactState='captured';r.reason=null;r.origin='command_materialized'
+    r.exactState='captured';r.reason=null;r.origin='command_materialized';r.materializationRule=COMMAND_MATERIALIZATION_RULE
    } finally{t.exec('DROP TABLE s728_materialize')}
   }
  }
@@ -158,6 +159,11 @@ export function finalizeApplyStored(options:ApplyStoredOptions,frozen?:FrozenSou
  const prior=z.object({state:z.literal('complete'),transform_version:z.literal('observation-fingerprint-basis-v1'),target_schema_version:z.string()}).parse(s.prepare('SELECT * FROM platform_migration_run WHERE run_id=?').get(options.predecessorRunId))
  if(s.pragma('user_version',{simple:true})!==71607||prior.target_schema_version!==sourceSchema)throw new Error('Unproven 71607 predecessor')
  const recovery=s.transaction(()=>z.array(ownerShape).parse(s.prepare(`SELECT o.*,a.old_id,q.old_id query_id,b.scheme FROM platform_business_observation o JOIN platform_collection c ON c.id=o.collection_id LEFT JOIN platform_legacy_relation_alias a ON a.observation_id=o.id LEFT JOIN platform_legacy_query_alias q ON q.collection_id=c.id LEFT JOIN platform_observation_fingerprint_basis b ON b.observation_id=o.id WHERE c.interface='apply_list' ORDER BY o.id`).all()).map(o=>recover(s,o,legacy?.database,custody)))()
+ const materialized=recovery.filter(r=>r.materializationRule!==null)
+ const checkpoints=(targetDb:Database.Database)=>[
+  ...(materialized.length?[{run_id:options.runId,phase:'apply-materialization',source_table:COMMAND_MATERIALIZATION_RULE,last_old_id:0,copied_count:materialized.length,batch_digest:hash(JSON.stringify(materialized))}]:[]),
+  {run_id:options.runId,phase:'apply-stored',source_table:'platform_apply_projection',last_old_id:0,copied_count:recovery.length,batch_digest:digest(targetDb,options.runId)},
+ ]
  const t=new Database(target,{fileMustExist:true})
  try {
   t.pragma('foreign_keys=ON')
@@ -165,8 +171,7 @@ export function finalizeApplyStored(options:ApplyStoredOptions,frozen?:FrozenSou
   if(existing) {
    const receipt=z.object({state:z.literal('complete'),source_snapshot_sha256:z.literal(sourceHash),source_schema_hash:z.literal(sourceSchema),source_manifest_sha256:z.literal(sourceManifest),target_schema_version:z.literal(schemaHash(t)),transform_version:z.literal(APPLY_STORED_TRANSFORM)}).parse(existing)
    void receipt
-   const copied=z.object({n:z.number()}).parse(s.prepare("SELECT count(*) n FROM platform_business_observation o JOIN platform_collection c ON c.id=o.collection_id WHERE c.interface='apply_list'").get()).n
-   if(!isDeepStrictEqual(t.prepare('SELECT * FROM platform_migration_checkpoint WHERE run_id=?').all(options.runId),[{run_id:options.runId,phase:'apply-stored',source_table:'platform_apply_projection',last_old_id:0,copied_count:copied,batch_digest:digest(t,options.runId)}]))throw new Error('Successor checkpoint drift')
+   if(!isDeepStrictEqual(t.prepare('SELECT * FROM platform_migration_checkpoint WHERE run_id=? ORDER BY phase,source_table').all(options.runId),checkpoints(t)))throw new Error('Successor checkpoint drift')
    if(t.pragma('user_version',{simple:true})!==APPLY_STORED_VERSION)throw new Error('Successor phase drift')
   } else {
    if(t.pragma('user_version',{simple:true})!==71607||schemaHash(t)!==sourceSchema||digest(t,options.runId)!==digest(s,options.runId))throw new Error('Unproven target facts/catalog')
@@ -192,7 +197,7 @@ export function finalizeApplyStored(options:ApplyStoredOptions,frozen?:FrozenSou
     assertFrozenSource(frozen,options.source);if(legacy){assertFrozenSource(legacy,options.legacySource!);assertLegacyFingerprintCustody(custody,frozen,legacy)}
     t.pragma(`user_version=${APPLY_STORED_VERSION}`)
     t.prepare('INSERT INTO platform_migration_run(run_id,state,source_snapshot_sha256,source_schema_hash,source_manifest_sha256,target_schema_version,transform_version) VALUES(?,?,?,?,?,?,?)').run(options.runId,'complete',sourceHash,sourceSchema,sourceManifest,schemaHash(t),APPLY_STORED_TRANSFORM)
-    t.prepare('INSERT INTO platform_migration_checkpoint(run_id,phase,source_table,last_old_id,copied_count,batch_digest) VALUES(?,?,?,?,?,?)').run(options.runId,'apply-stored','platform_apply_projection',0,recovered.length,digest(t,options.runId))
+    for(const checkpoint of checkpoints(t))t.prepare('INSERT INTO platform_migration_checkpoint(run_id,phase,source_table,last_old_id,copied_count,batch_digest) VALUES(@run_id,@phase,@source_table,@last_old_id,@copied_count,@batch_digest)').run(checkpoint)
     options.beforeCommit?.('receipt')
     assertFrozenSource(frozen,options.source);if(legacy)assertLegacyFingerprintCustody(custody,frozen,legacy)
     if(sourceHash!==fileHash(frozen.fd))throw new Error('Frozen source drift')
