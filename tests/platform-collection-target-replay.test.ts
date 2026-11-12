@@ -20,7 +20,7 @@ import { platformResultToImport } from '../lib/platform/recognized-evidence'
 import type { PlatformLiveQueryResult, PlatformQuerySource } from '../lib/platform/live-query'
 
 function fixture(seed?: (old: Database.Database) => void) {
-  const root = mkdtempSync('/Users/mang/.t3/acceptance/platform-complete-migration/w4b-replay/post-capture/fixture-')
+  const root = mkdtempSync((process.env.FINGERPRINT_REPLAY_EVIDENCE_DIR ?? '/Users/mang/.t3/acceptance/platform-complete-migration/w4b-replay/post-capture') + '/fixture-')
   const source = join(root, 'source.sqlite'), target = join(root, 'target.sqlite')
   const old = new Database(source)
   migrate(drizzle(old), { migrationsFolder: 'db/migrations' }); seed?.(old); old.close(); copyFileSync(source, target)
