@@ -1,3 +1,5 @@
+import { correspondenceTarget } from './record-correspondence-store'
+import { readCorrespondenceTargetQueries, readCorrespondenceTargetSources, correspondenceQueryRelationIds } from './record-correspondence-target-sources'
 import { and, eq, inArray, or, between } from 'drizzle-orm'
 import { createHash } from 'node:crypto'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
@@ -72,24 +74,38 @@ function completeTitle(query: typeof schema.platformQuery.$inferSelect, titleCod
   return last.maxPage != null ? last.page === last.maxPage : last.declaredTotal != null ? pages.reduce((sum, page) => sum + page.fetchedCount, 0) === last.declaredTotal : last.fetchedCount === 0
 }
 
+function sameStructuredFilters(filters: Record<string, unknown>, conditions: Record<string, unknown>) {
+  return Object.keys(filters).length === Object.keys(conditions).length && Object.entries(filters).every(([key, value]) => same(value, conditions[key]))
+}
+function completeTargetTitle(source: NonNullable<ReturnType<typeof readCorrespondenceTargetQueries> extends Map<number, infer V> ? V : never>, titleCode: string) {
+  const c = source.collection
+  if (c.interface !== 'recognized_list' || !['success', 'no_record'].includes(c.status) || c.completeness !== 'complete' || c.fullRange !== 1 || source.unfinished.length || !source.conditions.some(row => row.name === 'combination' && row.valueKind === 'text' && row.textValue === 'and')) return false
+  const selected = source.scopes.filter(row => RDJB_TITLE_CODES[row.rdjb] === titleCode)
+  if (selected.length !== 1) return false
+  const pages = source.pages.filter(page => page.rdjb === selected[0]!.rdjb).sort((a, b) => a.pageNo! - b.pageNo!)
+  if (!pages.length || pages[0]?.pageNo !== 1 || pages.some((page, index) => page.status !== 'success' || page.pageNo !== index + 1)) return false
+  const last = pages.at(-1)!
+  return last.maxPage !== null ? last.pageNo === last.maxPage : last.declaredTotal !== null ? pages.reduce((sum, page) => sum + (page.fetchedCount ?? 0), 0) === last.declaredTotal : last.fetchedCount === 0
+}
 export function currentSource(db: ProofExecutor, evidence: CurrentEvidence) {
-  const query = db.select().from(schema.platformQuery).where(eq(schema.platformQuery.id, evidence.queryId)).get()
+  const target = correspondenceTarget(db) ? readCorrespondenceTargetQueries(db, [evidence.queryId]).get(evidence.queryId) : null
+  const query = target ? target.query : correspondenceTarget(db) ? undefined : db.select().from(schema.platformQuery).where(eq(schema.platformQuery.id, evidence.queryId)).get()
   const batch = db.select().from(schema.platformExportBatch).where(eq(schema.platformExportBatch.id, evidence.exportBatchId)).get()
   if (!query || !batch) fail('source_missing', 'Archived query or export batch missing')
-  if (batch.importStatus !== 'imported' || batch.titleCode !== evidence.titleCode || !/^[0-9a-f]{64}$/.test(batch.sha256) || !completeTitle(query, evidence.titleCode)) fail('insufficient_evidence', 'Complete recognized query and imported hashed same-title export required')
+  if (batch.importStatus !== 'imported' || batch.titleCode !== evidence.titleCode || !/^[0-9a-f]{64}$/.test(batch.sha256) || !(target ? completeTargetTitle(target, evidence.titleCode) : completeTitle(query, evidence.titleCode))) fail('insufficient_evidence', 'Complete recognized query and imported hashed same-title export required')
   const actual = query.collectionEvidence!
-  const conditions = actual.effectiveConditions as unknown as Record<string, unknown>
+  const conditions: Record<string, unknown> = target ? Object.fromEntries(target.conditions.filter(row => row.valueKind !== 'absent').map(row => [row.name, row.valueKind === 'text' ? row.textValue : row.valueKind === 'boolean' ? Boolean(row.integerValue) : row.integerValue])) : actual.effectiveConditions as unknown as Record<string, unknown>
   const narrowed = ['name', 'uscc', 'sqsj', 'rddqrq', 'whpcyear', 'whpc', 'szq'].some(key => Boolean(conditions[key]))
   if (narrowed) fail('insufficient_evidence', 'Current equivalence requires full title scope without narrowing conditions')
   const scope = evidence.scope
   const freezeFile = db.select().from(schema.storedFile).where(eq(schema.storedFile.id, scope.freezeFileId)).get()
   if (!freezeFile || freezeFile.source !== 'miit' || freezeFile.removedAt || freezeFile.sha256 !== scope.freezeSha256 || freezeFile.relPath !== scope.freezeReference || !scope.freezeSha256) fail('source_mismatch', 'Archived platform freeze file reference/hash required')
   const start = Date.parse(scope.windowStart); const end = Date.parse(scope.windowEnd)
-  const queried = Date.parse(actual.queriedAt); const completed = Date.parse(actual.completedAt)
-  if (!scope.queryAccount || !scope.exportAccount || scope.queryAccount !== scope.exportAccount || !scope.queryRegion || scope.queryRegion !== scope.exportRegion || !scope.platformVersion || !scope.freezeReference || !Number.isFinite(start) || !Number.isFinite(end) || start > end || !same(scope.queryFilters, conditions) || !same(scope.exportFilters, conditions)) fail('insufficient_evidence', 'Explicit equal account, region, filters, window, version and freeze evidence required')
+  const queried = Date.parse(target ? target.collection.queriedAt : actual.queriedAt); const completed = Date.parse(target ? target.collection.completedAt ?? '' : actual.completedAt)
+  if (!scope.queryAccount || !scope.exportAccount || scope.queryAccount !== scope.exportAccount || !scope.queryRegion || scope.queryRegion !== scope.exportRegion || !scope.platformVersion || !scope.freezeReference || !Number.isFinite(start) || !Number.isFinite(end) || start > end || !(target ? sameStructuredFilters(scope.queryFilters, conditions) : same(scope.queryFilters, conditions)) || !(target ? sameStructuredFilters(scope.exportFilters, conditions) : same(scope.exportFilters, conditions))) fail('insufficient_evidence', 'Explicit equal account, region, filters, window, version and freeze evidence required')
   if (!Number.isFinite(queried) || !Number.isFinite(completed) || queried < start || completed > end || completed < queried || batch.collectedOn < scope.windowStart.slice(0, 10) || batch.collectedOn > scope.windowEnd.slice(0, 10)) fail('source_mismatch', 'Attested window excludes archived collection evidence')
   if (evidence.queryReference !== 'platform_query.collectionEvidence' || evidence.exportReference !== 'platform_export_batch.sha256' || !batch.sha256) fail('insufficient_evidence', 'Traceable original query and export field references required')
-  const queryRows = db.select().from(schema.platformRelation).where(eq(schema.platformRelation.queryId, query.id)).orderBy(schema.platformRelation.id).all()
+  const queryRows = target ? readCorrespondenceTargetSources(db, correspondenceQueryRelationIds(db, query.id)).map(row => row.relation) : db.select().from(schema.platformRelation).where(eq(schema.platformRelation.queryId, query.id)).orderBy(schema.platformRelation.id).all()
   const exportRows = db.select().from(schema.platformExportRow).where(eq(schema.platformExportRow.batchId, batch.id)).orderBy(schema.platformExportRow.id).all()
   return { sourceFingerprint: fingerprint({ kind: 'current_source_equivalence', query, queryRows, batch, exportRows, scope, freezeFile: { id: freezeFile.id, relPath: freezeFile.relPath, sha256: freezeFile.sha256, bytes: freezeFile.bytes } }), querySourceFingerprint: comparisonQueryFingerprint(query), exportSha256: batch.sha256, sourceSummary: { queryId: query.id, queryRowCount: queryRows.length, exportBatchId: batch.id, exportRowCount: exportRows.length, queryReference: evidence.queryReference, exportReference: evidence.exportReference, freezeFileId: freezeFile.id, freezeSha256: freezeFile.sha256 } }
 }

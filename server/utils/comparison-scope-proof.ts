@@ -1,3 +1,5 @@
+import { correspondenceTarget } from './record-correspondence-store'
+import { correspondenceRelationQueryId } from './record-correspondence-target-sources'
 import { and, eq, inArray, sql } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import { z } from 'zod'
@@ -168,6 +170,21 @@ export function resolveVerifiedComparisonEvidence(db: ProofExecutor, proofIds: n
   return { officialScopes, currentScopes }
 }
 
+/** Owned by one correspondence request so subsequent requests observe revocations. */
+export function createCurrentProofCoverageReader(db: ProofExecutor) {
+  const coverage = new Map<string, boolean>()
+  return (proofIds: number[], queryId: number, exportBatchId: number) => proofIds.some(proofId => {
+    const key = `${proofId}:${queryId}:${exportBatchId}`
+    const cached = coverage.get(key)
+    if (cached !== undefined) return cached
+    const covered = resolveVerifiedComparisonEvidence(db, [proofId], {
+      queryIds: [queryId], exportBatchIds: [exportBatchId], officialSourceDocumentIds: [],
+    }).currentScopes.some(proof => proof.queryId === queryId && proof.exportBatchId === exportBatchId)
+    coverage.set(key, covered)
+    return covered
+  })
+}
+
 /** Only these proofs can establish equivalence for the two endpoints. Selecting
  * IDs first keeps unrelated official archives out of current-row validation. */
 export function currentRowProofIds(db: ProofExecutor, proofIds: number[], relationId: number, exportRowId: number): number[] {
@@ -175,13 +192,13 @@ export function currentRowProofIds(db: ProofExecutor, proofIds: number[], relati
   const p = schema.comparisonScopeProof
   return db.select({ id:p.id }).from(p).where(and(
     inArray(p.id,proofIds), eq(p.kind,'current_source_equivalence'),
-    sql`json_extract(${p.evidence}, '$.queryId') = (select ${schema.platformRelation.queryId} from ${schema.platformRelation} where ${schema.platformRelation.id} = ${relationId})`,
+    correspondenceTarget(db) ? sql`json_extract(${p.evidence}, '$.queryId') = ${correspondenceRelationQueryId(db, relationId) ?? null}` : sql`json_extract(${p.evidence}, '$.queryId') = (select ${schema.platformRelation.queryId} from ${schema.platformRelation} where ${schema.platformRelation.id} = ${relationId})`,
     sql`json_extract(${p.evidence}, '$.exportBatchId') = (select ${schema.platformExportRow.batchId} from ${schema.platformExportRow} where ${schema.platformExportRow.id} = ${exportRowId})`,
   )).all().map(row => row.id)
 }
 
 export function currentProofCoversRows(db: ProofExecutor, proofIds: number[], relationId: number, exportRowId: number) {
-  const relation = db.select().from(schema.platformRelation).where(eq(schema.platformRelation.id, relationId)).get()
+  const relation = correspondenceTarget(db) ? (() => { const queryId = correspondenceRelationQueryId(db, relationId); return queryId === undefined ? undefined : { queryId } })() : db.select().from(schema.platformRelation).where(eq(schema.platformRelation.id, relationId)).get()
   const exportRow = db.select().from(schema.platformExportRow).where(eq(schema.platformExportRow.id, exportRowId)).get()
   if (!relation || !exportRow) return false
   return resolveVerifiedComparisonEvidence(db, currentRowProofIds(db,proofIds,relationId,exportRowId)).currentScopes.some(proof => proof.queryId === relation.queryId && proof.exportBatchId === exportRow.batchId)

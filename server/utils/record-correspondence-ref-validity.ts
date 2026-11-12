@@ -1,3 +1,5 @@
+import { correspondenceTarget } from './record-correspondence-store'
+import { listRecordCorrespondencesForIds } from './record-correspondence'
 import { and, eq, getTableColumns, inArray, sql, type SQL } from 'drizzle-orm'
 import { alias, type SQLiteTable } from 'drizzle-orm/sqlite-core'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
@@ -58,6 +60,7 @@ export function correspondenceRefValidity(db: Db, ids: number[]): Map<number, bo
 /** Reuse compilation only. Each invocation revalidates live source rows and proofs;
  * no validity result, archive or source fingerprint survives the call. */
 export function createCorrespondenceRefValidityReader(db: Db) {
+  if (correspondenceTarget(db)) return (ids: number[]) => new Map(listRecordCorrespondencesForIds(db, ids).map(row => [row.id, row.requiresRevalidation]))
   const checks = and(
     sql`case when ${t.eventId} is null then ${value('$.event')} is null else ${eventMatches(sql`${t.eventId}`,'')} end`,
     sql`case when ${t.predecessorEventId} is null then ${value('$.predecessor')} is null else ${eventMatches(sql`${t.predecessorEventId}`,'$.predecessor')} end`,

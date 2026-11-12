@@ -4,16 +4,13 @@ import {sqliteTable,integer,text,index,uniqueIndex} from 'drizzle-orm/sqlite-cor
 import type {BetterSQLite3Database} from 'drizzle-orm/better-sqlite3'
 import {recordEvent,platformExportRow,enterprise,title} from '../../db/schema'
 import {targetSchema,platformBusinessObservation,platformLegacyRelationAlias as a} from './target-schema'
-export const targetRecordCorrespondence = sqliteTable(
-  'record_correspondence',
-  {
+export function correspondenceFields() { return {
     id: integer('id').primaryKey({ autoIncrement: true }),
     edgeKey: text('edge_key').notNull(),
     type: text('type', { enum: ['event_process', 'event_recognized', 'later_process', 'event_export_context', 'process_export_context', 'recognized_export'] }).notNull(),
     role: text('role').notNull(),
     eventId: integer('event_id').references(() => recordEvent.id),
     predecessorEventId: integer('predecessor_event_id').references(() => recordEvent.id),
-    observationId: integer('observation_id').references(() => platformBusinessObservation.id),
     exportRowId: integer('export_row_id').references(() => platformExportRow.id),
     enterpriseId: integer('enterprise_id').references(() => enterprise.id),
     titleCode: text('title_code').notNull().references(() => title.code),
@@ -27,7 +24,11 @@ export const targetRecordCorrespondence = sqliteTable(
     createdAt: text('created_at').notNull(),
     decidedAt: text('decided_at'),
     endedAt: text('ended_at'),
-  },
+  } }
+export const targetRecordCorrespondence = sqliteTable('record_correspondence', {
+  ...correspondenceFields(),
+  observationId: integer('observation_id').references(() => platformBusinessObservation.id),
+},
   (t) => [
     uniqueIndex('record_correspondence_edge_uq').on(t.edgeKey),
     index('record_correspondence_event_idx').on(t.eventId),
