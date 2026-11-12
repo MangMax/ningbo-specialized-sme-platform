@@ -98,6 +98,8 @@ collection、observation、version 使用各自类型化 archive FK 附表，PK(
 
 历史 fingerprint 也不等于归档 sha256。`comparisonQueryFingerprint` 使用固定字段 JSON.stringify；currentSource 的 fingerprint 含 query、queryRows、exportRows、scope、freezeFile。目标为每种现存算法保存原 envelope/rule 的字节与 expected digest，核验时用 target 中同 owner 的字段按旧字段次序投影；需原 JSON 只在证据核验 owner 内解码。新增内部 id、basis、archive FK 不进入旧 envelope。113 capture 的 fact material 原来包含 relation 旧列及 raw rddqrq/whpcyear/whpc/szq，normalized字段无法重现。H2将该material作为版本化证据输入绑定具体观察，保留类型与旧列序；证据hash核验可以按观察读取归档，业务membership、完整性和归属筛选必须使用typed facts。capture partition/coverage 只读typed collection/page/conditions，旧异常条件保持原错误或unknown，不任意字符串化。输入漂移仍拒绝或触发原重核，不返回缓存 digest 冒充重新验证。不得以解析别名扩大 proof 范围。
 
+刷新 `businessFingerprint` 的投影输入固定为 `49f31949fe50326b2fdf241c7cbb9489c537478f` 中实际参与计算的各源业务列，包含认定目录当时已有的三个 source-fidelity 字段及 SQLite 原标量类型。原实现的 `select p.*` 不授权后续 schema 扩展改变输入：0050 新增的投影 id、observation owner、basis、原档引用和 reconciliation 列均不属于原算法。运行读服务显式选择原列；新内容版本只有非业务字段变化时，仍保留原刷新指纹。既有已保存摘要不批量改写，也不为新版本虚构旧分配器的编号。此限定落实上文“新增内部 id 不进入旧 envelope”，不改变 113/114 的原 envelope 或摘要。
+
 ## 写入、快照与失败
 
 计划调用接口由 Zod 边界 schema 推导类型，ID 在边界验证并区分 CollectionId/ObservationId/VersionId。规划 `platform-collection-write.ts` 接受已验证的采集事实，三个 source writer 接受各自字段与 typed assignment；不接受任意 table/column 字符串。读接口由同源 service 输出 source-specific DTO，HTTP/MCP 共用领域函数。旧 import schema 不能再从被删 schema.platformQuery/platformRelation 枚举派生，迁入领域 schema，保持 coercion/null/extra-field/error 旧契约。

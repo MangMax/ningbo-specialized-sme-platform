@@ -16,6 +16,9 @@ import { readOfficialPublishedPresentation, projectOfficialPublishedNames, Offic
 import type { PublishedPresentation } from './correspondence-view'
 import { identityFunctions } from './enterprise-read-snapshot'
 import { readQueryAssessment, readQueryCoverage, readQueryComparisonWitnesses, type QueryCoverageSource } from './query-assessment'
+import { differenceTargetSources, readDifferenceObservation } from '../platform/difference-sources'
+import { differencePublicColumns } from '../platform/difference-reference-target'
+import { readDifferencePlatformEffects } from './difference-platform-effects'
 import { relationScopeSql, TITLE_RDJB_CODES } from './current-platform-scope'
 import { normalizeName, normalizeUscc } from '../domain'
 import { identityKeys, type IdentityKeyVariants } from './current-identity-keys'
@@ -188,9 +191,10 @@ export function createCurrentQualificationAssessmentReaderWithWitnesses(db:Datab
 
 function createCurrentQualificationAssessmentReaderBody(db:Database.Database,receiptRuntime:ReceiptRuntimeContext|undefined,defaults:{recognizedFactSource?:RecognizedFactSource},witnesses?:RecognizedWitnessReader) {
   const evaluate = createCurrentCandidateEvaluationReader(db, receiptRuntime, defaults.recognizedFactSource,witnesses)
-  let correspondenceReader: ReturnType<typeof createEnterpriseTitleCorrespondenceRefsReader> | undefined
+  // Resolve the fixed schema binding before a caller starts a candidate iterator.
+  // Only prepared statements are retained; correspondence rows remain read-local.
+  const correspondenceReader = createEnterpriseTitleCorrespondenceRefsReader(prepareCurrentReader(db))
   const preparedCorrespondences = (enterpriseId: number, titleCode: string) => {
-    correspondenceReader ??= createEnterpriseTitleCorrespondenceRefsReader(prepareCurrentReader(db))
     return correspondenceReader(enterpriseId, titleCode)
   }
   // Only statement handles survive this request. Reference rows/maps belong to
@@ -423,7 +427,7 @@ function createCurrentCandidateEvaluationReader(db: Database.Database, receiptRu
     sql`select (select id from difference_reason where enterprise_id=${sql.placeholder('enterpriseId')}
       and title_code=${titleCode} and direction=${direction} order by recorded_at desc,id desc limit 1)`)),sql` union all `)
   // Prepare only when an explicit legacy assessment requests this dependency.
-  const prepareLegacyHeads = () => reader.select().from(d).where(sql`${d.id} in (${headIds})`).prepare()
+  const prepareLegacyHeads = () => reader.select(differencePublicColumns(reader)).from(d).where(sql`${d.id} in (${headIds})`).prepare()
   let headsQuery: ReturnType<typeof prepareLegacyHeads> | undefined
   const legacyHeads = () => headsQuery ??= prepareLegacyHeads()
   return function readCandidate(enterpriseId: number, title: CurrentTitle, year: number, executionTime = Date.now(), keys?: { queries: IdentityKeyVariants; relations: IdentityKeyVariants }, includeFilterFacts = false, includeReferences = true, assessmentOptions?: QualificationAssessmentReadOptions, includePendingFilterFacts = false, suppliedPlatformRefs?: readonly CurrentPlatformReference[], preparedCorrespondences?: ReturnType<typeof createEnterpriseTitleCorrespondenceRefsReader>, observePublishedForCurrent?: CurrentPublishedNameObservation, observeCycles?: CurrentCycleObservation, detail: { expandAssessment?: boolean; giant?: CurrentRow; qualificationOnly?: boolean } = {}): { row: CurrentRow; group: CurrentGroup; effectiveStatus: import('./current-status').CurrentStatus } {
@@ -485,7 +489,8 @@ function createCurrentCandidateEvaluationReader(db: Database.Database, receiptRu
   const rdjb=TITLE_RDJB_CODES[title]
   const relationKeys=keys ? identityKeys(keys.relations,enterprise.uscc_norm) : null
   const unassigned=relationKeys ? 'r.uscc_raw in (select value from json_each(@relationKeys))' : 'roster84_uscc(r.uscc_raw)=@uscc'
-  const platformRefs=includeReferences ? suppliedPlatformRefs ?? statement(`select r.id,r.query_id as queryId,q.interface,q.queried_at as queriedAt from platform_relation r join platform_query q on q.id=r.query_id where r.id in (select id from platform_relation where enterprise_id=@enterpriseId union select r.id from platform_relation r ${relationKeys ? 'indexed by platform_relation_uscc_query_idx' : ''} where r.enterprise_id is null and ${unassigned}) and ${relationScopeSql} order by r.id`).all({enterpriseId,...(relationKeys ? {relationKeys:JSON.stringify(relationKeys)} : {uscc:normalizeUscc(enterprise.uscc_norm)||null}),title,rdjb}) as ({id:number;queryId:number} & CurrentWorkbookFacts['platform'][number])[] : []
+  const targetEffects = includeReferences && differenceTargetSources(reader) ? readDifferencePlatformEffects(reader, enterpriseId, title) : undefined
+  const platformRefs=includeReferences ? suppliedPlatformRefs ?? targetEffects ?? statement(`select r.id,r.query_id as queryId,q.interface,q.queried_at as queriedAt from platform_relation r join platform_query q on q.id=r.query_id where r.id in (select id from platform_relation where enterprise_id=@enterpriseId union select r.id from platform_relation r ${relationKeys ? 'indexed by platform_relation_uscc_query_idx' : ''} where r.enterprise_id is null and ${unassigned}) and ${relationScopeSql} order by r.id`).all({enterpriseId,...(relationKeys ? {relationKeys:JSON.stringify(relationKeys)} : {uscc:normalizeUscc(enterprise.uscc_norm)||null}),title,rdjb}) as ({id:number;queryId:number} & CurrentWorkbookFacts['platform'][number])[] : []
   row.references.push(...platformRefs.map(r => 'platform-relation:' + r.id + ' query:' + r.queryId))
   // Default effective reads never execute legacy difference/assessment/receipt decisions.
   // Explicit prior versions retain those diagnostics and their historical behavior.
@@ -527,7 +532,7 @@ function createCurrentCandidateEvaluationReader(db: Database.Database, receiptRu
         ? assessment.currentDecision.current : decisionVersionInput(assessment.currentDecision.current) },
     }, reviewed })
     const gap = assessment.explanationValidity.status !== 'valid' || !(d.basis ?? reviewed?.basis) || !effectiveAt || !Number.isFinite(Date.parse(effectiveAt)) || Date.parse(effectiveAt) > executionTime
-    const source=d.relationId ? statement('select enterprise_id as enterpriseId,uscc_raw as uscc,verification_status as verificationStatus from platform_relation where id=?').get(d.relationId) as {enterpriseId:number|null;uscc:string|null;verificationStatus:string}|undefined : undefined
+    const source=d.relationId ? differenceTargetSources(reader) ? readDifferenceObservation(reader,d.relationId) : statement('select enterprise_id as enterpriseId,uscc_raw as uscc,verification_status as verificationStatus from platform_relation where id=?').get(d.relationId) as {enterpriseId:number|null;uscc:string|null;verificationStatus:string}|undefined : undefined
     const ownUscc=normalizeUscc(enterprise.uscc_norm), sourceUscc=normalizeUscc(source?.uscc)
     const sourceConflict=source && (source.enterpriseId != null && source.enterpriseId !== enterpriseId || sourceUscc && ownUscc && sourceUscc !== ownUscc)
     const sourceGap=!!d.currentQualification && (!source || source.verificationStatus !== 'confirmed' || source.enterpriseId == null && (!ownUscc || sourceUscc !== ownUscc))
@@ -751,7 +756,9 @@ function createCurrentCandidateEvaluationReader(db: Database.Database, receiptRu
     })
     const coverage = assessmentOptions.coverageForTitle?.(title) ?? readQueryCoverage(reader, {enterpriseId,titleCode:title,direction:'missing_in_miit'}, keys?.queries, assessmentOptions.ownQueryIds)
     const observedRows = platformRefs.map(ref => {
-      const r = statement('select status,year,batch from platform_relation where id=?').get(ref.id) as {status:string|null;year:number|null;batch:string|null}
+      const target = targetEffects?.find(r => r.id === ref.id)
+      const r = targetEffects ? target ? {status:target.status,year:target.year,batch:target.batch} : {status:null,year:null,batch:null}
+        : statement('select status,year,batch from platform_relation where id=?').get(ref.id) as {status:string|null;year:number|null;batch:string|null}
       return {queryId:ref.queryId,relationId:ref.id,...r}
     })
     const observations = coverage.sources.map(s => {

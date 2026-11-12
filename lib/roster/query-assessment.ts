@@ -7,6 +7,7 @@ import { normalizeUscc } from '../domain'
 import { identityFunctions, identityUsccSql } from './enterprise-read-snapshot'
 import { identityKeys, type IdentityKeyVariants } from './current-identity-keys'
 import { platformQueryResultShape, type PlatformQueryPage } from '../platform/live-query'
+import { differenceTargetSources, readDifferenceCollectionScopes, selectDifferenceCollections } from '../platform/difference-sources'
 
 export type AssessmentScope = Parameters<typeof currentDecision102>[1]
 type CoverageStatus = 'not_queried' | 'complete' | 'partial' | 'failed' | 'unknown'
@@ -41,6 +42,16 @@ function queryMetadata(db: DecisionDb, scope: AssessmentScope, variants?: Identi
   identityFunctions(db)
   const e = db.get<{ uscc: string | null; name: string }>(sql`select uscc_norm as uscc,name_norm as name from enterprise where id=${scope.enterpriseId}`)!
   const uscc = normalizeUscc(e.uscc) || null, rdjb = rdjbByTitle[scope.titleCode] ?? ''
+  if (differenceTargetSources(db)) {
+    const selected = selectDifferenceCollections(db, scope.enterpriseId, { titleCode: scope.titleCode, rdjb, queryIds: ownQueryIds, limit: 51,
+      queryKeys: variants ? [...new Set([`name:${e.name}`, ...identityKeys(variants, uscc)])] : undefined, normalizeIdentity: !variants })
+    const metadata = readDifferenceCollectionScopes(db, selected.slice(0,50).map(r => r.collection))
+    const rows: QueryMetadata[] = selected.slice(0,50).map(({ collection: q, id, matched }) => ({
+      id, interface: q.interface, queryKey: q.queryKey, titleCode: q.titleCode, rdjb: q.rdjb, queriedAt: q.queriedAt, status: q.status, matched,
+      metadata: JSON.stringify(metadata.get(q.id)!.metadata),
+    }))
+    return { rows, truncated: selected.length > 50, uscc }
+  }
   // Freeze bounded IDs before extracting JSON: ORDER BY/LIMIT on the outer
   // projection alone could parse metadata for every qualifying historical row.
   const titleScope = sql`(q.interface='apply_list' or q.title_code=${scope.titleCode} or instr(','||q.rdjb||',',${`,` + rdjb + `,`})>0 or (q.rdjb='' and q.title_code is null))`
@@ -206,6 +217,15 @@ export function readQueryAssessmentSummaries(db: DecisionDb, scopes: AssessmentS
  */
 function readCoveragesForScopes(db: DecisionDb, scopes: AssessmentScope[]): ReturnType<typeof readQueryCoverage>[] {
   if (!scopes.length) return []
+  if (differenceTargetSources(db)) {
+    const coverage = new Map<string, ReturnType<typeof readQueryCoverage>>()
+    return scopes.map(scope => {
+      const key = JSON.stringify([scope.enterpriseId, scope.titleCode])
+      let result = coverage.get(key)
+      if (!result) { result = readQueryCoverage(db, scope); coverage.set(key, result) }
+      return result
+    })
+  }
   identityFunctions(db)
   const keyOf = (s: AssessmentScope) => JSON.stringify([s.enterpriseId, s.titleCode])
   const targets = [...new Map(scopes.map(s => [keyOf(s), s])).values()]
