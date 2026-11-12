@@ -40,7 +40,7 @@ beforeAll(async()=>{
   old.insert(schema.platformRelation).values({id:201,queryId:121,sequenceNo:1,relationKey:'recognized201',enterpriseId:1,usccRaw:'U1',nameRaw:'Alpha',verificationStatus:'confirmed',rawFields:{id:'recognized201',rdjb:'2',whpcyear:'2026',whpc:'2026-1'}}).run()
   ensurePlatformObservation(old,201)
   old.insert(schema.platformExportBatch).values({id:50,titleCode:'specialized_sme',year:2026,collectedOn:'2026-01-01',originalFilename:'synthetic.xlsx',sha256:'b'.repeat(64),importStatus:'imported'}).run()
-  old.insert(schema.platformExportRow).values({id:51,batchId:50,sourceRowNo:1,usccRaw:'U1',nameRaw:'Alpha'}).run()
+  old.insert(schema.platformExportRow).values([{id:51,batchId:50,sourceRowNo:1,usccRaw:'U1',nameRaw:'Alpha'},{id:52,batchId:50,sourceRowNo:2,usccRaw:'U1',nameRaw:'Alpha'}]).run()
   const freeze=old.insert(schema.storedFile).values({relPath:'synthetic/freeze745',filename:'freeze.txt',ext:'txt',bytes:24,sha256:'c'.repeat(64),source:'miit',kind:'export'}).returning().get()
   const proof:ProofRequest={...req,idempotencyKey:'proof-before',operations:[{action:'create',kind:'current_source_equivalence',status:'confirmed',evidence:{queryId:121,exportBatchId:50,titleCode:'specialized_sme',queryReference:'platform_query.collectionEvidence',exportReference:'platform_export_batch.sha256',scope:{queryAccount:'normal',exportAccount:'normal',queryRegion:'normal',exportRegion:'normal',queryFilters:conditions,exportFilters:conditions,windowStart:'2026-01-01T00:00:00Z',windowEnd:'2026-01-01T23:59:59Z',platformVersion:'v1',freezeReference:freeze.relPath,freezeFileId:freeze.id,freezeSha256:freeze.sha256!}}}]}
   currentProofRequest=proof
@@ -185,4 +185,30 @@ it('batches structured source reads and avoids legacy mixed tables on the target
  expect(statements.filter(q=>/from "platform_recognized_projection"/i.test(q))).toHaveLength(1)
  expect(statements.some(q=>/\b(?:from|join)\s+"platform_(?:query|relation)"(?:\s|$)/i.test(q))).toBe(false)
  expect(statements.some(q=>/"record_correspondence"\."relation_id"/.test(q))).toBe(false)
+})
+
+
+it('reuses shared current proof coverage within each page and refs request',()=>{
+ const request:CorrespondenceRequest={idempotencyKey:'shared-proof',sourceIdentity:'745',actor:{type:'agent',id:'745'},basis:'normal',ruleId:'r',ruleVersion:'v',proofIds:[proofId],operations:[{action:'create',status:'confirmed',edge:{type:'recognized_export',relationId:201,exportRowId:52,role:'same_current_row'}}]}
+ commitRecordCorrespondences(db,request,preflightRecordCorrespondences(db,request).planHash)
+ const measure=(read:()=>unknown)=>{
+  statements.length=0
+  const result=read()
+  return {result,proofReads:statements.filter(q=>/from "comparison_scope_proof"/i.test(q)).length,sourceReads:statements.filter(q=>/from "platform_recognized_projection"/i.test(q)).length}
+ }
+ const one=measure(()=>pageRecordCorrespondences(db,{relationId:201},{page:1,pageSize:1}))
+ const two=measure(()=>pageRecordCorrespondences(db,{relationId:201},{page:1,pageSize:2}))
+ expect(two.proofReads).toBeGreaterThan(0)
+ expect(two.proofReads).toBe(one.proofReads)
+ expect(two.sourceReads).toBe(one.sourceReads)
+ const refs=measure(()=>listRecordCorrespondenceRefs(db,{relationId:201}))
+ expect(refs.result).toMatchObject([{requiresRevalidation:false},{requiresRevalidation:false}])
+ expect(refs.proofReads).toBe(one.proofReads)
+ expect(refs.sourceReads).toBe(one.sourceReads)
+ const readRefs=createEnterpriseTitleCorrespondenceRefsReader(db)
+ expect(readRefs(1,'specialized_sme').filter(row=>row.relationId===201)).toMatchObject([{requiresRevalidation:false},{requiresRevalidation:false}])
+ const revoke:ProofRequest={...currentProofRequest,idempotencyKey:'shared-proof-revoke',operations:[{action:'decide',proofId,expectedRevision:2,status:'revoked'}]}
+ commitComparisonScopeProofs(db,revoke,preflightComparisonScopeProofs(db,revoke).planHash)
+ expect(readRefs(1,'specialized_sme').filter(row=>row.relationId===201)).toMatchObject([{requiresRevalidation:true},{requiresRevalidation:true}])
+ expect(listRecordCorrespondenceRefs(db,{relationId:201})).toMatchObject([{requiresRevalidation:true},{requiresRevalidation:true}])
 })

@@ -170,6 +170,21 @@ export function resolveVerifiedComparisonEvidence(db: ProofExecutor, proofIds: n
   return { officialScopes, currentScopes }
 }
 
+/** Owned by one correspondence request so subsequent requests observe revocations. */
+export function createCurrentProofCoverageReader(db: ProofExecutor) {
+  const coverage = new Map<string, boolean>()
+  return (proofIds: number[], queryId: number, exportBatchId: number) => proofIds.some(proofId => {
+    const key = `${proofId}:${queryId}:${exportBatchId}`
+    const cached = coverage.get(key)
+    if (cached !== undefined) return cached
+    const covered = resolveVerifiedComparisonEvidence(db, [proofId], {
+      queryIds: [queryId], exportBatchIds: [exportBatchId], officialSourceDocumentIds: [],
+    }).currentScopes.some(proof => proof.queryId === queryId && proof.exportBatchId === exportBatchId)
+    coverage.set(key, covered)
+    return covered
+  })
+}
+
 /** Only these proofs can establish equivalence for the two endpoints. Selecting
  * IDs first keeps unrelated official archives out of current-row validation. */
 export function currentRowProofIds(db: ProofExecutor, proofIds: number[], relationId: number, exportRowId: number): number[] {

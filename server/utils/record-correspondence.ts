@@ -11,7 +11,7 @@ import { normalizePlatformRelation } from '../../lib/platform/normalization'
 import { ensureBatchRow, findBatchByKey } from './roster-batch-ledger'
 import { versionedOfficialEvent } from './roster-event-version'
 import { correspondenceRefValidity, createCorrespondenceRefValidityReader } from './record-correspondence-ref-validity'
-import { currentProofCoversRows } from './comparison-scope-proof'
+import { createCurrentProofCoverageReader, currentProofCoversRows } from './comparison-scope-proof'
 import { correspondenceIdentityProblem } from './record-correspondence-identity'
 
 type Db = BetterSQLite3Database<typeof schema>
@@ -229,7 +229,12 @@ function sourceForEdge(db: Executor, edge: CorrespondenceEdge, confirmed: boolea
   if (relation) sameTitle(titleCode, relationTitle(relation), confirmed)
   if (exported) sameTitle(titleCode, exported.exportBatch.titleCode, confirmed)
   if (edge.type === 'later_process' && confirmed && relation?.relation.declareKind && relation.relation.declareKind !== edge.role.replace('followup_', '')) fail('invalid_endpoint_type', 'Follow-up role conflicts with original process type')
-  if (edge.type === 'recognized_export' && confirmed && edge.role === 'same_current_row' && !currentProofCoversRows(db, proofIds, edge.relationId, edge.exportRowId)) fail('incomplete_coverage', 'Confirmed current-source equivalence proof required')
+  if (edge.type === 'recognized_export' && confirmed && edge.role === 'same_current_row') {
+    const covered = observed && relation && exported
+      ? observed.coversCurrentProof(proofIds, relation.query.id, exported.exportRow.batchId)
+      : currentProofCoversRows(db, proofIds, edge.relationId, edge.exportRowId)
+    if (!covered) fail('incomplete_coverage', 'Confirmed current-source equivalence proof required')
+  }
   if (edge.type === 'recognized_export' && confirmed && edge.role === 'candidate_same_current_row') fail('incomplete_coverage', 'Candidate role cannot be confirmed as current equivalence')
   const originalSource = sourceProvenance(db, edge, observed)
   const provenance = { ...originalSource, comparisonProofIds: edge.type === 'recognized_export' ? proofIds : [] }
@@ -477,6 +482,7 @@ type EventRows = { event: typeof schema.recordEvent.$inferSelect; record: typeof
 type RelationRows = { relation: typeof schema.platformRelation.$inferSelect; query: typeof schema.platformQuery.$inferSelect; facts?: ReturnType<typeof readCorrespondenceTargetSources>[number]['facts']; observationId?: number }
 type ExportRows = { exportRow: typeof schema.platformExportRow.$inferSelect; exportBatch: typeof schema.platformExportBatch.$inferSelect }
 interface ReadSources {
+  coversCurrentProof: ReturnType<typeof createCurrentProofCoverageReader>
   events: Map<number, EventRows>
   relations: Map<number, RelationRows>
   exports: Map<number, ExportRows>
@@ -513,7 +519,7 @@ function observeReadSources(db: Db, rows: SourceReference[]): ReadSources {
   const paths = [...new Set(evidence.map(r => r.sourceFile))]
   const files = Array.from({ length: Math.ceil(paths.length / 400) }, (_, i) => paths.slice(i * 400, (i + 1) * 400)).flatMap(paths => db.select({ id: schema.storedFile.id, relPath: schema.storedFile.relPath, bytes: schema.storedFile.bytes, sha256: schema.storedFile.sha256, removedAt: schema.storedFile.removedAt }).from(schema.storedFile).where(inArray(schema.storedFile.relPath, paths)).all())
   const filesByPath = new Map(files.map(r => [r.relPath, r]))
-  return { events: new Map(events.map(r => [r.event.id, r])), relations: targetRelations ? new Map(targetRelations.map(r => [r.relation.id, r])) : new Map(relations.flatMap(relation => { const query = queriesById.get(relation.queryId); return query ? [[relation.id, { relation, query }] as const] : [] })), exports: new Map(exports.map(r => [r.exportRow.id, r])), enterprises: new Map(enterprises.map(r => [r.id, r])), titles: new Set(storedTitles.map(r => r.code)), evidence: Map.groupBy(evidence.map(evidence => ({ evidence, storedFile: filesByPath.get(evidence.sourceFile) ?? null })), r => r.evidence.recordEventId) }
+  return { coversCurrentProof: createCurrentProofCoverageReader(db), events: new Map(events.map(r => [r.event.id, r])), relations: targetRelations ? new Map(targetRelations.map(r => [r.relation.id, r])) : new Map(relations.flatMap(relation => { const query = queriesById.get(relation.queryId); return query ? [[relation.id, { relation, query }] as const] : [] })), exports: new Map(exports.map(r => [r.exportRow.id, r])), enterprises: new Map(enterprises.map(r => [r.id, r])), titles: new Set(storedTitles.map(r => r.code)), evidence: Map.groupBy(evidence.map(evidence => ({ evidence, storedFile: filesByPath.get(evidence.sourceFile) ?? null })), r => r.evidence.recordEventId) }
 }
 function readCorrespondences(db: Db, rows: StoredCorrespondence[]) {
   const observed = observeReadSources(db, rows)
