@@ -105,7 +105,7 @@ function legacyOriginal(text: string, sequenceNo: number, processCanonical=false
   return row as RosterImportRelation
 }
 
-function targetReplaySource<S extends Record<string, unknown>>(tx: BetterSQLite3Database<S>, sqlite: Database.Database, collection: typeof s.platformCollection.$inferSelect) {
+export function targetReplaySource<S extends Record<string, unknown>>(tx: BetterSQLite3Database<S>, sqlite: Database.Database, collection: typeof s.platformCollection.$inferSelect) {
     if(collection.interface==='recognized_list')verifyWitnessCollection(sqlite,collection.id)
     const alias = tx.select().from(s.platformLegacyQueryAlias).where(eq(s.platformLegacyQueryAlias.collectionId,collection.id)).get()
     if (!alias) throw new Error('Missing collection alias')

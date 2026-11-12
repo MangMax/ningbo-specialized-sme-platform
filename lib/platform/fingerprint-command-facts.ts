@@ -17,7 +17,7 @@ const hash=(v:Buffer|string)=>createHash('sha256').update(v).digest('hex')
 const id=z.number().int().positive().max(Number.MAX_SAFE_INTEGER)
 // passthrough retains extra original own keys. Parsing validates, but never replaces original input.
 const inputShape=z.object({
-  collectionId:id,
+  collectionId:id, batchId:id.optional(),
   position:z.object({
     sequenceNo:id, positionState:z.enum(['unknown','verified','conflict']),
     pageId:id.nullable().optional(), pageRowNo:id.nullable().optional(),
@@ -52,7 +52,7 @@ function verifyCommandInSnapshot(target:Database.Database,predecessor:Database.D
   const alias=actual.select().from(s.platformLegacyRelationAlias).where(eq(s.platformLegacyRelationAlias.observationId,observation.id)).get()
   const queryAlias=actual.select().from(s.platformLegacyQueryAlias).where(eq(s.platformLegacyQueryAlias.collectionId,input.collectionId)).get()
   if(!alias||!queryAlias)throw new Error('Command alias owner missing')
-  const bytes=Buffer.from(canonicalPlatformJson({collectionId:input.collectionId,position:input.position,row:input.row,assignment:input.assignment}))
+  const bytes=Buffer.from(canonicalPlatformJson({collectionId:input.collectionId,position:input.position,row:input.row,assignment:input.assignment,...(input.batchId===undefined?{}:{batchId:input.batchId})}))
   if(hash(bytes)!==observation.inputFingerprint)throw new Error('Command fingerprint conflict')
   const scratch=new Database(predecessor.serialize());scratch.pragma('foreign_keys=ON')
   try {
@@ -72,6 +72,11 @@ function verifyCommandInSnapshot(target:Database.Database,predecessor:Database.D
       const enterprise=actual.select().from(s.enterprise).where(eq(s.enterprise.id,input.assignment.enterpriseId)).get()
       if(!enterprise)throw new Error('Command enterprise context missing')
       expected.insert(s.enterprise).values(enterprise).run()
+    }
+    if(input.batchId!=null&&!expected.select().from(s.importBatch).where(eq(s.importBatch.id,input.batchId)).get()) {
+      const batch=actual.select().from(s.importBatch).where(eq(s.importBatch.id,input.batchId)).get()
+      if(!batch)throw new Error('Command import batch context missing')
+      expected.insert(s.importBatch).values(batch).run()
     }
     // The independently bound snapshot also covers collections created after predecessor.
     if(!expected.select().from(s.platformCollection).where(eq(s.platformCollection.id,collection.id)).get()) {

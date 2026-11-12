@@ -1,3 +1,7 @@
+import { collectionImportTarget, collectionImportSource, collectionImportPreview, writeImportedCollection, verifyImportedCollectionFields } from './collection-import-target'
+import { targetCandidateTables } from './candidate-target-sources'
+import { targetDifferenceReason } from '../../lib/platform/difference-reference-target'
+import { readDifferenceCollection, readDifferenceCollectionScope, readDifferenceObservation } from '../../lib/platform/difference-sources'
 import { queryEvidenceError } from '../../lib/platform/query-evidence'
 import { platformQueryInsertMetadata, platformQuerySourceConflict, stagedPlatformQuerySource, type PlatformQueryReplaySource } from '../../lib/platform/query-replay'
 import { enqueueArchivedCandidates } from './jobs/candidate-discovery'
@@ -628,7 +632,7 @@ interface PendingPlatformRef {
 type PendingPlatformRefs = PendingPlatformRef[]
 
 /** 从载荷里收集「本批将写入」的平台查询自然键。 */
-function collectPendingPlatformRefs(payload: RosterImportPayload): PendingPlatformRefs {
+function collectPendingPlatformRefs(payload: RosterImportPayload, target = false): PendingPlatformRefs {
   const out: PendingPlatformRefs = []
   for (const query of Array.isArray(payload.platformQueries) ? payload.platformQueries : []) {
     if (!isObject(query)) continue
@@ -637,6 +641,7 @@ function collectPendingPlatformRefs(payload: RosterImportPayload): PendingPlatfo
     const queriedAt = optionalString((query as { queriedAt?: unknown }).queriedAt)
     if (!iface || !queryKey || !queriedAt) continue
     const relations = (query as { relations?: unknown }).relations
+    if (target && out.some(q => q.interface === iface && q.queryKey === queryKey && q.rdjb === (optionalString(query.rdjb) ?? '') && q.queriedAt === queriedAt)) continue
     out.push({
       collectionEvidence: query.collectionEvidence,
       interface: iface,
@@ -721,18 +726,23 @@ function normalizeRef(ref: unknown, field: string): { ok: true; value: Normalize
  *    **可能命中多行**（`resolveQueryRefPlan` 的「引用不唯一」正是靠这个数条数）。
  * 两种情况都只取 `id`，所以都不会碰 `raw_response` —— 那是本条路径真正省下的字节。
  */
-function platformQueryWhere(ref: NormalizedRef) {
+function importPlatformTables(db: Executor) {
+  return collectionImportTarget(db) ? targetCandidateTables(db) : { q: schema.platformQuery, r: schema.platformRelation }
+}
+
+function platformQueryWhere(ref: NormalizedRef, q: ReturnType<typeof importPlatformTables>['q']) {
   const conditions = [
-    eq(schema.platformQuery.interface, ref.interface as PlatformInterface),
-    eq(schema.platformQuery.queryKey, ref.queryKey),
-    eq(schema.platformQuery.rdjb, ref.rdjb),
+    eq(q.interface, ref.interface as PlatformInterface),
+    eq(q.queryKey, ref.queryKey),
+    eq(q.rdjb, ref.rdjb),
   ]
-  if (ref.queriedAt) conditions.push(eq(schema.platformQuery.queriedAt, ref.queriedAt))
+  if (ref.queriedAt) conditions.push(eq(q.queriedAt, ref.queriedAt))
   return and(...conditions)
 }
 
 /** 按自然键在「库内 + 本批将写入」两处找候选查询。 */
 function refCandidates(source: Executor, pending: PendingPlatformRefs, ref: NormalizedRef) {
+  const { q } = importPlatformTables(source)
   const matches = (candidate: { interface: string; queryKey: string; rdjb: string; queriedAt: string }) =>
     candidate.interface === ref.interface &&
     candidate.queryKey === ref.queryKey &&
@@ -741,11 +751,11 @@ function refCandidates(source: Executor, pending: PendingPlatformRefs, ref: Norm
   return {
     // 库内一侧**按键定位**且只取 `id`；本批一侧是内存数组，谓词留在 JS 里。
     dbHits: source
-      .select({ id: schema.platformQuery.id })
-      .from(schema.platformQuery)
-      .where(platformQueryWhere(ref))
+      .select({ id: q.id })
+      .from(q)
+      .where(platformQueryWhere(ref, q))
       .all(),
-    pendingHits: pending.filter(matches),
+    pendingHits: pending.filter(matches).filter(candidate => !collectionImportTarget(source) || !findQueryRow(source, { interface: candidate.interface as PlatformInterface, queryKey: candidate.queryKey, rdjb: candidate.rdjb, queriedAt: candidate.queriedAt })),
   }
 }
 
@@ -765,6 +775,7 @@ function resolveQueryRefPlan(source: Executor, pending: PendingPlatformRefs, ref
 
 /** 预检阶段的「关系能不能解析」。 */
 function resolveRelationRefPlan(source: Executor, pending: PendingPlatformRefs, ref: NormalizedRef, field: string): { ok: true } | { ok: false; error: RefError } {
+  const { r } = importPlatformTables(source)
   if (ref.sequenceNo == null || ref.sequenceNo < 1) {
     return { ok: false, error: { code: 'ref_sequence_no_required', field: `${field}.sequenceNo`, message: '关系引用缺少 sequenceNo（同一次查询内第几条，从 1 起）' } }
   }
@@ -777,8 +788,8 @@ function resolveRelationRefPlan(source: Executor, pending: PendingPlatformRefs, 
   const relationsOf = (query: { id: number }) =>
     source
       .select()
-      .from(schema.platformRelation)
-      .where(eq(schema.platformRelation.queryId, query.id))
+      .from(r)
+      .where(eq(sql<number>`${r.queryId}`, query.id))
       .all()
   // 「这条查询里有没有序号 N 的关系」= 关系表**唯一键**的按键定位（RL-18）。
   // 以前这里对每个候选查询各扫一遍整张 `platform_relation`。
@@ -804,7 +815,7 @@ function resolveRelationRefPlan(source: Executor, pending: PendingPlatformRefs, 
       ),
       ...pendingHits
         .filter((query) => query.sequenceNos.includes(ref.sequenceNo!))
-        .map((query) => (query.relationKeys.includes(ref.relationKey!) ? ref.relationKey : null)),
+        .map((query) => (collectionImportTarget(source) ? query.relations.find(r => r.sequenceNo === ref.sequenceNo)?.relationKey ?? null : query.relationKeys.includes(ref.relationKey!) ? ref.relationKey : null)),
     ].filter((key): key is string => key != null)
     const anyKey = [
       ...dbHits.flatMap((query) => relationsOf(query).map((relation) => relation.relationKey)),
@@ -839,10 +850,11 @@ function describeRef(ref: NormalizedRef): string {
 
 /** 执行阶段：解析出**真实**的 `platform_query.id`。 */
 function resolveQueryIdAt(source: Executor, ref: NormalizedRef): number | null {
+  const { q } = importPlatformTables(source)
   const hits = source
-    .select({ id: schema.platformQuery.id })
-    .from(schema.platformQuery)
-    .where(platformQueryWhere(ref))
+    .select({ id: q.id })
+    .from(q)
+    .where(platformQueryWhere(ref, q))
     .all()
   if (hits.length === 0) return null
   if (ref.queriedAt) return hits[0]!.id
@@ -865,16 +877,17 @@ interface PlatformAliasRelationEvidence {
 
 /** Load the actual platform row facts used to validate a platform-sourced alias. */
 export function findPlatformAliasRelationEvidence(source: Executor, relationId: number): PlatformAliasRelationEvidence | null {
+  const { q, r } = importPlatformTables(source)
   return source
     .select({
-      interface: schema.platformQuery.interface,
-      enterpriseId: schema.platformRelation.enterpriseId,
-      usccRaw: schema.platformRelation.usccRaw,
-      nameRaw: schema.platformRelation.nameRaw,
+      interface: q.interface,
+      enterpriseId: r.enterpriseId,
+      usccRaw: r.usccRaw,
+      nameRaw: r.nameRaw,
     })
-    .from(schema.platformRelation)
-    .innerJoin(schema.platformQuery, eq(schema.platformQuery.id, schema.platformRelation.queryId))
-    .where(eq(schema.platformRelation.id, relationId))
+    .from(r)
+    .innerJoin(q, eq(q.id, r.queryId))
+    .where(eq(sql<number>`${r.id}`, relationId))
     .get() ?? null
 }
 
@@ -1383,7 +1396,7 @@ export function planRosterImport(
   /** 本批新建主体的名称与统代（用于确认平台别名/按名归并是否只有一个真实候选）。 */
   const pendingEnterpriseCreates: PendingEnterpriseCreate[] = []
   /** 本批将写入的平台查询自然键（供别名 / 差异 / 归并在预检时解析到同批关系行）。 */
-  const pendingRefs: PendingPlatformRefs = collectPendingPlatformRefs(payload)
+  const pendingRefs: PendingPlatformRefs = collectPendingPlatformRefs(payload, collectionImportTarget(db))
   /** 先看整份载荷，标出同一出处行被指向多个不同目标路径的冲突。 */
   const announcementRecords = Array.isArray(payload.announcement?.records) ? payload.announcement.records : []
   const announcementIdentityPlan = payload.announcement && mode === 'write'
@@ -2609,15 +2622,16 @@ function findQueryRow(
   db: Executor,
   spec: { interface: PlatformInterface; queryKey: string; rdjb: string; queriedAt: string },
 ): { id: number } | undefined {
+  const { q } = importPlatformTables(db)
   return db
-    .select({ id: schema.platformQuery.id })
-    .from(schema.platformQuery)
+    .select({ id: q.id })
+    .from(q)
     .where(
       and(
-        eq(schema.platformQuery.interface, spec.interface),
-        eq(schema.platformQuery.queryKey, spec.queryKey),
-        eq(schema.platformQuery.rdjb, spec.rdjb),
-        eq(schema.platformQuery.queriedAt, spec.queriedAt),
+        eq(q.interface, spec.interface),
+        eq(q.queryKey, spec.queryKey),
+        eq(q.rdjb, spec.rdjb),
+        eq(q.queriedAt, spec.queriedAt),
       ),
     )
     .get()
@@ -2628,13 +2642,14 @@ function findRelationRow(
   db: Executor,
   spec: { queryId: number; sequenceNo: number },
 ): { id: number } | undefined {
+  const { r } = importPlatformTables(db)
   return db
-    .select({ id: schema.platformRelation.id })
-    .from(schema.platformRelation)
+    .select({ id: r.id })
+    .from(r)
     .where(
       and(
-        eq(schema.platformRelation.queryId, spec.queryId),
-        eq(schema.platformRelation.sequenceNo, spec.sequenceNo),
+        eq(sql<number>`${r.queryId}`, spec.queryId),
+        eq(r.sequenceNo, spec.sequenceNo),
       ),
     )
     .get()
@@ -2949,6 +2964,7 @@ function planAlias(
 // --- 平台查询与关系 --------------------------------------------------------
 
 function archivedPlatformQuerySource(db: Executor, queryId: number): PlatformQueryReplaySource {
+  if (collectionImportTarget(db)) return collectionImportSource(db, queryId)
   const original = db.select().from(schema.platformQuery).where(eq(schema.platformQuery.id, queryId)).get()!
   return {
     ref: `query:${queryId}`,
@@ -3063,7 +3079,8 @@ function planPlatformQuery(
   push({
     item: success('platform_query', existing ? `query:${existing.id}` : ref, { relationCount: newRelationCount, canonicalProjection: (query.relations ?? []).map(relation => {
       const archived = source.relationAt(relation.sequenceNo)
-      const projection = archived?.id != null ? readPlatformObservationPlan(db, archived.id) : planPlatformObservation({ interface: query.interface, relationKey: optionalString(archived?.values.relationKey), rawFields: archived?.values.rawFields })
+      const projection = archived?.id != null && !collectionImportTarget(db) ? readPlatformObservationPlan(db, archived.id) : planPlatformObservation({ interface: query.interface, relationKey: optionalString(archived?.values.relationKey), rawFields: archived?.values.rawFields })
+      if (archived?.id != null && collectionImportTarget(db)) return { ...collectionImportPreview(db, archived.id), identityState: projection.identityState, contentState: projection.contentState, keySource: projection.keySource }
       const apply = applyProjectionPreview(projection)
       const business = businessProjectionPreview(projection)
       const recognized = recognizedProjectionPreview(projection)
@@ -3083,6 +3100,7 @@ function writePlatformQuery(
   query: RosterImportPlatformQuery,
   batchId?: number,
 ): RosterImportItemResult {
+  if (collectionImportTarget(tx)) return writeImportedCollection(tx, query, batchId)
   const rdjb = optionalString(query.rdjb) ?? ''
   const existing = findQueryRow(tx, {
     interface: query.interface,
@@ -3394,7 +3412,54 @@ function collectEvidenceRefs(
 }
 
 /** Validate new-source evidence against its actual subject/title and query identity. */
+function targetImportDifferenceEvidenceError(db: Executor, pending: PendingPlatformRefs, refs: EvidenceRefs, difference: RosterImportDifference): string | null {
+  const queryAt = (id: number | null, ref: NormalizedRef | null) => {
+    const resolved = id ?? (ref ? resolveQueryIdAt(db, ref) : null)
+    if (resolved != null) {
+      const selected = readDifferenceCollection(db, resolved)
+      if (!selected) return undefined
+      const { pages } = readDifferenceCollectionScope(db, selected.collection.id)
+      return { ...selected.collection, pages: pages.map(p => ({ rdjb: p.rdjb, status: p.status, fetchedCount: p.fetchedCount ?? 0 })), relations: [] as PendingPlatformRef['relations'] }
+    }
+    const staged = ref ? pending.find(q => q.interface === ref.interface && q.queryKey === ref.queryKey && q.rdjb === ref.rdjb && (!ref.queriedAt || q.queriedAt === ref.queriedAt)) : undefined
+    return staged ? { ...staged, pages: staged.collectionEvidence?.pages ?? [] } : undefined
+  }
+  const query = queryAt(refs.queryIdLiteral, refs.queryRef)
+  const relationId = refs.relationIdLiteral ?? (refs.relationRef ? resolveRelationIdAt(db, refs.relationRef) : null)
+  const stored = relationId == null ? null : readDifferenceObservation(db, relationId)
+  const relationQuery = queryAt(stored?.queryId ?? null, stored ? null : refs.relationRef)
+  if ((refs.queryIdLiteral != null || refs.queryRef) && !query) return 'Query evidence not found'
+  if ((refs.relationIdLiteral != null || refs.relationRef) && !relationQuery) return 'Relation evidence not found'
+  const identity = (q: NonNullable<typeof query>) => JSON.stringify([q.interface, q.queryKey, q.rdjb, q.queriedAt])
+  if (query && relationQuery && identity(query) !== identity(relationQuery)) return 'Query and relation evidence must identify the same source query'
+  const source = relationQuery ?? query
+  if (!source) return null
+  // Import's recognized evidence admission stays narrower than candidate membership.
+  // The other two interfaces retain their original import admission rules.
+  if (source.interface !== 'recognized_list') return null
+  const target = locateEnterprise(db, { name: difference.enterpriseName, uscc: difference.uscc })
+  const supplied = usccOrNull(difference.uscc)
+  if (supplied && target && supplied !== target.usccNorm) return 'Supplied USCC conflicts with the resolved enterprise'
+  const uscc = supplied ?? target?.usccNorm
+  if (!uscc) return 'Recognized evidence cannot confirm subject by name alone'
+  if (!source.rdjb.split(',').some(r => RDJB_TITLE_CODES[r] === difference.titleCode)) return 'Evidence title scope does not include decision title'
+  if (refs.relationIdLiteral != null || refs.relationRef) {
+    const relation = stored ? { ...stored, usccRaw: stored.uscc } : source.relations.find(r => r.sequenceNo === refs.relationRef?.sequenceNo && (!refs.relationRef.relationKey || r.relationKey === refs.relationRef.relationKey))
+    if (!relation || usccOrNull(relation.usccRaw) !== uscc || (relation.enterpriseId != null && target && relation.enterpriseId !== target.id)) return 'Evidence relation belongs to another or unknown enterprise'
+    let offset = 0
+    let rdjb: string | null = null
+    for (const page of source.pages) {
+      if (page.status !== 'success') continue
+      offset += page.fetchedCount
+      if (relation.sequenceNo <= offset) { rdjb = page.rdjb; break }
+    }
+    if (RDJB_TITLE_CODES[rdjb ?? ''] !== difference.titleCode) return 'Evidence row belongs to another title'
+  } else if (source.queryKey !== uscc) return 'Query-only evidence requires an exact subject USCC query'
+  return null
+}
+
 function recognizedDifferenceEvidenceError(db: Executor, pending: PendingPlatformRefs, refs: EvidenceRefs, difference: RosterImportDifference): string | null {
+  if (collectionImportTarget(db)) return targetImportDifferenceEvidenceError(db, pending, refs, difference)
   const queryAt = (id: number | null, ref: NormalizedRef | null) => {
     const resolved = id ?? (ref ? resolveQueryIdAt(db, ref) : null)
     if (resolved != null) return db.select().from(schema.platformQuery).where(eq(schema.platformQuery.id, resolved)).get()
@@ -3531,9 +3596,7 @@ function planDifference(
         recordedAt,
       })
       if (already) return success('difference', `difference:${already.id}`, { enterpriseId: enterprise.id, rowsWritten: 0 })
-      const id = tx
-        .insert(schema.differenceReason)
-        .values({
+      const values = {
           enterpriseId: enterprise.id,
           titleCode: difference.titleCode,
           direction: difference.direction,
@@ -3542,17 +3605,18 @@ function planDifference(
           reasonNote: optionalString(difference.reasonNote),
           measureCode: (difference.measureCode ?? null) as typeof schema.differenceReason.$inferInsert.measureCode,
           measureNote: optionalString(difference.measureNote),
-          evidenceQueryId,
-          evidenceRelationId,
           movedInCity: optionalString(difference.movedIn?.city),
           movedInTitleCode: optionalString(difference.movedIn?.titleCode),
           movedInYear: optionalInt(difference.movedIn?.year),
           movedInBatch: optionalInt(difference.movedIn?.batch),
           verificationStatus: difference.verificationStatus ?? 'pending',
           recordedAt,
-        })
-        .returning({ id: schema.differenceReason.id })
-        .get().id
+      }
+      const mismatch = collectionImportTarget(tx) && recognizedDifferenceEvidenceError(tx, [], { queryIdLiteral: evidenceQueryId, relationIdLiteral: evidenceRelationId, queryRef: null, relationRef: null }, difference)
+      if (mismatch) return failure('difference', ref, 'evidence_subject_mismatch', mismatch, 'evidenceRelationRef')
+      const id = collectionImportTarget(tx)
+        ? tx.insert(targetDifferenceReason).values({ ...values, evidenceCollectionId: evidenceQueryId == null ? null : readDifferenceCollection(tx, evidenceQueryId)?.collection.id, evidenceObservationId: evidenceRelationId == null ? null : readDifferenceObservation(tx, evidenceRelationId)?.observationId }).returning({ id: targetDifferenceReason.id }).get().id
+        : tx.insert(schema.differenceReason).values({ ...values, evidenceQueryId, evidenceRelationId }).returning({ id: schema.differenceReason.id }).get().id
       return success('difference', `difference:${id}`, { enterpriseId: enterprise.id, evidenceQueryId, evidenceRelationId, rowsWritten: 1 })
     },
   })
@@ -4460,7 +4524,7 @@ function commitRosterImportCore(
         // 抛出去回滚整批 —— 绝不部分提交。
         if (!result.ok) throw new ExecStageFailure(out)
       }
-      if (request.sourceKind === 'platform_archive') platformFields = verifyPlatformFields(tx, out.flatMap(item => (item.detail?.canonicalProjection as PlatformProjectionResult[] | undefined) ?? []), plan.items.some(item => item.platformFieldReference))
+      if (request.sourceKind === 'platform_archive') platformFields = (collectionImportTarget(tx) ? verifyImportedCollectionFields : verifyPlatformFields)(tx, out.flatMap(item => (item.detail?.canonicalProjection as PlatformProjectionResult[] | undefined) ?? []), plan.items.some(item => item.platformFieldReference))
       return out
     })
   } catch (cause) {
@@ -4861,8 +4925,8 @@ export function rosterRowCounts(db: Db): Record<string, number> {
     record_event: db.select().from(schema.recordEvent).all().length,
     record_evidence: db.select().from(schema.recordEvidence).all().length,
     enterprise_alias: db.select().from(schema.enterpriseAlias).all().length,
-    platform_query: db.select().from(schema.platformQuery).all().length,
-    platform_relation: db.select().from(schema.platformRelation).all().length,
+    platform_query: db.select().from(importPlatformTables(db).q).all().length,
+    platform_relation: db.select().from(importPlatformTables(db).r).all().length,
     platform_export_batch: db.select().from(schema.platformExportBatch).all().length,
     platform_export_row: db.select().from(schema.platformExportRow).all().length,
     difference_reason: db.select().from(schema.differenceReason).all().length,

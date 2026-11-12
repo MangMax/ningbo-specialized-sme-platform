@@ -43,6 +43,8 @@ function redactCredentialEchoes(value: string): string {
   }
   return foundEncodedCredential ? normalized : direct
 }
+export function sanitizeEvidence(value: Record<string, unknown>, knownRedactors?: ReadonlyArray<(text: string) => string>): Record<string, unknown>
+export function sanitizeEvidence(value: unknown, knownRedactors?: ReadonlyArray<(text: string) => string>): unknown
 export function sanitizeEvidence(value: unknown, knownRedactors: ReadonlyArray<(text: string) => string> = []): unknown {
   if (Array.isArray(value)) return value.map(item => sanitizeEvidence(item, knownRedactors))
   const redact = (text: string) => knownRedactors.reduce((result, known) => known(result), redactCredentialEchoes(text))

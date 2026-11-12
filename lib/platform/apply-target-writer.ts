@@ -20,6 +20,8 @@ import { allocateLegacyAlias, insertArchiveValue, bindArchive, sealArchiveOwner 
 type Assignment = Omit<typeof s.platformObservationAssignment.$inferInsert, 'observationId' | 'revision'>
 export type ApplyTargetInput = {
   collectionId: number
+  /** Existing import ledger provenance, supplied only by the caller coordinator. */
+  batchId?: number
   position: Pick<typeof s.platformBusinessObservation.$inferInsert, 'sequenceNo' | 'pageId' | 'pageRowNo' | 'positionState'>
   /** Already validated by the current import contract. Raw JSON is serialized once here. */
   row: RosterImportRelation
@@ -41,7 +43,7 @@ export function writeApplyTarget<S extends Record<string, unknown>>(db: BetterSQ
     // S requires revision1 before observation INSERT; its incoming FK is immediate.
     // Defer within this transaction, never disable FK enforcement or reset before COMMIT.
     if(stored) tx.run(sql`PRAGMA defer_foreign_keys=ON`)
-    positive(input.collectionId); positive(input.position.sequenceNo)
+    positive(input.collectionId); if(input.batchId!==undefined)positive(input.batchId); positive(input.position.sequenceNo)
     if (input.assignment.origin !== 'command' || !input.assignment.actor || !input.assignment.basis) throw new Error('Explicit command provenance required')
     if (input.row.sequenceNo !== input.position.sequenceNo) throw new Error('Observation position mismatch')
     const collection = tx.select().from(s.platformCollection).where(eq(s.platformCollection.id, input.collectionId)).get()
@@ -54,7 +56,7 @@ export function writeApplyTarget<S extends Record<string, unknown>>(db: BetterSQ
     const plan = planPlatformObservation({ interface: 'apply_list', relationKey: input.row.relationKey, rawFields: raw })
     // Payload identity includes explicit stored facts and provenance, not just version bytes.
     // Callers supply materialized validated rows, rather than partial reference commands.
-    const inputBytes = Buffer.from(canonicalPlatformJson({ collectionId: collection.id, position: input.position, row: input.row, assignment: input.assignment }))
+    const inputBytes = Buffer.from(canonicalPlatformJson({ collectionId: collection.id, position: input.position, row: input.row, assignment: input.assignment, ...(input.batchId === undefined ? {} : { batchId: input.batchId }) }))
     const fingerprint = createHash('sha256').update(inputBytes).digest('hex')
     const existing = tx.select().from(s.platformBusinessObservation).where(and(eq(s.platformBusinessObservation.collectionId, collection.id), eq(s.platformBusinessObservation.sequenceNo, input.position.sequenceNo))).get()
     if (existing) {
@@ -71,7 +73,7 @@ export function writeApplyTarget<S extends Record<string, unknown>>(db: BetterSQ
     const { recordId, versionId, now } = ensureApplyTargetContent(tx, plan)
     if(stored) tx.insert(s.platformObservationAssignment).values({...input.assignment,observationId:observationId!,revision:1}).run()
     const candidateValues = candidateObservationValues(tx, collection, input.position.sequenceNo)
-    const observation = tx.insert(candidateValues.candidateScopeState ? candidateScopeObservation : stored ? storedObservation : s.platformBusinessObservation).values({ ...candidateValues, ...(stored ? {applyExactOwnerId:observationId,applyExactState:'captured' as const,applySqlFactTitleState:'captured' as const}:{}), id: observationId, collectionId: collection.id, ...input.position, sourceRelationKey: materialized ? materialized.sourceRelationKey : input.row.relationKey ?? null, recordId, versionId, identityState: plan.identityState, contentState: plan.contentState, keySource: plan.keySource, projectionRuleVersion: PLATFORM_PROJECTION_RULE, inputFingerprint: fingerprint, indexedAt: now }).returning().get()
+    const observation = tx.insert(candidateValues.candidateScopeState ? candidateScopeObservation : stored ? storedObservation : s.platformBusinessObservation).values({ ...candidateValues, ...(stored ? {applyExactOwnerId:observationId,applyExactState:'captured' as const,applySqlFactTitleState:'captured' as const}:{}), id: observationId, collectionId: collection.id, ...input.position, sourceRelationKey: materialized ? materialized.sourceRelationKey : input.row.relationKey ?? null, recordId, versionId, identityState: plan.identityState, contentState: plan.contentState, keySource: plan.keySource, projectionRuleVersion: PLATFORM_PROJECTION_RULE, inputFingerprint: fingerprint, indexedAt: now, batchId: input.batchId ?? null }).returning().get()
     const assignment = { ...input.assignment, observationId: observation.id, revision: 1 }
     if(!stored) tx.insert(s.platformObservationAssignment).values(assignment).run()
     const rawArchive = insertArchiveValue(tx, rawText === null ? { storageClass: 'null', bytes: null, createdAt: now } : { storageClass: 'text', bytes: Buffer.from(rawText), createdAt: now })
