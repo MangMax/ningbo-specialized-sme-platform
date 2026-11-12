@@ -22,7 +22,8 @@ CREATE TRIGGER recognized_witness_collection_insert BEFORE INSERT ON platform_co
 CREATE TRIGGER recognized_witness_condition_insert BEFORE INSERT ON platform_collection_condition WHEN NEW.witness_kind IS NOT NULL OR NEW.witness_value IS NOT NULL OR EXISTS(SELECT 1 FROM platform_collection_condition old WHERE old.collection_id=NEW.collection_id AND old.name=NEW.name AND old.witness_kind IS NOT NULL)
  BEGIN SELECT RAISE(ABORT,'recognized witness condition follows sealed source'); END;
 CREATE TRIGGER recognized_witness_condition_update BEFORE UPDATE ON platform_collection_condition WHEN
- OLD.witness_kind IS NOT NULL AND (${changed('platform_collection_condition')} OR NEW.collection_id<>OLD.collection_id OR NEW.name<>OLD.name)
+ (OLD.witness_kind IS NOT NULL AND (${changed('platform_collection_condition')} OR NEW.collection_id<>OLD.collection_id OR NEW.name<>OLD.name)) OR
+ ((NEW.collection_id<>OLD.collection_id OR NEW.name<>OLD.name) AND EXISTS(SELECT 1 FROM platform_collection_condition destination WHERE destination.collection_id=NEW.collection_id AND destination.name=NEW.name AND destination.witness_kind IS NOT NULL))
  BEGIN SELECT RAISE(ABORT,'immutable recognized witness condition'); END;
 CREATE TRIGGER recognized_witness_condition_delete BEFORE DELETE ON platform_collection_condition WHEN OLD.witness_kind IS NOT NULL
  BEGIN SELECT RAISE(ABORT,'immutable recognized witness condition'); END;

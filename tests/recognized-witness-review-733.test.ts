@@ -39,6 +39,28 @@ it('rejects replacing captured conditions with recursive triggers disabled and p
   try { verifyWitnessCollection(reopened, 1) } finally { reopened.close() }
 })
 
+it('rejects update replacement of a captured destination with recursive triggers disabled after commit and reopen', async () => {
+  const f = await fixture()
+  const t = new Database(f.target)
+  const query = 'SELECT * FROM platform_collection_condition ORDER BY collection_id,name'
+  const before = t.prepare(query).all()
+  try {
+    t.pragma('foreign_keys=ON')
+    expect(t.pragma('recursive_triggers', { simple: true })).toBe(0)
+    t.exec('BEGIN IMMEDIATE')
+    expect(() => t.exec("UPDATE OR REPLACE platform_collection_condition SET name='rddqrq',value_kind='text',text_value='2028',integer_value=NULL WHERE collection_id=1 AND name='combination'")).toThrow(/recognized witness condition/)
+    t.exec('COMMIT')
+    expect(t.prepare(query).all()).toEqual(before)
+  } finally { t.close() }
+  const reopened = new Database(f.target, { readonly: true })
+  try {
+    expect(reopened.prepare(query).all()).toEqual(before)
+    verifyWitnessCollection(reopened, 1)
+    expect(witnessInstalled(reopened)).toBe(true)
+    expect(reopened.pragma('foreign_key_check')).toEqual([])
+  } finally { reopened.close() }
+})
+
 it.each([
   { name: 'lone high surrogate', value: '\ud800', hex: '00d8' },
   { name: 'nested lone surrogate', value: [['\ud800']], hex: '00d8' },
