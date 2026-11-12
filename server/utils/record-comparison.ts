@@ -15,19 +15,23 @@ import { readPlatformBusinessMetadata } from './platform-business-record-read'
 import type { PlatformBusinessMetadata } from '../../lib/platform/business-record'
 import { comparisonFormalCounts, iterateComparisonFormalEvents } from './record-comparison-formal'
 import { listRecordCorrespondences, readScopedRecordCorrespondences } from './record-correspondence'
+import { correspondenceTarget, correspondenceTable, correspondenceColumns } from './record-correspondence-store'
+import { targetSchema } from '../../lib/platform/target-schema'
+import { readCorrespondenceTargetQueries } from './record-correspondence-target-sources'
+import { readComparisonTargetQueryFacts, readComparisonTargetRelations, readComparisonTargetIdentities, type ComparisonTargetQueryFacts } from './record-comparison-target-sources'
 
 type Db = ReturnType<typeof useDb>
-type Query = typeof schema.platformQuery.$inferSelect
-type Relation = ReturnType<typeof normalizePlatformRelation<typeof schema.platformRelation.$inferSelect>>
+type Query = typeof schema.platformQuery.$inferSelect & { comparisonFacts?: ComparisonTargetQueryFacts; proofSource?: () => typeof schema.platformQuery.$inferSelect }
+type Relation = Pick<ReturnType<typeof normalizePlatformRelation<typeof schema.platformRelation.$inferSelect>>, 'id' | 'sequenceNo' | 'relationKey' | 'enterpriseId' | 'usccRaw' | 'nameRaw' | 'status' | 'appliedAt' | 'awardBatchLabel' | 'year' | 'normalizationConflicts' | 'verificationStatus' | 'rawFields'> & { declareKind: string | null }
 type Event = Omit<typeof schema.recordEvent.$inferSelect, 'formalValidity'>
 type Edge = ReturnType<typeof listRecordCorrespondences>[number]
-/** Only an authorized evidence reader may supply these verified, persisted attestations.
- * HTTP/MCP currently have no such reader; client-supplied assertions are not accepted. */
+/** Only the persisted proof owner supplies verified attestations; client assertions are not accepted. */
 export interface VerifiedComparisonEvidence {
   officialScopes: Array<{ proofId: string; sourceDocumentIds: number[]; titleCode: string; fromYear: number; throughYear: number; enterpriseIds: number[] | null; verifiedAt: string }>
   currentScopes: Array<{ proofId: string; queryId: number; exportBatchId: number; titleCode: string; querySourceFingerprint: string; exportSha256: string; scopeEquivalent: true; versionEquivalent: true; verifiedAt: string }>
 }
 export function queryProofFingerprint(query: Query) {
+  query = query.proofSource?.() ?? query
   return createHash('sha256').update(JSON.stringify({ id: query.id, interface: query.interface, queryKey: query.queryKey, rdjb: query.rdjb, titleCode: query.titleCode, queriedAt: query.queriedAt, status: query.status, collectionEvidence: query.collectionEvidence })).digest('hex')
 }
 const positive = (n: number) => Number.isSafeInteger(n) && n > 0
@@ -45,28 +49,41 @@ function processTimingMatches(event: Event, relation: Relation) {
   return relation.year === event.year && relation.declareKind === 'apply'
 }
 const publicEdge = (edge: Edge) => ({ id: edge.id, type: edge.type, role: edge.role, eventId: edge.eventId, relationId: edge.relationId, exportRowId: edge.exportRowId, predecessorEventId: edge.predecessorEventId, status: edge.status, revision: edge.revision, requiresRevalidation: edge.requiresRevalidation, ruleId: edge.ruleId, ruleVersion: edge.ruleVersion, decidedAt: edge.decidedAt })
-const publicRelation = (relation: Relation, query: Query) => ({ id: relation.id, queryId: query.id, interface: query.interface, sequenceNo: relation.sequenceNo, relationKey: relation.relationKey, enterpriseId: relation.enterpriseId, usccRaw: relation.usccRaw, nameRaw: relation.nameRaw, status: relation.status, declareKind: relation.declareKind, appliedAt: relation.appliedAt, awardBatchLabel: relation.awardBatchLabel, year: relation.year, normalizationConflicts: relation.normalizationConflicts, verificationStatus: relation.verificationStatus, queriedAt: query.queriedAt, titleCode: relationTitle(relation, query), rdjb: query.rdjb, sourceRdjb: sourcePositionForSequence(query.collectionEvidence, relation.sequenceNo).sourceRdjb, sourcePage: sourcePositionForSequence(query.collectionEvidence, relation.sequenceNo).sourcePage })
+const publicRelation = (relation: Relation, query: Query) => ({ id: relation.id, queryId: query.id, interface: query.interface, sequenceNo: relation.sequenceNo, relationKey: relation.relationKey, enterpriseId: relation.enterpriseId, usccRaw: relation.usccRaw, nameRaw: relation.nameRaw, status: relation.status, declareKind: relation.declareKind, appliedAt: relation.appliedAt, awardBatchLabel: relation.awardBatchLabel, year: relation.year, normalizationConflicts: relation.normalizationConflicts, verificationStatus: relation.verificationStatus, queriedAt: query.queriedAt, titleCode: relationTitle(relation, query), rdjb: query.rdjb, sourceRdjb: comparisonPosition(query, relation.sequenceNo).sourceRdjb, sourcePage: comparisonPosition(query, relation.sequenceNo).sourcePage })
 const publicExport = (row: typeof schema.platformExportRow.$inferSelect, batch: typeof schema.platformExportBatch.$inferSelect) => ({ id: row.id, batchId: batch.id, sourceRowNo: row.sourceRowNo, usccRaw: row.usccRaw, nameRaw: row.nameRaw, district: row.district, province: row.province, city: row.city, regStatus: row.regStatus, titleCode: batch.titleCode, collectedOn: batch.collectedOn, sha256: batch.sha256 })
 const rdjbFor = (title: string) => Object.entries(RDJB_TITLE_CODES).find(([, value]) => value === title)?.[0]
+function comparisonPosition(query: Query, sequenceNo: number) {
+  if (!query.comparisonFacts) return sourcePositionForSequence(query.collectionEvidence, sequenceNo)
+  if (!query.comparisonFacts.evidencePresent) return { sourceRdjb: null, sourcePage: null }
+  const page = query.comparisonFacts.pages.find(page => page.status === 'success' && page.sequenceStart !== null && page.sequenceEnd !== null && sequenceNo >= page.sequenceStart && sequenceNo <= page.sequenceEnd)
+  return { sourceRdjb: page?.rdjb ?? null, sourcePage: page?.pageNo ?? null }
+}
 function relationTitle(relation: Relation, query: Query): string | null {
-  const source = query.interface === 'recognized_list' ? sourcePositionForSequence(query.collectionEvidence, relation.sequenceNo).sourceRdjb : null
+  const source = query.interface === 'recognized_list' ? comparisonPosition(query, relation.sequenceNo).sourceRdjb : null
   const rowTitle = platformRowTitle(query.rdjb, relation.rawFields)
   return (source ? RDJB_TITLE_CODES[source] : null) ?? query.titleCode ?? RDJB_TITLE_CODES[rowTitle] ?? null
 }
 function queryCoverage(query: Query) {
+  const facts = query.comparisonFacts
   const evidence = query.collectionEvidence
+  const present = facts ? facts.evidencePresent : Boolean(evidence)
+  const completeness = facts ? (present ? facts.collection.completeness : 'unknown') : evidence?.completeness ?? 'unknown'
+  const fullRange = facts ? present && Boolean(facts.collection.fullRange) : evidence?.fullRange ?? false
+  const unfinished = facts ? (present ? facts.unfinished : []).map(p => ({ rdjb: p.rdjb, page: p.pageNo })) : evidence?.unfinished ?? []
+  const allPages = facts ? (present ? facts.pages : []).map(p => ({ rdjb: p.rdjb, page: p.pageNo, status: p.status, maxPage: p.maxPage, declaredTotal: p.declaredTotal, fetchedCount: p.fetchedCount ?? 0 })) : evidence?.pages ?? []
+  const conditions = facts ? facts.conditions : evidence?.effectiveConditions ?? null
   const reasons: string[] = []
-  if (!evidence) reasons.push('collection_evidence_missing')
+  if (!present) reasons.push('collection_evidence_missing')
   if (query.status !== 'success' && query.status !== 'no_record') reasons.push(`query_${query.status}`)
   if (query.status === 'partial' || query.status === 'failed') reasons.push('incomplete_or_continuation')
-  if (evidence && (evidence.completeness !== 'complete' || !evidence.fullRange || evidence.unfinished.length)) reasons.push('incomplete_or_continuation')
-  const selected = evidence?.titleScope.rdjb ?? query.rdjb.split(',').filter(Boolean)
+  if (present && (completeness !== 'complete' || !fullRange || unfinished.length)) reasons.push('incomplete_or_continuation')
+  const selected = facts ? (present ? facts.scopes : query.rdjb.split(',').filter(Boolean)) : evidence?.titleScope.rdjb ?? query.rdjb.split(',').filter(Boolean)
   const titleCoverage = selected.map(rdjb => {
-    const pages = evidence?.pages.filter(page => page.rdjb === rdjb) ?? []
-    const complete = Boolean(evidence?.completeness === 'complete' && evidence.fullRange && !evidence.unfinished.some(position => position.rdjb === rdjb) && pages.length && pages.every(page => page.status === 'success') && pages[0]?.page === 1 && (pages.at(-1)?.maxPage != null ? pages.at(-1)?.page === pages.at(-1)?.maxPage : pages.at(-1)?.declaredTotal != null ? pages.reduce((count, page) => count + page.fetchedCount, 0) === pages.at(-1)?.declaredTotal : pages.at(-1)?.fetchedCount === 0))
-    return { rdjb, titleCode: RDJB_TITLE_CODES[rdjb] ?? null, complete, pageCount: pages.length, unfinished: evidence?.unfinished.filter(position => position.rdjb === rdjb).map(position => position.page) ?? [] }
+    const pages = allPages.filter(page => page.rdjb === rdjb)
+    const complete = Boolean(present && completeness === 'complete' && fullRange && !unfinished.some(position => position.rdjb === rdjb) && pages.length && pages.every(page => page.status === 'success') && pages[0]?.page === 1 && (pages.at(-1)?.maxPage != null ? pages.at(-1)?.page === pages.at(-1)?.maxPage : pages.at(-1)?.declaredTotal != null ? pages.reduce((count, page) => count + page.fetchedCount, 0) === pages.at(-1)?.declaredTotal : pages.at(-1)?.fetchedCount === 0))
+    return { rdjb, titleCode: RDJB_TITLE_CODES[rdjb] ?? null, complete, pageCount: pages.length, unfinished: unfinished.filter(position => position.rdjb === rdjb).map(position => position.page) }
   })
-  return { queryId: query.id, interface: query.interface, status: query.status, queriedAt: query.queriedAt, rdjb: query.rdjb, titleCode: query.titleCode, effectiveConditions: evidence?.effectiveConditions ?? null, completeness: evidence?.completeness ?? 'unknown', fullRange: evidence?.fullRange ?? false, titleCoverage, reasons }
+  return { queryId: query.id, interface: query.interface, status: query.status, queriedAt: query.queriedAt, rdjb: query.rdjb, titleCode: query.titleCode, effectiveConditions: conditions, completeness, fullRange, titleCoverage, reasons }
 }
 function consistentScope(query: Query, title: string) {
   const coverage = queryCoverage(query)
@@ -131,12 +148,15 @@ function conclusion(event: Event, edges: Edge[], relations: Map<number, { relati
 function selected(db: Db, input: RecordComparisonInput) {
   const parsed = recordComparisonInput.parse(input)
   for (const key of ['queryIds', 'exportBatchIds', 'officialSourceDocumentIds'] as const) if (unique(parsed[key]).length !== parsed[key].length) throw new Error(`duplicate_${key}`)
-  if (parsed.asOf) {
+  const target = correspondenceTarget(db)
+  if (!target && parsed.asOf) {
     const eligible = db.select({ id: schema.platformQuery.id, queriedAt: schema.platformQuery.queriedAt }).from(schema.platformQuery)
       .where(inArray(schema.platformQuery.id, parsed.queryIds)).all().filter(row => before(row.queriedAt, parsed.asOf))
     if (eligible.length !== parsed.queryIds.length) throw new Error('source_set_missing_or_out_of_scope')
   }
-  const queries = db.select({ ...getTableColumns(schema.platformQuery), rawResponse: sql<null>`null` }).from(schema.platformQuery).where(inArray(schema.platformQuery.id, parsed.queryIds)).orderBy(schema.platformQuery.id).all().filter(row => before(row.queriedAt, parsed.asOf))
+  const targetFacts = target ? readComparisonTargetQueryFacts(db, parsed.queryIds) : []
+  if (target && (targetFacts.length !== parsed.queryIds.length || targetFacts.some(row => !before(row.collection.queriedAt, parsed.asOf)))) throw new Error('source_set_missing_or_out_of_scope')
+  const queries: Query[] = target ? targetFacts.map(facts => ({ ...facts.collection, id: facts.id, collectionEvidence: null, rawResponse: null, comparisonFacts: facts, proofSource: () => readCorrespondenceTargetQueries(db, [facts.id], { rawResponse: false }).get(facts.id)!.query })).filter(row => before(row.queriedAt, parsed.asOf)) : db.select({ ...getTableColumns(schema.platformQuery), rawResponse: sql<null>`null` }).from(schema.platformQuery).where(inArray(schema.platformQuery.id, parsed.queryIds)).orderBy(schema.platformQuery.id).all().filter(row => before(row.queriedAt, parsed.asOf))
   const batches = db.select().from(schema.platformExportBatch).where(inArray(schema.platformExportBatch.id, parsed.exportBatchIds)).orderBy(schema.platformExportBatch.id).all().filter(row => row.importStatus === 'imported' && before(row.collectedOn, parsed.asOf))
   const documents = readOfficialSourceDocuments(db, parsed.officialSourceDocumentIds).filter(row => row.source === 'jxj' && (!parsed.asOf || before(row.issueDate, parsed.asOf)))
   if (queries.length !== parsed.queryIds.length || batches.length !== parsed.exportBatchIds.length || documents.length !== parsed.officialSourceDocumentIds.length) throw new Error('source_set_missing_or_out_of_scope')
@@ -146,14 +166,15 @@ function selected(db: Db, input: RecordComparisonInput) {
   // Keep the bounded process/title projection. Unrelated archived row
   // bytes must stay inside SQLite; multi-path extraction retains JSON value types.
   const processRaw = sql`case when json_valid(${r.rawFields}) then json_extract(${r.rawFields}, ${sql.join(PLATFORM_PROCESS_RAW_KEYS.map(key => sql`${`$.${key}`}`), sql`, `)}) else null end`.mapWith(platformProcessRawFromJson)
-  const relations = db.select({ ...getTableColumns(r), rawFields: processRaw, sourceText: sql<null>`null` }).from(r).where(inArray(r.queryId, parsed.queryIds)).orderBy(r.id).all().map(row => ({ relation: normalizePlatformRelation(queryMap.get(row.queryId)!.interface, row), query: queryMap.get(row.queryId)! }))
+  const relations: Array<{ relation: Relation; query: Query }> = target ? readComparisonTargetRelations(db, parsed.queryIds).map(relation => ({ relation, query: queryMap.get(relation.queryId)! })) : db.select({ ...getTableColumns(r), rawFields: processRaw, sourceText: sql<null>`null` }).from(r).where(inArray(r.queryId, parsed.queryIds)).orderBy(r.id).all().map(row => ({ relation: normalizePlatformRelation(queryMap.get(row.queryId)!.interface, row), query: queryMap.get(row.queryId)! }))
   const exports = db.select({ ...getTableColumns(schema.platformExportRow), rawFields: sql<null>`null` }).from(schema.platformExportRow).where(inArray(schema.platformExportRow.batchId, parsed.exportBatchIds)).orderBy(schema.platformExportRow.id).all().map(row => ({ row, batch: batchMap.get(row.batchId)! }))
-  const c = schema.recordCorrespondence
+  const c = correspondenceTable(db)
+  const targetObservations = db.select({ id: targetSchema.platformBusinessObservation.id }).from(targetSchema.platformBusinessObservation).innerJoin(targetSchema.platformLegacyQueryAlias, eq(targetSchema.platformLegacyQueryAlias.collectionId, targetSchema.platformBusinessObservation.collectionId)).where(inArray(targetSchema.platformLegacyQueryAlias.oldId, parsed.queryIds))
   const relationIds = db.select({ id: schema.platformRelation.id }).from(schema.platformRelation).where(inArray(schema.platformRelation.queryId, parsed.queryIds))
   const exportIds = db.select({ id: schema.platformExportRow.id }).from(schema.platformExportRow).where(inArray(schema.platformExportRow.batchId, parsed.exportBatchIds))
-  const edgeScope = and(or(isNull(c.relationId), inArray(c.relationId, relationIds)), or(isNull(c.exportRowId), inArray(c.exportRowId, exportIds)))
+  const edgeScope = and(or(isNull(c.relationId), inArray(c.relationId, target ? targetObservations : relationIds)), or(isNull(c.exportRowId), inArray(c.exportRowId, exportIds)))
   const scopedEdgeIds = db.select({ id: c.id }).from(c).where(edgeScope)
-  const allEdges = readScopedRecordCorrespondences(db, db.select().from(c).where(edgeScope).orderBy(c.id).all().filter(edge => before(edge.createdAt, parsed.asOf)))
+  const allEdges = readScopedRecordCorrespondences(db, db.select(correspondenceColumns(db)).from(c).where(edgeScope).orderBy(c.id).all().filter(edge => before(edge.createdAt, parsed.asOf)))
   const revisedAfterCutoff = new Set(parsed.asOf ? db.select({ correspondenceId: schema.recordCorrespondenceAudit.correspondenceId, decidedAt: schema.recordCorrespondenceAudit.decidedAt }).from(schema.recordCorrespondenceAudit).where(inArray(schema.recordCorrespondenceAudit.correspondenceId, scopedEdgeIds)).all().filter(audit => !before(audit.decidedAt, parsed.asOf)).map(audit => audit.correspondenceId) : [])
   const unavailableEdges = allEdges.filter(edge => parsed.asOf && ((!before(edge.decidedAt, parsed.asOf) && edge.decidedAt !== null) || revisedAfterCutoff.has(edge.id)))
   const unavailableIds = new Set(unavailableEdges.map(edge => edge.id))
@@ -380,7 +401,9 @@ interface SourceEnterpriseLink {
  */
 function sourceEnterpriseLinks(db: Db, queryPageIds: number[]) {
   if (!queryPageIds.length) return new Map<number, { confirmedEnterprises: SourceEnterpriseLink[]; recordNames: string[] }>()
-  const relationRows = db.select({
+  const targetRows = correspondenceTarget(db) ? readComparisonTargetIdentities(db, queryPageIds) : null
+  const names = new Map(targetRows?.length ? db.select({ id: schema.enterprise.id, name: schema.enterprise.name }).from(schema.enterprise).where(inArray(schema.enterprise.id, unique(targetRows.flatMap(r => r.enterpriseId === null ? [] : [r.enterpriseId])))).all().map(r => [r.id, r.name]) : [])
+  const relationRows = targetRows ? targetRows.map(r => ({ ...r, relationId: r.id, enterpriseName: r.enterpriseId === null ? null : names.get(r.enterpriseId) ?? null })) : db.select({
     queryId: schema.platformRelation.queryId,
     relationId: schema.platformRelation.id,
     sequenceNo: schema.platformRelation.sequenceNo,
@@ -438,7 +461,9 @@ export function listRecordComparisonSources(db: Db, input: ComparisonSourceCatal
 }
 export function* iterateRecordComparisonSources(db: Db, input: ComparisonSourceCatalogInput) {
   const filter = comparisonSourceCatalogInput.parse(input)
-  const qids = filter.ids === undefined ? undefined : inArray(schema.platformQuery.id, filter.ids)
+  const target = correspondenceTarget(db)
+  const qa = targetSchema.platformLegacyQueryAlias
+  const qids = filter.ids === undefined ? undefined : inArray(target ? qa.oldId : schema.platformQuery.id, filter.ids)
   const dids = filter.ids === undefined ? sql`1` : inArray(sql`id`, filter.ids)
   const bids = filter.ids === undefined ? undefined : inArray(schema.platformExportBatch.id, filter.ids)
   // SQLite's native whole-index Count can block the first request while leaf
@@ -446,9 +471,9 @@ export function* iterateRecordComparisonSources(db: Db, input: ComparisonSourceC
   // so a cold count also cooperates, without decoding query/archive objects.
   let queryCount = 0
   if (filter.ids === undefined) {
-    const ids = db.$client.prepare('select id from platform_query indexed by platform_query_key_idx').pluck().iterate()
+    const ids = target ? db.$client.prepare('select old_id from platform_legacy_query_alias').pluck().iterate() : db.$client.prepare('select id from platform_query indexed by platform_query_key_idx').pluck().iterate()
     for (const _id of ids) { if (++queryCount % 256 === 0) yield }
-  } else queryCount = db.select({ n: sql<number>`count(*)` }).from(schema.platformQuery).where(qids).get()!.n
+  } else queryCount = db.select({ n: sql<number>`count(*)` }).from(target ? qa : schema.platformQuery).where(qids).get()!.n
   const counts = {
     official_document: db.get<{ n: number }>(sql`select count(*) as n from ${officialSourceDirectory} where ${dids}`)!.n,
     query: queryCount,
@@ -472,13 +497,15 @@ export function* iterateRecordComparisonSources(db: Db, input: ComparisonSourceC
   // Explicit ID hydration already has bounded primary-key seeks.
   const queryPageIds = db.select({ id: sql<number>`${q.id}` }).from(filter.ids === undefined ? sql`${q} indexed by platform_query_key_idx` : q)
     .where(qids).orderBy(q.id).limit(qw.limit).offset(qw.offset)
-  const pageQueryIds = qw.limit ? db.select({ id: q.id }).from(q).where(inArray(q.id, queryPageIds)).orderBy(q.id).all().map(row => row.id) : []
+  const pageQueryIds = target ? (qw.limit ? db.select({ id: qa.oldId }).from(qa).where(qids).orderBy(qa.oldId).limit(qw.limit).offset(qw.offset).all().map(r => r.id) : []) : qw.limit ? db.select({ id: q.id }).from(q).where(inArray(q.id, queryPageIds)).orderBy(q.id).all().map(row => row.id) : []
   const enterpriseLinks = sourceEnterpriseLinks(db, pageQueryIds)
-  const queries = qw.limit ? db.select({ id: q.id, interface: q.interface, queryKey: q.queryKey, rdjb: q.rdjb, titleCode: q.titleCode, queriedAt: q.queriedAt, status: q.status,
+  const targetPage = target ? readComparisonTargetQueryFacts(db, pageQueryIds).map(({ id, collection: c, conditions, evidencePresent }) => ({ ...c, id, completeness: evidencePresent ? c.completeness : 'unknown', fullRange: evidencePresent ? c.fullRange : null, conditions })) : null
+  const queryRows = targetPage ?? (qw.limit ? db.select({ id: q.id, interface: q.interface, queryKey: q.queryKey, rdjb: q.rdjb, titleCode: q.titleCode, queriedAt: q.queriedAt, status: q.status,
     completeness: sql<string | null>`json_extract(${q.collectionEvidence}, '$.completeness')`,
     fullRange: sql<number | null>`json_extract(${q.collectionEvidence}, '$.fullRange')`,
     conditions: sql<string | null>`json_extract(${q.collectionEvidence}, '$.effectiveConditions')`,
-  }).from(q).where(inArray(q.id, pageQueryIds)).orderBy(q.id).all().map(row => ({ kind: 'query' as const, id: row.id, label: `${row.interface === 'business_list' ? '业务关联' : row.interface === 'apply_list' ? '申报流程' : '已认定名单'} · ${row.titleCode ? TITLES[row.titleCode] : row.rdjb || '多称号'} · ${row.queryKey}`, subtitle: row.interface, titleCode: row.titleCode, titleName: row.titleCode ? TITLES[row.titleCode] : null, observedAt: row.queriedAt, status: row.status, selectable: true, rdjb: row.rdjb, completeness: row.completeness ?? 'unknown', fullRange: Boolean(row.fullRange), conditions: row.conditions == null ? null : JSON.parse(row.conditions), ...(enterpriseLinks.get(row.id) ?? { confirmedEnterprises: [], recordNames: [] }) })) : []
+  }).from(q).where(inArray(q.id, pageQueryIds)).orderBy(q.id).all().map(row => ({ ...row, conditions: row.conditions == null ? null : JSON.parse(row.conditions) })) : [])
+  const queries = queryRows.map(row => ({ kind: 'query' as const, id: row.id, label: `${row.interface === 'business_list' ? '业务关联' : row.interface === 'apply_list' ? '申报流程' : '已认定名单'} · ${row.titleCode ? TITLES[row.titleCode] : row.rdjb || '多称号'} · ${row.queryKey}`, subtitle: row.interface, titleCode: row.titleCode, titleName: row.titleCode ? TITLES[row.titleCode] : null, observedAt: row.queriedAt, status: row.status, selectable: true, rdjb: row.rdjb, completeness: row.completeness ?? 'unknown', fullRange: Boolean(row.fullRange), conditions: row.conditions, ...(enterpriseLinks.get(row.id) ?? { confirmedEnterprises: [], recordNames: [] }) }))
   const batches = bw.limit ? db.select().from(schema.platformExportBatch).where(bids).orderBy(schema.platformExportBatch.id).limit(bw.limit).offset(bw.offset).all().map(row => ({ kind: 'export_batch' as const, id: row.id, label: `${TITLES[row.titleCode]} · ${row.year} · ${row.originalFilename}`, subtitle: row.originalFilename, titleCode: row.titleCode, titleName: TITLES[row.titleCode], observedAt: row.collectedOn, status: row.importStatus, selectable: row.importStatus === 'imported', sha256: row.sha256, rowCount: row.rowCount, replacedBatchId: row.replacedBatchId })) : []
   return { rows: [...documents, ...queries, ...batches], total: filter.kind ? counts[filter.kind] : counts.official_document + counts.query + counts.export_batch, page: filter.page, pageSize: filter.pageSize, counts, selection: 'explicit', completeness: 'not_implied_by_catalog' }
 }
