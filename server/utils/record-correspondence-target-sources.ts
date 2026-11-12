@@ -73,11 +73,11 @@ export function readCorrespondenceTargetSources(db: Db, ids: number[]) {
 }
 
 /** Collection predicates use these structured rows; query is only the original fingerprint input. */
-export function readCorrespondenceTargetQueries(db: Db, ids: number[]) {
+export function readCorrespondenceTargetQueries(db: Db, ids: number[], options: { rawResponse?: boolean } = {}) {
   const qa = s.platformLegacyQueryAlias, c = s.platformCollection, r = s.platformCollectionArchiveRef, v = s.platformArchiveValue
   const owners = chunks([...new Set(ids)]).flatMap(ids => db.select({ queryId: qa.oldId, collection: c }).from(qa).innerJoin(c, eq(c.id, qa.collectionId)).where(inArray(qa.oldId, ids)).all())
   const collectionIds = owners.map(row => row.collection.id)
-  const archives = Map.groupBy(chunks(collectionIds).flatMap(ids => db.select({ id: r.ownerId, field: r.field, bytes: v.bytes }).from(r).innerJoin(v, eq(v.id, r.archiveId)).where(and(inArray(r.ownerId, ids), inArray(r.field, ['rawResponse', 'collectionEvidence']))).all()), r => r.id)
+  const archives = Map.groupBy(chunks(collectionIds).flatMap(ids => db.select({ id: r.ownerId, field: r.field, bytes: v.bytes }).from(r).innerJoin(v, eq(v.id, r.archiveId)).where(and(inArray(r.ownerId, ids), inArray(r.field, options.rawResponse === false ? ['collectionEvidence'] : ['rawResponse', 'collectionEvidence']))).all()), r => r.id)
   const pages = Map.groupBy(chunks(collectionIds).flatMap(ids => db.select().from(s.platformCollectionPage).where(inArray(s.platformCollectionPage.collectionId, ids)).orderBy(s.platformCollectionPage.ordinal).all()), r => r.collectionId)
   const conditions = Map.groupBy(chunks(collectionIds).flatMap(ids => db.select().from(s.platformCollectionCondition).where(inArray(s.platformCollectionCondition.collectionId, ids)).all()), r => r.collectionId)
   const scopes = Map.groupBy(chunks(collectionIds).flatMap(ids => db.select().from(s.platformQueryTitleScope).where(inArray(s.platformQueryTitleScope.collectionId, ids)).all()), r => r.collectionId)
