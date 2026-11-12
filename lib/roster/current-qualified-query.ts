@@ -1,3 +1,5 @@
+import type { RecognizedWitnessReader } from './recognized-witness-reader'
+import { createCurrentQualificationAssessmentReaderWithWitnesses } from './current-qualification'
 import type { PublishedPresentation } from './correspondence-view'
 import type Database from 'better-sqlite3'
 import { normalizeName, normalizeUscc } from '../domain'
@@ -104,6 +106,14 @@ export function listCurrentQualified(db: Database.Database, filter: CurrentQuali
 /** Explicit candidate dependency for target integration. R5 assessment/keys below
  * still require migration before this can serve a finalized target publicly. */
 export function listCurrentQualifiedWithCandidates(db: Database.Database, filter: CurrentQualifiedFilter, candidateReader: CurrentCandidateReader, readOptions: CurrentQualifiedReadOptions = {}): CurrentQualifiedResult {
+  return listCurrentQualifiedBody(db,filter,candidateReader,readOptions)
+}
+/** Explicit R4/R5 composition only. Identity/H/full hydration below remain old-owned. */
+export function listCurrentQualifiedWithCandidatesAndWitnesses(db:Database.Database,filter:CurrentQualifiedFilter,candidateReader:CurrentCandidateReader,witnesses:RecognizedWitnessReader):CurrentQualifiedResult {
+  if(witnesses.connection!==db)throw new Error('Witness reader must use the caller connection')
+  return listCurrentQualifiedBody(db,filter,candidateReader,{},witnesses)
+}
+function listCurrentQualifiedBody(db:Database.Database,filter:CurrentQualifiedFilter,candidateReader:CurrentCandidateReader,readOptions:CurrentQualifiedReadOptions,witnesses?:RecognizedWitnessReader):CurrentQualifiedResult {
   if(candidateReader.connection!==db)throw new Error('Candidate reader must use the caller connection')
   const page = filter.page ?? 1, pageSize = filter.pageSize ?? 25
   const snapshotStartedAt = new Date().toISOString()
@@ -111,8 +121,9 @@ export function listCurrentQualifiedWithCandidates(db: Database.Database, filter
   prepareCurrentReader(db)
   db.exec('BEGIN')
   try {
-    const recognizedFactSource = resolveRecognizedFactSource(readOptions.recognizedFactSource)
-    const assessmentReader = createCurrentQualificationAssessmentReader(db, undefined, { recognizedFactSource })
+    const read=():CurrentQualifiedResult=>{
+    const assessmentReader = witnesses?createCurrentQualificationAssessmentReaderWithWitnesses(db,witnesses)
+      :createCurrentQualificationAssessmentReader(db,undefined,{recognizedFactSource:resolveRecognizedFactSource(readOptions.recognizedFactSource)})
     const keys = { queries: readIdentityKeyVariants(db, 'queries'), relations: readIdentityKeyVariants(db, 'unassignedRelations') }
     const qName = normalizeName(filter.q ?? ''), qUscc = normalizeUscc(filter.q ?? '')
     const requested = Boolean(qName || qUscc)
@@ -166,5 +177,7 @@ export function listCurrentQualifiedWithCandidates(db: Database.Database, filter
     const ascending = (values: Set<number>) => [...values].sort((a,b) => a-b)
     // Keep the old response field; the five-state reader has no pending bucket.
     return { responseVersion: 'current-qualified-478-v2', rows, publishedPending: { requested, rows: [], total: 0, page, pageSize }, total, uncertainTotal, options: { recognitionYears: ascending(recognitionYears), validYears: ascending(validYears), maintenanceYears: ascending(maintenanceYears), maintenanceBatchesByYear: Object.fromEntries([...maintenanceBatchesByYear].map(([year,batches]) => [year,ascending(batches)])) }, page, pageSize, titleCode: filter.titleCode, ruleVersion: CURRENT_RULE_VERSION, snapshotStartedAt }
+    }
+    return witnesses?witnesses.withinSnapshot(read):read()
   } catch (error) { if (db.inTransaction) db.exec('ROLLBACK'); throw error }
 }

@@ -1,3 +1,4 @@
+import type { RecognizedWitnessReader } from './recognized-witness-reader'
 import { adjudicateQualificationCycles as adjudicate407Cycles } from './qualification-cycles-407'
 import { readEnterpriseFactEffects } from './enterprise-fact-effects'
 import { formalValiditySchema, type FormalValidity } from './formal-validity'
@@ -176,7 +177,17 @@ export function readCurrentQualificationAssessment(db: Database.Database, enterp
  * remain those of readCurrentQualificationAssessment.
  */
 export function createCurrentQualificationAssessmentReader(db: Database.Database, receiptRuntime?: ReceiptRuntimeContext, defaults: { recognizedFactSource?: RecognizedFactSource } = {}) {
-  const evaluate = createCurrentCandidateEvaluationReader(db, receiptRuntime, defaults.recognizedFactSource)
+  return createCurrentQualificationAssessmentReaderBody(db,receiptRuntime,defaults)
+}
+
+/** Explicit R5 dependency seam. Other qualification/identity/H readers remain legacy-owned. */
+export function createCurrentQualificationAssessmentReaderWithWitnesses(db:Database.Database,witnesses:RecognizedWitnessReader,receiptRuntime?:ReceiptRuntimeContext) {
+  if(witnesses.connection!==db)throw new Error('Recognized witnesses require the same SQLite connection')
+  return createCurrentQualificationAssessmentReaderBody(db,receiptRuntime,{},witnesses)
+}
+
+function createCurrentQualificationAssessmentReaderBody(db:Database.Database,receiptRuntime:ReceiptRuntimeContext|undefined,defaults:{recognizedFactSource?:RecognizedFactSource},witnesses?:RecognizedWitnessReader) {
+  const evaluate = createCurrentCandidateEvaluationReader(db, receiptRuntime, defaults.recognizedFactSource,witnesses)
   let correspondenceReader: ReturnType<typeof createEnterpriseTitleCorrespondenceRefsReader> | undefined
   const preparedCorrespondences = (enterpriseId: number, titleCode: string) => {
     correspondenceReader ??= createEnterpriseTitleCorrespondenceRefsReader(prepareCurrentReader(db))
@@ -207,6 +218,7 @@ export function createCurrentQualificationAssessmentReader(db: Database.Database
     return byTitle
   }
   const readSnapshotBody = (enterpriseId: number, asOf: number, options: QualificationAssessmentReadOptions, filterTitle?: CurrentTitle, presentationTitle?: CurrentTitle, workbookTitle?: CurrentTitle, comparisons?: ReadonlyMap<CurrentTitle, CurrentCycleObservation>) => {
+    if(witnesses&&options.recognizedFactSource!==undefined)throw new Error('Explicit witness dependency does not accept a source selector')
     // #468: reader-level defaults never override an explicit per-request choice.
     const readOptions: QualificationAssessmentReadOptions = defaults.recognizedFactSource && !options.recognizedFactSource
       ? { ...options, recognizedFactSource: defaults.recognizedFactSource } : options
@@ -388,7 +400,7 @@ export function createCurrentCandidateReader(db: Database.Database) {
   return (...args: [enterpriseId: number, title: CurrentTitle, year: number, executionTime?: number, keys?: { queries: IdentityKeyVariants; relations: IdentityKeyVariants }, includeFilterFacts?: boolean, includeReferences?: boolean, assessmentOptions?: QualificationAssessmentReadOptions, includePendingFilterFacts?: boolean, suppliedPlatformRefs?: readonly CurrentPlatformReference[], preparedCorrespondences?: ReturnType<typeof createEnterpriseTitleCorrespondenceRefsReader>]) => evaluate(...args).row
 }
 
-function createCurrentCandidateEvaluationReader(db: Database.Database, receiptRuntime?: ReceiptRuntimeContext, recognizedFactSource?: RecognizedFactSource) {
+function createCurrentCandidateEvaluationReader(db: Database.Database, receiptRuntime?: ReceiptRuntimeContext, recognizedFactSource?: RecognizedFactSource,witnesses?:RecognizedWitnessReader) {
   const reader=prepareCurrentReader(db)
   const statements = new Map<string, Database.Statement>()
   const statement = (text: string) => {
@@ -647,19 +659,31 @@ function createCurrentCandidateEvaluationReader(db: Database.Database, receiptRu
     // unknown-batch grants. Never reconstruct them from basis/reviews strings.
     const awards = qualificationSource === 'formal' ? (effectiveMode ? effectiveFormal : qualification).cycles.flatMap(cycle => cycle.awardEventIds.map(awardEventId => ({ cycle, awardEventId }))) : []
     const linked = correspondences.filter(ref => ref.type === 'event_recognized' && ref.role === 'recognized_corrob' && ref.status === 'confirmed' && !ref.requiresRevalidation && ref.eventId != null && ref.relationId != null)
-    const filterSource = filterSourceReader(assessmentOptions?.recognizedFactSource)
+    const witnessSources=witnesses?.readMany({enterpriseId,uscc:normalizeUscc(enterprise.uscc_norm)||null,relationIds:awards.flatMap(({awardEventId})=>linked.filter(ref=>ref.eventId===awardEventId).map(ref=>ref.relationId!))})
+    const filterSource = witnesses?undefined:filterSourceReader(assessmentOptions?.recognizedFactSource)
     row.qualificationWitnesses = awards.flatMap<CurrentQualificationWitness>(({cycle,awardEventId}) => {
       const event = events.find(item => item.id === awardEventId)!
       const base = { cycle: { originYear: cycle.originYear, batchSeq: cycle.batch }, awardEventId, recognition: { precision: 'year' as const, year: awardTime(event)! } }
       const matches = linked.filter(ref => ref.eventId === awardEventId).flatMap(ref => {
-        const source = filterSource.read({relationId:ref.relationId!,enterpriseId,uscc:normalizeUscc(enterprise.uscc_norm)||null})
-        if (!source) return []
-        let pages: unknown
-        try { pages = source.pages ? JSON.parse(source.pages) : null } catch { return [] }
-        const positioned = Array.isArray(pages) ? sourcePositionForSequence({pages} as Parameters<typeof sourcePositionForSequence>[0],source.sequenceNo).sourceRdjb : null
+        let source: Omit<import('./recognized-filter-source').RecognizedFilterSourceRow,'pages'>
+        let fromPosition: string|null|undefined
+        if(witnesses) {
+          const result=witnessSources!.get(ref.relationId!)
+          if(!result||result.kind!=='available')return []
+          source=result.source
+          const key=result.source.position.state==='matched'?result.source.position.rdjbKey:null
+          fromPosition=key===null?null:RDJB_TITLE_CODES[key]
+        } else {
+          const original=filterSource!.read({relationId:ref.relationId!,enterpriseId,uscc:normalizeUscc(enterprise.uscc_norm)||null})
+          if(!original)return []
+          let pages:unknown
+          try {pages=original.pages?JSON.parse(original.pages):null}catch{return []}
+          const positioned=Array.isArray(pages)?sourcePositionForSequence({pages} as Parameters<typeof sourcePositionForSequence>[0],original.sequenceNo).sourceRdjb:null
+          fromPosition=positioned?RDJB_TITLE_CODES[positioned]:null
+          source=original
+        }
         const scope = source.rdjb.split(',').filter(Boolean)
         const fromScope = scope.length === 1 ? RDJB_TITLE_CODES[scope[0]!] : null
-        const fromPosition = positioned ? RDJB_TITLE_CODES[positioned] : null
         if (source.titleCode && source.titleCode !== title || fromScope && fromScope !== title || fromPosition && fromPosition !== title
           || (fromPosition ?? source.titleCode ?? fromScope) !== title) return []
         const projected = recognizedFilterFacts(
