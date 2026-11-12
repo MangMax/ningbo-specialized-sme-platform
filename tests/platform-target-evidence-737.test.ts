@@ -1,3 +1,6 @@
+import { createHash } from 'node:crypto'
+import { platformResultToImport } from '../lib/platform/recognized-evidence'
+import type { PlatformLiveQueryResult } from '../lib/platform/live-query'
 import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { migrate } from 'drizzle-orm/better-sqlite3/migrator'
@@ -22,6 +25,7 @@ beforeAll(async()=>{ f=await processReaderFixture(true,old=>{
     UPDATE platform_query SET raw_response=CAST(X'00FF0102' AS BLOB) WHERE id=24;`)
   old.exec("INSERT INTO import_batch(id,idempotency_key,source_kind,source_identity,created_at) VALUES(1,'test','platform_archive','fixture','created')")
   old.prepare("INSERT INTO platform_query_legacy_provenance(query_id,source_identity,source_sha256,segment_index,collection,input_fingerprint,import_batch_id,created_at) VALUES(21,'original',?,0,?,'fp',1,'c')").run('a'.repeat(64),'{ \"source\":\"queryList\", \"raw\":\"行🙂\\n\" }')
+  old.prepare("INSERT INTO platform_query_legacy_provenance(query_id,source_identity,source_sha256,segment_index,collection,input_fingerprint,import_batch_id,created_at) VALUES(13,'both',?,1,?,'fp',1,'c')").run('a'.repeat(64),'broken supplement')
   old.prepare('UPDATE platform_query SET raw_response=? WHERE id=11').run('x'.repeat(65535)+'🙂尾')
 }) })
 afterAll(()=>f?.close())
@@ -105,19 +109,21 @@ it('new three-source writers seal complete original DTO snapshots with external 
 })
 it('target SQL never reads retired query/relation entities',()=>{
   f.statements.length=0
-  read({queryId:21,relationId:21,field:'relation'});read({queryId:11,field:'relations'});read({queryId:24,field:'rawResponse'})
-  expect(f.statements.filter(q=>/\b(?:platform_query|platform_relation)\b/i.test(q))).toEqual([])
+  read({queryId:21,relationId:21,field:'relation'});read({queryId:11,field:'relations'});read({queryId:24,field:'rawResponse'});read({queryId:23,field:'legacyProvenance'})
+  expect(f.statements.filter(q=>/\b(?:from|join)\s+["`]?platform_(?:query|relation)["`]?(?:\s|$)/i.test(q))).toEqual([])
 })
 
-it('fails closed for the accepted migration absence of a sealed provenance binding (737 blocker)',()=>{
-  expect(readPlatformQueryEvidence(f.old,{queryId:23,field:'legacyProvenance'})).toMatchObject({isNull:true,totalBytes:0})
-  expect(()=>read({queryId:23,field:'legacyProvenance'})).toThrow('Missing sealed collection archive')
+it('returns legacy SQL NULL for legally absent T04 provenance after complete source migration and sealing',()=>{
+  for(const queryId of [11,12,22,23,24])for(const offset of [0,7,65536]) {
+    const input={queryId,field:'legacyProvenance' as const,offset,length:3}
+    expect(read(input)).toEqual(readPlatformQueryEvidence(f.old,input))
+  }
   expect(f.t.prepare("SELECT * FROM platform_collection_archive_ref WHERE owner_id=23 AND field='legacyProvenance'").all()).toEqual([])
 })
 
 it('decodes only the archived provenance collection cell and returns its original bytes',()=>{
-  for(const offset of [0,1,3,20,999]) {
-    const input={queryId:21,field:'legacyProvenance' as const,offset,length:3}
+  for(const queryId of [21,13])for(const offset of [0,1,3,20,999]) {
+    const input={queryId,field:'legacyProvenance' as const,offset,length:3}
     expect(read(input)).toEqual(readPlatformQueryEvidence(f.old,input))
   }
 })
@@ -142,4 +148,96 @@ it('resolves external query aliases independently of target collection IDs and r
   expect(result.collectionId).not.toBe(result.queryAlias)
   expect(read({queryId:result.queryAlias,field:'rawResponse'})).toMatchObject({data:'eA==',totalBytes:1})
   expect(()=>read({queryId:result.collectionId,field:'rawResponse'})).toThrowError(expect.objectContaining({statusCode:404}))
+})
+
+// Adversarial mutations are confined to an enclosing rolled-back synthetic transaction.
+function withCorruption(mutate:()=>void,assertion:()=>void) {
+  const rollback=Symbol('synthetic rollback')
+  try {f.db.transaction(()=>{
+    for(const {name} of f.t.prepare("SELECT name FROM sqlite_schema WHERE type='trigger' AND tbl_name IN ('platform_collection_archive_ref','platform_observation_archive_ref')").all() as {name:string}[])
+      f.t.exec('DROP TRIGGER "'+name.replaceAll('"','""')+'"')
+    mutate();assertion();throw rollback
+  })}catch(error){if(error!==rollback)throw error}
+}
+it('rejects deleted present provenance for both supplement-only and conflict T04 sources instead of returning NULL',()=>{
+  for(const queryId of [21,13]) {
+    expect(readPlatformQueryEvidence(f.old,{queryId,field:'legacyProvenance'})).toMatchObject({isNull:false})
+    withCorruption(()=>{f.t.prepare("DELETE FROM platform_collection_archive_ref WHERE owner_id=? AND field='legacyProvenance'").run(queryId)},()=>{
+      expect(()=>read({queryId,field:'legacyProvenance'})).toThrow('Contradictory T04 provenance lifecycle')
+    })
+  }
+})
+it('rejects partial or singly sealed T04 sets, contradictory metadata, unknown lifecycle and incomplete receipts',()=>{
+  const mutations=[
+    "DELETE FROM platform_collection_archive_ref WHERE owner_id=23 AND field='rawResponse'",
+    "DELETE FROM platform_collection_archive_ref WHERE owner_id=23 AND field='collectionEvidence'",
+    "UPDATE platform_collection_archive_ref SET sealed=0 WHERE owner_id=23 AND field='rawResponse'",
+    "UPDATE platform_collection_archive_ref SET sealed=0 WHERE owner_id=23",
+    "UPDATE platform_collection SET provenance_state='legacy_supplement' WHERE id=23",
+    "UPDATE platform_collection SET parse_state='invalid' WHERE id=23",
+    "UPDATE platform_collection SET rule_version='unrecognized' WHERE id=23",
+    "UPDATE platform_migration_run SET state='running' WHERE transform_version='t04-collection-v1'",
+    "DELETE FROM platform_migration_checkpoint WHERE phase='collections'",
+    "UPDATE platform_migration_checkpoint SET last_old_id=22 WHERE phase='collections'",
+    "UPDATE platform_migration_checkpoint SET copied_count=0 WHERE phase='collections'",
+  ]
+  for(const mutation of mutations)withCorruption(()=>f.t.exec(mutation),()=>{
+    expect(()=>read({queryId:23,field:'legacyProvenance'})).toThrow(/Incomplete|Contradictory|Unknown|Missing completed/)
+  })
+})
+it('returns independent old SQL NULL for complete new command lifecycle and rejects damaged command capture',()=>{
+  const result=writeNewCollectionTarget(f.db,{queryText:JSON.stringify({interface:'apply_list',queryKey:'absence-command',rdjb:'2',queriedAt:'t',status:'no_record',rawResponse:''}),evidenceText:null,createdAt:'c',assignments:[]})
+  const oracle=new Database(':memory:');migrate(drizzle(oracle),{migrationsFolder:'db/migrations'})
+  try {
+    oracle.prepare("INSERT INTO platform_query(id,interface,query_key,rdjb,queried_at,status,raw_response,created_at) VALUES(?,'apply_list','absence-command','2','t','no_record','','c')").run(result.queryAlias)
+    for(const offset of [0,7,65536]) {
+      const input={queryId:result.queryAlias,field:'legacyProvenance' as const,offset,length:3}
+      expect(read(input)).toEqual(readPlatformQueryEvidence(drizzle(oracle,{schema:legacySchema}),input))
+    }
+    for(const field of ['request','rawResponse','collectionEvidence']) {
+      withCorruption(()=>{f.t.prepare('DELETE FROM platform_collection_archive_ref WHERE owner_id=? AND field=?').run(result.collectionId,field)},()=>{
+        expect(()=>read({queryId:result.queryAlias,field:'legacyProvenance'})).toThrow('Incomplete command provenance field set')
+      })
+      withCorruption(()=>{f.t.prepare('UPDATE platform_collection_archive_ref SET sealed=0 WHERE owner_id=? AND field=?').run(result.collectionId,field)},()=>{
+        expect(()=>read({queryId:result.queryAlias,field:'legacyProvenance'})).toThrow('Incomplete sealed provenance owner')
+      })
+    }
+    for(const request of [null,'broken JSON',JSON.stringify({interface:'apply_list',queryKey:'another',queriedAt:'t',rawResponse:''}),JSON.stringify({interface:'apply_list',queryKey:'absence-command',rdjb:'2',queriedAt:'t',reuseExisting:true,rawResponse:''})])
+      withCorruption(()=>{
+        const bytes=request===null?null:Buffer.from(request)
+        const value=f.db.insert(s.platformArchiveValue).values({storageClass:bytes===null?'null':'text',bytes,byteLength:bytes?.length??null,sha256:bytes===null?null:createHash('sha256').update(bytes).digest('hex'),createdAt:null}).returning().get()
+        f.t.prepare("UPDATE platform_collection_archive_ref SET archive_id=? WHERE owner_id=? AND field='request'").run(value.id,result.collectionId)
+      },()=>{expect(()=>read({queryId:result.queryAlias,field:'legacyProvenance'})).toThrow(/Missing original|Untrusted original|Contradictory original/)})
+    for(const mutation of ["provenance_state='legacy_supplement'","parse_state='valid'","rule_version='future-command'"])
+      withCorruption(()=>f.t.exec('UPDATE platform_collection SET '+mutation+' WHERE id='+result.collectionId),()=>{
+        expect(()=>read({queryId:result.queryAlias,field:'legacyProvenance'})).toThrow(/Contradictory|Unknown/)
+      })
+  }finally{oracle.close()}
+})
+it('keeps pre-snapshot target-command observation inventory explicitly unsupported without online repair',()=>{
+  const queryId=21
+  const observation=f.db.select().from(s.platformBusinessObservation).where(eq(s.platformBusinessObservation.collectionId,queryId)).all().find(row=>row.sequenceNo===20)!
+  const alias=f.db.select().from(s.platformLegacyRelationAlias).where(eq(s.platformLegacyRelationAlias.observationId,observation.id)).get()!
+  withCorruption(()=>{f.t.prepare("DELETE FROM platform_observation_archive_ref WHERE owner_id=? AND field='legacyRowSnapshot'").run(observation.id)},()=>{
+    // Models the exact two-field inventory emitted by the accepted pre-H1a writer (base363d0b50).
+    const inventory=f.t.prepare('SELECT field,sealed,archive_id FROM platform_observation_archive_ref WHERE owner_id=? ORDER BY field').all(observation.id)
+    expect(inventory).toEqual([expect.objectContaining({field:'rawFields',sealed:1}),expect.objectContaining({field:'sourceText',sealed:1})])
+    expect(()=>read({queryId,relationId:alias.oldId,field:'relation'})).toThrow('Missing sealed original relation snapshot')
+    expect(f.t.prepare('SELECT field,sealed,archive_id FROM platform_observation_archive_ref WHERE owner_id=? ORDER BY field').all(observation.id)).toEqual(inventory)
+  })
+})
+
+it.each(['queryList','businessList','queryBusList'] as const)('returns old SQL NULL for complete %s command with original captured evidence',source=>{
+  const evidence:PlatformLiveQueryResult={source,status:'no_record',effectiveConditions:source==='businessList'?{uscc:'91330200712345678A',combination:'and'}:{name:'No rows',combination:'and'},titleScope:{mode:source==='queryList'?'source_default':'selected',rdjb:source==='queryList'?[]:['2']},queriedAt:'2026-11-11T00:00:00Z',completedAt:'2026-11-11T00:01:00Z',rows:[],dataRows:[],pages:[{source,rdjb:source==='queryList'?null:'2',page:1,maxPage:1,status:'success',fetchedCount:0,declaredTotal:0,error:null}],fetchedCount:0,declaredTotal:0,completeness:'complete',fullRange:true,unfinished:[],error:null,limits:{maxRequests:1,maxRows:50,maxDurationMs:1000,pageSize:50}}
+  const query=platformResultToImport(evidence)
+  const result=writeNewCollectionTarget(f.db,{queryText:JSON.stringify(query),evidenceText:JSON.stringify(evidence),createdAt:'c',assignments:[]})
+  const oracle=new Database(':memory:');migrate(drizzle(oracle),{migrationsFolder:'db/migrations'})
+  try {
+    oracle.prepare("INSERT INTO platform_query(id,interface,query_key,rdjb,queried_at,status,created_at) VALUES(?,?,'query','2','t','no_record','c')").run(result.queryAlias,query.interface)
+    const input={queryId:result.queryAlias,field:'legacyProvenance' as const}
+    expect(read(input)).toEqual(readPlatformQueryEvidence(drizzle(oracle,{schema:legacySchema}),input))
+    expect(f.t.prepare('SELECT field,sealed FROM platform_collection_archive_ref WHERE owner_id=? ORDER BY field').all(result.collectionId)).toEqual([{field:'collectionEvidence',sealed:1},{field:'rawResponse',sealed:1},{field:'request',sealed:1}])
+    f.statements.length=0;read(input)
+    expect(f.statements.filter(q=>/\b(?:from|join)\s+["`]?platform_(?:query|relation)["`]?(?:\s|$)/i.test(q))).toEqual([])
+  }finally{oracle.close()}
 })
