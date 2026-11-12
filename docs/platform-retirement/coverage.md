@@ -2,6 +2,10 @@
 
 状态：[#707 已独立静态接受](https://github.com/MangMax/ningbo-specialized-sme-platform/issues/707#issuecomment-6771581483)。接受范围仅架构与契约；运行迁移及完整退役尚未接受，按后续各票独立验收。生产切换及删除仍需最终单独批准。
 
+## #754 历史分页补录契约候选
+
+[补充 ADR](../adr/2026-11-13-legacy-provenance-lifecycle.md)与[补录生命周期契约](legacy-provenance-lifecycle.md)补充 W4/C3 的已封存 collection 后续补录缺口。推荐一张 collection 专属 metadata 附表，统一旧 T04 与新补录的 SHA/segment 唯一性；原 seal、原档、观察、版本及业务 predicate 保持。后续 S(schema/离线)、W(原命令/回执)、R(证据/选中展示)各≤M，依赖 S→W、S→R，独立 oracle 与组合正常路径见契约第7节。本段仅为 docs-only 待审候选，不实现 schema、API/UI、hash 或运行接线，不扩大 #753 接受范围，也不启用全局 guards。
+
 ## 第一实施前沿
 
 T01 是第一 schema 票，仅依赖 A0 独立接受。允许改 schema、生成 migration 和限定升级 fixture，不启动 source writer、不读生产、不迁 observation、不接 archive、不切运行 reader。明确交付 collection、page、unfinished、condition、limits 字段以及重建现有 scope/error 两表的 FK，结构及键见[契约](contract.md#标识与存储)。
