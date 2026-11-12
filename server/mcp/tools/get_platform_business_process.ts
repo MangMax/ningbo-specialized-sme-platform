@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { defineMcpTool } from '@nuxtjs/mcp-toolkit/server'
 import { useDb } from '@db'
-import { getPlatformBusinessProcess } from '../../utils/platform-business-processes'
+import { getTargetBusinessProcess } from '../../utils/platform-business-processes-target'
 
 export default defineMcpTool({
   name: 'get_platform_business_process',
@@ -11,7 +11,7 @@ export default defineMcpTool({
   annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   inputSchema: { recordId: z.number().int().positive() },
   handler: async input => {
-    const result = getPlatformBusinessProcess(useDb(), input.recordId)
+    const result = getTargetBusinessProcess(useDb(), input.recordId)
     return { structuredContent: { ...result }, content: [{ type: 'text' as const, text: JSON.stringify(result) }] }
   },
 })

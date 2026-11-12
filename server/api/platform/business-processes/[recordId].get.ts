@@ -1,6 +1,6 @@
 import { getRouterParam, setHeader } from 'h3'
 import { useDb } from '@db'
-import { getPlatformBusinessProcess } from '../../../utils/platform-business-processes'
+import { getTargetBusinessProcess } from '../../../utils/platform-business-processes-target'
 
 defineRouteMeta({
   openAPI: {
@@ -20,7 +20,7 @@ defineRouteMeta({
 export default defineEventHandler(event => {
   setHeader(event, 'cache-control', 'no-store')
   try {
-    return getPlatformBusinessProcess(useDb(), Number(getRouterParam(event, 'recordId')))
+    return getTargetBusinessProcess(useDb(), Number(getRouterParam(event, 'recordId')))
   } catch (error) {
     const failure = error as { statusCode?: number; code?: string; message?: string }
     throw createError({ statusCode: failure.statusCode ?? 500, statusMessage: failure.message ?? 'business process detail failed' })
