@@ -274,3 +274,37 @@ it('71610 original BOM source text bytes survive full-command ordinary and refer
   expect(writeCollectionTarget(db,c).reused).toBe(true);expect(writeCollectionTarget(db,reference(c)).reused).toBe(true)
  }finally{t.close()}
 })
+
+it.each([' K ', '   '])('71610 full command preserves original key bytes and replays materialized key: %j', async key => {
+ const {t,db}=await ready()
+ try {
+  const c=command(),q=JSON.parse(c.queryText);q.relations[0].relationKey=key;c.queryText=JSON.stringify(q)
+  const written=writeCollectionTarget(db,c),id=written.observations[0]!.observationId
+  expect(t.prepare('SELECT source_relation_key k FROM platform_business_observation WHERE id=?').get(id)).toEqual({k:key.trim()||null})
+  const before=projectionManifest(t)
+  expect(writeCollectionTarget(db,c).reused).toBe(true)
+  expect(writeCollectionTarget(db,reference(c)).reused).toBe(true)
+  expect(projectionManifest(t)).toBe(before)
+  t.exec('BEGIN')
+  t.prepare('UPDATE platform_business_observation SET source_relation_key=? WHERE id=?').run('forged',id)
+  const drift=projectionManifest(t)
+  expect(()=>writeCollectionTarget(db,c)).toThrow()
+  expect(()=>writeCollectionTarget(db,reference(c))).toThrow()
+  expect(projectionManifest(t)).toBe(drift)
+  t.exec('ROLLBACK')
+ } finally {if(t.inTransaction)t.exec('ROLLBACK');t.close()}
+})
+
+it('71610 rejects zero-observation scratch containing a business record before inheritance',async()=>{
+ const {t}=await ready()
+ const scratch=emptyFingerprintTarget(t)
+ try{
+  scratch.exec("INSERT INTO platform_business_record(interface,platform_key,identity_rule_version,created_at) VALUES('business_list','preexisting','probe','c')")
+  const copy=new Database(scratch.serialize())
+  try{
+   expect(copy.prepare('SELECT count(*) n FROM platform_business_observation').get()).toEqual({n:0})
+   expect(()=>inheritProcessStoredCatalog(t,copy)).toThrow(/scratch/)
+   expect(()=>processStoredInstalled(copy)).toThrow()
+  }finally{copy.close()}
+ }finally{scratch.close();t.close()}
+})

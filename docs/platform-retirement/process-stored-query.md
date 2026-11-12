@@ -87,7 +87,7 @@ JITI_FS_CACHE=false node upgrade/run-process-stored.mjs SOURCE_71609 TARGET EXCL
 
 [processStoredInstalled](../../lib/platform/process-stored-catalog.ts)核明确列/trigger/延迟配对形状、实际target schema hash、唯一完成receipt/checkpoint及原witness receipt指向；source阶段同时调用已接受R3/R5实际catalog认证。原R3/R5和fingerprint运行gate仍按其原phase拒绝71610，不放宽、不重写旧receipt。A2才为显式71610添加经过认证的predecessor解包、scratch继承和process白名单cell认证；A1的installed gate只证明catalog完成，不认证任意新command或使旧reader可运行。
 
-上述拒绝是 A1 交付时的运行边界。A2 候选通过 `processPredecessorSchema` 解包这一份实际完成的71610回执到原71609 schema hash，再由既有 witness/recognized gate验证原链，不改写任何旧receipt。未知schema、缺回执/屏障和漂移仍拒绝。private scratch仅能从已认证源继承到同catalog的空内存库，并固定完整catalog hash；继承后再增列也拒绝。旧phase路径保留，不引入环境selector或通用schema例外。
+上述拒绝是 A1 交付时的运行边界。A2 候选通过 `processPredecessorSchema` 解包这一份实际完成的71610回执到原71609 schema hash，再由既有 witness/recognized gate验证原链，不改写任何旧receipt。未知schema、缺回执/屏障和漂移仍拒绝。private scratch仅能从已认证源继承到同catalog的空内存库：所有非SQLite内部表必须无行，唯一例外是query/relation两个值为0的alias highwater初始化行；并固定完整catalog hash；继承后再增列也拒绝。旧phase路径保留，不引入环境selector或通用schema例外。
 
 新process观察配对需先有revision1和target-command basis；沿既有apply策略，低层首次插入实验在事务中用`defer_foreign_keys=ON`容纳原immediate assignment FK，但始终保持`foreign_keys=ON`。物理process复合FK为DEFERRABLE INITIALLY DEFERRED。遗漏整个projection/任一captured分支可RELEASE savepoint而不能outer COMMIT；失败后由caller回滚。捕获冻结同时拦截INSERT/UPDATE OR REPLACE目标、upsert、DELETE和跨owner移动；oldwriter即便在受控实验中降phase绕过JS，SQL屏障也拒绝缺capture提交。globalguard、三个worker拒绝不变。
 

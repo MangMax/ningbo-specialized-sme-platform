@@ -38,11 +38,18 @@ export function processPredecessorSchema(t:Database.Database):string|null {
  if(!processStoredInstalled(t))throw new Error('process_stored_catalog_required')
  return inherited.get(t)?.predecessor??z.object({source_schema_hash:z.string()}).parse(t.prepare('SELECT source_schema_hash FROM platform_migration_run WHERE transform_version=?').get(PROCESS_STORED_TRANSFORM)).source_schema_hash
 }
+function emptyStagingData(t:Database.Database) {
+ // Only the two initialization highwaters may exist before staging begins.
+ const highwaters=t.prepare('SELECT namespace,high_water FROM platform_legacy_alias_sequence ORDER BY namespace').all()
+ if(JSON.stringify(highwaters)!==JSON.stringify([{namespace:'query',high_water:0},{namespace:'relation',high_water:0}]))return false
+ const tables=t.prepare("SELECT name FROM sqlite_schema WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name<>'platform_legacy_alias_sequence'").all() as {name:string}[]
+ return tables.every(({name})=>!t.prepare(`SELECT 1 FROM "${name.replaceAll('"','""')}" LIMIT 1`).get())
+}
 /** Private verifier staging: same catalog, empty memory, authenticated source only. */
 export function inheritProcessStoredCatalog(source:Database.Database,target:Database.Database){
  const predecessor=processPredecessorSchema(source)
  if(predecessor===null)return
- if(!target.memory||schemaHash(target)!==schemaHash(source)||z.object({n:z.literal(0)}).safeParse(target.prepare('SELECT count(*) n FROM platform_business_observation').get()).success!==true)throw new Error('process_stored_scratch_catalog')
+ if(!target.memory||schemaHash(target)!==schemaHash(source)||!emptyStagingData(target))throw new Error('process_stored_scratch_catalog')
  inherited.set(target,{predecessor,catalog:schemaHash(source)})
 }
 

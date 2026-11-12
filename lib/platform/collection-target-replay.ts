@@ -130,7 +130,9 @@ function targetReplaySource<S extends Record<string, unknown>>(tx: BetterSQLite3
         const rawFields: unknown = parseOriginalRaw(rawText)
         const values = commandOriginal?.relations?.find(row => row.sequenceNo === o.sequenceNo) ?? legacyOriginal(archive(tx,{kind:'observation',id:o.id,field:'legacyRowSnapshot'})!,o.sequenceNo,collection.interface==='business_list'&&sqlite.pragma('user_version',{simple:true})===71610)
         if ((values.sourceText ?? null) !== sourceText) throw new PlatformProjectionError('projection_source_drift','Original source text differs')
-        if (platformObservationPayload({interface:collection.interface,relationKey:values.relationKey,rawFields:values.rawFields}) !== platformObservationPayload({interface:collection.interface,relationKey:o.sourceRelationKey,rawFields})) throw new PlatformProjectionError('projection_source_drift','Original observation archive differs')
+        // Original command bytes remain authenticated separately from the stored key.
+        const originalKey = commandOriginal && collection.interface==='business_list' && sqlite.pragma('user_version',{simple:true})===71610 ? optionalString(values.relationKey) : values.relationKey
+        if (platformObservationPayload({interface:collection.interface,relationKey:originalKey,rawFields:values.rawFields}) !== platformObservationPayload({interface:collection.interface,relationKey:o.sourceRelationKey,rawFields})) throw new PlatformProjectionError('projection_source_drift','Original observation archive differs')
         // The typed row owns original position/key; archive data only supplies payload assertions.
         return { id:a.oldId,ref:`relation:${a.oldId}`,values:{...values,relationKey:o.sourceRelationKey,rawFields:rawFields as RosterImportRelation['rawFields']},
           assertOriginal: claimed => {
