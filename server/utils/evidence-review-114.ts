@@ -10,6 +10,7 @@ import * as s from '../../db/schema'
 import { DecisionError102, decisionScope102, parse102, readDecision102, currentDecision102, type DecisionDb } from './decision-lifecycle-102'
 import { captureRuleRevision113, evidenceDigest113, evaluateEvidenceImpact113, processEvidenceImpacts113, readEvidenceRevision113, readEvidenceToken113 } from './evidence-impact-113'
 import { readQueryCoverage } from '../../lib/roster/query-assessment'
+import { differenceEvidenceColumns } from '../../lib/platform/difference-reference-target'
 const positive = z.number().int().positive().max(Number.MAX_SAFE_INTEGER)
 const limit = positive.max(100).default(50), cursor = z.string().min(1).max(2048).optional()
 const filters = decisionScope102.partial().extend({ decisionId: positive.optional() })
@@ -145,7 +146,7 @@ export function getImpact114(db:DecisionDb,id:number) {
 export function previewImpacts114(db:DecisionDb,input:z.infer<typeof impactPreview114>) {
   const revision=readEvidenceRevision113(db,input.revisionId);if(!revision)throw new DecisionError102(404,'not_found','Committed evidence revision not found')
   const c=pageContext(db,'preview',input)
-  const rows=db.all<{id:number;enterpriseId:number;titleCode:string;direction:string;status:string;evidenceQueryId:number|null;lifecycleAction:string|null}>(sql`select d.id,d.enterprise_id enterpriseId,d.title_code titleCode,d.direction,d.status,d.evidence_query_id evidenceQueryId,d.lifecycle_action lifecycleAction
+  const rows=db.all<{id:number;enterpriseId:number;titleCode:string;direction:string;status:string;evidenceQueryId:number|null;lifecycleAction:string|null}>(sql`select d.id,d.enterprise_id enterpriseId,d.title_code titleCode,d.direction,d.status,${differenceEvidenceColumns(db, 'd').evidenceQueryId} evidenceQueryId,d.lifecycle_action lifecycleAction
     from difference_reason d where d.id>${c.after} and d.id<=${Math.min(c.asOf.decision,revision.maxDecisionId)} and ${scoped(input,'d')}
     and ${revision.enterpriseId==null?sql`1`:sql`d.enterprise_id=${revision.enterpriseId}`} and ${revision.titleCode==null?sql`1`:sql`d.title_code=${revision.titleCode}`} and ${revision.direction==null?sql`1`:sql`d.direction=${revision.direction}`}
     and not exists(select 1 from difference_reason n where n.enterprise_id=d.enterprise_id and n.title_code=d.title_code and n.direction=d.direction and n.id<=${c.asOf.decision} and (n.recorded_at>d.recorded_at or (n.recorded_at=d.recorded_at and n.id>d.id))) order by d.id limit ${input.limit+1}`)

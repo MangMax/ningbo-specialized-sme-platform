@@ -13,18 +13,18 @@ export const targetDifferenceReason = sqliteTable('difference_reason', {
  previousId: integer('previous_id').references((): AnySQLiteColumn => targetDifferenceReason.id),
 })
 /** Public IDs remain external. No row payload, result or permission registration is cached. */
-export function differenceEvidenceColumns(db: object) {
+export function differenceEvidenceColumns(db: object, owner?: 'd') {
  const t = sqliteConnection(db), phase = Number(t.pragma('user_version',{simple:true}))
  if (phase === 71612) {
   requireH1cReady(t)
   return {
-   evidenceQueryId: sql<number|null>`(select ${q.oldId} from ${q} where ${q.collectionId} = ${targetDifferenceReason.evidenceCollectionId})`,
-   evidenceRelationId: sql<number|null>`(select ${r.oldId} from ${r} where ${r.observationId} = ${targetDifferenceReason.evidenceObservationId})`,
+   evidenceQueryId: sql<number|null>`(select ${q.oldId} from ${q} where ${q.collectionId} = ${owner ? sql`${sql.identifier(owner)}.${sql.identifier('evidence_query_id')}` : targetDifferenceReason.evidenceCollectionId})`,
+   evidenceRelationId: sql<number|null>`(select ${r.oldId} from ${r} where ${r.observationId} = ${owner ? sql`${sql.identifier(owner)}.${sql.identifier('evidence_relation_id')}` : targetDifferenceReason.evidenceObservationId})`,
   }
  }
  if (![0,71605,71606,71607,71608,71609,71610,71611].includes(phase)) throw new Error('Unsupported difference reference schema version')
  if (phase === 71611) requireH1cReady(t)
- return {evidenceQueryId:s.differenceReason.evidenceQueryId,evidenceRelationId:s.differenceReason.evidenceRelationId}
+ return {evidenceQueryId:owner ? sql<number|null>`${sql.identifier(owner)}.${sql.identifier('evidence_query_id')}` : s.differenceReason.evidenceQueryId,evidenceRelationId:owner ? sql<number|null>`${sql.identifier(owner)}.${sql.identifier('evidence_relation_id')}` : s.differenceReason.evidenceRelationId}
 }
 export function differencePublicColumns(db: object) {
  return {...getTableColumns(s.differenceReason),...differenceEvidenceColumns(db)}
