@@ -1,5 +1,6 @@
 import { processPredecessorSchema } from './process-stored-catalog'
-import { authenticateH1cCatalog, H1C_CATALOG_VERSION } from './h1c-catalog'
+import { H1C_CATALOG_VERSION } from './h1c-catalog'
+import { authenticateH1cFingerprintCatalog, inheritH1cFingerprintContext } from './h1c-fingerprint-context'
 import { witnessPredecessorSchema } from './recognized-witness-catalog'
 import { schemaHash } from './sqlite-row-cells'
 import type Database from 'better-sqlite3'
@@ -36,7 +37,7 @@ function catalogPresent(t:Database.Database) {
 }
 export function recognizedStoredInstalled(t:Database.Database) {
  if(t.pragma('user_version',{simple:true})===H1C_CATALOG_VERSION)return t.transaction(()=>{
-  authenticateH1cCatalog(t);return recognizedStoredInSnapshot(t)
+  authenticateH1cFingerprintCatalog(t);return recognizedStoredInSnapshot(t)
  }).deferred()
  return recognizedStoredInSnapshot(t)
 }
@@ -50,7 +51,7 @@ function recognizedStoredInSnapshot(t:Database.Database) {
 }
 /** Only the verifier's empty in-memory catalog may inherit its validated source state. */
 export function inheritRecognizedStoredCatalog(source:Database.Database,scratch:Database.Database) {
- if(source.pragma('user_version',{simple:true})===H1C_CATALOG_VERSION)throw new Error('h1c_verifier_staging_unwired')
+ if(source.pragma('user_version',{simple:true})===H1C_CATALOG_VERSION){inheritH1cFingerprintContext(source,scratch);scratchCatalogs.add(scratch);return}
  if(!recognizedStoredInstalled(source))return
  if(!scratch.memory||!catalogPresent(scratch)|| (scratch.prepare('SELECT count(*) n FROM platform_business_observation').get() as {n:number}).n!==0)throw new Error('recognized_stored_schema_scratch')
  scratchCatalogs.add(scratch)

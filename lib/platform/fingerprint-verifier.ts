@@ -24,6 +24,7 @@ import { parseRecognizedRecord, parseRecognizedSourceFidelity } from './recogniz
 import { isDeepStrictEqual } from 'node:util'
 import { z } from 'zod'
 import { verifyOriginalCommand } from './fingerprint-command-facts'
+import { authenticateH1cFingerprintCatalog } from './h1c-fingerprint-context'
 export type FingerprintOwner={observationId:number,collectionId:number,relationAlias:number}
 export class FingerprintVerificationError extends Error {
   readonly kind='platform_relation'
@@ -31,9 +32,16 @@ export class FingerprintVerificationError extends Error {
   readonly ref:string
   constructor(readonly code:'projection_source_drift'|'projection_mapping_conflict'|'apply_stored_conflict'|'apply_stored_uncaptured'|'process_stored_conflict'|'process_stored_uncaptured',owner:FingerprintOwner,reason:string){super(reason);this.ref=`relation:${owner.relationAlias}`}
 }
-export function emptyFingerprintTarget(t:Database.Database) {
+export function emptyFingerprintTarget(t:Database.Database):Database.Database {
+  if(t.pragma('user_version',{simple:true})===71611)return t.transaction(()=>{
+    authenticateH1cFingerprintCatalog(t);return emptyTargetInSnapshot(t)
+  }).deferred()
+  return emptyTargetInSnapshot(t)
+}
+function emptyTargetInSnapshot(t:Database.Database) {
   fingerprintArchiveInventory(t)
   const scratch=new Database(':memory:');scratch.pragma('foreign_keys=ON')
+  try {
   const catalog=t.prepare("select type,sql from sqlite_schema where sql is not null and name not like 'sqlite_%' order by case type when 'table' then 0 when 'index' then 1 else 2 end").all() as {type:string,sql:string}[]
   for(const row of catalog)scratch.exec(row.sql)
   scratch.pragma('user_version='+t.pragma('user_version',{simple:true}))
@@ -42,6 +50,7 @@ export function emptyFingerprintTarget(t:Database.Database) {
   inheritRecognizedStoredCatalog(t,scratch)
   inheritWitnessCatalog(t,scratch)
   return scratch
+  }catch(error){scratch.close();throw error}
 }
 const hash=(v:Buffer)=>createHash('sha256').update(v).digest('hex')
 export function verifyFingerprint(t:Database.Database,owner:FingerprintOwner, options: {allowMissingVersionProjection?:boolean, legacyCustody?:LegacyFingerprintCustody} = {}) {

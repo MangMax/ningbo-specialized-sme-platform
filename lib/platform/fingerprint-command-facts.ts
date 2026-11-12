@@ -14,6 +14,9 @@ import { canonicalPlatformJson, PLATFORM_PROJECTION_RULE } from './observation-p
 import { writeApplyTarget, type ApplyTargetInput } from './apply-target-writer'
 import { writeProcessTarget } from './process-target-writer'
 import { writeRecognizedTarget } from './recognized-target-writer'
+import { authenticateH1cFingerprintCatalog, assertH1cFingerprintSource } from './h1c-fingerprint-context'
+import { verifyProcessStored } from './process-stored-verifier'
+import { verifyRecognizedStored } from './recognized-stored'
 const hash=(v:Buffer|string)=>createHash('sha256').update(v).digest('hex')
 const id=z.number().int().positive().max(Number.MAX_SAFE_INTEGER)
 // passthrough retains extra original own keys. Parsing validates, but never replaces original input.
@@ -37,7 +40,17 @@ const inputShape=z.object({
  * including observation-owned projection and revision1. Actual owner IDs are remapped;
  * generated timestamps come from the independently frozen event snapshot.
  */
-export function verifyOriginalCommand(target:Database.Database,predecessor:Database.Database,event:{observationId:number, originalInput?:unknown},options: {allowMissingVersionProjection?:boolean} = {}):Buffer {
+type CommandEvent={observationId:number, originalInput?:unknown}
+type CommandOptions={allowMissingVersionProjection?:boolean}
+export function verifyOriginalCommand(target:Database.Database,predecessor:Database.Database,event:CommandEvent,options:CommandOptions = {}):Buffer {
+  if(target.pragma('user_version',{simple:true})===71611)return target.transaction(()=>{
+    authenticateH1cFingerprintCatalog(target)
+    assertH1cFingerprintSource(target,predecessor)
+    return verifyCommandInSnapshot(target,predecessor,event,options)
+  }).deferred()
+  return verifyCommandInSnapshot(target,predecessor,event,options)
+}
+function verifyCommandInSnapshot(target:Database.Database,predecessor:Database.Database,event:CommandEvent,options:CommandOptions):Buffer {
   const original=event.originalInput
   inputShape.parse(original)
   // Validated above; retain the original, not Zod's cloned DTO (own keys/order matter).
@@ -58,6 +71,10 @@ export function verifyOriginalCommand(target:Database.Database,predecessor:Datab
     const expected=drizzle(scratch,{schema:s})
     const collection=actual.select().from(s.platformCollection).where(eq(s.platformCollection.id,input.collectionId)).get()
     if(!collection)throw new Error('Command collection missing')
+    if(target.pragma('user_version',{simple:true})===71611){
+      if(collection.interface==='business_list')verifyProcessStored(target,observation.id,{kind:'command',input})
+      if(collection.interface==='recognized_list')verifyRecognizedStored(target,observation.id)
+    }
     if(collection.titleCode!==null&&!expected.select().from(s.title).where(eq(s.title.code,collection.titleCode)).get()) {
       const title=actual.select().from(s.title).where(eq(s.title.code,collection.titleCode)).get()
       if(!title)throw new Error('Command title context missing')
@@ -132,7 +149,7 @@ export function verifyOriginalCommand(target:Database.Database,predecessor:Datab
       const archive=actual.select({ref:vr,value:a}).from(vr).innerJoin(a,eq(a.id,vr.archiveId)).where(eq(vr.ownerId,f.id)).all()
       if(archive.length!==1||archive[0]!.ref.sealed!==1||archive[0]!.value.id!==f.canonicalArchiveId||archive[0]!.value.storageClass!=='text'||!archive[0]!.value.bytes?.equals(Buffer.from(f.canonicalRawJson!))||archive[0]!.value.sha256!==hash(archive[0]!.value.bytes!)||archive[0]!.value.byteLength!==archive[0]!.value.bytes!.length)throw new Error('Command canonical archive conflict')
     }
-    for(const table of [s.platformApplyProjection,target.pragma('user_version',{simple:true})===71610?storedProcessProjection:s.platformBusinessProjection,s.platformRecognizedProjection]) {
+    for(const table of [s.platformApplyProjection,[71610,71611].includes(Number(target.pragma('user_version',{simple:true})))?storedProcessProjection:s.platformBusinessProjection,s.platformRecognizedProjection]) {
       const ep=expected.select().from(table).where(eq(table.observationId,planned.id)).all(),ap=actual.select().from(table).where(eq(table.observationId,observation.id)).all()
       if(ep.length!==ap.length)throw new Error('Command projection owner inventory conflict')
       for(let i=0;i<ep.length;i++) {

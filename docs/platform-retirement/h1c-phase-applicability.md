@@ -28,3 +28,22 @@ A2a uses A1's exact fixed71611 catalog/receipt proof, never only a marker, hash 
 A2a acceptance: populated and empty controlled successors; all catalog primary entrypoints and process/recognized list/options/process-facts; old71610 complete DTO equivalence and literal original cells; standalone process/witness/recognized catalog calls use one snapshot during a second connection's receipt mutation; next request must reject; missing/forged receipt, marker-only, unrelated schema and sqliteX prefix, same-connection mutation refuse without writes; wrong phase retains old errors; declarations and private staging/new writer/capture/display remain closed; detail rejection belongs B. Exact focused/affected/typecheck/catalog/diff and resources are in h1c/a2. C mapping/data migration/rollback/replay are UNRUN.
 
 `readTargetPlatformEvidence` has selected raw/evidence branches without an explicit71610 marker gate already on the accepted base. A2a does not certify or close all such H1a branches; H1b display still explicitly refuses71611. Transitive catalog readiness is not whole-H1a/H2/H3 acceptance. The complete direct-catalog-consumer scan is retained in h1c/a2/direct-catalog-consumers-exact.txt.
+
+## A2b-S original-command reconstruction owner
+
+A2b-S is one independent original-command proof unit spanning authenticated private scratch, inventory, source witness reconstruction and necessary scratch-only writer/candidate dependencies. Main legacy fingerprint verify/capture/bootstrap remains A2b-R UNIMPLEMENTED; A2c collection command/full replay/public writers, A2d display, B/C remain unimplemented. No helper-by-helper ticket split or schema change.
+
+`h1c-fingerprint-context` registers only a genuine FK-ON71611 memory DB with the literal complete source catalog, every table empty (including sqlite_sequence), except exactly query/relation alias highwaters0. Source is full A1 authenticated in one snapshot, or an already registered private context with matching current header/catalog. Context keeps exact source run/checkpoint ledger digest and process71609 predecessor binding. No receipt is copied into memory or rewritten on source. Serializing memory does not copy the capability; each clone must pass fresh empty inheritance. Registered memory is revalidated for phase/FK/catalog at every capability use, including sqliteX user objects. Marker or schema hash alone never authorizes scratch. Primary catalogs still execute full A1 authentication.
+
+| A2b-S actual entry |71611 behavior|
+|---|---|
+| fingerprintArchiveInventory | full A1/context authentication and all archive owners in one snapshot |
+| emptyFingerprintTarget / inherit*Catalog | authenticate source, exact complete catalog and fully empty memory registration; no marker downgrade |
+| verifyOriginalCommand | full target proof and exact source-ledger/context binding before original input/owner/alias/revision/archive/stored projection comparison; one target snapshot |
+| reconstructWitnessCollectionSource | same source-ledger binding and snapshot before copying exact selected original witness archive and conditions |
+| capturePhase / source apply/process writer / candidate helpers | registered scratch only, needed to materialize independent expected command result; **main71611 remains rejected/unsupported** |
+| recognized writer/catalog private gate | existing writer via capturePhase on registered memory only; no main writer activation |
+| process stored projection selection | command-proof comparison uses stored process projection and rejects original stored/uncaptured drift; no new general reader predicate |
+| verifyFingerprint / bootstrapFingerprint main | existing unsupported71611 refusal retained; full legacy/ordinary/reference lane A2b-R not accepted here |
+
+Controlled successor fixtures are test-owned and not C production migration. Source proof and reference identity cannot fold same-version observations, discard original payload keys/order/bytes or repair uncaptured state. Ordinary runtime and three workers still reject all nonzero phases. Original71610 behavior and original baseline FAIL are separate evidence lanes. Follow-up acceptance must cover main verify/bootstrap/capture and its source-specific projection branches before claiming full A2b.

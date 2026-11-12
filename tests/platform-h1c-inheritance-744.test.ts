@@ -110,7 +110,7 @@ it.each([0,71605,71606,71607,71608,71609,71612])('preserves original gate result
     if(phase!==71609){expect(()=>witnessInstalled(source.t)).toThrow('witness_schema_phase');expect(()=>recognizedStoredInstalled(source.t)).toThrow('recognized_stored_schema_columns')}
   }finally{source.t.exec('ROLLBACK')}
 })
-it('keeps B detail column access rejected while declarations capture and private staging remain unwired',()=>{
+it('keeps B detail column access rejected while declarations capture and untrusted staging remain closed',()=>{
   const db=drizzle(target,{schema:targetSchema}),before=state(target)
   expect(()=>getTargetBusinessProcess(db,1)).toThrow(/no such column/)
   const row=target.prepare("SELECT id FROM platform_business_record WHERE interface='recognized_list'").get() as {id:number}
@@ -120,7 +120,7 @@ it('keeps B detail column access rejected while declarations capture and private
   expect(()=>writeProcessTarget(db,{collectionId:11,position:{sequenceNo:99,positionState:'unknown'},row:{sequenceNo:99,rawFields:{}},assignment:{matchBasis:'none',verificationStatus:'pending',origin:'command',actor:{type:'agent',id:'h1c-a2a'},basis:'controlled'}})).toThrow('Explicit finalized target required')
   expect(()=>readTargetRelationEvidenceDisplay(db,[{relationId:1}])).toThrow('Explicit 71610 evidence display target required')
   const scratch=new Database(':memory:')
-  try{for(const call of [inheritProcessStoredCatalog,inheritWitnessCatalog,inheritRecognizedStoredCatalog])expect(()=>call(target,scratch)).toThrow('h1c_verifier_staging_unwired')}finally{scratch.close()}
+  try{for(const call of [inheritProcessStoredCatalog,inheritWitnessCatalog,inheritRecognizedStoredCatalog])expect(()=>call(target,scratch)).toThrow('h1c_fingerprint_empty_catalog')}finally{scratch.close()}
   expect(state(target)).toEqual(before)
 })
 

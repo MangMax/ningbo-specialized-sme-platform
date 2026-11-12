@@ -1,5 +1,6 @@
 import { processPredecessorSchema } from './process-stored-catalog'
-import { authenticateH1cCatalog, H1C_CATALOG_VERSION } from './h1c-catalog'
+import { H1C_CATALOG_VERSION } from './h1c-catalog'
+import { authenticateH1cFingerprintCatalog, inheritH1cFingerprintContext } from './h1c-fingerprint-context'
 /** Exact #733 A catalog successor to the accepted #732 receipt, not a reader exemption. */
 import type Database from 'better-sqlite3'
 import { isDeepStrictEqual } from 'node:util'
@@ -48,7 +49,7 @@ CREATE TRIGGER recognized_witness_observation_insert BEFORE INSERT ON platform_b
 const scratch=new WeakSet<Database.Database>()
 export function witnessCatalogPresent(t:Database.Database) {
  if(t.pragma('user_version',{simple:true})===H1C_CATALOG_VERSION)return t.transaction(()=>{
-  authenticateH1cCatalog(t);return witnessCatalogInSnapshot(t)
+  authenticateH1cFingerprintCatalog(t);return witnessCatalogInSnapshot(t)
  }).deferred()
  return witnessCatalogInSnapshot(t)
 }
@@ -75,7 +76,7 @@ function witnessCatalogInSnapshot(t:Database.Database) {
 /** Returns only this one authenticated predecessor's actual catalog hash. */
 export function witnessPredecessorSchema(t:Database.Database):string|null {
  if(t.pragma('user_version',{simple:true})===H1C_CATALOG_VERSION)return t.transaction(()=>{
-  authenticateH1cCatalog(t);return witnessPredecessorInSnapshot(t)
+  authenticateH1cFingerprintCatalog(t);return witnessPredecessorInSnapshot(t)
  }).deferred()
  return witnessPredecessorInSnapshot(t)
 }
@@ -90,7 +91,7 @@ function witnessPredecessorInSnapshot(t:Database.Database):string|null {
 }
 export function witnessInstalled(t:Database.Database) {
  if(t.pragma('user_version',{simple:true})===H1C_CATALOG_VERSION)return t.transaction(()=>{
-  authenticateH1cCatalog(t);return witnessInstalledInSnapshot(t)
+  authenticateH1cFingerprintCatalog(t);return witnessInstalledInSnapshot(t)
  }).deferred()
  return witnessInstalledInSnapshot(t)
 }
@@ -100,7 +101,7 @@ function witnessInstalledInSnapshot(t:Database.Database) {
  witnessPredecessorSchema(t);return true
 }
 export function inheritWitnessCatalog(source:Database.Database,target:Database.Database) {
- if(source.pragma('user_version',{simple:true})===H1C_CATALOG_VERSION)throw new Error('h1c_verifier_staging_unwired')
+ if(source.pragma('user_version',{simple:true})===H1C_CATALOG_VERSION){inheritH1cFingerprintContext(source,target);scratch.add(target);return}
  if(!witnessInstalled(source))return
  if(!target.memory||!witnessCatalogPresent(target)||(target.prepare('SELECT count(*) n FROM platform_business_observation').get() as {n:number}).n!==0)throw new Error('witness_scratch_catalog')
  scratch.add(target)

@@ -2,11 +2,12 @@
 import type Database from 'better-sqlite3'
 import { schemaHash } from './sqlite-row-cells'
 import { z } from 'zod'
-import { authenticateH1cCatalog, H1C_CATALOG_VERSION } from './h1c-catalog'
+import { H1C_CATALOG_VERSION } from './h1c-catalog'
+import { authenticateH1cFingerprintCatalog, inheritH1cFingerprintContext, h1cFingerprintProcessSource } from './h1c-fingerprint-context'
 export const PROCESS_STORED_TRANSFORM='process-exact-stored-offline-v1'
 const inherited=new WeakMap<Database.Database,{predecessor:string,catalog:string}>()
 export function processStoredInstalled(t:Database.Database) {
- if(t.pragma('user_version',{simple:true})===H1C_CATALOG_VERSION){authenticateH1cCatalog(t);return true}
+ if(t.pragma('user_version',{simple:true})===H1C_CATALOG_VERSION){authenticateH1cFingerprintCatalog(t);return true}
  const columns=t.prepare("SELECT name FROM pragma_table_info('platform_business_projection') WHERE name LIKE 'exact_%' OR name LIKE 'sql_fact_title%'").all()
  const runs=t.prepare('SELECT * FROM platform_migration_run WHERE transform_version=?').all(PROCESS_STORED_TRANSFORM)
  const partial=t.prepare("SELECT 1 FROM sqlite_schema WHERE name LIKE 'platform_process_stored_%' OR name LIKE 'platform_process_pair_%'").get()||t.prepare("SELECT 1 FROM pragma_table_info('platform_business_observation') WHERE name LIKE 'process_exact_%' OR name='process_sql_fact_title_state'").get()||t.prepare("SELECT 1 FROM platform_migration_checkpoint WHERE phase='process-stored'").get()
@@ -37,7 +38,9 @@ export function processStoredInstalled(t:Database.Database) {
 /** Only this authenticated successor may unwrap the preserved 71609 receipt chain. */
 export function processPredecessorSchema(t:Database.Database):string|null {
  if(t.pragma('user_version',{simple:true})===H1C_CATALOG_VERSION)return t.transaction(()=>{
-  authenticateH1cCatalog(t)
+  authenticateH1cFingerprintCatalog(t)
+  const privateSource=h1cFingerprintProcessSource(t)
+  if(privateSource!==null)return privateSource
   return z.object({source_schema_hash:z.string()}).parse(t.prepare('SELECT source_schema_hash FROM platform_migration_run WHERE transform_version=?').get(PROCESS_STORED_TRANSFORM)).source_schema_hash
  }).deferred()
  if(t.pragma('user_version',{simple:true})!==71610)return null
@@ -53,7 +56,7 @@ function emptyStagingData(t:Database.Database) {
 }
 /** Private verifier staging: same catalog, empty memory, authenticated source only. */
 export function inheritProcessStoredCatalog(source:Database.Database,target:Database.Database){
- if(source.pragma('user_version',{simple:true})===H1C_CATALOG_VERSION)throw new Error('h1c_verifier_staging_unwired')
+ if(source.pragma('user_version',{simple:true})===H1C_CATALOG_VERSION){inheritH1cFingerprintContext(source,target);return}
  const predecessor=processPredecessorSchema(source)
  if(predecessor===null)return
  if(!target.memory||schemaHash(target)!==schemaHash(source)||!emptyStagingData(target))throw new Error('process_stored_scratch_catalog')
