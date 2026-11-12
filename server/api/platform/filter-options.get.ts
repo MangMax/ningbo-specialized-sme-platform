@@ -1,6 +1,7 @@
 import { createError, defineEventHandler, getQuery, setHeader } from 'h3'
 import { useDb } from '@db'
 import { platformFilterOptionsQueryFromQuery } from '../../../lib/platform/filter-options'
+import { readTargetDeclarationOptions } from '../../utils/platform-declarations-target'
 import { readPlatformFilterOptions } from '../../utils/platform-filter-options'
 
 defineRouteMeta({
@@ -23,7 +24,9 @@ export default defineEventHandler(event => {
   setHeader(event, 'cache-control', 'no-store')
   try {
     const query = platformFilterOptionsQueryFromQuery(getQuery(event))
-    return readPlatformFilterOptions(query, useDb())
+    const db = useDb()
+    if (query.source === 'declarations') return readTargetDeclarationOptions(query.view, db)
+    return readPlatformFilterOptions(query, db)
   } catch (error) {
     const failure = error as { statusCode?: number; message?: string }
     throw createError({ statusCode: failure.statusCode ?? 500, statusMessage: failure.message ?? 'platform filter options query failed' })
