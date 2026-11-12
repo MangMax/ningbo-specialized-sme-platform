@@ -54,6 +54,9 @@ export function verifyWitnessObservation(t:Database.Database,id:number) {
 /** Verifier's private empty in-memory reconstruction: copy authenticated original,
  * not derived witness values. No runtime reader or arbitrary catalog inheritance. */
 export function reconstructWitnessCollectionSource(source:Database.Database,scratch:Database.Database,id:number) {
+ return source.transaction(()=>reconstructInSnapshot(source,scratch,id)).deferred()
+}
+function reconstructInSnapshot(source:Database.Database,scratch:Database.Database,id:number) {
  if(!witnessInstalled(source))return
  if(!scratch.memory||!witnessInstalled(scratch)||(scratch.prepare('SELECT count(*) n FROM platform_business_observation').get() as {n:number}).n!==0)throw new Error('witness_reconstruction_context')
  verifyWitnessCollection(source,id)

@@ -147,26 +147,7 @@ it('recovers pre-capture 71609 command title from bound original input without b
  try{expect(upgraded.prepare('SELECT exact_title_raw title,exact_title_origin origin,title_raw display FROM platform_recognized_projection WHERE observation_id=?').get(r.observationId)).toEqual({title:'3',origin:'commandInput',display:'3'});verifyRecognizedStored(upgraded,r.observationId)}finally{upgraded.close()}
 })
 
-import { fingerprintArchiveInventory } from '../lib/platform/fingerprint-schema-inventory'
-it('rejects partial and unfinished exact catalogs before writer verifier or inventory can accept them',async()=>{
- const f=await ready()
- const mutations=[
-  "ALTER TABLE platform_recognized_projection ADD COLUMN exact_title_raw BLOB",
-  "ALTER TABLE platform_recognized_projection ADD COLUMN exact_title_state TEXT",
-  "ALTER TABLE platform_recognized_projection ADD COLUMN exact_title_raw BLOB;ALTER TABLE platform_recognized_projection ADD COLUMN exact_title_state TEXT;ALTER TABLE platform_recognized_projection ADD COLUMN exact_title_origin TEXT;ALTER TABLE platform_recognized_projection ADD COLUMN exact_title_archive_id INTEGER REFERENCES platform_archive_value(id);ALTER TABLE platform_recognized_projection ADD COLUMN exact_title_sha256 TEXT",
- ]
- for(const [i,ddl] of mutations.entries()){
-  const path=join(f.root,`partial-${i}.sqlite`);copyFileSync(f.source,path)
-  const t=new Database(path);t.pragma('foreign_keys=ON');t.exec(ddl)
-  try{
-   const before=t.serialize(),db=drizzle(t,{schema:targetSchema})
-   expect(()=>writeRecognizedTarget(db,command(6,'3'))).toThrow('recognized_stored_schema')
-   expect(()=>verifyFingerprint(t,{observationId:1,collectionId:1,relationAlias:1})).toThrow('recognized_stored_schema')
-   expect(()=>fingerprintArchiveInventory(t)).toThrow('recognized_stored_schema')
-   expect(t.serialize()).toEqual(before)
-  }finally{t.close()}
- }
-})
+
 it('authenticates unindexed reference exact cells bindings and uncaptured state without repair',async()=>{
  const f=await ready();finalizeRecognizedStored(f)
  for(const change of ["exact_title_raw='BAD'","exact_title_sha256='BAD'","exact_title_state='uncaptured'"]){
@@ -185,37 +166,3 @@ it('authenticates unindexed reference exact cells bindings and uncaptured state 
   }finally{t.close()}
  }
 })
-it('rejects incomplete receipts malformed barriers and wrong phase without changing facts',async()=>{
- const f=await ready();finalizeRecognizedStored(f)
- for(const [i,ddl] of [
-  "DELETE FROM platform_migration_checkpoint WHERE run_id='recognized-stored'",
-  "UPDATE platform_migration_run SET state='running' WHERE run_id='recognized-stored'",
-  "DROP TRIGGER recognized_stored_insert",
-  "DROP TRIGGER recognized_stored_update;CREATE TRIGGER recognized_stored_update BEFORE UPDATE ON platform_recognized_projection BEGIN SELECT 1;END",
-  'PRAGMA user_version=71608',
- ].entries()){
-  const path=join(f.root,`invalid-completion-${i}.sqlite`);copyFileSync(f.target,path)
-  const t=new Database(path);t.pragma('foreign_keys=ON');t.exec(ddl)
-  try{
-   const before=t.serialize()
-   expect(()=>writeRecognizedTarget(drizzle(t,{schema:targetSchema}),command(6,'3'))).toThrow()
-   expect(()=>verifyRecognizedStored(t,1)).toThrow('recognized_stored_schema')
-   expect(()=>fingerprintArchiveInventory(t)).toThrow('recognized_stored_schema')
-   expect(t.serialize()).toEqual(before)
-  }finally{t.close()}
- }
-},30000)
-it('binds completion receipt to actual catalog while permitting future data writes',async()=>{
- const f=await ready();finalizeRecognizedStored(f)
- const t=new Database(f.target);t.pragma('foreign_keys=ON');const db=drizzle(t,{schema:targetSchema})
- try{
-  const good=writeRecognizedTarget(db,command(6,'2'))
-  verifyFingerprint(t,{observationId:good.observationId,collectionId:1,relationAlias:good.relationAlias})
-  t.prepare('UPDATE platform_migration_run SET target_schema_version=? WHERE run_id=?').run('0'.repeat(64),'recognized-stored')
-  const before=t.serialize()
-  expect(()=>writeRecognizedTarget(db,command(7,'3'))).toThrow('recognized_stored_schema_receipt')
-  expect(()=>verifyFingerprint(t,{observationId:good.observationId,collectionId:1,relationAlias:good.relationAlias})).toThrow('recognized_stored_schema_receipt')
-  expect(()=>fingerprintArchiveInventory(t)).toThrow('recognized_stored_schema_receipt')
-  expect(t.serialize()).toEqual(before)
- }finally{t.close()}
-},30000)

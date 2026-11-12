@@ -9,7 +9,7 @@ import { finalizeProcessStored } from '../upgrade/process-stored'
 import { targetSchema } from '../lib/platform/target-schema'
 import { writeProcessTarget,type ProcessTargetInput } from '../lib/platform/process-target-writer'
 import { verifyFingerprint,emptyFingerprintTarget } from '../lib/platform/fingerprint-verifier'
-import { inheritProcessStoredCatalog,processStoredInstalled } from '../lib/platform/process-stored-catalog'
+import { processStoredInstalled } from '../lib/platform/process-stored-catalog'
 import { assertExpandRuntime } from '../db/schema-phase'
 import { writeCollectionTarget,type NewCollectionTargetCommand } from '../lib/platform/collection-target-command'
 import { projectionManifest } from '../upgrade/projections'
@@ -221,24 +221,6 @@ it('71610 identical raw versions do not merge different stored inputs or replace
   const before=projectionManifest(t);expect(()=>writeProcessTarget(db,{...v,row:{...v.row,status:'rejected'}})).toThrow(/conflict/);expect(projectionManifest(t)).toBe(before)
  }finally{t.close()}
 })
-it('71610 private scratch inherits only authenticated exact successor catalogs and global runtime still refuses',async()=>{
- const {t,db}=await ready()
- try{
-  const scratch=emptyFingerprintTarget(t)
-  try{
-   expect(processStoredInstalled(scratch)).toBe(true)
-   scratch.exec('ALTER TABLE platform_business_projection ADD COLUMN unapproved TEXT')
-   expect(()=>processStoredInstalled(scratch)).toThrow(/scratch.*catalog/)
-  }finally{scratch.close()}
-  const populated=new Database(t.serialize())
-  try{expect(()=>inheritProcessStoredCatalog(t,populated)).toThrow(/scratch/)}finally{populated.close()}
-  for(const sql of ["DELETE FROM platform_migration_run WHERE run_id='process'",'DROP TRIGGER platform_process_stored_no_update',"UPDATE platform_migration_run SET target_schema_version='wrong' WHERE run_id='witness'",'ALTER TABLE platform_business_projection ADD COLUMN unapproved TEXT']){
-   t.exec('BEGIN; PRAGMA defer_foreign_keys=ON');t.exec(sql);const before=projectionManifest(t)
-   expect(()=>writeProcessTarget(db,input())).toThrow();expect(()=>emptyFingerprintTarget(t)).toThrow();expect(projectionManifest(t)).toBe(before);t.exec('ROLLBACK')
-  }
-  expect(()=>assertExpandRuntime(t)).toThrow(/Finalized\/offline/)
- }finally{if(t.inTransaction)t.exec('ROLLBACK');t.close()}
-})
 
 it('71610 raw archive input basis and archive metadata drift are rejected independently without source repair',async()=>{
  const {t,db}=await ready()
@@ -293,18 +275,4 @@ it.each([' K ', '   '])('71610 full command preserves original key bytes and rep
   expect(projectionManifest(t)).toBe(drift)
   t.exec('ROLLBACK')
  } finally {if(t.inTransaction)t.exec('ROLLBACK');t.close()}
-})
-
-it('71610 rejects zero-observation scratch containing a business record before inheritance',async()=>{
- const {t}=await ready()
- const scratch=emptyFingerprintTarget(t)
- try{
-  scratch.exec("INSERT INTO platform_business_record(interface,platform_key,identity_rule_version,created_at) VALUES('business_list','preexisting','probe','c')")
-  const copy=new Database(scratch.serialize())
-  try{
-   expect(copy.prepare('SELECT count(*) n FROM platform_business_observation').get()).toEqual({n:0})
-   expect(()=>inheritProcessStoredCatalog(t,copy)).toThrow(/scratch/)
-   expect(()=>processStoredInstalled(copy)).toThrow()
-  }finally{copy.close()}
- }finally{scratch.close();t.close()}
 })

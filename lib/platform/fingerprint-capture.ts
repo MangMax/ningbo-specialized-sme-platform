@@ -1,4 +1,4 @@
-import { processPredecessorSchema } from './process-stored-catalog'
+import { ensureProcessStoredReady } from './process-stored-catalog'
 import { sqliteConnection } from './target-connection'
 /** Offline target-only evidence mechanism. No runtime selector. */
 import { createHash } from 'node:crypto'
@@ -13,7 +13,7 @@ export function requireCaptureForeignKeys<S extends Record<string,unknown>>(db:B
 export function capturePhase<S extends Record<string,unknown>>(db:BetterSQLite3Database<S>, allowApplyStored=false) {
   requireCaptureForeignKeys(db)
   const phase=db.get<{user_version:number}>(sql`PRAGMA user_version`)?.user_version
-  if(phase===71610){processPredecessorSchema(sqliteConnection(db));return true}
+  if(phase===71610||phase===71611){ensureProcessStoredReady(sqliteConnection(db));return true}
   if(![71605,71606,71607,71609,...(allowApplyStored?[71608]:[])].includes(phase!))throw new Error('Explicit finalized target required')
   return phase===71607||phase===71608||phase===71609
 }
