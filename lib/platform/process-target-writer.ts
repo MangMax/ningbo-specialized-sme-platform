@@ -1,3 +1,5 @@
+import { candidateObservationValues, verifyCandidateObservation } from './candidate-scope-write'
+import { candidateScopeObservation } from './candidate-scope-schema'
 /** W2a explicit finalized-target transaction seam. No public import routing. */
 import { capturePhase, nextObservationId, captureFingerprintBasis, assertCapturedInput } from './fingerprint-capture'
 import { createHash } from 'node:crypto'
@@ -54,13 +56,15 @@ export function writeProcessTarget<S extends Record<string, unknown>>(db: Better
       if (existing.inputFingerprint !== fingerprint || existing.projectionRuleVersion !== PLATFORM_PROJECTION_RULE) throw new Error('observation_payload_conflict')
       const alias = tx.select().from(s.platformLegacyRelationAlias).where(eq(s.platformLegacyRelationAlias.observationId, existing.id)).get()
       if (!alias) throw new Error('Missing observation alias')
+      verifyCandidateObservation(tx, existing.id)
       positive(alias.oldId)
       return { observationId: existing.id, recordId: existing.recordId, versionId: existing.versionId, relationAlias: alias.oldId, reused: true }
     }
     const observationId = capturing ? nextObservationId(tx) : undefined
     if (capturing) captureFingerprintBasis(tx, observationId!, 'target-command-v1', inputBytes)
     const { recordId, versionId, now } = ensureProcessTargetContent(tx, plan)
-    const observation = tx.insert(s.platformBusinessObservation).values({ id: observationId, collectionId: collection.id, ...input.position, sourceRelationKey: input.row.relationKey ?? null, recordId, versionId, identityState: plan.identityState, contentState: plan.contentState, keySource: plan.keySource, projectionRuleVersion: PLATFORM_PROJECTION_RULE, inputFingerprint: fingerprint, indexedAt: now }).returning().get()
+    const candidateValues = candidateObservationValues(tx, collection, input.position.sequenceNo)
+    const observation = tx.insert(candidateValues.candidateScopeState ? candidateScopeObservation : s.platformBusinessObservation).values({ ...candidateValues, id: observationId, collectionId: collection.id, ...input.position, sourceRelationKey: input.row.relationKey ?? null, recordId, versionId, identityState: plan.identityState, contentState: plan.contentState, keySource: plan.keySource, projectionRuleVersion: PLATFORM_PROJECTION_RULE, inputFingerprint: fingerprint, indexedAt: now }).returning().get()
     positive(observation.id)
     const assignment = { ...input.assignment, observationId: observation.id, revision: 1 }
     tx.insert(s.platformObservationAssignment).values(assignment).run()

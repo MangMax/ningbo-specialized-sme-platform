@@ -20,7 +20,7 @@ export function bootstrapFingerprint(t:Database.Database,owner:FingerprintOwner,
   if(o.identityState!=='not_indexed')return verifyFingerprint(t,owner)
   if(o.contentState!=='not_indexed'||[o.recordId,o.versionId,o.keySource,o.projectionRuleVersion,o.inputFingerprint,o.indexedAt,o.batchId].some(v=>v!==null))throw new FingerprintVerificationError('projection_mapping_conflict',owner,'Invalid paired not_indexed')
   if(mode==='reference'){
-   if(t.pragma('user_version',{simple:true})===71608){const {bytes}=legacyFingerprintInput(t,owner);verifyLegacyFacts(t,owner,bytes,true)}
+   if([71608,71609].includes(Number(t.pragma('user_version',{simple:true})))){const {bytes}=legacyFingerprintInput(t,owner);verifyLegacyFacts(t,owner,bytes,true)}
    return null
   }
   const {c,rawFields,stored,bytes}=legacyFingerprintInput(t,owner)

@@ -138,3 +138,7 @@ switch is included; historical T05c receipts retain their original schema hash.
 ## #727 申报 exact-stored 原列补充（待独立接受）
 
 [申报原列查询契约](apply-stored-query.md)与[补充 ADR](../adr/2026-11-11-apply-exact-stored-query.md)明确：本页“原列归档＋normalized stored 比较值”不足以覆盖旧 isolated list/count/options/DTO。apply observation-owner 另有五个 exact 原列及捕获状态；name/uscc 复用已验证 revision1，key 复用 source_relation_key。原 stored/parsed/reconciled/conflict、版本/detail/fact 语义保持，旧 hash/ID/bytes/time/alias 不变。未捕获不能当 NULL 或被过滤掉。S 离线恢复与 W 实际旧写物化/重放认证分开接受，R1a 再消费；原 R1a status-pair FAIL 保留。本段是待审契约修正，不声称 schema 或运行已实现。
+
+## #731 A 候选范围专用捕获
+
+[候选捕获契约](current-candidate-scope-capture.md)限定显式 71608→71609 successor 与现有 collection 事务 owner。原观察上的三 title predicate mask、captured/uncaptured/error、规则及原证据/上下文绑定只供候选域；不替代 requested/row/page、资格或通用 effectiveTitle。原字段与历史 hash/bytes/回执不改。A 独立接受后才推进 B reader；全局运行 guard 保持。

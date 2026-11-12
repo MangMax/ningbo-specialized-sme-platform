@@ -3,7 +3,8 @@ const refs=['platform_collection_archive_ref','platform_observation_archive_ref'
 const expected=[...refs.map(table=>`${table}.archive_id`),'platform_apply_projection.source_archive_id','platform_business_projection.source_archive_id','platform_recognized_projection.source_archive_id','platform_business_record_version.canonical_archive_id'].sort()
 export function fingerprintArchiveInventory(t:Database.Database) {
   const incoming=(t.prepare("select m.name owner,f.[from] source,f.[to] destination from sqlite_schema m join pragma_foreign_key_list(m.name) f where m.type='table' and f.[table]='platform_archive_value'").all() as {owner:string,source:string,destination:string}[]).map(f=>`${f.owner}.${f.source}${f.destination==='id'?'':`->${f.destination}`}`).sort()
-  const allowed=t.prepare("select 1 from sqlite_schema where name='platform_observation_fingerprint_basis'").get()?[...expected,'platform_observation_fingerprint_basis.input_archive_id'].sort():expected
+  const baseExpected = t.pragma('user_version',{simple:true})===71609 ? [...expected,'platform_business_observation.candidate_scope_archive_id'].sort() : expected
+  const allowed=t.prepare("select 1 from sqlite_schema where name='platform_observation_fingerprint_basis'").get()?[...baseExpected,'platform_observation_fingerprint_basis.input_archive_id'].sort():baseExpected
   if(JSON.stringify(incoming)!==JSON.stringify(allowed))throw new Error('Unexpected archive FK owner inventory: '+JSON.stringify(incoming))
   return incoming
 }

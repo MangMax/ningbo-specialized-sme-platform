@@ -159,3 +159,7 @@ Three inherited HTTP baseline FAILs and #705/B409 retain their status.
 ## #727 apply 原列前置（待独立接受）
 
 [字段矩阵与 S/W 切片](apply-stored-query.md)只补 R1 的 isolated 原列查询缺口，不改变其它 R/H/C/Z 责任。S（≤M）依赖 #727 接受和71607，拥有 apply projection 五个 exact cell/状态、71608 schema/offline 恢复与旧 writer commit-time 屏障；W（≤M）依赖 S 和已接受 #725，拥有 apply 新输入真实物化和 replay/verifier exact 校验。`S→W`、`S→R1a只读实现`、`S+W→R1a最终接受→R1b`，无 R1a→S/W 反向边。#722 的原 F1/F2 不转交本补充。R2/R3 有原列消费者风险但未授权扩其实现。R1a 原 FAIL 不变，本轮 runtime/tests/build/DB UNRUN。
+
+### #731 R4 同票 A/B
+
+实际迁移反例证明页输入不足后，#731 调整为 scope:L 跟踪 A Sourcecapture 与 B R4reader 两个 ≤M 接受项。A 的 [候选专用捕获契约](current-candidate-scope-capture.md)承接原始 SQLite 范围输入；B 仍保留 R4 的独立 PK union/count/page/trace/EXPLAIN、#702/#691 验收。A 不替 B/R5 或全局退役签收，不新增前置票链。

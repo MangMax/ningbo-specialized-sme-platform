@@ -11,8 +11,8 @@ export function requireCaptureForeignKeys<S extends Record<string,unknown>>(db:B
 export function capturePhase<S extends Record<string,unknown>>(db:BetterSQLite3Database<S>, allowApplyStored=false) {
   requireCaptureForeignKeys(db)
   const phase=db.get<{user_version:number}>(sql`PRAGMA user_version`)?.user_version
-  if(![71605,71606,71607,...(allowApplyStored?[71608]:[])].includes(phase!))throw new Error('Explicit finalized target required')
-  return phase===71607||phase===71608
+  if(![71605,71606,71607,71609,...(allowApplyStored?[71608]:[])].includes(phase!))throw new Error('Explicit finalized target required')
+  return phase===71607||phase===71608||phase===71609
 }
 /** Must run inside the writer savepoint, serialized by its write transaction. */
 export function nextObservationId<S extends Record<string,unknown>>(db:BetterSQLite3Database<S>) {

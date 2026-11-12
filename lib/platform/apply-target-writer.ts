@@ -1,3 +1,5 @@
+import { candidateObservationValues, verifyCandidateObservation } from './candidate-scope-write'
+import { candidateScopeObservation } from './candidate-scope-schema'
 import { sqliteConnection } from './target-connection'
 import { platformApplyStoredObservation as storedObservation, storedApplyProjection } from './apply-stored-schema'
 import { applyMaterialization, capturedApplyValues, APPLY_MATERIALIZATION_RULE } from './apply-materialization'
@@ -30,7 +32,7 @@ function positive(value: number) {
 /** A nested SQLite savepoint makes any failure atomic even if an outer caller catches it. */
 export function writeApplyTarget<S extends Record<string, unknown>>(db: BetterSQLite3Database<S>, input: ApplyTargetInput) {
   const capturing = capturePhase(db,true)
-  const stored = db.get<{user_version:number}>(sql`PRAGMA user_version`)?.user_version===71608
+  const stored = db.get<{user_version:number}>(sql`PRAGMA user_version`)?.user_version===71608 || db.get<{user_version:number}>(sql`PRAGMA user_version`)?.user_version===71609
   const rawText = input.row.rawFields == null ? null : JSON.stringify(input.row.rawFields)
   const materialized = stored ? applyMaterialization(db,input.row,rawText) : null
   if(materialized && ((input.assignment.nameRaw??null)!==materialized.nameRaw || (input.assignment.usccRaw??null)!==materialized.usccRaw)) throw new Error('apply_stored_conflict: revision1 materialization mismatch')
@@ -59,6 +61,7 @@ export function writeApplyTarget<S extends Record<string, unknown>>(db: BetterSQ
       if (existing.inputFingerprint !== fingerprint || existing.projectionRuleVersion !== PLATFORM_PROJECTION_RULE) throw new Error('observation_payload_conflict')
       const alias = tx.select().from(s.platformLegacyRelationAlias).where(eq(s.platformLegacyRelationAlias.observationId, existing.id)).get()
       if (!alias) throw new Error('Missing observation alias')
+      verifyCandidateObservation(tx, existing.id)
       if(stored) verifyFingerprint(sqliteConnection(tx),{observationId:existing.id,collectionId:existing.collectionId,relationAlias:alias.oldId})
       return { observationId: existing.id, recordId: existing.recordId, versionId: existing.versionId, relationAlias: alias.oldId, reused: true, ...(stored?{materializationRule:APPLY_MATERIALIZATION_RULE}:{}) }
     }
@@ -66,7 +69,8 @@ export function writeApplyTarget<S extends Record<string, unknown>>(db: BetterSQ
     if (capturing) captureFingerprintBasis(tx, observationId!, 'target-command-v1', inputBytes)
     const { recordId, versionId, now } = ensureApplyTargetContent(tx, plan)
     if(stored) tx.insert(s.platformObservationAssignment).values({...input.assignment,observationId:observationId!,revision:1}).run()
-    const observation = tx.insert(stored ? storedObservation : s.platformBusinessObservation).values({ ...(stored ? {applyExactOwnerId:observationId,applyExactState:'captured' as const,applySqlFactTitleState:'captured' as const}:{}), id: observationId, collectionId: collection.id, ...input.position, sourceRelationKey: materialized ? materialized.sourceRelationKey : input.row.relationKey ?? null, recordId, versionId, identityState: plan.identityState, contentState: plan.contentState, keySource: plan.keySource, projectionRuleVersion: PLATFORM_PROJECTION_RULE, inputFingerprint: fingerprint, indexedAt: now }).returning().get()
+    const candidateValues = candidateObservationValues(tx, collection, input.position.sequenceNo)
+    const observation = tx.insert(candidateValues.candidateScopeState ? candidateScopeObservation : stored ? storedObservation : s.platformBusinessObservation).values({ ...candidateValues, ...(stored ? {applyExactOwnerId:observationId,applyExactState:'captured' as const,applySqlFactTitleState:'captured' as const}:{}), id: observationId, collectionId: collection.id, ...input.position, sourceRelationKey: materialized ? materialized.sourceRelationKey : input.row.relationKey ?? null, recordId, versionId, identityState: plan.identityState, contentState: plan.contentState, keySource: plan.keySource, projectionRuleVersion: PLATFORM_PROJECTION_RULE, inputFingerprint: fingerprint, indexedAt: now }).returning().get()
     const assignment = { ...input.assignment, observationId: observation.id, revision: 1 }
     if(!stored) tx.insert(s.platformObservationAssignment).values(assignment).run()
     const rawArchive = insertArchiveValue(tx, rawText === null ? { storageClass: 'null', bytes: null, createdAt: now } : { storageClass: 'text', bytes: Buffer.from(rawText), createdAt: now })
