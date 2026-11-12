@@ -23,6 +23,8 @@ export const PROCESS_STORED_TRANSFORM='process-exact-stored-offline-v1'
 const COMMAND_MATERIALIZATION_RULE='legacy-process-insert-v1' as const
 const hash=(v:string|Buffer)=>createHash('sha256').update(v).digest('hex')
 const decode=(bytes:Buffer)=>new TextDecoder('utf-8',{fatal:true}).decode(bytes)
+// SQL sees the original TEXT, including a leading BOM; do not repair JSON here.
+const decodeSqlText=(bytes:Buffer)=>new TextDecoder('utf-8',{fatal:true,ignoreBOM:true}).decode(bytes)
 const cellShape=z.object({name:z.string(),storageClass:z.enum(['null','text','blob','integer','real']),hex:z.string().regex(/^(?:[0-9a-fA-F]{2})*$/),real64be:z.string().regex(/^[0-9a-fA-F]{16}$/).optional()})
 type Cell=z.infer<typeof cellShape>
 const fields=['status','declare_kind','applied_at','year','title_raw','batch','award_batch_label','province'] as const
@@ -122,7 +124,7 @@ function recover(t:Database.Database,o:Owner,legacy?:Database.Database,custody?:
   const assignment=z.object({name_raw:z.string().nullable(),uscc_raw:z.string().nullable()}).parse(t.prepare('SELECT name_raw,uscc_raw FROM platform_observation_assignment WHERE observation_id=? AND revision=1').get(o.id))
   if(assignment.name_raw!==text(row.nameRaw)||assignment.uscc_raw!==text(row.usccRaw)||o.source_relation_key!==text(row.relationKey))r.reason='command-materialization-revision1-or-key-incompatible'
   else {
-   const values=[text(row.status),text(row.declareKind),text(row.appliedAt),typeof row.year==='number'&&Number.isFinite(row.year)?Math.trunc(row.year):null,captureSqlFactTitle(t,raw?.storage_class==='text'?decode(raw.bytes!):null),text(row.batch),text(row.awardBatchLabel),text(row.province)]
+   const values=[text(row.status),text(row.declareKind),text(row.appliedAt),typeof row.year==='number'&&Number.isFinite(row.year)?Math.trunc(row.year):null,captureSqlFactTitle(t,raw?.storage_class==='text'?decodeSqlText(raw.bytes!):null),text(row.batch),text(row.awardBatchLabel),text(row.province)]
    t.exec('CREATE TEMP TABLE s734_materialize(status TEXT,declare_kind TEXT,applied_at TEXT,year INTEGER,title_raw TEXT,batch TEXT,award_batch_label TEXT,province TEXT)')
    try {
     t.prepare('INSERT INTO s734_materialize VALUES(?,?,?,?,?,?,?,?)').run(...values)
@@ -132,7 +134,7 @@ function recover(t:Database.Database,o:Owner,legacy?:Database.Database,custody?:
   }
  }
  if(raw) {
-  try {r.title=captureSqlFactTitle(t,raw.storage_class==='null'?null:raw.storage_class==='text'?decode(raw.bytes!):raw.bytes!);r.titleState='captured';r.titleReason=null}catch(error){r.titleReason=String(error)}
+  try {r.title=captureSqlFactTitle(t,raw.storage_class==='null'?null:raw.storage_class==='text'?decodeSqlText(raw.bytes!):raw.bytes!);r.titleState='captured';r.titleReason=null}catch(error){r.titleReason=String(error)}
  }
  if(o.scheme==='uncaptured'){r.exactState='uncaptured';r.cells=[];r.reason='original-command-input-not-captured'}
  if(r.exactState==='uncaptured')r.origin=null

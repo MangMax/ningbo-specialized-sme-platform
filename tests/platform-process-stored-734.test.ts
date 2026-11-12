@@ -279,3 +279,22 @@ it('rejects incomplete capture barriers even if a completion receipt is restampe
     }
   } finally {if(t.inTransaction)t.exec('ROLLBACK');t.close()}
 })
+
+it('preserves BOM-prefixed raw TEXT SQL semantics through full migration and replay', async () => {
+  const raw = '\ufeff{"rdjb":"2"}'
+  const f = await fixture(false, source => source.prepare('UPDATE platform_relation SET raw_fields=? WHERE id=1').run(raw))
+  const old = new Database(f.legacySource, { readonly: true })
+  try {
+    expect(old.prepare("SELECT CASE WHEN json_valid(raw_fields) AND json_type(raw_fields,'$.rdjb')='text' THEN json_extract(raw_fields,'$.rdjb') ELSE NULL END title FROM platform_relation WHERE id=1").get()).toEqual({ title: null })
+    expect(old.prepare('SELECT hex(CAST(raw_fields AS BLOB)) bytes FROM platform_relation WHERE id=1').get()).toEqual({ bytes: Buffer.from(raw).toString('hex').toUpperCase() })
+  } finally { old.close() }
+  expect(finalizeProcessStored(f).queryReady).toBe(true)
+  const t = new Database(f.target, { readonly: true })
+  try {
+    expect(t.prepare('SELECT sql_fact_title,sql_fact_title_state FROM platform_business_projection WHERE observation_id=1').get()).toEqual({ sql_fact_title: null, sql_fact_title_state: 'captured' })
+    expect(t.prepare("SELECT hex(a.bytes) bytes FROM platform_observation_archive_ref r JOIN platform_archive_value a ON a.id=r.archive_id WHERE r.owner_id=1 AND r.field='rawFields'").get()).toEqual({ bytes: Buffer.from(raw).toString('hex').toUpperCase() })
+  } finally { t.close() }
+  const before = createHash('sha256').update(readFileSync(f.target)).digest('hex')
+  expect(finalizeProcessStored(f).queryReady).toBe(true)
+  expect(createHash('sha256').update(readFileSync(f.target)).digest('hex')).toBe(before)
+})
