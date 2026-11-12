@@ -14,6 +14,7 @@ import { indexLegacyProvenance } from '../upgrade/legacy-provenance'
 import { installLegacyProvenance } from '../upgrade/legacy-provenance-schema'
 import { requireLegacyProvenanceReady } from '../lib/platform/legacy-provenance-catalog'
 import { assertExpandRuntime } from '../db/schema-phase'
+import { legacyPlatformProvenanceSchema } from '../lib/platform/legacy-provenance'
 import { allocateLegacyAlias, bindArchive, sealArchiveOwner, insertArchiveValue, reserveLegacyIds } from '../lib/platform/target-archive'
 import { writeNewCollectionTarget } from '../lib/platform/collection-target-command'
 
@@ -32,8 +33,8 @@ function ordinary(t:Database.Database,key:string) {
 function syntheticOrdinaryOwner(t:Database.Database) {
   const db=drizzle(t,{schema:targetSchema})
   return db.transaction(tx=>{
-    const collectionId=tx.insert(schema.platformCollection).values({interface:'business_list',queryKey:'after755',rdjb:'2',queriedAt:'2026-11-13',createdAt:'c',status:'no_record',completeness:'unknown',provenanceState:'unknown',parseState:'absent',ruleVersion:'w4a-new-collection-v1'}).returning().get().id
-    const queryText=JSON.stringify({interface:'business_list',queryKey:'after755',rdjb:'2',queriedAt:'2026-11-13',status:'no_record',rawResponse:' original response ',relations:[]})
+    const collectionId=tx.insert(schema.platformCollection).values({interface:'business_list',queryKey:'9133020078041158X6',rdjb:'2',titleCode:'specialized_sme',queriedAt:'2026-11-13T00:00:00Z',createdAt:'c',status:'no_record',completeness:'unknown',provenanceState:'unknown',parseState:'absent',ruleVersion:'w4a-new-collection-v1'}).returning().get().id
+    const queryText=JSON.stringify({interface:'business_list',queryKey:'9133020078041158X6',rdjb:'2',titleCode:'specialized_sme',queriedAt:'2026-11-13T00:00:00Z',status:'no_record',rawResponse:' original response ',relations:[]})
     for(const [field,bytes] of [['request',Buffer.from(queryText)],['rawResponse',Buffer.from(' original response ')],['collectionEvidence',null]] as const) {
       const archiveId=insertArchiveValue(tx,bytes===null?{storageClass:'null',bytes:null,createdAt:'c'}:{storageClass:'text',bytes,createdAt:'c'})
       bindArchive(tx,{kind:'collection',ownerId:collectionId,field,archiveId})
@@ -156,7 +157,11 @@ it('retains normal new collection synthetic lawful supplement and receipt byte f
   try {
     expect(()=>ordinary(t,'successor-command-stays-closed')).toThrow('Explicit 71606 target required')
     const added=syntheticOrdinaryOwner(t),id=batch(t,'after755')
-    const archiveId=insertArchiveValue(db,{storageClass:'text',bytes:Buffer.from(' { "rows":[],"pages":[] } '),createdAt:'now'})
+    const supplementText=' { "source":"businessList", "status":"no_record", "effectiveConditions":{"uscc":"9133020078041158X6","combination":"and"}, "titleScope":{"mode":"selected","rdjb":["2"]}, "queriedAt":"2026-11-13T00:00:00Z", "completedAt":"2026-11-13T00:01:00Z", "rows":[], "pages":[{"source":"businessList","rdjb":"2","page":1,"status":"success","fetchedCount":0,"declaredTotal":0,"error":null}], "fetchedCount":0, "declaredTotal":0, "completeness":"complete", "fullRange":true, "unfinished":[], "error":null, "limits":{"maxRequests":100,"maxRows":5000,"maxDurationMs":60000,"pageSize":50} } '
+    // The original public schema independently proves this is a valid empty
+    // supplement envelope. No W command, new parser or fingerprint oracle is used.
+    expect(legacyPlatformProvenanceSchema.safeParse({queryId:added.queryAlias,interface:'business_list',queryKey:'9133020078041158X6',rdjb:'2',queriedAt:'2026-11-13T00:00:00Z',sourceIdentity:' new ',sourceSha256:'d'.repeat(64),segmentIndex:3,collection:JSON.parse(supplementText),relations:[]}).success).toBe(true)
+    const archiveId=insertArchiveValue(db,{storageClass:'text',bytes:Buffer.from(supplementText),createdAt:'now'})
     db.insert(targetSchema.platformCollectionLegacyProvenance).values({collectionId:added.collectionId,origin:'supplement',sourceIdentity:' new ',sourceSha256:'d'.repeat(64),segmentIndex:3,inputFingerprint:'e'.repeat(64),importBatchId:id,createdAt:'newtime',archiveId}).run()
     db.insert(schema.importReceipt).values({batchId:id,operation:'commit',requestHash:' new hash ',requestBody:' { "synthetic":"S only" } ',status:'committed',summary:{written:1},createdAt:'new',completedAt:'new'}).run()
   } finally {t.close()}
