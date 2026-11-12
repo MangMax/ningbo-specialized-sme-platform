@@ -1,6 +1,6 @@
 import { sql } from 'drizzle-orm'
 /** Explicit finalized-target declarations. Not registered in ordinary expand schema; W/R adoption is gated. */
-import { check, index, integer, primaryKey, sqliteTable, text } from 'drizzle-orm/sqlite-core'
+import { check, index, integer, primaryKey, sqliteTable, text, unique } from 'drizzle-orm/sqlite-core'
 import * as expand from '../../db/schema'
 export const platformBusinessObservation = sqliteTable('platform_business_observation', {
   id: integer('id').primaryKey(),
@@ -40,4 +40,24 @@ export const platformObservationFingerprintBasis = sqliteTable('platform_observa
   check('platform_fingerprint_basis_input',sql`(${t.scheme}='uncaptured' AND ${t.inputArchiveId} IS NULL) OR (${t.scheme}<>'uncaptured' AND ${t.inputArchiveId} IS NOT NULL)`),
 ])
 
-export const targetSchema={...expand,platformObservationFingerprintBasis,platformBusinessObservation,platformObservationAssignment,platformObservationArchiveRef,platformLegacyRelationAlias,platformApplyProjection,platformBusinessProjection,platformRecognizedProjection,platformQueryTitleScope,platformQueryTitleScopeError}
+/** #755 collection-only metadata; physical insert/exclusion guards are offline DDL. */
+export const platformCollectionLegacyProvenance = sqliteTable('platform_collection_legacy_provenance', {
+  collectionId: integer('collection_id').primaryKey().notNull().references(()=>expand.platformCollection.id,{onDelete:'restrict'}),
+  origin: text('origin',{enum:['t04_envelope','supplement']}).notNull(),
+  sourceIdentity: text('source_identity').notNull(),
+  sourceSha256: text('source_sha256').notNull(),
+  segmentIndex: integer('segment_index').notNull(),
+  inputFingerprint: text('input_fingerprint').notNull(),
+  importBatchId: integer('import_batch_id').notNull().references(()=>expand.importBatch.id,{onDelete:'restrict'}),
+  createdAt: text('created_at').notNull(),
+  archiveId: integer('archive_id').notNull().unique().references(()=>expand.platformArchiveValue.id,{onDelete:'restrict'}),
+},t=>[
+  unique('platform_collection_legacy_source_uq').on(t.sourceSha256,t.segmentIndex),
+  ...[t.collectionId,t.importBatchId,t.archiveId].map(c=>check(`collection_provenance_${c.name}_safe`,sql`typeof(${c})='integer' AND ${c} BETWEEN 1 AND 9007199254740991`)),
+  check('collection_provenance_segment_safe',sql`typeof(${t.segmentIndex})='integer' AND ${t.segmentIndex} BETWEEN 0 AND 9007199254740991`),
+  check('collection_provenance_origin',sql`typeof(${t.origin})='text' AND ${t.origin} IN ('t04_envelope','supplement')`),
+  ...[t.sourceSha256,t.inputFingerprint].map(c=>check(`collection_provenance_${c.name}_hex`,sql`typeof(${c})='text' AND length(${c})=64 AND length(cast(${c} AS blob))=64 AND ${c} NOT GLOB '*[^0-9a-f]*'`)),
+  ...[t.sourceIdentity,t.createdAt].map(c=>check(`collection_provenance_${c.name}_text`,sql`typeof(${c})='text'`)),
+])
+
+export const targetSchema={...expand,platformCollectionLegacyProvenance,platformObservationFingerprintBasis,platformBusinessObservation,platformObservationAssignment,platformObservationArchiveRef,platformLegacyRelationAlias,platformApplyProjection,platformBusinessProjection,platformRecognizedProjection,platformQueryTitleScope,platformQueryTitleScopeError}
