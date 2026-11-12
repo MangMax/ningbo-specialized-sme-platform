@@ -1,3 +1,5 @@
+import { correspondenceTarget } from './record-correspondence-store'
+import { readTargetRelationEvidenceDisplay } from './platform-relation-evidence-display-target'
 import { readLegacyPlatformProvenance, legacySourcePositionForSequence } from './platform-legacy-provenance'
 import { readPublicPublishedNames } from '../../lib/roster/enterprise-roster'
 import { asc, eq, getTableColumns, inArray, sql } from 'drizzle-orm'
@@ -73,7 +75,9 @@ export function sourceReader(db: Db, rows: CorrespondenceRead[], extra?: { kind:
   const filesByPath = new Map(files.map(f => [f.relPath, f]))
   const evidenceByEvent = Map.groupBy(evidenceRows, e => e.recordEventId)
   const { rawResponse: _rawResponse, collectionEvidence, ...queryColumns } = getTableColumns(schema.platformQuery)
-  const relations = chunks(relationIds).flatMap(ids => db.select({ relation: schema.platformRelation, query: { ...queryColumns, collectionEvidence: sql`json_remove(${collectionEvidence}, '$.rows')`.mapWith(collectionEvidence) } }).from(schema.platformRelation).innerJoin(schema.platformQuery, eq(schema.platformRelation.queryId, schema.platformQuery.id)).where(inArray(schema.platformRelation.id, ids)).all())
+  const target = correspondenceTarget(db)
+  const targetDisplays = target ? readTargetRelationEvidenceDisplay(db, relationIds.map(relationId => ({ relationId })), redactor).sources : null
+  const relations = target ? [] : chunks(relationIds).flatMap(ids => db.select({ relation: schema.platformRelation, query: { ...queryColumns, collectionEvidence: sql`json_remove(${collectionEvidence}, '$.rows')`.mapWith(collectionEvidence) } }).from(schema.platformRelation).innerJoin(schema.platformQuery, eq(schema.platformRelation.queryId, schema.platformQuery.id)).where(inArray(schema.platformRelation.id, ids)).all())
   const exports = chunks(exportRowIds).flatMap(ids => db.select({ row: schema.platformExportRow, batch: schema.platformExportBatch }).from(schema.platformExportRow).innerJoin(schema.platformExportBatch, eq(schema.platformExportRow.batchId, schema.platformExportBatch.id)).where(inArray(schema.platformExportRow.id, ids)).all())
   // Three source sets together stay below SQLite's parameter budget, including the repeated event predicate.
   const links = new Map<number, ReturnType<typeof listRecordCorrespondenceRefs>[number]>()
@@ -103,7 +107,7 @@ export function sourceReader(db: Db, rows: CorrespondenceRead[], extra?: { kind:
     return [id, { ...joined.event, publishedPresentation: presentation.availability === 'unavailable' ? presentation : { ...presentation, facts: presentation.facts.filter(fact => fact.eventId === id) }, record: { id: joined.record.id, enterpriseId: joined.record.enterpriseId, titleCode: joined.record.titleCode, source: joined.record.source, usccRaw: joined.record.usccRaw }, evidence: evidence.map(item => ({ ...sanitizeEvidence(item) as typeof item, ...(facts.has(item.id) ? { publishedName: facts.get(item.id) } : {}) })), officialEvidence, correspondences: eventLinks }] as const
   }))
   const legacyById = readLegacyPlatformProvenance(db, relations.map(row => row.query.id))
-  const relationSources = new Map(relations.map(({ relation, query }) => {
+  const relationSources = targetDisplays ? new Map([...targetDisplays].map(([id, display]) => [id, display && typeof display === 'object' ? { ...display, correspondences: byRelation.get(id) ?? [] } : null])) : new Map(relations.map(({ relation, query }) => {
     const legacy = legacyById.get(query.id)
     const position = legacy ? legacySourcePositionForSequence(legacy.collection, relation.sequenceNo) : sourcePositionForSequence(query.collectionEvidence, relation.sequenceNo)
     return [relation.id, { ...normalizePlatformRelation(query.interface, relation), sourceRdjb: position.sourceRdjb, sourcePage: position.sourcePage, rawFields: sanitizeEvidence(relation.rawFields), query: { ...query, ...(legacy ? { legacyProvenance: sanitizeEvidence(legacy) as typeof legacy } : {}), failureReason: sanitizeEvidence(query.failureReason), collectionEvidence: safeCollectionEvidence(query.collectionEvidence) }, correspondences: byRelation.get(relation.id) ?? [] }] as const
