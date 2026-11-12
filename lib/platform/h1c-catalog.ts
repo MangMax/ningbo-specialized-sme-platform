@@ -66,7 +66,10 @@ export type H1cCatalogBinding = {
 export function authenticateH1cCatalog(target:Database.Database): H1cCatalogBinding {
  return target.transaction(():H1cCatalogBinding => {
   if(target.pragma('user_version',{simple:true})!==H1C_CATALOG_VERSION)fail()
-  const catalog=z.array(catalogRow).parse(target.prepare("SELECT type,name,tbl_name,sql FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%' ORDER BY type,name").all())
+  const catalog=z.array(catalogRow).parse(target.prepare("SELECT type,name,tbl_name,sql FROM sqlite_schema WHERE name NOT GLOB 'sqlite_*' ORDER BY type,name").all())
+  // Historical schemaHash omits LIKE sqlite_% matches. They are absent from the
+  // fixed predecessor; reject user objects in that gap without rewriting receipts.
+  if(catalog.some(row => /^sqlite[\s\S]/i.test(row.name)))fail()
   if(catalog.find(r=>r.type==='table'&&r.name==='record_correspondence')?.sql!==successorTable ||
      catalog.find(r=>r.type==='index'&&r.name==='record_correspondence_relation_idx')?.sql!==successorIndex)fail()
   const runs=target.prepare('SELECT * FROM platform_migration_run WHERE transform_version=?').all(H1C_CATALOG_TRANSFORM)

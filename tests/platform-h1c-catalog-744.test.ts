@@ -109,6 +109,25 @@ it('authenticates a readonly disk connection without changing either file or its
   expect(readFileSync(target.name)).toEqual(before);expect(readFileSync(original.target)).toEqual(source)
 })
 
+it.each([
+  ['index', 'CREATE INDEX sqliteX_review_index ON enterprise(name)'],
+  ['uppercase index', 'CREATE INDEX SQLITEZ_review_index ON enterprise(name)'],
+  ['newline index', 'CREATE INDEX "sqlite\nreview_index" ON enterprise(name)'],
+  ['trigger', "CREATE TRIGGER sqliteX_review_trigger BEFORE DELETE ON enterprise BEGIN SELECT RAISE(ABORT,'unexpected review restriction'); END"],
+])('rejects legal sqliteX %s without changing receipts after successful authentication', (_name, sql) => {
+  authenticateH1cCatalog(target)
+  target.exec('BEGIN')
+  try {
+    const receipts = receiptCells(target)
+    target.exec(sql)
+    const before = state(target)
+    expect(() => authenticateH1cCatalog(target)).toThrow('h1c_catalog_binding')
+    expect(receiptCells(target)).toEqual(receipts)
+    expect(state(target)).toEqual(before)
+  } finally { target.exec('ROLLBACK') }
+  expect(authenticateH1cCatalog(target).kind).toBe('h1c-catalog-binding')
+})
+
 const badCatalogs = [
   ['extra unrelated index', 'CREATE INDEX unexpected_enterprise_idx ON enterprise(name)'],
   ['extra unrelated column', 'ALTER TABLE enterprise ADD COLUMN unexpected TEXT'],
