@@ -29,7 +29,7 @@ export function witnessPositionValues(t:Database.Database,id:number) {
  const capture=witnessCollectionValues(t,row.collectionId),p=capture.input?captureWitnessPosition(capture.input,row.sequenceNo):null
  const matched=p?.state==='matched'
  return {witness_rule:WITNESS_RULE,witness_collection_id:row.collectionId,witness_sequence_no:row.sequenceNo,witness_archive_id:capture.fields.witness_archive_id,witness_sha256:capture.fields.witness_sha256,
- witness_state:p?.state??'uncaptured',witness_ordinal:matched?p.ordinal:null,witness_rdjb_kind:matched?p.rdjb.kind:null,witness_rdjb_value:matched?p.rdjb.value:null,witness_rdjb_key:matched?p.rdjbKey:null,
+ witness_state:p?.state??'uncaptured',witness_ordinal:matched?p.ordinal:null,witness_rdjb_kind:matched?p.rdjb.kind:null,witness_rdjb_value:matched?p.rdjb.value:null,witness_rdjb_key:matched&&p.rdjbKey!==null?Buffer.from(p.rdjbKey,'utf16le').toString('hex'):null,
  witness_page_kind:matched?p.page.kind:null,witness_page_value:matched?p.page.value:null,witness_error_name:p?.errorName??null,witness_error:p?.error??(p?null:'missing_original_collection_evidence')}
 }
 export function captureWitnessCollection(t:Database.Database,id:number) {

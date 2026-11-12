@@ -15,7 +15,7 @@
 
 ## 完整新增字段矩阵
 
-所有字段前缀 `witness_`，仅显式 successor 注册，普通 `db/schema.ts`/startup migration 不变。已有列、IDs、hash、run/checkpoint、page_id/position_state、candidate mask 不改写。无新业务表。已捕获的三条件新事实禁止更新或删除，避免通过删行丢失捕获。
+所有字段前缀 `witness_`，仅显式 successor 注册，普通 `db/schema.ts`/startup migration 不变。已有列、IDs、hash、run/checkpoint、page_id/position_state、candidate mask 不改写。无新业务表。已捕获的三条件新事实禁止更新、删除或替换；BEFORE INSERT 按既有 owner 拒绝 REPLACE，不依赖 recursive_triggers，避免通过隐式删行丢失捕获。
 
 | Owner | 新字段 | 类型与含义 |
 |---|---|---|
@@ -26,7 +26,7 @@
 | observation | state | TEXT NOT NULL DEFAULT uncaptured：matched/unmatched/not_applicable/rejected/error/uncaptured，分别为已定位、未定位、证据门槛未通过、原 pages JSON.parse 拒绝、原遍历/取键错误、缺可信原件。不是资格有效/无效 |
 | observation | rule, collection_id, sequence_no, archive_id, sha256 | 只绑定本观察的实际 collection/sequence 和同一原证据归档；不按共享 version 转移或扩张位置。archive FK 指原证据，不指不存在的 page row |
 | observation | ordinal | 原 SQLite 提取的 pages 数组在 JS 解码后的0基位置；仅 matched 非NULL。与当前 page_id 独立 |
-| observation | rdjb_kind, rdjb_value, rdjb_key | 原定位页 rdjb 的 JS kind（absent/null/text/number/boolean/array/object）和值；非NULL值保存 Node v8 serialize 的独立 BLOB（Node24.22.2固定运行时，保留 -0、Infinity、孤立 surrogate 及嵌套值），类型由kind显式区分；未捕获/NULL不伪造bytes（原完整输入仍绑定归档）。rdjb_key 为原 JS truthiness/ToPropertyKey 结果，仅作后续按旧语法查表的输入，不存 title 枚举。原值 BLOB 仅证据保真，业务 reader 禁止反序列化它们 |
+| observation | rdjb_kind, rdjb_value, rdjb_key | 原定位页 rdjb 的 JS kind（absent/null/text/number/boolean/array/object）和值；非NULL值保存 Node v8 serialize 的独立 BLOB（Node24.22.2固定运行时，保留 -0、Infinity、孤立 surrogate 及嵌套值），类型由kind显式区分；未捕获/NULL不伪造bytes（原完整输入仍绑定归档）。rdjb_key 为原 JS truthiness/ToPropertyKey 结果的 UTF-16LE code units 小写十六进制 TEXT（每 code unit 四字符，例如 `2` 为 `3200`，孤立高 surrogate 为 `00d8`；NULL 保持 NULL，空字符串为零长度 TEXT）。这不是 JSON，后续 reader 可用同编码查键或无损解码，不读取原文或 v8 BLOB；该编码保留 SQLite UTF-8 TEXT 无法直接表示的孤立 surrogate。此字段仅作后续按旧语法查表的输入，不存 title 枚举。原值 BLOB 仅证据保真，业务 reader 禁止反序列化它们 |
 | observation | page_kind, page_value | 原 sourcePage 的同类类型/值；缺 page、NULL、文本、数字、boolean、array/object 分开，不猜填页号。无需 page FK |
 | observation | error_name, error | 原 JS 错误类型/消息；非错误不补成 unknown。源语法错误不改成空集合或 false |
 

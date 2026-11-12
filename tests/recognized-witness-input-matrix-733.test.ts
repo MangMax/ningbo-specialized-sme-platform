@@ -112,8 +112,8 @@ it.each(cases)('freezes independent old witness input: $name', input => {
   const observed=target.prepare('SELECT * FROM platform_business_observation WHERE id=?').get(id) as Record<string,unknown>
   const expectedState=!input.gate?'not_applicable':position==='reject'?'rejected':position==='TypeError'?'error':position===null?'unmatched':'matched'
   expect(observed.witness_state).toBe(expectedState)
-  if(expectedState==='matched')expect(RDJB_TITLE_CODES[String(observed.witness_rdjb_key)]??null).toBe(position)
-  if(input.name==='first pages array lacks target ordinal')expect(observed).toMatchObject({witness_ordinal:0,witness_rdjb_kind:'text',witness_rdjb_key:'2',witness_page_kind:'number'})
+  if(expectedState==='matched')expect(RDJB_TITLE_CODES[Buffer.from(String(observed.witness_rdjb_key),'hex').toString('utf16le')]??null).toBe(position)
+  if(input.name==='first pages array lacks target ordinal')expect(observed).toMatchObject({witness_ordinal:0,witness_rdjb_kind:'text',witness_rdjb_key:'3200',witness_page_kind:'number'})
   if(input.name==='first pages array lacks target ordinal'){if(!Buffer.isBuffer(observed.witness_rdjb_value)||!Buffer.isBuffer(observed.witness_page_value))throw new Error('Expected raw position BLOBs');expect(deserialize(observed.witness_rdjb_value)).toBe('2');expect(deserialize(observed.witness_page_value)).toBe(1)}
   if(row)for(const [name,value] of [['rddqrq',row.conditionValidYear],['whpcyear',row.conditionMaintenanceYear],['whpc',row.conditionMaintenanceBatch]]){
    const condition=target.prepare('SELECT witness_value FROM platform_collection_condition WHERE collection_id=? AND name=?').get(id,name) as {witness_value:unknown}
