@@ -37,4 +37,3 @@ export function controlledH1cSuccessor(f: Fixture, name='controlled-h1c', change
   }).immediate()
   return t
 }
-
