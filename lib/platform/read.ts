@@ -17,7 +17,11 @@ import { MAX_PAGE_SIZE } from '../query'
 import { sourcePositionForSequence, RDJB_TITLE_CODES } from './recognized-evidence'
 import type { PlatformInterface } from '../labels'
 import { normalizePlatformRelation, type PlatformNormalizationConflict } from './normalization'
-import { readLegacyPlatformProvenance, legacySourcePositionForSequence } from '../../server/utils/platform-legacy-provenance'
+import { readLegacyPlatformProvenance, legacySourcePositionForSequence } from './legacy-provenance'
+import { queryHistoryTarget } from './query-history-target'
+import { listTargetPlatformQueries } from './target-query-read'
+import { MAX_FULL_QUERY_BYTES, MAX_FULL_PAGE_BYTES } from './evidence-contract'
+export { MAX_FULL_QUERY_BYTES, MAX_FULL_PAGE_BYTES } from './evidence-contract'
 
 export interface PlatformQueryFilter {
   queryId?: number
@@ -93,10 +97,6 @@ export interface PlatformQueriesResult {
 }
 
 const DEFAULT_PAGE_SIZE = 25
-/** Full reads fail explicitly above these archive-byte budgets; chunk reads never truncate. */
-export const MAX_FULL_QUERY_BYTES = 4 * 1024 * 1024
-export const MAX_FULL_PAGE_BYTES = 8 * 1024 * 1024
-
 function clamp(value: number | undefined, fallback: number, max = Number.MAX_SAFE_INTEGER): number {
   const n = Number(value)
   if (!Number.isFinite(n) || n < 1) return fallback
@@ -111,6 +111,7 @@ export function listPlatformQueries(
   db: BetterSQLite3Database<typeof schema>,
   filter: PlatformQueryFilter = {},
 ): PlatformQueriesResult {
+  if (queryHistoryTarget(db)) return listTargetPlatformQueries(db, filter)
   return db.transaction(tx => listPlatformQueriesSnapshot(tx, filter))
 }
 
