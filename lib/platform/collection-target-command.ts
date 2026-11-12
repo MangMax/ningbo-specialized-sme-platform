@@ -1,3 +1,6 @@
+import { witnessInstalled } from './recognized-witness-catalog'
+import { captureWitnessCollection } from './recognized-witness-write'
+import { sqliteConnection } from './target-connection'
 import { replayOptionalString, platformQueryInsertMetadata } from './query-replay'
 /** W4a: explicit offline 71606 complete-new-collection command. No public routing. */
 import { requireCaptureForeignKeys } from './fingerprint-capture'
@@ -157,6 +160,7 @@ export function writeNewCollectionTarget<S extends Record<string, unknown>>(db: 
       bindArchive(tx, { kind: 'collection', ownerId: collectionId, field, archiveId })
     }
     sealArchiveOwner(tx, { kind: 'collection', ownerId: collectionId })
+    if(q.interface==='recognized_list'&&witnessInstalled(sqliteConnection(tx)))captureWitnessCollection(sqliteConnection(tx),collectionId)
     const queryAlias = allocateLegacyAlias(tx, { kind: 'query', collectionId })
     const observations = (q.relations ?? []).map((row, i) => {
       const args = { collectionId, row, assignment: input.assignments[i]!, position: positions.get(row.sequenceNo) ?? { sequenceNo: row.sequenceNo, positionState: 'unknown' as const } }

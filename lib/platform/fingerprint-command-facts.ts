@@ -1,3 +1,5 @@
+import { inheritWitnessCatalog } from './recognized-witness-catalog'
+import { reconstructWitnessCollectionSource } from './recognized-witness-write'
 import { inheritRecognizedStoredCatalog } from './recognized-stored-catalog'
 import Database from 'better-sqlite3'
 import { createHash } from 'node:crypto'
@@ -49,6 +51,7 @@ export function verifyOriginalCommand(target:Database.Database,predecessor:Datab
   const scratch=new Database(predecessor.serialize());scratch.pragma('foreign_keys=ON')
   try {
     inheritRecognizedStoredCatalog(predecessor,scratch)
+    inheritWitnessCatalog(predecessor,scratch)
     const expected=drizzle(scratch,{schema:s})
     const collection=actual.select().from(s.platformCollection).where(eq(s.platformCollection.id,input.collectionId)).get()
     if(!collection)throw new Error('Command collection missing')
@@ -67,6 +70,7 @@ export function verifyOriginalCommand(target:Database.Database,predecessor:Datab
       expected.insert(s.platformCollection).values(collection).run()
       for(const alias of actual.select().from(s.platformLegacyQueryAlias).where(eq(s.platformLegacyQueryAlias.collectionId,collection.id)).all())expected.insert(s.platformLegacyQueryAlias).values(alias).run()
     }
+    if(collection.interface==='recognized_list')reconstructWitnessCollectionSource(target,scratch,collection.id)
     if(input.position.pageId!=null&&!expected.select().from(s.platformCollectionPage).where(eq(s.platformCollectionPage.id,input.position.pageId)).get()) {
       const page=actual.select().from(s.platformCollectionPage).where(eq(s.platformCollectionPage.id,input.position.pageId)).get()
       if(!page)throw new Error('Command page missing')

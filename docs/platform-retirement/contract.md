@@ -142,3 +142,7 @@ switch is included; historical T05c receipts retain their original schema hash.
 ## #731 A 候选范围专用捕获
 
 [候选捕获契约](current-candidate-scope-capture.md)限定显式 71608→71609 successor 与现有 collection 事务 owner。原观察上的三 title predicate mask、captured/uncaptured/error、规则及原证据/上下文绑定只供候选域；不替代 requested/row/page、资格或通用 effectiveTitle。原字段与历史 hash/bytes/回执不改。A 独立接受后才推进 B reader；全局运行 guard 保持。
+
+## #733 A 见证专用捕获（候选，待独立接受）
+
+参见 [见证输入字段、原语法与 catalog successor](recognized-witness-capture.md)。父级接受实际 fullRange/重复键/页 ordinal 缺口后，授权 collection 的见证专用 gate/state/rule/archive binding、三 condition 的 SQLite-first 类型和值、observation 的见证专用 JS 页原值/ordinal/sequence/source binding。它们与已有 boolean full_range、page_id/position_state、candidate mask 分开，无新业务表、无资格结论。仅显式#732实际catalog后的窄71609 successor安装；旧receipt不改写，writer/replay认证同步，普通runtime guard不变。A候选不代表B reader或全局接受。
