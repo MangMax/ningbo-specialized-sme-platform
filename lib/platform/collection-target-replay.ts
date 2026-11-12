@@ -1,3 +1,4 @@
+import { verifyWitnessCollection,verifyWitnessObservation } from './recognized-witness-write'
 import { verifyCandidateObservation } from './candidate-scope-write'
 import Database from 'better-sqlite3'
 import { verifyFingerprint, FingerprintVerificationError } from './fingerprint-verifier'
@@ -100,6 +101,7 @@ function legacyOriginal(text: string, sequenceNo: number): RosterImportRelation 
 }
 
 function targetReplaySource<S extends Record<string, unknown>>(tx: BetterSQLite3Database<S>, sqlite: Database.Database, collection: typeof s.platformCollection.$inferSelect) {
+    if(collection.interface==='recognized_list')verifyWitnessCollection(sqlite,collection.id)
     const alias = tx.select().from(s.platformLegacyQueryAlias).where(eq(s.platformLegacyQueryAlias.collectionId,collection.id)).get()
     if (!alias) throw new Error('Missing collection alias')
     const ref = `query:${alias.oldId}`
@@ -193,6 +195,7 @@ export function writeCollectionTarget<S extends Record<string, unknown>>(db: Bet
     const reused = (q.relations ?? []).map(row => {
       const o = observations.find(o => o.sequenceNo === row.sequenceNo)!
       verifyCandidateObservation(tx, o.id)
+      if(collection.interface==='recognized_list')verifyWitnessObservation(sqlite,o.id)
       const a = tx.select().from(s.platformLegacyRelationAlias).where(eq(s.platformLegacyRelationAlias.observationId,o.id)).get()!
       let recordId=o.recordId, versionId=o.versionId
       let completion: Record<string, unknown> = {}

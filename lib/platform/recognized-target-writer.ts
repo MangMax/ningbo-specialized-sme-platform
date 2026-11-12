@@ -1,3 +1,5 @@
+import { witnessInstalled } from './recognized-witness-catalog'
+import { captureWitnessObservation,verifyWitnessCollection,verifyWitnessObservation } from './recognized-witness-write'
 import { recognizedStoredInstalled, recognizedTitleEvidence, verifyRecognizedStored } from './recognized-stored'
 import { storedRecognizedProjection } from './recognized-stored-schema'
 import { sqliteConnection } from './target-connection'
@@ -47,6 +49,7 @@ export function writeRecognizedTarget<S extends Record<string, unknown>>(db: Bet
       const page = tx.select().from(s.platformCollectionPage).where(eq(s.platformCollectionPage.id, input.position.pageId)).get()
       if (!page || page.collectionId !== collection.id) throw new Error('Page collection owner mismatch')
     }
+    verifyWitnessCollection(sqliteConnection(tx),collection.id)
     const raw = input.row.rawFields ?? null
     const plan = planPlatformObservation({ interface: 'recognized_list', relationKey: input.row.relationKey, rawFields: raw })
     // Payload identity includes explicit stored facts and provenance, not just version bytes.
@@ -61,6 +64,7 @@ export function writeRecognizedTarget<S extends Record<string, unknown>>(db: Bet
       const alias = tx.select().from(s.platformLegacyRelationAlias).where(eq(s.platformLegacyRelationAlias.observationId, existing.id)).get()
       if (!alias) throw new Error('Missing observation alias')
       verifyCandidateObservation(tx, existing.id)
+      verifyWitnessObservation(sqliteConnection(tx),existing.id)
       if(stored) verifyRecognizedStored(sqliteConnection(tx),existing.id)
       positive(alias.oldId)
       return { observationId: existing.id, recordId: existing.recordId, versionId: existing.versionId, relationAlias: alias.oldId, reused: true }
@@ -85,6 +89,7 @@ export function writeRecognizedTarget<S extends Record<string, unknown>>(db: Bet
     const exactTitle = exact?.cell.storageClass === 'null' ? null : exact ? Buffer.from(exact.cell.hex,'hex').toString('utf8') : null
     const observationProjection = tx.insert(stored ? storedRecognizedProjection : s.platformRecognizedProjection).values({ ...(exact ? {exactTitleRaw:exactTitle,exactTitleState:exact.exactTitleState,exactTitleOrigin:exact.exactTitleOrigin,exactTitleArchiveId:exact.exactTitleArchiveId,exactTitleSha256:exact.exactTitleSha256}:{}), observationId: observation.id, basis: raw === null ? 'unavailable' : 'observation_reconciliation', parseState: raw === null ? 'absent' : 'valid', sourceArchiveId: rawArchive, ...(plan.recognizedProjection ?? parseRecognizedRecord(raw)), ...(raw === null ? { sourceValidityDate: null, sourceMaintenanceBatch: null, sourceMaintenanceYearAbsent: null } : parseRecognizedSourceFidelity(raw)), ruleVersion: RECOGNIZED_PROJECTION_RULE, sourceTitleKind: sourceValueKind(title), sourceTitleText: typeof title === 'string' ? title : null, sourceTitleNumberText: typeof title === 'number' ? String(title) : null, sourceTitleBoolean: typeof title === 'boolean' ? Number(title) : null, sourceTitleRuleVersion: 't05b-source-projections-v1', ...sourceFieldComparison('recognized_list', { province: input.row.province ?? null, status: input.row.status ?? null, batch: input.row.batch ?? null, declareKind: input.row.declareKind ?? null, appliedAt: input.row.appliedAt ?? null, awardBatchLabel: input.row.awardBatchLabel ?? null, year: input.row.year ?? null }, raw, raw === null ? 'absent' : 'valid') }).returning({ id: s.platformRecognizedProjection.id }).get()
     positive(observationProjection.id)
+    if(witnessInstalled(sqliteConnection(tx)))captureWitnessObservation(sqliteConnection(tx),observation.id)
     const relationAlias = allocateLegacyAlias(tx, { kind: 'relation', observationId: observation.id })
     return { observationId: observation.id, recordId, versionId, relationAlias, reused: false }
   })
