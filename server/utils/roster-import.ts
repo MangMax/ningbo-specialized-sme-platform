@@ -1599,7 +1599,7 @@ export function planRosterImport(
 
 function projectionItem(tx: Executor, relationId: number, batchId?: number, expected?: string): RosterImportItemResult {
   try {
-    return success('platform_observation', `relation:${relationId}`, { canonicalProjection: [queryHistoryTarget(tx) ? ensureHistoricalObservation(tx, relationId, expected) : ensurePlatformObservation(tx, relationId, batchId, expected)], rowsWritten: 0 })
+    return success('platform_observation', `relation:${relationId}`, { canonicalProjection: [queryHistoryTarget(tx) ? ensureHistoricalObservation(tx, relationId, batchId, expected) : ensurePlatformObservation(tx, relationId, batchId, expected)], rowsWritten: 0 })
   } catch (error) {
     if (!(error instanceof PlatformProjectionError)) throw error
     return failure('platform_observation', `relation:${relationId}`, error.code, error.message)

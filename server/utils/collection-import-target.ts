@@ -75,7 +75,7 @@ export function historicalObservationPlan(db: Executor, relationId: number) {
 }
 
 /** The import caller owns indexing, basis and receipt in the same transaction. */
-export function ensureHistoricalObservation(db: Executor, relationId: number, expected?: string): PlatformProjectionResult {
+export function ensureHistoricalObservation(db: Executor, relationId: number, batchId?: number, expected?: string): PlatformProjectionResult {
   const plan = historicalObservationPlan(db, relationId)
   if (expected && expected !== plan.inputFingerprint) throw new PlatformProjectionError('projection_source_drift', `Original relation ${relationId} changed since preflight`)
   const before = collectionProjection(db, relationId)
@@ -90,6 +90,9 @@ export function ensureHistoricalObservation(db: Executor, relationId: number, ex
   } catch (error) {
     if (error instanceof FingerprintVerificationError) throw new PlatformProjectionError(error.code, error.message)
     throw error
+  }
+  if (before.row.identityState === 'not_indexed' && batchId !== undefined) {
+    db.update(s.platformBusinessObservation).set({ batchId }).where(eq(s.platformBusinessObservation.id, before.row.id)).run()
   }
   const { row } = collectionImportProjection(db, relationId)
   if (row.identityState === 'not_indexed' || row.contentState === 'not_indexed' || row.keySource == null || row.projectionRuleVersion == null || row.inputFingerprint == null) throw new PlatformProjectionError('projection_missing', 'Historical observation was not indexed')
