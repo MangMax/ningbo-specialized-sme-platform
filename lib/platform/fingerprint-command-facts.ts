@@ -1,3 +1,5 @@
+import { storedProcessProjection } from './process-stored-schema'
+import { inheritProcessStoredCatalog } from './process-stored-catalog'
 import { inheritWitnessCatalog } from './recognized-witness-catalog'
 import { reconstructWitnessCollectionSource } from './recognized-witness-write'
 import { inheritRecognizedStoredCatalog } from './recognized-stored-catalog'
@@ -50,6 +52,7 @@ export function verifyOriginalCommand(target:Database.Database,predecessor:Datab
   if(hash(bytes)!==observation.inputFingerprint)throw new Error('Command fingerprint conflict')
   const scratch=new Database(predecessor.serialize());scratch.pragma('foreign_keys=ON')
   try {
+    inheritProcessStoredCatalog(predecessor,scratch)
     inheritRecognizedStoredCatalog(predecessor,scratch)
     inheritWitnessCatalog(predecessor,scratch)
     const expected=drizzle(scratch,{schema:s})
@@ -116,7 +119,7 @@ export function verifyOriginalCommand(target:Database.Database,predecessor:Datab
       const archive=actual.select({ref:vr,value:a}).from(vr).innerJoin(a,eq(a.id,vr.archiveId)).where(eq(vr.ownerId,f.id)).all()
       if(archive.length!==1||archive[0]!.ref.sealed!==1||archive[0]!.value.id!==f.canonicalArchiveId||archive[0]!.value.storageClass!=='text'||!archive[0]!.value.bytes?.equals(Buffer.from(f.canonicalRawJson!))||archive[0]!.value.sha256!==hash(archive[0]!.value.bytes!)||archive[0]!.value.byteLength!==archive[0]!.value.bytes!.length)throw new Error('Command canonical archive conflict')
     }
-    for(const table of [s.platformApplyProjection,s.platformBusinessProjection,s.platformRecognizedProjection]) {
+    for(const table of [s.platformApplyProjection,target.pragma('user_version',{simple:true})===71610?storedProcessProjection:s.platformBusinessProjection,s.platformRecognizedProjection]) {
       const ep=expected.select().from(table).where(eq(table.observationId,planned.id)).all(),ap=actual.select().from(table).where(eq(table.observationId,observation.id)).all()
       if(ep.length!==ap.length)throw new Error('Command projection owner inventory conflict')
       for(let i=0;i<ep.length;i++) {

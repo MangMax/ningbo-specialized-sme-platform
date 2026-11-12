@@ -1,3 +1,4 @@
+import { processPredecessorSchema } from './process-stored-catalog'
 import { witnessPredecessorSchema } from './recognized-witness-catalog'
 import { schemaHash } from './sqlite-row-cells'
 import type Database from 'better-sqlite3'
@@ -24,7 +25,7 @@ function catalogPresent(t:Database.Database) {
   if(![71605,71606,71607,71608,71609].includes(Number(t.pragma('user_version',{simple:true}))))throw new Error('recognized_stored_schema_phase')
   return false
  }
- if(t.pragma('user_version',{simple:true})!==71609 || exact.length!==names.length || exact.some((c,i)=>c.name!==names[i]||c.type!==types[i]||c.notnull!==0||c.dflt_value!==null||c.pk!==0))throw new Error('recognized_stored_schema_columns')
+ if((t.pragma('user_version',{simple:true})!==71609&&processPredecessorSchema(t)===null) || exact.length!==names.length || exact.some((c,i)=>c.name!==names[i]||c.type!==types[i]||c.notnull!==0||c.dflt_value!==null||c.pk!==0))throw new Error('recognized_stored_schema_columns')
  const fk=t.prepare("PRAGMA foreign_key_list('platform_recognized_projection')").all() as {from:string,table:string,to:string,on_delete:string,on_update:string,match:string}[]
  const refs=fk.filter(f=>f.from.startsWith('exact_title_'))
  if(refs.length!==1||refs[0]!.from!=='exact_title_archive_id'||refs[0]!.table!=='platform_archive_value'||refs[0]!.to!=='id'||refs[0]!.on_delete!=='RESTRICT'||refs[0]!.on_update!=='NO ACTION')throw new Error('recognized_stored_schema_fk')
