@@ -21,6 +21,8 @@ import { allocateLegacyAlias, insertArchiveValue, bindArchive, sealArchiveOwner 
 type Assignment = Omit<typeof s.platformObservationAssignment.$inferInsert, 'observationId' | 'revision'>
 export type RecognizedTargetInput = {
   collectionId: number
+  /** Existing import ledger provenance, supplied only by the caller coordinator. */
+  batchId?: number
   position: Pick<typeof s.platformBusinessObservation.$inferInsert, 'sequenceNo' | 'pageId' | 'pageRowNo' | 'positionState'>
   /** Already validated by the current import contract. Raw JSON is serialized once here. */
   row: RosterImportRelation
@@ -36,7 +38,7 @@ export function writeRecognizedTarget<S extends Record<string, unknown>>(db: Bet
   const capturing = capturePhase(db)
   const stored = recognizedStoredInstalled(sqliteConnection(db))
   return db.transaction(tx => {
-    positive(input.collectionId); positive(input.position.sequenceNo)
+    positive(input.collectionId); if(input.batchId!==undefined)positive(input.batchId); positive(input.position.sequenceNo)
     for (const id of [input.position.pageId, input.position.pageRowNo, input.assignment.enterpriseId, input.assignment.commandReceiptId, input.row.enterpriseId]) if (id != null) positive(id)
     if (input.position.pageRowNo != null && input.position.pageId == null) throw new Error('Page row requires page')
     for (const field of ['enterpriseId', 'matchBasis', 'verificationStatus'] as const) {
@@ -55,7 +57,7 @@ export function writeRecognizedTarget<S extends Record<string, unknown>>(db: Bet
     const plan = planPlatformObservation({ interface: 'recognized_list', relationKey: input.row.relationKey, rawFields: raw })
     // Payload identity includes explicit stored facts and provenance, not just version bytes.
     // Callers supply materialized validated rows, rather than partial reference commands.
-    const inputBytes = Buffer.from(canonicalPlatformJson({ collectionId: collection.id, position: input.position, row: input.row, assignment: input.assignment }))
+    const inputBytes = Buffer.from(canonicalPlatformJson({ collectionId: collection.id, position: input.position, row: input.row, assignment: input.assignment, ...(input.batchId === undefined ? {} : { batchId: input.batchId }) }))
     const fingerprint = createHash('sha256').update(inputBytes).digest('hex')
     const existing = tx.select().from(s.platformBusinessObservation).where(and(eq(s.platformBusinessObservation.collectionId, collection.id), eq(s.platformBusinessObservation.sequenceNo, input.position.sequenceNo))).get()
     if (existing) {
@@ -74,7 +76,7 @@ export function writeRecognizedTarget<S extends Record<string, unknown>>(db: Bet
     if (capturing) captureFingerprintBasis(tx, observationId!, 'target-command-v1', inputBytes)
     const { recordId, versionId, now } = ensureRecognizedTargetContent(tx, plan)
     const candidateValues = candidateObservationValues(tx, collection, input.position.sequenceNo)
-    const observation = tx.insert(candidateValues.candidateScopeState ? candidateScopeObservation : s.platformBusinessObservation).values({ ...candidateValues, id: observationId, collectionId: collection.id, ...input.position, sourceRelationKey: input.row.relationKey ?? null, recordId, versionId, identityState: plan.identityState, contentState: plan.contentState, keySource: plan.keySource, projectionRuleVersion: PLATFORM_PROJECTION_RULE, inputFingerprint: fingerprint, indexedAt: now }).returning().get()
+    const observation = tx.insert(candidateValues.candidateScopeState ? candidateScopeObservation : s.platformBusinessObservation).values({ ...candidateValues, id: observationId, collectionId: collection.id, ...input.position, sourceRelationKey: input.row.relationKey ?? null, recordId, versionId, identityState: plan.identityState, contentState: plan.contentState, keySource: plan.keySource, projectionRuleVersion: PLATFORM_PROJECTION_RULE, inputFingerprint: fingerprint, indexedAt: now, batchId: input.batchId ?? null }).returning().get()
     positive(observation.id)
     const assignment = { ...input.assignment, observationId: observation.id, revision: 1 }
     tx.insert(s.platformObservationAssignment).values(assignment).run()

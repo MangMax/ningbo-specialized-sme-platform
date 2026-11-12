@@ -11,6 +11,7 @@ import { writeProcessTarget } from './process-target-writer'
 import { writeRecognizedTarget } from './recognized-target-writer'
 import { insertArchiveValue, bindArchive, sealArchiveOwner } from './target-archive'
 import { PLATFORM_PROJECTION_RULE } from './observation-plan'
+import { reconstructWitnessCollectionSource } from './recognized-witness-write'
 export function bootstrapFingerprint(t:Database.Database,owner:FingerprintOwner,mode:'ordinary'|'reference') {
  const db=drizzle(t,{schema:s})
  if(!capturePhase(db,true))throw new Error('Explicit 71607 bootstrap target required')
@@ -34,6 +35,7 @@ export function bootstrapFingerprint(t:Database.Database,owner:FingerprintOwner,
    // Source-only staging uses the original source writer and parser, never a second parser.
    expected.insert(s.platformCollection).values({...c,titleCode:null}).run()
    expected.insert(s.platformLegacyQueryAlias).values({oldId:1,collectionId:c.id}).run()
+   if(c.interface==='recognized_list')reconstructWitnessCollectionSource(t,scratch,c.id)
    const writer=c.interface==='apply_list'?writeApplyTarget:c.interface==='business_list'?writeProcessTarget:writeRecognizedTarget
    const result=writer(expected,{collectionId:c.id,position:{sequenceNo:o.sequenceNo,positionState:'unknown'},row:{sequenceNo:o.sequenceNo,relationKey:o.sourceRelationKey,rawFields:rawFields as Record<string,unknown>|null,...stored},assignment:{matchBasis:'none',verificationStatus:'pending',origin:'command',actor:{type:'agent',id:'bootstrap-staging'},basis:'source staging'}})
    let recordId:number|null=null,versionId:number|null=null

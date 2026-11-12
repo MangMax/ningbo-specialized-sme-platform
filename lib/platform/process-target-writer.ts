@@ -20,6 +20,8 @@ import { allocateLegacyAlias, insertArchiveValue, bindArchive, sealArchiveOwner 
 type Assignment = Omit<typeof s.platformObservationAssignment.$inferInsert, 'observationId' | 'revision'>
 export type ProcessTargetInput = {
   collectionId: number
+  /** Existing import ledger provenance, supplied only by the caller coordinator. */
+  batchId?: number
   position: Pick<typeof s.platformBusinessObservation.$inferInsert, 'sequenceNo' | 'pageId' | 'pageRowNo' | 'positionState'>
   /** Already validated by the current import contract. Raw JSON is serialized once here. */
   row: RosterImportRelation
@@ -39,7 +41,7 @@ export function writeProcessTarget<S extends Record<string, unknown>>(db: Better
   if(materialized&&((input.assignment.nameRaw??null)!==materialized.nameRaw||(input.assignment.usccRaw??null)!==materialized.usccRaw))throw new Error('process_stored_conflict: revision1 materialization mismatch')
   return db.transaction(tx => {
     if(stored)tx.run(sql`PRAGMA defer_foreign_keys=ON`)
-    positive(input.collectionId); positive(input.position.sequenceNo)
+    positive(input.collectionId); if(input.batchId!==undefined)positive(input.batchId); positive(input.position.sequenceNo)
     for (const id of [input.position.pageId, input.position.pageRowNo, input.assignment.enterpriseId, input.assignment.commandReceiptId, input.row.enterpriseId]) if (id != null) positive(id)
     if (input.position.pageRowNo != null && input.position.pageId == null) throw new Error('Page row requires page')
     for (const field of ['enterpriseId', 'matchBasis', 'verificationStatus'] as const) {
@@ -57,7 +59,7 @@ export function writeProcessTarget<S extends Record<string, unknown>>(db: Better
     const plan = planPlatformObservation({ interface: 'business_list', relationKey: input.row.relationKey, rawFields: raw })
     // Payload identity includes explicit stored facts and provenance, not just version bytes.
     // Callers supply materialized validated rows, rather than partial reference commands.
-    const inputBytes = Buffer.from(canonicalPlatformJson({ collectionId: collection.id, position: input.position, row: input.row, assignment: input.assignment }))
+    const inputBytes = Buffer.from(canonicalPlatformJson({ collectionId: collection.id, position: input.position, row: input.row, assignment: input.assignment, ...(input.batchId === undefined ? {} : { batchId: input.batchId }) }))
     const fingerprint = createHash('sha256').update(inputBytes).digest('hex')
     const existing = tx.select().from(s.platformBusinessObservation).where(and(eq(s.platformBusinessObservation.collectionId, collection.id), eq(s.platformBusinessObservation.sequenceNo, input.position.sequenceNo))).get()
     if (existing) {
@@ -76,7 +78,7 @@ export function writeProcessTarget<S extends Record<string, unknown>>(db: Better
     const { recordId, versionId, now } = ensureProcessTargetContent(tx, plan)
     if(stored)tx.insert(s.platformObservationAssignment).values({...input.assignment,observationId:observationId!,revision:1}).run()
     const candidateValues = candidateObservationValues(tx, collection, input.position.sequenceNo)
-    const observation = tx.insert(stored?processWriteObservation:candidateValues.candidateScopeState ? candidateScopeObservation : s.platformBusinessObservation).values({ ...candidateValues,...(stored?{processExactOwnerId:observationId,processExactState:'captured' as const,processSqlFactTitleState:'captured' as const}:{}), id: observationId, collectionId: collection.id, ...input.position, sourceRelationKey:materialized?materialized.sourceRelationKey:input.row.relationKey??null, recordId, versionId, identityState: plan.identityState, contentState: plan.contentState, keySource: plan.keySource, projectionRuleVersion: PLATFORM_PROJECTION_RULE, inputFingerprint: fingerprint, indexedAt: now }).returning().get()
+    const observation = tx.insert(stored?processWriteObservation:candidateValues.candidateScopeState ? candidateScopeObservation : s.platformBusinessObservation).values({ ...candidateValues,...(stored?{processExactOwnerId:observationId,processExactState:'captured' as const,processSqlFactTitleState:'captured' as const}:{}), id: observationId, collectionId: collection.id, ...input.position, sourceRelationKey:materialized?materialized.sourceRelationKey:input.row.relationKey??null, recordId, versionId, identityState: plan.identityState, contentState: plan.contentState, keySource: plan.keySource, projectionRuleVersion: PLATFORM_PROJECTION_RULE, inputFingerprint: fingerprint, indexedAt: now, batchId: input.batchId ?? null }).returning().get()
     positive(observation.id)
     const assignment = { ...input.assignment, observationId: observation.id, revision: 1 }
     if(!stored)tx.insert(s.platformObservationAssignment).values(assignment).run()

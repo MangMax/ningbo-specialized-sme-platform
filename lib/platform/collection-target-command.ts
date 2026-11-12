@@ -26,6 +26,8 @@ export type NewCollectionTargetCommand = {
   /** Original evidence JSON text, not regenerated from normalized rows. NULL when absent. */
   evidenceText: string | null
   createdAt: string
+  /** Existing caller transaction batch; not a second command ledger. */
+  batchId?: number
   assignments: ApplyTargetInput['assignment'][]
 }
 function positive(value: number) {
@@ -33,6 +35,7 @@ function positive(value: number) {
   return value
 }
 function queryInput(input: NewCollectionTargetCommand): RosterImportPlatformQuery {
+  if (input.batchId !== undefined) positive(input.batchId)
   const original: unknown = JSON.parse(input.queryText)
   platformQueriesInputSchema.parse([original])
   // The public Zod schema validates shape; retain original own raw JSON keys and types.
@@ -165,7 +168,7 @@ export function writeNewCollectionTarget<S extends Record<string, unknown>>(db: 
     if(q.interface==='recognized_list'&&witnessInstalled(sqliteConnection(tx)))captureWitnessCollection(sqliteConnection(tx),collectionId)
     const queryAlias = allocateLegacyAlias(tx, { kind: 'query', collectionId })
     const observations = (q.relations ?? []).map((row, i) => {
-      const args = { collectionId, row, assignment: input.assignments[i]!, position: positions.get(row.sequenceNo) ?? { sequenceNo: row.sequenceNo, positionState: 'unknown' as const } }
+      const args = { collectionId, ...(input.batchId === undefined ? {} : { batchId: input.batchId }), row, assignment: input.assignments[i]!, position: positions.get(row.sequenceNo) ?? { sequenceNo: row.sequenceNo, positionState: 'unknown' as const } }
       switch (q.interface) {
         case 'apply_list': return writeApplyTarget(tx, args)
         case 'business_list': return writeProcessTarget(tx, args)
