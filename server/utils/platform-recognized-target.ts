@@ -14,6 +14,8 @@ import { normalizeName, normalizeUscc } from '../../lib/domain';
 import { fail, orderedScopes, pageOf } from './platform-business-read';
 import { recognizedDirectoryFilterSchema, RECOGNIZED_DIRECTORY_VERSION_LIMIT, RECOGNIZED_DIRECTORY_OBSERVATION_LIMIT, type RecognizedDirectoryFilter, type RecognizedDirectoryListResult, type RecognizedDirectoryIsolatedRow, type RecognizedDirectoryDetail, type RecognizedDirectoryView } from '../../lib/platform/recognized-directory';
 import type { PlatformFilterOptions } from '../../lib/platform/filter-options';
+import { withArchiveProcessFacts, legacyRowTitle, type PlatformObservationFact } from '../../lib/platform/observation-facts';
+import type { PlatformNormalizationConflict } from '../../lib/platform/normalization';
 type Db = BetterSQLite3Database<typeof targetSchema> | BetterSQLite3Database<typeof legacySchema>;
 type TargetIsolatedRow = Omit<RecognizedDirectoryIsolatedRow, 'titleRaw'> & {
     titleRaw: unknown;
@@ -27,11 +29,11 @@ export type TargetRecognizedOptions = Omit<PlatformFilterOptions, 'titles'> & {
 const previous = alias(a, 'newer_assignment'), original = alias(a, 'original_assignment');
 function current(db: Db) { return and(eq(a.observationId, o.id), eq(a.revision, db.select({ revision: max(previous.revision) }).from(previous).where(eq(previous.observationId, o.id)))); }
 const isolated = or(ne(o.identityState, 'resolved'), ne(o.contentState, 'verified'), isNull(o.versionId));
-function gate(db: Db) {
+function gate(db: Db, selected?: ReturnType<typeof inArray>) {
     if (!recognizedStoredInstalled(sqliteConnection(db)))
         fail(409, 'recognized_target_capture', 'Recognized reader requires completed 71609 stored-title capture');
     const missing = db.select({ id: o.id }).from(o).innerJoin(c, eq(c.id, o.collectionId)).leftJoin(p, eq(p.observationId, o.id)).leftJoin(a, current(db)).leftJoin(original, and(eq(original.observationId, o.id), eq(original.revision, 1))).leftJoin(ra, eq(ra.observationId, o.id)).leftJoin(qa, eq(qa.collectionId, c.id))
-        .where(and(eq(c.interface, 'recognized_list'), or(isNull(p.id), isNull(p.exactTitleState), ne(p.exactTitleState, 'captured'), isNull(a.observationId), isNull(original.observationId), isNull(ra.oldId), isNull(qa.oldId)))).limit(1).get();
+        .where(and(selected, eq(c.interface, 'recognized_list'), or(isNull(p.id), isNull(p.exactTitleState), ne(p.exactTitleState, 'captured'), isNull(a.observationId), isNull(original.observationId), isNull(ra.oldId), isNull(qa.oldId)))).limit(1).get();
     if (missing)
         fail(409, 'recognized_target_uncaptured', 'Recognized observation has uncaptured original facts or assignment');
 }
@@ -147,5 +149,47 @@ export function getTargetRecognizedRecord(db: Db, recordId: number): RecognizedD
                 const titleScopes = scopes.get(collectionId) ?? [], title = version?.titleRaw ?? null;
                 return { ...r, keySource: r.keySource, projectionRuleVersion: r.projectionRuleVersion, identityState: r.identityState, contentState: r.contentState, titleScopes, titleConflict: title !== null && ['1', '2', '3'].includes(title) && titleScopes.length > 0 && !titleScopes.includes(title), correspondenceRefs: (byRelation[String(r.relationId)] ?? []).map(({ id, status, revision }) => ({ id, status, revision })), version: r.versionId === null ? null : { versionId: r.versionId, validityDateRaw: version?.validityDateRaw ?? null, maintenanceYear: version?.maintenanceYear ?? null, maintenanceBatch: version?.maintenanceBatch ?? null, district: version?.district ?? null, awardNote: version?.awardNote ?? null, titleRaw: title, nameRaw: version?.nameRaw ?? null, usccRaw: version?.usccRaw ?? null, ruleVersion: version?.ruleVersion ?? null } };
             }), counts: { versions: versionTotal, observations: observationTotal, versionsTruncated: versionTotal > versions.length, observationsTruncated: observationTotal > observations.length }, conflicts: summaries(tx, [recordId]).get(recordId)!.conflicts };
+    });
+}
+
+/** Recognition content and reconciled observation facts retain their separate owners. */
+export function readTargetRecognizedFacts(db: Db, relationIds: number[]): Map<number, PlatformObservationFact> {
+    const result = new Map<number, PlatformObservationFact>();
+    if (!relationIds.length) return result;
+    return db.transaction(tx => {
+        const original = alias(a, 'candidate_recognized_original');
+        const vp = alias(p, 'candidate_recognized_version');
+        for (let start = 0; start < relationIds.length; start += 400) {
+            const ids = relationIds.slice(start, start + 400);
+            gate(tx, inArray(o.id, tx.select({ id: ra.observationId }).from(ra).where(inArray(ra.oldId, ids))));
+            const rows = tx.select({ relationId: ra.oldId, source: p, version: vp, originalName: original.nameRaw, originalUscc: original.usccRaw })
+                .from(ra).innerJoin(o, eq(o.id, ra.observationId)).innerJoin(c, eq(c.id, o.collectionId)).innerJoin(p, eq(p.observationId, o.id))
+                .leftJoin(vp, and(eq(vp.versionId, o.versionId), eq(vp.recordId, o.recordId)))
+                .leftJoin(original, and(eq(original.observationId, o.id), eq(original.revision, 1)))
+                .where(and(inArray(ra.oldId, ids), eq(c.interface, 'recognized_list'))).all();
+            for (const row of rows) {
+                const source = row.source, version = row.version, typed = version?.versionId != null;
+                const normalized = { province: source.reconciledProvince, status: source.reconciledStatus, batch: source.reconciledBatch, declareKind: source.reconciledDeclareKind, appliedAt: source.reconciledAppliedAt, awardBatchLabel: source.reconciledAwardBatchLabel, year: source.reconciledYear };
+                const comparisons = {
+                    province: [source.provinceConflict, source.storedProvince, source.parsedProvince], status: [source.statusConflict, source.storedStatus, source.parsedStatus], batch: [source.batchConflict, source.storedBatch, source.parsedBatch],
+                    declareKind: [source.declareKindConflict, source.storedDeclareKind, source.parsedDeclareKind], appliedAt: [source.appliedAtConflict, source.storedAppliedAt, source.parsedAppliedAt], awardBatchLabel: [source.awardBatchLabelConflict, source.storedAwardBatchLabel, source.parsedAwardBatchLabel], year: [source.yearConflict, source.storedYear, source.parsedYear],
+                } satisfies Record<keyof typeof normalized, [number | null, string | number | null, string | number | null]>;
+                const conflicts: PlatformNormalizationConflict[] = (['province', 'status', 'batch', 'declareKind', 'appliedAt', 'awardBatchLabel', 'year'] as const).flatMap(field => {
+                    const [conflict, storedValue, rawValue] = comparisons[field];
+                    return conflict && storedValue != null && rawValue != null ? [{ field, storedValue, rawValue }] : [];
+                });
+                const title = source.sourceTitleKind === 'text' ? legacyRowTitle({ rdjb: source.sourceTitleText }) : null;
+                result.set(row.relationId, withArchiveProcessFacts({
+                    relationId: row.relationId, interface: 'recognized_list', projectionVersionId: typed ? version.versionId : null, projectionRuleVersion: typed ? version.ruleVersion : null,
+                    modeledFields: typed ? ['validityDateRaw', 'maintenanceYear', 'maintenanceBatch', 'district', 'awardNote', 'titleRaw', 'nameRaw', 'usccRaw'] : [],
+                    ...normalized, titleRaw: typed ? version.titleRaw ?? title : title,
+                    nameRaw: typed ? version.nameRaw : row.originalName, usccRaw: typed ? version.usccRaw : row.originalUscc,
+                    validityDateRaw: typed ? version.validityDateRaw : null, maintenanceYear: typed ? version.maintenanceYear : null,
+                    maintenanceBatch: typed ? version.maintenanceBatch : null, district: typed ? version.district : null, awardNote: typed ? version.awardNote : null,
+                    normalizationConflicts: conflicts,
+                }, normalized));
+            }
+        }
+        return result;
     });
 }
