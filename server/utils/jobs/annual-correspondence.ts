@@ -5,7 +5,7 @@ import { z } from 'zod'
 import * as s from '../../../db/schema'
 import { newJobId } from '../../../lib/job'
 import { ANNUAL_CORRESPONDENCE_KIND as KIND, ANNUAL_CORRESPONDENCE_VERSION as VERSION, type AnnualTaskReceipt, type AnnualTaskResult } from '../../../lib/roster/annual-correspondence'
-import { annualDbReadonly, annualFail, annualHash, qualifyAnnualFinal, reconcileAnnualStep, type AnnualDb, type AnnualScopeReader } from '../annual-correspondence'
+import { annualDbReadonly, annualFail, annualHash, qualifyAnnualFinal, readAnnualScopes, reconcileAnnualStep, type AnnualDb, type AnnualScopeReader } from '../annual-correspondence'
 import { createJob, getJob, setJobResult } from '../job-store'
 import { enqueuePersistedJob, ensureJobRunnerReady, getJobSpec, registerJob, requeueFinishedJob, type JobContext, type JobSpec } from '../job-runner'
 
@@ -33,7 +33,8 @@ export function stageAnnualCorrespondence(db: AnnualDb, read: AnnualScopeReader,
       if (JSON.stringify(oldRequest.params.eventIds) !== JSON.stringify(eventIds)) annualFail('idempotency_conflict')
       return receipt(oldRequest)
     }
-    const sourceGenerations = eventIds.map(eventId => ({ eventId, generation: read(db,eventId)?.generation ?? 'event_unavailable' }))
+    const scopes = readAnnualScopes(db, read, eventIds)
+    const sourceGenerations = eventIds.map(eventId => ({ eventId, generation: scopes.get(eventId)?.generation ?? 'event_unavailable' }))
     const serverIdentity = annualHash({ sourceGenerations, ruleVersion: VERSION })
     const oldScope = db.select().from(s.job).where(and(eq(s.job.kind,KIND),sql`json_extract(${s.job.params},'$.serverIdentity') = ${serverIdentity}`)).get()
     if (oldScope) {
@@ -60,11 +61,30 @@ export function annualCorrespondenceSpec(read: AnnualScopeReader): JobSpec {
       const params = raw as Params
       const result = row.result as AnnualTaskResult
       if (!result || params.ruleVersion !== VERSION || result.ruleVersion !== VERSION) annualFail('rule_version_changed')
+      // Request-local batching. SQLite's connection counters invalidate the source
+      // cache across yields; decisions are still read live under each step lock.
+      // Own synchronous job/decision writes advance only the acknowledged counter.
+      let cached: ReturnType<typeof readAnnualScopes> | undefined
+      let ownChanges = -1, dataVersion = -1
+      const changes = () => ctx.db.get<{ n: number }>(sql`select total_changes() n`)!.n
+      const ownWrite = <T>(write: () => T): T => {
+        const before = changes()
+        try { return write() } finally { ownChanges += changes() - before }
+      }
+      const readCurrent: AnnualScopeReader = read.batch ? (db, id) => {
+        const version = db.get<{ data_version: number }>(sql`PRAGMA data_version`)!.data_version
+        if (!cached || ownChanges !== changes() || dataVersion !== version) {
+          cached = readAnnualScopes(db, read, params.eventIds)
+          ownChanges = changes()
+          dataVersion = version
+        }
+        return cached.get(id) ?? null
+      } : read
       result.attempt++
-      const persist = () => {
+      const persist = () => ownWrite(() => {
         setJobResult(ctx.db,ctx.jobId,result)
         ctx.progress(result.events.filter(e => ['done','failed'].includes(e.status)).length,result.events.length)
-      }
+      })
       persist()
       for (const event of result.events) {
         if (event.status === 'done') continue
@@ -73,7 +93,7 @@ export function annualCorrespondenceSpec(read: AnnualScopeReader): JobSpec {
         delete event.errorCode
         persist()
         try {
-          const scope = read(ctx.db,event.eventId)
+          const scope = readCurrent(ctx.db,event.eventId)
           if (!scope) annualFail('event_unavailable',422)
           if (scope.generation !== event.generation) annualFail('source_generation_changed')
           for (const step of scope.steps) {
@@ -81,12 +101,12 @@ export function annualCorrespondenceSpec(read: AnnualScopeReader): JobSpec {
             if (ctx.cancelled()) return { result, cancelled: true }
             // Each step commit is independently durable. A crash before this
             // checkpoint re-reads its real decision without appending an audit.
-            const outcome = reconcileAnnualStep(ctx.db,read,{ eventId: event.eventId, generation: event.generation, stepId: step.stepId })
+            const outcome = ownWrite(() => reconcileAnnualStep(ctx.db,readCurrent,{ eventId: event.eventId, generation: event.generation, stepId: step.stepId }))
             event.outcomes.push(outcome)
             persist()
             await yieldTurn()
           }
-          const fresh = read(ctx.db,event.eventId)
+          const fresh = readCurrent(ctx.db,event.eventId)
           if (!fresh) annualFail('event_unavailable',422)
           event.finalQualification = qualifyAnnualFinal(ctx.db,fresh,event.generation)
           if (fresh.generation !== event.generation) annualFail('source_generation_changed')
@@ -130,7 +150,8 @@ export function retryAnnualCorrespondence(db: AnnualDb, read: AnnualScopeReader,
   if (!row || row.kind !== KIND || !['failed','cancelled'].includes(row.state) || !result || result.attempt >= 10 || result.ruleVersion !== VERSION) annualFail('retry_unavailable')
   // A stale generation needs a new submission, never an old continuation.
   db.transaction(() => {
-    for (const event of result.events) if ((read(db,event.eventId)?.generation ?? 'event_unavailable') !== event.generation) annualFail('source_generation_changed')
+    const scopes = readAnnualScopes(db, read, result.events.map(e => e.eventId))
+    for (const event of result.events) if ((scopes.get(event.eventId)?.generation ?? 'event_unavailable') !== event.generation) annualFail('source_generation_changed')
   })
   if (!getJobSpec(KIND)) registerJob(annualCorrespondenceSpec(read))
   if (!requeueFinishedJob(db,{id,kind:KIND,params:row.params,filesDir,logContext})) annualFail('retry_unavailable')

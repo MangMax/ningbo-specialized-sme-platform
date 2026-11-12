@@ -5,6 +5,8 @@ import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3';
 import { groupBy } from 'es-toolkit';
 import { targetSchema, platformBusinessObservation as o, platformObservationAssignment as a, platformLegacyRelationAlias as ra } from '../../lib/platform/target-schema';
 import { storedApplyProjection as p } from '../../lib/platform/apply-stored-schema';
+import { processStoredInstalled } from '../../lib/platform/process-stored-catalog';
+import { sqliteConnection } from '../../lib/platform/target-connection';
 import { platformCollection as c, platformLegacyQueryAlias as qa, platformBusinessRecord as b, platformBusinessRecordVersion as v, enterprise as e } from '../../db/schema';
 import { normalizeName, normalizeUscc } from '../../lib/domain';
 import { normalizeDeclareKind } from '../../lib/platform/identity';
@@ -32,10 +34,9 @@ function current(db: Db) { return and(eq(a.observationId, o.id), eq(a.revision, 
 const isolated = or(ne(o.identityState, 'resolved'), ne(o.contentState, 'verified'), isNull(o.versionId));
 /** Gate the entire apply request domain, before any business filtering or paging.
  * PRAGMA is schema infrastructure; no archive or legacy entity is consulted. */
-function gate(db: Db, domain?: SQL) {
-    if (db.get<{
-        user_version: number;
-    }>(sql `PRAGMA user_version`)?.user_version !== 71608)
+function gate(db: Db, domain?: SQL, annualFacts = false) {
+    const phase = db.get<{ user_version: number }>(sql`PRAGMA user_version`)?.user_version;
+    if (phase !== 71608 && !(annualFacts && phase === 71611 && processStoredInstalled(sqliteConnection(db))))
         fail(409, 'apply_target_phase', 'Declaration reader requires 71608');
     const missing = db.select({ id: o.id }).from(o).innerJoin(c, eq(c.id, o.collectionId)).leftJoin(p, eq(p.observationId, o.id))
         .where(and(eq(c.interface, 'apply_list'), domain, or(isNull(p.id), ne(p.exactStoredState, 'captured'), ne(p.sqlFactTitleState, 'captured'), isNull(p.exactStoredState), isNull(p.sqlFactTitleState)))).limit(1).get();
@@ -155,7 +156,7 @@ export function readTargetDeclarationFacts(db: Db, relationIds: number[]): Map<n
         const original = alias(a, 'original_assignment');
         for (let start = 0; start < relationIds.length; start += 400) {
             const ids = relationIds.slice(start, start + 400);
-            gate(tx, inArray(o.id, tx.select({ id: ra.observationId }).from(ra).where(inArray(ra.oldId, ids))));
+            gate(tx, inArray(o.id, tx.select({ id: ra.observationId }).from(ra).where(inArray(ra.oldId, ids))), true);
             const rows = tx.select({ relationId: ra.oldId, source: p, version: vp, originalName: original.nameRaw, originalUscc: original.usccRaw })
                 .from(ra).innerJoin(o, eq(o.id, ra.observationId)).innerJoin(c, eq(c.id, o.collectionId)).innerJoin(p, eq(p.observationId, o.id))
                 .leftJoin(vp, and(eq(vp.versionId, o.versionId), eq(vp.recordId, o.recordId)))
