@@ -87,7 +87,7 @@ it('enforces FK ON transaction entry and represents all original affinity storag
  }finally{if(t.inTransaction)t.exec('ROLLBACK');t.close()}
 })
 
-it('blocks capture deletion replacement upsert cross-owner writes and old process writer while retaining the global runtime guard', async () => {
+it('blocks capture deletion replacement upsert cross-owner writes and uncaptured downgraded writer while retaining the global runtime guard', async () => {
  const f=await fixture();finalizeProcessStored(f);const t=new Database(f.target);t.pragma('foreign_keys=ON')
  try{
   const before=projectionManifest(t)
@@ -102,7 +102,11 @@ it('blocks capture deletion replacement upsert cross-owner writes and old proces
    'UPDATE OR REPLACE platform_business_observation SET sequence_no=2 WHERE id=1',
    "UPDATE platform_business_observation SET process_exact_state='uncaptured' WHERE id=1",
   ]){expect(()=>t.exec(statement),statement).toThrow(/immutable|captured/);expect(projectionManifest(t)).toBe(before)}
-  expect(()=>writeProcessTarget(drizzle(t,{schema:targetSchema}),{collectionId:1,position:{sequenceNo:3,positionState:'unknown'},row:{sequenceNo:3,rawFields:{}},assignment:{matchBasis:'none',verificationStatus:'pending',origin:'command',actor:{type:'agent',id:'A1'},basis:'test'}})).toThrow(/finalized target/)
+  // A2 now authorizes the authenticated successor writer; A1's old refusal stays in its accepted SHA.
+  t.exec('BEGIN')
+  const written=writeProcessTarget(drizzle(t,{schema:targetSchema}),{collectionId:1,position:{sequenceNo:3,positionState:'unknown'},row:{sequenceNo:3,rawFields:{}},assignment:{matchBasis:'none',verificationStatus:'pending',origin:'command',actor:{type:'agent',id:'A1'},basis:'test'}})
+  expect(t.prepare('SELECT exact_stored_state FROM platform_business_projection WHERE observation_id=?').get(written.observationId)).toEqual({exact_stored_state:'captured'})
+  t.exec('ROLLBACK')
   expect(()=>assertExpandRuntime(t)).toThrow(/Finalized\/offline/)
   expect(projectionManifest(t)).toBe(before)
   // Controlled marker downgrade demonstrates the SQL barrier independently of JS refusal.

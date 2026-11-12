@@ -1,3 +1,4 @@
+import { processPredecessorSchema } from './process-stored-catalog'
 import { witnessInstalled } from './recognized-witness-catalog'
 import { captureWitnessCollection } from './recognized-witness-write'
 import { sqliteConnection } from './target-connection'
@@ -76,7 +77,8 @@ function queryInput(input: NewCollectionTargetCommand): RosterImportPlatformQuer
 export function writeNewCollectionTarget<S extends Record<string, unknown>>(db: BetterSQLite3Database<S>, input: NewCollectionTargetCommand) {
   requireCaptureForeignKeys(db)
   return db.transaction(tx => {
-    if (tx.get<{ user_version: number }>(sql`PRAGMA user_version`)?.user_version !== FINAL_COLLECTION_SCOPE_VERSION && tx.get<{ user_version: number }>(sql`PRAGMA user_version`)?.user_version !== 71607 && tx.get<{ user_version: number }>(sql`PRAGMA user_version`)?.user_version !== 71608 && tx.get<{user_version:number}>(sql`PRAGMA user_version`)?.user_version !== 71609) throw new Error('Explicit 71606 target required')
+    if (tx.get<{ user_version: number }>(sql`PRAGMA user_version`)?.user_version !== FINAL_COLLECTION_SCOPE_VERSION && tx.get<{ user_version: number }>(sql`PRAGMA user_version`)?.user_version !== 71607 && tx.get<{ user_version: number }>(sql`PRAGMA user_version`)?.user_version !== 71608 && tx.get<{user_version:number}>(sql`PRAGMA user_version`)?.user_version !== 71609 && tx.get<{user_version:number}>(sql`PRAGMA user_version`)?.user_version !==71610) throw new Error('Explicit 71606 target required')
+    processPredecessorSchema(sqliteConnection(tx))
     const q = queryInput(input)
     if(tx.get<{user_version:number}>(sql`PRAGMA user_version`)?.user_version===71608 && q.interface!=='apply_list')throw new Error('71608 command supports apply_list only')
     const e = q.collectionEvidence, metadata = platformQueryInsertMetadata(q)

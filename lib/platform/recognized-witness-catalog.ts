@@ -1,3 +1,4 @@
+import { processPredecessorSchema } from './process-stored-catalog'
 /** Exact #733 A catalog successor to the accepted #732 receipt, not a reader exemption. */
 import type Database from 'better-sqlite3'
 import { isDeepStrictEqual } from 'node:util'
@@ -51,7 +52,7 @@ export function witnessCatalogPresent(t:Database.Database) {
   for(const name of ['platform_collection_condition','platform_business_observation'])if(t.prepare(`SELECT 1 FROM pragma_table_info('${name}') WHERE name LIKE 'witness_%'`).get())throw new Error('witness_partial_catalog')
   return false
  }
- if(t.pragma('user_version',{simple:true})!==71609)throw new Error('witness_schema_phase')
+ if(t.pragma('user_version',{simple:true})!==71609&&processPredecessorSchema(t)===null)throw new Error('witness_schema_phase')
  for(const [table,fields] of Object.entries(witnessDefinitions)) {
   const actual=t.prepare(`PRAGMA table_info('${table}')`).all() as {name:string,type:string,notnull:number,dflt_value:unknown,pk:number}[]
   const w=actual.filter(c=>c.name.startsWith('witness_'))
@@ -67,7 +68,7 @@ export function witnessCatalogPresent(t:Database.Database) {
 /** Returns only this one authenticated predecessor's actual catalog hash. */
 export function witnessPredecessorSchema(t:Database.Database):string|null {
  if(!witnessCatalogPresent(t))return null
- const rows=t.prepare("SELECT r.source_schema_hash FROM platform_migration_run r JOIN platform_migration_checkpoint c ON c.run_id=r.run_id WHERE r.transform_version=? AND r.state='complete' AND r.target_schema_version=? AND c.phase='recognized-witness' AND c.source_table='platform_collection' AND c.last_old_id=0 AND c.copied_count>=0 AND length(c.batch_digest)=64").all(WITNESS_TRANSFORM,schemaHash(t)) as {source_schema_hash:string}[]
+ const rows=t.prepare("SELECT r.source_schema_hash FROM platform_migration_run r JOIN platform_migration_checkpoint c ON c.run_id=r.run_id WHERE r.transform_version=? AND r.state='complete' AND r.target_schema_version=? AND c.phase='recognized-witness' AND c.source_table='platform_collection' AND c.last_old_id=0 AND c.copied_count>=0 AND length(c.batch_digest)=64").all(WITNESS_TRANSFORM,processPredecessorSchema(t)??schemaHash(t)) as {source_schema_hash:string}[]
  const all=t.prepare('SELECT 1 FROM platform_migration_run WHERE transform_version=?').all(WITNESS_TRANSFORM)
  if(rows.length!==1||all.length!==1)throw new Error('witness_schema_receipt')
  const prior=t.prepare("SELECT 1 FROM platform_migration_run r JOIN platform_migration_checkpoint c ON c.run_id=r.run_id WHERE r.transform_version='recognized-stored-title-v1' AND r.state='complete' AND r.target_schema_version=? AND c.phase='recognized-stored' AND c.source_table='platform_recognized_projection' AND c.last_old_id=0 AND length(c.batch_digest)=64").all(rows[0]!.source_schema_hash)

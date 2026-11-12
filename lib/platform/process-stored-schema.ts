@@ -1,5 +1,7 @@
 /** Explicit 71610 only. Never registered with expand/startup migrations. */
 import { customType, integer, sqliteTable, text } from 'drizzle-orm/sqlite-core'
+import * as expand from '../../db/schema'
+import { candidateScopeFields } from './candidate-scope-schema'
 import { businessProjectionFields } from '../../db/schema'
 import { platformBusinessObservation, targetSchema } from './target-schema'
 const cellText=customType<{data:unknown,driverData:unknown}>({dataType:()=> 'text'})
@@ -23,3 +25,11 @@ export const processStoredObservation=sqliteTable('platform_business_observation
  processSqlFactTitleState:text('process_sql_fact_title_state',{enum:['captured','uncaptured']}),
 })
 export const processStoredSchema={...targetSchema,platformBusinessProjection:storedProcessProjection,processStoredObservation}
+
+/** Writer-only explicit successor declaration; witness fields retain physical defaults. */
+export const processWriteObservation=sqliteTable('platform_business_observation',{
+ id:integer('id').primaryKey(),collectionId:integer('collection_id').notNull(),sequenceNo:integer('sequence_no').notNull(),
+ ...expand.observationFields(),positionState:text('position_state',{enum:['verified','unknown','conflict']}).notNull(),
+ applyExactOwnerId:integer('apply_exact_owner_id'),applyExactState:text('apply_exact_state',{enum:['captured','uncaptured']}),applySqlFactTitleState:text('apply_sql_fact_title_state',{enum:['captured','uncaptured']}),
+ ...candidateScopeFields(),processExactOwnerId:integer('process_exact_owner_id'),processExactState:text('process_exact_state',{enum:['captured','uncaptured']}),processSqlFactTitleState:text('process_sql_fact_title_state',{enum:['captured','uncaptured']}),
+})

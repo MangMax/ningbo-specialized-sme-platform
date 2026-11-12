@@ -1,9 +1,13 @@
+import { sqliteConnection } from './target-connection'
+import { processWriteObservation, storedProcessProjection } from './process-stored-schema'
+import { processMaterialization, capturedProcessValues } from './process-materialization'
+import { verifyFingerprint } from './fingerprint-verifier'
 import { candidateObservationValues, verifyCandidateObservation } from './candidate-scope-write'
 import { candidateScopeObservation } from './candidate-scope-schema'
 /** W2a explicit finalized-target transaction seam. No public import routing. */
 import { capturePhase, nextObservationId, captureFingerprintBasis, assertCapturedInput } from './fingerprint-capture'
 import { createHash } from 'node:crypto'
-import { and, eq } from 'drizzle-orm'
+import { and, eq, sql } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import type { RosterImportRelation } from '../roster-import-client'
 import { targetSchema as s } from './target-schema'
@@ -28,7 +32,12 @@ function positive(value: number) {
 /** A nested SQLite savepoint makes any failure atomic even if an outer caller catches it. */
 export function writeProcessTarget<S extends Record<string, unknown>>(db: BetterSQLite3Database<S>, input: ProcessTargetInput) {
   const capturing = capturePhase(db)
+  const stored=db.get<{user_version:number}>(sql`PRAGMA user_version`)?.user_version===71610
+  const rawText=input.row.rawFields==null?null:JSON.stringify(input.row.rawFields)
+  const materialized=stored?processMaterialization(db,input.row,rawText):null
+  if(materialized&&((input.assignment.nameRaw??null)!==materialized.nameRaw||(input.assignment.usccRaw??null)!==materialized.usccRaw))throw new Error('process_stored_conflict: revision1 materialization mismatch')
   return db.transaction(tx => {
+    if(stored)tx.run(sql`PRAGMA defer_foreign_keys=ON`)
     positive(input.collectionId); positive(input.position.sequenceNo)
     for (const id of [input.position.pageId, input.position.pageRowNo, input.assignment.enterpriseId, input.assignment.commandReceiptId, input.row.enterpriseId]) if (id != null) positive(id)
     if (input.position.pageRowNo != null && input.position.pageId == null) throw new Error('Page row requires page')
@@ -57,25 +66,26 @@ export function writeProcessTarget<S extends Record<string, unknown>>(db: Better
       const alias = tx.select().from(s.platformLegacyRelationAlias).where(eq(s.platformLegacyRelationAlias.observationId, existing.id)).get()
       if (!alias) throw new Error('Missing observation alias')
       verifyCandidateObservation(tx, existing.id)
+      if(stored)verifyFingerprint(sqliteConnection(tx),{observationId:existing.id,collectionId:existing.collectionId,relationAlias:alias.oldId})
       positive(alias.oldId)
       return { observationId: existing.id, recordId: existing.recordId, versionId: existing.versionId, relationAlias: alias.oldId, reused: true }
     }
     const observationId = capturing ? nextObservationId(tx) : undefined
     if (capturing) captureFingerprintBasis(tx, observationId!, 'target-command-v1', inputBytes)
     const { recordId, versionId, now } = ensureProcessTargetContent(tx, plan)
+    if(stored)tx.insert(s.platformObservationAssignment).values({...input.assignment,observationId:observationId!,revision:1}).run()
     const candidateValues = candidateObservationValues(tx, collection, input.position.sequenceNo)
-    const observation = tx.insert(candidateValues.candidateScopeState ? candidateScopeObservation : s.platformBusinessObservation).values({ ...candidateValues, id: observationId, collectionId: collection.id, ...input.position, sourceRelationKey: input.row.relationKey ?? null, recordId, versionId, identityState: plan.identityState, contentState: plan.contentState, keySource: plan.keySource, projectionRuleVersion: PLATFORM_PROJECTION_RULE, inputFingerprint: fingerprint, indexedAt: now }).returning().get()
+    const observation = tx.insert(stored?processWriteObservation:candidateValues.candidateScopeState ? candidateScopeObservation : s.platformBusinessObservation).values({ ...candidateValues,...(stored?{processExactOwnerId:observationId,processExactState:'captured' as const,processSqlFactTitleState:'captured' as const}:{}), id: observationId, collectionId: collection.id, ...input.position, sourceRelationKey:materialized?materialized.sourceRelationKey:input.row.relationKey??null, recordId, versionId, identityState: plan.identityState, contentState: plan.contentState, keySource: plan.keySource, projectionRuleVersion: PLATFORM_PROJECTION_RULE, inputFingerprint: fingerprint, indexedAt: now }).returning().get()
     positive(observation.id)
     const assignment = { ...input.assignment, observationId: observation.id, revision: 1 }
-    tx.insert(s.platformObservationAssignment).values(assignment).run()
-    const rawText = raw === null ? null : JSON.stringify(raw)
+    if(!stored)tx.insert(s.platformObservationAssignment).values(assignment).run()
     const rawArchive = insertArchiveValue(tx, rawText === null ? { storageClass: 'null', bytes: null, createdAt: now } : { storageClass: 'text', bytes: Buffer.from(rawText), createdAt: now })
     bindArchive(tx, { kind: 'observation', ownerId: observation.id, field: 'rawFields', archiveId: rawArchive })
     const sourceArchive = insertArchiveValue(tx, input.row.sourceText == null ? { storageClass: 'null', bytes: null, createdAt: now } : { storageClass: 'text', bytes: Buffer.from(input.row.sourceText), createdAt: now })
     bindArchive(tx, { kind: 'observation', ownerId: observation.id, field: 'sourceText', archiveId: sourceArchive })
     sealArchiveOwner(tx, { kind: 'observation', ownerId: observation.id })
     const title = raw?.rdjb
-    const observationProjection = tx.insert(s.platformBusinessProjection).values({ observationId: observation.id, basis: raw === null ? 'unavailable' : 'observation_reconciliation', parseState: raw === null ? 'absent' : 'valid', sourceArchiveId: rawArchive, ...(plan.businessProjection ?? parseBusinessProcess(raw)), ruleVersion: BUSINESS_PROJECTION_RULE, sourceTitleKind: sourceValueKind(title), sourceTitleText: typeof title === 'string' ? title : null, sourceTitleNumberText: typeof title === 'number' ? String(title) : null, sourceTitleBoolean: typeof title === 'boolean' ? Number(title) : null, sourceTitleRuleVersion: 't05b-source-projections-v1', ...sourceFieldComparison('business_list', { province: input.row.province ?? null, status: input.row.status ?? null, batch: input.row.batch ?? null, declareKind: input.row.declareKind ?? null, appliedAt: input.row.appliedAt ?? null, awardBatchLabel: input.row.awardBatchLabel ?? null, year: input.row.year ?? null }, raw, raw === null ? 'absent' : 'valid') }).returning({ id: s.platformBusinessProjection.id }).get()
+    const observationProjection = tx.insert(stored?storedProcessProjection:s.platformBusinessProjection).values({...(materialized?capturedProcessValues(materialized):{}), observationId: observation.id, basis: raw === null ? 'unavailable' : 'observation_reconciliation', parseState: raw === null ? 'absent' : 'valid', sourceArchiveId: rawArchive, ...(plan.businessProjection ?? parseBusinessProcess(raw)), ruleVersion: BUSINESS_PROJECTION_RULE, sourceTitleKind: sourceValueKind(title), sourceTitleText: typeof title === 'string' ? title : null, sourceTitleNumberText: typeof title === 'number' ? String(title) : null, sourceTitleBoolean: typeof title === 'boolean' ? Number(title) : null, sourceTitleRuleVersion: 't05b-source-projections-v1', ...sourceFieldComparison('business_list', { province: input.row.province ?? null, status: input.row.status ?? null, batch: input.row.batch ?? null, declareKind: input.row.declareKind ?? null, appliedAt: input.row.appliedAt ?? null, awardBatchLabel: input.row.awardBatchLabel ?? null, year: input.row.year ?? null }, raw, raw === null ? 'absent' : 'valid') }).returning({ id: s.platformBusinessProjection.id }).get()
     positive(observationProjection.id)
     const relationAlias = allocateLegacyAlias(tx, { kind: 'relation', observationId: observation.id })
     return { observationId: observation.id, recordId, versionId, relationAlias, reused: false }
