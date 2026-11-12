@@ -99,7 +99,20 @@ export function verifyOriginalCommand(target:Database.Database,predecessor:Datab
     if(wanted.length!==found.length)throw new Error('Command archive owner inventory conflict')
     for(const w of wanted) {
       const v=found.find(f=>f.ref.field===w.ref.field)
-      if(!v||v.ref.sealed!==1||v.value.storageClass!==w.value.storageClass||!isDeepStrictEqual(v.value.bytes,w.value.bytes)||v.value.sha256!==w.value.sha256||v.value.byteLength!==w.value.byteLength)throw new Error('Command raw/source bytes conflict')
+      let expectedBytes=w.value.bytes
+      if(w.ref.field==='legacyRowSnapshot' && expectedBytes) {
+        // Reconstruction generates a new alias/time, just as planned.id/indexedAt above.
+        // Map only those immutable observation coordinates; all original payload cells still compare byte-for-byte.
+        const alias=actual.select().from(s.platformLegacyRelationAlias).where(eq(s.platformLegacyRelationAlias.observationId,observation.id)).get()
+        if(!alias||!observation.indexedAt)throw new Error('Command snapshot coordinates missing')
+        const snapshot=z.object({encoding:z.literal('t05a-sqlite-cells-v1'),fields:z.array(z.object({name:z.string(),storageClass:z.string(),hex:z.string()}))}).parse(JSON.parse(expectedBytes.toString('utf8')))
+        for(const cell of snapshot.fields) {
+          if(cell.name==='id')cell.hex=Buffer.from(String(alias.oldId)).toString('hex').toUpperCase()
+          if(cell.name==='created_at')cell.hex=Buffer.from(observation.indexedAt).toString('hex').toUpperCase()
+        }
+        expectedBytes=Buffer.from(JSON.stringify(snapshot))
+      }
+      if(!v||v.ref.sealed!==1||v.value.storageClass!==w.value.storageClass||!isDeepStrictEqual(v.value.bytes,expectedBytes)||v.value.sha256!==(expectedBytes===null?null:hash(expectedBytes))||v.value.byteLength!==(expectedBytes===null?null:expectedBytes.length))throw new Error('Command raw/source bytes conflict')
     }
     if((planned.recordId===null)!==(observation.recordId===null)||(planned.versionId===null)!==(observation.versionId===null))throw new Error('Command mapping conflict')
     if(planned.recordId!==null) {

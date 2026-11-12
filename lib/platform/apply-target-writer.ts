@@ -1,3 +1,4 @@
+import { captureRelationEvidence } from './relation-evidence-snapshot'
 import { candidateObservationValues, verifyCandidateObservation } from './candidate-scope-write'
 import { candidateScopeObservation } from './candidate-scope-schema'
 import { sqliteConnection } from './target-connection'
@@ -77,10 +78,11 @@ export function writeApplyTarget<S extends Record<string, unknown>>(db: BetterSQ
     bindArchive(tx, { kind: 'observation', ownerId: observation.id, field: 'rawFields', archiveId: rawArchive })
     const sourceArchive = insertArchiveValue(tx, input.row.sourceText == null ? { storageClass: 'null', bytes: null, createdAt: now } : { storageClass: 'text', bytes: Buffer.from(input.row.sourceText), createdAt: now })
     bindArchive(tx, { kind: 'observation', ownerId: observation.id, field: 'sourceText', archiveId: sourceArchive })
+    const relationAlias = allocateLegacyAlias(tx, { kind: 'relation', observationId: observation.id })
+    captureRelationEvidence(tx,{observationId:observation.id,collectionId:collection.id,relationAlias,row:input.row,assignment,createdAt:now})
     sealArchiveOwner(tx, { kind: 'observation', ownerId: observation.id })
     const title = raw?.rdjb
     tx.insert(stored ? storedApplyProjection : s.platformApplyProjection).values({ ...(materialized ? capturedApplyValues(materialized):{}), observationId: observation.id, basis: raw === null ? 'unavailable' : 'observation_reconciliation', parseState: raw === null ? 'absent' : 'valid', sourceArchiveId: rawArchive, ...(plan.applyRecord ?? parseApplyRecord(raw)), ruleVersion: APPLY_PROJECTION_RULE, sourceTitleKind: sourceValueKind(title), sourceTitleText: typeof title === 'string' ? title : null, sourceTitleNumberText: typeof title === 'number' ? String(title) : null, sourceTitleBoolean: typeof title === 'boolean' ? Number(title) : null, sourceTitleRuleVersion: 't05b-source-projections-v1', ...sourceFieldComparison('apply_list', { province: input.row.province ?? null, status: input.row.status ?? null, batch: input.row.batch ?? null, declareKind: input.row.declareKind ?? null, appliedAt: input.row.appliedAt ?? null, awardBatchLabel: input.row.awardBatchLabel ?? null, year: input.row.year ?? null }, raw, raw === null ? 'absent' : 'valid') }).run()
-    const relationAlias = allocateLegacyAlias(tx, { kind: 'relation', observationId: observation.id })
     return { observationId: observation.id, recordId, versionId, relationAlias, reused: false, ...(stored?{materializationRule:APPLY_MATERIALIZATION_RULE}:{}) }
   })
 }
