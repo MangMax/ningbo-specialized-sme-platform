@@ -1469,9 +1469,8 @@ export const platformRecognizedProjection = definePlatformRecognizedProjection((
  * ── 时态化 ────────────────────────────────────────────────────────────────
  * 唯一键含 `recordedAt`:**旧解释不丢**,新解释形成新行;「当前解释」= `recordedAt` 最新那条。
  */
-export const differenceReason = sqliteTable(
-  'difference_reason',
-  {
+/** Shared decision fields; explicit target changes only the physical evidence FKs. */
+export function differenceReasonFields() { return {
     id: integer('id').primaryKey({ autoIncrement: true }),
     enterpriseId: integer('enterprise_id')
       .notNull()
@@ -1517,9 +1516,6 @@ export const differenceReason = sqliteTable(
       ],
     }),
     measureNote: text('measure_note'),
-    /** 证据:平台查询记录 / 平台关系记录。 */
-    evidenceQueryId: integer('evidence_query_id').references(() => platformQuery.id),
-    evidenceRelationId: integer('evidence_relation_id').references(() => platformRelation.id),
     /** 迁入承载:原城市 / 原称号 / 年份 / 批次。缺项留空待核。 */
     movedInCity: text('moved_in_city'),
     movedInTitleCode: text('moved_in_title_code').references(() => title.code),
@@ -1536,7 +1532,6 @@ export const differenceReason = sqliteTable(
     recordedAt: text('recorded_at').notNull(),
     /** #102: explicit lifecycle metadata; null denotes a historical import, never an inferred decision. */
     lifecycleAction: text('lifecycle_action', { enum: ['replace', 'withdraw'] }),
-    previousId: integer('previous_id').references((): AnySQLiteColumn => differenceReason.id),
     /** #108: a browser review genuinely has no recorded actor; null is not a placeholder identity. */
     actor: text('actor', { mode: 'json' }).$type<{ type: 'user' | 'agent'; id: string } | null>(),
     basis: text('basis'),
@@ -1547,6 +1542,15 @@ export const differenceReason = sqliteTable(
     createdAt: text('created_at')
       .notNull()
       .$defaultFn(() => new Date().toISOString()),
+} }
+export const differenceReason = sqliteTable(
+  'difference_reason',
+  {
+    ...differenceReasonFields(),
+    /** 证据:平台查询记录 / 平台关系记录。 */
+    evidenceQueryId: integer('evidence_query_id').references(() => platformQuery.id),
+    evidenceRelationId: integer('evidence_relation_id').references(() => platformRelation.id),
+    previousId: integer('previous_id').references((): AnySQLiteColumn => differenceReason.id),
   },
   (t) => [
     // 同企业 × 称号 × 方向 × 时点唯一:时点不同 → 并存(旧解释不丢)。

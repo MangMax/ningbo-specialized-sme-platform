@@ -1,3 +1,4 @@
+import { transferDifferenceReferences } from '../upgrade/difference-references'
 import Database from 'better-sqlite3'
 import { createServer } from 'node:http'
 import { createApp, toNodeListener, defineEventHandler, getQuery, setHeader, createError } from 'h3'
@@ -5,7 +6,7 @@ import { targetSchema } from '../lib/platform/target-schema'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { copyFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi, describe } from 'vitest'
 import { eq } from 'drizzle-orm'
 import { readRecordComparison, readRecordComparisonSources } from '../server/utils/record-comparison-read'
 import { preflightComparisonScopeProofs, commitComparisonScopeProofs, readComparisonScopeProof, resolveVerifiedComparisonEvidence, type ProofRequest } from '../server/utils/comparison-scope-proof'
@@ -37,6 +38,7 @@ function manual(database: typeof db, key: string, operations: CorrespondenceRequ
   const request: CorrespondenceRequest = { idempotencyKey: key, sourceIdentity: 'synthetic748/' + key, actor: { type: 'user', id: 'reviewer' }, basis: 'original normal source checked', ruleId: 'manual', ruleVersion: '1', operations, proofIds }
   return commitRecordCorrespondences(database, request, preflightRecordCorrespondences(database, request).planHash)
 }
+describe.each([71611,71612])('completed target %i', phase => {
 beforeAll(async () => {
   fixture = await witnessReaderFixture(source => {
     const old = drizzle(source, { schema })
@@ -112,6 +114,10 @@ beforeAll(async () => {
   const previous = join(fixture.root, 'comparison-71610.sqlite')
   copyFileSync(fixture.target, previous)
   transferCorrespondence({ source: previous, target: fixture.target, runId: 'comparison748' })
+  if (phase === 71612) {
+    const fixed = join(fixture.root,'difference-fixed-71611.sqlite'); copyFileSync(fixture.target,fixed)
+    transferDifferenceReferences({source:fixed,target:fixture.target,runId:'difference749'})
+  }
   // Reopen the unchanged old normal service as the independent baseline.
   const legacy = new Database(fixture.legacySource, { readonly: true })
   fixture.old = legacy
@@ -348,4 +354,6 @@ it('preserves official scope attestations and formal export context without prom
   expect(await readRecordComparison(db, selected)).toEqual(expected)
   expect(expected.businessGroups.rows.flatMap(g => g.versions.flatMap(v => v.observations)).find(r => r.relation.id === 403)?.correspondences).toMatchObject([{ type: 'recognized_export', requiresRevalidation: false }])
   expect(getRecordComparison(db, { ...input, exportBatchIds: [] }).rows.find(r => r.event.id === 14)?.correspondences).toEqual([])
+})
+
 })

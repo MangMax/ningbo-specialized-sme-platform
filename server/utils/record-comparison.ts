@@ -1,3 +1,4 @@
+import { differenceEvidenceColumns } from '../../lib/platform/difference-reference-target'
 import { platformRowTitle } from '../../lib/platform/row-title'
 import { registeredFileAtLocator } from './file-read-identity'
 import { createHash } from 'node:crypto'
@@ -359,7 +360,7 @@ export function previewRecordCorrespondenceImpact(db: Db, input: RecordCompariso
   const { legacyRows, total, pageReasons } = db.transaction(tx => ({
     legacyRows: tx.select({ count: sql<number>`count(*)` }).from(reason).where(cutoff).get()!.count,
     total: tx.select({ count: sql<number>`count(*)` }).from(reason).where(filtered).get()!.count,
-    pageReasons: tx.select({ id: reason.id, enterpriseId: reason.enterpriseId, titleCode: reason.titleCode, direction: reason.direction, status: reason.status, reasonCode: reason.reasonCode, measureCode: reason.measureCode, evidenceQueryId: reason.evidenceQueryId, evidenceRelationId: reason.evidenceRelationId, verificationStatus: reason.verificationStatus, recordedAt: reason.recordedAt })
+    pageReasons: tx.select({ id: reason.id, enterpriseId: reason.enterpriseId, titleCode: reason.titleCode, direction: reason.direction, status: reason.status, reasonCode: reason.reasonCode, measureCode: reason.measureCode, ...differenceEvidenceColumns(tx), verificationStatus: reason.verificationStatus, recordedAt: reason.recordedAt })
       .from(reason).where(filtered).orderBy(reason.id).limit(input.pageSize).offset((input.page - 1) * input.pageSize).all(),
   }))
   const owners = new Map(db.selectDistinct({ id: schema.enterprise.id, uscc: schema.enterprise.usccNorm }).from(schema.enterprise).innerJoin(schema.record, eq(schema.record.enterpriseId, schema.enterprise.id)).where(and(eq(schema.record.source, 'jxj'), input.enterpriseId == null ? undefined : eq(schema.enterprise.id, input.enterpriseId), input.titleCode ? eq(schema.record.titleCode, input.titleCode) : undefined)).all().map(row => [row.id, row.uscc]))

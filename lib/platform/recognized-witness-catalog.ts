@@ -45,8 +45,8 @@ export function witnessCatalogPresent(t:Database.Database) {
 }
 export function witnessInstalled(t:Database.Database) {
  const phase=Number(t.pragma('user_version',{simple:true}))
- if(phase!==71609&&phase!==71610&&phase!==71611)return false
- if(phase===71611)requireH1cReady(t)
+ if(phase!==71609&&phase!==71610&&phase!==71611&&phase!==71612)return false
+ if((phase===71611||phase===71612))requireH1cReady(t)
  if(!witnessCatalogPresent(t)){if(phase===71609)return false;throw new Error('Witness migration incomplete; necessary capture columns are missing')}
  if(!migrationFinished(t,WITNESS_TRANSFORM))throw new Error('Witness migration incomplete; finish witness capture before use')
  return true

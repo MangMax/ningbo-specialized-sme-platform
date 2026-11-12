@@ -1,3 +1,4 @@
+import { differencePublicColumns } from '../platform/difference-reference-target'
 /** #132 differences-only read plan. No persisted or cross-request cache. */
 import { eq, inArray, sql } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
@@ -53,7 +54,7 @@ export function listRosterDifferences(db: Db, filter: RosterDifferenceFilter = {
     const selected = rows.slice((page - 1) * pageSize, page * pageSize)
     if (!selected.length) return { rows: [], counts, total: rows.length, page, pageSize }
     const selectedIds = selected.flatMap(r => r.explanationId == null ? [] : [r.explanationId])
-    const explanations = new Map(db.select().from(d).where(inArray(d.id, selectedIds)).all().map(r => [r.id, r]))
+    const explanations = new Map(db.select(differencePublicColumns(db)).from(d).where(inArray(d.id, selectedIds)).all().map(r => [r.id, r]))
     const enterpriseIds = [...new Set(selected.map(r => r.enterpriseId))]
     const districts = new Map(db.all<{ id: number; district: string | null }>(sql`select e.id,coalesce(e.district,
       (select district from record r where r.enterprise_id=e.id and r.district is not null and r.district!='' order by r.id limit 1)) district

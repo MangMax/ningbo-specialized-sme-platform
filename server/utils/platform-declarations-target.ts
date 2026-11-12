@@ -36,7 +36,7 @@ const isolated = or(ne(o.identityState, 'resolved'), ne(o.contentState, 'verifie
  * PRAGMA is schema infrastructure; no archive or legacy entity is consulted. */
 function gate(db: Db, domain?: SQL, annualFacts = false) {
     const phase = db.get<{ user_version: number }>(sql`PRAGMA user_version`)?.user_version;
-    if (phase !== 71608 && !(annualFacts && phase === 71611 && processStoredInstalled(sqliteConnection(db))))
+    if (phase !== 71608 && !(annualFacts && (phase === 71611 || phase === 71612) && processStoredInstalled(sqliteConnection(db))))
         fail(409, 'apply_target_phase', 'Declaration reader requires 71608');
     const missing = db.select({ id: o.id }).from(o).innerJoin(c, eq(c.id, o.collectionId)).leftJoin(p, eq(p.observationId, o.id))
         .where(and(eq(c.interface, 'apply_list'), domain, or(isNull(p.id), ne(p.exactStoredState, 'captured'), ne(p.sqlFactTitleState, 'captured'), isNull(p.exactStoredState), isNull(p.sqlFactTitleState)))).limit(1).get();

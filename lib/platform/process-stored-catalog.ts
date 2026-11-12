@@ -4,14 +4,14 @@ import { hasColumns, migrationFinished, requireH1cReady } from './h1c-catalog'
 export const PROCESS_STORED_TRANSFORM='process-exact-stored-offline-v1'
 export function processStoredInstalled(t:Database.Database) {
  const phase=Number(t.pragma('user_version',{simple:true}))
- if(phase!==71610&&phase!==71611)return false
- if(phase===71611)requireH1cReady(t)
+ if(phase!==71610&&phase!==71611&&phase!==71612)return false
+ if((phase===71611||phase===71612))requireH1cReady(t)
  if(!hasColumns(t,'platform_business_projection',['observation_id','exact_status','exact_declare_kind','exact_applied_at','exact_year','exact_title_raw','exact_batch','exact_award_batch_label','exact_province','exact_stored_state','exact_stored_rule','exact_stored_origin','exact_stored_reason','sql_fact_title','sql_fact_title_state','sql_fact_title_rule','sql_fact_title_reason'])||!hasColumns(t,'platform_business_observation',['process_exact_owner_id','process_exact_state','process_sql_fact_title_state'])||!migrationFinished(t,PROCESS_STORED_TRANSFORM))throw new Error('Process migration incomplete; finish stored process migration before use')
  return true
 }
 export function ensureProcessStoredReady(t:Database.Database) {
  const phase=Number(t.pragma('user_version',{simple:true}))
- if(phase===71610||phase===71611)processStoredInstalled(t)
+ if(phase===71610||(phase===71611||phase===71612))processStoredInstalled(t)
 }
 
 export const processStoredBarrierSql=`CREATE TRIGGER platform_process_stored_no_update BEFORE UPDATE ON platform_business_projection BEGIN SELECT RAISE(ABORT,'immutable process stored projection'); END;

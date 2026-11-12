@@ -1,3 +1,4 @@
+import { transferDifferenceReferences } from '../upgrade/difference-references'
 import { eq } from 'drizzle-orm'
 import { z } from 'zod'
 import { handleRecordCorrespondenceRequest } from '../server/utils/record-correspondence-api'
@@ -8,7 +9,7 @@ import Database from 'better-sqlite3'
 import {drizzle} from 'drizzle-orm/better-sqlite3'
 import {copyFileSync} from 'node:fs'
 import {join} from 'node:path'
-import {afterAll,afterEach,beforeAll,beforeEach,expect,it} from 'vitest'
+import {afterAll,afterEach,beforeAll,beforeEach,expect,it,describe} from 'vitest'
 import {processReaderFixture} from './helpers/process-target-734'
 import {transferCorrespondence} from '../upgrade/correspondence'
 import {createOfflineSnapshot} from '../upgrade/offline-snapshot'
@@ -19,6 +20,7 @@ let f:Awaited<ReturnType<typeof processReaderFixture>>,t:Database.Database,db:Re
 const statements:string[]=[]
 let proofId: number
 let currentProofRequest:ProofRequest
+describe.each([71611,71612])('completed target %i', phase => {
 beforeAll(async()=>{
  f=await processReaderFixture(false, source => {
   source.exec("INSERT INTO platform_query(id,interface,query_key,rdjb,title_code,queried_at,status,created_at) VALUES(114,'business_list','normal','2','specialized_sme','2026-01-01','success','c')")
@@ -54,6 +56,10 @@ beforeAll(async()=>{
  const source=join(f.root,'runtime-source.sqlite'),target=join(f.root,'runtime-target.sqlite')
  await createOfflineSnapshot(f.target,source);copyFileSync(source,target)
  transferCorrespondence({source,target,runId:'runtime745'})
+  if (phase === 71612) {
+    const fixed = join(f.root,'difference-fixed-71611.sqlite'); copyFileSync(target,fixed)
+    transferDifferenceReferences({source:fixed,target:target,runId:'difference749'})
+  }
  t=new Database(target,{verbose:q=>statements.push(String(q))});t.pragma('foreign_keys=ON');db=drizzle(t,{schema})
 })
 beforeEach(()=>t.exec('SAVEPOINT correspondence_case'))
@@ -211,4 +217,6 @@ it('reuses shared current proof coverage within each page and refs request',()=>
  commitComparisonScopeProofs(db,revoke,preflightComparisonScopeProofs(db,revoke).planHash)
  expect(readRefs(1,'specialized_sme').filter(row=>row.relationId===201)).toMatchObject([{requiresRevalidation:true},{requiresRevalidation:true}])
  expect(listRecordCorrespondenceRefs(db,{relationId:201})).toMatchObject([{requiresRevalidation:true},{requiresRevalidation:true}])
+})
+
 })

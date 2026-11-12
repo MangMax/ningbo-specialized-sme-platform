@@ -10,8 +10,8 @@ export const recognizedStoredTriggers = `CREATE TRIGGER recognized_stored_update
  BEGIN SELECT RAISE(ABORT,'captured recognized stored title required'); END;`
 export function recognizedStoredInstalled(t:Database.Database) {
  const phase=Number(t.pragma('user_version',{simple:true}))
- if(phase!==71609&&phase!==71610&&phase!==71611)return false
- if(phase===71611)requireH1cReady(t)
+ if(phase!==71609&&phase!==71610&&phase!==71611&&phase!==71612)return false
+ if((phase===71611||phase===71612))requireH1cReady(t)
  if(!hasColumns(t,'platform_recognized_projection',['observation_id','exact_title_raw','exact_title_state','exact_title_origin','exact_title_archive_id','exact_title_sha256'])){if(phase===71609)return false;throw new Error('Recognized migration incomplete; necessary title columns are missing')}
  if(!migrationFinished(t,RECOGNIZED_STORED_RULE))throw new Error('Recognized migration incomplete; finish stored title capture before use')
  return true
