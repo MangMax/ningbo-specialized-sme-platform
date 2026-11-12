@@ -11,8 +11,8 @@ import { platformQueryResultShape } from './live-query'
 import { relationEvidenceColumns } from './relation-evidence-snapshot'
 const cellSchema = z.object({name:z.string(),storageClass:z.enum(['null','text','blob','integer','real']),hex:z.string().regex(/^(?:[a-fA-F0-9]{2})*$/),real64be:z.string().regex(/^[a-fA-F0-9]{16}$/).optional()})
 const commandProvenanceSchema=z.object({interface:z.enum(['apply_list','business_list','recognized_list']),queryKey:z.string(),rdjb:z.string().optional(),queriedAt:z.string(),reuseExisting:z.literal(true).optional(),rawResponse:z.string().nullish(),collectionEvidence:z.object(platformQueryResultShape).nullish()})
-const snapshotSchema=z.object({encoding:z.literal('t05a-sqlite-cells-v1'),fields:z.array(cellSchema)})
-function cellExpression(c:z.infer<typeof cellSchema>):SQL {
+export const snapshotSchema=z.object({encoding:z.literal('t05a-sqlite-cells-v1'),fields:z.array(cellSchema)})
+export function cellExpression(c:z.infer<typeof cellSchema>):SQL {
   const bytes=Buffer.from(c.hex,'hex')
   switch(c.storageClass) {
     case 'null': return sql`NULL`
@@ -33,18 +33,25 @@ function integer(value:number|undefined,fallback:number,min:number,max=Number.MA
 }
 /** T02 absence is meaningful only within a complete, committed, known caller field set.
  * This is evidence authorization, never a business fallback or an online archive repair. */
-function provenancePresence<S extends Record<string,unknown>>(db:BetterSQLite3Database<S>,collectionId:number,queryId:number) {
-  const c=db.select().from(s.platformCollection).where(eq(s.platformCollection.id,collectionId)).get()
+export type TargetProvenanceCapture = {
+  collection: typeof s.platformCollection.$inferSelect
+  refs: {field:string;sealed:number;archiveId:number|null;storageClass:string|null;byteLength:number|null;sha256:string|null}[]
+  receipts: {lastOldId:number;copiedCount:number;batchDigest:string;sourceSnapshotSha256:string;sourceManifestSha256:string}[]
+  requestBytes: Buffer | null
+}
+/** Optional request-local facts let display hydration share the exact H1a authentication without N+1 reads. */
+export function provenancePresence<S extends Record<string,unknown>>(db:BetterSQLite3Database<S>,collectionId:number,queryId:number,loaded?:TargetProvenanceCapture) {
+  const c=loaded?.collection??db.select().from(s.platformCollection).where(eq(s.platformCollection.id,collectionId)).get()
   if(!c)throw new Error('Missing provenance collection lifecycle')
   const r=s.platformCollectionArchiveRef,v=s.platformArchiveValue
-  const refs=db.select({field:r.field,sealed:r.sealed,archiveId:v.id,storageClass:v.storageClass,byteLength:v.byteLength,sha256:v.sha256}).from(r).leftJoin(v,eq(v.id,r.archiveId)).where(eq(r.ownerId,collectionId)).all()
+  const refs=loaded?.refs??db.select({field:r.field,sealed:r.sealed,archiveId:v.id,storageClass:v.storageClass,byteLength:v.byteLength,sha256:v.sha256}).from(r).leftJoin(v,eq(v.id,r.archiveId)).where(eq(r.ownerId,collectionId)).all()
   if(refs.some(ref=>ref.sealed!==1||ref.archiveId===null||ref.storageClass===null))throw new Error('Incomplete sealed provenance owner')
   const evidence=refs.find(ref=>ref.field==='collectionEvidence')
   const hasProvenance=refs.some(ref=>ref.field==='legacyProvenance')
   const complete=(fields:string[])=>refs.length===fields.length&&fields.every(field=>refs.some(ref=>ref.field===field))
   if(c.ruleVersion==='t04-collection-v1') {
     const run=s.platformMigrationRun,cp=s.platformMigrationCheckpoint
-    const receipts=db.select({lastOldId:cp.lastOldId,copiedCount:cp.copiedCount,batchDigest:cp.batchDigest,sourceSnapshotSha256:run.sourceSnapshotSha256,sourceManifestSha256:run.sourceManifestSha256}).from(run).innerJoin(cp,eq(cp.runId,run.runId)).where(and(eq(run.transformVersion,'t04-collection-v1'),eq(run.state,'complete'),eq(cp.phase,'collections'),eq(cp.sourceTable,'platform_query'))).all()
+    const receipts=loaded?.receipts??db.select({lastOldId:cp.lastOldId,copiedCount:cp.copiedCount,batchDigest:cp.batchDigest,sourceSnapshotSha256:run.sourceSnapshotSha256,sourceManifestSha256:run.sourceManifestSha256}).from(run).innerJoin(cp,eq(cp.runId,run.runId)).where(and(eq(run.transformVersion,'t04-collection-v1'),eq(run.state,'complete'),eq(cp.phase,'collections'),eq(cp.sourceTable,'platform_query'))).all()
     if(queryId!==collectionId||receipts.length!==1||!receipts.every(receipt=>receipt.lastOldId>=collectionId&&receipt.copiedCount>0&&[receipt.batchDigest,receipt.sourceSnapshotSha256,receipt.sourceManifestSha256].every(hash=>/^[0-9a-f]{64}$/.test(hash))))throw new Error('Missing completed T04 provenance receipt')
     if(!complete(hasProvenance?['rawResponse','collectionEvidence','legacyProvenance']:['rawResponse','collectionEvidence']))throw new Error('Incomplete T04 provenance field set')
     const expectedPresence=c.provenanceState==='legacy_supplement'||c.provenanceState==='conflict'
@@ -61,7 +68,8 @@ function provenancePresence<S extends Record<string,unknown>>(db:BetterSQLite3Da
     if(request?.storageClass!=='text'||!request.byteLength||!request.sha256)throw new Error('Missing original command provenance input')
     const parts:Buffer[]=[]
     let offset=0
-    for(;;) {
+    if(loaded?.requestBytes)parts.push(loaded.requestBytes)
+    else for(;;) {
       const chunk=readOwnerArchive(db,{kind:'collection',ownerId:collectionId,field:'request'},{offset,length:MAX_EVIDENCE_CHUNK_BYTES})
       if(!chunk||chunk.isNull)throw new Error('Missing original command provenance input')
       const bytes=Buffer.from(chunk.data,'base64');parts.push(bytes);offset+=bytes.length
@@ -80,6 +88,21 @@ function provenancePresence<S extends Record<string,unknown>>(db:BetterSQLite3Da
     return false
   }
   throw new Error('Unknown provenance lifecycle')
+}
+/** Original T04 evidence-cell grammar, shared only by explicit evidence readers. */
+export function* targetProvenanceCells(envelope:Buffer) {
+  let cursor=Buffer.byteLength('T04-PROVENANCE\n')
+  if(!envelope.subarray(0,cursor).equals(Buffer.from('T04-PROVENANCE\n')))throw new Error('Invalid original provenance envelope')
+  for(const name of ['query_id','source_identity','source_sha256','segment_index','collection','input_fingerprint','import_batch_id','created_at']) {
+    const end=envelope.indexOf(10,cursor)
+    const match=/^(\w+) (null|text|blob|integer|real) (\d+)$/.exec(envelope.subarray(cursor,end).toString())
+    if(end<0||!match||match[1]!==name)throw new Error('Invalid original provenance cell')
+    const size=Number(match[3]),begin=end+1,tail=begin+size
+    if(!Number.isSafeInteger(size)||tail>=envelope.length||envelope[tail]!==10)throw new Error('Truncated original provenance cell')
+    yield cellSchema.parse({name,storageClass:match[2],hex:envelope.subarray(begin,tail).toString('hex')})
+    cursor=tail+1
+  }
+  if(cursor!==envelope.length)throw new Error('Trailing original provenance cells')
 }
 /** Snapshot is deliberately whole-row: O(snapshot bytes + full computed DTO) before SQLite slices.
  * Raw/evidence ranges stay in SQLite. Provenance authorizes full request/envelope owners;
@@ -119,19 +142,12 @@ export function readTargetPlatformEvidence<S extends Record<string,unknown>>(db:
           if(!part.hasMore)break
         }
         const envelope=Buffer.concat(parts)
-        let cursorByte=Buffer.byteLength('T04-PROVENANCE\n')
-        if(!envelope.subarray(0,cursorByte).equals(Buffer.from('T04-PROVENANCE\n')))throw new Error('Invalid original provenance envelope')
-        for(const field of ['query_id','source_identity','source_sha256','segment_index','collection','input_fingerprint','import_batch_id','created_at']) {
-          const end=envelope.indexOf(10,cursorByte)
-          const match=/^(\w+) (null|text|blob|integer|real) (\d+)$/.exec(envelope.subarray(cursorByte,end).toString())
-          if(end<0||!match||match[1]!==field)throw new Error('Invalid original provenance cell')
-          const size=Number(match[3]),begin=end+1,tail=begin+size
-          if(!Number.isSafeInteger(size)||tail>=envelope.length||envelope[tail]!==10)throw new Error('Truncated original provenance cell')
-          if(field==='collection') {
-            const data=envelope.subarray(begin+Math.min(offset,size),begin+Math.min(offset+length,size))
-            return {queryId,field:input.field,encoding:'base64' as const,offset,byteLength:data.length,totalBytes:size,isNull:match[2]==='null',hasMore:offset+data.length<size,data:data.toString('base64')}
+        for(const cell of targetProvenanceCells(envelope)) {
+          if(cell.name==='collection') {
+            const bytes=Buffer.from(cell.hex,'hex'),size=bytes.length
+            const data=bytes.subarray(Math.min(offset,size),Math.min(offset+length,size))
+            return {queryId,field:input.field,encoding:'base64' as const,offset,byteLength:data.length,totalBytes:size,isNull:cell.storageClass==='null',hasMore:offset+data.length<size,data:data.toString('base64')}
           }
-          cursorByte=tail+1
         }
         throw new Error('Missing original provenance collection')
       }
