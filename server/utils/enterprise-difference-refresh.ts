@@ -82,7 +82,7 @@ function businessFingerprint(db: Db, enterpriseId: number, title: string, plan?:
       // recognized source-maintenance flags that the ORM decodes as booleans.
       const fields = Object.fromEntries(Object.values(getTableColumns(projection)).filter(column => columns.includes(column.name)).map(column => [column.name,sql`${column}`]))
       const versionRows = collectionId !== null ? db.select(fields).from(projection).innerJoin(targetSchema.platformBusinessObservation,eq(targetSchema.platformBusinessObservation.versionId,projection.versionId)).where(eq(targetSchema.platformBusinessObservation.collectionId,collectionId)).all()
-        : sqlite.prepare(`select ${columns.map(column => `p.${column}`).join(',')} from ${table} p join platform_business_observation o on o.version_id=p.version_id join platform_relation r on r.id=o.relation_id where r.query_id=?`).all(q.id)
+        : sqlite.prepare<[number],Record<string,unknown>>(`select ${columns.map(column => `p.${column}`).join(',')} from ${table} p join platform_business_observation o on o.version_id=p.version_id join platform_relation r on r.id=o.relation_id where r.query_id=?`).all(q.id)
       return versionRows
     })
     if (collectionId !== null) plan?.typed.set(collectionId, typed)
