@@ -43,3 +43,9 @@ writer、指纹认证和归档 FK inventory 共用同一个 catalog 判定。无
 paired not_indexed 的 reference 路径同样认证 exact cell、原归档绑定和 captured 状态。它不执行 bootstrap、不修复原值，失败仍映射为原 relation alias 的 projection_source_drift。
 
 完成回执的 target_schema_version 必须等于当前实际 catalog 摘要；不能仅按摘要长度放行。该绑定只覆盖结构，不比较会随合法写入变化的历史数据摘要。后续结构升级须显式更新对应接缝，不能继续沿用旧结构回执。
+
+## R3b #736：认定目录 handler 接线
+
+列表/详情 HTTP、list_platform_recognized_directory/get_platform_recognized_record MCP 与 filter-options 的 recognized-directory 分支使用已接受的目标 reader。71610 通过 recognized/witness/process predecessor catalog 校验，不能仅按历史 71609 数字判断兼容。输入、默认值、错误映射、no-store、MCP text/structured 序列化及旧 query/relation 别名保持。
+
+真实合成源经完整迁移链至 71610 后，在测试专用连接执行实际 handler；旧服务 oracle 保留。expand-only handler 夹具在此中间版本不满足目标前提，失败证据及替代目标覆盖分别记录于仓外 r3b。MCP handler 证据不代表 SDK transport/discovery。source-facts、资格、H/C/H3、worker/export 和全局启用仍属后续边界；启动/worker guard 不解除。该集成不能提前部署。

@@ -1,6 +1,6 @@
 import { getRouterParam, setHeader } from 'h3'
 import { useDb } from '@db'
-import { getPlatformRecognizedRecord } from '../../../utils/platform-recognized-directory'
+import { getTargetRecognizedRecord } from '../../../utils/platform-recognized-target'
 
 defineRouteMeta({
   openAPI: {
@@ -20,7 +20,7 @@ defineRouteMeta({
 export default defineEventHandler(event => {
   setHeader(event, 'cache-control', 'no-store')
   try {
-    return getPlatformRecognizedRecord(useDb(), Number(getRouterParam(event, 'recordId')))
+    return getTargetRecognizedRecord(useDb(), Number(getRouterParam(event, 'recordId')))
   } catch (error) {
     const failure = error as { statusCode?: number; code?: string; message?: string }
     throw createError({ statusCode: failure.statusCode ?? 500, statusMessage: failure.message ?? 'recognized directory detail failed' })

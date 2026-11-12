@@ -1,14 +1,14 @@
 import { getQuery, setHeader } from 'h3'
 import { useDb } from '@db'
 import { recognizedDirectoryFilterFromQuery } from '../../../lib/platform/recognized-directory'
-import { listPlatformRecognizedDirectory } from '../../utils/platform-recognized-directory'
+import { listTargetRecognizedDirectory } from '../../utils/platform-recognized-target'
 
 defineRouteMeta({
   openAPI: {
     tags: ['平台业务'],
     summary: '本地查询平台认定目录（镜像）',
     description:
-      '只读本地 recognized_list（上游 queryBusList，平台认定目录）typed 投影，不访问外部平台，不写业务数据。这是**平台认定目录镜像**，不是「当前有效企业」资格读模型：目录存在/消失或日期原值都不能推出正式有效或失效，资格仍由 /api/roster/current-enterprises 的既有算法判定。view=records 按目录业务ID组织，返回匹配内容版本、全部版本/观察计数、企业归属、观察到的明确称号范围与冲突（行称号与查询范围不一致时为 title_conflict）；view=isolated 单独返回缺编号/编号冲突/原文无法核实且无法并入任何记录的观察。rddqrq 按原值精确字符串匹配，不解析为日期；whpcyear 只接受显式正整数；whpc/szq 原值精确匹配；rdjb 使用来源查询的显式称号范围，不是逐行称号事实。未知值保持 null/原值，不猜填。筛选在 typed 投影与既有 observation/relation/query 上执行，不读取或解析 raw JSON。分页最多 200。',
+      '只读本地 recognized_list（上游 queryBusList，平台认定目录）typed 投影，不访问外部平台，不写业务数据。这是**平台认定目录镜像**，不是「当前有效企业」资格读模型：目录存在/消失或日期原值都不能推出正式有效或失效，资格仍由 /api/roster/current-enterprises 的既有算法判定。view=records 按目录业务ID组织，返回匹配内容版本、全部版本/观察计数、企业归属、观察到的明确称号范围与冲突（行称号与查询范围不一致时为 title_conflict）；view=isolated 单独返回缺编号/编号冲突/原文无法核实且无法并入任何记录的观察。rddqrq 按原值精确字符串匹配，不解析为日期；whpcyear 只接受显式正整数；whpc/szq 原值精确匹配；rdjb 使用来源查询的显式称号范围，不是逐行称号事实。未知值保持 null/原值，不猜填。筛选在目标 typed 投影与 observation/collection/assignment 上执行，relation/query ID 保留旧命名空间别名，不读取或解析 raw JSON。分页最多 200。',
     parameters: [
       { name: 'titleRaw', in: 'query', schema: { type: 'string' }, description: '每条原始 rdjb 的字符串原值，精确匹配；独立于来源查询 rdjb 范围，未知值保留，缺失不匹配。' },
       { name: 'view', in: 'query', schema: { type: 'string', enum: ['records', 'isolated'], default: 'records' } },
@@ -33,7 +33,7 @@ defineRouteMeta({
 export default defineEventHandler(event => {
   setHeader(event, 'cache-control', 'no-store')
   try {
-    return listPlatformRecognizedDirectory(recognizedDirectoryFilterFromQuery(getQuery(event)), useDb())
+    return listTargetRecognizedDirectory(recognizedDirectoryFilterFromQuery(getQuery(event)), useDb())
   } catch (error) {
     const failure = error as { statusCode?: number; code?: string; message?: string }
     throw createError({ statusCode: failure.statusCode ?? 500, statusMessage: failure.message ?? 'recognized directory query failed' })

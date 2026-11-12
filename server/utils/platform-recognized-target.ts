@@ -3,6 +3,7 @@ import { and, count, countDistinct, desc, eq, exists, inArray, isNull, max, min,
 import { alias } from 'drizzle-orm/sqlite-core';
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3';
 import { groupBy } from 'es-toolkit';
+import type * as legacySchema from '../../db/schema';
 import { targetSchema, platformBusinessObservation as o, platformObservationAssignment as a, platformLegacyRelationAlias as ra, platformQueryTitleScope as scope } from '../../lib/platform/target-schema';
 import { platformCollection as c, platformLegacyQueryAlias as qa, platformBusinessRecord as b, platformBusinessRecordVersion as v, enterprise as e, recordCorrespondence as correspondence } from '../../db/schema';
 import { storedRecognizedProjection as p } from '../../lib/platform/recognized-stored-schema';
@@ -12,7 +13,7 @@ import { normalizeName, normalizeUscc } from '../../lib/domain';
 import { fail, orderedScopes, pageOf } from './platform-business-read';
 import { recognizedDirectoryFilterSchema, RECOGNIZED_DIRECTORY_VERSION_LIMIT, RECOGNIZED_DIRECTORY_OBSERVATION_LIMIT, type RecognizedDirectoryFilter, type RecognizedDirectoryListResult, type RecognizedDirectoryIsolatedRow, type RecognizedDirectoryDetail, type RecognizedDirectoryView } from '../../lib/platform/recognized-directory';
 import type { PlatformFilterOptions } from '../../lib/platform/filter-options';
-type Db = BetterSQLite3Database<typeof targetSchema>;
+type Db = BetterSQLite3Database<typeof targetSchema> | BetterSQLite3Database<typeof legacySchema>;
 type TargetIsolatedRow = Omit<RecognizedDirectoryIsolatedRow, 'titleRaw'> & {
     titleRaw: unknown;
 };
