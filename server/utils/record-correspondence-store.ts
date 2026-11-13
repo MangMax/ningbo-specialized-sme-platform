@@ -23,8 +23,8 @@ export function correspondenceTarget(db: Db) {
   const known = targetConnections.get(connection)
   if (known !== undefined) return known
   const phase = Number(connection.pragma('user_version', { simple: true }))
-  if (![0,71605,71606,71607,71608,71609,71610,71611,71612].includes(phase)) throw new Error('Unsupported correspondence target schema version')
-  const target = phase === 71611 || phase === 71612
+  if (![0,71605,71606,71607,71608,71609,71610,71611,71612,71613].includes(phase)) throw new Error('Unsupported correspondence target schema version')
+  const target = phase === 71611 || phase === 71612 || phase === 71613
   if (target) requireH1cReady(connection)
   targetConnections.set(connection, target)
   return target
