@@ -20,6 +20,7 @@ import { parseRecognizedRecord, parseRecognizedSourceFidelity } from './recogniz
 import { isDeepStrictEqual } from 'node:util'
 import { z } from 'zod'
 import { verifyOriginalCommand } from './fingerprint-command-facts'
+import { legacyFingerprintRaw } from './legacy-fingerprint-raw'
 export type FingerprintOwner={observationId:number,collectionId:number,relationAlias:number}
 export class FingerprintVerificationError extends Error {
   readonly kind='platform_relation'
@@ -124,11 +125,9 @@ export function legacyFingerprintInput(t:Database.Database,owner:FingerprintOwne
  const number=(name:string)=>{const v=cell(name);if(v.storageClass!=='integer')throw new Error('Legacy integer class conflict');return Number(Buffer.from(v.hex,'hex').toString())}
  if(number('id')!==owner.relationAlias||number('query_id')!==q.oldId||number('sequence_no')!==o.sequenceNo||text('relation_key')!==o.sourceRelationKey)throw new Error('Legacy coordinate conflict')
  for(const [name,a] of [['raw_fields',raw],['source_text',source]] as const)if(cell(name).storageClass!==a.storageClass||cell(name).hex.toUpperCase()!==(a.bytes?.toString('hex').toUpperCase()??''))throw new Error('Legacy original bytes conflict')
- if(raw.storageClass!=='text'&&raw.storageClass!=='null')throw new Error('Unverifiable legacy BLOB')
- const rawText=raw.bytes===null?null:new TextDecoder('utf-8',{fatal:true}).decode(raw.bytes)
- let rawFields:unknown=null;try{rawFields=rawText===null?null:JSON.parse(rawText)}catch{}
+ const {rawFields,invalidRaw}=legacyFingerprintRaw(raw)
  const stored={province:text('province'),status:text('status'),batch:text('batch'),declareKind:text('declare_kind'),appliedAt:text('applied_at'),awardBatchLabel:text('award_batch_label'),year:cell('year').storageClass==='null'?null:number('year')}
- const bytes=Buffer.from(canonicalPlatformJson({interface:c.interface,relationKey:o.sourceRelationKey,queryId:q.oldId,sequenceNo:o.sequenceNo,queryKey:c.queryKey,rdjb:c.rdjb,queriedAt:c.queriedAt,rawFields,invalidRaw:rawFields===null?rawText:null}))
+ const bytes=Buffer.from(canonicalPlatformJson({interface:c.interface,relationKey:o.sourceRelationKey,queryId:q.oldId,sequenceNo:o.sequenceNo,queryKey:c.queryKey,rdjb:c.rdjb,queriedAt:c.queriedAt,rawFields,invalidRaw}))
  return {db,o,c,raw,cells,rawFields,stored,bytes,createdAt:text('created_at')}
 }
 export function verifyLegacyFacts(t:Database.Database,owner:FingerprintOwner,bytes:Buffer,notIndexed=false,options: {allowMissingVersionProjection?:boolean} = {},legacyCustody?:LegacyFingerprintCustody) {
