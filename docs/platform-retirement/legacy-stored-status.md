@@ -138,7 +138,11 @@ DB 驱动输出先按 kind、`typeof`、`Buffer.isBuffer` 检查，再构造分�
 | [generic history](../../lib/platform/target-query-read.ts)、[public read types](../../lib/platform/read.ts) | 在已知 collection.interface 边界解析 relation：仅 business status 允许原生 Buffer，且仅 field=status 的 conflict.storedValue 可为 Buffer；其他字段、rawValue 与其他来源保持原验证。输出类型表达这一来源差别，不将全部 relation 字段改为 unknown。保留 SQL 选择、计数、稳定分页、预算和 Node Buffer serialization |
 | [enterprise target history](../../lib/roster/enterprise-platform-history.ts)、[snapshot](../../lib/roster/enterprise-read-snapshot.ts)、[default detail](../../lib/roster/enterprise-roster.ts) | 这些入口先调用 shared selected display，再到 source facts。必要类型透传覆盖整条调用链，不能仅用预组装 rows 调用 readPlatformBusinessDetails 来声称 default enterprise detail 通过 |
 
-此外，`record-comparison-target-sources`、`annual-process-target-sources`、`record-correspondence-target-sources` 及旧 `record-correspondence-candidates` / `event-annual-process-read` / `lib/comparison-platform` 消费 status/conflict。B 只允许必要类型透传和原严格文本匹配的缩窄；Buffer 不获得正向状态含义，不转 String，不改变筛选、资格、年度规则或选择范围。若发现必须改变业务判据才能编译/运行，停止报告精确 NOTREADY；不能为本修正重做这些消费者或把其完整验收算成本票已覆盖。
+此外，`record-comparison-target-sources`、`annual-process-target-sources`、`record-correspondence-target-sources` 及旧 `record-correspondence-candidates` / `event-annual-process-read` / `lib/comparison-platform` 消费 status/conflict。B 保留**各个调用点**原有的类型检查与转换，不统一增加 string guard，也不统一把 Buffer 转文本。仅在原消费者本来拒绝非 string 时保留该拒绝；原来会转换的谓词必须保留同一转换，不能以类型缩窄改变业务结果。
+
+[record-comparison](../../server/utils/record-comparison.ts) 是必须明确保留的例外：`conclusion` 对 `relation.status ?? ''` 直接调用通过/失败/待审正则，`withoutOfficial` 选择也直接执行状态正则。原 `RegExp.test` 会对 Buffer 执行 JS ToString，按 Buffer 原 UTF-8 转换结果匹配。因此未冲突的 BLOB `Buffer.from('通过','utf8')` 配合原时间判据及 confirmed、无需重验的 `supports_award` 对应，可以得到 `historical_aligned`；`未通过`、`退回`、待审和无法匹配的 bytes 仍执行各自原分支。类型修正必须保留这两个调用点的原转换顺序、nullish 默认、正则及其他条件。若需显式表达转换，只在这两个原强制转换调用点作等价表达，不能提前改写存储值、归一化结果、其他消费者或 JSON 输出。平台冲突仍先阻止该观察参与正向判定；不把 BLOB 与 parsed TEXT 的内容相同当作无冲突。
+
+这保留旧的 Buffer 正向状态含义，不新增状态含义。B 的 acceptance 必须通过真实旧服务和独立字面期待验证它，不能用“所有业务 status 都严格为文本”替代原行为。上述读取 owner 只允许必要类型透传和原判据的等价表达；若必须改变筛选、资格、年度规则或选择范围，停止报告精确 NOTREADY，不能为本修正重做这些消费者或把其完整验收算成本票已覆盖。
 
 ## 6. source→full71613：prerequisite、完成库及 checkpoint
 
@@ -178,7 +182,8 @@ B 是同票一个局部兼容候选，高难度，待 A 独立接受及父级另
 | comparison与selection | 同一迁移target核stored/parsed/reconciled/kind/conflict、exact8cells/fact-title、fingerprint-verifier、实际source facts和selected detail；有/无version、not_indexed、共享版本但原stored不同均独立。Buffer bytes/空BLOB与JSON序列化都按旧/literal核；实际handler serialization另列，不把JSON.stringify probe称wire PASS |
 | legacy custody dispatch | 新 v2-only 历史携真实 legacySource 完成 apply exact 与 process stored recovery；旧 v1 完整链仍通过原源核验。零/重复/并存的 T05b 回执、来源 hash/schema/manifest 不符、foreign/inactive token 均拒绝且零写。不伪造额外回执来绕过原失败 |
 | history与default enterprise detail | 新 v2 target 的普通 TEXT、BLOB00FF/空BLOB且 parsed=NULL、BLOB且 parsed=done 冲突，分别经实际 full-history entry 和 default getRosterEnterpriseDetail，保留原 membership/order/counts/DTO及 Buffer bytes/serialization。与独立 schema0/literal 比较；apply/recognized v2规则、非status Buffer和非法规则仍拒绝。不能绕过 snapshot→enterprise history→shared display 前置链 |
-| 补充与冲突 | 原`00FF` + raw无cszt；派生`00FF`/空BLOB + `cszt=done`；version null/non-null、typed-fields membership；冲突NULL不被版本覆盖，未冲突Buffer不被NULL覆盖。保留platform_field_conflict及原业务状态严格文本判据 |
+| 补充与冲突 | 原`00FF` + raw无cszt；派生`00FF`/空BLOB + `cszt=done`；version null/non-null、typed-fields membership；冲突NULL不被版本覆盖，未冲突Buffer不被NULL覆盖。保留platform_field_conflict，以及各原业务调用点自己的字符串检查或强制转换 |
+| comparison原转换 | 派生 schema0 的 UTF-8 BLOB `通过`、`未通过`、待审及不匹配bytes，parsed=NULL，独立设置原时间及 confirmed supports_award 关系后，经实际旧 comparison 服务与迁移后同一服务比较字面分类/原因；`通过`应可 historical_aligned，其他值按原失败/待审/未决分支。另覆盖原 withoutOfficial 状态正则的未关联行选择。parsed非空造成的status冲突仍阻止正向结论，不因 Buffer 转换绕开冲突；所有原cell/类型/bytes不变 |
 | 不变量 | 原全PK/aliases/原cell storage class+bytes/版本hash+rule/观察version区分/归档与seal；派生source内非空decision/correspondence、113 revision/114 review、import_batch/receipt逐cell及hash核对。原源没有这些非空历史，不能借其空表证明；不重写requestHash/planHash/sourceFingerprint |
 | 失败与同run成功retry | prerequisite DDL及T05b batch/checkpoint、process DDL/capture/pair/barrier/receipt、最终promotion注入失败；核零半组owner、回滚前后manifest/catalog/sequence、FK/integrity与源不变。恢复后用同一**新**run、原schema/transform/source、全新evidence目录成功重试；旧失败run原样留存 |
 | completed replay | 在实际完成的新链上用既有合法command增加collection/observation/provenance supplement/receipt及归属revision；仅对工具契约支持完成重放的阶段，以同run重放并核历史绑定和新增数据不丢。#755完成重放须真实跑；早期phase若按原contract拒绝successor数据，保留拒绝并验证零写，不放宽全库摘要。无后续写的完成重放也独立核 |
