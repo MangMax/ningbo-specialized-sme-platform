@@ -18,10 +18,10 @@ export function verifyProcessStored(t:Database.Database,id:number,source:{kind:'
  if(pair?.processExactOwnerId!==id||pair.processExactState!=='captured'||pair.processSqlFactTitleState!=='captured'||projection.exactStoredRule!=='process-stored-cells-v1'||projection.sqlFactTitleRule!=='process-legacy-sql-fact-title-v1'||projection.exactStoredReason!==null||projection.sqlFactTitleReason!==null)throw new Error('process_stored_conflict: capture metadata')
  if(pair.versionId!==null){const version=db.select().from(storedProcessProjection).where(eq(storedProcessProjection.versionId,pair.versionId)).get();if(version&&PROCESS_STORED_KEYS.some(key=>version[key]!==null))throw new Error('process_stored_conflict: version capture fields')}
  const raw=db.select({r:s.platformObservationArchiveRef,a:s.platformArchiveValue}).from(s.platformObservationArchiveRef).innerJoin(s.platformArchiveValue,eq(s.platformArchiveValue.id,s.platformObservationArchiveRef.archiveId)).where(and(eq(s.platformObservationArchiveRef.ownerId,id),eq(s.platformObservationArchiveRef.field,'rawFields'))).get()
- if(!raw||raw.r.sealed!==1||!['text','null'].includes(raw.a.storageClass))throw new Error('process_stored_conflict: raw owner')
+ if(!raw||raw.r.sealed!==1||(!['text','null'].includes(raw.a.storageClass)&&!(source.kind==='legacy'&&raw.a.storageClass==='blob')))throw new Error('process_stored_conflict: raw owner')
  if(raw.a.storageClass==='null'?(raw.a.bytes!==null||raw.a.byteLength!==null||raw.a.sha256!==null):(!raw.a.bytes||raw.a.byteLength!==raw.a.bytes.length||raw.a.sha256!==createHash('sha256').update(raw.a.bytes).digest('hex')))throw new Error('process_stored_conflict: raw bytes')
- const text=raw.a.bytes===null?null:new TextDecoder('utf-8',{fatal:true,ignoreBOM:true}).decode(raw.a.bytes)
- if(projection.sqlFactTitle!==captureSqlFactTitle(t,text))throw new Error('process_stored_conflict: SQL fact title')
+ const text=raw.a.storageClass==='blob'||raw.a.bytes===null?null:new TextDecoder('utf-8',{fatal:true,ignoreBOM:true}).decode(raw.a.bytes)
+ if(projection.sqlFactTitle!==captureSqlFactTitle(t,raw.a.storageClass==='blob'?raw.a.bytes:text))throw new Error('process_stored_conflict: SQL fact title')
  const assignment=db.select().from(s.platformObservationAssignment).where(and(eq(s.platformObservationAssignment.observationId,id),eq(s.platformObservationAssignment.revision,1))).get()
  let expected:ReturnType<typeof rowSnapshot>
  if(source.kind==='command'){
