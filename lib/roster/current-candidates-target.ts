@@ -1,15 +1,20 @@
-/** Explicit 71609 candidate domain. Qualification/identity coverage remains R5. */
+/** Explicit completed target candidate domain. Qualification/identity coverage remains R5. */
 import { and, asc, count, desc, eq, isNotNull, isNull, max, ne, or, sql } from 'drizzle-orm'
 import { alias } from 'drizzle-orm/sqlite-core'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import { enterprise, record, differenceReason, recordCorrespondence } from '../../db/schema'
 import { candidateScopeObservation as o } from '../platform/candidate-scope-schema'
-import { platformObservationAssignment as a, type targetSchema } from '../platform/target-schema'
+import { platformObservationAssignment as a } from '../platform/target-schema'
 import { CANDIDATE_SCOPE_VERSION } from '../../db/schema-phase'
 import { sqliteConnection } from '../platform/target-connection'
 import { normalizeUscc } from '../domain'
 import type { CurrentTitle } from './current-titles'
 import type { CurrentCandidateReader } from './current-candidate-reader'
+import { candidateScopeColumns } from '../platform/candidate-scope-schema'
+import { CANDIDATE_SCOPE_RULE } from '../platform/candidate-scope-capture'
+import { hasColumns, migrationFinished } from '../platform/migration-readiness'
+import { ensureProcessStoredReady } from '../platform/process-stored-catalog'
+import { targetSchema } from '../platform/target-schema'
 
 const newer=alias(a,'candidate_newer_assignment'), owner=alias(enterprise,'candidate_unassigned_owner')
 const bits={innovative_sme:1,specialized_sme:2,little_giant:4} satisfies Record<CurrentTitle,number>
@@ -29,7 +34,29 @@ export function createTargetCurrentCandidateReader(db:BetterSQLite3Database<type
     db.select({revision:max(newer.revision)}).from(newer).where(eq(newer.observationId,o.id))))
   const ownerJoin=()=>and(isNull(a.enterpriseId),isNotNull(owner.usccNorm),sql`roster84_uscc(${owner.usccNorm})=roster84_uscc(${a.usccRaw})`)
   function gate(title:CurrentTitle) {
-    if(db.get<{user_version:number}>(sql`PRAGMA user_version`)?.user_version!==CANDIDATE_SCOPE_VERSION) throw new TargetCurrentCandidateGap(null,'phase','Explicit 71609 target required')
+    const phase=db.get<{user_version:number}>(sql`PRAGMA user_version`)?.user_version
+    if(![CANDIDATE_SCOPE_VERSION,71610,71611,71612,71613].includes(phase ?? -1)) throw new TargetCurrentCandidateGap(null,'phase','Explicit 71609 or completed successor target required')
+    if(phase!==CANDIDATE_SCOPE_VERSION) {
+      // Successors retain this capture, but a version number alone is no proof
+      // that its offline owner or the successor completed. No archive decoding.
+      ensureProcessStoredReady(sqlite)
+      if(!hasColumns(sqlite,'platform_business_observation',candidateScopeColumns) ||
+        !migrationFinished(sqlite,'candidate-scope-offline-v1'))throw new TargetCurrentCandidateGap(null,'catalog','Candidate migration incomplete')
+      const c=targetSchema.platformCollection, r=targetSchema.platformCollectionArchiveRef
+      const drift=db.select({id:o.id}).from(o).leftJoin(c,eq(c.id,o.collectionId))
+        .leftJoin(r,and(eq(r.ownerId,c.id),eq(r.field,'collectionEvidence')))
+        .where(and(eq(o.candidateScopeState,'captured'),or(
+          sql`${o.candidateScopeRule} is not ${CANDIDATE_SCOPE_RULE}`,
+          sql`${o.candidateScopeRdjb} is not ${c.rdjb}`,
+          sql`${o.candidateScopeTitleCode} is not ${c.titleCode}`,
+          sql`${o.candidateScopeSequenceNo} is not ${o.sequenceNo}`,
+          sql`${o.candidateScopeArchiveId} is not ${r.archiveId}`,
+          sql`typeof(${o.candidateScopeMask})<>'integer' or ${o.candidateScopeMask} not between 0 and 7`,
+          sql`${r.sealed} is not 1`,
+          isNull(c.id),
+        ))).orderBy(asc(o.id)).limit(1).get()
+      if(drift)throw new TargetCurrentCandidateGap(drift.id,'capture_drift',null)
+    }
     const gap=db.select({id:o.id,state:o.candidateScopeState,reason:o.candidateScopeError,assignment:a.observationId})
       .from(o).leftJoin(a,assignment()).where(or(
         ne(o.candidateScopeState,'captured'),isNull(o.candidateScopeState),

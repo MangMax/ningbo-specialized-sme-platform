@@ -9,14 +9,20 @@ import { storedProcessProjection } from '../platform/process-stored-schema'
 import { currentDifferenceAssignment } from '../platform/difference-sources'
 import { normalizeUscc } from '../domain'
 import { RDJB_TITLE_CODES } from '../platform/recognized-evidence'
+import { candidateScopeObservation } from '../platform/candidate-scope-schema'
+import { CANDIDATE_SCOPE_RULE } from '../platform/candidate-scope-capture'
+import { CURRENT_TITLES, type CurrentTitle } from './current-titles'
 type Db = BetterSQLite3Database<typeof s>
-const o = targetSchema.platformBusinessObservation, a = targetSchema.platformObservationAssignment
+const o = candidateScopeObservation, a = targetSchema.platformObservationAssignment
 const original = alias(a, 'effect_original')
 const c = s.platformCollection, qa = s.platformLegacyQueryAlias, ra = targetSchema.platformLegacyRelationAlias
-export function readDifferencePlatformEffects(db: Db, enterpriseId: number, title: string) {
+function readEffectRows(db: Db, enterpriseId: number, currentIdentity = false) {
   const e = db.select({ uscc: s.enterprise.usccNorm }).from(s.enterprise).where(eq(s.enterprise.id, enterpriseId)).get()
   const rows = db.select({ id: ra.oldId, queryId: qa.oldId, interface: c.interface, queriedAt: c.queriedAt,
     collectionId: c.id, rdjb: c.rdjb, titleCode: c.titleCode, sequenceNo: o.sequenceNo,
+    scopeMask: candidateScopeObservation.candidateScopeMask,
+    scopeState: candidateScopeObservation.candidateScopeState,
+    scopeRule: candidateScopeObservation.candidateScopeRule,
     // Original stored facts are owned by each source's observation projection.
     status: sql<string | null>`case ${c.interface} when 'business_list' then ${storedProcessProjection.exactStatus} when 'apply_list' then ${targetSchema.platformApplyProjection.storedStatus} else ${targetSchema.platformRecognizedProjection.storedStatus} end`,
     year: sql<number | null>`case ${c.interface} when 'business_list' then ${storedProcessProjection.exactYear} when 'apply_list' then ${targetSchema.platformApplyProjection.storedYear} else ${targetSchema.platformRecognizedProjection.storedYear} end`,
@@ -26,8 +32,28 @@ export function readDifferencePlatformEffects(db: Db, enterpriseId: number, titl
     .leftJoin(storedProcessProjection, eq(storedProcessProjection.observationId, o.id))
     .leftJoin(targetSchema.platformApplyProjection, eq(targetSchema.platformApplyProjection.observationId, o.id))
     .leftJoin(targetSchema.platformRecognizedProjection, eq(targetSchema.platformRecognizedProjection.observationId, o.id))
-    .where(or(eq(a.enterpriseId, enterpriseId), and(sql`${a.enterpriseId} is null`, e?.uscc ? sql`roster84_uscc(${original.usccRaw})=${normalizeUscc(e.uscc)}` : sql`0`)))
+    .where(or(eq(a.enterpriseId, enterpriseId), and(sql`${a.enterpriseId} is null`, (currentIdentity ? normalizeUscc(e?.uscc) : e?.uscc) ? sql`roster84_uscc(${currentIdentity ? a.usccRaw : original.usccRaw})=${normalizeUscc(e?.uscc)}` : sql`0`)))
     .orderBy(ra.oldId).all()
+  return rows
+}
+function effectReference({ id, queryId, interface: kind, queriedAt, status, year, batch }: ReturnType<typeof readEffectRows>[number]) {
+  return { id, queryId, interface: kind, queriedAt, status, year, batch }
+}
+/** One request-owned enterprise read for full three-title T2 hydration.
+ * Candidate scope is the captured exact legacy SQL predicate, not normalized
+ * page metadata. Source owners continue to supply all business cells. */
+export function readDifferencePlatformEffectsByTitle(db: Db, enterpriseId: number) {
+  const rows=readEffectRows(db,enterpriseId,true)
+  const byTitle=new Map<CurrentTitle, ReturnType<typeof effectReference>[]>(CURRENT_TITLES.map(title=>[title,[]]))
+  const bits={innovative_sme:1,specialized_sme:2,little_giant:4} satisfies Record<CurrentTitle,number>
+  for(const row of rows) {
+    if(row.scopeState!=='captured'||row.scopeRule!==CANDIDATE_SCOPE_RULE||row.scopeMask===null)throw new Error('Current hydration candidate capture unavailable')
+    for(const title of CURRENT_TITLES)if(row.scopeMask & bits[title])byTitle.get(title)!.push(effectReference(row))
+  }
+  return byTitle
+}
+export function readDifferencePlatformEffects(db: Db, enterpriseId: number, title: string) {
+  const rows=readEffectRows(db,enterpriseId)
   if (!rows.length) return []
   const pages = db.select().from(s.platformCollectionPage).where(inArray(s.platformCollectionPage.collectionId, [...new Set(rows.map(r => r.collectionId))])).orderBy(s.platformCollectionPage.ordinal).all()
   return rows.filter(r => {
@@ -37,5 +63,5 @@ export function readDifferencePlatformEffects(db: Db, enterpriseId: number, titl
       rowTitle = page?.rdjb ? RDJB_TITLE_CODES[page.rdjb] ?? r.titleCode : r.titleCode
     }
     return rowTitle === title || rowTitle === null && r.rdjb.split(',').includes(({ innovative_sme: '1', specialized_sme: '2', little_giant: '3' } as Record<string, string>)[title]!)
-  }).map(({ id, queryId, interface: kind, queriedAt, status, year, batch }) => ({ id, queryId, interface: kind, queriedAt, status, year, batch }))
+  }).map(effectReference)
 }

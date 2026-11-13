@@ -18,7 +18,7 @@ import { identityFunctions } from './enterprise-read-snapshot'
 import { readQueryAssessment, readQueryCoverage, readQueryComparisonWitnesses, type QueryCoverageSource } from './query-assessment'
 import { differenceTargetSources, readDifferenceObservation } from '../platform/difference-sources'
 import { differencePublicColumns } from '../platform/difference-reference-target'
-import { readDifferencePlatformEffects } from './difference-platform-effects'
+import { readDifferencePlatformEffects, readDifferencePlatformEffectsByTitle } from './difference-platform-effects'
 import { relationScopeSql, TITLE_RDJB_CODES } from './current-platform-scope'
 import { normalizeName, normalizeUscc } from '../domain'
 import { identityKeys, type IdentityKeyVariants } from './current-identity-keys'
@@ -202,6 +202,14 @@ function createCurrentQualificationAssessmentReaderBody(db:Database.Database,rec
   let identityStatement: Database.Statement | undefined
   let referencesStatement: Database.Statement | undefined
   const readHydrationReferences = (enterpriseId: number) => {
+    const reader=prepareCurrentReader(db)
+    if(differenceTargetSources(reader)) {
+      const effects=readDifferencePlatformEffectsByTitle(reader,enterpriseId)
+      const references=new Map<CurrentTitle,CurrentPlatformReference[]>(CURRENT_TITLES.map(title=>[
+        title,effects.get(title)!.map(({id,queryId,interface:kind,queriedAt})=>({id,queryId,interface:kind,queriedAt})),
+      ]))
+      return {references,effects}
+    }
     identityStatement ??= db.prepare('select uscc_norm as uscc from enterprise where id=?')
     const enterprise = identityStatement.get(enterpriseId) as { uscc: string | null } | undefined
     // Hydration evaluates with keys=undefined, exactly the original normalized
@@ -219,7 +227,7 @@ function createCurrentQualificationAssessmentReaderBody(db:Database.Database,rec
     const refs = referencesStatement.all({ enterpriseId, uscc: normalizeUscc(enterprise?.uscc) || null,
       scopes: JSON.stringify(CURRENT_TITLES.map(title => ({ title, rdjb: TITLE_RDJB_CODES[title] }))) }) as (CurrentPlatformReference & { scopeTitle: CurrentTitle })[]
     for (const { scopeTitle, ...ref } of refs) byTitle.get(scopeTitle)!.push(ref)
-    return byTitle
+    return {references:byTitle,effects:undefined}
   }
   const readSnapshotBody = (enterpriseId: number, asOf: number, options: QualificationAssessmentReadOptions, filterTitle?: CurrentTitle, presentationTitle?: CurrentTitle, workbookTitle?: CurrentTitle, comparisons?: ReadonlyMap<CurrentTitle, CurrentCycleObservation>) => {
     if(witnesses&&options.recognizedFactSource!==undefined)throw new Error('Explicit witness dependency does not accept a source selector')
@@ -227,7 +235,8 @@ function createCurrentQualificationAssessmentReaderBody(db:Database.Database,rec
     const readOptions: QualificationAssessmentReadOptions = defaults.recognizedFactSource && !options.recognizedFactSource
       ? { ...options, recognizedFactSource: defaults.recognizedFactSource } : options
     // No filterTitle means the existing default reader follows its original SQL.
-    const references = filterTitle == null && workbookTitle == null ? undefined : readHydrationReferences(enterpriseId)
+    const hydration = filterTitle == null && workbookTitle == null ? undefined : readHydrationReferences(enterpriseId)
+    const references = hydration?.references
     let publishedPresentation: PublishedPresentation | undefined
     let presentationScope: readonly OfficialPublishedScope[] | undefined
     const unavailable = (error: unknown): PublishedPresentation => ({ availability: 'unavailable', error: error instanceof OfficialPublishedPresentationError ? error.code : 'read_failed', facts: [] })
@@ -257,7 +266,7 @@ function createCurrentQualificationAssessmentReaderBody(db:Database.Database,rec
     // The giant has no inherited dependency; its v4 and independent v3 facts
     // are identical. Preserve public title order while sharing the full result.
     let giant: CurrentRow | undefined
-    const evaluateTitle = (title: CurrentTitle) => evaluate(enterpriseId, title, (readOptions.assessmentVersion === LEGACY_QUALIFICATION_ASSESSMENT_VERSION ? new Date(asOf).getUTCFullYear() : Number(qualificationDay(asOf).slice(0,4))), asOf, undefined, title === filterTitle, true, readOptions, title === filterTitle, references?.get(title), references == null ? undefined : preparedCorrespondences, title === workbookTitle ? observePublishedForWorkbook : title === presentationTitle ? observePublishedForCurrent : undefined, comparisons?.get(title), { giant }).row
+    const evaluateTitle = (title: CurrentTitle) => evaluate(enterpriseId, title, (readOptions.assessmentVersion === LEGACY_QUALIFICATION_ASSESSMENT_VERSION ? new Date(asOf).getUTCFullYear() : Number(qualificationDay(asOf).slice(0,4))), asOf, undefined, title === filterTitle, true, readOptions, title === filterTitle, references?.get(title), references == null ? undefined : preparedCorrespondences, title === workbookTitle ? observePublishedForWorkbook : title === presentationTitle ? observePublishedForCurrent : undefined, comparisons?.get(title), { giant, platformEffects:hydration?.effects?.get(title) }).row
     if (!readOptions.assessmentVersion || readOptions.assessmentVersion === QUALIFICATION_ASSESSMENT_VERSION) giant = evaluateTitle('little_giant')
     const rows = CURRENT_TITLES.map(title => title === 'little_giant' && giant ? giant : evaluateTitle(title))
     if (presentationTitle != null && publishedPresentation === undefined) {
@@ -430,7 +439,7 @@ function createCurrentCandidateEvaluationReader(db: Database.Database, receiptRu
   const prepareLegacyHeads = () => reader.select(differencePublicColumns(reader)).from(d).where(sql`${d.id} in (${headIds})`).prepare()
   let headsQuery: ReturnType<typeof prepareLegacyHeads> | undefined
   const legacyHeads = () => headsQuery ??= prepareLegacyHeads()
-  return function readCandidate(enterpriseId: number, title: CurrentTitle, year: number, executionTime = Date.now(), keys?: { queries: IdentityKeyVariants; relations: IdentityKeyVariants }, includeFilterFacts = false, includeReferences = true, assessmentOptions?: QualificationAssessmentReadOptions, includePendingFilterFacts = false, suppliedPlatformRefs?: readonly CurrentPlatformReference[], preparedCorrespondences?: ReturnType<typeof createEnterpriseTitleCorrespondenceRefsReader>, observePublishedForCurrent?: CurrentPublishedNameObservation, observeCycles?: CurrentCycleObservation, detail: { expandAssessment?: boolean; giant?: CurrentRow; qualificationOnly?: boolean } = {}): { row: CurrentRow; group: CurrentGroup; effectiveStatus: import('./current-status').CurrentStatus } {
+  return function readCandidate(enterpriseId: number, title: CurrentTitle, year: number, executionTime = Date.now(), keys?: { queries: IdentityKeyVariants; relations: IdentityKeyVariants }, includeFilterFacts = false, includeReferences = true, assessmentOptions?: QualificationAssessmentReadOptions, includePendingFilterFacts = false, suppliedPlatformRefs?: readonly CurrentPlatformReference[], preparedCorrespondences?: ReturnType<typeof createEnterpriseTitleCorrespondenceRefsReader>, observePublishedForCurrent?: CurrentPublishedNameObservation, observeCycles?: CurrentCycleObservation, detail: { expandAssessment?: boolean; giant?: CurrentRow; qualificationOnly?: boolean; platformEffects?: ReturnType<typeof readDifferencePlatformEffects> } = {}): { row: CurrentRow; group: CurrentGroup; effectiveStatus: import('./current-status').CurrentStatus } {
   const expandAssessment = detail.expandAssessment ?? assessmentOptions != null
   const enterprise = statement('select id,name,name_norm,uscc_norm,district,city from enterprise where id=?').get(enterpriseId) as any
   const events = statement(`select e.id,e.event_type as eventType,e.year,e.decided_year as decidedYear,e.batch_seq as batchSeq,e.review_outcome as reviewOutcome,e.revision,r.name_raw as nameRaw,r.uscc_raw as usccRaw,r.source from record r join record_event e on e.record_id=r.id where r.enterprise_id=? and r.title_code=? order by e.id`).all(enterpriseId,title) as (LifecycleEvent & { batchSeq: number|null; nameRaw: string|null; usccRaw: string|null; source: string; revision: number; formalValidity?: FormalValidity; validityInvalid?: boolean; formalValidityInputHash?: string; recordId?: number })[]
@@ -489,7 +498,7 @@ function createCurrentCandidateEvaluationReader(db: Database.Database, receiptRu
   const rdjb=TITLE_RDJB_CODES[title]
   const relationKeys=keys ? identityKeys(keys.relations,enterprise.uscc_norm) : null
   const unassigned=relationKeys ? 'r.uscc_raw in (select value from json_each(@relationKeys))' : 'roster84_uscc(r.uscc_raw)=@uscc'
-  const targetEffects = includeReferences && differenceTargetSources(reader) ? readDifferencePlatformEffects(reader, enterpriseId, title) : undefined
+  const targetEffects = detail.platformEffects ?? (includeReferences && differenceTargetSources(reader) ? readDifferencePlatformEffects(reader, enterpriseId, title) : undefined)
   const platformRefs=includeReferences ? suppliedPlatformRefs ?? targetEffects ?? statement(`select r.id,r.query_id as queryId,q.interface,q.queried_at as queriedAt from platform_relation r join platform_query q on q.id=r.query_id where r.id in (select id from platform_relation where enterprise_id=@enterpriseId union select r.id from platform_relation r ${relationKeys ? 'indexed by platform_relation_uscc_query_idx' : ''} where r.enterprise_id is null and ${unassigned}) and ${relationScopeSql} order by r.id`).all({enterpriseId,...(relationKeys ? {relationKeys:JSON.stringify(relationKeys)} : {uscc:normalizeUscc(enterprise.uscc_norm)||null}),title,rdjb}) as ({id:number;queryId:number} & CurrentWorkbookFacts['platform'][number])[] : []
   row.references.push(...platformRefs.map(r => 'platform-relation:' + r.id + ' query:' + r.queryId))
   // Default effective reads never execute legacy difference/assessment/receipt decisions.
