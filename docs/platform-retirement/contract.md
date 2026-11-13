@@ -160,3 +160,7 @@ switch is included; historical T05c receipts retain their original schema hash.
 ## #760 A 关联办理 stored-status BLOB 补充（候选，待独立接受）
 
 [具体契约](legacy-stored-status.md)及[补充ADR](../adr/2026-11-13-legacy-stored-status.md)修正本页文本比较列的一个已证明特例：旧 `business_list` 的合法 status Buffer，在现有来源投影 observation-owner 的 stored/reconciled status 中保留 native BLOB、显式 blob kind、原 bytes与冲突；版本/parser status 继续TEXT/NULL。空BLOB不等于NULL，与非空parsed TEXT严格冲突，既有archive/version补充及JSON Buffer序列化保持。新鲜离线target在T04绑定前安装专用DDL prerequisite，真实管线继续到71613；旧completed71613及中断run不改schema/transform/checkpoint，未证明需要后继phase，不承诺在线修复。A仅为docs候选，独立接受及另行授权后才准入同票B≤M；旧10项诊断PASS/真实T05b FAIL均为继承证据，本轮运行/typecheck均UNRUN。
+
+## #763 A reconcile 旧槽完整性捕获（候选，待独立接受）
+
+[四槽捕获契约](reconcile-slot-capture.md)与[补充 ADR](../adr/2026-11-13-reconcile-slot-capture.md)区分 T04 漏捕获的 rawResponse 专用封套与原 validator 尚缺的结构化表示。候选选择 collection 专用验证结果及原输入绑定，保留通用 evidence/supplement 优先级、本源逐观察 stored/source/conflict 和已选 typed 原输入。推荐新鲜 target 在首次 T04 绑定前安装 prerequisite，明确新 transform，实际链到71613；旧 completed/interrupted 绑定原样保留，不预设71614或覆盖后继新写。运行仍先选每槽最新，再以原 JS 字符串 queriedAt 判断 freshness；归档不作业务准入 fallback。A 仅 pending 父级独立 review 与 LOCAL 接受，B 离线 capture、新写 replay、显式 reconcile 接线另行按 ≤M 授权。global guards CLOSED，所有 runtime/DB/tests/typecheck 验收 UNRUN。
