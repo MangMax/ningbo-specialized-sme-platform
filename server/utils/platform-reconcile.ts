@@ -22,6 +22,7 @@ import {
 import type { PlatformRdjb, PlatformRow } from '../../lib/platform/adapter'
 import { type PlatformRelationRecord, relationFromRow } from '../../lib/platform/identity'
 import { normalizePlatformRelation } from '../../lib/platform/normalization'
+import { StoredReplayOriginal } from '../../lib/platform/reconcile-replay-input'
 import {
   type DifferenceDecision,
   type KnownEnterprise,
@@ -288,7 +289,7 @@ function freshStoredSlots(db: Db, queryKey: string, cutoffIso: string): Map<stri
   return db.transaction(tx => freshStoredSlotsSnapshot(tx, queryKey, cutoffIso))
 }
 
-function freshStoredSlotsSnapshot(db: Pick<Db, 'select'>, queryKey: string, cutoffIso: string): Map<string, StoredSlot> {
+function freshStoredSlotsSnapshot(db: Pick<Db, 'select' | 'get'>, queryKey: string, cutoffIso: string): Map<string, StoredSlot> {
   const out = new Map<string, StoredSlot>()
   const queries = db
     .select()
@@ -314,6 +315,8 @@ function freshStoredSlotsSnapshot(db: Pick<Db, 'select'>, queryKey: string, cuto
     const collection = readCompleteLegacySlot(query.rawResponse, query, legacyRows)
     if (!collection || (query.status === 'no_record') !== (legacyRows.length === 0)) continue
     out.set(key, {
+      kind: 'stored',
+      original: StoredReplayOriginal.read(db, query.id),
       titleCode: query.titleCode,
       collection,
       rawRows: legacyRows,
@@ -353,19 +356,19 @@ function freshStoredSlotsSnapshot(db: Pick<Db, 'select'>, queryKey: string, cuto
   return out
 }
 
-/** 一个槽位的证据:查询状态分类用 `evidence`,载荷构造用 typed `payloadRows`。 */
-interface StoredSlot {
+/** Comparison/mapping projections are independent of the selected immutable originals. */
+type StoredSlot = {
   /** Reused queries own their saved value (including NULL); fetched slots use the rdjb mapping. */
   titleCode: typeof schema.platformQuery.$inferSelect.titleCode
   collection?: LegacySlotCollection
   evidence: ReconcileQueryEvidence
   /** Legacy string projection, used only for old page/row validation. */
   rawRows: PlatformRow[]
-  /** Exact stored JSON rows; reused typed archives must never be replayed as strings. */
+  /** Legacy builder projection only; fallback rows do not own historical raw assertions. */
   payloadRows: Record<string, unknown>[]
   /** 本次实查拿到的**原始响应原文**(落 `platform_query.raw_response`);复用时为空串。 */
   raw: string
-}
+} & ({ kind: 'fresh' } | { kind: 'stored'; original: StoredReplayOriginal })
 
 // ---------------------------------------------------------------------------
 // 目标收集
@@ -499,6 +502,7 @@ function toEvidence(outcome: PlatformQueryOutcome): ReconcileQueryEvidence {
 function toQueryInput(slot: StoredSlot, queryKey: string): PlatformQueryInput {
   const { evidence } = slot
   return {
+    ...(slot.kind === 'stored' ? { kind: 'stored' as const, original: slot.original } : { kind: 'fresh' as const }),
     interface: evidence.interface,
     queryKey,
     rdjb: evidence.rdjb,
@@ -661,6 +665,7 @@ export async function runPlatformReconcile(options: ReconcileRunOptions): Promis
           networkByInterface[outcome.interface] = (networkByInterface[outcome.interface] ?? 0) + 1
         }
         slots.push({
+          kind: 'fresh',
           titleCode: outcome.interface === 'business_list' ? (RDJB_TITLE[outcome.rdjb] ?? null) : null,
           evidence: toEvidence(outcome), rawRows: outcome.rows, payloadRows: outcome.rows, raw: outcome.raw, collection: outcome.collection,
         })
