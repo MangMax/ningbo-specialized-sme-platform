@@ -25,7 +25,7 @@ export type RelationEvidenceDisplaySelection = Readonly<{ relationId: number; qu
 /** Original display presentation, deliberately not a PlatformObservationFact or decision input.
  * Callers render it or attach separately authorized links; no correspondences property is fabricated.
  */
-export type RelationEvidenceDisplay = Record<string, unknown> | null
+export type RelationEvidenceDisplay = (Record<string, unknown> & ReturnType<typeof sourcePositionForSequence>) | null
 const archiveShape = z.object({ storageClass: z.enum(['null', 'text', 'blob']), bytes: z.instanceof(Buffer).nullable(), byteLength: z.number().nullable(), sha256: z.string().nullable(), sealed: z.literal(1) })
 function authenticatedBytes(value: unknown) {
   const a = archiveShape.parse(value)

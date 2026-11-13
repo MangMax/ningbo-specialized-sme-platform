@@ -11,6 +11,10 @@ import { RDJB_TITLE_CODES } from '../../lib/platform/recognized-evidence'
 import { readPlatformBusinessGroups } from './platform-business-record-read'
 import { readPlatformObservationFacts } from './platform-source-facts'
 import { normalizeUscc } from '../../lib/domain'
+import { queryHistoryTarget } from '../../lib/platform/query-history-target'
+import { readTargetDeclarationFacts } from './platform-declarations-target'
+import { readTargetBusinessProcessFacts } from './platform-business-processes-target'
+import { readTargetRecognizedFacts } from './platform-recognized-target'
 
 type Db = BetterSQLite3Database<typeof schema>
 
@@ -36,8 +40,20 @@ function readPlatformDetailFacts(db: Db, queries: RosterPlatformQueryRow[], rela
     ids.push(relation.id); byInterface.set(interfaceName, ids)
   }
   const result = new Map<number, PlatformObservationFact>()
+  const target = queryHistoryTarget(db)
   for (const [interfaceName, ids] of byInterface) {
-    for (const [relationId, fact] of readPlatformObservationFacts(db, interfaceName, ids)) result.set(relationId, fact)
+    const facts = !target ? readPlatformObservationFacts(db, interfaceName, ids)
+      : interfaceName === 'apply_list' ? readTargetDeclarationFacts(db, ids)
+      : interfaceName === 'business_list' ? readTargetBusinessProcessFacts(db, ids, { scope: 'selected' })
+      : readTargetRecognizedFacts(db, ids)
+    for (const [relationId, fact] of facts) {
+      // Preserve the enterprise DTO's historical identity-first field order.
+      // The accepted source owner still defines field membership and values.
+      result.set(relationId, target && interfaceName === 'recognized_list' ? { ...fact, modeledFields: [
+        ...fact.modeledFields.filter(field => field === 'nameRaw' || field === 'usccRaw'),
+        ...fact.modeledFields.filter(field => field !== 'nameRaw' && field !== 'usccRaw'),
+      ] } : fact)
+    }
   }
   return result
 }

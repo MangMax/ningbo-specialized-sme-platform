@@ -1026,7 +1026,7 @@ function enterpriseDetail(db: Db, id: number, asOf: number): RosterEnterpriseDet
   const relationCounts = new Map<number, number>()
   for (const relation of relations) relationCounts.set(relation.queryId, (relationCounts.get(relation.queryId) ?? 0) + 1)
   const queriesById = new Map(includedQueries.map(q => [q.id, q]))
-  const legacyById = readLegacyPlatformProvenance(db, includedQueries.map(q => q.id))
+  const legacyById = enterpriseSnapshot.platformLegacyById ?? readLegacyPlatformProvenance(db, includedQueries.map(q => q.id))
   const queries = includedQueries
     .sort((a, b) => (a.queriedAt < b.queriedAt ? -1 : a.queriedAt > b.queriedAt ? 1 : 0) || a.id - b.id)
     .map((q): RosterPlatformQueryRow => ({
@@ -1126,8 +1126,8 @@ function enterpriseDetail(db: Db, id: number, asOf: number): RosterEnterpriseDet
         sequenceNo: r.sequenceNo,
         relationKey: r.relationKey,
         rawFields: r.rawFields,
-        ...(legacyById.has(r.queryId) ? legacySourcePositionForSequence(legacyById.get(r.queryId)!.collection, r.sequenceNo)
-          : sourcePositionForSequence(queriesById.get(r.queryId)?.collectionEvidence, r.sequenceNo)),
+        ...(enterpriseSnapshot.platformPositionsById?.get(r.id) ?? (legacyById.has(r.queryId) ? legacySourcePositionForSequence(legacyById.get(r.queryId)!.collection, r.sequenceNo)
+          : sourcePositionForSequence(queriesById.get(r.queryId)?.collectionEvidence, r.sequenceNo))),
         usccRaw: r.usccRaw,
         nameRaw: r.nameRaw,
         province: r.province,
