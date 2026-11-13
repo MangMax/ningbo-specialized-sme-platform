@@ -8,7 +8,7 @@ import { targetReplaySource, writeCollectionTarget, CollectionReplayError } from
 import { readDifferenceCollection } from '../../lib/platform/difference-sources'
 import { verifyFingerprint, legacyFingerprintInput, FingerprintVerificationError } from '../../lib/platform/fingerprint-verifier'
 import { bootstrapFingerprint } from '../../lib/platform/fingerprint-bootstrap'
-import { queryHistoryTarget } from '../../lib/platform/query-history-target'
+import { requireH1cReady } from '../../lib/platform/h1c-catalog'
 import { normalizeUscc } from '../../lib/domain'
 import { normalizePlatformRelation } from '../../lib/platform/normalization'
 import { planPlatformObservation, PLATFORM_PROJECTION_RULE, PLATFORM_RAW_HASH_RULE, PlatformProjectionError } from './platform-business-record'
@@ -17,7 +17,14 @@ import type { RosterImportPlatformQuery, RosterImportItemResult } from '../../li
 import type { PlatformProjectionResult } from '../../lib/platform/business-record'
 
 export function collectionImportTarget(db: Executor) {
-  return Number(sqliteConnection(db).pragma('user_version', { simple: true })) === 71612
+  const connection = sqliteConnection(db)
+  const phase = Number(connection.pragma('user_version', { simple: true }))
+  if (phase === 71612 || phase === 71613) {
+    requireH1cReady(connection)
+    return true
+  }
+  if (phase !== 0) throw new Error('Import requires schema0 or a complete 71612/71613 target')
+  return false
 }
 export function collectionImportSource(db: Executor, queryId: number) {
   const selected = readDifferenceCollection(db, queryId)
@@ -41,7 +48,7 @@ export function collectionImportProjection(db: Executor, relationId: number) {
 }
 /** Explicit historical command: reference admission is read-only, including first indexing. */
 export function historicalObservationPlan(db: Executor, relationId: number) {
-  if (!queryHistoryTarget(db)) throw new Error('Historical target command requires a complete 71612 target')
+  if (!collectionImportTarget(db)) throw new Error('Historical target command requires a complete 71612/71613 target')
   const { row, interface: source } = collectionProjection(db, relationId)
   const connection = sqliteConnection(db)
   const owner = { observationId: row.id, collectionId: row.collectionId, relationAlias: relationId }

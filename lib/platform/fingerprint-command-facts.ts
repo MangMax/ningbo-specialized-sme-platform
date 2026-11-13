@@ -59,7 +59,7 @@ function verifyCommandInSnapshot(target:Database.Database,predecessor:Database.D
     const expected=drizzle(scratch,{schema:s})
     const collection=actual.select().from(s.platformCollection).where(eq(s.platformCollection.id,input.collectionId)).get()
     if(!collection)throw new Error('Command collection missing')
-    if([71611,71612].includes(Number(target.pragma('user_version',{simple:true})))){
+    if([71611,71612,71613].includes(Number(target.pragma('user_version',{simple:true})))){
       if(collection.interface==='business_list')verifyProcessStored(target,observation.id,{kind:'command',input})
       if(collection.interface==='recognized_list')verifyRecognizedStored(target,observation.id)
     }
@@ -142,7 +142,7 @@ function verifyCommandInSnapshot(target:Database.Database,predecessor:Database.D
       const archive=actual.select({ref:vr,value:a}).from(vr).innerJoin(a,eq(a.id,vr.archiveId)).where(eq(vr.ownerId,f.id)).all()
       if(archive.length!==1||archive[0]!.ref.sealed!==1||archive[0]!.value.id!==f.canonicalArchiveId||archive[0]!.value.storageClass!=='text'||!archive[0]!.value.bytes?.equals(Buffer.from(f.canonicalRawJson!))||archive[0]!.value.sha256!==hash(archive[0]!.value.bytes!)||archive[0]!.value.byteLength!==archive[0]!.value.bytes!.length)throw new Error('Command canonical archive conflict')
     }
-    for(const table of [s.platformApplyProjection,[71610,71611,71612].includes(Number(target.pragma('user_version',{simple:true})))?storedProcessProjection:s.platformBusinessProjection,s.platformRecognizedProjection]) {
+    for(const table of [s.platformApplyProjection,[71610,71611,71612,71613].includes(Number(target.pragma('user_version',{simple:true})))?storedProcessProjection:s.platformBusinessProjection,s.platformRecognizedProjection]) {
       const ep=expected.select().from(table).where(eq(table.observationId,planned.id)).all(),ap=actual.select().from(table).where(eq(table.observationId,observation.id)).all()
       if(ep.length!==ap.length)throw new Error('Command projection owner inventory conflict')
       for(let i=0;i<ep.length;i++) {

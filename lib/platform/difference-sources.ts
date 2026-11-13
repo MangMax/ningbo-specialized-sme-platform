@@ -16,14 +16,14 @@ const { platformBusinessObservation: o, platformObservationAssignment: a, platfo
 const original = alias(a, 'difference_original'), newer = alias(a, 'difference_newer')
 export function differenceTargetSources(db: Db) {
   const connection = sqliteConnection(db), phase = Number(connection.pragma('user_version', { simple: true }))
-  if (![0,71605,71606,71607,71608,71609,71610,71611,71612].includes(phase)) throw new Error('Unsupported difference source schema version')
-  const target = phase === 71611 || phase === 71612
+  if (![0,71605,71606,71607,71608,71609,71610,71611,71612,71613].includes(phase)) throw new Error('Unsupported difference source schema version')
+  const target = phase === 71611 || phase === 71612 || phase === 71613
   if (target) requireH1cReady(connection)
   return target
 }
 export function differenceTargetStorage(db: Db) {
   const connection = sqliteConnection(db)
-  const target = Number(connection.pragma('user_version', { simple: true })) === 71612
+  const target = [71612,71613].includes(Number(connection.pragma('user_version', { simple: true })))
   if (target) requireH1cReady(connection)
   return target
 }
