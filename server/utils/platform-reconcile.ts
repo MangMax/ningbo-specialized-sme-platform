@@ -314,6 +314,7 @@ function freshStoredSlotsSnapshot(db: Pick<Db, 'select'>, queryKey: string, cuto
     const collection = readCompleteLegacySlot(query.rawResponse, query, legacyRows)
     if (!collection || (query.status === 'no_record') !== (legacyRows.length === 0)) continue
     out.set(key, {
+      titleCode: query.titleCode,
       collection,
       rawRows: legacyRows,
       payloadRows,
@@ -354,6 +355,8 @@ function freshStoredSlotsSnapshot(db: Pick<Db, 'select'>, queryKey: string, cuto
 
 /** 一个槽位的证据:查询状态分类用 `evidence`,载荷构造用 typed `payloadRows`。 */
 interface StoredSlot {
+  /** Reused queries own their saved value (including NULL); fetched slots use the rdjb mapping. */
+  titleCode: typeof schema.platformQuery.$inferSelect.titleCode
   collection?: LegacySlotCollection
   evidence: ReconcileQueryEvidence
   /** Legacy string projection, used only for old page/row validation. */
@@ -491,8 +494,7 @@ function toEvidence(outcome: PlatformQueryOutcome): ReconcileQueryEvidence {
  * `relations` 走 `rawRows`(平台原始行),让 `buildPlatformWritePayload` 用**同一套**
  * 字段映射与匹配依据规则构造关系项 —— 不在这里另写一份映射。
  *
- * `titleCode` 用 `rdjb` ↔ 称号的对应关系填(`businessList` 确实是按认定级别查的);
- * 申报接口不按称号查,留空。它描述的是「**这次查询**查的是哪一档」,不是目标企业。
+ * `titleCode` 由槽位来源确定：复用查询保留原值，新采集按 rdjb 映射。
  */
 function toQueryInput(slot: StoredSlot, queryKey: string): PlatformQueryInput {
   const { evidence } = slot
@@ -501,7 +503,7 @@ function toQueryInput(slot: StoredSlot, queryKey: string): PlatformQueryInput {
     queryKey,
     rdjb: evidence.rdjb,
     queriedAt: evidence.queriedAt,
-    titleCode: evidence.interface === 'business_list' ? (RDJB_TITLE[evidence.rdjb] ?? null) : null,
+    titleCode: slot.titleCode,
     outcome: {
       interface: evidence.interface,
       rdjb: evidence.rdjb,
@@ -658,7 +660,10 @@ export async function runPlatformReconcile(options: ReconcileRunOptions): Promis
           networkCount += 1
           networkByInterface[outcome.interface] = (networkByInterface[outcome.interface] ?? 0) + 1
         }
-        slots.push({ evidence: toEvidence(outcome), rawRows: outcome.rows, payloadRows: outcome.rows, raw: outcome.raw, collection: outcome.collection })
+        slots.push({
+          titleCode: outcome.interface === 'business_list' ? (RDJB_TITLE[outcome.rdjb] ?? null) : null,
+          evidence: toEvidence(outcome), rawRows: outcome.rows, payloadRows: outcome.rows, raw: outcome.raw, collection: outcome.collection,
+        })
       }
     }
     if (options.shouldCancel?.()) cancelled = true
