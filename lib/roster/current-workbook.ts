@@ -17,6 +17,7 @@ import { CURRENT_STATUS_LABELS, type CurrentStatus } from './current-status'
 import { CURRENT_COLUMNS, currentWorkbookValues } from './current-workbook-presentation'
 import { appLog, type LogContext } from '../logging'
 import type { CurrentCandidateReader } from './current-candidate-reader'
+import { createCurrentTargetContext } from './current-target-context'
 
 export class CurrentWorkbookLimitError extends Error {}
 function textCell(value: unknown): string | null {
@@ -47,18 +48,24 @@ function sheetOptions() {
 }
 /** Streaming rows in one pinned SQLite read transaction, owned by the independent executor. */
 export async function writeCurrentWorkbook(db: Database.Database, title: CurrentTitle, filename: string, progress: (done: number,total: number,snapshotStartedAt: string) => void, logContext?: LogContext, receiptRuntime?: ReceiptRuntimeContext, readOptions: { recognizedFactSource?: RecognizedFactSource } = {}) {
-  return writeCurrentWorkbookWithCandidates(db, title, filename, progress, {
+  return writeCurrentWorkbookBody(db, title, filename, progress, undefined, logContext, receiptRuntime, readOptions)
+}
+function legacyCandidates(db: Database.Database, readOptions: { recognizedFactSource?: RecognizedFactSource }): CurrentCandidateReader {
+  return {
     connection:db,
     iterate(candidateTitle) {
       return db.prepare(`select id from (${currentCandidateReadSqlFor(db, readOptions.recognizedFactSource)}) order by id`)
         .iterate(currentCandidateBindings(candidateTitle)) as Iterable<{ id: number }>
     },
-  }, logContext, receiptRuntime, readOptions)
+  }
 }
 
 /** Explicit R4 dependency seam; target qualification and coverage remain R5/X1. */
 export async function writeCurrentWorkbookWithCandidates(db: Database.Database, title: CurrentTitle, filename: string, progress: (done: number,total: number,snapshotStartedAt: string) => void, candidateReader: CurrentCandidateReader, logContext?: LogContext, receiptRuntime?: ReceiptRuntimeContext, readOptions: { recognizedFactSource?: RecognizedFactSource } = {}) {
   if(candidateReader.connection!==db)throw new Error('Candidate reader must use the caller connection')
+  return writeCurrentWorkbookBody(db, title, filename, progress, candidateReader, logContext, receiptRuntime, readOptions)
+}
+async function writeCurrentWorkbookBody(db: Database.Database, title: CurrentTitle, filename: string, progress: (done: number,total: number,snapshotStartedAt: string) => void, candidateReader: CurrentCandidateReader | undefined, logContext?: LogContext, receiptRuntime?: ReceiptRuntimeContext, readOptions: { recognizedFactSource?: RecognizedFactSource } = {}) {
   const generatedAt = new Date().toISOString(), year = Number(qualificationDay(Date.parse(generatedAt)).slice(0,4))
   const output = createWriteStream(filename)
   const completed = finished(output, { cleanup: true })
@@ -105,17 +112,20 @@ export async function writeCurrentWorkbookWithCandidates(db: Database.Database, 
     })
   }
   const startedAt = Date.now()
-  let summaryComplete = false, workbookStarted = false
+  let summaryComplete = false, workbookStarted = false, ownedTransaction = false
   appLog({ source: 'export', operation: 'export.current.summary', outcome: 'started' }, logContext)
   try {
     // SQLite functions must be registered before a streaming SELECT is active.
     prepareCurrentReader(db)
     db.exec('BEGIN')
+    ownedTransaction = true
     // Enumerate narrow query keys once inside this pinned snapshot. Full T2
     // still reads and verifies every title and source; only coverage lookup changes.
-    const queryKeys = readIdentityKeyVariants(db, 'queries')
+    const target = candidateReader === undefined ? createCurrentTargetContext(db, readOptions.recognizedFactSource, receiptRuntime) : undefined
+    const candidates = candidateReader ?? target?.candidates ?? legacyCandidates(db, readOptions)
+    const queryKeys = target?.keys.queries ?? readIdentityKeyVariants(db, 'queries')
     const recognizedFactSource = resolveRecognizedFactSource(readOptions.recognizedFactSource)
-    const assessmentReader = createCurrentQualificationAssessmentReader(db, receiptRuntime, { recognizedFactSource })
+    const assessmentReader = target?.assessment ?? createCurrentQualificationAssessmentReader(db, receiptRuntime, { recognizedFactSource })
     // Exhaust this one ordered SELECT before full assessments open SAVEPOINTs.
     // Five sheets can hold at most 5 * 1048575 IDs: Float64 chunks cap this
     // narrow projection at 40MiB, without a workbook-sized array of row objects.
@@ -123,7 +133,7 @@ export async function writeCurrentWorkbookWithCandidates(db: Database.Database, 
     // existing per-sheet bounds. No temporary ID file survives worker cancellation.
     const candidateChunks: Float64Array[] = []
     let total = 0
-    for (const { id } of candidateReader.iterate(title)) {
+    for (const { id } of candidates.iterate(title)) {
       if (total >= 5 * 1048575) throw new CurrentWorkbookLimitError('Excel 五个状态表超过总行数上限，未发布文件；请拆分数据范围')
       const offset = total % 4096
       if (offset === 0) candidateChunks.push(new Float64Array(4096))
@@ -164,7 +174,7 @@ export async function writeCurrentWorkbookWithCandidates(db: Database.Database, 
       const ids = group === 'effective' ? candidateIds() : deferred[group]
       for (const id of ids) {
         // Count the canonical scan once; defer IDs only, never T2 or cell data.
-        const canonicalGroup = group === 'effective' ? assessmentReader.readTitle(id,title,Date.parse(generatedAt)).effectiveStatus : group
+        const canonicalGroup = group === 'effective' ? assessmentReader.readTitle(id,title,Date.parse(generatedAt),target?.keys).effectiveStatus : group
         if (group === 'effective') {
           if (statusCounts[canonicalGroup] >= 1048575) throw new CurrentWorkbookLimitError('Excel 单表超过1048575条数据上限，未发布文件；请拆分数据范围')
           statusCounts[canonicalGroup]++
@@ -220,12 +230,13 @@ export async function writeCurrentWorkbookWithCandidates(db: Database.Database, 
     await workbook.commit()
     await completed
     db.exec('COMMIT')
+    ownedTransaction = false
     appLog({ source: 'export', operation: 'export.current.workbook', outcome: 'success', durationMs: Date.now() - startedAt, counts: { done: total, total } }, logContext)
     return { generatedAt, snapshotStartedAt, dataVersion, ruleVersion: CURRENT_RULE_VERSION, counts, statusCounts, total }
   } catch (error) {
     if (!summaryComplete) appLog({ source: 'export', operation: 'export.current.summary', outcome: 'failure', level: 'error', errorCode: 'summary_failed' }, logContext)
     if (workbookStarted) appLog({ source: 'export', operation: 'export.current.workbook', outcome: 'failure', level: 'error', errorCode: error instanceof CurrentWorkbookLimitError ? 'workbook_limit' : 'workbook_failed' }, logContext)
-    output.destroy(); await completed.catch(() => {}); if (db.inTransaction) db.exec('ROLLBACK'); throw error
+    output.destroy(); await completed.catch(() => {}); if (ownedTransaction && db.inTransaction) db.exec('ROLLBACK'); throw error
   } finally {
     rmSync(overflowDir,{recursive:true,force:true})
   }

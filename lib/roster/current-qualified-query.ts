@@ -8,6 +8,7 @@ import { resolveRecognizedFactSource, type RecognizedFactSource } from './recogn
 import { currentCandidateBindings, currentCandidateReadSqlFor } from './current-candidates'
 import { readIdentityKeyVariants } from './current-identity-keys'
 import type { CurrentCandidateReader } from './current-candidate-reader'
+import { createCurrentTargetContext } from './current-target-context'
 
 export interface CurrentQualifiedFilter {
   titleCode: CurrentTitle
@@ -92,7 +93,11 @@ export interface CurrentQualifiedReadOptions {
 }
 /** Count all candidates in one snapshot; hydrate only the requested page. */
 export function listCurrentQualified(db: Database.Database, filter: CurrentQualifiedFilter, readOptions: CurrentQualifiedReadOptions = {}): CurrentQualifiedResult {
-  return listCurrentQualifiedWithCandidates(db, filter, {
+  return listCurrentQualifiedBody(db, filter, undefined, readOptions)
+}
+
+function legacyCandidates(db: Database.Database, readOptions: CurrentQualifiedReadOptions): CurrentCandidateReader {
+  return {
     connection:db,
     iterate(title, sort) {
       const order = sort === 'name_asc' ? 'e.name collate nocase asc, c.id asc'
@@ -100,7 +105,7 @@ export function listCurrentQualified(db: Database.Database, filter: CurrentQuali
       return db.prepare(`select c.id from (${currentCandidateReadSqlFor(db, readOptions.recognizedFactSource)}) c join enterprise e on e.id=c.id order by ${order}`)
         .iterate(currentCandidateBindings(title)) as Iterable<{ id: number }>
     },
-  }, readOptions)
+  }
 }
 
 /** Explicit candidate dependency for target integration. R5 assessment/keys below
@@ -113,18 +118,20 @@ export function listCurrentQualifiedWithCandidatesAndWitnesses(db:Database.Datab
   if(witnesses.connection!==db)throw new Error('Witness reader must use the caller connection')
   return listCurrentQualifiedBody(db,filter,candidateReader,{},witnesses)
 }
-function listCurrentQualifiedBody(db:Database.Database,filter:CurrentQualifiedFilter,candidateReader:CurrentCandidateReader,readOptions:CurrentQualifiedReadOptions,witnesses?:RecognizedWitnessReader):CurrentQualifiedResult {
-  if(candidateReader.connection!==db)throw new Error('Candidate reader must use the caller connection')
+function listCurrentQualifiedBody(db:Database.Database,filter:CurrentQualifiedFilter,candidateReader:CurrentCandidateReader|undefined,readOptions:CurrentQualifiedReadOptions,witnesses?:RecognizedWitnessReader):CurrentQualifiedResult {
+  if(candidateReader && candidateReader.connection!==db)throw new Error('Candidate reader must use the caller connection')
   const page = filter.page ?? 1, pageSize = filter.pageSize ?? 25
   const snapshotStartedAt = new Date().toISOString()
   const at = Date.parse(snapshotStartedAt)
   prepareCurrentReader(db)
   db.exec('BEGIN')
   try {
+    const target = candidateReader === undefined ? createCurrentTargetContext(db, readOptions.recognizedFactSource) : undefined
     const read=():CurrentQualifiedResult=>{
-    const assessmentReader = witnesses?createCurrentQualificationAssessmentReaderWithWitnesses(db,witnesses)
-      :createCurrentQualificationAssessmentReader(db,undefined,{recognizedFactSource:resolveRecognizedFactSource(readOptions.recognizedFactSource)})
-    const keys = { queries: readIdentityKeyVariants(db, 'queries'), relations: readIdentityKeyVariants(db, 'unassignedRelations') }
+    const candidates = candidateReader ?? target?.candidates ?? legacyCandidates(db, readOptions)
+    const assessmentReader = target?.assessment ?? (witnesses?createCurrentQualificationAssessmentReaderWithWitnesses(db,witnesses)
+      :createCurrentQualificationAssessmentReader(db,undefined,{recognizedFactSource:resolveRecognizedFactSource(readOptions.recognizedFactSource)}))
+    const keys = target?.keys ?? { queries: readIdentityKeyVariants(db, 'queries'), relations: readIdentityKeyVariants(db, 'unassignedRelations') }
     const qName = normalizeName(filter.q ?? ''), qUscc = normalizeUscc(filter.q ?? '')
     const requested = Boolean(qName || qUscc)
     let total = 0
@@ -140,7 +147,7 @@ function listCurrentQualifiedBody(db:Database.Database,filter:CurrentQualifiedFi
     }
     const recognitionYears = new Set<number>(), validYears = new Set<number>(), maintenanceYears = new Set<number>()
     const maintenanceBatchesByYear = new Map<number, Set<number>>()
-    for (const { id } of candidateReader.iterate(filter.titleCode, filter.sort)) {
+    for (const { id } of candidates.iterate(filter.titleCode, filter.sort)) {
       const { row, effectiveStatus } = assessmentReader.readFilterCandidate(id, filter.titleCode, at, keys)
       const identityMatch = (!filter.district || row.district === filter.district) && (!filter.q
         || Boolean(qName && [row.name, ...row.aliases].some(name => normalizeName(name).includes(qName)))
@@ -173,11 +180,13 @@ function listCurrentQualifiedBody(db:Database.Database,filter:CurrentQualifiedFi
       }
       return hydrated
     })
-    db.exec('COMMIT')
     const ascending = (values: Set<number>) => [...values].sort((a,b) => a-b)
     // Keep the old response field; the five-state reader has no pending bucket.
     return { responseVersion: 'current-qualified-478-v2', rows, publishedPending: { requested, rows: [], total: 0, page, pageSize }, total, uncertainTotal, options: { recognitionYears: ascending(recognitionYears), validYears: ascending(validYears), maintenanceYears: ascending(maintenanceYears), maintenanceBatchesByYear: Object.fromEntries([...maintenanceBatchesByYear].map(([year,batches]) => [year,ascending(batches)])) }, page, pageSize, titleCode: filter.titleCode, ruleVersion: CURRENT_RULE_VERSION, snapshotStartedAt }
     }
-    return witnesses?witnesses.withinSnapshot(read):read()
+    const snapshotWitnesses = target?.witnesses ?? witnesses
+    const result = snapshotWitnesses?snapshotWitnesses.withinSnapshot(read):read()
+    db.exec('COMMIT')
+    return result
   } catch (error) { if (db.inTransaction) db.exec('ROLLBACK'); throw error }
 }
