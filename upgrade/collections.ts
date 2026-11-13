@@ -8,6 +8,9 @@ import { and, asc, eq, gt, lte, max, sql, getTableColumns } from 'drizzle-orm'
 import { drizzle, type BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../db/schema'
 import { bindArchive, bindLegacyAlias, insertArchiveValue, reserveLegacyIds, sealArchiveOwner } from '../lib/platform/immutable-archive'
+import { RECONCILE_SLOT_T04 } from '../lib/platform/reconcile-slot-capture'
+import { hasReconcileSlotCapture, requireReconcileSlotSchema } from './reconcile-slot-schema'
+import { captureSourceSlot, storeSlotCapture, readSlotCapture } from './reconcile-slot-capture'
 
 export const TRANSFORM_VERSION = 't04-collection-v1'
 const phase = 'collections', sourceTable = 'platform_query'
@@ -55,12 +58,12 @@ export function schemaHash(s: Database.Database) {
 }
 const legacyTables = ['platform_query', 'platform_query_legacy_provenance', 'platform_query_title_scope', 'platform_query_title_scope_error'] as const
 /** SQLite byte/storage infrastructure exception. No JSON serialization of original values. */
-export function manifest(s: Database.Database, emit?: (record: string) => void) {
+export function manifest(s: Database.Database, emit?: (record: string) => void, capture = false) {
   const h = createHash('sha256'), counts: Record<string, number> = {}
-  for (const table of legacyTables) {
+  for (const table of [...legacyTables,...(capture ? ['platform_relation'] as const : [])]) {
     const columns = s.prepare(`pragma table_info(${table})`).all() as { name: string }[]
     const fields = columns.map(c => c.name).filter(c => c !== 'collection_id')
-    const key = table === 'platform_query' ? 'id' : 'query_id'
+    const key = table === 'platform_query' || table === 'platform_relation' ? 'id' : 'query_id'
     const projection = fields.flatMap((c, i) => [`typeof("${c}") k${i}`, `hex(cast("${c}" as blob)) b${i}`]).join(',')
     let count = 0
     for (const row of s.prepare(`select ${projection} from ${table} order by ${key}${table === 'platform_query_title_scope' ? ',rdjb' : ''}`).iterate()) {
@@ -73,7 +76,7 @@ export function manifest(s: Database.Database, emit?: (record: string) => void) 
   return { digest: h.digest('hex'), counts }
 }
 type Db = BetterSQLite3Database<typeof schema>
-function targetRow(db: Db, collectionId: number) {
+function targetRow(db: Db, collectionId: number, capture?: unknown) {
   const collection = db.select().from(schema.platformCollection).where(eq(schema.platformCollection.id, collectionId)).get()
   const pages = db.select().from(schema.platformCollectionPage).where(eq(schema.platformCollectionPage.collectionId, collectionId)).orderBy(asc(schema.platformCollectionPage.ordinal)).all()
   const conditions = db.select().from(schema.platformCollectionCondition).where(eq(schema.platformCollectionCondition.collectionId, collectionId)).orderBy(asc(schema.platformCollectionCondition.name)).all()
@@ -83,7 +86,8 @@ function targetRow(db: Db, collectionId: number) {
   const scope = db.select().from(schema.platformQueryTitleScope).where(eq(schema.platformQueryTitleScope.queryId, collectionId)).orderBy(asc(schema.platformQueryTitleScope.rdjb)).all()
   const error = db.select().from(schema.platformQueryTitleScopeError).where(eq(schema.platformQueryTitleScopeError.queryId, collectionId)).get()
   const coreBytes = db.select({ value: sql<string>`json_array(${sql.join(Object.values(getTableColumns(schema.platformCollection)).flatMap(c => [sql`typeof(${c})`, sql`hex(cast(${c} as blob))`]), sql`,`)})` }).from(schema.platformCollection).where(eq(schema.platformCollection.id, collectionId)).get()
-  return { collection, coreBytes, pages, conditions, unfinished, refs, alias, scope, error }
+  const row = { collection, coreBytes, pages, conditions, unfinished, refs, alias, scope, error }
+  return capture === undefined ? row : {...row,capture}
 }
 const chain = (previous: string, value: unknown) => hash(previous + '\n' + JSON.stringify(value))
 function object(value: unknown): Record<string, unknown> {
@@ -124,7 +128,7 @@ function provenanceArchive(s: Database.Database, oldId: number) {
   }
   return { storageClass: 'blob' as const, bytes: Buffer.concat(chunks), createdAt: null }
 }
-function transfer(s: Database.Database, db: Db, q: Omit<typeof schema.platformQuery.$inferSelect, 'collectionEvidence'>) {
+function transfer(s: Database.Database, db: Db, q: Omit<typeof schema.platformQuery.$inferSelect, 'collectionEvidence'>, transform: string) {
   id(q.id)
   const evidenceRaw = raw(s, 'platform_query', 'collection_evidence', q.id)!
   const supplementRaw = raw(s, 'platform_query_legacy_provenance', 'collection', q.id)
@@ -142,7 +146,7 @@ function transfer(s: Database.Database, db: Db, q: Omit<typeof schema.platformQu
     fullRange: typeof v.fullRange === 'boolean' ? Number(v.fullRange) : null, fetchedCount: integer(v.fetchedCount), declaredTotal: integer(v.declaredTotal), scopeMode: text(scope.mode),
     provenanceState: both ? 'conflict' : evidence.state !== 'absent' ? 'captured' : supplement.state !== 'absent' ? 'legacy_supplement' : 'unknown',
     parseState: evidence.state !== 'absent' ? evidence.state : supplement.state,
-    ruleVersion: TRANSFORM_VERSION, errorCode: text(error.code), errorMessage: text(error.message),
+    ruleVersion: transform, errorCode: text(error.code), errorMessage: text(error.message),
     maxRequests: integer(limits.maxRequests, 1), maxRows: integer(limits.maxRows, 1), maxDurationMs: integer(limits.maxDurationMs, 1), pageSize: integer(limits.pageSize, 1),
   }).run()
   let successful = 0, known = true
@@ -176,14 +180,16 @@ function transfer(s: Database.Database, db: Db, q: Omit<typeof schema.platformQu
   bindLegacyAlias(db, { kind: 'query', oldId: q.id, collectionId: q.id })
 }
 
-export type UpgradeOptions = { source: string, target: string, runId: string, batchSize: number, transformVersion?: string, beforeCheckpoint?: (lastOldId: number) => void }
+export type UpgradeOptions = { source: string, target: string, runId: string, batchSize: number, transformVersion?: string, beforeCapture?: (oldId:number) => void, beforeCheckpoint?: (lastOldId: number) => void }
 /** Caller supplies frozen offline source and a separate isolated copy at current schema. */
 export function upgradeCollections(options: UpgradeOptions, frozenSource?: FrozenSource): {
   lastOldId: number, copiedCount: number, batchDigest: string,
   sourceManifest: ReturnType<typeof manifest>, inheritedForeignKeys: unknown,
   unresolved: { kind: string, oldQueryId: number, reason: string }[],
 } {
-  if (options.transformVersion !== undefined && options.transformVersion !== TRANSFORM_VERSION) throw new Error('Source/schema/transform binding changed; resume refused')
+  const transform = options.transformVersion ?? TRANSFORM_VERSION
+  if (transform !== TRANSFORM_VERSION && transform !== RECONCILE_SLOT_T04) throw new Error('Source/schema/transform binding changed; resume refused')
+  const capture = transform === RECONCILE_SLOT_T04
   const source = realpathSync(options.source), target = realpathSync(options.target)
   const a = statSync(source), b = statSync(target)
   if (source === target || (a.dev === b.dev && a.ino === b.ino)) throw new Error('Source and target must be distinct isolated files')
@@ -200,15 +206,17 @@ export function upgradeCollections(options: UpgradeOptions, frozenSource?: Froze
     if (existsSync(source + '-wal') && statSync(source + '-wal').size > 0) throw new Error('Source WAL appeared')
     const initialSnapshotHash = fileHash(frozenSource.fd)
     t.pragma('foreign_keys=ON')
+    if (capture) requireReconcileSlotSchema(t)
+    else if (hasReconcileSlotCapture(t)) throw new Error('Explicit reconcile capture transform required')
     const db = drizzle(t, { schema }), sourceDb = drizzle(s, { schema })
     const inheritedForeignKeys = s.pragma('foreign_key_check')
     const orphan = sourceDb.select({ oldQueryId: schema.platformQueryLegacyProvenance.queryId }).from(schema.platformQueryLegacyProvenance).leftJoin(schema.platformQuery, eq(schema.platformQuery.id, schema.platformQueryLegacyProvenance.queryId)).where(sql`${schema.platformQuery.id} IS NULL`).orderBy(asc(schema.platformQueryLegacyProvenance.queryId)).all()
     const unresolved = orphan.map(row => ({ kind: 'orphan_provenance', oldQueryId: row.oldQueryId, reason: 'Original query owner missing; retained in isolated legacy copy and source manifest' }))
-    const frozen = manifest(s), sourceSchemaHash = schemaHash(s), targetSchemaVersion = schemaHash(t)
+    const frozen = manifest(s,undefined,capture), sourceSchemaHash = schemaHash(s), targetSchemaVersion = schemaHash(t)
     // The transitional scope FK requires the untouched old owners in the isolated target copy.
-    if (manifest(t).digest !== frozen.digest) throw new Error('Target legacy copy differs from frozen source')
+    if (manifest(t,undefined,capture).digest !== frozen.digest) throw new Error('Target legacy copy differs from frozen source')
     if (fileHash(frozenSource.fd) !== initialSnapshotHash) throw new Error('Source snapshot drift during binding')
-    const binding = { runId: options.runId, sourceSnapshotSha256: initialSnapshotHash, sourceSchemaHash, sourceManifestSha256: frozen.digest, targetSchemaVersion, transformVersion: TRANSFORM_VERSION }
+    const binding = { runId: options.runId, sourceSnapshotSha256: initialSnapshotHash, sourceSchemaHash, sourceManifestSha256: frozen.digest, targetSchemaVersion, transformVersion: transform }
     const run = db.select().from(schema.platformMigrationRun).where(eq(schema.platformMigrationRun.runId, options.runId)).get()
     if (run) {
       const { state: _state, ...stored } = run
@@ -228,7 +236,11 @@ export function upgradeCollections(options: UpgradeOptions, frozenSource?: Froze
     while (validatedId < lastOldId) {
       const rows = sourceDb.select({ id: schema.platformQuery.id }).from(schema.platformQuery).where(and(gt(schema.platformQuery.id, validatedId), lte(schema.platformQuery.id, lastOldId))).orderBy(asc(schema.platformQuery.id)).limit(options.batchSize).all()
       if (!rows.length) throw new Error('Checkpoint source cursor missing')
-      for (const q of rows) { id(q.id); digest = chain(digest, targetRow(db, q.id)); copiedCount++ }
+      for (const q of rows) {
+        id(q.id)
+        if (capture && !isDeepStrictEqual(readSlotCapture(t,q.id),captureSourceSlot(s,t,q.id))) throw new Error('Reconcile capture input drift')
+        digest = chain(digest, targetRow(db, q.id,capture ? readSlotCapture(t,q.id) : undefined)); copiedCount++
+      }
       validatedId = rows.at(-1)!.id
     }
     if (cp && (cp.copiedCount !== copiedCount || cp.batchDigest !== digest)) throw new Error('Target/checkpoint drift; resume refused')
@@ -240,7 +252,14 @@ export function upgradeCollections(options: UpgradeOptions, frozenSource?: Froze
       if (!rows.length) break
       const result = db.transaction(tx => {
         let nextDigest = digest
-        for (const q of rows) { transfer(s, tx, q); nextDigest = chain(nextDigest, targetRow(tx, q.id)) }
+        for (const q of rows) {
+          transfer(s, tx, q,transform)
+          if (capture) {
+            options.beforeCapture?.(q.id)
+            storeSlotCapture(t,q.id,captureSourceSlot(s,t,q.id))
+          }
+          nextDigest = chain(nextDigest, targetRow(tx, q.id,capture ? readSlotCapture(t,q.id) : undefined))
+        }
         const nextId = rows.at(-1)!.id
         options.beforeCheckpoint?.(nextId)
         if (fileHash(frozenSource.fd) !== binding.sourceSnapshotSha256) throw new Error('Source snapshot drift before checkpoint')
@@ -251,7 +270,7 @@ export function upgradeCollections(options: UpgradeOptions, frozenSource?: Froze
       }, { behavior: 'immediate' })
       lastOldId = result.nextId; digest = result.nextDigest; copiedCount += rows.length
     }
-    if (fileHash(frozenSource.fd) !== binding.sourceSnapshotSha256 || manifest(s).digest !== frozen.digest || schemaHash(s) !== sourceSchemaHash) throw new Error('Source drift')
+    if (fileHash(frozenSource.fd) !== binding.sourceSnapshotSha256 || manifest(s,undefined,capture).digest !== frozen.digest || schemaHash(s) !== sourceSchemaHash) throw new Error('Source drift')
     if (!isDeepStrictEqual(t.pragma('foreign_key_check'), inheritedForeignKeys) || !isDeepStrictEqual(t.pragma('integrity_check'), [{ integrity_check: 'ok' }])) throw new Error('Target integrity failure')
     const query = schema.platformQuery, alias = schema.platformLegacyQueryAlias, collection = schema.platformCollection
     const missing = db.select({ id: query.id }).from(query)
