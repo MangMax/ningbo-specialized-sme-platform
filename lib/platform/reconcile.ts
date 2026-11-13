@@ -5,6 +5,7 @@
 import type { ComparisonDirection } from '../comparison'
 import type { PlatformInterface } from '../labels'
 import type { PlatformRelationRecord } from './identity'
+import type { BusinessStatusValue } from './business-status'
 import type { DifferenceMeasureCode, DifferenceReasonCode, DifferenceStatus } from './payload'
 
 export const DEFAULT_FRESHNESS_MS = 24 * 60 * 60 * 1000
@@ -46,7 +47,10 @@ export interface ReconcileQueryEvidence {
   failureReason?: string | null
   /** 逐条关联关系(**不按 id 去重**)。
       平台没有独立「曾用名」列 —— 同一 `tyshxydm` 下 `qymc` 不同的历史行**本身**就是证据。 */
-  relations: PlatformRelationRecord[]
+  relations: (PlatformRelationRecord | (Omit<PlatformRelationRecord, 'interface' | 'status'> & {
+    interface: 'business_list'
+    status: BusinessStatusValue
+  }))[]
 }
 
 /** 证据指针的**自然键**(契约 §8.7):写入侧在**同一批内**解析成真实行 id。 */
