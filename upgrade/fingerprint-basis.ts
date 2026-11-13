@@ -1,6 +1,7 @@
 /** #724 offline successor only. Absent from startup migrations and public routing. */
 import { readFingerprintEvents, verifyOriginalCommand, type FingerprintEventSource } from './fingerprint-events'
 import type Database from 'better-sqlite3'
+import { legacyFingerprintRaw } from '../lib/platform/legacy-fingerprint-raw'
 
 export function requireFingerprintForeignKeys(t: Database.Database) {
   if(t.pragma('foreign_keys',{simple:true})!==1)throw new Error('fingerprint writes require foreign_keys=ON before entry')
@@ -181,10 +182,7 @@ export function finalizeFingerprintBasis(options:FingerprintBasisOptions,frozen?
           const snapshot=ownerArchive('legacyRowSnapshot')
           if(snapshot.storageClass!=='blob'||!snapshot.bytes?.equals(Buffer.from(JSON.stringify({encoding:'t05a-sqlite-cells-v1',fields:rowSnapshot(legacyFrozen.database,'platform_relation','id',original.id)}))))throw new Error(`Legacy cells conflict ${observation.id}`)
           const raw=ownerArchive('rawFields')
-          if(raw.storageClass!=='text'&&raw.storageClass!=='null')throw new Error(`Unverifiable legacy BLOB ${observation.id}`)
-          const rawText=raw.storageClass==='null'?null:new TextDecoder('utf-8',{fatal:true}).decode(raw.bytes!)
-          let rawFields:unknown=null
-          try {rawFields=rawText===null?null:JSON.parse(rawText)}catch {/* Original public oracle keeps invalid raw text. */}
+          const {rawFields,invalidRaw}=legacyFingerprintRaw(raw)
           {
             const plan=planPlatformObservation({interface:collection.interface,relationKey:observation.sourceRelationKey,rawFields})
             if(observation.identityState!==plan.identityState||observation.contentState!==plan.contentState||observation.keySource!==plan.keySource||!observation.indexedAt)throw new Error('Legacy original index fact conflict')
@@ -203,7 +201,7 @@ export function finalizeFingerprintBasis(options:FingerprintBasisOptions,frozen?
               }
             }
           }
-          const bytes=Buffer.from(canonicalPlatformJson({interface:collection.interface,relationKey:observation.sourceRelationKey,queryId:queryAlias.oldId,sequenceNo:observation.sequenceNo,queryKey:collection.queryKey,rdjb:collection.rdjb,queriedAt:collection.queriedAt,rawFields,invalidRaw:rawFields===null?rawText:null}))
+          const bytes=Buffer.from(canonicalPlatformJson({interface:collection.interface,relationKey:observation.sourceRelationKey,queryId:queryAlias.oldId,sequenceNo:observation.sequenceNo,queryKey:collection.queryKey,rdjb:collection.rdjb,queriedAt:collection.queriedAt,rawFields,invalidRaw}))
           if(observation.projectionRuleVersion!==PLATFORM_PROJECTION_RULE||hash(bytes)!==observation.inputFingerprint)throw new Error(`Legacy fingerprint/rule conflict ${observation.id}`)
           const archiveId=insertArchiveValue(tx,{storageClass:'blob',bytes,createdAt:null})
           tx.insert(s.platformObservationFingerprintBasis).values({observationId:observation.id,scheme:indexEvent?.lifecycle==='legacy-bootstrap'?'legacy-bootstrap-v1':'legacy-indexed-v1',inputArchiveId:archiveId}).run()
