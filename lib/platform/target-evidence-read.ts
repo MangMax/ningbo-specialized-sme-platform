@@ -9,6 +9,7 @@ import { MAX_EVIDENCE_CHUNK_BYTES, type PlatformEvidenceInput } from './evidence
 
 import { platformQueryResultShape } from './live-query'
 import { relationEvidenceColumns } from './relation-evidence-snapshot'
+import { resolveSelectedLegacyProvenance } from './target-legacy-provenance'
 const cellSchema = z.object({name:z.string(),storageClass:z.enum(['null','text','blob','integer','real']),hex:z.string().regex(/^(?:[a-fA-F0-9]{2})*$/),real64be:z.string().regex(/^[a-fA-F0-9]{16}$/).optional()})
 const commandProvenanceSchema=z.object({interface:z.enum(['apply_list','business_list','recognized_list']),queryKey:z.string(),rdjb:z.string().optional(),queriedAt:z.string(),reuseExisting:z.literal(true).optional(),rawResponse:z.string().nullish(),collectionEvidence:z.object(platformQueryResultShape).nullish()})
 export const snapshotSchema=z.object({encoding:z.literal('t05a-sqlite-cells-v1'),fields:z.array(cellSchema)})
@@ -123,32 +124,20 @@ export function readTargetPlatformEvidence<S extends Record<string,unknown>>(db:
     if(ref.kind==='collection') {
       if(input.field==='relation')throw new Error('Observation reference required')
       const r=s.platformCollectionArchiveRef
-      if(input.field==='legacyProvenance'&&!provenancePresence(tx,ref.collectionId,queryId)) {
-        return {queryId,field:input.field,encoding:'base64' as const,offset,byteLength:0,totalBytes:0,isNull:true,hasMore:false,data:''}
+      if(input.field==='legacyProvenance') {
+        const collection=tx.select().from(s.platformCollection).where(eq(s.platformCollection.id,ref.collectionId)).get()
+        if(!collection)throw new Error('Missing provenance collection lifecycle')
+        const resolved=resolveSelectedLegacyProvenance(tx,[{collection,id:queryId}]).get(ref.collectionId)
+        if(!resolved)return {queryId,field:input.field,encoding:'base64' as const,offset,byteLength:0,totalBytes:0,isNull:true,hasMore:false,data:''}
+        const value=tx.get<{data:Buffer|null;totalBytes:number|null}>(sql`select
+          substr(cast(${resolved.collection} as blob),${offset+1},${length}) data,
+          length(cast(${resolved.collection} as blob)) totalBytes`)!
+        const bytes=value.data??Buffer.alloc(0),size=value.totalBytes??0
+        return {queryId,field:input.field,encoding:'base64' as const,offset,byteLength:bytes.length,totalBytes:size,isNull:value.totalBytes===null,hasMore:offset+bytes.length<size,data:bytes.toString('base64')}
       }
       const binding=tx.select().from(r).where(and(eq(r.ownerId,ref.collectionId),eq(r.field,input.field))).get()
       if(!binding||binding.sealed!==1)throw new Error('Missing sealed collection archive')
       const owner={kind:'collection' as const,ownerId:ref.collectionId,field:input.field}
-      if(input.field==='legacyProvenance') {
-        // T04 stores an exact length-prefixed multi-cell envelope, not the old collection DTO.
-        const parts:Buffer[]=[]
-        let cursor=0
-        for(;;) {
-          const part=readOwnerArchive(tx,owner,{offset:cursor,length:MAX_EVIDENCE_CHUNK_BYTES})
-          if(!part||part.isNull)throw new Error('Missing original provenance envelope')
-          const bytes=Buffer.from(part.data,'base64');parts.push(bytes);cursor+=bytes.length
-          if(!part.hasMore)break
-        }
-        const envelope=Buffer.concat(parts)
-        for(const cell of targetProvenanceCells(envelope)) {
-          if(cell.name==='collection') {
-            const bytes=Buffer.from(cell.hex,'hex'),size=bytes.length
-            const data=bytes.subarray(Math.min(offset,size),Math.min(offset+length,size))
-            return {queryId,field:input.field,encoding:'base64' as const,offset,byteLength:data.length,totalBytes:size,isNull:cell.storageClass==='null',hasMore:offset+data.length<size,data:data.toString('base64')}
-          }
-        }
-        throw new Error('Missing original provenance collection')
-      }
       const value=readOwnerArchive(tx,owner,{offset,length})
       if(!value)throw new Error('Missing collection archive value')
       const {storageClass:_storageClass,sha256:_sha256,...chunk}=value

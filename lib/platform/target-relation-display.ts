@@ -14,8 +14,11 @@ import { targetSchema as s } from './target-schema'
 import { storedApplyProjection } from './apply-stored-schema'
 import { storedProcessProjection } from './process-stored-schema'
 import { storedRecognizedProjection } from './recognized-stored-schema'
-import { cellExpression, snapshotSchema, provenancePresence, targetProvenanceCells } from './target-evidence-read'
+import { cellExpression, snapshotSchema } from './target-evidence-read'
 import { sourcePositionForSequence } from './recognized-evidence'
+import { resolveSelectedLegacyProvenance, readResolvedLegacyDisplay, type SelectedLegacyProvenance } from './target-legacy-provenance'
+import { assertTargetDisplayBudget } from './target-query-budget'
+import { requireLegacyProvenanceReady } from './legacy-provenance-catalog'
 import { legacySourcePositionForSequence } from './legacy-provenance'
 
 export type RelationEvidenceDisplaySelection = Readonly<{ relationId: number; queryId?: number }>
@@ -47,7 +50,7 @@ const fields = [
 ] as const
 
 export function readTargetRelationDisplay<S extends Record<string, unknown>>(
-  db: BetterSQLite3Database<S>, selections: readonly RelationEvidenceDisplaySelection[], options: { fullCollectionEvidence?: boolean } = {},
+  db: BetterSQLite3Database<S>, selections: readonly RelationEvidenceDisplaySelection[], options: { fullCollectionEvidence?: boolean; legacy?: SelectedLegacyProvenance; budgetChecked?: boolean } = {},
 ): Readonly<{ purpose: 'platform_relation_evidence_display'; sources: ReadonlyMap<number, RelationEvidenceDisplay> }> {
   const selected = new Map<number, RelationEvidenceDisplaySelection>()
   for (const selection of selections) {
@@ -57,7 +60,8 @@ export function readTargetRelationDisplay<S extends Record<string, unknown>>(
   }
   return db.transaction(tx => {
     const phase = tx.get<{ user_version: number }>(sql`PRAGMA user_version`)?.user_version
-    if (phase !== 71610 && phase !== 71611 && phase !== 71612) throw new Error('Explicit 71610 evidence display target required')
+    if (phase !== 71610 && phase !== 71611 && phase !== 71612 && phase !== 71613) throw new Error('Explicit 71610 evidence display target required')
+    if (phase === 71613) requireLegacyProvenanceReady(sqliteConnection(tx))
     if ((phase === 71611 || phase === 71612)) requireH1cReady(sqliteConnection(tx))
     const sources = new Map<number, RelationEvidenceDisplay>([...selected.keys()].map(id => [id, null]))
     const a = s.platformObservationAssignment, original = alias(a, 'display_original_assignment'), newer = alias(a, 'display_newer_assignment')
@@ -73,11 +77,15 @@ export function readTargetRelationDisplay<S extends Record<string, unknown>>(
         return selected.get(owner.relationId)?.queryId === undefined || selected.get(owner.relationId)?.queryId === owner.queryId
       })
     if (!owners.length) return { purpose: 'platform_relation_evidence_display', sources }
+    const distinctOwners = [...new Map(owners.map(owner => [owner.collection.id, owner])).values()]
+    const selectedCollections = distinctOwners.map(owner => ({ collection: owner.collection, id: owner.queryId! }))
+    const legacy = options.legacy ?? resolveSelectedLegacyProvenance(tx, selectedCollections)
+    if (!options.budgetChecked) assertTargetDisplayBudget(tx, selectedCollections, legacy)
     const observationIds = owners.map(owner => owner.observation.id)
     const collectionIds = [...new Set(owners.map(owner => owner.collection.id))]
     const cr = s.platformCollectionArchiveRef, ar = s.platformObservationArchiveRef, v = s.platformArchiveValue
     const collectionArchives = chunks(collectionIds).flatMap(ids => tx.select({ ownerId: cr.ownerId, field: cr.field, sealed: cr.sealed, archiveId: v.id, storageClass: v.storageClass, byteLength: v.byteLength, sha256: v.sha256,
-      bytes: sql<Buffer | null>`CASE WHEN ${cr.field} <> 'rawResponse' THEN ${v.bytes} ELSE NULL END`,
+      bytes: sql<Buffer | null>`CASE WHEN ${cr.field} = 'collectionEvidence' THEN ${v.bytes} ELSE NULL END`,
     }).from(cr).leftJoin(v, eq(v.id, cr.archiveId)).where(inArray(cr.ownerId, ids)).all())
     const observationArchives = chunks(observationIds).flatMap(ids => tx.select({ ownerId: ar.ownerId, field: ar.field, sealed: ar.sealed, storageClass: v.storageClass, bytes: v.bytes, byteLength: v.byteLength, sha256: v.sha256 })
       .from(ar).leftJoin(v, eq(v.id, ar.archiveId)).where(inArray(ar.ownerId, ids)).all())
@@ -91,42 +99,15 @@ export function readTargetRelationDisplay<S extends Record<string, unknown>>(
     // A collection's evidence and provenance are authenticated/decoded once per request,
     // even if hundreds of selected observations share it. Never retained across a request.
     const collectionDisplays = new Map<number, { query: object; position: (sequence: number) => ReturnType<typeof sourcePositionForSequence> }>()
-    const distinctOwners = [...new Map(owners.map(owner => [owner.collection.id, owner])).values()]
-    const metadataJobs = distinctOwners.map(owner => {
-      const collection = owner.collection, refs = collectionById.get(collection.id) ?? []
-      const hasLegacy = provenancePresence(tx, collection.id, owner.queryId!, { collection, refs, requestBytes: refs.find(ref => ref.field === 'request')?.bytes ?? null })
-      const evidence = authenticatedBytes(refs.find(ref => ref.field === 'collectionEvidence'))
-      const envelope = hasLegacy ? authenticatedBytes(refs.find(ref => ref.field === 'legacyProvenance')) : null
-      if (hasLegacy && !envelope?.bytes) throw new Error('Missing original provenance envelope')
-      const cells = envelope?.bytes ? [...targetProvenanceCells(envelope.bytes)] : []
-      const scalar = (name: string) => {
-        const cell = cells.find(cell => cell.name === name)
-        if (!cell) return sql`NULL`
-        return cellExpression(cell)
-      }
-      const originalCollection = scalar('collection')
-      return sql`SELECT ${collection.id} AS owner,
-        ${options.fullCollectionEvidence ? sql`cast(${evidence.bytes} as text)` : sql`json_remove(cast(${evidence.bytes} as text), '$.rows')`} AS evidence,
-        json_remove(${originalCollection}, '$.rows') AS legacyCollection,
-        ${scalar('query_id')} AS queryId, ${scalar('source_identity')} AS sourceIdentity,
-        ${scalar('source_sha256')} AS sourceSha256, ${scalar('segment_index')} AS segmentIndex,
-        ${scalar('input_fingerprint')} AS inputFingerprint, ${scalar('import_batch_id')} AS importBatchId,
-        ${scalar('created_at')} AS createdAt, ${Number(hasLegacy)} AS hasLegacy`
-    })
-    // Batch original scalar/JSON evidence expressions after owner selection. SQLite's exact
-    // json_remove grammar/errors are retained. None of these expressions is a predicate.
-    const metadata = new Map(chunks(metadataJobs).flatMap(jobs => tx.all<{
-      owner: number; evidence: string | null; legacyCollection: string | null;
-      queryId: unknown; sourceIdentity: unknown; sourceSha256: unknown; segmentIndex: unknown;
-      inputFingerprint: unknown; importBatchId: unknown; createdAt: unknown; hasLegacy: number;
-    }>(sql.join(jobs, sql` UNION ALL `))).map(value => [value.owner, value]))
     for (const owner of distinctOwners) {
-      const collection = owner.collection, value = metadata.get(collection.id)!
+      const collection = owner.collection, refs = collectionById.get(collection.id) ?? []
+      const evidenceArchive = authenticatedBytes(refs.find(ref => ref.field === 'collectionEvidence'))
+      const value = tx.get<{evidence: string | null}>(sql`select ${options.fullCollectionEvidence ? sql`cast(${evidenceArchive.bytes} as text)` : sql`json_remove(cast(${evidenceArchive.bytes} as text), '$.rows')`} AS evidence`)!
       const evidence = value.evidence === null ? null : JSON.parse(value.evidence)
-      const legacyCollection = value.legacyCollection === null ? null : JSON.parse(value.legacyCollection)
-      const legacy = value.hasLegacy ? { queryId: value.queryId, sourceIdentity: value.sourceIdentity, sourceSha256: value.sourceSha256, segmentIndex: value.segmentIndex, collection: legacyCollection, inputFingerprint: value.inputFingerprint, importBatchId: value.importBatchId, createdAt: value.createdAt, kind: 'legacy_pagination' } : undefined
-      const query = { id: owner.queryId, interface: collection.interface, queryKey: collection.queryKey, rdjb: collection.rdjb, titleCode: collection.titleCode, queriedAt: collection.queriedAt, lastCollectedAt: collection.lastCollectedAt, status: collection.status, failureReason: collection.failureReason, collectionEvidence: evidence, createdAt: collection.createdAt, ...(legacy ? { legacyProvenance: legacy } : {}) }
-      collectionDisplays.set(collection.id, { query, position: sequence => legacy ? legacySourcePositionForSequence(legacyCollection, sequence) : sourcePositionForSequence(evidence, sequence) })
+      const resolved = legacy.get(collection.id)
+      const provenance = resolved ? readResolvedLegacyDisplay(tx, resolved) : undefined
+      const query = { id: owner.queryId, interface: collection.interface, queryKey: collection.queryKey, rdjb: collection.rdjb, titleCode: collection.titleCode, queriedAt: collection.queriedAt, lastCollectedAt: collection.lastCollectedAt, status: collection.status, failureReason: collection.failureReason, collectionEvidence: evidence, createdAt: collection.createdAt, ...(provenance ? { legacyProvenance: provenance } : {}) }
+      collectionDisplays.set(collection.id, { query, position: sequence => provenance ? legacySourcePositionForSequence(provenance.collection, sequence) : sourcePositionForSequence(evidence, sequence) })
     }
     const snapshots = new Map(owners.map(owner => {
       const archive = authenticatedBytes(observationById.get(owner.observation.id)?.find(ref => ref.field === 'legacyRowSnapshot'))

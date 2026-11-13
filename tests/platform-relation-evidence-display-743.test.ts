@@ -106,7 +106,11 @@ it('batches selected hydration with bounded SQL and no retired tables or archive
     expect(display(ids).size).toBe(ids.length)
     const trace=[...f.statements]
     expect(trace.filter(q => /\b(?:from|join)\s+["`]?platform_(?:query|relation)["`]?(?:\s|$)/i.test(q))).toEqual([])
-    expect(trace.filter(q => /\b(?:where|order by|join)\b[^;]*\b(?:json_extract|json_each|json_tree)\s*\(/i.test(q))).toEqual([])
+    // The selected-owner byte budget inspects snapshot cells in SQL before hydration.
+    const budgets = trace.filter(q => q.includes('sum(1024 +') && q.includes('where ob.collection_id='))
+    expect(budgets).toHaveLength(1)
+    expect(budgets[0]).toMatch(/where ob.collection_id=21(?:\.0)?\),0\) as n$/)
+    expect(trace.filter(q => !budgets.includes(q) && /\b(?:where|order by|join)\b[^;]*\b(?:json_extract|json_each|json_tree)\s*\(/i.test(q))).toEqual([])
     const firstArchive=trace.findIndex(q=>q.includes('from "platform_collection_archive_ref"'))
     const selectedOwner=trace.findIndex(q=>q.includes('from "platform_legacy_relation_alias"'))
     expect(selectedOwner).toBeGreaterThanOrEqual(0)
