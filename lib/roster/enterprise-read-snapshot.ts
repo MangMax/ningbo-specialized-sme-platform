@@ -6,6 +6,8 @@ import * as s from '../../db/schema'
 import type { Database } from 'better-sqlite3'
 import { normalizeName, normalizeUscc } from '../domain'
 import { isPageCapable } from './evidence-page'
+import { queryHistoryTarget } from '../platform/query-history-target'
+import { readEnterpriseTargetPlatformHistory } from './enterprise-platform-history'
 
 type Db = BetterSQLite3Database<typeof s>
 // Connection-local deterministic normalizers preserve the shared JS contract,
@@ -74,6 +76,7 @@ export function readEnterpriseSnapshot(db: Db, id?: number) {
   let queries: (typeof s.platformQuery.$inferSelect)[] = []
   let relations: (typeof s.platformRelation.$inferSelect)[] = []
   let ownQueryIds: number[] = []
+  let targetHistory: ReturnType<typeof readEnterpriseTargetPlatformHistory> | undefined
   if (id == null) {
     exportRows = db.select(exportColumns).from(s.platformExportRow).all()
     exportBatches = db.select(batchColumns).from(s.platformExportBatch).all()
@@ -94,30 +97,36 @@ export function readEnterpriseSnapshot(db: Db, id?: number) {
       or ${inArray(s.platformExportBatch.id, [...new Set(exportRows.map(row => row.batchId))])}`).all()
     const enterprise = enterprises[0]
     if (enterprise) {
-      const ownUscc = normalizeUscc(enterprise.usccNorm) || null
-      // normalizeUscc uppercases the ASCII prefix to NAME:, so it can never
-      // equal the literal lowercase name: key. Keep that original exact match
-      // indexed; name-only identities need no normalization scan at all.
-      // Likewise normalization never removes ':': reject impossible USCC keys
-      // natively before invoking any legacy Unicode callback.
-      const queryScope = or(
-        sql`q.query_key = ${`name:${enterprise.nameNorm}`}`,
-        ownUscc == null ? undefined : sql`${ownUscc.includes(':') ? sql`1` : sql`instr(q.query_key,':')=0`} and ${uscc(sql`q.query_key`)} = ${ownUscc}`,
-        sql`q.id in (select query_id from platform_relation where enterprise_id = ${id})`,
-      )!
-      const ownQueries = sql`select q.id from platform_query q where ${queryScope}`
-      const ownIds = db.all<{ id: number }>(ownQueries).map(row => row.id)
-      ownQueryIds = ownIds
       const evidenceIds = [...new Set(differences.map(row => row.evidenceQueryId).filter((id): id is number => id != null))]
-      const queryIds = [...new Set([...ownIds, ...evidenceIds])]
-      queries = db.select({ ...getTableColumns(s.platformQuery), rawResponse: sql<null>`null`, collectionEvidence: sql<string | null>`case when ${inArray(s.platformQuery.id, ownIds)} then ${s.platformQuery.collectionEvidence} else null end`.mapWith(s.platformQuery.collectionEvidence) }).from(s.platformQuery).where(inArray(s.platformQuery.id, queryIds)).all()
-      const recognizedIds = queries.filter(q => ownIds.includes(q.id) && q.interface === 'recognized_list').map(q => q.id)
-      // Explanation queries need all relation IDs. Only displayed rows need JSON.
-      const displayed = or(eq(s.platformRelation.enterpriseId, id), recognizedIds.length ? inArray(s.platformRelation.queryId, recognizedIds) : undefined)!
-      relations = db.select({ ...getTableColumns(s.platformRelation), sourceText: sql<null>`null`, aliasNameRaw: sql<null>`null`, createdAt: sql<string>`''`, rawFields: sql<string | null>`case when ${displayed} then ${s.platformRelation.rawFields} else null end`.mapWith(s.platformRelation.rawFields) }).from(s.platformRelation).where(or(displayed, evidenceIds.length ? inArray(s.platformRelation.queryId, evidenceIds) : undefined)).all()
+      if (queryHistoryTarget(db)) {
+        targetHistory = readEnterpriseTargetPlatformHistory(db, enterprise, evidenceIds)
+        ;({ queries, relations, ownQueryIds } = targetHistory)
+      } else {
+        const ownUscc = normalizeUscc(enterprise.usccNorm) || null
+        // normalizeUscc uppercases the ASCII prefix to NAME:, so it can never
+        // equal the literal lowercase name: key. Keep that original exact match
+        // indexed; name-only identities need no normalization scan at all.
+        // Likewise normalization never removes ':': reject impossible USCC keys
+        // natively before invoking any legacy Unicode callback.
+        const queryScope = or(
+          sql`q.query_key = ${`name:${enterprise.nameNorm}`}`,
+          ownUscc == null ? undefined : sql`${ownUscc.includes(':') ? sql`1` : sql`instr(q.query_key,':')=0`} and ${uscc(sql`q.query_key`)} = ${ownUscc}`,
+          sql`q.id in (select query_id from platform_relation where enterprise_id = ${id})`,
+        )!
+        const ownQueries = sql`select q.id from platform_query q where ${queryScope}`
+        const ownIds = db.all<{ id: number }>(ownQueries).map(row => row.id)
+        ownQueryIds = ownIds
+        const queryIds = [...new Set([...ownIds, ...evidenceIds])]
+        queries = db.select({ ...getTableColumns(s.platformQuery), rawResponse: sql<null>`null`, collectionEvidence: sql<string | null>`case when ${inArray(s.platformQuery.id, ownIds)} then ${s.platformQuery.collectionEvidence} else null end`.mapWith(s.platformQuery.collectionEvidence) }).from(s.platformQuery).where(inArray(s.platformQuery.id, queryIds)).all()
+        const recognizedIds = queries.filter(q => ownIds.includes(q.id) && q.interface === 'recognized_list').map(q => q.id)
+        // Explanation queries need all relation IDs. Only displayed rows need JSON.
+        const displayed = or(eq(s.platformRelation.enterpriseId, id), recognizedIds.length ? inArray(s.platformRelation.queryId, recognizedIds) : undefined)!
+        relations = db.select({ ...getTableColumns(s.platformRelation), sourceText: sql<null>`null`, aliasNameRaw: sql<null>`null`, createdAt: sql<string>`''`, rawFields: sql<string | null>`case when ${displayed} then ${s.platformRelation.rawFields} else null end`.mapWith(s.platformRelation.rawFields) }).from(s.platformRelation).where(or(displayed, evidenceIds.length ? inArray(s.platformRelation.queryId, evidenceIds) : undefined)).all()
+      }
     }
   }
-  return { enterprises, ...history, differences, exportRows, exportBatches, queries, relations, ownQueryIds }
+  return { enterprises, ...history, differences, exportRows, exportBatches, queries, relations, ownQueryIds,
+    platformLegacyById: targetHistory?.legacyById, platformPositionsById: targetHistory?.positionsById }
 }
 
 /** Same USCC set difference as getComparison, scoped before materialization. */

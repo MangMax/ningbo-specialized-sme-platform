@@ -34,9 +34,9 @@ function current(db: Db) { return and(eq(a.observationId, o.id), eq(a.revision, 
 const isolated = or(ne(o.identityState, 'resolved'), ne(o.contentState, 'verified'), isNull(o.versionId));
 /** Gate the entire apply request domain, before any business filtering or paging.
  * PRAGMA is schema infrastructure; no archive or legacy entity is consulted. */
-function gate(db: Db, domain?: SQL, annualFacts = false) {
+function gate(db: Db, domain?: SQL, factScope?: 'annual' | 'selected') {
     const phase = db.get<{ user_version: number }>(sql`PRAGMA user_version`)?.user_version;
-    if (phase !== 71608 && !(annualFacts && (phase === 71611 || phase === 71612) && processStoredInstalled(sqliteConnection(db))))
+    if (phase !== 71608 && !(factScope && (phase === 71611 || phase === 71612 || (factScope === 'selected' && phase === 71613)) && processStoredInstalled(sqliteConnection(db))))
         fail(409, 'apply_target_phase', 'Declaration reader requires 71608');
     const missing = db.select({ id: o.id }).from(o).innerJoin(c, eq(c.id, o.collectionId)).leftJoin(p, eq(p.observationId, o.id))
         .where(and(eq(c.interface, 'apply_list'), domain, or(isNull(p.id), ne(p.exactStoredState, 'captured'), ne(p.sqlFactTitleState, 'captured'), isNull(p.exactStoredState), isNull(p.sqlFactTitleState)))).limit(1).get();
@@ -148,7 +148,7 @@ export function getTargetDeclaration(db: Db, recordId: number): DeclarationDetai
 const modeledFields = ['declareKind', 'year', 'appliedAt', 'status', 'nameRaw', 'usccRaw'] as const;
 const comparisonFields = ['province', 'status', 'batch', 'declareKind', 'appliedAt', 'awardBatchLabel', 'year'] as const;
 /** Alias inputs retain their namespace. No unindexed legacy lookup or archive fallback. */
-export function readTargetDeclarationFacts(db: Db, relationIds: number[]): Map<number, PlatformObservationFact> {
+export function readTargetDeclarationFacts(db: Db, relationIds: number[], options: { scope?: 'selected' } = {}): Map<number, PlatformObservationFact> {
     const result = new Map<number, PlatformObservationFact>();
     if (!relationIds.length)
         return result;
@@ -156,7 +156,7 @@ export function readTargetDeclarationFacts(db: Db, relationIds: number[]): Map<n
         const original = alias(a, 'original_assignment');
         for (let start = 0; start < relationIds.length; start += 400) {
             const ids = relationIds.slice(start, start + 400);
-            gate(tx, inArray(o.id, tx.select({ id: ra.observationId }).from(ra).where(inArray(ra.oldId, ids))), true);
+            gate(tx, inArray(o.id, tx.select({ id: ra.observationId }).from(ra).where(inArray(ra.oldId, ids))), options.scope ?? 'annual');
             const rows = tx.select({ relationId: ra.oldId, source: p, version: vp, originalName: original.nameRaw, originalUscc: original.usccRaw })
                 .from(ra).innerJoin(o, eq(o.id, ra.observationId)).innerJoin(c, eq(c.id, o.collectionId)).innerJoin(p, eq(p.observationId, o.id))
                 .leftJoin(vp, and(eq(vp.versionId, o.versionId), eq(vp.recordId, o.recordId)))

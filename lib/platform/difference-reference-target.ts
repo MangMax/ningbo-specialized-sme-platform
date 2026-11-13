@@ -15,7 +15,7 @@ export const targetDifferenceReason = sqliteTable('difference_reason', {
 /** Public IDs remain external. No row payload, result or permission registration is cached. */
 export function differenceEvidenceColumns(db: object, owner?: 'd') {
  const t = sqliteConnection(db), phase = Number(t.pragma('user_version',{simple:true}))
- if (phase === 71612) {
+ if (phase === 71612 || phase === 71613) {
   requireH1cReady(t)
   return {
    evidenceQueryId: sql<number|null>`(select ${q.oldId} from ${q} where ${q.collectionId} = ${owner ? sql`${sql.identifier(owner)}.${sql.identifier('evidence_query_id')}` : targetDifferenceReason.evidenceCollectionId})`,
