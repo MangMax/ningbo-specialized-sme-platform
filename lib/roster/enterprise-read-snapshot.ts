@@ -1,3 +1,4 @@
+import type { PlatformStoredRelation } from '../platform/read'
 import { differencePublicColumns } from '../platform/difference-reference-target'
 /** Enterprise-only reads. No raw platform archives enter a list aggregation. */
 import { eq, getTableColumns, inArray, sql, asc, or } from 'drizzle-orm'
@@ -74,7 +75,7 @@ export function readEnterpriseSnapshot(db: Db, id?: number) {
   let exportRows: (typeof s.platformExportRow.$inferSelect)[]
   let exportBatches: (typeof s.platformExportBatch.$inferSelect)[]
   let queries: (typeof s.platformQuery.$inferSelect)[] = []
-  let relations: (typeof s.platformRelation.$inferSelect)[] = []
+  let relations: PlatformStoredRelation[] = []
   let ownQueryIds: number[] = []
   let targetHistory: ReturnType<typeof readEnterpriseTargetPlatformHistory> | undefined
   if (id == null) {

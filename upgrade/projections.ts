@@ -1,3 +1,4 @@
+import { businessStatusRule } from '../lib/platform/business-status-catalog'
 import { sourceValueKind, sourceFieldComparison } from '../lib/platform/source-extraction'
 /** Offline T05b only. Source parsing ends here; no runtime consumer imports this module. */
 import Database from 'better-sqlite3'
@@ -69,21 +70,21 @@ function decode(a:typeof schema.platformArchiveValue.$inferSelect) {
     return {state:'valid' as const,row:parsed as Record<string,unknown>}
   }catch{return {state:'invalid' as const,row:null}}
 }
-function transferObservation(db:Db,id:number) {
+function transferObservation(db:Db,id:number,transform:string) {
   const o=schema.platformBusinessObservation,r=schema.platformRelation,c=schema.platformCollection,a=schema.platformArchiveValue,ref=schema.platformObservationArchiveRef
   const input=db.select({source:c.interface,province:r.province,status:r.status,batch:r.batch,declareKind:r.declareKind,appliedAt:r.appliedAt,awardBatchLabel:r.awardBatchLabel,year:r.year,createdAt:r.createdAt,versionId:o.versionId}).from(o).innerJoin(r,eq(r.id,o.relationId)).innerJoin(c,eq(c.id,o.collectionId)).where(eq(o.relationId,id)).get()
   const raw=db.select({value:a,ref}).from(ref).innerJoin(a,eq(a.id,ref.archiveId)).where(and(eq(ref.ownerId,id),eq(ref.field,'rawFields'))).get()
   if(!input||!raw||raw.ref.sealed!==1)throw new Error('Missing mapped source or sealed raw owner')
   archiveValid(raw.value)
   const decoded=decode(raw.value),title=decoded.row?.rdjb,titleKind=decoded.state==='valid'?sourceValueKind(title):decoded.state==='invalid'?'invalid':'absent'
-  const common={createdAt:input.createdAt,observationId:id,versionId:null,recordId:null,basis:decoded.state==='valid'?'observation_reconciliation' as const:'unavailable' as const,parseState:decoded.state,sourceArchiveId:raw.ref.archiveId,sourceTitleKind:titleKind,sourceTitleText:typeof title==='string'?title:null,sourceTitleNumberText:typeof title==='number'&&Number.isFinite(title)?String(title):null,sourceTitleBoolean:typeof title==='boolean'?Number(title):null,sourceTitleRuleVersion:PROJECTION_TRANSFORM,...sourceFieldComparison(input.source,input,decoded.row,decoded.state)}
+  const common={createdAt:input.createdAt,observationId:id,versionId:null,recordId:null,basis:decoded.state==='valid'?'observation_reconciliation' as const:'unavailable' as const,parseState:decoded.state,sourceArchiveId:raw.ref.archiveId,sourceTitleKind:titleKind,sourceTitleText:typeof title==='string'?title:null,sourceTitleNumberText:typeof title==='number'&&Number.isFinite(title)?String(title):null,sourceTitleBoolean:typeof title==='boolean'?Number(title):null,sourceTitleRuleVersion:PROJECTION_TRANSFORM}
   switch(input.source) {
-    case 'apply_list':db.insert(schema.platformApplyProjection).values({...common,...parseApplyRecord(decoded.row),ruleVersion:'platform-apply-v1'}).run();break
-    case 'business_list':db.insert(schema.platformBusinessProjection).values({...common,...parseBusinessProcess(decoded.row),ruleVersion:'platform-business-v1'}).run();break
+    case 'apply_list':db.insert(schema.platformApplyProjection).values({...common,...sourceFieldComparison('apply_list',input,decoded.row,decoded.state),...parseApplyRecord(decoded.row),ruleVersion:'platform-apply-v1'}).run();break
+    case 'business_list':db.insert(schema.platformBusinessProjection).values({...common,...sourceFieldComparison('business_list',input,decoded.row,decoded.state),sourceTitleRuleVersion:transform,...parseBusinessProcess(decoded.row),ruleVersion:'platform-business-v1'}).run();break
     case 'recognized_list': {
       // Preserve captured fidelity exactly, including uncaptured NULL; raw parsing cannot upgrade trust.
       const old=input.versionId===null?undefined:db.select().from(schema.platformRecognizedProjection).where(eq(schema.platformRecognizedProjection.versionId,input.versionId)).get()
-      db.insert(schema.platformRecognizedProjection).values({...common,...parseRecognizedRecord(decoded.row),sourceValidityDate:old?.sourceValidityDate??null,sourceMaintenanceBatch:old?.sourceMaintenanceBatch??null,sourceMaintenanceYearAbsent:old?.sourceMaintenanceYearAbsent??null,ruleVersion:'platform-recognized-v1'}).run();break
+      db.insert(schema.platformRecognizedProjection).values({...common,...sourceFieldComparison('recognized_list',input,decoded.row,decoded.state),...parseRecognizedRecord(decoded.row),sourceValidityDate:old?.sourceValidityDate??null,sourceMaintenanceBatch:old?.sourceMaintenanceBatch??null,sourceMaintenanceYearAbsent:old?.sourceMaintenanceYearAbsent??null,ruleVersion:'platform-recognized-v1'}).run();break
     }
     default:throw new Error('Unsupported source interface')
   }
@@ -106,7 +107,6 @@ type ProjectionUpgradeResult={state:'complete',observationCount:number,sourceMan
 export function upgradeProjections(options:ProjectionUpgradeOptions,frozen?:FrozenSource):ProjectionUpgradeResult {
   if(!frozen)return withFrozenSource(options.source,f=>upgradeProjections(options,f))
   assertFrozenSource(frozen,options.source)
-  if(options.transformVersion!==undefined&&options.transformVersion!==PROJECTION_TRANSFORM)throw new Error('Source/schema/transform binding changed')
   if(new Set([options.runId,options.observationRunId,options.collectionRunId]).size!==3||!options.runId||!Number.isSafeInteger(options.batchSize)||options.batchSize<1||options.batchSize>1000)throw new Error('Invalid run or batch')
   const source=realpathSync(options.source),target=realpathSync(options.target),ss=statSync(source),ts=statSync(target)
   if(source===target||(ss.dev===ts.dev&&ss.ino===ts.ino))throw new Error('Distinct isolated target required')
@@ -117,8 +117,10 @@ export function upgradeProjections(options:ProjectionUpgradeOptions,frozen?:Froz
   const s=frozen.database,t=new Database(target,{fileMustExist:true})
   try {
     t.pragma('foreign_keys=ON')
+    const transform=businessStatusRule(t)
+    if(options.transformVersion!==undefined&&options.transformVersion!==transform)throw new Error('Source/schema/transform binding changed')
     const db=drizzle(t,{schema}),sd=drizzle(s,{schema}),runs=schema.platformMigrationRun,cp=schema.platformMigrationCheckpoint
-    const binding={runId:options.runId,sourceSnapshotSha256:fileHash(frozen.fd),sourceSchemaHash:schemaHash(s),sourceManifestSha256:hash(JSON.stringify({manifest:projectionManifest(s),observationRunId:options.observationRunId,collectionRunId:options.collectionRunId})),targetSchemaVersion:schemaHash(t),transformVersion:PROJECTION_TRANSFORM}
+    const binding={runId:options.runId,sourceSnapshotSha256:fileHash(frozen.fd),sourceSchemaHash:schemaHash(s),sourceManifestSha256:hash(JSON.stringify({manifest:projectionManifest(s),observationRunId:options.observationRunId,collectionRunId:options.collectionRunId})),targetSchemaVersion:schemaHash(t),transformVersion:transform}
     const targetDigest=()=>hash(JSON.stringify({manifest:projectionManifest(t),checkpoints:db.select().from(cp).where(sql`NOT (${cp.runId} = ${options.runId} AND ${cp.phase} = 't05b-target')`).orderBy(asc(cp.runId),asc(cp.phase),asc(cp.sourceTable)).all(),prerequisites:db.select().from(runs).where(sql`${runs.runId} <> ${options.runId}`).orderBy(asc(runs.runId)).all()}))
     const run=db.select().from(runs).where(eq(runs.runId,options.runId)).get()
     if(run) {const {state:_,...stored}=run;if(!isDeepStrictEqual(binding,stored))throw new Error('Source/schema/transform binding changed')}
@@ -146,7 +148,7 @@ export function upgradeProjections(options:ProjectionUpgradeOptions,frozen?:Froz
         const batch=ids.filter(x=>x.id>last).slice(0,options.batchSize)
         if(!batch.length)break
         db.transaction(tx=>{
-          for(const {id} of batch) {if(phase==='observations')transferObservation(tx,id);else transferVersion(s,tx,id)}
+          for(const {id} of batch) {if(phase==='observations')transferObservation(tx,id,transform);else transferVersion(s,tx,id)}
           options.beforeCheckpoint?.(phase,batch.at(-1)!.id)
           if(fileHash(frozen.fd)!==binding.sourceSnapshotSha256)throw new Error('Source drift')
           const values={runId:options.runId,phase:`t05b-${phase}`,sourceTable:phase==='observations'?'platform_relation':'platform_business_record_version',lastOldId:batch.at(-1)!.id,copiedCount:count+batch.length,batchDigest:hash(JSON.stringify(ids.filter(x=>x.id<=batch.at(-1)!.id)))}

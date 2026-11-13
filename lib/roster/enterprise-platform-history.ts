@@ -1,3 +1,4 @@
+import { checkedBusinessStatus } from '../platform/business-status'
 /** Enterprise history membership is structured. Archives attach only after selection.
  * Qualification, coverage and business grouping continue to consume original facts.
  */
@@ -80,7 +81,7 @@ export function readEnterpriseTargetPlatformHistory(db: Db, enterprise: typeof s
       sequenceNo: sql<number>`${owner.sequenceNo}`, relationKey: sql<string | null>`${owner.relationKey}`,
       enterpriseId: sql<number | null>`${owner.enterpriseId}`, matchBasis: sql`${owner.matchBasis}`.mapWith(columns.matchBasis),
       verificationStatus: sql`${owner.verificationStatus}`.mapWith(columns.verificationStatus),
-      ...originalColumns(cells, columns),
+      ...originalColumns(cells, columns, allOwners.find(row=>row.id===owner.queryId)?.collection.interface === 'business_list'),
     }).from(o).where(eq(o.id, owner.observationId)).get()!
   })
   return { queries, relations, ownQueryIds,
@@ -92,14 +93,14 @@ export function readEnterpriseTargetPlatformHistory(db: Db, enterprise: typeof s
   }
 }
 
-function originalColumns(cells: ReturnType<typeof snapshotSchema.parse>['fields'], columns: ReturnType<typeof getTableColumns<typeof s.platformRelation>>) {
+function originalColumns(cells: ReturnType<typeof snapshotSchema.parse>['fields'], columns: ReturnType<typeof getTableColumns<typeof s.platformRelation>>, business: boolean) {
   function cell<K extends keyof typeof columns>(key: K) {
     const column = columns[key], found = cells.find(cell => cell.name === column.name)
     if (!found) throw new Error(`Missing original enterprise relation cell: ${column.name}`)
     return cellExpression(found).mapWith(column)
   }
   return { rawFields: cell('rawFields'), sourceText: cell('sourceText'), usccRaw: cell('usccRaw'), nameRaw: cell('nameRaw'),
-    aliasNameRaw: cell('aliasNameRaw'), titleRaw: cell('titleRaw'), province: cell('province'), status: cell('status'),
+    aliasNameRaw: cell('aliasNameRaw'), titleRaw: cell('titleRaw'), province: cell('province'), status: business ? cellExpression(cells.find(c=>c.name==='status')!).mapWith(checkedBusinessStatus) : cell('status'),
     batch: cell('batch'), declareKind: cell('declareKind'), appliedAt: cell('appliedAt'),
     awardBatchLabel: cell('awardBatchLabel'), year: cell('year'), createdAt: cell('createdAt') }
 }

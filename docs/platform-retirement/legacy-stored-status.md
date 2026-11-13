@@ -118,7 +118,7 @@ DB 驱动输出先按 kind、`typeof`、`Buffer.isBuffer` 检查，再构造分�
 
 版本 supplementation 保留 `withArchiveProcessFacts` 原条件：确有 projectionVersionId、modeledFields 拥有该字段、版本非 NULL、该观察无该字段冲突，才用版本值。无版本时直接保留 normalized Buffer；有版本但 status 为 NULL 时也保留 Buffer。内容 status 非空且 conflict=true 时绝不能覆盖冲突 NULL。无索引、不认识、未捕获、真实 NULL、空 TEXT、空 BLOB 各自保留，不用缺结果/INNER JOIN 消失来表达它们。
 
-在内存中保留 Buffer；对原公共 JSON serialization 保留 Node Buffer 的 `{ "type": "Buffer", "data": [0,255] }`（空 BLOB 为 data:[]），包括 archiveProcessFacts 及 conflict.storedValue。不是新 DTO/tag/base64/string 或 `{}`，也不把 wire 对象反过来当业务 Buffer。实际 handler/serializer 等价是 B 的待执行门槛；本静态设计没有 fresh wire PASS。
+在内存中保留 Buffer，包括 archiveProcessFacts 及 conflict.storedValue；序列化沿各路径实际旧 encoder 保真。原 Node `JSON.stringify` 路径保留 Buffer.toJSON 的 `{ "type": "Buffer", "data": [0,255] }`（空 BLOB 为 data:[]）。企业详情的 `enterpriseJsonChunks` 按原自有可枚举属性编码，00FF 为 `{"0":0,"1":255}`，空 Buffer 为 `{}`。不改 encoder、worker 或路由，不在 reader/DTO 中提前转换 Buffer，也不把编码对象反过来当业务值。旧 reader、候选 reader、实际 encoder 的结果及 bytes 必须分别核对；直接 encoder 执行不证明 launched worker 或 HTTP wire，未运行路径保持 UNRUN。
 
 ## 5. 必须一起闭合的 source owners
 
@@ -179,7 +179,7 @@ B 是同票一个局部兼容候选，高难度，待 A 独立接受及父级另
 | --- | --- |
 | 原源完整管线 | 从保留的 `investigation01.tar.gz` 单一原member恢复并核 source SHA；保留原 first FAIL；实际 §6 全链至completed71613，记录每阶段命令/exit/run/transform/schema/source hash。直接 owner函数证明与真实offline CLI dispatch分别记录，不以伪造target cell或跳completion替代 |
 | 旧service + literal | 在独立schema0副本运行原 provenance inspector/preflight/commit/replay、indexing、facts与selected detail；literal由storageClass/hex及 §4逐项期待构造，不能从新extractor返回值生成。实际JS42绑定为TEXT `42.0`沿原证据，不猜`42` |
-| comparison与selection | 同一迁移target核stored/parsed/reconciled/kind/conflict、exact8cells/fact-title、fingerprint-verifier、实际source facts和selected detail；有/无version、not_indexed、共享版本但原stored不同均独立。Buffer bytes/空BLOB与JSON序列化都按旧/literal核；实际handler serialization另列，不把JSON.stringify probe称wire PASS |
+| comparison与selection | 同一迁移target核stored/parsed/reconciled/kind/conflict、exact8cells/fact-title、fingerprint-verifier、实际source facts和selected detail；有/无version、not_indexed、共享版本但原stored不同均独立。Buffer bytes/空BLOB及冲突值按旧/literal核；Node JSON 与 enterpriseJsonChunks 各按原路径核 bytes，实际handler/worker/wire另列，不把encoder模块或JSON.stringify probe称wire PASS |
 | legacy custody dispatch | 新 v2-only 历史携真实 legacySource 完成 apply exact 与 process stored recovery；旧 v1 完整链仍通过原源核验。零/重复/并存的 T05b 回执、来源 hash/schema/manifest 不符、foreign/inactive token 均拒绝且零写。不伪造额外回执来绕过原失败 |
 | history与default enterprise detail | 新 v2 target 的普通 TEXT、BLOB00FF/空BLOB且 parsed=NULL、BLOB且 parsed=done 冲突，分别经实际 full-history entry 和 default getRosterEnterpriseDetail，保留原 membership/order/counts/DTO及 Buffer bytes/serialization。与独立 schema0/literal 比较；apply/recognized v2规则、非status Buffer和非法规则仍拒绝。不能绕过 snapshot→enterprise history→shared display 前置链 |
 | 补充与冲突 | 原`00FF` + raw无cszt；派生`00FF`/空BLOB + `cszt=done`；version null/non-null、typed-fields membership；冲突NULL不被版本覆盖，未冲突Buffer不被NULL覆盖。保留platform_field_conflict，以及各原业务调用点自己的字符串检查或强制转换 |

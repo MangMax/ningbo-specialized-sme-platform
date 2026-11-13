@@ -1,3 +1,4 @@
+import { businessStatusCell, businessStatusChecks } from '../lib/platform/business-status'
 import type { FormalValidity } from '../lib/roster/formal-validity'
 import { sql } from 'drizzle-orm'
 import type { AnySQLiteColumn } from 'drizzle-orm/sqlite-core'
@@ -1181,11 +1182,11 @@ export function businessProjectionFields(observationId: () => AnySQLiteColumn) {
   parsedProvince: text('parsed_province'),
   reconciledProvince: text('reconciled_province'),
   provinceConflict: integer('province_conflict'),
-  storedStatusKind: text('stored_status_kind', { enum: ['absent','null','text','number','boolean','array','object','invalid'] }),
-  storedStatus: text('stored_status'),
+  storedStatusKind: text('stored_status_kind', { enum: ['absent','null','text','number','boolean','array','object','invalid','blob'] }),
+  storedStatus: businessStatusCell('stored_status'),
   parsedStatusKind: text('parsed_status_kind', { enum: ['absent','null','text','number','boolean','array','object','invalid'] }),
   parsedStatus: text('parsed_status'),
-  reconciledStatus: text('reconciled_status'),
+  reconciledStatus: businessStatusCell('reconciled_status'),
   statusConflict: integer('status_conflict'),
   storedBatchKind: text('stored_batch_kind', { enum: ['absent','null','text','number','boolean','array','object','invalid'] }),
   storedBatch: text('stored_batch'),
@@ -1239,12 +1240,12 @@ export function definePlatformBusinessProjection(observationId: () => AnySQLiteC
   check('platform_business_projection_parsed_province_ck', sql`${t.parsedProvince} IS NULL OR (typeof(${t.parsedProvince}) = 'text')`),
   check('platform_business_projection_reconciled_province_ck', sql`${t.reconciledProvince} IS NULL OR (typeof(${t.reconciledProvince}) = 'text')`),
   check('platform_business_projection_province_reconcile_ck', sql`${t.observationId} IS NULL OR (typeof(${t.provinceConflict}) = 'integer' AND ${t.provinceConflict} = (${t.storedProvince} IS NOT NULL AND ${t.parsedProvince} IS NOT NULL AND ${t.storedProvince} <> ${t.parsedProvince}) AND ${t.reconciledProvince} IS (CASE WHEN ${t.provinceConflict} = 1 THEN NULL ELSE coalesce(${t.storedProvince},${t.parsedProvince}) END))`),
-  check('platform_business_projection_stored_status_kind_ck', sql`${t.storedStatusKind} IS NULL OR (${t.storedStatusKind} IN ('absent','null','text','number','boolean','array','object','invalid') AND (${t.storedStatusKind} NOT IN ('absent','null','array','object','invalid','boolean') OR ${t.storedStatus} IS NULL))`),
+  check('platform_business_projection_stored_status_kind_ck', sql.raw(businessStatusChecks.stored_status_kind_ck)),
   check('platform_business_projection_parsed_status_kind_ck', sql`${t.parsedStatusKind} IS NULL OR (${t.parsedStatusKind} IN ('absent','null','text','number','boolean','array','object','invalid') AND (${t.parsedStatusKind} NOT IN ('absent','null','array','object','invalid','boolean') OR ${t.parsedStatus} IS NULL))`),
-  check('platform_business_projection_stored_status_ck', sql`${t.storedStatus} IS NULL OR (typeof(${t.storedStatus}) = 'text')`),
+  check('platform_business_projection_stored_status_ck', sql.raw(businessStatusChecks.stored_status_ck)),
   check('platform_business_projection_parsed_status_ck', sql`${t.parsedStatus} IS NULL OR (typeof(${t.parsedStatus}) = 'text')`),
-  check('platform_business_projection_reconciled_status_ck', sql`${t.reconciledStatus} IS NULL OR (typeof(${t.reconciledStatus}) = 'text')`),
-  check('platform_business_projection_status_reconcile_ck', sql`${t.observationId} IS NULL OR (typeof(${t.statusConflict}) = 'integer' AND ${t.statusConflict} = (${t.storedStatus} IS NOT NULL AND ${t.parsedStatus} IS NOT NULL AND ${t.storedStatus} <> ${t.parsedStatus}) AND ${t.reconciledStatus} IS (CASE WHEN ${t.statusConflict} = 1 THEN NULL ELSE coalesce(${t.storedStatus},${t.parsedStatus}) END))`),
+  check('platform_business_projection_reconciled_status_ck', sql.raw(businessStatusChecks.reconciled_status_ck)),
+  check('platform_business_projection_status_reconcile_ck', sql.raw(businessStatusChecks.status_reconcile_ck)),
   check('platform_business_projection_stored_batch_kind_ck', sql`${t.storedBatchKind} IS NULL OR (${t.storedBatchKind} IN ('absent','null','text','number','boolean','array','object','invalid') AND (${t.storedBatchKind} NOT IN ('absent','null','array','object','invalid','boolean') OR ${t.storedBatch} IS NULL))`),
   check('platform_business_projection_parsed_batch_kind_ck', sql`${t.parsedBatchKind} IS NULL OR (${t.parsedBatchKind} IN ('absent','null','text','number','boolean','array','object','invalid') AND (${t.parsedBatchKind} NOT IN ('absent','null','array','object','invalid','boolean') OR ${t.parsedBatch} IS NULL))`),
   check('platform_business_projection_stored_batch_ck', sql`${t.storedBatch} IS NULL OR (typeof(${t.storedBatch}) = 'text')`),

@@ -1,3 +1,4 @@
+import { platformNormalizationConflict } from '../../lib/platform/normalization'
 /** Structured decision facts, plus original cells solely for historical fingerprints. */
 import { and, eq, getTableColumns, inArray, max, sql } from 'drizzle-orm'
 import { alias } from 'drizzle-orm/sqlite-core'
@@ -60,7 +61,7 @@ export function readCorrespondenceTargetSources(db: Db, ids: number[]) {
   return owners.map(owner => {
     const p = projections.get(owner.observation.id)
     if (!p) throw new Error('Missing correspondence source projection')
-    const normalizationConflicts: PlatformNormalizationConflict[] = fields.flatMap(([field, , conflict, stored, parsed]) => p[conflict] && p[stored] !== null && p[parsed] !== null ? [{ field, storedValue: p[stored]!, rawValue: p[parsed]! }] : [])
+    const normalizationConflicts: PlatformNormalizationConflict[] = fields.flatMap(([field, , conflict, stored, parsed]) => p[conflict] && p[stored] !== null && p[parsed] !== null ? [platformNormalizationConflict(field, p[stored], p[parsed])] : [])
     const position = queries.get(owner.queryId)!.pages.find(page => page.status === 'success' && page.sequenceStart !== null && page.sequenceEnd !== null && owner.observation.sequenceNo >= page.sequenceStart && owner.observation.sequenceNo <= page.sequenceEnd)
     const query = queries.get(owner.queryId)!.query
     const relation = originals.get(owner.id)!

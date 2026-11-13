@@ -1,3 +1,4 @@
+import type { PlatformStoredRelation } from '../../lib/platform/read'
 import { platformRowTitle } from '../../lib/platform/row-title'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import type * as schema from '../../db/schema'
@@ -30,7 +31,7 @@ export function resolvePlatformDetailTypedReadSource(explicit?: PlatformDetailTy
 
 /** Source-owned typed facts only. This function never reads projection tables directly:
  * each source module owns its projection layout and returns a legacy fallback too. */
-function readPlatformDetailFacts(db: Db, queries: RosterPlatformQueryRow[], relations: (typeof schema.platformRelation.$inferSelect)[]) {
+function readPlatformDetailFacts(db: Db, queries: RosterPlatformQueryRow[], relations: PlatformStoredRelation[]) {
   const byQuery = new Map(queries.map(query => [query.id, query]))
   const byInterface = new Map<PlatformFactInterface, number[]>()
   for (const relation of relations) {
@@ -59,7 +60,7 @@ function readPlatformDetailFacts(db: Db, queries: RosterPlatformQueryRow[], rela
 }
 
 /** Caller supplies only displayed enterprise-scoped archives, inside its existing read transaction. */
-export function readPlatformBusinessDetails(db: Db, enterpriseId: number, queries: RosterPlatformQueryRow[], relations: (typeof schema.platformRelation.$inferSelect)[], options: { typedReadSource?: PlatformDetailTypedReadSource } = {}) {
+export function readPlatformBusinessDetails(db: Db, enterpriseId: number, queries: RosterPlatformQueryRow[], relations: PlatformStoredRelation[], options: { typedReadSource?: PlatformDetailTypedReadSource } = {}) {
   const typedFields = resolvePlatformDetailTypedReadSource(options.typedReadSource) === 'legacy'
     ? new Map<number, PlatformObservationFact>()
     : readPlatformDetailFacts(db, queries, relations)

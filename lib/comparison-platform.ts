@@ -80,7 +80,7 @@ export interface ComparisonRelation {
   nameRaw: string | null
   aliasNameRaw: string | null
   province: string | null
-  status: string | null
+  status: string | Buffer | null
   batch: string | null
   declareKind: string | null
   appliedAt: string | null

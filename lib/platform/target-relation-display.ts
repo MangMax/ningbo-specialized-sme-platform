@@ -1,3 +1,4 @@
+import { BUSINESS_STATUS_V1, BUSINESS_STATUS_V2 } from './business-status'
 /** Explicit target evidence DISPLAY only. Never import into candidate membership/count/filter/sort,
  * correspondence decisions/roles/authorization/validity, qualification, annual closure or proof.
  * Selection and attribution use structured owners; archives are decoded only after selection.
@@ -128,7 +129,7 @@ export function readTargetRelationDisplay<S extends Record<string, unknown>>(
     for (const owner of owners) {
       const id = owner.observation.id, projection = projections.get(id), archives = observationById.get(id) ?? []
       if (!owner.assignment || !owner.original) throw new Error('Missing observation assignment')
-      if (!projection || projection.source !== owner.collection.interface || !projection.captured || projection.row.sourceTitleRuleVersion !== 't05b-source-projections-v1') throw new Error('Missing required source display capture')
+      if (!projection || projection.source !== owner.collection.interface || !projection.captured || !(projection.row.sourceTitleRuleVersion === BUSINESS_STATUS_V1 || (projection.source === 'business_list' && projection.row.sourceTitleRuleVersion === BUSINESS_STATUS_V2))) throw new Error('Missing required source display capture')
       const raw = authenticatedBytes(archives.find(ref => ref.field === 'rawFields'))
       authenticatedBytes(archives.find(ref => ref.field === 'sourceText'))
       const display = collectionDisplays.get(owner.collection.id)!, facts = projection.row

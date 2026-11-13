@@ -1,3 +1,4 @@
+import { platformNormalizationConflict } from '../../lib/platform/normalization'
 /** Explicit 71609–71611 recognition-directory reader. Public routing remains separate. */
 import {readObservationCorrespondenceRefs} from '../../lib/platform/correspondence-target';
 import { and, count, countDistinct, desc, eq, exists, inArray, isNull, max, min, ne, or, sql } from 'drizzle-orm';
@@ -176,7 +177,7 @@ export function readTargetRecognizedFacts(db: Db, relationIds: number[]): Map<nu
                 } satisfies Record<keyof typeof normalized, [number | null, string | number | null, string | number | null]>;
                 const conflicts: PlatformNormalizationConflict[] = (['province', 'status', 'batch', 'declareKind', 'appliedAt', 'awardBatchLabel', 'year'] as const).flatMap(field => {
                     const [conflict, storedValue, rawValue] = comparisons[field];
-                    return conflict && storedValue != null && rawValue != null ? [{ field, storedValue, rawValue }] : [];
+                    return conflict && storedValue != null && rawValue != null ? [platformNormalizationConflict(field, storedValue, rawValue)] : [];
                 });
                 const title = source.sourceTitleKind === 'text' ? legacyRowTitle({ rdjb: source.sourceTitleText }) : null;
                 result.set(row.relationId, withArchiveProcessFacts({

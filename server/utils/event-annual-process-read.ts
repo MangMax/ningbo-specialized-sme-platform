@@ -31,8 +31,8 @@ export function readEventAnnualProcess(db: Db, eventId: number): EventAnnualProc
 }
 type ScalarQuery = { toSQL(): { sql: string; params: unknown[] } }
 type Scope = NonNullable<ReturnType<typeof sourceScope>>
-type Rows = Array<Omit<ReturnType<Scope['rowsQuery']['all']>[number], 'declareKind' | 'rawFields' | 'sourcePage' | 'sourceRdjb'> & {
-  declareKind: string | null
+type Rows = Array<Omit<ReturnType<Scope['rowsQuery']['all']>[number], 'declareKind' | 'rawFields' | 'sourcePage' | 'sourceRdjb' | 'status'> & {
+  status: string | Buffer | null; declareKind: string | null
   rawFields: Record<string, unknown> | null
   sourcePage: number | null
   sourceRdjb: string | null
@@ -244,7 +244,7 @@ export function readAnnualProcessBatch(db: Db, eventIds: readonly number[], incl
     const source = sources.get(scope.event.id)!
     // The comparison seam historically reconciles stored/raw observation fields;
     // the annual read uses version facts. Preserve that existing distinction.
-    const facts = includeUnknownBusinessTitle ? new Map([...source.facts].map(([id, f]) => [id, { ...f, ...f.archiveProcessFacts }])) : source.facts
+    const facts = includeUnknownBusinessTitle ? new Map([...source.facts].map(([id, f]) => [id, f.interface === 'business_list' ? { ...f, ...f.archiveProcessFacts } : { ...f, ...f.archiveProcessFacts }])) : source.facts
     return prepareObservations(db, scope, source.rows, source.titles, source.queries, metadata, true, facts)
   })
   const groups = readPlatformBusinessGroups(db, prepared.flatMap(p => p.observations), metadata)

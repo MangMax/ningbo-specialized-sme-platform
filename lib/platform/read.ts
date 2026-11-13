@@ -40,7 +40,9 @@ export interface PlatformQueryFilter {
   includeRawResponse?: boolean
 }
 
-export interface PlatformRelationRow {
+export type PlatformStoredRelation = Omit<typeof schema.platformRelation.$inferSelect, 'status'> & {status:string|Buffer|null}
+
+export interface PlatformRelationRow<I extends PlatformInterface = PlatformInterface> {
   normalizationConflicts?: PlatformNormalizationConflict[]
   /** Historical page values are displayed as captured, including noncanonical types. */
   sourceRdjb?: unknown
@@ -57,7 +59,7 @@ export interface PlatformRelationRow {
   nameRaw: string | null
   aliasNameRaw: string | null
   province: string | null
-  status: string | null
+  status: I extends 'business_list' ? string | Buffer | null : string | null
   batch: string | null
   declareKind: string | null
   appliedAt: string | null
