@@ -1,4 +1,5 @@
 import { ensureProcessStoredReady } from './process-stored-catalog'
+import { reconcileSlotWriteInstalled, verifyReconcileSlot } from './reconcile-slot-write'
 import { verifyWitnessCollection,verifyWitnessObservation } from './recognized-witness-write'
 import { verifyCandidateObservation } from './candidate-scope-write'
 import Database from 'better-sqlite3'
@@ -105,7 +106,8 @@ function legacyOriginal(text: string, sequenceNo: number, processCanonical=false
   return row as RosterImportRelation
 }
 
-export function targetReplaySource<S extends Record<string, unknown>>(tx: BetterSQLite3Database<S>, sqlite: Database.Database, collection: typeof s.platformCollection.$inferSelect) {
+export function targetReplaySource<S extends Record<string, unknown>>(tx: BetterSQLite3Database<S>, sqlite: Database.Database, collection: typeof s.platformCollection.$inferSelect, authentication: 'immediate'|'after_assertions' = 'immediate') {
+    if (authentication === 'immediate') verifyReconcileSlot(sqlite, collection.id)
     if(collection.interface==='recognized_list')verifyWitnessCollection(sqlite,collection.id)
     const alias = tx.select().from(s.platformLegacyQueryAlias).where(eq(s.platformLegacyQueryAlias.collectionId,collection.id)).get()
     if (!alias) throw new Error('Missing collection alias')
@@ -118,6 +120,7 @@ export function targetReplaySource<S extends Record<string, unknown>>(tx: Better
     const request = requestRef ? archive(tx,{kind:'collection',id:collection.id,field:'request'}) : null
     const commandOriginal = request === null ? null : originalQuery(request)
     const source: PlatformQueryReplaySource = {
+      ...(authentication === 'after_assertions' ? { authenticateOriginal: () => verifyReconcileSlot(sqlite, collection.id) } : {}),
       ref, metadata: {titleCode:collection.titleCode,status:collection.status,failureReason:collection.failureReason,rawResponse,collectionEvidence:evidence as RosterImportPlatformQuery['collectionEvidence'] ?? null},
       relationCount:observations.length,
       relationAt: sequenceNo => {
@@ -162,6 +165,7 @@ export function writeCollectionTarget<S extends Record<string, unknown>>(db: Bet
   return db.transaction(tx => {
     if (tx.get<{ user_version: number }>(sql`PRAGMA user_version`)?.user_version !== FINGERPRINT_BASIS_VERSION && tx.get<{ user_version: number }>(sql`PRAGMA user_version`)?.user_version !== 71608 && tx.get<{user_version:number}>(sql`PRAGMA user_version`)?.user_version !== 71609 && tx.get<{user_version:number}>(sql`PRAGMA user_version`)?.user_version !==71610 && tx.get<{user_version:number}>(sql`PRAGMA user_version`)?.user_version!==71611 && tx.get<{user_version:number}>(sql`PRAGMA user_version`)?.user_version!==71612 && tx.get<{user_version:number}>(sql`PRAGMA user_version`)?.user_version!==71613) throw new Error('Explicit 71607 target required')
     ensureProcessStoredReady(sqlite)
+    reconcileSlotWriteInstalled(sqlite)
     const q = originalQuery(input.queryText)
     if(tx.get<{user_version:number}>(sql`PRAGMA user_version`)?.user_version===71608 && q.interface!=='apply_list')throw new Error('71608 command supports apply_list only')
     if (!isDeepStrictEqual(q.collectionEvidence ?? null,input.evidenceText === null ? null : JSON.parse(input.evidenceText))) throw new Error('Evidence bytes do not match command')
@@ -170,7 +174,7 @@ export function writeCollectionTarget<S extends Record<string, unknown>>(db: Bet
     if (!queriedAt) reject('platform_query','query:0','queried_at_required','平台查询缺少 queriedAt（查询时点）','queriedAt')
     const c = s.platformCollection
     const plannedCollection = tx.select().from(c).where(and(eq(c.interface,q.interface),eq(c.queryKey,queryKey),eq(c.rdjb,optionalString(q.rdjb) ?? ''),eq(c.queriedAt,queriedAt))).get()
-    const planned = plannedCollection ? targetReplaySource(tx,sqlite,plannedCollection) : undefined
+    const planned = plannedCollection ? targetReplaySource(tx,sqlite,plannedCollection,'after_assertions') : undefined
     const evidenceError = queryEvidenceError(q,planned?.source,{
       byId: id => tx.select().from(s.enterprise).where(eq(s.enterprise.id,id)).get(),
       byUscc: raw => { const uscc = normalizeUscc(raw); return uscc ? tx.select().from(s.enterprise).where(eq(s.enterprise.usccNorm,uscc)).get() : null },
@@ -193,7 +197,7 @@ export function writeCollectionTarget<S extends Record<string, unknown>>(db: Bet
       if (q.reuseExisting) reject('platform_query','query:0','query_reuse_missing','No original collection exists at these coordinates','reuseExisting')
       return {...writeNewCollectionTarget(tx,input),reused:false}
     }
-    const actual = plannedCollection?.id === collection.id && planned ? planned : targetReplaySource(tx,sqlite,collection)
+    const actual = plannedCollection?.id === collection.id && planned ? planned : targetReplaySource(tx,sqlite,collection,'after_assertions')
     const {source,alias,ref,observations} = actual
     if (actual !== planned) {
       const conflict = platformQuerySourceConflict(q,source)

@@ -41,6 +41,8 @@ export interface PlatformQueryReplaySource {
   metadata: QueryReplayMetadata
   relationCount: number
   relationAt(sequenceNo: number): QueryReplayRow | undefined
+  /** Persisted target capture is certified only after the original assertions agree. */
+  authenticateOriginal?: () => void
 }
 
 export function platformQueryInsertMetadata(query: RosterImportPlatformQuery): QueryReplayMetadata {
@@ -93,5 +95,6 @@ export function platformQuerySourceConflict(query: RosterImportPlatformQuery, so
   if (Object.hasOwn(query, 'relations') && !queryUsesReference(query) && seen.size !== source.relationCount) {
     return failure('platform_query', source.ref, 'query_relation_set_conflict', 'Replay must retain the original collection row set', 'relations')
   }
+  source.authenticateOriginal?.()
   return null
 }

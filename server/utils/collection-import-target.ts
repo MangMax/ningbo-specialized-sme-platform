@@ -29,7 +29,7 @@ export function collectionImportTarget(db: Executor) {
 export function collectionImportSource(db: Executor, queryId: number) {
   const selected = readDifferenceCollection(db, queryId)
   if (!selected) throw new PlatformProjectionError('projection_source_missing', `Original query ${queryId} not found`)
-  return targetReplaySource(db, sqliteConnection(db), selected.collection).source
+  return targetReplaySource(db, sqliteConnection(db), selected.collection, 'after_assertions').source
 }
 function collectionProjection(db: Executor, relationId: number) {
   const a = s.platformLegacyRelationAlias, o = s.platformBusinessObservation
