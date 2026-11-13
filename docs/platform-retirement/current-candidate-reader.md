@@ -20,9 +20,9 @@ union、最大revision、USCC条件、count、NOCASE排序与PK tie-break、limi
 
 ## 消费者接缝与后续
 
-`CurrentCandidateReader` 定义iterate及只读connection identity；消费者拒绝跨connection注入。`listCurrentQualifiedWithCandidates` 与 `writeCurrentWorkbookWithCandidates` 提供显式依赖注入，使用同一connection/snapshot；原公开函数包装既有legacy provider，保持既有行为，未新增运行选择器。#702原Float64Array4096分块、五sheet上限、一次枚举后hydrate结构不变；#691assessmentReader/identity读取、asOf/规则版本、#687资格算法不改。
+`CurrentCandidateReader` 定义iterate及只读connection identity；消费者拒绝跨connection注入。`listCurrentQualifiedWithCandidates` 与 `writeCurrentWorkbookWithCandidates` 提供显式依赖注入，使用同一connection/snapshot。#765正常函数的71613组合见下节，显式注入接缝仍保持原行为。#702原Float64Array4096分块、五sheet上限、一次枚举后hydrate结构不变；#691assessmentReader/identity读取、asOf/规则版本、#687资格算法不改。
 
-这些withCandidates函数仍有identity等旧路径，不是完整目标名单或导出入口。#731 B测试分别验证真实target候选与phase0既有assessment/workbook的注入契约。#762的同库组合证据如下；公开包装器与identity预扫描仍由后续票负责。R5/current-identity/H/C/X消费者明细和行号在仓外r4/reader/HANDOFF.md；旧current-candidates SQL在受guard的旧入口仍存在，target reader从不回退调用它。
+这些withCandidates函数仍有identity等旧路径，不是完整目标名单或导出入口。#731 B测试分别验证真实target候选与phase0既有assessment/workbook的注入契约。#762的同库组合证据如下，正常函数与identity预扫描由#765承接。R5/current-identity/H/C/X消费者明细和行号在仓外r4/reader/HANDOFF.md；旧current-candidates SQL在受guard的旧入口仍存在，target reader从不回退调用它。
 
 ## #762 完整 current 引用水合
 
@@ -33,6 +33,22 @@ union、最大revision、USCC条件、count、NOCASE排序与PK tie-break、limi
 `tests/current-target-readers-762.test.ts` 重用一份真实完整迁移的71613 fixture，在自有副本物理移除两张旧表，再通过真实导入 owner 增加三称号、混合页与独立同版本观察。各 case 从这一基准 COPY0600。完整 readCurrent/readWorkbook 与 schema0旧服务及独立literal对照，检查原cells/history/receipts不变、public alias、scope、BLOB、hash与规则版本；并验证并发assignment的snapshot边界、iterator释放和请求内单次批量读取。
 
 本轮仅交付本地候选。正常HTTP/MCP、identity预扫描、workbook worker、packaged job、全局runtime与实际退役操作未验收。#738–742未准入，整体#706仍为NOTREADY。
+
+## #765 正常名单与异步工作簿
+
+`listCurrentQualified` 和 `writeCurrentWorkbook` 在71613且 recognized source 解析为 `typed` 时，由 `current-target-context.ts` 组合已接受的目标 candidate、witness 和完整 assessment reader。context 在调用者同一连接的 `BEGIN` 内创建，复用现有 readiness。它不认证历史前驱回执链，也不拥有事务。schema0、其他中间阶段和显式 candidate 接缝保留原路径。
+
+`recognizedFactSource` 的显式参数继续优先于 `ROSTER_RECOGNIZED_FILTER_SOURCE`。解析为 `legacy` 时保留旧算法及旧表依赖。在物理删表目标上，该选择明确失败，不自动改读 typed 或归档。没有新增环境 selector。
+
+身份键从 collection 的 `query_key` 和最大 revision 的未归属 assignment `uscc_raw` 取得。每个请求各流式扫描一次窄 DISTINCT 投影，保留非canonical原值，复用原 `normalizeUscc`。canonical键、name键、NULL与空规范码沿用原匹配语义。Map 只存非canonical变体，随请求释放。Drizzle构建查询，native `prepare/iterate` 只执行其 `toSQL()`；投影显式命名 `key`，因为native执行不使用Drizzle的结果字段映射。
+
+名单的同步 witness scope 覆盖唯一候选枚举、全局 options/counts、筛选与选中页完整水合。该 scope 在游标开始前验证 readiness，避免活动 SQLite 游标期间再次执行 PRAGMA。全部读取共享一次判断时刻和外层事务。
+
+工作簿外层显式事务持有至 `workbook.commit()` 和输出流完成。异步 Promise 不传入同步 `withinSnapshot`。候选游标先耗尽，原4096项 Float64Array 分块和 deferred IDs 随后驱动五状态表。完整 `readWorkbook`、全文附表及原 dataVersion serializer 继续在同一snapshot内执行。输出错误、中止、取消和限制错误回滚本函数自己的事务并删除其全文TMP。两个正常函数继续拒绝调用者已开启的事务，拒绝不会提交或回滚调用者的修改。
+
+`tests/current-list-workbook-765.test.ts` 直接调用这两个正常函数。真实71613副本物理无旧表，独立schema0消费者从固定base冻结源码。测试以固定时钟比较三称号、五状态、过滤与稳定分页、完整assessment和digest；ExcelJS读取实际documonster输出并比较所有cell、样式、行高及全文附表，再独立重建dataVersion输入。SQL trace检查无旧表业务读、一次候选枚举、一次身份键扫描及选中页完整水合。两连接并发测试覆盖名单活动游标和实际异步drain，下一请求才看到新assignment。
+
+本票只交付本地函数组合。普通DB guard仍CLOSED；HTTP、MCP、worker、packaged job、#738–742及整体#706未准入。
 
 ## 查询计划与限制
 
