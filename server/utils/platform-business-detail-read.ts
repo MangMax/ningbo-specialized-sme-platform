@@ -43,7 +43,7 @@ function readPlatformDetailFacts(db: Db, queries: RosterPlatformQueryRow[], rela
   const target = queryHistoryTarget(db)
   for (const [interfaceName, ids] of byInterface) {
     const facts = !target ? readPlatformObservationFacts(db, interfaceName, ids)
-      : interfaceName === 'apply_list' ? readTargetDeclarationFacts(db, ids)
+      : interfaceName === 'apply_list' ? readTargetDeclarationFacts(db, ids, { scope: 'selected' })
       : interfaceName === 'business_list' ? readTargetBusinessProcessFacts(db, ids, { scope: 'selected' })
       : readTargetRecognizedFacts(db, ids)
     for (const [relationId, fact] of facts) {

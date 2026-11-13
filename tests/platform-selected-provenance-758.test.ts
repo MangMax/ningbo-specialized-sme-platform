@@ -36,6 +36,7 @@ import { createServer } from 'node:http'
 import * as h3 from 'h3'
 import { platformResultToImport } from '../lib/platform/recognized-evidence'
 import type { PlatformLiveQueryResult } from '../lib/platform/live-query'
+import { listTargetDeclarations, readTargetDeclarationFacts } from '../server/utils/platform-declarations-target'
 
 vi.mock('@db', () => ({ useDb: () => db }))
 const root = mkdtempSync(join(process.env.CANDIDATE_SCOPE_EVIDENCE_DIR ?? tmpdir(), 'selected758-'))
@@ -126,6 +127,34 @@ it('selects enterprise history from structured owners before archives with uncha
     .toEqual(original.relations.map(({ sourceText, aliasNameRaw, createdAt, ...row }) => row))
   expect(actual.relations.map(row => row.id)).toEqual([1, 3])
   noLegacy()
+})
+it('returns nonempty application enterprise detail on complete71613 while keeping public declaration admission closed', () => {
+  reserveLegacyIds(db, { query: 8000, relation: 9000 })
+  const rawFields = { id: 'detail-apply-758', rdjb: '2', qymc: 'Original Apply Alpha', tyshxydm: 'U1',
+    sblx: '申请', year: '2025', sqsj: '2025-03-01', cszt: 'pending' }
+  writeNewCollectionTarget(db, { queryText: JSON.stringify({ interface: 'apply_list', queryKey: 'U1', rdjb: '2',
+    queriedAt: '2026-11-13T08:00:00Z', status: 'success', rawResponse: 'original application response',
+    relations: [{ sequenceNo: 1, relationKey: rawFields.id, nameRaw: rawFields.qymc, usccRaw: 'U1', rawFields }] }),
+    evidenceText: null, createdAt: 'c', assignments: [{ enterpriseId: 1, nameRaw: rawFields.qymc, usccRaw: 'U1',
+      matchBasis: 'uscc', verificationStatus: 'confirmed', origin: 'command', actor: { type: 'agent', id: '758' }, basis: 'original' }] })
+  expect(readEnterpriseSnapshot(db, 1).ownQueryIds.sort((a, b) => a - b)).toEqual([11, 13, 8001])
+  expect(sourceReader(db, [], { kind: 'relation', id: 9001 }).read('relation', 9001)).toMatchObject({ queryId: 8001 })
+  const before = t.serialize()
+  const detail = getRosterEnterpriseDetail(db, 1, Date.UTC(2026, 10, 13))!
+  expect(detail.platform.queries.map(row => row.id)).toEqual([13, 11, 8001])
+  const observation = detail.platform.businessRecords.flatMap(row => row.observationRefs).find(row => row.relationId === 9001)
+  expect(observation).toMatchObject({ queryId: 8001, enterpriseId: 1, typedFields: { interface: 'apply_list',
+    projectionRuleVersion: 'platform-apply-v1', declareKind: 'apply', year: 2025, appliedAt: '2025-03-01',
+    status: 'pending', nameRaw: 'Original Apply Alpha', usccRaw: 'U1',
+    modeledFields: ['declareKind', 'year', 'appliedAt', 'status', 'nameRaw', 'usccRaw'] } })
+  expect(() => listTargetDeclarations({}, db)).toThrow(/Declaration reader requires 71608/)
+  expect(() => readTargetDeclarationFacts(db, [9001])).toThrow(/Declaration reader requires 71608/)
+  expect(() => assertExpandRuntime(t)).toThrow()
+  expect(t.serialize()).toEqual(before)
+  noLegacy()
+  t.exec("UPDATE platform_migration_run SET state='running' WHERE transform_version='collection-legacy-provenance-v1'")
+  expect(() => readTargetDeclarationFacts(db, [9001], { scope: 'selected' })).toThrow(/migration incomplete/)
+  expect(() => getRosterEnterpriseDetail(db, 1, Date.UTC(2026, 10, 13))).toThrow(/migration incomplete/)
 })
 it('attaches lawful supplements after enterprise selection and preserves nonempty business and coverage invariants', () => {
   populatedHistory()
