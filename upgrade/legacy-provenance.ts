@@ -13,6 +13,8 @@ import { withFrozenSource, fileHash, assertFrozenSource } from '../lib/platform/
 import { schemaHash, rowSnapshot } from '../lib/platform/sqlite-row-cells'
 import { projectionManifest } from './projections'
 import { installLegacyProvenance, provenanceTable, requireProvenanceForeignKeys } from './legacy-provenance-schema'
+import { hasReconcileSlotCapture, requireReconcileSlotSchema } from './reconcile-slot-schema'
+import { RECONCILE_SLOT_T04 } from '../lib/platform/reconcile-slot-capture'
 
 const fields = ['query_id','source_identity','source_sha256','segment_index','collection','input_fingerprint','import_batch_id','created_at'] as const
 const digest = (value: string | Buffer) => createHash('sha256').update(value).digest('hex')
@@ -66,6 +68,10 @@ function inventory(t: Database.Database): Metadata[] {
     'platform_business_record_version.canonical_archive_id','platform_recognized_projection.exact_title_archive_id',
     'platform_collection.witness_archive_id','platform_business_observation.witness_archive_id','platform_business_observation.candidate_scope_archive_id',
   ]
+  if (hasReconcileSlotCapture(t)) {
+    requireReconcileSlotSchema(t)
+    expected.push('platform_collection.reconcile_slot_raw_archive_id')
+  }
   if (t.prepare("SELECT 1 FROM sqlite_schema WHERE name=?").get(provenanceTable)) expected.push(`${provenanceTable}.archive_id`)
   const incoming = (t.prepare("SELECT m.name owner,f.[from] column_name,f.[to] destination FROM sqlite_schema m JOIN pragma_foreign_key_list(m.name) f WHERE m.type='table' AND f.[table]='platform_archive_value'").all() as {owner:string;column_name:string;destination:string}[]).map(r=>`${r.owner}.${r.column_name}${r.destination==='id'?'':`->${r.destination}`}`)
   if (!isDeepStrictEqual(incoming.sort(),expected.sort())) fail('Unknown archive FK owner inventory')
@@ -80,13 +86,14 @@ function inventory(t: Database.Database): Metadata[] {
     if (!Number.isSafeInteger(alias.oldId) || alias.oldId < 1) fail('Unsafe query alias')
     const refs = db.select().from(schema.platformCollectionArchiveRef).where(eq(schema.platformCollectionArchiveRef.ownerId,collection.id)).all()
     const legacy = refs.find(r => r.field === 'legacyProvenance')
-    const names = collection.ruleVersion === 't04-collection-v1' ? ['rawResponse','collectionEvidence',...(legacy ? ['legacyProvenance'] : [])] : collection.ruleVersion === 'w4a-new-collection-v1' ? ['request','rawResponse','collectionEvidence'] : fail('Unknown collection lifecycle')
+    const offline = collection.ruleVersion === 't04-collection-v1' || (hasReconcileSlotCapture(t) && collection.ruleVersion === RECONCILE_SLOT_T04)
+    const names = offline ? ['rawResponse','collectionEvidence',...(legacy ? ['legacyProvenance'] : [])] : collection.ruleVersion === 'w4a-new-collection-v1' ? ['request','rawResponse','collectionEvidence'] : fail('Unknown collection lifecycle')
     if (refs.length !== names.length || names.some(name => !refs.some(r => r.field === name)) || refs.some(r => r.sealed !== 1)) fail('Invalid sealed collection field set')
     for (const ref of refs) {
       const archive = db.select().from(schema.platformArchiveValue).where(eq(schema.platformArchiveValue.id,ref.archiveId)).get()
       if (!archive || (archive.storageClass === 'null' ? archive.bytes !== null || archive.byteLength !== null || archive.sha256 !== null : !Buffer.isBuffer(archive.bytes) || archive.bytes.length !== archive.byteLength || digest(archive.bytes) !== archive.sha256)) fail('Missing or drifted collection archive')
     }
-    const expected = collection.ruleVersion === 't04-collection-v1' && ['legacy_supplement','conflict'].includes(collection.provenanceState)
+    const expected = offline && ['legacy_supplement','conflict'].includes(collection.provenanceState)
     if (Boolean(legacy) !== expected) fail('Contradictory original provenance lifecycle')
     if (!legacy) continue
     const archive = db.select().from(schema.platformArchiveValue).where(eq(schema.platformArchiveValue.id,legacy.archiveId)).get()!
@@ -141,7 +148,7 @@ export function indexLegacyProvenance(options: LegacyProvenanceOptions) {
     let expectedSchema: string
     try {
       for (const row of s.prepare("SELECT sql FROM sqlite_schema WHERE sql IS NOT NULL AND name NOT LIKE 'sqlite_%' ORDER BY CASE type WHEN 'table' THEN 0 WHEN 'index' THEN 1 ELSE 2 END,name").all() as {sql:string}[]) model.exec(row.sql)
-      installLegacyProvenance(model); expectedSchema = schemaHash(model)
+      installLegacyProvenance(model,hasReconcileSlotCapture(s)); expectedSchema = schemaHash(model)
     } finally { model.close() }
     const t = new Database(target,{fileMustExist:true,readonly:options.preflightOnly ?? false}), db = drizzle(t,{schema}), runs = schema.platformMigrationRun, cp = schema.platformMigrationCheckpoint, p = schema.platformCollectionLegacyProvenance
     const binding = {runId:options.runId,sourceSnapshotSha256:snapshot,sourceSchemaHash:sourceSchema,sourceManifestSha256:manifest,targetSchemaVersion:expectedSchema,transformVersion:LEGACY_PROVENANCE_TRANSFORM}
@@ -156,7 +163,7 @@ export function indexLegacyProvenance(options: LegacyProvenanceOptions) {
         if (schemaHash(t) !== sourceSchema || originalDigest(t,options.runId) !== manifest || db.select().from(runs).where(eq(runs.runId,options.runId)).get()) fail('Target must be unchanged independent predecessor copy')
         if (options.preflightOnly) { frozenCheck(); return {state:'ready' as const,rows:rows.length,version:LEGACY_PROVENANCE_VERSION} }
         t.transaction(() => {
-          installLegacyProvenance(t)
+          installLegacyProvenance(t,hasReconcileSlotCapture(s))
           db.insert(runs).values({...binding,state:'running'}).run()
           db.insert(cp).values(checkpoint(0)).run()
           options.beforeCommit?.('schema')

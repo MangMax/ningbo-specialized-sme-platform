@@ -6,7 +6,7 @@ const refs = ['platform_collection_archive_ref', 'platform_observation_archive_r
 export function requireProvenanceForeignKeys(t: Database.Database) {
   if (t.pragma('foreign_keys', { simple: true }) !== 1) throw new Error('Provenance indexing requires foreign_keys=ON')
 }
-export function installLegacyProvenance(t: Database.Database) {
+export function installLegacyProvenance(t: Database.Database, capture = false) {
   requireProvenanceForeignKeys(t)
   t.exec(`CREATE TABLE ${provenanceTable}(
     collection_id INTEGER PRIMARY KEY NOT NULL REFERENCES platform_collection(id) ON DELETE RESTRICT
@@ -38,7 +38,7 @@ export function installLegacyProvenance(t: Database.Database) {
       THEN RAISE(ABORT,'invalid source identity length') END;
     SELECT CASE WHEN NEW.origin='t04_envelope' AND NOT EXISTS(
       SELECT 1 FROM platform_collection_archive_ref r JOIN platform_archive_value a ON a.id=r.archive_id
-        JOIN platform_collection c ON c.id=r.owner_id AND c.rule_version='t04-collection-v1'
+        JOIN platform_collection c ON c.id=r.owner_id AND c.rule_version${capture ? " IN ('t04-collection-v1','t04-collection-reconcile-slot-v2')" : "='t04-collection-v1'"}
       WHERE r.owner_id=NEW.collection_id AND r.field='legacyProvenance' AND r.sealed=1 AND r.archive_id=NEW.archive_id
         AND a.storage_class='blob' AND typeof(a.bytes)='blob')
       THEN RAISE(ABORT,'T04 provenance requires exact sealed owner') END;

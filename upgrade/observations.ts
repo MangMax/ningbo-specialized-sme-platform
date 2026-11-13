@@ -9,6 +9,8 @@ import { drizzle, type BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../db/schema'
 import { bindArchive, bindLegacyAlias, insertArchiveValue, type ArchiveInput } from '../lib/platform/immutable-archive'
 import { assertFrozenSource, fileHash, schemaHash, withFrozenSource, upgradeCollections, type FrozenSource } from './collections'
+import { RECONCILE_SLOT_T04 } from '../lib/platform/reconcile-slot-capture'
+import { verifyReconcileHistory } from './reconcile-slot-capture'
 
 export const OBSERVATION_TRANSFORM = 't05a-observation-v3'
 const phase = 'observations', sourceTable = 'platform_relation'
@@ -170,7 +172,7 @@ export function upgradeObservations(options:ObservationUpgradeOptions,frozen?:Fr
     if(unresolved.length) return {state:'blocked' as const,copiedCount:0,unresolved,sourceManifest:sm,inheritedForeignKeys}
     const prior=db.select().from(schema.platformMigrationRun).where(eq(schema.platformMigrationRun.runId,options.collectionRunId)).get()
     if(prior?.state!=='complete') throw new Error('Completed T04 run required')
-    upgradeCollections({source,target,runId:options.collectionRunId,batchSize:options.batchSize},frozen)
+    upgradeCollections({source,target,runId:options.collectionRunId,batchSize:options.batchSize,transformVersion:prior.transformVersion},frozen)
     // Compare immutable legacy/source domains; mapped observation columns and newly appended assignments excluded on target.
     const binding={runId:options.runId,sourceSnapshotSha256:snapshot,sourceSchemaHash:schemaHash(s),sourceManifestSha256:sm.digest,targetSchemaVersion:schemaHash(t),transformVersion:OBSERVATION_TRANSFORM}
     const run=db.select().from(schema.platformMigrationRun).where(eq(schema.platformMigrationRun.runId,options.runId)).get()
@@ -222,6 +224,7 @@ export function upgradeObservations(options:ObservationUpgradeOptions,frozen?:Fr
     if(!isDeepStrictEqual(ids,actual) || count!==ids.length || db.select().from(schema.platformLegacyRelationAlias).all().length!==count || db.select().from(schema.platformObservationAssignment).all().length!==count) throw new Error('Incomplete source PK coverage')
     if(fileHash(frozen.fd)!==snapshot || observationManifest(s).digest!==sm.digest) throw new Error('Source drift')
     if(!isDeepStrictEqual(t.pragma('foreign_key_check'),inheritedForeignKeys) || !isDeepStrictEqual(t.pragma('integrity_check'),[{integrity_check:'ok'}])) throw new Error('Target integrity failure')
+    if (prior.transformVersion===RECONCILE_SLOT_T04) verifyReconcileHistory(s,t)
     db.update(schema.platformMigrationRun).set({state:'complete'}).where(eq(schema.platformMigrationRun.runId,options.runId)).run()
     return {state:'complete' as const,copiedCount:count,lastOldId:last,batchDigest:chain,unresolved,sourceManifest:sm,inheritedForeignKeys}
   }finally{t.close()}

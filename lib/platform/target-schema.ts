@@ -61,3 +61,14 @@ export const platformCollectionLegacyProvenance = sqliteTable('platform_collecti
 ])
 
 export const targetSchema={...expand,platformCollectionLegacyProvenance,platformObservationFingerprintBasis,platformBusinessObservation,platformObservationAssignment,platformObservationArchiveRef,platformLegacyRelationAlias,platformApplyProjection,platformBusinessProjection,platformRecognizedProjection,platformQueryTitleScope,platformQueryTitleScopeError}
+
+/** Explicit fresh capture variant only. Kept separate so old target SELECT/replay stays byte-identical. */
+export const platformReconcileCapture = sqliteTable('platform_collection', {
+  id: integer('id').primaryKey(),
+  state: text('reconcile_slot_state',{enum:['uncaptured','verified','miss','error']}).notNull(),
+  rule: text('reconcile_slot_rule'),
+  rawArchiveId: integer('reconcile_slot_raw_archive_id').references(()=>expand.platformArchiveValue.id,{onDelete:'restrict'}),
+  rowCount: integer('reconcile_slot_row_count'),
+  inputSha256: text('reconcile_slot_input_sha256'),
+  reason: text('reconcile_slot_reason'),
+})

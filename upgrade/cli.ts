@@ -1,4 +1,7 @@
 import { installBusinessStatusPrerequisite } from './business-status'
+import { installReconcileSlotPrerequisite, requireReconcileSlotSchema } from './reconcile-slot-schema'
+import { RECONCILE_SLOT_T04 } from '../lib/platform/reconcile-slot-capture'
+import { completeReconcileSlotCapture } from './reconcile-slot-capture'
 import { businessStatusRule } from '../lib/platform/business-status-catalog'
 import { BUSINESS_STATUS_V2 } from '../lib/platform/business-status'
 import Database from 'better-sqlite3'
@@ -11,7 +14,13 @@ import { withFrozenSource, manifest, upgradeCollections } from './collections'
 
 // No defaults: paths must be supplied, and every write is explicitly an isolated target.
 const [command, source, target, evidenceDirectory, runId, batchText] = process.argv.slice(2)
-if (!['isolated-upgrade','isolated-upgrade-status-blob'].includes(command ?? '') || !source || !target || !evidenceDirectory || !runId) throw new Error('Usage: node upgrade/run.mjs isolated-upgrade FROZEN_SOURCE NEW_ISOLATED_TARGET EXISTING_EVIDENCE_DIRECTORY RUN_ID [BATCH_SIZE=100]; resume uses same command and existing target')
+if (!['isolated-upgrade','isolated-upgrade-status-blob','isolated-upgrade-reconcile-slot','complete-reconcile-slot'].includes(command ?? '') || !source || !target || !evidenceDirectory || !runId) throw new Error('Usage: node upgrade/run.mjs isolated-upgrade[-status-blob|-reconcile-slot] FROZEN_SOURCE NEW_ISOLATED_TARGET EXISTING_EVIDENCE_DIRECTORY RUN_ID [BATCH_SIZE=100]; or complete-reconcile-slot FROZEN_SCHEMA0 EXISTING_71613 EVIDENCE RUN_ID T04_RUN_ID')
+if (command === 'complete-reconcile-slot') {
+  if (!batchText) throw new Error('Explicit T04 run required')
+  const receipt=completeReconcileSlotCapture({source,target,runId,collectionRunId:batchText})
+  writeFileSync(`${evidenceDirectory}/receipt.json`,JSON.stringify(receipt,null,2)+'\n',{flag:'wx',mode:0o600})
+  process.stdout.write(JSON.stringify(receipt)+'\n')
+} else {
 for (const suffix of ['-wal','-journal']) if (existsSync(source + suffix) && statSync(source + suffix).size > 0) throw new Error('Frozen offline source required')
 withFrozenSource(source, frozen => {
   if (!existsSync(target)) {
@@ -26,16 +35,23 @@ withFrozenSource(source, frozen => {
     } finally { closeSync(destination) }
     const t = new Database(target)
     try { migrate(drizzle(t), { migrationsFolder: new URL('../db/migrations', import.meta.url).pathname }) } finally { t.close() }
-    if (command === 'isolated-upgrade-status-blob') installBusinessStatusPrerequisite(target, frozen, `${evidenceDirectory}/status-prerequisite.json`)
+    if (command === 'isolated-upgrade-status-blob' || command === 'isolated-upgrade-reconcile-slot') installBusinessStatusPrerequisite(target, frozen, `${evidenceDirectory}/status-prerequisite.json`)
+    if (command === 'isolated-upgrade-reconcile-slot') {
+      const receipt=installReconcileSlotPrerequisite(target,frozen)
+      writeFileSync(`${evidenceDirectory}/reconcile-prerequisite.json`,JSON.stringify(receipt,null,2)+'\n',{flag:'wx',mode:0o600})
+    }
   }
-  if (command === 'isolated-upgrade-status-blob') {
+  if (command === 'isolated-upgrade-status-blob' || command === 'isolated-upgrade-reconcile-slot') {
     const installed = new Database(target, { readonly: true })
-    try { if (businessStatusRule(installed) !== BUSINESS_STATUS_V2) throw new Error('Existing target lacks explicit status prerequisite') } finally { installed.close() }
+    try {
+      if (businessStatusRule(installed) !== BUSINESS_STATUS_V2) throw new Error('Existing target lacks explicit status prerequisite')
+      if (command === 'isolated-upgrade-reconcile-slot') requireReconcileSlotSchema(installed)
+    } finally { installed.close() }
   }
   // Exclusive files preserve all previous raw evidence. Use a new evidence directory on resume.
   const fd = openSync(`${evidenceDirectory}/source-manifest.jsonl`, 'wx')
-  try { manifest(frozen.database, line => writeSync(fd, line + '\n')) } finally { closeSync(fd) }
-  const receipt = upgradeCollections({ source, target, runId, batchSize: Number(batchText ?? 100) }, frozen)
+  try { manifest(frozen.database, line => writeSync(fd, line + '\n'),command === 'isolated-upgrade-reconcile-slot') } finally { closeSync(fd) }
+  const receipt = upgradeCollections({ source, target, runId, batchSize: Number(batchText ?? 100),transformVersion:command === 'isolated-upgrade-reconcile-slot' ? RECONCILE_SLOT_T04 : undefined }, frozen)
   writeFileSync(`${evidenceDirectory}/receipt.json`, JSON.stringify(receipt, null, 2) + '\n', { flag: 'wx' })
   const t = new Database(target, { readonly: true })
   const out = openSync(`${evidenceDirectory}/mapping.jsonl`, 'wx')
@@ -55,3 +71,4 @@ withFrozenSource(source, frozen => {
   process.stdout.write(JSON.stringify(receipt) + '\n')
 
 })
+}

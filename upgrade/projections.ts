@@ -16,6 +16,7 @@ import { parseRecognizedRecord } from '../lib/platform/recognized-projection'
 import { bindArchive, insertArchiveValue, type ArchiveInput } from '../lib/platform/immutable-archive'
 import { assertFrozenSource, fileHash, schemaHash, withFrozenSource, type FrozenSource } from './collections'
 import { upgradeObservations, rowSnapshot } from './observations'
+import { verifyReconcileHistory } from './reconcile-slot-capture'
 
 export const PROJECTION_TRANSFORM='t05b-source-projections-v1'
 type Db=BetterSQLite3Database<typeof schema>
@@ -168,6 +169,7 @@ export function upgradeProjections(options:ProjectionUpgradeOptions,frozen?:Froz
     if(!isDeepStrictEqual(expected,actual))throw new Error('Incomplete observation projection PK coverage')
     if(!isDeepStrictEqual(t.pragma('foreign_key_check'),[])||!isDeepStrictEqual(t.pragma('integrity_check'),[{integrity_check:'ok'}]))throw new Error('Target integrity failure')
     if(fileHash(frozen.fd)!==binding.sourceSnapshotSha256)throw new Error('Source drift')
+    verifyReconcileHistory(s,t,true)
     db.update(runs).set({state:'complete'}).where(eq(runs.runId,options.runId)).run()
     return {state:'complete' as const,observationCount:expected.length,sourceManifest:binding.sourceManifestSha256,targetManifest:projectionManifest(t)}
   }finally{t.close()}
