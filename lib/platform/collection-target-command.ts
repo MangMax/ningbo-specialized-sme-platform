@@ -1,4 +1,5 @@
 import { ensureProcessStoredReady } from './process-stored-catalog'
+import { captureNewReconcileSlot, reconcileSlotWriteInstalled } from './reconcile-slot-write'
 import { witnessInstalled } from './recognized-witness-catalog'
 import { captureWitnessCollection } from './recognized-witness-write'
 import { sqliteConnection } from './target-connection'
@@ -82,6 +83,7 @@ export function writeNewCollectionTarget<S extends Record<string, unknown>>(db: 
   return db.transaction(tx => {
     if (tx.get<{ user_version: number }>(sql`PRAGMA user_version`)?.user_version !== FINAL_COLLECTION_SCOPE_VERSION && tx.get<{ user_version: number }>(sql`PRAGMA user_version`)?.user_version !== 71607 && tx.get<{ user_version: number }>(sql`PRAGMA user_version`)?.user_version !== 71608 && tx.get<{user_version:number}>(sql`PRAGMA user_version`)?.user_version !== 71609 && tx.get<{user_version:number}>(sql`PRAGMA user_version`)?.user_version !==71610 && tx.get<{user_version:number}>(sql`PRAGMA user_version`)?.user_version!==71611 && tx.get<{user_version:number}>(sql`PRAGMA user_version`)?.user_version!==71612 && tx.get<{user_version:number}>(sql`PRAGMA user_version`)?.user_version!==71613) throw new Error('Explicit 71606 target required')
     ensureProcessStoredReady(sqliteConnection(tx))
+    reconcileSlotWriteInstalled(sqliteConnection(tx))
     const q = queryInput(input)
     if(tx.get<{user_version:number}>(sql`PRAGMA user_version`)?.user_version===71608 && q.interface!=='apply_list')throw new Error('71608 command supports apply_list only')
     const e = q.collectionEvidence, metadata = platformQueryInsertMetadata(q)
@@ -176,6 +178,7 @@ export function writeNewCollectionTarget<S extends Record<string, unknown>>(db: 
       }
     })
     for (const o of observations) for (const id of [o.observationId, o.recordId, o.versionId, o.relationAlias]) if (id != null) positive(id)
+    captureNewReconcileSlot(sqliteConnection(tx), collectionId)
     return { collectionId, queryAlias, observations }
   })
 }

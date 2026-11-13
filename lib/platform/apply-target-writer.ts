@@ -1,3 +1,4 @@
+import { reconcileSlotWriteInstalled, reconcileStoredApplyObservation, requireReconcileObservationWrite } from './reconcile-slot-write'
 import { captureRelationEvidence } from './relation-evidence-snapshot'
 import { candidateObservationValues, verifyCandidateObservation } from './candidate-scope-write'
 import { candidateScopeObservation } from './candidate-scope-schema'
@@ -34,6 +35,7 @@ function positive(value: number) {
 
 /** A nested SQLite savepoint makes any failure atomic even if an outer caller catches it. */
 export function writeApplyTarget<S extends Record<string, unknown>>(db: BetterSQLite3Database<S>, input: ApplyTargetInput) {
+  const slotCapture = reconcileSlotWriteInstalled(sqliteConnection(db))
   const capturing = capturePhase(db,true)
   const stored = db.get<{user_version:number}>(sql`PRAGMA user_version`)?.user_version===71608 || db.get<{user_version:number}>(sql`PRAGMA user_version`)?.user_version===71609 || db.get<{user_version:number}>(sql`PRAGMA user_version`)?.user_version===71610 || (db.get<{user_version:number}>(sql`PRAGMA user_version`)?.user_version===71611 || db.get<{user_version:number}>(sql`PRAGMA user_version`)?.user_version===71612 || db.get<{user_version:number}>(sql`PRAGMA user_version`)?.user_version===71613)
   const rawText = input.row.rawFields == null ? null : JSON.stringify(input.row.rawFields)
@@ -59,6 +61,7 @@ export function writeApplyTarget<S extends Record<string, unknown>>(db: BetterSQ
     const inputBytes = Buffer.from(canonicalPlatformJson({ collectionId: collection.id, position: input.position, row: input.row, assignment: input.assignment, ...(input.batchId === undefined ? {} : { batchId: input.batchId }) }))
     const fingerprint = createHash('sha256').update(inputBytes).digest('hex')
     const existing = tx.select().from(s.platformBusinessObservation).where(and(eq(s.platformBusinessObservation.collectionId, collection.id), eq(s.platformBusinessObservation.sequenceNo, input.position.sequenceNo))).get()
+    requireReconcileObservationWrite(sqliteConnection(tx), collection.id, !!existing)
     if (existing) {
       if (capturing) assertCapturedInput(tx, existing.id, inputBytes)
       if (existing.inputFingerprint !== fingerprint || existing.projectionRuleVersion !== PLATFORM_PROJECTION_RULE) throw new Error('observation_payload_conflict')
@@ -84,7 +87,7 @@ export function writeApplyTarget<S extends Record<string, unknown>>(db: BetterSQ
     captureRelationEvidence(tx,{observationId:observation.id,collectionId:collection.id,relationAlias,row:input.row,assignment,createdAt:now})
     sealArchiveOwner(tx, { kind: 'observation', ownerId: observation.id })
     const title = raw?.rdjb
-    tx.insert(stored ? storedApplyProjection : s.platformApplyProjection).values({ ...(materialized ? capturedApplyValues(materialized):{}), observationId: observation.id, basis: raw === null ? 'unavailable' : 'observation_reconciliation', parseState: raw === null ? 'absent' : 'valid', sourceArchiveId: rawArchive, ...(plan.applyRecord ?? parseApplyRecord(raw)), ruleVersion: APPLY_PROJECTION_RULE, sourceTitleKind: sourceValueKind(title), sourceTitleText: typeof title === 'string' ? title : null, sourceTitleNumberText: typeof title === 'number' ? String(title) : null, sourceTitleBoolean: typeof title === 'boolean' ? Number(title) : null, sourceTitleRuleVersion: 't05b-source-projections-v1', ...sourceFieldComparison('apply_list', { province: input.row.province ?? null, status: input.row.status ?? null, batch: input.row.batch ?? null, declareKind: input.row.declareKind ?? null, appliedAt: input.row.appliedAt ?? null, awardBatchLabel: input.row.awardBatchLabel ?? null, year: input.row.year ?? null }, raw, raw === null ? 'absent' : 'valid') }).run()
+    tx.insert(stored ? storedApplyProjection : s.platformApplyProjection).values({ ...(materialized ? capturedApplyValues(materialized):{}), observationId: observation.id, basis: raw === null ? 'unavailable' : 'observation_reconciliation', parseState: raw === null ? 'absent' : 'valid', sourceArchiveId: rawArchive, ...(plan.applyRecord ?? parseApplyRecord(raw)), ruleVersion: APPLY_PROJECTION_RULE, sourceTitleKind: sourceValueKind(title), sourceTitleText: typeof title === 'string' ? title : null, sourceTitleNumberText: typeof title === 'number' ? String(title) : null, sourceTitleBoolean: typeof title === 'boolean' ? Number(title) : null, sourceTitleRuleVersion: 't05b-source-projections-v1', ...sourceFieldComparison('apply_list', slotCapture ? reconcileStoredApplyObservation(sqliteConnection(tx), observation.id) : { province: input.row.province ?? null, status: input.row.status ?? null, batch: input.row.batch ?? null, declareKind: input.row.declareKind ?? null, appliedAt: input.row.appliedAt ?? null, awardBatchLabel: input.row.awardBatchLabel ?? null, year: input.row.year ?? null }, raw, raw === null ? 'absent' : 'valid') }).run()
     return { observationId: observation.id, recordId, versionId, relationAlias, reused: false, ...(stored?{materializationRule:APPLY_MATERIALIZATION_RULE}:{}) }
   })
 }

@@ -1,3 +1,4 @@
+import { reconcileSlotWriteInstalled, reconcileStoredObservation, requireReconcileObservationWrite } from './reconcile-slot-write'
 import { businessStatusRule } from './business-status-catalog'
 import { captureRelationEvidence } from './relation-evidence-snapshot'
 import { sqliteConnection } from './target-connection'
@@ -35,6 +36,7 @@ function positive(value: number) {
 
 /** A nested SQLite savepoint makes any failure atomic even if an outer caller catches it. */
 export function writeProcessTarget<S extends Record<string, unknown>>(db: BetterSQLite3Database<S>, input: ProcessTargetInput) {
+  const slotCapture = reconcileSlotWriteInstalled(sqliteConnection(db))
   const capturing = capturePhase(db)
   const stored=db.get<{user_version:number}>(sql`PRAGMA user_version`)?.user_version===71610 || (db.get<{user_version:number}>(sql`PRAGMA user_version`)?.user_version===71611 || db.get<{user_version:number}>(sql`PRAGMA user_version`)?.user_version===71612 || db.get<{user_version:number}>(sql`PRAGMA user_version`)?.user_version===71613)
   const rawText=input.row.rawFields==null?null:JSON.stringify(input.row.rawFields)
@@ -63,6 +65,7 @@ export function writeProcessTarget<S extends Record<string, unknown>>(db: Better
     const inputBytes = Buffer.from(canonicalPlatformJson({ collectionId: collection.id, position: input.position, row: input.row, assignment: input.assignment, ...(input.batchId === undefined ? {} : { batchId: input.batchId }) }))
     const fingerprint = createHash('sha256').update(inputBytes).digest('hex')
     const existing = tx.select().from(s.platformBusinessObservation).where(and(eq(s.platformBusinessObservation.collectionId, collection.id), eq(s.platformBusinessObservation.sequenceNo, input.position.sequenceNo))).get()
+    requireReconcileObservationWrite(sqliteConnection(tx), collection.id, !!existing)
     if (existing) {
       if (capturing) assertCapturedInput(tx, existing.id, inputBytes)
       for (const id of [existing.id, existing.recordId, existing.versionId]) if (id != null) positive(id)
@@ -91,7 +94,7 @@ export function writeProcessTarget<S extends Record<string, unknown>>(db: Better
     captureRelationEvidence(tx,{observationId:observation.id,collectionId:collection.id,relationAlias,row:input.row,assignment,createdAt:now})
     sealArchiveOwner(tx, { kind: 'observation', ownerId: observation.id })
     const title = raw?.rdjb
-    const observationProjection = tx.insert(stored?storedProcessProjection:s.platformBusinessProjection).values({...(materialized?capturedProcessValues(materialized):{}), observationId: observation.id, basis: raw === null ? 'unavailable' : 'observation_reconciliation', parseState: raw === null ? 'absent' : 'valid', sourceArchiveId: rawArchive, ...(plan.businessProjection ?? parseBusinessProcess(raw)), ruleVersion: BUSINESS_PROJECTION_RULE, sourceTitleKind: sourceValueKind(title), sourceTitleText: typeof title === 'string' ? title : null, sourceTitleNumberText: typeof title === 'number' ? String(title) : null, sourceTitleBoolean: typeof title === 'boolean' ? Number(title) : null, sourceTitleRuleVersion: businessStatusRule(sqliteConnection(tx)), ...sourceFieldComparison('business_list', { province: input.row.province ?? null, status: input.row.status ?? null, batch: input.row.batch ?? null, declareKind: input.row.declareKind ?? null, appliedAt: input.row.appliedAt ?? null, awardBatchLabel: input.row.awardBatchLabel ?? null, year: input.row.year ?? null }, raw, raw === null ? 'absent' : 'valid') }).returning({ id: s.platformBusinessProjection.id }).get()
+    const observationProjection = tx.insert(stored?storedProcessProjection:s.platformBusinessProjection).values({...(materialized?capturedProcessValues(materialized):{}), observationId: observation.id, basis: raw === null ? 'unavailable' : 'observation_reconciliation', parseState: raw === null ? 'absent' : 'valid', sourceArchiveId: rawArchive, ...(plan.businessProjection ?? parseBusinessProcess(raw)), ruleVersion: BUSINESS_PROJECTION_RULE, sourceTitleKind: sourceValueKind(title), sourceTitleText: typeof title === 'string' ? title : null, sourceTitleNumberText: typeof title === 'number' ? String(title) : null, sourceTitleBoolean: typeof title === 'boolean' ? Number(title) : null, sourceTitleRuleVersion: businessStatusRule(sqliteConnection(tx)), ...sourceFieldComparison('business_list', slotCapture ? reconcileStoredObservation(sqliteConnection(tx), observation.id) : { province: input.row.province ?? null, status: input.row.status ?? null, batch: input.row.batch ?? null, declareKind: input.row.declareKind ?? null, appliedAt: input.row.appliedAt ?? null, awardBatchLabel: input.row.awardBatchLabel ?? null, year: input.row.year ?? null }, raw, raw === null ? 'absent' : 'valid') }).returning({ id: s.platformBusinessProjection.id }).get()
     positive(observationProjection.id)
     return { observationId: observation.id, recordId, versionId, relationAlias, reused: false }
   })
