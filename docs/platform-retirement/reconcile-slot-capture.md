@@ -6,6 +6,12 @@
 
 本文补充[主契约](contract.md)和[补充 ADR](../adr/2026-11-13-reconcile-slot-capture.md)，保留企业、平台业务记录、内容版本、采集观察和差异决定的词表边界。capture 只回答“原旧槽封套是否通过原重验”，不裁定企业资格、差异或归属。
 
+## #770 原重放输入补充，pending 独立接受
+
+[原断言归属补充](reconcile-replay-input.md)与[对应 ADR](../adr/2026-11-13-reconcile-replay-input.md)是 scope:M docs-only 候选。本页 §1、§3.2、§5.3、B07/B09 将 fallback `payloadRows` 视为 exact immutable replay 输入的推论已被父级正常路径与实际 producer/comparator 探针证伪：原 SQL NULL/空对象不等于合成对象。原比较与 validator projection、持久化 exact original、请求 own assertions 须分责。原文字及历史证据保留，不能再单凭合成行声明重放保真。
+
+补充候选选择已有受约束 reference 语义，并为旧成功请求保留完整旧编码和 committed key/receipt。它覆盖 metadata、sequence/key/raw、全部源列、alias/sourceText、native status、逐观察原输入及失败恢复，不授权另一次逐字段补丁。所有新实现/测试/target carry 仍 UNRUN；A pending 父级固定对象 Standards/Spec 和 LOCAL 接受，B 未授权。#769 不变，target 在固定已接受 B 后另归 #768，#768/#763/#706 NOTREADY，global guards CLOSED。
+
 ## 1. 原输入、源码 owner 与现状
 
 下面的行号属于固定基线。路径链接指向实际 owner；B 可在这些边界内增加窄模块，不把每个 helper 拆成票。
