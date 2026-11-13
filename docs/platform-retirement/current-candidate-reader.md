@@ -50,6 +50,16 @@ union、最大revision、USCC条件、count、NOCASE排序与PK tie-break、limi
 
 本票只交付本地函数组合。普通DB guard仍CLOSED；HTTP、MCP、worker、packaged job、#738–742及整体#706未准入。
 
+## #767 current 专用 worker 请求边界
+
+`current-worker-admission.ts` 只归 current 读域所有。schema0 继续通过 `assertExpandRuntime`；71613 必须解析为现有 `typed` source，并通过现有 collection provenance readiness。candidate、process、witness 的完成性及数据检查继续由正常 consumer 在自己的 snapshot 内执行。显式 legacy、中间阶段及不支持的 phase 明确拒绝，不自动切换来源或修复数据库。
+
+enterprise worker 在**每个请求**上区分 operation：仅 `current-qualified` 调用该 gate，list/detail/recognitions/differences/summary 继续调用原 expand guard。路径/inode 连接复用不保存准入或结果；失败后的请求与同路径替换仍重新检查。export worker 只读打开目标，复用同一 gate；receiptRuntime 验证与公布名称脱敏、progress/done/failure、V8 预算、日志关闭及父级取消清理归属保持。
+
+`tests/current-worker-admission-767.test.ts` 使用真实 source launcher、executor、OS 子进程和实际 IPC 字节。测试专用 `current-worker-767-observer.mjs` 通过 `NODE_OPTIONS=--import` 固定时钟并在真实参数化 SQL 的 get 边界暂停，由独立连接提交 assignment；它不替换 reader 或 SQL 结果。fixture 沿 #765 的真实 import/correspondence/fact owner 只构造一次两种 baseline，每 case COPY0600。外部 runner 必须设置自有 `CURRENT_WORKER_767_FIXTURES`、`CURRENT_WORKER_767_BASELINES`、`CURRENT_WORKER_767_EVIDENCE`、TMP/config/log 根及只读共享 deps。
+
+同一测试另用现有 esbuild leaf bundling 方式生成两个入口，移动 artifact 目录后经 `createEnterpriseReadProcess` 启动，核对完整 JSON、三称号实际 documonster XLSX 和拒绝边界。这仅是可移位 leaf 证据，正式 Nitro/Rollup output、HTTP/MCP、完整 build、生产和未来集成仍未验收；普通 DB/import worker 与全局 guard 保持关闭，#706 仍 NOTREADY。
+
 ## 查询计划与限制
 
 本读域不新增索引。真实合成SQLite的trace/EXPLAIN记录实际使用的record_title_idx、difference_reason_impact_title_113_idx、record_correspondence_enterprise_idx、assignment复合PK、observation/enterprise PK，以及USCC覆盖索引扫描与UNION/ORDER BY临时B-tree。完整计划以同一最终tree的仓外reader/PLAN.json及REPORT为准。normalize-USCC两侧函数匹配仍可能扫描，mask bit过滤也不承诺索引seek；不为tinyfixture推导真实加速或新增影响全库写入的表达式索引。真实性能、HTTP/MCP/工作簿整体target接入及生产仍未接受。
