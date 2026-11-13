@@ -53,7 +53,7 @@ import type {
 import type { PlatformQueryOutcome } from './client'
 import { type PlatformRelationRecord, relationFromRow } from './identity'
 import type { PlatformInterface } from '../labels'
-import type { StoredReplayOriginal } from './reconcile-replay-input'
+import type { StoredReplayInput } from './reconcile-replay-input'
 
 // ---------------------------------------------------------------------------
 // 输入
@@ -80,7 +80,7 @@ interface QueryInput {
 /** Fresh callers retain their existing shape. Stored originals cannot be supplied as a raw bag. */
 export type PlatformQueryInput = QueryInput & (
   | { kind?: 'fresh' }
-  | { kind: 'stored'; original: StoredReplayOriginal }
+  | { kind: 'stored'; original: StoredReplayInput }
 )
 
 /** 平台关系的**自然键**:写入侧在本批事务内才生成行 id,客户端只能先用它指认。 */

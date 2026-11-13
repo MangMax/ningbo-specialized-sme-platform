@@ -5,7 +5,7 @@ import * as schema from '../../db/schema'
 import type { RosterImportPlatformQuery } from '../roster-import-client'
 import { checkedBusinessStatus, type BusinessStatusValue } from './business-status'
 import { normalizePlatformRelation } from './normalization'
-import { platformQuerySourceConflict } from './query-replay'
+import { platformQuerySourceConflict, type PlatformQueryReplaySource } from './query-replay'
 
 type Query = typeof schema.platformQuery.$inferSelect
 type Relation = typeof schema.platformRelation.$inferSelect
@@ -20,6 +20,51 @@ type OriginalRelation = {
   columns: Relation
   status: BusinessStatusValue
   raw: OriginalRaw
+}
+
+type QueryCoordinates = Pick<Query, 'interface' | 'queryKey' | 'rdjb' | 'queriedAt'>
+export type StoredReplayInput = Pick<StoredReplayOriginal, 'encode'>
+
+/** Freeze selected source values inside the reader transaction, not writer callbacks. */
+export function snapshotStoredReplayInput(
+  query: QueryCoordinates,
+  source: PlatformQueryReplaySource,
+  sequenceNos: readonly number[],
+): StoredReplayInput {
+  const rows = new Map(sequenceNos.map(sequenceNo => {
+    const row = source.relationAt(sequenceNo)
+    if (!row) throw new Error('Missing original reconcile sequence')
+    return [sequenceNo, { values: row.values, ref: row.ref }] as const
+  }))
+  const snapshot: PlatformQueryReplaySource = {
+    ref: source.ref, metadata: source.metadata, relationCount: source.relationCount,
+    relationAt: sequenceNo => rows.get(sequenceNo),
+  }
+  return { encode: legacyQuery => encodeStoredReplayQuery(query, snapshot, sequenceNos, legacyQuery) }
+}
+
+function encodeStoredReplayQuery(
+  query: QueryCoordinates,
+  source: PlatformQueryReplaySource,
+  sequenceNos: readonly number[],
+  legacyQuery: RosterImportPlatformQuery,
+): RosterImportPlatformQuery {
+  if (legacyQuery.interface !== query.interface || legacyQuery.queryKey !== query.queryKey
+    || legacyQuery.rdjb !== query.rdjb || legacyQuery.queriedAt !== query.queriedAt) {
+    throw new Error('Invalid original reconcile query binding')
+  }
+  const sequences = new Set(sequenceNos), rows = legacyQuery.relations ?? []
+  const complete = rows.length === sequences.size
+    && new Set(rows.map(row => row.sequenceNo)).size === sequences.size
+    && rows.every(row => sequences.has(row.sequenceNo))
+  const compatible = rows.every(row => !Buffer.isBuffer(row.rawFields?.cszt)
+    && normalizePlatformRelation(query.interface, row).normalizationConflicts.length === 0)
+  if (complete && compatible && !platformQuerySourceConflict(legacyQuery, source)) return legacyQuery
+  return {
+    interface: query.interface, queryKey: query.queryKey, rdjb: query.rdjb,
+    queriedAt: query.queriedAt, reuseExisting: true,
+    relations: sequenceNos.map(sequenceNo => ({ sequenceNo })),
+  }
 }
 
 function originalRaw(db: Db, id: number): OriginalRaw {
@@ -64,23 +109,8 @@ export class StoredReplayOriginal {
 
   encode(legacyQuery: RosterImportPlatformQuery): RosterImportPlatformQuery {
     const query = this.query
-    if (legacyQuery.interface !== query.interface || legacyQuery.queryKey !== query.queryKey
-      || legacyQuery.rdjb !== query.rdjb || legacyQuery.queriedAt !== query.queriedAt) {
-      throw new Error('Invalid original reconcile query binding')
-    }
     const bySequence = new Map(this.relations.map(row => [row.columns.sequenceNo, row]))
-    const rows = legacyQuery.relations ?? []
-    // queryUsesReference permits subsets for general callers; this producer must retain every row.
-    const complete = rows.length === bySequence.size
-      && new Set(rows.map(row => row.sequenceNo)).size === bySequence.size
-      && rows.every(row => bySequence.has(row.sequenceNo))
-    // The only native non-JSON source cell in the legacy fallback is business status.
-    // Detect it before invoking the unchanged serializer; never catch an authentication error.
-    const inputCompatible = rows.every(row => !Buffer.isBuffer(row.rawFields?.cszt)
-      && normalizePlatformRelation(query.interface, row).normalizationConflicts.length === 0)
-    // Reuse the actual immutable comparison rules, without authenticating/writing or swallowing
-    // any error. Native ORM source values stay internal; no public Buffer transport is produced.
-    const conflict = complete && inputCompatible ? platformQuerySourceConflict(legacyQuery, {
+    return encodeStoredReplayQuery(query, {
       ref: `query:${query.id}`,
       metadata: query,
       relationCount: this.relations.length,
@@ -88,15 +118,6 @@ export class StoredReplayOriginal {
         const original = bySequence.get(sequenceNo)
         return original ? { values: original.columns, ref: `relation:${original.columns.id}` } : undefined
       },
-    }) : true
-    if (!conflict) return legacyQuery
-    return {
-      interface: query.interface,
-      queryKey: query.queryKey,
-      rdjb: query.rdjb,
-      queriedAt: query.queriedAt,
-      reuseExisting: true,
-      relations: this.relations.map(row => ({ sequenceNo: row.columns.sequenceNo })),
-    }
+    }, this.relations.map(row => row.columns.sequenceNo), legacyQuery)
   }
 }

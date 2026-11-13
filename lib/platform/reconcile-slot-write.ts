@@ -9,6 +9,7 @@ import { targetSchema as s, platformReconcileCapture as c } from './target-schem
 import { migrationFinished } from './migration-readiness'
 import { captureReconcileSlot, RECONCILE_SLOT_COMPLETION, slotFallbackColumns, type SlotInput, type SlotRelation } from './reconcile-slot-capture'
 import { sourceFieldComparison } from './source-extraction'
+import type { LegacySlotCollection } from './client'
 
 const columns = ['reconcile_slot_state','reconcile_slot_rule','reconcile_slot_raw_archive_id','reconcile_slot_row_count','reconcile_slot_input_sha256','reconcile_slot_reason']
 const barriers = ['reconcile_slot_insert','reconcile_slot_binding','reconcile_slot_immutable','reconcile_slot_delete','reconcile_slot_observation_insert','reconcile_slot_observation_update','reconcile_slot_observation_delete']
@@ -98,6 +99,19 @@ function observationOriginal(t: Database.Database, id: number) {
     province: text('province'), status, batch: text('batch'), declareKind: text('declare_kind'), appliedAt: text('applied_at'), awardBatchLabel: text('award_batch_label'), year }
   return { row, decoded, queryId: integer('query_id'), raw,
     fallbackCells: slotFallbackColumns.map(name => { const { storageClass, hex } = cell(name); return { name, storageClass, hex } }) }
+}
+/** Selected-input owner only. Admission and classification must precede this read. */
+export function selectedReconcileObservationInput(t: Database.Database, id: number) {
+  const original = observationOriginal(t, id)
+  if ('error' in original.decoded) throw new SyntaxError(original.decoded.error.replace(/^SyntaxError: /, ''))
+  return { ...original.row, rawFields: original.decoded.rawFields }
+}
+/** Recover report/page material from the already admitted, sealed original.
+ * This does not run the capture validator or decide completeness. */
+export function selectedReconcileCollectionInput(t: Database.Database, id: number, archiveId: number): LegacySlotCollection {
+  const raw = archive(t, 'collection', id, 'rawResponse')
+  if (raw.id !== archiveId || raw.bytes === null) throw new Error('Missing selected reconcile original response')
+  return JSON.parse(raw.bytes.toString('utf8'))
 }
 /** The seven stored values come from the same sealed old-insert materialization as capture. */
 export function reconcileStoredObservation(t: Database.Database, id: number) {

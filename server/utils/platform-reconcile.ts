@@ -22,7 +22,7 @@ import {
 import type { PlatformRdjb, PlatformRow } from '../../lib/platform/adapter'
 import { type PlatformRelationRecord, relationFromRow } from '../../lib/platform/identity'
 import { normalizePlatformRelation } from '../../lib/platform/normalization'
-import { StoredReplayOriginal } from '../../lib/platform/reconcile-replay-input'
+import { StoredReplayOriginal, type StoredReplayInput } from '../../lib/platform/reconcile-replay-input'
 import {
   type DifferenceDecision,
   type KnownEnterprise,
@@ -44,6 +44,8 @@ import type {
   RosterImportRequest,
 } from '../../lib/roster-import-client'
 import { commitRosterImport, preflightRosterImport } from './roster-import'
+import { createReconcileTargetSlotReader, type ReconcileTargetSlotReader } from './platform-reconcile-target-slots'
+import { sqliteConnection } from '../../lib/platform/target-connection'
 
 type Db = BetterSQLite3Database<typeof schema>
 
@@ -143,6 +145,8 @@ export interface ReconcileRunOptions {
   /** `false` = 只采集预览不回写(试跑)。默认回写。 */
   write?: boolean
   writer?: ReconcileWriter
+  /** Explicit completed capture target, bound to this service's native connection. */
+  targetSlots?: ReconcileTargetSlotReader
   now?: () => Date
   onProgress?: (done: number, total: number) => void
   shouldCancel?: () => boolean
@@ -357,7 +361,7 @@ function freshStoredSlotsSnapshot(db: Pick<Db, 'select' | 'get'>, queryKey: stri
 }
 
 /** Comparison/mapping projections are independent of the selected immutable originals. */
-type StoredSlot = {
+export type StoredSlot = {
   /** Reused queries own their saved value (including NULL); fetched slots use the rdjb mapping. */
   titleCode: typeof schema.platformQuery.$inferSelect.titleCode
   collection?: LegacySlotCollection
@@ -368,7 +372,7 @@ type StoredSlot = {
   payloadRows: Record<string, unknown>[]
   /** 本次实查拿到的**原始响应原文**(落 `platform_query.raw_response`);复用时为空串。 */
   raw: string
-} & ({ kind: 'fresh' } | { kind: 'stored'; original: StoredReplayOriginal })
+} & ({ kind: 'fresh' } | { kind: 'stored'; original: StoredReplayInput })
 
 // ---------------------------------------------------------------------------
 // 目标收集
@@ -586,6 +590,10 @@ function hasFreshDecision(db: Db, target: ReconcileTarget, cutoffIso: string, co
 
 export async function runPlatformReconcile(options: ReconcileRunOptions): Promise<ReconcileReport> {
   const { db } = options
+  const connection = sqliteConnection(db)
+  const targetSlots = options.targetSlots ?? (connection.pragma('user_version', { simple: true }) === 71613
+    ? createReconcileTargetSlotReader(connection) : undefined)
+  targetSlots?.assertConnection(db)
   const now = options.now ?? (() => new Date())
   const startedAt = now().toISOString()
   const freshnessMs = options.freshnessMs ?? DEFAULT_FRESHNESS_MS
@@ -608,7 +616,9 @@ export async function runPlatformReconcile(options: ReconcileRunOptions): Promis
   // 先按槽位判「哪些新鲜可复用、哪些必须实查」—— 一次都不查的话不需要凭据。
   const planned = new Map<string, { reused: Map<string, StoredSlot>; missing: typeof SLOTS }>()
   for (const uscc of usccs) {
-    const reused = freshStoredSlots(db, uscc, cutoffIso)
+    const reused = targetSlots
+      ? targetSlots.read(db, uscc, cutoffIso)
+      : freshStoredSlots(db, uscc, cutoffIso)
     planned.set(uscc, { reused, missing: SLOTS.filter((slot) => !reused.has(slotKey(slot))) })
   }
   const missingSlots = [...planned.values()].reduce((sum, entry) => sum + entry.missing.length, 0)
