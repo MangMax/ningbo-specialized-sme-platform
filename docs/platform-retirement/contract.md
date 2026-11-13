@@ -156,3 +156,7 @@ switch is included; historical T05c receipts retain their original schema hash.
 离线迁移完成时统一核对 schema/FK、完整性、行数、PK 与关键字段/原字节；这些检查不因简化运行时而取消。正常业务 fingerprint、原输入/原列语义、replay 去重、事务/FK、备份及数据核对继续保留。计算业务指纹所需的临时空数据库保留，但不复制认证链或维护内存权限/ledger 绑定。
 
 显式 target 的71610/71611来源写入和正常重放共用现有业务代码；未完成迁移应清楚报错。普通 runtime/worker 非零phase guard不变，declarations 原71608边界不扩大。record_correspondence 的实际离线转接、两 detail 消费者和显示接线见 [H1c实际转接契约](h1c-phase-applicability.md#744-实际转接候选)；验收使用实际工具生成的合成目标，不代表生产执行。
+
+## #760 A 关联办理 stored-status BLOB 补充（候选，待独立接受）
+
+[具体契约](legacy-stored-status.md)及[补充ADR](../adr/2026-11-13-legacy-stored-status.md)修正本页文本比较列的一个已证明特例：旧 `business_list` 的合法 status Buffer，在现有来源投影 observation-owner 的 stored/reconciled status 中保留 native BLOB、显式 blob kind、原 bytes与冲突；版本/parser status 继续TEXT/NULL。空BLOB不等于NULL，与非空parsed TEXT严格冲突，既有archive/version补充及JSON Buffer序列化保持。新鲜离线target在T04绑定前安装专用DDL prerequisite，真实管线继续到71613；旧completed71613及中断run不改schema/transform/checkpoint，未证明需要后继phase，不承诺在线修复。A仅为docs候选，独立接受及另行授权后才准入同票B≤M；旧10项诊断PASS/真实T05b FAIL均为继承证据，本轮运行/typecheck均UNRUN。
