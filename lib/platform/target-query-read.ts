@@ -24,10 +24,17 @@ const relationShape = z.object({
   year: z.number().nullable(), matchBasis: z.string(), verificationStatus: z.string(),
   rawFields: z.record(z.string(), z.unknown()).nullable(),
   sourceRdjb: z.unknown().optional(), sourcePage: z.unknown().optional(),
-  normalizationConflicts: z.array(z.object({
-    field: z.enum(['province', 'status', 'batch', 'declareKind', 'appliedAt', 'awardBatchLabel', 'year']),
+  normalizationConflicts: z.array(z.union([z.object({field:z.literal('status'),storedValue:z.string(),rawValue:z.string()}),z.object({
+    field: z.enum(['province', 'batch', 'declareKind', 'appliedAt', 'awardBatchLabel', 'year']),
     storedValue: z.union([z.string(), z.number()]), rawValue: z.union([z.string(), z.number()]),
-  })).optional(),
+  })])).optional(),
+})
+const businessRelationShape = relationShape.extend({
+  status: z.union([text, z.custom<Buffer>(Buffer.isBuffer)]),
+  normalizationConflicts: z.array(z.union([
+    z.object({field:z.literal('status'),storedValue:z.union([z.string(),z.custom<Buffer>(Buffer.isBuffer)]),rawValue:z.string()}),
+    z.object({field:z.enum(['province','batch','declareKind','appliedAt','awardBatchLabel','year']),storedValue:z.union([z.string(),z.number()]),rawValue:z.union([z.string(),z.number()])}),
+  ])).optional(),
 })
 function clamp(value: number | undefined, fallback: number, max = Number.MAX_SAFE_INTEGER) {
   const n = Number(value)
@@ -84,7 +91,8 @@ export function listTargetPlatformQueries(db: Db, filter: PlatformQueryFilter): 
       .leftJoin(s.enterprise, eq(s.enterprise.id, a.enterpriseId)).where(inArray(o.collectionId, ids)).all() : []
     const namesById = new Map(names.map(row => [row.id, row.name]))
     for (const row of relationIds) {
-      const relation = { ...relationShape.parse(displays.sources.get(row.id)), matchedName: namesById.get(row.id) ?? null }
+      const interfaceName=selected.find(owner=>owner.collection.id===row.collectionId)?.collection.interface
+      const relation = { ...(interfaceName==='business_list'?businessRelationShape:relationShape).parse(displays.sources.get(row.id)), matchedName: namesById.get(row.id) ?? null }
       const bucket = byCollection.get(row.collectionId) ?? []
       bucket.push(relation); byCollection.set(row.collectionId, bucket)
     }

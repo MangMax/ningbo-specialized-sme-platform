@@ -29,6 +29,9 @@ export function bootstrapFingerprint(t:Database.Database,owner:FingerprintOwner,
   }
   const {c,rawFields,stored,bytes}=legacyFingerprintInput(t,owner)
   verifyLegacyFacts(t,owner,bytes,true)
+  // Ordinary source staging retains its former TEXT-only admission. Reference reads
+  // and the offline status recovery do not enter this command writer path.
+  if(Buffer.isBuffer(stored.status))throw new Error('Legacy text class conflict')
   const scratch=emptyFingerprintTarget(t)
   try {
    const expected=drizzle(scratch,{schema:s})
@@ -37,7 +40,7 @@ export function bootstrapFingerprint(t:Database.Database,owner:FingerprintOwner,
    expected.insert(s.platformLegacyQueryAlias).values({oldId:1,collectionId:c.id}).run()
    if(c.interface==='recognized_list')reconstructWitnessCollectionSource(t,scratch,c.id)
    const writer=c.interface==='apply_list'?writeApplyTarget:c.interface==='business_list'?writeProcessTarget:writeRecognizedTarget
-   const result=writer(expected,{collectionId:c.id,position:{sequenceNo:o.sequenceNo,positionState:'unknown'},row:{sequenceNo:o.sequenceNo,relationKey:o.sourceRelationKey,rawFields:rawFields as Record<string,unknown>|null,...stored},assignment:{matchBasis:'none',verificationStatus:'pending',origin:'command',actor:{type:'agent',id:'bootstrap-staging'},basis:'source staging'}})
+   const result=writer(expected,{collectionId:c.id,position:{sequenceNo:o.sequenceNo,positionState:'unknown'},row:{sequenceNo:o.sequenceNo,relationKey:o.sourceRelationKey,rawFields:rawFields as Record<string,unknown>|null,...stored,status:stored.status},assignment:{matchBasis:'none',verificationStatus:'pending',origin:'command',actor:{type:'agent',id:'bootstrap-staging'},basis:'source staging'}})
    let recordId:number|null=null,versionId:number|null=null
    if(result.recordId!==null) {
     const planned=expected.select().from(s.platformBusinessRecord).where(eq(s.platformBusinessRecord.id,result.recordId)).get()!

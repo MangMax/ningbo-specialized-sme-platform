@@ -1,3 +1,4 @@
+import type { PlatformStoredRelation } from '../platform/read'
 import { differencePublicColumns } from '../platform/difference-reference-target'
 import { readPublicPublishedNames } from './official-published-presentation'
 export { readPublicPublishedNames } from './official-published-presentation'
@@ -74,7 +75,7 @@ interface Snapshot {
   aliases: (typeof schema.enterpriseAlias)['$inferSelect'][]
   exportRows: (typeof schema.platformExportRow)['$inferSelect'][]
   exportBatches: (typeof schema.platformExportBatch)['$inferSelect'][]
-  relations: (typeof schema.platformRelation)['$inferSelect'][]
+  relations: PlatformStoredRelation[]
   queries: (typeof schema.platformQuery)['$inferSelect'][]
   differences: (typeof schema.differenceReason)['$inferSelect'][]
   recordsByEnterprise: Map<number, (typeof schema.record)['$inferSelect'][]>
@@ -830,7 +831,7 @@ export interface RosterPlatformRelationRow {
   usccRaw: string | null
   nameRaw: string | null
   province: string | null
-  status: string | null
+  status: string | Buffer | null
   batch: string | null
   declareKind: string | null
   appliedAt: string | null

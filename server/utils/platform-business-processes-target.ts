@@ -14,7 +14,7 @@ import { normalizeDeclareKind } from '../../lib/platform/identity';
 import { fail, orderedScopes, pageOf } from './platform-business-read';
 import { businessProcessFilterSchema, BUSINESS_PROCESS_VERSION_LIMIT, BUSINESS_PROCESS_OBSERVATION_LIMIT, type BusinessProcessFilter, type BusinessProcessListResult, type BusinessProcessIsolatedRow, type BusinessProcessDetail, type BusinessProcessView } from '../../lib/platform/business-processes';
 import { withArchiveProcessFacts, type PlatformObservationFact } from '../../lib/platform/observation-facts';
-import type { PlatformNormalizationConflict } from '../../lib/platform/normalization';
+import { platformNormalizationConflict, type PlatformNormalizationConflict } from '../../lib/platform/normalization';
 import type { PlatformFilterOptions } from '../../lib/platform/filter-options';
 // Explicit table queries use the injected session/logger, never db.query.
 // Match R1b's connection seam; gate() still requires the actual 71610 catalog.
@@ -182,20 +182,21 @@ export function readTargetBusinessProcessFacts(db: Db, relationIds: number[], op
                     declareKind: [source.declareKindConflict, source.storedDeclareKind, source.parsedDeclareKind], appliedAt: [source.appliedAtConflict, source.storedAppliedAt, source.parsedAppliedAt], awardBatchLabel: [source.awardBatchLabelConflict, source.storedAwardBatchLabel, source.parsedAwardBatchLabel], year: [source.yearConflict, source.storedYear, source.parsedYear],
                 } satisfies Record<typeof comparisonFields[number], [
                     number | null,
-                    string | number | null,
+                    string | number | Buffer | null,
                     string | number | null
                 ]>;
                 const conflicts: PlatformNormalizationConflict[] = comparisonFields.flatMap(field => {
                     const [conflict, storedValue, rawValue] = comparisons[field];
-                    return conflict && storedValue != null && rawValue != null ? [{ field, storedValue, rawValue }] : [];
+                    return conflict && storedValue != null && rawValue != null ? [platformNormalizationConflict(field, storedValue, rawValue)] : [];
                 });
                 const rawName = typeof row.originalName === 'string' ? row.originalName : null, rawUscc = typeof row.originalUscc === 'string' ? row.originalUscc : null;
                 result.set(row.relationId, withArchiveProcessFacts({
-                    relationId: row.relationId, interface: 'business_list', projectionVersionId: typed ? version.versionId : null, projectionRuleVersion: typed ? version.ruleVersion : null, modeledFields: typed ? modeledFields : [],
-                    titleRaw: source.sqlFactTitle, nameRaw: typed ? version.nameRaw : rawName, usccRaw: typed ? version.usccRaw : rawUscc,
+                    relationId: row.relationId, interface: 'business_list',
+                    nameRaw: typed ? version.nameRaw : rawName, usccRaw: typed ? version.usccRaw : rawUscc, titleRaw: source.sqlFactTitle,
+                    validityDateRaw: null, maintenanceYear: null, maintenanceBatch: null, district: null, awardNote: null, normalizationConflicts: conflicts,
+                    projectionVersionId: typed ? version.versionId : null, projectionRuleVersion: typed ? version.ruleVersion : null, modeledFields: typed ? modeledFields : [],
                     declareKind: typed ? version.declareKind : normalized.declareKind, year: typed ? version.businessYear : normalized.year, appliedAt: typed ? version.appliedAt : normalized.appliedAt, status: typed ? version.status : normalized.status,
                     batch: typed ? version.batch : normalized.batch, awardBatchLabel: typed ? version.awardBatchLabel : normalized.awardBatchLabel, province: typed ? version.province : normalized.province,
-                    validityDateRaw: null, maintenanceYear: null, maintenanceBatch: null, district: null, awardNote: null, normalizationConflicts: conflicts,
                 }, normalized));
             }
         }

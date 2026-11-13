@@ -108,7 +108,7 @@ function recover(t:Database.Database,o:Owner,legacy?:Database.Database,custody?:
  if(!raw){r.exactState='uncaptured';r.cells=[];r.origin=null;r.reason='missing-predecessor-raw-archive'}
  if(o.identity_state!=='not_indexed'&&!o.scheme){r.exactState='uncaptured';r.cells=[];r.origin=null;r.reason='missing-predecessor-fingerprint-basis'}
  const verifierCells=cells?.filter(c=>['status','declare_kind','applied_at','province','batch','award_batch_label','year'].includes(c.name))
- const verifierRepresentable=(r.exactState==='captured'||o.scheme==='target-command-v1')&&(!verifierCells||verifierCells.every(c=>c.storageClass==='null'||(c.name==='year'?c.storageClass==='integer':c.storageClass==='text'))) && (!cells||cells.every(c=>{if(c.storageClass!=='text')return true;try{decode(Buffer.from(c.hex,'hex'));return true}catch{return false}}))
+ const verifierRepresentable=(r.exactState==='captured'||o.scheme==='target-command-v1')&&(!verifierCells||verifierCells.every(c=>c.storageClass==='null'||(c.name==='year'?c.storageClass==='integer':c.storageClass==='text'||(c.name==='status'&&c.storageClass==='blob')))) && (!cells||cells.every(c=>{if(c.storageClass!=='text')return true;try{decode(Buffer.from(c.hex,'hex'));return true}catch{return false}}))
  if(!verifierRepresentable&&r.exactState==='captured'){r.exactState='uncaptured';r.cells=[];r.origin=null;r.reason='predecessor-verifier-cell-type-unrepresentable'}
  if(verifierRepresentable&&(cells||o.scheme==='target-command-v1')&&o.scheme&&o.scheme!=='uncaptured')verifyFingerprint(t,{observationId:o.id,collectionId:o.collection_id,relationAlias:o.old_id},legacy&&!snapshot?{legacyCustody:custody}:{})
  else if(verifierRepresentable&&o.identity_state==='not_indexed'&&cells) {

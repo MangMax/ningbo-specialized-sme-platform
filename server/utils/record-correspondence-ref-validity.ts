@@ -1,4 +1,4 @@
-import { correspondenceTarget } from './record-correspondence-store'
+import { correspondenceTable, correspondenceTarget } from './record-correspondence-store'
 import { listRecordCorrespondencesForIds } from './record-correspondence'
 import { and, eq, getTableColumns, inArray, sql, type SQL } from 'drizzle-orm'
 import { alias, type SQLiteTable } from 'drizzle-orm/sqlite-core'
@@ -7,6 +7,7 @@ import * as s from '../../db/schema'
 import { normalizeUscc } from '../../lib/domain'
 import { currentProofCoversRows, currentRowProofIds } from './comparison-scope-proof'
 import { correspondenceIdentityProblem } from './record-correspondence-identity'
+import { storedProcessProjection } from '../../lib/platform/process-stored-schema'
 
 type Db = BetterSQLite3Database<typeof s>
 const t = s.recordCorrespondence
@@ -60,7 +61,20 @@ export function correspondenceRefValidity(db: Db, ids: number[]): Map<number, bo
 /** Reuse compilation only. Each invocation revalidates live source rows and proofs;
  * no validity result, archive or source fingerprint survives the call. */
 export function createCorrespondenceRefValidityReader(db: Db) {
-  if (correspondenceTarget(db)) return (ids: number[]) => new Map(listRecordCorrespondencesForIds(db, ids).map(row => [row.id, row.requiresRevalidation]))
+  if (correspondenceTarget(db)) {
+    const target = correspondenceTable(db)
+    const blobStatuses = db.select({ id: target.id }).from(target)
+      .innerJoin(storedProcessProjection, eq(storedProcessProjection.observationId, target.relationId))
+      .where(and(sql`${target.id} in (select value from json_each(${sql.placeholder('ids')}))`, sql`typeof(${storedProcessProjection.storedStatus}) = 'blob'`)).prepare()
+    return (ids: number[]) => {
+      if (!ids.length) return new Map<number, boolean>()
+      const validity = new Map(listRecordCorrespondencesForIds(db, ids).map(row => [row.id, row.requiresRevalidation]))
+      // The old reverse-link SQL compares saved JSON with the native status cell.
+      // A saved Buffer object never IS a SQLite BLOB, unlike the full fingerprint.
+      for (const row of blobStatuses.all({ ids: JSON.stringify(ids) })) validity.set(row.id, true)
+      return validity
+    }
+  }
   const checks = and(
     sql`case when ${t.eventId} is null then ${value('$.event')} is null else ${eventMatches(sql`${t.eventId}`,'')} end`,
     sql`case when ${t.predecessorEventId} is null then ${value('$.predecessor')} is null else ${eventMatches(sql`${t.predecessorEventId}`,'$.predecessor')} end`,

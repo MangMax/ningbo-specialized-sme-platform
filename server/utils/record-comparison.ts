@@ -23,7 +23,7 @@ import { readComparisonTargetQueryFacts, readComparisonTargetRelations, readComp
 
 type Db = ReturnType<typeof useDb>
 type Query = typeof schema.platformQuery.$inferSelect & { comparisonFacts?: ComparisonTargetQueryFacts; proofSource?: () => typeof schema.platformQuery.$inferSelect }
-type Relation = Pick<ReturnType<typeof normalizePlatformRelation<typeof schema.platformRelation.$inferSelect>>, 'id' | 'sequenceNo' | 'relationKey' | 'enterpriseId' | 'usccRaw' | 'nameRaw' | 'status' | 'appliedAt' | 'awardBatchLabel' | 'year' | 'normalizationConflicts' | 'verificationStatus' | 'rawFields'> & { declareKind: string | null }
+type Relation = Pick<ReturnType<typeof normalizePlatformRelation<typeof schema.platformRelation.$inferSelect>>, 'id' | 'sequenceNo' | 'relationKey' | 'enterpriseId' | 'usccRaw' | 'nameRaw' | 'appliedAt' | 'awardBatchLabel' | 'year' | 'normalizationConflicts' | 'verificationStatus' | 'rawFields'> & { declareKind: string | null; status: string | Buffer | null }
 type Event = Omit<typeof schema.recordEvent.$inferSelect, 'formalValidity'>
 type Edge = ReturnType<typeof listRecordCorrespondences>[number]
 /** Only the persisted proof owner supplies verified attestations; client assertions are not accepted. */
@@ -124,7 +124,7 @@ function conclusion(event: Event, edges: Edge[], relations: Map<number, { relati
     const { relation } = source
     if (relation.normalizationConflicts.length) continue
     if (!processTimingMatches(event, relation)) { reasons.push('event_process_fact_or_timing_unknown'); continue }
-    const status = relation.status ?? ''
+    const status = String(relation.status ?? '')
     const pass = /通过|获批|认定/.test(status) && !/未通过|不通过/.test(status)
     const fail = /退回|驳回|未通过|不通过/.test(status)
     const pending = /待审核|审核中|在途|省已审/.test(status)
@@ -302,7 +302,7 @@ function* compareRecords(db: Db, source: ReturnType<typeof selected>, verifiedEv
   const laterRelationIds = new Set(later.map(edge => edge.relationId))
   const laterProcessPlatformRows = relations.filter(item => laterRelationIds.has(item.relation.id))
   const unlinkedPlatformRows = relations.filter(item => !linkedRelationIds.has(item.relation.id) && !laterRelationIds.has(item.relation.id))
-  const withoutOfficial = unlinkedPlatformRows.filter(item => item.relation.enterpriseId != null && item.relation.verificationStatus === 'confirmed' && item.relation.year != null && !unavailableRelations.has(item.relation.id) && !candidateRelationIds.has(item.relation.id) && (item.query.interface === 'recognized_list' || /通过|获批|认定/.test(item.relation.status ?? '')) &&
+  const withoutOfficial = unlinkedPlatformRows.filter(item => item.relation.enterpriseId != null && item.relation.verificationStatus === 'confirmed' && item.relation.year != null && !unavailableRelations.has(item.relation.id) && !candidateRelationIds.has(item.relation.id) && (item.query.interface === 'recognized_list' || /通过|获批|认定/.test(String(item.relation.status ?? ''))) &&
     officialProof(verifiedEvidence, documents, item.relation.enterpriseId!, relationTitle(item.relation, item.query) ?? '', item.relation.year))
   const withoutOfficialIds = new Set(withoutOfficial.map(item => item.relation.id))
   const counts = { officialEventRows, distinctEvents: officialEventRows, distinctPlatformRows: unique(relations.map(item => item.relation.id)).length, distinctEnterpriseTitles: formalCounts.enterpriseTitles, historical_aligned: classificationCounts.historical_aligned, historical_conflict: classificationCounts.historical_conflict, official_without_correspondence: classificationCounts.official_without_correspondence, unresolved: classificationCounts.unresolved, laterProcessRows: unique(later.map(edge => edge.relationId)).length, laterProcessAffectedEvents, platformWithoutOfficialRows: withoutOfficial.length, unresolvedPlatformRows: unlinkedPlatformRows.length - withoutOfficial.length, recognizedRows: recognized.length, exportRows: exports.length, observedRecognizedExportPairs: observations.reduce((n, item) => n + item.exportRows.length, 0), observedExportRows: matchedExportIds.size }

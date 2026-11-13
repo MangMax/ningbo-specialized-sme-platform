@@ -1,3 +1,4 @@
+import { platformNormalizationConflict } from '../../lib/platform/normalization'
 /** Explicit 71608 apply reader. Public runtime routing remains with R1b. */
 import { and, count, countDistinct, desc, eq, exists, inArray, isNull, max, min, ne, or, sql, type SQL } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/sqlite-core';
@@ -175,7 +176,7 @@ export function readTargetDeclarationFacts(db: Db, relationIds: number[], option
                 ]>;
                 const conflicts: PlatformNormalizationConflict[] = comparisonFields.flatMap(field => {
                     const [conflict, storedValue, rawValue] = comparisons[field];
-                    return conflict && storedValue != null && rawValue != null ? [{ field, storedValue, rawValue }] : [];
+                    return conflict && storedValue != null && rawValue != null ? [platformNormalizationConflict(field, storedValue, rawValue)] : [];
                 });
                 const rawName = typeof row.originalName === 'string' ? row.originalName : null, rawUscc = typeof row.originalUscc === 'string' ? row.originalUscc : null;
                 result.set(row.relationId, withArchiveProcessFacts({

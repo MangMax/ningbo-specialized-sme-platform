@@ -44,7 +44,7 @@ export function readComparisonTargetIdentities(db: Db, ids: number[]) {
 export function readComparisonTargetRelations(db: Db, queryIds: number[]) {
   const identities = readComparisonTargetIdentities(db, queryIds)
   const ids = identities.map(r => r.id), observations = identities.map(r => r.observationId)
-  const facts = new Map([...readTargetDeclarationFacts(db, ids), ...readTargetBusinessProcessFacts(db, ids, { scope: 'selected' }), ...readTargetRecognizedFacts(db, ids)])
+  const facts = new Map([...readTargetDeclarationFacts(db, ids, { scope: 'selected' }), ...readTargetBusinessProcessFacts(db, ids, { scope: 'selected' }), ...readTargetRecognizedFacts(db, ids)])
   const titles = new Map(batches(observations).flatMap(ids => [storedApplyProjection, storedProcessProjection, storedRecognizedProjection].flatMap(p => db.select({ id: p.observationId, kind: p.sourceTitleKind, text: p.sourceTitleText, number: p.sourceTitleNumberText }).from(p).where(inArray(p.observationId, ids)).all())).map(r => [r.id, r.kind === 'text' ? r.text : r.kind === 'number' ? r.number : null]))
   return identities.map(row => {
     const fact = facts.get(row.id)

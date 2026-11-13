@@ -1,3 +1,4 @@
+import { checkedBusinessStatus } from '../../lib/platform/business-status'
 import { withArchiveProcessFacts } from '../../lib/platform/observation-facts'
 import { and, eq, inArray, sql, type SQL } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
@@ -335,7 +336,7 @@ export function getPlatformBusinessProcess(db: Db, recordId: number): BusinessPr
 
 const BUSINESS_MODELED_FIELDS = ['declareKind', 'year', 'appliedAt', 'status', 'batch', 'awardBatchLabel', 'province', 'nameRaw', 'usccRaw'] as const
 
-function businessFactBase(relationId: number, normalized: ReturnType<typeof normalizePlatformRelation>, row: { nameRaw: string | null; usccRaw: string | null; titleRaw: string | null }) {
+function businessFactBase(relationId: number, normalized: Pick<import('../../lib/platform/observation-facts').PlatformObservationFact, 'normalizationConflicts'>, row: { nameRaw: string | null; usccRaw: string | null; titleRaw: string | null }) {
   return {
     relationId, interface: 'business_list' as const,
     nameRaw: row.nameRaw, usccRaw: row.usccRaw, titleRaw: row.titleRaw,
@@ -358,7 +359,7 @@ export function readPlatformBusinessProcessFacts(db: Db, relationIds: number[]):
       .innerJoin(r, eq(r.id, o.relationId))
       .where(inArray(o.relationId, ids)).all()
     for (const row of rows) {
-      const normalized = normalizePlatformRelation('business_list', row.legacy)
+      const normalized = normalizePlatformRelation('business_list', {...row.legacy,status:checkedBusinessStatus(row.legacy.status)})
       const titleRaw = legacyRowTitle({ rdjb: row.legacy.rawRdjb })
       const typed = row.projectionVersionId != null
       result.set(row.relationId, withArchiveProcessFacts({
@@ -381,7 +382,7 @@ export function readPlatformBusinessProcessFacts(db: Db, relationIds: number[]):
     }
     const missing = ids.filter(id => !result.has(id))
     if (missing.length) for (const row of readLegacyRelationRows(db, missing)) {
-      const normalized = normalizePlatformRelation('business_list', row)
+      const normalized = normalizePlatformRelation('business_list', {...row,status:checkedBusinessStatus(row.status)})
       result.set(row.id, withArchiveProcessFacts({
         ...businessFactBase(row.id, normalized, {
           nameRaw: normalized.nameRaw ?? null, usccRaw: normalized.usccRaw ?? null,

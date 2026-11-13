@@ -565,7 +565,7 @@ export function listRecordCorrespondencesForIds(db: Db, ids: number[]) {
   return readCorrespondences(db, idChunks(ids).flatMap(ids => db.select(correspondenceColumns(db)).from(correspondenceTable(db)).where(inArray(correspondenceTable(db).id, ids)).all()))
 }
 function refsWithCurrentValidity(db: Db, refs: CorrespondenceRefRow[], readValidity = (ids: number[]) => correspondenceRefValidity(db, ids)) {
-  const validity = correspondenceTarget(db) ? new Map(listRecordCorrespondencesForIds(db, refs.filter(r => r.status === 'confirmed').map(r => r.id)).map(row => [row.id, row.requiresRevalidation])) : new Map(idChunks(refs.filter(r => r.status === 'confirmed').map(r => r.id)).flatMap(ids => [...readValidity(ids)]))
+  const validity = new Map(idChunks(refs.filter(r => r.status === 'confirmed').map(r => r.id)).flatMap(ids => [...readValidity(ids)]))
   return refs.map(row => ({ ...row, requiresRevalidation: validity.get(row.id) ?? false }))
 }
 export function listRecordCorrespondenceRefs(db: Db, filter: CorrespondenceFilter, sources?: { eventIds: number[]; relationIds: number[]; exportRowIds: number[] }) {

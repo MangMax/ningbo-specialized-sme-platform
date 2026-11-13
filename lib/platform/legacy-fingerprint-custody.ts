@@ -1,3 +1,5 @@
+import { BUSINESS_STATUS_V1, BUSINESS_STATUS_V2 } from './business-status'
+import { businessStatusRule } from './business-status-catalog'
 /** Source-only recovery from operator-owned fixed artifacts. Tokens prove source binding,
  * not writer exclusion; plain cells or caller assertions cannot mint this binding. */
 import type Database from 'better-sqlite3'
@@ -17,7 +19,10 @@ export function withLegacyFingerprintCustody<T>(predecessor:FrozenSource,path:st
   // A copied finalized target retains phase/receipts; a renamed or marker-downgraded
   // file still cannot match the original source hash bound by the receipt chain.
   if(t.pragma('user_version',{simple:true})!==0||t.prepare('SELECT 1 FROM platform_migration_run LIMIT 1').get())throw new Error('Finalized target is not a legacy source')
-  for(const transform of ['t04-collection-v1','t05a-observation-v3','t05b-source-projections-v1','t05c-independent-observation-v1','w4a-pre-collection-scopes-v1']) {
+  const businessRuns=predecessor.database.prepare("SELECT * FROM platform_migration_run WHERE transform_version LIKE 't05b-%'").all()
+  const selected=z.array(receipt.extend({transform_version:z.enum([BUSINESS_STATUS_V1,BUSINESS_STATUS_V2])})).length(1).parse(businessRuns)[0]!
+  if(selected.transform_version!==businessStatusRule(predecessor.database))throw new Error('Legacy predecessor business catalog/transform conflict')
+  for(const transform of ['t04-collection-v1','t05a-observation-v3',selected.transform_version,'t05c-independent-observation-v1','w4a-pre-collection-scopes-v1']) {
    const rows=predecessor.database.prepare('SELECT * FROM platform_migration_run WHERE transform_version=?').all(transform)
    if(rows.length!==1)throw new Error('Legacy predecessor receipt chain missing '+transform)
    const r=receipt.parse(rows[0])
