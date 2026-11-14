@@ -48,7 +48,9 @@ function queryMetadata(db: DecisionDb, scope: AssessmentScope, variants?: Identi
     const metadata = readDifferenceCollectionScopes(db, selected.slice(0,50).map(r => r.collection))
     const rows: QueryMetadata[] = selected.slice(0,50).map(({ collection: q, id, matched }) => ({
       id, interface: q.interface, queryKey: q.queryKey, titleCode: q.titleCode, rdjb: q.rdjb, queriedAt: q.queriedAt, status: q.status, matched,
-      metadata: JSON.stringify(metadata.get(q.id)!.metadata),
+      // Supplemental pagination is presentation provenance, not the original
+      // query's completeness assertion.
+      metadata: q.provenanceState === 'legacy_supplement' ? null : JSON.stringify(metadata.get(q.id)!.metadata),
     }))
     return { rows, truncated: selected.length > 50, uscc }
   }

@@ -145,7 +145,7 @@ it.runIf(phase === 71612)('reads difference full and scalar summary with the mix
   const filter = { showCurated: true }
   const expectedFull = attachPlatformEvidence(comparison.rows, old)
   const expectedSummary = readComparisonSummary(old, comparison, reconcile, filter, 1, 50)
-  const expectedDifferences = listRosterDifferences(db, { pageSize: 50 })
+  const expectedDifferences = listRosterDifferences(old, { pageSize: 50 })
   const coordinates = (result: ReturnType<typeof listRosterDifferences>) => result.rows.map(row =>
     [row.enterpriseId, row.titleCode, row.direction, row.explanationId])
   expect(coordinates(expectedDifferences)).toEqual(coordinates(listRosterDifferences(old, { pageSize: 50 })))

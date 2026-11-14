@@ -8,7 +8,7 @@
 
 服务器类型检查仍有 26 条既有 MCP/日志诊断，本批新增诊断已修复。
 
-未解决：完整旧/新差异列表对照发现历史混合范围样本 queryCoverage/explanationValidity 不一致，诊断保留于 differences09.json；目前只确认该列表坐标与旧服务一致、目标模型结果在旧表删除前后不变。不能将该检查称为完整业务语义一致。
+2026-11-14 后续修复：覆盖评估不再把 legacy_supplement 的分页信息提升为原查询完整性断言。完整旧/新差异列表对照（含 queryCoverage/explanationValidity）已通过；比较服务相邻回归 31 PASS、1 SKIP。初始差异诊断 differences09.json 仍保留，修复结果见 coverage11.json、coverage12.json。
 
 仍待完成：源码内 schema0 分支与旧选择器退役、新库直接创建终态结构、完整真实数据升级与业务回归、MCP/真实工作簿及同源性能验证。生产切换未执行。
 
