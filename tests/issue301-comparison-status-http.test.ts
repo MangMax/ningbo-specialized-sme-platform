@@ -6,7 +6,7 @@ import { afterAll, beforeAll, expect, it } from 'vitest'
 import { schema, useDb } from '../db'
 import { initializeDb } from '../db/client'
 import { seedIssue301 } from './helpers/issue301-fixture'
-import { spawnOwnedChild, reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../scripts/lib/isolated-local-services.mjs'
+import { spawnOwnedChild, reserveLoopbackPort, waitForHttp, stopOwnedChild } from './helpers/isolated-local-services.mjs'
 
 // A caller-owned service lets manual RED -> GREEN and browser acceptance share
 // one dev compilation. Normal test runs still own and clean up their service.
@@ -20,8 +20,10 @@ let stop: (() => Promise<void>) | undefined
 let full: Awaited<ReturnType<typeof rest>>
 let detail: Awaited<ReturnType<typeof rest>>
 const persisted = () => ({
-  queries: db.$client.prepare('select * from platform_query order by id').all(),
-  relations: db.$client.prepare('select *, hex(raw_fields) raw_bytes from platform_relation order by id').all(),
+  queries: db.select().from(schema.platformCollection).all(),
+  relations: db.select().from(schema.platformBusinessObservation).all(),
+  archives: db.select().from(schema.platformArchiveValue).all(),
+  assignments: db.select().from(schema.platformObservationAssignment).all(),
   decisions: db.select().from(schema.differenceReason).all(),
   correspondences: db.select().from(schema.recordCorrespondence).all(),
   audit: db.select().from(schema.recordCorrespondenceAudit).all(),
@@ -65,7 +67,7 @@ async function mcp(name: string, args: unknown) {
   return JSON.parse(payload.result.content[0].text)
 }
 
-it.each(fixture.cases)('legacy full matches enterprise and HTTP/MCP archive facts without guessing: $label', async ({ query, relation, expected, label }) => {
+it.each(fixture.cases)('native full matches enterprise and HTTP/MCP archive facts without guessing: $label', async ({ query, relation, expected, label }) => {
   const actual = full.rows[0].platform.queries.find((q: { id: number }) => q.id === query.id).relations[0]
   const archive = await rest(`/api/platform/queries?queryId=${query.id}`)
   const remoteArchive = await mcp('list_platform_queries', { queryId: query.id })
@@ -90,8 +92,18 @@ it('exact HTTP/MCP chunks preserve response bytes and stored relation values aft
       }
       const bytes = Buffer.concat(chunks)
       if (field === 'rawResponse') expect(bytes).toEqual(Buffer.from(fixture.rawResponse))
-      else expect(JSON.parse(bytes.toString('utf8'))).toEqual(relation)
+      else expect(JSON.parse(bytes.toString('utf8'))).toMatchObject({ id: relation.id, queryId: query.id, sequenceNo: relation.sequenceNo, rawFields: relation.rawFields, sourceText: relation.sourceText })
     }
   }
   expect(persisted()).toEqual(before)
+})
+
+it('rejects a conflicting stored and original process status before publishing any native collection', async () => {
+  const { submitNativePlatformQuery } = await import('./helpers/native-platform-fixture')
+  const count = db.select().from(schema.platformCollection).all().length
+  expect(() => submitNativePlatformQuery(db, {
+    interface: 'business_list', queryKey: fixture.enterprise.usccNorm!, rdjb: '2', queriedAt: '2026-10-30T00:00:00Z', status: 'success', rawResponse: 'Explicit synthetic conflicting source',
+    relations: [{ sequenceNo: 1, enterpriseId: fixture.enterprise.id, status: '已退回', rawFields: { cszt: '终审通过' } }],
+  })).toThrow('platform_field_conflict')
+  expect(db.select().from(schema.platformCollection).all()).toHaveLength(count)
 })

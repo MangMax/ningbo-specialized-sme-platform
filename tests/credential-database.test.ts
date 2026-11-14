@@ -1,5 +1,4 @@
 import { initializeDb } from '../db/client'
-import { execFileSync } from 'node:child_process'
 import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -7,7 +6,7 @@ import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { migrate } from 'drizzle-orm/better-sqlite3/migrator'
 import { afterEach, beforeEach, expect, it } from 'vitest'
-import { schema, useDb } from '../db'
+import { schema } from '../db'
 import { allRecords } from '../lib/query'
 import { allRosterEnterprises } from '../lib/roster/enterprise-roster'
 import { updateCredentials } from '../server/utils/credential-state'
@@ -46,17 +45,22 @@ it('keeps credential values out of ordinary roster export rows', () => {
   expect(enterprises.rows).toHaveLength(1)
   expect(JSON.stringify({ records, enterprises })).not.toMatch(/synthetic-not-exported|service_credential|ocrToken|miitCookie/)
 })
-it('removes credentials and their raw bytes from demo database copies without changing the source', () => {
-  const source = join(dir, 'source.sqlite'), out = join(dir, 'demo.sqlite')
+it('reopens the native credential database without changing its provenance or business rows', () => {
+  const source = join(dir, 'source.sqlite')
   const db = initializeDb({ create: true, dbPath: source }); connections.push(db.$client)
-  for (const name of ['宁波上航测绘股份有限公司', '宁波上航测绘有限公司']) db.insert(schema.enterprise).values({ name, nameNorm: name }).run()
-  updateCredentials({ ocrToken: 'synthetic-demo-secret-ocr', miitCookie: 'session=synthetic-demo-secret-cookie' }, { db, env: {} })
-  const before = db.$client.serialize()
-  const output = execFileSync(process.execPath, ['scripts/seed-platform-evidence-demo.mjs', '--db', source, '--out', out], { cwd: process.cwd(), encoding: 'utf8' })
-  expect(output).not.toContain('synthetic-demo-secret')
-  const copy = new Database(out, { readonly: true }); connections.push(copy)
-  expect(copy.prepare('SELECT * FROM service_credential').all()).toEqual([])
-  expect(copy.prepare('SELECT count(*) AS count FROM platform_query').get()).toMatchObject({ count: 5 })
-  expect(readFileSync(out).includes(Buffer.from('synthetic-demo-secret'))).toBe(false)
-  expect(db.$client.serialize()).toEqual(before)
+  db.insert(schema.enterprise).values({ name: 'Synthetic native credential enterprise', nameNorm: 'synthetic native credential enterprise' }).run()
+  updateCredentials({ ocrToken: 'synthetic-native-secret-ocr', miitCookie: 'session=synthetic-native-secret-cookie' }, { db, env: {} })
+  const business = db.select().from(schema.enterprise).all()
+  const credentials = db.select().from(schema.serviceCredential).all()
+  const completion = db.$client.prepare('SELECT rule,schema_version FROM platform_runtime_completion WHERE id=1').get()
+  expect(completion).toEqual({ rule: 'platform-mixed-model-retirement-v1', schema_version: 71613 })
+  expect(db.$client.prepare("SELECT name FROM sqlite_schema WHERE name IN ('platform_query','platform_relation')").all()).toEqual([])
+  db.$client.close()
+  const bytes = readFileSync(source)
+  const readonly = initializeDb({ dbPath: source, readOnly: true }); connections.push(readonly.$client)
+  expect(readonly.select().from(schema.enterprise).all()).toEqual(business)
+  expect(readonly.select().from(schema.serviceCredential).all()).toEqual(credentials)
+  expect(readonly.$client.prepare('SELECT total_changes() AS n').get()).toEqual({ n: 0 })
+  readonly.$client.close()
+  expect(readFileSync(source)).toEqual(bytes)
 })

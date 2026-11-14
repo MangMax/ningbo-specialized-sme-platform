@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import Database from 'better-sqlite3'
 import { afterEach, expect, it } from 'vitest'
-import { useDb } from '../db/client'
+import { initializeDb } from '../db/client'
 import { startRosterApi } from './helpers/roster-http-server'
 import type { RosterImportRequest } from '../lib/roster-import-client'
 
@@ -20,7 +20,7 @@ function input(): RosterImportRequest {
 it('HTTP import keeps the event loop responsive during native write contention and commits all 300 rows once', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'import-execution-'))
   cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
-  const path = join(dir, 'roster.db'), db = useDb({ dbPath: path })
+  const path = join(dir, 'roster.db'), db = initializeDb({ create: true,  dbPath: path })
   cleanups.push(() => db.$client.close())
   const api = await startRosterApi({ db, apiToken: 'synthetic-token' })
   cleanups.push(() => api.close())
@@ -47,7 +47,7 @@ it('a worker that dies before readiness fails its admitted request without spawn
   const { createEnterpriseReadProcess } = await import('../server/utils/enterprise-read-process')
   const dir = mkdtempSync(join(tmpdir(), 'import-startup-'))
   cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
-  const db = useDb({ dbPath: join(dir, 'roster.db') })
+  const db = initializeDb({ create: true,  dbPath: join(dir, 'roster.db') })
   cleanups.push(() => db.$client.close())
   let starts = 0, allowRecovery = false
   const { createImportExecutionWorker } = await import('../server/utils/import-execution-worker-location')
@@ -72,7 +72,7 @@ async function isolatedApi(options: Parameters<typeof import('../server/utils/im
   const { startHttpFixture } = await import('./helpers/http-fixture')
   const dir = mkdtempSync(join(tmpdir(), 'isolated-import-http-'))
   cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
-  const path = join(dir, 'roster.db'), db = useDb({ dbPath: path })
+  const path = join(dir, 'roster.db'), db = initializeDb({ create: true,  dbPath: path })
   cleanups.push(() => db.$client.close())
   const executor = createImportExecutor(options)
   let requestStarted!: () => void

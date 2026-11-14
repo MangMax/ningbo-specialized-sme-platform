@@ -1,17 +1,19 @@
+import { submitNativePlatformQuery } from './helpers/native-platform-fixture'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 
 import { afterAll, beforeAll, expect, it } from 'vitest'
-import { useDb, schema } from '../db/client'
-import { spawnOwnedChild as spawn, reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../scripts/lib/isolated-local-services.mjs'
+import { initializeDb, schema } from '../db/client'
+import { spawnOwnedChild as spawn, reserveLoopbackPort, waitForHttp, stopOwnedChild } from './helpers/isolated-local-services.mjs'
 
 const dir = mkdtempSync(join(tmpdir(), 'alias-maintenance-99-'))
 const path = join(dir, 'roster.db')
-const db = useDb({ dbPath: path })
+const db = initializeDb({ create: true,  dbPath: path })
 const ent = db.insert(schema.enterprise).values({ name: '宁波别名维护企业', nameNorm: '宁波别名维护企业', usccNorm: '91330211255994457P' }).returning().get()
-const query = db.insert(schema.platformQuery).values({ interface: 'business_list', queryKey: ent.usccNorm!, rdjb: '2', queriedAt: '2026-10-19T00:00:00Z', status: 'success', rawResponse: 'SECRET_RAW_QUERY' }).returning().get()
-const rel = db.insert(schema.platformRelation).values({ queryId: query.id, sequenceNo: 1, enterpriseId: ent.id, usccRaw: ent.usccNorm, nameRaw: '宁波别名维护旧名', rawFields: { secret: 'SECRET_RAW_RELATION' } }).returning().get()
+const native = submitNativePlatformQuery(db, { interface: 'business_list', queryKey: ent.usccNorm!, rdjb: '2', queriedAt: '2026-10-19T00:00:00Z', status: 'success', rawResponse: 'SECRET_RAW_QUERY', relations: [{ sequenceNo: 1, enterpriseId: ent.id, usccRaw: ent.usccNorm, nameRaw: '宁波别名维护旧名', rawFields: { secret: 'SECRET_RAW_RELATION' } }] })
+const query = { id: native.queryId }
+const rel = { id: native.relationIds[0]! }
 const alias = db.insert(schema.enterpriseAlias).values({ enterpriseId: ent.id, name: '宁波别名维护旧名', nameNorm: '宁波别名维护旧名', sourceKind: 'platform_business', sourceRefId: rel.id }).returning().get()
 let url: string
 let stop: () => Promise<void>
@@ -105,7 +107,7 @@ it('rejects invalid evidence and subject conflicts without changing version or h
   expect(invalid.status).toBe(400)
   expect((await invalid.json()).data.code).toBe('alias_source_evidence_required')
   const other = db.insert(schema.enterprise).values({ name: '其他企业使用的名称', nameNorm: '其他企业使用的名称', usccNorm: '91330206793007818K' }).returning().get()
-  const wrongRel = db.insert(schema.platformRelation).values({ queryId: query.id, sequenceNo: 2, enterpriseId: other.id, usccRaw: ent.usccNorm, nameRaw: row.name }).returning().get()
+  const wrongRel = ({ id: submitNativePlatformQuery(db, { interface: 'business_list', queryKey: 'synthetic-alias-source-2', rdjb: '2', queriedAt: '2026-10-19T00:00:00Z', status: 'success', rawResponse: 'Explicit synthetic alias source', relations: [{ sequenceNo: 1, enterpriseId: other.id, usccRaw: ent.usccNorm, nameRaw: row.name }] }).relationIds[0]! })
   expect((await mutate(row.id, decision('correct', 1, 'wrong-owner', { changes: { sourceRefId: wrongRel.id } }))).status).toBe(400)
   expect((await mutate(row.id, decision('correct', 1, 'wrong-qymc', { changes: { sourceRefId: rel.id } }))).status).toBe(400)
   expect((await mutate(row.id, decision('correct', 1, 'wrong-interface', { changes: { sourceRefId: rel.id, sourceKind: 'platform_apply', name: alias.name } }))).status).toBe(400)
@@ -192,7 +194,8 @@ it('withdrawal excludes aliases from the public identity matching plan while ret
 })
 
 it('corrects source references using import identity validation and preserves the original name and source', async () => {
-  const source = db.insert(schema.platformRelation).values({ queryId: query.id, sequenceNo: 10, enterpriseId: ent.id, usccRaw: ent.usccNorm, nameRaw: '平台来源维护正确名' }).returning().get()
+  const sourceNative = submitNativePlatformQuery(db, { interface: 'business_list', queryKey: 'synthetic-alias-source-10', rdjb: '2', queriedAt: '2026-10-19T00:00:00Z', status: 'success', rawResponse: 'Explicit synthetic alias source', relations: [{ sequenceNo: 1, enterpriseId: ent.id, usccRaw: ent.usccNorm, nameRaw: '平台来源维护正确名' }] })
+  const source = { id: sourceNative.relationIds[0]!, nameRaw: '平台来源维护正确名', queryId: sourceNative.queryId }
   const row = db.insert(schema.enterpriseAlias).values({ enterpriseId: ent.id, name: '平台来源维护错名', nameNorm: '平台来源维护错名', sourceKind: 'platform_apply', sourceRefId: 987654 }).returning().get()
   const changed = await mutate(row.id, decision('correct', 1, 'source-correct', { changes: { name: source.nameRaw, sourceKind: 'platform_business', sourceRefId: source.id, validFrom: '2020-01-01', note: '来源更正' } }))
   expect(changed.status).toBe(200)
@@ -200,7 +203,7 @@ it('corrects source references using import identity validation and preserves th
   expect((await mutate(row.id, decision('confirm', 2, 'source-confirm'))).status).toBe(200)
   expect((await mutate(row.id, decision('correct', 3, 'source-null', { changes: { validFrom: null, note: null } }))).status).toBe(200)
   expect(await read(`${base()}/${row.id}`)).toMatchObject({ version: 4, validFrom: null, note: null, sourceRefId: source.id, originalSourceRefId: 987654 })
-  const raw = await read(`/api/platform/queries/${query.id}/evidence?field=relation&relationId=${source.id}`)
+  const raw = await read(`/api/platform/queries/${source.queryId}/evidence?field=relation&relationId=${source.id}`)
   expect(JSON.parse(Buffer.from(raw.data, 'base64').toString())).toMatchObject({ id: source.id, nameRaw: source.nameRaw, enterpriseId: ent.id })
 })
 
@@ -216,7 +219,7 @@ it('keeps fixed pages and exact history unchanged as unrelated aliases, audit ro
         seeded++
         const row = tx.insert(schema.enterpriseAlias).values({ enterpriseId: other.id, name: `无关别名${seeded}`, nameNorm: `无关别名${seeded}`, sourceKind: 'manual' }).returning().get()
         tx.insert(schema.enterpriseAliasAudit).values({ aliasId: row.id, enterpriseId: other.id, action: 'confirm', actor: 'synthetic', basis: 'synthetic', idempotencyKey: `noise-${seeded}`, requestHash: 'noise', before: { note: 'irrelevant'.repeat(500) }, after: { note: 'irrelevant'.repeat(500) }, createdAt: '2026-10-19T00:00:00Z' }).run()
-        tx.insert(schema.platformQuery).values({ interface: 'business_list', queryKey: `noise-${seeded}`, rdjb: '1', queriedAt: '2026-10-19T00:00:00Z', rawResponse: 'SECRET_UNRELATED_RAW'.repeat(500) }).run()
+        submitNativePlatformQuery(tx, { interface: 'business_list', queryKey: `noise-${seeded}`, rdjb: '1', queriedAt: '2026-10-19T00:00:00Z', rawResponse: 'SECRET_UNRELATED_RAW'.repeat(500) })
       }
     })
     const durations: number[] = []
@@ -268,7 +271,10 @@ it('moves audited aliases without a clash and folds clash histories without losi
   expect(result.status).toBe('committed')
   expect(await read(`${base()}/${moved.id}`)).toMatchObject({ id: moved.id, enterpriseId: ent.id, version: 2 })
   expect(await read(`${base()}/${moved.id}/history`)).toEqual(oldHistory)
-  expect((await fetch(`${url}/api/roster/enterprises/${source.id}/aliases/${moved.id}/history`)).status).toBe(404)
+  // Retained enterprise IDs resolve through the native enterprise_merge identity chain.
+  expect(await read(`/api/roster/enterprises/${source.id}/aliases/${moved.id}/history`)).toEqual(oldHistory)
+  const unrelated = sourceEnterprise('不可读取他企审计的独立主体')
+  expect((await fetch(`${url}/api/roster/enterprises/${unrelated.id}/aliases/${moved.id}/history`)).status).toBe(404)
   expect(await (await mutate(moved.id, originalDecision)).json()).toEqual({ ...originalResult, replayed: true })
   expect(await merge.commit()).toEqual(result)
 
@@ -381,7 +387,7 @@ it('accepts announcement provenance only for the same enterprise original name a
   expect((await mutate(supported.id, decision('confirm', 1, 'announcement-confirm'))).status).toBe(200)
   const unsupported = db.insert(schema.enterpriseAlias).values({ enterpriseId: ent.id, name: '公告不支持的名称', nameNorm: '公告不支持的名称', sourceKind: 'announcement', sourceRefId: document.id }).returning().get()
   expect((await mutate(unsupported.id, decision('confirm', 1, 'announcement-reject'))).status).toBe(400)
-  const wrongCode = db.insert(schema.platformRelation).values({ queryId: query.id, sequenceNo: 99, nameRaw: unsupported.name, usccRaw: '91330206793007818K' }).returning().get()
+  const wrongCode = ({ id: submitNativePlatformQuery(db, { interface: 'business_list', queryKey: 'synthetic-alias-source-99', rdjb: '2', queriedAt: '2026-10-19T00:00:00Z', status: 'success', rawResponse: 'Explicit synthetic alias source', relations: [{ sequenceNo: 1, nameRaw: unsupported.name, usccRaw: '91330206793007818K' }] }).relationIds[0]! })
   expect((await mutate(unsupported.id, decision('correct', 1, 'wrong-uscc', { changes: { sourceKind: 'platform_business', sourceRefId: wrongCode.id } }))).status).toBe(400)
   expect((await mutate(unsupported.id, decision('correct', 1, 'manual-wrong-ref', { changes: { sourceKind: 'manual' } }))).status).toBe(400)
   expect(await read(`${base()}/${unsupported.id}/history`)).toMatchObject({ total: 0 })

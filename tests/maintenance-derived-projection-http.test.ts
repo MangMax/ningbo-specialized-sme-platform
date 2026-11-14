@@ -1,17 +1,18 @@
+import { submitNativePlatformQuery } from './helpers/native-platform-fixture'
 import { createHash } from 'node:crypto'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { useDb, schema } from '../db/client'
+import { initializeDb, schema } from '../db/client'
 import { minimalPdf } from './helpers/minimal-pdf'
-import { spawnOwnedChild as spawn, reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../scripts/lib/isolated-local-services.mjs'
+import { spawnOwnedChild as spawn, reserveLoopbackPort, waitForHttp, stopOwnedChild } from './helpers/isolated-local-services.mjs'
 
 const dir = mkdtempSync(join(tmpdir(), 'maintenance-derived-'))
 const filesDir = join(dir, 'files'), dbPath = join(dir, 'synthetic.db')
 mkdirSync(filesDir)
-const db = useDb({ dbPath })
+const db = initializeDb({ create: true,  dbPath })
 const bytes = minimalPdf({ pages: 3 })
 const sha256 = createHash('sha256').update(bytes).digest('hex')
 let service: { baseUrl: string; stop: () => Promise<void> }
@@ -182,8 +183,7 @@ describe('cross-ticket event evidence and parse derived projections', () => {
 
   it('uses indexed affected-file projections and leaves unrelated raw evidence and file caches untouched', async () => {
     const f = fixture('scoped-refresh'), unrelated = fixture('unrelated-refresh')
-    db.insert(schema.platformQuery).values({ interface: 'apply_list', queryKey: 'unrelated-refresh', rdjb: '2', queriedAt: '2026-10-19', status: 'success', rawResponse: 'UNRELATED_RAW'.repeat(100000) }).run()
-    db.$client.prepare('UPDATE platform_query SET collection_evidence=? WHERE query_key=?').run('invalid-json-poison', 'unrelated-refresh')
+    submitNativePlatformQuery(db, { interface: 'apply_list', queryKey: 'unrelated-refresh', rdjb: '2', queriedAt: '2026-10-19', status: 'success', rawResponse: 'UNRELATED_RAW'.repeat(100000) })
     const before = await read(parsePath(unrelated.file.id))
     db.$client.exec('CREATE TRIGGER forbid_unrelated_refresh BEFORE DELETE ON stored_file_part WHEN OLD.file_id=' + unrelated.file.id + " BEGIN SELECT RAISE(ABORT,'unrelated cache touched'); END")
     try {

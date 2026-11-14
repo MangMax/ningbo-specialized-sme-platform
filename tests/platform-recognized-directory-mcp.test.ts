@@ -1,11 +1,11 @@
-import { initializeDb } from '../db/client'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync,rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterAll, beforeAll, expect, it, vi } from 'vitest'
-import { useDb, schema } from '../db'
-import { ensurePlatformObservation } from '../server/utils/platform-business-record'
-import { getPlatformRecognizedRecord, listPlatformRecognizedDirectory } from '../server/utils/platform-recognized-directory'
+import { afterAll,beforeAll,expect,it,vi } from 'vitest'
+import { schema } from '../db'
+import { initializeDb } from '../db/client'
+import { getTargetRecognizedRecord,listTargetRecognizedDirectory } from '../server/utils/platform-recognized-target'
+import { submitNativePlatformQuery } from './helpers/native-platform-fixture'
 
 vi.mock('@nuxtjs/mcp-toolkit/server', () => ({ defineMcpTool: (tool: unknown) => tool }))
 
@@ -21,16 +21,21 @@ let relationId = 0
 beforeAll(async () => {
   vi.stubGlobal('createError', (input: unknown) => Object.assign(new Error('fixture'), input))
   const enterprise = db.insert(schema.enterprise).values({ name: 'MCP 目录企业', nameNorm: 'MCP 目录企业', usccNorm: '91330211DDDDDDDD4X' }).returning().get()
-  const query = db.insert(schema.platformQuery).values({ interface: 'recognized_list', queryKey: enterprise.usccNorm!, rdjb: '2', queriedAt: '2026-10-01T00:00:00Z', status: 'success' }).returning().get()
-  db.insert(schema.platformQueryTitleScope).values({ queryId: query.id, rdjb: '2' }).run()
-  const relation = db.insert(schema.platformRelation).values({
-    queryId: query.id, sequenceNo: 1, relationKey: 'DIR-MCP-READ', enterpriseId: enterprise.id,
-    usccRaw: enterprise.usccNorm, nameRaw: enterprise.name,
-    rawFields: { id: 'DIR-MCP-READ', qymc: enterprise.name, tyshxydm: enterprise.usccNorm, rdjb: '2', rddqrq: '2027-12-31', whpcyear: '2024', whpc: '2024-2', szq: '33020000', rdxx: '原认定说明' },
-  }).returning().get()
-  const projection = ensurePlatformObservation(db, relation.id)
-  recordId = projection.recordId!
-  relationId = relation.id
+  const queriedAt = '2026-10-01T00:00:00Z'
+  const raw = { id: 'DIR-MCP-READ', qymc: enterprise.name, tyshxydm: enterprise.usccNorm!, rdjb: '2', rddqrq: '2027-12-31', whpcyear: '2024', whpc: '2024-2', szq: '33020000', rdxx: '原认定说明', unknownSensitiveField: 'PRIVATE-MCP-MARKER' }
+  const written = submitNativePlatformQuery(db, {
+    interface: 'recognized_list', queryKey: enterprise.usccNorm!, rdjb: '2', titleCode: 'specialized_sme', queriedAt, status: 'success',
+    collectionEvidence: {
+      source: 'queryBusList', status: 'success', effectiveConditions: { combination: 'and' }, titleScope: { mode: 'selected', rdjb: ['2'] },
+      queriedAt, completedAt: queriedAt, rows: [raw],
+      pages: [{ source: 'queryBusList', rdjb: '2', page: 1, status: 'success', fetchedCount: 1, declaredTotal: 1, maxPage: 1, error: null }],
+      fetchedCount: 1, declaredTotal: 1, completeness: 'complete', fullRange: true, unfinished: [], error: null,
+      limits: { maxRequests: 1, maxRows: 50, maxDurationMs: 1000, pageSize: 50 },
+    },
+    relations: [{ sequenceNo: 1, relationKey: raw.id, enterpriseId: enterprise.id, usccRaw: raw.tyshxydm, nameRaw: raw.qymc, rawFields: raw, matchBasis: 'uscc' }],
+  })
+  recordId = written.observations[0]!.recordId!
+  relationId = written.relationIds[0]!
   listTool = (await import('../server/mcp/tools/list_platform_recognized_directory')).default
   detailTool = (await import('../server/mcp/tools/get_platform_recognized_record')).default
 })
@@ -43,7 +48,7 @@ it('exposes the same recognized directory contract over MCP as the shared domain
   expect(detailTool.name).toBe('get_platform_recognized_record')
   const input = { view: 'records' as const, rdjb: '2' as const, rddqrq: '2027-12-31', whpcyear: 2024, whpc: '2024-2', szq: '33020000', page: 1, pageSize: 25 }
   const listed = await listTool.handler(input as never, {} as never) as { structuredContent: unknown; content: { text: string }[] }
-  const expected = listPlatformRecognizedDirectory(input, db)
+  const expected = listTargetRecognizedDirectory(input, db)
   expect(listed.structuredContent).toEqual(expected)
   expect(JSON.parse(listed.content[0]!.text)).toEqual(expected)
   expect(expected.rows[0]).toMatchObject({
@@ -53,12 +58,12 @@ it('exposes the same recognized directory contract over MCP as the shared domain
   })
 
   const detail = await detailTool.handler({ recordId }, {} as never) as { structuredContent: unknown; content: { text: string }[] }
-  const expectedDetail = getPlatformRecognizedRecord(db, recordId)
+  const expectedDetail = getTargetRecognizedRecord(db, recordId)
   expect(detail.structuredContent).toEqual(expectedDetail)
   expect(JSON.parse(detail.content[0]!.text)).toEqual(expectedDetail)
   expect(expectedDetail.observations[0]).toMatchObject({ relationId, titleConflict: false })
   expect(JSON.stringify(expectedDetail)).not.toContain('unknownSensitiveField')
 
   const isolated = await listTool.handler({ view: 'isolated', pageSize: 25 } as never, {} as never) as { structuredContent: { rows: unknown[] } }
-  expect(isolated.structuredContent).toEqual(listPlatformRecognizedDirectory({ view: 'isolated' }, db))
+  expect(isolated.structuredContent).toEqual(listTargetRecognizedDirectory({ view: 'isolated' }, db))
 })

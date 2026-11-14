@@ -26,3 +26,16 @@ export type LegacyPlatformProvenanceInput = z.infer<typeof legacyPlatformProvena
 export function legacySourcePositionForSequence(collection: Pick<LegacyPlatformCollection, 'pages'> | null | undefined, sequenceNo: number) {
   return sourcePositionForSequence(collection, sequenceNo)
 }
+
+/** Original metadata display, independent of the retired storage schema. */
+export interface LegacyProvenanceDisplay {
+  kind: 'legacy_pagination'
+  queryId: number
+  sourceIdentity: string
+  sourceSha256: string
+  segmentIndex: number
+  inputFingerprint: string
+  importBatchId: number
+  createdAt: string
+  collection: Omit<LegacyPlatformCollection, 'rows'>
+}

@@ -6,7 +6,7 @@ import { join, resolve } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { expect, it } from 'vitest'
 import { initializeDb } from '../db/client'
-import { spawnOwnedChild as spawn, reserveLoopbackPort, stopOwnedChild, waitForHttp } from '../scripts/lib/isolated-local-services.mjs'
+import { spawnOwnedChild as spawn, reserveLoopbackPort, stopOwnedChild, waitForHttp } from './helpers/isolated-local-services.mjs'
 
 it('does not scan changing runtime databases as icon source while real API errors and logging remain available', async () => {
   const root = resolve(import.meta.dirname, '..')

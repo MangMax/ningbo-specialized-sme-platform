@@ -22,15 +22,16 @@ import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../db/schema'
 import { normalizeUscc } from '../../lib/domain'
 import type { NameMatchLevel } from '../../lib/roster/uscc-research'
-import { getPlatformExportRows, listPlatformSnapshots } from '../../lib/platform-snapshots'
+import { getPlatformExportRows,listPlatformSnapshots } from '../../lib/platform-snapshots'
 import {
-  duplicateTwinKey,
-  type DuplicateMergeEvidence,
-  type DuplicateMergePendingReason,
-  type DuplicateMergeReport,
+duplicateTwinKey,
+type DuplicateMergeEvidence,
+type DuplicateMergePendingReason,
+type DuplicateMergeReport,
 } from '../../lib/roster/duplicate-merge'
-import type { DuplicateNameCandidate, RosterImportMerge, RosterImportRequest } from '../../lib/roster-import-client'
-import { findEnterpriseById, findEnterpriseByUscc, readImportBatchOutcome } from './roster-import'
+import type { DuplicateNameCandidate,RosterImportMerge } from '../../lib/roster-import-client'
+import { findEnterpriseById,findEnterpriseByUscc,readImportBatchOutcome } from './roster-import'
+import { targetCandidateTables } from './candidate-target-sources'
 
 type Db = BetterSQLite3Database<typeof schema>
 
@@ -52,12 +53,18 @@ const ALIAS_SOURCE_KIND: Record<string, 'platform_business' | 'platform_apply' |
  * （默认 25 条），拿它当证据查找会在查询很多时**静默截断**掉真正的证据 —— 归并的判据不能
  * 受分页影响。这里只做一次全量取数 + 归一化比较（查询键可能是小写/带空格的写法）。
  */
+function evidenceQueries(db: Db) {
+  const { q } = targetCandidateTables(db)
+  return db.select({ id: q.id, interface: q.interface, queryKey: q.queryKey, rdjb: q.rdjb, queriedAt: q.queriedAt }).from(q).all()
+}
+
+function evidenceRelations(db: Db) {
+  const { r } = targetCandidateTables(db)
+  return db.select({ id: r.id, queryId: r.queryId, sequenceNo: r.sequenceNo, relationKey: r.relationKey, nameRaw: r.nameRaw, usccRaw: r.usccRaw }).from(r).all()
+}
+
 function platformQueriesForUscc(db: Db, uscc: string) {
-  return db
-    .select()
-    .from(schema.platformQuery)
-    .all()
-    .filter((query) => normalizeUscc(query.queryKey) === uscc)
+  return evidenceQueries(db).filter((query) => normalizeUscc(query.queryKey) === uscc)
 }
 
 /**
@@ -70,22 +77,22 @@ function platformQueriesForUscc(db: Db, uscc: string) {
  */
 export interface PlatformEvidenceIndex {
   /** 归一化查询键 → 以它为键的查询。 */
-  queriesByUscc: Map<string, Array<typeof schema.platformQuery.$inferSelect>>
+  queriesByUscc: Map<string, ReturnType<typeof evidenceQueries>>
   /** query_id → 该次查询的关系（按 `sequenceNo` 升序）。 */
-  relationsByQuery: Map<number, Array<typeof schema.platformRelation.$inferSelect>>
+  relationsByQuery: Map<number, ReturnType<typeof evidenceRelations>>
 }
 
 /** 建索引：一次读两张表，之后所有证据查找都在这份快照上做。 */
 export function buildPlatformEvidenceIndex(db: Db): PlatformEvidenceIndex {
-  const queriesByUscc = new Map<string, Array<typeof schema.platformQuery.$inferSelect>>()
-  for (const query of db.select().from(schema.platformQuery).all()) {
+  const queriesByUscc: PlatformEvidenceIndex['queriesByUscc'] = new Map()
+  for (const query of evidenceQueries(db)) {
     const key = normalizeUscc(query.queryKey)
     const bucket = queriesByUscc.get(key)
     if (bucket) bucket.push(query)
     else queriesByUscc.set(key, [query])
   }
-  const relationsByQuery = new Map<number, Array<typeof schema.platformRelation.$inferSelect>>()
-  for (const relation of db.select().from(schema.platformRelation).all()) {
+  const relationsByQuery: PlatformEvidenceIndex['relationsByQuery'] = new Map()
+  for (const relation of evidenceRelations(db)) {
     const bucket = relationsByQuery.get(relation.queryId)
     if (bucket) bucket.push(relation)
     else relationsByQuery.set(relation.queryId, [relation])
@@ -135,7 +142,7 @@ export function findUsccKeyedRelationEvidence(
    * RL-06 会传入放宽到「字形/区县写法」的比对（父代理 2026-10-16 裁定），
    * 并把实际命中到哪一档**记进证据**（`nameMatch`），使「哪些回填依赖放宽判据」可审。
    */
-  match: (a: unknown, b: unknown) => NameMatchLevel | null = (a, b) => ((a as string) === (b as string) ? 'byte' : null),
+  match: (a: unknown, b: unknown) => NameMatchLevel | null = (a, b) => (a === b ? 'byte' : null),
 ): EvidenceResult {
   const uscc = input.uscc
   const queries = index ? (index.queriesByUscc.get(uscc) ?? []) : platformQueriesForUscc(db, uscc)
@@ -154,10 +161,7 @@ export function findUsccKeyedRelationEvidence(
     // 一次查询的关系按 `sequenceNo` 升序取第一条 `qymc` 逐字相等的（索引已排好序）。
     const relations = index
       ? (index.relationsByQuery.get(query.id) ?? [])
-      : db
-          .select()
-          .from(schema.platformRelation)
-          .all()
+      : evidenceRelations(db)
           .filter((relation) => relation.queryId === query.id)
           .sort((a, b) => a.sequenceNo - b.sequenceNo)
     for (const relation of relations) {

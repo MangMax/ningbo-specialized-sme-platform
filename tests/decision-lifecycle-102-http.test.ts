@@ -1,3 +1,5 @@
+import { readOwnerArchive } from '../lib/platform/target-archive'
+import { submitNativePlatformQuery } from './helpers/native-platform-fixture'
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -5,16 +7,17 @@ import { join, resolve } from 'node:path'
 import { createHash } from 'node:crypto'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { sql } from 'drizzle-orm'
-import { useDb, schema } from '../db/client'
-import { spawnOwnedChild as spawn, reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../scripts/lib/isolated-local-services.mjs'
+import { initializeDb, schema } from '../db/client'
+import { spawnOwnedChild as spawn, reserveLoopbackPort, waitForHttp, stopOwnedChild } from './helpers/isolated-local-services.mjs'
 import historicalReceipts from './fixtures/decision-102-pre-browser-receipts.json'
 
 const dir = mkdtempSync(join(tmpdir(), 'decision-102-'))
 const dbPath = join(dir, 'synthetic.db')
 const curatedPath = join(dir, 'legacy.json')
-const db = useDb({ dbPath })
+const db = initializeDb({ create: true,  dbPath })
 const enterprise = db.insert(schema.enterprise).values({ name: '合成决定企业', nameNorm: '合成决定企业', usccNorm: '91330211255994457P' }).returning().get()
-const query = db.insert(schema.platformQuery).values({ interface: 'apply_list', queryKey: enterprise.usccNorm!, rdjb: '2', titleCode: 'specialized_sme', queriedAt: '2026-10-18T00:00:00Z', status: 'success', rawResponse: 'SYNTHETIC_RAW_UNCHANGED' }).returning().get()
+const queryNative = submitNativePlatformQuery(db, { interface: 'apply_list', queryKey: enterprise.usccNorm!, rdjb: '2', titleCode: 'specialized_sme', queriedAt: '2026-10-18T00:00:00Z', status: 'success', rawResponse: 'SYNTHETIC_RAW_UNCHANGED' })
+const query = { id: queryNative.queryId, collectionId: queryNative.collectionId }
 const legacyKey = JSON.stringify([enterprise.usccNorm, 'specialized_sme', 'missing_in_miit'])
 writeFileSync(curatedPath, JSON.stringify({ [legacyKey]: { note: '已看过/不算差异', at: '2026-10-18T00:00:00Z' } }))
 let service: { baseUrl: string; stop: () => Promise<void> }
@@ -281,7 +284,7 @@ describe('ticket 102 public decision lifecycle', () => {
     expect((await json(await fetch(service.baseUrl + '/api/roster/differences'))).rows.find((r: any) => r.enterpriseId === enterprise.id)).toMatchObject({ status: 'needs_review', reasonCode: null })
     expect(value(await rpc('list_differences', {})).rows.find((r: any) => r.enterpriseId === enterprise.id)).toMatchObject({ status: 'needs_review', reasonCode: null })
     expect((await json(await fetch(service.baseUrl + '/api/roster/enterprises/' + enterprise.id))).differences[0]).toMatchObject({ status: 'needs_review', reasonCode: null })
-    expect(db.get(sql`SELECT raw_response as raw FROM platform_query WHERE id=${query.id}`)).toEqual({ raw: 'SYNTHETIC_RAW_UNCHANGED' })
+    expect(Buffer.from(readOwnerArchive(db, { kind: 'collection', ownerId: query.collectionId, field: 'rawResponse' })!.data, 'base64').toString()).toBe('SYNTHETIC_RAW_UNCHANGED')
   })
 
   it('previews exact legacy mappings and conflicts without promoting reviewed annotations or modifying either store', async () => {
@@ -326,8 +329,8 @@ describe('ticket 102 public decision lifecycle', () => {
 
   it('rejects mismatched evidence and gives typed MCP failures without leaking internal SQL', async () => {
     const before = await json(await fetch(api('current?' + scope)))
-    const wrong = db.insert(schema.platformQuery).values({ interface: 'recognized_list', queryKey: 'OTHER-SUBJECT', rdjb: '3', titleCode: 'little_giant', queriedAt: '2026-10-19', status: 'success' }).returning().get()
-    const bad = { ...request('wrong-evidence', before.versionId), decision: { ...request('x').decision, evidenceQueryId: wrong.id } }
+    const wrong = submitNativePlatformQuery(db, { interface: 'business_list', queryKey: 'OTHER-SUBJECT', rdjb: '3', titleCode: 'little_giant', queriedAt: '2026-10-19', status: 'success', rawResponse: 'Explicit synthetic empty source' }).queryId
+    const bad = { ...request('wrong-evidence', before.versionId), decision: { ...request('x').decision, evidenceQueryId: wrong } }
     const rejected = await post(bad)
     expect(rejected.status).toBe(422)
     expect(await json(rejected)).toMatchObject({ error: { code: 'evidence_mismatch' } })
@@ -381,8 +384,8 @@ describe('ticket 102 public decision lifecycle', () => {
 
   it('rechecks lifecycle ownership inside legacy import execution and preserves failed receipts across atomic rollback and retry', async () => {
     const target = db.insert(schema.enterprise).values({ name: '执行期接管企业', nameNorm: '执行期接管企业', usccNorm: 'RACE102' }).returning().get()
-    db.run(sql`CREATE TRIGGER decision102_import_race AFTER INSERT ON platform_query WHEN NEW.query_key='import-race-102' BEGIN INSERT INTO difference_reason(enterprise_id,title_code,direction,status,recorded_at,created_at,lifecycle_action) VALUES(${sql.raw(String(target.id))},'specialized_sme','missing_in_miit','needs_review','2099-01-01T00:00:00.000Z','2026-10-19','replace'); END`)
-    const body = { idempotencyKey: 'legacy-execution-race', sourceKind: 'alias_evidence', sourceIdentity: 'synthetic/race', payload: { platformQueries: [{ interface: 'apply_list', queryKey: 'import-race-102', rdjb: '2', queriedAt: '2026-10-19T00:00:00Z', status: 'no_record' }], differences: [{ enterpriseName: target.name, uscc: target.usccNorm, titleCode: 'specialized_sme', direction: 'missing_in_miit', recordedAt: '2199-01-01T00:00:00Z', status: 'confirmed_no_diff', measureCode: 'none', verificationStatus: 'confirmed' }] } }
+    db.run(sql`CREATE TRIGGER decision102_import_race AFTER INSERT ON platform_collection WHEN NEW.query_key='import-race-102' BEGIN INSERT INTO difference_reason(enterprise_id,title_code,direction,status,recorded_at,created_at,lifecycle_action) VALUES(${sql.raw(String(target.id))},'specialized_sme','missing_in_miit','needs_review','2099-01-01T00:00:00.000Z','2026-10-19','replace'); END`)
+    const body = { idempotencyKey: 'legacy-execution-race', sourceKind: 'alias_evidence', sourceIdentity: 'synthetic/race', payload: { platformQueries: [{ interface: 'apply_list', queryKey: 'import-race-102', rawResponse: 'Explicit synthetic empty source', rdjb: '2', queriedAt: '2026-10-19T00:00:00Z', status: 'no_record' }], differences: [{ enterpriseName: target.name, uscc: target.usccNorm, titleCode: 'specialized_sme', direction: 'missing_in_miit', recordedAt: '2199-01-01T00:00:00Z', status: 'confirmed_no_diff', measureCode: 'none', verificationStatus: 'confirmed' }] } }
     const submit = () => fetch(service.baseUrl + '/api/roster/import/commit', { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer synthetic-api-token' }, body: JSON.stringify(body) })
     const receipt = async (suffix: string) => json(await fetch(service.baseUrl + '/api/roster/import/receipts' + suffix, { headers: { authorization: 'Bearer synthetic-api-token' } }))
     let failed: any
@@ -392,7 +395,7 @@ describe('ticket 102 public decision lifecycle', () => {
       expect(result.status).toBe('failed')
       expect(result.items).toEqual(expect.arrayContaining([expect.objectContaining({ error: expect.objectContaining({ code: 'decision_lifecycle_required' }) })]))
       expect((await json(await fetch(api('history?enterpriseId=' + target.id + '&titleCode=specialized_sme&direction=missing_in_miit')))).total).toBe(0)
-      expect(db.get(sql`select count(*) as n from platform_query where query_key='import-race-102'`)).toEqual({ n: 0 })
+      expect(db.get(sql`select count(*) as n from platform_collection where query_key='import-race-102'`)).toEqual({ n: 0 })
       failed = await receipt('?idempotencyKey=' + body.idempotencyKey)
       expect(failed).toMatchObject({ status: 'failed', receiptId: expect.any(Number) })
       expect((await receipt('/items?receiptId=' + failed.receiptId)).rows).toEqual(expect.arrayContaining([expect.objectContaining({ ok: false, errorCode: 'decision_lifecycle_required' })]))
@@ -448,11 +451,11 @@ describe('ticket 102 public decision lifecycle', () => {
     const target = db.insert(schema.enterprise).values({ name: '归并执行竞态目标', nameNorm: '归并执行竞态目标', usccNorm: 'MERGE-RACE-102' }).returning().get()
     const legacy = db.insert(schema.differenceReason).values({ enterpriseId: source.id, titleCode: 'specialized_sme', direction: 'missing_in_miit', status: 'needs_review', recordedAt: '2099-01-01T00:00:00Z' }).returning().get()
     const original = await json(await fetch(api(String(legacy.id))))
-    const body = { idempotencyKey: 'merge-execution-race-102', sourceKind: 'alias_evidence', sourceIdentity: 'synthetic/merge-race', payload: { platformQueries: [{ interface: 'apply_list', queryKey: 'merge-race-102', rdjb: '2', queriedAt: '2026-10-19T00:00:00Z', status: 'no_record' }], merges: [{ fromEnterpriseId: source.id, intoUscc: target.usccNorm, sourceKind: 'manual' }] } }
+    const body = { idempotencyKey: 'merge-execution-race-102', sourceKind: 'alias_evidence', sourceIdentity: 'synthetic/merge-race', payload: { platformQueries: [{ interface: 'apply_list', queryKey: 'merge-race-102', rawResponse: 'Explicit synthetic empty source', rdjb: '2', queriedAt: '2026-10-19T00:00:00Z', status: 'no_record' }], merges: [{ fromEnterpriseId: source.id, intoUscc: target.usccNorm, sourceKind: 'manual' }] } }
     const submit = (action: string) => fetch(service.baseUrl + '/api/roster/import/' + action, { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer synthetic-api-token' }, body: JSON.stringify(body) })
     const receipt = async (suffix: string) => json(await fetch(service.baseUrl + '/api/roster/import/receipts' + suffix, { headers: { authorization: 'Bearer synthetic-api-token' } }))
     expect((await json(await submit('preflight'))).preflight.conflicts).toEqual([])
-    db.run(sql`CREATE TRIGGER decision102_merge_race AFTER INSERT ON platform_query WHEN NEW.query_key='merge-race-102' BEGIN INSERT INTO difference_reason(enterprise_id,title_code,direction,status,recorded_at,created_at,lifecycle_action) VALUES(${sql.raw(String(target.id))},'specialized_sme','missing_in_miit','needs_review','2099-01-01T00:00:00Z','2026-10-19','replace'); END`)
+    db.run(sql`CREATE TRIGGER decision102_merge_race AFTER INSERT ON platform_collection WHEN NEW.query_key='merge-race-102' BEGIN INSERT INTO difference_reason(enterprise_id,title_code,direction,status,recorded_at,created_at,lifecycle_action) VALUES(${sql.raw(String(target.id))},'specialized_sme','missing_in_miit','needs_review','2099-01-01T00:00:00Z','2026-10-19','replace'); END`)
     let failed: any
     try {
       const result = await json(await submit('commit'))
@@ -497,7 +500,7 @@ describe('ticket 102 public decision lifecycle', () => {
     const hugeReason = '原始历史长说明'.repeat(2000)
     const insert = db.$client.prepare("INSERT INTO difference_reason(enterprise_id,title_code,direction,status,reason_note,recorded_at,created_at) VALUES(?, 'specialized_sme','extra_in_miit','needs_review',?,?,?)")
     db.$client.transaction(() => { for (let n = 0; n < 200; n++) insert.run(other.id, hugeReason, '2026-' + String(n).padStart(4,'0'), '2026-01-01') })()
-    db.run(sql`INSERT INTO platform_query(interface,query_key,rdjb,queried_at,status,raw_response,collection_evidence,created_at) VALUES('apply_list','unrelated102','2','2026-10-19','success',${'LARGE_RAW_UNRELATED'.repeat(400000)},'invalid-json-poison','2026-10-19')`)
+    submitNativePlatformQuery(db, { interface: 'apply_list', queryKey: 'unrelated102', rdjb: '2', queriedAt: '2026-10-19', status: 'success', rawResponse: 'LARGE_RAW_UNRELATED'.repeat(400000) })
     const scoped = { enterpriseId: other.id, titleCode: 'specialized_sme', direction: 'extra_in_miit', page: 2, pageSize: 50 }
     const search = new URLSearchParams(Object.entries(scoped).map(([k,v]) => [k,String(v)])).toString()
     const response = await fetch(api('history?' + search))

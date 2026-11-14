@@ -46,3 +46,30 @@ it.each([['specialized_sme','specialized-sme',['specialized','both']],['innovati
  for(let i=2;i<=sheet.rowCount;i++) expect(JSON.stringify(sheet.getRow(i).values)).toContain('按有效小巨人资格计入')
  expect(f.businessDigest()).toBe(digest)
 },90000)
+
+it('retains complete inherited evidence and versions across page sizes and later requests', async () => {
+  const query = async (pageSize: number) => {
+    const response = await fetch(f.url(`/api/roster/current-enterprises?titleCode=specialized_sme&pageSize=${pageSize}`))
+    expect(response.status).toBe(200)
+    return response.json()
+  }
+  const small = await query(1)
+  const large = await query(200)
+  expect(large.total).toBe(2)
+  expect(large.rows.map((row: { name: string }) => row.name)).toEqual(['specialized', 'both'])
+  expect(small.rows[0]).toEqual(large.rows[0])
+  for (const row of large.rows) {
+    const detail = await fetch(f.url(`/api/roster/enterprises/${row.enterpriseId}`)).then(response => response.json())
+    expect(row.qualificationAssessment).toEqual(detail.qualificationAssessment)
+    const titles = row.qualificationAssessment.titles
+    expect(titles).toHaveLength(3)
+    const lower = titles.find((title: { titleCode: string }) => title.titleCode === 'specialized_sme')
+    const giant = titles.find((title: { titleCode: string }) => title.titleCode === 'little_giant')
+    expect(lower.evidence).toEqual([expect.objectContaining({ eventType: 'award', year: 2018 })])
+    expect(giant.evidence).toEqual([expect.objectContaining({ eventType: 'award', year: 2025 })])
+    expect(lower.effectiveQualification.status).toBe('effective')
+    expect(lower.references).toEqual(expect.arrayContaining(giant.references.map((reference: string) => '小巨人依据：' + reference)))
+  }
+  expect(await query(200)).toEqual(large)
+  expect(f.businessDigest()).toBe(digest)
+}, 90000)

@@ -1,5 +1,8 @@
+import type { RecognizedWitnessReader } from './recognized-witness-reader'
 import { adjudicateQualificationCycles as adjudicate407Cycles } from './qualification-cycles-407'
-import { readEnterpriseFactEffects } from './enterprise-fact-effects'
+import { createCurrentAssessmentInputs, type CurrentAssessmentInputs } from './current-assessment-inputs'
+import { readEnterpriseFactEffects, evaluateEnterpriseFactEffects } from './enterprise-fact-effects'
+import { canonicalEnterpriseId, hasEnterpriseMergeIdentity } from './enterprise-identity'
 import { formalValiditySchema, type FormalValidity } from './formal-validity'
 import { readPlatformComparisonProcesses } from '../../server/utils/platform-comparison-input'
 import type { ReceiptRuntimeContext } from '../../server/utils/receipt-runtime-context'
@@ -14,15 +17,18 @@ import type Database from 'better-sqlite3'
 import { readOfficialPublishedPresentation, projectOfficialPublishedNames, OfficialPublishedPresentationError, type OfficialPublishedFact, type OfficialPublishedScope } from './official-published-presentation'
 import type { PublishedPresentation } from './correspondence-view'
 import { identityFunctions } from './enterprise-read-snapshot'
-import { readQueryAssessment, readQueryCoverage, readQueryComparisonWitnesses, type QueryCoverageSource } from './query-assessment'
-import { relationScopeSql, TITLE_RDJB_CODES } from './current-platform-scope'
+import { readQueryAssessment, readQueryCoverage, readQueryCoverageBatch, readQueryComparisonWitnesses, type QueryCoverageSource } from './query-assessment'
+import { readDifferenceObservation } from '../platform/difference-sources'
+import { differencePublicColumns } from '../platform/difference-reference-target'
+import { readDifferencePlatformEffects, readDifferencePlatformEffectsByTitle } from './difference-platform-effects'
 import { normalizeName, normalizeUscc } from '../domain'
-import { identityKeys, type IdentityKeyVariants } from './current-identity-keys'
+import { type IdentityKeyVariants } from './current-identity-keys'
 import { computeTitleLifecycle, type LifecycleEvent } from './lifecycle'
 import { adjudicateQualificationCycles, awardTime, originTime, factTime, type QualificationEvent } from './qualification-cycles'
-import { sourcePositionForSequence, RDJB_TITLE_CODES } from '../platform/recognized-evidence'
+import { RDJB_TITLE_CODES } from '../platform/recognized-evidence'
 import { recognizedFilterFacts } from './recognized-filter-facts'
-import { createRecognizedFilterSourceReader, resolveRecognizedFactSource, type RecognizedFactSource } from './recognized-filter-source'
+import { createTargetRecognizedWitnessReader } from './recognized-witness-target'
+import { targetSchema } from '../platform/target-schema'
 import { CURRENT_TITLES, type CurrentTitle } from './current-titles'
 import { comparePlatformComparison, COMPARISON_VERSION, type CandidateComparisonInput } from './platform-comparison'
 export { CURRENT_TITLES }
@@ -77,8 +83,6 @@ export type QualificationAssessmentReadOptions = {
   ownQueryIds?: readonly number[]
   publishedNames?: PublishedNameAssessmentInput
   coverageForTitle?: (title: CurrentTitle) => ReturnType<typeof readQueryCoverage>
-  /** #468 read-path switch. Absent keeps typed unless the operational env rollback is set. */
-  recognizedFactSource?: RecognizedFactSource
 }
 export interface CurrentQualificationAssessment {
   effectiveQualification?: { status: 'effective' | 'expired' | 'terminated' | 'moved_out' | 'unrecognized'; basis: string; presentationBasis?: string[]; localRuleBasis?: string[]; notes: string[] }
@@ -175,43 +179,50 @@ export function readCurrentQualificationAssessment(db: Database.Database, enterp
  * Both paths execute the same adjudication. Default read options and digests
  * remain those of readCurrentQualificationAssessment.
  */
-export function createCurrentQualificationAssessmentReader(db: Database.Database, receiptRuntime?: ReceiptRuntimeContext, defaults: { recognizedFactSource?: RecognizedFactSource } = {}) {
-  const evaluate = createCurrentCandidateEvaluationReader(db, receiptRuntime, defaults.recognizedFactSource)
-  let correspondenceReader: ReturnType<typeof createEnterpriseTitleCorrespondenceRefsReader> | undefined
+export function createCurrentQualificationAssessmentReader(db: Database.Database, receiptRuntime?: ReceiptRuntimeContext) {
+  return createCurrentQualificationAssessmentReaderBody(db,receiptRuntime,createTargetRecognizedWitnessReader(drizzle(db,{schema:targetSchema})))
+}
+
+/** Explicit same-connection witness dependency. */
+export function createCurrentQualificationAssessmentReaderWithWitnesses(db:Database.Database,witnesses:RecognizedWitnessReader,receiptRuntime?:ReceiptRuntimeContext) {
+  if(witnesses.connection!==db)throw new Error('Recognized witnesses require the same SQLite connection')
+  return createCurrentQualificationAssessmentReaderBody(db,receiptRuntime,witnesses)
+}
+
+function createCurrentQualificationAssessmentReaderBody(db:Database.Database,receiptRuntime:ReceiptRuntimeContext|undefined,witnesses:RecognizedWitnessReader) {
+  const evaluate = createCurrentCandidateEvaluationReader(db, receiptRuntime, witnesses)
+  // Resolve the fixed schema binding before a caller starts a candidate iterator.
+  // Only prepared statements are retained; correspondence rows remain read-local.
+  const correspondenceReader = createEnterpriseTitleCorrespondenceRefsReader(prepareCurrentReader(db))
+  type Reference = ReturnType<typeof correspondenceReader>[number]
+  let referenceBatch: Map<number, Reference[]> | undefined
   const preparedCorrespondences = (enterpriseId: number, titleCode: string) => {
-    correspondenceReader ??= createEnterpriseTitleCorrespondenceRefsReader(prepareCurrentReader(db))
-    return correspondenceReader(enterpriseId, titleCode)
+    const rows = referenceBatch?.get(enterpriseId)
+    return rows ? rows.filter(row => row.titleCode === titleCode) : correspondenceReader(enterpriseId, titleCode)
+  }
+  const withinReferences = <T>(ids: readonly number[], read: () => T, titles?: readonly CurrentTitle[]): T => {
+    const previous = referenceBatch
+    const refs = correspondenceReader.readBatch(ids, titles)
+    referenceBatch = new Map(ids.map(id => [id, refs.filter(row => row.enterpriseId === id)]))
+    const relationIds = refs.flatMap(row => row.type === 'event_recognized' && row.role === 'recognized_corrob' && row.status === 'confirmed' && !row.requiresRevalidation && row.relationId != null ? [row.relationId] : [])
+    try { return witnesses.withinBatch ? witnesses.withinBatch(relationIds, read) : read() }
+    finally { referenceBatch = previous }
   }
   // Only statement handles survive this request. Reference rows/maps belong to
   // one readSnapshot invocation and are discarded after its three title reads.
-  let identityStatement: Database.Statement | undefined
-  let referencesStatement: Database.Statement | undefined
   const readHydrationReferences = (enterpriseId: number) => {
-    identityStatement ??= db.prepare('select uscc_norm as uscc from enterprise where id=?')
-    const enterprise = identityStatement.get(enterpriseId) as { uscc: string | null } | undefined
-    // Hydration evaluates with keys=undefined, exactly the original normalized
-    // SQL branch (including NULL, never an empty variant-key fallback).
-    const scopeSql = relationScopeSql.replaceAll('@title', "json_extract(scopes.value,'$.title')")
-      .replaceAll('@rdjb', "json_extract(scopes.value,'$.rdjb')")
-    referencesStatement ??= db.prepare(`select r.id,r.query_id as queryId,q.interface,q.queried_at as queriedAt,
-      json_extract(scopes.value,'$.title') as scopeTitle
-      from platform_relation r join platform_query q on q.id=r.query_id
-      cross join json_each(@scopes) scopes
-      where r.id in (select id from platform_relation where enterprise_id=@enterpriseId
-        union select r.id from platform_relation r where r.enterprise_id is null and roster84_uscc(r.uscc_raw)=@uscc)
-      and ${scopeSql} order by r.id,cast(scopes.key as integer)`)
-    const byTitle = new Map<CurrentTitle, CurrentPlatformReference[]>(CURRENT_TITLES.map(title => [title, []]))
-    const refs = referencesStatement.all({ enterpriseId, uscc: normalizeUscc(enterprise?.uscc) || null,
-      scopes: JSON.stringify(CURRENT_TITLES.map(title => ({ title, rdjb: TITLE_RDJB_CODES[title] }))) }) as (CurrentPlatformReference & { scopeTitle: CurrentTitle })[]
-    for (const { scopeTitle, ...ref } of refs) byTitle.get(scopeTitle)!.push(ref)
-    return byTitle
+    const reader=prepareCurrentReader(db)
+    const effects=readDifferencePlatformEffectsByTitle(reader,enterpriseId)
+    const references=new Map<CurrentTitle,CurrentPlatformReference[]>(CURRENT_TITLES.map(title=>[
+      title,effects.get(title)!.map(({id,queryId,interface:kind,queriedAt})=>({id,queryId,interface:kind,queriedAt})),
+    ]))
+    return {references,effects}
   }
-  const readSnapshotBody = (enterpriseId: number, asOf: number, options: QualificationAssessmentReadOptions, filterTitle?: CurrentTitle, presentationTitle?: CurrentTitle, workbookTitle?: CurrentTitle, comparisons?: ReadonlyMap<CurrentTitle, CurrentCycleObservation>) => {
-    // #468: reader-level defaults never override an explicit per-request choice.
-    const readOptions: QualificationAssessmentReadOptions = defaults.recognizedFactSource && !options.recognizedFactSource
-      ? { ...options, recognizedFactSource: defaults.recognizedFactSource } : options
+  const readSnapshotBody = (enterpriseId: number, asOf: number, options: QualificationAssessmentReadOptions, filterTitle?: CurrentTitle, presentationTitle?: CurrentTitle, workbookTitle?: CurrentTitle, comparisons?: ReadonlyMap<CurrentTitle, CurrentCycleObservation>, assessedTitle?: CurrentTitle) => {
+    const readOptions = options
     // No filterTitle means the existing default reader follows its original SQL.
-    const references = filterTitle == null ? undefined : readHydrationReferences(enterpriseId)
+    const hydration = filterTitle == null && workbookTitle == null ? undefined : readHydrationReferences(enterpriseId)
+    const references = hydration?.references
     let publishedPresentation: PublishedPresentation | undefined
     let presentationScope: readonly OfficialPublishedScope[] | undefined
     const unavailable = (error: unknown): PublishedPresentation => ({ availability: 'unavailable', error: error instanceof OfficialPublishedPresentationError ? error.code : 'read_failed', facts: [] })
@@ -237,7 +248,13 @@ export function createCurrentQualificationAssessmentReader(db: Database.Database
         workbookPublished = new Map(input.facts.map(fact => [fact.evidenceId, fact]))
       }
     }
-    const rows = CURRENT_TITLES.map(title => evaluate(enterpriseId, title, (readOptions.assessmentVersion === LEGACY_QUALIFICATION_ASSESSMENT_VERSION ? new Date(asOf).getUTCFullYear() : Number(qualificationDay(asOf).slice(0,4))), asOf, undefined, title === filterTitle, true, readOptions, title === filterTitle, references?.get(title), filterTitle == null ? undefined : preparedCorrespondences, title === workbookTitle ? observePublishedForWorkbook : title === presentationTitle ? observePublishedForCurrent : undefined, comparisons?.get(title)).row)
+    // Owned by this invocation and its pinned snapshot, never by the reader.
+    // The giant has no inherited dependency; its v4 and independent v3 facts
+    // are identical. Preserve public title order while sharing the full result.
+    let giant: CurrentRow | undefined
+    const evaluateTitle = (title: CurrentTitle) => evaluate(enterpriseId, title, (readOptions.assessmentVersion === LEGACY_QUALIFICATION_ASSESSMENT_VERSION ? new Date(asOf).getUTCFullYear() : Number(qualificationDay(asOf).slice(0,4))), asOf, undefined, title === filterTitle, true, readOptions, title === filterTitle, references?.get(title), references == null ? undefined : preparedCorrespondences, title === workbookTitle ? observePublishedForWorkbook : title === presentationTitle ? observePublishedForCurrent : undefined, comparisons?.get(title), { giant, platformEffects:hydration?.effects?.get(title) }).row
+    if (!readOptions.assessmentVersion || readOptions.assessmentVersion === QUALIFICATION_ASSESSMENT_VERSION) giant = evaluateTitle('little_giant')
+    const rows = (assessedTitle ? [assessedTitle] : CURRENT_TITLES).map(title => title === 'little_giant' && giant ? giant : evaluateTitle(title))
     if (presentationTitle != null && publishedPresentation === undefined) {
       if (presentationScope === undefined) throw new Error('Current published-name scope was not evaluated')
       try {
@@ -258,6 +275,18 @@ export function createCurrentQualificationAssessmentReader(db: Database.Database
   }
   // Preserve the original default wrapper, including caller-owned SAVEPOINT semantics.
   const readSnapshot = db.transaction(readSnapshotBody)
+  const readWorkbookBatch = (ids: readonly number[], asOf: number, title: CurrentTitle, queryKeys: IdentityKeyVariants | undefined, scoped: boolean) => {
+    const titles = scoped ? [...new Set<CurrentTitle>(['little_giant', title])] : CURRENT_TITLES
+    return evaluate.withinBatch(ids, inputs => withinReferences([...inputs.canonical.values()], () => {
+      const coverages = readQueryCoverageBatch(prepareCurrentReader(db), ids.flatMap(enterpriseId => titles.map(titleCode => ({ enterpriseId, titleCode, direction: 'missing_in_miit' as const }))), queryKeys)
+      return ids.map(id => {
+        const options: QualificationAssessmentReadOptions = { coverageForTitle: titleCode => coverages.get(id)!.get(titleCode)! }
+        const read = readSnapshot(id, asOf, options, undefined, undefined, title, undefined, scoped ? title : undefined)
+        if (read.workbookPublished === undefined) throw new Error('Workbook published-name facts missing')
+        return read
+      })
+    }, titles))
+  }
   const comparisonCollector = () => {
     let cycles: CandidateComparisonInput['formal']['cycles'] = []
     const collect: CurrentCycleObservation = (judgments, formal) => {
@@ -366,31 +395,67 @@ export function createCurrentQualificationAssessmentReader(db: Database.Database
     readTitle(enterpriseId: number, title: CurrentTitle, asOf: number, keys?: { queries: IdentityKeyVariants; relations: IdentityKeyVariants }) {
       return evaluate(enterpriseId, title, Number(qualificationDay(asOf).slice(0,4)), asOf, keys, true, false, undefined, true, undefined, preparedCorrespondences)
     },
+    readFilterCandidates(ids: readonly number[], title: CurrentTitle, asOf: number, keys: { queries: IdentityKeyVariants; relations: IdentityKeyVariants }, status: import('./current-status').CurrentStatus) {
+      return evaluate.withinBatch(ids, inputs => {
+        const minimal = ids.map(id => ({ id, ...evaluate(id, title, Number(qualificationDay(asOf).slice(0,4)), asOf, undefined, false, false, undefined, false, undefined, () => [], undefined, undefined, { qualificationOnly: true }) }))
+        const needsWitnesses = (item: typeof minimal[number]) => item.effectiveStatus === 'effective' || item.effectiveStatus === status
+        const owners = [...new Set(minimal.filter(needsWitnesses).map(item => inputs.canonical.get(item.id) ?? item.id))]
+        return withinReferences(owners, () => minimal.map(item => {
+          const assessed = needsWitnesses(item)
+            ? evaluate(item.id, title, Number(qualificationDay(asOf).slice(0,4)), asOf, keys, true, false, undefined, true, undefined, preparedCorrespondences, undefined, undefined, { qualificationOnly: true })
+            : item
+          const { name, aliases, uscc, district, qualificationWitnesses } = assessed.row
+          return { id: item.id, row: { name, aliases, uscc, district, qualificationWitnesses }, effectiveStatus: assessed.effectiveStatus }
+        }), [title])
+      })
+    },
+    readEffectiveTitles(ids: readonly number[], asOf: number, title: CurrentTitle) {
+      return evaluate.withinBatch(ids, () => new Map(ids.map(id => [id,
+        evaluate(id, title, Number(qualificationDay(asOf).slice(0,4)), asOf, undefined, false, false, undefined, false, undefined, () => [], undefined, undefined, { qualificationOnly: true }).effectiveStatus,
+      ])))
+    },
+    readCurrentBatch(ids: readonly number[], asOf: number, title: CurrentTitle, queryKeys?: IdentityKeyVariants) {
+      return evaluate.withinBatch(ids, inputs => withinReferences([...inputs.canonical.values()], () => {
+        const coverages = readQueryCoverageBatch(prepareCurrentReader(db), ids.flatMap(enterpriseId => CURRENT_TITLES.map(titleCode => ({ enterpriseId, titleCode, direction: 'missing_in_miit' as const }))), queryKeys)
+        return ids.map(id => {
+          const read = readSnapshot(id, asOf, { coverageForTitle: titleCode => coverages.get(id)!.get(titleCode)! }, title, title)
+          if (read.publishedPresentation === undefined) throw new Error('Current published-name facts missing')
+          return { ...read, publishedPresentation: read.publishedPresentation }
+        })
+      }))
+    },
+    readWorkbookBatch(ids: readonly number[], asOf: number, title: CurrentTitle, queryKeys?: IdentityKeyVariants) {
+      return readWorkbookBatch(ids, asOf, title, queryKeys, false)
+    },
+    /** Export rows bind only their title and its actual giant dependency. */
+    readWorkbookRowsBatch(ids: readonly number[], asOf: number, title: CurrentTitle, queryKeys?: IdentityKeyVariants) {
+      return readWorkbookBatch(ids, asOf, title, queryKeys, true)
+    },
+    readFilterCandidate(enterpriseId: number, title: CurrentTitle, asOf: number, keys: { queries: IdentityKeyVariants; relations: IdentityKeyVariants }) {
+      const { row, effectiveStatus } = evaluate(enterpriseId, title, Number(qualificationDay(asOf).slice(0,4)), asOf, keys, true, false, undefined, true, undefined, preparedCorrespondences, undefined, undefined, { qualificationOnly: true })
+      // This projection cannot publish explanations or dependency versions.
+      const { name, aliases, uscc, district, qualificationWitnesses } = row
+      return { row: { name, aliases, uscc, district, qualificationWitnesses }, effectiveStatus }
+    },
   }
 }
 
 /** Request-local prepared queries only: no rows or qualification results survive a read. */
 export function createCurrentCandidateReader(db: Database.Database) {
-  const evaluate = createCurrentCandidateEvaluationReader(db)
+  const evaluate = createCurrentCandidateEvaluationReader(db, undefined, createTargetRecognizedWitnessReader(drizzle(db,{schema:targetSchema})))
   // Preserve the previous public argument tuple; the output observer stays private.
-  return (...args: [enterpriseId: number, title: CurrentTitle, year: number, executionTime?: number, keys?: { queries: IdentityKeyVariants; relations: IdentityKeyVariants }, includeFilterFacts?: boolean, includeReferences?: boolean, assessmentOptions?: QualificationAssessmentReadOptions, includePendingFilterFacts?: boolean, suppliedPlatformRefs?: readonly CurrentPlatformReference[], preparedCorrespondences?: ReturnType<typeof createEnterpriseTitleCorrespondenceRefsReader>]) => evaluate(...args).row
+  return (...args: [enterpriseId: number, title: CurrentTitle, year: number, executionTime?: number, keys?: { queries: IdentityKeyVariants; relations: IdentityKeyVariants }, includeFilterFacts?: boolean, includeReferences?: boolean, assessmentOptions?: QualificationAssessmentReadOptions, includePendingFilterFacts?: boolean, suppliedPlatformRefs?: readonly CurrentPlatformReference[], preparedCorrespondences?: (enterpriseId: number, titleCode: string) => ReturnType<ReturnType<typeof createEnterpriseTitleCorrespondenceRefsReader>>]) => evaluate(...args).row
 }
 
-function createCurrentCandidateEvaluationReader(db: Database.Database, receiptRuntime?: ReceiptRuntimeContext, recognizedFactSource?: RecognizedFactSource) {
+function createCurrentCandidateEvaluationReader(db: Database.Database, receiptRuntime: ReceiptRuntimeContext | undefined, witnesses:RecognizedWitnessReader) {
   const reader=prepareCurrentReader(db)
+  const mergedIdentities = hasEnterpriseMergeIdentity(reader)
+  let batch: CurrentAssessmentInputs | undefined
   const statements = new Map<string, Database.Statement>()
   const statement = (text: string) => {
     let prepared = statements.get(text)
     if (!prepared) { prepared=db.prepare(text); statements.set(text,prepared) }
     return prepared
-  }
-  // #468: one prepared reader per requested source, never a result cache.
-  const filterSources = new Map<RecognizedFactSource, ReturnType<typeof createRecognizedFilterSourceReader>>()
-  const filterSourceReader = (source?: RecognizedFactSource) => {
-    const resolved = resolveRecognizedFactSource(source ?? recognizedFactSource)
-    let reader = filterSources.get(resolved)
-    if (!reader) { reader = createRecognizedFilterSourceReader(db, resolved); filterSources.set(resolved, reader) }
-    return reader
   }
   const d=schema.differenceReason
   // Same six #102 scopes and recordedAt/id descending head as latestDecision102.
@@ -399,17 +464,20 @@ function createCurrentCandidateEvaluationReader(db: Database.Database, receiptRu
     sql`select (select id from difference_reason where enterprise_id=${sql.placeholder('enterpriseId')}
       and title_code=${titleCode} and direction=${direction} order by recorded_at desc,id desc limit 1)`)),sql` union all `)
   // Prepare only when an explicit legacy assessment requests this dependency.
-  const prepareLegacyHeads = () => reader.select().from(d).where(sql`${d.id} in (${headIds})`).prepare()
+  const prepareLegacyHeads = () => reader.select(differencePublicColumns(reader)).from(d).where(sql`${d.id} in (${headIds})`).prepare()
   let headsQuery: ReturnType<typeof prepareLegacyHeads> | undefined
   const legacyHeads = () => headsQuery ??= prepareLegacyHeads()
-  return function readCandidate(enterpriseId: number, title: CurrentTitle, year: number, executionTime = Date.now(), keys?: { queries: IdentityKeyVariants; relations: IdentityKeyVariants }, includeFilterFacts = false, includeReferences = true, assessmentOptions?: QualificationAssessmentReadOptions, includePendingFilterFacts = false, suppliedPlatformRefs?: readonly CurrentPlatformReference[], preparedCorrespondences?: ReturnType<typeof createEnterpriseTitleCorrespondenceRefsReader>, observePublishedForCurrent?: CurrentPublishedNameObservation, observeCycles?: CurrentCycleObservation): { row: CurrentRow; group: CurrentGroup; effectiveStatus: import('./current-status').CurrentStatus } {
-  const enterprise = statement('select id,name,name_norm,uscc_norm,district,city from enterprise where id=?').get(enterpriseId) as any
-  const events = statement(`select e.id,e.event_type as eventType,e.year,e.decided_year as decidedYear,e.batch_seq as batchSeq,e.review_outcome as reviewOutcome,e.revision,r.name_raw as nameRaw,r.uscc_raw as usccRaw,r.source from record r join record_event e on e.record_id=r.id where r.enterprise_id=? and r.title_code=? order by e.id`).all(enterpriseId,title) as (LifecycleEvent & { batchSeq: number|null; nameRaw: string|null; usccRaw: string|null; source: string; revision: number; formalValidity?: FormalValidity; validityInvalid?: boolean; formalValidityInputHash?: string; recordId?: number })[]
-  const evidence = statement(`select v.id,v.record_event_id as eventId,v.source_file as sourceFile,v.attachment,v.list_no as listNo,v.page from record_evidence v join record_event e on e.id=v.record_event_id join record r on r.id=e.record_id where r.enterprise_id=? and r.title_code=? order by v.id`).all(enterpriseId,title) as (CurrentWorkbookFacts['evidence'][number] & {id:number})[]
+  function readCandidate(enterpriseId: number, title: CurrentTitle, year: number, executionTime = Date.now(), keys?: { queries: IdentityKeyVariants; relations: IdentityKeyVariants }, includeFilterFacts = false, includeReferences = true, assessmentOptions?: QualificationAssessmentReadOptions, includePendingFilterFacts = false, suppliedPlatformRefs?: readonly CurrentPlatformReference[], preparedCorrespondences?: (enterpriseId: number, titleCode: string) => ReturnType<ReturnType<typeof createEnterpriseTitleCorrespondenceRefsReader>>, observePublishedForCurrent?: CurrentPublishedNameObservation, observeCycles?: CurrentCycleObservation, detail: { expandAssessment?: boolean; giant?: CurrentRow; qualificationOnly?: boolean; platformEffects?: ReturnType<typeof readDifferencePlatformEffects> } = {}): { row: CurrentRow; group: CurrentGroup; effectiveStatus: import('./current-status').CurrentStatus } {
+  if (batch) enterpriseId = batch.canonical.get(enterpriseId) ?? enterpriseId
+  else if (mergedIdentities) enterpriseId = canonicalEnterpriseId(reader, enterpriseId) ?? enterpriseId
+  const expandAssessment = detail.expandAssessment ?? assessmentOptions != null
+  const enterprise = batch ? batch.enterprises.get(enterpriseId) : statement('select id,name,name_norm,uscc_norm,district,city from enterprise where id=?').get(enterpriseId) as any
+  const events = batch ? (batch.events.get(enterpriseId)?.get(title) ?? []).map(({ enterpriseId: _owner, titleCode: _title, ...event }) => event) as (LifecycleEvent & { batchSeq: number|null; nameRaw: string|null; usccRaw: string|null; source: string; revision: number; formalValidity?: FormalValidity; validityInvalid?: boolean; formalValidityInputHash?: string; recordId?: number })[] : statement(`select e.id,e.event_type as eventType,e.year,e.decided_year as decidedYear,e.batch_seq as batchSeq,e.review_outcome as reviewOutcome,e.revision,r.name_raw as nameRaw,r.uscc_raw as usccRaw,r.source from record r join record_event e on e.record_id=r.id where r.enterprise_id=? and r.title_code=? order by e.id`).all(enterpriseId,title) as (LifecycleEvent & { batchSeq: number|null; nameRaw: string|null; usccRaw: string|null; source: string; revision: number; formalValidity?: FormalValidity; validityInvalid?: boolean; formalValidityInputHash?: string; recordId?: number })[]
+  const evidence = batch ? (batch.evidence.get(enterpriseId)?.get(title) ?? []).map(({ enterpriseId: _owner, titleCode: _title, ...row }) => row) : statement(`select v.id,v.record_event_id as eventId,v.source_file as sourceFile,v.attachment,v.list_no as listNo,v.page from record_evidence v join record_event e on e.id=v.record_event_id join record r on r.id=e.record_id where r.enterprise_id=? and r.title_code=? order by v.id`).all(enterpriseId,title) as (CurrentWorkbookFacts['evidence'][number] & {id:number})[]
   const legacy = assessmentOptions?.assessmentVersion === LEGACY_QUALIFICATION_ASSESSMENT_VERSION
   const effectiveMode = !assessmentOptions?.assessmentVersion || assessmentOptions.assessmentVersion === QUALIFICATION_ASSESSMENT_VERSION || assessmentOptions.assessmentVersion === INDEPENDENT_QUALIFICATION_ASSESSMENT_VERSION
   if (!legacy) {
-    const validityRows = statement(`select e.id,e.record_id as recordId,e.formal_validity as value from record_event e join record r on r.id=e.record_id where r.enterprise_id=? and r.title_code=? order by e.id`).all(enterpriseId,title) as {id:number;recordId:number;value:string|null}[]
+    const validityRows = batch ? batch.validityRows.get(enterpriseId)?.get(title) ?? [] : statement(`select e.id,e.record_id as recordId,e.formal_validity as value from record_event e join record r on r.id=e.record_id where r.enterprise_id=? and r.title_code=? order by e.id`).all(enterpriseId,title) as {id:number;recordId:number;value:string|null}[]
     for (const raw of validityRows) {
       const event = events.find(e => e.id === raw.id)!
       if (!raw.value) continue
@@ -419,7 +487,7 @@ function createCurrentCandidateEvaluationReader(db: Database.Database, receiptRu
       if (!parsed.success) { event.validityInvalid=true; continue }
       const fact = parsed.data
       const ref = evidence.find(e => e.id === fact.evidenceId && e.eventId === event.id)
-      const file = ref && statement('select sha256,removed_at as removedAt from stored_file where rel_path=?').get(ref.sourceFile) as {sha256:string;removedAt:string|null}|undefined
+      const file = ref && (batch ? batch.files.get(ref.sourceFile) : statement('select sha256,removed_at as removedAt from stored_file where rel_path=?').get(ref.sourceFile) as {sha256:string;removedAt:string|null}|undefined)
       const origin = fact.originAwardEventId == null ? undefined : events.find(e => e.id === fact.originAwardEventId)
       const originRecord = origin && validityRows.find(e => e.id === origin.id)?.recordId
       const originValid = fact.originAwardEventId == null || !!origin && originRecord === raw.recordId && origin.eventType === 'award' && origin.year != null && origin.year === event.year && !(origin.batchSeq != null && event.batchSeq != null && origin.batchSeq !== event.batchSeq)
@@ -442,7 +510,7 @@ function createCurrentCandidateEvaluationReader(db: Database.Database, receiptRu
   if (!formal.length && events.length && events.every(e => e.eventType === 'nurture')) {
     row.group='excluded'; row.notes.push('纯入库培育，不构成称号')
   }
-  const aliases = statement("select id,name,version from enterprise_alias where enterprise_id=? and verification_status='confirmed' order by id").all(enterpriseId) as {id:number;name:string;version:number}[]
+  const aliases = batch ? (batch.aliases.get(enterpriseId) ?? []).map(({ enterpriseId: _owner, ...row }) => row) : statement("select id,name,version from enterprise_alias where enterprise_id=? and verification_status='confirmed' order by id").all(enterpriseId) as {id:number;name:string;version:number}[]
   row.aliases = [...new Set(aliases.map(a => a.name))]
   row.references.push(...aliases.map(a => 'alias:' + a.id + '@' + a.version))
   const knownNames = new Set([enterprise.name,...row.aliases].map(name => normalizeName(name)))
@@ -457,10 +525,8 @@ function createCurrentCandidateEvaluationReader(db: Database.Database, receiptRu
   if (formal.some(e => normalizeUscc(e.usccRaw) && enterprise.uscc_norm && normalizeUscc(e.usccRaw) !== normalizeUscc(enterprise.uscc_norm))) { identityGap=true; row.group='pending'; row.notes.push('公布统代与当前主体存在身份冲突') }
   let officialGroup = row.group
   // #102 owns the head; #108 owns evidence applicability, including legacy reviews.
-  const rdjb=TITLE_RDJB_CODES[title]
-  const relationKeys=keys ? identityKeys(keys.relations,enterprise.uscc_norm) : null
-  const unassigned=relationKeys ? 'r.uscc_raw in (select value from json_each(@relationKeys))' : 'roster84_uscc(r.uscc_raw)=@uscc'
-  const platformRefs=includeReferences ? suppliedPlatformRefs ?? statement(`select r.id,r.query_id as queryId,q.interface,q.queried_at as queriedAt from platform_relation r join platform_query q on q.id=r.query_id where r.id in (select id from platform_relation where enterprise_id=@enterpriseId union select r.id from platform_relation r ${relationKeys ? 'indexed by platform_relation_uscc_query_idx' : ''} where r.enterprise_id is null and ${unassigned}) and ${relationScopeSql} order by r.id`).all({enterpriseId,...(relationKeys ? {relationKeys:JSON.stringify(relationKeys)} : {uscc:normalizeUscc(enterprise.uscc_norm)||null}),title,rdjb}) as ({id:number;queryId:number} & CurrentWorkbookFacts['platform'][number])[] : []
+  const targetEffects = detail.platformEffects ?? (includeReferences ? readDifferencePlatformEffects(reader, enterpriseId, title) : undefined)
+  const platformRefs=includeReferences ? suppliedPlatformRefs ?? targetEffects ?? [] : []
   row.references.push(...platformRefs.map(r => 'platform-relation:' + r.id + ' query:' + r.queryId))
   // Default effective reads never execute legacy difference/assessment/receipt decisions.
   // Explicit prior versions retain those diagnostics and their historical behavior.
@@ -502,7 +568,7 @@ function createCurrentCandidateEvaluationReader(db: Database.Database, receiptRu
         ? assessment.currentDecision.current : decisionVersionInput(assessment.currentDecision.current) },
     }, reviewed })
     const gap = assessment.explanationValidity.status !== 'valid' || !(d.basis ?? reviewed?.basis) || !effectiveAt || !Number.isFinite(Date.parse(effectiveAt)) || Date.parse(effectiveAt) > executionTime
-    const source=d.relationId ? statement('select enterprise_id as enterpriseId,uscc_raw as uscc,verification_status as verificationStatus from platform_relation where id=?').get(d.relationId) as {enterpriseId:number|null;uscc:string|null;verificationStatus:string}|undefined : undefined
+    const source=d.relationId ? readDifferenceObservation(reader,d.relationId) : undefined
     const ownUscc=normalizeUscc(enterprise.uscc_norm), sourceUscc=normalizeUscc(source?.uscc)
     const sourceConflict=source && (source.enterpriseId != null && source.enterpriseId !== enterpriseId || sourceUscc && ownUscc && sourceUscc !== ownUscc)
     const sourceGap=!!d.currentQualification && (!source || source.verificationStatus !== 'confirmed' || source.enterpriseId == null && (!ownUscc || sourceUscc !== ownUscc))
@@ -583,11 +649,14 @@ function createCurrentCandidateEvaluationReader(db: Database.Database, receiptRu
     row.notes.push(...qualification.notes)
     if (correspondences.length) row.notes.push('对应边不是已确认当前资格；需核实具体资格与公布匹配范围')
   }
-  const independent = readEnterpriseFactEffects(db, enterpriseId, executionTime, statement)
+  const factEffects = (effectiveOnly = false) => batch
+    ? evaluateEnterpriseFactEffects(batch.facts.get(enterpriseId) ?? [], executionTime, effectiveOnly)
+    : readEnterpriseFactEffects(db, enterpriseId, executionTime, statement, effectiveOnly)
+  const independent = factEffects()
   if (independent) row.references.push(...independent.refs)
   // #478: one effective decision; legacy diagnostics remain readable but cannot
   // supply eligibility. Only formal periods and complete typed exclusions enter.
-  const exclusions = effectiveMode ? readEnterpriseFactEffects(db, enterpriseId, executionTime, statement, true) : independent
+  const exclusions = effectiveMode ? factEffects(true) : independent
   const effectiveFormal = qualification
   let effectiveStatus = exclusions?.terminated ? 'terminated' as const
     : exclusions?.region === 'outside_ningbo' ? 'moved_out' as const
@@ -607,9 +676,10 @@ function createCurrentCandidateEvaluationReader(db: Database.Database, receiptRu
   if (inheritanceMode && title !== 'little_giant' && formal.some(event => !historyTimeKnown(event))) row.notes.push('本称号正式历史发生时点未知，不能用作小巨人规则前提')
   const localRuleBasis: string[] = []
   let giant: CurrentRow | undefined
-  if (inheritanceMode && title !== 'little_giant') {
-    giant = readCandidate(enterpriseId, 'little_giant', year, executionTime, keys, false, true,
-      { ...assessmentOptions, assessmentVersion: INDEPENDENT_QUALIFICATION_ASSESSMENT_VERSION }, false, undefined, preparedCorrespondences).row
+  const needsGiant = !detail.qualificationOnly || effectiveStatus === 'expired' || effectiveStatus === 'unrecognized'
+  if (inheritanceMode && title !== 'little_giant' && (history.length || expandAssessment) && needsGiant) {
+    giant = detail.giant ?? readCandidate(enterpriseId, 'little_giant', year, executionTime, keys, false, includeReferences,
+      { ...assessmentOptions, assessmentVersion: INDEPENDENT_QUALIFICATION_ASSESSMENT_VERSION }, false, undefined, preparedCorrespondences, undefined, undefined, { expandAssessment }).row
     if (history.length && giant.group === 'eligible' && effectiveStatus !== 'terminated' && effectiveStatus !== 'moved_out') {
       effectiveStatus = 'effective'
       const explanation = '按有效小巨人资格计入；本称号正式历史：' + history.map(e => `event:${e.id}`).join('、')
@@ -633,19 +703,18 @@ function createCurrentCandidateEvaluationReader(db: Database.Database, receiptRu
     // unknown-batch grants. Never reconstruct them from basis/reviews strings.
     const awards = qualificationSource === 'formal' ? (effectiveMode ? effectiveFormal : qualification).cycles.flatMap(cycle => cycle.awardEventIds.map(awardEventId => ({ cycle, awardEventId }))) : []
     const linked = correspondences.filter(ref => ref.type === 'event_recognized' && ref.role === 'recognized_corrob' && ref.status === 'confirmed' && !ref.requiresRevalidation && ref.eventId != null && ref.relationId != null)
-    const filterSource = filterSourceReader(assessmentOptions?.recognizedFactSource)
+    const witnessSources=witnesses.readMany({enterpriseId,uscc:normalizeUscc(enterprise.uscc_norm)||null,relationIds:awards.flatMap(({awardEventId})=>linked.filter(ref=>ref.eventId===awardEventId).map(ref=>ref.relationId!))})
     row.qualificationWitnesses = awards.flatMap<CurrentQualificationWitness>(({cycle,awardEventId}) => {
       const event = events.find(item => item.id === awardEventId)!
       const base = { cycle: { originYear: cycle.originYear, batchSeq: cycle.batch }, awardEventId, recognition: { precision: 'year' as const, year: awardTime(event)! } }
       const matches = linked.filter(ref => ref.eventId === awardEventId).flatMap(ref => {
-        const source = filterSource.read({relationId:ref.relationId!,enterpriseId,uscc:normalizeUscc(enterprise.uscc_norm)||null})
-        if (!source) return []
-        let pages: unknown
-        try { pages = source.pages ? JSON.parse(source.pages) : null } catch { return [] }
-        const positioned = Array.isArray(pages) ? sourcePositionForSequence({pages} as Parameters<typeof sourcePositionForSequence>[0],source.sequenceNo).sourceRdjb : null
+        const result=witnessSources.get(ref.relationId!)
+        if(!result||result.kind!=='available')return []
+        const source=result.source
+        const key=source.position.state==='matched'?source.position.rdjbKey:null
+        const fromPosition=key===null?null:RDJB_TITLE_CODES[key]
         const scope = source.rdjb.split(',').filter(Boolean)
         const fromScope = scope.length === 1 ? RDJB_TITLE_CODES[scope[0]!] : null
-        const fromPosition = positioned ? RDJB_TITLE_CODES[positioned] : null
         if (source.titleCode && source.titleCode !== title || fromScope && fromScope !== title || fromPosition && fromPosition !== title
           || (fromPosition ?? source.titleCode ?? fromScope) !== title) return []
         const projected = recognizedFilterFacts(
@@ -686,7 +755,7 @@ function createCurrentCandidateEvaluationReader(db: Database.Database, receiptRu
   // One canonical assessment-group decision for both the scan projection and
   // full T2. Keep the legacy row.group unchanged for existing consumers.
   const group: CurrentGroup = effectiveMode ? row.group : independent?.terminated || terminations.length ? 'excluded' : independent?.pending ? 'pending' : independent?.region === 'outside_ningbo' ? 'excluded' : row.group
-  if (assessmentOptions) {
+  if (expandAssessment && assessmentOptions) {
     // These dimensions reuse the facts and applicability decisions above. Platform
     // observations and correspondence confirmation never feed back into eligibility.
     if (!effectiveMode && current.length) officialGroup='eligible'
@@ -707,13 +776,14 @@ function createCurrentCandidateEvaluationReader(db: Database.Database, receiptRu
       return {evidenceId:v.id,availability:publishedFacts.availability === 'unavailable' ? 'unavailable' as const : fact?.availability ?? 'unknown_legacy' as const,nameKnown:fact?.availability === 'captured' && !!fact.nameRaw?.trim()}
     })
     const sourceVersions = evidence.map(v => {
-      const file = statement('select id,sha256,bytes,removed_at as removedAt from stored_file where rel_path=?').get(v.sourceFile) as {id:number;sha256:string;bytes:number;removedAt:string|null}|undefined
+      const file = batch ? batch.files.get(v.sourceFile) : statement('select id,sha256,bytes,removed_at as removedAt from stored_file where rel_path=?').get(v.sourceFile) as {id:number;sha256:string;bytes:number;removedAt:string|null}|undefined
       const capture = statement('select revision,sha256 from official_evidence_row_revision where evidence_id=? order by revision desc limit 1').get(v.id) as {revision:number;sha256:string|null}|undefined
       return { evidenceId:v.id, eventId:v.eventId, sourceFile:v.sourceFile, storedFileId:file?.id ?? null, sha256:file?.sha256 ?? null, bytes:file?.bytes ?? null, removedAt:file?.removedAt ?? null, capturedRevision:capture?.revision ?? null, capturedSha256:capture?.sha256 ?? null }
     })
     const coverage = assessmentOptions.coverageForTitle?.(title) ?? readQueryCoverage(reader, {enterpriseId,titleCode:title,direction:'missing_in_miit'}, keys?.queries, assessmentOptions.ownQueryIds)
     const observedRows = platformRefs.map(ref => {
-      const r = statement('select status,year,batch from platform_relation where id=?').get(ref.id) as {status:string|null;year:number|null;batch:string|null}
+      const target = targetEffects?.find(r => r.id === ref.id)
+      const r = target ? {status:target.status,year:target.year,batch:target.batch} : {status:null,year:null,batch:null}
       return {queryId:ref.queryId,relationId:ref.id,...r}
     })
     const observations = coverage.sources.map(s => {
@@ -766,4 +836,12 @@ function createCurrentCandidateEvaluationReader(db: Database.Database, receiptRu
   observeCycles?.(qualification.cycles, formal)
   return { row, group, effectiveStatus }
 }
+  return Object.assign(readCandidate, {
+    withinBatch<T>(ids: readonly number[], read: (inputs: CurrentAssessmentInputs) => T): T {
+      if (!db.inTransaction) throw new Error('Assessment batch requires the caller snapshot')
+      const previous = batch
+      batch = createCurrentAssessmentInputs(reader, ids)
+      try { return read(batch) } finally { batch = previous }
+    },
+  })
 }

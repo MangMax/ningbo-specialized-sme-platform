@@ -1,3 +1,4 @@
+import { submitNativePlatformQuery } from './helpers/native-platform-fixture'
 import { initializeDb } from '../db/client'
 import { decodeJsonRead } from './helpers/json-read-adapter'
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
@@ -367,8 +368,7 @@ describe('总表与导出继承首次认定筛选(筛选状态能进 URL、也�
         { eventType: 'award', year: 2022, decidedYear: 2024 },
         { eventType: 'review', year: 2022, decidedYear: 2025 },
       ])
-      const archived = db.insert(schema.platformQuery).values({ interface: 'business_list', queryKey: 'unrelated-stats', queriedAt: '2026-10-19', status: 'success', rawResponse: 'unrelated'.repeat(1000) }).returning().get()
-      db.$client.prepare('UPDATE platform_query SET collection_evidence = ? WHERE id = ?').run('{unrelated-invalid-json', archived.id)
+      submitNativePlatformQuery(db, { interface: 'business_list', queryKey: 'unrelated-stats', queriedAt: '2026-10-19', status: 'success', rawResponse: 'unrelated'.repeat(1000) })
       query = {}
       expect(handlerStats({}).byFirstRecognitionYear).toEqual([{ key: '2024', n: 1 }])
     } finally {

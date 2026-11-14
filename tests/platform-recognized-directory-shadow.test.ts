@@ -1,13 +1,13 @@
-import { initializeDb } from '../db/client'
+import { initializeDb } from '../upgrade/legacy-client'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, expect, it } from 'vitest'
 import { eq } from 'drizzle-orm'
-import { useDb, schema } from '../db'
-import { ensurePlatformObservation } from '../server/utils/platform-business-record'
-import { readPlatformBusinessDetails } from '../server/utils/platform-business-detail-read'
-import { getPlatformRecognizedRecord, listPlatformRecognizedDirectory } from '../server/utils/platform-recognized-directory'
+import { useDb, schema } from '../upgrade/legacy-client'
+import { ensurePlatformObservation } from '../upgrade/frozen/server/platform-business-record'
+import { readPlatformBusinessDetails } from '../upgrade/frozen/server/platform-business-detail-read'
+import { getPlatformRecognizedRecord, listPlatformRecognizedDirectory } from '../upgrade/frozen/server/platform-recognized-directory'
 import { hasKnownPlatformBusiness } from '../lib/roster/platform-business-detail'
 
 const dir = mkdtempSync(join(tmpdir(), 'recognized-directory-shadow-'))

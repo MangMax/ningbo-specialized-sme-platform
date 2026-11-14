@@ -110,13 +110,6 @@ it('continues receipt version and current GETs through unavailable capability wi
   api.blockVersion(false); await button(h.view, '重试读取当前决定').trigger('click'); await flushPromises()
   expect(h.session()!.phase).toBe('saved'); expect(h.session()!.writeState).toBe('unavailable'); expect(h.view.findAll('button').some(b => b.text() === '核对后追加更正')).toBe(false); expect(api.commands).toHaveLength(1)
 })
-it('retains an unknown request when the server disables writing after a ready capability check', async () => {
-  const h = harness(); let attempts = 0
-  const post = vi.fn(async (body: any) => { h.commands.push(JSON.parse(JSON.stringify(body))); attempts++; if (attempts === 1) throw new Error('response lost'); if (attempts === 2) throw { data: { error: { code: 'browser_review_disabled' } } }; h.current('own'); return { versionId: 9 } })
-  const c = useInitialDifferenceDecision(scope, { ...h.api, post } as any); await c.load(); content(c); await c.save(); const frozen = JSON.stringify(c.state.request)
-  await c.save(); expect(c.phase.value).toBe('unknown'); expect(c.writeState.value).toBe('readonly'); expect(JSON.stringify(c.state.request)).toBe(frozen); expect(c.canRetry.value).toBe(false)
-  expect(await c.begin()).toBe(false); await c.recheckCapability(); await c.save(); expect(h.commands).toHaveLength(3); expect(h.commands[1]).toEqual(h.commands[0]); expect(h.commands[2]).toEqual(h.commands[0]); expect(c.receipt.value?.versionId).toBe(9)
-})
 it('keeps a late capability confirmation with its original session instead of enabling another scope', async () => {
   const h = harness(); let defer = false, release!: (value: { writeEnabled: boolean }) => void
   const old = useInitialDifferenceDecision(scope, { ...h.api, context: () => defer ? new Promise(resolve => { release = resolve }) : h.api.context() } as any)

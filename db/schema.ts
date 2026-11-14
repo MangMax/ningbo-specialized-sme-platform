@@ -1,3 +1,4 @@
+import { businessStatusCell, businessStatusChecks } from '../lib/platform/business-status'
 import type { FormalValidity } from '../lib/roster/formal-validity'
 import { sql } from 'drizzle-orm'
 import type { AnySQLiteColumn } from 'drizzle-orm/sqlite-core'
@@ -9,9 +10,15 @@ import {
   sqliteTable,
   text,
   uniqueIndex,
+  unique,
+  customType,
   check,
   foreignKey,
 } from 'drizzle-orm/sqlite-core'
+
+const exactText = customType<{ data: unknown; driverData: unknown }>({ dataType: () => 'text' })
+const exactInteger = customType<{ data: unknown; driverData: unknown }>({ dataType: () => 'integer' })
+const exactCell = customType<{ data: unknown; driverData: unknown }>({ dataType: () => 'blob' })
 
 /** 后台外部服务凭据。仅配置服务读取，不加入台账导出或任务历史。 */
 export const serviceCredential = sqliteTable('service_credential', {
@@ -22,7 +29,6 @@ export const serviceCredential = sqliteTable('service_credential', {
 
 /**
  * 称号字典。三种梯度,等级由高到低:小巨人 > 专精特新中小企业 > 创新型中小企业。
- * 见 GLOSSARY.md / docs/data-model.md。
  */
 export const title = sqliteTable('title', {
   code: text('code').primaryKey(),
@@ -52,6 +58,18 @@ export const enterprise = sqliteTable(
     index('enterprise_name_norm_idx').on(t.nameNorm),
   ],
 )
+
+/** A merged enterprise remains the immutable identity referenced by historical assignments. */
+export const enterpriseMerge = sqliteTable('enterprise_merge', {
+  fromEnterpriseId: integer('from_enterprise_id').primaryKey().references(() => enterprise.id, { onDelete: 'restrict' }),
+  intoEnterpriseId: integer('into_enterprise_id').notNull().references(() => enterprise.id, { onDelete: 'restrict' }),
+  basis: text('basis').notNull(),
+  recordedAt: text('recorded_at').notNull(),
+}, t => [
+  index('enterprise_merge_into_idx').on(t.intoEnterpriseId),
+  check('enterprise_merge_distinct_ck', sql`${t.fromEnterpriseId} <> ${t.intoEnterpriseId}`),
+  ...[t.fromEnterpriseId, t.intoEnterpriseId].map(c => check(`enterprise_merge_${c.name}_safe`, sql`typeof(${c})='integer' AND ${c} BETWEEN 1 AND 9007199254740991`)),
+])
 
 /** 来源文件。公布文件或工信部导出。 */
 export const sourceDocument = sqliteTable('source_document', {
@@ -116,7 +134,7 @@ export const recordEvent = sqliteTable(
     /**
      * **结论年份**(该事件公布/结论的年份)。与 `year` 分工明确:
      *  - `year` 是事件**所涉**年份 —— 认定事件的认定年份;复核事件记的是
-     *    **被复核的原认定年份**(见 GLOSSARY「复核」);
+     *    **被复核的原认定年份**;
      *  - `decided_year` 是**结论发生**的年份(如 2024 年公布的复核)。
      *
      * 复核锚点(下一次三年到期)按结论年份计算:2021 认定 → 2024 复核通过 ⇒ 下一次到期
@@ -157,7 +175,7 @@ export const recordEvidence = sqliteTable(
 )
 
 /**
- * 文件库(`app/files/`)中每个文件的元数据与处理状态。见 `.scratch/ingest-pipeline/issues/09-file-manager.md`。
+ * 文件库(`app/files/`)中每个文件的元数据与处理状态。
  *
  * `rel_path` 是文件库内**相对路径**(`jxj/announcement/2024/1/….pdf`),与
  * `record_evidence.source_file` 同一口径 —— 「被记录引用数」即按此列精确匹配计数。
@@ -187,7 +205,7 @@ export const storedFile = sqliteTable(
      *
      * ⚠️ 与 `storedFilePart.year` **不是一回事** —— 那是文件**内容**里各段的年份/批次,
      * 一份文件可以有多个(票 17)。这里只有一个,因为它由路径 `…/<year>/<batch>/…` 决定。
-     * 见 `.scratch/ingest-pipeline/issues/17-file-parts.md`。
+     *
      */
     year: integer('year'),
     batch: integer('batch'),
@@ -242,7 +260,6 @@ export const storedFileAudit = sqliteTable(
  * 「2024 年第二批认定(附件1)」又有「2021 年第二批到期复核(附件2)」;《〔2022〕145号》
  * 在同一个附件里并置 2021 与 2022 两段名单。所以文件级的单个 `year`/`batch` 表达不了它,
  * 真实粒度在这里:`(称号, 事件类型, 年份, 批次, 附件)`。
- * 见 `.scratch/ingest-pipeline/issues/17-file-parts.md`。
  *
  * 与 `stored_file.year` / `batch`(**公布**年份/批次,单值)分工明确:那里答「这份文件是
  * 哪一批公布的」,这里答「文件里都有什么」。**别把两者混用**。
@@ -250,7 +267,7 @@ export const storedFileAudit = sqliteTable(
  * `derived` 是从 `record_evidence` 聚合的派生结果,`agent` 是代理解析声明;升级前已存在的
  * 行标为 `legacy`,因为旧表无法证明它们来自哪条写入路径。回填重建派生行、保留代理行;
  * legacy 行与 evidence 完全一致时可归为 derived,不一致时保留并标记冲突。
- * 见 `.scratch/ingest-pipeline/issues/20-parts-origin.md`。
+ *
  */
 export const storedFilePart = sqliteTable(
   'stored_file_part',
@@ -305,7 +322,7 @@ export const storedFilePart = sqliteTable(
 /**
  * **OCR 结果**(票 14):页图 → 文本。**按页**挂在一个文件上。
  *
- * 见 `.scratch/ingest-pipeline/issues/14-ocr.md` 与 SPEC 需求 4。三条通路都往这张表落:
+ * 三条通路都往这张表落:
  *  - **api** —— `POST /api/jobs {kind:"ocr"}` 调 PaddleOCR API(异步、可批量);
  *  - **upload** —— `POST /api/ocr-results`,人把已在官网跑好的带页码 markdown 传进来;
  *  - **mcp** —— 代理经 MCP 的 `save_ocr_result` 写回。
@@ -406,7 +423,6 @@ export const reconciliationResult = sqliteTable(
  * 它们进 JSON 列不违反上面第 1 条(要查的是 `kind` / `state`,那是独立的列)。
  *
  * `params` / `result` **只放任务自己的载荷**:id、相对路径、分辨率。凭证不进这里
- * (见 `.scratch/ingest-pipeline/SPEC.md`「凭证不入库」)。
  */
 export const job = sqliteTable(
   'job',
@@ -448,7 +464,7 @@ export const job = sqliteTable(
 // ===========================================================================
 // 名录生命周期契约(RL-01)—— 冻结的领域对象。
 //
-// 契约原文见 `docs/roster-lifecycle-contract.md`,决策见
+// 写入载荷类型见 `lib/roster-import-client.ts`,领域决策见
 // `docs/adr/2026-10-16-roster-lifecycle-model.md`。本段是**全仓共享基线**:
 // 只由 RL-01 落一次,后续票(RL-02..RL-11)**增量消费,不再改这里的列语义**。
 //
@@ -611,189 +627,136 @@ export const enterpriseProfileAudit = sqliteTable('enterprise_profile_audit', {
   createdAt: text('created_at').notNull().$defaultFn(() => new Date().toISOString()),
 }, t => [uniqueIndex('enterprise_profile_audit_key_uq').on(t.idempotencyKey), index('enterprise_profile_audit_enterprise_idx').on(t.enterpriseId, t.id)])
 
-/**
- * **平台查询记录**(契约 3)。一次「查了工信部哪个接口、用什么键、什么时候查、结果如何」。
- *
- * **失败 ≠ 无记录** —— 这是这票的硬要求,所以 `status` 把四态分开:
- *  - `not_queried` **未查询**(还没查过,不是「没有」);
- *  - `failed` **查询失败**(网络/会话/结构异常 —— 查询**没成功执行**);
- *  - `no_record` **无记录**(查询成功执行,平台**返回空**);
- *  - `success` 查询成功且返回至少一条记录(记录逐条落 `platform_relation`)。
- *
- * `rawResponse` 存**原始响应/HTML**:平台接口现在返回 HTML 表格,留原文才能在解析口径
- * 变了以后回看引擎到底收到了什么(不参与查询,只供回溯,所以进 text 而非结构化列)。
- * 重复查询**各占一行**(`queriedAt` 进唯一键)——「不丢历史证据」,缓存/刷新由读侧决定。
- */
-export const platformQuery = sqliteTable(
-  'platform_query',
-  {
-    id: integer('id').primaryKey({ autoIncrement: true }),
-    /** 独立来源：business_list / apply_list / recognized_list(queryBusList)。 */
-    interface: text('interface', { enum: ['business_list', 'apply_list', 'recognized_list'] }).notNull(),
-    /** 查询键:统一社会信用代码,或 `name:<nameNorm>`(与 `lib/reconcile.ts` 同构)。 */
-    queryKey: text('query_key').notNull(),
-    /**
-     * `businessList` 的 `rdjb` 参数(认定级别):`1` 创新型 / `2` 专精特新中小企业 /
-     * `3` 专精特新“小巨人”。空串 = 该接口不用这个参数(如 `applyList`)。
-     *
-     * 实测:同一 USCC 下 `rdjb=3` 返回 6 条、`rdjb=1`/`rdjb=2` 各返回 0 条 ——
-     * 即**同一次查询键、不同 rdjb 是不同查询**,所以它进唯一键。
-     */
-    rdjb: text('rdjb').notNull().default(''),
-    /** 本次查询针对的称号;接口不按称号查时留空。 */
-    titleCode: text('title_code').references(() => title.code),
-    /** 查询时点(ISO 时间)。 */
-    queriedAt: text('queried_at').notNull(),
-    /** Latest successful collection with identical complete business content. */
-    lastCollectedAt: text('last_collected_at'),
-    /** 四态见上;默认 `not_queried`(「还没查」而不是「没有」)。 */
-    status: text('status', {
-      enum: ['success', 'failed', 'no_record', 'not_queried', 'partial'],
-    })
-      .notNull()
-      .default('not_queried'),
-    /** 失败原因(仅 `failed` 有意义)。 */
-    failureReason: text('failure_reason'),
-    /** 原始响应 / HTML 原文,供回溯。 */
-    rawResponse: text('raw_response'),
-    /** 原始逐来源采集结果，旧查询留 null；含原时间、页、条件及原行。 */
-    collectionEvidence: text('collection_evidence', { mode: 'json' }).$type<import('../lib/platform/live-query').PlatformLiveQueryResult>(),
-    createdAt: text('created_at')
-      .notNull()
-      .$defaultFn(() => new Date().toISOString()),
-  },
-  (t) => [
-    // 同接口 + 同查询键 + 同 rdjb + 同一时点 = 同一次查询(重放幂等);不同时点各自留档。
-    uniqueIndex('platform_query_identity_uq').on(t.interface, t.queryKey, t.rdjb, t.queriedAt),
-    index('platform_query_key_idx').on(t.queryKey),
-    index('platform_query_title_code_idx').on(t.titleCode, t.id),
-    // #87: narrow covering scans for counts and stable latest/deep pages.
-    index('platform_query_status_time_idx').on(t.status, t.queriedAt, t.id),
-    index('platform_query_time_idx').on(t.queriedAt, t.id),
-    index('platform_query_current_candidate_cover_idx').on(t.id, t.rdjb, t.titleCode, t.collectionEvidence),
-  ],
-)
+/** Platform collection metadata; raw response bytes belong to the immutable archive. */
+export const platformCollection = sqliteTable('platform_collection', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  interface: text('interface', { enum: ['business_list', 'apply_list', 'recognized_list'] }).notNull(),
+  queryKey: text('query_key').notNull(),
+  rdjb: text('rdjb').notNull(),
+  titleCode: text('title_code').references(() => title.code, { onDelete: 'restrict' }),
+  queriedAt: text('queried_at').notNull(),
+  createdAt: text('created_at').notNull(),
+  lastCollectedAt: text('last_collected_at'),
+  status: text('status', { enum: ['success', 'failed', 'no_record', 'not_queried', 'partial'] }).notNull(),
+  failureReason: text('failure_reason'),
+  source: text('source'),
+  evidenceStatus: text('evidence_status'),
+  completedAt: text('completed_at'),
+  completeness: text('completeness', { enum: ['complete', 'partial', 'not_queried', 'unknown'] }).notNull(),
+  fullRange: integer('full_range'),
+  fetchedCount: integer('fetched_count'),
+  declaredTotal: integer('declared_total'),
+  scopeMode: text('scope_mode'),
+  provenanceState: text('provenance_state', { enum: ['captured', 'legacy_supplement', 'unknown', 'conflict'] }).notNull(),
+  parseState: text('parse_state', { enum: ['valid', 'invalid', 'absent'] }).notNull(),
+  ruleVersion: text('rule_version').notNull(),
+  errorCode: text('error_code'),
+  errorMessage: text('error_message'),
+  maxRequests: integer('max_requests'),
+  maxRows: integer('max_rows'),
+  maxDurationMs: integer('max_duration_ms'),
+  pageSize: integer('page_size'),
+  reconcileSlotState: text('reconcile_slot_state', { enum: ['uncaptured', 'verified', 'miss', 'error'] }).notNull().default('uncaptured'),
+  reconcileSlotRule: text('reconcile_slot_rule'),
+  reconcileSlotRawArchiveId: integer('reconcile_slot_raw_archive_id').references((): AnySQLiteColumn => platformArchiveValue.id, { onDelete: 'restrict' }),
+  reconcileSlotRowCount: integer('reconcile_slot_row_count'),
+  reconcileSlotInputSha256: text('reconcile_slot_input_sha256'),
+  reconcileSlotReason: text('reconcile_slot_reason'),
+  witnessState: text('witness_state').notNull().default('uncaptured'),
+  witnessGate: integer('witness_gate'),
+  witnessRule: text('witness_rule'),
+  witnessArchiveId: integer('witness_archive_id').references((): AnySQLiteColumn => platformArchiveValue.id, { onDelete: 'restrict' }),
+  witnessSha256: text('witness_sha256'),
+  witnessErrorName: text('witness_error_name'),
+  witnessError: text('witness_error'),
+}, t => [
+  uniqueIndex('platform_collection_identity_uq').on(t.interface, t.queryKey, t.rdjb, t.queriedAt),
+  index('platform_collection_key_idx').on(t.queryKey, t.id),
+  index('platform_collection_status_time_idx').on(t.status, t.queriedAt, t.id),
+  index('platform_collection_title_idx').on(t.titleCode, t.id),
+  check('platform_collection_interface_ck', sql`${t.interface} IN ('business_list','apply_list','recognized_list')`),
+  check('platform_collection_status_ck', sql`${t.status} IN ('success','failed','no_record','not_queried','partial')`),
+  check('platform_collection_completeness_ck', sql`${t.completeness} IN ('complete','partial','not_queried','unknown')`),
+  check('platform_collection_provenance_ck', sql`${t.provenanceState} IN ('captured','legacy_supplement','unknown','conflict')`),
+  check('platform_collection_parse_ck', sql`${t.parseState} IN ('valid','invalid','absent')`),
+  check('platform_collection_full_range_ck', sql`${t.fullRange} IS NULL OR (typeof(${t.fullRange}) = 'integer' AND ${t.fullRange} IN (0,1))`),
+  ...[t.fetchedCount, t.declaredTotal].map(c => check(`platform_collection_${c.name}_ck`, sql`${c} IS NULL OR (typeof(${c}) = 'integer' AND ${c} BETWEEN 0 AND 9007199254740991)`)),
+  ...[t.maxRequests, t.maxRows, t.maxDurationMs, t.pageSize].map(c => check(`platform_collection_${c.name}_ck`, sql`${c} IS NULL OR (typeof(${c}) = 'integer' AND ${c} BETWEEN 1 AND 9007199254740991)`)),
+])
 
-/** Explicit supplementation only: never a typed collectionEvidence or content version. */
-export const platformQueryLegacyProvenance = sqliteTable('platform_query_legacy_provenance', {
-  queryId: integer('query_id').primaryKey().references(() => platformQuery.id, { onDelete: 'restrict' }),
-  sourceIdentity: text('source_identity').notNull(),
-  sourceSha256: text('source_sha256').notNull(),
-  segmentIndex: integer('segment_index').notNull(),
-  collection: text('collection', { mode: 'json' }).notNull().$type<import('../lib/platform/legacy-provenance').LegacyPlatformCollection>(),
-  inputFingerprint: text('input_fingerprint').notNull(),
-  importBatchId: integer('import_batch_id').notNull().references(() => importBatch.id),
-  createdAt: text('created_at').notNull().$defaultFn(() => new Date().toISOString()),
-}, t => [uniqueIndex('platform_query_legacy_source_uq').on(t.sourceSha256, t.segmentIndex)])
+export const platformCollectionPage = sqliteTable('platform_collection_page', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  collectionId: integer('collection_id').notNull().references(() => platformCollection.id, { onDelete: 'restrict' }),
+  ordinal: integer('ordinal').notNull(),
+  source: text('source'),
+  rdjb: text('rdjb'),
+  pageNo: integer('page_no'),
+  maxPage: integer('max_page'),
+  maxPagePresent: integer('max_page_present').notNull().default(0),
+  fetchedCount: integer('fetched_count'),
+  declaredTotal: integer('declared_total'),
+  status: text('status'),
+  errorCode: text('error_code'),
+  errorMessage: text('error_message'),
+  sequenceStart: integer('sequence_start'),
+  sequenceEnd: integer('sequence_end'),
+  positionState: text('position_state', { enum: ['verified', 'unknown', 'conflict'] }).notNull(),
+}, t => [
+  uniqueIndex('platform_collection_page_ordinal_uq').on(t.collectionId, t.ordinal),
+  index('platform_collection_page_title_idx').on(t.collectionId, t.rdjb, t.pageNo),
+  check('platform_collection_page_position_ck', sql`${t.positionState} IN ('verified','unknown','conflict')`),
+  check('platform_collection_page_max_page_present_ck', sql`${t.maxPagePresent} IN (0,1)`),
+  check('platform_collection_page_ordinal_ck', sql`typeof(${t.ordinal}) = 'integer' AND ${t.ordinal} BETWEEN 0 AND 9007199254740991`),
+  ...[t.pageNo, t.maxPage, t.sequenceStart, t.sequenceEnd].map(c => check(`platform_collection_page_${c.name}_ck`, sql`${c} IS NULL OR (typeof(${c}) = 'integer' AND ${c} BETWEEN 1 AND 9007199254740991)`)),
+  ...[t.fetchedCount, t.declaredTotal].map(c => check(`platform_collection_page_${c.name}_ck`, sql`${c} IS NULL OR (typeof(${c}) = 'integer' AND ${c} BETWEEN 0 AND 9007199254740991)`)),
+  check('platform_collection_page_sequence_ck', sql`(${t.sequenceStart} IS NULL AND ${t.sequenceEnd} IS NULL) OR (${t.sequenceStart} IS NOT NULL AND ${t.sequenceEnd} IS NOT NULL AND ${t.sequenceEnd} >= ${t.sequenceStart})`),
+])
 
-/** Indexed title membership extracted from archived collection evidence; triggers keep it current. */
-export const platformQueryTitleScope = sqliteTable(
-  'platform_query_title_scope',
-  {
-    queryId: integer('query_id').notNull().references(() => platformQuery.id, { onDelete: 'cascade' }),
-    rdjb: text('rdjb').notNull(),
-  },
-  (t) => [
-    primaryKey({ columns: [t.queryId, t.rdjb] }),
-    index('platform_query_title_scope_rdjb_query_idx').on(t.rdjb, t.queryId),
-  ],
-)
+export const platformCollectionUnfinished = sqliteTable('platform_collection_unfinished', {
+  collectionId: integer('collection_id').notNull().references(() => platformCollection.id, { onDelete: 'restrict' }),
+  ordinal: integer('ordinal').notNull(),
+  source: text('source'),
+  rdjb: text('rdjb'),
+  pageNo: integer('page_no'),
+}, t => [
+  primaryKey({ columns: [t.collectionId, t.ordinal] }),
+  check('platform_collection_unfinished_ordinal_ck', sql`typeof(${t.ordinal}) = 'integer' AND ${t.ordinal} BETWEEN 0 AND 9007199254740991`),
+  check('platform_collection_unfinished_page_ck', sql`${t.pageNo} IS NULL OR (typeof(${t.pageNo}) = 'integer' AND ${t.pageNo} BETWEEN 1 AND 9007199254740991)`),
+])
 
+export const platformCollectionCondition = sqliteTable('platform_collection_condition', {
+  collectionId: integer('collection_id').notNull().references(() => platformCollection.id, { onDelete: 'restrict' }),
+  name: text('name', { enum: ['name', 'uscc', 'combination', 'sqsj', 'rddqrq', 'whpcyear', 'whpc', 'szq', 'orderField', 'orderDirection'] }).notNull(),
+  valueKind: text('value_kind', { enum: ['absent', 'null', 'text', 'integer', 'real', 'boolean', 'array', 'object'] }).notNull(),
+  textValue: text('text_value'),
+  integerValue: integer('integer_value'),
+  witnessKind: text('witness_kind'),
+  witnessValue: exactCell('witness_value'),
+}, t => [
+  primaryKey({ columns: [t.collectionId, t.name] }),
+  check('platform_collection_condition_name_ck', sql`${t.name} IN ('name','uscc','combination','sqsj','rddqrq','whpcyear','whpc','szq','orderField','orderDirection')`),
+  check('platform_collection_condition_value_ck', sql`
+    (${t.valueKind} = 'text' AND ${t.textValue} IS NOT NULL AND typeof(${t.textValue}) = 'text' AND ${t.integerValue} IS NULL) OR
+    (${t.valueKind} = 'integer' AND ${t.textValue} IS NULL AND ${t.integerValue} IS NOT NULL AND typeof(${t.integerValue}) = 'integer' AND ${t.integerValue} BETWEEN -9007199254740991 AND 9007199254740991) OR
+    (${t.valueKind} = 'boolean' AND ${t.textValue} IS NULL AND ${t.integerValue} IS NOT NULL AND typeof(${t.integerValue}) = 'integer' AND ${t.integerValue} IN (0,1)) OR
+    (${t.valueKind} IN ('absent','null','real','array','object') AND ${t.textValue} IS NULL AND ${t.integerValue} IS NULL)
+  `),
+])
+
+export const platformQueryTitleScope = sqliteTable('platform_query_title_scope', {
+  collectionId: integer('collection_id').notNull().references(()=>platformCollection.id,{onDelete:'restrict'}),
+  rdjb: text('rdjb').notNull(),
+}, t=>[
+  primaryKey({columns:[t.collectionId,t.rdjb]}),
+  index('platform_query_title_scope_rdjb_collection_idx').on(t.rdjb,t.collectionId),
+  check('platform_query_title_scope_safe_id',sql`${t.collectionId} > 0 AND ${t.collectionId} <= 9007199254740991`),
+])
 /** Rows whose archived title JSON would make the legacy title predicate fail. */
 export const platformQueryTitleScopeError = sqliteTable('platform_query_title_scope_error', {
-  queryId: integer('query_id').primaryKey().references(() => platformQuery.id, { onDelete: 'cascade' }),
-})
+  collectionId: integer('collection_id').primaryKey().notNull().references(()=>platformCollection.id,{onDelete:'restrict'}),
+}, t=>[check('platform_query_title_scope_error_safe_id',sql`${t.collectionId} > 0 AND ${t.collectionId} <= 9007199254740991`)])
 
-/**
- * **平台接口关系记录**(契约 2)。一次查询返回的**每一条关联关系**各占一行。
- *
- * **同一信用代码返回的多条关联必须逐条保留**(这正是 `91330211255994457P` 案例:
- * 平台记录里明确写了经信局侧曾用名,要能匹配并展示**全部**关联)—— 所以用
- * `(query_id, sequence_no)` 做唯一键,而**不是**按企业或信用代码去重。
- *
- * `matchBasis`(匹配依据)记「这条为什么归到该企业」:`uscc`(统代)/ `alias`(曾用名)/
- * `manual`(人工确认)/ `none`(未匹配 —— `enterprise_id` 留空、`verification_status`
- * 为 `pending`,即「待核实」)。**没有模糊打分**:归属必须能指回一条可读的依据。
- *
- * ── 平台字段的落点(实测 `businessList` `rdjb=3` 的 6 条关联)──────────────────
- * 接口字段名 → 本表列:
- *  `id` → `relationKey`;`qymc` → `nameRaw`;`tyshxydm` → `usccRaw`;`szsfmc` → `province`;
- *  `cszt` → `status`;`whpc`(维护批次)→ `batch`;`sblx` → `declareKind`;
- *  `sqsj` → `appliedAt`;`personuuid`(列头为**认定批次**,值如 `第四批`)→ `awardBatchLabel`;
- *  `queryList` 的 `year` → `year`。
- *
- * ── 曾用名的原始证据就在这里 ──────────────────────────────────────────────
- * 平台**没有**独立「曾用名」列。同一 `tyshxydm` 下 `qymc` 不同的历史关联行**本身**
- * 就是曾用名证据(实测:`SQ332022062212391` 的 `qymc=宁波上航测绘有限公司`,
- * `SQ332024052128274` 的 `qymc=宁波上航测绘股份有限公司`,逐字段比对后**唯一**与名称
- * 有关的差异字段就是 `qymc`)。代理据此判断并确认,回填为 `enterprise_alias`。
- */
-export const platformRelation = sqliteTable(
-  'platform_relation',
-  {
-    id: integer('id').primaryKey({ autoIncrement: true }),
-    queryId: integer('query_id')
-      .notNull()
-      .references(() => platformQuery.id, { onDelete: 'cascade' }),
-    /** 关系序号:同一次查询内第几条(从 1 起)。**逐条保留**的载体。 */
-    sequenceNo: integer('sequence_no').notNull(),
-    /** 平台关联主键(`id`,如 `SQ332022062212391`)。可空(导出/异常响应可能没有)。 */
-    relationKey: text('relation_key'),
-    /** 匹配到的企业;无法判定时**留空**(不自动归并)。 */
-    enterpriseId: integer('enterprise_id').references(() => enterprise.id),
-    /** 原始字段(平台那一行/那一块的字段原样)。 */
-    rawFields: text('raw_fields', { mode: 'json' }).$type<Record<string, unknown>>(),
-    /** Derived only from rawFields.rdjb by SQLite triggers. */
-    titleRaw: text('title_raw'),
-    /** 源文本:关系里明确写出的经信局侧曾用名等原文。 */
-    sourceText: text('source_text'),
-    /** 统一社会信用代码(`tyshxydm`)。 */
-    usccRaw: text('uscc_raw'),
-    /** 企业名称(`qymc`)。同一 USCC 下 `qymc` 不同 ⇒ **曾用名证据**。 */
-    nameRaw: text('name_raw'),
-    /** 源文本中明确给出的曾用名(若有)。 */
-    aliasNameRaw: text('alias_name_raw'),
-    /** 所属省市名称(`szsfmc`)。 */
-    province: text('province'),
-    /** 存续状态(`cszt`,如「终审通过」「省已审」「待审核」)。 */
-    status: text('status'),
-    /** 维护批次(`whpc`,如 `2022-1` / `2025-1`)。 */
-    batch: text('batch'),
-    /**
-     * 申报类型(`sblx`):`apply` 申请 / `update` 更新 / `review` 复核。
-     * 非枚举字典外的取值原样入库(drizzle 的 enum 只是编译期约束)。
-     */
-    declareKind: text('declare_kind', { enum: ['apply', 'update', 'review'] }),
-    /** 申报时间(`sqsj`)。 */
-    appliedAt: text('applied_at'),
-    /** 认定批次(`personuuid`,值如 `第四批`);按「2018 + 批次序号」对应年份。 */
-    awardBatchLabel: text('award_batch_label'),
-    /** 申报记录年份(`queryList` 的 `year`)。 */
-    year: integer('year'),
-    /** 匹配依据:`uscc` / `alias` / `manual` / `none`。 */
-    matchBasis: text('match_basis', { enum: ['uscc', 'alias', 'manual', 'none'] })
-      .notNull()
-      .default('none'),
-    /** 核验状态:`confirmed` 已确认 / `pending` 待核实。 */
-    verificationStatus: text('verification_status', { enum: ['confirmed', 'pending'] })
-      .notNull()
-      .default('pending'),
-    createdAt: text('created_at')
-      .notNull()
-      .$defaultFn(() => new Date().toISOString()),
-  },
-  (t) => [
-    uniqueIndex('platform_relation_query_seq_uq').on(t.queryId, t.sequenceNo),
-    index('platform_relation_enterprise_idx').on(t.enterpriseId),
-    index('platform_relation_relation_key_idx').on(t.relationKey),
-    // #83 USCC filtering discovers query IDs without scanning original relation bodies.
-    index('platform_relation_uscc_query_idx').on(t.usccRaw, t.queryId),
-    index('platform_relation_title_query_idx').on(t.titleRaw, t.queryId),
-    index('platform_relation_current_candidate_cover_idx').on(t.queryId, t.sequenceNo, t.enterpriseId, t.usccRaw),
-  ],
-)
-
-/** Stable platform identity; never carries a mutable owner/title/current version. */
+/** Platform business identity, independently retained across observations. */
 export const platformBusinessRecord = sqliteTable('platform_business_record', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   interface: text('interface', { enum: ['business_list', 'apply_list', 'recognized_list'] }).notNull(),
@@ -812,40 +775,123 @@ export const platformBusinessRecordVersion = sqliteTable('platform_business_reco
   hashAlgorithm: text('hash_algorithm').notNull(),
   contentHash: text('content_hash').notNull(),
   canonicalRawJson: text('canonical_raw_json').notNull(),
+  /** Archive binding for the canonical version input. */
+  canonicalArchiveId: integer('canonical_archive_id').references((): AnySQLiteColumn => platformArchiveValue.id, { onDelete: 'restrict' }),
   createdAt: text('created_at').notNull().$defaultFn(() => new Date().toISOString()),
 }, t => [
   uniqueIndex('platform_business_version_hash_uq').on(t.recordId, t.hashAlgorithm, t.contentHash),
   uniqueIndex('platform_business_version_owner_uq').on(t.id, t.recordId),
+  index('platform_business_version_canonical_archive_idx').on(t.canonicalArchiveId),
 ])
 
-/** Additive mapping. All evidence/decisions continue to reference the original relation. */
-export const platformBusinessObservation = sqliteTable('platform_business_observation', {
-  relationId: integer('relation_id').primaryKey().references(() => platformRelation.id, { onDelete: 'restrict' }),
+/** Native observation fields shared by the source projections. */
+export function observationFields() { return {
+  pageId: integer('page_id').references(() => platformCollectionPage.id, { onDelete: 'restrict' }),
+  pageRowNo: integer('page_row_no'),
+  positionState: text('position_state', { enum: ['verified', 'unknown', 'conflict'] }),
+  /** Original relation_key, never canonical platformKey/raw.id. NULL before transfer is uncaptured. */
+  sourceRelationKey: text('source_relation_key'),
   recordId: integer('record_id').references(() => platformBusinessRecord.id, { onDelete: 'restrict' }),
   versionId: integer('version_id'),
-  identityState: text('identity_state', { enum: ['resolved', 'missing_key', 'conflict'] }).notNull(),
-  contentState: text('content_state', { enum: ['verified', 'unverifiable'] }).notNull(),
-  keySource: text('key_source', { enum: ['relation_key', 'raw_id', 'both', 'none'] }).notNull(),
-  projectionRuleVersion: text('projection_rule_version').notNull(),
-  inputFingerprint: text('input_fingerprint').notNull(),
-  indexedAt: text('indexed_at').notNull().$defaultFn(() => new Date().toISOString()),
+  identityState: text('identity_state', { enum: ['resolved', 'missing_key', 'conflict', 'not_indexed'] }).notNull(),
+  contentState: text('content_state', { enum: ['verified', 'unverifiable', 'not_indexed'] }).notNull(),
+  keySource: text('key_source', { enum: ['relation_key', 'raw_id', 'both', 'none'] }),
+  projectionRuleVersion: text('projection_rule_version'),
+  inputFingerprint: text('input_fingerprint'),
+  indexedAt: text('indexed_at').$defaultFn(() => new Date().toISOString()),
   batchId: integer('batch_id').references(() => importBatch.id, { onDelete: 'restrict' }),
-}, t => [
+} }
+export function observationConstraints(t: { [K in keyof ReturnType<typeof observationFields>]: AnySQLiteColumn } & { id: AnySQLiteColumn, collectionId: AnySQLiteColumn, sequenceNo: AnySQLiteColumn }, identity: AnySQLiteColumn) { return [
+  uniqueIndex('platform_observation_id_uq').on(t.id),
+  uniqueIndex('platform_observation_collection_sequence_uq').on(t.collectionId, t.sequenceNo),
+  index('platform_observation_position_idx').on(t.collectionId, t.pageId, t.sequenceNo),
+  ...[t.id, t.collectionId, t.sequenceNo, t.pageId, t.pageRowNo].map(c => check(`platform_observation_${c.name}_ck`, sql`${c} IS NULL OR (typeof(${c}) = 'integer' AND ${c} BETWEEN 1 AND 9007199254740991)`)),
+  check('platform_observation_position_state_ck', sql`${t.positionState} IS NULL OR ${t.positionState} IN ('verified','unknown','conflict')`),
+  check('platform_observation_source_key_ck', sql`${t.sourceRelationKey} IS NULL OR typeof(${t.sourceRelationKey}) = 'text'`),
+  check('platform_observation_mapping_ck', sql`(${t.id} IS NULL AND ${t.collectionId} IS NULL AND ${t.sequenceNo} IS NULL AND ${t.pageId} IS NULL AND ${t.pageRowNo} IS NULL AND ${t.positionState} IS NULL AND ${t.sourceRelationKey} IS NULL) OR (${t.id} IS NOT NULL AND ${t.collectionId} IS NOT NULL AND ${t.sequenceNo} IS NOT NULL AND ${t.positionState} IS NOT NULL AND (${t.pageRowNo} IS NULL OR ${t.pageId} IS NOT NULL))`),
   foreignKey({ columns: [t.versionId, t.recordId], foreignColumns: [platformBusinessRecordVersion.id, platformBusinessRecordVersion.recordId] }).onDelete('restrict'),
-  check('platform_business_observation_state_ck', sql`(${t.identityState} = 'resolved' AND ${t.recordId} IS NOT NULL) OR (${t.identityState} IN ('missing_key','conflict') AND ${t.recordId} IS NULL)`),
-  check('platform_business_observation_content_ck', sql`(${t.contentState} = 'verified' AND ${t.versionId} IS NOT NULL AND ${t.recordId} IS NOT NULL) OR (${t.contentState} = 'unverifiable' AND ${t.versionId} IS NULL)`),
-  index('platform_business_observation_record_idx').on(t.recordId, t.versionId, t.relationId),
-  index('platform_business_observation_version_idx').on(t.versionId, t.relationId),
+  check('platform_business_observation_state_ck', sql`(${t.identityState} = 'resolved' AND ${t.recordId} IS NOT NULL) OR (${t.identityState} IN ('missing_key','conflict','not_indexed') AND ${t.recordId} IS NULL)`),
+  check('platform_business_observation_content_ck', sql`(${t.contentState} = 'verified' AND ${t.versionId} IS NOT NULL AND ${t.recordId} IS NOT NULL) OR (${t.contentState} IN ('unverifiable','not_indexed') AND ${t.versionId} IS NULL)`),
+  // Explicit two-branch capture contract: IS/typeof make NULL CHECK outcomes impossible.
+  check('platform_observation_capture_ck', sql`(${t.identityState} = 'not_indexed' AND ${t.contentState} = 'not_indexed' AND ${t.recordId} IS NULL AND ${t.versionId} IS NULL AND ${t.keySource} IS NULL AND ${t.projectionRuleVersion} IS NULL AND ${t.inputFingerprint} IS NULL AND ${t.indexedAt} IS NULL) OR (${t.identityState} IN ('resolved','missing_key','conflict') AND ${t.contentState} IN ('verified','unverifiable') AND ${t.keySource} IS NOT NULL AND ${t.keySource} IN ('relation_key','raw_id','both','none') AND typeof(${t.projectionRuleVersion}) = 'text' AND typeof(${t.inputFingerprint}) = 'text' AND typeof(${t.indexedAt}) = 'text')`),
+  index('platform_business_observation_record_idx').on(t.recordId, t.versionId, identity),
+  index('platform_business_observation_version_idx').on(t.versionId, identity),
+] }
+export const platformBusinessObservation = sqliteTable('platform_business_observation', {
+  id: integer('id').primaryKey(),
+  collectionId: integer('collection_id').notNull().references(()=>platformCollection.id,{onDelete:'restrict'}),
+  sequenceNo: integer('sequence_no').notNull(),
+  ...observationFields(),
+  positionState: text('position_state',{enum:['verified','unknown','conflict']}).notNull(),
+  processExactOwnerId: integer('process_exact_owner_id'),
+  processExactState: text('process_exact_state', { enum: ['captured', 'uncaptured'] }),
+  processSqlFactTitleState: text('process_sql_fact_title_state', { enum: ['captured', 'uncaptured'] }),
+  applyExactOwnerId: integer('apply_exact_owner_id'),
+  applyExactState: text('apply_exact_state', { enum: ['captured', 'uncaptured'] }),
+  applySqlFactTitleState: text('apply_sql_fact_title_state', { enum: ['captured', 'uncaptured'] }),
+  candidateScopeMask: integer('candidate_scope_mask'),
+  candidateScopeRule: text('candidate_scope_rule'),
+  candidateScopeArchiveId: integer('candidate_scope_archive_id').references((): AnySQLiteColumn => platformArchiveValue.id, { onDelete: 'restrict' }),
+  candidateScopeRdjb: text('candidate_scope_rdjb'),
+  candidateScopeTitleCode: text('candidate_scope_title_code'),
+  candidateScopeSequenceNo: integer('candidate_scope_sequence_no'),
+  candidateScopeError: text('candidate_scope_error').default('not_captured'),
+  candidateScopeState: text('candidate_scope_state', { enum: ['uncaptured', 'captured', 'error'] }).notNull().default('uncaptured'),
+  witnessRule: text('witness_rule'),
+  witnessCollectionId: integer('witness_collection_id'),
+  witnessSequenceNo: integer('witness_sequence_no'),
+  witnessArchiveId: integer('witness_archive_id').references((): AnySQLiteColumn => platformArchiveValue.id, { onDelete: 'restrict' }),
+  witnessSha256: text('witness_sha256'),
+  witnessOrdinal: integer('witness_ordinal'),
+  witnessRdjbKind: text('witness_rdjb_kind'),
+  witnessRdjbValue: exactCell('witness_rdjb_value'),
+  witnessRdjbKey: text('witness_rdjb_key'),
+  witnessPageKind: text('witness_page_kind'),
+  witnessPageValue: exactCell('witness_page_value'),
+  witnessErrorName: text('witness_error_name'),
+  witnessError: text('witness_error'),
+  witnessState: text('witness_state').notNull().default('uncaptured'),
+},t=>observationConstraints(t,t.id))
+/** Append-only enterprise assignments for an independent observation. */
+export function definePlatformObservationAssignment(observationId: () => AnySQLiteColumn) { return sqliteTable('platform_observation_assignment', {
+  observationId: integer('observation_id').notNull().references(observationId, { onDelete: 'restrict' }),
+  revision: integer('revision').notNull(),
+  enterpriseId: integer('enterprise_id').references(() => enterprise.id, { onDelete: 'restrict' }),
+  matchBasis: text('match_basis', { enum: ['uscc', 'alias', 'manual', 'none'] }).notNull(),
+  verificationStatus: text('verification_status', { enum: ['confirmed', 'pending'] }).notNull(),
+  usccRaw: text('uscc_raw'),
+  nameRaw: text('name_raw'),
+  aliasNameRaw: text('alias_name_raw'),
+  actor: text('actor', { mode: 'json' }).$type<{ type: 'user' | 'agent'; id: string } | null>(),
+  basis: text('basis'),
+  commandReceiptId: integer('command_receipt_id'),
+  recordedAt: text('recorded_at'),
+  origin: text('origin', { enum: ['migrated_current', 'command'] }).notNull(),
+}, t => [
+  primaryKey({ columns: [t.observationId, t.revision] }),
+  index('platform_assignment_enterprise_idx').on(t.enterpriseId, t.observationId, t.revision),
+  index('platform_assignment_uscc_idx').on(t.usccRaw, t.observationId),
+  ...[t.observationId, t.revision, t.enterpriseId, t.commandReceiptId].map(c => check(`platform_assignment_${c.name}_ck`, sql`${c} IS NULL OR (typeof(${c}) = 'integer' AND ${c} BETWEEN 1 AND 9007199254740991)`)),
+  ...[t.usccRaw, t.nameRaw, t.aliasNameRaw, t.actor, t.basis, t.recordedAt].map(c => check(`platform_assignment_${c.name}_ck`, sql`${c} IS NULL OR typeof(${c}) = 'text'`)),
+  check('platform_assignment_match_ck', sql`${t.matchBasis} IN ('uscc','alias','manual','none')`),
+  check('platform_assignment_verification_ck', sql`${t.verificationStatus} IN ('confirmed','pending')`),
+  check('platform_assignment_origin_ck', sql`(${t.origin} = 'migrated_current' AND ${t.revision} = 1 AND ${t.actor} IS NULL AND ${t.recordedAt} IS NULL AND ${t.commandReceiptId} IS NULL) OR ${t.origin} = 'command'`),
 ])
+}
+export const platformObservationAssignment = definePlatformObservationAssignment(() => platformBusinessObservation.id)
 
 /**
  * Source-specific typed projection for apply_list (upstream queryList). One row per
  * immutable content version; the composite owner FK prevents a version/record mismatch.
  * Fields are copied from the archived raw row only (null when absent), never inferred.
  */
-export const platformApplyProjection = sqliteTable('platform_apply_projection', {
-  versionId: integer('version_id').primaryKey().references(() => platformBusinessRecordVersion.id, { onDelete: 'restrict' }),
-  recordId: integer('record_id').notNull().references(() => platformBusinessRecord.id, { onDelete: 'restrict' }),
+export function applyProjectionFields(observationId: () => AnySQLiteColumn) { return {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  ...applyStoredFields(),
+  observationId: integer('observation_id').references(observationId, { onDelete: 'restrict' }),
+  basis: text('basis', { enum: ['verified_raw', 'observation_reconciliation', 'unavailable'] }).notNull().default('verified_raw'),
+  versionId: integer('version_id').references(() => platformBusinessRecordVersion.id, { onDelete: 'restrict' }),
+  recordId: integer('record_id').references(() => platformBusinessRecord.id, { onDelete: 'restrict' }),
   /** Raw sblx after trimming; unknown dictionary values are retained. */
   declareKind: text('declare_kind'),
   /** Explicit positive decimal-integer source year only. */
@@ -858,9 +904,117 @@ export const platformApplyProjection = sqliteTable('platform_apply_projection', 
   titleRaw: text('title_raw'),
   nameRaw: text('name_raw'),
   usccRaw: text('uscc_raw'),
+  sourceTitleKind: text('source_title_kind', { enum: ['absent','null','text','number','boolean','array','object','invalid'] }),
+  sourceTitleText: text('source_title_text'),
+  sourceTitleNumberText: text('source_title_number_text'),
+  sourceTitleBoolean: integer('source_title_boolean'),
+  sourceTitleRuleVersion: text('source_title_rule_version'),
+  sourceArchiveId: integer('source_archive_id').references(() => platformArchiveValue.id, { onDelete: 'restrict' }),
+  parseState: text('parse_state', { enum: ['valid','invalid','absent'] }),
+  storedProvinceKind: text('stored_province_kind', { enum: ['absent','null','text','number','boolean','array','object','invalid'] }),
+  storedProvince: text('stored_province'),
+  parsedProvinceKind: text('parsed_province_kind', { enum: ['absent','null','text','number','boolean','array','object','invalid'] }),
+  parsedProvince: text('parsed_province'),
+  reconciledProvince: text('reconciled_province'),
+  provinceConflict: integer('province_conflict'),
+  storedStatusKind: text('stored_status_kind', { enum: ['absent','null','text','number','boolean','array','object','invalid'] }),
+  storedStatus: text('stored_status'),
+  parsedStatusKind: text('parsed_status_kind', { enum: ['absent','null','text','number','boolean','array','object','invalid'] }),
+  parsedStatus: text('parsed_status'),
+  reconciledStatus: text('reconciled_status'),
+  statusConflict: integer('status_conflict'),
+  storedBatchKind: text('stored_batch_kind', { enum: ['absent','null','text','number','boolean','array','object','invalid'] }),
+  storedBatch: text('stored_batch'),
+  parsedBatchKind: text('parsed_batch_kind', { enum: ['absent','null','text','number','boolean','array','object','invalid'] }),
+  parsedBatch: text('parsed_batch'),
+  reconciledBatch: text('reconciled_batch'),
+  batchConflict: integer('batch_conflict'),
+  storedDeclareKindKind: text('stored_declare_kind_kind', { enum: ['absent','null','text','number','boolean','array','object','invalid'] }),
+  storedDeclareKind: text('stored_declare_kind'),
+  parsedDeclareKindKind: text('parsed_declare_kind_kind', { enum: ['absent','null','text','number','boolean','array','object','invalid'] }),
+  parsedDeclareKind: text('parsed_declare_kind'),
+  reconciledDeclareKind: text('reconciled_declare_kind'),
+  declareKindConflict: integer('declare_kind_conflict'),
+  storedAppliedAtKind: text('stored_applied_at_kind', { enum: ['absent','null','text','number','boolean','array','object','invalid'] }),
+  storedAppliedAt: text('stored_applied_at'),
+  parsedAppliedAtKind: text('parsed_applied_at_kind', { enum: ['absent','null','text','number','boolean','array','object','invalid'] }),
+  parsedAppliedAt: text('parsed_applied_at'),
+  reconciledAppliedAt: text('reconciled_applied_at'),
+  appliedAtConflict: integer('applied_at_conflict'),
+  storedAwardBatchLabelKind: text('stored_award_batch_label_kind', { enum: ['absent','null','text','number','boolean','array','object','invalid'] }),
+  storedAwardBatchLabel: text('stored_award_batch_label'),
+  parsedAwardBatchLabelKind: text('parsed_award_batch_label_kind', { enum: ['absent','null','text','number','boolean','array','object','invalid'] }),
+  parsedAwardBatchLabel: text('parsed_award_batch_label'),
+  reconciledAwardBatchLabel: text('reconciled_award_batch_label'),
+  awardBatchLabelConflict: integer('award_batch_label_conflict'),
+  storedYearKind: text('stored_year_kind', { enum: ['absent','null','text','number','boolean','array','object','invalid'] }),
+  storedYear: integer('stored_year'),
+  parsedYearKind: text('parsed_year_kind', { enum: ['absent','null','text','number','boolean','array','object','invalid'] }),
+  parsedYear: integer('parsed_year'),
+  reconciledYear: integer('reconciled_year'),
+  yearConflict: integer('year_conflict'),
   ruleVersion: text('rule_version').notNull(),
   createdAt: text('created_at').notNull().$defaultFn(() => new Date().toISOString()),
+} }
+export function definePlatformApplyProjection(observationId: () => AnySQLiteColumn) { return sqliteTable('platform_apply_projection', {
+  ...applyProjectionFields(observationId),
 }, t => [
+  uniqueIndex('platform_apply_projection_version_uq').on(t.versionId),
+  uniqueIndex('platform_apply_projection_observation_uq').on(t.observationId),
+  index('platform_apply_projection_source_archive_idx').on(t.sourceArchiveId),
+  check('platform_apply_projection_owner_ck', sql`( ${t.versionId} IS NOT NULL AND ${t.recordId} IS NOT NULL AND ${t.observationId} IS NULL AND ${t.basis} = 'verified_raw') OR (${t.versionId} IS NULL AND ${t.recordId} IS NULL AND ${t.observationId} IS NOT NULL AND ${t.basis} IN ('observation_reconciliation','unavailable'))`),
+  check('platform_apply_projection_id_ck', sql`${t.id} IS NULL OR (typeof(${t.id}) = 'integer' AND ${t.id} BETWEEN 1 AND 9007199254740991)`),
+  check('platform_apply_projection_version_id_ck', sql`${t.versionId} IS NULL OR (typeof(${t.versionId}) = 'integer' AND ${t.versionId} BETWEEN 1 AND 9007199254740991)`),
+  check('platform_apply_projection_record_id_ck', sql`${t.recordId} IS NULL OR (typeof(${t.recordId}) = 'integer' AND ${t.recordId} BETWEEN 1 AND 9007199254740991)`),
+  check('platform_apply_projection_observation_id_ck', sql`${t.observationId} IS NULL OR (typeof(${t.observationId}) = 'integer' AND ${t.observationId} BETWEEN 1 AND 9007199254740991)`),
+  check('platform_apply_projection_source_archive_id_ck', sql`${t.sourceArchiveId} IS NULL OR (typeof(${t.sourceArchiveId}) = 'integer' AND ${t.sourceArchiveId} BETWEEN 1 AND 9007199254740991)`),
+  check('platform_apply_projection_capture_ck', sql`(${t.observationId} IS NULL AND ${t.sourceTitleKind} IS NULL AND ${t.sourceTitleText} IS NULL AND ${t.sourceTitleNumberText} IS NULL AND ${t.sourceTitleBoolean} IS NULL AND ${t.sourceTitleRuleVersion} IS NULL AND ${t.sourceArchiveId} IS NULL AND ${t.parseState} IS NULL AND ${t.storedProvinceKind} IS NULL AND ${t.storedProvince} IS NULL AND ${t.parsedProvinceKind} IS NULL AND ${t.parsedProvince} IS NULL AND ${t.reconciledProvince} IS NULL AND ${t.provinceConflict} IS NULL AND ${t.storedStatusKind} IS NULL AND ${t.storedStatus} IS NULL AND ${t.parsedStatusKind} IS NULL AND ${t.parsedStatus} IS NULL AND ${t.reconciledStatus} IS NULL AND ${t.statusConflict} IS NULL AND ${t.storedBatchKind} IS NULL AND ${t.storedBatch} IS NULL AND ${t.parsedBatchKind} IS NULL AND ${t.parsedBatch} IS NULL AND ${t.reconciledBatch} IS NULL AND ${t.batchConflict} IS NULL AND ${t.storedDeclareKindKind} IS NULL AND ${t.storedDeclareKind} IS NULL AND ${t.parsedDeclareKindKind} IS NULL AND ${t.parsedDeclareKind} IS NULL AND ${t.reconciledDeclareKind} IS NULL AND ${t.declareKindConflict} IS NULL AND ${t.storedAppliedAtKind} IS NULL AND ${t.storedAppliedAt} IS NULL AND ${t.parsedAppliedAtKind} IS NULL AND ${t.parsedAppliedAt} IS NULL AND ${t.reconciledAppliedAt} IS NULL AND ${t.appliedAtConflict} IS NULL AND ${t.storedAwardBatchLabelKind} IS NULL AND ${t.storedAwardBatchLabel} IS NULL AND ${t.parsedAwardBatchLabelKind} IS NULL AND ${t.parsedAwardBatchLabel} IS NULL AND ${t.reconciledAwardBatchLabel} IS NULL AND ${t.awardBatchLabelConflict} IS NULL AND ${t.storedYearKind} IS NULL AND ${t.storedYear} IS NULL AND ${t.parsedYearKind} IS NULL AND ${t.parsedYear} IS NULL AND ${t.reconciledYear} IS NULL AND ${t.yearConflict} IS NULL) OR (${t.observationId} IS NOT NULL AND ${t.sourceTitleKind} IS NOT NULL AND ${t.sourceTitleRuleVersion} IS NOT NULL AND ${t.sourceArchiveId} IS NOT NULL AND ${t.parseState} IS NOT NULL AND ${t.storedProvinceKind} IS NOT NULL AND ${t.parsedProvinceKind} IS NOT NULL AND ${t.storedStatusKind} IS NOT NULL AND ${t.parsedStatusKind} IS NOT NULL AND ${t.storedBatchKind} IS NOT NULL AND ${t.parsedBatchKind} IS NOT NULL AND ${t.storedDeclareKindKind} IS NOT NULL AND ${t.parsedDeclareKindKind} IS NOT NULL AND ${t.storedAppliedAtKind} IS NOT NULL AND ${t.parsedAppliedAtKind} IS NOT NULL AND ${t.storedAwardBatchLabelKind} IS NOT NULL AND ${t.parsedAwardBatchLabelKind} IS NOT NULL AND ${t.storedYearKind} IS NOT NULL AND ${t.parsedYearKind} IS NOT NULL AND ${t.provinceConflict} IS NOT NULL AND ${t.statusConflict} IS NOT NULL AND ${t.batchConflict} IS NOT NULL AND ${t.declareKindConflict} IS NOT NULL AND ${t.appliedAtConflict} IS NOT NULL AND ${t.awardBatchLabelConflict} IS NOT NULL AND ${t.yearConflict} IS NOT NULL)`),
+  check('platform_apply_projection_title_ck', sql`${t.sourceTitleKind} IS NULL OR (${t.sourceTitleKind} IN ('absent','null','array','object','invalid') AND ${t.sourceTitleText} IS NULL AND ${t.sourceTitleNumberText} IS NULL AND ${t.sourceTitleBoolean} IS NULL) OR (${t.sourceTitleKind} = 'text' AND typeof(${t.sourceTitleText}) = 'text' AND ${t.sourceTitleNumberText} IS NULL AND ${t.sourceTitleBoolean} IS NULL) OR (${t.sourceTitleKind} = 'number' AND typeof(${t.sourceTitleNumberText}) = 'text' AND length(${t.sourceTitleNumberText}) > 0 AND trim(${t.sourceTitleNumberText}) = ${t.sourceTitleNumberText} AND CASE WHEN json_valid(${t.sourceTitleNumberText}) THEN json_type(${t.sourceTitleNumberText}) IN ('integer','real') ELSE 0 END AND ${t.sourceTitleText} IS NULL AND ${t.sourceTitleBoolean} IS NULL) OR (${t.sourceTitleKind} = 'boolean' AND typeof(${t.sourceTitleBoolean}) = 'integer' AND ${t.sourceTitleBoolean} IN (0,1) AND ${t.sourceTitleText} IS NULL AND ${t.sourceTitleNumberText} IS NULL)`),
+  check('platform_apply_projection_parse_ck', sql`${t.parseState} IS NULL OR (${t.parseState} IN ('valid','invalid','absent') AND ((${t.basis} = 'unavailable') = (${t.parseState} <> 'valid')))`),
+  check('platform_apply_projection_rule_ck', sql`${t.sourceTitleRuleVersion} IS NULL OR (typeof(${t.sourceTitleRuleVersion}) = 'text' AND length(trim(${t.sourceTitleRuleVersion})) > 0)`),
+  check('platform_apply_projection_stored_province_kind_ck', sql`${t.storedProvinceKind} IS NULL OR (${t.storedProvinceKind} IN ('absent','null','text','number','boolean','array','object','invalid') AND (${t.storedProvinceKind} NOT IN ('absent','null','array','object','invalid','boolean') OR ${t.storedProvince} IS NULL))`),
+  check('platform_apply_projection_parsed_province_kind_ck', sql`${t.parsedProvinceKind} IS NULL OR (${t.parsedProvinceKind} IN ('absent','null','text','number','boolean','array','object','invalid') AND (${t.parsedProvinceKind} NOT IN ('absent','null','array','object','invalid','boolean') OR ${t.parsedProvince} IS NULL))`),
+  check('platform_apply_projection_stored_province_ck', sql`${t.storedProvince} IS NULL OR (typeof(${t.storedProvince}) = 'text')`),
+  check('platform_apply_projection_parsed_province_ck', sql`${t.parsedProvince} IS NULL OR (typeof(${t.parsedProvince}) = 'text')`),
+  check('platform_apply_projection_reconciled_province_ck', sql`${t.reconciledProvince} IS NULL OR (typeof(${t.reconciledProvince}) = 'text')`),
+  check('platform_apply_projection_province_reconcile_ck', sql`${t.observationId} IS NULL OR (typeof(${t.provinceConflict}) = 'integer' AND ${t.provinceConflict} = (${t.storedProvince} IS NOT NULL AND ${t.parsedProvince} IS NOT NULL AND ${t.storedProvince} <> ${t.parsedProvince}) AND ${t.reconciledProvince} IS (CASE WHEN ${t.provinceConflict} = 1 THEN NULL ELSE coalesce(${t.storedProvince},${t.parsedProvince}) END))`),
+  check('platform_apply_projection_stored_status_kind_ck', sql`${t.storedStatusKind} IS NULL OR (${t.storedStatusKind} IN ('absent','null','text','number','boolean','array','object','invalid') AND (${t.storedStatusKind} NOT IN ('absent','null','array','object','invalid','boolean') OR ${t.storedStatus} IS NULL))`),
+  check('platform_apply_projection_parsed_status_kind_ck', sql`${t.parsedStatusKind} IS NULL OR (${t.parsedStatusKind} IN ('absent','null','text','number','boolean','array','object','invalid') AND (${t.parsedStatusKind} NOT IN ('absent','null','array','object','invalid','boolean') OR ${t.parsedStatus} IS NULL))`),
+  check('platform_apply_projection_stored_status_ck', sql`${t.storedStatus} IS NULL OR (typeof(${t.storedStatus}) = 'text')`),
+  check('platform_apply_projection_parsed_status_ck', sql`${t.parsedStatus} IS NULL OR (typeof(${t.parsedStatus}) = 'text')`),
+  check('platform_apply_projection_reconciled_status_ck', sql`${t.reconciledStatus} IS NULL OR (typeof(${t.reconciledStatus}) = 'text')`),
+  check('platform_apply_projection_status_reconcile_ck', sql`${t.observationId} IS NULL OR (typeof(${t.statusConflict}) = 'integer' AND ${t.statusConflict} = (${t.storedStatus} IS NOT NULL AND ${t.parsedStatus} IS NOT NULL AND ${t.storedStatus} <> ${t.parsedStatus}) AND ${t.reconciledStatus} IS (CASE WHEN ${t.statusConflict} = 1 THEN NULL ELSE coalesce(${t.storedStatus},${t.parsedStatus}) END))`),
+  check('platform_apply_projection_stored_batch_kind_ck', sql`${t.storedBatchKind} IS NULL OR (${t.storedBatchKind} IN ('absent','null','text','number','boolean','array','object','invalid') AND (${t.storedBatchKind} NOT IN ('absent','null','array','object','invalid','boolean') OR ${t.storedBatch} IS NULL))`),
+  check('platform_apply_projection_parsed_batch_kind_ck', sql`${t.parsedBatchKind} IS NULL OR (${t.parsedBatchKind} IN ('absent','null','text','number','boolean','array','object','invalid') AND (${t.parsedBatchKind} NOT IN ('absent','null','array','object','invalid','boolean') OR ${t.parsedBatch} IS NULL))`),
+  check('platform_apply_projection_stored_batch_ck', sql`${t.storedBatch} IS NULL OR (typeof(${t.storedBatch}) = 'text')`),
+  check('platform_apply_projection_parsed_batch_ck', sql`${t.parsedBatch} IS NULL OR (typeof(${t.parsedBatch}) = 'text')`),
+  check('platform_apply_projection_reconciled_batch_ck', sql`${t.reconciledBatch} IS NULL OR (typeof(${t.reconciledBatch}) = 'text')`),
+  check('platform_apply_projection_batch_reconcile_ck', sql`${t.observationId} IS NULL OR (typeof(${t.batchConflict}) = 'integer' AND ${t.batchConflict} = (${t.storedBatch} IS NOT NULL AND ${t.parsedBatch} IS NOT NULL AND ${t.storedBatch} <> ${t.parsedBatch}) AND ${t.reconciledBatch} IS (CASE WHEN ${t.batchConflict} = 1 THEN NULL ELSE coalesce(${t.storedBatch},${t.parsedBatch}) END))`),
+  check('platform_apply_projection_stored_declare_kind_kind_ck', sql`${t.storedDeclareKindKind} IS NULL OR (${t.storedDeclareKindKind} IN ('absent','null','text','number','boolean','array','object','invalid') AND (${t.storedDeclareKindKind} NOT IN ('absent','null','array','object','invalid','boolean') OR ${t.storedDeclareKind} IS NULL))`),
+  check('platform_apply_projection_parsed_declare_kind_kind_ck', sql`${t.parsedDeclareKindKind} IS NULL OR (${t.parsedDeclareKindKind} IN ('absent','null','text','number','boolean','array','object','invalid') AND (${t.parsedDeclareKindKind} NOT IN ('absent','null','array','object','invalid','boolean') OR ${t.parsedDeclareKind} IS NULL))`),
+  check('platform_apply_projection_stored_declare_kind_ck', sql`${t.storedDeclareKind} IS NULL OR (typeof(${t.storedDeclareKind}) = 'text')`),
+  check('platform_apply_projection_parsed_declare_kind_ck', sql`${t.parsedDeclareKind} IS NULL OR (typeof(${t.parsedDeclareKind}) = 'text')`),
+  check('platform_apply_projection_reconciled_declare_kind_ck', sql`${t.reconciledDeclareKind} IS NULL OR (typeof(${t.reconciledDeclareKind}) = 'text')`),
+  check('platform_apply_projection_declare_kind_reconcile_ck', sql`${t.observationId} IS NULL OR (typeof(${t.declareKindConflict}) = 'integer' AND ${t.declareKindConflict} = (${t.storedDeclareKind} IS NOT NULL AND ${t.parsedDeclareKind} IS NOT NULL AND ${t.storedDeclareKind} <> ${t.parsedDeclareKind}) AND ${t.reconciledDeclareKind} IS (CASE WHEN ${t.declareKindConflict} = 1 THEN NULL ELSE coalesce(${t.storedDeclareKind},${t.parsedDeclareKind}) END))`),
+  check('platform_apply_projection_stored_applied_at_kind_ck', sql`${t.storedAppliedAtKind} IS NULL OR (${t.storedAppliedAtKind} IN ('absent','null','text','number','boolean','array','object','invalid') AND (${t.storedAppliedAtKind} NOT IN ('absent','null','array','object','invalid','boolean') OR ${t.storedAppliedAt} IS NULL))`),
+  check('platform_apply_projection_parsed_applied_at_kind_ck', sql`${t.parsedAppliedAtKind} IS NULL OR (${t.parsedAppliedAtKind} IN ('absent','null','text','number','boolean','array','object','invalid') AND (${t.parsedAppliedAtKind} NOT IN ('absent','null','array','object','invalid','boolean') OR ${t.parsedAppliedAt} IS NULL))`),
+  check('platform_apply_projection_stored_applied_at_ck', sql`${t.storedAppliedAt} IS NULL OR (typeof(${t.storedAppliedAt}) = 'text')`),
+  check('platform_apply_projection_parsed_applied_at_ck', sql`${t.parsedAppliedAt} IS NULL OR (typeof(${t.parsedAppliedAt}) = 'text')`),
+  check('platform_apply_projection_reconciled_applied_at_ck', sql`${t.reconciledAppliedAt} IS NULL OR (typeof(${t.reconciledAppliedAt}) = 'text')`),
+  check('platform_apply_projection_applied_at_reconcile_ck', sql`${t.observationId} IS NULL OR (typeof(${t.appliedAtConflict}) = 'integer' AND ${t.appliedAtConflict} = (${t.storedAppliedAt} IS NOT NULL AND ${t.parsedAppliedAt} IS NOT NULL AND ${t.storedAppliedAt} <> ${t.parsedAppliedAt}) AND ${t.reconciledAppliedAt} IS (CASE WHEN ${t.appliedAtConflict} = 1 THEN NULL ELSE coalesce(${t.storedAppliedAt},${t.parsedAppliedAt}) END))`),
+  check('platform_apply_projection_stored_award_batch_label_kind_ck', sql`${t.storedAwardBatchLabelKind} IS NULL OR (${t.storedAwardBatchLabelKind} IN ('absent','null','text','number','boolean','array','object','invalid') AND (${t.storedAwardBatchLabelKind} NOT IN ('absent','null','array','object','invalid','boolean') OR ${t.storedAwardBatchLabel} IS NULL))`),
+  check('platform_apply_projection_parsed_award_batch_label_kind_ck', sql`${t.parsedAwardBatchLabelKind} IS NULL OR (${t.parsedAwardBatchLabelKind} IN ('absent','null','text','number','boolean','array','object','invalid') AND (${t.parsedAwardBatchLabelKind} NOT IN ('absent','null','array','object','invalid','boolean') OR ${t.parsedAwardBatchLabel} IS NULL))`),
+  check('platform_apply_projection_stored_award_batch_label_ck', sql`${t.storedAwardBatchLabel} IS NULL OR (typeof(${t.storedAwardBatchLabel}) = 'text')`),
+  check('platform_apply_projection_parsed_award_batch_label_ck', sql`${t.parsedAwardBatchLabel} IS NULL OR (typeof(${t.parsedAwardBatchLabel}) = 'text')`),
+  check('platform_apply_projection_reconciled_award_batch_label_ck', sql`${t.reconciledAwardBatchLabel} IS NULL OR (typeof(${t.reconciledAwardBatchLabel}) = 'text')`),
+  check('platform_apply_projection_award_batch_label_reconcile_ck', sql`${t.observationId} IS NULL OR (typeof(${t.awardBatchLabelConflict}) = 'integer' AND ${t.awardBatchLabelConflict} = (${t.storedAwardBatchLabel} IS NOT NULL AND ${t.parsedAwardBatchLabel} IS NOT NULL AND ${t.storedAwardBatchLabel} <> ${t.parsedAwardBatchLabel}) AND ${t.reconciledAwardBatchLabel} IS (CASE WHEN ${t.awardBatchLabelConflict} = 1 THEN NULL ELSE coalesce(${t.storedAwardBatchLabel},${t.parsedAwardBatchLabel}) END))`),
+  check('platform_apply_projection_stored_year_kind_ck', sql`${t.storedYearKind} IS NULL OR (${t.storedYearKind} IN ('absent','null','text','number','boolean','array','object','invalid') AND (${t.storedYearKind} NOT IN ('absent','null','array','object','invalid','boolean') OR ${t.storedYear} IS NULL))`),
+  check('platform_apply_projection_parsed_year_kind_ck', sql`${t.parsedYearKind} IS NULL OR (${t.parsedYearKind} IN ('absent','null','text','number','boolean','array','object','invalid') AND (${t.parsedYearKind} NOT IN ('absent','null','array','object','invalid','boolean') OR ${t.parsedYear} IS NULL))`),
+  check('platform_apply_projection_stored_year_ck', sql`${t.storedYear} IS NULL OR (typeof(${t.storedYear}) = 'integer' AND ${t.storedYear} BETWEEN -9007199254740991 AND 9007199254740991)`),
+  check('platform_apply_projection_parsed_year_ck', sql`${t.parsedYear} IS NULL OR (typeof(${t.parsedYear}) = 'integer' AND ${t.parsedYear} BETWEEN -9007199254740991 AND 9007199254740991)`),
+  check('platform_apply_projection_reconciled_year_ck', sql`${t.reconciledYear} IS NULL OR (typeof(${t.reconciledYear}) = 'integer' AND ${t.reconciledYear} BETWEEN -9007199254740991 AND 9007199254740991)`),
+  check('platform_apply_projection_year_reconcile_ck', sql`${t.observationId} IS NULL OR (typeof(${t.yearConflict}) = 'integer' AND ${t.yearConflict} = (${t.storedYear} IS NOT NULL AND ${t.parsedYear} IS NOT NULL AND ${t.storedYear} <> ${t.parsedYear}) AND ${t.reconciledYear} IS (CASE WHEN ${t.yearConflict} = 1 THEN NULL ELSE coalesce(${t.storedYear},${t.parsedYear}) END))`),
+
   foreignKey({ columns: [t.versionId, t.recordId], foreignColumns: [platformBusinessRecordVersion.id, platformBusinessRecordVersion.recordId] }).onDelete('restrict'),
   index('platform_apply_projection_record_idx').on(t.recordId),
   index('platform_apply_projection_year_idx').on(t.declarationYear),
@@ -870,6 +1024,8 @@ export const platformApplyProjection = sqliteTable('platform_apply_projection', 
   index('platform_apply_projection_uscc_idx').on(t.usccRaw),
   index('platform_apply_projection_title_version_idx').on(t.titleRaw, t.versionId),
 ])
+}
+export const platformApplyProjection = definePlatformApplyProjection(() => platformBusinessObservation.id)
 
 /**
  * Source-specific typed projection for business_list (upstream businessList). One row
@@ -877,9 +1033,13 @@ export const platformApplyProjection = sqliteTable('platform_apply_projection', 
  * mismatch. Fields are copied from the archived raw row only (null when absent),
  * never inferred. Query title scope is not a row fact and is not stored here.
  */
-export const platformBusinessProjection = sqliteTable('platform_business_projection', {
-  versionId: integer('version_id').primaryKey().references(() => platformBusinessRecordVersion.id, { onDelete: 'restrict' }),
-  recordId: integer('record_id').notNull().references(() => platformBusinessRecord.id, { onDelete: 'restrict' }),
+export function businessProjectionFields(observationId: () => AnySQLiteColumn) { return {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  ...processStoredFields(),
+  observationId: integer('observation_id').references(observationId, { onDelete: 'restrict' }),
+  basis: text('basis', { enum: ['verified_raw', 'observation_reconciliation', 'unavailable'] }).notNull().default('verified_raw'),
+  versionId: integer('version_id').references(() => platformBusinessRecordVersion.id, { onDelete: 'restrict' }),
+  recordId: integer('record_id').references(() => platformBusinessRecord.id, { onDelete: 'restrict' }),
   /** Raw sblx after trimming; unknown dictionary values are retained. */
   declareKind: text('declare_kind'),
   /** Explicit positive decimal-integer source year only. */
@@ -898,9 +1058,115 @@ export const platformBusinessProjection = sqliteTable('platform_business_project
   titleRaw: text('title_raw'),
   nameRaw: text('name_raw'),
   usccRaw: text('uscc_raw'),
+  sourceTitleKind: text('source_title_kind', { enum: ['absent','null','text','number','boolean','array','object','invalid'] }),
+  sourceTitleText: text('source_title_text'),
+  sourceTitleNumberText: text('source_title_number_text'),
+  sourceTitleBoolean: integer('source_title_boolean'),
+  sourceTitleRuleVersion: text('source_title_rule_version'),
+  sourceArchiveId: integer('source_archive_id').references(() => platformArchiveValue.id, { onDelete: 'restrict' }),
+  parseState: text('parse_state', { enum: ['valid','invalid','absent'] }),
+  storedProvinceKind: text('stored_province_kind', { enum: ['absent','null','text','number','boolean','array','object','invalid'] }),
+  storedProvince: text('stored_province'),
+  parsedProvinceKind: text('parsed_province_kind', { enum: ['absent','null','text','number','boolean','array','object','invalid'] }),
+  parsedProvince: text('parsed_province'),
+  reconciledProvince: text('reconciled_province'),
+  provinceConflict: integer('province_conflict'),
+  storedStatusKind: text('stored_status_kind', { enum: ['absent','null','text','number','boolean','array','object','invalid','blob'] }),
+  storedStatus: businessStatusCell('stored_status'),
+  parsedStatusKind: text('parsed_status_kind', { enum: ['absent','null','text','number','boolean','array','object','invalid'] }),
+  parsedStatus: text('parsed_status'),
+  reconciledStatus: businessStatusCell('reconciled_status'),
+  statusConflict: integer('status_conflict'),
+  storedBatchKind: text('stored_batch_kind', { enum: ['absent','null','text','number','boolean','array','object','invalid'] }),
+  storedBatch: text('stored_batch'),
+  parsedBatchKind: text('parsed_batch_kind', { enum: ['absent','null','text','number','boolean','array','object','invalid'] }),
+  parsedBatch: text('parsed_batch'),
+  reconciledBatch: text('reconciled_batch'),
+  batchConflict: integer('batch_conflict'),
+  storedDeclareKindKind: text('stored_declare_kind_kind', { enum: ['absent','null','text','number','boolean','array','object','invalid'] }),
+  storedDeclareKind: text('stored_declare_kind'),
+  parsedDeclareKindKind: text('parsed_declare_kind_kind', { enum: ['absent','null','text','number','boolean','array','object','invalid'] }),
+  parsedDeclareKind: text('parsed_declare_kind'),
+  reconciledDeclareKind: text('reconciled_declare_kind'),
+  declareKindConflict: integer('declare_kind_conflict'),
+  storedAppliedAtKind: text('stored_applied_at_kind', { enum: ['absent','null','text','number','boolean','array','object','invalid'] }),
+  storedAppliedAt: text('stored_applied_at'),
+  parsedAppliedAtKind: text('parsed_applied_at_kind', { enum: ['absent','null','text','number','boolean','array','object','invalid'] }),
+  parsedAppliedAt: text('parsed_applied_at'),
+  reconciledAppliedAt: text('reconciled_applied_at'),
+  appliedAtConflict: integer('applied_at_conflict'),
+  storedAwardBatchLabelKind: text('stored_award_batch_label_kind', { enum: ['absent','null','text','number','boolean','array','object','invalid'] }),
+  storedAwardBatchLabel: text('stored_award_batch_label'),
+  parsedAwardBatchLabelKind: text('parsed_award_batch_label_kind', { enum: ['absent','null','text','number','boolean','array','object','invalid'] }),
+  parsedAwardBatchLabel: text('parsed_award_batch_label'),
+  reconciledAwardBatchLabel: text('reconciled_award_batch_label'),
+  awardBatchLabelConflict: integer('award_batch_label_conflict'),
+  storedYearKind: text('stored_year_kind', { enum: ['absent','null','text','number','boolean','array','object','invalid'] }),
+  storedYear: integer('stored_year'),
+  parsedYearKind: text('parsed_year_kind', { enum: ['absent','null','text','number','boolean','array','object','invalid'] }),
+  parsedYear: integer('parsed_year'),
+  reconciledYear: integer('reconciled_year'),
+  yearConflict: integer('year_conflict'),
   ruleVersion: text('rule_version').notNull(),
   createdAt: text('created_at').notNull().$defaultFn(() => new Date().toISOString()),
-}, t => [
+} }
+export function definePlatformBusinessProjection(observationId: () => AnySQLiteColumn) { return sqliteTable('platform_business_projection', businessProjectionFields(observationId), t => [
+  uniqueIndex('platform_business_projection_version_uq').on(t.versionId),
+  uniqueIndex('platform_business_projection_observation_uq').on(t.observationId),
+  index('platform_business_projection_source_archive_idx').on(t.sourceArchiveId),
+  check('platform_business_projection_owner_ck', sql`( ${t.versionId} IS NOT NULL AND ${t.recordId} IS NOT NULL AND ${t.observationId} IS NULL AND ${t.basis} = 'verified_raw') OR (${t.versionId} IS NULL AND ${t.recordId} IS NULL AND ${t.observationId} IS NOT NULL AND ${t.basis} IN ('observation_reconciliation','unavailable'))`),
+  check('platform_business_projection_id_ck', sql`${t.id} IS NULL OR (typeof(${t.id}) = 'integer' AND ${t.id} BETWEEN 1 AND 9007199254740991)`),
+  check('platform_business_projection_version_id_ck', sql`${t.versionId} IS NULL OR (typeof(${t.versionId}) = 'integer' AND ${t.versionId} BETWEEN 1 AND 9007199254740991)`),
+  check('platform_business_projection_record_id_ck', sql`${t.recordId} IS NULL OR (typeof(${t.recordId}) = 'integer' AND ${t.recordId} BETWEEN 1 AND 9007199254740991)`),
+  check('platform_business_projection_observation_id_ck', sql`${t.observationId} IS NULL OR (typeof(${t.observationId}) = 'integer' AND ${t.observationId} BETWEEN 1 AND 9007199254740991)`),
+  check('platform_business_projection_source_archive_id_ck', sql`${t.sourceArchiveId} IS NULL OR (typeof(${t.sourceArchiveId}) = 'integer' AND ${t.sourceArchiveId} BETWEEN 1 AND 9007199254740991)`),
+  check('platform_business_projection_capture_ck', sql`(${t.observationId} IS NULL AND ${t.sourceTitleKind} IS NULL AND ${t.sourceTitleText} IS NULL AND ${t.sourceTitleNumberText} IS NULL AND ${t.sourceTitleBoolean} IS NULL AND ${t.sourceTitleRuleVersion} IS NULL AND ${t.sourceArchiveId} IS NULL AND ${t.parseState} IS NULL AND ${t.storedProvinceKind} IS NULL AND ${t.storedProvince} IS NULL AND ${t.parsedProvinceKind} IS NULL AND ${t.parsedProvince} IS NULL AND ${t.reconciledProvince} IS NULL AND ${t.provinceConflict} IS NULL AND ${t.storedStatusKind} IS NULL AND ${t.storedStatus} IS NULL AND ${t.parsedStatusKind} IS NULL AND ${t.parsedStatus} IS NULL AND ${t.reconciledStatus} IS NULL AND ${t.statusConflict} IS NULL AND ${t.storedBatchKind} IS NULL AND ${t.storedBatch} IS NULL AND ${t.parsedBatchKind} IS NULL AND ${t.parsedBatch} IS NULL AND ${t.reconciledBatch} IS NULL AND ${t.batchConflict} IS NULL AND ${t.storedDeclareKindKind} IS NULL AND ${t.storedDeclareKind} IS NULL AND ${t.parsedDeclareKindKind} IS NULL AND ${t.parsedDeclareKind} IS NULL AND ${t.reconciledDeclareKind} IS NULL AND ${t.declareKindConflict} IS NULL AND ${t.storedAppliedAtKind} IS NULL AND ${t.storedAppliedAt} IS NULL AND ${t.parsedAppliedAtKind} IS NULL AND ${t.parsedAppliedAt} IS NULL AND ${t.reconciledAppliedAt} IS NULL AND ${t.appliedAtConflict} IS NULL AND ${t.storedAwardBatchLabelKind} IS NULL AND ${t.storedAwardBatchLabel} IS NULL AND ${t.parsedAwardBatchLabelKind} IS NULL AND ${t.parsedAwardBatchLabel} IS NULL AND ${t.reconciledAwardBatchLabel} IS NULL AND ${t.awardBatchLabelConflict} IS NULL AND ${t.storedYearKind} IS NULL AND ${t.storedYear} IS NULL AND ${t.parsedYearKind} IS NULL AND ${t.parsedYear} IS NULL AND ${t.reconciledYear} IS NULL AND ${t.yearConflict} IS NULL) OR (${t.observationId} IS NOT NULL AND ${t.sourceTitleKind} IS NOT NULL AND ${t.sourceTitleRuleVersion} IS NOT NULL AND ${t.sourceArchiveId} IS NOT NULL AND ${t.parseState} IS NOT NULL AND ${t.storedProvinceKind} IS NOT NULL AND ${t.parsedProvinceKind} IS NOT NULL AND ${t.storedStatusKind} IS NOT NULL AND ${t.parsedStatusKind} IS NOT NULL AND ${t.storedBatchKind} IS NOT NULL AND ${t.parsedBatchKind} IS NOT NULL AND ${t.storedDeclareKindKind} IS NOT NULL AND ${t.parsedDeclareKindKind} IS NOT NULL AND ${t.storedAppliedAtKind} IS NOT NULL AND ${t.parsedAppliedAtKind} IS NOT NULL AND ${t.storedAwardBatchLabelKind} IS NOT NULL AND ${t.parsedAwardBatchLabelKind} IS NOT NULL AND ${t.storedYearKind} IS NOT NULL AND ${t.parsedYearKind} IS NOT NULL AND ${t.provinceConflict} IS NOT NULL AND ${t.statusConflict} IS NOT NULL AND ${t.batchConflict} IS NOT NULL AND ${t.declareKindConflict} IS NOT NULL AND ${t.appliedAtConflict} IS NOT NULL AND ${t.awardBatchLabelConflict} IS NOT NULL AND ${t.yearConflict} IS NOT NULL)`),
+  check('platform_business_projection_title_ck', sql`${t.sourceTitleKind} IS NULL OR (${t.sourceTitleKind} IN ('absent','null','array','object','invalid') AND ${t.sourceTitleText} IS NULL AND ${t.sourceTitleNumberText} IS NULL AND ${t.sourceTitleBoolean} IS NULL) OR (${t.sourceTitleKind} = 'text' AND typeof(${t.sourceTitleText}) = 'text' AND ${t.sourceTitleNumberText} IS NULL AND ${t.sourceTitleBoolean} IS NULL) OR (${t.sourceTitleKind} = 'number' AND typeof(${t.sourceTitleNumberText}) = 'text' AND length(${t.sourceTitleNumberText}) > 0 AND trim(${t.sourceTitleNumberText}) = ${t.sourceTitleNumberText} AND CASE WHEN json_valid(${t.sourceTitleNumberText}) THEN json_type(${t.sourceTitleNumberText}) IN ('integer','real') ELSE 0 END AND ${t.sourceTitleText} IS NULL AND ${t.sourceTitleBoolean} IS NULL) OR (${t.sourceTitleKind} = 'boolean' AND typeof(${t.sourceTitleBoolean}) = 'integer' AND ${t.sourceTitleBoolean} IN (0,1) AND ${t.sourceTitleText} IS NULL AND ${t.sourceTitleNumberText} IS NULL)`),
+  check('platform_business_projection_parse_ck', sql`${t.parseState} IS NULL OR (${t.parseState} IN ('valid','invalid','absent') AND ((${t.basis} = 'unavailable') = (${t.parseState} <> 'valid')))`),
+  check('platform_business_projection_rule_ck', sql`${t.sourceTitleRuleVersion} IS NULL OR (typeof(${t.sourceTitleRuleVersion}) = 'text' AND length(trim(${t.sourceTitleRuleVersion})) > 0)`),
+  check('platform_business_projection_stored_province_kind_ck', sql`${t.storedProvinceKind} IS NULL OR (${t.storedProvinceKind} IN ('absent','null','text','number','boolean','array','object','invalid') AND (${t.storedProvinceKind} NOT IN ('absent','null','array','object','invalid','boolean') OR ${t.storedProvince} IS NULL))`),
+  check('platform_business_projection_parsed_province_kind_ck', sql`${t.parsedProvinceKind} IS NULL OR (${t.parsedProvinceKind} IN ('absent','null','text','number','boolean','array','object','invalid') AND (${t.parsedProvinceKind} NOT IN ('absent','null','array','object','invalid','boolean') OR ${t.parsedProvince} IS NULL))`),
+  check('platform_business_projection_stored_province_ck', sql`${t.storedProvince} IS NULL OR (typeof(${t.storedProvince}) = 'text')`),
+  check('platform_business_projection_parsed_province_ck', sql`${t.parsedProvince} IS NULL OR (typeof(${t.parsedProvince}) = 'text')`),
+  check('platform_business_projection_reconciled_province_ck', sql`${t.reconciledProvince} IS NULL OR (typeof(${t.reconciledProvince}) = 'text')`),
+  check('platform_business_projection_province_reconcile_ck', sql`${t.observationId} IS NULL OR (typeof(${t.provinceConflict}) = 'integer' AND ${t.provinceConflict} = (${t.storedProvince} IS NOT NULL AND ${t.parsedProvince} IS NOT NULL AND ${t.storedProvince} <> ${t.parsedProvince}) AND ${t.reconciledProvince} IS (CASE WHEN ${t.provinceConflict} = 1 THEN NULL ELSE coalesce(${t.storedProvince},${t.parsedProvince}) END))`),
+  check('platform_business_projection_stored_status_kind_ck', sql.raw(businessStatusChecks.stored_status_kind_ck)),
+  check('platform_business_projection_parsed_status_kind_ck', sql`${t.parsedStatusKind} IS NULL OR (${t.parsedStatusKind} IN ('absent','null','text','number','boolean','array','object','invalid') AND (${t.parsedStatusKind} NOT IN ('absent','null','array','object','invalid','boolean') OR ${t.parsedStatus} IS NULL))`),
+  check('platform_business_projection_stored_status_ck', sql.raw(businessStatusChecks.stored_status_ck)),
+  check('platform_business_projection_parsed_status_ck', sql`${t.parsedStatus} IS NULL OR (typeof(${t.parsedStatus}) = 'text')`),
+  check('platform_business_projection_reconciled_status_ck', sql.raw(businessStatusChecks.reconciled_status_ck)),
+  check('platform_business_projection_status_reconcile_ck', sql.raw(businessStatusChecks.status_reconcile_ck)),
+  check('platform_business_projection_stored_batch_kind_ck', sql`${t.storedBatchKind} IS NULL OR (${t.storedBatchKind} IN ('absent','null','text','number','boolean','array','object','invalid') AND (${t.storedBatchKind} NOT IN ('absent','null','array','object','invalid','boolean') OR ${t.storedBatch} IS NULL))`),
+  check('platform_business_projection_parsed_batch_kind_ck', sql`${t.parsedBatchKind} IS NULL OR (${t.parsedBatchKind} IN ('absent','null','text','number','boolean','array','object','invalid') AND (${t.parsedBatchKind} NOT IN ('absent','null','array','object','invalid','boolean') OR ${t.parsedBatch} IS NULL))`),
+  check('platform_business_projection_stored_batch_ck', sql`${t.storedBatch} IS NULL OR (typeof(${t.storedBatch}) = 'text')`),
+  check('platform_business_projection_parsed_batch_ck', sql`${t.parsedBatch} IS NULL OR (typeof(${t.parsedBatch}) = 'text')`),
+  check('platform_business_projection_reconciled_batch_ck', sql`${t.reconciledBatch} IS NULL OR (typeof(${t.reconciledBatch}) = 'text')`),
+  check('platform_business_projection_batch_reconcile_ck', sql`${t.observationId} IS NULL OR (typeof(${t.batchConflict}) = 'integer' AND ${t.batchConflict} = (${t.storedBatch} IS NOT NULL AND ${t.parsedBatch} IS NOT NULL AND ${t.storedBatch} <> ${t.parsedBatch}) AND ${t.reconciledBatch} IS (CASE WHEN ${t.batchConflict} = 1 THEN NULL ELSE coalesce(${t.storedBatch},${t.parsedBatch}) END))`),
+  check('platform_business_projection_stored_declare_kind_kind_ck', sql`${t.storedDeclareKindKind} IS NULL OR (${t.storedDeclareKindKind} IN ('absent','null','text','number','boolean','array','object','invalid') AND (${t.storedDeclareKindKind} NOT IN ('absent','null','array','object','invalid','boolean') OR ${t.storedDeclareKind} IS NULL))`),
+  check('platform_business_projection_parsed_declare_kind_kind_ck', sql`${t.parsedDeclareKindKind} IS NULL OR (${t.parsedDeclareKindKind} IN ('absent','null','text','number','boolean','array','object','invalid') AND (${t.parsedDeclareKindKind} NOT IN ('absent','null','array','object','invalid','boolean') OR ${t.parsedDeclareKind} IS NULL))`),
+  check('platform_business_projection_stored_declare_kind_ck', sql`${t.storedDeclareKind} IS NULL OR (typeof(${t.storedDeclareKind}) = 'text')`),
+  check('platform_business_projection_parsed_declare_kind_ck', sql`${t.parsedDeclareKind} IS NULL OR (typeof(${t.parsedDeclareKind}) = 'text')`),
+  check('platform_business_projection_reconciled_declare_kind_ck', sql`${t.reconciledDeclareKind} IS NULL OR (typeof(${t.reconciledDeclareKind}) = 'text')`),
+  check('platform_business_projection_declare_kind_reconcile_ck', sql`${t.observationId} IS NULL OR (typeof(${t.declareKindConflict}) = 'integer' AND ${t.declareKindConflict} = (${t.storedDeclareKind} IS NOT NULL AND ${t.parsedDeclareKind} IS NOT NULL AND ${t.storedDeclareKind} <> ${t.parsedDeclareKind}) AND ${t.reconciledDeclareKind} IS (CASE WHEN ${t.declareKindConflict} = 1 THEN NULL ELSE coalesce(${t.storedDeclareKind},${t.parsedDeclareKind}) END))`),
+  check('platform_business_projection_stored_applied_at_kind_ck', sql`${t.storedAppliedAtKind} IS NULL OR (${t.storedAppliedAtKind} IN ('absent','null','text','number','boolean','array','object','invalid') AND (${t.storedAppliedAtKind} NOT IN ('absent','null','array','object','invalid','boolean') OR ${t.storedAppliedAt} IS NULL))`),
+  check('platform_business_projection_parsed_applied_at_kind_ck', sql`${t.parsedAppliedAtKind} IS NULL OR (${t.parsedAppliedAtKind} IN ('absent','null','text','number','boolean','array','object','invalid') AND (${t.parsedAppliedAtKind} NOT IN ('absent','null','array','object','invalid','boolean') OR ${t.parsedAppliedAt} IS NULL))`),
+  check('platform_business_projection_stored_applied_at_ck', sql`${t.storedAppliedAt} IS NULL OR (typeof(${t.storedAppliedAt}) = 'text')`),
+  check('platform_business_projection_parsed_applied_at_ck', sql`${t.parsedAppliedAt} IS NULL OR (typeof(${t.parsedAppliedAt}) = 'text')`),
+  check('platform_business_projection_reconciled_applied_at_ck', sql`${t.reconciledAppliedAt} IS NULL OR (typeof(${t.reconciledAppliedAt}) = 'text')`),
+  check('platform_business_projection_applied_at_reconcile_ck', sql`${t.observationId} IS NULL OR (typeof(${t.appliedAtConflict}) = 'integer' AND ${t.appliedAtConflict} = (${t.storedAppliedAt} IS NOT NULL AND ${t.parsedAppliedAt} IS NOT NULL AND ${t.storedAppliedAt} <> ${t.parsedAppliedAt}) AND ${t.reconciledAppliedAt} IS (CASE WHEN ${t.appliedAtConflict} = 1 THEN NULL ELSE coalesce(${t.storedAppliedAt},${t.parsedAppliedAt}) END))`),
+  check('platform_business_projection_stored_award_batch_label_kind_ck', sql`${t.storedAwardBatchLabelKind} IS NULL OR (${t.storedAwardBatchLabelKind} IN ('absent','null','text','number','boolean','array','object','invalid') AND (${t.storedAwardBatchLabelKind} NOT IN ('absent','null','array','object','invalid','boolean') OR ${t.storedAwardBatchLabel} IS NULL))`),
+  check('platform_business_projection_parsed_award_batch_label_kind_ck', sql`${t.parsedAwardBatchLabelKind} IS NULL OR (${t.parsedAwardBatchLabelKind} IN ('absent','null','text','number','boolean','array','object','invalid') AND (${t.parsedAwardBatchLabelKind} NOT IN ('absent','null','array','object','invalid','boolean') OR ${t.parsedAwardBatchLabel} IS NULL))`),
+  check('platform_business_projection_stored_award_batch_label_ck', sql`${t.storedAwardBatchLabel} IS NULL OR (typeof(${t.storedAwardBatchLabel}) = 'text')`),
+  check('platform_business_projection_parsed_award_batch_label_ck', sql`${t.parsedAwardBatchLabel} IS NULL OR (typeof(${t.parsedAwardBatchLabel}) = 'text')`),
+  check('platform_business_projection_reconciled_award_batch_label_ck', sql`${t.reconciledAwardBatchLabel} IS NULL OR (typeof(${t.reconciledAwardBatchLabel}) = 'text')`),
+  check('platform_business_projection_award_batch_label_reconcile_ck', sql`${t.observationId} IS NULL OR (typeof(${t.awardBatchLabelConflict}) = 'integer' AND ${t.awardBatchLabelConflict} = (${t.storedAwardBatchLabel} IS NOT NULL AND ${t.parsedAwardBatchLabel} IS NOT NULL AND ${t.storedAwardBatchLabel} <> ${t.parsedAwardBatchLabel}) AND ${t.reconciledAwardBatchLabel} IS (CASE WHEN ${t.awardBatchLabelConflict} = 1 THEN NULL ELSE coalesce(${t.storedAwardBatchLabel},${t.parsedAwardBatchLabel}) END))`),
+  check('platform_business_projection_stored_year_kind_ck', sql`${t.storedYearKind} IS NULL OR (${t.storedYearKind} IN ('absent','null','text','number','boolean','array','object','invalid') AND (${t.storedYearKind} NOT IN ('absent','null','array','object','invalid','boolean') OR ${t.storedYear} IS NULL))`),
+  check('platform_business_projection_parsed_year_kind_ck', sql`${t.parsedYearKind} IS NULL OR (${t.parsedYearKind} IN ('absent','null','text','number','boolean','array','object','invalid') AND (${t.parsedYearKind} NOT IN ('absent','null','array','object','invalid','boolean') OR ${t.parsedYear} IS NULL))`),
+  check('platform_business_projection_stored_year_ck', sql`${t.storedYear} IS NULL OR (typeof(${t.storedYear}) = 'integer' AND ${t.storedYear} BETWEEN -9007199254740991 AND 9007199254740991)`),
+  check('platform_business_projection_parsed_year_ck', sql`${t.parsedYear} IS NULL OR (typeof(${t.parsedYear}) = 'integer' AND ${t.parsedYear} BETWEEN -9007199254740991 AND 9007199254740991)`),
+  check('platform_business_projection_reconciled_year_ck', sql`${t.reconciledYear} IS NULL OR (typeof(${t.reconciledYear}) = 'integer' AND ${t.reconciledYear} BETWEEN -9007199254740991 AND 9007199254740991)`),
+  check('platform_business_projection_year_reconcile_ck', sql`${t.observationId} IS NULL OR (typeof(${t.yearConflict}) = 'integer' AND ${t.yearConflict} = (${t.storedYear} IS NOT NULL AND ${t.parsedYear} IS NOT NULL AND ${t.storedYear} <> ${t.parsedYear}) AND ${t.reconciledYear} IS (CASE WHEN ${t.yearConflict} = 1 THEN NULL ELSE coalesce(${t.storedYear},${t.parsedYear}) END))`),
+
   foreignKey({ columns: [t.versionId, t.recordId], foreignColumns: [platformBusinessRecordVersion.id, platformBusinessRecordVersion.recordId] }).onDelete('restrict'),
   index('platform_business_projection_record_idx').on(t.recordId),
   index('platform_business_projection_year_idx').on(t.businessYear),
@@ -911,6 +1177,8 @@ export const platformBusinessProjection = sqliteTable('platform_business_project
   index('platform_business_projection_uscc_idx').on(t.usccRaw),
   index('platform_business_projection_title_version_idx').on(t.titleRaw, t.versionId),
 ])
+}
+export const platformBusinessProjection = definePlatformBusinessProjection(() => platformBusinessObservation.id)
 
 /**
  * Source-specific typed projection for recognized_list (upstream queryBusList, 平台认定目录).
@@ -919,9 +1187,17 @@ export const platformBusinessProjection = sqliteTable('platform_business_project
  * inferred from query conditions, queriedAt, batch or name. Query title scope is not a row
  * fact and is not stored here; a row-level rdjb is retained verbatim as its own raw field.
  */
-export const platformRecognizedProjection = sqliteTable('platform_recognized_projection', {
-  versionId: integer('version_id').primaryKey().references(() => platformBusinessRecordVersion.id, { onDelete: 'restrict' }),
-  recordId: integer('record_id').notNull().references(() => platformBusinessRecord.id, { onDelete: 'restrict' }),
+export function recognizedProjectionFields(observationId: () => AnySQLiteColumn) { return {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  exactTitleRaw: exactCell('exact_title_raw'),
+  exactTitleState: text('exact_title_state', { enum: ['captured', 'uncaptured'] }),
+  exactTitleOrigin: text('exact_title_origin', { enum: ['legacyRowSnapshot', 'commandInput'] }),
+  exactTitleArchiveId: integer('exact_title_archive_id').references(() => platformArchiveValue.id, { onDelete: 'restrict' }),
+  exactTitleSha256: text('exact_title_sha256'),
+  observationId: integer('observation_id').references(observationId, { onDelete: 'restrict' }),
+  basis: text('basis', { enum: ['verified_raw', 'observation_reconciliation', 'unavailable'] }).notNull().default('verified_raw'),
+  versionId: integer('version_id').references(() => platformBusinessRecordVersion.id, { onDelete: 'restrict' }),
+  recordId: integer('record_id').references(() => platformBusinessRecord.id, { onDelete: 'restrict' }),
   /** Raw rddqrq (有效期原值) after trimming; never parsed into a date or year. */
   validityDateRaw: text('validity_date_raw'),
   /** Explicit positive decimal-integer source whpcyear only. */
@@ -941,9 +1217,116 @@ export const platformRecognizedProjection = sqliteTable('platform_recognized_pro
   titleRaw: text('title_raw'),
   nameRaw: text('name_raw'),
   usccRaw: text('uscc_raw'),
+  sourceTitleKind: text('source_title_kind', { enum: ['absent','null','text','number','boolean','array','object','invalid'] }),
+  sourceTitleText: text('source_title_text'),
+  sourceTitleNumberText: text('source_title_number_text'),
+  sourceTitleBoolean: integer('source_title_boolean'),
+  sourceTitleRuleVersion: text('source_title_rule_version'),
+  sourceArchiveId: integer('source_archive_id').references(() => platformArchiveValue.id, { onDelete: 'restrict' }),
+  parseState: text('parse_state', { enum: ['valid','invalid','absent'] }),
+  storedProvinceKind: text('stored_province_kind', { enum: ['absent','null','text','number','boolean','array','object','invalid'] }),
+  storedProvince: text('stored_province'),
+  parsedProvinceKind: text('parsed_province_kind', { enum: ['absent','null','text','number','boolean','array','object','invalid'] }),
+  parsedProvince: text('parsed_province'),
+  reconciledProvince: text('reconciled_province'),
+  provinceConflict: integer('province_conflict'),
+  storedStatusKind: text('stored_status_kind', { enum: ['absent','null','text','number','boolean','array','object','invalid'] }),
+  storedStatus: text('stored_status'),
+  parsedStatusKind: text('parsed_status_kind', { enum: ['absent','null','text','number','boolean','array','object','invalid'] }),
+  parsedStatus: text('parsed_status'),
+  reconciledStatus: text('reconciled_status'),
+  statusConflict: integer('status_conflict'),
+  storedBatchKind: text('stored_batch_kind', { enum: ['absent','null','text','number','boolean','array','object','invalid'] }),
+  storedBatch: text('stored_batch'),
+  parsedBatchKind: text('parsed_batch_kind', { enum: ['absent','null','text','number','boolean','array','object','invalid'] }),
+  parsedBatch: text('parsed_batch'),
+  reconciledBatch: text('reconciled_batch'),
+  batchConflict: integer('batch_conflict'),
+  storedDeclareKindKind: text('stored_declare_kind_kind', { enum: ['absent','null','text','number','boolean','array','object','invalid'] }),
+  storedDeclareKind: text('stored_declare_kind'),
+  parsedDeclareKindKind: text('parsed_declare_kind_kind', { enum: ['absent','null','text','number','boolean','array','object','invalid'] }),
+  parsedDeclareKind: text('parsed_declare_kind'),
+  reconciledDeclareKind: text('reconciled_declare_kind'),
+  declareKindConflict: integer('declare_kind_conflict'),
+  storedAppliedAtKind: text('stored_applied_at_kind', { enum: ['absent','null','text','number','boolean','array','object','invalid'] }),
+  storedAppliedAt: text('stored_applied_at'),
+  parsedAppliedAtKind: text('parsed_applied_at_kind', { enum: ['absent','null','text','number','boolean','array','object','invalid'] }),
+  parsedAppliedAt: text('parsed_applied_at'),
+  reconciledAppliedAt: text('reconciled_applied_at'),
+  appliedAtConflict: integer('applied_at_conflict'),
+  storedAwardBatchLabelKind: text('stored_award_batch_label_kind', { enum: ['absent','null','text','number','boolean','array','object','invalid'] }),
+  storedAwardBatchLabel: text('stored_award_batch_label'),
+  parsedAwardBatchLabelKind: text('parsed_award_batch_label_kind', { enum: ['absent','null','text','number','boolean','array','object','invalid'] }),
+  parsedAwardBatchLabel: text('parsed_award_batch_label'),
+  reconciledAwardBatchLabel: text('reconciled_award_batch_label'),
+  awardBatchLabelConflict: integer('award_batch_label_conflict'),
+  storedYearKind: text('stored_year_kind', { enum: ['absent','null','text','number','boolean','array','object','invalid'] }),
+  storedYear: integer('stored_year'),
+  parsedYearKind: text('parsed_year_kind', { enum: ['absent','null','text','number','boolean','array','object','invalid'] }),
+  parsedYear: integer('parsed_year'),
+  reconciledYear: integer('reconciled_year'),
+  yearConflict: integer('year_conflict'),
   ruleVersion: text('rule_version').notNull(),
   createdAt: text('created_at').notNull().$defaultFn(() => new Date().toISOString()),
-}, t => [
+} }
+export function definePlatformRecognizedProjection(observationId: () => AnySQLiteColumn) { return sqliteTable('platform_recognized_projection', recognizedProjectionFields(observationId), t => [
+  uniqueIndex('platform_recognized_projection_version_uq').on(t.versionId),
+  uniqueIndex('platform_recognized_projection_observation_uq').on(t.observationId),
+  index('platform_recognized_projection_source_archive_idx').on(t.sourceArchiveId),
+  check('platform_recognized_projection_owner_ck', sql`( ${t.versionId} IS NOT NULL AND ${t.recordId} IS NOT NULL AND ${t.observationId} IS NULL AND ${t.basis} = 'verified_raw') OR (${t.versionId} IS NULL AND ${t.recordId} IS NULL AND ${t.observationId} IS NOT NULL AND ${t.basis} IN ('observation_reconciliation','unavailable'))`),
+  check('platform_recognized_projection_id_ck', sql`${t.id} IS NULL OR (typeof(${t.id}) = 'integer' AND ${t.id} BETWEEN 1 AND 9007199254740991)`),
+  check('platform_recognized_projection_version_id_ck', sql`${t.versionId} IS NULL OR (typeof(${t.versionId}) = 'integer' AND ${t.versionId} BETWEEN 1 AND 9007199254740991)`),
+  check('platform_recognized_projection_record_id_ck', sql`${t.recordId} IS NULL OR (typeof(${t.recordId}) = 'integer' AND ${t.recordId} BETWEEN 1 AND 9007199254740991)`),
+  check('platform_recognized_projection_observation_id_ck', sql`${t.observationId} IS NULL OR (typeof(${t.observationId}) = 'integer' AND ${t.observationId} BETWEEN 1 AND 9007199254740991)`),
+  check('platform_recognized_projection_source_archive_id_ck', sql`${t.sourceArchiveId} IS NULL OR (typeof(${t.sourceArchiveId}) = 'integer' AND ${t.sourceArchiveId} BETWEEN 1 AND 9007199254740991)`),
+  check('platform_recognized_projection_capture_ck', sql`(${t.observationId} IS NULL AND ${t.sourceTitleKind} IS NULL AND ${t.sourceTitleText} IS NULL AND ${t.sourceTitleNumberText} IS NULL AND ${t.sourceTitleBoolean} IS NULL AND ${t.sourceTitleRuleVersion} IS NULL AND ${t.sourceArchiveId} IS NULL AND ${t.parseState} IS NULL AND ${t.storedProvinceKind} IS NULL AND ${t.storedProvince} IS NULL AND ${t.parsedProvinceKind} IS NULL AND ${t.parsedProvince} IS NULL AND ${t.reconciledProvince} IS NULL AND ${t.provinceConflict} IS NULL AND ${t.storedStatusKind} IS NULL AND ${t.storedStatus} IS NULL AND ${t.parsedStatusKind} IS NULL AND ${t.parsedStatus} IS NULL AND ${t.reconciledStatus} IS NULL AND ${t.statusConflict} IS NULL AND ${t.storedBatchKind} IS NULL AND ${t.storedBatch} IS NULL AND ${t.parsedBatchKind} IS NULL AND ${t.parsedBatch} IS NULL AND ${t.reconciledBatch} IS NULL AND ${t.batchConflict} IS NULL AND ${t.storedDeclareKindKind} IS NULL AND ${t.storedDeclareKind} IS NULL AND ${t.parsedDeclareKindKind} IS NULL AND ${t.parsedDeclareKind} IS NULL AND ${t.reconciledDeclareKind} IS NULL AND ${t.declareKindConflict} IS NULL AND ${t.storedAppliedAtKind} IS NULL AND ${t.storedAppliedAt} IS NULL AND ${t.parsedAppliedAtKind} IS NULL AND ${t.parsedAppliedAt} IS NULL AND ${t.reconciledAppliedAt} IS NULL AND ${t.appliedAtConflict} IS NULL AND ${t.storedAwardBatchLabelKind} IS NULL AND ${t.storedAwardBatchLabel} IS NULL AND ${t.parsedAwardBatchLabelKind} IS NULL AND ${t.parsedAwardBatchLabel} IS NULL AND ${t.reconciledAwardBatchLabel} IS NULL AND ${t.awardBatchLabelConflict} IS NULL AND ${t.storedYearKind} IS NULL AND ${t.storedYear} IS NULL AND ${t.parsedYearKind} IS NULL AND ${t.parsedYear} IS NULL AND ${t.reconciledYear} IS NULL AND ${t.yearConflict} IS NULL) OR (${t.observationId} IS NOT NULL AND ${t.sourceTitleKind} IS NOT NULL AND ${t.sourceTitleRuleVersion} IS NOT NULL AND ${t.sourceArchiveId} IS NOT NULL AND ${t.parseState} IS NOT NULL AND ${t.storedProvinceKind} IS NOT NULL AND ${t.parsedProvinceKind} IS NOT NULL AND ${t.storedStatusKind} IS NOT NULL AND ${t.parsedStatusKind} IS NOT NULL AND ${t.storedBatchKind} IS NOT NULL AND ${t.parsedBatchKind} IS NOT NULL AND ${t.storedDeclareKindKind} IS NOT NULL AND ${t.parsedDeclareKindKind} IS NOT NULL AND ${t.storedAppliedAtKind} IS NOT NULL AND ${t.parsedAppliedAtKind} IS NOT NULL AND ${t.storedAwardBatchLabelKind} IS NOT NULL AND ${t.parsedAwardBatchLabelKind} IS NOT NULL AND ${t.storedYearKind} IS NOT NULL AND ${t.parsedYearKind} IS NOT NULL AND ${t.provinceConflict} IS NOT NULL AND ${t.statusConflict} IS NOT NULL AND ${t.batchConflict} IS NOT NULL AND ${t.declareKindConflict} IS NOT NULL AND ${t.appliedAtConflict} IS NOT NULL AND ${t.awardBatchLabelConflict} IS NOT NULL AND ${t.yearConflict} IS NOT NULL)`),
+  check('platform_recognized_projection_title_ck', sql`${t.sourceTitleKind} IS NULL OR (${t.sourceTitleKind} IN ('absent','null','array','object','invalid') AND ${t.sourceTitleText} IS NULL AND ${t.sourceTitleNumberText} IS NULL AND ${t.sourceTitleBoolean} IS NULL) OR (${t.sourceTitleKind} = 'text' AND typeof(${t.sourceTitleText}) = 'text' AND ${t.sourceTitleNumberText} IS NULL AND ${t.sourceTitleBoolean} IS NULL) OR (${t.sourceTitleKind} = 'number' AND typeof(${t.sourceTitleNumberText}) = 'text' AND length(${t.sourceTitleNumberText}) > 0 AND trim(${t.sourceTitleNumberText}) = ${t.sourceTitleNumberText} AND CASE WHEN json_valid(${t.sourceTitleNumberText}) THEN json_type(${t.sourceTitleNumberText}) IN ('integer','real') ELSE 0 END AND ${t.sourceTitleText} IS NULL AND ${t.sourceTitleBoolean} IS NULL) OR (${t.sourceTitleKind} = 'boolean' AND typeof(${t.sourceTitleBoolean}) = 'integer' AND ${t.sourceTitleBoolean} IN (0,1) AND ${t.sourceTitleText} IS NULL AND ${t.sourceTitleNumberText} IS NULL)`),
+  check('platform_recognized_projection_parse_ck', sql`${t.parseState} IS NULL OR (${t.parseState} IN ('valid','invalid','absent') AND ((${t.basis} = 'unavailable') = (${t.parseState} <> 'valid')))`),
+  check('platform_recognized_projection_rule_ck', sql`${t.sourceTitleRuleVersion} IS NULL OR (typeof(${t.sourceTitleRuleVersion}) = 'text' AND length(trim(${t.sourceTitleRuleVersion})) > 0)`),
+  check('platform_recognized_projection_stored_province_kind_ck', sql`${t.storedProvinceKind} IS NULL OR (${t.storedProvinceKind} IN ('absent','null','text','number','boolean','array','object','invalid') AND (${t.storedProvinceKind} NOT IN ('absent','null','array','object','invalid','boolean') OR ${t.storedProvince} IS NULL))`),
+  check('platform_recognized_projection_parsed_province_kind_ck', sql`${t.parsedProvinceKind} IS NULL OR (${t.parsedProvinceKind} IN ('absent','null','text','number','boolean','array','object','invalid') AND (${t.parsedProvinceKind} NOT IN ('absent','null','array','object','invalid','boolean') OR ${t.parsedProvince} IS NULL))`),
+  check('platform_recognized_projection_stored_province_ck', sql`${t.storedProvince} IS NULL OR (typeof(${t.storedProvince}) = 'text')`),
+  check('platform_recognized_projection_parsed_province_ck', sql`${t.parsedProvince} IS NULL OR (typeof(${t.parsedProvince}) = 'text')`),
+  check('platform_recognized_projection_reconciled_province_ck', sql`${t.reconciledProvince} IS NULL OR (typeof(${t.reconciledProvince}) = 'text')`),
+  check('platform_recognized_projection_province_reconcile_ck', sql`${t.observationId} IS NULL OR (typeof(${t.provinceConflict}) = 'integer' AND ${t.provinceConflict} = (${t.storedProvince} IS NOT NULL AND ${t.parsedProvince} IS NOT NULL AND ${t.storedProvince} <> ${t.parsedProvince}) AND ${t.reconciledProvince} IS (CASE WHEN ${t.provinceConflict} = 1 THEN NULL ELSE coalesce(${t.storedProvince},${t.parsedProvince}) END))`),
+  check('platform_recognized_projection_stored_status_kind_ck', sql`${t.storedStatusKind} IS NULL OR (${t.storedStatusKind} IN ('absent','null','text','number','boolean','array','object','invalid') AND (${t.storedStatusKind} NOT IN ('absent','null','array','object','invalid','boolean') OR ${t.storedStatus} IS NULL))`),
+  check('platform_recognized_projection_parsed_status_kind_ck', sql`${t.parsedStatusKind} IS NULL OR (${t.parsedStatusKind} IN ('absent','null','text','number','boolean','array','object','invalid') AND (${t.parsedStatusKind} NOT IN ('absent','null','array','object','invalid','boolean') OR ${t.parsedStatus} IS NULL))`),
+  check('platform_recognized_projection_stored_status_ck', sql`${t.storedStatus} IS NULL OR (typeof(${t.storedStatus}) = 'text')`),
+  check('platform_recognized_projection_parsed_status_ck', sql`${t.parsedStatus} IS NULL OR (typeof(${t.parsedStatus}) = 'text')`),
+  check('platform_recognized_projection_reconciled_status_ck', sql`${t.reconciledStatus} IS NULL OR (typeof(${t.reconciledStatus}) = 'text')`),
+  check('platform_recognized_projection_status_reconcile_ck', sql`${t.observationId} IS NULL OR (typeof(${t.statusConflict}) = 'integer' AND ${t.statusConflict} = (${t.storedStatus} IS NOT NULL AND ${t.parsedStatus} IS NOT NULL AND ${t.storedStatus} <> ${t.parsedStatus}) AND ${t.reconciledStatus} IS (CASE WHEN ${t.statusConflict} = 1 THEN NULL ELSE coalesce(${t.storedStatus},${t.parsedStatus}) END))`),
+  check('platform_recognized_projection_stored_batch_kind_ck', sql`${t.storedBatchKind} IS NULL OR (${t.storedBatchKind} IN ('absent','null','text','number','boolean','array','object','invalid') AND (${t.storedBatchKind} NOT IN ('absent','null','array','object','invalid','boolean') OR ${t.storedBatch} IS NULL))`),
+  check('platform_recognized_projection_parsed_batch_kind_ck', sql`${t.parsedBatchKind} IS NULL OR (${t.parsedBatchKind} IN ('absent','null','text','number','boolean','array','object','invalid') AND (${t.parsedBatchKind} NOT IN ('absent','null','array','object','invalid','boolean') OR ${t.parsedBatch} IS NULL))`),
+  check('platform_recognized_projection_stored_batch_ck', sql`${t.storedBatch} IS NULL OR (typeof(${t.storedBatch}) = 'text')`),
+  check('platform_recognized_projection_parsed_batch_ck', sql`${t.parsedBatch} IS NULL OR (typeof(${t.parsedBatch}) = 'text')`),
+  check('platform_recognized_projection_reconciled_batch_ck', sql`${t.reconciledBatch} IS NULL OR (typeof(${t.reconciledBatch}) = 'text')`),
+  check('platform_recognized_projection_batch_reconcile_ck', sql`${t.observationId} IS NULL OR (typeof(${t.batchConflict}) = 'integer' AND ${t.batchConflict} = (${t.storedBatch} IS NOT NULL AND ${t.parsedBatch} IS NOT NULL AND ${t.storedBatch} <> ${t.parsedBatch}) AND ${t.reconciledBatch} IS (CASE WHEN ${t.batchConflict} = 1 THEN NULL ELSE coalesce(${t.storedBatch},${t.parsedBatch}) END))`),
+  check('platform_recognized_projection_stored_declare_kind_kind_ck', sql`${t.storedDeclareKindKind} IS NULL OR (${t.storedDeclareKindKind} IN ('absent','null','text','number','boolean','array','object','invalid') AND (${t.storedDeclareKindKind} NOT IN ('absent','null','array','object','invalid','boolean') OR ${t.storedDeclareKind} IS NULL))`),
+  check('platform_recognized_projection_parsed_declare_kind_kind_ck', sql`${t.parsedDeclareKindKind} IS NULL OR (${t.parsedDeclareKindKind} IN ('absent','null','text','number','boolean','array','object','invalid') AND (${t.parsedDeclareKindKind} NOT IN ('absent','null','array','object','invalid','boolean') OR ${t.parsedDeclareKind} IS NULL))`),
+  check('platform_recognized_projection_stored_declare_kind_ck', sql`${t.storedDeclareKind} IS NULL OR (typeof(${t.storedDeclareKind}) = 'text')`),
+  check('platform_recognized_projection_parsed_declare_kind_ck', sql`${t.parsedDeclareKind} IS NULL OR (typeof(${t.parsedDeclareKind}) = 'text')`),
+  check('platform_recognized_projection_reconciled_declare_kind_ck', sql`${t.reconciledDeclareKind} IS NULL OR (typeof(${t.reconciledDeclareKind}) = 'text')`),
+  check('platform_recognized_projection_declare_kind_reconcile_ck', sql`${t.observationId} IS NULL OR (typeof(${t.declareKindConflict}) = 'integer' AND ${t.declareKindConflict} = (${t.storedDeclareKind} IS NOT NULL AND ${t.parsedDeclareKind} IS NOT NULL AND ${t.storedDeclareKind} <> ${t.parsedDeclareKind}) AND ${t.reconciledDeclareKind} IS (CASE WHEN ${t.declareKindConflict} = 1 THEN NULL ELSE coalesce(${t.storedDeclareKind},${t.parsedDeclareKind}) END))`),
+  check('platform_recognized_projection_stored_applied_at_kind_ck', sql`${t.storedAppliedAtKind} IS NULL OR (${t.storedAppliedAtKind} IN ('absent','null','text','number','boolean','array','object','invalid') AND (${t.storedAppliedAtKind} NOT IN ('absent','null','array','object','invalid','boolean') OR ${t.storedAppliedAt} IS NULL))`),
+  check('platform_recognized_projection_parsed_applied_at_kind_ck', sql`${t.parsedAppliedAtKind} IS NULL OR (${t.parsedAppliedAtKind} IN ('absent','null','text','number','boolean','array','object','invalid') AND (${t.parsedAppliedAtKind} NOT IN ('absent','null','array','object','invalid','boolean') OR ${t.parsedAppliedAt} IS NULL))`),
+  check('platform_recognized_projection_stored_applied_at_ck', sql`${t.storedAppliedAt} IS NULL OR (typeof(${t.storedAppliedAt}) = 'text')`),
+  check('platform_recognized_projection_parsed_applied_at_ck', sql`${t.parsedAppliedAt} IS NULL OR (typeof(${t.parsedAppliedAt}) = 'text')`),
+  check('platform_recognized_projection_reconciled_applied_at_ck', sql`${t.reconciledAppliedAt} IS NULL OR (typeof(${t.reconciledAppliedAt}) = 'text')`),
+  check('platform_recognized_projection_applied_at_reconcile_ck', sql`${t.observationId} IS NULL OR (typeof(${t.appliedAtConflict}) = 'integer' AND ${t.appliedAtConflict} = (${t.storedAppliedAt} IS NOT NULL AND ${t.parsedAppliedAt} IS NOT NULL AND ${t.storedAppliedAt} <> ${t.parsedAppliedAt}) AND ${t.reconciledAppliedAt} IS (CASE WHEN ${t.appliedAtConflict} = 1 THEN NULL ELSE coalesce(${t.storedAppliedAt},${t.parsedAppliedAt}) END))`),
+  check('platform_recognized_projection_stored_award_batch_label_kind_ck', sql`${t.storedAwardBatchLabelKind} IS NULL OR (${t.storedAwardBatchLabelKind} IN ('absent','null','text','number','boolean','array','object','invalid') AND (${t.storedAwardBatchLabelKind} NOT IN ('absent','null','array','object','invalid','boolean') OR ${t.storedAwardBatchLabel} IS NULL))`),
+  check('platform_recognized_projection_parsed_award_batch_label_kind_ck', sql`${t.parsedAwardBatchLabelKind} IS NULL OR (${t.parsedAwardBatchLabelKind} IN ('absent','null','text','number','boolean','array','object','invalid') AND (${t.parsedAwardBatchLabelKind} NOT IN ('absent','null','array','object','invalid','boolean') OR ${t.parsedAwardBatchLabel} IS NULL))`),
+  check('platform_recognized_projection_stored_award_batch_label_ck', sql`${t.storedAwardBatchLabel} IS NULL OR (typeof(${t.storedAwardBatchLabel}) = 'text')`),
+  check('platform_recognized_projection_parsed_award_batch_label_ck', sql`${t.parsedAwardBatchLabel} IS NULL OR (typeof(${t.parsedAwardBatchLabel}) = 'text')`),
+  check('platform_recognized_projection_reconciled_award_batch_label_ck', sql`${t.reconciledAwardBatchLabel} IS NULL OR (typeof(${t.reconciledAwardBatchLabel}) = 'text')`),
+  check('platform_recognized_projection_award_batch_label_reconcile_ck', sql`${t.observationId} IS NULL OR (typeof(${t.awardBatchLabelConflict}) = 'integer' AND ${t.awardBatchLabelConflict} = (${t.storedAwardBatchLabel} IS NOT NULL AND ${t.parsedAwardBatchLabel} IS NOT NULL AND ${t.storedAwardBatchLabel} <> ${t.parsedAwardBatchLabel}) AND ${t.reconciledAwardBatchLabel} IS (CASE WHEN ${t.awardBatchLabelConflict} = 1 THEN NULL ELSE coalesce(${t.storedAwardBatchLabel},${t.parsedAwardBatchLabel}) END))`),
+  check('platform_recognized_projection_stored_year_kind_ck', sql`${t.storedYearKind} IS NULL OR (${t.storedYearKind} IN ('absent','null','text','number','boolean','array','object','invalid') AND (${t.storedYearKind} NOT IN ('absent','null','array','object','invalid','boolean') OR ${t.storedYear} IS NULL))`),
+  check('platform_recognized_projection_parsed_year_kind_ck', sql`${t.parsedYearKind} IS NULL OR (${t.parsedYearKind} IN ('absent','null','text','number','boolean','array','object','invalid') AND (${t.parsedYearKind} NOT IN ('absent','null','array','object','invalid','boolean') OR ${t.parsedYear} IS NULL))`),
+  check('platform_recognized_projection_stored_year_ck', sql`${t.storedYear} IS NULL OR (typeof(${t.storedYear}) = 'integer' AND ${t.storedYear} BETWEEN -9007199254740991 AND 9007199254740991)`),
+  check('platform_recognized_projection_parsed_year_ck', sql`${t.parsedYear} IS NULL OR (typeof(${t.parsedYear}) = 'integer' AND ${t.parsedYear} BETWEEN -9007199254740991 AND 9007199254740991)`),
+  check('platform_recognized_projection_reconciled_year_ck', sql`${t.reconciledYear} IS NULL OR (typeof(${t.reconciledYear}) = 'integer' AND ${t.reconciledYear} BETWEEN -9007199254740991 AND 9007199254740991)`),
+  check('platform_recognized_projection_year_reconcile_ck', sql`${t.observationId} IS NULL OR (typeof(${t.yearConflict}) = 'integer' AND ${t.yearConflict} = (${t.storedYear} IS NOT NULL AND ${t.parsedYear} IS NOT NULL AND ${t.storedYear} <> ${t.parsedYear}) AND ${t.reconciledYear} IS (CASE WHEN ${t.yearConflict} = 1 THEN NULL ELSE coalesce(${t.storedYear},${t.parsedYear}) END))`),
+  check('platform_recognized_projection_no_process_parse_ck', sql`${t.observationId} IS NULL OR ${t.parsedProvince} IS NULL AND ${t.parsedProvinceKind} = 'absent' AND ${t.parsedStatus} IS NULL AND ${t.parsedStatusKind} = 'absent' AND ${t.parsedBatch} IS NULL AND ${t.parsedBatchKind} = 'absent' AND ${t.parsedDeclareKind} IS NULL AND ${t.parsedDeclareKindKind} = 'absent' AND ${t.parsedAppliedAt} IS NULL AND ${t.parsedAppliedAtKind} = 'absent' AND ${t.parsedAwardBatchLabel} IS NULL AND ${t.parsedAwardBatchLabelKind} = 'absent' AND ${t.parsedYear} IS NULL AND ${t.parsedYearKind} = 'absent'`),
+
   foreignKey({ columns: [t.versionId, t.recordId], foreignColumns: [platformBusinessRecordVersion.id, platformBusinessRecordVersion.recordId] }).onDelete('restrict'),
   index('platform_recognized_projection_record_idx').on(t.recordId),
   index('platform_recognized_projection_validity_idx').on(t.validityDateRaw),
@@ -953,7 +1336,10 @@ export const platformRecognizedProjection = sqliteTable('platform_recognized_pro
   index('platform_recognized_projection_title_idx').on(t.titleRaw),
   index('platform_recognized_projection_title_version_idx').on(t.titleRaw, t.versionId),
   index('platform_recognized_projection_uscc_idx').on(t.usccRaw),
+  check('platform_recognized_projection_fidelity_ck', sql`((${t.sourceMaintenanceYearAbsent} IS NULL OR (typeof(${t.sourceMaintenanceYearAbsent}) = 'integer' AND ${t.sourceMaintenanceYearAbsent} IN (0,1))) AND (${t.observationId} IS NULL OR ((${t.sourceValidityDate} IS NULL OR typeof(${t.sourceValidityDate}) = 'text') AND (${t.sourceMaintenanceBatch} IS NULL OR typeof(${t.sourceMaintenanceBatch}) = 'text'))))`),
 ])
+}
+export const platformRecognizedProjection = definePlatformRecognizedProjection(() => platformBusinessObservation.id)
 
 /**
  * **差异原因与后续措施**(契约 4)——**成对**记录的一行。
@@ -980,9 +1366,8 @@ export const platformRecognizedProjection = sqliteTable('platform_recognized_pro
  * ── 时态化 ────────────────────────────────────────────────────────────────
  * 唯一键含 `recordedAt`:**旧解释不丢**,新解释形成新行;「当前解释」= `recordedAt` 最新那条。
  */
-export const differenceReason = sqliteTable(
-  'difference_reason',
-  {
+/** Shared decision fields; explicit target changes only the physical evidence FKs. */
+export function differenceReasonFields() { return {
     id: integer('id').primaryKey({ autoIncrement: true }),
     enterpriseId: integer('enterprise_id')
       .notNull()
@@ -1028,9 +1413,6 @@ export const differenceReason = sqliteTable(
       ],
     }),
     measureNote: text('measure_note'),
-    /** 证据:平台查询记录 / 平台关系记录。 */
-    evidenceQueryId: integer('evidence_query_id').references(() => platformQuery.id),
-    evidenceRelationId: integer('evidence_relation_id').references(() => platformRelation.id),
     /** 迁入承载:原城市 / 原称号 / 年份 / 批次。缺项留空待核。 */
     movedInCity: text('moved_in_city'),
     movedInTitleCode: text('moved_in_title_code').references(() => title.code),
@@ -1047,7 +1429,6 @@ export const differenceReason = sqliteTable(
     recordedAt: text('recorded_at').notNull(),
     /** #102: explicit lifecycle metadata; null denotes a historical import, never an inferred decision. */
     lifecycleAction: text('lifecycle_action', { enum: ['replace', 'withdraw'] }),
-    previousId: integer('previous_id').references((): AnySQLiteColumn => differenceReason.id),
     /** #108: a browser review genuinely has no recorded actor; null is not a placeholder identity. */
     actor: text('actor', { mode: 'json' }).$type<{ type: 'user' | 'agent'; id: string } | null>(),
     basis: text('basis'),
@@ -1058,6 +1439,15 @@ export const differenceReason = sqliteTable(
     createdAt: text('created_at')
       .notNull()
       .$defaultFn(() => new Date().toISOString()),
+} }
+export const differenceReason = sqliteTable(
+  'difference_reason',
+  {
+    ...differenceReasonFields(),
+    /** 证据:平台查询记录 / 平台关系记录。 */
+    evidenceCollectionId: integer('evidence_query_id').references(() => platformCollection.id),
+    evidenceObservationId: integer('evidence_relation_id').references(() => platformBusinessObservation.id),
+    previousId: integer('previous_id').references((): AnySQLiteColumn => differenceReason.id),
   },
   (t) => [
     // 同企业 × 称号 × 方向 × 时点唯一:时点不同 → 并存(旧解释不丢)。
@@ -1171,7 +1561,7 @@ export const recordCorrespondence = sqliteTable(
     role: text('role').notNull(),
     eventId: integer('event_id').references(() => recordEvent.id),
     predecessorEventId: integer('predecessor_event_id').references(() => recordEvent.id),
-    relationId: integer('relation_id').references(() => platformRelation.id),
+    observationId: integer('observation_id').references(() => platformBusinessObservation.id),
     exportRowId: integer('export_row_id').references(() => platformExportRow.id),
     enterpriseId: integer('enterprise_id').references(() => enterprise.id),
     titleCode: text('title_code').notNull().references(() => title.code),
@@ -1190,7 +1580,7 @@ export const recordCorrespondence = sqliteTable(
     uniqueIndex('record_correspondence_edge_uq').on(t.edgeKey),
     index('record_correspondence_event_idx').on(t.eventId),
     index('record_correspondence_predecessor_idx').on(t.predecessorEventId),
-    index('record_correspondence_relation_idx').on(t.relationId),
+    index('record_correspondence_relation_idx').on(t.observationId),
     index('record_correspondence_export_idx').on(t.exportRowId),
     index('record_correspondence_enterprise_idx').on(t.enterpriseId, t.titleCode),
   ],
@@ -1420,60 +1810,12 @@ export const evidenceRuleRelease114 = sqliteTable('evidence_rule_release_114', {
 }, t => [uniqueIndex('evidence_rule_release_scope_114_uq').on(t.ruleId,t.version,t.enterpriseId,t.titleCode,t.direction)])
 
 /** #278 immutable UTF-8 bodies. Sealing/immutability guards live in migration 0029. */
-export const platformBodyLeaf = sqliteTable('platform_body_leaf', {
-  id: integer('id').primaryKey(),
-  digest: text('digest').notNull().unique(),
-  byteLength: integer('byte_length').notNull(),
-  encoding: text('encoding').notNull().default('utf8-v1'),
-  bytes: blob('bytes', { mode: 'buffer' }).notNull(),
-}, t => [
-  check('platform_body_leaf_length_ck', sql`typeof(${t.byteLength}) = 'integer' AND ${t.byteLength} >= 0`),
-  check('platform_body_leaf_encoding_ck', sql`${t.encoding} = 'utf8-v1'`),
-  check('platform_body_leaf_bytes_ck', sql`typeof(${t.bytes}) = 'blob' AND length(${t.bytes}) = ${t.byteLength}`),
-])
 
-export const platformBodyRoot = sqliteTable('platform_body_root', {
-  id: integer('id').primaryKey(),
-  digest: text('digest').notNull().unique(),
-  byteLength: integer('byte_length').notNull(),
-  encoding: text('encoding').notNull().default('utf8-v1'),
-  sealed: integer('sealed').notNull().default(0),
-}, t => [
-  check('platform_body_root_length_ck', sql`typeof(${t.byteLength}) = 'integer' AND ${t.byteLength} >= 0`),
-  check('platform_body_root_encoding_ck', sql`${t.encoding} = 'utf8-v1'`),
-  check('platform_body_root_sealed_ck', sql`${t.sealed} IN (0,1)`),
-])
 
-export const platformBodyPart = sqliteTable('platform_body_part', {
-  rootId: integer('root_id').notNull().references(() => platformBodyRoot.id, { onDelete: 'restrict' }),
-  logicalStart: integer('logical_start').notNull(),
-  leafId: integer('leaf_id').notNull().references(() => platformBodyLeaf.id, { onDelete: 'restrict' }),
-  byteLength: integer('byte_length').notNull(),
-}, t => [
-  primaryKey({ columns: [t.rootId, t.logicalStart] }),
-  check('platform_body_part_start_ck', sql`typeof(${t.logicalStart}) = 'integer' AND ${t.logicalStart} >= 0`),
-  check('platform_body_part_length_ck', sql`typeof(${t.byteLength}) = 'integer' AND ${t.byteLength} >= 0`),
-])
 
-export const platformRelationBodyRef = sqliteTable('platform_relation_body_ref', {
-  ownerId: integer('owner_id').notNull().references(() => platformRelation.id, { onDelete: 'restrict' }),
-  field: text('field', { enum: ['rawFields', 'sourceText'] }).notNull(),
-  rootId: integer('root_id').notNull().references(() => platformBodyRoot.id, { onDelete: 'restrict' }),
-}, t => [primaryKey({ columns: [t.ownerId, t.field] }), check('platform_relation_body_ref_field_ck', sql`${t.field} IN ('rawFields','sourceText')`)])
 
-export const platformQueryBodyRef = sqliteTable('platform_query_body_ref', {
-  ownerId: integer('owner_id').notNull().references(() => platformQuery.id, { onDelete: 'restrict' }),
-  field: text('field', { enum: ['rawResponse', 'collectionEvidence'] }).notNull(),
-  rootId: integer('root_id').notNull().references(() => platformBodyRoot.id, { onDelete: 'restrict' }),
-}, t => [primaryKey({ columns: [t.ownerId, t.field] }), check('platform_query_body_ref_field_ck', sql`${t.field} IN ('rawResponse','collectionEvidence')`)])
 
-export const platformVersionBodyRef = sqliteTable('platform_version_body_ref', {
-  ownerId: integer('owner_id').notNull().references(() => platformBusinessRecordVersion.id, { onDelete: 'restrict' }),
-  field: text('field', { enum: ['canonicalRawJson'] }).notNull(),
-  rootId: integer('root_id').notNull().references(() => platformBodyRoot.id, { onDelete: 'restrict' }),
-}, t => [primaryKey({ columns: [t.ownerId, t.field] }), check('platform_version_body_ref_field_ck', sql`${t.field} = 'canonicalRawJson'`)])
 
-/** #306 append-only enterprise assertions; no migration from legacy explanation heads. */
 export const enterpriseFactRevision = sqliteTable('enterprise_fact_revision', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   enterpriseId: integer('enterprise_id').notNull().references(() => enterprise.id),
@@ -1534,3 +1876,126 @@ export const fileDeclaration669 = sqliteTable('file_declaration_669', {
   part: text('part', { mode: 'json' }).$type<import('../lib/file-parts').FilePart>().notNull(),
   pageRanges: text('page_ranges', { mode: 'json' }).$type<{ start: number; end: number }[] | null>(),
 }, t => [index('file_declaration_669_file_idx').on(t.fileId)])
+
+/** Original SQLite storage class and bytes; never a business-query payload. */
+export const platformArchiveValue = sqliteTable('platform_archive_value', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  storageClass: text('storage_class', { enum: ['null', 'text', 'blob'] }).notNull(),
+  bytes: blob('bytes', { mode: 'buffer' }),
+  byteLength: integer('byte_length'),
+  sha256: text('sha256'),
+  createdAt: text('created_at'),
+}, t => [
+  check('platform_archive_value_ck', sql`(${t.storageClass} = 'null' AND ${t.bytes} IS NULL AND ${t.byteLength} IS NULL AND ${t.sha256} IS NULL) OR (${t.storageClass} IN ('text','blob') AND typeof(${t.bytes}) = 'blob' AND typeof(${t.byteLength}) = 'integer' AND ${t.byteLength} = length(${t.bytes}) AND ${t.sha256} IS NOT NULL AND length(${t.sha256}) = 64 AND ${t.sha256} NOT GLOB '*[^0-9a-f]*')`),
+])
+
+export const platformCollectionArchiveRef = sqliteTable('platform_collection_archive_ref', {
+  ownerId: integer('owner_id').notNull().references(() => platformCollection.id, { onDelete: 'restrict' }),
+  field: text('field', { enum: ['rawResponse', 'collectionEvidence', 'legacyProvenance', 'request'] }).notNull(),
+  archiveId: integer('archive_id').notNull().unique().references(() => platformArchiveValue.id, { onDelete: 'restrict' }),
+  sealed: integer('sealed').notNull().default(0),
+}, t => [primaryKey({ columns: [t.ownerId, t.field] }), check('platform_collection_archive_ref_ck', sql`${t.field} IN ('rawResponse','collectionEvidence','legacyProvenance','request') AND ${t.sealed} IN (0,1)`)])
+
+/** Native observation archive ownership. */
+export function definePlatformObservationArchiveRef(observationId: () => AnySQLiteColumn) { return sqliteTable('platform_observation_archive_ref', {
+  ownerId: integer('owner_id').notNull().references(observationId, { onDelete: 'restrict' }),
+  field: text('field', { enum: ['rawFields', 'sourceText', 'legacyRowSnapshot'] }).notNull(),
+  archiveId: integer('archive_id').notNull().unique().references(() => platformArchiveValue.id, { onDelete: 'restrict' }),
+  sealed: integer('sealed').notNull().default(0),
+}, t => [primaryKey({ columns: [t.ownerId, t.field] }), check('platform_observation_archive_ref_ck', sql`${t.field} IN ('rawFields','sourceText','legacyRowSnapshot') AND ${t.sealed} IN (0,1)`)])
+}
+export const platformObservationArchiveRef = definePlatformObservationArchiveRef(() => platformBusinessObservation.id)
+
+export const platformVersionArchiveRef = sqliteTable('platform_version_archive_ref', {
+  ownerId: integer('owner_id').notNull().references(() => platformBusinessRecordVersion.id, { onDelete: 'restrict' }),
+  field: text('field', { enum: ['canonicalRawJson'] }).notNull(),
+  archiveId: integer('archive_id').notNull().unique().references(() => platformArchiveValue.id, { onDelete: 'restrict' }),
+  sealed: integer('sealed').notNull().default(0),
+}, t => [primaryKey({ columns: [t.ownerId, t.field] }), check('platform_version_archive_ref_ck', sql`${t.field} = 'canonicalRawJson' AND ${t.sealed} IN (0,1)`)])
+
+export const platformLegacyQueryAlias = sqliteTable('platform_legacy_query_alias', {
+  oldId: integer('old_id').primaryKey(),
+  collectionId: integer('collection_id').notNull().unique().references(() => platformCollection.id, { onDelete: 'restrict' }),
+}, t => [check('platform_legacy_query_alias_id_ck', sql`${t.oldId} > 0 AND ${t.oldId} <= 9007199254740991`)])
+export function definePlatformLegacyRelationAlias(observationId: () => AnySQLiteColumn) { return sqliteTable('platform_legacy_relation_alias', {
+  oldId: integer('old_id').primaryKey(),
+  observationId: integer('observation_id').notNull().unique().references(observationId, { onDelete: 'restrict' }),
+}, t => [check('platform_legacy_relation_alias_id_ck', sql`${t.oldId} > 0 AND ${t.oldId} <= 9007199254740991`)])
+}
+export const platformLegacyRelationAlias = definePlatformLegacyRelationAlias(() => platformBusinessObservation.id)
+/** Explicitly initialized from the frozen source maxima before allocating any new aliases. */
+export const platformLegacyAliasSequence = sqliteTable('platform_legacy_alias_sequence', {
+  namespace: text('namespace', { enum: ['query', 'relation'] }).primaryKey(),
+  highWater: integer('high_water').notNull(),
+}, t => [check('platform_legacy_alias_sequence_ck', sql`${t.namespace} IN ('query','relation') AND typeof(${t.highWater}) = 'integer' AND ${t.highWater} BETWEEN 0 AND 9007199254740991`)])
+
+/** Upgrade-only source binding. Runtime never creates or resumes migration runs. */
+export const platformMigrationRun = sqliteTable('platform_migration_run', {
+  runId: text('run_id').primaryKey(),
+  sourceSnapshotSha256: text('source_snapshot_sha256').notNull(),
+  sourceSchemaHash: text('source_schema_hash').notNull(),
+  sourceManifestSha256: text('source_manifest_sha256').notNull(),
+  targetSchemaVersion: text('target_schema_version').notNull(),
+  transformVersion: text('transform_version').notNull(),
+  state: text('state', { enum: ['running', 'complete'] }).notNull(),
+}, t => [check('platform_migration_run_state_ck', sql`${t.state} IN ('running','complete')`)])
+export const platformMigrationCheckpoint = sqliteTable('platform_migration_checkpoint', {
+  runId: text('run_id').notNull().references(() => platformMigrationRun.runId, { onDelete: 'restrict' }),
+  phase: text('phase').notNull(),
+  sourceTable: text('source_table').notNull(),
+  lastOldId: integer('last_old_id').notNull(),
+  copiedCount: integer('copied_count').notNull(),
+  batchDigest: text('batch_digest').notNull(),
+}, t => [primaryKey({ columns: [t.runId, t.phase, t.sourceTable] }),
+  ...[t.lastOldId, t.copiedCount].map(c => check(`platform_migration_checkpoint_${c.name}_ck`, sql`typeof(${c}) = 'integer' AND ${c} BETWEEN 0 AND 9007199254740991`)),
+])
+
+export const platformObservationFingerprintBasis = sqliteTable('platform_observation_fingerprint_basis', {
+  observationId: integer('observation_id').primaryKey().notNull().references(()=>platformBusinessObservation.id,{onDelete:'restrict'}),
+  scheme: text('scheme',{enum:['legacy-indexed-v1','legacy-bootstrap-v1','target-command-v1','uncaptured']}).notNull(),
+  inputArchiveId: integer('input_archive_id').unique().references(()=>platformArchiveValue.id,{onDelete:'restrict'}),
+},t=>[
+  check('platform_fingerprint_basis_safe_id',sql`typeof(${t.observationId})='integer' AND ${t.observationId} BETWEEN 1 AND 9007199254740991`),
+  check('platform_fingerprint_basis_scheme',sql`${t.scheme} IN ('legacy-indexed-v1','legacy-bootstrap-v1','target-command-v1','uncaptured')`),
+  check('platform_fingerprint_basis_input',sql`(${t.scheme}='uncaptured' AND ${t.inputArchiveId} IS NULL) OR (${t.scheme}<>'uncaptured' AND ${t.inputArchiveId} IS NOT NULL)`),
+])
+
+
+export const platformCollectionLegacyProvenance = sqliteTable('platform_collection_legacy_provenance', {
+  collectionId: integer('collection_id').primaryKey().notNull().references(()=>platformCollection.id,{onDelete:'restrict'}),
+  origin: text('origin',{enum:['t04_envelope','supplement']}).notNull(),
+  sourceIdentity: text('source_identity').notNull(),
+  sourceSha256: text('source_sha256').notNull(),
+  segmentIndex: integer('segment_index').notNull(),
+  inputFingerprint: text('input_fingerprint').notNull(),
+  importBatchId: integer('import_batch_id').notNull().references(()=>importBatch.id,{onDelete:'restrict'}),
+  createdAt: text('created_at').notNull(),
+  archiveId: integer('archive_id').notNull().unique().references(()=>platformArchiveValue.id,{onDelete:'restrict'}),
+},t=>[
+  unique('platform_collection_legacy_source_uq').on(t.sourceSha256,t.segmentIndex),
+  ...[t.collectionId,t.importBatchId,t.archiveId].map(c=>check(`collection_provenance_${c.name}_safe`,sql`typeof(${c})='integer' AND ${c} BETWEEN 1 AND 9007199254740991`)),
+  check('collection_provenance_segment_safe',sql`typeof(${t.segmentIndex})='integer' AND ${t.segmentIndex} BETWEEN 0 AND 9007199254740991`),
+  check('collection_provenance_origin',sql`typeof(${t.origin})='text' AND ${t.origin} IN ('t04_envelope','supplement')`),
+  ...[t.sourceSha256,t.inputFingerprint].map(c=>check(`collection_provenance_${c.name}_hex`,sql`typeof(${c})='text' AND length(${c})=64 AND length(cast(${c} AS blob))=64 AND ${c} NOT GLOB '*[^0-9a-f]*'`)),
+  ...[t.sourceIdentity,t.createdAt].map(c=>check(`collection_provenance_${c.name}_text`,sql`typeof(${c})='text'`)),
+])
+
+
+function applyStoredFields(){return {
+ exactStatus:exactText('exact_status'),exactDeclareKind:exactText('exact_declare_kind'),
+ exactAppliedAt:exactText('exact_applied_at'),exactYear:exactInteger('exact_year'),exactTitleRaw:exactText('exact_title_raw'),
+ exactStoredState:text('exact_stored_state',{enum:['captured','uncaptured']}),exactStoredRule:text('exact_stored_rule'),
+ exactStoredOrigin:text('exact_stored_origin',{enum:['legacy_source','sealed_snapshot','command_materialized']}),exactStoredReason:text('exact_stored_reason'),
+ sqlFactTitle:text('sql_fact_title'),sqlFactTitleState:text('sql_fact_title_state',{enum:['captured','uncaptured']}),
+ sqlFactTitleRule:text('sql_fact_title_rule'),sqlFactTitleReason:text('sql_fact_title_reason'),
+}}
+
+function processStoredFields(){return {
+ exactStatus:exactText('exact_status'),exactDeclareKind:exactText('exact_declare_kind'),exactAppliedAt:exactText('exact_applied_at'),
+ exactYear:exactInteger('exact_year'),exactTitleRaw:exactText('exact_title_raw'),exactBatch:exactText('exact_batch'),
+ exactAwardBatchLabel:exactText('exact_award_batch_label'),exactProvince:exactText('exact_province'),
+ exactStoredState:text('exact_stored_state',{enum:['captured','uncaptured']}),exactStoredRule:text('exact_stored_rule'),
+ exactStoredOrigin:text('exact_stored_origin',{enum:['legacy_source','sealed_snapshot','command_materialized']}),exactStoredReason:text('exact_stored_reason'),
+ sqlFactTitle:text('sql_fact_title'),sqlFactTitleState:text('sql_fact_title_state',{enum:['captured','uncaptured']}),
+ sqlFactTitleRule:text('sql_fact_title_rule'),sqlFactTitleReason:text('sql_fact_title_reason'),
+}}

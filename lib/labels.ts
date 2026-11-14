@@ -124,7 +124,7 @@ export const OCR_CHANNEL_ORDER: string[] = ['api', 'upload', 'mcp']
 // 名录生命周期契约(RL-01)—— 新枚举的 code → 中文 映射
 //
 // 与 `db/schema.ts` 里各列的 `enum` 取值**逐字对应**,契约原文见
-// `docs/roster-lifecycle-contract.md`。页面/查询/导出一律从此处取文案。
+// `lib/roster-import-client.ts`。页面/查询/导出一律从此处取文案。
 // ---------------------------------------------------------------------------
 
 /** 复核结论(`record_event.review_outcome`)→ 中文名。`null` 不在此列(不适用/未知)。 */

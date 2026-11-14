@@ -1,6 +1,6 @@
+import { createRuntimeSchema } from '../db/create-runtime'
 import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
-import { migrate } from 'drizzle-orm/better-sqlite3/migrator'
 import { afterEach, expect, it } from 'vitest'
 import * as schema from '../db/schema'
 import {
@@ -35,9 +35,8 @@ function fixture() {
   const sqlite = new Database(':memory:'); handles.push(sqlite); sqlite.pragma('foreign_keys=ON')
   const statements: { sql: string; params: unknown[] }[] = []
   const db = drizzle(sqlite, { schema, logger: { logQuery(sql, params) { statements.push({ sql, params }) } } })
-  migrate(db, { migrationsFolder: 'db/migrations' })
-  sqlite.exec(`INSERT INTO title(code,name_zh,level,rank) VALUES('specialized_sme','synthetic','municipal',2);
-    INSERT INTO import_batch(id,idempotency_key,source_kind,source_identity,created_at) VALUES(1,'synthetic','announcement','synthetic','synthetic');`)
+  createRuntimeSchema(sqlite)
+  sqlite.exec(`INSERT INTO import_batch(id,idempotency_key,source_kind,source_identity,created_at) VALUES(1,'synthetic','announcement','synthetic','synthetic');`)
   const event = (id: number) => {
     sqlite.prepare('INSERT INTO enterprise(id,name,name_norm) VALUES(?,?,?)').run(id, `synthetic-${id}`, `synthetic-${id}`)
     sqlite.prepare("INSERT INTO record(id,enterprise_id,title_code,source,name_raw) VALUES(?,?,'specialized_sme','jxj','container name')").run(id, id)

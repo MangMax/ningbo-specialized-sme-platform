@@ -1,4 +1,4 @@
-import type { useDb } from '../../db/client'
+import type { useApplicationDb } from '../../db/client'
 import type { LogContext } from '../../lib/logging'
 import { operationLogContext } from './operation-log-context'
 import { isJobId } from '../../lib/job'
@@ -13,7 +13,7 @@ import { ensureJobRunnerReady } from './job-runner'
 import { registerJobSpecs } from './job-specs'
 export type CandidateJobAction = 'submit' | 'detail' | 'cancel' | 'retry'
 type Context = {
-  db: ReturnType<typeof useDb>
+  db: ReturnType<typeof useApplicationDb>
   filesDir: string
   apiToken?: string | null
   browserAuthorized?: boolean

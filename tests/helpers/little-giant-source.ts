@@ -18,7 +18,7 @@ import { buildLittleGiantWorkbookBuffer, type FixtureRow } from './little-giant-
  * 真件路径:`RL02_LITTLE_GIANT_XLSX=<绝对路径>` 覆盖;未设时退回本机源目录默认位置。
  */
 
-/** 本机源目录里的默认位置(与 `docs/roster-little-giant-source.md` 记的一致)。 */
+/** 本机源目录里的默认位置。 */
 export const LITTLE_GIANT_DEFAULT_SOURCE_PATH =
   '/Users/mang/Workfile/宁波/专精特新/20261013/经信局名单/小巨人/经信局公布历年小巨人企业名单.xlsx'
 

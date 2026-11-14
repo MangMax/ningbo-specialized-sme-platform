@@ -10,7 +10,7 @@
  * 这里同样:`lib/pdf-page.ts` 是一页页图的规则,`server/utils/pdf-pages.ts` 是页图服务。
  * 两个文件同叫 `pdf-pages` 会让人在 import 时看不出拿的是规则还是服务。
  *
- * ── 落盘规则(权威写法在 `files/README.md`) ───────────────────────────────
+ * ── 落盘规则(权威写法在 `lib/file-store-scope.ts`) ───────────────────────────────
  *
  *     files/<source>/<kind>/<year>/<batch>/.<文件名>.pages/pNNN.png
  *     files/<source>/<kind>/<year>/<batch>/.<文件名>.pages/.pages.json

@@ -1,0 +1,43 @@
+{
+  "a": {
+    "queryText": "{\n  \"interface\": \"recognized_list\",\n  \"queryKey\": \"name:Example\",\n  \"rdjb\": \"2\",\n  \"titleCode\": \"specialized_sme\",\n  \"queriedAt\": \"2026-11-11T00:00:00Z\",\n  \"status\": \"success\",\n  \"failureReason\": null,\n  \"collectionEvidence\": {\n    \"source\": \"queryBusList\",\n    \"status\": \"success\",\n    \"effectiveConditions\": {\n      \"name\": \"Example\",\n      \"combination\": \"and\"\n    },\n    \"titleScope\": {\n      \"mode\": \"selected\",\n      \"rdjb\": [\n        \"2\"\n      ]\n    },\n    \"queriedAt\": \"2026-11-11T00:00:00Z\",\n    \"completedAt\": \"2026-11-11T00:01:00Z\",\n    \"rows\": [\n      {\n        \"id\": \"A\",\n        \"qymc\": \"Example\",\n        \"rdjb\": \"2\",\n        \"year\": \" 2028 \",\n        \"whpcyear\": \"false\"\n      }\n    ],\n    \"dataRows\": [\n      {\n        \"id\": \"A\",\n        \"qymc\": \"Example\",\n        \"rdjb\": \"2\",\n        \"year\": \" 2028 \",\n        \"whpcyear\": false\n      }\n    ],\n    \"pages\": [\n      {\n        \"source\": \"queryBusList\",\n        \"rdjb\": \"2\",\n        \"page\": 1,\n        \"maxPage\": 1,\n        \"status\": \"success\",\n        \"fetchedCount\": 1,\n        \"declaredTotal\": 1,\n        \"error\": null\n      }\n    ],\n    \"fetchedCount\": 1,\n    \"declaredTotal\": 1,\n    \"completeness\": \"complete\",\n    \"fullRange\": true,\n    \"unfinished\": [],\n    \"error\": null,\n    \"limits\": {\n      \"maxRequests\": 100,\n      \"maxRows\": 5000,\n      \"maxDurationMs\": 60000,\n      \"pageSize\": 50\n    }\n  },\n  \"relations\": [\n    {\n      \"sequenceNo\": 1,\n      \"relationKey\": \"A\",\n      \"usccRaw\": null,\n      \"nameRaw\": \"Example\",\n      \"rawFields\": {\n        \"id\": \"A\",\n        \"qymc\": \"Example\",\n        \"rdjb\": \"2\",\n        \"year\": \" 2028 \",\n        \"whpcyear\": false\n      }\n    }\n  ]\n}",
+    "evidenceText": "{\n \"source\": \"queryBusList\",\n \"status\": \"success\",\n \"effectiveConditions\": {\n  \"name\": \"Example\",\n  \"combination\": \"and\"\n },\n \"titleScope\": {\n  \"mode\": \"selected\",\n  \"rdjb\": [\n   \"2\"\n  ]\n },\n \"queriedAt\": \"2026-11-11T00:00:00Z\",\n \"completedAt\": \"2026-11-11T00:01:00Z\",\n \"rows\": [\n  {\n   \"id\": \"A\",\n   \"qymc\": \"Example\",\n   \"rdjb\": \"2\",\n   \"year\": \" 2028 \",\n   \"whpcyear\": \"false\"\n  }\n ],\n \"dataRows\": [\n  {\n   \"id\": \"A\",\n   \"qymc\": \"Example\",\n   \"rdjb\": \"2\",\n   \"year\": \" 2028 \",\n   \"whpcyear\": false\n  }\n ],\n \"pages\": [\n  {\n   \"source\": \"queryBusList\",\n   \"rdjb\": \"2\",\n   \"page\": 1,\n   \"maxPage\": 1,\n   \"status\": \"success\",\n   \"fetchedCount\": 1,\n   \"declaredTotal\": 1,\n   \"error\": null\n  }\n ],\n \"fetchedCount\": 1,\n \"declaredTotal\": 1,\n \"completeness\": \"complete\",\n \"fullRange\": true,\n \"unfinished\": [],\n \"error\": null,\n \"limits\": {\n  \"maxRequests\": 100,\n  \"maxRows\": 5000,\n  \"maxDurationMs\": 60000,\n  \"pageSize\": 50\n }\n}",
+    "createdAt": "creation text",
+    "assignments": [
+      {
+        "enterpriseId": null,
+        "matchBasis": "none",
+        "verificationStatus": "pending",
+        "origin": "command",
+        "actor": {
+          "type": "agent",
+          "id": "w4a"
+        },
+        "basis": "explicit input",
+        "recordedAt": null
+      }
+    ]
+  },
+  "b": {
+    "queryText": "{\n  \"interface\": \"recognized_list\",\n  \"queryKey\": \"name:Example\",\n  \"rdjb\": \"2\",\n  \"titleCode\": \"specialized_sme\",\n  \"queriedAt\": \"2026-11-11T00:00:00Z\",\n  \"status\": \"success\",\n  \"failureReason\": null,\n  \"collectionEvidence\": {\n    \"source\": \"queryBusList\",\n    \"status\": \"success\",\n    \"effectiveConditions\": {\n      \"name\": \"Example\",\n      \"combination\": \"and\"\n    },\n    \"titleScope\": {\n      \"mode\": \"selected\",\n      \"rdjb\": [\n        \"2\"\n      ]\n    },\n    \"queriedAt\": \"2026-11-11T00:00:00Z\",\n    \"completedAt\": \"2026-11-11T00:01:00Z\",\n    \"rows\": [\n      {\n        \"id\": \"A\",\n        \"qymc\": \"Example\",\n        \"rdjb\": \"2\",\n        \"year\": \" 2028 \",\n        \"whpcyear\": \"false\"\n      }\n    ],\n    \"dataRows\": [\n      {\n        \"id\": \"A\",\n        \"qymc\": \"Example\",\n        \"rdjb\": \"2\",\n        \"year\": \" 2028 \",\n        \"whpcyear\": false\n      }\n    ],\n    \"pages\": [\n      {\n        \"source\": \"queryBusList\",\n        \"rdjb\": \"2\",\n        \"page\": 1,\n        \"maxPage\": 1,\n        \"status\": \"success\",\n        \"fetchedCount\": 1,\n        \"declaredTotal\": 1,\n        \"error\": null\n      }\n    ],\n    \"fetchedCount\": 1,\n    \"declaredTotal\": 1,\n    \"completeness\": \"complete\",\n    \"fullRange\": true,\n    \"unfinished\": [],\n    \"error\": null,\n    \"limits\": {\n      \"maxRequests\": 100,\n      \"maxRows\": 5000,\n      \"maxDurationMs\": 60000,\n      \"pageSize\": 50\n    }\n  },\n  \"relations\": [\n    {\n      \"sequenceNo\": 1,\n      \"relationKey\": \"A\",\n      \"usccRaw\": null,\n      \"nameRaw\": \"Example\",\n      \"rawFields\": {\n        \"id\": \"A\",\n        \"qymc\": \"Example\",\n        \"rdjb\": \"2\",\n        \"year\": \" 2028 \",\n        \"whpcyear\": false\n      }\n    }\n  ]\n}",
+    "evidenceText": "{\n \"source\": \"queryBusList\",\n \"status\": \"success\",\n \"effectiveConditions\": {\n  \"name\": \"Example\",\n  \"combination\": \"and\"\n },\n \"titleScope\": {\n  \"mode\": \"selected\",\n  \"rdjb\": [\n   \"2\"\n  ]\n },\n \"queriedAt\": \"2026-11-11T00:00:00Z\",\n \"completedAt\": \"2026-11-11T00:01:00Z\",\n \"rows\": [\n  {\n   \"id\": \"A\",\n   \"qymc\": \"Example\",\n   \"rdjb\": \"2\",\n   \"year\": \" 2028 \",\n   \"whpcyear\": \"false\"\n  }\n ],\n \"dataRows\": [\n  {\n   \"id\": \"A\",\n   \"qymc\": \"Example\",\n   \"rdjb\": \"2\",\n   \"year\": \" 2028 \",\n   \"whpcyear\": false\n  }\n ],\n \"pages\": [\n  {\n   \"source\": \"queryBusList\",\n   \"rdjb\": \"2\",\n   \"page\": 1,\n   \"maxPage\": 1,\n   \"status\": \"success\",\n   \"fetchedCount\": 1,\n   \"declaredTotal\": 1,\n   \"error\": null\n  }\n ],\n \"fetchedCount\": 1,\n \"declaredTotal\": 1,\n \"completeness\": \"complete\",\n \"fullRange\": true,\n \"unfinished\": [],\n \"error\": null,\n \"limits\": {\n  \"maxRequests\": 100,\n  \"maxRows\": 5000,\n  \"maxDurationMs\": 60000,\n  \"pageSize\": 50\n }\n}",
+    "createdAt": "creation text",
+    "assignments": [
+      {
+        "enterpriseId": null,
+        "matchBasis": "none",
+        "verificationStatus": "pending",
+        "origin": "command",
+        "actor": {
+          "type": "agent",
+          "id": "w4a"
+        },
+        "basis": "explicit input",
+        "recordedAt": null,
+        "commandReceiptId": null
+      }
+    ]
+  },
+  "bytesA": "{\"assignment\":{\"actor\":{\"id\":\"w4a\",\"type\":\"agent\"},\"basis\":\"explicit input\",\"enterpriseId\":null,\"matchBasis\":\"none\",\"origin\":\"command\",\"recordedAt\":null,\"verificationStatus\":\"pending\"},\"collectionId\":1,\"position\":{\"pageId\":1,\"pageRowNo\":1,\"positionState\":\"verified\",\"sequenceNo\":1},\"row\":{\"nameRaw\":\"Example\",\"rawFields\":{\"id\":\"A\",\"qymc\":\"Example\",\"rdjb\":\"2\",\"whpcyear\":false,\"year\":\" 2028 \"},\"relationKey\":\"A\",\"sequenceNo\":1,\"usccRaw\":null}}",
+  "bytesB": "{\"assignment\":{\"actor\":{\"id\":\"w4a\",\"type\":\"agent\"},\"basis\":\"explicit input\",\"commandReceiptId\":null,\"enterpriseId\":null,\"matchBasis\":\"none\",\"origin\":\"command\",\"recordedAt\":null,\"verificationStatus\":\"pending\"},\"collectionId\":1,\"position\":{\"pageId\":1,\"pageRowNo\":1,\"positionState\":\"verified\",\"sequenceNo\":1},\"row\":{\"nameRaw\":\"Example\",\"rawFields\":{\"id\":\"A\",\"qymc\":\"Example\",\"rdjb\":\"2\",\"whpcyear\":false,\"year\":\" 2028 \"},\"relationKey\":\"A\",\"sequenceNo\":1,\"usccRaw\":null}}"
+}

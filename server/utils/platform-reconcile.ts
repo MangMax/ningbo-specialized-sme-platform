@@ -8,41 +8,42 @@ import { createHash } from 'node:crypto'
 import { eq } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../db/schema'
-import { getComparison, type ComparisonDirection } from '../../lib/comparison'
+import { getComparison,type ComparisonDirection } from '../../lib/comparison'
 import { normalizeName } from '../../lib/domain'
 import type { PlatformInterface } from '../../lib/labels'
 import {
-  type PlatformFetch,
-  type PlatformQueryOutcome,
-  resolveCookie,
-  queryPlatformSlots,
-  readCompleteLegacySlot,
-  type LegacySlotCollection,
+type PlatformFetch,
+type PlatformQueryOutcome,
+resolveCookie,
+queryPlatformSlots,
+type LegacySlotCollection,
 } from '../../lib/platform/client'
-import type { PlatformRdjb, PlatformRow } from '../../lib/platform/adapter'
-import { type PlatformRelationRecord, relationFromRow } from '../../lib/platform/identity'
-import { normalizePlatformRelation } from '../../lib/platform/normalization'
+import type { PlatformRdjb,PlatformRow } from '../../lib/platform/adapter'
+import { relationFromRow } from '../../lib/platform/identity'
+import { type StoredReplayInput } from '../../lib/platform/reconcile-replay-input'
 import {
-  type DifferenceDecision,
-  type KnownEnterprise,
-  type PlatformQueryInput,
-  type RelationRef,
-  buildPlatformWritePayload,
+type DifferenceDecision,
+type KnownEnterprise,
+type PlatformQueryInput,
+type RelationRef,
+buildPlatformWritePayload,
 } from '../../lib/platform/payload'
 import {
-  DEFAULT_FRESHNESS_MS,
-  type DifferenceVerdict,
-  RDJB_TITLE,
-  type ReconcileQueryEvidence,
-  type ReconcileTarget,
-  decideDifference,
+DEFAULT_FRESHNESS_MS,
+type DifferenceVerdict,
+RDJB_TITLE,
+type ReconcileQueryEvidence,
+type ReconcileTarget,
+decideDifference,
 } from '../../lib/platform/reconcile'
 import type {
-  RosterImportCommitResponse,
-  RosterImportPreflightResponse,
-  RosterImportRequest,
+RosterImportCommitResponse,
+RosterImportPreflightResponse,
+RosterImportRequest,
 } from '../../lib/roster-import-client'
-import { commitRosterImport, preflightRosterImport } from './roster-import'
+import { commitRosterImport,preflightRosterImport } from './roster-import'
+import { createReconcileTargetSlotReader,type ReconcileTargetSlotReader } from './platform-reconcile-target-slots'
+import { sqliteConnection } from '../../lib/platform/target-connection'
 
 type Db = BetterSQLite3Database<typeof schema>
 
@@ -124,10 +125,9 @@ export interface ReconcileRunOptions {
    * ⚠️ **分片的理由在 RL-18(#19)之后变了。** 这里以前写的是「写入侧的计划阶段是
    * O(批内查询数²)(每条查询都要在已存在的查询里找同键的行),四千多条查询的那个批次会慢到
    * 跑不完」—— 那个根因**已修掉**:「找既有行」改为**按键定位**(谓词进 `WHERE` 命中既有
-   * 唯一索引,且不再把 `platform_query.raw_response` 那几十 KB 一并读出来)。
+   * 唯一索引,且不再把 不可变响应归档 那几十 KB 一并读出来)。
    * 于是分批**不再是为了规避计划阶段的复杂度**,只是控制**单次事务时长与失败重试代价**的
-   * **可选上限**(修后单批 4400 条查询 = 票面全量规模,实测在秒级)。实测口径与数字见
-   * `docs/roster-lifecycle-contract.md` §3.1c。
+   * **可选上限**。
    */
   offset?: number
   /** 同时打开的平台连接上限(每次查询 = 1 个连接)。实测 0.3–1.1 秒/次,默认 4。 */
@@ -142,6 +142,8 @@ export interface ReconcileRunOptions {
   /** `false` = 只采集预览不回写(试跑)。默认回写。 */
   write?: boolean
   writer?: ReconcileWriter
+  /** Explicit completed capture target, bound to this service's native connection. */
+  targetSlots?: ReconcileTargetSlotReader
   now?: () => Date
   onProgress?: (done: number, total: number) => void
   shouldCancel?: () => boolean
@@ -237,132 +239,19 @@ async function mapWithConcurrency<T, R>(
 // 读既有证据(新鲜性复用)
 // ---------------------------------------------------------------------------
 
-/** Mirror the live adapter's legacy string projection without losing typed source. */
-function legacyText(value: unknown): string {
-  if (value === null || value === undefined) return ''
-  if (typeof value === 'string') return value
-  if (typeof value === 'number' || typeof value === 'boolean') return String(value)
-  return JSON.stringify(value)
-}
-
-/**
- * 从库里读回一条 `platform_relation` 的**原始字段**。
- *
- * `raw_fields` 已保存的 typed JSON 原样返回;typed 原行不能再被字符串化后冒充原文,
- * 否则复用归档重放会与 `platform_business_record_version` 的类型化哈希冲突。
- * 万一某行没有 `raw_fields`(例如早期直接写库的演示数据),才按列**合成**一份等价字段。
- */
-function storedRawFields(row: typeof schema.platformRelation.$inferSelect): Record<string, unknown> {
-  if (row.rawFields && Object.keys(row.rawFields).length > 0) return row.rawFields
-  const synthesized: Record<string, unknown> = {}
-  if (row.relationKey) synthesized.id = row.relationKey
-  if (row.nameRaw) synthesized.qymc = row.nameRaw
-  if (row.usccRaw) synthesized.tyshxydm = row.usccRaw
-  if (row.province) synthesized.szsfmc = row.province
-  if (row.status) synthesized.cszt = row.status
-  if (row.batch) synthesized.whpc = row.batch
-  if (row.declareKind) synthesized.sblx = row.declareKind
-  if (row.appliedAt) synthesized.sqsj = row.appliedAt
-  if (row.awardBatchLabel) synthesized.personuuid = row.awardBatchLabel
-  if (row.year != null) synthesized.year = String(row.year)
-  return synthesized
-}
-
-/** Old string projection used only to revalidate legacy page rows; never the write payload.
- * Assignment deliberately mirrors the adapter's legacy projection (which drops an own
- * `__proto__` key); the typed payload keeps the exact row separately. */
-function legacyRowOf(row: typeof schema.platformRelation.$inferSelect): PlatformRow {
-  const out: PlatformRow = {}
-  for (const [key, value] of Object.entries(storedRawFields(row))) out[key] = legacyText(value)
-  return out
-}
-
-/**
- * 库里已有的、仍**新鲜**且已成功执行过的查询(按槽位)。
- *
- * 「新鲜」的判据是 `queried_at >= now - freshnessMs`,默认 24 小时 —— 命中就不重复打平台
- * (票面要求:已有新鲜查询可复用)。失败(`failed`)的查询**从不复用**:它代表「这次没查成」,
- * 重跑就该再试一次。
- */
-function freshStoredSlots(db: Db, queryKey: string, cutoffIso: string): Map<string, StoredSlot> {
-  return db.transaction(tx => freshStoredSlotsSnapshot(tx, queryKey, cutoffIso))
-}
-
-function freshStoredSlotsSnapshot(db: Pick<Db, 'select'>, queryKey: string, cutoffIso: string): Map<string, StoredSlot> {
-  const out = new Map<string, StoredSlot>()
-  const queries = db
-    .select()
-    .from(schema.platformQuery)
-    .where(eq(schema.platformQuery.queryKey, queryKey))
-    .all()
-    .sort((a, b) => b.queriedAt.localeCompare(a.queriedAt) || b.id - a.id)
-  const seen = new Set<string>()
-  for (const query of queries) {
-    const key = slotKey({ interface: query.interface, rdjb: query.rdjb })
-    if (seen.has(key)) continue
-    seen.add(key)
-    if (query.status !== 'success' && query.status !== 'no_record') continue
-    if (query.queriedAt < cutoffIso) continue
-    const relations = db
-      .select()
-      .from(schema.platformRelation)
-      .where(eq(schema.platformRelation.queryId, query.id))
-      .all()
-      .sort((a, b) => a.sequenceNo - b.sequenceNo)
-    const legacyRows = relations.map(legacyRowOf)
-    const payloadRows = relations.map(storedRawFields)
-    const collection = readCompleteLegacySlot(query.rawResponse, query, legacyRows)
-    if (!collection || (query.status === 'no_record') !== (legacyRows.length === 0)) continue
-    out.set(key, {
-      collection,
-      rawRows: legacyRows,
-      payloadRows,
-      raw: '',
-      evidence: {
-        interface: query.interface,
-        rdjb: query.rdjb,
-        queriedAt: query.queriedAt,
-        status: query.status,
-        completeness: collection.completeness,
-        failureReason: query.failureReason,
-        relations: relations.map((archived, index) => {
-          const row = normalizePlatformRelation(query.interface, archived)
-          return {
-            interface: query.interface,
-            rdjb: query.rdjb,
-            sequenceNo: row.sequenceNo,
-            relationKey: row.relationKey,
-            nameRaw: row.nameRaw,
-            usccRaw: row.usccRaw,
-            province: row.province,
-            status: row.status,
-            batch: row.batch,
-            declareKind: row.declareKind,
-            appliedAt: row.appliedAt,
-            awardBatchLabel: row.awardBatchLabel,
-            year: row.year,
-            normalizationConflicts: row.normalizationConflicts,
-            sourceKind: query.interface === 'business_list' ? 'platform_business' : 'platform_apply',
-            rawFields: payloadRows[index]!,
-          }
-        }),
-      },
-    })
-  }
-  return out
-}
-
-/** 一个槽位的证据:查询状态分类用 `evidence`,载荷构造用 typed `payloadRows`。 */
-interface StoredSlot {
+/** Comparison/mapping projections are independent of the selected immutable originals. */
+export type StoredSlot = {
+  /** Reused queries own their saved value (including NULL); fetched slots use the rdjb mapping. */
+  titleCode: typeof schema.platformCollection.$inferSelect.titleCode
   collection?: LegacySlotCollection
   evidence: ReconcileQueryEvidence
   /** Legacy string projection, used only for old page/row validation. */
   rawRows: PlatformRow[]
-  /** Exact stored JSON rows; reused typed archives must never be replayed as strings. */
+  /** Typed payload of the selected original or fresh platform rows. */
   payloadRows: Record<string, unknown>[]
-  /** 本次实查拿到的**原始响应原文**(落 `platform_query.raw_response`);复用时为空串。 */
+  /** 本次实查拿到的**原始响应原文**(落 不可变响应归档);复用时为空串。 */
   raw: string
-}
+} & ({ kind: 'fresh' } | { kind: 'stored'; original: StoredReplayInput })
 
 // ---------------------------------------------------------------------------
 // 目标收集
@@ -491,17 +380,17 @@ function toEvidence(outcome: PlatformQueryOutcome): ReconcileQueryEvidence {
  * `relations` 走 `rawRows`(平台原始行),让 `buildPlatformWritePayload` 用**同一套**
  * 字段映射与匹配依据规则构造关系项 —— 不在这里另写一份映射。
  *
- * `titleCode` 用 `rdjb` ↔ 称号的对应关系填(`businessList` 确实是按认定级别查的);
- * 申报接口不按称号查,留空。它描述的是「**这次查询**查的是哪一档」,不是目标企业。
+ * `titleCode` 由槽位来源确定：复用查询保留原值，新采集按 rdjb 映射。
  */
 function toQueryInput(slot: StoredSlot, queryKey: string): PlatformQueryInput {
   const { evidence } = slot
   return {
+    ...(slot.kind === 'stored' ? { kind: 'stored' as const, original: slot.original } : { kind: 'fresh' as const }),
     interface: evidence.interface,
     queryKey,
     rdjb: evidence.rdjb,
     queriedAt: evidence.queriedAt,
-    titleCode: evidence.interface === 'business_list' ? (RDJB_TITLE[evidence.rdjb] ?? null) : null,
+    titleCode: slot.titleCode,
     outcome: {
       interface: evidence.interface,
       rdjb: evidence.rdjb,
@@ -580,6 +469,9 @@ function hasFreshDecision(db: Db, target: ReconcileTarget, cutoffIso: string, co
 
 export async function runPlatformReconcile(options: ReconcileRunOptions): Promise<ReconcileReport> {
   const { db } = options
+  const connection = sqliteConnection(db)
+  const targetSlots = options.targetSlots ?? createReconcileTargetSlotReader(connection)
+  targetSlots.assertConnection(db)
   const now = options.now ?? (() => new Date())
   const startedAt = now().toISOString()
   const freshnessMs = options.freshnessMs ?? DEFAULT_FRESHNESS_MS
@@ -602,7 +494,7 @@ export async function runPlatformReconcile(options: ReconcileRunOptions): Promis
   // 先按槽位判「哪些新鲜可复用、哪些必须实查」—— 一次都不查的话不需要凭据。
   const planned = new Map<string, { reused: Map<string, StoredSlot>; missing: typeof SLOTS }>()
   for (const uscc of usccs) {
-    const reused = freshStoredSlots(db, uscc, cutoffIso)
+    const reused = targetSlots.read(db, uscc, cutoffIso)
     planned.set(uscc, { reused, missing: SLOTS.filter((slot) => !reused.has(slotKey(slot))) })
   }
   const missingSlots = [...planned.values()].reduce((sum, entry) => sum + entry.missing.length, 0)
@@ -658,7 +550,11 @@ export async function runPlatformReconcile(options: ReconcileRunOptions): Promis
           networkCount += 1
           networkByInterface[outcome.interface] = (networkByInterface[outcome.interface] ?? 0) + 1
         }
-        slots.push({ evidence: toEvidence(outcome), rawRows: outcome.rows, payloadRows: outcome.rows, raw: outcome.raw, collection: outcome.collection })
+        slots.push({
+          kind: 'fresh',
+          titleCode: outcome.interface === 'business_list' ? (RDJB_TITLE[outcome.rdjb] ?? null) : null,
+          evidence: toEvidence(outcome), rawRows: outcome.rows, payloadRows: outcome.rows, raw: outcome.raw, collection: outcome.collection,
+        })
       }
     }
     if (options.shouldCancel?.()) cancelled = true

@@ -20,11 +20,9 @@ export type PlatformFactField =
   | 'province' | 'nameRaw' | 'usccRaw'
   | 'validityDateRaw' | 'maintenanceYear' | 'maintenanceBatch' | 'district' | 'awardNote' | 'titleRaw'
 
-export interface PlatformObservationFact {
+interface ObservationFactFields {
   /** Archive display facts, separate from the source content's null/identity contract. */
-  archiveProcessFacts?: ArchiveProcessFacts
   relationId: number
-  interface: PlatformFactInterface
   /** The content version's typed row id; null when the observation has no projection. */
   projectionVersionId: number | null
   /** The typed projection rule version; null when the observation has no projection. */
@@ -34,7 +32,6 @@ export interface PlatformObservationFact {
   declareKind: string | null
   year: number | null
   appliedAt: string | null
-  status: string | null
   batch: string | null
   awardBatchLabel: string | null
   province: string | null
@@ -52,6 +49,10 @@ export interface PlatformObservationFact {
   normalizationConflicts: PlatformNormalizationConflict[]
 }
 
+export type PlatformObservationFact =
+  | (ObservationFactFields & { interface: 'business_list'; status: string | Buffer | null; archiveProcessFacts?: ArchiveProcessFacts })
+  | (ObservationFactFields & { interface: 'apply_list' | 'recognized_list'; status: string | null; archiveProcessFacts?: Omit<ArchiveProcessFacts, 'status'> & {status:string|null} })
+
 /** Legacy raw row title is evidence only for the interface that actually models it. */
 export function legacyRowTitle(rawFields: Record<string, unknown> | null | undefined): string | null {
   const value = rawFields?.rdjb
@@ -59,7 +60,7 @@ export function legacyRowTitle(rawFields: Record<string, unknown> | null | undef
 }
 
 const archiveProcessFields = ['province', 'status', 'batch', 'declareKind', 'appliedAt', 'awardBatchLabel', 'year'] as const
-export type ArchiveProcessFacts = Pick<PlatformObservationFact, typeof archiveProcessFields[number]>
+export type ArchiveProcessFacts = Pick<ObservationFactFields, Exclude<typeof archiveProcessFields[number], 'status'>> & { status: string | Buffer | null }
 
 /** Source-reader boundary for archive display consumers. Normalization has already
  * reconciled stored/raw conflicts. Only non-null modeled content may supplement it;
@@ -74,5 +75,8 @@ export function withArchiveProcessFacts(
       && fact[field] != null && !fact.normalizationConflicts.some(conflict => conflict.field === field)
       ? fact[field] : normalized[field] ?? null,
   ])) as ArchiveProcessFacts
-  return { ...fact, archiveProcessFacts }
+  if (fact.interface === 'business_list') return { ...fact, archiveProcessFacts }
+  const status=archiveProcessFacts.status
+  if (status!==null && typeof status!=='string') throw new Error('Non-business archive status must be TEXT')
+  return { ...fact, archiveProcessFacts: {...archiveProcessFacts,status} }
 }

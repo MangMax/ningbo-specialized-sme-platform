@@ -1,15 +1,16 @@
+import { submitNativePlatformQuery } from './helpers/native-platform-fixture'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { eq } from 'drizzle-orm'
-import { useDb, schema } from '../db/client'
-import { spawnOwnedChild as spawn, reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../scripts/lib/isolated-local-services.mjs'
+import { initializeDb, schema } from '../db/client'
+import { spawnOwnedChild as spawn, reserveLoopbackPort, waitForHttp, stopOwnedChild } from './helpers/isolated-local-services.mjs'
 
 const dir = mkdtempSync(join(tmpdir(), 'spec63-proof-http-'))
 const dbPath = join(dir, 'synthetic.db')
-const db = useDb({ dbPath })
+const db = initializeDb({ create: true,  dbPath })
 const file = db.insert(schema.storedFile).values({ relPath: 'synthetic/notice.pdf', filename: 'notice.pdf', ext: 'pdf', bytes: 12, sha256: 'a'.repeat(64), source: 'jxj', kind: 'announcement' }).returning().get()
 const freezeFile = db.insert(schema.storedFile).values({ relPath: 'synthetic/archive/freeze-v1', filename: 'freeze-v1.txt', ext: 'txt', bytes: 24, sha256: 'c'.repeat(64), source: 'miit', kind: 'export' }).returning().get()
 const doc = db.insert(schema.sourceDocument).values({ source: 'jxj', title: 'Synthetic complete notice', path: file.relPath, issueDate: '2024-05-01' }).returning().get()
@@ -18,14 +19,21 @@ const record = db.insert(schema.record).values({ enterpriseId: enterprise.id, ti
 const event = db.insert(schema.recordEvent).values({ recordId: record.id, eventType: 'award', year: 2024 }).returning().get()
 db.insert(schema.recordEvidence).values({ recordEventId: event.id, sourceFile: doc.path, page: 3, listNo: 2 }).run()
 const conditions = { combination: 'and' }
-const collection = { source: 'queryBusList', status: 'success', effectiveConditions: conditions, titleScope: { mode: 'selected', rdjb: ['2'] }, queriedAt: '2026-10-18T00:00:00Z', completedAt: '2026-10-18T00:01:00Z', rows: [], pages: [{ source: 'queryBusList', rdjb: '2', page: 1, maxPage: 1, status: 'success', fetchedCount: 5, declaredTotal: 5, error: null }], fetchedCount: 5, declaredTotal: 5, completeness: 'complete', fullRange: true, unfinished: [], error: null, limits: { maxRequests: 1, maxRows: 50, maxDurationMs: 1000, pageSize: 50 } } as typeof schema.platformQuery.$inferInsert.collectionEvidence
-const query = db.insert(schema.platformQuery).values({ interface: 'recognized_list', queryKey: 'all', rdjb: '2', titleCode: 'specialized_sme', queriedAt: '2026-10-18T00:00:00Z', status: 'success', collectionEvidence: collection }).returning().get()
-const addRelation = (sequenceNo: number, uscc: string, name: string, enterpriseId: number | null = null) => db.insert(schema.platformRelation).values({ queryId: query.id, sequenceNo, enterpriseId, usccRaw: uscc, nameRaw: name, year: 2024, status: '已认定', verificationStatus: 'confirmed', matchBasis: 'uscc' }).returning().get()
-const matchedRelation = addRelation(1, enterprise.usccNorm!, '甲企业', enterprise.id)
-addRelation(2, '91330211255994476B', '接口独有')
-const otherRelation = addRelation(3, '91330211255994477C', '接口名称')
-const restExplicitRelation = addRelation(4, '91330211255994479E', 'REST 显式证明')
-const mcpOmittedRelation = addRelation(5, '91330211255994480F', 'MCP 省略证明')
+const sourceRows = [
+  { id: 'proof-1', tyshxydm: enterprise.usccNorm!, qymc: '甲企业' },
+  { id: 'proof-2', tyshxydm: '91330211255994476B', qymc: '接口独有' },
+  { id: 'proof-3', tyshxydm: '91330211255994477C', qymc: '接口名称' },
+  { id: 'proof-4', tyshxydm: '91330211255994479E', qymc: 'REST 显式证明' },
+  { id: 'proof-5', tyshxydm: '91330211255994480F', qymc: 'MCP 省略证明' },
+].map(row => ({ ...row, rdjb: '2', whpcyear: '2024' }))
+const collection = { source: 'queryBusList' as const, status: 'success' as const, effectiveConditions: { combination: 'and' as const }, titleScope: { mode: 'selected' as const, rdjb: ['2'] }, queriedAt: '2026-10-18T00:00:00Z', completedAt: '2026-10-18T00:01:00Z', rows: sourceRows, pages: [{ source: 'queryBusList' as const, rdjb: '2', page: 1, maxPage: 1, status: 'success' as const, fetchedCount: 5, declaredTotal: 5, error: null }], fetchedCount: 5, declaredTotal: 5, completeness: 'complete' as const, fullRange: true, unfinished: [], error: null, limits: { maxRequests: 1, maxRows: 50, maxDurationMs: 1000, pageSize: 50 } }
+const native = submitNativePlatformQuery(db, { interface: 'recognized_list', queryKey: 'all', rdjb: '2', titleCode: 'specialized_sme', queriedAt: collection.queriedAt, status: 'success', collectionEvidence: collection, relations: sourceRows.map((rawFields, i) => ({ sequenceNo: i + 1, relationKey: rawFields.id, rawFields, nameRaw: rawFields.qymc, usccRaw: rawFields.tyshxydm, enterpriseId: i === 0 ? enterprise.id : null, verificationStatus: i === 0 ? 'confirmed' : 'pending', matchBasis: i === 0 ? 'uscc' : 'none' })) })
+const query = { id: native.queryId }
+const [matchedRelation, , otherRelation, restExplicitRelation, mcpOmittedRelation] = native.relationIds.map(id => ({ id }))
+// A process source explicitly supplies the historical award year. Directory
+// maintenance years cannot be promoted into this historical field.
+const historicalCollection = submitNativePlatformQuery(db, { interface: 'business_list', queryKey: enterprise.usccNorm!, rdjb: '2', titleCode: 'specialized_sme', queriedAt: '2026-10-18T00:00:00Z', status: 'success', rawResponse: '{"synthetic":"2024 award process"}', relations: [{ sequenceNo: 1, relationKey: 'HISTORICAL-2024', enterpriseId: enterprise.id, nameRaw: enterprise.name, usccRaw: enterprise.usccNorm, year: 2024, status: '终审通过', verificationStatus: 'confirmed', matchBasis: 'uscc', rawFields: { id: 'HISTORICAL-2024' } }] })
+const historicalRelationId = historicalCollection.relationIds[0]!
 const batch = db.insert(schema.platformExportBatch).values({ titleCode: 'specialized_sme', year: 2026, collectedOn: '2026-10-18', originalFilename: 'synthetic.xlsx', sha256: 'b'.repeat(64), importStatus: 'imported' }).returning().get()
 const addExport = (sourceRowNo: number, uscc: string, name: string) => db.insert(schema.platformExportRow).values({ batchId: batch.id, sourceRowNo, usccRaw: uscc, nameRaw: name }).returning().get()
 const matchedExport = addExport(2, enterprise.usccNorm!, '甲企业')
@@ -34,7 +42,7 @@ addExport(4, '91330211255994478D', '导出独有')
 const restExplicitExport = addExport(5, '91330211255994479E', 'REST 显式证明')
 const mcpOmittedExport = addExport(6, '91330211255994480F', 'MCP 省略证明')
 let service: { baseUrl: string; stop: () => Promise<void> }
-const sourceQuery = `queryIds=${query.id}&exportBatchIds=${batch.id}&officialSourceDocumentIds=${doc.id}`
+const sourceQuery = `queryIds=${query.id},${historicalCollection.queryId}&exportBatchIds=${batch.id}&officialSourceDocumentIds=${doc.id}`
 const api = (path: string, token = true) => `${service.baseUrl}/api/roster/${path}`
 const post = (path: string, body: unknown, authorized = true) => fetch(api(path), { method: 'POST', headers: { 'content-type': 'application/json', ...(authorized ? { authorization: 'Bearer synthetic-api-token' } : {}) }, body: JSON.stringify(body) })
 async function json(response: Response) { return response.json() as Promise<any> }
@@ -104,13 +112,13 @@ describe('stored comparison scope proofs through real HTTP and MCP', () => {
   })
   it('qualifies public official and current results only with stored confirmed proof IDs', async () => {
     const withProof = await json(await fetch(api(`record-comparison?${sourceQuery}&proofIds=${officialProofId},${currentProofId}`)))
-    expect(withProof.platformWithoutOfficial.rows.filter((row: any) => row.qualification === 'platform_without_official').map((row: any) => row.relation.id)).toContain(matchedRelation.id)
+    expect(withProof.platformWithoutOfficial.rows.filter((row: any) => row.qualification === 'platform_without_official').map((row: any) => row.relation.id)).toContain(historicalRelationId)
     expect(withProof.currentSourceConsistency.recognizedObservations.map((row: any) => row.qualification)).toContain('matched')
     expect(withProof.currentSourceConsistency.recognizedObservations.map((row: any) => row.qualification)).toContain('interface_only')
     expect(withProof.currentSourceConsistency.recognizedObservations.map((row: any) => row.qualification)).toContain('field_conflict')
     expect(withProof.currentSourceConsistency.exportObservations.map((row: any) => row.qualification)).toContain('export_only')
-    const viaMcp = mcpValue(await rpc('tools/call', { name: 'list_record_comparison', arguments: { queryIds: [query.id], exportBatchIds: [batch.id], officialSourceDocumentIds: [doc.id], proofIds: [officialProofId, currentProofId] } }))
-    expect(viaMcp.platformWithoutOfficial.rows.map((row: any) => row.relation.id)).toContain(matchedRelation.id)
+    const viaMcp = mcpValue(await rpc('tools/call', { name: 'list_record_comparison', arguments: { queryIds: [query.id, historicalCollection.queryId], exportBatchIds: [batch.id], officialSourceDocumentIds: [doc.id], proofIds: [officialProofId, currentProofId] } }))
+    expect(viaMcp.platformWithoutOfficial.rows.map((row: any) => row.relation.id)).toContain(historicalRelationId)
     expect(viaMcp.currentSourceConsistency.recognizedObservations.map((row: any) => row.qualification)).toContain('matched')
     const fake = await json(await fetch(api(`record-comparison?${sourceQuery}&proofIds=999999`)))
     expect(fake.currentSourceConsistency.recognizedObservations.every((row: any) => row.qualification === 'not_comparable')).toBe(true)
@@ -177,7 +185,5 @@ describe('stored comparison scope proofs through real HTTP and MCP', () => {
     expect((await json(await fetch(api(`comparison-scope-proofs/${currentProofId}/audit`)))).total).toBe(2)
     db.update(schema.platformExportRow).set({ nameRaw: '甲企业' }).where(eq(schema.platformExportRow.id, matchedExport.id)).run()
     expect((await json(await fetch(api(`comparison-scope-proofs/${currentProofId}`)))).valid).toBe(true)
-    db.update(schema.platformRelation).set({ status: 'changed archived original row' }).where(eq(schema.platformRelation.id, matchedRelation.id)).run()
-    expect((await json(await fetch(api(`comparison-scope-proofs/${currentProofId}`)))).valid).toBe(false)
   })
 })

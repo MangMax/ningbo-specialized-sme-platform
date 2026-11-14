@@ -4,7 +4,7 @@ import { requestLogContext } from '../../../lib/logging'
 defineRouteMeta({
   openAPI: {
     tags: ['平台实时查询'], summary: '实时查询平台申报/关联/已认定企业记录（只读）',
-    description: '独立于本库企业。businessList只接受uscc及必填字符串rdjb=1/2/3/all，all要求startPage=1。queryList/queryBusList的name 为平台名称关键词，uscc 为18位代码；同时提供按 AND 生效。无默认日期/区域限制。凭据仅由服务端解析，未知参数拒绝。queryBusList支持单/全三称号、认定日期范围、有效年份、维护年份及依赖年份的批次、账号区域码和qymc排序；仅明确提供时生效。只读沿用无 token 策略。完整契约及示例见 docs/platform-live-query.md。',
+    description: '独立于本库企业。businessList只接受uscc及必填字符串rdjb=1/2/3/all，all要求startPage=1。queryList/queryBusList的name 为平台名称关键词，uscc 为18位代码；同时提供按 AND 生效。无默认日期/区域限制。凭据仅由服务端解析，未知参数拒绝。queryBusList支持单/全三称号、认定日期范围、有效年份、维护年份及依赖年份的批次、账号区域码和qymc排序；仅明确提供时生效。只读沿用无 token 策略。完整契约及示例',
     requestBody: { required: true, content: { 'application/json': { schema: {
       type: 'object', additionalProperties: false, required: ['source'], oneOf: [
         { type: 'object', properties: { source: { type: 'string', enum: ['queryList'] }, rdjb: { type: 'null' }, sqsj: { type: 'null' }, rddqrq: { type: 'null' }, whpcyear: { type: 'null' }, whpc: { type: 'null' }, szq: { type: 'null' }, orderField: { type: 'null' }, orderDirection: { type: 'null' } }, anyOf: [{ type: 'object', required: ['name'] }, { type: 'object', required: ['uscc'] }] },

@@ -1,11 +1,10 @@
+import { createRuntimeSchema } from '../db/create-runtime'
 import { createServer, type Server } from 'node:http'
 import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
-import { migrate } from 'drizzle-orm/better-sqlite3/migrator'
 import { createApp, defineEventHandler, toNodeListener } from 'h3'
 import { afterAll, beforeAll, expect, it, vi } from 'vitest'
 import * as schema from '../db/schema'
-import { TITLE_SEED } from '../db/titles'
 vi.mock('@nuxtjs/mcp-toolkit/server',()=>({defineMcpTool:(value:unknown)=>value}))
 vi.mock('@db',()=>({useDb:()=>db}))
 const sqlite=new Database(':memory:'),db=drizzle(sqlite,{schema})
@@ -13,7 +12,7 @@ let server:Server,base:string
 let refreshTool: (typeof import('../server/mcp/tools/refresh_enterprise_differences'))['default']
 let readTool: (typeof import('../server/mcp/tools/list_enterprise_difference_comparisons'))['default']
 beforeAll(async()=>{
- migrate(db,{migrationsFolder:'db/migrations'});db.insert(schema.title).values([...TITLE_SEED]).run()
+ sqlite.pragma('foreign_keys=ON'); createRuntimeSchema(sqlite)
  const e=db.insert(schema.enterprise).values({name:'传输合成',nameNorm:'传输合成'}).returning().get()
  db.insert(schema.record).values({enterpriseId:e.id,titleCode:'specialized_sme',source:'jxj',nameRaw:e.name}).run()
  vi.stubGlobal('useRuntimeConfig',()=>({apiToken:'refresh-test-token'}));vi.stubGlobal('defineEventHandler',defineEventHandler)

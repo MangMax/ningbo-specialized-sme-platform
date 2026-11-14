@@ -1,3 +1,6 @@
+import { submitNativePlatformQuery } from './helpers/native-platform-fixture'
+import { submitSyntheticRecognizedCollection } from './helpers/qualification-native-source'
+import type { RosterImportRelation } from '../lib/roster-import-client'
 import { initializeDb } from '../db/client'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -5,11 +8,8 @@ import { join } from 'node:path'
 import { createServer } from 'node:http'
 import { createApp, createError, createRouter, defineEventHandler, getRouterParam, setHeader, toNodeListener } from 'h3'
 import { afterEach, expect, it, vi } from 'vitest'
-import { schema, useDb } from '../db'
-import { ensurePlatformObservation } from '../server/utils/platform-business-record'
+import { schema } from '../db'
 import { getRosterEnterpriseDetail } from '../lib/roster/enterprise-roster'
-import { readPlatformBusinessDetails, resolvePlatformDetailTypedReadSource } from '../server/utils/platform-business-detail-read'
-import { normalizePlatformRelation } from '../lib/platform/normalization'
 
 const cleanup: Array<() => void | Promise<void>> = []
 afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close(); vi.unstubAllEnvs(); vi.unstubAllGlobals() })
@@ -22,14 +22,18 @@ function fixture() {
   cleanup.push(() => { db.$client.close(); rmSync(dir, { recursive: true, force: true }) })
   const enterprise = db.insert(schema.enterprise).values({ name: '合成企业详情', nameNorm: '合成企业详情', usccNorm: 'SYN455' }).returning().get()
   let counter = 0
-  function row(options: { source?: Source; raw?: Record<string, unknown> | null; stored?: Partial<typeof schema.platformRelation.$inferInsert>; key?: string | null; indexed?: boolean; rdjb?: string; queriedAt?: string } = {}) {
-    const source = options.source ?? 'business_list'
-    const sequence = ++counter
-    const key = options.key === undefined ? (typeof options.raw?.id === 'string' ? options.raw.id : `KEY-${sequence}`) : options.key
-    const query = db.insert(schema.platformQuery).values({ interface: source, queryKey: enterprise.usccNorm!, rdjb: options.rdjb ?? '2', queriedAt: options.queriedAt ?? `2026-10-${String(sequence).padStart(2, '0')}T00:00:00Z`, status: 'success' }).returning().get()
-    const relation = db.insert(schema.platformRelation).values({ queryId: query.id, sequenceNo: 1, relationKey: key, enterpriseId: enterprise.id, nameRaw: enterprise.name, usccRaw: enterprise.usccNorm, rawFields: options.raw === undefined ? { id: key, qymc: enterprise.name, tyshxydm: enterprise.usccNorm } : options.raw, ...options.stored }).returning().get()
-    const projection = options.indexed === false ? null : ensurePlatformObservation(db, relation.id)
-    return { query, relation, projection }
+  function row(options: { source?: Source; raw?: Record<string, unknown> | null; stored?: Partial<RosterImportRelation>; key?: string | null; rdjb?: string; queriedAt?: string } = {}) {
+    const source=options.source??'business_list',sequence=++counter
+    const raw=options.raw===undefined?{id:`KEY-${sequence}`,qymc:enterprise.name,tyshxydm:enterprise.usccNorm}:options.raw
+    const queriedAt=options.queriedAt??`2026-10-${String(sequence).padStart(2,'0')}T00:00:00Z`
+    const key=options.key===undefined?(typeof raw?.id==='string'?raw.id:`KEY-${sequence}`):options.key
+    const input={sequenceNo:1,relationKey:key,enterpriseId:enterprise.id,nameRaw:enterprise.name,usccRaw:enterprise.usccNorm,rawFields:raw,...options.stored}
+    let native
+    if(source==='recognized_list'){
+      if(typeof raw?.tyshxydm==='string')db.$client.prepare('update enterprise set uscc_norm=? where id=?').run(raw.tyshxydm,enterprise.id)
+      native=submitSyntheticRecognizedCollection(db,{rdjb:options.rdjb??'2',queriedAt,rows:[{enterpriseId:enterprise.id,raw:raw??{}}]})
+    }else native=submitNativePlatformQuery(db,{interface:source,queryKey:enterprise.usccNorm!,rdjb:options.rdjb??'2',queriedAt,status:'success',rawResponse:JSON.stringify(raw),relations:[input]})
+    return {query:{id:native.queryId},relation:{...input,id:native.relationIds[0]!},projection:native.observations[0]!}
   }
   const detail = () => getRosterEnterpriseDetail(db, enterprise.id)! as any
   const observation = (relationId: number) => detail().platform.businessRecords.flatMap((b: any) => b.observationRefs).find((o: any) => o.relationId === relationId)
@@ -87,58 +91,17 @@ it('apply and recognized projections expose their own typed fields without inven
   })
 })
 
-it('historical rows without a projection keep the legacy normalized read and no typed fields', () => {
-  const f = fixture()
-  const raw = { id: 'BL-LEGACY', qymc: '历史企业', tyshxydm: '91330211OLD', sblx: '申请', year: '2019', sqsj: '2019-01-01', cszt: '已受理', whpc: '2019-1', szsfmc: '浙江省' }
-  const legacy = f.row({ raw, indexed: false })
-  const unindexed = f.row({ raw: { ...raw, id: 'BL-NO-OBS' }, indexed: false })
-  const detail = f.detail()
-  const normalized = normalizePlatformRelation('business_list', legacy.relation as any)
-  const relation = detail.platform.relations.find((r: any) => r.id === legacy.relation.id)
-  expect(relation).toMatchObject({ province: '浙江省', status: '已受理', batch: '2019-1', declareKind: 'apply', appliedAt: '2019-01-01' })
-  expect(relation).toMatchObject({ province: normalized.province, status: normalized.status, batch: normalized.batch, declareKind: normalized.declareKind, appliedAt: normalized.appliedAt })
-  expect(f.observation(legacy.relation.id).typedFields).toBeNull()
-  expect(f.observation(unindexed.relation.id)?.typedFields ?? null).toBeNull()
-  expect(detail.platform.businessRecords).toHaveLength(2)
+it('rejects conflicting imported process facts before publishing a native observation', () => {
+  const f=fixture()
+  expect(()=>f.row({raw:{id:'BL-CONFLICT',cszt:'终审通过',szsfmc:'浙江省'},stored:{status:'已退回',province:'江苏省'}})).toThrow('platform_field_conflict')
+  expect(f.detail().platform.businessRecords).toEqual([])
 })
 
-it('a projected empty/unknown source field stays null and never falls back to the imported column', () => {
+it('HTTP enterprise detail returns typed observations and preserves source originals separately', async () => {
   const f = fixture()
-  const projected = f.row({ source: 'recognized_list', raw: { id: 'DIR-EMPTY', qymc: '   ', tyshxydm: '', rddqrq: '', whpcyear: '2024.5', whpc: null, szq: '  ', rdxx: null }, stored: { nameRaw: '导入名称', usccRaw: 'IMPORTED-USCC', batch: 'stored-batch', year: 2020 } })
-  const typed = f.observation(projected.relation.id).typedFields
-  expect(typed).toMatchObject({
-    interface: 'recognized_list', projectionRuleVersion: 'platform-recognized-v1',
-    nameRaw: null, usccRaw: null, validityDateRaw: null, maintenanceYear: null,
-    maintenanceBatch: null, district: null, awardNote: null,
-  })
-  expect(typed.modeledFields).toEqual(expect.arrayContaining(['nameRaw', 'usccRaw', 'validityDateRaw', 'maintenanceYear', 'maintenanceBatch', 'district', 'awardNote']))
-  // The legacy relation columns are still present, proving the null typed value was not backfilled.
-  const relation = f.detail().platform.relations.find((r: any) => r.id === projected.relation.id)
-  expect(relation).toMatchObject({ nameRaw: '导入名称', usccRaw: 'IMPORTED-USCC', batch: 'stored-batch', year: 2020 })
-})
-
-it('stored-vs-raw conflicts stay explicit while typed fields show the archived raw value', () => {
-  const f = fixture()
-  const conflicted = f.row({ raw: { id: 'BL-CONFLICT', qymc: '冲突企业', tyshxydm: '91330211CF', sblx: '申请', year: '2024', cszt: '终审通过', szsfmc: '浙江省' }, stored: { status: '已退回', province: '江苏省' } })
-  const observation = f.observation(conflicted.relation.id)
-  expect(observation.conflicts).toContain('platform_field_conflict')
-  expect(observation.typedFields).toMatchObject({ status: '终审通过', province: '浙江省' })
-  const relation = f.detail().platform.relations.find((r: any) => r.id === conflicted.relation.id)
-  // Normalized stored process facts remain null on conflict; only the explicit raw values are typed.
-  expect(relation).toMatchObject({ status: null, province: null })
-  expect(relation.normalizationConflicts).toEqual(expect.arrayContaining([
-    { field: 'status', storedValue: '已退回', rawValue: '终审通过' },
-    { field: 'province', storedValue: '江苏省', rawValue: '浙江省' },
-  ]))
-})
-
-it('HTTP enterprise detail returns the same observations and typed fields without loading canonical raw content', async () => {
-  const f = fixture()
-  const raw = { id: 'DIR-HTTP', qymc: 'HTTP 目录企业', tyshxydm: '91330211HTTP', rddqrq: '2030-12-31', whpcyear: 2025, whpc: '2025-1', szq: '330211', rdxx: 'HTTP 原认定说明' }
+  const raw = { id: 'DIR-HTTP', qymc: 'HTTP 目录企业', tyshxydm: '91330211HTTP', rddqrq: '2030-12-31', whpcyear: 2025, whpc: '2025-1', szq: '330211', rdxx: 'HTTP 原认定说明', secret: 'CANONICAL-BODY-MUST-NOT-LEAK-455' }
   const projected = f.row({ source: 'recognized_list', raw, queriedAt: '2026-10-05T00:00:00Z' })
-  f.row({ source: 'recognized_list', raw: { ...raw, id: 'DIR-LEGACY' }, indexed: false, queriedAt: '2026-10-06T00:00:00Z' })
   const marker = 'CANONICAL-BODY-MUST-NOT-LEAK-455'
-  f.db.$client.prepare('update platform_business_record_version set canonical_raw_json=?').run(marker)
   const direct = f.detail()
   vi.stubEnv('NUXT_DB_PATH', join(f.dir, 'roster.db'))
   for (const [key, value] of Object.entries({ defineEventHandler, getRouterParam, createError, setHeader })) vi.stubGlobal(key, value)
@@ -149,8 +112,9 @@ it('HTTP enterprise detail returns the same observations and typed fields withou
   const response = await fetch(`http://127.0.0.1:${(server.address() as { port: number }).port}/api/roster/enterprises/${f.enterprise.id}`)
   expect(response.status).toBe(200)
   const text = await response.text()
-  expect(text).not.toContain(marker)
   const body = JSON.parse(text)
+  expect(JSON.stringify(body.platform.businessRecords)).not.toContain(marker)
+  expect(body.platform.relations[0].rawFields.secret).toBe(marker)
   expect(body.platform.relations.map((r: any) => r.id)).toEqual(direct.platform.relations.map((r: any) => r.id))
   expect(body.platform.businessRecords.map((b: any) => b.observationRefs.map((o: any) => [o.relationId, o.queryId, o.businessRecord.versionId, o.typedFields]))).toEqual(
     direct.platform.businessRecords.map((b: any) => b.observationRefs.map((o: any) => [o.relationId, o.queryId, o.businessRecord.versionId, o.typedFields])),
@@ -158,42 +122,4 @@ it('HTTP enterprise detail returns the same observations and typed fields withou
   expect(body.platform.businessRecords.flatMap((b: any) => b.observationRefs).find((o: any) => o.relationId === projected.relation.id).typedFields).toMatchObject({
     validityDateRaw: '2030-12-31', maintenanceYear: 2025, maintenanceBatch: '2025-1', district: '330211', awardNote: 'HTTP 原认定说明',
   })
-})
-it('legacy and typed reads share rows/versions and differ only on modeled nulls; env rollback swaps the whole detail', () => {
-  const f = fixture()
-  const shadow = f.row({ raw: { id: 'BL-SHADOW', qymc: '影子企业', tyshxydm: '91330211SH', sblx: '申请', year: '2024', sqsj: '2024-01-01', cszt: '终审通过', whpc: '2024-1', szsfmc: '浙江省' } })
-  const emptyName = f.row({ raw: { id: 'BL-EMPTY-NAME', qymc: '', tyshxydm: '91330211EN', sblx: '申请', year: '2024' }, stored: { nameRaw: '导入名称' } })
-  f.row({ raw: { id: 'BL-LEGACY-SHADOW', qymc: '未投影企业', tyshxydm: '91330211LG', sblx: '申请', year: '2023' }, indexed: false })
-  const queries = f.db.select().from(schema.platformQuery).all()
-  const relations = f.db.select().from(schema.platformRelation).all()
-  const typed = readPlatformBusinessDetails(f.db, f.enterprise.id, queries as never, relations, { typedReadSource: 'typed' })
-  const legacy = readPlatformBusinessDetails(f.db, f.enterprise.id, queries as never, relations, { typedReadSource: 'legacy' })
-  const refs = (detail: typeof typed) => detail.flatMap(b => b.observationRefs)
-  const typedRefs = refs(typed), legacyRefs = refs(legacy)
-  expect(legacyRefs.map(o => o.relationId)).toEqual(typedRefs.map(o => o.relationId))
-  expect(legacy.flatMap(b => b.versions.map(v => v.businessRecord.versionId))).toEqual(typed.flatMap(b => b.versions.map(v => v.businessRecord.versionId)))
-  expect(legacyRefs.every(o => o.typedFields === null)).toBe(true)
-  const typedBy = new Map(typedRefs.map(o => [o.relationId, o]))
-  const legacyBy = new Map(legacyRefs.map(o => [o.relationId, o]))
-  const typedShadow = typedBy.get(shadow.relation.id)!.typedFields!
-  const legacyShadow = legacyBy.get(shadow.relation.id)!
-  expect(typedShadow).toMatchObject({ declareKind: 'apply', year: 2024, appliedAt: '2024-01-01', status: '终审通过', batch: '2024-1', province: '浙江省' })
-  expect(legacyShadow).toMatchObject({ nameRaw: '合成企业详情', usccRaw: 'SYN455' })
-  // The legacy reader's process columns are the old normalizePlatformRelation result.
-  expect(normalizePlatformRelation('business_list', shadow.relation as any)).toMatchObject({ status: '终审通过', batch: '2024-1', province: '浙江省' })
-  // Approved difference: a modeled null stays unknown in typed mode; legacy still shows the import column.
-  expect(typedBy.get(emptyName.relation.id)!.typedFields).toMatchObject({ modeledFields: expect.arrayContaining(['nameRaw']), nameRaw: null })
-  expect(legacyBy.get(emptyName.relation.id)).toMatchObject({ nameRaw: '导入名称', typedFields: null })
-  // Unprojected history has no typed rows in either mode.
-  const unprojected = typedBy.get(relations.find(r => r.relationKey === 'BL-LEGACY-SHADOW')!.id)!
-  expect(unprojected.typedFields).toBeNull()
-  expect(legacyBy.get(unprojected.relationId)!.typedFields).toBeNull()
-
-  vi.stubEnv('ROSTER_ENTERPRISE_DETAIL_TYPED_READ', 'legacy')
-  try {
-    expect(resolvePlatformDetailTypedReadSource()).toBe('legacy')
-    const rolledBack = f.detail()
-    expect(rolledBack.platform.businessRecords.flatMap((b: any) => b.observationRefs).every((o: any) => o.typedFields === null)).toBe(true)
-  } finally { vi.unstubAllEnvs() }
-  expect(resolvePlatformDetailTypedReadSource()).toBe('typed')
 })

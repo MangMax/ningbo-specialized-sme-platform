@@ -1,7 +1,7 @@
 import { defineMcpTool } from '@nuxtjs/mcp-toolkit/server'
 import { useDb } from '@db'
 import { businessProcessFilterSchema } from '../../../lib/platform/business-processes'
-import { listPlatformBusinessProcesses } from '../../utils/platform-business-processes'
+import { listTargetBusinessProcesses } from '../../utils/platform-business-processes-target'
 
 export default defineMcpTool({
   name: 'list_platform_business_processes',
@@ -11,7 +11,7 @@ export default defineMcpTool({
   annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   inputSchema: businessProcessFilterSchema.shape,
   handler: async input => {
-    const result = listPlatformBusinessProcesses(input, useDb())
+    const result = listTargetBusinessProcesses(input, useDb())
     return { structuredContent: { ...result }, content: [{ type: 'text' as const, text: JSON.stringify(result) }] }
   },
 })

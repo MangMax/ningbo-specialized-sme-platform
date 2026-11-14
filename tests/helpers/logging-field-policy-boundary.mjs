@@ -9,7 +9,7 @@ import { resolve } from 'node:path'
 import { createApp, toNodeListener, setHeader } from 'h3'
 const { createJiti } = createRequire(import.meta.resolve('nuxt/package.json'))('jiti')
 const jiti = createJiti(import.meta.url)
-Reflect.set(globalThis, 'useRuntimeConfig', () => ({ apiToken: 'synthetic-field-api', browserLogsEnabled: false }))
+Reflect.set(globalThis, 'useRuntimeConfig', () => ({ apiToken: 'synthetic-field-api' }))
 const { createLoggingRoute } = await jiti.import(resolve('server/utils/logging-route.ts'))
 const { closeApplicationLogging } = await jiti.import(resolve('lib/logging/index.ts'))
 const routes = { patch: createLoggingRoute('setPolicy'), clear: createLoggingRoute('clear') }

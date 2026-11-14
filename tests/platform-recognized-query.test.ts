@@ -2,11 +2,11 @@ import { afterAll, beforeAll, beforeEach, expect, it, vi } from 'vitest'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { useDb } from '../db/client'
+import { initializeDb } from '../db/client'
 import { updateCredential } from '../server/utils/credential-state'
 
 const dir = mkdtempSync(join(tmpdir(), 'platform-live-'))
-const db = useDb({ dbPath: join(dir, 'test.db') })
+const db = initializeDb({ create: true,  dbPath: join(dir, 'test.db') })
 const cookie = 'session=synthetic-query-secret'
 let body: unknown
 let rest: (event: any) => Promise<any>

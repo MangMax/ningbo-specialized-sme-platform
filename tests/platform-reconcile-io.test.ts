@@ -1,3 +1,6 @@
+import {readPlatformQueryEvidence} from '../lib/platform/evidence-read'
+import {submitNativePlatformQuery} from './helpers/native-platform-fixture'
+import { nativeQueryRows, nativeRelationRows } from './helpers/native-platform-evidence'
 import { initializeDb } from '../db/client'
 /**
  * 平台实查的**取数纪律** —— 并发上限、退避重试、会话过期、凭据缺失、新鲜复用。
@@ -72,17 +75,8 @@ function typedSlotResponse(source: 'businessList' | 'queryList', rdjb: string | 
 function seedTypedSlot(db: ReturnType<typeof freshDb>, uscc: string, rdjb: string, rows: Record<string, unknown>[]) {
   const business = rdjb !== ''
   const titleCode = business ? ({ '1': 'innovative_sme', '2': 'specialized_sme', '3': 'little_giant' } as const)[rdjb as '1' | '2' | '3'] : null
-  const query = db.insert(schema.platformQuery).values({
-    interface: business ? 'business_list' : 'apply_list', queryKey: uscc, rdjb,
-    queriedAt: TYPED_QUERIED, status: rows.length ? 'success' : 'no_record', titleCode,
-    rawResponse: typedSlotResponse(business ? 'businessList' : 'queryList', business ? rdjb : null, rows, uscc),
-  }).returning().get()
-  for (const [index, rawFields] of rows.entries()) {
-    db.insert(schema.platformRelation).values({
-      queryId: query.id, sequenceNo: index + 1, relationKey: rawFields.id as string ?? null,
-      nameRaw: rawFields.qymc as string ?? null, usccRaw: rawFields.tyshxydm as string ?? null, rawFields,
-    }).run()
-  }
+  const seeded=submitNativePlatformQuery(db,{interface:business?'business_list':'apply_list',queryKey:uscc,rdjb,queriedAt:TYPED_QUERIED,status:rows.length?'success':'no_record',titleCode,rawResponse:typedSlotResponse(business?'businessList':'queryList',business?rdjb:null,rows,uscc),relations:rows.map((rawFields,index)=>({sequenceNo:index+1,relationKey:typeof rawFields.id==='string'?rawFields.id:null,nameRaw:typeof rawFields.qymc==='string'?rawFields.qymc:null,usccRaw:typeof rawFields.tyshxydm==='string'?rawFields.tyshxydm:null,rawFields}))})
+  const query=nativeQueryRows(db).find(q=>q.id===seeded.queryId)!
   return query
 }
 
@@ -142,7 +136,7 @@ describe('退避重试:5xx 重试,4xx 与会话过期不重试', () => {
     expect(sleeps).toEqual([1000])
     const third = platform.calls.filter((call) => call.rdjb === '3' && call.interface === 'business_list')
     expect(third).toHaveLength(2)
-    const rows = db.select().from(schema.platformQuery).all()
+    const rows = nativeQueryRows(db)
     expect(rows.find((row) => row.rdjb === '3')!.status).toBe('no_record')
     expect(report.counts.queryFailed).toBe(0)
   })
@@ -166,7 +160,7 @@ describe('退避重试:5xx 重试,4xx 与会话过期不重试', () => {
     })
     expect(sleeps).toEqual([])
     expect(platform.calls.filter((call) => call.rdjb === '3' && call.interface === 'business_list')).toHaveLength(1)
-    const failed = db.select().from(schema.platformQuery).all().find((row) => row.rdjb === '3')!
+    const failed = nativeQueryRows(db).find((row) => row.rdjb === '3')!
     expect(failed.status).toBe('failed')
     expect(failed.failureReason).toContain('HTTP 400')
 
@@ -199,11 +193,11 @@ describe('会话过期:HTTP 200 也要归 failed(不是 no_record)', () => {
     })
     // 过期是 HTTP 200 ⇒ **不重试**(重试也不会变好),每个槽位只打一次。
     expect(platform.calls).toHaveLength(4)
-    const queries = db.select().from(schema.platformQuery).all()
+    const queries = nativeQueryRows(db)
     expect(queries).toHaveLength(4)
     expect(queries.every((row) => row.status === 'failed')).toBe(true)
     expect(queries[0]!.failureReason).toContain('登录超时')
-    expect(db.select().from(schema.platformRelation).all()).toHaveLength(0)
+    expect(nativeRelationRows(db)).toHaveLength(0)
 
     const difference = db.select().from(schema.differenceReason).all()[0]!
     expect(difference.status).toBe('query_failed')
@@ -227,14 +221,14 @@ describe('凭据:拿不到就不发请求、不写半截结果', () => {
       }),
     ).rejects.toThrow(/MIIT_COOKIE/)
     expect(platform.calls).toHaveLength(0)
-    expect(db.select().from(schema.platformQuery).all()).toHaveLength(0)
+    expect(nativeQueryRows(db)).toHaveLength(0)
     expect(db.select().from(schema.differenceReason).all()).toHaveLength(0)
   })
 
   it('全部命中新鲜查询时**不需要**凭据(不打平台就不该要求会话)', async () => {
     const db = freshDb()
     const enterpriseId = seedTarget(db, '宁波新鲜科技有限公司', '91330211000000077W')
-    const queries = db.select().from(schema.platformQuery).all()
+    const queries = nativeQueryRows(db)
     expect(queries).toHaveLength(0)
     // Reusable coverage must come from a real complete traversal, not a bare status.
     await runPlatformReconcile({ db, fetchImpl: platformReplay(ok).fetchImpl,
@@ -263,7 +257,7 @@ describe('凭据:拿不到就不发请求、不写半截结果', () => {
     for (const rdjb of ['1', '2']) seedTypedSlot(db, uscc, rdjb, [])
     seedTypedSlot(db, uscc, '3', [typed])
     seedTypedSlot(db, uscc, '', [])
-    const before = db.select().from(schema.platformRelation).all()
+    const before = nativeRelationRows(db)
     const report = await runPlatformReconcile({
       db,
       fetchImpl: async () => { throw new Error('fresh typed slots must not reach the network') },
@@ -273,8 +267,11 @@ describe('凭据:拿不到就不发请求、不写半截结果', () => {
     })
     expect(report.queries.network).toBe(0)
     expect(report.write?.status).toBe('committed')
-    expect(db.select().from(schema.platformRelation).all()).toEqual(before)
-    expect(before.find(row => row.rawFields?.b === true)?.rawFields).toEqual(typed)
+    expect(nativeRelationRows(db)).toEqual(before)
+    const source=before.find(row=>row.rawFields?.b===true)!
+    const bytes=readPlatformQueryEvidence(db,{queryId:source.queryId,relationId:source.id,field:'relation'})
+    if(!('data' in bytes))throw Error('Expected immutable row bytes')
+    expect(JSON.parse(Buffer.from(bytes.data,'base64').toString()).rawFields).toEqual(typed)
   })
 })
 
@@ -340,7 +337,7 @@ describe('实测案例 `91330206793007818K`:旧名要真的落进 enterprise_ali
     expect(new Set(platform.calls.map((call) => `${call.interface}|${call.rdjb}`))).toEqual(
       new Set(['business_list|1', 'business_list|2', 'business_list|3', 'apply_list|']),
     )
-    const relations = db.select().from(schema.platformRelation).all()
+    const relations = nativeRelationRows(db)
     expect(relations).toHaveLength(4 + 1 + 2)
 
     const difference = db.select().from(schema.differenceReason).all().find((row) => row.enterpriseId === enterpriseId)!
@@ -363,45 +360,10 @@ describe('新鲜复用:库里的旧证据直接参与判定,不再打平台', ()
     const db = freshDb()
     const USCC = '91330211000000088V'
     const enterpriseId = seedTarget(db, '宁波上航测绘股份有限公司', USCC)
-    const stored = db
-      .insert(schema.platformQuery)
-      .values({
-        interface: 'business_list',
-        queryKey: USCC,
-        rdjb: '3',
-        queriedAt: '2026-10-16T01:00:00.000Z',
-        status: 'success',
-      })
-      .returning({ id: schema.platformQuery.id })
-      .get().id
-    db.insert(schema.platformRelation)
-      .values({
-        queryId: stored,
-        sequenceNo: 1,
-        relationKey: 'SQ-OLD',
-        enterpriseId,
-        usccRaw: USCC,
-        nameRaw: '宁波上航测绘有限公司',
-        province: '宁波市',
-        status: '终审通过',
-        appliedAt: '2022-06-22 17:17:52',
-        rawFields: { id: 'SQ-OLD', qymc: '宁波上航测绘有限公司', tyshxydm: USCC, szsfmc: '宁波市', cszt: '终审通过', sqsj: '2022-06-22 17:17:52' },
-      })
-      .run()
-    db.insert(schema.platformRelation)
-      .values({
-        queryId: stored,
-        sequenceNo: 2,
-        relationKey: 'SQ-NEW',
-        enterpriseId,
-        usccRaw: USCC,
-        nameRaw: '宁波上航测绘股份有限公司',
-        province: '宁波市',
-        status: '待审核',
-        appliedAt: '2025-06-21 09:50:48',
-        rawFields: { id: 'SQ-NEW', qymc: '宁波上航测绘股份有限公司', tyshxydm: USCC, szsfmc: '宁波市', cszt: '待审核', sqsj: '2025-06-21 09:50:48' },
-      })
-      .run()
+    const stored=submitNativePlatformQuery(db,{interface:'business_list',queryKey:USCC,rdjb:'3',queriedAt:'2026-10-16T01:00:00.000Z',status:'success',rawResponse:'Explicit incomplete source',relations:[
+      {sequenceNo:1,relationKey:'SQ-OLD',enterpriseId,usccRaw:USCC,nameRaw:'宁波上航测绘有限公司',rawFields:{id:'SQ-OLD',qymc:'宁波上航测绘有限公司',tyshxydm:USCC,szsfmc:'宁波市',cszt:'终审通过',sqsj:'2022-06-22 17:17:52'}},
+      {sequenceNo:2,relationKey:'SQ-NEW',enterpriseId,usccRaw:USCC,nameRaw:'宁波上航测绘股份有限公司',rawFields:{id:'SQ-NEW',qymc:'宁波上航测绘股份有限公司',tyshxydm:USCC,szsfmc:'宁波市',cszt:'待审核',sqsj:'2025-06-21 09:50:48'}}
+    ]}).queryId
 
     const platform = platformReplay(ok)
     const report = await runPlatformReconcile({
@@ -423,7 +385,7 @@ describe('新鲜复用:库里的旧证据直接参与判定,不再打平台', ()
     expect(difference.status).toBe('no_record')
     expect(difference.reasonCode).toBeNull()
     expect(db.select().from(schema.enterpriseAlias).all()).toHaveLength(0)
-    const relation = db.select().from(schema.platformRelation).all().find(row => row.relationKey === 'SQ-OLD')!
+    const relation = nativeRelationRows(db).find(row => row.relationKey === 'SQ-OLD')!
     expect(relation.queryId).toBe(stored)
 
   })
@@ -432,15 +394,7 @@ describe('新鲜复用:库里的旧证据直接参与判定,不再打平台', ()
     const db = freshDb()
     const USCC = '91330211000000099U'
     seedTarget(db, '宁波陈旧科技有限公司', USCC)
-    db.insert(schema.platformQuery)
-      .values({
-        interface: 'business_list',
-        queryKey: USCC,
-        rdjb: '3',
-        queriedAt: '2026-10-01T01:00:00.000Z', // 远超 24h 窗口
-        status: 'no_record',
-      })
-      .run()
+    submitNativePlatformQuery(db,{interface:'business_list',queryKey:USCC,rdjb:'3',queriedAt:'2026-10-01T01:00:00.000Z',status:'no_record',rawResponse:'Explicit original empty source'})
     const platform = platformReplay(ok)
     const report = await runPlatformReconcile({
       db,
@@ -454,6 +408,6 @@ describe('新鲜复用:库里的旧证据直接参与判定,不再打平台', ()
     expect(report.queries.reused).toBe(0)
     expect(report.queries.network).toBe(4)
     // 两个时点各自留档(旧解释不丢)。
-    expect(db.select().from(schema.platformQuery).all().filter((row) => row.rdjb === '3')).toHaveLength(2)
+    expect(nativeQueryRows(db).filter((row) => row.rdjb === '3')).toHaveLength(2)
   })
 })

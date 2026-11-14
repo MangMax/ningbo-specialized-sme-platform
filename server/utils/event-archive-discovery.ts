@@ -1,11 +1,12 @@
-import { and, asc, count, eq, getTableColumns, inArray, or, sql, type SQLWrapper } from 'drizzle-orm'
+import { and,asc,count,eq,inArray,or,sql,type SQLWrapper } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../db/schema'
 import { normalizeUscc } from '../../lib/domain'
-import { generateCandidates } from './record-correspondence-candidates'
-import { CorrespondenceError } from './record-correspondence'
-import { eventSource, safeCollectionEvidence } from './record-correspondence-read'
+import { readCandidateTargetQueries,targetCandidateTables,targetCandidateTitle } from './candidate-target-sources'
 import type { ReceiptRedactor } from './import-receipt-redaction'
+import { CorrespondenceError } from './record-correspondence'
+import { generateCandidates } from './record-correspondence-candidates'
+import { eventSource,safeCollectionEvidence } from './record-correspondence-read'
 
 export const EVENT_ARCHIVE_RULE_VERSION = 'event-archive-212-v1'
 export interface EventArchiveInput { eventId: number; page: number; pageSize: number; queryPage: number; queryPageSize: number }
@@ -18,16 +19,7 @@ export function normalizedUscc(column: SQLWrapper) {
   return value
 }
 /** Row title follows the original successful page partition, never the latest state. */
-function relationTitle() {
-  const q = schema.platformQuery, r = schema.platformRelation
-  return sql<string>`case when ${q.interface} = 'recognized_list' then coalesce((
-    select case rdjb when '1' then 'innovative_sme' when '2' then 'specialized_sme' when '3' then 'little_giant' end
-    from (select json_extract(value, '$.rdjb') rdjb,
-      sum(json_extract(value, '$.fetchedCount')) over (order by cast(key as integer)) last_sequence
-      from json_each(${q.collectionEvidence}, '$.pages') where json_extract(value, '$.status') = 'success')
-    where last_sequence >= ${r.sequenceNo} limit 1), ${q.titleCode})
-    else coalesce(${q.titleCode}, case ${q.rdjb} when '1' then 'innovative_sme' when '2' then 'specialized_sme' when '3' then 'little_giant' end) end`
-}
+
 /** Single-event read-only seam for REST, MCP and jobs. No network, persistence or automatic decisions.
  * Candidate and archive metadata pages are independent; only bounded selected relations are hydrated.
  */
@@ -41,7 +33,9 @@ function discoverSnapshot(db: Db, input: EventArchiveInput, redactor?: ReceiptRe
     .where(eq(schema.recordEvent.id, input.eventId)).get()
   if (!event || event.record.source !== 'jxj' || !['award', 'review'].includes(event.event.eventType)) return null
   const owner = event.enterprise.id, identity = normalizeUscc(event.record.usccRaw ?? event.enterprise.usccNorm)
-  const q = schema.platformQuery, r = schema.platformRelation
+
+  const { q, r } = targetCandidateTables(db)
+  const title = targetCandidateTitle(db)
   // Explicit verified owner supports aliases without inventing identity from a name.
   const rowIdentity = and(or(eq(r.enterpriseId, owner), sql`${r.enterpriseId} is null`),
     or(identity ? sql`${normalizedUscc(r.usccRaw)} = ${identity}` : undefined,
@@ -57,17 +51,18 @@ function discoverSnapshot(db: Db, input: EventArchiveInput, redactor?: ReceiptRe
         .where(and(eq(alias.enterpriseId, owner), eq(alias.verificationStatus, 'confirmed'))))))
     .union(db.select({ id: r.queryId }).from(r).where(rowIdentity))
   const related = inArray(q.id, relatedQueries)
-  const eligible = and(related, rowIdentity, inArray(q.status, ['success', 'partial']), eq(relationTitle(), event.record.titleCode))!
-  const total = db.select({ n: count() }).from(r).innerJoin(q, eq(r.queryId, q.id)).where(eligible).get()!.n
-  const selected = db.select({ id: r.id, queryId: r.queryId }).from(r).innerJoin(q, eq(r.queryId, q.id)).where(eligible)
-    .orderBy(asc(q.id), asc(r.sequenceNo), asc(r.id)).limit(input.pageSize).offset(offset(input.page, input.pageSize)).all()
+  const eligible = and(related, rowIdentity, inArray(q.status, ['success', 'partial']), eq(title, event.record.titleCode))!
+  const total = db.select({ n: count() }).from(r).innerJoin(q, eq(sql<number>`${r.queryId}`, q.id)).where(eligible).get()!.n
+  const selected = db.select({ id: r.id, queryId: r.queryId }).from(r).innerJoin(q, eq(sql<number>`${r.queryId}`, q.id)).where(eligible)
+    .orderBy(asc(q.id), asc(r.sequenceNo), asc(sql<number>`${r.id}`)).limit(input.pageSize).offset(offset(input.page, input.pageSize)).all()
   const generated = generateCandidates(db, { eventId: input.eventId, queryIds: [...new Set(selected.map(row => row.queryId))], exportBatchIds: [], ruleVersion: EVENT_ARCHIVE_RULE_VERSION, page: 1, pageSize: input.pageSize }, { relationIds: selected.map(row => row.id), total })!
-  const { rawResponse: _raw, collectionEvidence, ...columns } = getTableColumns(q)
   const queryTotal = db.select({ n: count() }).from(q).where(related).get()!.n
-  const coverage = db.select({ ...columns, collectionEvidence: sql`json_remove(${collectionEvidence}, '$.rows')`.mapWith(collectionEvidence),
-    relationCount: sql<number>`(select count(*) from ${r} where platform_relation.query_id = platform_query.id)`,
-    candidateCount: sql<number>`(select count(*) from ${r} where platform_relation.query_id = platform_query.id and ${rowIdentity} and ${relationTitle()} = ${event.record.titleCode} and platform_query.status in ('success', 'partial'))`,
+  const selectedCoverage = db.select({ id: q.id,
+    relationCount: sql<number>`(${db.select({ n: count() }).from(r).where(eq(sql<number>`${r.queryId}`, q.id))})`,
+    candidateCount: sql<number>`(${db.select({ n: count() }).from(r).where(and(eq(sql<number>`${r.queryId}`, q.id), rowIdentity, eq(title, event.record.titleCode), inArray(q.status, ['success', 'partial'])))})`,
   }).from(q).where(related).orderBy(asc(q.id)).limit(input.queryPageSize).offset(offset(input.queryPage, input.queryPageSize)).all()
+  const metadata = new Map(readCandidateTargetQueries(db, selectedCoverage.map(q => q.id)).map(q => [q.id, q]))
+  const coverage = selectedCoverage.map(row => ({ ...metadata.get(row.id)!, ...row }))
   // Aggregate only small status counts; never hydrate all query metadata or archive bodies.
   const states = db.select({ interface: q.interface, status: q.status, count: count() }).from(q).where(related).groupBy(q.interface, q.status).all()
   return { event: eventSource(db, input.eventId, redactor), ruleVersion: EVENT_ARCHIVE_RULE_VERSION,

@@ -2,7 +2,7 @@ import { ANNUAL_CORRESPONDENCE_KIND as KIND, ANNUAL_CORRESPONDENCE_VERSION as VE
 import { isJobId } from '../../lib/job'
 import type { LogContext } from '../../lib/logging'
 import { operationLogContext } from './operation-log-context'
-import { annualDbReadonly, annualFail, qualifyAnnualFinal, type AnnualDb, type AnnualScopeReader } from './annual-correspondence'
+import { annualDbReadonly, annualFail, qualifyAnnualFinal, readAnnualScopes, type AnnualDb, type AnnualScopeReader } from './annual-correspondence'
 import { readApiToken, resolveApiAuth } from './api-auth'
 import { getJob } from './job-store'
 import { requestJobCancel } from './job-runner'
@@ -16,8 +16,9 @@ export function readAnnualTask(db: AnnualDb, read: AnnualScopeReader, id: string
     if (!row || row.kind !== KIND) return null
     const result = row.result as AnnualTaskResult | null
     let generationCurrent = true
+    const scopes = result ? readAnnualScopes(db, read, result.events.map(e => e.eventId)) : new Map()
     if (result) for (const event of result.events) {
-      const scope = read(db,event.eventId)
+      const scope = scopes.get(event.eventId)
       if ((scope?.generation ?? 'event_unavailable') !== event.generation) generationCurrent = false
       event.finalQualification = scope ? qualifyAnnualFinal(db,scope,event.generation) : {stepId:null,status:'blocked',decisionRefs:[],reasons:['event_unavailable']}
     }

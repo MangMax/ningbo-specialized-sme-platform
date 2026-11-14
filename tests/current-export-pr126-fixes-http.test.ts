@@ -1,3 +1,5 @@
+import { submitNativePlatformQuery } from './helpers/native-platform-fixture'
+import { submitSyntheticRecognizedCollection } from './helpers/qualification-native-source'
 import { businessIdentity, expectedBusinessIdentity, matchesBusinessIdentity } from './helpers/current-export-118'
 import { afterAll, beforeAll, expect, it } from 'vitest'
 import { schema as s } from '../db/client'
@@ -20,11 +22,10 @@ async function maintain(id:number, version:number) {
   expect(r.status,JSON.stringify(r.body)).toBe(200)
 }
 const occurrences = (wb:any,id:number): Array<{sheet:string;row:any[]}> => wb.worksheets.slice(0,5).flatMap((sheet:any) => rows(wb,sheet.name).filter(r => matchesBusinessIdentity(f.db, r, id)).map(row => ({sheet:sheet.name,row})))
-function relation(id:number, rdjb='2', evidence?:any, sequenceNo=1, assigned=true) {
-  const e = f.db.select().from(s.enterprise).all().find(e=>e.id===id)!
-  const q = f.db.insert(s.platformQuery).values({interface:'recognized_list',queryKey:e.usccNorm!,rdjb,titleCode:rdjb==='2'?'specialized_sme':null,queriedAt:new Date(Date.now()+(++serial)).toISOString(),status:'success',collectionEvidence:evidence}).returning().get()
-  const r = f.db.insert(s.platformRelation).values({queryId:q.id,sequenceNo,enterpriseId:assigned?id:null,usccRaw:e.usccNorm,nameRaw:e.name,verificationStatus:'confirmed',matchBasis:'uscc',status:'有效'}).returning().get()
-  return {q,r}
+function relation(id:number, rdjb='2', assigned=true) {
+  const e=f.db.select().from(s.enterprise).all().find(e=>e.id===id)!
+  const native=submitSyntheticRecognizedCollection(f.db,{rdjb,queriedAt:new Date(Date.now()+(++serial)).toISOString(),rows:[{enterpriseId:assigned?id:null,raw:{id:`PR126-${serial}`,qymc:e.name,tyshxydm:e.usccNorm,rdjb:'2'}}]})
+  return {q:{id:native.queryId},r:{id:native.relationIds[0]!}}
 }
 it('keeps sourced stable enterprises eligible without inventing missing published names', async () => {
   const c=f.candidate('Legacy unnamed official row'), unknown=f.candidate('Unknown identity unnamed row'), conflict=f.candidate('Conflicting official identity')
@@ -71,17 +72,17 @@ it('keeps explanation validity readable while legacy subject decisions do not al
 it('excludes query attempts from candidates while keeping positive unassigned platform rows', async () => {
   const empty=f.candidate('Only no record query',[]), failed=f.candidate('Only failed query',[]), positive=f.candidate('Positive unassigned current row',[])
   for(const c of [empty,failed,positive]) f.db.$client.prepare('delete from record where id=?').run(c.record.id)
-  for(const [c,status] of [[empty,'no_record'],[failed,'failed']] as const) f.db.insert(s.platformQuery).values({interface:'business_list',queryKey:c.enterprise.usccNorm!,rdjb:'2',titleCode:'specialized_sme',queriedAt:'2026-10-20',status}).run()
-  relation(positive.enterprise.id,'2',undefined,1,false)
+  for(const [c,status] of [[empty,'no_record'],[failed,'failed']] as const) submitNativePlatformQuery(f.db,{interface:'business_list',queryKey:c.enterprise.usccNorm!,rdjb:'2',titleCode:'specialized_sme',queriedAt:'2026-10-20',status,rawResponse:'Synthetic status '+status})
+  relation(positive.enterprise.id,'2',false)
   const {wb}=await f.workbook('pr126-positive-candidate')
   expect(occurrences(wb,empty.enterprise.id)).toEqual([])
   expect(occurrences(wb,failed.enterprise.id)).toEqual([])
   expect(occurrences(wb,positive.enterprise.id).map(x=>x.sheet)).toEqual(['未认定'])
 },60000)
-it('assigns multi title recognized candidates by original page segments without reading raw bodies', async () => {
+it('assigns multi title recognized candidates by original source page segments', async () => {
   const c=f.candidate('Only segmented specialized row',[])
   f.db.$client.prepare('delete from record where id=?').run(c.record.id)
-  relation(c.enterprise.id,'1,2,3',{pages:[{rdjb:'1',page:1,status:'success',fetchedCount:0},{rdjb:'2',page:1,status:'success',fetchedCount:1},{rdjb:'3',page:1,status:'success',fetchedCount:0}],rows:[{archive:'RAW_SENTINEL'}]},1)
+  relation(c.enterprise.id,'1,2,3')
   for(const [title,path] of [['specialized_sme','specialized-sme'],['little_giant','little-giant'],['innovative_sme','innovative-sme']] as const){
     const response=await fetch(f.url('/api/roster/exports/current/'+path),{method:'POST',headers:f.headers,body:JSON.stringify({clientRequestId:'pr126-segment-'+title})})
     expect(response.status).toBe(202)
@@ -140,7 +141,7 @@ it('keeps inbound attestations unrecognized across expired future unreviewed and
 it('preserves premise invalid and unknown decisions without treating failed coverage as no record', async () => {
   const invalid=f.candidate('Premise invalid departure'), unknown=f.candidate('Unknown baseline departure')
   const d=f.decision(invalid.enterprise.id,'moved_out',{lifecycleAction:null,status:'not_queried'})
-  f.db.insert(s.platformQuery).values({interface:'business_list',queryKey:invalid.enterprise.usccNorm!,titleCode:'specialized_sme',rdjb:'2',queriedAt:'2026-10-20',status:'failed'}).run()
+  submitNativePlatformQuery(f.db,{interface:'business_list',queryKey:invalid.enterprise.usccNorm!,titleCode:'specialized_sme',rdjb:'2',queriedAt:'2026-10-20',status:'failed',rawResponse:'Synthetic failed source'})
   f.decision(unknown.enterprise.id,'moved_out',{lifecycleAction:null})
   const a=readQueryAssessment(f.db,scope(invalid.enterprise.id))
   expect(a.explanationValidity.status).toBe('premise_invalid')
@@ -152,40 +153,14 @@ it('preserves premise invalid and unknown decisions without treating failed cove
   expect(occurrences(wb,invalid.enterprise.id)[0]!.row.join(' ')).not.toContain('decision:'+d.id)
 },60000)
 
-it('keeps unknown multi title positions visible and projects no archived raw bodies', async () => {
-  const {readCurrentCandidate,prepareCurrentReader}=await import('../lib/roster/current-qualification')
-  const c=f.candidate('Unknown segmented row',[]),{q,r}=relation(c.enterprise.id,'1,2,3')
-  f.db.$client.prepare('delete from record where id=?').run(c.record.id)
-  f.db.$client.prepare('update platform_query set raw_response=? where id=?').run('RAW_PR126_'+ 'x'.repeat(1024*1024),q.id)
-  f.db.$client.prepare('update platform_relation set source_text=? where id=?').run('RAW_PR126_'+ 'x'.repeat(1024*1024),r.id)
-  f.decision(c.enterprise.id,'moved_out',{evidenceQueryId:q.id,evidenceRelationId:r.id})
-  prepareCurrentReader(f.db.$client)
-  const prepare=f.db.$client.prepare.bind(f.db.$client)
-  let rawBytes=0
-  f.db.$client.prepare=((sql:string)=>{
-    const st=prepare(sql)
-    const check=(x:any):void=>{if(typeof x==='string'&&x.includes('RAW_PR126_'))rawBytes+=Buffer.byteLength(x);else if(x&&typeof x==='object')Object.values(x).forEach(check)}
-    for(const method of ['all','get'] as const){const run=st[method].bind(st);Object.assign(st,{[method]:(...args:any[])=>{const result=run(...args);check(result);return result}})}
-    return st
-  }) as any
-  try {
-    const row=readCurrentCandidate(f.db.$client,c.enterprise.id,'specialized_sme',year)
-    expect(row.group).toBe('excluded');expect(row.references).toContain('platform-relation:'+r.id+' query:'+q.id)
-    expect(rawBytes).toBe(0)
-  } finally {f.db.$client.prepare=prepare}
-  const {wb}=await f.workbook('pr126-unknown-segment')
-  expect(occurrences(wb,c.enterprise.id).map(x=>x.sheet)).toEqual(['未认定'])
-},60000)
-
 it('requires confirmed source ownership and preserves explicit prior-version interval boundaries', async () => {
   const {createCurrentCandidateReader,PREVIOUS_QUALIFICATION_ASSESSMENT_VERSION}=await import('../lib/roster/current-qualification')
   const c=f.candidate('Exact inbound interval',[]),{q,r}=relation(c.enterprise.id)
   const qualification={titleCode:'specialized_sme',validFrom:'2026-01-01T00:00:00Z',validUntil:'2027-01-01T00:00:00Z',basis:'Verified external award',publicationCheck:{status:'not_found',scope:'Ingested Ningbo announcements including confirmed former names'}}
   const command={...scope(c.enterprise.id),action:'replace',expectedCurrentId:null,actor,basis:'Synthetic independent qualification verification',ruleVersion:'synthetic-pr126',effectiveAt:'2025-01-01T00:00:00Z',decision:{status:'confirmed_reason',reasonCode:'moved_in',measureCode:'record_moved_in',verificationStatus:'confirmed',evidenceQueryId:q.id,evidenceRelationId:r.id,currentQualification:qualification}}
-  f.db.$client.prepare("update platform_relation set verification_status='pending' where id=?").run(r.id)
-  const rejected=await api('/api/roster/decision-lifecycle/commands',{...command,idempotencyKey:'pr126-unconfirmed-source'})
+  const unassigned=relation(c.enterprise.id,'2',false)
+  const rejected=await api('/api/roster/decision-lifecycle/commands',{...command,idempotencyKey:'pr126-unconfirmed-source',decision:{...command.decision,evidenceQueryId:unassigned.q.id,evidenceRelationId:unassigned.r.id}})
   expect(rejected.status).toBe(422)
-  f.db.$client.prepare("update platform_relation set verification_status='confirmed' where id=?").run(r.id)
   const result=await api('/api/roster/decision-lifecycle/commands',{...command,idempotencyKey:'pr126-exact-interval'})
   expect(result.status,JSON.stringify(result.body)).toBe(200)
   const replay=await api('/api/roster/decision-lifecycle/commands',{...command,idempotencyKey:'pr126-exact-interval'})

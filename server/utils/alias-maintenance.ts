@@ -7,6 +7,7 @@ import { normalizeName } from '../../lib/domain'
 import * as schema from '../../db/schema'
 import { captureIdentityRevision113, identityMaterial113 } from './evidence-impact-113'
 import { findPlatformAliasRelationEvidence, platformAliasEvidenceMismatch } from './roster-import'
+import { canonicalEnterpriseId, currentEnterpriseIdentity } from '../../lib/roster/enterprise-identity'
 
 type Db = BetterSQLite3Database<typeof schema>
 const positiveId = z.coerce.number().int().positive().max(Number.MAX_SAFE_INTEGER)
@@ -37,7 +38,8 @@ export const aliasDecisionInput = {
 }
 export const aliasListInput = { ...aliasPageInput, status: z.enum(['all', 'pending', 'confirmed', 'withdrawn']).default('all') }
 function enterprise(db: Db, value: unknown) {
-  const id = parse(positiveId, value)
+  const selectedId = parse(positiveId, value)
+  const id = canonicalEnterpriseId(db, selectedId) ?? selectedId
   const found = db.select({ id: schema.enterprise.id, usccNorm: schema.enterprise.usccNorm }).from(schema.enterprise).where(eq(schema.enterprise.id, id)).get()
   if (!found) fail(404, 'enterprise_not_found', '企业不存在')
   return found
@@ -108,7 +110,7 @@ export function maintainEnterpriseAlias(db: Db, enterpriseId: unknown, aliasId: 
         if (!evidence) fail(400, 'alias_source_evidence_mismatch', '公布文件ID必须由该企业同原名称的记录出处支持')
       }
       if (next.verificationStatus === 'confirmed') {
-        const other = tx.select({ id: schema.enterprise.id }).from(schema.enterprise).where(and(ne(schema.enterprise.id, target.id), eq(schema.enterprise.nameNorm, next.nameNorm))).limit(1).get()
+        const other = tx.select({ id: schema.enterprise.id }).from(schema.enterprise).where(and(currentEnterpriseIdentity(tx), ne(schema.enterprise.id, target.id), eq(schema.enterprise.nameNorm, next.nameNorm))).limit(1).get()
         const otherAlias = tx.select({ id: schema.enterpriseAlias.id }).from(schema.enterpriseAlias).where(and(ne(schema.enterpriseAlias.enterpriseId, target.id), eq(schema.enterpriseAlias.nameNorm, next.nameNorm), eq(schema.enterpriseAlias.verificationStatus, 'confirmed'))).limit(1).get()
         if (other || otherAlias) fail(409, 'alias_subject_conflict', '该名称已由其他企业使用，不能自动确认归属')
       }

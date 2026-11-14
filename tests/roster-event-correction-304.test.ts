@@ -1,3 +1,4 @@
+import { submitNativePlatformQuery } from './helpers/native-platform-fixture'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -9,7 +10,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js'
 import type { McpToolCallbackResult } from '@nuxtjs/mcp-toolkit/server'
-import { schema, useDb } from '../db/client'
+import { schema, initializeDb } from '../db/client'
 import type { EventCorrectionRequest } from '../server/utils/roster-event-correction'
 import { dispatchEventCorrectionMcp, isEventCorrectionMcpResult } from '../server/utils/mcp-event-correction'
 
@@ -98,7 +99,7 @@ it.each<{
 
 async function fixture() {
   const dir = mkdtempSync(join(tmpdir(), 'issue304-correction-'))
-  const dbPath = join(dir, 'synthetic.db'), db = useDb({ dbPath })
+  const dbPath = join(dir, 'synthetic.db'), db = initializeDb({ create: true,  dbPath })
   vi.stubEnv('NUXT_DB_PATH', dbPath)
   for (const key of ['MIIT_COOKIE', 'NUXT_OCR_TOKEN', 'PADDLEOCR_MCP_AISTUDIO_ACCESS_TOKEN', 'NUXT_API_TOKEN', 'NUXT_MCP_TOKEN']) vi.stubEnv(key, '')
   vi.stubGlobal('defineEventHandler', defineEventHandler)
@@ -446,8 +447,8 @@ it('rolls back both review rounds audit revisions and receipt after a later SQL 
 it('preserves correspondence IDs while requiring revalidation and changing annual source generation after a review correction', async () => {
   const f = await fixture()
   try {
-    const query = f.db.insert(schema.platformQuery).values({ interface: 'business_list', queryKey: 'synthetic-issue304', rdjb: '2', titleCode: 'specialized_sme', queriedAt: '2026-10-25', status: 'success' }).returning().get()
-    const relation = f.db.insert(schema.platformRelation).values({ queryId: query.id, sequenceNo: 1, enterpriseId: f.enterprise.id, verificationStatus: 'confirmed', declareKind: 'review', year: 2021 }).returning().get()
+    const native = submitNativePlatformQuery(f.db, { interface: 'business_list', queryKey: 'synthetic-issue304', rdjb: '2', titleCode: 'specialized_sme', queriedAt: '2026-10-25', status: 'success', rawResponse: 'Explicit synthetic correspondence source', relations: [{ sequenceNo: 1, enterpriseId: f.enterprise.id, verificationStatus: 'confirmed', declareKind: 'review', year: 2021 }] })
+    const relation = { id: native.relationIds[0]! }
     const correspondence = { idempotencyKey: 'issue304-correspondence', sourceIdentity: 'synthetic:issue304', actor: { type: 'agent', id: 'issue304-test' }, basis: 'Explicit synthetic row context', ruleId: 'manual', ruleVersion: '1', operations: [{ action: 'create', status: 'confirmed', edge: { type: 'event_process', eventId: f.first.event.id, relationId: relation.id, role: 'context_only' } }] }
     const confirmedPlan = await f.http('/api/roster/correspondences/preflight', correspondence)
     expect(confirmedPlan.status).toBe(200)

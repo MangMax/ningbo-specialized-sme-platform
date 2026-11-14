@@ -1,25 +1,25 @@
 import { MAX_PAGE_SIZE } from './query-limits'
-import { readPublicPublishedNames, type OfficialPublishedFact } from './roster/official-published-presentation'
-import { publishedNameText, type PublishedPresentation } from './roster/correspondence-view'
-import { and, count, desc, eq, exists, inArray, isNull, like, or, sql, type SQL } from 'drizzle-orm'
+import { readPublicPublishedNames,type OfficialPublishedFact } from './roster/official-published-presentation'
+import { publishedNameText,type PublishedPresentation } from './roster/correspondence-view'
+import { and,desc,eq,exists,inArray,isNull,like,or,sql,type SQL } from 'drizzle-orm'
 import type { AnySQLiteColumn } from 'drizzle-orm/sqlite-core'
-import { compact, groupBy, minBy, orderBy } from 'es-toolkit'
+import { compact,groupBy,minBy,orderBy } from 'es-toolkit'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../db/schema'
-import { isNingboDistrict, normalizeName } from './domain'
-import { EVENTS, LIFECYCLE_FLAGS, LIFECYCLE_FLAG_ORDER, SOURCE_ORDER, TITLE_ORDER } from './labels'
+import { isNingboDistrict,normalizeName } from './domain'
+import { EVENTS,LIFECYCLE_FLAGS,LIFECYCLE_FLAG_ORDER,SOURCE_ORDER,TITLE_ORDER } from './labels'
 import { isPageCapable } from './roster/evidence-page'
 import {
-  judgeFirstRecognition,
-  matchesRecognitionQuery,
-  type FirstRecognitionStatus,
+judgeFirstRecognition,
+matchesRecognitionQuery,
+type FirstRecognitionStatus,
 } from './roster/first-recognition'
 import {
-  computeTitleLifecycle,
-  effectiveYear,
-  isQualifyingEvent,
-  type LifecycleEvent,
-  type TitleLifecycle,
+computeTitleLifecycle,
+effectiveYear,
+isQualifyingEvent,
+type LifecycleEvent,
+type TitleLifecycle,
 } from './roster/lifecycle'
 
 type Db = BetterSQLite3Database<typeof schema>
@@ -500,10 +500,10 @@ export interface EnterpriseDetail {
 
 /** 某企业的全部记录、事件与出处。 */
 export function getEnterpriseDetail(db: Db, id: number): EnterpriseDetail | null {
-  return db.transaction(() => legacyEnterpriseDetail(db, id))
+  return db.transaction(() => enterpriseDetailSnapshot(db, id))
 }
 
-function legacyEnterpriseDetail(db: Db, id: number): EnterpriseDetail | null {
+function enterpriseDetailSnapshot(db: Db, id: number): EnterpriseDetail | null {
   const ent = db
     .select({
       id: schema.enterprise.id,
@@ -562,8 +562,7 @@ function legacyEnterpriseDetail(db: Db, id: number): EnterpriseDetail | null {
   const evByEvent = groupBy(evidence, (v) => v.recordEventId)
   const evByRecord = groupBy(events, (e) => e.recordId)
 
-  const publishedPresentation = process.env.LEGACY_LEDGER_PRESENTATION_SOURCE === 'legacy' ? undefined
-    : readPublicPublishedNames(db, evidence.map(v => ({ evidenceId: v.id, eventId: v.recordEventId })))
+  const publishedPresentation = readPublicPublishedNames(db, evidence.map(v => ({ evidenceId: v.id, eventId: v.recordEventId })))
 
   return {
     ...(publishedPresentation ? { publishedPresentation } : {}),
@@ -815,10 +814,10 @@ function formatEvidence(v: {
  * 事件与出处合并该组合下全部事件,来源列出全部来源。
  */
 export function allRecords(db: Db, params: RecordFilterQuery): ExportRow[] {
-  return db.transaction(() => legacyLedgerRecords(db, params))
+  return db.transaction(() => ledgerRecordsSnapshot(db, params))
 }
 
-function legacyLedgerRecords(db: Db, params: RecordFilterQuery): ExportRow[] {
+function ledgerRecordsSnapshot(db: Db, params: RecordFilterQuery): ExportRow[] {
   const where = buildWhere(db, params)
 
   // 先按筛选挑出「企业 × 称号」组合,再取这些组合下的**全部**记录。
@@ -881,9 +880,8 @@ function legacyLedgerRecords(db: Db, params: RecordFilterQuery): ExportRow[] {
   const byKey = groupBy(matched, (r) => groupKey(r.enterpriseId, r.titleCode))
 
   const recordGroups = Object.values(byKey)
-  const usePublished = process.env.LEGACY_LEDGER_PRESENTATION_SOURCE !== 'legacy'
   const publishedByEvidence = new Map<number, OfficialPublishedFact>()
-  if (usePublished) for (let start = 0; start < recordGroups.length; start += 40) {
+  for (let start = 0; start < recordGroups.length; start += 40) {
     const scopes = recordGroups.slice(start, start + 40).map(recs => recs.flatMap(r =>
       (evByRecord[r.recordId] ?? []).flatMap(e => (evByEvent[e.id] ?? []).map(v => ({ evidenceId: v.id, eventId: e.id }))),
     ))
@@ -917,7 +915,6 @@ function legacyLedgerRecords(db: Db, params: RecordFilterQuery): ExportRow[] {
     const selectedEvidence = evRows.flatMap(e => evByEvent[e.id] ?? [])
     const evidenceText = selectedEvidence.map(v => {
       const locator = formatEvidence(v)
-      if (!usePublished) return locator
       const fact = publishedByEvidence.get(v.id)
       return locator + ' / ' + (fact ? publishedNameText(fact) : '公布名称暂不可用')
     }).join('; ')

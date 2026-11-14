@@ -3,32 +3,32 @@ import {tmpdir} from 'node:os'
 import {join} from 'node:path'
 import {eq} from 'drizzle-orm'
 import {afterEach,expect,it,vi} from 'vitest'
-import {useDb,schema as s} from '../db/client'
+import {initializeDb,schema as s} from '../db/client'
 import {readEventAnnualProcess} from '../server/utils/event-annual-process-read'
 import {enrichAnnualProcessFinalQualification,readAnnualWriteScope} from '../server/utils/annual-correspondence-read'
 import {qualifyAnnualFinal,readAnnualDecisionRefs,reconcileAnnualStep} from '../server/utils/annual-correspondence'
-import {commitRosterImport,preflightRosterImport} from '../server/utils/roster-import'
-import {commitRecordCorrespondences,preflightRecordCorrespondences,type CorrespondenceRequest} from '../server/utils/record-correspondence'
+import {submitNativePlatformQuery} from './helpers/native-platform-fixture'
+import {commitRecordCorrespondences,preflightRecordCorrespondences,type CorrespondenceRequest,listRecordCorrespondences} from '../server/utils/record-correspondence'
 import {clearJobSpecs,__resetJobRunner,whenIdle} from '../server/utils/job-runner'
 import {handleAnnualTaskRequest} from '../server/utils/annual-correspondence-api'
 import {getJob} from '../server/utils/job-store'
-let active:ReturnType<typeof useDb>
+let active:ReturnType<typeof initializeDb>
 vi.mock('@nuxtjs/mcp-toolkit/server',()=>({defineMcpTool:(definition:unknown)=>definition}))
 vi.mock('@db',()=>({useDb:()=>active}))
 const dirs:string[]=[]
 function fixture(){
- const dir=mkdtempSync(join(tmpdir(),'annual-read-251-'));dirs.push(dir);const db=useDb({dbPath:join(dir,'synthetic.db')});active=db;clearJobSpecs();__resetJobRunner()
- vi.stubGlobal('useRuntimeConfig',()=>({apiToken:'rest-251',mcpToken:'mcp-251',filesDir:dir,browserReviewEnabled:true}))
+ const dir=mkdtempSync(join(tmpdir(),'annual-read-251-'));dirs.push(dir);const db=initializeDb({ create: true, dbPath:join(dir,'synthetic.db')});active=db;clearJobSpecs();__resetJobRunner()
+ vi.stubGlobal('useRuntimeConfig',()=>({apiToken:'rest-251',mcpToken:'mcp-251',filesDir:dir,}))
  const enterprise=db.insert(s.enterprise).values({name:'合成年份互证企业',nameNorm:'合成年份互证企业',usccNorm:'91330211255994457P'}).returning().get()
  const record=db.insert(s.record).values({enterpriseId:enterprise.id,titleCode:'specialized_sme',source:'jxj',usccRaw:enterprise.usccNorm}).returning().get()
  const event=db.insert(s.recordEvent).values({recordId:record.id,eventType:'award',year:2024}).returning().get();let serial=0
- const add=(options:{key?:string;year?:number|null;status?:string;source?:'business_list'|'apply_list';title?:string|null;rdjb?:string;appliedAt?:string;rawStatus?:boolean;kind?:'apply'|'review';padding?:string}={})=>{
+ const add=(options:{key?:string;year?:number|null;status?:string;source?:'business_list'|'apply_list';title?:string|null;rdjb?:string;appliedAt?:string;rawStatus?:boolean;kind?:'apply'|'review';padding?:string;queryRaw?:string}={})=>{
   const key=options.key??'SAME-1',year=options.year===undefined?2024:options.year,status=options.status??'终审通过',source=options.source??'business_list',appliedAt=options.appliedAt??'2024-06-01'
-  const n=++serial;const query=db.insert(s.platformQuery).values({interface:source,queryKey:enterprise.usccNorm!,queriedAt:`2026-10-20T00:${String(n).padStart(2,'0')}:00Z`,rdjb:options.rdjb??(source==='business_list'?'2':''),titleCode:options.title??null,status:'success',rawResponse:'immutable synthetic archive'}).returning().get()
+  const n=++serial
   const rawFields={...(options.padding?{padding:options.padding}:{}),id:key,sblx:options.kind==='review'?'复核':'申请',sqsj:appliedAt,...(year==null?{}:{year:String(year)}),...(options.rawStatus===false?{}:{cszt:status})}
-  const relation=db.insert(s.platformRelation).values({queryId:query.id,sequenceNo:1,relationKey:key,enterpriseId:enterprise.id,usccRaw:enterprise.usccNorm,nameRaw:enterprise.name,declareKind:options.kind??'apply',year,appliedAt,status,verificationStatus:'confirmed',rawFields}).returning().get()
-  const request={idempotencyKey:`synthetic-projection-${n}`,sourceKind:'platform_archive' as const,sourceIdentity:'synthetic/annual-projection',payload:{platformRecordObservations:[{relationId:relation.id}]}}
-  preflightRosterImport(db,request);expect(commitRosterImport(db,request).status).toBe('committed')
+  const seeded=submitNativePlatformQuery(db,{interface:source,queryKey:enterprise.usccNorm!,queriedAt:`2026-10-20T00:${String(n).padStart(2,'0')}:00Z`,rdjb:options.rdjb??(source==='business_list'?'2':''),titleCode:options.title??null,status:'success',rawResponse:options.queryRaw??'immutable synthetic archive',relations:[{sequenceNo:1,relationKey:key,enterpriseId:enterprise.id,usccRaw:enterprise.usccNorm,nameRaw:enterprise.name,declareKind:options.kind??'apply',year,appliedAt,status,verificationStatus:'confirmed',rawFields}]})
+  const query={id:seeded.queryId},relation={id:seeded.relationIds[0]!}
+
   return {query,relation}
  }
  const scope=()=>readAnnualWriteScope(db,event.id)!
@@ -40,14 +40,14 @@ afterEach(async()=>{await whenIdle();__resetJobRunner();clearJobSpecs();vi.unstu
 it('writes native-title business endpoints using annual year lineage and retains early failure with unique late final',()=>{
  const f=fixture();const early=f.add({key:'EARLY',year:null,status:'终审不通过',appliedAt:'2024-01-01'});f.add({key:'EARLY',source:'apply_list',year:2024,status:'终审不通过',appliedAt:'2024-01-01'})
  const late=f.add({key:'LATE',year:null});f.add({key:'LATE',source:'apply_list',year:2024})
+ const sourceBefore={collections:f.db.select().from(s.platformCollection).all(),observations:f.db.select().from(s.platformBusinessObservation).all(),versions:f.db.select().from(s.platformBusinessRecordVersion).all()}
  const before=readEventAnnualProcess(f.db,f.event.id)!;expect(before.process.steps).toHaveLength(2);expect(before.process.finalCandidateStepId).not.toBeNull()
- expect(before.process.steps.map(step=>step.preferredWriteRelationId)).toEqual([early.relation.id,late.relation.id])
+ expect(f.scope().steps.map(step=>step.preferredRelationId)).toEqual([early.relation.id,late.relation.id])
  for(const step of f.scope().steps)expect(f.reconcile(step.stepId).status).toBe('created')
  const enriched=enrichAnnualProcessFinalQualification(f.db,readEventAnnualProcess(f.db,f.event.id)!)
  expect(enriched.sourceGeneration).toBe(before.sourceGeneration);expect(enriched.process.finalQualification).toMatchObject({stepId:before.process.finalCandidateStepId,status:'confirmed',decisionRefs:[{relationId:late.relation.id,requiresRevalidation:false}]})
- expect(f.db.select().from(s.recordCorrespondence).all().map(row=>row.relationId)).toEqual([early.relation.id,late.relation.id])
- expect(f.db.select().from(s.platformRelation).where(eq(s.platformRelation.id,late.relation.id)).get()).toEqual(late.relation)
- expect(f.db.select().from(s.platformQuery).where(eq(s.platformQuery.id,late.query.id)).get()).toEqual(late.query)
+ expect(listRecordCorrespondences(f.db).map(row=>row.relationId)).toEqual([early.relation.id,late.relation.id])
+ expect({collections:f.db.select().from(s.platformCollection).all(),observations:f.db.select().from(s.platformBusinessObservation).all(),versions:f.db.select().from(s.platformBusinessRecordVersion).all()}).toEqual(sourceBefore)
 })
 it.each([{name:'rejected',status:'rejected' as const},{name:'unlinked',status:'unlinked' as const}])('protects same-event manual $name on a verified version outside the current annual scope',({status})=>{
  const f=fixture();const old=f.add({year:2023,kind:'review'}),current=f.add({year:2024})
@@ -82,7 +82,7 @@ it('ignores an old differing stored status when the typed projection has no stat
 it('never falls back to an older confirmed pass after a later application fails',()=>{
  const f=fixture();const old=f.add({key:'OLD',appliedAt:'2024-01-01'});f.reconcile();const latest=f.add({key:'LATEST',status:'终审不通过',appliedAt:'2024-12-01'})
  expect(f.scope().finalCandidateStepId).toBeNull();expect(qualifyAnnualFinal(f.db,f.scope())).toMatchObject({stepId:null,status:'none'})
- expect(f.db.select().from(s.recordCorrespondence).get()!.relationId).toBe(old.relation.id);expect(f.scope().steps.some(step=>step.currentRelationIds.includes(latest.relation.id))).toBe(true)
+ expect(listRecordCorrespondences(f.db)[0]!.relationId).toBe(old.relation.id);expect(f.scope().steps.some(step=>step.currentRelationIds.includes(latest.relation.id))).toBe(true)
 })
 it('blocks enrichment of stale generation instead of attaching a new-scope final and never writes on GET',()=>{
  const f=fixture();f.add();f.reconcile();const old=readEventAnnualProcess(f.db,f.event.id)!;f.add({key:'APPENDED',status:'终审不通过',appliedAt:'2024-12-01'})
@@ -119,8 +119,7 @@ it('does not use derived annual title as native title proof for an archived appl
  expect(f.db.select().from(s.recordCorrespondence).where(eq(s.recordCorrespondence.id,candidateId)).get()).toEqual(before)
 })
 it('qualifies a real confirmed edge without hydrating its multi-megabyte raw or audit provenance on GET',()=>{
- const f=fixture(),marker='ANNUAL_RAW_SENTINEL_',row=f.add({padding:marker+'x'.repeat(512*1024)})
- f.db.update(s.platformQuery).set({rawResponse:marker+'y'.repeat(3*1024*1024)}).where(eq(s.platformQuery.id,row.query.id)).run()
+ const f=fixture(),marker='ANNUAL_RAW_SENTINEL_',row=f.add({padding:marker+'x'.repeat(512*1024),queryRaw:marker+'y'.repeat(3*1024*1024)})
  expect(f.reconcile().status).toBe('created')
  let rawBytes=0,stringBytes=0;const prepare=f.db.$client.prepare.bind(f.db.$client)
  const count=(value:unknown):void=>{if(typeof value==='string'){stringBytes+=Buffer.byteLength(value);if(value.includes(marker))rawBytes+=Buffer.byteLength(value)}else if(value&&typeof value==='object')Object.values(value).forEach(count)}

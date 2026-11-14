@@ -6,20 +6,21 @@ import { createHash } from 'node:crypto'
 import ExcelJS from 'exceljs'
 import { expect } from 'vitest'
 import { reviewCurrentExportDecision } from './current-export-decisions'
-import { useDb, schema as s } from '../../db/client'
-import { spawnOwnedChild as spawn, reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../../scripts/lib/isolated-local-services.mjs'
+import { initializeDb, schema as s } from '../../db/client'
+import { spawnOwnedChild as spawn, reserveLoopbackPort, waitForHttp, stopOwnedChild } from './isolated-local-services.mjs'
 
 export const titleCode = 'specialized_sme'
 export const route = '/api/roster/exports/current/specialized-sme'
 export const year = new Date().getFullYear()
 export type Event = { eventType: 'award'|'review'|'nurture'|'maintain'; year: number|null; decidedYear?: number|null; reviewOutcome?: 'passed'|'failed'|null; batchSeq?: number|null }
 export const fresh: Event[] = [{ eventType: 'award', year, batchSeq: 1 }]
-export const businessTables = ['enterprise_fact_revision','record_correspondence','difference_reason','platform_relation','platform_query','enterprise_alias','record_evidence','record_event','record','enterprise']
+export const businessTables = ['enterprise_fact_revision','record_correspondence','difference_reason','platform_observation_assignment','platform_legacy_relation_alias','platform_business_observation','platform_legacy_query_alias','platform_collection','enterprise_alias','record_evidence','record_event','record','enterprise']
 
 // Synthetic setup only. All assertions on export behavior use actual Nitro HTTP and XLSX bytes.
 export function currentExport409Fixture() {
   const dir = mkdtempSync(join(tmpdir(), 'export-409-'))
-  const dbPath = join(dir, 'synthetic.db'), db = useDb({ dbPath })
+  let generation=0
+  let dbPath = join(dir, 'synthetic.db'), db = initializeDb({ dbPath, create: true })
   const token = 'synthetic-export-409-token'
   const headers = { 'content-type': 'application/json', authorization: `Bearer ${token}` }
   let baseUrl = '', stop: (() => Promise<void>) | undefined
@@ -108,17 +109,19 @@ export function currentExport409Fixture() {
     reviewCurrentExportDecision(db,decision)
     return decision
   }
-  function resetBusiness() {
-    db.$client.pragma('foreign_keys = OFF')
-    try { db.$client.transaction(() => { for (const table of businessTables) db.$client.prepare('delete from ' + table).run() })() }
-    finally { db.$client.pragma('foreign_keys = ON') }
+  async function resetBusiness() {
+    const running=stop!=null
+    await stop?.();stop=undefined;db.$client.close()
+    dbPath=join(dir,`synthetic-${++generation}.db`)
+    db=initializeDb({dbPath,create:true})
+    if(running)await start()
   }
   function businessDigest() {
     const hash = createHash('sha256')
-    for (const table of businessTables) for (const row of db.$client.prepare('select * from ' + table + ' order by id').iterate()) hash.update(JSON.stringify(row))
+    for (const table of businessTables) for (const row of db.$client.prepare('select * from ' + table + ' order by rowid').iterate()) hash.update(JSON.stringify(row))
     return hash.digest('hex')
   }
-  return { dir, dbPath, db, headers, token, url, json, submit, start, terminal, download, workbook, candidate, addRecord, decision, resetBusiness, businessDigest,
+  return { dir, get dbPath(){return dbPath}, get db(){return db}, headers, token, url, json, submit, start, terminal, download, workbook, candidate, addRecord, decision, resetBusiness, businessDigest,
     async close() { try { await stop?.(); assertCompiledPins() } finally { db.$client.close(); rmSync(dir,{recursive:true,force:true}) } },
   }
 }

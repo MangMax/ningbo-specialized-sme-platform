@@ -1,3 +1,4 @@
+import { submitNativePlatformQuery } from './helpers/native-platform-fixture'
 import Database from 'better-sqlite3'
 import { createHash } from 'node:crypto'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
@@ -5,9 +6,9 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { useDb, schema } from '../db/client'
+import { initializeDb, schema } from '../db/client'
 import { minimalPdf } from './helpers/minimal-pdf'
-import { spawnOwnedChild as spawn, reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../scripts/lib/isolated-local-services.mjs'
+import { spawnOwnedChild as spawn, reserveLoopbackPort, waitForHttp, stopOwnedChild } from './helpers/isolated-local-services.mjs'
 
 const dir = mkdtempSync(join(tmpdir(), 'evidence-correction-101-'))
 const dbPath = join(dir, 'synthetic.db')
@@ -16,7 +17,7 @@ mkdirSync(filesDir)
 const bytes = minimalPdf({ pages: 3 })
 writeFileSync(join(filesDir, 'notice.pdf'), bytes)
 const sha256 = createHash('sha256').update(bytes).digest('hex')
-const db = useDb({ dbPath })
+const db = initializeDb({ create: true,  dbPath })
 const file = db.insert(schema.storedFile).values({ relPath: 'notice.pdf', filename: 'notice.pdf', ext: 'pdf', bytes: Buffer.byteLength(bytes), sha256, source: 'jxj', kind: 'announcement' }).returning().get()
 const enterprise = db.insert(schema.enterprise).values({ name: '合成出处核对企业', nameNorm: '合成出处核对企业' }).returning().get()
 const record = db.insert(schema.record).values({ enterpriseId: enterprise.id, titleCode: 'specialized_sme', source: 'jxj' }).returning().get()
@@ -208,8 +209,8 @@ describe('ticket 101 exact evidence correction through HTTP and MCP', () => {
 
   it('marks confirmed related correspondences stale and permits explicit revalidation', async () => {
     const target = seedEvidence(17)
-    const query = db.insert(schema.platformQuery).values({ interface: 'business_list', queryKey: 'synthetic-101', rdjb: '2', titleCode: 'specialized_sme', queriedAt: '2026-10-19', status: 'partial' }).returning().get()
-    const relation = db.insert(schema.platformRelation).values({ queryId: query.id, sequenceNo: 1, enterpriseId: enterprise.id, nameRaw: enterprise.name, verificationStatus: 'confirmed', matchBasis: 'uscc' }).returning().get()
+    const native = submitNativePlatformQuery(db, { interface: 'business_list', queryKey: 'synthetic-101', rdjb: '2', titleCode: 'specialized_sme', queriedAt: '2026-10-19', status: 'partial', rawResponse: 'Explicit synthetic correspondence source', relations: [{ sequenceNo: 1, enterpriseId: enterprise.id, nameRaw: enterprise.name, verificationStatus: 'confirmed', matchBasis: 'uscc' }] })
+    const relation = { id: native.relationIds[0]! }
     const decision = { idempotencyKey: 'edge-before-101', sourceIdentity: 'synthetic/manual-101', actor: { type: 'agent', id: 'test' }, basis: '明确核对公开来源', ruleId: 'manual', ruleVersion: '1', operations: [{ action: 'create', status: 'confirmed', edge: { type: 'event_process', eventId: event.id, relationId: relation.id, role: 'context_only' } }] }
     const edgePlan = await json(await post('correspondences/preflight', decision))
     const edgeReceipt = await json(await post('correspondences/commit', { request: decision, planHash: edgePlan.planHash }))
@@ -260,8 +261,8 @@ describe('ticket 101 exact evidence correction through HTTP and MCP', () => {
 
   it.each(['atomic', 'legacy'])('keeps direct and predecessor confirmations stale after %s coordinate ABA', async mode => {
     const target = seedEvidence(mode === 'atomic' ? 30 : 31)
-    const query = db.insert(schema.platformQuery).values({ interface: 'business_list', queryKey: 'aba-' + mode, rdjb: '2', titleCode: 'specialized_sme', queriedAt: '2026-10-19', status: 'success' }).returning().get()
-    const relation = db.insert(schema.platformRelation).values({ queryId: query.id, sequenceNo: 1, enterpriseId: enterprise.id, verificationStatus: 'confirmed', declareKind: 'apply', appliedAt: '2026-01-01' }).returning().get()
+    const native = submitNativePlatformQuery(db, { interface: 'business_list', queryKey: 'aba-' + mode, rdjb: '2', titleCode: 'specialized_sme', queriedAt: '2026-10-19', status: 'success', rawResponse: 'Explicit synthetic correspondence source', relations: [{ sequenceNo: 1, enterpriseId: enterprise.id, verificationStatus: 'confirmed', declareKind: 'apply', appliedAt: '2026-01-01' }] })
+    const relation = { id: native.relationIds[0]! }
     const edges = [
       { type: 'event_process', eventId: event.id, relationId: relation.id, role: 'context_only' },
       { type: 'later_process', enterpriseId: enterprise.id, titleCode: 'specialized_sme', predecessorEventId: event.id, relationId: relation.id, role: 'followup_apply' },

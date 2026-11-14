@@ -9,7 +9,7 @@ import { resolveInsideRoot } from '../../utils/stored-files'
 /**
  * 按台账「出处」路径读取来源文件,供预览组件使用。
  *
- * 文件库是 app 内的 `files/`(约定见 files/README.md):记录里的
+ * 文件库是 app 内的 `files/`(约定见 lib/file-store-scope.ts):记录里的
  * `record_evidence.source_file` 存**相对该目录**的路径,如
  * `jxj/announcement/2024/1/甬经信中小〔2024〕72号….pdf`。
  * 这里把它交给浏览器里的预览器。

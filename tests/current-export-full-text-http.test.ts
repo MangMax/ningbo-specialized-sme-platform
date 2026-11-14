@@ -5,7 +5,7 @@ const f = currentExport409Fixture()
 beforeAll(() => f.start(), 60000)
 afterAll(() => f.close())
 it('publishes and downloads complete multiple-source text through the HTTP export job', async () => {
-  f.resetBusiness()
+  await f.resetBusiness()
   f.candidate('synthetic-full-text')
   const attachment = 'literal first source\n'.repeat(24) + 'literal second source😀'.repeat(90)
   f.db.$client.prepare('update record_evidence set attachment=?').run(attachment)

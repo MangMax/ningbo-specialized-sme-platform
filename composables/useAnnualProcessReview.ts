@@ -177,7 +177,7 @@ export function useAnnualProcessReview(activeEventId: MaybeRefOrGetter<number | 
       if (current(token, id)) {
         const failure = cause as { statusCode?: number; status?: number; data?: { error?: { code?: string } } }
         const refused = [401, 403].includes(failure.statusCode ?? failure.status ?? 0)
-          && ['readonly_database', 'browser_review_disabled', 'unauthorized'].includes(failure.data?.error?.code ?? '')
+          && ['readonly_database', 'unauthorized'].includes(failure.data?.error?.code ?? '')
         if (refused) {
           // These protected-route refusals happen before enqueueing. They are
           // explicit no-write answers, unlike a network/unknown result.

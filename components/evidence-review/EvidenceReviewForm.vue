@@ -180,19 +180,18 @@ async function save() {
     try { await refreshAffected() } catch { /* 宿主详情仍会显式读回并说明状态 */ }
   } catch (error) {
     const code = (error as { data?: { error?: { code?: string } } })?.data?.error?.code
-    unknown.value = unknown.value || !['fact_reference_mismatch', 'stale_version', 'stale_evidence', 'unauthorized', 'origin_required', 'origin_mismatch', 'cross_site_request', 'unsupported_media_type', 'browser_review_disabled', 'idempotency_conflict', 'transaction_failed', 'invalid_request'].includes(code ?? '')
+    unknown.value = unknown.value || !['fact_reference_mismatch', 'stale_version', 'stale_evidence', 'unauthorized', 'origin_required', 'origin_mismatch', 'cross_site_request', 'unsupported_media_type', 'idempotency_conflict', 'transaction_failed', 'invalid_request'].includes(code ?? '')
     // Only translate known codes. Raw responses can contain credentials and are never rendered.
     failure.value = unknown.value ? '提交结果未知，原请求已保留。请使用原请求重试或重新读取当前状态。'
       : code === 'fact_reference_mismatch' ? '关联事实已变化，草稿保留。请刷新可关联事实并重新选择后提交。'
       : code === 'stale_version' ? '决定版本冲突。请重新读取当前决定，核对后再提交。'
       : code === 'stale_evidence' ? '证据版本冲突或影响检查尚未完成。请重新读取后复核。'
-      : ['unauthorized', 'origin_required', 'origin_mismatch', 'cross_site_request', 'unsupported_media_type', 'browser_review_disabled'].includes(code ?? '')
+      : ['unauthorized', 'origin_required', 'origin_mismatch', 'cross_site_request', 'unsupported_media_type'].includes(code ?? '')
         ? '这次提交没被接受：页面提交未开启或授权已失效。依据还在，重新读取后再试。'
       : code === 'idempotency_conflict' ? '提交标识冲突。请重新读取并核对当前决定。'
       : '复核保存失败，待复核状态保留。请重试；同一请求会复用提交标识。'
     if (['stale_version', 'stale_evidence', 'idempotency_conflict'].includes(code ?? '')) conflict.value = true
     if (code === 'fact_reference_mismatch' && !unknown.value) retry.value = null
-    if (code === 'browser_review_disabled') writeState.value = 'readonly'
     await revealFailure()
   } finally { pending.value = false }
 }

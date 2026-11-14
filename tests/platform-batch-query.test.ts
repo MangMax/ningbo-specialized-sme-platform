@@ -2,14 +2,14 @@ import { afterAll, beforeAll, beforeEach, expect, it, vi } from 'vitest'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { useDb } from '../db/client'
+import { initializeDb } from '../db/client'
 import { updateCredential } from '../server/utils/credential-state'
 import { whenIdle } from '../server/utils/job-runner'
 import { handlePlatformBatchRequest } from '../server/utils/platform-batch-http'
 import { MAX_BATCH_ATTEMPTS } from '../lib/platform/batch-query'
 
 const dir = mkdtempSync(join(tmpdir(), 'platform-batch-'))
-const db = useDb({ dbPath: join(dir, 'test.sqlite') })
+const db = initializeDb({ create: true,  dbPath: join(dir, 'test.sqlite') })
 const cookie = 'session=synthetic-batch-secret'
 const token = 'synthetic-task-token'
 const upstream = vi.fn()
@@ -46,7 +46,7 @@ it('REST accepts a mixed-source batch asynchronously and retrieves stable indivi
   const item = (await invoke('item', undefined, receipt.batchId, receipt.itemIds[1])).body as any
   expect(item.itemId).toBe(receipt.itemIds[1])
   expect(item.segments.flatMap((s: any) => s.rows).map((r: any) => r.relation)).toEqual(['1', '2', '3'])
-  for (const table of ['enterprise', 'record', 'platform_query', 'platform_relation', 'import_batch']) expect(db.$client.prepare(`SELECT count(*) AS n FROM ${table}`).get()).toEqual({ n: 0 })
+  for (const table of ['enterprise', 'record', 'platform_collection', 'platform_business_observation', 'platform_business_record', 'import_batch']) expect(db.$client.prepare(`SELECT count(*) AS n FROM ${table}`).get()).toEqual({ n: 0 })
 })
 it('retry keeps batch and item IDs and completed rows and times while querying only unfinished pages', async () => {
   let failSecond = true
@@ -94,7 +94,7 @@ it('running status checkpoints completed pages and restart reports failed withou
     const { writeFileSync } = await import('node:fs')
     const restartPath = join(dir, 'restart.sqlite')
     writeFileSync(restartPath, db.$client.serialize())
-    const restarted = useDb({ dbPath: restartPath })
+    const restarted = initializeDb({ create: true,  dbPath: restartPath })
     const restored = await handlePlatformBatchRequest('status', { batchId: receipt.batchId }, { db: restarted, filesDir: dir })
     expect(restored.body).toMatchObject({ state: 'failed', completeness: 'partial' })
     expect((restored.body as any).items[0]).toEqual(running.items[0])

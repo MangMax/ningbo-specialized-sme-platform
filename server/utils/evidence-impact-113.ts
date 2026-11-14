@@ -1,8 +1,11 @@
 /** Durable, explicitly drained evidence work. Call capture functions inside the fact transaction. */
-import { createHash } from 'node:crypto'
-import { and, asc, desc, eq, gt, inArray, sql } from 'drizzle-orm'
+import { and,asc,desc,eq,gt,inArray,sql } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
+import { createHash } from 'node:crypto'
 import * as s from '../../db/schema'
+import { orderDifferenceEnvelopeConditions,readDifferenceRevisionMaterials } from '../../lib/platform/difference-hash-inputs'
+import { differenceEvidenceColumns } from '../../lib/platform/difference-reference-target'
+import { readDifferenceCollection,readDifferenceCollectionScope,readDifferenceObservations } from '../../lib/platform/difference-sources'
 import { readLatestDecisionHead102 as latestDecisionHead102 } from './decision-lifecycle-102/head'
 
 type Db = BetterSQLite3Database<typeof s>
@@ -74,8 +77,9 @@ export function processEvidenceImpacts113(db: Db, input: { limit?: number } = {}
       if (!progress) break
       const revision = tx.select().from(s.evidenceRevision113).where(eq(s.evidenceRevision113.id, progress.revisionId)).get()!
       const remaining = limit - processed
+      const publicQuery = differenceEvidenceColumns(tx, 'd').evidenceQueryId
       const candidates = tx.all<{ id: number; enterpriseId: number; titleCode: string; direction: string; status: string; evidenceQueryId: number | null }>(sql`
-        select d.id, d.enterprise_id enterpriseId, d.title_code titleCode, d.direction, d.status,d.evidence_query_id evidenceQueryId from difference_reason d
+        select d.id, d.enterprise_id enterpriseId, d.title_code titleCode, d.direction, d.status,${publicQuery} evidenceQueryId from difference_reason d
         where d.id > ${progress.cursor} and d.id <= ${revision.maxDecisionId}
         and ${revision.enterpriseId == null ? sql`1` : sql`d.enterprise_id = ${revision.enterpriseId}`}
         and ${revision.titleCode == null ? sql`1` : sql`d.title_code = ${revision.titleCode}`}
@@ -118,12 +122,19 @@ export function readEvidenceToken113(db: EvidenceExecutor113, scope: EvidenceSco
 
 /** Original archive projections, never raw_response, collection_evidence.rows or whole raw_fields. */
 export function captureQueryRevision113(db: EvidenceExecutor113, queryId: number) {
-  const q = db.get<{ id: number; interface: string; queryKey: string; rdjb: string; titleCode: string | null; status: string; conditions: string | null; pages: string | null; completeness: string | null; fullRange: number | null; unfinished: string | null; pageSize: number | null }>(sql`
-    select id, interface, query_key queryKey, rdjb, title_code titleCode, status,
-    json_extract(collection_evidence,'$.effectiveConditions') conditions, json_extract(collection_evidence,'$.pages') pages,
-    json_extract(collection_evidence,'$.completeness') completeness, json_extract(collection_evidence,'$.fullRange') fullRange,
-    json_extract(collection_evidence,'$.unfinished') unfinished, json_extract(collection_evidence,'$.limits.pageSize') pageSize
-    from platform_query where id=${queryId}`)!
+  const source = readDifferenceCollection(db, queryId)
+  if (!source) throw new Error('Query evidence not found')
+  const scope = readDifferenceCollectionScope(db, source.collection.id)
+  if (scope && !scope.conditionsKnown) throw new Error('Difference revision conditions are unknown; original structured values are unavailable')
+  // Target structured owners supply all membership, attribution and coverage.
+  // The original hash material is isolated in its evidence owner below.
+  const q = {
+    ...source.collection, id: queryId,
+    conditions: JSON.stringify(orderDifferenceEnvelopeConditions(db, source.collection.id, scope.conditions)),
+    pages: JSON.stringify(scope.pages.map(p => ({ rdjb: p.rdjb, page: p.pageNo, status: p.status, fetchedCount: p.fetchedCount, declaredTotal: p.declaredTotal, maxPage: p.maxPage }))),
+    completeness: source.collection.completeness === 'unknown' ? null : source.collection.completeness,
+    unfinished: JSON.stringify(scope.unfinished.map(p => ({ rdjb: p.rdjb, page: p.pageNo }))),
+  }
   const titleFor: Record<string, string> = { '1': 'innovative_sme', '2': 'specialized_sme', '3': 'little_giant' }
   type Page = { rdjb: string | null; page: number; status: string; fetchedCount: number; declaredTotal: number | null; maxPage?: number | null }
   const pages: Page[] = JSON.parse(q.pages ?? '[]'), conditions = JSON.parse(q.conditions ?? '{}')
@@ -141,11 +152,9 @@ export function captureQueryRevision113(db: EvidenceExecutor113, queryId: number
   if (exactOwner) for (const title of partitions) get(exactOwner, title)
   let cursor = 0, lastRelationId = 0
   for (;;) {
-    const rows = db.all<{ id: number; enterpriseId: number | null; sequenceNo: number; material: string }>(sql`
-      select id, enterprise_id enterpriseId, sequence_no sequenceNo,
-      json_array(relation_key,uscc_raw,name_raw,alias_name_raw,province,status,batch,declare_kind,applied_at,award_batch_label,year,verification_status,
-        json_extract(raw_fields,'$.rddqrq'), json_extract(raw_fields,'$.whpcyear'),json_extract(raw_fields,'$.whpc'),json_extract(raw_fields,'$.szq')) material
-      from platform_relation where query_id=${queryId} and id>${cursor} order by id limit 200`)
+    const observations = readDifferenceObservations(db, source.collection.id, cursor)
+    const materials = readDifferenceRevisionMaterials(db, observations.map(r => r.observationId))
+    const rows = observations.map(row => ({ ...row, material: JSON.stringify(materials!.get(row.observationId)) }))
     for (const row of rows) {
       lastRelationId = row.id
       if (row.enterpriseId == null) continue
@@ -281,7 +290,12 @@ export function captureRuleRevision113(db: EvidenceExecutor113, input: { ruleId:
 /** Explicit disjoint dependency partitions are not evidence against a scoped confirmed decision. */
 function queryChangeRelevant113(db: EvidenceExecutor113, revision: typeof s.evidenceRevision113.$inferSelect, decision: { evidenceQueryId: number | null; status: string; titleCode: string }) {
   if (!decision.evidenceQueryId || decision.status === 'not_queried') return true
-  const old = db.get<{ interface: string; conditions: string | null; pages: string | null; fullRange: number | null }>(sql`select interface,json_extract(collection_evidence,'$.effectiveConditions') conditions,json_extract(collection_evidence,'$.pages') pages,json_extract(collection_evidence,'$.fullRange') fullRange from platform_query where id=${decision.evidenceQueryId}`)
+  const source = readDifferenceCollection(db, decision.evidenceQueryId)
+  const scope = source ? readDifferenceCollectionScope(db, source.collection.id) : null
+  const old = source && scope ? {
+    interface: source.collection.interface, conditions: JSON.stringify(scope.conditions),
+    pages: JSON.stringify(scope.pages.map(p => ({ rdjb: p.rdjb, page: p.pageNo }))), fullRange: source.collection.fullRange,
+  } : null
   if (!old || old.interface !== revision.metadata.interface) return true
   const before = JSON.parse(old.conditions ?? '{}') as Record<string, unknown>, after = revision.metadata.conditions as Record<string, unknown>
   for (const field of ['whpcyear','whpc','szq','sqsj','rddqrq']) if (before[field] != null && after[field] != null && before[field] !== after[field]) return false

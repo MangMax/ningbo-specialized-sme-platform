@@ -202,7 +202,7 @@ export interface BackfillStats {
   skipped: string[]
   /**
    * **认得出、但在入库范围之外**的文件(RL-16)。与 `skipped` 分开报:
-   * 前者是「我不认识它」,后者是「我认识它,但按 `files/README.md` 的规则它不该入库」——
+   * 前者是「我不认识它」,后者是「我认识它,但按 `lib/file-store-scope.ts` 的规则它不该入库」——
    * 两种不入表的理由完全不同,合成一个清单就没法验收了。
    *
    * 判据的唯一来源是 `lib/file-store-scope.ts`(纯函数,可单测)。

@@ -1,3 +1,5 @@
+import {differencePublicColumns} from '../lib/platform/difference-reference-target'
+import { nativeQueryRows, nativeRelationRows } from './helpers/native-platform-evidence'
 import { initializeDb } from '../db/client'
 /**
  * RL-03 的**真实端到端**(写入 → 读回):
@@ -164,7 +166,7 @@ describe('第一批 · 平台查询与关系经统一 API 落库', () => {
     const pre = await client().preflight(request)
     expect(pre.status).toBe('preflight')
     expect(pre.preflight.add).toBeGreaterThan(0)
-    expect(db.select().from(schema.platformQuery).all()).toHaveLength(0)
+    expect(nativeQueryRows(db)).toHaveLength(0)
   })
 
   it('commit 落 5 次查询与 8 条关系', async () => {
@@ -175,7 +177,7 @@ describe('第一批 · 平台查询与关系经统一 API 落库', () => {
   })
 
   it('platform_query:五次查询各自成行,四态按实际(含 rdjb=1/2 的 no_record 与一次 failed)', () => {
-    const rows = db.select().from(schema.platformQuery).all().filter((q) => q.queryKey === USCC)
+    const rows = nativeQueryRows(db).filter((q) => q.queryKey === USCC)
     expect(rows).toHaveLength(5)
     const byQueryStatus = rows.map((q) => `${q.interface}|${q.rdjb}|${q.status}`).sort()
     expect(byQueryStatus).toEqual([
@@ -188,16 +190,13 @@ describe('第一批 · 平台查询与关系经统一 API 落库', () => {
     const failed = rows.find((q) => q.status === 'failed')!
     expect(failed.failureReason).toContain('登录超时')
     // 失败那次没有关系行 —— 失败 ≠ 无记录,但也不冒充有记录。
-    expect(db.select().from(schema.platformRelation).all().filter((r) => r.queryId === failed.id)).toEqual([])
+    expect(nativeRelationRows(db).filter((r) => r.queryId === failed.id)).toEqual([])
   })
 
   it('platform_relation:rdjb=3 的 6 条逐条保留(序号 1–6、原序、不按 id 去重)', () => {
-    const rows = db.select().from(schema.platformQuery).all()
+    const rows = nativeQueryRows(db)
     const success3 = rows.find((q) => q.rdjb === '3' && q.status === 'success')!
-    const relations = db
-      .select()
-      .from(schema.platformRelation)
-      .all()
+    const relations = nativeRelationRows(db)
       .filter((r) => r.queryId === success3.id)
       .sort((a, b) => a.sequenceNo - b.sequenceNo)
     expect(relations.map((r) => r.sequenceNo)).toEqual([1, 2, 3, 4, 5, 6])
@@ -214,24 +213,21 @@ describe('第一批 · 平台查询与关系经统一 API 落库', () => {
     expect(relations.slice(2).every((r) => r.nameRaw === NEW_NAME)).toBe(true)
     // 同 USCC 的 8 条关系全在:两个接口各有 SQ332025060392166 / SQ332022062212391,
     // **不按 relation_key 去重**(同一份记录在两个接口各出一次)。
-    const allRelations = db
-      .select()
-      .from(schema.platformRelation)
-      .all()
+    const allRelations = nativeRelationRows(db)
       .filter((r) => rows.some((q) => q.id === r.queryId && q.queryKey === USCC))
     expect(allRelations).toHaveLength(8)
     expect(allRelations.filter((r) => r.relationKey === 'SQ332022062212391')).toHaveLength(2)
   })
 
   it('守护 C1:alias_name_raw 全为 null,平台关系不伪造曾用名列', () => {
-    for (const relation of db.select().from(schema.platformRelation).all()) {
+    for (const relation of nativeRelationRows(db)) {
       expect(relation.aliasNameRaw).toBeNull()
     }
   })
 
   it('匹配依据是统代:关系归到规范行(统代命中),verification_status=confirmed', () => {
-    const success3 = db.select().from(schema.platformQuery).all().find((q) => q.rdjb === '3' && q.status === 'success')!
-    const relations = db.select().from(schema.platformRelation).all().filter((r) => r.queryId === success3.id)
+    const success3 = nativeQueryRows(db).find((q) => q.rdjb === '3' && q.status === 'success')!
+    const relations = nativeRelationRows(db).filter((r) => r.queryId === success3.id)
     for (const relation of relations) {
       expect(relation.enterpriseId).toBe(canonical)
       expect(relation.matchBasis).toBe('uscc')
@@ -370,14 +366,14 @@ describe('第二批 · 曾用名、已核验处置与归并', () => {
     expect(alias.sourceKind).toBe('platform_business')
     expect(alias.validFrom).toBe('2022-06-22 17:17:52')
     // 来源证据 = rdjb=3 的第 1 条关系(读回的真 id),不是 0 哨兵、不是猜的。
-    const relation = db.select().from(schema.platformRelation).all().find((r) => r.id === alias.sourceRefId)!
+    const relation = nativeRelationRows(db).find((r) => r.id === alias.sourceRefId)!
     expect(relation.sequenceNo).toBe(1)
     expect(relation.nameRaw).toBe(OLD_NAME)
     expect(alias.sourceRefId).toBe(relationIds.get(`business_list|${USCC}|3|1`))
   })
 
   it('difference_reason:原因与措施成对,并带查询/关系证据', () => {
-    const reasons = db.select().from(schema.differenceReason).all().filter((d) => d.enterpriseId === canonical)
+    const reasons = db.select(differencePublicColumns(db)).from(schema.differenceReason).all().filter((d) => d.enterpriseId === canonical)
     const renamed = reasons.find((d) => d.reasonCode === 'renamed')!
     expect(renamed.measureCode).toBe('update_current_name')
     expect(renamed.measureNote).toContain('曾用名')
@@ -392,9 +388,10 @@ describe('第二批 · 曾用名、已核验处置与归并', () => {
 
   it('merges:375 与 7289 归并为一行,公布历史(事件 + 出处含页码)一条不丢', () => {
     const names = db.select().from(schema.enterprise).all().filter((e) => e.name === OLD_NAME || e.name === NEW_NAME)
-    expect(names).toHaveLength(1)
-    expect(names[0]!.id).toBe(canonical)
-    expect(names[0]!.usccNorm).toBe(USCC)
+    expect(names).toHaveLength(2)
+    expect(db.select().from(schema.enterpriseMerge).all()).toEqual(expect.arrayContaining([expect.objectContaining({intoEnterpriseId:canonical})]))
+    expect(names.find(e=>e.usccNorm===USCC)!.id).toBe(canonical)
+    expect(names.find(e=>e.id===canonical)!.usccNorm).toBe(USCC)
     // 被并企业的记录已改指规范行;事件与出处随之归入,页 74 还在。
     const moved = db.select().from(schema.record).all().find((r) => r.id === duplicateRecord)!
     expect(moved.enterpriseId).toBe(canonical)
@@ -450,15 +447,15 @@ describe('第二批 · 曾用名、已核验处置与归并', () => {
   it('重放第二批(同幂等键)不重复写:别名、差异、归并都不再新增', async () => {
     const before = {
       aliases: db.select().from(schema.enterpriseAlias).all().length,
-      differences: db.select().from(schema.differenceReason).all().length,
+      differences: db.select(differencePublicColumns(db)).from(schema.differenceReason).all().length,
       batches: db.select().from(schema.importBatch).all().length,
     }
     const replay = await client().commit(request)
     expect(replay.status).toBe('committed')
     expect(db.select().from(schema.enterpriseAlias).all().length).toBe(before.aliases)
-    expect(db.select().from(schema.differenceReason).all().length).toBe(before.differences)
+    expect(db.select(differencePublicColumns(db)).from(schema.differenceReason).all().length).toBe(before.differences)
     expect(db.select().from(schema.importBatch).all().length).toBe(before.batches)
     // 企业也没因为重放又冒出来。
-    expect(db.select().from(schema.enterprise).all().filter((e) => e.name === OLD_NAME)).toHaveLength(0)
+    expect(db.select().from(schema.enterprise).all().filter((e) => e.name === OLD_NAME)).toHaveLength(1)
   })
 })

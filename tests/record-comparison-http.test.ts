@@ -3,24 +3,24 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { ensurePlatformObservation } from '../server/utils/platform-business-record'
-import { useDb, schema } from '../db/client.ts'
-import { spawnOwnedChild as spawn, reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../scripts/lib/isolated-local-services.mjs'
+import { submitNativePlatformQuery } from './helpers/native-platform-fixture'
+import { initializeDb, schema } from '../db/client.ts'
+import { spawnOwnedChild as spawn, reserveLoopbackPort, waitForHttp, stopOwnedChild } from './helpers/isolated-local-services.mjs'
 
 const dir = mkdtempSync(join(tmpdir(), 'spztx-record-comparison-http-'))
 const path = join(dir, 'roster.db')
-const db = useDb({ dbPath: path })
+const db = initializeDb({ create: true,  dbPath: path })
 const doc = db.insert(schema.sourceDocument).values({ source: 'jxj', title: 'Synthetic', path: 'synthetic/official.pdf' }).returning().get()
 const enterprise = db.insert(schema.enterprise).values({ name: 'HTTP', nameNorm: 'HTTP', usccNorm: '91330211255994475A' }).returning().get()
 const record = db.insert(schema.record).values({ enterpriseId: enterprise.id, source: 'jxj', titleCode: 'specialized_sme' }).returning().get()
 const event = db.insert(schema.recordEvent).values({ recordId: record.id, eventType: 'award', year: 2024 }).returning().get()
 db.insert(schema.recordEvidence).values({ recordEventId: event.id, sourceFile: doc.path, page: 3 }).run()
-const query = db.insert(schema.platformQuery).values({ interface: 'business_list', queryKey: enterprise.usccNorm!, rdjb: '2', titleCode: 'specialized_sme', queriedAt: '2026-10-18T00:00:00Z', status: 'partial', rawResponse: 'PRIVATE_RAW_RESPONSE' }).returning().get()
-db.insert(schema.platformRelation).values({ queryId: query.id, sequenceNo: 1, enterpriseId: enterprise.id, usccRaw: enterprise.usccNorm, status: '待审核', verificationStatus: 'confirmed', matchBasis: 'uscc', rawFields: { secret: 'PRIVATE_RAW_FIELDS' } }).run()
+const native = submitNativePlatformQuery(db, { interface: 'business_list', queryKey: enterprise.usccNorm!, rdjb: '2', titleCode: 'specialized_sme', queriedAt: '2026-10-18T00:00:00Z', status: 'partial', rawResponse: 'PRIVATE_RAW_RESPONSE', relations: [{ sequenceNo: 1, enterpriseId: enterprise.id, usccRaw: enterprise.usccNorm, status: '待审核', verificationStatus: 'confirmed', matchBasis: 'uscc', rawFields: { secret: 'PRIVATE_RAW_FIELDS' } }] })
+const query = { id: native.queryId }
 const reason = db.insert(schema.differenceReason).values({ enterpriseId: enterprise.id, titleCode: 'specialized_sme', direction: 'missing_in_miit', status: 'needs_review', recordedAt: '2026-10-18T01:00:00Z' }).returning().get()
-const groupQuery = db.insert(schema.platformQuery).values({ interface: 'business_list', queryKey: 'canonical-fixture', rdjb: '2', titleCode: 'specialized_sme', queriedAt: '2026-10-18T00:00:00Z', status: 'partial' }).returning().get()
-const groupedRelations = [1, 2, 3].map(sequenceNo => db.insert(schema.platformRelation).values({ queryId: groupQuery.id, sequenceNo, relationKey: sequenceNo === 3 ? null : 'SAME', rawFields: { id: 'SAME', privateBody: 'PRIVATE_GROUP_RAW' } }).returning().get())
-for (const row of groupedRelations.slice(0, 2)) ensurePlatformObservation(db, row.id)
+const grouped = submitNativePlatformQuery(db, { interface: 'business_list', queryKey: 'canonical-fixture', rdjb: '2', titleCode: 'specialized_sme', queriedAt: '2026-10-18T00:00:00Z', status: 'partial', rawResponse: 'PRIVATE_GROUP_RAW', relations: [1, 2, 3].map(sequenceNo => ({ sequenceNo, relationKey: sequenceNo === 3 ? 'OTHER' : 'SAME', rawFields: { id: sequenceNo === 3 ? 'OTHER' : 'SAME', privateBody: 'PRIVATE_GROUP_RAW' } })) })
+const groupQuery = { id: grouped.queryId }
+const groupedRelations = grouped.relationIds.map(id => ({ id }))
 let service: { baseUrl: string; stop: () => Promise<void> }
 beforeAll(async () => {
   const cwd = resolve(import.meta.dirname, '..')
@@ -87,8 +87,8 @@ describe('record comparison true HTTP adapters on isolated SQLite', () => {
     const canonicalHttp = await fetch(`${service.baseUrl}/api/roster/record-comparison?queryIds=${groupQuery.id}&exportBatchIds=&officialSourceDocumentIds=${doc.id}&businessPage=2&businessPageSize=1`)
     const canonicalValue = JSON.parse(canonical.result.content[0].text)
     expect(canonicalValue).toEqual(await canonicalHttp.json())
-    expect(canonicalValue.businessCounts).toMatchObject({ records: 1, versions: 1, observations: 3, unknownObservations: 1 })
-    expect(canonicalValue.businessGroups).toMatchObject({ total: 2, page: 2, pageSize: 1, rows: [{ groupState: 'not_indexed' }] })
+    expect(canonicalValue.businessCounts).toMatchObject({ records: 2, versions: 2, observations: 3, unknownObservations: 0 })
+    expect(canonicalValue.businessGroups).toMatchObject({ total: 2, page: 2, pageSize: 1, rows: [{ groupState: 'resolved', observationCount: 1 }] })
     const impact = await rpc('tools/call' , { name: 'preview_record_correspondence_impact', arguments: { queryIds: [query.id], exportBatchIds: [], officialSourceDocumentIds: [doc.id] } })
     const preview = await fetch(`${service.baseUrl}/api/roster/record-comparison/legacy-impact?${sourceQuery}`)
     expect(preview.status).toBe(200)
@@ -121,7 +121,7 @@ describe('record comparison true HTTP adapters on isolated SQLite', () => {
   it('pages canonical business groups independently while retaining every original observation and validates bounds', async () => {
     const url = `${service.baseUrl}/api/roster/record-comparison?queryIds=${groupQuery.id}&exportBatchIds=&officialSourceDocumentIds=${doc.id}`
     const body = await (await fetch(`${url}&businessPageSize=1`)).json()
-    expect(body.businessCounts).toMatchObject({ records: 1, versions: 1, observations: 3, unknownObservations: 1 })
+    expect(body.businessCounts).toMatchObject({ records: 2, versions: 2, observations: 3, unknownObservations: 0 })
     expect(body.counts.distinctPlatformRows).toBe(3)
     expect(body.platformWithoutOfficial.rows.map((o: { relation: { id: number } }) => o.relation.id)).toEqual(groupedRelations.map(r => r.id))
     expect(body.businessGroups).toMatchObject({ total: 2, page: 1, pageSize: 1, rows: [{ groupState: 'resolved', observationCount: 2 }] })

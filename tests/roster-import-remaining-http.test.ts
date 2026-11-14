@@ -1,12 +1,11 @@
+import { createRuntimeSchema } from '../db/create-runtime'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { join } from 'node:path'
 import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
-import { migrate } from 'drizzle-orm/better-sqlite3/migrator'
 import { expect, it } from 'vitest'
 import * as schema from '../db/schema'
-import { TITLE_SEED } from '../db/titles'
 import { rosterImportMcpPayloadSchema } from '../server/utils/roster-import-schema'
 import { commitRosterImport, preflightRosterImport, readImportBatchOutcome } from '../server/utils/roster-import'
 import { startRosterApi } from './helpers/roster-http-server'
@@ -19,8 +18,7 @@ async function fixture(run: (f: any) => Promise<void>) {
   const dir = mkdtempSync(join(tmpdir(), '315remaining-'))
   const sqlite = new Database(join(dir, 'synthetic.sqlite'))
   const db = drizzle(sqlite, { schema })
-  migrate(db, { migrationsFolder: resolve('db/migrations') })
-  for (const title of TITLE_SEED) db.insert(schema.title).values(title).run()
+  sqlite.pragma('foreign_keys=ON'); createRuntimeSchema(sqlite)
   const api = await startRosterApi({ db, apiToken: 'synthetic', executeImport: async (database, action, request, errors, context) => action === 'preflight' ? preflightRosterImport(database, request, errors, context) : commitRosterImport(database, request, errors, context) })
   let serial = 0
   async function post(action: string, key: string, payload: unknown, sourceKind = 'alias_evidence') {
@@ -32,7 +30,7 @@ async function fixture(run: (f: any) => Promise<void>) {
     const key = `invalid-${serial++}`
     const p = JSON.parse(JSON.stringify(payload))
     const result = await post('preflight', key, rosterImportMcpPayloadSchema.parse(p))
-    expect(result.preflight.conflicts).toEqual([expect.objectContaining({ ok: false, error: expect.objectContaining({ code, field }) })])
+    expect(result.preflight.conflicts, JSON.stringify(result.preflight.conflicts)).toEqual([expect.objectContaining({ ok: false, error: expect.objectContaining({ code, field }) })])
     expect(await post('preflight', key, p)).toEqual(result)
     const failed = await post('commit', key, p)
     expect(failed.status).toBe('failed')
@@ -43,7 +41,7 @@ async function fixture(run: (f: any) => Promise<void>) {
     const preview = await post('preflight', key, rosterImportMcpPayloadSchema.parse(p), sourceKind)
     expect(preview.preflight.conflicts).toEqual([])
     const result = await post('commit', key, rosterImportMcpPayloadSchema.parse(p), sourceKind)
-    expect(result.status).toBe('committed')
+    expect(result.status, JSON.stringify(result.items)).toBe('committed')
     expect(await post('commit', key, p, sourceKind)).toEqual(result)
     expect(readImportBatchOutcome(db, key)).toMatchObject({ status: 'committed', items: result.items, summary: result.summary })
     return result
@@ -55,18 +53,20 @@ async function fixture(run: (f: any) => Promise<void>) {
   try { await run({ db, post, invalid, saved, owner }) } finally { await api.close(); sqlite.close(); rmSync(dir, { recursive: true, force: true }) }
 }
 
-it('keeps platform legacy sentinels normalization and immutable source replay through public HTTP core', () => fixture(async ({ db, invalid, saved }) => {
-  const query = { interface: 'apply_list', queryKey: 'legacy-key', queriedAt: '2026-11-05', status: 'success', rawResponse: '{original}', relations: [{ sequenceNo: 3.9, nameRaw: '  原行企业  ', year: 2026.9, declareKind: 'legacy-value', rawFields: { unknown: null } }] }
+it('rejects fractional source coordinates and keeps native source sentinels and immutable replay through public HTTP core', () => fixture(async ({ db, invalid, saved }) => {
+  const query = { interface: 'apply_list', queryKey: 'legacy-key', queriedAt: '2026-11-05', status: 'success', rawResponse: '{original}', relations: [{ sequenceNo: 1, nameRaw: '  原行企业  ', year: 2026, declareKind: 'legacy-value', rawFields: { unknown: null } }] }
   for (const [field, code] of [['interface', 'interface_unknown'], ['queryKey', 'query_key_required'], ['queriedAt', 'queried_at_required']] as const) await invalid({ platformQueries: [{ ...query, [field]: undefined }] }, code, field)
   await invalid({ platformQueries: [{ ...query, relations: [{}] }] }, 'sequence_no_required', 'relations[].sequenceNo')
   await invalid({ platformQueries: [{ ...query, status: 'bad' }] }, 'query_status_unknown', 'status')
   await invalid({ platformQueries: [{ ...query, reuseExisting: false }] }, 'query_reuse_invalid', 'reuseExisting')
   await invalid({ platformQueries: [{ interface: 'recognized_list', queryKey: 'x', queriedAt: '2026-11-05' }] }, 'collection_evidence_invalid', 'collectionEvidence')
+  await invalid({ platformQueries: [{ ...query, relations: [{ ...query.relations[0], sequenceNo: 3.9, year: 2026.9 }] }] }, 'sequence_no_invalid', 'relations[].sequenceNo')
+  await invalid({ platformQueries: [{ ...query, relations: [{ ...query.relations[0], year: 2026.9 }] }] }, 'year_invalid', 'relations[].year')
   expect(listPlatformQueries(db).rows).toEqual([])
   await saved('legacy-query', { platformQueries: [query] })
   const read = () => listPlatformQueries(db, { includeRawResponse: true }).rows
   expect(read()).toHaveLength(1)
-  expect(read()[0]).toMatchObject({ query: { interface: 'apply_list', queryKey: 'legacy-key', rawResponse: '{original}', collectionEvidence: null }, relations: [{ sequenceNo: 3, nameRaw: '原行企业', year: 2026, declareKind: 'legacy-value', rawFields: { unknown: null } }] })
+  expect(read()[0]).toMatchObject({ query: { interface: 'apply_list', queryKey: 'legacy-key', rawResponse: '{original}', collectionEvidence: null }, relations: [{ sequenceNo: 1, nameRaw: '原行企业', year: 2026, declareKind: 'legacy-value', rawFields: { unknown: null } }] })
   const before = read()
   for (const [i, rawResponse] of [undefined, null].entries()) await saved(`sentinel-${i}`, { platformQueries: [{ interface: 'apply_list', queryKey: 'legacy-key', queriedAt: '2026-11-05', rawResponse, reuseExisting: true }] })
   expect(read()).toEqual(before)
@@ -144,7 +144,9 @@ it('merges same input atomically with selector target ref and canonical name err
   })()
   expect(failed).toEqual(before)
   const result = await saved('merge-valid', { merges: [merge] })
-  expect(getRosterEnterpriseDetail(db, from)).toBeNull()
+  expect(db.$client.prepare('SELECT id FROM enterprise WHERE id=?').get(from)).toEqual({ id: from })
+  expect(db.$client.prepare('SELECT from_enterprise_id,into_enterprise_id FROM enterprise_merge WHERE from_enterprise_id=?').get(from)).toEqual({ from_enterprise_id: from, into_enterprise_id: into })
+  expect(getRosterEnterpriseDetail(db, from, Date.parse('2026-11-05'))).toEqual(getRosterEnterpriseDetail(db, into, Date.parse('2026-11-05')))
   const detail = getRosterEnterpriseDetail(db, into)!
   expect(detail.enterprise).toMatchObject({ name: '规范新名', uscc: '91330211255994457P' })
   expect(detail.aliases.map((a: any) => a.name).sort()).toEqual(['被并企业', '规范企业'].sort())

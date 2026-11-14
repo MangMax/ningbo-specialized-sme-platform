@@ -1,8 +1,7 @@
 /**
  * 名录统一导入 API 的**契约类型 + 客户端**（RL-11）。
  *
- * 契约原文：[`docs/roster-lifecycle-contract.md`](../docs/roster-lifecycle-contract.md) §8（写接口）
- * 与 §9（MCP tool）。本文件是**跨进程可复用**的那一半：类型与 HTTP 客户端。
+ * 本文件提供跨进程共用的类型与 HTTP 客户端。
  * 服务端实现见 `server/utils/roster-import.ts`（纯逻辑）与
  * `server/utils/roster-import-http.ts`（把逻辑翻成 HTTP 状态码/JSON）。
  *
@@ -417,8 +416,7 @@ export interface RosterImportItemResult {
  * 实测导入经信局历年小巨人工作簿后静默多出 4 家重复企业身份。
  *
  * 本结构把这件事**显式化**：不改匹配规则、不自动合并，只如实报出「新建这一行时，
- * 库里已经有同名的另一行」。是否归并由**证据**决定（见 `docs/roster-lifecycle-contract.md`
- * §8.8 与 §5.3），候选本身不是结论。
+ * 库里已经有同名的另一行」。是否归并由证据决定，候选本身不是结论。
  */
 export interface DuplicateNameCandidate {
   /** 判定依据。目前只有一种：归一化名相同（`same_name_norm`）。 */

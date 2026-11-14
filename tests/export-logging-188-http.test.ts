@@ -5,15 +5,15 @@ import { join, resolve } from 'node:path'
 import ExcelJS from 'exceljs'
 import { afterAll, beforeAll, expect, it } from 'vitest'
 import { eq } from 'drizzle-orm'
-import { useDb, schema as s } from '../db/client'
-import { spawnOwnedChild as spawn, reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../scripts/lib/isolated-local-services.mjs'
+import { initializeDb, schema as s } from '../db/client'
+import { spawnOwnedChild as spawn, reserveLoopbackPort, waitForHttp, stopOwnedChild } from './helpers/isolated-local-services.mjs'
 import { export188Candidate, seedExport188DisconnectFixture } from './helpers/export-188-fixture'
 
 // Actual Nuxt HTTP and its native subprocess/drain. Only setup/fault injection
 // touches the isolated synthetic fixture; all export/log assertions use public HTTP.
 const root = mkdtempSync('/tmp/export-188-')
 const dbPath = join(root, 'synthetic.db'), logDir = join(root, 'logs')
-const db = useDb({ dbPath })
+const db = initializeDb({ create: true,  dbPath })
 const token = 'synthetic-export-188-token'
 const privateText = 'PRIVATE_EXPORT188_CONTENT'
 const headers = { authorization: `Bearer ${token}`, 'content-type': 'application/json' }
@@ -84,7 +84,7 @@ async function start(logDirectory = logDir) {
     cwd, stdio: ['ignore', 'pipe', 'pipe'], env: {
       ...process.env, NUXT_BUILD_DIR: join(root, 'build'), NUXT_DB_PATH: dbPath, NUXT_LOG_DIR: logDirectory,
       NUXT_API_TOKEN: token, NUXT_MCP_TOKEN: 'synthetic-mcp-188', NUXT_OCR_TOKEN: 'synthetic-ocr-188',
-      NUXT_BROWSER_LOGS_ENABLED: 'false', NUXT_BROWSER_TASKS_ENABLED: 'false',
+      NUXT_BROWSER_TASKS_ENABLED: 'false',
       NUXT_FILES_DIR: join(root, 'files'), NUXT_INCOMING_DIR: join(root, 'incoming'),
       NUXT_CURATED_PATH: join(root, 'curated.json'), NUXT_RECONCILE_PATH: join(root, 'reconcile.json'),
       HOST: '127.0.0.1', PORT: String(port), NITRO_HOST: '127.0.0.1', NITRO_PORT: String(port),

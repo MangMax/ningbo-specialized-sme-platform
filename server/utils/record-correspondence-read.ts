@@ -1,12 +1,10 @@
-import { readLegacyPlatformProvenance, legacySourcePositionForSequence } from './platform-legacy-provenance'
-import { readPublicPublishedNames } from '../../lib/roster/enterprise-roster'
-import { asc, eq, getTableColumns, inArray, sql } from 'drizzle-orm'
+import { asc,eq,inArray } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../db/schema'
-import { sourcePositionForSequence } from '../../lib/platform/recognized-evidence'
-import { normalizePlatformRelation } from '../../lib/platform/normalization'
-import { getRecordCorrespondenceAudit, listRecordCorrespondenceRefs, type CorrespondenceRead } from './record-correspondence'
+import { readPublicPublishedNames } from '../../lib/roster/enterprise-roster'
 import type { ReceiptRedactor } from './import-receipt-redaction'
+import { readTargetRelationEvidenceDisplay } from './platform-relation-evidence-display-target'
+import { getRecordCorrespondenceAudit,listRecordCorrespondenceRefs,type CorrespondenceRead } from './record-correspondence'
 
 type Db = BetterSQLite3Database<typeof schema>
 export type SourceKind = 'event' | 'relation' | 'export_row'
@@ -41,6 +39,8 @@ function redactCredentialEchoes(value: string): string {
   }
   return foundEncodedCredential ? normalized : direct
 }
+export function sanitizeEvidence(value: Record<string, unknown>, knownRedactors?: ReadonlyArray<(text: string) => string>): Record<string, unknown>
+export function sanitizeEvidence(value: unknown, knownRedactors?: ReadonlyArray<(text: string) => string>): unknown
 export function sanitizeEvidence(value: unknown, knownRedactors: ReadonlyArray<(text: string) => string> = []): unknown {
   if (Array.isArray(value)) return value.map(item => sanitizeEvidence(item, knownRedactors))
   const redact = (text: string) => knownRedactors.reduce((result, known) => known(result), redactCredentialEchoes(text))
@@ -72,8 +72,8 @@ export function sourceReader(db: Db, rows: CorrespondenceRead[], extra?: { kind:
   const files = chunks(evidenceRows.map(e => e.sourceFile)).flatMap(paths => db.select({ id: schema.storedFile.id, relPath: schema.storedFile.relPath, bytes: schema.storedFile.bytes, sha256: schema.storedFile.sha256, removedAt: schema.storedFile.removedAt }).from(schema.storedFile).where(inArray(schema.storedFile.relPath, paths)).all())
   const filesByPath = new Map(files.map(f => [f.relPath, f]))
   const evidenceByEvent = Map.groupBy(evidenceRows, e => e.recordEventId)
-  const { rawResponse: _rawResponse, collectionEvidence, ...queryColumns } = getTableColumns(schema.platformQuery)
-  const relations = chunks(relationIds).flatMap(ids => db.select({ relation: schema.platformRelation, query: { ...queryColumns, collectionEvidence: sql`json_remove(${collectionEvidence}, '$.rows')`.mapWith(collectionEvidence) } }).from(schema.platformRelation).innerJoin(schema.platformQuery, eq(schema.platformRelation.queryId, schema.platformQuery.id)).where(inArray(schema.platformRelation.id, ids)).all())
+
+  const targetDisplays = readTargetRelationEvidenceDisplay(db, relationIds.map(relationId => ({ relationId })), redactor).sources
   const exports = chunks(exportRowIds).flatMap(ids => db.select({ row: schema.platformExportRow, batch: schema.platformExportBatch }).from(schema.platformExportRow).innerJoin(schema.platformExportBatch, eq(schema.platformExportRow.batchId, schema.platformExportBatch.id)).where(inArray(schema.platformExportRow.id, ids)).all())
   // Three source sets together stay below SQLite's parameter budget, including the repeated event predicate.
   const links = new Map<number, ReturnType<typeof listRecordCorrespondenceRefs>[number]>()
@@ -102,12 +102,7 @@ export function sourceReader(db: Db, rows: CorrespondenceRead[], extra?: { kind:
     const eventLinks = [...new Map([...(byEvent.get(id) ?? []), ...(byPredecessor.get(id) ?? [])].map(r => [r.id, r])).values()].sort((a, b) => a.id - b.id)
     return [id, { ...joined.event, publishedPresentation: presentation.availability === 'unavailable' ? presentation : { ...presentation, facts: presentation.facts.filter(fact => fact.eventId === id) }, record: { id: joined.record.id, enterpriseId: joined.record.enterpriseId, titleCode: joined.record.titleCode, source: joined.record.source, usccRaw: joined.record.usccRaw }, evidence: evidence.map(item => ({ ...sanitizeEvidence(item) as typeof item, ...(facts.has(item.id) ? { publishedName: facts.get(item.id) } : {}) })), officialEvidence, correspondences: eventLinks }] as const
   }))
-  const legacyById = readLegacyPlatformProvenance(db, relations.map(row => row.query.id))
-  const relationSources = new Map(relations.map(({ relation, query }) => {
-    const legacy = legacyById.get(query.id)
-    const position = legacy ? legacySourcePositionForSequence(legacy.collection, relation.sequenceNo) : sourcePositionForSequence(query.collectionEvidence, relation.sequenceNo)
-    return [relation.id, { ...normalizePlatformRelation(query.interface, relation), sourceRdjb: position.sourceRdjb, sourcePage: position.sourcePage, rawFields: sanitizeEvidence(relation.rawFields), query: { ...query, ...(legacy ? { legacyProvenance: sanitizeEvidence(legacy) as typeof legacy } : {}), failureReason: sanitizeEvidence(query.failureReason), collectionEvidence: safeCollectionEvidence(query.collectionEvidence) }, correspondences: byRelation.get(relation.id) ?? [] }] as const
-  }))
+  const relationSources = new Map([...targetDisplays].map(([id, display]) => [id, display && typeof display === 'object' ? { ...display, correspondences: byRelation.get(id) ?? [] } : null]))
   const exportSources = new Map(exports.map(({ row, batch }) => [row.id, { ...row, rawFields: sanitizeEvidence(row.rawFields), batch: sanitizeEvidence(batch), correspondences: byExport.get(row.id) ?? [] }] as const))
   const read = (kind: SourceKind, id: number) => kind === 'event' ? eventSources.get(id) ?? null : kind === 'relation' ? relationSources.get(id) ?? null : exportSources.get(id) ?? null
   const detailRow = (row: CorrespondenceRead) => {

@@ -1,13 +1,13 @@
-import { initializeDb } from '../db/client'
+import { initializeDb } from '../upgrade/legacy-client'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, expect, it } from 'vitest'
 import { eq } from 'drizzle-orm'
-import { useDb, schema } from '../db'
-import { ensurePlatformObservation } from '../server/utils/platform-business-record'
-import { readPlatformBusinessDetails } from '../server/utils/platform-business-detail-read'
-import { getPlatformBusinessProcess, listPlatformBusinessProcesses } from '../server/utils/platform-business-processes'
+import { useDb, schema } from '../upgrade/legacy-client'
+import { ensurePlatformObservation } from '../upgrade/frozen/server/platform-business-record'
+import { readPlatformBusinessDetails } from '../upgrade/frozen/server/platform-business-detail-read'
+import { getPlatformBusinessProcess, listPlatformBusinessProcesses } from '../upgrade/frozen/server/platform-business-processes'
 
 const dir = mkdtempSync(join(tmpdir(), 'business-processes-shadow-'))
 const db = initializeDb({ create: true, dbPath: join(dir, 'shadow.sqlite') })

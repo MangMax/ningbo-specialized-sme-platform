@@ -1,6 +1,6 @@
 import { getRouterParam, setHeader } from 'h3'
 import { useDb } from '@db'
-import { getPlatformDeclaration } from '../../../utils/platform-declarations'
+import { getTargetDeclaration } from '../../../utils/platform-declarations-target'
 
 defineRouteMeta({
   openAPI: {
@@ -22,7 +22,7 @@ export default defineEventHandler(event => {
   const raw = getRouterParam(event, 'recordId')
   const recordId = Number(raw)
   try {
-    return getPlatformDeclaration(useDb(), recordId)
+    return getTargetDeclaration(useDb(), recordId)
   } catch (error) {
     const failure = error as { statusCode?: number; code?: string; message?: string }
     throw createError({ statusCode: failure.statusCode ?? 500, statusMessage: failure.message ?? 'declaration read failed' })

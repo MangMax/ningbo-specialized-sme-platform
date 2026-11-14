@@ -1,9 +1,10 @@
+import { createRuntimeSchema } from '../db/create-runtime'
+import { submitNativePlatformQuery } from './helpers/native-platform-fixture'
 import { createHash } from 'node:crypto'
 import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs'
-import { join, resolve } from 'node:path'
+import { join } from 'node:path'
 import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
-import { migrate } from 'drizzle-orm/better-sqlite3/migrator'
 import { afterEach, expect, it } from 'vitest'
 import { z } from 'zod'
 import * as schema from '../db/schema'
@@ -23,8 +24,8 @@ async function fixture() {
   const text = 'synthetic official source\n', sha256 = createHash('sha256').update(text).digest('hex')
   for (const path of ['notice.txt', 'other.txt']) writeFileSync(join(filesDir, path), text)
   const sqlite = new Database(join(dir, 'synthetic.sqlite')); sqlite.pragma('foreign_keys=ON'); closes.push(() => { sqlite.close() })
-  const db = drizzle(sqlite, { schema }); migrate(db, { migrationsFolder: resolve('db/migrations') })
-  sqlite.exec(`INSERT INTO title(code,name_zh,level,rank) VALUES('specialized_sme','Synthetic','municipal',2);
+  createRuntimeSchema(sqlite); const db = drizzle(sqlite, { schema })
+  sqlite.exec(`
     INSERT INTO enterprise(id,name,name_norm,uscc_norm) VALUES(1,'Alpha','Alpha',NULL),(2,'Beta','Beta','91330211255994457P');
     INSERT INTO record(id,enterprise_id,title_code,source,name_raw) VALUES(1,1,'specialized_sme','jxj','container first'),(2,2,'specialized_sme','jxj','container beta');
     INSERT INTO record_event(id,record_id,event_type,year) VALUES(1,1,'award',2021),(2,2,'award',2024);
@@ -307,11 +308,11 @@ it('revalidates two SQLite handles competing for an initially empty K at public 
 
 it('preserves old observation raw hash proof decisions and audit while changing formal raw', async () => {
   const f = await fixture(); f.capture()
-  const queryId = f.db.insert(schema.platformQuery).values({ interface: 'business_list', queryKey: 'synthetic', queriedAt: '2021-01-01', rawResponse: '  {"legacy":true}  ' }).returning({ id: schema.platformQuery.id }).get().id
-  const relationId = f.db.insert(schema.platformRelation).values({ queryId, sequenceNo: 1, enterpriseId: 1, rawFields: { n: 1, text: 'verbatim', unknown: null }, sourceText: '  legacy text  ' }).returning({ id: schema.platformRelation.id }).get().id
-  f.db.insert(schema.recordCorrespondence).values({ edgeKey: 'synthetic-old-edge', type: 'event_process', role: 'context_only', eventId: 1, relationId, enterpriseId: 1, titleCode: 'specialized_sme', status: 'confirmed', revision: 7, targetIdentity: { old: true }, provenance: { relationId, observation: 'original' }, sourceFingerprint: 'original-hash-not-recomputed', ruleId: 'manual', ruleVersion: 'old', createdAt: '2021-01-01' }).run()
+  const native = submitNativePlatformQuery(f.db, { interface: 'business_list', queryKey: 'synthetic', queriedAt: '2021-01-01', rawResponse: '  {"legacy":true}  ', relations: [{ sequenceNo: 1, enterpriseId: 1, rawFields: { n: 1, text: 'verbatim', unknown: null }, sourceText: '  legacy text  ' }] })
+  const relationId = native.relationIds[0]!
+  f.db.insert(schema.recordCorrespondence).values({ edgeKey: 'synthetic-old-edge', type: 'event_process', role: 'context_only', eventId: 1, observationId: native.observations[0]!.observationId, enterpriseId: 1, titleCode: 'specialized_sme', status: 'confirmed', revision: 7, targetIdentity: { old: true }, provenance: { relationId, observation: 'original' }, sourceFingerprint: 'original-hash-not-recomputed', ruleId: 'manual', ruleVersion: 'old', createdAt: '2021-01-01' }).run()
   f.db.insert(schema.comparisonScopeProof).values({ kind: 'official_coverage', evidence: { eventIds: [1], original: true }, sourceFingerprint: 'original-proof-hash', createdAt: '2021-01-01' }).run()
-  const tables = ['platform_query', 'platform_relation', 'record_correspondence', 'record_correspondence_audit', 'comparison_scope_proof', 'comparison_scope_proof_audit']
+  const tables = ['platform_collection', 'platform_business_observation', 'platform_observation_assignment', 'platform_archive_value', 'platform_collection_archive_ref', 'platform_observation_archive_ref', 'record_correspondence', 'record_correspondence_audit', 'comparison_scope_proof', 'comparison_scope_proof_audit']
   const snapshot = () => Object.fromEntries(tables.map(table => [table, f.sqlite.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all()]))
   const before = snapshot()
   await f.commit(f.request({ officialEvidenceCorrections: { actor: { type: 'agent', id: 'synthetic' }, basis: 'Verified original', operations: [f.correction(1, f.row({ nameRaw: 'Explicit corrected original' }))] } }))

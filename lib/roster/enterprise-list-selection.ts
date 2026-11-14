@@ -10,14 +10,15 @@ import { normalizeName } from '../domain'
 import { TITLE_ORDER, DIFFERENCE_STATUS_ORDER } from '../labels'
 import { identityFunctions, identityNameSql, identityUsccSql } from './enterprise-read-snapshot'
 import type { RosterEnterpriseFilter, RosterEnterpriseDifference, RosterState, RosterCounts } from './enterprise-roster'
+import { currentEnterpriseIdentity } from './enterprise-identity'
 
 type Db = BetterSQLite3Database<typeof schema>
 const rank = (column: SQL, values: string[]) => sql`case ${sql.join(values.map((value, i) => sql`when ${column} = ${value} then ${i}`), sql` `)} else ${values.length} end`
 const selected = (column: SQL, values?: (string | number)[]) => values?.length ? inArray(column, values) : sql`1`
-const membershipCtes = () => sql`
+const membershipCtes = (db: Db) => sql`
   uscc_owners as materialized (
-    select ${identityUsccSql(sql`uscc_norm`)} as key,max(id) as id from enterprise group by ${identityUsccSql(sql`uscc_norm`)}
-  ), name_owners as materialized (select name_norm as key,max(id) as id from enterprise group by name_norm), latest as (
+    select ${identityUsccSql(sql`uscc_norm`)} as key,max(id) as id from enterprise where ${currentEnterpriseIdentity(db, sql`id`)} group by ${identityUsccSql(sql`uscc_norm`)}
+  ), name_owners as materialized (select name_norm as key,max(id) as id from enterprise where ${currentEnterpriseIdentity(db, sql`id`)} group by name_norm), latest as (
     select id from (select id,row_number() over(partition by title_code order by year desc,id desc) as n from platform_export_batch) where n=1
   ), membership as (
     select cast(coalesce(u.id,n.id) as integer) as id,max(x.batch_id in (select id from latest)) as current
@@ -31,7 +32,7 @@ const membershipCtes = () => sql`
 export function removedEnterpriseIds(db: Db, ids: number[]): Set<number> {
   if (!ids.length) return new Set()
   identityFunctions(db)
-  return new Set(db.all<{ id: number }>(sql`with ${membershipCtes()} select id from membership where not current and ${inArray(sql`id`, ids)}`).map(row => row.id))
+  return new Set(db.all<{ id: number }>(sql`with ${membershipCtes(db)} select id from membership where not current and ${inArray(sql`id`, ids)}`).map(row => row.id))
 }
 
 export interface EnterpriseSelection {
@@ -80,7 +81,7 @@ function selectCoordinates(db: Db, filter: RosterEnterpriseFilter, limit?: numbe
       ${filter.diffStatus.every(x => x === 'none') ? sql`and 0` : sql``}) or ${inArray(sql`d.reason`, filter.diffStatus.filter(x => x !== 'none'))})` : sql`1`
   const generalQuery = sql`
     with scope as materialized (
-      select e.id from enterprise e where ${validText ? search : sql`0`} ${explainedOnly ? sql`and e.id in (select enterprise_id from difference_reason union select enterprise_id from enterprise_difference_comparison)` : sql``}
+      select e.id from enterprise e where ${currentEnterpriseIdentity(db, sql`e.id`)} and ${validText ? search : sql`0`} ${explainedOnly ? sql`and e.id in (select enterprise_id from difference_reason union select enterprise_id from enterprise_difference_comparison)` : sql``}
         and ${filter.district ? sql`coalesce(nullif(e.district,''),(select district from record r where r.enterprise_id=e.id and r.district is not null and r.district!='' order by r.id limit 1))=${filter.district}` : sql`1`}
     ), fact_base as materialized (
       select r.enterprise_id,r.title_code,
@@ -137,7 +138,7 @@ function selectCoordinates(db: Db, filter: RosterEnterpriseFilter, limit?: numbe
     ), explained_differences as (
       select enterprise_id,count(*) as count,max(current) as current,max(case when n=1 then status end) as status,
         max(case when n=1 then reason_code end) as reason from ranked_differences group by enterprise_id
-    ), ${membershipCtes()}, candidates as (
+    ), ${membershipCtes(db)}, candidates as (
       select ${entityId} as id,${entityName} as name,h.titles,h.first_year,h.title_rank,h.recognition_pairs,
         ${filter.rosterState ? sql`case when h.official=0 and m.id is not null and not m.current then 'removed_platform_only' else 'current' end` : sql`'current'`} as state,
         ${differenceCount} as difference_count,${differenceStatus} as status,d.reason,coalesce(d.current,${defaultDifference}>0) as difference_current
@@ -159,7 +160,7 @@ function selectCoordinates(db: Db, filter: RosterEnterpriseFilter, limit?: numbe
       sum(distinct case when r.source='jxj' then ${titleMask} else (${titleMask} << ${TITLE_ORDER.length}) end) as source_mask,
       sum(distinct case when v.event_type='award' then ${titleMask} else 0 end) as recognition_mask
       from enterprise e left join record r on r.enterprise_id=e.id left join record_event v on v.record_id=r.id
-      where ${validText ? search : sql`0`}
+      where ${currentEnterpriseIdentity(db, sql`e.id`)} and ${validText ? search : sql`0`}
         and ${filter.district ? sql`coalesce(nullif(e.district,''),(select district from record r where r.enterprise_id=e.id and r.district is not null and r.district!='' order by r.id limit 1))=${filter.district}` : sql`1`}
       group by e.id)` : generalQuery
   // Drizzle builds/binds SQL; a raw cursor avoids per-column ORM mapping and

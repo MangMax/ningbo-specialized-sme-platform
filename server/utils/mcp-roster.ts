@@ -1,5 +1,5 @@
-import { readQueryAssessments, type QueryAssessment } from '../../lib/roster/query-assessment'
-import { and, asc, eq, sql } from 'drizzle-orm'
+import { and,asc,eq,sql } from 'drizzle-orm'
+import { readQueryAssessments,type QueryAssessment } from '../../lib/roster/query-assessment'
 /**
  * RL-11 名录只读工具的投影（契约 §9）。
  *
@@ -15,9 +15,9 @@ import { and, asc, eq, sql } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../db/schema'
 import {
-  listRosterEnterprises,
-  type RosterEnterpriseRow,
-  type RosterEnterprisesResult,
+listRosterEnterprises,
+type RosterEnterpriseRow,
+type RosterEnterprisesResult,
 } from '../../lib/roster/enterprise-roster'
 import type { FirstRecognitionStatus } from '../../lib/roster/first-recognition'
 
@@ -122,8 +122,8 @@ export function listDifferences(db: Db, input: ListDifferencesInput = {}): ListD
     const rows = tx.select({ enterpriseId: d.enterpriseId, name: schema.enterprise.name, titleCode: d.titleCode, direction: d.direction, status: d.status, reasonCode: d.reasonCode,
       measureCode: d.measureCode, verificationStatus: d.verificationStatus, recordedAt: d.recordedAt, factReferences: d.factReferences,
       movedInCity: d.movedInCity, movedInTitleCode: d.movedInTitleCode, movedInYear: d.movedInYear, movedInBatch: d.movedInBatch,
-      queryId: schema.platformQuery.id, queriedAt: schema.platformQuery.queriedAt, queryInterface: schema.platformQuery.interface, queryStatus: schema.platformQuery.status,
-    }).from(d).innerJoin(schema.enterprise,eq(schema.enterprise.id,d.enterpriseId)).leftJoin(schema.platformQuery,eq(schema.platformQuery.id,d.evidenceQueryId)).where(where)
+      queryId: schema.platformLegacyQueryAlias.oldId, queriedAt: schema.platformCollection.queriedAt, queryInterface: schema.platformCollection.interface, queryStatus: schema.platformCollection.status,
+    }).from(d).innerJoin(schema.enterprise,eq(schema.enterprise.id,d.enterpriseId)).leftJoin(schema.platformCollection,eq(schema.platformCollection.id,d.evidenceCollectionId)).leftJoin(schema.platformLegacyQueryAlias,eq(schema.platformLegacyQueryAlias.collectionId,schema.platformCollection.id)).where(where)
       .orderBy(asc(d.enterpriseId),asc(d.titleCode),asc(d.direction)).limit(pageSize).offset((page-1)*pageSize).all()
     const assessments = readQueryAssessments(db, rows)
     const projected = rows.map((row, index) => {

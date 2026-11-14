@@ -1,24 +1,26 @@
+import { readOwnerArchive } from '../lib/platform/target-archive'
+import { submitNativePlatformQuery } from './helpers/native-platform-fixture'
 import { afterAll, beforeAll, expect, it, vi } from 'vitest'
 import { createApp, defineEventHandler, toNodeListener } from 'h3'
 import { createServer, type Server } from 'node:http'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { useDb, schema } from '../db/client'
+import { initializeDb, schema } from '../db/client'
 import { sql } from 'drizzle-orm'
-const state = vi.hoisted(() => ({ db: null as any, enabled: true }))
+const state = vi.hoisted(() => ({ db: null as any }))
 vi.mock('@db', () => ({ useDb: () => state.db }))
 const dir = mkdtempSync(join(tmpdir(), 'initial-274-'))
-const db = useDb({ dbPath: join(dir, 'synthetic.db') })
+const db = initializeDb({ create: true,  dbPath: join(dir, 'synthetic.db') })
 let server: Server, base: string
 const scope = { enterpriseId: 1, titleCode: 'specialized_sme', direction: 'missing_in_miit' }
 const body = (key: string, expectedCurrentId: number | null = null) => ({ ...scope, action: 'replace', expectedCurrentId, idempotencyKey: key, basis: '人工核对保留公布历史', effectiveAt: '2026-10-24T00:00:00Z', decision: { status: 'confirmed_reason', reasonCode: 'other', measureCode: 'keep_history', verificationStatus: 'confirmed' } })
 beforeAll(async () => {
   state.db = db
   db.insert(schema.enterprise).values({ id: 1, name: '274合成', nameNorm: '274合成' }).run()
-  db.insert(schema.platformQuery).values({ queryKey: 'name:274合成', interface: 'apply_list', rdjb: '2', status: 'success', queriedAt: '2026-10-24T00:00:00Z', rawResponse: '{"synthetic":"unaltered"}' }).run()
+  submitNativePlatformQuery(db, { queryKey: 'name:274合成', interface: 'apply_list', rdjb: '2', status: 'success', queriedAt: '2026-10-24T00:00:00Z', rawResponse: '{"synthetic":"unaltered"}' })
   vi.stubGlobal('defineEventHandler', defineEventHandler)
-  vi.stubGlobal('useRuntimeConfig', () => ({ apiToken: 'synthetic-only', browserReviewEnabled: state.enabled }))
+  vi.stubGlobal('useRuntimeConfig', () => ({ apiToken: 'synthetic-only', }))
   const command = (await import('../server/api/roster/evidence-review/browser-commands.post')).default
   const current = (await import('../server/api/roster/decision-lifecycle/current.get')).default
   const history = (await import('../server/api/roster/decision-lifecycle/history.get')).default
@@ -39,13 +41,6 @@ it('first browser registration roundtrips null metadata and history while stale 
   const correction = await post(body('correction', receipt.versionId)); expect(correction.status).toBe(200)
   const history = await (await fetch(base + '/history?' + query)).json()
   expect(history.total).toBe(2); expect(history.rows[0]).toMatchObject({ previousId: receipt.versionId, actor: null, ruleVersion: null })
-  expect(db.get(sql`select raw_response as raw from platform_query`)).toEqual({ raw: '{"synthetic":"unaltered"}' })
+  expect(Buffer.from(readOwnerArchive(db, { kind: 'collection', ownerId: 1, field: 'rawResponse' })!.data, 'base64').toString()).toBe('{"synthetic":"unaltered"}')
   expect(db.all(sql`select * from evidence_review_receipt_114`)).toHaveLength(0)
-})
-it('the browser deployment gate rejects writes when disabled without adding a decision', async () => {
-  state.enabled = false
-  const before = db.all(sql`select id from difference_reason`)
-  const denied = await post(body('disabled')); expect(denied.status).toBe(403)
-  expect(await denied.json()).toMatchObject({ error: { code: 'browser_review_disabled' } })
-  expect(db.all(sql`select id from difference_reason`)).toEqual(before)
 })

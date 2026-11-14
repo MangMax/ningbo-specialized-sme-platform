@@ -1,13 +1,15 @@
-import { readEvidenceToken113 } from './evidence-impact-113'
-import { readLatestDecisionHead102 as latestDecisionHead102, whereDecisionScope102 as whereScope } from './decision-lifecycle-102/head'
-export { readLatestDecisionHead102 as latestDecisionHead102 } from './decision-lifecycle-102/head'
-import { RDJB_TITLE_CODES } from '../../lib/platform/recognized-evidence'
-import { normalizeUscc } from '../../lib/domain'
-import { createHash } from 'node:crypto'
-import { and, desc, eq, sql, type SQL, type AnyColumn } from 'drizzle-orm'
-import { z } from 'zod'
+import { and,desc,eq,sql,type AnyColumn,type SQL } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
+import { createHash } from 'node:crypto'
+import { z } from 'zod'
 import * as s from '../../db/schema'
+import { normalizeUscc } from '../../lib/domain'
+import { differenceEvidenceColumns,differencePublicColumns,targetDifferenceReason } from '../../lib/platform/difference-reference-target'
+import { readDifferenceCollection,readDifferenceCollectionScope,readDifferenceObservation } from '../../lib/platform/difference-sources'
+import { RDJB_TITLE_CODES } from '../../lib/platform/recognized-evidence'
+import { readLatestDecisionHead102 as latestDecisionHead102,whereDecisionScope102 as whereScope } from './decision-lifecycle-102/head'
+import { readEvidenceToken113 } from './evidence-impact-113'
+export { readLatestDecisionHead102 as latestDecisionHead102 } from './decision-lifecycle-102/head'
 
 export type DecisionDb = BetterSQLite3Database<typeof s>
 const positive = z.number().int().positive().max(Number.MAX_SAFE_INTEGER)
@@ -109,11 +111,11 @@ export function managedDecision102(id: AnyColumn | SQL = s.differenceReason.id, 
 export function latestDecision102(db: DecisionDb, scope: Scope) {
   return db.select().from(s.differenceReason).where(whereScope(scope)).orderBy(desc(s.differenceReason.recordedAt), desc(s.differenceReason.id)).limit(1).get()
 }
-function publicVersion(row: typeof s.differenceReason.$inferSelect, currentId: number | null) {
+function publicVersion(row: Omit<typeof s.differenceReason.$inferSelect, 'evidenceCollectionId' | 'evidenceObservationId'> & { evidenceQueryId: number | null; evidenceRelationId: number | null }, currentId: number | null) {
   const { requestHash, idempotencyKey, ...version } = row
   return { ...version, origin: row.lifecycleAction ? 'lifecycle' : 'legacy_import', isCurrent: row.id === currentId }
 }
-function receipt(row: typeof s.differenceReason.$inferSelect) {
+function receipt(row: Pick<typeof s.differenceReason.$inferSelect, 'id' | 'lifecycleAction' | 'previousId' | 'recordedAt'>) {
   return { versionId: row.id, currentId: row.lifecycleAction === 'withdraw' ? null : row.id, previousId: row.previousId, action: row.lifecycleAction as string | null, recordedAt: row.recordedAt }
 }
 function requireEnterprise(db: DecisionDb, enterpriseId: number) {
@@ -122,13 +124,13 @@ function requireEnterprise(db: DecisionDb, enterpriseId: number) {
   return enterprise
 }
 export function readDecision102(db: DecisionDb, id: number) {
-  const row = db.select().from(s.differenceReason).where(eq(s.differenceReason.id, id)).get()
+  const row = db.select(differencePublicColumns(db)).from(s.differenceReason).where(eq(s.differenceReason.id, id)).get()
   if (!row) throw new DecisionError102(404, 'not_found', 'Decision version not found')
   return publicVersion(row, latestDecisionHead102(db, row)?.id ?? null)
 }
 export function currentDecision102(db: DecisionDb, scope: Scope) {
   requireEnterprise(db, scope.enterpriseId)
-  const state = decisionState102(latestDecision102(db, scope))
+  const state = decisionState102(db.select(differencePublicColumns(db)).from(s.differenceReason).where(whereScope(scope)).orderBy(desc(s.differenceReason.recordedAt), desc(s.differenceReason.id)).limit(1).get())
   return { ...scope, versionId: state.versionId, current: state.current ? publicVersion(state.current, state.current.id) : null }
 }
 function decisionState102<T extends { id: number; lifecycleAction: string | null }>(row: T | undefined) {
@@ -199,7 +201,8 @@ export function saveDecision102(db: DecisionDb, command: DecisionCommand102) {
       if (ref.enterpriseId !== command.enterpriseId || !fact || fact.revision !== ref.revision || fact.status !== 'confirmed' || fact.fact.kind !== ref.kind) throw new DecisionError102(422, 'fact_reference_mismatch', 'Fact reference must pin a current confirmed fact owned by this enterprise')
     }
     // Validate source identity/title with narrow projections; original bodies remain untouched.
-    const relation = d.evidenceRelationId ? tx.select({ queryId: s.platformRelation.queryId, enterpriseId: s.platformRelation.enterpriseId, uscc: s.platformRelation.usccRaw, verificationStatus: s.platformRelation.verificationStatus, sequenceNo: s.platformRelation.sequenceNo }).from(s.platformRelation).where(eq(s.platformRelation.id, d.evidenceRelationId)).get() : null
+    const targetRelation = d.evidenceRelationId ? readDifferenceObservation(tx, d.evidenceRelationId) : null
+    const relation = targetRelation
     if (d.currentQualification && (!relation || relation.verificationStatus !== 'confirmed')) throw new DecisionError102(422, 'qualification_evidence_unconfirmed', 'Current qualification requires an explicitly confirmed source row')
     if (d.evidenceRelationId && !relation) throw new DecisionError102(422, 'evidence_not_found', 'Relation evidence not found')
     const enterpriseUscc=normalizeUscc(enterprise.usccNorm), relationUscc=normalizeUscc(relation?.uscc)
@@ -208,18 +211,19 @@ export function saveDecision102(db: DecisionDb, command: DecisionCommand102) {
     if (ownerMismatch || explicitConflict) throw new DecisionError102(422, 'evidence_mismatch', 'Relation evidence belongs to another or conflicting enterprise')
     if (relation && d.evidenceQueryId && relation.queryId !== d.evidenceQueryId) throw new DecisionError102(422, 'evidence_mismatch', 'Query and relation evidence must identify the same query')
     const queryId = d.evidenceQueryId ?? relation?.queryId
+    const targetQuery = queryId ? readDifferenceCollection(tx, queryId) : null
     if (queryId) {
-      const query = tx.select({ id: s.platformQuery.id, queryKey: s.platformQuery.queryKey, rdjb: s.platformQuery.rdjb }).from(s.platformQuery).where(eq(s.platformQuery.id, queryId)).get()
+      const query = targetQuery?.collection
       if (!query) throw new DecisionError102(422, 'evidence_not_found', 'Query evidence not found')
       const titles = query.rdjb.split(',')
       if (!titles.some(rdjb => RDJB_TITLE_CODES[rdjb] === command.titleCode)) throw new DecisionError102(422, 'evidence_mismatch', 'Evidence title scope does not include decision title')
       if (!relation && query.queryKey !== enterprise.usccNorm && query.queryKey !== `name:${enterprise.nameNorm}`) throw new DecisionError102(422, 'evidence_mismatch', 'Query-only evidence must identify the exact enterprise')
       if (relation && titles.length > 1) {
         // Only page metadata is needed to locate a multi-title original row.
-        const metadata = tx.get<{ pages: string | null }>(sql`select json_extract(collection_evidence,'$.pages') as pages from platform_query where id=${queryId}`)
-        const pages = metadata?.pages ? JSON.parse(metadata.pages) as Array<{ status: string; fetchedCount: number; rdjb: string }> : []
+
+        const pages = readDifferenceCollectionScope(tx, targetQuery!.collection.id).pages
         let offset = 0; let rowTitle: string | undefined
-        for (const page of pages) { if (page.status !== 'success') continue; offset += page.fetchedCount; if (relation.sequenceNo <= offset) { rowTitle = RDJB_TITLE_CODES[page.rdjb]; break } }
+        for (const page of pages) { if (page.status !== 'success') continue; offset += page.fetchedCount ?? 0; if (relation.sequenceNo <= offset) { rowTitle = page.rdjb ? RDJB_TITLE_CODES[page.rdjb] : undefined; break } }
         if (rowTitle !== command.titleCode) throw new DecisionError102(422, 'evidence_mismatch', 'Original row title is unknown or different')
       }
     }
@@ -228,16 +232,18 @@ export function saveDecision102(db: DecisionDb, command: DecisionCommand102) {
     // Older imports may omit milliseconds or carry offsets. Move beyond their
     // wall-clock second as well as actual instant so all existing lexical readers agree.
     const recordedAt = new Date(Math.max(Date.now(), previousWall + 1000, previous ? Date.parse(previous.recordedAt) + 1000 : 0)).toISOString()
-    const row = tx.insert(s.differenceReason).values({
+    const values = {
       enterpriseId: command.enterpriseId, titleCode: command.titleCode, direction: command.direction,
       status: d.status, reasonCode: d.reasonCode ?? null, reasonNote: d.reasonNote ?? null,
       measureCode: d.measureCode, measureNote: d.measureNote ?? null,
-      evidenceQueryId: d.evidenceQueryId ?? null, evidenceRelationId: d.evidenceRelationId ?? null,
       verificationStatus: d.verificationStatus, movedInCity: d.movedIn?.city ?? null, movedInTitleCode: d.movedIn?.titleCode ?? null,
       movedInYear: d.movedIn?.year ?? null, movedInBatch: d.movedIn?.batch ?? null, factReferences: d.factReferences ?? [], currentQualification: d.currentQualification ?? null,
       lifecycleAction: command.action, previousId: previous?.id ?? null, actor: command.actor === null ? jsonNull : command.actor, basis: command.basis,
       ruleVersion: command.ruleVersion, effectiveAt: command.effectiveAt, idempotencyKey: command.idempotencyKey, requestHash: hash, recordedAt,
-    }).returning().get()
+    }
+    // External IDs have already been resolved and validated. Bind them exactly once
+    // to the target slots; hashes and serialized receipts retain the original request.
+    const row = tx.insert(targetDifferenceReason).values({ ...values, evidenceCollectionId: d.evidenceQueryId ? targetQuery!.collection.id : null, evidenceObservationId: targetRelation?.observationId ?? null }).returning({ id: targetDifferenceReason.id, lifecycleAction: targetDifferenceReason.lifecycleAction, previousId: targetDifferenceReason.previousId, recordedAt: targetDifferenceReason.recordedAt }).get()
     return finishReview(receipt(row), row.id)
   }, { behavior: 'immediate' })
 }
@@ -256,7 +262,7 @@ export function historyDecision102(db: DecisionDb, input: z.infer<typeof decisio
     status: s.differenceReason.status, reasonCode: s.differenceReason.reasonCode, measureCode: s.differenceReason.measureCode,
     verificationStatus: s.differenceReason.verificationStatus, recordedAt: s.differenceReason.recordedAt, lifecycleAction: s.differenceReason.lifecycleAction,
     previousId: s.differenceReason.previousId, actor: s.differenceReason.actor, ruleVersion: s.differenceReason.ruleVersion, effectiveAt: s.differenceReason.effectiveAt,
-    evidenceQueryId: s.differenceReason.evidenceQueryId, evidenceRelationId: s.differenceReason.evidenceRelationId,
+    ...differenceEvidenceColumns(db),
   }).from(s.differenceReason).where(whereScope(scope)).orderBy(desc(s.differenceReason.recordedAt), desc(s.differenceReason.id)).limit(input.pageSize).offset((input.page - 1) * input.pageSize).all()
   return { rows: rows.map(row => ({ ...row, origin: row.lifecycleAction ? 'lifecycle' : 'legacy_import', isCurrent: row.id === current?.id, detailsAvailable: true })), total, page: input.page, pageSize: input.pageSize }
 }

@@ -6,7 +6,7 @@ import type { schema } from '../../db/client'
  * Evidence-linked and legacy fixtures deliberately remain unreviewed unless the test reviews them.
  */
 export function reviewCurrentExportDecision(db: DecisionDb, decision: typeof schema.differenceReason.$inferSelect) {
-  if (decision.lifecycleAction !== 'replace' || !decision.basis || !decision.effectiveAt || decision.evidenceQueryId || decision.evidenceRelationId) return
+  if (decision.lifecycleAction !== 'replace' || !decision.basis || !decision.effectiveAt || decision.evidenceCollectionId || decision.evidenceObservationId) return
   const scope={enterpriseId:decision.enterpriseId,titleCode:decision.titleCode as 'little_giant'|'specialized_sme'|'innovative_sme',direction:decision.direction as 'extra_in_miit'|'missing_in_miit'}
   const token=readEvidenceToken113(db,scope)
   saveDecision102(db,{...scope,action:'maintain',expectedCurrentId:decision.id,idempotencyKey:'fixture-reviewed-'+decision.id,actor:{type:'agent',id:'synthetic-export'},basis:decision.basis,ruleVersion:'synthetic-export',effectiveAt:decision.effectiveAt,reviewedEvidence:{latestRevisionId:token.latestRevisionId,projectionReady:true}})

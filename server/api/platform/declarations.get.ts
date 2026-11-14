@@ -1,7 +1,7 @@
 import { getQuery, setHeader } from 'h3'
 import { useDb } from '@db'
 import { declarationFilterFromQuery } from '../../../lib/platform/declarations'
-import { listPlatformDeclarations } from '../../utils/platform-declarations'
+import { listTargetDeclarations } from '../../utils/platform-declarations-target'
 
 defineRouteMeta({
   openAPI: {
@@ -31,7 +31,7 @@ defineRouteMeta({
 export default defineEventHandler(event => {
   setHeader(event, 'cache-control', 'no-store')
   try {
-    return listPlatformDeclarations(declarationFilterFromQuery(getQuery(event)), useDb())
+    return listTargetDeclarations(declarationFilterFromQuery(getQuery(event)), useDb())
   } catch (error) {
     const failure = error as { statusCode?: number; code?: string; message?: string }
     throw createError({ statusCode: failure.statusCode ?? 500, statusMessage: failure.message ?? 'declaration query failed' })

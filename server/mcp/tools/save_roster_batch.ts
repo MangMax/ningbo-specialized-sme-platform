@@ -16,7 +16,7 @@ import { writeGuard } from '../../utils/mcp-guard'
  * 的活（本 tool 不碰文件库）。本 tool 只管**名录实体**与平台证据。
  *
  * 幂等：同一 `idempotencyKey` 重复调用返回既有批次摘要，不重复写企业/事件。
- * `payload` 的形状见 `docs/roster-lifecycle-contract.md` §8.3（归并项 §8.4）。
+ * `payload` 的形状见 `lib/roster-import-client.ts`。
  *
  * **是写入 tool**，需要鉴权（`Authorization: Bearer <NUXT_MCP_TOKEN>`），未鉴权时
  * 不出现在 `tools/list`，强行调用得到 HTTP 401。
@@ -38,13 +38,13 @@ export default defineMcpTool({
     'platformLegacyProvenance[]：独立legacy分页补证，绑定queryId+自然键+sourceSha256+segmentIndex；完整原行/分页重核，typedState仍unknown，不改collectionEvidence、内容版本和人工决定。',
     'platformRecordObservations:[{relationId}]：sourceKind=platform_archive，每批1..100条，服务端读取原文建立业务身份/内容版本/观察映射；源缺失、漂移、同采集异原文整批失败。预检记录账本但不写业务，commit重核。',
     '差异原因 pending_review（待审核）须由代理/用户明确裁决：status=confirmed_reason、verificationStatus=confirmed、measureCode=follow_review；保留正式历史并跟进审核，区别于 needs_review 待核实。',
-    'queryBusList 仅作为 recognized_list 显式转存；collectionEvidence 必须保留原结果/时点/页行与完整性，见 docs/platform-recognized-evidence.md。读回使用 list_platform_queries。',
+    'queryBusList 仅作为 recognized_list 显式转存；collectionEvidence 必须保留原结果/时点/页行与完整性，见 lib/platform/recognized-evidence.ts。读回使用 list_platform_queries。',
     '把一批名单数据（企业 / 别名 / 称号事件 / 出处 / 平台查询与关系 / 导出快照 / 差异原因与措施 / 归并）',
     '经**统一写入路径**落库。等价 `POST /api/roster/import/commit`。',
     '**幂等**：同一 `idempotencyKey`（同一来源）重复调用不会重复写企业或事件，返回既有批次摘要。',
     '**单批事务**：要么整批 `committed`，要么 `failed`（`error` 说明原因）—— 绝不部分提交；',
     '逐项错误形如 `{ ok:false, kind, ref, error:{ code, field?, message } }`，不静默丢行。',
-    '`payload` 形状见 `docs/roster-lifecycle-contract.md` §8.3；归并项 `merges` 见 §8.4，血缘可从返回项的 `detail.lineage` 取回。',
+    '`payload` 包含归并项 `merges`，血缘可从返回项的 `detail.lineage` 取回。',
     '证据指针可用**自然键**指向**本批新建**的查询/关系（`aliases[].sourceRelationRef`、',
     '`differences[].evidenceQueryRef`/`evidenceRelationRef`、`merges[].sourceRelationRef`/`evidenceQueryRef`，见契约 §8.7）——',
     '一个批次即可写完「查询 → 关系 → 别名/差异证据」；裸 id 仍可用于已存在的行。',

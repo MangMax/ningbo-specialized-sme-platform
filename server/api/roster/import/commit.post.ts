@@ -21,7 +21,7 @@ defineRouteMeta({
       'pending_review（待审核）须显式提交 confirmed_reason + confirmed + follow_review；保留正式历史并跟进审核，区别于 needs_review。' +
       '按 body 的 `idempotencyKey` 幂等提交：同键重复调用返回既有批次摘要，不重复写企业/事件。' +
       '单批事务：要么整批 committed，要么 failed（`error` 说明原因）—— 绝不部分提交。' +
-      '载荷见 `docs/roster-lifecycle-contract.md` §8.3，归并项见 §8.4（血缘落 `item_results`）。' +
+      '载荷见 `lib/roster-import-client.ts`；归并血缘落 `item_results`。' +
       '需要 token：`Authorization: Bearer <NUXT_API_TOKEN>`（或 `X-API-Token`）；未配 token 时本接口整体关闭。',
     security: [{ bearerAuth: [] }],
     requestBody: {
@@ -41,7 +41,7 @@ defineRouteMeta({
               sourceSha256: { type: 'string', nullable: true },
               payload: {
   "type": "object",
-  "description": "统一写入载荷；recognized_list 必填 collectionEvidence。三来源 rawData.version=1 显式选择 typed 原行，relations.rawFields 必须逐行相等；缺省保留 legacy，冲突整批拒绝。见 docs/platform-recognized-evidence.md。",
+  "description": "统一写入载荷；recognized_list 必填 collectionEvidence。三来源 rawData.version=1 显式选择 typed 原行，relations.rawFields 必须逐行相等；缺省保留 legacy，冲突整批拒绝。见 lib/platform/recognized-evidence.ts。",
   "properties": {
     "platformLegacyProvenance": {
       "type": "array",
@@ -913,6 +913,13 @@ defineRouteMeta({
                       }
                     }
                   },
+                  "dataRows": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    }
+                  },
                   "rawData": {
                     "type": "object",
                     "properties": {
@@ -1247,8 +1254,10 @@ defineRouteMeta({
               "type": "object",
               "properties": {
                 "sequenceNo": {
-                  "type": "number",
-                  "description": "沿用核心 optionalInt；原查询内序号"
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991,
+                  "description": "原查询内正安全整数序号；新完整采集按输入顺序从 1 连续编号，不截断小数"
                 },
                 "relationKey": {
                   "type": [
@@ -1317,9 +1326,15 @@ defineRouteMeta({
                   ]
                 },
                 "year": {
-                  "type": [
-                    "number",
-                    "null"
+                  "anyOf": [
+                    {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    },
+                    {
+                      "type": "null"
+                    }
                   ]
                 },
                 "matchBasis": {
@@ -1407,7 +1422,7 @@ defineRouteMeta({
           }
         ]
       },
-      "description": "三来源原查询归档；recognized_list 新采集须带原 collectionEvidence，来源/interface、查询坐标、状态/称号及每条 relation 序号/身份/rawFields 必须匹配原行。rawData.version=1 保留 typed JSON 原值、原页 body 与来源隔离；缺省保持 legacy。reuseExisting:true 仅引用已存坐标，不补行；legacy 无 collectionEvidence 时 rawResponse 省略/null 是原引用哨兵，字符串 null 不是。显式不可变值、原行及 hash 冲突由核心拒绝，不重算来源。"
+      "description": "三来源原查询归档；recognized_list 新采集须带原 collectionEvidence，来源/interface、查询坐标、状态/称号及每条 relation 序号/身份/rawFields 必须匹配原行。dataRows 保留全部 typed 业务字段而不保存请求/响应正文；rawData.version=1 保留 typed JSON 原值、原页 body 与来源隔离；缺省保持 legacy。reuseExisting:true 仅引用已存坐标，不补行；legacy 无 collectionEvidence 时 rawResponse 省略/null 是原引用哨兵，字符串 null 不是。显式不可变值、原行及 hash 冲突由核心拒绝，不重算来源。"
     },
     "announcement": {
       "type": "object",

@@ -1,3 +1,4 @@
+import { submitNativePlatformQuery } from './helpers/native-platform-fixture'
 import { createServer } from 'node:http'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -8,7 +9,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
 import { afterAll, beforeAll, expect, it, vi } from 'vitest'
-import { useDb, schema as s } from '../db/client'
+import { initializeDb, schema as s } from '../db/client'
 import { enterpriseReads } from '../server/utils/enterprise-read'
 import { readEvidenceToken113 } from '../server/utils/evidence-impact-113'
 import { writeCurrentWorkbook } from '../lib/roster/current-workbook'
@@ -17,11 +18,11 @@ import type { CurrentQualifiedResult } from '../lib/roster/current-qualified-que
 import type { CurrentQualifiedFilter } from '../lib/roster/current-qualified-query'
 import type { currentQualifiedFilterSchema } from '../server/utils/current-qualified-filter'
 
-const active = vi.hoisted(() => ({ db: null as ReturnType<typeof useDb> | null }))
+const active = vi.hoisted(() => ({ db: null as ReturnType<typeof initializeDb> | null }))
 vi.mock('@db', () => ({ useDb: () => active.db }))
 vi.mock('@nuxtjs/mcp-toolkit/server', () => ({ defineMcpTool: (tool: unknown) => tool }))
 const dir = mkdtempSync(join(tmpdir(), 'issue305-inbound-'))
-const db = useDb({ dbPath: join(dir, 'issue305.sqlite') }); active.db = db
+const db = initializeDb({ create: true,  dbPath: join(dir, 'issue305.sqlite') }); active.db = db
 const titles = ['little_giant', 'specialized_sme', 'innovative_sme'] as const
 const year = new Date().getFullYear(), reawardYear = year - 1
 type Review = { decidedYear: number | null; reviewOutcome: 'failed' | null }
@@ -79,8 +80,8 @@ beforeAll(async () => {
       db.insert(s.recordEvidence).values({ recordEventId: event.id, sourceFile: 'issue305/inbound-history.pdf', attachment: c.id, listNo: event.id, page: 1 }).run()
     }
     const rdjb = { little_giant: '3', specialized_sme: '2', innovative_sme: '1' }[title]
-    const query = db.insert(s.platformQuery).values({ interface: 'business_list', queryKey: name, rdjb, titleCode: title, queriedAt: new Date().toISOString(), status: 'success' }).returning().get()
-    const relation = db.insert(s.platformRelation).values({ queryId: query.id, sequenceNo: 1, enterpriseId: enterprise.id, usccRaw: name, nameRaw: name, verificationStatus: 'confirmed', matchBasis: 'uscc' }).returning().get()
+    const native = submitNativePlatformQuery(db, { interface: 'business_list', queryKey: name, rdjb, titleCode: title, queriedAt: new Date().toISOString(), status: 'success', rawResponse: JSON.stringify({ synthetic: name }), relations: [{ sequenceNo: 1, enterpriseId: enterprise.id, usccRaw: name, nameRaw: name, verificationStatus: 'confirmed', matchBasis: 'uscc' }] })
+    const query = { id: native.queryId }, relation = { id: native.relationIds[0]! }
     const scope = { enterpriseId: enterprise.id, titleCode: title, direction: 'extra_in_miit' as const }
     const qualification = { titleCode: title, validFrom: `${reawardYear}-01-01T00:00:00Z`, validUntil: `${year + 2}-01-01T00:00:00Z`,
       ...(c.explicitAward ? { awardYear: reawardYear } : {}), basis: 'Synthetic independently verified external qualification',

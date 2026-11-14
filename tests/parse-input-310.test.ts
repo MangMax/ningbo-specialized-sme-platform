@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync, renameSync, unlinkSync, 
 import { join, resolve } from 'node:path'
 import { afterAll, expect, it, vi } from 'vitest'
 import { eq } from 'drizzle-orm'
-import { useDb, schema } from '../db/client'
+import { initializeDb, schema } from '../db/client'
 import { getParse105, historyParse105, saveParse105, saveParseMcp105, preflightParse310, commitRanges669 } from '../server/utils/parse-maintenance-105'
 
 // Schedule physical mutations after real filesystem calls, without replacing
@@ -26,7 +26,7 @@ vi.mock('node:fs', async importOriginal => {
 })
 
 const root = mkdtempSync('/tmp/issue310-unit-')
-const db = useDb({ dbPath: join(root, 'db.sqlite') })
+const db = initializeDb({ create: true,  dbPath: join(root, 'db.sqlite') })
 afterAll(() => { db.$client.close(); rmSync(root, { recursive: true, force: true }) })
 let serial = 0
 const actor = { type: 'agent' as const, id: 'synthetic-310' }

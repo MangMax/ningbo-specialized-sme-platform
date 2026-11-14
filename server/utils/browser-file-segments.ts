@@ -1,7 +1,7 @@
 import { createError, getRouterParam, readBody, setHeader } from 'h3'
 import { z } from 'zod'
 import { useDb } from '@db'
-import { browserReviewWriteEnabled, checkBrowserReviewRequest } from './browser-review-102'
+import { checkBrowserReviewRequest } from './browser-review-102'
 import { getParse105, preflightRanges669, commitRanges669, parseFrozenCommit310, ParseMaintenanceError } from './parse-maintenance-105'
 import { requestLogContext } from '../../lib/logging'
 
@@ -15,14 +15,14 @@ export function browserFileSegmentsRoute(action: 'read' | 'preflight' | 'commit'
     setHeader(event, 'cache-control', 'no-store')
     const config = useRuntimeConfig()
     if (action !== 'read') {
-      const gate = checkBrowserReviewRequest(event, config, { write: true })
+      const gate = checkBrowserReviewRequest(event, { write: true })
       if (!gate.ok) throw createError({ statusCode: gate.status, message: gate.message })
     }
     try {
       const rawId = getRouterParam(event, 'id') ?? ''
       if (!/^[1-9]\d*$/.test(rawId) || !Number.isSafeInteger(Number(rawId))) throw new ParseMaintenanceError(400, '文件 ID 非法')
       const id = Number(rawId), db = useDb()
-      if (action === 'read') return { writeEnabled: browserReviewWriteEnabled(config), state: getParse105(db, id) }
+      if (action === 'read') return { writeEnabled: true, state: getParse105(db, id) }
       const raw = await readBody(event)
       if (action === 'preflight') {
         const input = preflight.safeParse(raw)

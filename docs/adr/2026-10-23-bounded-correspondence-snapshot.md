@@ -1,9 +1,9 @@
 # 拟议：来源字节兼容先于 SQL 快照接入
 
-> 2026-10-23 最新用户澄清已取代下文的实施方向：保留现有来源快照、指纹与审计算法，允许单个所选来源完整水合，按实际内存/耗时调整任务限额；避免全量归档水合。旧的“不许调整1 MiB、F1必须先建设JSON/SQL/native快照接缝”不再是当前约束。下文保留为历史实验/提案，兼容失败与旧资源观测不撤销，也不授权继续这些切片。当前实现及实测范围见 [候选任务说明](../candidate-discovery-tasks.md)。
 
+> 2026-10-23 最新用户澄清已取代下文的实施方向：保留现有来源快照、指纹与审计算法，允许单个所选来源完整水合，按实际内存/耗时调整任务限额；避免全量归档水合。旧的“不许调整1 MiB、F1必须先建设JSON/SQL/native快照接缝”不再是当前约束。下文保留为历史实验/提案，兼容失败与旧资源观测不撤销，也不授权继续这些切片。后续实现与验证范围由关联 Issue 追踪。
 
-**状态：proposed，未批准、未实现。** 关联 [#220 spike](../spikes/220/README.md)、[#210](https://github.com/MangMax/ningbo-specialized-sme-platform/issues/210)。
+**状态：proposed，未批准、未实现。** 关联 [#220 spike](https://github.com/MangMax/ningbo-specialized-sme-platform/issues/220)、[#210](https://github.com/MangMax/ningbo-specialized-sme-platform/issues/210)。
 
 用户已明确：没有既定内存预算或恒定总 RSS SLO；目标为 JS/IPC 不完整水合单份原档，记录 main/worker/SQLite 的绝对内存观测，不新增固定来源大小排除。SQLite 完整构造的 O(N) 原生内存可以被评估，必须诚实披露，不能用 V8 heap 或64KiB输出冒充总内存界限。
 

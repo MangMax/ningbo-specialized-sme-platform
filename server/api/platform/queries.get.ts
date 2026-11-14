@@ -40,7 +40,7 @@ defineRouteMeta({
       { name: 'pageSize', in: 'query', schema: { type: 'integer', default: 25 } },
     ],
     responses: {
-      200: { description: '分页查询与全部关系(rows[{query,relations}]/total/page/pageSize/counts)。query.collectionEvidence 为原采集结果（旧记录 null）；relations 含原 rawFields、sourceRdjb/sourcePage 及真实查询/关系 id。完整转存/读回契约见 docs/platform-recognized-evidence.md。' },
+      200: { description: '分页查询与全部关系(rows[{query,relations}]/total/page/pageSize/counts)。query.collectionEvidence 为原采集结果（旧记录 null）；relations 含原 rawFields、sourceRdjb/sourcePage 及真实查询/关系 id。完整转存/读回契约见 lib/platform/recognized-evidence.ts。' },
       400: { description: 'interface / status 取值非法。' },
       413: { description: '完整证据超出单查询4MiB或单页8MiB原档字节预算；使用 summary 和按ID分段取证，不会静默截断。' },
     },

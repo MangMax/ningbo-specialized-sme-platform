@@ -9,10 +9,9 @@ import { schema, useDb } from '../db'
 const dir = mkdtempSync(join(tmpdir(), 'facts-browser-307-'))
 const db = initializeDb({ create: true, dbPath: join(dir, 'test.db') })
 let server: Server, base: string
-let enabled = true
 beforeAll(async () => {
   vi.stubGlobal('defineEventHandler', defineEventHandler)
-  vi.stubGlobal('useRuntimeConfig', () => ({ apiToken: 'synthetic', browserReviewEnabled: enabled }))
+  vi.stubGlobal('useRuntimeConfig', () => ({ apiToken: 'synthetic', }))
   vi.doMock('@db', () => ({ useDb: () => db }))
   const { browserEnterpriseFactsRoute } = await import('../server/utils/browser-enterprise-facts')
   const get = (await import('../server/api/roster/enterprises/[id]/facts.get')).default
@@ -45,9 +44,6 @@ it('browser lifecycle records actual adapter with preflight replay and rejects c
   }
   const input = { action: 'assert', fact, basis: '依据', expectedVersion: initial.version, idempotencyKey: 'gate' }
   expect((await http(id, '/preflight', input, 'https://other.example')).status).toBe(403)
-  enabled = false
-  expect((await http(id, '/preflight', input)).status).toBe(403)
-  enabled = true
   expect((await http(id, '/preflight', { ...input, actor: { type: 'user', id: 'forged' } })).status).toBe(400)
   expect((await http(id)).body).toEqual(initial)
   const first = await commit('assert', { fact })

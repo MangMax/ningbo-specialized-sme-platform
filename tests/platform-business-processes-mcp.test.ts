@@ -1,11 +1,11 @@
-import { initializeDb } from '../db/client'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync,rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterAll, beforeAll, expect, it, vi } from 'vitest'
-import { useDb, schema } from '../db'
-import { ensurePlatformObservation } from '../server/utils/platform-business-record'
-import { getPlatformBusinessProcess, listPlatformBusinessProcesses } from '../server/utils/platform-business-processes'
+import { afterAll,beforeAll,expect,it,vi } from 'vitest'
+import { schema } from '../db'
+import { initializeDb } from '../db/client'
+import { getTargetBusinessProcess,listTargetBusinessProcesses } from '../server/utils/platform-business-processes-target'
+import { submitNativePlatformQuery } from './helpers/native-platform-fixture'
 
 vi.mock('@nuxtjs/mcp-toolkit/server', () => ({ defineMcpTool: (tool: unknown) => tool }))
 
@@ -20,14 +20,12 @@ let recordId = 0
 beforeAll(async () => {
   vi.stubGlobal('createError', (input: unknown) => Object.assign(new Error('fixture'), input))
   const enterprise = db.insert(schema.enterprise).values({ name: 'MCP 办理企业', nameNorm: 'MCP 办理企业', usccNorm: '91330211255994457P' }).returning().get()
-  const query = db.insert(schema.platformQuery).values({ interface: 'business_list', queryKey: '91330211255994457P', rdjb: '2', queriedAt: '2026-10-01T00:00:00Z', status: 'success' }).returning().get()
-  db.insert(schema.platformQueryTitleScope).values({ queryId: query.id, rdjb: '2' }).run()
-  const relation = db.insert(schema.platformRelation).values({
-    queryId: query.id, sequenceNo: 1, relationKey: 'SQ-MCP-READ', enterpriseId: enterprise.id, usccRaw: enterprise.usccNorm, nameRaw: enterprise.name,
-    rawFields: { id: 'SQ-MCP-READ', qymc: enterprise.name, tyshxydm: enterprise.usccNorm, sblx: '复核', year: '2023', sqsj: '2023-02-01', cszt: '终审通过', whpc: '2023-2', personuuid: '第三批', szsfmc: '浙江省' },
-  }).returning().get()
-  const projection = ensurePlatformObservation(db, relation.id)
-  recordId = projection.recordId!
+  const written = submitNativePlatformQuery(db, {
+    interface: 'business_list', queryKey: enterprise.usccNorm!, rdjb: '2', titleCode: 'specialized_sme', queriedAt: '2026-10-01T00:00:00Z', status: 'success', rawResponse: 'synthetic original business response',
+    relations: [{ sequenceNo: 1, relationKey: 'SQ-MCP-READ', enterpriseId: enterprise.id, usccRaw: enterprise.usccNorm, nameRaw: enterprise.name,
+      rawFields: { id: 'SQ-MCP-READ', qymc: enterprise.name, tyshxydm: enterprise.usccNorm, sblx: '复核', year: '2023', sqsj: '2023-02-01', cszt: '终审通过', whpc: '2023-2', personuuid: '第三批', szsfmc: '浙江省', unknownSensitiveField: 'PRIVATE-MCP-MARKER' } }],
+  })
+  recordId = written.observations[0]!.recordId!
   listTool = (await import('../server/mcp/tools/list_platform_business_processes')).default
   detailTool = (await import('../server/mcp/tools/get_platform_business_process')).default
 })
@@ -40,13 +38,13 @@ it('exposes the same list and detail contract over MCP as the shared domain serv
   expect(detailTool.name).toBe('get_platform_business_process')
   const input = { view: 'records' as const, rdjb: '2' as const, declareKind: 'review', year: 2023, status: '终审通过', batch: '2023-2', page: 1, pageSize: 25 }
   const listed = await listTool.handler(input as never, {} as never) as { structuredContent: unknown; content: { text: string }[] }
-  const expected = listPlatformBusinessProcesses(input, db)
+  const expected = listTargetBusinessProcesses(input, db)
   expect(listed.structuredContent).toEqual(expected)
   expect(JSON.parse(listed.content[0]!.text)).toEqual(expected)
   expect(expected.rows[0]).toMatchObject({ kind: 'record', matchedVersion: { declareKind: 'review', businessYear: 2023, batch: '2023-2' }, titleScopes: ['2'] })
 
   const detail = await detailTool.handler({ recordId }, {} as never) as { structuredContent: unknown; content: { text: string }[] }
-  const expectedDetail = getPlatformBusinessProcess(db, recordId)
+  const expectedDetail = getTargetBusinessProcess(db, recordId)
   expect(detail.structuredContent).toEqual(expectedDetail)
   expect(JSON.parse(detail.content[0]!.text)).toEqual(expectedDetail)
   expect(JSON.stringify(expectedDetail)).not.toContain('unknownSensitiveField')

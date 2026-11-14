@@ -1,3 +1,4 @@
+import { submitNativePlatformQuery } from './helpers/native-platform-fixture'
 import { CURRENT_RULE_VERSION } from '../lib/roster/current-qualification'
 import { businessIdentity, expectedBusinessIdentity } from './helpers/current-export-118'
 import { reviewCurrentExportDecision, confirmCurrentExportExclusion } from './helpers/current-export-decisions'
@@ -10,11 +11,11 @@ import { newJobId } from '../lib/job'
 import { createHash } from 'node:crypto'
 import { eq } from 'drizzle-orm'
 import { afterAll, beforeAll, expect, it } from 'vitest'
-import { useDb, schema as s } from '../db/client'
-import { spawnOwnedChild as spawn, reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../scripts/lib/isolated-local-services.mjs'
+import { initializeDb, schema as s } from '../db/client'
+import { spawnOwnedChild as spawn, reserveLoopbackPort, waitForHttp, stopOwnedChild } from './helpers/isolated-local-services.mjs'
 
 const dir = mkdtempSync(join(tmpdir(), 'export-117-'))
-const dbPath = join(dir, 'synthetic.db'), db = useDb({ dbPath })
+const dbPath = join(dir, 'synthetic.db'), db = initializeDb({ create: true,  dbPath })
 let service: { baseUrl: string; stop: () => Promise<void> }
 const token = 'synthetic-export-token'
 const headers = { 'content-type': 'application/json', authorization: `Bearer ${token}` }
@@ -285,7 +286,7 @@ it('文本、身份、缺项与业务只读', async () => {
   db.delete(s.recordEvidence).where(eq(s.recordEvidence.recordEventId,oldEvent.id)).run()
   for(const status of ['failed','no_record'] as const) {
     const c=candidate('查询'+status)
-    db.insert(s.platformQuery).values({interface:'recognized_list',queryKey:c.enterprise.usccNorm!,rdjb:'3',titleCode:'little_giant',queriedAt:new Date().toISOString(),status,rawResponse:'=FORMULA()'}).run()
+    submitNativePlatformQuery(db,{interface:'business_list',queryKey:c.enterprise.usccNorm!,rdjb:'3',titleCode:'little_giant',queriedAt:new Date().toISOString(),status,rawResponse:'=FORMULA()'})
   }
   const sourceBefore=businessDigest()
   const {wb}=await workbook('safe-full')
@@ -300,7 +301,11 @@ it('文本、身份、缺项与业务只读', async () => {
 },30000)
 function businessDigest() {
   const hash=createHash('sha256')
-  for(const table of ['enterprise','record','record_event','record_evidence','enterprise_alias','platform_query','platform_relation','difference_reason','record_correspondence','enterprise_fact_revision']) for(const row of db.$client.prepare('select * from '+table+' order by id').iterate()) hash.update(JSON.stringify(row))
+  for(const table of ['enterprise','record','record_event','record_evidence','enterprise_alias','platform_collection','platform_business_observation','difference_reason','record_correspondence','enterprise_fact_revision']) for(const row of db.$client.prepare('select * from '+table+' order by id').iterate()) hash.update(JSON.stringify(row))
+  for (const { name } of db.$client.prepare("select name from sqlite_master where type='table' and name like 'platform_%' order by name").all() as Array<{ name: string }>) {
+    hash.update(name)
+    for (const row of db.$client.prepare(`select * from "${name}" order by rowid`).iterate()) hash.update(JSON.stringify(row))
+  }
   for(const row of db.$client.prepare('select * from enterprise_fact_receipt order by idempotency_key').iterate()) hash.update(JSON.stringify(row))
   return hash.digest('hex')
 }
@@ -339,14 +344,13 @@ it('决定撤回、前提失效与候选引用', async () => {
   const replaced=candidate('替代旧外迁'),head=decision(replaced.enterprise.id,'moved_out',{recordedAt:'2025-01-01T00:00:00Z'})
   decision(replaced.enterprise.id,'pending_review',{previousId:head.id,measureCode:'follow_review'})
   const premise=candidate('现有代码旧按名查询')
-  const query=db.insert(s.platformQuery).values({interface:'business_list',queryKey:'name:'+premise.enterprise.nameNorm,rdjb:'3',titleCode:'little_giant',queriedAt:new Date().toISOString(),status:'failed'}).returning().get()
-  const stale=decision(premise.enterprise.id,'moved_out',{evidenceQueryId:query.id})
+  const query=submitNativePlatformQuery(db,{interface:'business_list',queryKey:'name:'+premise.enterprise.nameNorm,rdjb:'3',titleCode:'little_giant',queriedAt:new Date().toISOString(),status:'failed',rawResponse:'Synthetic failed name query'})
+  const stale=decision(premise.enterprise.id,'moved_out',{evidenceQueryId:query.queryId})
   const terminalGap=candidate('终止能力待确认');decision(terminalGap.enterprise.id,'other',{reasonNote:'正式取消/终止资格，但现有模型无对应周期终止事件'})
   const identity=candidate('统代冲突');db.update(s.record).set({usccRaw:'DIFFERENT-ID'}).where(eq(s.record.id,identity.record.id)).run()
   for(const status of ['退回','待审核']) {
     const c=candidate('申请状态'+status)
-    const q=db.insert(s.platformQuery).values({interface:'business_list',queryKey:c.enterprise.usccNorm!,rdjb:'3',titleCode:'little_giant',queriedAt:new Date().toISOString(),status:'success'}).returning().get()
-    db.insert(s.platformRelation).values({queryId:q.id,sequenceNo:1,enterpriseId:c.enterprise.id,status,declareKind:'update',verificationStatus:'confirmed',matchBasis:'uscc'}).run()
+    submitNativePlatformQuery(db,{interface:'business_list',queryKey:c.enterprise.usccNorm!,rdjb:'3',titleCode:'little_giant',queriedAt:new Date().toISOString(),status:'success',rawResponse:JSON.stringify({status}),relations:[{sequenceNo:1,enterpriseId:c.enterprise.id,status,declareKind:'update',verificationStatus:'confirmed',matchBasis:'uscc'}]})
   }
   const unconfirmed=candidate('未确认对应边',[{eventType:'maintain',year:new Date().getFullYear()}])
   db.update(s.record).set({source:'miit'}).where(eq(s.record.id,unconfirmed.record.id)).run()
@@ -398,8 +402,11 @@ it('产物存储错误不泄露路径', async () => {
 },90000)
 it('平台单独候选不遗漏且不冒充已确认资格', async () => {
   const c=db.insert(s.enterprise).values({name:'仅平台识别候选',nameNorm:'仅平台识别候选',usccNorm:'PLATFORM-CANDIDATE-117'}).returning().get()
-  const q=db.insert(s.platformQuery).values({interface:'recognized_list',queryKey:c.usccNorm!,rdjb:'3',titleCode:'little_giant',queriedAt:new Date().toISOString(),status:'success'}).returning().get()
-  const r=db.insert(s.platformRelation).values({queryId:q.id,sequenceNo:1,enterpriseId:c.id,status:'认定通过',verificationStatus:'confirmed',matchBasis:'uscc'}).returning().get()
+  const queriedAt = new Date().toISOString()
+  const rawFields = { id: 'PLATFORM-ONLY-117', qymc: c.name, tyshxydm: c.usccNorm!, rdjb: '3' }
+  const collectionEvidence = { source: 'queryBusList' as const, status: 'success' as const, effectiveConditions: { combination: 'and' as const }, titleScope: { mode: 'selected' as const, rdjb: ['3'] }, queriedAt, completedAt: queriedAt, rows: [rawFields], pages: [{ source: 'queryBusList' as const, rdjb: '3', page: 1, maxPage: 1, status: 'success' as const, fetchedCount: 1, declaredTotal: 1, error: null }], fetchedCount: 1, declaredTotal: 1, completeness: 'complete' as const, fullRange: true, unfinished: [], error: null, limits: { maxRequests: 1, maxRows: 50, maxDurationMs: 1000, pageSize: 50 } }
+  const native = submitNativePlatformQuery(db,{interface:'recognized_list',queryKey:c.usccNorm!,rdjb:'3',titleCode:'little_giant',queriedAt,status:'success',collectionEvidence,relations:[{sequenceNo:1,relationKey:rawFields.id,rawFields,nameRaw:c.name,usccRaw:c.usccNorm,enterpriseId:c.id,verificationStatus:'confirmed',matchBasis:'uscc'}]})
+  const r = { id: native.relationIds[0]! }
   const {wb}=await workbook('platform-only')
   const pending=rows(wb,'未认定').find(row=>row[2]==='仅平台识别候选')!
   expect(businessIdentity(pending)).toEqual(expectedBusinessIdentity(db,c.id));expect(pending[12]).toContain('工信部已认定企业名单')

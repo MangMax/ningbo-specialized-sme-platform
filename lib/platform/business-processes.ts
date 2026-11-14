@@ -1,3 +1,4 @@
+import type { PlatformBusinessMetadata } from './business-record'
 import { z } from 'zod'
 import { MAX_PAGE_SIZE } from '../query-limits'
 
@@ -109,8 +110,8 @@ export interface BusinessProcessIsolatedRow {
   queryKey: string
   queryStatus: string
   sequenceNo: number
-  identityState: 'resolved' | 'missing_key' | 'conflict'
-  contentState: 'verified' | 'unverifiable'
+  identityState: PlatformBusinessMetadata['identityState']
+  contentState: PlatformBusinessMetadata['contentState']
   nameRaw: string | null
   usccRaw: string | null
   declareKind: string | null

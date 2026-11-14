@@ -1,7 +1,9 @@
 import { createError, defineEventHandler, getQuery, setHeader } from 'h3'
 import { useDb } from '@db'
 import { platformFilterOptionsQueryFromQuery } from '../../../lib/platform/filter-options'
-import { readPlatformFilterOptions } from '../../utils/platform-filter-options'
+import { readTargetDeclarationOptions } from '../../utils/platform-declarations-target'
+import { readTargetBusinessProcessOptions } from '../../utils/platform-business-processes-target'
+import { readTargetRecognizedOptions } from '../../utils/platform-recognized-target'
 
 defineRouteMeta({
   openAPI: {
@@ -23,7 +25,10 @@ export default defineEventHandler(event => {
   setHeader(event, 'cache-control', 'no-store')
   try {
     const query = platformFilterOptionsQueryFromQuery(getQuery(event))
-    return readPlatformFilterOptions(query, useDb())
+    const db = useDb()
+    if (query.source === 'declarations') return readTargetDeclarationOptions(query.view, db)
+    if (query.source === 'business-processes') return readTargetBusinessProcessOptions(query.view, db)
+    return readTargetRecognizedOptions(query.view, db)
   } catch (error) {
     const failure = error as { statusCode?: number; message?: string }
     throw createError({ statusCode: failure.statusCode ?? 500, statusMessage: failure.message ?? 'platform filter options query failed' })

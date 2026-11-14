@@ -6,16 +6,20 @@ import { createRequire } from 'node:module'
 import { once } from 'node:events'
 import { setTimeout as pause } from 'node:timers/promises'
 import { afterEach, beforeAll, describe, expect, it } from 'vitest'
-import { useDb, schema } from '../db/client'
+import { initializeDb, schema } from '../db/client'
 import { createEnterpriseReadExecutor } from '../server/utils/enterprise-read'
 import { startHttpFixture } from './helpers/http-fixture'
+import { writeNewCollectionTarget, type NewCollectionTargetCommand } from '../lib/platform/collection-target-command'
+import { platformResultToImport } from '../lib/platform/recognized-evidence'
+import type { PlatformRawRow } from '../lib/platform/adapter'
+import type { PlatformLiveQueryResult } from '../lib/platform/live-query'
 
 const cleanup: Array<() => unknown | Promise<unknown>> = []
 afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close() })
 function fixture() {
   const dir = mkdtempSync(join(tmpdir(), 'enterprise-async-'))
   cleanup.push(() => rmSync(dir, { recursive: true, force: true }))
-  const path = join(dir, 'test.db'), db = useDb({ dbPath: path })
+  const path = join(dir, 'test.db'), db = initializeDb({ dbPath: path, create:true })
   cleanup.push(() => db.$client.close())
   const enterprise = db.insert(schema.enterprise).values({ name: '合成企业', nameNorm: '合成企业' }).returning().get()
   const record = db.insert(schema.record).values({ enterpriseId: enterprise.id, titleCode: 'specialized_sme', source: 'jxj' }).returning().get()
@@ -23,6 +27,20 @@ function fixture() {
   const reads = createEnterpriseReadExecutor()
   cleanup.push(() => reads.close())
   return { path, db, enterprise, reads }
+}
+function recognizedRows(f:ReturnType<typeof fixture>, entries:{enterpriseId:number|null;rawFields:PlatformRawRow}[]) {
+  f.db.update(schema.enterprise).set({usccNorm:'913302007000000001'}).run()
+  const raw=entries.map(entry=>entry.rawFields)
+  const typed=raw.some(row=>Object.values(row).some(value=>typeof value!=='string'))
+  const rows=raw.map(row=>Object.fromEntries(Object.entries(row).map(([key,value])=>[key,value==null?'':typeof value==='string'?value:typeof value==='object'?JSON.stringify(value):String(value)])))
+  const evidence:PlatformLiveQueryResult={source:'queryBusList',status:'success',effectiveConditions:{name:'合成企业',combination:'and'},
+    titleScope:{mode:'selected',rdjb:['2']},queriedAt:'2026-10-19T00:00:00Z',completedAt:'2026-10-19T00:01:00Z',rows,
+    ...(typed?{dataRows:raw}:{}),pages:[{source:'queryBusList',rdjb:'2',page:1,maxPage:1,status:'success',fetchedCount:rows.length,declaredTotal:rows.length,error:null}],
+    fetchedCount:rows.length,declaredTotal:rows.length,completeness:'complete',fullRange:true,unfinished:[],error:null,
+    limits:{maxRequests:100,maxRows:5000,maxDurationMs:60000,pageSize:50}}
+  writeNewCollectionTarget(f.db,{queryText:JSON.stringify(platformResultToImport(evidence)),evidenceText:JSON.stringify(evidence),createdAt:'2026-10-19T00:01:00Z',
+    assignments:entries.map<NewCollectionTargetCommand['assignments'][number]>(entry=>({enterpriseId:entry.enterpriseId,nameRaw:null,usccRaw:null,matchBasis:entry.enterpriseId===null?'none':'uscc',
+      verificationStatus:entry.enterpriseId===null?'pending':'confirmed',origin:'command',actor:{type:'agent',id:'source-worker-test'},basis:'explicit synthetic assignment'}))})
 }
 it('serves HTTP health while a real native SQLite enterprise read waits for a separate writer', async () => {
   const f = fixture()
@@ -138,11 +156,9 @@ it('opens independent committed snapshots, sees subsequent commits and preserves
   writer.prepare("update enterprise set name='提交后企业' where id=?").run(f.enterprise.id)
   expect(await f.reads.list(f.path)).toMatchObject({ rows: [{ name: '提交后企业' }] })
   const rawFields = { original: '完整𠀀原文'.repeat(100000) }
-  const query = f.db.insert(schema.platformQuery).values({ interface: 'recognized_list', queryKey: 'name:合成企业', queriedAt: '2026-10-19', status: 'partial' }).returning().get()
-  f.db.insert(schema.platformRelation).values({ queryId: query.id, sequenceNo: 2, enterpriseId: null, rawFields }).run()
-  f.db.insert(schema.platformRelation).values({ queryId: query.id, sequenceNo: 1, enterpriseId: f.enterprise.id, rawFields: { original: '首行' } }).run()
+  recognizedRows(f,[{enterpriseId:f.enterprise.id,rawFields:{original:'首行',tyshxydm:'913302007000000001'}},{enterpriseId:null,rawFields}])
   const result = await f.reads.detail(f.path, f.enterprise.id)
-  expect(result?.platform.relations.map(row => [row.sequenceNo, row.enterpriseId, row.rawFields])).toEqual([[1, f.enterprise.id, { original: '首行' }], [2, null, rawFields]])
+  expect(result?.platform.relations.map(row => [row.sequenceNo, row.enterpriseId, row.rawFields])).toEqual([[1, f.enterprise.id, { original: '首行',tyshxydm:'913302007000000001' }], [2, null, rawFields]])
   await expect(f.reads.list(join(tmpdir(), 'missing-enterprise-r1', 'absent.db'))).rejects.toMatchObject({ statusCode: 503 })
   expect(await f.reads.detail(f.path, 999999)).toBeNull()
   expect(await f.reads.list(f.path)).toMatchObject({ counts: { total: 1 } })
@@ -196,8 +212,7 @@ it('isolates different source files and reopens a replaced file after all writer
 it('preserves raw strings across JSON and IPC chunk boundaries including escapes and lone surrogates', async () => {
   const f = fixture()
   const original = 'x'.repeat(16383) + '𠀀' + '\\"\n\t\u0000' + '\ud840' + '末尾' + '\udc00' + '🙂'.repeat(40000)
-  const query = f.db.insert(schema.platformQuery).values({ interface: 'recognized_list', queryKey: 'name:合成企业', queriedAt: '2026-10-19', status: 'partial' }).returning().get()
-  f.db.insert(schema.platformRelation).values({ queryId: query.id, sequenceNo: 1, enterpriseId: null, rawFields: { original, empty: '', values: [null, true, 0] } }).run()
+  recognizedRows(f,[{enterpriseId:null,rawFields:{original,empty:'',values:[null,true,0]}}])
   const result = await f.reads.json(f.path, { operation: 'detail', enterpriseId: f.enterprise.id })
   expect(result.found).toBe(true)
   expect(JSON.parse(result.body.toString()).platform.relations[0]).toMatchObject({ enterpriseId: null, rawFields: { original, empty: '', values: [null, true, 0] } })

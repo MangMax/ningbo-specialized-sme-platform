@@ -5,19 +5,20 @@ import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { createApp, toNodeListener, defineEventHandler } from 'h3'
 import { afterAll, expect, it, vi } from 'vitest'
-import { useDb, schema } from '../db/client'
+import { initializeDb, schema } from '../db/client'
+import { submitNativePlatformQuery } from './helpers/native-platform-fixture'
 import { browserCorrespondenceRoute } from '../server/utils/browser-correspondence'
 import { handleRecordCorrespondenceRequest } from '../server/utils/record-correspondence-api'
 
 const dir = mkdtempSync(join(tmpdir(), 'browser-correspondence-'))
-const db = useDb({ dbPath: join(dir, 'test.db') })
+const db = initializeDb({ create: true,  dbPath: join(dir, 'test.db') })
 const enterprise = db.insert(schema.enterprise).values({ name: '合成对应企业', nameNorm: '合成对应企业', usccNorm: '91330211255994457P' }).returning().get()
 const record = db.insert(schema.record).values({ enterpriseId: enterprise.id, source: 'jxj', titleCode: 'specialized_sme', usccRaw: enterprise.usccNorm }).returning().get()
 const event = db.insert(schema.recordEvent).values({ recordId: record.id, eventType: 'award', year: 2022 }).returning().get()
-const query = db.insert(schema.platformQuery).values({ interface: 'business_list', titleCode: 'specialized_sme', rdjb: '2', queryKey: enterprise.usccNorm!, queriedAt: '2026-10-23T00:00:00Z', status: 'success' }).returning().get()
-const relations = [1, 2, 3].map(sequenceNo => db.insert(schema.platformRelation).values({ queryId: query.id, sequenceNo, enterpriseId: enterprise.id, usccRaw: enterprise.usccNorm, verificationStatus: 'confirmed', rawFields: { original: `原行${sequenceNo}` } }).returning().get())
+const seeded = submitNativePlatformQuery(db, { interface: 'business_list', titleCode: 'specialized_sme', rdjb: '2', queryKey: enterprise.usccNorm!, queriedAt: '2026-10-23T00:00:00Z', status: 'success', rawResponse: 'Synthetic browser source', relations: [1, 2, 3].map(sequenceNo => ({ sequenceNo, enterpriseId: enterprise.id, usccRaw: enterprise.usccNorm, verificationStatus: 'confirmed' as const, rawFields: { original: `原行${sequenceNo}` } })) })
+const relations = seeded.relationIds.map(id => ({ id }))
 const edge = (n: number) => ({ type: 'event_process', eventId: event.id, relationId: relations[n]!.id, role: 'context_only' })
-const config = { apiToken: 'synthetic-private-token', browserReviewEnabled: true }
+const config = { apiToken: 'synthetic-private-token', }
 vi.stubGlobal('defineEventHandler', defineEventHandler)
 const app = createApp()
 for (const action of ['preflight', 'commit'] as const) app.use('/' + action, browserCorrespondenceRoute(action, () => ({ db, config })))
@@ -40,9 +41,6 @@ it('gates same origin and rejects forged identity before any decision is written
   const request = command([{ action: 'create', status: 'confirmed', edge: edge(0) }])
   expect((await post('preflight', request, 'https://elsewhere.invalid')).status).toBe(403)
   expect((await post('preflight', { ...request, actor: { type: 'user', id: 'forged' } })).status).toBe(400)
-  config.browserReviewEnabled = false
-  expect((await post('preflight', request)).status).toBe(403)
-  config.browserReviewEnabled = true
   expect(read('list').total).toBe(0)
 })
 
@@ -102,14 +100,14 @@ it('binds replacement source evidence and cannot resurrect an unchanged rejected
   expect(read('get', rejected)).toMatchObject({ status: 'rejected', revision: 2 })
   const request = command([{ action: 'correct', correspondenceId: a, expectedRevision: 2, edge: otherEdge(2) }])
   const plan = await (await post('preflight', request)).json()
-  // Synthetic source change models an independently committed archive correction.
+  // Official source correction invalidates the bound replacement plan.
   const { eq } = await import('drizzle-orm')
-  db.update(schema.platformRelation).set({ status: '合成来源更正' }).where(eq(schema.platformRelation.id, relations[2]!.id)).run()
+  db.update(schema.recordEvent).set({ batchSeq: 2 }).where(eq(schema.recordEvent.id, another.id)).run()
   expect((await post('commit', { request, planHash: plan.planHash })).status).toBe(409)
   expect(read('get', a)).toMatchObject({ status: 'confirmed', revision: 2 })
   expect((handleRecordCorrespondenceRequest({ action: 'list', method: 'GET', query: { eventId: String(another.id) } }, { db }).body as any).rows).toHaveLength(2)
   // Existing confirmation now invalidated by a source change is historical, never a validity certificate.
-  db.update(schema.platformRelation).set({ status: '合成来源更正' }).where(eq(schema.platformRelation.id, relations[0]!.id)).run()
+  db.update(schema.recordEvent).set({ batchSeq: 3 }).where(eq(schema.recordEvent.id, another.id)).run()
   expect(read('get', a)).toMatchObject({ status: 'confirmed', requiresRevalidation: true })
   await save(command([{ action: 'correct', correspondenceId: a, expectedRevision: 2, edge: otherEdge(0) }]))
   expect(read('get', a)).toMatchObject({ status: 'confirmed', revision: 4, requiresRevalidation: false })

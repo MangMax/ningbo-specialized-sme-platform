@@ -4,8 +4,8 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { afterAll, beforeAll, expect, it } from 'vitest'
-import { spawnOwnedChild as spawn, reserveLoopbackPort, stopOwnedChild, waitForHttp } from '../scripts/lib/isolated-local-services.mjs'
-import { useDb } from '../db/client'
+import { spawnOwnedChild as spawn, reserveLoopbackPort, stopOwnedChild, waitForHttp } from './helpers/isolated-local-services.mjs'
+import { initializeDb } from '../db/client'
 import { APPLICATION_LOG_ROUTES } from '../lib/logging/route-templates'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
@@ -59,7 +59,7 @@ async function mcp(method: string, params: unknown, tokenValue?: string) {
 
 beforeAll(async () => {
   if (process.env.LOG180_SKIP_BUILD !== '1') execFileSync('pnpm', ['build'], { cwd: resolve(import.meta.dirname, '..'), timeout: 300_000, stdio: 'pipe' })
-  const db = useDb({ dbPath })
+  const db = initializeDb({ create: true,  dbPath })
   db.$client.close()
   const port = await reserveLoopbackPort()
   baseUrl = `http://127.0.0.1:${port}`
@@ -70,8 +70,7 @@ beforeAll(async () => {
       ...process.env, HOST: '127.0.0.1', PORT: String(port), NODE_ENV: 'production',
       NUXT_DB_PATH: dbPath, NUXT_DB_READONLY: '1', NUXT_LOG_DIR: logDir,
       NUXT_FILES_DIR: join(root, 'files'), NUXT_INCOMING_DIR: join(root, 'incoming'),
-      NUXT_API_TOKEN: token, NUXT_MCP_TOKEN: mcpToken, NUXT_BROWSER_LOGS_ENABLED: 'false',
-      NUXT_CURATED_PATH: join(root, 'curated.json'), NUXT_RECONCILE_PATH: join(root, 'reconcile.json'),
+      NUXT_API_TOKEN: token, NUXT_MCP_TOKEN: mcpToken, NUXT_CURATED_PATH: join(root, 'curated.json'), NUXT_RECONCILE_PATH: join(root, 'reconcile.json'),
     },
   })
   child.stdout!.on('data', chunk => { output += chunk.toString() })

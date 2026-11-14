@@ -21,7 +21,7 @@ import { writeGuard } from '../../utils/mcp-guard'
  *
  * **不碰的东西**:`rel_path` / `filename` / `bytes` / `sha256`(磁盘事实,
  * `parseMetadataPatch` 直接拒掉这些键)、磁盘上的文件、以及台账记录
- * (`record` / `enterprise`,见 `app/.scratch/data-integrity/SPEC.md` 的安全阀)。
+ * 文件分类维护不能直接删除 `record` 或 `enterprise`。
  */
 export default defineMcpTool({
   name: 'set_file_category',

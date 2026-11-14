@@ -1,3 +1,4 @@
+import { submitNativePlatformQuery } from './helpers/native-platform-fixture'
 import { initializeDb } from '../db/client'
 import { createServer } from 'node:http'
 import { mkdtempSync, rmSync } from 'node:fs'
@@ -10,7 +11,7 @@ import { platformSummaryCache } from '../server/utils/platform-summary-cache'
 const dir = mkdtempSync(join(tmpdir(), 'platform-query-http-'))
 const db = initializeDb({ create: true, dbPath: join(dir, 'test.sqlite') })
 let server: ReturnType<typeof createServer>, base: string
-const id = db.insert(schema.platformQuery).values({ interface: 'recognized_list', queryKey: 'synthetic:http', queriedAt: '2026-10-19', status: 'partial', rawResponse: '完整原文🙂', collectionEvidence: { titleScope: { rdjb: ['2'] }, pages: [] } as never }).returning().get().id
+const id = submitNativePlatformQuery(db, { interface: 'apply_list', queryKey: 'synthetic:http', queriedAt: '2026-10-19', status: 'partial', rawResponse: '完整原文🙂' }).queryId
 beforeAll(async () => {
   vi.stubEnv('NUXT_DB_PATH', join(dir, 'test.sqlite'))
   vi.stubGlobal('defineEventHandler', defineEventHandler)

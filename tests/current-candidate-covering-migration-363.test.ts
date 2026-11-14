@@ -1,17 +1,24 @@
 import { createHash } from 'node:crypto'
 import { getTableConfig } from 'drizzle-orm/sqlite-core'
-import * as s from '../db/schema'
-import { prepareCurrentReader } from '../lib/roster/current-qualification'
+import * as s from '../upgrade/legacy-schema'
+import { normalizeUscc } from '../lib/domain'
 import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { migrate } from 'drizzle-orm/better-sqlite3/migrator'
-import { expect, it } from 'vitest'
-import { currentCandidateSql, currentCandidateSqlFor } from '../lib/roster/current-candidates'
+import { afterAll, expect, it } from 'vitest'
+import { currentCandidateSql, currentCandidateSqlFor } from '../upgrade/frozen/current-candidates'
 
-const folder = resolve('db/migrations')
+const sourceFolder = resolve('db/migrations')
+const folder = mkdtempSync(join(tmpdir(), 'offline-covering31-'))
+const journal = JSON.parse(readFileSync(join(sourceFolder, 'meta/_journal.json'), 'utf8'))
+const entries = journal.entries.filter((entry: { idx: number }) => entry.idx <= 31)
+mkdirSync(join(folder, 'meta'))
+writeFileSync(join(folder, 'meta/_journal.json'), JSON.stringify({ ...journal, entries }))
+for (const entry of entries) copyFileSync(join(sourceFolder, entry.tag + '.sql'), join(folder, entry.tag + '.sql'))
+afterAll(() => rmSync(folder, { recursive: true, force: true }))
 const rIndex = 'platform_relation_current_candidate_cover_idx'
 const qIndex = 'platform_query_current_candidate_cover_idx'
 function indexColumns(db: Database.Database, name: string) {
@@ -61,8 +68,8 @@ function oldDatabase(dir: string) {
   db.prepare('insert into platform_query (id, interface, query_key, rdjb, queried_at, status, raw_response, collection_evidence, created_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?)').run(41, 'business_list', '000000000000000023', '1', createdAt, 'success', '原响应\n🙂\u0000尾', JSON.stringify({ pages: [] }), createdAt)
   db.prepare('insert into platform_relation (id, query_id, sequence_no, enterprise_id, uscc_raw, relation_key, raw_fields, created_at) values (?, ?, ?, ?, ?, ?, ?, ?)').run(43, 41, 1, 23, '000000000000000023', 'legacy-relation-key', JSON.stringify({ original: '原字段\n🙂', number: '0001' }), createdAt)
   d.insert(s.platformBusinessRecord).values({ id: 47, interface: 'business_list', platformKey: 'old-business-id', identityRuleVersion: 'old-v1', createdAt }).run()
-  d.insert(s.platformBusinessRecordVersion).values({ id: 53, recordId: 47, hashAlgorithm: 'legacy-hash-v1', contentHash: 'unrecomputed-hash', canonicalRawJson: '{ "raw": "old🙂" }', createdAt }).run()
-  d.insert(s.platformBusinessObservation).values({ relationId: 43, recordId: 47, versionId: 53, identityState: 'resolved', contentState: 'verified', keySource: 'relation_key', projectionRuleVersion: 'old-v1', inputFingerprint: 'old-input-fingerprint', indexedAt: createdAt, batchId: 31 }).run()
+  db.prepare('INSERT INTO platform_business_record_version(id,record_id,hash_algorithm,content_hash,canonical_raw_json,created_at) VALUES(?,?,?,?,?,?)').run(53,47,'legacy-hash-v1','unrecomputed-hash','{ "raw": "old🙂" }',createdAt)
+  db.prepare('INSERT INTO platform_business_observation(relation_id,record_id,version_id,identity_state,content_state,key_source,projection_rule_version,input_fingerprint,indexed_at,batch_id) VALUES(?,?,?,?,?,?,?,?,?,?)').run(43,47,53,'resolved','verified','relation_key','old-v1','old-input-fingerprint',createdAt,31)
   d.insert(s.comparisonScopeProof).values({ id: 59, kind: 'official_coverage', evidence: { original: '证明原文🙂' }, sourceFingerprint: 'old-proof-fingerprint', createdAt }).run()
   d.insert(s.comparisonScopeProofAudit).values({ id: 61, proofId: 59, batchId: 31, idempotencyKey: 'legacy-key', toStatus: 'candidate', expectedRevision: 0, resultingRevision: 1, actorType: 'agent', actorId: 'synthetic', basis: '原依据', ruleId: 'old-rule', ruleVersion: '1', decidedAt: createdAt }).run()
   d.insert(s.recordCorrespondence).values({ id: 67, edgeKey: 'old-edge', type: 'event_process', role: 'context', eventId: 19, relationId: 43, enterpriseId: 23, titleCode: 'innovative_sme', status: 'candidate', revision: 1, targetIdentity: { legacy: 'identity' }, provenance: { original: 'old🙂' }, sourceFingerprint: 'old-edge-hash', ruleId: 'old-rule', ruleVersion: '1', createdAt }).run()
@@ -92,8 +99,6 @@ it('M02 old file upgrade preserves all rows IDs hashes proofs audits jobs receip
     expect(currentCandidateSqlFor(db)).toBe(currentCandidateSql)
     migrate(drizzle(db), { migrationsFolder: folder })
     expect(contents(db, baseline)).toEqual(before)
-    expect(db.prepare('select id,last_collected_at from platform_query').all()).toEqual([{ id: 41, last_collected_at: null }])
-    expect(db.prepare('select id,title_raw from platform_relation').all()).toEqual([{ id: 43, title_raw: null }])
     // Every baseline object must survive; later migrations may only add objects.
     const afterObjects = schemaObjects(db) as { name: string; type: string }[]
     const afterKeys = new Set(afterObjects.map(row => `${row.type}:${row.name}`))
@@ -144,7 +149,7 @@ it('M04 readonly old file stays byte intact and sees later external index create
   const before = readFileSync(path), reader = new Database(path, { readonly: true, fileMustExist: true })
   const update = new Database(path)
   try {
-    prepareCurrentReader(reader)
+    reader.function('roster84_uscc', { deterministic: true }, normalizeUscc)
     expect(currentCandidateSqlFor(reader)).toBe(currentCandidateSql)
     expect(reader.prepare(currentCandidateSqlFor(reader)).all({ title: 'innovative_sme', rdjb: '1' })).toEqual([{ id: 23 }])
     expect(readFileSync(path)).toEqual(before)

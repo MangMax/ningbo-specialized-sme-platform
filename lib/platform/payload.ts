@@ -53,6 +53,7 @@ import type {
 import type { PlatformQueryOutcome } from './client'
 import { type PlatformRelationRecord, relationFromRow } from './identity'
 import type { PlatformInterface } from '../labels'
+import type { StoredReplayInput } from './reconcile-replay-input'
 
 // ---------------------------------------------------------------------------
 // 输入
@@ -67,7 +68,7 @@ export interface KnownEnterprise {
 }
 
 /** 一次平台查询的输入:身份(§1.3 唯一键前缀)+ 已归类的响应。 */
-export interface PlatformQueryInput {
+interface QueryInput {
   interface: PlatformInterface
   queryKey: string
   rdjb: string
@@ -75,6 +76,12 @@ export interface PlatformQueryInput {
   outcome: PlatformQueryOutcome
   titleCode?: string | null
 }
+
+/** Fresh callers retain their existing shape. Stored originals cannot be supplied as a raw bag. */
+export type PlatformQueryInput = QueryInput & (
+  | { kind?: 'fresh' }
+  | { kind: 'stored'; original: StoredReplayInput }
+)
 
 /** 平台关系的**自然键**:写入侧在本批事务内才生成行 id,客户端只能先用它指认。 */
 export interface RelationRef {
@@ -438,19 +445,22 @@ export function buildPlatformWritePayload(input: BuildPayloadInput): RosterImpor
     if (enterprise) confirmedAliasNames.set(normalizeName(item.name), enterprise)
   }
 
-  const platformQueries: RosterImportPlatformQuery[] = input.queries.map((query) => ({
-    interface: query.interface,
-    queryKey: query.queryKey,
-    rdjb: query.rdjb,
-    titleCode: query.titleCode ?? null,
-    queriedAt: query.queriedAt,
-    status: query.outcome.status,
-    failureReason: query.outcome.failureReason,
-    rawResponse: query.outcome.raw || null,
-    relations: all
-      .filter((entry) => entry.query === query)
-      .map((entry) => toRelationItem(entry.relation, matchRelation(entry.relation, enterprises, confirmedAliasNames))),
-  }))
+  const platformQueries: RosterImportPlatformQuery[] = input.queries.map((query) => {
+    const legacyQuery: RosterImportPlatformQuery = {
+      interface: query.interface,
+      queryKey: query.queryKey,
+      rdjb: query.rdjb,
+      titleCode: query.titleCode ?? null,
+      queriedAt: query.queriedAt,
+      status: query.outcome.status,
+      failureReason: query.outcome.failureReason,
+      rawResponse: query.outcome.raw || null,
+      relations: all
+        .filter((entry) => entry.query === query)
+        .map((entry) => toRelationItem(entry.relation, matchRelation(entry.relation, enterprises, confirmedAliasNames))),
+    }
+    return query.kind === 'stored' ? query.original.encode(legacyQuery) : legacyQuery
+  })
 
   // 差异项的归属用 `enterpriseName` / `uscc`(写入侧按归一化名或统代解析)。
   const differences: RosterImportDifference[] = (input.differences ?? []).map((decision) => {

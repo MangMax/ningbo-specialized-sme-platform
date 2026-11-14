@@ -1,3 +1,4 @@
+import { nativeQueryRows } from './helpers/native-platform-evidence'
 import { initializeDb } from '../db/client'
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
@@ -104,7 +105,7 @@ async function readQuery(queryId: number) {
   return response.json()
 }
 function state() {
-  return Object.fromEntries(['platform_query', 'platform_relation', 'platform_business_record', 'platform_business_record_version', 'platform_business_observation', 'platform_export_batch', 'platform_export_row', 'record_correspondence', 'record_correspondence_audit', 'evidence_revision_113', 'evidence_semantic_head_113'].map(table => [table, db.$client.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all()]))
+  return Object.fromEntries(['platform_collection', 'platform_collection_page', 'platform_collection_condition', 'platform_legacy_query_alias', 'platform_legacy_relation_alias', 'platform_observation_assignment', 'platform_archive_value', 'platform_collection_archive_ref', 'platform_observation_archive_ref', 'platform_version_archive_ref', 'platform_business_record', 'platform_business_record_version', 'platform_business_observation', 'platform_export_batch', 'platform_export_row', 'record_correspondence', 'record_correspondence_audit', 'evidence_revision_113', 'evidence_semantic_head_113'].map(table => [table, db.$client.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all()]))
 }
 async function rejectAtomically(body: RosterImportRequest, code: string) {
   const before = state()
@@ -160,30 +161,10 @@ it(`${protocol} reuses identical sources across keys, returns the original same-
   const batches = db.select().from(schema.platformExportBatch).all()
   expect(batches.at(-1)!.replacedBatchId).toBe(batches.at(-2)!.id)
 })
-it(`${protocol} legacy omitted response and explicit reuse preserve archive bytes, fingerprints and audits`, async () => {
-  const q = query()
-  // Synthetic pre-projection history, including intentionally noncanonical JSON bytes.
-  const old = db.insert(schema.platformQuery).values({ ...q, rawResponse: q.rawResponse! }).returning().get()
-  const rel = db.insert(schema.platformRelation).values({ queryId: old.id, sequenceNo: 1, relationKey: 'old', nameRaw: '合成', rawFields: { id: 'old', n: '1' } }).returning().get()
-  db.$client.prepare('UPDATE platform_relation SET raw_fields=? WHERE id=?').run('{ "n": "1", "id":"old" }', rel.id)
-  const edge = db.insert(schema.recordCorrespondence).values({ edgeKey: `old-${serial++}`, type: 'event_process', role: 'context_only', relationId: rel.id, titleCode: 'specialized_sme', status: 'confirmed', revision: 1, targetIdentity: {}, provenance: {}, sourceFingerprint: 'old-fingerprint', ruleId: 'manual', ruleVersion: '1', createdAt: '2026-01-01' }).returning().get()
-  const oldBatch = db.insert(schema.importBatch).values({ idempotencyKey: `old-batch-${serial++}`, sourceKind: 'platform_archive', sourceIdentity: 'synthetic-old', status: 'committed' }).returning().get()
-  db.insert(schema.recordCorrespondenceAudit).values({ batchId: oldBatch.id, correspondenceId: edge.id, idempotencyKey: `old-audit-${serial++}`, toStatus: 'confirmed', expectedRevision: 0, resultingRevision: 1, actorType: 'agent', actorId: 'synthetic', basis: 'old', ruleId: 'manual', ruleVersion: '1', evidence: { relationId: rel.id }, decidedAt: '2026-01-01' }).run()
-  const before = state(), hash = createHash('sha256').update(JSON.stringify(before)).digest('hex')
-  for (const explicit of [false, true]) {
-    const omitted = { ...q, rawResponse: null, relations: [{ sequenceNo: 1, relationKey: 'old', nameRaw: '合成', ...(explicit ? { rawFields: { id: 'old', n: '1' } } : {}) }], ...(explicit ? { reuseExisting: true as const } : {}) }
-    const body = request({ platformQueries: [omitted] })
-    expect((await submit('preflight', body)).preflight).toMatchObject({ add: 0, update: 0, conflicts: [] })
-    const result = await submit('commit', body)
-    expect(result.status).toBe('committed'); expect(result.summary).toMatchObject({ written: 0, skipped: 1 })
-  }
-  expect(state()).toEqual(before)
-  expect(createHash('sha256').update(JSON.stringify(state())).digest('hex')).toBe(hash)
-})
-it(`${protocol} explicit reuse cannot create a missing source while ordinary raw omission can create a new legacy observation`, async () => {
+it(`${protocol} new native collections require original evidence and explicit reuse cannot create missing sources`, async () => {
   const q = query(); delete q.rawResponse
   await rejectAtomically(request({ platformQueries: [{ ...q, reuseExisting: true } as any] }), 'query_reuse_missing')
-  expect((await submit('commit', request({ platformQueries: [q] }))).status).toBe('committed')
+  await rejectAtomically(request({ platformQueries: [q] }), 'query_source_required')
 })
 it(`${protocol} ordinary query and snapshot replays cannot add new sequence numbers or silently omit rows`, async () => {
   const q = query(), s = snapshot()
@@ -204,7 +185,7 @@ it(`${protocol} concurrent different-key submissions keep one immutable source a
   const responses = await Promise.all([submit('commit', request({ platformQueries: [q] })), submit('commit', request({ platformQueries: [{ ...q, rawResponse: 'competing' }] }))])
   expect(responses.map(r => r.status).sort()).toEqual(['committed', 'failed'])
   expect(responses.find(r => r.status === 'failed').items).toEqual(expect.arrayContaining([expect.objectContaining({ error: expect.objectContaining({ code: 'query_payload_conflict' }) })]))
-  expect(db.select().from(schema.platformQuery).all().filter(r => r.queryKey === q.queryKey)).toHaveLength(1)
+  expect(nativeQueryRows(db).filter(r => r.queryKey === q.queryKey)).toHaveLength(1)
 })
 it(`${protocol} transaction failure rolls back a preceding query and preserves old references, then the same key can retry`, async () => {
   const q = query(), s = snapshot(), body = request({ platformQueries: [q], exportSnapshot: s })
@@ -238,30 +219,6 @@ it.each(['failed', 'partial'] as const)(`${protocol} preserves existing %s colle
   expect(state()).toEqual(before)
 })
 
-it(`${protocol} rechecks query and export source identity inside the write transaction and rolls back earlier siblings`, async () => {
-  for (const kind of ['query', 'export']) {
-    const sibling = query(), target = query(), file = snapshot()
-    target.relations = []
-    const body = request({ platformQueries: kind === 'query' ? [sibling, target] : [sibling], ...(kind === 'export' ? { exportSnapshot: file } : {}) })
-    const before = state()
-    expect((await submit('preflight', body)).preflight.conflicts).toEqual([])
-    // A trigger creates the competing source after planning, within the current
-    // transaction. The later item must compare it again, not trust the old plan.
-    const quote = (value: string) => "'" + value.replaceAll("'", "''") + "'"
-    const competing = kind === 'query'
-      ? `INSERT INTO platform_query(interface,query_key,rdjb,queried_at,status,raw_response,created_at) VALUES('business_list',${quote(target.queryKey)},'2',${quote(target.queriedAt)},'success','competing','synthetic')`
-      : `INSERT INTO platform_export_batch(title_code,year,sha256,collected_on,original_filename,row_count,created_at) VALUES('specialized_sme',2025,${quote(file.sha256)},'2026-10-01','synthetic.xlsx',1,'synthetic'); INSERT INTO platform_export_row(batch_id,source_row_no,name_raw,created_at) VALUES(last_insert_rowid(),2,'competing','synthetic')`
-    db.$client.exec(`CREATE TRIGGER synthetic_issue300_race AFTER INSERT ON platform_query WHEN NEW.query_key=${quote(sibling.queryKey)} BEGIN ${competing}; END`)
-    try {
-      const result = await submit('commit', body)
-      expect(result.status, JSON.stringify(result)).toBe('failed'); expect(result.summary).toMatchObject({ written: 0, skipped: 0 })
-      expect(result.items[0].error.code).toBe('commit_rolled_back')
-      expect(result.items[1].error.code).toBe(kind === 'query' ? 'query_payload_conflict' : 'export_row_payload_conflict')
-      expect(state()).toEqual(before)
-    } finally { db.$client.exec('DROP TRIGGER synthetic_issue300_race') }
-  }
-})
-
 it(`${protocol} discovery explains the existing reuseExisting field and immutable replay boundary`, async () => {
   for (const action of ['preflight', 'commit']) expect(metadata[action].requestBody.content['application/json'].schema.properties.payload.properties.platformQueries.items.properties.reuseExisting).toMatchObject({ type: 'boolean', const: true })
   if (realTransport) for (const tool of (await mcpClient.listTools()).tools.filter(tool => ['preflight_roster_batch', 'save_roster_batch'].includes(tool.name))) expect(tool.description).toContain('reuseExisting:true')
@@ -293,37 +250,6 @@ it(`${protocol} recognized typed envelope remains immutable while omitted status
   expect(read.rows[0].query.collectionEvidence).toEqual(evidence)
   expect(read.rows[0].relations[0].rawFields).toEqual(row)
 })
-
-it(`${protocol} pairs explicit reference, omitted row raw, complete legacy raw and second replay without changing the original archive`, async () => {
-  const q = query()
-  const old = db.insert(schema.platformQuery).values({ interface: q.interface, queryKey: q.queryKey, rdjb: q.rdjb, titleCode: q.titleCode, queriedAt: q.queriedAt, status: q.status, rawResponse: q.rawResponse }).returning().get()
-  const original = q.relations![0]!
-  const { declareKind, ...sourceRow } = original
-  if (declareKind != null && declareKind !== 'apply' && declareKind !== 'update' && declareKind !== 'review') throw new Error('Synthetic source row has an unsupported declaration kind')
-  const rel = db.insert(schema.platformRelation).values({ queryId: old.id, ...sourceRow, declareKind }).returning().get()
-  const before = { query: db.$client.prepare('SELECT * FROM platform_query WHERE id=?').get(old.id), relation: db.$client.prepare('SELECT * FROM platform_relation WHERE id=?').get(rel.id) }
-  const counts = () => [
-    (db.$client.prepare('SELECT count(*) n FROM platform_business_record WHERE platform_key=?').get(original.relationKey) as { n: number }).n,
-    (db.$client.prepare('SELECT count(*) n FROM platform_business_record_version WHERE record_id IN (SELECT id FROM platform_business_record WHERE platform_key=?)').get(original.relationKey) as { n: number }).n,
-    (db.$client.prepare('SELECT count(*) n FROM platform_business_observation WHERE relation_id=?').get(rel.id) as { n: number }).n,
-  ]
-  for (const reference of [{ ...q, reuseExisting: true as const }, { ...q, rawResponse: null, relations: [{ sequenceNo: 1, relationKey: original.relationKey }] }]) {
-    const out = await submit('commit', request({ platformQueries: [reference] }))
-    expect(out.status).toBe('committed'); expect(out.summary).toMatchObject({ written: 0, skipped: 1 })
-    expect(out.items[0].detail.canonicalProjection).toEqual([])
-    expect(counts()).toEqual([0, 0, 0])
-  }
-  const normal = { ...q, rawResponse: null }
-  const added = await submit('commit', request({ platformQueries: [normal] }))
-  expect(added.status).toBe('committed'); expect(added.summary).toMatchObject({ written: 0, skipped: 1, canonicalProjection: { recordsCreated: 1, versionsCreated: 1, observationsCreated: 1 } })
-  expect(counts()).toEqual([1, 1, 1])
-  const versions = db.$client.prepare('SELECT * FROM platform_business_record_version ORDER BY id').all()
-  const again = await submit('commit', request({ platformQueries: [normal] }))
-  expect(again.status).toBe('committed'); expect(again.summary).toMatchObject({ written: 0, skipped: 1, canonicalProjection: { recordsCreated: 0, versionsCreated: 0, observationsCreated: 0, observationsReused: 1 } })
-  expect(counts()).toEqual([1, 1, 1])
-  expect(db.$client.prepare('SELECT * FROM platform_business_record_version ORDER BY id').all()).toEqual(versions)
-  expect({ query: db.$client.prepare('SELECT * FROM platform_query WHERE id=?').get(old.id), relation: db.$client.prepare('SELECT * FROM platform_relation WHERE id=?').get(rel.id) }).toEqual(before)
-})
 it(`${protocol} accepts same-payload references that omit raw assertions and rejects explicit source-field changes before commit`, async () => {
   const q = query()
   expect((await submit('commit', request({ platformQueries: [q] }))).status).toBe('committed')
@@ -336,8 +262,7 @@ it(`${protocol} accepts same-payload references that omit raw assertions and rej
   expect((await submit('commit', body)).status).toBe('committed')
   const duplicated = query(); duplicated.relations!.push({ sequenceNo: 1 })
   const duplicateBody = request({ platformQueries: [duplicated] })
-  expect((await submit('preflight', duplicateBody)).preflight.conflicts).toEqual([])
-  expect((await submit('commit', duplicateBody)).status).toBe('committed')
+  await rejectAtomically(duplicateBody,'sequence_no_invalid')
   const fresh = query(), changed = { ...fresh, relations: [{ ...fresh.relations![0]!, nameRaw: 'different' }] }
   await rejectAtomically(request({ platformQueries: [fresh, changed] }), 'relation_payload_conflict')
 })
@@ -366,7 +291,7 @@ it.each([
     const result = await submit('commit', body)
     expect(result.status).toBe('committed')
     expect(result.summary.written).toBe(stored ? 0 : 3)
-    const saved = db.select().from(schema.platformQuery).all().filter(row => row.queryKey === original.queryKey)
+    const saved = nativeQueryRows(db).filter(row => row.queryKey === original.queryKey)
     expect(saved).toHaveLength(1)
     const read = await readQuery(saved[0]!.id)
     expect(read.rows[0].query.rawResponse).toBe(original.rawResponse)
@@ -398,7 +323,7 @@ it.each(['explicit-reuse', 'legacy-response-omission'] as const)(`${protocol} %s
     expect(replayItem.detail.canonicalProjection).toHaveLength(subset.length)
     expect(replayItem.detail.canonicalProjection.every((projection: { observationCreated: boolean }) => !projection.observationCreated)).toBe(true)
     if (stored) expect(state()).toEqual(before)
-    const saved = db.select().from(schema.platformQuery).all().filter(row => row.queryKey === original.queryKey)
+    const saved = nativeQueryRows(db).filter(row => row.queryKey === original.queryKey)
     expect(saved).toHaveLength(1)
     const read = await readQuery(saved[0]!.id)
     expect(read.rows[0].query.rawResponse).toBe(original.rawResponse)

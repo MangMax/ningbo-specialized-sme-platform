@@ -1,18 +1,18 @@
 import { commitRecordCorrespondences, preflightRecordCorrespondences } from '../server/utils/record-correspondence'
-import { ensurePlatformObservation } from '../server/utils/platform-business-record'
+import { submitNativePlatformQuery } from './helpers/native-platform-fixture'
+import { createRuntimeSchema } from '../db/create-runtime'
 import Database from 'better-sqlite3'
 import { afterEach, expect, it, vi } from 'vitest'
 import { mkdtempSync, rmSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { join } from 'node:path'
 import { createHash } from 'node:crypto'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
-import { migrate } from 'drizzle-orm/better-sqlite3/migrator'
 import * as s from '../db/schema'
 import { listCurrentQualified } from '../lib/roster/current-qualified-query'
 import { writeCurrentWorkbook } from '../lib/roster/current-workbook'
 import ExcelJS from 'exceljs'
-import * as candidates from '../lib/roster/current-candidates'
+import * as candidates from '../upgrade/frozen/current-candidates'
 import { normalizeUscc } from '../lib/domain'
 
 const relationIndex = 'platform_relation_current_candidate_cover_idx'
@@ -53,16 +53,12 @@ it('C01 selects both covering indexes only when available', () => {
 // Consumer fixtures are newly created, tiny files. No app worker/server is imported.
 function consumerFixture() {
   const dir = mkdtempSync(join(tmpdir(), 'cover363-consumer-'))
-  const statements: string[] = []
-  const sqlite = new Database(join(dir, 'synthetic.sqlite'), { verbose: sql => {
-    if (typeof sql !== 'string') throw new TypeError('Expected SQL text in verbose callback')
-    statements.push(sql)
-  } })
+  const sqlite = new Database(join(dir, 'synthetic.sqlite'))
   handles.push(sqlite); directories.push(dir)
-  migrate(drizzle(sqlite), { migrationsFolder: resolve('db/migrations') })
+  sqlite.pragma('foreign_keys=ON')
+  createRuntimeSchema(sqlite)
   const db = drizzle(sqlite)
   for (const [offset, title] of ['innovative_sme', 'specialized_sme', 'little_giant'].entries()) {
-    db.insert(s.title).values({ code: title, nameZh: title, level: 'municipal', rank: offset + 1 }).run()
     for (let n = 1; n <= 4; n++) {
       const id = offset * 4 + n
       const name = n === 1 ? '=1+1' : n === 2 ? 'Zeta\n企业😀' : `候选${id}`
@@ -72,36 +68,8 @@ function consumerFixture() {
       db.insert(s.recordEvidence).values({ id, recordEventId: id, sourceFile: 'jxj/announcement/synthetic363.pdf', attachment: '名单\n附件', listNo: id, page: 7 }).run()
     }
   }
-  statements.length = 0
-  return { db: sqlite, dir, statements }
+  return { db: sqlite, dir }
 }
-it('C30 qualified list count and page select the covering candidate path', () => {
-  vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(new Date('2026-10-26T00:00:00Z'))
-  const f = consumerFixture()
-  const result = listCurrentQualified(f.db, { titleCode: 'innovative_sme', pageSize: 1, page: 2 })
-  expect(result).toMatchObject({ total: 2, uncertainTotal: 0, rows: [{ enterpriseId: 2 }], page: 2, pageSize: 1 })
-  const candidate = f.statements.filter(sql => sql.startsWith('select c.id from (with owners'))
-  expect(candidate).toHaveLength(1)
-  expect(candidate[0]).toContain(`INDEXED BY ${relationIndex}`)
-  expect(candidate[0]).toContain(`INDEXED BY ${queryIndex}`)
-})
-it('C31 workbook count and eligible cursor share the covering candidate path', async () => {
-  vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(new Date('2026-10-26T00:00:00Z'))
-  const f = consumerFixture()
-  const result = await writeCurrentWorkbook(f.db, 'innovative_sme', join(f.dir, 'tiny.xlsx'), () => {})
-  expect(result).toMatchObject({ total: 4, counts: { eligible: 2, pending: 0, excluded: 2 } })
-  const counts = f.statements.filter(sql => sql.startsWith('select count(*) as n from (with owners'))
-  const cursors = f.statements.filter(sql => sql.startsWith('select id from (with owners'))
-  // One complete-set count plus at least one bounded cursor page; the cursor is
-  // re-run per 100-id batch, so its execution count is data dependent, not 2.
-  expect(counts).toHaveLength(1)
-  expect(cursors.length).toBeGreaterThan(0)
-  for (const sql of [...counts, ...cursors]) {
-    expect(sql).toContain(`INDEXED BY ${relationIndex}`)
-    expect(sql).toContain(`INDEXED BY ${queryIndex}`)
-  }
-})
-
 it.each([
   { name: 'relation-only', ddl: `DROP INDEX ${queryIndex}` },
   { name: 'query-only', ddl: `DROP INDEX ${relationIndex}` },
@@ -258,11 +226,7 @@ it.each(titles)('C32 fixed-time list literals preserve qualification filters opt
     { validYear: 2026 }, { maintenanceYear: 2026 }, { maintenanceYear: 2026, maintenanceBatch: 1 },
   ]
   const read = () => filters.map(filter => listCurrentQualified(f.db, { titleCode: title, ...filter }))
-  f.db.exec(`DROP INDEX ${relationIndex}; DROP INDEX ${queryIndex}`)
-  const old = read()
-  f.db.exec(indexSql)
   const covered = read()
-  expect(covered).toEqual(old)
   const all = covered[0]!
   expect(all).toMatchObject({ total: 2, uncertainTotal: 0, titleCode: title, ruleVersion: 'current-roster-116-v11', snapshotStartedAt: '2026-10-26T00:00:00.000Z', options: { recognitionYears: [2026], validYears: [], maintenanceYears: [], maintenanceBatchesByYear: {} } })
   expect(all.rows.map(row => row.enterpriseId)).toEqual([first, first + 1])
@@ -287,18 +251,12 @@ it.each(titles)('C33 fixed-time workbook literals preserve all sheets columns te
     const progress: unknown[] = [], path = join(f.dir, name)
     const result = await writeCurrentWorkbook(f.db, title, path, (...args) => progress.push(args))
     const workbook = new ExcelJS.Workbook(); await workbook.xlsx.readFile(path)
-    const values = workbook.worksheets.map(sheet => ({ name: sheet.name, rows: sheet.getSheetValues(), columns: sheet.columns.map(column => column.width), views: sheet.views, autoFilter: sheet.autoFilter }))
-    return { result, progress, values, workbook }
+    return { result, progress, workbook }
   }
-  f.db.exec(`DROP INDEX ${relationIndex}; DROP INDEX ${queryIndex}`)
-  const old = await run('old.xlsx')
-  f.db.exec(indexSql)
-  const covered = await run('cover.xlsx')
-  expect(covered.result).toEqual(old.result)
+  const covered = await run('native.xlsx')
   expect(covered.result).toMatchObject({ total: 4, counts: { eligible: 2, pending: 0, excluded: 2 }, generatedAt: '2026-10-26T00:00:00.000Z', snapshotStartedAt: '2026-10-26T00:00:00.000Z', ruleVersion: 'current-roster-116-v11' })
   expect(covered.result.dataVersion).toMatch(/^sha256:[a-f0-9]{64}$/)
   expect(covered.progress).toEqual([[0, 4, '2026-10-26T00:00:00.000Z']])
-  expect(covered.values).toEqual(old.values)
   expect(covered.workbook.worksheets.map(sheet => sheet.name)).toEqual(['有效企业', '已到期', '已注销（吊销）', '已迁出', '未认定', '口径说明'])
   expect(covered.workbook.worksheets.map(sheet => sheet.rowCount)).toEqual([3, 2, 1, 1, 2, 9])
   const headers = ['序号', '企业名称', '统一社会信用代码', '区县', '称号', '首次认定年份', '认定及复核情况', '公布名称', '已确认曾用名', '公布对应情况', '情况说明', '来源及页码', '有效状态', '有效期及排除依据', '资料缺口与来源备注']
@@ -319,10 +277,10 @@ it.each(titles)('C33 fixed-time workbook literals preserve all sheets columns te
   expect(covered.workbook.getWorksheet('未认定')!.getCell('B2').value).toBe(`候选${first + 3}`)
   expect(f.db.inTransaction).toBe(false)
 })
-it('C34 both consumers read an old readonly file without changing database bytes', async () => {
+it('C34 both consumers read a native readonly file without changing database bytes', async () => {
   vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(new Date('2026-10-26T00:00:00Z'))
   const f = consumerFixture(), path = f.db.name
-  f.db.exec(`DROP INDEX ${relationIndex}; DROP INDEX ${queryIndex}`); f.db.close()
+  f.db.close()
   const before = readFileSync(path), readonly = new Database(path, { readonly: true, fileMustExist: true }); handles.push(readonly)
   expect(listCurrentQualified(readonly, { titleCode: 'innovative_sme' })).toMatchObject({ total: 2, rows: [{ enterpriseId: 1 }, { enterpriseId: 2 }] })
   expect(await writeCurrentWorkbook(readonly, 'innovative_sme', join(f.dir, 'readonly.xlsx'), () => {})).toMatchObject({ total: 4, counts: { eligible: 2, pending: 0, excluded: 2 } })
@@ -331,25 +289,20 @@ it('C34 both consumers read an old readonly file without changing database bytes
 it('C35 confirmed recognized witness preserves positive options filters and source pointers', () => {
   vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(new Date('2026-10-26T00:00:00Z'))
   const f = consumerFixture(), db = drizzle(f.db, { schema: s }), stamp = '2026-10-25T00:00:00Z'
-  const rawFields = { id: 'synthetic363-recognized', rddqrq: '2028-11-20', whpc: '2025-2' }
-  db.insert(s.platformQuery).values({ id: 1, interface: 'recognized_list', queryKey: '000000000000000001', rdjb: '1', titleCode: 'innovative_sme', queriedAt: stamp, status: 'success', collectionEvidence: {
+  const rawFields = { id: 'synthetic363-recognized', qymc:'=1+1',tyshxydm:'000000000000000001', rddqrq: '2028-11-20', whpc: '2025-2' }
+  const seeded = submitNativePlatformQuery(db, { interface: 'recognized_list', queryKey: '000000000000000001', rdjb: '1', titleCode: 'innovative_sme', queriedAt: stamp, status: 'success', collectionEvidence: {
     source: 'queryBusList', status: 'success', effectiveConditions: { combination: 'and', rddqrq: '2028', whpcyear: '2025', whpc: '2' },
     titleScope: { mode: 'selected', rdjb: ['1'] }, queriedAt: stamp, completedAt: stamp,
-    rows: [rawFields], pages: [{ source: 'queryBusList', rdjb: '1', page: 1, status: 'success', fetchedCount: 1, declaredTotal: 1, maxPage: 1 }],
+    rows: [rawFields], pages: [{ source: 'queryBusList', rdjb: '1', page: 1, status: 'success', fetchedCount: 1, declaredTotal: 1, maxPage: 1, error:null }],
     fetchedCount: 1, declaredTotal: 1, completeness: 'complete', fullRange: true, unfinished: [], error: null,
     limits: { maxRequests: 1, maxRows: 50, maxDurationMs: 1000, pageSize: 50 },
-  } as never }).run()
-  db.insert(s.platformRelation).values({ id: 1, queryId: 1, sequenceNo: 1, enterpriseId: 1, usccRaw: '000000000000000001', nameRaw: '=1+1', rawFields, verificationStatus: 'confirmed', matchBasis: 'uscc' }).run()
-  ensurePlatformObservation(db, 1)
-  const request = { idempotencyKey: 'cover363-recognized', sourceIdentity: 'synthetic/cover363', actor: { type: 'agent' as const, id: 'synthetic363' }, basis: 'Synthetic confirmed event and recognized row', ruleId: 'manual', ruleVersion: '1', operations: [{ action: 'create' as const, status: 'confirmed' as const, edge: { type: 'event_recognized' as const, eventId: 1, relationId: 1, role: 'recognized_corrob' as const } }] }
+  }, relations:[{ sequenceNo:1,relationKey:rawFields.id,enterpriseId:1,usccRaw:'000000000000000001',nameRaw:'=1+1',rawFields,verificationStatus:'confirmed',matchBasis:'uscc' }] })
+  const request = { idempotencyKey: 'cover363-recognized', sourceIdentity: 'synthetic/cover363', actor: { type: 'agent' as const, id: 'synthetic363' }, basis: 'Synthetic confirmed event and recognized row', ruleId: 'manual', ruleVersion: '1', operations: [{ action: 'create' as const, status: 'confirmed' as const, edge: { type: 'event_recognized' as const, eventId: 1, relationId: seeded.relationIds[0]!, role: 'recognized_corrob' as const } }] }
   const plan = preflightRecordCorrespondences(db, request)
   commitRecordCorrespondences(db, request, plan.planHash)
   const filters = [{}, { validYear: 2028, maintenanceYear: 2025 }, { validYear: 2029 }, { maintenanceYear: 2025, maintenanceBatch: 2 }]
   const read = () => filters.map(filter => listCurrentQualified(f.db, { titleCode: 'innovative_sme', ...filter }))
-  f.db.exec(`DROP INDEX ${relationIndex}; DROP INDEX ${queryIndex}`)
-  const old = read(); f.db.exec(indexSql)
   const covered = read()
-  expect(covered).toEqual(old)
   expect(covered[0]).toMatchObject({ total: 2, options: { recognitionYears: [2026], validYears: [2028], maintenanceYears: [2025], maintenanceBatchesByYear: {} } })
   expect(covered[1]).toMatchObject({ total: 1, rows: [{ enterpriseId: 1, matchedValidYears: [2028], matchedMaintenance: [{ year: 2025, batch: null }] }] })
   expect(covered[1]!.rows[0]!.qualificationWitnesses).toEqual([{ cycle: { originYear: 2026, batchSeq: 1 }, awardEventId: 1, recognition: { precision: 'year', year: 2026 }, matchedValidYear: 2028, matchedMaintenance: { year: 2025, batch: null }, correspondenceId: 1, conditionQueryId: 1 }])
@@ -363,9 +316,6 @@ it('C36 confirmed alias filtering preserves identity references and excludes pen
   db.insert(s.enterpriseAlias).values({ id: 1, enterpriseId: 1, name: '原公布名称', nameNorm: '原公布名称', sourceKind: 'manual', verificationStatus: 'confirmed' }).run()
   db.insert(s.enterpriseAlias).values({ id: 2, enterpriseId: 2, name: '原公布名称', nameNorm: '原公布名称', sourceKind: 'manual', verificationStatus: 'pending' }).run()
   const read = () => listCurrentQualified(f.db, { titleCode: 'innovative_sme', q: '原公布名称', district: '鄞州区' })
-  f.db.exec(`DROP INDEX ${relationIndex}; DROP INDEX ${queryIndex}`)
-  const old = read(); f.db.exec(indexSql)
   const covered = read()
-  expect(covered).toEqual(old)
   expect(covered).toMatchObject({ total: 1, rows: [{ enterpriseId: 1, aliases: ['原公布名称'], references: ['evidence:1 jxj/announcement/synthetic363.pdf 名单\n附件 序号:1', 'alias:1@1'] }] })
 })

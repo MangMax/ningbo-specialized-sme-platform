@@ -1,8 +1,8 @@
 # 名录生命周期模型:公布历史、平台现状与解释证据三线分离
 
-> 状态（2026-10-25）：部分被后续能力及[待审分域 ADR](0001-source-domain-boundaries.md)限定，原文保留。正式历史、平台陈述、明确决定分离和未知不猜仍成立；平台现已承载申报/办理/目录业务，不只取证。迁移字段暂寄差异 head 是兼容现状，独立主体断言尚待实施；下文复核锚点摘要不能替代原认定周期裁定，也不能据此把失败后仅一次复核通过自动算有效。当前实现与目标分开见[总览](../data-model.md)。历史样例、测试数与 API 清单不作本轮新鲜验收。
+> 状态（2026-10-25）：部分被后续能力及[待审分域 ADR](0001-source-domain-boundaries.md)限定，原文保留。正式历史、平台陈述、明确决定分离和未知不猜仍成立；平台现已承载申报/办理/目录业务，不只取证。迁移字段暂寄差异 head 是兼容现状，独立主体断言尚待实施；下文复核锚点摘要不能替代原认定周期裁定，也不能据此把失败后仅一次复核通过自动算有效。当前实现与目标分开见[总览](../../db/schema.ts)。历史样例、测试数与 API 清单不作本轮新鲜验收。
 
-2026-10-16 · 状态:接受(RL-01) · 契约原文 [`docs/roster-lifecycle-contract.md`](../roster-lifecycle-contract.md)
+2026-10-16 · 状态:接受(RL-01) · 契约原文 [`lib/roster-import-client.ts`](../../lib/roster-import-client.ts)
 
 本 ADR 冻结后续全部名录票共同遵守的领域模型:**一家企业**跨三个称号的**身份与历史**、
 经信局**公布文件**给出的权威认定/复核事实、工信部**导出表**在采集时点的**平台现状**、
@@ -94,7 +94,7 @@ erDiagram
 5. **未通过的复核不再进入当前有效资格的复核队列**。
 6. `nurture`(入库培育)**不构成称号**,不参与首次认定 / 复核清单。
 7. **`decided_year` 是必需的补充**:既有 `record_event.year` 对复核事件记的是**被复核的原认定年份**
-   (GLOSSARY「复核」),表达不出「结论发生在哪一年」,而锚点要的是结论年份。
+   ,表达不出「结论发生在哪一年」,而锚点要的是结论年份。
    来源给不出时**留空**,锚点退回 `year` 并**标待核** —— **不猜**。
 
 **实测样例(平台关系行可佐证结论年份)**:USCC `91330211255994457P` 的关联
@@ -320,7 +320,7 @@ erDiagram
 | 候选(报告) | `import_batch.item_results`(`kind='duplicate_candidate'`)+ 预检增量字段 `duplicateCandidates` |
 | 候选 → 可并/待核 | `GET /api/roster/import/duplicate-candidates?batchKey=…`(只读报告,§7.8) |
 | 执行 | `POST /api/roster/import/commit`(§8.2),载荷 = `payload.merges`(§8.4) |
-| 可运行入口 | `node scripts/roster-duplicate-merge.mjs --base-url … --batch-key …`(薄封装上面两步) |
+| 可运行入口 | `GET /api/roster/import/duplicate-candidates` 取得请求，按当前契约预检后提交到 `POST /api/roster/import/commit` |
 | 幂等 | 幂等键 = `duplicate_merge:<源批次键>#sha256:<归并内容>` ⇒ 同证据重放不增行;补证据 ⇒ 新键新批 |
 
 **明确不做**:不给 `enterprise` 加「并入哪一行」的列(归并轨迹仍在 `import_batch.item_results`)。

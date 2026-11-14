@@ -1,11 +1,11 @@
+import { createRuntimeSchema } from '../db/create-runtime'
 import { createHash } from 'node:crypto'
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs'
-import { join, resolve } from 'node:path'
+import { join } from 'node:path'
 import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
-import { migrate } from 'drizzle-orm/better-sqlite3/migrator'
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from 'vitest'
 import { z } from 'zod'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
@@ -30,9 +30,8 @@ const dir = mkdtempSync('/tmp/issue350-mcp-'), filesDir = join(dir, 'files')
 mkdirSync(filesDir)
 writeFileSync(join(filesDir, 'notice.txt'), bytes)
 const sqlite = new Database(join(dir, 'synthetic.sqlite')); sqlite.pragma('foreign_keys=ON')
-const db = drizzle(sqlite, { schema }); migrate(db, { migrationsFolder: resolve('db/migrations') })
-sqlite.exec(`INSERT INTO title(code,name_zh,level,rank) VALUES('specialized_sme','Synthetic','municipal',2);
-  INSERT INTO enterprise(id,name,name_norm) VALUES(1,'Alpha','Alpha'),(2,'Beta','Beta');
+const db = drizzle(sqlite, { schema }); createRuntimeSchema(sqlite)
+sqlite.exec(`INSERT INTO enterprise(id,name,name_norm) VALUES(1,'Alpha','Alpha'),(2,'Beta','Beta');
   INSERT INTO record(id,enterprise_id,title_code,source) VALUES(1,1,'specialized_sme','jxj'),(2,2,'specialized_sme','jxj');
   INSERT INTO record_event(id,record_id,event_type,year) VALUES(1,1,'award',2021),(2,1,'review',2024),(3,2,'award',2021);
   INSERT INTO source_document(id,source,title,path) VALUES(1,'jxj','Explicit publication','notice.txt');

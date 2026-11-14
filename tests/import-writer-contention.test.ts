@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import Database from 'better-sqlite3'
 import { expect, it } from 'vitest'
-import { useDb } from '../db/client'
+import { initializeDb } from '../db/client'
 import { commitRosterImport } from '../server/utils/roster-import'
 import { readImportReceipt } from '../server/utils/import-receipts'
 
@@ -12,7 +12,7 @@ it.each([
   { phase: 'execution', transaction: 2 },
 ])('keeps import $phase atomic when another writer attempts to change its read snapshot', ({ transaction }) => {
   const dir = mkdtempSync(join(tmpdir(), 'import-writer-contention-'))
-  const db = useDb({ dbPath: join(dir, 'isolated.db') })
+  const db = initializeDb({ create: true,  dbPath: join(dir, 'isolated.db') })
   // A synthetic second connection represents the automatic candidate writer.
   // timeout=0 makes this probe report lock ownership immediately; it changes no
   // application connection setting and neither waits nor retries a business write.

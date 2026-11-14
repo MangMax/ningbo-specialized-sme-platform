@@ -2,8 +2,8 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { afterAll, beforeAll, expect, it } from 'vitest'
-import { useDb } from '../db/client'
-import { spawnOwnedChild as spawn, reserveLoopbackPort, stopOwnedChild, waitForHttp } from '../scripts/lib/isolated-local-services.mjs'
+import { initializeDb } from '../db/client'
+import { spawnOwnedChild as spawn, reserveLoopbackPort, stopOwnedChild, waitForHttp } from './helpers/isolated-local-services.mjs'
 
 // Built-product task context checks. Fresh empty synthetic schema, explicit
 // tokens, no parent manual fixture or real business data; no implicit build.
@@ -12,12 +12,12 @@ const token = 'synthetic-main-sync-token'
 let child: ReturnType<typeof spawn> | undefined, base = '', output = ''
 let annualSubmission: { jobId: string; requestId: string } | undefined
 beforeAll(async () => {
-  const db = useDb({ dbPath: join(root, 'synthetic.db') }); db.$client.close()
+  const db = initializeDb({ create: true,  dbPath: join(root, 'synthetic.db') }); db.$client.close()
   const port = await reserveLoopbackPort(); expect(port).not.toBe(50055)
   base = `http://127.0.0.1:${port}`
   child = spawn(process.execPath, ['.output/server/index.mjs'], {
     cwd: resolve(import.meta.dirname, '..'), stdio: ['ignore', 'pipe', 'pipe'],
-    env: { ...process.env, NODE_ENV: 'production', HOST: '127.0.0.1', PORT: String(port), NUXT_DB_PATH: join(root, 'synthetic.db'), NUXT_DB_READONLY: '0', NUXT_LOG_DIR: join(root, 'logs'), NUXT_FILES_DIR: join(root, 'files'), NUXT_INCOMING_DIR: join(root, 'incoming'), NUXT_CURATED_PATH: join(root, 'curated.json'), NUXT_RECONCILE_PATH: join(root, 'reconcile.json'), NUXT_API_TOKEN: token, NUXT_MCP_TOKEN: token, NUXT_BROWSER_LOGS_ENABLED: 'false', NUXT_BROWSER_REVIEW_ENABLED: 'false', NUXT_OCR_TOKEN: '', NUXT_PLATFORM_COOKIE: '' },
+    env: { ...process.env, NODE_ENV: 'production', HOST: '127.0.0.1', PORT: String(port), NUXT_DB_PATH: join(root, 'synthetic.db'), NUXT_DB_READONLY: '0', NUXT_LOG_DIR: join(root, 'logs'), NUXT_FILES_DIR: join(root, 'files'), NUXT_INCOMING_DIR: join(root, 'incoming'), NUXT_CURATED_PATH: join(root, 'curated.json'), NUXT_RECONCILE_PATH: join(root, 'reconcile.json'), NUXT_API_TOKEN: token, NUXT_MCP_TOKEN: token, NUXT_OCR_TOKEN: '', NUXT_PLATFORM_COOKIE: '' },
   })
   child.stdout!.on('data', chunk => { output = (output + chunk).slice(-64000) })
   child.stderr!.on('data', chunk => { output = (output + chunk).slice(-64000) })

@@ -5,10 +5,10 @@ import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { migrate } from 'drizzle-orm/better-sqlite3/migrator'
 import { afterAll, describe, expect, it } from 'vitest'
-import * as schema from '../db/schema'
+import * as schema from '../upgrade/legacy-schema'
 import { parseApplyRecord } from '../lib/platform/apply-record'
 import { parseBusinessProcess } from '../lib/platform/business-projection'
-import { ensurePlatformObservation } from '../server/utils/platform-business-record'
+import { ensurePlatformObservation } from '../upgrade/frozen/server/platform-business-record'
 
 const dirs: string[] = []
 afterAll(() => dirs.forEach(dir => rmSync(dir, { recursive: true, force: true })))
@@ -36,7 +36,15 @@ function fixture(legacy = false) {
     writeFileSync(journalPath, JSON.stringify(journal))
     migrate(db, { migrationsFolder: pre })
   } else migrate(db, { migrationsFolder: migrations })
-  return { sqlite, db }
+  const upgrade = join(dir, 'through43')
+  if (legacy) {
+    cpSync(migrations, upgrade, { recursive: true })
+    const journalPath = join(upgrade, 'meta/_journal.json')
+    const journal = JSON.parse(readFileSync(journalPath, 'utf8'))
+    journal.entries = journal.entries.filter((entry: { idx: number }) => entry.idx <= 43)
+    writeFileSync(journalPath, JSON.stringify(journal))
+  }
+  return { sqlite, db, upgrade }
 }
 function snapshot(sqlite: Database.Database) {
   const result: Record<string, unknown> = {}
@@ -52,7 +60,7 @@ function snapshot(sqlite: Database.Database) {
 
 describe('0043 row-owned platform titles', () => {
   it('backfills only row strings through 0042 upgrade and preserves every original column and journal replay', () => {
-    const { sqlite, db } = fixture(true)
+    const { sqlite, db, upgrade } = fixture(true)
     try {
       let id = 0
       for (const source of ['apply', 'business'] as const) {
@@ -70,7 +78,7 @@ describe('0043 row-owned platform titles', () => {
       sqlite.prepare("INSERT INTO platform_recognized_projection(version_id,record_id,title_raw,rule_version,created_at) VALUES(1,1,' preserved recognized ','platform-recognized-v1','frozen')").run()
       const before = snapshot(sqlite)
       expect(sqlite.prepare('PRAGMA table_info(platform_relation)').all()).not.toContainEqual(expect.objectContaining({ name: 'title_raw' }))
-      migrate(db, { migrationsFolder: migrations })
+      migrate(db, { migrationsFolder: upgrade })
       expect(snapshot(sqlite)).toEqual(before)
       const expected = [...cases, ...cases].map(([, title_raw]) => ({ title_raw }))
       expect(sqlite.prepare('SELECT title_raw FROM platform_relation ORDER BY id').all()).toEqual(expected)
@@ -83,7 +91,7 @@ describe('0043 row-owned platform titles', () => {
         expect((sqlite.prepare(`PRAGMA index_info(${index})`).all() as { name: string }[]).map(row => row.name)).toEqual(columns)
       }
       const after = snapshot(sqlite)
-      migrate(db, { migrationsFolder: migrations })
+      migrate(db, { migrationsFolder: upgrade })
       expect(snapshot(sqlite)).toEqual(after)
       expect(sqlite.pragma('foreign_key_check')).toEqual([])
     } finally { sqlite.close() }

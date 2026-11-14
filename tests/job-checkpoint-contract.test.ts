@@ -16,7 +16,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { useDb } from '../db/client'
+import { initializeDb } from '../db/client'
 import {
   __resetJobRunner,
   clearJobSpecs,
@@ -30,7 +30,7 @@ import {
 import { getJob, toJobDto } from '../server/utils/job-store'
 
 const dir = mkdtempSync(join(tmpdir(), 'job-contract-'))
-const db = useDb({ dbPath: join(dir, 'test.sqlite') })
+const db = initializeDb({ create: true,  dbPath: join(dir, 'test.sqlite') })
 
 /** kind 在一次执行里先落下的检查点。 */
 const checkpoint = {

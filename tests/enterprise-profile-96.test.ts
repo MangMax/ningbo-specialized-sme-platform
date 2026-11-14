@@ -1,3 +1,4 @@
+import { submitNativePlatformQuery } from './helpers/native-platform-fixture'
 import { initializeDb } from '../db/client'
 import { afterAll, beforeAll, expect, it, vi } from 'vitest'
 import { createServer, type Server } from 'node:http'
@@ -144,8 +145,7 @@ it('PATCH preserves formal rows, source evidence, platform originals and readbac
   const record = db.insert(schema.record).values({ enterpriseId: owner.id, titleCode: 'specialized_sme', source: 'jxj', nameRaw: owner.name, district: '历史属地' }).returning().get()
   const event = db.insert(schema.recordEvent).values({ recordId: record.id, eventType: 'award', year: 2024 }).returning().get()
   db.insert(schema.recordEvidence).values({ recordEventId: event.id, sourceFile: 'synthetic96.pdf', attachment: '原附件', listNo: 11, page: 3 }).run()
-  const query = db.insert(schema.platformQuery).values({ interface: 'apply_list', queryKey: `name:${owner.nameNorm}`, queriedAt: '2026-10-19', status: 'success', rawResponse: '平台原文96' }).returning().get()
-  db.insert(schema.platformRelation).values({ queryId: query.id, enterpriseId: owner.id, sequenceNo: 1, nameRaw: owner.name, rawFields: { original: '平台原始行96' } }).run()
+  submitNativePlatformQuery(db, { interface: 'apply_list', queryKey: `name:${owner.nameNorm}`, queriedAt: '2026-10-19', status: 'success', rawResponse: '平台原文96', relations: [{ enterpriseId: owner.id, sequenceNo: 1, nameRaw: owner.name, rawFields: { original: '平台原始行96' } }] })
   const detailBefore = (await request(`/api/roster/enterprises/${owner.id}`)).body
   await request('/api/roster/enterprises?pageSize=25') // Warm an existing reader before commit.
   const input = command(before.version, { name: '九六跨接缝新名', city: '宁波市', district: '鄞州区' }, { previousName: { name: owner.name, sameSubject: true } })
@@ -293,11 +293,10 @@ it('profile and history reads stay scoped as unrelated malformed archives and au
   db.$client.transaction(() => {
     const enterprise = db.$client.prepare('INSERT INTO enterprise(name,name_norm,quality_flags) VALUES(?,?,?)')
     const audit = db.$client.prepare('INSERT INTO enterprise_profile_audit(enterprise_id,idempotency_key,request_hash,before_version,after_version,"before","after",actor,basis,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)')
-    const query = db.$client.prepare("INSERT INTO platform_query(interface,query_key,queried_at,status,raw_response,created_at) VALUES('apply_list',?,'2026-10-19','failed',?,'2026-10-19')")
     for (let i = 0; i < 1000; i++) {
       const id = Number(enterprise.run(`无关合成96-${i}`, `无关合成96-${i}`, '{malformed unrelated flags').lastInsertRowid)
       audit.run(id, `unrelated96-${i}`, 'x', 'x', 'x', '{malformed unrelated profile', '{malformed unrelated profile', '{malformed actor', 'x'.repeat(4096), '2026-10-19')
-      if (i < 50) query.run(`unrelated96-${i}`, 'r'.repeat(64 * 1024))
+      if (i < 50) submitNativePlatformQuery(db, { interface: 'apply_list', queryKey: `unrelated96-${i}`, queriedAt: '2026-10-19', status: 'failed', rawResponse: 'r'.repeat(64 * 1024) })
     }
   })()
   await sample(1)

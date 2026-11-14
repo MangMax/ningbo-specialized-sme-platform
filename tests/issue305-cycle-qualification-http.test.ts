@@ -5,18 +5,18 @@ import { join } from 'node:path'
 import * as h3 from 'h3'
 import ExcelJS from 'exceljs'
 import { afterAll, beforeAll, expect, it, vi } from 'vitest'
-import { useDb, schema as s } from '../db/client'
+import { initializeDb, schema as s } from '../db/client'
 import { enterpriseReads } from '../server/utils/enterprise-read'
 import { writeCurrentWorkbook } from '../lib/roster/current-workbook'
 import { createCurrentCandidateReader } from '../lib/roster/current-qualification'
 import { qualificationCasesR4 } from './fixtures/current-qualification-r4'
 import { qualificationCasesR5 } from './fixtures/current-qualification-r5'
 
-const active = vi.hoisted(() => ({ db: null as ReturnType<typeof useDb> | null }))
+const active = vi.hoisted(() => ({ db: null as ReturnType<typeof initializeDb> | null }))
 vi.mock('@db', () => ({ useDb: () => active.db }))
 vi.mock('@nuxtjs/mcp-toolkit/server', () => ({ defineMcpTool: (tool: unknown) => tool }))
 const dir = mkdtempSync(join(tmpdir(), 'issue305-cycles-'))
-const db = useDb({ dbPath: join(dir, 'issue305.sqlite') }); active.db = db
+const db = initializeDb({ create: true,  dbPath: join(dir, 'issue305.sqlite') }); active.db = db
 const titles = ['little_giant', 'specialized_sme', 'innovative_sme'] as const
 type Event = { eventType: 'award' | 'review'; year: number | null; decidedYear: number | null; batchSeq: number | null; reviewOutcome?: 'passed' | 'failed' | null }
 const award = (year: number, batchSeq = 1): Event => ({ eventType: 'award', year, decidedYear: year, batchSeq })

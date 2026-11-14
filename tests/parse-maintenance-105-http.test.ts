@@ -3,12 +3,12 @@ import { createHash } from 'node:crypto'
 import { join, resolve } from 'node:path'
 
 import { afterAll, beforeAll, expect, it } from 'vitest'
-import { useDb, schema } from '../db/client'
-import { spawnOwnedChild as spawn, reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../scripts/lib/isolated-local-services.mjs'
+import { initializeDb, schema } from '../db/client'
+import { spawnOwnedChild as spawn, reserveLoopbackPort, waitForHttp, stopOwnedChild } from './helpers/isolated-local-services.mjs'
 
 const dir = mkdtempSync('/tmp/issue310-http-')
 const dbPath = join(dir, 'roster.db')
-const db = useDb({ dbPath })
+const db = initializeDb({ create: true,  dbPath })
 const token = 'synthetic-105-token'
 let service: { baseUrl: string; stop: () => Promise<void> }
 let serial = 0

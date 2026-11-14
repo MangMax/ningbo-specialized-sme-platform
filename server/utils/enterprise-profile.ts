@@ -5,6 +5,7 @@ import { z } from 'zod'
 import * as s from '../../db/schema'
 import { captureIdentityRevision113, identityMaterial113 } from './evidence-impact-113'
 import { normalizeName } from '../../lib/domain'
+import { canonicalEnterpriseId, currentEnterpriseIdentity } from '../../lib/roster/enterprise-identity'
 
 type Db = BetterSQLite3Database<typeof s>
 type Executor = Pick<Db, 'select' | 'insert' | 'update'>
@@ -27,6 +28,7 @@ export const enterpriseProfilePatchSchema = z.strictObject({
 })
 const digest = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex')
 function state(db: Executor, enterpriseId: number) {
+  enterpriseId = canonicalEnterpriseId(db, enterpriseId) ?? enterpriseId
   const row = db.select({ id: s.enterprise.id, name: s.enterprise.name, nameNorm: s.enterprise.nameNorm, city: s.enterprise.city, district: s.enterprise.district, usccNorm: s.enterprise.usccNorm }).from(s.enterprise).where(eq(s.enterprise.id, enterpriseId)).get()
   if (!row) throw new EnterpriseProfileError(404, 'not_found', 'Enterprise not found')
   const last = db.select({ key: s.enterpriseProfileAudit.idempotencyKey }).from(s.enterpriseProfileAudit).where(eq(s.enterpriseProfileAudit.enterpriseId, enterpriseId)).orderBy(desc(s.enterpriseProfileAudit.id)).limit(1).get()
@@ -41,6 +43,7 @@ function receipt(row: typeof s.enterpriseProfileAudit.$inferSelect) {
   return { auditId: row.id, profile: row.after, version: row.afterVersion, retainedAlias: row.retainedAliasId == null ? null : { id: row.retainedAliasId, name: row.before.name, created: row.aliasCreated }, committedAt: row.createdAt }
 }
 export function patchEnterpriseProfile(db: Db, enterpriseId: number, body: unknown) {
+  enterpriseId = canonicalEnterpriseId(db, enterpriseId) ?? enterpriseId
   const parsed = enterpriseProfilePatchSchema.safeParse(body)
   if (!parsed.success) throw new EnterpriseProfileError(400, 'invalid_request', z.prettifyError(parsed.error))
   const input = parsed.data, requestHash = digest({ enterpriseId, ...input })
@@ -62,7 +65,7 @@ export function patchEnterpriseProfile(db: Db, enterpriseId: number, body: unkno
       if (input.previousName?.name !== current.profile.name) throw new EnterpriseProfileError(422, 'previous_name_confirmation_required', 'Confirm the exact previous name belongs to this enterprise')
       const nameNorm = normalizeName(after.name), oldNorm = normalizeName(current.profile.name)
       if (!nameNorm || !oldNorm) throw new EnterpriseProfileError(422, 'invalid_name', 'Normalized enterprise name must not be empty')
-      const nameOwner = tx.select({ id: s.enterprise.id }).from(s.enterprise).where(and(inArray(s.enterprise.nameNorm, [nameNorm, oldNorm]), ne(s.enterprise.id, enterpriseId))).limit(1).get()
+      const nameOwner = tx.select({ id: s.enterprise.id }).from(s.enterprise).where(and(currentEnterpriseIdentity(tx), inArray(s.enterprise.nameNorm, [nameNorm, oldNorm]), ne(s.enterprise.id, enterpriseId))).limit(1).get()
       const aliasOwner = tx.select({ id: s.enterpriseAlias.id }).from(s.enterpriseAlias).where(and(inArray(s.enterpriseAlias.nameNorm, [nameNorm, oldNorm]), eq(s.enterpriseAlias.verificationStatus, 'confirmed'), ne(s.enterpriseAlias.enterpriseId, enterpriseId))).limit(1).get()
       if (nameOwner || aliasOwner) throw new EnterpriseProfileError(409, 'identity_conflict', 'Name belongs to another enterprise; use the identity operation')
       const existing = tx.select({ id: s.enterpriseAlias.id }).from(s.enterpriseAlias).where(and(eq(s.enterpriseAlias.enterpriseId, enterpriseId), eq(s.enterpriseAlias.nameNorm, oldNorm), eq(s.enterpriseAlias.verificationStatus, 'confirmed'))).orderBy(asc(s.enterpriseAlias.id)).limit(1).get()

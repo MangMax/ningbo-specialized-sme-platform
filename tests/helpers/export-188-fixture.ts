@@ -2,9 +2,9 @@ import { spawn } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
 import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
-import { useDb, schema as s } from '../../db/client'
+import { initializeDb, schema as s } from '../../db/client'
 
-export function export188Candidate(db: ReturnType<typeof useDb>, name: string, titleCode = 'specialized_sme') {
+export function export188Candidate(db: ReturnType<typeof initializeDb>, name: string, titleCode = 'specialized_sme') {
   const enterprise = db.insert(s.enterprise).values({ name, nameNorm: name, district: '鄞州区' }).returning().get()
   const record = db.insert(s.record).values({ enterpriseId: enterprise.id, nameRaw: name, titleCode, source: 'jxj' }).returning().get()
   const event = db.insert(s.recordEvent).values({ recordId: record.id, eventType: 'award', year: new Date().getFullYear(), batchSeq: 1 }).returning().get()
@@ -14,7 +14,7 @@ export function export188Candidate(db: ReturnType<typeof useDb>, name: string, t
 
 /** Child entry: ACK is only valid after the single transaction and handle close. */
 export function populateExport188DisconnectFixture(dbPath: string) {
-  const db = useDb({ dbPath })
+  const db = initializeDb({ create: true,  dbPath })
   try {
     db.transaction(() => {
       for (let i = 0; i < 30000; i++) export188Candidate(db, '合成断开' + i + randomBytes(160).toString('hex'), 'innovative_sme')

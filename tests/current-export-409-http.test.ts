@@ -14,7 +14,7 @@ const sheets409 = ['有效企业','已到期','已注销（吊销）','已迁出
 beforeAll(() => f.start(), 60000)
 afterAll(() => f.close())
 it('X409 canonical termination overrides an independent unresolved subject fact in real Excel', async () => {
-  f.resetBusiness()
+  await f.resetBusiness()
   const target = f.candidate(X409.name)
   f.decision(target.enterprise.id, 'deregistered')
   f.decision(target.enterprise.id, 'moved_out', { titleCode: 'innovative_sme', direction: 'missing_in_miit', basis: null })
@@ -50,7 +50,7 @@ it('X409 canonical termination overrides an independent unresolved subject fact 
 }, 30000)
 
 it('E409 full title exports retain platform failures missing records and unrecognized reviews beyond page one', async () => {
-  f.resetBusiness()
+  await f.resetBusiness()
   const titlePaths = {little_giant:'little-giant',specialized_sme:'specialized-sme',innovative_sme:'innovative-sme'} as const
   for (const [title,path] of Object.entries(titlePaths)) {
     const valid=f.candidate('E409-'+title,undefined,title)
@@ -98,7 +98,7 @@ it('L409 preserves idempotency rejected filters and authenticated artifact bound
 },30000)
 
 it('B409 separates formal title states and exhausts 201 public query and Excel members', async () => {
-  f.resetBusiness()
+  await f.resetBusiness()
   const stable = f.candidate(B409.name, B409.award.map(event => ({ ...event })), 'little_giant')
   f.addRecord(stable.enterprise.id, B409.name, B409.pending.map(event => ({ ...event })), 'specialized_sme')
   f.addRecord(stable.enterprise.id, B409.name, B409.failed.map(event => ({ ...event })), 'innovative_sme')

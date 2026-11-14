@@ -1,4 +1,4 @@
-import type { useDb } from '../../db/client'
+import type { useApplicationDb } from '../../db/client'
 import type * as schema from '../../db/schema'
 import type { RecordComparisonInput } from '../../lib/roster/record-comparison'
 
@@ -12,7 +12,7 @@ interface FormalRow {
 }
 /** Global counts include every formal event, even outside the row/source scope.
  * Aggregate these scalars in SQLite rather than allocating unrelated identities. */
-export function* comparisonFormalCounts(db: ReturnType<typeof useDb>) {
+export function* comparisonFormalCounts(db: ReturnType<typeof useApplicationDb>) {
   // record_identity_uq guarantees one jxj record per enterprise/title. The
   // existing source and event-record indexes stream groups without a temp sort.
   const counts = db.$client.prepare(`select count(*) from record r
@@ -29,7 +29,7 @@ export function* comparisonFormalCounts(db: ReturnType<typeof useDb>) {
 /** Events outside selected documents are uniformly unresolved. Only hydrate
  * them when row filters or later-process counts require their facts. No name or
  * USCC lookup collapses distinct official record/enterprise identities. */
-export function* iterateComparisonFormalEvents(db: ReturnType<typeof useDb>, documentPaths: string[], input: RecordComparisonInput, laterOwners: Array<{ enterpriseId: number | null; titleCode: string }>) {
+export function* iterateComparisonFormalEvents(db: ReturnType<typeof useApplicationDb>, documentPaths: string[], input: RecordComparisonInput, laterOwners: Array<{ enterpriseId: number | null; titleCode: string }>) {
   const params: Array<number | string> = [JSON.stringify(documentPaths)]
   const rowScope: string[] = []
   if (input.enterpriseId != null) { rowScope.push('r.enterprise_id = ?'); params.push(input.enterpriseId) }

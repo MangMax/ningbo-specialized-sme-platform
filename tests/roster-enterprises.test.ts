@@ -1,3 +1,6 @@
+import { submitNativePlatformQuery } from './helpers/native-platform-fixture'
+import { listPlatformQueries } from '../lib/platform/read'
+import type { RosterImportRelation } from '../lib/roster-import-client'
 import { initializeDb } from '../db/client'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -139,8 +142,8 @@ function difference(
       reasonNote: values.reasonNote ?? null,
       measureCode: (values.measureCode ?? null) as never,
       measureNote: values.measureNote ?? null,
-      evidenceQueryId: values.evidenceQueryId ?? null,
-      evidenceRelationId: values.evidenceRelationId ?? null,
+      evidenceCollectionId: values.evidenceQueryId == null ? null : db.select().from(schema.platformLegacyQueryAlias).all().find(row => row.oldId === values.evidenceQueryId)!.collectionId,
+      evidenceObservationId: values.evidenceRelationId == null ? null : db.select().from(schema.platformLegacyRelationAlias).all().find(row => row.oldId === values.evidenceRelationId)!.observationId,
       movedInCity: values.movedInCity ?? null,
       movedInTitleCode: (values.movedInTitleCode ?? null) as never,
       movedInYear: values.movedInYear ?? null,
@@ -159,51 +162,9 @@ function query(
   status: 'success' | 'failed' | 'no_record' | 'not_queried',
   queriedAt: string,
   failureReason: string | null = null,
+  relations: RosterImportRelation[] = [],
 ) {
-  return db
-    .insert(schema.platformQuery)
-    .values({ interface: interfaceName, queryKey, rdjb, status, queriedAt, failureReason })
-    .returning({ id: schema.platformQuery.id })
-    .get().id
-}
-
-function relation(
-  queryId: number,
-  sequenceNo: number,
-  values: Partial<{
-    relationKey: string
-    enterpriseId: number | null
-    usccRaw: string
-    nameRaw: string
-    declareKind: string | null
-    awardBatchLabel: string | null
-    batch: string
-    appliedAt: string
-    status: string
-    year: number
-    matchBasis: 'uscc' | 'alias' | 'manual' | 'none'
-    verificationStatus: 'confirmed' | 'pending'
-  }>,
-) {
-  return db
-    .insert(schema.platformRelation)
-    .values({
-      queryId,
-      sequenceNo,
-      relationKey: values.relationKey ?? null,
-      enterpriseId: values.enterpriseId ?? null,
-      usccRaw: values.usccRaw ?? null,
-      nameRaw: values.nameRaw ?? null,
-      declareKind: (values.declareKind ?? null) as never,
-      awardBatchLabel: values.awardBatchLabel ?? null,
-      batch: values.batch ?? null,
-      appliedAt: values.appliedAt ?? null,
-      status: values.status ?? null,
-      matchBasis: values.matchBasis ?? 'none',
-      verificationStatus: values.verificationStatus ?? 'pending',
-    })
-    .returning({ id: schema.platformRelation.id })
-    .get().id
+  return submitNativePlatformQuery(db, { interface: interfaceName, queryKey, rdjb, status, queriedAt, failureReason, rawResponse: 'Explicit synthetic roster source', relations }).queryId
 }
 
 function snapshotBatch(titleCode: string, year: number, sha256: string, collectedOn: string) {
@@ -317,8 +278,7 @@ beforeAll(async () => {
   })
 
   // —— 差异四态互不冒充(未查询 / 查询失败 / 无记录 / 已确认无差异)——
-  fourStateQuery = query('business_list', '91330211AAAAAAA010X', '2', 'failed', '2026-10-15T01:00:00.000Z', '登录超时,请重新登录')
-  relation(fourStateQuery, 1, { relationKey: 'SQ-BAD', usccRaw: '91330211AAAAAAA010X', nameRaw: '宁波查失败企业' })
+  fourStateQuery = query('business_list', '91330211AAAAAAA010X', '2', 'failed', '2026-10-15T01:00:00.000Z', '登录超时,请重新登录', [{ sequenceNo: 1, relationKey: 'SQ-BAD', usccRaw: '91330211AAAAAAA010X', nameRaw: '宁波查失败企业' }])
 
   const stateNotQueried = enterprise('stateNotQueried', '宁波未查企业', '91330211AAAAAAA009X')
   record(stateNotQueried, 'specialized_sme', 'miit', [{ eventType: 'maintain', year: 2025, batchSeq: 1 }])
@@ -402,9 +362,7 @@ beforeAll(async () => {
   record(e7289, 'specialized_sme', 'miit', [{ eventType: 'maintain', year: 2025, batchSeq: 1 }])
   record(e7289, 'little_giant', 'miit', [{ eventType: 'maintain', year: 2025, batchSeq: 1 }])
 
-  const q3 = query('business_list', REGRESSION_USCC, '3', 'success', '2026-10-15T17:11:21.514Z')
-  for (const [index, r] of REGRESSION_RELATIONS.entries()) {
-    relation(q3, index + 1, {
+  const q3 = query('business_list', REGRESSION_USCC, '3', 'success', '2026-10-15T17:11:21.514Z', null, REGRESSION_RELATIONS.map((r, index) => ({ sequenceNo: index + 1,
       relationKey: r.relationKey,
       enterpriseId: e7289,
       usccRaw: REGRESSION_USCC,
@@ -416,22 +374,16 @@ beforeAll(async () => {
       // 曾用名那条按 `qymc` 差异人工确认为 `alias`;其余按统代匹配。
       matchBasis: index < 2 ? 'alias' : 'uscc',
       verificationStatus: index < 2 ? 'confirmed' : 'pending',
-    })
-  }
+  })))
   // `rdjb=1` / `rdjb=2` 返回 0 行:请求成功、会话有效 ⇒ **无记录**,不是失败。
   query('business_list', REGRESSION_USCC, '1', 'no_record', '2026-10-15T17:11:21.514Z')
   query('business_list', REGRESSION_USCC, '2', 'no_record', '2026-10-15T17:11:21.514Z')
-  const qApply = query('apply_list', REGRESSION_USCC, '', 'success', '2026-10-15T17:11:21.514Z')
-  relation(qApply, 1, { relationKey: 'SQ332025060392166', enterpriseId: e7289, usccRaw: REGRESSION_USCC, nameRaw: '宁波上航测绘股份有限公司', year: 2025 })
-  relation(qApply, 2, { relationKey: 'SQ332022062212391', enterpriseId: e7289, usccRaw: REGRESSION_USCC, nameRaw: '宁波上航测绘有限公司', year: 2022 })
+  const qApply = query('apply_list', REGRESSION_USCC, '', 'success', '2026-10-15T17:11:21.514Z', null, [{ sequenceNo: 1, ...{ relationKey: 'SQ332025060392166', enterpriseId: e7289, usccRaw: REGRESSION_USCC, nameRaw: '宁波上航测绘股份有限公司', year: 2025 } }, { sequenceNo: 2, ...{ relationKey: 'SQ332022062212391', enterpriseId: e7289, usccRaw: REGRESSION_USCC, nameRaw: '宁波上航测绘有限公司', year: 2022 } }])
 
   // —— 归并走**真实 HTTP API**(不是测试自己改库) ——
   api = await startRosterApi({ db, apiToken: TOKEN })
   const client = createRosterImportClient({ baseUrl: api.baseUrl, token: TOKEN })
-  const oldNameRelation = db
-    .select()
-    .from(schema.platformRelation)
-    .all()
+  const oldNameRelation = listPlatformQueries(db, { pageSize: 200 }).rows.flatMap(item => item.relations.map(row => ({ ...row, queryId: item.query.id })))
     .find((r) => r.queryId === q3 && r.nameRaw === '宁波上航测绘有限公司')!
   const result = await client.commit({
     idempotencyKey: 'rl04/regression/merge#1',
@@ -730,15 +682,14 @@ describe('§7.2 企业详情 —— 别名 / 记录 / 事件 / 出处 / 差异 /
 
   it('无法归属的平台关系**不会**被按名称推断挂到某家企业上(不建模糊推断引擎)', () => {
     // 关系行写得很像「a」那家(名称一字不差),但写入侧没有把它归属给它(enterprise_id 为空)。
-    const q = query('business_list', 'UNATTRIBUTED-KEY', '2', 'success', '2026-10-16T00:00:00.000Z')
-    relation(q, 1, {
+    query('business_list', 'UNATTRIBUTED-KEY', '2', 'success', '2026-10-16T00:00:00.000Z', null, [{ sequenceNo: 1,
       relationKey: 'SQ-UNATTRIBUTED',
       enterpriseId: null,
       usccRaw: '91330211AAAAAAA001X',
       nameRaw: '宁波双称号股份有限公司',
       matchBasis: 'none',
       verificationStatus: 'pending',
-    })
+    }])
     const detail = getRosterEnterpriseDetail(db, ids.a!)!
     // 归属由**存下来的** enterprise_id 决定;读侧不按名称相似度补挂。
     expect(detail.platform.relations.some((r) => r.relationKey === 'SQ-UNATTRIBUTED')).toBe(false)

@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, it } from 'vitest'
 import Database from 'better-sqlite3'
-import { useDb as runtimeDb } from '../db'
+import { useRuntimeDb as runtimeDb } from '../db/client'
 
 const dirs: string[] = []
 afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }) })
@@ -25,13 +25,6 @@ it('runtime rejects an empty existing database without migrating or seeding it',
   } finally { observer.close() }
 })
 
-it('explicit setup refuses missing migrations before creating a database', async () => {
-  const { initializeDb } = await import('../db/client')
-  const dbPath = path()
-  expect(() => initializeDb({ dbPath, create: true, migrationsFolder: join(dbPath, '..', 'missing') })).toThrow(/journal/)
-  expect(existsSync(join(dbPath, '..'))).toBe(false)
-})
-
 it('startup refuses missing and unrelated database paths', async () => {
   const { initializeDb } = await import('../db/client')
   const dbPath = path()
@@ -41,14 +34,14 @@ it('startup refuses missing and unrelated database paths', async () => {
   const unrelated = join(dir, 'other.db'), observer = new Database(unrelated)
   observer.exec('CREATE TABLE unrelated (id INTEGER)')
   try {
-    expect(() => initializeDb({ dbPath: unrelated })).toThrow(/__drizzle_migrations/)
+    expect(() => initializeDb({ dbPath: unrelated })).toThrow(/Unsupported final platform runtime schema/)
     expect(observer.prepare('SELECT name FROM sqlite_master WHERE type = ?').all('table')).toEqual([{ name: 'unrelated' }])
   } finally { observer.close() }
 })
 
-it('runtime and readonly snapshots preserve legacy rows and never reseed deleted titles', async () => {
-  const { useDb: setupDb, getDbOwnerIdentity } = await import('../db/client')
-  const dbPath = path(), writer = setupDb({ dbPath })
+it('runtime and readonly snapshots preserve existing rows and never reseed deleted titles', async () => {
+  const { initializeDb: setupDb, getDbOwnerIdentity } = await import('../db/client')
+  const dbPath = path(), writer = setupDb({ dbPath, create: true })
   writer.$client.exec("INSERT INTO enterprise (name, name_norm) VALUES ('旧企业', '旧企业'); DELETE FROM title WHERE code = 'innovative_sme'")
   expect(getDbOwnerIdentity(writer)).toBeUndefined()
   const snapshot = runtimeDb({ dbPath, readOnly: true })
@@ -69,30 +62,19 @@ it('runtime and readonly snapshots preserve legacy rows and never reseed deleted
   } finally { readonly.$client.close(); runtime.$client.close() }
 })
 
-it('explicit initializer upgrades an old database, survives reopen and remains idempotent', async () => {
+it('native initialization refuses historical migration databases without changing their schema or rows', async () => {
   const { initializeDb } = await import('../db/client')
-  const { mkdirSync, readFileSync, writeFileSync, copyFileSync } = await import('node:fs')
-  const dbPath = path(), folder = join(dbPath, '..', 'old-migrations')
-  mkdirSync(join(folder, 'meta'), { recursive: true })
-  const journal = JSON.parse(readFileSync('db/migrations/meta/_journal.json', 'utf8'))
-  const expectedMigrationCount = journal.entries.length
-  journal.entries = journal.entries.slice(0, -1)
-  writeFileSync(join(folder, 'meta/_journal.json'), JSON.stringify(journal))
-  for (const entry of journal.entries) copyFileSync(`db/migrations/${entry.tag}.sql`, join(folder, `${entry.tag}.sql`))
-  const old = initializeDb({ dbPath, create: true, migrationsFolder: folder })
+  const { useDb: createHistoricalDb } = await import('../upgrade/legacy-client')
+  const dbPath = path(), old = createHistoricalDb({ dbPath })
   old.$client.exec("INSERT INTO enterprise (name, name_norm) VALUES ('保留旧库', '保留旧库')")
+  const before = old.$client.prepare('SELECT type,name,sql FROM sqlite_schema ORDER BY name').all()
   old.$client.close()
-  expect(() => runtimeDb({ dbPath })).toThrow(/schema is not current/)
-  const upgraded = initializeDb({ dbPath })
-  const before = upgraded.$client.prepare('SELECT * FROM __drizzle_migrations').all()
-  upgraded.$client.close()
-  const restarted = initializeDb({ dbPath })
+  expect(() => initializeDb({ dbPath })).toThrow(/Unsupported final platform runtime schema/)
+  const observer = new Database(dbPath, { readonly: true })
   try {
-    expect(restarted.$client.prepare('SELECT name FROM enterprise').all()).toEqual([{ name: '保留旧库' }])
-    expect(restarted.$client.prepare('SELECT count(*) AS n FROM title').get()).toEqual({ n: 3 })
-    expect(restarted.$client.prepare('SELECT * FROM __drizzle_migrations').all()).toEqual(before)
-    expect(before).toHaveLength(expectedMigrationCount)
-  } finally { restarted.$client.close() }
+    expect(observer.prepare('SELECT name FROM enterprise').all()).toEqual([{ name: '保留旧库' }])
+    expect(observer.prepare('SELECT type,name,sql FROM sqlite_schema ORDER BY name').all()).toEqual(before)
+  } finally { observer.close() }
 })
 
 it('runtime preserves data_version invalidation and native backup under independent commits', async () => {

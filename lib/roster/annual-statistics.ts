@@ -53,7 +53,6 @@ function occurrence(value: { precision?: string; value?: string }) {
 function historicalExclusion(facts: Fact[], cutoff: number) {
   let excluded = false, pending = false
   const references: string[] = []
-  if (process.env.ENTERPRISE_FACT_CONSUMER_SOURCE === 'legacy') return { excluded, pending, references }
   for (const row of facts) {
     if (['withdrawn', 'replaced'].includes(row.status)) continue
     try {

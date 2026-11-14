@@ -1,11 +1,11 @@
+import { createRuntimeSchema } from '../db/create-runtime'
 import { createHash } from 'node:crypto'
 import { createServer } from 'node:http'
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { join, resolve } from 'node:path'
+import { join } from 'node:path'
 import { createApp, createRouter, toNodeListener, defineEventHandler } from 'h3'
 import Database from 'better-sqlite3'
 import { drizzle, type BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
-import { migrate } from 'drizzle-orm/better-sqlite3/migrator'
 import { afterAll, afterEach, beforeAll, expect, it, vi } from 'vitest'
 import { z } from 'zod'
 import * as schema from '../db/schema'
@@ -39,9 +39,8 @@ async function fixture() {
   writeFileSync(join(filesDir, ' notice.txt '), padded)
   const sqlite = new Database(join(dir, 'synthetic.sqlite')); sqlite.pragma('foreign_keys=ON')
   closes.push(() => { sqlite.close() })
-  const db = drizzle(sqlite, { schema }); migrate(db, { migrationsFolder: resolve('db/migrations') })
-  sqlite.exec(`INSERT INTO title(code,name_zh,level,rank) VALUES('specialized_sme','Synthetic','municipal',2);
-    INSERT INTO enterprise(id,name,name_norm,uscc_norm) VALUES(1,'Alpha','Alpha',NULL),(2,'Beta','Beta','91330211255994457P');
+  const db = drizzle(sqlite, { schema }); createRuntimeSchema(sqlite)
+  sqlite.exec(`INSERT INTO enterprise(id,name,name_norm,uscc_norm) VALUES(1,'Alpha','Alpha',NULL),(2,'Beta','Beta','91330211255994457P');
     INSERT INTO record(id,enterprise_id,title_code,source) VALUES(1,1,'specialized_sme','jxj'),(2,2,'specialized_sme','jxj');
     INSERT INTO record_event(id,record_id,event_type,year) VALUES(1,1,'award',2021),(2,2,'award',2024);
     INSERT INTO record_evidence(id,record_event_id,source_file,list_no) VALUES(1,1,'other.txt',1);

@@ -1,8 +1,10 @@
+import { differenceEvidenceColumns } from './platform/difference-reference-target'
 import { identityFunctions } from './roster/enterprise-read-snapshot'
 import { inArray, sql } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../db/schema'
-import type { ComparisonDisposition } from './comparison-platform'
+import { readComparisonTargetMemberships, type ComparisonDisposition } from './comparison-platform'
+import { targetSchema as target } from './platform/target-schema'
 import type { ComparisonDirection } from './comparison'
 import type { TitleCode } from '../db/titles'
 import { filterComparisonRows, type ComparisonRowFilter } from './comparison-filter'
@@ -67,14 +69,7 @@ export function readComparisonSummary(
   // Match the legacy inclusion union: related enterprise OR its own query key.
   // Neither a candidate relation nor an own-key match confirms identity.
   if (ids.length) identityFunctions(db)
-  const memberships = ids.length ? db.all<{ enterpriseId: number; queryId: number }>(sql`
-    select distinct r.enterprise_id as enterpriseId, r.query_id as queryId
-    from platform_relation r where r.enterprise_id in ${ids}
-    union
-    select e.id as enterpriseId, q.id as queryId from enterprise e
-    join platform_query q on q.query_key = roster84_uscc(e.uscc_norm) or q.query_key = 'name:' || e.name_norm
-    where e.id in ${ids}
-  `) : []
+  const memberships = readComparisonTargetMemberships(db, ids)
   const queriesByEnterprise = new Map<number, number[]>()
   for (const member of memberships) {
     const bucket = queriesByEnterprise.get(member.enterpriseId) ?? []
@@ -93,8 +88,7 @@ export function readComparisonSummary(
     measureCode: schema.differenceReason.measureCode,
     verificationStatus: schema.differenceReason.verificationStatus,
     recordedAt: schema.differenceReason.recordedAt,
-    evidenceQueryId: schema.differenceReason.evidenceQueryId,
-    evidenceRelationId: schema.differenceReason.evidenceRelationId,
+    ...differenceEvidenceColumns(db),
   }).from(schema.differenceReason).where(inArray(schema.differenceReason.enterpriseId, ids)).all() : []
   const current = new Map<string, ComparisonSummaryDisposition>()
   for (const { enterpriseId, titleCode, direction, ...disposition } of dispositions) {
@@ -117,9 +111,10 @@ export function readComparisonSummary(
   const relationCounts = new Map<number, number>()
   // Bound bind parameters even for an enterprise with a long query history.
   for (let start = 0; start < selectedQueryIds.length; start += 500) {
-    const counts = db.select({ queryId: schema.platformRelation.queryId, count: sql<number>`count(*)` })
-      .from(schema.platformRelation).where(inArray(schema.platformRelation.queryId, selectedQueryIds.slice(start, start + 500)))
-      .groupBy(schema.platformRelation.queryId).all()
+    const qa = target.platformLegacyQueryAlias, o = target.platformBusinessObservation
+    const counts = db.select({ queryId: qa.oldId, count: sql<number>`count(*)` })
+      .from(o).innerJoin(qa, sql`${qa.collectionId}=${o.collectionId}`)
+      .where(inArray(qa.oldId, selectedQueryIds.slice(start, start + 500))).groupBy(qa.oldId).all()
     for (const row of counts) relationCounts.set(row.queryId, row.count)
   }
   const explanationFor = (row: typeof scoped[number]) => reconcile.entries.get(reconcileKey(row))

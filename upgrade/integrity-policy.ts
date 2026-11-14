@@ -1,0 +1,1 @@
+export { completeUpgradeActive, upgradeIntegrityGate, upgradeForeignKeyFailures, upgradeProjectionTables, upgradeProjectionFields, upgradeSnapshotHash, upgradeMemoizedDigest, withFinalUpgradeIntegrity } from './offline-validation'

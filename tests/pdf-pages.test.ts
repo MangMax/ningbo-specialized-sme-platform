@@ -44,7 +44,7 @@ import { countDarkRuns, markBand, minimalPdf } from './helpers/minimal-pdf'
 const PAGE_PT = { width: 400, height: 200 }
 /** 测试用的分辨率(比默认 300 低,快;规则与 DPI 无关)。 */
 const DPI = 100
-/** 夹具在文件库里的相对路径(形状照 `files/README.md`:source/kind/year/batch/名)。 */
+/** 夹具在文件库里的相对路径(形状照 `lib/file-store-scope.ts`:source/kind/year/batch/名)。 */
 const REL = 'jxj/announcement/2024/1/fixture.pdf'
 
 /** sharp writes PNG pixels as RGB when DPI metadata is present; grayscale means R=G=B. */
@@ -109,7 +109,7 @@ describe('页图路径与命名(纯规则)', () => {
 
   it('页图目录名带前导点 —— 文件库扫描器据此跳过页图', () => {
     // 这是「页图不进 stored_file」的**唯一依据**:`scanFileStore` 跳过以 `.` 开头的名字。
-    // 名字若改了,要连带改 `files/README.md` 与扫描器,故在此钉住。
+    // 名字若改了,要连带改 `lib/file-store-scope.ts` 与扫描器,故在此钉住。
     expect(pageDirRelPath(REL).split('/').pop()?.startsWith('.')).toBe(true)
     expect(pageDirRelPath(REL).endsWith('.pdf.pages')).toBe(true)
   })

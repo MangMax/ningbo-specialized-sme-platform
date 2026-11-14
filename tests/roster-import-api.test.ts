@@ -1,3 +1,6 @@
+import {differencePublicColumns} from '../lib/platform/difference-reference-target'
+import { submitNativePlatformQuery } from './helpers/native-platform-fixture'
+import { nativeQueryRows, nativeRelationRows } from './helpers/native-platform-evidence'
 import { initializeDb } from '../db/client'
 /**
  * RL-11 —— 名录统一写入 API 的验收（契约 §8 写接口 / §9 MCP tool）。
@@ -216,31 +219,16 @@ function seedPlatformRelation(
     enterpriseId?: number | null
   },
 ) {
-  const queryId = db
-    .insert(schema.platformQuery)
-    .values({
-      interface: input.interface ?? 'business_list',
-      queryKey: input.queryKey,
-      rdjb: input.rdjb ?? '3',
-      queriedAt: input.queriedAt ?? '2026-10-17T01:00:00.000Z',
-      status: 'success',
-    })
-    .returning({ id: schema.platformQuery.id })
-    .get().id
-  return db
-    .insert(schema.platformRelation)
-    .values({
-      queryId,
-      sequenceNo: 1,
-      relationKey: `SQ-${queryId}`,
-      enterpriseId: input.enterpriseId ?? null,
-      usccRaw: input.usccRaw,
-      nameRaw: input.nameRaw,
-      matchBasis: 'uscc',
-      verificationStatus: 'confirmed',
-    })
-    .returning({ id: schema.platformRelation.id })
-    .get().id
+  const seeded = submitNativePlatformQuery(db, {
+    interface: input.interface ?? 'business_list', queryKey: input.queryKey,
+    rdjb: input.rdjb ?? '3', queriedAt: input.queriedAt ?? '2026-10-17T01:00:00.000Z',
+    status: 'success', rawResponse: 'Explicit synthetic platform source',
+    relations: [{ sequenceNo: 1, relationKey: `SQ-${input.queryKey}`,
+      enterpriseId: input.enterpriseId ?? null, usccRaw: input.usccRaw,
+      nameRaw: input.nameRaw, matchBasis: 'uscc', verificationStatus: 'confirmed' }],
+  })
+  return seeded.relationIds[0]!
+
 }
 
 // ---------------------------------------------------------------------------
@@ -319,7 +307,7 @@ describe('提交：一次写入企业/事件/出处/别名/平台证据/快照/�
           enterpriseName: '甲企业有限公司',
           name: '甲企业旧名有限公司',
           sourceKind: 'platform_business',
-          sourceRelationRef: {
+          sourceRelationRef: { rawResponse: 'Explicit synthetic original response',
             interface: 'business_list',
             queryKey: '913302017133602847',
             rdjb: '3',
@@ -331,7 +319,7 @@ describe('提交：一次写入企业/事件/出处/别名/平台证据/快照/�
         { enterpriseName: '甲企业有限公司', name: '疑似同名待核有限公司', sourceKind: 'platform_apply', verificationStatus: 'pending' },
       ],
       platformQueries: [
-        {
+        { rawResponse: 'Explicit synthetic original response',
           interface: 'business_list',
           queryKey: '913302017133602847',
           rdjb: '3',
@@ -344,7 +332,7 @@ describe('提交：一次写入企业/事件/出处/别名/平台证据/快照/�
             { sequenceNo: 3, relationKey: 'SQ3', usccRaw: '913302017133602847', nameRaw: '甲企业有限公司', declareKind: '复核确认' },
           ],
         },
-        { interface: 'business_list', queryKey: '913302017133602847', rdjb: '1', queriedAt: '2026-10-16T03:01:00.000Z', status: 'no_record' },
+        { rawResponse: 'Explicit synthetic original response', interface: 'business_list', queryKey: '913302017133602847', rdjb: '1', queriedAt: '2026-10-16T03:01:00.000Z', status: 'no_record' },
       ],
       exportSnapshot: {
         titleCode: 'specialized_sme',
@@ -376,7 +364,7 @@ describe('提交：一次写入企业/事件/出处/别名/平台证据/快照/�
     const db = makeDb()
     const result = commitRosterImport(db, request)
 
-    expect(result.status).toBe('committed')
+    expect(result.status, JSON.stringify(result)).toBe('committed')
     expect(result.error).toBeNull()
     expect(result.summary.written).toBeGreaterThan(0)
     expect(result.summary.failed).toBe(0)
@@ -402,11 +390,11 @@ describe('提交：一次写入企业/事件/出处/别名/平台证据/快照/�
     expect(db.select().from(schema.recordEvidence).all()[0]!.page).toBe(74)
 
     // 未知 sblx 取值：原样入库 + 标待核。
-    const unknown = db.select().from(schema.platformRelation).all().find((r) => r.relationKey === 'SQ3')!
+    const unknown = nativeRelationRows(db).find((r) => r.relationKey === 'SQ3')!
     expect(unknown.declareKind).toBe('复核确认')
     expect(unknown.verificationStatus).toBe('pending')
     // 四态可区分：rdjb=1 那次是 no_record，不是 failed。
-    const empty = db.select().from(schema.platformQuery).all().find((q) => q.rdjb === '1')!
+    const empty = nativeQueryRows(db).find((q) => q.rdjb === '1')!
     expect(empty.status).toBe('no_record')
 
     // 错误 → `failed` 的区分在别的用例里（本批没有不合法项）。
@@ -823,10 +811,10 @@ describe('归并与回填：血缘在 item_results 中可查询', () => {
     const { canonical, duplicate, dupRecord, dupEvent, evidenceId } = seedMergeCase(db)
 
     const result = commitRosterImport(db, mergeRequest(duplicate))
-    expect(result.status).toBe('committed')
+    expect(result.status, JSON.stringify(result)).toBe('committed')
 
-    // 被并企业行已删除；称号、事件、出处**一条不丢**。
-    expect(enterpriseExists(db, duplicate)).toBe(false)
+    // 原企业保留身份归并映射；称号、事件和出处完整转入规范企业。
+    expect(db.select().from(schema.enterpriseMerge).all()).toEqual(expect.arrayContaining([expect.objectContaining({fromEnterpriseId:duplicate,intoEnterpriseId:canonical})]))
     const titles = db.select().from(schema.record).all().filter((r) => r.enterpriseId === canonical).map((r) => `${r.titleCode}/${r.source}`).sort()
     expect(titles).toEqual(['little_giant/miit', 'specialized_sme/jxj', 'specialized_sme/miit'])
     const kept = db.select().from(schema.recordEvent).all().find((e) => e.id === dupEvent)!
@@ -869,7 +857,7 @@ describe('归并与回填：血缘在 item_results 中可查询', () => {
 
     const request = mergeRequest(duplicate, 'merge/conflict#sha256:m2', '91330206732109570E')
     const result = commitRosterImport(db, request)
-    expect(result.status).toBe('committed')
+    expect(result.status, JSON.stringify(result)).toBe('committed')
 
     const merged = db.select().from(schema.record).all().filter((r) => r.enterpriseId === canonical && r.titleCode === 'innovative_sme')
     expect(merged).toHaveLength(1)
@@ -1081,7 +1069,7 @@ describe('API 写入边界：归并选择器与差异冲突', () => {
     const db = makeDb()
     const enterpriseId = seedEnterprise(db, { name: '宁波平台别名目标有限公司', uscc: TARGET_USCC })
     const request = boundaryRequest('write-boundary/alias-wrong-qymc-ref', {
-      platformQueries: [{
+      platformQueries: [{ rawResponse: 'Explicit synthetic original response',
         interface: 'business_list',
         queryKey: TARGET_USCC,
         rdjb: '3',
@@ -1101,7 +1089,7 @@ describe('API 写入边界：归并选择器与差异冲突', () => {
         name: '宁波未经返回的曾用名有限公司',
         sourceKind: 'platform_business',
         verificationStatus: 'confirmed',
-        sourceRelationRef: {
+        sourceRelationRef: { rawResponse: 'Explicit synthetic original response',
           interface: 'business_list',
           queryKey: TARGET_USCC,
           rdjb: '3',
@@ -1115,8 +1103,8 @@ describe('API 写入边界：归并选择器与差异冲突', () => {
 
     expect(result.status).toBe('failed')
     expect(result.items.find((item) => item.kind === 'alias')!.error!.code).toBe('alias_source_evidence_mismatch')
-    expect(db.select().from(schema.platformQuery).all()).toHaveLength(0)
-    expect(db.select().from(schema.platformRelation).all()).toHaveLength(0)
+    expect(nativeQueryRows(db)).toHaveLength(0)
+    expect(nativeRelationRows(db)).toHaveLength(0)
     expect(db.select().from(schema.enterpriseAlias).all()).toHaveLength(0)
     expect(enterpriseExists(db, enterpriseId)).toBe(true)
   })
@@ -1126,7 +1114,7 @@ describe('API 写入边界：归并选择器与差异冲突', () => {
     const enterpriseId = seedEnterprise(db, { name: '宁波平台别名目标有限公司', uscc: TARGET_USCC })
     const aliasName = '宁波平台已返回的历史名称有限公司'
     const request = boundaryRequest('write-boundary/alias-valid-qymc-ref', {
-      platformQueries: [{
+      platformQueries: [{ rawResponse: 'Explicit synthetic original response',
         interface: 'business_list',
         queryKey: TARGET_USCC,
         rdjb: '3',
@@ -1146,7 +1134,7 @@ describe('API 写入边界：归并选择器与差异冲突', () => {
         name: aliasName,
         sourceKind: 'platform_business',
         verificationStatus: 'confirmed',
-        sourceRelationRef: {
+        sourceRelationRef: { rawResponse: 'Explicit synthetic original response',
           interface: 'business_list',
           queryKey: TARGET_USCC,
           rdjb: '3',
@@ -1158,8 +1146,8 @@ describe('API 写入边界：归并选择器与差异冲突', () => {
 
     const result = await withRosterHttp(db, (client) => client.commit(request))
 
-    expect(result.status).toBe('committed')
-    const relation = db.select().from(schema.platformRelation).all()[0]!
+    expect(result.status, JSON.stringify(result)).toBe('committed')
+    const relation = nativeRelationRows(db)[0]!
     expect(db.select().from(schema.enterpriseAlias).all()).toMatchObject([{
       enterpriseId,
       name: aliasName,
@@ -1185,7 +1173,7 @@ describe('API 写入边界：归并选择器与差异冲突', () => {
 
     const result = await withRosterHttp(db, (client) => client.commit(request))
 
-    expect(result.status).toBe('committed')
+    expect(result.status, JSON.stringify(result)).toBe('committed')
     expect(searchEnterpriseIdsByName(db, pendingName)).toEqual([])
     expect(searchEnterpriseIdsByName(db, announcementName)).toEqual([enterpriseId])
     expect(searchEnterpriseIdsByName(db, manualName)).toEqual([enterpriseId])
@@ -1199,14 +1187,14 @@ describe('API 写入边界：归并选择器与差异冲突', () => {
     const name = '宁波差异冲突归并企业有限公司'
     const from = seedEnterprise(db, { name })
     const into = seedEnterprise(db, { name, uscc: TARGET_USCC })
-    const sourceEvidenceId = db.insert(schema.platformQuery).values({
+    const sourceEvidenceId = submitNativePlatformQuery(db, { ...{ rawResponse: 'Explicit synthetic original response',
       interface: 'business_list', queryKey: TARGET_USCC, rdjb: '3',
       queriedAt: '2026-10-17T04:00:00.000Z', status: 'success',
-    }).returning({ id: schema.platformQuery.id }).get().id
-    const targetEvidenceId = db.insert(schema.platformQuery).values({
+    }, rawResponse: 'Explicit synthetic platform source' }).queryId
+    const targetEvidenceId = submitNativePlatformQuery(db, { ...{ rawResponse: 'Explicit synthetic original response',
       interface: 'business_list', queryKey: TARGET_USCC, rdjb: '3',
       queriedAt: '2026-10-17T04:01:00.000Z', status: 'success',
-    }).returning({ id: schema.platformQuery.id }).get().id
+    }, rawResponse: 'Explicit synthetic platform source' }).queryId
     const recordedAt = '2026-10-17T04:02:00.000Z'
     const sourceDifferenceId = db.insert(schema.differenceReason).values({
       enterpriseId: from,
@@ -1216,7 +1204,7 @@ describe('API 写入边界：归并选择器与差异冲突', () => {
       reasonCode: 'renamed',
       reasonNote: '来源行记录了更名',
       measureCode: 'update_current_name',
-      evidenceQueryId: sourceEvidenceId,
+      evidenceCollectionId: db.select().from(schema.platformLegacyQueryAlias).where(eq(schema.platformLegacyQueryAlias.oldId,sourceEvidenceId)).get()!.collectionId,
       verificationStatus: 'confirmed',
       recordedAt,
     }).returning({ id: schema.differenceReason.id }).get().id
@@ -1227,12 +1215,12 @@ describe('API 写入边界：归并选择器与差异冲突', () => {
       status: 'needs_review',
       reasonCode: null,
       measureCode: 'manual_review',
-      evidenceQueryId: targetEvidenceId,
+      evidenceCollectionId: db.select().from(schema.platformLegacyQueryAlias).where(eq(schema.platformLegacyQueryAlias.oldId,targetEvidenceId)).get()!.collectionId,
       verificationStatus: 'pending',
       recordedAt,
     }).returning({ id: schema.differenceReason.id }).get().id
     const beforeEnterprises = db.select().from(schema.enterprise).all()
-    const beforeDifferences = db.select().from(schema.differenceReason).all()
+    const beforeDifferences = db.select(differencePublicColumns(db)).from(schema.differenceReason).all()
     const request = boundaryRequest('write-boundary/merge-difference-conflict', {
       merges: [{ fromEnterpriseId: from, intoUscc: TARGET_USCC, sourceKind: 'manual' }],
     })
@@ -1248,8 +1236,8 @@ describe('API 写入边界：归并选择器与差异冲突', () => {
     expect(result.summary.written).toBe(0)
     expect(enterpriseExists(db, from)).toBe(true)
     expect(db.select().from(schema.enterprise).all()).toEqual(beforeEnterprises)
-    expect(db.select().from(schema.differenceReason).all()).toEqual(beforeDifferences)
-    expect(db.select().from(schema.differenceReason).all().map((row) => row.id)).toEqual([
+    expect(db.select(differencePublicColumns(db)).from(schema.differenceReason).all()).toEqual(beforeDifferences)
+    expect(db.select(differencePublicColumns(db)).from(schema.differenceReason).all().map((row) => row.id)).toEqual([
       sourceDifferenceId, targetDifferenceId,
     ])
   })
@@ -1259,10 +1247,10 @@ describe('API 写入边界：归并选择器与差异冲突', () => {
     const name = '宁波差异等价归并企业有限公司'
     const from = seedEnterprise(db, { name })
     const into = seedEnterprise(db, { name, uscc: TARGET_USCC })
-    const evidenceQueryId = db.insert(schema.platformQuery).values({
+    const evidenceQueryId = submitNativePlatformQuery(db, { ...{ rawResponse: 'Explicit synthetic original response',
       interface: 'business_list', queryKey: TARGET_USCC, rdjb: '3',
       queriedAt: '2026-10-17T05:00:00.000Z', status: 'success',
-    }).returning({ id: schema.platformQuery.id }).get().id
+    }, rawResponse: 'Explicit synthetic platform source' }).queryId
     const recordedAt = '2026-10-17T05:01:00.000Z'
     const difference = {
       titleCode: 'specialized_sme' as const,
@@ -1275,17 +1263,19 @@ describe('API 写入边界：归并选择器与差异冲突', () => {
       verificationStatus: 'confirmed' as const,
       recordedAt,
     }
-    db.insert(schema.differenceReason).values({ enterpriseId: from, ...difference }).run()
-    db.insert(schema.differenceReason).values({ enterpriseId: into, ...difference }).run()
+    const {evidenceQueryId:publicQueryId,...nativeDifference}=difference
+    const evidenceCollectionId=db.select().from(schema.platformLegacyQueryAlias).where(eq(schema.platformLegacyQueryAlias.oldId,publicQueryId)).get()!.collectionId
+    db.insert(schema.differenceReason).values({enterpriseId:from,...nativeDifference,evidenceCollectionId}).run()
+    db.insert(schema.differenceReason).values({enterpriseId:into,...nativeDifference,evidenceCollectionId}).run()
     const request = boundaryRequest('write-boundary/merge-difference-equivalent', {
       merges: [{ fromEnterpriseId: from, intoUscc: TARGET_USCC, sourceKind: 'manual' }],
     })
 
     const result = await withRosterHttp(db, (client) => client.commit(request))
 
-    expect(result.status).toBe('committed')
-    expect(enterpriseExists(db, from)).toBe(false)
-    const kept = db.select().from(schema.differenceReason).all().filter((row) => row.enterpriseId === into)
+    expect(result.status, JSON.stringify(result)).toBe('committed')
+    expect(db.select().from(schema.enterpriseMerge).all()).toEqual(expect.arrayContaining([expect.objectContaining({fromEnterpriseId:from,intoEnterpriseId:into})]))
+    const kept = db.select(differencePublicColumns(db)).from(schema.differenceReason).all().filter((row) => row.enterpriseId === into)
     expect(kept).toHaveLength(1)
     expect(kept[0]).toMatchObject(difference)
   })
@@ -1399,7 +1389,7 @@ describe('真实 HTTP：预检 → 提交 → 重放 → 失败恢复 → 完整
 
     try {
       const result = await client.commit(request)
-      expect(result.status).toBe('committed')
+      expect(result.status, JSON.stringify(result)).toBe('committed')
       expect(db.select().from(schema.record).all()).toHaveLength(1)
       expect(db.select().from(schema.recordEvent).all()).toHaveLength(1)
       expect(db.select().from(schema.recordEvidence).all().map(({ sourceFile, attachment, listNo, page }) => ({ sourceFile, attachment, listNo, page })).sort((a, b) => a.sourceFile.localeCompare(b.sourceFile))).toEqual([
@@ -1430,7 +1420,7 @@ describe('真实 HTTP：预检 → 提交 → 重放 → 失败恢复 → 完整
 
     try {
       const result = await client.commit(request)
-      expect(result.status).toBe('committed')
+      expect(result.status, JSON.stringify(result)).toBe('committed')
       expect(db.select().from(schema.recordEvent).all().map((event) => event.recordId).sort()).toEqual([recordA, recordB].sort())
       expect(db.select().from(schema.recordEvidence).all().map((row) => [row.recordEventId, row.sourceFile]).sort((a, b) => String(a[1]).localeCompare(String(b[1])))).toEqual([
         [db.select().from(schema.recordEvent).all().find((event) => event.recordId === recordA)!.id, 'synthetic/group/a.pdf'],
@@ -1563,7 +1553,7 @@ describe('真实 HTTP：预检 → 提交 → 重放 → 失败恢复 → 完整
       const preflight = await client.preflight(request)
       expect(preflight.preflight.conflicts).toEqual([])
       const result = await client.commit(request)
-      expect(result.status).toBe('committed')
+      expect(result.status, JSON.stringify(result)).toBe('committed')
       expect(db.select().from(schema.recordEvent).all().map((event) => event.recordId)).toEqual([recordId])
       expect(db.select().from(schema.recordEvidence).all().map((evidence) => evidence.sourceFile)).toEqual(['synthetic/identity/unique-name.pdf'])
     } finally {
@@ -1588,7 +1578,7 @@ describe('真实 HTTP：预检 → 提交 → 重放 → 失败恢复 → 完整
       const preflight = await client.preflight(request)
       expect(preflight.preflight.conflicts).toEqual([])
       const result = await client.commit(request)
-      expect(result.status).toBe('committed')
+      expect(result.status, JSON.stringify(result)).toBe('committed')
       expect(db.select().from(schema.recordEvent).all().map((event) => event.recordId)).toEqual([recordId])
       expect(db.select().from(schema.recordEvidence).all().map((evidence) => evidence.sourceFile)).toEqual(['synthetic/identity/explicit-uscc.pdf'])
     } finally {
@@ -1624,7 +1614,7 @@ describe('真实 HTTP：预检 → 提交 → 重放 → 失败恢复 → 完整
       expect(rosterRowCounts(db)).toMatchObject({ enterprise: 0, record: 0, record_event: 0, record_evidence: 0 })
 
       const result = await client.commit(request)
-      expect(result.status).toBe('committed')
+      expect(result.status, JSON.stringify(result)).toBe('committed')
       expect(result.summary.failed).toBe(0)
       expect(rosterRowCounts(db)).toMatchObject({ enterprise: 1, record: 1, record_event: 1, record_evidence: 2 })
 
@@ -1788,7 +1778,7 @@ describe('真实 HTTP：预检 → 提交 → 重放 → 失败恢复 → 完整
 
     expect(preflightRosterImport(db, request).preflight.conflicts).toEqual([])
     const result = commitRosterImport(db, request)
-    expect(result.status).toBe('committed')
+    expect(result.status, JSON.stringify(result)).toBe('committed')
     expect(db.select().from(schema.enterprise).all()).toMatchObject([{ name, usccNorm: '91330211255994457P' }])
     expect(db.select().from(schema.enterprise).all()).toHaveLength(1)
     expect(db.select().from(schema.record).all().map((record) => record.usccRaw)).toEqual([
@@ -1810,7 +1800,7 @@ describe('真实 HTTP：预检 → 提交 → 重放 → 失败恢复 → 完整
     else enterprise.uscc = value
 
     const result = commitRosterImport(db, request)
-    expect(result.status).toBe('committed')
+    expect(result.status, JSON.stringify(result)).toBe('committed')
     expect(db.select().from(schema.enterprise).all()).toHaveLength(1)
     expect(db.select().from(schema.enterprise).all()[0]?.usccNorm).toBeNull()
     expect(db.select().from(schema.record).all()[0]?.usccRaw).toBeNull()
@@ -1830,7 +1820,7 @@ describe('真实 HTTP：预检 → 提交 → 重放 → 失败恢复 → 完整
     ]
 
     const result = commitRosterImport(db, request)
-    expect(result.status).toBe('committed')
+    expect(result.status, JSON.stringify(result)).toBe('committed')
     expect(db.select().from(schema.enterprise).all()).toHaveLength(1)
     expect(db.select().from(schema.enterprise).all()[0]).toMatchObject({ id: legacyId, usccNorm: '91330211255994457Q' })
     expect(db.select().from(schema.record).all()[0]?.usccRaw).toBeNull()
@@ -1850,7 +1840,7 @@ describe('真实 HTTP：预检 → 提交 → 重放 → 失败恢复 → 完整
       const preflight = await client.preflight(request)
       expect(preflight.preflight).toMatchObject({ add: 1, conflicts: [] })
       const result = await client.commit(request)
-      expect(result.status).toBe('committed')
+      expect(result.status, JSON.stringify(result)).toBe('committed')
       expect(rosterRowCounts(db)).toMatchObject({ enterprise: 1, record: 1, record_event: 1, record_evidence: 1 })
       expect(db.select().from(schema.enterprise).all()[0]).toMatchObject({ name, usccNorm: null })
       expect(db.select().from(schema.record).all()[0]?.usccRaw).toBeNull()
@@ -1913,7 +1903,7 @@ describe('真实 HTTP：预检 → 提交 → 重放 → 失败恢复 → 完整
         events: [{ eventType: 'award', year: 2026, batchSeq: 1 }],
       })
       complete.payload.platformQueries = [
-        {
+        { rawResponse: 'Explicit synthetic original response',
           interface: 'business_list',
           queryKey: '9133021100000000ZZ',
           rdjb: '3',
@@ -1927,7 +1917,7 @@ describe('真实 HTTP：预检 → 提交 → 重放 → 失败恢复 → 完整
       const names = db.select().from(schema.enterprise).all().map((e) => e.name)
       expect(names).toContain('未匹配平台导出的企业')
       // 平台关系归属不到企业时留空待核（不模糊推断）。
-      const unbound = db.select().from(schema.platformRelation).all().find((r) => r.usccRaw === '9133021100000000ZZ')!
+      const unbound = nativeRelationRows(db).find((r) => r.usccRaw === '9133021100000000ZZ')!
       expect(unbound.enterpriseId).toBeNull()
       expect(unbound.verificationStatus).toBe('pending')
     } finally {
@@ -2046,7 +2036,7 @@ describe('真实 HTTP：预检 → 提交 → 重放 → 失败恢复 → 完整
       const preflight = await client.preflight(request)
       expect(preflight.preflight.conflicts).toEqual([])
       const result = await client.commit(request)
-      expect(result.status).toBe('committed')
+      expect(result.status, JSON.stringify(result)).toBe('committed')
       expect(db.select().from(schema.recordEvidence).all().map((row) => row.page)).toEqual([23])
     } finally {
       await server.close()
@@ -2204,7 +2194,7 @@ describe('真实 HTTP：预检 → 提交 → 重放 → 失败恢复 → 完整
       ]
 
       const result = await client.commit(duplicate)
-      expect(result.status).toBe('committed')
+      expect(result.status, JSON.stringify(result)).toBe('committed')
       expect(result.summary.evidenceRepointed).toBe(3)
       const evidence = db.select().from(schema.recordEvidence).all()
       expect(evidence).toHaveLength(3)
@@ -2840,7 +2830,7 @@ describe('导出快照写入', () => {
   it('年度 / 采集日原样落库（不推断），行与 importBatchId 指回本批', () => {
     const db = makeDb()
     const result = commitRosterImport(db, snapshotRequest({ key: 'exp/first#sha:1', sha: '1'.repeat(64), year: 2019, collectedOn: '2019-06-30' }))
-    expect(result.status).toBe('committed')
+    expect(result.status, JSON.stringify(result)).toBe('committed')
     const batch = db.select().from(schema.platformExportBatch).all()[0]!
     expect(batch.year).toBe(2019)
     expect(batch.collectedOn).toBe('2019-06-30')
@@ -2927,7 +2917,7 @@ describe('大载荷：MB 级导出快照经真实 HTTP 提交', () => {
       expect(bytes).toBeGreaterThan(3_000_000)
 
       const result = await client.commit(body)
-      expect(result.status).toBe('committed')
+      expect(result.status, JSON.stringify(result)).toBe('committed')
       expect(result.items[0]!.ok).toBe(true)
 
       const batch = db.select().from(schema.platformExportBatch).all()[0]!
@@ -2961,7 +2951,7 @@ describe('批内自然键引用：一批写完「查询 → 关系 → 别名 / 
     sourceIdentity: 'jxj/announcement/2026/1/一批到底.pdf',
     payload: {
       platformQueries: [
-        {
+        { rawResponse: 'Explicit synthetic original response',
           interface: 'business_list',
           queryKey: '91330211255994457P',
           rdjb: '3',
@@ -2972,7 +2962,7 @@ describe('批内自然键引用：一批写完「查询 → 关系 → 别名 / 
             { sequenceNo: 2, relationKey: 'SQ-2', usccRaw: '91330211255994457P', nameRaw: '宁波上航测绘有限公司', matchBasis: 'alias', verificationStatus: 'confirmed' },
           ],
         },
-        { interface: 'apply_list', queryKey: '91330211255994457P', queriedAt: '2026-10-16T03:01:00.000Z', status: 'no_record' },
+        { rawResponse: 'Explicit synthetic original response', interface: 'apply_list', queryKey: '91330211255994457P', queriedAt: '2026-10-16T03:01:00.000Z', status: 'no_record' },
       ],
       announcement: {
         sourceDocument: { source: 'jxj', title: '一批到底' },
@@ -2993,7 +2983,7 @@ describe('批内自然键引用：一批写完「查询 → 关系 → 别名 / 
           sourceKind: 'platform_business',
           verificationStatus: 'confirmed',
           // ★ 指向**本批新建**的关系行（第 2 条）；带 queriedAt 精确匹配。
-          sourceRelationRef: { interface: 'business_list', queryKey: '91330211255994457P', rdjb: '3', queriedAt: '2026-10-16T03:00:00.000Z', sequenceNo: 2 },
+          sourceRelationRef: { rawResponse: 'Explicit synthetic original response', interface: 'business_list', queryKey: '91330211255994457P', rdjb: '3', queriedAt: '2026-10-16T03:00:00.000Z', sequenceNo: 2 },
         },
       ],
       differences: [
@@ -3028,17 +3018,17 @@ describe('批内自然键引用：一批写完「查询 → 关系 → 别名 / 
     const db = makeDb()
     const result = commitRosterImport(db, oneBatch())
 
-    expect(result.status).toBe('committed')
+    expect(result.status, JSON.stringify(result)).toBe('committed')
     expect(result.error).toBeNull()
     expect(result.summary.failed).toBe(0)
     expect(result.items.every((item) => item.ok)).toBe(true)
     // **只有一个批次** —— 不需要「先写查询、读回 id、再写别名」的两批绕行。
     expect(db.select().from(schema.importBatch).all()).toHaveLength(1)
 
-    const relations = db.select().from(schema.platformRelation).all()
+    const relations = nativeRelationRows(db)
     const rel1 = relations.find((r) => r.relationKey === 'SQ-1')!
     const rel2 = relations.find((r) => r.relationKey === 'SQ-2')!
-    const query = db.select().from(schema.platformQuery).all().find((q) => q.interface === 'business_list' && q.rdjb === '3')!
+    const query = nativeQueryRows(db).find((q) => q.interface === 'business_list' && q.rdjb === '3')!
 
     // 别名：source_ref_id = 本批新建的第 2 条关系的真实 id。
     const canonical = db.select().from(schema.enterprise).all().find((e) => e.usccNorm === '91330211255994457P')!
@@ -3049,7 +3039,7 @@ describe('批内自然键引用：一批写完「查询 → 关系 → 别名 / 
     expect(aliases[0]!.verificationStatus).toBe('confirmed')
 
     // 差异：evidence_query_id / evidence_relation_id 都指向本批新建的行。
-    const difference = db.select().from(schema.differenceReason).all()[0]!
+    const difference = db.select(differencePublicColumns(db)).from(schema.differenceReason).all()[0]!
     expect(difference.evidenceQueryId).toBe(query.id)
     expect(difference.evidenceRelationId).toBe(rel1.id)
 
@@ -3059,8 +3049,8 @@ describe('批内自然键引用：一批写完「查询 → 关系 → 别名 / 
     expect(lineage.aliasId).toBe(aliases[0]!.id)
     expect(lineage.evidenceQueryId).toBe(query.id)
 
-    // 归并仍按 §5.2 生效：被并企业行删除，称号/事件/出处一条不丢。
-    expect(enterpriseExists(db, lineage.fromEnterpriseId)).toBe(false)
+    // 归并保留原身份映射；称号、事件和出处完整归入规范企业。
+    expect(db.select().from(schema.enterpriseMerge).all()).toEqual(expect.arrayContaining([expect.objectContaining({fromEnterpriseId:lineage.fromEnterpriseId,intoEnterpriseId:canonical.id})]))
     expect(db.select().from(schema.record).all().filter((r) => r.enterpriseId === canonical.id).map((r) => r.titleCode).sort()).toEqual(['innovative_sme', 'specialized_sme'])
     expect(db.select().from(schema.recordEvidence).all()[0]!.page).toBe(74)
 
@@ -3126,7 +3116,7 @@ describe('批内自然键引用：一批写完「查询 → 关系 → 别名 / 
     const request = oneBatch()
     request.idempotencyKey = 'one-batch/ambiguous#sha256:x7'
     // 再插一次同 (interface, queryKey, rdjb) 但不同 queriedAt 的查询（含同样的序号 2）。
-    request.payload.platformQueries!.push({
+    request.payload.platformQueries!.push({ rawResponse: 'Explicit synthetic original response',
       interface: 'business_list',
       queryKey: '91330211255994457P',
       rdjb: '3',
@@ -3167,7 +3157,7 @@ describe('批内自然键引用：一批写完「查询 → 关系 → 别名 / 
         ],
       },
     })
-    expect(result.status).toBe('committed')
+    expect(result.status, JSON.stringify(result)).toBe('committed')
     const rows = db.select().from(schema.enterpriseAlias).all().filter((a) => a.enterpriseId === canonical)
     expect(rows.find((a) => a.name === '宁波显式旧名有限公司')!.sourceRefId).toBe(relationId)
     expect(rows.find((a) => a.name === '宁波无来源旧名')!.sourceRefId).toBe(0)
@@ -3202,7 +3192,7 @@ describe('读面：list_enterprises / list_differences', () => {
               name: '宁波读面旧名',
               sourceKind: 'platform_business',
               verificationStatus: 'confirmed',
-              sourceRelationRef: {
+              sourceRelationRef: { rawResponse: 'Explicit synthetic original response',
                 interface: 'business_list',
                 queryKey: '913302110000000098',
                 rdjb: '3',
@@ -3212,7 +3202,7 @@ describe('读面：list_enterprises / list_differences', () => {
             },
             { enterpriseName: '宁波读面企业有限公司', name: '宁波读面未核别名', sourceKind: 'platform_apply', verificationStatus: 'pending' },
           ],
-          platformQueries: [{
+          platformQueries: [{ rawResponse: 'Explicit synthetic original response',
             interface: 'business_list',
             queryKey: '913302110000000098',
             rdjb: '3',
@@ -3262,7 +3252,7 @@ describe('读面：list_enterprises / list_differences', () => {
         sourceIdentity: 'miit/relations/r2',
         payload: {
           platformQueries: [
-            { interface: 'apply_list', queryKey: '91330206793007818K', queriedAt: '2026-10-16T07:00:00.000Z', status: 'success' },
+            { rawResponse: 'Explicit synthetic original response', interface: 'apply_list', queryKey: '91330206793007818K', queriedAt: '2026-10-16T07:00:00.000Z', status: 'success' },
           ],
           announcement: {
             sourceDocument: { source: 'jxj', title: '读面差异' },
@@ -3284,7 +3274,7 @@ describe('读面：list_enterprises / list_differences', () => {
       expect(row.recordedAt).toBe('2026-10-16T08:00:00.000Z')
       expect(differences.counts.specialized_sme!.missing_in_miit).toBe(1)
       // 旧解释仍在库里（时态化不丢）。
-      expect(db.select().from(schema.differenceReason).all()).toHaveLength(2)
+      expect(db.select(differencePublicColumns(db)).from(schema.differenceReason).all()).toHaveLength(2)
     } finally {
       await server.close()
     }
@@ -3308,12 +3298,12 @@ describe('用户明确裁决的待审核', () => {
     await withRosterHttp(db, async client => {
       const preflight = await client.preflight(current)
       expect(preflight.preflight.conflicts).toEqual([])
-      expect(db.select().from(schema.differenceReason).all()).toHaveLength(1)
+      expect(db.select(differencePublicColumns(db)).from(schema.differenceReason).all()).toHaveLength(1)
       expect((await client.commit(current)).status).toBe('committed')
       expect((await client.commit(current)).status).toBe('committed')
     })
     expect(db.select().from(schema.recordEvent).all()).toEqual(events)
-    expect(db.select().from(schema.differenceReason).all()).toHaveLength(2)
+    expect(db.select(differencePublicColumns(db)).from(schema.differenceReason).all()).toHaveLength(2)
     const readback = listDifferences(db, { status: 'confirmed_reason' })
     expect(readback.rows).toHaveLength(1)
     expect(readback.rows[0]).toMatchObject({ status: 'confirmed_reason', reasonCode: 'pending_review', measureCode: 'follow_review', verificationStatus: 'confirmed' })
@@ -3330,6 +3320,6 @@ describe('用户明确裁决的待审核', () => {
     const request = boundaryRequest('synthetic/pending-review/invalid', { differences: [{ enterpriseName: '合成待审核校验企业', titleCode: 'specialized_sme', direction: 'missing_in_miit', reasonCode: 'pending_review', recordedAt: '2026-10-18T00:00:00.000Z', ...patch }] })
     const result = await withRosterHttp(db, client => client.commit(request))
     expect(result.status).toBe('failed')
-    expect(db.select().from(schema.differenceReason).all()).toEqual([])
+    expect(db.select(differencePublicColumns(db)).from(schema.differenceReason).all()).toEqual([])
   })
 })

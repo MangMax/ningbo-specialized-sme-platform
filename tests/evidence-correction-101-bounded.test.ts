@@ -1,9 +1,10 @@
+import { submitNativePlatformQuery } from './helpers/native-platform-fixture'
 import { createHash } from 'node:crypto'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { expect, it } from 'vitest'
-import { useDb, schema } from '../db/client'
+import { initializeDb, schema } from '../db/client'
 import { handleEvidenceCorrectionRequest } from '../server/utils/roster-evidence-correction-api'
 import { startHttpFixture } from './helpers/http-fixture'
 import { minimalPdf } from './helpers/minimal-pdf'
@@ -12,7 +13,7 @@ it('bounds fixed evidence preflight and history materialization across unrelated
   const dir = mkdtempSync(join(tmpdir(), 'evidence101-bounded-')), filesDir = join(dir, 'files')
   mkdirSync(filesDir)
   const bytes = minimalPdf({ pages: 3 }); writeFileSync(join(filesDir, 'notice.pdf'), bytes)
-  const db = useDb({ dbPath: join(dir, 'isolated.db') })
+  const db = initializeDb({ create: true,  dbPath: join(dir, 'isolated.db') })
   db.insert(schema.storedFile).values({ relPath: 'notice.pdf', filename: 'notice.pdf', ext: 'pdf', bytes: Buffer.byteLength(bytes), sha256: createHash('sha256').update(bytes).digest('hex'), source: 'jxj', kind: 'announcement' }).run()
   const owner = db.insert(schema.enterprise).values({ name: '固定目标', nameNorm: '固定目标' }).returning().get()
   const record = db.insert(schema.record).values({ enterpriseId: owner.id, titleCode: 'specialized_sme', source: 'jxj' }).returning().get()
@@ -41,7 +42,7 @@ it('bounds fixed evidence preflight and history materialization across unrelated
   const measure = async (path: string, unrelated: number, body?: unknown) => {
     calls = 0; rows = 0; materializedBytes = 0; rawReads = 0
     const started = performance.now()
-    const response = await fetch(app.baseUrl + path, body ? { method: 'POST', headers: { authorization: 'Bearer synthetic-token', 'content-type': 'application/json' }, body: JSON.stringify(body) } : undefined)
+    const response = await fetch(app.baseUrl + path, body ? { method: 'POST', headers: { connection: 'close', authorization: 'Bearer synthetic-token', 'content-type': 'application/json' }, body: JSON.stringify(body) } : { headers: { connection: 'close' } })
     expect(response.status).toBe(200)
     const raw = await response.text()
     const measured = { path, unrelated, calls, rows, materializedBytes, rawReads, responseBytes: Buffer.byteLength(raw), milliseconds: performance.now() - started }
@@ -59,9 +60,9 @@ it('bounds fixed evidence preflight and history materialization across unrelated
         for (let i = existing; i < unrelated; i++) {
           const otherEvent = db.insert(schema.recordEvent).values({ recordId: record.id, eventType: 'award', year: 2000 + i }).returning().get()
           db.insert(schema.recordEvidence).values({ recordEventId: otherEvent.id, sourceFile: 'unrelated/' + i + '.pdf', listNo: 1, page: 1 }).run()
-          const q = db.insert(schema.platformQuery).values({ interface: 'business_list', queryKey: 'unrelated-' + i, rdjb: '2', queriedAt: '2026-10-19', status: 'success', rawResponse: 'raw-sentinel'.repeat(1024) }).returning().get()
-          const relation = db.insert(schema.platformRelation).values({ queryId: q.id, sequenceNo: 1, rawFields: { rawSentinel: 'raw-sentinel'.repeat(1024) } }).returning({ id: schema.platformRelation.id }).get()
-          db.insert(schema.recordCorrespondence).values({ edgeKey: 'unrelated-' + i, type: 'event_process', role: 'context_only', eventId: otherEvent.id, predecessorEventId: otherEvent.id, relationId: relation.id, titleCode: 'specialized_sme', status: 'candidate', revision: 1, targetIdentity: {}, provenance: { rawSentinel: 'raw-sentinel'.repeat(1024) }, sourceFingerprint: 'synthetic', ruleId: 'manual', ruleVersion: '1', createdAt: '2026-10-19' }).run()
+          const q = submitNativePlatformQuery(db, { interface: 'business_list', queryKey: 'unrelated-' + i, rdjb: '2', queriedAt: '2026-10-19', status: 'success', rawResponse: 'raw-sentinel'.repeat(1024), relations: [{ sequenceNo: 1, rawFields: { rawSentinel: 'raw-sentinel'.repeat(1024) } }] })
+          const relation = { id: q.relationIds[0]! }
+          db.insert(schema.recordCorrespondence).values({ edgeKey: 'unrelated-' + i, type: 'event_process', role: 'context_only', eventId: otherEvent.id, predecessorEventId: otherEvent.id, observationId: q.observations[0]!.observationId, titleCode: 'specialized_sme', status: 'candidate', revision: 1, targetIdentity: {}, provenance: { rawSentinel: 'raw-sentinel'.repeat(1024) }, sourceFingerprint: 'synthetic', ruleId: 'manual', ruleVersion: '1', createdAt: '2026-10-19' }).run()
         }
       })
       const point = await measure('/point', unrelated)

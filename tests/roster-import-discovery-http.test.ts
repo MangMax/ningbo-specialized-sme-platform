@@ -1,12 +1,11 @@
+import { createRuntimeSchema } from '../db/create-runtime'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { join } from 'node:path'
 import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
-import { migrate } from 'drizzle-orm/better-sqlite3/migrator'
 import { expect, it } from 'vitest'
 import * as schema from '../db/schema'
-import { TITLE_SEED } from '../db/titles'
 import { rosterImportMcpPayloadSchema } from '../server/utils/roster-import-schema'
 import { commitRosterImport, preflightRosterImport, readImportBatchOutcome } from '../server/utils/roster-import'
 import { startRosterApi } from './helpers/roster-http-server'
@@ -18,8 +17,7 @@ it('preserves legacy HTTP item errors, numeric normalization and idempotent rece
   const dir = mkdtempSync(join(tmpdir(), 'issue315-'))
   const sqlite = new Database(join(dir, 'synthetic.sqlite'))
   const db = drizzle(sqlite, { schema })
-  migrate(db, { migrationsFolder: resolve('db/migrations') })
-  for (const title of TITLE_SEED) db.insert(schema.title).values(title).run()
+  sqlite.pragma('foreign_keys=ON'); createRuntimeSchema(sqlite)
   const api = await startRosterApi({ db, apiToken: 'synthetic-315', executeImport: async (database, action, request, errors, context) => action === 'preflight' ? preflightRosterImport(database, request, errors, context) : commitRosterImport(database, request, errors, context) })
   const envelope = { idempotencyKey: 'discovery-shadow', sourceKind: 'announcement', sourceIdentity: 'synthetic-notice' }
   const payload = { announcement: { sourceDocument: { source: 'jxj', title: 'Synthetic notice', docNumber: null }, records: [{ enterprise: { name: '发现模型测试企业', uscc: null }, titleCode: 'specialized_sme', events: [{ eventType: 'award', year: 2021.9, decidedYear: null, evidence: [{ sourceFile: 'synthetic.txt', page: null, extra: 'preserved' }] }] }] }, extra: { raw: null } }
@@ -57,8 +55,7 @@ it('preserves alias core required-field errors and commits normalized aliases wi
   const dir = mkdtempSync(join(tmpdir(), 'issue315b-alias-'))
   const sqlite = new Database(join(dir, 'synthetic.sqlite'))
   const db = drizzle(sqlite, { schema })
-  migrate(db, { migrationsFolder: resolve('db/migrations') })
-  for (const title of TITLE_SEED) db.insert(schema.title).values(title).run()
+  sqlite.pragma('foreign_keys=ON'); createRuntimeSchema(sqlite)
   const api = await startRosterApi({ db, apiToken: 'synthetic-315b', executeImport: async (database, action, request, errors, context) => action === 'preflight' ? preflightRosterImport(database, request, errors, context) : commitRosterImport(database, request, errors, context) })
   async function post(action: string, key: string, payload: unknown) {
     const response = await fetch(`${api.baseUrl}/api/roster/import/${action}`, { method: 'POST', headers: { authorization: 'Bearer synthetic-315b', 'content-type': 'application/json' }, body: JSON.stringify({ idempotencyKey: key, sourceKind: 'alias_evidence', sourceIdentity: 'synthetic-alias-notice', payload }) })
@@ -114,8 +111,7 @@ it('preserves snapshot core required-field errors and legacy numeric normalizati
   const dir = mkdtempSync(join(tmpdir(), 'issue315b-export-'))
   const sqlite = new Database(join(dir, 'synthetic.sqlite'))
   const db = drizzle(sqlite, { schema })
-  migrate(db, { migrationsFolder: resolve('db/migrations') })
-  for (const title of TITLE_SEED) db.insert(schema.title).values(title).run()
+  sqlite.pragma('foreign_keys=ON'); createRuntimeSchema(sqlite)
   const api = await startRosterApi({ db, apiToken: 'synthetic-315b', executeImport: async (database, action, request, errors, context) => action === 'preflight' ? preflightRosterImport(database, request, errors, context) : commitRosterImport(database, request, errors, context) })
   async function post(action: string, key: string, payload: unknown) {
     const response = await fetch(`${api.baseUrl}/api/roster/import/${action}`, { method: 'POST', headers: { authorization: 'Bearer synthetic-315b', 'content-type': 'application/json' }, body: JSON.stringify({ idempotencyKey: key, sourceKind: 'platform_export', sourceIdentity: 'synthetic-export', payload }) })

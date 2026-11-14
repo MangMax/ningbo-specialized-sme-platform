@@ -1,5 +1,5 @@
 /** Observed queryBusList innovative_sme projection; predicates never supply facts.
- * See docs/platform-recognized-evidence.md for the empirical contract and limits.
+ * See lib/platform/recognized-evidence.ts for the empirical contract and limits.
  */
 export function recognizedFilterFacts(
   context: { titleCode: string; schema: 'queryBusList' },

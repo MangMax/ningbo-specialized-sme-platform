@@ -1,8 +1,10 @@
+import { submitNativePlatformQuery } from './helpers/native-platform-fixture'
+import { listPlatformQueries } from '../lib/platform/read'
 import { initializeDb } from '../db/client'
 /**
  * 名录生命周期**冻结契约**的验收样例(RL-01)。
  *
- * 本文件是交付物 D:用 SQLite 场景数据证明 `docs/roster-lifecycle-contract.md`
+ * 本文件是交付物 D:用 SQLite 场景数据证明 `lib/roster-import-client.ts`
  * 与 `db/schema.ts` 里那批新表**真的**按契约行事 —— 尤其是唯一键/幂等键在
  * **库层面**生效(违反时确实抛错),而不是只在文档里写着。
  *
@@ -164,12 +166,12 @@ function searchEnterpriseId(term: string): number[] {
 
 describe('企业曾用名 / 别名', () => {
   const id = caseId
-  const query = db.insert(schema.platformQuery).values({
+  const query = submitNativePlatformQuery(db, { ...{
     interface: 'business_list',
     queryKey: '91330211255994457P',
     queriedAt: '2026-10-14T03:00:00.000Z',
     status: 'success',
-  }).returning({ id: schema.platformQuery.id }).get().id
+  }, rawResponse: 'Explicit synthetic lifecycle source' }).queryId
 
   it('一个企业可有多条别名记录,保留原值、来源关系与核验状态', () => {
     db.insert(schema.enterpriseAlias).values([
@@ -226,18 +228,15 @@ describe('平台接口关系记录', () => {
   const id = caseId
 
   it('同一信用代码返回的多条关联逐条保留,不覆盖成一条', () => {
-    const q = db.insert(schema.platformQuery).values({
+    const q = submitNativePlatformQuery(db, { ...{
       interface: 'business_list',
       queryKey: '91330211255994457P',
       titleCode: 'specialized_sme',
       queriedAt: '2026-10-14T04:00:00.000Z',
       status: 'success',
       rawResponse: '<table>…</table>',
-    }).returning({ id: schema.platformQuery.id }).get().id
-
-    db.insert(schema.platformRelation).values([
+    }, relations: [
       {
-        queryId: q,
         sequenceNo: 1,
         enterpriseId: id,
         rawFields: { 企业名称: '多关联案例企业', 统一社会信用代码: '91330211255994457P' },
@@ -247,7 +246,6 @@ describe('平台接口关系记录', () => {
         verificationStatus: 'confirmed',
       },
       {
-        queryId: q,
         sequenceNo: 2,
         enterpriseId: id,
         rawFields: { 企业名称: '经信局侧旧名企业', 曾用名: '经信局侧旧名企业' },
@@ -258,7 +256,6 @@ describe('平台接口关系记录', () => {
         verificationStatus: 'confirmed',
       },
       {
-        queryId: q,
         sequenceNo: 3,
         enterpriseId: null,
         rawFields: { 企业名称: '同名他企' },
@@ -266,12 +263,9 @@ describe('平台接口关系记录', () => {
         matchBasis: 'none',
         verificationStatus: 'pending',
       },
-    ]).run()
+    ] }).queryId
 
-    const relations = db
-      .select()
-      .from(schema.platformRelation)
-      .all()
+    const relations = listPlatformQueries(db, { pageSize: 200 }).rows.flatMap(item => item.relations.map(row => ({ ...row, queryId: item.query.id })))
       .filter((r) => r.queryId === q)
     expect(relations).toHaveLength(3)
     expect(relations.map((r) => r.sequenceNo).sort()).toEqual([1, 2, 3])
@@ -284,7 +278,7 @@ describe('平台接口关系记录', () => {
   })
 
   it('查询失败 ≠ 无记录:两种状态彼此可区分', () => {
-    db.insert(schema.platformQuery).values([
+    for (const query of [
       {
         interface: 'apply_list',
         queryKey: 'name:某企业',
@@ -298,8 +292,8 @@ describe('平台接口关系记录', () => {
         queriedAt: '2026-10-14T05:01:00.000Z',
         status: 'no_record',
       },
-    ]).run()
-    const rows = db.select().from(schema.platformQuery).all()
+    ]) submitNativePlatformQuery(db, { ...query, rawResponse: 'Explicit synthetic query outcome' })
+    const rows = listPlatformQueries(db, { pageSize: 200 }).rows.map(item => item.query)
     const failed = rows.find((r) => r.queryKey === 'name:某企业')!
     const empty = rows.find((r) => r.queryKey === 'name:另一企业')!
     expect(failed.status).toBe('failed')
@@ -339,12 +333,12 @@ describe('差异原因与后续措施', () => {
   })
 
   it('原因与后续措施成对保存,迁入承载原城市/称号/年份/批次', () => {
-    const q = db.insert(schema.platformQuery).values({
+    const q = submitNativePlatformQuery(db, { ...{
       interface: 'apply_list',
       queryKey: '91330211000000002Y',
       queriedAt: '2026-10-14T07:00:00.000Z',
       status: 'success',
-    }).returning({ id: schema.platformQuery.id }).get().id
+    }, rawResponse: 'Explicit synthetic lifecycle source' }).queryId
     db.insert(schema.differenceReason).values({
       enterpriseId: id,
       titleCode: 'specialized_sme',
@@ -354,7 +348,7 @@ describe('差异原因与后续措施', () => {
       reasonNote: '平台申报记录显示外地迁入',
       measureCode: 'record_moved_in',
       measureNote: '登记原称号与批次',
-      evidenceQueryId: q,
+      evidenceCollectionId: db.select().from(schema.platformLegacyQueryAlias).all().find(row => row.oldId === q)!.collectionId,
       movedInCity: '杭州市',
       movedInTitleCode: 'innovative_sme',
       movedInYear: 2021,
@@ -373,7 +367,7 @@ describe('差异原因与后续措施', () => {
     expect(row.movedInTitleCode).toBe('innovative_sme')
     expect(row.movedInYear).toBe(2021)
     expect(row.movedInBatch).toBe(2)
-    expect(row.evidenceQueryId).toBe(q)
+    expect(row.evidenceCollectionId).toBe(db.select().from(schema.platformLegacyQueryAlias).all().find(row => row.oldId === q)!.collectionId)
   })
 
   it('证据不足的迁入缺项留空并待核,不猜填', () => {
@@ -577,23 +571,7 @@ describe('回归案例:91330211255994457P(真实响应摘录)', () => {
 
   it('rdjb=3 的 6 条关联逐条保留;rdjb=1/2 是「无记录」,会话过期是「失败」', () => {
     const query = (rdjb: string, status: 'success' | 'no_record' | 'failed', at: string, failureReason?: string) =>
-      db.insert(schema.platformQuery).values({
-        interface: 'business_list',
-        queryKey: '91330211255994457P',
-        rdjb,
-        queriedAt: at,
-        status,
-        failureReason: failureReason ?? null,
-      }).returning({ id: schema.platformQuery.id }).get().id
-
-    const hit = query('3', 'success', '2026-10-15T17:11:21.514Z')
-    const none1 = query('1', 'no_record', '2026-10-15T17:11:21.600Z')
-    const none2 = query('2', 'no_record', '2026-10-15T17:11:21.700Z')
-    const expired = query('3', 'failed', '2026-10-15T17:20:00.000Z', '登录超时,请重新登录')
-
-    db.insert(schema.platformRelation).values(
-      trimmed.map((r, i) => ({
-        queryId: hit,
+      submitNativePlatformQuery(db, { interface: 'business_list', queryKey: '91330211255994457P', rdjb, queriedAt: at, status, failureReason: failureReason ?? null, rawResponse: 'Explicit synthetic archived response excerpt', relations: status === 'success' ? trimmed.map((r, i) => ({
         sequenceNo: i + 1,
         relationKey: r.id,
         enterpriseId: id,
@@ -606,15 +584,18 @@ describe('回归案例:91330211255994457P(真实响应摘录)', () => {
         awardBatchLabel: r.personuuid,
         matchBasis: 'uscc' as const,
         verificationStatus: 'confirmed' as const,
-      })),
-    ).run()
+      })) : [] }).queryId
+    const hit = query('3', 'success', '2026-10-15T17:11:21.514Z')
+    const none1 = query('1', 'no_record', '2026-10-15T17:11:21.600Z')
+    const none2 = query('2', 'no_record', '2026-10-15T17:11:21.700Z')
+    const expired = query('3', 'failed', '2026-10-15T17:20:00.000Z', '登录超时,请重新登录')
 
-    const relations = db.select().from(schema.platformRelation).all().filter((r) => r.queryId === hit)
+    const relations = listPlatformQueries(db, { pageSize: 200 }).rows.flatMap(item => item.relations.map(row => ({ ...row, queryId: item.query.id }))).filter((r) => r.queryId === hit)
     expect(relations).toHaveLength(6) // 不是 1 条
     expect(relations.map((r) => r.sequenceNo).sort((a, b) => a - b)).toEqual([1, 2, 3, 4, 5, 6])
     expect(relations.every((r) => r.usccRaw === '91330211255994457P')).toBe(true)
 
-    const queries = db.select().from(schema.platformQuery).all()
+    const queries = listPlatformQueries(db, { pageSize: 200 }).rows.map(item => item.query)
     expect(queries.find((q) => q.id === none1)!.status).toBe('no_record')
     expect(queries.find((q) => q.id === none2)!.status).toBe('no_record')
     expect(queries.find((q) => q.id === expired)!.status).toBe('failed')
@@ -623,10 +604,7 @@ describe('回归案例:91330211255994457P(真实响应摘录)', () => {
   })
 
   it('曾用名由「同 USCC 下 qymc 不同的历史关联行」派生,没有独立别名字段', () => {
-    const oldNameRows = db
-      .select()
-      .from(schema.platformRelation)
-      .all()
+    const oldNameRows = listPlatformQueries(db, { pageSize: 200 }).rows.flatMap(item => item.relations.map(row => ({ ...row, queryId: item.query.id })))
       .filter((r) => r.nameRaw === '宁波上航测绘有限公司')
     expect(oldNameRows).toHaveLength(2)
     // 同一 USCC、不同 qymc ⇒ 曾用名证据;确认后落 enterprise_alias。
@@ -651,10 +629,7 @@ describe('回归案例:91330211255994457P(真实响应摘录)', () => {
   })
 
   it('复核关联行佐证「2022 认定 → 2025 复核」,但不推断复核结论', () => {
-    const review = db
-      .select()
-      .from(schema.platformRelation)
-      .all()
+    const review = listPlatformQueries(db, { pageSize: 200 }).rows.flatMap(item => item.relations.map(row => ({ ...row, queryId: item.query.id })))
       .find((r) => r.relationKey === 'SQ332025060392166')!
     expect(review.declareKind).toBe('review')
     expect(review.batch).toBe('2025-1') // whpc:结论年份 2025

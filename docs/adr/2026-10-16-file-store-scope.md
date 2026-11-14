@@ -1,6 +1,7 @@
 # 文件库入库范围:一份可执行的裁决规则
 
-2026-10-16 · 状态:接受(RL-16,票 #17) · 规则实现 [`lib/file-store-scope.ts`](../../lib/file-store-scope.ts) · 目录与命名 [`files/README.md`](../../files/README.md)
+
+2026-10-16 · 状态:接受(RL-16,票 #17) · 规则实现 [`lib/file-store-scope.ts`](../../lib/file-store-scope.ts)
 
 **修正** [ADR-来源文件内化为仓库内的文件库](./2026-10-13-source-files-in-repo.md) 的「内化范围」一段(那一版说:经信局的 PDF 与 `.doc` 内化、与 PDF 同名的 `.docx` 不内化)。
 **目录规则(`files/<source>/<kind>/<year>/<batch>/<filename>`)与 `source_file` 口径不变** —— 变的只有「哪些文件该进文件库」这条判定。
@@ -11,7 +12,7 @@
 名录行的预览/跳转全断;②文件库里多出**两份重复的 `.doc`** 与**一份 2021 入库培育文件**。
 
 根因不是某一次搬运做错了,而是「该不该入库」这条判定**从来没落成代码** —— 它散在
-`files/README.md` 的散文、项目外 pipeline 的脚本、以及人的记忆里。于是每次搬运都可能再混进来。
+早期目录说明、项目外 pipeline 的脚本、以及人的记忆里。于是每次搬运都可能再混进来。
 
 ## 决定
 
@@ -49,7 +50,7 @@
 
 - 文件库的「应有集合」不再等于磁盘全量,而是**磁盘 ∩ 入库范围**;实测真实库 22 份。
 - 「历年汇总」类文件(《经信局公布历年小巨人企业名单.xlsx》)跨第 1–7 批,**没有**单一
-  「公布年份/批次」⇒ 按 `files/README.md`「year/batch 取值」第 4 条省略这两段,
+  「公布年份/批次」⇒ 按 `lib/file-store-scope.ts`「year/batch 取值」第 4 条省略这两段,
   于是 `category_state` 为 `unset`。那是**年份待核**,不是「不知道它是什么」;
   **不要**为了消掉它硬填一个年份(空值优于错值)。
 - ⚠️ **项目外 pipeline 尚未同步**:`pipeline/src/files.ts` 的 `scanSources()` 仍不扫

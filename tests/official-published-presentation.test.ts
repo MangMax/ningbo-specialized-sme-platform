@@ -1,14 +1,13 @@
+import { createRuntimeSchema } from '../db/create-runtime'
 import { CURRENT_RULE_VERSION, QUALIFICATION_ASSESSMENT_VERSION } from '../lib/roster/current-qualification'
 import { createHash } from 'node:crypto'
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { join, resolve } from 'node:path'
+import { join } from 'node:path'
 import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
-import { migrate } from 'drizzle-orm/better-sqlite3/migrator'
 import ExcelJS from 'exceljs'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import * as schema from '../db/schema'
-import { TITLE_SEED } from '../db/titles'
 import type { OfficialPublishedRow, RosterImportPayload, RosterImportRecord } from '../lib/roster-import-client'
 import { preflightRosterImport, commitRosterImport } from '../server/utils/roster-import'
 import { handleRosterImportRequest } from '../server/utils/roster-import-http'
@@ -48,9 +47,8 @@ async function fixture() {
   const dir = mkdtempSync('/tmp/issue355-synthetic-'), filesDir = join(dir, 'files'); mkdirSync(filesDir)
   const sqlite = new Database(join(dir, 'synthetic.sqlite')); sqlite.pragma('foreign_keys=ON')
   closes.push(() => { expect(sqlite.pragma('foreign_key_check')).toEqual([]); sqlite.close() })
-  const db = drizzle(sqlite, { schema }); migrate(db, { migrationsFolder: resolve('db/migrations') })
+  const db = drizzle(sqlite, { schema }); createRuntimeSchema(sqlite)
   // Infrastructure catalog only. Normal domain facts below go through B public commands.
-  for (const title of TITLE_SEED) db.insert(schema.title).values(title).run()
   for (const [index, path] of ['2021公布.pdf', '2024公布.pdf', '独立佐证.pdf'].entries()) {
     writeFileSync(join(filesDir, path), sourceBytes)
     db.insert(schema.storedFile).values({ id: index + 1, relPath: path, filename: path, ext: 'pdf', source: 'jxj', kind: 'announcement', bytes: Buffer.byteLength(sourceBytes), sha256: digest, createdAt: 'synthetic' }).run()
@@ -211,7 +209,7 @@ it('deduplicates caller scope and reads each event page once without per-evidenc
   expect(facts.has(f.ids()[51]!.id)).toBe(false)
 })
 
-it('keeps captured origin facts after a public legal merge removes old live owners', async () => {
+it('keeps captured origin facts after a public legal merge retains identity and redirects current ownership', async () => {
   const f = await fixture()
   await f.commit(f.announcement([f.record('specialized_sme', [{ eventType: 'award', year: 2021, batchSeq: 1, evidence: [f.evidence(f.published('2021旧名'))] }], '旧主体名', null)]), 'old')
   const original = await f.exact(f.ids()[0]!.id)
@@ -221,7 +219,8 @@ it('keeps captured origin facts after a public legal merge removes old live owne
   expect([...facts.values()].map(fact => fact.nameRaw)).toEqual(['2021旧名', '2024新名'])
   expect(exact.official.row.capturedEnterpriseId).toBe(original.enterpriseId)
   expect(exact.official.row.currentOwner.enterpriseId).not.toBe(original.enterpriseId)
-  expect(f.db.select().from(schema.enterprise).all().some(item => item.id === original.enterpriseId)).toBe(false)
+  expect(f.db.select().from(schema.enterprise).all().some(item => item.id === original.enterpriseId)).toBe(true)
+  expect(f.sqlite.prepare('SELECT from_enterprise_id,into_enterprise_id FROM enterprise_merge WHERE from_enterprise_id=?').get(original.enterpriseId)).toEqual({ from_enterprise_id: original.enterpriseId, into_enterprise_id: exact.official.row.currentOwner.enterpriseId })
 })
 
 it('isolates sidecar-only changes from enumerable qualification and dataVersion at a fixed time', async () => {
@@ -253,7 +252,10 @@ it('isolates sidecar-only changes from enumerable qualification and dataVersion 
   expect(sourceVersion.capturedSha256).toBe(digest)
   expect(f.sqlite.prepare('select v.id,v.record_event_id as eventId,v.source_file as sourceFile,v.attachment,v.list_no as listNo,v.page from record_evidence v join record_event e on e.id=v.record_event_id join record r on r.id=e.record_id where r.enterprise_id=? and r.title_code=? order by v.id').all(exact.enterpriseId,'specialized_sme')).toEqual(beforeEvidence)
   const hashJSON = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex')
-  selected.versions.sources = hashJSON([beforeEvidence,selected.sourceVersions,selected.completeness.publishedNames])
+  const giant = expectedT2.titles.find(item => item.titleCode === 'little_giant')!
+  expect(giant.sourceVersions).toEqual([])
+  expect(giant.completeness.publishedNames).toEqual([])
+  selected.versions.sources = hashJSON([hashJSON([beforeEvidence,selected.sourceVersions,selected.completeness.publishedNames]),hashJSON([[],[],[]])])
   const { snapshotId: _oldDigest, titles: expectedTitles, ...expectedScope } = expectedT2
   expectedT2.snapshotId = hashJSON([expectedScope,expectedTitles])
   expect(afterT2).toEqual(expectedT2) // Every unlisted full-T2 path stays byte/structurally equal.
@@ -272,14 +274,15 @@ it('isolates sidecar-only changes from enumerable qualification and dataVersion 
   }
   expect(afterCells).toEqual(beforeCells) // H2/L2 alone may change, including all explanation cells.
   const independentVersion = (book: ExcelJS.Workbook, snapshot: typeof beforeT2) => {
-    const {titles:_titles,snapshotId,...scope}=snapshot
+    const {titles,snapshotId:_fullSnapshotId,...scope}=snapshot
+    const snapshotId = hashJSON([scope,titles.filter(title => title.titleCode === 'specialized_sme')])
     const values=Array.from({length:15},(_,c)=>book.getWorksheet('有效企业')!.getRow(2).getCell(c+1).value)
     // This source-complete fixture has no diagnostic notes. The new O column
     // hashes the empty joined string, which ExcelJS reads as a blank/null cell.
     expect(snapshot.titles.find(title => title.titleCode === 'specialized_sme')!.effectiveQualification!.notes).toEqual([])
     expect(values[14]).toBeNull()
     values[14]=''
-    return 'sha256:'+createHash('sha256').update(JSON.stringify(['current-export-assessment-409-v2',QUALIFICATION_ASSESSMENT_VERSION,CURRENT_RULE_VERSION,2026,'specialized_sme'])+'\n')
+    return 'sha256:'+createHash('sha256').update(JSON.stringify(['current-export-assessment-title-v3',QUALIFICATION_ASSESSMENT_VERSION,CURRENT_RULE_VERSION,2026,'specialized_sme'])+'\n')
       .update(JSON.stringify(['effective',exact.enterpriseId,scope,snapshotId,values])+'\n').digest('hex')
   }
   expect(first.dataVersion).toBe(independentVersion(beforeBook,beforeT2))
@@ -457,8 +460,7 @@ function fixture391(filename = ':memory:') {
   closes.push(() => { sqlite.close(); })
   const statements: string[] = []
   const db = drizzle(sqlite, { schema, logger: { logQuery(query) { statements.push(query) } } })
-  migrate(db, { migrationsFolder: resolve('db/migrations') })
-  for (const title of TITLE_SEED) db.insert(schema.title).values(title).run()
+  createRuntimeSchema(sqlite)
   db.insert(schema.importBatch).values({ id: 1, idempotencyKey: '391', sourceKind: 'announcement', sourceIdentity: 'synthetic391', status: 'committed' }).run()
   const event = (id: number) => {
     db.insert(schema.enterprise).values({ id, name: 'Container391', nameNorm: 'Container391-' + id }).run()

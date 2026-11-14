@@ -2,12 +2,12 @@ import { afterAll, beforeAll, expect, it } from 'vitest'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { useDb } from '../db/client'
+import { initializeDb } from '../db/client'
 import { applicationLogs, closeApplicationLogging, initializeWorkerLogging } from '../lib/logging'
 import { __resetJobRunner, clearJobSpecs, registerJob, submitJob, whenIdle } from '../server/utils/job-runner'
 import { getJob } from '../server/utils/job-store'
 const dir = mkdtempSync(join(tmpdir(), 'jobs184-'))
-const db = useDb({ dbPath: join(dir, 'fixture.db') })
+const db = initializeDb({ create: true,  dbPath: join(dir, 'fixture.db') })
 const previous = process.env.NUXT_LOG_DIR
 beforeAll(() => { process.env.NUXT_LOG_DIR = join(dir, 'logs'); initializeWorkerLogging() })
 afterAll(async () => { await whenIdle(); __resetJobRunner(); clearJobSpecs(); await closeApplicationLogging(); db.$client.close(); if (previous === undefined) delete process.env.NUXT_LOG_DIR; else process.env.NUXT_LOG_DIR=previous; rmSync(dir,{recursive:true,force:true}) })

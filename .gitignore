@@ -19,9 +19,8 @@ data/
 *.db-shm
 
 # 运行时业务数据：SQLite 快照、来源文件、上传件、页图与本地标注。
-# 保留 files/README.md 作为目录说明；实际源文件只通过受控备份或应用上传交接。
+# 实际源文件只通过受控备份或应用上传交接。
 files/**
-!files/README.md
 
 # misc
 .DS_Store
@@ -30,14 +29,19 @@ files/**
 .env.*
 !.env.example
 
-# scratch
-.scratch/roster-board/issues/.cache/
+# Local implementation artifacts; tracked docs are ADRs and agent instructions.
+.scratch/
+docs/*
+!docs/adr/
+!docs/agents/
+*.md
+*.mdx
+*.rst
+!**/AGENTS.md
+!CLAUDE.md
+!docs/adr/**/*.md
+!docs/agents/**/*.md
+!.agents/**/*.md
 
 # agent worktrees
 .claude/worktrees/
-
-# design-review evidence (screenshots / fixtures / shots) — 过程产物,不入库
-.scratch/**/shots/
-.scratch/**/evidence/
-.scratch/**/fixtures/
-.scratch/**/preview-harness/

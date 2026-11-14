@@ -10,6 +10,8 @@ import * as s from '../../db/schema'
 import { DecisionError102, decisionScope102, parse102, readDecision102, currentDecision102, type DecisionDb } from './decision-lifecycle-102'
 import { captureRuleRevision113, evidenceDigest113, evaluateEvidenceImpact113, processEvidenceImpacts113, readEvidenceRevision113, readEvidenceToken113 } from './evidence-impact-113'
 import { readQueryCoverage } from '../../lib/roster/query-assessment'
+import { differenceEvidenceColumns } from '../../lib/platform/difference-reference-target'
+import { currentEnterpriseIdentity } from '../../lib/roster/enterprise-identity'
 const positive = z.number().int().positive().max(Number.MAX_SAFE_INTEGER)
 const limit = positive.max(100).default(50), cursor = z.string().min(1).max(2048).optional()
 const filters = decisionScope102.partial().extend({ decisionId: positive.optional() })
@@ -98,7 +100,7 @@ function impactRows(db:DecisionDb,input:z.infer<typeof impactList114>,a:Anchor,a
       coalesce((select max(l.revision_id) from evidence_impact_link_113 l where l.impact_id=i.id and l.revision_id<=${a.revision}),0) latestRevisionId,
       (select max(r.reviewed_revision_id) from evidence_review_receipt_114 r where r.enterprise_id=i.enterprise_id and r.title_code=i.title_code and r.direction=i.direction and (r.decision_id=i.decision_id or r.source_decision_id=i.decision_id) and r.id<=${a.receipt}) reviewedRevisionId,
       (${headAt(a)}) headId,
-      exists(select 1 from enterprise e where e.id=i.enterprise_id) ownerExists
+      exists(select 1 from enterprise e where e.id=i.enterprise_id and ${currentEnterpriseIdentity(db, sql`e.id`)}) ownerExists
     from explanation_impact_113 i where i.id>${after} and i.id<=${a.impact} and ${scoped(input,'i')} and ${id==null?sql`1`:sql`i.id=${id}`}
     and ${input.eventId==null?sql`1`:sql`exists(select 1 from evidence_impact_link_113 l join evidence_revision_event_113 e on e.revision_id=l.revision_id where l.impact_id=i.id and l.revision_id<=${a.revision} and e.event_id=${input.eventId} and e.enterprise_id=i.enterprise_id and e.title_code=i.title_code)`}
   ), classified as (
@@ -133,7 +135,7 @@ export function getImpact114(db:DecisionDb,id:number) {
   const row=impactRows(db,parse102(impactList114,{view:'all',state:'all'}),a,0,id)[0]
   if(!row)throw new DecisionError102(404,'not_found','Evidence impact not found')
   const scope={enterpriseId:row.enterpriseId,titleCode:row.titleCode,direction:row.direction}
-  const present=!!db.get(sql`select 1 from enterprise where id=${row.enterpriseId}`)
+  const present=!!db.get(sql`select 1 from enterprise e where id=${row.enterpriseId} and ${currentEnterpriseIdentity(db, sql`e.id`)}`)
   const queryCoverage=present?readQueryCoverage(db,scope):null
   const decisionUnavailable=!db.get(sql`select 1 from difference_reason where id=${row.decisionId}`)
   const review = db.get<{ reviewedRevisionId: number; actor: string | null; basis: string; ruleVersion: string | null; effectiveAt: string; recordedAt: string }>(sql`select reviewed_revision_id reviewedRevisionId,actor,basis,rule_version ruleVersion,effective_at effectiveAt,recorded_at recordedAt from evidence_review_receipt_114
@@ -145,7 +147,7 @@ export function getImpact114(db:DecisionDb,id:number) {
 export function previewImpacts114(db:DecisionDb,input:z.infer<typeof impactPreview114>) {
   const revision=readEvidenceRevision113(db,input.revisionId);if(!revision)throw new DecisionError102(404,'not_found','Committed evidence revision not found')
   const c=pageContext(db,'preview',input)
-  const rows=db.all<{id:number;enterpriseId:number;titleCode:string;direction:string;status:string;evidenceQueryId:number|null;lifecycleAction:string|null}>(sql`select d.id,d.enterprise_id enterpriseId,d.title_code titleCode,d.direction,d.status,d.evidence_query_id evidenceQueryId,d.lifecycle_action lifecycleAction
+  const rows=db.all<{id:number;enterpriseId:number;titleCode:string;direction:string;status:string;evidenceQueryId:number|null;lifecycleAction:string|null}>(sql`select d.id,d.enterprise_id enterpriseId,d.title_code titleCode,d.direction,d.status,${differenceEvidenceColumns(db, 'd').evidenceQueryId} evidenceQueryId,d.lifecycle_action lifecycleAction
     from difference_reason d where d.id>${c.after} and d.id<=${Math.min(c.asOf.decision,revision.maxDecisionId)} and ${scoped(input,'d')}
     and ${revision.enterpriseId==null?sql`1`:sql`d.enterprise_id=${revision.enterpriseId}`} and ${revision.titleCode==null?sql`1`:sql`d.title_code=${revision.titleCode}`} and ${revision.direction==null?sql`1`:sql`d.direction=${revision.direction}`}
     and not exists(select 1 from difference_reason n where n.enterprise_id=d.enterprise_id and n.title_code=d.title_code and n.direction=d.direction and n.id<=${c.asOf.decision} and (n.recorded_at>d.recorded_at or (n.recorded_at=d.recorded_at and n.id>d.id))) order by d.id limit ${input.limit+1}`)

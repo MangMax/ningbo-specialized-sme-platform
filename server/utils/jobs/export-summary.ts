@@ -1,9 +1,8 @@
 import type { TaskSummary } from '../../../lib/task-center'
 import { TASK_EXPORTS } from '../../../lib/task-center'
 import { isJobId } from '../../../lib/job'
-import type { useDb } from '../../../db/client'
+import type { useApplicationDb } from '../../../db/client'
 import { currentArtifact, currentExportDbPath } from '../current-export-artifact'
-import { CURRENT_RULE_VERSION, LEGACY_CURRENT_RULE_VERSION } from '../../../lib/roster/current-qualification'
 import type { ProjectedTask } from './task-summary'
 import { sql } from 'drizzle-orm'
 import { schema } from '../../../db/client'
@@ -21,7 +20,7 @@ export const exportProjection = {
 
 export const exportTitleFilter = (title: string) => sql`json_extract(${j.params}, '$.titleCode') = ${title}`
 
-export async function readExportSummary(row: ProjectedTask, authorized: boolean, db: ReturnType<typeof useDb>) {
+export async function readExportSummary(row: ProjectedTask, authorized: boolean, db: ReturnType<typeof useApplicationDb>) {
   const active = row.state === 'queued' || row.state === 'running'
   let exported: TaskSummary['export']
   if (row.kind === 'current-roster-export') {
@@ -40,9 +39,8 @@ export async function readExportSummary(row: ProjectedTask, authorized: boolean,
       titleCode: title?.titleCode ?? null, regenerateOf: isJobId(meta.regenerateOf) ? meta.regenerateOf : null,
       phase: ['starting','workbook','complete'].includes(meta.phase) ? meta.phase : 'unknown',
       generatedAt: date(meta.generatedAt), snapshotStartedAt: date(meta.snapshotStartedAt),
-      // Whitelist the live rule version plus its predecessor: a bump must not turn
-      // fresh exports into "unknown rule" in the task center.
-      ruleVersion: [CURRENT_RULE_VERSION, LEGACY_CURRENT_RULE_VERSION, 'current-roster-116-v1', 'current-roster-116-v2', 'current-roster-116-v3', 'current-roster-116-v4', 'current-roster-116-v5', 'current-roster-116-v6', 'current-roster-116-v7', 'current-roster-116-v9'].includes(meta.ruleVersion) ? meta.ruleVersion : null,
+      // This is a displayed label, not a qualification policy selector.
+      ruleVersion: /^current-roster-116-v[1-9]\d*$/.test(meta.ruleVersion) ? meta.ruleVersion : null,
       dataVersion: /^sha256:[a-f0-9]{64}$/.test(meta.dataVersion) ? meta.dataVersion : null,
       counts: meta.counts && Object.values(meta.counts).every(n => Number.isSafeInteger(n) && Number(n) >= 0) ? meta.counts : null,
       artifact, canDownload: authorized && artifact?.availability === 'available', canRegenerate: authorized && !active && !!title,

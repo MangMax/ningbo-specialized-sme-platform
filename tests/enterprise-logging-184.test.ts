@@ -3,12 +3,12 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { setTimeout as pause } from 'node:timers/promises'
-import { useDb } from '../db/client'
+import { initializeDb } from '../db/client'
 import { applicationLogs, closeApplicationLogging, initializeWorkerLogging } from '../lib/logging'
 import { createEnterpriseReadExecutor } from '../server/utils/enterprise-read'
 import { createEnterpriseReadProcess } from '../server/utils/enterprise-read-process'
 const root=mkdtempSync(join(tmpdir(),'enterprise184-'))
-const path=join(root,'fixture.db'), db=useDb({dbPath:path})
+const path=join(root,'fixture.db'), db=initializeDb({ create: true, dbPath:path})
 const previous=process.env.NUXT_LOG_DIR
 beforeAll(()=>{process.env.NUXT_LOG_DIR=join(root,'logs');initializeWorkerLogging()})
 afterAll(async()=>{await closeApplicationLogging();db.$client.close();if(previous===undefined) delete process.env.NUXT_LOG_DIR;else process.env.NUXT_LOG_DIR=previous;rmSync(root,{recursive:true,force:true})})

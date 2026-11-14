@@ -1,6 +1,6 @@
 # 台账不保留导入快照/批次
 
-> 状态（2026-10-25）：部分已被[生命周期模型](2026-10-16-roster-lifecycle-model.md)及现有统一导入实现替代。`import_batch/import_receipt` 已承担幂等命令与提交回执，下文“没有批次/只靠身份键”不适用；批次回执不等于可切换的业务历史快照，事件年份与加载时间分开仍成立。当前边界见[总览](../data-model.md)、[待审分域 ADR](0001-source-domain-boundaries.md)。原文保留。
+> 状态（2026-10-25）：部分已被[生命周期模型](2026-10-16-roster-lifecycle-model.md)及现有统一导入实现替代。`import_batch/import_receipt` 已承担幂等命令与提交回执，下文“没有批次/只靠身份键”不适用；批次回执不等于可切换的业务历史快照，事件年份与加载时间分开仍成立。当前边界见[总览](../../db/schema.ts)、[待审分域 ADR](0001-source-domain-boundaries.md)。原文保留。
 
 数据模型里**没有** `import_batch`(导入快照)这张表,`record` 也不记录「哪次导入写入了它」。台账只表达**当前的事实**:企业、称号、来源、事件及其出处。原始来源文件路径已逐条记在 `record_evidence` 里,足以回溯。
 

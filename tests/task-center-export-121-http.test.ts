@@ -7,11 +7,11 @@ import { execFileSync } from 'node:child_process'
 import { eq } from 'drizzle-orm'
 import { newJobId } from '../lib/job'
 import ExcelJS from 'exceljs'
-import { useDb, schema as s } from '../db/client'
-import { spawnOwnedChild as spawn, reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../scripts/lib/isolated-local-services.mjs'
+import { initializeDb, schema as s } from '../db/client'
+import { spawnOwnedChild as spawn, reserveLoopbackPort, waitForHttp, stopOwnedChild } from './helpers/isolated-local-services.mjs'
 
 const dir = mkdtempSync(join(tmpdir(), 'task-export-121-'))
-const dbPath = join(dir, 'synthetic.db'), db = useDb({ dbPath })
+const dbPath = join(dir, 'synthetic.db'), db = initializeDb({ create: true,  dbPath })
 const headers = { 'content-type': 'application/json', authorization: 'Bearer synthetic-121' }
 let baseUrl: string, stop: () => Promise<void>
 const request = (path: string, init?: RequestInit) => fetch(baseUrl + path, init)

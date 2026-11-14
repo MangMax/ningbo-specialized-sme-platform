@@ -2,12 +2,12 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { expect, it } from 'vitest'
-import { useDb } from '../db/client'
+import { initializeDb } from '../db/client'
 import { seedExport188DisconnectFixture } from './helpers/export-188-fixture'
 
 it('rolls back a failed export fixture transaction before its child closes and rejects', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'export-188-fixture-failure-'))
-  const dbPath = join(dir, 'synthetic.db'), db = useDb({ dbPath })
+  const dbPath = join(dir, 'synthetic.db'), db = initializeDb({ create: true,  dbPath })
   try {
     db.$client.exec(`CREATE TRIGGER fail_fixture BEFORE INSERT ON enterprise
       WHEN NEW.name LIKE '合成断开1%' BEGIN SELECT RAISE(ABORT, 'synthetic fixture failure'); END`)

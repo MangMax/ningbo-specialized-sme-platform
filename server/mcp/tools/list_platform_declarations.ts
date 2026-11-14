@@ -1,7 +1,7 @@
 import { defineMcpTool } from '@nuxtjs/mcp-toolkit/server'
 import { useDb } from '@db'
 import { declarationFilterSchema } from '../../../lib/platform/declarations'
-import { listPlatformDeclarations } from '../../utils/platform-declarations'
+import { listTargetDeclarations } from '../../utils/platform-declarations-target'
 
 export default defineMcpTool({
   name: 'list_platform_declarations',
@@ -11,7 +11,7 @@ export default defineMcpTool({
   annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   inputSchema: declarationFilterSchema.shape,
   handler: async input => {
-    const result = listPlatformDeclarations(input, useDb())
+    const result = listTargetDeclarations(input, useDb())
     return { structuredContent: { ...result }, content: [{ type: 'text' as const, text: JSON.stringify(result) }] }
   },
 })

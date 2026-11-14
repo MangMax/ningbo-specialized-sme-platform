@@ -1,7 +1,7 @@
 /**
  * RL-05 —— 三张工信部导出表 → 年度对照快照。
  *
- * 缝(契约已定,见 `docs/roster-lifecycle-contract.md` §1.6/§1.7/§8.3):
+ * 缝(契约已定,见 `lib/roster-import-client.ts`/§1.7/§8.3):
  *   1. `splitRegistrationAddress` —— 「浙江省 宁波市 宁海县」这种**单列空格分隔**文本拆省/市/区县;
  *   2. `readPlatformExport`      —— 按**列号**(不是列名)读两行表头、数据从 r3 起,产出规范化快照行;
  *   3. `buildExportSnapshotPayload` —— 产出契约 §8.3 的 `exportSnapshot` payload(交给统一写 API)。

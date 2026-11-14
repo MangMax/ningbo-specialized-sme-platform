@@ -1,14 +1,14 @@
+import { createRuntimeSchema } from '../db/create-runtime'
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
-import { migrate } from 'drizzle-orm/better-sqlite3/migrator'
 import * as schema from '../db/schema'
 import { afterEach, expect, it, vi } from 'vitest'
 const sqlite = new Database(':memory:')
 const db = drizzle(sqlite, { schema })
-migrate(db, { migrationsFolder: 'db/migrations' })
+sqlite.pragma('foreign_keys=ON'); createRuntimeSchema(sqlite)
 vi.mock('@db', () => ({ useDb: () => db }))
 const root = mkdtempSync(join(tmpdir(), 'preview-text-47-'))
 afterEach(() => { vi.unstubAllGlobals(); sqlite.close(); rmSync(root, { recursive: true, force: true }) })

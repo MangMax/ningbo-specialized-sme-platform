@@ -1,13 +1,15 @@
 /** Request-local USCC research projections. Archive bodies stay in SQLite;
  * original evidence remains available through the existing evidence read APIs. */
-import { and, asc, eq, getTableColumns, inArray, sql } from 'drizzle-orm'
+import { and,asc,eq,inArray,sql } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as s from '../../db/schema'
-import { normalizeName, normalizeUscc } from '../../lib/domain'
+import { normalizeName,normalizeUscc } from '../../lib/domain'
 import { TITLE_ORDER } from '../../lib/labels'
-import type { UsccChecklistFilter } from '../../lib/roster/uscc-research'
-import { identityFunctions, identityUsccSql } from '../../lib/roster/enterprise-read-snapshot'
+import { currentEnterpriseIdentity } from '../../lib/roster/enterprise-identity'
 import { removedEnterpriseIds } from '../../lib/roster/enterprise-list-selection'
+import { identityFunctions,identityUsccSql } from '../../lib/roster/enterprise-read-snapshot'
+import type { UsccChecklistFilter } from '../../lib/roster/uscc-research'
+import { targetCandidateTables } from './candidate-target-sources'
 import type { PlatformEvidenceIndex } from './roster-duplicate-merge'
 
 type Db = BetterSQLite3Database<typeof s>
@@ -15,8 +17,9 @@ const rank = (title: string) => { const i = TITLE_ORDER.indexOf(title); return i
 
 export function readUsccTargets(db: Db, filter: Omit<UsccChecklistFilter, 'page' | 'pageSize'>) {
   identityFunctions(db)
+  const { q, r } = targetCandidateTables(db)
   const missing = db.select({ id: s.enterprise.id, name: s.enterprise.name, nameNorm: s.enterprise.nameNorm, district: s.enterprise.district, city: s.enterprise.city })
-    .from(s.enterprise).where(sql`${identityUsccSql(sql`${s.enterprise.usccNorm}`)} is null`).orderBy(s.enterprise.id).all()
+    .from(s.enterprise).where(and(currentEnterpriseIdentity(db), sql`${identityUsccSql(sql`${s.enterprise.usccNorm}`)} is null`)).orderBy(s.enterprise.id).all()
   const ids = missing.map(row => row.id)
   const records = db.select({ id: s.record.id, enterpriseId: s.record.enterpriseId, titleCode: s.record.titleCode, source: s.record.source, district: s.record.district })
     .from(s.record).where(inArray(s.record.enterpriseId, ids)).orderBy(s.record.id).all()
@@ -59,12 +62,12 @@ export function readUsccTargets(db: Db, filter: Omit<UsccChecklistFilter, 'page'
     .from(s.differenceReason).where(inArray(s.differenceReason.enterpriseId, selectedIds)).orderBy(s.differenceReason.id).all()
   const enterprises = missing.filter(row => selected.has(row.id))
   const keys = [...new Set(enterprises.map(row => `name:${row.nameNorm}`))]
-  const queryScope = inArray(s.platformQuery.queryKey, keys)
-  const queries = db.select({ id: s.platformQuery.id, interface: s.platformQuery.interface, queryKey: s.platformQuery.queryKey, rdjb: s.platformQuery.rdjb, queriedAt: s.platformQuery.queriedAt, status: s.platformQuery.status })
-    .from(s.platformQuery).where(queryScope).orderBy(s.platformQuery.id).all()
-  const relationCounts = db.select({ queryId: s.platformRelation.queryId, count: sql<number>`count(*)` }).from(s.platformRelation)
-    .where(inArray(s.platformRelation.queryId, db.select({ id: s.platformQuery.id }).from(s.platformQuery).where(queryScope)))
-    .groupBy(s.platformRelation.queryId).all()
+  const queryScope = inArray(q.queryKey, keys)
+  const queries = db.select({ id: q.id, interface: q.interface, queryKey: q.queryKey, rdjb: q.rdjb, queriedAt: q.queriedAt, status: q.status })
+    .from(q).where(queryScope).orderBy(q.id).all()
+  const relationCounts = db.select({ queryId: r.queryId, count: sql<number>`count(*)` }).from(r)
+    .where(inArray(sql<number>`${r.queryId}`, db.select({ id: q.id }).from(q).where(queryScope)))
+    .groupBy(sql<number>`${r.queryId}`).all()
   return { rows, enterprises, records: selectedRecords, events, evidence, differences, queries, relationCounts }
 }
 
@@ -72,6 +75,7 @@ export function readUsccTargets(db: Db, filter: Omit<UsccChecklistFilter, 'page'
  * queries and relations are retained; no LIMIT can hide a second subject. */
 export function usccResearchEvidence(db: Db) {
   identityFunctions(db)
+  const { q, r } = targetCandidateTables(db)
   const index: PlatformEvidenceIndex = { queriesByUscc: new Map(), relationsByQuery: new Map() }
   const loaded = new Set<string>()
   const exportNames = new Map<string, string>()
@@ -82,17 +86,17 @@ export function usccResearchEvidence(db: Db) {
     // Chunk bind parameters, never per-target/per-candidate queries.
     for (let offset = 0; offset < fresh.length; offset += 400) {
       const chunk = fresh.slice(offset, offset + 400)
-      const scope = inArray(identityUsccSql(sql`${s.platformQuery.queryKey}`), chunk)
-      const queries = db.select({ ...getTableColumns(s.platformQuery), rawResponse: sql<null>`null`, collectionEvidence: sql<null>`null`, failureReason: sql<null>`null` })
-        .from(s.platformQuery).where(scope).orderBy(s.platformQuery.id).all()
+      const scope = inArray(identityUsccSql(sql`${q.queryKey}`), chunk)
+      const queries = db.select({ id: q.id, interface: q.interface, queryKey: q.queryKey, rdjb: q.rdjb, queriedAt: q.queriedAt })
+        .from(q).where(scope).orderBy(q.id).all()
       for (const query of queries) {
         const key = normalizeUscc(query.queryKey)
         const bucket = index.queriesByUscc.get(key) ?? []
         bucket.push(query); index.queriesByUscc.set(key, bucket)
       }
-      const relations = db.select({ ...getTableColumns(s.platformRelation), rawFields: sql<null>`null`, sourceText: sql<null>`null` }).from(s.platformRelation)
-        .where(inArray(s.platformRelation.queryId, db.select({ id: s.platformQuery.id }).from(s.platformQuery).where(scope)))
-        .orderBy(asc(s.platformRelation.queryId), asc(s.platformRelation.sequenceNo)).all()
+      const relations = db.select({ id: r.id, queryId: r.queryId, sequenceNo: r.sequenceNo, relationKey: r.relationKey, nameRaw: r.nameRaw, usccRaw: r.usccRaw }).from(r)
+        .where(inArray(sql<number>`${r.queryId}`, db.select({ id: q.id }).from(q).where(scope)))
+        .orderBy(asc(r.queryId), asc(r.sequenceNo)).all()
       for (const relation of relations) {
         const bucket = index.relationsByQuery.get(relation.queryId) ?? []
         bucket.push(relation); index.relationsByQuery.set(relation.queryId, bucket)

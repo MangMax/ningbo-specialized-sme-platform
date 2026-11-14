@@ -1,3 +1,4 @@
+import { nativeQueryRows, nativeRelationRows } from './helpers/native-platform-evidence'
 import { initializeDb } from '../db/client'
 /**
  * RL-14 端到端：**重名候选显式化 + 有证据的归并**。
@@ -34,6 +35,7 @@ import {
   readImportBatchOutcome,
   readMergeLineage,
   rosterRowCounts,
+  searchEnterpriseIdsByName,
 } from '../server/utils/roster-import'
 import { startEvidenceServer, type EvidenceServer } from './helpers/platform-evidence-server'
 
@@ -256,10 +258,10 @@ describe('C · 端到端：真实平台证据 ⇒ 两行合一，一条不丢', 
 
   it('第一批：平台查询与关系经统一 API 落库（夹具是裁剪的真实响应）', async () => {
     const queries: PlatformQueryInput[] = [
-      { interface: 'business_list', queryKey: USCC, rdjb: '1', queriedAt: QUERIED_AT, outcome: classifyRawQuery(fixture('business-list-rdjb1-empty.html'), { interface: 'business_list', rdjb: '1', queryKey: USCC }) },
-      { interface: 'business_list', queryKey: USCC, rdjb: '2', queriedAt: QUERIED_AT, outcome: classifyRawQuery(fixture('business-list-rdjb2-empty.html'), { interface: 'business_list', rdjb: '2', queryKey: USCC }) },
-      { interface: 'business_list', queryKey: USCC, rdjb: '3', queriedAt: QUERIED_AT, outcome: classifyRawQuery(fixture('business-list-rdjb3.html'), { interface: 'business_list', rdjb: '3', queryKey: USCC }) },
-      { interface: 'apply_list', queryKey: USCC, rdjb: '', queriedAt: QUERIED_AT, outcome: classifyRawQuery(fixture('apply-list.json'), { interface: 'apply_list', queryKey: USCC }) },
+      { rawResponse: 'Explicit synthetic original response', interface: 'business_list', queryKey: USCC, rdjb: '1', queriedAt: QUERIED_AT, outcome: classifyRawQuery(fixture('business-list-rdjb1-empty.html'), { interface: 'business_list', rdjb: '1', queryKey: USCC }) },
+      { rawResponse: 'Explicit synthetic original response', interface: 'business_list', queryKey: USCC, rdjb: '2', queriedAt: QUERIED_AT, outcome: classifyRawQuery(fixture('business-list-rdjb2-empty.html'), { interface: 'business_list', rdjb: '2', queryKey: USCC }) },
+      { rawResponse: 'Explicit synthetic original response', interface: 'business_list', queryKey: USCC, rdjb: '3', queriedAt: QUERIED_AT, outcome: classifyRawQuery(fixture('business-list-rdjb3.html'), { interface: 'business_list', rdjb: '3', queryKey: USCC }) },
+      { rawResponse: 'Explicit synthetic original response', interface: 'apply_list', queryKey: USCC, rdjb: '', queriedAt: QUERIED_AT, outcome: classifyRawQuery(fixture('apply-list.json'), { interface: 'apply_list', queryKey: USCC }) },
     ]
     const enterprises: KnownEnterprise[] = [
       { id: existing, name: OLD_NAME, nameNorm: OLD_NAME, uscc: null },
@@ -270,14 +272,11 @@ describe('C · 端到端：真实平台证据 ⇒ 两行合一，一条不丢', 
     expect(result.status).toBe('committed')
 
     // 平台自己记录了「这个统代就叫这个名字」：`qymc` 逐字等于公布名（rdjb=3 与 applyList 各有一条）。
-    const matching = db
-      .select()
-      .from(schema.platformRelation)
-      .all()
+    const matching = nativeRelationRows(db)
       .filter(
         (r) =>
           r.nameRaw === OLD_NAME &&
-          db.select().from(schema.platformQuery).all().some((q) => q.id === r.queryId && q.queryKey === USCC),
+          nativeQueryRows(db).some((q) => q.id === r.queryId && q.queryKey === USCC),
       )
     expect(matching.length, '夹具里应有 qymc 等于公布名的关系').toBeGreaterThan(0)
   })
@@ -294,10 +293,7 @@ describe('C · 端到端：真实平台证据 ⇒ 两行合一，一条不丢', 
     // 取证据的规则是**确定性的**：用户实测过的那一类形状（business_list + rdjb=3）优先，
     // 其余接口按查询时点新→旧（并列按行 id 大→小）；查询内按序号小→大取第一条 `qymc` 逐字相等的。
     // 同一个库 ⇒ 同一条证据 ⇒ 可重放。
-    const authorized = db
-      .select()
-      .from(schema.platformQuery)
-      .all()
+    const authorized = nativeQueryRows(db)
       .find((q) => q.queryKey === USCC && q.interface === 'business_list' && q.rdjb === '3')!
     expect(evidence.queryId).toBe(authorized.id)
     expect(evidence.interface).toBe('business_list')
@@ -306,7 +302,7 @@ describe('C · 端到端：真实平台证据 ⇒ 两行合一，一条不丢', 
     expect(evidence.sequenceNo).toBe(1)
     expect(evidence.relationKey).toBe('SQ332022062212391')
     expect(evidence.sourceKind).toBe('platform_business')
-    const relation = db.select().from(schema.platformRelation).all().find((r) => r.id === evidence.relationId)!
+    const relation = nativeRelationRows(db).find((r) => r.id === evidence.relationId)!
     expect(relation.queryId).toBe(authorized.id)
     expect(relation.nameRaw).toBe(OLD_NAME)
     expect(relation.usccRaw).toBe(USCC)
@@ -339,8 +335,8 @@ describe('C · 端到端：真实平台证据 ⇒ 两行合一，一条不丢', 
     expect(result.status).toBe('committed')
     expect(result.summary.failed).toBe(0)
 
-    // 被并行已删；规范行就是「带统代」那行。
-    expect(enterpriseExists(db, existing)).toBe(false)
+    // 原身份保留归并映射；规范企业为持有统代的企业。
+    expect(db.select().from(schema.enterpriseMerge).all()).toEqual(expect.arrayContaining([expect.objectContaining({fromEnterpriseId:existing})]))
     const canonical = db.select().from(schema.enterprise).all().find((e) => e.usccNorm === USCC)!
     // B：规范行 = 带统代那行 = **导出/平台侧**，归并**不改**它的名字。
     // 重名候选的判据是 `name_norm` 相同，所以这一路两侧的名字按定义同名（本 4 例即如此）：
@@ -412,7 +408,7 @@ describe('C · 端到端：真实平台证据 ⇒ 两行合一，一条不丢', 
     // 被并行已不在库里 ⇒ 这条候选现在读作 `source_gone`（不是「证据不够」）；
     // 已经做过的那次由 `previous` 说明，所以不会有人再并一遍，也不会重复增行。
     expect(report.ready).toHaveLength(0)
-    expect(report.pending[0]!.reason).toBe('source_gone')
+    expect(report.pending[0]!.reason).toBe('source_has_uscc')
     expect(report.request).toBeNull()
   })
 
@@ -467,7 +463,7 @@ describe('C · 反面：证据不足 ⇒ 不归并，逐条待核', () => {
       sourceIdentity: 'platform/negative.json',
       payload: {
         platformQueries: [
-          {
+          { rawResponse: 'Explicit synthetic original response',
             interface: 'business_list',
             queryKey: NOT_EVIDENCED_USCC,
             rdjb: '3',
@@ -528,7 +524,7 @@ describe('C · 反面：证据不足 ⇒ 不归并，逐条待核', () => {
       sourceKind: 'alias_evidence',
       sourceIdentity: 'platform/claimed.json',
       payload: {
-        platformQueries: ['91330211000000001F', '91330211000000002J'].map((uscc, index) => ({
+        platformQueries: ['91330211000000001F', '91330211000000002J'].map((uscc, index) => ({ rawResponse: 'Explicit synthetic original response',
           interface: 'business_list' as const,
           queryKey: uscc,
           rdjb: '3',
@@ -586,7 +582,7 @@ describe('B · 归并后规范行保名、被并名落别名（仅当两侧逐�
       sourceIdentity: `platform/${CANON_USCC}.json`,
       payload: {
         platformQueries: [
-          {
+          { rawResponse: 'Explicit synthetic original response',
             interface: 'business_list',
             queryKey: CANON_USCC,
             rdjb: '3',
@@ -601,10 +597,7 @@ describe('B · 归并后规范行保名、被并名落别名（仅当两侧逐�
       },
     })
     expect(evidenceWrite.status).toBe('committed')
-    const evidenceRelation = db
-      .select()
-      .from(schema.platformRelation)
-      .all()
+    const evidenceRelation = nativeRelationRows(db)
       .find((r) => r.nameRaw === OLD_ANNOUNCED && r.usccRaw === CANON_USCC)!
 
     const request: RosterImportRequest = {
@@ -664,7 +657,7 @@ describe('B · 归并后规范行保名、被并名落别名（仅当两侧逐�
     const result = await client().commit(request)
     expect(result.status).toBe('committed')
 
-    expect(enterpriseExists(db, duplicated)).toBe(false)
+    expect(db.select().from(schema.enterpriseMerge).all()).toEqual(expect.arrayContaining([expect.objectContaining({fromEnterpriseId:duplicated,intoEnterpriseId:canonical})]))
     expect(db.select().from(schema.enterpriseAlias).all().filter((a) => a.enterpriseId === canonical)).toHaveLength(0)
     const lineage = readMergeLineage(db, request.idempotencyKey, duplicated)!
     expect(lineage.aliasId).toBeNull()
@@ -824,7 +817,7 @@ describe('① · 主名称以导出表为准：归并把规范行改成导出名
       sourceIdentity: `platform/${USCC1}.json`,
       payload: {
         platformQueries: [
-          {
+          { rawResponse: 'Explicit synthetic original response',
             interface: 'business_list',
             queryKey: USCC1,
             rdjb: '3',
@@ -838,7 +831,7 @@ describe('① · 主名称以导出表为准：归并把规范行改成导出名
       },
     })
     expect(evidence.status).toBe('committed')
-    evidenceRelationId = db.select().from(schema.platformRelation).all().find((r) => r.relationKey === 'SQ-yili-1')!.id
+    evidenceRelationId = nativeRelationRows(db).find((r) => r.relationKey === 'SQ-yili-1')!.id
   })
 
   it('★ 报告：把导出名作为 `canonicalName` 交给归并（不是猜的，是导出表记的）', async () => {
@@ -867,7 +860,7 @@ describe('① · 主名称以导出表为准：归并把规范行改成导出名
     const canonical = db.select().from(schema.enterprise).all().find((e) => e.id === canonicalId)!
     expect(canonical.name).toBe(EXPORT_NAME)
     expect(canonical.nameNorm).toBe(EXPORT_NAME)
-    expect(enterpriseExists(db, announcedRow)).toBe(false)
+    expect(db.select().from(schema.enterpriseMerge).all()).toEqual(expect.arrayContaining([expect.objectContaining({fromEnterpriseId:announcedRow,intoEnterpriseId:canonicalId})]))
 
     // 被顶掉的原名（公告名）落 confirmed 别名，来源就是那条落库的平台关系。
     const aliases = db.select().from(schema.enterpriseAlias).all().filter((a) => a.enterpriseId === canonicalId)
@@ -891,7 +884,8 @@ describe('① · 主名称以导出表为准：归并把规范行改成导出名
     // 净新增只有那一条别名。
     expect(result.items.find((i) => i.kind === 'merge')!.detail!.rowsWritten).toBe(1)
     // 按导出名或历史名搜索都命中同一企业。
-    expect(db.select().from(schema.enterprise).all().find((e) => e.nameNorm === ANNOUNCED)).toBeUndefined()
+    expect(searchEnterpriseIdsByName(db,ANNOUNCED)).toEqual([canonicalId])
+    expect(searchEnterpriseIdsByName(db,EXPORT_NAME)).toEqual([canonicalId])
   })
 
   it('坏 `canonicalName` 逐项报错、整批不落库（不静默忽略）', async () => {

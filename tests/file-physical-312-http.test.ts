@@ -4,12 +4,12 @@ import { join, resolve } from 'node:path'
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { initializeDb, schema } from '../db/client'
-import { spawnOwnedChild as spawn, reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../scripts/lib/isolated-local-services.mjs'
+import { spawnOwnedChild as spawn, reserveLoopbackPort, waitForHttp, stopOwnedChild } from './helpers/isolated-local-services.mjs'
 
 const dir = mkdtempSync(join(tmpdir(), 'file-physical-312-'))
 const root = join(dir, 'files')
 const dbPath = join(dir, 'synthetic.db')
-const db = initializeDb({ create: true, dbPath, migrationsFolder: join(process.cwd(), 'db/migrations') })
+const db = initializeDb({ create: true, dbPath })
 let service: { baseUrl: string; stop(): Promise<void>; crash(): Promise<void> }
 let serverOutput = ''
 let seq = 0

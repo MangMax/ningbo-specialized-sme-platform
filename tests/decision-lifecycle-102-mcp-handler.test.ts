@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { afterAll, beforeAll, expect, it, vi } from 'vitest'
 import { sql } from 'drizzle-orm'
 import { z } from 'zod'
-import { useDb } from '../db/client'
+import { initializeDb } from '../db/client'
 import { decisionCommand102 } from '../server/utils/decision-lifecycle-102'
 
 // Only the framework registration shell is replaced; the exported tool handler,
@@ -12,7 +12,7 @@ import { decisionCommand102 } from '../server/utils/decision-lifecycle-102'
 vi.mock('@nuxtjs/mcp-toolkit/server', () => ({ defineMcpTool: (definition: unknown) => definition }))
 vi.mock('@db', () => ({ useDb: () => db }))
 const dir = mkdtempSync(join(tmpdir(), 'decision-102-handler-'))
-const db = useDb({ dbPath: join(dir, 'synthetic.db') })
+const db = initializeDb({ create: true,  dbPath: join(dir, 'synthetic.db') })
 let handler: (typeof import('../server/mcp/tools/save_difference_decision'))['default']['handler']
 beforeAll(async () => {
   vi.stubGlobal('useRuntimeConfig', () => ({ apiToken: '', mcpToken: '' }))

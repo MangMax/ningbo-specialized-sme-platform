@@ -1,0 +1,41 @@
+import { requireH1cReady } from './h1c-catalog'
+import { sqliteConnection } from './target-connection'
+/** Offline target-only evidence mechanism. No runtime selector. */
+import { createHash } from 'node:crypto'
+import { eq, sql } from 'drizzle-orm'
+import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
+import { targetSchema as s } from './target-schema'
+import { insertArchiveValue } from './target-archive'
+
+export function requireCaptureForeignKeys<S extends Record<string,unknown>>(db:BetterSQLite3Database<S>) {
+  if(db.get<{foreign_keys:number}>(sql`PRAGMA foreign_keys`)?.foreign_keys!==1)throw new Error('fingerprint writes require foreign_keys=ON before entry')
+}
+/** Native writers always capture the original command input. */
+export function requireFingerprintCapture<S extends Record<string,unknown>>(db:BetterSQLite3Database<S>) {
+  requireCaptureForeignKeys(db)
+  requireH1cReady(sqliteConnection(db))
+}
+/** Must run inside the writer savepoint, serialized by its write transaction. */
+export function nextObservationId<S extends Record<string,unknown>>(db:BetterSQLite3Database<S>) {
+  requireCaptureForeignKeys(db)
+  const row=db.get<{id:number}>(sql`SELECT max(coalesce((SELECT seq FROM sqlite_sequence WHERE name='platform_business_observation'),0),coalesce((SELECT max(id) FROM platform_business_observation),0)) id`)
+  const id=(row?.id??0)+1
+  if(!Number.isSafeInteger(id)||id<1)throw new Error('Observation identity exhausted')
+  return id
+}
+/** A RELEASE is provisional; caller owning the outer transaction must COMMIT/rollback. */
+export function captureFingerprintBasis<S extends Record<string,unknown>>(db:BetterSQLite3Database<S>, observationId:number, scheme:'target-command-v1'|'legacy-bootstrap-v1', bytes:Buffer) {
+  requireFingerprintCapture(db)
+  return db.transaction(tx=>{
+    const fingerprint=createHash('sha256').update(bytes).digest('hex')
+    const archiveId=insertArchiveValue(tx,{storageClass:'blob',bytes,createdAt:null},{sha256:fingerprint})
+    tx.insert(s.platformObservationFingerprintBasis).values({observationId,scheme,inputArchiveId:archiveId}).run()
+    return fingerprint
+  })
+}
+
+export function assertCapturedInput<S extends Record<string,unknown>>(db:BetterSQLite3Database<S>,observationId:number,bytes:Buffer) {
+ const b=s.platformObservationFingerprintBasis,a=s.platformArchiveValue
+ const found=db.select({basis:b,value:a}).from(b).innerJoin(a,eq(a.id,b.inputArchiveId)).where(eq(b.observationId,observationId)).get()
+ if(!found||found.basis.scheme!=='target-command-v1'||found.value.storageClass!=='blob'||!found.value.bytes?.equals(bytes)||found.value.byteLength!==bytes.length||found.value.sha256!==createHash('sha256').update(bytes).digest('hex'))throw new Error('observation_payload_conflict: missing or changed captured basis')
+}

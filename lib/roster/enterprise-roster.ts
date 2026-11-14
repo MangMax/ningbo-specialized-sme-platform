@@ -1,14 +1,18 @@
+import { readCorrespondenceTargetQueries,readCorrespondenceTargetSources,correspondenceQueryRelationIds } from '../../server/utils/record-correspondence-target-sources'
+import type { PlatformStoredQuery } from '../platform/read'
+import type { PlatformStoredRelation } from '../platform/read'
+import { differencePublicColumns } from '../platform/difference-reference-target'
 import { readPublicPublishedNames } from './official-published-presentation'
-export { readPublicPublishedNames } from './official-published-presentation'
 import type { PublishedPresentation } from './correspondence-view'
-import { readQueryAssessment, readQueryCoverage, type QueryAssessment } from './query-assessment'
+import { readQueryAssessment,readQueryCoverage,type QueryAssessment } from './query-assessment'
 import { sourcePositionForSequence } from '../platform/recognized-evidence'
-import { readLegacyPlatformProvenance, legacySourcePositionForSequence } from '../../server/utils/platform-legacy-provenance'
-import { normalizePlatformRelation, type PlatformNormalizationConflict } from '../platform/normalization'
-import { readEnterpriseSnapshot, readEnterpriseHistories, enterpriseComparisonCoordinates } from './enterprise-read-snapshot'
-import { readPlatformBusinessDetails } from '../../server/utils/platform-business-detail-read'
-import { readCurrentQualificationAssessment, type CurrentQualificationSnapshot } from './current-qualification'
+import { legacySourcePositionForSequence,type LegacyProvenanceDisplay } from '../platform/legacy-provenance'
+import { type PlatformNormalizationConflict } from '../platform/normalization'
+import { readEnterpriseSnapshot,readEnterpriseHistories,enterpriseComparisonCoordinates } from './enterprise-read-snapshot'
+import { readPlatformBusinessDetails,readPlatformDetailFacts } from '../../server/utils/platform-business-detail-read'
+import { readCurrentQualificationAssessment,type CurrentQualificationSnapshot } from './current-qualification'
 import type { PlatformBusinessDetail } from './platform-business-detail'
+export { readPublicPublishedNames } from './official-published-presentation'
 /**
  * 跨称号去重企业总表 / 企业详情 / 差异与解释 —— 契约 §7.1 / §7.2 / §7.3 的**读模型**(RL-04)。
  *
@@ -31,21 +35,21 @@ import type { PlatformBusinessDetail } from './platform-business-detail'
  */
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../db/schema'
-import { normalizeName, normalizeUscc } from '../domain'
-import { selectEnterpriseCoordinates, removedEnterpriseIds } from './enterprise-list-selection'
-import { and, inArray, getTableColumns, sql } from 'drizzle-orm'
-import { getComparison, type ComparisonDirection } from '../comparison'
-import { DIFFERENCE_STATUS_ORDER, SOURCE_ORDER, TITLE_ORDER } from '../labels'
+import { normalizeName,normalizeUscc } from '../domain'
+import { selectEnterpriseCoordinates,removedEnterpriseIds } from './enterprise-list-selection'
+import { and,inArray,sql } from 'drizzle-orm'
+import { getComparison,type ComparisonDirection } from '../comparison'
+import { DIFFERENCE_STATUS_ORDER,SOURCE_ORDER,TITLE_ORDER } from '../labels'
 import { MAX_PAGE_SIZE } from '../query'
-import { isPageCapable } from './evidence-page'
+import { canonicalEnterpriseId,currentEnterpriseIdentity } from './enterprise-identity'
 import type { RosterEnterpriseSort } from './ledger-contract'
 import {
-  judgeFirstRecognition,
-  type FirstRecognitionEvidence,
-  type RecognitionEntry,
-  type RecognitionEvent,
+judgeFirstRecognition,
+type FirstRecognitionEvidence,
+type RecognitionEntry,
+type RecognitionEvent,
 } from './first-recognition'
-import { computeTitleLifecycle, type LifecycleEvent, type TitleLifecycle } from './lifecycle'
+import { computeTitleLifecycle,type LifecycleEvent,type TitleLifecycle } from './lifecycle'
 
 type Db = BetterSQLite3Database<typeof schema>
 
@@ -73,46 +77,11 @@ interface Snapshot {
   aliases: (typeof schema.enterpriseAlias)['$inferSelect'][]
   exportRows: (typeof schema.platformExportRow)['$inferSelect'][]
   exportBatches: (typeof schema.platformExportBatch)['$inferSelect'][]
-  relations: (typeof schema.platformRelation)['$inferSelect'][]
-  queries: (typeof schema.platformQuery)['$inferSelect'][]
-  differences: (typeof schema.differenceReason)['$inferSelect'][]
+  relations: PlatformStoredRelation[]
+  queries: PlatformStoredQuery[]
+  differences: ReturnType<typeof readEnterpriseHistories>['differences']
   recordsByEnterprise: Map<number, (typeof schema.record)['$inferSelect'][]>
   eventsByRecord: Map<number, (typeof schema.recordEvent)['$inferSelect'][]>
-}
-
-function readSnapshot(db: Db): Snapshot {
-  const records = db.select().from(schema.record).all()
-  const events = db.select().from(schema.recordEvent).all()
-  const recordsByEnterprise = new Map<number, typeof records>()
-  for (const record of records) {
-    const bucket = recordsByEnterprise.get(record.enterpriseId)
-    if (bucket) bucket.push(record)
-    else recordsByEnterprise.set(record.enterpriseId, [record])
-  }
-  const eventsByRecord = new Map<number, typeof events>()
-  for (const event of events) {
-    const bucket = eventsByRecord.get(event.recordId)
-    if (bucket) bucket.push(event)
-    else eventsByRecord.set(event.recordId, [event])
-  }
-  return {
-    enterprises: db.select().from(schema.enterprise).all(),
-    records,
-    events,
-    // Legacy rows may contain guessed Word/Excel page numbers from before the API guard existed.
-    // Normalize only this read snapshot; never rewrite or migrate the stored evidence.
-    evidence: db.select().from(schema.recordEvidence).all().map((row) =>
-      isPageCapable(row.sourceFile) ? row : { ...row, page: null },
-    ),
-    aliases: db.select().from(schema.enterpriseAlias).all(),
-    exportRows: db.select().from(schema.platformExportRow).all(),
-    exportBatches: db.select().from(schema.platformExportBatch).all(),
-    relations: db.select().from(schema.platformRelation).all(),
-    queries: db.select().from(schema.platformQuery).all(),
-    differences: db.select().from(schema.differenceReason).all(),
-    recordsByEnterprise,
-    eventsByRecord,
-  }
 }
 
 /** Differences need coordinates and evidence pointers, never archive bodies. */
@@ -120,16 +89,20 @@ function readDifferenceSnapshot(db: Db, ids?: number[]): Snapshot {
   const d = schema.differenceReason
   // Global counts/sort use only narrow current-coordinate metadata. Large notes,
   // actors and evidence are hydrated for the selected page only.
-  const differences = db.select({ ...getTableColumns(d),
+  const differences = db.select({ ...differencePublicColumns(db),
     ...(ids == null ? { reasonNote: sql<null>`null`, measureNote: sql<null>`null`, movedInCity: sql<null>`null`, movedInTitleCode: sql<null>`null`, movedInYear: sql<null>`null`, movedInBatch: sql<null>`null`, basis: sql<null>`null`, actor: sql<null>`null`, requestHash: sql<null>`null`, idempotencyKey: sql<null>`null` } : {}),
   }).from(d).where(and(ids == null ? undefined : inArray(d.enterpriseId, ids), sql`not exists (select 1 from difference_reason newer where newer.enterprise_id=${d.enterpriseId} and newer.title_code=${d.titleCode} and newer.direction=${d.direction} and (newer.recorded_at>${d.recordedAt} or (newer.recorded_at=${d.recordedAt} and newer.id>${d.id})))`)).all()
   const queryIds = [...new Set(differences.flatMap(d => d.evidenceQueryId == null ? [] : [d.evidenceQueryId]))]
   return {
-    enterprises: db.select().from(schema.enterprise).where(ids == null ? undefined : inArray(schema.enterprise.id, ids)).all(),
+    enterprises: db.select().from(schema.enterprise).where(and(currentEnterpriseIdentity(db), ids == null ? undefined : inArray(schema.enterprise.id, ids))).all(),
     records: db.select().from(schema.record).where(ids == null ? undefined : inArray(schema.record.enterpriseId, ids)).all(),
     aliases: ids == null ? db.select().from(schema.enterpriseAlias).all() : [], differences,
-    queries: ids == null ? [] : db.select({ ...getTableColumns(schema.platformQuery), rawResponse: sql<null>`null`, collectionEvidence: sql<null>`null` }).from(schema.platformQuery).where(inArray(schema.platformQuery.id, queryIds)).all(),
-    relations: ids == null ? [] : db.select({ ...getTableColumns(schema.platformRelation), rawFields: sql<null>`null`, sourceText: sql<null>`null` }).from(schema.platformRelation).where(inArray(schema.platformRelation.queryId, queryIds)).all(),
+    queries: ids == null ? [] : [...readCorrespondenceTargetQueries(db, queryIds, { rawResponse: false }).values()].map(({ query, collection }) => ({
+      id: query.id, interface: collection.interface, queryKey: collection.queryKey, rdjb: collection.rdjb, titleCode: collection.titleCode,
+      queriedAt: collection.queriedAt, lastCollectedAt: collection.lastCollectedAt, status: collection.status,
+      failureReason: collection.failureReason, createdAt: collection.createdAt, rawResponse: null, collectionEvidence: null,
+    })),
+    relations: ids == null ? [] : readCorrespondenceTargetSources(db, queryIds.flatMap(queryId => correspondenceQueryRelationIds(db, queryId))).map(row => ({ ...row.relation, rawFields: null, sourceText: null })),
     events: [], evidence: [], exportRows: [], exportBatches: [], recordsByEnterprise: new Map(), eventsByRecord: new Map(),
   }
 }
@@ -620,30 +593,6 @@ export function allRosterEnterprises(
   return db.transaction(() => selectRosterEnterprises(db, filter))
 }
 
-/**
- * 读一次快照、把全部企业建成 profile —— **三个读模型共用这一处组织方式**。
- *
- * 为什么要抽出来:§7.1(企业总表)、§7.2(企业详情)、§7.5(首次认定)看的都是同一种
- * 「企业画像」(称号 / 每称号的生命周期 / 每称号的首次认定)。各写一遍的结果,是同一家
- * 企业的首次认定在总表和首次认定接口上给出不同的年份 —— 而票面恰恰要求两处一致。
- * 组织一次,取三份。
- */
-export function readRosterProfiles(db: Db): {
-  profiles: Profile[]
-  snap: Snapshot
-  index: SnapshotIndex
-  /** 别名:只带 `confirmed`(契约 §1.2 —— `pending` 不参与搜索)。 */
-  confirmedAliases: Map<number, string[]>
-} {
-  const ctx = readRosterContext(db)
-  return {
-    profiles: ctx.snap.enterprises.map((e) => ctx.profileOf(e)),
-    snap: ctx.snap,
-    index: ctx.index,
-    confirmedAliases: ctx.confirmedAliases,
-  }
-}
-
 /** 读模型的三样公共前置:**快照 / 快照索引 / 已确认别名**,外加一个**按需**建画像的入口。 */
 interface RosterContext {
   snap: Snapshot
@@ -659,7 +608,7 @@ interface RosterContext {
  * (实测:整表建画像 ≈ 3s,只建一家 ≈ 0.2s)。
  * 两条路共用同一份索引与同一个 `buildProfile`,只是**建几家的差别**。
  */
-function readRosterContext(db: Db, snap: Snapshot = readSnapshot(db)): RosterContext {
+function readRosterContext(snap: Snapshot): RosterContext {
   const evidence = indexEvidence(snap)
   const confirmedAliases = new Map<number, string[]>()
   for (const alias of snap.aliases) {
@@ -802,7 +751,7 @@ interface LegacyRosterDifferenceRow {
 }
 
 export interface RosterPlatformQueryRow {
-  legacyProvenance?: ReturnType<typeof readLegacyPlatformProvenance> extends Map<number, infer Value> ? Value : never
+  legacyProvenance?: LegacyProvenanceDisplay
   id: number
   interface: string
   queryKey: string
@@ -829,7 +778,7 @@ export interface RosterPlatformRelationRow {
   usccRaw: string | null
   nameRaw: string | null
   province: string | null
-  status: string | null
+  status: string | Buffer | null
   batch: string | null
   declareKind: string | null
   appliedAt: string | null
@@ -982,13 +931,16 @@ function differenceUniverse(db: Db, snap: Snapshot, derived: Array<{ enterpriseI
 }
 
 export function getRosterEnterpriseDetail(db: Db, id: number, asOf = Date.now()): RosterEnterpriseDetail | null {
-  return db.transaction(() => enterpriseDetail(db, id, asOf))
+  return db.transaction(() => {
+    const canonicalId = canonicalEnterpriseId(db, id)
+    return canonicalId === null ? null : enterpriseDetail(db, canonicalId, asOf)
+  })
 }
 
 function enterpriseDetail(db: Db, id: number, asOf: number): RosterEnterpriseDetail | null {
   // 只建**这一家**的画像:详情页开一行,不该把整库 7352 家全算一遍。
   const enterpriseSnapshot = readEnterpriseSnapshot(db, id)
-  const { snap, index, profileOf } = readRosterContext(db, enterpriseSnapshot)
+  const { snap, index, profileOf } = readRosterContext(enterpriseSnapshot)
   const enterprise = snap.enterprises.find((e) => e.id === id)
   if (!enterprise) return null
 
@@ -1025,7 +977,7 @@ function enterpriseDetail(db: Db, id: number, asOf: number): RosterEnterpriseDet
   const relationCounts = new Map<number, number>()
   for (const relation of relations) relationCounts.set(relation.queryId, (relationCounts.get(relation.queryId) ?? 0) + 1)
   const queriesById = new Map(includedQueries.map(q => [q.id, q]))
-  const legacyById = readLegacyPlatformProvenance(db, includedQueries.map(q => q.id))
+  const legacyById = enterpriseSnapshot.platformLegacyById ?? new Map()
   const queries = includedQueries
     .sort((a, b) => (a.queriedAt < b.queriedAt ? -1 : a.queriedAt > b.queriedAt ? 1 : 0) || a.id - b.id)
     .map((q): RosterPlatformQueryRow => ({
@@ -1057,6 +1009,7 @@ function enterpriseDetail(db: Db, id: number, asOf: number): RosterEnterpriseDet
 
   const selectedEvidence = snap.evidence.filter(v => eventIds.has(v.recordEventId))
   const publishedPresentation = readPublicPublishedNames(db, selectedEvidence.map(v => ({ evidenceId: v.id, eventId: v.recordEventId })))
+  const platformFacts = readPlatformDetailFacts(db, queries, relations)
   return {
     qualificationAssessment: readCurrentQualificationAssessment((db as Db & { $client: import('better-sqlite3').Database }).$client, id, asOf, {ownQueryIds:enterpriseSnapshot.ownQueryIds,publishedNames:publishedPresentation,coverageForTitle}),
     publishedPresentation,
@@ -1117,7 +1070,11 @@ function enterpriseDetail(db: Db, id: number, asOf: number): RosterEnterpriseDet
     platform: {
       queries,
       businessRecords: readPlatformBusinessDetails(db, id, queries, relations),
-      relations: relations.map(archived => normalizePlatformRelation(queriesById.get(archived.queryId)!.interface, archived)).map((r): RosterPlatformRelationRow => ({
+      relations: relations.map(archived => {
+        const fact = platformFacts.get(archived.id)
+        if (!fact?.archiveProcessFacts) throw new Error(`missing_archive_process_facts:${archived.id}`)
+        return { ...archived, ...fact.archiveProcessFacts, normalizationConflicts: fact.normalizationConflicts }
+      }).map((r): RosterPlatformRelationRow => ({
         normalizationConflicts: r.normalizationConflicts,
         ...(recognizedQueryIds.has(r.queryId) ? { enterpriseId: r.enterpriseId } : {}),
         id: r.id,
@@ -1125,8 +1082,8 @@ function enterpriseDetail(db: Db, id: number, asOf: number): RosterEnterpriseDet
         sequenceNo: r.sequenceNo,
         relationKey: r.relationKey,
         rawFields: r.rawFields,
-        ...(legacyById.has(r.queryId) ? legacySourcePositionForSequence(legacyById.get(r.queryId)!.collection, r.sequenceNo)
-          : sourcePositionForSequence(queriesById.get(r.queryId)?.collectionEvidence, r.sequenceNo)),
+        ...(enterpriseSnapshot.platformPositionsById?.get(r.id) ?? (legacyById.has(r.queryId) ? legacySourcePositionForSequence(legacyById.get(r.queryId)!.collection, r.sequenceNo)
+          : sourcePositionForSequence(queriesById.get(r.queryId)?.collectionEvidence, r.sequenceNo))),
         usccRaw: r.usccRaw,
         nameRaw: r.nameRaw,
         province: r.province,

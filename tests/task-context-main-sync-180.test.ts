@@ -2,7 +2,7 @@ import { afterEach, beforeEach, expect, it } from 'vitest'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { useDb, schema } from '../db/client'
+import { initializeDb, schema } from '../db/client'
 import { applicationLogs, closeApplicationLogging, initializeWorkerLogging } from '../lib/logging'
 import { __resetJobRunner, clearJobSpecs, enqueuePersistedJob, registerJob, whenIdle } from '../server/utils/job-runner'
 import { createJob, getJob } from '../server/utils/job-store'
@@ -12,7 +12,7 @@ import { operationLogContext } from '../server/utils/operation-log-context'
 import type { AnnualScopeReader } from '../server/utils/annual-correspondence'
 import { createImportExecutor } from '../server/utils/import-execution'
 
-let root: string, db: ReturnType<typeof useDb>
+let root: string, db: ReturnType<typeof initializeDb>
 const previous = process.env.NUXT_LOG_DIR
 const readScope: AnnualScopeReader = () => null
 beforeEach(async () => {
@@ -20,7 +20,7 @@ beforeEach(async () => {
   root = mkdtempSync(join(tmpdir(), 'task-main-sync-180-'))
   process.env.NUXT_LOG_DIR = join(root, 'logs')
   initializeWorkerLogging()
-  db = useDb({ dbPath: join(root, 'synthetic.db') })
+  db = initializeDb({ create: true,  dbPath: join(root, 'synthetic.db') })
   __resetJobRunner(); clearJobSpecs()
 })
 afterEach(async () => {

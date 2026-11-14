@@ -5,8 +5,8 @@ import { join, resolve } from 'node:path'
 
 import { afterAll, beforeAll, expect, it } from 'vitest'
 import { schema, useDb } from '../db'
-import { handleRosterImportRequest } from '../server/utils/roster-import-http'
-import { spawnOwnedChild as spawn, reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../scripts/lib/isolated-local-services.mjs'
+import { submitNativePlatformQuery } from './helpers/native-platform-fixture'
+import { spawnOwnedChild as spawn, reserveLoopbackPort, waitForHttp, stopOwnedChild } from './helpers/isolated-local-services.mjs'
 
 const dir = mkdtempSync(join(tmpdir(), 'annual250-mcp-http-'))
 const db = initializeDb({ create: true, dbPath: join(dir, 'roster.db') })
@@ -14,13 +14,11 @@ const enterprise = db.insert(schema.enterprise).values({ name: '合成年度只�
 const record = db.insert(schema.record).values({ enterpriseId: enterprise.id, titleCode: 'specialized_sme', source: 'jxj', usccRaw: enterprise.usccNorm }).returning().get()
 const event = db.insert(schema.recordEvent).values({ recordId: record.id, eventType: 'award', year: 2024 }).returning().get()
 const relations = [1, 2].map(n => {
-  const query = db.insert(schema.platformQuery).values({ interface: 'business_list', queryKey: enterprise.usccNorm!, rdjb: '2', titleCode: 'specialized_sme', queriedAt: `2026-10-0${n}T00:00:00Z`, status: 'success', rawResponse: 'PRIVATE-RESPONSE' }).returning().get()
-  return db.insert(schema.platformRelation).values({ queryId: query.id, sequenceNo: 1, relationKey: `SQ-${n}`, enterpriseId: enterprise.id, usccRaw: enterprise.usccNorm, verificationStatus: 'confirmed', matchBasis: 'uscc', rawFields: { id: `SQ-${n}`, year: 2024, sblx: '申请', sqsj: n === 1 ? '2024-03-01 09:00:00' : '2024-12-13 10:00:00', cszt: n === 1 ? '终审不通过' : '终审通过', cookie: 'PRIVATE-COOKIE' } }).returning().get()
+  const seeded=submitNativePlatformQuery(db,{interface:'business_list',queryKey:enterprise.usccNorm!,rdjb:'2',titleCode:'specialized_sme',queriedAt:`2026-10-0${n}T00:00:00Z`,status:'success',rawResponse:'PRIVATE-RESPONSE',relations:[{sequenceNo:1,relationKey:`SQ-${n}`,enterpriseId:enterprise.id,usccRaw:enterprise.usccNorm,verificationStatus:'confirmed',matchBasis:'uscc',rawFields:{id:`SQ-${n}`,year:2024,sblx:'申请',sqsj:n===1?'2024-03-01 09:00:00':'2024-12-13 10:00:00',cszt:n===1?'终审不通过':'终审通过',cookie:'PRIVATE-COOKIE'}}]})
+  return {id:seeded.relationIds[0]!}
 })
 let service: { baseUrl: string; stop: () => Promise<void> }
 beforeAll(async () => {
-  const saved = await handleRosterImportRequest('commit', { method: 'POST', headers: { authorization: 'Bearer isolated250' }, body: { idempotencyKey: 'annual250-wire-project', sourceKind: 'platform_archive', sourceIdentity: 'tests/annual250', payload: { platformRecordObservations: relations.map(r => ({ relationId: r.id })) } } }, { db, apiToken: 'isolated250' })
-  expect((saved.body as any).status).toBe('committed')
   const cwd = resolve(import.meta.dirname, '..'), port = await reserveLoopbackPort()
   const child = spawn(process.execPath, [join(cwd, 'node_modules/nuxt/bin/nuxt.mjs'), 'dev', '--host', '127.0.0.1', '--port', String(port)], { cwd, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, NUXT_BUILD_DIR: join(dir, 'build'), NUXT_DB_PATH: join(dir, 'roster.db'), NUXT_DB_READONLY: '1', NUXT_FILES_DIR: join(dir, 'files'), NUXT_INCOMING_DIR: join(dir, 'incoming'), NUXT_MCP_TOKEN: 'isolated250' } })
   let output = ''

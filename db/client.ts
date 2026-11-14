@@ -3,18 +3,15 @@ import { dirname, join, resolve } from 'node:path'
 import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { createDrizzleLogger } from '../lib/logging/drizzle'
-import { migrate } from 'drizzle-orm/better-sqlite3/migrator'
-import { readMigrationFiles } from 'drizzle-orm/migrator'
 import * as schema from './schema'
-import { TITLE_SEED } from './titles'
+import { assertFinalPlatformRuntime } from './schema-phase'
+import { createRuntimeSchema } from './create-runtime'
 import { readOwnerIdentity, sameReadOwner, type ReadOwnerIdentity } from '../lib/roster/offmain-read-protocol'
 
 export interface DbOptions {
   /** SQLite 文件路径。默认 `NUXT_DB_PATH` → `<cwd>/data/roster.db`。 */
   dbPath?: string
-  /** 迁移目录。默认 `<cwd>/db/migrations`，必须完整存在。 */
-  migrationsFolder?: string
-  /** 只读打开已迁移的库;跳过迁移与称号字典写入。 */
+  /** 只读打开已完成原生初始化或离线升级的库。 */
   readOnly?: boolean
 }
 
@@ -22,12 +19,9 @@ export function resolveDbPath(opts: DbOptions = {}): string {
   return resolve(opts.dbPath ?? process.env.NUXT_DB_PATH ?? join(process.cwd(), 'data/roster.db'))
 }
 
-function resolveMigrations(opts: DbOptions): string {
-  return resolve(opts.migrationsFolder ?? join(process.cwd(), 'db/migrations'))
-}
-
 const cache = new Map<string, ReturnType<typeof drizzle<typeof schema>>>()
 const ownerIdentities = new WeakMap<object, ReadOwnerIdentity>()
+const applicationSchemas = new WeakMap<object, unknown>()
 
 /** Only certify a managed disk handle whose identity was observed at open.
  * Cached owners never silently follow a replaced file or symlink. */
@@ -54,11 +48,11 @@ export function useRuntimeDb(opts: DbOptions = {}) {
   if (readOnly) {
     // Validation must not start the long-lived snapshot's first WAL read.
     const validation = new Database(path, { readonly: true, fileMustExist: true })
-    try { validateDatabase(validation, opts) } finally { validation.close() }
+    try { validateDatabase(validation) } finally { validation.close() }
   }
   const sqlite = new Database(path, { readonly: readOnly, fileMustExist: true })
   try {
-    if (!readOnly) validateDatabase(sqlite, opts)
+    if (!readOnly) validateDatabase(sqlite)
     const afterOpen = readOwnerIdentity(path)
     if (!readOnly) sqlite.pragma('journal_mode = WAL')
     sqlite.pragma('foreign_keys = ON')
@@ -72,51 +66,38 @@ export function useRuntimeDb(opts: DbOptions = {}) {
   }
 }
 
-function validateDatabase(sqlite: Database.Database, opts: DbOptions) {
-  const expected = readMigrationFiles({ migrationsFolder: resolveMigrations(opts) }).at(-1)
-  if (!expected) throw new Error('Database migrations are empty')
-  const actual = sqlite.prepare('SELECT hash, created_at FROM __drizzle_migrations ORDER BY created_at DESC LIMIT 1').get() as { hash: string; created_at: number } | undefined
-  if (actual?.hash !== expected.hash || actual.created_at !== expected.folderMillis) {
-    throw new Error('Database schema is not current; run explicit initialization')
-  }
-  sqlite.prepare('SELECT code, name_zh FROM title LIMIT 0').all()
-  sqlite.prepare('SELECT id, name, name_norm FROM enterprise LIMIT 0').all()
-  sqlite.prepare('SELECT id, enterprise_id, title_code, source FROM record LIMIT 0').all()
+function validateDatabase(sqlite: Database.Database) {
+  assertFinalPlatformRuntime(sqlite)
 }
 
-/** Startup/CLI setup; new files require explicit create authorization. */
+/** Public application entry accepts only the completed native runtime. */
+export function useApplicationDb(opts: DbOptions = {}) {
+  const db = useRuntimeDb(opts)
+  const version = db.$client.pragma('schema_version', { simple: true })
+  if (!applicationSchemas.has(db) || applicationSchemas.get(db) !== version) {
+    assertFinalPlatformRuntime(db.$client)
+    applicationSchemas.set(db, version)
+  }
+  return db
+}
+
+/** Explicit native initialization; existing databases must already be final. */
 export function initializeDb(opts: DbOptions & { create?: boolean } = {}) {
   const path = resolveDbPath(opts)
   const readOnly = opts.readOnly ?? process.env.NUXT_DB_READONLY === '1'
   if (readOnly) return useRuntimeDb(opts)
-  const migrationsFolder = resolveMigrations(opts)
   const beforeInitialization = readOwnerIdentity(path)
-  // Read every migration before opening or creating a database.
-  readMigrationFiles({ migrationsFolder })
   if (opts.create) mkdirSync(dirname(path), { recursive: true })
   const sqlite = new Database(path, { fileMustExist: !opts.create })
   try {
-    // An existing unrelated/empty file is not an upgrade target.
-    if (!opts.create) sqlite.prepare('SELECT hash, created_at FROM __drizzle_migrations LIMIT 1').all()
-    sqlite.pragma('journal_mode = WAL')
     sqlite.pragma('foreign_keys = ON')
-    const db = drizzle(sqlite, { schema, logger: createDrizzleLogger({ connection: 'primary' }) })
-    migrate(db, { migrationsFolder })
-    for (const t of TITLE_SEED) db.insert(schema.title).values(t).onConflictDoNothing().run()
-    validateDatabase(sqlite, opts)
+    if (!beforeInitialization && opts.create) createRuntimeSchema(sqlite)
+    assertFinalPlatformRuntime(sqlite)
+    sqlite.pragma('journal_mode = WAL')
   } finally { sqlite.close() }
   const runtime = useRuntimeDb(opts)
   if (!beforeInitialization) ownerIdentities.delete(runtime)
   return runtime
-}
-
-/** Legacy pipeline/test setup adapter. Production imports useDb from db/index. */
-export function useDb(opts: DbOptions = {}) {
-  const path = resolveDbPath(opts)
-  const readOnly = opts.readOnly ?? process.env.NUXT_DB_READONLY === '1'
-  const cached = cache.get(`${path}\u0000${readOnly ? 'readonly' : 'readwrite'}`)
-  if (cached?.$client.open) return cached
-  return initializeDb({ ...opts, create: true })
 }
 
 export { schema }

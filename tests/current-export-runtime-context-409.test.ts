@@ -3,7 +3,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from 'vite
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { useDb, schema } from '../db/client'
+import { initializeDb, schema } from '../db/client'
 import { captureReceiptRuntimeContext, validateReceiptRuntimeContext } from '../server/utils/receipt-runtime-context'
 import { importReceiptRedactor } from '../server/utils/import-receipt-redaction'
 import { createCurrentQualificationAssessmentReader, readCurrentQualificationAssessment } from '../lib/roster/current-qualification'
@@ -21,10 +21,10 @@ import type { RosterImportRequest } from '../lib/roster-import-client'
 import { minimalPdf } from './helpers/minimal-pdf'
 import { HEADERS_409 } from './fixtures/current-export-409'
 
-let root: string, db: ReturnType<typeof useDb>
+let root: string, db: ReturnType<typeof initializeDb>
 beforeEach(() => {
   root = mkdtempSync(join(tmpdir(),'runtime-context-409-'))
-  db = useDb({dbPath:join(root,'synthetic.db')})
+  db = initializeDb({ create: true, dbPath:join(root,'synthetic.db')})
   vi.stubEnv('NUXT_LOG_DIR',join(root,'logs'))
   for (const key of ['NUXT_API_TOKEN','NUXT_MCP_TOKEN','MIIT_COOKIE','NUXT_OCR_TOKEN','PADDLEOCR_MCP_AISTUDIO_ACCESS_TOKEN']) vi.stubEnv(key,'')
 })

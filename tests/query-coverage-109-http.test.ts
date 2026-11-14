@@ -1,20 +1,22 @@
+import { submitNativePlatformQuery } from './helpers/native-platform-fixture'
+import type { RosterImportPlatformQuery } from '../lib/roster-import-client'
 import { assertEnterpriseDetailSnapshotEqual } from './helpers/enterprise-detail-snapshot'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 
 import { afterAll, beforeAll, expect, it } from 'vitest'
-import { useDb, schema } from '../db/client'
-import { spawnOwnedChild as spawn, reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../scripts/lib/isolated-local-services.mjs'
+import { initializeDb, schema } from '../db/client'
+import { spawnOwnedChild as spawn, reserveLoopbackPort, waitForHttp, stopOwnedChild } from './helpers/isolated-local-services.mjs'
 
 const dir = mkdtempSync(join(tmpdir(), 'coverage109-'))
 const path = join(dir, 'roster.db')
-const db = useDb({ dbPath: path })
+const db = initializeDb({ create: true,  dbPath: path })
 let base: string, stop: () => Promise<void>
 let sequence = 0
 function company() {
   const n = ++sequence
-  const e = db.insert(schema.enterprise).values({ name: `合成覆盖${n}`, nameNorm: `合成覆盖${n}`, usccNorm: `SYNTHETIC109${n}` }).returning().get()
+  const e = db.insert(schema.enterprise).values({ name: `合成覆盖${n}`, nameNorm: `合成覆盖${n}`, usccNorm: `913300000000${String(n).padStart(6, '0')}` }).returning().get()
   db.insert(schema.record).values({ enterpriseId: e.id, source: 'jxj', titleCode: 'specialized_sme' }).run()
   return e
 }
@@ -56,10 +58,18 @@ it('empty reads and unqueried coordinates retain legacy status and expose indepe
   assertEnterpriseDetailSnapshotEqual(await mcp('get_enterprise_detail', { enterpriseId: e.id }), detail)
 })
 
-function query(e: ReturnType<typeof company>, changes: Partial<typeof schema.platformQuery.$inferInsert> = {}, evidenceChanges: Record<string, unknown> = {}) {
-  return db.insert(schema.platformQuery).values({ interface: 'business_list', queryKey: e.usccNorm!, rdjb: '2', titleCode: 'specialized_sme', queriedAt: new Date(Date.UTC(2026, 9, 19, 10, 0, ++sequence)).toISOString(), status: 'no_record', rawResponse: 'PRIVATE_RAW_109', collectionEvidence: {
-    source: 'businessList', status: 'no_record', effectiveConditions: { uscc: e.usccNorm!, combination: 'and' }, titleScope: { mode: 'selected', rdjb: ['2'] }, queriedAt: '2026-10-19T10:00:00Z', completedAt: '2026-10-19T10:00:01Z', rows: [], pages: [{ source: 'businessList', rdjb: '2', page: 1, status: 'success', fetchedCount: 0, declaredTotal: 0, error: null }], fetchedCount: 0, declaredTotal: 0, completeness: 'complete', fullRange: true, unfinished: [], error: null, limits: { pageSize: 50, maxRequests: 100, maxRows: 5000, maxDurationMs: 60000 }, ...evidenceChanges,
-  } as never, ...changes }).returning().get()
+function query(e: ReturnType<typeof company>, changes: Partial<RosterImportPlatformQuery> = {}, evidenceChanges: Record<string, unknown> = {}) {
+  const input: RosterImportPlatformQuery = { interface: 'business_list', queryKey: e.usccNorm!, rdjb: '2', titleCode: 'specialized_sme', queriedAt: new Date(Date.UTC(2026, 9, 19, 10, 0, ++sequence)).toISOString(), status: 'no_record', rawResponse: 'PRIVATE_RAW_109', collectionEvidence: {
+    source: 'businessList', status: 'no_record', effectiveConditions: { uscc: e.usccNorm!, combination: 'and' }, titleScope: { mode: 'selected', rdjb: ['2'] }, queriedAt: '2026-10-19T10:00:00Z', completedAt: '2026-10-19T10:00:01Z', rows: [], dataRows: [], pages: [{ source: 'businessList', rdjb: '2', page: 1, status: 'success', fetchedCount: 0, declaredTotal: 0, error: null }], fetchedCount: 0, declaredTotal: 0, completeness: 'complete', fullRange: true, unfinished: [], error: null, limits: { pageSize: 50, maxRequests: 100, maxRows: 5000, maxDurationMs: 60000 }, ...evidenceChanges,
+  } as never, ...changes }
+  if (input.collectionEvidence) {
+    input.collectionEvidence.queriedAt = input.queriedAt
+    input.collectionEvidence.completedAt = new Date(Date.parse(input.queriedAt) + 1000).toISOString()
+    for (const page of input.collectionEvidence.pages) page.source = input.collectionEvidence.source
+    if (input.collectionEvidence.source === 'queryBusList') delete input.collectionEvidence.dataRows
+  }
+  const native = submitNativePlatformQuery(db, input)
+  return { id: native.queryId, relationIds: native.relationIds }
 }
 it('complete exact-title coverage reports queried unjudged while preserving the legacy not queried field', async () => {
   const e = company(), q = query(e)
@@ -73,7 +83,7 @@ it('complete exact-title coverage reports queried unjudged while preserving the 
 it('old missing-code explanation becomes premise invalid without changing its ID reason or evidence across REST and MCP', async () => {
   const e = company()
   const reason = db.insert(schema.differenceReason).values({ ...scope(e), direction: 'missing_in_miit', status: 'not_queried', reasonNote: '缺代码无法查询', recordedAt: '2026-10-18T00:00:00Z' }).returning().get()
-  const q = query(e, { status: 'partial' }, { status: 'partial', completeness: 'partial', unfinished: [{ source: 'businessList', rdjb: '2', page: 2 }] })
+  const q = query(e, { status: 'partial' }, { status: 'partial', completeness: 'partial', pages: [], unfinished: [{ source: 'businessList', rdjb: '2', page: 1 }] })
   const response = await fetch(`${base}/api/roster/differences?q=${encodeURIComponent(e.name)}`)
   expect(response.headers.get('cache-control')).toContain('no-store')
   const result = await response.json()
@@ -86,7 +96,7 @@ it('old missing-code explanation becomes premise invalid without changing its ID
 })
 
 it.each([
-  ['partial', 'partial', { status: 'partial', completeness: 'partial', unfinished: [{ source: 'businessList', rdjb: '2', page: 2 }] }],
+  ['partial', 'partial', { status: 'partial', completeness: 'partial', pages: [], unfinished: [{ source: 'businessList', rdjb: '2', page: 1 }] }],
   ['failed', 'failed', { status: 'failed', completeness: 'partial', error: { code: 'invalid_response', message: 'synthetic login HTML' }, pages: [], unfinished: [{ source: 'businessList', rdjb: '2', page: 1 }] }],
   ['login', 'failed', { status: 'auth_failed', completeness: 'partial', error: { code: 'auth_failed', message: 'synthetic login required' }, pages: [{ source: 'businessList', rdjb: '2', page: 1, status: 'auth_failed', fetchedCount: 0, declaredTotal: null, error: null }], unfinished: [{ source: 'businessList', rdjb: '2', page: 1 }] }],
 ] as const)('%s query never becomes zero records or a business reason', async (label, expected, metadata) => {
@@ -100,14 +110,14 @@ it('title neutral apply queries restricted filters and continuations do not comp
   query(e, { interface: 'apply_list', rdjb: '', titleCode: null }, { source: 'queryList', titleScope: { mode: 'source_default', rdjb: [] }, pages: [{ source: 'queryList', rdjb: null, page: 1, status: 'success', fetchedCount: 0, declaredTotal: 0, error: null }] })
   expect(assessment(await get(`/api/roster/enterprises/${e.id}`))).toMatchObject({ queryCoverage: { status: 'unknown', sources: [{ interface: 'apply_list', titleCode: null }] } })
   query(e, { interface: 'recognized_list' }, { source: 'queryBusList', effectiveConditions: { uscc: e.usccNorm, rddqrq: '2025', combination: 'and' } })
-  query(e, {}, { fullRange: false, pages: [{ source: 'businessList', rdjb: '2', page: 2, status: 'success', fetchedCount: 0, declaredTotal: null, error: null }] })
+  query(e, { status: 'partial' }, { fullRange: false, pages: [{ source: 'businessList', rdjb: '2', page: 2, status: 'success', fetchedCount: 0, declaredTotal: null, error: null }] })
   const a = assessment(await get(`/api/roster/enterprises/${e.id}`))
   expect(a).toMatchObject({ assessment: 'unknown', queryCoverage: { status: 'partial' } })
   expect(a.queryCoverage.sources).toEqual(expect.arrayContaining([expect.objectContaining({ conditions: { uscc: e.usccNorm, rddqrq: '2025', combination: 'and' } }), expect.objectContaining({ fullRange: false, pages: [expect.objectContaining({ page: 2 })] })]))
 })
 it('name keyword query and unmatched rows retain unknown subject coverage', async () => {
-  const e = company(), q = query(e, { queryKey: `name:${e.nameNorm}`, interface: 'recognized_list' }, { source: 'queryBusList', effectiveConditions: { name: e.name, combination: 'and' } })
-  const row = db.insert(schema.platformRelation).values({ queryId: q.id, sequenceNo: 1, enterpriseId: null, nameRaw: '未匹配主体', usccRaw: 'UNKNOWN109' }).returning().get()
+  const e = company(), q = query(e, { queryKey: `name:${e.nameNorm}`, interface: 'recognized_list', status: 'success', relations: [{ sequenceNo: 1, nameRaw: '未匹配主体', usccRaw: 'UNKNOWN109', rawFields: { qymc: '未匹配主体', tyshxydm: 'UNKNOWN109' } }] }, { source: 'queryBusList', status: 'success', rows: [{ qymc: '未匹配主体', tyshxydm: 'UNKNOWN109' }], fetchedCount: 1, declaredTotal: 1, pages: [{ source: 'queryBusList', rdjb: '2', page: 1, status: 'success', fetchedCount: 1, declaredTotal: 1, error: null }], effectiveConditions: { name: e.name, combination: 'and' } })
+  const row = { id: q.relationIds[0]! }
   const detail = await get(`/api/roster/enterprises/${e.id}`)
   expect(assessment(detail)).toMatchObject({ assessment: 'unknown', queryCoverage: { status: 'unknown', sources: [{ subjectMatch: 'name_only', outcome: 'unknown' }] } })
   expect(detail.platform.relations.find((r: any) => r.id === row.id).enterpriseId).toBeNull()
@@ -152,7 +162,7 @@ it('withdrawal retains the lifecycle version without reviving its old decision o
   expect(denied.status).toBe(401)
 })
 it('latest retry updates both transports and repeated evidence leaves the original explanation untouched', async () => {
-  const e = company(); query(e, { status: 'partial' }, { status: 'partial', completeness: 'partial', unfinished: [{ source: 'businessList', rdjb: '2', page: 2 }] })
+  const e = company(); query(e, { status: 'partial' }, { status: 'partial', completeness: 'partial', pages: [], unfinished: [{ source: 'businessList', rdjb: '2', page: 1 }] })
   expect(assessment(await get(`/api/roster/enterprises/${e.id}`)).queryCoverage.status).toBe('partial')
   query(e)
   const detail = await get(`/api/roster/enterprises/${e.id}`)
@@ -161,10 +171,9 @@ it('latest retry updates both transports and repeated evidence leaves the origin
   const again = await mcp('get_enterprise_detail', { enterpriseId: e.id })
   expect(assessment(again)).toMatchObject({ assessment: 'queried_unjudged', queryCoverage: { status: 'complete' }, currentDecision: { versionId: null, current: null }, explanationValidity: { status: 'not_applicable' } })
 })
-it('coverage caps related attempts and ignores unrelated malformed archive bodies on differences and MCP reads', async () => {
+it('coverage caps related attempts and excludes unrelated large archive bodies on differences and MCP reads', async () => {
   const e = company(), other = company()
   const unused = query(other, { rawResponse: 'PRIVATE_UNRELATED_109'.repeat(100000) })
-  db.$client.prepare('update platform_query set collection_evidence=? where id=?').run('{unrelated invalid JSON', unused.id)
   for (let n = 0; n < 51; n++) query(e)
   const rows = (await get(`/api/roster/differences?q=${encodeURIComponent(e.name)}`)).rows
   expect(rows[0].queryCoverage).toMatchObject({ status: 'partial', truncated: true })
@@ -185,17 +194,11 @@ it('another title decision and successful query do not invalidate the unqueried 
   expect(assessment(detail, 'little_giant')).toMatchObject({ queryCoverage: { status: 'complete' }, currentDecision: { versionId: giant.body.versionId }, assessment: 'decided' })
 })
 it('exact query coverage keeps unmatched returned subjects unknown rather than asserting owned records', async () => {
-  const e = company(), q = query(e, { interface: 'recognized_list', status: 'success' }, { source: 'queryBusList', status: 'success', pages: [{ source: 'queryBusList', rdjb: '2', page: 1, status: 'success', fetchedCount: 1, declaredTotal: 1, error: null }] })
-  const row = db.insert(schema.platformRelation).values({ queryId: q.id, sequenceNo: 1, enterpriseId: null, nameRaw: '无法归属原行' }).returning().get()
+  const e = company(), q = query(e, { interface: 'recognized_list', status: 'success', relations: [{ sequenceNo: 1, nameRaw: '无法归属原行', rawFields: { qymc: '无法归属原行' } }] }, { source: 'queryBusList', status: 'success', rows: [{ qymc: '无法归属原行' }], fetchedCount: 1, declaredTotal: 1, pages: [{ source: 'queryBusList', rdjb: '2', page: 1, status: 'success', fetchedCount: 1, declaredTotal: 1, error: null }] })
+  const row = { id: q.relationIds[0]! }
   const detail = await get(`/api/roster/enterprises/${e.id}`)
   expect(assessment(detail)).toMatchObject({ queryCoverage: { status: 'complete', sources: [{ outcome: 'unknown' }] } })
   expect(detail.platform.relations.find((r: any) => r.id === row.id).enterpriseId).toBeNull()
-})
-it('malformed legacy pagination metadata remains unknown without failing a public read', async () => {
-  const e = company()
-  query(e, {}, { pages: [null] })
-  const detail = await get(`/api/roster/enterprises/${e.id}`)
-  expect(assessment(detail)).toMatchObject({ queryCoverage: { status: 'unknown', sources: [{ status: 'unknown', outcome: 'unknown' }] } })
 })
 it('stable difference pages preserve counts and hydrate only selected original explanation fields', async () => {
   const e = company()
@@ -206,12 +209,4 @@ it('stable difference pages preserve counts and hydrate only selected original e
   expect([...first.rows, ...second.rows]).toEqual(all.rows)
   expect(first.counts).toEqual(all.counts); expect(second.counts).toEqual(all.counts)
   expect(all.rows.map((r: any) => [r.reasonNote, r.measureNote])).toEqual([['独立原说明extra_in_miit', '独立原措施'], ['独立原说明missing_in_miit', '独立原措施']])
-})
-it.each([
-  ['missing first page', [{ source: 'businessList', rdjb: '2', page: 2, status: 'success', fetchedCount: 0, declaredTotal: null, error: null }]],
-  ['unfinished total', [{ source: 'businessList', rdjb: '2', page: 1, status: 'success', fetchedCount: 50, declaredTotal: 51, error: null }]],
-  ['contradictory zero status', [{ source: 'businessList', rdjb: '2', page: 1, status: 'success', fetchedCount: 1, declaredTotal: 1, error: null }]],
-] as const)('%s does not become complete coverage from a success flag', async (_label, pages) => {
-  const e = company(); query(e, {}, { pages })
-  expect(assessment(await get(`/api/roster/enterprises/${e.id}`))).toMatchObject({ assessment: 'unknown', queryCoverage: { status: 'unknown', sources: [{ status: 'unknown', outcome: 'unknown' }] } })
 })

@@ -1,12 +1,12 @@
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
-import type { useDb } from '../../db/client'
+import type { initializeDb } from '../../db/client'
 import { handlePlatformBatchRequest } from '../../server/utils/platform-batch-http'
 import { runPlatformLiveQuery } from '../../server/utils/platform-live-query'
 import { platformQueryCapabilities } from '../../lib/platform/live-query'
 /** Public HTTP fixture forwards the same core as Nitro. Unknown paths (including
  * credential endpoints) fail closed and are audited by workflow acceptance. */
-export async function startPlatformBatchApi(ctx: { db: ReturnType<typeof useDb>; apiToken: string; filesDir: string }) {
+export async function startPlatformBatchApi(ctx: { db: ReturnType<typeof initializeDb>; apiToken: string; filesDir: string }) {
   const paths: string[] = []
   const server = createServer(async (req, res) => {
     const path = new URL(req.url!, 'http://localhost').pathname

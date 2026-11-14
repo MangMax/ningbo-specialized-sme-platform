@@ -1,13 +1,13 @@
 import { createError, defineEventHandler, getHeader, getMethod, getRouterParam, readBody, setHeader, setResponseStatus, type H3Event } from 'h3'
 import { z } from 'zod'
 import { requestLogContext } from '../../lib/logging'
-import { checkBrowserReviewRequest, browserReviewWriteEnabled, type BrowserReviewRuntime } from './browser-review-102'
+import { checkBrowserReviewRequest } from './browser-review-102'
 import { readApiToken, resolveApiAuth } from './api-auth'
 import { handleAnnualTaskRequest, type AnnualTaskAction, type AnnualTaskContext } from './annual-correspondence-api'
 
 /** The context supplies the shared reader. Browser calls carry no token; exact
  * same-origin capability is checked before body parsing or database access. */
-export function annualTaskRoute(action: AnnualTaskAction, context: () => Omit<AnnualTaskContext,'apiToken'|'browserAuthorized'> & {config:BrowserReviewRuntime}, options: {eventScoped?:boolean} = {}) {
+export function annualTaskRoute(action: AnnualTaskAction, context: () => Omit<AnnualTaskContext,'apiToken'|'browserAuthorized'> & {config:{apiToken?:string}}, options: {eventScoped?:boolean} = {}) {
   return defineEventHandler(async (event: H3Event) => {
     setHeader(event,'cache-control','no-store')
     const runtime = context(), config = runtime.config
@@ -16,7 +16,7 @@ export function annualTaskRoute(action: AnnualTaskAction, context: () => Omit<An
     const apiAuthorized = resolveApiAuth({given:token,configured:config.apiToken}).writeAuthorized
     let browserAuthorized = false
     if (getMethod(event) !== 'GET' && !apiAuthorized && !token) {
-      const gate = checkBrowserReviewRequest(event,config,{write:true})
+      const gate = checkBrowserReviewRequest(event,{write:true})
       if (!gate.ok) {setResponseStatus(event,gate.status);return {error:{code:gate.code}}}
       browserAuthorized = true
     }
@@ -33,7 +33,7 @@ export function annualTaskRoute(action: AnnualTaskAction, context: () => Omit<An
     }
     const output = await handleAnnualTaskRequest(action,{method:getMethod(event),headers,body,id:getRouterParam(event,'id')},{
       get db(){return runtime.db},readScope:runtime.readScope,filesDir:runtime.filesDir,apiToken:config.apiToken,
-      browserAuthorized:browserAuthorized || action === 'detail' && browserReviewWriteEnabled(config),
+      browserAuthorized:browserAuthorized || action === 'detail',
       logContext: requestLogContext(event),
     })
     setResponseStatus(event,output.status)

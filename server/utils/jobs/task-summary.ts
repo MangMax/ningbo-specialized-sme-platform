@@ -7,11 +7,11 @@ import { readBatchSummary, batchProjection } from './batch-summary'
 import { readOcrLinks, ocrProjection } from './ocr-summary'
 import { CANDIDATE_JOB_KIND } from './candidate-discovery'
 import { desc, sql, type SQL } from 'drizzle-orm'
-import { schema, type useDb } from '../../../db/client'
+import { schema, type useApplicationDb } from '../../../db/client'
 import { isJobId } from '../../../lib/job'
 import { TASK_EXPORTS, TASK_GROUPS, TASK_LABELS, type TaskSummary, type TaskTab } from '../../../lib/task-center'
 
-type Db = ReturnType<typeof useDb>
+type Db = ReturnType<typeof useApplicationDb>
 const j = schema.job
 // SQLite projects only scalar fields and bounded ID/status arrays. Raw params,
 // OCR markdown and platform segment/page/row payloads never enter JS list memory.

@@ -4,17 +4,17 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import * as h3 from 'h3'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
-import { useDb } from '../db/client'
+import { initializeDb } from '../db/client'
 import { __resetJobRunner, clearJobSpecs, registerJob, whenIdle } from '../server/utils/job-runner'
 import { setJobResult } from '../server/utils/job-store'
 
-const active = vi.hoisted(() => ({ db: null as ReturnType<typeof useDb> | null }))
+const active = vi.hoisted(() => ({ db: null as ReturnType<typeof initializeDb> | null }))
 vi.mock('@db', () => ({ useDb: () => active.db }))
-let dir: string, db: ReturnType<typeof useDb>, server: ReturnType<typeof createServer>, base: string
+let dir: string, db: ReturnType<typeof initializeDb>, server: ReturnType<typeof createServer>, base: string
 let release: (() => void) | undefined
 beforeEach(async () => {
   dir = mkdtempSync(join(tmpdir(), 'main-a9bc-jobs-'))
-  db = useDb({ dbPath: join(dir, 'synthetic.sqlite') }); active.db = db
+  db = initializeDb({ create: true,  dbPath: join(dir, 'synthetic.sqlite') }); active.db = db
   __resetJobRunner(); clearJobSpecs()
   for (const [key, value] of Object.entries(h3)) vi.stubGlobal(key, value)
   vi.stubGlobal('useRuntimeConfig', () => ({ apiToken: 'synthetic-a9bc-key', filesDir: dir, browserTasksEnabled: false }))

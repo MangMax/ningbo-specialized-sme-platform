@@ -1,6 +1,6 @@
 # OCR 结果落在 `app`,**markdown + 页码**是产物形态;API 走 PaddleOCR 托管服务
 
-票 14(`.scratch/ingest-pipeline/issues/14-ocr.md`)把扫描 PDF 变成可解析的文本。这份 ADR 冻住三个决定。
+票 14把扫描 PDF 变成可解析的文本。这份 ADR 冻住三个决定。
 
 ## 1. 结果表在 `app`,不在 pipeline
 

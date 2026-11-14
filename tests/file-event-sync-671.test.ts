@@ -4,10 +4,10 @@ import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { createApp, createRouter, toNodeListener, defineEventHandler } from 'h3'
 import { afterAll, expect, it, vi } from 'vitest'
-import { useDb, schema } from '../db/client'
+import { initializeDb, schema } from '../db/client'
 const oldDbPath = process.env.NUXT_DB_PATH
 const dir = mkdtempSync('/tmp/sync671-'),
-  db = useDb({ dbPath: `${dir}/test.db` })
+  db = initializeDb({ create: true,  dbPath: `${dir}/test.db` })
 const pdf = Buffer.from(
   '%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 100 100]>>endobj\ntrailer<</Root 1 0 R>>\n%%EOF',
 )
@@ -118,8 +118,7 @@ async function service() {
   vi.stubGlobal('useRuntimeConfig', () => ({
     apiToken: 'test671',
     filesDir: dir,
-    browserReviewEnabled: true,
-  }))
+    }))
   process.env.NUXT_DB_PATH = `${dir}/test.db`
   const { fileEventSyncRoute } = await import('../server/utils/file-event-sync-route')
   const app = createApp(),
@@ -586,17 +585,7 @@ it('requires public auth and browser origin plus explicit write capability, with
   const origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`
   expect((await f.post('browser-preflight', f.request, { origin })).status).toBe(400)
   expect((await f.post('browser-preflight', business, { origin })).status).toBe(200)
-  vi.stubGlobal('useRuntimeConfig', () => ({
-    apiToken: 'test671',
-    filesDir: dir,
-    browserReviewEnabled: false,
-  }))
-  expect((await f.post('browser-preflight', business, { origin })).status).toBe(403)
-  vi.stubGlobal('useRuntimeConfig', () => ({
-    apiToken: 'test671',
-    filesDir: dir,
-    browserReviewEnabled: true,
-  }))
+
 })
 it('retains a fresh unknown-year fixture for manual browser and workbook acceptance when requested', () => {
   const f = sample()

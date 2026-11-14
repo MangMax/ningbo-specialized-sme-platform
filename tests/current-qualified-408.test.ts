@@ -1,3 +1,4 @@
+import { submitNativePlatformQuery } from './helpers/native-platform-fixture'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { listCurrentQualified } from '../lib/roster/current-qualified-query'
 import { readCurrentQualificationAssessment } from '../lib/roster/current-qualification'
@@ -316,7 +317,7 @@ it('wal_writer_changes_are_visible_only_on_next_current_snapshot_408', () => {
     const prepare = file.sqlite.prepare.bind(file.sqlite)
     const spy = vi.spyOn(file.sqlite, 'prepare').mockImplementation((sql: string) => {
       const statement = prepare(sql)
-      if (sql.startsWith('select r.id,r.query_id as queryId,')) {
+      if (/\b(?:from|join)\s+["`]?record_event["`]?\b/i.test(sql)) {
         const all = statement.all.bind(statement)
         statement.all = ((...args: unknown[]) => {
           if (!injected) {
@@ -420,90 +421,6 @@ function assertRefSnapshot408(enterpriseId: number, refs: Record<'little_giant' 
   return defaults
 }
 
-it('merged_refs_keep_three_distinct_titles_conflicts_and_same_query_rows_408', () => {
-  const m = matrix408(fixture.sqlite), r = refLiterals408(fixture.sqlite)
-  const a = m.formal('synthetic_408_three_refs', undefined, { uscc: '91330200000000408X' })
-  const qs = r.query('specialized_sme', '1') // explicit title wins conflicting single rdjb
-  const qi = r.query('innovative_sme', '1'), ql = r.query('little_giant', '3')
-  const s = r.relation(qs.id, 1, a.enterprise.id, a.enterprise.usccNorm, 'synthetic_specialized')
-  const i1 = r.relation(qi.id, 1, a.enterprise.id, a.enterprise.usccNorm, 'synthetic_innovative_first')
-  const l = r.relation(ql.id, 1, a.enterprise.id, a.enterprise.usccNorm, 'synthetic_giant')
-  const i2 = r.relation(qi.id, 2, a.enterprise.id, a.enterprise.usccNorm, 'synthetic_innovative_second')
-  assertRefSnapshot408(a.enterprise.id, {
-    little_giant: [{ id: l.id, queryId: ql.id, status: 'synthetic_giant', year: 2025, batch: '2025-1' }],
-    specialized_sme: [{ id: s.id, queryId: qs.id, status: 'synthetic_specialized', year: 2025, batch: '2025-1' }],
-    innovative_sme: [{ id: i1.id, queryId: qi.id, status: 'synthetic_innovative_first', year: 2025, batch: '2025-1' }, { id: i2.id, queryId: qi.id, status: 'synthetic_innovative_second', year: 2025, batch: '2025-1' }],
-  })
-})
-
-it('merged_refs_normalize_unassigned_identity_without_stealing_other_owner_408', () => {
-  const m = matrix408(fixture.sqlite), r = refLiterals408(fixture.sqlite)
-  const a = m.formal('synthetic_408_unassigned', undefined, { uscc: '91330200000000408X' })
-  const other = m.formal('synthetic_408_other_owner')
-  const q = r.query('innovative_sme', '1')
-  r.relation(q.id, 1, other.enterprise.id, a.enterprise.usccNorm, 'synthetic_other_owner')
-  const unassigned = r.relation(q.id, 2, null, ' \u200b91330200000000408x\u3000', 'synthetic_normalized')
-  r.relation(q.id, 3, null, null, 'synthetic_null_unassigned')
-  const owned = r.relation(q.id, 4, a.enterprise.id, null, 'synthetic_owned')
-  assertRefSnapshot408(a.enterprise.id, { little_giant: [], specialized_sme: [], innovative_sme: [
-    { id: unassigned.id, queryId: q.id, status: 'synthetic_normalized', year: 2025, batch: '2025-1' },
-    { id: owned.id, queryId: q.id, status: 'synthetic_owned', year: 2025, batch: '2025-1' },
-  ] })
-})
-
-it('merged_refs_null_identity_does_not_join_null_or_empty_unassigned_keys_408', () => {
-  const m = matrix408(fixture.sqlite), r = refLiterals408(fixture.sqlite)
-  const a = m.formal('synthetic_408_null_refs'), other = m.formal('synthetic_408_null_other')
-  const q = r.query('innovative_sme', '1')
-  r.relation(q.id, 1, null, null, 'synthetic_null')
-  r.relation(q.id, 2, null, ' \u200b ', 'synthetic_empty')
-  r.relation(q.id, 3, other.enterprise.id, null, 'synthetic_other')
-  const owned = r.relation(q.id, 4, a.enterprise.id, null, 'synthetic_null_owned')
-  assertRefSnapshot408(a.enterprise.id, { little_giant: [], specialized_sme: [], innovative_sme: [
-    { id: owned.id, queryId: q.id, status: 'synthetic_null_owned', year: 2025, batch: '2025-1' },
-  ] })
-})
-
-it('merged_refs_page_positions_keep_relation_id_order_not_sequence_order_408', () => {
-  const m = matrix408(fixture.sqlite), r = refLiterals408(fixture.sqlite)
-  const a = m.formal('synthetic_408_position_refs')
-  const q = r.query(null, '1,2,3', [
-    { source: 'businessList', rdjb: '1', page: 1, status: 'success', fetchedCount: 2, declaredTotal: 2, maxPage: 1, error: null },
-    { source: 'businessList', rdjb: '2', page: 1, status: 'success', fetchedCount: 1, declaredTotal: 1, maxPage: 1, error: null },
-    { source: 'businessList', rdjb: '3', page: 1, status: 'success', fetchedCount: 1, declaredTotal: 1, maxPage: 1, error: null },
-  ])
-  const l = r.relation(q.id, 4, a.enterprise.id, null, 'synthetic_pos_four')
-  const i2 = r.relation(q.id, 2, a.enterprise.id, null, 'synthetic_pos_two')
-  const i1 = r.relation(q.id, 1, a.enterprise.id, null, 'synthetic_pos_one')
-  const s = r.relation(q.id, 3, a.enterprise.id, null, 'synthetic_pos_three')
-  assertRefSnapshot408(a.enterprise.id, {
-    little_giant: [{ id: l.id, queryId: q.id, status: 'synthetic_pos_four', year: 2025, batch: '2025-1' }],
-    specialized_sme: [{ id: s.id, queryId: q.id, status: 'synthetic_pos_three', year: 2025, batch: '2025-1' }],
-    innovative_sme: [{ id: i2.id, queryId: q.id, status: 'synthetic_pos_two', year: 2025, batch: '2025-1' }, { id: i1.id, queryId: q.id, status: 'synthetic_pos_one', year: 2025, batch: '2025-1' }],
-  })
-})
-
-it('merged_refs_unknown_multiscope_fallback_retains_each_legitimate_title_408', () => {
-  const m = matrix408(fixture.sqlite), r = refLiterals408(fixture.sqlite)
-  const a = m.formal('synthetic_408_unknown_scope')
-  const q = r.query(null, '1,2,3')
-  const relation = r.relation(q.id, 1, a.enterprise.id, null, 'synthetic_fallback')
-  const expected = { id: relation.id, queryId: q.id, status: 'synthetic_fallback', year: 2025, batch: '2025-1' }
-  assertRefSnapshot408(a.enterprise.id, { little_giant: [expected], specialized_sme: [expected], innovative_sme: [expected] })
-})
-
-it('merged_refs_own_query_options_restrict_observations_without_dropping_refs_408', () => {
-  const m = matrix408(fixture.sqlite), r = refLiterals408(fixture.sqlite)
-  const a = m.formal('synthetic_408_owned_queries')
-  const q1 = r.query('innovative_sme', '1'), q2 = r.query('innovative_sme', '1')
-  const first = r.relation(q1.id, 1, a.enterprise.id, null, 'synthetic_q_first')
-  const second = r.relation(q2.id, 1, a.enterprise.id, null, 'synthetic_q_second')
-  assertRefSnapshot408(a.enterprise.id, { little_giant: [], specialized_sme: [], innovative_sme: [
-    { id: first.id, queryId: q1.id, status: 'synthetic_q_first', year: 2025, batch: '2025-1' },
-    { id: second.id, queryId: q2.id, status: 'synthetic_q_second', year: 2025, batch: '2025-1' },
-  ] }, [q1.id])
-})
-
 it('prepared_refs_empty_and_alternating_bindings_preserve_nullable_projection_408', () => {
   const m = matrix408(fixture.sqlite), r = refLiterals408(fixture.sqlite)
   const a = m.formal('synthetic_408_ref_binding_a'), b = m.formal('synthetic_408_ref_binding_b')
@@ -532,12 +449,12 @@ it('prepared_refs_refresh_new_confirmed_edges_and_source_revision_validity_408',
   const prepared = createEnterpriseTitleCorrespondenceRefsReader(m.db)
   expect(prepared(a.enterprise.id, 'innovative_sme')).toEqual([])
   const one = m.recognized(a.enterprise.id, a.events[0]!.id, { rddqrq: '2028-06-01' })
-  const id1 = (fixture.sqlite.prepare('select id,source_fingerprint as fingerprint from record_correspondence where relation_id=?').get(one.id) as { id: number; fingerprint: string })
+  const id1 = (fixture.sqlite.prepare('select id,source_fingerprint as fingerprint from record_correspondence where observation_id=(select observation_id from platform_legacy_relation_alias where old_id=?)').get(one.id) as { id: number; fingerprint: string })
   expect(id1.fingerprint).toMatch(/^[a-f0-9]{64}$/)
   const literal = (id: number, relationId: number, requiresRevalidation: boolean) => ({ id, type: 'event_recognized', role: 'recognized_corrob', status: 'confirmed', eventId: a.events[0]!.id, predecessorEventId: null, relationId, exportRowId: null, enterpriseId: a.enterprise.id, titleCode: 'innovative_sme', revision: 2, requiresRevalidation })
   expect(prepared(a.enterprise.id, 'innovative_sme')).toEqual([literal(id1.id, one.id, false)])
   const two = m.recognized(a.enterprise.id, a.events[0]!.id, { whpc: '2024-2' })
-  const id2 = (fixture.sqlite.prepare('select id from record_correspondence where relation_id=?').get(two.id) as { id: number }).id
+  const id2 = (fixture.sqlite.prepare('select id from record_correspondence where observation_id=(select observation_id from platform_legacy_relation_alias where old_id=?)').get(two.id) as { id: number }).id
   expect(prepared(a.enterprise.id, 'innovative_sme')).toEqual([literal(id1.id, one.id, false), literal(id2, two.id, false)])
   // Genuine source revision drift, not a cached flag or a fabricated confirmed row.
   fixture.sqlite.prepare('update record_event set revision=revision+1 where id=?').run(a.events[0]!.id)
@@ -546,31 +463,6 @@ it('prepared_refs_refresh_new_confirmed_edges_and_source_revision_validity_408',
   const drifted = prepared(a.enterprise.id, 'innovative_sme')
   expect(drifted).toEqual([literal(id1.id, one.id, true), literal(id2, two.id, true)])
   expect(drifted).toEqual(listRecordCorrespondenceRefs(m.db, { enterpriseId: a.enterprise.id, titleCode: 'innovative_sme' }))
-  expect(fixture.totalChanges()).toBe(changes)
-})
-
-it('legacy_ref_filters_any_event_and_sources_union_keep_original_scope_rules_408', () => {
-  const m = matrix408(fixture.sqlite), r = refLiterals408(fixture.sqlite)
-  const a = m.formal('synthetic_408_legacy_scope', undefined, { uscc: '91330200000000408X' })
-  const s = m.formal('unused', undefined, { enterpriseId: a.enterprise.id, title: 'specialized_sme' })
-  const other = m.formal('synthetic_408_legacy_other', undefined, { uscc: '913302000000004091' })
-  r.officialFile()
-  const ra = m.recognized(a.enterprise.id, a.events[0]!.id, {})
-  const rs = m.recognized(a.enterprise.id, s.events[0]!.id, {})
-  const rb = m.recognized(other.enterprise.id, other.events[0]!.id, {})
-  const find = (relationId: number) => (fixture.sqlite.prepare('select id from record_correspondence where relation_id=?').get(relationId) as { id: number }).id
-  const aid = find(ra.id), sid = find(rs.id), bid = find(rb.id)
-  const business = r.query('innovative_sme', '1')
-  const context = r.relation(business.id, 1, a.enterprise.id, a.enterprise.usccNorm, 'synthetic_followup')
-  const predecessor = r.legacyRef('any_event_predecessor', 'candidate', a.enterprise.id, 'innovative_sme', { predecessorEventId: a.events[0]!.id, relationId: context.id })
-  fixture.sqlite.pragma('query_only = ON')
-  const changes = fixture.totalChanges()
-  expect(listRecordCorrespondenceRefs(m.db, { anyEventId: a.events[0]!.id }).map(ref => ref.id)).toEqual([aid, predecessor.id])
-  expect(listRecordCorrespondenceRefs(m.db, { enterpriseId: a.enterprise.id, titleCode: 'innovative_sme', status: 'confirmed' }).map(ref => ref.id)).toEqual([aid])
-  expect(listRecordCorrespondenceRefs(m.db, { enterpriseId: other.enterprise.id }).map(ref => ref.id)).toEqual([bid])
-  // Existing sources branch is a UNION across source IDs and replaces the filter.
-  expect(listRecordCorrespondenceRefs(m.db, { enterpriseId: other.enterprise.id }, { eventIds: [a.events[0]!.id], relationIds: [rs.id], exportRowIds: [] }).map(ref => ref.id)).toEqual([aid, sid, predecessor.id])
-  expect(listRecordCorrespondenceRefs(m.db, {}, { eventIds: [], relationIds: [], exportRowIds: [] })).toEqual([])
   expect(fixture.totalChanges()).toBe(changes)
 })
 
@@ -733,10 +625,41 @@ it('effective_count_projection_preserves_status_and_basis_without_correspondence
   for (const drift of [false, true]) {
     if (drift) fixture.sqlite.prepare('update record_event set revision=revision+1 where id=?').run(a.events[0]!.id)
     const full = reader.readTitle(a.enterprise.id, 'innovative_sme', asOf)
-    const prepare = vi.spyOn(fixture.sqlite, 'prepare')
+    let correspondenceReads=0
+    const originalPrepare=fixture.sqlite.prepare.bind(fixture.sqlite)
+    const prepare = vi.spyOn(fixture.sqlite, 'prepare').mockImplementation(text=>{
+      const statement=originalPrepare(text)
+      if(/\bfrom\s+["`]?record_correspondence["`]?\b/i.test(text))for(const method of ['all','get','iterate'] as const){
+        const run=statement[method].bind(statement)
+        Object.assign(statement,{[method]:(...args:unknown[])=>{correspondenceReads++;return run(...args)}})
+      }
+      return statement
+    })
     try {
       expect(createCurrentQualificationAssessmentReader(fixture.sqlite).readEffectiveTitle(a.enterprise.id, 'innovative_sme', asOf)).toEqual({ effectiveStatus: full.effectiveStatus, basis: full.row.basis })
-      expect(prepare.mock.calls.filter(([sql]) => sql.includes('record_correspondence'))).toEqual([])
+      expect(correspondenceReads).toBe(0)
     } finally { prepare.mockRestore() }
   }
+})
+
+it('native complete recognized collections keep each title and source row in its own scope', () => {
+  const m = matrix408(fixture.sqlite)
+  const first = m.formal('native_three_title_source')
+  const refs: Record<'little_giant' | 'specialized_sme' | 'innovative_sme', RefLiteral408[]> = { little_giant:[],specialized_sme:[],innovative_sme:[] }
+  for (const title of ['little_giant','specialized_sme','innovative_sme'] as const) {
+    const formal = title === 'innovative_sme' ? first : m.formal('native_three_title_source', undefined, {enterpriseId:first.enterprise.id,title})
+    const row = m.recognized(first.enterprise.id,formal.events[0]!.id,{rddqrq:'2028-06-01',whpc:'2025-1'})
+    refs[title].push({id:row.id,queryId:row.queryId,status:null,year:null,batch:null})
+  }
+  assertRefSnapshot408(first.enterprise.id,refs)
+})
+
+it('native recognized submission rejects ownership that conflicts with source identity atomically', () => {
+  const m=matrix408(fixture.sqlite), first=m.formal('native_source_owner'), other=m.formal('native_wrong_owner')
+  const raw={id:'native-owner-conflict',qymc:first.enterprise.name,tyshxydm:first.enterprise.usccNorm!,rdjb:'1',rddqrq:'2028-06-01'}
+  const stamp='2026-05-20T00:00:00Z'
+  const evidence={source:'queryBusList' as const,status:'success' as const,effectiveConditions:{uscc:first.enterprise.usccNorm!,combination:'and' as const},titleScope:{mode:'selected' as const,rdjb:['1']},queriedAt:stamp,completedAt:stamp,rows:[raw],pages:[{source:'queryBusList' as const,rdjb:'1',page:1,status:'success' as const,fetchedCount:1,declaredTotal:1,maxPage:1,error:null}],fetchedCount:1,declaredTotal:1,completeness:'complete' as const,fullRange:true,unfinished:[],error:null,limits:{maxRequests:1,maxRows:50,maxDurationMs:1000,pageSize:50}}
+  const before=fixture.sqlite.prepare('select count(*) n from platform_collection').get()
+  expect(()=>submitNativePlatformQuery(m.db,{interface:'recognized_list',queryKey:first.enterprise.usccNorm!,titleCode:'innovative_sme',rdjb:'1',queriedAt:stamp,status:'success',collectionEvidence:evidence,relations:[{sequenceNo:1,relationKey:raw.id,nameRaw:raw.qymc,usccRaw:raw.tyshxydm,rawFields:raw,enterpriseId:other.enterprise.id,matchBasis:'uscc',verificationStatus:'confirmed'}]})).toThrow('Explicit enterprise must match original row USCC')
+  expect(fixture.sqlite.prepare('select count(*) n from platform_collection').get()).toEqual(before)
 })

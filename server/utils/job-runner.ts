@@ -20,8 +20,6 @@ type Db = BetterSQLite3Database<typeof schema>
 /**
  * 异步任务的**执行面**:kind → handler 的注册表,加一条进程内队列。
  *
- * 见 `.scratch/ingest-pipeline/issues/19-openapi.md`。
- *
  * ── 为什么是「队列 + 轮询」而不是同步 ──────────────────────────────────────
  * 97 页 OCR、700+ 家平台核查这类活是**分钟到小时**级的。同步接口下一个请求要挂到
  * 天荒地老,代理也只能一次干等一件 —— 而代理要在技能里 `curl`,没有后台线程可用。

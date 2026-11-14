@@ -1,25 +1,15 @@
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, existsSync, symlinkSync, copyFileSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, existsSync, symlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { initializeDb, schema } from '../db/client'
-import { spawnOwnedChild as spawn, reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../scripts/lib/isolated-local-services.mjs'
+import { spawnOwnedChild as spawn, reserveLoopbackPort, waitForHttp, stopOwnedChild } from './helpers/isolated-local-services.mjs'
 
 const dir = mkdtempSync(join(tmpdir(), 'file-maintenance-104-'))
 const root = join(dir, 'files')
 const dbPath = join(dir, 'synthetic.db')
-// Start at the actual journal prefix before #104, including #105/#106/#101.
-// Later appended migrations must not be applied before #104 in this upgrade fixture.
-const baselineMigrations = join(dir, 'baseline-migrations')
-mkdirSync(join(baselineMigrations, 'meta'), { recursive: true })
-const baselineJournal = JSON.parse(readFileSync(join(process.cwd(), 'db/migrations/meta/_journal.json'), 'utf8'))
-const maintenanceIndex = baselineJournal.entries.findIndex((entry: { tag: string }) => entry.tag === '0020_file_maintenance')
-if (maintenanceIndex < 0) throw new Error('File maintenance migration is missing from the journal')
-baselineJournal.entries = baselineJournal.entries.slice(0, maintenanceIndex)
-for (const entry of baselineJournal.entries) copyFileSync(join(process.cwd(), `db/migrations/${entry.tag}.sql`), join(baselineMigrations, `${entry.tag}.sql`))
-writeFileSync(join(baselineMigrations, 'meta/_journal.json'), JSON.stringify(baselineJournal))
-const db = initializeDb({ create: true, dbPath, migrationsFolder: baselineMigrations })
+const db = initializeDb({ create: true, dbPath })
 let service: { baseUrl: string; stop(): Promise<void> }
 let serverOutput = ''
 let seq = 0
