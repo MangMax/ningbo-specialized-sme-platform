@@ -6,6 +6,9 @@ export function hasColumns(t:Database.Database,table:string,names:readonly strin
 }
 /** Migration logs provide a completion flag, not a query-time authentication chain. */
 export function migrationFinished(t:Database.Database,transform:string) {
+ if(t.prepare("SELECT 1 FROM sqlite_schema WHERE name='platform_runtime_capability' AND type='table'").get()) {
+  return !!t.prepare('SELECT 1 FROM platform_runtime_capability WHERE transform_version=?').get(transform)
+ }
  if(!hasColumns(t,'platform_migration_run',['state','transform_version']))return false
  return !!t.prepare("SELECT 1 FROM platform_migration_run WHERE transform_version=? AND state='complete' LIMIT 1").get(transform)
 }

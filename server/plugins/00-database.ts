@@ -1,5 +1,5 @@
-import { initializeDb } from '../../db/client'
+import { useApplicationDb } from '../../db/client'
 
 export default defineNitroPlugin(() => {
-  initializeDb()
+  useApplicationDb()
 })

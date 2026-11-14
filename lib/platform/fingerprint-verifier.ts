@@ -39,6 +39,10 @@ export function emptyFingerprintTarget(t:Database.Database):Database.Database {
     scratch.exec("insert into platform_legacy_alias_sequence(namespace,high_water) values('query',0),('relation',0)")
     const runs=drizzle(t,{schema:s}).select().from(s.platformMigrationRun).all()
     if(runs.length)drizzle(scratch,{schema:s}).insert(s.platformMigrationRun).values(runs).run()
+    if(t.prepare("SELECT 1 FROM sqlite_schema WHERE name='platform_runtime_capability'").get()) {
+      const capabilities = t.prepare('SELECT transform_version FROM platform_runtime_capability').all() as {transform_version:string}[]
+      for(const row of capabilities) scratch.prepare('INSERT INTO platform_runtime_capability VALUES(?)').run(row.transform_version)
+    }
     return scratch
   }catch(error){scratch.close();throw error}
 }

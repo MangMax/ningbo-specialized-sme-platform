@@ -6,14 +6,15 @@ import { createDrizzleLogger } from '../lib/logging/drizzle'
 import { migrate } from 'drizzle-orm/better-sqlite3/migrator'
 import { readMigrationFiles } from 'drizzle-orm/migrator'
 import * as schema from './schema'
-import { assertApplicationRuntime, PLATFORM_RUNTIME_VERSION } from './schema-phase'
+import { assertApplicationRuntime, assertFinalPlatformRuntime, PLATFORM_RUNTIME_VERSION } from './schema-phase'
 import { TITLE_SEED } from './titles'
+import { createRuntimeSchema } from './create-runtime'
 import { readOwnerIdentity, sameReadOwner, type ReadOwnerIdentity } from '../lib/roster/offmain-read-protocol'
 
 export interface DbOptions {
   /** SQLite 文件路径。默认 `NUXT_DB_PATH` → `<cwd>/data/roster.db`。 */
   dbPath?: string
-  /** 迁移目录。默认 `<cwd>/db/migrations`，必须完整存在。 */
+  /** 历史 expand 工具的显式迁移目录；终态建库和运行不依赖此目录。 */
   migrationsFolder?: string
   /** 只读打开已迁移的库;跳过迁移与称号字典写入。 */
   readOnly?: boolean
@@ -29,6 +30,7 @@ function resolveMigrations(opts: DbOptions): string {
 
 const cache = new Map<string, ReturnType<typeof drizzle<typeof schema>>>()
 const ownerIdentities = new WeakMap<object, ReadOwnerIdentity>()
+const applicationSchemas = new WeakMap<object, unknown>()
 
 /** Only certify a managed disk handle whose identity was observed at open.
  * Cached owners never silently follow a replaced file or symlink. */
@@ -87,6 +89,17 @@ function validateDatabase(sqlite: Database.Database, opts: DbOptions) {
   sqlite.prepare('SELECT id, enterprise_id, title_code, source FROM record LIMIT 0').all()
 }
 
+/** Public application entry: schema0 is available only to explicit historical tools. */
+export function useApplicationDb(opts: DbOptions = {}) {
+  const db = useRuntimeDb(opts)
+  const version = db.$client.pragma('schema_version', { simple: true })
+  if (!applicationSchemas.has(db) || applicationSchemas.get(db) !== version) {
+    assertFinalPlatformRuntime(db.$client)
+    applicationSchemas.set(db, version)
+  }
+  return db
+}
+
 /** Startup/CLI setup; new files require explicit create authorization. */
 export function initializeDb(opts: DbOptions & { create?: boolean } = {}) {
   const path = resolveDbPath(opts)
@@ -95,10 +108,14 @@ export function initializeDb(opts: DbOptions & { create?: boolean } = {}) {
   const migrationsFolder = resolveMigrations(opts)
   const beforeInitialization = readOwnerIdentity(path)
   // Preserve failure-before-creation for a missing migration directory.
-  if (!beforeInitialization) readMigrationFiles({ migrationsFolder })
+  if (!beforeInitialization && opts.migrationsFolder) readMigrationFiles({ migrationsFolder })
   if (opts.create) mkdirSync(dirname(path), { recursive: true })
   const sqlite = new Database(path, { fileMustExist: !opts.create })
   try {
+    if (!beforeInitialization && opts.create && !opts.migrationsFolder) {
+      sqlite.pragma('foreign_keys = ON')
+      createRuntimeSchema(sqlite)
+    }
     assertApplicationRuntime(sqlite)
     // An existing unrelated/empty file is not an upgrade target.
     if (!opts.create) sqlite.prepare('SELECT hash, created_at FROM __drizzle_migrations LIMIT 1').all()
@@ -123,7 +140,7 @@ export function useDb(opts: DbOptions = {}) {
   const readOnly = opts.readOnly ?? process.env.NUXT_DB_READONLY === '1'
   const cached = cache.get(`${path}\u0000${readOnly ? 'readonly' : 'readwrite'}`)
   if (cached?.$client.open) return cached
-  return initializeDb({ ...opts, create: true })
+  return initializeDb({ ...opts, migrationsFolder: resolveMigrations(opts), create: true })
 }
 
 export { schema }

@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, it } from 'vitest'
 import Database from 'better-sqlite3'
-import { useDb as runtimeDb } from '../db'
+import { useRuntimeDb as runtimeDb } from '../db/client'
 
 const dirs: string[] = []
 afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }) })

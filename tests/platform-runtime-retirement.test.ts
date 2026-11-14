@@ -4,7 +4,7 @@ import { copyFileSync, mkdtempSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { serialize } from 'node:v8'
 import { afterEach, expect, it, vi } from 'vitest'
-import { initializeDb, useRuntimeDb } from '../db/client'
+import { initializeDb, useRuntimeDb, useApplicationDb, useDb as useHistoricalDb } from '../db/client'
 import { assertApplicationRuntime, RETIRED_PLATFORM_TABLES } from '../db/schema-phase'
 import { retirePlatformModel } from '../upgrade/retire-platform-model'
 import { createEnterpriseReadExecutor } from '../server/utils/enterprise-read'
@@ -38,6 +38,14 @@ function originalRows(db: Database.Database) {
 function oldTables(db: Database.Database) {
   return RETIRED_PLATFORM_TABLES.filter(name => db.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name=?").get(name))
 }
+
+it('refuses schema0 at the public application entry while preserving the historical tool adapter', () => {
+  const path = join(root, 'historical.sqlite')
+  const legacy = useHistoricalDb({ dbPath: path })
+  cleanup.push(() => legacy.$client.close())
+  expect(legacy.$client.pragma('user_version', { simple: true })).toBe(0)
+  expect(() => useApplicationDb({ dbPath: path })).toThrow('Unsupported final platform runtime schema')
+})
 
 it('retires historical tables atomically and opens the completed runtime without expand migrations', () => {
   const f = target(), before = originalRows(f.db)
@@ -107,3 +115,29 @@ it('serves ordinary and current reads and import preflight through the real sour
   expect(f.db.pragma('foreign_key_check')).toEqual([])
   expect(oldTables(f.db)).toEqual([])
 }, 30000)
+
+it('creates an empty native target and serves a first import without historical migration rows', async () => {
+  const path = join(root, 'native.sqlite')
+  const owner = initializeDb({ dbPath: path, create: true })
+  expect(useApplicationDb({ dbPath: path })).toBe(owner)
+  cleanup.push(() => owner.$client.close())
+  expect(oldTables(owner.$client)).toEqual([])
+  expect(owner.$client.prepare('SELECT count(*) n FROM platform_migration_run').get()).toEqual({ n: 0 })
+  const { commitRosterImport } = await import('../server/utils/roster-import')
+  const result = commitRosterImport(owner, { idempotencyKey: 'native-first', sourceKind: 'platform_archive', sourceIdentity: 'native-test',
+    payload: { platformQueries: [{ interface: 'business_list', queryKey: 'name:Native', rdjb: '2',
+      queriedAt: '2026-11-14T00:00:00Z', status: 'success', rawResponse: 'native original', relations: [{ sequenceNo: 1,
+        relationKey: 'native-business', rawFields: { id: 'native-business', rdjb: '2', qymc: 'Native' } }] }] } }, [], { deferCandidateTasks: true })
+  expect(result.status, JSON.stringify(result)).toBe('committed')
+  const { listTargetBusinessProcesses } = await import('../server/utils/platform-business-processes-target')
+  expect(listTargetBusinessProcesses({}, owner).rows).toHaveLength(1)
+  expect(owner.$client.pragma('foreign_key_check')).toEqual([])
+  owner.$client.close()
+  const restarted = initializeDb({ dbPath: path, migrationsFolder: join(root, 'absent') })
+  cleanup.push(() => restarted.$client.close())
+  expect(oldTables(restarted.$client)).toEqual([])
+  expect(restarted.$client.prepare('SELECT count(*) n FROM platform_collection').get()).toEqual({ n: 1 })
+  expect(useApplicationDb({ dbPath: path })).toBe(restarted)
+  restarted.$client.exec('CREATE TABLE platform_query(id INTEGER PRIMARY KEY)')
+  expect(() => useApplicationDb({ dbPath: path })).toThrow('dependency remains')
+})
