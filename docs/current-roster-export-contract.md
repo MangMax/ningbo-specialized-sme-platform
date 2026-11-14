@@ -91,3 +91,8 @@ v8 补充：绑定 enterpriseId 不能忽略明确矛盾的原始统代；新写
 每次执行使用一个 generatedAt/asOf、UTC年份及一个只读SQLite快照。dataVersion仍是opaque的sha256:摘要；新算法逐帧JSON后加换行：首帧[current-export-assessment-409-v2,assessmentVersion,ruleVersion,UTCyear,title]，随后依有效/待确认/排除的固定sheet顺序、每sheet稳定ID顺序逐帧[group,id,完整三称号scope,完整T2 snapshotId,实际12列文本/空投影]。scope含enterpriseId/asOf/ruleVersion/assessmentVersion；各组序号取该组稳定ID顺序。企业T2摘要不同于job.snapshotId（仍为jobID）。历史产物/摘要不重写，不要求两次实时执行摘要相等。
 
 执行时父进程仅捕获runtime apiToken/mcpToken/ocrToken，以私有启动IPC传递不可变窄context；不进入公开输入、任务持久化、日志或响应。worker在相同只读快照内自行resolve saved/env：saved优先，OCR仅无saved时runtime.trim优先于env NUXT_OCR_TOKEN/PADDLE fallback。未选中的runtime OCR不额外脱敏；原additionalSecrets、runtime API/MCP、env API/MCP、已选cookie/OCR的union顺序和默认省略路径保留。显式空context不回退child runtime。新transport单字段16KiB、三字段合计48KiB、JSON64KiB，非法/超限安全失败不截断；既有source/response/page/workbook预算不变。
+
+
+### 2026-11-14 终态批量导出摘要
+
+终态正常导出仅生成所选称号的完整 assessment，并保留实际小巨人依赖的版本。公共列表的完整三称号 T2 不变。首帧改为 `[current-export-assessment-title-v3,assessmentVersion,ruleVersion,qualificationYear,title]`，后续仍是 `[group,id,scope,snapshotId,实际全部列值]` 的 JSON 换行帧；内部 snapshotId 绑定所选称号评估及其依赖，资格年按上海资格日确定。dataVersion 仍为 opaque SHA256。上文 #409 的 v2 serializer 是历史/显式诊断路径，不重写既有任务或产物。详见[批量读取说明](platform-retirement/batch-current-read.md)。

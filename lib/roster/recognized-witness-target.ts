@@ -79,11 +79,25 @@ export function createTargetRecognizedWitnessReader(db:BetterSQLite3Database<typ
   }
   return connection.inTransaction?run():db.transaction(run)
  }
- return {connection,withinSnapshot,readMany(input){
+ const readRows = (ids: readonly number[]) => {
+  const rows: ReturnType<ReturnType<typeof select>['all']> = []
+  for (let start=0;start<ids.length;start+=256) rows.push(...select(ids.slice(start,start+256)).all())
+  return rows
+ }
+ let batchRows: Map<number, ReturnType<typeof readRows>[number]> | undefined
+ return {connection,withinSnapshot,
+ withinBatch<T>(relationIds: readonly number[], read: () => T): T {
+  return withinSnapshot(() => {
+   const previous = batchRows
+   batchRows = new Map(readRows([...new Set(relationIds)]).map(row => [row.relationId, row]))
+   try { return read() } finally { batchRows = previous }
+  })
+ },readMany(input){
   if(!Number.isSafeInteger(input.enterpriseId)||input.enterpriseId<1||input.relationIds.some(id=>!Number.isSafeInteger(id)||id<1))throw new Error('Invalid witness identity')
   const read=()=>{
    const ids=[...new Set(input.relationIds)],found=new Map<number,RecognizedWitnessResult|Error>()
-   for(let start=0;start<ids.length;start+=256)for(const row of select(ids.slice(start,start+256)).all()) {
+   const rows = batchRows ? ids.flatMap(id => { const row = batchRows!.get(id); return row ? [row] : [] }) : readRows(ids)
+   for(const row of rows) {
     try {
     const id=row.relationId
     let result:RecognizedWitnessResult

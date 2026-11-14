@@ -1,13 +1,14 @@
 import { readEvidenceImpact113 } from '../../server/utils/evidence-impact-113'
 /** #108 additive read projection. Business decisions stay owned by #102. */
-import { sql } from 'drizzle-orm'
+import { inArray, sql } from 'drizzle-orm'
 import { z } from 'zod'
+import { enterprise } from '../../db/schema'
 import { currentDecision102, currentDecisionState102, type DecisionDb } from '../../server/utils/decision-lifecycle-102'
 import { normalizeUscc } from '../domain'
 import { identityFunctions, identityUsccSql } from './enterprise-read-snapshot'
 import { identityKeys, type IdentityKeyVariants } from './current-identity-keys'
 import { platformQueryResultShape, type PlatformQueryPage } from '../platform/live-query'
-import { differenceTargetSources, readDifferenceCollectionScopes, selectDifferenceCollections } from '../platform/difference-sources'
+import { differenceTargetSources, readDifferenceCollectionScopes, selectDifferenceCollections, selectDifferenceCollectionsBatch } from '../platform/difference-sources'
 
 export type AssessmentScope = Parameters<typeof currentDecision102>[1]
 type CoverageStatus = 'not_queried' | 'complete' | 'partial' | 'failed' | 'unknown'
@@ -104,6 +105,44 @@ function completePages(pages: PlatformQueryPage[], pageSize: number, fullRange: 
 }
 export function readQueryCoverage(db: DecisionDb, scope: AssessmentScope, variants?: IdentityKeyVariants, ownQueryIds?: readonly number[]) {
   return coverageOf(queryMetadata(db, scope, variants, ownQueryIds), scope)
+}
+/** Chunk-local source read plan. Direction does not change query coverage, and
+ * scope metadata is loaded once for the union of each title's newest 50 rows.
+ * Only compiled SQL may be reused elsewhere; this map never outlives its caller. */
+export function readQueryCoverageBatch(db: DecisionDb, scopes: readonly AssessmentScope[], variants?: IdentityKeyVariants): Map<number, Map<string, ReturnType<typeof readQueryCoverage>>> {
+  const result = new Map<number, Map<string, ReturnType<typeof readQueryCoverage>>>()
+  const unique = [...new Map(scopes.map(scope => [JSON.stringify([scope.enterpriseId, scope.titleCode]), scope])).values()]
+  if (!unique.length) return result
+  const set = (scope: AssessmentScope, coverage: ReturnType<typeof readQueryCoverage>) => {
+    let titles = result.get(scope.enterpriseId)
+    if (!titles) { titles = new Map(); result.set(scope.enterpriseId, titles) }
+    titles.set(scope.titleCode, coverage)
+  }
+  if (!differenceTargetSources(db)) {
+    for (const scope of unique) set(scope, readQueryCoverage(db, scope, variants))
+    return result
+  }
+  const ids = [...new Set(unique.map(scope => scope.enterpriseId))]
+  const enterprises = new Map(db.select({ id: enterprise.id, uscc: enterprise.usccNorm, name: enterprise.nameNorm })
+    .from(enterprise).where(inArray(enterprise.id, ids)).all().map(row => [row.id, row]))
+  const targets = unique.map(scope => {
+    const e = enterprises.get(scope.enterpriseId), uscc = normalizeUscc(e?.uscc) || null
+    return { enterpriseId: scope.enterpriseId, titleCode: scope.titleCode, rdjb: rdjbByTitle[scope.titleCode] ?? '', uscc,
+      queryKeys: variants ? [...new Set([`name:${e?.name ?? ''}`, ...identityKeys(variants, uscc)])] : [e?.uscc ?? '', `name:${e?.name ?? ''}`] }
+  })
+  const selected = Map.groupBy(selectDifferenceCollectionsBatch(db, targets, !variants), row => row.slot)
+  const retained = [...selected.values()].flatMap(rows => rows.slice(0, 50))
+  const metadata = readDifferenceCollectionScopes(db, [...new Map(retained.map(row => [row.collection.id, row.collection])).values()])
+  for (const [slot, scope] of unique.entries()) {
+    const rows = selected.get(slot) ?? []
+    set(scope, coverageOf({ uscc: targets[slot]!.uscc, truncated: rows.length > 50,
+      rows: rows.slice(0, 50).map(({ collection: q, id, matched }) => ({
+        id, interface: q.interface, queryKey: q.queryKey, titleCode: q.titleCode, rdjb: q.rdjb, queriedAt: q.queriedAt, status: q.status, matched,
+        metadata: q.provenanceState === 'legacy_supplement' ? null : JSON.stringify(metadata.get(q.id)!.metadata),
+      })),
+    }, scope))
+  }
+  return result
 }
 /** Internal opt-in witness projection. Keep every retained retry/asOf candidate,
  * not the legacy aggregate status or its latest map. No rows/body fields escape SQL. */
@@ -220,13 +259,8 @@ export function readQueryAssessmentSummaries(db: DecisionDb, scopes: AssessmentS
 function readCoveragesForScopes(db: DecisionDb, scopes: AssessmentScope[]): ReturnType<typeof readQueryCoverage>[] {
   if (!scopes.length) return []
   if (differenceTargetSources(db)) {
-    const coverage = new Map<string, ReturnType<typeof readQueryCoverage>>()
-    return scopes.map(scope => {
-      const key = JSON.stringify([scope.enterpriseId, scope.titleCode])
-      let result = coverage.get(key)
-      if (!result) { result = readQueryCoverage(db, scope); coverage.set(key, result) }
-      return result
-    })
+    const coverage = readQueryCoverageBatch(db, scopes)
+    return scopes.map(scope => coverage.get(scope.enterpriseId)!.get(scope.titleCode)!)
   }
   identityFunctions(db)
   const keyOf = (s: AssessmentScope) => JSON.stringify([s.enterpriseId, s.titleCode])

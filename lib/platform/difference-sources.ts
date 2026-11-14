@@ -52,6 +52,66 @@ export function readDifferenceCollection(db: Db, queryId: number) {
   return db.select({ ...collectionColumns }).from(c).innerJoin(qa, eq(qa.collectionId, c.id)).where(eq(qa.oldId, queryId)).get()
 }
 const collectionColumns = { collection: c, id: qa.oldId }
+export interface DifferenceCollectionTarget {
+  enterpriseId: number
+  titleCode: string
+  rdjb: string
+  queryKeys: readonly string[]
+  uscc: string | null
+}
+/** Request/chunk-local selection. Rank before hydrating collection scope metadata;
+ * ownership is the latest assignment, exactly as in the single selector. */
+export function selectDifferenceCollectionsBatch(db: Db, inputs: readonly DifferenceCollectionTarget[], normalizeIdentity: boolean) {
+  identityFunctions(db)
+  if (!inputs.length) return []
+  const targets = db.$with('coverage_targets').as(db.select({
+    slot: sql<number>`cast(key as integer)`.as('slot'),
+    enterpriseId: sql<number>`json_extract(value,'$.enterpriseId')`.as('enterprise_id'),
+    titleCode: sql<string>`json_extract(value,'$.titleCode')`.as('title_code'),
+    rdjb: sql<string>`json_extract(value,'$.rdjb')`.as('rdjb'),
+    queryKeys: sql<string>`json_extract(value,'$.queryKeys')`.as('query_keys'),
+    uscc: sql<string | null>`json_extract(value,'$.uscc')`.as('uscc'),
+  }).from(sql`json_each(${JSON.stringify(inputs)})`))
+  // Drizzle SQL.Aliased CTE fields render bare aliases; qualify them explicitly
+  // when joined to tables that also own enterprise_id/title_code/rdjb columns.
+  const targetRef = {
+    slot: sql<number>`"coverage_targets"."slot"`,
+    enterpriseId: sql<number>`"coverage_targets"."enterprise_id"`,
+    titleCode: sql<string>`"coverage_targets"."title_code"`,
+    rdjb: sql<string>`"coverage_targets"."rdjb"`,
+    queryKeys: sql<string>`"coverage_targets"."query_keys"`,
+    uscc: sql<string | null>`"coverage_targets"."uscc"`,
+  }
+  const candidateRef = { slot: sql<number>`"coverage_candidates"."slot"`, collectionId: sql<number>`"coverage_candidates"."collection_id"`, id: sql<number>`"coverage_candidates"."query_id"` }
+  const rankedRef = { slot: sql<number>`"coverage_ranked"."slot"`, collectionId: sql<number>`"coverage_ranked"."collection_id"`, id: sql<number>`"coverage_ranked"."query_id"`, matched: sql<number>`"coverage_ranked"."matched"`, rank: sql<number>`"coverage_ranked"."rank"` }
+  const candidateColumns = { slot: targetRef.slot.as('slot'), collectionId: sql<number>`${c.id}`.as('collection_id'), id: sql<number>`${qa.oldId}`.as('query_id') }
+  const keyed = db.select(candidateColumns).from(targets)
+    .innerJoin(c, sql`${c.queryKey} in (select value from json_each(${targetRef.queryKeys}))`)
+    .innerJoin(qa, eq(qa.collectionId, c.id))
+  const related = db.select(candidateColumns).from(targets).innerJoin(a, eq(a.enterpriseId, targetRef.enterpriseId))
+    .innerJoin(o, currentDifferenceAssignment(db)).innerJoin(c, eq(c.id, o.collectionId)).innerJoin(qa, eq(qa.collectionId, c.id))
+  const normalized = db.select(candidateColumns).from(targets).innerJoin(c,
+    and(sql`${targetRef.uscc} is not null`, sql`instr(${c.queryKey},':')=0`, eq(identityUsccSql(sql`${c.queryKey}`), targetRef.uscc)))
+    .innerJoin(qa, eq(qa.collectionId, c.id))
+  // UNION deduplicates collections observed more than once and overlapping keys.
+  // Keep indexed key and ownership branches apart instead of a target×archive OR.
+  const candidates = db.$with('coverage_candidates').as(normalizeIdentity ? keyed.union(related).union(normalized) : keyed.union(related))
+  const owned = db.select({ id: o.id }).from(o).innerJoin(a, currentDifferenceAssignment(db))
+    .where(and(eq(o.collectionId, c.id), eq(a.enterpriseId, targetRef.enterpriseId)))
+  const ranked = db.$with('coverage_ranked').as(db.select({
+    slot: targetRef.slot.as('slot'), collectionId: sql<number>`${c.id}`.as('collection_id'),
+    id: sql<number>`${qa.oldId}`.as('query_id'),
+    matched: sql<number>`${exists(owned)}`.as('matched'),
+    rank: sql<number>`row_number() over (partition by ${targetRef.slot} order by ${c.queriedAt} desc,${qa.oldId} desc)`.as('rank'),
+  }).from(candidates).innerJoin(targets, eq(targetRef.slot, candidateRef.slot)).innerJoin(c, eq(c.id, candidateRef.collectionId))
+    .innerJoin(qa, eq(qa.oldId, candidateRef.id)).where(
+    or(eq(c.interface, 'apply_list'), eq(c.titleCode, targetRef.titleCode),
+      sql`instr(','||${c.rdjb}||',',','||${targetRef.rdjb}||',')>0`, and(eq(c.rdjb, ''), sql`${c.titleCode} is null`)),
+  ))
+  return db.with(targets, candidates, ranked).select({ slot: rankedRef.slot, collection: c, id: rankedRef.id, matched: rankedRef.matched })
+    .from(ranked).innerJoin(c, eq(c.id, rankedRef.collectionId)).where(sql`${rankedRef.rank}<=51`)
+    .orderBy(asc(rankedRef.slot), asc(rankedRef.rank)).all()
+}
 type ScopeRows = {
   collection: typeof c.$inferSelect
   conditions: (typeof s.platformCollectionCondition.$inferSelect)[]

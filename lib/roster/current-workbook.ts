@@ -16,7 +16,7 @@ import { TITLES } from '../labels'
 import { CURRENT_STATUS_LABELS, type CurrentStatus } from './current-status'
 import { CURRENT_COLUMNS, currentWorkbookValues } from './current-workbook-presentation'
 import { appLog, type LogContext } from '../logging'
-import type { CurrentCandidateReader } from './current-candidate-reader'
+import { currentCandidateIdBlocks, type CurrentCandidateReader } from './current-candidate-reader'
 import { createCurrentTargetContext } from './current-target-context'
 
 export class CurrentWorkbookLimitError extends Error {}
@@ -119,9 +119,9 @@ async function writeCurrentWorkbookBody(db: Database.Database, title: CurrentTit
     prepareCurrentReader(db)
     db.exec('BEGIN')
     ownedTransaction = true
-    // Enumerate narrow query keys once inside this pinned snapshot. Full T2
-    // still reads and verifies every title and source; only coverage lookup changes.
-    const target = candidateReader === undefined ? createCurrentTargetContext(db, readOptions.recognizedFactSource, receiptRuntime) : undefined
+    // Enumerate narrow query keys once inside this pinned snapshot. The export
+    // evaluates its title and actual inheritance dependency in bounded blocks.
+    const target = createCurrentTargetContext(db, readOptions.recognizedFactSource, receiptRuntime)
     const candidates = candidateReader ?? target?.candidates ?? legacyCandidates(db, readOptions)
     const queryKeys = target?.keys.queries ?? readIdentityKeyVariants(db, 'queries')
     const recognizedFactSource = resolveRecognizedFactSource(readOptions.recognizedFactSource)
@@ -147,7 +147,7 @@ async function writeCurrentWorkbookBody(db: Database.Database, title: CurrentTit
     workbookStarted = true
     appLog({ source: 'export', operation: 'export.current.workbook', outcome: 'started' }, logContext)
     const workbook = new Stream.WorkbookWriter({ stream: output, useStyles: true, useSharedStrings: false, trueStreaming: true })
-    const counts = { eligible: 0, pending: 0, excluded: 0 }, hash = createHash('sha256').update(JSON.stringify(['current-export-assessment-409-v2',QUALIFICATION_ASSESSMENT_VERSION,CURRENT_RULE_VERSION,year,title]) + '\n')
+    const counts = { eligible: 0, pending: 0, excluded: 0 }, hash = createHash('sha256').update(JSON.stringify([target && candidateReader === undefined ? 'current-export-assessment-title-v3' : 'current-export-assessment-409-v2',QUALIFICATION_ASSESSMENT_VERSION,CURRENT_RULE_VERSION,year,title]) + '\n')
     const statusCounts = { effective: 0, expired: 0, terminated: 0, moved_out: 0, unrecognized: 0 }
     const deferred: Record<CurrentStatus, number[]> = { effective: [], expired: [], terminated: [], moved_out: [], unrecognized: [] }
     progress(0,total,snapshotStartedAt)
@@ -172,32 +172,42 @@ async function writeCurrentWorkbookBody(db: Database.Database, title: CurrentTit
         }
       }
       const ids = group === 'effective' ? candidateIds() : deferred[group]
-      for (const id of ids) {
-        // Count the canonical scan once; defer IDs only, never T2 or cell data.
-        // Classification needs eligibility only. The written row below still
-        // reads the complete three-title assessment and checks the same status.
-        const canonicalGroup = group === 'effective' ? assessmentReader.readEffectiveTitle(id,title,Date.parse(generatedAt)).effectiveStatus : group
-        if (group === 'effective') {
-          if (statusCounts[canonicalGroup] >= 1048575) throw new CurrentWorkbookLimitError('Excel 单表超过1048575条数据上限，未发布文件；请拆分数据范围')
-          statusCounts[canonicalGroup]++
-          if (canonicalGroup !== 'effective') deferred[canonicalGroup].push(id)
-        }
-        if (canonicalGroup === group) {
-          const { rows, snapshot, workbookPublished } = assessmentReader.readWorkbook(id,Date.parse(generatedAt),title,queryKeys)
-          const row = rows.find(item => item.assessment!.titleCode === title)!
-          if (row.assessment!.effectiveQualification?.status !== group) throw new Error('Workbook scan and full assessment group differ')
-          // Keep the original row and its non-enumerable workbookFacts.
-          const effective = row.assessment!.effectiveQualification!
-          const values = [...currentWorkbookValues(title,row,++written,workbookPublished), name, (effective.presentationBasis ?? []).join('；'), effective.notes.join('；')]
-          const { titles: _titles, snapshotId, ...scope } = snapshot
-          hash.update(JSON.stringify([group,id,scope,snapshotId,values]) + '\n')
-          styledRow(sheet,overflowValues(values,name,written + 1))
-          await drain()
-        }
-        if (++scanned % 100 === 0) {
-          if (group === 'effective') progress(scanned,total,snapshotStartedAt)
-          await new Promise<void>(resolve => setImmediate(resolve))
-          await drain()
+      for (const block of currentCandidateIdBlocks(ids)) {
+        const classifications = group === 'effective' ? target && candidateReader === undefined
+          ? assessmentReader.readEffectiveTitles(block, Date.parse(generatedAt), title)
+          : new Map(block.map(id => [id, assessmentReader.readEffectiveTitle(id,title,Date.parse(generatedAt)).effectiveStatus]))
+          : new Map(block.map(id => [id, group]))
+        const admitted = block.filter(id => classifications.get(id) === group)
+        const prepared = target && candidateReader === undefined ? assessmentReader.readWorkbookRowsBatch(admitted, Date.parse(generatedAt), title, queryKeys)
+          : admitted.map(id => assessmentReader.readWorkbook(id,Date.parse(generatedAt),title,queryKeys))
+        const workbookReads = new Map(admitted.map((id, index) => [id, prepared[index]!]))
+        for (const id of block) {
+          // Count the canonical scan once; defer IDs only, never T2 or cell data.
+          // Classification needs eligibility only. The written row below still
+          // reads its title assessment (including the giant dependency) and checks status.
+          const canonicalGroup = classifications.get(id)!
+          if (group === 'effective') {
+            if (statusCounts[canonicalGroup] >= 1048575) throw new CurrentWorkbookLimitError('Excel 单表超过1048575条数据上限，未发布文件；请拆分数据范围')
+            statusCounts[canonicalGroup]++
+            if (canonicalGroup !== 'effective') deferred[canonicalGroup].push(id)
+          }
+          if (canonicalGroup === group) {
+            const { rows, snapshot, workbookPublished } = workbookReads.get(id)!
+            const row = rows.find(item => item.assessment!.titleCode === title)!
+            if (row.assessment!.effectiveQualification?.status !== group) throw new Error('Workbook scan and full assessment group differ')
+            // Keep the original row and its non-enumerable workbookFacts.
+            const effective = row.assessment!.effectiveQualification!
+            const values = [...currentWorkbookValues(title,row,++written,workbookPublished), name, (effective.presentationBasis ?? []).join('；'), effective.notes.join('；')]
+            const { titles: _titles, snapshotId, ...scope } = snapshot
+            hash.update(JSON.stringify([group,id,scope,snapshotId,values]) + '\n')
+            styledRow(sheet,overflowValues(values,name,written + 1))
+            await drain()
+          }
+          if (++scanned % 100 === 0) {
+            if (group === 'effective') progress(scanned,total,snapshotStartedAt)
+            await new Promise<void>(resolve => setImmediate(resolve))
+            await drain()
+          }
         }
       }
       sheet.autoFilter = `A1:${String.fromCharCode(64 + CURRENT_HEADERS.length)}${written + 1}`

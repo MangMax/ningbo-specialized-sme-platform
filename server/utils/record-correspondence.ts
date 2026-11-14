@@ -584,7 +584,12 @@ export function createEnterpriseTitleCorrespondenceRefsReader(db: Db) {
     .orderBy(asc(t.id)).prepare()
   let validity: ReturnType<typeof createCorrespondenceRefValidityReader> | undefined
   const readValidity = (ids: number[]) => (validity ??= createCorrespondenceRefValidityReader(db))(ids)
-  return (enterpriseId: number, titleCode: string) => refsWithCurrentValidity(db, prepared.all({ enterpriseId, titleCode }), readValidity)
+  return Object.assign((enterpriseId: number, titleCode: string) => refsWithCurrentValidity(db, prepared.all({ enterpriseId, titleCode }), readValidity), {
+    readBatch(enterpriseIds: readonly number[], titles?: readonly string[]) {
+      const rows = db.select(correspondenceRefColumns(db)).from(t).where(and(inArray(t.enterpriseId, enterpriseIds), titles ? inArray(t.titleCode, titles) : undefined)).orderBy(asc(t.id)).all()
+      return refsWithCurrentValidity(db, rows, readValidity)
+    },
+  })
 }
 export function getRecordCorrespondenceAudit(db: Db, correspondenceId: number): CorrespondenceAudit[] {
   return db.select().from(schema.recordCorrespondenceAudit).where(eq(schema.recordCorrespondenceAudit.correspondenceId, correspondenceId)).orderBy(asc(schema.recordCorrespondenceAudit.id)).all()

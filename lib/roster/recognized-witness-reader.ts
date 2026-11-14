@@ -10,6 +10,7 @@ export type RecognizedWitnessResult = {kind:'available';source:RecognizedWitness
 export interface RecognizedWitnessReader {
  /** Synchronous request scope: validate catalog before any caller streaming SELECT. */
  withinSnapshot<T>(read:()=>T):T
+ withinBatch?<T>(relationIds: readonly number[], read: () => T): T
  readonly connection:Database.Database
  readMany(input:{enterpriseId:number;uscc:string|null;relationIds:readonly number[]}):ReadonlyMap<number,RecognizedWitnessResult>
 }

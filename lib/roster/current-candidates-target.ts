@@ -5,7 +5,7 @@ import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import { enterprise, record, differenceReason, recordCorrespondence } from '../../db/schema'
 import { candidateScopeObservation as o } from '../platform/candidate-scope-schema'
 import { platformObservationAssignment as a } from '../platform/target-schema'
-import { CANDIDATE_SCOPE_VERSION } from '../../db/schema-phase'
+import { CANDIDATE_SCOPE_VERSION, PLATFORM_RETIREMENT_RULE, PLATFORM_RUNTIME_VERSION } from '../../db/schema-phase'
 import { sqliteConnection } from '../platform/target-connection'
 import { normalizeUscc } from '../domain'
 import type { CurrentTitle } from './current-titles'
@@ -36,6 +36,12 @@ export function createTargetCurrentCandidateReader(db:BetterSQLite3Database<type
   function gate(title:CurrentTitle) {
     const phase=db.get<{user_version:number}>(sql`PRAGMA user_version`)?.user_version
     if(![CANDIDATE_SCOPE_VERSION,71610,71611,71612,71613].includes(phase ?? -1)) throw new TargetCurrentCandidateGap(null,'phase','Explicit 71609 or completed successor target required')
+    // Retirement already audited every capture/assignment and installed the
+    // immutable write invariants. Runtime requests check that completed decision;
+    // replaying the whole observation audit on every page scales with history.
+    if (phase === PLATFORM_RUNTIME_VERSION &&
+      sqlite.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='platform_runtime_completion'").get() &&
+      sqlite.prepare('SELECT 1 FROM platform_runtime_completion WHERE id=1 AND rule=? AND schema_version=?').get(PLATFORM_RETIREMENT_RULE, PLATFORM_RUNTIME_VERSION)) return
     if(phase!==CANDIDATE_SCOPE_VERSION) {
       // Successors retain this capture, but a version number alone is no proof
       // that its offline owner or the successor completed. No archive decoding.
