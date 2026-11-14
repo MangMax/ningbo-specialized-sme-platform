@@ -1,3 +1,4 @@
+import { upgradeForeignKeyFailures } from './integrity-policy'
 /** Dedicated fresh-target prerequisite; never installed by startup or ordinary expand. */
 import Database from 'better-sqlite3'
 import { statSync, statfsSync, realpathSync } from 'node:fs'
@@ -73,7 +74,7 @@ export function installReconcileSlotPrerequisite(target: string, frozen: FrozenS
         CREATE TRIGGER reconcile_slot_observation_delete BEFORE DELETE ON platform_business_observation WHEN ${complete} AND ${verified('OLD')}
         BEGIN SELECT RAISE(ABORT,'immutable reconcile row set'); END;`)
       requireReconcileSlotSchema(t)
-      if (!isDeepStrictEqual(t.pragma('foreign_key_check'),[]) || sourceSha256 !== fileHash(frozen.fd)) throw new Error('Prerequisite source/integrity drift')
+      if (!isDeepStrictEqual(upgradeForeignKeyFailures(t),[]) || sourceSha256 !== fileHash(frozen.fd)) throw new Error('Prerequisite source/integrity drift')
       beforeCommit?.()
       return {sourceSha256,beforeSchema,afterSchema:schemaHash(t)}
     }).immediate()

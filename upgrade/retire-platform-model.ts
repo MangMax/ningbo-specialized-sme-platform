@@ -1,3 +1,4 @@
+import { upgradeIntegrityGate } from './integrity-policy'
 /** Explicit offline finalization only. Never imported by runtime initialization. */
 import { createHash } from 'node:crypto'
 import type Database from 'better-sqlite3'
@@ -71,7 +72,7 @@ function auditLegacyRows(db: Database.Database) {
   }
   if (!hasTable(db, 'platform_query_legacy_provenance')) return
   for (const { query_id: id } of db.prepare('SELECT query_id FROM platform_query_legacy_provenance').iterate() as Iterable<{ query_id: number }>) {
-    const chunks = [Buffer.from('T04-PROVENANCE\n')]
+    const chunks: Buffer[] = [Buffer.from('T04-PROVENANCE\n')]
     for (const field of ['query_id', 'source_identity', 'source_sha256', 'segment_index', 'collection', 'input_fingerprint', 'import_batch_id', 'created_at']) {
       const cell = db.prepare(`SELECT typeof(${field}) kind,cast(${field} AS blob) bytes FROM platform_query_legacy_provenance WHERE query_id=?`).get(id) as { kind: string; bytes: Buffer | null }
       const bytes = cell.bytes ?? Buffer.alloc(0)
@@ -122,6 +123,7 @@ export function retirePlatformModel(sqlite: Database.Database) {
   if (sqlite.pragma('foreign_keys', { simple: true }) !== 1) throw new Error('Platform retirement requires foreign_keys=ON')
   if (hasTable(sqlite, 'platform_runtime_completion')) {
     assertFinalPlatformRuntime(sqlite)
+    if (sqlite.prepare('PRAGMA foreign_key_check').all().length || !upgradeIntegrityGate(sqlite, true)) throw new Error('Retired target integrity validation failed')
     return { state: 'complete' as const, version: PLATFORM_RUNTIME_VERSION }
   }
   return sqlite.transaction(() => {
@@ -129,7 +131,7 @@ export function retirePlatformModel(sqlite: Database.Database) {
     for (const transform of requiredTransforms) if (!migrationFinished(sqlite, transform)) throw new Error(`Platform retirement prerequisite incomplete: ${transform}`)
     if (!['t04-collection-v1', 't04-collection-reconcile-slot-v2'].some(t => migrationFinished(sqlite, t))
       || !['t05b-source-projections-v1', 't05b-source-projections-v2-status-blob'].some(t => migrationFinished(sqlite, t))) throw new Error('Platform retirement collection/projection migration incomplete')
-    if (sqlite.pragma('foreign_key_check').length) throw new Error('Platform retirement starts with foreign key violations')
+    if (sqlite.prepare('PRAGMA foreign_key_check').all().length) throw new Error('Platform retirement starts with foreign key violations')
     auditLegacyRows(sqlite)
     auditHistoricalBodies(sqlite)
     upgradeEnterpriseMergeIdentity(sqlite)
@@ -140,7 +142,7 @@ export function retirePlatformModel(sqlite: Database.Database) {
     }
     for (const table of RETIRED_PLATFORM_TABLES) if (hasTable(sqlite, table)) sqlite.exec(`DROP TABLE "${table}"`)
     assertNoRetiredPlatformSchema(sqlite)
-    if (sqlite.pragma('foreign_key_check').length || sqlite.pragma('integrity_check', { simple: true }) !== 'ok') throw new Error('Platform retirement integrity validation failed')
+    if (sqlite.prepare('PRAGMA foreign_key_check').all().length || !upgradeIntegrityGate(sqlite, true)) throw new Error('Platform retirement integrity validation failed')
     sqlite.exec(`CREATE TABLE platform_runtime_completion(
       id INTEGER PRIMARY KEY CHECK(id=1),
       rule TEXT NOT NULL,

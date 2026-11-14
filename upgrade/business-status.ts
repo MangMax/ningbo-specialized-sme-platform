@@ -1,3 +1,4 @@
+import { upgradeIntegrityGate, upgradeForeignKeyFailures } from './integrity-policy'
 /** Explicit new-target prerequisite. Never a startup or completed-target migration. */
 import Database from 'better-sqlite3'
 import { closeSync, openSync, readFileSync, readdirSync, unlinkSync, writeSync } from 'node:fs'
@@ -74,7 +75,7 @@ export function installBusinessStatusPrerequisite(target: string, frozen: Frozen
       if (beforeCells !== afterCells || !isDeepStrictEqual(sequences, t.prepare('SELECT name,seq FROM sqlite_sequence ORDER BY name').safeIntegers().all())) throw new Error('Business prerequisite cell/PK/sequence drift')
       const afterCatalog = finalizationCatalog(t)
       if (!isDeepStrictEqual(catalog.filter(x => x.name !== table), afterCatalog.filter(x => x.name !== table)) || businessStatusRule(t) !== BUSINESS_STATUS_V2) throw new Error('Business prerequisite catalog drift')
-      if (!isDeepStrictEqual(t.pragma('foreign_key_check'), []) || !isDeepStrictEqual(t.pragma('integrity_check'), [{ integrity_check: 'ok' }])) throw new Error('Business prerequisite integrity failure')
+      if (!isDeepStrictEqual(upgradeForeignKeyFailures(t), []) || !upgradeIntegrityGate(t)) throw new Error('Business prerequisite integrity failure')
       if (sourceSha256 !== fileHash(frozen.fd)) throw new Error('Frozen source drift')
       const cwd = fileURLToPath(new URL('..', import.meta.url))
       const git = (arg: string) => execFileSync('git', ['rev-parse', arg], { cwd, encoding: 'utf8' }).trim()

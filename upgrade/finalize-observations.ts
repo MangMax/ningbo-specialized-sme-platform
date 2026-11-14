@@ -1,3 +1,4 @@
+import { upgradeIntegrityGate, upgradeForeignKeyFailures } from './integrity-policy'
 /** Explicit offline populated finalization, never a registered startup migration. */
 import Database from 'better-sqlite3'
 import { createHash } from 'node:crypto'
@@ -92,7 +93,7 @@ export function finalizeObservations(options:FinalizationOptions,frozen?:FrozenS
         const before=preservedManifest(t)
         rebuild(t,options.beforeCommit)
         if(before!==preservedManifest(t))throw new Error('Preserved cell/byte manifest mismatch')
-        if(!isDeepStrictEqual(t.pragma('foreign_key_check'),[])||!isDeepStrictEqual(t.pragma('integrity_check'),[{integrity_check:'ok'}]))throw new Error('Final target integrity failure')
+        if(!isDeepStrictEqual(upgradeForeignKeyFailures(t),[])||!upgradeIntegrityGate(t))throw new Error('Final target integrity failure')
         if(fileHash(frozen.fd)!==sourceHash)throw new Error('Source drift')
         t.pragma(`user_version=${FINAL_OBSERVATION_VERSION}`)
         tx.insert(r).values({runId:options.runId,state:'complete',sourceSnapshotSha256:sourceHash,sourceSchemaHash:schemaHash(frozen.database),sourceManifestSha256:sourceManifest,targetSchemaVersion:schemaHash(t),transformVersion:FINAL_OBSERVATION_TRANSFORM}).run()
@@ -176,7 +177,7 @@ export function finalizeCollectionScopes(options:CollectionScopeFinalizationOpti
         options.beforeCommit?.('indexed')
         if(!isDeepStrictEqual(scopes,tx.select().from(targetSchema.platformQueryTitleScope).orderBy(asc(targetSchema.platformQueryTitleScope.collectionId),asc(targetSchema.platformQueryTitleScope.rdjb)).all())||!isDeepStrictEqual(errors,tx.select().from(targetSchema.platformQueryTitleScopeError).orderBy(asc(targetSchema.platformQueryTitleScopeError.collectionId)).all())||before!==preserved()||beforeScope!==scopeBytes())throw new Error('Successor preserved cell/byte manifest mismatch')
         for(const name of scopeTables)t.exec(`DROP TABLE ${quote('w4pre_'+name)}`)
-        if(!isDeepStrictEqual(t.pragma('foreign_key_check'),[])||!isDeepStrictEqual(t.pragma('integrity_check'),[{integrity_check:'ok'}]))throw new Error('Successor target integrity failure')
+        if(!isDeepStrictEqual(upgradeForeignKeyFailures(t),[])||!upgradeIntegrityGate(t))throw new Error('Successor target integrity failure')
         if(fileHash(frozen.fd)!==sourceHash)throw new Error('Source drift')
         t.pragma(`user_version=${FINAL_COLLECTION_SCOPE_VERSION}`)
         tx.insert(r).values({runId:options.runId,state:'complete',sourceSnapshotSha256:sourceHash,sourceSchemaHash:schemaHash(frozen.database),sourceManifestSha256:sourceManifest,targetSchemaVersion:schemaHash(t),transformVersion:FINAL_COLLECTION_SCOPE_TRANSFORM}).run()

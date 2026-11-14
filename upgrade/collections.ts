@@ -1,3 +1,4 @@
+import { completeUpgradeActive, upgradeIntegrityGate, upgradeForeignKeyFailures, upgradeSnapshotHash } from './integrity-policy'
 /** T04 offline upgrade boundary. Never import this module from runtime code. */
 import Database from 'better-sqlite3'
 import { createHash } from 'node:crypto'
@@ -45,13 +46,15 @@ export function withFrozenSource<T>(path: string, action: (source: FrozenSource)
     try { return action(source) } finally { activeSources.delete(source) }
   } finally { try { database?.close() } finally { closeSync(fd) } }
 }
-export function fileHash(fd: number) {
+export function fileHash(fd: number, force = false) {
+  return upgradeSnapshotHash(fd, () => {
   const h = createHash('sha256'), chunk = Buffer.alloc(1024 * 1024)
   let size: number, offset = 0
   while ((size = readSync(fd, chunk, 0, chunk.length, offset)) > 0) {
     h.update(chunk.subarray(0, size)); offset += size
   }
   return h.digest('hex')
+  }, force)
 }
 export function schemaHash(s: Database.Database) {
   return hash(JSON.stringify(s.prepare("select type,name,tbl_name,sql from sqlite_schema where name not like 'sqlite_%' order by type,name").all()))
@@ -209,7 +212,7 @@ export function upgradeCollections(options: UpgradeOptions, frozenSource?: Froze
     if (capture) requireReconcileSlotSchema(t)
     else if (hasReconcileSlotCapture(t)) throw new Error('Explicit reconcile capture transform required')
     const db = drizzle(t, { schema }), sourceDb = drizzle(s, { schema })
-    const inheritedForeignKeys = s.pragma('foreign_key_check')
+    const inheritedForeignKeys = upgradeForeignKeyFailures(s)
     const orphan = sourceDb.select({ oldQueryId: schema.platformQueryLegacyProvenance.queryId }).from(schema.platformQueryLegacyProvenance).leftJoin(schema.platformQuery, eq(schema.platformQuery.id, schema.platformQueryLegacyProvenance.queryId)).where(sql`${schema.platformQuery.id} IS NULL`).orderBy(asc(schema.platformQueryLegacyProvenance.queryId)).all()
     const unresolved = orphan.map(row => ({ kind: 'orphan_provenance', oldQueryId: row.oldQueryId, reason: 'Original query owner missing; retained in isolated legacy copy and source manifest' }))
     const frozen = manifest(s,undefined,capture), sourceSchemaHash = schemaHash(s), targetSchemaVersion = schemaHash(t)
@@ -230,6 +233,12 @@ export function upgradeCollections(options: UpgradeOptions, frozenSource?: Froze
     }
     const key = and(eq(schema.platformMigrationCheckpoint.runId, options.runId), eq(schema.platformMigrationCheckpoint.phase, phase), eq(schema.platformMigrationCheckpoint.sourceTable, sourceTable))
     const cp = db.select().from(schema.platformMigrationCheckpoint).where(key).get()
+    if (run?.state === 'complete' && completeUpgradeActive()) {
+      const count = cp?.copiedCount ?? 0
+      if (count !== frozen.counts.platform_query || db.select({ n: sql<number>`count(*)` }).from(schema.platformCollection).get()?.n !== count
+        || db.select({ n: sql<number>`count(*)` }).from(schema.platformLegacyQueryAlias).get()?.n !== count) throw new Error('Completed collection checkpoint count drift')
+      return { lastOldId: cp?.lastOldId ?? 0, copiedCount: count, batchDigest: cp?.batchDigest ?? '', sourceManifest: frozen, inheritedForeignKeys, unresolved }
+    }
     let lastOldId = cp?.lastOldId ?? 0, copiedCount = 0, digest = ''
     // Replay validation covers every migrated row, including archive bytes and child sets.
     let validatedId = 0
@@ -271,7 +280,7 @@ export function upgradeCollections(options: UpgradeOptions, frozenSource?: Froze
       lastOldId = result.nextId; digest = result.nextDigest; copiedCount += rows.length
     }
     if (fileHash(frozenSource.fd) !== binding.sourceSnapshotSha256 || manifest(s,undefined,capture).digest !== frozen.digest || schemaHash(s) !== sourceSchemaHash) throw new Error('Source drift')
-    if (!isDeepStrictEqual(t.pragma('foreign_key_check'), inheritedForeignKeys) || !isDeepStrictEqual(t.pragma('integrity_check'), [{ integrity_check: 'ok' }])) throw new Error('Target integrity failure')
+    if (!isDeepStrictEqual(upgradeForeignKeyFailures(t), inheritedForeignKeys) || !upgradeIntegrityGate(t)) throw new Error('Target integrity failure')
     const query = schema.platformQuery, alias = schema.platformLegacyQueryAlias, collection = schema.platformCollection
     const missing = db.select({ id: query.id }).from(query)
       .leftJoin(alias, eq(alias.oldId, query.id)).leftJoin(collection, eq(collection.id, alias.collectionId))

@@ -1,3 +1,4 @@
+import { upgradeIntegrityGate, upgradeForeignKeyFailures } from './integrity-policy'
 /** #755 offline 71612 -> 71613; never imported by server/lib. */
 import Database from 'better-sqlite3'
 import { createHash } from 'node:crypto'
@@ -54,7 +55,7 @@ function integer(cell: Cell | undefined, min: number) {
 type Metadata = typeof schema.platformCollectionLegacyProvenance.$inferSelect
 function health(t: Database.Database) {
   requireProvenanceForeignKeys(t)
-  if ((t.pragma('foreign_key_check') as unknown[]).length || !isDeepStrictEqual(t.pragma('integrity_check'),[{integrity_check:'ok'}])) fail('Provenance database integrity failure')
+  if ((upgradeForeignKeyFailures(t) as unknown[]).length || !upgradeIntegrityGate(t)) fail('Provenance database integrity failure')
 }
 /** Whole collection/ref/alias/provenance domains, including proven absence. */
 function inventory(t: Database.Database): Metadata[] {

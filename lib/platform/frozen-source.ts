@@ -1,3 +1,4 @@
+import { upgradeSnapshotHash, upgradeIntegrityGate } from './offline-validation'
 /** S offline artifact context. Exclusive ownership/no writers is an operator precondition,
  * not a guarantee provided by hashes, descriptors or this read transaction. */
 import Database from 'better-sqlite3'
@@ -21,7 +22,7 @@ export function withFrozenSource<T>(path:string,action:(source:FrozenSource)=>T)
   database.exec('BEGIN')
   database.prepare('SELECT count(*) FROM sqlite_schema').get()
   if(!['delete','truncate','persist'].includes(String(database.pragma('journal_mode',{simple:true}))))throw new Error('Standalone fixed snapshot required; acquire a SQLite backup first')
-  if(JSON.stringify(database.pragma('integrity_check'))!==JSON.stringify([{integrity_check:'ok'}]))throw new Error('Snapshot integrity failure')
+  if(!upgradeIntegrityGate(database))throw new Error('Snapshot integrity failure')
   const db=drizzle(database,{schema})
   for(const table of [schema.platformQuery,schema.platformRelation]) {
    if(db.select({id:table.id}).from(table).where(sql`typeof(${table.id}) <> 'integer' OR ${table.id} <= 0 OR ${table.id} > ${Number.MAX_SAFE_INTEGER}`).limit(1).get())throw new Error('Unsafe source identity')
@@ -31,11 +32,13 @@ export function withFrozenSource<T>(path:string,action:(source:FrozenSource)=>T)
   try {assertFrozenSource(source,resolved);return action(source)}finally{active.delete(source)}
  }finally{try{database?.close()}finally{closeSync(fd)}}
 }
-export function fileHash(fd:number) {
+export function fileHash(fd:number, force = false) {
+ return upgradeSnapshotHash(fd, () => {
  const hash=createHash('sha256'),chunk=Buffer.alloc(1024*1024)
  let size:number,offset=0
  while((size=readSync(fd,chunk,0,chunk.length,offset))>0){hash.update(chunk.subarray(0,size));offset+=size}
  return hash.digest('hex')
+ }, force)
 }
 export function assertFrozenSource(source:FrozenSource,path:string) {
  if(!active.has(source)||!source.database.inTransaction)throw new Error('Inactive frozen source')

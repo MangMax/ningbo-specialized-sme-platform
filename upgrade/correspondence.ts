@@ -1,3 +1,4 @@
+import { completeUpgradeActive, upgradeIntegrityGate, upgradeForeignKeyFailures } from './integrity-policy'
 /** Maintenance-window transfer from a fixed 71610 snapshot into its independent target copy. */
 import Database from 'better-sqlite3'
 import {createHash} from 'node:crypto'
@@ -14,6 +15,7 @@ import {witnessInstalled} from '../lib/platform/recognized-witness-catalog'
 import {projectionManifest} from './projections'
 export type CorrespondenceTransferOptions={source:string;target:string;runId:string;beforeCommit?:(stage:string)=>void}
 const hash=(v:string|Buffer)=>createHash('sha256').update(v).digest('hex')
+const manifestOwners = ['record_correspondence', 'record_correspondence_audit'] as const
 const quote=(name:string)=>`"${name.replaceAll('"','""')}"`
 /** Compare every business cell, reversing only the intended reference conversion. Offline only. */
 function originalManifest(t:Database.Database) {
@@ -30,7 +32,7 @@ function originalManifest(t:Database.Database) {
    }
   }
   digest.update(JSON.stringify(row)+'\n')
- })
+ }, manifestOwners)
  return digest.digest('hex')
 }
 export function transferCorrespondence(options:CorrespondenceTransferOptions):{state:'complete';mapped:number;nulls:number} {
@@ -46,7 +48,7 @@ export function transferCorrespondence(options:CorrespondenceTransferOptions):{s
   try {
    t.pragma('foreign_keys=ON')
    if(s.pragma('user_version',{simple:true})!==71610||!processStoredInstalled(s)||!recognizedStoredInstalled(s)||!witnessInstalled(s))throw new Error('Completed 71610 source required')
-   const snapshot=fileHash(frozen.fd),manifest=projectionManifest(s)
+   const snapshot=fileHash(frozen.fd),manifest=projectionManifest(s,undefined,manifestOwners)
    const counts=s.prepare('SELECT count(relation_id) mapped,count(*)-count(relation_id) nulls FROM record_correspondence').get() as {mapped:number;nulls:number}
    const run=t.prepare('SELECT * FROM platform_migration_run WHERE run_id=?').get(options.runId) as {source_snapshot_sha256:string;transform_version:string;state:string}|undefined
    if(run) {
@@ -54,7 +56,7 @@ export function transferCorrespondence(options:CorrespondenceTransferOptions):{s
     requireH1cReady(t)
     return {state:'complete',...counts}
    }
-   if(t.pragma('user_version',{simple:true})!==71610||schemaHash(t)!==schemaHash(s)||projectionManifest(t)!==manifest)throw new Error('Target must be an unchanged independent source copy')
+   if(t.pragma('user_version',{simple:true})!==71610||schemaHash(t)!==schemaHash(s)||projectionManifest(t,undefined,manifestOwners)!==manifest)throw new Error('Target must be an unchanged independent source copy')
    const missing=s.prepare('SELECT c.id,c.relation_id,a.observation_id FROM record_correspondence c LEFT JOIN platform_legacy_relation_alias a ON a.old_id=c.relation_id LEFT JOIN platform_business_observation o ON o.id=a.observation_id WHERE c.relation_id IS NOT NULL AND o.id IS NULL ORDER BY c.id').all()
    if(missing.length)throw new Error(`Unmapped correspondence rows: ${JSON.stringify(missing)}`)
    const violations=s.pragma('foreign_key_check') as unknown[]
@@ -70,10 +72,13 @@ export function transferCorrespondence(options:CorrespondenceTransferOptions):{s
    const ledger=(db:Database.Database)=>JSON.stringify(['platform_migration_run','platform_migration_checkpoint'].map(name=>db.prepare(`SELECT * FROM ${name} ORDER BY 1,2,3`).all()))
    if(JSON.stringify(t.prepare('SELECT * FROM sqlite_sequence ORDER BY name').all())!==JSON.stringify(s.prepare('SELECT * FROM sqlite_sequence ORDER BY name').all()))throw new Error('Target sequence differs from source copy')
    if(ledger(t)!==ledger(s))throw new Error('Target migration log differs from source copy')
+   const externalReferences = s.prepare("SELECT sql FROM sqlite_schema WHERE type IN ('trigger','view') AND tbl_name NOT IN ('record_correspondence','record_correspondence_audit') AND (sql LIKE '%record_correspondence%')").all()
+   const renameOwners = completeUpgradeActive() && externalReferences.length === 0
    t.transaction(()=>{
-    t.exec('CREATE TEMP TABLE h1c_correspondence AS SELECT * FROM record_correspondence; CREATE TEMP TABLE h1c_audit AS SELECT * FROM record_correspondence_audit')
+    if (renameOwners) t.exec('ALTER TABLE record_correspondence_audit RENAME TO h1c_audit; ALTER TABLE record_correspondence RENAME TO h1c_correspondence')
+    else t.exec('CREATE TEMP TABLE h1c_correspondence AS SELECT * FROM record_correspondence; CREATE TEMP TABLE h1c_audit AS SELECT * FROM record_correspondence_audit')
     options.beforeCommit?.('prepared')
-    t.exec('DROP TABLE record_correspondence_audit; DROP TABLE record_correspondence')
+    if (!renameOwners) t.exec('DROP TABLE record_correspondence_audit; DROP TABLE record_correspondence')
     options.beforeCommit?.('dropped')
     for(const owner of owners) {
      let ddl=catalog.find(c=>c.type==='table'&&c.name===owner)!.sql
@@ -83,13 +88,14 @@ export function transferCorrespondence(options:CorrespondenceTransferOptions):{s
     options.beforeCommit?.('created')
     t.exec(`INSERT INTO record_correspondence (${fields.map(c=>quote(c==='relation_id'?'observation_id':c)).join(',')}) SELECT ${fields.map(c=>c==='relation_id'?'(SELECT observation_id FROM platform_legacy_relation_alias WHERE old_id=c.relation_id)':`c.${quote(c)}`).join(',')} FROM h1c_correspondence c; INSERT INTO record_correspondence_audit SELECT * FROM h1c_audit`)
     options.beforeCommit?.('copied')
+    if (renameOwners) t.exec('DROP TABLE h1c_audit; DROP TABLE h1c_correspondence')
     for(const c of catalog.filter(c=>c.type==='index'||c.type==='trigger'))t.exec(c.tbl_name==='record_correspondence'?c.sql.replaceAll('relation_id','observation_id'):c.sql)
     t.exec("DELETE FROM sqlite_sequence WHERE name IN ('record_correspondence','record_correspondence_audit')")
     for(const row of sequence)t.prepare('INSERT INTO sqlite_sequence(name,seq) VALUES(?,?)').run(row.name,row.seq)
-    t.exec('DROP TABLE h1c_audit; DROP TABLE h1c_correspondence')
+    if (!renameOwners) t.exec('DROP TABLE h1c_audit; DROP TABLE h1c_correspondence')
     options.beforeCommit?.('indexed')
     if(originalManifest(t)!==manifest)throw new Error('Transferred business cells differ from fixed snapshot')
-    if((t.pragma('foreign_key_check') as unknown[]).length||JSON.stringify(t.pragma('integrity_check'))!==JSON.stringify([{integrity_check:'ok'}]))throw new Error('Transferred target integrity failure')
+    if((upgradeForeignKeyFailures(t) as unknown[]).length||!upgradeIntegrityGate(t))throw new Error('Transferred target integrity failure')
     assertFrozenSource(frozen,source)
     if(fileHash(frozen.fd)!==snapshot)throw new Error('Fixed source changed')
     options.beforeCommit?.('validated')

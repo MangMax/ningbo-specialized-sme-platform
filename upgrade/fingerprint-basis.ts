@@ -1,3 +1,4 @@
+import { upgradeIntegrityGate, upgradeForeignKeyFailures } from './integrity-policy'
 /** #724 offline successor only. Absent from startup migrations and public routing. */
 import { readFingerprintEvents, verifyOriginalCommand, type FingerprintEventSource } from './fingerprint-events'
 import type Database from 'better-sqlite3'
@@ -116,7 +117,7 @@ export function finalizeFingerprintBasis(options:FingerprintBasisOptions,frozen?
       if(t.pragma('user_version',{simple:true})!==71606||schemaHash(t)!==schemaHash(frozen.database)||(eventProof?fullDigest(t,options.runId)!==eventDigest:fullDigest(t,options.runId)!==fullDigest(frozen.database,options.runId)))throw new Error('Unproven target or after-predecessor events')
       db.transaction(tx=>{
         requireFingerprintForeignKeys(t)
-        const oldLines:string[]=[];projectionManifest(t,line=>oldLines.push(line))
+        const oldLines=createHash('sha256');let oldLineCount=0;projectionManifest(t,line=>{oldLines.update(line).update('\n');oldLineCount++})
         const oldArchiveCount=tx.select({value:count()}).from(s.platformArchiveValue).get()!.value
         installFingerprintBasis(t);options.beforeCommit?.('created')
         const o=s.platformBusinessObservation,q=s.platformLegacyQueryAlias,a=s.platformLegacyRelationAlias
@@ -209,10 +210,10 @@ export function finalizeFingerprintBasis(options:FingerprintBasisOptions,frozen?
         if(eventProof?.events.some(e=>!processed.has(e.observationId)))throw new Error('Event observation owner missing')
         options.beforeCommit?.('recovered')
         installFingerprintBarrier(t);options.beforeCommit?.('barrier')
-        let archiveIndex=0;const afterLines:string[]=[]
-        projectionManifest(t,line=>{const row=JSON.parse(line) as {table:string};if(row.table==='platform_observation_fingerprint_basis')return;if(row.table==='platform_archive_value'&&archiveIndex++>=oldArchiveCount)return;afterLines.push(line)})
-        if(!isDeepStrictEqual(oldLines,afterLines))throw new Error('Original cell/byte manifest drift')
-        if(!isDeepStrictEqual(t.pragma('foreign_key_check'),[])||!isDeepStrictEqual(t.pragma('integrity_check'),[{integrity_check:'ok'}]))throw new Error('Fingerprint target integrity failure')
+        let archiveIndex=0,afterLineCount=0;const afterLines=createHash('sha256')
+        projectionManifest(t,line=>{const row=JSON.parse(line) as {table:string};if(row.table==='platform_observation_fingerprint_basis')return;if(row.table==='platform_archive_value'&&archiveIndex++>=oldArchiveCount)return;afterLines.update(line).update('\n');afterLineCount++})
+        if(oldLineCount!==afterLineCount||oldLines.digest('hex')!==afterLines.digest('hex'))throw new Error('Original cell/byte manifest drift')
+        if(!isDeepStrictEqual(upgradeForeignKeyFailures(t),[])||!upgradeIntegrityGate(t))throw new Error('Fingerprint target integrity failure')
         if(sourceHash!==fileHash(frozen.fd)||(legacyFrozen&&legacyHash!==fileHash(legacyFrozen.fd)))throw new Error('Frozen source drift')
         if(options.eventSource)readFingerprintEvents(options.eventSource,sourceHash,frozen.database,eventFrozen!)
         t.pragma(`user_version=${FINGERPRINT_BASIS_VERSION}`)

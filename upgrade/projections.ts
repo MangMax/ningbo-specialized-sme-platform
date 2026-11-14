@@ -1,3 +1,4 @@
+import { completeUpgradeActive, upgradeIntegrityGate, upgradeForeignKeyFailures, upgradeProjectionTables } from './integrity-policy'
 import { businessStatusRule } from '../lib/platform/business-status-catalog'
 import { sourceValueKind, sourceFieldComparison } from '../lib/platform/source-extraction'
 /** Offline T05b only. Source parsing ends here; no runtime consumer imports this module. */
@@ -21,11 +22,21 @@ import { verifyReconcileHistory } from './reconcile-slot-capture'
 export const PROJECTION_TRANSFORM='t05b-source-projections-v1'
 type Db=BetterSQLite3Database<typeof schema>
 const hash=(v:string|Buffer)=>createHash('sha256').update(v).digest('hex')
+const manifestCache = new WeakMap<Database.Database, { key:string; digest:string }>()
 /** Infrastructure manifest: SQLite storage classes and bytes, ordered by the complete PK. */
-export function projectionManifest(s:Database.Database,emit?:(line:string)=>void) {
+export function projectionManifest(s:Database.Database,emit?:(line:string)=>void, owners: readonly string[] = []) {
+  // Repeated predecessor/receipt checks often inspect the same connection with
+  // no intervening writes. SQLite counters invalidate on local writes, external
+  // commits and DDL; emitted row audits always traverse the actual cells.
+  const key = completeUpgradeActive() && !emit ? JSON.stringify([
+    s.prepare('SELECT total_changes()').pluck().get(),
+    s.pragma('data_version', { simple:true }), s.pragma('schema_version', { simple:true }), owners,
+  ]) : undefined
+  const cached = key === undefined ? undefined : manifestCache.get(s)
+  if (cached && cached.key === key) return cached.digest
   const tables=s.prepare("select name from sqlite_schema where type='table' and name not like 'sqlite_%' and name not in ('platform_migration_run','platform_migration_checkpoint') order by name").all() as {name:string}[]
   const digest=createHash('sha256')
-  for(const {name} of tables) {
+  for(const {name} of upgradeProjectionTables(tables, owners)) {
     const fields=s.prepare(`pragma table_info("${name}")`).all() as {name:string,pk:number}[]
     const pk=fields.filter(c=>c.pk).sort((a,b)=>a.pk-b.pk).map(c=>`"${c.name}"`).join(',')
     const values=fields.flatMap((c,i)=>[`typeof("${c.name}") k${i}`,`hex(cast("${c.name}" as blob)) b${i}`,`case when typeof("${c.name}")='real' then "${c.name}" end n${i}`]).join(',')
@@ -42,7 +53,9 @@ export function projectionManifest(s:Database.Database,emit?:(line:string)=>void
       digest.update(line+'\n');emit?.(line)
     }
   }
-  return digest.digest('hex')
+  const result = digest.digest('hex')
+  if (key !== undefined) manifestCache.set(s, { key, digest:result })
+  return result
 }
 function archiveValid(a:typeof schema.platformArchiveValue.$inferSelect) {
   if(a.storageClass==='null' ? a.bytes!==null||a.byteLength!==null||a.sha256!==null : !Buffer.isBuffer(a.bytes)||a.bytes.length!==a.byteLength||hash(a.bytes)!==a.sha256) throw new Error('Invalid archive length or digest')
@@ -122,7 +135,8 @@ export function upgradeProjections(options:ProjectionUpgradeOptions,frozen?:Froz
     if(options.transformVersion!==undefined&&options.transformVersion!==transform)throw new Error('Source/schema/transform binding changed')
     const db=drizzle(t,{schema}),sd=drizzle(s,{schema}),runs=schema.platformMigrationRun,cp=schema.platformMigrationCheckpoint
     const binding={runId:options.runId,sourceSnapshotSha256:fileHash(frozen.fd),sourceSchemaHash:schemaHash(s),sourceManifestSha256:hash(JSON.stringify({manifest:projectionManifest(s),observationRunId:options.observationRunId,collectionRunId:options.collectionRunId})),targetSchemaVersion:schemaHash(t),transformVersion:transform}
-    const targetDigest=()=>hash(JSON.stringify({manifest:projectionManifest(t),checkpoints:db.select().from(cp).where(sql`NOT (${cp.runId} = ${options.runId} AND ${cp.phase} = 't05b-target')`).orderBy(asc(cp.runId),asc(cp.phase),asc(cp.sourceTable)).all(),prerequisites:db.select().from(runs).where(sql`${runs.runId} <> ${options.runId}`).orderBy(asc(runs.runId)).all()}))
+    const checkpointMode = completeUpgradeActive() ? 'projection-ledger-v1' : 'all'
+    const targetDigest=(full = !completeUpgradeActive())=>hash(JSON.stringify({manifest:full ? projectionManifest(t) : 'full-manifest-at-stage-end',checkpoints:db.select().from(cp).where(sql`NOT (${cp.runId} = ${options.runId} AND ${cp.phase} = 't05b-target')`).orderBy(asc(cp.runId),asc(cp.phase),asc(cp.sourceTable)).all(),prerequisites:db.select().from(runs).where(sql`${runs.runId} <> ${options.runId}`).orderBy(asc(runs.runId)).all()}))
     const run=db.select().from(runs).where(eq(runs.runId,options.runId)).get()
     if(run) {const {state:_,...stored}=run;if(!isDeepStrictEqual(binding,stored))throw new Error('Source/schema/transform binding changed')}
     else {
@@ -131,15 +145,20 @@ export function upgradeProjections(options:ProjectionUpgradeOptions,frozen?:Froz
       // T05a is revalidated before any T05b domain changes. Its own immutable source checks
       // deliberately reject added projection/version facts on subsequent runs.
       upgradeObservations({source:options.source,target:options.target,runId:options.observationRunId,collectionRunId:options.collectionRunId,batchSize:options.batchSize},frozen)
-      originalVersionArchives(s,t,sd,db)
+      t.transaction(() => originalVersionArchives(s,t,sd,db)).immediate()
       db.transaction(tx=>{
         tx.insert(runs).values({...binding,state:'running'}).run()
-        tx.insert(cp).values({runId:options.runId,phase:'t05b-target',sourceTable:'all',lastOldId:0,copiedCount:0,batchDigest:targetDigest()}).run()
+        tx.insert(cp).values({runId:options.runId,phase:'t05b-target',sourceTable:checkpointMode,lastOldId:0,copiedCount:0,batchDigest:targetDigest()}).run()
       })
     }
     const targetKey=and(eq(cp.runId,options.runId),eq(cp.phase,'t05b-target'))
-    const checkpoint=db.select().from(cp).where(targetKey).get()
-    if(!checkpoint||checkpoint.sourceTable!=='all'||checkpoint.lastOldId!==0||checkpoint.copiedCount!==0||checkpoint.batchDigest!==targetDigest())throw new Error('Target checkpoint drift')
+    let checkpoint=db.select().from(cp).where(targetKey).get()
+    if (checkpoint?.sourceTable === 'all' && checkpointMode !== 'all') {
+      if (checkpoint.batchDigest !== targetDigest(true)) throw new Error('Target checkpoint drift')
+      db.update(cp).set({ sourceTable:checkpointMode, batchDigest:targetDigest() }).where(targetKey).run()
+      checkpoint=db.select().from(cp).where(targetKey).get()
+    }
+    if(!checkpoint||checkpoint.sourceTable!==checkpointMode||checkpoint.lastOldId!==0||checkpoint.copiedCount!==0||checkpoint.batchDigest!==targetDigest())throw new Error('Target checkpoint drift')
     for(const phase of ['observations','versions'] as const) {
       const key=and(eq(cp.runId,options.runId),eq(cp.phase,`t05b-${phase}`)),previous=db.select().from(cp).where(key).get()
       let last=previous?.lastOldId??0,count=previous?.copiedCount??0
@@ -167,7 +186,7 @@ export function upgradeProjections(options:ProjectionUpgradeOptions,frozen?:Froz
     const archived=db.select({id:v.id}).from(v).innerJoin(vr,and(eq(vr.ownerId,v.id),eq(vr.archiveId,v.canonicalArchiveId),eq(vr.sealed,1),eq(vr.field,'canonicalRawJson'))).orderBy(asc(v.id)).all()
     if(!isDeepStrictEqual(versions,archived))throw new Error('Incomplete canonical version PK coverage')
     if(!isDeepStrictEqual(expected,actual))throw new Error('Incomplete observation projection PK coverage')
-    if(!isDeepStrictEqual(t.pragma('foreign_key_check'),[])||!isDeepStrictEqual(t.pragma('integrity_check'),[{integrity_check:'ok'}]))throw new Error('Target integrity failure')
+    if(!isDeepStrictEqual(upgradeForeignKeyFailures(t),[])||!upgradeIntegrityGate(t))throw new Error('Target integrity failure')
     if(fileHash(frozen.fd)!==binding.sourceSnapshotSha256)throw new Error('Source drift')
     verifyReconcileHistory(s,t,true)
     db.update(runs).set({state:'complete'}).where(eq(runs.runId,options.runId)).run()

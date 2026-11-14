@@ -1,3 +1,4 @@
+import { upgradeForeignKeyFailures } from './integrity-policy'
 /** Explicit offline composition for the final target; never imported by runtime initialization. */
 import type Database from 'better-sqlite3'
 import { requireLegacyProvenanceReady } from '../lib/platform/legacy-provenance-catalog'
@@ -24,6 +25,6 @@ export function upgradeEnterpriseMergeIdentity(sqlite: Database.Database) {
     CREATE TRIGGER IF NOT EXISTS enterprise_merge_insert BEFORE INSERT ON enterprise_merge
       WHEN EXISTS(SELECT 1 FROM enterprise_merge WHERE from_enterprise_id IN (NEW.from_enterprise_id,NEW.into_enterprise_id))
       BEGIN SELECT RAISE(ABORT,'enterprise_merge_current_identity_required'); END;`)
-    if (sqlite.pragma('foreign_key_check').length) throw new Error('Enterprise identity upgrade foreign key conflict')
+    if (upgradeForeignKeyFailures(sqlite).length) throw new Error('Enterprise identity upgrade foreign key conflict')
   }).immediate()
 }

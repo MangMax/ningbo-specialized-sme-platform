@@ -1,3 +1,4 @@
+import { upgradeIntegrityGate, upgradeForeignKeyFailures } from './integrity-policy'
 /** Explicit offline 71611 -> 71612. Never imported by application startup. */
 import Database from 'better-sqlite3'
 import { createHash } from 'node:crypto'
@@ -104,7 +105,7 @@ export function transferDifferenceReferences(options: DifferenceTransferOptions)
     const installed = (t.prepare('SELECT type,name,tbl_name,sql FROM sqlite_schema WHERE sql IS NOT NULL ORDER BY type,name').all() as typeof catalog).filter(c => owners.includes(c.tbl_name))
     if (JSON.stringify(installed) !== JSON.stringify(catalog.map(c => ({...c,sql:c.type === 'table' ? reboundDdl(c.tbl_name,c.sql) : c.sql})))) throw new Error('Transferred constraints/indexes/triggers differ from source contract')
     if (originalManifest(t) !== manifest || ledger(t) !== ledger(s) || JSON.stringify(t.prepare('SELECT name,seq FROM sqlite_sequence ORDER BY name').all()) !== JSON.stringify(sequence)) throw new Error('Transferred business cells/log/sequence differ from fixed snapshot')
-    if ((t.pragma('foreign_key_check') as unknown[]).length || JSON.stringify(t.pragma('integrity_check')) !== JSON.stringify([{integrity_check:'ok'}])) throw new Error('Transferred target integrity failure')
+    if ((upgradeForeignKeyFailures(t) as unknown[]).length || !upgradeIntegrityGate(t)) throw new Error('Transferred target integrity failure')
     assertFrozenSource(frozen,source)
     if (fileHash(frozen.fd) !== snapshot) throw new Error('Fixed source changed')
     options.beforeCommit?.('validated')

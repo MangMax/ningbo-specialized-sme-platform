@@ -1,3 +1,4 @@
+import { completeUpgradeActive, upgradeIntegrityGate, upgradeForeignKeyFailures } from './integrity-policy'
 /** T05a offline identity/assignment transfer. No business JSON parsing or runtime imports. */
 import Database from 'better-sqlite3'
 import { createHash } from 'node:crypto'
@@ -158,7 +159,7 @@ export function upgradeObservations(options:ObservationUpgradeOptions,frozen?:Fr
   try {
     t.pragma('foreign_keys=ON')
     const db=drizzle(t,{schema}),sd=drizzle(s,{schema}),r=schema.platformRelation,o=schema.platformBusinessObservation
-    const inheritedForeignKeys=s.pragma('foreign_key_check')
+    const inheritedForeignKeys=upgradeForeignKeyFailures(s)
     const snapshot=fileHash(frozen.fd),sm=observationManifest(s)
     const unresolved: {kind:string,oldId:number,reason:string}[]=[]
     for(const table of domains) {
@@ -179,6 +180,12 @@ export function upgradeObservations(options:ObservationUpgradeOptions,frozen?:Fr
     if(run) { const {state:_,...stored}=run; if(!isDeepStrictEqual(stored,binding)) throw new Error('Source/schema/transform binding changed') }
 
     const c=schema.platformMigrationCheckpoint,key=and(eq(c.runId,options.runId),eq(c.phase,phase),eq(c.sourceTable,sourceTable)),cp=db.select().from(c).where(key).get()
+    if (run?.state === 'complete' && completeUpgradeActive()) {
+      const count = cp?.copiedCount ?? 0
+      if (count !== sm.counts.platform_relation || db.select({ n:sql<number>`count(*)` }).from(o).get()?.n !== count
+        || db.select({ n:sql<number>`count(*)` }).from(schema.platformLegacyRelationAlias).get()?.n !== count) throw new Error('Completed observation checkpoint count drift')
+      return { state:'complete', copiedCount:count, lastOldId:cp?.lastOldId ?? 0, batchDigest:cp?.batchDigest ?? '', unresolved, sourceManifest:sm, inheritedForeignKeys }
+    }
     let last=cp?.lastOldId??0,count=0,chain='',validatedLast=0
     reconcileSourceArchives(s,t,sd,db,last)
     const advance=(value:unknown)=>{chain=digest(chain+'\n'+JSON.stringify(value))}
@@ -189,6 +196,18 @@ export function upgradeObservations(options:ObservationUpgradeOptions,frozen?:Fr
       const fields=columns(s,table).filter(x=>!(table==='platform_business_observation'&&mapped.includes(x))&&x!=='collection_id')
       const pk=(s.prepare(`pragma table_info("${table}")`).all() as {name:string,pk:number}[]).filter(x=>x.pk).sort((a,b)=>a.pk-b.pk).map(x=>`"${x.name}"`).join(',')
       const projection=fields.flatMap(x=>[`typeof("${x}")`,`hex(cast("${x}" as blob))`,`case when typeof("${x}")='real' then "${x}" end`]).join(',')
+      if (table !== 'platform_business_observation') {
+        const sourceRows = s.prepare(`select ${projection} from "${table}" order by ${pk}`).iterate()
+        const targetRows = t.prepare(`select ${projection} from "${table}" order by ${pk}`).iterate()
+        try {
+          for (const row of sourceRows) {
+            const counterpart = targetRows.next()
+            if (counterpart.done || !isDeepStrictEqual(row, counterpart.value)) throw new Error(`Target source domain drift: ${table}`)
+          }
+          if (!targetRows.next().done) throw new Error(`Target source domain drift: ${table}`)
+        } finally { sourceRows.return?.(); targetRows.return?.() }
+        continue
+      }
       const sourceRows=s.prepare(`select ${projection} from "${table}" order by ${pk}`).all()
       let targetRows=t.prepare(`select ${projection} from "${table}" order by ${pk}`).all()
       if(table==='platform_business_observation') {
@@ -223,7 +242,7 @@ export function upgradeObservations(options:ObservationUpgradeOptions,frozen?:Fr
     const actual=db.select({id:o.id}).from(o).where(sql`${o.id} IS NOT NULL`).orderBy(asc(o.id)).all().map(x=>x.id)
     if(!isDeepStrictEqual(ids,actual) || count!==ids.length || db.select().from(schema.platformLegacyRelationAlias).all().length!==count || db.select().from(schema.platformObservationAssignment).all().length!==count) throw new Error('Incomplete source PK coverage')
     if(fileHash(frozen.fd)!==snapshot || observationManifest(s).digest!==sm.digest) throw new Error('Source drift')
-    if(!isDeepStrictEqual(t.pragma('foreign_key_check'),inheritedForeignKeys) || !isDeepStrictEqual(t.pragma('integrity_check'),[{integrity_check:'ok'}])) throw new Error('Target integrity failure')
+    if(!isDeepStrictEqual(upgradeForeignKeyFailures(t),inheritedForeignKeys) || !upgradeIntegrityGate(t)) throw new Error('Target integrity failure')
     if (prior.transformVersion===RECONCILE_SLOT_T04) verifyReconcileHistory(s,t)
     db.update(schema.platformMigrationRun).set({state:'complete'}).where(eq(schema.platformMigrationRun.runId,options.runId)).run()
     return {state:'complete' as const,copiedCount:count,lastOldId:last,batchDigest:chain,unresolved,sourceManifest:sm,inheritedForeignKeys}

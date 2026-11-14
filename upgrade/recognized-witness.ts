@@ -1,3 +1,4 @@
+import { upgradeIntegrityGate, upgradeForeignKeyFailures } from './integrity-policy'
 /** #733 A: maintenance-window fixed snapshot -> independent target, explicit #732 successor. */
 import Database from 'better-sqlite3'
 import { createHash } from 'node:crypto'
@@ -55,7 +56,7 @@ export function finalizeRecognizedWitness(options:WitnessUpgradeOptions,frozen?:
  t.exec(witnessTriggers)
  options.beforeCommit?.('barriers')
  if(digest(t,options.runId,true)!==sourceManifest)throw new Error('Original facts/hash/IDs/bytes/receipts drift')
- if(!isDeepStrictEqual(t.pragma('foreign_key_check'),[])||t.pragma('integrity_check',{simple:true})!=='ok')throw new Error('Witness successor integrity failure')
+ if(!isDeepStrictEqual(upgradeForeignKeyFailures(t),[])||!upgradeIntegrityGate(t))throw new Error('Witness successor integrity failure')
  t.prepare('INSERT INTO platform_migration_run(run_id,state,source_snapshot_sha256,source_schema_hash,source_manifest_sha256,target_schema_version,transform_version) VALUES(?,?,?,?,?,?,?)').run(options.runId,'complete',sourceHash,sourceSchema,sourceManifest,schemaHash(t),WITNESS_TRANSFORM)
  t.prepare('INSERT INTO platform_migration_checkpoint(run_id,phase,source_table,last_old_id,copied_count,batch_digest) VALUES(@run_id,@phase,@source_table,@last_old_id,@copied_count,@batch_digest)').run(checkpoint())
  if(!witnessInstalled(t)||!recognizedStoredInstalled(t))throw new Error('Witness successor catalog receipt conflict')

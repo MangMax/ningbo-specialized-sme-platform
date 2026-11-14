@@ -1,3 +1,4 @@
+import { upgradeIntegrityGate, upgradeForeignKeyFailures } from './integrity-policy'
 /** #728 S only. Never registered as a startup migration or runtime writer. */
 import Database from 'better-sqlite3'
 import { createHash } from 'node:crypto'
@@ -132,12 +133,13 @@ function recover(t:Database.Database,o:Owner,legacy?:Database.Database,custody?:
  return r
 }
 function digest(t:Database.Database,runId:string,original=false) {
- const lines:string[]=[]
+ const streamHash=createHash('sha256').update('{"lines":[');let firstLine=true
  projectionManifest(t,line=>{
   if(original){const row=JSON.parse(line) as {table:string,fields:{name:string}[]};if(row.table==='platform_apply_projection')row.fields=row.fields.filter(c=>!applyStoredColumns.some(n=>n===c.name));if(row.table==='platform_business_observation')row.fields=row.fields.filter(c=>!applyPairColumns.some(n=>n===c.name));line=JSON.stringify(row)}
-  lines.push(line)
+  if(!firstLine)streamHash.update(',');firstLine=false;streamHash.update(JSON.stringify(line))
  })
- return hash(JSON.stringify({lines,sequences:t.prepare('SELECT name,typeof(seq) storageClass,hex(cast(seq AS blob)) bytes FROM sqlite_sequence ORDER BY name').all(),runs:t.prepare('SELECT * FROM platform_migration_run WHERE run_id<>? ORDER BY run_id').all(runId),checkpoints:t.prepare('SELECT * FROM platform_migration_checkpoint WHERE run_id<>? ORDER BY run_id,phase,source_table').all(runId)}))
+ streamHash.update('],');const metadata={sequences:t.prepare('SELECT name,typeof(seq) storageClass,hex(cast(seq AS blob)) bytes FROM sqlite_sequence ORDER BY name').all(),runs:t.prepare('SELECT * FROM platform_migration_run WHERE run_id<>? ORDER BY run_id').all(runId),checkpoints:t.prepare('SELECT * FROM platform_migration_checkpoint WHERE run_id<>? ORDER BY run_id,phase,source_table').all(runId)}
+ streamHash.update(JSON.stringify(metadata).slice(1));return streamHash.digest('hex')
 }
 export type ApplyStoredOptions={source:string,target:string,runId:string,predecessorRunId:string,legacySource?:string,beforeCommit?:(stage:string)=>void}
 export function finalizeApplyStored(options:ApplyStoredOptions,frozen?:FrozenSource,legacy?:FrozenSource,custody?:LegacyFingerprintCustody):{state:'complete',queryReady:boolean,recovery:Recovery[],manifest:string} {
@@ -192,7 +194,7 @@ export function finalizeApplyStored(options:ApplyStoredOptions,frozen?:FrozenSou
     }
     options.beforeCommit?.('recovered');installApplyStoredBarrier(t);options.beforeCommit?.('barrier')
     if(before!==digest(t,options.runId,true))throw new Error('Original facts/sequences/receipt manifest drift')
-    if(!isDeepStrictEqual(t.pragma('foreign_key_check'),[])||!isDeepStrictEqual(t.pragma('integrity_check'),[{integrity_check:'ok'}]))throw new Error('Successor integrity failure')
+    if(!isDeepStrictEqual(upgradeForeignKeyFailures(t),[])||!upgradeIntegrityGate(t))throw new Error('Successor integrity failure')
     if(sourceHash!==fileHash(frozen.fd)||(legacy&&legacyHash!==fileHash(legacy.fd)))throw new Error('Frozen source drift')
     assertFrozenSource(frozen,options.source);if(legacy){assertFrozenSource(legacy,options.legacySource!);assertLegacyFingerprintCustody(custody,frozen,legacy)}
     t.pragma(`user_version=${APPLY_STORED_VERSION}`)
