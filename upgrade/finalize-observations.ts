@@ -7,11 +7,11 @@ import { dirname } from 'node:path'
 import { isDeepStrictEqual } from 'node:util'
 import { asc, eq, sql } from 'drizzle-orm'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
-import * as schema from '../db/schema'
+import * as schema from './legacy-schema'
 import { assertFrozenSource, fileHash, schemaHash, withFrozenSource, type FrozenSource } from './collections'
 import { projectionManifest, upgradeProjections } from './projections'
-import { FINAL_OBSERVATION_VERSION } from '../db/schema-phase'
-export { FINAL_OBSERVATION_VERSION } from '../db/schema-phase'
+import { FINAL_OBSERVATION_VERSION } from './schema-phase'
+export { FINAL_OBSERVATION_VERSION } from './schema-phase'
 export const FINAL_OBSERVATION_TRANSFORM='t05c-independent-observation-v1'
 const parent='platform_business_observation'
 export const observationIncomingOwners=['platform_apply_projection','platform_business_projection','platform_legacy_relation_alias','platform_observation_archive_ref','platform_observation_assignment','platform_recognized_projection'] as const
@@ -105,7 +105,7 @@ export function finalizeObservations(options:FinalizationOptions,frozen?:FrozenS
   } finally {t.close()}
 }
 
-import { FINAL_COLLECTION_SCOPE_VERSION } from '../db/schema-phase'
+import { FINAL_COLLECTION_SCOPE_VERSION } from './schema-phase'
 import { targetSchema } from './target-schema'
 export const FINAL_COLLECTION_SCOPE_TRANSFORM='w4a-pre-collection-scopes-v1'
 const scopeTables=['platform_query_title_scope','platform_query_title_scope_error'] as const

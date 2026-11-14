@@ -1,23 +1,21 @@
-import { platformNormalizationConflict } from '../../lib/platform/normalization'
+import { platformNormalizationConflict } from '../../lib/platform/normalization';
 /** Apply reader for stored capture and the completed target catalog. */
-import { and, count, countDistinct, desc, eq, exists, inArray, isNull, max, min, ne, or, sql, type SQL } from 'drizzle-orm';
-import { alias } from 'drizzle-orm/sqlite-core';
+import { getTableColumns,and,count,countDistinct,desc,eq,exists,inArray,isNull,max,min,ne,or,sql,type SQL } from 'drizzle-orm';
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3';
+import { alias } from 'drizzle-orm/sqlite-core';
 import { groupBy } from 'es-toolkit';
-import { targetSchema, platformBusinessObservation as o, platformObservationAssignment as a, platformLegacyRelationAlias as ra } from '../../lib/platform/target-schema';
+import { platformBusinessRecord as b,platformCollection as c,enterprise as e,platformLegacyQueryAlias as qa,platformBusinessRecordVersion as v } from '../../db/schema';
+import { normalizeName,normalizeUscc } from '../../lib/domain';
 import { storedApplyProjection as p } from '../../lib/platform/apply-stored-schema';
-import { processStoredInstalled } from '../../lib/platform/process-stored-catalog';
-import { sqliteConnection } from '../../lib/platform/target-connection';
-import { platformCollection as c, platformLegacyQueryAlias as qa, platformBusinessRecord as b, platformBusinessRecordVersion as v, enterprise as e } from '../../db/schema';
-import { normalizeName, normalizeUscc } from '../../lib/domain';
-import { normalizeDeclareKind } from '../../lib/platform/identity';
-import { declarationFilterSchema, DECLARATION_OBSERVATION_LIMIT, DECLARATION_VERSION_LIMIT, type DeclarationFilter, type DeclarationListResult, type DeclarationDetail, type DeclarationView, type DeclarationIsolatedRow, type DeclarationRecordRow } from '../../lib/platform/declarations';
+import { DECLARATION_OBSERVATION_LIMIT,DECLARATION_VERSION_LIMIT,declarationFilterSchema,type DeclarationDetail,type DeclarationFilter,type DeclarationIsolatedRow,type DeclarationListResult,type DeclarationRecordRow,type DeclarationView } from '../../lib/platform/declarations';
 import type { PlatformFilterOptions } from '../../lib/platform/filter-options';
-import { fail, pageOf } from './platform-business-read';
+import { normalizeDeclareKind } from '../../lib/platform/identity';
+import { platformObservationAssignment as a,platformBusinessObservation as o,platformLegacyRelationAlias as ra,targetSchema } from '../../lib/platform/target-schema';
+import { fail,pageOf } from './platform-business-read';
 // The old public DTO understates SQLite's legal cells. Keep target cells unknown
 // at this explicit boundary rather than asserting that a BLOB/REAL is a string/int.
-import { withArchiveProcessFacts, type PlatformObservationFact } from '../../lib/platform/observation-facts';
 import type { PlatformNormalizationConflict } from '../../lib/platform/normalization';
+import { withArchiveProcessFacts,type PlatformObservationFact } from '../../lib/platform/observation-facts';
 type ExactCells = { titleRaw: unknown; declareKind: unknown; declarationYear: unknown; appliedAt: unknown; status: unknown };
 export type TargetDeclarationListResult = Omit<DeclarationListResult, 'rows'> & {
     rows: (DeclarationRecordRow | (Omit<DeclarationIsolatedRow, keyof ExactCells> & ExactCells))[];
@@ -31,14 +29,13 @@ export type TargetDeclarationOptions = Omit<PlatformFilterOptions, 'titles' | 'd
 type Db = BetterSQLite3Database<typeof targetSchema> | BetterSQLite3Database<typeof import('../../db/schema')>;
 const previous = alias(a, 'newer_assignment');
 const vp = alias(p, 'version_projection');
+const { id: versionIdentity, ...versionProjectionFields } = getTableColumns(vp);
+const versionColumns = { id: versionIdentity, ...versionProjectionFields };
 function current(db: Db) { return and(eq(a.observationId, o.id), eq(a.revision, db.select({ revision: max(previous.revision) }).from(previous).where(eq(previous.observationId, o.id)))); }
 const isolated = or(ne(o.identityState, 'resolved'), ne(o.contentState, 'verified'), isNull(o.versionId));
 /** Gate the entire apply request domain, before any business filtering or paging.
  * PRAGMA is schema infrastructure; no archive or legacy entity is consulted. */
 function gate(db: Db, domain?: SQL, factScope?: 'annual' | 'selected') {
-    const phase = db.get<{ user_version: number }>(sql`PRAGMA user_version`)?.user_version;
-    if (phase !== 71608 && !((phase === 71613 || (factScope && (phase === 71611 || phase === 71612))) && processStoredInstalled(sqliteConnection(db))))
-        fail(409, 'apply_target_phase', 'Declaration reader requires 71608 or completed 71613');
     const missing = db.select({ id: o.id }).from(o).innerJoin(c, eq(c.id, o.collectionId)).leftJoin(p, eq(p.observationId, o.id))
         .where(and(eq(c.interface, 'apply_list'), domain, or(isNull(p.id), ne(p.exactStoredState, 'captured'), ne(p.sqlFactTitleState, 'captured'), isNull(p.exactStoredState), isNull(p.sqlFactTitleState)))).limit(1).get();
     if (missing)
@@ -158,7 +155,7 @@ export function readTargetDeclarationFacts(db: Db, relationIds: number[], option
         for (let start = 0; start < relationIds.length; start += 400) {
             const ids = relationIds.slice(start, start + 400);
             gate(tx, inArray(o.id, tx.select({ id: ra.observationId }).from(ra).where(inArray(ra.oldId, ids))), options.scope ?? 'annual');
-            const rows = tx.select({ relationId: ra.oldId, source: p, version: vp, originalName: original.nameRaw, originalUscc: original.usccRaw })
+            const rows = tx.select({ relationId: ra.oldId, source: p, version: versionColumns, originalName: original.nameRaw, originalUscc: original.usccRaw })
                 .from(ra).innerJoin(o, eq(o.id, ra.observationId)).innerJoin(c, eq(c.id, o.collectionId)).innerJoin(p, eq(p.observationId, o.id))
                 .leftJoin(vp, and(eq(vp.versionId, o.versionId), eq(vp.recordId, o.recordId)))
                 .leftJoin(original, and(eq(original.observationId, o.id), eq(original.revision, 1)))

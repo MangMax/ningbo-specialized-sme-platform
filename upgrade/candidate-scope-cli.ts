@@ -3,9 +3,9 @@ import Database from 'better-sqlite3'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { finalizeCandidateScopes } from './candidate-scope'
 import { realpathSync, statSync } from 'node:fs'
-import { fileHash } from '../lib/platform/frozen-source'
+import { fileHash } from './frozen-source'
 import { projectionManifest } from './projections'
-import { withFrozenSource } from '../lib/platform/frozen-source'
+import { withFrozenSource } from './frozen-source'
 import { finalizationCatalog } from './finalize-observations'
 const [source,target,evidence,runId,predecessorRunId]=process.argv.slice(2)
 if(!source||!target||!evidence||!runId||!predecessorRunId)throw new Error('Usage: SOURCE_71608 TARGET EVIDENCE RUN_ID PREDECESSOR_RUN_ID')

@@ -3,7 +3,7 @@
 import Database from 'better-sqlite3'
 import {closeSync,openSync,realpathSync,statSync,statfsSync} from 'node:fs'
 import {dirname,resolve} from 'node:path'
-import {fileHash} from '../lib/platform/frozen-source'
+import {fileHash} from './frozen-source'
 import {schemaHash} from '../lib/platform/sqlite-row-cells'
 export async function createOfflineSnapshot(sourcePath:string,snapshotPath:string) {
  const source=realpathSync(sourcePath),snapshot=resolve(snapshotPath),identity=statSync(source)

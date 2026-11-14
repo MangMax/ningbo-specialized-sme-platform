@@ -1,5 +1,6 @@
 /** Ingestion-boundary extraction shared with the frozen-source upgrade. */
 import type * as schema from '../../db/schema'
+import type { PlatformStoredRelation } from './read'
 import { processFactsFromRow } from './identity'
 import { normalizePlatformRelation } from './normalization'
 import { checkedBusinessStatus } from './business-status'
@@ -13,7 +14,7 @@ export function sourceValueKind(v:unknown):Kind {
 }
 const fieldKeys={province:'szsfmc',status:'cszt',batch:'whpc',declareKind:'sblx',appliedAt:'sqsj',awardBatchLabel:'personuuid',year:'year'} as const
 // These seven fields are the accepted normalization contract, not a mixed business table.
-function textFieldComparison(source:string,stored:Omit<Pick<typeof schema.platformRelation.$inferSelect,keyof typeof fieldKeys>, 'declareKind'> & { declareKind: string | null },row:Record<string,unknown>|null,state:'valid'|'invalid'|'absent') {
+function textFieldComparison(source:string,stored:Omit<Pick<PlatformStoredRelation,keyof typeof fieldKeys>, 'declareKind'> & { declareKind: string | null },row:Record<string,unknown>|null,state:'valid'|'invalid'|'absent') {
   const process=source==='apply_list'||source==='business_list'
   // Legacy PlatformRow declares strings, but this parser intentionally checks unknown JSON
   // scalar types itself (as normalizePlatformRelation does); never stringify its inputs.

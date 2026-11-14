@@ -1,15 +1,15 @@
 import { installBusinessStatusPrerequisite } from './business-status'
 import { installReconcileSlotPrerequisite, requireReconcileSlotSchema } from './reconcile-slot-schema'
-import { RECONCILE_SLOT_T04 } from '../lib/platform/reconcile-slot-capture'
+import { RECONCILE_SLOT_T04 } from './frozen/reconcile-slot-capture'
 import { completeReconcileSlotCapture } from './reconcile-slot-capture'
-import { businessStatusRule } from '../lib/platform/business-status-catalog'
+import { businessStatusRule } from './business-status-catalog'
 import { BUSINESS_STATUS_V2 } from '../lib/platform/business-status'
 import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { migrate } from 'drizzle-orm/better-sqlite3/migrator'
 import { closeSync, readSync, openSync, writeSync, writeFileSync, existsSync, statSync } from 'node:fs'
 import { asc, eq, gt } from 'drizzle-orm'
-import * as schema from '../db/schema'
+import * as schema from './legacy-schema'
 import { withFrozenSource, manifest, upgradeCollections } from './collections'
 
 // No defaults: paths must be supplied, and every write is explicitly an isolated target.

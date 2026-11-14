@@ -1,14 +1,14 @@
-import { correspondenceTable, correspondenceTarget } from './record-correspondence-store'
-import { listRecordCorrespondencesForIds } from './record-correspondence'
-import { and, eq, getTableColumns, inArray, sql, type SQL } from 'drizzle-orm'
-import { alias, type SQLiteTable } from 'drizzle-orm/sqlite-core'
+import { and,eq,getTableColumns,sql,type SQL } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
+import { alias,type SQLiteTable } from 'drizzle-orm/sqlite-core'
 import * as s from '../../db/schema'
 import { normalizeUscc } from '../../lib/domain'
-import { currentProofCoversRows, currentRowProofIds } from './comparison-scope-proof'
-import { correspondenceIdentityProblem } from './record-correspondence-identity'
 import { storedProcessProjection } from '../../lib/platform/process-stored-schema'
+import { sourceQueryFields,sourceRelationFields } from '../../lib/platform/source-snapshot-fields'
 import { targetSchema } from '../../lib/platform/target-schema'
+import { listRecordCorrespondencesForIds } from './record-correspondence'
+import { correspondenceIdentityProblem } from './record-correspondence-identity'
+import { correspondenceTable } from './record-correspondence-store'
 
 type Db = BetterSQLite3Database<typeof s>
 const t = s.recordCorrespondence
@@ -56,14 +56,14 @@ function targetSourceMatches(observationId: SQL): SQL {
     return sql`case ${kind} when 'null' then null when 'text' then cast(${bytes} as text) when 'integer' then cast(${bytes} as integer) when 'real' then cast(${bytes} as real) else ${bytes} end`
   }
   const currentAssignment = (column: string) => sql`(select ${sql.identifier(column)} from platform_observation_assignment where observation_id=o.id order by revision desc limit 1)`
-  const relationFields = Object.entries(getTableColumns(s.platformRelation)).map(([key,column]) => {
+  const relationFields = Object.entries(sourceRelationFields).map(([key,column]) => {
     const actual = key==='id' ? sql`ra.old_id` : key==='queryId' ? sql`qa.old_id`
       : key==='enterpriseId' ? currentAssignment('enterprise_id') : key==='matchBasis' ? currentAssignment('match_basis')
       : key==='verificationStatus' ? currentAssignment('verification_status') : original()
     const matches=column.dataType==='json' ? sql`json(${value('$.relation.'+key)}) is json(${actual})` : sql`${value('$.relation.'+key)} is ${actual}`
     return sql`when ${column.name} then ${matches}`
   })
-  const queryFields = Object.entries(getTableColumns(s.platformQuery)).map(([key,column]) => {
+  const queryFields = Object.entries(sourceQueryFields).map(([key,column]) => {
     const actual = key==='id' ? sql`qa.old_id`
       : key==='rawResponse'||key==='collectionEvidence' ? sql`(select cast(v.bytes as text) from platform_collection_archive_ref r join platform_archive_value v on v.id=r.archive_id where r.owner_id=c.id and r.field=${key})`
       : sql`c.${sql.identifier(column.name)}`
@@ -76,13 +76,11 @@ function targetSourceMatches(observationId: SQL): SQL {
     join platform_observation_archive_ref sr on sr.owner_id=o.id and sr.field='legacyRowSnapshot'
     join platform_archive_value snapshot on snapshot.id=sr.archive_id
     where o.id=${observationId}
-      and (select count(*) from json_each(snapshot.bytes,'$.fields') cell where json_extract(cell.value,'$.name') in (${sql.join(Object.values(getTableColumns(s.platformRelation)).map(c=>sql`${c.name}`),sql`, `)}))=${relationFields.length}
+      and (select count(*) from json_each(snapshot.bytes,'$.fields') cell where json_extract(cell.value,'$.name') in (${sql.join(Object.values(sourceRelationFields).map(c=>sql`${c.name}`),sql`, `)}))=${relationFields.length}
       and not exists(select 1 from json_each(snapshot.bytes,'$.fields') cell where not(case json_extract(cell.value,'$.name') ${sql.join(relationFields,sql` `)} else 1 end))
       and ${and(...queryFields)})`
 }
 const owner = alias(s.enterprise,'ref_owner')
-const relation = alias(s.platformRelation,'ref_relation')
-const target = alias(s.enterprise,'ref_target')
 /** Narrow reverse-link validity, with the same immutable source/change boundary.
  * Proof revalidation retains its existing service behind a 64KiB read budget;
  * a larger proof is explicitly unknown/requiresRevalidation, never assumed valid.
@@ -94,22 +92,22 @@ export function correspondenceRefValidity(db: Db, ids: number[]): Map<number, bo
 /** Reuse compilation only. Each invocation revalidates live source rows and proofs;
  * no validity result, archive or source fingerprint survives the call. */
 export function createCorrespondenceRefValidityReader(db: Db) {
-  if (correspondenceTarget(db)) {
+
     const target = correspondenceTable(db)
     const blobStatuses = db.select({ id: target.id }).from(target)
-      .innerJoin(storedProcessProjection, eq(storedProcessProjection.observationId, target.relationId))
+      .innerJoin(storedProcessProjection, eq(storedProcessProjection.observationId, target.observationId))
       .where(and(sql`${target.id} in (select value from json_each(${sql.placeholder('ids')}))`, sql`typeof(${storedProcessProjection.storedStatus}) = 'blob'`)).prepare()
     const sourceMatches = and(
       sql`case when ${target.eventId} is null then ${value('$.event')} is null else ${eventMatches(sql`${target.eventId}`,'')} end`,
       sql`case when ${target.predecessorEventId} is null then ${value('$.predecessor')} is null else ${eventMatches(sql`${target.predecessorEventId}`,'$.predecessor')} end`,
-      sql`case when ${target.relationId} is null then ${value('$.relation')} is null and ${value('$.query')} is null else ${targetSourceMatches(sql`${target.relationId}`)} end`,
+      sql`case when ${target.observationId} is null then ${value('$.relation')} is null and ${value('$.query')} is null else ${targetSourceMatches(sql`${target.observationId}`)} end`,
       sql`case when ${target.exportRowId} is null then ${value('$.exportRow')} is null and ${value('$.exportBatch')} is null else ${rowMatches(s.platformExportRow,'$.exportRow',sql`${target.exportRowId}`)} and ${rowMatches(s.platformExportBatch,'$.exportBatch',sql`(select ${s.platformExportRow.batchId} from ${s.platformExportRow} where ${s.platformExportRow.id}=${target.exportRowId})`)} end`,
     )!
     const assignment=targetSchema.platformObservationAssignment
     const prepared=db.select({id:target.id,type:target.type,role:target.role,enterpriseId:target.enterpriseId,titleCode:target.titleCode,
       matches:sql<number>`${sourceMatches}`,relationEnterpriseId:assignment.enterpriseId,relationStatus:assignment.verificationStatus,
       relationUscc:sql<string|null>`${value('$.relation.usccRaw')}`,ownerId:owner.id,ownerUscc:owner.usccNorm,targetId:s.enterprise.id,targetUscc:s.enterprise.usccNorm,targetTitle:s.title.code,
-    }).from(target).leftJoin(assignment,and(eq(assignment.observationId,target.relationId),eq(assignment.revision,sql`(select max(revision) from platform_observation_assignment where observation_id=${target.relationId})`)))
+    }).from(target).leftJoin(assignment,and(eq(assignment.observationId,target.observationId),eq(assignment.revision,sql`(select max(revision) from platform_observation_assignment where observation_id=${target.observationId})`)))
       .leftJoin(owner,eq(owner.id,assignment.enterpriseId)).leftJoin(s.enterprise,eq(s.enterprise.id,target.enterpriseId)).leftJoin(s.title,eq(s.title.code,target.titleCode))
       .where(sql`${target.id} in (select value from json_each(${sql.placeholder('ids')}))`).prepare()
     return (ids: number[]) => {
@@ -131,57 +129,5 @@ export function createCorrespondenceRefValidityReader(db: Db) {
       for (const row of blobStatuses.all({ ids: JSON.stringify(ids) })) validity.set(row.id, true)
       return validity
     }
-  }
-  const checks = and(
-    sql`case when ${t.eventId} is null then ${value('$.event')} is null else ${eventMatches(sql`${t.eventId}`,'')} end`,
-    sql`case when ${t.predecessorEventId} is null then ${value('$.predecessor')} is null else ${eventMatches(sql`${t.predecessorEventId}`,'$.predecessor')} end`,
-    sql`case when ${t.relationId} is null then ${value('$.relation')} is null and ${value('$.query')} is null else ${rowMatches(s.platformRelation,'$.relation',sql`${t.relationId}`)} and ${rowMatches(s.platformQuery,'$.query',sql`(select ${s.platformRelation.queryId} from ${s.platformRelation} where ${s.platformRelation.id} = ${t.relationId})`)} end`,
-    sql`case when ${t.exportRowId} is null then ${value('$.exportRow')} is null and ${value('$.exportBatch')} is null else ${rowMatches(s.platformExportRow,'$.exportRow',sql`${t.exportRowId}`)} and ${rowMatches(s.platformExportBatch,'$.exportBatch',sql`(select ${s.platformExportRow.batchId} from ${s.platformExportRow} where ${s.platformExportRow.id} = ${t.exportRowId})`)} end`,
-  )!
-  const prepared = db.select({ id:t.id, relationUscc:relation.usccRaw, relationEnterpriseId:relation.enterpriseId, relationStatus:relation.verificationStatus, ownerId:owner.id, ownerUscc:owner.usccNorm, targetId:target.id, targetUscc:target.usccNorm, targetTitle:s.title.code, matches: sql<number>`${checks}`, type:t.type, role:t.role, enterpriseId:t.enterpriseId, titleCode:t.titleCode, relationId:t.relationId, exportRowId:t.exportRowId,
-    proofIds: sql`json_extract(${t.provenance}, '$.comparisonProofIds')`.mapWith({mapFromDriverValue:(v: string|null) => v ? JSON.parse(v) as number[] : []}),
-  }).from(t).leftJoin(relation,eq(relation.id,t.relationId)).leftJoin(owner,eq(owner.id,relation.enterpriseId)).leftJoin(target,eq(target.id,t.enterpriseId)).leftJoin(s.title,eq(s.title.code,t.titleCode)).where(sql`${t.id} in (select value from json_each(${sql.placeholder('ids')}))`).prepare()
-  return (ids: number[]): Map<number, boolean> => {
-    if (!ids.length) return new Map()
-    const rows = prepared.all({ ids: JSON.stringify(ids) })
-    return new Map(rows.map(row => [row.id, needsRevalidation(row)]))
-  }
 
-  function needsRevalidation(row: ReturnType<typeof prepared.all>[number]): boolean {
-    if (!row.matches) return true
-    if (row.relationEnterpriseId && row.relationUscc && (!row.ownerId || row.ownerUscc && normalizeUscc(row.ownerUscc) !== normalizeUscc(row.relationUscc))) return true
-    if (row.type === 'later_process') {
-      if (!row.targetId || !row.targetTitle || correspondenceIdentityProblem({ enterpriseId:row.enterpriseId, uscc:row.targetUscc }, { enterpriseId:row.relationEnterpriseId, uscc:row.relationUscc }, true)) return true
-      if (!normalizeUscc(row.relationUscc) && row.relationStatus !== 'confirmed') return true
-    }
-    if (row.type === 'recognized_export' && row.role === 'same_current_row') {
-      // Existing proof service hashes its full source set. Refuse an unbounded
-      // source set before calling it, without materializing those source rows.
-      const proofIds = currentRowProofIds(db,row.proofIds,row.relationId!,row.exportRowId!)
-      if (!proofIds.length) return true
-      const proof = s.comparisonScopeProof
-      const queryId = sql`json_extract(${proof.evidence}, '$.queryId')`
-      const batchId = sql`json_extract(${proof.evidence}, '$.exportBatchId')`
-      const freezeId = sql`json_extract(${proof.evidence}, '$.scope.freezeFileId')`
-      const bytes = (table: SQLiteTable) => sql.join(Object.values(getTableColumns(table)).map(column => sql`coalesce(length(cast(${column} as blob)),0)`),sql` + `)
-      // Sum per proof, not per distinct source: the existing service reads each
-      // proof's full source and audit separately, including its freeze file.
-      // Also include the two endpoint rows read by currentProofCoversRows itself.
-      const budget = db.get<{bytes:number}>(sql`select
-        coalesce((select sum(
-          ${bytes(proof)} +
-          coalesce((select sum(${bytes(s.comparisonScopeProofAudit)}) from ${s.comparisonScopeProofAudit} where ${s.comparisonScopeProofAudit.proofId} = ${proof.id}),0) +
-          coalesce((select ${bytes(s.platformQuery)} from ${s.platformQuery} where ${s.platformQuery.id} = ${queryId}),0) +
-          coalesce((select sum(${bytes(s.platformRelation)}) from ${s.platformRelation} where ${s.platformRelation.queryId} = ${queryId}),0) +
-          coalesce((select ${bytes(s.platformExportBatch)} from ${s.platformExportBatch} where ${s.platformExportBatch.id} = ${batchId}),0) +
-          coalesce((select sum(${bytes(s.platformExportRow)}) from ${s.platformExportRow} where ${s.platformExportRow.batchId} = ${batchId}),0) +
-          coalesce((select ${bytes(s.storedFile)} from ${s.storedFile} where ${s.storedFile.id} = ${freezeId}),0)
-        ) from ${proof} where ${inArray(proof.id,proofIds)}),0) +
-        coalesce((select ${bytes(s.platformRelation)} from ${s.platformRelation} where ${s.platformRelation.id} = ${row.relationId}),0) +
-        coalesce((select ${bytes(s.platformExportRow)} from ${s.platformExportRow} where ${s.platformExportRow.id} = ${row.exportRowId}),0) as bytes`)
-      if (!budget || budget.bytes > 65536) return true
-      return !currentProofCoversRows(db,proofIds,row.relationId!,row.exportRowId!)
-    }
-    return false
-  }
 }

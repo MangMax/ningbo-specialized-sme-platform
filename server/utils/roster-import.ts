@@ -1,15 +1,15 @@
-import { collectionImportTarget, collectionImportSource, collectionImportPreview, writeImportedCollection, verifyImportedCollectionFields, historicalObservationPlan, ensureHistoricalObservation } from './collection-import-target'
+import { collectionImportSource,collectionImportPreview,writeImportedCollection,verifyImportedCollectionFields,historicalObservationPlan,ensureHistoricalObservation } from './collection-import-target'
 import { targetCandidateTables } from './candidate-target-sources'
 import { targetDifferenceReason } from '../../lib/platform/difference-reference-target'
-import { readDifferenceCollection, readDifferenceCollectionScope, readDifferenceObservation } from '../../lib/platform/difference-sources'
+import { readDifferenceCollection,readDifferenceCollectionScope,readDifferenceObservation } from '../../lib/platform/difference-sources'
 import { queryEvidenceError } from '../../lib/platform/query-evidence'
-import { platformQueryInsertMetadata, platformQuerySourceConflict, stagedPlatformQuerySource, type PlatformQueryReplaySource } from '../../lib/platform/query-replay'
+import { platformQuerySourceConflict,stagedPlatformQuerySource,type PlatformQueryReplaySource } from '../../lib/platform/query-replay'
 import { enqueueArchivedCandidates } from './jobs/candidate-discovery'
 import { managedDecision102 } from './decision-lifecycle-102'
-import { verifyPlatformFields, applyProjectionPreview, assertPlatformObservationReplay, businessProjectionPreview, ensurePlatformObservation, planPlatformObservation, PlatformProjectionError, projectionPreview, readPlatformObservationPlan, recognizedProjectionPreview } from './platform-business-record'
-import type { PlatformProjectionResult, PlatformProjectionSummary } from '../../lib/platform/business-record'
+import { applyProjectionPreview,businessProjectionPreview,planPlatformObservation,PlatformProjectionError,projectionPreview,recognizedProjectionPreview } from './platform-business-record'
+import type { PlatformProjectionResult,PlatformProjectionSummary } from '../../lib/platform/business-record'
 import { isDeepStrictEqual } from 'node:util'
-import { RDJB_TITLE_CODES, sourcePositionForSequence } from '../../lib/platform/recognized-evidence'
+import { RDJB_TITLE_CODES } from '../../lib/platform/recognized-evidence'
 import { normalizePlatformRelation } from '../../lib/platform/normalization'
 /**
  * 名录统一导入的**核心实现**（RL-11）—— 预检与单批事务提交（契约 §8）。
@@ -31,48 +31,46 @@ import { normalizePlatformRelation } from '../../lib/platform/normalization'
  */
 
 import { createHash } from 'node:crypto'
-import { and, desc, eq, inArray, isNull, ne, sql, type SQL } from 'drizzle-orm'
+import { and,desc,eq,inArray,isNull,ne,sql,type SQL } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../db/schema'
 import { isPageCapable } from '../../lib/roster/evidence-page'
-import { normalizeName, normalizeUscc } from '../../lib/domain'
+import { normalizeName,normalizeUscc } from '../../lib/domain'
 import { duplicateTwinKey } from '../../lib/roster/duplicate-merge'
-import { missingUsccSourceFields, usccFormatVerdict } from '../../lib/roster/uscc-research'
-import { diagnoseOfficialEventFields, readCurrentQualificationAssessment } from '../../lib/roster/current-qualification'
-import { PLATFORM_INTERFACE_VALUES, TITLE_ORDER, type PlatformInterface } from '../../lib/labels'
+import { missingUsccSourceFields,usccFormatVerdict } from '../../lib/roster/uscc-research'
+import { diagnoseOfficialEventFields,readCurrentQualificationAssessment } from '../../lib/roster/current-qualification'
+import { PLATFORM_INTERFACE_VALUES,TITLE_ORDER,type PlatformInterface } from '../../lib/labels'
 import type {
-  DuplicateNameCandidate,
-  RosterImportAlias,
-  RosterImportAnnouncement,
-  RosterImportDifference,
-  RosterImportEvidence,
-  RosterImportEvent,
-  RosterImportExportSnapshot,
-  RosterImportItemResult,
-  RosterImportMerge,
-  RosterImportPayload,
-  RosterImportPlatformQuery,
-  RosterImportRelation,
-  RosterImportPreflight,
-  RosterImportQualificationDiagnostic,
-  RosterImportHistoricalQualificationDiagnostics,
-  RosterImportAfterQualificationReadback,
-  RosterImportReplayResponse,
-  RosterImportRequest,
-  RosterImportSummary,
-  RosterImportUsccBackfill,
+DuplicateNameCandidate,
+RosterImportAlias,
+RosterImportAnnouncement,
+RosterImportDifference,
+RosterImportEvidence,
+RosterImportEvent,
+RosterImportExportSnapshot,
+RosterImportItemResult,
+RosterImportMerge,
+RosterImportPayload,
+RosterImportPlatformQuery,RosterImportPreflight,
+RosterImportQualificationDiagnostic,
+RosterImportHistoricalQualificationDiagnostics,
+RosterImportAfterQualificationReadback,
+RosterImportReplayResponse,
+RosterImportRequest,
+RosterImportSummary,
+RosterImportUsccBackfill
 } from '../../lib/roster-import-client'
-import { officialAppendSchema, officialPublishedRowSchema, planOfficialEvidenceChanges, resolveOfficialDeclaration, verifyOfficialDeclaration, writeOfficialPublishedRow, readOfficialFile, officialPlanDigest, OfficialFactError, type OfficialClaimChange, type OfficialCoordinate } from './official-evidence-plan'
+import { officialAppendSchema,officialPublishedRowSchema,planOfficialEvidenceChanges,resolveOfficialDeclaration,verifyOfficialDeclaration,writeOfficialPublishedRow,readOfficialFile,officialPlanDigest,OfficialFactError,type OfficialClaimChange,type OfficialCoordinate } from './official-evidence-plan'
 import { OfficialEvidenceError } from './official-evidence'
-import { evidenceCorrectionRequestSchema, planEvidenceCorrectionTargets, writeImportedEvidenceCorrection } from './roster-evidence-correction'
+import { evidenceCorrectionRequestSchema,planEvidenceCorrectionTargets,writeImportedEvidenceCorrection } from './roster-evidence-correction'
 import { advanceOfficialEventRevision } from './roster-event-version'
-import { ensureBatchRow, findBatchByKey } from './roster-batch-ledger'
-import { captureIdentityRevision113, captureQueryRevision113, identityMaterial113, selectedSnapshot113, captureSnapshotRevision113, captureOfficialEventRevision113 } from './evidence-impact-113'
+import { ensureBatchRow,findBatchByKey } from './roster-batch-ledger'
+import { captureIdentityRevision113,identityMaterial113,selectedSnapshot113,captureSnapshotRevision113,captureOfficialEventRevision113 } from './evidence-impact-113'
 import { recordImportReceipt } from './import-receipt-ledger'
 import { refreshDerivedFileParts } from './file-parts'
 import { legacyPlatformProvenanceItemsSchema } from '../../lib/platform/legacy-provenance'
-import { inspectLegacyPlatformProvenance, writeLegacyPlatformProvenance, LegacyProvenanceError } from './platform-legacy-provenance'
-import { canonicalEnterpriseId, currentEnterpriseIdentity } from '../../lib/roster/enterprise-identity'
+import { inspectLegacyPlatformProvenance,writeLegacyPlatformProvenance,LegacyProvenanceError } from './platform-legacy-provenance'
+import { canonicalEnterpriseId,currentEnterpriseIdentity } from '../../lib/roster/enterprise-identity'
 import { mergeTargetEnterpriseIdentity } from './enterprise-merge-target'
 
 type Db = BetterSQLite3Database<typeof schema>
@@ -114,8 +112,8 @@ const ALIAS_SOURCE_KINDS = enumSet(schema.enterpriseAlias.sourceKind.enumValues)
 const VERIFICATION_STATUSES = enumSet(schema.enterpriseAlias.verificationStatus.enumValues)
 /** 平台接口取值集 = `lib/labels.ts` 的唯一出处（契约 §2.4）。 */
 const PLATFORM_INTERFACE_SET = new Set<string>(PLATFORM_INTERFACE_VALUES)
-const QUERY_STATUSES = enumSet(schema.platformQuery.status.enumValues)
-const MATCH_BASES = enumSet(schema.platformRelation.matchBasis.enumValues)
+const QUERY_STATUSES = enumSet(schema.platformCollection.status.enumValues)
+const MATCH_BASES = enumSet(schema.platformObservationAssignment.matchBasis.enumValues)
 const DIRECTIONS = enumSet(schema.differenceReason.direction.enumValues)
 const DIFFERENCE_STATUSES = enumSet(schema.differenceReason.status.enumValues)
 const DIFFERENCE_REASONS = enumSet(schema.differenceReason.reasonCode.enumValues)
@@ -123,7 +121,6 @@ const DIFFERENCE_MEASURES = enumSet(schema.differenceReason.measureCode.enumValu
 // Correspondence decisions share the batch ledger, but are never a roster-import payload.
 const IMPORT_SOURCE_KINDS = new Set<string>(['announcement', 'platform_export', 'platform_archive', 'alias_evidence'])
 /** `sblx` 的字典取值；之外的**原样入库 + 标待核**（不因未知取值崩溃）。 */
-const DECLARE_KINDS = enumSet(schema.platformRelation.declareKind.enumValues)
 
 // ---------------------------------------------------------------------------
 // 小工具
@@ -637,7 +634,7 @@ interface PendingPlatformRef {
 type PendingPlatformRefs = PendingPlatformRef[]
 
 /** 从载荷里收集「本批将写入」的平台查询自然键。 */
-function collectPendingPlatformRefs(payload: RosterImportPayload, target = false): PendingPlatformRefs {
+function collectPendingPlatformRefs(payload: RosterImportPayload): PendingPlatformRefs {
   const out: PendingPlatformRefs = []
   for (const query of Array.isArray(payload.platformQueries) ? payload.platformQueries : []) {
     if (!isObject(query)) continue
@@ -646,7 +643,7 @@ function collectPendingPlatformRefs(payload: RosterImportPayload, target = false
     const queriedAt = optionalString((query as { queriedAt?: unknown }).queriedAt)
     if (!iface || !queryKey || !queriedAt) continue
     const relations = (query as { relations?: unknown }).relations
-    if (target && out.some(q => q.interface === iface && q.queryKey === queryKey && q.rdjb === (optionalString(query.rdjb) ?? '') && q.queriedAt === queriedAt)) continue
+    if (out.some(q => q.interface === iface && q.queryKey === queryKey && q.rdjb === (optionalString(query.rdjb) ?? '') && q.queriedAt === queriedAt)) continue
     out.push({
       collectionEvidence: query.collectionEvidence,
       interface: iface,
@@ -732,7 +729,7 @@ function normalizeRef(ref: unknown, field: string): { ok: true; value: Normalize
  * 两种情况都只取 `id`，所以都不会碰 `raw_response` —— 那是本条路径真正省下的字节。
  */
 function importPlatformTables(db: Executor) {
-  return collectionImportTarget(db) ? targetCandidateTables(db) : { q: schema.platformQuery, r: schema.platformRelation }
+  return targetCandidateTables(db)
 }
 
 function platformQueryWhere(ref: NormalizedRef, q: ReturnType<typeof importPlatformTables>['q']) {
@@ -760,7 +757,7 @@ function refCandidates(source: Executor, pending: PendingPlatformRefs, ref: Norm
       .from(q)
       .where(platformQueryWhere(ref, q))
       .all(),
-    pendingHits: pending.filter(matches).filter(candidate => !collectionImportTarget(source) || !findQueryRow(source, { interface: candidate.interface as PlatformInterface, queryKey: candidate.queryKey, rdjb: candidate.rdjb, queriedAt: candidate.queriedAt })),
+    pendingHits: pending.filter(matches).filter(candidate => !findQueryRow(source, { interface: candidate.interface as PlatformInterface, queryKey: candidate.queryKey, rdjb: candidate.rdjb, queriedAt: candidate.queriedAt })),
   }
 }
 
@@ -820,7 +817,7 @@ function resolveRelationRefPlan(source: Executor, pending: PendingPlatformRefs, 
       ),
       ...pendingHits
         .filter((query) => query.sequenceNos.includes(ref.sequenceNo!))
-        .map((query) => (collectionImportTarget(source) ? query.relations.find(r => r.sequenceNo === ref.sequenceNo)?.relationKey ?? null : query.relationKeys.includes(ref.relationKey!) ? ref.relationKey : null)),
+        .map((query) => (query.relations.find(r => r.sequenceNo === ref.sequenceNo)?.relationKey ?? null)),
     ].filter((key): key is string => key != null)
     const anyKey = [
       ...dbHits.flatMap((query) => relationsOf(query).map((relation) => relation.relationKey)),
@@ -1401,7 +1398,7 @@ export function planRosterImport(
   /** 本批新建主体的名称与统代（用于确认平台别名/按名归并是否只有一个真实候选）。 */
   const pendingEnterpriseCreates: PendingEnterpriseCreate[] = []
   /** 本批将写入的平台查询自然键（供别名 / 差异 / 归并在预检时解析到同批关系行）。 */
-  const pendingRefs: PendingPlatformRefs = collectPendingPlatformRefs(payload, collectionImportTarget(db))
+  const pendingRefs: PendingPlatformRefs = collectPendingPlatformRefs(payload)
   /** 先看整份载荷，标出同一出处行被指向多个不同目标路径的冲突。 */
   const announcementRecords = Array.isArray(payload.announcement?.records) ? payload.announcement.records : []
   const announcementIdentityPlan = payload.announcement && mode === 'write'
@@ -1524,7 +1521,7 @@ export function planRosterImport(
   for (const { relationId } of payload.platformRecordObservations ?? []) {
     const expected = previousSources?.find(row => row.relationId === relationId)?.inputFingerprint
     try {
-      const projection = collectionImportTarget(db) ? historicalObservationPlan(db, relationId) : readPlatformObservationPlan(db, relationId)
+      const projection = historicalObservationPlan(db, relationId)
       platformObservationSources.push({ relationId, inputFingerprint: expected ?? projection.inputFingerprint })
       if (expected && projection.inputFingerprint !== expected) throw new PlatformProjectionError('projection_source_drift', `Original relation ${relationId} changed since preflight`)
       const apply = applyProjectionPreview(projection)
@@ -1603,7 +1600,7 @@ export function planRosterImport(
 
 function projectionItem(tx: Executor, relationId: number, batchId?: number, expected?: string): RosterImportItemResult {
   try {
-    return success('platform_observation', `relation:${relationId}`, { canonicalProjection: [collectionImportTarget(tx) ? ensureHistoricalObservation(tx, relationId, batchId, expected) : ensurePlatformObservation(tx, relationId, batchId, expected)], rowsWritten: 0 })
+    return success('platform_observation', `relation:${relationId}`, { canonicalProjection: [ensureHistoricalObservation(tx, relationId, batchId, expected)], rowsWritten: 0 })
   } catch (error) {
     if (!(error instanceof PlatformProjectionError)) throw error
     return failure('platform_observation', `relation:${relationId}`, error.code, error.message)
@@ -2709,8 +2706,8 @@ function sameDifferenceContent(left: DifferenceRow, right: DifferenceRow): boole
     left.reasonNote === right.reasonNote &&
     left.measureCode === right.measureCode &&
     left.measureNote === right.measureNote &&
-    left.evidenceQueryId === right.evidenceQueryId &&
-    left.evidenceRelationId === right.evidenceRelationId &&
+    left.evidenceCollectionId === right.evidenceCollectionId &&
+    left.evidenceObservationId === right.evidenceObservationId &&
     left.movedInCity === right.movedInCity &&
     left.movedInTitleCode === right.movedInTitleCode &&
     left.movedInYear === right.movedInYear &&
@@ -2969,41 +2966,7 @@ function planAlias(
 // --- 平台查询与关系 --------------------------------------------------------
 
 function archivedPlatformQuerySource(db: Executor, queryId: number): PlatformQueryReplaySource {
-  if (collectionImportTarget(db)) return collectionImportSource(db, queryId)
-  const original = db.select().from(schema.platformQuery).where(eq(schema.platformQuery.id, queryId)).get()!
-  return {
-    ref: `query:${queryId}`,
-    metadata: original,
-    relationCount: db.get<{ n: number }>(sql`SELECT count(*) n FROM platform_relation WHERE query_id=${queryId}`)!.n,
-    relationAt: sequenceNo => {
-      const relation = db.select().from(schema.platformRelation).where(and(eq(schema.platformRelation.queryId, queryId), eq(schema.platformRelation.sequenceNo, sequenceNo))).get()
-      return relation ? { values: relation, id: relation.id, ref: `relation:${relation.id}`, assertOriginal: input => assertPlatformObservationReplay(db, relation.id, { interface: original.interface, ...input }) } : undefined
-    },
-  }
-}
-
-function queryReplayConflict(db: Executor, query: RosterImportPlatformQuery, queryId: number): RosterImportItemResult | null {
-  return platformQuerySourceConflict(query, archivedPlatformQuerySource(db, queryId))
-}
-
-function reusedPlatformQuery(db: Executor, queryId: number, query: RosterImportPlatformQuery, batchId?: number): RosterImportItemResult {
-  const projections: PlatformProjectionResult[] = []
-  for (const relation of query.relations ?? []) {
-    const archived = findRelationRow(db, { queryId, sequenceNo: relation.sequenceNo })!
-    // Preserve the existing full-row replay contract. Explicit references and
-    // omitted row originals never bootstrap a projection from normalized columns.
-    if (query.reuseExisting !== true && isObject(relation.rawFields)) {
-      try { projections.push(ensurePlatformObservation(db, archived.id, batchId)) }
-      catch (error) {
-        if (!(error instanceof PlatformProjectionError)) throw error
-        return failure('platform_relation', `relation:${archived.id}`, error.code, error.message, 'relations')
-      }
-    } else {
-      const stored = db.select().from(schema.platformBusinessObservation).where(eq(schema.platformBusinessObservation.relationId, archived.id)).get()
-      if (stored) projections.push({ ...projectionPreview(readPlatformObservationPlan(db, archived.id)), recordId: stored.recordId, versionId: stored.versionId, recordCreated: false, versionCreated: false, observationCreated: false })
-    }
-  }
-  return success('platform_query', `query:${queryId}`, { relations: [], skipped: new Set((query.relations ?? []).map(row => row.sequenceNo)).size, canonicalProjection: projections, rowsWritten: 0, reuseExisting: true })
+  return collectionImportSource(db, queryId)
 }
 
 function planPlatformQuery(
@@ -3047,7 +3010,6 @@ function planPlatformQuery(
     push({ item: failure('platform_query', ref, 'title_unknown', `称号不在字典内：${String(query.titleCode)}`, 'titleCode'), action: 'skip', review: false })
     return
   }
-  const rdjb = optionalString(query.rdjb) ?? ''
   for (let i = 0; i < (query.relations ?? []).length; i += 1) {
     const relation = query.relations![i]!
     if (optionalInt(relation?.sequenceNo) == null) {
@@ -3084,8 +3046,8 @@ function planPlatformQuery(
   push({
     item: success('platform_query', existing ? `query:${existing.id}` : ref, { relationCount: newRelationCount, canonicalProjection: (query.relations ?? []).map(relation => {
       const archived = source.relationAt(relation.sequenceNo)
-      const projection = archived?.id != null && !collectionImportTarget(db) ? readPlatformObservationPlan(db, archived.id) : planPlatformObservation({ interface: query.interface, relationKey: optionalString(archived?.values.relationKey), rawFields: archived?.values.rawFields })
-      if (archived?.id != null && collectionImportTarget(db)) return { ...collectionImportPreview(db, archived.id), identityState: projection.identityState, contentState: projection.contentState, keySource: projection.keySource }
+      const projection = planPlatformObservation({ interface: query.interface, relationKey: optionalString(archived?.values.relationKey), rawFields: archived?.values.rawFields })
+      if (archived?.id != null) return { ...collectionImportPreview(db, archived.id), identityState: projection.identityState, contentState: projection.contentState, keySource: projection.keySource }
       const apply = applyProjectionPreview(projection)
       const business = businessProjectionPreview(projection)
       const recognized = recognizedProjectionPreview(projection)
@@ -3105,92 +3067,7 @@ function writePlatformQuery(
   query: RosterImportPlatformQuery,
   batchId?: number,
 ): RosterImportItemResult {
-  if (collectionImportTarget(tx)) return writeImportedCollection(tx, query, batchId)
-  const rdjb = optionalString(query.rdjb) ?? ''
-  const existing = findQueryRow(tx, {
-    interface: query.interface,
-    queryKey: query.queryKey,
-    rdjb,
-    queriedAt: query.queriedAt,
-  })
-  if (existing) return queryReplayConflict(tx, query, existing.id) ?? reusedPlatformQuery(tx, existing.id, query, batchId)
-  if (query.reuseExisting) return failure('platform_query', 'query:reuse', 'query_reuse_missing', 'No original collection exists at these coordinates', 'reuseExisting')
-  const queryRow = { id: tx.insert(schema.platformQuery).values({
-    interface: query.interface, queryKey: query.queryKey, rdjb,
-    queriedAt: query.queriedAt, ...platformQueryInsertMetadata(query),
-  }).returning({ id: schema.platformQuery.id }).get().id, created: true }
-  const queryId = queryRow.id
-  const relations: number[] = []
-  const canonicalProjection = []
-  let skipped = 0
-  for (const archivedRelation of query.relations ?? []) {
-    const relation = normalizePlatformRelation(query.interface, archivedRelation)
-    const sequenceNo = optionalInt(relation.sequenceNo)!
-    const archived = findRelationRow(tx, { queryId, sequenceNo })
-    if (archived) {
-      const repeated = { ...query, relations: [archivedRelation] }
-      const conflict = queryReplayConflict(tx, { ...repeated, reuseExisting: true }, queryId)
-      if (conflict) return conflict
-      const reused = reusedPlatformQuery(tx, queryId, repeated, batchId)
-      if (!reused.ok) return reused
-      canonicalProjection.push(...((reused.detail?.canonicalProjection as PlatformProjectionResult[] | undefined) ?? []))
-      skipped += 1
-      continue
-    }
-    // 归属：显式 > 精确统代匹配；匹配不到**留空待核**（不模糊推断）。
-    const declareKindRaw = optionalString(relation.declareKind)
-    const unknownDeclare = !!declareKindRaw && !DECLARE_KINDS.has(declareKindRaw)
-    const enterpriseId =
-      optionalInt(relation.enterpriseId) ?? enterpriseByExactUscc(tx, relation.usccRaw) ?? null
-    const matchBasis =
-      relation.matchBasis ??
-      (optionalInt(relation.enterpriseId) != null
-        ? 'manual'
-        : enterpriseId != null
-          ? 'uscc'
-          : 'none')
-    const verificationStatus =
-      relation.verificationStatus ?? (enterpriseId != null && !unknownDeclare ? 'confirmed' : 'pending')
-    const id = tx
-      .insert(schema.platformRelation)
-      .values({
-        queryId,
-        sequenceNo,
-        relationKey: optionalString(relation.relationKey),
-        enterpriseId,
-        rawFields: relation.rawFields ?? null,
-        sourceText: optionalString(relation.sourceText),
-        usccRaw: optionalString(relation.usccRaw),
-        nameRaw: optionalString(relation.nameRaw),
-        aliasNameRaw: optionalString(relation.aliasNameRaw),
-        province: optionalString(relation.province),
-        status: optionalString(relation.status),
-        batch: optionalString(relation.batch),
-        // 非字典取值原样入库（drizzle 的 enum 只是编译期约束）。
-        declareKind: (declareKindRaw ?? null) as 'apply' | 'update' | 'review' | null,
-        appliedAt: optionalString(relation.appliedAt),
-        awardBatchLabel: optionalString(relation.awardBatchLabel),
-        year: optionalInt(relation.year),
-        matchBasis,
-        verificationStatus,
-      })
-      .returning({ id: schema.platformRelation.id })
-      .get().id
-    relations.push(id)
-    try { canonicalProjection.push(ensurePlatformObservation(tx, id, batchId)) }
-    catch (error) {
-      if (!(error instanceof PlatformProjectionError)) throw error
-      return failure('platform_relation', `relation:${id}`, error.code, error.message)
-    }
-  }
-  if (queryRow.created || relations.length) captureQueryRevision113(tx, queryId)
-  return success('platform_query', `query:${queryId}`, {
-    relations,
-    skipped,
-    canonicalProjection,
-    /** 真正插入的行数：新查询行 + 新关系行（重放时全为 0）。 */
-    rowsWritten: (queryRow.created ? 1 : 0) + relations.length,
-  })
+  return writeImportedCollection(tx, query, batchId)
 }
 
 // --- 导出快照 --------------------------------------------------------------
@@ -3464,36 +3341,7 @@ function targetImportDifferenceEvidenceError(db: Executor, pending: PendingPlatf
 }
 
 function recognizedDifferenceEvidenceError(db: Executor, pending: PendingPlatformRefs, refs: EvidenceRefs, difference: RosterImportDifference): string | null {
-  if (collectionImportTarget(db)) return targetImportDifferenceEvidenceError(db, pending, refs, difference)
-  const queryAt = (id: number | null, ref: NormalizedRef | null) => {
-    const resolved = id ?? (ref ? resolveQueryIdAt(db, ref) : null)
-    if (resolved != null) return db.select().from(schema.platformQuery).where(eq(schema.platformQuery.id, resolved)).get()
-    return ref ? pending.find(q => q.interface === ref.interface && q.queryKey === ref.queryKey && q.rdjb === ref.rdjb && (!ref.queriedAt || q.queriedAt === ref.queriedAt)) : undefined
-  }
-  const query = queryAt(refs.queryIdLiteral, refs.queryRef)
-  const relationId = refs.relationIdLiteral ?? (refs.relationRef ? resolveRelationIdAt(db, refs.relationRef) : null)
-  const relationQuery = relationId != null
-    ? queryAt(db.select({ id: schema.platformRelation.queryId }).from(schema.platformRelation).where(eq(schema.platformRelation.id, relationId)).get()?.id ?? null, null)
-    : queryAt(null, refs.relationRef)
-  if (query?.interface !== 'recognized_list' && relationQuery?.interface !== 'recognized_list') return null
-  const identity = (q: NonNullable<typeof query>) => JSON.stringify([q.interface, q.queryKey, q.rdjb, q.queriedAt])
-  if (query && relationQuery && identity(query) !== identity(relationQuery)) return 'Query and relation evidence must identify the same source query'
-  const source = relationQuery ?? query
-  if (!source || source.interface !== 'recognized_list') return 'Wrong source for recognized evidence'
-  const target = locateEnterprise(db, { name: difference.enterpriseName, uscc: difference.uscc })
-  const suppliedUscc = usccOrNull(difference.uscc)
-  if (suppliedUscc && target && suppliedUscc !== target.usccNorm) return 'Supplied USCC conflicts with the resolved enterprise'
-  const targetUscc = suppliedUscc ?? target?.usccNorm
-  if (!targetUscc) return 'Recognized evidence cannot confirm subject by name alone'
-  if (!source.rdjb.split(',').some(rdjb => RDJB_TITLE_CODES[rdjb] === difference.titleCode)) return 'Evidence title scope does not include decision title'
-  if (refs.relationRef || refs.relationIdLiteral) {
-    const relation = relationId != null
-      ? db.select().from(schema.platformRelation).where(eq(schema.platformRelation.id, relationId)).get()
-      : ('relations' in source ? source.relations : []).find(r => r.sequenceNo === refs.relationRef?.sequenceNo && (!refs.relationRef?.relationKey || r.relationKey === refs.relationRef.relationKey))
-    if (!relation || usccOrNull(relation.usccRaw) !== targetUscc || (relation.enterpriseId != null && target && relation.enterpriseId !== target.id)) return 'Evidence relation belongs to another or unknown enterprise'
-    if (RDJB_TITLE_CODES[sourcePositionForSequence(source.collectionEvidence, relation.sequenceNo).sourceRdjb ?? ''] !== difference.titleCode) return 'Evidence row belongs to another title'
-  } else if (source.queryKey !== targetUscc) return 'Query-only evidence requires an exact subject USCC query'
-  return null
+  return targetImportDifferenceEvidenceError(db, pending, refs, difference)
 }
 
 function lifecycleOwnsDifference102(db: Executor, enterpriseId: number, titleCode: string, direction: string): boolean {
@@ -3617,11 +3465,9 @@ function planDifference(
           verificationStatus: difference.verificationStatus ?? 'pending',
           recordedAt,
       }
-      const mismatch = collectionImportTarget(tx) && recognizedDifferenceEvidenceError(tx, [], { queryIdLiteral: evidenceQueryId, relationIdLiteral: evidenceRelationId, queryRef: null, relationRef: null }, difference)
+      const mismatch = recognizedDifferenceEvidenceError(tx, [], { queryIdLiteral: evidenceQueryId, relationIdLiteral: evidenceRelationId, queryRef: null, relationRef: null }, difference)
       if (mismatch) return failure('difference', ref, 'evidence_subject_mismatch', mismatch, 'evidenceRelationRef')
-      const id = collectionImportTarget(tx)
-        ? tx.insert(targetDifferenceReason).values({ ...values, evidenceCollectionId: evidenceQueryId == null ? null : readDifferenceCollection(tx, evidenceQueryId)?.collection.id, evidenceObservationId: evidenceRelationId == null ? null : readDifferenceObservation(tx, evidenceRelationId)?.observationId }).returning({ id: targetDifferenceReason.id }).get().id
-        : tx.insert(schema.differenceReason).values({ ...values, evidenceQueryId, evidenceRelationId }).returning({ id: schema.differenceReason.id }).get().id
+      const id = tx.insert(targetDifferenceReason).values({ ...values, evidenceCollectionId: evidenceQueryId == null ? null : readDifferenceCollection(tx, evidenceQueryId)?.collection.id, evidenceObservationId: evidenceRelationId == null ? null : readDifferenceObservation(tx, evidenceRelationId)?.observationId }).returning({ id: targetDifferenceReason.id }).get().id
       return success('difference', `difference:${id}`, { enterpriseId: enterprise.id, evidenceQueryId, evidenceRelationId, rowsWritten: 1 })
     },
   })
@@ -4235,21 +4081,10 @@ function executeMerge(tx: Executor, plan: MergePlan): RosterImportItemResult {
     }
   }
 
-  const targetIdentity = collectionImportTarget(tx)
-  let relationsMoved: number
-  if (targetIdentity) {
-    relationsMoved = mergeTargetEnterpriseIdentity(tx, {
-      fromEnterpriseId: from.id, intoEnterpriseId: into.id,
-      basis: optionalString(merge.note) ?? `merge:${from.id}->${into.id}`,
-    })
-  } else {
-    const fromRelations = tx.select({ id: schema.platformRelation.id }).from(schema.platformRelation)
-      .where(eq(schema.platformRelation.enterpriseId, from.id)).all()
-    for (const relation of fromRelations) {
-      tx.update(schema.platformRelation).set({ enterpriseId: into.id }).where(eq(schema.platformRelation.id, relation.id)).run()
-    }
-    relationsMoved = fromRelations.length
-  }
+  const relationsMoved = mergeTargetEnterpriseIdentity(tx, {
+    fromEnterpriseId: from.id, intoEnterpriseId: into.id,
+    basis: optionalString(merge.note) ?? `merge:${from.id}->${into.id}`,
+  })
 
   // 4. 记录：同 (称号, 来源) 冲突时把事件折到规范行那条记录上。
   const recordsMoved: number[] = []
@@ -4287,7 +4122,6 @@ function executeMerge(tx: Executor, plan: MergePlan): RosterImportItemResult {
   tx.update(schema.recordCorrespondence).set({ enterpriseId: into.id }).where(eq(schema.recordCorrespondence.enterpriseId, from.id)).run()
   captureIdentityRevision113(tx, { enterpriseId: into.id, sourceKey: `merge:${from.id}:${into.id}`, sourceVersion: '1', before: { identity: identityBefore, from: from.id }, after: { identity: identityMaterial113(tx, into.id), merged: from.id }, fromEnterpriseId: from.id })
   // 5. 删除被并企业行（子行已全部迁走）。
-  if (!targetIdentity) tx.delete(schema.enterprise).where(eq(schema.enterprise.id, from.id)).run()
 
   const lineage: MergeLineage = {
     fromEnterpriseId: from.id,
@@ -4536,7 +4370,7 @@ function commitRosterImportCore(
         // 抛出去回滚整批 —— 绝不部分提交。
         if (!result.ok) throw new ExecStageFailure(out)
       }
-      if (request.sourceKind === 'platform_archive') platformFields = (collectionImportTarget(tx) ? verifyImportedCollectionFields : verifyPlatformFields)(tx, out.flatMap(item => (item.detail?.canonicalProjection as PlatformProjectionResult[] | undefined) ?? []), plan.items.some(item => item.platformFieldReference))
+      if (request.sourceKind === 'platform_archive') platformFields = verifyImportedCollectionFields(tx, out.flatMap(item => (item.detail?.canonicalProjection as PlatformProjectionResult[] | undefined) ?? []), plan.items.some(item => item.platformFieldReference))
       return out
     })
   } catch (cause) {

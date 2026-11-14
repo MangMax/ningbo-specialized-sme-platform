@@ -5,9 +5,9 @@ import { join } from 'node:path';
 import { candidateFixture } from './candidate-scope-target';
 import { finalizeCandidateScopes } from '../../upgrade/candidate-scope';
 import { finalizeRecognizedStored } from '../../upgrade/recognized-stored';
-import { ensurePlatformObservation } from '../../server/utils/platform-business-record';
-import * as schema from '../../db/schema';
-import { targetSchema } from '../../lib/platform/target-schema';
+import { ensurePlatformObservation } from '../../upgrade/frozen/server/platform-business-record';
+import * as schema from '../../upgrade/legacy-schema';
+import { targetSchema } from '../../upgrade/target-schema';
 export async function recognizedFixture(extra?: (old: Database.Database) => void) {
     const f = await candidateFixture(old => {
         const db = drizzle(old, { schema });

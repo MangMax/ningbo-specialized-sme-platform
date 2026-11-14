@@ -1,10 +1,10 @@
-import { asc, eq, inArray } from 'drizzle-orm'
+import { asc,eq,inArray } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../db/schema'
 import { normalizeUscc } from '../../lib/domain'
-import type { PlatformBusinessGroup, PlatformBusinessMetadata, PlatformBusinessObservationRef, PlatformCorrespondenceRef, ScopedPlatformObservation } from '../../lib/platform/business-record'
+import type { PlatformBusinessGroup,PlatformBusinessMetadata,PlatformBusinessObservationRef,PlatformCorrespondenceRef,ScopedPlatformObservation } from '../../lib/platform/business-record'
 import { targetSchema } from '../../lib/platform/target-schema'
-import { correspondenceColumns, correspondenceTable, correspondenceTarget, externalRelationColumn } from './record-correspondence-store'
+import { correspondenceColumns,correspondenceTable,externalRelationColumn } from './record-correspondence-store'
 
 type Db = BetterSQLite3Database<typeof schema>
 
@@ -16,16 +16,11 @@ function chunks(ids: number[]) {
 
 /** Only lightweight canonical columns; neither raw_fields nor canonical_raw_json is read. */
 export function readPlatformBusinessMetadata(db: Db, relationIds: number[]) {
-  if (correspondenceTarget(db)) {
+
     const { platformLegacyRelationAlias: r, platformBusinessObservation: o, platformBusinessRecord: b, platformBusinessRecordVersion: v } = targetSchema
     return new Map(chunks(relationIds).flatMap(ids => db.select({ relationId: r.oldId, recordId: o.recordId, versionId: o.versionId, interface: b.interface, platformKey: b.platformKey, identityState: o.identityState, contentState: o.contentState, keySource: o.keySource, projectionRuleVersion: o.projectionRuleVersion, hashAlgorithm: v.hashAlgorithm, contentHash: v.contentHash })
       .from(r).innerJoin(o, eq(o.id, r.observationId)).leftJoin(b, eq(b.id, o.recordId)).leftJoin(v, eq(v.id, o.versionId)).where(inArray(r.oldId, ids)).orderBy(r.oldId).all()).map(row => [row.relationId, row]))
-  }
-  const r = schema.platformRelation, o = schema.platformBusinessObservation, b = schema.platformBusinessRecord, v = schema.platformBusinessRecordVersion
-  const rows = chunks(relationIds).flatMap(ids => db.select({ relationId: r.id, recordId: o.recordId, versionId: o.versionId, interface: b.interface, platformKey: b.platformKey, identityState: o.identityState, contentState: o.contentState, keySource: o.keySource, projectionRuleVersion: o.projectionRuleVersion, hashAlgorithm: v.hashAlgorithm, contentHash: v.contentHash })
-    .from(r).leftJoin(o, eq(o.relationId, r.id)).leftJoin(b, eq(b.id, o.recordId)).leftJoin(v, eq(v.id, o.versionId))
-    .where(inArray(r.id, ids)).orderBy(asc(r.id)).all())
-  return new Map(rows.map(row => [row.relationId, row]))
+
 }
 
 function decisionConflicts(priors: PlatformCorrespondenceRef[]) {

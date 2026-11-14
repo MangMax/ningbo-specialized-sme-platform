@@ -1,14 +1,14 @@
 /** Candidate-specific structured selection. External query/relation IDs never stand for PKs. */
-import { and, count, eq, inArray, max, or, sql } from 'drizzle-orm'
-import { alias } from 'drizzle-orm/sqlite-core'
+import { and,count,eq,inArray,max,or,sql } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
+import { alias } from 'drizzle-orm/sqlite-core'
 import * as s from '../../db/schema'
-import { targetSchema as t } from '../../lib/platform/target-schema'
-import { readTargetDeclarationFacts } from './platform-declarations-target'
-import { readTargetBusinessProcessFacts } from './platform-business-processes-target'
-import { readTargetRecognizedFacts } from './platform-recognized-target'
 import type { PlatformFactInterface } from '../../lib/platform/observation-facts'
+import { targetSchema as t } from '../../lib/platform/target-schema'
 import { identityFunctions } from '../../lib/roster/enterprise-read-snapshot'
+import { readTargetBusinessProcessFacts } from './platform-business-processes-target'
+import { readTargetDeclarationFacts } from './platform-declarations-target'
+import { readTargetRecognizedFacts } from './platform-recognized-target'
 
 type Db = BetterSQLite3Database<typeof s>
 const c = s.platformCollection, qa = s.platformLegacyQueryAlias
@@ -46,7 +46,7 @@ export function readCandidateTargetQueries(db: Db, ids: number[]) {
   return db.select({ id: q.id, interface: c.interface, queryKey: c.queryKey, rdjb: c.rdjb, titleCode: c.titleCode,
     queriedAt: c.queriedAt, lastCollectedAt: c.lastCollectedAt, status: c.status, failureReason: c.failureReason, createdAt: c.createdAt,
     collectionEvidence: sql`(select json_remove(cast(${v.bytes} as text), '$.rows') from ${ref} inner join ${v} on ${v.id}=${ref.archiveId}
-      where ${ref.ownerId}=${c.id} and ${ref.field}='collectionEvidence')`.mapWith(s.platformQuery.collectionEvidence),
+      where ${ref.ownerId}=${c.id} and ${ref.field}='collectionEvidence')`.mapWith((value: string | null) => value === null ? null : JSON.parse(value)),
   }).from(q).innerJoin(c, eq(c.id, q.collectionId)).where(inArray(q.id, ids)).orderBy(q.id).all()
 }
 export function readCandidateTargetRelations(db: Db, ids: number[], selected?: number[]) {

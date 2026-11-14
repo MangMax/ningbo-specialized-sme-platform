@@ -1,17 +1,13 @@
 import { createHash } from 'node:crypto'
 import { isDeepStrictEqual } from 'node:util'
-import { and, eq, sql } from 'drizzle-orm'
-import * as schema from '../../db/schema'
-import { legacyPlatformProvenanceSchema, type LegacyPlatformCollection, type LegacyPlatformProvenanceInput } from '../../lib/platform/legacy-provenance'
+import { legacyPlatformProvenanceSchema, type LegacyPlatformProvenanceInput } from '../../lib/platform/legacy-provenance'
 import { recognizedStoredStatus } from '../../lib/platform/recognized-evidence'
 import { legacySourcePositionForSequence } from '../../lib/platform/legacy-provenance'
 import type { Executor } from './roster-import'
-import { LegacyProvenanceError, rejectLegacyProvenance as reject, legacyProvenanceTarget, originalLegacyProvenanceInput,
+import { LegacyProvenanceError, rejectLegacyProvenance as reject, originalLegacyProvenanceInput,
   existingTargetLegacyProvenance, targetLegacySourceOwner, insertTargetLegacyProvenance } from '../../lib/platform/legacy-provenance-command'
 export { legacySourcePositionForSequence }
 export { LegacyProvenanceError }
-
-export { readLegacyPlatformProvenance } from '../../lib/platform/legacy-provenance'
 
 /** Both planning and execution read the original rows. No projection or normalized fallback. */
 export function inspectLegacyPlatformProvenance(db: Executor, input: LegacyPlatformProvenanceInput, expectedFingerprint?: string) {
@@ -20,8 +16,8 @@ export function inspectLegacyPlatformProvenance(db: Executor, input: LegacyPlatf
 function inspectInSnapshot(db: Executor, input: LegacyPlatformProvenanceInput, expectedFingerprint?: string) {
   const parsed = legacyPlatformProvenanceSchema.safeParse(input)
   if (!parsed.success) reject('legacy_provenance_invalid', parsed.error.issues.map(issue => issue.message).join('; '))
-  const target = legacyProvenanceTarget(db) ? originalLegacyProvenanceInput(db, input.queryId) : null
-  const query = target?.query ?? db.select().from(schema.platformQuery).where(eq(schema.platformQuery.id, input.queryId)).get()
+  const target = originalLegacyProvenanceInput(db, input.queryId)
+  const query = target.query
   if (!query) reject('legacy_query_missing', 'Original query does not exist')
   if (query.interface !== input.interface || query.queryKey !== input.queryKey || query.rdjb !== input.rdjb || query.queriedAt !== input.queriedAt)
     reject('legacy_query_identity_conflict', 'queryId and complete original natural key must agree')
@@ -30,10 +26,7 @@ function inspectInSnapshot(db: Executor, input: LegacyPlatformProvenanceInput, e
   if (collection.queriedAt !== query.queriedAt || collection.effectiveConditions.uscc !== query.queryKey
     || collection.titleScope.rdjb.join(',') !== query.rdjb || recognizedStoredStatus(collection) !== query.status)
     reject('legacy_collection_identity_conflict', 'Original collection conditions, time, title scope and status must agree with the query')
-  const rows = target?.rows ?? db.select({ id: schema.platformRelation.id, sequenceNo: schema.platformRelation.sequenceNo,
-    relationKey: schema.platformRelation.relationKey, rawFields: schema.platformRelation.rawFields,
-    rawBytes: sql<string | null>`raw_fields` }).from(schema.platformRelation)
-    .where(eq(schema.platformRelation.queryId, query.id)).orderBy(schema.platformRelation.sequenceNo, schema.platformRelation.id).all()
+  const rows = target.rows
   if (rows.length !== input.relations.length || rows.length !== collection.rows.length)
     reject('legacy_relation_set_conflict', 'Supplement must cover every original relation and original collection row')
   for (const [index, row] of rows.entries()) {
@@ -51,14 +44,12 @@ function inspectInSnapshot(db: Executor, input: LegacyPlatformProvenanceInput, e
   const inputFingerprint = createHash('sha256').update(JSON.stringify({ query, rows })).digest('hex')
   if (expectedFingerprint && expectedFingerprint !== inputFingerprint)
     reject('legacy_source_drift', 'Original query or relations changed since preflight')
-  const existing = target ? existingTargetLegacyProvenance(db, target.collectionId) : db.select().from(schema.platformQueryLegacyProvenance)
-    .where(eq(schema.platformQueryLegacyProvenance.queryId, query.id)).get()
+  const existing = existingTargetLegacyProvenance(db, target.collectionId)
   if (existing && (existing.sourceIdentity !== input.sourceIdentity || existing.sourceSha256 !== input.sourceSha256
     || existing.segmentIndex !== input.segmentIndex || existing.inputFingerprint !== inputFingerprint
     || !isDeepStrictEqual(existing.collection, collection))) reject('legacy_provenance_conflict', 'Query already has different immutable legacy provenance')
-  const sourceOwner = target ? targetLegacySourceOwner(db, input) : db.select({ queryId: schema.platformQueryLegacyProvenance.queryId }).from(schema.platformQueryLegacyProvenance)
-    .where(and(eq(schema.platformQueryLegacyProvenance.sourceSha256, input.sourceSha256), eq(schema.platformQueryLegacyProvenance.segmentIndex, input.segmentIndex))).get()
-  if (sourceOwner && ('collectionId' in sourceOwner ? sourceOwner.collectionId !== target?.collectionId : sourceOwner.queryId !== query.id))
+  const sourceOwner = targetLegacySourceOwner(db, input)
+  if (sourceOwner && sourceOwner.collectionId !== target.collectionId)
     reject('legacy_source_identity_conflict', 'Original source file/segment already belongs to another query')
   return { inputFingerprint, exists: !!existing, relationCount: rows.length }
 }
@@ -67,10 +58,7 @@ export function writeLegacyPlatformProvenance(db: Executor, input: LegacyPlatfor
   return db.transaction(tx => {
     const state = inspectInSnapshot(tx, input, expectedFingerprint)
     if (!state.exists) {
-      if (legacyProvenanceTarget(tx)) insertTargetLegacyProvenance(tx, input, batchId, state.inputFingerprint)
-      else tx.insert(schema.platformQueryLegacyProvenance).values({ queryId: input.queryId,
-        sourceIdentity: input.sourceIdentity, sourceSha256: input.sourceSha256, segmentIndex: input.segmentIndex,
-        collection: input.collection, inputFingerprint: state.inputFingerprint, importBatchId: batchId }).run()
+      insertTargetLegacyProvenance(tx, input, batchId, state.inputFingerprint)
     }
     return { queryId: input.queryId, provenanceKind: 'legacy_pagination', typedState: 'unknown', relationCount: state.relationCount, rowsWritten: state.exists ? 0 : 1 }
   })

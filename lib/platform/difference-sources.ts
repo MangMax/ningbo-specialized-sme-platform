@@ -5,8 +5,6 @@ import { alias } from 'drizzle-orm/sqlite-core'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as s from '../../db/schema'
 import { targetSchema } from './target-schema'
-import { sqliteConnection } from './target-connection'
-import { requireH1cReady } from './h1c-catalog'
 import { identityFunctions, identityUsccSql } from '../roster/enterprise-read-snapshot'
 import { normalizeUscc } from '../domain'
 
@@ -14,19 +12,6 @@ type Db = BetterSQLite3Database<typeof s>
 const c = s.platformCollection, qa = s.platformLegacyQueryAlias
 const { platformBusinessObservation: o, platformObservationAssignment: a, platformLegacyRelationAlias: ra } = targetSchema
 const original = alias(a, 'difference_original'), newer = alias(a, 'difference_newer')
-export function differenceTargetSources(db: Db) {
-  const connection = sqliteConnection(db), phase = Number(connection.pragma('user_version', { simple: true }))
-  if (![0,71605,71606,71607,71608,71609,71610,71611,71612,71613].includes(phase)) throw new Error('Unsupported difference source schema version')
-  const target = phase === 71611 || phase === 71612 || phase === 71613
-  if (target) requireH1cReady(connection)
-  return target
-}
-export function differenceTargetStorage(db: Db) {
-  const connection = sqliteConnection(db)
-  const target = [71612,71613].includes(Number(connection.pragma('user_version', { simple: true })))
-  if (target) requireH1cReady(connection)
-  return target
-}
 export function currentDifferenceAssignment(db: Db) {
   return and(eq(a.observationId, o.id), eq(a.revision, db.select({ n: max(newer.revision) }).from(newer).where(eq(newer.observationId, o.id))))
 }

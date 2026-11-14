@@ -4,7 +4,7 @@ import type Database from 'better-sqlite3'
 import { and, eq } from 'drizzle-orm'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { targetSchema as s } from './target-schema'
-import { capturePhase, captureFingerprintBasis } from './fingerprint-capture'
+import { requireFingerprintCapture, captureFingerprintBasis } from './fingerprint-capture'
 import { legacyFingerprintInput, verifyFingerprint, verifyLegacyFacts, emptyFingerprintTarget, type FingerprintOwner, FingerprintVerificationError } from './fingerprint-verifier'
 import { writeApplyTarget } from './apply-target-writer'
 import { writeProcessTarget } from './process-target-writer'
@@ -14,7 +14,7 @@ import { PLATFORM_PROJECTION_RULE } from './observation-plan'
 import { reconstructWitnessCollectionSource } from './recognized-witness-write'
 export function bootstrapFingerprint(t:Database.Database,owner:FingerprintOwner,mode:'ordinary'|'reference') {
  const db=drizzle(t,{schema:s})
- if(!capturePhase(db,true))throw new Error('Explicit 71607 bootstrap target required')
+ requireFingerprintCapture(db)
  try {return db.transaction(tx=>{
   const o=tx.select().from(s.platformBusinessObservation).where(eq(s.platformBusinessObservation.id,owner.observationId)).get()
   const alias=tx.select().from(s.platformLegacyRelationAlias).where(eq(s.platformLegacyRelationAlias.oldId,owner.relationAlias)).get()
@@ -24,7 +24,8 @@ export function bootstrapFingerprint(t:Database.Database,owner:FingerprintOwner,
   const collection=tx.select({interface:s.platformCollection.interface}).from(s.platformCollection).where(eq(s.platformCollection.id,owner.collectionId)).get()
   if(collection?.interface==='recognized_list')verifyRecognizedStored(t,owner.observationId)
   if(mode==='reference'){
-   if([71608,71609,71610,71611,71612,71613].includes(Number(t.pragma('user_version',{simple:true})))){const {bytes}=legacyFingerprintInput(t,owner);verifyLegacyFacts(t,owner,bytes,true)}
+   const {bytes}=legacyFingerprintInput(t,owner)
+   verifyLegacyFacts(t,owner,bytes,true)
    return null
   }
   const {c,rawFields,stored,bytes}=legacyFingerprintInput(t,owner)
@@ -36,7 +37,10 @@ export function bootstrapFingerprint(t:Database.Database,owner:FingerprintOwner,
   try {
    const expected=drizzle(scratch,{schema:s})
    // Source-only staging uses the original source writer and parser, never a second parser.
-   expected.insert(s.platformCollection).values({...c,titleCode:null}).run()
+   expected.insert(s.platformCollection).values({...c,titleCode:null,
+    reconcileSlotState:'uncaptured',reconcileSlotRule:null,reconcileSlotRawArchiveId:null,
+    reconcileSlotRowCount:null,reconcileSlotInputSha256:null,reconcileSlotReason:null,
+   }).run()
    expected.insert(s.platformLegacyQueryAlias).values({oldId:1,collectionId:c.id}).run()
    if(c.interface==='recognized_list')reconstructWitnessCollectionSource(t,scratch,c.id)
    const writer=c.interface==='apply_list'?writeApplyTarget:c.interface==='business_list'?writeProcessTarget:writeRecognizedTarget

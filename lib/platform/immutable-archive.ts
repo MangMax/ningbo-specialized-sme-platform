@@ -6,7 +6,7 @@ import * as schema from '../../db/schema'
 
 /** Successor helpers must reject FK-OFF even when an outer transaction already exists. */
 function requireTargetForeignKeys<S extends Record<string,unknown>>(db:BetterSQLite3Database<S>) {
-  if(db.get<{user_version:number}>(sql`PRAGMA user_version`)?.user_version===71607 && db.get<{foreign_keys:number}>(sql`PRAGMA foreign_keys`)?.foreign_keys!==1)throw new Error('fingerprint writes require foreign_keys=ON before entry')
+  if(db.get<{foreign_keys:number}>(sql`PRAGMA foreign_keys`)?.foreign_keys!==1)throw new Error('fingerprint writes require foreign_keys=ON before entry')
 }
 export const ARCHIVE_CHUNK_BYTES = 65536
 export type ArchiveInput = { storageClass: 'null', bytes: null, createdAt: string | null } | { storageClass: 'text' | 'blob', bytes: Buffer, createdAt: string | null }
@@ -22,9 +22,7 @@ export function insertArchiveValue<S extends Record<string, unknown>>(db: Better
   const sha256 = bytes === null ? null : createHash('sha256').update(bytes).digest('hex')
   if ((expected?.byteLength !== undefined && expected.byteLength !== byteLength) || (expected?.sha256 !== undefined && expected.sha256 !== sha256)) throw new Error('Archive byte length or hash mismatch')
   const values = { storageClass: input.storageClass, bytes, byteLength, sha256, createdAt: input.createdAt }
-  if(db.get<{user_version:number}>(sql`PRAGMA user_version`)?.user_version===71607) {
-    return db.transaction(tx=>positiveId(tx.insert(schema.platformArchiveValue).values(values).returning({id:schema.platformArchiveValue.id}).get().id))
-  }
+
   return db.insert(schema.platformArchiveValue).values(values).returning({id:schema.platformArchiveValue.id}).get().id
 }
 export function readArchiveValue<S extends Record<string, unknown>>(db: BetterSQLite3Database<S>, input: { archiveId: number, offset?: number, length?: number }) {
@@ -140,8 +138,8 @@ export function resolveLegacyReference<S extends Record<string, unknown>>(db: Be
   if (!query) return null
   if (input.kind === 'query') return { version: 2, kind: 'collection', collectionId: query.collectionId }
   positiveId(input.relationId)
-  // T02 transition only: the existing observation still owns relation_id. T03 must replace this JOIN.
-  const a = schema.platformLegacyRelationAlias, o = schema.platformBusinessObservation, r = schema.platformRelation
-  const found = db.select({ observationId: a.observationId }).from(a).innerJoin(o, eq(o.relationId, a.observationId)).innerJoin(r, eq(r.id, o.relationId)).where(and(eq(a.oldId, input.relationId), eq(r.queryId, input.queryId))).get()
+  const a = schema.platformLegacyRelationAlias, o = schema.platformBusinessObservation
+  const found = db.select({ observationId: a.observationId }).from(a).innerJoin(o, eq(o.id, a.observationId))
+    .where(and(eq(a.oldId, input.relationId), eq(o.collectionId, query.collectionId))).get()
   return found ? { version: 2, kind: 'observation', observationId: found.observationId, collectionId: query.collectionId } : null
 }

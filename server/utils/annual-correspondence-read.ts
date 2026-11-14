@@ -1,16 +1,13 @@
 import type Database from 'better-sqlite3'
-import { inArray } from 'drizzle-orm'
 import { useDb } from '../../db'
-import * as s from '../../db/schema'
 import type { EventAnnualProcessRead } from '../../lib/roster/annual-process'
-import { qualifyAnnualFinal, readAnnualDecisionRefs, type AnnualDb, type AnnualWriteScope } from './annual-correspondence'
-import { readEventAnnualProcess, readAnnualComparisonBatch, readAnnualProcessBatch } from './event-annual-process-read'
-import { correspondenceTarget } from './record-correspondence-store'
+import { qualifyAnnualFinal,readAnnualDecisionRefs,type AnnualDb,type AnnualWriteScope } from './annual-correspondence'
 import { readTargetAnnualHistory } from './annual-process-target-sources'
+import { readAnnualComparisonBatch,readAnnualProcessBatch,readEventAnnualProcess } from './event-annual-process-read'
 
 function writeScope(db: AnnualDb, read: EventAnnualProcessRead, historyFor?: (recordIds: number[]) => number[]): AnnualWriteScope {
   const process = read.process
-  if (!historyFor && correspondenceTarget(db)) {
+  if (!historyFor) {
     const history = readTargetAnnualHistory(db, process.steps.flatMap(step => step.groups.flatMap(g => g.observationRefs.flatMap(ref => ref.businessRecord.recordId === null ? [] : [ref.businessRecord.recordId]))))
     historyFor = ids => ids.flatMap(id => history.get(id) ?? [])
   }
@@ -26,11 +23,9 @@ function writeScope(db: AnnualDb, read: EventAnnualProcessRead, historyFor?: (re
           version.interface === ref.interface && version.recordId === ref.businessRecord.recordId && version.versionId === ref.businessRecord.versionId)
       }).map(ref => ref.relationId)
       const recordIds = [...new Set(observations.filter(ref => ref.businessRecord.groupState === 'verified' && ref.businessRecord.recordId != null).map(ref => ref.businessRecord.recordId!))]
-      const history: number[] = historyFor ? historyFor(recordIds) : []
+      const history = historyFor(recordIds)
       // Indexed identity history is protective only. It never expands annual
       // facts, selected versions, generation, or borrowed proof eligibility.
-      if (!historyFor) for (let i = 0; i < recordIds.length; i += 400) history.push(...db.select({id:s.platformBusinessObservation.relationId}).from(s.platformBusinessObservation)
-        .where(inArray(s.platformBusinessObservation.recordId,recordIds.slice(i,i+400))).all().map(row => row.id))
       return {stepId:step.id,currentRelationIds:[...new Set(currentRelationIds)],protectionRelationIds:[...new Set([...observations.map(ref => ref.relationId),...history])],
         preferredRelationId:step.preferredWriteRelationId,eligible:step.annualEligible,reasons:step.reasons}
     }),
@@ -43,7 +38,7 @@ export function readAnnualWriteScopes(db: AnnualDb, eventIds: readonly number[])
   return db.transaction(() => {
     const reads = readAnnualProcessBatch(db, eventIds)
     const records = [...new Set([...reads.values()].flatMap(r => r.read.process.steps.flatMap(step => step.groups.flatMap(g => g.observationRefs.flatMap(ref => ref.businessRecord.recordId === null ? [] : [ref.businessRecord.recordId])))))]
-    const history = correspondenceTarget(db) ? readTargetAnnualHistory(db, records) : null
+    const history = readTargetAnnualHistory(db, records)
     return new Map([...reads].map(([id, entry]) => [id, writeScope(db, entry.read, history ? ids => ids.flatMap(id => history.get(id) ?? []) : undefined)]))
   })
 }

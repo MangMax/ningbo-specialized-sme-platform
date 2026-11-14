@@ -1,4 +1,4 @@
-/** Explicit caller-owned import composition. Ordinary runtime/worker guards stay closed. */
+/** Collection import composition; the caller owns its transaction and receipt. */
 import { and, eq } from 'drizzle-orm'
 import { createHash } from 'node:crypto'
 import type { Executor } from './roster-import'
@@ -8,7 +8,7 @@ import { targetReplaySource, writeCollectionTarget, CollectionReplayError } from
 import { readDifferenceCollection } from '../../lib/platform/difference-sources'
 import { verifyFingerprint, legacyFingerprintInput, FingerprintVerificationError } from '../../lib/platform/fingerprint-verifier'
 import { bootstrapFingerprint } from '../../lib/platform/fingerprint-bootstrap'
-import { requireH1cReady } from '../../lib/platform/h1c-catalog'
+import { RELATION_DECLARE_KIND_ORDER } from '../../lib/labels'
 import { normalizeUscc } from '../../lib/domain'
 import { normalizePlatformRelation } from '../../lib/platform/normalization'
 import { planPlatformObservation, PLATFORM_PROJECTION_RULE, PLATFORM_RAW_HASH_RULE, PlatformProjectionError } from './platform-business-record'
@@ -17,16 +17,6 @@ import type { RosterImportPlatformQuery, RosterImportItemResult } from '../../li
 import type { PlatformProjectionResult } from '../../lib/platform/business-record'
 import { canonicalEnterpriseId } from '../../lib/roster/enterprise-identity'
 
-export function collectionImportTarget(db: Executor) {
-  const connection = sqliteConnection(db)
-  const phase = Number(connection.pragma('user_version', { simple: true }))
-  if (phase === 71612 || phase === 71613) {
-    requireH1cReady(connection)
-    return true
-  }
-  if (phase !== 0) throw new Error('Import requires schema0 or a complete 71612/71613 target')
-  return false
-}
 export function collectionImportSource(db: Executor, queryId: number) {
   const selected = readDifferenceCollection(db, queryId)
   if (!selected) throw new PlatformProjectionError('projection_source_missing', `Original query ${queryId} not found`)
@@ -49,7 +39,6 @@ export function collectionImportProjection(db: Executor, relationId: number) {
 }
 /** Explicit historical command: reference admission is read-only, including first indexing. */
 export function historicalObservationPlan(db: Executor, relationId: number) {
-  if (!collectionImportTarget(db)) throw new Error('Historical target command requires a complete 71612/71613 target')
   const { row, interface: source } = collectionProjection(db, relationId)
   const connection = sqliteConnection(db)
   const owner = { observationId: row.id, collectionId: row.collectionId, relationAlias: relationId }
@@ -159,7 +148,7 @@ export function writeImportedCollection(db: Executor, query: RosterImportPlatfor
         const uscc = normalizeUscc(row.usccRaw)
         const selectedOwner = explicit ?? (uscc ? db.select({ id: s.enterprise.id }).from(s.enterprise).where(eq(s.enterprise.usccNorm, uscc)).get()?.id : null) ?? null
         const owner = selectedOwner === null ? null : canonicalEnterpriseId(db, selectedOwner) ?? selectedOwner
-        const unknown = row.declareKind != null && !s.platformRelation.declareKind.enumValues.includes(row.declareKind as 'apply' | 'review' | 'update')
+        const unknown = row.declareKind != null && !RELATION_DECLARE_KIND_ORDER.includes(row.declareKind)
         return { enterpriseId: owner, matchBasis: row.matchBasis ?? (explicit != null ? 'manual' : owner != null ? 'uscc' : 'none'),
           verificationStatus: row.verificationStatus ?? (owner != null && !unknown ? 'confirmed' : 'pending'),
           nameRaw: typeof row.nameRaw === 'string' ? row.nameRaw.trim() || null : null,

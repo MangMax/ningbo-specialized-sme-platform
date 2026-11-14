@@ -5,15 +5,12 @@ import { targetSchema } from '../platform/target-schema'
 import { createTargetCurrentCandidateReader } from './current-candidates-target'
 import { createCurrentQualificationAssessmentReaderWithWitnesses } from './current-qualification'
 import { readTargetIdentityKeyVariants } from './current-identity-keys'
-import type { RecognizedFactSource } from './recognized-filter-source'
 import { createTargetRecognizedWitnessReader } from './recognized-witness-target'
 
 /** Compose accepted readers only inside the consumer-owned transaction. This
  * context owns no transaction and never encloses a Promise in withinSnapshot.
  * The same connection stays pinned through each sync read and async drain. */
-export function createCurrentTargetContext(db: Database.Database, source?: RecognizedFactSource, receiptRuntime?: ReceiptRuntimeContext) {
-  if (Number(db.pragma('user_version', { simple: true })) !== 71613) return
-  if (source === 'legacy') throw new Error('Final platform target requires typed recognized facts')
+export function createCurrentTargetContext(db: Database.Database, receiptRuntime?: ReceiptRuntimeContext) {
   if (!db.inTransaction) throw new Error('Current target context requires the caller snapshot')
   const reader = drizzle(db, { schema: targetSchema })
   const candidates = createTargetCurrentCandidateReader(reader)

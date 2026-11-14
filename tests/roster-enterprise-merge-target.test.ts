@@ -1,13 +1,13 @@
 import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { and, eq } from 'drizzle-orm'
-import { chmodSync, copyFileSync, mkdtempSync } from 'node:fs'
+import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, expect, it } from 'vitest'
 import * as schema from '../db/schema'
 import { targetSchema } from '../lib/platform/target-schema'
-import { retirePlatformModel } from '../upgrade/retire-platform-model'
+import { initializeDb } from '../db/client'
 import { commitRosterImport, findEnterpriseById, preflightRosterImport } from '../server/utils/roster-import'
 import { buildPlatformEvidenceIndex, findUsccKeyedRelationEvidence } from '../server/utils/roster-duplicate-merge'
 import { listRosterEnterprises, getRosterEnterpriseDetail } from '../lib/roster/enterprise-roster'
@@ -17,8 +17,6 @@ import { getEnterpriseProfile, patchEnterpriseProfile } from '../server/utils/en
 import { readUsccTargets } from '../server/utils/uscc-research-read'
 import type { RosterImportRequest } from '../lib/roster-import-client'
 
-const fixture = process.env.ENTERPRISE_MERGE_TARGET_FIXTURE ??
-  '/Users/mang/.t3/acceptance/platform-complete-migration/reconcile-slot-capture/target-final-integration/input/retired.sqlite'
 const root = mkdtempSync(join(tmpdir(), 'enterprise-merge-target-'))
 const from = 91001, into = 91002, third = 91003
 const uscc = '91330200712345678C', thirdUscc = '91330200712345678D'
@@ -28,9 +26,9 @@ let sourceSerial = 0
 const trace: string[] = []
 beforeEach(() => {
   const path = join(root, `case-${++serial}.sqlite`)
-  copyFileSync(fixture, path); chmodSync(path, 0o600)
+  const native=initializeDb({dbPath:path,create:true})
+  native.$client.close()
   sqlite = new Database(path, { verbose: text => trace.push(String(text)) }); sqlite.pragma('foreign_keys=ON')
-  retirePlatformModel(sqlite)
   expect(sqlite.prepare("select name from sqlite_schema where type='table' and name in ('platform_query','platform_relation')").all()).toEqual([])
   db = drizzle(sqlite, { schema })
   db.insert(schema.enterprise).values([

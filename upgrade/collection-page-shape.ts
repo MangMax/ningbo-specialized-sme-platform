@@ -1,5 +1,5 @@
 import type Database from 'better-sqlite3'
-import { targetProvenanceCells } from '../lib/platform/target-evidence-read'
+import { targetProvenanceCells } from './provenance-cells'
 
 /** Offline capture of the optional source property; runtime never parses the envelope. */
 export function captureCollectionPageShape(db:Database.Database) {

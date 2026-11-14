@@ -4,7 +4,7 @@ import { join, resolve } from 'node:path'
 import Database from 'better-sqlite3'
 import { eq, and, sql } from 'drizzle-orm'
 import { z } from 'zod'
-import type { useDb } from '../../db/client'
+import type { useApplicationDb } from '../../db/client'
 import * as s from '../../db/schema'
 import { newJobId } from '../../lib/job'
 import type { PlatformLiveQueryResult } from '../../lib/platform/live-query'
@@ -17,7 +17,7 @@ import { reuseCollectedPlatformResult } from './platform-collection-reuse'
 import { platformResultToImport } from '../../lib/platform/recognized-evidence'
 import { preflightRosterImport, commitRosterImport } from './roster-import'
 
-type Db = ReturnType<typeof useDb>
+type Db = ReturnType<typeof useApplicationDb>
 export const SNAPSHOT_KIND = 'difference-snapshot'
 export const snapshotInput = z.discriminatedUnion('action', [
   z.strictObject({ action: z.literal('create'), clientRequestId: z.string().trim().min(1).max(120), enterpriseIds: z.array(z.number().int().positive().max(Number.MAX_SAFE_INTEGER)).min(1).max(200).transform(ids => [...new Set(ids)].sort((a,b)=>a-b)).optional() }),

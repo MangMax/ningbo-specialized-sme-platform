@@ -9,7 +9,6 @@ import { TITLE_ORDER } from '../labels'
 import { MAX_PAGE_SIZE } from '../query'
 import type { RosterDifferenceFilter, RosterDifferencesResult } from './enterprise-roster'
 import { readQueryAssessments } from './query-assessment'
-import { queryHistoryTarget } from '../platform/query-history-target'
 import { targetCandidateTables } from '../../server/utils/candidate-target-sources'
 
 type Db = BetterSQLite3Database<typeof s>
@@ -22,7 +21,7 @@ const rank = (title: string) => { const i = TITLE_ORDER.indexOf(title); return i
  */
 export function listRosterDifferences(db: Db, filter: RosterDifferenceFilter = {}): RosterDifferencesResult {
   return db.transaction(() => {
-    const { q, r: relation } = queryHistoryTarget(db) ? targetCandidateTables(db) : { q: s.platformQuery, r: s.platformRelation }
+    const { q, r: relation } = targetCandidateTables(db)
     const d = s.differenceReason
     const heads = db.select({ id: d.id, enterpriseId: d.enterpriseId, titleCode: d.titleCode, direction: d.direction, status: d.status, reasonCode: d.reasonCode }).from(d)
       .where(sql`not exists (select 1 from difference_reason n where n.enterprise_id=${d.enterpriseId} and n.title_code=${d.titleCode} and n.direction=${d.direction} and (n.recorded_at>${d.recordedAt} or (n.recorded_at=${d.recordedAt} and n.id>${d.id})))`).all()

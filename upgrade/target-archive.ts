@@ -1,1 +1,1 @@
-export * from '../lib/platform/target-archive'
+export * from './frozen/target-archive'

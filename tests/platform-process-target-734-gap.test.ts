@@ -10,8 +10,8 @@ import { candidateFixture } from './helpers/candidate-scope-target'
 import { finalizeCandidateScopes } from '../upgrade/candidate-scope'
 import { finalizeRecognizedStored } from '../upgrade/recognized-stored'
 import { ensurePlatformObservation } from '../server/utils/platform-business-record'
-import { listPlatformBusinessProcesses } from '../server/utils/platform-business-processes'
-import { readPlatformFilterOptions } from '../server/utils/platform-filter-options'
+import { listPlatformBusinessProcesses } from '../upgrade/frozen/server/platform-business-processes'
+import { readPlatformFilterOptions } from '../upgrade/frozen/server/platform-filter-options'
 
 it('exposes complete-migration loss of isolated process stored cells independently of normalized source facts', async () => {
   const f = await candidateFixture(source => {

@@ -2,7 +2,6 @@ import type Database from 'better-sqlite3'
 export type EnterpriseFactEffectRow = {enterpriseId:number;factId:number;revision:number;status:string;fact:string;basis:string}
 /** Whole-consumer rollback leaves all assertion writes and audit history intact. */
 export function readEnterpriseFactEffects(db: Database.Database, enterpriseId: number, asOf: number, prepare: (sql: string) => Database.Statement = sql => db.prepare(sql), effectiveOnly = false) {
-  if (process.env.ENTERPRISE_FACT_CONSUMER_SOURCE === 'legacy') return null
   const merged = !!prepare("select 1 from sqlite_schema where type='table' and name='enterprise_merge'").get()
   const rows = prepare(`${merged ? `with recursive identity_members(id) as (
     select ? union select m.from_enterprise_id from enterprise_merge m join identity_members i on m.into_enterprise_id=i.id

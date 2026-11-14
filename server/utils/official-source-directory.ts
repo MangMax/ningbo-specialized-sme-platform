@@ -1,6 +1,6 @@
 import { registeredFileAtLocator } from './file-read-identity'
 import { sql } from 'drizzle-orm'
-import type { useDb } from '../../db/client'
+import type { useApplicationDb } from '../../db/client'
 import { fileNameOf } from '../../lib/preview'
 
 /** Exact persisted paths, supported by formal events; never classify by filename.
@@ -23,7 +23,7 @@ export const officialSourceDirectory = sql`(
 export interface OfficialSourceDocument {
   id: number; source: 'jxj'; title: string; docNumber: string | null; issueDate: string | null; path: string
 }
-export function readOfficialSourceDocuments(db: ReturnType<typeof useDb>, ids: number[]) {
+export function readOfficialSourceDocuments(db: ReturnType<typeof useApplicationDb>, ids: number[]) {
   if (!ids.length) return []
   // Existing persisted IDs remain valid for direct callers and stored proofs,
   // including documents which do not yet have a formal event.

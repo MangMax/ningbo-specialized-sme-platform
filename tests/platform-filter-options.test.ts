@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { createApp, toWebHandler } from 'h3'
 import { initializeDb } from '../db/client'
 import * as schema from '../db/schema'
-import { readPlatformFilterOptions } from '../server/utils/platform-filter-options'
+import { readPlatformFilterOptions } from '../upgrade/frozen/server/platform-filter-options'
 import { platformFilterOptionsQueryFromQuery } from '../lib/platform/filter-options'
 
 const empty = { titles: [], declareKinds: [], years: [], statuses: [], batches: [], districts: [], validityDates: [] }

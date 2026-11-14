@@ -40,16 +40,16 @@ function fixture(seed?: (db: ReturnType<typeof drizzle<typeof legacySchema>>) =>
     copyFileSync(target, source);
     return { source, target, legacySource: legacy, runId: 'stored', predecessorRunId: 'basis' };
 }
-import { targetSchema } from '../lib/platform/target-schema';
-import { writeApplyTarget, type ApplyTargetInput } from '../lib/platform/apply-target-writer';
-import { verifyFingerprint } from '../lib/platform/fingerprint-verifier';
+import { targetSchema } from '../upgrade/target-schema';
+import { writeApplyTarget, type ApplyTargetInput } from '../upgrade/frozen/apply-target-writer';
+import { verifyFingerprint } from '../upgrade/frozen/fingerprint-verifier';
 import { createHash } from 'node:crypto';
 function ready(seed?: Parameters<typeof fixture>[0]) { const f = fixture(seed); finalizeApplyStored(f); const t = new Database(f.target); t.pragma('foreign_keys=ON'); return { f, t, db: drizzle(t, { schema: targetSchema }) }; }
-import { ensurePlatformObservation } from '../server/utils/platform-business-record';
-import * as legacySchema from '../db/schema';
-import { listPlatformDeclarations } from '../server/utils/platform-declarations';
-import { readPlatformFilterOptions } from '../server/utils/platform-filter-options';
-import { listTargetDeclarations, readTargetDeclarationOptions } from '../server/utils/platform-declarations-target';
+import { ensurePlatformObservation } from '../upgrade/frozen/server/platform-business-record';
+import * as legacySchema from '../upgrade/legacy-schema';
+import { listPlatformDeclarations } from '../upgrade/frozen/server/platform-declarations';
+import { readPlatformFilterOptions } from '../upgrade/frozen/server/platform-filter-options';
+import { listTargetDeclarations, readTargetDeclarationOptions } from '../upgrade/frozen/server/platform-declarations-target';
 it('retains the legacy isolated stored status distinction in structured target facts', () => {
     const { f, t, db } = ready(), old = new Database(f.legacySource), legacy = drizzle(old, { schema: legacySchema });
     const input = { view: 'isolated', status: 'pending' };
@@ -60,9 +60,9 @@ it('retains the legacy isolated stored status distinction in structured target f
     old.close();
     t.close();
 });
-import { getPlatformDeclaration, readPlatformDeclarationFacts } from '../server/utils/platform-declarations';
-import { getTargetDeclaration, readTargetDeclarationFacts } from '../server/utils/platform-declarations-target';
-import { writeCollectionTarget } from '../lib/platform/collection-target-command';
+import { getPlatformDeclaration, readPlatformDeclarationFacts } from '../upgrade/frozen/server/platform-declarations';
+import { getTargetDeclaration, readTargetDeclarationFacts } from '../upgrade/frozen/server/platform-declarations-target';
+import { writeCollectionTarget } from '../upgrade/frozen/collection-target-command';
 import { writeFileSync } from 'node:fs';
 function records(db: ReturnType<typeof drizzle<typeof legacySchema>>) {
     db.$client.prepare("UPDATE platform_relation SET name_raw=' History ',uscc_raw=' U ' WHERE id=1").run();

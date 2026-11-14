@@ -7,8 +7,8 @@ import { legacyFingerprintRaw } from '../lib/platform/legacy-fingerprint-raw'
 export function requireFingerprintForeignKeys(t: Database.Database) {
   if(t.pragma('foreign_keys',{simple:true})!==1)throw new Error('fingerprint writes require foreign_keys=ON before entry')
 }
-import { fingerprintArchiveInventory } from '../lib/platform/fingerprint-schema-inventory'
-export { fingerprintArchiveInventory } from '../lib/platform/fingerprint-schema-inventory'
+import { fingerprintArchiveInventory } from './fingerprint-schema-inventory'
+export { fingerprintArchiveInventory } from './fingerprint-schema-inventory'
 const refs=['platform_collection_archive_ref','platform_observation_archive_ref','platform_version_archive_ref'] as const
 export function installFingerprintBasis(t:Database.Database) {
   requireFingerprintForeignKeys(t)
@@ -48,16 +48,16 @@ import { isDeepStrictEqual } from 'node:util'
 import SQLite from 'better-sqlite3'
 import { and, asc, count, eq, ne } from 'drizzle-orm'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
-import { targetSchema as s } from '../lib/platform/target-schema'
+import { targetSchema as s } from './target-schema'
 import { withFrozenSource, assertFrozenSource, fileHash, schemaHash, type FrozenSource } from './collections'
 import { projectionManifest } from './projections'
-import * as expand from '../db/schema'
+import * as expand from './legacy-schema'
 import { canonicalPlatformJson, planPlatformObservation, PLATFORM_PROJECTION_RULE, PLATFORM_RAW_HASH_RULE } from '../lib/platform/observation-plan'
-import { insertArchiveValue } from '../lib/platform/immutable-archive'
+import { insertArchiveValue } from './frozen/immutable-archive'
 import { rowSnapshot } from './observations'
 import { TextDecoder } from 'node:util'
-export { FINGERPRINT_BASIS_VERSION } from '../db/schema-phase'
-import { FINGERPRINT_BASIS_VERSION } from '../db/schema-phase'
+export { FINGERPRINT_BASIS_VERSION } from './schema-phase'
+import { FINGERPRINT_BASIS_VERSION } from './schema-phase'
 export const FINGERPRINT_BASIS_TRANSFORM='observation-fingerprint-basis-v1'
 const hash=(v:string|Buffer)=>createHash('sha256').update(v).digest('hex')
 function phaseDigest(t:Database.Database,runId:string) {

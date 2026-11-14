@@ -283,8 +283,8 @@ it('preserves TEXT affinities including NUL and BLOB in each exact text cell, an
 
 import * as expandSchema from '../db/schema'
 import { ensurePlatformObservation } from '../server/utils/platform-business-record'
-import { listPlatformDeclarations } from '../server/utils/platform-declarations'
-import { readPlatformFilterOptions } from '../server/utils/platform-filter-options'
+import { listPlatformDeclarations } from '../upgrade/frozen/server/platform-declarations'
+import { readPlatformFilterOptions } from '../upgrade/frozen/server/platform-filter-options'
 it('matches independent old public isolated total1/options2 on same-raw indexed status pair',()=>{
  const f=fixture(true),old=new Database(f.legacySource,{readonly:true}),db=drizzle(old,{schema:expandSchema})
  const before=old.serialize()
@@ -377,8 +377,8 @@ it('rejects plain cells and forged custody tokens at the shared verifier',()=>{
  t.close()
 })
 
-import {withFrozenSource} from '../lib/platform/frozen-source'
-import {withLegacyFingerprintCustody,legacyCustodyCells} from '../lib/platform/legacy-fingerprint-custody'
+import {withFrozenSource} from '../upgrade/frozen-source'
+import {withLegacyFingerprintCustody,legacyCustodyCells} from '../upgrade/legacy-fingerprint-custody'
 it('rejects forged and expired custody and expired predecessor freezes without target writes',()=>{
  const f=fixture(true),t=new Database(f.target),before=t.serialize();t.close()
  const owner={observationId:1,collectionId:1,relationAlias:1}

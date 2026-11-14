@@ -1,17 +1,17 @@
-import { readTasks, summarize } from './jobs/task-summary'
+import { readTasks,summarize } from './jobs/task-summary'
 import { exportTitleFilter } from './jobs/export-summary'
-import { CANDIDATE_JOB_KIND, retryCandidateDiscovery } from './jobs/candidate-discovery'
+import { CANDIDATE_JOB_KIND,retryCandidateDiscovery } from './jobs/candidate-discovery'
 import type { LogContext } from '../../lib/logging'
 import { ANNUAL_CORRESPONDENCE_KIND } from '../../lib/roster/annual-correspondence'
-import { and, eq, inArray, sql } from 'drizzle-orm'
-import { schema, type useDb } from '../../db/client'
-import { isJobId, JOB_STATES, type JobState } from '../../lib/job'
-import { TASK_EXPORTS, TASK_GROUPS, TASK_LABELS, TASK_TABS, type TaskList, type TaskTab } from '../../lib/task-center'
-import { readApiToken, resolveApiAuth } from './api-auth'
-import { requestJobCancel, jobSpecs } from './job-runner'
+import { and,eq,inArray,sql } from 'drizzle-orm'
+import { schema,type useApplicationDb } from '../../db/client'
+import { isJobId,JOB_STATES,type JobState } from '../../lib/job'
+import { TASK_EXPORTS,TASK_GROUPS,TASK_TABS,type TaskList,type TaskTab } from '../../lib/task-center'
+import { readApiToken,resolveApiAuth } from './api-auth'
+import { requestJobCancel,jobSpecs } from './job-runner'
 import { retryPlatformBatch } from './platform-batch-query'
 
-type Db = ReturnType<typeof useDb>
+type Db = ReturnType<typeof useApplicationDb>
 type Request = { method: string; path: string; query?: Record<string, unknown>; headers?: Record<string, string | undefined>; body?: unknown }
 const error = (status: number, message: string) => ({ status, headers: { 'cache-control': 'no-store' }, body: { message } })
 const positive = (raw: unknown, fallback: number, max: number) => typeof raw !== 'object' && Number.isInteger(Number(raw)) && Number(raw) > 0 ? Math.min(Number(raw), max) : fallback

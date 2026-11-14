@@ -11,7 +11,7 @@ import { migrationFinished } from '../lib/platform/migration-readiness'
 import { rowSnapshot } from '../lib/platform/sqlite-row-cells'
 import { upgradeEnterpriseMergeIdentity } from './enterprise-merge'
 import { z } from 'zod'
-import { installPlatformArchiveLookupIndexes } from '../db/platform-archive-indexes'
+import { installPlatformArchiveLookupIndexes } from './platform-archive-indexes'
 import { captureCollectionPageShape } from './collection-page-shape'
 
 const requiredTransforms = [

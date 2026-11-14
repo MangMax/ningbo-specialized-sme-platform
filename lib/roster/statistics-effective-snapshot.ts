@@ -1,7 +1,6 @@
 import { countBy } from 'es-toolkit'
 import type Database from 'better-sqlite3'
 import { createCurrentQualificationAssessmentReader, CURRENT_RULE_VERSION, QUALIFICATION_ASSESSMENT_VERSION, qualificationDay } from './current-qualification'
-import { createCurrentTargetContext } from './current-target-context'
 import { CURRENT_TITLES, type CurrentTitle } from './current-titles'
 
 /** Summary and detail share the caller’s read transaction and evaluation time. */
@@ -22,7 +21,7 @@ export function readStatisticsEffectiveSnapshot(db: Database.Database, asOf: num
 /** Hydrate diagnostics only after the caller has counted, filtered and paginated.
  * Keep this in the same read transaction as the effective projection. */
 export function hydrateStatisticsRows<T extends { enterpriseId: number; titleCode: string }>(db: Database.Database, rows: T[], asOf: number) {
-  const reader = createCurrentTargetContext(db)?.assessment ?? createCurrentQualificationAssessmentReader(db)
+  const reader = createCurrentQualificationAssessmentReader(db)
   return rows.map(row => {
     const assessed = reader.readTitle(row.enterpriseId, row.titleCode as CurrentTitle, asOf)
     return { ...row, notes: assessed.row.notes, basis: assessed.row.basis, references: assessed.row.references }

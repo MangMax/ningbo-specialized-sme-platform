@@ -1,6 +1,3 @@
-import { getTableColumns, inArray, sql } from 'drizzle-orm'
-import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
-import * as schema from '../../db/schema'
 import { z } from 'zod'
 import { platformQueryResultShape } from './live-query'
 import type { PlatformLiveQueryResult } from './live-query'
@@ -30,15 +27,15 @@ export function legacySourcePositionForSequence(collection: Pick<LegacyPlatformC
   return sourcePositionForSequence(collection, sequenceNo)
 }
 
-/** Bounded metadata read; callers must keep this distinct from collectionEvidence. */
-export function readLegacyPlatformProvenance(db: Pick<BetterSQLite3Database<typeof schema>, 'select'>, queryIds: readonly number[]) {
-  const { collection: _collection, ...columns } = getTableColumns(schema.platformQueryLegacyProvenance)
-  const ids = [...new Set(queryIds)]
-  const result = new Map<number, { kind: 'legacy_pagination' } & Omit<typeof schema.platformQueryLegacyProvenance.$inferSelect, 'collection'> & { collection: Omit<LegacyPlatformCollection, 'rows'> }>()
-  for (let start = 0; start < ids.length; start += 400) {
-    const rows = db.select({ ...columns, collection: sql<string>`json_remove(${schema.platformQueryLegacyProvenance.collection}, '$.rows')` })
-      .from(schema.platformQueryLegacyProvenance).where(inArray(schema.platformQueryLegacyProvenance.queryId, ids.slice(start, start + 400))).all()
-    for (const row of rows) result.set(row.queryId, { ...row, kind: 'legacy_pagination', collection: JSON.parse(row.collection) })
-  }
-  return result
+/** Original metadata display, independent of the retired storage schema. */
+export interface LegacyProvenanceDisplay {
+  kind: 'legacy_pagination'
+  queryId: number
+  sourceIdentity: string
+  sourceSha256: string
+  segmentIndex: number
+  inputFingerprint: string
+  importBatchId: number
+  createdAt: string
+  collection: Omit<LegacyPlatformCollection, 'rows'>
 }

@@ -7,7 +7,7 @@ import { createHash } from 'node:crypto'
 import ExcelJS from 'exceljs'
 import { expect } from 'vitest'
 import { reviewCurrentExportDecision } from './current-export-decisions'
-import { useDb, schema as s } from '../../db/client'
+import { initializeDb, schema as s } from '../../db/client'
 import { spawnOwnedChild as spawn, reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../../scripts/lib/isolated-local-services.mjs'
 
 export const titleCode = 'specialized_sme'
@@ -15,12 +15,12 @@ export const route = '/api/roster/exports/current/specialized-sme'
 export const year = new Date().getFullYear()
 export type Event = { eventType: 'award'|'review'|'nurture'|'maintain'; year: number|null; decidedYear?: number|null; reviewOutcome?: 'passed'|'failed'|null; batchSeq?: number|null }
 export const fresh: Event[] = [{ eventType: 'award', year, batchSeq: 1 }]
-export const businessTables = ['record_correspondence','difference_reason','platform_relation','platform_query','enterprise_alias','record_evidence','record_event','record','enterprise']
+export const businessTables = ['record_correspondence','difference_reason','platform_observation_assignment','platform_legacy_relation_alias','platform_business_observation','platform_legacy_query_alias','platform_collection','enterprise_alias','record_evidence','record_event','record','enterprise']
 
 // Synthetic setup only. All assertions on export behavior use actual Nitro HTTP and XLSX bytes.
 export function currentExport118Fixture() {
   const dir = mkdtempSync(join(process.env.CURRENT_CANDIDATE_READER_EVIDENCE_DIR ?? tmpdir(), 'export-118-'))
-  const dbPath = join(dir, 'synthetic.db'), db = useDb({ dbPath })
+  const dbPath = join(dir, 'synthetic.db'), db = initializeDb({ dbPath, create: true })
   const token = 'synthetic-export-118-token'
   const headers = { 'content-type': 'application/json', authorization: `Bearer ${token}` }
   let baseUrl = '', stop: (() => Promise<void>) | undefined
@@ -94,7 +94,7 @@ export function currentExport118Fixture() {
   }
   function businessDigest() {
     const hash = createHash('sha256')
-    for (const table of businessTables) for (const row of db.$client.prepare('select * from ' + table + ' order by id').iterate()) hash.update(JSON.stringify(row))
+    for (const table of businessTables) for (const row of db.$client.prepare('select * from ' + table + ' order by rowid').iterate()) hash.update(JSON.stringify(row))
     return hash.digest('hex')
   }
   return { dir, dbPath, db, headers, token, url, json, submit, start, terminal, download, workbook, candidate, addRecord, decision, resetBusiness, businessDigest,
@@ -106,12 +106,12 @@ export function rows(wb: ExcelJS.Workbook, sheet: string) {
   return target.getRows(2,Math.max(0,target.rowCount-1))?.map(row => row.values as any[]) ?? []
 }
 export function businessIdentity(row: any[]) { return [row[2], row[3]] }
-export function expectedBusinessIdentity(db: ReturnType<typeof useDb>, id: number) {
+export function expectedBusinessIdentity(db: ReturnType<typeof initializeDb>, id: number) {
   const row = db.$client.prepare('select name,uscc_norm as uscc from enterprise where id=?').get(id) as {name:string;uscc:string|null}|undefined
   if (!row) throw new Error('missing synthetic enterprise ' + id)
   return [row.name,row.uscc]
 }
-export function matchesBusinessIdentity(db: ReturnType<typeof useDb>, row: any[], id: number) {
+export function matchesBusinessIdentity(db: ReturnType<typeof initializeDb>, row: any[], id: number) {
   return JSON.stringify(businessIdentity(row)) === JSON.stringify(expectedBusinessIdentity(db,id))
 }
 export const currentSheetNames = ['有效企业','已到期','已注销（吊销）','已迁出','未认定','口径说明']

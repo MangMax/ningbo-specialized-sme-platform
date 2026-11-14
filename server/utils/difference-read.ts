@@ -1,6 +1,6 @@
 import type { LogContext } from '../../lib/logging'
 import type { RosterDifferenceFilter } from '../../lib/roster/enterprise-roster'
-import type { useDb } from '../../db/client'
+import type { useApplicationDb } from '../../db/client'
 import { getDbOwnerIdentity } from '../../db/client'
 import { listRosterDifferences } from '../../lib/roster/difference-list'
 import { restoreReaderError } from '../../lib/roster/offmain-read-protocol'
@@ -9,7 +9,7 @@ import { createReadTurns, runReadTurn } from './read-turn'
 
 /** New-consumer policy only. Normal operations submit directly to the singleton;
  * fallback is exactly one original synchronous reader on its acquired owner. */
-export async function readDifferences(owner: ReturnType<typeof useDb>, filter: RosterDifferenceFilter, signal?: AbortSignal,
+export async function readDifferences(owner: ReturnType<typeof useApplicationDb>, filter: RosterDifferenceFilter, signal?: AbortSignal,
   executor: Pick<typeof enterpriseReads, 'differences'> = enterpriseReads, logContext?: LogContext) {
   if (signal?.aborted) return
   const identity = getDbOwnerIdentity(owner)

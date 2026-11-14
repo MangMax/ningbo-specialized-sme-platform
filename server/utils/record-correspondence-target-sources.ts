@@ -1,15 +1,17 @@
 import { platformNormalizationConflict } from '../../lib/platform/normalization'
+import type { PlatformStoredQuery,PlatformStoredRelation } from '../../lib/platform/read'
+import { sourceRelationFields } from '../../lib/platform/source-snapshot-fields'
 /** Structured decision facts, plus original cells solely for historical fingerprints. */
-import { and, eq, getTableColumns, inArray, max, sql } from 'drizzle-orm'
-import { alias } from 'drizzle-orm/sqlite-core'
+import { and,eq,inArray,max,sql } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
+import { alias } from 'drizzle-orm/sqlite-core'
 import * as legacy from '../../db/schema'
-import { targetSchema as s } from '../../lib/platform/target-schema'
-import { cellExpression, snapshotSchema } from '../../lib/platform/target-evidence-read'
 import { storedApplyProjection } from '../../lib/platform/apply-stored-schema'
+import type { PlatformNormalizationConflict } from '../../lib/platform/normalization'
 import { storedProcessProjection } from '../../lib/platform/process-stored-schema'
 import { storedRecognizedProjection } from '../../lib/platform/recognized-stored-schema'
-import type { PlatformNormalizationConflict } from '../../lib/platform/normalization'
+import { cellExpression,snapshotSchema } from '../../lib/platform/target-evidence-read'
+import { targetSchema as s } from '../../lib/platform/target-schema'
 
 type Db = BetterSQLite3Database<typeof legacy>
 const fields = [
@@ -41,7 +43,7 @@ export function readCorrespondenceTargetSources(db: Db, ids: number[]) {
     if (!r.bytes) throw new Error('Missing original correspondence fingerprint snapshot')
     return [r.id, snapshotSchema.parse(JSON.parse(r.bytes.toString('utf8'))).fields] as const
   }))
-  const relationColumns = getTableColumns(legacy.platformRelation)
+  const relationColumns = sourceRelationFields
   const jobs = owners.map(owner => {
     const cells = snapshots.get(owner.observation.id)!
     const expressions = Object.entries(relationColumns).map(([key, column]) => {
@@ -54,7 +56,7 @@ export function readCorrespondenceTargetSources(db: Db, ids: number[]) {
   })
   // Original SQLite cells are decoded in batches only for existing hash/serialized evidence inputs.
   const originals = new Map(chunks(jobs).flatMap(jobs => db.all<Record<string, unknown>>(sql.join(jobs, sql` UNION ALL `))).map(row => {
-    const value = Object.fromEntries(Object.entries(relationColumns).map(([key, column]) => [key, row[key] == null ? null : column.mapFromDriverValue(row[key])])) as typeof legacy.platformRelation.$inferSelect
+    const value = Object.fromEntries(Object.entries(relationColumns).map(([key, column]) => [key, row[key] == null ? null : column.dataType === 'json' ? JSON.parse(String(row[key])) : row[key]])) as PlatformStoredRelation
     return [value.id, value] as const
   }))
   const queries = readCorrespondenceTargetQueries(db, owners.map(owner => owner.queryId))
@@ -86,7 +88,7 @@ export function readCorrespondenceTargetQueries(db: Db, ids: number[], options: 
   return new Map(owners.map(owner => {
     const c = owner.collection
     const bytes = (field: string) => archives.get(c.id)?.find(r => r.field === field)?.bytes ?? null
-    const query: typeof legacy.platformQuery.$inferSelect = { id: owner.queryId, interface: c.interface, queryKey: c.queryKey, rdjb: c.rdjb, titleCode: c.titleCode, queriedAt: c.queriedAt, lastCollectedAt: c.lastCollectedAt, status: c.status, failureReason: c.failureReason, rawResponse: bytes('rawResponse')?.toString('utf8') ?? null, collectionEvidence: bytes('collectionEvidence') === null ? null : JSON.parse(bytes('collectionEvidence')!.toString('utf8')), createdAt: c.createdAt }
+    const query: PlatformStoredQuery = { id: owner.queryId, interface: c.interface, queryKey: c.queryKey, rdjb: c.rdjb, titleCode: c.titleCode, queriedAt: c.queriedAt, lastCollectedAt: c.lastCollectedAt, status: c.status, failureReason: c.failureReason, rawResponse: bytes('rawResponse')?.toString('utf8') ?? null, collectionEvidence: bytes('collectionEvidence') === null ? null : JSON.parse(bytes('collectionEvidence')!.toString('utf8')), createdAt: c.createdAt }
     return [owner.queryId, { query, collection: c, pages: pages.get(c.id) ?? [], conditions: conditions.get(c.id) ?? [], scopes: scopes.get(c.id) ?? [], unfinished: unfinished.get(c.id) ?? [] }] as const
   }))
 }

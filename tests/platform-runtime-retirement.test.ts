@@ -1,18 +1,13 @@
+/** Offline retirement boundary tests; native application tests live in final-native-runtime.test.ts. */
 import Database from 'better-sqlite3'
-import { once } from 'node:events'
-import { copyFileSync, mkdtempSync, statSync } from 'node:fs'
+import { copyFileSync, mkdtempSync } from 'node:fs'
 import { join } from 'node:path'
-import { serialize } from 'node:v8'
 import { afterEach, expect, it, vi } from 'vitest'
-import { initializeDb, useRuntimeDb, useApplicationDb, useDb as useHistoricalDb } from '../db/client'
-import { assertApplicationRuntime, RETIRED_PLATFORM_TABLES } from '../db/schema-phase'
+import { initializeDb, useRuntimeDb, useApplicationDb } from '../db/client'
+import { assertFinalPlatformRuntime as assertApplicationRuntime, RETIRED_PLATFORM_TABLES } from '../db/schema-phase'
 import { retirePlatformModel } from '../upgrade/retire-platform-model'
-import { createEnterpriseReadExecutor } from '../server/utils/enterprise-read'
-import { createImportExecutionWorker } from '../server/utils/import-execution-worker-location'
 import { createHash } from 'node:crypto'
 import { getRosterEnterpriseDetail } from '../lib/roster/enterprise-roster'
-import { enterprise, record, recordEvent } from '../db/schema'
-import { writeNewCollectionTarget } from '../lib/platform/collection-target-command'
 
 const fixture = process.env.FINAL_PLATFORM_RETIREMENT_FIXTURE
 const evidence = process.env.FINAL_PLATFORM_RETIREMENT_EVIDENCE
@@ -41,49 +36,6 @@ function originalRows(db: Database.Database) {
 function oldTables(db: Database.Database) {
   return RETIRED_PLATFORM_TABLES.filter(name => db.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name=?").get(name))
 }
-
-it('refuses schema0 at application and source-worker entries while preserving the historical tool adapter', async () => {
-  const path = join(root, 'historical.sqlite')
-  const legacy = useHistoricalDb({ dbPath: path })
-  cleanup.push(() => legacy.$client.close())
-  expect(legacy.$client.pragma('user_version', { simple: true })).toBe(0)
-  expect(() => useApplicationDb({ dbPath: path })).toThrow('Unsupported final platform runtime schema')
-  const reads = createEnterpriseReadExecutor()
-  cleanup.push(() => reads.close())
-  await expect(reads.list(path)).rejects.toMatchObject({ statusCode:503, code:'enterprise_read_failed' })
-  const worker = createImportExecutionWorker()
-  cleanup.push(() => worker.terminate())
-  expect((await once(worker, 'message'))[0]).toMatchObject({ type:'ready' })
-  const stat = statSync(path)
-  const response = once(worker, 'message')
-  worker.postMessage({ id:1, dbPath:path, readonly:true, identity:{ dev:stat.dev, ino:stat.ino,
-    schemaVersion:legacy.$client.pragma('schema_version', { simple:true }),
-    migration:legacy.$client.prepare('SELECT hash,created_at FROM __drizzle_migrations ORDER BY created_at DESC LIMIT 1').get() },
-    action:'preflight', payload:serialize({ idempotencyKey:'historical-worker-refusal', sourceKind:'platform_archive',
-      sourceIdentity:'historical-test', payload:{ platformQueries:[] } }), pageCountErrors:[] })
-  expect((await response)[0]).toMatchObject({ type:'failure', error:{ message:'Unsupported final platform runtime schema' } })
-})
-
-it('keeps final enterprise details typed when a historical rollback environment remains set', () => {
-  const owner = initializeDb({ dbPath:join(root, 'native-detail.sqlite'), create:true })
-  cleanup.push(() => owner.$client.close())
-  owner.insert(enterprise).values({ id:1, name:'Native Detail', nameNorm:'Native Detail', usccNorm:'U1' }).run()
-  const rawFields = { id:'native-detail', rdjb:'2', qymc:'Native Detail', tyshxydm:'U1', year:'2025', cszt:'pending' }
-  writeNewCollectionTarget(owner, {
-    queryText:JSON.stringify({ interface:'apply_list', queryKey:'U1', rdjb:'2',
-      queriedAt:'2026-11-14T00:00:00Z', status:'success', rawResponse:'native detail original',
-      relations:[{ sequenceNo:1, relationKey:rawFields.id, nameRaw:rawFields.qymc, usccRaw:'U1', rawFields }] }),
-    evidenceText:null, createdAt:'2026-11-14T00:00:00Z', assignments:[{ enterpriseId:1, nameRaw:rawFields.qymc,
-      usccRaw:'U1', matchBasis:'uscc', verificationStatus:'confirmed', origin:'command',
-      actor:{ type:'agent', id:'native-detail' }, basis:'confirmed native detail' }],
-  })
-  const asOf = Date.UTC(2026, 10, 14)
-  const before = getRosterEnterpriseDetail(owner, 1, asOf)!
-  expect(before.platform.businessRecords.flatMap(row => row.observationRefs).some(row => row.typedFields !== null)).toBe(true)
-  vi.stubEnv('ROSTER_ENTERPRISE_DETAIL_TYPED_READ', 'legacy')
-  expect(getRosterEnterpriseDetail(owner, 1, asOf)!.platform.businessRecords).toEqual(before.platform.businessRecords)
-  expect(oldTables(owner.$client)).toEqual([])
-})
 
 it('serves migrated enterprise details with the reconcile capture collection marker', () => {
   const f = target()
@@ -122,8 +74,7 @@ it('retires historical tables atomically and opens the completed runtime without
   expect(f.db.pragma('foreign_key_check')).toEqual([])
   expect(f.db.pragma('integrity_check', { simple: true })).toBe('ok')
   expect(retirePlatformModel(f.db)).toEqual({ state: 'complete', version: 71613 })
-  const absentMigrations = join(root, 'no-expand-migrations')
-  const runtime = useRuntimeDb({ dbPath: f.path, readOnly: true, migrationsFolder: absentMigrations })
+  const runtime = useRuntimeDb({ dbPath: f.path, readOnly: true })
   cleanup.push(() => runtime.$client.close())
   expect(runtime.$client.prepare('SELECT count(*) n FROM platform_collection').get()).toEqual(f.db.prepare('SELECT count(*) n FROM platform_collection').get())
   const restarted = initializeDb({ dbPath: f.path, migrationsFolder: absentMigrations })
@@ -152,77 +103,4 @@ it('preserves orphan body bytes and rolls back retirement', () => {
   expect(oldTables(f.db)).toHaveLength(6)
   expect(f.db.prepare('SELECT bytes FROM platform_body_leaf WHERE id=1').get()).toEqual({ bytes })
   expect(f.db.prepare("SELECT 1 FROM sqlite_schema WHERE name='platform_runtime_completion'").get()).toBeUndefined()
-})
-
-it('serves ordinary and current reads and import preflight through the real source workers', async () => {
-  const f = target()
-  retirePlatformModel(f.db)
-  // The retired target always uses typed source facts, even with an old host setting.
-  vi.stubEnv('ROSTER_RECOGNIZED_FILTER_SOURCE', 'legacy')
-  const executor = createEnterpriseReadExecutor()
-  cleanup.push(() => executor.close())
-  const list = await executor.list(f.path, { pageSize: 5 })
-  expect(list.rows.length).toBeGreaterThan(0)
-  const current = await executor.currentQualifiedJson(f.path, { titleCode: 'little_giant', pageSize: 5 })
-  expect(current.found).toBe(true)
-  expect(JSON.parse(current.body.toString())).toMatchObject({ titleCode: 'little_giant' })
-  const stat = statSync(f.path)
-  const identity = { dev: stat.dev, ino: stat.ino, schemaVersion: f.db.pragma('schema_version', { simple: true }),
-    migration: f.db.prepare('SELECT hash,created_at FROM __drizzle_migrations ORDER BY created_at DESC LIMIT 1').get() }
-  const worker = createImportExecutionWorker()
-  cleanup.push(() => worker.terminate())
-  expect((await once(worker, 'message'))[0]).toMatchObject({ type: 'ready' })
-  const response = once(worker, 'message')
-  worker.postMessage({ id: 1, dbPath: f.path, readonly: false, identity, action: 'preflight',
-    payload: serialize({ idempotencyKey: 'final-runtime-worker', sourceKind: 'platform_archive', sourceIdentity: 'final-runtime',
-      payload: { platformQueries: [] } }), pageCountErrors: [] })
-  expect((await response)[0]).toMatchObject({ type: 'result', id: 1, result: { status: 'preflight' } })
-  expect(f.db.pragma('foreign_key_check')).toEqual([])
-  expect(oldTables(f.db)).toEqual([])
-}, 30000)
-
-it('refreshes current qualification after committed fact changes through the same real worker', async () => {
-  const path = join(root, 'qualification-freshness.sqlite')
-  const owner = initializeDb({ dbPath: path, create: true })
-  cleanup.push(() => owner.$client.close())
-  const subject = owner.insert(enterprise).values({ name:'资格刷新企业', nameNorm:'资格刷新企业' }).returning().get()
-  const title = owner.insert(record).values({ enterpriseId:subject.id,titleCode:'little_giant',source:'jxj' }).returning().get()
-  const executor = createEnterpriseReadExecutor()
-  cleanup.push(() => executor.close())
-  const read = async () => {
-    const response = await executor.currentQualifiedJson(path, { titleCode:'little_giant',q:'资格刷新企业',pageSize:5 })
-    expect(response.found).toBe(true)
-    return JSON.parse(response.body.toString())
-  }
-  expect(await read()).toMatchObject({total:0,rows:[]})
-  const event = owner.insert(recordEvent).values({recordId:title.id,eventType:'award',year:new Date().getFullYear()}).returning().get()
-  expect(await read()).toMatchObject({total:1,rows:[{enterpriseId:subject.id}]})
-  owner.$client.prepare('UPDATE record_event SET year=1999 WHERE id=?').run(event.id)
-  expect(await read()).toMatchObject({total:0,rows:[]})
-})
-
-it('creates an empty native target and serves a first import without historical migration rows', async () => {
-  const path = join(root, 'native.sqlite')
-  const owner = initializeDb({ dbPath: path, create: true })
-  expect(useApplicationDb({ dbPath: path })).toBe(owner)
-  cleanup.push(() => owner.$client.close())
-  expect(oldTables(owner.$client)).toEqual([])
-  expect(owner.$client.prepare('SELECT count(*) n FROM platform_migration_run').get()).toEqual({ n: 0 })
-  const { commitRosterImport } = await import('../server/utils/roster-import')
-  const result = commitRosterImport(owner, { idempotencyKey: 'native-first', sourceKind: 'platform_archive', sourceIdentity: 'native-test',
-    payload: { platformQueries: [{ interface: 'business_list', queryKey: 'name:Native', rdjb: '2',
-      queriedAt: '2026-11-14T00:00:00Z', status: 'success', rawResponse: 'native original', relations: [{ sequenceNo: 1,
-        relationKey: 'native-business', rawFields: { id: 'native-business', rdjb: '2', qymc: 'Native' } }] }] } }, [], { deferCandidateTasks: true })
-  expect(result.status, JSON.stringify(result)).toBe('committed')
-  const { listTargetBusinessProcesses } = await import('../server/utils/platform-business-processes-target')
-  expect(listTargetBusinessProcesses({}, owner).rows).toHaveLength(1)
-  expect(owner.$client.pragma('foreign_key_check')).toEqual([])
-  owner.$client.close()
-  const restarted = initializeDb({ dbPath: path, migrationsFolder: join(root, 'absent') })
-  cleanup.push(() => restarted.$client.close())
-  expect(oldTables(restarted.$client)).toEqual([])
-  expect(restarted.$client.prepare('SELECT count(*) n FROM platform_collection').get()).toEqual({ n: 1 })
-  expect(useApplicationDb({ dbPath: path })).toBe(restarted)
-  restarted.$client.exec('CREATE TABLE platform_query(id INTEGER PRIMARY KEY)')
-  expect(() => useApplicationDb({ dbPath: path })).toThrow('dependency remains')
 })

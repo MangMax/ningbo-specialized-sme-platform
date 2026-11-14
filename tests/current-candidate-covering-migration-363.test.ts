@@ -9,7 +9,7 @@ import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { migrate } from 'drizzle-orm/better-sqlite3/migrator'
 import { expect, it } from 'vitest'
-import { currentCandidateSql, currentCandidateSqlFor } from '../lib/roster/current-candidates'
+import { currentCandidateSql, currentCandidateSqlFor } from '../upgrade/frozen/current-candidates'
 
 const folder = resolve('db/migrations')
 const rIndex = 'platform_relation_current_candidate_cover_idx'

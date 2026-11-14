@@ -1,0 +1,40 @@
+/** Offline-only frozen stage dependency from ab503081dae3e24680afc9b07395a7e3ff21fc9f. */
+/** Bounded same-owner authentication only; never used for query membership. */
+import Database from 'better-sqlite3'
+import { and, eq } from 'drizzle-orm'
+import { drizzle } from 'drizzle-orm/better-sqlite3'
+import { isDeepStrictEqual } from 'node:util'
+import { targetSchema as s } from '../target-schema'
+import { platformApplyStoredProjection as p, platformApplyStoredObservation as o, storedApplyProjection } from './apply-stored-schema'
+import { applyMaterialization } from '../../lib/platform/apply-materialization'
+import { captureSqlFactTitle, APPLY_STORED_RULE, APPLY_SQL_TITLE_RULE } from '../../lib/platform/apply-stored-cells'
+import { rowSnapshot } from '../../lib/platform/sqlite-row-cells'
+import type { ApplyTargetInput } from './apply-target-writer'
+export const APPLY_STORED_KEYS=['exactStatus','exactDeclareKind','exactAppliedAt','exactYear','exactTitleRaw','exactStoredState','exactStoredRule','exactStoredOrigin','exactStoredReason','sqlFactTitle','sqlFactTitleState','sqlFactTitleRule','sqlFactTitleReason'] as const
+const fields=['status','declare_kind','applied_at','year','title_raw']
+export function verifyApplyStored(t:Database.Database,id:number,source:{kind:'command',input:ApplyTargetInput}|{kind:'legacy',cells:ReturnType<typeof rowSnapshot>}){
+ const db=drizzle(t),projection=db.select().from(p).where(eq(p.observationId,id)).get(),pair=db.select().from(o).where(eq(o.id,id)).get()
+ if(!projection||projection.exactStoredState!=='captured'||projection.sqlFactTitleState!=='captured')throw new Error('apply_stored_uncaptured')
+ if(pair?.applyExactOwnerId!==id||pair.applyExactState!=='captured'||pair.applySqlFactTitleState!=='captured'||projection.exactStoredRule!==APPLY_STORED_RULE||projection.sqlFactTitleRule!==APPLY_SQL_TITLE_RULE||projection.exactStoredReason!==null||projection.sqlFactTitleReason!==null)throw new Error('apply_stored_conflict: capture metadata')
+ if(pair.versionId!==null){const version=db.select().from(storedApplyProjection).where(eq(storedApplyProjection.versionId,pair.versionId)).get();if(version&&APPLY_STORED_KEYS.some(key=>version[key]!==null))throw new Error('apply_stored_conflict: version capture fields')}
+ const raw=db.select({r:s.platformObservationArchiveRef,a:s.platformArchiveValue}).from(s.platformObservationArchiveRef).innerJoin(s.platformArchiveValue,eq(s.platformArchiveValue.id,s.platformObservationArchiveRef.archiveId)).where(and(eq(s.platformObservationArchiveRef.ownerId,id),eq(s.platformObservationArchiveRef.field,'rawFields'))).get()
+ if(!raw||raw.r.sealed!==1||!['text','null'].includes(raw.a.storageClass))throw new Error('apply_stored_conflict: raw owner')
+ const text=raw.a.bytes===null?null:new TextDecoder('utf-8',{fatal:true}).decode(raw.a.bytes)
+ if(projection.sqlFactTitle!==captureSqlFactTitle(t,text))throw new Error('apply_stored_conflict: SQL fact title')
+ const assignment=db.select().from(s.platformObservationAssignment).where(and(eq(s.platformObservationAssignment.observationId,id),eq(s.platformObservationAssignment.revision,1))).get()
+ let expected:ReturnType<typeof rowSnapshot>
+ if(source.kind==='command'){
+  if(projection.exactStoredOrigin!=='command_materialized')throw new Error('apply_stored_conflict: command origin')
+  const m=applyMaterialization(db,source.input.row,text)
+  if(!assignment||assignment.nameRaw!==m.nameRaw||assignment.usccRaw!==m.usccRaw||pair.sourceRelationKey!==m.sourceRelationKey)throw new Error('apply_stored_conflict: revision1/key')
+  const oracle=new Database(':memory:')
+  try{oracle.exec('CREATE TABLE cells(status TEXT,declare_kind TEXT,applied_at TEXT,year INTEGER,title_raw TEXT)');oracle.prepare('INSERT INTO cells VALUES(?,?,?,?,?)').run(m.exactStatus,m.exactDeclareKind,m.exactAppliedAt,m.exactYear,m.exactTitleRaw);expected=rowSnapshot(oracle,'cells','rowid',1)}finally{oracle.close()}
+ }else{
+  if(!['legacy_source','sealed_snapshot'].includes(projection.exactStoredOrigin??''))throw new Error('apply_stored_conflict: legacy origin')
+  expected=fields.map(name=>{const cell=source.cells.find(c=>c.name===name);if(!cell)throw new Error('apply_stored_uncaptured: missing cell');return cell})
+  const originalText=(name:string)=>{const c=source.cells.find(c=>c.name===name);if(!c||!['text','null'].includes(c.storageClass))throw new Error('apply_stored_uncaptured: revision1');return c.storageClass==='null'?null:new TextDecoder('utf-8',{fatal:true}).decode(Buffer.from(c.hex,'hex'))}
+  if(!assignment||assignment.nameRaw!==originalText('name_raw')||assignment.usccRaw!==originalText('uscc_raw')||pair.sourceRelationKey!==originalText('relation_key'))throw new Error('apply_stored_conflict: revision1/key')
+ }
+ const actual=rowSnapshot(t,'platform_apply_projection','observation_id',id,fields.map(f=>'exact_'+f)).map((c,i)=>({...c,name:fields[i]!}))
+ if(!isDeepStrictEqual(expected,actual))throw new Error('apply_stored_conflict: exact cells')
+}

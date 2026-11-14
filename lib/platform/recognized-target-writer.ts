@@ -1,13 +1,11 @@
 import { captureRelationEvidence } from './relation-evidence-snapshot'
-import { witnessInstalled } from './recognized-witness-catalog'
 import { captureWitnessObservation,verifyWitnessCollection,verifyWitnessObservation } from './recognized-witness-write'
-import { recognizedStoredInstalled, recognizedTitleEvidence, verifyRecognizedStored } from './recognized-stored'
+import { recognizedTitleEvidence, verifyRecognizedStored } from './recognized-stored'
 import { storedRecognizedProjection } from './recognized-stored-schema'
 import { sqliteConnection } from './target-connection'
 import { candidateObservationValues, verifyCandidateObservation } from './candidate-scope-write'
-import { candidateScopeObservation } from './candidate-scope-schema'
 /** W3a explicit finalized-target transaction seam. No public import routing. */
-import { capturePhase, nextObservationId, captureFingerprintBasis, assertCapturedInput } from './fingerprint-capture'
+import { requireFingerprintCapture, nextObservationId, captureFingerprintBasis, assertCapturedInput } from './fingerprint-capture'
 import { createHash } from 'node:crypto'
 import { and, eq } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
@@ -35,8 +33,7 @@ function positive(value: number) {
 
 /** A nested SQLite savepoint makes any failure atomic even if an outer caller catches it. */
 export function writeRecognizedTarget<S extends Record<string, unknown>>(db: BetterSQLite3Database<S>, input: RecognizedTargetInput) {
-  const capturing = capturePhase(db)
-  const stored = recognizedStoredInstalled(sqliteConnection(db))
+  requireFingerprintCapture(db)
   return db.transaction(tx => {
     positive(input.collectionId); if(input.batchId!==undefined)positive(input.batchId); positive(input.position.sequenceNo)
     for (const id of [input.position.pageId, input.position.pageRowNo, input.assignment.enterpriseId, input.assignment.commandReceiptId, input.row.enterpriseId]) if (id != null) positive(id)
@@ -61,22 +58,22 @@ export function writeRecognizedTarget<S extends Record<string, unknown>>(db: Bet
     const fingerprint = createHash('sha256').update(inputBytes).digest('hex')
     const existing = tx.select().from(s.platformBusinessObservation).where(and(eq(s.platformBusinessObservation.collectionId, collection.id), eq(s.platformBusinessObservation.sequenceNo, input.position.sequenceNo))).get()
     if (existing) {
-      if (capturing) assertCapturedInput(tx, existing.id, inputBytes)
+      assertCapturedInput(tx, existing.id, inputBytes)
       for (const id of [existing.id, existing.recordId, existing.versionId]) if (id != null) positive(id)
       if (existing.inputFingerprint !== fingerprint || existing.projectionRuleVersion !== PLATFORM_PROJECTION_RULE) throw new Error('observation_payload_conflict')
       const alias = tx.select().from(s.platformLegacyRelationAlias).where(eq(s.platformLegacyRelationAlias.observationId, existing.id)).get()
       if (!alias) throw new Error('Missing observation alias')
       verifyCandidateObservation(tx, existing.id)
       verifyWitnessObservation(sqliteConnection(tx),existing.id)
-      if(stored) verifyRecognizedStored(sqliteConnection(tx),existing.id)
+      verifyRecognizedStored(sqliteConnection(tx),existing.id)
       positive(alias.oldId)
       return { observationId: existing.id, recordId: existing.recordId, versionId: existing.versionId, relationAlias: alias.oldId, reused: true }
     }
-    const observationId = capturing ? nextObservationId(tx) : undefined
-    if (capturing) captureFingerprintBasis(tx, observationId!, 'target-command-v1', inputBytes)
+    const observationId = nextObservationId(tx)
+    captureFingerprintBasis(tx, observationId, 'target-command-v1', inputBytes)
     const { recordId, versionId, now } = ensureRecognizedTargetContent(tx, plan)
     const candidateValues = candidateObservationValues(tx, collection, input.position.sequenceNo)
-    const observation = tx.insert(candidateValues.candidateScopeState ? candidateScopeObservation : s.platformBusinessObservation).values({ ...candidateValues, id: observationId, collectionId: collection.id, ...input.position, sourceRelationKey: input.row.relationKey ?? null, recordId, versionId, identityState: plan.identityState, contentState: plan.contentState, keySource: plan.keySource, projectionRuleVersion: PLATFORM_PROJECTION_RULE, inputFingerprint: fingerprint, indexedAt: now, batchId: input.batchId ?? null }).returning().get()
+    const observation = tx.insert(s.platformBusinessObservation).values({ ...candidateValues, id: observationId, collectionId: collection.id, ...input.position, sourceRelationKey: input.row.relationKey ?? null, recordId, versionId, identityState: plan.identityState, contentState: plan.contentState, keySource: plan.keySource, projectionRuleVersion: PLATFORM_PROJECTION_RULE, inputFingerprint: fingerprint, indexedAt: now, batchId: input.batchId ?? null }).returning().get()
     positive(observation.id)
     const assignment = { ...input.assignment, observationId: observation.id, revision: 1 }
     tx.insert(s.platformObservationAssignment).values(assignment).run()
@@ -89,12 +86,12 @@ export function writeRecognizedTarget<S extends Record<string, unknown>>(db: Bet
     captureRelationEvidence(tx,{observationId:observation.id,collectionId:collection.id,relationAlias,row:input.row,assignment,createdAt:now})
     sealArchiveOwner(tx, { kind: 'observation', ownerId: observation.id })
     const title = raw?.rdjb
-    const exact = stored ? recognizedTitleEvidence(sqliteConnection(tx),observation.id) : null
-    if(stored && !exact) throw new Error('recognized_stored_uncaptured')
-    const exactTitle = exact?.cell.storageClass === 'null' ? null : exact ? Buffer.from(exact.cell.hex,'hex').toString('utf8') : null
-    const observationProjection = tx.insert(stored ? storedRecognizedProjection : s.platformRecognizedProjection).values({ ...(exact ? {exactTitleRaw:exactTitle,exactTitleState:exact.exactTitleState,exactTitleOrigin:exact.exactTitleOrigin,exactTitleArchiveId:exact.exactTitleArchiveId,exactTitleSha256:exact.exactTitleSha256}:{}), observationId: observation.id, basis: raw === null ? 'unavailable' : 'observation_reconciliation', parseState: raw === null ? 'absent' : 'valid', sourceArchiveId: rawArchive, ...(plan.recognizedProjection ?? parseRecognizedRecord(raw)), ...(raw === null ? { sourceValidityDate: null, sourceMaintenanceBatch: null, sourceMaintenanceYearAbsent: null } : parseRecognizedSourceFidelity(raw)), ruleVersion: RECOGNIZED_PROJECTION_RULE, sourceTitleKind: sourceValueKind(title), sourceTitleText: typeof title === 'string' ? title : null, sourceTitleNumberText: typeof title === 'number' ? String(title) : null, sourceTitleBoolean: typeof title === 'boolean' ? Number(title) : null, sourceTitleRuleVersion: 't05b-source-projections-v1', ...sourceFieldComparison('recognized_list', { province: input.row.province ?? null, status: input.row.status ?? null, batch: input.row.batch ?? null, declareKind: input.row.declareKind ?? null, appliedAt: input.row.appliedAt ?? null, awardBatchLabel: input.row.awardBatchLabel ?? null, year: input.row.year ?? null }, raw, raw === null ? 'absent' : 'valid') }).returning({ id: s.platformRecognizedProjection.id }).get()
+    const exact = recognizedTitleEvidence(sqliteConnection(tx),observation.id)
+    if(!exact) throw new Error('recognized_stored_uncaptured')
+    const exactTitle = exact.cell.storageClass === 'null' ? null : Buffer.from(exact.cell.hex,'hex').toString('utf8')
+    const observationProjection = tx.insert(storedRecognizedProjection).values({ exactTitleRaw:exactTitle,exactTitleState:exact.exactTitleState,exactTitleOrigin:exact.exactTitleOrigin,exactTitleArchiveId:exact.exactTitleArchiveId,exactTitleSha256:exact.exactTitleSha256, observationId: observation.id, basis: raw === null ? 'unavailable' : 'observation_reconciliation', parseState: raw === null ? 'absent' : 'valid', sourceArchiveId: rawArchive, ...(plan.recognizedProjection ?? parseRecognizedRecord(raw)), ...(raw === null ? { sourceValidityDate: null, sourceMaintenanceBatch: null, sourceMaintenanceYearAbsent: null } : parseRecognizedSourceFidelity(raw)), ruleVersion: RECOGNIZED_PROJECTION_RULE, sourceTitleKind: sourceValueKind(title), sourceTitleText: typeof title === 'string' ? title : null, sourceTitleNumberText: typeof title === 'number' ? String(title) : null, sourceTitleBoolean: typeof title === 'boolean' ? Number(title) : null, sourceTitleRuleVersion: 't05b-source-projections-v1', ...sourceFieldComparison('recognized_list', { province: input.row.province ?? null, status: input.row.status ?? null, batch: input.row.batch ?? null, declareKind: input.row.declareKind ?? null, appliedAt: input.row.appliedAt ?? null, awardBatchLabel: input.row.awardBatchLabel ?? null, year: input.row.year ?? null }, raw, raw === null ? 'absent' : 'valid') }).returning({ id: s.platformRecognizedProjection.id }).get()
     positive(observationProjection.id)
-    if(witnessInstalled(sqliteConnection(tx)))captureWitnessObservation(sqliteConnection(tx),observation.id)
+    captureWitnessObservation(sqliteConnection(tx),observation.id)
     return { observationId: observation.id, recordId, versionId, relationAlias, reused: false }
   })
 }

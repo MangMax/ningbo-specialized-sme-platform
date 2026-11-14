@@ -1,7 +1,7 @@
 import type { TaskSummary } from '../../../lib/task-center'
 import { TASK_EXPORTS } from '../../../lib/task-center'
 import { isJobId } from '../../../lib/job'
-import type { useDb } from '../../../db/client'
+import type { useApplicationDb } from '../../../db/client'
 import { currentArtifact, currentExportDbPath } from '../current-export-artifact'
 import { CURRENT_RULE_VERSION, LEGACY_CURRENT_RULE_VERSION } from '../../../lib/roster/current-qualification'
 import type { ProjectedTask } from './task-summary'
@@ -21,7 +21,7 @@ export const exportProjection = {
 
 export const exportTitleFilter = (title: string) => sql`json_extract(${j.params}, '$.titleCode') = ${title}`
 
-export async function readExportSummary(row: ProjectedTask, authorized: boolean, db: ReturnType<typeof useDb>) {
+export async function readExportSummary(row: ProjectedTask, authorized: boolean, db: ReturnType<typeof useApplicationDb>) {
   const active = row.state === 'queued' || row.state === 'running'
   let exported: TaskSummary['export']
   if (row.kind === 'current-roster-export') {

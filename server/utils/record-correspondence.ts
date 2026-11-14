@@ -1,18 +1,18 @@
-import { readCorrespondenceTargetSources } from './record-correspondence-target-sources'
-import { correspondenceTarget, correspondenceTable, correspondenceColumns, externalRelationColumn } from './record-correspondence-store'
-import { platformRowTitle } from '../../lib/platform/row-title'
-import { createHash } from 'node:crypto'
-import { and, asc, count, eq, getTableColumns, inArray, or, sql } from 'drizzle-orm'
+import { and,asc,count,eq,inArray,or,sql } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
+import { createHash } from 'node:crypto'
 import * as schema from '../../db/schema'
 import { normalizeUscc } from '../../lib/domain'
-import { RDJB_TITLE_CODES, sourcePositionForSequence } from '../../lib/platform/recognized-evidence'
-import { normalizePlatformRelation } from '../../lib/platform/normalization'
-import { ensureBatchRow, findBatchByKey } from './roster-batch-ledger'
-import { versionedOfficialEvent } from './roster-event-version'
-import { correspondenceRefValidity, createCorrespondenceRefValidityReader } from './record-correspondence-ref-validity'
-import { createCurrentProofCoverageReader, currentProofCoversRows } from './comparison-scope-proof'
+import type { PlatformStoredQuery,PlatformStoredRelation } from '../../lib/platform/read'
+import { RDJB_TITLE_CODES } from '../../lib/platform/recognized-evidence'
+import { platformRowTitle } from '../../lib/platform/row-title'
+import { createCurrentProofCoverageReader,currentProofCoversRows } from './comparison-scope-proof'
 import { correspondenceIdentityProblem } from './record-correspondence-identity'
+import { correspondenceRefValidity,createCorrespondenceRefValidityReader } from './record-correspondence-ref-validity'
+import { correspondenceColumns,correspondenceTable,externalRelationColumn } from './record-correspondence-store'
+import { readCorrespondenceTargetSources } from './record-correspondence-target-sources'
+import { ensureBatchRow,findBatchByKey } from './roster-batch-ledger'
+import { versionedOfficialEvent } from './roster-event-version'
 
 type Db = BetterSQLite3Database<typeof schema>
 type Tx = Parameters<Parameters<Db['transaction']>[0]>[0]
@@ -42,7 +42,7 @@ export interface CorrespondenceRequest {
 export interface CorrespondenceImpact { created: number; unlinked: number; audit: number }
 export interface CorrespondencePlan { batchId: number; batchStatus: 'preflight' | 'committed'; planHash: string; impact: CorrespondenceImpact; targets: Record<string, unknown>[] }
 export interface CorrespondenceReceipt { batchId: number; planHash: string; impact: CorrespondenceImpact; correspondenceIds: number[] }
-type StoredCorrespondence = typeof schema.recordCorrespondence.$inferSelect
+type StoredCorrespondence = Omit<typeof schema.recordCorrespondence.$inferSelect, 'observationId'> & { relationId: number | null }
 export type CorrespondenceRead = StoredCorrespondence & { requiresRevalidation: boolean }
 export type CorrespondenceAudit = typeof schema.recordCorrespondenceAudit.$inferSelect
 export type CorrespondenceFilter = Partial<Pick<CorrespondenceRead, 'id' | 'eventId' | 'relationId' | 'exportRowId' | 'enterpriseId' | 'titleCode' | 'status' | 'type' | 'role' | 'ruleVersion'>> & { anyEventId?: number }
@@ -80,13 +80,11 @@ function eventSource(db: Executor, id: number, observed?: ReadSources) {
 }
 function relationSource(db: Executor, id: number, observed?: ReadSources) {
   if (!positive(id)) fail('invalid_endpoint_type', 'relationId must be a positive integer')
-  const row: RelationRows | undefined = observed ? observed.relations.get(id) : correspondenceTarget(db) ? readCorrespondenceTargetSources(db, [id])[0] : db.select({ relation: schema.platformRelation, query: schema.platformQuery })
-    .from(schema.platformRelation).innerJoin(schema.platformQuery, eq(schema.platformRelation.queryId, schema.platformQuery.id))
-    .where(eq(schema.platformRelation.id, id)).get()
+  const row: RelationRows | undefined = observed ? observed.relations.get(id) : readCorrespondenceTargetSources(db, [id])[0]
   if (!row || !['success', 'partial'].includes(row.query.status)) fail('invalid_endpoint_type', 'Persisted positive interface row not found')
   // Validate the same facts shown by source/candidate readers. Provenance and
   // fingerprints below continue to use the untouched persisted rows.
-  return { ...row, relation: row.facts ?? normalizePlatformRelation(row.query.interface, row.relation) }
+  return { ...row, relation: row.facts }
 }
 function exportSource(db: Executor, id: number, observed?: ReadSources) {
   if (!positive(id)) fail('invalid_endpoint_type', 'exportRowId must be a positive integer')
@@ -112,9 +110,7 @@ function sourceProvenance(db: Executor, edge: CorrespondenceEdge, observed?: Rea
     .from(schema.recordEvent).innerJoin(schema.record, eq(schema.recordEvent.recordId, schema.record.id))
     .innerJoin(schema.enterprise, eq(schema.record.enterpriseId, schema.enterprise.id))
     .where(eq(schema.recordEvent.id, edge.eventId)).get() : null
-  const relation = 'relationId' in edge ? observed ? observed.relations.get(edge.relationId) : correspondenceTarget(db) ? readCorrespondenceTargetSources(db, [edge.relationId])[0] : db.select({ relation: schema.platformRelation, query: schema.platformQuery })
-    .from(schema.platformRelation).innerJoin(schema.platformQuery, eq(schema.platformRelation.queryId, schema.platformQuery.id))
-    .where(eq(schema.platformRelation.id, edge.relationId)).get() : null
+  const relation = 'relationId' in edge ? observed ? observed.relations.get(edge.relationId) : readCorrespondenceTargetSources(db, [edge.relationId])[0] : null
   const exported = 'exportRowId' in edge ? observed ? observed.exports.get(edge.exportRowId) : db.select({ exportRow: schema.platformExportRow, exportBatch: schema.platformExportBatch })
     .from(schema.platformExportRow).innerJoin(schema.platformExportBatch, eq(schema.platformExportRow.batchId, schema.platformExportBatch.id))
     .where(eq(schema.platformExportRow.id, edge.exportRowId)).get() : null
@@ -134,7 +130,7 @@ function sourceProvenance(db: Executor, edge: CorrespondenceEdge, observed?: Rea
 function relationTitle(source: ReturnType<typeof relationSource>): string | null {
   const { query, relation } = source
   const fromPosition = query.interface === 'recognized_list'
-    ? RDJB_TITLE_CODES[('sourceRdjb' in relation ? relation.sourceRdjb : sourcePositionForSequence(query.collectionEvidence, relation.sequenceNo).sourceRdjb) ?? '']
+    ? RDJB_TITLE_CODES[relation.sourceRdjb ?? '']
     : undefined
   const fromScope = RDJB_TITLE_CODES[platformRowTitle(query.rdjb, relation.rawFields)]
   if (query.titleCode && fromPosition && query.titleCode !== fromPosition) fail('title_conflict', 'Query and row title differ')
@@ -360,7 +356,7 @@ export function preflightRecordCorrespondences(db: Db, request: CorrespondenceRe
   }
   return { batchId: batch.id, batchStatus: 'preflight', planHash: plan.planHash, impact: plan.impact, targets: plan.targets }
 }
-function addAudit(tx: Tx, row: StoredCorrespondence, batchId: number, request: CorrespondenceRequest, fromStatus: string | null, toStatus: string, expectedRevision: number, decidedAt: string) {
+function addAudit(tx: Tx, row: Pick<StoredCorrespondence, 'id' | 'provenance'>, batchId: number, request: CorrespondenceRequest, fromStatus: string | null, toStatus: string, expectedRevision: number, decidedAt: string) {
   tx.insert(schema.recordCorrespondenceAudit).values({ correspondenceId: row.id, batchId, idempotencyKey: request.idempotencyKey, fromStatus, toStatus, expectedRevision, resultingRevision: expectedRevision + 1, actorType: request.actor.type, actorId: request.actor.id, basis: request.basis, ruleId: request.ruleId, ruleVersion: request.ruleVersion, evidence: row.provenance, decidedAt }).run()
 }
 function insertEdge(tx: Tx, edge: CorrespondenceEdge, request: CorrespondenceRequest, batchId: number, status: 'candidate' | 'confirmed' | 'rejected', at: string, observed: ReadSources) {
@@ -369,7 +365,7 @@ function insertEdge(tx: Tx, edge: CorrespondenceEdge, request: CorrespondenceReq
     edgeKey: edgeKey(edge), type: edge.type, role: edge.role,
     eventId: 'eventId' in edge ? edge.eventId : null,
     predecessorEventId: edge.type === 'later_process' ? edge.predecessorEventId ?? null : null,
-    relationId: 'relationId' in edge ? correspondenceTarget(tx) ? observed.relations.get(edge.relationId)!.observationId! : edge.relationId : null,
+    observationId: 'relationId' in edge ? observed.relations.get(edge.relationId)!.observationId! : null,
     exportRowId: 'exportRowId' in edge ? edge.exportRowId : null,
     enterpriseId: source.enterpriseId, titleCode: source.titleCode, status,
     revision: status !== 'candidate' ? 2 : 1,
@@ -479,7 +475,7 @@ function correspondenceWhere(db: Db, filter: CorrespondenceFilter) {
     anyEventId == null ? undefined : or(eq(schema.recordCorrespondence.eventId, anyEventId), eq(schema.recordCorrespondence.predecessorEventId, anyEventId)))
 }
 type EventRows = { event: typeof schema.recordEvent.$inferSelect; record: typeof schema.record.$inferSelect; enterprise: typeof schema.enterprise.$inferSelect }
-type RelationRows = { relation: typeof schema.platformRelation.$inferSelect; query: typeof schema.platformQuery.$inferSelect; facts?: ReturnType<typeof readCorrespondenceTargetSources>[number]['facts']; observationId?: number }
+type RelationRows = { relation: PlatformStoredRelation; query: PlatformStoredQuery; facts: ReturnType<typeof readCorrespondenceTargetSources>[number]['facts']; observationId?: number }
 type ExportRows = { exportRow: typeof schema.platformExportRow.$inferSelect; exportBatch: typeof schema.platformExportBatch.$inferSelect }
 interface ReadSources {
   coversCurrentProof: ReturnType<typeof createCurrentProofCoverageReader>
@@ -507,10 +503,9 @@ function observeRequestSources(db: Db, request: CorrespondenceRequest) {
 function observeReadSources(db: Db, rows: SourceReference[]): ReadSources {
   const sourceBound = rows.filter(row => row.status === 'confirmed' || row.status === 'candidate')
   const events = idChunks(sourceBound.flatMap(r => [r.eventId, r.predecessorEventId])).flatMap(ids => db.select({ event: schema.recordEvent, record: schema.record, enterprise: schema.enterprise }).from(schema.recordEvent).innerJoin(schema.record, eq(schema.recordEvent.recordId, schema.record.id)).innerJoin(schema.enterprise, eq(schema.record.enterpriseId, schema.enterprise.id)).where(inArray(schema.recordEvent.id, ids)).all())
-  const targetRelations = correspondenceTarget(db) ? readCorrespondenceTargetSources(db, sourceBound.flatMap(r => r.relationId === null ? [] : [r.relationId])) : null
-  const relations = targetRelations ? targetRelations.map(r => r.relation) : idChunks(sourceBound.map(r => r.relationId)).flatMap(ids => db.select().from(schema.platformRelation).where(inArray(schema.platformRelation.id, ids)).all())
-  const queries = targetRelations ? targetRelations.map(r => r.query) : idChunks(relations.map(r => r.queryId)).flatMap(ids => db.select().from(schema.platformQuery).where(inArray(schema.platformQuery.id, ids)).all())
-  const queriesById = new Map(queries.map(r => [r.id, r]))
+  const targetRelations = readCorrespondenceTargetSources(db, sourceBound.flatMap(r => r.relationId === null ? [] : [r.relationId]))
+  const relations = targetRelations.map(r => r.relation)
+
   const exports = idChunks(sourceBound.map(r => r.exportRowId)).flatMap(ids => db.select({ exportRow: schema.platformExportRow, exportBatch: schema.platformExportBatch }).from(schema.platformExportRow).innerJoin(schema.platformExportBatch, eq(schema.platformExportRow.batchId, schema.platformExportBatch.id)).where(inArray(schema.platformExportRow.id, ids)).all())
   const enterprises = idChunks([...sourceBound.map(r => r.enterpriseId), ...relations.map(r => r.enterpriseId)]).flatMap(ids => db.select().from(schema.enterprise).where(inArray(schema.enterprise.id, ids)).all())
   const titles = [...new Set(sourceBound.map(r => r.titleCode))]
@@ -519,7 +514,7 @@ function observeReadSources(db: Db, rows: SourceReference[]): ReadSources {
   const paths = [...new Set(evidence.map(r => r.sourceFile))]
   const files = Array.from({ length: Math.ceil(paths.length / 400) }, (_, i) => paths.slice(i * 400, (i + 1) * 400)).flatMap(paths => db.select({ id: schema.storedFile.id, relPath: schema.storedFile.relPath, bytes: schema.storedFile.bytes, sha256: schema.storedFile.sha256, removedAt: schema.storedFile.removedAt }).from(schema.storedFile).where(inArray(schema.storedFile.relPath, paths)).all())
   const filesByPath = new Map(files.map(r => [r.relPath, r]))
-  return { coversCurrentProof: createCurrentProofCoverageReader(db), events: new Map(events.map(r => [r.event.id, r])), relations: targetRelations ? new Map(targetRelations.map(r => [r.relation.id, r])) : new Map(relations.flatMap(relation => { const query = queriesById.get(relation.queryId); return query ? [[relation.id, { relation, query }] as const] : [] })), exports: new Map(exports.map(r => [r.exportRow.id, r])), enterprises: new Map(enterprises.map(r => [r.id, r])), titles: new Set(storedTitles.map(r => r.code)), evidence: Map.groupBy(evidence.map(evidence => ({ evidence, storedFile: filesByPath.get(evidence.sourceFile) ?? null })), r => r.evidence.recordEventId) }
+  return { coversCurrentProof: createCurrentProofCoverageReader(db), events: new Map(events.map(r => [r.event.id, r])), relations: new Map(targetRelations.map(r => [r.relation.id, r])), exports: new Map(exports.map(r => [r.exportRow.id, r])), enterprises: new Map(enterprises.map(r => [r.id, r])), titles: new Set(storedTitles.map(r => r.code)), evidence: Map.groupBy(evidence.map(evidence => ({ evidence, storedFile: filesByPath.get(evidence.sourceFile) ?? null })), r => r.evidence.recordEventId) }
 }
 function readCorrespondences(db: Db, rows: StoredCorrespondence[]) {
   const observed = observeReadSources(db, rows)

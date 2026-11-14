@@ -1,22 +1,22 @@
-import { platformNormalizationConflict } from '../../lib/platform/normalization'
+import { platformNormalizationConflict } from '../../lib/platform/normalization';
 /** Explicit 71609–71611 recognition-directory reader. Public routing remains separate. */
-import {readObservationCorrespondenceRefs} from '../../lib/platform/correspondence-target';
-import { and, count, countDistinct, desc, eq, exists, inArray, isNull, max, min, ne, or, sql } from 'drizzle-orm';
-import { alias } from 'drizzle-orm/sqlite-core';
+import { getTableColumns,and,count,countDistinct,desc,eq,exists,inArray,isNull,max,min,ne,or,sql } from 'drizzle-orm';
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3';
+import { alias } from 'drizzle-orm/sqlite-core';
 import { groupBy } from 'es-toolkit';
 import type * as legacySchema from '../../db/schema';
-import { targetSchema, platformBusinessObservation as o, platformObservationAssignment as a, platformLegacyRelationAlias as ra, platformQueryTitleScope as scope } from '../../lib/platform/target-schema';
-import { platformCollection as c, platformLegacyQueryAlias as qa, platformBusinessRecord as b, platformBusinessRecordVersion as v, enterprise as e, recordCorrespondence as correspondence } from '../../db/schema';
-import { storedRecognizedProjection as p } from '../../lib/platform/recognized-stored-schema';
-import { recognizedStoredInstalled } from '../../lib/platform/recognized-stored-catalog';
-import { sqliteConnection } from '../../lib/platform/target-connection';
-import { normalizeName, normalizeUscc } from '../../lib/domain';
-import { fail, orderedScopes, pageOf } from './platform-business-read';
-import { recognizedDirectoryFilterSchema, RECOGNIZED_DIRECTORY_VERSION_LIMIT, RECOGNIZED_DIRECTORY_OBSERVATION_LIMIT, type RecognizedDirectoryFilter, type RecognizedDirectoryListResult, type RecognizedDirectoryIsolatedRow, type RecognizedDirectoryDetail, type RecognizedDirectoryView } from '../../lib/platform/recognized-directory';
+import { platformBusinessRecord as b,platformCollection as c,enterprise as e,platformLegacyQueryAlias as qa,platformBusinessRecordVersion as v } from '../../db/schema';
+import { normalizeName,normalizeUscc } from '../../lib/domain';
+import { readObservationCorrespondenceRefs } from '../../lib/platform/correspondence-target';
 import type { PlatformFilterOptions } from '../../lib/platform/filter-options';
-import { withArchiveProcessFacts, legacyRowTitle, type PlatformObservationFact } from '../../lib/platform/observation-facts';
 import type { PlatformNormalizationConflict } from '../../lib/platform/normalization';
+import { legacyRowTitle,withArchiveProcessFacts,type PlatformObservationFact } from '../../lib/platform/observation-facts';
+import { RECOGNIZED_DIRECTORY_OBSERVATION_LIMIT,RECOGNIZED_DIRECTORY_VERSION_LIMIT,recognizedDirectoryFilterSchema,type RecognizedDirectoryDetail,type RecognizedDirectoryFilter,type RecognizedDirectoryIsolatedRow,type RecognizedDirectoryListResult,type RecognizedDirectoryView } from '../../lib/platform/recognized-directory';
+import { recognizedStoredInstalled } from '../../lib/platform/recognized-stored-catalog';
+import { storedRecognizedProjection as p } from '../../lib/platform/recognized-stored-schema';
+import { sqliteConnection } from '../../lib/platform/target-connection';
+import { platformObservationAssignment as a,platformBusinessObservation as o,platformLegacyRelationAlias as ra,platformQueryTitleScope as scope,targetSchema } from '../../lib/platform/target-schema';
+import { fail,orderedScopes,pageOf } from './platform-business-read';
 type Db = BetterSQLite3Database<typeof targetSchema> | BetterSQLite3Database<typeof legacySchema>;
 type TargetIsolatedRow = Omit<RecognizedDirectoryIsolatedRow, 'titleRaw'> & {
     titleRaw: unknown;
@@ -141,7 +141,7 @@ export function getTargetRecognizedRecord(db: Db, recordId: number): RecognizedD
         const scopes = scopesByCollection(tx, [...new Set([...queries.map(r => r.collectionId), ...observations.map(r => r.collectionId)])]);
         const byVersion = groupBy(queries, r => String(r.versionId));
         const relations = observations.map(r => r.relationId);
-        const refs = [71611,71612,71613].includes(Number(sqliteConnection(tx).pragma('user_version',{simple:true}))) ? readObservationCorrespondenceRefs(tx,relations) : relations.length ? tx.select({ relationId: correspondence.relationId, id: correspondence.id, status: correspondence.status, revision: correspondence.revision }).from(correspondence).where(inArray(correspondence.relationId, relations)).orderBy(correspondence.relationId, correspondence.id).all() : [];
+        const refs = readObservationCorrespondenceRefs(tx,relations);
         const byRelation = groupBy(refs, r => String(r.relationId));
         return { record: { ...record, interface: 'recognized_list' }, versions: versions.map(r => ({ ...r, titleScopes: orderedScopes((byVersion[String(r.versionId)] ?? []).flatMap(q => scopes.get(q.collectionId) ?? [])) })),
             observations: observations.map(({ collectionId, version, ...r }) => {
@@ -160,10 +160,12 @@ export function readTargetRecognizedFacts(db: Db, relationIds: number[]): Map<nu
     return db.transaction(tx => {
         const original = alias(a, 'candidate_recognized_original');
         const vp = alias(p, 'candidate_recognized_version');
+        const { id: versionIdentity, ...versionProjectionFields } = getTableColumns(vp);
+        const versionColumns = { id: versionIdentity, ...versionProjectionFields };
         for (let start = 0; start < relationIds.length; start += 400) {
             const ids = relationIds.slice(start, start + 400);
             gate(tx, inArray(o.id, tx.select({ id: ra.observationId }).from(ra).where(inArray(ra.oldId, ids))));
-            const rows = tx.select({ relationId: ra.oldId, source: p, version: vp, originalName: original.nameRaw, originalUscc: original.usccRaw })
+            const rows = tx.select({ relationId: ra.oldId, source: p, version: versionColumns, originalName: original.nameRaw, originalUscc: original.usccRaw })
                 .from(ra).innerJoin(o, eq(o.id, ra.observationId)).innerJoin(c, eq(c.id, o.collectionId)).innerJoin(p, eq(p.observationId, o.id))
                 .leftJoin(vp, and(eq(vp.versionId, o.versionId), eq(vp.recordId, o.recordId)))
                 .leftJoin(original, and(eq(original.observationId, o.id), eq(original.revision, 1)))

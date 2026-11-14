@@ -6,7 +6,6 @@ import { z } from 'zod'
 import type { Executor } from '../../server/utils/roster-import'
 import { targetSchema as s } from './target-schema'
 import { sqliteConnection } from './target-connection'
-import { requireLegacyProvenanceReady } from './legacy-provenance-catalog'
 import { cellExpression, provenancePresence, snapshotSchema, targetProvenanceCells } from './target-evidence-read'
 import { insertArchiveValue } from './target-archive'
 import type { LegacyPlatformProvenanceInput } from './legacy-provenance'
@@ -17,13 +16,6 @@ export class LegacyProvenanceError extends Error {
 export function rejectLegacyProvenance(code: string, message: string): never { throw new LegacyProvenanceError(code, message) }
 const drift = (message: string): never => rejectLegacyProvenance('legacy_source_drift', message)
 
-export function legacyProvenanceTarget(db: Executor) {
-  const connection = sqliteConnection(db)
-  const phase = Number(connection.pragma('user_version', { simple: true }))
-  if (phase === 0) return false
-  requireLegacyProvenanceReady(connection)
-  return true
-}
 const scalar = z.union([z.string(), z.number(), z.instanceof(Buffer), z.null()])
 const querySchema = z.object({
   id: z.number(), interface: scalar, queryKey: scalar, rdjb: scalar, titleCode: scalar,

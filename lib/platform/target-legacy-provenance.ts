@@ -58,8 +58,7 @@ export function resolveSelectedLegacyProvenance<S extends Record<string, unknown
   db: Db<S>, owners: readonly SelectedProvenanceOwner[],
 ): SelectedLegacyProvenance {
   const unique = [...new Map(owners.map(owner => [owner.collection.id, owner])).values()]
-  const successor = Number(sqliteConnection(db).pragma('user_version', { simple: true })) === 71613
-  if (successor) requireLegacyProvenanceReady(sqliteConnection(db))
+  requireLegacyProvenanceReady(sqliteConnection(db))
   const p = s.platformCollectionLegacyProvenance, v = s.platformArchiveValue, r = s.platformCollectionArchiveRef
   const refs = batches(unique.map(owner => owner.collection.id)).flatMap(ids => db.select({
     ownerId: r.ownerId, field: r.field, sealed: r.sealed, archiveId: v.id, storageClass: v.storageClass, byteLength: v.byteLength, sha256: v.sha256,
@@ -69,7 +68,7 @@ export function resolveSelectedLegacyProvenance<S extends Record<string, unknown
     const capture = { collection: owner.collection, refs: byRef.get(owner.collection.id) ?? [], requestBytes: null }
     return [owner.collection.id, { capture, present: provenancePresence(db, owner.collection.id, owner.id, capture) }]
   }))
-  const indices = successor ? batches(unique.map(owner => owner.collection.id)).flatMap(ids => db.select().from(p).where(inArray(p.collectionId, ids)).all()) : []
+  const indices = batches(unique.map(owner => owner.collection.id)).flatMap(ids => db.select().from(p).where(inArray(p.collectionId, ids)).all())
   const byOwner = new Map(indices.map(row => [row.collectionId, row]))
   const archives = new Map(batches(indices.map(row => row.archiveId)).flatMap(ids => db.select({
     id: v.id, storageClass: v.storageClass, byteLength: v.byteLength, sha256: v.sha256,
@@ -80,12 +79,12 @@ export function resolveSelectedLegacyProvenance<S extends Record<string, unknown
     const { capture, present } = authenticated.get(owner.collection.id)!
     const index = byOwner.get(owner.collection.id)
     const ref = capture.refs.find(ref => ref.field === 'legacyProvenance')
-    if (successor && present && !index) lifecycle('missing T04 index')
+    if (present && !index) lifecycle('missing T04 index')
     if (!present && !index) { result.set(owner.collection.id, null); continue }
     if (index && ((index.origin === 't04_envelope') !== present || (present && index.archiveId !== ref?.archiveId))) lifecycle('origin/owner/archive conflict')
     const archiveId = index?.archiveId ?? ref?.archiveId
     if (!archiveId) lifecycle('missing archive')
-    const archive = successor ? archives.get(archiveId) : ref
+    const archive = archives.get(archiveId)
     if (!archive || archive.byteLength === null || !archive.sha256 || ('actualLength' in archive && archive.actualLength !== archive.byteLength)) lifecycle('missing or contradictory archive')
     let fields: Map<string, SQL>
     if (present) {

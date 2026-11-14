@@ -23,7 +23,7 @@ import { transferDifferenceReferences } from './difference-references'
 import { indexLegacyProvenance } from './legacy-provenance'
 import { completeReconcileSlotCapture } from './reconcile-slot-capture'
 import { retirePlatformModel } from './retire-platform-model'
-import { RECONCILE_SLOT_T04 } from '../lib/platform/reconcile-slot-capture'
+import { RECONCILE_SLOT_T04 } from './frozen/reconcile-slot-capture'
 import { BUSINESS_STATUS_V2 } from '../lib/platform/business-status'
 import { withFinalUpgradeIntegrity } from './integrity-policy'
 

@@ -1,17 +1,4 @@
 import type Database from 'better-sqlite3'
-/** Explicit offline target version; never selected by an environment switch. */
-export const FINAL_OBSERVATION_VERSION=71605
-export const FINAL_COLLECTION_SCOPE_VERSION=71606
-export const FINGERPRINT_BASIS_VERSION=71607
-export const APPLY_STORED_VERSION=71608
-/** #731 A candidate-only capture successor. */
-export const CANDIDATE_SCOPE_VERSION=71609
-/** #734 A1 explicit offline capture; runtime guard remains unchanged. */
-export const PROCESS_STORED_VERSION=71610
-export function assertExpandRuntime(sqlite:Database.Database) {
-  if(sqlite.pragma('user_version',{simple:true})!==0)throw new Error('Finalized/offline target schema cannot be opened by the current expand runtime; W/R cutover required')
-}
-
 export const PLATFORM_RUNTIME_VERSION = 71613
 export const PLATFORM_RETIREMENT_RULE = 'platform-mixed-model-retirement-v1'
 export const RETIRED_PLATFORM_TABLES = [
@@ -48,10 +35,4 @@ export function assertFinalPlatformRuntime(sqlite: Database.Database) {
     enterprise_merge e,platform_apply_projection pa,platform_business_projection pb,platform_recognized_projection pr,
     platform_business_record_version v,platform_collection_page cp,platform_collection_unfinished cu,
     platform_collection_condition cc LIMIT 0`).all()
-}
-
-/** Historical tool adapter only. Application entries and workers require final runtime. */
-export function assertApplicationRuntime(sqlite: Database.Database) {
-  if (sqlite.pragma('user_version', { simple: true }) === 0) return
-  assertFinalPlatformRuntime(sqlite)
 }

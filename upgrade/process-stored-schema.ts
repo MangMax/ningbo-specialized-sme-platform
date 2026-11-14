@@ -1,9 +1,9 @@
-import { processStoredBarrierSql } from '../lib/platform/process-stored-catalog'
+import { processStoredBarrierSql } from './process-stored-catalog'
 /** #734 A1 populated rebuild. Only called inside the offline successor's immediate transaction. */
 import type Database from 'better-sqlite3'
 import { isDeepStrictEqual } from 'node:util'
 import { finalizationCatalog, observationIncomingOwners } from './finalize-observations'
-export { PROCESS_STORED_VERSION } from '../db/schema-phase'
+export { PROCESS_STORED_VERSION } from './schema-phase'
 export const processStoredColumns = [
   'exact_status','exact_declare_kind','exact_applied_at','exact_year','exact_title_raw','exact_batch','exact_award_batch_label','exact_province',
   'exact_stored_state','exact_stored_rule','exact_stored_origin','exact_stored_reason',

@@ -3,12 +3,9 @@ import { readSummary } from '../utils/comparison-summary-read'
 import { withEnterpriseReadSignal } from '../utils/enterprise-read-signal'
 import { useDb } from '@db'
 import { COMPARISON_DIRECTIONS, type ComparisonDirection } from '~~/lib/comparison'
-import { attachPlatformEvidence } from '~~/lib/comparison-platform'
-import { getCuratedComparison } from '~~/lib/curation'
-import { filterComparisonRows } from '~~/lib/comparison-filter'
+import { readWholeComparisonFull } from '~~/lib/comparison-full'
 import { TITLE_ORDER } from '~~/lib/labels'
 import { MAX_PAGE_SIZE } from '~~/lib/query'
-import { attachReconcile, readReconcile } from '~~/lib/reconcile'
 
 /**
  * 两侧比对结果(已公布 vs 平台导出),带人工标注、**库内平台原因与证据**、旧解释缓存对照。
@@ -125,50 +122,12 @@ export default defineEventHandler((event) => {
       return result
     })
   }
-  const result = getCuratedComparison(db, config.curatedPath)
-  const { counts, curatedCounts } = result
-  // Additive exact-coordinate read; an absent enterprise returns zero rows.
-  const scopedResult = enterpriseId == null ? result : { ...result, rows: result.rows.filter(row => row.enterpriseId === enterpriseId) }
-  // 旧解释缓存(`data/platform-reconcile.json`)是**对照**,缺失时 explanation 全为 null;
-  // 原因与证据以库内为准(见下方 `platform` 段)。
-  const reconcile = readReconcile(config.reconcilePath)
-  const page = Math.max(1, Math.floor(num(q.page, 1)))
-  const pageSize = Math.min(MAX_PAGE_SIZE, Math.max(1, Math.floor(num(q.pageSize, 25))))
-  // 库内平台原因与证据(RL-15 起的**主源**):每一行都带 platform。
-  const enriched = attachPlatformEvidence(attachReconcile(scopedResult.rows, reconcile), db)
-  const rows = filterComparisonRows(enriched, {
-    title,
-    direction: direction as ComparisonDirection | undefined,
+  return readWholeComparisonFull(db, {
+    curatedPath: config.curatedPath, reconcilePath: config.reconcilePath, enterpriseId,
+    title, direction: direction as ComparisonDirection | undefined,
     district: typeof q.district === 'string' ? q.district : undefined,
-    q: typeof q.q === 'string' ? q.q : undefined,
-    showCurated: q.showCurated === 'true',
+    q: typeof q.q === 'string' ? q.q : undefined, showCurated: q.showCurated === 'true',
+    page: Math.max(1, Math.floor(num(q.page, 1))),
+    pageSize: Math.min(MAX_PAGE_SIZE, Math.max(1, Math.floor(num(q.pageSize, 25)))),
   })
-  const withExplanation = rows.filter((row) => row.platform.disposition.explanationId != null).length
-  return {
-    rows: rows.slice((page - 1) * pageSize, page * pageSize),
-    total: rows.length,
-    counts,
-    curatedCounts,
-    platform: {
-      /** 有库内平台证据(曾用名 / 解释记录 / 查询)的行数。 */
-      withEvidence: rows.filter(
-        (row) =>
-          row.platform.disposition.explanationId != null ||
-          row.platform.aliases.length > 0 ||
-          row.platform.queries.length > 0,
-      ).length,
-      /** 有解释记录(= 已落状态/原因/措施)的行数。 */
-      withExplanation,
-      /**
-       * 还没有解释记录的行数 —— 它们的展示态是状态机默认态「未查询」。
-       * ⚠️ 不要与「`status = not_queried` 的行数」混同:后者**是有**解释记录的
-       * (写回时明确判成「无法直查」),两者是不同的东西。
-       */
-      withoutExplanation: rows.length - withExplanation,
-    },
-    reconcile: {
-      generatedAt: reconcile.generatedAt,
-      matched: rows.filter((row) => row.explanation).length,
-    },
-  }
 })

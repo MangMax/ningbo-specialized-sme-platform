@@ -1,21 +1,21 @@
 /** Explicit 71610/71611 process reader. Public routing remains separate. */
-import {readObservationCorrespondenceRefs} from '../../lib/platform/correspondence-target';
-import { and, count, countDistinct, desc, eq, exists, inArray, isNull, max, min, ne, or, sql } from 'drizzle-orm';
-import { alias } from 'drizzle-orm/sqlite-core';
+import { getTableColumns,and,count,countDistinct,desc,eq,exists,inArray,isNull,max,min,ne,or,sql } from 'drizzle-orm';
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3';
+import { alias } from 'drizzle-orm/sqlite-core';
 import { groupBy } from 'es-toolkit';
-import { targetSchema, platformBusinessObservation as o, platformObservationAssignment as a, platformLegacyRelationAlias as ra, platformQueryTitleScope as scope } from '../../lib/platform/target-schema';
-import { platformCollection as c, platformLegacyQueryAlias as qa, platformBusinessRecord as b, platformBusinessRecordVersion as v, enterprise as e, recordCorrespondence as correspondence } from '../../db/schema';
-import { storedProcessProjection as p } from '../../lib/platform/process-stored-schema';
-import { processStoredInstalled } from '../../lib/platform/process-stored-catalog';
-import { sqliteConnection } from '../../lib/platform/target-connection';
-import { normalizeName, normalizeUscc } from '../../lib/domain';
-import { normalizeDeclareKind } from '../../lib/platform/identity';
-import { fail, orderedScopes, pageOf } from './platform-business-read';
-import { businessProcessFilterSchema, BUSINESS_PROCESS_VERSION_LIMIT, BUSINESS_PROCESS_OBSERVATION_LIMIT, type BusinessProcessFilter, type BusinessProcessListResult, type BusinessProcessIsolatedRow, type BusinessProcessDetail, type BusinessProcessView } from '../../lib/platform/business-processes';
-import { withArchiveProcessFacts, type PlatformObservationFact } from '../../lib/platform/observation-facts';
-import { platformNormalizationConflict, type PlatformNormalizationConflict } from '../../lib/platform/normalization';
+import { platformBusinessRecord as b,platformCollection as c,enterprise as e,platformLegacyQueryAlias as qa,platformBusinessRecordVersion as v } from '../../db/schema';
+import { normalizeName,normalizeUscc } from '../../lib/domain';
+import { BUSINESS_PROCESS_OBSERVATION_LIMIT,BUSINESS_PROCESS_VERSION_LIMIT,businessProcessFilterSchema,type BusinessProcessDetail,type BusinessProcessFilter,type BusinessProcessIsolatedRow,type BusinessProcessListResult,type BusinessProcessView } from '../../lib/platform/business-processes';
+import { readObservationCorrespondenceRefs } from '../../lib/platform/correspondence-target';
 import type { PlatformFilterOptions } from '../../lib/platform/filter-options';
+import { normalizeDeclareKind } from '../../lib/platform/identity';
+import { platformNormalizationConflict,type PlatformNormalizationConflict } from '../../lib/platform/normalization';
+import { withArchiveProcessFacts,type PlatformObservationFact } from '../../lib/platform/observation-facts';
+import { processStoredInstalled } from '../../lib/platform/process-stored-catalog';
+import { storedProcessProjection as p } from '../../lib/platform/process-stored-schema';
+import { sqliteConnection } from '../../lib/platform/target-connection';
+import { platformObservationAssignment as a,platformBusinessObservation as o,platformLegacyRelationAlias as ra,platformQueryTitleScope as scope,targetSchema } from '../../lib/platform/target-schema';
+import { fail,orderedScopes,pageOf } from './platform-business-read';
 // Explicit table queries use the injected session/logger, never db.query.
 // Match R1b's connection seam; gate() still requires the actual 71610 catalog.
 type Db = BetterSQLite3Database<typeof targetSchema> | BetterSQLite3Database<typeof import('../../db/schema')>;
@@ -146,7 +146,7 @@ export function getTargetBusinessProcess(db: Db, recordId: number): BusinessProc
         const scopes = scopesByCollection(tx, [...new Set([...queries.map(r => r.collectionId), ...observations.map(r => r.collectionId)])]);
         const byVersion = groupBy(queries, r => String(r.versionId));
         const relations = observations.map(r => r.relationId);
-        const refs = [71611,71612,71613].includes(Number(sqliteConnection(tx).pragma('user_version',{simple:true}))) ? readObservationCorrespondenceRefs(tx,relations) : relations.length ? tx.select({ relationId: correspondence.relationId, id: correspondence.id, status: correspondence.status, revision: correspondence.revision }).from(correspondence).where(inArray(correspondence.relationId, relations)).orderBy(correspondence.relationId, correspondence.id).all() : [];
+        const refs = readObservationCorrespondenceRefs(tx,relations);
         const byRelation = groupBy(refs, r => String(r.relationId));
         return { record: { ...record, interface: 'business_list' }, versions: versions.map(r => ({ ...r, titleScopes: orderedScopes((byVersion[String(r.versionId)] ?? []).flatMap(q => scopes.get(q.collectionId) ?? [])) })),
             observations: observations.map(({ collectionId, version, ...r }) => {
@@ -159,6 +159,8 @@ export function getTargetBusinessProcess(db: Db, recordId: number): BusinessProc
 }
 
 const vp = alias(p, 'version_projection');
+const { id: versionIdentity, ...versionProjectionFields } = getTableColumns(vp);
+const versionColumns = { id: versionIdentity, ...versionProjectionFields };
 const comparisonFields = ['province', 'status', 'batch', 'declareKind', 'appliedAt', 'awardBatchLabel', 'year'] as const;
 const modeledFields = ['declareKind', 'year', 'appliedAt', 'status', 'batch', 'awardBatchLabel', 'province', 'nameRaw', 'usccRaw'] as const;
 export function readTargetBusinessProcessFacts(db: Db, relationIds: number[], options: { scope?: 'selected' } = {}): Map<number, PlatformObservationFact> {
@@ -169,7 +171,7 @@ export function readTargetBusinessProcessFacts(db: Db, relationIds: number[], op
         for (let start = 0; start < relationIds.length; start += 400) {
             const ids = relationIds.slice(start, start + 400);
             if (options.scope === 'selected') gate(tx, inArray(o.id, tx.select({ id: ra.observationId }).from(ra).where(inArray(ra.oldId, ids))));
-            const rows = tx.select({ relationId: ra.oldId, source: p, version: vp, originalName: original.nameRaw, originalUscc: original.usccRaw })
+            const rows = tx.select({ relationId: ra.oldId, source: p, version: versionColumns, originalName: original.nameRaw, originalUscc: original.usccRaw })
                 .from(ra).innerJoin(o, eq(o.id, ra.observationId)).innerJoin(c, eq(c.id, o.collectionId)).innerJoin(p, eq(p.observationId, o.id))
                 .leftJoin(vp, and(eq(vp.versionId, o.versionId), eq(vp.recordId, o.recordId)))
                 .leftJoin(original, and(eq(original.observationId, o.id), eq(original.revision, 1)))

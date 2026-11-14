@@ -1,8 +1,10 @@
+import type { PlatformStoredQuery, PlatformStoredRelation } from '../platform/read'
+import { sourceRelationFields } from '../platform/source-snapshot-fields'
 import { checkedBusinessStatus } from '../platform/business-status'
 /** Enterprise history membership is structured. Archives attach only after selection.
  * Qualification, coverage and business grouping continue to consume original facts.
  */
-import { and, eq, getTableColumns, inArray, max, or, sql } from 'drizzle-orm'
+import { and, eq, inArray, max, or, sql } from 'drizzle-orm'
 import { alias } from 'drizzle-orm/sqlite-core'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as s from '../../db/schema'
@@ -25,7 +27,7 @@ export function readEnterpriseTargetPlatformHistory(db: Db, enterprise: typeof s
   const current = and(eq(a.observationId, o.id), eq(a.revision, db.select({ n: max(newer.revision) }).from(newer).where(eq(newer.observationId, o.id))))
   const uscc = normalizeUscc(enterprise.usccNorm) || null
   const owned = db.select({ collectionId: o.collectionId }).from(o).innerJoin(a, current).where(eq(a.enterpriseId, enterprise.id))
-  // Match the schema0 normalized key branch, including its exact lowercase name: key.
+  // Match normalized USCC and the exact lowercase name: key.
   const selected = db.select({ collection: c, id: qa.oldId }).from(c).innerJoin(qa, eq(qa.collectionId, c.id)).where(or(
     eq(c.queryKey, `name:${enterprise.nameNorm}`),
     uscc === null ? undefined : sql`${uscc.includes(':') ? sql`1` : sql`instr(${c.queryKey},':')=0`} and ${identityUsccSql(sql`${c.queryKey}`)}=${uscc}`,
@@ -50,7 +52,7 @@ export function readEnterpriseTargetPlatformHistory(db: Db, enterprise: typeof s
   const displays = readTargetRelationDisplay(db, owners.filter(row => row.displayed).map(row => ({ relationId: row.relationId, queryId: row.queryId })),
     { fullCollectionEvidence: true, legacy, budgetChecked: true }).sources
   const queryDisplays = new Map(chunks(selected).flatMap(rows => [...readTargetCollectionDisplay(db, rows, false, legacy)]))
-  const queries: (typeof s.platformQuery.$inferSelect)[] = allOwners.map(({ collection: q, id }) => ({
+  const queries: PlatformStoredQuery[] = allOwners.map(({ collection: q, id }) => ({
     id, interface: q.interface, queryKey: q.queryKey, rdjb: q.rdjb, titleCode: q.titleCode,
     queriedAt: q.queriedAt, lastCollectedAt: q.lastCollectedAt, status: q.status,
     failureReason: q.failureReason, createdAt: q.createdAt, rawResponse: null,
@@ -66,7 +68,6 @@ export function readEnterpriseTargetPlatformHistory(db: Db, enterprise: typeof s
     if (!row.bytes) throw new Error('Missing selected enterprise relation snapshot')
     return [row.id, snapshotSchema.parse(JSON.parse(row.bytes.toString('utf8'))).fields] as const
   }))
-  const columns = getTableColumns(s.platformRelation)
   const relations = owners.map(owner => {
     if (!owner.displayed) return {
       id: owner.relationId, queryId: owner.queryId, sequenceNo: owner.sequenceNo, relationKey: owner.relationKey,
@@ -74,14 +75,14 @@ export function readEnterpriseTargetPlatformHistory(db: Db, enterprise: typeof s
       sourceText: null, rawFields: null, nameRaw: null, usccRaw: null, aliasNameRaw: null,
       titleRaw: null, province: null, status: null, batch: null, declareKind: null, appliedAt: null,
       awardBatchLabel: null, year: null, createdAt: '',
-    } satisfies typeof s.platformRelation.$inferSelect
+    } satisfies PlatformStoredRelation
     const cells = snapshots.get(owner.observationId)!
     return db.select({
       id: sql<number>`${owner.relationId}`, queryId: sql<number>`${owner.queryId}`,
       sequenceNo: sql<number>`${owner.sequenceNo}`, relationKey: sql<string | null>`${owner.relationKey}`,
-      enterpriseId: sql<number | null>`${owner.enterpriseId}`, matchBasis: sql`${owner.matchBasis}`.mapWith(columns.matchBasis),
-      verificationStatus: sql`${owner.verificationStatus}`.mapWith(columns.verificationStatus),
-      ...originalColumns(cells, columns, allOwners.find(row=>row.id===owner.queryId)?.collection.interface === 'business_list'),
+      enterpriseId: sql<number | null>`${owner.enterpriseId}`, matchBasis: sql<typeof owner.matchBasis>`${owner.matchBasis}`,
+      verificationStatus: sql<typeof owner.verificationStatus>`${owner.verificationStatus}`,
+      ...originalColumns(cells, allOwners.find(row=>row.id===owner.queryId)?.collection.interface === 'business_list'),
     }).from(o).where(eq(o.id, owner.observationId)).get()!
   })
   return { queries, relations, ownQueryIds,
@@ -93,14 +94,15 @@ export function readEnterpriseTargetPlatformHistory(db: Db, enterprise: typeof s
   }
 }
 
-function originalColumns(cells: ReturnType<typeof snapshotSchema.parse>['fields'], columns: ReturnType<typeof getTableColumns<typeof s.platformRelation>>, business: boolean) {
-  function cell<K extends keyof typeof columns>(key: K) {
-    const column = columns[key], found = cells.find(cell => cell.name === column.name)
-    if (!found) throw new Error(`Missing original enterprise relation cell: ${column.name}`)
-    return cellExpression(found).mapWith(column)
+function originalColumns(cells: ReturnType<typeof snapshotSchema.parse>['fields'], business: boolean) {
+  function cell(key: keyof typeof sourceRelationFields) {
+    const descriptor = sourceRelationFields[key], found = cells.find(cell => cell.name === descriptor.name)
+    if (!found) throw new Error(`Missing original enterprise relation cell: ${descriptor.name}`)
+    return cellExpression(found)
   }
-  return { rawFields: cell('rawFields'), sourceText: cell('sourceText'), usccRaw: cell('usccRaw'), nameRaw: cell('nameRaw'),
-    aliasNameRaw: cell('aliasNameRaw'), titleRaw: cell('titleRaw'), province: cell('province'), status: business ? cellExpression(cells.find(c=>c.name==='status')!).mapWith(checkedBusinessStatus) : cell('status'),
-    batch: cell('batch'), declareKind: cell('declareKind'), appliedAt: cell('appliedAt'),
-    awardBatchLabel: cell('awardBatchLabel'), year: cell('year'), createdAt: cell('createdAt') }
+  const text = (key: keyof typeof sourceRelationFields) => cell(key).mapWith(String)
+  return { rawFields: cell('rawFields').mapWith((value: string) => JSON.parse(value)), sourceText: text('sourceText'), usccRaw: text('usccRaw'), nameRaw: text('nameRaw'),
+    aliasNameRaw: text('aliasNameRaw'), titleRaw: text('titleRaw'), province: text('province'), status: business ? cell('status').mapWith(checkedBusinessStatus) : text('status'),
+    batch: text('batch'), declareKind: text('declareKind'), appliedAt: text('appliedAt'),
+    awardBatchLabel: text('awardBatchLabel'), year: cell('year').mapWith(Number), createdAt: text('createdAt') }
 }

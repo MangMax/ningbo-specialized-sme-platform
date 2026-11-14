@@ -1,16 +1,15 @@
-import { platformRowTitle } from '../../lib/platform/row-title'
-import { and, asc, eq, getTableColumns, inArray, sql } from 'drizzle-orm'
+import { asc,eq,inArray } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../db/schema'
 import { normalizeUscc } from '../../lib/domain'
-import { RDJB_TITLE_CODES, sourcePositionForSequence } from '../../lib/platform/recognized-evidence'
-import { safeCollectionEvidence } from './record-correspondence-read'
-import type { PlatformObservationFact } from '../../lib/platform/observation-facts'
 import type { ScopedPlatformObservation } from '../../lib/platform/business-record'
+import type { PlatformObservationFact } from '../../lib/platform/observation-facts'
+import { RDJB_TITLE_CODES,sourcePositionForSequence } from '../../lib/platform/recognized-evidence'
+import { platformRowTitle } from '../../lib/platform/row-title'
+import { readCandidateTargetFacts,readCandidateTargetPositions,readCandidateTargetQueries,readCandidateTargetRelations,selectCandidateTargetPage } from './candidate-target-sources'
 import { readPlatformBusinessGroups } from './platform-business-record-read'
-import { readPlatformObservationFacts } from './platform-source-facts'
-import { correspondenceTarget, correspondenceTable } from './record-correspondence-store'
-import { readCandidateTargetFacts, readCandidateTargetPositions, readCandidateTargetQueries, readCandidateTargetRelations, selectCandidateTargetPage } from './candidate-target-sources'
+import { safeCollectionEvidence } from './record-correspondence-read'
+import { correspondenceTable,externalRelationColumn } from './record-correspondence-store'
 
 type Db = BetterSQLite3Database<typeof schema>
 export interface CandidateInput { eventId?: number; enterpriseId?: number; titleCode?: string; queryIds: number[]; exportBatchIds: number[]; ruleVersion: string; page: number; pageSize: number }
@@ -23,7 +22,6 @@ export function generateCandidates(db: Db, input: CandidateInput, selection?: { 
   return db.transaction(() => generateCandidateSnapshot(db, input, selection))
 }
 function generateCandidateSnapshot(db: Db, input: CandidateInput, selection?: { relationIds: number[]; total: number }) {
-  const target = correspondenceTarget(db)
   const event = input.eventId ? db.select({ event: schema.recordEvent, record: schema.record }).from(schema.recordEvent).innerJoin(schema.record, eq(schema.recordEvent.recordId, schema.record.id)).where(eq(schema.recordEvent.id, input.eventId)).get() : null
   if (input.eventId && (!event || event.record.source !== 'jxj')) return null
   const enterpriseId = event?.record.enterpriseId ?? input.enterpriseId!
@@ -31,29 +29,26 @@ function generateCandidateSnapshot(db: Db, input: CandidateInput, selection?: { 
   const enterprise = db.select().from(schema.enterprise).where(eq(schema.enterprise.id, enterpriseId)).get()
   if (!enterprise || !db.select().from(schema.title).where(eq(schema.title.code, titleCode)).get()) return null
   const identity = normalizeUscc(event?.record.usccRaw ?? enterprise.usccNorm)
-  const { rawResponse: _rawResponse, collectionEvidence, ...queryColumns } = getTableColumns(schema.platformQuery)
   // These public candidates never expose raw_response or archived row arrays.
-  const queries = batchesOf(input.queryIds).flatMap(ids => target ? readCandidateTargetQueries(db, ids) : db.select({ ...queryColumns, collectionEvidence: sql`json_remove(${collectionEvidence}, '$.rows')`.mapWith(collectionEvidence) }).from(schema.platformQuery).where(inArray(schema.platformQuery.id, ids)).orderBy(asc(schema.platformQuery.id)).all())
+  const queries = batchesOf(input.queryIds).flatMap(ids => readCandidateTargetQueries(db, ids))
   const batches = batchesOf(input.exportBatchIds).flatMap(ids => db.select().from(schema.platformExportBatch).where(inArray(schema.platformExportBatch.id, ids)).orderBy(asc(schema.platformExportBatch.id)).all())
   if (queries.length !== new Set(input.queryIds).size || batches.length !== new Set(input.exportBatchIds).size) return null
-  const targetPage = target && !selection ? selectCandidateTargetPage(db, { queryIds: input.queryIds, enterpriseId, identity, titleCode, event: !!event, page: input.page, pageSize: input.pageSize }) : null
-  const r = schema.platformRelation, x = schema.platformExportRow, c = correspondenceTable(db)
+  const targetPage = !selection ? selectCandidateTargetPage(db, { queryIds: input.queryIds, enterpriseId, identity, titleCode, event: !!event, page: input.page, pageSize: input.pageSize }) : null
+  const x = schema.platformExportRow, c = correspondenceTable(db)
   const queriesById = new Map(queries.map(q => [q.id, q]))
   // Identity/scope columns only. Source-specific facts are read after scoping below.
-  const relations = batchesOf(queries.filter(q => ['success', 'partial'].includes(q.status)).map(q => q.id)).flatMap(ids => target
-    ? readCandidateTargetRelations(db, ids, selection?.relationIds ?? targetPage?.ids)
-    : db.select({ id: r.id, queryId: r.queryId, sequenceNo: r.sequenceNo, relationKey: r.relationKey, enterpriseId: r.enterpriseId, usccRaw: r.usccRaw, nameRaw: r.nameRaw, matchBasis: r.matchBasis, verificationStatus: r.verificationStatus, rowTitleRaw: sql<unknown>`case when json_valid(${r.rawFields}) then json_extract(${r.rawFields}, '$.rdjb') end` }).from(r).where(and(inArray(r.queryId, ids), selection ? inArray(r.id, selection.relationIds) : undefined)).orderBy(asc(r.queryId), asc(r.sequenceNo)).all())
+  const relations = batchesOf(queries.filter(q => ['success', 'partial'].includes(q.status)).map(q => q.id)).flatMap(ids => readCandidateTargetRelations(db, ids, selection?.relationIds ?? targetPage?.ids))
   const exports = batchesOf(event && identity ? batches.filter(b => b.importStatus === 'imported' && b.titleCode === titleCode).map(b => b.id) : []).flatMap(ids => db.select({ id: x.id, batchId: x.batchId, sourceRowNo: x.sourceRowNo, usccRaw: x.usccRaw }).from(x).where(inArray(x.batchId, ids)).orderBy(asc(x.batchId), asc(x.sourceRowNo)).all())
   const relevantRelations = relations.filter(r => (!r.enterpriseId || r.enterpriseId === enterpriseId) && ((identity && normalizeUscc(r.usccRaw) === identity) || (selection && !normalizeUscc(r.usccRaw) && r.enterpriseId === enterpriseId && r.verificationStatus === 'confirmed')))
   // Scope by selected query/owner/title/role first; only then read source-specific facts.
   const factsByRelation = new Map<number, PlatformObservationFact>()
   for (const [interfaceName, scopedRows] of Map.groupBy(relevantRelations, row => queriesById.get(row.queryId)!.interface)) {
-    for (const [relationId, fact] of (target ? readCandidateTargetFacts : readPlatformObservationFacts)(db, interfaceName, scopedRows.map(row => row.id))) factsByRelation.set(relationId, fact)
+    for (const [relationId, fact] of (readCandidateTargetFacts)(db, interfaceName, scopedRows.map(row => row.id))) factsByRelation.set(relationId, fact)
   }
-  const positions = target ? new Map(batchesOf(relevantRelations.map(r => r.id)).flatMap(ids => [...readCandidateTargetPositions(db, ids)])) : null
+  const positions = new Map(batchesOf(relevantRelations.map(r => r.id)).flatMap(ids => [...readCandidateTargetPositions(db, ids)]))
   const relevantExports = exports.filter(r => identity && normalizeUscc(r.usccRaw) === identity)
   const priors = batchesOf(relevantExports.map(r => r.id)).map(ids => inArray(c.exportRowId, ids))
-    .flatMap(where => db.select({ id: c.id, eventId: c.eventId, type: c.type, role: c.role, relationId: c.relationId, exportRowId: c.exportRowId, revision: c.revision }).from(c).where(where).orderBy(asc(c.id)).all())
+    .flatMap(where => db.select({ id: c.id, eventId: c.eventId, type: c.type, role: c.role, relationId: externalRelationColumn(db), exportRowId: c.exportRowId, revision: c.revision }).from(c).where(where).orderBy(asc(c.id)).all())
   const relationsByQuery = Map.groupBy(relevantRelations, r => r.queryId)
   const exportsByBatch = Map.groupBy(relevantExports, r => r.batchId)
   const exportPriors = Map.groupBy(priors.filter(r => r.exportRowId != null), r => r.exportRowId)

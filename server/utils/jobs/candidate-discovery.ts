@@ -5,7 +5,7 @@ import { and, asc, eq, gt, inArray, sql } from 'drizzle-orm'
 import { z } from 'zod'
 import * as schema from '../../../db/schema'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
-import { correspondenceTarget, correspondenceTable, externalRelationColumn } from '../record-correspondence-store'
+import { correspondenceTable, externalRelationColumn } from '../record-correspondence-store'
 import { candidateTargetSourceBytes, targetCandidateTables } from '../candidate-target-sources'
 import {
   discoverEventArchives,
@@ -86,7 +86,7 @@ function fail(message: string, statusCode = 400): never {
 }
 /** A query targets only verified identity/name coverage, never every event. No raw columns. */
 function affectedWhere(db: Db, queryId: number) {
-  const { q, r: p } = correspondenceTarget(db) ? targetCandidateTables(db) : { q: schema.platformQuery, r: schema.platformRelation }
+  const { q, r: p } = targetCandidateTables(db)
   const r = schema.record, e = schema.enterprise
   return sql`exists (select 1 from ${q} where ${q.id} = ${queryId}
     and (coalesce(${q.titleCode}, case ${q.rdjb} when '1' then 'innovative_sme' when '2' then 'specialized_sme' when '3' then 'little_giant' end) = ${r.titleCode}
@@ -173,17 +173,7 @@ const MAX_SOURCE_BYTES = 4 * 1024 * 1024
 /** The existing domain hydrates one selected source for its fingerprint and
  * audit. Bound that work before hydration; discovery never loads the corpus. */
 function checkSourceBudget(db: Db, relationId: number) {
-  const bytes = correspondenceTarget(db) ? candidateTargetSourceBytes(db, relationId) : db
-    .select({
-      n: sql<number>`length(cast(coalesce(${schema.platformQuery.rawResponse},'') as blob)) + length(cast(coalesce(${schema.platformQuery.collectionEvidence},'') as blob)) + length(cast(coalesce(${schema.platformRelation.rawFields},'') as blob))`,
-    })
-    .from(schema.platformRelation)
-    .innerJoin(
-      schema.platformQuery,
-      eq(schema.platformRelation.queryId, schema.platformQuery.id),
-    )
-    .where(eq(schema.platformRelation.id, relationId))
-    .get()?.n
+  const bytes = candidateTargetSourceBytes(db, relationId)
   if (bytes == null || bytes > MAX_SOURCE_BYTES)
     fail('source_materialization_limit', 422)
 }
@@ -476,7 +466,7 @@ export function enqueueArchivedCandidates(
 ) {
   const ids: string[] = []
   for (const query of queries) {
-    const { q, r } = correspondenceTarget(db) ? targetCandidateTables(db) : { q: schema.platformQuery, r: schema.platformRelation }
+    const { q, r } = targetCandidateTables(db)
     const row = db
       .select({ id: q.id })
       .from(q)
@@ -484,7 +474,7 @@ export function enqueueArchivedCandidates(
         and(
           eq(
             q.interface,
-            query.interface as (typeof schema.platformQuery.$inferSelect)['interface'],
+            query.interface as (typeof schema.platformCollection.$inferSelect)['interface'],
           ),
           eq(q.queryKey, query.queryKey.trim()),
           eq(q.rdjb, query.rdjb?.trim() ?? ''),

@@ -5,8 +5,8 @@ import { join } from 'node:path'
 import { recognizedFixture } from './recognized-target-732'
 import { finalizeRecognizedWitness } from '../../upgrade/recognized-witness'
 import { finalizeProcessStored } from '../../upgrade/process-stored'
-import * as schema from '../../db/schema'
-import { targetSchema } from '../../lib/platform/target-schema'
+import * as schema from '../../upgrade/legacy-schema'
+import { targetSchema } from '../../upgrade/target-schema'
 
 /** Advance the accepted directory fixture through every currently accepted successor. */
 export async function recognizedHandlerFixture(extra?: (source: Database.Database) => void) {

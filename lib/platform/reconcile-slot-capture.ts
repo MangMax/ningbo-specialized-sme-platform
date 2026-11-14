@@ -1,14 +1,14 @@
 /** Capture-time authentication. Never an online completeness fallback. */
 import { createHash } from 'node:crypto'
-import type { platformQuery, platformRelation } from '../../db/schema'
+import type { PlatformStoredQuery, PlatformStoredRelation } from './read'
 import { readCompleteLegacySlot } from './client'
 import type { PlatformRow } from './types'
 
 export const RECONCILE_SLOT_RULE = 'legacy-reconcile-slot-v1'
 export const RECONCILE_SLOT_T04 = 't04-collection-reconcile-slot-v2'
 export const RECONCILE_SLOT_COMPLETION = 'reconcile-slot-capture-v1'
-type Query = Pick<typeof platformQuery.$inferSelect, 'id'|'interface'|'rdjb'|'queryKey'|'queriedAt'|'status'>
-export type SlotRelation = Omit<Pick<typeof platformRelation.$inferSelect, 'id'|'sequenceNo'|'relationKey'|'nameRaw'|'usccRaw'|'province'|'status'|'batch'|'declareKind'|'appliedAt'|'awardBatchLabel'|'year'|'rawFields'>, 'status'|'declareKind'> & { status: string|Buffer|null; declareKind: string|null }
+type Query = Pick<PlatformStoredQuery, 'id'|'interface'|'rdjb'|'queryKey'|'queriedAt'|'status'>
+export type SlotRelation = Omit<Pick<PlatformStoredRelation, 'id'|'sequenceNo'|'relationKey'|'nameRaw'|'usccRaw'|'province'|'status'|'batch'|'declareKind'|'appliedAt'|'awardBatchLabel'|'year'|'rawFields'>, 'status'|'declareKind'> & { status: string|Buffer|null; declareKind: string|null }
 export type SlotCell = { name: string; storageClass: string; hex: string }
 export type SlotBytes = { storageClass: string; byteLength: number|null; sha256: string|null }
 export const slotFallbackColumns = ['relation_key','name_raw','uscc_raw','province','status','batch','declare_kind','applied_at','award_batch_label','year'] as const

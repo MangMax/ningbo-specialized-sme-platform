@@ -5,10 +5,10 @@ import { z } from 'zod'
 import { enterprise } from '../../db/schema'
 import { currentDecision102, currentDecisionState102, type DecisionDb } from '../../server/utils/decision-lifecycle-102'
 import { normalizeUscc } from '../domain'
-import { identityFunctions, identityUsccSql } from './enterprise-read-snapshot'
+import { identityFunctions } from './enterprise-read-snapshot'
 import { identityKeys, type IdentityKeyVariants } from './current-identity-keys'
 import { platformQueryResultShape, type PlatformQueryPage } from '../platform/live-query'
-import { differenceTargetSources, readDifferenceCollectionScopes, selectDifferenceCollections, selectDifferenceCollectionsBatch } from '../platform/difference-sources'
+import { readDifferenceCollectionScopes, selectDifferenceCollections, selectDifferenceCollectionsBatch } from '../platform/difference-sources'
 
 export type AssessmentScope = Parameters<typeof currentDecision102>[1]
 type CoverageStatus = 'not_queried' | 'complete' | 'partial' | 'failed' | 'unknown'
@@ -32,53 +32,23 @@ export interface QueryCoverageSource {
   completeness: string | null; unfinished: Metadata['unfinished']; outcome: 'records' | 'no_record' | 'unknown'
   subjectMatch: 'exact_uscc' | 'matched_relation' | 'name_only' | 'unknown'
 }
-const metadataProjection = sql`case when json_valid(q.collection_evidence) then json_object(
-        'source',json_extract(q.collection_evidence,'$.source'), 'status',json_extract(q.collection_evidence,'$.status'),
-        'effectiveConditions',json_extract(q.collection_evidence,'$.effectiveConditions'), 'titleScope',json_extract(q.collection_evidence,'$.titleScope'),
-        'pages',json_extract(q.collection_evidence,'$.pages'), 'completeness',json_extract(q.collection_evidence,'$.completeness'),
-        'fullRange',json_extract(q.collection_evidence,'$.fullRange'), 'unfinished',json_extract(q.collection_evidence,'$.unfinished'),
-        'error',json_extract(q.collection_evidence,'$.error'), 'limits',json_extract(q.collection_evidence,'$.limits')) else null end`
 /** Metadata extraction stays inside SQLite; original rows/raw_response never enter JS. */
 function queryMetadata(db: DecisionDb, scope: AssessmentScope, variants?: IdentityKeyVariants, ownQueryIds?: readonly number[]) {
   identityFunctions(db)
   const e = db.get<{ uscc: string | null; name: string }>(sql`select uscc_norm as uscc,name_norm as name from enterprise where id=${scope.enterpriseId}`)!
   const uscc = normalizeUscc(e.uscc) || null, rdjb = rdjbByTitle[scope.titleCode] ?? ''
-  if (differenceTargetSources(db)) {
-    const selected = selectDifferenceCollections(db, scope.enterpriseId, { titleCode: scope.titleCode, rdjb, queryIds: ownQueryIds, limit: 51,
-      queryKeys: variants ? [...new Set([`name:${e.name}`, ...identityKeys(variants, uscc)])] : undefined, normalizeIdentity: !variants })
-    const metadata = readDifferenceCollectionScopes(db, selected.slice(0,50).map(r => r.collection))
-    const rows: QueryMetadata[] = selected.slice(0,50).map(({ collection: q, id, matched }) => ({
-      id, interface: q.interface, queryKey: q.queryKey, titleCode: q.titleCode, rdjb: q.rdjb, queriedAt: q.queriedAt, status: q.status, matched,
-      // Supplemental pagination is presentation provenance, not the original
-      // query's completeness assertion.
-      metadata: q.provenanceState === 'legacy_supplement' ? null : JSON.stringify(metadata.get(q.id)!.metadata),
-    }))
-    return { rows, truncated: selected.length > 50, uscc }
-  }
-  // Freeze bounded IDs before extracting JSON: ORDER BY/LIMIT on the outer
-  // projection alone could parse metadata for every qualifying historical row.
-  const titleScope = sql`(q.interface='apply_list' or q.title_code=${scope.titleCode} or instr(','||q.rdjb||',',${`,` + rdjb + `,`})>0 or (q.rdjb='' and q.title_code is null))`
-  // Each identity branch uses the existing key/enterprise index. Take its top
-  // 51 before merging: no branch can contribute a 52nd row to the global top 51.
-  const keys = variants ? [...new Set([`name:${e.name}`, ...identityKeys(variants, uscc)])] : []
-  const indexed = variants ? sql.join([
-    sql`select id,queried_at from (select q.id,q.queried_at from platform_query q indexed by platform_query_key_idx where q.query_key in (select value from json_each(${JSON.stringify(keys)})) and ${titleScope} order by q.queried_at desc,q.id desc limit 51)`,
-    sql`select id,queried_at from (select distinct q.id,q.queried_at from platform_relation r indexed by platform_relation_enterprise_idx join platform_query q on q.id=r.query_id where r.enterprise_id=${scope.enterpriseId} and ${titleScope} order by q.queried_at desc,q.id desc limit 51)`,
-  ], sql` union `) : null
-  const selected = ownQueryIds ? sql`select q.id from platform_query q where q.id in (select value from json_each(${JSON.stringify(ownQueryIds)})) and ${titleScope} order by q.queried_at desc,q.id desc limit 51` : indexed ? sql`select id from (${indexed}) order by queried_at desc,id desc limit 51` : sql`select q.id from platform_query q
-    where (q.query_key=${`name:${e.name}`} or
-      (${uscc} is not null and ${uscc?.includes(':') ? sql`1` : sql`instr(q.query_key,':')=0`} and ${identityUsccSql(sql`q.query_key`)}=${uscc}) or
-      q.id in (select query_id from platform_relation where enterprise_id=${scope.enterpriseId}))
-      and (q.interface='apply_list' or q.title_code=${scope.titleCode} or instr(','||q.rdjb||',',${`,` + rdjb + `,`})>0 or (q.rdjb='' and q.title_code is null))
-    order by q.queried_at desc,q.id desc limit 51`
-  const rows = db.all<QueryMetadata>(sql`with selected as materialized (${selected})
-    select q.id,q.interface,q.query_key as queryKey,q.title_code as titleCode,q.rdjb,q.queried_at as queriedAt,q.status,
-      exists(select 1 from platform_relation r where r.query_id=q.id and r.enterprise_id=${scope.enterpriseId}) as matched,
-      ${metadataProjection} as metadata
-    from selected join platform_query q on q.id=selected.id
-    order by q.queried_at desc,q.id desc`)
-  return { rows: rows.slice(0, 50), truncated: rows.length > 50, uscc }
+  const selected = selectDifferenceCollections(db, scope.enterpriseId, { titleCode: scope.titleCode, rdjb, queryIds: ownQueryIds, limit: 51,
+    queryKeys: variants ? [...new Set([`name:${e.name}`, ...identityKeys(variants, uscc)])] : undefined, normalizeIdentity: !variants })
+  const metadata = readDifferenceCollectionScopes(db, selected.slice(0,50).map(r => r.collection))
+  const rows: QueryMetadata[] = selected.slice(0,50).map(({ collection: q, id, matched }) => ({
+    id, interface: q.interface, queryKey: q.queryKey, titleCode: q.titleCode, rdjb: q.rdjb, queriedAt: q.queriedAt, status: q.status, matched,
+    // Supplemental pagination is presentation provenance, not the original
+    // query's completeness assertion.
+    metadata: q.provenanceState === 'legacy_supplement' ? null : JSON.stringify(metadata.get(q.id)!.metadata),
+  }))
+  return { rows, truncated: selected.length > 50, uscc }
 }
+
 function metadataOf(row: QueryMetadata): Metadata | null {
   if (!row.metadata) return null
   try {
@@ -117,10 +87,6 @@ export function readQueryCoverageBatch(db: DecisionDb, scopes: readonly Assessme
     let titles = result.get(scope.enterpriseId)
     if (!titles) { titles = new Map(); result.set(scope.enterpriseId, titles) }
     titles.set(scope.titleCode, coverage)
-  }
-  if (!differenceTargetSources(db)) {
-    for (const scope of unique) set(scope, readQueryCoverage(db, scope, variants))
-    return result
   }
   const ids = [...new Set(unique.map(scope => scope.enterpriseId))]
   const enterprises = new Map(db.select({ id: enterprise.id, uscc: enterprise.usccNorm, name: enterprise.nameNorm })
@@ -258,50 +224,6 @@ export function readQueryAssessmentSummaries(db: DecisionDb, scopes: AssessmentS
  */
 function readCoveragesForScopes(db: DecisionDb, scopes: AssessmentScope[]): ReturnType<typeof readQueryCoverage>[] {
   if (!scopes.length) return []
-  if (differenceTargetSources(db)) {
-    const coverage = readQueryCoverageBatch(db, scopes)
-    return scopes.map(scope => coverage.get(scope.enterpriseId)!.get(scope.titleCode)!)
-  }
-  identityFunctions(db)
-  const keyOf = (s: AssessmentScope) => JSON.stringify([s.enterpriseId, s.titleCode])
-  const targets = [...new Map(scopes.map(s => [keyOf(s), s])).values()]
-  const ids = [...new Set(targets.map(s => s.enterpriseId))]
-  const enterprises = new Map(db.all<{ id: number; name: string; uscc: string | null }>(sql`
-    select id,name_norm name,uscc_norm uscc from enterprise where id in (${sql.join(ids.map(id => sql`${id}`), sql`,`)})`).map(e => [e.id, e]))
-  const targetSql = sql.join(targets.map((s, i) => {
-    const e = enterprises.get(s.enterpriseId)
-    return sql`select ${i} slot,${s.enterpriseId} enterpriseId,${s.titleCode} titleCode,${rdjbByTitle[s.titleCode] ?? ''} rdjb,${e?.name ?? ''} name,${normalizeUscc(e?.uscc) || null} uscc`
-  }), sql` union all `)
-  const rows = db.all<QueryMetadata & { slot: number }>(sql`
-    with targets as materialized (${targetSql}),
-    raw_keys as materialized (select distinct query_key from platform_query),
-    keys as materialized (select query_key,${identityUsccSql(sql`query_key`)} uscc from raw_keys),
-    candidates as (
-      select t.slot,q.id from targets t join platform_query q on q.query_key='name:'||t.name
-      union
-      select t.slot,q.id from targets t join keys k on k.uscc=t.uscc join platform_query q on q.query_key=k.query_key
-      union
-      select t.slot,r.query_id from targets t join platform_relation r on r.enterprise_id=t.enterpriseId
-    ),
-    ranked as materialized (
-      select c.slot,q.id,row_number() over (partition by c.slot order by q.queried_at desc,q.id desc) rank
-      from candidates c join targets t on t.slot=c.slot join platform_query q on q.id=c.id
-      where q.interface='apply_list' or q.title_code=t.titleCode or instr(','||q.rdjb||',',','||t.rdjb||',')>0 or (q.rdjb='' and q.title_code is null)
-    ),
-    selected as materialized (select slot,id,rank from ranked where rank<=51)
-    select selected.slot,q.id,q.interface,q.query_key queryKey,q.title_code titleCode,q.rdjb,q.queried_at queriedAt,q.status,
-      exists(select 1 from platform_relation r where r.query_id=q.id and r.enterprise_id=t.enterpriseId) matched,
-      ${metadataProjection} metadata
-    from selected join targets t on t.slot=selected.slot join platform_query q on q.id=selected.id
-    order by selected.slot,selected.rank`)
-  const grouped = new Map<number, QueryMetadata[]>()
-  for (const row of rows) {
-    const group = grouped.get(row.slot) ?? []
-    group.push(row); grouped.set(row.slot, group)
-  }
-  const coverage = new Map(targets.map((s, slot) => {
-    const selected = grouped.get(slot) ?? []
-    return [keyOf(s), coverageOf({ rows: selected.slice(0, 50), truncated: selected.length > 50, uscc: normalizeUscc(enterprises.get(s.enterpriseId)?.uscc) || null }, s)] as const
-  }))
-  return scopes.map(s => coverage.get(keyOf(s))!)
+  const coverage = readQueryCoverageBatch(db, scopes)
+  return scopes.map(scope => coverage.get(scope.enterpriseId)!.get(scope.titleCode)!)
 }

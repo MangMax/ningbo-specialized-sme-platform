@@ -2,7 +2,7 @@ import Database from 'better-sqlite3'
 import { closeSync, openSync, writeFileSync, writeSync } from 'node:fs'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { asc, gt } from 'drizzle-orm'
-import * as schema from '../db/schema'
+import * as schema from './legacy-schema'
 import { withFrozenSource } from './collections'
 import { observationManifest, upgradeObservations } from './observations'
 

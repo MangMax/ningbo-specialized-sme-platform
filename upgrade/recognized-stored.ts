@@ -1,5 +1,5 @@
 import { upgradeMemoizedDigest, upgradeIntegrityGate, upgradeForeignKeyFailures } from './integrity-policy'
-import { recognizedStoredTriggers } from '../lib/platform/recognized-stored-catalog'
+import { recognizedStoredTriggers } from './recognized-stored-catalog'
 /** #732 A only. Explicit additive offline 71609 upgrade; never a startup migration. */
 import Database from 'better-sqlite3'
 import { existsSync, realpathSync, statSync, statfsSync } from 'node:fs'
@@ -7,11 +7,11 @@ import { dirname } from 'node:path'
 import { createHash } from 'node:crypto'
 import { isDeepStrictEqual } from 'node:util'
 import { z } from 'zod'
-import { withFrozenSource, assertFrozenSource, fileHash, type FrozenSource } from '../lib/platform/frozen-source'
+import { withFrozenSource, assertFrozenSource, fileHash, type FrozenSource } from './frozen-source'
 import { schemaHash } from '../lib/platform/sqlite-row-cells'
 import { projectionManifest } from './projections'
-import { recognizedStoredColumns } from '../lib/platform/recognized-stored-schema'
-import { recognizedTitleEvidence, titleCellExpression, verifyRecognizedStored, RECOGNIZED_STORED_RULE } from '../lib/platform/recognized-stored'
+import { recognizedStoredColumns } from './frozen/recognized-stored-schema'
+import { recognizedTitleEvidence, titleCellExpression, verifyRecognizedStored, RECOGNIZED_STORED_RULE } from './frozen/recognized-stored'
 const hash=(s:string)=>createHash('sha256').update(s).digest('hex')
 function digest(t:Database.Database,run:string,original=false) {
  return upgradeMemoizedDigest(t,JSON.stringify(['recognized-stored',run,original]),()=>{

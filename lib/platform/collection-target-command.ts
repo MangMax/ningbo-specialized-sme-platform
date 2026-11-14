@@ -1,25 +1,24 @@
 import { ensureProcessStoredReady } from './process-stored-catalog'
-import { captureNewReconcileSlot, reconcileSlotWriteInstalled } from './reconcile-slot-write'
+import { captureNewReconcileSlot,reconcileSlotWriteInstalled } from './reconcile-slot-write'
 import { witnessInstalled } from './recognized-witness-catalog'
 import { captureWitnessCollection } from './recognized-witness-write'
 import { sqliteConnection } from './target-connection'
-import { replayOptionalString, platformQueryInsertMetadata } from './query-replay'
+import { replayOptionalString,platformQueryInsertMetadata } from './query-replay'
 /** W4a: explicit offline 71606 complete-new-collection command. No public routing. */
 import { requireCaptureForeignKeys } from './fingerprint-capture'
 import { isDeepStrictEqual } from 'node:util'
-import { and, eq, sql } from 'drizzle-orm'
+import { and,eq,sql } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import { normalizeUscc } from '../domain'
 import { normalizePlatformRelation } from './normalization'
 import type { RosterImportPlatformQuery } from '../roster-import-client'
 import { platformQueriesInputSchema } from '../../server/utils/roster-import-platform-schema'
-import { FINAL_COLLECTION_SCOPE_VERSION } from '../../db/schema-phase'
 import { targetSchema as s } from './target-schema'
-import { platformEvidenceError, PLATFORM_PERSISTED_SOURCE, archiveQueryKey, recognizedStoredStatus, RDJB_TITLE_CODES } from './recognized-evidence'
-import { writeApplyTarget, type ApplyTargetInput } from './apply-target-writer'
+import { platformEvidenceError,PLATFORM_PERSISTED_SOURCE,archiveQueryKey,recognizedStoredStatus,RDJB_TITLE_CODES } from './recognized-evidence'
+import { writeApplyTarget,type ApplyTargetInput } from './apply-target-writer'
 import { writeProcessTarget } from './process-target-writer'
 import { writeRecognizedTarget } from './recognized-target-writer'
-import { allocateLegacyAlias, insertArchiveValue, bindArchive, sealArchiveOwner } from './target-archive'
+import { allocateLegacyAlias,insertArchiveValue,bindArchive,sealArchiveOwner } from './target-archive'
 
 export type NewCollectionTargetCommand = {
   /** Original UTF-8 JSON query command, retained verbatim. Not a reuse/reference command. */
@@ -81,11 +80,9 @@ function queryInput(input: NewCollectionTargetCommand): RosterImportPlatformQuer
 export function writeNewCollectionTarget<S extends Record<string, unknown>>(db: BetterSQLite3Database<S>, input: NewCollectionTargetCommand) {
   requireCaptureForeignKeys(db)
   return db.transaction(tx => {
-    if (tx.get<{ user_version: number }>(sql`PRAGMA user_version`)?.user_version !== FINAL_COLLECTION_SCOPE_VERSION && tx.get<{ user_version: number }>(sql`PRAGMA user_version`)?.user_version !== 71607 && tx.get<{ user_version: number }>(sql`PRAGMA user_version`)?.user_version !== 71608 && tx.get<{user_version:number}>(sql`PRAGMA user_version`)?.user_version !== 71609 && tx.get<{user_version:number}>(sql`PRAGMA user_version`)?.user_version !==71610 && tx.get<{user_version:number}>(sql`PRAGMA user_version`)?.user_version!==71611 && tx.get<{user_version:number}>(sql`PRAGMA user_version`)?.user_version!==71612 && tx.get<{user_version:number}>(sql`PRAGMA user_version`)?.user_version!==71613) throw new Error('Explicit 71606 target required')
     ensureProcessStoredReady(sqliteConnection(tx))
     reconcileSlotWriteInstalled(sqliteConnection(tx))
     const q = queryInput(input)
-    if(tx.get<{user_version:number}>(sql`PRAGMA user_version`)?.user_version===71608 && q.interface!=='apply_list')throw new Error('71608 command supports apply_list only')
     const e = q.collectionEvidence, metadata = platformQueryInsertMetadata(q)
     const existing = tx.select({ id: s.platformCollection.id }).from(s.platformCollection).where(and(eq(s.platformCollection.interface, q.interface), eq(s.platformCollection.queryKey, q.queryKey), eq(s.platformCollection.rdjb, replayOptionalString(q.rdjb) ?? ''), eq(s.platformCollection.queriedAt, q.queriedAt))).get()
     if (existing) throw new Error('collection_already_exists: new-only command; public reuse is deferred')

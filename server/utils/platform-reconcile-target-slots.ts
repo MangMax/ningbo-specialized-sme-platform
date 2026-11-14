@@ -1,9 +1,8 @@
-/** Explicit decision reader for completed capture targets. Ordinary guards stay closed. */
+/** Reconcile decision reader for structured capture facts and sealed originals. */
 import type Database from 'better-sqlite3'
 import { and, asc, eq, or } from 'drizzle-orm'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
-import { alias } from 'drizzle-orm/sqlite-core'
-import { targetSchema as s, platformReconcileCapture as capture } from '../../lib/platform/target-schema'
+import { targetSchema as s } from '../../lib/platform/target-schema'
 import { sqliteConnection } from '../../lib/platform/target-connection'
 import { requireH1cReady } from '../../lib/platform/h1c-catalog'
 import { reconcileSlotWriteInstalled, selectedReconcileCollectionInput, selectedReconcileObservationInput } from '../../lib/platform/reconcile-slot-write'
@@ -15,7 +14,6 @@ import type { ReconcileQueryEvidence } from '../../lib/platform/reconcile'
 import type { StoredSlot, ReconcileRunOptions } from './platform-reconcile'
 
 type Db = ReconcileRunOptions['db']
-const slotCapture = alias(capture, 'slot_capture')
 type CandidateOrder = { collection: Pick<typeof s.platformCollection.$inferSelect, 'queriedAt'>; id: number }
 /** id is the public query alias. Physical collection IDs never break a tie. */
 export function compareReconcileSlotCollections(a: CandidateOrder, b: CandidateOrder) {
@@ -61,8 +59,8 @@ export function createReconcileTargetSlotReader(connection: Database.Database): 
       return db.transaction(tx => {
         assertConnection(tx)
         const target = drizzle(connection), c = s.platformCollection, a = s.platformLegacyQueryAlias
-        const candidates = target.select({ collection: c, id: a.oldId, capture: slotCapture }).from(c)
-          .innerJoin(a, eq(a.collectionId, c.id)).innerJoin(slotCapture, eq(slotCapture.id, c.id))
+        const candidates = target.select({ collection: c, id: a.oldId }).from(c)
+          .innerJoin(a, eq(a.collectionId, c.id))
           .where(and(eq(c.queryKey, queryKey), or(
             and(eq(c.interface, 'business_list'), or(eq(c.rdjb, '1'), eq(c.rdjb, '2'), eq(c.rdjb, '3'))),
             and(eq(c.interface, 'apply_list'), eq(c.rdjb, '')),
@@ -73,18 +71,18 @@ export function createReconcileTargetSlotReader(connection: Database.Database): 
           if (!selected.has(key)) selected.set(key, row)
         }
         const result = new Map<string, StoredSlot>()
-        for (const [key, { collection: c, capture: state }] of selected) {
+        for (const [key, { collection: c }] of selected) {
           if (c.status !== 'success' && c.status !== 'no_record' || c.queriedAt < cutoffIso) continue
-          if (state.state === 'uncaptured') throw new Error('Reconcile capture target NOTREADY: selected slot uncaptured')
-          if (state.rule !== RECONCILE_SLOT_RULE) throw new Error('Reconcile capture target NOTREADY: unsupported rule')
-          if (state.state === 'miss') continue
-          if (state.state === 'error') throw new SyntaxError((state.reason ?? '').replace(/^SyntaxError: /, ''))
-          if (state.rawArchiveId === null || state.rowCount === null) throw new Error('Reconcile capture target NOTREADY: missing binding')
+          if (c.reconcileSlotState === 'uncaptured') throw new Error('Reconcile capture target NOTREADY: selected slot uncaptured')
+          if (c.reconcileSlotRule !== RECONCILE_SLOT_RULE) throw new Error('Reconcile capture target NOTREADY: unsupported rule')
+          if (c.reconcileSlotState === 'miss') continue
+          if (c.reconcileSlotState === 'error') throw new SyntaxError((c.reconcileSlotReason ?? '').replace(/^SyntaxError: /, ''))
+          if (c.reconcileSlotRawArchiveId === null || c.reconcileSlotRowCount === null) throw new Error('Reconcile capture target NOTREADY: missing binding')
           const o = s.platformBusinessObservation, original = s.platformObservationAssignment
           const observations = target.select({ observation: o, original }).from(o)
             .innerJoin(original, and(eq(original.observationId, o.id), eq(original.revision, 1)))
             .where(eq(o.collectionId, c.id)).orderBy(asc(o.sequenceNo)).all()
-          if (observations.length !== state.rowCount) throw new Error('Reconcile selected observation count drift')
+          if (observations.length !== c.reconcileSlotRowCount) throw new Error('Reconcile selected observation count drift')
           if ((c.status === 'no_record') !== (observations.length === 0)) continue
           // All classification facts are source-owned and observation-local, even without a version.
           const facts = observations.map(({ observation, original }) => {
@@ -95,7 +93,7 @@ export function createReconcileTargetSlotReader(connection: Database.Database): 
           })
           // Only now may selected original owners hydrate typed payloads and report pages.
           const originals = observations.map(({ observation }) => selectedReconcileObservationInput(connection, observation.id))
-          const collection = selectedReconcileCollectionInput(connection, c.id, state.rawArchiveId)
+          const collection = selectedReconcileCollectionInput(connection, c.id, c.reconcileSlotRawArchiveId)
           const payloadRows = originals.map(slotPayloadRow)
           const { source } = targetReplaySource(target, connection, c, 'after_assertions')
           result.set(key, {

@@ -1,7 +1,7 @@
 import Database from 'better-sqlite3'
 import { expect, it } from 'vitest'
 import { captureCandidateScope } from '../lib/platform/candidate-scope-capture'
-import { relationScopeSql } from '../lib/roster/current-platform-scope'
+import { relationScopeSql } from '../upgrade/frozen/current-platform-scope'
 
 it.each([
   ['strict', '{"pages":[{"status":"success","rdjb":"2","fetchedCount":1}]}', 2],

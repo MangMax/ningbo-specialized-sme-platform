@@ -8,10 +8,7 @@ import { join } from 'node:path'
 import { createInterface } from 'node:readline'
 import { once } from 'node:events'
 import { finished } from 'node:stream/promises'
-import { CURRENT_RULE_VERSION, qualificationDay, prepareCurrentReader, createCurrentQualificationAssessmentReader, QUALIFICATION_ASSESSMENT_VERSION, type CurrentTitle } from './current-qualification'
-import { currentCandidateBindings, currentCandidateReadSqlFor } from './current-candidates'
-import { resolveRecognizedFactSource, type RecognizedFactSource } from './recognized-filter-source'
-import { readIdentityKeyVariants } from './current-identity-keys'
+import { CURRENT_RULE_VERSION, qualificationDay, prepareCurrentReader, QUALIFICATION_ASSESSMENT_VERSION, type CurrentTitle } from './current-qualification'
 import { TITLES } from '../labels'
 import { CURRENT_STATUS_LABELS, type CurrentStatus } from './current-status'
 import { CURRENT_COLUMNS, currentWorkbookValues } from './current-workbook-presentation'
@@ -47,25 +44,15 @@ function sheetOptions() {
   return {views:[{state:'frozen' as const,xSplit:2,ySplit:1,topLeftCell:'C2',zoomScale:90}]}
 }
 /** Streaming rows in one pinned SQLite read transaction, owned by the independent executor. */
-export async function writeCurrentWorkbook(db: Database.Database, title: CurrentTitle, filename: string, progress: (done: number,total: number,snapshotStartedAt: string) => void, logContext?: LogContext, receiptRuntime?: ReceiptRuntimeContext, readOptions: { recognizedFactSource?: RecognizedFactSource } = {}) {
-  return writeCurrentWorkbookBody(db, title, filename, progress, undefined, logContext, receiptRuntime, readOptions)
+export async function writeCurrentWorkbook(db: Database.Database, title: CurrentTitle, filename: string, progress: (done: number,total: number,snapshotStartedAt: string) => void, logContext?: LogContext, receiptRuntime?: ReceiptRuntimeContext) {
+  return writeCurrentWorkbookBody(db, title, filename, progress, undefined, logContext, receiptRuntime)
 }
-function legacyCandidates(db: Database.Database, readOptions: { recognizedFactSource?: RecognizedFactSource }): CurrentCandidateReader {
-  return {
-    connection:db,
-    iterate(candidateTitle) {
-      return db.prepare(`select id from (${currentCandidateReadSqlFor(db, readOptions.recognizedFactSource)}) order by id`)
-        .iterate(currentCandidateBindings(candidateTitle)) as Iterable<{ id: number }>
-    },
-  }
-}
-
 /** Explicit R4 dependency seam; target qualification and coverage remain R5/X1. */
-export async function writeCurrentWorkbookWithCandidates(db: Database.Database, title: CurrentTitle, filename: string, progress: (done: number,total: number,snapshotStartedAt: string) => void, candidateReader: CurrentCandidateReader, logContext?: LogContext, receiptRuntime?: ReceiptRuntimeContext, readOptions: { recognizedFactSource?: RecognizedFactSource } = {}) {
+export async function writeCurrentWorkbookWithCandidates(db: Database.Database, title: CurrentTitle, filename: string, progress: (done: number,total: number,snapshotStartedAt: string) => void, candidateReader: CurrentCandidateReader, logContext?: LogContext, receiptRuntime?: ReceiptRuntimeContext) {
   if(candidateReader.connection!==db)throw new Error('Candidate reader must use the caller connection')
-  return writeCurrentWorkbookBody(db, title, filename, progress, candidateReader, logContext, receiptRuntime, readOptions)
+  return writeCurrentWorkbookBody(db, title, filename, progress, candidateReader, logContext, receiptRuntime)
 }
-async function writeCurrentWorkbookBody(db: Database.Database, title: CurrentTitle, filename: string, progress: (done: number,total: number,snapshotStartedAt: string) => void, candidateReader: CurrentCandidateReader | undefined, logContext?: LogContext, receiptRuntime?: ReceiptRuntimeContext, readOptions: { recognizedFactSource?: RecognizedFactSource } = {}) {
+async function writeCurrentWorkbookBody(db: Database.Database, title: CurrentTitle, filename: string, progress: (done: number,total: number,snapshotStartedAt: string) => void, candidateReader: CurrentCandidateReader | undefined, logContext?: LogContext, receiptRuntime?: ReceiptRuntimeContext) {
   const generatedAt = new Date().toISOString(), year = Number(qualificationDay(Date.parse(generatedAt)).slice(0,4))
   const output = createWriteStream(filename)
   const completed = finished(output, { cleanup: true })
@@ -121,11 +108,10 @@ async function writeCurrentWorkbookBody(db: Database.Database, title: CurrentTit
     ownedTransaction = true
     // Enumerate narrow query keys once inside this pinned snapshot. The export
     // evaluates its title and actual inheritance dependency in bounded blocks.
-    const target = createCurrentTargetContext(db, readOptions.recognizedFactSource, receiptRuntime)
-    const candidates = candidateReader ?? target?.candidates ?? legacyCandidates(db, readOptions)
-    const queryKeys = target?.keys.queries ?? readIdentityKeyVariants(db, 'queries')
-    const recognizedFactSource = resolveRecognizedFactSource(readOptions.recognizedFactSource)
-    const assessmentReader = target?.assessment ?? createCurrentQualificationAssessmentReader(db, receiptRuntime, { recognizedFactSource })
+    const target = createCurrentTargetContext(db, receiptRuntime)
+    const candidates = candidateReader ?? target.candidates
+    const queryKeys = target.keys.queries
+    const assessmentReader = target.assessment
     // Exhaust this one ordered SELECT before full assessments open SAVEPOINTs.
     // Five sheets can hold at most 5 * 1048575 IDs: Float64 chunks cap this
     // narrow projection at 40MiB, without a workbook-sized array of row objects.
@@ -147,7 +133,7 @@ async function writeCurrentWorkbookBody(db: Database.Database, title: CurrentTit
     workbookStarted = true
     appLog({ source: 'export', operation: 'export.current.workbook', outcome: 'started' }, logContext)
     const workbook = new Stream.WorkbookWriter({ stream: output, useStyles: true, useSharedStrings: false, trueStreaming: true })
-    const counts = { eligible: 0, pending: 0, excluded: 0 }, hash = createHash('sha256').update(JSON.stringify([target && candidateReader === undefined ? 'current-export-assessment-title-v3' : 'current-export-assessment-409-v2',QUALIFICATION_ASSESSMENT_VERSION,CURRENT_RULE_VERSION,year,title]) + '\n')
+    const counts = { eligible: 0, pending: 0, excluded: 0 }, hash = createHash('sha256').update(JSON.stringify([candidateReader === undefined ? 'current-export-assessment-title-v3' : 'current-export-assessment-409-v2',QUALIFICATION_ASSESSMENT_VERSION,CURRENT_RULE_VERSION,year,title]) + '\n')
     const statusCounts = { effective: 0, expired: 0, terminated: 0, moved_out: 0, unrecognized: 0 }
     const deferred: Record<CurrentStatus, number[]> = { effective: [], expired: [], terminated: [], moved_out: [], unrecognized: [] }
     progress(0,total,snapshotStartedAt)
@@ -173,12 +159,12 @@ async function writeCurrentWorkbookBody(db: Database.Database, title: CurrentTit
       }
       const ids = group === 'effective' ? candidateIds() : deferred[group]
       for (const block of currentCandidateIdBlocks(ids)) {
-        const classifications = group === 'effective' ? target && candidateReader === undefined
+        const classifications = group === 'effective' ? candidateReader === undefined
           ? assessmentReader.readEffectiveTitles(block, Date.parse(generatedAt), title)
           : new Map(block.map(id => [id, assessmentReader.readEffectiveTitle(id,title,Date.parse(generatedAt)).effectiveStatus]))
           : new Map(block.map(id => [id, group]))
         const admitted = block.filter(id => classifications.get(id) === group)
-        const prepared = target && candidateReader === undefined ? assessmentReader.readWorkbookRowsBatch(admitted, Date.parse(generatedAt), title, queryKeys)
+        const prepared = candidateReader === undefined ? assessmentReader.readWorkbookRowsBatch(admitted, Date.parse(generatedAt), title, queryKeys)
           : admitted.map(id => assessmentReader.readWorkbook(id,Date.parse(generatedAt),title,queryKeys))
         const workbookReads = new Map(admitted.map((id, index) => [id, prepared[index]!]))
         for (const id of block) {

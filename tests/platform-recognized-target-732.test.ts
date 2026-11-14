@@ -1,9 +1,9 @@
 import { projectionManifest } from '../upgrade/projections';
 import { expect, it } from 'vitest';
 import { recognizedFixture } from './helpers/recognized-target-732';
-import { listPlatformRecognizedDirectory, getPlatformRecognizedRecord } from '../server/utils/platform-recognized-directory';
-import { readPlatformFilterOptions } from '../server/utils/platform-filter-options';
-import { listTargetRecognizedDirectory, getTargetRecognizedRecord, readTargetRecognizedOptions } from '../server/utils/platform-recognized-target';
+import { listPlatformRecognizedDirectory, getPlatformRecognizedRecord } from '../upgrade/frozen/server/platform-recognized-directory';
+import { readPlatformFilterOptions } from '../upgrade/frozen/server/platform-filter-options';
+import { listTargetRecognizedDirectory, getTargetRecognizedRecord, readTargetRecognizedOptions } from '../upgrade/frozen/server/platform-recognized-target';
 it('preserves migrated directory records isolated exact titles and global options against independent old services', async () => {
     const f = await recognizedFixture();
     try {
@@ -186,9 +186,9 @@ it('bounds SQL hydration after paging and records actual indexes and temporary s
 });
 import Database from 'better-sqlite3';
 import { drizzle } from 'drizzle-orm/better-sqlite3';
-import { targetSchema } from '../lib/platform/target-schema';
-import { ensurePlatformObservation } from '../server/utils/platform-business-record';
-import * as legacySchema from '../db/schema';
+import { targetSchema } from '../upgrade/target-schema';
+import { ensurePlatformObservation } from '../upgrade/frozen/server/platform-business-record';
+import * as legacySchema from '../upgrade/legacy-schema';
 it('pins count page owners and conflicts to one SQLite snapshot while the next request observes a new revision', async () => {
     const f = await recognizedFixture();
     f.t.pragma('journal_mode=WAL');

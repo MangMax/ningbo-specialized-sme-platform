@@ -3,10 +3,7 @@ import { createCurrentQualificationAssessmentReaderWithWitnesses } from './curre
 import type { PublishedPresentation } from './correspondence-view'
 import type Database from 'better-sqlite3'
 import { normalizeName, normalizeUscc } from '../domain'
-import { CURRENT_RULE_VERSION, prepareCurrentReader, createCurrentQualificationAssessmentReader, type CurrentQualificationSnapshot, type CurrentQualificationWitness, type CurrentRow, type CurrentTitle } from './current-qualification'
-import { resolveRecognizedFactSource, type RecognizedFactSource } from './recognized-filter-source'
-import { currentCandidateBindings, currentCandidateReadSqlFor } from './current-candidates'
-import { readIdentityKeyVariants } from './current-identity-keys'
+import { CURRENT_RULE_VERSION, prepareCurrentReader, type CurrentQualificationSnapshot, type CurrentQualificationWitness, type CurrentRow, type CurrentTitle } from './current-qualification'
 import { currentCandidateIdBlocks, type CurrentCandidateReader } from './current-candidate-reader'
 import { createCurrentTargetContext } from './current-target-context'
 
@@ -87,37 +84,21 @@ function retainFilterWitnesses(row: CurrentRow, matching: CurrentQualificationWi
   row.matchedMaintenance = matching.flatMap(w => w.matchedMaintenance ? [w.matchedMaintenance] : []).filter((fact,index,all) => all.findIndex(other => other.year === fact.year && other.batch === fact.batch) === index).sort((a,b) => a.year-b.year || (a.batch ?? 0)-(b.batch ?? 0))
 }
 
-export interface CurrentQualifiedReadOptions {
-  /** Explicit #468 rollback seam; absent follows the operational default. */
-  recognizedFactSource?: RecognizedFactSource
-}
 /** Count all candidates in one snapshot; hydrate only the requested page. */
-export function listCurrentQualified(db: Database.Database, filter: CurrentQualifiedFilter, readOptions: CurrentQualifiedReadOptions = {}): CurrentQualifiedResult {
-  return listCurrentQualifiedBody(db, filter, undefined, readOptions)
-}
-
-function legacyCandidates(db: Database.Database, readOptions: CurrentQualifiedReadOptions): CurrentCandidateReader {
-  return {
-    connection:db,
-    iterate(title, sort) {
-      const order = sort === 'name_asc' ? 'e.name collate nocase asc, c.id asc'
-        : sort === 'name_desc' ? 'e.name collate nocase desc, c.id asc' : 'c.id asc'
-      return db.prepare(`select c.id from (${currentCandidateReadSqlFor(db, readOptions.recognizedFactSource)}) c join enterprise e on e.id=c.id order by ${order}`)
-        .iterate(currentCandidateBindings(title)) as Iterable<{ id: number }>
-    },
-  }
+export function listCurrentQualified(db: Database.Database, filter: CurrentQualifiedFilter): CurrentQualifiedResult {
+  return listCurrentQualifiedBody(db, filter, undefined )
 }
 
 /** Explicit candidate dependency for offline comparisons and bounded oracles. */
-export function listCurrentQualifiedWithCandidates(db: Database.Database, filter: CurrentQualifiedFilter, candidateReader: CurrentCandidateReader, readOptions: CurrentQualifiedReadOptions = {}): CurrentQualifiedResult {
-  return listCurrentQualifiedBody(db,filter,candidateReader,readOptions)
+export function listCurrentQualifiedWithCandidates(db: Database.Database, filter: CurrentQualifiedFilter, candidateReader: CurrentCandidateReader): CurrentQualifiedResult {
+  return listCurrentQualifiedBody(db,filter,candidateReader)
 }
 /** Explicit same-connection candidate and witness dependencies. */
 export function listCurrentQualifiedWithCandidatesAndWitnesses(db:Database.Database,filter:CurrentQualifiedFilter,candidateReader:CurrentCandidateReader,witnesses:RecognizedWitnessReader):CurrentQualifiedResult {
   if(witnesses.connection!==db)throw new Error('Witness reader must use the caller connection')
-  return listCurrentQualifiedBody(db,filter,candidateReader,{},witnesses)
+  return listCurrentQualifiedBody(db,filter,candidateReader,witnesses)
 }
-function listCurrentQualifiedBody(db:Database.Database,filter:CurrentQualifiedFilter,candidateReader:CurrentCandidateReader|undefined,readOptions:CurrentQualifiedReadOptions,witnesses?:RecognizedWitnessReader):CurrentQualifiedResult {
+function listCurrentQualifiedBody(db:Database.Database,filter:CurrentQualifiedFilter,candidateReader:CurrentCandidateReader|undefined,witnesses?:RecognizedWitnessReader):CurrentQualifiedResult {
   if(candidateReader && candidateReader.connection!==db)throw new Error('Candidate reader must use the caller connection')
   const page = filter.page ?? 1, pageSize = filter.pageSize ?? 25
   const snapshotStartedAt = new Date().toISOString()
@@ -125,12 +106,12 @@ function listCurrentQualifiedBody(db:Database.Database,filter:CurrentQualifiedFi
   prepareCurrentReader(db)
   db.exec('BEGIN')
   try {
-    const target = createCurrentTargetContext(db, readOptions.recognizedFactSource)
+    const target = createCurrentTargetContext(db)
     const read=():CurrentQualifiedResult=>{
-    const candidates = candidateReader ?? target?.candidates ?? legacyCandidates(db, readOptions)
+    const candidates = candidateReader ?? target.candidates
     const assessmentReader = witnesses ? createCurrentQualificationAssessmentReaderWithWitnesses(db,witnesses)
-      : target?.assessment ?? createCurrentQualificationAssessmentReader(db,undefined,{recognizedFactSource:resolveRecognizedFactSource(readOptions.recognizedFactSource)})
-    const keys = target?.keys ?? { queries: readIdentityKeyVariants(db, 'queries'), relations: readIdentityKeyVariants(db, 'unassignedRelations') }
+      : target.assessment
+    const keys = target.keys
     const qName = normalizeName(filter.q ?? ''), qUscc = normalizeUscc(filter.q ?? '')
     const requested = Boolean(qName || qUscc)
     let total = 0
@@ -151,7 +132,7 @@ function listCurrentQualifiedBody(db:Database.Database,filter:CurrentQualifiedFi
       for (const { id } of candidates.iterate(filter.titleCode, filter.sort)) yield id
     }
     for (const ids of currentCandidateIdBlocks(candidateIds())) {
-      const assessed = target && candidateReader === undefined
+      const assessed = candidateReader === undefined
         ? assessmentReader.readFilterCandidates(ids, filter.titleCode, at, keys, filter.status ?? 'effective')
         : ids.map(id => ({ id, ...assessmentReader.readFilterCandidate(id, filter.titleCode, at, keys) }))
       for (const { id, row, effectiveStatus } of assessed) {
@@ -180,7 +161,7 @@ function listCurrentQualifiedBody(db:Database.Database,filter:CurrentQualifiedFi
     // Exhausting the candidate iterator releases its active SQLite statement
     // before read() opens a nested SAVEPOINT. The outer BEGIN is still active:
     // Counts, witnesses and full T2 hydration share the same read snapshot/time.
-    if (target && candidateReader === undefined) for (const ids of currentCandidateIdBlocks(selected.map(row => row.id))) {
+    if (candidateReader === undefined) for (const ids of currentCandidateIdBlocks(selected.map(row => row.id))) {
       const reads = assessmentReader.readCurrentBatch(ids, at, filter.titleCode, keys.queries)
       ids.forEach((id, index) => hydratedPage.set(id, reads[index]!))
     }
@@ -195,8 +176,8 @@ function listCurrentQualifiedBody(db:Database.Database,filter:CurrentQualifiedFi
     // Keep the old response field; the five-state reader has no pending bucket.
     return { responseVersion: 'current-qualified-478-v2', rows, publishedPending: { requested, rows: [], total: 0, page, pageSize }, total, uncertainTotal, options: { recognitionYears: ascending(recognitionYears), validYears: ascending(validYears), maintenanceYears: ascending(maintenanceYears), maintenanceBatchesByYear: Object.fromEntries([...maintenanceBatchesByYear].map(([year,batches]) => [year,ascending(batches)])) }, page, pageSize, titleCode: filter.titleCode, ruleVersion: CURRENT_RULE_VERSION, snapshotStartedAt }
     }
-    const snapshotWitnesses = witnesses ?? target?.witnesses
-    const result = snapshotWitnesses?snapshotWitnesses.withinSnapshot(read):read()
+    const snapshotWitnesses = witnesses ?? target.witnesses
+    const result = snapshotWitnesses.withinSnapshot(read)
     db.exec('COMMIT')
     return result
   } catch (error) { if (db.inTransaction) db.exec('ROLLBACK'); throw error }

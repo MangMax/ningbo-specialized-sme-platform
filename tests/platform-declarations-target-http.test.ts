@@ -5,11 +5,11 @@ import { afterAll, beforeAll, expect, it, vi } from 'vitest'
 import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { ready, records } from './helpers/declarations-target'
-import * as legacySchema from '../db/schema'
-import { targetSchema } from '../lib/platform/target-schema'
-import { listPlatformDeclarations, getPlatformDeclaration } from '../server/utils/platform-declarations'
-import { readPlatformFilterOptions } from '../server/utils/platform-filter-options'
-import { writeCollectionTarget } from '../lib/platform/collection-target-command'
+import * as legacySchema from '../upgrade/legacy-schema'
+import { targetSchema } from '../upgrade/target-schema'
+import { listPlatformDeclarations, getPlatformDeclaration } from '../upgrade/frozen/server/platform-declarations'
+import { readPlatformFilterOptions } from '../upgrade/frozen/server/platform-filter-options'
+import { writeCollectionTarget } from '../upgrade/frozen/collection-target-command'
 
 const statements: { sql: string; params: unknown[] }[] = []
 let fixture: ReturnType<typeof ready>, old: Database.Database

@@ -10,8 +10,8 @@ import { upgradeCollections } from '../upgrade/collections'
 import { upgradeObservations } from '../upgrade/observations'
 import { upgradeProjections } from '../upgrade/projections'
 import { finalizeObservations } from '../upgrade/finalize-observations'
-import { targetSchema } from '../lib/platform/target-schema'
-import { writeRecognizedTarget, type RecognizedTargetInput } from '../lib/platform/recognized-target-writer'
+import { targetSchema } from '../upgrade/target-schema'
+import { writeRecognizedTarget, type RecognizedTargetInput } from '../upgrade/frozen/recognized-target-writer'
 
 function fixture() {
   const root = mkdtempSync(join(process.env.W3A_EVIDENCE_DIR ?? tmpdir(), 'w3a-'))

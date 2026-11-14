@@ -1,3 +1,4 @@
+import { verifyCandidateObservation } from './candidate-scope-write'
 import { storedProcessProjection } from './process-stored-schema'
 import { reconstructWitnessCollectionSource } from './recognized-witness-write'
 import Database from 'better-sqlite3'
@@ -59,10 +60,8 @@ function verifyCommandInSnapshot(target:Database.Database,predecessor:Database.D
     const expected=drizzle(scratch,{schema:s})
     const collection=actual.select().from(s.platformCollection).where(eq(s.platformCollection.id,input.collectionId)).get()
     if(!collection)throw new Error('Command collection missing')
-    if([71611,71612,71613].includes(Number(target.pragma('user_version',{simple:true})))){
-      if(collection.interface==='business_list')verifyProcessStored(target,observation.id,{kind:'command',input})
-      if(collection.interface==='recognized_list')verifyRecognizedStored(target,observation.id)
-    }
+    if(collection.interface==='business_list')verifyProcessStored(target,observation.id,{kind:'command',input})
+    if(collection.interface==='recognized_list')verifyRecognizedStored(target,observation.id)
     if(collection.titleCode!==null&&!expected.select().from(s.title).where(eq(s.title.code,collection.titleCode)).get()) {
       const title=actual.select().from(s.title).where(eq(s.title.code,collection.titleCode)).get()
       if(!title)throw new Error('Command title context missing')
@@ -80,10 +79,33 @@ function verifyCommandInSnapshot(target:Database.Database,predecessor:Database.D
     }
     // The independently bound snapshot also covers collections created after predecessor.
     if(!expected.select().from(s.platformCollection).where(eq(s.platformCollection.id,collection.id)).get()) {
-      expected.insert(s.platformCollection).values(collection).run()
+      // Rebuild the observation at its original write boundary, before the collection
+      // capture seals its row set. Final collection capture is authenticated separately.
+      expected.insert(s.platformCollection).values({ ...collection,
+        reconcileSlotState: 'uncaptured', reconcileSlotRule: null,
+        reconcileSlotRawArchiveId: null, reconcileSlotRowCount: null,
+        reconcileSlotInputSha256: null, reconcileSlotReason: null,
+      }).run()
       for(const alias of actual.select().from(s.platformLegacyQueryAlias).where(eq(s.platformLegacyQueryAlias.collectionId,collection.id)).all())expected.insert(s.platformLegacyQueryAlias).values(alias).run()
     }
+    verifyCandidateObservation(actual,observation.id)
     if(collection.interface==='recognized_list')reconstructWitnessCollectionSource(target,scratch,collection.id)
+    else {
+      // Candidate scope consumes the sealed collection original for every interface.
+      // Reconstruct that same context before the expected observation writer runs.
+      const ref = s.platformCollectionArchiveRef, archive = s.platformArchiveValue
+      const binding = actual.select({ref,value:archive}).from(ref).innerJoin(archive,eq(archive.id,ref.archiveId))
+        .where(and(eq(ref.ownerId,collection.id),eq(ref.field,'collectionEvidence'))).get()
+      if(binding) {
+        if(binding.ref.sealed!==1)throw new Error('Command candidate source is not sealed')
+        const existing=expected.select().from(archive).where(eq(archive.id,binding.value.id)).get()
+        if(existing&&!isDeepStrictEqual(existing,binding.value))throw new Error('Command candidate archive identity conflict')
+        if(!existing)expected.insert(archive).values(binding.value).run()
+        const prior=expected.select().from(ref).where(and(eq(ref.ownerId,collection.id),eq(ref.field,'collectionEvidence'))).get()
+        if(prior&&!isDeepStrictEqual(prior,binding.ref))throw new Error('Command candidate archive binding conflict')
+        if(!prior)expected.insert(ref).values(binding.ref).run()
+      }
+    }
     if(input.position.pageId!=null&&!expected.select().from(s.platformCollectionPage).where(eq(s.platformCollectionPage.id,input.position.pageId)).get()) {
       const page=actual.select().from(s.platformCollectionPage).where(eq(s.platformCollectionPage.id,input.position.pageId)).get()
       if(!page)throw new Error('Command page missing')
@@ -97,8 +119,21 @@ function verifyCommandInSnapshot(target:Database.Database,predecessor:Database.D
       if(field==='recordId'||field==='versionId')continue
       if(planned[field]!==observation[field])throw new Error('Command mapping conflict: '+field)
     }
-    const expectedObservation={...planned,id:observation.id,recordId:observation.recordId,versionId:observation.versionId,indexedAt:observation.indexedAt}
-    if(!isDeepStrictEqual(expectedObservation,observation))throw new Error('Command source coordinate conflict')
+    // These fields are self references, so validate both owners before translating
+    // the scratch identity. Null remains null for the other source interfaces.
+    for (const field of ['applyExactOwnerId','processExactOwnerId'] as const) {
+      const owns = field === 'applyExactOwnerId' ? collection.interface === 'apply_list' : collection.interface === 'business_list'
+      if (planned[field] !== (owns ? planned.id : null) || observation[field] !== (owns ? observation.id : null))
+        throw new Error('Command exact owner conflict: '+field)
+    }
+    const expectedObservation={...planned,id:observation.id,recordId:observation.recordId,versionId:observation.versionId,indexedAt:observation.indexedAt,
+      applyExactOwnerId:planned.applyExactOwnerId === null ? null : observation.id,
+      processExactOwnerId:planned.processExactOwnerId === null ? null : observation.id,
+    }
+    if(!isDeepStrictEqual(expectedObservation,observation)) {
+      const fields = Object.keys(expectedObservation).filter(key => !isDeepStrictEqual(Reflect.get(expectedObservation,key),Reflect.get(observation,key)))
+      throw new Error('Command source coordinate conflict: '+fields.join(','))
+    }
     const assignment=s.platformObservationAssignment
     const revision1=actual.select().from(assignment).where(and(eq(assignment.observationId,observation.id),eq(assignment.revision,1))).get()
     const plannedAssignment=expected.select().from(assignment).where(and(eq(assignment.observationId,planned.id),eq(assignment.revision,1))).get()!
@@ -142,12 +177,22 @@ function verifyCommandInSnapshot(target:Database.Database,predecessor:Database.D
       const archive=actual.select({ref:vr,value:a}).from(vr).innerJoin(a,eq(a.id,vr.archiveId)).where(eq(vr.ownerId,f.id)).all()
       if(archive.length!==1||archive[0]!.ref.sealed!==1||archive[0]!.value.id!==f.canonicalArchiveId||archive[0]!.value.storageClass!=='text'||!archive[0]!.value.bytes?.equals(Buffer.from(f.canonicalRawJson!))||archive[0]!.value.sha256!==hash(archive[0]!.value.bytes!)||archive[0]!.value.byteLength!==archive[0]!.value.bytes!.length)throw new Error('Command canonical archive conflict')
     }
-    for(const table of [s.platformApplyProjection,[71610,71611,71612,71613].includes(Number(target.pragma('user_version',{simple:true})))?storedProcessProjection:s.platformBusinessProjection,s.platformRecognizedProjection]) {
+    for(const table of [s.platformApplyProjection,storedProcessProjection,s.platformRecognizedProjection]) {
       const ep=expected.select().from(table).where(eq(table.observationId,planned.id)).all(),ap=actual.select().from(table).where(eq(table.observationId,observation.id)).all()
       if(ep.length!==ap.length)throw new Error('Command projection owner inventory conflict')
       for(let i=0;i<ep.length;i++) {
         const e=ep[i]!,v=ap[i]!,raw=found.find(f=>f.ref.field==='rawFields')!
-        if(!isDeepStrictEqual({...e,id:v.id,observationId:observation.id,sourceArchiveId:raw.value.id,createdAt:v.createdAt},v))throw new Error('Command observation projection conflict')
+        let mapped = {...e,id:v.id,observationId:observation.id,sourceArchiveId:raw.value.id,createdAt:v.createdAt}
+        if ('exactTitleArchiveId' in e && 'exactTitleArchiveId' in v) {
+          const basis = s.platformObservationFingerprintBasis
+          const expectedBasis = expected.select().from(basis).where(eq(basis.observationId,planned.id)).get()
+          const actualBasis = actual.select().from(basis).where(eq(basis.observationId,observation.id)).get()
+          if (!expectedBasis || !actualBasis || expectedBasis.scheme !== 'target-command-v1' || actualBasis.scheme !== 'target-command-v1'
+            || e.exactTitleArchiveId !== expectedBasis.inputArchiveId || v.exactTitleArchiveId !== actualBasis.inputArchiveId)
+            throw new Error('Command recognized title basis owner conflict')
+          mapped = {...mapped,exactTitleArchiveId:actualBasis.inputArchiveId}
+        }
+        if(!isDeepStrictEqual(mapped,v))throw new Error('Command observation projection conflict')
       }
       if(planned.versionId!==null) {
         const ep=expected.select().from(table).where(eq(table.versionId,planned.versionId)).all(),ap=actual.select().from(table).where(eq(table.versionId,observation.versionId!)).all()

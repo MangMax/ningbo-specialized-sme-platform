@@ -1,24 +1,23 @@
 /** Request-local USCC research projections. Archive bodies stay in SQLite;
  * original evidence remains available through the existing evidence read APIs. */
-import { and, asc, eq, inArray, sql } from 'drizzle-orm'
+import { and,asc,eq,inArray,sql } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as s from '../../db/schema'
-import { normalizeName, normalizeUscc } from '../../lib/domain'
+import { normalizeName,normalizeUscc } from '../../lib/domain'
 import { TITLE_ORDER } from '../../lib/labels'
-import type { UsccChecklistFilter } from '../../lib/roster/uscc-research'
-import { identityFunctions, identityUsccSql } from '../../lib/roster/enterprise-read-snapshot'
-import { removedEnterpriseIds } from '../../lib/roster/enterprise-list-selection'
-import type { PlatformEvidenceIndex } from './roster-duplicate-merge'
 import { currentEnterpriseIdentity } from '../../lib/roster/enterprise-identity'
-import { collectionImportTarget } from './collection-import-target'
+import { removedEnterpriseIds } from '../../lib/roster/enterprise-list-selection'
+import { identityFunctions,identityUsccSql } from '../../lib/roster/enterprise-read-snapshot'
+import type { UsccChecklistFilter } from '../../lib/roster/uscc-research'
 import { targetCandidateTables } from './candidate-target-sources'
+import type { PlatformEvidenceIndex } from './roster-duplicate-merge'
 
 type Db = BetterSQLite3Database<typeof s>
 const rank = (title: string) => { const i = TITLE_ORDER.indexOf(title); return i < 0 ? TITLE_ORDER.length : i }
 
 export function readUsccTargets(db: Db, filter: Omit<UsccChecklistFilter, 'page' | 'pageSize'>) {
   identityFunctions(db)
-  const { q, r } = collectionImportTarget(db) ? targetCandidateTables(db) : { q: s.platformQuery, r: s.platformRelation }
+  const { q, r } = targetCandidateTables(db)
   const missing = db.select({ id: s.enterprise.id, name: s.enterprise.name, nameNorm: s.enterprise.nameNorm, district: s.enterprise.district, city: s.enterprise.city })
     .from(s.enterprise).where(and(currentEnterpriseIdentity(db), sql`${identityUsccSql(sql`${s.enterprise.usccNorm}`)} is null`)).orderBy(s.enterprise.id).all()
   const ids = missing.map(row => row.id)
@@ -76,7 +75,7 @@ export function readUsccTargets(db: Db, filter: Omit<UsccChecklistFilter, 'page'
  * queries and relations are retained; no LIMIT can hide a second subject. */
 export function usccResearchEvidence(db: Db) {
   identityFunctions(db)
-  const { q, r } = collectionImportTarget(db) ? targetCandidateTables(db) : { q: s.platformQuery, r: s.platformRelation }
+  const { q, r } = targetCandidateTables(db)
   const index: PlatformEvidenceIndex = { queriesByUscc: new Map(), relationsByQuery: new Map() }
   const loaded = new Set<string>()
   const exportNames = new Map<string, string>()

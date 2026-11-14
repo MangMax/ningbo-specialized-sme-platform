@@ -25,7 +25,8 @@
     "verify:evidence-page-jump": "node scripts/verify-evidence-page-jump.mjs",
     "verify:detail-return-scroll": "node scripts/verify-detail-return-scroll.mjs",
     "verify:roster-return-chain": "node scripts/verify-roster-return-chain.mjs",
-    "verify:browser-test-port-isolation": "node scripts/verify-browser-test-port-isolation.mjs"
+    "verify:browser-test-port-isolation": "node scripts/verify-browser-test-port-isolation.mjs",
+    "verify:native-platform-boundary": "node scripts/verify-native-platform-boundary.mjs"
   },
   "dependencies": {
     "@embedpdf/core": "2.15.1",

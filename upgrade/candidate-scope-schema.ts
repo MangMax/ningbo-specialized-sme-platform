@@ -1,6 +1,6 @@
 /** A additive successor; schema infrastructure, no ordinary startup migration. */
 import type Database from 'better-sqlite3'
-import { candidateScopeCheck, candidateScopeColumns } from '../lib/platform/candidate-scope-schema'
+import { candidateScopeCheck, candidateScopeColumns } from './frozen/candidate-scope-schema'
 export function installCandidateScopeSchema(t: Database.Database) {
   if (!t.inTransaction || t.pragma('foreign_keys',{simple:true}) !== 1) throw new Error('Candidate schema requires FK ON transaction')
   for (const ddl of [

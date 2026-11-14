@@ -1,13 +1,12 @@
-import { reconcileSlotWriteInstalled, reconcileStoredApplyObservation, requireReconcileObservationWrite } from './reconcile-slot-write'
+import { reconcileStoredApplyObservation, requireReconcileObservationWrite } from './reconcile-slot-write'
 import { captureRelationEvidence } from './relation-evidence-snapshot'
 import { candidateObservationValues, verifyCandidateObservation } from './candidate-scope-write'
-import { candidateScopeObservation } from './candidate-scope-schema'
 import { sqliteConnection } from './target-connection'
-import { platformApplyStoredObservation as storedObservation, storedApplyProjection } from './apply-stored-schema'
+import { storedApplyProjection } from './apply-stored-schema'
 import { applyMaterialization, capturedApplyValues, APPLY_MATERIALIZATION_RULE } from './apply-materialization'
 import { verifyFingerprint } from './fingerprint-verifier'
 /** W1a explicit finalized-target transaction seam. No public import routing. */
-import { capturePhase, nextObservationId, captureFingerprintBasis, assertCapturedInput } from './fingerprint-capture'
+import { requireFingerprintCapture, nextObservationId, captureFingerprintBasis, assertCapturedInput } from './fingerprint-capture'
 import { createHash } from 'node:crypto'
 import { and, eq, sql } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
@@ -35,16 +34,14 @@ function positive(value: number) {
 
 /** A nested SQLite savepoint makes any failure atomic even if an outer caller catches it. */
 export function writeApplyTarget<S extends Record<string, unknown>>(db: BetterSQLite3Database<S>, input: ApplyTargetInput) {
-  const slotCapture = reconcileSlotWriteInstalled(sqliteConnection(db))
-  const capturing = capturePhase(db,true)
-  const stored = db.get<{user_version:number}>(sql`PRAGMA user_version`)?.user_version===71608 || db.get<{user_version:number}>(sql`PRAGMA user_version`)?.user_version===71609 || db.get<{user_version:number}>(sql`PRAGMA user_version`)?.user_version===71610 || (db.get<{user_version:number}>(sql`PRAGMA user_version`)?.user_version===71611 || db.get<{user_version:number}>(sql`PRAGMA user_version`)?.user_version===71612 || db.get<{user_version:number}>(sql`PRAGMA user_version`)?.user_version===71613)
+  requireFingerprintCapture(db)
   const rawText = input.row.rawFields == null ? null : JSON.stringify(input.row.rawFields)
-  const materialized = stored ? applyMaterialization(db,input.row,rawText) : null
-  if(materialized && ((input.assignment.nameRaw??null)!==materialized.nameRaw || (input.assignment.usccRaw??null)!==materialized.usccRaw)) throw new Error('apply_stored_conflict: revision1 materialization mismatch')
+  const materialized = applyMaterialization(db,input.row,rawText)
+  if(((input.assignment.nameRaw??null)!==materialized.nameRaw || (input.assignment.usccRaw??null)!==materialized.usccRaw)) throw new Error('apply_stored_conflict: revision1 materialization mismatch')
   return db.transaction(tx => {
     // S requires revision1 before observation INSERT; its incoming FK is immediate.
     // Defer within this transaction, never disable FK enforcement or reset before COMMIT.
-    if(stored) tx.run(sql`PRAGMA defer_foreign_keys=ON`)
+    tx.run(sql`PRAGMA defer_foreign_keys=ON`)
     positive(input.collectionId); if(input.batchId!==undefined)positive(input.batchId); positive(input.position.sequenceNo)
     if (input.assignment.origin !== 'command' || !input.assignment.actor || !input.assignment.basis) throw new Error('Explicit command provenance required')
     if (input.row.sequenceNo !== input.position.sequenceNo) throw new Error('Observation position mismatch')
@@ -63,22 +60,21 @@ export function writeApplyTarget<S extends Record<string, unknown>>(db: BetterSQ
     const existing = tx.select().from(s.platformBusinessObservation).where(and(eq(s.platformBusinessObservation.collectionId, collection.id), eq(s.platformBusinessObservation.sequenceNo, input.position.sequenceNo))).get()
     requireReconcileObservationWrite(sqliteConnection(tx), collection.id, !!existing)
     if (existing) {
-      if (capturing) assertCapturedInput(tx, existing.id, inputBytes)
+      assertCapturedInput(tx, existing.id, inputBytes)
       if (existing.inputFingerprint !== fingerprint || existing.projectionRuleVersion !== PLATFORM_PROJECTION_RULE) throw new Error('observation_payload_conflict')
       const alias = tx.select().from(s.platformLegacyRelationAlias).where(eq(s.platformLegacyRelationAlias.observationId, existing.id)).get()
       if (!alias) throw new Error('Missing observation alias')
       verifyCandidateObservation(tx, existing.id)
-      if(stored) verifyFingerprint(sqliteConnection(tx),{observationId:existing.id,collectionId:existing.collectionId,relationAlias:alias.oldId})
-      return { observationId: existing.id, recordId: existing.recordId, versionId: existing.versionId, relationAlias: alias.oldId, reused: true, ...(stored?{materializationRule:APPLY_MATERIALIZATION_RULE}:{}) }
+      verifyFingerprint(sqliteConnection(tx),{observationId:existing.id,collectionId:existing.collectionId,relationAlias:alias.oldId})
+      return { observationId: existing.id, recordId: existing.recordId, versionId: existing.versionId, relationAlias: alias.oldId, reused: true, materializationRule:APPLY_MATERIALIZATION_RULE }
     }
-    const observationId = capturing ? nextObservationId(tx) : undefined
-    if (capturing) captureFingerprintBasis(tx, observationId!, 'target-command-v1', inputBytes)
+    const observationId = nextObservationId(tx)
+    captureFingerprintBasis(tx, observationId, 'target-command-v1', inputBytes)
     const { recordId, versionId, now } = ensureApplyTargetContent(tx, plan)
-    if(stored) tx.insert(s.platformObservationAssignment).values({...input.assignment,observationId:observationId!,revision:1}).run()
+    tx.insert(s.platformObservationAssignment).values({...input.assignment,observationId,revision:1}).run()
     const candidateValues = candidateObservationValues(tx, collection, input.position.sequenceNo)
-    const observation = tx.insert(candidateValues.candidateScopeState ? candidateScopeObservation : stored ? storedObservation : s.platformBusinessObservation).values({ ...candidateValues, ...(stored ? {applyExactOwnerId:observationId,applyExactState:'captured' as const,applySqlFactTitleState:'captured' as const}:{}), id: observationId, collectionId: collection.id, ...input.position, sourceRelationKey: materialized ? materialized.sourceRelationKey : input.row.relationKey ?? null, recordId, versionId, identityState: plan.identityState, contentState: plan.contentState, keySource: plan.keySource, projectionRuleVersion: PLATFORM_PROJECTION_RULE, inputFingerprint: fingerprint, indexedAt: now, batchId: input.batchId ?? null }).returning().get()
+    const observation = tx.insert(s.platformBusinessObservation).values({ ...candidateValues, applyExactOwnerId:observationId,applyExactState:'captured' as const,applySqlFactTitleState:'captured' as const, id: observationId, collectionId: collection.id, ...input.position, sourceRelationKey: materialized.sourceRelationKey, recordId, versionId, identityState: plan.identityState, contentState: plan.contentState, keySource: plan.keySource, projectionRuleVersion: PLATFORM_PROJECTION_RULE, inputFingerprint: fingerprint, indexedAt: now, batchId: input.batchId ?? null }).returning().get()
     const assignment = { ...input.assignment, observationId: observation.id, revision: 1 }
-    if(!stored) tx.insert(s.platformObservationAssignment).values(assignment).run()
     const rawArchive = insertArchiveValue(tx, rawText === null ? { storageClass: 'null', bytes: null, createdAt: now } : { storageClass: 'text', bytes: Buffer.from(rawText), createdAt: now })
     bindArchive(tx, { kind: 'observation', ownerId: observation.id, field: 'rawFields', archiveId: rawArchive })
     const sourceArchive = insertArchiveValue(tx, input.row.sourceText == null ? { storageClass: 'null', bytes: null, createdAt: now } : { storageClass: 'text', bytes: Buffer.from(input.row.sourceText), createdAt: now })
@@ -87,8 +83,8 @@ export function writeApplyTarget<S extends Record<string, unknown>>(db: BetterSQ
     captureRelationEvidence(tx,{observationId:observation.id,collectionId:collection.id,relationAlias,row:input.row,assignment,createdAt:now})
     sealArchiveOwner(tx, { kind: 'observation', ownerId: observation.id })
     const title = raw?.rdjb
-    tx.insert(stored ? storedApplyProjection : s.platformApplyProjection).values({ ...(materialized ? capturedApplyValues(materialized):{}), observationId: observation.id, basis: raw === null ? 'unavailable' : 'observation_reconciliation', parseState: raw === null ? 'absent' : 'valid', sourceArchiveId: rawArchive, ...(plan.applyRecord ?? parseApplyRecord(raw)), ruleVersion: APPLY_PROJECTION_RULE, sourceTitleKind: sourceValueKind(title), sourceTitleText: typeof title === 'string' ? title : null, sourceTitleNumberText: typeof title === 'number' ? String(title) : null, sourceTitleBoolean: typeof title === 'boolean' ? Number(title) : null, sourceTitleRuleVersion: 't05b-source-projections-v1', ...sourceFieldComparison('apply_list', slotCapture ? reconcileStoredApplyObservation(sqliteConnection(tx), observation.id) : { province: input.row.province ?? null, status: input.row.status ?? null, batch: input.row.batch ?? null, declareKind: input.row.declareKind ?? null, appliedAt: input.row.appliedAt ?? null, awardBatchLabel: input.row.awardBatchLabel ?? null, year: input.row.year ?? null }, raw, raw === null ? 'absent' : 'valid') }).run()
-    return { observationId: observation.id, recordId, versionId, relationAlias, reused: false, ...(stored?{materializationRule:APPLY_MATERIALIZATION_RULE}:{}) }
+    tx.insert(storedApplyProjection).values({ ...capturedApplyValues(materialized), observationId: observation.id, basis: raw === null ? 'unavailable' : 'observation_reconciliation', parseState: raw === null ? 'absent' : 'valid', sourceArchiveId: rawArchive, ...(plan.applyRecord ?? parseApplyRecord(raw)), ruleVersion: APPLY_PROJECTION_RULE, sourceTitleKind: sourceValueKind(title), sourceTitleText: typeof title === 'string' ? title : null, sourceTitleNumberText: typeof title === 'number' ? String(title) : null, sourceTitleBoolean: typeof title === 'boolean' ? Number(title) : null, sourceTitleRuleVersion: 't05b-source-projections-v1', ...sourceFieldComparison('apply_list', reconcileStoredApplyObservation(sqliteConnection(tx), observation.id), raw, raw === null ? 'absent' : 'valid') }).run()
+    return { observationId: observation.id, recordId, versionId, relationAlias, reused: false, materializationRule:APPLY_MATERIALIZATION_RULE }
   })
 }
 

@@ -1,8 +1,8 @@
 import { z } from 'zod'
-import { platformQuery, platformRelation } from '../../db/schema'
-import { PLATFORM_INTERFACE_VALUES, TITLE_ORDER } from '../../lib/labels'
+import { platformCollection,platformObservationAssignment } from '../../db/schema'
+import { PLATFORM_INTERFACE_VALUES,TITLE_ORDER } from '../../lib/labels'
 import { platformQueryResultShape } from '../../lib/platform/live-query'
-import type { RosterImportPlatformQuery, RosterImportRelation } from '../../lib/roster-import-client'
+import type { RosterImportPlatformQuery,RosterImportRelation } from '../../lib/roster-import-client'
 
 const relation = z.looseObject({
   sequenceNo: z.number().describe('沿用核心 optionalInt；原查询内序号'),
@@ -12,15 +12,15 @@ const relation = z.looseObject({
   status: z.string().nullable().optional(), batch: z.string().nullable().optional(),
   declareKind: z.string().nullable().optional(), appliedAt: z.string().nullable().optional(),
   awardBatchLabel: z.string().nullable().optional(), year: z.number().nullable().optional(),
-  matchBasis: z.enum(platformRelation.matchBasis.enumValues).optional(),
-  verificationStatus: z.enum(platformRelation.verificationStatus.enumValues).optional(),
+  matchBasis: z.enum(platformObservationAssignment.matchBasis.enumValues).optional(),
+  verificationStatus: z.enum(platformObservationAssignment.verificationStatus.enumValues).optional(),
   sourceText: z.string().nullable().optional(), rawFields: z.record(z.string(), z.unknown()).nullable().optional(),
 } satisfies Record<keyof RosterImportRelation, z.ZodType>)
 export const platformQueriesInputSchema = z.array(z.looseObject({
   reuseExisting: z.literal(true).optional(), interface: z.enum(PLATFORM_INTERFACE_VALUES),
   queryKey: z.string(), rdjb: z.string().optional(),
   titleCode: z.enum(TITLE_ORDER as [string, ...string[]]).nullable().optional(), queriedAt: z.string(),
-  status: z.enum(platformQuery.status.enumValues).optional(),
+  status: z.enum(platformCollection.status.enumValues).optional(),
   collectionEvidence: z.object(platformQueryResultShape).nullable().optional(),
   failureReason: z.string().nullable().optional(), rawResponse: z.string().nullable().optional(),
   relations: z.array(relation).optional(),

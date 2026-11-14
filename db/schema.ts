@@ -10,9 +10,15 @@ import {
   sqliteTable,
   text,
   uniqueIndex,
+  unique,
+  customType,
   check,
   foreignKey,
 } from 'drizzle-orm/sqlite-core'
+
+const exactText = customType<{ data: unknown; driverData: unknown }>({ dataType: () => 'text' })
+const exactInteger = customType<{ data: unknown; driverData: unknown }>({ dataType: () => 'integer' })
+const exactCell = customType<{ data: unknown; driverData: unknown }>({ dataType: () => 'blob' })
 
 /** 后台外部服务凭据。仅配置服务读取，不加入台账导出或任务历史。 */
 export const serviceCredential = sqliteTable('service_credential', {
@@ -624,70 +630,7 @@ export const enterpriseProfileAudit = sqliteTable('enterprise_profile_audit', {
   createdAt: text('created_at').notNull().$defaultFn(() => new Date().toISOString()),
 }, t => [uniqueIndex('enterprise_profile_audit_key_uq').on(t.idempotencyKey), index('enterprise_profile_audit_enterprise_idx').on(t.enterpriseId, t.id)])
 
-/**
- * **平台查询记录**(契约 3)。一次「查了工信部哪个接口、用什么键、什么时候查、结果如何」。
- *
- * **失败 ≠ 无记录** —— 这是这票的硬要求,所以 `status` 把四态分开:
- *  - `not_queried` **未查询**(还没查过,不是「没有」);
- *  - `failed` **查询失败**(网络/会话/结构异常 —— 查询**没成功执行**);
- *  - `no_record` **无记录**(查询成功执行,平台**返回空**);
- *  - `success` 查询成功且返回至少一条记录(记录逐条落 `platform_relation`)。
- *
- * `rawResponse` 存**原始响应/HTML**:平台接口现在返回 HTML 表格,留原文才能在解析口径
- * 变了以后回看引擎到底收到了什么(不参与查询,只供回溯,所以进 text 而非结构化列)。
- * 重复查询**各占一行**(`queriedAt` 进唯一键)——「不丢历史证据」,缓存/刷新由读侧决定。
- */
-export const platformQuery = sqliteTable(
-  'platform_query',
-  {
-    id: integer('id').primaryKey({ autoIncrement: true }),
-    /** 独立来源：business_list / apply_list / recognized_list(queryBusList)。 */
-    interface: text('interface', { enum: ['business_list', 'apply_list', 'recognized_list'] }).notNull(),
-    /** 查询键:统一社会信用代码,或 `name:<nameNorm>`(与 `lib/reconcile.ts` 同构)。 */
-    queryKey: text('query_key').notNull(),
-    /**
-     * `businessList` 的 `rdjb` 参数(认定级别):`1` 创新型 / `2` 专精特新中小企业 /
-     * `3` 专精特新“小巨人”。空串 = 该接口不用这个参数(如 `applyList`)。
-     *
-     * 实测:同一 USCC 下 `rdjb=3` 返回 6 条、`rdjb=1`/`rdjb=2` 各返回 0 条 ——
-     * 即**同一次查询键、不同 rdjb 是不同查询**,所以它进唯一键。
-     */
-    rdjb: text('rdjb').notNull().default(''),
-    /** 本次查询针对的称号;接口不按称号查时留空。 */
-    titleCode: text('title_code').references(() => title.code),
-    /** 查询时点(ISO 时间)。 */
-    queriedAt: text('queried_at').notNull(),
-    /** Latest successful collection with identical complete business content. */
-    lastCollectedAt: text('last_collected_at'),
-    /** 四态见上;默认 `not_queried`(「还没查」而不是「没有」)。 */
-    status: text('status', {
-      enum: ['success', 'failed', 'no_record', 'not_queried', 'partial'],
-    })
-      .notNull()
-      .default('not_queried'),
-    /** 失败原因(仅 `failed` 有意义)。 */
-    failureReason: text('failure_reason'),
-    /** 原始响应 / HTML 原文,供回溯。 */
-    rawResponse: text('raw_response'),
-    /** 原始逐来源采集结果，旧查询留 null；含原时间、页、条件及原行。 */
-    collectionEvidence: text('collection_evidence', { mode: 'json' }).$type<import('../lib/platform/live-query').PlatformLiveQueryResult>(),
-    createdAt: text('created_at')
-      .notNull()
-      .$defaultFn(() => new Date().toISOString()),
-  },
-  (t) => [
-    // 同接口 + 同查询键 + 同 rdjb + 同一时点 = 同一次查询(重放幂等);不同时点各自留档。
-    uniqueIndex('platform_query_identity_uq').on(t.interface, t.queryKey, t.rdjb, t.queriedAt),
-    index('platform_query_key_idx').on(t.queryKey),
-    index('platform_query_title_code_idx').on(t.titleCode, t.id),
-    // #87: narrow covering scans for counts and stable latest/deep pages.
-    index('platform_query_status_time_idx').on(t.status, t.queriedAt, t.id),
-    index('platform_query_time_idx').on(t.queriedAt, t.id),
-    index('platform_query_current_candidate_cover_idx').on(t.id, t.rdjb, t.titleCode, t.collectionEvidence),
-  ],
-)
-
-/** T01 expand only. Missing source facts remain NULL; no runtime writer owns these yet. */
+/** Platform collection metadata; raw response bytes belong to the immutable archive. */
 export const platformCollection = sqliteTable('platform_collection', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   interface: text('interface', { enum: ['business_list', 'apply_list', 'recognized_list'] }).notNull(),
@@ -716,6 +659,19 @@ export const platformCollection = sqliteTable('platform_collection', {
   maxRows: integer('max_rows'),
   maxDurationMs: integer('max_duration_ms'),
   pageSize: integer('page_size'),
+  reconcileSlotState: text('reconcile_slot_state', { enum: ['uncaptured', 'verified', 'miss', 'error'] }).notNull().default('uncaptured'),
+  reconcileSlotRule: text('reconcile_slot_rule'),
+  reconcileSlotRawArchiveId: integer('reconcile_slot_raw_archive_id').references((): AnySQLiteColumn => platformArchiveValue.id, { onDelete: 'restrict' }),
+  reconcileSlotRowCount: integer('reconcile_slot_row_count'),
+  reconcileSlotInputSha256: text('reconcile_slot_input_sha256'),
+  reconcileSlotReason: text('reconcile_slot_reason'),
+  witnessState: text('witness_state').notNull().default('uncaptured'),
+  witnessGate: integer('witness_gate'),
+  witnessRule: text('witness_rule'),
+  witnessArchiveId: integer('witness_archive_id').references((): AnySQLiteColumn => platformArchiveValue.id, { onDelete: 'restrict' }),
+  witnessSha256: text('witness_sha256'),
+  witnessErrorName: text('witness_error_name'),
+  witnessError: text('witness_error'),
 }, t => [
   uniqueIndex('platform_collection_identity_uq').on(t.interface, t.queryKey, t.rdjb, t.queriedAt),
   index('platform_collection_key_idx').on(t.queryKey, t.id),
@@ -777,6 +733,8 @@ export const platformCollectionCondition = sqliteTable('platform_collection_cond
   valueKind: text('value_kind', { enum: ['absent', 'null', 'text', 'integer', 'real', 'boolean', 'array', 'object'] }).notNull(),
   textValue: text('text_value'),
   integerValue: integer('integer_value'),
+  witnessKind: text('witness_kind'),
+  witnessValue: exactCell('witness_value'),
 }, t => [
   primaryKey({ columns: [t.collectionId, t.name] }),
   check('platform_collection_condition_name_ck', sql`${t.name} IN ('name','uscc','combination','sqsj','rddqrq','whpcyear','whpc','szq','orderField','orderDirection')`),
@@ -788,130 +746,20 @@ export const platformCollectionCondition = sqliteTable('platform_collection_cond
   `),
 ])
 
-/** Explicit supplementation only: never a typed collectionEvidence or content version. */
-export const platformQueryLegacyProvenance = sqliteTable('platform_query_legacy_provenance', {
-  queryId: integer('query_id').primaryKey().references(() => platformQuery.id, { onDelete: 'restrict' }),
-  sourceIdentity: text('source_identity').notNull(),
-  sourceSha256: text('source_sha256').notNull(),
-  segmentIndex: integer('segment_index').notNull(),
-  collection: text('collection', { mode: 'json' }).notNull().$type<import('../lib/platform/legacy-provenance').LegacyPlatformCollection>(),
-  inputFingerprint: text('input_fingerprint').notNull(),
-  importBatchId: integer('import_batch_id').notNull().references(() => importBatch.id),
-  createdAt: text('created_at').notNull().$defaultFn(() => new Date().toISOString()),
-}, t => [uniqueIndex('platform_query_legacy_source_uq').on(t.sourceSha256, t.segmentIndex)])
-
-/** Indexed title membership extracted from archived collection evidence; triggers keep it current. */
-export const platformQueryTitleScope = sqliteTable(
-  'platform_query_title_scope',
-  {
-    queryId: integer('query_id').notNull().references(() => platformQuery.id, { onDelete: 'cascade' }),
-    rdjb: text('rdjb').notNull(),
-    collectionId: integer('collection_id').references(() => platformCollection.id, { onDelete: 'restrict' }),
-  },
-  (t) => [
-    primaryKey({ columns: [t.queryId, t.rdjb] }),
-    uniqueIndex('platform_query_title_scope_collection_uq').on(t.collectionId, t.rdjb),
-    index('platform_query_title_scope_rdjb_collection_idx').on(t.rdjb, t.collectionId),
-    index('platform_query_title_scope_rdjb_query_idx').on(t.rdjb, t.queryId),
-  ],
-)
-
+export const platformQueryTitleScope = sqliteTable('platform_query_title_scope', {
+  collectionId: integer('collection_id').notNull().references(()=>platformCollection.id,{onDelete:'restrict'}),
+  rdjb: text('rdjb').notNull(),
+}, t=>[
+  primaryKey({columns:[t.collectionId,t.rdjb]}),
+  index('platform_query_title_scope_rdjb_collection_idx').on(t.rdjb,t.collectionId),
+  check('platform_query_title_scope_safe_id',sql`${t.collectionId} > 0 AND ${t.collectionId} <= 9007199254740991`),
+])
 /** Rows whose archived title JSON would make the legacy title predicate fail. */
 export const platformQueryTitleScopeError = sqliteTable('platform_query_title_scope_error', {
-  queryId: integer('query_id').primaryKey().references(() => platformQuery.id, { onDelete: 'cascade' }),
-  collectionId: integer('collection_id').references(() => platformCollection.id, { onDelete: 'restrict' }),
-}, t => [uniqueIndex('platform_query_title_scope_error_collection_uq').on(t.collectionId)])
+  collectionId: integer('collection_id').primaryKey().notNull().references(()=>platformCollection.id,{onDelete:'restrict'}),
+}, t=>[check('platform_query_title_scope_error_safe_id',sql`${t.collectionId} > 0 AND ${t.collectionId} <= 9007199254740991`)])
 
-/**
- * **平台接口关系记录**(契约 2)。一次查询返回的**每一条关联关系**各占一行。
- *
- * **同一信用代码返回的多条关联必须逐条保留**(这正是 `91330211255994457P` 案例:
- * 平台记录里明确写了经信局侧曾用名,要能匹配并展示**全部**关联)—— 所以用
- * `(query_id, sequence_no)` 做唯一键,而**不是**按企业或信用代码去重。
- *
- * `matchBasis`(匹配依据)记「这条为什么归到该企业」:`uscc`(统代)/ `alias`(曾用名)/
- * `manual`(人工确认)/ `none`(未匹配 —— `enterprise_id` 留空、`verification_status`
- * 为 `pending`,即「待核实」)。**没有模糊打分**:归属必须能指回一条可读的依据。
- *
- * ── 平台字段的落点(实测 `businessList` `rdjb=3` 的 6 条关联)──────────────────
- * 接口字段名 → 本表列:
- *  `id` → `relationKey`;`qymc` → `nameRaw`;`tyshxydm` → `usccRaw`;`szsfmc` → `province`;
- *  `cszt` → `status`;`whpc`(维护批次)→ `batch`;`sblx` → `declareKind`;
- *  `sqsj` → `appliedAt`;`personuuid`(列头为**认定批次**,值如 `第四批`)→ `awardBatchLabel`;
- *  `queryList` 的 `year` → `year`。
- *
- * ── 曾用名的原始证据就在这里 ──────────────────────────────────────────────
- * 平台**没有**独立「曾用名」列。同一 `tyshxydm` 下 `qymc` 不同的历史关联行**本身**
- * 就是曾用名证据(实测:`SQ332022062212391` 的 `qymc=宁波上航测绘有限公司`,
- * `SQ332024052128274` 的 `qymc=宁波上航测绘股份有限公司`,逐字段比对后**唯一**与名称
- * 有关的差异字段就是 `qymc`)。代理据此判断并确认,回填为 `enterprise_alias`。
- */
-export const platformRelation = sqliteTable(
-  'platform_relation',
-  {
-    id: integer('id').primaryKey({ autoIncrement: true }),
-    queryId: integer('query_id')
-      .notNull()
-      .references(() => platformQuery.id, { onDelete: 'cascade' }),
-    /** 关系序号:同一次查询内第几条(从 1 起)。**逐条保留**的载体。 */
-    sequenceNo: integer('sequence_no').notNull(),
-    /** 平台关联主键(`id`,如 `SQ332022062212391`)。可空(导出/异常响应可能没有)。 */
-    relationKey: text('relation_key'),
-    /** 匹配到的企业;无法判定时**留空**(不自动归并)。 */
-    enterpriseId: integer('enterprise_id').references(() => enterprise.id),
-    /** 原始字段(平台那一行/那一块的字段原样)。 */
-    rawFields: text('raw_fields', { mode: 'json' }).$type<Record<string, unknown>>(),
-    /** Derived only from rawFields.rdjb by SQLite triggers. */
-    titleRaw: text('title_raw'),
-    /** 源文本:关系里明确写出的经信局侧曾用名等原文。 */
-    sourceText: text('source_text'),
-    /** 统一社会信用代码(`tyshxydm`)。 */
-    usccRaw: text('uscc_raw'),
-    /** 企业名称(`qymc`)。同一 USCC 下 `qymc` 不同 ⇒ **曾用名证据**。 */
-    nameRaw: text('name_raw'),
-    /** 源文本中明确给出的曾用名(若有)。 */
-    aliasNameRaw: text('alias_name_raw'),
-    /** 所属省市名称(`szsfmc`)。 */
-    province: text('province'),
-    /** 存续状态(`cszt`,如「终审通过」「省已审」「待审核」)。 */
-    status: text('status'),
-    /** 维护批次(`whpc`,如 `2022-1` / `2025-1`)。 */
-    batch: text('batch'),
-    /**
-     * 申报类型(`sblx`):`apply` 申请 / `update` 更新 / `review` 复核。
-     * 非枚举字典外的取值原样入库(drizzle 的 enum 只是编译期约束)。
-     */
-    declareKind: text('declare_kind', { enum: ['apply', 'update', 'review'] }),
-    /** 申报时间(`sqsj`)。 */
-    appliedAt: text('applied_at'),
-    /** 认定批次(`personuuid`,值如 `第四批`);按「2018 + 批次序号」对应年份。 */
-    awardBatchLabel: text('award_batch_label'),
-    /** 申报记录年份(`queryList` 的 `year`)。 */
-    year: integer('year'),
-    /** 匹配依据:`uscc` / `alias` / `manual` / `none`。 */
-    matchBasis: text('match_basis', { enum: ['uscc', 'alias', 'manual', 'none'] })
-      .notNull()
-      .default('none'),
-    /** 核验状态:`confirmed` 已确认 / `pending` 待核实。 */
-    verificationStatus: text('verification_status', { enum: ['confirmed', 'pending'] })
-      .notNull()
-      .default('pending'),
-    createdAt: text('created_at')
-      .notNull()
-      .$defaultFn(() => new Date().toISOString()),
-  },
-  (t) => [
-    uniqueIndex('platform_relation_query_seq_uq').on(t.queryId, t.sequenceNo),
-    index('platform_relation_enterprise_idx').on(t.enterpriseId),
-    index('platform_relation_relation_key_idx').on(t.relationKey),
-    // #83 USCC filtering discovers query IDs without scanning original relation bodies.
-    index('platform_relation_uscc_query_idx').on(t.usccRaw, t.queryId),
-    index('platform_relation_title_query_idx').on(t.titleRaw, t.queryId),
-    index('platform_relation_current_candidate_cover_idx').on(t.queryId, t.sequenceNo, t.enterpriseId, t.usccRaw),
-  ],
-)
-
-/** Stable platform identity; never carries a mutable owner/title/current version. */
+/** Platform business identity, independently retained across observations. */
 export const platformBusinessRecord = sqliteTable('platform_business_record', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   interface: text('interface', { enum: ['business_list', 'apply_list', 'recognized_list'] }).notNull(),
@@ -930,7 +778,7 @@ export const platformBusinessRecordVersion = sqliteTable('platform_business_reco
   hashAlgorithm: text('hash_algorithm').notNull(),
   contentHash: text('content_hash').notNull(),
   canonicalRawJson: text('canonical_raw_json').notNull(),
-  /** T03b expand: optional until T05 transfer; uses T02 canonicalRawJson ref. */
+  /** Archive binding for the canonical version input. */
   canonicalArchiveId: integer('canonical_archive_id').references((): AnySQLiteColumn => platformArchiveValue.id, { onDelete: 'restrict' }),
   createdAt: text('created_at').notNull().$defaultFn(() => new Date().toISOString()),
 }, t => [
@@ -939,7 +787,7 @@ export const platformBusinessRecordVersion = sqliteTable('platform_business_reco
   index('platform_business_version_canonical_archive_idx').on(t.canonicalArchiveId),
 ])
 
-/** Shared declarations for the temporary expand schema and explicit offline target. Z removes expand. */
+/** Native observation fields shared by the source projections. */
 export function observationFields() { return {
   pageId: integer('page_id').references(() => platformCollectionPage.id, { onDelete: 'restrict' }),
   pageRowNo: integer('page_row_no'),
@@ -973,16 +821,42 @@ export function observationConstraints(t: { [K in keyof ReturnType<typeof observ
   index('platform_business_observation_version_idx').on(t.versionId, identity),
 ] }
 export const platformBusinessObservation = sqliteTable('platform_business_observation', {
-  relationId: integer('relation_id').primaryKey().references(() => platformRelation.id, { onDelete: 'restrict' }),
-  id: integer('id'),
-  collectionId: integer('collection_id').references(() => platformCollection.id, { onDelete: 'restrict' }),
-  sequenceNo: integer('sequence_no'),
+  id: integer('id').primaryKey(),
+  collectionId: integer('collection_id').notNull().references(()=>platformCollection.id,{onDelete:'restrict'}),
+  sequenceNo: integer('sequence_no').notNull(),
   ...observationFields(),
-}, t => observationConstraints(t, t.relationId))
-
-/** T03a append-only schema; no runtime assignment writer or historical transfer. */
+  positionState: text('position_state',{enum:['verified','unknown','conflict']}).notNull(),
+  processExactOwnerId: integer('process_exact_owner_id'),
+  processExactState: text('process_exact_state', { enum: ['captured', 'uncaptured'] }),
+  processSqlFactTitleState: text('process_sql_fact_title_state', { enum: ['captured', 'uncaptured'] }),
+  applyExactOwnerId: integer('apply_exact_owner_id'),
+  applyExactState: text('apply_exact_state', { enum: ['captured', 'uncaptured'] }),
+  applySqlFactTitleState: text('apply_sql_fact_title_state', { enum: ['captured', 'uncaptured'] }),
+  candidateScopeMask: integer('candidate_scope_mask'),
+  candidateScopeRule: text('candidate_scope_rule'),
+  candidateScopeArchiveId: integer('candidate_scope_archive_id').references((): AnySQLiteColumn => platformArchiveValue.id, { onDelete: 'restrict' }),
+  candidateScopeRdjb: text('candidate_scope_rdjb'),
+  candidateScopeTitleCode: text('candidate_scope_title_code'),
+  candidateScopeSequenceNo: integer('candidate_scope_sequence_no'),
+  candidateScopeError: text('candidate_scope_error').default('not_captured'),
+  candidateScopeState: text('candidate_scope_state', { enum: ['uncaptured', 'captured', 'error'] }).notNull().default('uncaptured'),
+  witnessRule: text('witness_rule'),
+  witnessCollectionId: integer('witness_collection_id'),
+  witnessSequenceNo: integer('witness_sequence_no'),
+  witnessArchiveId: integer('witness_archive_id').references((): AnySQLiteColumn => platformArchiveValue.id, { onDelete: 'restrict' }),
+  witnessSha256: text('witness_sha256'),
+  witnessOrdinal: integer('witness_ordinal'),
+  witnessRdjbKind: text('witness_rdjb_kind'),
+  witnessRdjbValue: exactCell('witness_rdjb_value'),
+  witnessRdjbKey: text('witness_rdjb_key'),
+  witnessPageKind: text('witness_page_kind'),
+  witnessPageValue: exactCell('witness_page_value'),
+  witnessErrorName: text('witness_error_name'),
+  witnessError: text('witness_error'),
+  witnessState: text('witness_state').notNull().default('uncaptured'),
+},t=>observationConstraints(t,t.id))
+/** Append-only enterprise assignments for an independent observation. */
 export function definePlatformObservationAssignment(observationId: () => AnySQLiteColumn) { return sqliteTable('platform_observation_assignment', {
-  // The expand registration binds relationId; the offline target binds id.
   observationId: integer('observation_id').notNull().references(observationId, { onDelete: 'restrict' }),
   revision: integer('revision').notNull(),
   enterpriseId: integer('enterprise_id').references(() => enterprise.id, { onDelete: 'restrict' }),
@@ -1007,7 +881,7 @@ export function definePlatformObservationAssignment(observationId: () => AnySQLi
   check('platform_assignment_origin_ck', sql`(${t.origin} = 'migrated_current' AND ${t.revision} = 1 AND ${t.actor} IS NULL AND ${t.recordedAt} IS NULL AND ${t.commandReceiptId} IS NULL) OR ${t.origin} = 'command'`),
 ])
 }
-export const platformObservationAssignment = definePlatformObservationAssignment(() => platformBusinessObservation.relationId)
+export const platformObservationAssignment = definePlatformObservationAssignment(() => platformBusinessObservation.id)
 
 /**
  * Source-specific typed projection for apply_list (upstream queryList). One row per
@@ -1016,6 +890,7 @@ export const platformObservationAssignment = definePlatformObservationAssignment
  */
 export function applyProjectionFields(observationId: () => AnySQLiteColumn) { return {
   id: integer('id').primaryKey({ autoIncrement: true }),
+  ...applyStoredFields(),
   observationId: integer('observation_id').references(observationId, { onDelete: 'restrict' }),
   basis: text('basis', { enum: ['verified_raw', 'observation_reconciliation', 'unavailable'] }).notNull().default('verified_raw'),
   versionId: integer('version_id').references(() => platformBusinessRecordVersion.id, { onDelete: 'restrict' }),
@@ -1153,7 +1028,7 @@ export function definePlatformApplyProjection(observationId: () => AnySQLiteColu
   index('platform_apply_projection_title_version_idx').on(t.titleRaw, t.versionId),
 ])
 }
-export const platformApplyProjection = definePlatformApplyProjection(() => platformBusinessObservation.relationId)
+export const platformApplyProjection = definePlatformApplyProjection(() => platformBusinessObservation.id)
 
 /**
  * Source-specific typed projection for business_list (upstream businessList). One row
@@ -1163,6 +1038,7 @@ export const platformApplyProjection = definePlatformApplyProjection(() => platf
  */
 export function businessProjectionFields(observationId: () => AnySQLiteColumn) { return {
   id: integer('id').primaryKey({ autoIncrement: true }),
+  ...processStoredFields(),
   observationId: integer('observation_id').references(observationId, { onDelete: 'restrict' }),
   basis: text('basis', { enum: ['verified_raw', 'observation_reconciliation', 'unavailable'] }).notNull().default('verified_raw'),
   versionId: integer('version_id').references(() => platformBusinessRecordVersion.id, { onDelete: 'restrict' }),
@@ -1305,7 +1181,7 @@ export function definePlatformBusinessProjection(observationId: () => AnySQLiteC
   index('platform_business_projection_title_version_idx').on(t.titleRaw, t.versionId),
 ])
 }
-export const platformBusinessProjection = definePlatformBusinessProjection(() => platformBusinessObservation.relationId)
+export const platformBusinessProjection = definePlatformBusinessProjection(() => platformBusinessObservation.id)
 
 /**
  * Source-specific typed projection for recognized_list (upstream queryBusList, 平台认定目录).
@@ -1316,6 +1192,11 @@ export const platformBusinessProjection = definePlatformBusinessProjection(() =>
  */
 export function recognizedProjectionFields(observationId: () => AnySQLiteColumn) { return {
   id: integer('id').primaryKey({ autoIncrement: true }),
+  exactTitleRaw: exactCell('exact_title_raw'),
+  exactTitleState: text('exact_title_state', { enum: ['captured', 'uncaptured'] }),
+  exactTitleOrigin: text('exact_title_origin', { enum: ['legacyRowSnapshot', 'commandInput'] }),
+  exactTitleArchiveId: integer('exact_title_archive_id').references(() => platformArchiveValue.id, { onDelete: 'restrict' }),
+  exactTitleSha256: text('exact_title_sha256'),
   observationId: integer('observation_id').references(observationId, { onDelete: 'restrict' }),
   basis: text('basis', { enum: ['verified_raw', 'observation_reconciliation', 'unavailable'] }).notNull().default('verified_raw'),
   versionId: integer('version_id').references(() => platformBusinessRecordVersion.id, { onDelete: 'restrict' }),
@@ -1461,7 +1342,7 @@ export function definePlatformRecognizedProjection(observationId: () => AnySQLit
   check('platform_recognized_projection_fidelity_ck', sql`((${t.sourceMaintenanceYearAbsent} IS NULL OR (typeof(${t.sourceMaintenanceYearAbsent}) = 'integer' AND ${t.sourceMaintenanceYearAbsent} IN (0,1))) AND (${t.observationId} IS NULL OR ((${t.sourceValidityDate} IS NULL OR typeof(${t.sourceValidityDate}) = 'text') AND (${t.sourceMaintenanceBatch} IS NULL OR typeof(${t.sourceMaintenanceBatch}) = 'text'))))`),
 ])
 }
-export const platformRecognizedProjection = definePlatformRecognizedProjection(() => platformBusinessObservation.relationId)
+export const platformRecognizedProjection = definePlatformRecognizedProjection(() => platformBusinessObservation.id)
 
 /**
  * **差异原因与后续措施**(契约 4)——**成对**记录的一行。
@@ -1567,8 +1448,8 @@ export const differenceReason = sqliteTable(
   {
     ...differenceReasonFields(),
     /** 证据:平台查询记录 / 平台关系记录。 */
-    evidenceQueryId: integer('evidence_query_id').references(() => platformQuery.id),
-    evidenceRelationId: integer('evidence_relation_id').references(() => platformRelation.id),
+    evidenceCollectionId: integer('evidence_query_id').references(() => platformCollection.id),
+    evidenceObservationId: integer('evidence_relation_id').references(() => platformBusinessObservation.id),
     previousId: integer('previous_id').references((): AnySQLiteColumn => differenceReason.id),
   },
   (t) => [
@@ -1683,7 +1564,7 @@ export const recordCorrespondence = sqliteTable(
     role: text('role').notNull(),
     eventId: integer('event_id').references(() => recordEvent.id),
     predecessorEventId: integer('predecessor_event_id').references(() => recordEvent.id),
-    relationId: integer('relation_id').references(() => platformRelation.id),
+    observationId: integer('observation_id').references(() => platformBusinessObservation.id),
     exportRowId: integer('export_row_id').references(() => platformExportRow.id),
     enterpriseId: integer('enterprise_id').references(() => enterprise.id),
     titleCode: text('title_code').notNull().references(() => title.code),
@@ -1702,7 +1583,7 @@ export const recordCorrespondence = sqliteTable(
     uniqueIndex('record_correspondence_edge_uq').on(t.edgeKey),
     index('record_correspondence_event_idx').on(t.eventId),
     index('record_correspondence_predecessor_idx').on(t.predecessorEventId),
-    index('record_correspondence_relation_idx').on(t.relationId),
+    index('record_correspondence_relation_idx').on(t.observationId),
     index('record_correspondence_export_idx').on(t.exportRowId),
     index('record_correspondence_enterprise_idx').on(t.enterpriseId, t.titleCode),
   ],
@@ -1932,60 +1813,12 @@ export const evidenceRuleRelease114 = sqliteTable('evidence_rule_release_114', {
 }, t => [uniqueIndex('evidence_rule_release_scope_114_uq').on(t.ruleId,t.version,t.enterpriseId,t.titleCode,t.direction)])
 
 /** #278 immutable UTF-8 bodies. Sealing/immutability guards live in migration 0029. */
-export const platformBodyLeaf = sqliteTable('platform_body_leaf', {
-  id: integer('id').primaryKey(),
-  digest: text('digest').notNull().unique(),
-  byteLength: integer('byte_length').notNull(),
-  encoding: text('encoding').notNull().default('utf8-v1'),
-  bytes: blob('bytes', { mode: 'buffer' }).notNull(),
-}, t => [
-  check('platform_body_leaf_length_ck', sql`typeof(${t.byteLength}) = 'integer' AND ${t.byteLength} >= 0`),
-  check('platform_body_leaf_encoding_ck', sql`${t.encoding} = 'utf8-v1'`),
-  check('platform_body_leaf_bytes_ck', sql`typeof(${t.bytes}) = 'blob' AND length(${t.bytes}) = ${t.byteLength}`),
-])
 
-export const platformBodyRoot = sqliteTable('platform_body_root', {
-  id: integer('id').primaryKey(),
-  digest: text('digest').notNull().unique(),
-  byteLength: integer('byte_length').notNull(),
-  encoding: text('encoding').notNull().default('utf8-v1'),
-  sealed: integer('sealed').notNull().default(0),
-}, t => [
-  check('platform_body_root_length_ck', sql`typeof(${t.byteLength}) = 'integer' AND ${t.byteLength} >= 0`),
-  check('platform_body_root_encoding_ck', sql`${t.encoding} = 'utf8-v1'`),
-  check('platform_body_root_sealed_ck', sql`${t.sealed} IN (0,1)`),
-])
 
-export const platformBodyPart = sqliteTable('platform_body_part', {
-  rootId: integer('root_id').notNull().references(() => platformBodyRoot.id, { onDelete: 'restrict' }),
-  logicalStart: integer('logical_start').notNull(),
-  leafId: integer('leaf_id').notNull().references(() => platformBodyLeaf.id, { onDelete: 'restrict' }),
-  byteLength: integer('byte_length').notNull(),
-}, t => [
-  primaryKey({ columns: [t.rootId, t.logicalStart] }),
-  check('platform_body_part_start_ck', sql`typeof(${t.logicalStart}) = 'integer' AND ${t.logicalStart} >= 0`),
-  check('platform_body_part_length_ck', sql`typeof(${t.byteLength}) = 'integer' AND ${t.byteLength} >= 0`),
-])
 
-export const platformRelationBodyRef = sqliteTable('platform_relation_body_ref', {
-  ownerId: integer('owner_id').notNull().references(() => platformRelation.id, { onDelete: 'restrict' }),
-  field: text('field', { enum: ['rawFields', 'sourceText'] }).notNull(),
-  rootId: integer('root_id').notNull().references(() => platformBodyRoot.id, { onDelete: 'restrict' }),
-}, t => [primaryKey({ columns: [t.ownerId, t.field] }), check('platform_relation_body_ref_field_ck', sql`${t.field} IN ('rawFields','sourceText')`)])
 
-export const platformQueryBodyRef = sqliteTable('platform_query_body_ref', {
-  ownerId: integer('owner_id').notNull().references(() => platformQuery.id, { onDelete: 'restrict' }),
-  field: text('field', { enum: ['rawResponse', 'collectionEvidence'] }).notNull(),
-  rootId: integer('root_id').notNull().references(() => platformBodyRoot.id, { onDelete: 'restrict' }),
-}, t => [primaryKey({ columns: [t.ownerId, t.field] }), check('platform_query_body_ref_field_ck', sql`${t.field} IN ('rawResponse','collectionEvidence')`)])
 
-export const platformVersionBodyRef = sqliteTable('platform_version_body_ref', {
-  ownerId: integer('owner_id').notNull().references(() => platformBusinessRecordVersion.id, { onDelete: 'restrict' }),
-  field: text('field', { enum: ['canonicalRawJson'] }).notNull(),
-  rootId: integer('root_id').notNull().references(() => platformBodyRoot.id, { onDelete: 'restrict' }),
-}, t => [primaryKey({ columns: [t.ownerId, t.field] }), check('platform_version_body_ref_field_ck', sql`${t.field} = 'canonicalRawJson'`)])
 
-/** #306 append-only enterprise assertions; no migration from legacy explanation heads. */
 export const enterpriseFactRevision = sqliteTable('enterprise_fact_revision', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   enterpriseId: integer('enterprise_id').notNull().references(() => enterprise.id),
@@ -2066,7 +1899,7 @@ export const platformCollectionArchiveRef = sqliteTable('platform_collection_arc
   sealed: integer('sealed').notNull().default(0),
 }, t => [primaryKey({ columns: [t.ownerId, t.field] }), check('platform_collection_archive_ref_ck', sql`${t.field} IN ('rawResponse','collectionEvidence','legacyProvenance','request') AND ${t.sealed} IN (0,1)`)])
 
-/** Shared owner fields; expand and target registrations supply their actual observation PK. */
+/** Native observation archive ownership. */
 export function definePlatformObservationArchiveRef(observationId: () => AnySQLiteColumn) { return sqliteTable('platform_observation_archive_ref', {
   ownerId: integer('owner_id').notNull().references(observationId, { onDelete: 'restrict' }),
   field: text('field', { enum: ['rawFields', 'sourceText', 'legacyRowSnapshot'] }).notNull(),
@@ -2074,7 +1907,7 @@ export function definePlatformObservationArchiveRef(observationId: () => AnySQLi
   sealed: integer('sealed').notNull().default(0),
 }, t => [primaryKey({ columns: [t.ownerId, t.field] }), check('platform_observation_archive_ref_ck', sql`${t.field} IN ('rawFields','sourceText','legacyRowSnapshot') AND ${t.sealed} IN (0,1)`)])
 }
-export const platformObservationArchiveRef = definePlatformObservationArchiveRef(() => platformBusinessObservation.relationId)
+export const platformObservationArchiveRef = definePlatformObservationArchiveRef(() => platformBusinessObservation.id)
 
 export const platformVersionArchiveRef = sqliteTable('platform_version_archive_ref', {
   ownerId: integer('owner_id').notNull().references(() => platformBusinessRecordVersion.id, { onDelete: 'restrict' }),
@@ -2092,7 +1925,7 @@ export function definePlatformLegacyRelationAlias(observationId: () => AnySQLite
   observationId: integer('observation_id').notNull().unique().references(observationId, { onDelete: 'restrict' }),
 }, t => [check('platform_legacy_relation_alias_id_ck', sql`${t.oldId} > 0 AND ${t.oldId} <= 9007199254740991`)])
 }
-export const platformLegacyRelationAlias = definePlatformLegacyRelationAlias(() => platformBusinessObservation.relationId)
+export const platformLegacyRelationAlias = definePlatformLegacyRelationAlias(() => platformBusinessObservation.id)
 /** Explicitly initialized from the frozen source maxima before allocating any new aliases. */
 export const platformLegacyAliasSequence = sqliteTable('platform_legacy_alias_sequence', {
   namespace: text('namespace', { enum: ['query', 'relation'] }).primaryKey(),
@@ -2119,3 +1952,53 @@ export const platformMigrationCheckpoint = sqliteTable('platform_migration_check
 }, t => [primaryKey({ columns: [t.runId, t.phase, t.sourceTable] }),
   ...[t.lastOldId, t.copiedCount].map(c => check(`platform_migration_checkpoint_${c.name}_ck`, sql`typeof(${c}) = 'integer' AND ${c} BETWEEN 0 AND 9007199254740991`)),
 ])
+
+export const platformObservationFingerprintBasis = sqliteTable('platform_observation_fingerprint_basis', {
+  observationId: integer('observation_id').primaryKey().notNull().references(()=>platformBusinessObservation.id,{onDelete:'restrict'}),
+  scheme: text('scheme',{enum:['legacy-indexed-v1','legacy-bootstrap-v1','target-command-v1','uncaptured']}).notNull(),
+  inputArchiveId: integer('input_archive_id').unique().references(()=>platformArchiveValue.id,{onDelete:'restrict'}),
+},t=>[
+  check('platform_fingerprint_basis_safe_id',sql`typeof(${t.observationId})='integer' AND ${t.observationId} BETWEEN 1 AND 9007199254740991`),
+  check('platform_fingerprint_basis_scheme',sql`${t.scheme} IN ('legacy-indexed-v1','legacy-bootstrap-v1','target-command-v1','uncaptured')`),
+  check('platform_fingerprint_basis_input',sql`(${t.scheme}='uncaptured' AND ${t.inputArchiveId} IS NULL) OR (${t.scheme}<>'uncaptured' AND ${t.inputArchiveId} IS NOT NULL)`),
+])
+
+
+export const platformCollectionLegacyProvenance = sqliteTable('platform_collection_legacy_provenance', {
+  collectionId: integer('collection_id').primaryKey().notNull().references(()=>platformCollection.id,{onDelete:'restrict'}),
+  origin: text('origin',{enum:['t04_envelope','supplement']}).notNull(),
+  sourceIdentity: text('source_identity').notNull(),
+  sourceSha256: text('source_sha256').notNull(),
+  segmentIndex: integer('segment_index').notNull(),
+  inputFingerprint: text('input_fingerprint').notNull(),
+  importBatchId: integer('import_batch_id').notNull().references(()=>importBatch.id,{onDelete:'restrict'}),
+  createdAt: text('created_at').notNull(),
+  archiveId: integer('archive_id').notNull().unique().references(()=>platformArchiveValue.id,{onDelete:'restrict'}),
+},t=>[
+  unique('platform_collection_legacy_source_uq').on(t.sourceSha256,t.segmentIndex),
+  ...[t.collectionId,t.importBatchId,t.archiveId].map(c=>check(`collection_provenance_${c.name}_safe`,sql`typeof(${c})='integer' AND ${c} BETWEEN 1 AND 9007199254740991`)),
+  check('collection_provenance_segment_safe',sql`typeof(${t.segmentIndex})='integer' AND ${t.segmentIndex} BETWEEN 0 AND 9007199254740991`),
+  check('collection_provenance_origin',sql`typeof(${t.origin})='text' AND ${t.origin} IN ('t04_envelope','supplement')`),
+  ...[t.sourceSha256,t.inputFingerprint].map(c=>check(`collection_provenance_${c.name}_hex`,sql`typeof(${c})='text' AND length(${c})=64 AND length(cast(${c} AS blob))=64 AND ${c} NOT GLOB '*[^0-9a-f]*'`)),
+  ...[t.sourceIdentity,t.createdAt].map(c=>check(`collection_provenance_${c.name}_text`,sql`typeof(${c})='text'`)),
+])
+
+
+function applyStoredFields(){return {
+ exactStatus:exactText('exact_status'),exactDeclareKind:exactText('exact_declare_kind'),
+ exactAppliedAt:exactText('exact_applied_at'),exactYear:exactInteger('exact_year'),exactTitleRaw:exactText('exact_title_raw'),
+ exactStoredState:text('exact_stored_state',{enum:['captured','uncaptured']}),exactStoredRule:text('exact_stored_rule'),
+ exactStoredOrigin:text('exact_stored_origin',{enum:['legacy_source','sealed_snapshot','command_materialized']}),exactStoredReason:text('exact_stored_reason'),
+ sqlFactTitle:text('sql_fact_title'),sqlFactTitleState:text('sql_fact_title_state',{enum:['captured','uncaptured']}),
+ sqlFactTitleRule:text('sql_fact_title_rule'),sqlFactTitleReason:text('sql_fact_title_reason'),
+}}
+
+function processStoredFields(){return {
+ exactStatus:exactText('exact_status'),exactDeclareKind:exactText('exact_declare_kind'),exactAppliedAt:exactText('exact_applied_at'),
+ exactYear:exactInteger('exact_year'),exactTitleRaw:exactText('exact_title_raw'),exactBatch:exactText('exact_batch'),
+ exactAwardBatchLabel:exactText('exact_award_batch_label'),exactProvince:exactText('exact_province'),
+ exactStoredState:text('exact_stored_state',{enum:['captured','uncaptured']}),exactStoredRule:text('exact_stored_rule'),
+ exactStoredOrigin:text('exact_stored_origin',{enum:['legacy_source','sealed_snapshot','command_materialized']}),exactStoredReason:text('exact_stored_reason'),
+ sqlFactTitle:text('sql_fact_title'),sqlFactTitleState:text('sql_fact_title_state',{enum:['captured','uncaptured']}),
+ sqlFactTitleRule:text('sql_fact_title_rule'),sqlFactTitleReason:text('sql_fact_title_reason'),
+}}

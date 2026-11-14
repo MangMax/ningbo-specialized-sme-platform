@@ -12,7 +12,7 @@ import * as s from '../db/schema'
 import { listCurrentQualified } from '../lib/roster/current-qualified-query'
 import { writeCurrentWorkbook } from '../lib/roster/current-workbook'
 import ExcelJS from 'exceljs'
-import * as candidates from '../lib/roster/current-candidates'
+import * as candidates from '../upgrade/frozen/current-candidates'
 import { normalizeUscc } from '../lib/domain'
 
 const relationIndex = 'platform_relation_current_candidate_cover_idx'

@@ -8,7 +8,7 @@ import { TextDecoder, isDeepStrictEqual } from 'node:util'
 import { z } from 'zod'
 import { and, eq } from 'drizzle-orm'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
-import { targetSchema as s } from '../lib/platform/target-schema'
+import { targetSchema as s } from './target-schema'
 import { parseRecognizedSourceFidelity } from '../lib/platform/recognized-projection'
 import { canonicalPlatformJson } from '../lib/platform/observation-plan'
 import { projectionManifest } from './projections'
@@ -80,4 +80,4 @@ export function readFingerprintEvents(source:FingerprintEventSource,predecessorH
     return {events:proof.events,manifest:projectionManifest(f.database),snapshot:f.database.serialize(),snapshotSha256:proof.targetSha256,binding:source.sha256}
   }
 }
-export { verifyOriginalCommand } from '../lib/platform/fingerprint-command-facts'
+export { verifyOriginalCommand } from './frozen/fingerprint-command-facts'

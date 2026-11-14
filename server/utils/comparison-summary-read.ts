@@ -1,5 +1,5 @@
 import type { LogContext } from '../../lib/logging'
-import type { useDb } from '../../db/client'
+import type { useApplicationDb } from '../../db/client'
 import { getDbOwnerIdentity } from '../../db/client'
 import { readWholeComparisonSummary, type ComparisonSummaryOptions } from '../../lib/comparison-summary-read'
 import { restoreReaderError } from '../../lib/roster/offmain-read-protocol'
@@ -8,7 +8,7 @@ import { createReadTurns, runReadTurn } from './read-turn'
 
 /** Eligible reads enter the existing child directly; only the original whole,
  * synchronous callback uses the shared FIFO for at-most-once fallback. */
-export async function readSummary(owner: ReturnType<typeof useDb>, options: ComparisonSummaryOptions, signal?: AbortSignal,
+export async function readSummary(owner: ReturnType<typeof useApplicationDb>, options: ComparisonSummaryOptions, signal?: AbortSignal,
   executor: Pick<typeof enterpriseReads, 'summary'> = enterpriseReads, logContext?: LogContext) {
   if (signal?.aborted) return
   const identity = getDbOwnerIdentity(owner)

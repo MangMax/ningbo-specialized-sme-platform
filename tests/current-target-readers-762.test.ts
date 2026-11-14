@@ -10,7 +10,7 @@ import { createTargetRecognizedWitnessReader } from '../lib/roster/recognized-wi
 import { createCurrentQualificationAssessmentReader, createCurrentQualificationAssessmentReaderWithWitnesses } from '../lib/roster/current-qualification'
 import { CURRENT_TITLES } from '../lib/roster/current-titles'
 import { normalizeUscc } from '../lib/domain'
-import { currentCandidateBindings, currentCandidateSql } from '../lib/roster/current-candidates'
+import { currentCandidateBindings, currentCandidateSql } from '../upgrade/frozen/current-candidates'
 import { matrix408 } from './helpers/current-qualified-408'
 import { commitRosterImport } from '../server/utils/roster-import'
 import { platformResultToImport } from '../lib/platform/recognized-evidence'

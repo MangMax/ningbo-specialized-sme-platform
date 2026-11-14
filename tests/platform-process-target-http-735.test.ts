@@ -9,8 +9,8 @@ import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { processReaderFixture } from './helpers/process-target-734'
 import { targetSchema } from '../lib/platform/target-schema'
-import { listPlatformBusinessProcesses, getPlatformBusinessProcess } from '../server/utils/platform-business-processes'
-import { readPlatformFilterOptions } from '../server/utils/platform-filter-options'
+import { listPlatformBusinessProcesses, getPlatformBusinessProcess } from '../upgrade/frozen/server/platform-business-processes'
+import { readPlatformFilterOptions } from '../upgrade/frozen/server/platform-filter-options'
 import { writeCollectionTarget } from '../lib/platform/collection-target-command'
 
 const responses: unknown[] = []

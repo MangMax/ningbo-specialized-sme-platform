@@ -22,16 +22,15 @@ import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../db/schema'
 import { normalizeUscc } from '../../lib/domain'
 import type { NameMatchLevel } from '../../lib/roster/uscc-research'
-import { getPlatformExportRows, listPlatformSnapshots } from '../../lib/platform-snapshots'
+import { getPlatformExportRows,listPlatformSnapshots } from '../../lib/platform-snapshots'
 import {
-  duplicateTwinKey,
-  type DuplicateMergeEvidence,
-  type DuplicateMergePendingReason,
-  type DuplicateMergeReport,
+duplicateTwinKey,
+type DuplicateMergeEvidence,
+type DuplicateMergePendingReason,
+type DuplicateMergeReport,
 } from '../../lib/roster/duplicate-merge'
-import type { DuplicateNameCandidate, RosterImportMerge, RosterImportRequest } from '../../lib/roster-import-client'
-import { findEnterpriseById, findEnterpriseByUscc, readImportBatchOutcome } from './roster-import'
-import { collectionImportTarget } from './collection-import-target'
+import type { DuplicateNameCandidate,RosterImportMerge } from '../../lib/roster-import-client'
+import { findEnterpriseById,findEnterpriseByUscc,readImportBatchOutcome } from './roster-import'
 import { targetCandidateTables } from './candidate-target-sources'
 
 type Db = BetterSQLite3Database<typeof schema>
@@ -55,12 +54,12 @@ const ALIAS_SOURCE_KIND: Record<string, 'platform_business' | 'platform_apply' |
  * 受分页影响。这里只做一次全量取数 + 归一化比较（查询键可能是小写/带空格的写法）。
  */
 function evidenceQueries(db: Db) {
-  const { q } = collectionImportTarget(db) ? targetCandidateTables(db) : { q: schema.platformQuery }
+  const { q } = targetCandidateTables(db)
   return db.select({ id: q.id, interface: q.interface, queryKey: q.queryKey, rdjb: q.rdjb, queriedAt: q.queriedAt }).from(q).all()
 }
 
 function evidenceRelations(db: Db) {
-  const { r } = collectionImportTarget(db) ? targetCandidateTables(db) : { r: schema.platformRelation }
+  const { r } = targetCandidateTables(db)
   return db.select({ id: r.id, queryId: r.queryId, sequenceNo: r.sequenceNo, relationKey: r.relationKey, nameRaw: r.nameRaw, usccRaw: r.usccRaw }).from(r).all()
 }
 

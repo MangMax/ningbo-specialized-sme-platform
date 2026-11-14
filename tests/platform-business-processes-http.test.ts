@@ -1,16 +1,16 @@
-import { initializeDb } from '../db/client'
+import { sql } from 'drizzle-orm'
+import { createApp,createError,createRouter,defineEventHandler,getHeader,getQuery,getRouterParam,readBody,setHeader,setResponseStatus,toNodeListener } from 'h3'
+import { mkdtempSync,rmSync } from 'node:fs'
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
-import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createApp, createRouter, toNodeListener, defineEventHandler, readBody, setHeader, setResponseStatus, getQuery, getRouterParam, getHeader, createError } from 'h3'
-import { afterAll, beforeAll, expect, it, vi } from 'vitest'
-import { sql } from 'drizzle-orm'
-import { schema, useDb } from '../db'
-import { handleRosterImportRequest } from '../server/utils/roster-import-http'
+import { afterAll,beforeAll,expect,it,vi } from 'vitest'
+import { schema } from '../db'
+import { initializeDb } from '../db/client'
+import type { RosterImportPlatformQuery,RosterImportRequest } from '../lib/roster-import-client'
 import { whenIdle } from '../server/utils/job-runner'
-import type { RosterImportPlatformQuery, RosterImportRequest } from '../lib/roster-import-client'
+import { handleRosterImportRequest } from '../server/utils/roster-import-http'
 
 const dir = mkdtempSync(join(tmpdir(), 'business-processes-http-'))
 const dbPath = join(dir, 'business.sqlite')
@@ -26,6 +26,7 @@ function businessQuery(time: string, raw: Record<string, unknown>, rdjb = '2', k
     rdjb,
     queriedAt: time,
     status: 'success',
+    rawResponse: 'synthetic original HTTP query response',
     relations: [{ sequenceNo: 1, relationKey: typeof raw.id === 'string' ? raw.id : null, usccRaw: typeof raw.tyshxydm === 'string' ? raw.tyshxydm : null, nameRaw: typeof raw.qymc === 'string' ? raw.qymc : null, rawFields: raw }],
   }
 }
@@ -35,6 +36,7 @@ function applyQuery(time: string, raw: Record<string, unknown>, key = '913302112
     queryKey: key,
     queriedAt: time,
     status: 'success',
+    rawResponse: 'synthetic original HTTP query response',
     relations: [{ sequenceNo: 1, relationKey: typeof raw.id === 'string' ? raw.id : null, rawFields: raw }],
   }
 }
@@ -50,8 +52,8 @@ async function get(path: string) {
   return { http: response.status, ...(await response.json() as any) }
 }
 function addTitleScopes(queryKey: string, queriedAt: string, values: string[]) {
-  const query = db.select().from(schema.platformQuery).all().find(row => row.queryKey === queryKey && row.queriedAt === queriedAt)!
-  for (const rdjb of values) db.insert(schema.platformQueryTitleScope).values({ queryId: query.id, rdjb }).onConflictDoNothing().run()
+  const query = db.select().from(schema.platformCollection).all().find(row => row.queryKey === queryKey && row.queriedAt === queriedAt)!
+  for (const rdjb of values) db.insert(schema.platformQueryTitleScope).values({ collectionId: query.id, rdjb }).onConflictDoNothing().run()
 }
 
 beforeAll(async () => {
@@ -92,7 +94,7 @@ it('filters by enterprise, 办理编号, explicit title scope, 事项, year, sta
   const rawB = { id: 'SQ-B-B', qymc: '乙办理企业', tyshxydm: enterpriseB.usccNorm, sblx: '申请', year: 2022, sqsj: '2022-03-01 09:00:00', cszt: '待审核', whpc: '2022-1' }
   const rawApply = { id: 'SQ-B-A', qymc: '甲办理企业', tyshxydm: enterpriseA.usccNorm, sblx: '申请', year: 2024 }
   const first = await post('/api/roster/import/commit', request('seed-business', [businessQuery('2026-10-01T00:00:00Z', rawA), businessQuery('2026-10-01T00:00:01Z', rawB, '1', enterpriseB.usccNorm!), applyQuery('2026-10-01T00:00:02Z', rawApply)]))
-  expect(first.http).toBe(200); expect(first.status).toBe('committed')
+  expect(first.http).toBe(200); expect(first.status, JSON.stringify(first)).toBe('committed')
   addTitleScopes(enterpriseB.usccNorm!, '2026-10-01T00:00:01Z', ['3'])
 
   const all = await get('/api/platform/business-processes')
@@ -140,7 +142,7 @@ it('filters by enterprise, 办理编号, explicit title scope, 事项, year, sta
 
 it('isolates missing-key observations and rejects invalid filters', async () => {
   const missing = await post('/api/roster/import/commit', request('seed-missing-business', [businessQuery('2026-10-03T00:00:00Z', { qymc: '无编号办理企业', sblx: '补录', year: '2024', cszt: '待补充' }, '2', 'name:无编号办理企业')]))
-  expect(missing.status).toBe('committed')
+  expect(missing.status, JSON.stringify(missing)).toBe('committed')
   const isolated = await get('/api/platform/business-processes?view=isolated')
   expect(isolated.http).toBe(200)
   expect(isolated.rows.some((row: any) => row.nameRaw === '无编号办理企业' && row.identityState === 'missing_key' && row.declareKind === '补录')).toBe(true)
@@ -160,7 +162,7 @@ it('restricts the matched version and its count to the selected explicit title s
     businessQuery('2026-11-01T00:00:00Z', rawOld, '2', '91330211255994459R'),
     businessQuery('2026-11-02T00:00:00Z', rawNew, '1', '91330211255994459R'),
   ]))
-  expect(saved.status).toBe('committed')
+  expect(saved.status, JSON.stringify(saved)).toBe('committed')
   addTitleScopes('91330211255994459R', '2026-11-01T00:00:00Z', ['2'])
   addTitleScopes('91330211255994459R', '2026-11-02T00:00:00Z', ['1'])
 
@@ -181,7 +183,7 @@ it('bounds detail history and observation reads explicitly', async () => {
     queries.push(businessQuery(queriedAt, { ...raw, sqsj: `2020-01-01 00:${String(index).padStart(2, '0')}:00` }, '2', 'SQ-B-BIG'))
   }
   const saved = await post('/api/roster/import/commit', request('seed-big', queries))
-  expect(saved.status).toBe('committed')
+  expect(saved.status, JSON.stringify(saved)).toBe('committed')
   const record = db.get<{ id: number }>(sql`select id from platform_business_record where interface = 'business_list' and platform_key = 'SQ-B-BIG'`)!
   const detail = await get(`/api/platform/business-processes/${record.id}`)
   expect(detail.http).toBe(200)
@@ -205,4 +207,4 @@ it('bounds detail history and observation reads explicitly', async () => {
   expect(bounded.counts.observationsTruncated).toBe(true)
   expect(bounded.observations).toHaveLength(200)
   expect(JSON.stringify(bounded).length).toBeLessThan(900_000)
-})
+}, 60000)

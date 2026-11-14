@@ -1,13 +1,11 @@
-import { BUSINESS_STATUS_V1, BUSINESS_STATUS_V2 } from './business-status'
+import { BUSINESS_STATUS_V1,BUSINESS_STATUS_V2 } from './business-status'
 /** Explicit target evidence DISPLAY only. Never import into candidate membership/count/filter/sort,
  * correspondence decisions/roles/authorization/validity, qualification, annual closure or proof.
  * Selection and attribution use structured owners; archives are decoded only after selection.
  * This is not sourceReader: correspondence links and their authorization closure stay with H1.
  */
-import {requireH1cReady} from './h1c-catalog'
-import {sqliteConnection} from './target-connection'
 import { createHash } from 'node:crypto'
-import { and, eq, inArray, max, sql } from 'drizzle-orm'
+import { and,eq,inArray,max,sql } from 'drizzle-orm'
 import { alias } from 'drizzle-orm/sqlite-core'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import { z } from 'zod'
@@ -15,11 +13,10 @@ import { targetSchema as s } from './target-schema'
 import { storedApplyProjection } from './apply-stored-schema'
 import { storedProcessProjection } from './process-stored-schema'
 import { storedRecognizedProjection } from './recognized-stored-schema'
-import { cellExpression, snapshotSchema } from './target-evidence-read'
+import { cellExpression,snapshotSchema } from './target-evidence-read'
 import { sourcePositionForSequence } from './recognized-evidence'
-import { resolveSelectedLegacyProvenance, readResolvedLegacyDisplay, type SelectedLegacyProvenance } from './target-legacy-provenance'
+import { resolveSelectedLegacyProvenance,readResolvedLegacyDisplay,type SelectedLegacyProvenance } from './target-legacy-provenance'
 import { assertTargetDisplayBudget } from './target-query-budget'
-import { requireLegacyProvenanceReady } from './legacy-provenance-catalog'
 import { legacySourcePositionForSequence } from './legacy-provenance'
 
 export type RelationEvidenceDisplaySelection = Readonly<{ relationId: number; queryId?: number }>
@@ -60,10 +57,6 @@ export function readTargetRelationDisplay<S extends Record<string, unknown>>(
     selected.set(selection.relationId, selection)
   }
   return db.transaction(tx => {
-    const phase = tx.get<{ user_version: number }>(sql`PRAGMA user_version`)?.user_version
-    if (phase !== 71610 && phase !== 71611 && phase !== 71612 && phase !== 71613) throw new Error('Explicit 71610 evidence display target required')
-    if (phase === 71613) requireLegacyProvenanceReady(sqliteConnection(tx))
-    if ((phase === 71611 || phase === 71612)) requireH1cReady(sqliteConnection(tx))
     const sources = new Map<number, RelationEvidenceDisplay>([...selected.keys()].map(id => [id, null]))
     const a = s.platformObservationAssignment, original = alias(a, 'display_original_assignment'), newer = alias(a, 'display_newer_assignment')
     const o = s.platformBusinessObservation, ra = s.platformLegacyRelationAlias, qa = s.platformLegacyQueryAlias, c = s.platformCollection

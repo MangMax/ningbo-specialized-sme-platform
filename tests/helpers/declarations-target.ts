@@ -39,10 +39,10 @@ function fixture(seed?: (db: ReturnType<typeof drizzle<typeof legacySchema>>) =>
     copyFileSync(target, source);
     return { source, target, legacySource: legacy, runId: 'stored', predecessorRunId: 'basis' };
 }
-import { targetSchema } from '../../lib/platform/target-schema';
+import { targetSchema } from '../../upgrade/target-schema';
 export function ready(seed?: Parameters<typeof fixture>[0]) { const f = fixture(seed); finalizeApplyStored(f); const t = new Database(f.target); t.pragma('foreign_keys=ON'); return { f, t, db: drizzle(t, { schema: targetSchema }) }; }
-import { ensurePlatformObservation } from '../../server/utils/platform-business-record';
-import * as legacySchema from '../../db/schema';
+import { ensurePlatformObservation } from '../../upgrade/frozen/server/platform-business-record';
+import * as legacySchema from '../../upgrade/legacy-schema';
 export function records(db: ReturnType<typeof drizzle<typeof legacySchema>>) {
     db.$client.prepare("UPDATE platform_relation SET name_raw=' History ',uscc_raw=' U ' WHERE id=1").run();
     const ea = db.insert(legacySchema.enterprise).values({ name: 'Alpha', nameNorm: 'Alpha', usccNorm: 'UA' }).returning().get();

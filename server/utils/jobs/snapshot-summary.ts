@@ -1,8 +1,8 @@
-import type { useDb } from '../../../db/client'
+import type { useApplicationDb } from '../../../db/client'
 import type { TaskSummary } from '../../../lib/task-center'
 
 /** Project scalars in SQLite: never hydrate archives, conditions or backup paths. */
-export function readSnapshotSummary(db: ReturnType<typeof useDb>, id: string): NonNullable<TaskSummary['snapshot']> {
+export function readSnapshotSummary(db: ReturnType<typeof useApplicationDb>, id: string): NonNullable<TaskSummary['snapshot']> {
   const counts = db.$client.prepare(`select
     json_extract(result,'$.counts.enterprises') enterprises,
     json_extract(result,'$.counts.requests') requests,

@@ -4,13 +4,13 @@ import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { expect, it } from 'vitest'
 import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import * as schema from '../db/schema'
-import { targetSchema } from '../lib/platform/target-schema'
+import * as schema from '../upgrade/legacy-schema'
+import { targetSchema } from '../upgrade/target-schema'
 import { candidateFixture } from './helpers/candidate-scope-target'
 import { finalizeCandidateScopes } from '../upgrade/candidate-scope'
-import { ensurePlatformObservation } from '../server/utils/platform-business-record'
-import { listPlatformRecognizedDirectory } from '../server/utils/platform-recognized-directory'
-import { readPlatformFilterOptions } from '../server/utils/platform-filter-options'
+import { ensurePlatformObservation } from '../upgrade/frozen/server/platform-business-record'
+import { listPlatformRecognizedDirectory } from '../upgrade/frozen/server/platform-recognized-directory'
+import { readPlatformFilterOptions } from '../upgrade/frozen/server/platform-filter-options'
 
 it('exposes actual 71609 loss of isolated stored title distinctions while source title remains identical', async () => {
   const f = await candidateFixture(old => {

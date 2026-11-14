@@ -6,9 +6,9 @@ import { candidateFixture } from './helpers/candidate-scope-target'
 import { finalizeCandidateScopes } from '../upgrade/candidate-scope'
 import { finalizeRecognizedStored } from '../upgrade/recognized-stored'
 import { projectionManifest } from '../upgrade/projections'
-import { ensurePlatformObservation } from '../server/utils/platform-business-record'
-import * as legacySchema from '../db/schema'
-import { verifyRecognizedStored } from '../lib/platform/recognized-stored'
+import { ensurePlatformObservation } from '../upgrade/frozen/server/platform-business-record'
+import * as legacySchema from '../upgrade/legacy-schema'
+import { verifyRecognizedStored } from '../upgrade/frozen/recognized-stored'
 async function ready() {
  const f=await candidateFixture(old=>{
  old.exec(`INSERT INTO platform_query(id,interface,query_key,rdjb,queried_at,status,created_at) VALUES(1,'recognized_list','Q','1,2,3','t','success','c');
@@ -39,9 +39,9 @@ it('captures exact legacy title NULL whitespace and BLOB cells independently of 
 
 
 import { drizzle } from 'drizzle-orm/better-sqlite3'
-import { targetSchema } from '../lib/platform/target-schema'
-import { writeRecognizedTarget, type RecognizedTargetInput } from '../lib/platform/recognized-target-writer'
-import { verifyFingerprint } from '../lib/platform/fingerprint-verifier'
+import { targetSchema } from '../upgrade/target-schema'
+import { writeRecognizedTarget, type RecognizedTargetInput } from '../upgrade/frozen/recognized-target-writer'
+import { verifyFingerprint } from '../upgrade/frozen/fingerprint-verifier'
 function command(sequenceNo:number,rdjb:unknown):RecognizedTargetInput {
  return {collectionId:1,position:{sequenceNo,positionState:'unknown'},row:{sequenceNo,relationKey:'shared-command',rawFields:{id:'shared-command',rdjb}},assignment:{enterpriseId:null,matchBasis:'none',verificationStatus:'pending',origin:'command',actor:{type:'agent',id:'732'},basis:'explicit',nameRaw:null,usccRaw:null}}
 }
@@ -104,7 +104,7 @@ it('keeps all other directory legacy cells in their own existing target owners w
  expect(target).toEqual(legacy);expect(target).toMatchObject({relation_key:'  key  ',name_raw:' Original ',uscc_raw:' U ',rdjb:'2,3'})
  }finally{old.close();t.close()}
 })
-import { assertExpandRuntime } from '../db/schema-phase'
+import { assertExpandRuntime } from '../upgrade/schema-phase'
 it('retains the global runtime guard and requires a distinct completed 71609 source before schema changes',async()=>{
  const f=await ready()
  expect(()=>finalizeRecognizedStored({...f,target:f.source})).toThrow('Distinct isolated')
@@ -126,7 +126,7 @@ it('refuses exact title drift during writer reuse and fingerprint certification 
  expect(projectionManifest(t)).toEqual(before)
  }finally{t.close()}
 })
-import { writeCollectionTarget } from '../lib/platform/collection-target-replay'
+import { writeCollectionTarget } from '../upgrade/frozen/collection-target-replay'
 it('certifies original collection reference replay with independent stored title and refuses drift with its original alias',async()=>{
  const f=await ready();finalizeRecognizedStored(f);const t=new Database(f.target);t.pragma('foreign_keys=ON');const db=drizzle(t,{schema:targetSchema})
  const input={queryText:JSON.stringify({interface:'recognized_list',queryKey:'Q',rdjb:'1,2,3',queriedAt:'t',reuseExisting:true,relations:[{sequenceNo:1}]}),evidenceText:null,createdAt:'c',assignments:[]}

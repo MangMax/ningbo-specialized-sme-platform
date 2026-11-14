@@ -5,7 +5,7 @@ import { isDeepStrictEqual } from 'node:util'
 import { and, asc, eq } from 'drizzle-orm'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { z } from 'zod'
-import { targetSchema as s, platformReconcileCapture as c } from './target-schema'
+import { targetSchema as s, platformCollection as c } from './target-schema'
 import { migrationFinished } from './migration-readiness'
 import { captureReconcileSlot, RECONCILE_SLOT_COMPLETION, slotFallbackColumns, type SlotInput, type SlotRelation } from './reconcile-slot-capture'
 import { sourceFieldComparison } from './source-extraction'
@@ -13,12 +13,11 @@ import type { LegacySlotCollection } from './client'
 
 const columns = ['reconcile_slot_state','reconcile_slot_rule','reconcile_slot_raw_archive_id','reconcile_slot_row_count','reconcile_slot_input_sha256','reconcile_slot_reason']
 const barriers = ['reconcile_slot_insert','reconcile_slot_binding','reconcile_slot_immutable','reconcile_slot_delete','reconcile_slot_observation_insert','reconcile_slot_observation_update','reconcile_slot_observation_delete']
-/** Old nonvariant writers remain available. A partially installed variant never does. */
+/** Final write capture is mandatory. Partial installation is an error. */
 export function reconcileSlotWriteInstalled(t: Database.Database) {
   const names = t.prepare('SELECT name FROM pragma_table_info(?)').all('platform_collection') as { name: string }[]
   const present = columns.filter(name => names.some(c => c.name === name))
   const completed = migrationFinished(t, RECONCILE_SLOT_COMPLETION)
-  if (!present.length && !completed && !t.prepare("SELECT 1 FROM sqlite_schema WHERE name LIKE 'reconcile_slot_%' LIMIT 1").get()) return false
   const fk = t.pragma('foreign_key_list(platform_collection)') as { from: string; table: string; to: string; on_delete: string }[]
   if (t.pragma('user_version', { simple: true }) !== 71613 || present.length !== columns.length || !completed
     || !fk.some(f => f.from === 'reconcile_slot_raw_archive_id' && f.table === 'platform_archive_value' && f.to === 'id' && f.on_delete === 'RESTRICT')
@@ -124,10 +123,10 @@ export function reconcileStoredApplyObservation(t: Database.Database, id: number
 }
 /** Independent source calls cannot extend even a captured miss's original row set. */
 export function requireReconcileObservationWrite(t: Database.Database, collectionId: number, existing: boolean) {
-  if (!reconcileSlotWriteInstalled(t)) return
+  reconcileSlotWriteInstalled(t)
   const row = drizzle(t).select().from(c).where(eq(c.id, collectionId)).get()
   if (!row) throw new Error('Missing reconcile collection')
-  if (row.rule !== null) {
+  if (row.reconcileSlotRule !== null) {
     if (!existing) throw new Error('Immutable reconcile captured row set')
     verifyReconcileSlot(t, collectionId)
   }
@@ -166,15 +165,19 @@ function expectedCapture(t: Database.Database, collectionId: number, projections
   return captureReconcileSlot(input, raw.id, raw.bytes === null ? null : raw.bytes.toString('utf8'), decoded)
 }
 export function captureNewReconcileSlot(t: Database.Database, collectionId: number) {
-  if (!reconcileSlotWriteInstalled(t)) return
+  reconcileSlotWriteInstalled(t)
   const db = drizzle(t), prior = db.select().from(c).where(eq(c.id, collectionId)).get()
-  if (!prior || prior.state !== 'uncaptured' || prior.rule !== null || prior.reason !== null) throw new Error('Reconcile capture already finalized')
-  db.update(c).set(expectedCapture(t, collectionId, true)).where(eq(c.id, collectionId)).run()
+  if (!prior || prior.reconcileSlotState !== 'uncaptured' || prior.reconcileSlotRule !== null || prior.reconcileSlotReason !== null) throw new Error('Reconcile capture already finalized')
+  const capture = expectedCapture(t, collectionId, true)
+  db.update(c).set({ reconcileSlotState: capture.state, reconcileSlotRule: capture.rule,
+    reconcileSlotRawArchiveId: capture.rawArchiveId, reconcileSlotRowCount: capture.rowCount,
+    reconcileSlotInputSha256: capture.inputSha256, reconcileSlotReason: capture.reason,
+  }).where(eq(c.id, collectionId)).run()
 }
 /** Read-only authentication: no upgrading misses, partial collections, aliases or archives. */
 export function verifyReconcileSlot(t: Database.Database, collectionId: number) {
-  if (!reconcileSlotWriteInstalled(t)) return
-  const db = drizzle(t), stored = db.select({ state: c.state, rule: c.rule, rawArchiveId: c.rawArchiveId, rowCount: c.rowCount, inputSha256: c.inputSha256, reason: c.reason }).from(c).where(eq(c.id, collectionId)).get()
+  reconcileSlotWriteInstalled(t)
+  const db = drizzle(t), stored = db.select({ state: c.reconcileSlotState, rule: c.reconcileSlotRule, rawArchiveId: c.reconcileSlotRawArchiveId, rowCount: c.reconcileSlotRowCount, inputSha256: c.reconcileSlotInputSha256, reason: c.reconcileSlotReason }).from(c).where(eq(c.id, collectionId)).get()
   if (!stored || stored.state === 'uncaptured' && stored.reason !== 'not_legacy_slot') throw new Error('Reconcile original capture unavailable')
   if (!isDeepStrictEqual(stored, expectedCapture(t, collectionId, true))) throw new Error('Reconcile original capture drift')
 }
