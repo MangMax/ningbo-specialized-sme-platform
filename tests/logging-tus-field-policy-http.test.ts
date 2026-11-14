@@ -45,7 +45,7 @@ beforeAll(async () => {
   const db = useDb({ dbPath }); db.$client.close(); beforeHash = hash(dbPath)
   mkdirSync(files); mkdirSync(incoming)
   const port = await reserveLoopbackPort(); expect(port).not.toBe(50055); url = `http://127.0.0.1:${port}`
-  child = spawn(process.execPath, ['.output/server/index.mjs'], { stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, HOST: '127.0.0.1', PORT: String(port), NODE_ENV: 'production', NUXT_DB_PATH: dbPath, NUXT_DB_READONLY: '1', NUXT_LOG_DIR: logs, NUXT_FILES_DIR: files, NUXT_INCOMING_DIR: incoming, NUXT_API_TOKEN: token, NUXT_MCP_TOKEN: mcpToken, NUXT_BROWSER_LOGS_ENABLED: 'false', NUXT_CURATED_PATH: join(root, 'curated.json'), NUXT_RECONCILE_PATH: join(root, 'reconcile.json') } })
+  child = spawn(process.execPath, ['.output/server/index.mjs'], { stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, HOST: '127.0.0.1', PORT: String(port), NODE_ENV: 'production', NUXT_DB_PATH: dbPath, NUXT_DB_READONLY: '1', NUXT_LOG_DIR: logs, NUXT_FILES_DIR: files, NUXT_INCOMING_DIR: incoming, NUXT_API_TOKEN: token, NUXT_MCP_TOKEN: mcpToken, NUXT_CURATED_PATH: join(root, 'curated.json'), NUXT_RECONCILE_PATH: join(root, 'reconcile.json') } })
   child.stdout!.on('data', c => { output += c }); child.stderr!.on('data', c => { output += c })
   const ready = await waitForHttp(url + '/api/health', { child }); initialHealth = await ready.json()
   observations.push({ root, url, pid: child.pid, beforeHash, artifactHash: hash('.output/server/chunks/nitro/nitro.mjs') })

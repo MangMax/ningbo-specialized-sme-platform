@@ -70,8 +70,7 @@ beforeAll(async () => {
       ...process.env, HOST: '127.0.0.1', PORT: String(port), NODE_ENV: 'production',
       NUXT_DB_PATH: dbPath, NUXT_DB_READONLY: '1', NUXT_LOG_DIR: logDir,
       NUXT_FILES_DIR: join(root, 'files'), NUXT_INCOMING_DIR: join(root, 'incoming'),
-      NUXT_API_TOKEN: token, NUXT_MCP_TOKEN: mcpToken, NUXT_BROWSER_LOGS_ENABLED: 'false',
-      NUXT_CURATED_PATH: join(root, 'curated.json'), NUXT_RECONCILE_PATH: join(root, 'reconcile.json'),
+      NUXT_API_TOKEN: token, NUXT_MCP_TOKEN: mcpToken, NUXT_CURATED_PATH: join(root, 'curated.json'), NUXT_RECONCILE_PATH: join(root, 'reconcile.json'),
     },
   })
   child.stdout!.on('data', chunk => { output += chunk.toString() })

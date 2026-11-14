@@ -35,7 +35,6 @@ const env = {
   NUXT_RECONCILE_PATH: join(root, 'reconcile.json'),
   NUXT_API_TOKEN: token,
   NUXT_MCP_TOKEN: 'fixture-mcp-182',
-  NUXT_BROWSER_LOGS_ENABLED: 'true',
   NUXT_BROWSER_TASKS_ENABLED: 'true',
   NUXT_OCR_TOKEN: '',
   NUXT_PLATFORM_COOKIE: ''

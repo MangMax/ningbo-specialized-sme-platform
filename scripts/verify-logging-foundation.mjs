@@ -19,7 +19,7 @@ const results = []
 const checks = (name, fn) => { fn(); results.push({ name, result: 'PASS' }) }
 let child, output = '', base
 const delay = ms => new Promise(r => setTimeout(r, ms))
-const env = { ...process.env, HOST: '127.0.0.1', NODE_ENV: 'production', NUXT_DB_PATH: dbPath, NUXT_DB_READONLY: '1', NUXT_FILES_DIR: join(root, 'files'), NUXT_INCOMING_DIR: join(root, 'incoming'), NUXT_LOG_DIR: logs, NUXT_API_TOKEN: 'fixture-api181', NUXT_MCP_TOKEN: 'fixture-mcp181', NUXT_BROWSER_LOGS_ENABLED: 'false' }
+const env = { ...process.env, HOST: '127.0.0.1', NODE_ENV: 'production', NUXT_DB_PATH: dbPath, NUXT_DB_READONLY: '1', NUXT_FILES_DIR: join(root, 'files'), NUXT_INCOMING_DIR: join(root, 'incoming'), NUXT_LOG_DIR: logs, NUXT_API_TOKEN: 'fixture-api181', NUXT_MCP_TOKEN: 'fixture-mcp181', }
 async function start(extra = {}) {
   const socket = createServer(); socket.listen(0,'127.0.0.1'); await once(socket,'listening'); const port = socket.address().port; await new Promise(r=>socket.close(r))
   base = `http://127.0.0.1:${port}`
@@ -53,7 +53,7 @@ try {
     checks('REST protected read rejects '+path+' '+(token||'missing'),()=>assert.equal(denied.status,401))
   }
   const sameOrigin=await request('/api/logs',{headers:{'x-log-browser':'1','sec-fetch-site':'same-origin',referer:base+'/logs'}})
-  checks('same origin alone cannot enable sensitive log reads',()=>assert.equal(sameOrigin.status,401))
+  checks('same-origin log page reads work by default',()=>assert.equal(sameOrigin.status,200))
   const row = (await pollLogs('requestId='+healthy.headers.get('x-request-id'))).rows[0]
   checks('real Nuxt HTTP evlog drain readback is safe and bounded',()=>{ assert.equal(row.source,'http'); assert.equal(row.statusCode,200); assert.equal(row.outcome,'success'); assert.ok(row.durationMs>=0); assert.ok(!JSON.stringify(row).includes(privateMarker)) })
   const detail = await request('/api/logs/'+row.id,{headers:apiHeaders})
@@ -93,10 +93,10 @@ try {
   const durable=await request('/api/logs/'+durableId,{headers:apiHeaders})
   checks('abrupt process exit preserves previously committed events',()=>assert.equal(durable.status,200))
   await stop()
-  await start({NUXT_BROWSER_LOGS_ENABLED:'true'})
+  await start({})
   const browser=await request('/api/logs',{headers:{'x-log-browser':'1','sec-fetch-site':'same-origin',referer:base+'/logs'}})
   const cross=await request('/api/logs',{headers:{'x-log-browser':'1','sec-fetch-site':'same-origin',referer:'http://untrusted.invalid/logs'}})
-  checks('explicit page capability accepts matching provenance and rejects foreign provenance',()=>{assert.equal(browser.status,200);assert.equal(cross.status,401)})
+  checks('default page access accepts matching provenance and rejects foreign provenance',()=>{assert.equal(browser.status,200);assert.equal(cross.status,401)})
   await stop()
   chmodSync(join(logs,'events.db'),0o444)
   await start()

@@ -47,7 +47,7 @@ db.pragma('wal_checkpoint(TRUNCATE)'); db.close()
 const businessHash=hash(readFileSync(business)); write('fixture.json',{synthetic:true,rows:1000,businessHash})
 const sources=['http','mcp','task','worker','platform','file','ocr','import','export','client','system']
 // An allowlist environment prevents accidental credential/config inheritance.
-const envBase={PATH:process.env.PATH,HOME:process.env.HOME,TMPDIR:process.env.TMPDIR,LANG:'en_US.UTF-8',NODE_ENV:'production',HOST:'127.0.0.1',NUXT_DB_PATH:business,NUXT_DB_READONLY:'1',NUXT_FILES_DIR:join(run,'files'),NUXT_INCOMING_DIR:join(run,'incoming'),NUXT_CURATED_PATH:join(run,'absent-curated.json'),NUXT_RECONCILE_PATH:join(run,'absent-reconcile.json'),NUXT_API_TOKEN:'synthetic-logging-benchmark',NUXT_MCP_TOKEN:'synthetic-logging-benchmark-mcp',NUXT_BROWSER_LOGS_ENABLED:'false',NUXT_LOG_MAX_BYTES:'4294967296',LOGGING_BENCH_PROCESS_DIR:processDir,NODE_OPTIONS:`--import=${resolve('scripts/lib/logging-performance-preload.mjs')}`}
+const envBase={PATH:process.env.PATH,HOME:process.env.HOME,TMPDIR:process.env.TMPDIR,LANG:'en_US.UTF-8',NODE_ENV:'production',HOST:'127.0.0.1',NUXT_DB_PATH:business,NUXT_DB_READONLY:'1',NUXT_FILES_DIR:join(run,'files'),NUXT_INCOMING_DIR:join(run,'incoming'),NUXT_CURATED_PATH:join(run,'absent-curated.json'),NUXT_RECONCILE_PATH:join(run,'absent-reconcile.json'),NUXT_API_TOKEN:'synthetic-logging-benchmark',NUXT_MCP_TOKEN:'synthetic-logging-benchmark-mcp',NUXT_LOG_MAX_BYTES:'4294967296',LOGGING_BENCH_PROCESS_DIR:processDir,NODE_OPTIONS:`--import=${resolve('scripts/lib/logging-performance-preload.mjs')}`}
 const auth={authorization:'Bearer '+envBase.NUXT_API_TOKEN}
 const owned=new Set(), results=[], failures=[], references={}
 let aborted=false

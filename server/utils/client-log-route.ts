@@ -35,7 +35,7 @@ async function readClientBody(event: H3Event): Promise<{ status: number; body?: 
 }
 export default defineEventHandler(async event => {
   setHeader(event, 'cache-control', 'no-store')
-  // Same explicit deployment capability as log UI; same-origin is not user identity.
+  // Same default same-origin access as log UI; same-origin is not user identity.
   if (!logAccessAllowed(event)) {
     setResponseStatus(event, 401); return { error: { code: 'log_access_denied' } }
   }

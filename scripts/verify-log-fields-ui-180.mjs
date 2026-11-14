@@ -81,7 +81,7 @@ const child = spawn(process.execPath, [join(worktree, 'node_modules/nuxt/bin/nux
     NUXT_FILES_DIR: files, NUXT_INCOMING_DIR: incoming,
     NUXT_CURATED_PATH: join(root, 'curated.json'), NUXT_RECONCILE_PATH: join(root, 'reconcile.json'),
     NUXT_API_TOKEN: apiToken, NUXT_MCP_TOKEN: 'f03-owned-mcp',
-    NUXT_BROWSER_LOGS_ENABLED: 'true', NUXT_OCR_TOKEN: '', NUXT_PLATFORM_COOKIE: ''
+    NUXT_OCR_TOKEN: '', NUXT_PLATFORM_COOKIE: ''
   }
 })
 let output = ''

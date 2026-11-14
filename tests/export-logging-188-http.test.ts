@@ -84,7 +84,7 @@ async function start(logDirectory = logDir) {
     cwd, stdio: ['ignore', 'pipe', 'pipe'], env: {
       ...process.env, NUXT_BUILD_DIR: join(root, 'build'), NUXT_DB_PATH: dbPath, NUXT_LOG_DIR: logDirectory,
       NUXT_API_TOKEN: token, NUXT_MCP_TOKEN: 'synthetic-mcp-188', NUXT_OCR_TOKEN: 'synthetic-ocr-188',
-      NUXT_BROWSER_LOGS_ENABLED: 'false', NUXT_BROWSER_TASKS_ENABLED: 'false',
+      NUXT_BROWSER_TASKS_ENABLED: 'false',
       NUXT_FILES_DIR: join(root, 'files'), NUXT_INCOMING_DIR: join(root, 'incoming'),
       NUXT_CURATED_PATH: join(root, 'curated.json'), NUXT_RECONCILE_PATH: join(root, 'reconcile.json'),
       HOST: '127.0.0.1', PORT: String(port), NITRO_HOST: '127.0.0.1', NITRO_PORT: String(port),

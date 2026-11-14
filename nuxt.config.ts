@@ -270,8 +270,6 @@ export default defineNuxtConfig({
      * 想让两边共用一个值,把两个变量设成一样即可 —— 那是配置时的选择。
      */
     apiToken: '',
-    /** Sensitive log page capability; explicit opt-in, not a user identity/session. */
-    browserLogsEnabled: false,
     /**
      * **#108 页面复核写入口的显式部署开关**（server-only，默认 `false`）。
      *

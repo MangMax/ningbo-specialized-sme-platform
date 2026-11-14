@@ -23,7 +23,7 @@ const token = 'fixture-api189'
 const api = { authorization: `Bearer ${token}`, 'content-type': 'application/json' }
 const body = [{ event: { kind: 'interaction_failure', page: 'logs', level: 'error' } }]
 const check = (name, fn) => { fn(); results.push({ name, result: 'PASS' }) }
-async function start(enabled, extra = {}) {
+async function start(extra = {}) {
   const socket = createServer(); socket.listen(0, '127.0.0.1'); await once(socket, 'listening')
   const port = socket.address().port; await new Promise(r => socket.close(r)); base = `http://127.0.0.1:${port}`
   child = spawn(process.execPath, ['.output/server/index.mjs'], { env: {
@@ -32,7 +32,7 @@ async function start(enabled, extra = {}) {
     NUXT_FILES_DIR: join(root, 'files'), NUXT_INCOMING_DIR: join(root, 'incoming'),
     NUXT_CURATED_PATH: join(root, 'curated.json'), NUXT_RECONCILE_PATH: join(root, 'reconcile.json'),
     NUXT_API_TOKEN: token, NUXT_MCP_TOKEN: 'fixture-mcp189', NUXT_OCR_TOKEN: '', PADDLEOCR_MCP_AISTUDIO_ACCESS_TOKEN: '', MIIT_COOKIE: '',
-    NUXT_BROWSER_LOGS_ENABLED: String(enabled), ...extra,
+    ...extra,
   }, stdio: ['ignore', 'pipe', 'pipe'] })
   child.stdout.on('data', b => { output += b }); child.stderr.on('data', b => { output += b })
   for (let i = 0; i < 600; i++) {
@@ -76,10 +76,10 @@ function save() {
   writeFileSync(join(root, 'results.json'), JSON.stringify({ sha: execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(), results }, null, 2))
 }
 try {
-  await start(false)
+  await start()
   const browserHeaders = () => ({ 'content-type': 'application/json', 'x-log-browser': '1', 'sec-fetch-site': 'same-origin', origin: base })
-  const disabled = await post(body, browserHeaders())
-  check('default-off browser intake refuses same-origin requests', () => assert.equal(disabled.status, 401))
+  const defaultAccepted = await post([{ event: { ...body[0].event, page: 'settings' } }], browserHeaders())
+  check('default browser intake accepts same-origin requests', () => assert.equal(defaultAccepted.status, 202))
   assert.equal((await post(body, {})).status, 401)
   assert.equal((await post(body, { ...api, authorization: 'Bearer fixture-mcp189' })).status, 401)
   const malicious = [{ event: { ...body[0].event, source: 'worker', operation: 'import.commit', taskId: marker, requestId: marker,
@@ -116,9 +116,9 @@ try {
   check('over-limit intake leaves business health unchanged', () => { assert.equal(health.status, 200); assert.equal(health.body.recordCount, 0) })
   const rawTransport = await call('/api/_evlog/ingest', { method: 'POST', headers: api, body: JSON.stringify(body) })
   check('raw evlog transport remains disabled and does not accept events', () => { assert.notEqual(rawTransport.status, 202); assert.equal(rawTransport.body, null) })
-  await stop(); await start(true)
+  await stop(); await start()
   const browser = await post([{ event: { kind: 'interaction_failure', page: 'settings', level: 'warn' } }], browserHeaders())
-  check('actual explicit browser capability accepts correct provenance without exposing token', () => assert.equal(browser.status, 202))
+  check('default browser access accepts correct provenance without exposing token', () => assert.equal(browser.status, 202))
   const foreign = await post(body, { ...browserHeaders(), origin: 'https://foreign.invalid' })
   check('actual browser capability rejects foreign origin', () => assert.equal(foreign.status, 401))
   const cross = await post(body, { ...browserHeaders(), 'sec-fetch-site': 'cross-site' })
@@ -129,7 +129,7 @@ try {
   check('privacy marker absent from real drain stdout and stderr', () => assert.ok(!output.includes(marker)))
   await stop()
   const blocked = join(root, 'blocked-log-directory'); writeFileSync(blocked, 'synthetic fixture')
-  await start(true, { NUXT_LOG_DIR: join(blocked, 'logs') })
+  await start({ NUXT_LOG_DIR: join(blocked, 'logs') })
   const faulty = await post([{ event: { kind: 'script_error', page: 'files', level: 'error' } }])
   await delay(500)
   const unavailable = await call('/api/logs/policy', { headers: api })
@@ -138,7 +138,7 @@ try {
     assert.equal(faulty.status, 202); assert.equal(healthyDuringFault.status, 200); assert.deepEqual(healthyDuringFault.body, health.body)
     assert.equal(unavailable.status, 503); assert.equal(unavailable.body.status.unavailable, true); assert.ok(unavailable.body.status.dropped > 0)
   })
-  await stop(); await start(true) // Fresh budgets for independent desktop/mobile browser lane.
+  await stop(); await start() // Fresh budgets for independent desktop/mobile browser lane.
   const manifest = { root, base, pid: child.pid, dbPath, logDir: join(root, 'logs') }
   writeFileSync(join(root, 'manifest.json'), JSON.stringify(manifest, null, 2))
   if (process.env.CLIENT189_MANIFEST) writeFileSync(process.env.CLIENT189_MANIFEST, JSON.stringify(manifest, null, 2))

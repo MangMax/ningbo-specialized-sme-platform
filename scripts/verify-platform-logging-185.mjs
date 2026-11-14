@@ -42,8 +42,7 @@ const env = {
   ...process.env, HOST: '127.0.0.1', NODE_ENV: 'production', NUXT_DB_PATH: dbPath, NUXT_DB_READONLY: '0',
   NUXT_FILES_DIR: join(root, 'files'), NUXT_INCOMING_DIR: join(root, 'incoming'), NUXT_LOG_DIR: logs,
   NUXT_CURATED_PATH: join(root, 'curated.json'), NUXT_RECONCILE_PATH: join(root, 'reconcile.json'),
-  NUXT_API_TOKEN: 'fixture-api185', NUXT_MCP_TOKEN: 'fixture-mcp185', NUXT_BROWSER_LOGS_ENABLED: 'false',
-  NUXT_OCR_TOKEN: '', PADDLEOCR_MCP_AISTUDIO_ACCESS_TOKEN: '', MIIT_COOKIE: cookie, MIIT_COOKIE_FILE: '',
+  NUXT_API_TOKEN: 'fixture-api185', NUXT_MCP_TOKEN: 'fixture-mcp185', NUXT_OCR_TOKEN: '', PADDLEOCR_MCP_AISTUDIO_ACCESS_TOKEN: '', MIIT_COOKIE: cookie, MIIT_COOKIE_FILE: '',
   PLATFORM185_UPSTREAM: upstreamBase, NODE_OPTIONS: '',
 }
 const headers = { authorization: 'Bearer fixture-api185' }

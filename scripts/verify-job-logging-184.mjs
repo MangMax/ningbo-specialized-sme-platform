@@ -13,7 +13,7 @@ const results=[]
 const check=(name,fn)=>{fn();results.push({name,result:'PASS'})}
 const delay=ms=>new Promise(r=>setTimeout(r,ms))
 let child,base,output=''
-const env={...process.env,NODE_ENV:'production',HOST:'127.0.0.1',NUXT_DB_PATH:join(root,'fixture.db'),NUXT_FILES_DIR:join(root,'files'),NUXT_INCOMING_DIR:join(root,'incoming'),NUXT_CURATED_PATH:join(root,'curated.json'),NUXT_RECONCILE_PATH:join(root,'reconcile.json'),NUXT_LOG_DIR:join(root,'logs'),NUXT_API_TOKEN:'fixture-api184',NUXT_MCP_TOKEN:'fixture-mcp184',NUXT_BROWSER_LOGS_ENABLED:'false',MIIT_COOKIE:'',NUXT_OCR_TOKEN:'',NUXT_DB_READONLY:'0'}
+const env={...process.env,NODE_ENV:'production',HOST:'127.0.0.1',NUXT_DB_PATH:join(root,'fixture.db'),NUXT_FILES_DIR:join(root,'files'),NUXT_INCOMING_DIR:join(root,'incoming'),NUXT_CURATED_PATH:join(root,'curated.json'),NUXT_RECONCILE_PATH:join(root,'reconcile.json'),NUXT_LOG_DIR:join(root,'logs'),NUXT_API_TOKEN:'fixture-api184',NUXT_MCP_TOKEN:'fixture-mcp184',MIIT_COOKIE:'',NUXT_OCR_TOKEN:'',NUXT_DB_READONLY:'0'}
 mkdirSync(env.NUXT_FILES_DIR,{recursive:true})
 async function start(extra={}){
  const port=await reserveLoopbackPort();base=`http://127.0.0.1:${port}`
