@@ -80,7 +80,7 @@ export function readDifferenceCollectionScope(db: Db, collectionId: number, load
   const metadata = collection.parseState === 'valid' && conditionsKnown ? {
     source: collection.source, status: collection.evidenceStatus, effectiveConditions: conditions,
     titleScope: { mode: collection.scopeMode, rdjb: titles },
-    pages: pages.map(p => ({ source: p.source, rdjb: p.rdjb, page: p.pageNo, maxPage: p.maxPage, declaredTotal: p.declaredTotal, fetchedCount: p.fetchedCount, status: p.status,
+    pages: pages.map(p => ({ source: p.source, rdjb: p.rdjb, page: p.pageNo, ...(p.maxPagePresent?{maxPage:p.maxPage}:{}), status:p.status, fetchedCount:p.fetchedCount, declaredTotal:p.declaredTotal,
       error: p.errorCode === null && p.errorMessage === null ? null : { code: p.errorCode, message: p.errorMessage } })),
     completeness: collection.completeness, fullRange: collection.fullRange === null ? null : !!collection.fullRange,
     unfinished: unfinished.map(p => ({ source: p.source, rdjb: p.rdjb, page: p.pageNo })),

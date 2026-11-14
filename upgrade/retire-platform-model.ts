@@ -12,6 +12,7 @@ import { rowSnapshot } from '../lib/platform/sqlite-row-cells'
 import { upgradeEnterpriseMergeIdentity } from './enterprise-merge'
 import { z } from 'zod'
 import { installPlatformArchiveLookupIndexes } from '../db/platform-archive-indexes'
+import { captureCollectionPageShape } from './collection-page-shape'
 
 const requiredTransforms = [
   't05a-observation-v3', 't05c-independent-observation-v1',
@@ -141,6 +142,7 @@ export function retirePlatformModel(sqlite: Database.Database) {
   if (sqlite.pragma('foreign_keys', { simple: true }) !== 1) throw new Error('Platform retirement requires foreign_keys=ON')
   if (hasTable(sqlite, 'platform_runtime_completion')) {
     return sqlite.transaction(() => {
+      captureCollectionPageShape(sqlite)
       assertFinalPlatformRuntime(sqlite)
       installPlatformArchiveLookupIndexes(sqlite)
       auditArchiveValues(sqlite)
@@ -158,6 +160,7 @@ export function retirePlatformModel(sqlite: Database.Database) {
     auditLegacyRows(sqlite)
     auditHistoricalBodies(sqlite)
     upgradeEnterpriseMergeIdentity(sqlite)
+    captureCollectionPageShape(sqlite)
     const triggers = sqlite.prepare("SELECT name,tbl_name,sql FROM sqlite_schema WHERE type='trigger'").all() as { name: string; tbl_name: string; sql: string }[]
     const oldNames = new RegExp(`\\b(?:${RETIRED_PLATFORM_TABLES.join('|')})\\b`, 'i')
     for (const trigger of triggers) if (oldNames.test(trigger.tbl_name) || oldNames.test(trigger.sql)) {

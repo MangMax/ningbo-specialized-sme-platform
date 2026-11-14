@@ -32,7 +32,7 @@ export function createTargetCurrentCandidateReader(db:BetterSQLite3Database<type
   sqlite.function('roster84_uscc',{deterministic:true},normalizeUscc)
   const assignment=()=>and(eq(a.observationId,o.id),eq(a.revision,
     db.select({revision:max(newer.revision)}).from(newer).where(eq(newer.observationId,o.id))))
-  const ownerJoin=()=>and(isNull(a.enterpriseId),isNotNull(owner.usccNorm),sql`roster84_uscc(${owner.usccNorm})=roster84_uscc(${a.usccRaw})`)
+  const ownerJoin=()=>and(isNull(a.enterpriseId),isNotNull(owner.usccNorm),eq(owner.usccNorm,sql`roster84_uscc(${a.usccRaw})`))
   function gate(title:CurrentTitle) {
     const phase=db.get<{user_version:number}>(sql`PRAGMA user_version`)?.user_version
     if(![CANDIDATE_SCOPE_VERSION,71610,71611,71612,71613].includes(phase ?? -1)) throw new TargetCurrentCandidateGap(null,'phase','Explicit 71609 or completed successor target required')

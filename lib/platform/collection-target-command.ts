@@ -138,6 +138,7 @@ export function writeNewCollectionTarget<S extends Record<string, unknown>>(db: 
       rdjb: p.rdjb,
       pageNo: p.page,
       maxPage: p.maxPage ?? null,
+      maxPagePresent:Object.hasOwn(p,'maxPage')?1:0,
       fetchedCount: p.fetchedCount,
       declaredTotal: p.declaredTotal,
       status: p.status,

@@ -8,6 +8,7 @@ import { normalizeUscc } from '../../lib/domain'
 import { currentProofCoversRows, currentRowProofIds } from './comparison-scope-proof'
 import { correspondenceIdentityProblem } from './record-correspondence-identity'
 import { storedProcessProjection } from '../../lib/platform/process-stored-schema'
+import { targetSchema } from '../../lib/platform/target-schema'
 
 type Db = BetterSQLite3Database<typeof s>
 const t = s.recordCorrespondence
@@ -47,6 +48,38 @@ function eventMatches(id: SQL, prefix: string): SQL {
     evidenceMatches(id,prefix ? prefix + '.officialEvidence' : '$.officialEvidence'),
   )!
 }
+/** Historical fingerprint equality stays inside SQLite. Decode the sealed cells
+ * once per row; no original body or parsed provenance crosses the driver. */
+function targetSourceMatches(observationId: SQL): SQL {
+  const original = () => {
+    const kind = sql`json_extract(cell.value,'$.storageClass')`, bytes = sql`unhex(json_extract(cell.value,'$.hex'))`
+    return sql`case ${kind} when 'null' then null when 'text' then cast(${bytes} as text) when 'integer' then cast(${bytes} as integer) when 'real' then cast(${bytes} as real) else ${bytes} end`
+  }
+  const currentAssignment = (column: string) => sql`(select ${sql.identifier(column)} from platform_observation_assignment where observation_id=o.id order by revision desc limit 1)`
+  const relationFields = Object.entries(getTableColumns(s.platformRelation)).map(([key,column]) => {
+    const actual = key==='id' ? sql`ra.old_id` : key==='queryId' ? sql`qa.old_id`
+      : key==='enterpriseId' ? currentAssignment('enterprise_id') : key==='matchBasis' ? currentAssignment('match_basis')
+      : key==='verificationStatus' ? currentAssignment('verification_status') : original()
+    const matches=column.dataType==='json' ? sql`json(${value('$.relation.'+key)}) is json(${actual})` : sql`${value('$.relation.'+key)} is ${actual}`
+    return sql`when ${column.name} then ${matches}`
+  })
+  const queryFields = Object.entries(getTableColumns(s.platformQuery)).map(([key,column]) => {
+    const actual = key==='id' ? sql`qa.old_id`
+      : key==='rawResponse'||key==='collectionEvidence' ? sql`(select cast(v.bytes as text) from platform_collection_archive_ref r join platform_archive_value v on v.id=r.archive_id where r.owner_id=c.id and r.field=${key})`
+      : sql`c.${sql.identifier(column.name)}`
+    return column.dataType==='json' ? sql`json(${value('$.query.'+key)}) is json(${actual})` : sql`${value('$.query.'+key)} is ${actual}`
+  })
+  return sql`exists(select 1 from platform_business_observation o
+    join platform_legacy_relation_alias ra on ra.observation_id=o.id
+    join platform_collection c on c.id=o.collection_id
+    join platform_legacy_query_alias qa on qa.collection_id=c.id
+    join platform_observation_archive_ref sr on sr.owner_id=o.id and sr.field='legacyRowSnapshot'
+    join platform_archive_value snapshot on snapshot.id=sr.archive_id
+    where o.id=${observationId}
+      and (select count(*) from json_each(snapshot.bytes,'$.fields') cell where json_extract(cell.value,'$.name') in (${sql.join(Object.values(getTableColumns(s.platformRelation)).map(c=>sql`${c.name}`),sql`, `)}))=${relationFields.length}
+      and not exists(select 1 from json_each(snapshot.bytes,'$.fields') cell where not(case json_extract(cell.value,'$.name') ${sql.join(relationFields,sql` `)} else 1 end))
+      and ${and(...queryFields)})`
+}
 const owner = alias(s.enterprise,'ref_owner')
 const relation = alias(s.platformRelation,'ref_relation')
 const target = alias(s.enterprise,'ref_target')
@@ -66,9 +99,33 @@ export function createCorrespondenceRefValidityReader(db: Db) {
     const blobStatuses = db.select({ id: target.id }).from(target)
       .innerJoin(storedProcessProjection, eq(storedProcessProjection.observationId, target.relationId))
       .where(and(sql`${target.id} in (select value from json_each(${sql.placeholder('ids')}))`, sql`typeof(${storedProcessProjection.storedStatus}) = 'blob'`)).prepare()
+    const sourceMatches = and(
+      sql`case when ${target.eventId} is null then ${value('$.event')} is null else ${eventMatches(sql`${target.eventId}`,'')} end`,
+      sql`case when ${target.predecessorEventId} is null then ${value('$.predecessor')} is null else ${eventMatches(sql`${target.predecessorEventId}`,'$.predecessor')} end`,
+      sql`case when ${target.relationId} is null then ${value('$.relation')} is null and ${value('$.query')} is null else ${targetSourceMatches(sql`${target.relationId}`)} end`,
+      sql`case when ${target.exportRowId} is null then ${value('$.exportRow')} is null and ${value('$.exportBatch')} is null else ${rowMatches(s.platformExportRow,'$.exportRow',sql`${target.exportRowId}`)} and ${rowMatches(s.platformExportBatch,'$.exportBatch',sql`(select ${s.platformExportRow.batchId} from ${s.platformExportRow} where ${s.platformExportRow.id}=${target.exportRowId})`)} end`,
+    )!
+    const assignment=targetSchema.platformObservationAssignment
+    const prepared=db.select({id:target.id,type:target.type,role:target.role,enterpriseId:target.enterpriseId,titleCode:target.titleCode,
+      matches:sql<number>`${sourceMatches}`,relationEnterpriseId:assignment.enterpriseId,relationStatus:assignment.verificationStatus,
+      relationUscc:sql<string|null>`${value('$.relation.usccRaw')}`,ownerId:owner.id,ownerUscc:owner.usccNorm,targetId:s.enterprise.id,targetUscc:s.enterprise.usccNorm,targetTitle:s.title.code,
+    }).from(target).leftJoin(assignment,and(eq(assignment.observationId,target.relationId),eq(assignment.revision,sql`(select max(revision) from platform_observation_assignment where observation_id=${target.relationId})`)))
+      .leftJoin(owner,eq(owner.id,assignment.enterpriseId)).leftJoin(s.enterprise,eq(s.enterprise.id,target.enterpriseId)).leftJoin(s.title,eq(s.title.code,target.titleCode))
+      .where(sql`${target.id} in (select value from json_each(${sql.placeholder('ids')}))`).prepare()
     return (ids: number[]) => {
       if (!ids.length) return new Map<number, boolean>()
-      const validity = new Map(listRecordCorrespondencesForIds(db, ids).map(row => [row.id, row.requiresRevalidation]))
+      const rows=prepared.all({ids:JSON.stringify(ids)})
+      const proofs=rows.filter(row=>row.type==='recognized_export'&&row.role==='same_current_row').map(row=>row.id)
+      const proofValidity=new Map(proofs.length?listRecordCorrespondencesForIds(db,proofs).map(row=>[row.id,row.requiresRevalidation]):[])
+      const validity = new Map(rows.map(row => {
+        let invalid=!row.matches
+        if(row.relationEnterpriseId&&row.relationUscc&&(!row.ownerId||row.ownerUscc&&normalizeUscc(row.ownerUscc)!==normalizeUscc(row.relationUscc)))invalid=true
+        if(row.type==='later_process') {
+          if(!row.targetId||!row.targetTitle||correspondenceIdentityProblem({enterpriseId:row.enterpriseId,uscc:row.targetUscc},{enterpriseId:row.relationEnterpriseId,uscc:row.relationUscc},true))invalid=true
+          if(!normalizeUscc(row.relationUscc)&&row.relationStatus!=='confirmed')invalid=true
+        }
+        return [row.id,invalid||(proofValidity.get(row.id)??false)] as const
+      }))
       // The old reverse-link SQL compares saved JSON with the native status cell.
       // A saved Buffer object never IS a SQLite BLOB, unlike the full fingerprint.
       for (const row of blobStatuses.all({ ids: JSON.stringify(ids) })) validity.set(row.id, true)

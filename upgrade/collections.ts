@@ -158,7 +158,7 @@ function transfer(s: Database.Database, db: Db, q: Omit<typeof schema.platformQu
     const valid = integer(p.page, 1) !== null && count !== null && (p.status === 'success' || ((p.status === 'failed' || p.status === 'auth_failed') && count === 0))
     const next = count === null ? null : integer(successful + count)
     const verified = known && valid && next !== null
-    db.insert(schema.platformCollectionPage).values({ collectionId: q.id, ordinal, source: text(p.source), rdjb: text(p.rdjb), pageNo: integer(p.page, 1), maxPage: integer(p.maxPage, 1), fetchedCount: count, declaredTotal: integer(p.declaredTotal), status: text(p.status), errorCode: text(e.code), errorMessage: text(e.message), sequenceStart: verified && p.status === 'success' && count! > 0 ? successful + 1 : null, sequenceEnd: verified && p.status === 'success' && count! > 0 ? next : null, positionState: verified ? 'verified' : 'unknown' }).run()
+    db.insert(schema.platformCollectionPage).values({ collectionId: q.id, ordinal, source: text(p.source), rdjb: text(p.rdjb), pageNo: integer(p.page, 1), maxPage: integer(p.maxPage, 1), maxPagePresent:Object.hasOwn(p,'maxPage')?1:0, fetchedCount: count, declaredTotal: integer(p.declaredTotal), status: text(p.status), errorCode: text(e.code), errorMessage: text(e.message), sequenceStart: verified && p.status === 'success' && count! > 0 ? successful + 1 : null, sequenceEnd: verified && p.status === 'success' && count! > 0 ? next : null, positionState: verified ? 'verified' : 'unknown' }).run()
     if (!verified) known = false
     if (p.status === 'success' && next !== null) successful = next
   }
