@@ -10,7 +10,7 @@ import { processEvidenceImpacts113, listEvidenceImpacts113, listImpactEvidence11
 import { recognizedResultToImport } from '../lib/platform/recognized-evidence'
 import type { PlatformLiveQueryResult } from '../lib/platform/live-query'
 import { minimalPdf } from './helpers/minimal-pdf'
-import { spawnOwnedChild as spawn, reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../scripts/lib/isolated-local-services.mjs'
+import { spawnOwnedChild as spawn, reserveLoopbackPort, waitForHttp, stopOwnedChild } from './helpers/isolated-local-services.mjs'
 
 const dir = mkdtempSync(join(tmpdir(), 'impact-113-'))
 const dbPath = join(dir, 'synthetic.db'), db = initializeDb({ create: true,  dbPath })

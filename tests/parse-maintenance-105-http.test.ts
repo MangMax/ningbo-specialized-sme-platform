@@ -4,7 +4,7 @@ import { join, resolve } from 'node:path'
 
 import { afterAll, beforeAll, expect, it } from 'vitest'
 import { initializeDb, schema } from '../db/client'
-import { spawnOwnedChild as spawn, reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../scripts/lib/isolated-local-services.mjs'
+import { spawnOwnedChild as spawn, reserveLoopbackPort, waitForHttp, stopOwnedChild } from './helpers/isolated-local-services.mjs'
 
 const dir = mkdtempSync('/tmp/issue310-http-')
 const dbPath = join(dir, 'roster.db')

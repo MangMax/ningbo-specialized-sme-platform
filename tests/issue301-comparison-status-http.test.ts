@@ -6,7 +6,7 @@ import { afterAll, beforeAll, expect, it } from 'vitest'
 import { schema, useDb } from '../db'
 import { initializeDb } from '../db/client'
 import { seedIssue301 } from './helpers/issue301-fixture'
-import { spawnOwnedChild, reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../scripts/lib/isolated-local-services.mjs'
+import { spawnOwnedChild, reserveLoopbackPort, waitForHttp, stopOwnedChild } from './helpers/isolated-local-services.mjs'
 
 // A caller-owned service lets manual RED -> GREEN and browser acceptance share
 // one dev compilation. Normal test runs still own and clean up their service.

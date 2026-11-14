@@ -913,6 +913,13 @@ defineRouteMeta({
                       }
                     }
                   },
+                  "dataRows": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    }
+                  },
                   "rawData": {
                     "type": "object",
                     "properties": {
@@ -1247,8 +1254,10 @@ defineRouteMeta({
               "type": "object",
               "properties": {
                 "sequenceNo": {
-                  "type": "number",
-                  "description": "沿用核心 optionalInt；原查询内序号"
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991,
+                  "description": "原查询内正安全整数序号；新完整采集按输入顺序从 1 连续编号，不截断小数"
                 },
                 "relationKey": {
                   "type": [
@@ -1317,9 +1326,15 @@ defineRouteMeta({
                   ]
                 },
                 "year": {
-                  "type": [
-                    "number",
-                    "null"
+                  "anyOf": [
+                    {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    },
+                    {
+                      "type": "null"
+                    }
                   ]
                 },
                 "matchBasis": {
@@ -1407,7 +1422,7 @@ defineRouteMeta({
           }
         ]
       },
-      "description": "三来源原查询归档；recognized_list 新采集须带原 collectionEvidence，来源/interface、查询坐标、状态/称号及每条 relation 序号/身份/rawFields 必须匹配原行。rawData.version=1 保留 typed JSON 原值、原页 body 与来源隔离；缺省保持 legacy。reuseExisting:true 仅引用已存坐标，不补行；legacy 无 collectionEvidence 时 rawResponse 省略/null 是原引用哨兵，字符串 null 不是。显式不可变值、原行及 hash 冲突由核心拒绝，不重算来源。"
+      "description": "三来源原查询归档；recognized_list 新采集须带原 collectionEvidence，来源/interface、查询坐标、状态/称号及每条 relation 序号/身份/rawFields 必须匹配原行。dataRows 保留全部 typed 业务字段而不保存请求/响应正文；rawData.version=1 保留 typed JSON 原值、原页 body 与来源隔离；缺省保持 legacy。reuseExisting:true 仅引用已存坐标，不补行；legacy 无 collectionEvidence 时 rawResponse 省略/null 是原引用哨兵，字符串 null 不是。显式不可变值、原行及 hash 冲突由核心拒绝，不重算来源。"
     },
     "announcement": {
       "type": "object",

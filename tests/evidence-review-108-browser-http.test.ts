@@ -6,7 +6,7 @@ import { createHash } from 'node:crypto'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { sql } from 'drizzle-orm'
 import { initializeDb, schema } from '../db/client'
-import { spawnOwnedChild as spawn, reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../scripts/lib/isolated-local-services.mjs'
+import { spawnOwnedChild as spawn, reserveLoopbackPort, waitForHttp, stopOwnedChild } from './helpers/isolated-local-services.mjs'
 
 const dir = mkdtempSync(join(tmpdir(), 'review-108-browser-'))
 const dbPath = join(dir, 'synthetic.db')

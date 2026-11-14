@@ -19,11 +19,6 @@
     "check:doctor:structure": "vite-doctor . --analyses dead-code,graph,dupes,health",
     "test": "vitest run",
     "test:watch": "vitest",
-    "verify:prod-openapi": "node scripts/verify-prod-openapi.mjs",
-    "verify:evidence-page-jump": "node scripts/verify-evidence-page-jump.mjs",
-    "verify:detail-return-scroll": "node scripts/verify-detail-return-scroll.mjs",
-    "verify:roster-return-chain": "node scripts/verify-roster-return-chain.mjs",
-    "verify:browser-test-port-isolation": "node scripts/verify-browser-test-port-isolation.mjs",
     "verify:native-platform-boundary": "node scripts/verify-native-platform-boundary.mjs",
     "db:init": "node --env-file-if-exists=.env scripts/initialize-native-db.mjs"
   },

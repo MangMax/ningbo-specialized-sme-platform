@@ -9,7 +9,7 @@ import { z } from 'zod'
 import * as schema from '../db/schema'
 import type { OfficialPublishedRow, RosterImportPayload, RosterImportRecord } from '../lib/roster-import-client'
 import { usccFormatVerdict } from '../lib/roster/uscc-research'
-import { spawnOwnedChild, reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../scripts/lib/isolated-local-services.mjs'
+import { spawnOwnedChild, reserveLoopbackPort, waitForHttp, stopOwnedChild } from './helpers/isolated-local-services.mjs'
 
 // Actual Nuxt routes/toolkit/middleware/JSON-RPC and real import process. Execute only
 // with the parent's heavy slot; this suite never uses the SDK's in-memory bridge.

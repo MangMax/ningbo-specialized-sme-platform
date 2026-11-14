@@ -5,7 +5,7 @@ import { join, resolve } from 'node:path'
 import ExcelJS from 'exceljs'
 import { afterAll, beforeAll, expect, it } from 'vitest'
 import { initializeDb, schema as s } from '../db/client'
-import { spawnOwnedChild as spawn, reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../scripts/lib/isolated-local-services.mjs'
+import { spawnOwnedChild as spawn, reserveLoopbackPort, waitForHttp, stopOwnedChild } from './helpers/isolated-local-services.mjs'
 
 const dir = mkdtempSync(join(tmpdir(), 'facts-export-307-'))
 const dbPath = join(dir, 'synthetic.db'), db = initializeDb({ create: true,  dbPath })

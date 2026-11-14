@@ -7,7 +7,7 @@ import ExcelJS from 'exceljs'
 import { expect } from 'vitest'
 import { reviewCurrentExportDecision } from './current-export-decisions'
 import { initializeDb, schema as s } from '../../db/client'
-import { spawnOwnedChild as spawn, reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../../scripts/lib/isolated-local-services.mjs'
+import { spawnOwnedChild as spawn, reserveLoopbackPort, waitForHttp, stopOwnedChild } from './isolated-local-services.mjs'
 
 export const titleCode = 'specialized_sme'
 export const route = '/api/roster/exports/current/specialized-sme'

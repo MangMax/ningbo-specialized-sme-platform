@@ -5,7 +5,7 @@ import { join, resolve } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { submitNativePlatformQuery } from './helpers/native-platform-fixture'
 import { initializeDb, schema } from '../db/client.ts'
-import { spawnOwnedChild as spawn, reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../scripts/lib/isolated-local-services.mjs'
+import { spawnOwnedChild as spawn, reserveLoopbackPort, waitForHttp, stopOwnedChild } from './helpers/isolated-local-services.mjs'
 
 const dir = mkdtempSync(join(tmpdir(), 'spztx-record-comparison-http-'))
 const path = join(dir, 'roster.db')

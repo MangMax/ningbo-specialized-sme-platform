@@ -6,7 +6,7 @@ import { join, resolve } from 'node:path'
 import { afterAll, beforeAll, expect, it } from 'vitest'
 import { schema, useDb } from '../db'
 import { submitNativePlatformQuery } from './helpers/native-platform-fixture'
-import { spawnOwnedChild as spawn, reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../scripts/lib/isolated-local-services.mjs'
+import { spawnOwnedChild as spawn, reserveLoopbackPort, waitForHttp, stopOwnedChild } from './helpers/isolated-local-services.mjs'
 
 const dir = mkdtempSync(join(tmpdir(), 'annual250-mcp-http-'))
 const db = initializeDb({ create: true, dbPath: join(dir, 'roster.db') })

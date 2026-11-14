@@ -11,7 +11,7 @@ import { initializeDb, schema } from '../db/client'
 import { recognizedResultToImport } from '../lib/platform/recognized-evidence'
 import type { PlatformLiveQueryResult } from '../lib/platform/live-query'
 import { createRosterImportClient } from '../lib/roster-import-client'
-import { spawnOwnedChild as spawn, reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../scripts/lib/isolated-local-services.mjs'
+import { spawnOwnedChild as spawn, reserveLoopbackPort, waitForHttp, stopOwnedChild } from './helpers/isolated-local-services.mjs'
 const dir = mkdtempSync(join(tmpdir(), 'review-114-')), dbPath = join(dir, 'synthetic.db'), db = initializeDb({ create: true,  dbPath })
 let base: string, stop: () => Promise<void>, client: ReturnType<typeof createRosterImportClient>
 const actor = { type: 'user', id: 'synthetic-reviewer' }, basis = '指定证据人工核验'

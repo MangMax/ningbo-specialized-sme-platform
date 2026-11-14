@@ -5,7 +5,7 @@ import { join, resolve } from 'node:path'
 import { eq } from 'drizzle-orm'
 import { afterAll, beforeAll, expect, it } from 'vitest'
 import { initializeDb, schema } from '../db/client'
-import { spawnOwnedChild, reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../scripts/lib/isolated-local-services.mjs'
+import { spawnOwnedChild, reserveLoopbackPort, waitForHttp, stopOwnedChild } from './helpers/isolated-local-services.mjs'
 
 const dir = mkdtempSync(join(tmpdir(), 'candidate-570-'))
 const db = initializeDb({ create: true, dbPath: join(dir, 'test.db') })

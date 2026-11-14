@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { afterAll, beforeAll, expect, it } from 'vitest'
-import { spawnOwnedChild as spawn, reserveLoopbackPort, stopOwnedChild, waitForHttp } from '../scripts/lib/isolated-local-services.mjs'
+import { spawnOwnedChild as spawn, reserveLoopbackPort, stopOwnedChild, waitForHttp } from './helpers/isolated-local-services.mjs'
 import { initializeDb } from '../db/client'
 import { APPLICATION_LOG_ROUTES } from '../lib/logging/route-templates'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'

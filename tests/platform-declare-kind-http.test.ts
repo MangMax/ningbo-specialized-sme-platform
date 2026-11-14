@@ -7,7 +7,7 @@ import Database from 'better-sqlite3'
 import { afterAll, beforeAll, expect, it } from 'vitest'
 import { initializeDb } from '../db/client'
 import { createRosterImportClient, type RosterImportRequest } from '../lib/roster-import-client'
-import { spawnOwnedChild as spawn, reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../scripts/lib/isolated-local-services.mjs'
+import { spawnOwnedChild as spawn, reserveLoopbackPort, waitForHttp, stopOwnedChild } from './helpers/isolated-local-services.mjs'
 
 // Every business write uses the app API on a new isolated SQLite database.
 const dir = mkdtempSync(join(tmpdir(), 'declare-kind-249-'))

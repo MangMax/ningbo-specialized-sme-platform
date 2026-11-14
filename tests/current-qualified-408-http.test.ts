@@ -9,7 +9,7 @@ import { CallToolResultSchema } from '@modelcontextprotocol/sdk/types.js'
 import { fileMatrix408 } from './helpers/current-qualified-408'
 import type { CurrentQualifiedResult } from '../lib/roster/current-qualified-query'
 import type { CurrentQualificationSnapshot } from '../lib/roster/current-qualification'
-import { spawnOwnedChild, reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../scripts/lib/isolated-local-services.mjs'
+import { spawnOwnedChild, reserveLoopbackPort, waitForHttp, stopOwnedChild } from './helpers/isolated-local-services.mjs'
 
 let fixture: ReturnType<typeof fileMatrix408> | undefined
 let child: ReturnType<typeof spawnOwnedChild> | undefined

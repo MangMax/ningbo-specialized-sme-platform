@@ -7,7 +7,7 @@ import { initializeDb, schema as s } from '../db/client'
 import { submitNativePlatformQuery } from './helpers/native-platform-fixture'
 import { preflightRecordCorrespondences, commitRecordCorrespondences } from '../server/utils/record-correspondence'
 import { readEventAnnualProcess } from '../server/utils/event-annual-process-read'
-import { spawnOwnedChild as spawn, reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../scripts/lib/isolated-local-services.mjs'
+import { spawnOwnedChild as spawn, reserveLoopbackPort, waitForHttp, stopOwnedChild } from './helpers/isolated-local-services.mjs'
 
 const dir = mkdtempSync(join(tmpdir(), 'annual258-wire-')), dbPath = join(dir, 'isolated.db')
 const db = initializeDb({ create: true,  dbPath })

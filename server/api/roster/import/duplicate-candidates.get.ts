@@ -11,7 +11,7 @@ import { planDuplicateMerge } from '~~/server/utils/roster-duplicate-merge'
  * 写入口**：真正落库仍然只有 `POST /api/roster/import/commit` 一条路。
  *
  * 读接口**不鉴权**（与既有分法一致：读不鉴权，写/任务鉴权）。报告里的 `request` 就是可以
- * 直接 POST 给提交接口的请求体（含幂等键），`scripts/roster-duplicate-merge.mjs` 即照此转发。
+ * 提交请求体（含幂等键），按当前契约预检后提交。
  *
  * ── 证据不足一律不并 ────────────────────────────────────────────────────
  * 拿不到平台关系证据的候选**不进** `ready`，留在 `pending` 里带一句可读的理由

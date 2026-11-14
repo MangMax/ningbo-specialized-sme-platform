@@ -6,7 +6,7 @@ import ExcelJS from 'exceljs'
 import { afterAll, beforeAll, expect, it } from 'vitest'
 import { eq } from 'drizzle-orm'
 import { initializeDb, schema as s } from '../db/client'
-import { spawnOwnedChild as spawn, reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../scripts/lib/isolated-local-services.mjs'
+import { spawnOwnedChild as spawn, reserveLoopbackPort, waitForHttp, stopOwnedChild } from './helpers/isolated-local-services.mjs'
 import { export188Candidate, seedExport188DisconnectFixture } from './helpers/export-188-fixture'
 
 // Actual Nuxt HTTP and its native subprocess/drain. Only setup/fault injection

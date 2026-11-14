@@ -7,7 +7,7 @@ import { expect, it } from 'vitest'
 import { useDb, schema } from '../db'
 import { DEFAULT_DPI } from '../lib/pdf-page'
 import { renderPdfPages } from '../server/utils/pdf-pages'
-import { spawnOwnedChild as spawn, reserveLoopbackPort, stopOwnedChild, waitForHttp } from '../scripts/lib/isolated-local-services.mjs'
+import { spawnOwnedChild as spawn, reserveLoopbackPort, stopOwnedChild, waitForHttp } from './helpers/isolated-local-services.mjs'
 import { minimalPdf } from './helpers/minimal-pdf'
 import { startMiniOcrApi } from './helpers/ocr-mini-api'
 

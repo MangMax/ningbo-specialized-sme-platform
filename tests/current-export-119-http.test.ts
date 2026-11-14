@@ -11,7 +11,7 @@ import ExcelJS from 'exceljs'
 import { eq } from 'drizzle-orm'
 import { afterAll, beforeAll, beforeEach, expect, it } from 'vitest'
 import { initializeDb, schema as s } from '../db/client'
-import { spawnOwnedChild as spawn, reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../scripts/lib/isolated-local-services.mjs'
+import { spawnOwnedChild as spawn, reserveLoopbackPort, waitForHttp, stopOwnedChild } from './helpers/isolated-local-services.mjs'
 
 // Only synthetic fixtures are written here. Assertions use real HTTP and XLSX bytes.
 const dir = mkdtempSync(join(tmpdir(), 'export-119-'))

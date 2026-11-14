@@ -320,7 +320,7 @@ erDiagram
 | 候选(报告) | `import_batch.item_results`(`kind='duplicate_candidate'`)+ 预检增量字段 `duplicateCandidates` |
 | 候选 → 可并/待核 | `GET /api/roster/import/duplicate-candidates?batchKey=…`(只读报告,§7.8) |
 | 执行 | `POST /api/roster/import/commit`(§8.2),载荷 = `payload.merges`(§8.4) |
-| 可运行入口 | `node scripts/roster-duplicate-merge.mjs --base-url … --batch-key …`(薄封装上面两步) |
+| 可运行入口 | `GET /api/roster/import/duplicate-candidates` 取得请求，按当前契约预检后提交到 `POST /api/roster/import/commit` |
 | 幂等 | 幂等键 = `duplicate_merge:<源批次键>#sha256:<归并内容>` ⇒ 同证据重放不增行;补证据 ⇒ 新键新批 |
 
 **明确不做**:不给 `enterprise` 加「并入哪一行」的列(归并轨迹仍在 `import_batch.item_results`)。
