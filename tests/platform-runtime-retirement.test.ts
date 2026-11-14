@@ -11,7 +11,7 @@ import { createEnterpriseReadExecutor } from '../server/utils/enterprise-read'
 import { createImportExecutionWorker } from '../server/utils/import-execution-worker-location'
 import { createHash } from 'node:crypto'
 import { getRosterEnterpriseDetail } from '../lib/roster/enterprise-roster'
-import { enterprise } from '../db/schema'
+import { enterprise, record, recordEvent } from '../db/schema'
 import { writeNewCollectionTarget } from '../lib/platform/collection-target-command'
 
 const fixture = process.env.FINAL_PLATFORM_RETIREMENT_FIXTURE
@@ -180,6 +180,26 @@ it('serves ordinary and current reads and import preflight through the real sour
   expect(f.db.pragma('foreign_key_check')).toEqual([])
   expect(oldTables(f.db)).toEqual([])
 }, 30000)
+
+it('refreshes current qualification after committed fact changes through the same real worker', async () => {
+  const path = join(root, 'qualification-freshness.sqlite')
+  const owner = initializeDb({ dbPath: path, create: true })
+  cleanup.push(() => owner.$client.close())
+  const subject = owner.insert(enterprise).values({ name:'资格刷新企业', nameNorm:'资格刷新企业' }).returning().get()
+  const title = owner.insert(record).values({ enterpriseId:subject.id,titleCode:'little_giant',source:'jxj' }).returning().get()
+  const executor = createEnterpriseReadExecutor()
+  cleanup.push(() => executor.close())
+  const read = async () => {
+    const response = await executor.currentQualifiedJson(path, { titleCode:'little_giant',q:'资格刷新企业',pageSize:5 })
+    expect(response.found).toBe(true)
+    return JSON.parse(response.body.toString())
+  }
+  expect(await read()).toMatchObject({total:0,rows:[]})
+  const event = owner.insert(recordEvent).values({recordId:title.id,eventType:'award',year:new Date().getFullYear()}).returning().get()
+  expect(await read()).toMatchObject({total:1,rows:[{enterpriseId:subject.id}]})
+  owner.$client.prepare('UPDATE record_event SET year=1999 WHERE id=?').run(event.id)
+  expect(await read()).toMatchObject({total:0,rows:[]})
+})
 
 it('creates an empty native target and serves a first import without historical migration rows', async () => {
   const path = join(root, 'native.sqlite')
