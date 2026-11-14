@@ -23,6 +23,10 @@ import type { LegacyPlatformProvenanceInput } from '../lib/platform/legacy-prove
 import { ensurePlatformObservation } from '../server/utils/platform-business-record'
 import { getRecordComparison, listRecordComparisonSources, previewRecordCorrespondenceImpact } from '../server/utils/record-comparison'
 import { commitRecordCorrespondences, preflightRecordCorrespondences, type CorrespondenceRequest } from '../server/utils/record-correspondence'
+import { attachPlatformEvidence } from '../lib/comparison-platform'
+import { readComparisonSummary } from '../lib/comparison-summary'
+import { getCuratedComparison } from '../lib/curation'
+import { listRosterDifferences } from '../lib/roster/difference-list'
 
 vi.mock('@nuxtjs/mcp-toolkit/server', () => ({ defineMcpTool: (tool: unknown) => tool }))
 vi.mock('../db', async importOriginal => ({ ...await importOriginal<typeof import('../db')>(), useDb: () => db }))
@@ -134,6 +138,32 @@ beforeEach(() => {
 })
 afterEach(() => { sqlite?.close() })
 afterAll(() => { fixture?.old.close() })
+it.runIf(phase === 71612)('reads difference full and scalar summary with the mixed tables unavailable', () => {
+  const old = drizzle(fixture.old, { schema })
+  const comparison = getCuratedComparison(old, join(fixture.root, 'no-curation.json'))
+  const reconcile = { entries: new Map(), generatedAt: null, source: null }
+  const filter = { showCurated: true }
+  const expectedFull = attachPlatformEvidence(comparison.rows, old)
+  const expectedSummary = readComparisonSummary(old, comparison, reconcile, filter, 1, 50)
+  const expectedDifferences = listRosterDifferences(db, { pageSize: 50 })
+  const coordinates = (result: ReturnType<typeof listRosterDifferences>) => result.rows.map(row =>
+    [row.enterpriseId, row.titleCode, row.direction, row.explanationId])
+  expect(coordinates(expectedDifferences)).toEqual(coordinates(listRosterDifferences(old, { pageSize: 50 })))
+  sqlite.exec('ALTER TABLE platform_relation RENAME TO retired_relation_748')
+  sqlite.exec('ALTER TABLE platform_query RENAME TO retired_query_748')
+  trace.length = 0
+  const full = attachPlatformEvidence(comparison.rows, db)
+  expect(full.map(row => row.platform)).toEqual(expectedFull.map(row => row.platform))
+  expect(full.flatMap(row => row.platform.queries).some(query => query.relations.length > 0)).toBe(true)
+  expect(trace.some(q => /\b(?:from|join)\s+"?platform_(?:query|relation)"?(?:\s|$)/i.test(q))).toBe(false)
+  trace.length = 0
+  const summary = readComparisonSummary(db, comparison, reconcile, filter, 1, 50)
+  expect(summary.rows.map(row => row.platform)).toEqual(expectedSummary.rows.map(row => row.platform))
+  expect(summary.rows.some(row => row.platform.sourceRelationCount > 0)).toBe(true)
+  expect(trace.some(q => /platform_archive_value|retired_relation_748|retired_query_748/.test(q))).toBe(false)
+  const actualDifferences = listRosterDifferences(db, { pageSize: 50 })
+  expect(actualDifferences).toEqual(expectedDifferences)
+})
 it('preserves complete comparison classifications observations catalog and preview through offline 71611', () => {
   const old = drizzle(fixture.old, { schema })
   const expected = getRecordComparison(old, input)

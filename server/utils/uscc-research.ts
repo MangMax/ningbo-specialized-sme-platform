@@ -63,6 +63,7 @@ import type { DuplicateMergeEvidence } from '../../lib/roster/duplicate-merge'
 import { TITLE_ORDER } from '../../lib/labels'
 import { MAX_PAGE_SIZE } from '../../lib/query'
 import { findUsccKeyedRelationEvidence } from './roster-duplicate-merge'
+import { currentEnterpriseIdentity } from '../../lib/roster/enterprise-identity'
 import { readUsccTargets, usccResearchEvidence } from './uscc-research-read'
 
 type Db = BetterSQLite3Database<typeof schema>
@@ -270,7 +271,7 @@ interface DictionaryEntry {
  */
 function buildDictionary(db: Db): DictionaryEntry[] {
   const entries = new Map<number, DictionaryEntry>()
-  for (const enterprise of db.select({ id: schema.enterprise.id, name: schema.enterprise.name, nameNorm: schema.enterprise.nameNorm, usccNorm: schema.enterprise.usccNorm, district: schema.enterprise.district }).from(schema.enterprise).all()) {
+  for (const enterprise of db.select({ id: schema.enterprise.id, name: schema.enterprise.name, nameNorm: schema.enterprise.nameNorm, usccNorm: schema.enterprise.usccNorm, district: schema.enterprise.district }).from(schema.enterprise).where(currentEnterpriseIdentity(db)).all()) {
     const uscc = normalizeUscc(enterprise.usccNorm)
     if (!uscc) continue
     entries.set(enterprise.id, {

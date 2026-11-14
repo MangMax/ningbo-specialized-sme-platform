@@ -9,6 +9,8 @@ import { TITLE_ORDER } from '../labels'
 import { MAX_PAGE_SIZE } from '../query'
 import type { RosterDifferenceFilter, RosterDifferencesResult } from './enterprise-roster'
 import { readQueryAssessments } from './query-assessment'
+import { queryHistoryTarget } from '../platform/query-history-target'
+import { targetCandidateTables } from '../../server/utils/candidate-target-sources'
 
 type Db = BetterSQLite3Database<typeof s>
 const keyOf = (r: { enterpriseId: number; titleCode: string; direction: string }) => JSON.stringify([r.enterpriseId, r.titleCode, r.direction])
@@ -20,6 +22,7 @@ const rank = (title: string) => { const i = TITLE_ORDER.indexOf(title); return i
  */
 export function listRosterDifferences(db: Db, filter: RosterDifferenceFilter = {}): RosterDifferencesResult {
   return db.transaction(() => {
+    const { q, r: relation } = queryHistoryTarget(db) ? targetCandidateTables(db) : { q: s.platformQuery, r: s.platformRelation }
     const d = s.differenceReason
     const heads = db.select({ id: d.id, enterpriseId: d.enterpriseId, titleCode: d.titleCode, direction: d.direction, status: d.status, reasonCode: d.reasonCode }).from(d)
       .where(sql`not exists (select 1 from difference_reason n where n.enterprise_id=${d.enterpriseId} and n.title_code=${d.titleCode} and n.direction=${d.direction} and (n.recorded_at>${d.recordedAt} or (n.recorded_at=${d.recordedAt} and n.id>${d.id})))`).all()
@@ -60,9 +63,9 @@ export function listRosterDifferences(db: Db, filter: RosterDifferenceFilter = {
       (select district from record r where r.enterprise_id=e.id and r.district is not null and r.district!='' order by r.id limit 1)) district
       from enterprise e where e.id in (${sql.join(enterpriseIds.map(id => sql`${id}`), sql`,`)})`).map(r => [r.id, r.district]))
     const queryIds = [...new Set([...explanations.values()].flatMap(r => r.evidenceQueryId == null ? [] : [r.evidenceQueryId]))]
-    const queries = new Map(db.select({ id: s.platformQuery.id, queriedAt: s.platformQuery.queriedAt, interface: s.platformQuery.interface, status: s.platformQuery.status, failureReason: s.platformQuery.failureReason }).from(s.platformQuery).where(inArray(s.platformQuery.id, queryIds)).all().map(q => [q.id, q]))
+    const queries = new Map(db.select({ id: q.id, queriedAt: q.queriedAt, interface: q.interface, status: q.status, failureReason: q.failureReason }).from(q).where(inArray(sql<number>`${q.id}`, queryIds)).all().map(q => [q.id, q]))
     const relations = new Map<number, number[]>()
-    for (const r of db.select({ id: s.platformRelation.id, queryId: s.platformRelation.queryId }).from(s.platformRelation).where(inArray(s.platformRelation.queryId, queryIds)).all()) {
+    for (const r of db.select({ id: relation.id, queryId: relation.queryId }).from(relation).where(inArray(sql<number>`${relation.queryId}`, queryIds)).all()) {
       const ids = relations.get(r.queryId) ?? []; ids.push(r.id); relations.set(r.queryId, ids)
     }
     const assessments = readQueryAssessments(db, selected)

@@ -40,6 +40,7 @@ import { getComparison, type ComparisonDirection } from '../comparison'
 import { DIFFERENCE_STATUS_ORDER, SOURCE_ORDER, TITLE_ORDER } from '../labels'
 import { MAX_PAGE_SIZE } from '../query'
 import { isPageCapable } from './evidence-page'
+import { canonicalEnterpriseId, currentEnterpriseIdentity } from './enterprise-identity'
 import type { RosterEnterpriseSort } from './ledger-contract'
 import {
   judgeFirstRecognition,
@@ -98,7 +99,7 @@ function readSnapshot(db: Db): Snapshot {
     else eventsByRecord.set(event.recordId, [event])
   }
   return {
-    enterprises: db.select().from(schema.enterprise).all(),
+    enterprises: db.select().from(schema.enterprise).where(currentEnterpriseIdentity(db)).all(),
     records,
     events,
     // Legacy rows may contain guessed Word/Excel page numbers from before the API guard existed.
@@ -127,7 +128,7 @@ function readDifferenceSnapshot(db: Db, ids?: number[]): Snapshot {
   }).from(d).where(and(ids == null ? undefined : inArray(d.enterpriseId, ids), sql`not exists (select 1 from difference_reason newer where newer.enterprise_id=${d.enterpriseId} and newer.title_code=${d.titleCode} and newer.direction=${d.direction} and (newer.recorded_at>${d.recordedAt} or (newer.recorded_at=${d.recordedAt} and newer.id>${d.id})))`)).all()
   const queryIds = [...new Set(differences.flatMap(d => d.evidenceQueryId == null ? [] : [d.evidenceQueryId]))]
   return {
-    enterprises: db.select().from(schema.enterprise).where(ids == null ? undefined : inArray(schema.enterprise.id, ids)).all(),
+    enterprises: db.select().from(schema.enterprise).where(and(currentEnterpriseIdentity(db), ids == null ? undefined : inArray(schema.enterprise.id, ids))).all(),
     records: db.select().from(schema.record).where(ids == null ? undefined : inArray(schema.record.enterpriseId, ids)).all(),
     aliases: ids == null ? db.select().from(schema.enterpriseAlias).all() : [], differences,
     queries: ids == null ? [] : db.select({ ...getTableColumns(schema.platformQuery), rawResponse: sql<null>`null`, collectionEvidence: sql<null>`null` }).from(schema.platformQuery).where(inArray(schema.platformQuery.id, queryIds)).all(),
@@ -984,7 +985,10 @@ function differenceUniverse(db: Db, snap: Snapshot, derived: Array<{ enterpriseI
 }
 
 export function getRosterEnterpriseDetail(db: Db, id: number, asOf = Date.now()): RosterEnterpriseDetail | null {
-  return db.transaction(() => enterpriseDetail(db, id, asOf))
+  return db.transaction(() => {
+    const canonicalId = canonicalEnterpriseId(db, id)
+    return canonicalId === null ? null : enterpriseDetail(db, canonicalId, asOf)
+  })
 }
 
 function enterpriseDetail(db: Db, id: number, asOf: number): RosterEnterpriseDetail | null {

@@ -36,7 +36,9 @@ import { createServer } from 'node:http'
 import * as h3 from 'h3'
 import { platformResultToImport } from '../lib/platform/recognized-evidence'
 import type { PlatformLiveQueryResult } from '../lib/platform/live-query'
-import { listTargetDeclarations, readTargetDeclarationFacts } from '../server/utils/platform-declarations-target'
+import { getTargetDeclaration, listTargetDeclarations, readTargetDeclarationFacts, readTargetDeclarationOptions } from '../server/utils/platform-declarations-target'
+import { getTargetBusinessProcess } from '../server/utils/platform-business-processes-target'
+import { getTargetRecognizedRecord } from '../server/utils/platform-recognized-target'
 
 vi.mock('@db', () => ({ useDb: () => db }))
 const root = mkdtempSync(join(process.env.CANDIDATE_SCOPE_EVIDENCE_DIR ?? tmpdir(), 'selected758-'))
@@ -128,7 +130,7 @@ it('selects enterprise history from structured owners before archives with uncha
   expect(actual.relations.map(row => row.id)).toEqual([1, 3])
   noLegacy()
 })
-it('returns nonempty application enterprise detail on complete71613 while keeping public declaration admission closed', () => {
+it('returns public application reads and three-source details with observation correspondence refs on complete71613', () => {
   reserveLegacyIds(db, { query: 8000, relation: 9000 })
   const rawFields = { id: 'detail-apply-758', rdjb: '2', qymc: 'Original Apply Alpha', tyshxydm: 'U1',
     sblx: '申请', year: '2025', sqsj: '2025-03-01', cszt: 'pending' }
@@ -147,12 +149,51 @@ it('returns nonempty application enterprise detail on complete71613 while keepin
     projectionRuleVersion: 'platform-apply-v1', declareKind: 'apply', year: 2025, appliedAt: '2025-03-01',
     status: 'pending', nameRaw: 'Original Apply Alpha', usccRaw: 'U1',
     modeledFields: ['declareKind', 'year', 'appliedAt', 'status', 'nameRaw', 'usccRaw'] } })
-  expect(() => listTargetDeclarations({}, db)).toThrow(/Declaration reader requires 71608/)
-  expect(() => readTargetDeclarationFacts(db, [9001])).toThrow(/Declaration reader requires 71608/)
+  const application = listTargetDeclarations({ platformKey: rawFields.id }, db).rows[0]
+  if (application?.kind !== 'record') throw new Error('Expected application record')
+  expect(application).toMatchObject({ record: { platformKey: rawFields.id }, observationCount: 1 })
+  expect(readTargetDeclarationOptions('records', db).statuses).toContain('pending')
+  expect(getTargetDeclaration(db, application.record.id).observations).toMatchObject([{ relationId: 9001, queryId: 8001 }])
+  expect(readTargetDeclarationFacts(db, [9001]).get(9001)).toMatchObject({ interface: 'apply_list', status: 'pending', year: 2025 })
+  expect(readTargetDeclarationFacts(db, [9001], { scope: 'selected' })).toEqual(readTargetDeclarationFacts(db, [9001]))
   expect(() => assertExpandRuntime(t)).toThrow()
   expect(t.serialize()).toEqual(before)
   noLegacy()
+  const detailUscc = '91330200712345678C'
+  db.update(schema.enterprise).set({ usccNorm: detailUscc }).where(eq(schema.enterprise.id, 1)).run()
+  for (const [index, source] of ['business_list', 'recognized_list'].entries()) {
+    const rawFields = { id: `detail-${source}-758`, rdjb: '2', qymc: 'Original Alpha', tyshxydm: detailUscc,
+      sblx: '申请', year: '2025', sqsj: '2025-03-01', cszt: 'pending', rddqrq: '2028-12-31', whpcyear: '2025', whpc: '2025-1' }
+    const evidence: PlatformLiveQueryResult = { source: source === 'business_list' ? 'businessList' : 'queryBusList',
+      status: 'success', effectiveConditions: { uscc: detailUscc, combination: 'and' }, titleScope: { mode: 'selected', rdjb: ['2'] },
+      queriedAt: '2026-11-13T09:00:00Z', completedAt: '2026-11-13T09:01:00Z', rows: [rawFields],
+      ...(source === 'business_list' ? { dataRows: [rawFields] } : {}),
+      pages: [{ source: source === 'business_list' ? 'businessList' : 'queryBusList', rdjb: '2', page: 1,
+        maxPage: 1, status: 'success', fetchedCount: 1, declaredTotal: 1, error: null }],
+      fetchedCount: 1, declaredTotal: 1, completeness: 'complete', fullRange: true, unfinished: [], error: null,
+      limits: { maxRequests: 100, maxRows: 5000, maxDurationMs: 60000, pageSize: 50 } }
+    const written = writeNewCollectionTarget(db, { queryText: JSON.stringify(platformResultToImport(evidence)),
+      evidenceText: JSON.stringify(evidence), createdAt: 'c', assignments: [{ enterpriseId: 1, nameRaw: rawFields.qymc, usccRaw: detailUscc,
+        matchBasis: 'uscc', verificationStatus: 'confirmed', origin: 'command', actor: { type: 'agent', id: '758' }, basis: 'original' }] })
+    const observation = written.observations[0]!
+    if (observation.recordId === null) throw new Error('Expected source record')
+    expect(observation.observationId).not.toBe(observation.relationAlias)
+    db.insert(correspondenceTable(db)).values({ id: 75800 + index, enterpriseId: 1, titleCode: 'specialized_sme',
+      relationId: observation.observationId, edgeKey: `detail-${source}-758`, type: source === 'business_list' ? 'event_process' : 'event_recognized',
+      role: 'candidate', status: 'rejected', revision: 1, targetIdentity: {}, provenance: {}, sourceFingerprint: 'original',
+      ruleId: 'r', ruleVersion: 'v', createdAt: 'c' }).run()
+    const beforeDetail = t.serialize()
+    const detail = source === 'business_list' ? getTargetBusinessProcess(db, observation.recordId) : getTargetRecognizedRecord(db, observation.recordId)
+    expect(detail.observations).toMatchObject([{ relationId: observation.relationAlias, queryId: written.queryAlias,
+      correspondenceRefs: [{ id: 75800 + index, status: 'rejected', revision: 1 }] }])
+    expect(t.serialize()).toEqual(beforeDetail)
+    noLegacy()
+  }
   t.exec("UPDATE platform_migration_run SET state='running' WHERE transform_version='collection-legacy-provenance-v1'")
+  expect(() => listTargetDeclarations({}, db)).toThrow(/migration incomplete/)
+  expect(() => readTargetDeclarationOptions('records', db)).toThrow(/migration incomplete/)
+  expect(() => getTargetDeclaration(db, application.record.id)).toThrow(/migration incomplete/)
+  expect(() => readTargetDeclarationFacts(db, [9001])).toThrow(/migration incomplete/)
   expect(() => readTargetDeclarationFacts(db, [9001], { scope: 'selected' })).toThrow(/migration incomplete/)
   expect(() => getRosterEnterpriseDetail(db, 1, Date.UTC(2026, 10, 13))).toThrow(/migration incomplete/)
 })

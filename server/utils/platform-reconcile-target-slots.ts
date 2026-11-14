@@ -11,6 +11,7 @@ import { RECONCILE_SLOT_RULE, slotLegacyRow, slotPayloadRow } from '../../lib/pl
 import { platformNormalizationConflict } from '../../lib/platform/normalization'
 import { targetReplaySource } from '../../lib/platform/collection-target-replay'
 import { snapshotStoredReplayInput } from '../../lib/platform/reconcile-replay-input'
+import type { ReconcileQueryEvidence } from '../../lib/platform/reconcile'
 import type { StoredSlot, ReconcileRunOptions } from './platform-reconcile'
 
 type Db = ReconcileRunOptions['db']
@@ -105,12 +106,16 @@ export function createReconcileTargetSlotReader(connection: Database.Database): 
             evidence: {
               interface: c.interface, rdjb: c.rdjb, queriedAt: c.queriedAt, status: c.status,
               completeness: 'complete', failureReason: c.failureReason,
-              relations: facts.map(({ observation, original, facts }, index) => ({
-                interface: c.interface, rdjb: c.rdjb, sequenceNo: observation.sequenceNo,
-                relationKey: observation.sourceRelationKey, nameRaw: original.nameRaw, usccRaw: original.usccRaw,
-                ...facts, sourceKind: c.interface === 'business_list' ? 'platform_business' : 'platform_apply',
-                rawFields: payloadRows[index]!,
-              })),
+              relations: facts.map(({ observation, original, facts }, index): ReconcileQueryEvidence['relations'][number] => {
+                const row = {
+                  rdjb: c.rdjb, sequenceNo: observation.sequenceNo,
+                  relationKey: observation.sourceRelationKey, nameRaw: original.nameRaw, usccRaw: original.usccRaw,
+                  ...facts, rawFields: payloadRows[index]!,
+                }
+                if (c.interface === 'business_list') return { ...row, interface: c.interface, sourceKind: 'platform_business' }
+                if (row.status !== null && typeof row.status !== 'string') throw new Error('Invalid apply stored status cell')
+                return { ...row, interface: c.interface, status: row.status, sourceKind: 'platform_apply' }
+              }),
             },
           })
         }

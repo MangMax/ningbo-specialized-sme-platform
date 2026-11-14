@@ -1,7 +1,7 @@
 import type { PlatformStoredRelation } from '../platform/read'
 import { differencePublicColumns } from '../platform/difference-reference-target'
 /** Enterprise-only reads. No raw platform archives enter a list aggregation. */
-import { eq, getTableColumns, inArray, sql, asc, or } from 'drizzle-orm'
+import { eq, getTableColumns, inArray, sql, asc, or, and } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as s from '../../db/schema'
 import type { Database } from 'better-sqlite3'
@@ -9,6 +9,7 @@ import { normalizeName, normalizeUscc } from '../domain'
 import { isPageCapable } from './evidence-page'
 import { queryHistoryTarget } from '../platform/query-history-target'
 import { readEnterpriseTargetPlatformHistory } from './enterprise-platform-history'
+import { canonicalEnterpriseId, currentEnterpriseIdentity } from './enterprise-identity'
 
 type Db = BetterSQLite3Database<typeof s>
 // Connection-local deterministic normalizers preserve the shared JS contract,
@@ -66,7 +67,8 @@ export function readEnterpriseHistories(db: Db, ids?: number[]) {
 }
 
 export function readEnterpriseSnapshot(db: Db, id?: number) {
-  const enterprises = db.select().from(s.enterprise).where(id == null ? undefined : eq(s.enterprise.id, id)).orderBy(asc(s.enterprise.id)).all()
+  if (id !== undefined) id = canonicalEnterpriseId(db, id) ?? id
+  const enterprises = db.select().from(s.enterprise).where(and(currentEnterpriseIdentity(db), id == null ? undefined : eq(s.enterprise.id, id))).orderBy(asc(s.enterprise.id)).all()
   const history = readEnterpriseHistories(db, id == null ? [] : [id])
   const differences = id == null ? db.select(differencePublicColumns(db)).from(s.differenceReason).all() : history.differences
   // Only identity and membership are used; export raw_fields are never needed here.
@@ -86,8 +88,8 @@ export function readEnterpriseSnapshot(db: Db, id?: number) {
     // Preserve normalized USCC-first/name-fallback and last-identity-wins semantics,
     // including duplicate names and historical noncanonical raw identity values.
     const owner = sql`coalesce(
-      (select e.id from enterprise e where ${uscc(sql`e.uscc_norm`)} = ${uscc(sql`${s.platformExportRow.usccRaw}`)} order by e.id desc limit 1),
-      (select e.id from enterprise e where e.name_norm = ${name(sql`${s.platformExportRow.nameRaw}`)} and ${s.platformExportRow.nameRaw} is not null and ${s.platformExportRow.nameRaw} != '' order by e.id desc limit 1))`
+      (select e.id from enterprise e where ${currentEnterpriseIdentity(db, sql`e.id`)} and ${uscc(sql`e.uscc_norm`)} = ${uscc(sql`${s.platformExportRow.usccRaw}`)} order by e.id desc limit 1),
+      (select e.id from enterprise e where ${currentEnterpriseIdentity(db, sql`e.id`)} and e.name_norm = ${name(sql`${s.platformExportRow.nameRaw}`)} and ${s.platformExportRow.nameRaw} is not null and ${s.platformExportRow.nameRaw} != '' order by e.id desc limit 1))`
     exportRows = db.select(exportColumns).from(s.platformExportRow).where(sql`(${uscc(sql`${s.platformExportRow.usccRaw}`)} = ${normalizeUscc(enterprises[0]?.usccNorm) || null} or ${name(sql`${s.platformExportRow.nameRaw}`)} = ${enterprises[0]?.nameNorm ?? null}) and ${owner} = ${id}`).all()
     // Only latest batch per title is required to decide membership, plus the batches
     // referenced by this enterprise's rows. No unrelated batch metadata is materialized.

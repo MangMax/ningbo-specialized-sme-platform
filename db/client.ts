@@ -6,7 +6,7 @@ import { createDrizzleLogger } from '../lib/logging/drizzle'
 import { migrate } from 'drizzle-orm/better-sqlite3/migrator'
 import { readMigrationFiles } from 'drizzle-orm/migrator'
 import * as schema from './schema'
-import { assertExpandRuntime } from './schema-phase'
+import { assertApplicationRuntime, PLATFORM_RUNTIME_VERSION } from './schema-phase'
 import { TITLE_SEED } from './titles'
 import { readOwnerIdentity, sameReadOwner, type ReadOwnerIdentity } from '../lib/roster/offmain-read-protocol'
 
@@ -74,7 +74,8 @@ export function useRuntimeDb(opts: DbOptions = {}) {
 }
 
 function validateDatabase(sqlite: Database.Database, opts: DbOptions) {
-  assertExpandRuntime(sqlite)
+  assertApplicationRuntime(sqlite)
+  if (sqlite.pragma('user_version', { simple: true }) === PLATFORM_RUNTIME_VERSION) return
   const expected = readMigrationFiles({ migrationsFolder: resolveMigrations(opts) }).at(-1)
   if (!expected) throw new Error('Database migrations are empty')
   const actual = sqlite.prepare('SELECT hash, created_at FROM __drizzle_migrations ORDER BY created_at DESC LIMIT 1').get() as { hash: string; created_at: number } | undefined
@@ -93,19 +94,22 @@ export function initializeDb(opts: DbOptions & { create?: boolean } = {}) {
   if (readOnly) return useRuntimeDb(opts)
   const migrationsFolder = resolveMigrations(opts)
   const beforeInitialization = readOwnerIdentity(path)
-  // Read every migration before opening or creating a database.
-  readMigrationFiles({ migrationsFolder })
+  // Preserve failure-before-creation for a missing migration directory.
+  if (!beforeInitialization) readMigrationFiles({ migrationsFolder })
   if (opts.create) mkdirSync(dirname(path), { recursive: true })
   const sqlite = new Database(path, { fileMustExist: !opts.create })
   try {
-    assertExpandRuntime(sqlite)
+    assertApplicationRuntime(sqlite)
     // An existing unrelated/empty file is not an upgrade target.
     if (!opts.create) sqlite.prepare('SELECT hash, created_at FROM __drizzle_migrations LIMIT 1').all()
+    if (sqlite.pragma('user_version', { simple: true }) === 0) readMigrationFiles({ migrationsFolder })
     sqlite.pragma('journal_mode = WAL')
     sqlite.pragma('foreign_keys = ON')
     const db = drizzle(sqlite, { schema, logger: createDrizzleLogger({ connection: 'primary' }) })
-    migrate(db, { migrationsFolder })
-    for (const t of TITLE_SEED) db.insert(schema.title).values(t).onConflictDoNothing().run()
+    if (sqlite.pragma('user_version', { simple: true }) === 0) {
+      migrate(db, { migrationsFolder })
+      for (const t of TITLE_SEED) db.insert(schema.title).values(t).onConflictDoNothing().run()
+    }
     validateDatabase(sqlite, opts)
   } finally { sqlite.close() }
   const runtime = useRuntimeDb(opts)

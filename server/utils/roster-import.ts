@@ -72,6 +72,8 @@ import { recordImportReceipt } from './import-receipt-ledger'
 import { refreshDerivedFileParts } from './file-parts'
 import { legacyPlatformProvenanceItemsSchema } from '../../lib/platform/legacy-provenance'
 import { inspectLegacyPlatformProvenance, writeLegacyPlatformProvenance, LegacyProvenanceError } from './platform-legacy-provenance'
+import { canonicalEnterpriseId, currentEnterpriseIdentity } from '../../lib/roster/enterprise-identity'
+import { mergeTargetEnterpriseIdentity } from './enterprise-merge-target'
 
 type Db = BetterSQLite3Database<typeof schema>
 /** Internal persistence only; the public summary keeps its existing counts/projection shape. */
@@ -274,19 +276,22 @@ const enterpriseColumns = {
  * 单批就是分钟级 —— 实测对比见契约 §3.1c。
  */
 export function findEnterpriseByUscc(db: Executor, usccNorm: string): ResolvedEnterprise | null {
-  return db
+  const row = db
     .select(enterpriseColumns)
     .from(schema.enterprise)
     .where(eq(schema.enterprise.usccNorm, usccNorm))
-    .get() ?? null
+    .get()
+  return row ? findEnterpriseById(db, row.id) : null
 }
 
 /** 按行 id 定位企业（归并/候选在写入阶段解析真 id 时用）—— RL-18：命中主键。 */
 export function findEnterpriseById(db: Executor, id: number): ResolvedEnterprise | null {
+  const canonicalId = canonicalEnterpriseId(db, id)
+  if (canonicalId === null) return null
   return db
     .select(enterpriseColumns)
     .from(schema.enterprise)
-    .where(eq(schema.enterprise.id, id))
+    .where(eq(schema.enterprise.id, canonicalId))
     .get() ?? null
 }
 
@@ -308,7 +313,7 @@ function findEnterpriseByNorm(db: Executor, nameNorm: string): ResolvedEnterpris
   return db
     .select(enterpriseColumns)
     .from(schema.enterprise)
-    .where(eq(schema.enterprise.nameNorm, nameNorm))
+    .where(and(eq(schema.enterprise.nameNorm, nameNorm), currentEnterpriseIdentity(db)))
     .get() ?? null
 }
 
@@ -323,7 +328,7 @@ function findEnterprisesByNorm(db: Executor, nameNorm: string): ResolvedEnterpri
   return db
     .select(enterpriseColumns)
     .from(schema.enterprise)
-    .where(eq(schema.enterprise.nameNorm, nameNorm))
+    .where(and(eq(schema.enterprise.nameNorm, nameNorm), currentEnterpriseIdentity(db)))
     .all()
 }
 
@@ -4230,13 +4235,20 @@ function executeMerge(tx: Executor, plan: MergePlan): RosterImportItemResult {
     }
   }
 
-  const fromRelations = tx
-    .select({ id: schema.platformRelation.id })
-    .from(schema.platformRelation)
-    .where(eq(schema.platformRelation.enterpriseId, from.id))
-    .all()
-  for (const relation of fromRelations) {
-    tx.update(schema.platformRelation).set({ enterpriseId: into.id }).where(eq(schema.platformRelation.id, relation.id)).run()
+  const targetIdentity = collectionImportTarget(tx)
+  let relationsMoved: number
+  if (targetIdentity) {
+    relationsMoved = mergeTargetEnterpriseIdentity(tx, {
+      fromEnterpriseId: from.id, intoEnterpriseId: into.id,
+      basis: optionalString(merge.note) ?? `merge:${from.id}->${into.id}`,
+    })
+  } else {
+    const fromRelations = tx.select({ id: schema.platformRelation.id }).from(schema.platformRelation)
+      .where(eq(schema.platformRelation.enterpriseId, from.id)).all()
+    for (const relation of fromRelations) {
+      tx.update(schema.platformRelation).set({ enterpriseId: into.id }).where(eq(schema.platformRelation.id, relation.id)).run()
+    }
+    relationsMoved = fromRelations.length
   }
 
   // 4. 记录：同 (称号, 来源) 冲突时把事件折到规范行那条记录上。
@@ -4275,7 +4287,7 @@ function executeMerge(tx: Executor, plan: MergePlan): RosterImportItemResult {
   tx.update(schema.recordCorrespondence).set({ enterpriseId: into.id }).where(eq(schema.recordCorrespondence.enterpriseId, from.id)).run()
   captureIdentityRevision113(tx, { enterpriseId: into.id, sourceKey: `merge:${from.id}:${into.id}`, sourceVersion: '1', before: { identity: identityBefore, from: from.id }, after: { identity: identityMaterial113(tx, into.id), merged: from.id }, fromEnterpriseId: from.id })
   // 5. 删除被并企业行（子行已全部迁走）。
-  tx.delete(schema.enterprise).where(eq(schema.enterprise.id, from.id)).run()
+  if (!targetIdentity) tx.delete(schema.enterprise).where(eq(schema.enterprise.id, from.id)).run()
 
   const lineage: MergeLineage = {
     fromEnterpriseId: from.id,
@@ -4289,7 +4301,7 @@ function executeMerge(tx: Executor, plan: MergePlan): RosterImportItemResult {
     childRowsMoved: {
       aliases: aliasesMoved,
       differences: differencesMoved,
-      relations: fromRelations.length,
+      relations: relationsMoved,
       records: recordsMoved.length + recordsFolded.length,
     },
     recordsMoved,

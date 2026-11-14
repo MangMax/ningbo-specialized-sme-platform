@@ -54,6 +54,18 @@ export const enterprise = sqliteTable(
   ],
 )
 
+/** A merged enterprise remains the immutable identity referenced by historical assignments. */
+export const enterpriseMerge = sqliteTable('enterprise_merge', {
+  fromEnterpriseId: integer('from_enterprise_id').primaryKey().references(() => enterprise.id, { onDelete: 'restrict' }),
+  intoEnterpriseId: integer('into_enterprise_id').notNull().references(() => enterprise.id, { onDelete: 'restrict' }),
+  basis: text('basis').notNull(),
+  recordedAt: text('recorded_at').notNull(),
+}, t => [
+  index('enterprise_merge_into_idx').on(t.intoEnterpriseId),
+  check('enterprise_merge_distinct_ck', sql`${t.fromEnterpriseId} <> ${t.intoEnterpriseId}`),
+  ...[t.fromEnterpriseId, t.intoEnterpriseId].map(c => check(`enterprise_merge_${c.name}_safe`, sql`typeof(${c})='integer' AND ${c} BETWEEN 1 AND 9007199254740991`)),
+])
+
 /** 来源文件。公布文件或工信部导出。 */
 export const sourceDocument = sqliteTable('source_document', {
   id: integer('id').primaryKey({ autoIncrement: true }),

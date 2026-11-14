@@ -15,6 +15,7 @@ import { planPlatformObservation, PLATFORM_PROJECTION_RULE, PLATFORM_RAW_HASH_RU
 import { captureQueryRevision113 } from './evidence-impact-113'
 import type { RosterImportPlatformQuery, RosterImportItemResult } from '../../lib/roster-import-client'
 import type { PlatformProjectionResult } from '../../lib/platform/business-record'
+import { canonicalEnterpriseId } from '../../lib/roster/enterprise-identity'
 
 export function collectionImportTarget(db: Executor) {
   const connection = sqliteConnection(db)
@@ -135,6 +136,11 @@ export function collectionImportPreview(db: Executor, relationId: number) {
   return { ...state, ...(fields ? { recognizedProjection: fields } : {}) }
 }
 export function writeImportedCollection(db: Executor, query: RosterImportPlatformQuery, batchId?: number): RosterImportItemResult {
+  // Resolve command attribution once at the import boundary. Source fields remain
+  // unchanged; later writes addressed to a historical identity use its current owner.
+  query = { ...query, relations: query.relations?.map(row => typeof row.enterpriseId === 'number'
+    ? { ...row, enterpriseId: canonicalEnterpriseId(db, row.enterpriseId) ?? row.enterpriseId }
+    : row) }
   const existed = new Map((query.relations ?? []).map(row => {
     const plan = planPlatformObservation({ interface: query.interface, relationKey: row.relationKey, rawFields: row.rawFields })
     const record = plan.platformKey == null ? undefined : db.select().from(s.platformBusinessRecord).where(and(eq(s.platformBusinessRecord.interface, query.interface), eq(s.platformBusinessRecord.platformKey, plan.platformKey))).get()
@@ -151,7 +157,8 @@ export function writeImportedCollection(db: Executor, query: RosterImportPlatfor
         const row = normalizePlatformRelation(query.interface, raw)
         const explicit = typeof row.enterpriseId === 'number' ? row.enterpriseId : null
         const uscc = normalizeUscc(row.usccRaw)
-        const owner = explicit ?? (uscc ? db.select({ id: s.enterprise.id }).from(s.enterprise).where(eq(s.enterprise.usccNorm, uscc)).get()?.id : null) ?? null
+        const selectedOwner = explicit ?? (uscc ? db.select({ id: s.enterprise.id }).from(s.enterprise).where(eq(s.enterprise.usccNorm, uscc)).get()?.id : null) ?? null
+        const owner = selectedOwner === null ? null : canonicalEnterpriseId(db, selectedOwner) ?? selectedOwner
         const unknown = row.declareKind != null && !s.platformRelation.declareKind.enumValues.includes(row.declareKind as 'apply' | 'review' | 'update')
         return { enterpriseId: owner, matchBasis: row.matchBasis ?? (explicit != null ? 'manual' : owner != null ? 'uscc' : 'none'),
           verificationStatus: row.verificationStatus ?? (owner != null && !unknown ? 'confirmed' : 'pending'),

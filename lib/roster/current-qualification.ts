@@ -1,6 +1,7 @@
 import type { RecognizedWitnessReader } from './recognized-witness-reader'
 import { adjudicateQualificationCycles as adjudicate407Cycles } from './qualification-cycles-407'
 import { readEnterpriseFactEffects } from './enterprise-fact-effects'
+import { canonicalEnterpriseId, hasEnterpriseMergeIdentity } from './enterprise-identity'
 import { formalValiditySchema, type FormalValidity } from './formal-validity'
 import { readPlatformComparisonProcesses } from '../../server/utils/platform-comparison-input'
 import type { ReceiptRuntimeContext } from '../../server/utils/receipt-runtime-context'
@@ -415,6 +416,7 @@ export function createCurrentCandidateReader(db: Database.Database) {
 
 function createCurrentCandidateEvaluationReader(db: Database.Database, receiptRuntime?: ReceiptRuntimeContext, recognizedFactSource?: RecognizedFactSource,witnesses?:RecognizedWitnessReader) {
   const reader=prepareCurrentReader(db)
+  const mergedIdentities = hasEnterpriseMergeIdentity(reader)
   const statements = new Map<string, Database.Statement>()
   const statement = (text: string) => {
     let prepared = statements.get(text)
@@ -440,6 +442,7 @@ function createCurrentCandidateEvaluationReader(db: Database.Database, receiptRu
   let headsQuery: ReturnType<typeof prepareLegacyHeads> | undefined
   const legacyHeads = () => headsQuery ??= prepareLegacyHeads()
   return function readCandidate(enterpriseId: number, title: CurrentTitle, year: number, executionTime = Date.now(), keys?: { queries: IdentityKeyVariants; relations: IdentityKeyVariants }, includeFilterFacts = false, includeReferences = true, assessmentOptions?: QualificationAssessmentReadOptions, includePendingFilterFacts = false, suppliedPlatformRefs?: readonly CurrentPlatformReference[], preparedCorrespondences?: ReturnType<typeof createEnterpriseTitleCorrespondenceRefsReader>, observePublishedForCurrent?: CurrentPublishedNameObservation, observeCycles?: CurrentCycleObservation, detail: { expandAssessment?: boolean; giant?: CurrentRow; qualificationOnly?: boolean; platformEffects?: ReturnType<typeof readDifferencePlatformEffects> } = {}): { row: CurrentRow; group: CurrentGroup; effectiveStatus: import('./current-status').CurrentStatus } {
+  if (mergedIdentities) enterpriseId = canonicalEnterpriseId(reader, enterpriseId) ?? enterpriseId
   const expandAssessment = detail.expandAssessment ?? assessmentOptions != null
   const enterprise = statement('select id,name,name_norm,uscc_norm,district,city from enterprise where id=?').get(enterpriseId) as any
   const events = statement(`select e.id,e.event_type as eventType,e.year,e.decided_year as decidedYear,e.batch_seq as batchSeq,e.review_outcome as reviewOutcome,e.revision,r.name_raw as nameRaw,r.uscc_raw as usccRaw,r.source from record r join record_event e on e.record_id=r.id where r.enterprise_id=? and r.title_code=? order by e.id`).all(enterpriseId,title) as (LifecycleEvent & { batchSeq: number|null; nameRaw: string|null; usccRaw: string|null; source: string; revision: number; formalValidity?: FormalValidity; validityInvalid?: boolean; formalValidityInputHash?: string; recordId?: number })[]

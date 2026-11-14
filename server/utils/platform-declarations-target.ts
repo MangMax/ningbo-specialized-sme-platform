@@ -1,5 +1,5 @@
 import { platformNormalizationConflict } from '../../lib/platform/normalization'
-/** Explicit 71608 apply reader. Public runtime routing remains with R1b. */
+/** Apply reader for stored capture and the completed target catalog. */
 import { and, count, countDistinct, desc, eq, exists, inArray, isNull, max, min, ne, or, sql, type SQL } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/sqlite-core';
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3';
@@ -27,7 +27,7 @@ export type TargetDeclarationOptions = Omit<PlatformFilterOptions, 'titles' | 'd
 };
 // Queries use explicit target table declarations, never relational db.query.
 // Accept the existing connection injection seam without rebuilding its session/logger.
-// The 71608 gate below still owns schema compatibility; this is not a selector.
+// The gate below owns schema compatibility; this is not a selector.
 type Db = BetterSQLite3Database<typeof targetSchema> | BetterSQLite3Database<typeof import('../../db/schema')>;
 const previous = alias(a, 'newer_assignment');
 const vp = alias(p, 'version_projection');
@@ -37,8 +37,8 @@ const isolated = or(ne(o.identityState, 'resolved'), ne(o.contentState, 'verifie
  * PRAGMA is schema infrastructure; no archive or legacy entity is consulted. */
 function gate(db: Db, domain?: SQL, factScope?: 'annual' | 'selected') {
     const phase = db.get<{ user_version: number }>(sql`PRAGMA user_version`)?.user_version;
-    if (phase !== 71608 && !(factScope && (phase === 71611 || phase === 71612 || (factScope === 'selected' && phase === 71613)) && processStoredInstalled(sqliteConnection(db))))
-        fail(409, 'apply_target_phase', 'Declaration reader requires 71608');
+    if (phase !== 71608 && !((phase === 71613 || (factScope && (phase === 71611 || phase === 71612))) && processStoredInstalled(sqliteConnection(db))))
+        fail(409, 'apply_target_phase', 'Declaration reader requires 71608 or completed 71613');
     const missing = db.select({ id: o.id }).from(o).innerJoin(c, eq(c.id, o.collectionId)).leftJoin(p, eq(p.observationId, o.id))
         .where(and(eq(c.interface, 'apply_list'), domain, or(isNull(p.id), ne(p.exactStoredState, 'captured'), ne(p.sqlFactTitleState, 'captured'), isNull(p.exactStoredState), isNull(p.sqlFactTitleState)))).limit(1).get();
     if (missing)

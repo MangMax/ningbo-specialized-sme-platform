@@ -1,5 +1,4 @@
-import { assertExpandRuntime } from '../../db/schema-phase'
-import { assertCurrentWorkerRuntime } from './current-worker-admission'
+import { assertApplicationRuntime } from '../../db/schema-phase'
 import { appLog, initializeWorkerLogging, closeApplicationLogging, type LogContext, type LogInput } from '../logging/index'
 /** Dedicated native SQLite executor. This entry has no Nitro runtime dependency. */
 import { getHeapStatistics } from 'node:v8'
@@ -101,8 +100,7 @@ process.on('message', async (request: EnterpriseReadRequest) => {
     }
     const connectionMs = performance.now() - started
 
-    if (request.operation === 'current-qualified') assertCurrentWorkerRuntime(connection!)
-    else assertExpandRuntime(connection!)
+    assertApplicationRuntime(connection!)
     const db = drizzle(connection!, { schema, logger: createDrizzleLogger({ connection: 'enterprise_read', execution: 'worker', context: request.logContext }) })
     // Each whole reader owns one synchronous transaction across every statement. It
     // lives entirely off-thread, including native cursor drains and JS sorting.

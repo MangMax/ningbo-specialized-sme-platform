@@ -1,5 +1,11 @@
 import { differencePublicColumns } from './platform/difference-reference-target'
 import { readPlatformObservationFacts } from '../server/utils/platform-source-facts'
+import { readTargetDeclarationFacts } from '../server/utils/platform-declarations-target'
+import { readTargetBusinessProcessFacts } from '../server/utils/platform-business-processes-target'
+import { readTargetRecognizedFacts } from '../server/utils/platform-recognized-target'
+import { readCorrespondenceTargetQueries, readCorrespondenceTargetSources } from '../server/utils/record-correspondence-target-sources'
+import { queryHistoryTarget } from './platform/query-history-target'
+import { targetSchema as target } from './platform/target-schema'
 import type { PlatformObservationFact } from './platform/observation-facts'
 import { sourcePositionForSequence } from './platform/recognized-evidence'
 import { normalizePlatformRelation, type PlatformNormalizationConflict } from './platform/normalization'
@@ -29,7 +35,8 @@ import { normalizePlatformRelation, type PlatformNormalizationConflict } from '.
  *
  * 取数一次读完(与 `enterprise-roster.ts` 同一取舍:台账是几千级,拼 join 不如内存组织)。
  */
-import { inArray, or, sql } from 'drizzle-orm'
+import { and, eq, inArray, max, or, sql } from 'drizzle-orm'
+import { alias } from 'drizzle-orm/sqlite-core'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../db/schema'
 import type { ComparisonDirection } from './comparison'
@@ -139,6 +146,35 @@ function normUscc(uscc: string | null | undefined): string | null {
   return normalizeUscc(uscc) || null
 }
 
+/** Scalar membership shared by full evidence and summary; no archives. */
+export function readComparisonTargetMemberships(db: BetterSQLite3Database<typeof schema>, enterpriseIds: number[]) {
+  if (!enterpriseIds.length) return []
+  const c = target.platformCollection, qa = target.platformLegacyQueryAlias
+  const o = target.platformBusinessObservation, a = target.platformObservationAssignment
+  const newer = alias(a, 'comparison_membership_newer')
+  const current = and(eq(a.observationId, o.id), eq(a.revision,
+    db.select({ revision: max(newer.revision) }).from(newer).where(eq(newer.observationId, o.id))))
+  const owned = db.selectDistinct({ enterpriseId: a.enterpriseId, queryId: qa.oldId, collectionId: c.id })
+    .from(a).innerJoin(o, current).innerJoin(c, eq(c.id, o.collectionId))
+    .innerJoin(qa, eq(qa.collectionId, c.id)).where(inArray(a.enterpriseId, enterpriseIds)).all()
+    .flatMap(row => row.enterpriseId === null ? [] : [{ ...row, enterpriseId: row.enterpriseId }])
+  const keys = db.select({ id: schema.enterprise.id, name: schema.enterprise.nameNorm, uscc: schema.enterprise.usccNorm })
+    .from(schema.enterprise).where(inArray(schema.enterprise.id, enterpriseIds)).all()
+  const ownersByKey = new Map<string, number[]>()
+  for (const row of keys) {
+    const uscc = normUscc(row.uscc)
+    for (const key of [`name:${row.name}`, ...(uscc ? [uscc] : [])]) {
+      const owners = ownersByKey.get(key) ?? []
+      owners.push(row.id); ownersByKey.set(key, owners)
+    }
+  }
+  const queried = ownersByKey.size ? db.select({ queryId: qa.oldId, collectionId: c.id, key: c.queryKey }).from(c)
+    .innerJoin(qa, eq(qa.collectionId, c.id)).where(inArray(c.queryKey, [...ownersByKey.keys()])).all() : []
+  const memberships = [...owned, ...queried.flatMap(row => (ownersByKey.get(row.key) ?? [])
+    .map(enterpriseId => ({ enterpriseId, queryId: row.queryId, collectionId: row.collectionId })))]
+  return [...new Map(memberships.map(row => [`${row.enterpriseId}:${row.queryId}`, row])).values()]
+}
+
 export function attachPlatformEvidence<T extends RowKey>(
   rows: T[],
   db: BetterSQLite3Database<typeof schema>,
@@ -200,7 +236,12 @@ function attachPlatformEvidenceSnapshot<T extends RowKey>(
   // 与「查询没成功执行」正是要看得见的四态里的两态(契约 §3.1)。
   // 判定键与 `enterprise-roster.ts` 的 `ownKeys` 逐字一致(先用过 `normUscc`)。
   const allKeys = [...queriedEnterpriseByKey.keys()]
-  const queries = db
+  const targetRead = queryHistoryTarget(db)
+  const memberships = targetRead ? readComparisonTargetMemberships(db, enterpriseIds) : []
+  const queries = targetRead
+    ? [...readCorrespondenceTargetQueries(db, [...new Set(memberships.map(row => row.queryId))], { rawResponse: false }).values()]
+      .map(row => row.query).sort((a, b) => a.id - b.id)
+    : db
     .select()
     .from(schema.platformQuery)
     .where(
@@ -213,7 +254,22 @@ function attachPlatformEvidenceSnapshot<T extends RowKey>(
   // Read original rows for the selected queries, including archives saved before a master existed.
   // Query inclusion above remains scoped to this enterprise set; no identity is inferred here.
   const recognizedQueryIds = queries.filter(query => query.interface === 'recognized_list').map(query => query.id)
-  const relationRows = db.select().from(schema.platformRelation)
+  const o = target.platformBusinessObservation, a = target.platformObservationAssignment
+  const ra = target.platformLegacyRelationAlias, qa = target.platformLegacyQueryAlias
+  const newer = alias(a, 'comparison_evidence_newer')
+  const current = and(eq(a.observationId, o.id), eq(a.revision,
+    db.select({ revision: max(newer.revision) }).from(newer).where(eq(newer.observationId, o.id))))
+  const ownedCollections = db.select({ id: o.collectionId }).from(o).innerJoin(a, current)
+    .where(inArray(a.enterpriseId, enterpriseIds))
+  const targetRelations = targetRead ? db.select({ id: ra.oldId }).from(o)
+    .innerJoin(ra, eq(ra.observationId, o.id)).innerJoin(qa, eq(qa.collectionId, o.collectionId))
+    .innerJoin(a, current).where(or(inArray(o.collectionId, ownedCollections),
+      recognizedQueryIds.length ? inArray(qa.oldId, recognizedQueryIds) : undefined))
+    .orderBy(qa.oldId, o.sequenceNo).all() : []
+  const relationRows = targetRead
+    ? readCorrespondenceTargetSources(db, targetRelations.map(row => row.id)).map(row => row.relation)
+      .sort((a, b) => a.queryId - b.queryId || a.sequenceNo - b.sequenceNo)
+    : db.select().from(schema.platformRelation)
     .where(or(
       sql`${schema.platformRelation.enterpriseId} in ${enterpriseIds} or ${schema.platformRelation.queryId} in (select ${schema.platformRelation.queryId} from ${schema.platformRelation} where ${schema.platformRelation.enterpriseId} in ${enterpriseIds})`,
       recognizedQueryIds.length ? inArray(schema.platformRelation.queryId, recognizedQueryIds) : undefined,
@@ -221,12 +277,17 @@ function attachPlatformEvidenceSnapshot<T extends RowKey>(
     .orderBy(schema.platformRelation.queryId, schema.platformRelation.sequenceNo).all()
 
   // Only this consumer is rolled back; detail/candidate readers keep their own switches.
-  const source = options.source ?? (process.env.ROSTER_COMPARISON_TYPED_READ === 'legacy' ? 'legacy' : 'typed')
+  const source = targetRead ? 'typed' : options.source ?? (process.env.ROSTER_COMPARISON_TYPED_READ === 'legacy' ? 'legacy' : 'typed')
   const facts = new Map<number, PlatformObservationFact>()
   if (source === 'typed') {
     for (const interfaceName of ['apply_list', 'business_list', 'recognized_list'] as const) {
       const queryIds = new Set(queries.filter(q => q.interface === interfaceName).map(q => q.id))
-      for (const [id, fact] of readPlatformObservationFacts(db, interfaceName, relationRows.filter(r => queryIds.has(r.queryId)).map(r => r.id))) facts.set(id, fact)
+      const ids = relationRows.filter(r => queryIds.has(r.queryId)).map(r => r.id)
+      const selected = !targetRead ? readPlatformObservationFacts(db, interfaceName, ids)
+        : interfaceName === 'apply_list' ? readTargetDeclarationFacts(db, ids, { scope: 'selected' })
+        : interfaceName === 'business_list' ? readTargetBusinessProcessFacts(db, ids, { scope: 'selected' })
+        : readTargetRecognizedFacts(db, ids)
+      for (const [id, fact] of selected) facts.set(id, fact)
     }
   }
 
