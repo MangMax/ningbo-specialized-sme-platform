@@ -1,5 +1,0 @@
-$ nuxt typecheck
-[nuxt:icon] ✔ Nuxt Icon loaded local collection project with 2 icons
-ℹ Nuxt Icon client bundle consist of 31 icons with 28.38KB(uncompressed) in size
-components/files/EditSegmentsDialog.vue(9,36): error TS2307: Cannot find module '~~/lib/fetch-error' or its corresponding type declarations.
-[ELIFECYCLE] Command failed with exit code 2.

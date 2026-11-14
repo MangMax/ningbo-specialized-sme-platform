@@ -21,7 +21,7 @@ defineRouteMeta({
       'pending_review（待审核）须显式提交 confirmed_reason + confirmed + follow_review；保留正式历史并跟进审核，区别于 needs_review。' +
       '按 body 的 `idempotencyKey` 幂等提交：同键重复调用返回既有批次摘要，不重复写企业/事件。' +
       '单批事务：要么整批 committed，要么 failed（`error` 说明原因）—— 绝不部分提交。' +
-      '载荷见 `docs/roster-lifecycle-contract.md` §8.3，归并项见 §8.4（血缘落 `item_results`）。' +
+      '载荷见 `lib/roster-import-client.ts`；归并血缘落 `item_results`。' +
       '需要 token：`Authorization: Bearer <NUXT_API_TOKEN>`（或 `X-API-Token`）；未配 token 时本接口整体关闭。',
     security: [{ bearerAuth: [] }],
     requestBody: {
@@ -41,7 +41,7 @@ defineRouteMeta({
               sourceSha256: { type: 'string', nullable: true },
               payload: {
   "type": "object",
-  "description": "统一写入载荷；recognized_list 必填 collectionEvidence。三来源 rawData.version=1 显式选择 typed 原行，relations.rawFields 必须逐行相等；缺省保留 legacy，冲突整批拒绝。见 docs/platform-recognized-evidence.md。",
+  "description": "统一写入载荷；recognized_list 必填 collectionEvidence。三来源 rawData.version=1 显式选择 typed 原行，relations.rawFields 必须逐行相等；缺省保留 legacy，冲突整批拒绝。见 lib/platform/recognized-evidence.ts。",
   "properties": {
     "platformLegacyProvenance": {
       "type": "array",

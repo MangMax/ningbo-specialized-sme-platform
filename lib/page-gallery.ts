@@ -233,7 +233,7 @@ export function galleryStatus(
 /**
  * 页图的 `<img src>`:带上「这一版是哪一次渲染出来的」。
  *
- * **不能直接用接口给的 `url`**:页图路径**不随 DPI 变**(原地覆盖,见 files/README.md),
+ * **不能直接用接口给的 `url`**:页图路径**不随 DPI 变**(原地覆盖,见 lib/file-store-scope.ts),
  * 而 `/api/files/**` 给的是 `max-age=3600`。刚按 300 DPI 重渲染完,浏览器还能拿一小时前
  * 那张 200 DPI 的缓存图 —— 页面上「尺寸」写着 1653×2339,图却是老的,而且看起来一切正常。
  * 用清单里的 `renderedAt` 当版本号:一次渲染一个值,重渲染必然换新。

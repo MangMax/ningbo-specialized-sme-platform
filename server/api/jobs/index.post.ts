@@ -13,7 +13,7 @@ import { registerJobSpecs } from '../../utils/job-specs'
  * 返回 **202 Accepted** + `{ jobId }`(外加 `Location: /api/jobs/<jobId>`),
  * **不等任务做完** —— 这正是这张票的全部意义:97 页 OCR、700+ 家平台核查这类长活,
  * 同步请求要挂到天荒地老,而代理需要在技能里一件件 `curl`,拿一个 jobId 去轮询
- * 才能批量推进(见 `.scratch/ingest-pipeline/issues/19-openapi.md`)。
+ * 才能批量推进()。
  *
  * **需要 token**(`Authorization: Bearer <NUXT_API_TOKEN>`,或 `X-API-Token`)。
  * 鉴权**排在最前**:未带的请求连「有哪些 kind」都探不到。

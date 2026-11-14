@@ -14,7 +14,7 @@ const observationRef = z.object({
 })
 export default defineMcpTool({
   name: 'find_record_correspondence_candidates', title: '从选定归档业务版本只读生成对应候选',
-  description: '等价 POST /api/roster/correspondences/candidates。先按选中query/event/主体/称号/角色过滤，再以同接口recordId+versionId分组；不支持asOf。返回businessRecord、全部observationRefs、existingCorrespondenceIds和含status/revision/ruleVersion的existingCorrespondences。缺编号/冲突/无原文/未索引按relationId独立。代表端点优先有旧对应的最小原ID，否则最小原ID；相反决定报correspondence_decision_conflict。multiple_candidate_rows按实际候选组计数。导出逐行，分页在分组后。不借未选观察确认，不自动确认或写入。应用错误isError=true，content[0].text含error.code/message。详见docs/platform-business-record-contract.md及docs/record-correspondence-mcp-errors.md。',
+  description: '等价 POST /api/roster/correspondences/candidates。先按选中query/event/主体/称号/角色过滤，再以同接口recordId+versionId分组；不支持asOf。返回businessRecord、全部observationRefs、existingCorrespondenceIds和含status/revision/ruleVersion的existingCorrespondences。缺编号/冲突/无原文/未索引按relationId独立。代表端点优先有旧对应的最小原ID，否则最小原ID；相反决定报correspondence_decision_conflict。multiple_candidate_rows按实际候选组计数。导出逐行，分页在分组后。不借未选观察确认，不自动确认或写入。应用错误isError=true，content[0].text含error.code/message。',
   annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   inputSchema: { eventId: z.number().int().positive().optional(), enterpriseId: z.number().int().positive().optional(), titleCode: z.string().optional(), queryIds: z.array(z.number().int().positive()).optional(), exportBatchIds: z.array(z.number().int().positive()).optional(), ruleVersion: z.string().min(1), page: z.number().int().positive().optional(), pageSize: z.number().int().min(1).max(200).optional() },
   outputSchema: {

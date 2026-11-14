@@ -1,6 +1,6 @@
 # Issue tracker: GitHub
 
-Issues and specs for this repo live in GitHub Issues at `MangMax/ningbo-specialized-sme-platform`. Use the `gh` CLI for all operations. Local `.scratch/` files are drafts and supporting material, not published tracker issues.
+Issues and specs for this repo live in GitHub Issues at `MangMax/ningbo-specialized-sme-platform`. Use the `gh` CLI for all operations. Keep implementation plans, progress, acceptance evidence and follow-up work in the relevant issue; store large artifacts outside Git.
 
 ## Conventions
 

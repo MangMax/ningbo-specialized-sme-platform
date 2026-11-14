@@ -22,7 +22,7 @@ defineRouteMeta({
       '算「这次提交会发生什么」并落一条 `status=preflight` 的批次，**不改任何业务数据**。' +
       '幂等键是 body 的 `idempotencyKey`：同键重复调用返回/刷新同一批次。' +
       '需要 token：`Authorization: Bearer <NUXT_API_TOKEN>`（或 `X-API-Token`）；未配 token 时本接口整体关闭。' +
-      '载荷见 `docs/roster-lifecycle-contract.md` §8.3（含 §8.4 的 `merges` 归并项）。',
+      '载荷见 `lib/roster-import-client.ts`（含 §8.4 的 `merges` 归并项）。',
     security: [{ bearerAuth: [] }],
     requestBody: {
       required: true,
@@ -41,7 +41,7 @@ defineRouteMeta({
               sourceSha256: { type: 'string', nullable: true },
               payload: {
   "type": "object",
-  "description": "统一写入载荷；recognized_list 必填 collectionEvidence。三来源 rawData.version=1 显式选择 typed 原行，relations.rawFields 必须逐行相等；缺省保留 legacy，冲突整批拒绝。见 docs/platform-recognized-evidence.md。",
+  "description": "统一写入载荷；recognized_list 必填 collectionEvidence。三来源 rawData.version=1 显式选择 typed 原行，relations.rawFields 必须逐行相等；缺省保留 legacy，冲突整批拒绝。见 lib/platform/recognized-evidence.ts。",
   "properties": {
     "platformLegacyProvenance": {
       "type": "array",

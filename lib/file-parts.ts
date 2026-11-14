@@ -8,7 +8,7 @@
  *
  * 文件级另有 `stored_file.year` / `batch`,那是**目录给出的「这份文件是哪一批公布的」**
  * (单值、可排序,页面标签写作「公布年份/批次」),与这里的**内容年份/批次**是两回事 —— 别混。
- * 见 `.scratch/ingest-pipeline/issues/17-file-parts.md`。
+ *
  */
 import { EVENT_ORDER, TITLE_ORDER, TITLE_RANK } from './labels'
 

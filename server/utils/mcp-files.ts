@@ -180,7 +180,7 @@ const NO_PART_STATS: PartsBackfillStats = { files: 0, parts: 0, orphanPaths: [] 
  *
  * 与 `/api/files` 的懒回填**同一顺序、同一幂等性**,只是触发点不同 —— MCP 客户端不走那个
  * 路由,所以它自己入口也要有一次。返回**本次是否真的跑了**(没跑返回 `null`),便于验收时
- * 核对「第一次调用会回填出 22 个文件」(RL-16 后的应有集合,见 `files/README.md`)。
+ * 核对「第一次调用会回填出 22 个文件」(RL-16 后的应有集合,见 `lib/file-store-scope.ts`)。
  *
  * `force` 只强制文件行回填；段回填仍守 `needParts`。
  * 的判据,不因为 `force` 就去覆盖已有段。

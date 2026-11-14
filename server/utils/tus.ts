@@ -10,7 +10,7 @@ import { FileStore } from '@tus/file-store'
  * 边界与规则见:
  *  - `docs/adr/2026-10-14-tus-uploads-in-app.md`(上传落在 app 内)
  *  - `docs/adr/2026-10-13-source-files-in-repo.md`(文件库目录规则)
- *  - `files/README.md` 与 `.research/tus-research.md`
+ *  - `lib/file-store-scope.ts` 与 `.research/tus-research.md`
  *
  * 这里只放两件事:**Server 单例**,以及从客户端声明的 metadata 到落位路径的**裁决规则**。
  * 落位规则(`landingSegments`)是纯函数、不碰 Nitro 全局,便于单测;只有拼绝对路径的
@@ -81,7 +81,7 @@ export type UploadMetadata = Record<string, string | null | undefined>
  *  - `year`   可选,给了就必须四位数字
  *  - `batch`  可选,给了就必须是数字,且**必须同时有 year**(batch 嵌在 year 之下)
  *
- * `year`/`batch` 缺省时**省略对应段**(与 `files/README.md` 规则一致,如导出表无批次)。
+ * `year`/`batch` 缺省时**省略对应段**(与 `lib/file-store-scope.ts` 规则一致,如导出表无批次)。
  */
 export function landingSegments(metadata: UploadMetadata): string[] {
   const source = metadata.source ?? undefined

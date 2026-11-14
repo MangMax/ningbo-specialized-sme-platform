@@ -32,7 +32,7 @@ import { newJobId } from '../lib/job'
  *  - 结果按 `layoutParsingResults[].markdown.text` 逐页切(与官方 `_poller.py` 同一形状)。
  *
  * **真 token 的真实外网调用**不进单测(它花钱、看网络、结果会变);那一次实跑的证据
- * 写在票里(`.scratch/ingest-pipeline/issues/14-ocr.md`),脚本与口径与本文件一致。
+ * 写在票里,脚本与口径与本文件一致。
  */
 
 let dir: string

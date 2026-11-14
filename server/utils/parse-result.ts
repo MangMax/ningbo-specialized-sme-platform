@@ -21,7 +21,7 @@ type Db = BetterSQLite3Database<typeof schema>
  * **绝不**碰 `record` / `record_event` / `record_evidence` / `enterprise` —— 也就是说,
  * 它落的是「这份文件里**写了什么**」,不是「谁被认定了」。从文件到台账记录(以及
  * 随之而来的身份归并)仍只走 pipeline 的导入路径,守
- * `app/.scratch/data-integrity/SPEC.md` 的安全阀(单一来源不得触发归并)。
+ * 单一来源不得触发归并。
  * tests/mcp-surface.test.ts 里有一条断言把这一点钉死:调用前后
  * `record` / `enterprise` / `record_evidence` 的行数必须**一个都不变**。
  *

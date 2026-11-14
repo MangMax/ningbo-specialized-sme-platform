@@ -6,7 +6,7 @@
 
 逐份记录原始文件名、类型、哈希、来源、用途、重复关系和处理状态。正式公布及名单附件是称号依据；三张工信部表是平台现状对照快照。不能仅从通知正文创建名单行，须检查附件并保留全部范围内正式行，包括未匹配导出的行。
 
-文件范围只有一个规则来源：[可执行文件范围规则](../../../../lib/file-store-scope.ts)，文字说明见[文件清单](../../../../files/README.md)。决定文件是否入库前先读两者，不通过手工放置或删除文件绕过规则。
+文件范围只有一个规则来源：[可执行文件范围规则](../../../../lib/file-store-scope.ts)。决定文件是否入库前先读该规则，不通过手工放置或删除文件绕过规则。
 
 重新处理已有文件或批次前，查看应用当前状态并复用已完成、已核验的结果；只补齐或修复具体缺口，不无故重跑完整入库。
 
@@ -43,15 +43,15 @@
 
 ## 按当前应用契约写入
 
-写入前查看运行中应用的 `/_openapi.json` 或 MCP `tools/list`；以当前结构和[名录生命周期契约](../../../../docs/roster-lifecycle-contract.md)为载荷依据。
+写入前查看运行中应用的 `/_openapi.json` 或 MCP `tools/list`；以当前结构和[名录生命周期契约](../../../../lib/roster-import-client.ts)为载荷依据。
 
 首次变更前确认目标应用/数据库及其基线或可恢复备份，备份放在 Git 外。目标或恢复点无法确认时，停在写入之前。
 
 - TUS 负责传输，再调用应用文件注册、页图、OCR 和解析接口。`record_evidence.source_file` 必须是已入文件库文件的相对路径。
 - 企业名录和支持的平台证据通过统一导入写入：HTTP `POST /api/roster/import/preflight` 后 `/commit`，或 MCP `preflight_roster_batch` 后 `save_roster_batch`。同批保留一个来源身份、哈希和幂等键。
-- 正式公布原行按[正式事实写入契约](../../../../docs/official-evidence-writes.md)提供 `evidence.publishedRow`，逐字保存本次已核原名、代码、属地及声明、文件和行坐标；未知字段显式为 `null`。普通公告载荷兼容旧协议，其成功不表示已捕获公布原行。既有事件缺少该表示时，按同契约的精确更正流程固定 evidence ID、版本和 `planHash` 补核，再用 `official=latest` 独立读回；保留原事件和出处 ID。
-- 按[平台查询说明](./platform-query.md)通过应用 REST/MCP 查证三类平台来源。查询结果是只读证据候选，不自动写入。完整范围查询才可证明零记录；全部关系和原查询时间均保留。存储支持 `business_list`（businessList）、`apply_list`（queryList）及独立的 `recognized_list`（queryBusList）。原结果/每个批量分段只通过统一预检、提交转存，随后读回全部查询/行 ID，遵循[归档转存契约](../../../../docs/platform-recognized-evidence.md)。缺原始时间或分页证明时留待处理，不改标来源。
-- 公开来源和平台证据只使用当前契约支持的载荷。公开来源补码、合并结构见契约 §§8.4、8.10；遵循[身份查证说明](./uscc-recovery.md)中更严格的 `cross_source` 准入条件。
+- 正式公布原行按[正式事实写入契约](../../../../server/utils/official-evidence.ts)提供 `evidence.publishedRow`，逐字保存本次已核原名、代码、属地及声明、文件和行坐标；未知字段显式为 `null`。普通公告载荷兼容旧协议，其成功不表示已捕获公布原行。既有事件缺少该表示时，按同契约的精确更正流程固定 evidence ID、版本和 `planHash` 补核，再用 `official=latest` 独立读回；保留原事件和出处 ID。
+- 按[平台查询说明](./platform-query.md)通过应用 REST/MCP 查证三类平台来源。查询结果是只读证据候选，不自动写入。完整范围查询才可证明零记录；全部关系和原查询时间均保留。存储支持 `business_list`（businessList）、`apply_list`（queryList）及独立的 `recognized_list`（queryBusList）。原结果/每个批量分段只通过统一预检、提交转存，随后读回全部查询/行 ID，遵循[归档转存契约](../../../../lib/platform/recognized-evidence.ts)。缺原始时间或分页证明时留待处理，不改标来源。
+- 公开来源和平台证据只使用当前契约支持的载荷。公开来源补码、合并结构见当前 API；遵循[身份查证说明](./uscc-recovery.md)中更严格的 `cross_source` 准入条件。
 - 同批提交具有原子性：失败不写业务行。不得改用直接 SQLite 写入或临时导入器。结果不确定时按[同键恢复流程](./orchestration.md)处理。
 
 提交后精确读回：`GET /api/roster/evidence/{id}` / `get_roster_evidence` 可选 `official=latest|history`，`GET /api/roster/events/{id}` / `get_official_event` 可选 `official=latest`；按当前 discovery 核对鉴权和分页，区分原始出处、当前正式值与别名。历史用 `beforeRevision`，事件列表用 `afterEvidenceId`，`pageSize` 默认20/最大50，`maxBytes` 默认16384/最大65536。需要当次不可变快照时，用 `/api/roster/import/receipts/items` / `list_roster_import_items` 的 `projection=snapshot|eventIds`，显式选 `source=private_batch` + `batchId` 或 `source=redacted_receipt` + `receiptId`，并固定 `itemIndex/oldRecordId`；eventIds 单独 cursor 分页。缺失、unavailable、not_retained 原样报告，不从当前详情重建或换源补齐。仍须由独立读取者确认字段和固定版本，回执成功本身不完成业务确认。
@@ -64,9 +64,9 @@
 
 提交后按原 ID 读回、检查追加审计及原出处，核对企业/记录/事件/出处数量未增加，再验证资格、查询和导出。支持的更正不需要等待 #34；实际契约不支持的字段才记入 #34 或窄票并保留待处理。不得换幂等键重导创建替代事件，不得直接 SQL 修改。`attachment/listNo/sourceFile` 属于出处更正，按当前独立出处更正契约处理，不能塞进事件更正。
 
-既有 `POST /api/roster/evidence/pages`（契约 §8.11）仅用于已核实的 PDF 实际页码更正，只改 `page`，不能改事件元数据、`attachment`、`listNo`。请求按文件库相对 `sourceFile`、`listNo` 及 `enterpriseId` 或 `enterpriseName` 唯一定位，并带 `basis`。先用 `dryRun: true` 提交原条目，核对返回 `evidenceId`、`previous` 和来源页，再对同一已确认条目以 `dryRun: false` 应用并核验响应。接口不支持预期旧值前置条件，目标或当前值可能变化时须重做预演；定位不唯一或页码无法确认时保留待核。页码接口不能当通用更正 API。
+既有 `POST /api/roster/evidence/pages`（当前 API）仅用于已核实的 PDF 实际页码更正，只改 `page`，不能改事件元数据、`attachment`、`listNo`。请求按文件库相对 `sourceFile`、`listNo` 及 `enterpriseId` 或 `enterpriseName` 唯一定位，并带 `basis`。先用 `dryRun: true` 提交原条目，核对返回 `evidenceId`、`previous` 和来源页，再对同一已确认条目以 `dryRun: false` 应用并核验响应。接口不支持预期旧值前置条件，目标或当前值可能变化时须重做预演；定位不唯一或页码无法确认时保留待核。页码接口不能当通用更正 API。
 
-入库后查询 `GET /api/roster/import/duplicate-candidates?batchKey=…`（契约 §7.8）。没有当前契约支持的平台关系证据的同名候选继续待核，不按名称直接合并。
+入库后查询 `GET /api/roster/import/duplicate-candidates?batchKey=…`（当前 API）。没有当前契约支持的平台关系证据的同名候选继续待核，不按名称直接合并。
 
 ## 完成报告
 
@@ -74,4 +74,4 @@
 
 分别报告输入/应入库文件、重复文件、转图页、OCR 成败、正式名单行、视觉核验、导出匹配、事件、身份查证、提交批次和 API 错误的数量与状态。文件/元数据、页图/OCR、事件元数据、身份和写入状态分开。OCR 完成不等于入库完成，缺代码不等于缺正式名单行。
 
-正式文件的已知事实入库完成验收必须执行[文件交接事实对账](../../../../docs/roster-source-completeness.md)：原页独立清单包含全部行及已知字段，使用未裁剪的实际事件 GET 读回运行 `scripts/verify-roster-source-completeness.mjs`。保存输入哈希、读回时间、目标身份、工具版本、退出码和报告。退出非零不得标记已知事实入库完成；unknown 清单仍随交接保留。此检查不改变 `parsed` 的文件段语义，也不能用预检载荷、提交计数或原文非空替代。
+正式文件的已知事实入库完成验收必须执行[文件交接事实对账](../../../../scripts/verify-roster-source-completeness.mjs)：原页独立清单包含全部行及已知字段，使用未裁剪的实际事件 GET 读回运行 `scripts/verify-roster-source-completeness.mjs`。保存输入哈希、读回时间、目标身份、工具版本、退出码和报告。退出非零不得标记已知事实入库完成；unknown 清单仍随交接保留。此检查不改变 `parsed` 的文件段语义，也不能用预检载荷、提交计数或原文非空替代。

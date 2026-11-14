@@ -4,7 +4,7 @@
 
 ## 缺口
 
-旧 isolated 申报列表、count 和 options 直接读 relation 原列。原[退役契约](../platform-retirement/contract.md)把原列放 archive，只在结构化 projection 保留 trim/字典转换后的 stored 比较值，无法覆盖这些旧查询。R1a 已保留反例：同 raw、无业务 key，旧 status 分别 `" pending "` / `"pending"`，旧 filter total1/options2，71607 target total2/options1。archive 字节没有丢失，但业务查询禁止从 archive JSON 筛选。
+旧 isolated 申报列表、count 和 options 直接读 relation 原列。原退役契约把原列放 archive，只在结构化 projection 保留 trim/字典转换后的 stored 比较值，无法覆盖这些旧查询。R1a 已保留反例：同 raw、无业务 key，旧 status 分别 `" pending "` / `"pending"`，旧 filter total1/options2，71607 target total2/options1。archive 字节没有丢失，但业务查询禁止从 archive JSON 筛选。
 
 ## 决定
 
@@ -14,7 +14,7 @@
 
 不新建表：现有 observation-owner 已提供唯一行、来源 FK、封存原档和逐观察比较字段；新增事实仍属于该观察的申报字段。不得把它放通用 observation 或共享 version。observation 上只允许为 commit-time 配对约束增加内部引用，不承载业务值。
 
-[具体契约](../platform-retirement/apply-stored-query.md)冻结字段/消费者矩阵、literal/SQL 旧 oracle、五列类型与捕获状态、71608 successor、T05/71607 恢复、真实旧插入 materialization、新 writer 与 replay 原输入认证、完整回滚及无环 S/W/R1a 顺序。schema/offline 与 writer/replay 各≤M，后续独立授权和接受。
+具体契约冻结字段/消费者矩阵、literal/SQL 旧 oracle、五列类型与捕获状态、71608 successor、T05/71607 恢复、真实旧插入 materialization、新 writer 与 replay 原输入认证、完整回滚及无环 S/W/R1a 顺序。schema/offline 与 writer/replay 各≤M，后续独立授权和接受。
 
 normalized/stored-comparison、parsed、reconciled、conflict 字段及来源 parser 均保留。records/detail 版本字段仍来自版本 projection，facts 仍遵循逐观察 conflict 和 withArchiveProcessFacts；exact 分支只补原列需求，不全局替换 fact 值。旧 hash/bytes/ID/alias/time 不变，不以修改业务规则迎合归一化。
 

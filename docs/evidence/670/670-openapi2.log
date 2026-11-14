@@ -1,9 +1,0 @@
-$ node scripts/verify-prod-openapi.mjs --skip-build --port 3691
-▶ 起生产产物:PORT=3691 node .output/server/index.mjs
-✓ /_openapi.json     404(期望 404)
-✓ /_scalar           404(期望 404)
-✓ /_swagger          404(期望 404)
-✓ /api/health        200(期望 200)
-✓ /api/jobs/kinds    200(期望 200)
-
-✓ 生产环境 OpenAPI 端点不可达,业务接口正常

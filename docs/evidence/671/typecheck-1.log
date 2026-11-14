@@ -1,7 +1,0 @@
-$ nuxt typecheck
-[nuxt:icon] ✔ Nuxt Icon loaded local collection project with 2 icons
-ℹ Nuxt Icon client bundle consist of 31 icons with 28.38KB(uncompressed) in size
-server/utils/file-event-sync.ts(46,58): error TS2339: Property 'officialEvidenceRow' does not exist on type 'typeof import("/Users/mang/.t3/worktrees/app/t3-c6394828-4f89addabfe489cf/db/schema")'.
-server/utils/file-event-sync.ts(46,100): error TS2339: Property 'officialEvidenceRow' does not exist on type 'typeof import("/Users/mang/.t3/worktrees/app/t3-c6394828-4f89addabfe489cf/db/schema")'.
-server/utils/file-event-sync.ts(46,174): error TS2339: Property 'officialEvidenceRow' does not exist on type 'typeof import("/Users/mang/.t3/worktrees/app/t3-c6394828-4f89addabfe489cf/db/schema")'.
-[ELIFECYCLE] Command failed with exit code 2.

@@ -5,8 +5,6 @@
  * app 与 `../pipeline` **共用这一个文件**:pipeline 从 `../../app/lib/ocr-markdown` import,
  * 所以「什么算一个页码标记」只有一处定义,两边不会各认各的。
  *
- * 见 `.scratch/ingest-pipeline/issues/14-ocr.md`。
- *
  * ── 为什么 markdown 是首选产物 ──────────────────────────────────────────
  * 用户原话:识别率更高、**导出 markdown 便于处理**、**带页码好读取**。具体到本仓:
  *  - 页内表格在 markdown 里是**标准表格**(`| 序号 | 属地 | 企业名称 |`),pipeline 的

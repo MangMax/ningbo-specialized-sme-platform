@@ -6,7 +6,7 @@ export { default as Badge } from "./Badge.vue"
 /**
  * 徽章 = 一行的语义标签。全站只有这一种标签语法。
  *
- * 相对官方默认改了两处(见 .scratch/ui-redesign/DESIGN.md):
+ * 相对官方默认改了两处():
  *  - 圆角 rounded-full → rounded-sm(4px)。全圆胶囊是消费级 App 的语言;
  *    政务台账用方标,和侧栏、表格的直角节奏一致。
  *  - 增加称号梯度 tier-1/2/3、quiet、dashed 三族变体。

@@ -1,9 +1,0 @@
-
- RUN  v4.1.11 /Users/mang/.t3/worktrees/app/t3-cd25cb76-4fbb9c55666fe80a
-
-
- Test Files  1 passed (1)
-      Tests  29 passed (29)
-   Start at  14:45:17
-   Duration  1.46s (transform 287ms, setup 13ms, import 267ms, tests 1.12s, environment 0ms)
-

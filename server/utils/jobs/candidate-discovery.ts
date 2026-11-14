@@ -167,8 +167,7 @@ function updateCounts(result: CandidateJobResult) {
     existing: result.items.reduce((n, i) => n + i.existing, 0),
   }
 }
-// Measured envelope, not a domain/import size restriction. See
-// docs/candidate-discovery-tasks.md for resource measurements and retry limits.
+// Bounds source hydration without imposing a domain import limit.
 const MAX_SOURCE_BYTES = 4 * 1024 * 1024
 /** The existing domain hydrates one selected source for its fingerprint and
  * audit. Bound that work before hydration; discovery never loads the corpus. */

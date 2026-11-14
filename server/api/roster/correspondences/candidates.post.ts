@@ -1,7 +1,7 @@
 import { correspondenceRoute } from '~~/server/utils/record-correspondence-route'
 defineRouteMeta({ openAPI: {
   tags: ['名录对应'], summary: '只读生成已选归档业务版本对应候选',
-  description: '先过滤指定 queryIds/event/主体/称号/角色，再以同接口 recordId+versionId 分组。缺编号、冲突、无原文和未投影均按 relationId 隔离；不支持 asOf。每组保留全部 observationRefs、旧决定状态/revision/规则版本及冲突，不复制确认。edge.relationId 优先组内有旧对应的最小原ID，否则取最小原ID。导出候选仍逐行，total/分页在业务分组后计算。不抓取、不写入、不自动确认。详见 docs/platform-business-record-contract.md。',
+  description: '先过滤指定 queryIds/event/主体/称号/角色，再以同接口 recordId+versionId 分组。缺编号、冲突、无原文和未投影均按 relationId 隔离；不支持 asOf。每组保留全部 observationRefs、旧决定状态/revision/规则版本及冲突，不复制确认。edge.relationId 优先组内有旧对应的最小原ID，否则取最小原ID。导出候选仍逐行，total/分页在业务分组后计算。不抓取、不写入、不自动确认。',
   requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', additionalProperties: false, required: ['ruleVersion'], properties: { eventId: { type: 'integer' }, enterpriseId: { type: 'integer' }, titleCode: { type: 'string' }, queryIds: { type: 'array', items: { type: 'integer' } }, exportBatchIds: { type: 'array', items: { type: 'integer' } }, ruleVersion: { type: 'string' }, page: { type: 'integer' }, pageSize: { type: 'integer', maximum: 200 } } } } } },
   responses: {
     200: { description: '业务版本候选，导出仍为原行粒度；status 始终 candidate。', content: { 'application/json': { schema: {

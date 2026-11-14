@@ -6,7 +6,7 @@
 
 `canonicalPlatformJson` 对原对象的 own keys 排序并保存其存在性。三来源 target writer 对 `{collectionId,position,row,assignment}` 计算 SHA256，但数据库只保存其中的投影。合法 assignment 省略 `commandReceiptId` 与显式 `null` 可得到同一存储事实、不同原 hash。额外 assignment own key、直接 writer 的 position 省略与 null 也有相同缺口。collection request 仅保存 queryText，不能还原 assignment。current assignment 更不能证明原调用形状。
 
-选择一张专属 `platform_observation_fingerprint_basis`，只拥有观察的索引证据，复用 `platform_archive_value` 的不可变 BLOB。表不承载业务资格、归属、通用事件或命令回执。其输入保存 hash 实际消费的 canonical UTF-8 bytes。scheme 记录索引生命周期，不加入原 hash envelope，不替换 `platform-observation-v1` 或 `platform-row-json-v1`。详细约束、验证与分票见[契约补充](../platform-retirement/fingerprint-basis.md)。
+选择一张专属 `platform_observation_fingerprint_basis`，只拥有观察的索引证据，复用 `platform_archive_value` 的不可变 BLOB。表不承载业务资格、归属、通用事件或命令回执。其输入保存 hash 实际消费的 canonical UTF-8 bytes。scheme 记录索引生命周期，不加入原 hash envelope，不替换 `platform-observation-v1` 或 `platform-row-json-v1`。详细约束、验证与分票见契约补充。
 
 ## 为什么不扩现有 observation ref
 

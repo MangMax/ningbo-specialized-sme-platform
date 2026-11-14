@@ -259,7 +259,7 @@ export default defineNuxtConfig({
      * (空 = 放行)会让「忘了配」变成「静默的公开写入口」。
      *
      * 生产/测试用 `NUXT_MCP_TOKEN` 覆盖 —— **凭证不入库、不入仓库**,仓库里只有
-     * `.env.example` 占位(见 `.scratch/ingest-pipeline/SPEC.md`)。
+     * `.env.example` 占位()。
      */
     mcpToken: '',
     /**

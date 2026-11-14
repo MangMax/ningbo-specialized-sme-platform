@@ -41,7 +41,7 @@ import {
  * 同一口径,预览/跳转据此解析(RL-16)。
  *
  * 这份工作簿从第 1 批到第 7 批**跨年**,没有单一的「公布年份/批次」,故按
- * `files/README.md` 的「year/batch 取值」第 4 条**省略这两段**:
+ * `lib/file-store-scope.ts` 的「year/batch 取值」第 4 条**省略这两段**:
  *
  *     files/jxj/announcement/经信局公布历年小巨人企业名单.xlsx
  *

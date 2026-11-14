@@ -29,7 +29,6 @@ export const serviceCredential = sqliteTable('service_credential', {
 
 /**
  * 称号字典。三种梯度,等级由高到低:小巨人 > 专精特新中小企业 > 创新型中小企业。
- * 见 GLOSSARY.md / docs/data-model.md。
  */
 export const title = sqliteTable('title', {
   code: text('code').primaryKey(),
@@ -135,7 +134,7 @@ export const recordEvent = sqliteTable(
     /**
      * **结论年份**(该事件公布/结论的年份)。与 `year` 分工明确:
      *  - `year` 是事件**所涉**年份 —— 认定事件的认定年份;复核事件记的是
-     *    **被复核的原认定年份**(见 GLOSSARY「复核」);
+     *    **被复核的原认定年份**;
      *  - `decided_year` 是**结论发生**的年份(如 2024 年公布的复核)。
      *
      * 复核锚点(下一次三年到期)按结论年份计算:2021 认定 → 2024 复核通过 ⇒ 下一次到期
@@ -176,7 +175,7 @@ export const recordEvidence = sqliteTable(
 )
 
 /**
- * 文件库(`app/files/`)中每个文件的元数据与处理状态。见 `.scratch/ingest-pipeline/issues/09-file-manager.md`。
+ * 文件库(`app/files/`)中每个文件的元数据与处理状态。
  *
  * `rel_path` 是文件库内**相对路径**(`jxj/announcement/2024/1/….pdf`),与
  * `record_evidence.source_file` 同一口径 —— 「被记录引用数」即按此列精确匹配计数。
@@ -206,7 +205,7 @@ export const storedFile = sqliteTable(
      *
      * ⚠️ 与 `storedFilePart.year` **不是一回事** —— 那是文件**内容**里各段的年份/批次,
      * 一份文件可以有多个(票 17)。这里只有一个,因为它由路径 `…/<year>/<batch>/…` 决定。
-     * 见 `.scratch/ingest-pipeline/issues/17-file-parts.md`。
+     *
      */
     year: integer('year'),
     batch: integer('batch'),
@@ -261,7 +260,6 @@ export const storedFileAudit = sqliteTable(
  * 「2024 年第二批认定(附件1)」又有「2021 年第二批到期复核(附件2)」;《〔2022〕145号》
  * 在同一个附件里并置 2021 与 2022 两段名单。所以文件级的单个 `year`/`batch` 表达不了它,
  * 真实粒度在这里:`(称号, 事件类型, 年份, 批次, 附件)`。
- * 见 `.scratch/ingest-pipeline/issues/17-file-parts.md`。
  *
  * 与 `stored_file.year` / `batch`(**公布**年份/批次,单值)分工明确:那里答「这份文件是
  * 哪一批公布的」,这里答「文件里都有什么」。**别把两者混用**。
@@ -269,7 +267,7 @@ export const storedFileAudit = sqliteTable(
  * `derived` 是从 `record_evidence` 聚合的派生结果,`agent` 是代理解析声明;升级前已存在的
  * 行标为 `legacy`,因为旧表无法证明它们来自哪条写入路径。回填重建派生行、保留代理行;
  * legacy 行与 evidence 完全一致时可归为 derived,不一致时保留并标记冲突。
- * 见 `.scratch/ingest-pipeline/issues/20-parts-origin.md`。
+ *
  */
 export const storedFilePart = sqliteTable(
   'stored_file_part',
@@ -324,7 +322,7 @@ export const storedFilePart = sqliteTable(
 /**
  * **OCR 结果**(票 14):页图 → 文本。**按页**挂在一个文件上。
  *
- * 见 `.scratch/ingest-pipeline/issues/14-ocr.md` 与 SPEC 需求 4。三条通路都往这张表落:
+ * 三条通路都往这张表落:
  *  - **api** —— `POST /api/jobs {kind:"ocr"}` 调 PaddleOCR API(异步、可批量);
  *  - **upload** —— `POST /api/ocr-results`,人把已在官网跑好的带页码 markdown 传进来;
  *  - **mcp** —— 代理经 MCP 的 `save_ocr_result` 写回。
@@ -425,7 +423,6 @@ export const reconciliationResult = sqliteTable(
  * 它们进 JSON 列不违反上面第 1 条(要查的是 `kind` / `state`,那是独立的列)。
  *
  * `params` / `result` **只放任务自己的载荷**:id、相对路径、分辨率。凭证不进这里
- * (见 `.scratch/ingest-pipeline/SPEC.md`「凭证不入库」)。
  */
 export const job = sqliteTable(
   'job',
@@ -467,7 +464,7 @@ export const job = sqliteTable(
 // ===========================================================================
 // 名录生命周期契约(RL-01)—— 冻结的领域对象。
 //
-// 契约原文见 `docs/roster-lifecycle-contract.md`,决策见
+// 写入载荷类型见 `lib/roster-import-client.ts`,领域决策见
 // `docs/adr/2026-10-16-roster-lifecycle-model.md`。本段是**全仓共享基线**:
 // 只由 RL-01 落一次,后续票(RL-02..RL-11)**增量消费,不再改这里的列语义**。
 //

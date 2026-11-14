@@ -5,7 +5,7 @@
  * 这里不碰 tus-js-client,也不碰 Vue —— 组件只负责把它接起来,规则本身可以单测。
  *
  * 契约来源:`app/server/utils/tus.ts`(端点与 metadata 白名单)与
- * `app/files/README.md`(文件库目录规则 `files/<source>/<kind>/<year>/<batch>/<filename>`)。
+ * `app/lib/file-store-scope.ts`(文件库目录规则 `files/<source>/<kind>/<year>/<batch>/<filename>`)。
  * 客户端在此**声明**元数据,服务端**裁决**落位;声明错了会被 400 挡回来。
  */
 
@@ -103,7 +103,7 @@ function cnNumberToInt(text: string): number | undefined {
  * 从文件名**推导**批次声明:只填有把握的,拿不准的空着交给用户。
  *
  * 有一条规则刻意不猜:**`kind` 不按扩展名(是不是 xlsx)猜**。经信局的公布文件里
- * 也有 `.xlsx` 附件(见 `files/README.md` 关于 `.docx` 的说明),扩展名判不出来源目录,
+ * 也有 `.xlsx` 附件(见 `lib/file-store-scope.ts` 关于 `.docx` 的说明),扩展名判不出来源目录,
  * 猜错会把文件落进错的格子 —— 不如空着让人选。反过来,`.xlsx` 必属工信部导出表,
  * 所以**来源**这一项可以由扩展名定。
  */

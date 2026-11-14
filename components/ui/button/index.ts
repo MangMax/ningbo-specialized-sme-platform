@@ -4,7 +4,7 @@ import { cva } from "class-variance-authority"
 export { default as Button } from "./Button.vue"
 
 /**
- * 相对官方默认改了两处(见 .scratch/ui-redesign/DESIGN.md):
+ * 相对官方默认改了两处():
  *  - 过渡属性由 transition-all 收窄到实际会变的那几项,时长与缓动写成
  *    项目统一的「咔嗒」手感(150ms / --ease-snap);
  *  - 加 active:scale-[0.97] —— 按下去要有回应,而不是只有悬停变色。

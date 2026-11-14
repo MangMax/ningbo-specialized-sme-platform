@@ -23,7 +23,7 @@ import {
  * 上传的**模型层**单测:只测规则本身(文件名推导、落位路径、续传匹配、错误翻译),
  * 不测 tus 协议 —— 协议端到端在 `tests/tus.test.ts`(服务端那一侧)里。
  *
- * 断言的口径全部对着 `files/README.md` 的目录规则与 `server/utils/tus.ts` 的白名单,
+ * 断言的口径全部对着 `lib/file-store-scope.ts` 的目录规则与 `server/utils/tus.ts` 的白名单,
  * 这两处是客户端声明的**唯一依据**。
  */
 

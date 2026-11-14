@@ -6,7 +6,7 @@
 
 应用已承载平台业务迁移与本地查询。选择按申报、关联办理、认定目录的业务语义分责，复用稳定身份/版本/观察索引，把正式出处原值、主体迁移状态与解析输入血缘归各自领域。相比扩宽 `platform_relation`，增加专用投影与渐进迁移成本，但避免每个消费者解释所有来源字段；不同 URL 不机械等于不同 aggregate。
 
-关联：[本票 #297](https://github.com/MangMax/ningbo-specialized-sme-platform/issues/297)、[父票 #296](https://github.com/MangMax/ningbo-specialized-sme-platform/issues/296)、[当前总览](../data-model.md)、[词表](../../GLOSSARY.md)。
+关联：[本票 #297](https://github.com/MangMax/ningbo-specialized-sme-platform/issues/297)、[父票 #296](https://github.com/MangMax/ningbo-specialized-sme-platform/issues/296)、[当前 schema](../../db/schema.ts)。
 
 ## 1. 基线、依据与证据边界
 

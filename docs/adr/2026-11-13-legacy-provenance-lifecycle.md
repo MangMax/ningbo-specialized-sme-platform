@@ -16,17 +16,17 @@ T04 把既有 metadata 的原列保存为 `T04-PROVENANCE` 封套。collection �
 | 一张 collection 专属补录 metadata 附表 | collection FK、一 collection 一条、全历史唯一文件 SHA/segment；新补录 JSON 使用独立不可变 BLOB。旧 T04 封套只增加结构化查询索引，不搬动原字节。命令和读取各增加一个限定接缝 | 推荐。允许已封存 collection 获得一次独立补录，复用既有 archive、caller batch 和 receipt |
 | 新建 collection 或观察承载补录 | 产生第二个采集时间、自然键或 observation 身份，必须转接 aliases、决定、113、历史回执；相同 version 的不同观察也会被误合并 | 不采用。补录不是一次新采集，也不是新观察 |
 
-选定第二项。新增表只拥有这一命令的 metadata 与归档绑定，不是事件账本、命令账本或第二套业务模型。原字节仍在 `platform_archive_value`。不引入完整性树、正文共享、去重或 GC。详细字段、来源输入、事务、消费者及 ≤M 分票见[补录契约](../platform-retirement/legacy-provenance-lifecycle.md)。
+选定第二项。新增表只拥有这一命令的 metadata 与归档绑定，不是事件账本、命令账本或第二套业务模型。原字节仍在 `platform_archive_value`。不引入完整性树、正文共享、去重或 GC。详细字段、来源输入、事务、消费者及 ≤M 分票见补录契约。
 
 ## 对已接受契约的限定补充
 
 | 已有约定 | 本补充 |
 | --- | --- |
-| [退役 ADR](2026-11-10-platform-mixed-table-retirement.md)“责任与数据流”及[主契约](../platform-retirement/contract.md)“标识与存储”将 provenance 交给 collection owner | 增加 collection 专属附表，覆盖首次 seal 之后的同一命令。原 collection 的采集列和 refs 不更新；旧 T04 metadata 与新补录共用唯一性和读取解析器 |
+| [退役 ADR](2026-11-10-platform-mixed-table-retirement.md)“责任与数据流”及主契约“标识与存储”将 provenance 交给 collection owner | 增加 collection 专属附表，覆盖首次 seal 之后的同一命令。原 collection 的采集列和 refs 不更新；旧 T04 metadata 与新补录共用唯一性和读取解析器 |
 | 主契约“不可变归档与引用”要求保留原算法输入 | 逐字段定义此命令的旧 query/rows 投影。它与 observation fingerprint 不同，不能复用其 digest。完整正常路径的已有原档足够作为重建材料，后续必须独立验证，不能用当前 target 对象直接 stringify |
 | [观察 fingerprint ADR](2026-11-11-observation-fingerprint-basis.md)允许专属 basis owner | 仅借鉴专属证据的边界。不扩 observation basis、不改变其 scheme 或 hash，不为补录另存一份可从现有原档无损重建的输入 |
 | 主契约“范围与条件”“写入、快照与失败” | 补录页只改变选中证据的展示位置；原采集 coverage、业务 predicate、qualification、决定和原 receipt 不改变。预检可写原有 import 预检回执，业务源保持只读 |
-| [#751](../platform-retirement/collection-import-runtime.md)、[#752](../platform-retirement/query-history-runtime.md)、[#753](../platform-retirement/historical-observation-runtime.md)的显式目标边界 | 后续 successor 仅在显式注入、完成迁移的目标上接入本命令及读取。普通 runtime/import/worker guards 继续 CLOSED；schema0 原分支保留 |
+| #751、#752、#753的显式目标边界 | 后续 successor 仅在显式注入、完成迁移的目标上接入本命令及读取。普通 runtime/import/worker guards 继续 CLOSED；schema0 原分支保留 |
 | 主契约“迁移检查点与切换”和 #744 简化兼容 | 必要 successor 只建立专属 metadata 及旧封套索引，沿用现有 run/checkpoint completion。运行时检查受支持版本、必要列、完成状态，不恢复 DDL/hash 信任链 |
 
 历史旧文档中的“待接受”文字不在本票回填。父级提供的既有 LOCAL 接受事实与本票新证据分列；本候选不宣布 #706/#690 完成。

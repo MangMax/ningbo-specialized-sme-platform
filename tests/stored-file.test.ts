@@ -111,7 +111,7 @@ describe('deriveParts 从目录反推分类', () => {
     expect(deriveParts('README.md')).toBeNull()
   })
 
-  it('目录**给不出**年份/批次时,才回退文件名解析(files/README.md 第 3 条,与 pipeline 同规则)', () => {
+  it('目录**给不出**年份/批次时,才回退文件名解析(与 pipeline 同规则)', () => {
     // 正常文件库里不会有这种路径(文件库就是按年/批次分层放的)。这条只在缺目录段时兜底。
     // 注意风险:文件名里的四位数字可能是**文号**年份而非公布年份 —— 所以**目录有就绝不用文件名**(见上一条)。
     expect(deriveParts('jxj/announcement/2024年第二批的通知.pdf')).toEqual({

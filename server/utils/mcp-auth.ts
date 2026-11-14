@@ -19,7 +19,7 @@ import { createHash, timingSafeEqual } from 'node:crypto'
  *
  * ── 凭证不入库不入仓库 ──────────────────────────────────────────────────
  * token 只从 `NUXT_MCP_TOKEN`(→ `runtimeConfig.mcpToken`)读;仓库里只有
- * `.env.example` 占位。见 `app/.scratch/ingest-pipeline/SPEC.md`「凭证不入库」。
+ * `.env.example` 占位。「凭证不入库」。
  */
 
 /**

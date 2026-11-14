@@ -8,7 +8,7 @@ import { NURTURE_KEYWORD, scopeOf, siblingIndex } from '../lib/file-store-scope'
  * 规则被 `server/utils/stored-files.ts` 的回填真的用上(见 `stored-file.test.ts` 的
  * 「入库范围」一节)—— 所以这里钉住的是**行为**,不是一份散文。
  *
- * 判据的出处:`files/README.md` 的「入库范围」一节 +
+ * 判据的出处:`lib/file-store-scope.ts` 的「入库范围」一节 +
  * `.agents/skills/roster-ingestion-pipeline/references/decisions.md`。
  */
 

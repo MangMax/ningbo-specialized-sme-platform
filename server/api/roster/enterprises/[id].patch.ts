@@ -1,7 +1,7 @@
 import { enterpriseProfileRoute } from '../../../utils/enterprise-profile-route'
 defineRouteMeta({ openAPI: {
   tags: ['企业资料'], summary: '按稳定企业 ID 原子更正普通资料并保留旧名',
-  description: '#96: name 为规范现名；city/district 为企业当前属地，null 显式清空，省略不改。expectedVersion 必须来自 GET profile。name 变更必须带 previousName 的精确旧名和 sameSubject:true；actor/basis 为调用方明确声明。统代、登记状态 regStatus、平台流程状态、差异/名录派生状态只读，身份补全/冲突/归并使用专门操作。详情见 docs/maintenance-96.md。',
+  description: '#96: name 为规范现名；city/district 为企业当前属地，null 显式清空，省略不改。expectedVersion 必须来自 GET profile。name 变更必须带 previousName 的精确旧名和 sameSubject:true；actor/basis 为调用方明确声明。统代、登记状态 regStatus、平台流程状态、差异/名录派生状态只读，身份补全/冲突/归并使用专门操作。详情',
   security: [{ bearerAuth: [] }],
   requestBody: { required: true, content: { 'application/json': { schema: {
     type: 'object', additionalProperties: false, required: ['idempotencyKey', 'expectedVersion', 'changes', 'actor', 'basis'],

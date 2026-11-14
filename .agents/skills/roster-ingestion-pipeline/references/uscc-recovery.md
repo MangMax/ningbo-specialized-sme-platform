@@ -25,7 +25,7 @@
 4. **关联记录 businessList**：通过应用传 `source:"businessList",uscc,rdjb:"all"` 或字符串 `"1"|"2"|"3"`。此来源不支持名称和认定列表专用筛选。查全关系时覆盖三个称号及全部页；普通失败可继续其他称号，鉴权失败停止。某称号零记录不能掩盖其他称号尚未完成。
 5. **公开来源**：搜索准确公布名、标点变体、逐步缩短的特征词、候选现名和已确认代码。优先直接记载名称/代码关系的企业或登记主体页面。名称出现地名变化或地址/认定属地冲突时，按[地名变化与迁移查证](difference-investigation.md#地名变化与迁移查证)搜索沿革、搬迁及当前地址；此分支也适用于信用代码已经齐全的企业。搜索摘要或看似相同的名称只是线索。
 
-平台单查、批量提交、进度、单项结果和重试均通过应用 API/MCP，遵循[平台查询说明](./platform-query.md)。服务端解析凭据，代理不读/展示 Cookie、不直发平台 HTTP。`GET /api/platform/queries` 是存储历史，不是新的实时查询。本地 `business_list` 业务检索及版本/孤立观察读回另见[平台查询说明的业务读回](./platform-query.md#上限与证据)；归档命中不等于业务迁移或身份确认。存储类型为 `business_list` / `apply_list` / `recognized_list`，queryBusList 只能对应 recognized_list。统一转存须保留原时间与页证明；元数据不足继续待处理，见[归档转存契约](../../../../docs/platform-recognized-evidence.md)。
+平台单查、批量提交、进度、单项结果和重试均通过应用 API/MCP，遵循[平台查询说明](./platform-query.md)。服务端解析凭据，代理不读/展示 Cookie、不直发平台 HTTP。`GET /api/platform/queries` 是存储历史，不是新的实时查询。本地 `business_list` 业务检索及版本/孤立观察读回另见[平台查询说明的业务读回](./platform-query.md#上限与证据)；归档命中不等于业务迁移或身份确认。存储类型为 `business_list` / `apply_list` / `recognized_list`，queryBusList 只能对应 recognized_list。统一转存须保留原时间与页证明；元数据不足继续待处理，见[归档转存契约](../../../../lib/platform/recognized-evidence.ts)。
 
 ## 闭合身份链
 
@@ -48,6 +48,6 @@
 ## 写入与状态边界
 
 - 代码未确认时，全部正式行继续保留；身份待核不等于名录入库失败。
-- 平台查询/关系以当前支持的 `business_list` / `apply_list` 或已校验的 `recognized_list` 归档载荷保存；采集不自动入库。公开证据只用支持的补码/合并结构，见[契约](../../../../docs/roster-lifecycle-contract.md) §§8.3、8.4、8.10。
+- 平台查询/关系以当前支持的 `business_list` / `apply_list` 或已校验的 `recognized_list` 归档载荷保存；采集不自动入库。公开证据只用支持的补码/合并结构，见[契约](../../../../lib/roster-import-client.ts)。
 - 查询状态、分页完整性、页图/OCR、事件元数据和身份状态分别保存。`failed`、`no_record`、`not_queried`、`pending` 不能互换。
 - issue #35 中海尔施、众鑫、华盛、展慈只是用户线索，不能因任务中提到就视为已确认旧名、别名或主体。须有独立公开证据与平台按码证据支持，才能记录沿革。

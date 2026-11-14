@@ -37,7 +37,7 @@ import { SYNTHETIC_DUPLICATE_USCC, hasRealSource, loadLittleGiantSource, type Li
 const TOKEN = 'rl02-e2e-token-value'
 
 /**
- * 真实**文件库**是否就位(全新 clone 只提交了 `files/README.md`,运行时数据已 gitignore)。
+ * 真实**文件库**是否就位(全新 clone 只提交了 `lib/file-store-scope.ts`,运行时数据已 gitignore)。
  * 用它把「出处解析得到文件」那半条**显式** skip 掉 —— 写成 `if (...)` 的话,文件库不在时
  * 那几条断言会**静默通过**,读起来像验过了。
  */
@@ -45,7 +45,7 @@ const hasRealFileStore = existsSync(join(process.cwd(), 'files', 'miit', 'export
 
 /** 合成夹具的期望(独立于 payload 构造器,手数出来的 7 行里的 6 家 / 7 条事件)。 */
 const EXPECTED_SYNTHETIC = { rows: 7, enterprises: 6, records: 6, events: 7, evidences: 7 }
-/** 真件的期望(`docs/roster-little-giant-source.md` §4 记录的数字)。 */
+/** 真件的期望。 */
 const EXPECTED_REAL = { rows: 511, enterprises: 510, records: 510, events: 539, evidences: 539 }
 
 interface Expected {
