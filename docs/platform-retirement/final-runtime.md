@@ -31,3 +31,5 @@
 企业详情证据读取已识别 reconcile-slot T04 的完成标记，保留相同原档字段集合和 lifecycle 核验，修复迁移后详情的 Unknown provenance lifecycle。终态详情忽略历史 typed-read 回退设置，部署示例移除两个已退役的平台回退变量；原生首笔导入和迁移后详情的两项定向回归通过。首轮失败与修复结果分别保存在 detail-retired-selector.json / detail-retired-selector04.json。
 
 真实申报升级剖析定位到指纹反查的重复全表扫描：三张投影的 source_archive_id 与版本 canonical_archive_id 没有反向索引。完整离线链在只读前置事务中一次读取窄 ID 集合，并按连接、data_version/schema_version 复用原归属存在性判据；可写连接与独立验证器保持原路径。24 个完整原指纹在普通路径和离线复用路径的结果一致；严格探针仍为 39 条依赖诊断，未增加诊断。原始扫描计划、调用栈与已停止的只读恢复阶段保留在真实副本证据目录。
+
+申报、办理、认定、候选与见证阶段的自定义流式摘要也按 SQLite 状态复用，保留原摘要字节格式。18 个完整合成阶段的全部 result 与未复用链完全一致，普通修改、外部提交及 DDL 的失效检查通过；独立执行这些阶段时仍重新计算。

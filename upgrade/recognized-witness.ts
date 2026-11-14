@@ -1,4 +1,4 @@
-import { upgradeIntegrityGate, upgradeForeignKeyFailures } from './integrity-policy'
+import { upgradeMemoizedDigest, upgradeIntegrityGate, upgradeForeignKeyFailures } from './integrity-policy'
 /** #733 A: maintenance-window fixed snapshot -> independent target, explicit #732 successor. */
 import Database from 'better-sqlite3'
 import { createHash } from 'node:crypto'
@@ -18,11 +18,13 @@ import { witnessInstalled,witnessTriggers,WITNESS_TRANSFORM } from '../lib/platf
 import { captureWitnessCollection,captureWitnessObservation,verifyWitnessCollection,verifyWitnessObservation } from '../lib/platform/recognized-witness-write'
 export type WitnessUpgradeOptions={source:string,target:string,runId:string,predecessorRunId:string,beforeCommit?:(stage:string)=>void}
 function digest(t:Database.Database,run:string,original=false) {
+ return upgradeMemoizedDigest(t,JSON.stringify(['recognized-witness',run,original]),()=>{
  const h=createHash('sha256')
  projectionManifest(t,line=>{if(original){const r=z.object({table:z.string(),fields:z.array(z.object({name:z.string()}).passthrough())}).parse(JSON.parse(line));r.fields=r.fields.filter(c=>!c.name.startsWith('witness_'));line=JSON.stringify(r)}h.update(line+'\n')})
  for(const table of ['platform_migration_run','platform_migration_checkpoint'])h.update(JSON.stringify(t.prepare(`SELECT * FROM ${table} WHERE run_id<>? ORDER BY run_id${table.endsWith('checkpoint')?',phase,source_table':''}`).all(run)))
  h.update(JSON.stringify(t.prepare('SELECT * FROM sqlite_sequence ORDER BY name').all()))
  return h.digest('hex')
+ })
 }
 export function finalizeRecognizedWitness(options:WitnessUpgradeOptions,frozen?:FrozenSource):{state:'complete';collections:number;observations:number} {
  if(!frozen)return withFrozenSource(options.source,s=>finalizeRecognizedWitness(options,s))

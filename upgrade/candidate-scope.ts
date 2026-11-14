@@ -1,4 +1,4 @@
-import { upgradeIntegrityGate, upgradeForeignKeyFailures } from './integrity-policy'
+import { upgradeMemoizedDigest, upgradeIntegrityGate, upgradeForeignKeyFailures } from './integrity-policy'
 /** #731 A explicit offline 71608 -> 71609 successor. Operator maintains no writers. */
 import Database from 'better-sqlite3'
 import { createHash } from 'node:crypto'
@@ -19,6 +19,7 @@ import { CANDIDATE_SCOPE_VERSION } from '../db/schema-phase'
 export const CANDIDATE_SCOPE_TRANSFORM = 'candidate-scope-offline-v1'
 const hash = (v: string) => createHash('sha256').update(v).digest('hex')
 function digest(t: Database.Database, runId: string, original=false) {
+ return upgradeMemoizedDigest(t,JSON.stringify(['candidate-scope',runId,original]),()=>{
   const h = createHash('sha256')
   projectionManifest(t, line => {
     if (original) {
@@ -31,6 +32,7 @@ function digest(t: Database.Database, runId: string, original=false) {
   for (const table of ['platform_migration_run','platform_migration_checkpoint']) h.update(JSON.stringify(t.prepare(`SELECT * FROM ${table} WHERE run_id<>? ORDER BY run_id${table.endsWith('checkpoint')?',phase,source_table':''}`).all(runId)))
   h.update(JSON.stringify(t.prepare('SELECT * FROM sqlite_sequence ORDER BY name').all()))
   return h.digest('hex')
+ })
 }
 export type CandidateScopeOptions = { source:string; target:string; runId:string; predecessorRunId:string; beforeCommit?:(stage:string)=>void }
 export function finalizeCandidateScopes(options: CandidateScopeOptions, frozen?: FrozenSource): {state:'complete'; captured:number; uncaptured:number; errors:number} {

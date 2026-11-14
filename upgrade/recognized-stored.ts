@@ -1,4 +1,4 @@
-import { upgradeIntegrityGate, upgradeForeignKeyFailures } from './integrity-policy'
+import { upgradeMemoizedDigest, upgradeIntegrityGate, upgradeForeignKeyFailures } from './integrity-policy'
 import { recognizedStoredTriggers } from '../lib/platform/recognized-stored-catalog'
 /** #732 A only. Explicit additive offline 71609 upgrade; never a startup migration. */
 import Database from 'better-sqlite3'
@@ -14,6 +14,7 @@ import { recognizedStoredColumns } from '../lib/platform/recognized-stored-schem
 import { recognizedTitleEvidence, titleCellExpression, verifyRecognizedStored, RECOGNIZED_STORED_RULE } from '../lib/platform/recognized-stored'
 const hash=(s:string)=>createHash('sha256').update(s).digest('hex')
 function digest(t:Database.Database,run:string,original=false) {
+ return upgradeMemoizedDigest(t,JSON.stringify(['recognized-stored',run,original]),()=>{
  const streamHash=createHash('sha256').update('{"lines":[');let firstLine=true
  projectionManifest(t,line=>{
   if(original){const row=z.object({table:z.string(),fields:z.array(z.object({name:z.string()}).passthrough())}).parse(JSON.parse(line));if(row.table==='platform_recognized_projection')row.fields=row.fields.filter(c=>!recognizedStoredColumns.some(n=>n===c.name));line=JSON.stringify(row)}
@@ -21,6 +22,7 @@ function digest(t:Database.Database,run:string,original=false) {
  })
  streamHash.update('],');const metadata={runs:t.prepare('SELECT * FROM platform_migration_run WHERE run_id<>? ORDER BY run_id').all(run),checkpoints:t.prepare('SELECT * FROM platform_migration_checkpoint WHERE run_id<>? ORDER BY run_id,phase,source_table').all(run),sequences:t.prepare('SELECT * FROM sqlite_sequence ORDER BY name').all()}
  streamHash.update(JSON.stringify(metadata).slice(1));return streamHash.digest('hex')
+ })
 }
 export type RecognizedStoredOptions={source:string,target:string,runId:string,predecessorRunId:string,beforeCommit?:(stage:string)=>void}
 export function finalizeRecognizedStored(options:RecognizedStoredOptions,frozen?:FrozenSource):{state:'complete',captured:number,uncaptured:number} {

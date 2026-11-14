@@ -1,4 +1,4 @@
-import { upgradeIntegrityGate, upgradeForeignKeyFailures } from './integrity-policy'
+import { upgradeMemoizedDigest, upgradeIntegrityGate, upgradeForeignKeyFailures } from './integrity-policy'
 /** #734 A1 only. Never registered as a startup migration or runtime writer. */
 import Database from 'better-sqlite3'
 import { createHash } from 'node:crypto'
@@ -142,6 +142,7 @@ function recover(t:Database.Database,o:Owner,legacy?:Database.Database,custody?:
  return r
 }
 function digest(t:Database.Database,runId:string,original=false) {
+ return upgradeMemoizedDigest(t,JSON.stringify(['process-stored',runId,original]),()=>{
  const streamHash=createHash('sha256').update('{"lines":[');let firstLine=true
  projectionManifest(t,line=>{
   if(original){const row=JSON.parse(line) as {table:string,fields:{name:string}[]};if(row.table==='platform_business_projection')row.fields=row.fields.filter(c=>!processStoredColumns.some(n=>n===c.name));if(row.table==='platform_business_observation')row.fields=row.fields.filter(c=>!processPairColumns.some(n=>n===c.name));line=JSON.stringify(row)}
@@ -149,6 +150,7 @@ function digest(t:Database.Database,runId:string,original=false) {
  })
  streamHash.update('],');const metadata={sequences:t.prepare('SELECT name,typeof(seq) storageClass,hex(cast(seq AS blob)) bytes FROM sqlite_sequence ORDER BY name').all(),runs:t.prepare('SELECT * FROM platform_migration_run WHERE run_id<>? ORDER BY run_id').all(runId),checkpoints:t.prepare('SELECT * FROM platform_migration_checkpoint WHERE run_id<>? ORDER BY run_id,phase,source_table').all(runId)}
  streamHash.update(JSON.stringify(metadata).slice(1));return streamHash.digest('hex')
+ })
 }
 /** Compare source-derived capture on first completion and replay; the receipt alone is not an oracle. */
 function verifyRecovery(t:Database.Database,recovery:Recovery[]) {
