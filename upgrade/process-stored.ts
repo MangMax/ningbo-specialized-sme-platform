@@ -1,4 +1,4 @@
-import { upgradeMemoizedDigest, upgradeIntegrityGate, upgradeForeignKeyFailures } from './integrity-policy'
+import { completeUpgradeActive, upgradeMemoizedDigest, upgradeIntegrityGate, upgradeForeignKeyFailures } from './integrity-policy'
 /** #734 A1 only. Never registered as a startup migration or runtime writer. */
 import Database from 'better-sqlite3'
 import { createHash } from 'node:crypto'
@@ -111,7 +111,9 @@ function recover(t:Database.Database,o:Owner,legacy?:Database.Database,custody?:
  const verifierCells=cells?.filter(c=>['status','declare_kind','applied_at','province','batch','award_batch_label','year'].includes(c.name))
  const verifierRepresentable=(r.exactState==='captured'||o.scheme==='target-command-v1')&&(!verifierCells||verifierCells.every(c=>c.storageClass==='null'||(c.name==='year'?c.storageClass==='integer':c.storageClass==='text'||(c.name==='status'&&c.storageClass==='blob')))) && (!cells||cells.every(c=>{if(c.storageClass!=='text')return true;try{decode(Buffer.from(c.hex,'hex'));return true}catch{return false}}))
  if(!verifierRepresentable&&r.exactState==='captured'){r.exactState='uncaptured';r.cells=[];r.origin=null;r.reason='predecessor-verifier-cell-type-unrepresentable'}
- if(verifierRepresentable&&(cells||o.scheme==='target-command-v1')&&o.scheme&&o.scheme!=='uncaptured')verifyFingerprint(t,{observationId:o.id,collectionId:o.collection_id,relationAlias:o.old_id},legacy&&!snapshot?{legacyCustody:custody}:{})
+ if(verifierRepresentable&&(cells||o.scheme==='target-command-v1')&&o.scheme&&o.scheme!=='uncaptured') {
+  if(!completeUpgradeActive()||o.scheme!=='legacy-indexed-v1')verifyFingerprint(t,{observationId:o.id,collectionId:o.collection_id,relationAlias:o.old_id},legacy&&!snapshot?{legacyCustody:custody}:{})
+ }
  else if(verifierRepresentable&&o.identity_state==='not_indexed'&&cells) {
   const owner={observationId:o.id,collectionId:o.collection_id,relationAlias:o.old_id}
   const sourceCells=legacy&&!snapshot?custody:undefined

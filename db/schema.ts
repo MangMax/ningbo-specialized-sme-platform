@@ -934,6 +934,7 @@ export const platformBusinessRecordVersion = sqliteTable('platform_business_reco
 }, t => [
   uniqueIndex('platform_business_version_hash_uq').on(t.recordId, t.hashAlgorithm, t.contentHash),
   uniqueIndex('platform_business_version_owner_uq').on(t.id, t.recordId),
+  index('platform_business_version_canonical_archive_idx').on(t.canonicalArchiveId),
 ])
 
 /** Shared declarations for the temporary expand schema and explicit offline target. Z removes expand. */
@@ -1086,6 +1087,7 @@ export function definePlatformApplyProjection(observationId: () => AnySQLiteColu
 }, t => [
   uniqueIndex('platform_apply_projection_version_uq').on(t.versionId),
   uniqueIndex('platform_apply_projection_observation_uq').on(t.observationId),
+  index('platform_apply_projection_source_archive_idx').on(t.sourceArchiveId),
   check('platform_apply_projection_owner_ck', sql`( ${t.versionId} IS NOT NULL AND ${t.recordId} IS NOT NULL AND ${t.observationId} IS NULL AND ${t.basis} = 'verified_raw') OR (${t.versionId} IS NULL AND ${t.recordId} IS NULL AND ${t.observationId} IS NOT NULL AND ${t.basis} IN ('observation_reconciliation','unavailable'))`),
   check('platform_apply_projection_id_ck', sql`${t.id} IS NULL OR (typeof(${t.id}) = 'integer' AND ${t.id} BETWEEN 1 AND 9007199254740991)`),
   check('platform_apply_projection_version_id_ck', sql`${t.versionId} IS NULL OR (typeof(${t.versionId}) = 'integer' AND ${t.versionId} BETWEEN 1 AND 9007199254740991)`),
@@ -1236,6 +1238,7 @@ export function businessProjectionFields(observationId: () => AnySQLiteColumn) {
 export function definePlatformBusinessProjection(observationId: () => AnySQLiteColumn) { return sqliteTable('platform_business_projection', businessProjectionFields(observationId), t => [
   uniqueIndex('platform_business_projection_version_uq').on(t.versionId),
   uniqueIndex('platform_business_projection_observation_uq').on(t.observationId),
+  index('platform_business_projection_source_archive_idx').on(t.sourceArchiveId),
   check('platform_business_projection_owner_ck', sql`( ${t.versionId} IS NOT NULL AND ${t.recordId} IS NOT NULL AND ${t.observationId} IS NULL AND ${t.basis} = 'verified_raw') OR (${t.versionId} IS NULL AND ${t.recordId} IS NULL AND ${t.observationId} IS NOT NULL AND ${t.basis} IN ('observation_reconciliation','unavailable'))`),
   check('platform_business_projection_id_ck', sql`${t.id} IS NULL OR (typeof(${t.id}) = 'integer' AND ${t.id} BETWEEN 1 AND 9007199254740991)`),
   check('platform_business_projection_version_id_ck', sql`${t.versionId} IS NULL OR (typeof(${t.versionId}) = 'integer' AND ${t.versionId} BETWEEN 1 AND 9007199254740991)`),
@@ -1389,6 +1392,7 @@ export function recognizedProjectionFields(observationId: () => AnySQLiteColumn)
 export function definePlatformRecognizedProjection(observationId: () => AnySQLiteColumn) { return sqliteTable('platform_recognized_projection', recognizedProjectionFields(observationId), t => [
   uniqueIndex('platform_recognized_projection_version_uq').on(t.versionId),
   uniqueIndex('platform_recognized_projection_observation_uq').on(t.observationId),
+  index('platform_recognized_projection_source_archive_idx').on(t.sourceArchiveId),
   check('platform_recognized_projection_owner_ck', sql`( ${t.versionId} IS NOT NULL AND ${t.recordId} IS NOT NULL AND ${t.observationId} IS NULL AND ${t.basis} = 'verified_raw') OR (${t.versionId} IS NULL AND ${t.recordId} IS NULL AND ${t.observationId} IS NOT NULL AND ${t.basis} IN ('observation_reconciliation','unavailable'))`),
   check('platform_recognized_projection_id_ck', sql`${t.id} IS NULL OR (typeof(${t.id}) = 'integer' AND ${t.id} BETWEEN 1 AND 9007199254740991)`),
   check('platform_recognized_projection_version_id_ck', sql`${t.versionId} IS NULL OR (typeof(${t.versionId}) = 'integer' AND ${t.versionId} BETWEEN 1 AND 9007199254740991)`),

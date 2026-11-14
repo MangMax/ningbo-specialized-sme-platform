@@ -11,6 +11,7 @@ import { migrationFinished } from '../lib/platform/migration-readiness'
 import { rowSnapshot } from '../lib/platform/sqlite-row-cells'
 import { upgradeEnterpriseMergeIdentity } from './enterprise-merge'
 import { z } from 'zod'
+import { installPlatformArchiveLookupIndexes } from '../db/platform-archive-indexes'
 
 const requiredTransforms = [
   't05a-observation-v3', 't05c-independent-observation-v1',
@@ -139,10 +140,13 @@ export function retirePlatformModel(sqlite: Database.Database) {
   if (sqlite.inTransaction) throw new Error('Platform retirement requires its own offline transaction')
   if (sqlite.pragma('foreign_keys', { simple: true }) !== 1) throw new Error('Platform retirement requires foreign_keys=ON')
   if (hasTable(sqlite, 'platform_runtime_completion')) {
-    assertFinalPlatformRuntime(sqlite)
-    auditArchiveValues(sqlite)
-    if (sqlite.prepare('PRAGMA foreign_key_check').all().length || !upgradeIntegrityGate(sqlite, true)) throw new Error('Retired target integrity validation failed')
-    return { state: 'complete' as const, version: PLATFORM_RUNTIME_VERSION }
+    return sqlite.transaction(() => {
+      assertFinalPlatformRuntime(sqlite)
+      installPlatformArchiveLookupIndexes(sqlite)
+      auditArchiveValues(sqlite)
+      if (sqlite.prepare('PRAGMA foreign_key_check').all().length || !upgradeIntegrityGate(sqlite, true)) throw new Error('Retired target integrity validation failed')
+      return { state: 'complete' as const, version: PLATFORM_RUNTIME_VERSION }
+    }).immediate()
   }
   return sqlite.transaction(() => {
     requireLegacyProvenanceReady(sqlite)
@@ -161,6 +165,7 @@ export function retirePlatformModel(sqlite: Database.Database) {
     }
     for (const table of RETIRED_PLATFORM_TABLES) if (hasTable(sqlite, table)) sqlite.exec(`DROP TABLE "${table}"`)
     assertNoRetiredPlatformSchema(sqlite)
+    installPlatformArchiveLookupIndexes(sqlite)
     if (sqlite.prepare('PRAGMA foreign_key_check').all().length || !upgradeIntegrityGate(sqlite, true)) throw new Error('Platform retirement integrity validation failed')
     sqlite.exec(`CREATE TABLE platform_runtime_completion(
       id INTEGER PRIMARY KEY CHECK(id=1),

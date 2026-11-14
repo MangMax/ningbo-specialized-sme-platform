@@ -25,6 +25,10 @@ export function installProcessStoredSchema(t:Database.Database, step?:(stage:str
   }
   if(catalog.some(x=>x.type==='view'&&tables.some(n=>x.sql.includes(n))))throw new Error('Unexpected dependent view')
   const affected=catalog.filter(x=>tables.includes(x.tbl_name)||(x.type==='trigger'&&tables.some(n=>x.sql.includes(n))))
+  // The old observation owner still references apply while its child tables are
+  // dropped. Index that reverse FK lookup before SQLite's implicit DELETEs.
+  // Dropping the old parent removes this transaction-local rebuild index too.
+  if(catalog.some(x=>x.type==='table'&&x.name===parent&&/\bapply_exact_owner_id\b/.test(x.sql)))t.exec('CREATE INDEX s734_apply_pair_drop_lookup ON platform_business_observation(apply_exact_owner_id)')
   const sequences=t.prepare('SELECT name,seq FROM sqlite_sequence').safeIntegers().all() as {name:string,seq:bigint}[]
   for(const x of affected.filter(x=>x.type==='trigger'))t.exec(`DROP TRIGGER ${quote(x.name)}`)
   for(const name of tables)t.exec(`CREATE TEMP TABLE ${quote('s734_'+name)} AS SELECT * FROM ${quote(name)}`)

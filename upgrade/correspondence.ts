@@ -13,10 +13,40 @@ import {processStoredInstalled} from '../lib/platform/process-stored-catalog'
 import {recognizedStoredInstalled} from '../lib/platform/recognized-stored-catalog'
 import {witnessInstalled} from '../lib/platform/recognized-witness-catalog'
 import {projectionManifest} from './projections'
+import {z} from 'zod'
 export type CorrespondenceTransferOptions={source:string;target:string;runId:string;beforeCommit?:(stage:string)=>void}
 const hash=(v:string|Buffer)=>createHash('sha256').update(v).digest('hex')
 const manifestOwners = ['record_correspondence', 'record_correspondence_audit'] as const
 const quote=(name:string)=>`"${name.replaceAll('"','""')}"`
+/** Full owner bytes without expanding multi-GiB audit text into HEX/JSON. */
+export function correspondenceCellDigest(t:Database.Database) {
+ const digest=createHash('sha256').update('h1c-framed-original-cells-v1\n')
+ for(const table of manifestOwners) {
+  const fields=z.array(z.object({name:z.string(),pk:z.number()})).parse(t.pragma(`table_info(${quote(table)})`))
+  const normalized=fields.map(field=>field.name==='observation_id'&&table==='record_correspondence'?'relation_id':field.name)
+  const value=(name:string)=>name==='observation_id'&&table==='record_correspondence'?'(SELECT old_id FROM platform_legacy_relation_alias WHERE observation_id=c.observation_id)':`c.${quote(name)}`
+  const select=fields.flatMap(field=>{const expression=value(field.name);return[`typeof(${expression})`,`cast(${expression} as blob)`,`case when typeof(${expression})='real' then ${expression} end`]}).join(',')
+  const order=fields.filter(field=>field.pk).sort((a,b)=>a.pk-b.pk).map(field=>`c.${quote(field.name)}`).join(',')||'c.rowid'
+  digest.update(JSON.stringify([table,normalized])+'\n')
+  for(const raw of t.prepare(`SELECT ${select} FROM ${quote(table)} c ORDER BY ${order}`).raw().iterate()) {
+   const row=z.array(z.unknown()).parse(raw)
+   for(let i=0;i<fields.length;i++) {
+    const kind=row[i*3],bytes=row[i*3+1],numeric=row[i*3+2]
+    if(typeof kind!=='string'||(bytes!==null&&!Buffer.isBuffer(bytes)))throw new Error('Invalid correspondence SQLite cell')
+    let real:string|null=null
+    if(kind==='real') {if(typeof numeric!=='number')throw new Error('Invalid correspondence REAL');const bits=Buffer.alloc(8);bits.writeDoubleBE(numeric);real=bits.toString('hex')}
+    digest.update(JSON.stringify([normalized[i],kind,bytes?.length??null,real])+'\n')
+    if(bytes)digest.update(bytes)
+    digest.update('\n')
+   }
+  }
+ }
+ return digest.digest('hex')
+}
+function transferManifest(t:Database.Database, original=false) {
+ return completeUpgradeActive()?hash(JSON.stringify({metadata:projectionManifest(t),owners:correspondenceCellDigest(t)}))
+  :original?originalManifest(t):projectionManifest(t,undefined,manifestOwners)
+}
 /** Compare every business cell, reversing only the intended reference conversion. Offline only. */
 function originalManifest(t:Database.Database) {
  const aliases=new Map((t.prepare('SELECT observation_id,old_id FROM platform_legacy_relation_alias').all() as {observation_id:number;old_id:number}[]).map(r=>[r.observation_id,r.old_id]))
@@ -48,7 +78,7 @@ export function transferCorrespondence(options:CorrespondenceTransferOptions):{s
   try {
    t.pragma('foreign_keys=ON')
    if(s.pragma('user_version',{simple:true})!==71610||!processStoredInstalled(s)||!recognizedStoredInstalled(s)||!witnessInstalled(s))throw new Error('Completed 71610 source required')
-   const snapshot=fileHash(frozen.fd),manifest=projectionManifest(s,undefined,manifestOwners)
+   const snapshot=fileHash(frozen.fd),manifest=transferManifest(s)
    const counts=s.prepare('SELECT count(relation_id) mapped,count(*)-count(relation_id) nulls FROM record_correspondence').get() as {mapped:number;nulls:number}
    const run=t.prepare('SELECT * FROM platform_migration_run WHERE run_id=?').get(options.runId) as {source_snapshot_sha256:string;transform_version:string;state:string}|undefined
    if(run) {
@@ -56,7 +86,7 @@ export function transferCorrespondence(options:CorrespondenceTransferOptions):{s
     requireH1cReady(t)
     return {state:'complete',...counts}
    }
-   if(t.pragma('user_version',{simple:true})!==71610||schemaHash(t)!==schemaHash(s)||projectionManifest(t,undefined,manifestOwners)!==manifest)throw new Error('Target must be an unchanged independent source copy')
+   if(t.pragma('user_version',{simple:true})!==71610||schemaHash(t)!==schemaHash(s)||transferManifest(t)!==manifest)throw new Error('Target must be an unchanged independent source copy')
    const missing=s.prepare('SELECT c.id,c.relation_id,a.observation_id FROM record_correspondence c LEFT JOIN platform_legacy_relation_alias a ON a.old_id=c.relation_id LEFT JOIN platform_business_observation o ON o.id=a.observation_id WHERE c.relation_id IS NOT NULL AND o.id IS NULL ORDER BY c.id').all()
    if(missing.length)throw new Error(`Unmapped correspondence rows: ${JSON.stringify(missing)}`)
    const violations=s.pragma('foreign_key_check') as unknown[]
@@ -94,7 +124,7 @@ export function transferCorrespondence(options:CorrespondenceTransferOptions):{s
     for(const row of sequence)t.prepare('INSERT INTO sqlite_sequence(name,seq) VALUES(?,?)').run(row.name,row.seq)
     if (!renameOwners) t.exec('DROP TABLE h1c_audit; DROP TABLE h1c_correspondence')
     options.beforeCommit?.('indexed')
-    if(originalManifest(t)!==manifest)throw new Error('Transferred business cells differ from fixed snapshot')
+    if(transferManifest(t,true)!==manifest)throw new Error('Transferred business cells differ from fixed snapshot')
     if((upgradeForeignKeyFailures(t) as unknown[]).length||!upgradeIntegrityGate(t))throw new Error('Transferred target integrity failure')
     assertFrozenSource(frozen,source)
     if(fileHash(frozen.fd)!==snapshot)throw new Error('Fixed source changed')
