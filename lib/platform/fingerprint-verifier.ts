@@ -22,6 +22,7 @@ import { isDeepStrictEqual } from 'node:util'
 import { z } from 'zod'
 import { verifyOriginalCommand } from './fingerprint-command-facts'
 import { legacyFingerprintRaw } from './legacy-fingerprint-raw'
+import { completeUpgradeActive } from './offline-validation'
 export type FingerprintOwner={observationId:number,collectionId:number,relationAlias:number}
 export class FingerprintVerificationError extends Error {
   readonly kind='platform_relation'
@@ -48,6 +49,25 @@ export function emptyFingerprintTarget(t:Database.Database):Database.Database {
 }
 
 const hash=(v:Buffer)=>createHash('sha256').update(v).digest('hex')
+type ArchiveUsage = { source:Set<number>; canonical:Set<number> }
+const frozenArchiveUsage = new WeakMap<Database.Database, { key:string; usage:ArchiveUsage }>()
+/** Complete upgrades repeatedly verify owners in the same frozen predecessor.
+ * Read reverse membership once, without loading any body or changing its schema.
+ * Live/write connections keep the ordinary database lookup path. */
+function offlineArchiveUsage(t:Database.Database):ArchiveUsage|undefined {
+ if(!completeUpgradeActive()||!t.readonly||!t.inTransaction)return
+ const key=JSON.stringify([t.pragma('data_version',{simple:true}),t.pragma('schema_version',{simple:true})])
+ const cached=frozenArchiveUsage.get(t)
+ if(cached?.key===key)return cached.usage
+ const db=drizzle(t),source=new Set<number>(),canonical=new Set<number>()
+ for(const rows of [
+  db.select({id:s.platformApplyProjection.sourceArchiveId}).from(s.platformApplyProjection).all(),
+  db.select({id:s.platformBusinessProjection.sourceArchiveId}).from(s.platformBusinessProjection).all(),
+  db.select({id:s.platformRecognizedProjection.sourceArchiveId}).from(s.platformRecognizedProjection).all(),
+ ])for(const row of rows)if(row.id!==null)source.add(row.id)
+ for(const row of db.select({id:s.platformBusinessRecordVersion.canonicalArchiveId}).from(s.platformBusinessRecordVersion).all())if(row.id!==null)canonical.add(row.id)
+ const usage={source,canonical};frozenArchiveUsage.set(t,{key,usage});return usage
+}
 export function verifyFingerprint(t:Database.Database,owner:FingerprintOwner, options: {allowMissingVersionProjection?:boolean, legacyCustody?:LegacyFingerprintCustody} = {}) {
  const recognized=drizzle(t).select({id:s.platformBusinessObservation.id}).from(s.platformBusinessObservation).innerJoin(s.platformCollection,eq(s.platformCollection.id,s.platformBusinessObservation.collectionId)).where(and(eq(s.platformBusinessObservation.id,owner.observationId),eq(s.platformCollection.interface,'recognized_list'))).get()
  if(recognized)try{verifyRecognizedStored(t,owner.observationId)}catch(error){throw new FingerprintVerificationError('projection_source_drift',owner,error instanceof Error?error.message:String(error))}
@@ -67,8 +87,14 @@ export function verifyFingerprint(t:Database.Database,owner:FingerprintOwner, op
   const a=db.select().from(s.platformArchiveValue).where(eq(s.platformArchiveValue.id,b.inputArchiveId)).get()
   if(!a||a.storageClass!=='blob'||!a.bytes||a.byteLength!==a.bytes.length||a.sha256!==hash(a.bytes)||o.inputFingerprint!==hash(a.bytes)||o.projectionRuleVersion!==PLATFORM_PROJECTION_RULE)throw new FingerprintVerificationError('projection_source_drift',owner,'Fingerprint archive/rule/hash conflict')
   for(const table of [s.platformCollectionArchiveRef,s.platformObservationArchiveRef,s.platformVersionArchiveRef])if(db.select().from(table).where(eq(table.archiveId,a.id)).get())throw new FingerprintVerificationError('projection_source_drift',owner,'Input archive has another owner')
-  for(const table of [s.platformApplyProjection,s.platformBusinessProjection,s.platformRecognizedProjection])if(db.select().from(table).where(eq(table.sourceArchiveId,a.id)).get())throw new FingerprintVerificationError('projection_source_drift',owner,'Input archive used as source')
-  if(db.select().from(s.platformBusinessRecordVersion).where(eq(s.platformBusinessRecordVersion.canonicalArchiveId,a.id)).get())throw new FingerprintVerificationError('projection_source_drift',owner,'Input archive used as canonical')
+  const usage=offlineArchiveUsage(t)
+  if(usage) {
+   if(usage.source.has(a.id))throw new FingerprintVerificationError('projection_source_drift',owner,'Input archive used as source')
+   if(usage.canonical.has(a.id))throw new FingerprintVerificationError('projection_source_drift',owner,'Input archive used as canonical')
+  } else {
+   for(const table of [s.platformApplyProjection,s.platformBusinessProjection,s.platformRecognizedProjection])if(db.select().from(table).where(eq(table.sourceArchiveId,a.id)).get())throw new FingerprintVerificationError('projection_source_drift',owner,'Input archive used as source')
+   if(db.select().from(s.platformBusinessRecordVersion).where(eq(s.platformBusinessRecordVersion.canonicalArchiveId,a.id)).get())throw new FingerprintVerificationError('projection_source_drift',owner,'Input archive used as canonical')
+  }
   try {
    const original:unknown=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(a.bytes))
    if(!Buffer.from(canonicalPlatformJson(original)).equals(a.bytes))throw new Error('Noncanonical input')
