@@ -14,6 +14,8 @@ description: '用于本应用的宁波专精特新名录清洗与入库：分类
 - **平台采集**：先查看 `GET /api/platform/capabilities` 或 MCP `get_platform_capabilities`，再按[平台查询说明](references/platform-query.md)使用应用 REST/MCP 单条或批量查询。保留全部关系、分页和未完成范围。凭据由服务端管理；代理不得读取 Cookie 或直调平台网址。
 - **差异、待审核与全量刷新**：遵循[差异调查与判断](references/difference-investigation.md)。先对应具体认定事件和平台流程，再判断是否有差异；名称出现地名变化或属地冲突时，进入其中的“地名变化与迁移查证”，主动搜索名称沿革及迁入迁出。仅凭历年公布与最新导出集合不同，不能认定业务差异。在用户限定范围内复用归档证据。代理判断原因与措施，软件保存查询事实和明确决定；可用[合成判断示例](references/adjudication-examples.md)核对理解。
 
+- **有效名单对比与业务情况表**：沿用[差异调查与判断](references/difference-investigation.md#业务情况表与问题闭环)的交付流程。固定双方快照、称号、判断时点和当前确认规则，先生成双向差集；核心字段待核须定位缺口，修正或规则变化后重新导出、重算和解释成员变化。业务主表沿用用户模板，技术底稿独立追溯。
+
 - **主体事实与解释引用**：查证迁入、迁出、注销/登记状态，确认、更正、撤回事实，或核对历史解释所引用的多个事实时，遵循[主体事实公开协议](references/enterprise-facts.md)。逐条固定 enterpriseId/factId/revision/kind；读回来源与审计后独立确认，旧解释不随事实 head 漂移。
 
 ## 编排与写入
