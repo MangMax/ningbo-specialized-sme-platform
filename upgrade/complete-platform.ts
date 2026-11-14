@@ -106,7 +106,7 @@ export function completePlatformMigration(source: string, target: string, eviden
   next('candidates', predecessor => finalizeCandidateScopes({ source: predecessor, target, runId: 'complete-candidates', predecessorRunId: 'complete-apply' }))
   next('recognized', predecessor => finalizeRecognizedStored({ source: predecessor, target, runId: 'complete-recognized', predecessorRunId: 'complete-candidates' }))
   next('witness', predecessor => finalizeRecognizedWitness({ source: predecessor, target, runId: 'complete-witness', predecessorRunId: 'complete-recognized' }))
-  next('process', predecessor => finalizeProcessStored({ source: predecessor, target, runId: 'complete-process', predecessorRunId: 'complete-witness', legacySource: source }))
+  next('process', predecessor => finalizeProcessStored({ source: predecessor, target, runId: 'complete-process', predecessorRunId: 'complete-witness', legacySource: source, beforeCommit:stage=>process.stdout.write(`process ${stage}\n`) }))
   next('correspondence', predecessor => transferCorrespondence({ source: predecessor, target, runId: 'complete-correspondence' }))
   next('differences', predecessor => transferDifferenceReferences({ source: predecessor, target, runId: 'complete-differences' }))
   next('provenance', predecessor => indexLegacyProvenance({ source: predecessor, target, runId: 'complete-provenance', batchSize: 1000 }))

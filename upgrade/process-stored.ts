@@ -207,6 +207,7 @@ export function finalizeProcessStored(options:ProcessStoredOptions,frozen?:Froze
     const before=digest(t,options.runId)
     const recovered=recovery;options.beforeCommit?.('authenticated')
     installProcessStoredSchema(t,options.beforeCommit)
+    t.exec('CREATE INDEX s734_process_pair_recovery_lookup ON platform_business_observation(process_exact_owner_id)')
     for(const r of recovered) {
      const assignments=r.exactState==='captured'?r.cells.map((c,i)=>`exact_${fields[i]}=${expression(c)}`).join(','):fields.map(c=>`exact_${c}=NULL`).join(',')
      const result=t.prepare(`UPDATE platform_business_projection SET ${assignments},exact_stored_state=?,exact_stored_rule=?,exact_stored_origin=?,exact_stored_reason=?,sql_fact_title=?,sql_fact_title_state=?,sql_fact_title_rule=?,sql_fact_title_reason=? WHERE observation_id=?`).run(r.exactState,r.exactState==='captured'?'process-stored-cells-v1':null,r.origin,r.reason,r.title,r.titleState,r.titleState==='captured'?'process-legacy-sql-fact-title-v1':null,r.titleReason,r.observationId)
@@ -218,6 +219,7 @@ export function finalizeProcessStored(options:ProcessStoredOptions,frozen?:Froze
      t.prepare('UPDATE platform_business_observation SET process_exact_owner_id=id,process_exact_state=?,process_sql_fact_title_state=? WHERE id=?').run(r.exactState,r.titleState,r.observationId)
     }
     verifyRecovery(t,recovered)
+    t.exec('DROP INDEX s734_process_pair_recovery_lookup')
     options.beforeCommit?.('recovered');installProcessStoredBarrier(t);options.beforeCommit?.('barrier')
     if(before!==digest(t,options.runId,true))throw new Error('Original facts/sequences/receipt manifest drift')
     if(!isDeepStrictEqual(upgradeForeignKeyFailures(t),[])||!upgradeIntegrityGate(t))throw new Error('Successor integrity failure')

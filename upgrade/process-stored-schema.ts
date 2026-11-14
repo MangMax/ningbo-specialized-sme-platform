@@ -53,6 +53,9 @@ export function installProcessStoredSchema(t:Database.Database, step?:(stage:str
     )`)
     t.exec(ddl)
   }
+  // Deferred parent inserts also look back into the rebuilt observation table.
+  // Install these before copying any rows, then remove them after reconstruction.
+  t.exec('CREATE INDEX s734_apply_pair_restore_lookup ON platform_business_observation(apply_exact_owner_id); CREATE INDEX s734_process_pair_restore_lookup ON platform_business_observation(process_exact_owner_id)')
   step?.('created')
   // Capture fields are populated by the successor before checks/constraints become observable.
   // Seed unknown states for the historical owner inventory, then fill once before barriers.
@@ -66,6 +69,7 @@ export function installProcessStoredSchema(t:Database.Database, step?:(stage:str
   for(const {name,seq} of sequences)if(tables.includes(name))t.prepare('UPDATE sqlite_sequence SET seq=? WHERE name=?').run(seq,name)
   for(const x of affected.filter(x=>x.type==='index'||x.type==='trigger'))t.exec(x.sql)
   for(const name of tables)t.exec(`DROP TABLE ${quote('s734_'+name)}`)
+  t.exec('DROP INDEX s734_apply_pair_restore_lookup; DROP INDEX s734_process_pair_restore_lookup')
   step?.('restored')
 }
 export function installProcessStoredBarrier(t:Database.Database) {
