@@ -50,7 +50,7 @@ export function assertFinalPlatformRuntime(sqlite: Database.Database) {
     platform_collection_condition cc LIMIT 0`).all()
 }
 
-/** schema0 remains available to historical fixtures during the final cleanup. */
+/** Historical tool adapter only. Application entries and workers require final runtime. */
 export function assertApplicationRuntime(sqlite: Database.Database) {
   if (sqlite.pragma('user_version', { simple: true }) === 0) return
   assertFinalPlatformRuntime(sqlite)

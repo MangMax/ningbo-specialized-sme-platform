@@ -6,7 +6,7 @@ import { createRequire } from 'node:module'
 import { once } from 'node:events'
 import { setTimeout as pause } from 'node:timers/promises'
 import { afterEach, beforeAll, describe, expect, it } from 'vitest'
-import { useDb, schema } from '../db/client'
+import { initializeDb, schema } from '../db/client'
 import { createEnterpriseReadExecutor } from '../server/utils/enterprise-read'
 import { startHttpFixture } from './helpers/http-fixture'
 
@@ -15,7 +15,7 @@ afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await c
 function fixture() {
   const dir = mkdtempSync(join(tmpdir(), 'enterprise-async-'))
   cleanup.push(() => rmSync(dir, { recursive: true, force: true }))
-  const path = join(dir, 'test.db'), db = useDb({ dbPath: path })
+  const path = join(dir, 'test.db'), db = initializeDb({ dbPath: path, create:true })
   cleanup.push(() => db.$client.close())
   const enterprise = db.insert(schema.enterprise).values({ name: '合成企业', nameNorm: '合成企业' }).returning().get()
   const record = db.insert(schema.record).values({ enterpriseId: enterprise.id, titleCode: 'specialized_sme', source: 'jxj' }).returning().get()

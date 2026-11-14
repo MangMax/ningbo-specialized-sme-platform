@@ -42,12 +42,26 @@ function oldTables(db: Database.Database) {
   return RETIRED_PLATFORM_TABLES.filter(name => db.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name=?").get(name))
 }
 
-it('refuses schema0 at the public application entry while preserving the historical tool adapter', () => {
+it('refuses schema0 at application and source-worker entries while preserving the historical tool adapter', async () => {
   const path = join(root, 'historical.sqlite')
   const legacy = useHistoricalDb({ dbPath: path })
   cleanup.push(() => legacy.$client.close())
   expect(legacy.$client.pragma('user_version', { simple: true })).toBe(0)
   expect(() => useApplicationDb({ dbPath: path })).toThrow('Unsupported final platform runtime schema')
+  const reads = createEnterpriseReadExecutor()
+  cleanup.push(() => reads.close())
+  await expect(reads.list(path)).rejects.toMatchObject({ statusCode:503, code:'enterprise_read_failed' })
+  const worker = createImportExecutionWorker()
+  cleanup.push(() => worker.terminate())
+  expect((await once(worker, 'message'))[0]).toMatchObject({ type:'ready' })
+  const stat = statSync(path)
+  const response = once(worker, 'message')
+  worker.postMessage({ id:1, dbPath:path, readonly:true, identity:{ dev:stat.dev, ino:stat.ino,
+    schemaVersion:legacy.$client.pragma('schema_version', { simple:true }),
+    migration:legacy.$client.prepare('SELECT hash,created_at FROM __drizzle_migrations ORDER BY created_at DESC LIMIT 1').get() },
+    action:'preflight', payload:serialize({ idempotencyKey:'historical-worker-refusal', sourceKind:'platform_archive',
+      sourceIdentity:'historical-test', payload:{ platformQueries:[] } }), pageCountErrors:[] })
+  expect((await response)[0]).toMatchObject({ type:'failure', error:{ message:'Unsupported final platform runtime schema' } })
 })
 
 it('keeps final enterprise details typed when a historical rollback environment remains set', () => {
