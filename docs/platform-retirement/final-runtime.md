@@ -27,3 +27,5 @@
 原值比较与回执摘要改为有序流式处理，避免整表 HEX/JSON 常驻内存；摘要序列化格式保持原样。同一连接无写入时复用 manifest，SQLite total_changes、data_version 和 schema_version 变化即失效，逐行输出的审计始终重新读取。对应关系转换在完整链且无外部 trigger/view 引用时使用事务内 rename/copy/drop，避免额外大 TEMP 副本；其他情况保留原转换。
 
 本轮验证：最新完整合成链完成，除迁移控制表外，71 张业务表的行数与 SQLite 单元格字节摘要全部一致；退役/重启/worker 相邻 6 PASS；manifest 复用的本地写入、外部提交及 DDL 失效检查通过。离线入口严格类型探针的升级所属诊断为 0，依赖图仍有 39 条既有诊断，不能称全仓类型检查通过。真实历史备份仍在升级，尚无真实业务回归或性能结论。
+
+企业详情证据读取已识别 reconcile-slot T04 的完成标记，保留相同原档字段集合和 lifecycle 核验，修复迁移后详情的 Unknown provenance lifecycle。终态详情忽略历史 typed-read 回退设置，部署示例移除两个已退役的平台回退变量；原生首笔导入和迁移后详情的两项定向回归通过。首轮失败与修复结果分别保存在 detail-retired-selector.json / detail-retired-selector04.json。

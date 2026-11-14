@@ -10,6 +10,9 @@ import { retirePlatformModel } from '../upgrade/retire-platform-model'
 import { createEnterpriseReadExecutor } from '../server/utils/enterprise-read'
 import { createImportExecutionWorker } from '../server/utils/import-execution-worker-location'
 import { createHash } from 'node:crypto'
+import { getRosterEnterpriseDetail } from '../lib/roster/enterprise-roster'
+import { enterprise } from '../db/schema'
+import { writeNewCollectionTarget } from '../lib/platform/collection-target-command'
 
 const fixture = process.env.FINAL_PLATFORM_RETIREMENT_FIXTURE
 const evidence = process.env.FINAL_PLATFORM_RETIREMENT_EVIDENCE
@@ -45,6 +48,38 @@ it('refuses schema0 at the public application entry while preserving the histori
   cleanup.push(() => legacy.$client.close())
   expect(legacy.$client.pragma('user_version', { simple: true })).toBe(0)
   expect(() => useApplicationDb({ dbPath: path })).toThrow('Unsupported final platform runtime schema')
+})
+
+it('keeps final enterprise details typed when a historical rollback environment remains set', () => {
+  const owner = initializeDb({ dbPath:join(root, 'native-detail.sqlite'), create:true })
+  cleanup.push(() => owner.$client.close())
+  owner.insert(enterprise).values({ id:1, name:'Native Detail', nameNorm:'Native Detail', usccNorm:'U1' }).run()
+  const rawFields = { id:'native-detail', rdjb:'2', qymc:'Native Detail', tyshxydm:'U1', year:'2025', cszt:'pending' }
+  writeNewCollectionTarget(owner, {
+    queryText:JSON.stringify({ interface:'apply_list', queryKey:'U1', rdjb:'2',
+      queriedAt:'2026-11-14T00:00:00Z', status:'success', rawResponse:'native detail original',
+      relations:[{ sequenceNo:1, relationKey:rawFields.id, nameRaw:rawFields.qymc, usccRaw:'U1', rawFields }] }),
+    evidenceText:null, createdAt:'2026-11-14T00:00:00Z', assignments:[{ enterpriseId:1, nameRaw:rawFields.qymc,
+      usccRaw:'U1', matchBasis:'uscc', verificationStatus:'confirmed', origin:'command',
+      actor:{ type:'agent', id:'native-detail' }, basis:'confirmed native detail' }],
+  })
+  const asOf = Date.UTC(2026, 10, 14)
+  const before = getRosterEnterpriseDetail(owner, 1, asOf)!
+  expect(before.platform.businessRecords.flatMap(row => row.observationRefs).some(row => row.typedFields !== null)).toBe(true)
+  vi.stubEnv('ROSTER_ENTERPRISE_DETAIL_TYPED_READ', 'legacy')
+  expect(getRosterEnterpriseDetail(owner, 1, asOf)!.platform.businessRecords).toEqual(before.platform.businessRecords)
+  expect(oldTables(owner.$client)).toEqual([])
+})
+
+it('serves migrated enterprise details with the reconcile capture collection marker', () => {
+  const f = target()
+  retirePlatformModel(f.db)
+  const owner = useApplicationDb({ dbPath:f.path })
+  cleanup.push(() => owner.$client.close())
+  const detail = getRosterEnterpriseDetail(owner, 1, Date.UTC(2026, 10, 14))!
+  expect(detail.platform.queries.length).toBeGreaterThan(0)
+  expect(detail.platform.businessRecords.flatMap(row => row.observationRefs).some(row => row.typedFields !== null)).toBe(true)
+  expect(oldTables(f.db)).toEqual([])
 })
 
 it('retires historical tables atomically and opens the completed runtime without expand migrations', () => {

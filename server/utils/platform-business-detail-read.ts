@@ -61,9 +61,9 @@ function readPlatformDetailFacts(db: Db, queries: RosterPlatformQueryRow[], rela
 
 /** Caller supplies only displayed enterprise-scoped archives, inside its existing read transaction. */
 export function readPlatformBusinessDetails(db: Db, enterpriseId: number, queries: RosterPlatformQueryRow[], relations: PlatformStoredRelation[], options: { typedReadSource?: PlatformDetailTypedReadSource } = {}) {
-  const typedFields = resolvePlatformDetailTypedReadSource(options.typedReadSource) === 'legacy'
-    ? new Map<number, PlatformObservationFact>()
-    : readPlatformDetailFacts(db, queries, relations)
+  const typedFields = queryHistoryTarget(db) || resolvePlatformDetailTypedReadSource(options.typedReadSource) !== 'legacy'
+    ? readPlatformDetailFacts(db, queries, relations)
+    : new Map<number, PlatformObservationFact>()
   const byQuery = new Map(queries.map(q => [q.id, q]))
   const groups = readPlatformBusinessGroups(db, relations.map(archived => {
     const query = byQuery.get(archived.queryId)!

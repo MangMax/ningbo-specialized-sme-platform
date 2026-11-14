@@ -10,6 +10,7 @@ import { MAX_EVIDENCE_CHUNK_BYTES, type PlatformEvidenceInput } from './evidence
 import { platformQueryResultShape } from './live-query'
 import { relationEvidenceColumns } from './relation-evidence-snapshot'
 import { resolveSelectedLegacyProvenance } from './target-legacy-provenance'
+import { RECONCILE_SLOT_T04 } from './reconcile-slot-capture'
 const cellSchema = z.object({name:z.string(),storageClass:z.enum(['null','text','blob','integer','real']),hex:z.string().regex(/^(?:[a-fA-F0-9]{2})*$/),real64be:z.string().regex(/^[a-fA-F0-9]{16}$/).optional()})
 const commandProvenanceSchema=z.object({interface:z.enum(['apply_list','business_list','recognized_list']),queryKey:z.string(),rdjb:z.string().optional(),queriedAt:z.string(),reuseExisting:z.literal(true).optional(),rawResponse:z.string().nullish(),collectionEvidence:z.object(platformQueryResultShape).nullish()})
 export const snapshotSchema=z.object({encoding:z.literal('t05a-sqlite-cells-v1'),fields:z.array(cellSchema)})
@@ -49,7 +50,7 @@ export function provenancePresence<S extends Record<string,unknown>>(db:BetterSQ
   const evidence=refs.find(ref=>ref.field==='collectionEvidence')
   const hasProvenance=refs.some(ref=>ref.field==='legacyProvenance')
   const complete=(fields:string[])=>refs.length===fields.length&&fields.every(field=>refs.some(ref=>ref.field===field))
-  if(c.ruleVersion==='t04-collection-v1') {
+  if(c.ruleVersion==='t04-collection-v1'||c.ruleVersion===RECONCILE_SLOT_T04) {
     if(!complete(hasProvenance?['rawResponse','collectionEvidence','legacyProvenance']:['rawResponse','collectionEvidence']))throw new Error('Incomplete T04 provenance field set')
     const expectedPresence=c.provenanceState==='legacy_supplement'||c.provenanceState==='conflict'
     const expectedEvidence=c.provenanceState==='captured'||c.provenanceState==='conflict'
