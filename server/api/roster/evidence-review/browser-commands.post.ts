@@ -9,7 +9,7 @@ defineRouteMeta({
     tags: ['证据复核'],
     summary: '页面同源人工复核（maintain / replace）',
     description: [
-      '显式部署能力的过渡入口，不是登录鉴权，也不识别操作人。仅当 NUXT_BROWSER_REVIEW_ENABLED=true 且 NUXT_API_TOKEN 非空时启用；默认关闭。',
+      '同源页面默认可提交，不识别个人身份；保留精确 Origin、JSON、业务预检和版本冲突校验。',
       '请求必须由同源浏览器页面发起：Origin 必须精确等于服务端规范化后的请求 origin，Sec-Fetch-Site 不得为跨站；缺失 Origin 一律拒绝，curl/MCP 不豁免。',
       '只接受业务字段，actor 与 ruleVersion 不允许出现在请求体中。落库的 actor/ruleVersion 是真实的 JSON null（“未记录”），幂等哈希覆盖含 null 的完整内部命令。HTTP/MCP 的既有 commands 入口仍要求 actor/ruleVersion 必填。',
     ].join(' '),
@@ -77,7 +77,7 @@ defineRouteMeta({
 export default defineEventHandler(async (event: H3Event) => {
   setHeader(event, 'cache-control', 'no-store')
   try {
-    const gate = checkBrowserReviewRequest(event, useRuntimeConfig(), { write: true })
+    const gate = checkBrowserReviewRequest(event, { write: true })
     if (!gate.ok) throw new DecisionError102(gate.status, gate.code, gate.message)
     let body: unknown
     try {

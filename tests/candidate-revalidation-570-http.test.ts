@@ -15,7 +15,7 @@ const query = db.insert(schema.platformQuery).values({ interface: 'business_list
 let base: string, child: ReturnType<typeof spawnOwnedChild>, serial = 0
 beforeAll(async () => {
   const cwd = resolve(import.meta.dirname, '..'), port = await reserveLoopbackPort()
-  child = spawnOwnedChild(process.execPath, [join(cwd, 'node_modules/nuxt/bin/nuxt.mjs'), 'dev', '--host', '127.0.0.1', '--port', String(port)], { cwd, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, NUXT_BUILD_DIR: join(dir, 'build'), NUXT_DB_PATH: join(dir, 'test.db'), NUXT_FILES_DIR: join(dir, 'files'), NUXT_INCOMING_DIR: join(dir, 'incoming'), NUXT_API_TOKEN: 'synthetic-570', NUXT_BROWSER_REVIEW_ENABLED: 'true' } })
+  child = spawnOwnedChild(process.execPath, [join(cwd, 'node_modules/nuxt/bin/nuxt.mjs'), 'dev', '--host', '127.0.0.1', '--port', String(port)], { cwd, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, NUXT_BUILD_DIR: join(dir, 'build'), NUXT_DB_PATH: join(dir, 'test.db'), NUXT_FILES_DIR: join(dir, 'files'), NUXT_INCOMING_DIR: join(dir, 'incoming'), NUXT_API_TOKEN: 'synthetic-570', } })
   let output = ''
   for (const stream of [child.stdout, child.stderr]) stream?.on('data', data => { output += data; writeFileSync(join(dir, 'server.log'), output) })
   base = `http://127.0.0.1:${port}`

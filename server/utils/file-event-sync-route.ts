@@ -15,7 +15,7 @@ export function fileEventSyncRoute(action: 'preflight' | 'commit', browser = fal
     setHeader(event, 'cache-control', 'no-store')
     const config = useRuntimeConfig()
     if (browser) {
-      const gate = checkBrowserReviewRequest(event, config, { write: true })
+      const gate = checkBrowserReviewRequest(event, { write: true })
       if (!gate.ok) {
         setResponseStatus(event, gate.status)
         return { error: { code: gate.code, message: gate.message } }

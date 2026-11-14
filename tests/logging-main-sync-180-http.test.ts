@@ -17,7 +17,7 @@ beforeAll(async () => {
   base = `http://127.0.0.1:${port}`
   child = spawn(process.execPath, ['.output/server/index.mjs'], {
     cwd: resolve(import.meta.dirname, '..'), stdio: ['ignore', 'pipe', 'pipe'],
-    env: { ...process.env, NODE_ENV: 'production', HOST: '127.0.0.1', PORT: String(port), NUXT_DB_PATH: join(root, 'synthetic.db'), NUXT_DB_READONLY: '0', NUXT_LOG_DIR: join(root, 'logs'), NUXT_FILES_DIR: join(root, 'files'), NUXT_INCOMING_DIR: join(root, 'incoming'), NUXT_CURATED_PATH: join(root, 'curated.json'), NUXT_RECONCILE_PATH: join(root, 'reconcile.json'), NUXT_API_TOKEN: token, NUXT_MCP_TOKEN: token, NUXT_BROWSER_REVIEW_ENABLED: 'false', NUXT_OCR_TOKEN: '', NUXT_PLATFORM_COOKIE: '' },
+    env: { ...process.env, NODE_ENV: 'production', HOST: '127.0.0.1', PORT: String(port), NUXT_DB_PATH: join(root, 'synthetic.db'), NUXT_DB_READONLY: '0', NUXT_LOG_DIR: join(root, 'logs'), NUXT_FILES_DIR: join(root, 'files'), NUXT_INCOMING_DIR: join(root, 'incoming'), NUXT_CURATED_PATH: join(root, 'curated.json'), NUXT_RECONCILE_PATH: join(root, 'reconcile.json'), NUXT_API_TOKEN: token, NUXT_MCP_TOKEN: token, NUXT_OCR_TOKEN: '', NUXT_PLATFORM_COOKIE: '' },
   })
   child.stdout!.on('data', chunk => { output = (output + chunk).slice(-64000) })
   child.stderr!.on('data', chunk => { output = (output + chunk).slice(-64000) })

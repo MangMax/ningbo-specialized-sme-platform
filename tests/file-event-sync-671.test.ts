@@ -118,8 +118,7 @@ async function service() {
   vi.stubGlobal('useRuntimeConfig', () => ({
     apiToken: 'test671',
     filesDir: dir,
-    browserReviewEnabled: true,
-  }))
+    }))
   process.env.NUXT_DB_PATH = `${dir}/test.db`
   const { fileEventSyncRoute } = await import('../server/utils/file-event-sync-route')
   const app = createApp(),
@@ -586,17 +585,7 @@ it('requires public auth and browser origin plus explicit write capability, with
   const origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`
   expect((await f.post('browser-preflight', f.request, { origin })).status).toBe(400)
   expect((await f.post('browser-preflight', business, { origin })).status).toBe(200)
-  vi.stubGlobal('useRuntimeConfig', () => ({
-    apiToken: 'test671',
-    filesDir: dir,
-    browserReviewEnabled: false,
-  }))
-  expect((await f.post('browser-preflight', business, { origin })).status).toBe(403)
-  vi.stubGlobal('useRuntimeConfig', () => ({
-    apiToken: 'test671',
-    filesDir: dir,
-    browserReviewEnabled: true,
-  }))
+
 })
 it('retains a fresh unknown-year fixture for manual browser and workbook acceptance when requested', () => {
   const f = sample()

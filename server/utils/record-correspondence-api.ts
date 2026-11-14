@@ -78,16 +78,16 @@ function scalar(value: unknown) { return typeof value === 'string' && value.leng
 function ids(input: Record<string, unknown>, keys: string[]) { const result: Record<string, number> = {}; for (const key of keys) if (input[key] != null) { const value = int(input[key]); if (!value) return null; result[key] = value } return result }
 function permitted(input: Record<string, unknown>, keys: string[]) { return Object.keys(input).every(key => keys.includes(key)) }
 function auth(input: CorrespondenceApiInput, configured: string | null | undefined) { return resolveApiAuth({ given: readApiToken(input.headers), configured }).writeAuthorized }
-export function handleRecordCorrespondenceRequest(input: CorrespondenceApiInput, context: { db: Db; apiToken?: string | null }): CorrespondenceApiOutput {
+export function handleRecordCorrespondenceRequest(input: CorrespondenceApiInput, context: { db: Db; apiToken?: string | null; browserAuthorized?: boolean }): CorrespondenceApiOutput {
   return ['list', 'get', 'audit', 'source', 'candidates', 'discover'].includes(input.action)
     ? context.db.transaction(() => correspondenceSnapshot(input, context))
     : correspondenceSnapshot(input, context)
 }
-function correspondenceSnapshot(input: CorrespondenceApiInput, context: { db: Db; apiToken?: string | null }): CorrespondenceApiOutput {
+function correspondenceSnapshot(input: CorrespondenceApiInput, context: { db: Db; apiToken?: string | null; browserAuthorized?: boolean }): CorrespondenceApiOutput {
   try {
     const { db } = context
     const write = ['preflight', 'commit', 'batch'].includes(input.action)
-    if (write && !auth(input, context.apiToken)) return fail(401, 'unauthorized', 'Configured API token required')
+    if (write && context.browserAuthorized !== true && !auth(input, context.apiToken)) return fail(401, 'unauthorized', 'Configured API token required')
     const method = ['list', 'get', 'audit', 'source', 'batch'].includes(input.action) ? 'GET' : 'POST'
     if (input.method !== method) return fail(405, 'method_not_allowed', `${method} required`)
     // Resolve secrets before any preflight or commit side effect, so response

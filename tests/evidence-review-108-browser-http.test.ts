@@ -79,7 +79,7 @@ function rowCount() {
 }
 
 beforeAll(async () => {
-  enabled = await start({ NUXT_API_TOKEN: apiToken, NUXT_BROWSER_REVIEW_ENABLED: 'true' })
+  enabled = await start({ NUXT_API_TOKEN: apiToken, })
 }, 120000)
 afterAll(async () => {
   if (enabled) await enabled.stop()
@@ -288,26 +288,13 @@ describe('ticket 108 browser review capability', () => {
     expect(noToken.status).toBe(401)
   })
 
-  it('stays closed by default and when the write token is not configured', async () => {
-    const enterprise = db.insert(schema.enterprise).values({ name: '浏览器默认关闭主体', nameNorm: '浏览器默认关闭主体', usccNorm: 'BROWSER-108-G' }).returning().get()
-    const body = replace(enterprise.id, 'browser-default-off', null)
-    const before = rowCount()
-    const defaults = await start({ NUXT_API_TOKEN: apiToken, NUXT_BROWSER_REVIEW_ENABLED: '' })
+  it('enables same-origin review without a configured API token while external commands remain protected', async () => {
+    const server = await start({ NUXT_API_TOKEN: '' })
     try {
-      expect(await json(await fetch(defaults.baseUrl + contextPath))).toEqual({ writeEnabled: false })
-      const denied = await browserPost(defaults, body)
-      expect(denied.status).toBe(403)
-      expect(await json(denied)).toMatchObject({ error: { code: 'browser_review_disabled' } })
-    } finally { await defaults.stop() }
-    const noToken = await start({ NUXT_API_TOKEN: '', NUXT_BROWSER_REVIEW_ENABLED: 'true' })
-    try {
-      expect(await json(await fetch(noToken.baseUrl + contextPath))).toEqual({ writeEnabled: false })
-      const denied = await browserPost(noToken, body)
-      expect(denied.status).toBe(403)
-      expect(await json(denied)).toMatchObject({ error: { code: 'browser_review_disabled' } })
-      expect((await fetch(noToken.baseUrl + externalPath, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ...body, actor: { type: 'agent', id: 'x' }, ruleVersion: '1' }) })).status).toBe(401)
-    } finally { await noToken.stop() }
-    expect(rowCount()).toBe(before)
+      expect(await json(await fetch(server.baseUrl + contextPath))).toEqual({ writeEnabled: true })
+      expect((await browserPost(server, {})).status).toBe(400)
+      expect((await fetch(server.baseUrl + externalPath, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })).status).toBe(401)
+    } finally { await server.stop() }
   }, 120000)
 
   it('does not print the configured token in the enabled server output', () => {

@@ -17,7 +17,7 @@ const event = db.insert(schema.recordEvent).values({ recordId: record.id, eventT
 const query = db.insert(schema.platformQuery).values({ interface: 'business_list', titleCode: 'specialized_sme', rdjb: '2', queryKey: enterprise.usccNorm!, queriedAt: '2026-10-23T00:00:00Z', status: 'success' }).returning().get()
 const relations = [1, 2, 3].map(sequenceNo => db.insert(schema.platformRelation).values({ queryId: query.id, sequenceNo, enterpriseId: enterprise.id, usccRaw: enterprise.usccNorm, verificationStatus: 'confirmed', rawFields: { original: `原行${sequenceNo}` } }).returning().get())
 const edge = (n: number) => ({ type: 'event_process', eventId: event.id, relationId: relations[n]!.id, role: 'context_only' })
-const config = { apiToken: 'synthetic-private-token', browserReviewEnabled: true }
+const config = { apiToken: 'synthetic-private-token', }
 vi.stubGlobal('defineEventHandler', defineEventHandler)
 const app = createApp()
 for (const action of ['preflight', 'commit'] as const) app.use('/' + action, browserCorrespondenceRoute(action, () => ({ db, config })))
@@ -40,9 +40,6 @@ it('gates same origin and rejects forged identity before any decision is written
   const request = command([{ action: 'create', status: 'confirmed', edge: edge(0) }])
   expect((await post('preflight', request, 'https://elsewhere.invalid')).status).toBe(403)
   expect((await post('preflight', { ...request, actor: { type: 'user', id: 'forged' } })).status).toBe(400)
-  config.browserReviewEnabled = false
-  expect((await post('preflight', request)).status).toBe(403)
-  config.browserReviewEnabled = true
   expect(read('list').total).toBe(0)
 })
 

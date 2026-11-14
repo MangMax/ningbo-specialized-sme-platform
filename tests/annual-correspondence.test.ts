@@ -197,9 +197,9 @@ it('fails an admitted stale generation and requires a fresh request instead of o
  expect(()=>retryAnnualCorrespondence(f.db,f.read,task.jobId,f.dir)).toThrowError(expect.objectContaining({code:'source_generation_changed'}))
  expect(f.rows()).toEqual([])
 })
-it('gates real HTTP browser commands by explicit capability and exact origin without exposing a token',async()=>{
+it('gates real HTTP browser commands by exact origin without exposing a token',async()=>{
  const {createServer}=await import('node:http');const {createApp,createRouter,toNodeListener}=await import('h3');const {annualTaskRoute}=await import('../server/utils/annual-correspondence-route')
- const f=fixture(),config={apiToken:'http-private-token',browserReviewEnabled:true}
+ const f=fixture(),config={apiToken:'http-private-token',}
  const context=()=>({db:f.db,readScope:f.read,filesDir:f.dir,config})
  const router=createRouter();router.post('/events/:id/tasks',annualTaskRoute('submit',context,{eventScoped:true}));router.get('/tasks/:id',annualTaskRoute('detail',context));router.post('/tasks/:id/cancel',annualTaskRoute('cancel',context));router.post('/tasks/:id/retry',annualTaskRoute('retry',context))
  const app=createApp().use(router);const server=createServer(toNodeListener(app));await new Promise<void>(r=>server.listen(0,'127.0.0.1',r));const base=`http://127.0.0.1:${(server.address() as any).port}`
@@ -208,15 +208,12 @@ it('gates real HTTP browser commands by explicit capability and exact origin wit
   expect((await post('https://elsewhere.invalid')).status).toBe(403);expect((await post(undefined)).status).toBe(403)
   expect((await post(base,{'sec-fetch-site':'cross-site'})).status).toBe(403)
   expect((await post(base,{'content-type':'text/plain'})).status).toBe(415)
-  config.browserReviewEnabled=false;expect((await post(base)).status).toBe(403);config.browserReviewEnabled=true
-  config.apiToken='';expect((await post(base)).status).toBe(403);config.apiToken='http-private-token'
   expect(f.db.select().from(s.job).all()).toEqual([])
   expect((await post(base,{}, {clientRequestId:'forged',eventIds:[999]})).status).toBe(400)
   const response=await post(base);expect(response.status).toBe(202);const receipt=await response.json() as any;await whenIdle()
   const detail=await fetch(`${base}/tasks/${receipt.jobId}`);expect(detail.status).toBe(200);const dto=await detail.json() as any
   expect(dto).toMatchObject({status:'done',result:{events:[{eventId:f.event.id,finalQualification:{status:'confirmed'}}]}})
   expect(JSON.stringify({receipt,dto})).not.toContain(config.apiToken)
-  config.browserReviewEnabled=false
   expect((await post(undefined,{authorization:'Bearer http-private-token'},{clientRequestId:'rest-authorized'})).status).toBe(202)
   expect((await post(base,{authorization:'Bearer wrong'})).status).toBe(401)
  } finally {await whenIdle();await new Promise<void>(r=>server.close(()=>r()))}

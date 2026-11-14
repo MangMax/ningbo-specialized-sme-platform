@@ -12,7 +12,7 @@ const commit = z.strictObject({ request: business, planHash: z.string().regex(/^
 export function browserEnterpriseFactsRoute(action: 'preflight' | 'commit') {
   return defineEventHandler(async event => {
     setHeader(event, 'cache-control', 'no-store')
-    const gate = checkBrowserReviewRequest(event, useRuntimeConfig(), { write: true })
+    const gate = checkBrowserReviewRequest(event, { write: true })
     if (!gate.ok) { setResponseStatus(event, gate.status); return { error: { code: gate.code, message: gate.message } } }
     try {
       const id = Number(getRouterParam(event, 'id'))

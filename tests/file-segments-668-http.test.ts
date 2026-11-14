@@ -8,10 +8,10 @@ import { initializeDb } from '../db/client'
 import { schema } from '../db'
 const root = mkdtempSync('/tmp/segments-668-')
 const db = initializeDb({ create: true, dbPath: join(root, 'test.sqlite') })
-let server: Server, base: string, enabled = true
+let server: Server, base: string
 beforeAll(async () => {
   vi.stubGlobal('defineEventHandler', defineEventHandler)
-  vi.stubGlobal('useRuntimeConfig', () => ({ apiToken: 'synthetic-server-only', browserReviewEnabled: enabled, filesDir: root }))
+  vi.stubGlobal('useRuntimeConfig', () => ({ apiToken: 'synthetic-server-only', filesDir: root }))
   vi.doMock('@db', () => ({ useDb: () => db }))
   const { browserFileSegmentsRoute } = await import('../server/utils/browser-file-segments')
   const router = createRouter()
@@ -54,14 +54,10 @@ it('saves explicit combinations through real HTTP, preserves parse state and rep
   expect(readFileSync(join(root, f.relPath), 'utf8')).toBe('controlled source, never OCR')
   expect(JSON.stringify(await http(f.id))).not.toContain('synthetic-server-only')
 })
-it('rejects cross-origin, disabled, forged actors, stale versions, duplicates, illegal values and oversized collections atomically', async () => {
+it('rejects cross-origin, forged actors, stale versions, duplicates, illegal values and oversized collections atomically', async () => {
   const f = fixture(), initial = (await http(f.id)).body
   const request = { expectedVersion: initial.state.version }
   expect((await http(f.id, '/preflight', request, 'https://other.example')).status).toBe(403)
-  enabled = false
-  expect((await http(f.id)).body.writeEnabled).toBe(false)
-  expect((await http(f.id, '/preflight', request)).status).toBe(403)
-  enabled = true
   const plan = (await http(f.id, '/preflight', request)).body
   const part = { titleCode: 'specialized_sme', eventKind: 'award', year: 2022, batch: 1, rowCount: 1 }
   const body = { ...plan, parts: [part], idempotencyKey: 'guard', reason: '登记' }

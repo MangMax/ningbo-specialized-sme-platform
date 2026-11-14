@@ -108,3 +108,33 @@ it('revalidates native recognized-export proof and correspondence when the selec
   expect(readComparisonScopeProof(f.db, proofId)).toMatchObject({ valid: false, invalidReason: 'source_drift_or_missing' })
   expect(listRecordCorrespondences(f.db)[0]).toMatchObject({ relationId: 201, requiresRevalidation: true })
 })
+
+it('preflights and commits native correspondence from the same-origin browser without a configured token', async () => {
+  const { createServer } = await import('node:http')
+  const { createApp, defineEventHandler, toNodeListener } = await import('h3')
+  const { vi } = await import('vitest')
+  const { browserCorrespondenceRoute } = await import('../server/utils/browser-correspondence')
+  const { handleRecordCorrespondenceRequest } = await import('../server/utils/record-correspondence-api')
+  const f = fixture(), source = submitNativePlatformQuery(f.db, f.query('2026-10-01T00:00:00Z'))
+  vi.stubGlobal('defineEventHandler', defineEventHandler)
+  const app = createApp()
+  for (const action of ['preflight', 'commit'] as const) app.use('/' + action, browserCorrespondenceRoute(action, () => ({ db: f.db })))
+  const server = createServer(toNodeListener(app))
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
+  const address = server.address()
+  if (!address || typeof address === 'string') throw new Error('Missing listener')
+  const base = `http://127.0.0.1:${address.port}`
+  const full = correspondence('browser-without-token', f.event.id, source.relationIds[0]!)
+  const request = { idempotencyKey: full.idempotencyKey, basis: full.basis, operations: full.operations }
+  const post = (action: string, body: unknown, origin = base) => fetch(base + '/' + action, { method: 'POST', headers: { origin, 'content-type': 'application/json' }, body: JSON.stringify(body) })
+  try {
+    expect((await post('preflight', request, 'https://foreign.invalid')).status).toBe(403)
+    const plan = await post('preflight', request)
+    expect(plan.status).toBe(200)
+    const { planHash } = await plan.json()
+    expect(typeof planHash).toBe('string')
+    expect((await post('commit', { request, planHash })).status).toBe(200)
+    expect(f.db.select().from(schema.recordCorrespondence).all()).toHaveLength(1)
+    expect(handleRecordCorrespondenceRequest({ action: 'preflight', method: 'POST', headers: {}, body: full }, { db: f.db }).status).toBe(401)
+  } finally { await new Promise<void>(resolve => server.close(() => resolve())); vi.unstubAllGlobals() }
+})

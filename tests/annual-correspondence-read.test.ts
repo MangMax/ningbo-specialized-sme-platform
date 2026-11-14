@@ -18,7 +18,7 @@ vi.mock('@db',()=>({useDb:()=>active}))
 const dirs:string[]=[]
 function fixture(){
  const dir=mkdtempSync(join(tmpdir(),'annual-read-251-'));dirs.push(dir);const db=useDb({dbPath:join(dir,'synthetic.db')});active=db;clearJobSpecs();__resetJobRunner()
- vi.stubGlobal('useRuntimeConfig',()=>({apiToken:'rest-251',mcpToken:'mcp-251',filesDir:dir,browserReviewEnabled:true}))
+ vi.stubGlobal('useRuntimeConfig',()=>({apiToken:'rest-251',mcpToken:'mcp-251',filesDir:dir,}))
  const enterprise=db.insert(s.enterprise).values({name:'合成年份互证企业',nameNorm:'合成年份互证企业',usccNorm:'91330211255994457P'}).returning().get()
  const record=db.insert(s.record).values({enterpriseId:enterprise.id,titleCode:'specialized_sme',source:'jxj',usccRaw:enterprise.usccNorm}).returning().get()
  const event=db.insert(s.recordEvent).values({recordId:record.id,eventType:'award',year:2024}).returning().get();let serial=0

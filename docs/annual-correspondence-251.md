@@ -4,7 +4,7 @@
 
 公共 DTO：`lib/roster/annual-correspondence.ts`。任务 kind `event-annual-correspondence`，专属 rule `event-annual-process` / version `1`。执行 outcomes 是历史检查点；当前资格须读 `finalQualification`。
 
-- `POST /api/roster/events/:id/annual-correspondence-tasks`：`{clientRequestId}`。页面不发送 token，服务端使用 browserReviewEnabled、非空 API token、精确 Origin、Sec-Fetch-Site 与 JSON 部署闸门；REST 使用 API token。
+- `POST /api/roster/events/:id/annual-correspondence-tasks`：`{clientRequestId}`。页面不发送 token，服务端使用 默认启用的精确 Origin、Sec-Fetch-Site 与 JSON 校验；REST 使用 API token。
 - `POST /api/roster/annual-correspondence-tasks` 批量入口使用相同 worker、显式 `eventIds`（1..200）与 `clientRequestId`；不扫描全库。
 - `GET /api/roster/annual-correspondence-tasks/:id`：`AnnualTaskDto`，`status` 沿用 JobState，`result.events[]` 逐事件保存 generation、执行状态、历史 outcomes 和当前 finalQualification。GET 不预检、不入队、不写 job/ledger/audit，不调用启动对账。
 - `POST .../:id/cancel`：返回 `{jobId,state,cancelled,cancelRequested?,alreadyFinished?,note}`；停止在检查点，保留已完成业务。

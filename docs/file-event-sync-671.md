@@ -11,7 +11,7 @@
 - `POST /api/files/{id}/event-sync/commit`：需同样鉴权，严格请求
   `{request:原请求,planHash:64位小写SHA256,chunk:0起块号}`。
 - `browser-preflight` / `browser-commit` 是同目录的同源页面适配器：请求中不允许 actor；
-  复用既有显式 browserReviewEnabled + 已配置写能力 + 精确 Origin/JSON gate，
+  复用默认启用的精确 Origin/JSON 校验，
   服务端 actor 为 `agent/same-origin-file-event-sync-adapter`，不表示真实登录人。
   浏览器既不接收也不提交任务 token，现有代理鉴权不放宽。
 - `idempotencyKey` 1–120 字符、basis 1–4000、actor ID 1–200；封套最多16KiB。
