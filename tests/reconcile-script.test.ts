@@ -1,3 +1,4 @@
+import { nativeQueryRows } from './helpers/native-platform-evidence'
 import { initializeDb } from '../db/client'
 /**
  * `scripts/reconcile-live.mjs` —— 无头长跑入口的**两个入口、一份核心**。
@@ -112,7 +113,7 @@ describe('缺凭据:明确失败,一行不写', () => {
     expect(result.status).toBe(1)
     expect(result.stderr).toContain('MIIT_COOKIE')
     // 「不产出一片『未查询』的假结果」是硬约束 —— 库里必须干净。
-    expect(db.select().from(schema.platformQuery).all()).toHaveLength(0)
+    expect(nativeQueryRows(db)).toHaveLength(0)
     expect(db.select().from(schema.differenceReason).all()).toHaveLength(0)
   })
 })

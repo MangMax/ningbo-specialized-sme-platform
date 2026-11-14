@@ -1,9 +1,9 @@
+import { createRuntimeSchema } from '../db/create-runtime'
 import { createHash } from 'node:crypto'
 import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
-import { migrate } from 'drizzle-orm/better-sqlite3/migrator'
 import { afterAll, beforeAll, expect, it } from 'vitest'
 import { z } from 'zod'
 import * as schema from '../db/schema'
@@ -19,9 +19,8 @@ writeFileSync(join(dir,'emptydotenv'),'')
 const text='synthetic transport official source\n',sha256=createHash('sha256').update(text).digest('hex')
 writeFileSync(join(filesDir,'notice.txt'),text)
 const sqlite=new Database(dbPath);sqlite.pragma('foreign_keys=ON')
-const db=drizzle(sqlite,{schema});migrate(db,{migrationsFolder:resolve('db/migrations')})
+const db=drizzle(sqlite,{schema});createRuntimeSchema(sqlite)
 // Infrastructure catalog only; all business fixtures are formed through public commands.
-sqlite.exec("INSERT INTO title(code,name_zh,level,rank) VALUES('specialized_sme','Synthetic','municipal',2)")
 sqlite.prepare("INSERT INTO stored_file(id,rel_path,filename,ext,source,kind,title_code,bytes,sha256,created_at) VALUES(1,'notice.txt','notice.txt','txt','jxj','announcement','specialized_sme',?,?,'synthetic')").run(Buffer.byteLength(text),sha256)
 const apiToken='synthetic-c-api',mcpToken='synthetic-c-mcp',trace:unknown[]=[]
 let base='',child:ReturnType<typeof spawnOwnedChild>|undefined,sequence=0,seedSequence=0

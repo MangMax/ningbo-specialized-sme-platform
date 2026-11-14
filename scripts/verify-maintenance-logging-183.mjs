@@ -13,6 +13,10 @@ const { Client } = require('@modelcontextprotocol/sdk/client/index.js')
 const { StreamableHTTPClientTransport } = require('@modelcontextprotocol/sdk/client/streamableHttp.js')
 const root = mkdtempSync(join(tmpdir(), 'maintenance183-')), results = []
 const api = 'fixture183-api', mcp = 'fixture183-mcp', marker = 'PRIVATE183_SENSITIVE_NONCE'
+
+const { createJiti } = createRequire(import.meta.resolve('nuxt/package.json'))('jiti')
+const { initializeDb } = await createJiti(import.meta.url).import('../db/client.ts')
+initializeDb({ dbPath: join(root,'business.db'), create: true }).$client.close()
 let child, base, output = '', clients = []
 const callResponses = []
 const delay = ms => new Promise(r => setTimeout(r, ms))

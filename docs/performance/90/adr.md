@@ -1,5 +1,8 @@
 # #90 PostgreSQL 调查 ADR（最终窄工作负载对照后 defer）
 
+> 历史脚本说明：本文引用的混合表实验/验收脚本已在原生运行切换时退役。复现旧命令须在独立 checkout 固定到 `ab503081dae3e24680afc9b07395a7e3ff21fc9f` 并使用当时的隔离数据库与二进制；这些命令不适用于当前运行库。历史证据与 FAIL/UNKNOWN 保持原样。
+
+
 **2026-10-20 最终决策更新：defer 生产迁移；本轮窄调查可交父任务评审。** 精确 `96a0bd9c21d6c0ac32f0de45daf44b76bbda99e6` 的全新 1x 与 query/relation 局部域合成 2x 已完成九例 cold-process n=20、hot c1/c2/c5 各 n=20、真实 Node oracle 对照及四表完整字段恢复核验，详见 [最终结果](final-96a-results.md) 和 [脱敏聚合](final-96a-results.json)。2916 次计时读取全部语义一致；2x exact-summary/c5 的 SQLite 572.742ms、PG 508.249ms 两项 p95 超过 500ms 参考线，均保留。PG 在部分 cold 病例和物理域体积有优势，尚无跨模式/病例一致的迁移收益依据；c5 墙钟残差未归因。计时 Python SQLite 3.40.1 与准备/实际 Node oracle SQLite 3.53.4 的差异、相同总 envelope 下的不同分配/IPC、readiness 失败和观察器峰值边界均明确保留。没有 Node SLO、容量、纯引擎或生产验收结论。
 
 以下保留早期 PoC 和兼容性/运维调查历史。其“最终对照尚未完成/等待窗口”等状态已由上述最终结果更新；旧 pre-JSON5 `full-1x` migration/import/oracle 已失效，不得继承为本轮 fresh 证明。正式驱动、其他域/混合写、锁争用、长期/5x、PITR 等仍是迁移实施前的独立门槛，不是本次窄调查的虚设前置条件。

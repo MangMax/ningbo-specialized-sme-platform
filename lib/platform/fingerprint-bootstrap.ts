@@ -40,6 +40,8 @@ export function bootstrapFingerprint(t:Database.Database,owner:FingerprintOwner,
    expected.insert(s.platformCollection).values({...c,titleCode:null,
     reconcileSlotState:'uncaptured',reconcileSlotRule:null,reconcileSlotRawArchiveId:null,
     reconcileSlotRowCount:null,reconcileSlotInputSha256:null,reconcileSlotReason:null,
+    witnessState:'uncaptured',witnessRule:null,witnessGate:null,
+    witnessArchiveId:null,witnessSha256:null,witnessErrorName:null,witnessError:null,
    }).run()
    expected.insert(s.platformLegacyQueryAlias).values({oldId:1,collectionId:c.id}).run()
    if(c.interface==='recognized_list')reconstructWitnessCollectionSource(t,scratch,c.id)

@@ -1,9 +1,10 @@
+import { submitNativePlatformQuery } from './helpers/native-platform-fixture'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 
 import { afterAll, beforeAll, expect, it } from 'vitest'
-import { useDb, schema } from '../db/client'
+import { initializeDb, schema } from '../db/client'
 import { spawnOwnedChild as spawn, reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../scripts/lib/isolated-local-services.mjs'
 
 const dir = mkdtempSync(join(tmpdir(), 'official-source-directory-'))
@@ -11,7 +12,7 @@ mkdirSync(join(dir, 'files', 'nested'), { recursive: true })
 writeFileSync(join(dir, 'files', 'known.pdf'), '%PDF-1.4\n')
 writeFileSync(join(dir, 'files', 'nested', 'known.pdf'), '%PDF-1.4\n')
 const path = join(dir, 'fixture.db')
-const db = useDb({ dbPath: path })
+const db = initializeDb({ create: true,  dbPath: path })
 const enterprise = db.insert(schema.enterprise).values({ name: '目录合成企业', nameNorm: '目录合成企业' }).returning().get()
 const record = db.insert(schema.record).values({ enterpriseId: enterprise.id, source: 'jxj', titleCode: 'specialized_sme' }).returning().get()
 const doc = db.insert(schema.sourceDocument).values({ source: 'jxj', title: '已登记公布文件', path: 'formal.pdf', docNumber: '原文号' }).returning().get()
@@ -28,7 +29,7 @@ const word = add('unregistered.docx', 'award', '附件一', null)
 const excel = add('unregistered.xlsx', 'review', '复核名单', null)
 add('notice.pdf', 'nurture', '入库培育', null)
 add('maintenance.pdf', 'maintain', '维护', null)
-const query = db.insert(schema.platformQuery).values({ interface: 'business_list', queryKey: 'synthetic', queriedAt: '2026-10-23T00:00:00Z', status: 'success' }).returning().get()
+const query = { id: submitNativePlatformQuery(db, { interface: 'business_list', queryKey: 'synthetic', queriedAt: '2026-10-23T00:00:00Z', status: 'success', rawResponse: 'Explicit synthetic empty source' }).queryId }
 const snapshot = () => db.$client.prepare("select name from sqlite_master where type='table' and name not like 'sqlite_%' order by name").all().map((row: any) => [row.name, db.$client.prepare(`select * from \"${row.name}\" order by rowid`).all()])
 let service: { baseUrl: string; stop: () => Promise<void> }
 beforeAll(async () => {

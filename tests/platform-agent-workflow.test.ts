@@ -2,12 +2,12 @@ import { afterAll, beforeAll, expect, it, vi } from 'vitest'
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { useDb } from '../db/client'
+import { initializeDb } from '../db/client'
 import { updateCredential } from '../server/utils/credential-state'
 import { startPlatformBatchApi } from './helpers/platform-batch-api'
 import { whenIdle } from '../server/utils/job-runner'
 const dir = mkdtempSync(join(tmpdir(), 'platform-agent-'))
-const db = useDb({ dbPath: join(dir, 'agent.sqlite') })
+const db = initializeDb({ create: true,  dbPath: join(dir, 'agent.sqlite') })
 const nativeFetch = globalThis.fetch
 const scenarios = JSON.parse(readFileSync('.agents/skills/roster-ingestion-pipeline/examples/platform-scenarios.json', 'utf8'))
 const workflowUrl = new URL('../.agents/skills/roster-ingestion-pipeline/examples/investigate-platform.mjs', import.meta.url).href

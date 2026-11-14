@@ -4,14 +4,14 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createApp, createError, defineEventHandler, getQuery, readBody, setHeader, toNodeListener } from 'h3'
 import { afterAll, beforeAll, expect, it, vi } from 'vitest'
-import { useDb } from '../db/client'
+import { initializeDb } from '../db/client'
 import { createRosterImportClient } from '../lib/roster-import-client'
 import { startRosterApi } from './helpers/roster-http-server'
-const active = vi.hoisted(() => ({ db: null as ReturnType<typeof useDb> | null }))
+const active = vi.hoisted(() => ({ db: null as ReturnType<typeof initializeDb> | null }))
 vi.mock('@db', () => ({ useDb: () => active.db }))
 vi.mock('@nuxtjs/mcp-toolkit/server', () => ({ defineMcpTool: (tool: unknown) => tool }))
 const dir = mkdtempSync(join(tmpdir(), 'read-fairness-'))
-const db = useDb({ dbPath: join(dir, 'fixture.db') })
+const db = initializeDb({ create: true,  dbPath: join(dir, 'fixture.db') })
 active.db = db
 let imports: Awaited<ReturnType<typeof startRosterApi>>, server: Server, base: string
 beforeAll(async () => {

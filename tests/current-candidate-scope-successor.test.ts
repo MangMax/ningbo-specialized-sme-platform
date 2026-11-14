@@ -6,8 +6,7 @@ import { copyFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { candidateFixture } from './helpers/candidate-scope-target'
 import { finalizeCandidateScopes } from '../upgrade/candidate-scope'
-import { candidateScopeObservation as o } from '../lib/platform/candidate-scope-schema'
-import { assertExpandRuntime } from '../db/schema-phase'
+import { candidateScopeObservation as o } from '../upgrade/frozen/candidate-scope-schema'
 
 it('captures both actual migration gap pairs while preserving every original table cell and predecessor receipt', async () => {
   const inputs = [
@@ -27,7 +26,6 @@ it('captures both actual migration gap pairs while preserving every original tab
   const t=new Database(f.target)
   try{
     expect(drizzle(t).select({state:o.candidateScopeState,mask:o.candidateScopeMask,code:o.candidateScopeRdjb,seq:o.candidateScopeSequenceNo,source:o.candidateScopeArchiveId}).from(o).all().map(r=>({...r,source:typeof r.source==='number'}))).toEqual([2,3,2,3].map(mask=>({state:'captured',mask,code:'1,2',seq:1,source:true})))
-    expect(()=>assertExpandRuntime(t)).toThrow(/cutover/)
     expect(t.pragma('foreign_key_check')).toEqual([])
     expect(t.pragma('integrity_check',{simple:true})).toBe('ok')
     const source=new Database(f.source,{readonly:true})

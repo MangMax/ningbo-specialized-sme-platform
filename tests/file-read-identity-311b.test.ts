@@ -1,9 +1,9 @@
+import { createRuntimeSchema } from '../db/create-runtime'
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
-import { migrate } from 'drizzle-orm/better-sqlite3/migrator'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import * as schema from '../db/schema'
 import { registerStoredFile, parseUploadDeclaration } from '../server/utils/stored-files-upload'
@@ -17,7 +17,7 @@ beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), 'read-311b-'))
   sqlite = new Database(':memory:')
   db = drizzle(sqlite, { schema })
-  migrate(db, { migrationsFolder: join(process.cwd(), 'db/migrations') })
+  sqlite.pragma('foreign_keys=ON'); createRuntimeSchema(sqlite)
   locator = 'notice.txt'
   vi.stubGlobal('defineEventHandler', (fn: unknown) => fn)
   vi.stubGlobal('useRuntimeConfig', () => ({ filesDir: root }))

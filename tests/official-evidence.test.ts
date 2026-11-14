@@ -1,3 +1,4 @@
+import { createRuntimeSchema } from '../db/create-runtime'
 import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import Database from 'better-sqlite3'
@@ -19,9 +20,8 @@ function fixture() {
   const dir = mkdtempSync('/tmp/issue349-sqlite-')
   const sqlite = new Database(join(dir, 'synthetic.sqlite')); handles.push(sqlite)
   sqlite.pragma('foreign_keys = ON')
-  const db = drizzle(sqlite, { schema }); migrate(db, { migrationsFolder: folder })
+  const db = drizzle(sqlite, { schema }); createRuntimeSchema(sqlite)
   sqlite.exec(`
-    INSERT INTO title(code,name_zh,level,rank) VALUES ('specialized_sme','合成称号','municipal',2);
     INSERT INTO enterprise(id,name,name_norm) VALUES (1,'当前甲','当前甲'),(2,'当前乙','当前乙');
     INSERT INTO record(id,enterprise_id,title_code,source,name_raw) VALUES (1,1,'specialized_sme','jxj','容器首名'),(2,2,'specialized_sme','jxj','另名');
     INSERT INTO record_event(id,record_id,event_type,year) VALUES (1,1,'award',2021),(2,2,'award',2024);
@@ -200,10 +200,17 @@ it('guards exact JSON response bytes in SQLite before hydration and rejects over
   expect(db.$client.prepare('SELECT length(name_raw) n FROM official_evidence_row_revision').get()).toEqual({ n: 200000 })
 })
 
-it.each([28, 29])('upgrades real SQLite from journal index %i with old data schema triggers and ledger prefix unchanged', lastIndex => {
+it.each([28, 29])('upgrades real SQLite from journal index %i through official evidence migration 0030 with old data schema triggers and ledger prefix unchanged', lastIndex => {
   const dir = mkdtempSync('/tmp/issue349-upgrade-'), oldFolder = join(dir, 'baseline')
   mkdirSync(join(oldFolder, 'meta'), { recursive: true })
   const journal = JSON.parse(readFileSync(join(folder, 'meta/_journal.json'), 'utf8'))
+  // This historical migration contract ends at its feature migration; later
+  // platform table rebuilds have their own explicit offline owners.
+  const upgradedFolder = join(dir, 'official-evidence-0030')
+  mkdirSync(join(upgradedFolder, 'meta'), { recursive: true })
+  const featureEntries = journal.entries.filter((e: { idx: number }) => e.idx <= 30)
+  writeFileSync(join(upgradedFolder, 'meta/_journal.json'), JSON.stringify({ ...journal, entries: featureEntries }))
+  for (const entry of featureEntries) copyFileSync(join(folder, entry.tag + '.sql'), join(upgradedFolder, entry.tag + '.sql'))
   const entries = journal.entries.filter((e: { idx: number }) => e.idx <= lastIndex)
   writeFileSync(join(oldFolder, 'meta/_journal.json'), JSON.stringify({ ...journal, entries }))
   for (const entry of entries) copyFileSync(join(folder, entry.tag + '.sql'), join(oldFolder, entry.tag + '.sql'))
@@ -228,7 +235,7 @@ it.each([28, 29])('upgrades real SQLite from journal index %i with old data sche
   const rowsOf = (name: string) => sqlite.prepare(`SELECT ${oldColumns.get(name)!.map(c => `"${c.name}"`).join(',')} FROM "${name}" ORDER BY rowid`).all()
   const contents = () => tables.map(name => [name, rowsOf(name)])
   const before = contents(), ledger = sqlite.prepare('SELECT * FROM __drizzle_migrations ORDER BY id').all()
-  migrate(db, { migrationsFolder: folder })
+  migrate(db, { migrationsFolder: upgradedFolder })
   const afterObjects = objects()
   // Every baseline object still exists with its original type. Baseline table
   // columns keep their declared shape as a prefix: ALTER TABLE ADD COLUMN is an
@@ -254,7 +261,7 @@ it.each([28, 29])('upgrades real SQLite from journal index %i with old data sche
   // assert the ones this feature must add, not the complete future set.
   expect(added.filter(o => o.type === 'table').map(o => o.name)).toEqual(expect.arrayContaining(lastIndex === 28 ? ['official_evidence_row_revision', 'platform_body_leaf', 'platform_body_part', 'platform_body_root', 'platform_query_body_ref', 'platform_relation_body_ref', 'platform_version_body_ref'] : ['official_evidence_row_revision']))
   expect(added.filter(o => o.tbl_name === 'official_evidence_row_revision' && o.type === 'index').map(o => o.name)).toEqual(expect.arrayContaining(['official_evidence_row_revision_uq', 'official_evidence_row_source_idx', 'official_evidence_row_event_idx']))
-  const settled = contents(); migrate(db, { migrationsFolder: folder }); expect(contents()).toEqual(settled)
+  const settled = contents(); migrate(db, { migrationsFolder: upgradedFolder }); expect(contents()).toEqual(settled)
   expect(sqlite.pragma('foreign_key_check')).toEqual([]); expect(sqlite.pragma('integrity_check', { simple: true })).toBe('ok')
 })
 

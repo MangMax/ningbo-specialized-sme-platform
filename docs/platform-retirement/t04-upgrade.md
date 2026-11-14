@@ -1,5 +1,8 @@
 # T04: isolated collection upgrade
 
+> 历史脚本说明：本文引用的混合表实验/验收脚本已在原生运行切换时退役。复现旧命令须在独立 checkout 固定到 `ab503081dae3e24680afc9b07395a7e3ff21fc9f` 并使用当时的隔离数据库与二进制；这些命令不适用于当前运行库。历史证据与 FAIL/UNKNOWN 保持原样。
+
+
 This is an **offline upgrade tool**, not a runtime writer. No server/lib runtime module imports `upgrade/`. It requires the accepted T01/T02/T03 expand schema and migration 0051 on the target. No original business database is an authorized target.
 
 ## Operation

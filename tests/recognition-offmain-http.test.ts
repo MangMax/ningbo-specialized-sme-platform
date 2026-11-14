@@ -25,8 +25,8 @@ it('recognition native lock leaves health responsive before independent release 
     const require=createRequire(${JSON.stringify(resolve('package.json'))}); const h=require('h3');
     Object.assign(globalThis,h,{defineRouteMeta:()=>{},defineNitroPlugin:f=>f});process.env.M1_APP_PID=String(process.pid);
     const {createJiti}=require(${JSON.stringify(jiti)});const load=createJiti(${JSON.stringify(resolve('package.json'))},{alias:{'@db':${JSON.stringify(resolve('db/index.ts'))},'~~':${JSON.stringify(root)}}});
-    const {useDb}=await load.import(${JSON.stringify(resolve('db/client.ts'))});
-    const writer=useDb({readOnly:false});writer.$client.pragma('journal_mode=DELETE');
+    const {initializeDb}=await load.import(${JSON.stringify(resolve('db/client.ts'))});
+    const writer=initializeDb({readOnly:false});writer.$client.pragma('journal_mode=DELETE');
     const {startRosterApi}=await load.import(${JSON.stringify(resolve('tests/helpers/roster-http-server.ts'))});
     const imports=await startRosterApi({db:writer,apiToken:'synthetic-m1'});
     process.env.NUXT_DB_READONLY='1';

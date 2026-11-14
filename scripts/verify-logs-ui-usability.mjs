@@ -9,7 +9,7 @@
  * worker 进程无 taskId。
  *
  * 做法：
- * 1. 在临时目录用 drizzle migrations 克隆一个空的 synthetic 业务库（只读打开）。
+ * 1. 在临时目录初始化一个原生 synthetic 业务库（只读打开）。
  * 2. 直接播种独立日志 SQLite（events.db），事件带 `synthetic: true` 的 fixture 标记；
  *    时间固定在过去 24h 内，页面用 from/to 过滤，避免混入 dev server 自己的请求事件。
  * 3. 端口随机，NUXT_BUILD_DIR 固定在本 worktree 的 .nuxt（保证 native better-sqlite3 解析）。
@@ -25,10 +25,11 @@ import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { execFileSync } from 'node:child_process'
+import { createRequire } from 'node:module'
 import Database from 'better-sqlite3'
-import { drizzle } from 'drizzle-orm/better-sqlite3'
-import { migrate } from 'drizzle-orm/better-sqlite3/migrator'
 import { spawnOwnedChild as spawn, reserveLoopbackPort, waitForHttp, stopOwnedChild } from './lib/isolated-local-services.mjs'
+const { createJiti } = createRequire(import.meta.resolve('nuxt/package.json'))('jiti')
+const { createRuntimeSchema } = await createJiti(import.meta.url).import('../db/create-runtime.ts')
 
 const worktree = resolve('.')
 const root = mkdtempSync(join(tmpdir(), 'logs-ui-usability-'))
@@ -46,7 +47,7 @@ assert.equal(longErrorCode.length, 64)
 
 // —— 1) 合成业务库：只克隆 schema，不写业务数据；fixture 不提交 ——
 const businessDb = new Database(business)
-migrate(drizzle(businessDb), { migrationsFolder: resolve('db/migrations') })
+businessDb.pragma('foreign_keys = ON'); createRuntimeSchema(businessDb)
 businessDb.close()
 const businessBefore = readFileSync(business)
 

@@ -1,16 +1,17 @@
+import { submitNativePlatformQuery } from './helpers/native-platform-fixture'
 import { chmodSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { afterAll, beforeAll, expect, it } from 'vitest'
 import { writeOcrResult } from '../server/utils/ocr-result'
-import { useDb, schema } from '../db/client'
+import { initializeDb, schema } from '../db/client'
 import { spawnOwnedChild as spawn, reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../scripts/lib/isolated-local-services.mjs'
 
 const dir = mkdtempSync(join(tmpdir(), 'read-311b-http-'))
 const root = join(dir, 'files')
 mkdirSync(root)
 const dbPath = join(dir, 'fixture.sqlite')
-const db = useDb({ dbPath })
+const db = initializeDb({ create: true,  dbPath })
 let service: { baseUrl: string; stop(): Promise<void> }
 let output = ''
 beforeAll(async () => {
@@ -120,7 +121,7 @@ it('comparison REST and MCP evidence retain stable registration alongside old pa
   const record = db.insert(schema.record).values({ enterpriseId: enterprise.id, source: 'jxj', titleCode: 'specialized_sme' }).returning().get()
   const event = db.insert(schema.recordEvent).values({ recordId: record.id, eventType: 'award', year: 2024 }).returning().get()
   const evidence = db.insert(schema.recordEvidence).values({ recordEventId: event.id, sourceFile: relPath, listNo: 1 }).returning().get()
-  const query = db.insert(schema.platformQuery).values({ interface: 'business_list', queryKey: 'B3', queriedAt: '2026-11-05T00:00:00Z', status: 'success' }).returning().get()
+  const query = { id: submitNativePlatformQuery(db, { interface: 'business_list', queryKey: 'B3', queriedAt: '2026-11-05T00:00:00Z', status: 'success', rawResponse: 'Explicit synthetic empty source' }).queryId }
   const value = await (await rest(`/api/roster/record-comparison?queryIds=${query.id}&exportBatchIds=&officialSourceDocumentIds=${-evidence.id}`)).json()
   const selectedRow = value.rows.find((row: { event: { id: number } }) => row.event.id === event.id)
   expect(selectedRow.evidence).toContainEqual(expect.objectContaining({ id: evidence.id, sourceFile: relPath, inSelectedSource: true, contentIdentity: { registered: expect.objectContaining({ fileId: file.id, bytes: 3 }), status: 'unknown', historical: 'unknown' } }))

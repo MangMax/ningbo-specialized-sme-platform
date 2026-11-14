@@ -1,5 +1,8 @@
 # #90 最终对照：窄读结果与后续全应用清单
 
+> 历史脚本说明：本文引用的混合表实验/验收脚本已在原生运行切换时退役。复现旧命令须在独立 checkout 固定到 `ab503081dae3e24680afc9b07395a7e3ff21fc9f` 并使用当时的隔离数据库与二进制；这些命令不适用于当前运行库。历史证据与 FAIL/UNKNOWN 保持原样。
+
+
 **最终窄读路线已执行：** [fresh 96a0bd9 结果](final-96a-results.md) / [脱敏聚合](final-96a-results.json) 记录全新 1x 和 query/relation 合成 2x 的九例、每组 20 cold-process 与 20 hot c1/c2/c5、真实 Node oracle、实际总资源包络、全部超标及完整字段恢复核验。旧 pre-JSON5 准备产物未复用。结论为 defer 生产迁移；下文更广的正式 API/MCP、混合写和完整域验收仍按各自边界保留，不由窄读结果替代。
 
 **状态：窄读路线已执行；全应用通用 runner 尚未执行。** 早期小型 PoC 数字不能替代最终对照。现已用实际应用 oracle 证明窄工作负载在完整保留分布上的 SQLite/PG 语义一致，并完成同总资源包络矩阵；**不以前置完成整个应用 PG 移植为本票调查门槛**。步骤及边界见 [retained-workload.md](retained-workload.md)。下文的全应用通用 runner/清单留作后续迁移实施验收，#91 综合验收另行跟踪。

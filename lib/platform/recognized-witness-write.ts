@@ -69,6 +69,6 @@ function reconstructInSnapshot(source:Database.Database,scratch:Database.Databas
   if(!existing)to.insert(s.platformArchiveValue).values(a).run()
   to.insert(s.platformCollectionArchiveRef).values(ref).run()
  }
- for(const condition of from.select().from(s.platformCollectionCondition).where(eq(s.platformCollectionCondition.collectionId,id)).all())to.insert(s.platformCollectionCondition).values(condition).run()
+ for(const condition of from.select().from(s.platformCollectionCondition).where(eq(s.platformCollectionCondition.collectionId,id)).all())to.insert(s.platformCollectionCondition).values({...condition,witnessKind:null,witnessValue:null}).run()
  captureWitnessCollection(scratch,id)
 }

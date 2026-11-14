@@ -85,6 +85,9 @@ function verifyCommandInSnapshot(target:Database.Database,predecessor:Database.D
         reconcileSlotState: 'uncaptured', reconcileSlotRule: null,
         reconcileSlotRawArchiveId: null, reconcileSlotRowCount: null,
         reconcileSlotInputSha256: null, reconcileSlotReason: null,
+        witnessState: 'uncaptured', witnessRule: null, witnessGate: null,
+        witnessArchiveId: null, witnessSha256: null,
+        witnessErrorName: null, witnessError: null,
       }).run()
       for(const alias of actual.select().from(s.platformLegacyQueryAlias).where(eq(s.platformLegacyQueryAlias.collectionId,collection.id)).all())expected.insert(s.platformLegacyQueryAlias).values(alias).run()
     }

@@ -1,3 +1,5 @@
+import { submitNativePlatformQuery } from './helpers/native-platform-fixture'
+import { submitSyntheticRecognizedCollection } from './helpers/qualification-native-source'
 import { CURRENT_RULE_VERSION } from '../lib/roster/current-qualification'
 import { businessIdentity, expectedBusinessIdentity, matchesBusinessIdentity } from './helpers/current-export-118'
 import { execFileSync } from 'node:child_process'
@@ -15,7 +17,7 @@ import { currentExport118Fixture, expectCounts, rows, route, year as y, type Eve
 
 const f = currentExport118Fixture()
 beforeAll(f.start,90000)
-beforeEach(f.resetBusiness)
+beforeEach(f.resetBusiness, 90000)
 afterAll(f.close)
 
 it('专精特新入口提交202并下载六表新认定文件', async () => {
@@ -177,12 +179,11 @@ it('查询失败零行退回待审不作废且部分依据候选显式待确认'
   const eligible = []
   for (const status of ['failed','no_record'] as const) {
     const c = f.candidate('平台查询' + status); eligible.push(c)
-    f.db.insert(s.platformQuery).values({interface:'recognized_list',queryKey:c.enterprise.usccNorm!,rdjb:'2',titleCode:'specialized_sme',queriedAt:new Date().toISOString(),status}).run()
+    submitNativePlatformQuery(f.db,{interface:'business_list',queryKey:c.enterprise.usccNorm!,rdjb:'2',titleCode:'specialized_sme',queriedAt:new Date().toISOString(),status,rawResponse:'Synthetic query status '+status})
   }
   for (const status of ['退回','待审核']) {
     const c = f.candidate('更新' + status); eligible.push(c)
-    const q = f.db.insert(s.platformQuery).values({interface:'business_list',queryKey:c.enterprise.usccNorm!,rdjb:'2',titleCode:'specialized_sme',queriedAt:new Date().toISOString(),status:'success'}).returning().get()
-    f.db.insert(s.platformRelation).values({queryId:q.id,sequenceNo:1,enterpriseId:c.enterprise.id,status,declareKind:'update',verificationStatus:'confirmed',matchBasis:'uscc'}).run()
+    submitNativePlatformQuery(f.db,{interface:'business_list',queryKey:c.enterprise.usccNorm!,rdjb:'2',titleCode:'specialized_sme',queriedAt:new Date().toISOString(),status:'success',rawResponse:JSON.stringify({status}),relations:[{sequenceNo:1,enterpriseId:c.enterprise.id,status,declareKind:'update',verificationStatus:'confirmed',matchBasis:'uscc'}]})
   }
   const partial = f.candidate('首次补充依据缺口',[{eventType:'award',year:y-5},{eventType:'award',year:y}]); eligible.push(partial)
   const oldEvent = f.db.select().from(s.recordEvent).where(eq(s.recordEvent.recordId,partial.record.id)).all()[0]!
@@ -192,8 +193,8 @@ it('查询失败零行退回待审不作废且部分依据候选显式待确认'
   const event = f.db.select().from(s.recordEvent).where(eq(s.recordEvent.recordId,unconfirmed.record.id)).get()!
   const edge = f.db.insert(s.recordCorrespondence).values({edgeKey:'synthetic-118-candidate',type:'event_process',role:'award',eventId:event.id,enterpriseId:unconfirmed.enterprise.id,titleCode:'specialized_sme',status:'candidate',revision:1,targetIdentity:{},provenance:{},sourceFingerprint:'synthetic',ruleId:'manual',ruleVersion:'1',createdAt:new Date().toISOString()}).returning().get()
   const platform = f.db.insert(s.enterprise).values({name:'仅平台识别候选',nameNorm:'仅平台识别候选',usccNorm:'SYNTHETIC-118-PLATFORM'}).returning().get()
-  const q = f.db.insert(s.platformQuery).values({interface:'recognized_list',queryKey:platform.usccNorm!,rdjb:'2',titleCode:'specialized_sme',queriedAt:new Date().toISOString(),status:'success'}).returning().get()
-  const relation = f.db.insert(s.platformRelation).values({queryId:q.id,sequenceNo:1,enterpriseId:platform.id,status:'认定通过',verificationStatus:'confirmed',matchBasis:'uscc'}).returning().get()
+  const native = submitSyntheticRecognizedCollection(f.db,{rdjb:'2',queriedAt:new Date().toISOString(),rows:[{enterpriseId:platform.id,raw:{id:'PLATFORM-118',qymc:platform.name,tyshxydm:platform.usccNorm,rdjb:'2'}}]})
+  const relation = {id:native.relationIds[0]!}
   const digest = f.businessDigest(), {wb,job} = await f.workbook('118-evidence-gaps')
   expect(rows(wb,'有效企业').map(row => businessIdentity(row))).toEqual(eligible.map(item => expectedBusinessIdentity(f.db,item.enterprise.id)))
   const partialRow = rows(wb,'有效企业').find(row => matchesBusinessIdentity(f.db, row, partial.enterprise.id))!
@@ -203,7 +204,8 @@ it('查询失败零行退回待审不作废且部分依据候选显式待确认'
   expect(waiting[0]![13]).toBe('未认定'); expect(waiting[0]![15]).toContain('缺少已确认认定及资格依据')
   expect(waiting[1]![15]).toContain('缺少已确认认定及资格依据')
   expect(f.db.$client.prepare('select event_id,enterprise_id,status,role from record_correspondence where id=?').get(edge.id)).toEqual({event_id:event.id,enterprise_id:unconfirmed.enterprise.id,status:'candidate',role:'award'})
-  expect(f.db.$client.prepare('select query_id,enterprise_id,verification_status from platform_relation where id=?').get(relation.id)).toEqual({query_id:q.id,enterprise_id:platform.id,verification_status:'confirmed'})
+  expect(native.queryId).toBeGreaterThan(0)
+  expect(native.relationIds).toEqual([relation.id])
   expect(waiting[1]![12]).toContain('工信部已认定企业名单')
   expect(f.businessDigest()).toBe(digest)
   expectCounts(wb,job,{eligible:5,pending:0,excluded:2}, {effective:5,expired:0,terminated:0,moved_out:0,unrecognized:2})
@@ -273,7 +275,7 @@ it('空集六表计数及产物过期缺失与成功历史分别可查', async (
 })
 
 it('本称号生成失败无半成品且可显式重新生成', async () => {
-  f.candidate('超'.repeat(33000))
+  const invalid=f.candidate('超'.repeat(33000))
   const response = await f.submit('118-failed'); expect(response.status).toBe(202)
   const accepted = await f.json(response), failed = await f.terminal(accepted.jobId)
   expect(failed.state).toBe('failed'); expect(failed.error).toContain('Excel')
@@ -284,7 +286,9 @@ it('本称号生成失败无半成品且可显式重新生成', async () => {
   expect((await fetch(f.url('/api/job-artifacts/' + failed.id),{headers:f.headers})).status).toBe(404)
   for (const suffix of ['.part','.xlsx']) expect(existsSync(join(f.dbPath + '.exports',failed.id + suffix))).toBe(false)
   expect((await f.json(await f.submit('118-failed'))).jobId).toBe(failed.id)
-  f.resetBusiness(); const recovered = f.candidate('修正合成超限后重新导出')
+  f.db.delete(s.record).where(eq(s.record.id,invalid.record.id)).run()
+  f.db.delete(s.enterprise).where(eq(s.enterprise.id,invalid.enterprise.id)).run()
+  const recovered = f.candidate('修正合成超限后重新导出')
   const next = await f.workbook('118-retry-failed',{regenerateOf:failed.id})
   expect(next.job.id).not.toBe(failed.id); expect(next.job.params.regenerateOf).toBe(failed.id)
   expect(rows(next.wb,'有效企业').map(row => businessIdentity(row))).toEqual([expectedBusinessIdentity(f.db,recovered.enterprise.id)])

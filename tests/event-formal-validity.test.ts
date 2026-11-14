@@ -2,11 +2,11 @@ import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, it, vi } from 'vitest'
-import { useDb, schema } from '../db/client'
+import { initializeDb, schema } from '../db/client'
 import { handleEventCorrectionRequest } from '../server/utils/roster-event-correction-api'
 import { versionedOfficialEvent } from '../server/utils/roster-event-version'
 
-const opened: Array<ReturnType<typeof useDb>> = []
+const opened: Array<ReturnType<typeof initializeDb>> = []
 afterEach(() => {
   try {
     for (const db of opened.splice(0)) if (db.$client.open) db.$client.close()
@@ -16,7 +16,7 @@ afterEach(() => {
 })
 
 function fixture() {
-  const db = useDb({ dbPath: join(mkdtempSync(join(tmpdir(), 'formal-validity-')), 'owned.db') })
+  const db = initializeDb({ create: true,  dbPath: join(mkdtempSync(join(tmpdir(), 'formal-validity-')), 'owned.db') })
   opened.push(db)
   vi.stubGlobal('useRuntimeConfig', () => ({ apiToken: 'synthetic' }))
   const enterprise = db.insert(schema.enterprise).values({ name: '合成原件企业', nameNorm: '合成原件企业' }).returning().get()

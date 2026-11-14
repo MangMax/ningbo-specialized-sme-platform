@@ -1,3 +1,5 @@
+import {submitNativePlatformQuery} from './helpers/native-platform-fixture'
+import {normalizePlatformRelation} from '../lib/platform/normalization'
 import { initializeDb } from '../db/client'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -17,9 +19,9 @@ const dir = mkdtempSync(join(tmpdir(), 'platform-normalization-'))
 const db = initializeDb({ create: true, dbPath: join(dir, 'test.sqlite') })
 const uscc = '91330211000000001A'
 const enterpriseId = db.insert(schema.enterprise).values({ name: '归一化测试企业', nameNorm: '归一化测试企业', usccNorm: uscc }).returning().get().id
-const queryId = db.insert(schema.platformQuery).values({ interface: 'business_list', queryKey: uscc, rdjb: '1', queriedAt: '2026-10-18T10:10:07.888Z', status: 'success', rawResponse: '原始响应 🙂\n' }).returning().get().id
 const rawFields = { cszt: '终审通过', sblx: '复核', sqsj: '2025-11-21 09:54:16', year: '2025', whpc: '2025-2' }
-const relationId = db.insert(schema.platformRelation).values({ queryId, sequenceNo: 1, enterpriseId, usccRaw: uscc, rawFields }).returning().get().id
+const seeded = submitNativePlatformQuery(db,{interface:'business_list',queryKey:uscc,rdjb:'1',queriedAt:'2026-10-18T10:10:07.888Z',status:'success',rawResponse:'原始响应 🙂\n',relations:[{sequenceNo:1,enterpriseId,usccRaw:uscc,rawFields}]})
+const queryId=seeded.queryId,relationId=seeded.relationIds[0]!
 let server: HttpFixture
 let writes: HttpFixture
 beforeAll(async () => {
@@ -39,7 +41,7 @@ function storedRelation(queryId: number, relationId: number) {
   return JSON.parse(Buffer.from(chunk.data, 'base64').toString())
 }
 
-it('historical raw-only process facts agree across HTTP, enterprise, source and candidate reads', async () => {
+it('native raw-only process facts agree across HTTP, enterprise, source and candidate reads', async () => {
   const response = await fetch(`${server.baseUrl}/api/platform/queries?queryId=${queryId}`)
   expect(response.status).toBe(200)
   const result = await response.json()
@@ -52,8 +54,8 @@ it('historical raw-only process facts agree across HTTP, enterprise, source and 
   expect(candidates.rows).toHaveLength(1)
   expect(candidates.rows[0]).toMatchObject({ status: 'candidate', edge: { relationId, role: 'followup_review' }, evidence: { temporal: { relationYear: 2025, relationBatch: '2025-2' }, process: { declareKind: 'review', appliedAt: '2025-11-21 09:54:16', status: '终审通过' } } })
   expect(candidates.rows[0]!.conflicts).not.toContain('process_type_unknown')
-  // Compatibility reads must not rewrite old columns, identity or raw evidence bytes.
-  expect(storedRelation(queryId, relationId)).toMatchObject({ id: relationId, status: null, declareKind: null, appliedAt: null, rawFields })
+  // Evidence reads retain the captured source facts and raw values.
+  expect(storedRelation(queryId, relationId)).toMatchObject({ id: relationId, ...expected, rawFields })
 })
 
 it('new archives preserve matching explicit facts and reject contradictory nonempty facts atomically', async () => {
@@ -67,17 +69,6 @@ it('new archives preserve matching explicit facts and reject contradictory nonem
   expect((await client.preflight(conflict)).preflight.conflicts).toEqual(expect.arrayContaining([expect.objectContaining({ error: expect.objectContaining({ code: 'platform_field_conflict' }) })]))
   expect((await client.commit(conflict)).status).toBe('failed')
   expect(listPlatformQueries(db, { queryKey: 'synthetic:conflict' }).total).toBe(0)
-})
-
-it('historical conflicting facts stay explicit and unavailable to candidate decisions', () => {
-  const id = db.insert(schema.platformQuery).values({ interface: 'business_list', queryKey: 'synthetic:historic-conflict', rdjb: '1', queriedAt: '2026-10-23', status: 'success' }).returning().get().id
-  const rowId = db.insert(schema.platformRelation).values({ queryId: id, sequenceNo: 1, enterpriseId, usccRaw: uscc, declareKind: 'apply', status: '已退回', rawFields }).returning().get().id
-  const row = listPlatformQueries(db, { queryId: id }).rows[0]!.relations[0]!
-  expect(row).toMatchObject({ id: rowId, status: null, declareKind: null, appliedAt: '2025-11-21 09:54:16', normalizationConflicts: [{ field: 'status', storedValue: '已退回', rawValue: '终审通过' }, { field: 'declareKind', storedValue: 'apply', rawValue: 'review' }] })
-  expect(relationSource(db, rowId)).toMatchObject({ status: null, declareKind: null, normalizationConflicts: row.normalizationConflicts })
-  const candidates = generateCandidates(db, { enterpriseId, titleCode: 'innovative_sme', queryIds: [id], exportBatchIds: [], ruleVersion: 'test', page: 1, pageSize: 25 })!
-  expect(candidates.rows[0]!.conflicts).toContain('platform_field_conflict')
-  expect(storedRelation(id, rowId)).toMatchObject({ status: '已退回', declareKind: 'apply', rawFields })
 })
 
 it('new raw-only archives persist process facts through preflight and idempotent HTTP commit', async () => {
@@ -111,16 +102,13 @@ it.each([
   if (name === 'unknown-enum') expect(row.verificationStatus).toBe('pending')
 })
 
-it('recognized snapshots do not borrow process status, matter, time or year from similar keys', () => {
-  const id = db.insert(schema.platformQuery).values({ interface: 'recognized_list', queryKey: 'synthetic:recognized', queriedAt: '2026-10-23', status: 'partial' }).returning().get().id
-  const recognizedRaw = { ...rawFields, sfyx: '1', rddqrq: '2029-02-27' }
-  db.insert(schema.platformRelation).values({ queryId: id, sequenceNo: 1, rawFields: recognizedRaw }).run()
-  expect(listPlatformQueries(db, { queryId: id }).rows[0]).toMatchObject({ query: { status: 'partial' }, relations: [{ status: null, declareKind: null, appliedAt: null, year: null, batch: null, rawFields: recognizedRaw }] })
+it('recognized parsing does not borrow process status, matter, time or year from similar keys', () => {
+  const raw = { ...rawFields, sfyx: '1', rddqrq: '2029-02-27' }
+  expect(normalizePlatformRelation('recognized_list',{sequenceNo:1,rawFields:raw})).toMatchObject({status:null,declareKind:null,appliedAt:null,year:null,batch:null,rawFields:raw})
 })
 
 it('candidate projection preserves unknown enum and JSON boolean year without positive inference', () => {
-  const id = db.insert(schema.platformQuery).values({ interface: 'business_list', queryKey: 'synthetic:unknown-candidate', rdjb: '1', queriedAt: '2026-10-23', status: 'success' }).returning().get().id
-  db.insert(schema.platformRelation).values({ queryId: id, sequenceNo: 1, enterpriseId, usccRaw: uscc, rawFields: { sblx: 'constructor', cszt: '未知', year: true, sqsj: '2025-11-21 09:54:16' } }).run()
+  const id=submitNativePlatformQuery(db,{interface:'business_list',queryKey:'synthetic:unknown-candidate',rdjb:'1',queriedAt:'2026-10-23',status:'success',rawResponse:'Explicit original',relations:[{sequenceNo:1,enterpriseId,usccRaw:uscc,rawFields:{sblx:'constructor',cszt:'未知',year:true,sqsj:'2025-11-21 09:54:16'}}]}).queryId
   const result = generateCandidates(db, { enterpriseId, titleCode: 'innovative_sme', queryIds: [id], exportBatchIds: [], ruleVersion: 'test', page: 1, pageSize: 25 })!
   expect(result.rows[0]).toMatchObject({ status: 'candidate', evidence: { process: { declareKind: 'constructor', status: '未知', appliedAt: '2025-11-21 09:54:16' }, temporal: { relationYear: null } } })
   expect(result.rows[0]!.conflicts).toEqual(expect.arrayContaining(['process_type_unknown', 'platform_year_missing']))

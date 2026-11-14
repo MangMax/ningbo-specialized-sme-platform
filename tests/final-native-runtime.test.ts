@@ -11,14 +11,13 @@ import * as s from '../db/schema'
 import { commitRosterImport } from '../server/utils/roster-import'
 import { createEnterpriseReadExecutor } from '../server/utils/enterprise-read'
 import { createImportExecutionWorker } from '../server/utils/import-execution-worker-location'
-import { getRosterEnterpriseDetail } from '../lib/roster/enterprise-roster'
 import { listTargetBusinessProcesses } from '../server/utils/platform-business-processes-target'
 import { runPlatformReconcile } from '../server/utils/platform-reconcile'
 import { whenIdle } from '../server/utils/job-runner'
 import type { RosterImportRequest } from '../lib/roster-import-client'
 
 const cleanup:Array<()=>void|Promise<unknown>>=[]
-afterEach(async()=>{await whenIdle();for(const close of cleanup.splice(0).reverse())await close();vi.unstubAllEnvs()})
+afterEach(async()=>{await whenIdle();for(const close of cleanup.splice(0).reverse())await close()})
 function fixture() {
   const dir=mkdtempSync(join(tmpdir(),'final-native-')),path=join(dir,'native.sqlite')
   cleanup.push(()=>rmSync(dir,{recursive:true,force:true}))
@@ -99,20 +98,6 @@ it('serves native source read workers and commits an import through the actual s
   expect(JSON.parse(fresh.body.toString())).toMatchObject({total:0,rows:[]})
   expectNative(db.$client)
 },30000)
-
-it('keeps native detail facts independent of obsolete host read selectors',()=>{
-  const {db}=fixture()
-  const entity=db.insert(s.enterprise).values({name:'Native',nameNorm:'Native',usccNorm:'91330200712345678C'}).returning().get()
-  const request=sourceRequest('native-detail'),row=request.payload.platformQueries![0]!.relations![0]!
-  row.enterpriseId=entity.id;row.usccRaw=entity.usccNorm;row.matchBasis='uscc';row.verificationStatus='confirmed';row.rawFields!.tyshxydm=entity.usccNorm!
-  expect(commitRosterImport(db,request,[],{deferCandidateTasks:true}).status).toBe('committed')
-  const before=getRosterEnterpriseDetail(db,entity.id,Date.parse('2026-11-14T00:00:00Z'))!
-  expect(before.platform.businessRecords.flatMap(row=>row.observationRefs).some(row=>row.typedFields!==null),JSON.stringify(before.platform)).toBe(true)
-  vi.stubEnv('ROSTER_ENTERPRISE_DETAIL_TYPED_READ','legacy')
-  vi.stubEnv('ROSTER_RECOGNIZED_FILTER_SOURCE','legacy')
-  expect(getRosterEnterpriseDetail(db,entity.id,Date.parse('2026-11-14T00:00:00Z'))!.platform).toEqual(before.platform)
-  expectNative(db.$client)
-})
 
 it('captures four native reconcile slots and reuses them without network or duplicate archives',async()=>{
   const {db}=fixture(),uscc='91330200712345678C',time='2026-11-14T04:00:00Z'

@@ -1,4 +1,4 @@
-/** Explicit 71610/71611 process reader. Public routing remains separate. */
+/** Native business process reader. */
 import { getTableColumns,and,count,countDistinct,desc,eq,exists,inArray,isNull,max,min,ne,or,sql } from 'drizzle-orm';
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3';
 import { alias } from 'drizzle-orm/sqlite-core';
@@ -17,7 +17,6 @@ import { sqliteConnection } from '../../lib/platform/target-connection';
 import { platformObservationAssignment as a,platformBusinessObservation as o,platformLegacyRelationAlias as ra,platformQueryTitleScope as scope,targetSchema } from '../../lib/platform/target-schema';
 import { fail,orderedScopes,pageOf } from './platform-business-read';
 // Explicit table queries use the injected session/logger, never db.query.
-// Match R1b's connection seam; gate() still requires the actual 71610 catalog.
 type Db = BetterSQLite3Database<typeof targetSchema> | BetterSQLite3Database<typeof import('../../db/schema')>;
 // SQLite's original non-STRICT cells can be BLOB/REAL; keep that explicit here.
 type TargetIsolatedRow = Omit<BusinessProcessIsolatedRow, 'titleRaw' | 'declareKind' | 'businessYear' | 'appliedAt' | 'status' | 'batch' | 'awardBatchLabel' | 'province'> & {
@@ -36,7 +35,7 @@ const isolated = or(ne(o.identityState, 'resolved'), ne(o.contentState, 'verifie
  * NULL facts remain readable; absent capture, assignment or aliases never disappear in a join. */
 function gate(db: Db, selected?: ReturnType<typeof inArray>) {
     if (!processStoredInstalled(sqliteConnection(db)))
-        fail(409, 'process_target_capture', 'Process reader requires completed 71610 stored capture');
+        fail(409, 'process_target_capture', 'Process observations require completed stored capture');
     const missing = db.select({ id: o.id }).from(o).innerJoin(c, eq(c.id, o.collectionId)).leftJoin(p, eq(p.observationId, o.id)).leftJoin(a, current(db)).leftJoin(original, and(eq(original.observationId, o.id), eq(original.revision, 1))).leftJoin(ra, eq(ra.observationId, o.id)).leftJoin(qa, eq(qa.collectionId, c.id))
         .where(and(selected, eq(c.interface, 'business_list'), or(isNull(p.id), isNull(p.exactStoredState), ne(p.exactStoredState, 'captured'), isNull(p.sqlFactTitleState), ne(p.sqlFactTitleState, 'captured'), isNull(p.exactStoredRule), ne(p.exactStoredRule, 'process-stored-cells-v1'), isNull(p.sqlFactTitleRule), ne(p.sqlFactTitleRule, 'process-legacy-sql-fact-title-v1'), isNull(a.observationId), isNull(original.observationId), isNull(ra.oldId), isNull(qa.oldId)))).limit(1).get();
     if (missing)

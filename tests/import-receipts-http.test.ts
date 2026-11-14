@@ -5,12 +5,12 @@ import { join, resolve } from 'node:path'
 import { request as httpRequest } from 'node:http'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { sql } from 'drizzle-orm'
-import { useDb, schema } from '../db/client'
+import { initializeDb, schema } from '../db/client'
 import { spawnOwnedChild as spawn, reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../scripts/lib/isolated-local-services.mjs'
 
 const dir = mkdtempSync(join(tmpdir(), 'spec98-import-receipts-'))
 const dbPath = join(dir, 'synthetic.db')
-const db = useDb({ dbPath })
+const db = initializeDb({ create: true,  dbPath })
 const legacy = db.insert(schema.importBatch).values({ idempotencyKey: 'legacy/key?精确=1', sourceKind: 'announcement', sourceIdentity: 'synthetic/legacy', status: 'preflight' }).returning().get()
 const processing = db.insert(schema.importBatch).values({ idempotencyKey: 'interrupted-worker', sourceKind: 'announcement', sourceIdentity: 'synthetic/processing' }).returning().get()
 db.insert(schema.importReceipt).values({ batchId: processing.id, operation: 'commit', requestHash: 'synthetic-hash', requestBody: '{}', status: 'processing', createdAt: '2026-10-19T00:00:00Z' }).run()

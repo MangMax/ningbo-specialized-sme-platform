@@ -1,3 +1,4 @@
+import { submitNativePlatformQuery } from './helpers/native-platform-fixture'
 import { CURRENT_RULE_VERSION } from '../lib/roster/current-qualification'
 import { businessIdentity, expectedBusinessIdentity, matchesBusinessIdentity } from './helpers/current-export-118'
 import { reviewCurrentExportDecision, confirmCurrentExportExclusion } from './helpers/current-export-decisions'
@@ -9,13 +10,14 @@ import { join, resolve } from 'node:path'
 import ExcelJS from 'exceljs'
 import { eq } from 'drizzle-orm'
 import { afterAll, beforeAll, beforeEach, expect, it } from 'vitest'
-import { useDb, schema as s } from '../db/client'
+import { initializeDb, schema as s } from '../db/client'
 import { spawnOwnedChild as spawn, reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../scripts/lib/isolated-local-services.mjs'
 
 // Only synthetic fixtures are written here. Assertions use real HTTP and XLSX bytes.
 const dir = mkdtempSync(join(tmpdir(), 'export-119-'))
-const dbPath = join(dir, 'synthetic.db')
-const db = useDb({ dbPath })
+let generation=0
+let dbPath = join(dir, 'synthetic.db')
+let db = initializeDb({ create: true,  dbPath })
 const titleCode = 'innovative_sme'
 const endpoint = '/api/roster/exports/current/innovative-sme'
 const token = 'synthetic-export-119-token'
@@ -97,7 +99,7 @@ async function workbook(key: string, extra = {}) {
   expect(job.result.artifact.availability).toBe('available')
   return { job, ...await download(job) }
 }
-beforeAll(async () => {
+async function startService() {
   const cwd = resolve(import.meta.dirname, '..')
   const port = await reserveLoopbackPort()
   const child = spawn(process.execPath, [join(cwd, 'node_modules/nuxt/bin/nuxt.mjs'), 'dev', '--host', '127.0.0.1', '--port', String(port)], {
@@ -108,13 +110,16 @@ beforeAll(async () => {
   service = { baseUrl: `http://127.0.0.1:${port}`, stop: () => stopOwnedChild(child) }
   try { await waitForHttp(url('/api/jobs/kinds'), { timeoutMs: 60000, child }) }
   catch (error) { await service.stop(); throw new Error(String(error) + output) }
-}, 90000)
-beforeEach(() => {
-  // Retain job history; reset only synthetic business fixtures between terminal jobs.
-  db.transaction(() => {
-    for (const table of ['enterprise_fact_receipt', 'enterprise_fact_revision', 'record_correspondence', 'difference_reason', 'platform_relation', 'platform_query', 'record', 'enterprise_alias', 'enterprise']) db.$client.exec(`delete from ${table}`)
-  })
-})
+}
+beforeAll(startService, 90000)
+beforeEach(async () => {
+  await service?.stop()
+  db.$client.close()
+  dbPath=join(dir,`synthetic-${++generation}.db`)
+  db=initializeDb({create:true,dbPath})
+  await startService()
+},90000)
+
 afterAll(async () => {
   await service?.stop()
   db.$client.close()
@@ -262,15 +267,16 @@ it('创新型按稳定主体去重且多称号分别保留', async () => {
   }
 })
 
-function query(enterprise: typeof s.enterprise.$inferSelect, status: 'success' | 'failed' | 'no_record', key = enterprise.usccNorm!) {
-  return db.insert(s.platformQuery).values({ interface: 'recognized_list', queryKey: key, rdjb: '1', titleCode, queriedAt: new Date().toISOString(), status }).returning().get()
+// Native source facts live in this case's independent database generation.
+function query(enterprise: typeof s.enterprise.$inferSelect, status: 'success' | 'failed' | 'no_record', key = enterprise.usccNorm!, rowStatus?: string) {
+  const native = submitNativePlatformQuery(db, { interface: 'business_list', queryKey: key, rdjb: '1', titleCode, queriedAt: new Date().toISOString(), status, rawResponse: JSON.stringify({ status, rowStatus: rowStatus ?? null }), relations: rowStatus == null ? [] : [{ sequenceNo: 1, enterpriseId: enterprise.id, nameRaw: enterprise.name, usccRaw: enterprise.usccNorm, status: rowStatus, declareKind: 'update', verificationStatus: 'confirmed', matchBasis: 'uscc' }] })
+  return { id: native.queryId, relationIds: native.relationIds }
 }
 it('创新型查询失败退回待审与旧决定不冒充资格失效', async () => {
   for (const status of ['failed', 'no_record'] as const) query(candidate('查询' + status).enterprise, status)
   for (const status of ['退回', '待审核']) {
     const c = candidate('更新' + status)
-    const q = query(c.enterprise, 'success')
-    db.insert(s.platformRelation).values({ queryId: q.id, sequenceNo: 1, enterpriseId: c.enterprise.id, status, declareKind: 'update', verificationStatus: 'confirmed', matchBasis: 'uscc' }).run()
+    query(c.enterprise, 'success', c.enterprise.usccNorm!, status)
   }
   const pending = candidate('更新待审决定'); decision(pending.enterprise.id, 'pending_review', { measureCode: 'follow_review' })
   const withdrawn = candidate('撤回旧外迁')
@@ -280,8 +286,8 @@ it('创新型查询失败退回待审与旧决定不冒充资格失效', async (
   const staleQuery = query(stale.enterprise, 'failed', 'name:' + stale.enterprise.nameNorm)
   const staleDecision = decision(stale.enterprise.id, 'moved_out', { evidenceQueryId: staleQuery.id })
   const onlyPlatform = db.insert(s.enterprise).values({ name: '仅平台通过', nameNorm: '仅平台通过', usccNorm: 'ONLY-PLATFORM-119' }).returning().get()
-  const q = query(onlyPlatform, 'success')
-  const relation = db.insert(s.platformRelation).values({ queryId: q.id, sequenceNo: 1, enterpriseId: onlyPlatform.id, status: '认定通过', verificationStatus: 'confirmed', matchBasis: 'uscc' }).returning().get()
+  const q = query(onlyPlatform, 'success', onlyPlatform.usccNorm!, '认定通过')
+  const relation = { id: q.relationIds[0]! }
   const unconfirmed = candidate('候选对应非资格', [{ eventType: 'maintain', year }])
   db.update(s.record).set({ source: 'miit' }).where(eq(s.record.id, unconfirmed.record.id)).run()
   const edge = db.insert(s.recordCorrespondence).values({ edgeKey: 'candidate-119', type: 'event_process', role: 'award', eventId: unconfirmed.events[0]!.id, enterpriseId: unconfirmed.enterprise.id, titleCode, status: 'candidate', revision: 1, targetIdentity: {}, provenance: {}, sourceFingerprint: 'synthetic-119', ruleId: 'manual', ruleVersion: '1', createdAt: new Date().toISOString() }).returning().get()
@@ -304,8 +310,12 @@ it('创新型超页全量文本安全与业务只读', async () => {
   }
   const sourceDigest = () => {
     const hash = createHash('sha256')
-    for (const table of ['enterprise', 'record', 'record_event', 'record_evidence', 'enterprise_alias', 'platform_query', 'platform_relation', 'difference_reason', 'record_correspondence']) {
+    for (const table of ['enterprise', 'record', 'record_event', 'record_evidence', 'enterprise_alias', 'platform_collection', 'platform_business_observation', 'difference_reason', 'record_correspondence']) {
       for (const row of db.$client.prepare(`select * from ${table} order by id`).iterate()) hash.update(JSON.stringify(row))
+    }
+    for (const { name } of db.$client.prepare("select name from sqlite_master where type='table' and name like 'platform_%' order by name").all() as Array<{ name: string }>) {
+      hash.update(name)
+      for (const row of db.$client.prepare(`select * from "${name}" order by rowid`).iterate()) hash.update(JSON.stringify(row))
     }
     return hash.digest('hex')
   }

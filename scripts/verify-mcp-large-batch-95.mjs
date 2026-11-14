@@ -11,10 +11,10 @@ import { setTimeout as sleep } from 'node:timers/promises'
 import { forkOwnedChild as fork, reserveLoopbackPort, stopOwnedChild } from './lib/isolated-local-services.mjs'
 
 const { createJiti } = createRequire(import.meta.resolve('nuxt/package.json'))('jiti')
-const { useDb } = await createJiti(import.meta.url).import('../db/client.ts')
+const { initializeDb } = await createJiti(import.meta.url).import('../db/client.ts')
 const dir = mkdtempSync(join(tmpdir(), 'mcp-large-batch-95-'))
 const dbPath = join(dir, 'synthetic.sqlite')
-useDb({ dbPath }).$client.close()
+initializeDb({ dbPath, create: true }).$client.close()
 const apiToken = randomBytes(24).toString('hex')
 const mcpToken = randomBytes(24).toString('hex')
 assert.notEqual(apiToken, mcpToken)

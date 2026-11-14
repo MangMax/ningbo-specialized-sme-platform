@@ -1,3 +1,6 @@
+import {newJobId} from '../lib/job'
+import {submitNativePlatformQuery} from './helpers/native-platform-fixture'
+import { nativeRelationRows } from './helpers/native-platform-evidence'
 import { initializeDb } from '../db/client'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -12,7 +15,8 @@ import { updateCredential } from '../server/utils/credential-state'
 import type { TaskList, TaskSummary } from '../lib/task-center'
 
 const dir = mkdtempSync(join(tmpdir(), 'issue299-pagination-'))
-const db = initializeDb({ create: true, dbPath: join(dir, 'tasks.db') })
+let dbSerial=0
+let db = initializeDb({ create: true, dbPath: join(dir, 'tasks.db') })
 const USCC = '91330211255994457P'
 const nativeFetch = globalThis.fetch
 let server: Server, baseUrl: string
@@ -62,8 +66,12 @@ beforeAll(async () => {
 })
 afterEach(async () => {
   await whenIdle()
-  // Typed projections reference content versions with ON DELETE RESTRICT; clear them first.
-  for (const table of [schema.differenceReason, schema.platformApplyProjection, schema.platformBusinessProjection, schema.platformBusinessObservation, schema.platformBusinessRecordVersion, schema.platformBusinessRecord, schema.platformRelation, schema.platformQuery, schema.importReceipt, schema.importBatch, schema.job]) db.delete(table).run()
+  db.$client.close()
+  const path=join(dir,`tasks-${++dbSerial}.db`)
+  db=initializeDb({create:true,dbPath:path})
+  vi.stubEnv('NUXT_DB_PATH',path)
+  const enterprise=db.insert(schema.enterprise).values({name:'合成企业',nameNorm:'合成企业',usccNorm:USCC}).returning().get()
+  db.insert(schema.record).values({enterpriseId:enterprise.id,source:'miit',titleCode:'specialized_sme'}).run()
   calls.length = 0
 })
 afterAll(async () => {
@@ -161,8 +169,8 @@ it('cancel between pages stops requests, returns unfinished position and atomica
 
 it('historical success without page proof is preserved but never reused as complete', async () => {
   upstream()
-  const old = db.insert(schema.platformQuery).values({ interface: 'business_list', queryKey: USCC, rdjb: '3', queriedAt: new Date().toISOString(), status: 'success', rawResponse: page('businessList', 1) }).returning().get()
-  db.insert(schema.platformRelation).values({ queryId: old.id, sequenceNo: 1, relationKey: 'old', rawFields: { id: 'old' } }).run()
+  const seeded=submitNativePlatformQuery(db,{interface:'business_list',queryKey:USCC,rdjb:'3',queriedAt:new Date().toISOString(),status:'success',rawResponse:page('businessList',1),relations:[{sequenceNo:1,relationKey:'old',rawFields:{id:'old'}}]})
+  const old={id:seeded.queryId,rawResponse:page('businessList',1)}
   const done = await finish((await submit()).jobId)
   expect(done.result.queries).toMatchObject({ network: 4, reused: 0 })
   expect((await archives()).find(e => e.query.id === old.id)).toMatchObject({ query: { status: 'success', rawResponse: old.rawResponse }, relations: [{ id: expect.any(Number), relationKey: 'old' }] })
@@ -222,7 +230,7 @@ it('newer failed slot invalidates older complete cache without changing either h
   await finish((await submit()).jobId)
   const before = await archives()
   const old = before.find(e => e.query.rdjb === '3')
-  const failure = db.insert(schema.platformQuery).values({ interface: 'business_list', queryKey: USCC, rdjb: '3', queriedAt: new Date(Date.now() + 1000).toISOString(), status: 'failed', failureReason: 'newer synthetic failure' }).returning().get()
+  const failure={id:submitNativePlatformQuery(db,{interface:'business_list',queryKey:USCC,rdjb:'3',queriedAt:new Date(Date.now()+1000).toISOString(),status:'failed',failureReason:'newer synthetic failure',rawResponse:'Explicit failed response'}).queryId}
   const retried = await finish((await submit()).jobId)
   expect(retried.result.queries).toMatchObject({ network: 1, reused: 3 })
   const after = await archives()
@@ -232,12 +240,12 @@ it('newer failed slot invalidates older complete cache without changing either h
 
 it('archive failure on row 51 rolls back the whole query/relation/decision batch, then retry commits', async () => {
   upstream()
-  db.$client.exec("CREATE TEMP TRIGGER issue299_fail BEFORE INSERT ON platform_relation WHEN NEW.sequence_no = 51 BEGIN SELECT RAISE(ABORT, 'issue299 synthetic archive failure'); END")
+  db.$client.exec("CREATE TEMP TRIGGER issue299_fail BEFORE INSERT ON platform_business_observation WHEN NEW.sequence_no = 51 BEGIN SELECT RAISE(ABORT, 'issue299 synthetic archive failure'); END")
   try {
     const failed = await finish((await submit()).jobId)
     expect(failed.state).toBe('failed')
     expect(await archives()).toHaveLength(0)
-    expect(db.select().from(schema.platformRelation).all()).toHaveLength(0)
+    expect(nativeRelationRows(db)).toHaveLength(0)
     expect(db.select().from(schema.differenceReason).all()).toHaveLength(0)
     expect(db.select().from(schema.importReceipt).all().length).toBeGreaterThan(0)
   } finally { db.$client.exec('DROP TRIGGER issue299_fail') }
@@ -254,19 +262,19 @@ it('missing later-page total cannot inherit earlier metadata and masquerade as c
   expect(JSON.parse(entry.query.rawResponse)).toMatchObject({ completeness: 'partial', declaredTotal: 51, unfinished: [{ page: 2 }] })
 })
 
-it('cache verifies archived page bytes against ordered relations, rejecting a forged complete marker', async () => {
+it('immutable native archives reject a forged complete marker before cache replay', async () => {
   upstream()
   await finish((await submit()).jobId)
   const original = (await archives()).find(e => e.query.rdjb === '3')
   const corrupted = JSON.parse(original.query.rawResponse)
   corrupted.pages[1].raw = page('businessList', 2, 51, { pageSet: [{ id: 'DIFFERENT', qymc: '不同记录', tyshxydm: USCC }] })
   // Synthetic corruption stays in this isolated database only.
-  db.$client.prepare('UPDATE platform_query SET raw_response = ? WHERE id = ?').run(JSON.stringify(corrupted), original.query.id)
+  expect(()=>db.$client.prepare('UPDATE platform_archive_value SET bytes = ? WHERE id=(SELECT archive_id FROM platform_collection_archive_ref WHERE owner_id=(SELECT collection_id FROM platform_legacy_query_alias WHERE old_id=?) AND field=?)').run(Buffer.from(JSON.stringify(corrupted)),original.query.id,'rawResponse')).toThrow()
   const retry = await finish((await submit()).jobId)
-  expect(retry.result.queries).toMatchObject({ network: 1, reused: 3 })
+  expect(retry.result.queries).toMatchObject({ network: 0, reused: 4 })
   const after = await archives()
-  expect(after.find(e => e.query.id === original.query.id).query.rawResponse).toBe(JSON.stringify(corrupted))
-  expect(after.filter(e => e.query.rdjb === '3')).toHaveLength(2)
+  expect(after.find(e => e.query.id === original.query.id).query.rawResponse).toBe(original.query.rawResponse)
+  expect(after.filter(e => e.query.rdjb === '3')).toHaveLength(1)
 })
 
 it('four failed slots remain four failed collection slots through public task list and detail, while report targets stay one', async () => {
@@ -285,9 +293,15 @@ it('four failed slots remain four failed collection slots through public task li
   expect(calls).toHaveLength(4)
 })
 
+function historicalSummaryJob() {
+  const id=newJobId(),result={counts:{total:1,needsReview:1,queryFailed:0,notQueried:0},collection:{complete:4,partial:0,failed:0,unknown:0,positions:Array.from({length:4},()=>({unfinished:[]}))}}
+  db.insert(schema.job).values({id,kind:'reconcile',state:'done',params:{titles:['specialized_sme']},progress:{done:1,total:1},result,createdAt:'2026-06-01T00:00:00Z'}).run()
+  return {job:{jobId:id},done:{result}}
+}
+
 it('historical task reports without collection stay explicitly unknown through public list and detail', async () => {
   upstream()
-  const job = await submit(), done = await finish(job.jobId)
+  const {job,done}=historicalSummaryJob()
   const { collection: _collection, ...historicalReport } = done.result
   db.update(schema.job).set({ result: historicalReport }).where(eq(schema.job.id, job.jobId)).run()
   const detail = await api(`/api/task-center/${job.jobId}`)
@@ -299,7 +313,7 @@ it('historical task reports without collection stay explicitly unknown through p
 
 it('task summary bounds locations to 50 while retaining the actual unfinished total and excludes page raw', async () => {
   upstream()
-  const job = await submit(), done = await finish(job.jobId)
+  const {job,done}=historicalSummaryJob()
   db.update(schema.job).set({ result: { ...done.result, raw: 'PRIVATE_RAW'.repeat(100000), collection: {
     complete: 0, partial: 0, failed: 61, unknown: 0,
     positions: Array.from({ length: 61 }, (_, index) => ({ unfinished: [{ source: 'businessList', rdjb: '3', page: index + 1 }], pages: [{ raw: 'PRIVATE_PAGE_RAW' }] })),
@@ -318,7 +332,7 @@ it('task summary bounds locations to 50 while retaining the actual unfinished to
 
 it('malformed historical collection scalars stay unknown without transporting nested raw objects', async () => {
   upstream()
-  const job = await submit(), done = await finish(job.jobId)
+  const {job,done}=historicalSummaryJob()
   db.update(schema.job).set({ result: { ...done.result, collection: {
     complete: { raw: 'PRIVATE_NESTED_RAW'.repeat(100000) }, partial: 0, failed: 0, unknown: 0,
     positions: [{ unfinished: [{ source: 'queryList', rdjb: null, page: { raw: 'PRIVATE_PAGE_RAW'.repeat(100000) } }] }],
@@ -369,7 +383,7 @@ const invalidHistoricalCollections: { name: string; collection: unknown }[] = [
 
 it.each(invalidHistoricalCollections)('historical $name stays unknown through public list and detail without filtering bad entries into completion', async ({ collection }) => {
   upstream()
-  const job = await submit(), done = await finish(job.jobId)
+  const {job,done}=historicalSummaryJob()
   db.update(schema.job).set({ result: { ...done.result, collection } }).where(eq(schema.job.id, job.jobId)).run()
   const before = db.select({ result: schema.job.result }).from(schema.job).where(eq(schema.job.id, job.jobId)).get()?.result
   const detail = await publicSummaryPair(job.jobId)
@@ -384,7 +398,7 @@ it.each([
   { name: 'four complete slots', collection: { ...originalCollection, positions: emptySlots } },
 ])('only validated $name report zero unfinished ranges through public list and detail', async ({ collection }) => {
   upstream()
-  const job = await submit(), done = await finish(job.jobId)
+  const {job,done}=historicalSummaryJob()
   db.update(schema.job).set({ result: { ...done.result, collection } }).where(eq(schema.job.id, job.jobId)).run()
   const detail = await publicSummaryPair(job.jobId)
   const { positions: _positions, ...counts } = collection
@@ -395,7 +409,7 @@ it.each([
 
 it.each([50, 51])('validated %i ranges preserve the full count and at most 50 scopes through public list and detail', async count => {
   upstream()
-  const job = await submit(), done = await finish(job.jobId)
+  const {job,done}=historicalSummaryJob()
   db.update(schema.job).set({ result: { ...done.result, collection: {
     complete: 0, partial: 1, failed: 0, unknown: 0,
     positions: [{ unfinished: Array.from({ length: count }, (_, index) => ({ ...pendingRange, page: index + 1 })) }],

@@ -1,23 +1,28 @@
+import Database from 'better-sqlite3'
+import { drizzle } from 'drizzle-orm/better-sqlite3'
+import { submitNativePlatformQuery } from './helpers/native-platform-fixture'
 import { mkdtempSync, renameSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import Database from 'better-sqlite3'
 import { afterEach, expect, it } from 'vitest'
-import { schema, useDb } from '../db/client'
+import { schema, initializeDb } from '../db/client'
 import { listPlatformQueries, type PlatformQueryFilter } from '../lib/platform/read'
 import { createPlatformSummaryCache } from '../server/utils/platform-summary-cache'
 
 const cleanup: (() => void)[] = []
 afterEach(() => { for (const close of cleanup.splice(0).reverse()) close() })
-function fixture() {
+function fixture(lastStatus: 'not_queried' | 'partial' | 'no_record' = 'not_queried', lastKey = 'synthetic:4', failureReason: string | null = null) {
   const dir = mkdtempSync(join(tmpdir(), 'summary-cache-89-'))
   cleanup.push(() => rmSync(dir, { recursive: true, force: true }))
-  const db = useDb({ dbPath: join(dir, 'db.sqlite') })
+  const db = initializeDb({ create: true,  dbPath: join(dir, 'db.sqlite') })
   cleanup.push(() => db.$client.close())
   for (const [index, status] of (['success', 'partial', 'failed', 'no_record', 'not_queried'] as const).entries()) {
-    db.insert(schema.platformQuery).values({ interface: 'recognized_list', queryKey: `synthetic:${index}`, queriedAt: `2026-10-19T00:00:0${index}Z`, status, rawResponse: 'private raw', collectionEvidence: { private: 'raw' } as never }).run()
+    submitNativePlatformQuery(db, { interface: 'business_list', queryKey: index === 4 ? lastKey : `synthetic:${index}`, queriedAt: `2026-10-19T00:00:0${index}Z`, status: index === 4 ? lastStatus : status, failureReason: index === 4 ? failureReason : null, rawResponse: 'private raw' })
   }
   return db
+}
+function append(db: ReturnType<typeof initializeDb>) {
+  return submitNativePlatformQuery(db, { interface: 'business_list', queryKey: 'native-cache-append', rdjb: '', queriedAt: '2026-10-20T00:00:00Z', status: 'partial', rawResponse: 'Explicit synthetic appended source' })
 }
 function cache(options: Parameters<typeof createPlatformSummaryCache>[0] = {}) {
   const reader = createPlatformSummaryCache(options)
@@ -49,8 +54,7 @@ it('entry eviction uses least recently read order and evicted requests safely re
 })
 
 it('byte and per-entry limits count encoded data and admit only at the exact budget', () => {
-  const db = fixture(), args = { view: 'summary' as const, pageSize: 5 }
-  db.$client.prepare('UPDATE platform_query SET query_key=? WHERE id=5').run('界🙂'.repeat(400))
+  const db = fixture('not_queried', '界🙂'.repeat(400)), args = { view: 'summary' as const, pageSize: 5 }
   const probe = cache(); const expected = probe.read(db, args)
   expect(Buffer.byteLength(JSON.stringify(expected))).toBeGreaterThan(JSON.stringify(expected).length)
   const charge = probe.stats().bytes
@@ -85,24 +89,25 @@ it('TTL expires at the boundary and hits do not extend the committed value lifet
 it('same-connection commits invalidate both independent readers while rollback never publishes', () => {
   const db = fixture(), a = cache(), b = cache(), args = { view: 'summary' as const }
   const before = a.read(db, args); b.read(db, args)
-  db.$client.exec("BEGIN; UPDATE platform_query SET status='partial' WHERE id=5")
+  db.$client.exec('BEGIN')
+  append(db)
   // A transactional caller may read its own writes, but may not fill or consume a shared entry.
   expect(a.read(db, args).rows[0]!.query.status).toBe('partial')
   db.$client.exec('ROLLBACK')
   expect(a.read(db, args)).toEqual(before)
   expect(b.read(db, args)).toEqual(before)
   expect(b.stats()).toMatchObject({ hits: 1, misses: 1 })
-  db.$client.exec("BEGIN; UPDATE platform_query SET status='partial' WHERE id=5; COMMIT")
+  append(db)
   for (const reader of [a, b]) {
     const committed = reader.read(db, args)
     expect(committed.rows[0]!.query.status).toBe('partial')
-    expect(committed.counts).toEqual({ success: 1, partial: 2, failed: 1, no_record: 1 })
+    expect(committed.counts).toEqual({ success: 1, partial: 2, failed: 1, no_record: 1, not_queried: 1 })
     expect(reader.stats().misses).toBe(2)
   }
 })
 
 it('unsafe filters, raw reads, no-store and sensitive failures bypass result storage', () => {
-  const db = fixture(), reader = cache(), summary = { view: 'summary' as const }
+  const db = fixture('not_queried', 'synthetic:4', 'sensitive synthetic error'), reader = cache(), summary = { view: 'summary' as const }
   const cases: PlatformQueryFilter[] = [
     {}, { ...summary, includeRawResponse: true }, { ...summary, page: 2 }, { ...summary, pageSize: 51 },
     { ...summary, interface: 'recognized_list' as const }, { ...summary, titleCode: 'specialized_sme' },
@@ -115,7 +120,6 @@ it('unsafe filters, raw reads, no-store and sensitive failures bypass result sto
   }
   reader.read(db, summary, { allowStore: false })
   expect(reader.stats()).toMatchObject({ entries: 0, hits: 0, misses: 0, sources: 0 })
-  db.$client.exec("UPDATE platform_query SET failure_reason='sensitive synthetic error' WHERE id=5")
   const result = reader.read(db, summary)
   expect(result.rows[0]!.query.failureReason).toBe('sensitive synthetic error')
   expect(reader.stats().entries).toBe(0)
@@ -123,9 +127,10 @@ it('unsafe filters, raw reads, no-store and sensitive failures bypass result sto
 
 it('external commits, pending writes, rollback and restart preserve committed public results', () => {
   const db = fixture(), a = cache(), b = cache(), args = { view: 'summary' as const }
-  const writer = new Database(db.$client.name); cleanup.push(() => writer.close())
+  const writer = new Database(db.$client.name); writer.pragma('foreign_keys = ON'); const writerDb = drizzle(writer, { schema }); cleanup.push(() => writer.close())
   const before = a.read(db, args); b.read(db, args)
-  writer.exec("BEGIN; UPDATE platform_query SET status='partial' WHERE id=5")
+  writer.exec('BEGIN')
+  append(writerDb)
   expect(a.read(db, args)).toEqual(before); expect(b.read(db, args)).toEqual(before)
   const cold = cache()
   expect(cold.read(db, args)).toEqual(before)
@@ -133,18 +138,16 @@ it('external commits, pending writes, rollback and restart preserve committed pu
   writer.exec('ROLLBACK')
   expect(a.read(db, args)).toEqual(before)
   expect(a.stats()).toMatchObject({ misses: 1, hits: 2 })
-  writer.exec("BEGIN; UPDATE platform_query SET status='partial' WHERE id=5; INSERT INTO platform_relation(query_id,sequence_no,created_at) VALUES(5,1,'2026-10-19'); COMMIT")
+  append(writerDb)
   for (const reader of [a, b, cache()]) {
     const result = reader.read(db, args)
-    expect(result.rows[0]!.query).toMatchObject({ status: 'partial', relationCount: 1 })
-    expect(result.counts).toEqual({ success: 1, partial: 2, failed: 1, no_record: 1 })
+    expect(result.rows[0]!.query).toMatchObject({ status: 'partial', relationCount: 0 })
+    expect(result.counts).toEqual({ success: 1, partial: 2, failed: 1, no_record: 1, not_queried: 1 })
   }
 })
 
 it('source eviction and same-path replacement isolate identical IDs and close old readers', () => {
-  const first = fixture(), second = fixture(), third = fixture(), args = { view: 'summary' as const }
-  second.$client.exec("UPDATE platform_query SET status='partial' WHERE id=5")
-  third.$client.exec("UPDATE platform_query SET status='no_record' WHERE id=5")
+  const first = fixture(), second = fixture('partial'), third = fixture('no_record'), args = { view: 'summary' as const }
   const reader = cache({ maxSources: 2 })
   expect(reader.read(first, args).rows[0]!.query.status).toBe('not_queried')
   expect(reader.read(second, args).rows[0]!.query.status).toBe('partial')
@@ -164,11 +167,11 @@ it('source eviction and same-path replacement isolate identical IDs and close ol
 it('read errors are not cached as empty and recovered schema reads refill normally', () => {
   const db = fixture(), reader = cache(), args = { view: 'summary' as const }
   const expected = reader.read(db, args)
-  db.$client.exec('ALTER TABLE platform_query RENAME TO temporarily_unavailable')
+  db.$client.exec('ALTER TABLE platform_collection RENAME TO temporarily_unavailable')
   expect(() => reader.read(db, args)).toThrow()
   expect(() => reader.read(db, args)).toThrow()
   expect(reader.stats()).toMatchObject({ entries: 0, bytes: 0 })
-  db.$client.exec('ALTER TABLE temporarily_unavailable RENAME TO platform_query')
+  db.$client.exec('ALTER TABLE temporarily_unavailable RENAME TO platform_collection')
   expect(reader.read(db, args)).toEqual(expected)
   expect(reader.read(db, args)).toEqual(expected)
   expect(reader.stats().hits).toBe(1)

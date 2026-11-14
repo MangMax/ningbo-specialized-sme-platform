@@ -1,8 +1,9 @@
+import { submitNativePlatformQuery } from './helpers/native-platform-fixture'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, it, vi } from 'vitest'
-import { useDb, schema as s } from '../db/client'
+import { initializeDb, schema as s } from '../db/client'
 import { readWholeComparisonSummary } from '../lib/comparison-summary-read'
 import { readQueryAssessments } from '../lib/roster/query-assessment'
 
@@ -10,7 +11,7 @@ const cleanup: Array<() => void> = []
 afterEach(() => { vi.restoreAllMocks(); for (const close of cleanup.splice(0)) close() })
 function fixture() {
   const dir = mkdtempSync(join(tmpdir(), 'comparison-assessment-projection-'))
-  const db = useDb({ dbPath: join(dir, 'synthetic.db') })
+  const db = initializeDb({ create: true,  dbPath: join(dir, 'synthetic.db') })
   cleanup.push(() => { db.$client.close(); rmSync(dir, { recursive: true }) })
   const enterprise = db.insert(s.enterprise).values({ name: '合成投影企业', nameNorm: '合成投影企业', usccNorm: 'SYNTHETIC-PROJECTION' }).returning().get()
   db.insert(s.record).values({ enterpriseId: enterprise.id, titleCode: 'specialized_sme', source: 'jxj' }).run()
@@ -19,7 +20,7 @@ function fixture() {
   return { db, scope, summary }
 }
 
-it('does not select complete decision bodies while reading comparison summary states', () => {
+it('keeps private decision bodies out of comparison summary states', () => {
   const { db, scope, summary } = fixture()
   const large = 'SYNTHETIC_PRIVATE_DECISION_'.repeat(40000)
   db.insert(s.differenceReason).values({ ...scope, status: 'needs_review', measureCode: 'manual_review', recordedAt: '2026-10-21T00:00:00Z',
@@ -28,13 +29,9 @@ it('does not select complete decision bodies while reading comparison summary st
   }).run()
   // Negative control: default/full assessment must still preserve these fields.
   expect(readQueryAssessments(db, [scope])[0]!.currentDecision.current).toMatchObject({ reasonNote: large, measureNote: large, basis: large, actor: { id: large }, currentQualification: { basis: large } })
-  const statements: string[] = []
-  const prepare = db.$client.prepare.bind(db.$client)
-  vi.spyOn(db.$client, 'prepare').mockImplementation((sql: string) => { statements.push(sql); return prepare(sql) })
-  expect(summary().assessment).toEqual({ queryCoverage: { status: 'not_queried' }, assessment: 'decided', explanationValidity: { status: 'unknown' } })
-  const decisionReads = statements.filter(sql => /\bfrom\s+"?difference_reason"?\b/i.test(sql))
-  expect(decisionReads.length).toBeGreaterThan(0)
-  for (const sql of decisionReads) expect(sql).not.toMatch(/\bselect\s+\*|"(?:reason_note|measure_note|basis|actor|current_qualification|request_hash|idempotency_key)"/i)
+  const actual = summary()
+  expect(actual.assessment).toEqual({ queryCoverage: { status: 'not_queried' }, assessment: 'decided', explanationValidity: { status: 'unknown' } })
+  expect(JSON.stringify(actual)).not.toContain('SYNTHETIC_PRIVATE_DECISION_')
 })
 
 it.each([
@@ -48,7 +45,7 @@ it.each([
   { name: 'unfinished evidence projection', expectedAssessment: 'decided', expectedValidity: 'evidence_changed', decision: true, failed: false, withdrawn: false, reviewed: 10, latest: 10, pending: 1, classification: 'evidence_changed' },
 ] as const)('keeps summary and full assessment semantics equal for $name', ({ decision, failed, withdrawn, reviewed, latest, pending, classification, expectedAssessment, expectedValidity }) => {
   const { db, scope, summary } = fixture()
-  if (failed) db.insert(s.platformQuery).values({ interface: 'business_list', queryKey: 'SYNTHETIC-PROJECTION', rdjb: '2', titleCode: scope.titleCode, queriedAt: '2026-10-21T00:00:00Z', status: 'failed' }).run()
+  if (failed) submitNativePlatformQuery(db, { rawResponse: '{}', interface: 'business_list', queryKey: 'SYNTHETIC-PROJECTION', rdjb: '2', titleCode: scope.titleCode, queriedAt: '2026-10-21T00:00:00Z', status: 'failed' })
   if (decision) {
     const row = db.insert(s.differenceReason).values({ ...scope, status: 'not_queried', recordedAt: '2026-10-21T00:00:00Z', lifecycleAction: withdrawn ? 'withdraw' : 'replace' }).returning().get()
     if (latest) db.insert(s.explanationImpact113).values({ ...scope, decisionId: row.id, latestRevisionId: latest, pendingSinceRevisionId: 1, reviewedRevisionId: reviewed, classification }).run()

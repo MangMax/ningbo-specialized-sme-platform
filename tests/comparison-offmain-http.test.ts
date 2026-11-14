@@ -30,7 +30,7 @@ it('whole summary keeps an independent HTTP probe responsive and preserves SQL f
 const require=createRequire(${JSON.stringify(resolve(root, 'package.json'))}),h=require('h3');
 Object.assign(globalThis,h,{defineRouteMeta:()=>{},defineNitroPlugin:f=>f,useRuntimeConfig:()=>({apiToken:'synthetic-m3',curatedPath:${JSON.stringify(curated)},reconcilePath:${JSON.stringify(reconcile)}})});
 const {createJiti}=require(${JSON.stringify(jiti)}),load=createJiti(${JSON.stringify(resolve(root, 'package.json'))},{alias:{'@db':${JSON.stringify(resolve(root, 'db/index.ts'))},'~~':${JSON.stringify(root)}}});
-const {useDb}=await load.import(${JSON.stringify(resolve(root, 'db/client.ts'))}),writer=useDb({readOnly:false});
+const {initializeDb}=await load.import(${JSON.stringify(resolve(root, 'db/client.ts'))}),writer=initializeDb({readOnly:false});
 const {startRosterApi}=await load.import(${JSON.stringify(resolve(root, 'tests/helpers/roster-http-server.ts'))}),imports=await startRosterApi({db:writer,apiToken:'synthetic-m3'});
 const hooks={};(await load.import(${JSON.stringify(resolve(root, 'server/plugins/enterprise-read.ts'))})).default({hooks:{hook:(n,f)=>hooks[n]=f}});
 const router=h.createRouter();for(const [path,file] of [['/api/comparison','comparison.get.ts'],['/api/platform/queries/:queryId/evidence','platform/queries/[queryId]/evidence.get.ts'],['/api/roster/recognitions','roster/recognitions.get.ts'],['/api/roster/differences','roster/differences.get.ts'],['/api/roster/enterprises','roster/enterprises.get.ts']])router.get(path,(await load.import(${JSON.stringify(resolve(root, 'server/api'))}+'/'+file)).default);

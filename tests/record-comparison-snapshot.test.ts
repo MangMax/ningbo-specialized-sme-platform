@@ -1,18 +1,18 @@
+import { submitNativePlatformQuery } from './helpers/native-platform-fixture'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { setImmediate } from 'node:timers/promises'
-import { eq } from 'drizzle-orm'
 import { expect, it } from 'vitest'
-import { useDb, schema } from '../db/client'
+import { initializeDb, schema } from '../db/client'
 import { getRecordComparison } from '../server/utils/record-comparison'
 import { readRecordComparison, readRecordComparisonSources } from '../server/utils/record-comparison-read'
 
 it('yields during cold source counting and keeps the catalog page in its original readonly snapshot', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'comparison-catalog-snapshot-'))
-  const db = useDb({ dbPath: join(dir, 'test.db') })
+  const db = initializeDb({ create: true,  dbPath: join(dir, 'test.db') })
   try {
-    db.transaction(tx => { for (let n = 0; n < 512; n++) tx.insert(schema.platformQuery).values({ interface: 'business_list', queryKey: `catalog:${n}`, rdjb: '2', queriedAt: '2026-10-18T00:00:00Z' }).run() })
+    db.transaction(tx => { for (let n = 0; n < 512; n++) submitNativePlatformQuery(tx, { rawResponse: '{}', interface: 'business_list', queryKey: `catalog:${n}`, rdjb: '2', queriedAt: '2026-10-18T00:00:00Z' }) })
     const input = { kind: 'query' as const, page: 1, pageSize: 1 }
     const reading = readRecordComparisonSources(db, input)
     let settled = false
@@ -20,11 +20,10 @@ it('yields during cold source counting and keeps the catalog page in its origina
     await Promise.resolve()
     expect(settled).toBe(false)
     db.transaction(tx => {
-      tx.insert(schema.platformQuery).values({ interface: 'business_list', queryKey: 'next-commit', rdjb: '2', queriedAt: '2026-10-18T00:00:00Z' }).run()
-      tx.update(schema.platformQuery).set({ queryKey: 'changed-generation' }).where(eq(schema.platformQuery.id, 1)).run()
+      submitNativePlatformQuery(tx, { rawResponse: '{}', interface: 'business_list', queryKey: 'next-commit', rdjb: '2', queriedAt: '2026-10-18T00:00:00Z' })
     })
     expect(await reading).toMatchObject({ total: 512, counts: { query: 512 }, rows: [{ id: 1, label: expect.stringContaining('catalog:0') }] })
-    expect(await readRecordComparisonSources(db, input)).toMatchObject({ total: 513, rows: [{ id: 1, label: expect.stringContaining('changed-generation') }] })
+    expect(await readRecordComparisonSources(db, input)).toMatchObject({ total: 513, rows: [{ id: 1, label: expect.stringContaining('catalog:0') }] })
     const controller = new AbortController()
     const cancelled = readRecordComparisonSources(db, input, controller.signal)
     const rejected = expect(cancelled).rejects.toMatchObject({ name: 'AbortError' })
@@ -36,14 +35,14 @@ it('yields during cold source counting and keeps the catalog page in its origina
 
 it('cancels a suspended comparison and releases its readonly snapshot before the next read', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'comparison-cancel-'))
-  const db = useDb({ dbPath: join(dir, 'test.db') })
+  const db = initializeDb({ create: true,  dbPath: join(dir, 'test.db') })
   try {
     const owner = db.insert(schema.enterprise).values({ name: 'Cancel', nameNorm: 'Cancel' }).returning().get()
     const record = db.insert(schema.record).values({ enterpriseId: owner.id, titleCode: 'specialized_sme', source: 'jxj' }).returning().get()
     const doc = db.insert(schema.sourceDocument).values({ source: 'jxj', title: 'Cancel', path: 'cancel.pdf' }).returning().get()
-    const query = db.insert(schema.platformQuery).values({ interface: 'business_list', queryKey: 'cancel', rdjb: '2', queriedAt: '2026-10-18T00:00:00Z', status: 'partial' }).returning().get()
+    const query = submitNativePlatformQuery(db, { rawResponse: '{}', interface: 'business_list', queryKey: 'cancel', rdjb: '2', queriedAt: '2026-10-18T00:00:00Z', status: 'partial' })
     db.transaction(tx => { for (let n = 0; n < 512; n++) tx.insert(schema.recordEvent).values({ recordId: record.id, eventType: 'award', year: 2024 }).run() })
-    const input = { queryIds: [query.id], exportBatchIds: [], officialSourceDocumentIds: [doc.id], page: 1, pageSize: 1 }
+    const input = { queryIds: [query.queryId], exportBatchIds: [], officialSourceDocumentIds: [doc.id], page: 1, pageSize: 1 }
     const controller = new AbortController()
     const reading = readRecordComparison(db, input, controller.signal)
     const rejected = expect(reading).rejects.toMatchObject({ name: 'AbortError' })
@@ -60,14 +59,14 @@ it('cancels a suspended comparison and releases its readonly snapshot before the
 
 it('yields to concurrent work while keeping counts and rows in one readonly SQLite snapshot', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'comparison-snapshot-'))
-  const db = useDb({ dbPath: join(dir, 'test.db') })
+  const db = initializeDb({ create: true,  dbPath: join(dir, 'test.db') })
   try {
     const owner = db.insert(schema.enterprise).values({ name: 'Synthetic', nameNorm: 'Synthetic' }).returning().get()
     const record = db.insert(schema.record).values({ enterpriseId: owner.id, titleCode: 'specialized_sme', source: 'jxj' }).returning().get()
     const doc = db.insert(schema.sourceDocument).values({ source: 'jxj', title: 'Synthetic', path: 'synthetic.pdf' }).returning().get()
-    const query = db.insert(schema.platformQuery).values({ interface: 'business_list', queryKey: 'synthetic', rdjb: '2', queriedAt: '2026-10-18T00:00:00Z', status: 'partial' }).returning().get()
+    const query = submitNativePlatformQuery(db, { rawResponse: '{}', interface: 'business_list', queryKey: 'synthetic', rdjb: '2', queriedAt: '2026-10-18T00:00:00Z', status: 'partial' })
     db.transaction(tx => { for (let n = 0; n < 1024; n++) tx.insert(schema.recordEvent).values({ recordId: record.id, eventType: 'award', year: 2024, sortKey: n }).run() })
-    const input = { queryIds: [query.id], exportBatchIds: [], officialSourceDocumentIds: [doc.id], page: 2, pageSize: 25 }
+    const input = { queryIds: [query.queryId], exportBatchIds: [], officialSourceDocumentIds: [doc.id], page: 2, pageSize: 25 }
     const expected = getRecordComparison(db, input)
     const reading = readRecordComparison(db, input)
     let settled = false

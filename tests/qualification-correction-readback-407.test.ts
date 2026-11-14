@@ -1,4 +1,6 @@
-/** #407 parent-frozen correction/readback cases. Authoring status: UNRUN.
+import { initializeDb } from '../db/client'
+import { submitNativePlatformQuery } from './helpers/native-platform-fixture'
+/** #407 parent-frozen correction/readback cases.
  * Synthetic SQLite only. MCP dispatcher assertions do not stand for real SDK proof.
  * Budget tests deliberately fake only the reader output, never qualification policy.
  */
@@ -8,11 +10,9 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
-import { migrate } from 'drizzle-orm/better-sqlite3/migrator'
 import { eq } from 'drizzle-orm'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import * as schema from '../db/schema'
-import { TITLE_SEED } from '../db/titles'
 import type { OfficialPublishedRow, RosterImportRequest } from '../lib/roster-import-client'
 import * as qualification from '../lib/roster/current-qualification'
 import { getRosterEnterpriseDetail } from '../lib/roster/enterprise-roster'
@@ -44,11 +44,8 @@ beforeEach(async () => {
   vi.setSystemTime(NOW)
   dir = mkdtempSync(join(tmpdir(), 'qualification-correction-407-'))
   writeFileSync(join(dir, 'notice.txt'), SOURCE)
-  sqlite = new Database(':memory:')
-  sqlite.pragma('foreign_keys=ON')
-  db = drizzle(sqlite, { schema })
-  migrate(db, { migrationsFolder: 'db/migrations' })
-  db.insert(schema.title).values([...TITLE_SEED]).run()
+  db = initializeDb({ create: true, dbPath: join(dir,'source.sqlite') })
+  sqlite = db.$client
   enterprise = db.insert(schema.enterprise).values({ name: '合成更正甲', nameNorm: '合成更正甲', usccNorm: '913302000000000001' }).returning().get()
   record = db.insert(schema.record).values({ enterpriseId: enterprise.id, titleCode: 'innovative_sme', source: 'jxj', nameRaw: '合成公布原名', usccRaw: enterprise.usccNorm }).returning().get()
   event = db.insert(schema.recordEvent).values({ recordId: record.id, eventType: 'review', year: 2025, batchSeq: null, decidedYear: null, reviewOutcome: null }).returning().get()
@@ -281,8 +278,8 @@ it('capture_source_drift_rolls_back_original_rows_and_event', async () => {
 })
 
 it('confirmed_edge_does_not_fill_event_and_correction_requires_revalidation', async () => {
-  const query = db.insert(schema.platformQuery).values({ interface: 'business_list', queryKey: enterprise.usccNorm!, rdjb: '1', titleCode: 'innovative_sme', queriedAt: '2025-12-01T00:00:00Z', status: 'success' }).returning().get()
-  const relation = db.insert(schema.platformRelation).values({ queryId: query.id, sequenceNo: 1, enterpriseId: enterprise.id, usccRaw: enterprise.usccNorm, status: '终审通过', year: 2022, batch: '2022-1', matchBasis: 'uscc', verificationStatus: 'confirmed' }).returning().get()
+  const native = submitNativePlatformQuery(db, { interface: 'business_list', queryKey: enterprise.usccNorm!, rdjb: '1', titleCode: 'innovative_sme', queriedAt: '2025-12-01T00:00:00Z', status: 'success', rawResponse: 'Synthetic approved 2022 process', relations: [{ sequenceNo: 1, enterpriseId: enterprise.id, usccRaw: enterprise.usccNorm, status: '终审通过', year: 2022, batch: '2022-1', matchBasis: 'uscc', verificationStatus: 'confirmed' }] })
+  const query = { id: native.queryId }, relation = { id: native.relationIds[0]! }
   const body: CorrespondenceRequest = { idempotencyKey: '407-confirm-edge', sourceIdentity: 'synthetic/edge', actor: { type: 'agent', id: 'synthetic-407' }, basis: '合成来源对应', ruleId: 'manual', ruleVersion: 'fixture',
     operations: [{ action: 'create', status: 'confirmed', edge: { type: 'event_process', eventId: event.id, relationId: relation.id, role: 'context_only' } }] }
   commitRecordCorrespondences(db, body, preflightRecordCorrespondences(db, body).planHash)

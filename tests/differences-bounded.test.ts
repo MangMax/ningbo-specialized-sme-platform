@@ -4,13 +4,13 @@ import { join } from 'node:path'
 import { createServer } from 'node:http'
 import { afterEach, expect, it, vi } from 'vitest'
 import { createApp, defineEventHandler, getQuery, setHeader, toNodeListener } from 'h3'
-import { useDb } from '../db/client'
+import { initializeDb } from '../db/client'
 import { commitRosterImport } from '../server/utils/roster-import'
 import { whenIdle } from '../server/utils/job-runner'
 import type { RosterImportPayload } from '../lib/roster-import-client'
 import type { PlatformLiveQueryResult } from '../lib/platform/live-query'
 
-const active = vi.hoisted(() => ({ db: null as ReturnType<typeof useDb> | null }))
+const active = vi.hoisted(() => ({ db: null as ReturnType<typeof initializeDb> | null }))
 vi.mock('@db', () => ({ useDb: () => active.db }))
 vi.mock('@nuxtjs/mcp-toolkit/server', () => ({ defineMcpTool: (tool: unknown) => tool }))
 const cleanup: (() => void | Promise<void>)[] = []
@@ -21,9 +21,9 @@ afterEach(async () => {
   for (const close of cleanup.splice(0).reverse()) await close()
   vi.unstubAllGlobals()
 })
-function fixture(observe?: (db: ReturnType<typeof useDb>) => void) {
+function fixture(observe?: (db: ReturnType<typeof initializeDb>) => void) {
   const dir = mkdtempSync(join(tmpdir(), 'differences-132-'))
-  const db = useDb({ dbPath: join(dir, 'synthetic.db') })
+  const db = initializeDb({ create: true,  dbPath: join(dir, 'synthetic.db') })
   active.db = db
   cleanup.push(() => { db.$client.close(); rmSync(dir, { recursive: true, force: true }) })
   observe?.(db)
@@ -40,7 +40,7 @@ function fixture(observe?: (db: ReturnType<typeof useDb>) => void) {
 }
 // Wrap the registered production UDF, preserving its implementation and arity.
 // Count only executions of the page-local coverage SELECT, not other readers.
-function coverageFunctionMeter(db: ReturnType<typeof useDb>) {
+function coverageFunctionMeter(db: ReturnType<typeof initializeDb>) {
   const register = db.$client.function.bind(db.$client)
   const prepare = db.$client.prepare.bind(db.$client)
   let selectingCoverage = false, selects = 0
@@ -65,7 +65,7 @@ function coverageFunctionMeter(db: ReturnType<typeof useDb>) {
 }
 // Observe the SQLite boundary, not internal collaborators. The ceiling is a
 // resource regression guard for a 20-row public page, never a latency/SLO claim.
-function statementMeter(db: ReturnType<typeof useDb>) {
+function statementMeter(db: ReturnType<typeof initializeDb>) {
   const prepare = db.$client.prepare.bind(db.$client)
   let statements = 0, bytes = 0
   db.$client.prepare = ((...args: Parameters<typeof prepare>) => {

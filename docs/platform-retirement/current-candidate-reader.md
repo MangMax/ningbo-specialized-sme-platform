@@ -1,4 +1,7 @@
-# 显式目标候选 reader 与 current 引用水合
+# 中间阶段候选 reader 与引用水合验收记录
+
+本文记录固定对象的历史阶段验收，相关中间态运行套件已退役，不作为当前操作说明。当前应用仅支持原生终态；使用方式见[原生运行边界](native-runtime.md)。历史失败、准入限制及证据范围保留原记录。
+
 
 A sourcecapture 已独立接受。`createTargetCurrentCandidateReader(db)` 保留71609准入，并由 #762 延续到完成的71610至71613，返回 `iterate(title,sort?)`、`count(title)`、`page(title,offset,limit,sort?)`。无公开路由、环境 selector、旧表 fallback 或跨请求结果 cache；expand runtime guard 保持。page limit 为正 safe integer，offset 为非负 safe integer。
 

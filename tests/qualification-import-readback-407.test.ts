@@ -1,3 +1,4 @@
+import { createRuntimeSchema } from '../db/create-runtime'
 /** #407 parent-frozen contract tests. UNRUN at authoring: no production implementation.
  * HTTP uses the real public handler and existing in-process executor injection;
  * it does not prove native worker, Nitro middleware or real MCP SDK behavior.
@@ -8,10 +9,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
-import { migrate } from 'drizzle-orm/better-sqlite3/migrator'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import * as schema from '../db/schema'
-import { TITLE_SEED } from '../db/titles'
 import type { RosterImportEvent, RosterImportRequest } from '../lib/roster-import-client'
 import * as qualification from '../lib/roster/current-qualification'
 import { getRosterEnterpriseDetail } from '../lib/roster/enterprise-roster'
@@ -34,8 +33,7 @@ beforeEach(async () => {
   sqlite = new Database(':memory:')
   sqlite.pragma('foreign_keys=ON')
   db = drizzle(sqlite, { schema })
-  migrate(db, { migrationsFolder: 'db/migrations' })
-  db.insert(schema.title).values([...TITLE_SEED]).run()
+  createRuntimeSchema(sqlite)
   // No new HTTP framework: only the route map for the existing shared fixture.
   api = await startHttpFixture({
     routes: Object.fromEntries((['preflight', 'commit'] as const).map(action => [

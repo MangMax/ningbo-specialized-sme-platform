@@ -1,5 +1,8 @@
 # 建立 reconcile 旧槽 capture 的离线 target
 
+> 历史脚本说明：本文引用的混合表实验/验收脚本已在原生运行切换时退役。复现旧命令须在独立 checkout 固定到 `ab503081dae3e24680afc9b07395a7e3ff21fc9f` 并使用当时的隔离数据库与二进制；这些命令不适用于当前运行库。历史证据与 FAIL/UNKNOWN 保持原样。
+
+
 本操作属于 #764 B1，按[已接受 capture 契约](reconcile-slot-capture.md)建立新鲜 target。保留原 schema0 snapshot 和全部旧 target。只在独立副本上操作。
 
 ## 安装 prerequisite 并运行 T04

@@ -8,7 +8,7 @@ import { join } from 'node:path'
 import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { useDb, getDbOwnerIdentity, schema } from '../db/client'
+import { initializeDb, getDbOwnerIdentity, schema } from '../db/client'
 import { readRecognitions } from '../server/utils/recognition-read'
 import { readDifferences } from '../server/utils/difference-read'
 import { readSummary } from '../server/utils/comparison-summary-read'
@@ -25,7 +25,7 @@ afterEach(async()=>{for(const close of cleanup.splice(0).reverse())await close()
 async function fixture(filename='fixture.db') {
   const dir=mkdtempSync(join(tmpdir(),'recognition-m1-owner-')),path=join(dir,filename)
   cleanup.push(()=>rmSync(dir,{recursive:true,force:true}))
-  const writer=useDb({dbPath:path})
+  const writer=initializeDb({ create: true, dbPath:path})
   cleanup.push(()=>{if(writer.$client.open)writer.$client.close()})
   // Seeding remains real HTTP/isolated core execution. This reader-owner fixture
   // deliberately switches journal mode and must not retain an unrelated idle
@@ -37,7 +37,7 @@ async function fixture(filename='fixture.db') {
   const client=createRosterImportClient({baseUrl:api.baseUrl,token:'synthetic-m1'})
   const payload={announcement:{sourceDocument:{source:'jxj' as const,title:'合成 M1'},records:[{enterprise:{name:'合成M1企业'},titleCode:'specialized_sme',events:[{eventType:'award' as const,year:2021,evidence:[{sourceFile:'synthetic/m1.pdf',page:3}]}]}]}}
   expect((await client.commit({idempotencyKey:'seed',sourceIdentity:'synthetic/m1',sourceKind:'announcement',payload})).status).toBe('committed')
-  const owner=useDb({dbPath:path,readOnly:true});cleanup.push(()=>{if(owner.$client.open)owner.$client.close()})
+  const owner=initializeDb({ create: true, dbPath:path,readOnly:true});cleanup.push(()=>{if(owner.$client.open)owner.$client.close()})
   return {dir,path,owner,writer,client,payload}
 }
 const decoded=(out:unknown)=>Buffer.isBuffer(out)?JSON.parse(out.toString()):out
@@ -114,7 +114,7 @@ it('ordinary inode and symlink replacement retain the cached original owner whil
   // Close readonly handles before rotation; retain the original writer as the
   // old cached owner via a tracked readwrite handle on an already existing file.
   const link=join(f.dir,'link.db');symlinkSync(f.path,link)
-  const linked=useDb({dbPath:link,readOnly:true});cleanup.push(()=>{if(linked.$client.open)linked.$client.close()})
+  const linked=initializeDb({ create: true, dbPath:link,readOnly:true});cleanup.push(()=>{if(linked.$client.open)linked.$client.close()})
   expect(getDbOwnerIdentity(linked)).toBeDefined()
   unlinkSync(link);symlinkSync(other.path,link)
   expect(getDbOwnerIdentity(linked)).toBeUndefined()
@@ -126,7 +126,7 @@ it('ordinary inode and symlink replacement retain the cached original owner whil
   expect(decoded(await readRecognitions(f.owner,{},undefined,fallback))).toMatchObject({counts:{titlePairs:1},rows:[{name:'合成M1企业'}]})
   expect(fallback.recognitions).not.toHaveBeenCalled()
   const fresh=join(f.dir,'fresh.db');symlinkSync(f.path,fresh)
-  const reopened=useDb({dbPath:fresh,readOnly:true});cleanup.push(()=>reopened.$client.close())
+  const reopened=initializeDb({ create: true, dbPath:fresh,readOnly:true});cleanup.push(()=>reopened.$client.close())
   expect(getDbOwnerIdentity(reopened)).toBeDefined()
 })
 
@@ -138,7 +138,7 @@ it.each([
   await other.client.commit({idempotencyKey:'extra',sourceKind:'announcement',sourceIdentity:'synthetic/extra',payload:{announcement:{...other.payload.announcement,records:[{...other.payload.announcement.records[0]!,enterprise:{name:'另一企业'}}]}}})
   f.writer.$client.pragma('wal_checkpoint(TRUNCATE)');other.writer.$client.pragma('wal_checkpoint(TRUNCATE)')
   const link=join(f.dir,'queued-link.db');symlinkSync(f.path,link)
-  const owner=kind==='inode'?f.owner:useDb({dbPath:link,readOnly:true})
+  const owner=kind==='inode'?f.owner:initializeDb({ create: true, dbPath:link,readOnly:true})
   if(owner!==f.owner)cleanup.push(()=>owner.$client.close())
   let readySeen!:()=>void,releaseReady!:()=>void
   const seen=new Promise<void>(resolve=>{readySeen=resolve})
@@ -185,7 +185,7 @@ it('REST uses the same conservative owner identity for disk memory untracked tra
   f.owner.$client.exec('BEGIN')
   try {expect(await readDifferences(f.owner,{},undefined,never)).toEqual(original)}finally{f.owner.$client.exec('ROLLBACK')}
   const link=join(f.dir,'m2-link.db');symlinkSync(f.path,link)
-  const linked=useDb({dbPath:link,readOnly:true});cleanup.push(()=>linked.$client.close())
+  const linked=initializeDb({ create: true, dbPath:link,readOnly:true});cleanup.push(()=>linked.$client.close())
   unlinkSync(link);symlinkSync(join(f.dir,'absent.db'),link)
   expect(await readDifferences(linked,{},undefined,never)).toEqual(original)
   renameSync(f.path,join(f.dir,'original.db'))
@@ -258,7 +258,7 @@ it('summary uses the same conservative owner for disk memory untracked transacti
   try {expect(await readSummary(f.owner,options,undefined,never)).toEqual(original)}finally{f.owner.$client.exec('ROLLBACK');spy.mockRestore()}
   expect(inTransaction.length).toBeGreaterThan(0);expect(inTransaction.every(Boolean)).toBe(true)
   const link=join(f.dir,'m3-link.db');symlinkSync(f.path,link)
-  const linked=useDb({dbPath:link,readOnly:true});cleanup.push(()=>linked.$client.close())
+  const linked=initializeDb({ create: true, dbPath:link,readOnly:true});cleanup.push(()=>linked.$client.close())
   unlinkSync(link);symlinkSync(join(f.dir,'absent.db'),link)
   expect(await readSummary(linked,options,undefined,never)).toEqual(original)
   renameSync(f.path,join(f.dir,'original.db'))

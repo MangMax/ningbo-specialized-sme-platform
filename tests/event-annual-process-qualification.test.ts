@@ -2,33 +2,29 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, afterEach, expect, it, vi } from 'vitest'
-import { useDb, schema as s } from '../db/client'
+import { initializeDb, schema as s } from '../db/client'
 import type { EventAnnualProcessPage } from '../lib/roster/annual-process'
 import * as annualReader from '../server/utils/event-annual-process-read'
 import { enrichAnnualProcessFinalQualification, readAnnualWriteScope } from '../server/utils/annual-correspondence-read'
 import { reconcileAnnualStep } from '../server/utils/annual-correspondence'
 import { handleEventAnnualProcessRequest, dispatchEventAnnualProcessMcp } from '../server/utils/event-annual-process-api'
-import { commitRosterImport, preflightRosterImport } from '../server/utils/roster-import'
+import { submitNativePlatformQuery } from './helpers/native-platform-fixture'
 import { commitRecordCorrespondences, preflightRecordCorrespondences } from '../server/utils/record-correspondence'
 
-const fixtures: Array<{ dir: string; db: ReturnType<typeof useDb>; readonly?: ReturnType<typeof useDb> }> = []
+const fixtures: Array<{ dir: string; db: ReturnType<typeof initializeDb>; readonly?: ReturnType<typeof initializeDb> }> = []
 afterEach(() => vi.restoreAllMocks())
 afterAll(() => fixtures.forEach(f => { f.readonly?.$client.close(); f.db.$client.close(); rmSync(f.dir, { recursive: true, force: true }) }))
 function fixture() {
   const dir = mkdtempSync(join(tmpdir(), 'annual-qualification-258-')), dbPath = join(dir, 'isolated.db')
-  const db = useDb({ dbPath })
+  const db = initializeDb({ create: true,  dbPath })
   const enterprise = db.insert(s.enterprise).values({ name: '合成同快照企业', nameNorm: '合成同快照企业', usccNorm: '91330211255994457P' }).returning().get()
   const record = db.insert(s.record).values({ enterpriseId: enterprise.id, titleCode: 'specialized_sme', source: 'jxj', usccRaw: enterprise.usccNorm }).returning().get()
   const event = db.insert(s.recordEvent).values({ recordId: record.id, eventType: 'award', year: 2024 }).returning().get()
   let serial = 0
   function add(options: { key?: string; year?: number; appliedAt?: string; status?: string } = {}) {
     const n = ++serial, key = options.key ?? `SQ-${n}`, year = options.year ?? 2024, appliedAt = options.appliedAt ?? '2024-03-01 09:00:00', status = options.status ?? '终审通过'
-    const query = db.insert(s.platformQuery).values({ interface: 'business_list', queryKey: enterprise.usccNorm!, titleCode: 'specialized_sme', rdjb: '2', queriedAt: `2026-10-01T00:00:${String(n).padStart(2, '0')}Z`, status: 'success' }).returning().get()
-    const relation = db.insert(s.platformRelation).values({ queryId: query.id, sequenceNo: 1, relationKey: key, enterpriseId: enterprise.id, usccRaw: enterprise.usccNorm, verificationStatus: 'confirmed', matchBasis: 'uscc', rawFields: { id: key, sblx: '申请', year, sqsj: appliedAt, cszt: status } }).returning().get()
-    // Synthetic historical fixtures use the existing public import domain port.
-    const request = { idempotencyKey: `projection-${n}`, sourceKind: 'platform_archive' as const, sourceIdentity: 'tests/annual-258', payload: { platformRecordObservations: [{ relationId: relation.id }] } }
-    preflightRosterImport(db, request)
-    expect(commitRosterImport(db, request).status).toBe('committed')
+    const seeded = submitNativePlatformQuery(db, { interface: 'business_list', queryKey: enterprise.usccNorm!, titleCode: 'specialized_sme', rdjb: '2', queriedAt: `2026-10-01T00:00:${String(n).padStart(2, '0')}Z`, status: 'success', rawResponse: 'Synthetic annual source', relations: [{ sequenceNo: 1, relationKey: key, enterpriseId: enterprise.id, usccRaw: enterprise.usccNorm, verificationStatus: 'confirmed', matchBasis: 'uscc', rawFields: { id: key, sblx: '申请', year, sqsj: appliedAt, cszt: status } }] })
+    const relation = { id: seeded.relationIds[0]! }
     return relation
   }
   const confirm = (eventId = event.id) => {
@@ -43,7 +39,7 @@ function fixture() {
     const request = { idempotencyKey: `unlink-${id}`, sourceIdentity: 'tests/annual-258/manual', actor: { type: 'user' as const, id: 'fixture' }, basis: 'synthetic unlink', ruleId: 'manual', ruleVersion: '1', operations: [{ action: 'decide' as const, correspondenceId: id, expectedRevision: revision, status: 'unlinked' as const }] }
     return commitRecordCorrespondences(db, request, preflightRecordCorrespondences(db, request).planHash)
   }
-  const readonly = useDb({ dbPath, readOnly: true }); readonly.$client.pragma('query_only=ON')
+  const readonly = initializeDb({ create: true,  dbPath, readOnly: true }); readonly.$client.pragma('query_only=ON')
   fixtures.push({ dir, db, readonly })
   const read = (query: Record<string, unknown> = {}) => {
     const output = handleEventAnnualProcessRequest({ method: 'GET', id: event.id, query }, { db: readonly })
@@ -52,7 +48,7 @@ function fixture() {
   }
   return { dir, dbPath, db, readonly, enterprise, record, event, add, confirm, reject, unlink, read }
 }
-function writeState(db: ReturnType<typeof useDb>) {
+function writeState(db: ReturnType<typeof initializeDb>) {
   return { jobs: db.select().from(s.job).all(), batches: db.select().from(s.importBatch).all(), receipts: db.select().from(s.importReceipt).all(), correspondences: db.select().from(s.recordCorrespondence).all(), audit: db.select().from(s.recordCorrespondenceAudit).all(), proofs: db.select().from(s.comparisonScopeProof).all(), proofAudit: db.select().from(s.comparisonScopeProofAudit).all() }
 }
 

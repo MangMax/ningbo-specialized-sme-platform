@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { useDb, schema } from '../db/client'
+import { initializeDb, schema } from '../db/client'
 import { eq } from 'drizzle-orm'
 import { __resetJobRunner, clearJobSpecs, ensureJobRunnerReady, registerJob, submitJob, whenIdle } from '../server/utils/job-runner'
 import { newJobId } from '../lib/job'
@@ -11,11 +11,11 @@ import { startHttpFixture, type HttpFixture, type FixtureRequest } from './helpe
 
 let dir: string
 let api: HttpFixture
-let db: ReturnType<typeof useDb>
+let db: ReturnType<typeof initializeDb>
 const ids = { ocr: newJobId(), render: newJobId(), batch: newJobId(), reconcile: newJobId(), unknown: newJobId() }
 beforeEach(async () => {
   dir = mkdtempSync(join(tmpdir(), 'task-center-'))
-  db = useDb({ dbPath: join(dir, 'test.db') })
+  db = initializeDb({ create: true,  dbPath: join(dir, 'test.db') })
   __resetJobRunner(); clearJobSpecs(); ensureJobRunnerReady(db)
   for (const [name, kind] of Object.entries({ ocr: 'ocr', render: 'render-pages', batch: 'platform-query-batch', reconcile: 'reconcile', unknown: 'future-kind' })) {
     db.insert(schema.job).values({ id: ids[name as keyof typeof ids], kind, state: 'failed', params: { cookie: 'PRIVATE_COOKIE', files: ['/Users/private/secret.pdf'] }, progress: { done: 1, total: 3 }, result: { raw: 'PRIVATE_RAW'.repeat(100000), token: 'PRIVATE_TOKEN' }, error: 'PRIVATE_TOKEN /Users/private/secret.pdf', createdAt: '2026-10-19T00:00:00Z' }).run()

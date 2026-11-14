@@ -12,7 +12,7 @@ import { PlatformProjectionError } from './projection-error';
 import { ensureApplyTargetContent } from './apply-target-writer';
 import { ensureProcessTargetContent } from './process-target-writer';
 import { ensureRecognizedTargetContent } from './recognized-target-writer';
-/** Explicit 71607 collection replay. Typed coordinates choose owners; archives only verify originals. */
+/** Native replay resolves typed owners and verifies their immutable source archives. */
 import { createHash } from 'node:crypto';
 import { and,eq } from 'drizzle-orm';
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3';

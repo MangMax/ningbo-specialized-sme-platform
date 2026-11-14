@@ -24,9 +24,12 @@
 
 需要 Node.js 24 LTS（24.x）以及 pnpm 12.11.2。容器基础镜像与原生依赖构建、备份及回滚步骤见 [DEPLOYMENT.md](DEPLOYMENT.md)。
 
+新空库先运行 `pnpm db:init`（可追加数据库路径），再启动应用。旧库必须通过 `upgrade/run-complete-platform.mjs` 在隔离副本离线升级；应用启动不会自动回放历史迁移。
+
 ```bash
 pnpm install
 cp .env.example .env
+pnpm db:init
 pnpm dev
 ```
 

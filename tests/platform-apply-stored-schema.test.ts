@@ -129,7 +129,7 @@ it.each([['captured','uncaptured'],['uncaptured','captured'],['uncaptured','unca
  t.exec('RELEASE nested');expect(()=>t.exec('COMMIT')).toThrow(/FOREIGN KEY/);t.exec('ROLLBACK');t.close()
 })
 
-import { writeApplyTarget } from '../lib/platform/apply-target-writer'
+import { writeApplyTarget } from '../upgrade/frozen/apply-target-writer'
 import { targetSchema } from '../lib/platform/target-schema'
 it.each(['missing','different'])('records command materialization profile and rejects %s profile on replay without rewriting original input',drift=>{
  const f=fixture();const t=new Database(f.target);t.pragma('foreign_keys=ON')
@@ -242,33 +242,6 @@ it('retains incompatible preexisting command revision1/key as uncaptured without
 
 import { statSync, readFileSync } from 'node:fs'
 import { serialize } from 'node:v8'
-it('runtime initialize and three workers refuse 71608 before business access',async()=>{
- const f=fixture();finalizeApplyStored(f)
- const {useRuntimeDb,initializeDb}=await import('../db/client')
- const before=readFileSync(f.target)
- for(const readOnly of [false,true])expect(()=>useRuntimeDb({dbPath:f.target,readOnly})).toThrow(/finalized/i)
- expect(()=>initializeDb({dbPath:f.target})).toThrow(/finalized/i)
- const {createImportExecutionWorker}=await import('../server/utils/import-execution-worker-location')
- const {createCurrentExportWorker}=await import('../server/utils/current-export-worker-location')
- const {createEnterpriseWorker}=await import('../server/utils/enterprise-read-worker-location')
- const t=new Database(f.target),st=statSync(f.target)
- const identity={dev:st.dev,ino:st.ino,schemaVersion:t.pragma('schema_version',{simple:true}),migration:t.prepare('select hash,created_at from __drizzle_migrations order by created_at desc limit 1').get()};t.close()
- for(const [kind,create] of [['import',createImportExecutionWorker],['export',createCurrentExportWorker],['read',createEnterpriseWorker]] as const){
-  const w=create()
-  try{
-   const result=await new Promise<Record<string,unknown>>((resolve,reject)=>{
-    const timer=setTimeout(()=>reject(new Error('worker timeout '+kind)),15000)
-    w.on('error',error=>{clearTimeout(timer);reject(error)})
-    w.on('message',(m:Record<string,unknown>)=>{if(m.type!=='ready'&&m.type!=='progress'){clearTimeout(timer);resolve(m)}})
-    w.postMessage({dbPath:f.target,id:'guard',identity,readonly:false,action:'preflight',payload:serialize({}),operation:'list',filter:{},title:'specialized_sme',temporaryPath:f.target+'.never.xlsx',jobId:'guard'})
-   })
-   if(kind==='import')expect(result).toMatchObject({type:'failure',error:{message:expect.stringMatching(/finalized/i)}})
-   if(kind==='export')expect(result).toEqual({type:'failure',message:'当前名录导出执行失败；请核对数据或资源限制后重新提交'})
-   if(kind==='read')expect(result).toMatchObject({type:'failure',code:'enterprise_read_failed'})
-  }finally{await w.terminate()}
- }
- expect(readFileSync(f.target)).toEqual(before)
-},30000)
 it('preserves TEXT affinities including NUL and BLOB in each exact text cell, and captured all-NULL cells',()=>{
  const f=fixture();finalizeApplyStored(f);const t=new Database(f.target);t.pragma('foreign_keys=ON')
  for(const field of ['exact_status','exact_declare_kind','exact_applied_at','exact_title_raw'])for(const [value,kind,hex] of [['NULL','null',''],["''",'text',''],['2024','text','32303234'],['2024.5','text','323032342E35'],["X''",'blob',''],["X'610062'",'blob','610062'],["CAST(X'610062' AS TEXT)",'text','610062']] as const){
@@ -281,8 +254,8 @@ it('preserves TEXT affinities including NUL and BLOB in each exact text cell, an
  t.exec('RELEASE nested; COMMIT');t.close()
 })
 
-import * as expandSchema from '../db/schema'
-import { ensurePlatformObservation } from '../server/utils/platform-business-record'
+import * as expandSchema from '../upgrade/legacy-schema'
+import { ensurePlatformObservation } from '../upgrade/frozen/server/platform-business-record'
 import { listPlatformDeclarations } from '../upgrade/frozen/server/platform-declarations'
 import { readPlatformFilterOptions } from '../upgrade/frozen/server/platform-filter-options'
 it('matches independent old public isolated total1/options2 on same-raw indexed status pair',()=>{
@@ -298,7 +271,7 @@ it('matches independent old public isolated total1/options2 on same-raw indexed 
 })
 
 import { getTableConfig } from 'drizzle-orm/sqlite-core'
-import { platformApplyStoredProjection, platformApplyStoredObservation } from '../lib/platform/apply-stored-schema'
+import { platformApplyStoredProjection, platformApplyStoredObservation } from '../upgrade/frozen/apply-stored-schema'
 it('matches explicit successor column registry to physical catalog and keeps ordinary expand unextended',()=>{
  const f=fixture();finalizeApplyStored(f);const t=new Database(f.target)
  for(const table of [platformApplyStoredProjection,platformApplyStoredObservation]) {
@@ -356,7 +329,7 @@ it('authenticates frozen legacy source alone without adding a missing sealed sna
  expect(t.prepare('SELECT exact_status FROM platform_apply_projection ORDER BY observation_id').all()).toEqual([{exact_status:' pending '},{exact_status:'pending'}]);t.close()
 })
 
-import { verifyFingerprint } from '../lib/platform/fingerprint-verifier'
+import { verifyFingerprint } from '../upgrade/frozen/fingerprint-verifier'
 
 import { linkSync } from 'node:fs'
 import { rowSnapshot } from '../upgrade/observations'

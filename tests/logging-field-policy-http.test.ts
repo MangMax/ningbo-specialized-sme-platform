@@ -6,7 +6,7 @@ import { request } from 'node:http'
 import { connect } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
-import { useDb } from '../db/client'
+import { initializeDb } from '../db/client'
 import { spawnOwnedChild as spawn, reserveLoopbackPort, stopOwnedChild, waitForHttp } from '../scripts/lib/isolated-local-services.mjs'
 import { LOG_LEVELS } from '../lib/logging/contract'
 import { LOG_FIELD_PROFILES, defaultFieldControls } from '../lib/logging/field-controls'
@@ -55,7 +55,7 @@ function prefixRequest(base: string, authorized: boolean, prefix = '', observed?
 
 beforeAll(async () => {
   if (process.env.FIELD_POLICY_SKIP_BUILD !== '1') execFileSync(process.execPath, ['node_modules/nuxt/bin/nuxt.mjs', 'build'], { cwd: resolve('.'), stdio: 'pipe', timeout: 300000 })
-  const db = useDb({ dbPath }); db.$client.close(); beforeDbHash = hash(dbPath)
+  const db = initializeDb({ create: true,  dbPath }); db.$client.close(); beforeDbHash = hash(dbPath)
   for (const name of ['files', 'incoming']) mkdirSync(join(root, name))
   const port = await reserveLoopbackPort(); expect(port).not.toBe(50055); baseUrl = `http://127.0.0.1:${port}`
   const child = spawn(process.execPath, ['.output/server/index.mjs'], { cwd: resolve('.'), stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, NODE_ENV: 'production', HOST: '127.0.0.1', PORT: String(port), NUXT_DB_PATH: dbPath, NUXT_DB_READONLY: '1', NUXT_LOG_DIR: logDir, NUXT_FILES_DIR: join(root, 'files'), NUXT_INCOMING_DIR: join(root, 'incoming'), NUXT_API_TOKEN: token, NUXT_MCP_TOKEN: mcpToken, NUXT_CURATED_PATH: join(root, 'curated.json'), NUXT_RECONCILE_PATH: join(root, 'reconcile.json') } }); children.push(child)

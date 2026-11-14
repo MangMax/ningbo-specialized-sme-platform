@@ -1,11 +1,4 @@
-import { listTargetDeclarations } from '../server/utils/platform-declarations-target'
-import { platformResultToImport } from '../lib/platform/recognized-evidence'
-import type { PlatformLiveQueryResult } from '../lib/platform/live-query'
 import { execFileSync } from 'node:child_process'
-import { writeCollectionTarget } from '../lib/platform/collection-target-replay'
-import { verifyFingerprint } from '../lib/platform/fingerprint-verifier'
-import { differenceEvidenceColumns, targetDifferenceReason } from '../lib/platform/difference-reference-target'
-import { assertExpandRuntime } from '../db/schema-phase'
 import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { copyFileSync, readFileSync } from 'node:fs'
@@ -14,11 +7,9 @@ import { beforeAll, beforeEach, afterAll, expect, it } from 'vitest'
 import { processReaderFixture } from './helpers/process-target-734'
 import { transferCorrespondence } from '../upgrade/correspondence'
 import { transferDifferenceReferences } from '../upgrade/difference-references'
-import { writeNewCollectionTarget } from '../lib/platform/collection-target-command'
+import { writeNewCollectionTarget } from '../upgrade/frozen/collection-target-command'
 import { reserveLegacyIds } from '../lib/platform/target-archive'
-import * as schema from '../db/schema'
-import { targetSchema } from '../lib/platform/target-schema'
-import { currentDecision102, readDecision102, historyDecision102 } from '../server/utils/decision-lifecycle-102'
+import * as schema from '../upgrade/legacy-schema'
 
 let f: Awaited<ReturnType<typeof processReaderFixture>>, source: string, target: string
 let coordinates: ReturnType<typeof writeNewCollectionTarget>
@@ -63,17 +54,6 @@ it('transfers nonidentity evidence references and self chains preserving literal
   expect(t.pragma('foreign_key_list(difference_reason)')).toEqual(expect.arrayContaining([expect.objectContaining({from:'evidence_query_id',table:'platform_collection'}),expect.objectContaining({from:'evidence_relation_id',table:'platform_business_observation'}),expect.objectContaining({from:'previous_id',table:'difference_reason'})]))
  } finally { t.close() }
 })
-it('returns unchanged public external IDs from current read and history on the completed successor', () => {
- const old = new Database(source), oldDb = drizzle(old,{schema})
- const expected = { current: currentDecision102(oldDb,scope), read: readDecision102(oldDb,104), history: historyDecision102(oldDb,{...scope,page:1,pageSize:50}) }
- old.close()
- transferDifferenceReferences({source,target,runId:'reads749'})
- const t = new Database(target), db = drizzle(t,{schema})
- try {
-  expect({current:currentDecision102(db,scope),read:readDecision102(db,104),history:historyDecision102(db,{...scope,page:1,pageSize:50})}).toEqual(expected)
-  expect(readDecision102(db,104)).toMatchObject({evidenceQueryId:8001,evidenceRelationId:9001})
- } finally {t.close()}
-})
 it('preserves every PK cell storage class original serialized byte and old ledger through an independent reverse oracle', () => {
  const original = readFileSync(source)
  transferDifferenceReferences({source,target,runId:'bytes749'})
@@ -100,7 +80,6 @@ it('preserves every PK cell storage class original serialized byte and old ledge
     const columns=fields.flatMap(c=>[`typeof("${c.name}") AS "k_${c.name}"`,`hex(cast("${c.name}" as blob)) AS "b_${c.name}"`]).join(',')
     expect(t.prepare(`SELECT ${columns} FROM ${name} ORDER BY 1`).all(),name+' entire pipeline').toEqual(legacy.prepare(`SELECT ${columns} FROM ${name} ORDER BY 1`).all())
    }
-   expect(readDecision102(drizzle(t,{schema}),101)).toEqual({...readDecision102(drizzle(legacy,{schema}),101),isCurrent:false})
   } finally {legacy.close()}
   expect(readFileSync(source)).toEqual(original)
   const before=s.prepare("SELECT type,name,tbl_name,sql FROM sqlite_schema WHERE tbl_name='difference_reason' ORDER BY type,name").all() as {sql:string|null}[]
@@ -125,20 +104,6 @@ it('fails with decision PK and original missing query and relation IDs without c
  expect(()=>transferDifferenceReferences({source:src,target:dst,runId:'missing749'})).toThrow('Unmapped difference rows: [{"id":999,"evidence_query_id":999,"evidence_relation_id":998,"collection_id":null,"observation_id":null}]')
  expect(readFileSync(dst)).toEqual(bytes)
 })
-it('replays the same completed run read-only after a normal successor source write', () => {
- const expected=transferDifferenceReferences({source,target,runId:'replay749'})
- const t=new Database(target),db=drizzle(t,{schema:targetSchema});t.pragma('foreign_keys=ON')
- try {
-  const result=writeNewCollectionTarget(db,{queryText:JSON.stringify({interface:'business_list',queryKey:'post749',rdjb:'2',queriedAt:'2026-11-13',status:'no_record',rawResponse:'normal empty source',relations:[]}),evidenceText:null,assignments:[],createdAt:'2026-11-13'})
-  expect(result.queryAlias).toBe(8002)
-  const saved=db.insert(targetDifferenceReason).values({...scope,recordedAt:'post749',evidenceCollectionId:result.collectionId}).returning({id:targetDifferenceReason.id}).get()
-  expect(saved.id).toBe(251)
-  expect(readDecision102(drizzle(t,{schema}),saved.id)).toMatchObject({evidenceQueryId:8002,evidenceRelationId:null})
- } finally {t.close()}
- const after=readFileSync(target)
- expect(transferDifferenceReferences({source,target,runId:'replay749'})).toEqual(expected)
- expect(readFileSync(target)).toEqual(after)
-})
 it('retains necessary incoming FK owners their indexes and sequence', () => {
  const src=join(f.root,'incoming-71611.sqlite'),dst=join(f.root,'incoming-target.sqlite');copyFileSync(source,src)
  const s=new Database(src)
@@ -156,59 +121,6 @@ it('runs the actual offline CLI recording schema references integrity sequence a
  const output=execFileSync(process.execPath,['upgrade/run-difference-references.mjs',source,target,evidence,'cli749'],{encoding:'utf8',env:{...process.env,JITI_FS_CACHE:'false'}})
  expect(JSON.parse(output)).toEqual({state:'complete',rows:5,queries:3,relations:3})
  expect(JSON.parse(readFileSync(join(evidence,'receipt.json'),'utf8'))).toMatchObject({target:{phase:71612,foreignKeyCheck:[],integrity:[{integrity_check:'ok'}],counts:{rows:5,queries:3,relations:3}}})
-})
-it('keeps current paired external references while preserving withdrawal and history semantics', () => {
- const src=join(f.root,'current-71611.sqlite'),dst=join(f.root,'current-target.sqlite');copyFileSync(source,src)
- const old=new Database(src),oldDb=drizzle(old,{schema})
- oldDb.insert(schema.differenceReason).values({...scope,direction:'extra_in_miit',id:106,evidenceQueryId:8001,evidenceRelationId:9001,status:'needs_review',recordedAt:'106',lifecycleAction:'replace'}).run()
- const selected={...scope,direction:'extra_in_miit' as const},expected=currentDecision102(oldDb,selected)
- old.close();copyFileSync(src,dst)
- transferDifferenceReferences({source:src,target:dst,runId:'current749'})
- const t=new Database(dst),db=drizzle(t,{schema})
- try {expect(currentDecision102(db,selected)).toEqual(expected);expect(currentDecision102(db,selected).current).toMatchObject({evidenceQueryId:8001,evidenceRelationId:9001});expect(currentDecision102(db,scope).current).toBeNull()} finally {t.close()}
-})
-it.each(['apply_list','business_list','recognized_list'] as const)('writes and replays %s with original fingerprint and target capture on the actual successor', kind => {
- transferDifferenceReferences({source,target,runId:'writers749'})
- const t=new Database(target),db=drizzle(t,{schema:targetSchema});t.pragma('foreign_keys=ON')
- try {
-  const sourceKind=kind==='apply_list'?'queryList':kind==='business_list'?'businessList':'queryBusList'
-  const rawFields={id:'SOURCE749',qymc:'Alpha',rdjb:'2',sblx:'申请',year:'2024',cszt:'终审通过',whpcyear:'2024',whpc:'2024-1'}
-  const collection:PlatformLiveQueryResult={source:sourceKind,status:'success',effectiveConditions:sourceKind==='businessList'?{uscc:'91330200712345678A',combination:'and'}:{name:'Alpha',combination:'and'},titleScope:sourceKind==='queryList'?{mode:'source_default',rdjb:[]}:{mode:'selected',rdjb:['2']},queriedAt:'2026-11-13T00:00:00Z',completedAt:'2026-11-13T00:01:00Z',rows:[rawFields],dataRows:[rawFields],pages:[{source:sourceKind,rdjb:sourceKind==='queryList'?null:'2',page:1,maxPage:1,declaredTotal:1,fetchedCount:1,status:'success',error:null}],fetchedCount:1,declaredTotal:1,completeness:'complete',fullRange:true,unfinished:[],error:null,limits:{maxRequests:1,maxRows:50,maxDurationMs:1000,pageSize:50}}
-  const query=platformResultToImport(collection)
-  const input={queryText:JSON.stringify(query),evidenceText:JSON.stringify(collection),createdAt:'2026-11-13',assignments:[{enterpriseId:null,nameRaw:'Alpha',matchBasis:'none' as const,verificationStatus:'pending' as const,origin:'command' as const,actor:{type:'agent' as const,id:'749'},basis:'normal'}]}
-  const result=writeCollectionTarget(db,input),observation=result.observations[0]!
-  expect(result.reused).toBe(false)
-  const owner={collectionId:result.collectionId,observationId:observation.observationId,relationAlias:observation.relationAlias}
-  expect(verifyFingerprint(t,owner)).not.toBeNull()
-  const original=t.prepare('SELECT input_fingerprint FROM platform_business_observation WHERE id=?').get(observation.observationId)
-  expect(writeCollectionTarget(db,input)).toMatchObject({collectionId:result.collectionId,queryAlias:result.queryAlias,reused:true,observations:[{observationId:observation.observationId,relationAlias:observation.relationAlias,recordId:observation.recordId,versionId:observation.versionId,reused:true}]})
-  expect(t.prepare('SELECT input_fingerprint FROM platform_business_observation WHERE id=?').get(observation.observationId)).toEqual(original)
-  expect(t.prepare('SELECT candidate_scope_state FROM platform_business_observation WHERE id=?').get(observation.observationId)).toEqual({candidate_scope_state:'captured'})
-  expect(t.pragma('foreign_key_check')).toEqual([])
- } finally {t.close()}
-})
-it('refuses unknown and normally incomplete targets and keeps the global runtime guard closed', () => {
- const incomplete=new Database(target),db=drizzle(incomplete,{schema})
- try {
-  incomplete.pragma('user_version=71612')
-  expect(()=>differenceEvidenceColumns(db)).toThrow('Difference reference migration incomplete')
-  incomplete.pragma('user_version=71613')
-  expect(()=>differenceEvidenceColumns(db)).toThrow('Unsupported difference reference schema version')
- } finally {incomplete.pragma('user_version=71611');incomplete.close()}
- transferDifferenceReferences({source,target,runId:'guards749'})
- const t=new Database(target)
- try {expect(()=>assertExpandRuntime(t)).toThrow('Finalized/offline target schema cannot be opened');expect(()=>listTargetDeclarations({},drizzle(t,{schema:targetSchema}))).toThrow('Declaration reader requires 71608')} finally {t.close()}
-})
-it('keeps preview evidence IDs external without rewriting historical decision input', async () => {
- const {previewRecordCorrespondenceImpact}=await import('../server/utils/record-comparison')
- const input={queryIds:[8001],exportBatchIds:[],officialSourceDocumentIds:[1],enterpriseId:1,page:1,pageSize:10}
- const old=new Database(source),oldDb=drizzle(old,{schema}),expected=previewRecordCorrespondenceImpact(oldDb,input);old.close()
- transferDifferenceReferences({source,target,runId:'preview749'})
- const t=new Database(target),db=drizzle(t,{schema})
- try {
-  expect(previewRecordCorrespondenceImpact(db,input)).toEqual(expected)
-  expect(previewRecordCorrespondenceImpact(db,input).rows.find(r=>r.id===104)?.original).toMatchObject({evidenceQueryId:8001,evidenceRelationId:9001})
- } finally {t.close()}
 })
 it('transfers an empty normal decision table without manufacturing decisions', () => {
  const src=join(f.root,'empty-71611.sqlite'),dst=join(f.root,'empty-target.sqlite');copyFileSync(source,src)

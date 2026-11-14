@@ -1,5 +1,5 @@
 import Database from 'better-sqlite3'
-/** Explicit accepted-71609 R5 reader. Never captures, parses archives, or selects legacy. */
+/** Reads captured native witness facts without decoding source archives. */
 import { and,eq,inArray,max,sql } from 'drizzle-orm'
 import { alias } from 'drizzle-orm/sqlite-core'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'

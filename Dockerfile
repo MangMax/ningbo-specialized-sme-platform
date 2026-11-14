@@ -30,8 +30,6 @@ LABEL org.opencontainers.image.source="https://github.com/MangMax/ningbo-special
   org.opencontainers.image.revision="${SOURCE_REVISION}"
 
 COPY --from=build --chown=node:node /app/.output/ ./.output/
-# db/client.ts resolves migrations from process.cwd(), outside .output.
-COPY --from=build --chown=node:node /app/db/migrations/ ./db/migrations/
 
 # Independent diagnostics volume; never shares the business /state mount.
 RUN mkdir -p /logs && chown node:node /logs

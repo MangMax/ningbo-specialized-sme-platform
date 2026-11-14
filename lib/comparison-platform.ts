@@ -8,32 +8,7 @@ import { targetSchema as target } from './platform/target-schema'
 import type { PlatformObservationFact } from './platform/observation-facts'
 import { sourcePositionForSequence } from './platform/recognized-evidence'
 import { type PlatformNormalizationConflict } from './platform/normalization'
-/**
- * 比对行 × 平台证据的**接缝**(RL-03 交付物 3;RL-15 收口为**以库内为准**)。
- *
- * 比对页原来只把 `data/platform-reconcile.json` 的**离线解释缓存**挂在行上
- * (见 `lib/reconcile.ts`,那条路径**保持兼容、一字不改**)。本模块是**库内**那条路:
- *  - 该企业的**现名 / 曾用名**(`enterprise_alias`);
- *  - 该差异的**已核验处置**(`difference_reason`,原因 + 配对措施,取 `recordedAt` 最新那条);
- *  - 该企业的**平台查询与原始关系**(`platform_query` / `platform_relation`)—— 可展开的接口证据。
- *
- * ── RL-15 改了什么(以及为什么) ────────────────────────────────────────────
- * 用户 2026-10-16 反馈「三个称号从平台获取的数据都没了」。根因是**解释缓存缺失**
- * (`data/platform-reconcile.json` 在某环境不存在)时,旧的「平台解释」列整列退化成 `—`,
- * 而库里其实有 `difference_reason` / `platform_query` / `platform_relation` —— 页面却把它
- * 当成空。所以:
- *
- *  1. **每一行都带 `platform`**(不再有 `null`):状态机的**默认态**是 `not_queried`
- *     (「还没查过」,不是「没有」),由 `disposition.explanationId === null` 说清
- *     「还没存下解释」。这与 `lib/roster/enterprise-roster.ts` 的差异读模型**同一口径**
- *     (父代理 2026-10-16 裁决 #1:展示态**只从 `difference_reason.status` 取**)。
- *  2. **读侧绝不二次推导**:不从查询/关系反推「无记录」或「已确认」,也不改写原因 ——
- *     接口有记录时库里的 `confirmed_reason` + `platform_stale` 原样带出,
- *     **不得**显示成 `no_record` / `confirmed_no_diff`。
- *  3. 旧 JSON 缓存仍由 `lib/reconcile.ts` 照旧挂 `explanation`,页面只把它当**对照**。
- *
- * 取数一次读完(与 `enterprise-roster.ts` 同一取舍:台账是几千级,拼 join 不如内存组织)。
- */
+/** Batch native evidence for comparison rows; stored decisions remain authoritative. */
 import { and, eq, inArray, max, or } from 'drizzle-orm'
 import { alias } from 'drizzle-orm/sqlite-core'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'

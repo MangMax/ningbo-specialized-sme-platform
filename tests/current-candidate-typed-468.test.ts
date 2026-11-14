@@ -1,32 +1,46 @@
-import { readFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { join, resolve } from 'node:path'
+import Database from 'better-sqlite3'
+import { drizzle } from 'drizzle-orm/better-sqlite3'
+import { migrate } from 'drizzle-orm/better-sqlite3/migrator'
+import { tmpdir } from 'node:os'
+import { TITLE_SEED } from '../db/titles'
+import { normalizeUscc } from '../lib/domain'
+import { submitNativePlatformQuery } from './helpers/native-platform-fixture'
 import { afterEach, expect, it, vi } from 'vitest'
 import { eq } from 'drizzle-orm'
-import * as s from '../db/schema'
-import { fileMatrix408, refLiterals408 } from './helpers/current-qualified-408'
+import * as s from '../upgrade/legacy-schema'
+import * as nativeSchema from '../db/schema'
+import { fileMatrix408 } from './helpers/current-qualified-408'
 import { readExportWorkbook } from './helpers/read-export-workbook'
-import { ensurePlatformObservation } from '../server/utils/platform-business-record'
-import { currentCandidateBindings, currentCandidateReadSqlFor, currentCandidateSqlFor } from '../upgrade/frozen/current-candidates'
+import { ensurePlatformObservation } from '../upgrade/frozen/server/platform-business-record'
+import { currentCandidateBindings, currentCandidateReadSqlFor } from '../upgrade/frozen/current-candidates'
 import { prepareCurrentReader } from '../lib/roster/current-qualification'
 import { listCurrentQualified } from '../lib/roster/current-qualified-query'
 import { writeCurrentWorkbook } from '../lib/roster/current-workbook'
 import type { CurrentTitle } from '../lib/roster/current-titles'
 
-const fixtures: ReturnType<typeof fileMatrix408>[] = []
+const fixtures: Array<{ close(): void }> = []
 afterEach(() => {
   vi.useRealTimers()
-  vi.unstubAllEnvs()
   for (const fixture of fixtures.splice(0)) fixture.close()
 })
-function setup() {
-  const f = fileMatrix408()
+function offlineHistoricalFixture() {
+  // This fixture belongs only to the frozen pre-retirement candidate oracle.
+  const dir = mkdtempSync(join(tmpdir(), 'offline-candidate468-'))
+  const sqlite = new Database(join(dir, 'historical.sqlite'))
+  sqlite.pragma('foreign_keys=ON')
+  migrate(drizzle(sqlite), { migrationsFolder: resolve('db/migrations') })
+  const db = drizzle(sqlite, { schema: s })
+  for (const title of TITLE_SEED) db.insert(s.title).values(title).onConflictDoNothing().run()
+  sqlite.function('roster84_uscc', { deterministic: true }, normalizeUscc)
+  const f = { sqlite, db, close() { sqlite.close(); rmSync(dir, { recursive: true, force: true }) } }
   fixtures.push(f)
-  prepareCurrentReader(f.sqlite)
   vi.useFakeTimers({ toFake: ['Date'] })
   vi.setSystemTime(new Date('2026-11-05T04:00:00Z'))
   return f
 }
-type Fixture = ReturnType<typeof setup>
+type Fixture = ReturnType<typeof offlineHistoricalFixture>
 function enterprise(f: Fixture, id: number) {
   return f.db.insert(s.enterprise).values({ id, name: `候选企业${id}`, nameNorm: `候选企业${id}`, usccNorm: `SYNTHETIC468-${id}`, city: '宁波市', district: '鄞州区' }).returning().get()
 }
@@ -57,7 +71,7 @@ function candidates(f: Fixture, title: CurrentTitle, source: 'typed' | 'legacy')
 }
 
 it('candidate migration retains exact archive owners and unprojected null conflicting and unresolved histories', () => {
-  const f = setup()
+  const f = offlineHistoricalFixture()
   for (let id = 1; id <= 12; id++) enterprise(f, id)
   const shared = { id: 'shared468', tyshxydm: ' synthetic468-1 ' }
   observation(f, null, 'SYNTHETIC468-1', { raw: shared })
@@ -81,7 +95,7 @@ it('candidate migration retains exact archive owners and unprojected null confli
 })
 
 it('candidate migration retains page scoped titles and unknown scope without using the row title', () => {
-  const f = setup()
+  const f = offlineHistoricalFixture()
   for (let id = 1; id <= 3; id++) enterprise(f, id)
   const query = f.db.insert(s.platformQuery).values({ interface: 'recognized_list', queryKey: 'multi468', rdjb: '1,2,3', queriedAt: '2026-10-01T00:00:00Z', status: 'success' }).returning().get()
   f.sqlite.prepare('update platform_query set collection_evidence=? where id=?').run(JSON.stringify({ pages: [
@@ -100,26 +114,16 @@ it('candidate migration retains page scoped titles and unknown scope without usi
   }
 })
 
-it('candidate source rollback is explicit and environment driven and works without projection tables', () => {
-  const f = setup()
-  enterprise(f, 1)
-  observation(f, null, 'SYNTHETIC468-1', { project: false })
-  f.sqlite.exec('drop table platform_recognized_projection')
-  expect(currentCandidateReadSqlFor(f.sqlite, 'legacy')).toBe(currentCandidateSqlFor(f.sqlite))
-  expect(candidates(f, 'innovative_sme', 'legacy')).toEqual([{ id: 1 }])
-  vi.stubEnv('ROSTER_RECOGNIZED_FILTER_SOURCE', 'legacy')
-  expect(f.sqlite.prepare(currentCandidateReadSqlFor(f.sqlite)).all(currentCandidateBindings('innovative_sme'))).toEqual([{ id: 1 }])
-})
-
 it.each(['innovative_sme', 'specialized_sme', 'little_giant'] as const)('candidate migration preserves all four candidate sources and duplicate elimination with missing indexes for %s', title => {
-  const f = setup()
+  const f = offlineHistoricalFixture()
   expect(candidates(f, title, 'typed')).toEqual([])
-  const formal = f.formal('名录候选', undefined, { title })
+  const formal = {enterprise:enterprise(f, 1)}
+  f.db.insert(s.record).values({enterpriseId:1,titleCode:title,source:'jxj'}).run()
   enterprise(f, 2)
   enterprise(f, 3)
   enterprise(f, 4)
   f.db.insert(s.differenceReason).values({ enterpriseId: 2, titleCode: title, direction: 'missing_in_miit', status: 'needs_review', recordedAt: '2026-10-01T00:00:00Z' }).run()
-  refLiterals408(f.sqlite).legacyRef(`candidate468-${title}`, 'candidate', 3, title)
+  f.db.insert(s.recordCorrespondence).values({edgeKey:'offline-candidate468',type:'later_process',role:'followup_review',enterpriseId:3,titleCode:title,status:'candidate',revision:1,targetIdentity:{},provenance:{},sourceFingerprint:'offline-candidate468',ruleId:'historical-oracle',ruleVersion:'1',createdAt:'2026-10-01'}).run()
   observation(f, 4, null, { titleCode: title })
   observation(f, formal.enterprise.id, null, { titleCode: title })
   for (const covered of [true, false]) {
@@ -129,34 +133,38 @@ it.each(['innovative_sme', 'specialized_sme', 'little_giant'] as const)('candida
   }
 })
 
-it.each(['innovative_sme', 'specialized_sme', 'little_giant'] as const)('qualified query and parsed workbook preserve platform-only candidates and rollback for %s', async title => {
-  const f = setup()
+it.each(['innovative_sme', 'specialized_sme', 'little_giant'] as const)('native qualified query and parsed workbook preserve platform-only candidates for %s', async title => {
+  const f = fileMatrix408()
+  fixtures.push(f)
+  prepareCurrentReader(f.sqlite)
+  vi.useFakeTimers({ toFake: ['Date'] })
+  vi.setSystemTime(new Date('2026-11-05T04:00:00Z'))
   const formal = f.formal('正式候选', [{ eventType: 'award', year: 2026, decidedYear: 2026, batchSeq: 1 }], { title })
-  for (const id of [20, 21, 22]) enterprise(f, id)
-  observation(f, null, 'SYNTHETIC468-20', { titleCode: title })
-  observation(f, 21, null, { titleCode: title, project: false })
-  observation(f, null, 'SYNTHETIC468-22', { titleCode: title, raw: { id: `null-workbook468-${title}`, tyshxydm: null } })
-  expect(candidates(f, title, 'typed')).toEqual([formal.enterprise.id, 20, 21, 22].map(id => ({ id })))
-  const typed = listCurrentQualified(f.sqlite, { titleCode: title, page: 1, pageSize: 1 })
-  const legacy = listCurrentQualified(f.sqlite, { titleCode: title, page: 1, pageSize: 1 }, { recognizedFactSource: 'legacy' })
-  expect(typed).toEqual(legacy)
-  expect(typed).toMatchObject({ total: 1, rows: [{ enterpriseId: formal.enterprise.id }] })
-  const dir = join(f.sqlite.name, '..')
-  const read = async (source?: 'typed' | 'legacy') => {
-    const path = join(dir, `candidate468-${title}-${serial++}.xlsx`)
-    const summary = await writeCurrentWorkbook(f.sqlite, title, path, () => {}, undefined, undefined, { recognizedFactSource: source })
-    const workbook = await readExportWorkbook(readFileSync(path))
-    const sheets = workbook.worksheets.map(sheet => ({ name: sheet.name, rows: (sheet.getRows(1, sheet.rowCount) ?? []).map(row => (row.values as unknown[]).slice(1)) }))
-    return { total: summary.total, counts: summary.counts, sheets }
+  const rdjb = { innovative_sme: '1', specialized_sme: '2', little_giant: '3' }[title]
+  for (const id of [20, 21, 22]) {
+    const name = '候选企业' + id
+    const enterprise = f.db.insert(nativeSchema.enterprise).values({ id, name, nameNorm: name, usccNorm: 'SYNTHETIC468-' + id }).returning().get()
+    const stamp = '2026-10-01T00:00:00Z'
+    const rawFields = { id: 'native468-' + id, qymc: name, tyshxydm: enterprise.usccNorm, rdjb }
+    const collectionEvidence = {
+      source: 'queryBusList' as const, status: 'success' as const,
+      effectiveConditions: { combination: 'and' as const, name },
+      titleScope: { mode: 'selected' as const, rdjb: [rdjb] },
+      queriedAt: stamp, completedAt: stamp, rows: [rawFields],
+      pages: [{ source: 'queryBusList' as const, rdjb, page: 1, status: 'success' as const, fetchedCount: 1, declaredTotal: 1, maxPage: 1, error: null }],
+      fetchedCount: 1, declaredTotal: 1, completeness: 'complete' as const, fullRange: true, unfinished: [], error: null,
+      limits: { maxRequests: 1, maxRows: 50, maxDurationMs: 1000, pageSize: 50 },
+    }
+    submitNativePlatformQuery(f.db, {
+      interface: 'recognized_list', queryKey: 'name:' + name, titleCode: title, rdjb, queriedAt: stamp, status: 'success', collectionEvidence,
+      relations: [{ sequenceNo: 1, relationKey: rawFields.id, enterpriseId: id === 20 ? null : id, nameRaw: name, usccRaw: rawFields.tyshxydm, rawFields, verificationStatus: 'confirmed', matchBasis: 'uscc' }],
+    })
   }
-  const workbook = await read()
-  expect(workbook.total).toBe(4)
-  expect(workbook.counts.eligible).toBe(1)
-  const names = workbook.sheets.filter(sheet => sheet.name !== '口径说明').flatMap(sheet => sheet.rows.slice(1).map(row => row[1]))
+  expect(listCurrentQualified(f.sqlite, { titleCode: title, page: 1, pageSize: 1 })).toMatchObject({ total: 1, rows: [{ enterpriseId: formal.enterprise.id }] })
+  const path = join(f.sqlite.name, '..', 'candidate468-' + title + '.xlsx')
+  const summary = await writeCurrentWorkbook(f.sqlite, title, path, () => {})
+  const workbook = await readExportWorkbook(readFileSync(path))
+  const names = workbook.worksheets.filter(sheet => sheet.name !== '口径说明').flatMap(sheet => (sheet.getRows(2, sheet.rowCount - 1) ?? []).map(row => row.getCell(2).value))
+  expect(summary).toMatchObject({ total: 4, counts: { eligible: 1, pending: 0, excluded: 3 } })
   expect(names).toEqual(['正式候选', '候选企业20', '候选企业21', '候选企业22'])
-  expect(names).toHaveLength(4)
-  expect(await read('legacy')).toEqual(workbook)
-  vi.stubEnv('ROSTER_RECOGNIZED_FILTER_SOURCE', 'legacy')
-  expect(listCurrentQualified(f.sqlite, { titleCode: title, page: 1, pageSize: 1 })).toEqual(legacy)
-  expect(await read()).toEqual(workbook)
 })

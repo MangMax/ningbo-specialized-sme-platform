@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, readdirSync, copyFileSync, readFileSync, writeF
 import { join } from 'node:path'
 import { createServer } from 'node:http'
 import { createApp, defineEventHandler, toNodeListener } from 'h3'
-import { initializeDb, schema } from '../db/client'
+import { initializeDb, schema } from '../upgrade/legacy-client'
 import { getParse105 } from '../server/utils/parse-maintenance-105'
 import { listStoredFiles } from '../server/utils/stored-files'
 

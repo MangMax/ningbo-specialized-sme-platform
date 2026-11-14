@@ -3,27 +3,25 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 
 import { afterAll, beforeAll, expect, it } from 'vitest'
-import { useDb, schema as s } from '../db/client'
-import { preflightRosterImport, commitRosterImport } from '../server/utils/roster-import'
+import { initializeDb, schema as s } from '../db/client'
+import { submitNativePlatformQuery } from './helpers/native-platform-fixture'
 import { preflightRecordCorrespondences, commitRecordCorrespondences } from '../server/utils/record-correspondence'
 import { readEventAnnualProcess } from '../server/utils/event-annual-process-read'
 import { spawnOwnedChild as spawn, reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../scripts/lib/isolated-local-services.mjs'
 
 const dir = mkdtempSync(join(tmpdir(), 'annual258-wire-')), dbPath = join(dir, 'isolated.db')
-const db = useDb({ dbPath })
+const db = initializeDb({ create: true,  dbPath })
 const enterprise = db.insert(s.enterprise).values({ name: '合成实际资格协议企业', nameNorm: '合成实际资格协议企业', usccNorm: '91330211255994457P' }).returning().get()
 const record = db.insert(s.record).values({ enterpriseId: enterprise.id, titleCode: 'specialized_sme', source: 'jxj', usccRaw: enterprise.usccNorm }).returning().get()
 const cases = [2024, 2023, 2022].map((year, n) => ({ status: ['confirmed', 'blocked', 'none'][n]!, event: db.insert(s.recordEvent).values({ recordId: record.id, eventType: 'award', year }).returning().get() }))
 const rows = [2024, 2024, 2023].map((year, n) => {
   const key = `SQ258-${n}`, appliedAt = n === 1 ? '2024-12-13 10:00:00' : `${year}-03-01 09:00:00`
-  const query = db.insert(s.platformQuery).values({ interface: 'business_list', queryKey: enterprise.usccNorm!, rdjb: '2', titleCode: 'specialized_sme', queriedAt: `2026-10-01T00:00:0${n}Z`, status: 'success' }).returning().get()
-  return db.insert(s.platformRelation).values({ queryId: query.id, sequenceNo: 1, relationKey: key, enterpriseId: enterprise.id, usccRaw: enterprise.usccNorm, verificationStatus: 'confirmed', matchBasis: 'uscc', rawFields: { id: key, year, sblx: '申请', sqsj: appliedAt, cszt: n === 0 ? '终审不通过' : '终审通过' } }).returning().get()
+  const seeded = submitNativePlatformQuery(db, { interface: 'business_list', queryKey: enterprise.usccNorm!, rdjb: '2', titleCode: 'specialized_sme', queriedAt: `2026-10-01T00:00:0${n}Z`, status: 'success', rawResponse: 'Synthetic annual HTTP source', relations: [{ sequenceNo: 1, relationKey: key, enterpriseId: enterprise.id, usccRaw: enterprise.usccNorm, verificationStatus: 'confirmed', matchBasis: 'uscc', rawFields: { id: key, year, sblx: '申请', sqsj: appliedAt, cszt: n === 0 ? '终审不通过' : '终审通过' } }] })
+  return { id: seeded.relationIds[0]! }
 })
 let service: { baseUrl: string; stop: () => Promise<void> }
 const state = () => ({ jobs: db.select().from(s.job).all(), ledger: db.select().from(s.importBatch).all(), receipts: db.select().from(s.importReceipt).all(), audit: db.select().from(s.recordCorrespondenceAudit).all(), decisions: db.select().from(s.recordCorrespondence).all() })
 beforeAll(async () => {
-  const projection = { idempotencyKey: 'wire258/projection', sourceKind: 'platform_archive' as const, sourceIdentity: 'tests/annual258', payload: { platformRecordObservations: rows.map(r => ({ relationId: r.id })) } }
-  preflightRosterImport(db, projection); expect(commitRosterImport(db, projection).status).toBe('committed')
   for (const [n, status] of ['confirmed', 'rejected'].entries()) {
     const request = { idempotencyKey: `wire258/decision-${n}`, sourceIdentity: 'tests/annual258', actor: { type: 'user' as const, id: 'fixture' }, basis: 'synthetic actual decision', ruleId: 'manual', ruleVersion: '1', operations: [{ action: 'create' as const, status: status as 'confirmed' | 'rejected', edge: { type: 'event_process' as const, eventId: cases[n]!.event.id, relationId: rows[n + 1]!.id, role: 'context_only' as const } }] }
     commitRecordCorrespondences(db, request, preflightRecordCorrespondences(db, request).planHash)

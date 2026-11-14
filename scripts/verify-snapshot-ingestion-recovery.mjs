@@ -10,9 +10,9 @@ import { setTimeout as sleep } from 'node:timers/promises'
 import { forkOwnedChild as fork, reserveLoopbackPort, stopOwnedChild } from './lib/isolated-local-services.mjs'
 
 const { createJiti } = createRequire(import.meta.resolve('nuxt/package.json'))('jiti')
-const { useDb } = await createJiti(import.meta.url).import('../db/client.ts')
+const { initializeDb } = await createJiti(import.meta.url).import('../db/client.ts')
 const dir = mkdtempSync(join(tmpdir(), 'snapshot-recovery-')), dbPath = join(dir, 'roster.db')
-useDb({ dbPath }).$client.close()
+initializeDb({ dbPath, create: true }).$client.close()
 const marker = join(dir, 'first-chunk-written'), hook = join(dir, 'kill-boundary.mjs')
 const driver = createRequire(resolve('.output/server/index.mjs')).resolve('better-sqlite3')
 // Fault injection observes the actual SQLite statement boundary. The native transaction is

@@ -5,7 +5,7 @@ import { join, resolve } from 'node:path'
 import ExcelJS from 'exceljs'
 import { afterAll, beforeAll, expect, it } from 'vitest'
 import { eq } from 'drizzle-orm'
-import { useDb, schema as s } from '../db/client'
+import { initializeDb, schema as s } from '../db/client'
 import { spawnOwnedChild as spawn, reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../scripts/lib/isolated-local-services.mjs'
 import { export188Candidate, seedExport188DisconnectFixture } from './helpers/export-188-fixture'
 
@@ -13,7 +13,7 @@ import { export188Candidate, seedExport188DisconnectFixture } from './helpers/ex
 // touches the isolated synthetic fixture; all export/log assertions use public HTTP.
 const root = mkdtempSync('/tmp/export-188-')
 const dbPath = join(root, 'synthetic.db'), logDir = join(root, 'logs')
-const db = useDb({ dbPath })
+const db = initializeDb({ create: true,  dbPath })
 const token = 'synthetic-export-188-token'
 const privateText = 'PRIVATE_EXPORT188_CONTENT'
 const headers = { authorization: `Bearer ${token}`, 'content-type': 'application/json' }

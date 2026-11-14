@@ -16,6 +16,25 @@ const finished = () => {
 }
 
 describe('445 independent runtime literals', () => {
+  it('R_native_fixture_reopen_preserves_completion_and_rows', async () => {
+    const { mkdtemp, rm } = await import('node:fs/promises')
+    const { tmpdir } = await import('node:os')
+    const directory = await mkdtemp(join(tmpdir(), '445-native-fixture-'))
+    let db: Awaited<ReturnType<typeof fresh445FixtureDB>> | undefined
+    try {
+      const path = join(directory, 'business.sqlite')
+      db = await fresh445FixtureDB(path)
+      db.$client.exec("INSERT INTO enterprise(name,name_norm) VALUES('445 fixture','445 fixture')")
+      db.$client.close()
+      db = await fresh445FixtureDB(path)
+      expect(db.$client.prepare('SELECT name FROM enterprise').all()).toEqual([{ name: '445 fixture' }])
+      expect(db.$client.prepare('SELECT schema_version FROM platform_runtime_completion WHERE id=1').get()).toEqual({ schema_version: 71613 })
+      expect(db.$client.prepare("SELECT name FROM sqlite_schema WHERE name IN ('platform_query','platform_relation')").all()).toEqual([])
+    } finally {
+      if (db?.$client.open) db.$client.close()
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
   it('R_reserved_task_keys_preserve_ordinary_metadata', () => {
     expect(acceptsSessionFrame({ method: 'tools/call', params: { _meta: { ordinary: 'kept' } } })).toBe(true)
     expect(acceptsSessionFrame({ method: 'tools/call', params: { _meta: { 'io.modelcontextprotocol/related-task': { taskId: 'x' } } } })).toBe(false)
@@ -628,14 +647,9 @@ async function compiled445Artifact(): Promise<Artifact445> {
   await verify()
   return { root, entry: join(root, 'server/index.mjs'), manifestSHA256: receipt.manifestSHA256, manifest: m, scopeBound, verify }
 }
-async function fresh445FixtureDB(dbPath: string, migrationsFolder: string) {
-  // useDb caches closed handles. The parent-only compiled fixture needs fresh
-  // handles across A/B/A; production children still execute their original useDb.
-  const { createRequire } = await import('node:module'); const Database = createRequire(import.meta.url)('better-sqlite3') as typeof import('better-sqlite3')
-  const { drizzle } = await import('drizzle-orm/better-sqlite3'); const { migrate } = await import('drizzle-orm/better-sqlite3/migrator'); const schema = await import('../db/schema'); const { TITLE_SEED } = await import('../db/titles')
-  const sqlite = new Database(dbPath); sqlite.pragma('journal_mode = WAL'); sqlite.pragma('foreign_keys = ON')
-  try { const db = drizzle(sqlite, { schema }); migrate(db, { migrationsFolder }); for (const title of TITLE_SEED) db.insert(schema.title).values(title).onConflictDoNothing().run(); return db }
-  catch (error) { sqlite.close(); throw error }
+async function fresh445FixtureDB(dbPath: string) {
+  const { initializeDb } = await import('../db/client')
+  return initializeDb({ dbPath, create: true })
 }
 
 async function start445ActualApp(options: App445Options = {}) {
@@ -677,9 +691,9 @@ async function start445ActualApp(options: App445Options = {}) {
   const { useDb, schema } = await import('../db')
   const { initializeDb } = await import('../db/client')
   const dbPath = shared?.dbPath ?? join(directory, 'business.sqlite')
-  const db = options.mode === 'compiled' ? await fresh445FixtureDB(dbPath, join(project, 'db/migrations'))
-    : shared ? useDb({ dbPath, migrationsFolder: join(project, 'db/migrations') })
-      : initializeDb({ dbPath, migrationsFolder: join(project, 'db/migrations'), create: true })
+  const db = options.mode === 'compiled' ? await fresh445FixtureDB(dbPath)
+    : shared ? useDb({ dbPath })
+      : initializeDb({ dbPath, create: true })
   const businessState: Business445 = shared ?? { directory, dbPath, files, incoming, grantId: grant.grantId, nonce: grant.nonce }
   let child: ReturnType<typeof spawnOwnedChild> | undefined
   let childExitReceipt: { pid?: number; exitCode?: number | null; signalCode?: NodeJS.Signals | null; spawnError?: boolean } | undefined

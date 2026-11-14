@@ -1,5 +1,8 @@
 # Task summary consumers (#134 M2)
 
+> 历史脚本说明：本文引用的混合表实验/验收脚本已在原生运行切换时退役。复现旧命令须在独立 checkout 固定到 `ab503081dae3e24680afc9b07395a7e3ff21fc9f` 并使用当时的隔离数据库与二进制；这些命令不适用于当前运行库。历史证据与 FAIL/UNKNOWN 保持原样。
+
+
 At the M2 baseline (`59462b101b93b530740b4ce3b4bb108288e3b6b5`), the repository has two executable generic job-read consumers:
 
 - `scripts/reconcile-live.mjs --base-url`: submits the existing reconcile job, polls `GET /api/jobs/:id?view=summary`, then reads `GET /api/jobs/:id` at a terminal state. The full detail is authoritative for state, error and result. If a domain retry reopens the same ID between reads, polling continues. Failed/cancelled partial receipts still go to `--out` and exit nonzero. Submission authorization, local execution, polling interval and runner ownership are unchanged.

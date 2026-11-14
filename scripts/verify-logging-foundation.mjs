@@ -7,12 +7,13 @@ import { join, resolve } from 'node:path'
 import { createServer } from 'node:net'
 import { once } from 'node:events'
 import assert from 'node:assert/strict'
+import { createRequire } from 'node:module'
 import Database from 'better-sqlite3'
-import { drizzle } from 'drizzle-orm/better-sqlite3'
-import { migrate } from 'drizzle-orm/better-sqlite3/migrator'
+const { createJiti } = createRequire(import.meta.resolve('nuxt/package.json'))('jiti')
+const { createRuntimeSchema } = await createJiti(import.meta.url).import('../db/create-runtime.ts')
 const root = mkdtempSync(join(tmpdir(), 'logging181-public-'))
 const dbPath = join(root, 'synthetic.db'), logs = join(root, 'logs')
-const db = new Database(dbPath); migrate(drizzle(db), { migrationsFolder: resolve('db/migrations') }); db.close()
+const db = new Database(dbPath); db.pragma('foreign_keys = ON'); createRuntimeSchema(db); db.close()
 const beforeBusiness = readFileSync(dbPath)
 const privateMarker = 'PRIVATE181_PAYLOAD_MARKER'
 const results = []

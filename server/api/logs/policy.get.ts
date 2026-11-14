@@ -39,7 +39,7 @@ defineRouteMeta({ openAPI: {
         accounting: { type: 'string' }, status: { type: 'object', description: '本进程实时计数；记录单位accepted/stored/filtered/dropped/writeUnknown，额外查询尝试单位coalesced；overflow/oversized为丢弃原因，stdout跳过为fallbackSkipped；PATCH可不返回' },
       },
     } } } },
-    401: { description: '默认拒绝，不打开store；no-store' },
+    401: { description: '未授权请求拒绝，不打开store；no-store' },
   },
 } })
 export default createLoggingRoute('policy')

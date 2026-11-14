@@ -1,13 +1,14 @@
+import { createHash } from 'node:crypto'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import ExcelJS from 'exceljs'
 import { afterAll, beforeAll, expect, it } from 'vitest'
-import { useDb, schema as s } from '../db/client'
+import { initializeDb, schema as s } from '../db/client'
 import { spawnOwnedChild as spawn, reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../scripts/lib/isolated-local-services.mjs'
 
 const dir = mkdtempSync(join(tmpdir(), 'facts-export-307-'))
-const dbPath = join(dir, 'synthetic.db'), db = useDb({ dbPath })
+const dbPath = join(dir, 'synthetic.db'), db = initializeDb({ create: true,  dbPath })
 let service: { baseUrl: string; stop: () => Promise<void> }
 const token = 'synthetic-export-token'
 const headers = { 'content-type': 'application/json', authorization: `Bearer ${token}` }
@@ -37,6 +38,8 @@ async function workbook(key: string) {
   expect(download.headers.get('content-type')).toBe('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
   expect(download.headers.get('content-disposition')).toContain('.xlsx')
   const bytes = Buffer.from(await download.arrayBuffer()), wb = new ExcelJS.Workbook()
+  expect(bytes.length).toBe(job.result.artifact.size)
+  expect(createHash('sha256').update(bytes).digest('hex')).toBe(job.result.artifact.sha256)
   await wb.xlsx.load(bytes as any)
   expect(job.result.snapshotStartedAt).toBe('2026-11-04T12:00:00.000Z')
   expect(wb.worksheets.map(sheet=>sheet.name)).toEqual(['有效企业','已到期','已注销（吊销）','已迁出','未认定','口径说明'])
@@ -51,10 +54,9 @@ function candidate(name: string, events: Array<{ eventType: 'award'|'review'|'nu
   }
   return { enterprise, record }
 }
-let mode = ''
 async function startService() {
   const cwd = resolve(import.meta.dirname, '..'), port = await reserveLoopbackPort()
-  const child = spawn(process.execPath, [join(cwd, 'node_modules/nuxt/bin/nuxt.mjs'), 'dev', '--host', '127.0.0.1', '--port', String(port)], { cwd, stdio: ['ignore','pipe','pipe'], env: { ...process.env, ENTERPRISE_FACT_CONSUMER_SOURCE: mode, NODE_OPTIONS: `${process.env.NODE_OPTIONS ?? ''} --import=${join(dir,'clock.mjs')}`, NUXT_BUILD_DIR: join(dir,'build'), NUXT_DB_PATH: dbPath, NUXT_API_TOKEN: token, NUXT_FILES_DIR: join(dir,'files'), NUXT_INCOMING_DIR: join(dir,'incoming') } })
+  const child = spawn(process.execPath, [join(cwd, 'node_modules/nuxt/bin/nuxt.mjs'), 'dev', '--host', '127.0.0.1', '--port', String(port)], { cwd, stdio: ['ignore','pipe','pipe'], env: { ...process.env, NODE_OPTIONS: `${process.env.NODE_OPTIONS ?? ''} --import=${join(dir,'clock.mjs')}`, NUXT_BUILD_DIR: join(dir,'build'), NUXT_DB_PATH: dbPath, NUXT_API_TOKEN: token, NUXT_FILES_DIR: join(dir,'files'), NUXT_INCOMING_DIR: join(dir,'incoming') } })
   let output = ''; for (const stream of [child.stdout, child.stderr]) stream.on('data', data => { output = (output + data).slice(-12000) })
   service = { baseUrl: `http://127.0.0.1:${port}`, stop: () => stopOwnedChild(child) }
   try { await waitForHttp(url('/api/jobs/kinds'), { timeoutMs: 60000, child }) } catch (e) { await service.stop(); throw new Error(String(e) + output) }
@@ -97,11 +99,14 @@ function sheetRows(wb: ExcelJS.Workbook, name: string) {
 function contents(wb: ExcelJS.Workbook) {
   return Object.fromEntries(['有效企业','已到期','已注销（吊销）','已迁出','未认定'].map(name=>[name,sheetRows(wb,name).map(r=>({name:r[2],note:r[11]}))]))
 }
-it('independent facts survive HTTP async export and whole effect-reader legacy fallback with retained lifecycle readback', async () => {
+it('native facts retain qualification effects and immutable lifecycle references through HTTP XLSX export and restart', async () => {
   const cases = ['已迁出','已注销','待确认事实','未知生效','未来生效','已撤回','已替换']
   const ids = cases.map(name=>candidate(name,[{eventType:'award',year:2026,batchSeq:1}]).enterprise.id)
   const before = await workbook('before-independent-facts')
   const baseline = await snapshot()
+  expect(before.job.result.counts).toEqual({eligible:7,pending:0,excluded:0})
+  expect(baseline.list.total).toBe(4)
+  expect(baseline.details.map(d=>d.qualificationAssessment.titles.find((t:any)=>t.titleCode==='little_giant').group)).toEqual(Array(7).fill('eligible'))
   await assertion(ids[0]!)
   await assertion(ids[1]!,{kind:'cancelled',source:{reference:'synthetic:notice:cancelled',statement:'正式注销'}})
   await assertion(ids[2]!,{},false)
@@ -140,25 +145,23 @@ it('independent facts survive HTTP async export and whole effect-reader legacy f
   expect(modern.list.total).toBe(2)
   expect(modern.list.rows.map((r:any)=>r.enterpriseId ?? r.id)).toEqual([ids[5],ids[6]])
   expect(modern.details.map(d=>d.qualificationAssessment.titles.find((t:any)=>t.titleCode==='little_giant').group)).toEqual(['excluded','excluded','eligible','eligible','eligible','eligible','eligible'])
-  await service.stop(); mode='legacy'; await startService()
-  const legacy = await workbook('legacy-facts')
-  expect(contents(legacy.wb)).toEqual(contents(before.wb))
-  expect(legacy.job.result.snapshotStartedAt).toBe(before.job.result.snapshotStartedAt)
-  expect(legacy.job.result.counts).toEqual({eligible:7,pending:0,excluded:0})
-  expect(contents(legacy.wb)).toEqual({有效企业:cases.map(name=>({name,note:businessNote})),已到期:[],'已注销（吊销）':[],已迁出:[],未认定:[]})
-  const fallback = await snapshot()
-  expect(fallback).toEqual(baseline)
-  expect(fallback.details.map(d=>d.qualificationAssessment.titles.find((t:any)=>t.titleCode==='little_giant').group)).toEqual(Array(7).fill('eligible'))
-  expect(fallback.list.total).toBe(4) // q=已: migrated, cancelled, withdrawn, replaced
+  await service.stop(); await startService()
+  const restarted = await workbook('native-facts-after-restart')
+  expect(contents(restarted.wb)).toEqual(contents(fresh.wb))
+  expect(restarted.job.result.snapshotStartedAt).toBe(fresh.job.result.snapshotStartedAt)
+  expect(restarted.job.result.counts).toEqual({eligible:5,pending:0,excluded:2})
+  expect(restarted.job.result.statusCounts).toEqual({effective:5,expired:0,terminated:1,moved_out:1,unrecognized:0})
+  const readback = await snapshot()
+  expect(readback).toEqual(modern)
   expect(await Promise.all(ids.map(id=>get(`/api/roster/enterprises/${id}/facts`)))).toEqual(factsBefore)
-  // Rollback changes effects, not command availability or the existing ID/history contract.
+  // New commands append history without rewriting the existing confirmed fact.
   await assertion(ids[0]!,{kind:'registration_status',effective:{precision:'unknown',value:null}},false)
   const retained = await get(`/api/roster/enterprises/${ids[0]}/facts`)
   expect(retained.facts).toHaveLength(2)
   expect(retained.facts[0]).toEqual(factsBefore[0].facts[0])
   expect(retained.history).toHaveLength(factsBefore[0].history.length+1)
   const refs = [{enterpriseId:ids[0],factId:factsBefore[0].facts[0].factId,revision:2,kind:'moved_out'}]
-  const decisionResponse = await fetch(url('/api/roster/decision-lifecycle/commands'),{method:'POST',headers,body:JSON.stringify({enterpriseId:ids[0],titleCode:'specialized_sme',direction:'missing_in_miit',action:'replace',expectedCurrentId:null,idempotencyKey:'fallback-pinned-reference',actor:{type:'agent',id:'synthetic-307'},basis:'合成核实',ruleVersion:'manual-v1',effectiveAt:'2026-01-01T00:00:00Z',decision:{status:'confirmed_reason',reasonCode:'platform_stale',measureCode:'none',verificationStatus:'confirmed',factReferences:refs}})})
+  const decisionResponse = await fetch(url('/api/roster/decision-lifecycle/commands'),{method:'POST',headers,body:JSON.stringify({enterpriseId:ids[0],titleCode:'specialized_sme',direction:'missing_in_miit',action:'replace',expectedCurrentId:null,idempotencyKey:'native-pinned-reference',actor:{type:'agent',id:'synthetic-307'},basis:'合成核实',ruleVersion:'manual-v1',effectiveAt:'2026-01-01T00:00:00Z',decision:{status:'confirmed_reason',reasonCode:'platform_stale',measureCode:'none',verificationStatus:'confirmed',factReferences:refs}})})
   expect(decisionResponse.status).toBe(200)
   const saved = await decisionResponse.json()
   const pinned = await get('/api/roster/decision-lifecycle/'+saved.versionId)
@@ -168,8 +171,13 @@ it('independent facts survive HTTP async export and whole effect-reader legacy f
   const evidenceDir = process.env.FACTS_307_EVIDENCE_DIR
   if (evidenceDir) {
     writeFileSync(join(evidenceDir,'new-facts.xlsx'),fresh.bytes)
-    writeFileSync(join(evidenceDir,'legacy-facts.xlsx'),legacy.bytes)
-    writeFileSync(join(evidenceDir,'http-observations.json'),JSON.stringify({before:before.job,modern,job:fresh.job,contents:contents(fresh.wb),fallback,legacyJob:legacy.job,legacyContents:contents(legacy.wb),factsBefore,retained,pinned},null,2))
+    writeFileSync(join(evidenceDir,'native-restarted-facts.xlsx'),restarted.bytes)
+    writeFileSync(join(evidenceDir,'http-observations.json'),JSON.stringify({before:before.job,modern,job:fresh.job,contents:contents(fresh.wb),readback,restartedJob:restarted.job,restartedContents:contents(restarted.wb),factsBefore,retained,pinned},null,2))
   }
   expect((await get(`/api/roster/enterprises/${ids[0]}`)).qualificationAssessment.titles.find((t:any)=>t.titleCode==='little_giant').group).toBe('eligible')
+  const withdrawnExport=await workbook('native-after-withdrawal')
+  expect(withdrawnExport.job.result.counts).toEqual({eligible:6,pending:0,excluded:1})
+  expect(withdrawnExport.job.result.statusCounts).toEqual({effective:6,expired:0,terminated:1,moved_out:0,unrecognized:0})
+  expect(sheetRows(withdrawnExport.wb,'有效企业').map(row=>row[2])).toEqual(['已迁出','待确认事实','未知生效','未来生效','已撤回','已替换'])
+  expect(sheetRows(withdrawnExport.wb,'已注销（吊销）').map(row=>row[2])).toEqual(['已注销'])
 }, 120000)

@@ -1,4 +1,4 @@
-/** Explicit successor description only. W/R own admission; ordinary guards remain CLOSED. */
+/** Native provenance completion metadata; source archives are validated by their owners. */
 import type Database from 'better-sqlite3'
 import { hasColumns, migrationFinished } from './migration-readiness'
 export const LEGACY_PROVENANCE_VERSION = 71613

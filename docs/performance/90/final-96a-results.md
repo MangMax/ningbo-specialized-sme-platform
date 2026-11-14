@@ -1,5 +1,8 @@
 # #90 最终保留归档工作负载：fresh 96a0bd9
 
+> 历史脚本说明：本文引用的混合表实验/验收脚本已在原生运行切换时退役。复现旧命令须在独立 checkout 固定到 `ab503081dae3e24680afc9b07395a7e3ff21fc9f` 并使用当时的隔离数据库与二进制；这些命令不适用于当前运行库。历史证据与 FAIL/UNKNOWN 保持原样。
+
+
 本轮授权的 1x 和 query/relation 局部域合成 2x 调查矩阵、完整字段校验及私有恢复演练已完成。建议仍为 **defer 生产 PostgreSQL 迁移**。这里是同算法、同语义、同总资源包络的窄工作负载比较；没有 Node 性能等价、纯引擎排名、容量或生产 SLO 验收结论。
 
 完整聚合见 [final-96a-results.json](final-96a-results.json)；运行步骤见 [retained-workload.md](retained-workload.md)。逐请求记录、原文、数据库、PGDATA、凭据、失败日志及完整遥测均在 Git 外。

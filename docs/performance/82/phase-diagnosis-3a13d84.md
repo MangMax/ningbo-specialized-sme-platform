@@ -1,5 +1,8 @@
 # Node phase diagnosis and capacity-blocked continuation
 
+> 历史脚本说明：本文引用的混合表实验/验收脚本已在原生运行切换时退役。复现旧命令须在独立 checkout 固定到 `ab503081dae3e24680afc9b07395a7e3ff21fc9f` 并使用当时的隔离数据库与二进制；这些命令不适用于当前运行库。历史证据与 FAIL/UNKNOWN 保持原样。
+
+
 **Performance acceptance remains open.** This continuation completes the seven #83 readiness retries and retains ten new measured rows (200 hot requests). Nine rows miss a gate: six default-full list byte gates and three key/MCP/c5 loop gates, including a separately labelled driver-scheduling diagnostic. One additional cold phase misses the loop gate. No application, schema, contract, budget, timeout or heap setting changed. Remaining #94/#86/whole5x lanes are capacity blocked.
 
 The [sanitized aggregate](phase-diagnosis-3a13d84.json) retains every new request sample, phase result, miss and runtime-driver hash. The [previous matrix](final-96a-node-matrix.md) and its **30 hot / 4 cold resource-miss rows remain immutable**. A cumulative histogram can mix startup/cold/hot; that qualifies attribution, without deleting those observations. The earlier >=8GiB disk invariant **FAILED**, and its resource-stop137/OOMfalse and cleanup evidence remain historical facts.

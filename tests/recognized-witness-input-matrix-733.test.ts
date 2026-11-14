@@ -1,20 +1,18 @@
 import { deserialize } from 'node:v8'
 import { finalizeRecognizedWitness } from '../upgrade/recognized-witness'
-import { witnessInstalled } from '../lib/platform/recognized-witness-catalog'
-import { recognizedStoredInstalled } from '../lib/platform/recognized-stored-catalog'
 /** R5 A bounded source-input audit. Passing diagnostics do not certify capture. */
 import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { beforeAll, afterAll, expect, it } from 'vitest'
 import { copyFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import * as s from '../db/schema'
+import * as s from '../upgrade/legacy-schema'
 import { candidateFixture } from './helpers/candidate-scope-target'
 import { finalizeCandidateScopes } from '../upgrade/candidate-scope'
 import { finalizeRecognizedStored } from '../upgrade/recognized-stored'
-import { ensurePlatformObservation } from '../server/utils/platform-business-record'
+import { ensurePlatformObservation } from '../upgrade/frozen/server/platform-business-record'
 import { recognizedFilterFacts } from '../lib/roster/recognized-filter-facts'
-import { createRecognizedFilterSourceReader } from '../lib/roster/recognized-filter-source'
+import { createRecognizedFilterSourceReader } from '../upgrade/frozen/recognized-filter-source'
 import { sourcePositionForSequence, RDJB_TITLE_CODES } from '../lib/platform/recognized-evidence'
 
 type Case = { conditionValue?: string | number | null; name: string; text: string | Buffer | null; gate: boolean | 'sql_error'; position?: string | null | 'reject' | 'TypeError'; sequence?: number; supplement?: boolean }
@@ -92,8 +90,6 @@ afterAll(() => { if (f) writeFileSync(join(f.root, 'INPUT-MATRIX.json'), JSON.st
 it.each(cases)('freezes independent old witness input: $name', input => {
   const id = cases.indexOf(input) + 1
   const reader = createRecognizedFilterSourceReader(old, 'typed')
-  expect(witnessInstalled(target)).toBe(true)
-  expect(recognizedStoredInstalled(target)).toBe(true)
   const captured=target.prepare('SELECT * FROM platform_collection WHERE id=?').get(id) as Record<string,unknown>
   if (input.gate === 'sql_error') { expect(captured).toMatchObject({witness_state:'error',witness_gate:null,witness_error:'malformed JSON'}); expect(() => reader.read({ relationId: id, enterpriseId: 1, uscc: null })).toThrow('malformed JSON'); results.push({id,name:input.name,input:input.text,oldError:'malformed JSON',captured}); return }
   const row = reader.read({ relationId: id, enterpriseId: 1, uscc: null })

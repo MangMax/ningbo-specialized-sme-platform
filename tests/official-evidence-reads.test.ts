@@ -1,11 +1,11 @@
+import { createRuntimeSchema } from '../db/create-runtime'
 import { createHash } from 'node:crypto'
 import { createServer } from 'node:http'
 import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs'
-import { join, resolve } from 'node:path'
+import { join } from 'node:path'
 import { createApp, createRouter, toNodeListener, defineEventHandler } from 'h3'
 import Database from 'better-sqlite3'
 import { drizzle, type BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
-import { migrate } from 'drizzle-orm/better-sqlite3/migrator'
 import { afterAll, afterEach, beforeAll, expect, it, vi } from 'vitest'
 import { z } from 'zod'
 import { AjvJsonSchemaValidator } from '@modelcontextprotocol/sdk/validation/ajv'
@@ -49,9 +49,8 @@ async function fixture() {
   writeFileSync(join(filesDir, 'notice.txt'), bytes); writeFileSync(join(filesDir, 'other.txt'), 'different content\n')
   const sqlite = new Database(join(dir, 'synthetic.sqlite')); sqlite.pragma('foreign_keys=ON')
   closes.push(() => { expect(sqlite.pragma('foreign_keys', { simple: true })).toBe(1); sqlite.close() })
-  const db = drizzle(sqlite, { schema }); migrate(db, { migrationsFolder: resolve('db/migrations') })
+  const db = drizzle(sqlite, { schema }); createRuntimeSchema(sqlite)
   // Only infrastructure catalog uses SQL. Domain state is established through public commands below.
-  sqlite.exec("INSERT INTO title(code,name_zh,level,rank) VALUES('specialized_sme','Synthetic','municipal',2)")
   for (const [id, path, body] of [[1,'notice.txt',bytes],[2,'other.txt','different content\n']] as const) sqlite.prepare("INSERT INTO stored_file(id,rel_path,filename,ext,source,kind,title_code,bytes,sha256,created_at) VALUES(?,?,?,'txt','jxj','announcement','specialized_sme',?,?,'synthetic')").run(id,path,path,Buffer.byteLength(body),createHash('sha256').update(body).digest('hex'))
   current.db = db; current.filesDir = filesDir
   const server = createServer(toNodeListener(createApp().use(router)))

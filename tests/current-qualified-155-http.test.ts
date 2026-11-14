@@ -1,22 +1,19 @@
+import { submitSyntheticRecognizedCollection } from './helpers/qualification-native-source'
+import { submitNativePlatformQuery } from './helpers/native-platform-fixture'
 import { afterAll, beforeAll, beforeEach, expect, it } from 'vitest'
 import { assertCurrentQualifiedRowsSnapshotEqual408 } from './helpers/current-qualified-408'
 import { schema as s } from '../db/client'
 import { commitRecordCorrespondences, preflightRecordCorrespondences } from '../server/utils/record-correspondence'
 import { readEvidenceToken113 } from '../server/utils/evidence-impact-113'
 import { currentExport118Fixture, year } from './helpers/current-export-118'
-import { ensurePlatformObservation } from '../server/utils/platform-business-record'
 
 const fixture = currentExport118Fixture()
-const f = { ...fixture, candidate: (name: string, events?: Parameters<typeof fixture.candidate>[1], title = 'innovative_sme') => fixture.candidate(name, events, title) }
+const f = { ...fixture, get db() { return fixture.db }, get dbPath() { return fixture.dbPath }, candidate: (name: string, events?: Parameters<typeof fixture.candidate>[1], title = 'innovative_sme') => fixture.candidate(name, events, title) }
 let linkOffset = 0
 beforeAll(f.start, 90000)
-beforeEach(() => {
-  f.db.delete(s.platformRecognizedProjection).run()
-  f.db.delete(s.platformBusinessObservation).run()
-  f.db.delete(s.platformBusinessRecordVersion).run()
-  f.db.delete(s.platformBusinessRecord).run()
-  f.resetBusiness()
-})
+beforeEach(async () => {
+  await f.resetBusiness()
+}, 90000)
 afterAll(f.close)
 
 async function query(params: Record<string, string>) {
@@ -32,21 +29,18 @@ async function mcp(args: Record<string, unknown>) {
   return JSON.parse(payload.result.content[0].text)
 }
 
-function linkRecognized(enterpriseId: number, eventId: number, conditions: Record<string, string>, role: 'recognized_corrob' | 'current_context' = 'recognized_corrob', rawFields: Record<string, unknown> = {}, multiTitle = false) {
+function linkRecognized(enterpriseId: number, eventId: number, conditions: Record<string, string>, role: 'recognized_corrob' | 'current_context' = 'recognized_corrob', rawFields: Record<string, unknown> = {}, multiTitle = false, partial = false) {
   const enterprise = f.db.select().from(s.enterprise).all().find(row => row.id === enterpriseId)!
   const title = (f.db.$client.prepare('select r.title_code as title from record_event e join record r on r.id=e.record_id where e.id=?').get(eventId) as {title:string}).title
   const rdjb = {innovative_sme:'1',specialized_sme:'2',little_giant:'3'}[title]!
   const stamp = new Date(Date.now() + ++linkOffset * 1000).toISOString()
-  rawFields = { id: `synthetic-filter155-${linkOffset}`, ...rawFields }
-  const query = f.db.insert(s.platformQuery).values({ interface: 'recognized_list', queryKey: enterprise.usccNorm!, rdjb: multiTitle ? '1,2,3' : rdjb, titleCode: multiTitle ? null : title, queriedAt: stamp, status: 'success', collectionEvidence: {
-    source: 'queryBusList', status: 'success', effectiveConditions: { combination: 'and', ...conditions }, titleScope: { mode: 'selected', rdjb: multiTitle ? ['1','2','3'] : [rdjb] }, queriedAt: stamp, completedAt: stamp, rows: [rawFields], pages: [{ source:'queryBusList', rdjb, page:1, status:'success', fetchedCount:1, declaredTotal:1, maxPage:1 }], fetchedCount: 1, declaredTotal: 1, completeness: 'complete', fullRange: true, unfinished: [], error: null, limits: { maxRequests: 1, maxRows: 50, maxDurationMs: 1000, pageSize: 50 },
-  } as any }).returning().get()
-  const relation = f.db.insert(s.platformRelation).values({ queryId: query.id, sequenceNo: 1, enterpriseId, usccRaw: enterprise.usccNorm, nameRaw: enterprise.name, rawFields, verificationStatus: 'confirmed', matchBasis: 'uscc' }).returning().get()
-  ensurePlatformObservation(f.db, relation.id)
+  rawFields = { id: `synthetic-filter155-${linkOffset}`, qymc: enterprise.name, tyshxydm: enterprise.usccNorm, rdjb, ...rawFields }
+  const native = submitSyntheticRecognizedCollection(f.db, { rdjb: multiTitle ? '1,2,3' : rdjb, queriedAt: stamp, conditions, partial, rows: [{ raw: rawFields, enterpriseId }] })
+  const relation = { id: native.relationIds[0]! }
   const request = { idempotencyKey: `filter-155-${relation.id}`, sourceIdentity: `synthetic/filter-155/${relation.id}`, actor: { type: 'agent' as const, id: 'test' }, basis: 'synthetic confirmed event and recognized row', ruleId: 'manual', ruleVersion: '1', operations: [{ action: 'create' as const, status: 'confirmed' as const, edge: { type: 'event_recognized' as const, eventId, relationId: relation.id, role } }] }
   const plan = preflightRecordCorrespondences(f.db, request)
   commitRecordCorrespondences(f.db, request, plan.planHash)
-  return relation
+  return {...relation,queryId:native.queryId}
 }
 
 it('filters a formal current award by full-year contained recognition range and reports partial overlap separately', async () => {
@@ -194,8 +188,8 @@ it('retains eligible rows with missing metadata until a related filter is reques
 
 it('keeps a confirmed migrant without a formal award unrecognized without fabricating recognition from its validity interval', async () => {
   const candidate=f.candidate('迁入仅有有效区间',[])
-  const source=f.db.insert(s.platformQuery).values({interface:'business_list',queryKey:candidate.enterprise.usccNorm!,rdjb:'1',titleCode:'innovative_sme',queriedAt:new Date().toISOString(),status:'success'}).returning().get()
-  const relation=f.db.insert(s.platformRelation).values({queryId:source.id,enterpriseId:candidate.enterprise.id,sequenceNo:1,usccRaw:candidate.enterprise.usccNorm,nameRaw:candidate.enterprise.name,verificationStatus:'confirmed',matchBasis:'uscc'}).returning().get()
+  const native = submitNativePlatformQuery(f.db,{interface:'business_list',queryKey:candidate.enterprise.usccNorm!,rdjb:'1',titleCode:'innovative_sme',queriedAt:new Date().toISOString(),status:'success',rawResponse:'Synthetic assigned process',relations:[{enterpriseId:candidate.enterprise.id,sequenceNo:1,usccRaw:candidate.enterprise.usccNorm,nameRaw:candidate.enterprise.name,verificationStatus:'confirmed',matchBasis:'uscc'}]})
+  const source = {id:native.queryId}, relation={id:native.relationIds[0]!}
   const scope={enterpriseId:candidate.enterprise.id,titleCode:'innovative_sme',direction:'extra_in_miit'}
   const api=async (body:unknown) => {
     const response=await fetch(f.url('/api/roster/decision-lifecycle/commands'),{method:'POST',headers:f.headers,body:JSON.stringify(body)})
@@ -302,9 +296,7 @@ it.each(['HTTP', 'MCP'] as const)('uses predicates only for consistency and igno
   const a = f.candidate('条件不替代事实')
   const eventId = (f.db.$client.prepare('select id from record_event where record_id=?').get(a.record.id) as {id:number}).id
   const mismatch = linkRecognized(a.enterprise.id,eventId,{rddqrq:'2029',whpcyear:'2024'},'recognized_corrob',{rddqrq:'2028-11-20',whpc:'2023-2'})
-  const partial = linkRecognized(a.enterprise.id,eventId,{},'recognized_corrob',{rddqrq:'2028-11-20',whpc:'2023-2'})
-  // Synthetic archive setup; assertions remain on public read transports.
-  f.db.$client.prepare("update platform_query set status='partial', collection_evidence=json_set(collection_evidence,'$.status','partial','$.completeness','partial','$.fullRange',0) where id=?").run(partial.queryId)
+  linkRecognized(a.enterprise.id,eventId,{},'recognized_corrob',{rddqrq:'2028-11-20',whpc:'2023-2'},false,true)
   const read = async (filters: Record<string,number> = {}) => transport === 'MCP' ? mcp(filters)
     : (await query(Object.fromEntries(Object.entries(filters).map(([key,value]) => [key,String(value)])))).body
   const all = await read()
@@ -326,15 +318,11 @@ it.each(['HTTP', 'MCP'] as const)('keeps independently supported validity when m
   expect(await read({validYear:2028,maintenanceYear:2023})).toMatchObject({total:0,rows:[]})
 })
 
-it.each(['HTTP', 'MCP'] as const)('requires the recognized-list schema and consistent archived title over %s', async transport => {
-  const a = f.candidate('来源称号边界')
-  const eventId = (f.db.$client.prepare('select id from record_event where record_id=?').get(a.record.id) as {id:number}).id
-  const wrongSchema = linkRecognized(a.enterprise.id,eventId,{},'recognized_corrob',{rddqrq:'2028-11-20',whpc:'2023-2'})
-  const wrongTitle = linkRecognized(a.enterprise.id,eventId,{},'recognized_corrob',{rddqrq:'2028-11-20',whpc:'2023-2'},true)
-  f.db.$client.prepare("update platform_query set collection_evidence=json_set(collection_evidence,'$.source','businessList') where id=?").run(wrongSchema.queryId)
-  f.db.$client.prepare("update platform_query set collection_evidence=json_set(collection_evidence,'$.pages[0].rdjb','2') where id=?").run(wrongTitle.queryId)
-  const read = async (filters: Record<string,number> = {}) => transport === 'MCP' ? mcp(filters)
-    : (await query(Object.fromEntries(Object.entries(filters).map(([key,value]) => [key,String(value)])))).body
+it.each(['HTTP', 'MCP'] as const)('does not use a different original row title as qualification evidence over %s', async transport => {
+  const a=f.candidate('来源称号边界')
+  const eventId=(f.db.$client.prepare('select id from record_event where record_id=?').get(a.record.id) as {id:number}).id
+  submitSyntheticRecognizedCollection(f.db,{rdjb:'2',queriedAt:'2026-05-01T00:00:00Z',rows:[{enterpriseId:a.enterprise.id,raw:{id:'OTHER-TITLE',qymc:a.enterprise.name,tyshxydm:a.enterprise.usccNorm,rdjb:'2',rddqrq:'2028-11-20',whpc:'2023-2'}}]})
+  const read=async(filters:Record<string,number>={})=>transport==='MCP'?mcp(filters):(await query(Object.fromEntries(Object.entries(filters).map(([key,value])=>[key,String(value)])))).body
   expect(await read()).toMatchObject({total:1,rows:[{matchedValidYears:[],matchedMaintenance:[]}],options:{validYears:[],maintenanceYears:[]}})
   expect(await read({validYear:2028})).toMatchObject({total:0,rows:[]})
   expect(await read({maintenanceYear:2023})).toMatchObject({total:0,rows:[]})

@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { beforeAll, beforeEach, afterAll, expect, it } from 'vitest'
-import * as schema from '../db/schema'
+import * as schema from '../upgrade/legacy-schema'
 import { targetSchema } from '../lib/platform/target-schema'
 import { processReaderFixture } from './helpers/process-target-734'
 import { transferCorrespondence } from '../upgrade/correspondence'
@@ -13,10 +13,9 @@ import { transferDifferenceReferences } from '../upgrade/difference-references'
 import { indexLegacyProvenance } from '../upgrade/legacy-provenance'
 import { installLegacyProvenance } from '../upgrade/legacy-provenance-schema'
 import { requireLegacyProvenanceReady } from '../lib/platform/legacy-provenance-catalog'
-import { assertExpandRuntime } from '../db/schema-phase'
 import { legacyPlatformProvenanceSchema } from '../lib/platform/legacy-provenance'
-import { allocateLegacyAlias, bindArchive, sealArchiveOwner, insertArchiveValue, reserveLegacyIds } from '../lib/platform/target-archive'
-import { writeNewCollectionTarget } from '../lib/platform/collection-target-command'
+import { allocateLegacyAlias, bindArchive, sealArchiveOwner, insertArchiveValue, reserveLegacyIds } from '../upgrade/frozen/target-archive'
+import { writeNewCollectionTarget } from '../upgrade/frozen/collection-target-command'
 
 let f: Awaited<ReturnType<typeof processReaderFixture>>, source:string, target:string
 let caseNumber=0
@@ -129,7 +128,6 @@ it('runs readonly preflight and actual CLI after populated schema0 full pipeline
     expect(t.pragma('foreign_key_list(platform_collection_legacy_provenance)')).toEqual(expect.arrayContaining(['platform_collection','import_batch','platform_archive_value'].map(table=>expect.objectContaining({table,on_delete:'RESTRICT'}))))
     expect(t.prepare("SELECT name FROM sqlite_schema WHERE type='index' AND tbl_name='platform_collection_legacy_provenance'").all()).toHaveLength(2)
     expect(()=>requireLegacyProvenanceReady(t)).not.toThrow()
-    expect(()=>assertExpandRuntime(t)).toThrow('Finalized/offline target')
     expect(old.pragma('user_version',{simple:true})).toBe(0)
   } finally {old.close();s.close();t.close()}
   expect(readFileSync(source)).toEqual(sourceBytes)

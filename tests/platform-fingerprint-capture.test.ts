@@ -1,6 +1,6 @@
 import Database from 'better-sqlite3'
-import * as expandSchema from '../db/schema'
-import { ensurePlatformObservation } from '../server/utils/platform-business-record'
+import * as expandSchema from '../upgrade/legacy-schema'
+
 import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { migrate } from 'drizzle-orm/better-sqlite3/migrator'
 import { copyFileSync, mkdtempSync } from 'node:fs'
@@ -29,12 +29,12 @@ function fixture(seed?:(s:Database.Database)=>void) {
   return {source,target,t}
 }
 
-import { beforeAll, afterAll } from 'vitest'
+import { beforeAll } from 'vitest'
 import { installFingerprintBarrier } from '../upgrade/fingerprint-basis'
 import { targetSchema } from '../lib/platform/target-schema'
-import { writeApplyTarget, type ApplyTargetInput } from '../lib/platform/apply-target-writer'
-import { writeProcessTarget } from '../lib/platform/process-target-writer'
-import { writeRecognizedTarget } from '../lib/platform/recognized-target-writer'
+import { writeApplyTarget, type ApplyTargetInput } from '../upgrade/frozen/apply-target-writer'
+import { writeProcessTarget } from '../upgrade/frozen/process-target-writer'
+import { writeRecognizedTarget } from '../upgrade/frozen/recognized-target-writer'
 let base: Buffer
 beforeAll(()=>{ const f=fixture(t=>{
  t.exec("insert into platform_query(id,interface,query_key,rdjb,queried_at,status,created_at) values(2,'business_list','B','','t','success','c'),(3,'recognized_list','R','','t','success','c')")
@@ -51,14 +51,14 @@ it.each([['apply_list',writeApplyTarget],['business_list',writeProcessTarget],['
  expect(t.prepare('select scheme,cast(bytes as text) bytes from platform_observation_fingerprint_basis b join platform_archive_value a on a.id=b.input_archive_id where observation_id=?').get(result.observationId)).toEqual({scheme:'target-command-v1',bytes:literal.replace('collectionId\":1','collectionId\":'+args.collectionId)})
  expect(result.recordId).toBeNull();expect(result.versionId).toBeNull();expect(t.pragma('foreign_key_check')).toEqual([]);t.close()
 })
-import { verifyFingerprint } from '../lib/platform/fingerprint-verifier'
+import { verifyFingerprint } from '../upgrade/frozen/fingerprint-verifier'
 it('verifies captured input against facts and revision1 but leaves revision2 outside original hash',()=>{
  const {t,db}=fresh(); const r=writeApplyTarget(db,input)
  expect(verifyFingerprint(t,{observationId:r.observationId,collectionId:1,relationAlias:r.relationAlias}).scheme).toBe('target-command-v1')
  t.prepare("insert into platform_observation_assignment(observation_id,revision,match_basis,verification_status,origin,actor,basis) values(?,2,'none','pending','command','{}','later')").run(r.observationId)
  expect(()=>verifyFingerprint(t,{observationId:r.observationId,collectionId:1,relationAlias:r.relationAlias})).not.toThrow();t.close()
 })
-import { bootstrapFingerprint } from '../lib/platform/fingerprint-bootstrap'
+import { bootstrapFingerprint } from '../upgrade/frozen/fingerprint-bootstrap'
 it('ordinary bootstrap captures original legacy null envelope even with request while reference leaves not_indexed intact',()=>{
  const {t}=fresh();const owner={observationId:11,collectionId:1,relationAlias:11}
  const before=t.serialize();expect(bootstrapFingerprint(t,owner,'reference')).toBeNull();expect(t.serialize()).toEqual(before)
@@ -96,7 +96,7 @@ it('revision1 drift rejects while its archive still has the original digest',()=
 })
 
 import { readFileSync } from 'node:fs'
-import { writeNewCollectionTarget, type NewCollectionTargetCommand } from '../lib/platform/collection-target-command'
+import { writeNewCollectionTarget, type NewCollectionTargetCommand } from '../upgrade/frozen/collection-target-command'
 it.each(['queryList','businessList','queryBusList'])('full %s command preserves research literal A/B hashes and canonical input presence',source=>{
  const original=JSON.parse(readFileSync(new URL('./fixtures/fingerprint-capture/'+source+'.json',import.meta.url),'utf8')) as {a:NewCollectionTargetCommand,b:NewCollectionTargetCommand,bytesA:string,bytesB:string}
  for(const [key,wanted] of [['a','5787a3cae365a8bb0632230f801aefa5fa16676a0a3c5d978239eeec78aad45b'],['b','29ad6f09680c20070d3dbc05f69c8ae09a069ab16bc40bbe2fb351cc497be73d']] as const) {
@@ -112,12 +112,12 @@ it.each(['queryList','businessList','queryBusList'])('full %s command preserves 
   expect(Object.hasOwn(JSON.parse(row.bytes).assignment,'commandReceiptId')).toBe(key==='b');empty.close()
  }
 })
-import { emptyFingerprintTarget } from '../lib/platform/fingerprint-verifier'
+import { emptyFingerprintTarget } from '../upgrade/frozen/fingerprint-verifier'
 it('outer COMMIT rejects orphan captured basis after successful nested RELEASE; explicit rollback restores bytes',()=>{
  const {t,db}=fresh();const before=t.serialize();t.exec('BEGIN;SAVEPOINT nested')
  captureFingerprintBasis(db,999,'target-command-v1',Buffer.from('{}'));t.exec('RELEASE nested');expect(()=>t.exec('COMMIT')).toThrow(/FOREIGN KEY/);t.exec('ROLLBACK');expect(t.serialize()).toEqual(before);t.close()
 })
-import { captureFingerprintBasis } from '../lib/platform/fingerprint-capture'
+import { captureFingerprintBasis } from '../upgrade/frozen/fingerprint-capture'
 it('FK OFF rejects command bootstrap and basis helper before any write',()=>{
  const {t,db}=fresh();t.pragma('foreign_keys=OFF');const before=t.serialize()
  for(const outer of [false,true]){if(outer)t.exec('BEGIN');expect(()=>writeNewCollectionTarget(db,{queryText:'{}',evidenceText:null,createdAt:'c',assignments:[]})).toThrow(/foreign_keys/);expect(()=>bootstrapFingerprint(t,{observationId:11,collectionId:1,relationAlias:11},'ordinary')).toThrow(/foreign_keys/);expect(()=>captureFingerprintBasis(db,999,'target-command-v1',Buffer.from('{}'))).toThrow(/foreign_keys/);if(outer)t.exec('ROLLBACK');expect(t.serialize()).toEqual(before)}t.close()
@@ -154,7 +154,7 @@ it('rejects undefined and non-plain prototype input without leaving any facts',(
  const row=Object.assign(Object.create({extra:'inherited'}),input.row)
  expect(()=>writeApplyTarget(db,{...input,row})).toThrow('platform_raw_not_json');expect(t.serialize()).toEqual(before);t.close()
 })
-import { insertArchiveValue, bindArchive, sealArchiveOwner, allocateLegacyAlias, reserveLegacyIds, bindLegacyAlias, writeOwnerArchive } from '../lib/platform/target-archive'
+import { insertArchiveValue, bindArchive, sealArchiveOwner, allocateLegacyAlias, reserveLegacyIds, bindLegacyAlias, writeOwnerArchive } from '../upgrade/frozen/target-archive'
 it('all successor archive and alias write helpers reject FK OFF before mutations in outer transactions',()=>{
  const {t,db}=fresh();t.pragma('foreign_keys=OFF');const before=t.serialize()
  const calls=[()=>insertArchiveValue(db,{storageClass:'blob',bytes:Buffer.from('{}'),createdAt:null}),()=>bindArchive(db,{kind:'observation',ownerId:11,field:'rawFields',archiveId:1}),()=>sealArchiveOwner(db,{kind:'observation',ownerId:11}),()=>allocateLegacyAlias(db,{kind:'relation',observationId:11}),()=>reserveLegacyIds(db,{query:9,relation:999}),()=>bindLegacyAlias(db,{kind:'relation',oldId:999,observationId:11}),()=>writeOwnerArchive(db,{kind:'observation',ownerId:11,field:'rawFields'},{storageClass:'null',bytes:null,createdAt:null})]

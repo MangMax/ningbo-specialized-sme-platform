@@ -4,7 +4,7 @@ import { witnessInstalled } from './recognized-witness-catalog'
 import { captureWitnessCollection } from './recognized-witness-write'
 import { sqliteConnection } from './target-connection'
 import { replayOptionalString,platformQueryInsertMetadata } from './query-replay'
-/** W4a: explicit offline 71606 complete-new-collection command. No public routing. */
+/** Atomic native collection creation, including source-owned observations and archives. */
 import { requireCaptureForeignKeys } from './fingerprint-capture'
 import { isDeepStrictEqual } from 'node:util'
 import { and,eq,sql } from 'drizzle-orm'

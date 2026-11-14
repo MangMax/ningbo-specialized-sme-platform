@@ -5,12 +5,13 @@ import { migrate } from 'drizzle-orm/better-sqlite3/migrator'
 import { eq } from 'drizzle-orm'
 import { mkdirSync, mkdtempSync, statfsSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { tmpdir } from 'node:os'
 import { expect, it } from 'vitest'
-import * as schema from '../db/schema'
+import * as schema from '../upgrade/legacy-schema'
 import { legacyRawRdjb } from '../upgrade/frozen/server/platform-legacy-relation-read'
 import { legacyRowTitle } from '../lib/platform/observation-facts'
 import { parseBusinessProcess } from '../lib/platform/business-projection'
-import { ensurePlatformObservation } from '../server/utils/platform-business-record'
+import { ensurePlatformObservation } from '../upgrade/frozen/server/platform-business-record'
 import { listPlatformBusinessProcesses } from '../upgrade/frozen/server/platform-business-processes'
 import { readPlatformFilterOptions } from '../upgrade/frozen/server/platform-filter-options'
 import { rowSnapshot } from '../lib/platform/sqlite-row-cells'
@@ -18,8 +19,7 @@ import { candidateFixture } from './helpers/candidate-scope-target'
 
 const fields = ['title_raw', 'declare_kind', 'year', 'status', 'batch', 'applied_at', 'award_batch_label', 'province'] as const
 function fixture() {
-  const base = process.env.PROCESS_STORED_EVIDENCE_DIR
-  if (!base) throw new Error('Exclusive PROCESS_STORED_EVIDENCE_DIR required')
+  const base = process.env.PROCESS_STORED_EVIDENCE_DIR ?? tmpdir()
   mkdirSync(base, { recursive: true })
   const d = statfsSync(base)
   if (d.bavail * d.bsize < 8 * 1024 ** 3) throw new Error('Disk floor 8GiB')
@@ -115,5 +115,5 @@ it('retains the actual historical REAL-year full-migration rejection without mod
     })
   } catch (error) { failure = String(error) }
   expect(failure).toContain('Unrepresentable legacy process year')
-  writeFileSync(join(process.env.PROCESS_STORED_EVIDENCE_DIR!, 'REAL-YEAR-REJECTION.json'), JSON.stringify({ input: 2024.5, failure, fullMigrationSupported: false }, null, 2))
+  writeFileSync(join(process.env.PROCESS_STORED_EVIDENCE_DIR ?? tmpdir(), 'REAL-YEAR-REJECTION.json'), JSON.stringify({ input: 2024.5, failure, fullMigrationSupported: false }, null, 2))
 })

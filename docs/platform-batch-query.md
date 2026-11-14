@@ -1,5 +1,6 @@
 # Asynchronous platform queries
 
+
 The batch interface reuses the single live-query service in
 [platform-live-query.md](./platform-live-query.md). It only persists safe task
 parameters and redacted query results in the existing job table. It never writes

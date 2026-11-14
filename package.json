@@ -12,8 +12,6 @@
     "generate": "nuxt generate",
     "preview": "nuxt preview",
     "postinstall": "nuxt prepare",
-    "db:generate": "drizzle-kit generate",
-    "db:migrate": "drizzle-kit migrate",
     "db:studio": "drizzle-kit studio",
     "typecheck": "nuxt typecheck",
     "check:doctor": "vite-doctor .",
@@ -26,7 +24,8 @@
     "verify:detail-return-scroll": "node scripts/verify-detail-return-scroll.mjs",
     "verify:roster-return-chain": "node scripts/verify-roster-return-chain.mjs",
     "verify:browser-test-port-isolation": "node scripts/verify-browser-test-port-isolation.mjs",
-    "verify:native-platform-boundary": "node scripts/verify-native-platform-boundary.mjs"
+    "verify:native-platform-boundary": "node scripts/verify-native-platform-boundary.mjs",
+    "db:init": "node --env-file-if-exists=.env scripts/initialize-native-db.mjs"
   },
   "dependencies": {
     "@embedpdf/core": "2.15.1",

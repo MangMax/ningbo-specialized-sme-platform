@@ -11,7 +11,7 @@ import { setTimeout as sleep } from 'node:timers/promises'
 import { forkOwnedChild as fork, reserveLoopbackPort, stopOwnedChild } from './lib/isolated-local-services.mjs'
 
 const { createJiti } = createRequire(import.meta.resolve('nuxt/package.json'))('jiti')
-const { useDb } = await createJiti(import.meta.url).import('../db/client.ts')
+const { initializeDb } = await createJiti(import.meta.url).import('../db/client.ts')
 const driver = createRequire(resolve('.output/server/index.mjs')).resolve('better-sqlite3')
 const phases = ['batch-finalized', 'receipt-finalized', 'commit-returned']
 const root = mkdtempSync(join(tmpdir(), 'snapshot-finalization-'))
@@ -19,7 +19,7 @@ const root = mkdtempSync(join(tmpdir(), 'snapshot-finalization-'))
 async function verify(phase) {
   const dir = join(root, phase), dbPath = join(dir, 'roster.db'), marker = join(dir, 'paused')
   const hook = join(dir, 'fault-hook.mjs')
-  useDb({ dbPath }).$client.close()
+  initializeDb({ dbPath, create: true }).$client.close()
   // Observe driver statements only. The production import, ledger, and transaction
   // implementation remain unchanged; each marker is written after native run returns.
   writeFileSync(hook, `import {createRequire} from 'node:module';import {writeFileSync} from 'node:fs';

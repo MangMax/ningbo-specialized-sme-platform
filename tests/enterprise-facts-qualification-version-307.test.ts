@@ -2,12 +2,12 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, expect, it } from 'vitest'
-import { useDb, schema } from '../db/client'
+import { initializeDb, schema } from '../db/client'
 import { createHash } from 'node:crypto'
 import { createCurrentQualificationAssessmentReader, PREVIOUS_QUALIFICATION_ASSESSMENT_VERSION, QUALIFICATION_ASSESSMENT_VERSION } from '../lib/roster/current-qualification'
 
 const dir = mkdtempSync(join(tmpdir(), 'facts-qualification-version-307-'))
-const db = useDb({ dbPath: join(dir, 'test.sqlite') })
+const db = initializeDb({ create: true,  dbPath: join(dir, 'test.sqlite') })
 db.insert(schema.enterprise).values({ id: 1, name: '版本兼容合成企业', nameNorm: '版本兼容合成企业', city: '宁波市' }).run()
 db.insert(schema.differenceReason).values({
   id: 1, enterpriseId: 1, titleCode: 'specialized_sme', direction: 'missing_in_miit',

@@ -7,14 +7,14 @@ import { mount, flushPromises, type VueWrapper } from '@vue/test-utils'
 import { createPinia } from 'pinia'
 import { PiniaColada } from '@pinia/colada'
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from 'vitest'
-import { useDb, schema } from '../db/client'
+import { initializeDb, schema } from '../db/client'
 import { captureIdentityRevision113, processEvidenceImpacts113 } from '../server/utils/evidence-impact-113'
 import { closeReviewSnapshots114, impactList114, listImpacts114 } from '../server/utils/evidence-review-114'
 import EvidenceReviewList from '../components/evidence-review/EvidenceReviewList.vue'
 import { Select } from '../components/ui/select'
 
 const dir = mkdtempSync(join(tmpdir(), 'review-275-'))
-const db = useDb({ dbPath: join(dir, 'synthetic.db') })
+const db = initializeDb({ create: true,  dbPath: join(dir, 'synthetic.db') })
 const enterprise = db.insert(schema.enterprise).values({ name: '合成目标企业', nameNorm: '合成目标企业' }).returning().get()
 const other = db.insert(schema.enterprise).values({ name: '合成其他企业', nameNorm: '合成其他企业' }).returning().get()
 captureIdentityRevision113(db, { enterpriseId: other.id, sourceKey: '275-other', sourceVersion: '1', before: {}, after: { name: other.name } })

@@ -1,7 +1,7 @@
 import { deserialize } from 'node:v8'
 import { getTableConfig } from 'drizzle-orm/sqlite-core'
-import { witnessCollection,witnessCondition,witnessObservation } from '../lib/platform/recognized-witness-schema'
-import { verifyFingerprint } from '../lib/platform/fingerprint-verifier'
+import { witnessCollection,witnessCondition,witnessObservation } from '../upgrade/frozen/recognized-witness-schema'
+import { verifyFingerprint } from '../upgrade/frozen/fingerprint-verifier'
 import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { expect,it } from 'vitest'
@@ -9,15 +9,14 @@ import { copyFileSync,writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { recognizedFixture } from './helpers/recognized-target-732'
 import { finalizeRecognizedWitness } from '../upgrade/recognized-witness'
-import { witnessInstalled } from '../lib/platform/recognized-witness-catalog'
-import { recognizedStoredInstalled } from '../lib/platform/recognized-stored-catalog'
-import { verifyWitnessCollection,verifyWitnessObservation,captureWitnessCollection,witnessCollectionValues } from '../lib/platform/recognized-witness-write'
-import { assertExpandRuntime } from '../db/schema-phase'
+import { witnessInstalled } from '../upgrade/frozen/recognized-witness-catalog'
+import { recognizedStoredInstalled } from '../upgrade/recognized-stored-catalog'
+import { verifyWitnessCollection,verifyWitnessObservation,captureWitnessCollection,witnessCollectionValues } from '../upgrade/frozen/recognized-witness-write'
 import { targetSchema as s } from '../lib/platform/target-schema'
 import { platformResultToImport } from '../lib/platform/recognized-evidence'
 import type { PlatformLiveQueryResult,PlatformQuerySource } from '../lib/platform/live-query'
-import { writeNewCollectionTarget,writeCollectionTarget,type NewCollectionTargetCommand } from '../lib/platform/collection-target-command'
-import { insertArchiveValue,bindArchive,sealArchiveOwner } from '../lib/platform/target-archive'
+import { writeNewCollectionTarget,writeCollectionTarget,type NewCollectionTargetCommand } from '../upgrade/frozen/collection-target-command'
+import { insertArchiveValue,bindArchive,sealArchiveOwner } from '../upgrade/frozen/target-archive'
 import { listTargetRecognizedDirectory } from '../server/utils/platform-recognized-target'
 async function fixture(){const f=await recognizedFixture();f.close();const source=join(f.root,'witness-source.sqlite');copyFileSync(f.target,source);return {...f,source,runId:'witness',predecessorRunId:'recognized'}}
 function command(source:PlatformQuerySource='queryBusList'):NewCollectionTargetCommand {
@@ -39,7 +38,6 @@ it('preserves every predecessor cell receipt and checkpoint and replays a catalo
     expect(actual.dflt_value).toBe(column.default==='uncaptured'?"'uncaptured'":null)
    }
   }
-  expect(()=>assertExpandRuntime(t)).toThrow(/cutover/)
   for(const r of source.prepare("SELECT name FROM sqlite_schema WHERE type='table' AND name NOT LIKE 'sqlite_%'").all() as {name:string}[]) {
    const columns=(source.prepare(`PRAGMA table_info('${r.name}')`).all() as {name:string}[]).map(c=>`"${c.name}"`).join(',')
    const suffix=r.name.startsWith('platform_migration_')?" WHERE run_id<>'witness'":''

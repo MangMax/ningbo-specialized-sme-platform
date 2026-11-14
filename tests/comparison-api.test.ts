@@ -1,3 +1,4 @@
+import { submitNativePlatformQuery } from './helpers/native-platform-fixture'
 import { initializeDb } from '../db/client'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -58,14 +59,7 @@ db.insert(schema.enterpriseAlias)
     verificationStatus: 'pending',
   })
   .run()
-const queryId = db
-  .insert(schema.platformQuery)
-  .values({ interface: 'business_list', queryKey: USCC, rdjb: '3', queriedAt: '2026-10-15T17:11:21.514Z', status: 'success' })
-  .returning({ id: schema.platformQuery.id })
-  .get().id
-db.insert(schema.platformRelation)
-  .values({ queryId, sequenceNo: 1, relationKey: 'SQ1', enterpriseId: withEvidence, usccRaw: USCC, nameRaw: '宁波上航测绘有限公司' })
-  .run()
+const queryId = submitNativePlatformQuery(db, { ...{ interface: 'business_list', queryKey: USCC, rdjb: '3', queriedAt: '2026-10-15T17:11:21.514Z', status: 'success' }, rawResponse: 'Explicit synthetic comparison source', relations: [{ sequenceNo: 1, relationKey: 'SQ1', enterpriseId: withEvidence, usccRaw: USCC, nameRaw: '宁波上航测绘有限公司' }] }).queryId
 db.insert(schema.differenceReason)
   .values({
     enterpriseId: withEvidence,

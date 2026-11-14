@@ -4,7 +4,7 @@ import { join, resolve } from 'node:path'
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { sql } from 'drizzle-orm'
-import { useDb, schema } from '../db/client'
+import { initializeDb, schema } from '../db/client'
 import { createRosterImportClient, type RosterImportRequest } from '../lib/roster-import-client'
 import { processEvidenceImpacts113, listEvidenceImpacts113, listImpactEvidence113, readEvidenceToken113, listRevisionEvents113 } from '../server/utils/evidence-impact-113'
 import { recognizedResultToImport } from '../lib/platform/recognized-evidence'
@@ -13,7 +13,7 @@ import { minimalPdf } from './helpers/minimal-pdf'
 import { spawnOwnedChild as spawn, reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../scripts/lib/isolated-local-services.mjs'
 
 const dir = mkdtempSync(join(tmpdir(), 'impact-113-'))
-const dbPath = join(dir, 'synthetic.db'), db = useDb({ dbPath })
+const dbPath = join(dir, 'synthetic.db'), db = initializeDb({ create: true,  dbPath })
 let baseUrl: string, stop: () => Promise<void>, client: ReturnType<typeof createRosterImportClient>
 const actor = { type: 'agent', id: 'synthetic-113' }
 async function rpc(name: string, args: Record<string, unknown>) {
@@ -28,7 +28,7 @@ function seed(name: string, usccNorm: string | null = null) { return db.insert(s
 function decision(enterpriseId: number, titleCode = 'specialized_sme', direction: 'missing_in_miit' | 'extra_in_miit' = 'missing_in_miit', status: 'not_queried' | 'confirmed_no_diff' = 'not_queried') {
   return db.insert(schema.differenceReason).values({ enterpriseId, titleCode, direction, status, measureCode: status === 'not_queried' ? 'manual_review' : 'none', verificationStatus: status === 'not_queried' ? 'pending' : 'confirmed', recordedAt: '2026-10-01T00:00:00Z' }).returning().get()
 }
-const batch = (key: string, payload: any) => ({ idempotencyKey: key, sourceKind: 'alias_evidence' as const, sourceIdentity: 'synthetic/' + key, payload })
+const batch = (key: string, payload: any) => ({ idempotencyKey: key, sourceKind: 'alias_evidence' as const, sourceIdentity: 'synthetic/' + key, payload: { ...payload, ...(payload.platformQueries ? { platformQueries: payload.platformQueries.map((q: any) => q.reuseExisting || q.rawResponse != null || q.collectionEvidence != null ? q : { ...q, rawResponse: JSON.stringify({ synthetic: true, rows: q.relations ?? [] }) }) } : {}) } })
 const backfill = (id: number) => ({ enterpriseId: id, uscc: '91330211255994457P', source: { url: 'https://example.com/official', title: '合成公开来源', checkedOn: '2026-10-19', basis: '同名及地区主体核验', name: '缺码补齐' } })
 function drain(limit = 100) { let result; for (let i = 0; i < 100; i++) { result = processEvidenceImpacts113(db, { limit }); if (!result.unfinished) return result }; throw new Error('bounded processor did not finish') }
 beforeAll(async () => {
@@ -82,8 +82,8 @@ describe('ticket 113 committed evidence impact substrate', () => {
     expect(listEvidenceImpacts113(db, { enterpriseId: other.id })).toEqual([])
     const record = db.insert(schema.record).values({ enterpriseId: e.id, titleCode: 'specialized_sme', source: 'jxj' }).returning().get()
     const event = db.insert(schema.recordEvent).values({ recordId: record.id, eventType: 'award', year: 2024 }).returning().get()
-    const source = db.get<{ id: number }>(sql`select id from platform_relation where enterprise_id=${e.id} order by id desc limit 1`)!
-    db.insert(schema.recordCorrespondence).values({ edgeKey: 'archive-associated-event-113', type: 'event_process', role: 'award_origin', eventId: event.id, relationId: source.id, enterpriseId: e.id, titleCode: 'specialized_sme', status: 'confirmed', revision: 1, targetIdentity: {}, provenance: {}, sourceFingerprint: 'synthetic', ruleId: 'manual', ruleVersion: '1', createdAt: '2026-10-19' }).run()
+    const source = db.get<{ id: number; observationId: number }>(sql`select a.old_id as id, a.observation_id as observationId from platform_legacy_relation_alias a join platform_observation_assignment s on s.observation_id=a.observation_id where s.enterprise_id=${e.id} order by a.old_id desc limit 1`)!
+    db.insert(schema.recordCorrespondence).values({ edgeKey: 'archive-associated-event-113', type: 'event_process', role: 'award_origin', eventId: event.id, observationId: source.observationId, enterpriseId: e.id, titleCode: 'specialized_sme', status: 'confirmed', revision: 1, targetIdentity: {}, provenance: {}, sourceFingerprint: 'synthetic', ruleId: 'manual', ruleVersion: '1', createdAt: '2026-10-19' }).run()
     expect((await client.commit(batch('archive-linked-new', { platformQueries: [{ ...q, queriedAt: '2026-10-19T03:30:00Z', status: 'success', relations: [{ sequenceNo: 1, enterpriseId: e.id, status: '关联事件的新证据' }] }] }))).status).toBe('committed'); drain()
     const updated = listEvidenceImpacts113(db, { enterpriseId: e.id })
     expect(listRevisionEvents113(db, updated[0]!.latestRevisionId, { enterpriseId: e.id })).toEqual([expect.objectContaining({ eventId: event.id, titleCode: 'specialized_sme' })])
@@ -199,7 +199,7 @@ describe('ticket 113 committed evidence impact substrate', () => {
     const request = batch(`receipt-atomic-113-${table}`, { platformQueries: [query] })
     const before = readEvidenceToken113(db, scope)
     const revisionCount = db.select().from(schema.evidenceRevision113).all().length
-    const facts = () => db.get<{ n: number }>(sql`select count(*) n from platform_query where query_key=${e.usccNorm}`)!.n
+    const facts = () => db.get<{ n: number }>(sql`select count(*) n from platform_collection where query_key=${e.usccNorm}`)!.n
     const getReceipt = async (selector: string) => {
       const response = await fetch(baseUrl + '/api/roster/import/receipts?' + selector, { headers: { authorization: 'Bearer synthetic-api' } })
       expect(response.status).toBe(200)

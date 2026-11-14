@@ -8,9 +8,9 @@ import { join } from 'node:path'
 import { createRequire } from 'node:module'
 import { spawnOwnedChild as spawn, reserveLoopbackPort, stopOwnedChild, waitForHttp } from './lib/isolated-local-services.mjs'
 const { createJiti } = createRequire(import.meta.resolve('nuxt/package.json'))('jiti')
-const { useDb, schema } = await createJiti(import.meta.url).import('../db/client.ts')
+const { initializeDb, schema } = await createJiti(import.meta.url).import('../db/client.ts')
 const dir = mkdtempSync(join(tmpdir(), 'event-100-public-')), dbPath = join(dir, 'test.db')
-const db = useDb({ dbPath })
+const db = initializeDb({ dbPath, create: true })
 const enterprise = db.insert(schema.enterprise).values({ name: '公开接缝合成企业', nameNorm: '公开接缝合成企业' }).returning().get()
 const record = db.insert(schema.record).values({ enterpriseId: enterprise.id, source: 'jxj', titleCode: 'specialized_sme' }).returning().get()
 const event = db.insert(schema.recordEvent).values({ recordId: record.id, eventType: 'award', year: 2021, decidedYear: 2021, batchSeq: 1 }).returning().get()

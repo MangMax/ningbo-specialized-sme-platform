@@ -1,5 +1,6 @@
 # #763 A：reconcile 四槽旧封套捕获契约
 
+
 状态：docs-only 候选，pending 父级独立 Standards/Spec review 与 LOCAL 接受。A 不授权 B。级别 L，难度高；离线捕获、新写重放和显式运行接线分三片 ≤M，见末节。本文是表示和验收契约，不是已运行证明。
 
 固定基线为 `3f8085abe5bb8b5c5c2221495a40c68e84f086db`，tree `0b7fc5874bf9477bef3a0389e9cbd8346d9a0a7f`。实时 #763 正文及 comments 冻结于仓外证据 root `/Users/mang/.t3/acceptance/platform-complete-migration/reconcile-slot-capture/contract763/issue763.frozen.json`，updatedAt 为 `2026-11-13T03:52:46Z`。冻结文件 SHA256 为 `e80b007ecd55cca24454d001f68d2d6c116ccdf1fc9b2c993e6671b992c62d41`。

@@ -1,45 +1,28 @@
 import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
-import { migrate } from 'drizzle-orm/better-sqlite3/migrator'
 import { eq } from 'drizzle-orm'
 import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { createHash } from 'node:crypto'
-import { createRequire } from 'node:module'
 import { spawnSync } from 'node:child_process'
-import { beforeAll, expect, it } from 'vitest'
-import * as schema from '../db/schema'
-import { queryPlatformSlots, readCompleteLegacySlot, type LegacySlotCollection, type PlatformQueryOutcome } from '../lib/platform/client'
-import { buildPlatformWritePayload } from '../lib/platform/payload'
-import { commitRosterImport } from '../server/utils/roster-import'
-import { runPlatformReconcile } from '../server/utils/platform-reconcile'
+import { beforeAll, describe, expect, it } from 'vitest'
+import * as schema from '../upgrade/legacy-schema'
+import { readCompleteLegacySlot, type LegacySlotCollection } from '../lib/platform/client'
 import { normalizePlatformRelation } from '../lib/platform/normalization'
 import { rowSnapshot, schemaHash } from '../lib/platform/sqlite-row-cells'
 import { slotLegacyRow, slotPayloadRow, slotInputDigest, RECONCILE_SLOT_T04, captureReconcileSlot, type SlotInput } from '../lib/platform/reconcile-slot-capture'
 import { installReconcileSlotPrerequisite, hasReconcileSlotCapture } from '../upgrade/reconcile-slot-schema'
 import { captureSourceSlot, completeReconcileSlotCapture, readSlotCapture, sourceSlotInput, verifyReconcileHistory } from '../upgrade/reconcile-slot-capture'
-import { installBusinessStatusPrerequisite } from '../upgrade/business-status'
 import { upgradeCollections, withFrozenSource, manifest } from '../upgrade/collections'
 import { upgradeObservations } from '../upgrade/observations'
 import { upgradeProjections, projectionManifest } from '../upgrade/projections'
-import { finalizeObservations, finalizeCollectionScopes } from '../upgrade/finalize-observations'
-import { finalizeFingerprintBasis } from '../upgrade/fingerprint-basis'
-import { finalizeApplyStored } from '../upgrade/apply-stored'
-import { finalizeCandidateScopes } from '../upgrade/candidate-scope'
-import { finalizeRecognizedStored } from '../upgrade/recognized-stored'
-import { finalizeRecognizedWitness } from '../upgrade/recognized-witness'
-import { finalizeProcessStored } from '../upgrade/process-stored'
-import { transferCorrespondence } from '../upgrade/correspondence'
-import { transferDifferenceReferences } from '../upgrade/difference-references'
-import { indexLegacyProvenance } from '../upgrade/legacy-provenance'
-import type { PlatformRawRow } from '../lib/platform/adapter'
 
 const owner = process.env.OFFLINE_764_ROOT
-if (!owner) throw new Error('Exclusive OFFLINE_764_ROOT required')
-const root = join(owner,'final-fixture-batch'), source = join(root,'schema0.sqlite'), target = join(root,'target.sqlite')
-mkdirSync(root,{recursive:true})
-const caseRoot=mkdtempSync(join(owner,'cases-'))
-const time='2026-11-13T00:00:00.000Z', uscc='91330211000000088X'
+// Private acceptance requires the frozen fixture bundle, not an old application service.
+describe.runIf(Boolean(owner))('offline capture custody (requires OFFLINE_764_ROOT frozen bundle)', () => {
+const root = join(owner ?? '', 'final-fixture-batch'), source = join(root,'schema0.sqlite'), target = join(root,'target.sqlite')
+let caseRoot: string
+const uscc='91330211000000088X'
 const hash=(v:string|Buffer)=>createHash('sha256').update(v).digest('hex')
 const opts={source,target,runId:'c',collectionRunId:'c',observationRunId:'o',projectionRunId:'p',finalizationRunId:'f',batchSize:17}
 const completion={source,target,runId:'capture',collectionRunId:'c'}
@@ -55,171 +38,18 @@ function caseCopy(from:string) {return copy(from,'case-'+(++serial),caseRoot)}
 function open(path:string,readonly=false) {
   const t=new Database(path,{readonly,fileMustExist:true});t.pragma('foreign_keys=ON');return t
 }
-function snapshot(name:string) {
-  const path=join(root,name+'.sqlite')
-  if (!existsSync(path)) {copyFileSync(target,path);chmodSync(path,0o400)}
-  return path
-}
-function step(name:string,action:()=>unknown) {
-  const receipt=join(root,name+'.json')
-  if (!existsSync(receipt)) {
-    const result=action()
-    writeFileSync(receipt,JSON.stringify({result,targetSha256:hash(readFileSync(target))},null,2))
-  }
-}
-function response(rows:PlatformRawRow[],page=1) {
-  return JSON.stringify({zrarData:{grid:{businessListGrid:{page,pageSize:50,maxCount:rows.length,pageSet:rows.slice((page-1)*50,page*50)}}}})
-}
-async function produce(rows:PlatformRawRow[],key:string,rdjb:'1'|'2'|'3'='2') {
-  return (await queryPlatformSlots({uscc:key,cookie:'offline=764',retries:0,now:()=>time,fetchImpl:async(_url,init)=>{
-    const page=Number(new URLSearchParams(init.body).get('pageNum'))
-    return {ok:true,status:200,text:async()=>response(rows,page)}
-  }},[{interface:'business_list',rdjb}]))[0]!
-}
-function insert(s:Database.Database,outcome:PlatformQueryOutcome,rawRows?:PlatformRawRow[]) {
-  const request=buildPlatformWritePayload({sourceIdentity:'offline764',idempotencyKey:'764:'+outcome.queryKey+':'+outcome.rdjb,
-    queries:[{...outcome,outcome:{...outcome,...(rawRows?{rawRows}: {})}}],enterprises:[{id:1,name:'Capture',uscc}]})
-  const result=commitRosterImport(drizzle(s,{schema}),request,[],{deferCandidateTasks:true})
-  expect(result.status,JSON.stringify(result)).toBe('committed')
-  return (s.prepare('SELECT id FROM platform_query WHERE query_key=? AND rdjb=?').get(outcome.queryKey,outcome.rdjb) as {id:number}).id
-}
 type MatrixCase={name:string;expected:'verified'|'miss'|'error'|'uncaptured';queryId:number}
 let cases:MatrixCase[]=[]
-beforeAll(async()=>{
-  if (!existsSync(source)) {
-    const s=new Database(source)
-    try {
-      migrate(drizzle(s),{migrationsFolder:'db/migrations'})
-      s.exec(`INSERT INTO title(code,name_zh,level,rank) VALUES('innovative_sme','创新型中小企业','municipal',1),('specialized_sme','专精特新中小企业','municipal',2),('little_giant','小巨人','national',3);
-        INSERT INTO enterprise(id,name,name_norm,uscc_norm) VALUES(1,'Capture','Capture','${uscc}');
-        INSERT INTO record(enterprise_id,source,title_code) VALUES(1,'miit','specialized_sme');`)
-      const typed:PlatformRawRow=JSON.parse(`{"id":"SHARED","qymc":"Capture","tyshxydm":"${uscc}","rdjb":"2","szsfmc":"P","cszt":"done","whpc":"B","sblx":"申请","sqsj":"D","personuuid":"A","year":2024,"n":1,"b":true,"x":null,"o":{"z":1,"a":false},"arr":[1,false],"__proto__":{"own":true},"constructor":"own"}`)
-      const original=await produce([typed],uscc)
-      const main=insert(s,original,[typed]);cases.push({name:'main',expected:'verified',queryId:main})
-      for (const name of ['supplement','evidence-priority']) {
-        const out=await produce([typed],name),id=insert(s,out,[typed])
-        const batch=Number(s.prepare('SELECT max(id) FROM import_batch').pluck().get())
-        s.prepare('INSERT INTO platform_query_legacy_provenance(query_id,source_identity,source_sha256,segment_index,collection,input_fingerprint,import_batch_id,created_at) VALUES(?,?,?,?,?,?,?,?)')
-          .run(id,'offline764/'+name,hash(name),0,JSON.stringify({source:'businessList',completeness:'partial',fetchedCount:1,pages:[]}),hash('input:'+name),batch,time)
-        if (name==='evidence-priority') s.prepare('UPDATE platform_query SET collection_evidence=? WHERE id=?').run(JSON.stringify({source:'queryList',completeness:'not_queried',fetchedCount:0,pages:[]}),id)
-        cases.push({name,expected:'verified',queryId:id})
-      }
-      // Other fresh slots are genuinely produced and imported, including complete empty.
-      for (const rdjb of ['1','3'] as const) cases.push({name:'empty-'+rdjb,expected:'verified',queryId:insert(s,await produce([],uscc,rdjb))})
-      const apply=(await queryPlatformSlots({uscc,cookie:'offline=764',retries:0,now:()=>time,fetchImpl:async()=>({ok:true,status:200,text:async()=>JSON.stringify({zrarData:{grid:{applyGrid:{page:1,pageSize:50,maxCount:0,pageSet:[]}}}})})},[{interface:'apply_list'}]))[0]!
-      cases.push({name:'empty-apply',expected:'verified',queryId:insert(s,apply)})
-      const multi=await produce(Array.from({length:51},(_,i)=>({id:'M'+i,cszt:'done'})),'multi')
-      cases.push({name:'multi51',expected:'verified',queryId:insert(s,multi)})
-      const fifty=await produce(Array.from({length:50},(_,i)=>({id:'F'+i})),'fifty')
-      cases.push({name:'single50',expected:'verified',queryId:insert(s,fifty)})
-      const mutations:{name:string;expected:'verified'|'miss';edit:(c:LegacySlotCollection)=>void;queryTime?:string;failureReason?:string}[]=[
-        {name:'unfinished-object',expected:'verified',edit:c=>{Object.assign(c,{unfinished:{}})}},
-        {name:'unfinished-empty-string',expected:'verified',edit:c=>{Object.assign(c,{unfinished:''})}},
-        {name:'unparseable-query-time',expected:'verified',edit:c=>{c.queriedAt='not-date'},queryTime:'not-date'},
-        {name:'nonmonotonic-page-time',expected:'verified',edit:c=>{c.pages[0]!.queriedAt='2026-11-14'}},
-        {name:'ignored-page-policy',expected:'verified',edit:c=>{Object.assign(c.pages[0]!,{maxPage:99,nextPage:100})}},
-        {name:'outer-failure-reason',expected:'verified',edit:()=>{},failureReason:'old outer diagnostic'},
-        {name:'missing-page',expected:'miss',edit:c=>{c.pages=[]}},
-        {name:'duplicate-page',expected:'miss',edit:c=>{c.pages.push({...c.pages[0]!})}},
-        {name:'wrong-page',expected:'miss',edit:c=>{c.pages[0]!.page=2}},
-        {name:'wrong-pagesize',expected:'miss',edit:c=>{c.pages[0]!.raw=c.pages[0]!.raw.replace('"pageSize":50','"pageSize":49')}},
-        {name:'declared-changed',expected:'miss',edit:c=>{c.declaredTotal=2}},
-        {name:'page-declared-changed',expected:'miss',edit:c=>{c.pages[0]!.declaredTotal=2}},
-        {name:'fetched-changed',expected:'miss',edit:c=>{c.pages[0]!.fetchedCount=0}},
-        {name:'request-lower',expected:'miss',edit:c=>{c.requestCount=0}},
-        {name:'request-upper',expected:'miss',edit:c=>{c.requestCount=101}},
-        {name:'request-fraction',expected:'miss',edit:c=>{c.requestCount=1.5}},
-        {name:'request-max',expected:'verified',edit:c=>{c.requestCount=100}},
-        {name:'completed-before',expected:'miss',edit:c=>{c.completedAt='2026-11-12'}},
-        {name:'completed-invalid',expected:'miss',edit:c=>{c.completedAt='bad'}},
-        {name:'page-time-invalid',expected:'miss',edit:c=>{c.pages[0]!.queriedAt='bad'}},
-        {name:'page-error-undefined',expected:'miss',edit:c=>{Reflect.deleteProperty(c.pages[0]!,'error')}},
-        {name:'wrong-source',expected:'miss',edit:c=>{c.pages[0]!.source='queryList'}},
-        {name:'wrong-rdjb',expected:'miss',edit:c=>{c.pages[0]!.rdjb='3'}},
-        {name:'wrong-raw-row',expected:'miss',edit:c=>{c.pages[0]!.raw=c.pages[0]!.raw.replace('SHARED','OTHER')}},
-        {name:'failure-reason',expected:'miss',edit:c=>{c.failureReason='failed'}},
-        {name:'unfinished-page',expected:'miss',edit:c=>{c.unfinished=[{source:'businessList',rdjb:'2',page:2}]}},
-      ]
-      for (const test of mutations) {
-        const c:LegacySlotCollection=JSON.parse(original.raw);test.edit(c)
-        c.queryKey=test.name
-        const outcome={...original,queryKey:test.name,queriedAt:test.queryTime??time,raw:JSON.stringify(c),failureReason:test.failureReason??null}
-        cases.push({name:test.name,expected:test.expected,queryId:insert(s,outcome,[typed])})
-      }
-      for (const [name,value] of [['shared-text','done'],['shared-blob',Buffer.from([0,255])],['shared-empty-blob',Buffer.alloc(0)]] as const) {
-        const out=await produce([typed],name),id=insert(s,out,[typed])
-        s.prepare('UPDATE platform_relation SET status=?,province=?,batch=?,declare_kind=?,applied_at=?,award_batch_label=?,year=? WHERE query_id=?').run(value,' other ',' other ','review',' other ',' other ',2020,id)
-        cases.push({name,expected:'verified',queryId:id})
-      }
-      const unindexed=await produce([{qymc:'No key',cszt:'raw'}],'unindexed')
-      const uid=insert(s,unindexed)
-      s.prepare('DELETE FROM platform_business_observation WHERE relation_id IN (SELECT id FROM platform_relation WHERE query_id=?)').run(uid)
-      cases.push({name:'unindexed',expected:'verified',queryId:uid})
-      const fallback={id:'FB',qymc:'Fallback',tyshxydm:uscc,szsfmc:'P',cszt:'done',whpc:'B',sblx:'apply',sqsj:'D',personuuid:'A',year:'2024'}
-      for (const name of ['null-raw','empty-raw']) {
-        const out=await produce([fallback],name),id=insert(s,out)
-        s.prepare('UPDATE platform_relation SET raw_fields=? WHERE query_id=?').run(name==='null-raw'?null:'{}',id)
-        s.prepare('DELETE FROM platform_business_observation WHERE relation_id IN (SELECT id FROM platform_relation WHERE query_id=?)').run(id)
-        cases.push({name,expected:'verified',queryId:id})
-      }
-      const invalid=insert(s,await produce([{id:'INVALID'}],'invalid-json'))
-      s.prepare("UPDATE platform_relation SET raw_fields='{' WHERE query_id=?").run(invalid)
-      s.prepare('DELETE FROM platform_business_observation WHERE relation_id IN (SELECT id FROM platform_relation WHERE query_id=?)').run(invalid)
-      cases.push({name:'invalid-json',expected:'error',queryId:invalid})
-      for (const name of ['null-response','bare-success','no-record-with-row','key-order']) {
-        const id=insert(s,{...original,queryKey:name,raw:name==='null-response'?'':name==='bare-success'?response([typed]):JSON.stringify({...JSON.parse(original.raw),queryKey:name})},[typed])
-        if (name==='no-record-with-row') s.prepare("UPDATE platform_query SET status='no_record' WHERE id=?").run(id)
-        if (name==='key-order') {
-          s.prepare('UPDATE platform_relation SET raw_fields=? WHERE query_id=?').run(JSON.stringify(Object.fromEntries(Object.entries(typed).reverse())),id)
-          s.prepare('DELETE FROM platform_business_observation WHERE relation_id IN (SELECT id FROM platform_relation WHERE query_id=?)').run(id)
-        }
-        cases.push({name,expected:'miss',queryId:id})
-      }
-      s.exec("INSERT INTO platform_query(interface,query_key,rdjb,queried_at,status,created_at) VALUES('recognized_list','recognized','2','t','success','c')")
-      cases.push({name:'recognized',expected:'uncaptured',queryId:Number(s.prepare('SELECT max(id) FROM platform_query').pluck().get())})
-      writeFileSync(join(root,'cases.json'),JSON.stringify(cases,null,2))
-      writeFileSync(join(root,'schema0-cells.json'),JSON.stringify(s.prepare('SELECT id FROM platform_relation ORDER BY id').all().map((r)=>rowSnapshot(s,'platform_relation','id',(r as {id:number}).id))))
-    } finally {s.close()}
-    chmodSync(source,0o400)
-    writeFileSync(join(root,'source-binding.json'),JSON.stringify({sha256:hash(readFileSync(source)),base:'ee6c45f87b11dc5fe8b9f8ab4defff573c874e8b'}))
+beforeAll(() => {
+  for (const name of ['schema0.sqlite','target.sqlite','cases.json','source-binding.json']) {
+    if (!existsSync(join(root, name))) throw new Error('Frozen offline capture fixture is missing '+name)
   }
-  cases=JSON.parse(readFileSync(join(root,'cases.json'),'utf8'))
-  expect(hash(readFileSync(source))).toBe(JSON.parse(readFileSync(join(root,'source-binding.json'),'utf8')).sha256)
-  if (!existsSync(target)) copy(source,'target')
-  snapshot('expand')
-  step('prerequisite',()=>withFrozenSource(source,f=>{
-    if (!existsSync(join(root,'status-prerequisite.json'))) installBusinessStatusPrerequisite(target,f,join(root,'status-prerequisite.json'))
-    return installReconcileSlotPrerequisite(target,f)
-  }))
-  snapshot('prerequisite')
-  step('t04',()=>upgradeCollections({...opts,transformVersion:RECONCILE_SLOT_T04}))
-  snapshot('t04')
-  step('t05a',()=>upgradeObservations({...opts,runId:'o'}));snapshot('t05a')
-  step('t05b',()=>upgradeProjections({...opts,runId:'p'}));snapshot('t05b')
-  step('t05c',()=>finalizeObservations({...opts,runId:'f'}));snapshot('t05c')
-  step('scopes',()=>finalizeCollectionScopes({...opts,runId:'scopes'}));snapshot('71606')
-  step('basis',()=>finalizeFingerprintBasis({source:join(root,'71606.sqlite'),target,runId:'basis',predecessorRunId:'scopes',legacySource:source}));snapshot('71607')
-  step('apply',()=>finalizeApplyStored({source:join(root,'71607.sqlite'),target,runId:'apply',predecessorRunId:'basis',legacySource:source}));snapshot('71608')
-  step('candidate',()=>finalizeCandidateScopes({source:join(root,'71608.sqlite'),target,runId:'candidate',predecessorRunId:'apply'}));snapshot('candidate')
-  step('recognized',()=>finalizeRecognizedStored({source:join(root,'candidate.sqlite'),target,runId:'recognized',predecessorRunId:'candidate'}));snapshot('recognized')
-  step('witness',()=>finalizeRecognizedWitness({source:join(root,'recognized.sqlite'),target,runId:'witness',predecessorRunId:'recognized'}));snapshot('witness')
-  step('process',()=>finalizeProcessStored({source:join(root,'witness.sqlite'),target,runId:'process',predecessorRunId:'witness',legacySource:source}));snapshot('71610')
-  step('correspondence',()=>transferCorrespondence({source:join(root,'71610.sqlite'),target,runId:'correspondence'}));snapshot('71611')
-  step('difference',()=>transferDifferenceReferences({source:join(root,'71611.sqlite'),target,runId:'difference'}));snapshot('71612')
-  step('provenance',()=>indexLegacyProvenance({source:join(root,'71612.sqlite'),target,runId:'provenance',batchSize:7}));snapshot('71613')
-  step('capture',()=>completeReconcileSlotCapture(completion));snapshot('complete')
-  const basePath=join(root,'base-t04.sqlite')
-  if (!existsSync(join(root,'base-t04.json'))) {
-    if (!existsSync(basePath)) copy(source,'base-t04')
-    const {createJiti}=createRequire(import.meta.resolve('nuxt/package.json'))('jiti')
-    const base=await createJiti(import.meta.url,{fsCache:false,moduleCache:false}).import(join(owner!,'frozen/base-collections.ts'))
-    const result=base.upgradeCollections({...opts,target:basePath})
-    writeFileSync(join(root,'base-t04.json'),JSON.stringify(result,null,2))
-    chmodSync(basePath,0o400)
-  }
-},120000)
+  caseRoot = mkdtempSync(join(owner!, 'cases-'))
+  cases = JSON.parse(readFileSync(join(root, 'cases.json'), 'utf8'))
+  expect(hash(readFileSync(source))).toBe(JSON.parse(readFileSync(join(root, 'source-binding.json'), 'utf8')).sha256)
+})
 
-it('B01 authenticates real producer and unified-import rawResponse-only rows and independently reproduces exact-base omission',async()=>{
+it('B01 preserves original rawResponse-only rows and the frozen base omission counterexample',()=>{
   const s=open(source,true),db=drizzle(s,{schema})
   try {
     const main=cases.find(c=>c.name==='main')!
@@ -231,18 +61,12 @@ it('B01 authenticates real producer and unified-import rawResponse-only rows and
     expect(readCompleteLegacySlot(q.rawResponse,q,rows.map(slotLegacyRow))?.completeness).toBe('complete')
     expect(Object.hasOwn(slotPayloadRow(rows[0]!),'__proto__')).toBe(true)
     expect(Object.hasOwn(slotLegacyRow(rows[0]!),'__proto__')).toBe(false)
-    let calls=0
-    const report=await runPlatformReconcile({db,usccs:[uscc],now:()=>new Date(time),write:false,cookie:null,fetchImpl:async()=>{calls++;throw new Error('network forbidden')}})
-    expect(report.queries).toEqual({network:0,reused:4,byInterface:{business_list:0,apply_list:0}})
-    expect(calls).toBe(0);expect(report.relations).toBe(1);expect(report.collection.complete).toBe(4)
-    writeFileSync(join(root,'schema0-service.json'),JSON.stringify(report,null,2))
     const basePath=join(root,'base-t04.sqlite')
     const b=open(basePath,true),t=open(target,true)
     try {
       expect(b.prepare('SELECT parse_state,completeness FROM platform_collection WHERE id=?').get(q.id)).toEqual({parse_state:'absent',completeness:'unknown'})
       expect(hasReconcileSlotCapture(b)).toBe(false)
       expect(readSlotCapture(t,q.id)).toMatchObject({state:'verified',rowCount:1,reason:null})
-      writeFileSync(join(root,'BASE-COUNTEREXAMPLE.json'),JSON.stringify({queryId:q.id,base:hash(readFileSync(join(owner!,'frozen/base-collections.ts'))),oldComplete:true,baseCapture:false,candidate:readSlotCapture(t,q.id)},null,2))
     } finally {b.close();t.close()}
   } finally {s.close()}
 })
@@ -392,17 +216,6 @@ it('B12 historical completion replays only its frozen set preserves successor da
   expect(()=>completeReconcileSlotCapture({...completion,target:path})).toThrow()
 })
 
-it('B11 preserves old completed71613 catalog receipts and exact original provenance replay without installing capture',()=>{
-  const shared=process.env.PLATFORM_757_FIXTURES!
-  const path=caseCopy(join(shared,'normal-71613.sqlite')),oldSource=join(owner!,'frozen/old-71612.sqlite')
-  expect(hash(readFileSync(path))).toBe('8acbef6f3a16762383307924a8a289a984aa1dd8839458135b2fd5d1c0cb8844')
-  const t=open(path),before=hash(readFileSync(path)),catalog=schemaHash(t),logs=t.prepare('SELECT * FROM platform_migration_run ORDER BY run_id').all();t.close()
-  withFrozenSource(source,f=>expect(()=>installReconcileSlotPrerequisite(path,f)).toThrow('Fresh'))
-  expect(indexLegacyProvenance({source:oldSource,target:path,runId:'review-normal'}).state).toBe('complete')
-  const after=open(path);expect(hasReconcileSlotCapture(after)).toBe(false);expect(schemaHash(after)).toBe(catalog);expect(after.prepare('SELECT * FROM platform_migration_run ORDER BY run_id').all()).toEqual(logs);after.close()
-  expect(hash(readFileSync(path))).toBe(before)
-})
-
 it('B11 runs the explicit offline completion CLI on a private copy with the same historical source binding',()=>{
   const path=caseCopy(join(root,'71613.sqlite')),evidence=join(caseRoot,'completion-cli-'+serial);mkdirSync(evidence)
   const result=spawnSync(process.execPath,['upgrade/run.mjs','complete-reconcile-slot',source,path,evidence,'capture','c'],{encoding:'utf8',env:{...process.env,JITI_FS_CACHE:'false',NODE_DISABLE_COMPILE_CACHE:'1'}})
@@ -526,4 +339,6 @@ it('B11 refuses final source catalog transform manifest cursor and completion-ru
     expect(()=>completeReconcileSlotCapture({...completion,source:src,target:path,runId:drift==='run'?'other-run':'capture'}),drift).toThrow()
     const after=open(path);expect(after.prepare('SELECT * FROM platform_migration_run ORDER BY run_id').all()).toEqual(before);after.close()
   }
+})
+
 })

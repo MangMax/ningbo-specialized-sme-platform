@@ -28,6 +28,7 @@ import { eq } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../db/schema'
 import { normalizeName, normalizeUscc } from '../../lib/domain'
+import { planRosterImport } from './roster-import'
 import {
   coreWordOf,
   isByteEqualName,
@@ -855,8 +856,6 @@ export function planUsccResearch(db: Db, options: UsccResearchOptions = {}): Usc
       })
       continue
     }
-    claimedCodes.set(uscc, target.enterpriseId)
-
     // 整组写：判定文件里该 (接口, rdjb) 的全部行都进同一条 `platform_query`，
     // 于是命中那一行的序号**必然**存在于写进去的那组里，锚点解析得到。
     const groups = stored.ok ? [] : groupSuppliedEvidence(claim)
@@ -892,6 +891,23 @@ export function planUsccResearch(db: Db, options: UsccResearchOptions = {}): Usc
           relations: group.relations,
         }))
     const platformQuery: RosterImportPlatformQuery | null = platformQueries[0] ?? null
+    if (platformQueries.length) {
+      const conflicts = planRosterImport(db, {
+        idempotencyKey: `uscc-source:${target.enterpriseId}:${uscc}`,
+        sourceKind: 'platform_archive', sourceIdentity: USCC_RESEARCH_SOURCE_IDENTITY,
+        payload: { platformQueries },
+      }).conflicts
+      if (conflicts.length) {
+        pending.set(target.enterpriseId, {
+          targetId: target.enterpriseId, targetName: target.name, outcome: 'manual',
+          code: conflicts[0]!.error?.code ?? 'platform_source_invalid',
+          message: conflicts.map(item => item.error?.message).filter(Boolean).join('；'),
+          candidates: [],
+        })
+        continue
+      }
+    }
+    claimedCodes.set(uscc, target.enterpriseId)
 
     if (holder) {
       // 该统代已挂在另一家企业行上 ⇒ §5.2 的**归并**（不是 UPDATE：会撞 enterprise_uscc_norm_uq）。

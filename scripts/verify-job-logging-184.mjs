@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 /** Actual built Nuxt, independent fixture paths, only public operation/log APIs. */
+import { createRequire } from 'node:module'
 import assert from 'node:assert/strict'
 import { minimalPdf } from '../tests/helpers/minimal-pdf.ts'
 
@@ -14,6 +15,10 @@ const check=(name,fn)=>{fn();results.push({name,result:'PASS'})}
 const delay=ms=>new Promise(r=>setTimeout(r,ms))
 let child,base,output=''
 const env={...process.env,NODE_ENV:'production',HOST:'127.0.0.1',NUXT_DB_PATH:join(root,'fixture.db'),NUXT_FILES_DIR:join(root,'files'),NUXT_INCOMING_DIR:join(root,'incoming'),NUXT_CURATED_PATH:join(root,'curated.json'),NUXT_RECONCILE_PATH:join(root,'reconcile.json'),NUXT_LOG_DIR:join(root,'logs'),NUXT_API_TOKEN:'fixture-api184',NUXT_MCP_TOKEN:'fixture-mcp184',MIIT_COOKIE:'',NUXT_OCR_TOKEN:'',NUXT_DB_READONLY:'0'}
+
+const { createJiti } = createRequire(import.meta.resolve('nuxt/package.json'))('jiti')
+const { initializeDb } = await createJiti(import.meta.url).import('../db/client.ts')
+initializeDb({ dbPath: env.NUXT_DB_PATH, create: true }).$client.close()
 mkdirSync(env.NUXT_FILES_DIR,{recursive:true})
 async function start(extra={}){
  const port=await reserveLoopbackPort();base=`http://127.0.0.1:${port}`

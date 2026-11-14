@@ -19,7 +19,8 @@ export const businessTables = ['enterprise_fact_revision','record_correspondence
 // Synthetic setup only. All assertions on export behavior use actual Nitro HTTP and XLSX bytes.
 export function currentExport409Fixture() {
   const dir = mkdtempSync(join(tmpdir(), 'export-409-'))
-  const dbPath = join(dir, 'synthetic.db'), db = initializeDb({ dbPath, create: true })
+  let generation=0
+  let dbPath = join(dir, 'synthetic.db'), db = initializeDb({ dbPath, create: true })
   const token = 'synthetic-export-409-token'
   const headers = { 'content-type': 'application/json', authorization: `Bearer ${token}` }
   let baseUrl = '', stop: (() => Promise<void>) | undefined
@@ -108,17 +109,19 @@ export function currentExport409Fixture() {
     reviewCurrentExportDecision(db,decision)
     return decision
   }
-  function resetBusiness() {
-    db.$client.pragma('foreign_keys = OFF')
-    try { db.$client.transaction(() => { for (const table of businessTables) db.$client.prepare('delete from ' + table).run() })() }
-    finally { db.$client.pragma('foreign_keys = ON') }
+  async function resetBusiness() {
+    const running=stop!=null
+    await stop?.();stop=undefined;db.$client.close()
+    dbPath=join(dir,`synthetic-${++generation}.db`)
+    db=initializeDb({dbPath,create:true})
+    if(running)await start()
   }
   function businessDigest() {
     const hash = createHash('sha256')
     for (const table of businessTables) for (const row of db.$client.prepare('select * from ' + table + ' order by rowid').iterate()) hash.update(JSON.stringify(row))
     return hash.digest('hex')
   }
-  return { dir, dbPath, db, headers, token, url, json, submit, start, terminal, download, workbook, candidate, addRecord, decision, resetBusiness, businessDigest,
+  return { dir, get dbPath(){return dbPath}, get db(){return db}, headers, token, url, json, submit, start, terminal, download, workbook, candidate, addRecord, decision, resetBusiness, businessDigest,
     async close() { try { await stop?.(); assertCompiledPins() } finally { db.$client.close(); rmSync(dir,{recursive:true,force:true}) } },
   }
 }

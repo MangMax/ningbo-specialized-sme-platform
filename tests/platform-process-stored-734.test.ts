@@ -5,19 +5,18 @@ import { createHash } from 'node:crypto'
 import { spawnSync } from 'node:child_process'
 import { join } from 'node:path'
 import { expect, it } from 'vitest'
-import * as schema from '../db/schema'
-import { ensurePlatformObservation } from '../server/utils/platform-business-record'
+import * as schema from '../upgrade/legacy-schema'
+import { ensurePlatformObservation } from '../upgrade/frozen/server/platform-business-record'
 import { witnessReaderFixture } from './helpers/recognized-witness-target-733'
 import { finalizeProcessStored } from '../upgrade/process-stored'
-import { processStoredInstalled } from '../lib/platform/process-stored-catalog'
+import { processStoredInstalled } from '../upgrade/process-stored-catalog'
 import { rowSnapshot, schemaHash } from '../lib/platform/sqlite-row-cells'
 import { projectionManifest } from '../upgrade/projections'
 import { installProcessStoredSchema } from '../upgrade/process-stored-schema'
-import { writeProcessTarget } from '../lib/platform/process-target-writer'
+import { writeProcessTarget } from '../upgrade/frozen/process-target-writer'
 import { targetSchema } from '../lib/platform/target-schema'
-import { assertExpandRuntime } from '../db/schema-phase'
-import { bootstrapFingerprint } from '../lib/platform/fingerprint-bootstrap'
-import { verifyFingerprint } from '../lib/platform/fingerprint-verifier'
+import { bootstrapFingerprint } from '../upgrade/frozen/fingerprint-bootstrap'
+import { verifyFingerprint } from '../upgrade/frozen/fingerprint-verifier'
 
 async function fixture(indexed=true,extra?:(source:Database.Database)=>void) {
   const f = await witnessReaderFixture(source => {
@@ -107,7 +106,6 @@ it('blocks capture deletion replacement upsert cross-owner writes and uncaptured
   const written=writeProcessTarget(drizzle(t,{schema:targetSchema}),{collectionId:1,position:{sequenceNo:3,positionState:'unknown'},row:{sequenceNo:3,rawFields:{}},assignment:{matchBasis:'none',verificationStatus:'pending',origin:'command',actor:{type:'agent',id:'A1'},basis:'test'}})
   expect(t.prepare('SELECT exact_stored_state FROM platform_business_projection WHERE observation_id=?').get(written.observationId)).toEqual({exact_stored_state:'captured'})
   t.exec('ROLLBACK')
-  expect(()=>assertExpandRuntime(t)).toThrow(/Finalized\/offline/)
   expect(projectionManifest(t)).toBe(before)
   // Controlled marker downgrade demonstrates the SQL barrier independently of JS refusal.
   t.pragma('user_version=71609')

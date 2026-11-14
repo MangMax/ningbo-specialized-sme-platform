@@ -4,16 +4,16 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import * as h3 from 'h3'
 import { afterAll, beforeAll, expect, it, vi } from 'vitest'
-import { useDb, schema } from '../db/client'
+import { initializeDb, schema } from '../db/client'
 import { startRosterApi } from './helpers/roster-http-server'
 import { enterpriseReads } from '../server/utils/enterprise-read'
 import { readEvidenceToken113 } from '../server/utils/evidence-impact-113'
 
-const active = vi.hoisted(() => ({ db: null as ReturnType<typeof useDb> | null }))
+const active = vi.hoisted(() => ({ db: null as ReturnType<typeof initializeDb> | null }))
 vi.mock('@db', () => ({ useDb: () => active.db }))
 vi.mock('@nuxtjs/mcp-toolkit/server', () => ({ defineMcpTool: (tool: unknown) => tool }))
 const dir = mkdtempSync(join(tmpdir(), 'main-a9bc-qualification-'))
-const db = useDb({ dbPath: join(dir, 'synthetic.sqlite') }); active.db = db
+const db = initializeDb({ create: true,  dbPath: join(dir, 'synthetic.sqlite') }); active.db = db
 let imports: Awaited<ReturnType<typeof startRosterApi>>, server: ReturnType<typeof createServer>, base: string
 let mcp: { handler(input: Record<string, unknown>): Promise<any> }
 const headers = { authorization: 'Bearer synthetic-a9bc', 'content-type': 'application/json' }
@@ -40,7 +40,7 @@ beforeAll(async () => {
   expect(await committed.json()).toMatchObject({ status: 'committed', summary: { failed: 0 } })
   // Read IDs from this owned synthetic DB; no SQL writes or copied fixtures.
   enterpriseId = db.select({ id: schema.enterprise.id }).from(schema.enterprise).get()!.id
-  relationId = db.select({ id: schema.platformRelation.id }).from(schema.platformRelation).get()!.id
+  relationId = db.select({ id: schema.platformLegacyRelationAlias.oldId }).from(schema.platformLegacyRelationAlias).get()!.id
   const processImpacts = (await import('../server/api/roster/evidence-impacts/commands.post')).default
   const commands = (await import('../server/api/roster/decision-lifecycle/commands.post')).default
   const detail = (await import('../server/api/roster/enterprises/[id].get')).default

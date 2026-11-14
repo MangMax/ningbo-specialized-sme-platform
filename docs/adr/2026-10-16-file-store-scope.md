@@ -1,5 +1,6 @@
 # 文件库入库范围:一份可执行的裁决规则
 
+
 2026-10-16 · 状态:接受(RL-16,票 #17) · 规则实现 [`lib/file-store-scope.ts`](../../lib/file-store-scope.ts) · 目录与命名 [`files/README.md`](../../files/README.md)
 
 **修正** [ADR-来源文件内化为仓库内的文件库](./2026-10-13-source-files-in-repo.md) 的「内化范围」一段(那一版说:经信局的 PDF 与 `.doc` 内化、与 PDF 同名的 `.docx` 不内化)。

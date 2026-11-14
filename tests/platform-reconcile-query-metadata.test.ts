@@ -1,3 +1,4 @@
+import { nativeQueryRows } from './helpers/native-platform-evidence'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -19,7 +20,7 @@ const now = () => new Date('2026-11-13T04:00:00.000Z')
 afterEach(async () => { await whenIdle(); vi.unstubAllEnvs() })
 afterAll(() => {
   if (process.env.RECONCILE_769_EVIDENCE) writeFileSync(join(process.env.RECONCILE_769_EVIDENCE, 'synthetic-regressions.json'), JSON.stringify({
-    queries: db.select().from(schema.platformQuery).all(),
+    queries: nativeQueryRows(db),
     receipts: db.select().from(schema.importReceipt).all(),
   }, null, 2))
   db.$client.close()

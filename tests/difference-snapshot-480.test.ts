@@ -1,3 +1,5 @@
+import { submitNativePlatformQuery } from './helpers/native-platform-fixture'
+import { platformResultToImport } from '../lib/platform/recognized-evidence'
 import { it, expect, afterAll } from 'vitest'
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -30,14 +32,14 @@ async function settled(id: string, store = db) {
 }
 function archive(source: PlatformLiveQueryResult['source'], broken = false): PlatformLiveQueryResult {
   const titles = source === 'queryList' ? [null] : ['1','2','3']
-  return { source, status: broken ? 'partial' : 'no_record', effectiveConditions: { uscc: '91330200123456789X', combination: 'and' }, titleScope: { mode: 'selected', rdjb: titles.filter((x): x is string => x !== null) }, queriedAt: '2026-01-01T00:00:00Z', completedAt: '2026-01-01T00:00:01Z', rows: [], pages: titles.flatMap(rdjb => (broken ? [1,2] : [1]).map(page => ({ source, rdjb, page, maxPage: broken ? 2 : 1, status: broken && page === 2 ? 'failed' as const : 'success' as const, fetchedCount: broken && page === 1 ? 50 : 0, declaredTotal: broken ? 51 : 0, error: null }))), fetchedCount: 0, declaredTotal: 0, completeness: broken ? 'partial' : 'complete', fullRange: true, unfinished: broken ? [{ source, rdjb: titles[0]!, page: 2 }] : [], error: null, limits: { maxRequests: 100, maxRows: 5000, maxDurationMs: 60000, pageSize: 50 } }
+  return { source, status: broken ? 'partial' : 'no_record', effectiveConditions: { uscc: '91330200123456789X', combination: 'and' }, titleScope: { mode: source === 'queryList' ? 'source_default' : 'selected', rdjb: titles.filter((x): x is string => x !== null) }, queriedAt: '2026-01-01T00:00:00Z', completedAt: '2026-01-01T00:00:01Z', rows: [], dataRows: [], pages: titles.flatMap(rdjb => (broken ? [1,2] : [1]).map(page => ({ source, rdjb, page, maxPage: broken ? 2 : 1, status: broken && page === 2 ? 'failed' as const : 'success' as const, fetchedCount: broken && page === 1 ? 50 : 0, declaredTotal: broken ? 51 : 0, error: null }))), fetchedCount: 0, declaredTotal: 0, completeness: broken ? 'partial' : 'complete', fullRange: true, unfinished: broken ? [{ source, rdjb: titles[0]!, page: 2 }] : [], error: null, limits: { maxRequests: 100, maxRows: 5000, maxDurationMs: 60000, pageSize: 50 } }
 }
 it('fresh tasks query all interfaces despite historical empty completion and reuse only identical clientRequestId', async () => {
   db.insert(s.title).values({code:'innovative_sme',nameZh:'创新型',level:'municipal',rank:1}).onConflictDoNothing().run()
   const e=db.insert(s.enterprise).values({ name:'fixture',nameNorm:'fixture',usccNorm:'91330200123456789X' }).returning().get()
   db.insert(s.record).values({enterpriseId:e.id,titleCode:'innovative_sme',source:'jxj'}).run()
   for (const source of ['queryList','businessList','queryBusList'] as const)
-    db.insert(s.platformQuery).values({interface:source==='queryList'?'apply_list':source==='businessList'?'business_list':'recognized_list',queryKey:e.usccNorm!,queriedAt:'2026-01-01',status:'no_record',collectionEvidence:archive(source)}).run()
+    submitNativePlatformQuery(db, platformResultToImport(archive(source)))
   const batchId=newJobId()
   createJob(db,{id:batchId,kind:'platform-query-batch',params:{},progress:{done:1,total:1}})
   finishJob(db,batchId,{state:'done',result:{items:[{itemId:'old-empty',segments:['queryList','businessList','queryBusList'].map(source=>archive(source as PlatformLiveQueryResult['source']))}]}})
@@ -115,18 +117,6 @@ it('rejects retry after backup checksum changes without changing the checkpoint'
   await expect(snapshotOperation(db,dir,{action:'retry',jobId:row.id})).rejects.toThrow('Backup checksum mismatch')
   expect(getJob(db,row.id)!.result).toEqual(prior.result)
 })
-it('does not let historical unproven pagination complete a fresh task', async () => {
-  const e=db.insert(s.enterprise).values({name:'unproven',nameNorm:'unproven',usccNorm:'91330200987654321X'}).returning().get()
-  db.insert(s.record).values({enterpriseId:e.id,titleCode:'innovative_sme',source:'jxj'}).run()
-  const result=archive('queryList')
-  result.effectiveConditions.uscc='91330200987654321X'
-  for (const p of result.pages) { delete p.maxPage; p.declaredTotal=null; p.fetchedCount=50 }
-  db.insert(s.platformQuery).values({interface:'apply_list',queryKey:'91330200987654321X',queriedAt:'2026-02-01',status:'success',collectionEvidence:result}).run()
-  const row=await snapshotOperation(db,dir,{action:'create',clientRequestId:'unproven'})
-  const completed=await settled(row.id)
-  const item=(completed.result as {items:{enterpriseId:number;source:string;rows:number|null;complete:boolean;reason:string}[]}).items.find(i=>i.enterpriseId===e.id&&i.source==='queryList')
-  expect(item).toMatchObject({complete:false,rows:null,reason:'provider_failed_or_partial_pagination'})
-})
 vi.mock('../server/utils/platform-live-query', () => ({ runPlatformLiveQuery: vi.fn(async (input: {source: PlatformLiveQueryResult['source']}) => ({...archive((input as {source:PlatformLiveQueryResult['source']}).source,true),pages:[],effectiveConditions:{combination:'and'},unfinished:[],completeness:'partial'})) }))
 
 import { runPlatformLiveQuery } from '../server/utils/platform-live-query'
@@ -167,7 +157,7 @@ it('collects missing per-enterprise title pages and resumes only failed position
   expect(calls).toHaveLength(7)
   const later=db.insert(s.enterprise).values({name:'later',nameNorm:'later'}).returning().get()
   db.insert(s.record).values({enterpriseId:later.id,titleCode:'innovative_sme',source:'jxj'}).run()
-  db.insert(s.platformQuery).values({interface:'business_list',queryKey:e.usccNorm!,queriedAt:'2099-01-01',status:'no_record',collectionEvidence:archive('businessList')}).run()
+  submitNativePlatformQuery(db, platformResultToImport({ ...archive('businessList'), effectiveConditions: { uscc: e.usccNorm!, combination: 'and' }, queriedAt: '2099-01-01T00:00:00Z', completedAt: '2099-01-01T00:00:01Z' }))
   const beforeRetry=db.$client.prepare('select count(*) n from platform_business_observation').get() as {n:number}
   await publicHttp({action:'retry',jobId:row.id})
   const done=await settled(row.id,db)

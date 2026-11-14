@@ -8,13 +8,14 @@ import { createServer } from 'node:net'
 import { once } from 'node:events'
 import { request as httpRequest } from 'node:http'
 import assert from 'node:assert/strict'
+import { createRequire } from 'node:module'
 import Database from 'better-sqlite3'
-import { drizzle } from 'drizzle-orm/better-sqlite3'
-import { migrate } from 'drizzle-orm/better-sqlite3/migrator'
+const { createJiti } = createRequire(import.meta.resolve('nuxt/package.json'))('jiti')
+const { createRuntimeSchema } = await createJiti(import.meta.url).import('../db/create-runtime.ts')
 const root = mkdtempSync(join(tmpdir(), 'client189-public-'))
 const dbPath = join(root, 'synthetic.db')
-// Existing schema, exclusively in this empty synthetic fixture; no application migration changes.
-const db = new Database(dbPath); migrate(drizzle(db), { migrationsFolder: resolve('db/migrations') }); db.close()
+// Native empty fixture; historical expand migrations are not an application initializer.
+const db = new Database(dbPath); db.pragma('foreign_keys = ON'); createRuntimeSchema(db); db.close()
 const before = readFileSync(dbPath)
 const results = [], marker = 'PRIVATE189_BODY_URL_TOKEN_TEXT'
 let child, base, output = ''

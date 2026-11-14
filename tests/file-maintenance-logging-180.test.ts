@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { applicationLogs, closeApplicationLogging, initializeWorkerLogging } from '../lib/logging'
-import { useDb } from '../db/client'
+import { initializeDb } from '../db/client'
 import { maintainStoredFile } from '../server/utils/file-maintenance'
 import { handleStoredFilePatchRequest } from '../server/utils/stored-file-patch-http'
 
@@ -13,7 +13,7 @@ import { handleStoredFilePatchRequest } from '../server/utils/stored-file-patch-
  * fabricated. Upload-before-id and worker process events stay out of scope.
  */
 const dir = mkdtempSync(join(tmpdir(), 'file-log-180-'))
-const db = useDb({ dbPath: join(dir, 'fixture.db') })
+const db = initializeDb({ create: true,  dbPath: join(dir, 'fixture.db') })
 const previous = process.env.NUXT_LOG_DIR
 
 beforeAll(() => {

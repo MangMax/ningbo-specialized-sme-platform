@@ -1,5 +1,8 @@
 # #82 全规模隔离基线调查
 
+> 历史脚本说明：本文引用的混合表实验/验收脚本已在原生运行切换时退役。复现旧命令须在独立 checkout 固定到 `ab503081dae3e24680afc9b07395a7e3ff21fc9f` 并使用当时的隔离数据库与二进制；这些命令不适用于当前运行库。历史证据与 FAIL/UNKNOWN 保持原样。
+
+
 范围：scope:spike，高难度；只交调查报告、位置清单、聚合证据和复现脚本。来源代码 `d198a09f5a6fab2d5358d442d1b6ce47670c7506`；开工时分支 `t3/perf-baseline-spike-82`、集成分支 `t3/implement-spec-81-89`、merge-base 三者相同。#81/#82/#19 通过 gh 读取正文与评论，评论均为空；#19 保持 OPEN。本票不关闭任何 issue，不创建 PR，不修改生产代码/数据库。
 
 先读 [冻结预算](budgets.md)，再读 [调查报告](report.md)。`distribution.json` 只含结构、计数、字段字节分布和参数化查询计划。`inventory.json` 是完整静态位置清单：REST、MCP、ORM/native SQL、事务、JSON、文件与缓存候选；每个入口有归属与保守结论。[fixtures.json](fixtures.json)记录隔离快照指纹、0x/2x规模及5x容量缺口；`measurements.json` 只含聚合结果，不含业务原文、响应内容、查询键或凭据。

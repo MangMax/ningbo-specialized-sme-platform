@@ -20,8 +20,8 @@ const { createJiti } = createRequire(import.meta.resolve('nuxt/package.json'))('
 const canonical = value => value && typeof value === 'object' ? Array.isArray(value)
   ? value.map(canonical) : Object.fromEntries(Object.keys(value).sort().map(key => [key, canonical(value[key])])) : value
 const jiti = createJiti(import.meta.url)
-const { useDb } = await jiti.import('../db/client.ts')
-const db = useDb({ dbPath, readOnly: true })
+const { useApplicationDb } = await jiti.import('../db/client.ts')
+const db = useApplicationDb({ dbPath, readOnly: true })
 const fixed = db.$client.prepare('select id, name from enterprise order by id limit 1').get()
 const input = { page: mode === 'deep' ? 100 : 1, pageSize: 25, ...(mode === 'search' ? { q: fixed.name } : {}) }
 const metrics = [], samples = []

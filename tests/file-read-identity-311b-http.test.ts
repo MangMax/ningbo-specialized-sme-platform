@@ -3,14 +3,14 @@ import { tmpdir } from 'node:os'
 import { basename, dirname, join, resolve } from 'node:path'
 import { afterAll, beforeAll, expect, it } from 'vitest'
 import { minimalPdf } from './helpers/minimal-pdf'
-import { useDb } from '../db/client'
+import { initializeDb } from '../db/client'
 import { spawnOwnedChild as spawn, reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../scripts/lib/isolated-local-services.mjs'
 
 const dir = mkdtempSync(join(tmpdir(), 'read-311b-http-'))
 const root = join(dir, 'files')
 mkdirSync(root)
 const dbPath = join(dir, 'fixture.sqlite')
-const db = useDb({ dbPath })
+const db = initializeDb({ create: true,  dbPath })
 let service: { baseUrl: string; stop(): Promise<void> }
 let output = ''
 beforeAll(async () => {

@@ -1,5 +1,8 @@
 # #83 residual title filter: frozen scope and evidence
 
+> 历史脚本说明：本文引用的混合表实验/验收脚本已在原生运行切换时退役。复现旧命令须在独立 checkout 固定到 `ab503081dae3e24680afc9b07395a7e3ff21fc9f` 并使用当时的隔离数据库与二进制；这些命令不适用于当前运行库。历史证据与 FAIL/UNKNOWN 保持原样。
+
+
 ## Scope frozen 2026-10-20
 
 Starting source `fc37375eb35ecd175a5746d93dc22129d2a2ffe3` already contains the bounded platform query read and #87 indexes. This slice changes only the #83 title filter read path, its SQLite derived title membership structures/triggers, tests, benchmark mode, and this evidence. It does not change public REST/MCP fields, business interpretation, the #84 enterprise coverage evaluator, #87's delivered indexes, or production data. Parent owns ticket splitting and migration review. No issue closure is implied.

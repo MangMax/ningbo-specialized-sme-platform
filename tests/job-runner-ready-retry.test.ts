@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import Database from 'better-sqlite3'
 import * as h3 from 'h3'
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
-import { useDb } from '../db/client'
+import { initializeDb } from '../db/client'
 import { newJobId } from '../lib/job'
 import { ensureJobRunnerReady } from '../server/utils/job-runner'
 import { createJob, getJob } from '../server/utils/job-store'
@@ -15,7 +15,7 @@ let listJobsRoute: Awaited<typeof import('../server/api/jobs/index.get')>['defau
 const ownedDirectories: string[] = []
 const ownedServers: Server[] = []
 const ownedConnections: Database.Database[] = []
-const ownedDbs: Array<ReturnType<typeof useDb>> = []
+const ownedDbs: Array<ReturnType<typeof initializeDb>> = []
 
 beforeAll(async () => {
   for (const [name, value] of Object.entries(h3)) vi.stubGlobal(name, value)
@@ -63,7 +63,7 @@ function holdWriterLock(dbPath: string): Database.Database {
 describe('ensureJobRunnerReady 对账就绪缓存', () => {
   it('保留首次 SQLITE_BUSY，释放锁后同一 db 可重试且成功后幂等', () => {
     const { dbPath } = fixturePath()
-    const db = useDb({ dbPath })
+    const db = initializeDb({ create: true,  dbPath })
     ownedDbs.push(db)
     db.$client.pragma('busy_timeout = 0')
     const id = newJobId()
@@ -92,7 +92,7 @@ describe('ensureJobRunnerReady 对账就绪缓存', () => {
     const { dbPath } = fixturePath()
     vi.stubEnv('NUXT_DB_PATH', dbPath)
     vi.stubEnv('NUXT_DB_READONLY', '0')
-    const db = useDb({ dbPath })
+    const db = initializeDb({ create: true,  dbPath })
     ownedDbs.push(db)
     db.$client.pragma('busy_timeout = 0')
     const id = newJobId()
@@ -127,7 +127,7 @@ describe('ensureJobRunnerReady 对账就绪缓存', () => {
 
   it('只读公开入口不会为恢复中断任务打开写能力', async () => {
     const { dbPath } = fixturePath()
-    const writer = useDb({ dbPath })
+    const writer = initializeDb({ create: true,  dbPath })
     ownedDbs.push(writer)
     const id = newJobId()
     createJob(writer, { id, kind: 'issue-313-readonly', params: {} })
@@ -144,7 +144,7 @@ describe('ensureJobRunnerReady 对账就绪缓存', () => {
     const observer = new Database(dbPath, { readonly: true, fileMustExist: true })
     ownedConnections.push(observer)
     expect(observer.prepare('select state from job where id = ?').get(id)).toEqual({ state: 'queued' })
-    const readOnly = useDb({ dbPath, readOnly: true })
+    const readOnly = initializeDb({ create: true,  dbPath, readOnly: true })
     ownedDbs.push(readOnly)
     readOnly.$client.close()
   })

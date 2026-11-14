@@ -88,11 +88,11 @@ it('legacy retry records transport retry separately from one semantic slot outco
   expect(JSON.stringify(logged)).not.toContain('PRIVATE185')
 })
 it('batch retry preserves accepted pages and correlates only unfinished item collection', async () => {
-  const { useDb } = await import('../db/client')
+  const { initializeDb } = await import('../db/client')
   const { updateCredential } = await import('../server/utils/credential-state')
   const { handlePlatformBatchRequest } = await import('../server/utils/platform-batch-http')
   const { whenIdle } = await import('../server/utils/job-runner')
-  const db = useDb({ dbPath: join(root, 'batch.db') })
+  const db = initializeDb({ dbPath: join(root, 'batch.db'), create: true })
   updateCredential('miitCookie', 'session=PRIVATE185_COOKIE', { db })
   const nativeFetch = globalThis.fetch
   let failSecond = true

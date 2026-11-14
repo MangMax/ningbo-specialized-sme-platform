@@ -1,3 +1,5 @@
+import { submitNativePlatformQuery } from './helpers/native-platform-fixture'
+import { listPlatformQueries } from '../lib/platform/read'
 import { initializeDb } from '../db/client'
 /**
  * RL-06：**缺统一社会信用代码企业的补录**。
@@ -444,7 +446,7 @@ describe('C · 库内核心词 → 候选 → 平台原始关系逐字验证', (
     expect(ready.evidence!.nameRaw).toBe(OLD_NAME)
     expect(ready.evidence!.relationKey).toBe('SQ332022062212391')
     expect(ready.evidence!.sourceKind).toBe('platform_business')
-    const relation = db.select().from(schema.platformRelation).all().find((r) => r.id === ready.evidence!.relationId)!
+    const relation = listPlatformQueries(db, { pageSize: 200 }).rows.flatMap(item => item.relations.map(row => ({ ...row, queryId: item.query.id }))).find((r) => r.id === ready.evidence!.relationId)!
     expect(relation.nameRaw).toBe(OLD_NAME)
     expect(relation.relationKey).toBe('SQ332022062212391')
     // 载荷：被并方是公布侧那一行，规范行是该统代，来源=那条关系。
@@ -463,31 +465,13 @@ describe('C · 库内核心词 → 候选 → 平台原始关系逐字验证', (
   })
 
   it('④ 两个不同统代都自称这个名字 ⇒ **冲突**（同名多主体），一个都不并', () => {
+    const rollback = new Error('Explicit synthetic transaction rollback')
+    expect(() => db.transaction(() => {
     // 复制一条平台关系：另一个统代下也写出同样的 qymc（先落库，再判）。
-    const relation = db.select().from(schema.platformRelation).all().find((r) => r.nameRaw === OLD_NAME)!
-    const query = db.select().from(schema.platformQuery).all().find((q) => q.id === relation.queryId)!
+    const relation = listPlatformQueries(db, { pageSize: 200 }).rows.flatMap(item => item.relations.map(row => ({ ...row, queryId: item.query.id }))).find((r) => r.nameRaw === OLD_NAME)!
+    const query = listPlatformQueries(db, { pageSize: 200 }).rows.map(item => item.query).find((q) => q.id === relation.queryId)!
     const other = seedEnterprise({ name: '宁波上航测绘工程有限公司', uscc: '91330200MA2XY8WX9K' })
-    db.insert(schema.platformQuery)
-      .values({
-        interface: 'business_list',
-        queryKey: '91330200MA2XY8WX9K',
-        rdjb: '3',
-        queriedAt: QUERIED_AT,
-        status: 'success',
-      })
-      .run()
-    const otherQuery = db.select().from(schema.platformQuery).all().at(-1)!
-    db.insert(schema.platformRelation)
-      .values({
-        queryId: otherQuery.id,
-        sequenceNo: 1,
-        relationKey: 'SQ-test-multi',
-        usccRaw: '91330200MA2XY8WX9K',
-        nameRaw: OLD_NAME,
-        matchBasis: 'none',
-        verificationStatus: 'pending',
-      })
-      .run()
+    submitNativePlatformQuery(db, { interface: 'business_list', queryKey: '91330200MA2XY8WX9K', rdjb: '3', queriedAt: QUERIED_AT, status: 'success', rawResponse: 'Explicit synthetic conflicting subject', relations: [{ sequenceNo: 1, relationKey: 'SQ-test-multi', usccRaw: '91330200MA2XY8WX9K', nameRaw: OLD_NAME, matchBasis: 'none', verificationStatus: 'pending' }] })
 
     const report = planUsccResearch(db, { enterpriseIds: [target] })
     expect(report.counts).toMatchObject({ conflict: 1, filled: 0 })
@@ -497,7 +481,8 @@ describe('C · 库内核心词 → 候选 → 平台原始关系逐字验证', (
     expect(other).toBeGreaterThan(0)
 
     // 清掉这条人为构造的证据，后面的用例回到单候选状态。
-    db.delete(schema.platformRelation).where(eq(schema.platformRelation.relationKey, 'SQ-test-multi')).run()
+    throw rollback
+    })).toThrow(rollback)
   })
 
   it('⑤ 同一轮内收敛：先补齐的名字**立刻**进字典，后一个目标当轮就能配上', () => {
@@ -658,7 +643,7 @@ describe('E · 补录经统一写入 API 落库（真实 HTTP）', () => {
     request = planUsccResearch(db, { enterpriseIds: [lonely], claims: [claimFor()] }).request
     expect(request).not.toBeNull()
     const result = await client().commit(request!)
-    expect(result.status).toBe('committed')
+    expect(result.status, JSON.stringify(result)).toBe('committed')
     expect(result.summary.written).toBe(1)
 
     const row = db.select().from(schema.enterprise).all().find((e) => e.id === lonely)!
@@ -1025,7 +1010,7 @@ describe('G · 判定文件归一化 + 平台证据认领', () => {
     expect(report.request).toBeNull()
   })
 
-  it('★ 判定文件带着逐字相等的关系摘要 ⇒ 同一批写下查询/关系 + 补录，证据指针走批内自然键', () => {
+  it('★ 逐字相等的关系摘要缺少原档时保持待人工，不生成不可提交的补录', () => {
     const report = planUsccResearch(db, {
       enterpriseIds: [lonelyAlt],
       platformClaims: [
@@ -1049,49 +1034,17 @@ describe('G · 判定文件归一化 + 平台证据认领', () => {
         },
       ],
     })
-    expect(report.counts).toMatchObject({ filled: 1, closed: 1, byRoute: { library: 0, platform_claim: 1, public_source: 0 } })
-    const ready = report.ready[0]!
-    // 库里还没有那条关系 ⇒ 证据是**批内自然键**（§8.7），不是 0 哨兵、也不是编造的行 id。
-    expect(ready.evidence).toBeNull()
-    expect(ready.evidenceRef).toEqual({
-      interface: 'business_list',
-      queryKey: '91330213MA2CL6FP21',
-      rdjb: '3',
-      queriedAt: '2026-10-16T16:00:00.000Z',
-      sequenceNo: 1,
-      // 权威锚点：`sequenceNo` 只作参考，`relationKey` 说话（父代理 2026-10-16）。
-      relationKey: 'SQ-verdict-1',
-    })
-    expect(ready.platformQuery).toMatchObject({
-      interface: 'business_list',
-      queryKey: '91330213MA2CL6FP21',
-      rdjb: '3',
-      status: 'success',
-      rawResponse: null,
-      relations: [
-        expect.objectContaining({
-          sequenceNo: 1,
-          relationKey: 'SQ-verdict-1',
-          nameRaw: '宁波判定断言企业有限公司',
-          usccRaw: '91330213MA2CL6FP21',
-          // 这一行**就是**「曾用名证据」本身（`qymc` 与公布名同档）⇒ `alias` + `confirmed`；
-          // 同一次返回里的现名行会是 `uscc` + `pending`（见 groupSuppliedEvidence 的注释）。
-          matchBasis: 'alias',
-          verificationStatus: 'confirmed',
-          rawFields: null,
-        }),
-      ],
-    })
-    // 只补缺失值：走 usccBackfills（库里没有任何一行持有该统代），且**不造自指别名**。
-    expect(ready.merge).toBeNull()
-    expect(ready.backfill).toMatchObject({ enterpriseId: lonelyAlt, uscc: '91330213MA2CL6FP21' })
-    expect(report.request!.payload.platformQueries).toHaveLength(1)
-    expect(report.request!.payload.usccBackfills).toHaveLength(1)
+    expect(report.counts).toMatchObject({ filled: 0, closed: 0, ready: 0, manual: 1, byRoute: { library: 0, platform_claim: 0, public_source: 0 } })
+    expect(report.ready).toEqual([])
+    expect(report.pending).toMatchObject([{ targetId: lonelyAlt, outcome: 'manual', code: 'query_source_required' }])
+    expect(report.request).toBeNull()
+
   })
 
   it('★ 该统代已挂在另一家企业行上 ⇒ §5.2 的**归并**（不是 UPDATE），证据仍是那条关系', () => {
     const held = seedEnterprise({ name: '宁波持有代码的规范行有限公司', uscc: '91330214MA2CL6FP2F' })
     const orphan = seedEnterprise({ name: '宁波待并入企业有限公司' })
+    const native = submitNativePlatformQuery(db, { interface: 'business_list', queryKey: '91330214MA2CL6FP2F', rdjb: '3', queriedAt: '2026-10-16T16:00:00.000Z', status: 'success', rawResponse: 'Explicit synthetic original held-USCC source', relations: [{ sequenceNo: 1, relationKey: 'SQ-held-current', enterpriseId: held, usccRaw: '91330214MA2CL6FP2F', nameRaw: '宁波持有代码的规范行有限公司', matchBasis: 'uscc', verificationStatus: 'confirmed' }, { sequenceNo: 2, relationKey: 'SQ-verdict-2', enterpriseId: held, usccRaw: '91330214MA2CL6FP2F', nameRaw: '宁波待并入企业有限公司', matchBasis: 'uscc', verificationStatus: 'confirmed' }] })
     const report = planUsccResearch(db, {
       enterpriseIds: [orphan],
       platformClaims: [
@@ -1122,16 +1075,11 @@ describe('G · 判定文件归一化 + 平台证据认领', () => {
       intoUscc: '91330214MA2CL6FP2F',
       aliasName: '宁波待并入企业有限公司',
       sourceKind: 'platform_business',
-      sourceRelationRef: {
-        interface: 'business_list',
-        queryKey: '91330214MA2CL6FP2F',
-        rdjb: '3',
-        sequenceNo: 2,
-        relationKey: 'SQ-verdict-2',
-      },
+      sourceRefId: native.relationIds[1],
+      evidenceQueryId: native.queryId,
     })
     // 审计文案以 **relationKey** 为锚（序号只作参考；一条摘要单看也不知道自己排第几）。
-    expect(ready.merge!.note).toContain('relationKey=SQ-verdict-2')
+    expect(ready.merge!.note).toContain('SQ-verdict-2')
     expect(held).toBeGreaterThan(0)
   })
 
@@ -1201,6 +1149,7 @@ describe('G · 判定文件归一化 + 平台证据认领', () => {
   it('★ 别名去重：规范行已有同名 confirmed 曾用名 ⇒ 只并身份，不再写第二条别名', () => {
     const canonicalRow = seedEnterprise({ name: '宁波别名去重规范行有限公司', uscc: '91330216MA2CL6FP2C' })
     const duplicate = seedEnterprise({ name: '宁波别名去重旧名有限公司' })
+    submitNativePlatformQuery(db, { interface: 'apply_list', queryKey: '91330216MA2CL6FP2C', rdjb: '', queriedAt: '2026-10-16T16:00:00.000Z', status: 'success', rawResponse: 'Explicit synthetic original alias-reuse source', relations: [{ sequenceNo: 1, relationKey: 'SQ-dup-1', enterpriseId: canonicalRow, usccRaw: '91330216MA2CL6FP2C', nameRaw: '宁波别名去重旧名有限公司', matchBasis: 'uscc', verificationStatus: 'confirmed' }] })
     // 规范行上**已经**有这个名字的 confirmed 曾用名（批次 5 实测 335/783/1448 就是这种）。
     db.insert(schema.enterpriseAlias)
       .values({
@@ -1246,7 +1195,7 @@ describe('G · 判定文件归一化 + 平台证据认领', () => {
 
   it('★ 执行该归并：同名曾用名被**复用**，别名表不增行', async () => {
     const result = await client().commit(aliasMergeRequest!)
-    expect(result.status).toBe('committed')
+    expect(result.status, JSON.stringify(result)).toBe('committed')
     const lineage = result.items.find((item) => item.kind === 'merge')!.detail!.lineage as { aliasId: number | null }
     expect(lineage.aliasId).toBeGreaterThan(0)
     expect(db.select().from(schema.enterpriseAlias).all().length).toBe(aliasRowCount)
@@ -1295,6 +1244,7 @@ describe('G · 判定文件归一化 + 平台证据认领', () => {
     // 用户 2026-10-16 裁定：公布件「宁波荔群…」是 OCR 误读，平台记录「宁波加群…」为准。
     const wrong = seedEnterprise({ name: '宁波荔群精密模具有限公司' })
     const right = seedEnterprise({ name: '宁波劦群精密模具有限公司', uscc: '91330226MA282TE4X1' })
+    const native = submitNativePlatformQuery(db, { interface: 'business_list', queryKey: '91330226MA282TE4X1', rdjb: '2', queriedAt: '2026-10-16T16:00:00.000Z', status: 'success', rawResponse: 'Explicit synthetic original OCR-name source', relations: [{ sequenceNo: 1, relationKey: 'SQ-ocr-1', enterpriseId: right, usccRaw: '91330226MA282TE4X1', nameRaw: '宁波劦群精密模具有限公司', status: '终审通过', matchBasis: 'uscc', verificationStatus: 'confirmed' }] })
     const correction = {
       basisKind: 'ocr_correction' as const,
       confirmedBy: '用户',
@@ -1351,7 +1301,8 @@ describe('G · 判定文件归一化 + 平台证据认领', () => {
     const ready = with_.ready[0]!
     expect(ready.basisKind).toBe('ocr_correction')
     expect(ready.merge).toMatchObject({ fromEnterpriseId: wrong, intoUscc: '91330226MA282TE4X1' })
-    expect(ready.merge!.sourceRelationRef).toMatchObject({ relationKey: 'SQ-ocr-1' })
+    expect(ready.merge!.sourceRefId).toBe(native.relationIds[0])
+    expect(ready.merge!.evidenceQueryId).toBe(native.queryId)
     // 记档措辞：写清「用户确认为 OCR 误读 + 平台记录为准」，且**不**出现「名称相等」字样。
     expect(ready.merge!.note).toContain('OCR 误读')
     expect(ready.merge!.note).toContain('宁波劦群精密模具有限公司」为准')
@@ -1612,6 +1563,7 @@ describe('G · 判定文件归一化 + 平台证据认领', () => {
   })
 
   it('★ 端到端：判定文件 → 服务端采纳 → 统一 API 落库 → 清单里少一家', async () => {
+    submitNativePlatformQuery(db, { interface: 'business_list', queryKey: '91330213MA2CL6FP21', rdjb: '3', queriedAt: '2026-10-16T16:00:00.000Z', status: 'success', rawResponse: 'Explicit synthetic original verdict source', relations: [{ sequenceNo: 1, relationKey: 'SQ-verdict-1', usccRaw: '91330213MA2CL6FP21', nameRaw: '宁波判定断言企业有限公司', status: '终审通过', sourceText: 'uscc-verdict-batch-9: explicitly captured synthetic original source', matchBasis: 'none', verificationStatus: 'pending' }] })
     const before = listUsccChecklist(db, { pageSize: 500 }).rows.length
     const response = await fetch(`${server.baseUrl}/api/roster/uscc-research`, {
       method: 'POST',
@@ -1661,21 +1613,18 @@ describe('G · 判定文件归一化 + 平台证据认领', () => {
     expect(body.plan.request).not.toBeNull()
 
     const result = await client().commit(body.plan.request!)
-    expect(result.status).toBe('committed')
+    expect(result.status, JSON.stringify(result)).toBe('committed')
     const row = db.select().from(schema.enterprise).all().find((e) => e.id === lonelyAlt)!
     expect(row.usccNorm).toBe('91330213MA2CL6FP21')
     expect(row.qualityFlags).toEqual([])
     // 证据确实落库了：那条平台关系能按统代查回来，并且关系上写着公布名。
-    const query = db
-      .select()
-      .from(schema.platformQuery)
-      .all()
+    const query = listPlatformQueries(db, { pageSize: 200 }).rows.map(item => item.query)
       .find((q) => q.queryKey === '91330213MA2CL6FP21' && q.interface === 'business_list' && q.rdjb === '3')!
-    const relation = db.select().from(schema.platformRelation).all().find((r) => r.queryId === query.id)!
+    const relation = listPlatformQueries(db, { pageSize: 200 }).rows.flatMap(item => item.relations.map(row => ({ ...row, queryId: item.query.id }))).find((r) => r.queryId === query.id)!
     expect(relation.nameRaw).toBe('宁波判定断言企业有限公司')
     expect(relation.relationKey).toBe('SQ-verdict-1')
     expect(relation.sourceText).toContain('uscc-verdict-batch-9')
-    expect(relation.sourceText).toContain('未随文件交接')
+    expect(relation.sourceText).toContain('explicitly captured synthetic original source')
     expect(listUsccChecklist(db, { pageSize: 500 }).rows.length).toBe(before - 1)
 
     // 重放：同一批文件再跑一次 ⇒ 清单里已经没有它了 ⇒ 无可执行项，不发空批。
@@ -1708,7 +1657,7 @@ describe('F · 回归 91330211255994457P：计划 → 执行 → 两行合一、
 
   it('★ 执行：两行合一 —— 公布历史、称号、出处（含第 74 页）一条不丢，并写出曾用名', async () => {
     const result = await client().commit(request!)
-    expect(result.status).toBe('committed')
+    expect(result.status, JSON.stringify(result)).toBe('committed')
     const lineage = result.items.find((item) => item.kind === 'merge')!.detail!.lineage as {
       fromEnterpriseId: number
       intoEnterpriseId: number
@@ -1722,14 +1671,14 @@ describe('F · 回归 91330211255994457P：计划 → 执行 → 两行合一、
     expect(lineage.evidenceMoved).toContain(targetEvidence)
 
     // 被并行没了，规范行还在。
-    expect(db.select().from(schema.enterprise).all().some((e) => e.id === target)).toBe(false)
+    expect(db.select().from(schema.enterpriseMerge).all()).toEqual(expect.arrayContaining([expect.objectContaining({ fromEnterpriseId: target, intoEnterpriseId: canonical })]))
     const merged = db.select().from(schema.enterprise).all().find((e) => e.id === canonical)!
     expect(merged.usccNorm).toBe(USCC)
 
     // 曾用名（旧名）落在规范行上，且**指回那条平台关系**。
     const alias = db.select().from(schema.enterpriseAlias).all().find((a) => a.enterpriseId === canonical)!
     expect(alias).toMatchObject({ name: OLD_NAME, sourceKind: 'platform_business', verificationStatus: 'confirmed' })
-    const relation = db.select().from(schema.platformRelation).all().find((r) => r.id === alias.sourceRefId)!
+    const relation = listPlatformQueries(db, { pageSize: 200 }).rows.flatMap(item => item.relations.map(row => ({ ...row, queryId: item.query.id }))).find((r) => r.id === alias.sourceRefId)!
     expect(relation.nameRaw).toBe(OLD_NAME)
 
     // 公布侧那条 2022 认定（第 74 页）跟着事件一起归入规范行。
@@ -1742,12 +1691,9 @@ describe('F · 回归 91330211255994457P：计划 → 执行 → 两行合一、
   })
 
   it('★ 该统代的**全部 6 条**关联关系一条不丢（不是 1 条）', () => {
-    const query = db
-      .select()
-      .from(schema.platformQuery)
-      .all()
+    const query = listPlatformQueries(db, { pageSize: 200 }).rows.map(item => item.query)
       .find((q) => q.queryKey === USCC && q.interface === 'business_list' && q.rdjb === '3')!
-    expect(db.select().from(schema.platformRelation).all().filter((r) => r.queryId === query.id)).toHaveLength(6)
+    expect(listPlatformQueries(db, { pageSize: 200 }).rows.flatMap(item => item.relations.map(row => ({ ...row, queryId: item.query.id }))).filter((r) => r.queryId === query.id)).toHaveLength(6)
   })
 
   it('★ 按**现名或曾用名**搜索都命中同一家企业（读侧口径）', async () => {
@@ -1771,4 +1717,41 @@ describe('F · 回归 91330211255994457P：计划 → 执行 → 两行合一、
     const report = planUsccResearch(db)
     expect(report.counts.filled).toBe(0)
   })
+})
+
+it('keeps an absent-source verdict manual without reserving its USCC or writing business facts', async () => {
+  const absentName = '宁波无原档护栏甲有限公司'
+  const capturedName = '宁波有原档护栏乙有限公司'
+  const absent = seedEnterprise({ name: absentName })
+  const captured = seedEnterprise({ name: capturedName })
+  submitNativePlatformQuery(db, { interface: 'business_list', queryKey: USCC, rdjb: '3', queriedAt: '2026-11-14T00:00:00Z', status: 'success', rawResponse: 'Explicit synthetic original admission source', relations: [{ sequenceNo: 1, relationKey: 'native-admission-captured', enterpriseId: canonical, usccRaw: USCC, nameRaw: capturedName, matchBasis: 'uscc', verificationStatus: 'confirmed' }] })
+  const snapshot = () => ({
+    enterprises: db.select().from(schema.enterprise).all(),
+    aliases: db.select().from(schema.enterpriseAlias).all(),
+    merges: db.select().from(schema.enterpriseMerge).all(),
+    records: db.select().from(schema.record).all(),
+    events: db.select().from(schema.recordEvent).all(),
+    collections: db.select().from(schema.platformCollection).all(),
+    observations: db.select().from(schema.platformBusinessObservation).all(),
+    assignments: db.select().from(schema.platformObservationAssignment).all(),
+    archives: db.select().from(schema.platformArchiveValue).all(),
+    batches: db.select().from(schema.importBatch).all(),
+  })
+  const before = snapshot()
+  const response = await fetch(`${server.baseUrl}/api/roster/uscc-research`, {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ enterpriseIds: [absent], verdictFiles: [{ file: 'absent-native-source.json', value: { batch: 99, generatedAt: '2026-11-13T00:00:00Z', items: [{ enterpriseId: absent, name: absentName, district: '镇海区', keyword: '无原档护栏甲', candidateUscc: USCC, platformEvidence: [{ interface: 'business_list', rdjb: '3', sequenceNo: 1, relationKey: 'not-archived', qymc: absentName }], qymcEqualsAnnouncedName: true, verdict: 'resolved', reason: 'Explicit synthetic verdict without original collection bytes' }] } }] }),
+  })
+  expect(response.status).toBe(200)
+  const result = await response.json()
+  expect(result.plan).toMatchObject({ counts: { targets: 1, ready: 0, filled: 0, manual: 1 }, ready: [], request: null, pending: [{ targetId: absent, targetName: absentName, outcome: 'manual', code: 'query_source_required', candidates: [] }] })
+  expect(result.plan.pending[0].message).toContain('rawResponse')
+  expect(result.plan.outcomes).toMatchObject([{ enterpriseId: absent, outcome: 'manual' }])
+  const combined = planUsccResearch(db, { enterpriseIds: [absent, captured], platformClaims: [
+    { enterpriseId: absent, enterpriseName: absentName, uscc: USCC, observedAt: '2026-11-13T00:00:00Z', evidence: [{ interface: 'business_list', rdjb: '3', sequenceNo: 1, relationKey: 'not-archived', nameRaw: absentName }] },
+    { enterpriseId: captured, enterpriseName: capturedName, uscc: USCC, observedAt: '2026-11-14T00:00:00Z', evidence: [{ interface: 'business_list', rdjb: '3', sequenceNo: 1, relationKey: 'native-admission-captured', nameRaw: capturedName }] },
+  ] })
+  expect(combined.pending).toMatchObject([{ targetId: absent, outcome: 'manual', code: 'query_source_required' }])
+  expect(combined.ready.map(row => row.targetId)).toEqual([captured])
+  expect(combined.request?.payload.merges).toMatchObject([{ fromEnterpriseId: captured, intoUscc: USCC }])
+  expect(snapshot()).toEqual(before)
 })

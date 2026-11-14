@@ -1,6 +1,6 @@
 import Database from 'better-sqlite3'
-import * as expandSchema from '../db/schema'
-import { ensurePlatformObservation } from '../server/utils/platform-business-record'
+import * as expandSchema from '../upgrade/legacy-schema'
+import { ensurePlatformObservation } from '../upgrade/frozen/server/platform-business-record'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { migrate } from 'drizzle-orm/better-sqlite3/migrator'
 import { copyFileSync, mkdtempSync } from 'node:fs'
@@ -152,17 +152,6 @@ it('keeps source lock during schema and receipt writes and replays in another pr
   writeFileSync(f.target+'.replay.stdout',result.stdout);writeFileSync(f.target+'.replay.stderr',result.stderr)
   expect(result.status,result.stderr).toBe(0)
 })
-it('preserves runtime initialization guards and rejects malformed C-capable successor commands',async()=>{
-  const f=fixture();f.t.close();const source=f.target+'.71606';copyFileSync(f.target,source)
-  finalizeFingerprintBasis({source,target:f.target,runId:'basis',predecessorRunId:'scopes'})
-  const {useRuntimeDb,initializeDb}=await import('../db/client')
-  for(const readOnly of [false,true])expect(()=>useRuntimeDb({dbPath:f.target,readOnly})).toThrow(/finalized/i)
-  expect(()=>initializeDb({dbPath:f.target})).toThrow(/finalized/i)
-  const {writeNewCollectionTarget}=await import('../lib/platform/collection-target-command')
-  const t=new Database(f.target);t.pragma('foreign_keys=ON');const before=t.serialize()
-  expect(()=>writeNewCollectionTarget(drizzle(t),{queryText:'{}',evidenceText:null,createdAt:'c',assignments:[]})).toThrow(/Invalid input/)
-  expect(t.serialize()).toEqual(before);t.close()
-})
 
 it('checks the complete physical basis FK index trigger catalog and original ref DDL stays byte equal',()=>{
   const {t}=fixture()
@@ -181,7 +170,7 @@ it('checks the complete physical basis FK index trigger catalog and original ref
   expect(ddl.sql).toContain('DEFERRABLE INITIALLY DEFERRED');t.close()
 })
 
-import { writeApplyTarget } from '../lib/platform/apply-target-writer'
+import { writeApplyTarget } from '../upgrade/frozen/apply-target-writer'
 it('rolls back content archives sequences and aliases when the old direct writer hits the basis-first barrier',()=>{
   const {t}=fixture();installFingerprintBasis(t);installFingerprintBarrier(t)
   // Outer empty COMMIT increments SQLite header counters, not business facts or high waters.
@@ -236,8 +225,8 @@ it.each([null,7])('recovers a proven bootstrap with captured batch %s without in
   const db=new Database(f.target);expect(db.prepare('SELECT batch_id FROM platform_business_observation WHERE id=11').get()).toEqual({batch_id:batchId});db.close()
 })
 
-import { writeProcessTarget } from '../lib/platform/process-target-writer'
-import { writeRecognizedTarget } from '../lib/platform/recognized-target-writer'
+import { writeProcessTarget } from '../upgrade/frozen/process-target-writer'
+import { writeRecognizedTarget } from '../upgrade/frozen/recognized-target-writer'
 const writers={apply_list:writeApplyTarget,business_list:writeProcessTarget,recognized_list:writeRecognizedTarget}
 it.each(Object.keys(writers) as (keyof typeof writers)[])('recovers %s original command and seals proven missing input as uncaptured',sourceInterface=>{
   for(const captured of [true,false]) {
@@ -358,7 +347,7 @@ it.each(['created','recovered','barrier','receipt'])('locks independent after-ev
   expect(checked).toBe(true)
 })
 
-import { writeNewCollectionTarget } from '../lib/platform/collection-target-command'
+import { writeNewCollectionTarget } from '../upgrade/frozen/collection-target-command'
 import { platformResultToImport } from '../lib/platform/recognized-evidence'
 import type { PlatformLiveQueryResult } from '../lib/platform/live-query'
 it.each(['queryList','businessList','queryBusList'] as const)('recovers original writer envelope produced by a full %s collection command',sourceKind=>{

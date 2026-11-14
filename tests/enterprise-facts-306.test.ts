@@ -141,18 +141,23 @@ it('conservative intervals preserve precision and unknown registration never imp
     expect((await http(id)).body.facts[0].fact.effective).toEqual(effective)
   }
 })
-it('whole-consumer legacy rollback retains new writes and same-input legacy-only results', async () => {
+it('native qualification consumes confirmed facts and withdrawal preserves immutable lifecycle revisions', async () => {
   const { readCurrentQualificationAssessment } = await import('../lib/roster/current-qualification')
-  const id = seed(), read = () => readCurrentQualificationAssessment(db.$client, id, Date.parse('2026-11-04T00:00:00Z'))
-  const before = read()
-  process.env.ENTERPRISE_FACT_CONSUMER_SOURCE = 'legacy'
-  try { expect(read()).toEqual(before) } finally { delete process.env.ENTERPRISE_FACT_CONSUMER_SOURCE }
-  const first = await commit(id, await command(id, { action: 'assert', fact }))
-  await commit(id, await command(id, { action: 'confirm', factId: first.body.factId }))
-  const stored = (await http(id)).body
-  process.env.ENTERPRISE_FACT_CONSUMER_SOURCE = 'legacy'
-  try { expect(read()).toEqual(before); expect((await http(id)).body).toEqual(stored) }
-  finally { delete process.env.ENTERPRISE_FACT_CONSUMER_SOURCE }
+  const id=seed(),read=()=>readCurrentQualificationAssessment(db.$client,id,Date.parse('2026-11-04T00:00:00Z')).titles.find(t=>t.titleCode==='specialized_sme')!
+  expect(read().region.status).toBe('not_established')
+  const first=await commit(id,await command(id,{action:'assert',fact}))
+  await commit(id,await command(id,{action:'confirm',factId:first.body.factId}))
+  const confirmed=(await http(id)).body
+  expect(confirmed.facts).toMatchObject([{factId:first.body.factId,status:'confirmed',fact}])
+  expect(read().region.status).toBe('outside_ningbo')
+  const version=read().versions.facts
+  await commit(id,await command(id,{action:'withdraw',factId:first.body.factId}))
+  const withdrawn=(await http(id)).body
+  expect(withdrawn.facts).toMatchObject([{factId:first.body.factId,status:'withdrawn',fact}])
+  expect(withdrawn.history.map((row:any)=>row.action)).toEqual(['assert','confirm','withdraw'])
+  expect(withdrawn.history.slice(0,2)).toEqual(confirmed.history)
+  expect(read().region.status).toBe('not_established')
+  expect(read().versions.facts).not.toBe(version)
 })
 it('difference commands pin multiple owned confirmed revisions and reject cross-enterprise stale or pending references', async () => {
   const { saveDecision102 } = await import('../server/utils/decision-lifecycle-102')

@@ -1,5 +1,8 @@
 # Frozen 96a Node candidate: controlled child-performance evidence
 
+> 历史脚本说明：本文引用的混合表实验/验收脚本已在原生运行切换时退役。复现旧命令须在独立 checkout 固定到 `ab503081dae3e24680afc9b07395a7e3ff21fc9f` 并使用当时的隔离数据库与二进制；这些命令不适用于当前运行库。历史证据与 FAIL/UNKNOWN 保持原样。
+
+
 **Performance acceptance remains open.** The serial run observed 30 hot-stage gate-miss rows and 4 cold resource-miss rows. The required host reserve **FAILED**: the 8.5 GiB guard stopped a container, but free space subsequently fell below 8 GiB. All timing stopped permanently; the exclusive Node window was released at **2026-10-20 10:09:43Z** after owned containers stopped and cleanup evidence was saved. The cause of additional host allocation is unknown.
 
 

@@ -28,9 +28,9 @@
 
 ## 终态原生建库与完整升级入口
 
-`initializeDb({ create: true })` 在新路径直接创建终态结构；显式 migrationsFolder 及 db/client 的旧 setup 适配器保留给历史工具。公开 db/index.useDb 和应用启动只接受终态。新库的 capability 声明与历史迁移记录分开，platform_migration_run 保持空表。指纹校验临时模型复制 capability，不伪造历史迁移记录。
+`initializeDb({ create: true })` 在新路径直接创建终态结构；历史初始化只由 upgrade/legacy-client 持有，运行 client 不接受 migrationsFolder。公开 db/index.useDb 和应用启动只接受终态。新库的 capability 声明与历史迁移记录分开，platform_migration_run 保持空表。指纹校验临时模型复制 capability，不伪造历史迁移记录。
 
-`db/runtime-schema.generated.ts` 仅包含已退役结构的 DDL，通过 upgrade/generate-runtime-schema.mjs 生成，无业务行、凭据或源文件内容。初始化、首笔平台导入、来源读取、重启、schema0 公共入口拒绝及相邻检查 14 PASS。
+`db/runtime-schema.generated.ts` 仅包含完成退役后的原生结构 DDL，通过 upgrade/generate-runtime-schema.mjs 生成，无业务行、凭据或源文件内容。初始化、首笔平台导入、来源读取、重启、schema0 公共入口拒绝及相邻检查 14 PASS。
 
 `upgrade/run-complete-platform.mjs` 串行组合既有迁移，只复用一份 predecessor 快照；新目标必须不存在。完整链的全库 integrity_check 由最终退役事务执行一次，各独立升级命令仍保持原检查，阶段回执明确记录 deferred/full，不把待验证阶段标成全库已通过。外键强制和各阶段源值/映射检查保留；重复的全库外键扫描合并到最终退役事务，独立命令仍执行原扫描。完整合成链已跑通；真实历史备份迁移正在仓外隔离副本验证，未获完成结论。
 
@@ -46,7 +46,7 @@
 
 申报、办理、认定、候选与见证阶段的自定义流式摘要也按 SQLite 状态复用，保留原摘要字节格式。18 个完整合成阶段的全部 result 与未复用链完全一致，普通修改、外部提交及 DDL 的失效检查通过；独立执行这些阶段时仍重新计算。
 
-生产读取、导入和导出 worker 也只接受终态，移除临时 schema0 worker 准入。显式 db/client 历史工具适配器继续供旧模型 oracle 使用，不是应用或 worker 入口。应用、真实读取 worker 与真实导入 worker 对 schema0 的拒绝定向检查通过；异步队列测试夹具同步改为原生终态建库。
+生产读取、导入和导出 worker 也只接受终态，移除临时 schema0 worker 准入。历史 oracle 只使用显式 upgrade/legacy-client，不进入应用或 worker。应用、真实读取 worker 与真实导入 worker 对 schema0 的拒绝定向检查通过；异步队列测试夹具同步改为原生终态建库。
 
 完整链的 archive-metadata-v1 策略将重复正文校验归并到最终退役事务：阶段 manifest 保留归档 ID、原存储类型、长度和 SHA，跳过不可变 payload 及待退役的旧表；最终有界遍历全部归档验证实际 BLOB、长度和内容 SHA，并保留旧 query/relation 原值与归档逐项核验。对应关系和审计仍由其 owner 比较全部原字节。独立升级命令的 manifest 不变。新阶段回执显式标注 manifestPolicy，旧检查点不改写。该策略的完整合成升级后，71 张业务表仍与已接受结果逐字节一致；归档内容损坏时拒绝退役并保留全部旧表的检查通过。
 

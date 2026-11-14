@@ -1,5 +1,5 @@
 import { platformNormalizationConflict } from '../../lib/platform/normalization';
-/** Explicit 71609–71611 recognition-directory reader. Public routing remains separate. */
+/** Native recognition directory reader. */
 import { getTableColumns,and,count,countDistinct,desc,eq,exists,inArray,isNull,max,min,ne,or,sql } from 'drizzle-orm';
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3';
 import { alias } from 'drizzle-orm/sqlite-core';
@@ -32,7 +32,7 @@ function current(db: Db) { return and(eq(a.observationId, o.id), eq(a.revision, 
 const isolated = or(ne(o.identityState, 'resolved'), ne(o.contentState, 'verified'), isNull(o.versionId));
 function gate(db: Db, selected?: ReturnType<typeof inArray>) {
     if (!recognizedStoredInstalled(sqliteConnection(db)))
-        fail(409, 'recognized_target_capture', 'Recognized reader requires completed 71609 stored-title capture');
+        fail(409, 'recognized_target_capture', 'Recognized observations require completed stored-title capture');
     const missing = db.select({ id: o.id }).from(o).innerJoin(c, eq(c.id, o.collectionId)).leftJoin(p, eq(p.observationId, o.id)).leftJoin(a, current(db)).leftJoin(original, and(eq(original.observationId, o.id), eq(original.revision, 1))).leftJoin(ra, eq(ra.observationId, o.id)).leftJoin(qa, eq(qa.collectionId, c.id))
         .where(and(selected, eq(c.interface, 'recognized_list'), or(isNull(p.id), isNull(p.exactTitleState), ne(p.exactTitleState, 'captured'), isNull(a.observationId), isNull(original.observationId), isNull(ra.oldId), isNull(qa.oldId)))).limit(1).get();
     if (missing)

@@ -6,7 +6,7 @@
 
 - `POST /api/roster/correspondences/browser-preflight`：`{idempotencyKey,basis,operations}`。
 - `POST /api/roster/correspondences/browser-commit`：`{request:{idempotencyKey,basis,operations},planHash}`。
-- `GET /api/roster/evidence-review/browser-context`：复用部署能力的 `{writeEnabled}`。默认关闭；要求已有 API token 和显式页面复核开关，并执行精确 Origin、Sec-Fetch-Site 和 JSON 检查。
+- `GET /api/roster/evidence-review/browser-context`：返回 `{writeEnabled:true}`，同源页面默认可提交，无需 API token 或页面复核开关；实际写请求仍执行精确 Origin、Sec-Fetch-Site 和 JSON 检查。外部 REST/MCP 写入继续使用独立 token。
 
 请求体禁止 actor/sourceIdentity/ruleId/ruleVersion。适配器固定记录实际调用代理 `agent / same-origin-correspondence-adapter`，明确不识别个人身份；这不是用户登录或 #127 身份治理。规则是 `manual-source-row-review / 1`。凭证只留在服务端；表单仅收集业务依据与选定原行。
 

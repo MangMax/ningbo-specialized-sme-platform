@@ -1,5 +1,8 @@
 # 平台查询读取（#83）
 
+> 历史脚本说明：本文引用的混合表实验/验收脚本已在原生运行切换时退役。复现旧命令须在独立 checkout 固定到 `ab503081dae3e24680afc9b07395a7e3ff21fc9f` 并使用当时的隔离数据库与二进制；这些命令不适用于当前运行库。历史证据与 FAIL/UNKNOWN 保持原样。
+
+
 范围：平台历史读模型及 REST/MCP。以下记录的是 #87 之前的原始有界读取交付，基于 #81 / #83 与 d198a09；当时不改 schema、迁移、业务判断或原始档案，索引归 #87。#87 后剩余 title 过滤及独立 schema 切片见 [#83 残余证据](performance/83/residual-title-scope.md)。所有测试库、商业原文和运行日志均在 Git 外。
 
 ## 兼容契约
@@ -26,7 +29,9 @@
 
 非法参数 400；不存在的查询/所属关系 404；默认完整模式预算超限 413。保留 failed、partial、no_record、not_queried、success 原值；读侧不重判，不把失败或未完成解释为无记录。不改变既有公开读取权限或写入鉴权；返回已有归档，不重新还原采集时已脱敏的内容。分块不是跨请求数据库快照：若另一写入者修改同一档案，调用方应重新开始读取；本票不引入跨请求锁或缓存。
 
-## 可复现验证
+## 历史验证（仅适用于原版本）
+
+下列命令及统计属于旧 query/relation 模型。`verify-platform-query-read.mjs`、`bench-platform-queries.mjs` 已随原生运行切换删除；需要复现实验时，在独立 checkout 固定到 `ab503081dae3e24680afc9b07395a7e3ff21fc9f`，使用当时的代码和隔离数据库，不使用当前二进制。当前原生初始化与离线升级见 [原生运行边界](platform-retirement/native-runtime.md)。
 
 - `pnpm exec vitest run tests/platform-read.test.ts tests/platform-query-evidence.test.ts tests/platform-query-http.test.ts`
 - `pnpm build` 后 `node scripts/verify-platform-query-read.mjs`：临时合成库、本地生产构建、真实 HTTP 与 MCP `tools/list/tools/call`，全筛选/五态/关系/原档/摘要/分块/400/401/413 兼容证据。

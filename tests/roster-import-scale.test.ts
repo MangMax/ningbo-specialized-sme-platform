@@ -1,3 +1,4 @@
+import {submitNativePlatformQuery} from './helpers/native-platform-fixture'
 import { initializeDb } from '../db/client'
 /**
  * RL-18 —— 写入侧**规模**用例：单批千条级平台查询不再随批内查询数平方增长。
@@ -131,21 +132,7 @@ function fakeRawResponse(uscc: string): string {
 function seedArchive(db: ReturnType<typeof makeDb>, count: number): void {
   for (let i = 0; i < count; i += 1) {
     const uscc = `91${String(330200000000000 + i).padStart(16, '0')}`
-    const queryId = db
-      .insert(schema.platformQuery)
-      .values({
-        interface: 'business_list',
-        queryKey: uscc,
-        rdjb: '3',
-        queriedAt: '2026-10-15T00:00:00.000Z',
-        status: 'success',
-        rawResponse: fakeRawResponse(uscc),
-      })
-      .returning({ id: schema.platformQuery.id })
-      .get().id
-    db.insert(schema.platformRelation)
-      .values({ queryId, sequenceNo: 1, relationKey: `ARC-${i}`, usccRaw: uscc, nameRaw: `存档企业${i}` })
-      .run()
+    submitNativePlatformQuery(db,{interface:'business_list',queryKey:uscc,rdjb:'3',queriedAt:'2026-10-15T00:00:00.000Z',status:'success',rawResponse:fakeRawResponse(uscc),relations:[{sequenceNo:1,relationKey:`ARC-${i}`,usccRaw:uscc,nameRaw:`存档企业${i}`}]})
   }
 }
 
@@ -216,8 +203,8 @@ describe.runIf(SCALE_ENABLED)('RL-18 规模：单批千条级平台查询', () =
     const { result: first } = timedCommit(db, request)
     expect(first.summary.written).toBeGreaterThan(0)
 
-    const countQueries = () => db.select({ id: schema.platformQuery.id }).from(schema.platformQuery).all().length
-    const countRelations = () => db.select({ id: schema.platformRelation.id }).from(schema.platformRelation).all().length
+    const countQueries = () => db.select().from(schema.platformCollection).all().length
+    const countRelations = () => db.select().from(schema.platformBusinessObservation).all().length
     const queriesBefore = countQueries()
     const relationsBefore = countRelations()
 

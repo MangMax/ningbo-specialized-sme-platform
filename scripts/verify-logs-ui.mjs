@@ -7,14 +7,15 @@ import { mkdtempSync, writeFileSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { execFileSync } from 'node:child_process'
+import { createRequire } from 'node:module'
 import Database from 'better-sqlite3'
-import { drizzle } from 'drizzle-orm/better-sqlite3'
-import { migrate } from 'drizzle-orm/better-sqlite3/migrator'
 import { spawnOwnedChild as spawn, reserveLoopbackPort, waitForHttp, stopOwnedChild } from './lib/isolated-local-services.mjs'
+const { createJiti } = createRequire(import.meta.resolve('nuxt/package.json'))('jiti')
+const { createRuntimeSchema } = await createJiti(import.meta.url).import('../db/create-runtime.ts')
 const root = mkdtempSync(join(tmpdir(), 'logs182-public-'))
 const business = join(root, 'synthetic.db')
 const db = new Database(business)
-migrate(drizzle(db), { migrationsFolder: resolve('db/migrations') })
+db.pragma('foreign_keys = ON'); createRuntimeSchema(db)
 db.close()
 const before = readFileSync(business)
 const port = await reserveLoopbackPort(),

@@ -14,7 +14,7 @@ assert.ok(!existsSync(report), 'preserve evidence')
 for (const k of Object.keys(process.env)) if (/TOKEN|COOKIE|PASSWORD|SECRET/.test(k)) delete process.env[k]
 process.env.NUXT_DB_PATH = dbPath; process.env.NUXT_DB_READONLY = '1'
 Object.assign(globalThis, { useRuntimeConfig: () => ({ apiToken: 'synthetic-perf227-only', mcpToken: '', miitCookie: '', ocrToken: '' }) })
-register(root + '/scripts/perf-82/loader.mjs', import.meta.url)
+register(root + '/scripts/lib/diagnostic-module-loader.mjs', import.meta.url)
 const require = createRequire(root + '/package.json')
 const Database = require('better-sqlite3')
 const { readFileSync } = await import('node:fs')
@@ -43,13 +43,13 @@ Database.prototype.prepare = function (sql) {
   return statement
 }
 let t = performance.now()
-const { useDb } = await import(root + '/db/client.ts')
+const { useApplicationDb } = await import(root + '/db/client.ts')
 const { handleRecordCorrespondenceRequest: api } = await import(root + '/server/utils/record-correspondence-api.ts')
 const { dispatchRecordCorrespondenceMcp: mcp } = await import(root + '/server/utils/mcp-record-correspondence.ts')
 const { drizzle } = await import('file://' + require.resolve('drizzle-orm/better-sqlite3'))
 const schema = await import(root + '/db/schema.ts')
 const importsMs = performance.now() - t
-phase = 'open-first'; t = performance.now(); const firstDb = useDb({ dbPath, readOnly: true }); const firstOpenMs = performance.now() - t
+phase = 'open-first'; t = performance.now(); const firstDb = useApplicationDb({ dbPath, readOnly: true }); const firstOpenMs = performance.now() - t
 const run = (db, label) => {
   phase = label; const usage = process.resourceUsage(), cpu = process.cpuUsage(), memoryBefore = process.memoryUsage(), start = performance.now()
   const result = api({ action: 'discover', method: 'POST', body: cell.args }, { db })

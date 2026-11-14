@@ -1,3 +1,4 @@
+import { submitNativePlatformQuery } from './helpers/native-platform-fixture'
 import { initializeDb } from '../db/client'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -59,18 +60,10 @@ db.insert(schema.enterpriseAlias)
   ])
   .run()
 
-const queryId = db
-  .insert(schema.platformQuery)
-  .values({ interface: 'business_list', queryKey: USCC, rdjb: '3', queriedAt: '2026-10-15T17:11:21.514Z', status: 'success' })
-  .returning({ id: schema.platformQuery.id })
-  .get().id
-db.insert(schema.platformRelation)
-  .values([
-    { queryId, sequenceNo: 1, relationKey: 'SQ332022062212391', enterpriseId: withEvidence, usccRaw: USCC, nameRaw: '宁波上航测绘有限公司', aliasNameRaw: '宁波上航测绘有限公司', province: '宁波市', status: '终审通过', batch: '2022-1', declareKind: 'apply', appliedAt: '2022-06-22 17:17:52', year: 2022, matchBasis: 'uscc', verificationStatus: 'confirmed' },
-    { queryId, sequenceNo: 2, relationKey: 'SQ332024052128274', enterpriseId: withEvidence, usccRaw: USCC, nameRaw: '宁波上航测绘股份有限公司', province: '宁波市', status: '终审通过', batch: '2024-1', declareKind: 'update', appliedAt: '2024-05-21', year: 2024, matchBasis: 'uscc', verificationStatus: 'confirmed' },
-  ])
-  .run()
-
+const queryId = submitNativePlatformQuery(db, { ...{ interface: 'business_list', queryKey: USCC, rdjb: '3', queriedAt: '2026-10-15T17:11:21.514Z', status: 'success' }, rawResponse: 'Explicit synthetic comparison source', relations: [
+    { sequenceNo: 1, relationKey: 'SQ332022062212391', enterpriseId: withEvidence, usccRaw: USCC, nameRaw: '宁波上航测绘有限公司', aliasNameRaw: '宁波上航测绘有限公司', province: '宁波市', status: '终审通过', batch: '2022-1', declareKind: 'apply', appliedAt: '2022-06-22 17:17:52', year: 2022, matchBasis: 'uscc', verificationStatus: 'confirmed' },
+    { sequenceNo: 2, relationKey: 'SQ332024052128274', enterpriseId: withEvidence, usccRaw: USCC, nameRaw: '宁波上航测绘股份有限公司', province: '宁波市', status: '终审通过', batch: '2024-1', declareKind: 'update', appliedAt: '2024-05-21', year: 2024, matchBasis: 'uscc', verificationStatus: 'confirmed' },
+  ] }).queryId
 // 时态化:同一差异两条解释,展示取 recordedAt 最新那条。
 db.insert(schema.differenceReason)
   .values([
@@ -81,7 +74,7 @@ db.insert(schema.differenceReason)
       status: 'needs_review',
       reasonCode: 'other',
       recordedAt: '2026-10-01T00:00:00.000Z',
-      evidenceQueryId: queryId,
+      evidenceCollectionId: db.select().from(schema.platformLegacyQueryAlias).all().find(row => row.oldId === queryId)!.collectionId,
     },
     {
       enterpriseId: withEvidence,
@@ -93,7 +86,7 @@ db.insert(schema.differenceReason)
       measureNote: '旧名保留为曾用名',
       verificationStatus: 'confirmed',
       recordedAt: '2026-10-14T00:00:00.000Z',
-      evidenceQueryId: queryId,
+      evidenceCollectionId: db.select().from(schema.platformLegacyQueryAlias).all().find(row => row.oldId === queryId)!.collectionId,
     },
   ])
   .run()
@@ -244,12 +237,8 @@ describe('attachPlatformEvidence:状态、原因、措施照库原样带出', ()
   // 丁:`no_record` / `failed` 这类查询**一条关系都不返回**。只看关系会把它们整条丢掉,
   //     而「查过、接口确无记录」正是要看得见的四态之一 —— 所以查询要按**查询键**归属。
   const noRecorded = make('宁波接口无记录企业', '91330211000000004A', 'specialized_sme', 'jxj')
-  db2.insert(schema.platformQuery)
-    .values({ interface: 'apply_list', queryKey: '91330211000000004A', rdjb: '', queriedAt: '2026-10-16T03:20:00.000Z', status: 'no_record' })
-    .run()
-  db2.insert(schema.platformQuery)
-    .values({ interface: 'business_list', queryKey: '91330211000000004A', rdjb: '2', queriedAt: '2026-10-16T03:20:01.000Z', status: 'failed', failureReason: '登录超时,请重新登录' })
-    .run()
+  submitNativePlatformQuery(db2, { ...{ interface: 'apply_list', queryKey: '91330211000000004A', rdjb: '', queriedAt: '2026-10-16T03:20:00.000Z', status: 'no_record' }, rawResponse: 'Explicit synthetic comparison source' })
+  submitNativePlatformQuery(db2, { ...{ interface: 'business_list', queryKey: '91330211000000004A', rdjb: '2', queriedAt: '2026-10-16T03:20:01.000Z', status: 'failed', failureReason: '登录超时,请重新登录' }, rawResponse: 'Explicit synthetic comparison source' })
   db2.insert(schema.differenceReason)
     .values({
       enterpriseId: noRecorded,
@@ -311,21 +300,4 @@ describe('attachPlatformEvidence:状态、原因、措施照库原样带出', ()
     expect(row.platform!.queries[1]!.failureReason).toBe('登录超时,请重新登录')
     expect(row.platform!.relationCount).toBe(0)
   })
-})
-
-
-it('comparison typed read uses source projection and explicit legacy rollback preserves archived evidence', async () => {
-  const { ensurePlatformObservation } = await import('../server/utils/platform-business-record')
-  const relation = db.select().from(schema.platformRelation).all()[0]!
-  db.$client.prepare('update platform_relation set raw_fields=? where id=?').run(JSON.stringify({ id: relation.relationKey, cszt: '终审通过' }), relation.id)
-  ensurePlatformObservation(db, relation.id)
-  // A typed projection is authoritative; independent literal also detects an inert switch.
-  db.$client.prepare("update platform_business_projection set status = '投影状态'").run()
-  const input = [{ enterpriseId: withEvidence, titleCode: 'specialized_sme', direction: 'extra_in_miit' as const }]
-  const typed = attachPlatformEvidence(input, db)
-  const legacy = attachPlatformEvidence(input, db, { source: 'legacy' })
-  expect(typed[0]!.platform.queries[0]!.relations[0]!.status).toBe('投影状态')
-  expect(legacy[0]!.platform.queries[0]!.relations[0]!.status).toBe('终审通过')
-  expect(typed[0]!.platform.disposition).toEqual(legacy[0]!.platform.disposition)
-  expect(typed[0]!.platform.queries[0]!.relations.map(r => r.id)).toEqual(legacy[0]!.platform.queries[0]!.relations.map(r => r.id))
 })

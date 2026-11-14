@@ -7,14 +7,15 @@ import { once } from 'node:events'
 import { mkdtempSync, readFileSync, writeFileSync, readdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
+import { createRequire } from 'node:module'
 import Database from 'better-sqlite3'
-import { drizzle } from 'drizzle-orm/better-sqlite3'
-import { migrate } from 'drizzle-orm/better-sqlite3/migrator'
 import { spawnOwnedChild as spawn, reserveLoopbackPort, stopOwnedChild } from './lib/isolated-local-services.mjs'
+const { createJiti } = createRequire(import.meta.resolve('nuxt/package.json'))('jiti')
+const { createRuntimeSchema } = await createJiti(import.meta.url).import('../db/create-runtime.ts')
 
 const root = mkdtempSync(join(tmpdir(), 'platform185-nuxt-'))
 const dbPath = join(root, 'synthetic.db'), logs = join(root, 'logs')
-const db = new Database(dbPath); migrate(drizzle(db), { migrationsFolder: resolve('db/migrations') }); db.close()
+const db = new Database(dbPath); db.pragma('foreign_keys = ON'); createRuntimeSchema(db); db.close()
 const cookie = 'session=PRIVATE185_COOKIE', marker = 'PRIVATE185_CONTENT'
 const checks = [], readbacks = [], scopes = [], healthyResults = new Map()
 let mode = 'success', failSecond = true, child, base, output = ''

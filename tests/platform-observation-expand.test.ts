@@ -1,5 +1,5 @@
 import { sql } from 'drizzle-orm'
-import { bindLegacyAlias, resolveLegacyReference, writeOwnerArchive, readOwnerArchive } from '../lib/platform/immutable-archive'
+import { bindLegacyAlias, resolveLegacyReference, writeOwnerArchive, readOwnerArchive } from '../upgrade/frozen/immutable-archive'
 import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { migrate } from 'drizzle-orm/better-sqlite3/migrator'
@@ -7,7 +7,7 @@ import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSy
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { expect, it } from 'vitest'
-import * as schema from '../db/schema'
+import * as schema from '../upgrade/legacy-schema'
 
 const folder = resolve('db/migrations')
 function setup(upgrade = false) {
@@ -60,7 +60,7 @@ it('upgrades populated 0048 without inventing identity collection assignment or 
 
 function mapped(f: ReturnType<typeof setup>) {
   const c = f.db.insert(schema.platformCollection).values({ interface: 'business_list', queryKey: 'fixture', rdjb: '2', queriedAt: 'original', createdAt: 'original', status: 'success', completeness: 'unknown', provenanceState: 'unknown', parseState: 'absent', ruleVersion: 'test' }).returning().get()
-  const page = f.db.insert(schema.platformCollectionPage).values({ collectionId: c.id, ordinal: 0, positionState: 'verified' }).returning().get()
+  const page = f.s.prepare("INSERT INTO platform_collection_page(collection_id,ordinal,position_state) VALUES(?,0,'verified') RETURNING id").get(c.id) as { id: number }
   return { c, page }
 }
 it('stores original null empty space and conflicting keys with repeated verified versions at distinct positions', () => {

@@ -1,3 +1,4 @@
+import { submitNativePlatformQuery } from './helpers/native-platform-fixture'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -8,14 +9,14 @@ import type { AddressInfo } from 'node:net'
 import { createApp, createRouter, defineEventHandler, toNodeListener } from 'h3'
 import { afterAll, expect, it, vi } from 'vitest'
 import Database from 'better-sqlite3'
-import { useDb, schema } from '../db/client'
+import { initializeDb, schema } from '../db/client'
 import { readCurrentCandidate } from '../lib/roster/current-qualification'
 
 const dirs: string[] = []
 afterAll(() => { vi.unstubAllGlobals(); for (const dir of dirs) rmSync(dir, { recursive: true, force: true }) })
 async function fixture(awardYear = 2021, titleCode = 'specialized_sme') {
   const dir = mkdtempSync(join(tmpdir(), 'event-correction-100-')); dirs.push(dir)
-  const dbPath = join(dir, 'test.db'), db = useDb({ dbPath })
+  const dbPath = join(dir, 'test.db'), db = initializeDb({ create: true,  dbPath })
   const enterprise = db.insert(schema.enterprise).values({ name: '合成事件企业', nameNorm: '合成事件企业' }).returning().get()
   const record = db.insert(schema.record).values({ enterpriseId: enterprise.id, titleCode, source: 'jxj', nameRaw: enterprise.name }).returning().get()
   const event = db.insert(schema.recordEvent).values({ recordId: record.id, eventType: 'award', year: awardYear, decidedYear: awardYear, batchSeq: 1, sortKey: awardYear }).returning().get()
@@ -285,8 +286,8 @@ it('rolls back the first update, revisions, audit and receipt if a later update 
 it('marks direct and predecessor confirmations stale after correction and after restoring original values until explicit reconfirmation', async () => {
   const f = await fixture()
   try {
-    const query = f.db.insert(schema.platformQuery).values({ interface: 'business_list', queryKey: 'synthetic', rdjb: '2', titleCode: 'specialized_sme', queriedAt: '2026-10-19', status: 'success' }).returning().get()
-    const relation = f.db.insert(schema.platformRelation).values({ queryId: query.id, sequenceNo: 1, enterpriseId: f.enterprise.id, verificationStatus: 'confirmed', declareKind: 'apply', appliedAt: '2026-01-01' }).returning().get()
+    const native = submitNativePlatformQuery(f.db, { interface: 'business_list', queryKey: 'synthetic', rdjb: '2', titleCode: 'specialized_sme', queriedAt: '2026-10-19', status: 'success', rawResponse: 'Explicit synthetic correspondence source', relations: [{ sequenceNo: 1, enterpriseId: f.enterprise.id, verificationStatus: 'confirmed', declareKind: 'apply', appliedAt: '2026-01-01' }] })
+    const relation = { id: native.relationIds[0]! }
     const create = { idempotencyKey: 'correspondence', sourceIdentity: 'synthetic:relation', actor: { type: 'agent', id: 'test' }, basis: 'Explicit row context', ruleId: 'manual', ruleVersion: '1', operations: [
       { action: 'create', status: 'confirmed', edge: { type: 'event_process', eventId: f.event.id, relationId: relation.id, role: 'context_only' } },
       { action: 'create', status: 'confirmed', edge: { type: 'later_process', enterpriseId: f.enterprise.id, titleCode: 'specialized_sme', predecessorEventId: f.event.id, relationId: relation.id, role: 'followup_apply' } },
@@ -427,7 +428,7 @@ it('keeps exact reads and audit pages fixed when unrelated raw evidence and even
     const record = f.db.insert(schema.record).values({ enterpriseId: other.id, source: 'jxj', titleCode: 'specialized_sme' }).returning().get()
     f.db.transaction(tx => {
       for (let i = 0; i < 2000; i++) tx.insert(schema.recordEvent).values({ recordId: record.id, eventType: 'award', year: 2000 + i % 25, batchSeq: i + 1 }).run()
-      for (let i = 0; i < 100; i++) tx.insert(schema.platformQuery).values({ interface: 'business_list', queryKey: `unrelated-${i}`, rdjb: '2', queriedAt: '2026-10-19', status: 'success', rawResponse: 'UNRELATED-RAW'.repeat(5000) }).run()
+      for (let i = 0; i < 100; i++) submitNativePlatformQuery(tx, { interface: 'business_list', queryKey: `unrelated-${i}`, rdjb: '2', queriedAt: '2026-10-19', status: 'success', rawResponse: 'UNRELATED-RAW'.repeat(5000) })
     })
     const samples: number[] = []
     for (let i = 0; i < 5; i++) {

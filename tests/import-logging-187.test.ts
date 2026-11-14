@@ -7,7 +7,7 @@ import { join } from 'node:path'
 import { afterEach, expect, it } from 'vitest'
 import { createImportExecutor } from '../server/utils/import-execution'
 import type { RosterImportRequest } from '../lib/roster-import-client'
-import { useDb } from '../db/client'
+import { initializeDb } from '../db/client'
 import { handleRosterImportRequest } from '../server/utils/roster-import-http'
 import { readImportReceipt } from '../server/utils/import-receipts'
 import { applicationLogs, closeApplicationLogging, initializeWorkerLogging } from '../lib/logging'
@@ -21,7 +21,7 @@ function fixture(options: Parameters<typeof createImportExecutor>[0] = {}) {
   process.env.NUXT_LOG_DIR = join(root, 'logs')
   cleanups.push(() => { if (old === undefined) delete process.env.NUXT_LOG_DIR; else process.env.NUXT_LOG_DIR = old })
   initializeWorkerLogging()
-  const db = useDb({ dbPath: join(root, 'roster.db') })
+  const db = initializeDb({ create: true,  dbPath: join(root, 'roster.db') })
   cleanups.push(() => db.$client.close())
   const executor = createImportExecutor(options)
   cleanups.push(() => executor.close())

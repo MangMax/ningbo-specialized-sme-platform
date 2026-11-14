@@ -1,10 +1,13 @@
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { initializeDb } from '../db/client'
+import { submitNativePlatformQuery } from './helpers/native-platform-fixture'
 import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
-import { migrate } from 'drizzle-orm/better-sqlite3/migrator'
 import { eq } from 'drizzle-orm'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import * as schema from '../db/schema'
-import { TITLE_SEED } from '../db/titles'
 import { getRosterEnterpriseDetail } from '../lib/roster/enterprise-roster'
 import { readCurrentCandidate } from '../lib/roster/current-qualification'
 import { reviewCurrentExportDecision } from './helpers/current-export-decisions'
@@ -15,16 +18,15 @@ import * as publishedReads from '../lib/roster/official-published-presentation'
 import { readEvidenceToken113 } from '../server/utils/evidence-impact-113'
 
 const AS_OF = Date.parse('2026-06-01T00:00:00Z')
+let fixtureDir: string
 let sqlite: Database.Database
 let db: ReturnType<typeof drizzle<typeof schema>>
 beforeEach(() => {
-  sqlite = new Database(':memory:')
-  sqlite.pragma('foreign_keys = ON')
-  db = drizzle(sqlite, { schema })
-  migrate(db, { migrationsFolder: 'db/migrations' })
-  db.insert(schema.title).values([...TITLE_SEED]).run()
+  fixtureDir=mkdtempSync(join(tmpdir(),'qualification406-native-'))
+  db = initializeDb({ create: true, dbPath: join(fixtureDir,'source.sqlite') })
+  sqlite = db.$client
 })
-afterEach(() => { vi.restoreAllMocks(); sqlite.close() })
+afterEach(() => { vi.restoreAllMocks(); sqlite.close(); rmSync(fixtureDir,{recursive:true,force:true}) })
 
 function formalEnterprise() {
   const enterprise = db.insert(schema.enterprise).values({ name: '合成正式企业', nameNorm: '合成正式企业', usccNorm: '913302000000000001' }).returning().get()
@@ -51,27 +53,13 @@ function assessment(id: number, asOf = AS_OF, title = 'innovative_sme') {
   return readCurrentQualificationAssessment(sqlite, id, asOf, { assessmentVersion: 'enterprise-qualification-407-v1' }).titles.find(t => t.titleCode === title)!
 }
 
-function observation(enterprise: typeof schema.enterprise.$inferSelect, status: 'success' | 'no_record' | 'failed', rowStatus: string | null = null, titleCode = 'innovative_sme', rdjb = '1') {
-  const failed = status === 'failed'
-  const query = db.insert(schema.platformQuery).values({
-    interface: 'business_list', queryKey: enterprise.usccNorm!, rdjb, titleCode,
-    queriedAt: '2026-05-01T00:00:00Z', status,
-    collectionEvidence: {
-      source: 'businessList', status, effectiveConditions: { uscc: enterprise.usccNorm!, combination: 'and' },
-      titleScope: { mode: 'selected', rdjb: [rdjb] }, queriedAt: '2026-05-01T00:00:00Z', completedAt: '2026-05-01T00:00:01Z',
-      rows: [], pages: failed ? [] : [{ source: 'businessList', rdjb, page: 1, status: 'success', fetchedCount: status === 'success' ? 1 : 0, declaredTotal: status === 'success' ? 1 : 0, error: null }],
-      fetchedCount: status === 'success' ? 1 : 0, declaredTotal: failed ? null : status === 'success' ? 1 : 0,
-      completeness: failed ? 'partial' : 'complete', fullRange: true,
-      unfinished: failed ? [{ source: 'businessList', rdjb, page: 1 }] : [],
-      error: failed ? { code: 'invalid_response', message: 'synthetic failed query' } : null,
-      limits: { maxRequests: 100, maxRows: 5000, maxDurationMs: 60000, pageSize: 50 },
-    },
-  }).returning().get()
-  const relation = status === 'success' ? db.insert(schema.platformRelation).values({
-    queryId: query.id, sequenceNo: 1, enterpriseId: enterprise.id, usccRaw: enterprise.usccNorm,
-    status: rowStatus, year: 2025, batch: '2025-1', matchBasis: 'uscc', verificationStatus: 'confirmed',
-  }).returning().get() : null
-  return { query, relation }
+function observation(enterprise: typeof schema.enterprise.$inferSelect, status: 'success' | 'no_record' | 'failed', rowStatus: string | null = null, titleCode = 'innovative_sme', rdjb = '1', queriedAt = '2026-05-01T00:00:00Z') {
+  const failed=status==='failed'
+  const rawFields={id:'SYNTHETIC-'+queriedAt,qymc:enterprise.name,tyshxydm:enterprise.usccNorm!,year:'2025',whpc:'2025-1',...(rowStatus?{cszt:rowStatus}:{})}
+  const sourceRows=status==='success'?[rawFields]:[]
+  const evidence={source:'businessList' as const,status,effectiveConditions:{uscc:enterprise.usccNorm!,combination:'and' as const},titleScope:{mode:'selected' as const,rdjb:[rdjb]},queriedAt,completedAt:queriedAt,rows:sourceRows,dataRows:sourceRows,pages:failed?[]:[{source:'businessList' as const,rdjb,page:1,maxPage:1,status:'success' as const,fetchedCount:sourceRows.length,declaredTotal:sourceRows.length,error:null}],fetchedCount:sourceRows.length,declaredTotal:failed?null:sourceRows.length,completeness:failed?'partial' as const:'complete' as const,fullRange:true,unfinished:failed?[{source:'businessList' as const,rdjb,page:1}]:[],error:failed?{code:'invalid_response' as const,message:'Synthetic failed query'}:null,limits:{maxRequests:100,maxRows:5000,maxDurationMs:60000,pageSize:50}}
+  const native=submitNativePlatformQuery(db,{interface:'business_list',queryKey:enterprise.usccNorm!,rdjb,titleCode,queriedAt,status,rawResponse:JSON.stringify({status,rowStatus}),...(Number.isNaN(Date.parse(queriedAt))?{}:{collectionEvidence:evidence}),relations:status==='success'?[{sequenceNo:1,relationKey:rawFields.id,rawFields,enterpriseId:enterprise.id,nameRaw:enterprise.name,usccRaw:enterprise.usccNorm,status:rowStatus,year:2025,batch:'2025-1',matchBasis:'uscc',verificationStatus:'confirmed'}]:[]})
+  return {query:{id:native.queryId},relation:native.relationIds[0]?{id:native.relationIds[0]}:null}
 }
 
 function subjectDecision(enterpriseId: number, reasonCode: 'deregistered' | 'moved_out' | 'moved_in' | 'other', titleCode = 'innovative_sme', direction = 'missing_in_miit', effectiveAt = '2026-01-01T00:00:00Z', confirmed = true) {
@@ -173,8 +161,7 @@ it.each([
   { case: 'unknown-query-time', queriedAt: 'not-a-time', applicability: 'unknown_time', status: 'requires_verification' },
 ])('preserves observation time applicability without manufacturing absence: $case', ({ queriedAt, applicability, status }) => {
   const { enterprise } = formalEnterprise()
-  const { query } = observation(enterprise, 'success', '退回')
-  db.update(schema.platformQuery).set({ queriedAt }).where(eq(schema.platformQuery.id, query.id)).run()
+  const { query } = observation(enterprise, 'success', '退回', 'innovative_sme', '1', queriedAt)
   expect(assessment(enterprise.id)).toMatchObject({ group: 'eligible', platform: { status, comparison: 'not_established', observations: [{ queryId: query.id, queriedAt, applicability, rows: [{ status: '退回' }] }] } })
 })
 
@@ -431,10 +418,10 @@ it('427 explicit_prior_versions_preserve_frozen_legacy_and_current_consumers_sha
   db.insert(schema.officialEvidenceRowRevision).values({ evidenceId: 1, revision: 1, eventId: 1, capturedRecordId: 1, capturedEnterpriseId: 1,
     nameRaw: '合成427', usccRaw: '91330211255994457P', storedFileId: 1, path: 'synthetic/427.pdf', sha256: 'a'.repeat(64), bytes: 10, sourceBindingKnown: false,
     listNo: 1, page: 1, actor: { type: 'agent', id: 'synthetic-427' }, basis: 'fixture', commandKind: 'import', importBatchId: 1, createdAt: '2024-06-01T00:00:00Z' }).run()
-  db.insert(schema.platformQuery).values({ id: 1, interface: 'recognized_list', queryKey: '91330211255994457P', rdjb: '2', titleCode: 'specialized_sme', queriedAt: '2026-05-31T00:00:00Z', status: 'no_record', collectionEvidence: {
+  submitNativePlatformQuery(db, { interface: 'recognized_list', queryKey: '91330211255994457P', rdjb: '2', titleCode: 'specialized_sme', queriedAt: '2026-05-31T00:00:00Z', status: 'no_record', collectionEvidence: {
     source: 'queryBusList', status: 'no_record', effectiveConditions: { uscc: '91330211255994457P', combination: 'and' }, titleScope: { mode: 'selected', rdjb: ['2'] },
     queriedAt: '2026-05-31T00:00:00Z', completedAt: '2026-05-31T00:00:01Z', rows: [], pages: [{ source: 'queryBusList', rdjb: '2', page: 1, status: 'success', fetchedCount: 0, declaredTotal: 0, error: null }], fetchedCount: 0, declaredTotal: 0, completeness: 'complete', fullRange: true, unfinished: [], error: null, limits: { maxRequests: 100, maxRows: 5000, maxDurationMs: 60000, pageSize: 50 },
-  } }).run()
+  } })
   sqlite.pragma('query_only=ON')
   const changes = sqlite.prepare('select total_changes() as n').get()
   const reader = createCurrentQualificationAssessmentReader(sqlite)

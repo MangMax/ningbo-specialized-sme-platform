@@ -4,21 +4,21 @@ import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
 let dir: string
-let useDb: typeof import('@db/client').useDb
+let initializeDb: typeof import('@db/client').initializeDb
 let schema: typeof import('@db/schema')
 
 beforeAll(async () => {
   dir = mkdtempSync(join(tmpdir(), 'spztx-db-'))
   process.env.NUXT_DB_PATH = join(dir, 'test.db')
-  ;({ useDb } = await import('@db/client'))
+  ;({ initializeDb } = await import('@db/client'))
   schema = await import('@db/schema')
 })
 
 afterAll(() => rmSync(dir, { recursive: true, force: true }))
 
 describe('database bootstrap', () => {
-  it('applies migrations and seeds the title dictionary', () => {
-    const db = useDb()
+  it('creates the native schema and seeds the title dictionary', () => {
+    const db = initializeDb({ create: true })
     const titles = db.select().from(schema.title).all()
     expect(titles.map((t) => t.code).sort()).toEqual([
       'innovative_sme',
@@ -28,18 +28,18 @@ describe('database bootstrap', () => {
   })
 
   it('seeding is idempotent', () => {
-    const db = useDb()
+    const db = initializeDb({ create: true })
     expect(db.select().from(schema.title).all()).toHaveLength(3)
   })
 
   it('只读打开时不运行迁移或写入称号字典', () => {
     const readOnlyPath = join(dir, 'readonly.db')
-    const writable = useDb({ dbPath: readOnlyPath })
+    const writable = initializeDb({ dbPath: readOnlyPath, create: true })
     expect(writable.select().from(schema.title).all()).toHaveLength(3)
     writable.$client.close()
 
     const before = readFileSync(readOnlyPath)
-    const readOnly = useDb({ dbPath: readOnlyPath, readOnly: true })
+    const readOnly = initializeDb({ dbPath: readOnlyPath, readOnly: true })
     expect(readOnly.select().from(schema.title).all()).toHaveLength(3)
     expect(() =>
       readOnly
@@ -52,7 +52,7 @@ describe('database bootstrap', () => {
   })
 
   it('enforces (enterprise, title, source) uniqueness on records', () => {
-    const db = useDb()
+    const db = initializeDb({ create: true })
     const ent = db
       .insert(schema.enterprise)
       .values({ name: '测试企业', nameNorm: '测试企业' })

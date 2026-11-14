@@ -181,11 +181,6 @@ export function useInitialDifferenceDecision(scope: ReviewScope, api: InitialDec
       if (['stale_version', 'stale_evidence', 'idempotency_conflict'].includes(code ?? '') || e?.status === 409 || e?.statusCode === 409) {
         phase.value = 'conflict'; state.request = null
         message.value = '当前决定已变化或提交冲突。草稿保留；请重新读取当前决定，核对后明确追加更正。'
-      } else if (code === 'browser_review_disabled') {
-        // A disabled retry cannot tell whether the earlier unknown attempt committed.
-        // Keep its identity even when the server gate changes after our capability check.
-        writeState.value = 'readonly'; phase.value = 'unknown'
-        message.value = '页面提交已关闭，本次请求身份保留。重新确认能力后，只能重试同一次提交。'
       } else if (['origin_required', 'origin_mismatch', 'cross_site_request', 'unsupported_media_type', 'invalid_request', 'evidence_mismatch', 'evidence_not_found', 'invalid_prior_time', 'fact_reference_mismatch'].includes(code ?? '')) {
         phase.value = 'ready'; state.request = null
         message.value = code === 'fact_reference_mismatch' ? '关联事实已变化，填写内容保留。请刷新可关联事实，重新选择后提交。' : '提交未被接受，填写内容保留。请核对业务字段或重新读取页面提交能力。'

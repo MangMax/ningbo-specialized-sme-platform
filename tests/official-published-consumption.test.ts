@@ -1,13 +1,12 @@
+import { createRuntimeSchema } from '../db/create-runtime'
 import { CURRENT_RULE_VERSION, QUALIFICATION_ASSESSMENT_VERSION } from '../lib/roster/current-qualification'
 import { createHash } from 'node:crypto'
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { join, resolve } from 'node:path'
+import { join } from 'node:path'
 import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
-import { migrate } from 'drizzle-orm/better-sqlite3/migrator'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import * as schema from '../db/schema'
-import { TITLE_SEED } from '../db/titles'
 import type { OfficialPublishedRow, RosterImportPayload, RosterImportRecord } from '../lib/roster-import-client'
 import { preflightRosterImport, commitRosterImport } from '../server/utils/roster-import'
 import { handleRosterImportRequest } from '../server/utils/roster-import-http'
@@ -48,9 +47,8 @@ async function fixture() {
   const dir = mkdtempSync('/tmp/issue356-synthetic-'), filesDir = join(dir, 'files'); mkdirSync(filesDir)
   const sqlite = new Database(join(dir, 'synthetic.sqlite')); sqlite.pragma('foreign_keys=ON')
   closes.push(() => { expect(sqlite.pragma('foreign_key_check')).toEqual([]); sqlite.close() })
-  const db = drizzle(sqlite, { schema }); migrate(db, { migrationsFolder: resolve('db/migrations') })
+  const db = drizzle(sqlite, { schema }); createRuntimeSchema(sqlite)
   // Infrastructure catalog only. Normal domain facts below go through B public commands.
-  for (const title of TITLE_SEED) db.insert(schema.title).values(title).run()
   for (const [index, path] of ['2021公布.pdf', '2024公布.pdf', '独立佐证.pdf'].entries()) {
     writeFileSync(join(filesDir, path), sourceBytes)
     db.insert(schema.storedFile).values({ id: index + 1, relPath: path, filename: path, ext: 'pdf', source: 'jxj', kind: 'announcement', bytes: Buffer.byteLength(sourceBytes), sha256: digest, createdAt: 'synthetic' }).run()
@@ -257,7 +255,11 @@ it('B10 preserves enumerable qualification input exactly under an explicit sidec
   const knownNames = [{ evidenceId: 1, availability: 'captured', nameKnown: true }, { evidenceId: 2, availability: 'captured', nameKnown: true }]
   expect(beforeQA.titles[1]!.sourceVersions).toEqual(originalSources)
   expect(beforeQA.titles[1]!.completeness.publishedNames).toEqual(knownNames)
-  expect(beforeQA.titles[1]!.versions.sources).toBe('4f5c00947fcde877a9d6c0fe6c35228182045c2a23083178b16e385ccc81893d')
+  expect(beforeQA.titles[0]!.sourceVersions).toEqual([])
+  expect(beforeQA.titles[0]!.completeness.publishedNames).toEqual([])
+  const emptyGiantSources = createHash('sha256').update(JSON.stringify([[], [], []])).digest('hex')
+  const lowerSources = (own: string) => createHash('sha256').update(JSON.stringify([own, emptyGiantSources])).digest('hex')
+  expect(beforeQA.titles[1]!.versions.sources).toBe(lowerSources('4f5c00947fcde877a9d6c0fe6c35228182045c2a23083178b16e385ccc81893d'))
   expect(beforeQA.titles[1]!.group).toBe('eligible')
   expect(beforeQA.titles[1]!.cycles).toEqual([{ originYear: 2021, batchSeq: 1, precision: 'year' }])
   const row = f.published('隔离变量公布名',2,1,{declaration:{kind:'existing',sourceDocumentId:exact.official.row.sourceDocumentId,basis:'同一公布事实'}})
@@ -269,12 +271,12 @@ it('B10 preserves enumerable qualification input exactly under an explicit sidec
   assertQA(afterQA)
   expect(afterQA.titles[1]!.sourceVersions).toEqual([originalSources[0], { ...originalSources[1], capturedRevision: 2 }])
   expect(afterQA.titles[1]!.completeness.publishedNames).toEqual(knownNames)
-  expect(afterQA.titles[1]!.versions.sources).toBe('6b237ce4671d559acbd79ad50cb0c4a7926e442363e339060399c091505b0155')
+  expect(afterQA.titles[1]!.versions.sources).toBe(lowerSources('6b237ce4671d559acbd79ad50cb0c4a7926e442363e339060399c091505b0155'))
   // Exactly these source changes are allowed. Everything else, including unknown
   // added/deleted fields and both non-target titles, stays deeply equal.
   const expectedAfter = structuredClone(beforeQA)
   expectedAfter.titles[1]!.sourceVersions[1]!.capturedRevision = 2
-  expectedAfter.titles[1]!.versions.sources = '6b237ce4671d559acbd79ad50cb0c4a7926e442363e339060399c091505b0155'
+  expectedAfter.titles[1]!.versions.sources = lowerSources('6b237ce4671d559acbd79ad50cb0c4a7926e442363e339060399c091505b0155')
   expectedAfter.snapshotId = createHash('sha256').update(JSON.stringify([scope, expectedAfter.titles])).digest('hex')
   expect(afterQA).toEqual(expectedAfter)
   expect(afterQA.snapshotId).not.toBe(beforeQA.snapshotId)
@@ -428,7 +430,7 @@ it('L303 detail and ledger preserve each published name and original coordinates
   }])
 })
 
-it('L303 uncaptured and captured unknown names stay distinct from unavailable and explicit rollback', async () => {
+it('L303 uncaptured and captured unknown names stay distinct from unavailable', async () => {
   const { getEnterpriseDetail, allRecords } = await import('../lib/query')
   const f = await fixture()
   await f.commit(f.announcement([f.record('specialized_sme', [{ eventType: 'award', year: 2024, batchSeq: 1, evidence: [
@@ -442,14 +444,7 @@ it('L303 uncaptured and captured unknown names stay distinct from unavailable an
   f.sqlite.prepare('UPDATE official_evidence_row_revision SET name_raw=? WHERE evidence_id=1').run('x'.repeat(4001))
   expect(getEnterpriseDetail(f.db, 1)!.publishedPresentation).toEqual({ availability: 'unavailable', error: 'field_limit', facts: [] })
   expect(allRecords(f.db, {})[0]!.evidence).toBe('2021公布.pdf / 序号1 / 第1页 / 公布名称暂不可用; 2024公布.pdf / 序号9 / 第1页 / 公布名称暂不可用')
-  vi.stubEnv('LEGACY_LEDGER_PRESENTATION_SOURCE', 'legacy')
-  try {
-    expect(getEnterpriseDetail(f.db, 1)!.publishedPresentation).toBeUndefined()
-    expect(allRecords(f.db, {})).toEqual([{
-      enterpriseId: 1, name: '现用名', uscc, district: null, titleCode: 'specialized_sme', sources: ['jxj'],
-      events: '认定 2024-1', evidence: '2021公布.pdf / 序号1 / 第1页; 2024公布.pdf / 序号9 / 第1页',
-    }])
-  } finally { vi.unstubAllEnvs() }
+
 })
 
 it('L303 actual legacy HTTP detail and sync XLSX retain a literal matrix with per-source names', async () => {
@@ -472,22 +467,15 @@ it('L303 actual legacy HTTP detail and sync XLSX retain a literal matrix with pe
   expect(detail.publishedPresentation.facts).toEqual([minimal(1,1,'2021旧名'),minimal(2,2,'2024新名')])
   expect(detail.records.map((r: any) => [r.id, r.events.map((e: any) => [e.id,e.recordId,e.evidence.map((v: any) => [v.id,v.sourceFile,v.page])])])).toEqual([[1,[[1,1,[[1,'2021公布.pdf',1]]],[2,1,[[2,'2024公布.pdf',1]]]]]])
   const { readExportWorkbook } = await import('./helpers/read-export-workbook')
-  for (const legacy of [false, true]) {
-    if (legacy) vi.stubEnv('LEGACY_LEDGER_PRESENTATION_SOURCE', 'legacy')
-    try {
-      const download = await fetch(baseUrl + '/api/export?eventType=award')
-      expect(download.status).toBe(200)
-      expect(download.headers.get('content-type')).toContain('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
-      const workbook = await readExportWorkbook(new Uint8Array(await download.arrayBuffer()))
-      const sheet = workbook.worksheets[0]!
-      expect(sheet.name).toBe('台账')
-      expect(sheet.rowCount).toBe(3)
-      expect(sheet.getRow(2).values).toEqual([, '企业名称','统一社会信用代码','区县','称号','来源','事件','出处'])
-      expect(sheet.getRow(3).values).toEqual([, '现用名',uscc,'','专精特新中小企业','经信局','认定 2021-1; 复核 2021-1', legacy
-        ? '2021公布.pdf / 序号1 / 第1页; 2024公布.pdf / 序号1 / 第1页'
-        : '2021公布.pdf / 序号1 / 第1页 / 公布名称："2021旧名"; 2024公布.pdf / 序号1 / 第1页 / 公布名称："2024新名"'])
-    } finally { vi.unstubAllEnvs() }
-  }
+  const download = await fetch(baseUrl + '/api/export?eventType=award')
+  expect(download.status).toBe(200)
+  expect(download.headers.get('content-type')).toContain('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+  const workbook = await readExportWorkbook(new Uint8Array(await download.arrayBuffer()))
+  const sheet = workbook.worksheets[0]!
+  expect(sheet.name).toBe('台账')
+  expect(sheet.rowCount).toBe(3)
+  expect(sheet.getRow(2).values).toEqual([, '企业名称','统一社会信用代码','区县','称号','来源','事件','出处'])
+  expect(sheet.getRow(3).values).toEqual([, '现用名',uscc,'','专精特新中小企业','经信局','认定 2021-1; 复核 2021-1', '2021公布.pdf / 序号1 / 第1页 / 公布名称："2021旧名"; 2024公布.pdf / 序号1 / 第1页 / 公布名称："2024新名"'])
 })
 
 it('L303 ledger batches selected groups and isolates an unavailable group without changing rows', async () => {

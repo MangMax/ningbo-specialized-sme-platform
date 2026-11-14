@@ -1,5 +1,8 @@
 # #90 retained archive workload — final 96a0bd9 1x/2x results
 
+> 历史脚本说明：本文引用的混合表实验/验收脚本已在原生运行切换时退役。复现旧命令须在独立 checkout 固定到 `ab503081dae3e24680afc9b07395a7e3ff21fc9f` 并使用当时的隔离数据库与二进制；这些命令不适用于当前运行库。历史证据与 FAIL/UNKNOWN 保持原样。
+
+
 **Final run:** [fresh 96a0bd9 results](final-96a-results.md) and [sanitized aggregates](final-96a-results.json) record the completed 1x and query/relation-only synthetic 2x matrices, all misses, runtime/resource evidence and private restore verification. The pre-JSON5 `full-1x` prepared copy/import/oracle were invalidated and were not reused as fresh proof. Earlier preparation observations below are historical. Production migration remains deferred.
 
 This narrow comparison does **not** require porting the whole application to PostgreSQL. It compares the optimized #83 read algorithm for platform summaries/title filters and exact original evidence/relation discovery on the complete retained query/relation distribution. All original query/relation columns and text bytes are imported; the PostgreSQL side is a separate experimental schema, not an application migration. Other domains remain in the source SQLite copy but are not ported or benchmarked.

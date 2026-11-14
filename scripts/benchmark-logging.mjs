@@ -10,10 +10,10 @@ import { performance } from 'node:perf_hooks'
 import { setTimeout as sleep } from 'node:timers/promises'
 import http from 'node:http'
 import Database from 'better-sqlite3'
-import { drizzle } from 'drizzle-orm/better-sqlite3'
-import { migrate } from 'drizzle-orm/better-sqlite3/migrator'
 import { performanceController } from './lib/performance-controller.mjs'
 import { forkOwnedChild as fork, reserveLoopbackPort, stopOwnedChild, waitForHttp } from './lib/isolated-local-services.mjs'
+const { createJiti } = createRequire(import.meta.resolve('nuxt/package.json'))('jiti')
+const { createRuntimeSchema } = await createJiti(import.meta.url).import('../db/create-runtime.ts')
 const BASE = '50f4f710b3e9677d86806557b5120c1ac157130f'
 const TREE = '76efcedb31862f11444a87673feaa2f89f13502b'
 const root = '/tmp/implement-spec-180/logging-performance'
@@ -36,9 +36,8 @@ function artifactFiles(path) { for(const name of readdirSync(path)){const p=join
 artifactFiles(resolve('.output/server')); write('manifest.json',manifest); write('matrix.md',matrix)
 if(git('rev-parse',BASE+'^{tree}')!==TREE)throw Error('Pinned baseline tree mismatch')
 const business=join(run,'synthetic-1000.db')
-const db=new Database(business); migrate(drizzle(db),{migrationsFolder:resolve('db/migrations')})
+const db=new Database(business); db.pragma('foreign_keys = ON'); createRuntimeSchema(db)
 // This newly created fixture has never contained user data. Raw inserts are fixture setup only.
-db.exec("PRAGMA foreign_keys=ON; INSERT INTO title(code,name_zh,level,rank) VALUES ('innovative_sme','Synthetic','city',1)")
 const enterprise=db.prepare('insert into enterprise(name,name_norm,uscc_norm,district) values(?,?,?,?)')
 const record=db.prepare('insert into record(enterprise_id,title_code,source) values(?,?,?)')
 const event=db.prepare('insert into record_event(record_id,event_type,year,decided_year) values(?,?,?,?)')

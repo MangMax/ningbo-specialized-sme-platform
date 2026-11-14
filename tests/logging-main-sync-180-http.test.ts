@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { afterAll, beforeAll, expect, it } from 'vitest'
-import { useDb } from '../db/client'
+import { initializeDb } from '../db/client'
 import { spawnOwnedChild as spawn, reserveLoopbackPort, stopOwnedChild, waitForHttp } from '../scripts/lib/isolated-local-services.mjs'
 
 // Built-product task context checks. Fresh empty synthetic schema, explicit
@@ -12,7 +12,7 @@ const token = 'synthetic-main-sync-token'
 let child: ReturnType<typeof spawn> | undefined, base = '', output = ''
 let annualSubmission: { jobId: string; requestId: string } | undefined
 beforeAll(async () => {
-  const db = useDb({ dbPath: join(root, 'synthetic.db') }); db.$client.close()
+  const db = initializeDb({ create: true,  dbPath: join(root, 'synthetic.db') }); db.$client.close()
   const port = await reserveLoopbackPort(); expect(port).not.toBe(50055)
   base = `http://127.0.0.1:${port}`
   child = spawn(process.execPath, ['.output/server/index.mjs'], {

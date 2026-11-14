@@ -5,14 +5,14 @@ import { copyFileSync, existsSync, mkdtempSync, readFileSync, rmSync } from 'nod
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, expect, it } from 'vitest'
-import { sourceFieldComparison, sourceValueKind } from '../lib/platform/source-extraction'
+import { sourceFieldComparison, sourceValueKind } from '../upgrade/frozen/source-extraction'
 import { checkedBusinessStatus, BUSINESS_STATUS_V1, BUSINESS_STATUS_V2 } from '../lib/platform/business-status'
-import { businessStatusRule } from '../lib/platform/business-status-catalog'
+import { businessStatusRule } from '../upgrade/business-status-catalog'
 import { installBusinessStatusPrerequisite } from '../upgrade/business-status'
 import { withFrozenSource } from '../upgrade/collections'
 import { projectionManifest } from '../upgrade/projections'
-import { ensurePlatformObservation } from '../server/utils/platform-business-record'
-import * as schema from '../db/schema'
+import { ensurePlatformObservation } from '../upgrade/frozen/server/platform-business-record'
+import * as schema from '../upgrade/legacy-schema'
 
 const root = mkdtempSync(join(process.env.ISSUE760_EVIDENCE ?? tmpdir(), 'status760-'))
 const source = join(root, 'source.sqlite')

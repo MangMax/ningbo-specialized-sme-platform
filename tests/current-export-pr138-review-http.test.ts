@@ -1,3 +1,4 @@
+import { submitNativePlatformQuery } from './helpers/native-platform-fixture'
 import { businessIdentity, expectedBusinessIdentity, matchesBusinessIdentity } from './helpers/current-export-118'
 import { afterAll, beforeAll, expect, it } from 'vitest'
 import { schema as s } from '../db/client'
@@ -18,8 +19,8 @@ async function review(id:number,version:number,direction='extra_in_miit'){
 }
 function source(id:number,raw?:string,assigned=true){
   const e=f.db.select().from(s.enterprise).all().find(e=>e.id===id)!
-  const q=f.db.insert(s.platformQuery).values({interface:'business_list',queryKey:e.usccNorm!,rdjb:'2',titleCode:'specialized_sme',queriedAt:new Date().toISOString(),status:'success'}).returning().get()
-  const r=f.db.insert(s.platformRelation).values({queryId:q.id,enterpriseId:assigned?id:null,sequenceNo:1,usccRaw:raw??e.usccNorm,nameRaw:e.name,verificationStatus:assigned?'confirmed':'pending',matchBasis:'uscc'}).returning().get()
+  const native=submitNativePlatformQuery(f.db,{interface:'business_list',queryKey:e.usccNorm!,rdjb:'2',titleCode:'specialized_sme',queriedAt:new Date(Date.now()+(++serial)).toISOString(),status:'success',rawResponse:'Synthetic process source',relations:[{enterpriseId:assigned?id:null,sequenceNo:1,usccRaw:raw?.trim()??e.usccNorm,nameRaw:e.name,rawFields:{id:'PR138-'+serial,qymc:e.name,tyshxydm:raw??e.usccNorm},verificationStatus:assigned?'confirmed':'pending',matchBasis:'uscc'}]})
+  const q={id:native.queryId},r={id:native.relationIds[0]!}
   return {q,r}
 }
 async function inbound(id:number,extra:any={},raw?:string){
@@ -35,11 +36,12 @@ it('rejects bound source identity conflicts without creating decision history',a
   expect(result.status,JSON.stringify(result.body)).toBe(422)
   expect(f.db.$client.prepare('select count(*) n from difference_reason where enterprise_id=?').get(c.enterprise.id)).toEqual(before)
 })
-it('keeps historical source conflicts unrecognized and preserves their audit',async()=>{
+it('keeps later conflicting observations separate from retained decision audit',async()=>{
   const c=f.candidate('Historical source conflict',[]),{result,r}=await inbound(c.enterprise.id)
   expect(result.status).toBe(200);await review(c.enterprise.id,result.body.versionId)
-  // Legacy-invalid source fixture only; do not rewrite history to repair it.
-  f.db.$client.prepare('update platform_relation set uscc_raw=? where id=?').run('OTHER-ENTITY',r.id)
+  // Append the new source observation; the original binding remains immutable.
+  const correction=source(c.enterprise.id,'OTHER-ENTITY',false)
+  expect(correction.r.id).not.toBe(r.id)
   const before=f.db.$client.prepare('select * from difference_reason where id=?').get(result.body.versionId)
   const {wb}=await f.workbook('pr138-historical-conflict')
   const actual=occurrences(wb,c.enterprise.id)
@@ -106,7 +108,7 @@ it('keeps normalized unassigned candidates and references without confirming own
     const {r}=source(c.enterprise.id,raw,false);ids.push([c.enterprise.id,r.id])
   }
   const {wb}=await f.workbook('pr138-normalized-unassigned')
-  for(const [id,rid] of ids){const actual=occurrences(wb,id);expect(actual.map(x=>x.sheet)).toEqual(['未认定']);expect(actual[0]!.row[12]).toContain('工信部企业信息查询');expect(actual[0]!.row.join(' ')).not.toContain('platform-relation:'+rid);expect(f.db.$client.prepare('select enterprise_id,verification_status from platform_relation where id=?').get(rid)).toEqual({enterprise_id:null,verification_status:'pending'})}
+  for(const [id,rid] of ids){const actual=occurrences(wb,id);expect(actual.map(x=>x.sheet)).toEqual(['未认定']);expect(actual[0]!.row[12]).toContain('工信部企业信息查询');expect(actual[0]!.row.join(' ')).not.toContain('platform-relation:'+rid);expect(f.db.$client.prepare('select a.enterprise_id,a.verification_status from platform_observation_assignment a join platform_legacy_relation_alias l on l.observation_id=a.observation_id where l.old_id=? order by a.revision desc limit 1').get(rid)).toEqual({enterprise_id:null,verification_status:'pending'})}
 },60000)
 
 it('rejects future reaward assertions and keeps unrelated title qualification gaps scoped',async()=>{
@@ -120,10 +122,11 @@ it('rejects future reaward assertions and keeps unrelated title qualification ga
   expect(occurrences(wb,c.enterprise.id).map(x=>x.sheet)).toEqual(['未认定'])
 },60000)
 
-it('keeps unconfirmed historical qualification sources unrecognized after a valid review receipt',async()=>{
+it('keeps later pending observations separate from reviewed inbound history',async()=>{
   const c=f.candidate('Unconfirmed historical source',[]),{result,r}=await inbound(c.enterprise.id)
   expect(result.status).toBe(200);await review(c.enterprise.id,result.body.versionId)
-  f.db.$client.prepare("update platform_relation set verification_status='pending' where id=?").run(r.id)
+  const next=source(c.enterprise.id,undefined,false)
+  expect(next.r.id).not.toBe(r.id)
   const {wb}=await f.workbook('pr138-source-confirmation-defense')
   expect(occurrences(wb,c.enterprise.id).map(x=>x.sheet)).toEqual(['未认定'])
 },60000)
@@ -144,8 +147,8 @@ it.each(CURRENT_TITLES)('keeps a later formal failure excluded after an expired 
     {eventType:'review',year:year-6,decidedYear:year-2,reviewOutcome:'failed',batchSeq:1},
   ],titleCode)
   expect(readCurrentCandidate(f.db.$client,c.enterprise.id,titleCode,year).group).toBe('excluded')
-  const q=f.db.insert(s.platformQuery).values({interface:'business_list',queryKey:c.enterprise.usccNorm!,rdjb:{little_giant:'3',specialized_sme:'2',innovative_sme:'1'}[titleCode],titleCode,queriedAt:new Date().toISOString(),status:'success'}).returning().get()
-  const r=f.db.insert(s.platformRelation).values({queryId:q.id,enterpriseId:c.enterprise.id,sequenceNo:1,usccRaw:c.enterprise.usccNorm,verificationStatus:'confirmed',matchBasis:'uscc'}).returning().get()
+  const native=submitNativePlatformQuery(f.db,{interface:'business_list',queryKey:c.enterprise.usccNorm!,rdjb:{little_giant:'3',specialized_sme:'2',innovative_sme:'1'}[titleCode],titleCode,queriedAt:new Date().toISOString(),status:'success',rawResponse:'Synthetic title process',relations:[{enterpriseId:c.enterprise.id,sequenceNo:1,usccRaw:c.enterprise.usccNorm,verificationStatus:'confirmed',matchBasis:'uscc'}]})
+  const q={id:native.queryId},r={id:native.relationIds[0]!}
   const sc=scope(c.enterprise.id,'extra_in_miit',titleCode)
   const result=await api({...sc,action:'replace',expectedCurrentId:null,idempotencyKey:'pr138-expired-'+(++serial),actor,basis:'Synthetic verified historical migration and expired grant',ruleVersion:'synthetic-pr138',effectiveAt:`${year-1}-01-01T00:00:00Z`,decision:{status:'confirmed_reason',reasonCode:'moved_in',measureCode:'record_moved_in',verificationStatus:'confirmed',evidenceQueryId:q.id,evidenceRelationId:r.id,currentQualification:{titleCode,awardYear:year-6,validFrom:`${year-6}-01-01T00:00:00Z`,validUntil:`${year-3}-01-01T00:00:00Z`,basis:'Synthetic expired external grant retained for audit',publicationCheck:{status:'not_found',scope:'Historical grant scope only'}}}})
   expect(result.status,JSON.stringify(result.body)).toBe(200)

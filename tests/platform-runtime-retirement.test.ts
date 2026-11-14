@@ -2,17 +2,25 @@
 import Database from 'better-sqlite3'
 import { copyFileSync, mkdtempSync } from 'node:fs'
 import { join } from 'node:path'
-import { afterEach, expect, it, vi } from 'vitest'
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { initializeDb, useRuntimeDb, useApplicationDb } from '../db/client'
-import { assertFinalPlatformRuntime as assertApplicationRuntime, RETIRED_PLATFORM_TABLES } from '../db/schema-phase'
+import { assertFinalPlatformRuntime as assertApplicationRuntime } from '../db/schema-phase'
 import { retirePlatformModel } from '../upgrade/retire-platform-model'
 import { createHash } from 'node:crypto'
 import { getRosterEnterpriseDetail } from '../lib/roster/enterprise-roster'
 
+const historicalTables = [
+  'platform_query_legacy_provenance',
+  'platform_relation_body_ref', 'platform_query_body_ref', 'platform_version_body_ref',
+  'platform_body_part', 'platform_body_root', 'platform_body_leaf',
+  'platform_relation', 'platform_query',
+]
 const fixture = process.env.FINAL_PLATFORM_RETIREMENT_FIXTURE
 const evidence = process.env.FINAL_PLATFORM_RETIREMENT_EVIDENCE
-if (!fixture || !evidence) throw new Error('Set owned FINAL_PLATFORM_RETIREMENT_FIXTURE and FINAL_PLATFORM_RETIREMENT_EVIDENCE')
-const root = mkdtempSync(join(evidence, 'runtime-retirement-'))
+// Explicit offline acceptance lane: an owned pre-retirement fixture is required.
+describe.runIf(Boolean(fixture && evidence))('offline historical runtime retirement (requires FINAL_PLATFORM_RETIREMENT_FIXTURE and FINAL_PLATFORM_RETIREMENT_EVIDENCE)', () => {
+let root: string
+beforeAll(() => { root = mkdtempSync(join(evidence!, 'runtime-retirement-')) })
 const cleanup: Array<() => void | Promise<unknown>> = []
 let serial = 0
 afterEach(async () => {
@@ -34,7 +42,7 @@ function originalRows(db: Database.Database) {
   return importantTables.map(table => ({ table, rows: db.prepare(`SELECT * FROM ${table}`).all() }))
 }
 function oldTables(db: Database.Database) {
-  return RETIRED_PLATFORM_TABLES.filter(name => db.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name=?").get(name))
+  return historicalTables.filter(name => db.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name=?").get(name))
 }
 
 it('serves migrated enterprise details with the reconcile capture collection marker', () => {
@@ -60,13 +68,13 @@ it('refuses archive content corruption before retiring any historical table', ()
   f.db.prepare('UPDATE platform_archive_value SET bytes=? WHERE id=?').run(corrupted,id)
   f.db.exec(trigger)
   expect(() => retirePlatformModel(f.db)).toThrow('Archive content digest mismatch')
-  expect(oldTables(f.db)).toHaveLength(6)
+  expect(oldTables(f.db)).toEqual(historicalTables)
   expect(f.db.prepare("SELECT 1 FROM sqlite_schema WHERE name='platform_runtime_completion'").get()).toBeUndefined()
 })
 
 it('retires historical tables atomically and opens the completed runtime without expand migrations', () => {
   const f = target(), before = originalRows(f.db)
-  expect(oldTables(f.db)).toHaveLength(6)
+  expect(oldTables(f.db)).toEqual(historicalTables)
   expect(() => assertApplicationRuntime(f.db)).toThrow('retirement incomplete')
   expect(retirePlatformModel(f.db)).toEqual({ state: 'complete', version: 71613 })
   expect(oldTables(f.db)).toEqual([])
@@ -77,7 +85,7 @@ it('retires historical tables atomically and opens the completed runtime without
   const runtime = useRuntimeDb({ dbPath: f.path, readOnly: true })
   cleanup.push(() => runtime.$client.close())
   expect(runtime.$client.prepare('SELECT count(*) n FROM platform_collection').get()).toEqual(f.db.prepare('SELECT count(*) n FROM platform_collection').get())
-  const restarted = initializeDb({ dbPath: f.path, migrationsFolder: absentMigrations })
+  const restarted = initializeDb({ dbPath: f.path })
   cleanup.push(() => restarted.$client.close())
   expect(oldTables(restarted.$client)).toEqual([])
   expect(originalRows(f.db)).toEqual(before)
@@ -100,7 +108,9 @@ it('preserves orphan body bytes and rolls back retirement', () => {
   f.db.prepare('INSERT INTO platform_body_leaf(id,digest,byte_length,bytes) VALUES(1,?,?,?)')
     .run(createHash('sha256').update(bytes).digest('hex'), bytes.length, bytes)
   expect(() => retirePlatformModel(f.db)).toThrow('orphan historical body leaf')
-  expect(oldTables(f.db)).toHaveLength(6)
+  expect(oldTables(f.db)).toEqual(historicalTables)
   expect(f.db.prepare('SELECT bytes FROM platform_body_leaf WHERE id=1').get()).toEqual({ bytes })
   expect(f.db.prepare("SELECT 1 FROM sqlite_schema WHERE name='platform_runtime_completion'").get()).toBeUndefined()
+})
+
 })

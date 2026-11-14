@@ -1,5 +1,8 @@
 # #85 M3: reproducible public transport verification
 
+> 历史脚本说明：本文引用的混合表实验/验收脚本已在原生运行切换时退役。复现旧命令须在独立 checkout 固定到 `ab503081dae3e24680afc9b07395a7e3ff21fc9f` 并使用当时的隔离数据库与二进制；这些命令不适用于当前运行库。历史证据与 FAIL/UNKNOWN 保持原样。
+
+
 ## Scope and source
 
 M1 entered integration at `6422c4e`. This M3 owns only `scripts/perf85-*` and this document. The verifier starts the compiled `.output/server/index.mjs`, calls real loopback REST and MCP `tools/list` / `tools/call`, and opens only a fresh synthetic SQLite fixture as read-only in the application process. It does not exercise UI, production, or a business database. Fixture generation writes to a private temporary directory; no response body or database is committed.

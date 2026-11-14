@@ -2,13 +2,13 @@ import { afterAll, beforeAll, beforeEach, expect, it, vi } from 'vitest'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { useDb } from '../db/client'
+import { initializeDb } from '../db/client'
 import { updateCredential } from '../server/utils/credential-state'
 import { whenIdle } from '../server/utils/job-runner'
 import { handlePlatformBatchRequest } from '../server/utils/platform-batch-http'
 
 const dir = mkdtempSync(join(tmpdir(), 'pagination-regressions-'))
-const db = useDb({ dbPath: join(dir, 'test.sqlite') })
+const db = initializeDb({ create: true,  dbPath: join(dir, 'test.sqlite') })
 const cookie = 'session=synthetic-pagination-secret'
 const upstream = vi.fn()
 const uscc = '91330211255994457P'
@@ -296,7 +296,7 @@ it.each([
     if (restart) {
       const path = join(dir, `short-page-${source}.sqlite`)
       writeFileSync(path, db.$client.serialize())
-      restarted = useDb({ dbPath: path })
+      restarted = initializeDb({ create: true,  dbPath: path })
     }
   } finally { release(); await whenIdle() }
   const invoke = (action: 'status' | 'retry', value?: unknown) => handlePlatformBatchRequest(action, { batchId: receipt.batchId, body: value, headers: { authorization: 'Bearer synthetic-task' } }, { db: restarted ?? db, apiToken: 'synthetic-task', filesDir: dir })

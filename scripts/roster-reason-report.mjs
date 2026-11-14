@@ -3,9 +3,9 @@
  * **写回后的平台原因分布** —— 只读报告(RL-15 的验收证据)。
  *
  * 用户 2026-10-16 的诉求是「三个称号从平台获取的数据都没了」。这张票把比对页的
- * 「平台解释 / 平台证据」改成读**库内**(`difference_reason` / `platform_query` /
- * `platform_relation`)之后,需要一个**可复现**的命令回答「写回后到底落了什么」——
- * 本脚本就是它:按 `称号 × 状态 × 原因` 给出计数,顺带给出接口查询与关系的体量。
+ * 「平台解释 / 平台证据」改成读**库内**(`difference_reason` / `platform_collection` /
+ * `platform_business_observation`)之后,需要一个**可复现**的命令回答「写回后到底落了什么」——
+ * 本脚本就是它:按 `称号 × 状态 × 原因` 给出计数,顺带给出采集与观察的体量。
  *
  * ── 口径 ──────────────────────────────────────────────────────────────────
  * 计数走 `lib/roster/enterprise-roster.ts` 的 `listRosterDifferences`(契约 §7.3 的
@@ -26,6 +26,7 @@
  *   --json        以 JSON 输出(便于存档 / 对比)
  *   --help
  */
+import { initLogger } from 'evlog'
 import { spawnSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { register } from 'node:module'
@@ -78,12 +79,14 @@ if (!existsSync(dbPath)) {
   process.exit(2)
 }
 
+// Keep CLI output machine-readable; application HTTP logging is configured separately.
+initLogger({ silent: true })
 const { initializeDb } = await import('../db/client.ts')
 const { listRosterDifferences } = await import('../lib/roster/enterprise-roster.ts')
 const { DIFFERENCE_REASONS, DIFFERENCE_STATUSES, TITLES, TITLE_ORDER } = await import('../lib/labels.ts')
 const { MAX_PAGE_SIZE } = await import('../lib/query.ts')
 
-const db = initializeDb({ dbPath })
+const db = initializeDb({ dbPath, readOnly: true })
 
 /** 分页取完 —— `listRosterDifferences` 与 HTTP 端点同样受 `MAX_PAGE_SIZE` 约束。 */
 function allDifferenceRows() {
@@ -105,9 +108,9 @@ for (const row of rows) {
   bump(`${row.titleCode}|${row.status}|${row.reasonCode ?? ''}`)
 }
 
-const queries = db.$client.prepare('select interface, rdjb, status, count(*) c from platform_query group by 1,2,3 order by 1,2,3').all()
-const queryTotal = db.$client.prepare('select count(*) c from platform_query').get().c
-const relationTotal = db.$client.prepare('select count(*) c from platform_relation').get().c
+const collections = db.$client.prepare('select interface, rdjb, status, count(*) c from platform_collection group by 1,2,3 order by 1,2,3').all()
+const collectionTotal = db.$client.prepare('select count(*) c from platform_collection').get().c
+const observationTotal = db.$client.prepare('select count(*) c from platform_business_observation').get().c
 const aliasTotal = db.$client.prepare('select count(*) c from enterprise_alias').get().c
 
 const report = {
@@ -134,7 +137,7 @@ const report = {
       return acc
     }, new Map()),
   ),
-  platform: { queries: queryTotal, relations: relationTotal, aliases: aliasTotal, byQuery: queries },
+  platform: { collections: collectionTotal, observations: observationTotal, aliases: aliasTotal, byCollection: collections },
 }
 
 if (has('json')) {
@@ -159,8 +162,8 @@ lines.push('【全称号合一 · 按原因】')
 for (const [reason, value] of Object.entries(report.byReason).sort()) {
   lines.push(reason === '(无原因编码)' ? `  无原因编码 → ${value}` : `  ${DIFFERENCE_REASONS[reason] ?? reason}(${reason}) → ${value}`)
 }
-lines.push('', `【平台证据体量】查询 ${queryTotal} · 关系 ${relationTotal} · 曾用名 ${aliasTotal}`)
-for (const row of queries) {
+lines.push('', `【平台证据体量】采集 ${collectionTotal} · 观察 ${observationTotal} · 曾用名 ${aliasTotal}`)
+for (const row of collections) {
   lines.push(`  ${row.interface} rdjb=${row.rdjb || '(无)'} ${row.status} → ${row.c}`)
 }
 process.stdout.write(`${lines.join('\n')}\n`)

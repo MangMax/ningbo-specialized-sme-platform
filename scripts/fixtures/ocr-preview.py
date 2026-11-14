@@ -12,6 +12,8 @@ compare like with like. Nothing here touches a production database or file.
 import hashlib
 import json
 import sqlite3
+import subprocess
+import os
 import sys
 from pathlib import Path
 from reportlab.lib.pagesizes import A4
@@ -24,6 +26,12 @@ root = Path(sys.argv[1]).resolve()
 if root.exists() and any(root.iterdir()):
     raise SystemExit('Fixture root must be empty')
 root.mkdir(parents=True, exist_ok=True)
+subprocess.run([os.environ.get('NODE_BINARY', 'node'), '--input-type=module', '-e', """
+import { createRequire } from 'node:module';
+const { createJiti } = createRequire(import.meta.resolve('nuxt/package.json'))('jiti');
+const { initializeDb } = await createJiti(import.meta.url).import('./db/client.ts');
+initializeDb({ dbPath: process.argv[1], create: true }).$client.close();
+""", str(root / 'roster.db')], check=True)
 files = root / 'files'
 files.mkdir()
 
@@ -151,14 +159,6 @@ for number, (name, count) in enumerate([('workbench-97.pdf', 97), ('second.pdf',
     pdf.save()
     data = path.read_bytes()
     db = sqlite3.connect(root / 'roster.db')
-    db.execute('CREATE TABLE IF NOT EXISTS __drizzle_migrations (id SERIAL PRIMARY KEY, hash text NOT NULL, created_at numeric)')
-    journal = json.loads(Path('db/migrations/meta/_journal.json').read_text())
-    if number == 1:
-        for entry in journal['entries']:
-            migration = Path('db/migrations') / (entry['tag'] + '.sql')
-            sql = migration.read_text()
-            db.executescript(sql)
-            db.execute('INSERT INTO __drizzle_migrations(hash,created_at) VALUES (?,?)', (hashlib.sha256(sql.encode()).hexdigest(), entry['when']))
     db.execute('INSERT INTO stored_file(id,rel_path,filename,ext,bytes,sha256,source,kind,year,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)', (number, name, name, 'pdf', len(data), hashlib.sha256(data).hexdigest(), 'jxj', 'announcement', 2026, '2026-10-17T00:00:00Z'))
     if number == 1:
         page_texts = {1: source, 2: '', 47: '# 第47页\n\n第47页企业', 97: '# 第97页\n\n最终页企业'}
@@ -175,7 +175,6 @@ for number, (name, count) in enumerate([('workbench-97.pdf', 97), ('second.pdf',
 
 db = sqlite3.connect(root / 'roster.db')
 # A nonempty business sentinel makes accidental deletion/rewrites observable.
-db.execute("INSERT INTO title(code,name_zh,level,rank) VALUES ('specialized_sme','专精特新中小企业','municipal',2)")
 db.execute("INSERT INTO enterprise(id,name,name_norm) VALUES (1,'隔离校验企业','隔离校验企业')")
 db.execute("INSERT INTO record(id,enterprise_id,title_code,source) VALUES (1,1,'specialized_sme','jxj')")
 db.execute("INSERT INTO record_event(id,record_id,event_type,year) VALUES (1,1,'award',2026)")

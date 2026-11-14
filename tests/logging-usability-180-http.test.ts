@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { afterAll, beforeAll, expect, it } from 'vitest'
 import { spawnOwnedChild as spawn, reserveLoopbackPort, stopOwnedChild, waitForHttp } from '../scripts/lib/isolated-local-services.mjs'
-import { useDb } from '../db/client'
+import { initializeDb } from '../db/client'
 import { APPLICATION_LOG_ROUTES } from '../lib/logging/route-templates'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
@@ -59,7 +59,7 @@ async function mcp(method: string, params: unknown, tokenValue?: string) {
 
 beforeAll(async () => {
   if (process.env.LOG180_SKIP_BUILD !== '1') execFileSync('pnpm', ['build'], { cwd: resolve(import.meta.dirname, '..'), timeout: 300_000, stdio: 'pipe' })
-  const db = useDb({ dbPath })
+  const db = initializeDb({ create: true,  dbPath })
   db.$client.close()
   const port = await reserveLoopbackPort()
   baseUrl = `http://127.0.0.1:${port}`

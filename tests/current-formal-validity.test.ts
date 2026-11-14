@@ -1,6 +1,6 @@
+import { createRuntimeSchema } from '../db/create-runtime'
 import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
-import { migrate } from 'drizzle-orm/better-sqlite3/migrator'
 import { eq } from 'drizzle-orm'
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -8,7 +8,6 @@ import { join } from 'node:path'
 import ExcelJS from 'exceljs'
 import { afterEach, expect, it, vi } from 'vitest'
 import * as schema from '../db/schema'
-import { TITLE_SEED } from '../db/titles'
 import { readCurrentQualificationAssessment } from '../lib/roster/current-qualification'
 import { listCurrentQualified } from '../lib/roster/current-qualified-query'
 import { writeCurrentWorkbook } from '../lib/roster/current-workbook'
@@ -20,7 +19,7 @@ afterEach(() => { for (const db of opened.splice(0)) db.close(); vi.useRealTimer
 // Owned source IDs and enterprise names are synthetic; unknown exact publication dates stay omitted.
 function fixture(kind: 'lanfan' | 'yayan' | 'yongchuang' = 'lanfan') {
   const sqlite = new Database(':memory:'); opened.push(sqlite)
-  const db = drizzle(sqlite, { schema }); migrate(db, { migrationsFolder: 'db/migrations' }); db.insert(schema.title).values([...TITLE_SEED]).run()
+  const db = drizzle(sqlite, { schema }); sqlite.pragma('foreign_keys=ON'); createRuntimeSchema(sqlite)
   const enterprise = db.insert(schema.enterprise).values({ name: kind, nameNorm: kind, usccNorm: '913302000000000001' }).returning().get()
   const title: 'innovative_sme' | 'specialized_sme' = kind === 'lanfan' ? 'innovative_sme' : 'specialized_sme'
   const record = db.insert(schema.record).values({ enterpriseId: enterprise.id, titleCode: title, source: 'jxj', nameRaw: kind, usccRaw: enterprise.usccNorm }).returning().get()

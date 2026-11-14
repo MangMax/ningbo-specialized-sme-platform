@@ -1,9 +1,9 @@
+import { createRuntimeSchema } from '../db/create-runtime'
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
-import { migrate } from 'drizzle-orm/better-sqlite3/migrator'
 import { eq } from 'drizzle-orm'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import * as schema from '../db/schema'
@@ -31,7 +31,7 @@ beforeEach(() => {
   root = join(dir, 'files')
   sqlite = new Database(join(dir, 'fixture.sqlite'))
   db = drizzle(sqlite, { schema })
-  migrate(db, { migrationsFolder: join(process.cwd(), 'db/migrations') })
+  sqlite.pragma('foreign_keys=ON'); createRuntimeSchema(sqlite)
   put(relPath, 'abc')
 })
 afterEach(() => {

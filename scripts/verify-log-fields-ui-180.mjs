@@ -15,10 +15,11 @@ import assert from 'node:assert/strict'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
+import { createRequire } from 'node:module'
 import Database from 'better-sqlite3'
-import { drizzle } from 'drizzle-orm/better-sqlite3'
-import { migrate } from 'drizzle-orm/better-sqlite3/migrator'
 import { spawnOwnedChild as spawn, reserveLoopbackPort, stopOwnedChild, waitForHttp } from './lib/isolated-local-services.mjs'
+const { createJiti } = createRequire(import.meta.resolve('nuxt/package.json'))('jiti')
+const { createRuntimeSchema } = await createJiti(import.meta.url).import('../db/create-runtime.ts')
 
 const worktree = resolve(process.argv[2] ?? '.')
 const evidence = process.argv[3]
@@ -31,7 +32,7 @@ mkdirSync(evidence, { recursive: true })
 
 // --- synthetic business schema only: no real data is read or copied. ---
 const businessDb = new Database(business)
-migrate(drizzle(businessDb), { migrationsFolder: join(worktree, 'db/migrations') })
+businessDb.pragma('foreign_keys = ON'); createRuntimeSchema(businessDb)
 businessDb.close()
 
 // --- independent log DB seeded just past 1MiB/3 so a real capacity 409 exists later ---

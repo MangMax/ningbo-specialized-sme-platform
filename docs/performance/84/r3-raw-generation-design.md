@@ -1,5 +1,8 @@
 # R2-01 residual: raw lifetime and generation allocation
 
+> 历史脚本说明：本文引用的混合表实验/验收脚本已在原生运行切换时退役。复现旧命令须在独立 checkout 固定到 `ab503081dae3e24680afc9b07395a7e3ff21fc9f` 并使用当时的隔离数据库与二进制；这些命令不适用于当前运行库。历史证据与 FAIL/UNKNOWN 保持原样。
+
+
 Base integration: a1a050387e6fa0a092f43b74a0cd83ec527afcec. This amendment
 supersedes only the child generation split in r2-worker-design.md. The frozen
 #82 limits, application flags, readers, transport and failure policy stay the same.

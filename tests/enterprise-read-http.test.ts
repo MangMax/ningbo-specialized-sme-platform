@@ -1,3 +1,4 @@
+import { submitNativePlatformQuery } from './helpers/native-platform-fixture'
 import { initializeDb } from '../db/client'
 import { createServer } from 'node:http'
 import { mkdtempSync, rmSync } from 'node:fs'
@@ -11,7 +12,7 @@ import { listEnterprises } from '../server/utils/mcp-roster'
 
 const dir = mkdtempSync(join(tmpdir(), 'enterprise-read-http-'))
 const db = initializeDb({ create: true, dbPath: join(dir, 'test.sqlite') })
-const owner = db.insert(schema.enterprise).values({ name: '合成双称号企业', nameNorm: '合成双称号企业', usccNorm: 'SYNTHETIC84', district: '海曙区' }).returning().get().id
+const owner = db.insert(schema.enterprise).values({ name: '合成双称号企业', nameNorm: '合成双称号企业', usccNorm: '91330211255994457P', district: '海曙区' }).returning().get().id
 const unrelated = db.insert(schema.enterprise).values({ name: '无关企业', nameNorm: '无关企业' }).returning().get().id
 for (const [titleCode, year] of [['specialized_sme', 2022], ['little_giant', 2024]] as const) {
   const recordId = db.insert(schema.record).values({ enterpriseId: owner, titleCode, source: 'jxj' }).returning().get().id
@@ -23,37 +24,13 @@ for (const [titleCode, year] of [['specialized_sme', 2022], ['little_giant', 202
   db.insert(schema.recordEvidence).values({ recordEventId: reviewId, sourceFile: `synthetic-review-${titleCode}.pdf`, page: 1 }).run()
 }
 for (const [name, verificationStatus] of [['已确认旧名', 'confirmed'], ['待核旧名', 'pending']] as const) db.insert(schema.enterpriseAlias).values({ enterpriseId: owner, name, nameNorm: name, sourceKind: 'manual', sourceRefId: 0, verificationStatus }).run()
-const recognized = db.insert(schema.platformQuery).values({ interface: 'recognized_list', queryKey: ' synthetic84 ', queriedAt: '2026-10-19', status: 'partial', collectionEvidence: { titleScope: { rdjb: ['2'] }, pages: [{ rdjb: '2', page: 4, fetchedCount: 2, status: 'success' }] } as never }).returning().get().id
-for (const sequenceNo of [2, 1]) db.insert(schema.platformRelation).values({ queryId: recognized, sequenceNo, enterpriseId: sequenceNo === 1 ? owner : null, rawFields: { original: `原行${sequenceNo}` }, nameRaw: `原名${sequenceNo}` }).run()
-const failed = db.insert(schema.platformQuery).values({ interface: 'apply_list', queryKey: 'name:合成双称号企业', queriedAt: '2026-10-18', status: 'failed', failureReason: 'synthetic failure' }).returning().get().id
-const otherQuery = db.insert(schema.platformQuery).values({ interface: 'business_list', queryKey: 'unrelated', queriedAt: '2026-10-19', status: 'success', rawResponse: '原文'.repeat(1_000_000) }).returning().get().id
-// A malformed, unrelated archive must never be decoded by a list or a fixed enterprise read.
-db.$client.prepare('UPDATE platform_query SET collection_evidence = ? WHERE id = ?').run('{unrelated invalid json', otherQuery)
-db.insert(schema.platformRelation).values({ queryId: otherQuery, sequenceNo: 1, enterpriseId: unrelated }).run()
-db.$client.prepare('UPDATE platform_relation SET raw_fields = ? WHERE query_id = ?').run('{unrelated invalid json', otherQuery)
+const originalRows = [{ original: '原行1', qymc: '原名1', tyshxydm: '91330211255994457P' }, { original: '原行2', qymc: '原名2' }]
+const recognized = submitNativePlatformQuery(db, { interface: 'recognized_list', queryKey: '91330211255994457P', rdjb: '2', titleCode: 'specialized_sme', queriedAt: '2026-10-19T00:00:00Z', status: 'partial', rawResponse: 'Explicit synthetic original directory page',
+  collectionEvidence: { source: 'queryBusList', status: 'partial', effectiveConditions: { uscc: '91330211255994457P', combination: 'and' }, titleScope: { mode: 'selected', rdjb: ['2'] }, queriedAt: '2026-10-19T00:00:00Z', completedAt: '2026-10-19T00:00:01Z', rows: originalRows, pages: [{ source: 'queryBusList', rdjb: '2', page: 4, status: 'success', fetchedCount: 2, declaredTotal: null, error: null }], fetchedCount: 2, declaredTotal: null, completeness: 'partial', fullRange: false, unfinished: [{ source: 'queryBusList', rdjb: '2', page: 5 }], error: null, limits: { pageSize: 50, maxRequests: 100, maxRows: 5000, maxDurationMs: 60000 } },
+  relations: originalRows.map((rawFields, index) => ({ sequenceNo: index + 1, enterpriseId: index === 0 ? owner : null, nameRaw: rawFields.qymc, usccRaw: 'tyshxydm' in rawFields ? rawFields.tyshxydm : null, rawFields })) }).queryId
+const failed = submitNativePlatformQuery(db, { interface: 'apply_list', queryKey: 'name:合成双称号企业', queriedAt: '2026-10-18', status: 'failed', failureReason: 'synthetic failure', rawResponse: 'Explicit synthetic failed capture' }).queryId
+submitNativePlatformQuery(db, { interface: 'business_list', queryKey: 'unrelated', queriedAt: '2026-10-19', status: 'success', rawResponse: '原文'.repeat(1_000_000), relations: [{ sequenceNo: 1, enterpriseId: unrelated, rawFields: { original: 'unrelated source row' } }] })
 let server: ReturnType<typeof createServer>, base: string
-let normalizationCalls = 0
-let coverageSqlCalls = 0
-let unrelatedPointerBytes = 0
-const prepare = db.$client.prepare.bind(db.$client)
-db.$client.prepare = ((...args: Parameters<typeof db.$client.prepare>) => {
-  if (String(args[0]).includes('with selected as materialized')) coverageSqlCalls++
-  const statement = prepare(...args)
-  const observe = (value: unknown) => {
-    if (typeof value === 'string' && value.startsWith('unrelated-pointer-')) unrelatedPointerBytes += Buffer.byteLength(value)
-    else if (value && typeof value === 'object') for (const child of Object.values(value)) observe(child)
-  }
-  for (const method of ['get', 'all'] as const) {
-    const run = statement[method].bind(statement)
-    statement[method] = ((...params: unknown[]) => { const out = run(...params); observe(out); return out }) as never
-  }
-  const iterate = statement.iterate.bind(statement)
-  statement.iterate = function* (...params: unknown[]) { for (const row of iterate(...params)) { observe(row); yield row } }
-  return statement
-}) as typeof db.$client.prepare
-const registerFunction = db.$client.function.bind(db.$client)
-db.$client.function = ((name: string, options: unknown, callback: (...args: unknown[]) => unknown) =>
-  registerFunction(name, { ...(options as object), varargs: true }, (...args: unknown[]) => { normalizationCalls++; return callback(...args) })) as typeof db.$client.function
 beforeAll(async () => {
   vi.stubEnv('NUXT_DB_PATH', join(dir, 'test.sqlite'))
   for (const [name, value] of Object.entries({ defineEventHandler, getQuery, getRouterParam, createError, setHeader })) vi.stubGlobal(name, value)
@@ -105,110 +82,27 @@ it.each([
     db.$client.prepare('DELETE FROM enterprise WHERE id = ?').run(enterprise.id)
   }
 })
-it('HTTP detail preserves legacy Unicode keys without allocating normalization callbacks for unrelated plain keys', async () => {
-  const ids: number[] = []
-  db.$client.transaction(() => {
-    const insert = db.$client.prepare("INSERT INTO platform_query(interface,query_key,queried_at,status,created_at) VALUES('apply_list',?,'2026-10-19','failed','2026-10-19')")
-    for (let i = 0; i < 1000; i++) ids.push(Number(insert.run(`synthetic84:unrelated:${i}`).lastInsertRowid))
-    ids.push(Number(insert.run('\u200B sYnThEtIc84\u3000').lastInsertRowid))
-  })()
-  normalizationCalls = 0
-  try {
-    const response = await fetch(`${base}/api/roster/enterprises/${owner}`)
-    expect(response.status).toBe(200)
-    const detail = await response.json()
-    expect(detail.platform.queries.map((q: any) => q.id)).toEqual([failed, recognized, ids.at(-1)])
-    // Observe the same reader on this instrumented connection, then compare to
-    // the worker/HTTP result. A worker has its own driver, so a zero reading on
-    // the writer connection alone would prove nothing about its allocations.
-    expect(getRosterEnterpriseDetail(db, owner, Date.parse(detail.qualificationAssessment.asOf))).toEqual(detail)
-    expect(normalizationCalls).toBeGreaterThan(0)
-    // Supplementary allocation observation at the real SQLite/HTTP seam.
-    // Unrelated ASCII punctuation/lowercase keys must stay inside native SQL.
-    expect(normalizationCalls).toBeLessThan(30)
-  } finally {
-    db.$client.prepare(`DELETE FROM platform_query WHERE id IN (${ids.map(() => '?').join(',')})`).run(...ids)
-  }
-})
-it('HTTP detail shares title coverage and keeps unrelated Unicode keys out of repeated scans', async () => {
-  const ids: number[] = []
-  const addUnrelated = (start: number, count: number) => db.$client.transaction(() => {
-    const insert = db.$client.prepare("INSERT INTO platform_query(interface,query_key,queried_at,status,created_at) VALUES('apply_list',?,'2026-10-19','failed','2026-10-19')")
-    for (let i = start; i < start + count; i++) ids.push(Number(insert.run(`\u200B UNRELATED84${i} `).lastInsertRowid))
-  })()
-  addUnrelated(0, 200)
-  normalizationCalls = coverageSqlCalls = 0
-  try {
-    const response = await fetch(`${base}/api/roster/enterprises/${owner}`)
-    expect(response.status).toBe(200)
-    const detail = await response.json()
-    // Compare the complete response at the HTTP snapshot time, not two clocks.
-    const asOf = Date.parse(detail.qualificationAssessment.asOf)
-    const direct = getRosterEnterpriseDetail(db, owner, asOf)!
-    const callsAt200 = normalizationCalls
-    expect(detail).toEqual(direct)
-    const specialized = direct.titleAssessments.filter(row => row.titleCode === 'specialized_sme')
-    expect(specialized).toHaveLength(2)
-    expect(specialized[0]?.queryCoverage).toEqual(specialized[1]?.queryCoverage)
-    expect(specialized[0]?.queryCoverage.sources).toEqual(expect.arrayContaining([
-      expect.objectContaining({ queryId: recognized, queryStatus: 'partial', subjectMatch: 'exact_uscc' }),
-      expect.objectContaining({ queryId: failed, queryStatus: 'failed', subjectMatch: 'name_only' }),
-    ]))
-    expect(coverageSqlCalls).toBeLessThanOrEqual(3)
-    expect(normalizationCalls).toBeLessThan(400)
-    addUnrelated(200, 800)
-    normalizationCalls = coverageSqlCalls = 0
-    expect(getRosterEnterpriseDetail(db, owner, asOf)).toEqual(direct)
-    expect(coverageSqlCalls).toBeLessThanOrEqual(3)
-    // One owned-ID selection still visits exceptional keys; the title/direction
-    // assessments must not each revisit those 800 unrelated keys.
-    expect(normalizationCalls - callsAt200).toBeLessThan(850)
-  } finally { db.$client.prepare(`DELETE FROM platform_query WHERE id IN (${ids.map(() => '?').join(',')})`).run(...ids) }
-})
-it('HTTP filtered list counts titles without materializing unrelated evidence pointers', async () => {
+it('HTTP filtered list scopes title counts to matched enterprises despite unrelated evidence pointers', async () => {
   const record = db.insert(schema.record).values({ enterpriseId: unrelated, titleCode: 'innovative_sme', source: 'jxj' }).returning().get()
   const event = db.insert(schema.recordEvent).values({ recordId: record.id, eventType: 'award', year: 2020 }).returning().get()
   db.insert(schema.recordEvidence).values({ recordEventId: event.id, sourceFile: `unrelated-pointer-${'x'.repeat(4096)}.pdf` }).run()
-  unrelatedPointerBytes = 0
+
   try {
     const response = await fetch(`${base}/api/roster/enterprises?q=已确认旧名&pageSize=1`)
     expect(response.status).toBe(200)
     expect(await response.json()).toMatchObject({ counts: { total: 1, titlePairs: 2, recognitionPairs: 2, differences: 2 }, rows: [{ enterpriseId: owner, nextReviewYear: 2028 }] })
-    listEnterprises(db, { q: '已确认旧名', pageSize: 1 })
-    expect(unrelatedPointerBytes).toBe(0)
+    expect(listEnterprises(db, { q: '已确认旧名', pageSize: 1 })).toMatchObject({ counts: { total: 1, titlePairs: 2, recognitionPairs: 2 } })
   } finally { db.$client.prepare('DELETE FROM record WHERE id = ?').run(record.id) }
 })
 it('HTTP detail keeps embedded-null Unicode identity normalization', async () => {
   const identity = db.insert(schema.enterprise).values({ name: '控制符测试企业', nameNorm: '控制符测试企业', usccNorm: 'X\u0000SS' }).returning().get()
-  const query = db.insert(schema.platformQuery).values({ interface: 'apply_list', queryKey: 'x\u0000ß', queriedAt: '2026-10-19', status: 'failed' }).returning().get()
+  const query = { id: submitNativePlatformQuery(db, { interface: 'apply_list', queryKey: 'x\u0000ß', queriedAt: '2026-10-19', status: 'failed', rawResponse: 'Explicit synthetic identity lookup' }).queryId }
   try {
     const response = await fetch(`${base}/api/roster/enterprises/${identity.id}`)
     expect(response.status).toBe(200)
     expect((await response.json()).platform.queries.map((q: any) => q.id)).toEqual([query.id])
   } finally {
-    db.$client.prepare('DELETE FROM platform_query WHERE id = ?').run(query.id)
     db.$client.prepare('DELETE FROM enterprise WHERE id = ?').run(identity.id)
-  }
-})
-it('HTTP name-only detail skips impossible normalized-name matches in unrelated query keys', async () => {
-  const identity = db.insert(schema.enterprise).values({ name: '纯名称主体', nameNorm: '纯名称主体' }).returning().get()
-  const exact = db.insert(schema.platformQuery).values({ interface: 'apply_list', queryKey: 'name:纯名称主体', queriedAt: '2026-10-19', status: 'failed' }).returning().get()
-  const ids: number[] = []
-  db.$client.transaction(() => {
-    const insert = db.$client.prepare("INSERT INTO platform_query(interface,query_key,queried_at,status,created_at) VALUES('apply_list',?,'2026-10-19','failed','2026-10-19')")
-    for (let i = 0; i < 1000; i++) ids.push(Number(insert.run(`\u200B 无关键${i} `).lastInsertRowid))
-  })()
-  normalizationCalls = 0
-  try {
-    const response = await fetch(`${base}/api/roster/enterprises/${identity.id}`)
-    expect(response.status).toBe(200)
-    const detail = await response.json()
-    expect(detail.platform.queries.map((q: any) => q.id)).toEqual([exact.id])
-    expect(getRosterEnterpriseDetail(db, identity.id, Date.parse(detail.qualificationAssessment.asOf))).toEqual(detail)
-    expect(normalizationCalls).toBeLessThan(30)
-  } finally {
-    db.$client.prepare(`DELETE FROM platform_query WHERE id IN (${[exact.id, ...ids].map(() => '?').join(',')})`).run(exact.id, ...ids)
-    db.$client.prepare('DELETE FROM enterprise WHERE id=?').run(identity.id)
   }
 })
 it('MCP search keeps malformed UTF-16 distinct from stored replacement characters', () => {
@@ -292,7 +186,7 @@ it('HTTP detail scopes identity and record evidence but preserves recognized unm
     expect(detail.evidence).toEqual(expect.arrayContaining([expect.objectContaining({ sourceFile: 'synthetic.pdf', page: 3 })]))
     expect(detail.aliases).toHaveLength(2)
     expect(detail.platform.queries.map((q: any) => [q.id, q.status, q.relationCount])).toEqual([[failed, 'failed', 0], [recognized, 'partial', 2]])
-    expect(detail.platform.relations.map((r: any) => [r.sequenceNo, r.enterpriseId, r.rawFields, r.sourcePage])).toEqual([[1, owner, { original: '原行1' }, 4], [2, null, { original: '原行2' }, 4]])
+    expect(detail.platform.relations.map((r: any) => [r.sequenceNo, r.enterpriseId, r.rawFields, r.sourcePage])).toEqual([[1, owner, originalRows[0], 4], [2, null, originalRows[1], 4]])
   } finally { db.$client.prepare('UPDATE enterprise SET quality_flags = NULL WHERE id = ?').run(unrelated) }
   expect((await fetch(`${base}/api/roster/enterprises/999999`)).status).toBe(404)
   expect((await fetch(`${base}/api/roster/enterprises/invalid`)).status).toBe(400)

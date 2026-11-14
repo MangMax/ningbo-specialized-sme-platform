@@ -11,6 +11,7 @@ import type { PlatformProjectionResult,PlatformProjectionSummary } from '../../l
 import { isDeepStrictEqual } from 'node:util'
 import { RDJB_TITLE_CODES } from '../../lib/platform/recognized-evidence'
 import { normalizePlatformRelation } from '../../lib/platform/normalization'
+import { platformRelationInputSchema } from './roster-import-platform-schema'
 /**
  * 名录统一导入的**核心实现**（RL-11）—— 预检与单批事务提交（契约 §8）。
  *
@@ -3012,8 +3013,20 @@ function planPlatformQuery(
   }
   for (let i = 0; i < (query.relations ?? []).length; i += 1) {
     const relation = query.relations![i]!
-    if (optionalInt(relation?.sequenceNo) == null) {
+    if (relation?.sequenceNo == null) {
       push({ item: failure('platform_relation', `${ref}/r${i}`, 'sequence_no_required', '关系缺少 sequenceNo', 'relations[].sequenceNo'), action: 'skip', review: false })
+      return
+    }
+    if (!platformRelationInputSchema.shape.sequenceNo.safeParse(relation?.sequenceNo).success) {
+      push({ item: failure('platform_relation', `${ref}/r${i}`, 'sequence_no_invalid', 'sequenceNo 必须是正安全整数，不截断小数', 'relations[].sequenceNo'), action: 'skip', review: false })
+      return
+    }
+    if (!originalSource && relation.sequenceNo !== i + 1) {
+      push({ item: failure('platform_relation', `${ref}/r${i}`, 'sequence_no_invalid', '新完整采集的 sequenceNo 必须按输入顺序从 1 连续编号', 'relations[].sequenceNo'), action: 'skip', review: false })
+      return
+    }
+    if (!platformRelationInputSchema.shape.year.safeParse(relation.year).success) {
+      push({ item: failure('platform_relation', `${ref}/r${i}`, 'year_invalid', 'year 必须是整数或 null，不截断小数', 'relations[].year'), action: 'skip', review: false })
       return
     }
     if (relation.matchBasis != null && !MATCH_BASES.has(String(relation.matchBasis))) {
@@ -3033,6 +3046,10 @@ function planPlatformQuery(
   }
   if (!originalSource && query.reuseExisting) {
     push({ item: failure('platform_query', ref, 'query_reuse_missing', 'No original collection exists at these coordinates', 'reuseExisting'), action: 'skip', review: false })
+    return
+  }
+  if (!originalSource && !query.collectionEvidence && query.rawResponse == null) {
+    push({ item: failure('platform_query', ref, 'query_source_required', '新采集必须提供原始 rawResponse 或 collectionEvidence', 'rawResponse'), action: 'skip', review: false })
     return
   }
   const source = originalSource ?? stagedPlatformQuerySource(query, ref)

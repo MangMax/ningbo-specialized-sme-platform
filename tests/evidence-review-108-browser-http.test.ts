@@ -5,12 +5,12 @@ import { type ChildProcess } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { sql } from 'drizzle-orm'
-import { useDb, schema } from '../db/client'
+import { initializeDb, schema } from '../db/client'
 import { spawnOwnedChild as spawn, reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../scripts/lib/isolated-local-services.mjs'
 
 const dir = mkdtempSync(join(tmpdir(), 'review-108-browser-'))
 const dbPath = join(dir, 'synthetic.db')
-const db = useDb({ dbPath })
+const db = initializeDb({ create: true,  dbPath })
 const contextPath = '/api/roster/evidence-review/browser-context'
 const commandPath = '/api/roster/evidence-review/browser-commands'
 const externalPath = '/api/roster/decision-lifecycle/commands'

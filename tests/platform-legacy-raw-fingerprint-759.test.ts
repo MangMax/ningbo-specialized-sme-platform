@@ -6,9 +6,9 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createHash } from 'node:crypto'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
-import * as schema from '../db/schema'
+import * as schema from '../upgrade/legacy-schema'
 import { upgradeCollections } from '../upgrade/collections'
-import { upgradeObservations, rowSnapshot } from '../upgrade/observations'
+import { upgradeObservations } from '../upgrade/observations'
 import { upgradeProjections } from '../upgrade/projections'
 import { finalizeObservations, finalizeCollectionScopes } from '../upgrade/finalize-observations'
 import { finalizeFingerprintBasis } from '../upgrade/fingerprint-basis'
@@ -20,15 +20,15 @@ import { finalizeProcessStored } from '../upgrade/process-stored'
 import { transferCorrespondence } from '../upgrade/correspondence'
 import { transferDifferenceReferences } from '../upgrade/difference-references'
 import { indexLegacyProvenance } from '../upgrade/legacy-provenance'
-import { preflightRosterImport, commitRosterImport } from '../server/utils/roster-import'
-import { inspectLegacyPlatformProvenance } from '../server/utils/platform-legacy-provenance'
-import { originalLegacyProvenanceInput } from '../lib/platform/legacy-provenance-command'
-import { readPlatformQueryEvidence } from '../lib/platform/evidence-read'
-import { assertExpandRuntime } from '../db/schema-phase'
-import type { LegacyPlatformCollection, LegacyPlatformProvenanceInput } from '../lib/platform/legacy-provenance'
-import type { RosterImportRequest } from '../lib/roster-import-client'
-import { ensurePlatformObservation, readPlatformObservationPlan } from '../server/utils/platform-business-record'
-import { legacyFingerprintInput, verifyFingerprint } from '../lib/platform/fingerprint-verifier'
+
+
+
+
+
+import type { LegacyPlatformCollection } from '../lib/platform/legacy-provenance'
+
+import { ensurePlatformObservation, readPlatformObservationPlan } from '../upgrade/frozen/server/platform-business-record'
+import { legacyFingerprintInput, verifyFingerprint } from '../upgrade/frozen/fingerprint-verifier'
 
 vi.mock('@db', () => ({ useDb: () => { throw new Error('No global database in #759') } }))
 const root = mkdtempSync(join(process.env.ISSUE759_EVIDENCE ?? tmpdir(), 'raw759-'))
@@ -43,15 +43,6 @@ const collection: LegacyPlatformCollection = {
   rows: [rawRow], pages: [{ source: 'businessList', rdjb: '2', page: 1, fetchedCount: 1, declaredTotal: 1, status: 'success', error: null }],
   fetchedCount: 1, declaredTotal: 1, completeness: 'complete', fullRange: true, unfinished: [], error: null,
   limits: { maxRequests: 100, maxRows: 5000, maxDurationMs: 60000, pageSize: 50 },
-}
-const command: LegacyPlatformProvenanceInput = {
-  queryId: 101, interface: 'business_list', queryKey: '9133020078041158X6', rdjb: '2', queriedAt: collection.queriedAt,
-  sourceIdentity: 'review old BLOB source', sourceSha256: 'b'.repeat(64), segmentIndex: 3, collection,
-  relations: [{ sequenceNo: 1, relationKey: 'new756', rawFields: rawRow }],
-}
-function request(key: string): RosterImportRequest {
-  return { sourceKind: 'platform_archive', sourceIdentity: 'review old source', idempotencyKey: key,
-    payload: { platformLegacyProvenance: [command] } }
 }
 function copy(source: string, destination: string) { copyFileSync(source, destination); chmodSync(destination, 0o600); return destination }
 function schema0(name: string) {
@@ -101,79 +92,15 @@ function orderedOriginal(old: Database.Database) {
   const query = old.prepare('SELECT id,interface,query_key queryKey,rdjb,title_code titleCode,queried_at queriedAt,last_collected_at lastCollectedAt,status,failure_reason failureReason,raw_response rawResponse,collection_evidence collectionEvidence,created_at createdAt FROM platform_query WHERE id=101').get()
   return JSON.stringify({ query, rows: [{ id: 1101, sequenceNo: 1, relationKey: 'new756', rawFields: rawRow, rawBytes: Buffer.from(rawText) }] })
 }
-
-it('migrates the frozen schema0 BLOB through complete71613 and preserves the old command receipt replay and generic exact evidence', () => {
-  const source = schema0('frozen')
-  const old = new Database(copy(source, join(root, 'old-coordinator.sqlite')))
+it('preserves the independent schema0 BLOB row and literal ordered-source digest', () => {
+  const source = schema0('literal-blob')
   const frozen = new Database(source, { readonly: true })
-  old.pragma('foreign_keys=ON')
-  const oldDb = drizzle(old, { schema })
   try {
     expect(frozen.pragma('user_version', { simple: true })).toBe(0)
-    expect(frozen.prepare('SELECT typeof(raw_fields) storage,raw_fields bytes FROM platform_relation WHERE id=1101').get())
-      .toEqual({ storage: 'blob', bytes: Buffer.from(rawText) })
-    const ordered = orderedOriginal(frozen)
-    expect(hash(ordered)).toBe(originalDigest)
-    expect(inspectLegacyPlatformProvenance(oldDb, command)).toMatchObject({ exists: false, inputFingerprint: originalDigest })
-    const oldPreflight = preflightRosterImport(oldDb, request('old759'))
-    expect(oldPreflight.preflight).toMatchObject({ add: 1, conflicts: [], platformLegacyProvenanceSources: [{ inputFingerprint: originalDigest }] })
-    const oldResult = commitRosterImport(oldDb, request('old759'), [], { deferCandidateTasks: true })
-    expect(oldResult).toMatchObject({ status: 'committed', summary: { written: 1 } })
-    expect(commitRosterImport(oldDb, request('old759'), [], { deferCandidateTasks: true })).toEqual(oldResult)
-    expect(rowSnapshot(old, 'platform_relation', 'id', 1101)).toEqual(rowSnapshot(frozen, 'platform_relation', 'id', 1101))
-    writeFileSync(join(root, 'old-normal-oracle.json'), JSON.stringify({ ordered, digest: originalDigest, oldPreflight, oldResult }, null, 2))
-
-    const originalHistory = tableBytes(frozen, historyTables)
-    const migrated = complete(source, 'frozen')
-    const statements: string[] = []
-    const t = new Database(migrated.target, { verbose: sql => statements.push(String(sql)) })
-    t.pragma('foreign_keys=ON')
-    const db = drizzle(t, { schema })
-    try {
-      expect(t.pragma('user_version', { simple: true })).toBe(71613)
-      expect(tableBytes(t, historyTables)).toEqual(originalHistory)
-      expect(t.prepare('SELECT old_id,collection_id FROM platform_legacy_query_alias WHERE old_id=101').get()).toEqual({ old_id: 101, collection_id: 101 })
-      expect(t.prepare('SELECT old_id,observation_id FROM platform_legacy_relation_alias WHERE old_id=1101').get()).toEqual({ old_id: 1101, observation_id: 1101 })
-      expect(t.prepare("SELECT a.storage_class,a.bytes FROM platform_observation_archive_ref r JOIN platform_archive_value a ON a.id=r.archive_id WHERE r.owner_id=1101 AND r.field='rawFields'").get())
-        .toEqual({ storage_class: 'blob', bytes: Buffer.from(rawText) })
-      const restored = originalLegacyProvenanceInput(db, 101)
-      expect(JSON.stringify({ query: restored.query, rows: restored.rows })).toBe(ordered)
-      const protectedTables = ['platform_collection', 'platform_collection_archive_ref', 'platform_collection_page',
-        'platform_collection_condition', 'platform_business_observation', 'platform_observation_assignment',
-        'platform_observation_fingerprint_basis', 'platform_business_record_version', ...historyTables]
-      const before = tableBytes(t, protectedTables)
-      statements.length = 0
-      expect(preflightRosterImport(db, request('target759')).preflight).toEqual(oldPreflight.preflight)
-      const result = commitRosterImport(db, request('target759'), [], { deferCandidateTasks: true })
-      expect(result).toMatchObject({ status: 'committed', summary: { written: 1 } })
-      expect(result.items).toEqual(oldResult.items)
-      expect(commitRosterImport(db, request('target759'), [], { deferCandidateTasks: true })).toEqual(result)
-      expect(commitRosterImport(db, request('skip759'), [], { deferCandidateTasks: true })).toMatchObject({ status: 'committed', summary: { written: 0, skipped: 1 } })
-      const evidence = readPlatformQueryEvidence(db, { queryId: 101, field: 'legacyProvenance', offset: 0, length: 65536 })
-      expect('data' in evidence).toBe(true)
-      if (!('data' in evidence)) throw new Error('Expected exact evidence')
-      expect(Buffer.from(evidence.data, 'base64')).toEqual(Buffer.from(JSON.stringify(collection)))
-      const relation = readPlatformQueryEvidence(db, { queryId: 101, relationId: 1101, field: 'relation', offset: 0, length: 65536 })
-      expect('data' in relation).toBe(true)
-      if (!('data' in relation)) throw new Error('Expected raw evidence')
-      expect(relation).toEqual(readPlatformQueryEvidence(oldDb, { queryId: 101, relationId: 1101, field: 'relation', offset: 0, length: 65536 }))
-      expect(JSON.parse(Buffer.from(relation.data, 'base64').toString()).rawFields).toEqual(rawRow)
-      // New receipt rows are allowed; every existing historical cell is protected.
-      expect(tableBytes(t, protectedTables.filter(n => !n.startsWith('import_receipt')))).toEqual(before.filter(([n]) => typeof n === 'string' && !n.startsWith('import_receipt')))
-      expect(statements.filter(sql => /\b(?:from|join|insert into|update|delete from)\s+["`]?platform_(?:query|relation|query_legacy_provenance)["`]?(?=\s|$|\()/i.test(sql))).toEqual([])
-      expect(() => assertExpandRuntime(t)).toThrow()
-      expect(t.pragma('foreign_key_check')).toEqual([])
-      expect(t.pragma('integrity_check')).toEqual([{ integrity_check: 'ok' }])
-      const postWrites = tableBytes(t, [...protectedTables, 'platform_collection_legacy_provenance', 'platform_archive_value'])
-      writeFileSync(join(root, 'normal-composed.json'), JSON.stringify({ state: 'complete71613', originalDigest, oldResult, result, evidence, relation, postWrites }, null, 2))
-      t.close()
-      expect(indexLegacyProvenance({ source: migrated.predecessor, target: migrated.target, runId: 'provenance', batchSize: 2 })).toMatchObject({ state: 'complete' })
-      const replay = new Database(migrated.target, { readonly: true })
-      try { expect(tableBytes(replay, [...protectedTables, 'platform_collection_legacy_provenance', 'platform_archive_value'])).toEqual(postWrites) }
-      finally { replay.close() }
-    } finally { if (t.open) t.close() }
-  } finally { old.close(); frozen.close() }
-}, 120000)
+    expect(frozen.prepare('SELECT typeof(raw_fields) storage,raw_fields bytes FROM platform_relation WHERE id=1101').get()).toEqual({ storage: 'blob', bytes: Buffer.from(rawText) })
+    expect(hash(orderedOriginal(frozen))).toBe(originalDigest)
+  } finally { frozen.close() }
+})
 
 describe('authenticated original fingerprint cells', () => {
   const values = [
@@ -215,7 +142,8 @@ describe('authenticated original fingerprint cells', () => {
         INSERT INTO explanation_impact_113(id,enterprise_id,title_code,direction,decision_id,latest_revision_id,pending_since_revision_id,classification) VALUES(12,1,'specialized_sme','missing_in_miit',101,11,11,'review');
         INSERT INTO evidence_review_receipt_114(id,idempotency_key,request_hash,kind,enterprise_id,title_code,direction,decision_id,source_decision_id,reviewed_revision_id,actor,basis,response,recorded_at)
         VALUES(13,'old759',' original hash ','review',1,'specialized_sme','missing_in_miit',101,101,11,' { "type":"agent" } ',' 原始 ',' { "queryId":102 } ',' time ');`)
-      expect(commitRosterImport(oldDb, request('historical759'), [], { deferCandidateTasks: true })).toMatchObject({ status: 'committed', summary: { written: 1 } })
+      const batchId = oldDb.insert(schema.importBatch).values({idempotencyKey:'original759',sourceKind:'platform_archive',sourceIdentity:'original759',status:'committed',createdAt:' original time '}).returning().get().id
+      oldDb.insert(schema.importReceipt).values({batchId,operation:'commit',requestHash:' original receipt hash ',requestBody:' { "original":"759 BLOB receipt 尾🙂" } ',status:'committed',createdAt:' original time ',completedAt:' original completed '}).run()
       for (const table of historyTables) expect((old.prepare(`SELECT count(*) n FROM ${table}`).get() as { n: number }).n, table).toBeGreaterThan(0)
       protectedHistory = tableBytes(old, historyTables)
       writeFileSync(join(root, 'corpus-original-driver.json'), JSON.stringify({ expected, protectedHistory }, null, 2))
