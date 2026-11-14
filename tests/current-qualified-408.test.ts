@@ -733,10 +733,19 @@ it('effective_count_projection_preserves_status_and_basis_without_correspondence
   for (const drift of [false, true]) {
     if (drift) fixture.sqlite.prepare('update record_event set revision=revision+1 where id=?').run(a.events[0]!.id)
     const full = reader.readTitle(a.enterprise.id, 'innovative_sme', asOf)
-    const prepare = vi.spyOn(fixture.sqlite, 'prepare')
+    let correspondenceReads=0
+    const originalPrepare=fixture.sqlite.prepare.bind(fixture.sqlite)
+    const prepare = vi.spyOn(fixture.sqlite, 'prepare').mockImplementation(text=>{
+      const statement=originalPrepare(text)
+      if(/\bfrom\s+["`]?record_correspondence["`]?\b/i.test(text))for(const method of ['all','get','iterate'] as const){
+        const run=statement[method].bind(statement)
+        Object.assign(statement,{[method]:(...args:unknown[])=>{correspondenceReads++;return run(...args)}})
+      }
+      return statement
+    })
     try {
       expect(createCurrentQualificationAssessmentReader(fixture.sqlite).readEffectiveTitle(a.enterprise.id, 'innovative_sme', asOf)).toEqual({ effectiveStatus: full.effectiveStatus, basis: full.row.basis })
-      expect(prepare.mock.calls.filter(([sql]) => sql.includes('record_correspondence'))).toEqual([])
+      expect(correspondenceReads).toBe(0)
     } finally { prepare.mockRestore() }
   }
 })

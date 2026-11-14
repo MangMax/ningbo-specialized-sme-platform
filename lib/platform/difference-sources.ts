@@ -89,31 +89,64 @@ export function readDifferenceCollectionScope(db: Db, collectionId: number, load
   } : null
   return { collection, conditions, conditionsKnown, pages, unfinished, metadata }
 }
-/** One page-local batch. No row payloads or archive bodies are hydrated. */
+function prepareScopeQueries(db:Db) {
+  const ids=sql`(select value from json_each(${sql.placeholder('ids')}))`
+  return {
+    conditions:db.select().from(s.platformCollectionCondition).where(sql`${s.platformCollectionCondition.collectionId} in ${ids}`).prepare(),
+    pages:db.select().from(s.platformCollectionPage).where(sql`${s.platformCollectionPage.collectionId} in ${ids}`).orderBy(s.platformCollectionPage.ordinal).prepare(),
+    unfinished:db.select().from(s.platformCollectionUnfinished).where(sql`${s.platformCollectionUnfinished.collectionId} in ${ids}`).orderBy(s.platformCollectionUnfinished.ordinal).prepare(),
+    titles:db.select().from(targetSchema.platformQueryTitleScope).where(sql`${targetSchema.platformQueryTitleScope.collectionId} in ${ids}`).prepare(),
+  }
+}
+const scopeQueries=new WeakMap<Db,ReturnType<typeof prepareScopeQueries>>()
+/** One page-local batch. Compiled statements are reused; rows are always fresh. */
 export function readDifferenceCollectionScopes(db: Db, collections: (typeof c.$inferSelect)[]) {
   const ids = [...new Set(collections.map(c => c.id))]
   if (!ids.length) return new Map<number, ReturnType<typeof readDifferenceCollectionScope>>()
-  const conditions = Map.groupBy(db.select().from(s.platformCollectionCondition).where(inArray(s.platformCollectionCondition.collectionId, ids)).all(), r => r.collectionId)
-  const pages = Map.groupBy(db.select().from(s.platformCollectionPage).where(inArray(s.platformCollectionPage.collectionId, ids)).orderBy(s.platformCollectionPage.ordinal).all(), r => r.collectionId)
-  const unfinished = Map.groupBy(db.select().from(s.platformCollectionUnfinished).where(inArray(s.platformCollectionUnfinished.collectionId, ids)).orderBy(s.platformCollectionUnfinished.ordinal).all(), r => r.collectionId)
-  const titles = Map.groupBy(db.select().from(targetSchema.platformQueryTitleScope).where(inArray(targetSchema.platformQueryTitleScope.collectionId, ids)).all(), r => r.collectionId)
+  let queries=scopeQueries.get(db)
+  if(!queries){queries=prepareScopeQueries(db);scopeQueries.set(db,queries)}
+  const input={ids:JSON.stringify(ids)}
+  const conditions = Map.groupBy(queries.conditions.all(input), r => r.collectionId)
+  const pages = Map.groupBy(queries.pages.all(input), r => r.collectionId)
+  const unfinished = Map.groupBy(queries.unfinished.all(input), r => r.collectionId)
+  const titles = Map.groupBy(queries.titles.all(input), r => r.collectionId)
   return new Map(collections.map(collection => [collection.id, readDifferenceCollectionScope(db, collection.id, { collection,
     conditions: conditions.get(collection.id) ?? [], pages: pages.get(collection.id) ?? [], unfinished: unfinished.get(collection.id) ?? [], titles: (titles.get(collection.id) ?? []).map(t => t.rdjb),
   })]))
 }
 /** The collection selector shares current ownership, but leaves title/page admission to callers. */
+function prepareCollectionSelector(db:Db,flags:{queryIds:boolean;normalize:boolean;title:boolean}) {
+  const enterpriseId=sql.placeholder('enterpriseId')
+  const related=db.select({id:o.collectionId}).from(o).innerJoin(a,currentDifferenceAssignment(db)).where(eq(a.enterpriseId,enterpriseId))
+  const matched=sql<number>`${exists(db.select({id:o.id}).from(o).innerJoin(a,currentDifferenceAssignment(db)).where(and(eq(o.collectionId,c.id),eq(a.enterpriseId,enterpriseId))))}`
+  return db.select({...collectionColumns,matched}).from(c).innerJoin(qa,eq(qa.collectionId,c.id)).where(and(
+    flags.queryIds?sql`${qa.oldId} in (select value from json_each(${sql.placeholder('queryIds')}))`:or(
+      sql`${c.queryKey} in (select value from json_each(${sql.placeholder('queryKeys')}))`,
+      flags.normalize?and(sql`${sql.placeholder('uscc')} is not null`,sql`instr(${c.queryKey},':')=0`,eq(identityUsccSql(sql`${c.queryKey}`),sql.placeholder('uscc'))):undefined,
+      inArray(c.id,related)),
+    flags.title?or(eq(c.interface,'apply_list'),eq(c.titleCode,sql.placeholder('titleCode')),sql`instr(','||${c.rdjb}||',',${sql.placeholder('rdjb')})>0`,and(eq(c.rdjb,''),sql`${c.titleCode} is null`)):undefined,
+  )).orderBy(desc(c.queriedAt),desc(qa.oldId)).limit(sql.placeholder('limit')).prepare()
+}
+function prepareCollectionInputs(db:Db) {
+  return {
+    enterprise:db.select().from(s.enterprise).where(eq(s.enterprise.id,sql.placeholder('enterpriseId'))).prepare(),
+    aliases:db.select({name:s.enterpriseAlias.nameNorm}).from(s.enterpriseAlias).where(and(eq(s.enterpriseAlias.enterpriseId,sql.placeholder('enterpriseId')),eq(s.enterpriseAlias.verificationStatus,'confirmed'))).prepare(),
+    selectors:new Map<string,ReturnType<typeof prepareCollectionSelector>>(),
+  }
+}
+const collectionInputs=new WeakMap<Db,ReturnType<typeof prepareCollectionInputs>>()
 export function selectDifferenceCollections(db: Db, enterpriseId: number, options: { titleCode?: string; rdjb?: string; queryIds?: readonly number[]; queryKeys?: string[]; normalizeIdentity?: boolean; limit?: number; confirmedAliases?: boolean } = {}) {
   identityFunctions(db)
-  const enterprise = db.select().from(s.enterprise).where(eq(s.enterprise.id, enterpriseId)).get()
+  let input=collectionInputs.get(db)
+  if(!input){input=prepareCollectionInputs(db);collectionInputs.set(db,input)}
+  const enterprise = input.enterprise.get({enterpriseId})
   if (!enterprise) return []
-  const aliases = options.confirmedAliases ? db.select({ name: s.enterpriseAlias.nameNorm }).from(s.enterpriseAlias).where(and(eq(s.enterpriseAlias.enterpriseId, enterpriseId), eq(s.enterpriseAlias.verificationStatus, 'confirmed'))).all() : []
-  const related = db.select({ id: o.collectionId }).from(o).innerJoin(a, currentDifferenceAssignment(db)).where(eq(a.enterpriseId, enterpriseId))
-  const matched = sql<number>`${exists(db.select({ id: o.id }).from(o).innerJoin(a, currentDifferenceAssignment(db)).where(and(eq(o.collectionId, c.id), eq(a.enterpriseId, enterpriseId))))}`
-  return db.select({ ...collectionColumns, matched }).from(c).innerJoin(qa, eq(qa.collectionId, c.id))
-    .where(and(options.queryIds ? inArray(qa.oldId, [...options.queryIds]) : or(
-      inArray(c.queryKey, options.queryKeys ?? [enterprise.usccNorm ?? '', `name:${enterprise.nameNorm}`, ...aliases.map(a => `name:${a.name}`)]),
-      options.normalizeIdentity && enterprise.usccNorm ? and(sql`instr(${c.queryKey},':')=0`, eq(identityUsccSql(sql`${c.queryKey}`), normalizeUscc(enterprise.usccNorm))) : undefined,
-      inArray(c.id, related)),
-      options.titleCode ? or(eq(c.interface, 'apply_list'), eq(c.titleCode, options.titleCode), sql`instr(','||${c.rdjb}||',',${',' + options.rdjb + ','})>0`, and(eq(c.rdjb, ''), sql`${c.titleCode} is null`)) : undefined))
-    .orderBy(desc(c.queriedAt), desc(qa.oldId)).limit(options.limit ?? 2147483647).all()
+  const aliases = options.confirmedAliases ? input.aliases.all({enterpriseId}) : []
+  const flags={queryIds:options.queryIds!==undefined,normalize:!!options.normalizeIdentity,title:!!options.titleCode},key=JSON.stringify(flags)
+  let selector=input.selectors.get(key)
+  if(!selector){selector=prepareCollectionSelector(db,flags);input.selectors.set(key,selector)}
+  return selector.all({enterpriseId,limit:options.limit??2147483647,
+    ...(flags.queryIds?{queryIds:JSON.stringify(options.queryIds)}:{queryKeys:JSON.stringify(options.queryKeys??[enterprise.usccNorm??'',`name:${enterprise.nameNorm}`,...aliases.map(a=>`name:${a.name}`)]),...(flags.normalize?{uscc:enterprise.usccNorm?normalizeUscc(enterprise.usccNorm):null}:{})}),
+    ...(flags.title?{titleCode:options.titleCode,rdjb:','+options.rdjb+','}:{}),
+  })
 }

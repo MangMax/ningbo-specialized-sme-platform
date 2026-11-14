@@ -16,9 +16,8 @@ type Db = BetterSQLite3Database<typeof s>
 const o = candidateScopeObservation, a = targetSchema.platformObservationAssignment
 const original = alias(a, 'effect_original')
 const c = s.platformCollection, qa = s.platformLegacyQueryAlias, ra = targetSchema.platformLegacyRelationAlias
-function readEffectRows(db: Db, enterpriseId: number, currentIdentity = false) {
-  const e = db.select({ uscc: s.enterprise.usccNorm }).from(s.enterprise).where(eq(s.enterprise.id, enterpriseId)).get()
-  const rows = db.select({ id: ra.oldId, queryId: qa.oldId, interface: c.interface, queriedAt: c.queriedAt,
+function prepareEffectRows(db:Db,currentIdentity:boolean) {
+  return db.select({ id: ra.oldId, queryId: qa.oldId, interface: c.interface, queriedAt: c.queriedAt,
     collectionId: c.id, rdjb: c.rdjb, titleCode: c.titleCode, sequenceNo: o.sequenceNo,
     scopeMask: candidateScopeObservation.candidateScopeMask,
     scopeState: candidateScopeObservation.candidateScopeState,
@@ -32,9 +31,19 @@ function readEffectRows(db: Db, enterpriseId: number, currentIdentity = false) {
     .leftJoin(storedProcessProjection, eq(storedProcessProjection.observationId, o.id))
     .leftJoin(targetSchema.platformApplyProjection, eq(targetSchema.platformApplyProjection.observationId, o.id))
     .leftJoin(targetSchema.platformRecognizedProjection, eq(targetSchema.platformRecognizedProjection.observationId, o.id))
-    .where(or(eq(a.enterpriseId, enterpriseId), and(sql`${a.enterpriseId} is null`, (currentIdentity ? normalizeUscc(e?.uscc) : e?.uscc) ? sql`roster84_uscc(${currentIdentity ? a.usccRaw : original.usccRaw})=${normalizeUscc(e?.uscc)}` : sql`0`)))
-    .orderBy(ra.oldId).all()
-  return rows
+    .where(or(eq(a.enterpriseId, sql.placeholder('enterpriseId')), and(sql`${a.enterpriseId} is null`, sql`${sql.placeholder('uscc')} is not null`,sql`roster84_uscc(${currentIdentity ? a.usccRaw : original.usccRaw})=${sql.placeholder('uscc')}`)))
+    .orderBy(ra.oldId).prepare()
+}
+function prepareEffectReader(db:Db) {
+  return {enterprise:db.select({uscc:s.enterprise.usccNorm}).from(s.enterprise).where(eq(s.enterprise.id,sql.placeholder('enterpriseId'))).prepare(),
+    current:prepareEffectRows(db,true),original:prepareEffectRows(db,false)}
+}
+const effectReaders=new WeakMap<Db,ReturnType<typeof prepareEffectReader>>()
+function readEffectRows(db: Db, enterpriseId: number, currentIdentity = false) {
+  let reader=effectReaders.get(db)
+  if(!reader){reader=prepareEffectReader(db);effectReaders.set(db,reader)}
+  const e=reader.enterprise.get({enterpriseId})
+  return (currentIdentity?reader.current:reader.original).all({enterpriseId,uscc:(currentIdentity?normalizeUscc(e?.uscc):e?.uscc)?normalizeUscc(e?.uscc):null})
 }
 function effectReference({ id, queryId, interface: kind, queriedAt, status, year, batch }: ReturnType<typeof readEffectRows>[number]) {
   return { id, queryId, interface: kind, queriedAt, status, year, batch }

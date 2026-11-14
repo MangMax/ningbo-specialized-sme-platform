@@ -4,10 +4,10 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { expect,it } from 'vitest'
 import { captureCollectionPageShape } from '../upgrade/collection-page-shape'
-import { initializeDb } from '../db/client'
+import { initializeDb,schema } from '../db/client'
 import { writeNewCollectionTarget } from '../lib/platform/collection-target-command'
 import { platformResultToImport } from '../lib/platform/recognized-evidence'
-import { readDifferenceCollectionScope } from '../lib/platform/difference-sources'
+import { readDifferenceCollectionScope,readDifferenceCollectionScopes,selectDifferenceCollections } from '../lib/platform/difference-sources'
 import type { PlatformLiveQueryResult } from '../lib/platform/live-query'
 
 it('captures missing, explicit null and numeric maxPage from original archived pages atomically',()=>{
@@ -30,15 +30,30 @@ it('captures missing, explicit null and numeric maxPage from original archived p
   }finally{db.close()}
 })
 
-it('preserves optional page properties through native target writes and structured reads',()=>{
+it('preserves optional page properties and refreshes prepared collection reads after commits',()=>{
   const dir=mkdtempSync(join(tmpdir(),'page-shape-')),db=initializeDb({dbPath:join(dir,'native.sqlite'),create:true})
   try {
+    const examples:PlatformLiveQueryResult[]=[]
     for(const [i,extra] of [{},{maxPage:null},{maxPage:1}].entries()) {
       const evidence:PlatformLiveQueryResult={source:'queryBusList',status:'no_record',effectiveConditions:{name:'页元数据'+i,combination:'and'},titleScope:{mode:'selected',rdjb:['2']},queriedAt:'2026-11-14T00:00:00Z',completedAt:'2026-11-14T00:01:00Z',rows:[],pages:[{source:'queryBusList',rdjb:'2',page:1,...extra,status:'success',fetchedCount:0,declaredTotal:0,error:null}],fetchedCount:0,declaredTotal:0,completeness:'complete',fullRange:true,unfinished:[],error:null,limits:{maxRequests:1,maxRows:50,maxDurationMs:1000,pageSize:50}}
+      examples.push(evidence)
       writeNewCollectionTarget(db,{queryText:JSON.stringify(platformResultToImport(evidence)),evidenceText:JSON.stringify(evidence),createdAt:evidence.completedAt!,assignments:[]})
       const id=(db.$client.prepare('SELECT id FROM platform_collection ORDER BY id DESC LIMIT 1').get() as {id:number}).id
       expect(readDifferenceCollectionScope(db,id).metadata?.pages).toEqual(evidence.pages)
       expect(Object.hasOwn(readDifferenceCollectionScope(db,id).metadata!.pages[0]!,'maxPage')).toBe(i!==0)
     }
+    const subject=db.insert(schema.enterprise).values({name:'页元数据0',nameNorm:'页元数据0'}).returning().get()
+    const first=selectDifferenceCollections(db,subject.id,{titleCode:'specialized_sme',rdjb:'2'})
+    expect(first).toHaveLength(1)
+    expect(selectDifferenceCollections(db,subject.id,{queryIds:[]})).toEqual([])
+    expect(selectDifferenceCollections(db,subject.id,{queryKeys:[]})).toEqual([])
+    expect(selectDifferenceCollections(db,subject.id,{queryIds:[first[0]!.id],titleCode:'little_giant',rdjb:'3'})).toEqual([])
+    expect(selectDifferenceCollections(db,subject.id,{normalizeIdentity:true,confirmedAliases:true,queryKeys:['name:页元数据0']})).toHaveLength(1)
+    expect(readDifferenceCollectionScopes(db,first.map(row=>row.collection)).get(first[0]!.collection.id)?.metadata?.pages[0]).not.toHaveProperty('maxPage')
+    const next:PlatformLiveQueryResult={...examples[0]!,queriedAt:'2026-11-14T00:02:00Z',completedAt:'2026-11-14T00:03:00Z',pages:[{...examples[0]!.pages[0]!,maxPage:null}]}
+    writeNewCollectionTarget(db,{queryText:JSON.stringify(platformResultToImport(next)),evidenceText:JSON.stringify(next),createdAt:next.completedAt!,assignments:[]})
+    const refreshed=selectDifferenceCollections(db,subject.id,{titleCode:'specialized_sme',rdjb:'2'})
+    expect(refreshed).toHaveLength(2)
+    expect(readDifferenceCollectionScopes(db,refreshed.map(row=>row.collection)).get(refreshed[0]!.collection.id)?.metadata?.pages[0]).toHaveProperty('maxPage',null)
   }finally{db.$client.close();rmSync(dir,{recursive:true,force:true})}
 })

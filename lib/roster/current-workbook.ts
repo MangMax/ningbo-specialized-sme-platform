@@ -174,7 +174,9 @@ async function writeCurrentWorkbookBody(db: Database.Database, title: CurrentTit
       const ids = group === 'effective' ? candidateIds() : deferred[group]
       for (const id of ids) {
         // Count the canonical scan once; defer IDs only, never T2 or cell data.
-        const canonicalGroup = group === 'effective' ? assessmentReader.readTitle(id,title,Date.parse(generatedAt),target?.keys).effectiveStatus : group
+        // Classification needs eligibility only. The written row below still
+        // reads the complete three-title assessment and checks the same status.
+        const canonicalGroup = group === 'effective' ? assessmentReader.readEffectiveTitle(id,title,Date.parse(generatedAt)).effectiveStatus : group
         if (group === 'effective') {
           if (statusCounts[canonicalGroup] >= 1048575) throw new CurrentWorkbookLimitError('Excel 单表超过1048575条数据上限，未发布文件；请拆分数据范围')
           statusCounts[canonicalGroup]++

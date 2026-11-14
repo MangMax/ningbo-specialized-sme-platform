@@ -7,7 +7,7 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, expect, it } from 'vitest'
 import * as schema from '../db/schema'
 import { targetSchema } from '../lib/platform/target-schema'
-import { upgradeEnterpriseMergeIdentity } from '../upgrade/enterprise-merge'
+import { retirePlatformModel } from '../upgrade/retire-platform-model'
 import { commitRosterImport, findEnterpriseById, preflightRosterImport } from '../server/utils/roster-import'
 import { buildPlatformEvidenceIndex, findUsccKeyedRelationEvidence } from '../server/utils/roster-duplicate-merge'
 import { listRosterEnterprises, getRosterEnterpriseDetail } from '../lib/roster/enterprise-roster'
@@ -30,7 +30,7 @@ beforeEach(() => {
   const path = join(root, `case-${++serial}.sqlite`)
   copyFileSync(fixture, path); chmodSync(path, 0o600)
   sqlite = new Database(path, { verbose: text => trace.push(String(text)) }); sqlite.pragma('foreign_keys=ON')
-  upgradeEnterpriseMergeIdentity(sqlite)
+  retirePlatformModel(sqlite)
   expect(sqlite.prepare("select name from sqlite_schema where type='table' and name in ('platform_query','platform_relation')").all()).toEqual([])
   db = drizzle(sqlite, { schema })
   db.insert(schema.enterprise).values([
