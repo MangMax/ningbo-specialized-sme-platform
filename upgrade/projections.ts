@@ -1,4 +1,4 @@
-import { completeUpgradeActive, upgradeIntegrityGate, upgradeForeignKeyFailures, upgradeProjectionTables } from './integrity-policy'
+import { completeUpgradeActive, upgradeIntegrityGate, upgradeForeignKeyFailures, upgradeProjectionTables, upgradeProjectionFields } from './integrity-policy'
 import { businessStatusRule } from '../lib/platform/business-status-catalog'
 import { sourceValueKind, sourceFieldComparison } from '../lib/platform/source-extraction'
 /** Offline T05b only. Source parsing ends here; no runtime consumer imports this module. */
@@ -37,7 +37,7 @@ export function projectionManifest(s:Database.Database,emit?:(line:string)=>void
   const tables=s.prepare("select name from sqlite_schema where type='table' and name not like 'sqlite_%' and name not in ('platform_migration_run','platform_migration_checkpoint') order by name").all() as {name:string}[]
   const digest=createHash('sha256')
   for(const {name} of upgradeProjectionTables(tables, owners)) {
-    const fields=s.prepare(`pragma table_info("${name}")`).all() as {name:string,pk:number}[]
+    const fields=upgradeProjectionFields(name,s.prepare(`pragma table_info("${name}")`).all() as {name:string,pk:number}[])
     const pk=fields.filter(c=>c.pk).sort((a,b)=>a.pk-b.pk).map(c=>`"${c.name}"`).join(',')
     const values=fields.flatMap((c,i)=>[`typeof("${c.name}") k${i}`,`hex(cast("${c.name}" as blob)) b${i}`,`case when typeof("${c.name}")='real' then "${c.name}" end n${i}`]).join(',')
     for(const row of s.prepare(`select ${values} from "${name}" order by ${pk||'rowid'}`).iterate()) {

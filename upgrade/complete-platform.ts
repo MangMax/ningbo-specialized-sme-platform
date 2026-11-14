@@ -67,7 +67,7 @@ export function completePlatformMigration(source: string, target: string, eviden
   }
   return withFinalUpgradeIntegrity(target, () => {
   const clone = cloneDatabase
-  const receiptSchema = z.array(z.object({ stage:z.string(), milliseconds:z.number(), integrity:z.string(), result:z.unknown() }))
+  const receiptSchema = z.array(z.object({ stage:z.string(), milliseconds:z.number(), integrity:z.string(), manifestPolicy:z.literal('archive-metadata-v1').optional(), result:z.unknown() }))
   const receipts = resume ? receiptSchema.parse(JSON.parse(readFileSync(join(evidence, 'stages.json'), 'utf8'))) : []
   function run(stage: string, action: () => unknown) {
     if (receipts.some(receipt => receipt.stage === stage)) {
@@ -75,7 +75,7 @@ export function completePlatformMigration(source: string, target: string, eviden
       process.stdout.write(stage + ' retained from completed checkpoint\n'); return
     }
     const start = performance.now(), result = action()
-    receipts.push({ stage, milliseconds: performance.now() - start, integrity: stage === 'retirement' ? 'full_check_in_retirement_transaction' : 'deferred_to_retirement', result })
+    receipts.push({ stage, milliseconds: performance.now() - start, integrity: stage === 'retirement' ? 'full_check_in_retirement_transaction' : 'deferred_to_retirement', manifestPolicy:'archive-metadata-v1', result })
     writeFileSync(join(evidence, 'stages.json'), JSON.stringify(receipts, null, 2))
     process.stdout.write(stage + ' complete\n')
     return result

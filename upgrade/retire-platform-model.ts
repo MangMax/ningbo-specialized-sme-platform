@@ -10,6 +10,7 @@ import { requireLegacyProvenanceReady } from '../lib/platform/legacy-provenance-
 import { migrationFinished } from '../lib/platform/migration-readiness'
 import { rowSnapshot } from '../lib/platform/sqlite-row-cells'
 import { upgradeEnterpriseMergeIdentity } from './enterprise-merge'
+import { z } from 'zod'
 
 const requiredTransforms = [
   't05a-observation-v3', 't05c-independent-observation-v1',
@@ -22,6 +23,22 @@ const requiredTransforms = [
 ] as const
 const hasTable = (db: Database.Database, table: string) => !!db.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name=?").get(table)
 const hash = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex')
+const archiveValueShape = z.object({
+  id:z.number().int().positive(), storage_class:z.enum(['null','text','blob']),
+  bytes:z.instanceof(Buffer).nullable(), byte_length:z.number().int().nonnegative().nullable(),
+  sha256:z.string().nullable(), sqlite_kind:z.string(),
+})
+/** One bounded pass over every payload, including fingerprint and version inputs. */
+function auditArchiveValues(db:Database.Database) {
+  for(const row of db.prepare('SELECT id,storage_class,bytes,byte_length,sha256,typeof(bytes) sqlite_kind FROM platform_archive_value ORDER BY id').iterate()) {
+    const value=archiveValueShape.parse(row)
+    if(value.storage_class==='null') {
+      if(value.sqlite_kind!=='null'||value.bytes!==null||value.byte_length!==null||value.sha256!==null)throw new Error(`Invalid null archive: ${value.id}`)
+    } else if(value.sqlite_kind!=='blob'||!value.bytes||value.byte_length!==value.bytes.length||value.sha256!==hash(value.bytes)) {
+      throw new Error(`Archive content digest mismatch: ${value.id}`)
+    }
+  }
+}
 type ArchiveCell = { storage_class: string; bytes: Buffer | null; sealed: number }
 
 function archiveCell(db: Database.Database, kind: 'query' | 'relation' | 'version', oldId: number, field: string) {
@@ -123,6 +140,7 @@ export function retirePlatformModel(sqlite: Database.Database) {
   if (sqlite.pragma('foreign_keys', { simple: true }) !== 1) throw new Error('Platform retirement requires foreign_keys=ON')
   if (hasTable(sqlite, 'platform_runtime_completion')) {
     assertFinalPlatformRuntime(sqlite)
+    auditArchiveValues(sqlite)
     if (sqlite.prepare('PRAGMA foreign_key_check').all().length || !upgradeIntegrityGate(sqlite, true)) throw new Error('Retired target integrity validation failed')
     return { state: 'complete' as const, version: PLATFORM_RUNTIME_VERSION }
   }
@@ -132,6 +150,7 @@ export function retirePlatformModel(sqlite: Database.Database) {
     if (!['t04-collection-v1', 't04-collection-reconcile-slot-v2'].some(t => migrationFinished(sqlite, t))
       || !['t05b-source-projections-v1', 't05b-source-projections-v2-status-blob'].some(t => migrationFinished(sqlite, t))) throw new Error('Platform retirement collection/projection migration incomplete')
     if (sqlite.prepare('PRAGMA foreign_key_check').all().length) throw new Error('Platform retirement starts with foreign key violations')
+    auditArchiveValues(sqlite)
     auditLegacyRows(sqlite)
     auditHistoricalBodies(sqlite)
     upgradeEnterpriseMergeIdentity(sqlite)

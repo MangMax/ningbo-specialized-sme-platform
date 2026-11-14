@@ -96,6 +96,22 @@ it('serves migrated enterprise details with the reconcile capture collection mar
   expect(oldTables(f.db)).toEqual([])
 })
 
+it('refuses archive content corruption before retiring any historical table', () => {
+  const f = target()
+  const id = f.db.prepare('SELECT input_archive_id FROM platform_observation_fingerprint_basis WHERE input_archive_id IS NOT NULL LIMIT 1').pluck().get()
+  const original = f.db.prepare('SELECT bytes FROM platform_archive_value WHERE id=?').pluck().get(id)
+  const trigger = f.db.prepare("SELECT sql FROM sqlite_schema WHERE name='platform_archive_no_update'").pluck().get()
+  if(!Buffer.isBuffer(original)||!original.length||typeof trigger!=='string')throw new Error('Expected a captured fingerprint archive fixture')
+  const corrupted = Buffer.from(original)
+  corrupted[0] = corrupted[0]! ^ 255
+  f.db.exec('DROP TRIGGER platform_archive_no_update')
+  f.db.prepare('UPDATE platform_archive_value SET bytes=? WHERE id=?').run(corrupted,id)
+  f.db.exec(trigger)
+  expect(() => retirePlatformModel(f.db)).toThrow('Archive content digest mismatch')
+  expect(oldTables(f.db)).toHaveLength(6)
+  expect(f.db.prepare("SELECT 1 FROM sqlite_schema WHERE name='platform_runtime_completion'").get()).toBeUndefined()
+})
+
 it('retires historical tables atomically and opens the completed runtime without expand migrations', () => {
   const f = target(), before = originalRows(f.db)
   expect(oldTables(f.db)).toHaveLength(6)

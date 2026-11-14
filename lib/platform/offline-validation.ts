@@ -37,8 +37,13 @@ export function upgradeForeignKeyFailures(db: Database.Database): unknown[] {
 /** Non-platform domains are untouched by projection stages. Their own transfer
  * owners retain their byte manifests; do not rehash all audit bodies per stage. */
 export function upgradeProjectionTables<T extends {name:string}>(tables: T[], owners: readonly string[] = []): T[] {
-  const unchangedBodies = ['record_correspondence', 'record_correspondence_audit', 'import_receipt', 'job']
+  const unchangedBodies = ['record_correspondence', 'record_correspondence_audit', 'import_receipt', 'job', 'platform_query', 'platform_relation', 'platform_query_legacy_provenance']
   return completeTarget ? tables.filter(table => !unchangedBodies.includes(table.name) || owners.includes(table.name)) : tables
+}
+/** Immutable archive payloads are checked once in retirement. Stage manifests
+ * retain their IDs, storage classes, lengths and content hashes. */
+export function upgradeProjectionFields<T extends {name:string}>(table:string, fields:T[]):T[] {
+  return completeTarget && table==='platform_archive_value' ? fields.filter(field=>field.name!=='bytes') : fields
 }
 export function upgradeIntegrityGate(db: Database.Database, final = false): boolean {
   if (completeTarget && !final) return true
