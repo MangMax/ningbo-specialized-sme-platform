@@ -144,13 +144,13 @@ jobs:
 
   app:
     needs: [build, coverage]
-    name: App ${{ matrix.shard }}/6
+    name: App ${{ matrix.shard }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5, 6]
+        shard: ${{ needs.coverage.outputs.ttl == '1' && fromJSON('[1,2,3,4,5,6,"expiry"]') || fromJSON('[1,2,3,4,5,6]') }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
@@ -169,7 +169,8 @@ jobs:
       - name: Run tests within the workflow time budget
         env:
           GH_TOKEN: ${{ github.token }}
-          RUN_REAL_TTL_DEEP: ${{ needs.coverage.outputs.ttl }}
+          RUN_REAL_TTL_DEEP: ${{ matrix.shard == 'expiry' && '1' || '0' }}
+          APP_SHARD: ${{ matrix.shard }}
         run: |
           run_started_at=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" --jq .run_started_at)
           started=$(date -d "$run_started_at" +%s)
@@ -181,7 +182,12 @@ jobs:
             exit 1
           fi
           result=0
-          timeout --signal=TERM --kill-after=5s "${remaining}s" pnpm test:app --shard=${{ matrix.shard }}/6 --maxWorkers 1 --no-file-parallelism --reporter=default --reporter=json --outputFile=test-results.json || result=$?
+          if [ "$APP_SHARD" = expiry ]; then
+            args=(tests/roster/official-evidence/review.http.app.test.ts -t 'expires 120-second readonly snapshots')
+          else
+            args=(--shard="$APP_SHARD/6")
+          fi
+          timeout --signal=TERM --kill-after=5s "${remaining}s" pnpm test:app "${args[@]}" --maxWorkers 1 --no-file-parallelism --reporter=default --reporter=json --outputFile=test-results.json || result=$?
           elapsed=$(( $(date +%s) - started ))
           echo "Workflow elapsed after tests: ${elapsed}s (exit ${result})" >> "$GITHUB_STEP_SUMMARY"
           if [ "$result" -eq 124 ] || [ "$result" -eq 137 ]; then

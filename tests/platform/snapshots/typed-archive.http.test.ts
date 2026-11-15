@@ -1,3 +1,4 @@
+import { executeNativeImport } from '../../roster/imports/fixtures/import-server'
 import { preflightRosterImport, commitRosterImport } from '../../../server/utils/roster-import'
 import { initializeDb } from '../../../db/client'
 import { createServer } from 'node:http'
@@ -47,6 +48,7 @@ async function call(name: string, args: Record<string, unknown>) {
   return result.structuredContent ?? JSON.parse((result.content as any)[0].text)
 }
 beforeAll(async () => {
+  vi.spyOn(importExecutor, 'execute').mockImplementation(executeNativeImport)
   vi.stubEnv('NUXT_DB_PATH', join(dir, 'test.sqlite'))
   vi.stubEnv('MIIT_COOKIE', ''); vi.stubEnv('MIIT_COOKIE_FILE', '')
   updateCredential('miitCookie', 'sid=synthetic-raw-wire-secret', { db })
@@ -93,7 +95,7 @@ afterAll(async () => {
   await whenIdle(); await client?.close()
   for (const transport of transports) await transport.close()
   if (server) await new Promise<void>(resolve => server.close(() => resolve()))
-  await importExecutor.close()
+  await importExecutor.close(); vi.restoreAllMocks()
   platformSummaryCache.close(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); db.$client.close(); rmSync(dir, { recursive: true, force: true })
 })
 

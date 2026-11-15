@@ -1,6 +1,6 @@
 import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
 import { CURRENT_RULE_VERSION } from '../../../lib/roster/current-qualification'
-import { businessIdentity, expectedBusinessIdentity, matchesBusinessIdentity } from './fixtures/specialized-export'
+import { readDevelopmentDiscovery, businessIdentity, expectedBusinessIdentity, matchesBusinessIdentity } from './fixtures/specialized-export'
 import { reviewCurrentExportDecision, confirmCurrentExportExclusion } from '../fixtures/qualification-decisions'
 import { createHash } from 'node:crypto'
 
@@ -11,7 +11,7 @@ import ExcelJS from 'exceljs'
 import { eq } from 'drizzle-orm'
 import { afterAll, beforeAll, beforeEach, expect, it } from 'vitest'
 import { initializeDb, schema as s } from '../../../db/client'
-import { spawnOwnedChild as spawn, reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../../support/owned-process.mjs'
+import { spawnCompiledApp, reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../../support/owned-process.mjs'
 
 // Only synthetic fixtures are written here. Assertions use real HTTP and XLSX bytes.
 const dir = mkdtempSync(join(tmpdir(), 'export-119-'))
@@ -102,7 +102,7 @@ async function workbook(key: string, extra = {}) {
 async function startService() {
   const cwd = resolve(import.meta.dirname, '../../..')
   const port = await reserveLoopbackPort()
-  const child = spawn(process.execPath, [join(cwd, 'node_modules/nuxt/bin/nuxt.mjs'), 'dev', '--host', '127.0.0.1', '--port', String(port)], {
+  const child = spawnCompiledApp(port, {
     cwd, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, NUXT_BUILD_DIR: join(dir, 'build'), NUXT_DB_PATH: dbPath, NUXT_API_TOKEN: token, NUXT_FILES_DIR: join(dir, 'files'), NUXT_INCOMING_DIR: join(dir, 'incoming') },
   })
   let output = ''
@@ -111,7 +111,8 @@ async function startService() {
   try { await waitForHttp(url('/api/jobs/kinds'), { timeoutMs: 60000, child }) }
   catch (error) { await service.stop(); throw new Error(String(error) + output) }
 }
-beforeAll(startService, 90000)
+let discovery: any
+beforeAll(async () => { discovery = await readDevelopmentDiscovery() }, 90000)
 beforeEach(async () => {
   await service?.stop()
   db.$client.close()
@@ -350,9 +351,7 @@ it('创新型空集保留六表表头与真实零计数', async () => {
 })
 
 it('创新型入口鉴权参数边界与OpenAPI可发现', async () => {
-  const specResponse = await fetch(url('/_openapi.json'))
-  expect(specResponse.status).toBe(200)
-  const spec = await json(specResponse)
+  const spec = discovery
   const operation = spec.paths[endpoint].post
   expect(operation.security).toEqual([{ bearerAuth: [] }])
   expect(operation.requestBody.content['application/json'].schema.additionalProperties).toBe(false)

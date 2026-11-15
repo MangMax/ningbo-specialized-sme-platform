@@ -1,3 +1,6 @@
+import { executeNativeImport } from '../../roster/imports/fixtures/import-server'
+import { importExecutor } from '../../../server/utils/import-execution'
+import { enterpriseReads } from '../../../server/utils/enterprise-read'
 import { initializeDb } from '../../../db/client'
 import { assertEnterpriseDetailSnapshotEqual } from '../../roster/assertions/enterprise-detail-snapshot'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
@@ -19,6 +22,8 @@ const token = 'synthetic-recognized-import-token'
 let api: Awaited<ReturnType<typeof startEvidenceServer>>
 let client: ReturnType<typeof createRosterImportClient>
 beforeAll(async () => {
+  vi.spyOn(importExecutor, 'execute').mockImplementation(executeNativeImport)
+  await enterpriseReads.json(db.$client.name, { operation: 'detail', enterpriseId: Number.MAX_SAFE_INTEGER })
   vi.stubEnv('NUXT_DB_PATH', join(dir, 'test.sqlite'))
   vi.stubGlobal('setHeader', () => {})
   vi.stubGlobal('defineEventHandler', (fn: unknown) => fn)
@@ -51,7 +56,7 @@ beforeAll(async () => {
   } })
   client = createRosterImportClient({ baseUrl: api.baseUrl, token })
 })
-afterAll(async () => { await api?.close(); vi.unstubAllEnvs(); vi.unstubAllGlobals(); db.$client.close(); rmSync(dir, { recursive: true, force: true }) })
+afterAll(async () => { await api?.close(); await enterpriseReads.close(); vi.restoreAllMocks(); vi.unstubAllEnvs(); vi.unstubAllGlobals(); db.$client.close(); rmSync(dir, { recursive: true, force: true }) })
 function archive(): PlatformLiveQueryResult {
   return {
     source: 'queryBusList', status: 'success',

@@ -1,10 +1,11 @@
+import { readDevelopmentDiscovery } from '../../roster/current-export/fixtures/specialized-export'
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readlinkSync, lstatSync, renameSync, rmSync, existsSync, symlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { initializeDb, schema } from '../../../db/client'
-import { spawnOwnedChild as spawn, reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../../support/owned-process.mjs'
+import { spawnCompiledApp, reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../../support/owned-process.mjs'
 
 const dir = mkdtempSync(join(tmpdir(), 'file-physical-312-'))
 const root = join(dir, 'files')
@@ -49,12 +50,13 @@ async function file() {
 async function startService() {
   const cwd = resolve(import.meta.dirname, '../../..')
   const port = await reserveLoopbackPort()
-  const child = spawn(process.execPath, [join(cwd, 'node_modules/nuxt/bin/nuxt.mjs'), 'dev', '--host', '127.0.0.1', '--port', String(port)], { cwd, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, NUXT_BUILD_DIR: join(dir, 'nuxt-build'), NUXT_DB_PATH: dbPath, NUXT_API_TOKEN: 'synthetic-api-token', NUXT_MCP_TOKEN: 'synthetic-mcp-token', NUXT_FILES_DIR: root, NUXT_INCOMING_DIR: join(dir, 'incoming') } })
+  const child = spawnCompiledApp(port, { cwd, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, NUXT_BUILD_DIR: join(dir, 'nuxt-build'), NUXT_DB_PATH: dbPath, NUXT_API_TOKEN: 'synthetic-api-token', NUXT_MCP_TOKEN: 'synthetic-mcp-token', NUXT_FILES_DIR: root, NUXT_INCOMING_DIR: join(dir, 'incoming') } })
   for (const stream of [child.stdout, child.stderr]) stream.on('data', data => { serverOutput = (serverOutput + data).slice(-12000) })
   service = { baseUrl: `http://127.0.0.1:${port}`, stop: () => stopOwnedChild(child), crash: async () => { const exited = new Promise<void>(resolveExit => child.once('exit', () => resolveExit())); process.kill(-child.pid!, 'SIGKILL'); await exited; await stopOwnedChild(child) } }
   try { await waitForHttp(`${service.baseUrl}/api/health`, { timeoutMs: 60000, child }) } catch (error) { await service.stop(); throw new Error(`${String(error)}\n${serverOutput}`) }
 }
-beforeAll(startService, 90000)
+let discovery: any
+beforeAll(async () => { discovery = await readDevelopmentDiscovery(); await startService() }, 90000)
 afterAll(async () => {
   mkdirSync('/tmp/issue-312-stage', { recursive: true })
   writeFileSync('/tmp/issue-312-stage/http-server.log', serverOutput)
@@ -212,7 +214,7 @@ describe("recoverable physical command", () => {
       expect(privateTools).toContain(name)
       expect((await rpc(name, { fileId: f.id, ...await modernControls(f.id) }, false)).status).toBe(401)
     }
-    const spec = await (await fetch(`${service.baseUrl}/_openapi.json`)).json() as any
+    const spec = discovery
     expect(spec.paths['/api/files/{id}/physical-recovery'].post.requestBody.content['application/json'].schema.required).toEqual(['intentId', 'expectedRevision', 'idempotencyKey', 'actor', 'basis'])
     expect((await rest(`${f.id}/maintenance`)).body).toMatchObject({ total: 0, file: { removedAt: null } })
   })

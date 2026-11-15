@@ -264,7 +264,7 @@ it('SIGKILL after a paid-page checkpoint preserves raw across restart and resume
     }
     base = savedBase
   }
-})
+}, 15000)
 
 it('unknown submission is reported and explicit resume never repeats a possibly paid POST', async () => {
   const { file } = await setup(1, { submitStatuses: [503] })

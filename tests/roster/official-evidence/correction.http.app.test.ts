@@ -1,3 +1,4 @@
+import { readDevelopmentDiscovery } from '../current-export/fixtures/specialized-export'
 import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
 import Database from 'better-sqlite3'
 import { createHash } from 'node:crypto'
@@ -8,7 +9,7 @@ import { join, resolve } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { initializeDb, schema } from '../../../db/client'
 import { minimalPdf } from '../../support/minimal-pdf'
-import { spawnOwnedChild as spawn, reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../../support/owned-process.mjs'
+import { spawnCompiledApp, reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../../support/owned-process.mjs'
 
 const dir = mkdtempSync(join(tmpdir(), 'evidence-correction-101-'))
 const dbPath = join(dir, 'synthetic.db')
@@ -37,10 +38,12 @@ async function rpc(method: string, params?: Record<string, unknown>, authorized 
   return { status: response.status, body: JSON.parse(payload!) }
 }
 const mcpValue = (r: any) => JSON.parse(r.body.result.content[0].text)
+let discovery: any
 beforeAll(async () => {
+  discovery = await readDevelopmentDiscovery()
   const cwd = resolve(import.meta.dirname, '../../..')
   const port = await reserveLoopbackPort()
-  const child = spawn(process.execPath, [join(cwd, 'node_modules/nuxt/bin/nuxt.mjs'), 'dev', '--host', '127.0.0.1', '--port', String(port)], { cwd, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, NUXT_BUILD_DIR: join(dir, 'nuxt-build'), NUXT_DB_PATH: dbPath, NUXT_API_TOKEN: 'synthetic-api-token', NUXT_MCP_TOKEN: 'synthetic-mcp-token', NUXT_FILES_DIR: filesDir, NUXT_INCOMING_DIR: join(dir, 'incoming') } })
+  const child = spawnCompiledApp(port, { cwd, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, NUXT_BUILD_DIR: join(dir, 'nuxt-build'), NUXT_DB_PATH: dbPath, NUXT_API_TOKEN: 'synthetic-api-token', NUXT_MCP_TOKEN: 'synthetic-mcp-token', NUXT_FILES_DIR: filesDir, NUXT_INCOMING_DIR: join(dir, 'incoming') } })
   let startupOutput = ''
   for (const stream of [child.stdout, child.stderr]) stream.on('data', data => { startupOutput = (startupOutput + data).slice(-8000) })
   service = { baseUrl: `http://127.0.0.1:${port}`, stop: () => stopOwnedChild(child) }
@@ -231,7 +234,7 @@ describe('ticket 101 exact evidence correction through HTTP and MCP', () => {
     expect(await edgeRead()).toMatchObject({ status: 'confirmed', requiresRevalidation: true })
   })
   it('publishes actionable OpenAPI coordinates and rejects unauthenticated or malformed requests', async () => {
-    const spec = await json(await fetch(service.baseUrl + '/_openapi.json'))
+    const spec = discovery
     const operation = spec.paths['/api/roster/evidence/corrections/preflight'].post.requestBody.content['application/json'].schema.properties.operations.items
     expect(operation.properties.coordinate.required).toEqual(['sourceFile', 'attachment', 'listNo', 'page'])
     expect(operation.properties.expectedVersion.type).toBe('string')

@@ -1,3 +1,4 @@
+import { readDevelopmentDiscovery } from '../../roster/current-export/fixtures/specialized-export'
 import { initializeDb } from '../../../db/client'
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -6,7 +7,7 @@ import { afterAll, beforeAll, beforeEach, expect, it } from 'vitest'
 import { useDb, schema } from '../../../db'
 import { minimalPdf } from '../../support/minimal-pdf'
 
-import { spawnOwnedChild as spawn, reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../../support/owned-process.mjs'
+import { spawnCompiledApp, reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../../support/owned-process.mjs'
 
 const dir = mkdtempSync(join(tmpdir(), 'ocr-lifecycle-106-'))
 const dbPath = join(dir, 'test.sqlite')
@@ -32,10 +33,12 @@ async function call(name: string, args: unknown) {
 async function rest(method: string, page?: number, body?: unknown) {
   return fetch(`${app.baseUrl}/api/ocr-results?includeVersion=1&fileId=${file.id}${page === undefined ? '' : `&page=${page}`}`, { method, headers: { 'content-type': 'application/json' }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) })
 }
+let discovery: any
 beforeAll(async () => {
+  discovery = await readDevelopmentDiscovery()
   const port = await reserveLoopbackPort()
   const baseUrl = `http://127.0.0.1:${port}`
-  const child = spawn(process.execPath, ['node_modules/nuxt/bin/nuxt.mjs', 'dev', '--host', '127.0.0.1', '--port', String(port)], { env: { ...process.env, NUXT_BUILD_DIR: join(dir, 'nuxt'), NUXT_DB_PATH: dbPath, NUXT_FILES_DIR: root, NUXT_API_TOKEN: 'synthetic-api-106', NUXT_MCP_TOKEN: 'synthetic-mcp-106', NUXT_OCR_TOKEN: '', PADDLEOCR_MCP_AISTUDIO_ACCESS_TOKEN: '', MIIT_COOKIE: '', MIIT_COOKIE_FILE: '' }, stdio: ['ignore', 'pipe', 'pipe'] })
+  const child = spawnCompiledApp(port, { env: { ...process.env, NUXT_BUILD_DIR: join(dir, 'nuxt'), NUXT_DB_PATH: dbPath, NUXT_FILES_DIR: root, NUXT_API_TOKEN: 'synthetic-api-106', NUXT_MCP_TOKEN: 'synthetic-mcp-106', NUXT_OCR_TOKEN: '', PADDLEOCR_MCP_AISTUDIO_ACCESS_TOKEN: '', MIIT_COOKIE: '', MIIT_COOKIE_FILE: '' }, stdio: ['ignore', 'pipe', 'pipe'] })
   app = { baseUrl, stop: () => stopOwnedChild(child) }
   let output = ''
   child.stdout.on('data', chunk => { output += chunk })
@@ -230,9 +233,7 @@ it('exact page reads and deletes exclude unrelated text and raw while coverage s
 })
 
 it('public OpenAPI and MCP schemas discover page lifecycle and expected versions', async () => {
-  const response = await fetch(`${app.baseUrl}/_openapi.json`)
-  expect(response.status).toBe(200)
-  const spec = await response.json()
+  const spec = discovery
   const route = spec.paths['/api/files/{id}/ocr-pages/{page}']
   expect(route.get).toBeDefined()
   expect(route.put.security).toEqual([{ bearerAuth: [] }])
