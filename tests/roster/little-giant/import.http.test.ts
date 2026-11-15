@@ -15,7 +15,7 @@ import { buildLittleGiantImportRequest, LITTLE_GIANT_SOURCE_FILE } from '../../.
 import { parseLittleGiantWorkbook, type LittleGiantWorkbook } from '../../../lib/roster/little-giant-workbook'
 import { rosterRowCounts } from '../../../server/utils/roster-import'
 import { landingSegments } from '../../../server/utils/tus'
-import { startRosterApi, type RosterApiServer } from '../imports/fixtures/import-server'
+import { executeNativeImport, startRosterApi, type RosterApiServer } from '../imports/fixtures/import-server'
 import { SYNTHETIC_DUPLICATE_USCC, hasRealSource, loadLittleGiantSource, type LittleGiantSource } from './fixtures/official-source'
 
 /**
@@ -70,7 +70,7 @@ describe('RL-02 端到端:经真实 HTTP 提交小巨人工作簿', () => {
   beforeAll(async () => {
     dir = mkdtempSync(join(tmpdir(), 'rl02-e2e-'))
     db = initializeDb({ create: true, dbPath: join(dir, 'roster.db') })
-    server = await startRosterApi({ db, apiToken: TOKEN })
+    server = await startRosterApi({ db, apiToken: TOKEN, executeImport: executeNativeImport })
 
     source = await loadLittleGiantSource()
     workbook = await parseLittleGiantWorkbook(source.buffer)
@@ -80,6 +80,7 @@ describe('RL-02 端到端:经真实 HTTP 提交小巨人工作簿', () => {
 
   afterAll(async () => {
     await server?.close()
+    db?.$client.close()
     if (dir) rmSync(dir, { recursive: true, force: true })
   })
 

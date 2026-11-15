@@ -25,6 +25,7 @@ it('P_closed_public_award', async () => {
   let api: HttpFixture | undefined
   const hash = (value: string) => createHash('sha256').update(value).digest('hex')
   try {
+    sqlite.pragma('journal_mode=WAL')
     sqlite.pragma('foreign_keys=ON')
     const db = drizzle(sqlite, { schema })
     createRuntimeSchema(sqlite)
@@ -140,6 +141,7 @@ async function publicPartition428(spec:PublicPartition428) {
   let api: HttpFixture | undefined
   const hash = (value: string) => createHash('sha256').update(value).digest('hex')
   try {
+    sqlite.pragma('journal_mode=WAL')
     sqlite.pragma('foreign_keys=ON')
     const db = drizzle(sqlite, { schema })
     createRuntimeSchema(sqlite)

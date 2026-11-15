@@ -14,6 +14,15 @@ import { clearJobSpecs, whenIdle } from '../../../server/utils/job-runner'
 import { updateCredential } from '../../../server/utils/credential-state'
 import type { TaskList, TaskSummary } from '../../../lib/task-center'
 
+// Keep real retries/page capture/credentials; advance only the injected backoff.
+// The client/reconcile I/O suites own real scheduling and cancellation during sleep.
+const backoffs = vi.hoisted(() => [] as number[])
+vi.mock('../../../lib/platform/client', async importOriginal => {
+  const actual = await importOriginal<typeof import('../../../lib/platform/client')>()
+  return { ...actual, queryPlatformSlots: (options: Parameters<typeof actual.queryPlatformSlots>[0], slots: Parameters<typeof actual.queryPlatformSlots>[1]) =>
+    actual.queryPlatformSlots({ ...options, sleep: async ms => { backoffs.push(ms) } }, slots) }
+})
+
 const dir = mkdtempSync(join(tmpdir(), 'issue299-pagination-'))
 let dbSerial=0
 let db = initializeDb({ create: true, dbPath: join(dir, 'tasks.db') })
@@ -73,6 +82,7 @@ afterEach(async () => {
   const enterprise=db.insert(schema.enterprise).values({name:'合成企业',nameNorm:'合成企业',usccNorm:USCC}).returning().get()
   db.insert(schema.record).values({enterpriseId:enterprise.id,source:'miit',titleCode:'specialized_sme'}).run()
   calls.length = 0
+  backoffs.length = 0
 })
 afterAll(async () => {
   await whenIdle()
@@ -209,6 +219,7 @@ it('later-page timeout exhausts bounded retries, retains 50 rows and the actual 
   expect(evidence).toMatchObject({ declaredTotal: 51, requestCount: 4, unfinished: [{ page: 2 }], failureReason: 'issue299 upstream timeout' })
   expect(evidence.pages[1].error.code).toBe('timeout')
   expect(done.result.collection.partial).toBe(1)
+  expect(backoffs).toEqual([1000, 3000])
 }, 30000)
 
 it('network retry and subsequent pages keep the submission credential snapshot after replacement', async () => {
@@ -227,6 +238,7 @@ it('network retry and subsequent pages keep the submission credential snapshot a
   expect(JSON.stringify({ done, stored })).not.toMatch(/issue299-original|issue299-replacement/)
   const evidence = JSON.parse(stored.find(e => e.query.rdjb === '3').query.rawResponse)
   expect(evidence.requestCount).toBe(3)
+  expect(backoffs).toEqual([1000])
 }, 30000)
 
 it('newer failed slot invalidates older complete cache without changing either historical query', async () => {

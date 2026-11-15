@@ -9,7 +9,7 @@ import * as schema from '../../../db/schema'
 import { initializeDb } from '../../../db/client'
 import { assertFinalPlatformRuntime } from '../../../db/schema-phase'
 import { TITLE_SEED } from '../../../db/titles'
-import { startRosterApi } from '../imports/fixtures/import-server'
+import { executeNativeImport, startRosterApi } from '../imports/fixtures/import-server'
 import { createRosterImportClient } from '../../../lib/roster-import-client'
 import { listEvidenceImpacts113, processEvidenceImpacts113 } from '../../../server/utils/evidence-impact-113'
 
@@ -56,7 +56,7 @@ it.each(['fresh', 'upgrade'])('adds empty durable impact storage and preserves e
   native.$client.prepare("insert into difference_reason(id,enterprise_id,title_code,direction,status,measure_code,verification_status,recorded_at,created_at) values(113,113,'specialized_sme','missing_in_miit','confirmed_no_diff','none','confirmed','2026-10-01','2026-10-01')").run()
   expect(processEvidenceImpacts113(native, { limit: 1 })).toEqual({ processed: 0, unfinished: false, watermark: 0 })
   expect(listEvidenceImpacts113(native)).toEqual([])
-  const app = await startRosterApi({ db: native, apiToken: 'synthetic-113' })
+  const app = await startRosterApi({ db: native, apiToken: 'synthetic-113', executeImport: executeNativeImport })
   try {
     const client = createRosterImportClient({ baseUrl: app.baseUrl, token: 'synthetic-113' })
     expect((await client.commit({ idempotencyKey: 'migration-alias', sourceKind: 'alias_evidence', sourceIdentity: 'synthetic/migration', payload: { aliases: [{ enterpriseName: '升级保留主体', name: '升级保留旧名称', sourceKind: 'manual', sourceRefId: 0, verificationStatus: 'confirmed' }] } })).status).toBe('committed')
