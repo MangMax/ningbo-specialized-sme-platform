@@ -1,4 +1,4 @@
-name: Engineering checks
+name: 工程质量检查
 
 on:
   workflow_dispatch:
@@ -18,7 +18,7 @@ concurrency:
 
 jobs:
   coverage:
-    name: Select historical coverage
+    name: 确定回归测试范围
     runs-on: ubuntu-latest
     outputs:
       upgrade: ${{ steps.select.outputs.upgrade }}
@@ -55,7 +55,7 @@ jobs:
           echo "Historical upgrade coverage: $upgrade. Runtime and app always run; main, nightly and manual runs require all projects." >> "$GITHUB_STEP_SUMMARY"
 
   compile:
-    name: Typecheck
+    name: 类型与静态规则检查
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -76,7 +76,7 @@ jobs:
       - run: node scripts/generate-roster-import-discovery.mjs --check
 
   build:
-    name: Build test artifact
+    name: 构建应用产物
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -99,7 +99,7 @@ jobs:
           retention-days: 1
 
   discovery:
-    name: Capture development discovery
+    name: 校验开发服务接口契约
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -121,7 +121,7 @@ jobs:
 
   native:
     needs: coverage
-    name: ${{ matrix.project }} ${{ matrix.shard }}/6
+    name: ${{ matrix.project == 'runtime' && '业务逻辑与组件测试' || '历史数据升级测试' }} · ${{ matrix.shard }}/6
     runs-on: ubuntu-latest
     timeout-minutes: 5
     strategy:
@@ -171,7 +171,7 @@ jobs:
 
   app:
     needs: [build, coverage, discovery]
-    name: App ${{ matrix.shard }}
+    name: ${{ matrix.shard == 'expiry' && '快照真实过期测试' || matrix.shard == 'watcher' && '开发服务热更新测试' || format('应用与独立进程测试 · {0}/6', matrix.shard) }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     strategy:
@@ -238,6 +238,7 @@ jobs:
           retention-days: 7
 
   check:
+    name: CI 总门禁
     if: always()
     needs: [coverage, compile, build, discovery, native, app]
     runs-on: ubuntu-latest

@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from 'vitest'
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import ExcelJS from 'exceljs'
@@ -59,13 +59,24 @@ it('keeps full three-title snapshots and workbook cells exact with bounded input
   db.$client.exec('BEGIN')
   try { expect(reader.readEffectiveTitles([first], at, 'little_giant').get(first)).toBe('expired') } finally { db.$client.exec('ROLLBACK') }
 })
-it('preserves filters counts options pagination and export cells while batching the native consumer', async () => {
+it('preserves three-title filters counts options and pagination on a compact consumer matrix', () => {
   vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(at)
-  const { db, ids, dir } = fixture(140), candidates = createTargetCurrentCandidateReader(db), witnesses = createTargetRecognizedWitnessReader(db)
+  // 24 rows retain a nonempty second page and every fixture status/identity partition.
+  const { db } = fixture(24), candidates = createTargetCurrentCandidateReader(db), witnesses = createTargetRecognizedWitnessReader(db)
   for (const titleCode of CURRENT_TITLES) for (const filter of [{ page:2, pageSize:7 }, { q:'曾用名1', district:'鄞州区', pageSize:10 }, { status:'expired' as const, pageSize:10 }, { status:'terminated' as const }, { recognitionFrom:'2025-01-01', recognitionTo:'2025-12-31', validYear:2028 }]) {
     const request = { titleCode, ...filter }
     expect(listCurrentQualified(db.$client, request)).toEqual(listCurrentQualifiedWithCandidatesAndWitnesses(db.$client, request, candidates, witnesses))
   }
+})
+it('preserves cross-block pagination and real export cells through the native consumer', async () => {
+  vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(at)
+  // Production candidate blocks hold 128 IDs. Keep the first ID in the second
+  // block effective and assert it survives both list hydration and XLSX output.
+  const { db, ids, dir } = fixture(129), candidates = createTargetCurrentCandidateReader(db), witnesses = createTargetRecognizedWitnessReader(db)
+  const request = { titleCode: 'specialized_sme' as const, sort: 'id_asc' as const, page: 2, pageSize: 60 }
+  const listed = listCurrentQualified(db.$client, request)
+  expect(listed).toEqual(listCurrentQualifiedWithCandidatesAndWitnesses(db.$client, request, candidates, witnesses))
+  expect(listed.rows.map(row => row.name)).toContain('分块企业128')
   const file = join(dir, 'batch.xlsx'), oracle = join(dir, 'single.xlsx')
   const actual = await writeCurrentWorkbook(db.$client, 'specialized_sme', file, () => {})
   const expected = await writeCurrentWorkbookWithCandidates(db.$client, 'specialized_sme', oracle, () => {}, candidates)
@@ -74,8 +85,10 @@ it('preserves filters counts options pagination and export cells while batching 
   expect(actualSummary).toEqual(expectedSummary)
   expect(actualVersion).not.toBe(expectedVersion)
   const sheets = async (path: string) => { const wb = new ExcelJS.Workbook(); await wb.xlsx.readFile(path); return wb.worksheets.map(sheet => ({ name:sheet.name, rows:sheet.getSheetValues() })) }
-  expect(await sheets(file)).toEqual(await sheets(oracle))
-  expect(ids).toHaveLength(140)
+  const actualSheets = await sheets(file)
+  expect(actualSheets).toEqual(await sheets(oracle))
+  expect(actualSheets[0]!.rows.filter(Array.isArray).map(row => row[2])).toContain('分块企业128')
+  expect(ids).toHaveLength(129)
 })
 it('preserves per-title query limits ordering and fresh metadata through batched coverage', () => {
   const { db, ids } = fixture(2)
