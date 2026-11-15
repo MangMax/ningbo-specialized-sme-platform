@@ -89,19 +89,21 @@ const owners = {
     "platform/observations",
     "platform/reconciliation"
   ],
-  "名录资格与导出": [
+  "名录资格与认定读取": [
     "roster/current-qualification",
     "roster/current-candidates",
     "roster/little-giant",
     "roster/qualification-readback",
-    "roster/recognition-read",
+    "roster/recognition-read"
+  ],
+  "名录工作簿导出": [
     "roster/current-export",
     "roster/legacy-export",
     "roster/status-workbook"
   ],
-  "名录台账、对应与年度业务": [
-    "roster/aliases",
+  "名录企业台账与年度流程": [
     "roster/annual-process",
+    "roster/aliases",
     "roster/enterprise-detail",
     "roster/enterprise-facts",
     "roster/enterprise-read",
@@ -110,6 +112,8 @@ const owners = {
     "roster/labels",
     "roster/ledger",
     "roster/lifecycle",
+  ],
+  "名录对应与差异决定": [
     "roster/comparison",
     "roster/correspondence",
     "roster/event-correspondence",

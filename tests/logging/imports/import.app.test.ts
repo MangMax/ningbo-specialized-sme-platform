@@ -1,6 +1,7 @@
 import { EventEmitter } from 'node:events'
 import Database from 'better-sqlite3'
-import { createImportExecutionWorker } from '../../../server/utils/import-execution-worker-location'
+import { createEnterpriseReadProcess } from '../../../server/utils/enterprise-read-process'
+
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -11,6 +12,10 @@ import { initializeDb } from '../../../db/client'
 import { handleRosterImportRequest } from '../../../server/utils/roster-import-http'
 import { readImportReceipt } from '../../../server/utils/import-receipts'
 import { applicationLogs, closeApplicationLogging, initializeWorkerLogging } from '../../../lib/logging'
+
+
+// Preserve real IPC, worker logging and durable commits using the artifact CI builds.
+const createImportExecutionWorker = () => createEnterpriseReadProcess(new URL('../../../.output/server/import-execution-worker.mjs', import.meta.url))
 
 const cleanups: (() => unknown | Promise<unknown>)[] = []
 afterEach(async () => { await closeApplicationLogging(); for (const cleanup of cleanups.splice(0).reverse()) await cleanup() })
@@ -23,7 +28,7 @@ function fixture(options: Parameters<typeof createImportExecutor>[0] = {}) {
   initializeWorkerLogging()
   const db = initializeDb({ create: true,  dbPath: join(root, 'roster.db') })
   cleanups.push(() => db.$client.close())
-  const executor = createImportExecutor(options)
+  const executor = createImportExecutor({ createWorker: createImportExecutionWorker, ...options })
   cleanups.push(() => executor.close())
   const input = { idempotencyKey: 'PRIVATE_KEY_187', sourceKind: 'platform_export', sourceIdentity: '/PRIVATE_PATH_187.xlsx', payload: { exportSnapshot: {
     titleCode: 'specialized_sme', year: 2026, collectedOn: '2026-10-20', originalFilename: 'PRIVATE_NAME_187.xlsx', sha256: 'fixture187', rows: [{ sourceRowNo: 3, rawFields: { original: 'PRIVATE_TEXT_187' } }],

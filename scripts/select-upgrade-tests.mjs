@@ -1,48 +1,22 @@
-import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
-import { resolve, relative, dirname } from 'node:path'
+import { existsSync, readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import ts from 'typescript'
 
-// Parse syntax rather than guessing dependencies from import text. Unresolved
-// local aliases or computed imports make source changes conservatively relevant.
-export function upgradeDependencies() {
- const seen=new Set()
- let uncertain=false
- function visit(file) {
-  file=resolve(file); if(seen.has(file)||!existsSync(file)) return
-  seen.add(file)
-  if(!/\.(ts|mjs|js)$/.test(file)) return
-  const ast=ts.createSourceFile(file,readFileSync(file,'utf8'),ts.ScriptTarget.Latest,true)
-  function dependency(spec) {
-   const alias=spec.match(/^(~~|~|@db|@)(?:\/|$)/)
-   if(!spec.startsWith('.')&&!alias) {
-    if(spec.startsWith('#')) uncertain=true
-    return
-   }
-   const base=alias?resolve(alias[1]==='@db'?'db':'.',spec.slice(alias[0].length)):resolve(dirname(file),spec)
-   const target=[base,base+'.ts',base+'.mjs',base+'.js',base.replace(/\.js$/,'.ts'),base+'/index.ts'].find(p=>existsSync(p)&&statSync(p).isFile())
-   if(target) visit(target)
-   else uncertain=true
-  }
-  function walk(node) {
-   if((ts.isImportDeclaration(node)||ts.isExportDeclaration(node))&&node.moduleSpecifier&&ts.isStringLiteral(node.moduleSpecifier)) dependency(node.moduleSpecifier.text)
-   if(ts.isCallExpression(node)&&(node.expression.kind===ts.SyntaxKind.ImportKeyword||node.expression.getText(ast)==='require')) {
-    const arg=node.arguments[0]
-    if(arg&&(ts.isStringLiteral(arg)||ts.isNoSubstitutionTemplateLiteral(arg))) dependency(arg.text)
-    else uncertain=true
-   }
-   ts.forEachChild(node,walk)
-  }
-  walk(ast)
- }
- function walk(dir) {for(const e of readdirSync(dir,{withFileTypes:true})) {const p=`${dir}/${e.name}`;if(e.isDirectory())walk(p);else if(dir.startsWith('upgrade')||p.endsWith('.upgrade.test.ts'))visit(p)}}
- walk('upgrade');walk('tests')
- const dependencies=new Set([...seen].map(p=>relative(process.cwd(),p)))
- dependencies.uncertain=uncertain
- return dependencies
-}
+// Supported boundary, not an import closure: offline recovery can consume any
+// server/lib/db source. Unknown and deleted paths require history. Only these
+// explicit leaf surfaces are safe to skip; no parser or installed packages needed.
 export function selectUpgrade(paths) {
- const deps=upgradeDependencies()
- return paths.some(p=>!existsSync(p)||deps.has(p)||(deps.uncertain&&/^(server|lib)\/.*\.(ts|js|mjs)$/.test(p))||(p.startsWith('tests/')&&!p.endsWith('.test.ts'))||/^(db\/|upgrade\/|docs\/adr\/)/.test(p)||! /^(server\/|lib\/|tests\/|app\/|components\/|pages\/|assets\/|public\/|docs\/|README[^/]*$)/.test(p))
+  return paths.some(path => {
+    if (!existsSync(path)) return true
+    if (/^tests\/(support|fixtures)\//.test(path)) return true
+    if (/^tests\//.test(path)) {
+      return !path.endsWith('.test.ts') || path.endsWith('.upgrade.test.ts')
+    }
+    if (/^(app|components|pages|layouts|composables|assets|public)\//.test(path)) return false
+    if (/^docs\//.test(path)) return path.startsWith('docs/adr/')
+    if (/^README[^/]*$/.test(path)) return false
+    return true
+  })
 }
-if(process.argv[1]===fileURLToPath(import.meta.url)) console.log(selectUpgrade(readFileSync(process.argv[2],'utf8').split('\n').filter(Boolean)))
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  console.log(selectUpgrade(readFileSync(process.argv[2], 'utf8').split('\n').filter(Boolean)))
+}
