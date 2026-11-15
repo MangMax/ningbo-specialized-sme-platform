@@ -1,12 +1,14 @@
+import { nativeWorkbookFixture } from './fixtures/native-workbook'
 import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
 import { businessIdentity, expectedBusinessIdentity, matchesBusinessIdentity } from './fixtures/specialized-export'
-import { afterAll, beforeAll, expect, it } from 'vitest'
+import { afterAll, beforeAll, beforeEach, expect, it } from 'vitest'
 import { schema as s } from '../../../db/client'
 import { CURRENT_TITLES, readCurrentCandidate } from '../../../lib/roster/current-qualification'
 import { specializedExportFixture, rows, year } from './fixtures/specialized-export'
 import { readEvidenceToken113 } from '../../../server/utils/evidence-impact-113'
-const f=specializedExportFixture()
+const f=nativeWorkbookFixture()
 beforeAll(()=>f.start(),90000)
+beforeEach(()=>f.resetBusiness())
 afterAll(()=>f.close())
 let serial=0
 const actor={type:'agent',id:'synthetic-pr138-review'}
@@ -158,11 +160,7 @@ it.each(CURRENT_TITLES)('keeps a later formal failure excluded after an expired 
   const auditBefore=f.db.$client.prepare('select * from difference_reason where enterprise_id=? order by id').all(c.enterprise.id)
   const eventsBefore=f.db.$client.prepare('select * from record_event where record_id=? order by id').all(c.record.id)
   const path={little_giant:'little-giant',specialized_sme:'specialized-sme',innovative_sme:'innovative-sme'}[titleCode]
-  const accepted=await fetch(f.url('/api/roster/exports/current/'+path),{method:'POST',headers:f.headers,body:JSON.stringify({clientRequestId:'pr138-expired-export-'+titleCode})})
-  expect(accepted.status).toBe(202)
-  const job=await f.terminal((await accepted.json()).jobId)
-  expect(job.state,JSON.stringify(job)).toBe('done')
-  const {wb}=await f.download(job),actual=occurrences(wb,c.enterprise.id)
+  const {wb}=await f.workbook('pr138-expired-export-'+titleCode,titleCode),actual=occurrences(wb,c.enterprise.id)
   expect(actual.map(x=>x.sheet)).toEqual(['已到期'])
   expect(actual[0]!.row[7]).toContain('年第1批认定')
   expect(actual[0]!.row[7]).not.toContain('Synthetic expired external grant retained for audit')

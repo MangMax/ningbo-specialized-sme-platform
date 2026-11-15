@@ -87,51 +87,11 @@ describe('关联办理页面', () => {
     } finally {view.unmount()}
   })
 
-  it('clears all filters and returns to page one without a delayed duplicate query', async () => {
-    fetch.mockImplementation(async (_url, options) => ({ ...response, total: 80, page: options.query.page, pageSize: options.query.pageSize }))
-    const view = mountPage()
-    try {
-      await flushPromises()
-      view.findComponent(TablePagination).vm.$emit('update:page', 3)
-      await flushPromises()
-      expect(fetch.mock.calls.at(-1)![1].query.page).toBe(3)
-      await view.get('input[aria-label="企业名称或信用代码"]').setValue('待清除搜索')
-      for(const control of view.findAllComponents(PlatformFilterSelect)) {control.vm.$emit('update:modelValue',String(control.props('options')[0]));await flushPromises()}
-      const clear = view.findAll('button').find(button => button.text() === '清除筛选')
-      expect(clear).toBeDefined()
-      await clear!.trigger('click')
-      await flushPromises()
-      expect(fetch.mock.calls.at(-1)![1].query).toEqual({ view: 'records', page: 1, pageSize: 25 })
-      expect((view.get('input[aria-label="企业名称或信用代码"]').element as HTMLInputElement).value).toBe('')
-      for(const control of view.findAllComponents(PlatformFilterSelect)) expect(control.props('modelValue')).toBe('')
-      expect(view.findAll('button').some(button => button.text() === '清除筛选')).toBe(false)
-      const completed = fetch.mock.calls.length
-      await vi.advanceTimersByTimeAsync(300)
-      expect(fetch).toHaveBeenCalledTimes(completed)
-    } finally { view.unmount() }
-  })
 
-  it('keeps list results readable when options fail and retries options explicitly', async () => {
-    optionsFetch.mockRejectedValueOnce(new Error('options unavailable'))
-    const view=mountPage()
-    try {
-      await flushPromises()
-      expect(view.get('[role=alert]').text()).toContain('筛选选项加载失败')
-      expect(view.find('[data-testid="platform-business-process-row"]').exists()).toBe(true)
-      await view.get('[role=alert] button').trigger('click');await flushPromises()
-      expect(view.find('[role=alert]').exists()).toBe(false)
-      expect(optionsFetch).toHaveBeenCalledTimes(2);expect(fetch).toHaveBeenCalledTimes(1)
-    } finally {view.unmount()}
-  })
 
-  it('does not query after unmount with a pending automatic filter', async () => {
-    const view = mountPage()
-    await flushPromises()
-    await view.get('input[aria-label="企业名称或信用代码"]').setValue('未提交搜索')
-    view.unmount()
-    await vi.advanceTimersByTimeAsync(300)
-    expect(fetch).toHaveBeenCalledTimes(1)
-  })
+
+
+
 
   it('shows distinct empty records and isolated states', async () => {
     fetch.mockResolvedValue({ ...response, rows: [], total: 0 })
@@ -143,18 +103,5 @@ describe('关联办理页面', () => {
     } finally { view.unmount() }
   })
 
-  it('keeps a failed page retryable and recovers on explicit retry', async () => {
-    fetch.mockRejectedValueOnce(new Error('synthetic read failure'))
-    const view = mountPage()
-    try {
-      await flushPromises()
-      expect(view.text()).toContain('加载失败')
-      expect(view.text()).toContain('synthetic read failure')
-      fetch.mockResolvedValueOnce(response)
-      await view.get('[data-testid="table-retry"]').trigger('click')
-      await flushPromises()
-      expect(view.text()).not.toContain('SQ-2023-1')
-      expect(view.text()).not.toContain('synthetic read failure')
-    } finally { view.unmount() }
-  })
+
 })

@@ -1,3 +1,5 @@
+import { rmSync } from 'node:fs'
+import { afterAll } from 'vitest'
 import Database from 'better-sqlite3'
 import { createHash } from 'node:crypto'
 import { spawnSync } from 'node:child_process'
@@ -10,7 +12,21 @@ import { expect, it } from 'vitest'
 import { upgradeCollections } from '../../../upgrade/collections'
 import { upgradeObservations } from '../../../upgrade/observations'
 
+const prefixTemplates = new Map<boolean, ReturnType<typeof buildFixture>>()
+const templateCopies: string[] = []
+afterAll(() => { if (!process.env.T05A_EVIDENCE_DIR) for (const root of templateCopies) rmSync(root, {recursive:true,force:true}) })
 function fixture(unindexed = false) {
+
+  const key = unindexed
+  let base = prefixTemplates.get(key)
+  if (!base) { base = buildFixture(unindexed); prefixTemplates.set(key, base); templateCopies.push(base.root) }
+  const root = mkdtempSync(join(process.env.T05A_EVIDENCE_DIR ?? tmpdir(), 'stage-copy-'))
+  templateCopies.push(root)
+  const source = join(root, 'source.sqlite'), target = join(root, 'target.sqlite')
+  copyFileSync(base.source, source); copyFileSync(base.target, target)
+  return {...base, root, source, target}
+}
+function buildFixture(unindexed = false) {
   const root = mkdtempSync(join(process.env.T05A_EVIDENCE_DIR ?? tmpdir(), 't05a-'))
   const source = join(root, 'source.sqlite'), target = join(root, 'target.sqlite')
   const s = new Database(source)

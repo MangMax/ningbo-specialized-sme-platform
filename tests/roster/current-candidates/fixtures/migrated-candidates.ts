@@ -5,8 +5,7 @@ import { tmpdir } from 'node:os'
 import { afterAll } from 'vitest'
 import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
-import { candidateFixture } from '../../../platform/fixtures/candidate-scope-upgrade'
-import { finalizeCandidateScopes } from '../../../../upgrade/candidate-scope'
+import { migrate } from 'drizzle-orm/better-sqlite3/migrator'
 import { ensurePlatformObservation } from '../../../../upgrade/frozen/server/platform-business-record'
 import * as s from '../../../../upgrade/legacy-schema'
 import * as targetSchema from '../../../../db/schema'
@@ -20,7 +19,12 @@ export const literalCandidates = {
   little_giant:[1,2,3,5,6,7,8,11,20],
 } satisfies Record<CurrentTitle,number[]>
 async function buildTemplate() {
-  const f=await candidateFixture(old=>{
+  const root=mkdtempSync(join(tmpdir(),'candidate-template-')); clones.push(root)
+  const legacySource=join(root,'legacy.sqlite')
+  const old=new Database(legacySource)
+  try {
+    migrate(drizzle(old),{migrationsFolder:'db/migrations'})
+    old.exec("INSERT INTO title(code,name_zh,level,rank) VALUES('innovative_sme','创新型中小企业','municipal',1),('specialized_sme','专精特新中小企业','municipal',2),('little_giant','小巨人','national',3)")
     const db=drizzle(old,{schema:s})
     for(let id=1;id<=24;id++)db.insert(s.enterprise).values({id,name:id%2?'same':'Same',nameNorm:'same',usccNorm:id===20?' u7 ':id===23?'':id===24?' \u200b ':`U${id}`}).run()
     for(const title of titles){
@@ -51,12 +55,10 @@ async function buildTemplate() {
       query(10+i,'1,2',undefined,evidence);row(10+i,1,[18,19,21,22][i]!)
     }
     query(14,'9');row(14,1,14)
-  })
-  finalizeCandidateScopes(f)
-  const runtimeTarget=join(f.root,'runtime.sqlite'),evidence=join(f.root,'complete-evidence');mkdirSync(evidence)
-  completePlatformMigration(f.legacySource,runtimeTarget,evidence)
-  f.target=runtimeTarget
-  return f
+  } finally {old.close()}
+  const runtimeTarget=join(root,'runtime.sqlite'),evidence=join(root,'complete-evidence');mkdirSync(evidence)
+  completePlatformMigration(legacySource,runtimeTarget,evidence)
+  return {root,target:runtimeTarget,legacySource}
 }
 let template: ReturnType<typeof buildTemplate> | undefined
 const clones: string[] = []

@@ -1,5 +1,5 @@
-import { nativeQueryRows } from '../fixtures/native-evidence'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+
+import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, afterEach, expect, it, vi } from 'vitest'
@@ -19,10 +19,7 @@ const queriedAt = '2026-11-13T00:00:00.000Z'
 const now = () => new Date('2026-11-13T04:00:00.000Z')
 afterEach(async () => { await whenIdle(); vi.unstubAllEnvs() })
 afterAll(() => {
-  if (process.env.RECONCILE_769_EVIDENCE) writeFileSync(join(process.env.RECONCILE_769_EVIDENCE, 'synthetic-regressions.json'), JSON.stringify({
-    queries: nativeQueryRows(db),
-    receipts: db.select().from(schema.importReceipt).all(),
-  }, null, 2))
+
   db.$client.close()
   rmSync(dir, { recursive: true, force: true })
 })

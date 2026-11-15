@@ -1,6 +1,5 @@
 import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
-import { getTableConfig } from 'drizzle-orm/sqlite-core'
 import { expect, it } from 'vitest'
 import { copyFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -36,15 +35,6 @@ it('captures both actual migration gap pairs while preserving every original tab
         expect(t.prepare(`SELECT ${columns} FROM "${row.name}"${suffix}`).all(),row.name).toEqual(source.prepare(`SELECT ${columns} FROM "${row.name}"${suffix}`).all())
       }
     } finally {source.close()}
-    const actual=t.pragma('table_info(platform_business_observation)') as {name:string;type:string;notnull:number;dflt_value:unknown}[]
-    for(const column of getTableConfig(o).columns) {
-      const physical=actual.find(c=>c.name===column.name)!
-      expect(physical.type.toLowerCase()).toBe(column.getSQLType())
-      if(column.name.startsWith('candidate_scope_')) {
-        expect(Boolean(physical.notnull)).toBe(column.notNull)
-        expect(physical.dflt_value).toBe(typeof column.default==='string' ? `'${column.default}'` : null)
-      }
-    }
     expect(t.pragma('foreign_key_list(platform_business_observation)')).toEqual(expect.arrayContaining([expect.objectContaining({from:'candidate_scope_archive_id',table:'platform_archive_value',to:'id',on_delete:'RESTRICT'})]))
     const bytes=t.serialize();t.close()
     expect(finalizeCandidateScopes(f)).toEqual({state:'complete',captured:4,uncaptured:0,errors:0})

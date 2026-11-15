@@ -522,7 +522,7 @@ it('factory_default_compatibility keeps omitted and empty options equivalent wit
   expect(receiptRedaction.importReceiptRedactor(f.db, { additionalSecrets: ['second391-request'] })('first391-request second391-request')).toBe('first391-request [REDACTED]')
 })
 
-it.each([1, 2])('391 factory_credential_fault fails closed on read %i', read => {
+it.each([1, 2])("factory_credential_fault fails closed on read %i", read => {
   const f = fixture391(), original = credentialState.resolveCredential
   let n = 0
   vi.spyOn(credentialState, 'resolveCredential').mockImplementation((...args) => { if (++n === read) throw new Error('synthetic-private-storage'); return original(...args) })
@@ -530,7 +530,7 @@ it.each([1, 2])('391 factory_credential_fault fails closed on read %i', read => 
   expect(n).toBe(read)
 })
 
-it.each([0, 1, 40, 41, 81])('391 batch_distinct reads all %i events in bounded chunks', count => {
+it.each([0, 1, 40, 41, 81])("batch_distinct reads all %i events in bounded chunks", count => {
   const f = fixture391()
   for (let i = 1; i <= count; i++) { f.event(i); f.capture(i, i) }
   const pages = vi.spyOn(official, 'listEventsOfficialEvidencePages'), old = vi.spyOn(official, 'listEventOfficialEvidence')
@@ -569,7 +569,7 @@ it('latest_origin_owner retains latest raw-only values after owner links disappe
   expect(raw).toEqual({ captured_record_id: 1, captured_enterprise_id: 1 })
 })
 
-it.each(['path', 'name_raw', 'actor'] as const)('391 unselected_full_field_gate checks %s at UTF16 boundaries', field => {
+it.each(['path', 'name_raw', 'actor'] as const)("unselected_full_field_gate checks %s at UTF16 boundaries", field => {
   const f = fixture391(); f.event(1); f.capture(1); f.capture(2)
   const put = (value: string) => f.sqlite.prepare('UPDATE official_evidence_row_revision SET ' + field + '=? WHERE evidence_id=2').run(field === 'actor' ? JSON.stringify({ type: 'agent', id: value }) : value)
   put('🙂'.repeat(2000))
@@ -638,7 +638,7 @@ function finalBytes391(names: string[]) {
     + Buffer.byteLength('{"publishedPresentation":{"availability":"available","error":null,"facts":[]}}')
     + names.length * Buffer.byteLength('{"publishedName":null}')
 }
-it.each([65535, 65536, 65537])('391 final_current_bytes gates %i after context expansion with one DTO and two texts', target => {
+it.each([65535, 65536, 65537])("final_current_bytes gates %i after context expansion with one DTO and two texts", target => {
   const f = fixture391(); f.event(1)
   let names: string[] = [], raw: string[] = []
   for (let quotes = 0; quotes < 3; quotes++) {
@@ -677,7 +677,7 @@ it('default_consumers preserve full secrets and qualifier inputs in detail curre
   expect(JSON.stringify(readCurrentCandidate(f.sqlite, 1, 'specialized_sme', qualificationYear, executionTime))).toBe(before)
 })
 
-it.each(['evidenceId', 'eventId', 'nameRaw', 'revision', 'availability', 'sourceBindingKnown', 'captured'])('391 typed_fact_keys keeps %s out of verified DTO structure', token => {
+it.each(['evidenceId', 'eventId', 'nameRaw', 'revision', 'availability', 'sourceBindingKnown', 'captured'])("typed_fact_keys keeps %s out of verified DTO structure", token => {
   const f = fixture391(); f.event(9)
   f.capture(17, 9, token); f.capture(17, 9, token, 2); f.capture(17, 9, token, 3)
   f.db.insert(schema.sourceDocument).values({ id: 391, source: 'jxj', title: 'synthetic391', path: 'synthetic391.pdf' }).run()
@@ -691,7 +691,7 @@ it.each(['evidenceId', 'eventId', 'nameRaw', 'revision', 'availability', 'source
   expect(callback).toHaveBeenCalledWith({ evidenceId: 17, eventId: 9, revision: 3, availability: 'captured', nameRaw: token, sourceBindingKnown: true }, 'official_published_name')
 })
 
-it.each(['evidenceId', 'captured'])('391 typed_mode_explicit keeps %s raw shape and JSON generic', token => {
+it.each(['evidenceId', 'captured'])("typed_mode_explicit keeps %s raw shape and JSON generic", token => {
   const f = fixture391(), redact = receiptRedaction.importReceiptRedactor(f.db, { additionalSecrets: [token] })
   const input = { evidenceId: 17, eventId: 9, revision: 3, availability: 'captured', nameRaw: token, sourceBindingKnown: true }
   expect(redact(input)).toEqual(token === 'evidenceId'
@@ -708,7 +708,7 @@ it.each([
   { label: 'empty', raw: '', expected: '' },
   { label: 'json', raw: '{"name":"cx391-only-A7mN5p9Q","token":"private"}', expected: '{"name":"[REDACTED]","token":"[REDACTED]"}' },
   { label: 'bearer', raw: 'Bearer arbitrary-value', expected: 'Bearer [REDACTED]' },
-])('391 typed_name_literals keeps $label display semantics', ({ raw, expected }) => {
+])("typed_name_literals keeps $label display semantics", ({ raw, expected }) => {
   const f = fixture391(); f.event(9); f.capture(17, 9, raw)
   const callback = redactor391(f.db)
   expect([...readOfficialPublishedPresentation(f.db, [{ evidenceId: 17, eventId: 9 }], callback).values()]).toEqual([
@@ -718,7 +718,7 @@ it.each([
   expect(callback).toHaveBeenCalledWith({ evidenceId: 17, eventId: 9, revision: 1, availability: 'captured', nameRaw: raw, sourceBindingKnown: false }, 'official_published_name')
 })
 
-it.each([true, false])('391 typed_name_union shares one closure with context %s', includeContext => {
+it.each([true, false])("typed_name_union shares one closure with context %s", includeContext => {
   const f = fixture391(); secrets391(f.db)
   const credentials = vi.spyOn(credentialState, 'resolveCredential')
   const redact = includeContext
@@ -739,7 +739,7 @@ it.each([true, false])('391 typed_name_union shares one closure with context %s'
   expect(typedFirst).toBe(expected); expect(typedSecond).toBe(expected)
 })
 
-it.each(['undefined', 'object', 'number'] as const)('391 typed_name_result rejects %s atomically', kind => {
+it.each(['undefined', 'object', 'number'] as const)("typed_name_result rejects %s atomically", kind => {
   const f = fixture391(); f.event(1); f.capture(1); f.capture(2)
   const real = receiptRedaction.importReceiptRedactor(f.db)
   const callback = Object.assign(vi.fn((value: unknown, mode?: receiptRedaction.ReceiptRedactionMode) => {

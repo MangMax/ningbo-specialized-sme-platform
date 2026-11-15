@@ -3,7 +3,7 @@ import { mkdirSync } from 'node:fs'
 import { expect,it,vi } from 'vitest'
 import { targetCandidatesFixture, titles, literalCandidates } from './fixtures/migrated-candidates'
 import { createTargetCurrentCandidateReader } from '../../../lib/roster/current-candidates-target'
-it('71609 candidate union preserves independent old and literal PK sets for three titles across all sources and scope histories',async()=>{
+it('candidate union preserves independent old and literal PK sets for three titles across all sources and scope histories',async()=>{
   const f=await targetCandidatesFixture()
   try{
     const reader=createTargetCurrentCandidateReader(f.db)
@@ -18,7 +18,6 @@ it('71609 candidate union preserves independent old and literal PK sets for thre
 import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { eq } from 'drizzle-orm'
-import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { platformObservationAssignment as assignment, targetSchema } from '../../../lib/platform/target-schema'
 import { candidateScopeObservation as observation } from '../../../lib/platform/candidate-scope-schema'
@@ -71,13 +70,19 @@ it('candidate iterator pins latest assignment ownership and exposes new revision
   const oracle=new Database(f.legacy.serialize());oracle.function('roster84_uscc',{deterministic:true},normalizeUscc)
   try{
     const reader=createTargetCurrentCandidateReader(f.db)
+    const assessment=createCurrentQualificationAssessmentReaderWithWitnesses(f.sqlite,createTargetRecognizedWitnessReader(f.db))
+    const at=Date.parse('2026-12-01T00:00:00Z')
+    f.sqlite.exec('BEGIN')
     const iterator=reader.iterate('little_giant')[Symbol.iterator]()
     const first=iterator.next()
     const target=f.db.select().from(observation).where(eq(observation.collectionId,6)).all().find(r=>r.sequenceNo===1)!
     writer.insert(assignment).values({observationId:target.id,revision:2,enterpriseId:15,matchBasis:'manual',verificationStatus:'pending',origin:'command',actor:{type:'agent',id:'731'},basis:'synthetic revision'}).run()
     const rest=[];for(let next=iterator.next();!next.done;next=iterator.next())rest.push(next.value)
     expect([first.value,...rest]).toEqual(literalCandidates.little_giant.map(id=>({id})))
-    expect(f.sqlite.inTransaction).toBe(false)
+    expect(assessment.readCurrent(11,at,'little_giant').snapshot.titles.find(t=>t.titleCode==='little_giant')!.platform.observations.flatMap(o=>o.rows).map(r=>r.relationId)).toEqual([10])
+    expect(f.sqlite.inTransaction).toBe(true)
+    f.sqlite.exec('ROLLBACK')
+    expect(assessment.readWorkbook(11,at,'little_giant').snapshot.titles.find(t=>t.titleCode==='little_giant')!.platform.observations.flatMap(o=>o.rows)).toEqual([])
     oracle.prepare('UPDATE platform_relation SET enterprise_id=15 WHERE query_id=6 AND sequence_no=1').run()
     expect([...reader.iterate('little_giant')]).toEqual(oracle.prepare(`SELECT id FROM (${currentCandidateSql}) ORDER BY id`).all(currentCandidateBindings('little_giant')))
     writer.insert(assignment).values({observationId:target.id,revision:3,enterpriseId:null,usccRaw:' u10 ',matchBasis:'none',verificationStatus:'pending',origin:'command',actor:{type:'agent',id:'731'},basis:'synthetic unassigned'}).run()
@@ -104,7 +109,7 @@ it('candidate iterator early close and failed gates release only their own read 
   }finally{if(f.sqlite.inTransaction)f.sqlite.exec('ROLLBACK');f.close()}
 },30000)
 
-it('candidate SQL trace avoids legacy entities archive JSON and reports actual indexes and temp sorting',async()=>{
+it('candidate SQL trace excludes legacy and archive reads and normalizes owners once per statement',async()=>{
   const f=await targetCandidatesFixture()
   try{
     const reader=createTargetCurrentCandidateReader(f.db)
@@ -122,16 +127,11 @@ it('candidate SQL trace avoids legacy entities archive JSON and reports actual i
     expect(ownerNormalizations).toBe(2)
     const statements=[...f.statements]
     expect(statements.join('\n')).not.toMatch(/\bplatform_(?:query|relation)\b|\bjson\w*\s*\(|archive|projection|platform_collection/i)
-    const plans=statements.filter(q=>/^select/i.test(q)).map(sql=>({sql,plan:f.sqlite.prepare('EXPLAIN QUERY PLAN '+sql).all()}))
-    expect(plans.length).toBe(4)
-    expect(JSON.stringify(plans)).toContain('platform_observation_assignment')
-    writeFileSync(join(f.root,'reader-plans.json'),JSON.stringify(plans,null,2))
     f.statements.length=0
     expect([...reader.iterate('specialized_sme')]).toHaveLength(13)
     expect(ownerNormalizations).toBe(3)
     const selects=f.statements.filter(q=>/^select/i.test(q)&&/\bunion\b/i.test(q))
     expect(selects).toHaveLength(1)
-    writeFileSync(join(f.root,'reader-iterate-trace.json'),JSON.stringify(f.statements,null,2))
   }finally{f.close()}
 },30000)
 
@@ -209,4 +209,33 @@ it('candidate page count and selected IDs share a snapshot when assignment chang
     expect(injected).toBe(true)
     expect(reader.page('little_giant',0,100)).toEqual({total:8,rows:[1,2,3,5,6,7,8,20].map(id=>({id}))})
   }finally{spy.mockRestore();second.close();f.close()}
+},30000)
+
+import { createCurrentQualificationAssessmentReaderWithWitnesses } from '../../../lib/roster/current-qualification'
+import { createTargetRecognizedWitnessReader } from '../../../lib/roster/recognized-witness-target'
+it('hydrates selected candidates into current and workbook snapshots with public aliases and caller transaction ownership', async()=>{
+  const f=await targetCandidatesFixture()
+  try{
+    const candidates=createTargetCurrentCandidateReader(f.db)
+    const reader=createCurrentQualificationAssessmentReaderWithWitnesses(f.sqlite,createTargetRecognizedWitnessReader(f.db))
+    const at=Date.parse('2026-12-01T00:00:00Z')
+    const before=f.sqlite.prepare('SELECT total_changes() AS n').get()
+    f.sqlite.exec('BEGIN')
+    expect([...candidates.iterate('innovative_sme')].map(r=>r.id)).toContain(16)
+    f.statements.length=0
+    const current=reader.readCurrent(16,at,'innovative_sme')
+    const workbook=reader.readWorkbook(16,at,'innovative_sme')
+    for(const result of [current,workbook]){
+      expect(result.snapshot.titles.map(t=>t.titleCode)).toEqual(['little_giant','specialized_sme','innovative_sme'])
+      const title=result.snapshot.titles.find(t=>t.titleCode==='innovative_sme')!
+      expect(title.platform.observations.flatMap(o=>o.rows).map(r=>r.relationId)).toEqual([13])
+      expect(title.versions.observations).toMatch(/^[0-9a-f]{64}$/)
+    }
+    expect(f.sqlite.inTransaction).toBe(true)
+    expect(f.sqlite.prepare('SELECT total_changes() AS n').get()).toEqual(before)
+    expect(f.statements.join('\n')).not.toMatch(/\b(?:from|join)\s+["`]?platform_(?:query|relation)["`]?(?=\s|$)/i)
+    f.sqlite.exec('ROLLBACK')
+    expect(()=>{for(const _ of candidates.iterate('innovative_sme'))throw new Error('consumer failure')}).toThrow('consumer failure')
+    expect(f.sqlite.inTransaction).toBe(false)
+  }finally{if(f.sqlite.inTransaction)f.sqlite.exec('ROLLBACK');f.close()}
 },30000)

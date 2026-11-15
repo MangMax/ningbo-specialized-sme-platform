@@ -2,7 +2,7 @@
 import Database from 'better-sqlite3'
 import { copyFileSync, mkdtempSync } from 'node:fs'
 import { join } from 'node:path'
-import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeAll, expect, it, vi } from 'vitest'
 import { initializeDb, useRuntimeDb, useApplicationDb } from '../../../db/client'
 import { assertFinalPlatformRuntime as assertApplicationRuntime } from '../../../db/schema-phase'
 import { retirePlatformModel } from '../../../upgrade/retire-platform-model'
@@ -15,12 +15,10 @@ const historicalTables = [
   'platform_body_part', 'platform_body_root', 'platform_body_leaf',
   'platform_relation', 'platform_query',
 ]
-const fixture = process.env.FINAL_PLATFORM_RETIREMENT_FIXTURE
-const evidence = process.env.FINAL_PLATFORM_RETIREMENT_EVIDENCE
-// Explicit offline acceptance lane: an owned pre-retirement fixture is required.
-describe.runIf(Boolean(fixture && evidence))('offline historical runtime retirement (requires FINAL_PLATFORM_RETIREMENT_FIXTURE and FINAL_PLATFORM_RETIREMENT_EVIDENCE)', () => {
+import { preRetirementFixture } from './fixtures/pre-retirement'
+let fixture: string
 let root: string
-beforeAll(() => { root = mkdtempSync(join(evidence!, 'runtime-retirement-')) })
+beforeAll(() => { const f = preRetirementFixture(); fixture=f.target; root=f.root }, 120000)
 const cleanup: Array<() => void | Promise<unknown>> = []
 let serial = 0
 afterEach(async () => {
@@ -29,13 +27,16 @@ afterEach(async () => {
 })
 function target() {
   const path = join(root, `${++serial}.sqlite`)
-  copyFileSync(fixture!, path)
+  copyFileSync(fixture, path)
   const db = new Database(path)
   db.pragma('foreign_keys=ON')
   cleanup.push(() => { if (db.open) db.close() })
   return { path, db }
 }
-const importantTables = ['platform_collection', 'platform_business_observation', 'platform_observation_assignment',
+const importantTables = ['platform_collection', 'platform_collection_page', 'platform_collection_condition',
+  'platform_business_record', 'platform_business_record_version', 'platform_business_observation', 'platform_observation_assignment',
+  'platform_observation_fingerprint_basis', 'platform_legacy_query_alias', 'platform_legacy_relation_alias',
+  'platform_collection_archive_ref', 'platform_observation_archive_ref', 'platform_version_archive_ref',
   'platform_archive_value', 'platform_apply_projection', 'platform_business_projection', 'platform_recognized_projection',
   'platform_collection_legacy_provenance', 'record_correspondence', 'difference_reason'] as const
 function originalRows(db: Database.Database) {
@@ -113,4 +114,17 @@ it('preserves orphan body bytes and rolls back retirement', () => {
   expect(f.db.prepare("SELECT 1 FROM sqlite_schema WHERE name='platform_runtime_completion'").get()).toBeUndefined()
 })
 
+import { createRuntimeSchema } from '../../../db/create-runtime'
+it('retired populated catalog matches native creation except the native capability receipt', () => {
+ const f=target();retirePlatformModel(f.db)
+ const native=new Database(':memory:')
+ try {
+  native.pragma('foreign_keys=ON');createRuntimeSchema(native)
+  const catalog=(db:Database.Database)=>db.prepare("SELECT type,name,tbl_name,sql FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%' AND name NOT LIKE 'platform_runtime_capability%' ORDER BY type,name").all()
+  // 0053 and the additive capture helper spell this same column differently.
+  const columnSql='`max_page_present` integer DEFAULT 0 NOT NULL CHECK (`max_page_present` IN (0,1))'
+  const actual=catalog(f.db),expected=catalog(native).map(row=>{const r=row as {sql:string|null};return {...r,sql:r.sql?.replace('max_page_present INTEGER NOT NULL DEFAULT 0 CHECK(max_page_present IN (0,1))',columnSql)??null}})
+  expect(actual.map((row,i)=>JSON.stringify(row)===JSON.stringify(expected[i])?null:{actual:row,expected:expected[i]}).filter(Boolean)).toEqual([])
+  expect(f.db.pragma('foreign_key_check')).toEqual([])
+ } finally {native.close()}
 })

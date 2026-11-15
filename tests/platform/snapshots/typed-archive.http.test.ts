@@ -2,7 +2,7 @@ import { executeNativeImport } from '../../roster/imports/fixtures/import-server
 import { preflightRosterImport, commitRosterImport } from '../../../server/utils/roster-import'
 import { initializeDb } from '../../../db/client'
 import { createServer } from 'node:http'
-import { createHash } from 'node:crypto'
+
 import type { AddressInfo } from 'node:net'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
@@ -13,7 +13,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
-import { schema, useDb } from '../../../db'
+import { schema } from '../../../db'
 import { eq, sql } from 'drizzle-orm'
 import type { PlatformLiveQueryResult } from '../../../lib/platform/live-query'
 import type { RosterImportPlatformQuery } from '../../../lib/roster-import-client'
@@ -168,9 +168,14 @@ function businessState() {
     ['owner', q => { q.relations![0]!.enterpriseId = 999999 }],
     ['name-only-confirm', q => { q.relations![0]!.verificationStatus = 'confirmed'; q.relations![0]!.matchBasis = 'alias' }],
   ]
-for (const sourceName of ['queryBusList', 'queryList', 'businessList']) it.each(mutations)(`native ${sourceName} import rejects %s atomically with a valid sibling`, async (_label, mutate) => {
-  const valid = platformResultToImport(await collect({ id: `sibling-${serial}`, qymc: '合成', n: 1 }, 'REST', sourceName))
-  const bad = platformResultToImport(await collect({ id: `bad-${serial}`, qymc: '合成', n: 1 }, 'REST', sourceName)); mutate(bad)
+const nativePairs = new Map<string, [RosterImportPlatformQuery, RosterImportPlatformQuery]>()
+for (const sourceName of ['queryBusList', 'queryList', 'businessList']) it.each(sourceName === 'queryBusList' ? mutations : mutations.filter(([name]) => ['page-source', 'page-title', 'source-interface'].includes(name)))(`native ${sourceName} import rejects %s atomically with a valid sibling`, async (_label, mutate) => {
+  if (!nativePairs.has(sourceName)) nativePairs.set(sourceName, [
+    platformResultToImport(await collect({ id: 'native-sibling', qymc: '合成', n: 1 }, 'REST', sourceName)),
+    platformResultToImport(await collect({ id: 'native-invalid', qymc: '合成', n: 1 }, 'REST', sourceName)),
+  ])
+  const [valid, bad] = structuredClone(nativePairs.get(sourceName)!)
+  mutate(bad)
   const before = businessState(), body = request([valid, bad])
   expect(preflightRosterImport(db, body).preflight.conflicts).not.toEqual([])
   expect(commitRosterImport(db, body).status).toBe('failed')

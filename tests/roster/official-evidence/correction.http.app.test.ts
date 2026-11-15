@@ -51,7 +51,7 @@ beforeAll(async () => {
 }, 90000)
 afterAll(async () => { if (service) await service.stop(); rmSync(dir, { recursive: true, force: true }) })
 
-describe('ticket 101 exact evidence correction through HTTP and MCP', () => {
+describe("ticket exact evidence correction through HTTP and MCP", () => {
   it('preflights the exact evidence and event with old and new coordinates and file identity', async () => {
     const response = await fetch(api(`evidence/${evidence.id}`))
     expect(response.status).toBe(200)

@@ -1,3 +1,4 @@
+import { spawnCompiledApp } from '../../support/owned-process.mjs'
 import { assertEnterpriseDetailSnapshotEqual } from '../assertions/enterprise-detail-snapshot'
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -6,7 +7,7 @@ import { afterAll, beforeAll, expect, it } from 'vitest'
 import { schema, useDb } from '../../../db'
 import { initializeDb } from '../../../db/client'
 import { seedComparisonSourceStatus } from './fixtures/source-status'
-import { spawnOwnedChild, reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../../support/owned-process.mjs'
+import { reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../../support/owned-process.mjs'
 
 // A caller-owned service lets manual RED -> GREEN and browser acceptance share
 // one dev compilation. Normal test runs still own and clean up their service.
@@ -34,12 +35,12 @@ beforeAll(async () => {
   const cwd = resolve(import.meta.dirname, '../../..')
   let port = await reserveLoopbackPort()
   while ([3480, 3516].includes(port)) port = await reserveLoopbackPort()
-  const child = spawnOwnedChild(process.execPath, [join(cwd, 'node_modules/nuxt/bin/nuxt.mjs'), 'dev', '--host', '127.0.0.1', '--port', String(port)], { cwd, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, NUXT_BUILD_DIR: join(dir, 'build'), NUXT_DB_PATH: join(dir, 'fixture.db'), NUXT_FILES_DIR: join(dir, 'files'), NUXT_INCOMING_DIR: join(dir, 'incoming'), NUXT_LOG_DIR: join(dir, 'logs'), NUXT_CURATED_PATH: join(dir, 'curated.json'), NUXT_RECONCILE_PATH: join(dir, 'reconcile.json'), NUXT_MCP_TOKEN: 'issue301-synthetic' } })
+  const child = spawnCompiledApp(port, { cwd, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, NUXT_BUILD_DIR: join(dir, 'build'), NUXT_DB_PATH: join(dir, 'fixture.db'), NUXT_FILES_DIR: join(dir, 'files'), NUXT_INCOMING_DIR: join(dir, 'incoming'), NUXT_LOG_DIR: join(dir, 'logs'), NUXT_CURATED_PATH: join(dir, 'curated.json'), NUXT_RECONCILE_PATH: join(dir, 'reconcile.json'), NUXT_MCP_TOKEN: 'issue301-synthetic' } })
   let output = ''
   for (const stream of [child.stdout, child.stderr]) stream.on('data', chunk => { output = (output + chunk).slice(-8000) })
   base = `http://127.0.0.1:${port}`
   stop = () => stopOwnedChild(child)
-  try { await waitForHttp(`${base}/_openapi.json`, { child }) }
+  try { await waitForHttp(`${base}/api/health`, { child }) }
   catch (error) { throw new Error(`${String(error)}\n${output}`) }
 }, 90000)
 beforeAll(async () => {

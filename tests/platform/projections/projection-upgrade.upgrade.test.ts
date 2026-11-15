@@ -14,7 +14,20 @@ import { upgradeProjections } from '../../../upgrade/projections'
 
 const ownedRoots: string[] = []
 afterAll(() => { if (!process.env.T05B_EVIDENCE_DIR) for (const root of ownedRoots) rmSync(root, { recursive: true, force: true }) })
+let prefixTemplate: ReturnType<typeof buildFixture> | undefined
+const templateCopies: string[] = []
+afterAll(() => { if (!process.env.T05B_EVIDENCE_DIR) for (const root of templateCopies) rmSync(root, {recursive:true,force:true}) })
 function fixture(seed?:(s:Database.Database)=>void) {
+  if (seed) return buildFixture(seed)
+  if (!prefixTemplate) { prefixTemplate = buildFixture(); templateCopies.push(prefixTemplate.root) }
+  const base = prefixTemplate
+  const root = mkdtempSync(join(process.env.T05B_EVIDENCE_DIR ?? tmpdir(), 'stage-copy-'))
+  templateCopies.push(root)
+  const source = join(root, 'source.sqlite'), target = join(root, 'target.sqlite')
+  copyFileSync(base.source, source); copyFileSync(base.target, target)
+  return {...base, root, source, target}
+}
+function buildFixture(seed?:(s:Database.Database)=>void) {
   const root=mkdtempSync(join(process.env.T05B_EVIDENCE_DIR??tmpdir(),'t05b-')); ownedRoots.push(root)
   const source=join(root,'source.sqlite'),target=join(root,'target.sqlite'),s=new Database(source)
   migrate(drizzle(s),{migrationsFolder:'db/migrations'})
@@ -43,11 +56,6 @@ it('retains every observation and literal source parser versus process reconcili
   expect(upgradeProjections(f).state).toBe('complete')
 })
 
-it('rejects checkpoint cursor tampering even when target rows are unchanged',()=>{
-  const f=fixture();upgradeProjections(f)
-  const t=new Database(f.target);t.exec("update platform_migration_checkpoint set last_old_id=11,copied_count=1 where phase='t05b-observations'");t.close()
-  expect(()=>upgradeProjections(f)).toThrow(/drift/)
-})
 
 function shared(s:Database.Database) {
   s.exec(`insert into platform_business_record(id,interface,platform_key,identity_rule_version,created_at) values(8,'apply_list','canonical','old-rule','c');

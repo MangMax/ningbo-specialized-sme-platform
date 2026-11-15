@@ -1,6 +1,6 @@
 import { initializeDb } from '../../../db/client'
 import { createServer, type Server } from 'node:http'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createApp, createRouter, createError, defineEventHandler, getQuery, toNodeListener } from 'h3'
@@ -123,7 +123,7 @@ it('keeps source differences and driver materialization fixed as matched records
     expect(after.result).toEqual(initial.result)
     observations.push({ matchedEnterprises: count === 4 ? 5 : 25, ...after.metrics() })
   }
-  if (process.env.COMPARISON_SOURCE_METRICS) writeFileSync(process.env.COMPARISON_SOURCE_METRICS, JSON.stringify(observations, null, 2))
+
   // Only the five differences may cross the driver boundary, never matched
   // source rows or originals. This fails even on the small legacy fixture.
   expect(observations.map(sample => sample.rows)).toEqual([5, 5, 5])

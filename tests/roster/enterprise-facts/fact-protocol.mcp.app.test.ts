@@ -4,16 +4,18 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
-import { realpathSync, writeFileSync } from 'node:fs'
-import { join, dirname } from 'node:path'
+import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { schema, useDb } from '../../../db'
 import { prepareFactCommand, commitPreparedFact, confirmedFactReferences, saveReferencedDecision } from '../../../.agents/skills/roster-ingestion-pipeline/examples/enterprise-facts.mjs'
 
-const base = process.env.FACT_PROTOCOL_307_URL
-const dbPath = process.env.FACT_PROTOCOL_307_DB_PATH
-const token = process.env.FACT_PROTOCOL_307_TOKEN ?? 'synthetic-fact-protocol-307'
-const enabled = !!base && !!dbPath
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { nativeAppAdapter } from '../../support/native-app'
+let base: string
+let directory: string
+let app: ReturnType<typeof nativeAppAdapter>
+const token = 'synthetic-fact-protocol'
 const client = new Client({ name: 'synthetic-fact-protocol-307', version: '1' })
 let db: ReturnType<typeof useDb>, ids: number[], tools: Awaited<ReturnType<Client['listTools']>>
 const observations: unknown[] = []
@@ -45,24 +47,24 @@ async function assertConfirmed(enterpriseId: number, kind: string) {
   return confirmedFactReferences(confirmed.readback, [first.receipt.factId])[0]
 }
 
-describe.skipIf(!enabled)('307 skill consumer through real toolkit transport', () => {
+describe('skill consumer through real toolkit transport', () => {
   beforeAll(async () => {
-    const url = new URL(base!)
-    if (!['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname)) throw new Error('Only owned loopback fixture is allowed')
-    const fixture = realpathSync(dirname(dbPath!))
-    if (!fixture.startsWith('/private/tmp/issue-307-') && !fixture.startsWith('/tmp/issue-307-')) throw new Error('Explicit owned issue-307 temp fixture required')
-    db = useDb({ dbPath: dbPath! })
+    directory = await mkdtemp(join(tmpdir(), 'fact-protocol-'))
+    app = nativeAppAdapter({ dir: directory, token, launch: ({ cwd, port }) => ({ args: [join(cwd, '.output/server/index.mjs')], env: { HOST: '127.0.0.1', PORT: String(port), NUXT_MCP_TOKEN: token } }) })
+    db = app.db
+    await app.start()
+    base = app.url('')
+    const url = new URL(base)
     ids = Array.from({ length: 3 }, () => {
       const name = `合成MCP事实协议-${randomUUID()}`
       return db.insert(schema.enterprise).values({ name, nameNorm: name }).returning().get().id
     })
     await client.connect(new StreamableHTTPClientTransport(new URL('/mcp', url), { requestInit: { headers: { authorization: `Bearer ${token}` } } }))
     tools = await client.listTools()
-  })
+  }, 60000)
   afterAll(async () => {
-    if (db) writeFileSync(join(dirname(dbPath!), 'mcp-fact-protocol-readbacks.json'), JSON.stringify(observations, null, 2))
-    await client.close()
-    db?.$client.close()
+    try { await client.close(); await app?.close() }
+    finally { if (directory) await rm(directory, { recursive: true, force: true }) }
   })
 
   it('discovers schemas and performs explicit sourced assert confirm correct withdraw with immutable audit and original replay', async () => {

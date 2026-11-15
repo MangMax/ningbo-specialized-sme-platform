@@ -1,4 +1,4 @@
-import { execFileSync } from 'node:child_process'
+
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, rmSync, copyFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -81,13 +81,7 @@ beforeAll(async () => {
 afterAll(async () => {
   await stopOwnedChild(child)
   await api?.close()
-  if (process.env.TICKET_186_EVIDENCE_DIR) {
-    mkdirSync(process.env.TICKET_186_EVIDENCE_DIR, { recursive: true })
-    writeFileSync(join(process.env.TICKET_186_EVIDENCE_DIR, 'server.log'), output)
-    writeFileSync(join(process.env.TICKET_186_EVIDENCE_DIR, 'public-log-observations.json'), JSON.stringify(observations, null, 2))
-    writeFileSync(join(process.env.TICKET_186_EVIDENCE_DIR, 'manifest.json'), JSON.stringify({ sha: execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(), tree: execFileSync('git', ['rev-parse', 'HEAD^{tree}'], { encoding: 'utf8' }).trim(), status: execFileSync('git', ['status', '--porcelain'], { encoding: 'utf8' }), lane: 'actual built Nuxt HTTP and raw MCP JSON-RPC, real evlog drain and protected REST query, controlled local OCR HTTP' }, null, 2))
-    writeFileSync(join(process.env.TICKET_186_EVIDENCE_DIR, 'fixture-root.txt'), dir)
-  } else rmSync(dir, { recursive: true, force: true })
+  rmSync(dir, { recursive: true, force: true })
 })
 
 it('actual Nuxt preserves full-PDF atomicity and recovers only the failed source page through the protected log seam', async () => {

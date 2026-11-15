@@ -12,7 +12,7 @@ import { initializeDb, schema } from '../../../db/client'
 import { recognizedResultToImport } from '../../../lib/platform/recognized-evidence'
 import type { PlatformLiveQueryResult } from '../../../lib/platform/live-query'
 import { createRosterImportClient } from '../../../lib/roster-import-client'
-import { spawnOwnedChild as spawn, reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../../support/owned-process.mjs'
+import { reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../../support/owned-process.mjs'
 const dir = mkdtempSync(join(tmpdir(), 'review-114-')), dbPath = join(dir, 'synthetic.db'), db = initializeDb({ create: true,  dbPath })
 let base: string, stop: () => Promise<void>, client: ReturnType<typeof createRosterImportClient>
 const actor = { type: 'user', id: 'synthetic-reviewer' }, basis = '指定证据人工核验'
@@ -46,7 +46,7 @@ async function startService(){
 }
 beforeAll(startService,90000)
 afterAll(async()=>{if(stop)await stop();rmSync(dir,{recursive:true,force:true})})
-describe('ticket 114 public evidence review',()=>{
+describe("ticket public evidence review",()=>{
   it('exposes bounded no-token HTTP and MCP lists without implicitly processing committed evidence',async()=>{
     const e=seed('有界复核主体','REVIEW-114-A'), scope=coord(e.id), d=await decide(scope,'list-decision')
     await archive(e,'list-archive')

@@ -1,9 +1,9 @@
-import { afterAll, beforeEach, expect, it } from 'vitest'
+import { afterAll, beforeAll, expect, it } from 'vitest'
 import { qualificationExportFixture } from './fixtures/qualification-export'
 
 const f = qualificationExportFixture()
 afterAll(() => f.close())
-beforeEach(async () => { await f.resetBusiness(); await f.start() }, 60000)
+beforeAll(async () => { await f.start() }, 60000)
 it('publishes and downloads complete multiple-source text through the HTTP export job', async () => {
   f.candidate('synthetic-full-text')
   const attachment = 'literal first source\n'.repeat(24) + 'literal second source😀'.repeat(90)

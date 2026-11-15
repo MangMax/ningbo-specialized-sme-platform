@@ -1,3 +1,5 @@
+import { compiledUpgradeCli } from '../runtime-boundary/fixtures/compiled-cli'
+const cliArtifact = compiledUpgradeCli('fingerprint-basis-cli')
 import Database from 'better-sqlite3'
 import * as expandSchema from '../../../upgrade/legacy-schema'
 import { ensurePlatformObservation } from '../../../upgrade/frozen/server/platform-business-record'
@@ -396,7 +398,7 @@ it('recovers command evidence through the CLI and replays in an independent proc
   let original:unknown
   for(const attempt of ['first','replay']) {
     const dir=f.target+'.cli-'+attempt
-    const result=spawnSync(process.execPath,['upgrade/run-fingerprint-basis.mjs',source,f.target,dir,'basis','scopes','',eventSource.path,eventSource.sha256,eventSource.snapshot],{encoding:'utf8'})
+    const result=spawnSync(process.execPath,[cliArtifact(),source,f.target,dir,'basis','scopes','',eventSource.path,eventSource.sha256,eventSource.snapshot],{encoding:'utf8'})
     writeFileSync(dir+'.stdout',result.stdout);writeFileSync(dir+'.stderr',result.stderr)
     expect(result.status,result.stderr).toBe(0)
     const receipt=JSON.parse(readFileSync(join(dir,'receipt.json'),'utf8'))
@@ -410,7 +412,7 @@ it('CLI persists every observation refusal reason and original aliases after rec
   const input={collectionId:1,position:{sequenceNo:2,positionState:'unknown' as const},row:{sequenceNo:2,rawFields:null},assignment:{enterpriseId:null,matchBasis:'none' as const,verificationStatus:'pending' as const,origin:'command' as const,actor:{type:'agent' as const,id:'original'},basis:'original',recordedAt:null}}
   const row=writeApplyTarget(drizzle(t),input);t.close()
   const eventSource=eventEvidence(source,f.target,[{observationId:row.observationId,lifecycle:'command',originalInput:{...input,position:{...input.position,pageId:null}}}]),before=readFileSync(f.target),dir=f.target+'.cli-rejected'
-  const result=spawnSync(process.execPath,['upgrade/run-fingerprint-basis.mjs',source,f.target,dir,'basis','scopes','',eventSource.path,eventSource.sha256,eventSource.snapshot],{encoding:'utf8'})
+  const result=spawnSync(process.execPath,[cliArtifact(),source,f.target,dir,'basis','scopes','',eventSource.path,eventSource.sha256,eventSource.snapshot],{encoding:'utf8'})
   writeFileSync(dir+'.stdout',result.stdout);writeFileSync(dir+'.stderr',result.stderr)
   expect(result.status).not.toBe(0);expect(readFileSync(f.target).equals(before)).toBe(true)
   const failure=JSON.parse(readFileSync(join(dir,'failure.json'),'utf8'))

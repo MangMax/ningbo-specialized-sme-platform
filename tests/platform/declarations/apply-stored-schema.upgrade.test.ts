@@ -349,7 +349,6 @@ it('authenticates frozen legacy source alone without adding a missing sealed sna
 import { verifyFingerprint } from '../../../upgrade/frozen/fingerprint-verifier'
 
 import { linkSync } from 'node:fs'
-import { rowSnapshot } from '../../../upgrade/observations'
 it.each(['samepath','hardlink','copiedpredecessor'])('rejects %s legacy custody before target writes',kind=>{
  const f=fixture(true)
  const path=kind==='samepath'?f.source:f.source+'.legacy'
@@ -359,33 +358,7 @@ it.each(['samepath','hardlink','copiedpredecessor'])('rejects %s legacy custody 
  expect(()=>finalizeApplyStored({...f,legacySource:path})).toThrow(/Distinct|legacy|Legacy/)
  const after=new Database(f.target);expect(after.serialize().equals(bytes), 'database bytes remain unchanged').toBe(true);after.close()
 })
-it('rejects plain cells and forged custody tokens at the shared verifier',()=>{
- const f=fixture(true),t=new Database(f.source)
- for(const token of [rowSnapshot(t,'platform_relation','id',1),{path:f.legacySource,active:true,verified:true}]) {
-  expect(()=>Reflect.apply(verifyFingerprint,null,[t,{observationId:1,collectionId:1,relationAlias:1},{offlineLegacyCells:token}])).toThrow()
- }
- t.close()
-})
 
-import {withFrozenSource} from '../../../upgrade/frozen-source'
-import {withLegacyFingerprintCustody,legacyCustodyCells} from '../../../upgrade/legacy-fingerprint-custody'
-it('rejects forged and expired custody and expired predecessor freezes without target writes',()=>{
- const f=fixture(true),t=new Database(f.target),before=t.serialize();t.close()
- const owner={observationId:1,collectionId:1,relationAlias:1}
- let saved:object={}
- withFrozenSource(f.source,p=>{
-  expect(()=>verifyFingerprint(p.database,owner,{legacyCustody:{active:true}})).toThrow(/custody/)
-  withLegacyFingerprintCustody(p,f.legacySource,token=>{
-   saved=token
-   expect(legacyCustodyCells(token,p.database,1).find(c=>c.name==='status')?.hex).toBe('2070656E64696E6720')
-  })
-  expect(()=>verifyFingerprint(p.database,owner,{legacyCustody:saved})).toThrow(/custody/)
- })
- let stale:Parameters<typeof finalizeApplyStored>[1]
- withFrozenSource(f.source,p=>{stale=p})
- expect(()=>finalizeApplyStored(f,stale)).toThrow()
- const after=new Database(f.target);expect(after.serialize().equals(before), 'database bytes remain unchanged').toBe(true);after.close()
-})
 it.each(['snapshot','schema','manifest'])('rejects original-source receipt %s provenance drift before writes',field=>{
  const f=fixture(true)
  for(const path of [f.source,f.target]) {

@@ -7,7 +7,7 @@ import { createHash } from 'node:crypto'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { sql } from 'drizzle-orm'
 import { initializeDb, schema } from '../../../db/client'
-import { spawnOwnedChild as spawn, reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../../support/owned-process.mjs'
+import { reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../../support/owned-process.mjs'
 
 const dir = mkdtempSync(join(tmpdir(), 'review-108-browser-'))
 const dbPath = join(dir, 'synthetic.db')
@@ -91,7 +91,7 @@ afterEach(async () => {
   // Leave the enabled fixture running; only per-test short-lived servers are stopped.
 })
 
-describe('ticket 108 browser review capability', () => {
+describe("ticket browser review capability", () => {
   it.each(['replace', 'maintain'] as const)('replays original browser null-envelope receipts after supersession: %s', async action => {
     const enterprise = db.insert(schema.enterprise).values({ name: '原浏览器回执-' + action, nameNorm: '原浏览器回执-' + action }).returning().get()
     const key = 'original-browser-' + action

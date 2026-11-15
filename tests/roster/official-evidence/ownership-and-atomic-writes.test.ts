@@ -259,7 +259,7 @@ it('accepts exactly 100 operations and rejects the 101st without changing old la
   expect(f.sqlite.prepare('SELECT revision FROM record_event WHERE id=1').get()).toEqual({ revision: 2 })
 })
 
-it('rejects source candidate 101 and event evidence 301 instead of truncating conflict checks', async () => {
+it("rejects source candidate and event evidence 301 instead of truncating conflict checks", async () => {
   const f = await fixture(); f.capture()
   for (let id = 3; id <= 102; id++) {
     f.sqlite.prepare("INSERT INTO record_evidence(id,record_event_id,source_file,list_no) VALUES(?,1,'notice.txt',?)").run(id, id)

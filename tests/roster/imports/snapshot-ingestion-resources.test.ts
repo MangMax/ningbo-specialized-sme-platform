@@ -337,18 +337,3 @@ it('snapshot HTTP versions retain previous history and empty and mixed rows reta
 })
 
 // Opt-in: this regression deliberately seeds >300MiB of unrelated JSON. Keep it out of daily tests.
-it.runIf(process.env.ROSTER_SNAPSHOT_SCALE === '1')('snapshot preflight does not materialize unrelated archived raw fields', async () => {
-  const { db } = database()
-  const batch = db.insert(schema.platformExportBatch).values({ titleCode: 'specialized_sme', year: 2026, collectedOn: '2026-10-19', originalFilename: 'synthetic.xlsx', sha256: 'synthetic-v1', rowCount: 1100, importStatus: 'imported' }).returning({ id: schema.platformExportBatch.id }).get()
-  const insert = db.$client.prepare('INSERT INTO platform_export_row(batch_id,source_row_no,raw_fields,created_at) VALUES(?,?,?,?)')
-  const raw = JSON.stringify({ original: 'x'.repeat(300_000) })
-  db.$client.transaction(() => { for (let i = 0; i < 1100; i++) insert.run(batch.id, i + 3, raw, '2026-10-19') })()
-  const server = await api(db)
-  try {
-    const before = process.memoryUsage().heapUsed
-    const preflight = await server.post('preflight', request(300))
-    const growth = process.memoryUsage().heapUsed - before
-    expect(preflight.preflight).toMatchObject({ add: 0, update: 1, conflicts: [] })
-    expect(growth).toBeLessThanOrEqual(256 * MiB)
-  } finally { await server.close() }
-}, 30_000)

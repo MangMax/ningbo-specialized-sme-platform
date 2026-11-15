@@ -1,3 +1,5 @@
+import { readDevelopmentDiscovery } from '../current-export/fixtures/specialized-export'
+import { spawnCompiledApp } from '../../support/owned-process.mjs'
 import { CURRENT_RULE_VERSION, QUALIFICATION_ASSESSMENT_VERSION } from '../../../lib/roster/current-qualification'
 import { createHash } from 'node:crypto'
 import { writeFileSync, renameSync } from 'node:fs'
@@ -18,7 +20,9 @@ let base = '', output = '', year = 0
 let eligibleId = 0, pendingId = 0, reviewId = 0
 const hash = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex')
 // Opens only on an explicitly granted future HTTP test run. No reader/native mocks.
+let developmentSpec: any
 beforeAll(async () => {
+  developmentSpec = await readDevelopmentDiscovery()
   fixture = qualificationFileFixture()
   const f = fixture
   year = new Date().getUTCFullYear()
@@ -31,7 +35,7 @@ beforeAll(async () => {
   writeFileSync(join(root, 'empty.env'), '')
   const port = await reserveLoopbackPort()
   base = `http://127.0.0.1:${port}`
-  child = spawnOwnedChild(process.execPath, [join(cwd, 'node_modules/nuxt/bin/nuxt.mjs'), 'dev', '--host', '127.0.0.1', '--port', String(port), '--dotenv', join(root, 'empty.env')], {
+  child = spawnCompiledApp(port, {
     cwd, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, NUXT_BUILD_DIR: join(root, 'nuxt'), NUXT_LOG_DIR: join(root, 'logs'), NUXT_OCR_TOKEN: 'synthetic408-ocr-token', MIIT_COOKIE: 'synthetic408-cookie', NUXT_DB_PATH: f.sqlite.name, NUXT_FILES_DIR: join(root, 'files'), NUXT_INCOMING_DIR: join(root, 'incoming'), NUXT_API_TOKEN: 'synthetic408-http-token', NUXT_MCP_TOKEN: 'synthetic408-mcp-token' },
   })
   for (const stream of [child.stdout, child.stderr]) stream?.on('data', data => { output = (output + String(data)).slice(-12000) })
@@ -123,7 +127,7 @@ function sameCurrentFacts(left: CurrentQualifiedResult, right: CurrentQualifiedR
     .toEqual([right.total, right.uncertainTotal, right.publishedPending.total, right.publishedPending.requested, right.options])
 }
 
-it('real_http_and_sdk_share_effective_and_expired_states_without_platform_veto_408', async () => {
+it("real_http_and_sdk_share_effective_and_expired_states_without_platform_veto", async () => {
   const a = await http({ q: 'synthetic_408_public' }), b = await sdk({ q: 'synthetic_408_public' })
   expect(a.responseVersion).toBe('current-qualified-478-v2')
   expect(a.rows.map(row => row.enterpriseId)).toEqual([eligibleId])
@@ -142,7 +146,7 @@ it('real_http_and_sdk_share_effective_and_expired_states_without_platform_veto_4
   sameCurrentFacts(expired, await sdk({ q: 'synthetic_408_public', status: 'expired' }))
 })
 
-it('real_transports_distinguish_unrequested_pending_and_requested_empty_408', async () => {
+it("real_transports_distinguish_unrequested_pending_and_requested_empty", async () => {
   const absent = await http(), absentSdk = await sdk()
   expect(absent.publishedPending).toMatchObject({ requested: false, rows: [], total: 0 })
   sameCurrentFacts(absent, absentSdk)
@@ -154,7 +158,7 @@ it('real_transports_distinguish_unrequested_pending_and_requested_empty_408', as
 it.each([
   { id: 'different_valid_year', args: { validYear: 2027 } },
   { id: 'unknown_batch', args: { maintenanceYear: 2024, maintenanceBatch: 2 } },
-])('real_expired_identity_is_not_a_definite_filter_hit_408_$id', async ({ args }) => {
+])("real_expired_identity_is_not_a_definite_filter_hit_$id", async ({ args }) => {
   const known = await http({ q: 'synthetic_408_public_pending', status: 'expired', validYear: '2028', maintenanceYear: '2024' })
   expect(known.rows.map(row => row.enterpriseId)).toEqual([pendingId])
   expect(known.rows[0]).toMatchObject({ matchedValidYears: [2028], matchedMaintenance: [{ year: 2024, batch: null }] })
@@ -168,7 +172,7 @@ it.each([
   sameCurrentFacts(expired, await sdk({ q: 'synthetic_408_public_pending', status: 'expired', ...args }))
 })
 
-it('real_date_precision_and_deep_pages_keep_legacy_totals_408', async () => {
+it("real_date_precision_and_deep_pages_keep_legacy_totals", async () => {
   const full = await http({ recognitionFrom: `${year}-01-01`, recognitionTo: `${year}-12-31`, pageSize: '1' })
   expect(full).toMatchObject({ total: 1, uncertainTotal: 0, options: { recognitionYears: [year] } })
   const partial = await http({ recognitionFrom: `${year}-02-01`, recognitionTo: `${year}-12-31` })
@@ -182,9 +186,9 @@ it('real_date_precision_and_deep_pages_keep_legacy_totals_408', async () => {
   sameCurrentFacts(deep, await sdk({ q: 'synthetic_408_public', page: 9, pageSize: 1 }))
 })
 
-it('real_http_400_and_sdk_original_argument_validation_keep_bounds_408', async () => {
+it("real_http_400_and_sdk_original_argument_validation_keep_bounds", async () => {
   const before = databaseContent()
-  for (const args of [{ titleCode: 'invalid' }, { pageSize: 201 }, { maintenanceBatch: 2 }, { recognitionFrom: '2024-02-30', recognitionTo: '2024-12-31' }, { unsupported408: true }]) {
+  for (const args of [{ titleCode: 'invalid' }, { pageSize: 201 }, { maintenanceBatch: 2 }, { recognitionFrom: '2024-02-30', recognitionTo: '2024-12-31' }, { unsupported: true }]) {
     const response = await fetch(base + '/api/roster/current-enterprises?' + new URLSearchParams({ titleCode: 'innovative_sme', ...Object.fromEntries(Object.entries(args).map(([key, value]) => [key, String(value)])) }))
     expect(response.status).toBe(400)
     await expect(client!.callTool({ name: 'list_current_qualified_enterprises', arguments: { titleCode: 'innovative_sme', ...args } }, CallToolResultSchema))
@@ -195,7 +199,7 @@ it('real_http_400_and_sdk_original_argument_validation_keep_bounds_408', async (
   expect(databaseContent()).toBe(before)
 })
 
-it('real_executor_unavailable_is_503_then_retry_recovers_not_zero_408', async () => {
+it("real_executor_unavailable_is_503_then_retry_recovers_not_zero", async () => {
   const before = databaseContent(), path = fixture!.sqlite.name, unavailable = path + '.temporarily-unavailable'
   // Only this owned synthetic file is renamed, with no writes while absent.
   // The actual native executor realpath check must fail; nothing is mocked.
@@ -209,11 +213,9 @@ it('real_executor_unavailable_is_503_then_retry_recovers_not_zero_408', async ()
   expect(databaseContent()).toBe(before)
 })
 
-it('dev_generated_openapi_and_actual_sdk_describe_five_states_and_empty_pending_408', async () => {
+it("dev_generated_openapi_and_actual_sdk_describe_five_states_and_empty_pending", async () => {
   // Actual dev-generated spec, not a static route string or compiled artifact claim.
-  const response = await fetch(base + '/_openapi.json')
-  expect(response.status).toBe(200)
-  const spec = await response.json()
+  const spec = developmentSpec
   const operation = spec.paths['/api/roster/current-enterprises'].get
   expect(operation.responses['400']).toBeDefined(); expect(operation.responses['503']).toBeDefined()
   expect(JSON.stringify(operation)).toContain('publishedPending')

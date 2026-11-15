@@ -2,7 +2,7 @@ import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
 import { initializeDb } from '../../../db/client'
 import { afterAll, beforeAll, expect, it, vi } from 'vitest'
 import { createServer, type Server } from 'node:http'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createApp, createRouter, defineEventHandler, getQuery, getRouterParam, setHeader, createError, toNodeListener } from 'h3'
@@ -306,5 +306,5 @@ it('profile and history reads stay scoped as unrelated malformed archives and au
   expect(plan('SELECT id FROM enterprise_profile_audit WHERE enterprise_id=? ORDER BY id DESC LIMIT 1', owner.id)).toContain('enterprise_profile_audit_enterprise_idx')
   expect(plan('SELECT id FROM enterprise_profile_audit WHERE idempotency_key=?', 'unrelated96-1')).toContain('enterprise_profile_audit_key_uq')
   const measurement = { ticket: 96, sourceHead: process.env.PROFILE96_SOURCE_SHA ?? 'unrecorded', samplesPerDistribution: 5, distribution: { unrelatedEnterprises: 1000, unrelatedAudits: 1000, unrelatedRawQueries: 50, rawQueryBytes: 65536 }, combinedProfileHistoryHttpMs: durations, limitation: 'small synthetic boundedness observation; no capacity or tail SLO claim' }
-  if (process.env.PROFILE96_MEASUREMENTS) writeFileSync(process.env.PROFILE96_MEASUREMENTS, JSON.stringify(measurement, null, 2))
+
 })

@@ -1,3 +1,5 @@
+import { rmSync } from 'node:fs'
+import { afterAll } from 'vitest'
 import Database from 'better-sqlite3'
 import { spawnSync } from 'node:child_process'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
@@ -12,7 +14,20 @@ function copyTarget(source: string, target: string) {
   copyFileSync(source,target); const t = new Database(target)
   try { migrate(drizzle(t), { migrationsFolder: 'db/migrations' }) } finally { t.close() }
 }
+let prefixTemplate: ReturnType<typeof buildFixture> | undefined
+const templateCopies: string[] = []
+afterAll(() => { if (!process.env.T04_EVIDENCE_DIR) for (const root of templateCopies) rmSync(root, {recursive:true,force:true}) })
 function fixture() {
+
+  if (!prefixTemplate) { prefixTemplate = buildFixture(); templateCopies.push(prefixTemplate.root) }
+  const base = prefixTemplate
+  const root = mkdtempSync(join(process.env.T04_EVIDENCE_DIR ?? tmpdir(), 'stage-copy-'))
+  templateCopies.push(root)
+  const source = join(root, 'source.sqlite'), target = join(root, 'target.sqlite')
+  copyFileSync(base.source, source); copyFileSync(base.target, target)
+  return {...base, root, source, target}
+}
+function buildFixture() {
   const root = mkdtempSync(join(process.env.T04_EVIDENCE_DIR ?? tmpdir(), 't04-'))
   const source = join(root, 'source.sqlite'), target = join(root, 'target.sqlite')
   const s = new Database(source)

@@ -47,7 +47,6 @@ const collection: LegacyPlatformCollection = {
 function copy(source: string, destination: string) { copyFileSync(source, destination); chmodSync(destination, 0o600); return destination }
 function schema0(name: string) {
   const path = join(root, name + '.sqlite')
-  if (process.env.ISSUE759_SOURCE) return copy(process.env.ISSUE759_SOURCE, path)
   const old = new Database(path)
   try {
     migrate(drizzle(old), { migrationsFolder: 'db/migrations' })

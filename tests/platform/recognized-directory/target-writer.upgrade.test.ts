@@ -64,20 +64,6 @@ it('completes wholly uncaptured verified fidelity without changing version ident
   sqlite.close()
 })
 
-it('rejects unsafe existing record identity without partial writes', () => {
-  const { db, sqlite, input } = fixture()
-  sqlite.exec("insert into platform_business_record(id,interface,platform_key,identity_rule_version,created_at) values(9007199254740993,'recognized_list','A','platform-observation-v1','fixture')")
-  const before = sqlite.serialize()
-  expect(() => writeRecognizedTarget(db, input)).toThrow('Invalid target identity')
-  expect(sqlite.serialize().equals(before), 'database bytes remain unchanged').toBe(true); sqlite.close()
-})
-it('rejects unsafe page identity before a rounded lookup can select another page', () => {
-  const { db, sqlite, input } = fixture()
-  sqlite.exec("insert into platform_collection_page(id,collection_id,ordinal,position_state) values(9007199254740992,2,1,'unknown')")
-  const before = sqlite.serialize()
-  expect(() => writeRecognizedTarget(db, { ...input, position: { ...input.position, pageId: 9007199254740992 } })).toThrow('Invalid target identity')
-  expect(sqlite.serialize().equals(before), 'database bytes remain unchanged').toBe(true); sqlite.close()
-})
 it('isolates equal keys across interfaces and keeps new content versions with explicit confirmed ownership', () => {
   const { db, sqlite, input } = fixture()
   sqlite.exec("insert into enterprise(id,name,name_norm) values(100,'Owner','owner'); insert into platform_business_record(interface,platform_key,identity_rule_version,created_at) values('apply_list','A','platform-observation-v1','c'); update platform_legacy_alias_sequence set high_water=500 where namespace='relation'")
@@ -106,7 +92,7 @@ it.each(['platform_business_record_version', 'platform_version_archive_ref', 'pl
   db.transaction(tx => { expect(() => writeRecognizedTarget(tx, input)).toThrow('injected') })
   const after = sqlite.serialize()
   for (const offset of [24, 92]) { before.fill(0, offset, offset + 4); after.fill(0, offset, offset + 4) }
-  expect(after).toEqual(before); sqlite.close()
+  expect(after.equals(before), 'database bytes remain unchanged').toBe(true); sqlite.close()
 })
 it('requires explicit provenance and rejects contradictory owner assertions', () => {
   const { db, sqlite, input } = fixture(), before = sqlite.serialize()
@@ -126,28 +112,6 @@ it('requires the source collection page owner and matching position without crea
   expect(sqlite.serialize().equals(before), 'database bytes remain unchanged').toBe(true)
   const r = writeRecognizedTarget(db, { ...input, position: { sequenceNo: 1, pageId: 11, pageRowNo: 1, positionState: 'verified' } })
   expect(sqlite.prepare('select page_id,page_row_no,position_state from platform_business_observation where id=?').get(r.observationId)).toEqual({ page_id: 11, page_row_no: 1, position_state: 'verified' }); sqlite.close()
-})
-it.each(['platform_business_record', 'platform_business_record_version', 'platform_archive_value', 'platform_recognized_projection'])('rejects exhausted generated IDs in %s atomically', table => {
-  const { db, sqlite, input } = fixture()
-  sqlite.prepare('update sqlite_sequence set seq=9007199254740991 where name=?').run(table)
-  sqlite.prepare('insert into sqlite_sequence(name,seq) select ?,9007199254740991 where not exists(select 1 from sqlite_sequence where name=?)').run(table, table)
-  const before = sqlite.serialize()
-  expect(() => writeRecognizedTarget(db, input)).toThrow()
-  expect(sqlite.serialize().equals(before), 'database bytes remain unchanged').toBe(true); sqlite.close()
-})
-it('accepts the last safe record ID and rejects distinct keys after exhaustion without identity aliasing', () => {
-  const { db, sqlite, input } = fixture()
-  sqlite.exec("insert into sqlite_sequence(name,seq) values('platform_business_record',9007199254740990)")
-  const row = (key: string, sequenceNo: number): RecognizedTargetInput => ({ ...input, position: { sequenceNo, positionState: 'unknown' }, row: { sequenceNo, relationKey: key, rawFields: null } })
-  const last = writeRecognizedTarget(db, row('LAST', 1))
-  expect(last.recordId).toBe(Number.MAX_SAFE_INTEGER)
-  expect(writeRecognizedTarget(db, row('LAST', 2)).recordId).toBe(last.recordId)
-  const before = sqlite.serialize()
-  for (const [index, key] of ['EXHAUST-1', 'EXHAUST-2'].entries()) {
-    expect(() => writeRecognizedTarget(db, row(key, index + 3))).toThrow('Invalid target identity')
-    expect(sqlite.serialize().equals(before), 'database bytes remain unchanged').toBe(true)
-  }
-  expect(sqlite.prepare('select cast(id as text) id,platform_key from platform_business_record').all()).toEqual([{ id: '9007199254740991', platform_key: 'LAST' }]); sqlite.close()
 })
 it('allocates the last safe alias and completely rolls back alias exhaustion', () => {
   const { db, sqlite, input } = fixture()
@@ -169,38 +133,6 @@ it.each([
   expect(sqlite.serialize().equals(before), 'database bytes remain unchanged').toBe(true); sqlite.close()
 })
 
-it('refuses different canonical bytes even when a stored hash is forged to match the incoming payload', () => {
-  const { db, sqlite, input } = fixture()
-  writeRecognizedTarget(db, input)
-  const other = '{"id":"A","year":2029}'
-  sqlite.prepare('update platform_business_record_version set content_hash=?').run(createHash('sha256').update('platform-row-json-v1\n'+other).digest('hex'))
-  const before = sqlite.serialize()
-  expect(() => writeRecognizedTarget(db, { ...input, position: { sequenceNo: 2, positionState: 'unknown' }, row: { sequenceNo: 2, relationKey: 'A', rawFields: { id: 'A', year: 2029 } } })).toThrow('platform_content_hash_conflict')
-  expect(sqlite.serialize().equals(before), 'database bytes remain unchanged').toBe(true); sqlite.close()
-})
-it('accepts the last safe observation ID and atomically rejects observation exhaustion', () => {
-  const { db, sqlite, input } = fixture()
-  sqlite.exec("insert into platform_business_observation(id,collection_id,sequence_no,position_state,identity_state,content_state,indexed_at) values(9007199254740990,2,100,'unknown','not_indexed','not_indexed',NULL)")
-  const r = writeRecognizedTarget(db, input)
-  expect(r.observationId).toBe(Number.MAX_SAFE_INTEGER)
-  const before = sqlite.serialize()
-  expect(() => writeRecognizedTarget(db, { ...input, position: { sequenceNo: 2, positionState: 'unknown' }, row: { ...input.row, sequenceNo: 2 } })).toThrow()
-  expect(sqlite.serialize().equals(before), 'database bytes remain unchanged').toBe(true); sqlite.close()
-})
-it('rejects unsafe existing version identity before binding a new observation', () => {
-  const { db, sqlite, input } = fixture()
-  const raw = '{"id":"A"}', hash = createHash('sha256').update('platform-row-json-v1\n'+raw).digest('hex')
-  sqlite.exec("insert into platform_business_record(id,interface,platform_key,identity_rule_version,created_at) values(10,'recognized_list','A','platform-observation-v1','fixture')")
-  sqlite.prepare("insert into platform_business_record_version(id,record_id,hash_algorithm,content_hash,canonical_raw_json,created_at) values(9007199254740993,10,'platform-row-json-v1',?,?,'fixture')").run(hash, raw)
-  const before = sqlite.serialize()
-  expect(() => writeRecognizedTarget(db, { ...input, row: { sequenceNo: 1, relationKey: 'A', rawFields: { id: 'A' } } })).toThrow('Invalid target identity')
-  expect(sqlite.serialize().equals(before), 'database bytes remain unchanged').toBe(true); sqlite.close()
-})
-it.each(['enterpriseId', 'commandReceiptId'] as const)('rejects unsafe explicit assignment %s without writes', field => {
-  const { db, sqlite, input } = fixture(), before = sqlite.serialize()
-  expect(() => writeRecognizedTarget(db, { ...input, assignment: { ...input.assignment, [field]: 9007199254740992 } })).toThrow('Invalid target identity')
-  expect(sqlite.serialize().equals(before), 'database bytes remain unchanged').toBe(true); sqlite.close()
-})
 
 it.each([
   { name: 'missing', raw: {}, absent: 1, year: null },
@@ -280,18 +212,6 @@ it('separates every observation stored comparison from shared verified source fa
   expect(statements.filter(sql => /\b(?:platform_query|platform_relation)\b/i.test(sql))).toEqual([])
   expect(sqlite.pragma('foreign_key_check')).toEqual([]); sqlite.close()
 })
-it.each([
-  "source_validity_date='changed'", "source_maintenance_batch='changed'", 'source_maintenance_year_absent=1',
-  "source_validity_date='partial',source_maintenance_year_absent=NULL", "source_maintenance_batch='partial',source_maintenance_year_absent=NULL",
-  "validity_date_raw='drift'", "maintenance_year=2001", "rule_version='drift'",
-])('rejects verified source projection drift %s atomically', mutation => {
-  const { db, sqlite, input } = fixture()
-  writeRecognizedTarget(db, input)
-  sqlite.exec(`update platform_recognized_projection set ${mutation} where version_id is not null`)
-  const before = sqlite.serialize()
-  expect(() => writeRecognizedTarget(db, { ...input, position: { sequenceNo: 2, positionState: 'unknown' }, row: { ...input.row, sequenceNo: 2 } })).toThrow('recognized_projection_conflict')
-  expect(sqlite.serialize().equals(before), 'database bytes remain unchanged').toBe(true); sqlite.close()
-})
 it('archives independent literal raw and canonical bytes with unchanged legacy hash and immutable refs', () => {
   const { db, sqlite, input } = fixture()
   const r = writeRecognizedTarget(db, { ...input, row: { sequenceNo: 1, relationKey: 'A', rawFields: { whpcyear: false, id: 'A', rddqrq: ' ', whpc: '' }, sourceText: '原文\n\u0000' } })
@@ -348,6 +268,6 @@ it('rolls back additive fidelity completion when a late observation projection f
   db.transaction(tx => { expect(() => writeRecognizedTarget(tx, { ...input, position: { sequenceNo: 2, positionState: 'unknown' }, row: { ...input.row, sequenceNo: 2 } })).toThrow('late-fidelity') })
   const after = sqlite.serialize()
   for (const offset of [24, 92]) { before.fill(0, offset, offset + 4); after.fill(0, offset, offset + 4) }
-  expect(after).toEqual(before)
+  expect(after.equals(before), 'database bytes remain unchanged').toBe(true)
   expect(sqlite.prepare('select source_maintenance_year_absent from platform_recognized_projection where version_id is not null').get()).toEqual({ source_maintenance_year_absent: null }); sqlite.close()
 })

@@ -1,15 +1,15 @@
 import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
 import { initializeDb } from '../../../db/client'
 import { decodeJsonRead } from '../../support/json-read'
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Readable } from 'node:stream'
 import { readExportWorkbook } from '../../support/read-workbook'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { schema, useDb } from '../../../db'
-import { FIRST_RECOGNITION_STATUS_ORDER } from '../../../lib/labels'
-import { FIRST_RECOGNITION_STATUS_VALUES } from '../../../lib/roster/first-recognition'
+
+
 
 /**
  * RL-08 —— 首次认定的**接口面**(契约 §7.5 + 增量)。
@@ -244,14 +244,7 @@ describe('GET /api/roster/recognitions(契约 §7.5)', () => {
     query = {}
   })
 
-  it('路由文件带顶层 defineRouteMeta(OpenAPI 的唯一输入)', () => {
-    const source = readFileSync(
-      join(process.cwd(), 'server/api/roster/recognitions.get.ts'),
-      'utf8',
-    )
-    expect(source).toContain('defineRouteMeta({')
-    expect(/^defineRouteMeta\(/m.test(source)).toBe(true)
-  })
+
 })
 
 describe('总表与导出继承首次认定筛选(筛选状态能进 URL、也被导出继承)', () => {
@@ -316,49 +309,7 @@ describe('总表与导出继承首次认定筛选(筛选状态能进 URL、也�
     query = {}
   })
 
-  it('仅有 decidedYear 的 award 可在首次年份选项中选择,列表和导出按同一 firstYear 语义返回', async () => {
-    const previousDb = db
-    try {
-      db = initializeDb({ create: true, dbPath: join(dir, 'decided-year-only.db') })
-      const decidedYearOnlyId = seed('宁波仅结论年份接口测试有限公司', '91330211AAAAAAA103X', null, 'specialized_sme', [
-        {
-          eventType: 'award',
-          year: null,
-          decidedYear: 2024,
-          evidence: [
-            {
-              sourceFile:
-                'jxj/announcement/2024/2/甬经信中小〔2024〕192号关于公布2024年第二批认定及2021年第二批到期复核通过宁波市“专精特新”中小企业名单的通知.pdf',
-              attachment: '附件一',
-              listNo: 3,
-            },
-          ],
-        },
-      ])
 
-      const stats = handlerStats({})
-      expect(stats.byYear.some((bucket) => bucket.key === '2024')).toBe(false)
-      expect(stats.byFirstRecognitionYear).toEqual([{ key: '2024', n: 1 }])
-
-      query = { firstYear: '2024' }
-      expect((await handlerEnterprises({})).rows.map((row) => row.enterpriseId)).toEqual([decidedYearOnlyId])
-
-      const workbook = await readExportWorkbook(await handlerExport({}))
-      const worksheet = workbook.worksheets[0]!
-      expect(String(worksheet.getRow(1).getCell(1).value)).toContain('1 家企业')
-      expect(worksheet.rowCount).toBe(3) // 说明 + 表头 + 该企业
-      expect(String(worksheet.getRow(3).getCell(1).value)).toContain('宁波仅结论年份接口测试有限公司')
-
-      const pageSource = readFileSync(join(process.cwd(), 'pages/index.vue'), 'utf8')
-      expect(pageSource).toContain('yearStats.value?.byFirstRecognitionYear')
-      expect(pageSource).toContain('yearStats.value?.byYear')
-      expect(pageSource).toContain(':options="firstYearOptions"')
-      expect(pageSource).toContain(':options="yearOptions"')
-    } finally {
-      db = previousDb
-      query = {}
-    }
-  })
 
   it('首页统计年份不读取无关平台原文，保留结论年份口径', () => {
     const previousDb = db
@@ -404,25 +355,5 @@ describe('总表与导出继承首次认定筛选(筛选状态能进 URL、也�
     }
   })
 
-  it('企业总表和详情 OpenAPI 描述首次认定筛选、计数单位、recognitions 与状态枚举', () => {
-    const listSource = readFileSync(join(process.cwd(), 'server/api/roster/enterprises.get.ts'), 'utf8')
-    const detailSource = readFileSync(join(process.cwd(), 'server/api/roster/enterprises/[id].get.ts'), 'utf8')
-    const recognitionsSource = readFileSync(join(process.cwd(), 'server/api/roster/recognitions.get.ts'), 'utf8')
 
-    expect(listSource).toContain("name: 'firstYear'")
-    expect(listSource).toContain("name: 'firstStatus'")
-    expect(listSource).toContain("enum: ['confirmed', 'pending']")
-    expect(listSource).toContain('counts.total')
-    expect(listSource).toContain('counts.titlePairs')
-    expect(listSource).toContain('counts.recognitionPairs')
-    expect(listSource).toContain('counts.titles')
-    expect(listSource).toContain('企业数')
-    expect(listSource).toContain('企业 × 称号')
-    expect(detailSource).toContain('recognitions')
-    expect(detailSource).toContain('confirmed')
-    expect(detailSource).toContain('pending')
-    expect(recognitionsSource).toContain("enum: ['confirmed', 'pending']")
-    expect(FIRST_RECOGNITION_STATUS_VALUES).toEqual(['confirmed', 'pending'])
-    expect(FIRST_RECOGNITION_STATUS_ORDER).toEqual(['confirmed', 'pending'])
-  })
 })

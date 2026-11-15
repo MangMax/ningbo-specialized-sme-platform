@@ -1,3 +1,5 @@
+import { readDevelopmentDiscovery } from '../current-export/fixtures/specialized-export'
+import { spawnCompiledApp } from '../../support/owned-process.mjs'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -5,7 +7,7 @@ import { join, resolve } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
 import { initializeDb, schema } from '../../../db/client.ts'
-import { spawnOwnedChild as spawn, reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../../support/owned-process.mjs'
+import { reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../../support/owned-process.mjs'
 
 const dir = mkdtempSync(join(tmpdir(), 'spztx-record-comparison-http-'))
 const path = join(dir, 'roster.db')
@@ -22,10 +24,12 @@ const grouped = submitNativePlatformQuery(db, { interface: 'business_list', quer
 const groupQuery = { id: grouped.queryId }
 const groupedRelations = grouped.relationIds.map(id => ({ id }))
 let service: { baseUrl: string; stop: () => Promise<void> }
+let developmentSpec: any
 beforeAll(async () => {
+  developmentSpec = await readDevelopmentDiscovery()
   const cwd = resolve(import.meta.dirname, '../../..')
   const port = await reserveLoopbackPort()
-  const child = spawn(process.execPath, [join(cwd, 'node_modules/nuxt/bin/nuxt.mjs'), 'dev', '--host', '127.0.0.1', '--port', String(port)], {
+  const child = spawnCompiledApp(port, {
     cwd, stdio: ['ignore', 'pipe', 'pipe'],
     env: { ...process.env, NUXT_BUILD_DIR: join(dir, 'nuxt-build'), NUXT_DB_PATH: path, NUXT_FILES_DIR: join(dir, 'files'), NUXT_INCOMING_DIR: join(dir, 'incoming') },
   })
@@ -128,7 +132,7 @@ describe('record comparison true HTTP adapters on isolated SQLite', () => {
     expect(JSON.stringify(body)).not.toContain('PRIVATE_GROUP_RAW')
     expect((await fetch(`${url}&businessPage=0`)).status).toBe(400)
     expect((await fetch(`${url}&businessPageSize=201`)).status).toBe(400)
-    const openapi = await (await fetch(`${service.baseUrl}/_openapi.json`)).json()
+    const openapi = developmentSpec
     expect(openapi.paths['/api/roster/record-comparison'].get.parameters).toEqual(expect.arrayContaining([expect.objectContaining({ name: 'businessPage' }), expect.objectContaining({ name: 'businessPageSize' })]))
   })
 

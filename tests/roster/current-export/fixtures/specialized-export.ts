@@ -1,3 +1,4 @@
+import { resetExportRows } from './reset-rows'
 import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync, writeFileSync, renameSync } from 'node:fs'
 import { normalizeUscc } from '../../../../lib/domain'
@@ -20,14 +21,20 @@ export type Event = { eventType: 'award'|'review'|'nurture'|'maintain'; year: nu
 export const fresh: Event[] = [{ eventType: 'award', year, batchSeq: 1 }]
 export const businessTables = ['record_correspondence','difference_reason','platform_observation_assignment','platform_legacy_relation_alias','platform_business_observation','platform_legacy_query_alias','platform_collection','enterprise_alias','record_evidence','record_event','record','enterprise']
 
-// Synthetic setup only. All assertions on export behavior use actual Nitro HTTP and XLSX bytes.
+// Synthetic setup only; callers choose real Nitro HTTP or the native workbook writer.
 export function specializedExportFixture({ discovery = false }: { discovery?: boolean } = {}) {
   const dir = mkdtempSync(join(process.env.CURRENT_CANDIDATE_READER_EVIDENCE_DIR ?? tmpdir(), 'export-118-'))
   const token = 'synthetic-export-118-token'
   const app = nativeAppAdapter({ dir, token, launch: discovery ? ({ cwd, port }) => ({
     args: [join(cwd, 'node_modules/nuxt/bin/nuxt.mjs'), 'dev', '--host', '127.0.0.1', '--port', String(port)],
   }) : undefined })
-  const { headers, url, start, terminal, resetBusiness } = app
+  const { headers, url, terminal } = app
+  let started = false
+  async function start() { if (!started) { await app.start(); started = true } }
+  async function resetBusiness() {
+    if (!started) { await app.resetBusiness(); return }
+    resetExportRows(app.db.$client)
+  }
   const json = (response: Response): Promise<any> => response.json()
   const submit = (key: string, extra = {}) => app.request(route, { method: 'POST', body: JSON.stringify({ clientRequestId: key, ...extra }) })
   async function download(job: any) {

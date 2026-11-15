@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, expect, it } from 'vitest'
 import { type ChildProcess } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { initializeDb } from '../../../db/client'
@@ -54,11 +54,7 @@ afterAll(async () => {
   await stopOwnedChild(child)
   const afterHash = existsSync(dbPath) ? hash(dbPath) : null
   observations.push({ afterHash, unchangedBusinessDb: afterHash === beforeHash, rawAbsent: !output.includes(payload.toString().trim()), child: { pid: child?.pid, exitCode: child?.exitCode, signalCode: child?.signalCode } })
-  if (process.env.TUS_FIELD_EVIDENCE_DIR) {
-    mkdirSync(process.env.TUS_FIELD_EVIDENCE_DIR, { recursive: true })
-    writeFileSync(join(process.env.TUS_FIELD_EVIDENCE_DIR, 'server.log'), output)
-    writeFileSync(join(process.env.TUS_FIELD_EVIDENCE_DIR, 'observations.json'), JSON.stringify(observations, null, 2))
-  }
+
   rmSync(root, { recursive: true, force: true })
   expect(afterHash).toBe(beforeHash); expect(output).not.toContain(payload.toString().trim())
 })

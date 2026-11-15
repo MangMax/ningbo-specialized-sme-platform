@@ -1,12 +1,14 @@
+import { readDevelopmentDiscovery } from '../current-export/fixtures/specialized-export'
+import { spawnCompiledApp } from '../../support/owned-process.mjs'
 import { initializeDb } from '../../../db/client'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 
 import { afterAll, beforeAll, expect, it } from 'vitest'
-import { schema, useDb } from '../../../db'
+import { schema } from '../../../db'
 import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
-import { spawnOwnedChild as spawn, reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../../support/owned-process.mjs'
+import { reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../../support/owned-process.mjs'
 
 const dir = mkdtempSync(join(tmpdir(), 'annual250-mcp-http-'))
 const db = initializeDb({ create: true, dbPath: join(dir, 'roster.db') })
@@ -18,13 +20,15 @@ const relations = [1, 2].map(n => {
   return {id:seeded.relationIds[0]!}
 })
 let service: { baseUrl: string; stop: () => Promise<void> }
+let developmentSpec: any
 beforeAll(async () => {
+  developmentSpec = await readDevelopmentDiscovery()
   const cwd = resolve(import.meta.dirname, '../../..'), port = await reserveLoopbackPort()
-  const child = spawn(process.execPath, [join(cwd, 'node_modules/nuxt/bin/nuxt.mjs'), 'dev', '--host', '127.0.0.1', '--port', String(port)], { cwd, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, NUXT_BUILD_DIR: join(dir, 'build'), NUXT_DB_PATH: join(dir, 'roster.db'), NUXT_DB_READONLY: '1', NUXT_FILES_DIR: join(dir, 'files'), NUXT_INCOMING_DIR: join(dir, 'incoming'), NUXT_MCP_TOKEN: 'isolated250' } })
+  const child = spawnCompiledApp(port, { cwd, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, NUXT_BUILD_DIR: join(dir, 'build'), NUXT_DB_PATH: join(dir, 'roster.db'), NUXT_DB_READONLY: '1', NUXT_FILES_DIR: join(dir, 'files'), NUXT_INCOMING_DIR: join(dir, 'incoming'), NUXT_MCP_TOKEN: 'isolated250' } })
   let output = ''
   for (const stream of [child.stdout, child.stderr]) stream.on('data', data => { output = (output + data).slice(-8000) })
   service = { baseUrl: `http://127.0.0.1:${port}`, stop: () => stopOwnedChild(child) }
-  try { await waitForHttp(`${service.baseUrl}/_openapi.json`, { timeoutMs: 60000, child }) }
+  try { await waitForHttp(`${service.baseUrl}/api/health`, { timeoutMs: 60000, child }) }
   catch (error) { await service.stop(); throw new Error(`${String(error)}\n${output}`) }
 }, 90000)
 afterAll(async () => { await service?.stop(); db.$client.close(); rmSync(dir, { recursive: true, force: true }) })
@@ -50,7 +54,7 @@ it('real GET and MCP return the same full-scope qualification with off-page summ
   expect(db.select().from(schema.recordCorrespondenceAudit).all()).toEqual([])
 })
 it('publishes read-only REST and MCP schema with annual facts generation and bounded pagination', async () => {
-  const spec = await (await fetch(`${service.baseUrl}/_openapi.json`)).json()
+  const spec = developmentSpec
   const operation = spec.paths['/api/roster/events/{id}/annual-process'].get
   expect(operation.parameters.find((p: any) => p.name === 'pageSize').schema.maximum).toBe(200)
   expect(operation.parameters.map((p: any) => p.name)).toEqual(['id', 'page', 'pageSize'])

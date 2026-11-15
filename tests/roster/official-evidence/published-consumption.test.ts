@@ -1,7 +1,7 @@
 import { createRuntimeSchema } from '../../../db/create-runtime'
 import { CURRENT_RULE_VERSION, QUALIFICATION_ASSESSMENT_VERSION } from '../../../lib/roster/current-qualification'
 import { createHash } from 'node:crypto'
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
@@ -12,12 +12,12 @@ import { preflightRosterImport, commitRosterImport } from '../../../server/utils
 import { handleRosterImportRequest } from '../../../server/utils/roster-import-http'
 import { handleEvidenceCorrectionRequest } from '../../../server/utils/roster-evidence-correction-api'
 import { readCurrentCandidate, readCurrentQualificationAssessment, type CurrentQualificationSnapshot, type CurrentTitle } from '../../../lib/roster/current-qualification'
-import { writeCurrentWorkbook } from '../../../lib/roster/current-workbook'
+
 import { startHttpFixture } from '../../support/http'
 import { minimalPdf } from '../../support/minimal-pdf'
 import * as official from '../../../server/utils/official-evidence'
-import { assertOfficialPublishedBudget, readOfficialPublishedPresentation, OfficialPublishedPresentationError, type OfficialPublishedFact } from '../../../lib/roster/official-published-presentation'
-import { currentWorkbookValues } from '../../../lib/roster/current-workbook-presentation'
+
+
 
 import { getRosterEnterpriseDetail } from '../../../lib/roster/enterprise-roster'
 import { listCurrentQualified, type CurrentQualifiedResult } from '../../../lib/roster/current-qualified-query'
@@ -101,7 +101,7 @@ async function paired() {
   return f
 }
 
-it('B01 pairs anonymous detail source and retained current names by stable evidence IDs without exposing C envelopes', async () => {
+it("pairs anonymous detail source and retained current names by stable evidence IDs without exposing C envelopes", async () => {
   const f = await paired(), ids = f.ids(), expected = [minimal(1, 1, '2021旧名'), minimal(2, 2, '2024新名')]
   const detail = await f.http('/detail?id=1')
   expect(factsOf(detail)).toEqual(expected)
@@ -123,7 +123,7 @@ it('B01 pairs anonymous detail source and retained current names by stable evide
   }
 })
 
-it('B02 preserves null empty whitespace binding unknown legacy and repeated equal names as distinct sources', async () => {
+it("preserves null empty whitespace binding unknown legacy and repeated equal names as distinct sources", async () => {
   const f = await fixture()
   await f.commit(f.announcement([f.record('specialized_sme', [{ eventType: 'award', year: 2024, batchSeq: 1, evidence: [
     f.evidence(f.published(null, 1, 1)), f.evidence(f.published('', 1, 2)), f.evidence(f.published(' \t旧名\n ', 1, 3)),
@@ -136,7 +136,7 @@ it('B02 preserves null empty whitespace binding unknown legacy and repeated equa
   expect(factsOf((await f.http('/current')).rows[0])).toEqual(expected)
 })
 
-it('B03 hydrates only retained current rows after qualification counts filters and options', async () => {
+it("hydrates only retained current rows after qualification counts filters and options", async () => {
   const f = await paired()
   await f.commit(f.announcement([f.record('specialized_sme', [{ eventType:'award',year:2024,batchSeq:1,evidence:[f.evidence(f.published('第二企业',3,2,{usccRaw:null}))] }], '第二企业', null)]), 'second')
   const read = vi.spyOn(official, 'listEventsOfficialEvidencePages')
@@ -149,7 +149,7 @@ it('B03 hydrates only retained current rows after qualification counts filters a
   expect(current.rows[0].references).toEqual(expect.arrayContaining(['evidence:1 2021公布.pdf  序号:1','evidence:2 2024公布.pdf  序号:1']))
 })
 
-it('B04 reads raw-only latest after public correction without caching or changing qualification partitions', async () => {
+it("reads raw-only latest after public correction without caching or changing qualification partitions", async () => {
   const f = await paired(), before = await f.http('/current'), current = await f.exact(2)
   const row = f.published('更正公布原名', 2, 1, { declaration:{kind:'existing',sourceDocumentId:current.official.row.sourceDocumentId,basis:'同一出处复核'} })
   await f.correct(2,row,'raw-only')
@@ -161,7 +161,7 @@ it('B04 reads raw-only latest after public correction without caching or changin
   expect(after.rows[0].basis).not.toBe(before.rows[0].basis) // B correctly increments event.revision.
 })
 
-it('B05 separates unavailable safe errors from unknown legacy while preserving original detail and locators', async () => {
+it("separates unavailable safe errors from unknown legacy while preserving original detail and locators", async () => {
   const f = await paired()
   vi.spyOn(official,'listEventsOfficialEvidencePages').mockImplementation(() => { throw new Error('private sql secret capture') })
   const detail = await f.http('/detail?id=1')
@@ -174,7 +174,7 @@ it('B05 separates unavailable safe errors from unknown legacy while preserving o
   expect(query.rows[0].publishedPresentation).toEqual({availability:'unavailable',error:'read_failed',facts:[]})
 })
 
-it('B06 reuses one selected event Map across source detail and repeated references with no per-evidence latest', async () => {
+it("reuses one selected event Map across source detail and repeated references with no per-evidence latest", async () => {
   const f = await paired()
   const { sourceReader } = await import('../../../server/utils/record-correspondence-read')
   // Caller-selected reference inputs to the pure reader, not forged persisted decisions.
@@ -190,7 +190,7 @@ it('B06 reuses one selected event Map across source detail and repeated referenc
   expect(latest).not.toHaveBeenCalled()
 })
 
-it('B07 applies final source copy and text budget without truncating old locators or shrinking A pages', async () => {
+it("applies final source copy and text budget without truncating old locators or shrinking A pages", async () => {
   const f = await fixture(), name = 'x'.repeat(600)
   await f.commit(f.announcement([f.record('specialized_sme',[{eventType:'award',year:2024,batchSeq:1,evidence:Array.from({length:20},(_,i) => f.evidence(f.published(name,1,i+1)))}])]),'budget')
   const read = vi.spyOn(official,'listEventsOfficialEvidencePages')
@@ -207,7 +207,7 @@ it('B07 applies final source copy and text budget without truncating old locator
   expect(read.mock.calls.every(call => JSON.stringify(call[2]) === JSON.stringify({pageSize:50,maxBytes:65536}))).toBe(true)
 })
 
-it('B08 preserves A field and event scope failures as typed unavailable without exposing raw errors', async () => {
+it("preserves A field and event scope failures as typed unavailable without exposing raw errors", async () => {
   const f = await paired()
   // Explicit corrupt historical capture; public B rejects these invalid inputs.
   f.sqlite.prepare('UPDATE official_evidence_row_revision SET name_raw=? WHERE evidence_id=1').run('x'.repeat(4001))
@@ -223,7 +223,7 @@ it('B08 preserves A field and event scope failures as typed unavailable without 
   expect(source.source.evidence).toHaveLength(301)
 })
 
-it('B09 retains captured old and new names after public merge using the surviving owner IDs', async () => {
+it("retains captured old and new names after public merge using the surviving owner IDs", async () => {
   const f = await fixture()
   await f.commit(f.announcement([f.record('specialized_sme',[{eventType:'award',year:2021,batchSeq:1,evidence:[f.evidence(f.published('归并前原名'))]}],'归并前企业',null)]),'old')
   await f.commit(f.announcement([f.record('specialized_sme',[{eventType:'award',year:2024,batchSeq:1,evidence:[f.evidence(f.published('归并后原名',2))]}])]),'new')
@@ -236,7 +236,7 @@ it('B09 retains captured old and new names after public merge using the survivin
   expect((await f.exact(1)).official.row).toMatchObject({capturedEnterpriseId:1,currentOwner:{enterpriseId:2}})
 })
 
-it('B10 preserves enumerable qualification input exactly under an explicit sidecar-only isolation control', async () => {
+it("preserves enumerable qualification input exactly under an explicit sidecar-only isolation control", async () => {
   const f = await paired(), before = await f.http('/current'), exact = await f.exact(2)
   const scope = { enterpriseId: 1, asOf: '2026-10-25T08:00:00.000Z', ruleVersion: CURRENT_RULE_VERSION, assessmentVersion: QUALIFICATION_ASSESSMENT_VERSION }
   const assertQA = (value: CurrentQualificationSnapshot) => {
@@ -288,7 +288,7 @@ it('B10 preserves enumerable qualification input exactly under an explicit sidec
   expect(readCurrentCandidate(f.sqlite,1,'specialized_sme',qualificationYear,executionTime).group).toBe('eligible')
 })
 
-it('B11 reads actual H3 routes and MCP handlers through the same serialized DTO while C exact auth remains protected', async () => {
+it("reads actual H3 routes and MCP handlers through the same serialized DTO while C exact auth remains protected", async () => {
   const f = await paired(), h3 = await import('h3'), { createServer } = await import('node:http')
   routeContext.db = f.db
   for (const key of ['defineEventHandler','getRouterParam','setHeader','createError'] as const) vi.stubGlobal(key,h3[key])
@@ -323,7 +323,7 @@ it('B11 reads actual H3 routes and MCP handlers through the same serialized DTO 
   expect(JSON.stringify(factsOf(detail.body))).not.toMatch(/actor|command|basis|sha256|usccRaw|districtRaw/)
 })
 
-it('B12 rejects total enterprise name bytes across individually small event pages and preserves current counts', async () => {
+it("rejects total enterprise name bytes across individually small event pages and preserves current counts", async () => {
   const f = await fixture()
   await f.commit(f.announcement([f.record('specialized_sme',Array.from({length:4},(_,eventIndex) => ({eventType:'award' as const,year:2021+eventIndex,batchSeq:1,evidence:Array.from({length:10},(_,i) => f.evidence(f.published('x'.repeat(1000),1,eventIndex*10+i+1)))})))]),'enterprise-scope')
   const detail=await f.http('/detail?id=1')
@@ -365,7 +365,7 @@ async function budgetFixture(count: number, perEvent: number, name: string) {
 }
 
 it.each([{ case: 'Spec25', count: 25, perEvent: 5 }, { case: 'Standards24', count: 24, perEvent: 1 }])(
-  'B13 rejects current double text overflow while retaining one DTO and all old qualification fields for $case', async ({ count, perEvent }) => {
+  "rejects current double text overflow while retaining one DTO and all old qualification fields for $case", async ({ count, perEvent }) => {
     const { f, literal, dtoBytes, textBytes, get } = await budgetFixture(count, perEvent, 'x'.repeat(1000))
     expect(dtoBytes + textBytes).toBeLessThan(65536)
     expect(dtoBytes + textBytes * 2).toBeGreaterThan(65536)
@@ -387,7 +387,7 @@ it.each([{ case: 'Spec25', count: 25, perEvent: 5 }, { case: 'Standards24', coun
   },
 )
 
-it('B14 keeps current under budget when one DTO and two texts fit but doubling the DTO would not', async () => {
+it("keeps current under budget when one DTO and two texts fit but doubling the DTO would not", async () => {
   const { f, literal, dtoBytes, textBytes, get } = await budgetFixture(24, 1, 'x'.repeat(700))
   await f.commit({ aliases: [{ uscc, name: '已确认旧名', sourceKind: 'manual', sourceRefId: 0, verificationStatus: 'confirmed' }, { uscc, name: '待核别名', sourceKind: 'manual', sourceRefId: 0, verificationStatus: 'pending' }] }, 'r1-aliases')
   expect(dtoBytes + textBytes * 2).toBeLessThan(65536)
@@ -399,7 +399,7 @@ it('B14 keeps current under budget when one DTO and two texts fit but doubling t
 })
 
 it.each([{ case: 'escaped-below', repeats: 48, available: true }, { case: 'escaped-above', repeats: 54, available: false }])(
-  'B15 budgets escaped Unicode UTF8 across both current text branches for $case', async ({ repeats, available }) => {
+  "budgets escaped Unicode UTF8 across both current text branches for $case", async ({ repeats, available }) => {
     const name = '中🙂"\\\n'.repeat(repeats)
     const { literal, dtoBytes, textBytes, get } = await budgetFixture(24, 1, name)
     expect(name.length).toBeLessThan(4000)

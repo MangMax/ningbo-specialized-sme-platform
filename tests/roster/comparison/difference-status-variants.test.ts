@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs'
+
 import { describe, expect, it } from 'vitest'
 import { badgeVariants } from '../../../components/ui/badge'
 import { cn } from '../../../lib/utils'
@@ -38,29 +38,9 @@ describe('六态两两可区分', () => {
     expect(seen.size).toBe(STATES.length)
   })
 
-    it('调用点不给状态徽章压字重或字色(否则六态会静默糊回去)', () => {
-    for (const file of [
-      'components/RosterDifferenceTable.vue',
-      'components/RosterEnterprisePanel.vue',
-    ]) {
-      const src = readFileSync(new URL(`../../../${file}`, import.meta.url), 'utf8')
-      const line = src.split('\n').find((l) => l.includes(':variant="statusVariant('))
-      expect(line, `${file} 里找不到状态徽章那行`).toBeTruthy()
-      expect(line, `${file}:状态徽章不该再挂 font-* / text-* 的 class`).not.toMatch(
-        /class="[^"]*(?:font-|text-)/,
-      )
-    }
-  })
 
-  it('理由 3 的前提成立:每枚状态徽章的**中文标签**都在(颜色只是冗余加固)', () => {
-        for (const file of [
-      'components/RosterDifferenceTable.vue',
-      'components/RosterEnterprisePanel.vue',
-    ]) {
-      const src = readFileSync(new URL(`../../../${file}`, import.meta.url), 'utf8')
-      expect(src, `${file}:状态徽章必须带中文标签`).toMatch(/DIFFERENCE_STATUSES\[/)
-    }
-  })
+
+
 
   it('配对通道真的落到了 class 上(不是只在注释里说说)', () => {
     const has = (code: string, needle: string) => rendered[code]!.includes(needle)

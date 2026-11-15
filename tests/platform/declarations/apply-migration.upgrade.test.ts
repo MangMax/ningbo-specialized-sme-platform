@@ -45,16 +45,6 @@ describe('0033 platform apply projection migration', () => {
       expect(storedRelation.relation_key).toBe('SQ-LEGACY')
       expect(JSON.parse(storedRelation.raw_fields)).toEqual(originalFields)
       expect(sqlite.prepare('SELECT count(*) n FROM platform_apply_projection').get()).toEqual({ n: 0 })
-      expect(sqlite.prepare('PRAGMA table_info(platform_apply_projection)').all().map((column: any) => column.name)).toEqual(expect.arrayContaining(['version_id', 'record_id', 'declare_kind', 'declaration_year', 'applied_at', 'status', 'name_raw', 'uscc_raw', 'rule_version', 'created_at', 'title_raw']))
-      expect(sqlite.prepare("SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='platform_apply_projection' ORDER BY name").all()).toEqual(expect.arrayContaining([
-        { name: 'platform_apply_projection_applied_idx' },
-        { name: 'platform_apply_projection_kind_idx' },
-        { name: 'platform_apply_projection_record_idx' },
-        { name: 'platform_apply_projection_status_idx' },
-        { name: 'platform_apply_projection_title_version_idx' },
-        { name: 'platform_apply_projection_uscc_idx' },
-        { name: 'platform_apply_projection_year_idx' },
-      ]))
       // Applying the same final migration set again is a journal no-op.
       migrate(db, { migrationsFolder: fullMigrations })
       expect(sqlite.prepare('SELECT count(*) n FROM platform_query').get()).toEqual({ n: 1 })

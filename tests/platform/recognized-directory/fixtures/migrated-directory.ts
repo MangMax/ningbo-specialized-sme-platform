@@ -10,8 +10,7 @@ import { finalizeRecognizedStored } from '../../../../upgrade/recognized-stored'
 import { ensurePlatformObservation } from '../../../../upgrade/frozen/server/platform-business-record';
 import * as schema from '../../../../upgrade/legacy-schema';
 import { targetSchema } from '../../../../upgrade/target-schema';
-async function buildRecognizedFixture(extra?: (old: Database.Database) => void) {
-    const f = await candidateFixture(old => {
+export function seedRecognizedDirectory(old: Database.Database, extra?: (old: Database.Database) => void) {
         const db = drizzle(old, { schema });
         for (const [id, name] of [[1, 'Alpha'], [2, 'Beta']] as const)
             db.insert(schema.enterprise).values({ id, name, nameNorm: name, usccNorm: `U${id}` }).run();
@@ -32,7 +31,9 @@ async function buildRecognizedFixture(extra?: (old: Database.Database) => void) 
         old.exec("UPDATE platform_relation SET title_raw='3' WHERE id=5");
         db.insert(schema.recordCorrespondence).values({ enterpriseId: 1, titleCode: 'specialized_sme', relationId: 1, edgeKey: 'edge', type: 'event_process', role: 'candidate', status: 'rejected', revision: 1, targetIdentity: {}, provenance: {}, sourceFingerprint: 'f', ruleId: 'r', ruleVersion: 'v', createdAt: 'c' }).run();
         extra?.(old);
-    });
+}
+async function buildRecognizedFixture(extra?: (old: Database.Database) => void) {
+    const f = await candidateFixture(old => seedRecognizedDirectory(old, extra));
     finalizeCandidateScopes(f);
     const source = join(f.root, '71609.sqlite');
     copyFileSync(f.target, source);

@@ -36,7 +36,7 @@ beforeEach(() => {
 })
 afterEach(() => { for (const wrapper of mounted.splice(0)) wrapper.unmount(); vi.unstubAllGlobals(); vi.restoreAllMocks() })
 
-it('U01 rejects first typed unavailable scope and keeps null rather than displaying legacy', async () => {
+it("rejects first typed unavailable scope and keeps null rather than displaying legacy", async () => {
   vi.stubGlobal('$fetch', vi.fn(async () => unavailable()))
   const wrapper = render(); await flushPromises()
   expect(wrapper.text()).toContain('未能读取事件出处')
@@ -45,7 +45,7 @@ it('U01 rejects first typed unavailable scope and keeps null rather than display
   expect(wrapper.findAll('button').some(b => b.text() === '重试读取')).toBe(true)
 })
 
-it('U02 retains the last successful names on unavailable and retry replaces them using the same existing request', async () => {
+it("retains the last successful names on unavailable and retry replaces them using the same existing request", async () => {
   const fetch = vi.fn().mockResolvedValueOnce(source('原成功公布名')).mockResolvedValueOnce(unavailable()).mockResolvedValueOnce(source('重试新公布名'))
   vi.stubGlobal('$fetch', fetch)
   const wrapper = render(); await flushPromises()
@@ -60,7 +60,7 @@ it('U02 retains the last successful names on unavailable and retry replaces them
   expect(wrapper.text()).not.toContain('未能读取事件出处')
 })
 
-it('U03 accepts legacy and captured null as successful names and keeps distinct review years', async () => {
+it("accepts legacy and captured null as successful names and keeps distinct review years", async () => {
   const fetch = vi.fn().mockResolvedValueOnce(source(null, 'unknown_legacy')).mockResolvedValueOnce(source(null))
   vi.stubGlobal('$fetch', fetch)
   const wrapper = render(); await flushPromises()
@@ -72,7 +72,7 @@ it('U03 accepts legacy and captured null as successful names and keeps distinct 
   expect(wrapper.text()).not.toContain('未逐出处核实')
 })
 
-it('U04 ignores stale unavailable and late success after a newer successful source', async () => {
+it("ignores stale unavailable and late success after a newer successful source", async () => {
   let first!: (value: unknown) => void, second!: (value: unknown) => void
   const fetch = vi.fn().mockImplementationOnce(() => new Promise(resolve => { first = resolve }))
     .mockImplementationOnce(() => new Promise(resolve => { second = resolve })).mockResolvedValueOnce(source('当前成功名'))
@@ -84,7 +84,7 @@ it('U04 ignores stale unavailable and late success after a newer successful sour
   expect(wrapper.text()).not.toContain('未能读取事件出处')
 })
 
-it('U05 reports failed explicit readback and recovers without replacing retained success on failure', async () => {
+it("reports failed explicit readback and recovers without replacing retained success on failure", async () => {
   const fetch = vi.fn().mockResolvedValueOnce(source('保留公布名')).mockResolvedValueOnce(unavailable()).mockResolvedValueOnce(source('恢复公布名'))
   vi.stubGlobal('$fetch', fetch)
   const wrapper = render(); await flushPromises()
@@ -94,7 +94,7 @@ it('U05 reports failed explicit readback and recovers without replacing retained
   expect(wrapper.text()).toContain('恢复公布名')
 })
 
-it('U06 accepts old responses and platform raw unavailable strings without guessing typed failure', async () => {
+it("accepts old responses and platform raw unavailable strings without guessing typed failure", async () => {
   const payload = { source: { id: 1, nameRaw: 'unavailable', rawFields: { publishedPresentation: { availability: 'unavailable' } } }, correspondences: [] }
   vi.stubGlobal('$fetch', vi.fn(async () => payload))
   let reader!: ReturnType<typeof useRecordSource>
@@ -102,7 +102,7 @@ it('U06 accepts old responses and platform raw unavailable strings without guess
   await flushPromises(); expect(reader.displayed.value).toEqual(payload); expect(reader.error.value).toBe(false)
 })
 
-it('U07 keeps captured name empty whitespace and binding states separate from missing file HEAD', async () => {
+it("keeps captured name empty whitespace and binding states separate from missing file HEAD", async () => {
   vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 404 })))
   const wrapper = mount(OfficialEvidence, { props: { evidence: { ...source().source.evidence[0]!, publishedName: { ...fact(''), sourceBindingKnown: false } } as any, back: '' }, global: { stubs } }); mounted.push(wrapper)
   await flushPromises()
@@ -129,7 +129,7 @@ async function renderCurrent(aliases: string[]) {
   await flushPromises(); return wrapper
 }
 
-it('U08 keeps confirmed aliases and the detail entry while leaving published-source text on the detail page', async () => {
+it("keeps confirmed aliases and the detail entry while leaving published-source text on the detail page", async () => {
   const wrapper = await renderCurrent(['已确认旧名']), card = wrapper.get('[data-testid="current-enterprise-card"]')
   expect(card.text()).toContain('新名')
   expect(card.text()).toContain('已确认曾用名：已确认旧名')
@@ -140,13 +140,13 @@ it('U08 keeps confirmed aliases and the detail entry while leaving published-sou
   expect(wrapper.get('table tbody tr').text()).toContain('已确认曾用名：已确认旧名')
 })
 
-it('U09 leaves the mobile confirmed alias label absent when no confirmed alias exists', async () => {
+it("leaves the mobile confirmed alias label absent when no confirmed alias exists", async () => {
   const wrapper = await renderCurrent([]), card = wrapper.get('[data-testid="current-enterprise-card"]')
   expect(card.text()).toContain('新名'); expect(card.text()).not.toContain('公布名称："公告名"')
   expect(card.text()).not.toContain('已确认曾用名'); expect(card.text()).not.toContain('待核别名')
 })
 
-it('U10 keeps the real enterprise page single-root for Nuxt out-in navigation from the source dialog to a file', () => {
+it("keeps the real enterprise page single-root for Nuxt out-in navigation from the source dialog to a file", () => {
   // Vue Transition requires a component to have one element root:
   // https://vuejs.org/guide/built-ins/transition.html#the-transition-component
   // This page uses the Nuxt out-in transition; UI07 retains the actual SPA failure.
@@ -205,7 +205,7 @@ describe("formal source consumer boundaries", () => {
   })
 
   const states = [true, false].flatMap(capability => (['confirmed', 'candidate'] as const).map(status => ({ capability, status })))
-  it.each(states)('U11 readonly event sources and current never mount decisions or request capability for $status capability=$capability', async ({ capability, status }) => {
+  it.each(states)("readonly event sources and current never mount decisions or request capability for $status capability=$capability", async ({ capability, status }) => {
     vi.stubGlobal('useState', () => ref(null))
     const api = vi.fn(async (url: string) => url === '/api/roster/evidence-review/browser-context' ? { writeEnabled: capability } : r4Source(status))
     vi.stubGlobal('$fetch', api)
@@ -219,7 +219,7 @@ describe("formal source consumer boundaries", () => {
     expect(api.mock.calls.filter(([url]) => url === '/api/roster/evidence-review/browser-context')).toHaveLength(0)
   })
 
-  it.each(states.flatMap(state => ['default', 'false'].map(mode => ({ ...state, mode }))))('U12 writable $mode source preserves decision UI for $status capability=$capability', async ({ capability, status, mode }) => {
+  it.each(states.flatMap(state => ['default', 'false'].map(mode => ({ ...state, mode }))))("writable $mode source preserves decision UI for $status capability=$capability", async ({ capability, status, mode }) => {
     vi.stubGlobal('useState', () => ref(null))
     const api = vi.fn(async (url: string) => url === '/api/roster/evidence-review/browser-context' ? { writeEnabled: capability } : r4Source(status))
     vi.stubGlobal('$fetch', api)
@@ -282,7 +282,7 @@ describe("formal source consumer boundaries", () => {
     { branch: 'sources', selector: '[aria-label="本记录的平台来源"] [data-correspondence-id="329"] a' },
     { branch: 'current', selector: '[aria-label="当前导出快照"] [data-correspondence-id="330"] a' },
   ]
-  it.each(links.flatMap(link => (['current', 'back', 'comparison'] as const).flatMap(context => [9, 10].map(initial => ({ ...link, context, initial })))))('U13 formal $branch returns from event $initial preserving $context and PDF back independently', async ({ selector, context, initial }) => {
+  it.each(links.flatMap(link => (['current', 'back', 'comparison'] as const).flatMap(context => [9, 10].map(initial => ({ ...link, context, initial })))))("formal $branch returns from event $initial preserving $context and PDF back independently", async ({ selector, context, initial }) => {
     const { wrapper, router, reader } = await formal(initial, context), departure = router.currentRoute.value.fullPath
     const file = new URL(reader.querySelector('[data-testid="official-evidence"] a')!.getAttribute('href')!, 'http://local.invalid')
     expect(file.pathname).toBe('/preview'); expect(file.searchParams.get('file')).toBe('synthetic.pdf'); expect(file.searchParams.get('page')).toBe('1'); expect(file.searchParams.get('back')).toBe(departure)
@@ -301,7 +301,7 @@ describe("formal source consumer boundaries", () => {
     expect(router.currentRoute.value.fullPath).toBe(router.resolve(expectedBack).fullPath)
   })
 
-  it.each([{ name: 'ctrl', ctrlKey: true }, { name: 'meta', metaKey: true }, { name: 'shift', shiftKey: true }, { name: 'alt', altKey: true }, { name: 'middle', button: 1 }, { name: 'target', target: '_blank' }])('U14 formal event link keeps NuxtLink modifier behavior for $name', async ({ name, target, ...options }) => {
+  it.each([{ name: 'ctrl', ctrlKey: true }, { name: 'meta', metaKey: true }, { name: 'shift', shiftKey: true }, { name: 'alt', altKey: true }, { name: 'middle', button: 1 }, { name: 'target', target: '_blank' }])("formal event link keeps NuxtLink modifier behavior for $name", async ({ name, target, ...options }) => {
     const { router, reader } = await formal(10, 'current'), before = router.currentRoute.value.fullPath
     const link = reader.querySelector(links[0]!.selector) as HTMLAnchorElement
     if (target) link.setAttribute('target', target)
@@ -312,7 +312,7 @@ describe("formal source consumer boundaries", () => {
     expect(new URL(link.href).searchParams.get('currentBack')).toBe(currentBack)
   })
 
-  it('U15 old source consumers retain comparison returnTo when no event query adapter is supplied', async () => {
+  it("old source consumers retain comparison returnTo when no event query adapter is supplied", async () => {
     vi.stubGlobal('$fetch', vi.fn(async () => r4Source('confirmed')))
     const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/:pathMatch(.*)*', component: { template: '<p />' } }] })
     await router.push(comparison)

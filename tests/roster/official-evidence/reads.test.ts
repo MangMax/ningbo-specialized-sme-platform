@@ -483,13 +483,13 @@ it.each([
 it.each([
   { case: 'missing', body: { jsonrpc: '2.0', id: 399, method: 'tools/call', params: { name: 'list_roster_import_items' } } },
   ...[undefined, null, [], 1, 'x', true].map((args, i) => ({ case: ['undefined', 'null', 'array', 'number', 'string', 'boolean'][i], body: rpc399(args) })),
-])('399 raw malformed root $case', async ({ body }) => {
+])("raw malformed root $case", async ({ body }) => {
   const { officialEvidenceRpcError } = await import('../../../server/utils/official-evidence-read')
   const result = officialEvidenceRpcError(body, true)
   expect(result?.status).toBe(400)
   expect(await result!.json()).toEqual({ jsonrpc: '2.0', id: 399, error: { code: -32602, message: 'Invalid exact official read arguments' } })
 })
-it.each(['projection', 'source', 'itemIndex', 'oldRecordId', 'cursor', 'maxBytes', 'extra'])('399 raw own key stays strict %s', async key => {
+it.each(['projection', 'source', 'itemIndex', 'oldRecordId', 'cursor', 'maxBytes', 'extra'])("raw own key stays strict %s", async key => {
   const { officialEvidenceRpcError } = await import('../../../server/utils/official-evidence-read')
   for (const value of [undefined, null, 'invalid']) {
     // Invalid old paging distinguishes strict routing even for optional undefined.
@@ -537,7 +537,7 @@ const strictInvalid399: { case: string; args: Record<string, unknown> }[] = [
   { case: 'cursor-empty', args: { ...events399, cursor: '' } },
   { case: 'cursor-over', args: { ...events399, cursor: 'x'.repeat(513) } },
 ]
-it.each(strictInvalid399)('399 raw strict rejection $case', async ({ args }) => {
+it.each(strictInvalid399)("raw strict rejection $case", async ({ args }) => {
   const { officialEvidenceRpcError } = await import('../../../server/utils/official-evidence-read')
   const result = officialEvidenceRpcError(rpc399(args), true)
   expect(result?.status).toBe(400)
@@ -597,14 +597,14 @@ it.each([
   { case: 'receipt-key', args: { receiptId: 2, idempotencyKey: 'x' }, message: 'Supply exactly one batchId, idempotencyKey or receiptId' },
   { case: 'whitespace', args: { idempotencyKey: '   ' }, message: 'Invalid idempotencyKey' },
   { case: 'unknown-undefined', args: { batchId: 1, extra: undefined }, message: 'Unsupported query field' },
-])('399 handler original selector error before DB $case', async ({ args, message }) => {
+])("handler original selector error before DB $case", async ({ args, message }) => {
   const f = await handler399()
   try {
     expect(await f.tool.handler(args as never, {} as never)).toEqual({ isError: true, structuredContent: { error: { code: 'invalid_query', message } } })
     expect(f.acquire).not.toHaveBeenCalled(); expect(f.read).not.toHaveBeenCalled()
   } finally { f.restore() }
 })
-it.each([...invalidFields399, ...strictInvalid399])('399 handler full schema rejects before DB $case', async ({ args }) => {
+it.each([...invalidFields399, ...strictInvalid399])("handler full schema rejects before DB $case", async ({ args }) => {
   const f = await handler399()
   try {
     expect(await f.tool.handler(args as never, {} as never)).toMatchObject({ isError: true, structuredContent: { error: { code: 'invalid_query' } } })
@@ -630,7 +630,7 @@ it('handler preserves accepted selectors undefined normalization and content byt
     expect(await f.tool.handler({ batchId: 1 } as never, {} as never)).toEqual({ isError: true, structuredContent: { error: { code: 'not_found', message: 'Import batch or receipt not found' } } })
   } finally { f.restore() }
 })
-it.each(invalidFields399)('399 SDK field schema rejects legacy $case', async ({ args }) => {
+it.each(invalidFields399)("SDK field schema rejects legacy $case", async ({ args }) => {
   const { importItemsReadShape } = await import('../../../server/utils/official-evidence-read')
   const { objectFromShape, safeParseAsync } = await import('@modelcontextprotocol/sdk/server/zod-compat.js')
   // Actual installed SDK schema adapter only. SDK server ordering is inspected

@@ -1,6 +1,6 @@
 import {beforeAll,afterAll,it,expect,vi} from 'vitest'
 import Database from 'better-sqlite3'
-import {writeFileSync} from 'node:fs'
+
 import {nativeImportDb} from '../../roster/imports/fixtures/native-import'
 import {writeNewCollectionTarget} from '../../../lib/platform/collection-target-command'
 import {readTargetPlatformEvidence} from '../../../lib/platform/target-evidence-read'
@@ -27,7 +27,7 @@ it.each(['apply_list','business_list','recognized_list'])('formal new %s snapsho
   if(!('data' in legacy)||!('data' in target))throw new Error('Expected relation byte response')
   const oldText=Buffer.from(legacy.data!,'base64').toString(),newText=Buffer.from(target.data!,'base64').toString()
   const mappedOld=oldText.replace(/^\{"id":\d+,"queryId":\d+,/,`{"id":${result.observations[0]!.relationAlias},"queryId":${result.queryAlias},`)
-  if(process.env.CANDIDATE_SCOPE_EVIDENCE_DIR) writeFileSync(process.env.CANDIDATE_SCOPE_EVIDENCE_DIR+'/'+source+'.json',JSON.stringify({q,preflight:'no conflicts',commit:'committed',legacy:oldText,target:newText,mappedOld,targetPhase:f.t.pragma('user_version',{simple:true})},null,2))
+
   expect(newText).toBe(mappedOld)
   const snapshot=JSON.parse(newText)
   expect(snapshot).toMatchObject({sequenceNo:1,relationKey:'A',rawFields:q.relations[0].rawFields,nameRaw:'Example',matchBasis:'none',verificationStatus:'pending'})

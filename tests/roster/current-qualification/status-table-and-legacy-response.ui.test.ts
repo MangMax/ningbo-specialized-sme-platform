@@ -115,7 +115,7 @@ const states: { id: CurrentStatus; label: string; timeline: string[] }[] = [
   { id: 'unrecognized', label: '未认定', timeline: [] },
 ]
 
-it.each(states)('single_table_status_and_timeline_408_$id', async ({ id, label, timeline }) => {
+it.each(states)("single_table_status_and_timeline_$id", async ({ id, label, timeline }) => {
   const { view, router, requests } = await setup()
   expect(view.findAllComponents(TablePagination)).toHaveLength(0)
   expect(view.text()).not.toContain('共 0')
@@ -142,7 +142,7 @@ it.each(states)('single_table_status_and_timeline_408_$id', async ({ id, label, 
   expect(JSON.stringify(response)).toBe(before)
 })
 
-it('initial_failure_and_settled_empty_are_distinct_408', async () => {
+it("initial_failure_and_settled_empty_are_distinct", async () => {
   const { view, requests } = await setup()
   expect(requests[0]!.query.status).toBe('effective')
   expect(view.findAllComponents(TablePagination)).toHaveLength(0)
@@ -157,7 +157,7 @@ it('initial_failure_and_settled_empty_are_distinct_408', async () => {
   expect(view.get('[data-testid="table-total"]').text()).toBe('共 0 家企业')
 })
 
-it('effective_row_with_review_gaps_keeps_unknown_timeline_facts_without_pending_region_408', async () => {
+it("effective_row_with_review_gaps_keeps_unknown_timeline_facts_without_pending_region", async () => {
   const { view, requests } = await setup()
   const response = wire()
   const selected = response.rows[0]!.qualificationAssessment.titles.find(title => title.titleCode === 'innovative_sme')!
@@ -181,7 +181,7 @@ it('effective_row_with_review_gaps_keeps_unknown_timeline_facts_without_pending_
   expect(JSON.stringify(response)).toBe(before)
 })
 
-it.each([{ id: 'desktop', narrow: false }, { id: 'mobile', narrow: true }])('single_table_retains_scope_retry_and_ignores_late_response_408_$id', async ({ narrow }) => {
+it.each([{ id: 'desktop', narrow: false }, { id: 'mobile', narrow: true }])("single_table_retains_scope_retry_and_ignores_late_response_$id", async ({ narrow }) => {
   const q = 'synthetic_408_完整搜索条件与已确认曾用名'.repeat(2)
   const source = { status: 'expired', q, district: '鄞州区', recognitionFrom: '2025-01-01', recognitionTo: '2025-12-31', sort: 'name_desc', page: '2', pageSize: '1' }
   const { view, router, requests } = await setup(source, narrow)
@@ -217,7 +217,7 @@ it.each([{ id: 'desktop', narrow: false }, { id: 'mobile', narrow: true }])('sin
   expect(view.findComponent(TablePagination).props()).toMatchObject({ page: 2, pageSize: 1, total: 3, loading: false })
 })
 
-it('single_table_pages_selected_status_and_preserves_filters_408', async () => {
+it("single_table_pages_selected_status_and_preserves_filters", async () => {
   const { view, router, requests } = await setup({ status: 'expired', district: '鄞州区', sort: 'name_desc' })
   requests[0]!.result.resolve(wire({ status: 'expired', total: 5 })); await flushPromises()
   expect(view.findAllComponents(TablePagination)).toHaveLength(1)
@@ -232,7 +232,7 @@ it('single_table_pages_selected_status_and_preserves_filters_408', async () => {
   expect(requests.at(-1)!.query).toMatchObject({ status: 'expired', district: '鄞州区', sort: 'name_desc', page: 1, pageSize: 2 })
 })
 
-it('legacy_effective_response_preserves_rows_and_marks_five_states_unknown_408', async () => {
+it("legacy_effective_response_preserves_rows_and_marks_five_states_unknown", async () => {
   const { view, requests } = await setup()
   const legacy = wire({ suffix: '_legacy' })
   Reflect.deleteProperty(legacy, 'responseVersion'); Reflect.deleteProperty(legacy, 'publishedPending')
@@ -245,7 +245,7 @@ it('legacy_effective_response_preserves_rows_and_marks_five_states_unknown_408',
   expectBack(view, { titleCode: 'innovative_sme', status: 'effective', q: 'synthetic_408', sort: 'id_asc', page: '2', pageSize: '1' })
 })
 
-it('legacy_non_effective_response_is_rejected_and_modern_retry_recovers_408', async () => {
+it("legacy_non_effective_response_is_rejected_and_modern_retry_recovers", async () => {
   const { view, requests } = await setup({ status: 'unrecognized' })
   const legacy = wire({ status: 'unrecognized' }); legacy.responseVersion = 'current-qualified-408-v1'
   requests[0]!.result.resolve(legacy); await flushPromises()
@@ -260,7 +260,7 @@ it('legacy_non_effective_response_is_rejected_and_modern_retry_recovers_408', as
   expect(view.get('tbody tr').text()).toContain('synthetic_408_unrecognized')
 })
 
-it.each([{ id: 'main_rows', pending: false }, { id: 'legacy_pending_wire', pending: true }])('unavailable_published_names_retain_scope_and_retry_408_$id', async ({ pending }) => {
+it.each([{ id: 'main_rows', pending: false }, { id: 'legacy_pending_wire', pending: true }])("unavailable_published_names_retain_scope_and_retry_$id", async ({ pending }) => {
   const source = { status: 'expired', q: 'synthetic_408_public_names_source'.repeat(3), district: '鄞州区', recognitionFrom: '2025-01-01', recognitionTo: '2025-12-31', sort: 'name_desc', page: '2', pageSize: '1' }
   const { view, router, requests } = await setup(source)
   requests[0]!.result.resolve(wire({ status: 'expired', suffix: '_source' })); await flushPromises()
@@ -289,7 +289,7 @@ it.each([{ id: 'main_rows', pending: false }, { id: 'legacy_pending_wire', pendi
   expectBack(view, target)
 })
 
-it.each([{ id: 'little_giant', label: '专精特新“小巨人”' }, { id: 'specialized_sme', label: '专精特新中小企业' }, { id: 'innovative_sme', label: '创新型中小企业' }] as const)('timeline_uses_displayed_title_without_cross_title_facts_408_$id', async ({ id, label }) => {
+it.each([{ id: 'little_giant', label: '专精特新“小巨人”' }, { id: 'specialized_sme', label: '专精特新中小企业' }, { id: 'innovative_sme', label: '创新型中小企业' }] as const)("timeline_uses_displayed_title_without_cross_title_facts_$id", async ({ id, label }) => {
   const { view, requests } = await setup({ titleCode: id })
   const response = wire({ titleCode: id })
   const titles = response.rows[0]!.qualificationAssessment.titles

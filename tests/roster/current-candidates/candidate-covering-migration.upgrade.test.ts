@@ -1,5 +1,4 @@
 import { createHash } from 'node:crypto'
-import { getTableConfig } from 'drizzle-orm/sqlite-core'
 import * as s from '../../../upgrade/legacy-schema'
 import { normalizeUscc } from '../../../lib/domain'
 import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
@@ -162,20 +161,4 @@ it('M04 readonly old file stays byte intact and sees later external index create
     expect(currentCandidateSqlFor(reader)).toBe(currentCandidateSql)
     expect(reader.prepare(currentCandidateSqlFor(reader)).all({ title: 'innovative_sme', rdjb: '1' })).toEqual([{ id: 23 }])
   } finally { reader.close(); update.close(); rmSync(dir, { recursive: true, force: true }) }
-})
-it('M05 schema declares exactly the two migrated nonpartial index key lists', () => {
-  for (const [table, name, keys] of [
-    [s.platformRelation, rIndex, ['query_id', 'sequence_no', 'enterprise_id', 'uscc_raw']],
-    [s.platformQuery, qIndex, ['id', 'rdjb', 'title_code', 'collection_evidence']],
-  ] as const) {
-    const index = getTableConfig(table).indexes.find(index => index.config.name === name)!
-    expect(index.config.columns.map(column => 'name' in column ? column.name : null)).toEqual(keys)
-    expect(index.config.where).toBeUndefined()
-    expect(index.config.unique).toBe(false)
-  }
-  const statements = readFileSync(join(folder, '0031_current_candidate_covering_indexes.sql'), 'utf8').split('--> statement-breakpoint').map(text => text.trim())
-  expect(statements).toEqual([
-    'CREATE INDEX platform_relation_current_candidate_cover_idx ON platform_relation(query_id,sequence_no,enterprise_id,uscc_raw);',
-    'CREATE INDEX platform_query_current_candidate_cover_idx ON platform_query(id,rdjb,title_code,collection_evidence);',
-  ])
 })

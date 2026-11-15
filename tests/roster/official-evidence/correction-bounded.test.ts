@@ -73,7 +73,7 @@ it('bounds fixed evidence preflight and history materialization across unrelated
       if (baseMetrics) expect(stable).toEqual(baseMetrics)
       else baseMetrics = stable
     }
-    if (process.env.TICKET101_METRICS) writeFileSync(process.env.TICKET101_METRICS, JSON.stringify({ sourceSha: process.env.TICKET101_SOURCE_SHA ?? 'uncommitted candidate', unrelatedProvenanceBytesPerRow: Buffer.byteLength('raw-sentinel'.repeat(1024)), observations, impactExplain: db.$client.prepare('EXPLAIN QUERY PLAN SELECT count(*) FROM record_correspondence WHERE event_id = ? OR predecessor_event_id = ?').all(event.id, event.id), coordinateExplain: db.$client.prepare('EXPLAIN QUERY PLAN SELECT id FROM record_evidence WHERE source_file = ? AND list_no = ?').all('notice.pdf', 1) }, null, 2))
+
     console.info('TICKET101_DRIVER_MATERIALIZATION ' + JSON.stringify(observations))
     console.info('TICKET101_COORDINATE_EXPLAIN ' + JSON.stringify(db.$client.prepare('EXPLAIN QUERY PLAN SELECT id FROM record_evidence WHERE source_file = ? AND list_no = ?').all('notice.pdf', 1)))
   } finally { await app.close(); db.$client.close(); rmSync(dir, { recursive: true, force: true }) }

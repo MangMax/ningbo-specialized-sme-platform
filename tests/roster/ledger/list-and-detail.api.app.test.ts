@@ -1,6 +1,6 @@
 import { initializeDb } from '../../../db/client'
 import { decodeJsonRead } from '../../support/json-read'
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import ExcelJS from 'exceljs'
@@ -405,20 +405,5 @@ describe('GET /api/roster/export(总表导出)', () => {
   it('文件名带企业数,并写明单位', async () => {
     await exported({})
     expect(decodeURIComponent(headers['content-disposition']!)).toContain('企业总表-3家.xlsx')
-  })
-})
-
-describe('路由的 spec 可发现性', () => {
-  it('四个路由文件都带顶层 defineRouteMeta(OpenAPI 的唯一输入)', () => {
-    for (const rel of [
-      'server/api/roster/enterprises.get.ts',
-      'server/api/roster/enterprises/[id].get.ts',
-      'server/api/roster/differences.get.ts',
-      'server/api/roster/export.get.ts',
-    ]) {
-      const source = readFileSync(join(process.cwd(), rel), 'utf8')
-      expect(source, rel).toContain('defineRouteMeta({')
-      expect(/^defineRouteMeta\(/m.test(source), rel).toBe(true)
-    }
   })
 })

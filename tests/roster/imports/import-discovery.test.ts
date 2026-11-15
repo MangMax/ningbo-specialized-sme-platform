@@ -3,9 +3,13 @@ import { describe, expect, it } from 'vitest'
 import { z } from 'zod'
 import { rosterImportMcpPayloadSchema } from '../../../server/utils/roster-import-schema'
 
+const httpPayloadCache = new Map<string, any>()
 function httpPayload(action: string) {
+  if (httpPayloadCache.has(action)) return httpPayloadCache.get(action)
   const source = readFileSync(new URL(`../../../server/api/roster/import/${action}.post.ts`, import.meta.url), 'utf8')
-  return JSON.parse(source.match(/payload: (\{\n[\s\S]*?\n\}),/)![1]!)
+  const payload = JSON.parse(source.match(/payload: (\{\n[\s\S]*?\n\}),/)![1]!)
+  httpPayloadCache.set(action, payload)
+  return payload
 }
 const discovery = z.toJSONSchema(rosterImportMcpPayloadSchema, { io: 'input' })
 const allPayloads: any[] = [discovery, ...['preflight', 'commit'].map(httpPayload)]

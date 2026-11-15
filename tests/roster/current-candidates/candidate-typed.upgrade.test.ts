@@ -25,12 +25,16 @@ afterEach(() => {
   vi.useRealTimers()
   for (const fixture of fixtures.splice(0)) fixture.close()
 })
+let historicalTemplate: Buffer | undefined
 function offlineHistoricalFixture() {
   // This fixture belongs only to the frozen pre-retirement candidate oracle.
   const dir = mkdtempSync(join(tmpdir(), 'offline-candidate468-'))
-  const sqlite = new Database(join(dir, 'historical.sqlite'))
+  const sqlite = historicalTemplate ? new Database(historicalTemplate) : new Database(':memory:')
   sqlite.pragma('foreign_keys=ON')
-  migrate(drizzle(sqlite), { migrationsFolder: resolve('db/migrations') })
+  if (!historicalTemplate) {
+    migrate(drizzle(sqlite), { migrationsFolder: resolve('db/migrations') })
+    historicalTemplate = sqlite.serialize()
+  }
   const db = drizzle(sqlite, { schema: s })
   for (const title of TITLE_SEED) db.insert(s.title).values(title).onConflictDoNothing().run()
   sqlite.function('roster84_uscc', { deterministic: true }, normalizeUscc)

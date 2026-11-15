@@ -1,11 +1,12 @@
+import { readDevelopmentDiscovery } from '../current-export/fixtures/specialized-export'
 import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 
 import { afterAll, beforeAll, expect, it } from 'vitest'
 import { initializeDb, schema } from '../../../db/client'
-import { spawnOwnedChild as spawn, reserveLoopbackPort, waitForHttp, stopOwnedChild, spawnCompiledApp } from '../../support/owned-process.mjs'
+import { reserveLoopbackPort, waitForHttp, stopOwnedChild, spawnCompiledApp } from '../../support/owned-process.mjs'
 
 const dir = mkdtempSync(join(tmpdir(), 'alias-maintenance-99-'))
 const path = join(dir, 'roster.db')
@@ -19,21 +20,17 @@ let url: string
 let stop: () => Promise<void>
 let openapi: { paths: Record<string, any> }
 beforeAll(async () => {
+  openapi = await readDevelopmentDiscovery()
   const port = await reserveLoopbackPort()
   const cwd = resolve(import.meta.dirname, '../../..')
-  const child = spawn(process.execPath, [join(cwd, 'node_modules/nuxt/bin/nuxt.mjs'), 'dev', '--host', '127.0.0.1', '--port', String(port)], { cwd, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, NUXT_BUILD_DIR: join(dir, 'build'), NUXT_DB_PATH: path, NUXT_FILES_DIR: join(dir, 'files'), NUXT_INCOMING_DIR: join(dir, 'incoming'), NUXT_API_TOKEN: 'test-alias-token', NUXT_MCP_TOKEN: 'test-alias-token' } })
+  const child = spawnCompiledApp(port, { cwd, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, NUXT_BUILD_DIR: join(dir, 'build'), NUXT_DB_PATH: path, NUXT_FILES_DIR: join(dir, 'files'), NUXT_INCOMING_DIR: join(dir, 'incoming'), NUXT_API_TOKEN: 'test-alias-token', NUXT_MCP_TOKEN: 'test-alias-token' } })
   let logs = ''
   for (const stream of [child.stdout, child.stderr]) stream.on('data', data => { logs = (logs + data).slice(-8000) })
   url = `http://127.0.0.1:${port}`
   stop = () => stopOwnedChild(child)
   try {
-    await waitForHttp(url + '/_openapi.json', { timeoutMs: 60000, child })
-    openapi = await (await fetch(url + '/_openapi.json')).json()
-    await stop()
-    const compiled = spawnCompiledApp(port, { cwd, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, NUXT_DB_PATH: path, NUXT_FILES_DIR: join(dir, 'files'), NUXT_INCOMING_DIR: join(dir, 'incoming'), NUXT_API_TOKEN: 'test-alias-token', NUXT_MCP_TOKEN: 'test-alias-token' } })
-    stop = () => stopOwnedChild(compiled)
-    for (const stream of [compiled.stdout, compiled.stderr]) stream.on('data', data => { logs = (logs + data).slice(-8000) })
-    await waitForHttp(url + '/api/roster/enterprises?pageSize=1', { timeoutMs: 60000, child: compiled })
+    await waitForHttp(url + '/api/health', { timeoutMs: 60000, child })
+
   }
   catch (error) { await stop(); throw new Error(`${error}\n${logs}`) }
 }, 90000)
@@ -249,7 +246,7 @@ it('keeps fixed pages and exact history unchanged as unrelated aliases, audit ro
     }
     samples.push({ scale, aliases: seeded, rawBytes: seeded * Buffer.byteLength('SECRET_UNRELATED_RAW'.repeat(500)), milliseconds: durations, listBytes, historyBytes })
   }
-  if (process.env.ALIAS99_MEASUREMENTS) writeFileSync(process.env.ALIAS99_MEASUREMENTS, JSON.stringify(samples, null, 2))
+
   console.info('alias99 bounded synthetic samples', JSON.stringify(samples))
 })
 

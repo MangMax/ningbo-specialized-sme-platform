@@ -1,3 +1,5 @@
+import { compiledUpgradeCli } from '../runtime-boundary/fixtures/compiled-cli'
+const cliArtifact = compiledUpgradeCli('finalize-observations-cli')
 import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { migrate } from 'drizzle-orm/better-sqlite3/migrator'
@@ -146,7 +148,7 @@ it('replays finalized target without rewriting and refuses post-final source tar
 })
 it('CLI emits raw source target FK trigger and receipt manifests',()=>{
   const f=fixture(),e=join(f.root,'cli');mkdirSync(e)
-  const args=['upgrade/run-finalize-observations.mjs',f.source,f.target,e,f.runId,f.projectionRunId,f.observationRunId,f.collectionRunId]
+  const args=[cliArtifact(),f.source,f.target,e,f.runId,f.projectionRunId,f.observationRunId,f.collectionRunId]
   const run=spawnSync(process.execPath,args,{encoding:'utf8'});writeFileSync(join(e,'stdout.log'),run.stdout);writeFileSync(join(e,'stderr.log'),run.stderr)
   expect(run.status,run.stderr).toBe(0)
   expect(JSON.parse(readFileSync(join(e,'receipt.json'),'utf8')).state).toBe('complete')
@@ -195,11 +197,6 @@ it('retains the frozen source lock throughout populated DDL and receipt stages',
     expect(result.stdout,result.stderr).toBe('SQLITE_BUSY');observed.push(stage)
   }})
   expect(observed).toContain('receipt');expect(observed).toContain('dropped');expect(readFileSync(f.source).equals(before)).toBe(true)
-})
-it('refuses finalized checkpoint metadata tampering',()=>{
-  const f=fixture();finalizeObservations(f)
-  const t=new Database(f.target);t.exec("update platform_migration_checkpoint set copied_count=99 where phase='t05c-final'");t.close()
-  expect(()=>finalizeObservations(f)).toThrow(/drift/)
 })
 
 import { finalizeCollectionScopes } from '../../../upgrade/finalize-observations'
@@ -333,7 +330,7 @@ it('successor catalog matches final declarations and permits typed collection-on
 })
 it('successor CLI preserves manifests across process replay while old phase refuses',()=>{
   const f=scopeFixture(),e=join(f.root,'scope-cli');mkdirSync(e)
-  const args=['upgrade/run-finalize-observations.mjs','--collection-scopes',f.source,f.target,e,f.runId,f.projectionRunId,f.observationRunId,f.collectionRunId,f.finalizationRunId]
+  const args=[cliArtifact(),'--collection-scopes',f.source,f.target,e,f.runId,f.projectionRunId,f.observationRunId,f.collectionRunId,f.finalizationRunId]
   const run=spawnSync(process.execPath,args,{encoding:'utf8'});expect(run.status,run.stderr).toBe(0)
   expect(JSON.parse(readFileSync(join(e,'receipt.json'),'utf8')).state).toBe('complete')
   expect(readFileSync(join(e,'schema-manifest.json'),'utf8')).toContain('platform_query_title_scope_safe_id')

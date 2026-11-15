@@ -1,4 +1,4 @@
-import { execFileSync } from 'node:child_process'
+
 import { createHash } from 'node:crypto'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -83,18 +83,7 @@ beforeAll(async () => {
 afterAll(async () => {
   await stopOwnedChild(child)
   writeFileSync(join(root, 'server.log'), output)
-  if (process.env.LOG180_EVIDENCE_DIR) {
-    mkdirSync(process.env.LOG180_EVIDENCE_DIR, { recursive: true })
-    writeFileSync(join(process.env.LOG180_EVIDENCE_DIR, 'server.log'), output)
-    writeFileSync(join(process.env.LOG180_EVIDENCE_DIR, 'manifest.json'), JSON.stringify({
-      sha: execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(),
-      tree: execFileSync('git', ['rev-parse', 'HEAD^{tree}'], { encoding: 'utf8' }).trim(),
-      status: execFileSync('git', ['status', '--porcelain'], { encoding: 'utf8' }),
-      fixture: root,
-      lane: 'actual built Nuxt HTTP, real evlog drain, protected log list/detail and MCP',
-    }, null, 2))
-    writeFileSync(join(process.env.LOG180_EVIDENCE_DIR, 'fixture-root.txt'), root)
-  } else rmSync(root, { recursive: true, force: true })
+  rmSync(root, { recursive: true, force: true })
 })
 
 it('records a real matched HTTP template and method in the protected list and detail', async () => {

@@ -8,7 +8,7 @@ import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { migrate } from 'drizzle-orm/better-sqlite3/migrator'
 import { copyFileSync, mkdtempSync } from 'node:fs'
 import { join } from 'node:path'
-import { afterEach, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, expect, it } from 'vitest'
 import { targetSchema } from '../../../lib/platform/target-schema'
 import { writeNewCollectionTarget, type NewCollectionTargetCommand } from '../../../lib/platform/collection-target-command'
 import { platformResultToImport } from '../../../lib/platform/recognized-evidence'
@@ -16,12 +16,21 @@ import type { PlatformLiveQueryResult, PlatformQuerySource } from '../../../lib/
 
 const owned: {root:string; sqlite:Database.Database}[]=[]
 afterEach(()=>{for(const f of owned.splice(0)){if(f.sqlite.open)f.sqlite.close();rmSync(f.root,{recursive:true,force:true})}})
+// Copy only a closed schema template; connections and command facts remain per case.
+const templateRoot = mkdtempSync(join(tmpdir(), 'collection-command-schema-'))
+const templatePath = join(templateRoot, 'native.sqlite')
+beforeAll(() => {
+  const db = new Database(templatePath)
+  try { db.pragma('foreign_keys=ON'); createRuntimeSchema(db) } finally { db.close() }
+})
+afterAll(() => rmSync(templateRoot, { recursive: true, force: true }))
 function fixture() {
   const root = mkdtempSync(join(tmpdir(), 'w4a-fixture-'))
   const target = join(root, 'target.sqlite')
+  copyFileSync(templatePath, target)
   const statements: string[] = []
   const sqlite = new Database(target, { verbose: text => statements.push(String(text)) }); sqlite.pragma('foreign_keys=ON')
-  owned.push({root,sqlite});createRuntimeSchema(sqlite);statements.length=0
+  owned.push({root,sqlite});statements.length=0
   return { sqlite, db: drizzle(sqlite, { schema: targetSchema }), statements }
 }
 function evidence(source: PlatformQuerySource): PlatformLiveQueryResult {
@@ -89,7 +98,7 @@ it('keeps new collection times and paired aliases while sharing a source version
   expect(resolveLegacyReference(db, { version: 1, kind: 'relation', queryId: second.queryAlias, relationId: second.observations[0]!.relationAlias })).toEqual({ version: 2, kind: 'observation', collectionId: second.collectionId, observationId: second.observations[0]!.observationId })
   const before = normalizedBytes(sqlite)
   expect(() => writeNewCollectionTarget(db, input)).toThrow('collection_already_exists')
-  expect(normalizedBytes(sqlite)).toEqual(before)
+  expect(normalizedBytes(sqlite).equals(before), 'database bytes remain unchanged').toBe(true)
   sqlite.close()
 })
 it.each(['no_record','failed','auth_failed','not_queried'] as const)('retains %s collection without observations and separates evidence status from query status', status => {
@@ -127,7 +136,7 @@ it.each([{ label: 'null', value: null }, { label: 'integer', value: 4 }, { label
   const q = JSON.parse(input.queryText); q.collectionEvidence.effectiveConditions.whpcyear = value
   const before = normalizedBytes(sqlite)
   expect(() => writeNewCollectionTarget(db, { ...input, queryText: JSON.stringify(q), evidenceText: JSON.stringify(q.collectionEvidence) })).toThrow()
-  expect(normalizedBytes(sqlite)).toEqual(before); sqlite.close()
+  expect(normalizedBytes(sqlite).equals(before), 'database bytes remain unchanged').toBe(true); sqlite.close()
 })
 it.each(['duplicate-page','wrong-source','wrong-position','missing-row','reordered-raw','bad-metadata','missing-evidence','reference','unsafe-sequence','assignment-conflict','evidence-bytes'] as const)('rejects %s before any collection fact survives', kind => {
   const { sqlite, db } = fixture(), input = command(evidence('queryBusList'))
@@ -144,21 +153,21 @@ it.each(['duplicate-page','wrong-source','wrong-position','missing-row','reorder
   if (kind === 'assignment-conflict') q.relations[0].enterpriseId = 100
   const before = normalizedBytes(sqlite)
   expect(() => writeNewCollectionTarget(db, { ...input, queryText: JSON.stringify(q), evidenceText: kind === 'evidence-bytes' ? '{}' : q.collectionEvidence ? JSON.stringify(q.collectionEvidence) : null })).toThrow()
-  expect(normalizedBytes(sqlite)).toEqual(before); sqlite.close()
+  expect(normalizedBytes(sqlite).equals(before), 'database bytes remain unchanged').toBe(true); sqlite.close()
 })
 it.each(['platform_collection','platform_collection_page','platform_collection_condition','platform_collection_archive_ref','platform_query_title_scope','platform_legacy_query_alias','platform_legacy_relation_alias'])('rolls back the complete command after %s failure even when outer caller catches', table => {
   const { sqlite, db } = fixture()
   sqlite.exec(`create trigger inject before insert on ${table} begin select raise(abort,'injected'); end`)
   const before = normalizedBytes(sqlite)
   db.transaction(tx => { expect(() => writeNewCollectionTarget(tx, command(evidence('queryBusList')))).toThrow('injected') })
-  expect(normalizedBytes(sqlite)).toEqual(before); sqlite.close()
+  expect(normalizedBytes(sqlite).equals(before), 'database bytes remain unchanged').toBe(true); sqlite.close()
 })
 it.each(['query','relation'] as const)('rejects exhausted %s namespace without partial collection or other namespace advancement', namespace => {
   const { sqlite, db } = fixture()
   sqlite.prepare('update platform_legacy_alias_sequence set high_water=9007199254740991 where namespace=?').run(namespace)
   const before = normalizedBytes(sqlite)
   expect(() => writeNewCollectionTarget(db, command(evidence('queryList')))).toThrow()
-  expect(normalizedBytes(sqlite)).toEqual(before); sqlite.close()
+  expect(normalizedBytes(sqlite).equals(before), 'database bytes remain unchanged').toBe(true); sqlite.close()
 })
 it.each(['platform_collection','platform_collection_page','platform_archive_value','platform_business_observation','platform_business_record_version'] as const)('rejects exhausted generated %s ID atomically', table => {
   const { sqlite, db } = fixture()
@@ -171,13 +180,13 @@ it.each(['platform_collection','platform_collection_page','platform_archive_valu
   else sqlite.prepare('insert into sqlite_sequence(name,seq) values(?,9007199254740991)').run(table)
   const before = normalizedBytes(sqlite)
   expect(() => writeNewCollectionTarget(db, command(evidence('queryList')))).toThrow()
-  expect(normalizedBytes(sqlite)).toEqual(before); sqlite.close()
+  expect(normalizedBytes(sqlite).equals(before), 'database bytes remain unchanged').toBe(true); sqlite.close()
 })
 it.each([0,71605])('refuses non-native phase %s and preserves the target', phase => {
   const { sqlite, db } = fixture(); sqlite.pragma(`user_version=${phase}`)
   const before = normalizedBytes(sqlite)
   expect(() => writeNewCollectionTarget(db, command(evidence('queryList')))).toThrow('Final native platform schema required')
-  expect(normalizedBytes(sqlite)).toEqual(before); sqlite.close()
+  expect(normalizedBytes(sqlite).equals(before), 'database bytes remain unchanged').toBe(true); sqlite.close()
 })
 it('rejects unsafe source projection IDs at command boundary after source writer insertion', () => {
   const { sqlite, db } = fixture()
@@ -225,7 +234,7 @@ it.each(['apply_list','business_list'] as const)('rejects legacy null-raw refere
   const { sqlite, db } = fixture()
   const before = normalizedBytes(sqlite)
   expect(() => writeNewCollectionTarget(db, { queryText: JSON.stringify({ interface: interfaceName, queryKey: 'reference', queriedAt: 'time', relations: [] }), evidenceText: null, assignments: [], createdAt: 'c' })).toThrow('reference reuse is deferred')
-  expect(normalizedBytes(sqlite)).toEqual(before); sqlite.close()
+  expect(normalizedBytes(sqlite).equals(before), 'database bytes remain unchanged').toBe(true); sqlite.close()
 })
 it('accepts rawData response evidence without rewriting source body types array order NULL or whitespace', () => {
   const { sqlite, db } = fixture(), e = evidence('queryBusList')
@@ -246,7 +255,7 @@ it.each(['queryList','businessList','queryBusList'] as const)('rolls back collec
   sqlite.exec("create trigger inject_source before insert on platform_legacy_relation_alias begin select raise(abort,'source-terminal'); end")
   const before = normalizedBytes(sqlite)
   db.transaction(tx => { expect(() => writeNewCollectionTarget(tx, command(evidence(source)))).toThrow('source-terminal') })
-  expect(normalizedBytes(sqlite)).toEqual(before); sqlite.close()
+  expect(normalizedBytes(sqlite).equals(before), 'database bytes remain unchanged').toBe(true); sqlite.close()
 })
 it('keeps query failure reason independent of top-level collection error and preserves unfinished title order', () => {
   const { sqlite, db } = fixture(), e = evidence('businessList')
@@ -279,6 +288,6 @@ it.each(['queryList', 'businessList'] as const)('rejects fresh %s stored raw con
   const input = changed(command(e), q => { q.relations![0]!.status = '退回' })
   const before = normalizedBytes(sqlite)
   db.transaction(tx => { expect(() => writeNewCollectionTarget(tx, input)).toThrow('platform_field_conflict') })
-  expect(normalizedBytes(sqlite)).toEqual(before)
+  expect(normalizedBytes(sqlite).equals(before), 'database bytes remain unchanged').toBe(true)
   sqlite.close()
 })

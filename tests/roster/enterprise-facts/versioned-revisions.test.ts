@@ -5,7 +5,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import * as h3 from 'h3'
-import { createApp, createRouter, defineEventHandler, toNodeListener } from 'h3'
+import { createApp, createRouter, toNodeListener } from 'h3'
 import { schema, useDb } from '../../../db'
 const dir = mkdtempSync(join(tmpdir(), 'facts-306-'))
 const db = initializeDb({ create: true, dbPath: join(dir, 'test.db') })

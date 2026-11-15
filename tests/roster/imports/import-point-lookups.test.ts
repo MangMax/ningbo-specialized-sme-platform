@@ -1,9 +1,9 @@
 import { initializeDb } from '../../../db/client'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, describe, expect, it, vi } from 'vitest'
-import { schema, useDb } from '../../../db'
+import { schema } from '../../../db'
 import type { RosterImportRequest } from '../../../lib/roster-import-client'
 import { commitRosterImport, preflightRosterImport } from '../../../server/utils/roster-import'
 
@@ -104,7 +104,7 @@ describe('Historical import point lookup work', () => {
       expect(commitRosterImport(db, input)).toEqual(commit.result)
       return { size, preflight, commit }
     })
-    if (process.env.POINT_LOOKUP_EVIDENCE) writeFileSync(process.env.POINT_LOOKUP_EVIDENCE, JSON.stringify(samples, null, 2))
+
     expect(samples[1]!.commit.result).toEqual(samples[0]!.commit.result)
     for (const phase of ['preflight', 'commit'] as const) {
       // A single batch-wide ambiguity pass is allowed; per-input full-table work is not.

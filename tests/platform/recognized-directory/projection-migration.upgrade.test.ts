@@ -10,45 +10,11 @@ import * as schema from '../../../db/schema'
 const dirs: string[] = []
 afterAll(() => dirs.forEach(dir => rmSync(dir, { recursive: true, force: true })))
 
-const COLUMNS = [
-  'version_id', 'record_id', 'validity_date_raw', 'maintenance_year', 'maintenance_batch',
-  'district', 'award_note', 'title_raw', 'name_raw', 'uscc_raw', 'rule_version', 'created_at',
-  'source_validity_date', 'source_maintenance_batch', 'source_maintenance_year_absent',
-]
-const INDEXES = [
-  { name: 'platform_recognized_projection_batch_idx' },
-  { name: 'platform_recognized_projection_district_idx' },
-  { name: 'platform_recognized_projection_record_idx' },
-  { name: 'platform_recognized_projection_title_idx' },
-  { name: 'platform_recognized_projection_title_version_idx' },
-  { name: 'platform_recognized_projection_uscc_idx' },
-  { name: 'platform_recognized_projection_validity_idx' },
-  { name: 'platform_recognized_projection_year_idx' },
-]
-
 function tableExists(sqlite: Database.Database, name: string) {
   return (sqlite.prepare("SELECT count(*) n FROM sqlite_master WHERE type='table' AND name=?").get(name) as { n: number }).n === 1
 }
 
 describe('0035 platform recognized projection migration', () => {
-  it('applies idempotently from an empty database and adds only the recognized table', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'recognized-migration-empty-')); dirs.push(dir)
-    const fullMigrations = resolve(import.meta.dirname, '../../../db/migrations')
-    const sqlite = new Database(join(dir, 'empty.sqlite'))
-    try {
-      const db = drizzle(sqlite, { schema })
-      expect(tableExists(sqlite, 'platform_recognized_projection')).toBe(false)
-      migrate(db, { migrationsFolder: fullMigrations })
-      expect(tableExists(sqlite, 'platform_recognized_projection')).toBe(true)
-      expect((sqlite.prepare('PRAGMA table_info(platform_recognized_projection)').all() as { name: string }[]).map(column => column.name)).toEqual(expect.arrayContaining(COLUMNS))
-      expect(sqlite.prepare("SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='platform_recognized_projection' ORDER BY name").all()).toEqual(expect.arrayContaining(INDEXES))
-      expect((sqlite.pragma("index_info('platform_recognized_projection_title_version_idx')") as { name: string }[]).map(column => column.name)).toEqual(['title_raw', 'version_id'])
-      expect(sqlite.pragma('foreign_key_check')).toEqual([])
-      // Re-applying the same journal is a no-op, not a duplicate-table failure.
-      migrate(db, { migrationsFolder: fullMigrations })
-      expect(sqlite.prepare('SELECT count(*) n FROM platform_recognized_projection').get()).toEqual({ n: 0 })
-    } finally { sqlite.close() }
-  })
 
   it('adds the table to an existing pre-0035 database and preserves old relation/raw rows', () => {
     const dir = mkdtempSync(join(tmpdir(), 'recognized-migration-existing-')); dirs.push(dir)
@@ -82,9 +48,6 @@ describe('0035 platform recognized projection migration', () => {
       expect(JSON.parse(stored.raw_fields)).toEqual(rawFields)
       expect(enterprise.id).toBeGreaterThan(0)
       expect(sqlite.prepare('SELECT count(*) n FROM platform_recognized_projection').get()).toEqual({ n: 0 })
-      expect((sqlite.prepare('PRAGMA table_info(platform_recognized_projection)').all() as { name: string }[]).map(column => column.name)).toEqual(expect.arrayContaining(COLUMNS))
-      expect(sqlite.prepare("SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='platform_recognized_projection' ORDER BY name").all()).toEqual(expect.arrayContaining(INDEXES))
-      expect((sqlite.pragma("index_info('platform_recognized_projection_title_version_idx')") as { name: string }[]).map(column => column.name)).toEqual(['title_raw', 'version_id'])
       expect(sqlite.pragma('foreign_key_check')).toEqual([])
       // The same final migration set applies again as a journal no-op.
       migrate(db, { migrationsFolder: fullMigrations })

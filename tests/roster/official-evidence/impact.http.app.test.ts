@@ -11,7 +11,7 @@ import { processEvidenceImpacts113, listEvidenceImpacts113, listImpactEvidence11
 import { recognizedResultToImport } from '../../../lib/platform/recognized-evidence'
 import type { PlatformLiveQueryResult } from '../../../lib/platform/live-query'
 import { minimalPdf } from '../../support/minimal-pdf'
-import { spawnOwnedChild as spawn, reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../../support/owned-process.mjs'
+import { reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../../support/owned-process.mjs'
 
 const dir = mkdtempSync(join(tmpdir(), 'impact-113-'))
 const dbPath = join(dir, 'synthetic.db'), db = initializeDb({ create: true,  dbPath })
@@ -42,7 +42,7 @@ beforeAll(async () => {
 }, 90000)
 afterAll(async () => { if (stop) await stop(); rmSync(dir, { recursive: true, force: true }) })
 
-describe('ticket 113 committed evidence impact substrate', () => {
+describe("ticket committed evidence impact substrate", () => {
   it('registers committed code supplementation across titles and directions without changing decisions', async () => {
     const e = seed('缺码补齐'), unchanged = seed('仍然缺码')
     const a = decision(e.id), b = decision(e.id, 'innovative_sme', 'extra_in_miit', 'confirmed_no_diff')

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, it } from 'vitest'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { initializeDb, schema } from '../../../db/client'
@@ -115,7 +115,7 @@ it('carries a native archive submission through continuation and annual child jo
     }
     await applicationLogs().flush()
     const status = applicationLogs().status()
-    if (process.env.LOG180_RELIABILITY_RECEIPT) writeFileSync(process.env.LOG180_RELIABILITY_RECEIPT, JSON.stringify({ status, jobs: jobs.map(({ id, kind, state, result }) => ({ id, kind, state, result })) }, null, 2))
+
     expect(status).toMatchObject({ overflow: 0, dropped: 0, writeUnknown: 0, drainFailures: 0, queuedEntries: 0, inFlightEntries: 0 })
     expect(status.coalesced).toBeGreaterThan(0)
   } finally { await executor.close() }

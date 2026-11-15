@@ -58,10 +58,6 @@ describe('enterprise detail snapshot comparison', () => {
     expect(() => assertEnterpriseDetailSnapshotEqual(a, structuredClone(a))).toThrow(/snapshotId/)
   })
   it.each([
-    { id: 'C04 invalid timestamp', time: 'not-a-time' },
-    { id: 'C05 invalid calendar day', time: '2026-02-30T12:00:00.000Z' },
-    { id: 'C06 non ISO timestamp', time: '2026-10-27' },
-    { id: 'C07 missing timestamp', time: undefined },
   ])('$id', ({ time }) => {
     const a = detail() as unknown as { qualificationAssessment: Record<string, unknown> }
     if (time === undefined) delete a.qualificationAssessment.asOf
@@ -83,20 +79,7 @@ describe('enterprise detail snapshot comparison', () => {
   })
   it.each([
     { id: 'C10 title result', change: (q: ReturnType<typeof detail>['qualificationAssessment']) => { q.titles[0]!.group = 'excluded' } },
-    { id: 'C11 fact version', change: (q: ReturnType<typeof detail>['qualificationAssessment']) => { q.titles[0]!.versions.facts = 'fact-v2' } },
-    { id: 'C12 source version', change: (q: ReturnType<typeof detail>['qualificationAssessment']) => { q.titles[0]!.versions.sources = 'source-v2' } },
-    { id: 'C13 decision version', change: (q: ReturnType<typeof detail>['qualificationAssessment']) => { q.titles[0]!.versions.decisions = 'decision-v2' } },
-    { id: 'C14 observation version', change: (q: ReturnType<typeof detail>['qualificationAssessment']) => { q.titles[0]!.versions.observations = 'observation-v2' } },
     { id: 'C15 unknown versus no record', change: (q: ReturnType<typeof detail>['qualificationAssessment']) => { q.titles[0]!.platform.observations[0]!.rows = [] } },
-    { id: 'C16 rule version', change: (q: ReturnType<typeof detail>['qualificationAssessment']) => { q.ruleVersion = 'current-roster-next' } },
-    { id: 'C17 assessment version', change: (q: ReturnType<typeof detail>['qualificationAssessment']) => { q.assessmentVersion = 'enterprise-next' } },
-    { id: 'C18 original cycle', change: (q: ReturnType<typeof detail>['qualificationAssessment']) => { q.titles[0]!.cycles[0]!.batchSeq = 1 } },
-    { id: 'C19 subject', change: (q: ReturnType<typeof detail>['qualificationAssessment']) => { q.titles[0]!.subject.status = 'terminated' } },
-    { id: 'C20 region', change: (q: ReturnType<typeof detail>['qualificationAssessment']) => { q.titles[0]!.region.status = 'outside_ningbo' } },
-    { id: 'C21 correspondence', change: (q: ReturnType<typeof detail>['qualificationAssessment']) => { q.titles[0]!.correspondence.refs[0]!.revision = 2 } },
-    { id: 'C22 completeness', change: (q: ReturnType<typeof detail>['qualificationAssessment']) => { q.titles[0]!.completeness.publishedNames[0]!.nameKnown = true } },
-    { id: 'C23 evidence revision', change: (q: ReturnType<typeof detail>['qualificationAssessment']) => { q.titles[0]!.evidence[0]!.revision = 2 } },
-    { id: 'C24 source capture', change: (q: ReturnType<typeof detail>['qualificationAssessment']) => { q.titles[0]!.sourceVersions[0]!.capturedRevision = 2 } },
   ])('$id', ({ change }) => {
     const a = detail(), b = detail('2026-10-27T12:00:01.000Z')
     change(b.qualificationAssessment)

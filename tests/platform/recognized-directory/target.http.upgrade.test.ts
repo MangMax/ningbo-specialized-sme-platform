@@ -8,7 +8,10 @@ import { createApp, createRouter, toWebHandler, defineEventHandler, createError 
 import { afterAll, beforeAll, expect, it, vi } from 'vitest'
 import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { recognizedHandlerFixture } from './fixtures/migrated-handler'
+import { seedRecognizedDirectory } from './fixtures/migrated-directory'
+import { migrate } from 'drizzle-orm/better-sqlite3/migrator'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { targetSchema } from '../../../lib/platform/target-schema'
 import { listPlatformRecognizedDirectory, getPlatformRecognizedRecord } from '../../../upgrade/frozen/server/platform-recognized-directory'
 import { readPlatformFilterOptions } from '../../../upgrade/frozen/server/platform-filter-options'
@@ -16,9 +19,21 @@ import { platformResultToImport } from '../../../lib/platform/recognized-evidenc
 import type { PlatformLiveQueryResult } from '../../../lib/platform/live-query'
 import { writeCollectionTarget } from '../../../lib/platform/collection-target-command'
 
+// Seed the legacy source once, then run the complete chain once (no discarded prefix).
+async function historicalFixture(extra?: (source: Database.Database) => void) {
+  const root = mkdtempSync(join(tmpdir(), 'recognized-http-'))
+  const legacySource = join(root, 'legacy.sqlite')
+  const source = new Database(legacySource)
+  try {
+    migrate(drizzle(source), { migrationsFolder: 'db/migrations' })
+    source.exec("INSERT INTO title(code,name_zh,level,rank) VALUES('innovative_sme','创新型中小企业','municipal',1),('specialized_sme','专精特新中小企业','municipal',2),('little_giant','小巨人','national',3)")
+    seedRecognizedDirectory(source, extra)
+  } finally { source.close() }
+  return { root, legacySource, close() {} }
+}
 const responses: unknown[] = []
 const statements: { sql: string; params: unknown[] }[] = []
-let fixture: ReturnType<typeof finalEvidenceFixture<Awaited<ReturnType<typeof recognizedHandlerFixture>>>>
+let fixture: ReturnType<typeof finalEvidenceFixture<Awaited<ReturnType<typeof historicalFixture>>>>
 let request: ReturnType<typeof toWebHandler>
 let listTool: typeof import('../../../server/mcp/tools/list_platform_recognized_directory')['default']
 let detailTool: typeof import('../../../server/mcp/tools/get_platform_recognized_record')['default']
@@ -37,7 +52,7 @@ async function mcp(input: unknown, detail = false) {
   return json(result.structuredContent)
 }
 beforeAll(async () => {
-  fixture = finalEvidenceFixture(await recognizedHandlerFixture(source => {
+  fixture = finalEvidenceFixture(await historicalFixture(source => {
     const db = drizzle(source, { schema: legacySchema })
     for (let i = 0; i < 5; i++) {
       const r = db.insert(legacySchema.platformRelation).values({ queryId: 1, sequenceNo: i + 2, nameRaw: ' Cells ', rawFields: { rdjb: false } }).returning().get()
@@ -69,6 +84,7 @@ afterAll(() => {
   if (process.env.RECOGNIZED_HANDLER_EVIDENCE_DIR) writeFileSync(join(process.env.RECOGNIZED_HANDLER_EVIDENCE_DIR, 'HTTP-MCP-SQL.json'), JSON.stringify(statements, null, 2))
   if (process.env.RECOGNIZED_HANDLER_EVIDENCE_DIR) writeFileSync(join(process.env.RECOGNIZED_HANDLER_EVIDENCE_DIR, 'HTTP-RESPONSES.json'), JSON.stringify(responses, null, 2))
   fixture?.close()
+  if (fixture) rmSync(fixture.root, { recursive: true, force: true })
   vi.doUnmock('@db'); vi.doUnmock('@nuxtjs/mcp-toolkit/server'); vi.unstubAllGlobals()
 })
 it('real HTTP and MCP preserve independent legacy records isolated filters pages details and no-store', async () => {

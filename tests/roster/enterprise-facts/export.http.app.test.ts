@@ -6,7 +6,7 @@ import { join, resolve } from 'node:path'
 import ExcelJS from 'exceljs'
 import { afterAll, beforeAll, expect, it } from 'vitest'
 import { initializeDb, schema as s } from '../../../db/client'
-import { spawnOwnedChild as spawn, reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../../support/owned-process.mjs'
+import { reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../../support/owned-process.mjs'
 
 const dir = mkdtempSync(join(tmpdir(), 'facts-export-307-'))
 const dbPath = join(dir, 'synthetic.db'), db = initializeDb({ create: true,  dbPath })
@@ -169,12 +169,7 @@ it('native facts retain qualification effects and immutable lifecycle references
   expect(pinned.factReferences).toEqual(refs)
   await command(ids[0]!,{action:'withdraw',factId:refs[0]!.factId})
   expect((await get('/api/roster/decision-lifecycle/'+saved.versionId)).factReferences).toEqual(refs)
-  const evidenceDir = process.env.FACTS_307_EVIDENCE_DIR
-  if (evidenceDir) {
-    writeFileSync(join(evidenceDir,'new-facts.xlsx'),fresh.bytes)
-    writeFileSync(join(evidenceDir,'native-restarted-facts.xlsx'),restarted.bytes)
-    writeFileSync(join(evidenceDir,'http-observations.json'),JSON.stringify({before:before.job,modern,job:fresh.job,contents:contents(fresh.wb),readback,restartedJob:restarted.job,restartedContents:contents(restarted.wb),factsBefore,retained,pinned},null,2))
-  }
+
   expect((await get(`/api/roster/enterprises/${ids[0]}`)).qualificationAssessment.titles.find((t:any)=>t.titleCode==='little_giant').group).toBe('eligible')
   const withdrawnExport=await workbook('native-after-withdrawal')
   expect(withdrawnExport.job.result.counts).toEqual({eligible:6,pending:0,excluded:1})

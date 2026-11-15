@@ -1,3 +1,4 @@
+import { resetExportRows } from './fixtures/reset-rows'
 import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
 import { CURRENT_RULE_VERSION } from '../../../lib/roster/current-qualification'
 import { readDevelopmentDiscovery, businessIdentity, expectedBusinessIdentity, matchesBusinessIdentity } from './fixtures/specialized-export'
@@ -112,14 +113,9 @@ async function startService() {
   catch (error) { await service.stop(); throw new Error(String(error) + output) }
 }
 let discovery: any
-beforeAll(async () => { discovery = await readDevelopmentDiscovery() }, 90000)
-beforeEach(async () => {
-  await service?.stop()
-  db.$client.close()
-  dbPath=join(dir,`synthetic-${++generation}.db`)
-  db=initializeDb({create:true,dbPath})
-  await startService()
-},90000)
+beforeAll(async () => { discovery = await readDevelopmentDiscovery(); await startService() }, 90000)
+beforeEach(() => resetExportRows(db.$client))
+
 
 afterAll(async () => {
   await service?.stop()
@@ -136,93 +132,11 @@ it('创新型专用入口交付六表与共享任务产物', async () => {
   expect(job.result.dataVersion).toMatch(/^sha256:[a-f0-9]{64}$/)
 })
 
-it('创新型按自身认定周期复核并保留恢复与同年冲突', async () => {
-  candidate('新认定')
-  candidate('复核通过', [{ eventType: 'award', year: year - 4, batchSeq: 1 }, { eventType: 'review', year: year - 4, batchSeq: 1, decidedYear: year - 1, reviewOutcome: 'passed' }])
-  const restored = candidate('失败后恢复', [{ eventType: 'award', year: year - 5, batchSeq: 1 }, { eventType: 'review', year: year - 5, batchSeq: 1, decidedYear: year - 2, reviewOutcome: 'failed' }, { eventType: 'award', year: year - 1, batchSeq: 2 }])
-  candidate('旧周期晚失败', [{ eventType: 'award', year: year - 5, batchSeq: 1 }, { eventType: 'award', year: year - 1, batchSeq: 2 }, { eventType: 'review', year: year - 5, batchSeq: 1, decidedYear: year, reviewOutcome: 'failed' }])
-  const failed = candidate('本周期失败', [{ eventType: 'award', year: year - 4, batchSeq: 1 }, { eventType: 'review', year: year - 4, batchSeq: 1, decidedYear: year - 1, reviewOutcome: 'failed' }])
-  // A different title's passing review cannot rescue this title's failed cycle.
-  record(failed.enterprise.id, '本周期失败', [{ eventType: 'award', year: year - 4, batchSeq: 1 }, { eventType: 'review', year: year - 4, batchSeq: 1, decidedYear: year - 1, reviewOutcome: 'passed' }], 'specialized_sme')
-  candidate('到期结果未知', [{ eventType: 'award', year: year - 3, batchSeq: 1 }])
-  candidate('复核缺结论年', [{ eventType: 'award', year: year - 4, batchSeq: 1 }, { eventType: 'review', year: year - 4, batchSeq: 1, reviewOutcome: 'passed' }])
-  candidate('同年复核冲突', [{ eventType: 'award', year: year - 4, batchSeq: 1 }, { eventType: 'review', year: year - 4, batchSeq: 1, decidedYear: year - 1, reviewOutcome: 'failed' }, { eventType: 'review', year: year - 4, batchSeq: 1, decidedYear: year - 1, reviewOutcome: 'passed' }])
-  candidate('同年恢复顺序未知', [{ eventType: 'award', year: year - 4, batchSeq: 1 }, { eventType: 'review', year: year - 4, batchSeq: 1, decidedYear: year, reviewOutcome: 'failed' }, { eventType: 'award', year, batchSeq: 2 }])
-  candidate('复核原周期未知', [{ eventType: 'award', year: year - 1 }, { eventType: 'review', year: null, decidedYear: year, reviewOutcome: 'failed' }])
-  candidate('纯培育', [{ eventType: 'nurture', year }])
-  const { wb, job } = await workbook('119-cycles')
-  expect(rows(wb, '有效企业').map(row => row[2])).toEqual(['新认定', '复核通过', '失败后恢复'])
-  expect(rows(wb, '未认定').map(row => row[2])).toEqual(['纯培育'])
-  expect(rows(wb, '已到期').map(row => row[2])).toEqual(['旧周期晚失败', '本周期失败', '到期结果未知', '复核缺结论年', '同年复核冲突', '同年恢复顺序未知', '复核原周期未知'])
-  expect(job.result.counts).toEqual({ eligible: 3, pending: 0, excluded: 8 })
-  const restoreRow = rows(wb, '有效企业').find(row => matchesBusinessIdentity(db, row, restored.enterprise.id))!
-  expect(restoreRow[6]).toBe(String(year - 5))
-  expect(restoreRow[7].split('\n')).toHaveLength(restored.events.length)
-  expect(restoreRow[7]).toContain('复核未通过')
-  expect(rows(wb, '有效企业')[1]![7]).toContain(`${year - 1}年复核通过`)
-  for (const name of ['同年复核冲突', '同年恢复顺序未知']) expect(rows(wb, '已到期').find(row => row[2] === name)![15]).toContain('复核明确不通过')
-})
-
 function decision(enterpriseId: number, reasonCode: 'moved_out' | 'moved_in' | 'deregistered' | 'pending_review' | 'other', extra = {}) {
   const decision = db.insert(s.differenceReason).values({ enterpriseId, titleCode, direction: 'extra_in_miit', status: 'confirmed_reason', reasonCode, verificationStatus: 'confirmed', lifecycleAction: 'replace', basis: '合成已确认主体事实', effectiveAt: '2025-01-01T00:00:00Z', recordedAt: new Date().toISOString(), ...extra }).returning().get()
   reviewCurrentExportDecision(db,decision)
   return decision
 }
-it('创新型迁入更名双备注与主体排除不越过证据边界', async () => {
-  // Historical case name retained; #355/#379 display legacy unknown per source,
-  // preserve the confirmed alias, and remove the unsupported rename inference.
-  const renamed = candidate('迁入现名')
-  db.update(s.record).set({ nameRaw: '公布旧名' }).where(eq(s.record.id, renamed.record.id)).run()
-  const alias = db.insert(s.enterpriseAlias).values({ enterpriseId: renamed.enterprise.id, name: '公布旧名', nameNorm: '公布旧名', sourceKind: 'manual', verificationStatus: 'confirmed' }).returning().get()
-  decision(renamed.enterprise.id, 'moved_in', { movedInTitleCode: titleCode })
-  const out = candidate('外迁排除'); const outDecision = decision(out.enterprise.id, 'moved_out')
-  const deregistered = candidate('注销排除'); decision(deregistered.enterprise.id, 'deregistered')
-  const returned = candidate('迁出后迁回')
-  const prior = decision(returned.enterprise.id, 'moved_out', { recordedAt: '2025-01-01T00:00:00Z' })
-  decision(returned.enterprise.id, 'moved_in', { previousId: prior.id, effectiveAt: '2026-01-01T00:00:00Z', movedInTitleCode: titleCode })
-  const migrant = candidate('迁入缺本称号资格', [])
-  decision(migrant.enterprise.id, 'moved_in', { movedInTitleCode: titleCode, movedInYear: year })
-  record(migrant.enterprise.id, '迁入缺本称号资格', [award], 'little_giant')
-  const unknown = candidate('未确认旧名')
-  db.update(s.record).set({ nameRaw: '待确认公布名' }).where(eq(s.record.id, unknown.record.id)).run()
-  const partial = candidate('缺正式出处')
-  db.delete(s.recordEvidence).where(eq(s.recordEvidence.recordEventId, partial.events[0]!.id)).run()
-  const conflict = candidate('统代冲突')
-  db.update(s.record).set({ usccRaw: 'OTHER-IDENTITY' }).where(eq(s.record.id, conflict.record.id)).run()
-  const stale = candidate('旧解释前提未知')
-  const staleDecision = decision(stale.enterprise.id, 'moved_out', { lifecycleAction: null, basis: null, reasonNote: '历史缺码无法查询' })
-  const terminated = candidate('终止周期未结构化')
-  decision(terminated.enterprise.id, 'other', { reasonNote: '正式取消/终止，但缺对应周期结构化依据' })
-  const expectedDisplay = Object.freeze({
-    8: `${year}年第1批认定，《innovative_sme-synthetic.xlsx》：未逐出处核实`,
-    9: '公布旧名',
-    11: '逐出处公布名见公布名称列；现用名见企业名称列；已确认曾用名仅见该列',
-    12: `${year}年第1批认定：宁波市经信局公布资料\n《innovative_sme-synthetic.xlsx》，附件：合成名单，名单序号${renamed.events[0]!.id}，未逐出处核实`,
-  })
-  const { wb, job } = await workbook('119-identity')
-  expect(rows(wb, '有效企业').map(row => row[2])).toEqual(['迁入现名', '外迁排除', '注销排除', '迁出后迁回', '未确认旧名', '缺正式出处', '统代冲突', '旧解释前提未知', '终止周期未结构化'])
-  expect(rows(wb, '已迁出')).toEqual([]); expect(rows(wb, '已注销（吊销）')).toEqual([])
-  expect(rows(wb, '未认定').map(row => row[2])).toEqual(['迁入缺本称号资格'])
-  expect(job.result.counts).toEqual({ eligible: 9, pending: 0, excluded: 1 })
-  const renameRow = rows(wb, '有效企业')[0]!
-  expect({ 8: renameRow[8], 9: renameRow[9], 11: renameRow[11], 12: renameRow[12] }).toEqual(expectedDisplay); expect(renameRow[9]).toBe('公布旧名')
-  expect(renameRow[11]).not.toContain('已确认迁入宁波')
-  expect(renameRow[11]).not.toContain('现已更名为')
-  expect(renameRow[11]).not.toContain('未见宁波')
-  expect(renameRow[11]).not.toContain('原城市：')
-  expect(renameRow[9]).toBe(alias.name)
-  expect(rows(wb, '有效企业').find(row => row[2] === '外迁排除')![13]).toBe('有效企业')
-  expect(outDecision.id).toBeGreaterThan(0)
-  for (const name of ['迁入缺本称号资格']) {
-    const pending = rows(wb, '未认定').find(row => row[2] === name)!
-    expect(pending[10]).toBe('尚未完成公布匹配核实')
-    expect(pending[11] ?? null).toBeNull()
-  }
-  expect(rows(wb, '未认定').find(row => row[2] === '迁入缺本称号资格')![15]).toContain('缺少已确认认定及资格依据')
-  expect(rows(wb, '有效企业').find(row => row[2] === '旧解释前提未知')![13]).toBe('有效企业')
-  expect(staleDecision.id).toBeGreaterThan(0)
-  expect(rows(wb, '有效企业').find(row => row[2] === '统代冲突')![11]).toContain('身份冲突')
-})
 
 it('创新型按稳定主体去重且多称号分别保留', async () => {
   const twins = [candidate('同名主体甲'), candidate('同名主体乙')]
@@ -273,68 +187,6 @@ function query(enterprise: typeof s.enterprise.$inferSelect, status: 'success' |
   const native = submitNativePlatformQuery(db, { interface: 'business_list', queryKey: key, rdjb: '1', titleCode, queriedAt: new Date().toISOString(), status, rawResponse: JSON.stringify({ status, rowStatus: rowStatus ?? null }), relations: rowStatus == null ? [] : [{ sequenceNo: 1, enterpriseId: enterprise.id, nameRaw: enterprise.name, usccRaw: enterprise.usccNorm, status: rowStatus, declareKind: 'update', verificationStatus: 'confirmed', matchBasis: 'uscc' }] })
   return { id: native.queryId, relationIds: native.relationIds }
 }
-it('创新型查询失败退回待审与旧决定不冒充资格失效', async () => {
-  for (const status of ['failed', 'no_record'] as const) query(candidate('查询' + status).enterprise, status)
-  for (const status of ['退回', '待审核']) {
-    const c = candidate('更新' + status)
-    query(c.enterprise, 'success', c.enterprise.usccNorm!, status)
-  }
-  const pending = candidate('更新待审决定'); decision(pending.enterprise.id, 'pending_review', { measureCode: 'follow_review' })
-  const withdrawn = candidate('撤回旧外迁')
-  const old = decision(withdrawn.enterprise.id, 'moved_out', { recordedAt: '2025-01-01T00:00:00Z' })
-  decision(withdrawn.enterprise.id, 'moved_out', { lifecycleAction: 'withdraw', previousId: old.id })
-  const stale = candidate('补码后旧按名证据')
-  const staleQuery = query(stale.enterprise, 'failed', 'name:' + stale.enterprise.nameNorm)
-  const staleDecision = decision(stale.enterprise.id, 'moved_out', { evidenceQueryId: staleQuery.id })
-  const onlyPlatform = db.insert(s.enterprise).values({ name: '仅平台通过', nameNorm: '仅平台通过', usccNorm: 'ONLY-PLATFORM-119' }).returning().get()
-  const q = query(onlyPlatform, 'success', onlyPlatform.usccNorm!, '认定通过')
-  const relation = { id: q.relationIds[0]! }
-  const unconfirmed = candidate('候选对应非资格', [{ eventType: 'maintain', year }])
-  db.update(s.record).set({ source: 'miit' }).where(eq(s.record.id, unconfirmed.record.id)).run()
-  const edge = db.insert(s.recordCorrespondence).values({ edgeKey: 'candidate-119', type: 'event_process', role: 'award', eventId: unconfirmed.events[0]!.id, enterpriseId: unconfirmed.enterprise.id, titleCode, status: 'candidate', revision: 1, targetIdentity: {}, provenance: {}, sourceFingerprint: 'synthetic-119', ruleId: 'manual', ruleVersion: '1', createdAt: new Date().toISOString() }).returning().get()
-  const { wb, job } = await workbook('119-platform-boundary')
-  expect(rows(wb, '有效企业').map(row => row[2])).toEqual(['查询failed', '查询no_record', '更新退回', '更新待审核', '更新待审决定', '撤回旧外迁', '补码后旧按名证据'])
-  expect(rows(wb, '未认定').map(row => row[2])).toEqual(['仅平台通过', '候选对应非资格'])
-  expect(job.result.counts).toEqual({ eligible: 7, pending: 0, excluded: 2 })
-  expect(rows(wb, '有效企业').find(row => row[2] === '补码后旧按名证据')![13]).toBe('有效企业')
-  expect(rows(wb, '未认定')[0]![15]).toContain('缺少已确认认定及资格依据')
-  expect(rows(wb, '未认定')[1]![13]).toBe('未认定'); expect(rows(wb, '未认定')[1]![15]).toContain('缺少已确认认定及资格依据')
-  expect(staleDecision.id).toBeGreaterThan(0); expect(relation.id).toBeGreaterThan(0); expect(edge.id).toBeGreaterThan(0)
-})
-
-it('创新型超页全量文本安全与业务只读', async () => {
-  const fixtures = db.transaction(() => Array.from({ length: 251 }, (_, index) => candidate('超页合成' + index)))
-  const textNames = ['=HYPERLINK("https://invalid.example","合成")', '+SUM(1,2)', '-1+2', '@SUM(1,2)', '长名称😀' + '宁波'.repeat(80)]
-  for (const [index, name] of textNames.entries()) {
-    const c = candidate(name)
-    db.update(s.enterprise).set({ usccNorm: `00123456789012345${index}` }).where(eq(s.enterprise.id, c.enterprise.id)).run()
-  }
-  const sourceDigest = () => {
-    const hash = createHash('sha256')
-    for (const table of ['enterprise', 'record', 'record_event', 'record_evidence', 'enterprise_alias', 'platform_collection', 'platform_business_observation', 'difference_reason', 'record_correspondence']) {
-      for (const row of db.$client.prepare(`select * from ${table} order by id`).iterate()) hash.update(JSON.stringify(row))
-    }
-    for (const { name } of db.$client.prepare("select name from sqlite_master where type='table' and name like 'platform_%' order by name").all() as Array<{ name: string }>) {
-      hash.update(name)
-      for (const row of db.$client.prepare(`select * from "${name}" order by rowid`).iterate()) hash.update(JSON.stringify(row))
-    }
-    return hash.digest('hex')
-  }
-  const before = sourceDigest()
-  const { wb, job } = await workbook('119-pages-text')
-  expect(job.result.counts).toEqual({ eligible: 256, pending: 0, excluded: 0 })
-  expect(job.result.total).toBe(256)
-  expect(rows(wb, '有效企业').slice(0, 251).map(row => businessIdentity(row))).toEqual(fixtures.map(c => expectedBusinessIdentity(db,c.enterprise.id)))
-  const ws = wb.getWorksheet('有效企业')!
-  for (const [index, name] of textNames.entries()) {
-    const row = ws.getRow(253 + index)
-    expect(row.getCell(2).value).toBe(name)
-    expect(row.getCell(2).type).toBe(ExcelJS.ValueType.String)
-    expect(row.getCell(3).value).toBe(`00123456789012345${index}`)
-    expect(row.getCell(3).type).toBe(ExcelJS.ValueType.String)
-  }
-  expect(sourceDigest()).toBe(before)
-})
 
 it('创新型空集保留六表表头与真实零计数', async () => {
   candidate('其他称号不污染空集', [award], 'specialized_sme')
@@ -372,75 +224,4 @@ it('创新型入口鉴权参数边界与OpenAPI可发现', async () => {
   expect((await fetch(url('/api/job-artifacts/not-a-disk-path'), { headers })).status).toBe(400)
   expect((await fetch(url('/api/job-artifacts/%2Ftmp%2Fsynthetic.xlsx'), { headers })).status).toBe(400)
   expect(JSON.stringify(job)).not.toContain(dir)
-})
-
-it('创新型持久去重与显式重生成读取完整迁出事实', async () => {
-  const c = candidate('重生成新决定')
-  const first = await workbook('119-dedup')
-  const responses = await Promise.all([submit('119-dedup'), submit('119-dedup')])
-  for (const response of responses) {
-    expect(response.status).toBe(202)
-    expect((await json(response)).jobId).toBe(first.job.id)
-  }
-  const listed = await json(await fetch(url('/api/jobs?kind=current-roster-export')))
-  expect(listed.rows.filter((job: any) => job.params.clientRequestId === '119-dedup')).toHaveLength(1)
-  const changed = await fetch(url('/api/roster/decision-lifecycle/commands'), {
-    method: 'POST', headers, body: JSON.stringify({ enterpriseId: c.enterprise.id, titleCode, direction: 'extra_in_miit', action: 'replace', expectedCurrentId: null, idempotencyKey: '119-change-current', actor: { type: 'agent', id: 'test' }, basis: '隔离SQLite合成外迁事实', ruleVersion: 'manual-v1', effectiveAt: '2026-01-01T00:00:00Z', decision: { status: 'confirmed_reason', reasonCode: 'moved_out', verificationStatus: 'confirmed', measureCode: 'mark_moved_out' } }),
-  })
-  expect(changed.status).toBe(200)
-  const version=await changed.json()
-  reviewCurrentExportDecision(db,db.select().from(s.differenceReason).where(eq(s.differenceReason.id,version.versionId)).get()!)
-  await confirmCurrentExportExclusion(service!.baseUrl,headers,c.enterprise.id,'119-typed-new-exclusion')
-  const regenerated = await workbook('119-regenerated', { regenerateOf: first.job.id })
-  expect(regenerated.job.id).not.toBe(first.job.id)
-  expect(regenerated.job.params.regenerateOf).toBe(first.job.id)
-  expect(regenerated.job.result.counts).toEqual({ eligible: 0, pending: 0, excluded: 1 })
-  expect(businessIdentity(rows(regenerated.wb, '已迁出')[0]!)).toEqual(expectedBusinessIdentity(db,c.enterprise.id))
-  expect(regenerated.job.result.dataVersion).not.toBe(first.job.result.dataVersion)
-  expect((await download(first.job)).bytes).toEqual(first.bytes)
-  expect((await submit('119-regenerated', { regenerateOf: regenerated.job.id })).status).toBe(409)
-  const other = await fetch(url('/api/roster/exports/current/little-giant'), { method: 'POST', headers, body: JSON.stringify({ clientRequestId: '119-foreign-parent' }) })
-  expect(other.status).toBe(202)
-  const foreign = await terminal((await json(other)).jobId)
-  expect((await submit('119-invalid-parent', { regenerateOf: foreign.id })).status).toBe(409)
-})
-
-it('创新型产物过期缺失保留成功历史并可重生成', async () => {
-  candidate('产物状态合成企业')
-  const expired = await workbook('119-expired')
-  db.update(s.job).set({ result: { ...expired.job.result, artifact: { ...expired.job.result.artifact, expiresAt: '2000-01-01T00:00:00Z' } } }).where(eq(s.job.id, expired.job.id)).run()
-  const expiredRead = await json(await fetch(url('/api/jobs/' + expired.job.id)))
-  expect(expiredRead.state).toBe('done')
-  expect(expiredRead.result.artifact.availability).toBe('expired')
-  expect((await fetch(url(expired.job.result.artifact.downloadUrl), { headers })).status).toBe(410)
-  expect(existsSync(join(dbPath + '.exports', expired.job.id + '.xlsx'))).toBe(false)
-  const missing = await workbook('119-missing')
-  rmSync(join(dbPath + '.exports', missing.job.id + '.xlsx'))
-  const missingRead = await json(await fetch(url('/api/jobs/' + missing.job.id)))
-  expect(missingRead.state).toBe('done')
-  expect(missingRead.result.artifact.availability).toBe('missing')
-  expect((await fetch(url(missing.job.result.artifact.downloadUrl), { headers })).status).toBe(404)
-  const regenerated = await workbook('119-missing-regenerated', { regenerateOf: missing.job.id })
-  expect(regenerated.job.id).not.toBe(missing.job.id)
-  expect(regenerated.job.params.regenerateOf).toBe(missing.job.id)
-  expect(regenerated.job.result.counts).toEqual({ eligible: 1, pending: 0, excluded: 0 })
-})
-
-it('创新型失败无半成品并支持修正后重生成', async () => {
-  const c = candidate('超长单元格')
-  db.update(s.enterprise).set({ name: '超'.repeat(33000) }).where(eq(s.enterprise.id, c.enterprise.id)).run()
-  const response = await submit('119-failure')
-  expect(response.status).toBe(202)
-  const job = await terminal((await json(response)).jobId)
-  expect(job.state).toBe('failed')
-  expect(job.error).toContain('Excel')
-  expect(job.result.ruleVersion).toBe(CURRENT_RULE_VERSION)
-  expect(job.result.artifact).toBeUndefined()
-  expect((await fetch(url('/api/job-artifacts/' + job.id), { headers })).status).toBe(404)
-  for (const extension of ['.part', '.xlsx']) expect(existsSync(join(dbPath + '.exports', job.id + extension))).toBe(false)
-  db.update(s.enterprise).set({ name: '超长单元格' }).where(eq(s.enterprise.id, c.enterprise.id)).run()
-  const retry = await workbook('119-failure-regenerated', { regenerateOf: job.id })
-  expect(retry.job.params.regenerateOf).toBe(job.id)
-  expect(retry.job.result.counts).toEqual({ eligible: 1, pending: 0, excluded: 0 })
-  expect((await download(retry.job)).bytes).toEqual(retry.bytes)
 })

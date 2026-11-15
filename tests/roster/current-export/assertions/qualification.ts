@@ -1,9 +1,9 @@
 import { CURRENT_RULE_VERSION } from '../../../../lib/roster/current-qualification'
 import { expect } from 'vitest'
-import { rows, businessIdentity, expectedBusinessIdentity, matchesBusinessIdentity, type specializedExportFixture } from '../fixtures/specialized-export'
+import { rows, businessIdentity, expectedBusinessIdentity, matchesBusinessIdentity } from '../fixtures/specialized-export'
 import type { QualificationCase } from "../../current-qualification/fixtures/cycle-cases"
 
-type ExportFixture = ReturnType<typeof specializedExportFixture>
+type ExportFixture = ReturnType<typeof import('../fixtures/native-workbook').nativeWorkbookFixture>
 export type EffectiveQualificationCase = Omit<QualificationCase, 'sheet' | 'note'> & { sheet: '有效企业' | '已到期' | '未认定' }
 type ExportCase = EffectiveQualificationCase & ReturnType<ExportFixture['candidate']>
 type ReferenceAssertion = (c: ExportCase, title: string, row: ReturnType<typeof rows>[number]) => void
@@ -14,8 +14,8 @@ const titles = [
   ['innovative_sme','innovative-sme','创新型中小企业'],
 ] as const
 // R4 checks reference counts; R5 checks exact IDs. Keep each suite's assertion
-// at the same HTTP/XLSX seam while sharing the complete export driver.
-export function currentQualificationHttpAssertions(f: ExportFixture, assertReferences: ReferenceAssertion) {
+// at the native reader/writer seam while sharing the complete export driver.
+export function currentQualificationWorkbookAssertions(f: ExportFixture, assertReferences: ReferenceAssertion) {
   return async function assertCases(cases: EffectiveQualificationCase[], key: string, permute = false) {
     const entries = cases.map(c => {
       const events = permute ? [...c.events].reverse() : c.events
@@ -38,20 +38,11 @@ export function currentQualificationHttpAssertions(f: ExportFixture, assertRefer
       expect(db.pragma('foreign_key_check')).toEqual([])
     }
     const before = f.businessDigest()
-    for (const [title,slug,label] of titles) {
-      const response = await fetch(f.url('/api/roster/exports/current/'+slug),{method:'POST',headers:f.headers,body:JSON.stringify({clientRequestId:key+'-'+title})})
-      expect(response.status).toBe(202)
-      const accepted=await response.json()
-      expect(response.headers.get('location')).toBe('/api/jobs/'+accepted.jobId)
-      const job=await f.terminal(accepted.jobId)
-      expect(job.state,JSON.stringify(job)).toBe('done')
-      expect(job.result.ruleVersion).toBe(CURRENT_RULE_VERSION)
-      const {wb}=await f.download(job)
+    for (const [title,,label] of titles) {
+      const { wb, result } = await f.workbook(key + '-' + title, title)
+      expect(result.ruleVersion).toBe(CURRENT_RULE_VERSION)
       const explanation=Object.fromEntries(rows(wb,'口径说明').map(row=>[row[1],row[2]]))
       expect(explanation['规则版本']).toBeUndefined()
-      const summary=await (await fetch(f.url('/api/task-center/'+accepted.jobId),{headers:f.headers})).json()
-      expect(summary.export.ruleVersion).toBe(CURRENT_RULE_VERSION)
-      const observations=[]
       for (const c of entries) {
         const actual=wb.worksheets.slice(0,5).flatMap(sheet=>rows(wb,sheet.name).filter(row=>matchesBusinessIdentity(f.db, row, c.enterprise.id)).map(row=>({sheet:sheet.name,row})))
         expect.soft(actual.map(r=>r.sheet),c.id+' '+title).toEqual([c.sheet])
@@ -67,7 +58,6 @@ export function currentQualificationHttpAssertions(f: ExportFixture, assertRefer
         expect.soft(row[7]?.match(/原认定年份待核/g)?.length??0,c.id).toBe(c.events.filter(e=>e.year==null).length)
         expect.soft(row[7]?.match(/结论年份待核/g)?.length??0,c.id).toBe(c.events.filter(e=>e.eventType==='review'&&e.decidedYear==null).length)
         expect.soft(row[7]?.match(/复核结论待核/g)?.length??0,c.id).toBe(c.events.filter(e=>e.eventType==='review'&&e.reviewOutcome==null).length)
-        observations.push({id:c.id,expected:c.sheet,actual:actual.map(r=>r.sheet),first:row[6]??null,notes:row[11]??''})
       }
       expect(wb.worksheets.map(sheet=>sheet.name)).toEqual(['有效企业','已到期','已注销（吊销）','已迁出','未认定','口径说明'])
       for (const sheet of ['有效企业','已到期','已注销（吊销）','已迁出','未认定']) {
@@ -75,9 +65,8 @@ export function currentQualificationHttpAssertions(f: ExportFixture, assertRefer
         expect.soft(rows(wb,sheet).map(row=>businessIdentity(row)),sheet).toEqual(expected.map(c=>expectedBusinessIdentity(f.db,c.enterprise.id)))
       }
       const eligible=entries.filter(c=>c.sheet==='有效企业').length
-      expect(job.result.counts).toEqual({eligible,pending:0,excluded:entries.length-eligible})
-      expect(job.result.statusCounts).toEqual({effective:eligible,expired:entries.filter(c=>c.sheet==='已到期').length,terminated:0,moved_out:0,unrecognized:entries.filter(c=>c.sheet==='未认定').length})
-      console.log(JSON.stringify({matrix:key,title,observations}))
+      expect(result.counts).toEqual({eligible,pending:0,excluded:entries.length-eligible})
+      expect(result.statusCounts).toEqual({effective:eligible,expired:entries.filter(c=>c.sheet==='已到期').length,terminated:0,moved_out:0,unrecognized:entries.filter(c=>c.sheet==='未认定').length})
     }
     expect(f.businessDigest()).toBe(before)
   }

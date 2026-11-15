@@ -365,8 +365,9 @@ it("S1 compatible append also preserves two accepted stored IDs across distinct 
   expect(f.snapshot()).toEqual(before)
 })
 
-const claimOrders = [[0, 1, 2], [0, 2, 1], [1, 0, 2], [1, 2, 0], [2, 0, 1], [2, 1, 0]] as const
-for (const entry of ['import', 'standalone'] as const) for (const variant of ['owner', 'raw', 'only-unknown'] as const) it(`whole-K ${entry} ${variant} priority is independent of all six input orders`, async () => {
+// Full six-order priority matrix lives in claim-priority.test.ts.
+const claimOrders = [[0, 1, 2]] as const
+for (const entry of ['import', 'standalone'] as const) for (const variant of ['owner', 'raw', 'only-unknown'] as const) it(`whole-K ${entry} ${variant} rejects unknown-first conflict-last atomically`, async () => {
   const f = await fixture()
   const alpha = publicAnnouncement('Alpha', 2022, [publicLocator('other.txt', 20), publicLocator('other.txt', 30)]).announcement
   const third = publicAnnouncement(variant === 'owner' ? 'Beta' : 'Alpha', 2025, [publicLocator('other.txt', 40)]).announcement

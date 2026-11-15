@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, expect, it, vi } from 'vitest'
 import { type ChildProcess } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { request } from 'node:http'
 import { connect } from 'node:net'
@@ -69,11 +69,7 @@ afterAll(async () => {
   for (const child of children) await stopOwnedChild(child)
   const afterDbHash = existsSync(dbPath) ? hash(dbPath) : null
   observations.push({ afterDbHash, unchangedBusinessDb: afterDbHash === beforeDbHash, children: children.map(c => ({ pid: c.pid, exitCode: c.exitCode, signalCode: c.signalCode })), rawAbsent: !output.includes(PRIVATE) && !boundaryOutput.includes(PRIVATE) })
-  if (process.env.FIELD_POLICY_EVIDENCE_DIR) {
-    const evidence = process.env.FIELD_POLICY_EVIDENCE_DIR; mkdirSync(evidence, { recursive: true })
-    writeFileSync(join(evidence, 'server.log'), output); writeFileSync(join(evidence, 'boundary.log'), boundaryOutput)
-    writeFileSync(join(evidence, 'observations.json'), JSON.stringify(observations, null, 2))
-  }
+
   rmSync(root, { recursive: true, force: true })
   expect(output + boundaryOutput).not.toContain(PRIVATE)
   expect(afterDbHash).toBe(beforeDbHash)
