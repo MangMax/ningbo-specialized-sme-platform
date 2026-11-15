@@ -28,5 +28,7 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm typecheck
+        env:
+          NODE_OPTIONS: --max-old-space-size=6144
       - run: pnpm test --maxWorkers 1 --no-file-parallelism
       - run: pnpm build
