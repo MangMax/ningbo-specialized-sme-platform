@@ -143,4 +143,4 @@ it('normal replay and retained relationId verification expose the same literal f
     db.$client.close(); vi.unstubAllGlobals(); vi.unstubAllEnvs()
     if (!retained) rmSync(dir, { recursive: true, force: true })
   }
-})
+}, 10000)

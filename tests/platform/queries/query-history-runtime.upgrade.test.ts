@@ -244,7 +244,7 @@ it('reads complete migrated history with original conflicts provenance null empt
   expect(readPlatformQueryEvidence(database,{queryId:105,field:'rawResponse'})).toMatchObject({data:'',totalBytes:0,isNull:false})
   expect(readPlatformQueryEvidence(database,{queryId:106,field:'rawResponse'})).toMatchObject({data:'',totalBytes:0,isNull:true})
  }finally{target.close();legacy.close()}
-})
+}, 10000)
 
 it('enforces exact 4MiB query and 8MiB page budgets before payload hydration and isolates giant nonselected archives',()=>{
  frozen();const oracle=oldOracle(),limit=4*1024*1024

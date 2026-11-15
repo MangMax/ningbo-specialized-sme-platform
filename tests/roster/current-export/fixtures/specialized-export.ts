@@ -1,3 +1,4 @@
+import { captureDiscovery, readDiscoveryArtifact } from '../../../support/development-discovery.mjs'
 import { resetExportRows } from './reset-rows'
 import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync, writeFileSync, renameSync } from 'node:fs'
@@ -22,12 +23,10 @@ export const fresh: Event[] = [{ eventType: 'award', year, batchSeq: 1 }]
 export const businessTables = ['record_correspondence','difference_reason','platform_observation_assignment','platform_legacy_relation_alias','platform_business_observation','platform_legacy_query_alias','platform_collection','enterprise_alias','record_evidence','record_event','record','enterprise']
 
 // Synthetic setup only; callers choose real Nitro HTTP or the native workbook writer.
-export function specializedExportFixture({ discovery = false }: { discovery?: boolean } = {}) {
+export function specializedExportFixture() {
   const dir = mkdtempSync(join(process.env.CURRENT_CANDIDATE_READER_EVIDENCE_DIR ?? tmpdir(), 'export-118-'))
   const token = 'synthetic-export-118-token'
-  const app = nativeAppAdapter({ dir, token, launch: discovery ? ({ cwd, port }) => ({
-    args: [join(cwd, 'node_modules/nuxt/bin/nuxt.mjs'), 'dev', '--host', '127.0.0.1', '--port', String(port)],
-  }) : undefined })
+  const app = nativeAppAdapter({ dir, token })
   const { headers, url, terminal } = app
   let started = false
   async function start() { if (!started) { await app.start(); started = true } }
@@ -127,23 +126,19 @@ export function expectCounts(wb: ExcelJS.Workbook, job: any, counts: {eligible:n
 // Capture real development discovery separately from compiled business requests.
 let discoveryPromise: Promise<any> | undefined
 export function readDevelopmentDiscovery() {
-  return discoveryPromise ??= captureDevelopmentDiscovery()
+  return discoveryPromise ??= process.env.TEST_DISCOVERY_ARTIFACT
+    ? Promise.resolve(readDiscoveryArtifact(process.env.TEST_DISCOVERY_ARTIFACT))
+    : captureDevelopmentDiscovery()
 }
 async function captureDevelopmentDiscovery() {
   // Single-worker files share only immutable discovery JSON for this runner.
   // Process start time prevents reuse after a PID is recycled.
   const owner = execFileSync('ps', ['-p', String(process.ppid), '-o', 'lstart='], { encoding: 'utf8' })
-  const key = createHash('sha256').update(process.cwd() + process.ppid + owner).digest('hex')
+  const key = createHash('sha256').update(process.cwd() + execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim() + process.ppid + owner).digest('hex')
   const cache = join(tmpdir(), `native-discovery-${key}.json`)
   if (existsSync(cache)) return JSON.parse(readFileSync(cache, 'utf8'))
-  const discovery = specializedExportFixture({ discovery: true })
-  try {
-    await discovery.start()
-    const response = await fetch(discovery.url('/_openapi.json'))
-    expect(response.status).toBe(200)
-    const spec = await response.json()
-    const pending = cache + `.${process.pid}`
-    writeFileSync(pending, JSON.stringify(spec)); renameSync(pending, cache)
-    return spec
-  } finally { await discovery.close() }
+  const spec = (await captureDiscovery()).spec
+  const pending = cache + `.${process.pid}`
+  writeFileSync(pending, JSON.stringify(spec)); renameSync(pending, cache)
+  return spec
 }

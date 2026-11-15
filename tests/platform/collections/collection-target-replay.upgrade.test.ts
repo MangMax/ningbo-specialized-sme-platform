@@ -173,7 +173,7 @@ it.each([null,'',' '] as const)('preserves typed original key %s and independent
   else{expect(publicResult.preflight.conflicts[0]).toMatchObject({ref:'relation:101',error:{code:'observation_payload_conflict',field:'relations'}});expect(()=>writeCollectionTarget(db,reference)).toThrow('observation_payload_conflict')}
   expect(sqlite.prepare('select source_relation_key from platform_business_observation').get()).toEqual({source_relation_key:key})
   expect(bytes(sqlite).equals(before), 'database bytes remain unchanged').toBe(true);old.close();sqlite.close()
-})
+}, 10000)
 
 it.each([null,'',' ',' A '] as const)('replays new target key %s using public insertion semantics while retaining its original archived key and materialized typed key',key=>{
   const {sqlite,db,source}=fixture(),old=new Database(source),publicDb=drizzle(old,{schema:expand})

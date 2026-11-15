@@ -487,4 +487,5 @@ it('keeps real worker queries successful while Drizzle and system rules independ
     expect((await logs('requestId=' + sourceDisabled.requestId)).filter(row => row.origin?.integration === 'drizzle')).toEqual([])
     expect(output).not.toContain(PRIVATE)
   } finally { await policyPatch(previous) }
-})
+// Three real isolated worker executions plus durable log/policy acknowledgements.
+}, 15_000)

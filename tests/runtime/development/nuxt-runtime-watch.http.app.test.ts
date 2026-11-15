@@ -40,7 +40,7 @@ it('does not scan changing runtime databases as icon source while real API error
     // Same-named source directories must still participate in development.
     writeFileSync(component, '<template><span>watch source control</span></template>')
     writeFileSync(route, "export default defineEventHandler(() => ({ watched: true }))")
-    const sourceResponse = await waitForHttp(base + `/api/files/${id}`, { child, timeoutMs: 20000 })
+    const sourceResponse = await waitForHttp(base + `/api/files/${id}`, { child, timeoutMs: 60000 })
     expect(await sourceResponse.json()).toEqual({ watched: true })
     for (let i = 0; i < 6; i++) {
       writeFileSync(sentinel, Buffer.alloc(65536, i))

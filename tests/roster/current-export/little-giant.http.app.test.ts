@@ -13,7 +13,7 @@ import ExcelJS from 'exceljs'
 import { newJobId } from '../../../lib/job'
 import { createHash } from 'node:crypto'
 import { eq } from 'drizzle-orm'
-import { afterAll, beforeAll, beforeEach, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from 'vitest'
 import { initializeDb, schema as s } from '../../../db/client'
 import { spawnOwnedChild as spawn, reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../../support/owned-process.mjs'
 
@@ -70,6 +70,13 @@ async function startService() {
 }
 beforeAll(startService, 90000)
 beforeEach(() => resetExportRows(db.$client))
+// Emit the assertion at failure time: a later workflow deadline may prevent
+// Vitest's end-of-run summary and JSON reporter from being written.
+afterEach(context => {
+  if (context.task.result?.state === 'fail') {
+    console.error('little-giant immediate failure', context.task.name, context.task.result.errors)
+  }
+})
 afterAll(async () => { if (service) await service.stop(); db.$client.close(); rmSync(dir, { recursive: true, force: true }) })
 it('HTTP提交到六表文件', async () => {
   const { enterprise } = candidate('新认定')

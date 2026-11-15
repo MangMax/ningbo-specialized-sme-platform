@@ -118,18 +118,17 @@ it.each(['', '1800-12-31T12:34:56.789'])('keeps default years reachable while br
   const earliestYear = String(currentYear - 100)
   const latestYear = String(currentYear + 10)
   const options = calendarYearOptions
-  expect(await options()).toContain(earliestYear)
-  expect(await options()).toContain(latestYear)
+  expect(await options()).toEqual(expect.arrayContaining([earliestYear, latestYear]))
   if (cutoff) expect(calendarSelectValue('年份')).toBe('1800')
-  await navigate(earliestYear, '1')
+  await chooseCalendarSelect('年份', earliestYear)
   expect(calendarSelectValue('年份')).toBe(earliestYear)
   expect(await options()).toContain(latestYear)
-  await navigate(latestYear, '12')
+  await chooseCalendarSelect('年份', latestYear)
   expect(calendarSelectValue('年份')).toBe(latestYear)
   expect(await options()).toContain(earliestYear)
   if (cutoff) {
     expect(await options()).toContain('1800')
-    await navigate('1800', '12')
+    await chooseCalendarSelect('年份', '1800')
     expect(calendarSelectValue('年份')).toBe('1800')
   }
   expect(view.emitted('update:modelValue')).toBeUndefined()
