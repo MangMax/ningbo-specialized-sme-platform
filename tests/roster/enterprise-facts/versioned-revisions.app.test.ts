@@ -17,7 +17,7 @@ beforeAll(async () => {
   vi.doMock('@db', () => ({ useDb: () => db }))
   vi.doMock('@nuxtjs/mcp-toolkit/server', () => ({ defineMcpTool: (tool: unknown) => tool }))
   mcp = {}
-  for (const name of ['get_enterprise_facts', 'preflight_enterprise_fact', 'commit_enterprise_fact']) mcp[name] = (await import(`../server/mcp/tools/${name}.ts`)).default
+  for (const name of ['get_enterprise_facts', 'preflight_enterprise_fact', 'commit_enterprise_fact']) mcp[name] = (await import(`../../../server/mcp/tools/${name}.ts`)).default
   const get = (await import('../../../server/api/roster/enterprises/[id]/facts.get')).default
   const preflight = (await import('../../../server/api/roster/enterprises/[id]/facts/preflight.post')).default
   const commit = (await import('../../../server/api/roster/enterprises/[id]/facts/commit.post')).default

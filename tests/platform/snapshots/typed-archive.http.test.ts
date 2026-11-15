@@ -51,7 +51,7 @@ beforeAll(async () => {
   updateCredential('miitCookie', 'sid=synthetic-raw-wire-secret', { db })
   for (const [key, value] of Object.entries({ defineEventHandler, readBody, setHeader, setResponseStatus, getQuery, createError, useRuntimeConfig: () => ({ filesDir: dir, apiToken: token }) })) vi.stubGlobal(key, value)
   vi.doMock('@nuxtjs/mcp-toolkit/server', () => ({ defineMcpTool: (value: unknown) => value }))
-  for (const path of ['query_platform', 'preflight_roster_batch', 'save_roster_batch', 'list_platform_queries', 'get_platform_batch_item', 'submit_platform_batch', 'retry_platform_batch']) tools.push((await import(`../server/mcp/tools/${path}.ts`)).default)
+  for (const path of ['query_platform', 'preflight_roster_batch', 'save_roster_batch', 'list_platform_queries', 'get_platform_batch_item', 'submit_platform_batch', 'retry_platform_batch']) tools.push((await import(`../../../server/mcp/tools/${path}.ts`)).default)
   const queryRoute = (await import('../../../server/api/platform/query.post')).default
   const readRoute = (await import('../../../server/api/platform/queries.get')).default
   const evidenceRoute = (await import('../../../server/api/platform/queries/[queryId]/evidence.get')).default
@@ -59,7 +59,7 @@ beforeAll(async () => {
   const router = createRouter().post('/api/platform/query', queryRoute).get('/api/platform/queries', readRoute).get('/api/platform/queries/:queryId/evidence', evidenceRoute).get('/api/platform/declarations', declarationsRoute)
   for (const action of ['preflight', 'commit'] as const) {
     vi.stubGlobal('defineRouteMeta', (value: any) => { importMetadata[action] = value.openAPI })
-    router.post(`/api/roster/import/${action}`, (await import(`../server/api/roster/import/${action}.post.ts`)).default)
+    router.post(`/api/roster/import/${action}`, (await import(`../../../server/api/roster/import/${action}.post.ts`)).default)
   }
   router.post('/api/platform/batches', defineEventHandler(async event => {
     const out = await handlePlatformBatchRequest('submit', { body: await readBody(event), headers: { authorization: event.node.req.headers.authorization } }, { db, apiToken: token, filesDir: dir })

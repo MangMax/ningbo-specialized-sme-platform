@@ -48,7 +48,7 @@ let serial = 0
 beforeAll(async () => {
   vi.stubGlobal('useRuntimeConfig', () => ({ filesDir, apiToken: token, mcpToken: token }))
   vi.stubGlobal('createError', (input: { statusCode: number; message: string }) => Object.assign(new Error(input.message), input))
-  const definitions = await Promise.all(['preflight_roster_batch', 'save_roster_batch', 'preflight_roster_evidence_corrections', 'commit_roster_evidence_corrections'].map(async name => (await import(`../server/mcp/tools/${name}.ts`)).default))
+  const definitions = await Promise.all(['preflight_roster_batch', 'save_roster_batch', 'preflight_roster_evidence_corrections', 'commit_roster_evidence_corrections'].map(async name => (await import(`../../../server/mcp/tools/${name}.ts`)).default))
   server = createServer((request, response) => {
     const mcp = new McpServer({ name: 'issue350', version: '1' })
     const mcpAuth = resolveMcpAuth({ given: readMcpToken({ authorization: request.headers.authorization }), configured: token })

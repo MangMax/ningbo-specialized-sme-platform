@@ -39,8 +39,8 @@ it('normal replay and retained relationId verification expose the same literal f
     return out.body
   }))
   for (const source of ['declarations', 'business-processes', 'recognized-directory']) {
-    router.get(`/api/platform/${source}`, (await import(`../server/api/platform/${source}.get.ts`)).default)
-    router.get(`/api/platform/${source}/:recordId`, (await import(`../server/api/platform/${source}/[recordId].get.ts`)).default)
+    router.get(`/api/platform/${source}`, (await import(`../../../server/api/platform/${source}.get.ts`)).default)
+    router.get(`/api/platform/${source}/:recordId`, (await import(`../../../server/api/platform/${source}/[recordId].get.ts`)).default)
   }
   const server = createServer(toNodeListener(createApp().use(router)))
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))

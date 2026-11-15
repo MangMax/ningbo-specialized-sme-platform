@@ -59,7 +59,7 @@ beforeAll(async () => {
   // and its auth middleware are outside this focused harness.
   mcp = new McpServer({ name: 'issue309', version: '1' })
   for (const name of ['get_ocr_result', 'save_ocr_result']) {
-    const tool = (await import(`../server/mcp/tools/${name}.ts`)).default as unknown as { inputSchema: ZodRawShape; handler: (input: Record<string, unknown>) => Promise<unknown> }
+    const tool = (await import(`../../../server/mcp/tools/${name}.ts`)).default as unknown as { inputSchema: ZodRawShape; handler: (input: Record<string, unknown>) => Promise<unknown> }
     mcp.registerTool(name, { inputSchema: tool.inputSchema }, async input => ({ content: [{ type: 'text', text: JSON.stringify(await tool.handler(input)) }] }))
   }
   client = new Client({ name: 'issue309-client', version: '1' })

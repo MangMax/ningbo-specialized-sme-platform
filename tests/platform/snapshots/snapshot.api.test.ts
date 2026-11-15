@@ -224,7 +224,7 @@ describe('Nitro 路由只是薄薄地转调 HTTP 核心', () => {
 
   it('两条路由都带顶层 defineRouteMeta(spec 的唯一输入)', async () => {
     const { readFile } = await import('node:fs/promises')
-    const routes = ['../server/api/platform/snapshots.get.ts', '../server/api/platform/snapshots/diff.get.ts']
+    const routes = ['../../../server/api/platform/snapshots.get.ts', '../../../server/api/platform/snapshots/diff.get.ts']
     for (const rel of routes) {
       const source = await readFile(new URL(rel, import.meta.url), 'utf8')
       expect(source, rel).toContain('defineRouteMeta({')
