@@ -4,7 +4,7 @@
 
 ## 封存之后仍需保留原补录命令
 
-`payload.platformLegacyProvenance` 对一个 `business_list` 原查询补入分页来源，原查询的 `collectionEvidence` 必须为 NULL。预检按旧 ORM 对象计算 `SHA256(JSON.stringify({query, rows}))`，提交重核原输入。成功只新增独立 metadata，返回 `typedState=unknown`。它不重新采集、不索引业务，也不重写原查询。见[原命令](../../server/utils/platform-legacy-provenance.ts)第19–69行和[完整公开行为测试](../../tests/platform-legacy-provenance.test.ts)。
+`payload.platformLegacyProvenance` 对一个 `business_list` 原查询补入分页来源，原查询的 `collectionEvidence` 必须为 NULL。预检按旧 ORM 对象计算 `SHA256(JSON.stringify({query, rows}))`，提交重核原输入。成功只新增独立 metadata，返回 `typedState=unknown`。它不重新采集、不索引业务，也不重写原查询。见[原命令](../../server/utils/platform-legacy-provenance.ts)第19–69行和[完整公开行为测试](../../tests/platform/provenance/legacy.test.ts)。
 
 T04 把既有 metadata 的原列保存为 `T04-PROVENANCE` 封套。collection 在同一事务首次 seal，之后任何字段都不能追加或改绑。`provenancePresence` 还要求 T04 或 W4a 的完整固定字段集合。因此已迁移、无 metadata 的正常历史查询无法继续原补录命令。#753 只处理观察索引，不授权改变此生命周期。
 

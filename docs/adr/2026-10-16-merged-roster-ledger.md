@@ -98,7 +98,7 @@ outline、把 `needs_review`(待核实)与 `query_failed`(查询失败)一律画
 是全站「正文 ↔ 次要」的成对 token,不是同一档灰的微调;③ **颜色不是承重结构** ——
 每枚徽章**始终带着中文标签**,单通道失效只造成「少一层提示」,不会造成误判。
 
-`tests/difference-status-variants.test.ts` 就按**实际渲染出来的 class** 钉:
+`tests/roster/comparison/difference-status-variants.test.ts` 就按**实际渲染出来的 class** 钉:
 六态 `cn(badgeVariants(...))` 签名两两不同;**最小通道距离实测为 1 且恰好是上面那两对**
 (谁把某一对抹成 0、或让别的对掉到最小值,都必须回来改这段判据);每枚徽章必须带中文标签
 (理由 ③ 的承重前提,拿掉文字则颜色立刻变成承重结构);另有一条看源码,禁止调用点再给状态
