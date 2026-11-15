@@ -1,3 +1,4 @@
+import '../../support/compiled-enterprise-reader'
 import { enterpriseReads } from '../../../server/utils/enterprise-read'
 import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
 import { initializeDb } from '../../../db/client'

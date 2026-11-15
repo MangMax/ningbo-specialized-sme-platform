@@ -1,3 +1,4 @@
+import '../../support/compiled-enterprise-reader'
 import { enterpriseReads } from '../../../server/utils/enterprise-read'
 import { initializeDb } from '../../../db/client'
 import { assertEnterpriseDetailSnapshotEqual } from '../assertions/enterprise-detail-snapshot'

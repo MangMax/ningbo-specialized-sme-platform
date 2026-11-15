@@ -30,6 +30,7 @@ it('whole summary keeps an independent HTTP probe responsive and preserves SQL f
 const require=createRequire(${JSON.stringify(resolve(root, 'package.json'))}),h=require('h3');
 Object.assign(globalThis,h,{defineRouteMeta:()=>{},defineNitroPlugin:f=>f,useRuntimeConfig:()=>({apiToken:'synthetic-m3',curatedPath:${JSON.stringify(curated)},reconcilePath:${JSON.stringify(reconcile)}})});
 const {createJiti}=require(${JSON.stringify(jiti)}),load=createJiti(${JSON.stringify(resolve(root, 'package.json'))},{alias:{'@db':${JSON.stringify(resolve(root, 'db/index.ts'))},'~~':${JSON.stringify(root)}}});
+(await load.import(${JSON.stringify(resolve(root, 'tests/support/compiled-business-workers.ts'))})).installCompiledBusinessWorkers();
 const {initializeDb}=await load.import(${JSON.stringify(resolve(root, 'db/client.ts'))}),writer=initializeDb({create:true,readOnly:false});
 const {startRosterApi,executeNativeImport}=await load.import(${JSON.stringify(resolve(root, 'tests/roster/imports/fixtures/import-server.ts'))}),imports=await startRosterApi({db:writer,apiToken:'synthetic-m3',executeImport:executeNativeImport});
 const hooks={};(await load.import(${JSON.stringify(resolve(root, 'server/plugins/enterprise-read.ts'))})).default({hooks:{hook:(n,f)=>hooks[n]=f}});
@@ -38,7 +39,7 @@ router.patch('/api/comparison/curated',(await load.import(${JSON.stringify(resol
 const app=h.createApp({debug:false});app.use(h.defineEventHandler(e=>hooks.request(e)));app.use(router);const server=createServer(h.toNodeListener(app));await new Promise(r=>server.listen(Number(process.env.NITRO_PORT),'127.0.0.1',r));console.log(JSON.stringify({imports:imports.baseUrl}));
 process.on('SIGTERM',async()=>{server.closeAllConnections();await new Promise(r=>server.close(r));await imports.close();await hooks.close();writer.$client.close();process.exit(0)});`)
     }
-    writeFileSync(preload, comparisonWorkerObserver(driver, dir, dbPath)); writeFileSync(observed, ''); writeFileSync(join(dir, 'delete-journal'), '')
+    writeFileSync(preload, comparisonWorkerObserver([driver, createRequire(resolve('.output/server/package.json')).resolve('better-sqlite3')], dir, dbPath)); writeFileSync(observed, ''); writeFileSync(join(dir, 'delete-journal'), '')
     const portServer = createServer(); await new Promise<void>(r => portServer.listen(0, '127.0.0.1', r))
     const port = (portServer.address() as { port: number }).port; await new Promise<void>(r => portServer.close(() => r()))
     const base = `http://127.0.0.1:${port}`

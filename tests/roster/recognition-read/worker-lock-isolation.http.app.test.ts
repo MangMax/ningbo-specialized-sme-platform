@@ -19,14 +19,15 @@ it('recognition native lock leaves health responsive before independent release 
   const preload = join(dir, 'observe.cjs'), boot = join(dir, 'app.mjs')
   const children: ChildProcess[] = []
   let output = ''
-  writeFileSync(preload, `const fs=require('node:fs'),D=require(${JSON.stringify(driver)}),p=D.prototype.prepare,g=D.prototype.pragma;
+  writeFileSync(preload, `const fs=require('node:fs'),drivers=[...new Set([require(${JSON.stringify(driver)}),require(${JSON.stringify(createRequire(resolve('.output/server/package.json')).resolve('better-sqlite3'))})])];for(const D of drivers){const p=D.prototype.prepare,g=D.prototype.pragma;
     D.prototype.pragma=function(sql,...a){if(sql==='user_version')fs.appendFileSync(${JSON.stringify(marker)},JSON.stringify({pid:process.pid,kind:'admission',sql,at:Date.now()})+'\\n');return g.call(this,sql,...a)};
-    D.prototype.prepare=function(sql,...a){if(/record_event/.test(sql)){fs.appendFileSync(${JSON.stringify(marker)},JSON.stringify({pid:process.pid,kind:'source',sql,at:Date.now()})+'\\n');if(process.env.M1_APP_PID&&process.pid!==Number(process.env.M1_APP_PID)&&fs.existsSync(${JSON.stringify(fault)}))process.exit(97)}return p.call(this,sql,...a)};`)
+    D.prototype.prepare=function(sql,...a){if(/record_event/.test(sql)){fs.appendFileSync(${JSON.stringify(marker)},JSON.stringify({pid:process.pid,kind:'source',sql,at:Date.now()})+'\\n');if(process.env.M1_APP_PID&&process.pid!==Number(process.env.M1_APP_PID)&&fs.existsSync(${JSON.stringify(fault)}))process.exit(97)}return p.call(this,sql,...a)};}`)
   writeFileSync(boot, `import {createRequire} from 'node:module';import {createServer} from 'node:http';
     const require=createRequire(${JSON.stringify(resolve('package.json'))}); const h=require('h3');
     Object.assign(globalThis,h,{defineRouteMeta:()=>{},defineNitroPlugin:f=>f});process.env.M1_APP_PID=String(process.pid);
     const {createJiti}=require(${JSON.stringify(jiti)});const load=createJiti(${JSON.stringify(resolve('package.json'))},{alias:{'@db':${JSON.stringify(resolve('db/index.ts'))},'~~':${JSON.stringify(root)}}});
-    const {initializeDb}=await load.import(${JSON.stringify(resolve('db/client.ts'))});
+    (await load.import(${JSON.stringify(resolve('tests/support/compiled-business-workers.ts'))})).installCompiledBusinessWorkers();
+      const {initializeDb}=await load.import(${JSON.stringify(resolve('db/client.ts'))});
     const writer=initializeDb({create:true,readOnly:false});writer.$client.pragma('journal_mode=DELETE');
     const {startRosterApi}=await load.import(${JSON.stringify(resolve('tests/roster/imports/fixtures/import-server.ts'))});
     const imports=await startRosterApi({db:writer,apiToken:'synthetic-m1'});
