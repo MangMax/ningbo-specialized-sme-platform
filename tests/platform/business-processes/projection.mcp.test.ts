@@ -1,3 +1,5 @@
+import { executeNativeImport } from '../../roster/imports/fixtures/import-server'
+import { importExecutor } from '../../../server/utils/import-execution'
 import { initializeDb } from '../../../db/client'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -16,6 +18,7 @@ let preflight: typeof import('../../../server/mcp/tools/preflight_roster_batch')
 let commit: typeof import('../../../server/mcp/tools/save_roster_batch').default
 
 beforeAll(async () => {
+  vi.spyOn(importExecutor, 'execute').mockImplementation(executeNativeImport)
   vi.stubEnv('NUXT_DB_PATH', dbPath)
   vi.stubEnv('NUXT_DB_READONLY', '0')
   vi.stubGlobal('createError', createError)
@@ -25,7 +28,7 @@ beforeAll(async () => {
 })
 afterAll(() => {
   try { useDb({ dbPath }).$client.close() } catch { /* already closed */ }
-  vi.unstubAllGlobals(); vi.unstubAllEnvs()
+  vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.unstubAllEnvs()
   dirs.forEach(path => rmSync(path, { recursive: true, force: true }))
 })
 

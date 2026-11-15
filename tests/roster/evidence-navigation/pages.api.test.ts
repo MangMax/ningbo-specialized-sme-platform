@@ -7,7 +7,7 @@ import { schema, useDb } from '../../../db'
 import { getRosterEnterpriseDetail } from '../../../lib/roster/enterprise-roster'
 import { evidencePageState } from '../../../lib/roster/evidence-page'
 import { minimalPdf } from '../../support/minimal-pdf'
-import { startRosterApi, type RosterApiServer } from '../imports/fixtures/import-server'
+import { executeNativeImport, startRosterApi, type RosterApiServer } from '../imports/fixtures/import-server'
 
 /**
  * RL-10 —— 出处页码补录接口的**真实 HTTP 契约**(`POST /api/roster/evidence/pages`)。
@@ -121,7 +121,7 @@ beforeAll(async () => {
   const sourcePdf = join(filesDir, F145)
   mkdirSync(dirname(sourcePdf), { recursive: true })
   writeFileSync(sourcePdf, minimalPdf({ pages: 23 }))
-  server = await startRosterApi({ db, apiToken: TOKEN, filesDir })
+  server = await startRosterApi({ db, apiToken: TOKEN, filesDir, executeImport: executeNativeImport })
 })
 
 afterAll(async () => {
@@ -347,7 +347,7 @@ describe('POST /api/roster/evidence/pages —— 分节定位与留空待核', (
 
 describe('未配 token 时写入整体关闭(与其它写入口同一条反向默认)', () => {
   it('NUXT_API_TOKEN 未配置 ⇒ 401 no-token-configured,即使请求带了 token', async () => {
-    const closed = await startRosterApi({ db, apiToken: null })
+    const closed = await startRosterApi({ db, apiToken: null, executeImport: executeNativeImport })
     try {
       const res = await fetch(`${closed.baseUrl}/api/roster/evidence/pages`, {
         method: 'POST',

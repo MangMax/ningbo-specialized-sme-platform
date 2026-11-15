@@ -28,7 +28,7 @@ import {
 } from '../../../lib/roster/little-giant-import'
 import { parseLittleGiantWorkbook } from '../../../lib/roster/little-giant-workbook'
 import { rosterRowCounts } from '../../../server/utils/roster-import'
-import { startRosterApi } from '../imports/fixtures/import-server'
+import { executeNativeImport, startRosterApi } from '../imports/fixtures/import-server'
 import { loadLittleGiantSource } from '../little-giant/fixtures/official-source'
 
 const TOKEN = 'rl16-repoint-token-value'
@@ -107,7 +107,7 @@ function evidenceRows(db: ReturnType<typeof makeDb>) {
 describe('RL-16:重导把出处指针收敛到库内路径,历史一行不改', () => {
   it('首次导入用库外路径 → 重导(来源标识变了 ⇒ 换键)后只换指针,不多不少', async () => {
     const db = makeDb()
-    const server = await startRosterApi({ db, apiToken: TOKEN })
+    const server = await startRosterApi({ db, apiToken: TOKEN, executeImport: executeNativeImport })
     const client = createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN })
     try {
       // 1) 历史批次:库外路径(RL-02 的口径)。
@@ -155,7 +155,7 @@ describe('RL-16:重导把出处指针收敛到库内路径,历史一行不改', 
 
   it('同键重放是彻底的空操作:指针不再变、一行不增、也不报「改了」', async () => {
     const db = makeDb()
-    const server = await startRosterApi({ db, apiToken: TOKEN })
+    const server = await startRosterApi({ db, apiToken: TOKEN, executeImport: executeNativeImport })
     const client = createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN })
     try {
       const request = littleGiantRequest({
@@ -178,7 +178,7 @@ describe('RL-16:重导把出处指针收敛到库内路径,历史一行不改', 
 
   it('收敛只认**坐标逐字相同**的出处行:序号不同的那条不会被误改', async () => {
     const db = makeDb()
-    const server = await startRosterApi({ db, apiToken: TOKEN })
+    const server = await startRosterApi({ db, apiToken: TOKEN, executeImport: executeNativeImport })
     const client = createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN })
     try {
       // 同一家企业、同一坐标的事件,但出处序号是 20(而不是重导载荷里的 14)。
@@ -262,7 +262,7 @@ function sourceFiles(rows: ReturnType<typeof evidenceRows>) {
 describe('RL-19:预检报的行数 = 提交真改的行数(计划项口径与行口径都对得上)', () => {
   it('库中出处指向旧路径 → 以新来源标识重导 → 全部收敛,企业/记录/事件/出处计数一行不变', async () => {
     const db = makeDb()
-    const server = await startRosterApi({ db, apiToken: TOKEN })
+    const server = await startRosterApi({ db, apiToken: TOKEN, executeImport: executeNativeImport })
     const client = createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN })
     try {
       const source = await loadLittleGiantSource()
@@ -337,7 +337,7 @@ describe('RL-19:幂等键被消费后,收敛仍补得上(重放入口 §8.9.3)',
    */
   it('键已消费 → 预检如实报「同键提交什么都不改」→ commit 空操作 → replay 把指针收敛掉,计数一行不变', async () => {
     const db = makeDb()
-    const server = await startRosterApi({ db, apiToken: TOKEN })
+    const server = await startRosterApi({ db, apiToken: TOKEN, executeImport: executeNativeImport })
     const client = createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN })
     try {
       const source = await loadLittleGiantSource()
@@ -424,7 +424,7 @@ describe('RL-19:幂等键被消费后,收敛仍补得上(重放入口 §8.9.3)',
 
   it('重放**只**改指针:在空库上重放,业务表一行都不新增', async () => {
     const db = makeDb()
-    const server = await startRosterApi({ db, apiToken: TOKEN })
+    const server = await startRosterApi({ db, apiToken: TOKEN, executeImport: executeNativeImport })
     const client = createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN })
     try {
       const source = await loadLittleGiantSource()

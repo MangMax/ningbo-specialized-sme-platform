@@ -40,6 +40,7 @@ let server: ReturnType<typeof createServer>, base: string
 let recordsTool: any, currentTool: any
 const ids = new Map<string, number>()
 beforeAll(async () => {
+  await enterpriseReads.start()
   for (const [key, value] of Object.entries(h3)) vi.stubGlobal(key, value)
   vi.stubGlobal('useRuntimeConfig', () => ({ filesDir: dir }))
   for (const title of titles) for (const c of cases) {

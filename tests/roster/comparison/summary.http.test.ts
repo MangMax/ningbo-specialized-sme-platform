@@ -1,3 +1,4 @@
+import { executeNativeImport } from '../imports/fixtures/import-server'
 import { initializeDb } from '../../../db/client'
 import { createServer, type Server } from 'node:http'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
@@ -51,7 +52,7 @@ beforeAll(async () => {
   router.post('/api/roster/import/commit', defineEventHandler(async event => {
     const response = await handleRosterImportRequest('commit', {
       method: 'POST', headers: { authorization: 'Bearer synthetic-test-token' }, body: await readBody(event),
-    }, { db, apiToken: 'synthetic-test-token' })
+    }, { db, apiToken: 'synthetic-test-token', executeImport: executeNativeImport })
     return response.body
   }))
   const app = createApp().use(router)

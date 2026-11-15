@@ -12,7 +12,7 @@ import { relationSource } from '../../../server/utils/record-correspondence-read
 import { generateCandidates } from '../../../server/utils/record-correspondence-candidates'
 import { createRosterImportClient, type RosterImportRequest } from '../../../lib/roster-import-client'
 import { readPlatformQueryEvidence } from '../../../lib/platform/evidence-read'
-import { startRosterApi } from '../../roster/imports/fixtures/import-server'
+import { executeNativeImport, startRosterApi } from '../../roster/imports/fixtures/import-server'
 import { startHttpFixture, type HttpFixture } from '../../support/http'
 
 const dir = mkdtempSync(join(tmpdir(), 'platform-normalization-'))
@@ -28,7 +28,7 @@ beforeAll(async () => {
   server = await startHttpFixture({ getRoutes: {
     '/api/platform/queries': request => ({ status: 200, body: listPlatformQueries(db, { queryId: Number(request.query.queryId), includeRawResponse: true }) }),
   } })
-  writes = await startRosterApi({ db, apiToken: 'synthetic-normalization-token' })
+  writes = await startRosterApi({ db, apiToken: 'synthetic-normalization-token', executeImport: executeNativeImport })
 })
 afterAll(async () => { await server?.close(); await writes?.close(); db.$client.close(); rmSync(dir, { recursive: true, force: true }) })
 

@@ -1,9 +1,10 @@
+import { importExecutor } from '../../../server/utils/import-execution'
 import { serialize } from 'node:v8'
 import { mkdtempSync, rmSync, renameSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import Database from 'better-sqlite3'
-import { afterEach, expect, it } from 'vitest'
+import { afterAll, afterEach, expect, it } from 'vitest'
 import { initializeDb } from '../../../db/client'
 import { startRosterApi } from './fixtures/import-server'
 import type { RosterImportRequest } from '../../../lib/roster-import-client'
@@ -283,3 +284,6 @@ it.each(['inode', 'schema', 'migration'] as const)('rejects a changed admitted d
   expect(await response.json()).toMatchObject({ error: { code: 'import_source_changed' } })
   expect((await fetch(`${service.api.baseUrl}/receipt?idempotencyKey=synthetic:isolation`)).status).toBe(404)
 })
+
+// The real contention case owns the singleton process until suite shutdown.
+afterAll(async () => { await importExecutor.close() })

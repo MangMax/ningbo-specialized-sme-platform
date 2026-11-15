@@ -1,3 +1,4 @@
+import { enterpriseReads } from '../../../server/utils/enterprise-read'
 import { initializeDb } from '../../../db/client'
 import { afterAll, beforeAll, expect, it, vi } from 'vitest'
 import { createServer, type Server } from 'node:http'
@@ -33,7 +34,6 @@ beforeAll(async () => {
 })
 afterAll(async () => {
   if (server) await new Promise<void>(resolve => server.close(() => resolve()))
-  const { enterpriseReads } = await import('../../../server/utils/enterprise-read')
   await enterpriseReads.close()
   db.$client.close()
   rmSync(dir, { recursive: true, force: true })
@@ -133,3 +133,6 @@ it('fact replacement and withdrawal retain pinned historical revisions and ident
   expect(facts.facts.map((row: any) => [row.factId, row.revision, row.status])).toEqual([[refs[0]!.factId, 3, 'replaced'], [refs[1]!.factId, 3, 'withdrawn'], [3, 1, 'pending']])
   for (const ref of refs) expect(facts.history.find((row: any) => row.factId === ref.factId && row.revision === ref.revision)).toMatchObject({ enterpriseId: id, status: 'confirmed', fact: { kind: ref.kind } })
 })
+
+// Native reader readiness is setup; each business case retains its default budget.
+beforeAll(async () => { await enterpriseReads.start() }, 30000)

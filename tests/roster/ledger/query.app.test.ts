@@ -1,3 +1,4 @@
+import { enterpriseReads } from '../../../server/utils/enterprise-read'
 import { initializeDb } from '../../../db/client'
 import { assertEnterpriseDetailSnapshotEqual } from '../assertions/enterprise-detail-snapshot'
 import { decodeJsonRead } from '../../support/json-read'
@@ -228,7 +229,7 @@ beforeAll(async () => {
   enterpriseDetailTool = { ...detailTool,handler: decodeJsonRead(detailTool.handler as never) } as unknown as typeof enterpriseDetailTool
 })
 
-afterAll(() => rmSync(dir, { recursive: true, force: true }))
+afterAll(async () => { await enterpriseReads.close(); db.$client.close(); rmSync(dir, { recursive: true, force: true }) })
 
 describe('通用记录查询的生命周期投影', () => {
   it('REST OpenAPI 将 firstStatus 声明为逗号分隔的枚举数组', () => {
@@ -559,3 +560,6 @@ describe('REST / MCP 共用记录查询与企业详情读模型', () => {
     await expect(enterpriseDetailTool.handler({ enterpriseId: 999999 })).rejects.toMatchObject({ statusCode: 404 })
   })
 })
+
+// Native reader readiness is setup; each business case retains its default budget.
+beforeAll(async () => { await enterpriseReads.start() }, 30000)

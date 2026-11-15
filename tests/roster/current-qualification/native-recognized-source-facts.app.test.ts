@@ -1,8 +1,9 @@
+import { enterpriseReads } from '../../../server/utils/enterprise-read'
 import { createServer } from 'node:http'
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, expect, it, vi } from 'vitest'
+import { afterEach, beforeAll, afterAll, expect, it, vi } from 'vitest'
 import { initializeDb } from '../../../db/client'
 import { qualificationMatrix } from '../fixtures/qualification-matrix'
 import { submitSyntheticRecognizedCollection } from '../fixtures/recognized-source'
@@ -11,6 +12,9 @@ import { listCurrentQualified, type CurrentQualifiedResult } from '../../../lib/
 import { writeCurrentWorkbook } from '../../../lib/roster/current-workbook'
 import { readExportWorkbook } from '../../support/read-workbook'
 vi.mock('@nuxtjs/mcp-toolkit/server', () => ({ defineMcpTool: (tool: unknown) => tool }))
+// Real current-qualified reader startup belongs to setup, outside case budgets.
+beforeAll(async () => { await enterpriseReads.start() }, 30000)
+afterAll(async () => { await enterpriseReads.close() })
 const cleanup: Array<() => void | Promise<void>>=[]
 afterEach(async()=>{for(const close of cleanup.splice(0).reverse())await close();vi.unstubAllEnvs();vi.unstubAllGlobals()})
 function setup(){

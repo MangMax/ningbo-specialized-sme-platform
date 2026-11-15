@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import * as h3 from 'h3'
 import { afterAll, beforeAll, expect, it, vi } from 'vitest'
 import { initializeDb, schema } from '../../../db/client'
-import { startRosterApi } from '../imports/fixtures/import-server'
+import { executeNativeImport, startRosterApi } from '../imports/fixtures/import-server'
 import { enterpriseReads } from '../../../server/utils/enterprise-read'
 import { readEvidenceToken113 } from '../../../server/utils/evidence-impact-113'
 
@@ -22,9 +22,10 @@ const qualification = { titleCode: 'specialized_sme', validFrom: '2025-01-01T00:
 const uscc = '91330211255994457P'
 let enterpriseId: number, relationId: number, serial = 0
 beforeAll(async () => {
+  await enterpriseReads.start()
   for (const [key, value] of Object.entries(h3)) vi.stubGlobal(key, value)
   vi.stubGlobal('useRuntimeConfig', () => ({ apiToken: 'synthetic-a9bc', filesDir: dir }))
-  imports = await startRosterApi({ db, apiToken: 'synthetic-a9bc' })
+  imports = await startRosterApi({ db, apiToken: 'synthetic-a9bc', executeImport: executeNativeImport })
   // All synthetic business facts enter through the public preflight/commit contract.
   const body = { idempotencyKey: 'main-a9bc-synthetic-seed', sourceKind: 'announcement', sourceIdentity: 'synthetic/a9bc.pdf', payload: {
     announcement: { sourceDocument: { source: 'jxj', title: 'Synthetic qualification compatibility' }, records: [

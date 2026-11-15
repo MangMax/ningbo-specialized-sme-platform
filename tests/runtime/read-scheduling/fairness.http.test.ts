@@ -6,7 +6,7 @@ import { createApp, createError, defineEventHandler, getQuery, readBody, setHead
 import { afterAll, beforeAll, expect, it, vi } from 'vitest'
 import { initializeDb } from '../../../db/client'
 import { createRosterImportClient } from '../../../lib/roster-import-client'
-import { startRosterApi } from '../../roster/imports/fixtures/import-server'
+import { executeNativeImport, startRosterApi } from '../../roster/imports/fixtures/import-server'
 const active = vi.hoisted(() => ({ db: null as ReturnType<typeof initializeDb> | null }))
 vi.mock('@db', () => ({ useDb: () => active.db }))
 vi.mock('@nuxtjs/mcp-toolkit/server', () => ({ defineMcpTool: (tool: unknown) => tool }))
@@ -15,7 +15,7 @@ const db = initializeDb({ create: true,  dbPath: join(dir, 'fixture.db') })
 active.db = db
 let imports: Awaited<ReturnType<typeof startRosterApi>>, server: Server, base: string
 beforeAll(async () => {
-  imports = await startRosterApi({ db, apiToken: 'synthetic-fairness' })
+  imports = await startRosterApi({ db, apiToken: 'synthetic-fairness', executeImport: executeNativeImport })
   vi.stubGlobal('defineEventHandler', defineEventHandler)
   vi.stubGlobal('getQuery', getQuery)
   vi.stubGlobal('setHeader', setHeader)

@@ -1,3 +1,4 @@
+import { enterpriseReads } from '../../../server/utils/enterprise-read'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
@@ -12,6 +13,7 @@ const dir = mkdtempSync(join(tmpdir(), 'statistics-514-'))
 const db = initializeDb({ create: true, dbPath: join(dir, 'test.sqlite') }); active.db = db
 let server: ReturnType<typeof createServer>, base: string
 beforeAll(async () => {
+  await enterpriseReads.start()
   vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(new Date('2026-11-06T00:00:00Z'))
   for (const [key, value] of Object.entries(h3)) vi.stubGlobal(key, value)
   const route = (await import('../../../server/api/statistics/annual.get')).default
@@ -19,8 +21,8 @@ beforeAll(async () => {
   server = createServer(h3.toNodeListener(h3.createApp().use('/api/statistics/annual', route).use('/api/roster/current-enterprises', currentRoute)))
   await new Promise<void>(r => server.listen(0, '127.0.0.1', r))
   base = `http://127.0.0.1:${(server.address() as any).port}/api/statistics/annual`
-})
-afterAll(async () => { if (server) await new Promise<void>(r => server.close(() => r())); db.$client.close(); rmSync(dir, { recursive: true, force: true }); vi.unstubAllGlobals(); vi.useRealTimers() })
+}, 30000)
+afterAll(async () => { await enterpriseReads.close(); if (server) await new Promise<void>(r => server.close(() => r())); db.$client.close(); rmSync(dir, { recursive: true, force: true }); vi.unstubAllGlobals(); vi.useRealTimers() })
 async function read(query = '') { const response = await fetch(base + query); return { status: response.status, body: await response.json() } }
 it('uses Shanghai evaluation metadata and rejects future or invalid scopes', async () => {
   const { body, status } = await read()

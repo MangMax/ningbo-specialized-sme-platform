@@ -16,8 +16,7 @@ beforeAll(async () => {
   for (const [key, value] of Object.entries(h3)) vi.stubGlobal(key, value)
   const route = (await import('../../../server/api/statistics/districts.get')).default
   const annual = (await import('../../../server/api/statistics/annual.get')).default
-  const currentRoute = (await import('../../../server/api/roster/current-enterprises.get')).default
-  server = createServer(h3.toNodeListener(h3.createApp().use('/api/statistics/districts', route).use('/api/statistics/annual', annual).use('/api/roster/current-enterprises', currentRoute)))
+  server = createServer(h3.toNodeListener(h3.createApp().use('/api/statistics/districts', route).use('/api/statistics/annual', annual)))
   await new Promise<void>(r => server.listen(0, '127.0.0.1', r))
   base = `http://127.0.0.1:${(server.address() as any).port}/api/statistics/districts`
 })

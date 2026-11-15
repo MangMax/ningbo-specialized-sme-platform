@@ -49,6 +49,7 @@ async function post(body: unknown): Promise<{ versionId: number }> {
   return response.json()
 }
 beforeAll(async () => {
+  await enterpriseReads.start()
   for (const [key, value] of Object.entries(h3)) vi.stubGlobal(key, value)
   vi.stubGlobal('useRuntimeConfig', () => ({ apiToken: 'issue305-synthetic', filesDir: dir }))
   const commands = (await import('../../../server/api/roster/decision-lifecycle/commands.post')).default
