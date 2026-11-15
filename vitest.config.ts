@@ -23,7 +23,8 @@ export default defineConfig({
     projects: [
       { extends: true, test: { name: 'runtime', include: ['tests/**/*.test.ts'], exclude: ['tests/**/*.app.test.ts', 'tests/**/*.upgrade.test.ts'] } },
       { extends: true, test: { name: 'upgrade', include: ['tests/**/*.upgrade.test.ts'] } },
-      { extends: true, test: { name: 'app', include: ['tests/**/*.app.test.ts'] } },
+      { extends: true, test: { name: 'app', include: ['tests/**/*.app.test.ts'], exclude: ['tests/runtime/development/nuxt-runtime-watch.http.app.test.ts'] } },
+      { extends: true, test: { name: 'deep', include: ['tests/runtime/development/nuxt-runtime-watch.http.app.test.ts'] } },
     ],
   },
 })

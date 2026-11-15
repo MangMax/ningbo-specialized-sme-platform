@@ -23,6 +23,7 @@ jobs:
     outputs:
       upgrade: ${{ steps.select.outputs.upgrade }}
       ttl: ${{ steps.select.outputs.ttl }}
+      watcher: ${{ steps.select.outputs.watcher }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
@@ -33,10 +34,13 @@ jobs:
           EVENT: ${{ github.event_name }}
           BASE: ${{ github.event.pull_request.base.sha }}
         run: |
+          watcher=1
           ttl=1
           upgrade=true
           if [ "$EVENT" = pull_request ]; then
             git diff --name-only "$BASE" HEAD > changed-paths.txt
+            watcher=0
+            if grep -qE "^(nuxt.config|package.json$|pnpm-lock.yaml$|vitest.config|tests/runtime/development/|tests/support/|.github/workflows/)" changed-paths.txt; then watcher=1; fi
             ttl=0
             if grep -qE "^(server/utils/.*(evidence|snapshot)|server/api/roster/|server/mcp/|tests/roster/official-evidence/|tests/support/|vitest.config|.github/workflows/)" changed-paths.txt; then ttl=1; fi
             # Fail closed: only exclusively presentation/documentation changes may omit history.
@@ -44,6 +48,8 @@ jobs:
               upgrade=false
             fi
           fi
+          echo "watcher=$watcher" >> "$GITHUB_OUTPUT"
+          echo "Development watcher coverage: $watcher (configuration/dependency paths or full run)." >> "$GITHUB_STEP_SUMMARY"
           echo "ttl=$ttl" >> "$GITHUB_OUTPUT"
           echo "upgrade=$upgrade" >> "$GITHUB_OUTPUT"
           echo "Historical upgrade coverage: $upgrade. Runtime and app always run; main, nightly and manual runs require all projects." >> "$GITHUB_STEP_SUMMARY"
@@ -156,7 +162,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: ${{ needs.coverage.outputs.ttl == '1' && fromJSON('[1,2,3,4,5,6,"expiry"]') || fromJSON('[1,2,3,4,5,6]') }}
+        shard: ${{ fromJSON(format('[1,2,3,4,5,6{0}{1}]', needs.coverage.outputs.ttl == '1' && ',"expiry"' || '', needs.coverage.outputs.watcher == '1' && ',"watcher"' || '')) }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
@@ -194,12 +200,16 @@ jobs:
             exit 1
           fi
           result=0
-          if [ "$APP_SHARD" = expiry ]; then
+          project=app
+          if [ "$APP_SHARD" = watcher ]; then
+            project=deep
+            args=()
+          elif [ "$APP_SHARD" = expiry ]; then
             args=(tests/roster/official-evidence/review.http.app.test.ts -t 'expires 120-second readonly snapshots')
           else
             args=(--shard="$APP_SHARD/6")
           fi
-          timeout --signal=TERM --kill-after=5s "${remaining}s" pnpm test:app "${args[@]}" --maxWorkers 1 --no-file-parallelism --reporter=default --reporter=json --outputFile=test-results.json || result=$?
+          timeout --signal=TERM --kill-after=5s "${remaining}s" pnpm test --project="$project" "${args[@]}" --maxWorkers 1 --no-file-parallelism --reporter=default --reporter=json --outputFile=test-results.json || result=$?
           elapsed=$(( $(date +%s) - started ))
           echo "Workflow elapsed after tests: ${elapsed}s (exit ${result})" >> "$GITHUB_STEP_SUMMARY"
           if [ "$result" -eq 124 ] || [ "$result" -eq 137 ]; then

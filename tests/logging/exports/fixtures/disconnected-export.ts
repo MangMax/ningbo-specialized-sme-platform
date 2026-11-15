@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process'
-import { randomBytes } from 'node:crypto'
+import { createHash } from 'node:crypto'
 import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
 import { initializeDb, schema as s } from '../../../../db/client'
@@ -17,7 +17,9 @@ export function populateDisconnectedExportFixture(dbPath: string) {
   const db = initializeDb({ create: true,  dbPath })
   try {
     db.transaction(() => {
-      for (let i = 0; i < 30000; i++) exportCandidate(db, '合成断开' + i + randomBytes(160).toString('hex'), 'innovative_sme')
+      // Deterministic incompressible text keeps the actual >4MiB stream boundary
+      // with 30x fewer enterprise/event/evidence inserts; each cell stays below Excel's limit.
+      for (let i = 0; i < 1000; i++) exportCandidate(db, '合成断开' + i + createHash('shake256', { outputLength: 5000 }).update(String(i)).digest('hex'), 'innovative_sme')
     })
   } finally { db.$client.close() }
 }

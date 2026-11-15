@@ -366,7 +366,7 @@ it("S1 compatible append also preserves two accepted stored IDs across distinct 
 })
 
 const claimOrders = [[0, 1, 2], [0, 2, 1], [1, 0, 2], [1, 2, 0], [2, 0, 1], [2, 1, 0]] as const
-for (const entry of ['import', 'standalone'] as const) for (const variant of ['owner', 'raw', 'only-unknown'] as const) for (const order of claimOrders) it(`R5 S2 ${entry} ${variant} whole-K priority order ${order.join('')}`, async () => {
+for (const entry of ['import', 'standalone'] as const) for (const variant of ['owner', 'raw', 'only-unknown'] as const) it(`whole-K ${entry} ${variant} priority is independent of all six input orders`, async () => {
   const f = await fixture()
   const alpha = publicAnnouncement('Alpha', 2022, [publicLocator('other.txt', 20), publicLocator('other.txt', 30)]).announcement
   const third = publicAnnouncement(variant === 'owner' ? 'Beta' : 'Alpha', 2025, [publicLocator('other.txt', 40)]).announcement
@@ -376,6 +376,8 @@ for (const entry of ['import', 'standalone'] as const) for (const variant of ['o
   const ids = [20, 30, 40].map(n => { const target = f.rows().find(r => r.list_no === n); if (!target) throw new Error('Expected public target'); return target.id })
   const facts = [{ ...row, usccRaw: null }, row, variant === 'raw' ? { ...row, nameRaw: 'Conflicting confirmed raw' } : row]
   const operations = await Promise.all(ids.map((id, i) => { const fact = facts[i]; if (!fact) throw new Error('Expected explicit fact'); return finalOperation(f, id, fact) }))
-  const selected = order.map(i => { const op = operations[i]; if (!op) throw new Error('Expected operation'); return op })
-  await submitFinalCorrections(f, entry, selected, 'whole-k-priority', variant === 'only-unknown' ? 'ambiguity' : 'source_row_conflict')
+  for (const order of claimOrders) {
+    const selected = order.map(i => { const op = operations[i]; if (!op) throw new Error('Expected operation'); return op })
+    await submitFinalCorrections(f, entry, selected, 'whole-k-priority-' + order.join(''), variant === 'only-unknown' ? 'ambiguity' : 'source_row_conflict')
+  }
 })

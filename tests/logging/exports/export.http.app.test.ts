@@ -79,8 +79,7 @@ async function start(logDirectory = logDir) {
   // Native modules resolve from the emitted chunk under this external buildDir.
   if (!existsSync(join(root, 'node_modules'))) symlinkSync(join(cwd, 'node_modules'), join(root, 'node_modules'), 'dir')
   baseUrl = `http://127.0.0.1:${port}`
-  const built = process.env.EXPORT188_BUILT === '1'
-  child = spawn(process.execPath, built ? ['.output/server/index.mjs'] : [join(cwd, 'node_modules/nuxt/bin/nuxt.mjs'), 'dev', '--host', '127.0.0.1', '--port', String(port)], {
+  child = spawn(process.execPath, ['.output/server/index.mjs'], {
     cwd, stdio: ['ignore', 'pipe', 'pipe'], env: {
       ...process.env, NUXT_BUILD_DIR: join(root, 'build'), NUXT_DB_PATH: dbPath, NUXT_LOG_DIR: logDirectory,
       NUXT_API_TOKEN: token, NUXT_MCP_TOKEN: 'synthetic-mcp-188', NUXT_OCR_TOKEN: 'synthetic-ocr-188',
@@ -273,7 +272,7 @@ it('distinguishes actual HTTP disconnects for artifact and both legacy streams w
   expect(response.status).toBe(202)
   const job = await terminal((await json(response)).jobId, 90000)
   expect(job.state).toBe('done')
-  expect(job.result.counts).toEqual({ eligible: 30000, pending: 0, excluded: 0 })
+  expect(job.result.counts).toEqual({ eligible: 1000, pending: 0, excluded: 0 })
   async function disconnect(path: string) {
     return new Promise<string>((resolve, reject) => {
       const request = get(url(path), { headers }, res => {
@@ -294,7 +293,7 @@ it('distinguishes actual HTTP disconnects for artifact and both legacy streams w
     })
   }
   const { bytes, wb } = await original(job.result.artifact.downloadUrl, 'after-disconnect-original')
-  expect(wb.getWorksheet('有效企业')!.rowCount).toBe(30001)
+  expect(wb.getWorksheet('有效企业')!.rowCount).toBe(1001)
   expect(createHash('sha256').update(bytes).digest('hex')).toBe(job.result.artifact.sha256)
 }, 180000)
 

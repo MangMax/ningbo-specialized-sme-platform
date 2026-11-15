@@ -1,3 +1,4 @@
+import { readDevelopmentDiscovery } from '../../roster/current-export/fixtures/specialized-export'
 import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
 import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -5,7 +6,7 @@ import { join, resolve } from 'node:path'
 import { eq } from 'drizzle-orm'
 import { afterAll, beforeAll, expect, it } from 'vitest'
 import { initializeDb, schema } from '../../../db/client'
-import { spawnOwnedChild, reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../../support/owned-process.mjs'
+import { spawnOwnedChild, spawnCompiledApp, reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../../support/owned-process.mjs'
 
 const dir = mkdtempSync(join(tmpdir(), 'candidate-570-'))
 const db = initializeDb({ create: true, dbPath: join(dir, 'test.db') })
@@ -15,12 +16,12 @@ const event = db.insert(schema.recordEvent).values({ recordId: record.id, eventT
 let base: string, child: ReturnType<typeof spawnOwnedChild>, serial = 0
 beforeAll(async () => {
   const cwd = resolve(import.meta.dirname, '../../..'), port = await reserveLoopbackPort()
-  child = spawnOwnedChild(process.execPath, [join(cwd, 'node_modules/nuxt/bin/nuxt.mjs'), 'dev', '--host', '127.0.0.1', '--port', String(port)], { cwd, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, NUXT_BUILD_DIR: join(dir, 'build'), NUXT_DB_PATH: join(dir, 'test.db'), NUXT_FILES_DIR: join(dir, 'files'), NUXT_INCOMING_DIR: join(dir, 'incoming'), NUXT_API_TOKEN: 'synthetic-570', } })
+  child = spawnCompiledApp(port, { cwd, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, NUXT_BUILD_DIR: join(dir, 'build'), NUXT_DB_PATH: join(dir, 'test.db'), NUXT_FILES_DIR: join(dir, 'files'), NUXT_INCOMING_DIR: join(dir, 'incoming'), NUXT_API_TOKEN: 'synthetic-570', } })
   let output = ''
   for (const stream of [child.stdout, child.stderr]) stream?.on('data', data => { output += data; writeFileSync(join(dir, 'server.log'), output) })
   base = `http://127.0.0.1:${port}`
-  await waitForHttp(base + '/_openapi.json', { timeoutMs: 60000, child })
-  const contract = await (await fetch(base + '/_openapi.json')).json()
+  await waitForHttp(base + '/api/health', { timeoutMs: 60000, child })
+  const contract = await readDevelopmentDiscovery()
   writeFileSync(join(dir, 'openapi.json'), JSON.stringify(contract))
   expect(contract.paths['/api/roster/correspondences/preflight']).toBeDefined()
 }, 90000)

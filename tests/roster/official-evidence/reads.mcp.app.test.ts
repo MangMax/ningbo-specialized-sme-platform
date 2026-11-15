@@ -1,3 +1,4 @@
+import { readDevelopmentDiscovery } from '../current-export/fixtures/specialized-export'
 import { createRuntimeSchema } from '../../../db/create-runtime'
 import { createHash } from 'node:crypto'
 import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs'
@@ -9,7 +10,7 @@ import { z } from 'zod'
 import * as schema from '../../../db/schema'
 import type { OfficialPublishedRow, RosterImportPayload, RosterImportRecord } from '../../../lib/roster-import-client'
 import { usccFormatVerdict } from '../../../lib/roster/uscc-research'
-import { spawnOwnedChild, reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../../support/owned-process.mjs'
+import { spawnOwnedChild, spawnCompiledApp, reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../../support/owned-process.mjs'
 
 // Actual Nuxt routes/toolkit/middleware/JSON-RPC and real import process. Execute only
 // with the parent's heavy slot; this suite never uses the SDK's in-memory bridge.
@@ -23,16 +24,18 @@ const db=drizzle(sqlite,{schema});createRuntimeSchema(sqlite)
 // Infrastructure catalog only; all business fixtures are formed through public commands.
 sqlite.prepare("INSERT INTO stored_file(id,rel_path,filename,ext,source,kind,title_code,bytes,sha256,created_at) VALUES(1,'notice.txt','notice.txt','txt','jxj','announcement','specialized_sme',?,?,'synthetic')").run(Buffer.byteLength(text),sha256)
 const apiToken='synthetic-c-api',mcpToken='synthetic-c-mcp',trace:unknown[]=[]
+let discovery: unknown
 let base='',child:ReturnType<typeof spawnOwnedChild>|undefined,sequence=0,seedSequence=0
 // Synthetic identities with independently precomputed valid check digits, not registered entities.
 const seedUsccs=['913302110000001015','913302110000001028','91330211000000103B','91330211000000104E','91330211000000105H','91330211000000106L'] as const
 const usedSeedUsccs=new Set<string>()
 beforeAll(async()=>{
+  discovery = await readDevelopmentDiscovery()
   const cwd=resolve(import.meta.dirname,'../../..'),port=await reserveLoopbackPort()
   const env:Record<string,string>={}
   for(const key of ['PATH','HOME','USER','LOGNAME','SHELL','LANG','LC_ALL']) if(process.env[key]!==undefined) env[key]=process.env[key]!
   Object.assign(env,{TMPDIR:join(dir,'tmp'),NUXT_DB_PATH:dbPath,NUXT_FILES_DIR:filesDir,NUXT_INCOMING_DIR:join(dir,'incoming'),NUXT_LOG_DIR:join(dir,'logs'),NUXT_CURATED_PATH:join(dir,'curated.json'),NUXT_RECONCILE_PATH:join(dir,'reconcile.json'),NUXT_API_TOKEN:apiToken,NUXT_MCP_TOKEN:mcpToken,CI:'1'})
-  child=spawnOwnedChild(process.execPath,[join(cwd,'node_modules/nuxt/bin/nuxt.mjs'),'dev','--host','127.0.0.1','--port',String(port),'--dotenv',join(dir,'emptydotenv')],{cwd,stdio:['ignore','pipe','pipe'],env})
+  child=spawnCompiledApp(port,{cwd,stdio:['ignore','pipe','pipe'],env})
   let output='';for(const stream of [child.stdout,child.stderr]) stream?.on('data',data=>{output+=String(data);writeFileSync(join(dir,'nuxt.log'),output)})
   base=`http://127.0.0.1:${port}`
   writeFileSync(join(dir,'owned-launch.json'),JSON.stringify({pid:child.pid,port,envKeys:Object.keys(env),cwd,args:child.spawnargs,defaultBuildDir:join(cwd,'.nuxt')},null,2))
@@ -95,8 +98,7 @@ it('discovers bounded opt-in fields on actual OpenAPI and MCP schemas while keep
   const evidence=tools.find(t=>t.name==='get_roster_evidence')!;expect(evidence.inputSchema).toMatchObject({properties:{official:{enum:['latest','history']},pageSize:{maximum:50},maxBytes:{maximum:65536}}})
   const auth=z.object({result:z.object({tools:z.array(z.object({name:z.string(),inputSchema:z.record(z.string(),z.unknown())}))})}).parse((await rpc('',{},mcpToken,'tools/list')).body).result.tools
   expect(auth.find(t=>t.name==='list_roster_import_items')?.inputSchema).toMatchObject({properties:{projection:{enum:['snapshot','eventIds','qualification']},source:{enum:['private_batch','redacted_receipt']},itemIndex:{minimum:0}}})
-  const spec=await http('/_openapi.json');expect(spec.status).toBe(200)
-  const serialized=JSON.stringify(spec.body);for(const field of ['beforeRevision','afterEvidenceId','oldRecordId','storedRedacted','requiredBytes']) expect(serialized).toContain(field)
+  const serialized=JSON.stringify(discovery);for(const field of ['beforeRevision','afterEvidenceId','oldRecordId','storedRedacted','requiredBytes']) expect(serialized).toContain(field)
 })
 it('reads exact fact evidence and event with HTTP and actual MCP JSON-RPC parity after public worker writes',async()=>{
   const s=await seed(false,'mcp')

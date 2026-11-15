@@ -29,3 +29,10 @@
 ## Real-clock deep acceptance
 
 The 121-second public readonly-snapshot expiry case is selected explicitly with `RUN_REAL_TTL_DEEP=1` when running `tests/roster/official-evidence/review.http.app.test.ts`. CI runs it in the separate `App expiry` job, alongside ordinary app shards, for roster API/MCP, evidence/snapshot implementation, owning tests/shared support, configuration/workflow changes, and all main/nightly/manual runs. Run it for snapshot lifecycle/TTL changes and before deployment; daily tests retain capacity eviction, public cursor validation, hydration-failure release and shutdown release. A daily PASS does not establish real-clock expiry acceptance. Keep its historical failures and report the deep case as UNRUN unless explicitly executed.
+
+The real Nuxt development watcher belongs to the `deep` project. `pnpm test`
+continues to include it; `pnpm test --project=deep --maxWorkers=1` runs it alone.
+CI selects it for Nuxt/package/lock/test configuration, its owning tests/shared
+support and workflow changes, and always on main/nightly/manual runs. The app
+matrix requires the selected watcher result. A PR without that selection has no
+fresh development watcher evidence. Deployment acceptance requires the full run.

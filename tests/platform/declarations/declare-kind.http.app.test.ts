@@ -1,3 +1,4 @@
+import { readDevelopmentDiscovery } from '../../roster/current-export/fixtures/specialized-export'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -7,7 +8,7 @@ import Database from 'better-sqlite3'
 import { afterAll, beforeAll, expect, it } from 'vitest'
 import { initializeDb } from '../../../db/client'
 import { createRosterImportClient, type RosterImportRequest } from '../../../lib/roster-import-client'
-import { spawnOwnedChild as spawn, reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../../support/owned-process.mjs'
+import { spawnOwnedChild as spawn, spawnCompiledApp, reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../../support/owned-process.mjs'
 
 // Every business write uses the app API on a new isolated SQLite database.
 const dir = mkdtempSync(join(tmpdir(), 'declare-kind-249-'))
@@ -17,19 +18,17 @@ let client: ReturnType<typeof createRosterImportClient>
 beforeAll(async () => {
   const cwd = resolve(import.meta.dirname, '../../..'), port = await reserveLoopbackPort()
   initializeDb({ dbPath: join(dir, 'roster.db'), create: true }).$client.close()
-  const child = spawn(process.execPath, [join(cwd, 'node_modules/nuxt/bin/nuxt.mjs'), 'dev', '--host', '127.0.0.1', '--port', String(port)], { cwd, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env,
+  const child = spawnCompiledApp(port, { cwd, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env,
     NUXT_BUILD_DIR: join(dir, 'build'), NUXT_DB_PATH: join(dir, 'roster.db'), NUXT_DB_READONLY: '0',
     NUXT_FILES_DIR: join(dir, 'files'), NUXT_INCOMING_DIR: join(dir, 'incoming'), NUXT_API_TOKEN: token, NUXT_MCP_TOKEN: token,
   } })
   let output = ''
   for (const stream of [child.stdout, child.stderr]) stream.on('data', data => { output = (output + data).slice(-8000) })
   service = { baseUrl: `http://127.0.0.1:${port}`, stop: () => stopOwnedChild(child) }
-  try { await waitForHttp(`${service.baseUrl}/_openapi.json`, { timeoutMs: 60000, child }) }
+  try { await waitForHttp(`${service.baseUrl}/api/health`, { timeoutMs: 60000, child }) }
   catch (error) { await service.stop(); throw new Error(`${String(error)}\n${output}`) }
   expect(output).toContain(service.baseUrl)
-  const response = await fetch(`${service.baseUrl}/_openapi.json`)
-  expect(response.status).toBe(200)
-  const contract = await response.json()
+  const contract = await readDevelopmentDiscovery()
   expect(contract.paths['/api/roster/import/preflight'].post).toBeDefined()
   expect(contract.paths['/api/roster/import/commit'].post).toBeDefined()
   expect(contract.paths['/api/platform/queries/{queryId}/evidence'].get).toBeDefined()
