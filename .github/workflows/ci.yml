@@ -22,6 +22,8 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       upgrade: ${{ steps.select.outputs.upgrade }}
+      native: ${{ steps.select.outputs.native }}
+      app: ${{ steps.select.outputs.app }}
       ttl: ${{ steps.select.outputs.ttl }}
       watcher: ${{ steps.select.outputs.watcher }}
     steps:
@@ -29,6 +31,12 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+      - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
       - id: select
         env:
           EVENT: ${{ github.event_name }}
@@ -40,14 +48,13 @@ jobs:
           if [ "$EVENT" = pull_request ]; then
             git diff --name-only "$BASE" HEAD > changed-paths.txt
             watcher=0
-            if grep -qE "^(nuxt.config|package.json$|pnpm-lock.yaml$|vitest.config|tests/runtime/development/|tests/support/|.github/workflows/)" changed-paths.txt; then watcher=1; fi
+            if grep -qE "^(nuxt.config|package.json$|pnpm-lock.yaml$|vitest.config|tests/runtime/development/|tests/support/|scripts/(business-test-groups|select-upgrade-tests)|.github/workflows/)" changed-paths.txt; then watcher=1; fi
             ttl=0
-            if grep -qE "^(server/utils/.*(evidence|snapshot)|server/api/roster/|server/mcp/|tests/roster/official-evidence/|tests/support/|vitest.config|.github/workflows/)" changed-paths.txt; then ttl=1; fi
-            # Fail closed: only exclusively presentation/documentation changes may omit history.
-            if ! grep -q '^docs/adr/' changed-paths.txt && ! grep -qvE '^(app/|components/|pages/|assets/|public/|docs/|README[^/]*$)' changed-paths.txt; then
-              upgrade=false
-            fi
+            if grep -qE "^(server/utils/.*(evidence|snapshot)|server/api/roster/|server/mcp/|tests/roster/official-evidence/|tests/support/|scripts/(business-test-groups|select-upgrade-tests)|vitest.config|.github/workflows/)" changed-paths.txt; then ttl=1; fi
+            upgrade=$(node scripts/select-upgrade-tests.mjs changed-paths.txt)
           fi
+          node scripts/business-test-groups.mjs matrix "$upgrade" > business-matrix.json
+          TTL="$ttl" WATCHER="$watcher" node --input-type=module -e 'import fs from "node:fs"; const m=JSON.parse(fs.readFileSync("business-matrix.json")); if(process.env.TTL==="1")m.app.push({group:"名录快照真实过期 · deep",project:"expiry"}); if(process.env.WATCHER==="1")m.app.push({group:"开发服务热更新 · deep",project:"watcher"}); for(const k of ["native","app"]) fs.appendFileSync(process.env.GITHUB_OUTPUT,`${k}=${JSON.stringify({include:m[k]})}\n`)'
           echo "watcher=$watcher" >> "$GITHUB_OUTPUT"
           echo "Development watcher coverage: $watcher (configuration/dependency paths or full run)." >> "$GITHUB_STEP_SUMMARY"
           echo "ttl=$ttl" >> "$GITHUB_OUTPUT"
@@ -121,14 +128,13 @@ jobs:
 
   native:
     needs: coverage
-    name: ${{ matrix.project == 'runtime' && '业务逻辑与组件测试' || '历史数据升级测试' }} · ${{ matrix.shard }}/6
+    name: ${{ matrix.group }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     strategy:
       fail-fast: false
       matrix:
-        project: ${{ needs.coverage.outputs.upgrade == 'true' && fromJSON('["runtime","upgrade"]') || fromJSON('["runtime"]') }}
-        shard: [1, 2, 3, 4, 5, 6]
+        include: ${{ fromJSON(needs.coverage.outputs.native).include }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
@@ -154,7 +160,7 @@ jobs:
             exit 1
           fi
           result=0
-          timeout --signal=TERM --kill-after=5s "${remaining}s" pnpm test --project=${{ matrix.project }} --shard=${{ matrix.shard }}/6 --maxWorkers 1 --no-file-parallelism --reporter=default --reporter=json --outputFile=test-results.json || result=$?
+          timeout --signal=TERM --kill-after=5s "${remaining}s" node scripts/business-test-groups.mjs run "${{ matrix.group }}" --reporter=default --reporter=json --outputFile=test-results.json || result=$?
           elapsed=$(( $(date +%s) - started ))
           echo "Workflow elapsed after tests: ${elapsed}s (exit ${result})" >> "$GITHUB_STEP_SUMMARY"
           if [ "$result" -eq 124 ] || [ "$result" -eq 137 ]; then
@@ -164,20 +170,20 @@ jobs:
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
-          name: ${{ matrix.project }}-results-${{ matrix.shard }}
+          name: ${{ matrix.group }}-results
           path: test-results.json
           if-no-files-found: warn
           retention-days: 7
 
   app:
     needs: [build, coverage, discovery]
-    name: ${{ matrix.shard == 'expiry' && '快照真实过期测试' || matrix.shard == 'watcher' && '开发服务热更新测试' || format('应用与独立进程测试 · {0}/6', matrix.shard) }}
+    name: ${{ matrix.group }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     strategy:
       fail-fast: false
       matrix:
-        shard: ${{ fromJSON(format('[1,2,3,4,5,6{0}{1}]', needs.coverage.outputs.ttl == '1' && ',"expiry"' || '', needs.coverage.outputs.watcher == '1' && ',"watcher"' || '')) }}
+        include: ${{ fromJSON(needs.coverage.outputs.app).include }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
@@ -199,9 +205,10 @@ jobs:
       - name: Run tests within the workflow time budget
         env:
           GH_TOKEN: ${{ github.token }}
-          RUN_REAL_TTL_DEEP: ${{ matrix.shard == 'expiry' && '1' || '0' }}
+          RUN_REAL_TTL_DEEP: ${{ matrix.project == 'expiry' && '1' || '0' }}
           TEST_DISCOVERY_ARTIFACT: ${{ github.workspace }}/development-discovery.json
-          APP_SHARD: ${{ matrix.shard }}
+          APP_SHARD: ${{ matrix.project }}
+          BUSINESS_GROUP: ${{ matrix.group }}
         run: |
           run_started_at=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" --jq .run_started_at)
           started=$(date -d "$run_started_at" +%s)
@@ -220,9 +227,14 @@ jobs:
           elif [ "$APP_SHARD" = expiry ]; then
             args=(tests/roster/official-evidence/review.http.app.test.ts -t 'expires 120-second readonly snapshots')
           else
-            args=(--shard="$APP_SHARD/6")
+            args=()
           fi
-          timeout --signal=TERM --kill-after=5s "${remaining}s" pnpm test --project="$project" "${args[@]}" --maxWorkers 1 --no-file-parallelism --reporter=default --reporter=json --outputFile=test-results.json || result=$?
+          if [ "$APP_SHARD" = app ]; then
+            command=(node scripts/business-test-groups.mjs run "$BUSINESS_GROUP")
+          else
+            command=(pnpm test --project="$project" "${args[@]}" --maxWorkers=1 --no-file-parallelism)
+          fi
+          timeout --signal=TERM --kill-after=5s "${remaining}s" "${command[@]}" --reporter=default --reporter=json --outputFile=test-results.json || result=$?
           elapsed=$(( $(date +%s) - started ))
           echo "Workflow elapsed after tests: ${elapsed}s (exit ${result})" >> "$GITHUB_STEP_SUMMARY"
           if [ "$result" -eq 124 ] || [ "$result" -eq 137 ]; then
@@ -232,7 +244,7 @@ jobs:
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
-          name: app-results-${{ matrix.shard }}
+          name: ${{ matrix.group }}-results
           path: test-results.json
           if-no-files-found: warn
           retention-days: 7

@@ -23,7 +23,9 @@
     "db:init": "node --env-file-if-exists=.env scripts/initialize-native-db.mjs",
     "test:runtime": "vitest run --project runtime",
     "test:upgrade": "vitest run --project upgrade",
-    "test:app": "vitest run --project app"
+    "test:app": "vitest run --project app",
+    "test:groups": "node scripts/business-test-groups.mjs inventory",
+    "test:business": "node scripts/business-test-groups.mjs run"
   },
   "dependencies": {
     "@embedpdf/core": "2.15.1",
