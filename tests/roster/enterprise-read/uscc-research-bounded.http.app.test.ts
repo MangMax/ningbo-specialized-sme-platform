@@ -71,10 +71,10 @@ beforeAll(async () => {
         { sequenceNo: 2, nameRaw: name, usccRaw: uscc, relationKey: 'selected-second', rawFields: { original: 'selected original'.repeat(65536) } },
         { sequenceNo: 3, nameRaw: name, usccRaw: uscc, relationKey: 'selected-third' },
       ] },
-      ...(['failed', 'partial', 'not_queried'] as const).map((status, i) => ({ interface: 'apply_list' as const, queryKey: 'name:' + name, queriedAt: `2026-10-20T02:00:0${i}Z`, status, relations: i === 1 ? [{ sequenceNo: 1, nameRaw: name }, { sequenceNo: 2, nameRaw: name }] : [] })),
+      ...(['failed', 'partial', 'not_queried'] as const).map((status, i) => ({ interface: 'apply_list' as const, queryKey: 'name:' + name, queriedAt: `2026-10-20T02:00:0${i}Z`, status, rawResponse: JSON.stringify({ status }), relations: i === 1 ? [{ sequenceNo: 1, nameRaw: name }, { sequenceNo: 2, nameRaw: name }] : [] })),
     ],
   } })
-  expect(evidence).toMatchObject({ status: 'committed', summary: { failed: 0 } })
+  expect(evidence, JSON.stringify(evidence)).toMatchObject({ status: 'committed', summary: { failed: 0 } })
 }, 30000)
 
 afterAll(async () => {
@@ -138,7 +138,7 @@ it('GET batches evidence and holder lookup for many targets sharing a candidate 
       ...labels.map(label => ({ enterprise: { name: `宁波批量${label}有限公司` }, titleCode: 'specialized_sme', events: [] })),
       { enterprise: { name: `宁波${labels.map(label => '批量' + label).join('')}股份有限公司`, uscc: holderUscc }, titleCode: 'specialized_sme', events: [] },
     ] },
-    platformQueries: [{ interface: 'business_list', queryKey: holderUscc, rdjb: '3', queriedAt: '2026-10-20T04:00:00Z', status: 'success', relations: labels.map((label, i) => ({ sequenceNo: i + 1, nameRaw: `宁波批量${label}有限公司`, usccRaw: holderUscc })) }],
+    platformQueries: [{ interface: 'business_list', queryKey: holderUscc, rdjb: '3', queriedAt: '2026-10-20T04:00:00Z', status: 'success', rawResponse: JSON.stringify(labels), relations: labels.map((label, i) => ({ sequenceNo: i + 1, nameRaw: `宁波批量${label}有限公司`, usccRaw: holderUscc })) }],
   } })
   expect(imported).toMatchObject({ status: 'committed', summary: { failed: 0 } })
   bytes = 0; statements = 0; measuring = true
@@ -173,7 +173,7 @@ it('GET keeps confirmed-alias filters current membership multiple titles and sam
       { enterpriseName: filterName, name: '合成已确认检索词', sourceKind: 'manual', verificationStatus: 'confirmed' },
       { enterpriseName: filterName, name: '合成待核检索词', sourceKind: 'manual', verificationStatus: 'pending' },
     ],
-    platformQueries: codes.map(code => ({ interface: 'apply_list', queryKey: code, queriedAt: '2026-10-20T05:00:00Z', status: 'success', relations: [{ sequenceNo: 1, nameRaw: subject, usccRaw: code }] })),
+    platformQueries: codes.map(code => ({ interface: 'apply_list', queryKey: code, queriedAt: '2026-10-20T05:00:00Z', status: 'success', rawResponse: JSON.stringify({ code }), relations: [{ sequenceNo: 1, nameRaw: subject, usccRaw: code }] })),
   } })
   expect(imported).toMatchObject({ status: 'committed', summary: { failed: 0 } })
   for (const [i, year] of [2025, 2026].entries()) {

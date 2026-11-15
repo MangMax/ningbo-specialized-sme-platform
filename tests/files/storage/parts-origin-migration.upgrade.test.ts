@@ -1,6 +1,6 @@
 import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
@@ -9,7 +9,7 @@ import { expect, it } from 'vitest'
 import * as schema from '../../../db/schema'
 import { backfillFileParts } from '../../../server/utils/file-parts'
 
-const appRoot = dirname(dirname(fileURLToPath(import.meta.url)))
+const appRoot = fileURLToPath(new URL('../../../', import.meta.url))
 const migrationsFolder = join(appRoot, 'db/migrations')
 
 it('0006 保留来源未知的旧行,并对含 NULL 坐标施加唯一约束', () => {

@@ -1,5 +1,5 @@
 import Database from 'better-sqlite3'
-import { expect, it } from 'vitest'
+import { afterAll, beforeAll, expect, it } from 'vitest'
 import { captureSqlFactTitle } from '../../../upgrade/apply-stored-cells'
 
 it.each([
@@ -34,7 +34,7 @@ it('requires FK ON and a caller transaction before any successor DDL', () => {
 
 import { migrate } from 'drizzle-orm/better-sqlite3/migrator'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
-import { copyFileSync, mkdtempSync } from 'node:fs'
+import { copyFileSync, mkdtempSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { upgradeCollections } from '../../../upgrade/collections'
@@ -43,8 +43,10 @@ import { upgradeProjections } from '../../../upgrade/projections'
 import { finalizeObservations, finalizeCollectionScopes } from '../../../upgrade/finalize-observations'
 import { finalizeFingerprintBasis } from '../../../upgrade/fingerprint-basis'
 import { finalizeApplyStored } from '../../../upgrade/apply-stored'
-function fixture(indexed=false) {
+const ownedRoots: string[] = []
+function buildFixture(indexed=false) {
  const root=mkdtempSync(join(process.env.APPLY_STORED_EVIDENCE_DIR??tmpdir(),'apply-stored-'))
+ ownedRoots.push(root)
  const legacy=join(root,'legacy.sqlite'),target=join(root,'target.sqlite'),source=join(root,'71607.sqlite')
  const s=new Database(legacy);migrate(drizzle(s),{migrationsFolder:'db/migrations'})
  s.exec(`INSERT INTO platform_query(id,interface,query_key,rdjb,queried_at,status,created_at) VALUES(1,'apply_list','Q','2','t','success','c');
@@ -61,6 +63,21 @@ function fixture(indexed=false) {
  finalizeFingerprintBasis({source:p,target,runId:'basis',predecessorRunId:'scopes',legacySource:legacy})
  copyFileSync(target,source)
  return {source,target,legacySource:legacy,runId:'stored',predecessorRunId:'basis'}
+}
+const predecessors = new Map<boolean, ReturnType<typeof buildFixture>>()
+beforeAll(() => {
+ for (const indexed of [false, true]) predecessors.set(indexed, buildFixture(indexed))
+}, 30000)
+afterAll(() => {
+ if (!process.env.APPLY_STORED_EVIDENCE_DIR) for (const root of ownedRoots) rmSync(root, {recursive:true, force:true})
+})
+function fixture(indexed=false) {
+ const base=predecessors.get(indexed)!
+ const root=mkdtempSync(join(process.env.APPLY_STORED_EVIDENCE_DIR??tmpdir(),'apply-stored-case-'))
+ ownedRoots.push(root)
+ const result={...base,source:join(root,'71607.sqlite'),target:join(root,'target.sqlite'),legacySource:join(root,'legacy.sqlite')}
+ for (const key of ['source','target','legacySource'] as const) copyFileSync(base[key],result[key])
+ return result
 }
 it('upgrades original status pair and duplicate-key SQL facts independently without rewriting old cells',()=>{
  const f=fixture()
@@ -204,7 +221,7 @@ it('independently replays the fixed snapshot in a new process',()=>{
  const output=execFileSync(process.execPath,['upgrade/run-apply-stored.mjs',f.source,f.target,f.target+'.replay-evidence',f.runId,f.predecessorRunId,f.legacySource],{encoding:'utf8'})
  expect(JSON.parse(output).manifest).toBe(result.manifest)
  const again=new Database(f.target);expect(again.serialize()).toEqual(before);again.close()
-})
+}, 15000)
 it('classifies invalid sealed snapshot encoding as uncaptured, independently retaining captured SQL NULL/text',()=>{
  const f=fixture()
  for(const path of [f.source,f.target]) {

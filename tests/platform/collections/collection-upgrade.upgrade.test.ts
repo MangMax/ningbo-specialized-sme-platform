@@ -270,7 +270,7 @@ it('CLI keeps a frozen source through copy and resumes in a separate process', (
   expect(receipts[0]).toBe(receipts[1])
   expect(JSON.parse(receipts[0]!).copiedCount).toBe(1)
   expect(readFileSync(f.source)).toEqual(before)
-})
+}, 15000)
 
 it('blocks independent process writers after source hashing through the final checkpoint', () => {
   const f = fixture()

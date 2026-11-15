@@ -53,7 +53,7 @@ it.each([2028, ' ', true, [], '2.5', -1].map(year => ({ year })))('uses literal 
   writeApplyTarget(db, { ...input, row: { ...input.row, rawFields: { id: 'A', year } } })
   expect(sqlite.prepare('select declaration_year from platform_apply_projection where version_id is not null').get()).toEqual({ declaration_year: year === 2028 ? 2028 : null }); sqlite.close()
 })
-it('refuses same position different payload and rolls back invalid owners and alias exhaustion', () => {
+it('refuses same position different payload and rolls back invalid owners', () => {
   const { db, sqlite, input } = fixture()
   writeApplyTarget(db, input)
   const before = sqlite.serialize()
@@ -61,6 +61,10 @@ it('refuses same position different payload and rolls back invalid owners and al
   expect(sqlite.serialize()).toEqual(before)
   expect(() => writeApplyTarget(db, { ...input, collectionId: 2 })).toThrow('owner mismatch')
   expect(() => writeApplyTarget(db, { ...input, position: { ...input.position, pageId: 999 } })).toThrow('owner mismatch')
+  expect(sqlite.serialize()).toEqual(before); sqlite.close()
+})
+it('rolls back alias exhaustion without allocating an observation', () => {
+  const { db, sqlite, input } = fixture()
   sqlite.exec("update platform_legacy_alias_sequence set high_water=9007199254740991 where namespace='relation'")
   const exhausted = sqlite.serialize()
   expect(() => writeApplyTarget(db, { ...input, position: { ...input.position, sequenceNo: 2 }, row: { ...input.row, sequenceNo: 2, rawFields: { id: 'B' } } })).toThrow('Invalid archive identity')
