@@ -1,6 +1,9 @@
 name: Engineering checks
 
 on:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 18 * * *'
   pull_request:
   push:
     branches: [main]
@@ -14,6 +17,32 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  coverage:
+    name: Select historical coverage
+    runs-on: ubuntu-latest
+    outputs:
+      upgrade: ${{ steps.select.outputs.upgrade }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - id: select
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          upgrade=true
+          if [ "$EVENT" = pull_request ]; then
+            git diff --name-only "$BASE" HEAD > changed-paths.txt
+            # Fail closed: only exclusively presentation/documentation changes may omit history.
+            if ! grep -q '^docs/adr/' changed-paths.txt && ! grep -qvE '^(app/|components/|pages/|assets/|public/|docs/|README[^/]*$)' changed-paths.txt; then
+              upgrade=false
+            fi
+          fi
+          echo "upgrade=$upgrade" >> "$GITHUB_OUTPUT"
+          echo "Historical upgrade coverage: $upgrade. Runtime and app always run; main, nightly and manual runs require all projects." >> "$GITHUB_STEP_SUMMARY"
+
   compile:
     name: Typecheck
     runs-on: ubuntu-latest
@@ -58,9 +87,59 @@ jobs:
           path: test-build.tar.gz
           retention-days: 1
 
-  tests:
+  native:
+    needs: coverage
+    name: ${{ matrix.project }} ${{ matrix.shard }}/3
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix:
+        project: ${{ needs.coverage.outputs.upgrade == 'true' && fromJSON('["runtime","upgrade"]') || fromJSON('["runtime"]') }}
+        shard: [1, 2, 3]
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Run tests within the workflow time budget
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          run_started_at=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" --jq .run_started_at)
+          started=$(date -d "$run_started_at" +%s)
+          elapsed=$(( $(date +%s) - started ))
+          remaining=$(( 300 - elapsed ))
+          echo "Workflow elapsed: ${elapsed}s; remaining test budget: ${remaining}s" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$remaining" -le 0 ]; then
+            echo '::error::Workflow exceeded its five-minute budget before tests started'
+            exit 1
+          fi
+          result=0
+          timeout --signal=TERM --kill-after=5s "${remaining}s" pnpm test --project=${{ matrix.project }} --shard=${{ matrix.shard }}/3 --maxWorkers 1 --no-file-parallelism --reporter=default --reporter=json --outputFile=test-results.json || result=$?
+          elapsed=$(( $(date +%s) - started ))
+          echo "Workflow elapsed after tests: ${elapsed}s (exit ${result})" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$result" -eq 124 ] || [ "$result" -eq 137 ]; then
+            echo '::error::Five-minute workflow budget exceeded; optimize the slow suites before retrying'
+          fi
+          exit "$result"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: ${{ matrix.project }}-results-${{ matrix.shard }}
+          path: test-results.json
+          if-no-files-found: warn
+          retention-days: 7
+
+  app:
     needs: build
-    name: Tests ${{ matrix.shard }}/6
+    name: App ${{ matrix.shard }}/6
     runs-on: ubuntu-latest
     timeout-minutes: 5
     strategy:
@@ -96,7 +175,7 @@ jobs:
             exit 1
           fi
           result=0
-          timeout --signal=TERM --kill-after=5s "${remaining}s" pnpm test --shard=${{ matrix.shard }}/6 --maxWorkers 1 --no-file-parallelism --reporter=default --reporter=json --outputFile=test-results.json || result=$?
+          timeout --signal=TERM --kill-after=5s "${remaining}s" pnpm test:app --shard=${{ matrix.shard }}/6 --maxWorkers 1 --no-file-parallelism --reporter=default --reporter=json --outputFile=test-results.json || result=$?
           elapsed=$(( $(date +%s) - started ))
           echo "Workflow elapsed after tests: ${elapsed}s (exit ${result})" >> "$GITHUB_STEP_SUMMARY"
           if [ "$result" -eq 124 ] || [ "$result" -eq 137 ]; then
@@ -106,19 +185,21 @@ jobs:
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
-          name: test-results-${{ matrix.shard }}
+          name: app-results-${{ matrix.shard }}
           path: test-results.json
           if-no-files-found: warn
           retention-days: 7
 
   check:
     if: always()
-    needs: [compile, build, tests]
+    needs: [coverage, compile, build, native, app]
     runs-on: ubuntu-latest
     steps:
       - name: Require every check
         env:
           COMPILE_RESULT: ${{ needs.compile.result }}
           BUILD_RESULT: ${{ needs.build.result }}
-          TEST_RESULT: ${{ needs.tests.result }}
-        run: test "$COMPILE_RESULT" = success && test "$BUILD_RESULT" = success && test "$TEST_RESULT" = success
+          COVERAGE_RESULT: ${{ needs.coverage.result }}
+          NATIVE_RESULT: ${{ needs.native.result }}
+          APP_RESULT: ${{ needs.app.result }}
+        run: test "$COMPILE_RESULT" = success && test "$BUILD_RESULT" = success && test "$COVERAGE_RESULT" = success && test "$NATIVE_RESULT" = success && test "$APP_RESULT" = success

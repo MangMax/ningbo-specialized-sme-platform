@@ -22,14 +22,9 @@ function effectiveCases(): EffectiveQualificationCase[] {
 const assertCases = currentQualificationHttpAssertions(f, (c,_title,row) => {
   expect.soft(row[7]?.split('\n').filter((line:string) => !line.includes('正式出处待核')).length??0,c.id).toBe(c.events.length-(c.missing?.length??0))
 })
-it('三称号各批次失败优先且未决资料仅备注不覆盖有效期间',()=>assertCases(effectiveCases().filter(c=>c.id.startsWith('A-')),'r4-batches'),60000)
-
-it('较晚正式认定或通过恢复资格且同年失败优先',()=>assertCases(effectiveCases().filter(c=>c.id.startsWith('B-')),'r4-recovery'),60000)
-
-it('旧缺口仅备注且正式期间按较晚通过认定与失败裁定',()=>assertCases(effectiveCases().filter(c=>c.id.startsWith('C-')),'r4-applicability'),60000)
-
-it('当前及历史出处归属缺口仅备注并保留正式期间及真实首次历史',()=>assertCases(effectiveCases().filter(c=>c.id.startsWith('D-')),'r4-provenance'),60000)
-
-it('完整判定矩阵在三称号逆序及事件出处ID置换后保持字面集合',()=>assertCases(effectiveCases(),'r4-reversed-ids',true),60000)
-
-it('三称号不同周期同年失败优先且较晚正式通过恢复资格',()=>assertCases(effectiveCases().filter(c=>c.id.startsWith('R3-')),'r4-prior-controls'),60000)
+// All literal A/B/C/D/R3 partitions share one workbook per title and ordering.
+// Separate DB generations still isolate normal order from permuted IDs.
+for (const permute of [false, true]) {
+  it(`三称号完整批次恢复出处矩阵 ${permute ? '逆序ID置换' : '正序'}`,
+    () => assertCases(effectiveCases(), 'r4-complete-' + permute, permute), 60000)
+}

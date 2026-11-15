@@ -38,6 +38,7 @@ const assertCases = currentQualificationHttpAssertions(f, (c,title,row) => {
   expect.soft(row[7] + row[12],c.id).not.toMatch(/event:|evidence:|revision|sha256:/)
 })
 for (const permute of [false,true]) {
-  it(`失败按已知时间优先且较晚正式认定或通过恢复资格 ${permute?'逆序ID置换':'正序'}`,()=>assertCases(effectiveCases().filter(c=>c.id.startsWith('F-')),'r5-failure-'+permute,permute),60000)
-  it(`未知认定批次仅备注且较晚正式期间与失败决定资格 ${permute?'逆序ID置换':'正序'}`,()=>assertCases(effectiveCases().filter(c=>c.id.startsWith('G-')),'r5-association-'+permute,permute),60000)
+  // F and G are independent enterprises in the same literal rowset oracle.
+  it(`失败恢复及未知批次完整矩阵 ${permute?'逆序ID置换':'正序'}`,
+    ()=>assertCases(effectiveCases(),'r5-complete-'+permute,permute),60000)
 }

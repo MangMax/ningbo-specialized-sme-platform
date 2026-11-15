@@ -1,7 +1,8 @@
+import { afterAll } from 'vitest';
 import Database from 'better-sqlite3';
 import { migrate } from 'drizzle-orm/better-sqlite3/migrator';
 import { drizzle } from 'drizzle-orm/better-sqlite3';
-import { copyFileSync, mkdtempSync } from 'node:fs';
+import { copyFileSync, mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { upgradeCollections } from '../../../../upgrade/collections';
@@ -10,9 +11,24 @@ import { upgradeProjections } from '../../../../upgrade/projections';
 import { finalizeObservations, finalizeCollectionScopes } from '../../../../upgrade/finalize-observations';
 import { finalizeFingerprintBasis } from '../../../../upgrade/fingerprint-basis';
 import { finalizeApplyStored } from '../../../../upgrade/apply-stored';
+type Seed = (db: ReturnType<typeof drizzle<typeof legacySchema>>) => void;
+const prefixTemplates = new Map<Seed | undefined, { source: string; target: string; legacySource: string; runId: string; predecessorRunId: string }>();
+const fixtureRoots: string[] = [];
+afterAll(() => {
+    if (!process.env.APPLY_STORED_EVIDENCE_DIR)
+        for (const root of fixtureRoots) rmSync(root, { recursive: true, force: true });
+});
 function fixture(seed?: (db: ReturnType<typeof drizzle<typeof legacySchema>>) => void) {
     const root = mkdtempSync(join(process.env.APPLY_STORED_EVIDENCE_DIR ?? tmpdir(), 'apply-stored-'));
     const legacy = join(root, 'legacy.sqlite'), target = join(root, 'target.sqlite'), source = join(root, '71607.sqlite');
+    fixtureRoots.push(root);
+    const template = prefixTemplates.get(seed);
+    if (template) {
+        copyFileSync(template.legacySource, legacy);
+        copyFileSync(template.target, target);
+        copyFileSync(template.source, source);
+        return { source, target, legacySource: legacy, runId: 'stored', predecessorRunId: 'basis' };
+    }
     const s = new Database(legacy);
     migrate(drizzle(s), { migrationsFolder: 'db/migrations' });
     s.exec(`INSERT INTO platform_query(id,interface,query_key,rdjb,queried_at,status,created_at) VALUES(1,'apply_list','Q','2','t','success','c');
@@ -37,6 +53,14 @@ function fixture(seed?: (db: ReturnType<typeof drizzle<typeof legacySchema>>) =>
     copyFileSync(target, p);
     finalizeFingerprintBasis({ source: p, target, runId: 'basis', predecessorRunId: 'scopes', legacySource: legacy });
     copyFileSync(target, source);
+    // These files have no open handles and precede the finalizer under test.
+    // Retain a separate immutable copy: callers may mutate every returned path.
+    const pristine = mkdtempSync(join(root, 'pristine-'));
+    const frozen = { source: join(pristine, 'source.sqlite'), target: join(pristine, 'target.sqlite'), legacySource: join(pristine, 'legacy.sqlite'), runId: 'stored', predecessorRunId: 'basis' };
+    copyFileSync(source, frozen.source);
+    copyFileSync(target, frozen.target);
+    copyFileSync(legacy, frozen.legacySource);
+    prefixTemplates.set(seed, frozen);
     return { source, target, legacySource: legacy, runId: 'stored', predecessorRunId: 'basis' };
 }
 import { targetSchema } from '../../../../upgrade/target-schema';
