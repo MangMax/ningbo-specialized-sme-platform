@@ -5,7 +5,7 @@ import { join, resolve } from 'node:path'
 
 import { afterAll, beforeAll, expect, it } from 'vitest'
 import { initializeDb, schema } from '../../../db/client'
-import { spawnOwnedChild as spawn, reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../../support/owned-process.mjs'
+import { spawnOwnedChild as spawn, reserveLoopbackPort, waitForHttp, stopOwnedChild, spawnCompiledApp } from '../../support/owned-process.mjs'
 
 const dir = mkdtempSync(join(tmpdir(), 'alias-maintenance-99-'))
 const path = join(dir, 'roster.db')
@@ -17,6 +17,7 @@ const rel = { id: native.relationIds[0]! }
 const alias = db.insert(schema.enterpriseAlias).values({ enterpriseId: ent.id, name: '宁波别名维护旧名', nameNorm: '宁波别名维护旧名', sourceKind: 'platform_business', sourceRefId: rel.id }).returning().get()
 let url: string
 let stop: () => Promise<void>
+let openapi: { paths: Record<string, any> }
 beforeAll(async () => {
   const port = await reserveLoopbackPort()
   const cwd = resolve(import.meta.dirname, '../../..')
@@ -25,7 +26,15 @@ beforeAll(async () => {
   for (const stream of [child.stdout, child.stderr]) stream.on('data', data => { logs = (logs + data).slice(-8000) })
   url = `http://127.0.0.1:${port}`
   stop = () => stopOwnedChild(child)
-  try { await waitForHttp(`${url}/api/roster/enterprises?pageSize=1`, { timeoutMs: 60000, child }) }
+  try {
+    await waitForHttp(url + '/_openapi.json', { timeoutMs: 60000, child })
+    openapi = await (await fetch(url + '/_openapi.json')).json()
+    await stop()
+    const compiled = spawnCompiledApp(port, { cwd, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, NUXT_DB_PATH: path, NUXT_FILES_DIR: join(dir, 'files'), NUXT_INCOMING_DIR: join(dir, 'incoming'), NUXT_API_TOKEN: 'test-alias-token', NUXT_MCP_TOKEN: 'test-alias-token' } })
+    stop = () => stopOwnedChild(compiled)
+    for (const stream of [compiled.stdout, compiled.stderr]) stream.on('data', data => { logs = (logs + data).slice(-8000) })
+    await waitForHttp(url + '/api/roster/enterprises?pageSize=1', { timeoutMs: 60000, child: compiled })
+  }
   catch (error) { await stop(); throw new Error(`${error}\n${logs}`) }
 }, 90000)
 afterAll(async () => { await stop?.(); db.$client.close(); rmSync(dir, { recursive: true, force: true }) })
@@ -96,7 +105,6 @@ it('exposes authenticated MCP lifecycle tools and equivalent bounded REST reads 
   const invalid = await rpc('tools/call', { name: 'maintain_enterprise_alias', arguments: { ...args, ...decision('confirm', 1, 'mcp-stale') } })
   expect(invalid.body.result.isError).toBe(true)
   expect((await mutate(row.id, decision('confirm', 1, 'rest-stale'))).status).toBe(409)
-  const openapi = await read('/_openapi.json')
   expect(openapi.paths['/api/roster/enterprises/{id}/aliases/{aliasId}'].patch).toBeTruthy()
   expect(openapi.paths['/api/roster/enterprises/{id}/aliases/{aliasId}/history'].get).toBeTruthy()
 })

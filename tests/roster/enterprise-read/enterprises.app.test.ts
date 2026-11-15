@@ -14,7 +14,7 @@ import {
   listRosterEnterprises,
 } from '../../../lib/roster/enterprise-roster'
 import type { PlatformInterface } from '../../../lib/labels'
-import { startRosterApi, type RosterApiServer } from '../imports/fixtures/import-server'
+import { executeNativeImport, startRosterApi, type RosterApiServer } from '../imports/fixtures/import-server'
 
 /**
  * RL-04 —— 跨称号去重企业总表 / 企业详情 / 差异与解释(契约 §7.1 / §7.2 / §7.3)。
@@ -381,7 +381,7 @@ beforeAll(async () => {
   const qApply = query('apply_list', REGRESSION_USCC, '', 'success', '2026-10-15T17:11:21.514Z', null, [{ sequenceNo: 1, ...{ relationKey: 'SQ332025060392166', enterpriseId: e7289, usccRaw: REGRESSION_USCC, nameRaw: '宁波上航测绘股份有限公司', year: 2025 } }, { sequenceNo: 2, ...{ relationKey: 'SQ332022062212391', enterpriseId: e7289, usccRaw: REGRESSION_USCC, nameRaw: '宁波上航测绘有限公司', year: 2022 } }])
 
   // —— 归并走**真实 HTTP API**(不是测试自己改库) ——
-  api = await startRosterApi({ db, apiToken: TOKEN })
+  api = await startRosterApi({ db, apiToken: TOKEN, executeImport: executeNativeImport })
   const client = createRosterImportClient({ baseUrl: api.baseUrl, token: TOKEN })
   const oldNameRelation = listPlatformQueries(db, { pageSize: 200 }).rows.flatMap(item => item.relations.map(row => ({ ...row, queryId: item.query.id })))
     .find((r) => r.queryId === q3 && r.nameRaw === '宁波上航测绘有限公司')!
