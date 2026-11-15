@@ -26,7 +26,7 @@ it('requires FK ON and a caller transaction before any successor DDL', () => {
   t.pragma('foreign_keys=OFF')
   const before = t.serialize()
   expect(() => installApplyStoredSchema(t)).toThrow(/foreign_keys/)
-  expect(t.serialize()).toEqual(before)
+  expect(t.serialize().equals(before), 'database bytes remain unchanged').toBe(true)
   t.pragma('foreign_keys=ON')
   expect(() => installApplyStoredSchema(t)).toThrow(/transaction/)
   t.close()
@@ -94,13 +94,13 @@ it('upgrades original status pair and duplicate-key SQL facts independently with
  expect(t.pragma('foreign_key_check')).toEqual([])
  const bytes=t.serialize();t.close()
  expect(finalizeApplyStored(f).queryReady).toBe(true)
- const again=new Database(f.target);expect(again.serialize()).toEqual(bytes);again.close()
+ const again=new Database(f.target);expect(again.serialize().equals(bytes), 'database bytes remain unchanged').toBe(true);again.close()
 })
 
 it.each(['authenticated','dropped','created','copied:platform_business_observation','copied:platform_apply_projection','copied:platform_business_projection','copied:platform_legacy_relation_alias','copied:platform_observation_archive_ref','copied:platform_observation_assignment','copied:platform_recognized_projection','copied:platform_observation_fingerprint_basis','restored','recovered','barrier','receipt'])('rolls back populated DDL and every incoming owner at %s',stage=>{
  const f=fixture();const before=new Database(f.target);const bytes=before.serialize();before.close()
  expect(()=>finalizeApplyStored({...f,beforeCommit:s=>{if(s===stage)throw new Error('injected '+stage)}})).toThrow('injected '+stage)
- const t=new Database(f.target);expect(t.serialize()).toEqual(bytes);expect(t.pragma('user_version',{simple:true})).toBe(71607);t.close()
+ const t=new Database(f.target);expect(t.serialize().equals(bytes), 'database bytes remain unchanged').toBe(true);expect(t.pragma('user_version',{simple:true})).toBe(71607);t.close()
 })
 it.each([0,1])('rejects update delete replace and upsert with recursive triggers %i',recursive=>{
  const f=fixture();finalizeApplyStored(f);const t=new Database(f.target);t.pragma('foreign_keys=ON');t.pragma(`recursive_triggers=${recursive}`)
@@ -112,7 +112,7 @@ it.each([0,1])('rejects update delete replace and upsert with recursive triggers
   "UPDATE platform_business_observation SET apply_sql_fact_title_state='uncaptured'",
   'INSERT OR REPLACE INTO platform_business_observation SELECT * FROM platform_business_observation',
  ])expect(()=>t.exec(sql),sql).toThrow()
- expect(t.serialize()).toEqual(before);t.close()
+ expect(t.serialize().equals(before), 'database bytes remain unchanged').toBe(true);t.close()
 })
 
 import { createHash } from 'node:crypto'
@@ -129,7 +129,7 @@ it('defers missing entire projection past RELEASE and rejects outer COMMIT witho
  const f=fixture();finalizeApplyStored(f);const t=new Database(f.target);t.pragma('foreign_keys=ON');const bytes=t.serialize()
  beginNewOwner(t);t.exec('RELEASE nested')
  expect(()=>t.exec('COMMIT')).toThrow(/FOREIGN KEY/);expect(t.inTransaction).toBe(true)
- t.exec('ROLLBACK');expect(t.serialize()).toEqual(bytes);t.close()
+ t.exec('ROLLBACK');expect(t.serialize().equals(bytes), 'database bytes remain unchanged').toBe(true);t.close()
 })
 it.each([['captured','uncaptured'],['uncaptured','captured'],['uncaptured','uncaptured']])('requires both captured states at outer COMMIT even when exact=%s/title=%s',(state,titleState)=>{
  const f=fixture();finalizeApplyStored(f);const t=new Database(f.target);t.pragma('foreign_keys=ON')
@@ -163,26 +163,26 @@ it.each(['missing','different'])('records command materialization profile and re
  expect(next.prepare("SELECT source_table,copied_count FROM platform_migration_checkpoint WHERE run_id=? AND phase='apply-materialization'").get(f.runId)).toEqual({source_table:'legacy-apply-insert-v1',copied_count:1})
  const beforeReplay=next.serialize();next.close()
  expect(finalizeApplyStored(f)).toEqual(receipt)
- const changed=new Database(f.target);expect(changed.serialize()).toEqual(beforeReplay)
+ const changed=new Database(f.target);expect(changed.serialize().equals(beforeReplay), 'database bytes remain unchanged').toBe(true)
  if(drift==='missing')changed.prepare("DELETE FROM platform_migration_checkpoint WHERE run_id=? AND phase='apply-materialization'").run(f.runId)
  else changed.prepare("UPDATE platform_migration_checkpoint SET source_table='other-rule' WHERE run_id=? AND phase='apply-materialization'").run(f.runId)
  const beforeRefusal=changed.serialize();changed.close()
  expect(()=>finalizeApplyStored(f)).toThrow(/checkpoint drift/)
- const refused=new Database(f.target);expect(refused.serialize()).toEqual(beforeRefusal);refused.close()
+ const refused=new Database(f.target);expect(refused.serialize().equals(beforeRefusal), 'database bytes remain unchanged').toBe(true);refused.close()
 }, 15000)
 it('recovers sealed snapshot alone and refuses source/snapshot contradiction atomically',()=>{
  const f=fixture();expect(finalizeApplyStored({...f,legacySource:undefined}).queryReady).toBe(true)
  const other=fixture();const legacy=new Database(other.legacySource);legacy.exec("UPDATE platform_relation SET status='changed' WHERE id=1");legacy.close()
  const t=new Database(other.target),before=t.serialize();t.close()
  expect(()=>finalizeApplyStored(other)).toThrow(/source\/snapshot conflict|provenance binding conflict/)
- const unchanged=new Database(other.target);expect(unchanged.serialize()).toEqual(before);unchanged.close()
+ const unchanged=new Database(other.target);expect(unchanged.serialize().equals(before), 'database bytes remain unchanged').toBe(true);unchanged.close()
 })
 it('rejects unknown incoming FK owners before DDL and retains predecessor bytes',()=>{
  const f=fixture();for(const file of [f.source,f.target]){const t=new Database(file);t.exec('CREATE TABLE unexpected_owner(id INTEGER REFERENCES platform_business_observation(id))');t.close()}
  // The unchanged predecessor schema receipt itself rejects this catalog drift.
  const t=new Database(f.target),before=t.serialize();t.close()
  expect(()=>finalizeApplyStored(f)).toThrow(/predecessor/)
- const unchanged=new Database(f.target);expect(unchanged.serialize()).toEqual(before);unchanged.close()
+ const unchanged=new Database(f.target);expect(unchanged.serialize().equals(before), 'database bytes remain unchanged').toBe(true);unchanged.close()
 })
 
 function newProjection(t:Database.Database,overrides:Record<string,string>={}) {
@@ -220,7 +220,7 @@ it('independently replays the fixed snapshot in a new process',()=>{
  const t=new Database(f.target),before=t.serialize();t.close()
  const output=execFileSync(process.execPath,['upgrade/run-apply-stored.mjs',f.source,f.target,f.target+'.replay-evidence',f.runId,f.predecessorRunId,f.legacySource],{encoding:'utf8'})
  expect(JSON.parse(output).manifest).toBe(result.manifest)
- const again=new Database(f.target);expect(again.serialize()).toEqual(before);again.close()
+ const again=new Database(f.target);expect(again.serialize().equals(before), 'database bytes remain unchanged').toBe(true);again.close()
 }, 15000)
 it('classifies invalid sealed snapshot encoding as uncaptured, independently retaining captured SQL NULL/text',()=>{
  const f=fixture()
@@ -280,7 +280,7 @@ it('matches independent old public isolated total1/options2 on same-raw indexed 
  const before=old.serialize()
  expect(listPlatformDeclarations({view:'isolated',status:'pending'},db).total).toBe(1)
  expect(readPlatformFilterOptions({source:'declarations',view:'isolated'},db).statuses).toEqual([' pending ','pending'])
- expect(old.serialize()).toEqual(before);old.close()
+ expect(old.serialize().equals(before), 'database bytes remain unchanged').toBe(true);old.close()
  expect(finalizeApplyStored(f).queryReady).toBe(true)
  const t=new Database(f.target)
  expect(t.prepare("SELECT count(*) n FROM platform_apply_projection WHERE exact_status='pending'").get()).toEqual({n:1})
@@ -357,7 +357,7 @@ it.each(['samepath','hardlink','copiedpredecessor'])('rejects %s legacy custody 
  if(kind==='copiedpredecessor')copyFileSync(f.source,path)
  const t=new Database(f.target),bytes=t.serialize();t.close()
  expect(()=>finalizeApplyStored({...f,legacySource:path})).toThrow(/Distinct|legacy|Legacy/)
- const after=new Database(f.target);expect(after.serialize()).toEqual(bytes);after.close()
+ const after=new Database(f.target);expect(after.serialize().equals(bytes), 'database bytes remain unchanged').toBe(true);after.close()
 })
 it('rejects plain cells and forged custody tokens at the shared verifier',()=>{
  const f=fixture(true),t=new Database(f.source)
@@ -384,7 +384,7 @@ it('rejects forged and expired custody and expired predecessor freezes without t
  let stale:Parameters<typeof finalizeApplyStored>[1]
  withFrozenSource(f.source,p=>{stale=p})
  expect(()=>finalizeApplyStored(f,stale)).toThrow()
- const after=new Database(f.target);expect(after.serialize()).toEqual(before);after.close()
+ const after=new Database(f.target);expect(after.serialize().equals(before), 'database bytes remain unchanged').toBe(true);after.close()
 })
 it.each(['snapshot','schema','manifest'])('rejects original-source receipt %s provenance drift before writes',field=>{
  const f=fixture(true)
@@ -394,7 +394,7 @@ it.each(['snapshot','schema','manifest'])('rejects original-source receipt %s pr
  }
  const t=new Database(f.target),before=t.serialize();t.close()
  expect(()=>finalizeApplyStored(f)).toThrow(/provenance binding/)
- const after=new Database(f.target);expect(after.serialize()).toEqual(before);after.close()
+ const after=new Database(f.target);expect(after.serialize().equals(before), 'database bytes remain unchanged').toBe(true);after.close()
 })
 it.each(['finalized-successor','marker-downgraded-predecessor'])('refuses copied %s as legacy even during replay',kind=>{
  const f=fixture(true),copy=f.source+'.impostor'
@@ -403,7 +403,7 @@ it.each(['finalized-successor','marker-downgraded-predecessor'])('refuses copied
  if(kind==='marker-downgraded-predecessor'){const d=new Database(copy);d.pragma('user_version=0');d.close()}
  const t=new Database(f.target),before=t.serialize();t.close()
  expect(()=>finalizeApplyStored({...f,legacySource:copy})).toThrow(/legacy source/)
- const after=new Database(f.target);expect(after.serialize()).toEqual(before);after.close()
+ const after=new Database(f.target);expect(after.serialize().equals(before), 'database bytes remain unchanged').toBe(true);after.close()
 })
 it('cannot certify target residual status with no trusted snapshot or independent legacy',()=>{
  const f=fixture(true)
@@ -443,7 +443,7 @@ it('migrates a WAL-backed predecessor snapshot and replays with literal exact ce
  const targetBytes=t.serialize();t.close()
  expect(finalizeApplyStored(options).queryReady).toBe(true)
  expect(readFileSync(snapshot)).toEqual(before)
- const replay=new Database(f.target);expect(replay.serialize()).toEqual(targetBytes);replay.close()
+ const replay=new Database(f.target);expect(replay.serialize().equals(targetBytes), 'database bytes remain unchanged').toBe(true);replay.close()
 }, 15000)
 it.each(['source','legacySource'] as const)('rejects missing fixed %s before target writes',field=>{
  const f=fixture(),before=readFileSync(f.target)

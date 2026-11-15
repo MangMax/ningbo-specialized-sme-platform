@@ -27,7 +27,7 @@ it('preserves literal bytes hash fields provenance and independent observations 
   const first = writeApplyTarget(db, input)
   const before = sqlite.serialize()
   expect(writeApplyTarget(db, input)).toEqual({ ...first, reused: true })
-  expect(sqlite.serialize()).toEqual(before)
+  expect(sqlite.serialize().equals(before), 'database bytes remain unchanged').toBe(true)
   const second = writeApplyTarget(db, { ...input, position: { ...input.position, sequenceNo: 2 }, row: { ...input.row, sequenceNo: 2, status: 'source' } })
   expect(second.versionId).toBe(first.versionId); expect(second.observationId).not.toBe(first.observationId)
   // Native writes apply the legacy public insertion grammar; unknown stored status is absent.
@@ -58,7 +58,7 @@ it('refuses different payload at an existing observation position atomically', (
   writeApplyTarget(db, input)
   const before = sqlite.serialize()
   expect(() => writeApplyTarget(db, { ...input, row: { ...input.row, rawFields: { id: 'changed' } } })).toThrow('observation_payload_conflict')
-  expect(sqlite.serialize()).toEqual(before)
+  expect(sqlite.serialize().equals(before), 'database bytes remain unchanged').toBe(true)
   sqlite.close()
 })
 it('rejects invalid collection and page owners without changing the database', () => {
@@ -66,14 +66,14 @@ it('rejects invalid collection and page owners without changing the database', (
   const before = sqlite.serialize()
   expect(() => writeApplyTarget(db, { ...input, collectionId: 2 })).toThrow('owner mismatch')
   expect(() => writeApplyTarget(db, { ...input, position: { ...input.position, pageId: 999 } })).toThrow('owner mismatch')
-  expect(sqlite.serialize()).toEqual(before); sqlite.close()
+  expect(sqlite.serialize().equals(before), 'database bytes remain unchanged').toBe(true); sqlite.close()
 })
 it('rolls back alias exhaustion without allocating an observation', () => {
   const { db, sqlite, input } = fixture()
   sqlite.exec("update platform_legacy_alias_sequence set high_water=9007199254740991 where namespace='relation'")
   const exhausted = sqlite.serialize()
   expect(() => writeApplyTarget(db, { ...input, position: { ...input.position, sequenceNo: 2 }, row: { ...input.row, sequenceNo: 2, rawFields: { id: 'B' } } })).toThrow('Invalid archive identity')
-  expect(sqlite.serialize()).toEqual(exhausted); sqlite.close()
+  expect(sqlite.serialize().equals(exhausted), 'database bytes remain unchanged').toBe(true); sqlite.close()
 })
 it.each(['platform_observation_assignment', 'platform_observation_archive_ref', 'platform_apply_projection', 'platform_legacy_relation_alias'])('rolls back every write after an injected %s failure even when caller catches', table => {
   const { db, sqlite, input } = fixture()
@@ -89,7 +89,7 @@ it('requires explicit command provenance rather than silently accepting a fabric
   const { db, sqlite, input } = fixture()
   const before = sqlite.serialize()
   expect(() => writeApplyTarget(db, { ...input, assignment: { enterpriseId: null, matchBasis: 'none', verificationStatus: 'pending', origin: 'migrated_current' } })).toThrow('Explicit command provenance required')
-  expect(sqlite.serialize()).toEqual(before); sqlite.close()
+  expect(sqlite.serialize().equals(before), 'database bytes remain unchanged').toBe(true); sqlite.close()
 })
 it('preserves confirmed ownership source bytes seals alias high water and catalog across new content versions', () => {
   const { db, sqlite, input } = fixture()
@@ -112,7 +112,7 @@ it('rejects canonical byte drift on a hash hit before creating another observati
   sqlite.exec("update platform_business_record_version set canonical_raw_json='{}'")
   const before = sqlite.serialize()
   expect(() => writeApplyTarget(db, { ...input, position: { ...input.position, sequenceNo: 2 }, row: { ...input.row, sequenceNo: 2 } })).toThrow('platform_content_hash_conflict')
-  expect(sqlite.serialize()).toEqual(before); sqlite.close()
+  expect(sqlite.serialize().equals(before), 'database bytes remain unchanged').toBe(true); sqlite.close()
 })
 it('allocates the last safe record ID and reuses it for the same key', () => {
   const { db, sqlite, input } = fixture()
@@ -128,7 +128,7 @@ it('atomically rejects a distinct key when record IDs are exhausted', () => {
   sqlite.exec("insert into platform_business_record(id,interface,platform_key,identity_rule_version,created_at) values(9007199254740991,'apply_list','LAST-SAFE','platform-observation-v1','fixture')")
   const before = sqlite.serialize()
   expect(() => writeApplyTarget(db, { ...input, row: { ...input.row, relationKey: 'EXHAUST', rawFields: null } })).toThrow('Invalid target identity')
-  expect(sqlite.serialize()).toEqual(before)
+  expect(sqlite.serialize().equals(before), 'database bytes remain unchanged').toBe(true)
   expect(sqlite.prepare('select cast(id as text) id,platform_key from platform_business_record').all()).toEqual([{ id: '9007199254740991', platform_key: 'LAST-SAFE' }])
   expect(sqlite.pragma('foreign_key_check')).toEqual([])
   sqlite.close()
@@ -138,7 +138,7 @@ it('rejects an existing unsafe record ID before writing an observation', () => {
   sqlite.exec("insert into platform_business_record(id,interface,platform_key,identity_rule_version,created_at) values(9007199254740993,'apply_list','A','platform-observation-v1','fixture')")
   const before = sqlite.serialize()
   expect(() => writeApplyTarget(db, input)).toThrow('Invalid target identity')
-  expect(sqlite.serialize()).toEqual(before)
+  expect(sqlite.serialize().equals(before), 'database bytes remain unchanged').toBe(true)
   sqlite.close()
 })
 it('keeps absent raw content as an unavailable observation without fabricating a version', () => {

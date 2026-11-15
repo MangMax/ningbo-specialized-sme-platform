@@ -2,7 +2,6 @@ import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
@@ -430,14 +429,10 @@ it('keeps exact reads and audit pages fixed when unrelated raw evidence and even
       for (let i = 0; i < 2000; i++) tx.insert(schema.recordEvent).values({ recordId: record.id, eventType: 'award', year: 2000 + i % 25, batchSeq: i + 1 }).run()
       for (let i = 0; i < 100; i++) submitNativePlatformQuery(tx, { interface: 'business_list', queryKey: `unrelated-${i}`, rdjb: '2', queriedAt: '2026-10-19', status: 'success', rawResponse: 'UNRELATED-RAW'.repeat(5000) })
     })
-    const samples: number[] = []
-    for (let i = 0; i < 5; i++) {
-      const start = performance.now(); const after = await f.read(); samples.push(performance.now() - start)
-      expect(after.body).toEqual(before.body)
-      expect((await f.read(`/api/roster/events/${f.event.id}/audit?pageSize=1`)).body).toEqual(auditBefore.body)
-      expect(Buffer.byteLength(JSON.stringify(after.body))).toBeLessThan(4096)
-    }
-    console.log(JSON.stringify({ ticket: 100, sourceSha: execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(), unrelatedEvents: 2000, unrelatedRawBytes: 100 * 13 * 5000, exactReadMs: samples, samples: 5, responseBytes: Buffer.byteLength(JSON.stringify(before.body)), limitation: 'boundedness fixture only; no tail/capacity claim' }))
+    const after = await f.read()
+    expect(after.body).toEqual(before.body)
+    expect((await f.read(`/api/roster/events/${f.event.id}/audit?pageSize=1`)).body).toEqual(auditBefore.body)
+    expect(Buffer.byteLength(JSON.stringify(after.body))).toBeLessThan(4096)
   } finally { await f.close() }
 })
 

@@ -109,7 +109,7 @@ it.each([0, 1, 2])('real HTTP or MCP archive roundtrip preserves versioned raw e
   const beforeReplay = db.$client.serialize()
   const replay: any = index === 0 ? await (await post('/api/roster/import/commit', request)).json() : await call('save_roster_batch', request)
   expect(replay).toEqual(saved)
-  expect(db.$client.serialize()).toEqual(beforeReplay)
+  expect(db.$client.serialize().equals(beforeReplay), 'database bytes remain unchanged').toBe(true)
   const queryId = Number(saved.items.find((item: any) => item.kind === 'platform_query').ref.replace('query:', ''))
   const history: any = index === 0 ? await (await nativeFetch(`${base}/api/platform/queries?queryId=${queryId}`)).json() : await call('list_platform_queries', { queryId })
   expect(history.rows).toHaveLength(1)
@@ -152,7 +152,7 @@ it('existing strict HTTP archive body rejects prototype-named keys atomically wh
   const before = db.$client.serialize()
   const rejected = await post('/api/roster/import/commit', { idempotencyKey: 'http-prototype-boundary', sourceKind: 'alias_evidence', sourceIdentity: 'issue298-synthetic', payload: { platformQueries: [recognizedResultToImport(result)] } })
   expect(rejected.status).toBe(400)
-  expect(db.$client.serialize()).toEqual(before)
+  expect(db.$client.serialize().equals(before), 'database bytes remain unchanged').toBe(true)
 })
 
 it.each(['HTTP', 'MCP'])('real %s query rejects a sensitive source without leaking raw data or writing business state', async transport => {
@@ -161,7 +161,7 @@ it.each(['HTTP', 'MCP'])('real %s query rejects a sensitive source without leaki
   const result: any = transport === 'HTTP' ? await (await post('/api/platform/query', input)).json() : await call('query_platform', input)
   expect(result).toMatchObject({ status: 'failed', error: { code: 'sensitive_response' }, rawData: { rows: [], pages: [] } })
   expect(JSON.stringify(result)).not.toContain('never-return-this-value')
-  expect(db.$client.serialize()).toEqual(before)
+  expect(db.$client.serialize().equals(before), 'database bytes remain unchanged').toBe(true)
 })
 
 it('real MCP batch retry appends typed source segments and retains the accepted checkpoint and original times', async () => {

@@ -29,7 +29,7 @@ export async function seedDisconnectedExportFixture(dbPath: string) {
     const { createJiti } = require(${JSON.stringify(jiti)});
     (async () => {
       const fixture = await createJiti(${JSON.stringify(entry)}, { fsCache: false }).import(${JSON.stringify(entry)});
-      fixture.populateExport188DisconnectFixture(${JSON.stringify(dbPath)});
+      fixture.populateDisconnectedExportFixture(${JSON.stringify(dbPath)});
       process.send({ type: 'committed-and-closed' }, () => process.disconnect());
     })().catch(error => {
       process.exitCode = 1;

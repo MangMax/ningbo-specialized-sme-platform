@@ -75,7 +75,6 @@ async function start(extra: Record<string, string> = {}) {
 beforeAll(async () => {
   mkdirSync(files)
   initializeDb({ dbPath: join(dir, 'business.db'), create: true }).$client.close()
-  if (!process.env.TICKET_186_SKIP_BUILD) execFileSync('pnpm', ['build'], { timeout: 180_000, stdio: 'pipe' })
   api = await startMiniOcrApi(fixture)
   await start()
 }, 240_000)

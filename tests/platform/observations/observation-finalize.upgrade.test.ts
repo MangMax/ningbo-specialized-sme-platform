@@ -57,7 +57,7 @@ import { finalizationCatalog,observationIncomingOwners } from '../../../upgrade/
 it.each(['dropped','created','copied:platform_observation_archive_ref','restored','receipt'])('atomically rolls back populated DDL and receipts at %s then restarts',stage=>{
   const f=fixture(),t=new Database(f.target),before=t.serialize();t.close()
   expect(()=>finalizeObservations({...f,beforeCommit:s=>{if(s===stage)throw new Error('injected DDL failure')}})).toThrow('injected DDL failure')
-  const failed=new Database(f.target);expect(failed.serialize()).toEqual(before);expect(failed.prepare("select name from sqlite_temp_schema").all()).toEqual([]);failed.close()
+  const failed=new Database(f.target);expect(failed.serialize().equals(before), 'database bytes remain unchanged').toBe(true);expect(failed.prepare("select name from sqlite_temp_schema").all()).toEqual([]);failed.close()
   expect(finalizeObservations(f).state).toBe('complete')
 })
 it.each(['source','target','checkpoint','missing-phase','wrong-phase','wrong-source'])('refuses %s drift before any finalization',mode=>{

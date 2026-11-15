@@ -61,21 +61,21 @@ it('verifies captured input against facts and revision1 but leaves revision2 out
 import { bootstrapFingerprint } from '../../../upgrade/frozen/fingerprint-bootstrap'
 it('ordinary bootstrap captures original legacy null envelope even with request while reference leaves not_indexed intact',()=>{
  const {t}=fresh();const owner={observationId:11,collectionId:1,relationAlias:11}
- const before=t.serialize();expect(bootstrapFingerprint(t,owner,'reference')).toBeNull();expect(t.serialize()).toEqual(before)
+ const before=t.serialize();expect(bootstrapFingerprint(t,owner,'reference')).toBeNull();expect(t.serialize().equals(before), 'database bytes remain unchanged').toBe(true)
  expect(bootstrapFingerprint(t,owner,'ordinary')?.scheme).toBe('legacy-bootstrap-v1')
  expect(verifyFingerprint(t,owner).scheme).toBe('legacy-bootstrap-v1');t.close()
 })
 
 it.each([['apply_list',writeApplyTarget],['business_list',writeProcessTarget],['recognized_list',writeRecognizedTarget]] as const)('FK OFF refuses %s before writes including outer transactions',(source,writer)=>{
  const {t,db}=fresh(source);t.pragma('foreign_keys=OFF');const before=t.serialize()
- for(const outer of [false,true]) {if(outer)t.exec('BEGIN');expect(()=>writer(db,{...input,collectionId:sourceId(source)})).toThrow(/foreign_keys/);if(outer)t.exec('ROLLBACK');expect(t.serialize()).toEqual(before)}t.close()
+ for(const outer of [false,true]) {if(outer)t.exec('BEGIN');expect(()=>writer(db,{...input,collectionId:sourceId(source)})).toThrow(/foreign_keys/);if(outer)t.exec('ROLLBACK');expect(t.serialize().equals(before), 'database bytes remain unchanged').toBe(true)}t.close()
 })
 it.each(['platform_observation_fingerprint_basis','platform_observation_assignment','platform_observation_archive_ref','platform_apply_projection','platform_legacy_relation_alias'])('caller-caught %s failure restores basis archive IDs and alias highwater',table=>{
  const {t,db}=fresh();t.exec(`create trigger inject before insert on ${table} begin select raise(abort,'injected');end`);const before=t.serialize()
- t.exec('BEGIN');expect(()=>writeApplyTarget(db,input)).toThrow('injected');expect(t.serialize()).toEqual(before);t.exec('ROLLBACK');expect(t.serialize()).toEqual(before);t.close()
+ t.exec('BEGIN');expect(()=>writeApplyTarget(db,input)).toThrow('injected');expect(t.serialize().equals(before), 'database bytes remain unchanged').toBe(true);t.exec('ROLLBACK');expect(t.serialize().equals(before), 'database bytes remain unchanged').toBe(true);t.close()
 })
 it('safe observation allocation refuses exhausted sqlite_sequence before any persisted change',()=>{
- const {t,db}=fresh();t.exec("insert into sqlite_sequence(name,seq) values('platform_business_observation',9007199254740991)");const before=t.serialize();expect(()=>writeApplyTarget(db,input)).toThrow(/exhausted/);expect(t.serialize()).toEqual(before);t.close()
+ const {t,db}=fresh();t.exec("insert into sqlite_sequence(name,seq) values('platform_business_observation',9007199254740991)");const before=t.serialize();expect(()=>writeApplyTarget(db,input)).toThrow(/exhausted/);expect(t.serialize().equals(before), 'database bytes remain unchanged').toBe(true);t.close()
 })
 it.each(['page_id','input_fingerprint','projection_rule_version','key_source','record_id','version_id'])('rejects %s drift with original relation error envelope',field=>{
  const {t,db}=fresh();const r=writeApplyTarget(db,input)
@@ -115,12 +115,12 @@ it.each(['queryList','businessList','queryBusList'])('full %s command preserves 
 import { emptyFingerprintTarget } from '../../../upgrade/frozen/fingerprint-verifier'
 it('outer COMMIT rejects orphan captured basis after successful nested RELEASE; explicit rollback restores bytes',()=>{
  const {t,db}=fresh();const before=t.serialize();t.exec('BEGIN;SAVEPOINT nested')
- captureFingerprintBasis(db,999,'target-command-v1',Buffer.from('{}'));t.exec('RELEASE nested');expect(()=>t.exec('COMMIT')).toThrow(/FOREIGN KEY/);t.exec('ROLLBACK');expect(t.serialize()).toEqual(before);t.close()
+ captureFingerprintBasis(db,999,'target-command-v1',Buffer.from('{}'));t.exec('RELEASE nested');expect(()=>t.exec('COMMIT')).toThrow(/FOREIGN KEY/);t.exec('ROLLBACK');expect(t.serialize().equals(before), 'database bytes remain unchanged').toBe(true);t.close()
 })
 import { captureFingerprintBasis } from '../../../upgrade/frozen/fingerprint-capture'
 it('FK OFF rejects command bootstrap and basis helper before any write',()=>{
  const {t,db}=fresh();t.pragma('foreign_keys=OFF');const before=t.serialize()
- for(const outer of [false,true]){if(outer)t.exec('BEGIN');expect(()=>writeNewCollectionTarget(db,{queryText:'{}',evidenceText:null,createdAt:'c',assignments:[]})).toThrow(/foreign_keys/);expect(()=>bootstrapFingerprint(t,{observationId:11,collectionId:1,relationAlias:11},'ordinary')).toThrow(/foreign_keys/);expect(()=>captureFingerprintBasis(db,999,'target-command-v1',Buffer.from('{}'))).toThrow(/foreign_keys/);if(outer)t.exec('ROLLBACK');expect(t.serialize()).toEqual(before)}t.close()
+ for(const outer of [false,true]){if(outer)t.exec('BEGIN');expect(()=>writeNewCollectionTarget(db,{queryText:'{}',evidenceText:null,createdAt:'c',assignments:[]})).toThrow(/foreign_keys/);expect(()=>bootstrapFingerprint(t,{observationId:11,collectionId:1,relationAlias:11},'ordinary')).toThrow(/foreign_keys/);expect(()=>captureFingerprintBasis(db,999,'target-command-v1',Buffer.from('{}'))).toThrow(/foreign_keys/);if(outer)t.exec('ROLLBACK');expect(t.serialize().equals(before), 'database bytes remain unchanged').toBe(true)}t.close()
 })
 
 it.each(['apply_list','business_list','recognized_list'])('ordinary %s bootstrap preserves SQL NULL text-null malformed primitive array and object input',source=>{
@@ -152,19 +152,19 @@ it('rejects undefined and non-plain prototype input without leaving any facts',(
  const {t,db}=fresh();const before=t.serialize()
  expect(()=>writeApplyTarget(db,{...input,assignment:{...assignment,recordedAt:undefined}})).toThrow('platform_raw_not_json')
  const row=Object.assign(Object.create({extra:'inherited'}),input.row)
- expect(()=>writeApplyTarget(db,{...input,row})).toThrow('platform_raw_not_json');expect(t.serialize()).toEqual(before);t.close()
+ expect(()=>writeApplyTarget(db,{...input,row})).toThrow('platform_raw_not_json');expect(t.serialize().equals(before), 'database bytes remain unchanged').toBe(true);t.close()
 })
 import { insertArchiveValue, bindArchive, sealArchiveOwner, allocateLegacyAlias, reserveLegacyIds, bindLegacyAlias, writeOwnerArchive } from '../../../upgrade/frozen/target-archive'
 it('all successor archive and alias write helpers reject FK OFF before mutations in outer transactions',()=>{
  const {t,db}=fresh();t.pragma('foreign_keys=OFF');const before=t.serialize()
  const calls=[()=>insertArchiveValue(db,{storageClass:'blob',bytes:Buffer.from('{}'),createdAt:null}),()=>bindArchive(db,{kind:'observation',ownerId:11,field:'rawFields',archiveId:1}),()=>sealArchiveOwner(db,{kind:'observation',ownerId:11}),()=>allocateLegacyAlias(db,{kind:'relation',observationId:11}),()=>reserveLegacyIds(db,{query:9,relation:999}),()=>bindLegacyAlias(db,{kind:'relation',oldId:999,observationId:11}),()=>writeOwnerArchive(db,{kind:'observation',ownerId:11,field:'rawFields'},{storageClass:'null',bytes:null,createdAt:null})]
- for(const outer of [false,true]){if(outer)t.exec('BEGIN');for(const call of calls)expect(call).toThrow(/foreign_keys/);if(outer)t.exec('ROLLBACK');expect(t.serialize()).toEqual(before)}t.close()
+ for(const outer of [false,true]){if(outer)t.exec('BEGIN');for(const call of calls)expect(call).toThrow(/foreign_keys/);if(outer)t.exec('ROLLBACK');expect(t.serialize().equals(before), 'database bytes remain unchanged').toBe(true)}t.close()
 })
 it.each(['platform_observation_fingerprint_basis','platform_observation_assignment','platform_legacy_relation_alias'])('full command caller-caught %s failure rolls collection pages archives and sequences back',table=>{
  const {t}=fresh();const empty=emptyFingerprintTarget(t);t.close();const db=drizzle(empty,{schema:targetSchema})
  const original=JSON.parse(readFileSync(new URL('../../fixtures/fingerprint-capture/queryList.json',import.meta.url),'utf8')).a as NewCollectionTargetCommand
  empty.exec(`create trigger inject before insert on ${table} begin select raise(abort,'injected command');end`);const before=empty.serialize();empty.exec('BEGIN')
- expect(()=>writeNewCollectionTarget(db,original)).toThrow('injected command');expect(empty.serialize()).toEqual(before);empty.exec('ROLLBACK');expect(empty.serialize()).toEqual(before);empty.close()
+ expect(()=>writeNewCollectionTarget(db,original)).toThrow('injected command');expect(empty.serialize().equals(before), 'database bytes remain unchanged').toBe(true);empty.exec('ROLLBACK');expect(empty.serialize().equals(before), 'database bytes remain unchanged').toBe(true);empty.close()
 })
 it('exports physical schema catalog with eight archive owners and valid deferred pairs',()=>{
  const {t,db}=fresh();writeApplyTarget(db,input)
@@ -176,7 +176,7 @@ import { writeFileSync } from 'node:fs'
 import { fingerprintArchiveInventory } from '../../../upgrade/fingerprint-basis'
 it.each(['platform_observation_fingerprint_basis','platform_business_observation'])('ordinary bootstrap caller-caught %s failure restores original not_indexed facts and archive highwater',table=>{
  const {t}=fresh();t.exec(`create trigger inject before ${table==='platform_business_observation'?'update':'insert'} on ${table} begin select raise(abort,'bootstrap injected');end`)
- const before=t.serialize();t.exec('BEGIN');expect(()=>bootstrapFingerprint(t,{observationId:105,collectionId:1,relationAlias:105},'ordinary')).toThrow('bootstrap injected');expect(t.serialize()).toEqual(before);t.exec('ROLLBACK');expect(t.serialize()).toEqual(before);t.close()
+ const before=t.serialize();t.exec('BEGIN');expect(()=>bootstrapFingerprint(t,{observationId:105,collectionId:1,relationAlias:105},'ordinary')).toThrow('bootstrap injected');expect(t.serialize().equals(before), 'database bytes remain unchanged').toBe(true);t.exec('ROLLBACK');expect(t.serialize().equals(before), 'database bytes remain unchanged').toBe(true);t.close()
 })
 it('bootstrap classifies independently of collection request presence',()=>{
  const {t,db}=fresh();
@@ -202,5 +202,5 @@ it('bootstrap classifies independently of collection request presence',()=>{
 })
 it('successor archive helper refuses unsafe ID and rolls back insertion/highwater even when caller catches',()=>{
  const {t,db}=fresh();t.exec("update sqlite_sequence set seq=9007199254740991 where name='platform_archive_value'");const before=t.serialize()
- t.exec('BEGIN');expect(()=>insertArchiveValue(db,{storageClass:'blob',bytes:Buffer.from('{}'),createdAt:null})).toThrow('Invalid archive identity');expect(t.serialize()).toEqual(before);t.exec('ROLLBACK');expect(t.serialize()).toEqual(before);t.close()
+ t.exec('BEGIN');expect(()=>insertArchiveValue(db,{storageClass:'blob',bytes:Buffer.from('{}'),createdAt:null})).toThrow('Invalid archive identity');expect(t.serialize().equals(before), 'database bytes remain unchanged').toBe(true);t.exec('ROLLBACK');expect(t.serialize().equals(before), 'database bytes remain unchanged').toBe(true);t.close()
 })

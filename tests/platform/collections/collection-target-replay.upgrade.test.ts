@@ -78,7 +78,7 @@ it.each(['queryList','businessList','queryBusList'] as const)('replays %s withou
   const again = writeCollectionTarget(db, input)
   expect(again).toMatchObject({collectionId:first.collectionId, queryAlias:first.queryAlias, reused:true})
   expect(again.observations.map(x => [x.observationId,x.relationAlias,x.versionId])).toEqual(first.observations.map(x => [x.observationId,x.relationAlias,x.versionId]))
-  expect(bytes(sqlite)).toEqual(before)
+  expect(bytes(sqlite).equals(before), 'database bytes remain unchanged').toBe(true)
   expect(statements.filter(text => /\b(platform_query|platform_relation)\b/i.test(text))).toEqual([])
   sqlite.close()
 })
@@ -94,7 +94,7 @@ it.each(['queryList','businessList','queryBusList'] as const)('keeps %s subset r
     const result = writeCollectionTarget(db,replay(input,q => {delete q.collectionEvidence;delete q.status;delete q.titleCode;delete q.rawResponse;q.reuseExisting=true;q.relations=relations}))
     expect(result.queryAlias).toBe(first.queryAlias)
     expect(result.observations).toHaveLength(relations?.length ?? 0)
-    expect(bytes(sqlite)).toEqual(before)
+    expect(bytes(sqlite).equals(before), 'database bytes remain unchanged').toBe(true)
   }
   sqlite.close()
 })
@@ -117,7 +117,7 @@ it.each([
   try {writeCollectionTarget(db,next);expect.fail('accepted conflict')} catch(error) {
     expect(error).toMatchObject({result:{ok:false,ref:kind==='raw'||kind==='key'||kind==='name'?`relation:${first.observations[0]!.relationAlias}`:`query:${first.queryAlias}`,error:{code,field}}})
   }
-  expect(bytes(sqlite)).toEqual(before);sqlite.close()
+  expect(bytes(sqlite).equals(before), 'database bytes remain unchanged').toBe(true);sqlite.close()
 })
 it('rebuilds migrated not_indexed only for ordinary full raw replay without replacing its assignment or original aliases',() => {
   const input=command(evidence('businessList')), {sqlite,db}=fixture(old=>seedOriginal(old,input))
@@ -126,7 +126,7 @@ it('rebuilds migrated not_indexed only for ordinary full raw replay without repl
   const assignment=sqlite.prepare('select * from platform_observation_assignment').all()
   const before=bytes(sqlite)
   writeCollectionTarget(db,replay(input,q=>{delete q.titleCode;q.reuseExisting=true}))
-  expect(bytes(sqlite)).toEqual(before)
+  expect(bytes(sqlite).equals(before), 'database bytes remain unchanged').toBe(true)
   writeCollectionTarget(db,ordinary)
   expect(sqlite.prepare('select identity_state,content_state from platform_business_observation').all()).toEqual([{identity_state:'resolved',content_state:'verified'}])
   expect(sqlite.prepare('select * from platform_observation_assignment').all()).toEqual(assignment)
@@ -140,10 +140,10 @@ it.each(['apply_list','business_list'] as const)('retains %s omitted NULL empty 
   const before=bytes(sqlite)
   for(const rawResponse of [undefined,null])for(const status of [undefined,null,'',' ']){
     const next=replay(input,q=>{q.rawResponse=rawResponse;delete q.status;delete q.failureReason;q.relations=[{sequenceNo:1,status}]})
-    writeCollectionTarget(db,next);expect(bytes(sqlite)).toEqual(before)
+    writeCollectionTarget(db,next);expect(bytes(sqlite).equals(before), 'database bytes remain unchanged').toBe(true)
   }
   for(const rawResponse of ['',' ','null'])expect(()=>writeCollectionTarget(db,replay(input,q=>{q.rawResponse=rawResponse}))).toThrow('query_payload_conflict')
-  expect(bytes(sqlite)).toEqual(before);sqlite.close()
+  expect(bytes(sqlite).equals(before), 'database bytes remain unchanged').toBe(true);sqlite.close()
 },15000)
 it('requires full row set for ordinary replay while explicit reference may select a typed subset',()=>{
   const {sqlite,db}=fixture(), e=evidence('businessList')
@@ -157,7 +157,7 @@ it('requires full row set for ordinary replay while explicit reference may selec
   expect(()=>writeCollectionTarget(db,replay(input,q=>{delete q.collectionEvidence;q.rawResponse=null;q.relations=[{sequenceNo:2}];q.collectionEvidence=null}))).toThrow('query_payload_conflict')
   const result=writeCollectionTarget(db,replay(input,q=>{delete q.collectionEvidence;delete q.rawResponse;q.reuseExisting=true;q.relations=[{sequenceNo:2}]}))
   expect(result.observations[0]!.relationAlias).toBe(first.observations[1]!.relationAlias)
-  expect(bytes(sqlite)).toEqual(before);sqlite.close()
+  expect(bytes(sqlite).equals(before), 'database bytes remain unchanged').toBe(true);sqlite.close()
 })
 it.each(['queryList','businessList','queryBusList'] as const)('atomically rechecks %s staged duplicates and rolls back an earlier new collection on a later conflict',source=>{
   const {sqlite,db}=fixture(), input=command(evidence(source)), before=logicalCells(sqlite)
@@ -172,7 +172,7 @@ it.each(['queryList','businessList','queryBusList'] as const)('atomically rechec
 it('rejects missing original explicit reuse without creating aliases or collections',()=>{
   const {sqlite,db}=fixture(),input=command(evidence('queryBusList')),before=bytes(sqlite)
   expect(()=>writeCollectionTarget(db,replay(input,q=>{q.reuseExisting=true;delete q.collectionEvidence;q.relations=[]}))).toThrow('query_reuse_missing')
-  expect(bytes(sqlite)).toEqual(before);sqlite.close()
+  expect(bytes(sqlite).equals(before), 'database bytes remain unchanged').toBe(true);sqlite.close()
 })
 it('rejects sealed archive drift instead of signing off a partial reference',()=>{
   const {sqlite,db}=fixture(),input=command(evidence('businessList'))
@@ -182,12 +182,12 @@ it('rejects sealed archive drift instead of signing off a partial reference',()=
   sqlite.exec("update platform_archive_value set bytes=cast(('x'||substr(cast(bytes as text),2)) as blob) where id=(select archive_id from platform_observation_archive_ref where field='rawFields' limit 1)")
   const before=bytes(sqlite)
   expect(()=>writeCollectionTarget(db,replay(input,q=>{delete q.collectionEvidence;q.reuseExisting=true;q.relations=[{sequenceNo:1}]}))).toThrow('Original archive drift')
-  expect(bytes(sqlite)).toEqual(before);sqlite.close()
+  expect(bytes(sqlite).equals(before), 'database bytes remain unchanged').toBe(true);sqlite.close()
 })
 it('retains existing last_collected_at and creates new-time collections even for identical content',()=>{
   const {sqlite,db}=fixture(),input=command(evidence('queryBusList')),first=writeCollectionTarget(db,input)
   sqlite.exec("update platform_collection set last_collected_at='2026-11-11T00:30:00Z'")
-  const before=bytes(sqlite);writeCollectionTarget(db,input);expect(bytes(sqlite)).toEqual(before)
+  const before=bytes(sqlite);writeCollectionTarget(db,input);expect(bytes(sqlite).equals(before), 'database bytes remain unchanged').toBe(true)
   const next=writeCollectionTarget(db,replay(input,q=>{q.queriedAt='2026-11-12T00:00:00Z';q.collectionEvidence!.queriedAt=q.queriedAt;q.collectionEvidence!.completedAt='2026-11-12T00:01:00Z'}))
   expect(next.collectionId).not.toBe(first.collectionId);expect(next.observations[0]!.observationId).not.toBe(first.observations[0]!.observationId);expect(next.observations[0]!.versionId).toBe(first.observations[0]!.versionId)
   expect(sqlite.prepare('select queried_at,last_collected_at from platform_collection order by id').all()).toEqual([{queried_at:'2026-11-11T00:00:00Z',last_collected_at:'2026-11-11T00:30:00Z'},{queried_at:'2026-11-12T00:00:00Z',last_collected_at:null}]);sqlite.close()
@@ -209,12 +209,12 @@ it.each(['queryList','businessList','queryBusList'] as const)('replays migrated 
   expect(commitRosterImport(publicDb,req,[],{deferCandidateTasks:true}).status).toBe('committed')
   const before=bytes(sqlite), result=writeCollectionTarget(db,reference)
   expect(result.queryAlias).toBe(91);expect(result.observations).toEqual([{observationId:101,recordId:null,versionId:null,relationAlias:101,reused:true}])
-  expect(bytes(sqlite)).toEqual(before)
+  expect(bytes(sqlite).equals(before), 'database bytes remain unchanged').toBe(true)
   const bad=replay(reference,q=>{q.relations=[{sequenceNo:1,rawFields:null}]})
   const rejected=preflightRosterImport(publicDb,{...req,idempotencyKey:'w4b-bad',payload:{platformQueries:[JSON.parse(bad.queryText)]}})
   expect(rejected.preflight.conflicts[0]).toMatchObject({ref:'relation:101',error:{code:'observation_payload_conflict',field:'relations'}})
   expect(()=>writeCollectionTarget(db,bad)).toThrow('observation_payload_conflict')
-  expect(bytes(sqlite)).toEqual(before)
+  expect(bytes(sqlite).equals(before), 'database bytes remain unchanged').toBe(true)
   const assignment=sqlite.prepare('select * from platform_observation_assignment').all()
   const ordinary=replay(input,q=>{delete q.titleCode})
   const publicFull=commitRosterImport(publicDb,{...req,idempotencyKey:'w4b-full',payload:{platformQueries:[JSON.parse(ordinary.queryText)]}},[],{deferCandidateTasks:true})
@@ -239,19 +239,19 @@ it('requires exact ordinary fullset and preserves empty legacy metadata assertio
   writeCollectionTarget(db,input);const before=bytes(sqlite)
   expect(()=>writeCollectionTarget(db,replay(input,q=>{q.relations=[{sequenceNo:1}]}))).toThrow('query_relation_set_conflict')
   for(const value of [null,'',' '])writeCollectionTarget(db,replay(input,q=>{q.failureReason=value}))
-  expect(bytes(sqlite)).toEqual(before);sqlite.close()
+  expect(bytes(sqlite).equals(before), 'database bytes remain unchanged').toBe(true);sqlite.close()
 })
 it.each(['queryList','businessList','queryBusList'] as const)('rolls back %s projection completion after terminal failure even when outer transaction catches',source=>{
   const input=command(evidence(source)),{sqlite,db}=fixture(old=>seedOriginal(old,input))
   sqlite.exec("create trigger inject before update on platform_business_observation begin select raise(abort,'repair-terminal'); end")
   const before=bytes(sqlite)
   db.transaction(tx=>{expect(()=>writeCollectionTarget(tx,replay(input,q=>{delete q.titleCode}))).toThrow('projection_source_drift')})
-  expect(bytes(sqlite)).toEqual(before);sqlite.close()
+  expect(bytes(sqlite).equals(before), 'database bytes remain unchanged').toBe(true);sqlite.close()
 })
 it.each(['queryList','businessList','queryBusList'] as const)('rejects %s changed evidence with original source-specific metadata code',source=>{
   const {sqlite,db}=fixture(),input=command(evidence(source));writeCollectionTarget(db,input);const before=bytes(sqlite)
   expect(()=>writeCollectionTarget(db,replay(input,q=>{q.collectionEvidence!.completedAt='2026-11-11T00:03:00Z'}))).toThrow(source==='queryBusList'?'collection_evidence_conflict':'query_payload_conflict')
-  expect(bytes(sqlite)).toEqual(before);sqlite.close()
+  expect(bytes(sqlite).equals(before), 'database bytes remain unchanged').toBe(true);sqlite.close()
 })
 it('uses optionalString coordinates and returns namespace aliases independently of target IDs',()=>{
   const input=command(evidence('businessList')), {sqlite,db}=fixture()
@@ -260,23 +260,23 @@ it('uses optionalString coordinates and returns namespace aliases independently 
   const next=writeCollectionTarget(db,replay(input,q=>{delete q.collectionEvidence;delete q.status;delete q.titleCode;delete q.rawResponse;q.reuseExisting=true;q.queryKey=` ${q.queryKey} `;q.rdjb=` ${q.rdjb} `;q.queriedAt=` ${q.queriedAt} `;q.relations=[{sequenceNo:1}]}))
   expect(next.queryAlias).toBe(501);expect(next.collectionId).toBe(1);expect(next.observations[0]!.relationAlias).toBe(801);expect(next.observations[0]!.observationId).toBe(1)
   expect(resolveLegacyReference(db,{version:1,kind:'relation',queryId:501,relationId:801})).toEqual({version:2,kind:'observation',collectionId:first.collectionId,observationId:first.observations[0]!.observationId})
-  expect(bytes(sqlite)).toEqual(before);sqlite.close()
+  expect(bytes(sqlite).equals(before), 'database bytes remain unchanged').toBe(true);sqlite.close()
 })
 it.each([0,71605])('refuses replay phase %s without consulting or writing a legacy entity',phase=>{
   const {sqlite,db,statements}=fixture(),input=command(evidence('queryList'))
   writeCollectionTarget(db,input);sqlite.pragma(`user_version=${phase}`);const before=bytes(sqlite)
   expect(()=>writeCollectionTarget(db,input)).toThrow('Final native platform schema required')
-  expect(bytes(sqlite)).toEqual(before);expect(statements.filter(text=>/\b(platform_query|platform_relation)\b/i.test(text))).toEqual([]);sqlite.close()
+  expect(bytes(sqlite).equals(before), 'database bytes remain unchanged').toBe(true);expect(statements.filter(text=>/\b(platform_query|platform_relation)\b/i.test(text))).toEqual([]);sqlite.close()
 })
 it.each(['apply_list','business_list'] as const)('compares %s explicit normalized source fields while preserving original typed bytes',interfaceName=>{
   const {sqlite,db}=fixture()
   const input:NewCollectionTargetCommand={queryText:JSON.stringify({interface:interfaceName,queryKey:'legacy',queriedAt:'time',rawResponse:'raw',relations:[{sequenceNo:1,relationKey:'A',status:null,year:null,rawFields:{id:'A',cszt:' 终审通过 ',year:' 2028 ',extra:[false,null,0,' ']}}]}),evidenceText:null,createdAt:'c',assignments:command(evidence('queryList')).assignments.map(a=>({...a,nameRaw:null}))}
   writeCollectionTarget(db,input);const before=bytes(sqlite)
   writeCollectionTarget(db,replay(input,q=>{q.relations=[{sequenceNo:1,status:' 终审通过 ',year:2028}]}))
-  expect(bytes(sqlite)).toEqual(before)
+  expect(bytes(sqlite).equals(before), 'database bytes remain unchanged').toBe(true)
   expect(()=>writeCollectionTarget(db,replay(input,q=>{q.relations=[{sequenceNo:1,status:'退回'}]}))).toThrow('relation_payload_conflict')
   expect(()=>writeCollectionTarget(db,replay(input,q=>{q.relations=[{sequenceNo:1,status:'退回',rawFields:{id:'A',cszt:'终审通过'}}]}))).toThrow('platform_field_conflict')
-  expect(bytes(sqlite)).toEqual(before);sqlite.close()
+  expect(bytes(sqlite).equals(before), 'database bytes remain unchanged').toBe(true);sqlite.close()
 })
 it.each(['apply_list','business_list','recognized_list'] as const)('keeps %s source-specific migrated NULL-response sentinel semantics',interfaceName=>{
   const input:NewCollectionTargetCommand={queryText:JSON.stringify({interface:interfaceName,queryKey:'legacy',rdjb:'',queriedAt:'time',status:'success',rawResponse:'original raw',relations:[{sequenceNo:1,relationKey:'A',nameRaw:'Example',rawFields:{id:'A'}}]}),evidenceText:null,createdAt:'c',assignments:[]}
@@ -284,7 +284,7 @@ it.each(['apply_list','business_list','recognized_list'] as const)('keeps %s sou
   const reference=replay(input,q=>{q.reuseExisting=true;q.rawResponse=null;q.relations=[{sequenceNo:1}]})
   if(interfaceName==='recognized_list')expect(()=>writeCollectionTarget(db,reference)).toThrow('query_payload_conflict')
   else expect(writeCollectionTarget(db,reference).queryAlias).toBe(91)
-  expect(bytes(sqlite)).toEqual(before);sqlite.close()
+  expect(bytes(sqlite).equals(before), 'database bytes remain unchanged').toBe(true);sqlite.close()
 })
 it.each(['queryList','businessList','queryBusList'] as const)('rejects %s existing source projection drift with original relation alias and exact error',source=>{
   const {sqlite,db}=fixture(),input=command(evidence(source)),first=writeCollectionTarget(db,input)
@@ -295,7 +295,7 @@ it.each(['queryList','businessList','queryBusList'] as const)('rejects %s existi
   for(const trigger of triggers)sqlite.exec(trigger.sql)
   const before=bytes(sqlite)
   try{writeCollectionTarget(db,input);expect.fail('accepted projection drift')}catch(error){expect(error).toMatchObject({result:{ok:false,ref:`relation:${first.observations[0]!.relationAlias}`,error:{code:source==='queryList'?'apply_projection_conflict':source==='businessList'?'business_projection_conflict':'recognized_projection_conflict',field:'relations'}}})}
-  expect(bytes(sqlite)).toEqual(before);sqlite.close()
+  expect(bytes(sqlite).equals(before), 'database bytes remain unchanged').toBe(true);sqlite.close()
 })
 it('retains public legacy insertion defaults for whitespace metadata and rdjb before replay lookup',()=>{
   const {sqlite,db,source}=fixture()
@@ -308,7 +308,7 @@ it('retains public legacy insertion defaults for whitespace metadata and rdjb be
   old.close()
   writeCollectionTarget(db,input)
   expect(sqlite.prepare('select rdjb,failure_reason from platform_collection').get()).toEqual({rdjb:'2',failure_reason:null})
-  const before=bytes(sqlite);writeCollectionTarget(db,input);expect(bytes(sqlite)).toEqual(before);sqlite.close()
+  const before=bytes(sqlite);writeCollectionTarget(db,input);expect(bytes(sqlite).equals(before), 'database bytes remain unchanged').toBe(true);sqlite.close()
 })
 it.each([null,'',' '] as const)('preserves typed original key %s and independently matches public original-payload assertion',key=>{
   const input:NewCollectionTargetCommand={queryText:JSON.stringify({interface:'business_list',queryKey:'legacy',rdjb:'',queriedAt:'time',status:'success',rawResponse:'original',relations:[{sequenceNo:1,relationKey:key,nameRaw:'Example',rawFields:{id:'A'}}]}),evidenceText:null,createdAt:'c',assignments:[]}
@@ -319,7 +319,7 @@ it.each([null,'',' '] as const)('preserves typed original key %s and independent
   if(key===null){expect(publicResult.preflight.conflicts).toEqual([]);writeCollectionTarget(db,reference)}
   else{expect(publicResult.preflight.conflicts[0]).toMatchObject({ref:'relation:101',error:{code:'observation_payload_conflict',field:'relations'}});expect(()=>writeCollectionTarget(db,reference)).toThrow('observation_payload_conflict')}
   expect(sqlite.prepare('select source_relation_key from platform_business_observation').get()).toEqual({source_relation_key:key})
-  expect(bytes(sqlite)).toEqual(before);old.close();sqlite.close()
+  expect(bytes(sqlite).equals(before), 'database bytes remain unchanged').toBe(true);old.close();sqlite.close()
 })
 
 it.each([null,'',' ',' A '] as const)('replays new target key %s using public insertion semantics while retaining its original archived key and materialized typed key',key=>{
@@ -334,7 +334,7 @@ it.each([null,'',' ',' A '] as const)('replays new target key %s using public in
   expect(requestArchive.bytes).toEqual(Buffer.from(input.queryText))
   expect(requestArchive.sha256).toBe(createHash('sha256').update(input.queryText).digest('hex'))
   expect(JSON.parse(requestArchive.bytes.toString()).relations[0].relationKey).toBe(key)
-  expect(bytes(sqlite)).toEqual(before);old.close();sqlite.close()
+  expect(bytes(sqlite).equals(before), 'database bytes remain unchanged').toBe(true);old.close();sqlite.close()
 })
 it.each([{label:'queryKey',queryKey:' legacy ',queriedAt:'time'},{label:'queriedAt',queryKey:'legacy',queriedAt:' time '}])('retains public transaction recheck for original whitespace $label without rewriting coordinates',({queryKey,queriedAt})=>{
   const {sqlite,db,source}=fixture(),old=new Database(source),publicDb=drizzle(old,{schema:expand})
@@ -350,7 +350,7 @@ it.each([{label:'queryKey',queryKey:' legacy ',queriedAt:'time'},{label:'queried
   expect(preflightRosterImport(publicDb,{...req,idempotencyKey:'w4b-coordinate-explicit',payload:{platformQueries:[JSON.parse(explicit.queryText)]}}).preflight.conflicts[0]).toMatchObject({error:{code:'query_reuse_missing',field:'reuseExisting'}})
   expect(()=>writeCollectionTarget(db,explicit)).toThrow('query_reuse_missing')
   expect(sqlite.prepare('select query_key,queried_at from platform_collection').get()).toEqual({query_key:queryKey,queried_at:queriedAt})
-  expect(bytes(sqlite)).toEqual(before);old.close();sqlite.close()
+  expect(bytes(sqlite).equals(before), 'database bytes remain unchanged').toBe(true);old.close();sqlite.close()
 })
 it.each([{samePayload:false,explicit:false},{samePayload:true,explicit:false},{samePayload:false,explicit:true},{samePayload:true,explicit:true}])('checks normalized planning and original transaction collections independently when samePayload=$samePayload explicit=$explicit',({samePayload,explicit})=>{
   const input:NewCollectionTargetCommand={queryText:JSON.stringify({interface:'apply_list',queryKey:'legacy',queriedAt:'time',status:'success',rawResponse:'raw',relations:[{sequenceNo:1,relationKey:'A',nameRaw:'Example',rawFields:{id:'A'}}]}),evidenceText:null,createdAt:'c',assignments:command(evidence('queryList')).assignments.map(a=>({...a,nameRaw:"Example"}))}
@@ -371,7 +371,7 @@ it.each([{samePayload:false,explicit:false},{samePayload:true,explicit:false},{s
     expect(result.status).toBe('failed')
     expect(result.items).toContainEqual(expect.objectContaining({kind:'platform_relation',ref:'relation:102',error:expect.objectContaining({code:'observation_payload_conflict',field:'relations'})}))
     try{writeCollectionTarget(db,requestInput);expect.fail('accepted wrong transaction source')}catch(error){expect(error).toMatchObject({result:{kind:'platform_relation',ref:'relation:102',error:{code:'observation_payload_conflict',field:'relations'}}})}
-    expect(bytes(sqlite)).toEqual(before)
+    expect(bytes(sqlite).equals(before), 'database bytes remain unchanged').toBe(true)
   }
   old.close();sqlite.close()
 })
@@ -382,7 +382,7 @@ it('preserves projection mapping conflict code field and original relation alias
   sqlite.prepare('update platform_business_observation set record_id=?,version_id=? where id=?').run(second.observations[0]!.recordId,second.observations[0]!.versionId,first.observations[0]!.observationId)
   const before=bytes(sqlite)
   try{writeCollectionTarget(db,input);expect.fail('accepted mapping drift')}catch(error){expect(error).toMatchObject({result:{ref:`relation:${first.observations[0]!.relationAlias}`,error:{code:'projection_mapping_conflict',field:'relations'}}})}
-  expect(bytes(sqlite)).toEqual(before);sqlite.close()
+  expect(bytes(sqlite).equals(before), 'database bytes remain unchanged').toBe(true);sqlite.close()
 })
 it.each(['migrated','new'] as const)('retains own proto keys typed arrays and original raw bytes when a %s row is referenced',mode=>{
   const rawText='{"id":"A","__proto__":{"polluted":true},"array":[null,false," ",2]}'
@@ -392,7 +392,7 @@ it.each(['migrated','new'] as const)('retains own proto keys typed arrays and or
   const reference=replay(input,q=>{q.reuseExisting=true;q.relations=[{sequenceNo:1}]})
   const req={idempotencyKey:'w4b-own-proto',sourceKind:'platform_archive' as const,sourceIdentity:'synthetic',payload:{platformQueries:[JSON.parse(reference.queryText)]}}
   expect(preflightRosterImport(publicDb,req).preflight.conflicts).toEqual([])
-  const before=bytes(sqlite);writeCollectionTarget(db,reference);expect(bytes(sqlite)).toEqual(before)
+  const before=bytes(sqlite);writeCollectionTarget(db,reference);expect(bytes(sqlite).equals(before), 'database bytes remain unchanged').toBe(true)
   expect(sqlite.prepare("select cast(a.bytes as text) bytes from platform_archive_value a join platform_observation_archive_ref r on r.archive_id=a.id where r.owner_id=? and r.field='rawFields'").get(mode==='migrated'?101:1)).toEqual({bytes:rawText})
   old.close();sqlite.close()
 })
@@ -403,5 +403,5 @@ it('refuses missing observation source fidelity instead of inventing a projectio
   sqlite.exec('delete from platform_recognized_projection where observation_id=101')
   const before=bytes(sqlite)
   expect(()=>writeCollectionTarget(db,ordinary)).toThrow('projection_missing')
-  expect(bytes(sqlite)).toEqual(before);sqlite.close()
+  expect(bytes(sqlite).equals(before), 'database bytes remain unchanged').toBe(true);sqlite.close()
 })

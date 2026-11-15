@@ -34,14 +34,14 @@ it('rejects unsafe existing record identity without partial writes', () => {
   sqlite.exec("insert into platform_business_record(id,interface,platform_key,identity_rule_version,created_at) values(9007199254740993,'business_list','A','platform-observation-v1','fixture')")
   const before = sqlite.serialize()
   expect(() => writeProcessTarget(db, input)).toThrow('Invalid target identity')
-  expect(sqlite.serialize()).toEqual(before); sqlite.close()
+  expect(sqlite.serialize().equals(before), 'database bytes remain unchanged').toBe(true); sqlite.close()
 })
 it('rejects unsafe page identity before a rounded lookup can select another page', () => {
   const { db, sqlite, input } = fixture()
   sqlite.exec("insert into platform_collection_page(id,collection_id,ordinal,position_state) values(9007199254740992,2,1,'unknown')")
   const before = sqlite.serialize()
   expect(() => writeProcessTarget(db, { ...input, position: { ...input.position, pageId: 9007199254740992 } })).toThrow('Invalid target identity')
-  expect(sqlite.serialize()).toEqual(before); sqlite.close()
+  expect(sqlite.serialize().equals(before), 'database bytes remain unchanged').toBe(true); sqlite.close()
 })
 it.each(['identical replay', 'source drift', 'assignment drift'] as const)('handles %s at an existing observation position atomically', scenario => {
   const { db, sqlite, input } = fixture()
@@ -53,7 +53,7 @@ it.each(['identical replay', 'source drift', 'assignment drift'] as const)('hand
       : { ...input, assignment: { ...input.assignment, basis: 'changed' } }
     expect(() => writeProcessTarget(db, changed)).toThrow('observation_payload_conflict')
   }
-  expect(sqlite.serialize()).toEqual(before)
+  expect(sqlite.serialize().equals(before), 'database bytes remain unchanged').toBe(true)
   expect(sqlite.pragma('foreign_key_check')).toEqual([]); sqlite.close()
 })
 it('reuses a version across independent observations', () => {
@@ -101,7 +101,7 @@ it.each([
   const before = sqlite.serialize()
   if (name === 'unsafe') {
     expect(() => writeProcessTarget(db, { ...input, row: { sequenceNo: 1, relationKey: 'A', rawFields: { id: 'A', year } } })).toThrow('Unrepresentable reconcile integer')
-    expect(sqlite.serialize()).toEqual(before)
+    expect(sqlite.serialize().equals(before), 'database bytes remain unchanged').toBe(true)
   } else {
     writeProcessTarget(db, { ...input, row: { sequenceNo: 1, relationKey: 'A', rawFields: { id: 'A', year } } })
     expect(sqlite.prepare('select business_year from platform_business_projection order by id').all()).toEqual([{ business_year: expected }, { business_year: expected }])
@@ -133,7 +133,7 @@ it('rejects canonical byte drift on a hash hit without appending an observation'
   sqlite.exec("update platform_business_record_version set canonical_raw_json='{}'")
   const before = sqlite.serialize()
   expect(() => writeProcessTarget(db, { ...input, position: { sequenceNo: 2, positionState: 'unknown' }, row: { ...input.row, sequenceNo: 2 } })).toThrow('platform_content_hash_conflict')
-  expect(sqlite.serialize()).toEqual(before); sqlite.close()
+  expect(sqlite.serialize().equals(before), 'database bytes remain unchanged').toBe(true); sqlite.close()
 })
 it.each(['platform_business_record_version', 'platform_version_archive_ref', 'platform_observation_assignment', 'platform_observation_archive_ref', 'platform_business_projection', 'platform_legacy_relation_alias'])('rolls back all effects after injected %s failure caught by the outer transaction', table => {
   const { db, sqlite, input } = fixture()
@@ -148,7 +148,7 @@ it('requires explicit provenance and rejects contradictory owner assertions', ()
   const { db, sqlite, input } = fixture(), before = sqlite.serialize()
   expect(() => writeProcessTarget(db, { ...input, assignment: { enterpriseId: null, matchBasis: 'none', verificationStatus: 'pending', origin: 'migrated_current' } })).toThrow('Explicit command provenance required')
   expect(() => writeProcessTarget(db, { ...input, row: { ...input.row, enterpriseId: 100 } })).toThrow('Assignment payload conflict')
-  expect(sqlite.serialize()).toEqual(before); sqlite.close()
+  expect(sqlite.serialize().equals(before), 'database bytes remain unchanged').toBe(true); sqlite.close()
 })
 it('requires the source collection page owner and matching position without creating collections', () => {
   const { db, sqlite, input } = fixture()
@@ -159,7 +159,7 @@ it('requires the source collection page owner and matching position without crea
   expect(() => writeProcessTarget(db, { ...input, position: { ...input.position, pageId: 10 } })).toThrow('Page collection owner mismatch')
   expect(() => writeProcessTarget(db, { ...input, position: { ...input.position, pageRowNo: 1 } })).toThrow('Page row requires page')
   expect(() => writeProcessTarget(db, { ...input, position: { ...input.position, sequenceNo: 2 } })).toThrow('Observation position mismatch')
-  expect(sqlite.serialize()).toEqual(before)
+  expect(sqlite.serialize().equals(before), 'database bytes remain unchanged').toBe(true)
   const r = writeProcessTarget(db, { ...input, position: { sequenceNo: 1, pageId: 11, pageRowNo: 1, positionState: 'verified' } })
   expect(sqlite.prepare('select page_id,page_row_no,position_state from platform_business_observation where id=?').get(r.observationId)).toEqual({ page_id: 11, page_row_no: 1, position_state: 'verified' }); sqlite.close()
 })
@@ -169,7 +169,7 @@ it.each(['platform_business_record', 'platform_business_record_version', 'platfo
   sqlite.prepare('insert into sqlite_sequence(name,seq) select ?,9007199254740991 where not exists(select 1 from sqlite_sequence where name=?)').run(table, table)
   const before = sqlite.serialize()
   expect(() => writeProcessTarget(db, input)).toThrow()
-  expect(sqlite.serialize()).toEqual(before); sqlite.close()
+  expect(sqlite.serialize().equals(before), 'database bytes remain unchanged').toBe(true); sqlite.close()
 })
 it('allocates the last safe record ID and reuses it for the same key', () => {
   const { db, sqlite, input } = fixture()
@@ -185,7 +185,7 @@ it('atomically rejects a distinct key when record IDs are exhausted', () => {
   sqlite.exec("insert into platform_business_record(id,interface,platform_key,identity_rule_version,created_at) values(9007199254740991,'business_list','LAST','platform-observation-v1','fixture')")
   const before = sqlite.serialize()
   expect(() => writeProcessTarget(db, { ...input, row: { ...input.row, relationKey: 'EXHAUST', rawFields: null } })).toThrow('Invalid target identity')
-  expect(sqlite.serialize()).toEqual(before)
+  expect(sqlite.serialize().equals(before), 'database bytes remain unchanged').toBe(true)
   expect(sqlite.prepare('select cast(id as text) id,platform_key from platform_business_record').all()).toEqual([{ id: '9007199254740991', platform_key: 'LAST' }]); sqlite.close()
 })
 it('allocates the last safe alias and completely rolls back alias exhaustion', () => {
@@ -196,7 +196,7 @@ it('allocates the last safe alias and completely rolls back alias exhaustion', (
   expect(writeProcessTarget(db, input)).toEqual({ ...r, reused: true })
   const before = sqlite.serialize()
   expect(() => writeProcessTarget(db, { ...input, position: { sequenceNo: 2, positionState: 'unknown' }, row: { ...input.row, sequenceNo: 2 } })).toThrow('Invalid archive identity')
-  expect(sqlite.serialize()).toEqual(before); sqlite.close()
+  expect(sqlite.serialize().equals(before), 'database bytes remain unchanged').toBe(true); sqlite.close()
 })
 it.each([
   { name: 'collection', patch: { collectionId: 9007199254740992 } },
@@ -205,7 +205,7 @@ it.each([
 ])('rejects invalid input identity $name before writes', ({ patch }) => {
   const { db, sqlite, input } = fixture(), before = sqlite.serialize()
   expect(() => writeProcessTarget(db, { ...input, ...patch })).toThrow('Invalid target identity')
-  expect(sqlite.serialize()).toEqual(before); sqlite.close()
+  expect(sqlite.serialize().equals(before), 'database bytes remain unchanged').toBe(true); sqlite.close()
 })
 
 it('refuses different canonical bytes even when a stored hash is forged to match the incoming payload', () => {
@@ -215,7 +215,7 @@ it('refuses different canonical bytes even when a stored hash is forged to match
   sqlite.prepare('update platform_business_record_version set content_hash=?').run(createHash('sha256').update('platform-row-json-v1\n'+other).digest('hex'))
   const before = sqlite.serialize()
   expect(() => writeProcessTarget(db, { ...input, position: { sequenceNo: 2, positionState: 'unknown' }, row: { sequenceNo: 2, relationKey: 'A', rawFields: { id: 'A', year: 2029 } } })).toThrow('platform_content_hash_conflict')
-  expect(sqlite.serialize()).toEqual(before); sqlite.close()
+  expect(sqlite.serialize().equals(before), 'database bytes remain unchanged').toBe(true); sqlite.close()
 })
 it('accepts the last safe observation ID and atomically rejects observation exhaustion', () => {
   const { db, sqlite, input } = fixture()
@@ -230,7 +230,7 @@ it('accepts the last safe observation ID and atomically rejects observation exha
   expect(r.observationId).toBe(Number.MAX_SAFE_INTEGER)
   const before = sqlite.serialize()
   expect(() => writeProcessTarget(db, { ...input, position: { sequenceNo: 2, positionState: 'unknown' }, row: { ...input.row, sequenceNo: 2 } })).toThrow()
-  expect(sqlite.serialize()).toEqual(before); sqlite.close()
+  expect(sqlite.serialize().equals(before), 'database bytes remain unchanged').toBe(true); sqlite.close()
 })
 it('rejects unsafe existing version identity before binding a new observation', () => {
   const { db, sqlite, input } = fixture()
@@ -239,12 +239,12 @@ it('rejects unsafe existing version identity before binding a new observation', 
   sqlite.prepare("insert into platform_business_record_version(id,record_id,hash_algorithm,content_hash,canonical_raw_json,created_at) values(9007199254740993,10,'platform-row-json-v1',?,?,'fixture')").run(hash, raw)
   const before = sqlite.serialize()
   expect(() => writeProcessTarget(db, { ...input, row: { sequenceNo: 1, relationKey: 'A', rawFields: { id: 'A' } } })).toThrow('Invalid target identity')
-  expect(sqlite.serialize()).toEqual(before); sqlite.close()
+  expect(sqlite.serialize().equals(before), 'database bytes remain unchanged').toBe(true); sqlite.close()
 })
 it.each(['enterpriseId', 'commandReceiptId'] as const)('rejects unsafe explicit assignment %s without writes', field => {
   const { db, sqlite, input } = fixture(), before = sqlite.serialize()
   expect(() => writeProcessTarget(db, { ...input, assignment: { ...input.assignment, [field]: 9007199254740992 } })).toThrow('Invalid target identity')
-  expect(sqlite.serialize()).toEqual(before); sqlite.close()
+  expect(sqlite.serialize().equals(before), 'database bytes remain unchanged').toBe(true); sqlite.close()
 })
 
 it('uses a raw-only key without inventing the source relation key and retains numeric title type', () => {

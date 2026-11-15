@@ -46,7 +46,7 @@ it('preserves every predecessor cell receipt and checkpoint and replays a catalo
   expect(t.pragma('foreign_key_check')).toEqual([])
   expect(t.pragma('integrity_check',{simple:true})).toBe('ok')
   const bytes=t.serialize();t.close();expect(finalizeRecognizedWitness(f).state).toBe('complete')
-  const replay=new Database(f.target);try{expect(replay.serialize()).toEqual(bytes)}finally{replay.close()}
+  const replay=new Database(f.target);try{expect(replay.serialize().equals(bytes), 'database bytes remain unchanged').toBe(true)}finally{replay.close()}
  }finally{if(t.open)t.close();source.close()}
 },30000)
 it('rolls back schema captures barriers and receipts at every publication boundary',async()=>{
@@ -55,7 +55,7 @@ it('rolls back schema captures barriers and receipts at every publication bounda
   const target=join(f.root,stage+'.sqlite');copyFileSync(f.source,target)
   const before=new Database(target);const bytes=before.serialize();before.close()
   expect(()=>finalizeRecognizedWitness({...f,target,beforeCommit:s=>{if(s===stage)throw new Error('injected '+stage)}})).toThrow('injected '+stage)
-  const t=new Database(target);try{expect(t.serialize()).toEqual(bytes);expect(recognizedStoredInstalled(t)).toBe(true);expect(witnessInstalled(t)).toBe(false)}finally{t.close()}
+  const t=new Database(target);try{expect(t.serialize().equals(bytes), 'database bytes remain unchanged').toBe(true);expect(recognizedStoredInstalled(t)).toBe(true);expect(witnessInstalled(t)).toBe(false)}finally{t.close()}
  }
 },30000)
 it('new commands capture source pages without changing candidate masks and replay without writes',async()=>{
@@ -69,11 +69,11 @@ it('new commands capture source pages without changing candidate masks and repla
   expect(deserialize(position.witness_rdjb_value)).toBe('1');expect(deserialize(position.witness_page_value)).toBe(1)
   verifyWitnessObservation(t,id)
   verifyFingerprint(t,{observationId:id,collectionId:result.collectionId,relationAlias:result.observations[0]!.relationAlias})
-  const before=t.serialize();expect(writeCollectionTarget(db,input).observations[0]!.observationId).toBe(id);expect(t.serialize()).toEqual(before)
-  for(const source of ['queryList','businessList'] as const){const future=command(source),written=writeNewCollectionTarget(db,future),bytes=t.serialize();expect(writeCollectionTarget(db,future).observations[0]!.observationId).toBe(written.observations[0]!.observationId);expect(t.serialize()).toEqual(bytes)}
+  const before=t.serialize();expect(writeCollectionTarget(db,input).observations[0]!.observationId).toBe(id);expect(t.serialize().equals(before), 'database bytes remain unchanged').toBe(true)
+  for(const source of ['queryList','businessList'] as const){const future=command(source),written=writeNewCollectionTarget(db,future),bytes=t.serialize();expect(writeCollectionTarget(db,future).observations[0]!.observationId).toBe(written.observations[0]!.observationId);expect(t.serialize().equals(bytes), 'database bytes remain unchanged').toBe(true)}
   expect(listTargetRecognizedDirectory({},db).total).toBeGreaterThan(0)
   const bad=command();bad.queryText=bad.queryText.replace('future','other');const snapshot=t.serialize()
-  expect(()=>db.transaction(tx=>{try{writeNewCollectionTarget(tx,bad)}catch{}})).not.toThrow();expect(t.serialize()).toEqual(snapshot)
+  expect(()=>db.transaction(tx=>{try{writeNewCollectionTarget(tx,bad)}catch{}})).not.toThrow();expect(t.serialize().equals(snapshot), 'database bytes remain unchanged').toBe(true)
  }finally{t.close()}
 },30000)
 it('rejects forged partial catalogs altered barriers or corrupted successor receipts without editing predecessor receipts',async()=>{
@@ -96,7 +96,7 @@ it('rejects forged partial catalogs altered barriers or corrupted successor rece
   expect(recognizedStoredInstalled(t)).toBe(true)
   expect(t.prepare("SELECT * FROM platform_migration_run WHERE run_id<>'witness'").all()).toEqual(receipts)
   const before=t.serialize();t.close();expect(()=>finalizeRecognizedWitness(f)).toThrow(/checkpoint/)
-  const after=new Database(f.target);try{expect(after.serialize()).toEqual(before)}finally{after.close()}
+  const after=new Database(f.target);try{expect(after.serialize().equals(before), 'database bytes remain unchanged').toBe(true)}finally{after.close()}
   const altered=join(f.root,'altered.sqlite');copyFileSync(f.source,altered)
   const partial=new Database(altered);partial.exec('ALTER TABLE platform_collection ADD COLUMN witness_gate INTEGER')
   try{expect(recognizedStoredInstalled(partial)).toBe(true)}finally{partial.close()}

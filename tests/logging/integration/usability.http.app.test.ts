@@ -58,7 +58,6 @@ async function mcp(method: string, params: unknown, tokenValue?: string) {
 }
 
 beforeAll(async () => {
-  if (process.env.LOG180_SKIP_BUILD !== '1') execFileSync('pnpm', ['build'], { cwd: resolve(import.meta.dirname, '../../..'), timeout: 300_000, stdio: 'pipe' })
   const db = initializeDb({ create: true,  dbPath })
   db.$client.close()
   const port = await reserveLoopbackPort()

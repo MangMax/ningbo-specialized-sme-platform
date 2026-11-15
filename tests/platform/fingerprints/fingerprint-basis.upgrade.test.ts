@@ -34,7 +34,7 @@ it('requires actual FK ON before schema writes even inside an outer transaction'
     if(outer)t.exec('BEGIN')
     expect(()=>installFingerprintBasis(t)).toThrow(/foreign_keys/)
     if(outer)t.exec('ROLLBACK')
-    expect(t.serialize()).toEqual(before)
+    expect(t.serialize().equals(before), 'database bytes remain unchanged').toBe(true)
   }
   t.close()
 })
@@ -42,7 +42,7 @@ it('defers orphan basis validation to outer COMMIT and restores facts on explici
   const {t}=fixture();installFingerprintBasis(t);const before=t.serialize()
   t.exec("BEGIN; SAVEPOINT nested; INSERT INTO platform_observation_fingerprint_basis VALUES(100,'uncaptured',NULL); RELEASE nested")
   expect(()=>t.exec('COMMIT')).toThrow(/FOREIGN KEY/);expect(t.inTransaction).toBe(true)
-  t.exec('ROLLBACK');expect(t.serialize()).toEqual(before)
+  t.exec('ROLLBACK');expect(t.serialize().equals(before), 'database bytes remain unchanged').toBe(true)
   t.exec("BEGIN; INSERT INTO platform_observation_fingerprint_basis VALUES(100,'uncaptured',NULL); INSERT INTO platform_business_observation(id,collection_id,sequence_no,position_state,identity_state,content_state,indexed_at) VALUES(100,1,2,'unknown','not_indexed','not_indexed',NULL); COMMIT")
   expect(t.pragma('foreign_key_check')).toEqual([]);t.close()
 })
@@ -61,7 +61,7 @@ it('upgrades complete populated 71606 preserving original cells and seals then r
   expect(a.prepare("select hex(a.bytes) bytes,r.sealed from platform_observation_archive_ref r join platform_archive_value a on a.id=r.archive_id where r.owner_id=11 and r.field='rawFields'").get()).toEqual({bytes:'6E756C6C',sealed:1})
   const bytes=a.serialize();a.close()
   expect(finalizeFingerprintBasis({source:predecessor,target,runId:'basis',predecessorRunId:'scopes'}).state).toBe('complete')
-  const b=new Database(target);expect(b.serialize()).toEqual(bytes);b.close()
+  const b=new Database(target);expect(b.serialize().equals(bytes), 'database bytes remain unchanged').toBe(true);b.close()
 })
 
 import { installFingerprintBarrier, fingerprintArchiveInventory } from '../../../upgrade/fingerprint-basis'
@@ -138,7 +138,7 @@ it('rejects unproved after-predecessor fact drift with zero target writes',()=>{
 it('rejects FK OFF barrier installation inside outer transactions before any writes',()=>{
   const {t}=fixture();installFingerprintBasis(t);t.pragma('foreign_keys=OFF');const before=t.serialize()
   t.exec('BEGIN');expect(()=>installFingerprintBarrier(t)).toThrow(/foreign_keys/);t.exec('ROLLBACK')
-  expect(t.serialize()).toEqual(before);t.close()
+  expect(t.serialize().equals(before), 'database bytes remain unchanged').toBe(true);t.close()
 })
 it('keeps source lock during schema and receipt writes and replays in another process',()=>{
   const f=fixture();f.t.close();const source=f.target+'.71606';copyFileSync(f.target,source)
@@ -240,7 +240,7 @@ it.each(Object.keys(writers) as (keyof typeof writers)[])('recovers %s original 
     expect(result.recoveryManifest).toContainEqual(expect.objectContaining({observationId:row.observationId,scheme:captured?'target-command-v1':'uncaptured',reason:captured?null:'original-command-input-not-captured',oldAlias:row.relationAlias,queryAlias:1}))
     const db=new Database(f.target),before=db.serialize();db.close()
     expect(finalizeFingerprintBasis(options).state).toBe('complete')
-    const after=new Database(f.target);expect(after.serialize()).toEqual(before);after.close()
+    const after=new Database(f.target);expect(after.serialize().equals(before), 'database bytes remain unchanged').toBe(true);after.close()
   }
 })
 it.each(Object.keys(writers) as (keyof typeof writers)[])('rolls back %s old writer archives aliases and highwaters under caller-caught rejection',sourceInterface=>{
@@ -330,7 +330,7 @@ it.each(['null','text'])('rejects a %s archive as captured BLOB without side eff
   t.prepare('INSERT INTO platform_archive_value(id,storage_class,bytes,byte_length,sha256) VALUES(100,?,?,?,?)').run(storageClass,value.bytes,value.length,value.digest)
   const before=t.serialize()
   expect(()=>t.exec("INSERT INTO platform_observation_fingerprint_basis VALUES(11,'target-command-v1',100)")).toThrow(/BLOB/)
-  expect(t.serialize()).toEqual(before);t.close()
+  expect(t.serialize().equals(before), 'database bytes remain unchanged').toBe(true);t.close()
 })
 it.each(['created','recovered','barrier','receipt'])('locks independent after-event snapshot throughout successor %s stage',wanted=>{
   const f=fixture();f.t.close();const source=f.target+'.71606';copyFileSync(f.target,source)

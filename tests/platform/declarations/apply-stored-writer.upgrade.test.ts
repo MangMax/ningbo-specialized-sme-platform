@@ -43,7 +43,7 @@ it('71608 direct writer captures literal legacy materialization and preserves or
  const literal='{"assignment":{"actor":{"id":"W","type":"agent"},"basis":"explicit","matchBasis":"none","nameRaw":"Old","origin":"command","usccRaw":"U","verificationStatus":"pending"},"collectionId":1,"position":{"positionState":"unknown","sequenceNo":3},"row":{"declareKind":"申请","nameRaw":" Old ","rawFields":{"cszt":"pending","rdjb":" 2 "},"relationKey":" K ","sequenceNo":3,"status":" pending ","usccRaw":" U ","year":2024}}'
  expect(t.prepare('SELECT cast(a.bytes AS TEXT) bytes,o.input_fingerprint hash,o.source_relation_key key FROM platform_business_observation o JOIN platform_observation_fingerprint_basis b ON b.observation_id=o.id JOIN platform_archive_value a ON a.id=b.input_archive_id WHERE o.id=?').get(r.observationId)).toEqual({bytes:literal,hash:createHash('sha256').update(literal).digest('hex'),key:'K'})
  expect(()=>verifyFingerprint(t,{observationId:r.observationId,collectionId:1,relationAlias:r.relationAlias})).not.toThrow()
- const before=t.serialize();expect(writeApplyTarget(db,v).reused).toBe(true);expect(t.serialize()).toEqual(before);t.close()
+ const before=t.serialize();expect(writeApplyTarget(db,v).reused).toBe(true);expect(t.serialize().equals(before), 'database bytes remain unchanged').toBe(true);t.close()
 })
 import { writeCollectionTarget, type NewCollectionTargetCommand } from '../../../upgrade/frozen/collection-target-command'
 function command():NewCollectionTargetCommand{return {queryText:JSON.stringify({interface:'apply_list',queryKey:'new',queriedAt:'time',status:'success',rawResponse:'{}',relations:[{sequenceNo:1,status:' pending ',declareKind:'申请',rawFields:{rdjb:' 2 ',cszt:'pending',year:'2e3'}}]}),evidenceText:null,createdAt:'creation',assignments:[{matchBasis:'none',verificationStatus:'pending',origin:'command',actor:{type:'agent',id:'W'},basis:'explicit'}]}}
@@ -67,12 +67,12 @@ it('71608 rejects assignment provenance mismatch and existing REAL year predeces
  const {t,db}=ready(),v=input(),before=t.serialize()
  expect(()=>writeApplyTarget(db,{...v,assignment:{...v.assignment,nameRaw:' Old '}})).toThrow(/revision1/)
  expect(()=>writeApplyTarget(db,{...v,row:{...v.row,year:2024.5}})).toThrow(/Unrepresentable legacy process year/)
- expect(t.serialize()).toEqual(before);t.close()
+ expect(t.serialize().equals(before), 'database bytes remain unchanged').toBe(true);t.close()
 })
 it('71608 same raw different stored input remains distinct and reused input conflict is atomic',()=>{
  const {t,db}=ready(),v=input(),a=writeApplyTarget(db,v),b=writeApplyTarget(db,{...v,position:{...v.position,sequenceNo:4},row:{...v.row,sequenceNo:4,status:'rejected'}})
  expect(t.prepare('SELECT exact_status FROM platform_apply_projection WHERE observation_id IN (?,?) ORDER BY observation_id').all(a.observationId,b.observationId)).toEqual([{exact_status:'pending'},{exact_status:null}])
- const before=t.serialize();expect(()=>writeApplyTarget(db,{...v,row:{...v.row,status:'rejected'}})).toThrow(/conflict/);expect(t.serialize()).toEqual(before);t.close()
+ const before=t.serialize();expect(()=>writeApplyTarget(db,{...v,row:{...v.row,status:'rejected'}})).toThrow(/conflict/);expect(t.serialize().equals(before), 'database bytes remain unchanged').toBe(true);t.close()
 })
 it.each(['platform_observation_assignment','platform_observation_archive_ref','platform_apply_projection','platform_legacy_relation_alias','platform_observation_fingerprint_basis'])('71608 caller caught failure rolls back complete savepoint at %s',table=>{
  const {t,db}=ready();t.exec(`CREATE TRIGGER inject BEFORE INSERT ON ${table} BEGIN SELECT RAISE(ABORT,'injected'); END`);const before=fileBytes(t)
@@ -85,7 +85,7 @@ it.each(['FK OFF','observation exhaustion','alias exhaustion'] as const)('71608 
  if(mode==='alias exhaustion')t.exec("UPDATE platform_legacy_alias_sequence SET high_water=9007199254740991 WHERE namespace='relation'")
  const before=t.serialize()
  expect(()=>writeApplyTarget(db,input())).toThrow(mode==='FK OFF'?/foreign_keys/:mode==='observation exhaustion'?/identity exhausted/:/Invalid archive identity/)
- expect(t.serialize()).toEqual(before);t.close()
+ expect(t.serialize().equals(before), 'database bytes remain unchanged').toBe(true);t.close()
 })
 
 it.each(['projection','title-capture','exact-capture'] as const)('71608 outer COMMIT refuses missing %s after RELEASE',mode=>{
@@ -97,7 +97,7 @@ it.each(['projection','title-capture','exact-capture'] as const)('71608 outer CO
 it('71608 historical S snapshot ordinary bootstrap and reference retain exact whitespace and duplicate SQL title',()=>{
  const {t,db}=ready(),before=t.serialize()
  const ref={queryText:JSON.stringify({interface:'apply_list',queryKey:'Q',rdjb:'2',queriedAt:'t',reuseExisting:true,relations:[{sequenceNo:1},{sequenceNo:2}]}),evidenceText:null,createdAt:'unused',assignments:[]}
- expect(writeCollectionTarget(db,ref).reused).toBe(true);expect(t.serialize()).toEqual(before)
+ expect(writeCollectionTarget(db,ref).reused).toBe(true);expect(t.serialize().equals(before), 'database bytes remain unchanged').toBe(true)
  const ordinary={...ref,queryText:JSON.stringify({interface:'apply_list',queryKey:'Q',rdjb:'2',queriedAt:'t',status:'success',relations:[{sequenceNo:1,status:'pending',rawFields:{rdjb:'3',cszt:'pending'}},{sequenceNo:2,status:'pending',rawFields:{rdjb:'3',cszt:'pending'}}]})}
  try{expect(writeCollectionTarget(db,ordinary).reused).toBe(true)}catch(e){throw new Error(JSON.stringify(Reflect.get(e as object,'result')), {cause:e})}
  expect(t.prepare('SELECT exact_status,exact_title_raw,sql_fact_title FROM platform_apply_projection WHERE observation_id IS NOT NULL ORDER BY observation_id').all()).toEqual([{exact_status:' pending ',exact_title_raw:'X',sql_fact_title:'2'},{exact_status:'pending',exact_title_raw:'X',sql_fact_title:'1'}])
@@ -117,7 +117,7 @@ it.each(['exact_status','exact_year','sql_fact_title','exact_stored_rule','sql_f
  else if(field==='missing')t.prepare('DELETE FROM platform_apply_projection WHERE observation_id=?').run(id)
  else t.prepare(`UPDATE platform_apply_projection SET ${field}=? WHERE observation_id=?`).run(field==='exact_year'?2025:'tampered',id)
  t.pragma('foreign_keys=ON');const before=t.serialize();expect(()=>writeCollectionTarget(db,c)).toThrow()
- const q=JSON.parse(c.queryText);q.reuseExisting=true;delete q.rawResponse;delete q.status;q.relations=[{sequenceNo:1}];expect(()=>writeCollectionTarget(db,{...c,queryText:JSON.stringify(q),assignments:[]})).toThrow();expect(t.serialize()).toEqual(before);t.close()
+ const q=JSON.parse(c.queryText);q.reuseExisting=true;delete q.rawResponse;delete q.status;q.relations=[{sequenceNo:1}];expect(()=>writeCollectionTarget(db,{...c,queryText:JSON.stringify(q),assignments:[]})).toThrow();expect(t.serialize().equals(before), 'database bytes remain unchanged').toBe(true);t.close()
 })
 it('71608 revision2 changes current attribution without altering original command authentication',()=>{
  const {t,db}=ready(),v=input(),r=writeApplyTarget(db,v)
@@ -133,15 +133,15 @@ it.each(['exact_status','exact_declare_kind','exact_applied_at','exact_year','ex
  if(field==='revision1')t.exec("UPDATE platform_observation_assignment SET name_raw='wrong' WHERE observation_id=1 AND revision=1")
  else t.prepare(`UPDATE platform_apply_projection SET ${field}=? WHERE observation_id=1`).run(field==='exact_year'?2026:'wrong')
  const before=t.serialize(),ref={queryText:JSON.stringify({interface:'apply_list',queryKey:'Q',rdjb:'2',queriedAt:'t',reuseExisting:true,relations:[{sequenceNo:1}]}),evidenceText:null,createdAt:'unused',assignments:[]}
- expect(()=>writeCollectionTarget(db,ref)).toThrow();expect(t.serialize()).toEqual(before);t.close()
+ expect(()=>writeCollectionTarget(db,ref)).toThrow();expect(t.serialize().equals(before), 'database bytes remain unchanged').toBe(true);t.close()
 })
 it('71608 uncaptured states are refused without replay supplementation',()=>{
  const {t,db}=ready();t.exec("DROP TRIGGER platform_apply_stored_no_update; PRAGMA ignore_check_constraints=ON; PRAGMA foreign_keys=OFF; UPDATE platform_apply_projection SET exact_stored_state='uncaptured' WHERE observation_id=1; PRAGMA foreign_keys=ON")
- const before=t.serialize();expect(()=>writeCollectionTarget(db,{queryText:JSON.stringify({interface:'apply_list',queryKey:'Q',rdjb:'2',queriedAt:'t',reuseExisting:true,relations:[{sequenceNo:1}]}),evidenceText:null,createdAt:'unused',assignments:[]})).toThrow();expect(t.serialize()).toEqual(before);t.close()
+ const before=t.serialize();expect(()=>writeCollectionTarget(db,{queryText:JSON.stringify({interface:'apply_list',queryKey:'Q',rdjb:'2',queriedAt:'t',reuseExisting:true,relations:[{sequenceNo:1}]}),evidenceText:null,createdAt:'unused',assignments:[]})).toThrow();expect(t.serialize().equals(before), 'database bytes remain unchanged').toBe(true);t.close()
 })
 it('71608 direct reuse authenticates exact cells and original rev1 while new ID reaches the last safe integer',()=>{
  const {t,db}=ready(),v=input(),r=writeApplyTarget(db,v)
- t.exec('DROP TRIGGER platform_apply_stored_no_update');t.prepare("UPDATE platform_apply_projection SET exact_status='tampered' WHERE observation_id=?").run(r.observationId);const before=t.serialize();expect(()=>writeApplyTarget(db,v)).toThrow();expect(t.serialize()).toEqual(before)
+ t.exec('DROP TRIGGER platform_apply_stored_no_update');t.prepare("UPDATE platform_apply_projection SET exact_status='tampered' WHERE observation_id=?").run(r.observationId);const before=t.serialize();expect(()=>writeApplyTarget(db,v)).toThrow();expect(t.serialize().equals(before), 'database bytes remain unchanged').toBe(true)
  t.exec("DELETE FROM sqlite_sequence WHERE name='platform_business_observation';INSERT INTO sqlite_sequence(name,seq) VALUES('platform_business_observation',9007199254740990)")
  expect(writeApplyTarget(db,{...v,position:{...v.position,sequenceNo:4},row:{...v.row,sequenceNo:4}}).observationId).toBe(Number.MAX_SAFE_INTEGER);expect(t.pragma('foreign_key_check')).toEqual([]);t.close()
 })

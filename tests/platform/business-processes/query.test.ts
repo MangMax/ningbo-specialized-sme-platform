@@ -58,7 +58,7 @@ it('REST and MCP preserve all Little Giant relationships across three titles wit
   expect(a).toMatchObject({ source: 'businessList', status: 'success', rows, fetchedCount: 6, declaredTotal: 6, completeness: 'complete', titleScope: { mode: 'selected', rdjb: ['1', '2', '3'] }, unfinished: [], effectiveConditions: { uscc, combination: 'and' } })
   expect(a.pages.map((p: any) => [p.rdjb, p.page, p.fetchedCount])).toEqual([['1', 1, 0], ['2', 1, 0], ['3', 1, 3], ['3', 2, 3]])
   expect({ ...a, queriedAt: null, completedAt: null }).toEqual({ ...b, queriedAt: null, completedAt: null })
-  expect(db.$client.serialize()).toEqual(before)
+  expect(db.$client.serialize().equals(before), 'database bytes remain unchanged').toBe(true)
 })
 it.each(['1', '2', '3'])('single title %s has its own scope and a valid zero says nothing about other titles', async rdjb => {
   fetcher.mockResolvedValue(response(page([], 0)))

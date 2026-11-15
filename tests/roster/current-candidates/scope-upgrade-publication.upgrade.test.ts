@@ -48,7 +48,7 @@ it('captures both actual migration gap pairs while preserving every original tab
     expect(t.pragma('foreign_key_list(platform_business_observation)')).toEqual(expect.arrayContaining([expect.objectContaining({from:'candidate_scope_archive_id',table:'platform_archive_value',to:'id',on_delete:'RESTRICT'})]))
     const bytes=t.serialize();t.close()
     expect(finalizeCandidateScopes(f)).toEqual({state:'complete',captured:4,uncaptured:0,errors:0})
-    const replay=new Database(f.target);try{expect(replay.serialize()).toEqual(bytes)}finally{replay.close()}
+    const replay=new Database(f.target);try{expect(replay.serialize().equals(bytes), 'database bytes remain unchanged').toBe(true)}finally{replay.close()}
   }finally{if(t.open)t.close()}
 },30000)
 
@@ -58,7 +58,7 @@ it('rolls back ordinary successor transactions at every publication boundary', a
     const target=join(f.root,stage+'.sqlite');copyFileSync(f.source,target)
     const old=new Database(target);const bytes=old.serialize();old.close()
     expect(()=>finalizeCandidateScopes({...f,target,beforeCommit:s=>{if(s===stage)throw new Error('injected '+stage)}})).toThrow('injected '+stage)
-    const t=new Database(target);try{expect(t.serialize()).toEqual(bytes);expect(t.pragma('user_version',{simple:true})).toBe(71608)}finally{t.close()}
+    const t=new Database(target);try{expect(t.serialize().equals(bytes), 'database bytes remain unchanged').toBe(true);expect(t.pragma('user_version',{simple:true})).toBe(71608)}finally{t.close()}
   }
 },30000)
 
@@ -71,5 +71,5 @@ it('rejects wrong predecessor source alias and corrupted successor checkpoint wi
   t.prepare("UPDATE platform_migration_checkpoint SET batch_digest='tampered' WHERE run_id='candidate'").run()
   const before=t.serialize();t.close()
   expect(()=>finalizeCandidateScopes(f)).toThrow(/checkpoint drift/)
-  const after=new Database(f.target);try{expect(after.serialize()).toEqual(before)}finally{after.close()}
+  const after=new Database(f.target);try{expect(after.serialize().equals(before), 'database bytes remain unchanged').toBe(true)}finally{after.close()}
 },30000)

@@ -587,18 +587,6 @@ it('requires public auth and browser origin plus explicit write capability, with
   expect((await f.post('browser-preflight', business, { origin })).status).toBe(200)
 
 })
-it('retains a fresh unknown-year fixture for manual browser and workbook acceptance when requested', () => {
-  const f = sample()
-  console.log(
-    'BROWSER_671=' +
-      JSON.stringify({
-        dir,
-        fileId: f.file.id,
-        eventId: f.event.id,
-        enterpriseId: f.enterprise.id,
-      }),
-  )
-})
 it('rejects 3001 source members explicitly instead of truncating the plan', async () => {
   const f = sample()
   const insert = db.$client.prepare(

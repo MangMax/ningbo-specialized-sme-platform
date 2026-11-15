@@ -56,13 +56,13 @@ it('materializes command titles by independent old SQL string-only grammar and c
  ])
  const before=t.serialize()
  inputs.forEach((i,n)=>{expect(writeRecognizedTarget(db,i)).toMatchObject({...results[n],reused:true});verifyRecognizedStored(t,results[n]!.observationId);verifyFingerprint(t,{observationId:results[n]!.observationId,collectionId:1,relationAlias:results[n]!.relationAlias})})
- expect(t.serialize()).toEqual(before)
+ expect(t.serialize().equals(before), 'database bytes remain unchanged').toBe(true)
  }finally{t.close()}
 })
 it.each(['authenticated','recovered','receipt'])('rolls back the entire additive upgrade at injected %s failure and allows retry',async stage=>{
  const f=await ready();const t=new Database(f.target);const before=t.serialize();t.close()
  expect(()=>finalizeRecognizedStored({...f,beforeCommit:s=>{if(s===stage)throw new Error('injected')}})).toThrow('injected')
- const after=new Database(f.target);expect(after.serialize()).toEqual(before);after.close()
+ const after=new Database(f.target);expect(after.serialize().equals(before), 'database bytes remain unchanged').toBe(true);after.close()
  expect(finalizeRecognizedStored(f).captured).toBe(5)
 })
 it('rejects wrong target bytes and changed successor cells on migration replay',async()=>{
@@ -110,7 +110,7 @@ it('retains the global runtime guard and requires a distinct completed 71609 sou
  expect(()=>finalizeRecognizedStored({...f,target:f.source})).toThrow('Distinct isolated')
  const t=new Database(f.target);t.pragma('user_version=71608');const before=t.serialize();t.close()
  expect(()=>finalizeRecognizedStored(f)).toThrow('Unproven target facts/catalog')
- const after=new Database(f.target);expect(after.serialize()).toEqual(before);after.close()
+ const after=new Database(f.target);expect(after.serialize().equals(before), 'database bytes remain unchanged').toBe(true);after.close()
  copyFileSync(f.source,f.target);finalizeRecognizedStored(f)
  const guarded=new Database(f.target);try{expect(()=>assertExpandRuntime(guarded)).toThrow('Expected historical expand schema')}finally{guarded.close()}
 })

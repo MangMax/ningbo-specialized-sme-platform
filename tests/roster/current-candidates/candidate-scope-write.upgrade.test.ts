@@ -35,7 +35,7 @@ it('new collection transactions and replay retain three-source masks without cha
       const before=t.serialize()
       const replay=writeCollectionTarget(db,input)
       expect(replay.observations[0]!.observationId).toBe(row.id)
-      expect(t.serialize()).toEqual(before)
+      expect(t.serialize().equals(before), 'database bytes remain unchanged').toBe(true)
     }
     expect(t.pragma('foreign_key_check')).toEqual([])
   } finally {t.close()}
@@ -100,7 +100,7 @@ it('schema distinguishes captured zero uncaptured and errors and enforces source
       "UPDATE platform_collection SET rdjb='1'", "UPDATE platform_collection SET title_code='innovative_sme'",
       'DELETE FROM platform_business_observation','INSERT OR REPLACE INTO platform_business_observation SELECT * FROM platform_business_observation',
     ])expect(()=>t.exec(sql)).toThrow()
-    expect(t.serialize()).toEqual(before)
+    expect(t.serialize().equals(before), 'database bytes remain unchanged').toBe(true)
     t.prepare("UPDATE platform_collection SET last_collected_at='later'").run()
     expect(t.prepare('SELECT candidate_scope_mask FROM platform_business_observation').get()).toEqual({candidate_scope_mask:0})
   }finally{t.close()}

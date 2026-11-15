@@ -86,7 +86,7 @@ function compare(f: ReturnType<typeof ready>, inputs: unknown[]) {
         id: number;
     }[])
         expect(getTargetDeclaration(f.db, r.id)).toEqual(getPlatformDeclaration(legacy, r.id));
-    expect(old.serialize()).toEqual(sourceBefore);expect(f.t.serialize()).toEqual(targetBefore);
+    expect(old.serialize().equals(sourceBefore), 'database bytes remain unchanged').toBe(true);expect(f.t.serialize().equals(targetBefore), 'database bytes remain unchanged').toBe(true);
     old.close();
 }
 it('matches independent legacy records matched versions whole record counts owners conflicts stable pages detail and per observation facts', () => {
@@ -137,7 +137,7 @@ it('refuses phase and uncaptured owners before filtering empty pages counts or o
     expect(() => listTargetDeclarations({ platformKey: 'absent', page: 999 }, f.db)).toThrow(/uncaptured/);
     expect(() => readTargetDeclarationOptions('records', f.db)).toThrow(/uncaptured/);
     expect(() => readTargetDeclarationFacts(f.db, [1])).toThrow(/uncaptured/);
-    expect(f.t.serialize()).toEqual(before);
+    expect(f.t.serialize().equals(before), 'database bytes remain unchanged').toBe(true);
     f.t.pragma('user_version=71607');
     expect(() => listTargetDeclarations({}, f.db)).toThrow(/71608/);
     f.t.close();
@@ -183,7 +183,7 @@ it('executes bounded page hydration with target only SQL and records concrete EX
     if (process.env.APPLY_STORED_EVIDENCE_DIR)
         writeFileSync(join(process.env.APPLY_STORED_EVIDENCE_DIR, 'SQL-EXPLAIN.json'), JSON.stringify({ statements, plans, catalog }, null, 2));
     expect(plans.some(p => JSON.stringify(p.plan).includes('INDEX'))).toBe(true);
-    expect(f.t.serialize()).toEqual(before);
+    expect(f.t.serialize().equals(before), 'database bytes remain unchanged').toBe(true);
     expect(f.t.pragma('foreign_key_check')).toEqual([]);
     expect(f.t.pragma('integrity_check', { simple: true })).toBe('ok');
     f.t.close();

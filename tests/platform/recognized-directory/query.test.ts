@@ -63,7 +63,7 @@ it('REST and MCP traverse three pages and all titles without compressing relatio
   expect(a.rows[0]).toEqual({ qymc: '合成1甲', tyshxydm: '91330000TEST000001', extra: '原字段' })
   expect(a.rows[5]).toEqual({ qymc: '跨称号关系', rdjb: '3', whpc: '2023-2', whpcyear: '' })
   expect({ ...a, queriedAt: null, completedAt: null }).toEqual({ ...b, queriedAt: null, completedAt: null })
-  expect(db.$client.serialize()).toEqual(before)
+  expect(db.$client.serialize().equals(before), 'database bytes remain unchanged').toBe(true)
 })
 it('REST and MCP send only verified filters and return the actual restricted scope', async () => {
   const input = { source: 'queryBusList', name: '合成', uscc: '91330000TEST000001', rdjb: ['2'], sqsj: '2024/02/01 - 2024/02/29', rddqrq: '2027', whpcyear: '2023', whpc: '2', szq: '33028100', orderField: 'qymc', orderDirection: 'desc', pageSize: 2 }

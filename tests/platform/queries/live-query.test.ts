@@ -60,7 +60,7 @@ it('REST and MCP preserve every paginated relation for a name and code without w
   expect(a).toMatchObject({ source: 'queryList', status: 'success', rows, fetchedCount: 2, declaredTotal: 2, completeness: 'complete', unfinished: [], effectiveConditions: { name: '合成', uscc: '91330211255994457P', combination: 'and' } })
   expect(a.pages.map((p: any) => p.page)).toEqual([1, 2])
   expect({ ...a, queriedAt: null, completedAt: null }).toEqual({ ...b, queriedAt: null, completedAt: null })
-  expect(db.$client.serialize()).toEqual(before)
+  expect(db.$client.serialize().equals(before), 'database bytes remain unchanged').toBe(true)
 })
 it.each([
   ['empty', () => response(page([], 0)), 'no_record', null],

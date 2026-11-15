@@ -7,32 +7,13 @@ import {
   DIFFERENCE_STATUS_VARIANTS,
 } from '../../../lib/labels'
 
-/**
- * 差异六态徽章色 —— **单一出处 + 两两可区分**(契约 §3.2)。
- *
- * 为什么值得专门钉一条:仓里曾经同时存在**三份**「状态 → 徽章色」级联,取值互不相同。
- * 其中两份把 `not_queried`(未查询)与 `no_record`(无记录)画成同一枚 outline、
- * 把 `needs_review`(待核实)与 `query_failed`(查询失败)一律画红 —— 用户反馈过的
- * 「失败 ≠ 无记录、未查询 ≠ 无记录」当场失守,而且**页面上看不出来**:每一枚单独看都
- * 挺合理,只有把六态摆在一起才露馅。所以这里不做「代码里有没有 if」的检查,而是
- * **把六态真的渲染出来的 class 拿来比**:两两不同才算过。
- *
- * 用的是 `Badge` 组件自己的 `badgeVariants`(cva),不是另抄一份变体表 ——
- * 这样一旦有人给变体改名或改样式,这里会跟着变,不会两处各说各话。
- */
 
 const STATES = Object.keys(DIFFERENCE_STATUSES)
 
 describe('差异六态的单一出处', () => {
 
   it('每个取值都解析得出 class(写错变体名时 cva 不报错,只静默落回默认色)', () => {
-    /**
-     * cva 对不认识的变体**不抛错**,只是那一段类名不出现 —— 于是页面照常渲染、
-     * 只是退回默认色,谁也不会发现。所以这里正着查:每个取值解析出的 class
-     * 必须和「`outline` 这个已知变体对未知取值的兜底」不同,也必须彼此不同
-     * (后半条由下面「六态两两可区分」再钉一遍)。
-     */
-    const fallback = badgeVariants({ variant: 'definitely-not-a-variant' as never })
+        const fallback = badgeVariants({ variant: 'definitely-not-a-variant' as never })
     for (const code of STATES) {
       const variant = DIFFERENCE_STATUS_VARIANTS[code]!
       const cls = badgeVariants({ variant: variant as never })
@@ -43,13 +24,7 @@ describe('差异六态的单一出处', () => {
 })
 
 describe('六态两两可区分', () => {
-  /**
-   * 六态各自**真实渲染出来**的 class 串。
-   * 走 `cn(badgeVariants(...))` —— 与 `Badge.vue` 里那行一模一样 —— 而不是只比变体名:
-   * `cn` 是 `twMerge`,会把同族工具类去重("后写的赢")。只比变体名会漏掉
-   * 「调用点又挂了 `class="font-normal"`,把 `solid` 唯一的字重通道吃掉」这种改法。
-   */
-  const render = (code: string) =>
+    const render = (code: string) =>
     cn(badgeVariants({ variant: DIFFERENCE_STATUS_VARIANTS[code] as never }))
   const rendered = Object.fromEntries(STATES.map((code) => [code, render(code)]))
 
@@ -63,15 +38,7 @@ describe('六态两两可区分', () => {
     expect(seen.size).toBe(STATES.length)
   })
 
-  /**
-   * 调用点不许给状态徽章挂 `font-*` / `text-*` 的 class。
-   *
-   * 这条来自一次真实回归:`quiet`(待核实)与 `outline`(无记录)之间**只有字色**这一处
-   * 差别(灰字 vs 深字)。调用点随手挂一个 `class="text-…"` 就会被 `twMerge` 判为同族、
-   * 后写的赢,把唯一的差别抹平 —— 而上面那条「比 class 串」的用例**照样通过**
-   * (它比的是没挂 class 的版本)。所以这里直接看源码,把「调用点别压字重/字色」钉住。
-   */
-  it('调用点不给状态徽章压字重或字色(否则六态会静默糊回去)', () => {
+    it('调用点不给状态徽章压字重或字色(否则六态会静默糊回去)', () => {
     for (const file of [
       'components/RosterDifferenceTable.vue',
       'components/RosterEnterprisePanel.vue',
@@ -86,12 +53,7 @@ describe('六态两两可区分', () => {
   })
 
   it('理由 3 的前提成立:每枚状态徽章的**中文标签**都在(颜色只是冗余加固)', () => {
-    /**
-     * 这条是上面「单通道可接受」的承重前提:如果哪天状态改成只显示图标/圆点、
-     * 把文字拿掉,颜色就从「冗余加固」变成「承重结构」,单通道立刻不可接受。
-     * 所以把它也钉住 —— 两个调用点都必须渲染 `DIFFERENCE_STATUSES[...]` 的文字。
-     */
-    for (const file of [
+        for (const file of [
       'components/RosterDifferenceTable.vue',
       'components/RosterEnterprisePanel.vue',
     ]) {

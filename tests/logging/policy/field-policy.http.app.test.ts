@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, expect, it, vi } from 'vitest'
-import { execFileSync, type ChildProcess } from 'node:child_process'
+import { type ChildProcess } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { request } from 'node:http'
@@ -54,7 +54,6 @@ function prefixRequest(base: string, authorized: boolean, prefix = '', observed?
 }
 
 beforeAll(async () => {
-  if (process.env.FIELD_POLICY_SKIP_BUILD !== '1') execFileSync(process.execPath, ['node_modules/nuxt/bin/nuxt.mjs', 'build'], { cwd: resolve('.'), stdio: 'pipe', timeout: 300000 })
   const db = initializeDb({ create: true,  dbPath }); db.$client.close(); beforeDbHash = hash(dbPath)
   for (const name of ['files', 'incoming']) mkdirSync(join(root, name))
   const port = await reserveLoopbackPort(); expect(port).not.toBe(50055); baseUrl = `http://127.0.0.1:${port}`
