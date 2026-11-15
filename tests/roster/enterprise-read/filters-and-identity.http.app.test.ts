@@ -1,3 +1,4 @@
+import { enterpriseReads } from '../../../server/utils/enterprise-read'
 import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
 import { initializeDb } from '../../../db/client'
 import { createServer } from 'node:http'
@@ -32,6 +33,7 @@ const failed = submitNativePlatformQuery(db, { interface: 'apply_list', queryKey
 submitNativePlatformQuery(db, { interface: 'business_list', queryKey: 'unrelated', queriedAt: '2026-10-19', status: 'success', rawResponse: '原文'.repeat(1_000_000), relations: [{ sequenceNo: 1, enterpriseId: unrelated, rawFields: { original: 'unrelated source row' } }] })
 let server: ReturnType<typeof createServer>, base: string
 beforeAll(async () => {
+  await enterpriseReads.start()
   vi.stubEnv('NUXT_DB_PATH', join(dir, 'test.sqlite'))
   for (const [name, value] of Object.entries({ defineEventHandler, getQuery, getRouterParam, createError, setHeader })) vi.stubGlobal(name, value)
   const list = (await import('../../../server/api/roster/enterprises.get')).default
@@ -40,7 +42,7 @@ beforeAll(async () => {
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
   base = `http://127.0.0.1:${(server.address() as { port: number }).port}`
 })
-afterAll(async () => { if (server) await new Promise<void>(resolve => server.close(() => resolve())); vi.unstubAllGlobals(); vi.unstubAllEnvs(); db.$client.close(); rmSync(dir, { recursive: true, force: true }) })
+afterAll(async () => { if (server) await new Promise<void>(resolve => server.close(() => resolve())); await enterpriseReads.close(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); db.$client.close(); rmSync(dir, { recursive: true, force: true }) })
 it('HTTP list keeps filters, same-title recognition, counts, stable deep pages and confirmed alias search without decoding unrelated archives', async () => {
   const response = await fetch(`${base}/api/roster/enterprises?q=已确认旧名&pageSize=1`)
   expect(response.status).toBe(200)

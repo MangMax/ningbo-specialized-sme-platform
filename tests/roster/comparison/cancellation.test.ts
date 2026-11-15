@@ -1,6 +1,6 @@
 import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
 import { once } from 'node:events'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { copyFileSync, mkdtempSync, rmSync } from 'node:fs'
 import { createServer, get } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -11,16 +11,16 @@ import { initializeDb, schema } from '../../../db/client'
 
 let comparison: (event: H3Event) => Promise<unknown>
 let catalog: (event: H3Event) => Promise<unknown>
+let seedDir: string
 let dir: string, db: ReturnType<typeof initializeDb>, documentId: number, recordId: number
 
 beforeAll(async () => {
   for (const [name, value] of Object.entries({ createError, defineEventHandler, getQuery, setHeader })) vi.stubGlobal(name, value)
   comparison = (await import('../../../server/api/roster/record-comparison.get')).default
   catalog = (await import('../../../server/api/roster/record-comparison/sources.get')).default
-})
-beforeEach(() => {
-  dir = mkdtempSync(join(tmpdir(), 'comparison-route-cancel-'))
-  vi.stubEnv('NUXT_DB_PATH', join(dir, 'test.sqlite'))
+  // Seed the real native command graph once; each case gets an independent file.
+  seedDir = mkdtempSync(join(tmpdir(), 'comparison-route-cancel-'))
+  vi.stubEnv('NUXT_DB_PATH', join(seedDir, 'test.sqlite'))
   db = initializeDb({ create: true })
   documentId = db.insert(schema.sourceDocument).values({ source: 'jxj', title: 'Synthetic', path: 'synthetic.pdf' }).returning().get().id
   const enterpriseId = db.insert(schema.enterprise).values({ name: 'Synthetic', nameNorm: 'Synthetic' }).returning().get().id
@@ -31,7 +31,14 @@ beforeEach(() => {
       submitNativePlatformQuery(tx, { rawResponse: '{}', interface: 'business_list', queryKey: `synthetic:${n}`, rdjb: '2', queriedAt: '2026-10-18T00:00:00Z' })
     }
   })
-
+  expect(db.$client.pragma('wal_checkpoint(TRUNCATE)')).toEqual([{ busy: 0, log: 0, checkpointed: 0 }])
+  db.$client.close()
+})
+beforeEach(() => {
+  dir = mkdtempSync(join(tmpdir(), 'comparison-route-cancel-'))
+  copyFileSync(join(seedDir, 'test.sqlite'), join(dir, 'test.sqlite'))
+  vi.stubEnv('NUXT_DB_PATH', join(dir, 'test.sqlite'))
+  db = initializeDb()
 })
 afterEach(() => {
   vi.restoreAllMocks()
@@ -39,7 +46,7 @@ afterEach(() => {
   db.$client.close()
   rmSync(dir, { recursive: true, force: true })
 })
-afterAll(() => { vi.unstubAllGlobals() })
+afterAll(() => { vi.unstubAllGlobals(); rmSync(seedDir, { recursive: true, force: true }) })
 
 // Use actual IncomingMessage/ServerResponse lifetimes. The awaited request drain
 // models dispatch after an asynchronous request hook, without replacing readers.

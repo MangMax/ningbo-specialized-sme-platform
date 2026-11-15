@@ -312,3 +312,32 @@ it.each([{ id: 'little_giant', label: '专精特新“小巨人”' }, { id: 'sp
   }
   expect(JSON.stringify(response)).toBe(before)
 })
+
+// Probe the real page/router lifecycle, including the 300ms search debounce.
+it.each([false, true])('route_search_sync_does_not_navigate_after_unmount_narrow_%s', async narrow => {
+  const { view, router } = await setup({}, narrow)
+  const push = vi.spyOn(router, 'push')
+  await router.replace({ path: '/current-enterprises', query: { q: 'synthetic_unmount' } })
+  await flushPromises()
+  view.unmount()
+  views.splice(views.indexOf(view), 1)
+  await new Promise(resolve => setTimeout(resolve, 350))
+  expect(push).not.toHaveBeenCalled()
+})
+
+it('mounted_search_debounces_and_preserves_scope_then_cancels_pending_input_on_unmount', async () => {
+  const { view, router } = await setup({ status: 'expired', district: '鄞州区' })
+  const push = vi.spyOn(router, 'push')
+  const search = view.get('input[aria-label="搜索企业名称、已确认曾用名或统一社会信用代码"]')
+  await search.setValue('  synthetic_search  ')
+  expect(push).not.toHaveBeenCalled()
+  await new Promise(resolve => setTimeout(resolve, 350))
+  await flushPromises()
+  expect(router.currentRoute.value.query).toEqual({ titleCode: 'innovative_sme', status: 'expired', district: '鄞州区', q: 'synthetic_search', pageSize: '1' })
+  expect(push).toHaveBeenCalledTimes(1)
+  await search.setValue('synthetic_pending_input')
+  view.unmount()
+  views.splice(views.indexOf(view), 1)
+  await new Promise(resolve => setTimeout(resolve, 350))
+  expect(push).toHaveBeenCalledTimes(1)
+})
