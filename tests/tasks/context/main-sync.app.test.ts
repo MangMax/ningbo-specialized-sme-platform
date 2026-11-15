@@ -11,6 +11,7 @@ import { dispatchCandidateJobMcp, handleCandidateJobRequest } from '../../../ser
 import { operationLogContext } from '../../../server/utils/operation-log-context'
 import type { AnnualScopeReader } from '../../../server/utils/annual-correspondence'
 import { createImportExecutor } from '../../../server/utils/import-execution'
+import { createEnterpriseReadProcess } from '../../../server/utils/enterprise-read-process'
 
 let root: string, db: ReturnType<typeof initializeDb>
 const previous = process.env.NUXT_LOG_DIR
@@ -93,7 +94,11 @@ it('carries a native archive submission through continuation and annual child jo
     for (let i = 1; i <= 201; i++) db.insert(schema.recordEvent).values({ recordId: record.id, eventType: 'award', year: 2024, batchSeq: i }).run()
   })
   const context = { requestId: 'request-native-chain', traceId: 'trace-main-sync' }
-  const executor = createImportExecutor()
+  // Exercise real IPC and worker logging with the artifact CI builds, avoiding
+  // source-loader compilation during the worker's startup handshake.
+  const executor = createImportExecutor({
+    createWorker: () => createEnterpriseReadProcess(new URL('../../../.output/server/import-execution-worker.mjs', import.meta.url)),
+  })
   try {
     const result = await executor.execute(db, 'commit', {
       idempotencyKey: 'synthetic-chain', sourceKind: 'platform_archive', sourceIdentity: 'synthetic-chain-source',

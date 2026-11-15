@@ -239,7 +239,9 @@ jobs:
         if: always()
         with:
           name: ${{ matrix.group }}-results
-          path: test-results.json
+          path: |
+            test-results.json
+            /tmp/export-188-*/missing-log-event.json
           if-no-files-found: warn
           retention-days: 7
 

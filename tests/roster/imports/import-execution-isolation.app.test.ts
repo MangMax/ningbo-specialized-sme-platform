@@ -1,13 +1,17 @@
-import { importExecutor } from '../../../server/utils/import-execution'
+import { createImportExecutor } from '../../../server/utils/import-execution'
+import { createEnterpriseReadProcess } from '../../../server/utils/enterprise-read-process'
 import { serialize } from 'node:v8'
 import { mkdtempSync, rmSync, renameSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import Database from 'better-sqlite3'
-import { afterAll, afterEach, expect, it } from 'vitest'
+import { afterEach, expect, it } from 'vitest'
 import { initializeDb } from '../../../db/client'
 import { startRosterApi } from './fixtures/import-server'
 import type { RosterImportRequest } from '../../../lib/roster-import-client'
+
+// Exercise CI's compiled worker through real child-process IPC, without JIT startup.
+const createImportExecutionWorker = () => createEnterpriseReadProcess(new URL('../../../.output/server/import-execution-worker.mjs', import.meta.url))
 
 const cleanups: (() => unknown | Promise<unknown>)[] = []
 afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup() })
@@ -23,7 +27,11 @@ it('HTTP import keeps the event loop responsive during native write contention a
   cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
   const path = join(dir, 'roster.db'), db = initializeDb({ create: true,  dbPath: path })
   cleanups.push(() => db.$client.close())
-  const api = await startRosterApi({ db, apiToken: 'synthetic-token' })
+  const executor = createImportExecutor({ createWorker: createImportExecutionWorker })
+  cleanups.push(() => executor.close())
+  // Readiness is separate from lock contention; preflight does not commit rows.
+  await executor.execute(db, 'preflight', input())
+  const api = await startRosterApi({ db, apiToken: 'synthetic-token', executeImport: executor.execute })
   cleanups.push(() => api.close())
   const blocker = new Database(path)
   cleanups.push(() => blocker.close())
@@ -35,7 +43,7 @@ it('HTTP import keeps the event loop responsive during native write contention a
   cleanups.push(() => { clearTimeout(release); if (blocker.inTransaction) blocker.exec('ROLLBACK') })
   const post = () => fetch(`${api.baseUrl}/api/roster/import/commit`, { method: 'POST', headers: { authorization: 'Bearer synthetic-token', 'content-type': 'application/json' }, body: JSON.stringify(input()) })
   const response = await post()
-  expect(response.status).toBe(200)
+  expect(response.status, response.status === 200 ? undefined : await response.clone().text()).toBe(200)
   expect(released).toBe(true)
   const receipt = await response.json()
   expect(receipt).toMatchObject({ status: 'committed', summary: { written: 301, failed: 0 }, items: [{ detail: { rowsWritten: 301, skipped: 0 } }] })
@@ -51,7 +59,6 @@ it('a worker that dies before readiness fails its admitted request without spawn
   const db = initializeDb({ create: true,  dbPath: join(dir, 'roster.db') })
   cleanups.push(() => db.$client.close())
   let starts = 0, allowRecovery = false
-  const { createImportExecutionWorker } = await import('../../../server/utils/import-execution-worker-location')
   const executor = createImportExecutor({ createWorker: () => {
     if (++starts > 1 && allowRecovery) return createImportExecutionWorker()
     if (starts > 1) throw Error('No automatic retry may create another worker')
@@ -75,7 +82,7 @@ async function isolatedApi(options: Parameters<typeof import('../../../server/ut
   cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
   const path = join(dir, 'roster.db'), db = initializeDb({ create: true,  dbPath: path })
   cleanups.push(() => db.$client.close())
-  const executor = createImportExecutor(options)
+  const executor = createImportExecutor({ createWorker: createImportExecutionWorker, ...options })
   let requestStarted!: () => void
   const admitted = new Promise<void>(resolve => { requestStarted = resolve })
   const api = await startHttpFixture({ routes: Object.fromEntries(['preflight', 'commit'].map(action => [
@@ -98,7 +105,6 @@ async function isolatedApi(options: Parameters<typeof import('../../../server/ut
 
 it('a lost response after durable commit returns unknown outcome and same-key HTTP retry never duplicates it', async () => {
   const { EventEmitter } = await import('node:events')
-  const { createImportExecutionWorker } = await import('../../../server/utils/import-execution-worker-location')
   let starts = 0
   const service = await isolatedApi({ createWorker: () => {
     const owned = createImportExecutionWorker(), proxy = new EventEmitter(), drop = ++starts === 1
@@ -127,7 +133,6 @@ it('a lost response after durable commit returns unknown outcome and same-key HT
 }, 20_000)
 
 it('closing admission drains the accepted write without cancellation and rejects overflow before another fork', async () => {
-  const { createImportExecutionWorker } = await import('../../../server/utils/import-execution-worker-location')
   let starts = 0
   const service = await isolatedApi({ maxPending: 1, createWorker: () => { starts++; return createImportExecutionWorker() } })
   const blocker = new Database(service.path)
@@ -224,7 +229,6 @@ it.each([
   { lane: 'oversized exclusive batch', maxBytes: 1 },
   { lane: 'combined backlog bytes', maxBytes: 2 * serialize(input()).byteLength - 1 },
 ])('$lane pressure recovers after the admitted atomic commit', async ({ maxBytes }) => {
-  const { createImportExecutionWorker } = await import('../../../server/utils/import-execution-worker-location')
   let starts = 0
   let dispatched!: () => void, release!: () => void
   const held = new Promise<void>(resolve => { release = resolve })
@@ -265,7 +269,6 @@ it('isolated writes enforce foreign keys and leave no business rows after a trig
 })
 
 it.each(['inode', 'schema', 'migration'] as const)('rejects a changed admitted database %s before a business write', async change => {
-  const { createImportExecutionWorker } = await import('../../../server/utils/import-execution-worker-location')
   let mutate = () => {}
   const service = await isolatedApi({ createWorker: () => {
     const owned = createImportExecutionWorker(), send = owned.postMessage.bind(owned)
@@ -284,6 +287,3 @@ it.each(['inode', 'schema', 'migration'] as const)('rejects a changed admitted d
   expect(await response.json()).toMatchObject({ error: { code: 'import_source_changed' } })
   expect((await fetch(`${service.api.baseUrl}/receipt?idempotencyKey=synthetic:isolation`)).status).toBe(404)
 })
-
-// The real contention case owns the singleton process until suite shutdown.
-afterAll(async () => { await importExecutor.close() })
