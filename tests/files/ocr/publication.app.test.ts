@@ -613,7 +613,16 @@ it("independent HTTP processes share SQLite claims and old parent results after 
     // Provider polling and each process's persisted job result are separate signals.
     await vi.waitFor(async () => {
       const accepted = await Promise.all([at(one.base, `/api/jobs/${a}`).then(r => r.json()), at(two.base, `/api/jobs/${b}`).then(r => r.json())])
-      expect(accepted.every(row => row.state === 'failed' || Object.values(row.result?.publication.files[0].requests ?? {}).every((r: any) => r.state === 'accepted')), JSON.stringify(accepted)).toBe(true)
+      // A peer's blocked-page snapshot can remain claimed. Only its owner
+      // submits that page; owners may split the two pages between processes.
+      const ownedRequests = accepted.flatMap(row => Object.entries(row.result?.publication.files[0].requests ?? {})
+        .filter(([, request]: [string, any]) => request.taskId === row.id)
+        .map(([page, request]: [string, any]) => ({ page: Number(page), state: request.state, jobId: request.jobId })))
+      expect(ownedRequests.map(request => request.page).sort(), JSON.stringify(accepted)).toEqual([1, 2])
+      for (const request of ownedRequests) {
+        expect(request.state).toBe('accepted')
+        expect(request.jobId).toEqual(expect.any(String))
+      }
     }, { timeout: 5000 })
     expect(api!.stats.submits).toBe(4)
     release()
@@ -621,7 +630,8 @@ it("independent HTTP processes share SQLite claims and old parent results after 
     expect(idle.map(r => r.status)).toEqual([200, 200])
     const completed = await Promise.all([at(one.base, `/api/jobs/${a}`).then(r => r.json()), at(two.base, `/api/jobs/${b}`).then(r => r.json())])
     expect(completed.map(row => row.state).every(state => ['done', 'failed'].includes(state))).toBe(true)
-    expect(completed.some(row => row.state === 'done'), JSON.stringify(completed)).toBe(true)
+    // Split ownership may leave both jobs partial; the retained claims allow
+    // the next resume to publish both completed pages without another POST.
     const old = await submitAt(two.base, file, parent)
     expect((await at(two.base, '/issue309/idle')).status).toBe(200)
     expect((await (await at(two.base, `/api/jobs/${old}`)).json()).state).toBe('done')

@@ -1,3 +1,4 @@
+import { executeNativeImport } from '../../roster/imports/fixtures/import-server'
 import { beforeAll, it, expect, vi } from 'vitest'
 import { existsSync, mkdtempSync, rmSync, writeFileSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -46,7 +47,7 @@ it('normal replay and retained relationId verification expose the same literal f
   const request = (key: string, payload: RosterImportRequest['payload']): RosterImportRequest => ({ idempotencyKey: key, sourceKind: 'platform_archive', sourceIdentity: 'tests/598-controlled', payload })
   const router = createRouter()
   for (const action of ['preflight', 'commit'] as const) router.post(`/api/roster/import/${action}`, defineEventHandler(async event => {
-    const out = await handleRosterImportRequest(action, { method: 'POST', headers: { authorization: getHeader(event, 'authorization') }, body: await readBody(event) }, { db, apiToken: '598-isolated-token' })
+    const out = await handleRosterImportRequest(action, { method: 'POST', headers: { authorization: getHeader(event, 'authorization') }, body: await readBody(event) }, { db, apiToken: '598-isolated-token', executeImport: executeNativeImport })
     setResponseStatus(event, out.status)
     return out.body
   }))
@@ -143,4 +144,4 @@ it('normal replay and retained relationId verification expose the same literal f
     db.$client.close(); vi.unstubAllGlobals(); vi.unstubAllEnvs()
     if (!retained) rmSync(dir, { recursive: true, force: true })
   }
-}, 10000)
+})
