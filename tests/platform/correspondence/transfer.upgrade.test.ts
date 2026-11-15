@@ -78,7 +78,7 @@ it('preserves original correspondence fields serialized references audit bytes a
    const sql=`SELECT ${fields.flatMap(c=>[`typeof(${c}) AS k_${c}`,`hex(cast(${c} AS blob)) AS b_${c}`]).join(',')} FROM ${table} ORDER BY id`
    expect(t.prepare(sql).all()).toEqual(f.t.prepare(sql).all())
   }
-  expect(readFileSync(source)).toEqual(original)
+  expect(readFileSync(source).equals(original)).toBe(true)
  }finally{t.close()}
 })
 it.each(['prepared','dropped','created','copied','indexed','validated','receipt'])('rolls back at %s then retries and replays without duplicating or losing rows',stage=>{
@@ -91,11 +91,11 @@ it.each(['prepared','dropped','created','copied','indexed','validated','receipt'
   expect(t.prepare("SELECT * FROM platform_migration_run WHERE run_id='h1c'").get()).toBeUndefined()
   expect(t.pragma('foreign_key_check')).toEqual([])
  }finally{t.close()}
- expect(readFileSync(target)).toEqual(original)
+ expect(readFileSync(target).equals(original)).toBe(true)
  expect(transferCorrespondence({source,target,runId:'h1c'})).toEqual({state:'complete',mapped:4,nulls:1})
  const committed=readFileSync(target)
  expect(transferCorrespondence({source,target,runId:'h1c'})).toEqual({state:'complete',mapped:4,nulls:1})
- expect(readFileSync(target)).toEqual(committed)
+ expect(readFileSync(target).equals(committed)).toBe(true)
 })
 it('fails with concrete original row IDs when a normal legacy reference has no observation alias',()=>{
  const badSource=join(f.root,'unmapped-source.sqlite'),badTarget=join(f.root,'unmapped-target.sqlite')
@@ -105,7 +105,7 @@ it('fails with concrete original row IDs when a normal legacy reference has no o
  s.close();copyFileSync(badSource,badTarget)
  const original=readFileSync(badTarget)
  expect(()=>transferCorrespondence({source:badSource,target:badTarget,runId:'h1c'})).toThrow('Unmapped correspondence rows: [{"id":999,"relation_id":999,"observation_id":null}]')
- expect(readFileSync(badTarget)).toEqual(original)
+ expect(readFileSync(badTarget).equals(original)).toBe(true)
 })
 it('transfers a normally empty target copy without manufacturing correspondence or audit rows',async()=>{
  const empty=await emptyProcessReaderFixture()

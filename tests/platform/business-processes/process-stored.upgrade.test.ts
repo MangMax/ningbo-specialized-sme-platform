@@ -245,7 +245,7 @@ it('authenticates frozen original source alone without recreating missing sealed
  const w=new Database(wrong);w.exec("UPDATE platform_relation SET status='drift' WHERE id=1");w.close()
  const targetBefore=readFileSync(f.target)
  expect(()=>finalizeProcessStored({...f,legacySource:wrong})).toThrow(/provenance binding conflict/)
- expect(readFileSync(f.target)).toEqual(targetBefore)
+ expect(readFileSync(f.target).equals(targetBefore)).toBe(true)
  expect(finalizeProcessStored(f).queryReady).toBe(true)
  const t=new Database(f.target)
  try{expect(t.prepare("SELECT count(*) n FROM platform_observation_archive_ref WHERE field='legacyRowSnapshot' AND owner_id IN(1,2)").get()).toEqual({n:0});expect(t.prepare('SELECT exact_stored_origin FROM platform_business_projection WHERE observation_id=1').get()).toEqual({exact_stored_origin:'legacy_source'})}finally{t.close()}
@@ -276,7 +276,7 @@ it.each([
  try {t.exec(sql)} finally {t.close()}
  const before=readFileSync(target)
  expect(()=>finalizeProcessStored({...f,target})).toThrow()
- expect(readFileSync(target)).toEqual(before)
+ expect(readFileSync(target).equals(before)).toBe(true)
 })
 
 it('preserves BOM-prefixed raw TEXT SQL semantics through full migration and replay', async () => {

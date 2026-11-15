@@ -103,12 +103,12 @@ it('keeps ordinary runtime and three source worker guards closed on the migrated
       if(kind==='read')expect(result).toMatchObject({type:'failure',code:'enterprise_read_failed'})
     }finally{await worker.terminate()}
   }
-  expect(readFileSync(path)).toEqual(before)
+  expect(readFileSync(path).equals(before)).toBe(true)
 },30000)
 
 it('replays the completed offline transfer without overwriting subsequent normal business writes',()=>{
  const before=projectionManifest(target),bytes=readFileSync(target.name)
  expect(transferCorrespondence({source:join(f.root,'actual-h1c-source.sqlite'),target:target.name,runId:'actual-h1c'})).toMatchObject({state:'complete'})
  expect(projectionManifest(target)).toBe(before)
- expect(readFileSync(target.name)).toEqual(bytes)
+ expect(readFileSync(target.name).equals(bytes)).toBe(true)
 })

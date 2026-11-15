@@ -48,7 +48,7 @@ it('maps observations and current assignment preserving original fields and byte
   expect(t.prepare("select r.owner_id id,a.storage_class kind,a.bytes from platform_observation_archive_ref r join platform_archive_value a on a.id=r.archive_id where r.field='rawFields' order by id").all()).toEqual(bytes)
   expect(t.prepare('select * from platform_legacy_relation_alias order by old_id').all()).toEqual([{old_id:55,observation_id:55},{old_id:56,observation_id:56}])
   expect(t.pragma('foreign_key_check')).toEqual([]); t.close()
-  expect(readFileSync(f.source)).toEqual(original)
+  expect(readFileSync(f.source).equals(original)).toBe(true)
   expect(upgradeObservations({...f,transformVersion:'t05a-observation-v3'})).toEqual(result)
 })
 
@@ -62,7 +62,7 @@ it('transfers an unindexed relation with genuine NULL indexing facts and exact s
   expect(t.prepare('select observation_id,revision,origin,actor,recorded_at,command_receipt_id from platform_observation_assignment where observation_id=56').get()).toEqual({observation_id:56,revision:1,origin:'migrated_current',actor:null,recorded_at:null,command_receipt_id:null})
   expect(t.prepare('select * from platform_legacy_relation_alias order by old_id').all()).toEqual([{old_id:55,observation_id:55},{old_id:56,observation_id:56}])
   expect(t.pragma('foreign_key_check')).toEqual([]);t.close()
-  expect(readFileSync(f.source)).toEqual(sourceBytes)
+  expect(readFileSync(f.source).equals(sourceBytes)).toBe(true)
   expect(upgradeObservations(f)).toEqual(result)
 })
 it.each([false,true])('rolls back a whole batch and resumes with no duplicate archives or assignments (unindexed=%s)', (unindexed) => {
@@ -121,7 +121,7 @@ it('refuses unsafe identities and reports dangling owners without writes',()=>{
   const f=fixture(),s=new Database(f.source)
   s.exec('PRAGMA foreign_keys=OFF; update platform_relation set enterprise_id=987 where id=55');s.close()
   const before=readFileSync(f.target),result=upgradeObservations(f)
-  expect(result.state).toBe('blocked');expect(result.unresolved).toEqual([{kind:'source_foreign_key',oldId:55,reason:'platform_relation -> enterprise'}]);expect(readFileSync(f.target)).toEqual(before)
+  expect(result.state).toBe('blocked');expect(result.unresolved).toEqual([{kind:'source_foreign_key',oldId:55,reason:'platform_relation -> enterprise'}]);expect(readFileSync(f.target).equals(before)).toBe(true)
   const g=fixture(),x=new Database(g.source)
   x.exec('PRAGMA foreign_keys=OFF; update platform_relation set id=0 where id=55');x.close()
   expect(()=>upgradeObservations(g)).toThrow('Unsafe source identity')
@@ -289,7 +289,7 @@ it('reports all true orphan source references even for unindexed relations witho
   expect(result.state).toBe('blocked')
   expect(result.unresolved.map(x=>x.reason).sort()).toEqual(['platform_relation -> enterprise','platform_relation -> platform_query'])
   expect(result.unresolved.every(x=>x.oldId===56)).toBe(true)
-  expect(readFileSync(f.target)).toEqual(before)
+  expect(readFileSync(f.target).equals(before)).toBe(true)
 })
 
 it('keeps unknown page positions empty keys and confirmed ownership for unindexed history',()=>{

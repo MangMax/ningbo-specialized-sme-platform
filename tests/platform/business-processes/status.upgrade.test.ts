@@ -100,5 +100,5 @@ it('refuses begun migration, unknown incoming owners and receipt collisions with
   const bytes = readFileSync(target), originalReceipt = readFileSync(join(root, 'installed.json'))
   expect(() => withFrozenSource(source, frozen => installBusinessStatusPrerequisite(target, frozen, join(root, 'installed.json')))).toThrow()
   expect(readFileSync(target).equals(bytes)).toBe(true)
-  expect(readFileSync(join(root, 'installed.json'))).toEqual(originalReceipt)
+  expect(readFileSync(join(root, 'installed.json')).equals(originalReceipt)).toBe(true)
 })

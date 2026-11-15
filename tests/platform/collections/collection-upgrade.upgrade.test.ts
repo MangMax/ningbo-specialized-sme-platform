@@ -31,7 +31,7 @@ it('moves collection facts and raw bytes with ordered pages without changing fro
   const f = fixture(), before = readFileSync(f.source)
   const result = upgradeCollections(f)
   expect(result.copiedCount).toBe(1)
-  expect(readFileSync(f.source)).toEqual(before)
+  expect(readFileSync(f.source).equals(before)).toBe(true)
   const t = new Database(f.target)
   expect(t.prepare('select id,status,evidence_status,queried_at,created_at,error_message from platform_collection').all()).toEqual([{ id:7,status:'failed',evidence_status:'auth_failed',queried_at:'原时间',created_at:'原创建',error_message:'原失败' }])
   expect(t.prepare('select ordinal,page_no,status,fetched_count,sequence_start,sequence_end from platform_collection_page order by ordinal').all()).toEqual([
@@ -238,7 +238,7 @@ it('holds the rollback journal read lock against writes and WAL switches through
     } finally { writer.close() }
   } })
   expect(result.copiedCount).toBe(1)
-  expect(readFileSync(f.source)).toEqual(before)
+  expect(readFileSync(f.source).equals(before)).toBe(true)
 })
 
 it('CLI rejects invalid identities and persistent WAL before copying a target', () => {
@@ -269,7 +269,7 @@ it('CLI keeps a frozen source through copy and resumes in a separate process', (
   }
   expect(receipts[0]).toBe(receipts[1])
   expect(JSON.parse(receipts[0]!).copiedCount).toBe(1)
-  expect(readFileSync(f.source)).toEqual(before)
+  expect(readFileSync(f.source).equals(before)).toBe(true)
 }, 15000)
 
 it('blocks independent process writers after source hashing through the final checkpoint', () => {

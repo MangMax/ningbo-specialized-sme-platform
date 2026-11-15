@@ -94,7 +94,7 @@ it.each(['render.pdf', 'render.v1.pdf', 'nested.v1/render.final.pdf'])('public r
   const foreign = await rest(pageUrl)
   expect(foreign.status).toBe(409)
   expect(await foreign.json()).toMatchObject({ data: { code: 'file_content_conflict', reason: 'page_source_mismatch' } })
-  expect(readFileSync(join(root, fileName))).toEqual(original)
+  expect(readFileSync(join(root, fileName)).equals(original)).toBe(true)
   rmSync(manifestPath)
   const legacyPage = await rest(pageUrl)
   expect(legacyPage.status).toBe(200)

@@ -23,7 +23,7 @@ it('backs up committed WAL cells into an independent standalone snapshot',async(
  const fixed=readFileSync(snapshot);s.close()
  // Acquisition is finished; later changes to original cannot change the artifact.
  d.exec("INSERT INTO facts VALUES(4,'later')");d.close()
- expect(readFileSync(snapshot)).toEqual(fixed)
+ expect(readFileSync(snapshot).equals(fixed)).toBe(true)
 })
 it('rejects missing sources and existing snapshot aliases without overwriting bytes',async()=>{
  const root=mkdtempSync(join(process.env.APPLY_STORED_EVIDENCE_DIR??tmpdir(),'snapshot-reject-'))
@@ -34,7 +34,7 @@ it('rejects missing sources and existing snapshot aliases without overwriting by
  await expect(createOfflineSnapshot(source,source)).rejects.toThrow()
  const alias=source+'.alias';linkSync(source,alias)
  await expect(createOfflineSnapshot(source,alias)).rejects.toThrow()
- expect(readFileSync(source)).toEqual(before)
+ expect(readFileSync(source).equals(before)).toBe(true)
 })
 import {linkSync} from 'node:fs'
 import {execFileSync} from 'node:child_process'

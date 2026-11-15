@@ -48,7 +48,7 @@ describe('database bootstrap', () => {
         .run(),
     ).toThrow()
     readOnly.$client.close()
-    expect(readFileSync(readOnlyPath)).toEqual(before)
+    expect(readFileSync(readOnlyPath).equals(before)).toBe(true)
   })
 
   it('enforces (enterprise, title, source) uniqueness on records', () => {

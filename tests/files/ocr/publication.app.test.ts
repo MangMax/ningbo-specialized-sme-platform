@@ -966,7 +966,7 @@ it('B2 async rendering rejects replacement without touching pages and restores t
   await whenIdle()
   expect((await status(bad)).state).toBe('failed')
   expect((await status(bad)).result.files[0].error).toContain('file_content_conflict')
-  expect(readFileSync(manifestPath)).toEqual(manifest)
+  expect(readFileSync(manifestPath).equals(manifest)).toBe(true)
   writeFileSync(join(filesDir, file), original)
   const recovered = await submitRender([file])
   await whenIdle()

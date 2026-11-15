@@ -100,7 +100,7 @@ it('runs readonly preflight and actual CLI after populated schema0 full pipeline
   const sourceBytes=readFileSync(source),before=readFileSync(target)
   const preflight=execFileSync(process.execPath,['upgrade/run-legacy-provenance.mjs',source,target,join(f.root,'preflight755'),'cli755','--preflight'],{encoding:'utf8'})
   expect(JSON.parse(preflight)).toEqual({state:'ready',rows:2,version:71613})
-  expect(readFileSync(target)).toEqual(before)
+  expect(readFileSync(target).equals(before)).toBe(true)
   const output=execFileSync(process.execPath,['upgrade/run-legacy-provenance.mjs',source,target,join(f.root,'cli755'),'cli755'],{encoding:'utf8'})
   expect(JSON.parse(output)).toEqual({state:'complete',rows:2,version:71613})
   const old=new Database(f.legacySource,{readonly:true}),s=new Database(source,{readonly:true}),t=new Database(target)
@@ -138,7 +138,7 @@ it('runs readonly preflight and actual CLI after populated schema0 full pipeline
     expect(()=>requireLegacyProvenanceReady(t)).not.toThrow()
     expect(old.pragma('user_version',{simple:true})).toBe(0)
   } finally {old.close();s.close();t.close()}
-  expect(readFileSync(source)).toEqual(sourceBytes)
+  expect(readFileSync(source).equals(sourceBytes)).toBe(true)
 }, 15000)
 it.each(['schema','batch','promotion'] as const)('rolls back atomic %s and checkpoint then retries the same run',stage=>{
   let calls=0
@@ -173,7 +173,7 @@ it('retains normal new collection synthetic lawful supplement and receipt byte f
   } finally {t.close()}
   const bytes=readFileSync(target)
   expect(complete('replay755')).toEqual({state:'complete',rows:2,version:71613})
-  expect(readFileSync(target)).toEqual(bytes)
+  expect(readFileSync(target).equals(bytes)).toBe(true)
 })
 it.each(['UPDATE platform_collection_legacy_provenance SET created_at=created_at WHERE collection_id=11','DELETE FROM platform_collection_legacy_provenance WHERE collection_id=11','INSERT OR REPLACE INTO platform_collection_legacy_provenance SELECT * FROM platform_collection_legacy_provenance WHERE collection_id=11'])('rejects insert-only mutation %s',statement=>{
   complete()
@@ -235,7 +235,7 @@ it('rejects FK OFF and incomplete readiness at the schema boundary',()=>{
   } finally {t.close()}
   const before=readFileSync(target)
   expect(()=>complete()).toThrow('Unsupported difference reference schema version')
-  expect(readFileSync(target)).toEqual(before)
+  expect(readFileSync(target).equals(before)).toBe(true)
 })
 it('rejects same-file source and target',()=>{
   expect(()=>indexLegacyProvenance({source,target:source,runId:'same'})).toThrow('Distinct isolated')
@@ -244,7 +244,7 @@ it('rejects a drifted predecessor without modifying its bytes',()=>{
   const changed=new Database(target);changed.exec("UPDATE platform_collection SET queried_at='drift' WHERE id=11");changed.close()
   const drift=readFileSync(target)
   expect(()=>complete()).toThrow('unchanged independent predecessor')
-  expect(readFileSync(target)).toEqual(drift)
+  expect(readFileSync(target).equals(drift)).toBe(true)
 })
 it.each([
     "DELETE FROM platform_legacy_query_alias WHERE old_id=11",
@@ -259,7 +259,7 @@ it.each([
     s.exec(mutation);s.close();copyFileSync(src,dst)
     const before=readFileSync(dst)
     expect(()=>indexLegacyProvenance({source:src,target:dst,runId:'bad'})).toThrow()
-    expect(readFileSync(dst)).toEqual(before)
+    expect(readFileSync(dst).equals(before)).toBe(true)
 })
 it.each([
   ['original BLOB metadata',"UPDATE platform_query_legacy_provenance SET source_identity=X'78' WHERE query_id=11",'Unsupported original metadata storage class'],
@@ -287,7 +287,7 @@ it.each([
   } finally {s.close()}
   copyFileSync(src,dst);const before=readFileSync(dst)
   expect(()=>indexLegacyProvenance({source:src,target:dst,runId:'corrupt'})).toThrow(error)
-  expect(readFileSync(dst)).toEqual(before)
+  expect(readFileSync(dst).equals(before)).toBe(true)
 })
 it('preserves absent provenance metadata on indexing and replay',()=>{
   const dst=join(emptyRoot,'empty71613.sqlite');copyFileSync(emptySource,dst)
@@ -299,7 +299,7 @@ it('preserves absent provenance metadata on indexing and replay',()=>{
   } finally {t.close()}
   const bytes=readFileSync(dst)
   expect(indexLegacyProvenance({source:emptySource,target:dst,runId:'empty'})).toEqual({state:'complete',rows:0,version:71613})
-  expect(readFileSync(dst)).toEqual(bytes)
+  expect(readFileSync(dst).equals(bytes)).toBe(true)
 })
 it.each(['checkpoint','historical collection','unknown version','source binding'] as const)('refuses completed replay drift in %s without rewriting evidence',kind=>{
   complete('drift755')
@@ -316,7 +316,7 @@ it.each(['checkpoint','historical collection','unknown version','source binding'
   } finally {t.close()}
   const bytes=readFileSync(target)
   expect(()=>indexLegacyProvenance({source:src,target,runId:'drift755'})).toThrow()
-  expect(readFileSync(target)).toEqual(bytes)
+  expect(readFileSync(target).equals(bytes)).toBe(true)
 })
 it.each([
   ['blob archive','blob',Buffer.from('{}')],
@@ -341,7 +341,7 @@ it.each(['source unknown','source incomplete','target incomplete'] as const)('re
   } finally {changed.close()}
   const bytes=readFileSync(dst)
   expect(()=>indexLegacyProvenance({source:src,target:dst,runId:'completion'})).toThrow(kind==='source unknown'?'Unsupported difference reference schema version':'Difference reference migration incomplete')
-  expect(readFileSync(dst)).toEqual(bytes)
+  expect(readFileSync(dst).equals(bytes)).toBe(true)
 })
 it('rolls back the first batch checkpoint and retains originals immutable and sealed',()=>{
   expect(()=>indexLegacyProvenance({source,target,runId:'first-batch',batchSize:1,beforeCommit:stage=>{if(stage==='batch')throw new Error('first batch cancellation')}})).toThrow('first batch cancellation')

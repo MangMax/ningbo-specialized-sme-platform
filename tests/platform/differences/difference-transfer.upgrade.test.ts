@@ -81,7 +81,7 @@ it('preserves every PK cell storage class original serialized byte and old ledge
     expect(t.prepare(`SELECT ${columns} FROM ${name} ORDER BY 1`).all(),name+' entire pipeline').toEqual(legacy.prepare(`SELECT ${columns} FROM ${name} ORDER BY 1`).all())
    }
   } finally {legacy.close()}
-  expect(readFileSync(source)).toEqual(original)
+  expect(readFileSync(source).equals(original)).toBe(true)
   const before=s.prepare("SELECT type,name,tbl_name,sql FROM sqlite_schema WHERE tbl_name='difference_reason' ORDER BY type,name").all() as {sql:string|null}[]
   expect(t.prepare("SELECT type,name,tbl_name,sql FROM sqlite_schema WHERE tbl_name='difference_reason' ORDER BY type,name").all()).toEqual(before.map(row=>({...row,sql:row.sql?.replace(/REFERENCES\s+([`"]?)platform_query\1/gi,'REFERENCES platform_collection').replace(/REFERENCES\s+([`"]?)platform_relation\1/gi,'REFERENCES platform_business_observation')??null})))
  } finally {s.close();t.close()}
@@ -89,7 +89,7 @@ it('preserves every PK cell storage class original serialized byte and old ledge
 it.each(['prepared','dropped','created','copied','indexed','validated','receipt'])('rolls back the whole physical transfer at %s then retries safely', stage => {
  const original = readFileSync(target)
  expect(()=>transferDifferenceReferences({source,target,runId:'rollback749',beforeCommit:at=>{if(at===stage)throw new Error('normal transaction cancellation')}})).toThrow('normal transaction cancellation')
- expect(readFileSync(target)).toEqual(original)
+ expect(readFileSync(target).equals(original)).toBe(true)
  const t = new Database(target)
  try {expect(t.pragma('foreign_keys',{simple:true})).toBe(1);expect(t.pragma('user_version',{simple:true})).toBe(71611);expect(t.pragma('foreign_key_check')).toEqual([])} finally {t.close()}
  expect(transferDifferenceReferences({source,target,runId:'rollback749'})).toEqual({state:'complete',rows:5,queries:3,relations:3})
@@ -102,7 +102,7 @@ it('fails with decision PK and original missing query and relation IDs without c
  db.insert(schema.differenceReason).values({...scope,id:999,evidenceQueryId:999,evidenceRelationId:998,recordedAt:'999'}).run()
  old.close();copyFileSync(src,dst);const bytes=readFileSync(dst)
  expect(()=>transferDifferenceReferences({source:src,target:dst,runId:'missing749'})).toThrow('Unmapped difference rows: [{"id":999,"evidence_query_id":999,"evidence_relation_id":998,"collection_id":null,"observation_id":null}]')
- expect(readFileSync(dst)).toEqual(bytes)
+ expect(readFileSync(dst).equals(bytes)).toBe(true)
 })
 it('retains necessary incoming FK owners their indexes and sequence', () => {
  const src=join(f.root,'incoming-71611.sqlite'),dst=join(f.root,'incoming-target.sqlite');copyFileSync(source,src)

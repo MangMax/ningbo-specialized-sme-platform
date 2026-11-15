@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: engineering-${{ github.ref }}
@@ -16,7 +17,7 @@ jobs:
   compile:
     name: Typecheck
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
@@ -37,7 +38,7 @@ jobs:
   build:
     name: Build test artifact
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
@@ -61,7 +62,7 @@ jobs:
     needs: build
     name: Tests ${{ matrix.shard }}/6
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 5
     strategy:
       fail-fast: false
       matrix:
@@ -81,7 +82,27 @@ jobs:
         with:
           name: test-build
       - run: tar -xzf test-build.tar.gz
-      - run: pnpm test --shard=${{ matrix.shard }}/6 --maxWorkers 1 --no-file-parallelism --reporter=default --reporter=json --outputFile=test-results.json
+      - name: Run tests within the workflow time budget
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          run_started_at=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" --jq .run_started_at)
+          started=$(date -d "$run_started_at" +%s)
+          elapsed=$(( $(date +%s) - started ))
+          remaining=$(( 300 - elapsed ))
+          echo "Workflow elapsed: ${elapsed}s; remaining test budget: ${remaining}s" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$remaining" -le 0 ]; then
+            echo '::error::Workflow exceeded its five-minute budget before tests started'
+            exit 1
+          fi
+          result=0
+          timeout --signal=TERM --kill-after=5s "${remaining}s" pnpm test --shard=${{ matrix.shard }}/6 --maxWorkers 1 --no-file-parallelism --reporter=default --reporter=json --outputFile=test-results.json || result=$?
+          elapsed=$(( $(date +%s) - started ))
+          echo "Workflow elapsed after tests: ${elapsed}s (exit ${result})" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$result" -eq 124 ] || [ "$result" -eq 137 ]; then
+            echo '::error::Five-minute workflow budget exceeded; optimize the slow suites before retrying'
+          fi
+          exit "$result"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:

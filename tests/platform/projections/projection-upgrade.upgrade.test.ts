@@ -152,7 +152,7 @@ it('holds the frozen source against separate process UPDATE and WAL during both 
     const result=spawnSync(process.execPath,['-e',code,f.source],{encoding:'utf8'})
     expect(result.status).toBe(0);expect(result.stdout.trim().split('\n')).toEqual(['SQLITE_BUSY','SQLITE_BUSY']);probes.push(phase)
   }})
-  expect(new Set(probes)).toEqual(new Set(['observations','versions']));expect(readFileSync(f.source)).toEqual(before)
+  expect(new Set(probes)).toEqual(new Set(['observations','versions']));expect(readFileSync(f.source).equals(before)).toBe(true)
 })
 let cli: ReturnType<typeof fixture>, oneShot: string
 beforeAll(()=>{

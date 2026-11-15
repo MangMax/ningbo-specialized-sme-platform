@@ -13,7 +13,7 @@
 - `upgrade`: historical schema, upgrade or source-transfer tests; `.upgrade.test.ts` files. Historical adapters stay explicit and do not become current runtime fallbacks.
 - `app`: real Nuxt/Nitro or business-worker process tests; `.app.test.ts` files. `http` or `mcp` alone does not establish this execution class.
 - `test` runs all three projects. `test:runtime`, `test:upgrade` and `test:app` select a class without weakening the full entry point. Classify by actual execution, including fixture adapters, rather than filename guesses.
-- CI distributes the full suite across six isolated runners with Vitest `--shard`; each runner uses one worker. Typecheck and build run independently; build publishes one artifact reused by every test runner. Tests never invoke a build themselves. Run `pnpm build` before local app tests that consume `.output`. The final `check` requires every shard and compile job to pass. Preserve per-shard JSON reports to diagnose slow suites and failures.
+- CI distributes the full suite across six isolated runners with Vitest `--shard`; each runner uses one worker. Typecheck and build run independently; build publishes one artifact reused by every test runner. Tests never invoke a build themselves. Run `pnpm build` before local app tests that consume `.output`. The final `check` requires every shard and compile job to pass. Preserve per-shard JSON reports to diagnose slow suites and failures. CI uses a five-minute workflow budget measured from the current run attempt start, including setup and queue time. Tests receive only the remaining budget; exceeding it fails the check. Use job logs when timeout prevents the final JSON report. Timeout never counts as a semantic pass.
 
 ## Test surface
 

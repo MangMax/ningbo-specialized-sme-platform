@@ -81,7 +81,7 @@ async function roundTrip(disabled?: typeof fields[number]) {
   expect(completed.status).toBe(204); expect(completed.headers.get('upload-offset')).toBe(String(payload.length))
   const path = `jxj/announcement/2026/4/${filename}`
   expect(decodeURIComponent(completed.headers.get('x-upload-path')!)).toBe(path)
-  expect(readFileSync(join(files, path))).toEqual(payload)
+  expect(readFileSync(join(files, path)).equals(payload)).toBe(true)
   expect(existsSync(join(incoming, id + '.json'))).toBe(false)
   const events = []
   for (const [response, phase, method, outcome, expectedFacts] of [

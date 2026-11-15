@@ -151,7 +151,7 @@ it('actual upload and render log once per semantic phase and retain idempotence 
   for (const page of ['p004.png', 'p005.png']) copyFileSync(join(pageDir, 'p001.png'), join(pageDir, page))
   expect((await call('/api/pdf-pages', 'POST', { file: relPath, force: true })).body).toMatchObject({ written: 3, removed: 2 })
   expect(readdirSync(pageDir).filter(n => n.endsWith('.png'))).toEqual(['p001.png', 'p002.png', 'p003.png'])
-  expect(readFileSync(join(files, relPath))).toEqual(bytes)
+  expect(readFileSync(join(files, relPath)).equals(bytes)).toBe(true)
   const rendered = await logs(`fileId=${fileId}`, 'file.render', 3)
   expect(rendered.filter(r => r.operation === 'file.render').map(r => r.outcome).sort()).toEqual(['skipped', 'success', 'success'])
   expect(rendered.filter(r => r.operation === 'file.render.page').map(r => r.page).sort()).toEqual([1, 1, 2, 2, 3, 3])
@@ -315,7 +315,7 @@ it('soft removal and verified restoration retain source bytes OCR pages and auth
   const control = { expectedRevision: 0, idempotencyKey: 'PRIVATE186_REMOVE_KEY', actor: 'PRIVATE186_ACTOR', basis: 'PRIVATE186_BASIS' }
   expect((await call(`/api/files/${file.id}`, 'DELETE', control)).body).toMatchObject({ removed: true, diskDeleted: false })
   expect((await call(`/api/files/${file.id}/restore`, 'POST', { ...control, expectedRevision: 1, idempotencyKey: 'PRIVATE186_RESTORE_KEY' })).status).toBe(200)
-  expect(readFileSync(join(files, file.relPath))).toEqual(original)
+  expect(readFileSync(join(files, file.relPath)).equals(original)).toBe(true)
   expect((await call(pageUrl)).body.markdown).toContain(privateText)
   expect((await call(`/api/files/${file.id}/maintenance`)).body).toMatchObject({ total: 2, revision: 2, rows: [{ action: 'remove' }, { action: 'restore' }] })
   const entries = await logs(`fileId=${file.id}`, 'file.maintenance.restore')

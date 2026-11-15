@@ -1,17 +1,33 @@
 import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { migrate } from 'drizzle-orm/better-sqlite3/migrator'
-import { copyFileSync, mkdtempSync } from 'node:fs'
+import { copyFileSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { expect, it } from 'vitest'
+import { afterAll, expect, it } from 'vitest'
 import { upgradeCollections } from '../../../upgrade/collections'
 import { upgradeObservations } from '../../../upgrade/observations'
 import { upgradeProjections } from '../../../upgrade/projections'
 import { finalizeObservations } from '../../../upgrade/finalize-observations'
 
+const roots: string[] = []
+afterAll(() => { if (!process.env.T05C_EVIDENCE_DIR) for (const root of roots) rmSync(root, {recursive:true,force:true}) })
+let pristine: ReturnType<typeof buildFixture> | undefined
+function copyFixture<T extends ReturnType<typeof buildFixture>>(base: T): T {
+  const root = mkdtempSync(join(process.env.T05C_EVIDENCE_DIR ?? tmpdir(), 't05c-'))
+  roots.push(root)
+  const source = join(root, 'source.sqlite'), target = join(root, 'target.sqlite')
+  copyFileSync(base.source, source); copyFileSync(base.target, target)
+  return {...base, root, source, target}
+}
 function fixture(seed?:(s:Database.Database)=>void) {
+  if (seed) return buildFixture(seed)
+  pristine ??= buildFixture()
+  return copyFixture(pristine)
+}
+function buildFixture(seed?:(s:Database.Database)=>void) {
   const root=mkdtempSync(join(process.env.T05C_EVIDENCE_DIR??tmpdir(),'t05c-'))
+  roots.push(root)
   const source=join(root,'source.sqlite'),target=join(root,'target.sqlite'),s=new Database(source)
   migrate(drizzle(s),{migrationsFolder:'db/migrations'})
   s.exec(`insert into platform_query(id,interface,query_key,rdjb,queried_at,status,created_at) values(1,'apply_list','a','2','t','success','c'),(2,'business_list','b','3','t','success','c'),(3,'recognized_list','r','1','t','success','c');
@@ -68,7 +84,7 @@ it.each(['source','target','checkpoint','missing-phase','wrong-phase','wrong-sou
   if(mode==='missing-phase')t.exec("update platform_migration_run set state='running' where run_id='t05b'")
   t.close();const before=readFileSync(f.target)
   expect(()=>finalizeObservations({...f,...(mode==='wrong-phase'?{observationRunId:'other'}:{}),...(mode==='wrong-source'?{source:f.target}:{})})).toThrow()
-  expect(readFileSync(f.target)).toEqual(before)
+  expect(readFileSync(f.target).equals(before)).toBe(true)
 })
 it('performs typed final target CRUD and archive alias ownership without old relation joins',()=>{
   const f=fixture();finalizeObservations(f);const t=new Database(f.target);t.pragma('foreign_keys=ON')
@@ -124,7 +140,7 @@ it.each([0,1])('rejects NULL owner wrong page wrong source and REPLACE attacks w
 })
 it('replays finalized target without rewriting and refuses post-final source target ref and schema drift',()=>{
   const f=fixture();finalizeObservations(f);const before=readFileSync(f.target)
-  finalizeObservations(f);expect(readFileSync(f.target)).toEqual(before)
+  finalizeObservations(f);expect(readFileSync(f.target).equals(before)).toBe(true)
   const t=new Database(f.target);t.exec("update platform_business_observation set source_relation_key='drift' where id=11");t.close()
   expect(()=>finalizeObservations(f)).toThrow(/drift/)
 })
@@ -138,7 +154,7 @@ it('CLI emits raw source target FK trigger and receipt manifests then restarts i
   expect(readFileSync(join(e,'schema-manifest.json'),'utf8')).toContain('platform_observation_archive_ref')
   const next=join(f.root,'replay');mkdirSync(next);args[3]=next
   const replay=spawnSync(process.execPath,args,{encoding:'utf8'});expect(replay.status,replay.stderr).toBe(0)
-  expect(readFileSync(join(e,'target-manifest.jsonl'))).toEqual(readFileSync(join(next,'target-manifest.jsonl')))
+  expect(readFileSync(join(e,'target-manifest.jsonl')).equals(readFileSync(join(next,'target-manifest.jsonl')))).toBe(true)
 })
 
 it('preserves indexed shared versions hashes sealed original refs aliases assignments and duplicate unknown pages',()=>{
@@ -181,7 +197,7 @@ it('retains the frozen source lock throughout populated DDL and receipt stages',
     const result=spawnSync(process.execPath,['--input-type=module','-e',`import Database from 'better-sqlite3';const s=new Database(process.argv[1]);s.pragma('busy_timeout=1');try{s.exec("update platform_relation set relation_key='changed' where id=11");process.stdout.write('UNEXPECTED_WRITE')}catch(e){process.stdout.write(e.code)}finally{s.close()}`,f.source],{encoding:'utf8',timeout:5000})
     expect(result.stdout,result.stderr).toBe('SQLITE_BUSY');observed.push(stage)
   }})
-  expect(observed).toContain('receipt');expect(observed).toContain('dropped');expect(readFileSync(f.source)).toEqual(before)
+  expect(observed).toContain('receipt');expect(observed).toContain('dropped');expect(readFileSync(f.source).equals(before)).toBe(true)
 })
 it('refuses finalized checkpoint metadata tampering',()=>{
   const f=fixture();finalizeObservations(f)
@@ -190,7 +206,12 @@ it('refuses finalized checkpoint metadata tampering',()=>{
 })
 
 import { finalizeCollectionScopes } from '../../../upgrade/finalize-observations'
+let pristineScope: ReturnType<typeof buildScopeFixture> | undefined
 function scopeFixture() {
+  pristineScope ??= buildScopeFixture()
+  return copyFixture(pristineScope)
+}
+function buildScopeFixture() {
   const f=fixture(s=>{
     const values=[`{titleScope:{rdjb:['2','3','2',4,null,'','  ']}}`,JSON.stringify({titleScope:{rdjb:'["1","2"]'}}),'{bad',JSON.stringify({titleScope:{rdjb:'plain'}}),null,JSON.stringify({titleScope:{rdjb:'"2"'}}),JSON.stringify({titleScope:{rdjb:''}}),JSON.stringify({titleScope:{rdjb:'  '}}),null,null]
     for(let i=0;i<values.length;i++)s.prepare("insert into platform_query(id,interface,query_key,rdjb,queried_at,status,collection_evidence,created_at) values(?,'apply_list',?,'','t',?,?, 'c')").run(10+i,'scope'+i,i===4?'not_queried':i===8?'no_record':'failed',values[i])
@@ -208,7 +229,7 @@ it('finalizes collection scopes against frozen legacy SQL and complete PK byte o
   expect(a.prepare('select collection_id from platform_query_title_scope_error order by collection_id').all()).toEqual(errors)
   expect(a.pragma('user_version',{simple:true})).toBe(71606)
   expect(a.pragma('foreign_key_check')).toEqual([]);a.close()
-  const bytes=readFileSync(f.target);finalizeCollectionScopes(f);expect(readFileSync(f.target)).toEqual(bytes)
+  const bytes=readFileSync(f.target);finalizeCollectionScopes(f);expect(readFileSync(f.target).equals(bytes)).toBe(true)
 })
 
 // Independent SQL oracle: frozen migration0027 expressions, no extractor/finalizer expectations.
@@ -250,7 +271,7 @@ it('matches populated frozen migration0027 oracle and preserves every unrelated 
 it.each(['dropped','created','copied','indexed','receipt'])('successor rolls back all DDL bytes triggers marker and receipt at %s then retries',stage=>{
   const f=scopeFixture(),before=readFileSync(f.target)
   expect(()=>finalizeCollectionScopes({...f,beforeCommit:s=>{if(s===stage)throw new Error('successor fault')}})).toThrow('successor fault')
-  expect(readFileSync(f.target)).toEqual(before)
+  expect(readFileSync(f.target).equals(before)).toBe(true)
   expect(finalizeCollectionScopes(f).state).toBe('complete')
 })
 it.each(['source','fact','null-owner','wrong-owner','missing-alias','incoming','trigger','index','missing-t04','missing-t05a','missing-t05b','missing-t05c','wrong-run','inode'])('successor refuses %s before writing',mode=>{
@@ -268,7 +289,7 @@ it.each(['source','fact','null-owner','wrong-owner','missing-alias','incoming','
   if(mode.startsWith('missing-t'))t.prepare('update platform_migration_run set state=? where run_id=?').run('running',mode.slice(8))
   t.close();const before=readFileSync(f.target)
   expect(()=>finalizeCollectionScopes({...f,...(mode==='wrong-run'?{finalizationRunId:'wrong'}:{}),...(mode==='inode'?{source:f.target}:{})})).toThrow()
-  expect(readFileSync(f.target)).toEqual(before)
+  expect(readFileSync(f.target).equals(before)).toBe(true)
 })
 it.each(['source','source-schema','fact','schema','receipt','checkpoint','predecessor-receipt','predecessor-checkpoint','wrong-predecessor'])('completed successor replay rejects %s binding drift without writing',mode=>{
   const f=scopeFixture();finalizeCollectionScopes(f)
@@ -281,7 +302,7 @@ it.each(['source','source-schema','fact','schema','receipt','checkpoint','predec
   if(mode==='checkpoint'||mode==='predecessor-checkpoint')t.prepare('update platform_migration_checkpoint set copied_count=999 where run_id=?').run(mode==='checkpoint'?'w4pre':'t05c')
   t.close();const before=readFileSync(f.target)
   expect(()=>finalizeCollectionScopes({...f,...(mode==='wrong-predecessor'?{finalizationRunId:'other'}:{})})).toThrow(/drift/)
-  expect(readFileSync(f.target)).toEqual(before)
+  expect(readFileSync(f.target).equals(before)).toBe(true)
 })
 it('successor catalog matches final declarations and permits typed collection-only scope CRUD with FK safe IDs and PK enforcement',()=>{
   const f=scopeFixture();finalizeCollectionScopes(f);const t=new Database(f.target);t.pragma('foreign_keys=ON')
@@ -321,9 +342,9 @@ it('successor CLI emits exclusive manifests and replays in a new process while o
   expect(readFileSync(join(e,'schema-manifest.json'),'utf8')).toContain('platform_query_title_scope_safe_id')
   const next=join(f.root,'scope-replay');mkdirSync(next);args[4]=next
   const replay=spawnSync(process.execPath,args,{encoding:'utf8'});expect(replay.status,replay.stderr).toBe(0)
-  expect(readFileSync(join(e,'target-manifest.jsonl'))).toEqual(readFileSync(join(next,'target-manifest.jsonl')))
+  expect(readFileSync(join(e,'target-manifest.jsonl')).equals(readFileSync(join(next,'target-manifest.jsonl')))).toBe(true)
   expect(spawnSync(process.execPath,args,{encoding:'utf8'}).status).not.toBe(0)
-  const before=readFileSync(f.target);expect(()=>finalizeObservations({...f,runId:f.finalizationRunId})).toThrow();expect(()=>upgradeCollections({...f,runId:f.collectionRunId,batchSize:2})).toThrow();expect(readFileSync(f.target)).toEqual(before)
+  const before=readFileSync(f.target);expect(()=>finalizeObservations({...f,runId:f.finalizationRunId})).toThrow();expect(()=>upgradeCollections({...f,runId:f.collectionRunId,batchSize:2})).toThrow();expect(readFileSync(f.target).equals(before)).toBe(true)
 })
 it('successor retains frozen source lock through every DDL and receipt stage',()=>{
   const f=scopeFixture(),observed:string[]=[]
@@ -370,7 +391,7 @@ it.each([71605,71606])('runtime initialize and all three source workers reject p
       if(kind==='read')expect(result).toMatchObject({type:'failure',code:'enterprise_read_failed'})
     }finally{await w.terminate()}
   }
-  expect(readFileSync(f.target)).toEqual(before)
+  expect(readFileSync(f.target).equals(before)).toBe(true)
 },30000)
 it('FK ON refuses absent collection and unsafe unmapped owner mutations before finalization',()=>{
   const f=scopeFixture(),t=new Database(f.target);expect(t.pragma('foreign_keys',{simple:true})).toBe(1)
@@ -383,5 +404,5 @@ it('successor rejects distinct paths sharing a source inode without changing eit
   const f=scopeFixture(),alias=join(f.root,'source-hardlink.sqlite'),source=readFileSync(f.source),target=readFileSync(f.target)
   linkSync(f.source,alias)
   expect(()=>finalizeCollectionScopes({...f,target:alias})).toThrow(/Distinct isolated target/)
-  expect(readFileSync(f.source)).toEqual(source);expect(readFileSync(f.target)).toEqual(target)
+  expect(readFileSync(f.source).equals(source)).toBe(true);expect(readFileSync(f.target).equals(target)).toBe(true)
 })

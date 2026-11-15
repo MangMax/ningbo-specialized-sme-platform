@@ -62,5 +62,5 @@ it('reopens the native credential database without changing its provenance or bu
   expect(readonly.select().from(schema.serviceCredential).all()).toEqual(credentials)
   expect(readonly.$client.prepare('SELECT total_changes() AS n').get()).toEqual({ n: 0 })
   readonly.$client.close()
-  expect(readFileSync(source)).toEqual(bytes)
+  expect(readFileSync(source).equals(bytes)).toBe(true)
 })

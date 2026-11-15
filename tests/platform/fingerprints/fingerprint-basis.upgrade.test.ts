@@ -125,7 +125,7 @@ it.each(['created','recovered','barrier','receipt'])('rolls back all successor D
   const f=fixture();f.t.close();const source=f.target+'.71606';copyFileSync(f.target,source)
   const before=readFileSync(f.target)
   expect(()=>finalizeFingerprintBasis({source,target:f.target,runId:'basis',predecessorRunId:'scopes',beforeCommit:s=>{if(s===stage)throw new Error('injected '+stage)}})).toThrow('injected '+stage)
-  expect(readFileSync(f.target)).toEqual(before)
+  expect(readFileSync(f.target).equals(before)).toBe(true)
   expect(finalizeFingerprintBasis({source,target:f.target,runId:'basis',predecessorRunId:'scopes'}).state).toBe('complete')
 })
 it('rejects unproved after-predecessor fact drift with zero target writes',()=>{
@@ -133,7 +133,7 @@ it('rejects unproved after-predecessor fact drift with zero target writes',()=>{
   const t=new Database(f.target);t.exec("UPDATE platform_business_observation SET source_relation_key='changed' WHERE id=11");t.close()
   const before=readFileSync(f.target)
   expect(()=>finalizeFingerprintBasis({source,target:f.target,runId:'basis',predecessorRunId:'scopes'})).toThrow(/Unproven target/)
-  expect(readFileSync(f.target)).toEqual(before)
+  expect(readFileSync(f.target).equals(before)).toBe(true)
 })
 it('rejects FK OFF barrier installation inside outer transactions before any writes',()=>{
   const {t}=fixture();installFingerprintBasis(t);t.pragma('foreign_keys=OFF');const before=t.serialize()
@@ -147,7 +147,7 @@ it('keeps source lock during schema and receipt writes and replays in another pr
     const result=spawnSync(process.execPath,['--input-type=module','-e',`import Database from 'better-sqlite3';const t=new Database(process.argv[1]);t.pragma('busy_timeout=1');try{t.exec("UPDATE platform_collection SET query_key='drift'");process.stdout.write('WRITE')}catch(e){process.stdout.write(e.code)}finally{t.close()}`,source],{encoding:'utf8'})
     expect(result.stdout,result.stderr).toBe('SQLITE_BUSY');stages.push(stage)
   }})
-  expect(stages).toEqual(['created','recovered','barrier','receipt']);expect(readFileSync(source)).toEqual(before)
+  expect(stages).toEqual(['created','recovered','barrier','receipt']);expect(readFileSync(source).equals(before)).toBe(true)
   const result=spawnSync(process.execPath,['upgrade/run-fingerprint-basis.mjs',source,f.target,join(f.target+'.evidence'),'basis','scopes'],{encoding:'utf8'})
   writeFileSync(f.target+'.replay.stdout',result.stdout);writeFileSync(f.target+'.replay.stderr',result.stderr)
   expect(result.status,result.stderr).toBe(0)
@@ -187,7 +187,7 @@ it('binds allocation highwaters and rejects target sequence drift',()=>{
   const t=new Database(f.target);t.exec("UPDATE sqlite_sequence SET seq=seq+50 WHERE name='platform_archive_value'");t.close()
   const before=readFileSync(f.target)
   expect(()=>finalizeFingerprintBasis({source,target:f.target,runId:'basis',predecessorRunId:'scopes'})).toThrow(/Unproven target/)
-  expect(readFileSync(f.target)).toEqual(before)
+  expect(readFileSync(f.target).equals(before)).toBe(true)
 })
 
 it('recovers a proven after-predecessor command preserving original own keys position and assignment',()=>{
@@ -257,7 +257,7 @@ it.each(['recovered','receipt'])('rolls back actual recovered command rows inclu
   const row=writeApplyTarget(drizzle(t),input);t.close()
   const eventSource=eventEvidence(source,f.target,[{observationId:row.observationId,lifecycle:'command',originalInput:input}]),before=readFileSync(f.target)
   expect(()=>finalizeFingerprintBasis({source,target:f.target,runId:'basis',predecessorRunId:'scopes',eventSource,beforeCommit:s=>{if(s===stage)throw new Error('injected '+s)}})).toThrow('injected '+stage)
-  expect(readFileSync(f.target)).toEqual(before)
+  expect(readFileSync(f.target).equals(before)).toBe(true)
   expect(finalizeFingerprintBasis({source,target:f.target,runId:'basis',predecessorRunId:'scopes',eventSource}).recoveryManifest).toContainEqual(expect.objectContaining({observationId:row.observationId,scheme:'target-command-v1'}))
 })
 
@@ -284,7 +284,7 @@ it.each(['blob','invalid-utf8','wrong-hash','wrong-rule'])('rejects legacy %s wi
     s.prepare("INSERT INTO platform_business_observation(relation_id,record_id,identity_state,content_state,key_source,projection_rule_version,input_fingerprint,indexed_at) VALUES(11,9,'resolved','unverifiable','relation_key',?,?,'original time')").run(kind==='wrong-rule'?'wrong':'platform-observation-v1',kind==='wrong-hash'?'wrong':createHash('sha256').update(literal).digest('hex'))
   });f.t.close();const source=f.target+'.71606';copyFileSync(f.target,source);const before=readFileSync(f.target)
   expect(()=>finalizeFingerprintBasis({source,target:f.target,runId:'basis',predecessorRunId:'scopes',legacySource:f.source})).toThrow()
-  expect(readFileSync(f.target)).toEqual(before)
+  expect(readFileSync(f.target).equals(before)).toBe(true)
 })
 it.each(['input','revision1','projection','version','alias','target','event-hash','unknown-lifecycle'])('rejects independently frozen command %s conflict with zero target writes',conflict=>{
   const f=fixture();f.t.close();const source=f.target+'.71606';copyFileSync(f.target,source)
@@ -303,7 +303,7 @@ it.each(['input','revision1','projection','version','alias','target','event-hash
   if(conflict==='event-hash')eventSource.sha256='wrong'
   const before=readFileSync(f.target)
   expect(()=>finalizeFingerprintBasis({source,target:f.target,runId:'basis',predecessorRunId:'scopes',eventSource})).toThrow()
-  expect(readFileSync(f.target)).toEqual(before)
+  expect(readFileSync(f.target).equals(before)).toBe(true)
 })
 it('recovers a synthetic original-command counterexample with omitted nullable own keys rather than accepting its rejection',()=>{
   // The external DCNXXw artifact is not a portable fixture. Reproduce its command-presence class locally.
@@ -371,7 +371,7 @@ it('rejects bootstrap evidence changing predecessor position with zero writes',(
   t.prepare("UPDATE platform_business_observation SET record_id=9,identity_state='resolved',content_state='unverifiable',key_source='relation_key',projection_rule_version='platform-observation-v1',input_fingerprint=?,indexed_at='bootstrap event time',position_state='conflict' WHERE id=11").run(createHash('sha256').update(literal).digest('hex'));t.close()
   const eventSource=eventEvidence(source,f.target,[{observationId:11,lifecycle:'legacy-bootstrap'}]),before=readFileSync(f.target)
   expect(()=>finalizeFingerprintBasis({source,target:f.target,runId:'basis',predecessorRunId:'scopes',legacySource:f.source,eventSource})).toThrow(/predecessor.*positionState/)
-  expect(readFileSync(f.target)).toEqual(before)
+  expect(readFileSync(f.target).equals(before)).toBe(true)
 })
 it('seals proven command lifecycle with missing original input as uncaptured rather than rejecting recovery',()=>{
   const f=fixture();f.t.close();const source=f.target+'.71606';copyFileSync(f.target,source)
@@ -406,7 +406,7 @@ it('CLI persists every observation refusal reason and original aliases after rec
   const eventSource=eventEvidence(source,f.target,[{observationId:row.observationId,lifecycle:'command',originalInput:{...input,position:{...input.position,pageId:null}}}]),before=readFileSync(f.target),dir=f.target+'.cli-rejected'
   const result=spawnSync(process.execPath,['upgrade/run-fingerprint-basis.mjs',source,f.target,dir,'basis','scopes','',eventSource.path,eventSource.sha256,eventSource.snapshot],{encoding:'utf8'})
   writeFileSync(dir+'.stdout',result.stdout);writeFileSync(dir+'.stderr',result.stderr)
-  expect(result.status).not.toBe(0);expect(readFileSync(f.target)).toEqual(before)
+  expect(result.status).not.toBe(0);expect(readFileSync(f.target).equals(before)).toBe(true)
   const failure=JSON.parse(readFileSync(join(dir,'failure.json'),'utf8'))
   expect(failure.recoveryManifest).toHaveLength(2)
   expect(failure.recoveryManifest).toContainEqual(expect.objectContaining({observationId:row.observationId,scheme:'rejected',certification:'rejected',oldAlias:row.relationAlias,queryAlias:1,reason:'Command fingerprint conflict'}))
@@ -426,6 +426,6 @@ it.each([false,true])('checks proven recognized additive fidelity event with con
   t.close()
   const eventSource=eventEvidence(source,f.target,[{observationId:row.observationId,lifecycle:'command',originalInput:input}])
   const before=readFileSync(f.target),run=()=>finalizeFingerprintBasis({source,target:f.target,runId:'basis',predecessorRunId:'scopes',legacySource:f.source,eventSource})
-  if(drift){expect(run).toThrow(/predecessor facts/);expect(readFileSync(f.target)).toEqual(before)}
+  if(drift){expect(run).toThrow(/predecessor facts/);expect(readFileSync(f.target).equals(before)).toBe(true)}
   else expect(run().recoveryManifest).toContainEqual(expect.objectContaining({observationId:row.observationId,scheme:'target-command-v1'}))
 })

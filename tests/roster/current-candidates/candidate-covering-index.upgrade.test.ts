@@ -284,7 +284,7 @@ it('C34 both consumers read a native readonly file without changing database byt
   const before = readFileSync(path), readonly = new Database(path, { readonly: true, fileMustExist: true }); handles.push(readonly)
   expect(listCurrentQualified(readonly, { titleCode: 'innovative_sme' })).toMatchObject({ total: 2, rows: [{ enterpriseId: 1 }, { enterpriseId: 2 }] })
   expect(await writeCurrentWorkbook(readonly, 'innovative_sme', join(f.dir, 'readonly.xlsx'), () => {})).toMatchObject({ total: 4, counts: { eligible: 2, pending: 0, excluded: 2 } })
-  expect(readFileSync(path)).toEqual(before)
+  expect(readFileSync(path).equals(before)).toBe(true)
 })
 it('C35 confirmed recognized witness preserves positive options filters and source pointers', () => {
   vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(new Date('2026-10-26T00:00:00Z'))

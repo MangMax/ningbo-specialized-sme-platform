@@ -135,7 +135,7 @@ it('refuses an existing foreign database without modifying its bytes or schema',
   const before = readFileSync(path)
   service.emit({ source: 'worker', operation: 'foreign.guard', outcome: 'success' }); await service.flush()
   expect(service.status()).toMatchObject({ unavailable: true, dropped: 1, stored: 0 })
-  expect(readFileSync(path)).toEqual(before)
+  expect(readFileSync(path).equals(before)).toBe(true)
 })
 
 it('enforces retention at the time boundary and records age pruning independently of clearing', async () => {

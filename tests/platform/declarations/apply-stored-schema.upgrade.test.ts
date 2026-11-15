@@ -442,17 +442,17 @@ it('migrates a WAL-backed predecessor snapshot and replays with literal exact ce
  ])
  const targetBytes=t.serialize();t.close()
  expect(finalizeApplyStored(options).queryReady).toBe(true)
- expect(readFileSync(snapshot)).toEqual(before)
+ expect(readFileSync(snapshot).equals(before)).toBe(true)
  const replay=new Database(f.target);expect(replay.serialize().equals(targetBytes), 'database bytes remain unchanged').toBe(true);replay.close()
 }, 15000)
 it.each(['source','legacySource'] as const)('rejects missing fixed %s before target writes',field=>{
  const f=fixture(),before=readFileSync(f.target)
  expect(()=>finalizeApplyStored({...f,[field]:f[field]+'.missing'})).toThrow()
- expect(readFileSync(f.target)).toEqual(before)
+ expect(readFileSync(f.target).equals(before)).toBe(true)
 })
 it.each(['samepath','hardlink'])('rejects %s target identity before migration',kind=>{
  const f=fixture(),before=readFileSync(f.source),alias=f.source+'.alias'
  if(kind==='hardlink')linkSync(f.source,alias)
  expect(()=>finalizeApplyStored({...f,target:kind==='samepath'?f.source:alias})).toThrow(/Distinct/)
- expect(readFileSync(f.source)).toEqual(before)
+ expect(readFileSync(f.source).equals(before)).toBe(true)
 })

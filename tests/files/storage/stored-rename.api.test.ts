@@ -153,8 +153,8 @@ describe('PATCH /api/files/:id 用户显示名称', () => {
     expect(db.select().from(schema.ocrResult).where(eq(schema.ocrResult.fileId, fileId)).all()).toEqual(beforeOcr)
     expect(db.select().from(schema.storedFilePart).where(eq(schema.storedFilePart.fileId, fileId)).all()).toEqual(beforeParts)
     expect(db.select().from(schema.recordEvidence).all()).toEqual(beforeEvidence)
-    expect(readFileSync(pageImageAbs)).toEqual(beforePage)
-    expect(readFileSync(sourceAbs)).toEqual(beforePreview)
+    expect(readFileSync(pageImageAbs).equals(beforePage)).toBe(true)
+    expect(readFileSync(sourceAbs).equals(beforePreview)).toBe(true)
     expect(await previewBytes()).toEqual(beforePreview)
     expect(existsSync(sourceAbs)).toBe(true)
 
