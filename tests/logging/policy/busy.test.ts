@@ -192,3 +192,25 @@ it('opens a current store under another writer without taking an initialization 
   expect((await fresh.call('write', [event('startup.after.writer')])).result.stored).toBe(1)
   expect(db.prepare('SELECT count(*) n FROM log_events').get()).toEqual({ n: 1 })
 })
+
+it('waits for a short peer write transaction and stores the batch exactly once', async () => {
+  const f = fixture(); await f.call('policy')
+  const db = peer(f.directory)
+  db.exec('BEGIN EXCLUSIVE')
+  const release = setTimeout(() => db.exec('ROLLBACK'), 250)
+  try {
+    expect(await f.call('write', [event('peer.short-write')])).toMatchObject({ ok: true, result: { stored: 1 } })
+    expect(db.prepare('SELECT count(*) n FROM log_events').get()).toEqual({ n: 1 })
+  } finally {
+    clearTimeout(release)
+    if (db.inTransaction) db.exec('ROLLBACK')
+  }
+})
+
+it('closes an initialized connection without reading policy under a peer exclusive lock', async () => {
+  const f = fixture(); await f.call('policy')
+  const db = peer(f.directory)
+  db.exec('BEGIN EXCLUSIVE')
+  try { expect(await f.call('close')).toMatchObject({ ok: true }) }
+  finally { db.exec('ROLLBACK') }
+})
