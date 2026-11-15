@@ -185,13 +185,24 @@ it('row overflow retains whole pages and every uncompleted title position', asyn
   expect(await query({ ...input, maxRows: 3, pageSize: 2 })).toMatchObject({ status: 'partial', fetchedCount: 2, rows: [{ qymc: '合成1a' }, { qymc: '合成1b' }], unfinished: [{ rdjb: '1', page: 2 }, { rdjb: '2', page: 1 }, { rdjb: '3', page: 1 }], pages: [{ status: 'success' }, { status: 'failed', fetchedCount: 0, error: { code: 'safety_limit' } }] })
 })
 it('an active deadline leaves the failed page and all unrequested titles incomplete', async () => {
-  fetcher.mockImplementation(async (_url: string, init: any) => new Promise((_resolve, reject) => {
-    init.signal.addEventListener('abort', () => reject(init.signal.reason), { once: true })
-  }))
-  const r = await query({ ...input, maxDurationMs: 20 })
-  expect(r).toMatchObject({ status: 'partial', completeness: 'partial', rows: [], unfinished: [{ rdjb: '1', page: 1 }, { rdjb: '2', page: 1 }, { rdjb: '3', page: 1 }] })
-  expect(r.pages[0]).toMatchObject({ status: 'failed', error: { code: 'timeout' } })
-  expect(fetcher).toHaveBeenCalledTimes(1)
+  const started = Date.now()
+  vi.useFakeTimers({ toFake: ['Date'] })
+  vi.setSystemTime(started)
+  try {
+    fetcher.mockImplementation(async (_url: string, init: any) => new Promise((_resolve, reject) => {
+      init.signal.addEventListener('abort', () => {
+        // Native abort timers and Date.now do not share an exact millisecond edge.
+        // This case owns total-deadline expiry, not an earlier per-request timeout.
+        vi.setSystemTime(started + 20)
+        reject(init.signal.reason)
+      }, { once: true })
+    }))
+    const r = await query({ ...input, maxDurationMs: 20 })
+    expect(r).toMatchObject({ status: 'partial', completeness: 'partial', rows: [], unfinished: [{ rdjb: '1', page: 1 }, { rdjb: '2', page: 1 }, { rdjb: '3', page: 1 }] })
+    expect(r.pages).toHaveLength(1)
+    expect(r.pages[0]).toMatchObject({ status: 'failed', error: { code: 'timeout' } })
+    expect(fetcher).toHaveBeenCalledTimes(1)
+  } finally { vi.useRealTimers() }
 })
 it('all titles keep the initial credential snapshot and omit envelope account data', async () => {
   fetcher.mockImplementation(async (_url: string, init: any) => {
