@@ -14,6 +14,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import * as schema from '../../../db/schema'
 import type { OfficialPublishedRow, RosterImportPayload } from '../../../lib/roster-import-client'
+import { createEnterpriseReadProcess } from '../../../server/utils/enterprise-read-process'
 import { importExecutor } from '../../../server/utils/import-execution'
 import { readExactEvidence } from '../../../server/utils/roster-evidence-correction'
 import { readLatestOfficialEvidence } from '../../../server/utils/official-evidence'
@@ -22,6 +23,10 @@ import { readMcpToken, resolveMcpAuth } from '../../../server/utils/mcp-auth'
 // Dedicated transport suite: run only in the parent's heavy slot. Production tools,
 // SDK HTTP transport and the real serial import process execute against one synthetic DB.
 const current = vi.hoisted(() => ({ db: null as unknown }))
+// Match the deployed worker entry; avoid compiling the source graph on first admission.
+vi.mock('../../../server/utils/import-execution-worker-location', () => ({
+  createImportExecutionWorker: () => createEnterpriseReadProcess(new URL('../../../.output/server/import-execution-worker.mjs', import.meta.url)),
+}))
 vi.mock('@db', () => ({ useDb: () => current.db }))
 vi.mock('@nuxtjs/mcp-toolkit/server', () => ({ defineMcpTool: (tool: unknown) => tool }))
 const bytes = 'synthetic MCP source', sha256 = createHash('sha256').update(bytes).digest('hex')
@@ -54,7 +59,9 @@ beforeAll(async () => {
     const mcpAuth = resolveMcpAuth({ given: readMcpToken({ authorization: request.headers.authorization }), configured: token })
     for (const tool of definitions.filter(tool => !tool.enabled || tool.enabled({ context: { mcpAuth } }))) mcp.registerTool(tool.name, { description: tool.description, inputSchema: tool.inputSchema }, async (input: Record<string, unknown>) => {
       const result = await tool.handler(input)
-      return result.content ? result : { structuredContent: result, content: [{ type: 'text', text: JSON.stringify(result) }] }
+      return result.content ? result : 'isError' in result
+        ? { ...result, content: [{ type: 'text', text: JSON.stringify(result.structuredContent) }] }
+        : { structuredContent: result, content: [{ type: 'text', text: JSON.stringify(result) }] }
     })
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true }); transports.add(transport)
     response.on('close', () => { transports.delete(transport); void mcp.close() })
@@ -77,11 +84,12 @@ const append = (eventId: number, publishedRow = row()) => ({ eventId, recordId: 
 function request(payload: RosterImportPayload) { return { idempotencyKey: 'mcp-' + serial++, sourceKind: 'announcement', sourceIdentity: 'synthetic', payload } }
 async function call(name: string, args: object): Promise<any> {
   const result = await client.callTool({ name, arguments: args as Record<string, unknown> })
-  expect(result.isError, JSON.stringify(result.content)).not.toBe(true)
+  expect(result.isError, JSON.stringify(result)).not.toBe(true)
   return result.structuredContent ?? JSON.parse((result.content as { text: string }[])[0]!.text)
 }
 async function commit(payload: RosterImportPayload) {
   const input = request(payload), plan = await call('preflight_roster_batch', input)
+  expect(plan, JSON.stringify(plan)).toHaveProperty('preflight.conflicts')
   expect(plan.preflight.conflicts).toEqual([])
   const bound = { ...input, payload: { ...payload, officialEvidencePlanHash: plan.preflight.officialEvidencePlanHash } }
   const saved = await call('save_roster_batch', bound)

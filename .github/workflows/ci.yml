@@ -48,7 +48,7 @@ jobs:
             upgrade=$(node scripts/select-upgrade-tests.mjs changed-paths.txt)
           fi
           node scripts/business-test-groups.mjs matrix "$upgrade" > business-matrix.json
-          TTL="$ttl" WATCHER="$watcher" node --input-type=module -e 'import fs from "node:fs"; const m=JSON.parse(fs.readFileSync("business-matrix.json")); if(process.env.TTL==="1")m.app.push({group:"名录快照真实过期 · deep",project:"expiry"}); if(process.env.WATCHER==="1")m.app.push({group:"开发服务热更新 · deep",project:"watcher"}); for(const k of ["native","app"]) fs.appendFileSync(process.env.GITHUB_OUTPUT,`${k}=${JSON.stringify({include:m[k]})}\n`)'
+          TTL="$ttl" WATCHER="$watcher" node --input-type=module -e 'import fs from "node:fs"; const m=JSON.parse(fs.readFileSync("business-matrix.json")); if(process.env.TTL==="1")m.app.push({group:"深度测试 · 名录 · 快照真实过期",project:"expiry"}); if(process.env.WATCHER==="1")m.app.push({group:"深度测试 · 运行环境 · 开发服务热更新",project:"watcher"}); for(const k of ["native","app"]) fs.appendFileSync(process.env.GITHUB_OUTPUT,`${k}=${JSON.stringify({include:m[k]})}\n`)'
           echo "watcher=$watcher" >> "$GITHUB_OUTPUT"
           echo "Development watcher coverage: $watcher (configuration/dependency paths or full run)." >> "$GITHUB_STEP_SUMMARY"
           echo "ttl=$ttl" >> "$GITHUB_OUTPUT"

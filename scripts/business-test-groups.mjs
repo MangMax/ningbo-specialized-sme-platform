@@ -3,28 +3,28 @@ import { readdirSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 const owners = {
-  "名录导入与证据": [
+  "名录 · 导入与证据": [
     "roster/imports",
     "roster/official-evidence",
     "roster/event-correction",
     "roster/source-completeness",
     "roster/curation"
   ],
-  "后台任务": [
+  "任务 · 后台任务": [
     "tasks/candidates",
     "tasks/center",
     "tasks/context",
     "tasks/details",
     "tasks/jobs"
   ],
-  "称号统计": [
+  "统计 · 称号统计": [
     "statistics/annual",
     "statistics/districts",
     "statistics/movements",
     "statistics/published",
     "statistics/retired-models"
   ],
-  "日志与审计": [
+  "日志 · 审计": [
     "logging/client",
     "logging/context",
     "logging/core",
@@ -40,7 +40,7 @@ const owners = {
     "logging/reliability",
     "logging/viewer"
   ],
-  "运行环境与界面": [
+  "运行环境 · 界面与基础设施": [
     "runtime/credentials",
     "runtime/database",
     "runtime/development",
@@ -56,7 +56,7 @@ const owners = {
     "ui/settings",
     "ui/tables"
   ],
-  "平台申报与办理": [
+  "平台 · 申报与办理": [
     "platform/declarations",
     "platform/business-processes",
     "platform/filters",
@@ -65,17 +65,17 @@ const owners = {
     "platform/summary",
     "platform/export"
   ],
-  "平台认定目录": [
+  "平台 · 认定目录": [
     "platform/recognized-directory"
   ],
-  "平台采集与查询回放": [
+  "平台 · 采集与查询回放": [
     "platform/collections",
     "platform/queries",
     "platform/transport",
     "platform/retained-query",
     "platform/comparison"
   ],
-  "平台归档与引用迁移": [
+  "平台 · 归档与引用迁移": [
     "platform/evidence",
     "platform/correspondence",
     "platform/differences",
@@ -84,24 +84,24 @@ const owners = {
     "platform/runtime-boundary",
     "platform/snapshots"
   ],
-  "平台观察、指纹与补录": [
+  "平台 · 观察、指纹与补录": [
     "platform/fingerprints",
     "platform/observations",
     "platform/reconciliation"
   ],
-  "名录资格与认定读取": [
+  "名录 · 资格与认定读取": [
     "roster/current-qualification",
     "roster/current-candidates",
     "roster/little-giant",
     "roster/qualification-readback",
     "roster/recognition-read"
   ],
-  "名录工作簿导出": [
+  "名录 · 工作簿导出": [
     "roster/current-export",
     "roster/legacy-export",
     "roster/status-workbook"
   ],
-  "名录企业台账与年度流程": [
+  "名录 · 企业台账与年度流程": [
     "roster/annual-process",
     "roster/aliases",
     "roster/enterprise-detail",
@@ -113,7 +113,7 @@ const owners = {
     "roster/ledger",
     "roster/lifecycle",
   ],
-  "名录对应与差异决定": [
+  "名录 · 对应与差异决定": [
     "roster/comparison",
     "roster/correspondence",
     "roster/event-correspondence",
@@ -121,7 +121,7 @@ const owners = {
     "roster/decisions",
     "roster/enterprise-differences"
   ],
-  "文件存储、OCR识别、解析与预览": [
+  "文件 · 存储、OCR识别、解析与预览": [
     "files/ocr",
     "files/parsing",
     "files/pdf-reader",
@@ -142,7 +142,7 @@ export function inventory() {
     const matches=Object.entries(owners).filter(([,dirs])=>dirs.includes(directory))
     if(matches.length!==1) throw new Error(`Expected exactly one business owner: ${file} (${matches.length})`)
     const project=file===watcher?'deep':file.endsWith('.app.test.ts')?'app':file.endsWith('.upgrade.test.ts')?'upgrade':'runtime'
-    return {file,project,business:matches[0][0],group:`${matches[0][0]} · ${project}`}
+    return {file,project,business:matches[0][0],group:`${project} · ${matches[0][0]}`}
   })
 }
 export function matrices(includeUpgrade=true) {
@@ -150,7 +150,7 @@ export function matrices(includeUpgrade=true) {
   const unique=[...new Map(rows.map(r=>[`${r.business}:${r.project==='app'?'app':'native'}`,r])).values()].map(r=>{
     const project=r.project==='app'?'app':'native'
     const upgrade=project==='native'&&rows.some(row=>row.business===r.business&&row.project==='upgrade')
-    const group=`${r.business} · ${project==='app'?'应用进程':upgrade?'逻辑及升级':'逻辑'}`
+    const group=`${project==='app'?'应用进程':upgrade?'逻辑及升级':'逻辑'} · ${r.business}`
     return {group,business:r.business,project,upgrade}
   })
   return {native:unique.filter(r=>r.project==='native'),app:unique.filter(r=>r.project==='app')}
