@@ -141,6 +141,19 @@ it('still applies a later disable rule to an already prioritized queued failure'
   expect(service.status()).toMatchObject({ filtered: 1, dropped: 1, overflow: 1, drainFailures: 0 })
 })
 
+it('flushes a terminal accepted behind a finishing drain before returning to its reader', async () => {
+  const service = fixture()
+  await service.policy()
+  const finishing = service.flush()
+  const id = service.emit({ source: 'task', operation: 'task.finished', outcome: 'success', taskId: 'flush-terminal' })
+  expect(id).not.toBeNull()
+  await service.flush()
+  expect(service.status()).toMatchObject({ accepted: 1, stored: 1, queuedEntries: 0, inFlightEntries: 0, dropped: 0, writeUnknown: 0, drainFailures: 0 })
+  expect((await service.list({ taskId: 'flush-terminal' })).rows).toEqual([
+    expect.objectContaining({ id, operation: 'task.finished', outcome: 'success' }),
+  ])
+  await finishing
+})
 it('drains a terminal queued behind a finishing flush before closing', async () => {
   const service = fixture()
   await service.policy()

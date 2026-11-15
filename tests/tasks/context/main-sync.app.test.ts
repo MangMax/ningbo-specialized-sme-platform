@@ -35,8 +35,9 @@ async function assertContext(id: string, requestId: string) {
   const job = getJob(db, id)!
   expect(job).toBeDefined()
   expect(JSON.stringify({ params: job.params, result: job.result })).not.toContain(requestId)
-  const rows = (await applicationLogs().list({ taskId: id })).rows
-  expect(rows.filter(row => row.operation === 'task.finished')).toHaveLength(1)
+  const listed = await applicationLogs().list({ taskId: id })
+  const rows = listed.rows
+  expect(rows.filter(row => row.operation === 'task.finished'), JSON.stringify({ taskId: id, status: listed.status, operations: rows.map(row => row.operation) })).toHaveLength(1)
   expect(rows.filter(row => ['task.queued', 'task.started', 'task.finished'].includes(row.operation)).length).toBe(3)
   expect(rows.every(row => row.requestId === requestId && row.traceId === 'trace-main-sync')).toBe(true)
   return job
