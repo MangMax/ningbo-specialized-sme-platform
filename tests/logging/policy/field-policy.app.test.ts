@@ -336,6 +336,9 @@ it('races legacy migration with a first management write without replacing its c
 })
 
 for (const format of ['legacy', 'v1', 'v2'] as const) it(`TUS policy ${format} open and concurrent PATCH preserves revision preferences restart and history`, async () => {
+  const stage = <T>(name: string, promise: Promise<T>): Promise<T> => promise.catch(cause => {
+    throw new Error(`${format}: ${name}: ${String(cause)}`, { cause })
+  })
   const { service, directory } = fixture()
   const historyId = service.emit(input('migration.history'))!; await service.flush(); const history = await service.detail(historyId)
   await service.close()
@@ -346,7 +349,7 @@ for (const format of ['legacy', 'v1', 'v2'] as const) it(`TUS policy ${format} o
   const persisted = format === 'legacy' ? collection : { version: format === 'v1' ? 1 : 2, collection, fieldControls: format === 'v1' ? { http: controls.http } : controls }
   edit(directory, db => db.prepare('UPDATE log_collection SET collection=?,revision=40').run(JSON.stringify(persisted)))
   let reader = fixture(directory).service, manager = fixture(directory).service
-  const opened = await Promise.all([reader.policy(), manager.policy()])
+  const opened = await Promise.all([stage('first reader open', reader.policy()), stage('first manager open', manager.policy())])
   for (const policy of opened) {
     expect(policy).toMatchObject({ revision: 40, collection })
     expect(policy.fieldControls.http.info.httpRoute).toBe(format === 'legacy')
@@ -357,8 +360,8 @@ for (const format of ['legacy', 'v1', 'v2'] as const) it(`TUS policy ${format} o
   reader = fixture(directory).service; manager = fixture(directory).service
   const cold = fixture(directory).service
   // Both first opens and the first management write compete over the original format.
-  await Promise.all([reader.policy(), manager.setPolicy(patch({ tus: { warn: { 'tus.method': false } } }))])
-  await Promise.all([reader.setPolicy(patch({ http: { error: { durationMs: false } } })), manager.setPolicy(patch({ tus: { info: { 'tus.offset': false } } }))])
+  await Promise.all([stage('migration reader open', reader.policy()), stage('migration manager PATCH', manager.setPolicy(patch({ tus: { warn: { 'tus.method': false } } })))])
+  await Promise.all([stage('concurrent reader PATCH', reader.setPolicy(patch({ http: { error: { durationMs: false } } }))), stage('concurrent manager PATCH', manager.setPolicy(patch({ tus: { info: { 'tus.offset': false } } })))])
   const latest = await reader.policy()
   expect(latest).toMatchObject({ revision: 43, collection, fieldControls: { http: { error: { durationMs: false } }, tus: { warn: { 'tus.method': false }, info: { 'tus.offset': false } } } })
   expect(latest.fieldControls.http.info.httpRoute).toBe(format === 'legacy')
