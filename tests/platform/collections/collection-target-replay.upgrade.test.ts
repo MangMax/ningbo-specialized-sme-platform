@@ -11,7 +11,7 @@ import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { migrate } from 'drizzle-orm/better-sqlite3/migrator'
 import { copyFileSync, mkdtempSync, existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { afterEach, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, expect, it } from 'vitest'
 import { targetSchema } from '../../../lib/platform/target-schema'
 import { writeNewCollectionTarget, writeCollectionTarget, type NewCollectionTargetCommand } from '../../../lib/platform/collection-target-command'
 import { platformResultToImport } from '../../../lib/platform/recognized-evidence'
@@ -19,13 +19,24 @@ import type { PlatformLiveQueryResult, PlatformQuerySource } from '../../../lib/
 
 const owned: {root:string;sqlite:Database.Database}[]=[]
 afterEach(()=>{for(const f of owned.splice(0)){if(f.sqlite.open)f.sqlite.close();rmSync(f.root,{recursive:true,force:true})}})
-function fixture(seed?: (old: Database.Database) => void) {
-  const root = mkdtempSync(join(tmpdir(),'w4b-fixture-'))
+function prepareTarget(root: string, seed?: (old: Database.Database) => void) {
   const source = join(root, 'source.sqlite'), target = join(root, 'target.sqlite')
   const old = new Database(source)
   migrate(drizzle(old), { migrationsFolder: 'db/migrations' }); seed?.(old); old.close()
   const evidencePath=join(root,'native-evidence');mkdirSync(evidencePath)
   completePlatformMigration(source,target,evidencePath)
+  return { source, target }
+}
+let pristine: ReturnType<typeof prepareTarget>
+const pristineRoot = mkdtempSync(join(tmpdir(),'w4b-pristine-'))
+beforeAll(() => { pristine = prepareTarget(pristineRoot) }, 30000)
+afterAll(() => rmSync(pristineRoot, {recursive:true,force:true}))
+function fixture(seed?: (old: Database.Database) => void) {
+  const root = mkdtempSync(join(tmpdir(),'w4b-fixture-'))
+  const { source, target } = seed ? prepareTarget(root,seed) : {
+    source: join(root,'source.sqlite'), target: join(root,'target.sqlite'),
+  }
+  if (!seed) { copyFileSync(pristine.source,source); copyFileSync(pristine.target,target) }
   const predecessor=source
   const statements: string[] = []
   const sqlite = new Database(target, { verbose: text => statements.push(String(text)) }); sqlite.pragma('foreign_keys=ON'); sqlite.exec("insert into title(code,name_zh,level,rank) values('specialized_sme','专精特新中小企业','municipal',2),('little_giant','小巨人','national',3),('innovative_sme','创新型中小企业','municipal',1)")
