@@ -91,7 +91,7 @@ it.each(['platform_observation_assignment', 'platform_observation_archive_ref', 
   // Committing the empty enclosing transaction advances SQLite header counters only.
   const after = sqlite.serialize()
   for (const offset of [24, 92]) { before.fill(0, offset, offset + 4); after.fill(0, offset, offset + 4) }
-  expect(after).toEqual(before); sqlite.close()
+  expect(after.equals(before), 'database bytes remain unchanged after rollback').toBe(true); sqlite.close()
 })
 it('requires explicit command provenance rather than silently accepting a fabricated migrated assignment', () => {
   const { db, sqlite, input } = fixture()

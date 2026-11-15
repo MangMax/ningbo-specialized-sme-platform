@@ -146,7 +146,7 @@ it.each(['platform_business_record_version', 'platform_version_archive_ref', 'pl
   db.transaction(tx => { expect(() => writeProcessTarget(tx, input)).toThrow('injected') })
   const after = sqlite.serialize()
   for (const offset of [24, 92]) { before.fill(0, offset, offset + 4); after.fill(0, offset, offset + 4) }
-  expect(after).toEqual(before); sqlite.close()
+  expect(after.equals(before), 'database bytes remain unchanged after rollback').toBe(true); sqlite.close()
 })
 it('requires explicit provenance and rejects contradictory owner assertions', () => {
   const { db, sqlite, input } = fixture(), before = sqlite.serialize()
