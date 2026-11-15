@@ -45,12 +45,14 @@ parentPort.on('message'`)
     directory, sqliteModule: createRequire(import.meta.url).resolve('better-sqlite3'),
     policy: base, maxEventBytes: LOG_DEFAULTS.maxEventBytes, stdout: true,
     barrier: barrier.buffer, faultCode, dangling,
-  }, stdout: true })
+  }, stdout: true, stderr: true })
   workers.push(worker)
+  let diagnostic = ''
+  worker.stderr!.on('data', chunk => { diagnostic += chunk.toString() })
   let output = ''
   worker.stdout!.on('data', chunk => { output += chunk.toString() })
   let id = 0
-  return { directory, barrier, output: () => output, async call(action: string, data?: unknown, time = Date.now()): Promise<any> {
+  return { directory, barrier, diagnostic: () => diagnostic, output: () => output, async call(action: string, data?: unknown, time = Date.now()): Promise<any> {
     const current = ++id
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => { cleanup(); reject(new Error('worker command timeout')) }, 5000)
@@ -107,6 +109,9 @@ it('keeps a healthy hot connection after real BUSY and never authorizes a locked
   expect(await f.call('policy', { ...base, collection: { sources: { task: { enabled: false, minLevel: 'debug' } } } })).toMatchObject({ ok: false, observation: { nativeCode: 'SQLITE_BUSY' } })
   expect(await f.call('write', [event('busy.denied')])).toMatchObject({ ok: false, writeOutcome: 'not_written', observation: { nativeCode: 'SQLITE_BUSY', inTransaction: false } })
   expect(await f.call('policy')).toMatchObject({ ok: true, result: { revision: 0, collection: { sources: { task: { enabled: true } } } }, observation: { opens: 1, inTransaction: false } })
+  await expect.poll(() => f.diagnostic()).toContain('"nativeCode":"SQLITE_BUSY"')
+  const diagnostic = JSON.parse(f.diagnostic().trim().split('\n')[0]!)
+  expect(diagnostic).toEqual({ source: 'system', operation: 'logging.storage', outcome: 'failure', code: 'storage_unavailable', nativeCode: 'SQLITE_BUSY', action: 'policy', phase: 'command' })
   db.exec('ROLLBACK')
   expect((await f.call('write', [event('busy.recovered')])).result.stored).toBe(1)
   expect(f.output()).not.toContain('busy.denied')

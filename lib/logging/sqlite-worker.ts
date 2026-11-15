@@ -27,6 +27,7 @@ const encodeCollection = (collection,fieldControls) => JSON.stringify({version:2
 const collectionAllows = ${collectionAllowsAtLevels.toString()}
 const boundedLogOutput = ${boundedLogOutput.toString()}
 const stdout = workerData.stdout ? boundedLogOutput(process.stdout, workerData.maxEventBytes + 1) : undefined
+const diagnostics = boundedLogOutput(process.stderr, 512, 1)
 const failureCode = error => error && error.code === 'SQLITE_FULL' ? 'storage_full' : error && String(error.code).startsWith('SQLITE_READONLY') ? 'storage_readonly' : 'storage_unavailable'
 // Open, policy and BEGIN/SAVEPOINT failures precede insertion. After insertion
 // is attempted, an unstructured failure cannot prove the outer commit outcome.
@@ -240,7 +241,10 @@ parentPort.on('message', ({id,action,data,time}) => {
   try { parentPort.postMessage({ id, ok:true, result:execute(action,data) }) }
   catch(error) {
     const code = failureCode(error)
-    // No raw error/message/path sent to parent or stderr.
+    // Fixed categories only: never expose SQL, paths, payloads or error messages.
+    const diagnosticCode = ['SQLITE_BUSY','SQLITE_BUSY_RECOVERY','SQLITE_BUSY_SNAPSHOT','SQLITE_BUSY_TIMEOUT','SQLITE_LOCKED','SQLITE_FULL','SQLITE_READONLY','SQLITE_IOERR','SQLITE_CORRUPT','SQLITE_NOTADB'].includes(error?.code) ? error.code : 'other'
+    const operation = ['write','list','detail','policy','clear','maintain','close'].includes(action) ? action : 'other'
+    diagnostics.write(JSON.stringify({source:'system',operation:'logging.storage',outcome:'failure',code,nativeCode:diagnosticCode,action:operation,phase:initialized?'command':'open'})+'\n')
     parentPort.postMessage({id,ok:false,code,...(action === 'write' ? {writeOutcome:writeMayCommit ? 'unknown' : 'not_written'} : {})})
     if (!reusableAfterBusy(error)) {
       try { db?.close() } catch {}
