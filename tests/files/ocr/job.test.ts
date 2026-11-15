@@ -84,7 +84,8 @@ afterEach(async () => {
 async function seedPdf(relPath: string, pages = 3): Promise<number> {
   const abs = join(filesDir, relPath)
   await mkdir(dirname(abs), { recursive: true })
-  const bytes = minimalPdf({ pages })
+  // These protocol/cache tests need distinct real PNG pages, not a large raster.
+  const bytes = minimalPdf({ pages, widthPt: Math.max(120, 30 * pages + 20), heightPt: 60 })
   await writeFile(abs, bytes)
   const base = relPath.split('/').pop()!
   return db

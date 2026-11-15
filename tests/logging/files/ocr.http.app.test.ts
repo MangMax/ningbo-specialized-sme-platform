@@ -56,7 +56,7 @@ async function logs(filter: string, operation?: string, count = 1) {
 }
 async function register(pages = 3) {
   const relPath = `${++sequence}-${privatePath}`
-  writeFileSync(join(files, relPath), minimalPdf({ pages }))
+  writeFileSync(join(files, relPath), minimalPdf({ pages, widthPt: 220, heightPt: 60 }))
   const response = await call('/api/files/register', 'POST', { relPath })
   expect(response.status).toBe(201)
   return { id: response.body.id as number, relPath, requestId: response.requestId }
@@ -128,7 +128,7 @@ it('actual Nuxt preserves full-PDF atomicity and recovers only the failed source
 }, 120_000)
 
 it('actual upload and render log once per semantic phase and retain idempotence and stale-page cleanup', async () => {
-  const bytes = minimalPdf({ pages: 3 })
+  const bytes = minimalPdf({ pages: 3, widthPt: 120, heightPt: 60 })
   const create = await fetch(origin + '/api/uploads', { method: 'POST', headers: { 'tus-resumable': '1.0.0', 'upload-length': String(bytes.length), 'upload-metadata': Object.entries({ filename: 'PRIVATE186_UPLOAD.pdf', source: 'jxj', kind: 'announcement' }).map(([k, v]) => `${k} ${Buffer.from(v).toString('base64')}`).join(',') } })
   expect(create.status).toBe(201)
   const location = new URL(create.headers.get('location')!, origin).href

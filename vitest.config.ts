@@ -1,5 +1,6 @@
 import { defineConfig } from 'vitest/config'
 import vue from '@vitejs/plugin-vue'
+import BalancedSequencer from './tests/support/balanced-sequencer.ts'
 import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
 
@@ -17,6 +18,7 @@ export default defineConfig({
   },
   test: {
     environment: 'node',
+    sequence: { sequencer: BalancedSequencer },
     // Nitro 的编译期宏(`defineRouteMeta`)在裸 node 里不存在,而有些用例会直接
     // import 路由文件 —— 垫片见 `tests/setup.ts`,只影响测试进程。
     setupFiles: ['tests/setup.ts'],

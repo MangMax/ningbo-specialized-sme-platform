@@ -21,14 +21,20 @@ const endpoint = '/api/roster/exports/current/specialized-sme'
 let child: ReturnType<typeof spawn>, baseUrl = '', output = ''
 const url = (path: string) => baseUrl + path
 async function json(response: Response) { return response.json() as Promise<any> }
+// Event details are immutable. Poll only for new rows, rather than rereading
+// every previously observed detail over HTTP on every drain retry.
+const eventDetails = new Map<string, any>()
 async function logs(filter: Record<string, string> = {}) {
   const response = await fetch(url('/api/logs?' + new URLSearchParams({ limit: '100', ...filter })), { headers })
   expect(response.status, output.slice(-3000)).toBe(200)
   const listed = await json(response)
   return Promise.all(listed.rows.map(async (row: any) => {
+    if (eventDetails.has(row.id)) return eventDetails.get(row.id)
     const detail = await fetch(url('/api/logs/' + row.id), { headers })
     expect(detail.status).toBe(200)
-    return json(detail)
+    const event = await json(detail)
+    eventDetails.set(row.id, event)
+    return event
   }))
 }
 async function waitLogs(filter: Record<string, string>, check: (events: any[]) => void) {

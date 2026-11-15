@@ -1,3 +1,4 @@
+import { enterpriseReads } from '../../../server/utils/enterprise-read'
 import { initializeDb } from '../../../db/client'
 import { afterAll, beforeAll, expect, it, vi } from 'vitest'
 import { createServer, type Server } from 'node:http'
@@ -25,8 +26,10 @@ beforeAll(async () => {
   server = createServer(toNodeListener(createApp().use(createRouter().get('/:id/detail', detail).get('/:id', get).post('/:id/preflight', preflight).post('/:id/commit', commit))))
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
   base = `http://127.0.0.1:${(server.address() as { port: number }).port}`
+  await enterpriseReads.start()
 })
 afterAll(async () => {
+  await enterpriseReads.close()
   if (server) await new Promise<void>(resolve => server.close(() => resolve()))
   db.$client.close(); rmSync(dir, { recursive: true, force: true }); vi.unstubAllGlobals(); vi.doUnmock('@db'); vi.doUnmock('@nuxtjs/mcp-toolkit/server')
 })

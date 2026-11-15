@@ -138,10 +138,10 @@ it('enforces disabled and reenabled rules in a real child sharing the directory,
   await service.setPolicy({...base,collection:{sources:{task:{enabled:true,minLevel:'debug'}}}})
   await child.send('emit','child.after')
   await child.send('close')
-  await new Promise(r=>setTimeout(r,50))
+  // IPC acknowledgements and stdout arrive on separate channels.
+  await vi.waitFor(() => expect(child.output()).toContain('child.after'))
   expect(child.output()).toContain('child.before')
   expect(child.output()).not.toContain('child.disabled')
-  expect(child.output()).toContain('child.after')
   expect((await service.list({source:'task'})).rows.map(r=>r.operation).sort()).toEqual(['child.after','child.before'])
   expect((await service.list({operation:'child.after'})).rows[0]!.origin).toEqual({runtime:'node',integration:'application',capture:'manual',execution:'worker'})
 })

@@ -10,7 +10,7 @@ import { afterAll, afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { useDb } from '../../../db'
 import { createRosterImportClient, type RosterImportPayload } from '../../../lib/roster-import-client'
 import type { RosterRecognitionsResult } from '../../../lib/roster/recognitions'
-import { startRosterApi } from '../imports/fixtures/import-server'
+import { startRosterApi, executeNativeImport } from '../imports/fixtures/import-server'
 
 const dir = mkdtempSync(join(tmpdir(), 'recognitions-130-'))
 let db: ReturnType<typeof useDb>
@@ -64,7 +64,7 @@ beforeEach(async () => {
   vi.stubGlobal('defineEventHandler', defineEventHandler)
   vi.stubGlobal('getQuery', getQuery)
   vi.stubGlobal('createError', createError)
-  imports = await startRosterApi({ db, apiToken: 'synthetic-130' })
+  imports = await startRosterApi({ db, apiToken: 'synthetic-130', executeImport: executeNativeImport })
   const route = (await import('../../../server/api/roster/recognitions.get')).default
   server = createServer(toNodeListener(createApp({ debug: false }).use(createRouter().get('/api/roster/recognitions', route))))
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))

@@ -285,7 +285,7 @@ it('revalidates actual PDF bytes before publication and retains the paid result'
   const { file, pagePath } = await setup()
   const id = await submit(file)
   await vi.waitFor(() => expect(api!.stats.submits).toBe(1))
-  writeFileSync(join(filesDir, file), minimalPdf({ pages: 2 }))
+  writeFileSync(join(filesDir, file), minimalPdf({ pages: 2, widthPt: 100, heightPt: 60 }))
   gate!(); await whenIdle()
   expect((await request(pagePath)).status).toBe(404)
   const result = await status(id)
@@ -1011,7 +1011,7 @@ it('B2 queued render cannot rebind its locator to a different registered ID', as
 
 it('B2 async render leaves unregistered input pending unknown without publishing pages', async () => {
   const file = `unregistered-${++sequence}.pdf`
-  writeFileSync(join(filesDir, file), minimalPdf({ pages: 1 }))
+  writeFileSync(join(filesDir, file), minimalPdf({ pages: 1, widthPt: 100, heightPt: 60 }))
   const id = await submitRender([file])
   await whenIdle()
   expect((await status(id)).state).toBe('failed')

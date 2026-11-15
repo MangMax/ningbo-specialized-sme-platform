@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
+import { eq } from 'drizzle-orm'
 import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
 import { initializeDb, schema as s } from '../../../../db/client'
@@ -19,7 +20,14 @@ export function populateDisconnectedExportFixture(dbPath: string) {
     db.transaction(() => {
       // Same 4.5MB entropy in fewer business rows; each base64 cell stays
       // below Excel's limit and public downloads must still exceed 4MiB.
-      for (let i = 0; i < 200; i++) exportCandidate(db, '合成断开' + i + createHash('shake256', { outputLength: 22500 }).update(String(i)).digest('base64'), 'innovative_sme')
+      for (let i = 0; i < 200; i++) {
+        const enterprise = exportCandidate(db, '合成断开' + i, 'innovative_sme')
+        // All three public workbooks retain district verbatim. Keep entropy
+        // out of identity/name matching and qualification explanation work.
+        const district = createHash('shake256', { outputLength: 22500 }).update(String(i)).digest('base64')
+        db.update(s.enterprise).set({ district }).where(eq(s.enterprise.id, enterprise.id)).run()
+        db.update(s.record).set({ district }).where(eq(s.record.enterpriseId, enterprise.id)).run()
+      }
     })
   } finally { db.$client.close() }
 }
