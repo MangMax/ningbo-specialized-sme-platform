@@ -589,7 +589,15 @@ async function stopChild(child: ChildProcess) {
 }
 
 it("independent HTTP processes share SQLite claims and old parent results after one publication", async () => {
-  const { file } = await setup(2, { submitStatuses: [429, 429] })
+  // Observe provider polls rather than giving two cold processes vi.waitFor's
+  // default one-second scheduling window to acquire their durable receipts.
+  let polls = 0, ready!: () => void, release!: () => void
+  const bothPolling = new Promise<void>(resolve => { ready = resolve })
+  const pollGate = new Promise<void>(resolve => { release = resolve })
+  const { file } = await setup(2, { submitStatuses: [429, 429], waitForPoll: () => {
+    if (++polls === 2) ready()
+    return pollGate
+  } })
   const parent = await submit(file)
   await whenIdle()
   const initial = await status(parent)
@@ -599,27 +607,27 @@ it("independent HTTP processes share SQLite claims and old parent results after 
     expect((await at(one.base, `/api/jobs/${parent}`)).status).toBe(200)
     expect((await at(two.base, `/api/jobs/${parent}`)).status).toBe(200)
     const [a, b] = await Promise.all([submitAt(one.base, file, parent), submitAt(two.base, file, parent)])
-    await vi.waitFor(async () => {
-      const rows = await Promise.all([at(one.base, `/api/jobs/${a}`).then(r => r.json()), at(two.base, `/api/jobs/${b}`).then(r => r.json())])
-      expect(rows.every(row => row.state === 'failed' || Object.values(row.result?.publication.files[0].requests ?? {}).every((r: any) => r.state === 'accepted'))).toBe(true)
-      expect(api!.stats.submits).toBe(4)
-    })
-    gate!()
-    await vi.waitFor(async () => {
-      const rows = await Promise.all([at(one.base, `/api/jobs/${a}`).then(r => r.json()), at(two.base, `/api/jobs/${b}`).then(r => r.json())])
-      expect(rows.every(row => ['done', 'failed'].includes(row.state))).toBe(true)
-      expect(rows.some(row => row.state === 'done')).toBe(true)
-    })
+    await bothPolling
+    const accepted = await Promise.all([at(one.base, `/api/jobs/${a}`).then(r => r.json()), at(two.base, `/api/jobs/${b}`).then(r => r.json())])
+    expect(accepted.every(row => row.state === 'failed' || Object.values(row.result?.publication.files[0].requests ?? {}).every((r: any) => r.state === 'accepted'))).toBe(true)
+    expect(api!.stats.submits).toBe(4)
+    release()
+    const idle = await Promise.all([at(one.base, '/issue309/idle'), at(two.base, '/issue309/idle')])
+    expect(idle.map(r => r.status)).toEqual([200, 200])
+    const completed = await Promise.all([at(one.base, `/api/jobs/${a}`).then(r => r.json()), at(two.base, `/api/jobs/${b}`).then(r => r.json())])
+    expect(completed.map(row => row.state).every(state => ['done', 'failed'].includes(state))).toBe(true)
+    expect(completed.some(row => row.state === 'done'), JSON.stringify(completed)).toBe(true)
     const old = await submitAt(two.base, file, parent)
-    await vi.waitFor(async () => expect((await (await at(two.base, `/api/jobs/${old}`)).json()).state).toBe('done'))
+    expect((await at(two.base, '/issue309/idle')).status).toBe(200)
+    expect((await (await at(two.base, `/api/jobs/${old}`)).json()).state).toBe('done')
     expect(api!.stats.submits).toBe(4)
     const final = await status(parent)
     const { ocrRecovery, ...historic } = final.result
     expect(historic).toEqual(initial.result)
     expect(Object.values(ocrRecovery.pages)).toHaveLength(2)
     expect((Object.values(ocrRecovery.pages) as any[]).every(page => page.attempts.length === 2 && page.attempts.at(-1).state === 'complete')).toBe(true)
-  } finally { gate!(); await stopChild(one.child); await stopChild(two.child) }
-})
+  } finally { release(); gate!(); await stopChild(one.child); await stopChild(two.child) }
+}, 15000)
 
 it.each(['claimed', 'complete'] as const)("SIGKILL after committed %s claim never repeats POST and preserves the original receipt", async phase => {
   const { file, pagePath } = await setup(1, { submitStatuses: [429] })

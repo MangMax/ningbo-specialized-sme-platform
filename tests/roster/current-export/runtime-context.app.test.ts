@@ -233,7 +233,9 @@ async function actualWorker409(mode: typeof workerModes409[number], context: unk
   }
 }
 
-it.each(workerModes409.flatMap(mode => ocrPartitions409.map(partition => ({ mode, ...partition }))))('B3 actual worker $mode OCR $id literal cells', async partition => {
+// Pure B02/B03 cover every credential precedence partition. Both real worker
+// loaders retain end-to-end literal-cell and business-digest controls.
+it.each([{ mode: 'source' as const, ...ocrPartitions409[0] }, { mode: 'compiled' as const, ...ocrPartitions409[3] }])('B3 actual worker $mode OCR $id literal cells', async partition => {
   legalWorkerSeed409()
   for (const a of Object.values(W409)) for (const b of Object.values(W409)) if (a !== b) expect(a.includes(b)).toBe(false)
   if (partition.savedCookie) saved('miitCookie',W409.savedCookie)
@@ -279,14 +281,10 @@ it.each(workerModes409.flatMap(mode => ocrPartitions409.map(partition => ({ mode
   expect(workerBusinessDigest409()).toBe(before)
 },30000)
 
-const invalidWorkerContexts409 = [
-  { id: 'null', value: null }, { id: 'array', value: [] },
-  { id: 'unknown', value: { extra: W409.runtimeApi } }, { id: 'wrongtype', value: { apiToken: 409 } },
-  { id: 'utf8_field', value: { apiToken: '中'.repeat(5462) } },
-  { id: 'ascii_field', value: { apiToken: 'z'.repeat(16385) } },
-  { id: 'json_total', value: { apiToken: '\u0000'.repeat(16384) } },
-]
-it.each(workerModes409.flatMap(mode => invalidWorkerContexts409.map(input => ({ mode, ...input }))))('B4 actual worker $mode invalid IPC $id safe failure', async ({ mode,id,value }) => {
+// B09 above retains all invalid-value partitions and byte boundaries in-process.
+// One invalid IPC message per loader proves transport rejection without repeating
+// the validator's Cartesian product in fourteen fresh processes.
+it.each(workerModes409.map(mode => ({ mode, id: 'null', value: null })))('B4 actual worker $mode invalid IPC $id safe failure', async ({ mode,id,value }) => {
   const result = await actualWorker409(mode,value,'B4-invalid-' + id)
   expect(result.message).toEqual({ type: 'failure', message: W409_SAFE_FAILURE })
   expect(result.progress).toEqual([])

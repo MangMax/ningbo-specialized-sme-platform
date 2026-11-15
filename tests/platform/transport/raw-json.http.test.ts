@@ -1,3 +1,4 @@
+import { executeNativeImport } from '../../roster/imports/fixtures/import-server'
 import { initializeDb } from '../../../db/client'
 import { createServer } from 'node:http'
 import { createHash } from 'node:crypto'
@@ -42,6 +43,7 @@ async function call(name: string, args: Record<string, unknown>) {
   return result.structuredContent ?? JSON.parse((result.content as any)[0].text)
 }
 beforeAll(async () => {
+  vi.spyOn(importExecutor, 'execute').mockImplementation(executeNativeImport)
   vi.stubEnv('NUXT_DB_PATH', join(dir, 'test.sqlite'))
   vi.stubEnv('MIIT_COOKIE', ''); vi.stubEnv('MIIT_COOKIE_FILE', '')
   updateCredential('miitCookie', 'sid=synthetic-raw-wire-secret', { db })
@@ -86,7 +88,7 @@ afterAll(async () => {
   for (const transport of transports) await transport.close()
   if (server) await new Promise<void>(resolve => server.close(() => resolve()))
   await importExecutor.close()
-  platformSummaryCache.close(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); db.$client.close(); rmSync(dir, { recursive: true, force: true })
+  vi.restoreAllMocks(); platformSummaryCache.close(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); db.$client.close(); rmSync(dir, { recursive: true, force: true })
 })
 const plain = Object.fromEntries(Object.entries(typed).filter(([key]) => !['__proto__', 'constructor'].includes(key)))
 const cases = [plain, { id: 'same', qymc: '合成', x: '', n: '1', b: 'true', o: '{"a":1}', arr: '[null,false,2,{"unknown":true}]' }, typed]

@@ -1,3 +1,4 @@
+import { executeNativeImport } from '../imports/fixtures/import-server'
 import { initializeDb } from '../../../db/client'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -326,7 +327,7 @@ it('first recognition uses the earliest populated record district even on a diff
           { enterprise: { name: '合成属地企业', district: '鄞州区' }, titleCode: 'little_giant', events: [{ eventType: 'award', year: 2021 }] },
         ] },
       },
-    } }, { db: isolated, apiToken: 'synthetic-130' })
+    } }, { db: isolated, apiToken: 'synthetic-130', executeImport: executeNativeImport })
     expect(out.status).toBe(200)
     expect(out.body).toMatchObject({ status: 'committed' })
     const result = listRosterRecognitions(isolated, { title: ['little_giant'] })

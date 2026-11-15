@@ -1,3 +1,4 @@
+import { executeNativeImport } from '../../roster/imports/fixtures/import-server'
 import { sql } from 'drizzle-orm'
 import { createApp,createError,createRouter,defineEventHandler,getHeader,getQuery,getRouterParam,readBody,setHeader,setResponseStatus,toNodeListener } from 'h3'
 import { mkdtempSync,rmSync } from 'node:fs'
@@ -63,7 +64,7 @@ beforeAll(async () => {
   const importRoute = defineEventHandler(async event => {
     const out = await handleRosterImportRequest('commit', {
       method: 'POST', headers: { authorization: getHeader(event, 'authorization') }, body: await readBody(event),
-    }, { db, apiToken: token })
+    }, { db, apiToken: token, executeImport: executeNativeImport })
     setResponseStatus(event, out.status)
     for (const [name, value] of Object.entries(out.headers)) setHeader(event, name, value)
     return out.body
