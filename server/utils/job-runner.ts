@@ -1,5 +1,5 @@
 import { appLog, type LogContext } from '../../lib/logging'
-import { whenImportWriterIdle } from './import-write-barrier'
+import { hasImportWriter, whenImportWriterIdle } from './import-write-barrier'
 import { cleanupCurrentExports } from './current-export-artifact'
 import { and, eq, sql } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
@@ -331,7 +331,8 @@ function notifyIdleIfReady(): void {
 async function runOne(entry: QueueEntry): Promise<void> {
   const { db, jobId, filesDir, logContext } = entry
   try {
-    await whenImportWriterIdle()
+    // Claim synchronously when idle so immediate cancellation still sees running.
+    if (hasImportWriter()) await whenImportWriterIdle()
     // 入队后被取消:队列里已经没它了(取消时就地摘掉了),这里是兜底。
     if (cancelRequested.has(jobId)) {
       finishJob(db, jobId, { state: 'cancelled', error: '任务在开始前被取消' }, logContext)

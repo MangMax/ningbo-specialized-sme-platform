@@ -15,3 +15,7 @@ export function beginImportWrite(): () => void {
 export function whenImportWriterIdle(): Promise<void> {
   return activeWriters ? new Promise(resolve => waiters.add(resolve)) : Promise.resolve()
 }
+
+export function hasImportWriter(): boolean {
+  return activeWriters > 0
+}
