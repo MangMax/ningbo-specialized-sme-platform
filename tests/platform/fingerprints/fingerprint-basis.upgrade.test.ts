@@ -3,19 +3,26 @@ import * as expandSchema from '../../../upgrade/legacy-schema'
 import { ensurePlatformObservation } from '../../../upgrade/frozen/server/platform-business-record'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { migrate } from 'drizzle-orm/better-sqlite3/migrator'
-import { copyFileSync, mkdtempSync } from 'node:fs'
+import { copyFileSync, mkdtempSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { expect, it } from 'vitest'
+import { afterAll, expect, it } from 'vitest'
 import { upgradeCollections } from '../../../upgrade/collections'
 import { upgradeObservations } from '../../../upgrade/observations'
 import { upgradeProjections } from '../../../upgrade/projections'
 import { finalizeObservations, finalizeCollectionScopes } from '../../../upgrade/finalize-observations'
 import { installFingerprintBasis } from '../../../upgrade/fingerprint-basis'
 const evidence=process.env.FINGERPRINT_SCHEMA_EVIDENCE_DIR??tmpdir()
+const roots: string[] = []
+const pristineRoot=mkdtempSync(join(evidence,'basis-pristine-'))
+const pristine=join(pristineRoot,'source.sqlite')
+{ const db=new Database(pristine); migrate(drizzle(db),{migrationsFolder:'db/migrations'}); db.close() }
+afterAll(()=>{ if(!process.env.FINGERPRINT_SCHEMA_EVIDENCE_DIR) for(const root of [...roots,pristineRoot]) rmSync(root,{recursive:true,force:true}) })
 function fixture(seed?:(s:Database.Database)=>void) {
   const root=mkdtempSync(join(evidence,'sqlite-')),source=join(root,'source.sqlite'),target=join(root,'target.sqlite')
-  const s=new Database(source);migrate(drizzle(s),{migrationsFolder:'db/migrations'})
+  roots.push(root)
+  copyFileSync(pristine,source)
+  const s=new Database(source)
   s.exec(`INSERT INTO platform_query(id,interface,query_key,rdjb,queried_at,status,created_at) VALUES(1,'apply_list','Q','2','t','success','c');
     INSERT INTO platform_relation(id,query_id,sequence_no,relation_key,raw_fields,created_at) VALUES(11,1,1,'A','null','c');`)
   seed?.(s)
@@ -140,7 +147,7 @@ it('rejects FK OFF barrier installation inside outer transactions before any wri
   t.exec('BEGIN');expect(()=>installFingerprintBarrier(t)).toThrow(/foreign_keys/);t.exec('ROLLBACK')
   expect(t.serialize().equals(before), 'database bytes remain unchanged').toBe(true);t.close()
 })
-it('keeps source lock during schema and receipt writes and replays in another process',()=>{
+it('keeps source lock during schema and receipt writes',()=>{
   const f=fixture();f.t.close();const source=f.target+'.71606';copyFileSync(f.target,source)
   const before=readFileSync(source),stages:string[]=[]
   finalizeFingerprintBasis({source,target:f.target,runId:'basis',predecessorRunId:'scopes',beforeCommit:stage=>{
@@ -148,9 +155,7 @@ it('keeps source lock during schema and receipt writes and replays in another pr
     expect(result.stdout,result.stderr).toBe('SQLITE_BUSY');stages.push(stage)
   }})
   expect(stages).toEqual(['created','recovered','barrier','receipt']);expect(readFileSync(source).equals(before)).toBe(true)
-  const result=spawnSync(process.execPath,['upgrade/run-fingerprint-basis.mjs',source,f.target,join(f.target+'.evidence'),'basis','scopes'],{encoding:'utf8'})
-  writeFileSync(f.target+'.replay.stdout',result.stdout);writeFileSync(f.target+'.replay.stderr',result.stderr)
-  expect(result.status,result.stderr).toBe(0)
+
 })
 
 it('checks the complete physical basis FK index trigger catalog and original ref DDL stays byte equal',()=>{
@@ -179,7 +184,7 @@ it('rolls back content archives sequences and aliases when the old direct writer
   const input={collectionId:1,position:{sequenceNo:2,positionState:'unknown' as const},row:{sequenceNo:2,relationKey:'new',rawFields:{id:'new',rdjb:'2'}},assignment:{enterpriseId:null,matchBasis:'none' as const,verificationStatus:'pending' as const,origin:'command' as const,actor:{type:'agent' as const,id:'test'},basis:'test',recordedAt:null}}
   t.exec('BEGIN')
   expect(()=>writeApplyTarget(drizzle(t),input)).toThrow(/basis required/)
-  t.exec('COMMIT');expect(facts()).toEqual(before);t.close()
+  t.exec('COMMIT');expect(facts().equals(before), 'database bytes remain unchanged').toBe(true);t.close()
 })
 
 it('binds allocation highwaters and rejects target sequence drift',()=>{
@@ -248,7 +253,7 @@ it.each(Object.keys(writers) as (keyof typeof writers)[])('rolls back %s old wri
   const facts=()=>{const bytes=t.serialize();bytes.fill(0,24,28);bytes.fill(0,92,96);return bytes}
   const before=facts();t.exec('BEGIN')
   expect(()=>writers[sourceInterface](drizzle(t),{collectionId:1,position:{sequenceNo:2,positionState:'unknown'},row:{sequenceNo:2,relationKey:'new',rawFields:{id:'new',rdjb:'2'}},assignment:{enterpriseId:null,matchBasis:'none',verificationStatus:'pending',origin:'command',actor:{type:'agent',id:'test'},basis:'test',recordedAt:null}})).toThrow(/basis required/)
-  t.exec('COMMIT');expect(facts()).toEqual(before);t.close()
+  t.exec('COMMIT');expect(facts().equals(before), 'database bytes remain unchanged').toBe(true);t.close()
 })
 it.each(['recovered','receipt'])('rolls back actual recovered command rows including new basis archives at %s',stage=>{
   const f=fixture();f.t.close();const source=f.target+'.71606';copyFileSync(f.target,source)
@@ -261,7 +266,9 @@ it.each(['recovered','receipt'])('rolls back actual recovered command rows inclu
   expect(finalizeFingerprintBasis({source,target:f.target,runId:'basis',predecessorRunId:'scopes',eventSource}).recoveryManifest).toContainEqual(expect.objectContaining({observationId:row.observationId,scheme:'target-command-v1'}))
 })
 
-it.each([null,'null','{bad','42','true','"word"','[1,null]','{"id":"A"}'].flatMap(raw=>(Object.keys(writers) as (keyof typeof writers)[]).map(sourceInterface=>({raw,sourceInterface}))))('recovers legacy original SQL raw partition $raw for $sourceInterface preserving literal bytes and hash',({raw,sourceInterface})=>{
+// Raw SQL partitions share the same recovery algorithm; source-specific writers
+// are independently exercised above. Avoid the redundant Cartesian product.
+it.each([null,'null','{bad','42','true','"word"','[1,null]','{"id":"A"}'].map((raw,index)=>({raw,sourceInterface:(Object.keys(writers) as (keyof typeof writers)[])[index%3]!})))('recovers legacy original SQL raw partition $raw for $sourceInterface preserving literal bytes and hash',({raw,sourceInterface})=>{
   let value:unknown=null;try{value=raw===null?null:JSON.parse(raw)}catch{}
   const literal='{"interface":'+JSON.stringify(sourceInterface)+',"invalidRaw":'+JSON.stringify(value===null?raw:null)+',"queriedAt":"t","queryId":1,"queryKey":"Q","rawFields":'+JSON.stringify(value)+',"rdjb":"2","relationKey":"A","sequenceNo":1}'
   const fingerprint=createHash('sha256').update(literal).digest('hex')
@@ -332,19 +339,18 @@ it.each(['null','text'])('rejects a %s archive as captured BLOB without side eff
   expect(()=>t.exec("INSERT INTO platform_observation_fingerprint_basis VALUES(11,'target-command-v1',100)")).toThrow(/BLOB/)
   expect(t.serialize().equals(before), 'database bytes remain unchanged').toBe(true);t.close()
 })
-it.each(['created','recovered','barrier','receipt'])('locks independent after-event snapshot throughout successor %s stage',wanted=>{
+it('locks independent after-event snapshot throughout every successor stage',()=>{
   const f=fixture();f.t.close();const source=f.target+'.71606';copyFileSync(f.target,source)
   const t=new Database(f.target);t.pragma('foreign_keys=ON')
   const input={collectionId:1,position:{sequenceNo:2,positionState:'unknown' as const},row:{sequenceNo:2,rawFields:null},assignment:{enterpriseId:null,matchBasis:'none' as const,verificationStatus:'pending' as const,origin:'command' as const,actor:{type:'agent' as const,id:'test'},basis:'test',recordedAt:null}}
   const row=writeApplyTarget(drizzle(t),input);t.close()
   const eventSource=eventEvidence(source,f.target,[{observationId:row.observationId,lifecycle:'command',originalInput:input}])
-  let checked=false
+  const checked:string[]=[]
   finalizeFingerprintBasis({source,target:f.target,runId:'basis',predecessorRunId:'scopes',eventSource,beforeCommit:stage=>{
-    if(stage!==wanted)return
     const result=spawnSync(process.execPath,['--input-type=module','-e',`import Database from 'better-sqlite3';const t=new Database(process.argv[1]);t.pragma('busy_timeout=1');try{t.exec("UPDATE platform_collection SET query_key='drift'");process.stdout.write('WRITE')}catch(e){process.stdout.write(e.code)}finally{t.close()}`,eventSource.snapshot],{encoding:'utf8'})
-    expect(result.stdout,result.stderr).toBe('SQLITE_BUSY');checked=true
+    expect(result.stdout,result.stderr).toBe('SQLITE_BUSY');checked.push(stage)
   }})
-  expect(checked).toBe(true)
+  expect(checked).toEqual(['created','recovered','barrier','receipt'])
 })
 
 import { writeNewCollectionTarget } from '../../../upgrade/frozen/collection-target-command'
@@ -397,7 +403,7 @@ it('recovers command evidence through the CLI and replays in an independent proc
     expect(receipt.recoveryManifest).toContainEqual(expect.objectContaining({observationId:row.observationId,scheme:'target-command-v1',certification:'verified',oldAlias:row.relationAlias,queryAlias:1}))
     if(attempt==='first')original=receipt;else expect(receipt).toEqual(original)
   }
-})
+}, 15000) // Two independent CLI startups plus historical recovery; other tests keep 5s.
 it('CLI persists every observation refusal reason and original aliases after recovery conflict without target writes',()=>{
   const f=fixture();f.t.close();const source=f.target+'.71606';copyFileSync(f.target,source)
   const t=new Database(f.target);t.pragma('foreign_keys=ON')

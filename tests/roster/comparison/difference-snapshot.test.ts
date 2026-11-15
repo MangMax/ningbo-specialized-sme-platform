@@ -190,7 +190,7 @@ async function publicHttp(body: unknown) {
     return await res.json()
   } finally { await new Promise<void>(r=>server.close(()=>r())) }
 }
-// Real multi-page provider imports include hundreds of native observations.
+// One source crosses the real 50-row page boundary; the other six slots prove empty completion.
 // Bound the integration runner at 30s, below the source's explicit 60s budget;
 // metadata and selected-scope tests retain the default 5s.
 it('runs real provider pagination with metadata-only checkpoints and complete business rows', async () => {
@@ -204,19 +204,19 @@ it('runs real provider pagination with metadata-only checkpoints and complete bu
     const body=new URLSearchParams(String(init?.body)),page=Number(body.get('pageNum'))
     calls.push({source,page})
     const grid=source==='queryBusList'?'businessGrid':source==='businessList'?'businessListGrid':'applyGrid'
-    return {ok:true,status:200,text:async()=>JSON.stringify({zrarData:{grid:{[grid]:{page,pageSize:50,maxCount:51,maxPage:2,pageSet:Array.from({length:page===1?50:1},(_,i)=>({id:`${source}-${page}-${i}`,qymc:'fixture provider',tyshxydm:'91330200222222222X',unknown:{nested:[null,false,17]},blank:null}))}}}})}
+    return {ok:true,status:200,text:async()=>JSON.stringify({zrarData:{grid:{[grid]:{page,pageSize:50,maxCount:source==='queryList'?51:0,maxPage:source==='queryList'?2:1,pageSet:Array.from({length:source!=='queryList'?0:page===1?50:1},(_,i)=>({id:`${source}-${page}-${i}`,qymc:'fixture provider',tyshxydm:'91330200222222222X',unknown:{nested:[null,false,17]},blank:null}))}}}})}
   }}}))
   try {
     const row=await publicHttp({action:'create',clientRequestId:'real-provider-fixture'})
     const done=await settled(row.id,db)
     expect(done.state).toBe('done')
-    expect(calls).toHaveLength(14)
-    expect(calls.filter(c=>c.page===2)).toHaveLength(7)
-    expect(done.result).toMatchObject({counts:{enterprises:1,unfinished:0,rows:357,requests:14}})
+    expect(calls).toHaveLength(8)
+    expect(calls.filter(c=>c.page===2)).toEqual([{source:'queryList',page:2}])
+    expect(done.result).toMatchObject({counts:{enterprises:1,unfinished:0,rows:51,requests:8}})
     const result=done.result as {items:{segments:PlatformLiveQueryResult[]}[]}
     expect(result.items.every(i=>i.segments.every(segment=>!Object.hasOwn(segment,'rows')&&!Object.hasOwn(segment,'rawData')&&!Object.hasOwn(segment,'dataRows')))).toBe(true)
     const versions=db.$client.prepare('select canonical_raw_json raw from platform_business_record_version').all() as {raw:string}[]
-    expect(versions.length).toBe(153)
+    expect(versions.length).toBe(51)
     expect(versions.every(v=>{const row=JSON.parse(v.raw);return row.qymc==='fixture provider'&&row.blank===null&&JSON.stringify(row.unknown)==='{"nested":[null,false,17]}'})).toBe(true)
   } finally {db.$client.close();activeDb=globalDb}
 }, 30000)

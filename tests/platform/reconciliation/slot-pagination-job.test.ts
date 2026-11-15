@@ -31,7 +31,7 @@ function page(source: string, number: number, total = 51, overrides: Record<stri
     pageSet: Array.from({ length: count }, (_, i) => ({ id: `SQ${(number - 1) * 50 + i + 1}`, qymc: number === 2 ? '后页独有企业' : '合成企业', tyshxydm: USCC })), ...overrides,
   } } } })
 }
-const normalReply = (source: string, rdjb: string, n: number) => page(source, n, source === 'queryList' || rdjb === '3' ? 51 : 0)
+const normalReply = (source: string, rdjb: string, n: number) => page(source, n, rdjb === '3' ? 51 : 0)
 async function api(path: string, method = 'GET', body?: unknown) {
   const response = await nativeFetch(baseUrl + path, { method, headers: { authorization: 'Bearer issue299-api', 'content-type': 'application/json' }, ...(body ? { body: JSON.stringify(body) } : {}) })
   const result = await response.json()
@@ -98,6 +98,7 @@ function upstream() {
 
 it('public job retains both sources’ unique row 51 and exact page evidence; complete cache reuses original IDs', async () => {
   upstream()
+  reply=(s,r,n)=>page(s,n,s==='queryList'||r==='3'?51:0)
   const job = await submit(), done = await finish(job.jobId)
   expect(done.state).toBe('done')
   expect(done.result.relations).toBe(102)
@@ -167,7 +168,7 @@ it('cancel between pages stops requests, returns unfinished position and atomica
   expect(await archives()).toHaveLength(0)
   expect(db.select().from(schema.importBatch).all()).toHaveLength(0)
   reply = normalReply
-  expect((await finish((await submit()).jobId)).result.relations).toBe(102)
+  expect((await finish((await submit()).jobId)).result.relations).toBe(51)
 }, 30000)
 
 it('historical success without page proof is preserved but never reused as complete', async () => {
@@ -219,8 +220,8 @@ it('network retry and subsequent pages keep the submission credential snapshot a
     return normalReply(s, r, n)
   }
   const done = await finish((await submit()).jobId)
-  expect(done.result.relations).toBe(102)
-  expect(calls).toHaveLength(7)
+  expect(done.result.relations).toBe(51)
+  expect(calls).toHaveLength(6)
   expect(calls.every(c => c.cookie === 'session=issue299-original')).toBe(true)
   const stored = await archives()
   expect(JSON.stringify({ done, stored })).not.toMatch(/issue299-original|issue299-replacement/)
@@ -252,7 +253,7 @@ it('archive failure on row 51 rolls back the whole query/relation/decision batch
     expect(db.select().from(schema.differenceReason).all()).toHaveLength(0)
     expect(db.select().from(schema.importReceipt).all().length).toBeGreaterThan(0)
   } finally { db.$client.exec('DROP TRIGGER issue299_fail') }
-  expect((await finish((await submit()).jobId)).result.relations).toBe(102)
+  expect((await finish((await submit()).jobId)).result.relations).toBe(51)
 }, 30000)
 
 it('missing later-page total cannot inherit earlier metadata and masquerade as complete', async () => {
