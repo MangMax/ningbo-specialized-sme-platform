@@ -1,6 +1,6 @@
 import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
 import { platformResultToImport } from '../../../lib/platform/recognized-evidence'
-import { it, expect, afterAll } from 'vitest'
+import { it, expect, afterAll, beforeEach } from 'vitest'
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -120,6 +120,10 @@ it('rejects retry after backup checksum changes without changing the checkpoint'
 vi.mock('../../../server/utils/platform-live-query', () => ({ runPlatformLiveQuery: vi.fn(async (input: {source: PlatformLiveQueryResult['source']}) => ({...archive((input as {source:PlatformLiveQueryResult['source']}).source,true),pages:[],effectiveConditions:{combination:'and'},unfinished:[],completeness:'partial'})) }))
 
 import { runPlatformLiveQuery } from '../../../server/utils/platform-live-query'
+// Restore the deterministic provider fixture between scenarios. Real-provider
+// cases install transports with retry backoff that must not leak into scope-only
+// checks (or other scenarios when execution order changes).
+beforeEach(() => { vi.mocked(runPlatformLiveQuery).mockReset() })
 it('collects missing per-enterprise title pages and resumes only failed positions through HTTP retry and MCP read', async () => {
   const db=initializeDb({create:true,dbPath:join(dir,'collection.db')})
   activeDb=db

@@ -17,10 +17,9 @@ export function populateDisconnectedExportFixture(dbPath: string) {
   const db = initializeDb({ create: true,  dbPath })
   try {
     db.transaction(() => {
-      // Deterministic incompressible text keeps the actual >4MiB stream boundary
-      // using base64 rather than hex avoids 40% of XML text while retaining
-      // >4MiB of compressed entropy; each cell stays below Excel's limit.
-      for (let i = 0; i < 1000; i++) exportCandidate(db, '合成断开' + i + createHash('shake256', { outputLength: 4500 }).update(String(i)).digest('base64'), 'innovative_sme')
+      // Same 4.5MB entropy in fewer business rows; each base64 cell stays
+      // below Excel's limit and public downloads must still exceed 4MiB.
+      for (let i = 0; i < 200; i++) exportCandidate(db, '合成断开' + i + createHash('shake256', { outputLength: 22500 }).update(String(i)).digest('base64'), 'innovative_sme')
     })
   } finally { db.$client.close() }
 }

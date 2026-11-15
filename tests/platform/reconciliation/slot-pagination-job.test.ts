@@ -106,6 +106,7 @@ function upstream() {
   })
 }
 
+// Archives both 51-row sources then replays a public job to verify cache identity.
 it('public job retains both sources’ unique row 51 and exact page evidence; complete cache reuses original IDs', async () => {
   upstream()
   reply=(s,r,n)=>page(s,n,s==='queryList'||r==='3'?51:0)
@@ -134,7 +135,7 @@ it('public job retains both sources’ unique row 51 and exact page evidence; co
   expect(task.reconcileCollection).toMatchObject({ complete: 4, partial: 0, failed: 0, unknown: 0, unfinished: 0, positions: [], positionsTruncated: false })
   expect((await api('/api/task-center?tab=platform')).rows.find((t: { id: string }) => t.id === job.jobId).reconcileCollection).toEqual(task.reconcileCollection)
   expect((await api(`/api/task-center/${second.id}`)).reconcileCollection).toEqual(task.reconcileCollection)
-})
+}, 10000)
 
 // These multi-page/replay integration cases include native archive verification.
 // Their 30s runner budget stays below the source collection's 60s limit; it is

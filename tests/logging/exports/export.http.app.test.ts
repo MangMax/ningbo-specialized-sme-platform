@@ -272,7 +272,7 @@ it('distinguishes actual HTTP disconnects for artifact and both legacy streams w
   expect(response.status).toBe(202)
   const job = await terminal((await json(response)).jobId, 90000)
   expect(job.state).toBe('done')
-  expect(job.result.counts).toEqual({ eligible: 1000, pending: 0, excluded: 0 })
+  expect(job.result.counts).toEqual({ eligible: 200, pending: 0, excluded: 0 })
   async function disconnect(path: string) {
     return new Promise<string>((resolve, reject) => {
       const request = get(url(path), { headers }, res => {
@@ -293,7 +293,7 @@ it('distinguishes actual HTTP disconnects for artifact and both legacy streams w
     })
   }
   const { bytes, wb } = await original(job.result.artifact.downloadUrl, 'after-disconnect-original')
-  expect(wb.getWorksheet('有效企业')!.rowCount).toBe(1001)
+  expect(wb.getWorksheet('有效企业')!.rowCount).toBe(201)
   expect(createHash('sha256').update(bytes).digest('hex')).toBe(job.result.artifact.sha256)
 }, 180000)
 

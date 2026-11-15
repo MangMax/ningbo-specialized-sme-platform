@@ -142,9 +142,12 @@ it('万行快照与普通请求响应', async () => {
   for(let i=0;i<500;i++) {
     active=await json(await fetch(url('/api/jobs/'+id)))
     if(active.state==='running' && active.progress.done>=100) break
+    if(['done','failed','cancelled'].includes(active.state)) break
     await new Promise(r=>setTimeout(r,10))
   }
-  expect(active.state).toBe('running');expect(active.progress.done).toBeLessThan(active.progress.total)
+  expect(active.state, 'snapshot must still be active before mutation: '+JSON.stringify(active)).toBe('running')
+  expect(active.progress.done).toBeGreaterThanOrEqual(100)
+  expect(active.progress.done).toBeLessThan(active.progress.total)
   const changed=await fetch(url('/api/roster/decision-lifecycle/commands'),{method:'POST',headers,body:JSON.stringify({enterpriseId:last.enterprise.id,titleCode:'little_giant',direction:'extra_in_miit',action:'replace',expectedCurrentId:null,idempotencyKey:'snapshot-change',actor:{type:'agent',id:'test'},basis:'隔离SQLite当前事实更新',ruleVersion:'manual-v1',effectiveAt:'2026-01-01T00:00:00Z',decision:{status:'confirmed_reason',reasonCode:'moved_out',verificationStatus:'confirmed',measureCode:'mark_moved_out'}})})
   expect(changed.status).toBe(200)
   const version=await changed.json()

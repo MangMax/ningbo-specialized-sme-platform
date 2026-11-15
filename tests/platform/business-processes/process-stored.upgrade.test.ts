@@ -261,7 +261,7 @@ it('executes the offline capture and fixed-source replay in fresh processes with
   expect(result.status,result.stderr).toBe(0)
   expect(JSON.parse(readFileSync(join(evidence,'receipt.json'),'utf8'))).toMatchObject({state:'complete',queryReady:true})
  }
-})
+}, 15000) // Two real CLI cold starts; the operator wrapper deliberately disables Jiti caches.
 
 it.each([
   'DROP TRIGGER platform_process_stored_no_delete',

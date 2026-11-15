@@ -162,15 +162,21 @@ it('hides expired rows beyond one bounded maintenance batch', async () => {
 
 it('refuses to activate a smaller cap until bounded pruning physically satisfies it', async () => {
   const {service}=fixture()
+  // Keep more than 32 maintenance batches of real events, without inflating
+  // every indexed identity to its independent maximum-length boundary.
   for(let batch=0;batch<520;batch++) {
-    for(let row=0;row<64;row++)service.emit({source:'worker',operation:'shrink.run',outcome:'success',taskId:'t'.repeat(120),requestId:'r'.repeat(120),traceId:'x'.repeat(120),resourceId:'z'.repeat(120)})
+    for(let row=0;row<64;row++)service.emit({source:'worker',operation:'shrink.run',outcome:'success'})
     await service.flush()
   }
+  expect(service.status()).toMatchObject({ stored: 33280, dropped: 0, writeUnknown: 0, unavailable: false })
   const {dispatchLogAction}=await import('../../../lib/logging/application')
   const pending=await dispatchLogAction(service,'setPolicy',{retentionDays:7,maxBytes:1048576,collection:{integrations:{application:{enabled:false,minLevel:'error'}}}},true)
   expect(pending.status).toBe(409)
   expect(pending.body).toMatchObject({error:{code:'policy_capacity_pending'}})
-  expect(await service.policy()).toMatchObject({maxBytes:536870912,revision:0,collection:{integrations:{application:{enabled:true,minLevel:'debug'}}}})
+  const unchanged = await service.policy()
+  expect(unchanged).toMatchObject({maxBytes:536870912,revision:0,collection:{integrations:{application:{enabled:true,minLevel:'debug'}}}})
+  expect(unchanged.pruned).toBeGreaterThan(0)
+  expect(unchanged.storageBytes).toBeGreaterThan(1048576 / 3)
   const applied=await dispatchLogAction(service,'setPolicy',{retentionDays:7,maxBytes:1048576},true)
   expect(applied.status).toBe(200)
   expect(await service.policy()).toMatchObject({maxBytes:1048576})

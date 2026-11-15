@@ -36,8 +36,10 @@ async function fixture(filename='fixture.db') {
   return {dir,path,owner,writer,client,payload}
 }
 const decoded=(out:unknown)=>Buffer.isBuffer(out)?JSON.parse(out.toString()):out
+describe('managed owner eligibility', () => {
+let f: Awaited<ReturnType<typeof fixture>>
+beforeEach(async () => { f = await fixture('literal:memory:.db') })
 it('managed existing disk owner is eligible, real memory and untracked handles are ineligible, and a filename containing :memory: is disk',async()=>{
-  const f=await fixture('literal:memory:.db')
   expect(getDbOwnerIdentity(f.owner)).toMatchObject({dbPath:f.path,realpath:realpathSync(f.path)})
   f.writer.$client.pragma('journal_mode=DELETE')
   const client=new Database(f.writer.$client.serialize()),memory=drizzle(client,{schema});cleanup.push(()=>client.close())
@@ -52,6 +54,7 @@ it('managed existing disk owner is eligible, real memory and untracked handles a
   expect(getDbOwnerIdentity(f.writer)).toBeUndefined()
   const reads=createEnterpriseReadExecutor();cleanup.push(()=>reads.close())
   expect(decoded(await readRecognitions(f.owner,{},undefined,reads))).toMatchObject({counts:{titlePairs:1},rows:[{name:'合成M1企业'}]})
+})
 })
 it('owner transaction and untracked fallback execute the original owner once, including FIFO 16-job and 64KiB inline overflow',async()=>{
   const f=await fixture(),never={recognitions:vi.fn()}

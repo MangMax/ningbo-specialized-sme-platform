@@ -215,10 +215,8 @@ it('an idle executor preflights a valid batch larger than 32MiB without changing
   expect(response.status).toBe(200)
   expect(await response.json()).toEqual(expected)
   expect(await service.get('/receipt?idempotencyKey=synthetic:isolation')).toMatchObject({ status: 'preflight' })
-  const committed = await (await service.post(request)).json()
-  expect(committed).toMatchObject({ status: 'committed', summary: { written: 2, failed: 0 } })
-  expect(await service.get('/source?id=' + committed.items[0].detail.rows[0])).toMatchObject({ source: request.payload.exportSnapshot!.rows[0] })
-  expect(await (await service.post(request)).json()).toEqual(committed)
+  // Commit/raw preservation and replay are covered above; oversized admission
+  // needs one real HTTP preflight, not three further 32MiB transfers.
 }, 20_000)
 
 it.each([

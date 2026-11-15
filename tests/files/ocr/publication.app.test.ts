@@ -82,7 +82,9 @@ async function request(path: string, method = 'GET', body?: unknown) {
 }
 async function seed(pages = 1) {
   const file = `synthetic-${++sequence}.pdf`
-  writeFileSync(join(filesDir, file), minimalPdf({ pages }))
+  // Publication checks need real distinct page images, not a large raster.
+  // Two 20pt marks fit this canvas; keep the actual default-DPI renderer.
+  writeFileSync(join(filesDir, file), minimalPdf({ pages, widthPt: 100, heightPt: 60 }))
   const row = db.insert(schema.storedFile).values({ relPath: file, filename: file, ext: 'pdf', bytes: readFileSync(join(filesDir, file)).length, sha256: createHash('sha256').update(readFileSync(join(filesDir, file))).digest('hex') }).returning().get()
   await renderPdfPages(filesDir, file, { dpi: DEFAULT_DPI })
   return { file, row, pagePath: `/api/files/${row.id}/ocr-pages/1` }

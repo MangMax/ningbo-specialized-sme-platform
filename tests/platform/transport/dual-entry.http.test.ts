@@ -1,4 +1,4 @@
-import { it, expect, vi } from 'vitest'
+import { beforeAll, it, expect, vi } from 'vitest'
 import { existsSync, mkdtempSync, rmSync, writeFileSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -8,6 +8,19 @@ import { sql } from 'drizzle-orm'
 import { initializeDb } from '../../../db/client'
 import { handleRosterImportRequest } from '../../../server/utils/roster-import-http'
 import type { RosterImportRequest, RosterImportPlatformQuery } from '../../../lib/roster-import-client'
+
+const platformSources = ['declarations', 'business-processes', 'recognized-directory'] as const
+let platformRoutes: { source: typeof platformSources[number]; list: import('h3').EventHandler; detail: import('h3').EventHandler }[]
+beforeAll(async () => {
+  for (const [key, value] of Object.entries({ defineEventHandler, setHeader, getQuery, getRouterParam, createError })) vi.stubGlobal(key, value)
+  // Prepare real handlers before exercising replay, as the running HTTP server
+  // does. Cold module loading is setup, separate from the default 5s case budget.
+  platformRoutes = await Promise.all(platformSources.map(async source => ({
+    source,
+    list: (await import(`../../../server/api/platform/${source}.get.ts`)).default,
+    detail: (await import(`../../../server/api/platform/${source}/[recordId].get.ts`)).default,
+  })))
+})
 
 it('normal replay and retained relationId verification expose the same literal fields without changing archived identities', async () => {
   const retained = process.env.ACCEPTANCE_598_DIR
@@ -31,16 +44,15 @@ it('normal replay and retained relationId verification expose the same literal f
     limits: { pageSize: 50, maxRequests: 100, maxRows: 5000, maxDurationMs: 60000 },
   } as never
   const request = (key: string, payload: RosterImportRequest['payload']): RosterImportRequest => ({ idempotencyKey: key, sourceKind: 'platform_archive', sourceIdentity: 'tests/598-controlled', payload })
-  for (const [key, value] of Object.entries({ defineEventHandler, setHeader, getQuery, getRouterParam, createError })) vi.stubGlobal(key, value)
   const router = createRouter()
   for (const action of ['preflight', 'commit'] as const) router.post(`/api/roster/import/${action}`, defineEventHandler(async event => {
     const out = await handleRosterImportRequest(action, { method: 'POST', headers: { authorization: getHeader(event, 'authorization') }, body: await readBody(event) }, { db, apiToken: '598-isolated-token' })
     setResponseStatus(event, out.status)
     return out.body
   }))
-  for (const source of ['declarations', 'business-processes', 'recognized-directory']) {
-    router.get(`/api/platform/${source}`, (await import(`../../../server/api/platform/${source}.get.ts`)).default)
-    router.get(`/api/platform/${source}/:recordId`, (await import(`../../../server/api/platform/${source}/[recordId].get.ts`)).default)
+  for (const { source, list, detail } of platformRoutes) {
+    router.get(`/api/platform/${source}`, list)
+    router.get(`/api/platform/${source}/:recordId`, detail)
   }
   const server = createServer(toNodeListener(createApp().use(router)))
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
