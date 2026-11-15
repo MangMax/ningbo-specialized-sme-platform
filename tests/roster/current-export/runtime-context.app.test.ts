@@ -252,7 +252,7 @@ it.each([{ mode: 'source' as const, ...ocrPartitions409[0] }, { mode: 'compiled'
   expect(progress).toContainEqual(expect.objectContaining({ done: 0, total: 3, snapshotId: 'actual-worker-409', ruleVersion: CURRENT_RULE_VERSION }))
   const workbook = new ExcelJS.Workbook(); await workbook.xlsx.readFile(temporaryPath)
   expect(workbook.worksheets.map(sheet => sheet.name)).toEqual(['有效企业','已到期','已注销（吊销）','已迁出','未认定','口径说明'])
-  const selected = [W409.runtimeApi,W409.runtimeMcp,W409.envApi,W409.envMcp,partition.savedCookie ? W409.savedCookie : W409.envCookie,partition.selectedOcr]
+  const selected: string[] = [W409.runtimeApi,W409.runtimeMcp,W409.envApi,W409.envMcp,partition.savedCookie ? W409.savedCookie : W409.envCookie,partition.selectedOcr]
   const expectedName = '合成公布 ' + Object.values(W409).map(value => selected.includes(value) ? '[REDACTED]' : value).join(' ') + ' 企业'
   const published = '2026年第1批认定，《B409合成公布.pdf》：公布名称：' + JSON.stringify(expectedName)
   expect(workbook.getWorksheet('有效企业')!.getCell('H2').value).toBe(published)
