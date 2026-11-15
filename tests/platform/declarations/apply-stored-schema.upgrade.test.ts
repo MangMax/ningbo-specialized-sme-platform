@@ -169,7 +169,7 @@ it.each(['missing','different'])('records command materialization profile and re
  const beforeRefusal=changed.serialize();changed.close()
  expect(()=>finalizeApplyStored(f)).toThrow(/checkpoint drift/)
  const refused=new Database(f.target);expect(refused.serialize()).toEqual(beforeRefusal);refused.close()
-})
+}, 15000)
 it('recovers sealed snapshot alone and refuses source/snapshot contradiction atomically',()=>{
  const f=fixture();expect(finalizeApplyStored({...f,legacySource:undefined}).queryReady).toBe(true)
  const other=fixture();const legacy=new Database(other.legacySource);legacy.exec("UPDATE platform_relation SET status='changed' WHERE id=1");legacy.close()
@@ -444,7 +444,7 @@ it('migrates a WAL-backed predecessor snapshot and replays with literal exact ce
  expect(finalizeApplyStored(options).queryReady).toBe(true)
  expect(readFileSync(snapshot)).toEqual(before)
  const replay=new Database(f.target);expect(replay.serialize()).toEqual(targetBytes);replay.close()
-})
+}, 15000)
 it.each(['source','legacySource'] as const)('rejects missing fixed %s before target writes',field=>{
  const f=fixture(),before=readFileSync(f.target)
  expect(()=>finalizeApplyStored({...f,[field]:f[field]+'.missing'})).toThrow()

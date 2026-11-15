@@ -53,12 +53,17 @@ it.each([2028, ' ', true, [], '2.5', -1].map(year => ({ year })))('uses literal 
   writeApplyTarget(db, { ...input, row: { ...input.row, rawFields: { id: 'A', year } } })
   expect(sqlite.prepare('select declaration_year from platform_apply_projection where version_id is not null').get()).toEqual({ declaration_year: year === 2028 ? 2028 : null }); sqlite.close()
 })
-it('refuses same position different payload and rolls back invalid owners', () => {
+it('refuses different payload at an existing observation position atomically', () => {
   const { db, sqlite, input } = fixture()
   writeApplyTarget(db, input)
   const before = sqlite.serialize()
   expect(() => writeApplyTarget(db, { ...input, row: { ...input.row, rawFields: { id: 'changed' } } })).toThrow('observation_payload_conflict')
   expect(sqlite.serialize()).toEqual(before)
+  sqlite.close()
+})
+it('rejects invalid collection and page owners without changing the database', () => {
+  const { db, sqlite, input } = fixture()
+  const before = sqlite.serialize()
   expect(() => writeApplyTarget(db, { ...input, collectionId: 2 })).toThrow('owner mismatch')
   expect(() => writeApplyTarget(db, { ...input, position: { ...input.position, pageId: 999 } })).toThrow('owner mismatch')
   expect(sqlite.serialize()).toEqual(before); sqlite.close()
@@ -109,18 +114,21 @@ it('rejects canonical byte drift on a hash hit before creating another observati
   expect(() => writeApplyTarget(db, { ...input, position: { ...input.position, sequenceNo: 2 }, row: { ...input.row, sequenceNo: 2 } })).toThrow('platform_content_hash_conflict')
   expect(sqlite.serialize()).toEqual(before); sqlite.close()
 })
-it('accepts the last safe record ID and atomically rejects exhausted record IDs for distinct keys', () => {
+it('allocates the last safe record ID and reuses it for the same key', () => {
   const { db, sqlite, input } = fixture()
   sqlite.exec("insert into sqlite_sequence(name,seq) values('platform_business_record',9007199254740990)")
   const row = (key: string, sequenceNo: number): ApplyTargetInput => ({ ...input, position: { ...input.position, sequenceNo }, row: { sequenceNo, relationKey: key, rawFields: null } })
   const last = writeApplyTarget(db, row('LAST-SAFE', 1))
   expect(last.recordId).toBe(Number.MAX_SAFE_INTEGER)
   expect(writeApplyTarget(db, row('LAST-SAFE', 2)).recordId).toBe(last.recordId)
+  sqlite.close()
+})
+it('atomically rejects a distinct key when record IDs are exhausted', () => {
+  const { db, sqlite, input } = fixture()
+  sqlite.exec("insert into platform_business_record(id,interface,platform_key,identity_rule_version,created_at) values(9007199254740991,'apply_list','LAST-SAFE','platform-observation-v1','fixture')")
   const before = sqlite.serialize()
-  for (const [index, key] of ['EXHAUST-1', 'EXHAUST-2'].entries()) {
-    expect(() => writeApplyTarget(db, row(key, index + 3))).toThrow('Invalid target identity')
-    expect(sqlite.serialize()).toEqual(before)
-  }
+  expect(() => writeApplyTarget(db, { ...input, row: { ...input.row, relationKey: 'EXHAUST', rawFields: null } })).toThrow('Invalid target identity')
+  expect(sqlite.serialize()).toEqual(before)
   expect(sqlite.prepare('select cast(id as text) id,platform_key from platform_business_record').all()).toEqual([{ id: '9007199254740991', platform_key: 'LAST-SAFE' }])
   expect(sqlite.pragma('foreign_key_check')).toEqual([])
   sqlite.close()
