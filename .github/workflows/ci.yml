@@ -113,6 +113,12 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - name: Prepare disposable test storage
+        run: |
+          test_tmp="$RUNNER_TEMP/test-fixtures"
+          mkdir -p "$test_tmp"
+          sudo mount -t tmpfs -o size=1536m,mode=1777 tmpfs "$test_tmp"
+          echo "TMPDIR=$test_tmp" >> "$GITHUB_ENV"
       - name: Run tests within the workflow time budget
         env:
           GH_TOKEN: ${{ github.token }}
@@ -166,6 +172,12 @@ jobs:
         with:
           name: test-build
       - run: tar -xzf test-build.tar.gz
+      - name: Prepare disposable test storage
+        run: |
+          test_tmp="$RUNNER_TEMP/test-fixtures"
+          mkdir -p "$test_tmp"
+          sudo mount -t tmpfs -o size=1536m,mode=1777 tmpfs "$test_tmp"
+          echo "TMPDIR=$test_tmp" >> "$GITHUB_ENV"
       - name: Run tests within the workflow time budget
         env:
           GH_TOKEN: ${{ github.token }}
