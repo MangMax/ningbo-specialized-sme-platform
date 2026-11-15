@@ -123,3 +123,11 @@ export async function stopOwnedChild(child) {
   if (members().length) throw new Error('Owned service process group did not exit: ' + group)
   ownedGroups.delete(child)
 }
+
+/** Start the build produced once by CI or `pnpm build`. */
+export function spawnCompiledApp(port, options = {}) {
+  return spawnOwnedChild(process.execPath, ['.output/server/index.mjs'], {
+    ...options,
+    env: { ...process.env, ...options.env, NODE_ENV: 'production', HOST: '127.0.0.1', PORT: String(port), NITRO_HOST: '127.0.0.1', NITRO_PORT: String(port) },
+  })
+}

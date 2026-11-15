@@ -1,10 +1,10 @@
-import {afterAll,beforeAll,it,expect} from 'vitest'
+import {afterAll,beforeAll,it,expect,vi} from 'vitest'
 import {Client} from '@modelcontextprotocol/sdk/client/index.js'
 import {StreamableHTTPClientTransport} from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import {qualificationExportFixture} from '../current-export/fixtures/qualification-export'
 const f=qualificationExportFixture()
-beforeAll(()=>f.start(),60000)
-afterAll(()=>f.close())
+beforeAll(()=>{ vi.stubEnv('NUXT_MCP_TOKEN', f.token); return f.start() },60000)
+afterAll(async()=>{ try { await f.close() } finally { vi.unstubAllEnvs() } })
 it.each(['difference_snapshot','refresh_enterprise_differences'])('protects %s at HTTP and SDK boundaries',async name=>{
  for(const auth of [undefined,'Bearer incorrect']){
   const response=await fetch(f.url('/mcp'),{method:'POST',headers:{'content-type':'application/json',accept:'application/json, text/event-stream',...(auth?{authorization:auth}:{})},body:JSON.stringify({jsonrpc:'2.0',id:1,method:'tools/call',params:{name,arguments:{}}})})

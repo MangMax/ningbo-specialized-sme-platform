@@ -1,3 +1,4 @@
+import { spawnCompiledApp } from '../../support/owned-process.mjs'
 import { assertEnterpriseDetailSnapshotEqual } from '../assertions/enterprise-detail-snapshot'
 import { createHash } from 'node:crypto'
 import { minimalPdf } from '../../support/minimal-pdf'
@@ -37,7 +38,7 @@ async function archive(e: ReturnType<typeof seed>, key: string, status = '新事
 async function drain(key: string, limit = 100) { for(let i=0;i<30;i++){ const r = await post(workPath,{...cmd(key+'-'+i),action:'process',limit}); expect(r.status,JSON.stringify(r.body)).toBe(200); if(!r.body.unfinished)return r.body }; throw new Error('drain incomplete') }
 beforeAll(async()=>{
   const cwd = resolve(import.meta.dirname,'../../..'), port=await reserveLoopbackPort()
-  const child=spawn(process.execPath,[join(cwd,'node_modules/nuxt/bin/nuxt.mjs'),'dev','--host','127.0.0.1','--port',String(port)],{cwd,stdio:['ignore','pipe','pipe'],env:{...process.env,NUXT_BUILD_DIR:join(dir,'build'),NUXT_DB_PATH:dbPath,NUXT_API_TOKEN:'synthetic-api',NUXT_CURATED_PATH:join(dir,'curated.json'),NUXT_MCP_TOKEN:'synthetic-mcp',NUXT_FILES_DIR:join(dir,'files'),NUXT_INCOMING_DIR:join(dir,'incoming')}})
+  const child=spawnCompiledApp(port, {cwd,stdio:['ignore','pipe','pipe'],env:{...process.env,NUXT_BUILD_DIR:join(dir,'build'),NUXT_DB_PATH:dbPath,NUXT_API_TOKEN:'synthetic-api',NUXT_CURATED_PATH:join(dir,'curated.json'),NUXT_MCP_TOKEN:'synthetic-mcp',NUXT_FILES_DIR:join(dir,'files'),NUXT_INCOMING_DIR:join(dir,'incoming')}})
   let output='';for(const stream of [child.stdout,child.stderr])stream.on('data',d=>{output=(output+d).slice(-8000)})
   base=`http://127.0.0.1:${port}`;stop=()=>stopOwnedChild(child)
   try{await waitForHttp(base+'/api/roster/differences',{timeoutMs:60000,child})}catch(e){await stop();throw new Error(String(e)+output)}

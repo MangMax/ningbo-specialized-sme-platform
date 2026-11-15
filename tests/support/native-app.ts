@@ -9,11 +9,12 @@ type Launch = (context: { cwd: string; port: number }) => {
 
 // Real native app transport only: scenario seeds and export oracles stay with callers.
 // Each reset stops the owned process before opening a new immutable database path.
-export function nativeAppAdapter({ dir, token, launch }: { dir: string; token: string; launch: Launch }) {
+export function nativeAppAdapter({ dir, token, launch }: { dir: string; token: string; launch?: Launch }) {
   let generation = 0
   let dbPath = join(dir, 'synthetic.db')
   let db = initializeDb({ dbPath, create: true })
   let baseUrl = ''
+  let processId: number | undefined
   let stop: (() => Promise<void>) | undefined
   const headers = { 'content-type': 'application/json', authorization: `Bearer ${token}` }
   const url = (path: string) => baseUrl + path
@@ -24,7 +25,7 @@ export function nativeAppAdapter({ dir, token, launch }: { dir: string; token: s
     const cwd = resolve(import.meta.dirname, '../..')
     const port = await reserveLoopbackPort()
     if (port === 3480 || port === 3481) throw new Error('Reserved business port refused')
-    const command = launch({ cwd, port })
+    const command = launch?.({ cwd, port }) ?? { args: [join(cwd, '.output/server/index.mjs')], env: { NODE_ENV: 'production', HOST: '127.0.0.1', PORT: String(port) } }
     const child = spawnOwnedChild(process.execPath, command.args, {
       cwd, stdio: ['ignore', 'pipe', 'pipe'],
       env: {
@@ -34,6 +35,7 @@ export function nativeAppAdapter({ dir, token, launch }: { dir: string; token: s
         ...command.env,
       },
     })
+    processId = child.pid
     let output = ''
     for (const stream of [child.stdout, child.stderr]) stream.on('data', data => { output = (output + data).slice(-12000) })
     baseUrl = `http://127.0.0.1:${port}`
@@ -61,17 +63,15 @@ export function nativeAppAdapter({ dir, token, launch }: { dir: string; token: s
   }
 
   async function resetBusiness() {
-    const running = stop != null
     await stop?.()
     stop = undefined
     db.$client.close()
     dbPath = join(dir, `synthetic-${++generation}.db`)
     db = initializeDb({ dbPath, create: true })
-    if (running) await start()
   }
 
   return {
-    get db() { return db }, get dbPath() { return dbPath },
+    get processId() { return processId }, get db() { return db }, get dbPath() { return dbPath },
     headers, url, request, start, terminal, download, resetBusiness,
     async close() { try { await stop?.(); stop = undefined } finally { db.$client.close() } },
   }

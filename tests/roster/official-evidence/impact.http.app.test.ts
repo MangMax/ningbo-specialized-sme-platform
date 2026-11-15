@@ -1,3 +1,4 @@
+import { spawnCompiledApp } from '../../support/owned-process.mjs'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -33,7 +34,7 @@ const backfill = (id: number) => ({ enterpriseId: id, uscc: '91330211255994457P'
 function drain(limit = 100) { let result; for (let i = 0; i < 100; i++) { result = processEvidenceImpacts113(db, { limit }); if (!result.unfinished) return result }; throw new Error('bounded processor did not finish') }
 beforeAll(async () => {
   const cwd = resolve(import.meta.dirname, '../../..'), port = await reserveLoopbackPort()
-  const child = spawn(process.execPath, [join(cwd, 'node_modules/nuxt/bin/nuxt.mjs'), 'dev', '--host', '127.0.0.1', '--port', String(port)], { cwd, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, NUXT_BUILD_DIR: join(dir, 'build'), NUXT_DB_PATH: dbPath, NUXT_API_TOKEN: 'synthetic-api', NUXT_MCP_TOKEN: 'synthetic-mcp', NUXT_FILES_DIR: join(dir, 'files'), NUXT_INCOMING_DIR: join(dir, 'incoming') } })
+  const child = spawnCompiledApp(port, { cwd, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, NUXT_BUILD_DIR: join(dir, 'build'), NUXT_DB_PATH: dbPath, NUXT_API_TOKEN: 'synthetic-api', NUXT_MCP_TOKEN: 'synthetic-mcp', NUXT_FILES_DIR: join(dir, 'files'), NUXT_INCOMING_DIR: join(dir, 'incoming') } })
   let output = ''; for (const stream of [child.stdout, child.stderr]) stream.on('data', data => { output = (output + data).slice(-8000) })
   baseUrl = `http://127.0.0.1:${port}`; stop = () => stopOwnedChild(child)
   try { await waitForHttp(baseUrl + '/api/roster/differences', { timeoutMs: 60000, child }) } catch (e) { await stop(); throw new Error(String(e) + output) }

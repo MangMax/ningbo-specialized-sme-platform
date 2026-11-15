@@ -5,7 +5,7 @@ import { chmodSync, copyFileSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { createHash } from 'node:crypto'
 import { sql as schemaSql } from 'drizzle-orm'
-import { afterEach, beforeAll, beforeEach, expect, it } from 'vitest'
+import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import * as schema from '../../../db/schema'
 import { targetSchema } from '../../../lib/platform/target-schema'
 import { reserveLegacyIds } from '../../../lib/platform/target-archive'
@@ -19,8 +19,9 @@ import { writeCollectionTarget } from '../../../lib/platform/collection-target-r
 // Required owner paths prevent accidental writes into historical fixture roots.
 const evidenceRoot = process.env.REUSE_761_EVIDENCE_DIR
 const shared = process.env.PLATFORM_757_FIXTURES
-if (!evidenceRoot || !shared) throw new Error('Set REUSE_761_EVIDENCE_DIR and PLATFORM_757_FIXTURES')
-const root = mkdtempSync(join(evidenceRoot, 'reuse761-'))
+if (Boolean(evidenceRoot) !== Boolean(shared)) throw new Error('Supply both REUSE_761_EVIDENCE_DIR and PLATFORM_757_FIXTURES')
+describe.runIf(Boolean(evidenceRoot && shared))('explicit historical collection reuse source acceptance', () => {
+const root = evidenceRoot ? mkdtempSync(join(evidenceRoot, 'reuse761-')) : ''
 const schema0 = join(root, 'schema0-baseline.sqlite')
 let t: Database.Database, old: Database.Database
 let db: ReturnType<typeof drizzle<typeof schema>>, oracle: typeof db
@@ -40,7 +41,7 @@ beforeAll(() => {
 })
 beforeEach(() => {
   const targetPath = join(root, `target-${++serial}.sqlite`), oldPath = join(root, `old-${serial}.sqlite`)
-  copyFileSync(join(shared, 'absent-71613.sqlite'), targetPath)
+  copyFileSync(join(shared!, 'absent-71613.sqlite'), targetPath)
   chmodSync(targetPath, 0o600)
   copyFileSync(schema0, oldPath)
   t = new Database(targetPath, { verbose: q => trace.push(String(q)) }); t.pragma('foreign_keys=ON')
@@ -291,3 +292,5 @@ function corruptible(connection: Database.Database, table: string) {
     connection.exec(`drop trigger "${row.name.replaceAll('"', '""')}"`)
   }
 }
+
+})

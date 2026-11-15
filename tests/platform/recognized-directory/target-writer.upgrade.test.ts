@@ -1,11 +1,11 @@
 import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { migrate } from 'drizzle-orm/better-sqlite3/migrator'
-import { copyFileSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { copyFileSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createHash } from 'node:crypto'
-import { expect, it } from 'vitest'
+import { afterAll, afterEach, expect, it } from 'vitest'
 import { upgradeCollections } from '../../../upgrade/collections'
 import { upgradeObservations } from '../../../upgrade/observations'
 import { upgradeProjections } from '../../../upgrade/projections'
@@ -13,9 +13,17 @@ import { finalizeObservations } from '../../../upgrade/finalize-observations'
 import { targetSchema } from '../../../upgrade/target-schema'
 import { writeRecognizedTarget, type RecognizedTargetInput } from '../../../upgrade/frozen/recognized-target-writer'
 
+let template: string | undefined
+const roots: string[] = []
+const connections: Database.Database[] = []
+afterEach(() => { for(const db of connections.splice(0)) if(db.open)db.close() })
+afterAll(() => { for(const root of roots)rmSync(root,{recursive:true,force:true}) })
 function fixture() {
-  const root = mkdtempSync(join(process.env.W3A_EVIDENCE_DIR ?? tmpdir(), 'w3a-'))
+  const root = mkdtempSync(join(tmpdir(), 'w3a-'))
+  roots.push(root)
   const source = join(root, 'source.sqlite'), target = join(root, 'target.sqlite')
+  if (template) copyFileSync(template, target)
+  else {
   const sourceDb = new Database(source)
   migrate(drizzle(sourceDb), { migrationsFolder: 'db/migrations' })
   sourceDb.exec("insert into platform_query(id,interface,query_key,rdjb,queried_at,status,created_at) values(1,'apply_list','a','','t','success','c'),(2,'recognized_list','b','','t','success','c');")
@@ -24,8 +32,11 @@ function fixture() {
   upgradeObservations({ source, target, runId: 'o', collectionRunId: 'c', batchSize: 2 })
   upgradeProjections({ source, target, runId: 'p', observationRunId: 'o', collectionRunId: 'c', batchSize: 2 })
   finalizeObservations({ source, target, runId: 'f', projectionRunId: 'p', observationRunId: 'o', collectionRunId: 'c' })
+    template = join(root, "pristine.sqlite"); copyFileSync(target, template)
+  }
   const statements: string[] = []
   const sqlite = new Database(target, { verbose: text => statements.push(String(text)) }); sqlite.pragma('foreign_keys=ON')
+  connections.push(sqlite)
   const db = drizzle(sqlite, { schema: targetSchema })
   const input: RecognizedTargetInput = { collectionId: 2, position: { sequenceNo: 1, positionState: 'unknown' }, row: { sequenceNo: 1, relationKey: ' A ', year: 2017, status: '旧状态', rawFields: { year: 2020, id: 'A', rddqrq: ' 2028-01 ', whpcyear: false, rdjb: ' 2 ', whpc: ' 2026-2 ', szq: ' 鄞州 ', rdxx: ' 原说明 ', qymc: ' 企业 ', tyshxydm: ' CODE ' }, sourceText: '原文\n\u0000' }, assignment: { enterpriseId: null, matchBasis: 'none', verificationStatus: 'pending', origin: 'command', actor: { type: 'agent', id: 'test' }, basis: 'explicit test observation', recordedAt: null } }
   return { sqlite, db, input, statements }

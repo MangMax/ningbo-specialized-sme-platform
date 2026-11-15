@@ -1,6 +1,6 @@
 import { submitSyntheticRecognizedCollection } from '../fixtures/recognized-source'
 import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
-import { afterAll, beforeAll, beforeEach, expect, it } from 'vitest'
+import { afterAll, beforeEach, expect, it } from 'vitest'
 import { assertQualificationRowsSnapshotEqual } from '../fixtures/qualification-matrix'
 import { schema as s } from '../../../db/client'
 import { commitRecordCorrespondences, preflightRecordCorrespondences } from '../../../server/utils/record-correspondence'
@@ -10,9 +10,8 @@ import { specializedExportFixture, year } from '../current-export/fixtures/speci
 const fixture = specializedExportFixture()
 const f = { ...fixture, get db() { return fixture.db }, get dbPath() { return fixture.dbPath }, candidate: (name: string, events?: Parameters<typeof fixture.candidate>[1], title = 'innovative_sme') => fixture.candidate(name, events, title) }
 let linkOffset = 0
-beforeAll(f.start, 90000)
 beforeEach(async () => {
-  await f.resetBusiness()
+  await f.resetBusiness(); await f.start()
 }, 90000)
 afterAll(f.close)
 

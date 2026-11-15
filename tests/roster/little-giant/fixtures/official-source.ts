@@ -2,39 +2,11 @@ import { existsSync, readFileSync } from 'node:fs'
 import { LITTLE_GIANT_SOURCE_FILE } from '../../../../lib/roster/little-giant-import'
 import { buildLittleGiantWorkbookBuffer, type FixtureRow } from './workbook'
 
-/**
- * RL-02 的测试源:**真件在就用真件,不在就用合成夹具**,但**永远有一份可跑**。
- *
- * ── 为什么不整组 skip ────────────────────────────────────────────────────
- * 真件是业务数据、不进 Git(brief:不要把 xlsx 提交进 Git),所以它在不在**取决于机器**。
- * 「文件不在 ⇒ 这组用例消失」会让这条链路的验收在新检出上**静默归零** —— 那不是省事,
- * 是把「没跑过」伪装成「跑过了」。所以:
- *
- *  - **结构 / 逐行交代 / 写入链路**这些断言在两种源上都必须成立(合成夹具按真件的
- *    结构特征造:单表、单行表头、r2 起、G 与 I 同表头、K 起是杂项、跨批次同码);
- *  - **只有真件才有的具体数字**(SHA-256、511 行、510 企业、r15/r367)挂在
- *    `hasRealSource` 上,真件在时才断言。
- *
- * 真件路径:`RL02_LITTLE_GIANT_XLSX=<绝对路径>` 覆盖;未设时退回本机源目录默认位置。
- */
+// Deterministic synthetic input by default; real-source acceptance is explicit.
+export const littleGiantSourcePath = process.env.LITTLE_GIANT_SOURCE_XLSX ?? ''
+export const hasRealSource = Boolean(littleGiantSourcePath)
+if (hasRealSource && !existsSync(littleGiantSourcePath)) throw new Error('LITTLE_GIANT_SOURCE_XLSX does not exist')
 
-/** 本机源目录里的默认位置。 */
-export const LITTLE_GIANT_DEFAULT_SOURCE_PATH =
-  '/Users/mang/Workfile/宁波/专精特新/20261013/经信局名单/小巨人/经信局公布历年小巨人企业名单.xlsx'
-
-/** 实际使用的真件路径(可能不存在)。 */
-export const littleGiantSourcePath =
-  process.env.RL02_LITTLE_GIANT_XLSX ?? LITTLE_GIANT_DEFAULT_SOURCE_PATH
-
-/** 真件在不在。**只在「真有才有的数字」上用它**;结构性断言不许依赖它。 */
-export const hasRealSource = existsSync(littleGiantSourcePath)
-
-/**
- * 合成夹具:复刻真件的关键**结构**事实,并包含那个唯一的重复信用代码形态
- * (同一码在第 2 批与第 6 批各一次)⇒ 企业去重 / 两条事件这条链路**不依赖真件**也能验。
- *
- * 除那一对之外用的是明显的样例名与样例码(不给真实企业配假代码)。
- */
 export const SYNTHETIC_LITTLE_GIANT_ROWS: readonly FixtureRow[] = [
   { seq: 1, district: '鄞州区', name: '样例企业一号有限公司', uscc: '91330212MA2AB00009', batch: '第1批' },
   { seq: 14, district: '镇海区', name: '宁波昌扬机械工业有限公司', uscc: '91330211316904639T', batch: '第2批' },
@@ -78,17 +50,10 @@ export async function loadLittleGiantSource(): Promise<LittleGiantSource> {
     }
   }
   return {
-    label: '合成夹具(真件不在本机 ⇒ 不整组跳过)',
+    label: '合成名录夹具',
     path: null,
     real: false,
     buffer: await buildLittleGiantWorkbookBuffer(SYNTHETIC_LITTLE_GIANT_ROWS),
     sourceFile: 'tests/fixtures/little-giant/synthetic-historical-list.xlsx',
   }
-}
-
-if (!hasRealSource) {
-  console.info(
-    `[RL-02] 真件不在 ${littleGiantSourcePath} ⇒ 用合成夹具跑同一条链路。` +
-      '要跑真件:RL02_LITTLE_GIANT_XLSX=<绝对路径>。',
-  )
 }

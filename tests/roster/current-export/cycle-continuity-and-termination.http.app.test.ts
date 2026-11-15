@@ -1,11 +1,10 @@
 import { businessIdentity, expectedBusinessIdentity, matchesBusinessIdentity } from './fixtures/specialized-export'
-import { afterAll, beforeAll, beforeEach, expect, it } from 'vitest'
+import { afterAll, beforeEach, expect, it } from 'vitest'
 import type ExcelJS from 'exceljs'
 import { specializedExportFixture, rows, year as y, type Event } from './fixtures/specialized-export'
 
 const f = specializedExportFixture()
-beforeAll(f.start, 90000)
-beforeEach(f.resetBusiness, 90000)
+beforeEach(async () => { await f.resetBusiness(); await f.start() }, 90000)
 afterAll(f.close)
 const award = (year: number|null, batchSeq: number|null = 1): Event => ({eventType:'award',year,batchSeq})
 const review = (year: number|null, decidedYear: number|null, reviewOutcome: 'passed'|'failed'|null = 'passed', batchSeq: number|null = 1): Event => ({eventType:'review',year,decidedYear,reviewOutcome,batchSeq})

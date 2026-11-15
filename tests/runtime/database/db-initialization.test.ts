@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, it } from 'vitest'
@@ -62,14 +62,18 @@ it('runtime and readonly snapshots preserve existing rows and never reseed delet
   } finally { readonly.$client.close(); runtime.$client.close() }
 })
 
-it('native initialization refuses historical migration databases without changing their schema or rows', async () => {
+it('native initialization refuses a retired-table sentinel without changing bytes', async () => {
   const { initializeDb } = await import('../../../db/client')
-  const { useDb: createHistoricalDb } = await import('../../../upgrade/legacy-client')
-  const dbPath = path(), old = createHistoricalDb({ dbPath })
-  old.$client.exec("INSERT INTO enterprise (name, name_norm) VALUES ('保留旧库', '保留旧库')")
+  const dbPath = path()
+  const { mkdirSync } = await import('node:fs')
+  mkdirSync(join(dbPath, '..'), { recursive: true })
+  const old = { $client: new Database(dbPath) }
+  old.$client.exec("CREATE TABLE enterprise(name TEXT); CREATE TABLE platform_query(id INTEGER); INSERT INTO enterprise VALUES ('保留旧库')")
   const before = old.$client.prepare('SELECT type,name,sql FROM sqlite_schema ORDER BY name').all()
   old.$client.close()
+  const bytes = readFileSync(dbPath)
   expect(() => initializeDb({ dbPath })).toThrow(/Unsupported final platform runtime schema/)
+  expect(readFileSync(dbPath).equals(bytes), 'rejected source bytes remain unchanged').toBe(true)
   const observer = new Database(dbPath, { readonly: true })
   try {
     expect(observer.prepare('SELECT name FROM enterprise').all()).toEqual([{ name: '保留旧库' }])

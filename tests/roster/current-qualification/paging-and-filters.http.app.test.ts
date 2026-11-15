@@ -2,11 +2,12 @@ import { afterAll, beforeAll, beforeEach, expect, it } from 'vitest'
 import { assertQualificationRowsSnapshotEqual } from '../fixtures/qualification-matrix'
 import { eq } from 'drizzle-orm'
 import { schema as s } from '../../../db/client'
-import { specializedExportFixture, year } from '../current-export/fixtures/specialized-export'
+import { readDevelopmentDiscovery, specializedExportFixture, year } from '../current-export/fixtures/specialized-export'
 
+let developmentSpec: any
+beforeAll(async () => { developmentSpec = await readDevelopmentDiscovery() }, 60000)
 const f = specializedExportFixture()
-beforeAll(f.start, 90000)
-beforeEach(f.resetBusiness, 90000)
+beforeEach(async () => { await f.resetBusiness(); await f.start() }, 90000)
 afterAll(f.close)
 
 async function query(params: Record<string, string>) {
@@ -22,7 +23,7 @@ async function mcp(args: Record<string, unknown>) {
 }
 
 it('publishes the read-only HTTP and MCP contracts', async () => {
-  const spec = await (await fetch(f.url('/_openapi.json'))).json() as any
+  const spec = developmentSpec as any
   const route = spec.paths['/api/roster/current-enterprises'].get
   expect(route.parameters.find((item: any) => item.name === 'titleCode')).toMatchObject({ required: true })
   expect(route.responses['503']).toBeDefined()

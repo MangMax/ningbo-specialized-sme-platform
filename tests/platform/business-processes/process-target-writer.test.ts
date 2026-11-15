@@ -1,19 +1,27 @@
 import { createRuntimeSchema } from '../../../db/create-runtime'
 import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
-import { mkdtempSync } from 'node:fs'
+import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createHash } from 'node:crypto'
-import { expect, it } from 'vitest'
+import { afterEach, expect, it } from 'vitest'
 import { targetSchema } from '../../../lib/platform/target-schema'
 import { writeProcessTarget, type ProcessTargetInput } from '../../../lib/platform/process-target-writer'
 
+const owned: { root: string; sqlite: Database.Database }[] = []
+afterEach(() => {
+  for (const { root, sqlite } of owned.splice(0)) {
+    if (sqlite.open) sqlite.close()
+    rmSync(root, { recursive: true, force: true })
+  }
+})
 function fixture() {
-  const root = mkdtempSync(join(process.env.W2A_EVIDENCE_DIR ?? tmpdir(), 'w2a-'))
+  const root = mkdtempSync(join(tmpdir(), 'w2a-'))
   const target = join(root, 'target.sqlite')
   const statements: string[] = []
   const sqlite = new Database(target, { verbose: text => statements.push(String(text)) }); sqlite.pragma('foreign_keys=ON')
+  owned.push({ root, sqlite })
   createRuntimeSchema(sqlite)
   sqlite.exec("INSERT INTO platform_collection(id,interface,query_key,rdjb,queried_at,created_at,status,completeness,provenance_state,parse_state,rule_version) VALUES(1,'apply_list','a','','t','c','success','unknown','unknown','absent','fixture'),(2,'business_list','b','','t','c','success','unknown','unknown','absent','fixture')")
   sqlite.exec("INSERT INTO platform_legacy_query_alias(old_id,collection_id) VALUES(1,1),(2,2); UPDATE platform_legacy_alias_sequence SET high_water=2 WHERE namespace='query'")

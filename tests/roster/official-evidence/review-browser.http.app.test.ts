@@ -1,3 +1,4 @@
+import { spawnCompiledApp } from '../../support/owned-process.mjs'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -47,7 +48,7 @@ function browserPost(server: Server, body: unknown, headers: Record<string, stri
 async function start(env: Record<string, string>): Promise<Server> {
   const cwd = resolve(import.meta.dirname, '../../..')
   const port = await reserveLoopbackPort()
-  const child = spawn(process.execPath, [join(cwd, 'node_modules/nuxt/bin/nuxt.mjs'), 'dev', '--host', '127.0.0.1', '--port', String(port)], {
+  const child = spawnCompiledApp(port, {
     cwd,
     stdio: ['ignore', 'pipe', 'pipe'],
     env: {

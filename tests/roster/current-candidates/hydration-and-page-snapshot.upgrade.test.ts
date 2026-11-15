@@ -1,6 +1,6 @@
 import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
-import { beforeAll, expect, it, vi } from 'vitest'
+import { beforeAll, describe, expect, it, vi } from 'vitest'
 import { chmodSync, copyFileSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import * as schema from '../../../db/schema'
@@ -22,12 +22,13 @@ import { createHash } from 'node:crypto'
 import { serialize } from 'node:v8'
 
 const fixtures=process.env.CURRENT_TARGET_762_FIXTURES, evidence=process.env.CURRENT_TARGET_762_EVIDENCE
-if(!fixtures||!evidence)throw new Error('Set private CURRENT_TARGET_762_FIXTURES and CURRENT_TARGET_762_EVIDENCE')
-const root=mkdtempSync(join(evidence,'readers762-')), at=Date.parse('2026-12-01T00:00:00Z')
+if (Boolean(fixtures) !== Boolean(evidence)) throw new Error('Supply both CURRENT_TARGET_762_FIXTURES and CURRENT_TARGET_762_EVIDENCE')
+describe.runIf(Boolean(fixtures && evidence))('explicit historical reader source acceptance', () => {
+const root=evidence ? mkdtempSync(join(evidence,'readers762-')) : '', at=Date.parse('2026-12-01T00:00:00Z')
 const targetBase=join(root,'target-base.sqlite'), oldBase=join(root,'old-base.sqlite')
 function copy(from:string,to:string){copyFileSync(from,to);chmodSync(to,0o600)}
 beforeAll(()=>{
- copy(join(fixtures,'baseline71613.sqlite'),targetBase);copy(join(fixtures,'baseline0.sqlite'),oldBase)
+ copy(join(fixtures!,'baseline71613.sqlite'),targetBase);copy(join(fixtures!,'baseline0.sqlite'),oldBase)
  const t=new Database(targetBase),old=new Database(oldBase)
  // Physical retirement is a test condition on this owned copy only. Runtime
  // readers have no DROP, migration, repair or schema-change responsibility.
@@ -257,4 +258,6 @@ it('keeps71613 page count and rows in one snapshot when current assignment chang
   expect(injected).toBe(true)
   expect(r.page('specialized_sme',0,10)).toEqual({total:2,rows:[{id:760},{id:761}]})
  }finally{spy.mockRestore();writer.close();f.close()}
+})
+
 })

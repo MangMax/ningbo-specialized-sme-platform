@@ -20,7 +20,7 @@ import {
  *
  * ⇒ 「真件不在」时**不会整组消失**:它会退成一份结构等价的工作簿继续跑。
  *
- * 真件路径:`RL02_LITTLE_GIANT_XLSX=<绝对路径>` 覆盖。
+ * 真件路径:`LITTLE_GIANT_SOURCE_XLSX=<绝对路径>` 覆盖。
  */
 
 const source: LittleGiantSource = await loadLittleGiantSource()

@@ -1,3 +1,4 @@
+import { spawnCompiledApp } from '../../support/owned-process.mjs'
 import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -34,7 +35,7 @@ const snapshot = () => db.$client.prepare("select name from sqlite_master where 
 let service: { baseUrl: string; stop: () => Promise<void> }
 beforeAll(async () => {
   const port = await reserveLoopbackPort()
-  const child = spawn(process.execPath, [resolve('node_modules/nuxt/bin/nuxt.mjs'), 'dev', '--host', '127.0.0.1', '--port', String(port)], {
+  const child = spawnCompiledApp(port, {
     cwd: resolve('.'), stdio: ['ignore', 'pipe', 'pipe'],
     env: { ...process.env, NUXT_BUILD_DIR: join(dir, 'build'), NUXT_DB_PATH: path, NUXT_DB_READONLY: '1', NUXT_FILES_DIR: join(dir, 'files'), NUXT_INCOMING_DIR: join(dir, 'incoming') },
   })

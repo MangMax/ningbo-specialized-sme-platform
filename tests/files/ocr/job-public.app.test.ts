@@ -1,3 +1,4 @@
+import { spawnCompiledApp } from '../../support/owned-process.mjs'
 import { initializeDb } from '../../../db/client'
 import { createHash } from 'node:crypto'
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
@@ -33,7 +34,7 @@ it('公开任务 HTTP 受文件级背压约束,完成结果经 OCR REST/MCP 原�
     api = await startMiniOcrApi({ pages: ['公开原文🙂'], waitForPoll: () => gate })
     const port = await reserveLoopbackPort()
     const baseUrl = `http://127.0.0.1:${port}`
-    child = spawn(process.execPath, ['node_modules/nuxt/bin/nuxt.mjs', 'dev', '--host', '127.0.0.1', '--port', String(port)], {
+    child = spawnCompiledApp(port, {
       env: { ...process.env, NUXT_BUILD_DIR: join(dir, 'nuxt'), NUXT_DB_PATH: dbPath, NUXT_FILES_DIR: filesDir, NUXT_API_TOKEN: 'synthetic-api', NUXT_MCP_TOKEN: 'synthetic-mcp', NUXT_OCR_TOKEN: 'synthetic-ocr', NUXT_OCR_BASE_URL: api.origin, PADDLEOCR_MCP_AISTUDIO_ACCESS_TOKEN: '', MIIT_COOKIE: '' },
       stdio: 'ignore',
     })

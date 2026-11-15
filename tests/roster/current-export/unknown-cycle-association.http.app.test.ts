@@ -1,12 +1,11 @@
-import { afterAll, beforeAll, beforeEach, expect, it } from 'vitest'
+import { afterAll, beforeEach, expect, it } from 'vitest'
 import { specializedExportFixture, year as y } from './fixtures/specialized-export'
 import { qualificationReferenceCases } from "../current-qualification/fixtures/reference-cases"
 import { currentQualificationHttpAssertions, type EffectiveQualificationCase } from './assertions/qualification'
 import { readCurrentCandidate } from '../../../lib/roster/current-qualification'
 
 const f = specializedExportFixture()
-beforeAll(f.start, 90000)
-beforeEach(f.resetBusiness, 90000)
+beforeEach(async () => { await f.resetBusiness(); await f.start() }, 90000)
 afterAll(f.close)
 // Literal #475/#478 HTTP rowsets; the shared fixtures retain historical reader oracles.
 const expectedRows = {

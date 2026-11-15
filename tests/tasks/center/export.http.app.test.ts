@@ -1,3 +1,4 @@
+import { spawnCompiledApp } from '../../support/owned-process.mjs'
 import { CURRENT_RULE_VERSION, QUALIFICATION_ASSESSMENT_VERSION } from '../../../lib/roster/current-qualification'
 import { afterAll, beforeAll, expect, it } from 'vitest'
 import { mkdtempSync, rmSync } from 'node:fs'
@@ -13,6 +14,7 @@ import { spawnOwnedChild as spawn, reserveLoopbackPort, waitForHttp, stopOwnedCh
 const dir = mkdtempSync(join(tmpdir(), 'task-export-121-'))
 const dbPath = join(dir, 'synthetic.db'), db = initializeDb({ create: true,  dbPath })
 const headers = { 'content-type': 'application/json', authorization: 'Bearer synthetic-121' }
+let serverPid: number | undefined
 let baseUrl: string, stop: () => Promise<void>
 const request = (path: string, init?: RequestInit) => fetch(baseUrl + path, init)
 const read = async (path: string, authorized = true) => (await request(path, { headers: authorized ? headers : undefined })).json()
@@ -35,7 +37,8 @@ async function startService(apiToken: string | null = 'synthetic-121') {
   const env: NodeJS.ProcessEnv = { ...process.env, NUXT_BUILD_DIR: join(dir, 'build'), NUXT_DB_PATH: dbPath, NUXT_FILES_DIR: join(dir, 'files'), NUXT_INCOMING_DIR: join(dir, 'incoming') }
   delete env.NUXT_API_TOKEN
   if (apiToken !== null) env.NUXT_API_TOKEN = apiToken
-  const child = spawn(process.execPath, [join(cwd, 'node_modules/nuxt/bin/nuxt.mjs'), 'dev', '--host', '127.0.0.1', '--port', String(port)], { cwd, stdio: ['ignore', 'pipe', 'pipe'], env })
+  const child = spawnCompiledApp(port, { cwd, stdio: ['ignore', 'pipe', 'pipe'], env })
+  serverPid = child.pid
   let output = ''; for (const stream of [child.stdout, child.stderr]) stream.on('data', data => { output = (output + data).slice(-6000) })
   stop = () => stopOwnedChild(child)
   try { await waitForHttp(baseUrl + '/api/jobs/kinds', { child, timeoutMs: 60000 }) } catch (e) { throw new Error(String(e) + output) }
@@ -114,7 +117,7 @@ it('keeps export cancellation pending until terminal and offers explicit regener
   const id = await submit('cancel-running')
   let pid: number | undefined
   for (let n = 0; n < 100 && !pid; n++) {
-    const line = execFileSync('ps', ['-Ao', 'pid=,args='], { encoding: 'utf8' }).split('\n').find(l => l.includes(dir) && l.includes('/current-export-worker.mjs'))
+    const line = execFileSync('ps', ['-Ao', 'pid=,ppid=,args='], { encoding: 'utf8' }).split('\n').find(l => Number(l.trim().split(/\s+/)[1]) === serverPid && l.includes('/current-export-worker.mjs'))
     if (line) pid = Number(line.trim().split(/\s+/)[0])
     else await new Promise(r => setTimeout(r, 10))
   }
@@ -217,7 +220,7 @@ it('default same-origin browser flow submits views cancels regenerates and downl
   const id = await browserSubmit('browser-cancel')
   let pid: number | undefined
   for (let n = 0; n < 100 && !pid; n++) {
-    const line = execFileSync('ps', ['-Ao', 'pid=,args='], { encoding: 'utf8' }).split('\n').find(l => l.includes(dir) && l.includes('/current-export-worker.mjs'))
+    const line = execFileSync('ps', ['-Ao', 'pid=,ppid=,args='], { encoding: 'utf8' }).split('\n').find(l => Number(l.trim().split(/\s+/)[1]) === serverPid && l.includes('/current-export-worker.mjs'))
     if (line) pid = Number(line.trim().split(/\s+/)[0])
     else await new Promise(r => setTimeout(r, 10))
   }

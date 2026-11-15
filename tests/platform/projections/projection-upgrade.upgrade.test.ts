@@ -1,19 +1,21 @@
 import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { migrate } from 'drizzle-orm/better-sqlite3/migrator'
-import { copyFileSync, mkdtempSync, readFileSync, mkdirSync, writeFileSync } from 'node:fs'
+import { copyFileSync, rmSync, mkdtempSync, readFileSync, mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { createHash } from 'node:crypto'
 import { spawnSync } from 'node:child_process'
-import { beforeAll, expect, it } from 'vitest'
+import { afterAll, beforeAll, expect, it } from 'vitest'
 import { platformRowTitle } from '../../../lib/platform/row-title'
 import { upgradeCollections } from '../../../upgrade/collections'
 import { upgradeObservations } from '../../../upgrade/observations'
 import { upgradeProjections } from '../../../upgrade/projections'
 
+const ownedRoots: string[] = []
+afterAll(() => { if (!process.env.T05B_EVIDENCE_DIR) for (const root of ownedRoots) rmSync(root, { recursive: true, force: true }) })
 function fixture(seed?:(s:Database.Database)=>void) {
-  const root=mkdtempSync(join(process.env.T05B_EVIDENCE_DIR??tmpdir(),'t05b-'))
+  const root=mkdtempSync(join(process.env.T05B_EVIDENCE_DIR??tmpdir(),'t05b-')); ownedRoots.push(root)
   const source=join(root,'source.sqlite'),target=join(root,'target.sqlite'),s=new Database(source)
   migrate(drizzle(s),{migrationsFolder:'db/migrations'})
   s.exec(`insert into platform_query(id,interface,query_key,rdjb,queried_at,status,created_at) values(1,'apply_list','q','2,3','t','success','c'),(2,'business_list','q','2,3','t','success','c'),(3,'recognized_list','q','1,2','t','success','c');

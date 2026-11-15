@@ -1,7 +1,7 @@
 import { submitSyntheticRecognizedCollection } from '../fixtures/recognized-source'
 import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
 import { CURRENT_RULE_VERSION, QUALIFICATION_ASSESSMENT_VERSION } from '../../../lib/roster/current-qualification'
-import { afterAll, beforeAll, expect, it } from 'vitest'
+import { afterAll, expect, it } from 'vitest'
 import { createHash } from 'node:crypto'
 import { existsSync, statSync } from 'node:fs'
 import type ExcelJS from 'exceljs'
@@ -13,10 +13,9 @@ import { readCurrentQualificationAssessment } from '../../../lib/roster/current-
 const f = qualificationExportFixture()
 const headers409 = [...HEADERS_409,'有效状态','有效期及排除依据','资料缺口与来源备注']
 const sheets409 = ['有效企业','已到期','已注销（吊销）','已迁出','未认定','口径说明']
-beforeAll(() => f.start(), 60000)
 afterAll(() => f.close())
 it('canonical termination overrides an independent unresolved subject fact in real Excel', async () => {
-  await f.resetBusiness()
+  await f.resetBusiness(); await f.start()
   const target = f.candidate(X409.name)
   f.decision(target.enterprise.id, 'deregistered')
   f.decision(target.enterprise.id, 'moved_out', { titleCode: 'innovative_sme', direction: 'missing_in_miit', basis: null })
@@ -52,7 +51,7 @@ it('canonical termination overrides an independent unresolved subject fact in re
 }, 30000)
 
 it('full title exports retain platform failures missing records and unrecognized reviews beyond page one', async () => {
-  await f.resetBusiness()
+  await f.resetBusiness(); await f.start()
   const titlePaths = {little_giant:'little-giant',specialized_sme:'specialized-sme',innovative_sme:'innovative-sme'} as const
   for (const [title,path] of Object.entries(titlePaths)) {
     const valid=f.candidate('E409-'+title,undefined,title)
@@ -103,7 +102,7 @@ it('preserves idempotency rejected filters and authenticated artifact boundaries
 },30000)
 
 it('separates formal title states and exhausts 201 public query and Excel members', async () => {
-  await f.resetBusiness()
+  await f.resetBusiness(); await f.start()
   const stable = f.candidate(B409.name, B409.award.map(event => ({ ...event })), 'little_giant')
   f.addRecord(stable.enterprise.id, B409.name, B409.pending.map(event => ({ ...event })), 'specialized_sme')
   f.addRecord(stable.enterprise.id, B409.name, B409.failed.map(event => ({ ...event })), 'innovative_sme')

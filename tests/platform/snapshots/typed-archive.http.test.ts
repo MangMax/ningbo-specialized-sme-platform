@@ -1,3 +1,4 @@
+import { preflightRosterImport, commitRosterImport } from '../../../server/utils/roster-import'
 import { initializeDb } from '../../../db/client'
 import { createServer } from 'node:http'
 import { createHash } from 'node:crypto'
@@ -121,7 +122,7 @@ function archive(e: PlatformLiveQueryResult): RosterImportPlatformQuery {
   }
 }
 function request(queries: RosterImportPlatformQuery[]) {
-  return { idempotencyKey: `issue327-${serial++}`, sourceKind: 'platform_archive', sourceIdentity: 'issue327-synthetic', payload: { platformQueries: queries } }
+  return { idempotencyKey: `issue327-${serial++}`, sourceKind: 'platform_archive' as const, sourceIdentity: 'issue327-synthetic', payload: { platformQueries: queries } }
 }
 async function submit(transport: Transport, action: 'preflight' | 'commit', body: ReturnType<typeof request>) {
   if (transport === 'MCP') return call(action === 'commit' ? 'save_roster_batch' : 'preflight_roster_batch', body)
@@ -139,6 +140,41 @@ function businessState() {
   const tables = db.$client.prepare("SELECT name FROM sqlite_schema WHERE type='table' AND (name LIKE 'platform_%' OR name IN ('record_correspondence', 'record_correspondence_audit', 'difference_reason')) ORDER BY name").all() as { name: string }[]
   return Object.fromEntries(tables.map(({ name }) => [name, db.$client.prepare(`SELECT * FROM "${name}" ORDER BY rowid`).all()]))
 }
+
+  const mutations: [string, (q: RosterImportPlatformQuery) => void][] = [
+    ['typed-row', q => { q.collectionEvidence!.rawData!.rows[0]!.n = '1' }],
+    ['legacy-projection', q => { q.collectionEvidence!.rows[0]!.n = 'wrong' }],
+    ['legacy-as-raw', q => { q.relations![0]!.rawFields = q.collectionEvidence!.rows[0] }],
+    ['raw-version', q => { Object.assign(q.collectionEvidence!.rawData!, { version: 2 }) }],
+    ['raw-null', q => { Object.assign(q.collectionEvidence!, { rawData: null }) }],
+    ['raw-count', q => { q.collectionEvidence!.rawData!.rows = [] }],
+    ['relation-count', q => { q.relations = [] }],
+    ['malformed-relation', q => { Object.assign(q, { relations: [null] }) }],
+    ['page-position', q => { q.collectionEvidence!.rawData!.pages[0]!.page++ }],
+    ['page-source', q => { q.collectionEvidence!.rawData!.pages[0]!.source = q.collectionEvidence!.source === 'queryList' ? 'businessList' : 'queryList' }],
+    ['page-title', q => { q.collectionEvidence!.rawData!.pages[0]!.rdjb = '3' }],
+    ['page-count', q => { q.collectionEvidence!.pages[0]!.fetchedCount = 0 }],
+    ['response-body', q => { q.collectionEvidence!.rawData!.pages[0]!.body = '{}' }],
+    ['relation-position', q => { q.relations![0]!.sequenceNo = 2 }],
+    ['relation-id', q => { q.relations![0]!.relationKey = 'another' }],
+    ['query-key', q => { q.queryKey = 'name:another' }],
+    ['query-time', q => { q.queriedAt = '2026-09-01T00:00:00Z' }],
+    ['query-status', q => { q.status = 'no_record' }],
+    ['query-rdjb', q => { q.rdjb = '3' }],
+    ['source-interface', q => { q.interface = q.interface === 'apply_list' ? 'business_list' : 'apply_list' }],
+    ['title', q => { q.titleCode = 'little_giant' }],
+    ['owner', q => { q.relations![0]!.enterpriseId = 999999 }],
+    ['name-only-confirm', q => { q.relations![0]!.verificationStatus = 'confirmed'; q.relations![0]!.matchBasis = 'alias' }],
+  ]
+for (const sourceName of ['queryBusList', 'queryList', 'businessList']) it.each(mutations)(`native ${sourceName} import rejects %s atomically with a valid sibling`, async (_label, mutate) => {
+  const valid = platformResultToImport(await collect({ id: `sibling-${serial}`, qymc: '合成', n: 1 }, 'REST', sourceName))
+  const bad = platformResultToImport(await collect({ id: `bad-${serial}`, qymc: '合成', n: 1 }, 'REST', sourceName)); mutate(bad)
+  const before = businessState(), body = request([valid, bad])
+  expect(preflightRosterImport(db, body).preflight.conflicts).not.toEqual([])
+  expect(commitRosterImport(db, body).status).toBe('failed')
+  expect(businessState()).toEqual(before)
+})
+const transportMutations = mutations.filter(([name]) => ['typed-row', 'page-source', 'page-title', 'source-interface', 'owner', 'name-only-confirm'].includes(name))
 
 for (const transport of ['REST', 'MCP'] as const) {
   it.each([
@@ -202,32 +238,7 @@ for (const transport of ['REST', 'MCP'] as const) {
     expect(new Set(ids).size).toBe(3)
   })
 
-  const mutations: [string, (q: RosterImportPlatformQuery) => void][] = [
-    ['typed-row', q => { q.collectionEvidence!.rawData!.rows[0]!.n = '1' }],
-    ['legacy-projection', q => { q.collectionEvidence!.rows[0]!.n = 'wrong' }],
-    ['legacy-as-raw', q => { q.relations![0]!.rawFields = q.collectionEvidence!.rows[0] }],
-    ['raw-version', q => { Object.assign(q.collectionEvidence!.rawData!, { version: 2 }) }],
-    ['raw-null', q => { Object.assign(q.collectionEvidence!, { rawData: null }) }],
-    ['raw-count', q => { q.collectionEvidence!.rawData!.rows = [] }],
-    ['relation-count', q => { q.relations = [] }],
-    ['malformed-relation', q => { Object.assign(q, { relations: [null] }) }],
-    ['page-position', q => { q.collectionEvidence!.rawData!.pages[0]!.page++ }],
-    ['page-source', q => { q.collectionEvidence!.rawData!.pages[0]!.source = q.collectionEvidence!.source === 'queryList' ? 'businessList' : 'queryList' }],
-    ['page-title', q => { q.collectionEvidence!.rawData!.pages[0]!.rdjb = '3' }],
-    ['page-count', q => { q.collectionEvidence!.pages[0]!.fetchedCount = 0 }],
-    ['response-body', q => { q.collectionEvidence!.rawData!.pages[0]!.body = '{}' }],
-    ['relation-position', q => { q.relations![0]!.sequenceNo = 2 }],
-    ['relation-id', q => { q.relations![0]!.relationKey = 'another' }],
-    ['query-key', q => { q.queryKey = 'name:another' }],
-    ['query-time', q => { q.queriedAt = '2026-09-01T00:00:00Z' }],
-    ['query-status', q => { q.status = 'no_record' }],
-    ['query-rdjb', q => { q.rdjb = '3' }],
-    ['source-interface', q => { q.interface = q.interface === 'apply_list' ? 'business_list' : 'apply_list' }],
-    ['title', q => { q.titleCode = 'little_giant' }],
-    ['owner', q => { q.relations![0]!.enterpriseId = 999999 }],
-    ['name-only-confirm', q => { q.relations![0]!.verificationStatus = 'confirmed'; q.relations![0]!.matchBasis = 'alias' }],
-  ]
-  it.each(mutations)(`${transport} rejects %s atomically with a valid sibling and no fallback`, async (_label, mutate) => {
+  it.each(transportMutations)(`${transport} rejects %s atomically with a valid sibling and no fallback`, async (_label, mutate) => {
     const valid = archive(await collect({ id: `sibling-${serial}`, qymc: '合成', n: 1 }, transport))
     const bad = archive(await collect({ id: `bad-${serial}`, qymc: '合成', n: 1 }, transport)); mutate(bad)
     const before = businessState(), body = request([valid, bad])
@@ -238,7 +249,7 @@ for (const transport of ['REST', 'MCP'] as const) {
     expect(businessState()).toEqual(before)
   })
 
-  for (const sourceName of ['queryList', 'businessList']) it.each(mutations)(`${transport} ${sourceName} rejects %s with its own envelope`, async (_label, mutate) => {
+  for (const sourceName of ['queryList', 'businessList']) it.each(transportMutations)(`${transport} ${sourceName} rejects %s with its own envelope`, async (_label, mutate) => {
     const valid = platformResultToImport(await collect({ id: `valid-${serial}`, n: 1 }, transport, sourceName))
     const bad = platformResultToImport(await collect({ id: `bad-${serial}`, n: 1 }, transport, sourceName)); mutate(bad)
     const before = businessState(), body = request([valid, bad])

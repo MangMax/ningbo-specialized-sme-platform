@@ -1,3 +1,4 @@
+import { spawnCompiledApp } from '../../support/owned-process.mjs'
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join, resolve } from 'node:path'
@@ -15,7 +16,7 @@ let service: { baseUrl: string; stop(): Promise<void> }
 let output = ''
 beforeAll(async () => {
   const port = await reserveLoopbackPort()
-  const child = spawn(process.execPath, [resolve('node_modules/nuxt/bin/nuxt.mjs'), 'dev', '--host', '127.0.0.1', '--port', String(port)], {
+  const child = spawnCompiledApp(port, {
     cwd: resolve('.'), stdio: ['ignore', 'pipe', 'pipe'],
     env: { ...process.env, NUXT_BUILD_DIR: join(dir, 'build'), NUXT_DB_PATH: dbPath, NUXT_FILES_DIR: root, NUXT_INCOMING_DIR: join(dir, 'incoming') },
   })

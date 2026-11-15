@@ -1,3 +1,4 @@
+import { spawnCompiledApp } from '../../support/owned-process.mjs'
 import { submitNativePlatformQuery } from '../fixtures/native-query'
 import type { RosterImportPlatformQuery } from '../../../lib/roster-import-client'
 import { assertEnterpriseDetailSnapshotEqual } from '../../roster/assertions/enterprise-detail-snapshot'
@@ -22,7 +23,7 @@ function company() {
 }
 beforeAll(async () => {
   const cwd = resolve(import.meta.dirname, '../../..'), port = await reserveLoopbackPort()
-  const child = spawn(process.execPath, [join(cwd, 'node_modules/nuxt/bin/nuxt.mjs'), 'dev', '--host', '127.0.0.1', '--port', String(port)], {
+  const child = spawnCompiledApp(port, {
     cwd, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, NUXT_BUILD_DIR: join(dir, 'build'), NUXT_DB_PATH: path, NUXT_FILES_DIR: join(dir, 'files'), NUXT_INCOMING_DIR: join(dir, 'incoming'), NUXT_API_TOKEN: 'synthetic-http109', NUXT_MCP_TOKEN: 'synthetic-mcp109' },
   })
   let output = ''

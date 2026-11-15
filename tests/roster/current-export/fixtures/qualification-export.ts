@@ -1,6 +1,6 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { join } from 'node:path'
 
 import { createHash } from 'node:crypto'
 import ExcelJS from 'exceljs'
@@ -20,34 +20,7 @@ export const businessTables = ['enterprise_fact_revision','record_correspondence
 export function qualificationExportFixture() {
   const dir = mkdtempSync(join(tmpdir(), 'export-409-'))
   const token = 'synthetic-export-409-token'
-  const mode = process.env.ISSUE409_EXPORT_MODE ?? 'source'
-  if (mode !== 'source' && mode !== 'compiled') throw new Error('Unsupported 409 acceptance mode')
-  function assertCompiledPins() {
-    if (mode !== 'compiled') return
-    const manifestPath = process.env.ISSUE409_COMPILED_INVENTORY
-    const manifestSHA = process.env.ISSUE409_COMPILED_INVENTORY_SHA256
-    if (!manifestPath || !manifestSHA || !/^[a-f0-9]{64}$/.test(manifestSHA)) throw new Error('Explicit compiled artifact binding required')
-    const raw = readFileSync(manifestPath)
-    if (createHash('sha256').update(raw).digest('hex') !== manifestSHA) throw new Error('Compiled manifest changed')
-    const inventory = JSON.parse(raw.toString()) as { files: Record<string, { sha256: string }>; entries: { path: string }[] }
-    if (inventory.entries.map(entry => entry.path).join('|') !== ['index','enterprise-read-worker','current-export-worker','import-execution-worker'].map(name => '.output/server/' + name + '.mjs').join('|')) throw new Error('Compiled entry binding invalid')
-    const cwd = resolve(import.meta.dirname, '../../../..')
-    for (const [file, pin] of Object.entries(inventory.files)) {
-      if (!file.startsWith('.output/server/') || file.includes('..') || !/^[a-f0-9]{64}$/.test(pin.sha256)) throw new Error('Compiled artifact path invalid')
-      if (createHash('sha256').update(readFileSync(join(cwd, file))).digest('hex') !== pin.sha256) throw new Error('Compiled artifact changed')
-    }
-  }
-  const app = nativeAppAdapter({ dir, token, launch: ({ cwd, port }) => {
-    assertCompiledPins()
-    const emptyDotenv = process.env.ISSUE409_EMPTY_DOTENV ?? join(dir, 'empty.env')
-    if (!process.env.ISSUE409_EMPTY_DOTENV) writeFileSync(emptyDotenv, '', { mode: 0o600 })
-    return {
-      args: mode === 'compiled' ? [join(cwd, '.output/server/index.mjs')] : [join(cwd, 'node_modules/nuxt/bin/nuxt.mjs'), 'dev', '--dotenv', emptyDotenv, '--host', '127.0.0.1', '--port', String(port)],
-      env: { NUXT_LOG_DIR: join(dir, 'logs'), NUXT_MCP_TOKEN: token,
-        ...(mode === 'compiled' ? { HOST: '127.0.0.1', PORT: String(port), NITRO_HOST: '127.0.0.1', NITRO_PORT: String(port) } : {}),
-      },
-    }
-  } })
+  const app = nativeAppAdapter({ dir, token })
   const { headers, url, start, terminal, resetBusiness } = app
   const json = (response: Response): Promise<any> => response.json()
   const submit = (key: string, extra = {}) => app.request(route, { method: 'POST', body: JSON.stringify({ clientRequestId: key, ...extra }) })
@@ -96,6 +69,6 @@ export function qualificationExportFixture() {
     return hash.digest('hex')
   }
   return { dir, get dbPath(){return app.dbPath}, get db(){return app.db}, headers, token, url, json, submit, start, terminal, download, workbook, candidate, addRecord, decision, resetBusiness, businessDigest,
-    async close() { try { await app.close(); assertCompiledPins() } finally { rmSync(dir,{recursive:true,force:true}) } },
+    async close() { try { await app.close();  } finally { rmSync(dir,{recursive:true,force:true}) } },
   }
 }

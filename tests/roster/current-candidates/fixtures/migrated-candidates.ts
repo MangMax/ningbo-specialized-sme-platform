@@ -1,6 +1,8 @@
 import { completePlatformMigration } from '../../../../upgrade/complete-platform'
-import { mkdirSync } from 'node:fs'
+import { copyFileSync, mkdtempSync, rmSync, mkdirSync } from 'node:fs'
 import { join } from 'node:path'
+import { tmpdir } from 'node:os'
+import { afterAll } from 'vitest'
 import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { candidateFixture } from '../../../platform/fixtures/candidate-scope-upgrade'
@@ -17,7 +19,7 @@ export const literalCandidates = {
   specialized_sme:[1,2,3,4,6,7,10,13,18,19,20,21,22],
   little_giant:[1,2,3,5,6,7,8,11,20],
 } satisfies Record<CurrentTitle,number[]>
-export async function targetCandidatesFixture() {
+async function buildTemplate() {
   const f=await candidateFixture(old=>{
     const db=drizzle(old,{schema:s})
     for(let id=1;id<=24;id++)db.insert(s.enterprise).values({id,name:id%2?'same':'Same',nameNorm:'same',usccNorm:id===20?' u7 ':id===23?'':id===24?' \u200b ':`U${id}`}).run()
@@ -54,6 +56,17 @@ export async function targetCandidatesFixture() {
   const runtimeTarget=join(f.root,'runtime.sqlite'),evidence=join(f.root,'complete-evidence');mkdirSync(evidence)
   completePlatformMigration(f.legacySource,runtimeTarget,evidence)
   f.target=runtimeTarget
+  return f
+}
+let template: ReturnType<typeof buildTemplate> | undefined
+const clones: string[] = []
+afterAll(() => { for (const root of clones) rmSync(root, { recursive: true, force: true }) })
+export async function targetCandidatesFixture() {
+  template ??= buildTemplate()
+  const pristine = await template
+  const root = mkdtempSync(join(tmpdir(), 'candidate-reader-')); clones.push(root)
+  const f = { ...pristine, root, target: join(root, 'runtime.sqlite'), legacySource: join(root, 'legacy.sqlite') }
+  copyFileSync(pristine.target, f.target); copyFileSync(pristine.legacySource, f.legacySource)
   const statements:string[]=[]
   const sqlite=new Database(f.target,{verbose:q=>statements.push(String(q))});sqlite.pragma('foreign_keys=ON')
   const legacy=new Database(f.legacySource,{readonly:true});legacy.function('roster84_uscc',{deterministic:true},normalizeUscc)

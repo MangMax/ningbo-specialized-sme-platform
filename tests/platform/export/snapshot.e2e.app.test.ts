@@ -32,7 +32,8 @@ import { startRosterPlatformApi } from './fixtures/snapshot-server'
 
 const TOKEN = 'test-api-token-value'
 const REAL_DIR =
-  process.env.SPZTX_PLATFORM_EXPORT_DIR ?? '/Users/mang/Workfile/宁波/专精特新/20261013/工信部名单'
+  process.env.SPZTX_PLATFORM_EXPORT_DIR ?? ''
+if (REAL_DIR && !existsSync(REAL_DIR)) throw new Error('SPZTX_PLATFORM_EXPORT_DIR does not exist')
 const realFile = (name: string) => join(REAL_DIR, name)
 
 const dirs: string[] = []
@@ -74,7 +75,7 @@ const getJson = async (baseUrl: string, path: string) => {
 
 // ---------------------------------------------------------------------------
 
-describe.runIf(existsSync(REAL_DIR))('RL-05 写侧端到端:真实导出表 → 统一写 API → 读回', () => {
+describe.runIf(Boolean(REAL_DIR))('RL-05 写侧端到端:真实导出表 → 统一写 API → 读回', () => {
   it('专精特新中小企业导出(3267 行):批次身份落库,行可追溯到源行号,import_batch_id 指回本批', async () => {
     const db = makeDb()
     const parsed = await readPlatformExport(realFile('专精特新中小企业导出Excel.xlsx'))

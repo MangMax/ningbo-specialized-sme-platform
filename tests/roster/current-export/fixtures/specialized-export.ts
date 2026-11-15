@@ -19,12 +19,12 @@ export const fresh: Event[] = [{ eventType: 'award', year, batchSeq: 1 }]
 export const businessTables = ['record_correspondence','difference_reason','platform_observation_assignment','platform_legacy_relation_alias','platform_business_observation','platform_legacy_query_alias','platform_collection','enterprise_alias','record_evidence','record_event','record','enterprise']
 
 // Synthetic setup only. All assertions on export behavior use actual Nitro HTTP and XLSX bytes.
-export function specializedExportFixture() {
+export function specializedExportFixture({ discovery = false }: { discovery?: boolean } = {}) {
   const dir = mkdtempSync(join(process.env.CURRENT_CANDIDATE_READER_EVIDENCE_DIR ?? tmpdir(), 'export-118-'))
   const token = 'synthetic-export-118-token'
-  const app = nativeAppAdapter({ dir, token, launch: ({ cwd, port }) => ({
+  const app = nativeAppAdapter({ dir, token, launch: discovery ? ({ cwd, port }) => ({
     args: [join(cwd, 'node_modules/nuxt/bin/nuxt.mjs'), 'dev', '--host', '127.0.0.1', '--port', String(port)],
-  }) })
+  }) : undefined })
   const { headers, url, start, terminal, resetBusiness } = app
   const json = (response: Response): Promise<any> => response.json()
   const submit = (key: string, extra = {}) => app.request(route, { method: 'POST', body: JSON.stringify({ clientRequestId: key, ...extra }) })
@@ -76,7 +76,7 @@ export function specializedExportFixture() {
     }
     return hash.digest('hex')
   }
-  return { dir, get dbPath() { return app.dbPath }, get db() { return app.db }, headers, token, url, json, submit, start, terminal, download, workbook, candidate, addRecord, decision, resetBusiness, businessDigest,
+  return { dir, get processId() { return app.processId }, get dbPath() { return app.dbPath }, get db() { return app.db }, headers, token, url, json, submit, start, terminal, download, workbook, candidate, addRecord, decision, resetBusiness, businessDigest,
     async close() { try { await app.close() } finally { if (!process.env.CURRENT_CANDIDATE_READER_EVIDENCE_DIR) rmSync(dir,{recursive:true,force:true}) } },
   }
 }
@@ -113,4 +113,15 @@ export function expectCounts(wb: ExcelJS.Workbook, job: any, counts: {eligible:n
   expect(job.result.ruleVersion).toBe(CURRENT_RULE_VERSION)
   expect(job.result.dataVersion).toMatch(/^sha256:/)
   expect(notes['范围']).toContain('未实时采集，不证明全市完整')
+}
+
+// Capture real development discovery separately from compiled business requests.
+export async function readDevelopmentDiscovery() {
+  const discovery = specializedExportFixture({ discovery: true })
+  try {
+    await discovery.start()
+    const response = await fetch(discovery.url('/_openapi.json'))
+    expect(response.status).toBe(200)
+    return await response.json()
+  } finally { await discovery.close() }
 }

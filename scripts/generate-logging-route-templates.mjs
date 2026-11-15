@@ -19,7 +19,7 @@ const routes = [...new Set(
 if (routes.length < 100) throw new Error(`refusing to write ${routes.length} route templates; build first`)
 
 const body = routes.map(route => `  ${JSON.stringify(route)},`).join('\n')
-writeFileSync('lib/logging/route-templates.ts', `/**
+const generated = `/**
  * Application route templates for runtime diagnostics. Generated from the built
  * Nitro route table; \`httpRoute\` is accepted only when it is an exact member.
  * Never add a concrete request path here. Run
@@ -28,5 +28,11 @@ writeFileSync('lib/logging/route-templates.ts', `/**
 export const APPLICATION_LOG_ROUTES: ReadonlySet<string> = new Set([
 ${body}
 ])
-`)
-console.log(`wrote ${routes.length} route templates`)
+`
+if (process.argv.includes('--check')) {
+  if (readFileSync('lib/logging/route-templates.ts', 'utf8') !== generated) throw new Error('Route templates differ; regenerate after building')
+  console.log(`verified ${routes.length} route templates`)
+} else {
+  writeFileSync('lib/logging/route-templates.ts', generated)
+  console.log(`wrote ${routes.length} route templates`)
+}

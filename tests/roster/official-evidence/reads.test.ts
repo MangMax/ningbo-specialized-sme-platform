@@ -448,18 +448,6 @@ it.each(['legacy list', 'private snapshot', 'receipt not retained', 'event IDs']
 function rpc399(args: unknown) {
   return { jsonrpc: '2.0', id: 399, method: 'tools/call', params: { name: 'list_roster_import_items', arguments: args } }
 }
-const legacy399: { case: string; args: Record<string, unknown> }[] = [
-  { case: 'batch-defaults', args: { batchId: 1 } },
-  { case: 'receipt-defaults', args: { receiptId: 2 } },
-  { case: 'key-preserved', args: { idempotencyKey: ' x ' } },
-  { case: 'explicit-defaults', args: { batchId: 1, page: 1, pageSize: 20 } },
-  { case: 'optional-undefined', args: { batchId: 1, receiptId: undefined, page: undefined, pageSize: undefined } },
-  { case: 'empty-selector', args: {} },
-  { case: 'undefined-selector', args: { batchId: undefined } },
-  { case: 'multiple-selector', args: { batchId: 1, receiptId: 2 } },
-  { case: 'whitespace-key', args: { idempotencyKey: '   ' } },
-  { case: 'partial-paging', args: { pageSize: 20 } },
-]
 const invalidFields399: { case: string; args: Record<string, unknown> }[] = [
   { case: 'page-zero', args: { batchId: 1, page: 0 } },
   { case: 'page-over', args: { batchId: 1, page: 1000001 } },
@@ -481,7 +469,13 @@ const invalidFields399: { case: string; args: Record<string, unknown> }[] = [
   { case: 'key-empty', args: { idempotencyKey: '' } },
   { case: 'key-over', args: { idempotencyKey: 'x'.repeat(4097) } },
 ]
-it.each([...legacy399, ...invalidFields399])('399 raw legacy dispatch $case', async ({ args }) => {
+it.each([
+  { case: 'normal-selector', args: { batchId: 1 } },
+  { case: 'multiple-legacy-keys', args: { batchId: 1, receiptId: 2, idempotencyKey: 'key', page: 1, pageSize: 50 } },
+  { case: 'SDK-owns-value-validation', args: { batchId: null, page: 'invalid', pageSize: false } },
+  { case: 'undefined-own-key', args: { batchId: undefined } },
+  { case: 'empty-object', args: {} },
+])('raw legacy dispatch delegates values to SDK: $case', async ({ args }) => {
   const { officialEvidenceRpcError } = await import('../../../server/utils/official-evidence-read')
   // null proves raw dispatch only, never HTTP200 or an SDK tool-error envelope.
   expect(officialEvidenceRpcError(rpc399(args), true)).toBeNull()

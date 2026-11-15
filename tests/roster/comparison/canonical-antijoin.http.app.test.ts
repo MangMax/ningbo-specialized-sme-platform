@@ -1,3 +1,4 @@
+import { spawnCompiledApp } from '../../support/owned-process.mjs'
 import { initializeDb } from '../../../db/client'
 import { mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync, mkdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -34,7 +35,7 @@ it('actual Nuxt preserves full summary differences and MCP evidence with canonic
     // Lifecycle observation only, on the real native driver in main and child.
     writeFileSync(preload, `const fs=require('node:fs'),D=require(${JSON.stringify(driver)}),p=D.prototype.prepare;let logged=false;D.prototype.prepare=function(...a){if(!logged){logged=true;fs.appendFileSync(${JSON.stringify(nativeLog)},JSON.stringify({pid:process.pid})+'\\n')}return p.apply(this,a)};`)
     const port = await reserveLoopbackPort(), base = `http://127.0.0.1:${port}`
-    child = spawn(process.execPath, [join(root, 'node_modules/nuxt/bin/nuxt.mjs'), 'dev', '--host', '127.0.0.1', '--port', String(port)], {
+    child = spawnCompiledApp(port, {
       cwd: root, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env,
         NODE_OPTIONS: `--require=${preload}`, NUXT_BUILD_DIR: join(dir, 'build'), NUXT_DB_PATH: dbPath,
         NUXT_API_TOKEN: 'synthetic-canonical', NUXT_MCP_TOKEN: 'synthetic-canonical', NUXT_CURATED_PATH: join(dir, 'curated.json'),

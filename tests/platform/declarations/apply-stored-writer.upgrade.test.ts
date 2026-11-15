@@ -1,8 +1,8 @@
 import Database from 'better-sqlite3'
-import { expect,it } from 'vitest'
+import { afterAll, afterEach, expect,it } from 'vitest'
 import { migrate } from 'drizzle-orm/better-sqlite3/migrator'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
-import { copyFileSync, mkdtempSync } from 'node:fs'
+import { copyFileSync, mkdtempSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { upgradeCollections } from '../../../upgrade/collections'
@@ -35,7 +35,19 @@ import { targetSchema } from '../../../upgrade/target-schema'
 import { writeApplyTarget, type ApplyTargetInput } from '../../../upgrade/frozen/apply-target-writer'
 import { verifyFingerprint } from '../../../upgrade/frozen/fingerprint-verifier'
 import { createHash } from 'node:crypto'
-function ready(){const f=fixture();finalizeApplyStored(f);const t=new Database(f.target);t.pragma('foreign_keys=ON');return {f,t,db:drizzle(t,{schema:targetSchema})}}
+let pristine: ReturnType<typeof fixture> | undefined
+const roots: string[] = [], connections: Database.Database[] = []
+afterEach(() => { for (const db of connections.splice(0)) if (db.open) db.close() })
+afterAll(() => { if (!process.env.APPLY_STORED_EVIDENCE_DIR) for (const root of roots) rmSync(root, { recursive: true, force: true }) })
+function ready() {
+ if (!pristine) { pristine = fixture(); finalizeApplyStored(pristine); roots.push(join(pristine.target, '..')) }
+ const root = mkdtempSync(join(process.env.APPLY_STORED_EVIDENCE_DIR ?? tmpdir(), 'apply-writer-')); roots.push(root)
+ const f = { ...pristine, target: join(root, 'target.sqlite') }
+ copyFileSync(pristine.target, f.target)
+ const t = new Database(f.target); connections.push(t); t.pragma('foreign_keys=ON')
+ return { f, t, db: drizzle(t, { schema: targetSchema }) }
+}
+
 function input():ApplyTargetInput{return {collectionId:1,position:{sequenceNo:3,positionState:'unknown'},row:{sequenceNo:3,relationKey:' K ',status:' pending ',declareKind:'申请',year:2024,nameRaw:' Old ',usccRaw:' U ',rawFields:{rdjb:' 2 ',cszt:'pending'}},assignment:{nameRaw:'Old',usccRaw:'U',matchBasis:'none',verificationStatus:'pending',origin:'command',actor:{type:'agent',id:'W'},basis:'explicit'}}}
 it('71608 direct writer captures literal legacy materialization and preserves original canonical bytes',()=>{
  const {t,db}=ready();const v=input(),r=writeApplyTarget(db,v)

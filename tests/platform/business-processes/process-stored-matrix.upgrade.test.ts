@@ -3,10 +3,10 @@ import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { migrate } from 'drizzle-orm/better-sqlite3/migrator'
 import { eq } from 'drizzle-orm'
-import { mkdirSync, mkdtempSync, statfsSync, writeFileSync } from 'node:fs'
+import { mkdirSync, rmSync, mkdtempSync, statfsSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { expect, it } from 'vitest'
+import { afterAll, expect, it } from 'vitest'
 import * as schema from '../../../upgrade/legacy-schema'
 import { legacyRawRdjb } from '../../../upgrade/frozen/server/platform-legacy-relation-read'
 import { legacyRowTitle } from '../../../lib/platform/observation-facts'
@@ -18,12 +18,14 @@ import { rowSnapshot } from '../../../lib/platform/sqlite-row-cells'
 import { candidateFixture } from '../fixtures/candidate-scope-upgrade'
 
 const fields = ['title_raw', 'declare_kind', 'year', 'status', 'batch', 'applied_at', 'award_batch_label', 'province'] as const
+const ownedRoots: string[] = []
+afterAll(() => { if (!process.env.PROCESS_STORED_EVIDENCE_DIR) for (const root of ownedRoots) rmSync(root, { recursive: true, force: true }) })
 function fixture() {
   const base = process.env.PROCESS_STORED_EVIDENCE_DIR ?? tmpdir()
   mkdirSync(base, { recursive: true })
   const d = statfsSync(base)
   if (d.bavail * d.bsize < 8 * 1024 ** 3) throw new Error('Disk floor 8GiB')
-  const root = mkdtempSync(join(base, 'matrix-'))
+  const root = mkdtempSync(join(base, 'matrix-')); ownedRoots.push(root)
   const t = new Database(join(root, 'legacy.sqlite'))
   const db = drizzle(t, { schema })
   migrate(db, { migrationsFolder: 'db/migrations' })

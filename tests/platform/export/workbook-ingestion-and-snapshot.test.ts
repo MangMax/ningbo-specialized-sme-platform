@@ -165,7 +165,8 @@ describe('readPlatformExport:按列号读两行表头的数据表', () => {
 // ---------------------------------------------------------------------------
 
 const REAL_DIR =
-  process.env.SPZTX_PLATFORM_EXPORT_DIR ?? '/Users/mang/Workfile/宁波/专精特新/20261013/工信部名单'
+  process.env.SPZTX_PLATFORM_EXPORT_DIR ?? ''
+if (REAL_DIR && !existsSync(REAL_DIR)) throw new Error('SPZTX_PLATFORM_EXPORT_DIR does not exist')
 const realFile = (name: string) => join(REAL_DIR, name)
 
 /** 三张表的实测基线:数据行数 / 统代列号 / 版本哈希 / 首行抽样。 */
@@ -193,7 +194,7 @@ const REAL_BASELINE = [
   },
 ] as const
 
-describe.runIf(existsSync(REAL_DIR))('真实导出表:列号、行数、版本哈希都对得上', () => {
+describe.runIf(Boolean(REAL_DIR))('真实导出表:列号、行数、版本哈希都对得上', () => {
   it.each(REAL_BASELINE)('$file', async (base) => {
     const parsed = await readPlatformExport(realFile(base.file))
     // 称号按工作表名自动识别,不需要调用方指定。

@@ -13,11 +13,12 @@ import { eq } from 'drizzle-orm'
 import { schema as s } from '../../../db/client'
 
 import { afterAll, beforeAll, beforeEach, expect, it } from 'vitest'
-import { specializedExportFixture, expectCounts, rows, route, year as y, type Event } from './fixtures/specialized-export'
+import { readDevelopmentDiscovery, specializedExportFixture, expectCounts, rows, route, year as y, type Event } from './fixtures/specialized-export'
 
+let developmentSpec: any
+beforeAll(async () => { developmentSpec = await readDevelopmentDiscovery() }, 60000)
 const f = specializedExportFixture()
-beforeAll(f.start,90000)
-beforeEach(f.resetBusiness, 90000)
+beforeEach(async () => { await f.resetBusiness(); await f.start() }, 90000)
 afterAll(f.close)
 
 it('专精特新入口提交202并下载六表新认定文件', async () => {
@@ -244,7 +245,7 @@ it('专用入口鉴权去重重生成参数拒绝及OpenAPI共用kind', async ()
   expect(repeated.response.headers.get('etag')).toBe('"' + first.job.result.artifact.sha256 + '"')
   expect(JSON.stringify(first.job)).not.toContain(f.dir)
   expect((await fetch(f.url('/api/job-artifacts/not-a-path'),{headers:f.headers})).status).toBe(400)
-  const spec = await f.json(await fetch(f.url('/_openapi.json'))), endpoint = spec.paths[route].post
+  const spec = developmentSpec, endpoint = spec.paths[route].post
   expect(endpoint.summary).toBe('提交专精特新中小企业当前有效名录后台导出')
   expect(endpoint.security).toEqual([{bearerAuth:[]}]); expect(endpoint.responses['202']).toBeDefined()
   expect(endpoint.requestBody.content['application/json'].schema.additionalProperties).toBe(false)
@@ -302,7 +303,7 @@ it('阻塞真实执行进程仍先返回202并共用队列取消', async () => {
   let pid: number|undefined
   const deadline = Date.now() + 5000
   while (Date.now() < deadline) {
-    const line = execFileSync('ps',['-Ao','pid=,args='],{encoding:'utf8'}).split('\n').find(line => line.includes(f.dir) && line.includes('/current-export-worker.mjs'))
+    const line = execFileSync('ps',['-Ao','pid=,ppid=,args='],{encoding:'utf8'}).split('\n').find(line => Number(line.trim().split(/\s+/)[1]) === f.processId && line.includes('/current-export-worker.mjs'))
     if (line) { pid = Number(line.trim().split(/\s+/)[0]); break }
     await new Promise(resolve => setTimeout(resolve,10))
   }
