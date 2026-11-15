@@ -42,6 +42,9 @@ export function createEnterpriseReadProcess(entry: URL, sourceLoader?: string) {
     unref() { child.unref(); child.channel?.unref() },
     terminate(): Promise<void> {
       if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve()
+      // Idle readers are unrefed. Keep the host alive until libuv observes
+      // exit and reaps the child; awaiting a Promise alone cannot do that.
+      child.ref()
       return new Promise(resolve => {
         child.once('exit', () => resolve())
         // A blocking native SQLite call cannot process a cooperative stop message.
