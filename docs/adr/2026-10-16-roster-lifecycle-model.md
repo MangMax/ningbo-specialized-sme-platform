@@ -343,7 +343,7 @@ erDiagram
 显式字段让「预检能报、载荷能看、血缘能查」(报告里 `ready[].exportName` 与
 `merge.canonicalName`、血缘 `rename`)。
 
-### 11.3 验收样例(实现于 `tests/roster/enterprise-read/duplicate-merge.app.test.ts`,另跑过真数据)
+### 11.3 验收样例(实现于 `tests/roster/enterprise-read/duplicate-merge.http.test.ts`,另跑过真数据)
 
 | 样例 | 断言 |
 |---|---|

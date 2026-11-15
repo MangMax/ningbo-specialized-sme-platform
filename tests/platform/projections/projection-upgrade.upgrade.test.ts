@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { createHash } from 'node:crypto'
 import { spawnSync } from 'node:child_process'
-import { expect, it } from 'vitest'
+import { beforeAll, expect, it } from 'vitest'
 import { platformRowTitle } from '../../../lib/platform/row-title'
 import { upgradeCollections } from '../../../upgrade/collections'
 import { upgradeObservations } from '../../../upgrade/observations'
@@ -152,23 +152,24 @@ it('holds the frozen source against separate process UPDATE and WAL during both 
   }})
   expect(new Set(probes)).toEqual(new Set(['observations','versions']));expect(readFileSync(f.source)).toEqual(before)
 })
-it('resumes in a fresh CLI process with identical persisted fields and emits full source target manifests',()=>{
-  const f=fixture(s=>versionArchive(s,0)),oneShot=join(f.root,'oneshot.sqlite');copyFileSync(f.target,oneShot)
-  upgradeProjections({...f,target:oneShot})
-  expect(()=>upgradeProjections({...f,beforeCheckpoint:(phase,id)=>{if(phase==='observations'&&id===31)throw new Error('interrupt')}})).toThrow('interrupt')
-  for(const suffix of ['restart','replay']) {
-    const out=join(f.root,suffix);mkdirSync(out)
-    const result=spawnSync(process.execPath,['upgrade/run-projections.mjs',f.source,f.target,out,f.runId,f.observationRunId,f.collectionRunId,'2'],{encoding:'utf8'})
-    writeFileSync(join(out,'process.log'),result.stdout+result.stderr)
-    expect(result.status).toBe(0);expect(JSON.parse(readFileSync(join(out,'receipt.json'),'utf8')).state).toBe('complete')
-    expect(readFileSync(join(out,'source-manifest.jsonl'),'utf8')).toContain('canonical_raw_json')
-    expect(readFileSync(join(out,'target-manifest.jsonl'),'utf8')).toContain('source_archive_id')
-  }
-  const a=new Database(oneShot),b=new Database(f.target)
+let cli: ReturnType<typeof fixture>, oneShot: string
+beforeAll(()=>{
+  cli=fixture(s=>versionArchive(s,0));oneShot=join(cli.root,'oneshot.sqlite');copyFileSync(cli.target,oneShot)
+  upgradeProjections({...cli,target:oneShot})
+  expect(()=>upgradeProjections({...cli,beforeCheckpoint:(phase,id)=>{if(phase==='observations'&&id===31)throw new Error('interrupt')}})).toThrow('interrupt')
+},30000)
+it.each(['restart','replay'] as const)('runs a fresh CLI %s with identical persisted fields and full manifests',mode=>{
+  const target=join(cli.root,mode+'.sqlite'),out=join(cli.root,mode)
+  copyFileSync(mode==='restart'?cli.target:oneShot,target);mkdirSync(out)
+  const result=spawnSync(process.execPath,['upgrade/run-projections.mjs',cli.source,target,out,cli.runId,cli.observationRunId,cli.collectionRunId,'2'],{encoding:'utf8'})
+  writeFileSync(join(out,'process.log'),result.stdout+result.stderr)
+  expect(result.status).toBe(0);expect(JSON.parse(readFileSync(join(out,'receipt.json'),'utf8')).state).toBe('complete')
+  expect(readFileSync(join(out,'source-manifest.jsonl'),'utf8')).toContain('canonical_raw_json')
+  expect(readFileSync(join(out,'target-manifest.jsonl'),'utf8')).toContain('source_archive_id')
+  const a=new Database(oneShot),b=new Database(target)
   for(const table of ['platform_apply_projection','platform_business_projection','platform_recognized_projection','platform_archive_value','platform_version_archive_ref','platform_business_record_version'])expect(b.prepare(`select * from ${table} order by 1`).all()).toEqual(a.prepare(`select * from ${table} order by 1`).all())
   a.close();b.close()
 })
-
 
 it('pins all seven stored parsed and reconciled fields with independent literals',()=>{
   const f=fixture(s=>s.exec(`update platform_relation set province=' 浙江 ',status=' ',batch='旧批',declare_kind=' 申请 ',applied_at=NULL,award_batch_label=' 第四批 ',year=0,raw_fields='{"szsfmc":"浙江","cszt":"终审通过","whpc":"新批","sblx":"申请","sqsj":" 2028-01 ","personuuid":"第四批","year":"2.028e3"}' where id=11`))

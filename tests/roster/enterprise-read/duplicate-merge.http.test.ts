@@ -1,25 +1,6 @@
 import { nativeQueryRows, nativeRelationRows } from '../../platform/fixtures/native-evidence'
 import { initializeDb } from '../../../db/client'
-/**
- * RL-14 端到端：**重名候选显式化 + 有证据的归并**。
- *
- * ── 覆盖什么 ────────────────────────────────────────────────────────────
- *  - **A**：导入**新建企业**时，库里已有同名（`name_norm` 相同）的行 ⇒ 报告里**显式**出现
- *    该重名候选（预检 + 提交 + 批次结果三处都能查回）；**匹配规则不变**（不按名自动合并 ——
- *    新建那行照样建出来，候选只是把它说清楚）。
- *  - **B**：归并后规范行保留**导出表侧**的名字；被并的公布名落 `enterprise_alias`
- *    （**逐字相同则不造别名**，只并身份）。
- *  - **C**：一条**端到端** —— 真实 HTTP 写入平台查询/关系（夹具是 `tests/fixtures/platform/`
- *    里裁剪的**真实响应摘录**），再执行 `payload.merges`：两行合一、各称号/事件/出处一条不丢、
- *    血缘可在 `import_batch.item_results` 取回、同键重放不增行。
- *  - **反面**：证据不足（`qymc` 与公布名不符 / 该统代一次都没查过 / 同一既有行被多条候选认领）
- *    ⇒ **不归并**，逐条列待核。
- *
- * ── 走的是哪条链路 ──────────────────────────────────────────────────────
- * `tests/helpers/platform-evidence-server.ts` 在**真端口**上起 node:http，挂的是 Nitro 路由
- * 也在调的**同一份** `handleRosterImportRequest`（写）与**真的**路由模块（读）；
- * 客户端用 `lib/roster-import-client.ts`。测的不是替身实现，契约只有一份。
- */
+/** Real HTTP duplicate-candidate, evidence-backed merge and idempotent replay contracts. */
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'

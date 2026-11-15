@@ -1,20 +1,8 @@
-/**
- * 一个**真实**的进程内 HTTP 服务(RL-03 的端到端夹具)。
- *
- * 同一条服务同时挂两类路由,用它跑「写入 → 读回」的闭环:
- *  - **写**:`POST /api/roster/import/{preflight,commit}` → RL-11 的
- *    `handleRosterImportRequest`(Nitro 路由调的就是这一个,不是替身);
- *  - **读**:调用方注入的 GET 处理器(本票注入的是**真的**两块路由模块:
- *    `server/api/platform/queries.get.ts` 与 `server/api/comparison.get.ts`)。
- *
- * 起端口 / 读 body / 404 / 异常 → 状态码等细节见共用底座
- * [`http-fixture.ts`](./http-fixture.ts)(`agent-http.test.ts` 里那次 `createNitro`
- * 只用来问路由**注册表**,不是拿来服务的 —— 进程内它扫不到 `server/api`)。
- * 这里只留「哪些路径交给谁」。
- */
+/** Real in-process HTTP contracts. Worker isolation is verified in its dedicated suite. */
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../../db/schema'
 import { handleRosterImportRequest } from '../../../server/utils/roster-import-http'
+import { executeNativeImport } from '../../roster/imports/fixtures/import-server'
 import { startHttpFixture, type FixtureHandler } from '../../support/http'
 
 type Db = BetterSQLite3Database<typeof schema>
@@ -47,7 +35,7 @@ export async function startEvidenceServer(options: EvidenceServerOptions): Promi
     const out = await handleRosterImportRequest(
       request.path.endsWith('/commit') ? 'commit' : 'preflight',
       { method: request.method, headers: request.headers, body: request.body },
-      { db: options.db, apiToken: options.apiToken },
+      { db: options.db, apiToken: options.apiToken, executeImport: executeNativeImport },
     )
     return { status: out.status, headers: out.headers, body: out.body }
   }
