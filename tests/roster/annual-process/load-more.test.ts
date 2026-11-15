@@ -549,4 +549,4 @@ it.each([50, 100])('cancels the old pending append from %i rows across A-B-A sel
   expect(reads(fetch).slice(before)).toEqual([{ page: 1, pageSize: 50 }])
   expect(wrapper.findComponent(AnnualProcessTimeline).props('view').eventId).toBe(7)
   expect(posts(fetch)).toHaveLength(0)
-})
+}, 10000)

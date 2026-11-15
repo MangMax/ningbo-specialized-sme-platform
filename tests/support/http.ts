@@ -81,7 +81,10 @@ export async function startHttpFixture(routes: FixtureRoutes): Promise<HttpFixtu
   const { port } = server.address() as AddressInfo
   return {
     baseUrl: `http://127.0.0.1:${port}`,
-    close: () => new Promise<void>((resolve) => server.close(() => resolve())),
+    close: () => new Promise<void>((resolve) => {
+      server.close(() => resolve())
+      server.closeAllConnections()
+    }),
   }
 }
 

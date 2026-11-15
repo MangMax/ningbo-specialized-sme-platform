@@ -43,15 +43,22 @@ it('rejects unsafe page identity before a rounded lookup can select another page
   expect(() => writeProcessTarget(db, { ...input, position: { ...input.position, pageId: 9007199254740992 } })).toThrow('Invalid target identity')
   expect(sqlite.serialize()).toEqual(before); sqlite.close()
 })
-it('reuses a version across independent observations and rejects changed payload at the same position', () => {
-  const { db, sqlite, input, statements } = fixture()
+it.each(['identical replay', 'source drift', 'assignment drift'] as const)('handles %s at an existing observation position atomically', scenario => {
+  const { db, sqlite, input } = fixture()
   const first = writeProcessTarget(db, input), before = sqlite.serialize()
-  expect(writeProcessTarget(db, input)).toEqual({ ...first, reused: true })
-  expect(sqlite.serialize()).toEqual(before)
-  for (const changed of [{ ...input, row: { ...input.row, sourceText: 'changed' } }, { ...input, assignment: { ...input.assignment, basis: 'changed' } }]) {
+  if (scenario === 'identical replay') expect(writeProcessTarget(db, input)).toEqual({ ...first, reused: true })
+  else {
+    const changed = scenario === 'source drift'
+      ? { ...input, row: { ...input.row, sourceText: 'changed' } }
+      : { ...input, assignment: { ...input.assignment, basis: 'changed' } }
     expect(() => writeProcessTarget(db, changed)).toThrow('observation_payload_conflict')
-    expect(sqlite.serialize()).toEqual(before)
   }
+  expect(sqlite.serialize()).toEqual(before)
+  expect(sqlite.pragma('foreign_key_check')).toEqual([]); sqlite.close()
+})
+it('reuses a version across independent observations', () => {
+  const { db, sqlite, input, statements } = fixture()
+  const first = writeProcessTarget(db, input)
   const second = writeProcessTarget(db, { ...input, position: { sequenceNo: 2, positionState: 'unknown' }, row: { ...input.row, sequenceNo: 2, status: '终审通过' } })
   expect(second.recordId).toBe(first.recordId); expect(second.versionId).toBe(first.versionId); expect(second.observationId).not.toBe(first.observationId)
   expect(sqlite.prepare('select status_conflict,reconciled_status from platform_business_projection where observation_id is not null order by observation_id').all()).toEqual([{ status_conflict: 0, reconciled_status: '终审通过' }, { status_conflict: 0, reconciled_status: '终审通过' }])

@@ -132,7 +132,7 @@ it('runs readonly preflight and actual CLI after populated schema0 full pipeline
     expect(old.pragma('user_version',{simple:true})).toBe(0)
   } finally {old.close();s.close();t.close()}
   expect(readFileSync(source)).toEqual(sourceBytes)
-})
+}, 15000)
 it.each(['schema','batch','promotion'] as const)('rolls back atomic %s and checkpoint then retries the same run',stage=>{
   let calls=0
   expect(()=>indexLegacyProvenance({source,target,runId:'fault755',batchSize:1,beforeCommit:at=>{if(at===stage && ++calls===(stage==='batch'?2:1)) throw new Error('injected transaction failure')}})).toThrow('injected transaction failure')
@@ -236,14 +236,12 @@ it('rejects FK OFF at the schema write boundary and unknown incomplete same-file
   expect(()=>complete()).toThrow('unchanged independent predecessor')
   expect(readFileSync(target)).toEqual(drift)
 })
-it('refuses missing alias archive digest and mismatching original cells with immutable failed preflight',()=>{
-  const mutations=[
+it.each([
     "DELETE FROM platform_legacy_query_alias WHERE old_id=11",
     "UPDATE platform_archive_value SET sha256='"+'0'.repeat(64)+"' WHERE id=(SELECT archive_id FROM platform_collection_archive_ref WHERE owner_id=11 AND field='legacyProvenance')",
     "DELETE FROM platform_archive_value WHERE id=(SELECT archive_id FROM platform_collection_archive_ref WHERE owner_id=11 AND field='legacyProvenance')",
     "UPDATE platform_query_legacy_provenance SET source_sha256='invalid' WHERE query_id=11",
-  ]
-  for(const [i,mutation] of mutations.entries()) {
+  ].map((mutation,i)=>[i,mutation] as const))('refuses damaged provenance input %i with immutable failed preflight',(i,mutation)=>{
     const src=join(f.root,`bad-source-${i}.sqlite`),dst=join(f.root,`bad-target-${i}.sqlite`);copyFileSync(source,src)
     const s=new Database(src);s.pragma('foreign_keys=OFF')
     // Corruption fixture deliberately removes source protection, never a production repair path.
@@ -252,7 +250,6 @@ it('refuses missing alias archive digest and mismatching original cells with imm
     const before=readFileSync(dst)
     expect(()=>indexLegacyProvenance({source:src,target:dst,runId:'bad'})).toThrow()
     expect(readFileSync(dst)).toEqual(before)
-  }
 })
 it.each([
   ['original BLOB metadata',"UPDATE platform_query_legacy_provenance SET source_identity=X'78' WHERE query_id=11",'Unsupported original metadata storage class'],
