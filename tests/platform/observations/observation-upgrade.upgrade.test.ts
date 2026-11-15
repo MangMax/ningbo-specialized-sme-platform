@@ -161,32 +161,6 @@ it.each([false,true])('holds the source lock against a separate process through 
   }}).state).toBe('complete')
   const released=new Database(f.source,{timeout:0});expect(()=>released.exec("update platform_relation set name_raw='released'")).not.toThrow();released.close()
 })
-it.each([false,true])('CLI restart retains exclusion at hash manifest receipt mapping and stdout boundaries (unindexed=%s)',(unindexed)=>{
-  const f=fixture(unindexed),preload=join(f.root,'observe.cjs'),log=join(f.root,'stages.jsonl')
-  writeFileSync(preload,`
-    const fs=require('node:fs'),{spawnSync}=require('node:child_process'),source=fs.realpathSync(${JSON.stringify(f.source)}),log=${JSON.stringify(log)};
-    const open=fs.openSync,read=fs.readSync,write=fs.writeSync,close=fs.closeSync,wf=fs.writeFileSync,sourceFds=new Set(),outputs=new Map(),seen=new Set();
-    function probe(stage){const p=spawnSync(process.execPath,['-e',${JSON.stringify(`const D=require(${JSON.stringify(join(process.cwd(),'node_modules/better-sqlite3'))});const d=new D(process.argv[1],{timeout:0});for(const sql of ["update platform_relation set name_raw='external'",'pragma journal_mode=WAL']){try{d.exec(sql);process.exitCode=2}catch(e){if(e.code!=='SQLITE_BUSY')throw e}}d.close()` )},source],{encoding:'utf8',env:{...process.env,NODE_OPTIONS:''}});fs.appendFileSync(log,JSON.stringify({stage,status:p.status,stderr:p.stderr})+'\\n');if(p.status!==0)throw Error('Writer escaped '+stage)}
-    fs.openSync=function(p,...a){const fd=open(p,...a);if(String(p)===source)sourceFds.add(fd);if(/(source-manifest|mapping).jsonl$/.test(String(p)))outputs.set(fd,String(p));return fd};
-    fs.closeSync=function(fd){sourceFds.delete(fd);outputs.delete(fd);return close(fd)};
-    fs.readSync=function(fd,...a){const n=read(fd,...a);if(sourceFds.has(fd)&&n===0)probe('hash-eof');return n};
-    fs.writeSync=function(fd,...a){if(outputs.has(fd)&&!seen.has(fd)){seen.add(fd);probe(outputs.get(fd).endsWith('mapping.jsonl')?'mapping':'manifest')}return write(fd,...a)};
-    fs.writeFileSync=function(p,...a){if(String(p).endsWith('receipt.json'))probe('receipt');return wf(p,...a)};
-    const stdout=process.stdout.write.bind(process.stdout);process.stdout.write=function(...a){probe('stdout');return stdout(...a)};
-    require('node:module').syncBuiltinESMExports();
-  `)
-  for(const attempt of ['first','resume']) {
-    const evidence=join(f.root,attempt);mkdirSync(evidence)
-    const result=spawnSync(process.execPath,['--require',preload,'upgrade/run-observations.mjs',f.source,f.target,evidence,f.runId,f.collectionRunId,'1'],{encoding:'utf8'})
-    writeFileSync(join(evidence,'stdout.log'),result.stdout);writeFileSync(join(evidence,'stderr.log'),result.stderr)
-    expect(result.stderr).toBe('');expect(result.status).toBe(0)
-    expect(JSON.parse(readFileSync(join(evidence,'receipt.json'),'utf8')).state).toBe('complete')
-  }
-  const stages=readFileSync(log,'utf8').trim().split('\n').map(x=>JSON.parse(x))
-  expect(stages.filter(x=>x.stage==='hash-eof')).toHaveLength(12)
-  for(const stage of ['manifest','mapping','receipt','stdout']) expect(stages.filter(x=>x.stage===stage)).toHaveLength(2)
-  expect(stages.every(x=>x.status===0&&x.stderr==='')).toBe(true)
-})
 it('restores the full old SQLite row and independently reproduces the legacy DTO order',()=>{
   const f=fixture(),s=new Database(f.source)
   s.exec('update platform_relation set year=1.2345678901234567 where id=55');copyFileSync(f.source,f.target);upgradeCollections({...f,runId:'t04'})

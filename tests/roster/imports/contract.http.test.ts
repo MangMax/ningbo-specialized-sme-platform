@@ -2,20 +2,7 @@ import {differencePublicColumns} from '../../../lib/platform/difference-referenc
 import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
 import { nativeQueryRows, nativeRelationRows } from '../../platform/fixtures/native-evidence'
 import { initializeDb } from '../../../db/client'
-/**
- * RL-11 —— 名录统一写入 API 的验收（契约 §8 写接口 / §9 MCP tool）。
- *
- * 分四层：
- *  1. **核心逻辑**（`server/utils/roster-import.ts`）：预检不写业务数据、单批事务、
- *     逐项错误、幂等重放、七张新表覆盖、归并血缘可查回；
- *  2. **真实 HTTP 契约**（`tests/helpers/roster-http-server.ts` 起真端口 + `lib/roster-import-client.ts`
- *     发真请求）：鉴权四态、预检 → 提交 → 重放 → 失败恢复 → 完整性；
- *  3. **MCP 面**：写入 tool 名单（`MCP_WRITE_TOOLS`）与四个 tool 的注册/参数面；
- *  4. **读面**：`list_enterprises` / `list_differences` 的落点（`server/utils/mcp-roster.ts`）。
- *
- * 验收要求「不以直接数据库写入代替 API 验收」—— 所以端到端一律走 HTTP，只有
- * 夹具造数（企业/记录/事件）用 drizzle 直插（那是**输入**，不是被测行为）。
- */
+/** Import core and real HTTP contracts. Worker isolation is tested separately. */
 
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -42,7 +29,8 @@ import {
 } from '../../../server/utils/roster-import'
 import { MCP_WRITE_TOOLS } from '../../../server/utils/mcp-auth'
 import { listDifferences, listEnterprises } from '../../../server/utils/mcp-roster'
-import { startRosterApi } from './fixtures/import-server'
+import { startRosterApi as startWorkerRosterApi, executeNativeImport } from './fixtures/import-server'
+const startRosterApi: typeof startWorkerRosterApi = options => startWorkerRosterApi({ ...options, executeImport: options.executeImport ?? executeNativeImport })
 import { minimalPdf } from '../../support/minimal-pdf'
 
 const TOKEN = 'test-api-token-value'

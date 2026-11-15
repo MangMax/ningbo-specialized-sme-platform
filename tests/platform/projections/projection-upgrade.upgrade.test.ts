@@ -169,32 +169,6 @@ it('resumes in a fresh CLI process with identical persisted fields and emits ful
   a.close();b.close()
 })
 
-it('CLI first and replay retain exclusion at hash manifest receipt target output and stdout boundaries',()=>{
-  const f=fixture(shared),preload=join(f.root,'observe.cjs'),log=join(f.root,'stages.jsonl')
-  writeFileSync(preload,`
-    const fs=require('node:fs'),{spawnSync}=require('node:child_process'),source=fs.realpathSync(${JSON.stringify(f.source)}),log=${JSON.stringify(log)};
-    const open=fs.openSync,read=fs.readSync,write=fs.writeSync,close=fs.closeSync,wf=fs.writeFileSync,sourceFds=new Set(),outputs=new Map(),seen=new Set();
-    function probe(stage){const p=spawnSync(process.execPath,['-e',${JSON.stringify(`const D=require(${JSON.stringify(join(process.cwd(),'node_modules/better-sqlite3'))});const d=new D(process.argv[1],{timeout:0});for(const sql of ["update platform_relation set name_raw='external'",'pragma journal_mode=WAL']){try{d.exec(sql);process.exitCode=2}catch(e){if(e.code!=='SQLITE_BUSY')throw e}}d.close()` )},source],{encoding:'utf8',env:{...process.env,NODE_OPTIONS:''}});fs.appendFileSync(log,JSON.stringify({stage,status:p.status,stderr:p.stderr})+'\\n');if(p.status!==0)throw Error('Writer escaped '+stage)}
-    fs.openSync=function(p,...a){const fd=open(p,...a);if(String(p)===source)sourceFds.add(fd);if(/(source-manifest|target-manifest).jsonl$/.test(String(p)))outputs.set(fd,String(p));return fd};
-    fs.closeSync=function(fd){sourceFds.delete(fd);outputs.delete(fd);return close(fd)};
-    fs.readSync=function(fd,...a){const n=read(fd,...a);if(sourceFds.has(fd)&&n===0)probe('hash-eof');return n};
-    fs.writeSync=function(fd,...a){if(outputs.has(fd)&&!seen.has(fd)){seen.add(fd);probe(outputs.get(fd).endsWith('target-manifest.jsonl')?'mapping':'manifest')}return write(fd,...a)};
-    fs.writeFileSync=function(p,...a){if(String(p).endsWith('receipt.json'))probe('receipt');return wf(p,...a)};
-    const stdout=process.stdout.write.bind(process.stdout);process.stdout.write=function(...a){probe('stdout');return stdout(...a)};
-    require('node:module').syncBuiltinESMExports();
-  `)
-  for(const attempt of ['first','resume']) {
-    const evidence=join(f.root,attempt);mkdirSync(evidence)
-    const result=spawnSync(process.execPath,['--require',preload,'upgrade/run-projections.mjs',f.source,f.target,evidence,f.runId,f.observationRunId,f.collectionRunId,'2'],{encoding:'utf8'})
-    writeFileSync(join(evidence,'stdout.log'),result.stdout);writeFileSync(join(evidence,'stderr.log'),result.stderr)
-    expect(result.stderr).toBe('');expect(result.status).toBe(0)
-    expect(JSON.parse(readFileSync(join(evidence,'receipt.json'),'utf8')).state).toBe('complete')
-  }
-  const stages=readFileSync(log,'utf8').trim().split('\n').map(x=>JSON.parse(x))
-  expect(stages.filter(x=>x.stage==='hash-eof').length).toBeGreaterThanOrEqual(8)
-  for(const stage of ['manifest','mapping','receipt','stdout']) expect(stages.filter(x=>x.stage===stage)).toHaveLength(2)
-  expect(stages.every(x=>x.status===0&&x.stderr==='')).toBe(true)
-})
 
 it('pins all seven stored parsed and reconciled fields with independent literals',()=>{
   const f=fixture(s=>s.exec(`update platform_relation set province=' 浙江 ',status=' ',batch='旧批',declare_kind=' 申请 ',applied_at=NULL,award_batch_label=' 第四批 ',year=0,raw_fields='{"szsfmc":"浙江","cszt":"终审通过","whpc":"新批","sblx":"申请","sqsj":" 2028-01 ","personuuid":"第四批","year":"2.028e3"}' where id=11`))

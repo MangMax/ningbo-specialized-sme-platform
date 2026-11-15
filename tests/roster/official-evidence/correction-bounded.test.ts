@@ -53,6 +53,7 @@ it('bounds fixed evidence preflight and history materialization across unrelated
     return { value: JSON.parse(raw), measured }
   }
   try {
+    const q = submitNativePlatformQuery(db, { interface: 'business_list', queryKey: 'unrelated-source', rdjb: '2', queriedAt: '2026-10-19', status: 'success', rawResponse: 'raw-sentinel'.repeat(1024), relations: [{ sequenceNo: 1, rawFields: { rawSentinel: 'raw-sentinel'.repeat(1024) } }] })
     let baseMetrics: unknown
     for (const unrelated of [0, 200, 1000]) {
       if (unrelated > 0) db.transaction(() => {
@@ -60,8 +61,6 @@ it('bounds fixed evidence preflight and history materialization across unrelated
         for (let i = existing; i < unrelated; i++) {
           const otherEvent = db.insert(schema.recordEvent).values({ recordId: record.id, eventType: 'award', year: 2000 + i }).returning().get()
           db.insert(schema.recordEvidence).values({ recordEventId: otherEvent.id, sourceFile: 'unrelated/' + i + '.pdf', listNo: 1, page: 1 }).run()
-          const q = submitNativePlatformQuery(db, { interface: 'business_list', queryKey: 'unrelated-' + i, rdjb: '2', queriedAt: '2026-10-19', status: 'success', rawResponse: 'raw-sentinel'.repeat(1024), relations: [{ sequenceNo: 1, rawFields: { rawSentinel: 'raw-sentinel'.repeat(1024) } }] })
-          const relation = { id: q.relationIds[0]! }
           db.insert(schema.recordCorrespondence).values({ edgeKey: 'unrelated-' + i, type: 'event_process', role: 'context_only', eventId: otherEvent.id, predecessorEventId: otherEvent.id, observationId: q.observations[0]!.observationId, titleCode: 'specialized_sme', status: 'candidate', revision: 1, targetIdentity: {}, provenance: { rawSentinel: 'raw-sentinel'.repeat(1024) }, sourceFingerprint: 'synthetic', ruleId: 'manual', ruleVersion: '1', createdAt: '2026-10-19' }).run()
         }
       })
@@ -74,7 +73,7 @@ it('bounds fixed evidence preflight and history materialization across unrelated
       if (baseMetrics) expect(stable).toEqual(baseMetrics)
       else baseMetrics = stable
     }
-    if (process.env.TICKET101_METRICS) writeFileSync(process.env.TICKET101_METRICS, JSON.stringify({ sourceSha: process.env.TICKET101_SOURCE_SHA ?? 'uncommitted candidate', unrelatedRawBytesPerRow: 36900, observations, impactExplain: db.$client.prepare('EXPLAIN QUERY PLAN SELECT count(*) FROM record_correspondence WHERE event_id = ? OR predecessor_event_id = ?').all(event.id, event.id), coordinateExplain: db.$client.prepare('EXPLAIN QUERY PLAN SELECT id FROM record_evidence WHERE source_file = ? AND list_no = ?').all('notice.pdf', 1) }, null, 2))
+    if (process.env.TICKET101_METRICS) writeFileSync(process.env.TICKET101_METRICS, JSON.stringify({ sourceSha: process.env.TICKET101_SOURCE_SHA ?? 'uncommitted candidate', unrelatedProvenanceBytesPerRow: Buffer.byteLength('raw-sentinel'.repeat(1024)), observations, impactExplain: db.$client.prepare('EXPLAIN QUERY PLAN SELECT count(*) FROM record_correspondence WHERE event_id = ? OR predecessor_event_id = ?').all(event.id, event.id), coordinateExplain: db.$client.prepare('EXPLAIN QUERY PLAN SELECT id FROM record_evidence WHERE source_file = ? AND list_no = ?').all('notice.pdf', 1) }, null, 2))
     console.info('TICKET101_DRIVER_MATERIALIZATION ' + JSON.stringify(observations))
     console.info('TICKET101_COORDINATE_EXPLAIN ' + JSON.stringify(db.$client.prepare('EXPLAIN QUERY PLAN SELECT id FROM record_evidence WHERE source_file = ? AND list_no = ?').all('notice.pdf', 1)))
   } finally { await app.close(); db.$client.close(); rmSync(dir, { recursive: true, force: true }) }

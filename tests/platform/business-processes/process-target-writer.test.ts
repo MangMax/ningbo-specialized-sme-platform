@@ -171,18 +171,21 @@ it.each(['platform_business_record', 'platform_business_record_version', 'platfo
   expect(() => writeProcessTarget(db, input)).toThrow()
   expect(sqlite.serialize()).toEqual(before); sqlite.close()
 })
-it('accepts the last safe record ID and rejects distinct keys after exhaustion without identity aliasing', () => {
+it('allocates the last safe record ID and reuses it for the same key', () => {
   const { db, sqlite, input } = fixture()
   sqlite.exec("insert into sqlite_sequence(name,seq) values('platform_business_record',9007199254740990)")
   const row = (key: string, sequenceNo: number): ProcessTargetInput => ({ ...input, position: { sequenceNo, positionState: 'unknown' }, row: { sequenceNo, relationKey: key, rawFields: null } })
   const last = writeProcessTarget(db, row('LAST', 1))
   expect(last.recordId).toBe(Number.MAX_SAFE_INTEGER)
   expect(writeProcessTarget(db, row('LAST', 2)).recordId).toBe(last.recordId)
+  sqlite.close()
+})
+it('atomically rejects a distinct key when record IDs are exhausted', () => {
+  const { db, sqlite, input } = fixture()
+  sqlite.exec("insert into platform_business_record(id,interface,platform_key,identity_rule_version,created_at) values(9007199254740991,'business_list','LAST','platform-observation-v1','fixture')")
   const before = sqlite.serialize()
-  for (const [index, key] of ['EXHAUST-1', 'EXHAUST-2'].entries()) {
-    expect(() => writeProcessTarget(db, row(key, index + 3))).toThrow('Invalid target identity')
-    expect(sqlite.serialize()).toEqual(before)
-  }
+  expect(() => writeProcessTarget(db, { ...input, row: { ...input.row, relationKey: 'EXHAUST', rawFields: null } })).toThrow('Invalid target identity')
+  expect(sqlite.serialize()).toEqual(before)
   expect(sqlite.prepare('select cast(id as text) id,platform_key from platform_business_record').all()).toEqual([{ id: '9007199254740991', platform_key: 'LAST' }]); sqlite.close()
 })
 it('allocates the last safe alias and completely rolls back alias exhaustion', () => {

@@ -1,17 +1,4 @@
-/**
- * 一个**真实**的名录导入 HTTP 服务(RL-11 的验收夹具)。
- *
- * 契约验收要求「以真实 HTTP 契约测试预检、提交、重复重放、失败恢复及完整性,不以直接
- * 数据库写入代替 API 验收」。起端口 / 读 body / 404 与 500 信封等**逐字重复**的部分已经
- * 抽到 [`http-fixture.ts`](./http-fixture.ts);这里只剩本夹具的路由表 ——
- * 把**同一份** `handleRosterImportRequest`(Nitro 路由也调它)挂上去,测的不是替身实现。
- *
- * 只认四条路径:`/api/roster/import/preflight`、`/commit`、`/replay`(RL-19 的收敛重放)
- * 与 `/api/roster/evidence/pages`(RL-10 的出处页码补录);其余一律 404。
- *
- * RL-10 那条**没有**新起一份夹具:它和导入面共用同一个 `db` / `apiToken`,起两个端口
- * 等于让一批测试同时握两个服务(端口更多、关不干净的风险更大),而它们的路由互不重叠。
- */
+/** Real HTTP routes for import preflight, commit, replay and evidence-page updates. */
 
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../../../db/schema'
@@ -19,6 +6,13 @@ import { handleRosterImportRequest, type RosterImportAction } from '../../../../
 import { handleEvidencePagesRequest } from '../../../../server/utils/roster-evidence-pages'
 import { startHttpFixture, type FixtureHandler } from '../../../support/http'
 import type { importExecutor } from '../../../../server/utils/import-execution'
+import { commitRosterImport, preflightRosterImport } from '../../../../server/utils/roster-import'
+
+// HTTP contract tests exercise the actual import core; worker ownership has its own suite.
+export const executeNativeImport: typeof importExecutor.execute = async (db, action, request, errors, context, source) =>
+  action === 'preflight'
+    ? preflightRosterImport(db, request, errors, { ...context, filesDir: source?.filesDir })
+    : commitRosterImport(db, request, errors, { ...context, filesDir: source?.filesDir, deferCandidateTasks: true })
 
 type Db = BetterSQLite3Database<typeof schema>
 

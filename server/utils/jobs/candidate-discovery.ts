@@ -1,3 +1,4 @@
+import { whenImportWriterIdle } from '../import-write-barrier'
 import { setImmediate as yieldTurn } from 'node:timers/promises'
 import type { LogContext } from '../../../lib/logging'
 import { createHash } from 'node:crypto'
@@ -178,7 +179,7 @@ function checkSourceBudget(db: Db, relationId: number) {
 }
 async function run(ctx: JobContext, raw: Record<string, unknown>) {
   // submitJob can begin executing before returning. Never discover in archive transactions.
-  await yieldTurn()
+  await yieldTurn(); await whenImportWriterIdle()
   const current = getJob(ctx.db, ctx.jobId)
   // Staging may have rolled back after the queue was notified.
   if (!current || current.state !== 'running')
@@ -292,7 +293,7 @@ async function run(ctx: JobContext, raw: Record<string, unknown>) {
             Object.assign(item, beforeRow)
             throw cause
           }
-          await yieldTurn()
+          await yieldTurn(); await whenImportWriterIdle()
         }
         complete = item.page * 25 >= page.total
         if (complete) item.status = 'done'
@@ -301,7 +302,7 @@ async function run(ctx: JobContext, raw: Record<string, unknown>) {
           item.rowIndex = 0
         }
         persist()
-        await yieldTurn()
+        await yieldTurn(); await whenImportWriterIdle()
       }
     } catch (cause) {
       item.status = 'failed'
@@ -313,7 +314,7 @@ async function run(ctx: JobContext, raw: Record<string, unknown>) {
           ? cause.message
           : 'candidate_persistence_failed'
       persist()
-      await yieldTurn()
+      await yieldTurn(); await whenImportWriterIdle()
     }
   }
   // Only the already-resolved archive query slice is automatic. Explicit event
@@ -322,6 +323,7 @@ async function run(ctx: JobContext, raw: Record<string, unknown>) {
     // Native import only stages candidates. Do not load Nuxt's @db-dependent
     // adapter in that process; annual reads belong to the application runner.
     const { readAnnualWriteScope } = await import('../annual-correspondence-read')
+    await whenImportWriterIdle()
     if (ctx.cancelled()) return { result, cancelled: true }
     const eventIds = result.items.map(item => item.eventId)
     const identity = createHash('sha256').update(JSON.stringify({

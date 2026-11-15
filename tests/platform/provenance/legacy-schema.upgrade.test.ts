@@ -19,6 +19,7 @@ import { allocateLegacyAlias, bindArchive, sealArchiveOwner, insertArchiveValue,
 import { writeNewCollectionTarget } from '../../../upgrade/frozen/collection-target-command'
 
 let f: Awaited<ReturnType<typeof processReaderFixture>>, source:string, target:string
+let emptySource: string, emptyRoot: string
 let caseNumber=0
 let normal: ReturnType<typeof writeNewCollectionTarget>
 const sha = 'a'.repeat(64), fingerprint = 'b'.repeat(64)
@@ -81,7 +82,13 @@ beforeAll(async()=>{
   source=join(f.root,'fixed71612.sqlite');copyFileSync(s11,source)
   transferDifferenceReferences({source:s11,target:source,runId:'difference755'})
   target=join(f.root,'target71613.sqlite')
-})
+  const empty=await processReaderFixture()
+  empty.close(); emptyRoot=empty.root
+  const empty10=join(empty.root,'empty71610.sqlite'),empty11=join(empty.root,'empty71611.sqlite')
+  emptySource=join(empty.root,'empty71612.sqlite')
+  copyFileSync(empty.target,empty10);copyFileSync(empty10,empty11);transferCorrespondence({source:empty10,target:empty11,runId:'empty-h1c'})
+  copyFileSync(empty11,emptySource);transferDifferenceReferences({source:empty11,target:emptySource,runId:'empty-difference'})
+}, 60000)
 beforeEach(context=>{
   target=join(f.root,`case-${++caseNumber}-71613.sqlite`)
   copyFileSync(source,target)
@@ -219,7 +226,7 @@ it.each([
     expect(t.prepare('SELECT count(*) n FROM platform_collection_legacy_provenance').get()).toEqual({n:2})
   } finally {t.close()}
 })
-it('rejects FK OFF at the schema write boundary and unknown incomplete same-file or drifted predecessor before writes',()=>{
+it('rejects FK OFF and incomplete readiness at the schema boundary',()=>{
   const t=new Database(target)
   try {
     t.pragma('foreign_keys=OFF');expect(()=>installLegacyProvenance(t)).toThrow('foreign_keys=ON')
@@ -229,8 +236,11 @@ it('rejects FK OFF at the schema write boundary and unknown incomplete same-file
   const before=readFileSync(target)
   expect(()=>complete()).toThrow('Unsupported difference reference schema version')
   expect(readFileSync(target)).toEqual(before)
+})
+it('rejects same-file source and target',()=>{
   expect(()=>indexLegacyProvenance({source,target:source,runId:'same'})).toThrow('Distinct isolated')
-  copyFileSync(source,target)
+})
+it('rejects a drifted predecessor without modifying its bytes',()=>{
   const changed=new Database(target);changed.exec("UPDATE platform_collection SET queried_at='drift' WHERE id=11");changed.close()
   const drift=readFileSync(target)
   expect(()=>complete()).toThrow('unchanged independent predecessor')
@@ -279,21 +289,16 @@ it.each([
   expect(()=>indexLegacyProvenance({source:src,target:dst,runId:'corrupt'})).toThrow(error)
   expect(readFileSync(dst)).toEqual(before)
 })
-it('completes an actual pipeline without provenance and preserves absent metadata on replay',async()=>{
-  const empty=await processReaderFixture()
-  empty.close()
-  const s10=join(empty.root,'empty71610.sqlite'),s11=join(empty.root,'empty71611.sqlite'),s12=join(empty.root,'empty71612.sqlite')
-  copyFileSync(empty.target,s10);copyFileSync(s10,s11);transferCorrespondence({source:s10,target:s11,runId:'empty-h1c'})
-  copyFileSync(s11,s12);transferDifferenceReferences({source:s11,target:s12,runId:'empty-difference'})
-  const dst=join(empty.root,'empty71613.sqlite');copyFileSync(s12,dst)
-  expect(indexLegacyProvenance({source:s12,target:dst,runId:'empty'})).toEqual({state:'complete',rows:0,version:71613})
+it('preserves absent provenance metadata on indexing and replay',()=>{
+  const dst=join(emptyRoot,'empty71613.sqlite');copyFileSync(emptySource,dst)
+  expect(indexLegacyProvenance({source:emptySource,target:dst,runId:'empty'})).toEqual({state:'complete',rows:0,version:71613})
   const t=new Database(dst)
   try {
     expect(t.prepare('SELECT * FROM platform_collection_legacy_provenance').all()).toEqual([])
     expect(t.prepare("SELECT last_old_id,copied_count FROM platform_migration_checkpoint WHERE run_id='empty'").get()).toEqual({last_old_id:0,copied_count:0})
   } finally {t.close()}
   const bytes=readFileSync(dst)
-  expect(indexLegacyProvenance({source:s12,target:dst,runId:'empty'})).toEqual({state:'complete',rows:0,version:71613})
+  expect(indexLegacyProvenance({source:emptySource,target:dst,runId:'empty'})).toEqual({state:'complete',rows:0,version:71613})
   expect(readFileSync(dst)).toEqual(bytes)
 })
 it.each(['checkpoint','historical collection','unknown version','source binding'] as const)('refuses completed replay drift in %s without rewriting evidence',kind=>{
