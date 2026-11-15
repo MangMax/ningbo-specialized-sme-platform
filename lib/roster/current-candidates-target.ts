@@ -1,5 +1,5 @@
 /** Explicit completed target candidate domain. Qualification/identity coverage remains R5. */
-import { and, asc, count, desc, eq, isNotNull, isNull, max, sql } from 'drizzle-orm'
+import { and, asc, count, desc, eq, inArray, isNotNull, isNull, max, sql } from 'drizzle-orm'
 import { alias } from 'drizzle-orm/sqlite-core'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import { enterprise, record, differenceReason, recordCorrespondence } from '../../db/schema'
@@ -12,7 +12,7 @@ import type { CurrentTitle } from './current-titles'
 import type { CurrentCandidateReader } from './current-candidate-reader'
 import { targetSchema } from '../platform/target-schema'
 
-const newer=alias(a,'candidate_newer_assignment'), owner=alias(enterprise,'candidate_unassigned_owner')
+const newer=alias(a,'candidate_newer_assignment')
 const bits={innovative_sme:1,specialized_sme:2,little_giant:4} satisfies Record<CurrentTitle,number>
 export class TargetCurrentCandidateGap extends Error {
   constructor(readonly observationId:number|null,readonly state:string,readonly reason:string|null) {
@@ -28,21 +28,35 @@ export function createTargetCurrentCandidateReader(db:BetterSQLite3Database<type
   sqlite.function('roster84_uscc',{deterministic:true},normalizeUscc)
   const assignment=()=>and(eq(a.observationId,o.id),eq(a.revision,
     db.select({revision:max(newer.revision)}).from(newer).where(eq(newer.observationId,o.id))))
-  const ownerJoin=()=>and(isNull(a.enterpriseId),isNotNull(owner.usccNorm),eq(owner.usccNorm,sql`roster84_uscc(${a.usccRaw})`))
+  const ownerRows=db.select({id:enterprise.id,normalizedKey:sql<string>`roster84_uscc(${enterprise.usccNorm})`.as('normalized_key')})
+    .from(enterprise).where(isNotNull(enterprise.usccNorm))
+  // Drizzle's SQLite $with API has no MATERIALIZED option. This narrow fence
+  // evaluates each stored owner once and lets SQLite index the computed key,
+  // rather than normalizing every enterprise for every unassigned observation.
+  const owners=db.$with('candidate_normalized_owners',{}).as(sql`
+    with normalized_owners as materialized (${ownerRows.getSQL()})
+    select id,normalized_key from normalized_owners`)
+  const ownerId=sql<number>`"candidate_normalized_owners"."id"`
+  const ownerJoin=()=>and(isNull(a.enterpriseId),eq(sql`"candidate_normalized_owners"."normalized_key"`,sql`roster84_uscc(${a.usccRaw})`))
   function gate() {
-    if (!sqlite.prepare('SELECT 1 FROM platform_runtime_completion WHERE id=1 AND rule=? AND schema_version=?').get(PLATFORM_RETIREMENT_RULE, PLATFORM_RUNTIME_VERSION)) {
+    if (sqlite.pragma('user_version',{simple:true})!==PLATFORM_RUNTIME_VERSION || !sqlite.prepare('SELECT 1 FROM platform_runtime_completion WHERE id=1 AND rule=? AND schema_version=?').get(PLATFORM_RETIREMENT_RULE, PLATFORM_RUNTIME_VERSION)) {
       throw new TargetCurrentCandidateGap(null,'completion','Completed runtime model required')
     }
+    // Completed migration can lawfully retain an unavailable or malformed source scope.
+    // Read only the first compact capture marker; never decode its archive at runtime.
+    const gap=db.select({id:o.id,state:o.candidateScopeState,reason:o.candidateScopeError}).from(o)
+      .where(inArray(o.candidateScopeState,['uncaptured','error'])).limit(1).get()
+    if(gap)throw new TargetCurrentCandidateGap(gap.id,gap.state,gap.reason)
   }
   function candidates(title:CurrentTitle) {
-    const id=sql<number>`coalesce(${a.enterpriseId},${owner.id})`.as('id')
-    return db.select({id:record.enterpriseId}).from(record).where(eq(record.titleCode,title))
+    const id=sql<number>`coalesce(${a.enterpriseId},${ownerId})`.as('id')
+    return db.with(owners).select({id:record.enterpriseId}).from(record).where(eq(record.titleCode,title))
       .union(db.select({id:differenceReason.enterpriseId}).from(differenceReason).where(eq(differenceReason.titleCode,title)))
       .union(db.select({id:sql<number>`${recordCorrespondence.enterpriseId}`.as('id')}).from(recordCorrespondence)
         .where(and(eq(recordCorrespondence.titleCode,title),isNotNull(recordCorrespondence.enterpriseId))))
       .union(db.select({id}).from(o).innerJoin(a,assignment())
-        .leftJoin(owner,ownerJoin())
-        .where(and(sql`(${o.candidateScopeMask} & ${bits[title]})<>0`,isNotNull(sql`coalesce(${a.enterpriseId},${owner.id})`))))
+        .leftJoin(owners,ownerJoin())
+        .where(and(sql`(${o.candidateScopeMask} & ${bits[title]})<>0`,isNotNull(sql`coalesce(${a.enterpriseId},${ownerId})`))))
       .as('current_candidates')
   }
   function ordered(title:CurrentTitle,sort?:'id_asc'|'name_asc'|'name_desc') {

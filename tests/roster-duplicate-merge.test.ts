@@ -258,10 +258,10 @@ describe('C · 端到端：真实平台证据 ⇒ 两行合一，一条不丢', 
 
   it('第一批：平台查询与关系经统一 API 落库（夹具是裁剪的真实响应）', async () => {
     const queries: PlatformQueryInput[] = [
-      { rawResponse: 'Explicit synthetic original response', interface: 'business_list', queryKey: USCC, rdjb: '1', queriedAt: QUERIED_AT, outcome: classifyRawQuery(fixture('business-list-rdjb1-empty.html'), { interface: 'business_list', rdjb: '1', queryKey: USCC }) },
-      { rawResponse: 'Explicit synthetic original response', interface: 'business_list', queryKey: USCC, rdjb: '2', queriedAt: QUERIED_AT, outcome: classifyRawQuery(fixture('business-list-rdjb2-empty.html'), { interface: 'business_list', rdjb: '2', queryKey: USCC }) },
-      { rawResponse: 'Explicit synthetic original response', interface: 'business_list', queryKey: USCC, rdjb: '3', queriedAt: QUERIED_AT, outcome: classifyRawQuery(fixture('business-list-rdjb3.html'), { interface: 'business_list', rdjb: '3', queryKey: USCC }) },
-      { rawResponse: 'Explicit synthetic original response', interface: 'apply_list', queryKey: USCC, rdjb: '', queriedAt: QUERIED_AT, outcome: classifyRawQuery(fixture('apply-list.json'), { interface: 'apply_list', queryKey: USCC }) },
+      { interface: 'business_list', queryKey: USCC, rdjb: '1', queriedAt: QUERIED_AT, outcome: classifyRawQuery(fixture('business-list-rdjb1-empty.html'), { interface: 'business_list', rdjb: '1', queryKey: USCC }) },
+      { interface: 'business_list', queryKey: USCC, rdjb: '2', queriedAt: QUERIED_AT, outcome: classifyRawQuery(fixture('business-list-rdjb2-empty.html'), { interface: 'business_list', rdjb: '2', queryKey: USCC }) },
+      { interface: 'business_list', queryKey: USCC, rdjb: '3', queriedAt: QUERIED_AT, outcome: classifyRawQuery(fixture('business-list-rdjb3.html'), { interface: 'business_list', rdjb: '3', queryKey: USCC }) },
+      { interface: 'apply_list', queryKey: USCC, rdjb: '', queriedAt: QUERIED_AT, outcome: classifyRawQuery(fixture('apply-list.json'), { interface: 'apply_list', queryKey: USCC }) },
     ]
     const enterprises: KnownEnterprise[] = [
       { id: existing, name: OLD_NAME, nameNorm: OLD_NAME, uscc: null },

@@ -6,7 +6,7 @@ import { candidateFixture } from './candidate-scope-target'
 import { finalizeCandidateScopes } from '../../upgrade/candidate-scope'
 import { finalizeRecognizedStored } from '../../upgrade/recognized-stored'
 import { finalizeRecognizedWitness } from '../../upgrade/recognized-witness'
-import { targetSchema } from '../../lib/platform/target-schema'
+import { targetSchema } from '../../upgrade/target-schema'
 export async function witnessReaderFixture(seed:(old:Database.Database)=>void) {
  const f=await candidateFixture(seed);finalizeCandidateScopes(f)
  const r3=join(f.root,'r3-source.sqlite');copyFileSync(f.target,r3)

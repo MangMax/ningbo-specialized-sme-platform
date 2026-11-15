@@ -31,9 +31,9 @@ function fixture() {
  return {source,target,legacySource:legacy,runId:'stored',predecessorRunId:'basis'}
 }
 
-import { targetSchema } from '../lib/platform/target-schema'
-import { writeApplyTarget, type ApplyTargetInput } from '../lib/platform/apply-target-writer'
-import { verifyFingerprint } from '../lib/platform/fingerprint-verifier'
+import { targetSchema } from '../upgrade/target-schema'
+import { writeApplyTarget, type ApplyTargetInput } from '../upgrade/frozen/apply-target-writer'
+import { verifyFingerprint } from '../upgrade/frozen/fingerprint-verifier'
 import { createHash } from 'node:crypto'
 function ready(){const f=fixture();finalizeApplyStored(f);const t=new Database(f.target);t.pragma('foreign_keys=ON');return {f,t,db:drizzle(t,{schema:targetSchema})}}
 function input():ApplyTargetInput{return {collectionId:1,position:{sequenceNo:3,positionState:'unknown'},row:{sequenceNo:3,relationKey:' K ',status:' pending ',declareKind:'申请',year:2024,nameRaw:' Old ',usccRaw:' U ',rawFields:{rdjb:' 2 ',cszt:'pending'}},assignment:{nameRaw:'Old',usccRaw:'U',matchBasis:'none',verificationStatus:'pending',origin:'command',actor:{type:'agent',id:'W'},basis:'explicit'}}}
@@ -45,7 +45,7 @@ it('71608 direct writer captures literal legacy materialization and preserves or
  expect(()=>verifyFingerprint(t,{observationId:r.observationId,collectionId:1,relationAlias:r.relationAlias})).not.toThrow()
  const before=t.serialize();expect(writeApplyTarget(db,v).reused).toBe(true);expect(t.serialize()).toEqual(before);t.close()
 })
-import { writeCollectionTarget, type NewCollectionTargetCommand } from '../lib/platform/collection-target-command'
+import { writeCollectionTarget, type NewCollectionTargetCommand } from '../upgrade/frozen/collection-target-command'
 function command():NewCollectionTargetCommand{return {queryText:JSON.stringify({interface:'apply_list',queryKey:'new',queriedAt:'time',status:'success',rawResponse:'{}',relations:[{sequenceNo:1,status:' pending ',declareKind:'申请',rawFields:{rdjb:' 2 ',cszt:'pending',year:'2e3'}}]}),evidenceText:null,createdAt:'creation',assignments:[{matchBasis:'none',verificationStatus:'pending',origin:'command',actor:{type:'agent',id:'W'},basis:'explicit'}]}}
 function fileBytes(t:Database.Database){const b=t.serialize();for(const offset of [24,92])b.fill(0,offset,offset+4);return b}
 it('71608 full command ordinary and explicit reference authenticate literal materialization without writes',()=>{
@@ -78,11 +78,16 @@ it.each(['platform_observation_assignment','platform_observation_archive_ref','p
  const {t,db}=ready();t.exec(`CREATE TRIGGER inject BEFORE INSERT ON ${table} BEGIN SELECT RAISE(ABORT,'injected'); END`);const before=fileBytes(t)
  db.transaction(tx=>{expect(()=>writeApplyTarget(tx,input())).toThrow('injected')});expect(fileBytes(t)).toEqual(before);expect(t.pragma('foreign_key_check')).toEqual([]);t.close()
 })
-it('71608 FK OFF and exhausted safe observation and alias IDs refuse atomically',()=>{
- const {t,db}=ready();t.pragma('foreign_keys=OFF');let before=t.serialize();expect(()=>writeApplyTarget(db,input())).toThrow(/foreign_keys/);expect(t.serialize()).toEqual(before);t.pragma('foreign_keys=ON')
- t.exec("DELETE FROM sqlite_sequence WHERE name='platform_business_observation';INSERT INTO sqlite_sequence(name,seq) VALUES('platform_business_observation',9007199254740991)");before=t.serialize();expect(()=>writeApplyTarget(db,input())).toThrow(/identity exhausted/);expect(t.serialize()).toEqual(before)
- t.exec("UPDATE sqlite_sequence SET seq=2 WHERE name='platform_business_observation';UPDATE platform_legacy_alias_sequence SET high_water=9007199254740991 WHERE namespace='relation'");before=t.serialize();expect(()=>writeApplyTarget(db,input())).toThrow(/Invalid archive identity/);expect(t.serialize()).toEqual(before);t.close()
+it.each(['FK OFF','observation exhaustion','alias exhaustion'] as const)('71608 %s refuses atomically',mode=>{
+ const {t,db}=ready()
+ if(mode==='FK OFF')t.pragma('foreign_keys=OFF')
+ if(mode==='observation exhaustion')t.exec("DELETE FROM sqlite_sequence WHERE name='platform_business_observation';INSERT INTO sqlite_sequence(name,seq) VALUES('platform_business_observation',9007199254740991)")
+ if(mode==='alias exhaustion')t.exec("UPDATE platform_legacy_alias_sequence SET high_water=9007199254740991 WHERE namespace='relation'")
+ const before=t.serialize()
+ expect(()=>writeApplyTarget(db,input())).toThrow(mode==='FK OFF'?/foreign_keys/:mode==='observation exhaustion'?/identity exhausted/:/Invalid archive identity/)
+ expect(t.serialize()).toEqual(before);t.close()
 })
+
 it.each(['projection','title-capture','exact-capture'] as const)('71608 outer COMMIT refuses missing %s after RELEASE',mode=>{
  const {t,db}=ready();t.exec('BEGIN');writeApplyTarget(db,input());t.exec('DROP TRIGGER platform_apply_stored_no_delete; DROP TRIGGER platform_apply_stored_no_update; SAVEPOINT nested')
  if(mode==='projection')t.exec('DELETE FROM platform_apply_projection WHERE observation_id=3')

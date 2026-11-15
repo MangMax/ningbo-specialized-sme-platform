@@ -21,7 +21,7 @@ it('stages native archive annual work atomically and runs the durable task once'
 })
 it('rolls native task admission back with its enclosing archive transaction',()=>{
  const f=fixture();f.add()
- expect(()=>f.db.transaction(()=>{stageAnnualCorrespondence(f.db,readAnnualWriteScope,{clientRequestId:'rollback',eventIds:[f.event.id]});throw new Error('rollback')})()).toThrow('rollback')
+ expect(()=>f.db.transaction(()=>{stageAnnualCorrespondence(f.db,readAnnualWriteScope,{clientRequestId:'rollback',eventIds:[f.event.id]});throw new Error('rollback')})).toThrow('rollback')
  expect(f.db.select().from(schema.job).all()).toEqual([]);expect(listRecordCorrespondences(f.db)).toEqual([])
 })
 it('resumes cancelled native work on the same durable task',async()=>{

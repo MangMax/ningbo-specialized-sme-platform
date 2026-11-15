@@ -12,7 +12,7 @@ import { generateCandidates } from './record-correspondence-candidates'
 type Db = BetterSQLite3Database<typeof schema>
 export type CorrespondenceAction = 'discover' | 'list' | 'get' | 'audit' | 'source' | 'candidates' | 'preflight' | 'commit' | 'batch'
 export interface CorrespondenceApiInput { action: CorrespondenceAction; method: string; query?: Record<string, unknown>; body?: unknown; id?: unknown; kind?: unknown; key?: unknown; headers?: Record<string, string | undefined> }
-export interface CorrespondenceApiOutput { status: number; headers: Record<string, string>; body: unknown }
+export interface CorrespondenceApiOutput { status: number; headers: Record<string, string>; body: Record<string, unknown> }
 const headers = { 'cache-control': 'no-store' }
 const positive = z.number().int().positive()
 const edge = z.discriminatedUnion('type', [
@@ -33,8 +33,8 @@ const decision = z.strictObject({ idempotencyKey: z.string().trim().min(1), sour
 const candidate = z.strictObject({ eventId: positive.optional(), enterpriseId: positive.optional(), titleCode: z.string().min(1).optional(), queryIds: z.array(positive).default([]), exportBatchIds: z.array(positive).default([]), ruleVersion: z.string().trim().min(1), page: positive.default(1), pageSize: positive.max(200).default(50) }).refine(v => v.eventId ? !v.enterpriseId && !v.titleCode : !!v.enterpriseId && !!v.titleCode, 'Provide eventId or enterpriseId and titleCode').refine(v => v.queryIds.length + v.exportBatchIds.length > 0, 'Specify archived query or export batch IDs')
 const sourceKinds = ['event', 'relation', 'export_row'] as const
 function fail(status: number, code: string, message: string): CorrespondenceApiOutput { return { status, headers, body: { error: { code, message } } } }
-function success(body: unknown): CorrespondenceApiOutput { return { status: 200, headers, body } }
-function ok(body: unknown, redactors: ReadonlyArray<(text: string) => string>): CorrespondenceApiOutput { return success(sanitizeEvidence(body, redactors)) }
+function success(body: object): CorrespondenceApiOutput { return { status: 200, headers, body: { ...body } } }
+function ok(body: object, redactors: ReadonlyArray<(text: string) => string>): CorrespondenceApiOutput { return success(sanitizeEvidence({ ...body }, redactors)) }
 type PublishedEvent = NonNullable<ReturnType<typeof detail>['event']>
 /** Visit this already-hydrated object's own fields in their original order.
  * Only a trusted event/evidence seam may identify its additive finalized slot. */

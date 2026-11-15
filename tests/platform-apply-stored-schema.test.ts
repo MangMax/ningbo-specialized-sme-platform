@@ -130,7 +130,7 @@ it.each([['captured','uncaptured'],['uncaptured','captured'],['uncaptured','unca
 })
 
 import { writeApplyTarget } from '../upgrade/frozen/apply-target-writer'
-import { targetSchema } from '../lib/platform/target-schema'
+import { targetSchema } from '../upgrade/target-schema'
 it.each(['missing','different'])('records command materialization profile and rejects %s profile on replay without rewriting original input',drift=>{
  const f=fixture();const t=new Database(f.target);t.pragma('foreign_keys=ON')
  const result=writeApplyTarget(drizzle(t,{schema:targetSchema}),{collectionId:1,position:{sequenceNo:3,positionState:'unknown'},row:{sequenceNo:3,status:' pending ',year:2024,rawFields:{id:'A',cszt:'pending',rdjb:' 2 '}},assignment:{matchBasis:'none',verificationStatus:'pending',origin:'command',actor:{type:'agent',id:'S-test'},basis:'explicit'}})

@@ -190,6 +190,9 @@ async function publicHttp(body: unknown) {
     return await res.json()
   } finally { await new Promise<void>(r=>server.close(()=>r())) }
 }
+// Real multi-page provider imports include hundreds of native observations.
+// Bound the integration runner at 30s, below the source's explicit 60s budget;
+// metadata and selected-scope tests retain the default 5s.
 it('runs real provider pagination with metadata-only checkpoints and complete business rows', async () => {
   const db=initializeDb({create:true,dbPath:join(dir,'provider.db')}); activeDb=db
   const e=db.insert(s.enterprise).values({name:'fixture provider',nameNorm:'fixtureprovider',usccNorm:'91330200222222222X'}).returning().get()
@@ -216,7 +219,7 @@ it('runs real provider pagination with metadata-only checkpoints and complete bu
     expect(versions.length).toBe(153)
     expect(versions.every(v=>{const row=JSON.parse(v.raw);return row.qymc==='fixture provider'&&row.blank===null&&JSON.stringify(row.unknown)==='{"nested":[null,false,17]}'})).toBe(true)
   } finally {db.$client.close();activeDb=globalDb}
-})
+}, 30000)
 
 it.each(['short-tail','retained-total'] as const)('real provider public snapshot handles %s across retry without erasing attempts', async mode => {
   const db=initializeDb({create:true,dbPath:join(dir,mode+'.db')}); activeDb=db
@@ -259,7 +262,7 @@ it.each(['short-tail','retained-total'] as const)('real provider public snapshot
       expect(item.segments[1].unfinished).toContainEqual({source:'queryList',rdjb:null,page:3})
     }
   } finally {db.$client.close();activeDb=globalDb}
-})
+}, 30000)
 
 it('freezes exactly selected published enterprise IDs and rejects unknown IDs without creating a task', async()=>{
  const store=initializeDb({create:true,dbPath:join(dir,'selected.db')})

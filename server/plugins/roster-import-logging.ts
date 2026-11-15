@@ -11,7 +11,7 @@ export default defineNitroPlugin(app => {
   app.hooks.hook('mcp:config:resolved', ({ config, event }) => {
     const context = requestLogContext(event)
     config.tools = config.tools?.map(tool => {
-      if (!contextTools.has(tool.name)) return tool
+      if (tool.name === undefined || !contextTools.has(tool.name)) return tool
       const handler = tool.handler
       return { ...tool, handler: (...args: Parameters<typeof handler>) => operationLogContext.run(context, () => handler(...args)) }
     })

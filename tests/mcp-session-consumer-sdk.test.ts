@@ -669,7 +669,7 @@ async function start445ActualApp(options: App445Options = {}) {
   await fs.writeFile(join(grantDirectory, options.label ? 'owned-app-root-' + options.label + '.json' : 'owned-app-root.json'), JSON.stringify(ownership, null, 2), { flag: 'wx', mode: 0o600 })
   if (options.mode === 'compiled' && !options.artifact) throw new Error('HARNESS: compiled mode requires prebuilt artifact')
   const shared = options.sharedBusiness
-  if (shared && (shared.grantId !== grant.grantId || shared.nonce !== grant.nonce || await fs.realpath(shared.directory) !== shared.directory || !shared.directory.startsWith('/private/tmp/i445-') || shared.dbPath !== join(shared.directory, 'business.sqlite') || shared.files !== join(shared.directory, 'files') || shared.incoming !== join(shared.directory, 'incoming'))) throw new Error('HARNESS: shared business ownership')
+  if (shared && (shared.grantId !== grant.grantId || shared.nonce !== grant.nonce || await fs.realpath(shared.directory) !== shared.directory || shared.directory !== directory || shared.dbPath !== join(shared.directory, 'business.sqlite') || shared.files !== join(shared.directory, 'files') || shared.incoming !== join(shared.directory, 'incoming'))) throw new Error('HARNESS: shared business ownership')
   const buildDir = options.mode === 'compiled' ? options.artifact!.root : join(directory, 'nuxt'), files = shared?.files ?? join(directory, 'files'), incoming = shared?.incoming ?? join(directory, 'incoming')
   if (!shared) { await fs.mkdir(files); await fs.mkdir(incoming) }
   else { if (await fs.realpath(files) !== files || await fs.realpath(incoming) !== incoming) throw new Error('HARNESS: shared business path drift') }

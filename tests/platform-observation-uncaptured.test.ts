@@ -36,7 +36,7 @@ function fixture(pre = false) {
     const id=i+1
     s.prepare(`INSERT INTO platform_query(id,interface,query_key,rdjb,queried_at,status,created_at) VALUES(?,?,?,'2','original','success','original')`).run(id,src+'_list',src)
     db.insert(schema.platformCollection).values({id,interface:src==='apply'?'apply_list':src==='business'?'business_list':'recognized_list',queryKey:src,rdjb:'2',queriedAt:'original',createdAt:'original',status:'success',completeness:'unknown',provenanceState:'unknown',parseState:'absent',ruleVersion:'fixture'}).run()
-    db.insert(schema.platformCollectionPage).values({id,collectionId:id,ordinal:0,positionState:'unknown'}).run()
+    s.prepare("INSERT INTO platform_collection_page(id,collection_id,ordinal,position_state) VALUES(?,?,0,'unknown')").run(id,id)
     s.prepare(`INSERT INTO platform_relation(id,query_id,sequence_no,relation_key,raw_fields,created_at) VALUES(?,?,1,'K',' {"id":"K"} ','original')`).run(id,id)
     s.prepare(`INSERT INTO platform_business_record(id,interface,platform_key,identity_rule_version,created_at) VALUES(?,?,'K','old','original')`).run(id,src+'_list')
     s.prepare(`INSERT INTO platform_business_record_version(id,record_id,hash_algorithm,content_hash,canonical_raw_json,created_at) VALUES(?,?,'old-algorithm','old-hash',' {"id":"K"} ','original')`).run(id,id)
@@ -57,7 +57,12 @@ function fixture(pre = false) {
 }
 function catalog(s: Database.Database) {return s.prepare("SELECT type,name,sql FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%' ORDER BY type,name").all()}
 const tables=['platform_query','platform_relation','platform_business_record','platform_business_record_version','platform_business_observation','platform_collection','platform_collection_page','platform_archive_value','platform_collection_archive_ref','platform_observation_archive_ref','platform_version_archive_ref','platform_legacy_query_alias','platform_legacy_relation_alias','platform_observation_assignment',...sources.map(src=>'platform_'+src+'_projection')]
-function facts(s: Database.Database) {return tables.map(t=>s.prepare(`SELECT * FROM ${t} ORDER BY rowid`).all())}
+const originalColumns=new WeakMap<Database.Database,string[][]>()
+function facts(s: Database.Database) {
+ let columns=originalColumns.get(s)
+ if(!columns){columns=tables.map(t=>(s.prepare('PRAGMA table_info("'+t+'")').all() as {name:string}[]).map(c=>c.name));originalColumns.set(s,columns)}
+ return tables.map((t,i)=>s.prepare('SELECT '+columns![i]!.map(c=>'"'+c+'"').join(',')+' FROM "'+t+'" ORDER BY rowid').all())
+}
 
 it('upgrades populated 0051 preserving sealed archives aliases assignments projections hashes IDs FKs and triggers',()=>{
   const f=fixture(true),fresh=fixture()
@@ -65,6 +70,7 @@ it('upgrades populated 0051 preserving sealed archives aliases assignments proje
     const before=facts(f.s), triggers=f.s.prepare("SELECT name,sql FROM sqlite_schema WHERE type='trigger' ORDER BY name").all()
     migrate(f.db,{migrationsFolder:resolve('db/migrations')})
     expect(facts(f.s)).toEqual(before)
+    expect(f.s.prepare('SELECT max_page_present FROM platform_collection_page ORDER BY id').all()).toEqual([{max_page_present:0},{max_page_present:0},{max_page_present:0}])
     if(process.env.T714_EVIDENCE_DIR) {
       const dir=process.env.T714_EVIDENCE_DIR;mkdirSync(dir,{recursive:true})
       writeFileSync(join(dir,'upgrade-manifest.json'),JSON.stringify({oldFixture:f.root,newFixture:fresh.root,tables,before,after:facts(f.s),catalog:catalog(f.s),foreignKeys:f.s.pragma('foreign_key_check'),fkDefinitions:tables.map(t=>[t,f.s.pragma(`foreign_key_list(${t})`)]),triggers},null,2))

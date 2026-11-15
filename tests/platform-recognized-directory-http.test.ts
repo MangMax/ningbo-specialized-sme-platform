@@ -12,5 +12,5 @@ it('native directory keeps original row title apart from explicit collection sco
  const f=fixture();f.seed('recognized_list',f.raw('TITLE',{rdjb:'3'}),'2')
  expect(f.list('recognized_list',{titleRaw:'3'})).toMatchObject({total:1})
  expect(f.list('recognized_list',{titleRaw:'2'})).toMatchObject({total:0})
- expect(f.list('recognized_list').rows[0]!.conflicts).toContain('title_conflict')
+ expect(f.list('recognized_list').rows.filter(row=>row.kind==='record')[0]!.conflicts).toContain('title_conflict')
 })

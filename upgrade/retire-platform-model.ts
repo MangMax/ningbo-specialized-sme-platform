@@ -6,7 +6,7 @@ import {
   assertFinalPlatformRuntime, assertNoRetiredPlatformSchema,
   PLATFORM_RETIREMENT_RULE, PLATFORM_RUNTIME_VERSION, RETIRED_PLATFORM_TABLES,
 } from '../db/schema-phase'
-import { requireLegacyProvenanceReady } from '../lib/platform/legacy-provenance-catalog'
+import { requireLegacyProvenanceReady } from './legacy-provenance-catalog'
 import { migrationFinished } from '../lib/platform/migration-readiness'
 import { rowSnapshot } from '../lib/platform/sqlite-row-cells'
 import { upgradeEnterpriseMergeIdentity } from './enterprise-merge'

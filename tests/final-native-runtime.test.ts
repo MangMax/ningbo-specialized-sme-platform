@@ -51,11 +51,13 @@ it('initializes a native database imports replays and restarts without historica
   expectNative(db.$client)
   db.$client.close()
   const restarted=initializeDb({dbPath:path})
-  cleanup.push(()=>restarted.$client.close())
+  cleanup.push(()=>{restarted.$client.close()})
   expect(useApplicationDb({dbPath:path})).toBe(restarted)
   expect(listTargetBusinessProcesses({},restarted).rows).toHaveLength(1)
   expectNative(restarted.$client)
   restarted.$client.exec('CREATE TABLE platform_query(id INTEGER PRIMARY KEY)')
+  // Offline schema mutation requires closing the admitted runtime connection.
+  restarted.$client.close()
   expect(()=>useApplicationDb({dbPath:path})).toThrow('dependency remains')
 })
 
@@ -63,7 +65,7 @@ it('refuses non-native databases at application and actual source worker entries
   const dir=mkdtempSync(join(tmpdir(),'non-native-refusal-')),path=join(dir,'schema0.sqlite')
   cleanup.push(()=>rmSync(dir,{recursive:true,force:true}))
   const old=new Database(path)
-  cleanup.push(()=>old.close())
+  cleanup.push(()=>{old.close()})
   old.exec('CREATE TABLE __drizzle_migrations(id INTEGER PRIMARY KEY,hash TEXT,created_at INTEGER)')
   expect(()=>useApplicationDb({dbPath:path})).toThrow('Unsupported final platform runtime schema')
   const worker=createImportExecutionWorker();cleanup.push(()=>worker.terminate())

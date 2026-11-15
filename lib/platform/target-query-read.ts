@@ -22,7 +22,8 @@ const relationShape = z.object({
   enterpriseId: z.number().nullable(), sourceText: text, usccRaw: text, nameRaw: text, aliasNameRaw: text,
   province: text, status: text, batch: text, declareKind: text, appliedAt: text, awardBatchLabel: text,
   year: z.number().nullable(), matchBasis: z.string(), verificationStatus: z.string(),
-  rawFields: z.record(z.string(), z.unknown()).nullable(),
+  // Validate the object without projecting away source-owned keys such as __proto__.
+  rawFields: z.custom<Record<string, unknown>>(value => value !== null && typeof value === 'object' && !Array.isArray(value)).nullable(),
   sourceRdjb: z.unknown().optional(), sourcePage: z.unknown().optional(),
   normalizationConflicts: z.array(z.union([z.object({field:z.literal('status'),storedValue:z.string(),rawValue:z.string()}),z.object({
     field: z.enum(['province', 'batch', 'declareKind', 'appliedAt', 'awardBatchLabel', 'year']),

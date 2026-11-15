@@ -1,3 +1,6 @@
+import { afterAll } from 'vitest'
+import { tmpdir } from 'node:os'
+import { rmSync } from 'node:fs'
 import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { migrate } from 'drizzle-orm/better-sqlite3/migrator'
@@ -10,13 +13,16 @@ import { finalizeObservations, finalizeCollectionScopes } from '../../upgrade/fi
 import { finalizeFingerprintBasis } from '../../upgrade/fingerprint-basis'
 import { finalizeApplyStored } from '../../upgrade/apply-stored'
 import { createOfflineSnapshot } from '../../upgrade/offline-snapshot'
-export const captureEvidence = process.env.CANDIDATE_SCOPE_EVIDENCE_DIR ?? '/Users/mang/.t3/acceptance/platform-complete-migration/r4/sourcecapture/raw'
+export const captureEvidence = process.env.CANDIDATE_SCOPE_EVIDENCE_DIR ?? tmpdir()
+const temporaryRoots:string[]=[]
+afterAll(()=>{if(!process.env.CANDIDATE_SCOPE_EVIDENCE_DIR)for(const root of temporaryRoots)rmSync(root,{recursive:true,force:true})})
 /** Only own synthetic evidence, preserved for validated archive closeout. */
 export async function candidateFixture(seed?: (source:Database.Database)=>void, afterStored?: (target:Database.Database)=>void) {
   mkdirSync(captureEvidence,{recursive:true})
   const disk=statfsSync(captureEvidence)
   if(disk.bavail*disk.bsize<8*1024**3)throw new Error('Disk floor 8GiB')
   const root=mkdtempSync(join(captureEvidence,'fixture-')),source=join(root,'legacy.sqlite'),target=join(root,'target.sqlite')
+  temporaryRoots.push(root)
   const old=new Database(source)
   try {
     migrate(drizzle(old),{migrationsFolder:'db/migrations'})

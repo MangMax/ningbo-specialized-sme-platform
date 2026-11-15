@@ -1,5 +1,6 @@
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../db/schema'
+import { platformQueryResultShape } from '../../lib/platform/live-query'
 import type { RosterImportPlatformQuery } from '../../lib/roster-import-client'
 import { archiveQueryKey } from '../../lib/platform/recognized-evidence'
 import { submitNativePlatformQuery } from './native-platform-fixture'
@@ -17,7 +18,7 @@ export function submitSyntheticRecognizedCollection(db: BetterSQLite3Database<ty
   const collectionEvidence = {
     source: 'queryBusList' as const, status: input.partial ? 'partial' as const : rows.length ? 'success' as const : 'no_record' as const,
     effectiveConditions: { combination: 'and' as const, ...input.conditions }, titleScope: { mode: 'selected' as const, rdjb: scope },
-    queriedAt: input.queriedAt, completedAt: input.queriedAt, rows, dataRows: input.rows.map(row => row.raw),
+    queriedAt: input.queriedAt, completedAt: input.queriedAt, rows, dataRows: platformQueryResultShape.dataRows.parse(input.rows.map(row => row.raw)),
     pages: scope.map(rdjb => ({ source: 'queryBusList' as const, rdjb, page: 1, maxPage: input.partial ? 2 : 1, status: 'success' as const, fetchedCount: rows.filter(row => scope.length === 1 || row.rdjb === rdjb).length, declaredTotal: input.partial ? 2 : rows.filter(row => scope.length === 1 || row.rdjb === rdjb).length, error: null })),
     fetchedCount: rows.length, declaredTotal: input.partial ? 2 : rows.length, completeness: input.partial ? 'partial' as const : 'complete' as const, fullRange: !input.partial, unfinished: input.partial ? scope.map(rdjb => ({ source: 'queryBusList' as const, rdjb, page: 2 })) : [], error: null,
     limits: { maxRequests: scope.length, maxRows: 50, maxDurationMs: 1000, pageSize: input.partial ? 1 : 50 },

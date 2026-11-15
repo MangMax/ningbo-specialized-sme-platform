@@ -21,7 +21,6 @@ export function resolveDbPath(opts: DbOptions = {}): string {
 
 const cache = new Map<string, ReturnType<typeof drizzle<typeof schema>>>()
 const ownerIdentities = new WeakMap<object, ReadOwnerIdentity>()
-const applicationSchemas = new WeakMap<object, unknown>()
 
 /** Only certify a managed disk handle whose identity was observed at open.
  * Cached owners never silently follow a replaced file or symlink. */
@@ -70,15 +69,12 @@ function validateDatabase(sqlite: Database.Database) {
   assertFinalPlatformRuntime(sqlite)
 }
 
-/** Public application entry accepts only the completed native runtime. */
+/** Public application entry accepts only a connection admitted at open.
+ * Runtime schema is immutable for the connection lifetime; offline upgrades close
+ * connections and restart the process. Polling PRAGMA here would block the main
+ * event loop on an exclusive lock before an off-main read can be dispatched. */
 export function useApplicationDb(opts: DbOptions = {}) {
-  const db = useRuntimeDb(opts)
-  const version = db.$client.pragma('schema_version', { simple: true })
-  if (!applicationSchemas.has(db) || applicationSchemas.get(db) !== version) {
-    assertFinalPlatformRuntime(db.$client)
-    applicationSchemas.set(db, version)
-  }
-  return db
+  return useRuntimeDb(opts)
 }
 
 /** Explicit native initialization; existing databases must already be final. */

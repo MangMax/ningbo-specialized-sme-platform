@@ -6,17 +6,17 @@ import { join } from 'node:path'
 import { beforeAll, afterAll, expect, it } from 'vitest'
 import { processReaderFixture } from './helpers/process-target-734'
 import {transferCorrespondence} from '../upgrade/correspondence'
-import { targetSchema } from '../lib/platform/target-schema'
-import { requireH1cReady } from '../lib/platform/h1c-catalog'
-import { processStoredInstalled } from '../lib/platform/process-stored-catalog'
-import { recognizedStoredInstalled } from '../lib/platform/recognized-stored-catalog'
-import { witnessInstalled } from '../lib/platform/recognized-witness-catalog'
-import { listTargetBusinessProcesses } from '../server/utils/platform-business-processes-target'
-import { writeProcessTarget, type ProcessTargetInput } from '../lib/platform/process-target-writer'
-import { writeApplyTarget } from '../lib/platform/apply-target-writer'
-import { writeRecognizedTarget } from '../lib/platform/recognized-target-writer'
-import { verifyFingerprint } from '../lib/platform/fingerprint-verifier'
-import { writeCollectionTarget } from '../lib/platform/collection-target-command'
+import { targetSchema } from '../upgrade/target-schema'
+import { requireH1cReady } from '../upgrade/h1c-catalog'
+import { processStoredInstalled } from '../upgrade/process-stored-catalog'
+import { recognizedStoredInstalled } from '../upgrade/recognized-stored-catalog'
+import { witnessInstalled } from '../upgrade/frozen/recognized-witness-catalog'
+import { listTargetBusinessProcesses } from '../upgrade/frozen/server/platform-business-processes-target'
+import { writeProcessTarget, type ProcessTargetInput } from '../upgrade/frozen/process-target-writer'
+import { writeApplyTarget } from '../upgrade/frozen/apply-target-writer'
+import { writeRecognizedTarget } from '../upgrade/frozen/recognized-target-writer'
+import { verifyFingerprint } from '../upgrade/frozen/fingerprint-verifier'
+import { writeCollectionTarget } from '../upgrade/frozen/collection-target-command'
 import { projectionManifest } from '../upgrade/projections'
 
 let f:Awaited<ReturnType<typeof processReaderFixture>>,target:Database.Database
@@ -78,13 +78,13 @@ it('reports an unfinished column transfer and does not scan full catalog or rece
  target.exec('BEGIN')
  try{target.exec('ALTER TABLE record_correspondence RENAME COLUMN observation_id TO pending_observation_id');expect(()=>requireH1cReady(target)).toThrow(/migration incomplete/i)}finally{target.exec('ROLLBACK')}
  const trace:string[]=[],reader=new Database(target.name,{readonly:true,verbose:q=>trace.push(String(q))})
- try{listTargetBusinessProcesses({},drizzle(reader,{schema:targetSchema}));expect(trace.join('\n')).not.toMatch(/sqlite_schema|platform_migration_checkpoint|CREATE TABLE|source_schema_hash|target_schema_version/)}finally{reader.close()}
+ try{listTargetBusinessProcesses({},drizzle(reader,{schema:targetSchema}));expect(trace.filter(q=>!/^SELECT 1 FROM sqlite_schema WHERE name='platform_runtime_capability' AND type='table'$/.test(q)).join('\n')).not.toMatch(/sqlite_schema|platform_migration_checkpoint|CREATE TABLE|source_schema_hash|target_schema_version/)}finally{reader.close()}
 })
 it('keeps ordinary runtime and three source worker guards closed on the migrated successor',async()=>{
   const {useRuntimeDb,initializeDb}=await import('../db/client')
   const path=target.name, before=readFileSync(path)
-  for(const readOnly of [false,true])expect(()=>useRuntimeDb({dbPath:path,readOnly})).toThrow(/finalized/i)
-  expect(()=>initializeDb({dbPath:path})).toThrow(/finalized/i)
+  for(const readOnly of [false,true])expect(()=>useRuntimeDb({dbPath:path,readOnly})).toThrow(/final platform runtime schema/i)
+  expect(()=>initializeDb({dbPath:path})).toThrow(/final platform runtime schema/i)
   const {createImportExecutionWorker}=await import('../server/utils/import-execution-worker-location')
   const {createCurrentExportWorker}=await import('../server/utils/current-export-worker-location')
   const {createEnterpriseWorker}=await import('../server/utils/enterprise-read-worker-location')
@@ -98,7 +98,7 @@ it('keeps ordinary runtime and three source worker guards closed on the migrated
         worker.on('message',(message:Record<string,unknown>)=>{if(message.type!=='ready'&&message.type!=='progress'){clearTimeout(timer);resolve(message)}})
         worker.postMessage({dbPath:path,id:'h1c-guard',identity,readonly:false,action:'preflight',payload:serialize({}),operation:'list',filter:{},title:'specialized_sme',temporaryPath:join(f.root,'never.xlsx'),jobId:'h1c-guard'})
       })
-      if(kind==='import')expect(result).toMatchObject({type:'failure',error:{message:expect.stringMatching(/finalized/i)}})
+      if(kind==='import')expect(result).toMatchObject({type:'failure',error:{message:expect.stringMatching(/final platform runtime schema/i)}})
       if(kind==='export')expect(result).toEqual({type:'failure',message:'当前名录导出执行失败；请核对数据或资源限制后重新提交'})
       if(kind==='read')expect(result).toMatchObject({type:'failure',code:'enterprise_read_failed'})
     }finally{await worker.terminate()}

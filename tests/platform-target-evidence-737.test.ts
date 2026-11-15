@@ -1,22 +1,20 @@
+import { finalEvidenceFixture } from './helpers/final-evidence-fixture'
 import { createHash } from 'node:crypto'
 import { platformResultToImport } from '../lib/platform/recognized-evidence'
 import type { PlatformLiveQueryResult } from '../lib/platform/live-query'
 import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { migrate } from 'drizzle-orm/better-sqlite3/migrator'
-import * as legacySchema from '../db/schema'
+import * as legacySchema from '../upgrade/legacy-schema'
 import { afterAll, beforeAll, expect, it, vi } from 'vitest'
 import { processReaderFixture } from './helpers/process-target-734'
-import { readPlatformQueryEvidence } from '../lib/platform/evidence-read'
+import { readPlatformQueryEvidence } from './helpers/legacy-evidence-oracle'
 import { writeNewCollectionTarget } from '../lib/platform/collection-target-command'
-import { writeApplyTarget } from '../lib/platform/apply-target-writer'
-import { writeProcessTarget } from '../lib/platform/process-target-writer'
-import { writeRecognizedTarget } from '../lib/platform/recognized-target-writer'
 import { targetSchema as s } from '../lib/platform/target-schema'
 import { eq } from 'drizzle-orm'
 import { readTargetPlatformEvidence } from '../lib/platform/target-evidence-read'
-let f: Awaited<ReturnType<typeof processReaderFixture>>
-beforeAll(async()=>{ f=await processReaderFixture(true,old=>{
+let f: ReturnType<typeof finalEvidenceFixture<Awaited<ReturnType<typeof processReaderFixture>>>>
+beforeAll(async()=>{ f=finalEvidenceFixture(await processReaderFixture(true,old=>{
   old.exec(`INSERT INTO platform_query(id,interface,query_key,rdjb,queried_at,status,raw_response,created_at) VALUES
     (21,'apply_list','apply','2','t','success','','c'),(22,'recognized_list','recognized','2','t','success',NULL,'c'),
     (23,'apply_list','failed','2','t','failed',NULL,'c'),(24,'apply_list','empty','2','t','no_record',NULL,'c');
@@ -24,10 +22,10 @@ beforeAll(async()=>{ f=await processReaderFixture(true,old=>{
     (21,21,1,'{ "n":1.00,"n":2,"u":"🙂" }','c'),(22,22,1,NULL,'c'),(23,22,4,'broken','c');
     UPDATE platform_query SET raw_response=CAST(X'00FF0102' AS BLOB) WHERE id=24;`)
   old.exec("INSERT INTO import_batch(id,idempotency_key,source_kind,source_identity,created_at) VALUES(1,'test','platform_archive','fixture','created')")
-  old.prepare("INSERT INTO platform_query_legacy_provenance(query_id,source_identity,source_sha256,segment_index,collection,input_fingerprint,import_batch_id,created_at) VALUES(21,'original',?,0,?,'fp',1,'c')").run('a'.repeat(64),'{ \"source\":\"queryList\", \"raw\":\"行🙂\\n\" }')
-  old.prepare("INSERT INTO platform_query_legacy_provenance(query_id,source_identity,source_sha256,segment_index,collection,input_fingerprint,import_batch_id,created_at) VALUES(13,'both',?,1,?,'fp',1,'c')").run('a'.repeat(64),'broken supplement')
+  old.prepare("INSERT INTO platform_query_legacy_provenance(query_id,source_identity,source_sha256,segment_index,collection,input_fingerprint,import_batch_id,created_at) VALUES(21,'original',?,0,?,'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',1,'c')").run('a'.repeat(64),'{ \"source\":\"queryList\", \"raw\":\"行🙂\\n\" }')
+  old.prepare("INSERT INTO platform_query_legacy_provenance(query_id,source_identity,source_sha256,segment_index,collection,input_fingerprint,import_batch_id,created_at) VALUES(13,'both',?,1,?,'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',1,'c')").run('a'.repeat(64),'broken supplement')
   old.prepare('UPDATE platform_query SET raw_response=? WHERE id=11').run('x'.repeat(65535)+'🙂尾')
-}) })
+})) })
 afterAll(()=>f?.close())
 it('returns frozen SQLite DTO bytes through explicit target aliases after complete migration',()=>{
   const input={queryId:11,relationId:1,field:'relation' as const}
@@ -88,23 +86,32 @@ it('reads fresh assignment attribution without changing any immutable source fie
   expect(Buffer.from(after.data,'base64').toString()).toBe(expected)
   expect(f.t.prepare('SELECT id,sha256,byte_length,hex(bytes) bytes FROM platform_archive_value ORDER BY id').all()).toEqual(archives)
 })
+let newApply: {queryId:number;observationId:number;relationAlias:number}
 it('new three-source writers seal complete original DTO snapshots with external aliases',()=>{
   const oracle=new Database(':memory:');migrate(drizzle(oracle),{migrationsFolder:'db/migrations'})
   vi.useFakeTimers();vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'))
   f.t.exec("UPDATE platform_legacy_alias_sequence SET high_water=500 WHERE namespace='relation'")
   try {
-  for(const [collectionId,writer] of [[21,writeApplyTarget],[11,writeProcessTarget],[22,writeRecognizedTarget]] as const){
-    const row={sequenceNo:20,relationKey:'new',nameRaw:'Original',rawFields:{id:'new',rdjb:'2'},sourceText:'new source'}
-    const result=writer(f.db,{collectionId,position:{sequenceNo:20,positionState:'unknown'},row,assignment:{nameRaw:'Original',origin:'command',matchBasis:'none',verificationStatus:'pending',actor:{type:'agent',id:'test'},basis:'explicit'}})
+   for(const source of ['apply_list','business_list','recognized_list'] as const){
+    const raw={id:'new-'+source,rdjb:'2',qymc:'Original'}
+    const row={sequenceNo:1,relationKey:raw.id,nameRaw:'Original',rawFields:raw,sourceText:'new source'}
+    let query:any={interface:source,queryKey:'new-'+source,rdjb:'2',queriedAt:'t',status:'success',rawResponse:'new raw',relations:[row]}
+    if(source==='recognized_list'){
+      const evidence:PlatformLiveQueryResult={source:'queryBusList',status:'success',effectiveConditions:{name:'Original',combination:'and'},titleScope:{mode:'selected',rdjb:['2']},queriedAt:'2026-01-01T00:00:00Z',completedAt:'2026-01-01T00:01:00Z',rows:[raw],dataRows:[raw],pages:[{source:'queryBusList',rdjb:'2',page:1,maxPage:1,status:'success',fetchedCount:1,declaredTotal:1,error:null}],fetchedCount:1,declaredTotal:1,completeness:'complete',fullRange:true,unfinished:[],error:null,limits:{maxRequests:1,maxRows:50,maxDurationMs:1000,pageSize:50}}
+      query={...platformResultToImport(evidence),relations:[row]}
+    }
+    const written=writeNewCollectionTarget(f.db,{queryText:JSON.stringify(query),evidenceText:query.collectionEvidence?JSON.stringify(query.collectionEvidence):null,createdAt:'c',assignments:[{nameRaw:'Original',origin:'command',matchBasis:'none',verificationStatus:'pending',actor:{type:'agent',id:'test'},basis:'explicit'}]})
+    const result=written.observations[0]!,collectionId=written.queryAlias
+    if(source==='apply_list')newApply={queryId:collectionId,observationId:result.observationId,relationAlias:result.relationAlias}
     const chunk=read({queryId:collectionId,relationId:result.relationAlias,field:'relation'})
     if(typeof chunk.data!=='string')throw new Error('chunk expected')
     expect(result.relationAlias).not.toBe(result.observationId)
-    oracle.prepare("INSERT OR IGNORE INTO platform_query(id,interface,query_key,rdjb,queried_at,status,created_at) VALUES(?,'apply_list',?,'2','t','success','c')").run(collectionId,String(collectionId))
-    oracle.prepare("INSERT INTO platform_relation(id,query_id,sequence_no,relation_key,name_raw,raw_fields,source_text,created_at) VALUES(?,?,20,'new','Original',?, 'new source','2026-01-01T00:00:00.000Z')").run(result.relationAlias,collectionId,JSON.stringify(row.rawFields))
+    oracle.prepare("INSERT INTO platform_query(id,interface,query_key,rdjb,queried_at,status,created_at) VALUES(?, ?,?,'2','t','success','c')").run(collectionId,source,String(collectionId))
+    oracle.prepare("INSERT INTO platform_relation(id,query_id,sequence_no,relation_key,name_raw,raw_fields,title_raw,source_text,created_at) VALUES(?,?,1,?,'Original',?,'2', 'new source','2026-01-01T00:00:00.000Z')").run(result.relationAlias,collectionId,raw.id,JSON.stringify(raw))
     expect(chunk).toEqual(readPlatformQueryEvidence(drizzle(oracle,{schema:legacySchema}),{queryId:collectionId,relationId:result.relationAlias,field:'relation'}))
     expect(Buffer.from(chunk.data,'base64').toString()).toContain('"nameRaw":"Original"')
     expect(Buffer.from(chunk.data,'base64').toString()).toContain('"id":'+result.relationAlias+',"queryId":'+collectionId)
-  }
+   }
   } finally {vi.useRealTimers();oracle.close()}
 })
 it('target SQL never reads retired query/relation entities',()=>{
@@ -154,7 +161,7 @@ it('resolves external query aliases independently of target collection IDs and r
 function withCorruption(mutate:()=>void,assertion:()=>void) {
   const rollback=Symbol('synthetic rollback')
   try {f.db.transaction(()=>{
-    for(const {name} of f.t.prepare("SELECT name FROM sqlite_schema WHERE type='trigger' AND tbl_name IN ('platform_collection_archive_ref','platform_observation_archive_ref')").all() as {name:string}[])
+    for(const {name} of f.t.prepare("SELECT name FROM sqlite_schema WHERE type='trigger' AND tbl_name IN ('platform_collection_archive_ref','platform_observation_archive_ref','platform_runtime_capability')").all() as {name:string}[])
       f.t.exec('DROP TRIGGER "'+name.replaceAll('"','""')+'"')
     mutate();assertion();throw rollback
   })}catch(error){if(error!==rollback)throw error}
@@ -176,13 +183,10 @@ it('rejects partial or singly sealed T04 sets, contradictory metadata, unknown l
     "UPDATE platform_collection SET provenance_state='legacy_supplement' WHERE id=23",
     "UPDATE platform_collection SET parse_state='invalid' WHERE id=23",
     "UPDATE platform_collection SET rule_version='unrecognized' WHERE id=23",
-    "UPDATE platform_migration_run SET state='running' WHERE transform_version='t04-collection-v1'",
-    "DELETE FROM platform_migration_checkpoint WHERE phase='collections'",
-    "UPDATE platform_migration_checkpoint SET last_old_id=22 WHERE phase='collections'",
-    "UPDATE platform_migration_checkpoint SET copied_count=0 WHERE phase='collections'",
+    "UPDATE platform_migration_run SET state='running' WHERE transform_version='collection-legacy-provenance-v1'",
   ]
   for(const mutation of mutations)withCorruption(()=>f.t.exec(mutation),()=>{
-    expect(()=>read({queryId:23,field:'legacyProvenance'})).toThrow(/Incomplete|Contradictory|Unknown|Missing completed/)
+    expect(()=>read({queryId:23,field:'legacyProvenance'})).toThrow(/Incomplete|incomplete|Contradictory|Unknown|Missing completed/)
   })
 })
 it('returns independent old SQL NULL for complete new command lifecycle and rejects damaged command capture',()=>{
@@ -215,9 +219,7 @@ it('returns independent old SQL NULL for complete new command lifecycle and reje
   }finally{oracle.close()}
 })
 it('keeps pre-snapshot target-command observation inventory explicitly unsupported without online repair',()=>{
-  const queryId=21
-  const observation=f.db.select().from(s.platformBusinessObservation).where(eq(s.platformBusinessObservation.collectionId,queryId)).all().find(row=>row.sequenceNo===20)!
-  const alias=f.db.select().from(s.platformLegacyRelationAlias).where(eq(s.platformLegacyRelationAlias.observationId,observation.id)).get()!
+  const queryId=newApply.queryId,observation={id:newApply.observationId},alias={oldId:newApply.relationAlias}
   withCorruption(()=>{f.t.prepare("DELETE FROM platform_observation_archive_ref WHERE owner_id=? AND field='legacyRowSnapshot'").run(observation.id)},()=>{
     // Models the exact two-field inventory emitted by the accepted pre-H1a writer (base363d0b50).
     const inventory=f.t.prepare('SELECT field,sealed,archive_id FROM platform_observation_archive_ref WHERE owner_id=? ORDER BY field').all(observation.id)

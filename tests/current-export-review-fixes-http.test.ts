@@ -1,3 +1,4 @@
+import { submitNativePlatformQuery } from './helpers/native-platform-fixture'
 import { matchesBusinessIdentity } from './helpers/current-export-118'
 import { afterAll, beforeAll, expect, it } from 'vitest'
 import { currentExport118Fixture, rows, year } from '../tests/helpers/current-export-118'
@@ -25,13 +26,16 @@ it('历史差异注销决定不作为跨称号正式主体终止事实', async (
   expect(actual.map(r => r.sheet)).toEqual(['有效企业'])
 }, 60000)
 it('对应边引用读取不应展开无关原始平台大字段', async () => {
-  const {schema:s} = await import('../db/client')
   const {preflightRecordCorrespondences,commitRecordCorrespondences} = await import('../server/utils/record-correspondence')
   const {readCurrentCandidate} = await import('../lib/roster/current-qualification')
   const c = f.candidate('轻量对应引用')
   const event = f.db.$client.prepare('select id from record_event where record_id=?').get(c.record.id) as {id:number}
-  const query = f.db.insert(s.platformQuery).values({interface:'business_list',queryKey:c.enterprise.usccNorm!,rdjb:'2',titleCode:'specialized_sme',queriedAt:'2026-10-19',status:'success',rawResponse:'ARCHIVED_RAW_'+ 'x'.repeat(1024*1024)}).returning({id:s.platformQuery.id}).get()
-  const relation = f.db.insert(s.platformRelation).values({queryId:query.id,sequenceNo:1,enterpriseId:c.enterprise.id,usccRaw:c.enterprise.usccNorm,verificationStatus:'confirmed',matchBasis:'uscc',rawFields:{archive:'ARCHIVED_RAW_'+ 'x'.repeat(1024*1024)},sourceText:'ARCHIVED_RAW_'+ 'x'.repeat(1024*1024)}).returning({id:s.platformRelation.id}).get()
+  const archived='ARCHIVED_RAW_'+ 'x'.repeat(1024*1024)
+  const native=submitNativePlatformQuery(f.db,{interface:'business_list',queryKey:c.enterprise.usccNorm!,rdjb:'2',titleCode:'specialized_sme',queriedAt:'2026-10-19',status:'success',rawResponse:archived,relations:[{sequenceNo:1,enterpriseId:c.enterprise.id,usccRaw:c.enterprise.usccNorm,verificationStatus:'confirmed',matchBasis:'uscc',rawFields:{archive:archived},sourceText:archived}]})
+  const relation={id:native.relationIds[0]!}
+  const observation=native.observations[0]!
+  const queryArchive=f.db.$client.prepare("select archive_id id from platform_collection_archive_ref where owner_id=? and field='rawResponse'").get(native.collectionId) as {id:number}
+  const rowArchive=f.db.$client.prepare("select archive_id id from platform_observation_archive_ref where owner_id=? and field='sourceText'").get(observation.observationId) as {id:number}
   const request:any = {idempotencyKey:'review-raw-edge',sourceIdentity:'synthetic',actor:{type:'user',id:'reviewer'},basis:'explicit confirmation',ruleId:'manual',ruleVersion:'1',operations:[{action:'create',edge:{type:'event_process',eventId:event.id,relationId:relation.id,role:'context_only'},status:'confirmed'}]}
   const plan = preflightRecordCorrespondences(f.db,request)
   const edge = commitRecordCorrespondences(f.db,request,plan.planHash)
@@ -50,15 +54,13 @@ it('对应边引用读取不应展开无关原始平台大字段', async () => {
     const ref = 'correspondence:' + edge.correspondenceIds[0]
     const reference = () => readCurrentCandidate(f.db.$client,c.enterprise.id,'specialized_sme',year).references.find(r => r.startsWith(ref))!
     expect(reference()).not.toContain('来源需重新核实')
-    // Same-length archive edits must be detected, not just byte-count changes.
-    prepare('update platform_query set raw_response=? where id=?').run('ARCHIVED_RAW_'+ 'x'.repeat(1024*1024-1)+'y',query.id)
-    expect(reference()).toContain('来源需重新核实')
-    prepare('update platform_query set raw_response=? where id=?').run('ARCHIVED_RAW_'+ 'x'.repeat(1024*1024),query.id)
-    expect(reference()).not.toContain('来源需重新核实')
-    prepare('update platform_relation set source_text=? where id=?').run('ARCHIVED_RAW_'+ 'x'.repeat(1024*1024-1)+'z',relation.id)
-    expect(reference()).toContain('来源需重新核实')
-    prepare('update platform_relation set source_text=? where id=?').run('ARCHIVED_RAW_'+ 'x'.repeat(1024*1024),relation.id)
-    expect(reference()).not.toContain('来源需重新核实')
+    // Native originals are sealed: same-length edits are rejected before
+    // they can invalidate an existing decision. Event revisions still trigger
+    // the bounded correspondence revalidation path below.
+    for(const original of [queryArchive,rowArchive]) {
+      expect(()=>prepare('update platform_archive_value set bytes=? where id=?').run(Buffer.from('ARCHIVED_RAW_'+ 'x'.repeat(1024*1024-1)+'y'),original.id)).toThrow('immutable archive')
+      expect(reference()).not.toContain('来源需重新核实')
+    }
     prepare('update record_event set revision=revision+1 where id=?').run(event.id)
     expect(reference()).toContain('来源需重新核实')
     expect(rawBytes).toBe(0)

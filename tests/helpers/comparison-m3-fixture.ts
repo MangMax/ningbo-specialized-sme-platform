@@ -26,8 +26,8 @@ export async function seedM3(base: string, token: string) {
       { sequenceNo: 2, nameRaw: 'M3未分配候选', matchBasis: 'none', verificationStatus: 'pending', rawFields: { original: 'M3未分配原文' } },
       { sequenceNo: 3, nameRaw: 'M3Alpha企业', usccRaw: m3Uscc, matchBasis: 'uscc', verificationStatus: 'pending', rawFields: { original: 'M3关联候选原文' } },
     ] },
-    { interface: 'apply_list', queryKey: 'name:M3Gamma企业', queriedAt: '2026-10-20T00:00:00Z', status: 'failed', failureReason: 'M3合成失败' },
-    { interface: 'business_list', queryKey: 'name:M3Gamma企业', rdjb: '1', queriedAt: '2026-10-20T00:00:01Z', status: 'no_record' },
+    { interface: 'apply_list', queryKey: 'name:M3Gamma企业', queriedAt: '2026-10-20T00:00:00Z', status: 'failed', failureReason: 'M3合成失败', rawResponse: 'M3失败原档' },
+    { interface: 'business_list', queryKey: 'name:M3Gamma企业', rdjb: '1', queriedAt: '2026-10-20T00:00:01Z', status: 'no_record', rawResponse: 'M3空结果原档' },
   ], differences: [{ uscc: m3Uscc, titleCode: 'specialized_sme', direction: 'missing_in_miit', status: 'confirmed_reason', reasonCode: 'platform_stale', measureCode: 'mark_platform_snapshot', verificationStatus: 'confirmed', recordedAt: '2026-10-20T01:00:00Z' }] })
   return { commit }
 }

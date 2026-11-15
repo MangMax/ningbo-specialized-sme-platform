@@ -32,11 +32,32 @@ export class FingerprintVerificationError extends Error {
     readonly ref: string;
     constructor(readonly code: 'projection_source_drift' | 'projection_mapping_conflict' | 'apply_stored_conflict' | 'apply_stored_uncaptured' | 'process_stored_conflict' | 'process_stored_uncaptured', owner: FingerprintOwner, reason: string) { super(reason); this.ref = `relation:${owner.relationAlias}`; }
 }
+const fingerprintSnapshots = new WeakMap<Database.Database, { emptyTemplate?: Buffer }>();
+/** Reuse only immutable schema preparation during one synchronous target operation.
+ * Every reconstruction still gets a fresh database and verifies current source facts.
+ * The template never survives the operation, including when verification throws.
+ */
+export function withFingerprintVerificationSnapshot<T>(t: Database.Database, operation: () => T): T {
+    if (fingerprintSnapshots.has(t))
+        return operation();
+    return t.transaction(() => {
+        fingerprintSnapshots.set(t, {});
+        try {
+            return operation();
+        }
+        finally {
+            fingerprintSnapshots.delete(t);
+        }
+    }).deferred();
+}
 /** Empty model used only to recompute expected business fingerprints. */
 export function emptyFingerprintTarget(t: Database.Database): Database.Database {
-    const scratch = new Database(':memory:');
+    const snapshot = fingerprintSnapshots.get(t);
+    const scratch = new Database(snapshot?.emptyTemplate ?? ':memory:');
     scratch.pragma('foreign_keys=ON');
     try {
+        if (snapshot?.emptyTemplate)
+            return scratch;
         const catalog = t.prepare("select sql from sqlite_schema where sql is not null and name not glob 'sqlite_*' order by case type when 'table' then 0 when 'index' then 1 else 2 end").all() as {
             sql: string;
         }[];
@@ -54,6 +75,8 @@ export function emptyFingerprintTarget(t: Database.Database): Database.Database 
             for (const row of capabilities)
                 scratch.prepare('INSERT INTO platform_runtime_capability VALUES(?)').run(row.transform_version);
         }
+        if (snapshot)
+            snapshot.emptyTemplate = scratch.serialize();
         return scratch;
     }
     catch (error) {
@@ -61,6 +84,8 @@ export function emptyFingerprintTarget(t: Database.Database): Database.Database 
         throw error;
     }
 }
+// Source-owned exact title cells are authenticated by verifyRecognizedStored above.
+const RECOGNIZED_STORED_KEYS = ['exactTitleRaw','exactTitleState','exactTitleOrigin','exactTitleArchiveId','exactTitleSha256'] as const;
 const hash = (v: Buffer) => createHash('sha256').update(v).digest('hex');
 export function verifyFingerprint(t: Database.Database, owner: FingerprintOwner, options: {
     allowMissingVersionProjection?: boolean;
@@ -230,7 +255,7 @@ export function verifyLegacyFacts(t: Database.Database, owner: FingerprintOwner,
             throw new Error('Legacy observation projection drift');
         if (p)
             for (const [k, v] of Object.entries(p))
-                if (!Object.hasOwn(wanted, k) && !['id', 'sourceValidityDate', 'sourceMaintenanceBatch', 'sourceMaintenanceYearAbsent', ...(source === 'apply_list' && true ? APPLY_STORED_KEYS : []), ...(source === 'business_list' && true ? PROCESS_STORED_KEYS : [])].includes(k) && v !== null)
+                if (!Object.hasOwn(wanted, k) && !['id', 'sourceValidityDate', 'sourceMaintenanceBatch', 'sourceMaintenanceYearAbsent', ...(source === 'apply_list' && true ? APPLY_STORED_KEYS : []), ...(source === 'business_list' && true ? PROCESS_STORED_KEYS : []), ...(source === 'recognized_list' ? RECOGNIZED_STORED_KEYS : [])].includes(k) && v !== null)
                     throw new Error('Legacy extra observation projection field drift: ' + k);
         if (source === 'recognized_list' && p) {
             const fidelity = parseRecognizedSourceFidelity(row ?? {});

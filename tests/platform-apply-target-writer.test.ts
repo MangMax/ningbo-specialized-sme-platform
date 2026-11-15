@@ -1,31 +1,23 @@
+import { createRuntimeSchema } from '../db/create-runtime'
 import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
-import { migrate } from 'drizzle-orm/better-sqlite3/migrator'
-import { copyFileSync, mkdtempSync } from 'node:fs'
+import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createHash } from 'node:crypto'
 import { expect, it } from 'vitest'
-import { upgradeCollections } from '../upgrade/collections'
-import { upgradeObservations } from '../upgrade/observations'
-import { upgradeProjections } from '../upgrade/projections'
-import { finalizeObservations } from '../upgrade/finalize-observations'
 import { targetSchema } from '../lib/platform/target-schema'
 import { writeApplyTarget, type ApplyTargetInput } from '../lib/platform/apply-target-writer'
 
 function fixture() {
   const root = mkdtempSync(join(process.env.W1A_EVIDENCE_DIR ?? tmpdir(), 'w1a-'))
-  const source = join(root, 'source.sqlite'), target = join(root, 'target.sqlite')
-  const sourceDb = new Database(source)
-  migrate(drizzle(sourceDb), { migrationsFolder: 'db/migrations' })
-  sourceDb.exec("insert into platform_query(id,interface,query_key,rdjb,queried_at,status,created_at) values(1,'apply_list','a','','t','success','c'),(2,'business_list','b','','t','success','c');")
-  sourceDb.close(); copyFileSync(source, target)
-  upgradeCollections({ source, target, runId: 'c', batchSize: 2 })
-  upgradeObservations({ source, target, runId: 'o', collectionRunId: 'c', batchSize: 2 })
-  upgradeProjections({ source, target, runId: 'p', observationRunId: 'o', collectionRunId: 'c', batchSize: 2 })
-  finalizeObservations({ source, target, runId: 'f', projectionRunId: 'p', observationRunId: 'o', collectionRunId: 'c' })
+  const target = join(root, 'target.sqlite')
   const statements: string[] = []
   const sqlite = new Database(target, { verbose: text => statements.push(String(text)) }); sqlite.pragma('foreign_keys=ON')
+  createRuntimeSchema(sqlite)
+  sqlite.exec("INSERT INTO platform_collection(id,interface,query_key,rdjb,queried_at,created_at,status,completeness,provenance_state,parse_state,rule_version) VALUES(1,'apply_list','a','','t','c','success','unknown','unknown','absent','fixture'),(2,'business_list','b','','t','c','success','unknown','unknown','absent','fixture')")
+  sqlite.exec("INSERT INTO platform_legacy_query_alias(old_id,collection_id) VALUES(1,1),(2,2); UPDATE platform_legacy_alias_sequence SET high_water=2 WHERE namespace='query'")
+  statements.length=0
   const db = drizzle(sqlite, { schema: targetSchema })
   const input: ApplyTargetInput = { collectionId: 1, position: { sequenceNo: 1, positionState: 'unknown' }, row: { sequenceNo: 1, relationKey: ' A ', status: 'stored', rawFields: { year: ' 2028 ', id: 'A', cszt: 'source', rdjb: ' 2 ' }, sourceText: '原文\n\u0000' }, assignment: { enterpriseId: null, matchBasis: 'none', verificationStatus: 'pending', origin: 'command', actor: { type: 'agent', id: 'test' }, basis: 'explicit test observation', recordedAt: null } }
   return { sqlite, db, input, statements }
@@ -38,10 +30,11 @@ it('preserves literal bytes hash fields provenance and independent observations 
   expect(sqlite.serialize()).toEqual(before)
   const second = writeApplyTarget(db, { ...input, position: { ...input.position, sequenceNo: 2 }, row: { ...input.row, sequenceNo: 2, status: 'source' } })
   expect(second.versionId).toBe(first.versionId); expect(second.observationId).not.toBe(first.observationId)
+  // Native writes apply the legacy public insertion grammar; unknown stored status is absent.
   const literal = '{"cszt":"source","id":"A","rdjb":" 2 ","year":" 2028 "}'
   expect(sqlite.prepare('select canonical_raw_json,content_hash from platform_business_record_version').get()).toEqual({ canonical_raw_json: literal, content_hash: createHash('sha256').update('platform-row-json-v1\n' + literal).digest('hex') })
   expect(sqlite.prepare('select observation_id,declaration_year,source_title_kind,source_title_text,stored_status,parsed_status,reconciled_status,status_conflict from platform_apply_projection where observation_id is not null order by observation_id').all()).toEqual([
-    { observation_id: first.observationId, declaration_year: 2028, source_title_kind: 'text', source_title_text: ' 2 ', stored_status: 'stored', parsed_status: 'source', reconciled_status: null, status_conflict: 1 },
+    { observation_id: first.observationId, declaration_year: 2028, source_title_kind: 'text', source_title_text: ' 2 ', stored_status: null, parsed_status: 'source', reconciled_status: 'source', status_conflict: 0 },
     { observation_id: second.observationId, declaration_year: 2028, source_title_kind: 'text', source_title_text: ' 2 ', stored_status: 'source', parsed_status: 'source', reconciled_status: 'source', status_conflict: 0 },
   ])
   expect(sqlite.prepare("select cast(a.bytes as text) bytes,r.sealed from platform_archive_value a join platform_observation_archive_ref r on r.archive_id=a.id where r.owner_id=? and field='rawFields'").get(first.observationId)).toEqual({ bytes: '{"year":" 2028 ","id":"A","cszt":"source","rdjb":" 2 "}', sealed: 1 })

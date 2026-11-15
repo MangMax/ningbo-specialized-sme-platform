@@ -1,10 +1,13 @@
+import { completePlatformMigration } from '../../upgrade/complete-platform'
+import { mkdirSync } from 'node:fs'
+import { join } from 'node:path'
 import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { candidateFixture } from './candidate-scope-target'
 import { finalizeCandidateScopes } from '../../upgrade/candidate-scope'
 import { ensurePlatformObservation } from '../../upgrade/frozen/server/platform-business-record'
 import * as s from '../../upgrade/legacy-schema'
-import { targetSchema } from '../../upgrade/target-schema'
+import * as targetSchema from '../../db/schema'
 import { normalizeUscc } from '../../lib/domain'
 import { currentCandidateBindings, currentCandidateSql } from '../../upgrade/frozen/current-candidates'
 import type { CurrentTitle } from '../../lib/roster/current-titles'
@@ -48,6 +51,9 @@ export async function targetCandidatesFixture() {
     query(14,'9');row(14,1,14)
   })
   finalizeCandidateScopes(f)
+  const runtimeTarget=join(f.root,'runtime.sqlite'),evidence=join(f.root,'complete-evidence');mkdirSync(evidence)
+  completePlatformMigration(f.legacySource,runtimeTarget,evidence)
+  f.target=runtimeTarget
   const statements:string[]=[]
   const sqlite=new Database(f.target,{verbose:q=>statements.push(String(q))});sqlite.pragma('foreign_keys=ON')
   const legacy=new Database(f.legacySource,{readonly:true});legacy.function('roster84_uscc',{deterministic:true},normalizeUscc)

@@ -48,7 +48,7 @@ it('bounds byte slices including split UTF8 and rejects invalid ranges', () => {
 it('checks independent hashes and rolls back archive inserts inside the caller transaction', () => {
   const {db}=fixture(),bytes=Buffer.from('独立原字节🙂'),sha256=createHash('sha256').update(bytes).digest('hex')
   expect(()=>insertArchiveValue(db,{storageClass:'text',bytes,createdAt:null},{sha256:'0'.repeat(64)})).toThrow()
-  expect(()=>db.transaction(tx=>{insertArchiveValue(tx,{storageClass:'text',bytes,createdAt:null},{sha256});throw Error('abort')})()).toThrow('abort')
+  expect(()=>db.transaction(tx=>{insertArchiveValue(tx,{storageClass:'text',bytes,createdAt:null},{sha256});throw Error('abort')})).toThrow('abort')
   expect(db.select().from(schema.platformArchiveValue).all()).toEqual([])
   expect(insertArchiveValue(db,{storageClass:'text',bytes,createdAt:null},{sha256,byteLength:bytes.length})).toBeGreaterThan(0)
 })

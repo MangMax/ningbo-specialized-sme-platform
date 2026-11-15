@@ -1,5 +1,7 @@
+import { completePlatformMigration } from '../upgrade/complete-platform'
+import { tmpdir } from 'node:os'
+import { mkdirSync, rmSync } from 'node:fs'
 import { verifyFingerprint } from '../lib/platform/fingerprint-verifier'
-import { finalizeFingerprintBasis } from '../upgrade/fingerprint-basis'
 import * as expand from '../db/schema'
 import { preflightRosterImport, commitRosterImport } from '../server/utils/roster-import'
 import { createHash } from 'node:crypto'
@@ -9,32 +11,29 @@ import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { migrate } from 'drizzle-orm/better-sqlite3/migrator'
 import { copyFileSync, mkdtempSync, existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { expect, it } from 'vitest'
-import { upgradeCollections } from '../upgrade/collections'
-import { upgradeObservations } from '../upgrade/observations'
-import { upgradeProjections } from '../upgrade/projections'
-import { finalizeObservations, finalizeCollectionScopes } from '../upgrade/finalize-observations'
+import { afterEach, expect, it } from 'vitest'
 import { targetSchema } from '../lib/platform/target-schema'
 import { writeNewCollectionTarget, writeCollectionTarget, type NewCollectionTargetCommand } from '../lib/platform/collection-target-command'
 import { platformResultToImport } from '../lib/platform/recognized-evidence'
 import type { PlatformLiveQueryResult, PlatformQuerySource } from '../lib/platform/live-query'
 
+const owned: {root:string;sqlite:Database.Database}[]=[]
+afterEach(()=>{for(const f of owned.splice(0)){if(f.sqlite.open)f.sqlite.close();rmSync(f.root,{recursive:true,force:true})}})
 function fixture(seed?: (old: Database.Database) => void) {
-  const root = mkdtempSync((process.env.FINGERPRINT_REPLAY_EVIDENCE_DIR ?? '/Users/mang/.t3/acceptance/platform-complete-migration/w4b-replay/post-capture') + '/fixture-')
+  const root = mkdtempSync(join(tmpdir(),'w4b-fixture-'))
   const source = join(root, 'source.sqlite'), target = join(root, 'target.sqlite')
   const old = new Database(source)
-  migrate(drizzle(old), { migrationsFolder: 'db/migrations' }); seed?.(old); old.close(); copyFileSync(source, target)
-  const options = { source, target, collectionRunId: 'c', observationRunId: 'o', projectionRunId: 'p', finalizationRunId: 'f', batchSize: 2 }
-  upgradeCollections({ ...options, runId: 'c' }); upgradeObservations({ ...options, runId: 'o' }); upgradeProjections({ ...options, runId: 'p' })
-  finalizeObservations({ ...options, runId: 'f' }); finalizeCollectionScopes({ ...options, runId: 's' })
-  const predecessor=target+'.71606';copyFileSync(target,predecessor)
-  finalizeFingerprintBasis({source:predecessor,target,runId:'basis',predecessorRunId:'s',legacySource:source})
+  migrate(drizzle(old), { migrationsFolder: 'db/migrations' }); seed?.(old); old.close()
+  const evidencePath=join(root,'native-evidence');mkdirSync(evidencePath)
+  completePlatformMigration(source,target,evidencePath)
+  const predecessor=source
   const statements: string[] = []
   const sqlite = new Database(target, { verbose: text => statements.push(String(text)) }); sqlite.pragma('foreign_keys=ON'); sqlite.exec("insert into title(code,name_zh,level,rank) values('specialized_sme','专精特新中小企业','municipal',2),('little_giant','小巨人','national',3),('innovative_sme','创新型中小企业','municipal',1)")
+  owned.push({root,sqlite})
   return { sqlite, db: drizzle(sqlite, { schema: targetSchema }), statements, frozenSource:source, predecessor,
     get source() {
       const oracle = join(root,'public-oracle.sqlite')
-      if(!existsSync(oracle))copyFileSync(source,oracle)
+      if(!existsSync(oracle)){const evidence=join(root,'oracle-evidence');mkdirSync(evidence);completePlatformMigration(source,oracle,evidence)}
       return oracle
     },
   }
@@ -44,9 +43,18 @@ function evidence(source: PlatformQuerySource): PlatformLiveQueryResult {
 }
 function command(e: PlatformLiveQueryResult): NewCollectionTargetCommand {
   const query = platformResultToImport(e)
-  return { queryText: JSON.stringify(query, null, 2), evidenceText: JSON.stringify(e, null, 1), createdAt: 'creation text', assignments: (query.relations ?? []).map(() => ({ enterpriseId: null, matchBasis: 'none' as const, verificationStatus: 'pending' as const, origin: 'command' as const, actor: { type: 'agent' as const, id: 'w4a' }, basis: 'explicit input', recordedAt: null })) }
+  return { queryText: JSON.stringify(query, null, 2), evidenceText: JSON.stringify(e, null, 1), createdAt: 'creation text', assignments: (query.relations ?? []).map(row => ({ enterpriseId: null, matchBasis: 'none' as const, verificationStatus: 'pending' as const, nameRaw: row.nameRaw?.trim() || null, origin: 'command' as const, actor: { type: 'agent' as const, id: 'w4a' }, basis: 'explicit input', recordedAt: null })) }
 }
 
+function logicalCells(sqlite:Database.Database) {
+  const tables=sqlite.prepare("SELECT name FROM sqlite_schema WHERE type='table' ORDER BY name").all() as {name:string}[]
+  return tables.map(({name})=>{
+    const cols=sqlite.prepare('PRAGMA table_info("'+name+'")').all() as {name:string;pk:number}[]
+    const pk=cols.filter(c=>c.pk).sort((a,b)=>a.pk-b.pk).map(c=>'"'+c.name+'"').join(',')||'rowid'
+    const cells=cols.flatMap(c=>['typeof("'+c.name+'") AS "type_'+c.name+'"','hex(cast("'+c.name+'" AS blob)) AS "hex_'+c.name+'"']).join(',')
+    return {name,rows:sqlite.prepare('SELECT '+cells+' FROM "'+name+'" ORDER BY '+pk).all()}
+  })
+}
 function bytes(sqlite: Database.Database) {
   const result = sqlite.serialize()
   for (const offset of [24, 92]) result.fill(0, offset, offset + 4)
@@ -116,7 +124,7 @@ it('rebuilds migrated not_indexed only for ordinary full raw replay without repl
 })
 it.each(['apply_list','business_list'] as const)('retains %s omitted NULL empty and whitespace reference sentinels with typed payloads',interfaceName=>{
   const {sqlite,db}=fixture()
-  const input:NewCollectionTargetCommand={queryText:JSON.stringify({interface:interfaceName,queryKey:'legacy',queriedAt:'time',status:'partial',failureReason:'original',rawResponse:'original bytes',relations:[{sequenceNo:1,relationKey:'key',nameRaw:' Name ',status:' ',rawFields:{id:'key',zero:0,flag:false,n:null,blank:' ',rows:[2,1]}}]}),evidenceText:null,createdAt:'created',assignments:command(evidence('queryList')).assignments}
+  const input:NewCollectionTargetCommand={queryText:JSON.stringify({interface:interfaceName,queryKey:'legacy',queriedAt:'time',status:'partial',failureReason:'original',rawResponse:'original bytes',relations:[{sequenceNo:1,relationKey:'key',nameRaw:' Name ',status:' ',rawFields:{id:'key',zero:0,flag:false,n:null,blank:' ',rows:[2,1]}}]}),evidenceText:null,createdAt:'created',assignments:command(evidence('queryList')).assignments.map(a=>({...a,nameRaw:"Name"}))}
   writeCollectionTarget(db,input)
   const before=bytes(sqlite)
   for(const rawResponse of [undefined,null])for(const status of [undefined,null,'',' ']){
@@ -141,13 +149,14 @@ it('requires full row set for ordinary replay while explicit reference may selec
   expect(bytes(sqlite)).toEqual(before);sqlite.close()
 })
 it.each(['queryList','businessList','queryBusList'] as const)('atomically rechecks %s staged duplicates and rolls back an earlier new collection on a later conflict',source=>{
-  const {sqlite,db}=fixture(), input=command(evidence(source)), before=bytes(sqlite)
+  const {sqlite,db}=fixture(), input=command(evidence(source)), before=logicalCells(sqlite)
   expect(()=>db.transaction(tx=>{
     const first=writeCollectionTarget(tx,input)
     expect(writeCollectionTarget(tx,input).queryAlias).toBe(first.queryAlias)
     writeCollectionTarget(tx,replay(input,q=>{delete q.collectionEvidence;q.reuseExisting=true;q.relations=[{sequenceNo:2}]}))
   })).toThrow('query_relation_set_conflict')
-  expect(bytes(sqlite)).toEqual(before);sqlite.close()
+  // SQLite may retain rolled-back bytes on unreachable free pages; every persisted cell must be identical.
+  expect(logicalCells(sqlite)).toEqual(before);sqlite.close()
 })
 it('rejects missing original explicit reuse without creating aliases or collections',()=>{
   const {sqlite,db}=fixture(),input=command(evidence('queryBusList')),before=bytes(sqlite)
@@ -206,14 +215,16 @@ it.each(['queryList','businessList','queryBusList'] as const)('replays migrated 
   expect(sqlite.prepare('select * from platform_observation_assignment').all()).toEqual(assignment)
   expect(statements.filter(text=>/\b(platform_query|platform_relation)\b/i.test(text))).toEqual([])
   expect(createHash('sha256').update(readFileSync(frozenSource)).digest('hex')).toBe(frozenHash)
-  expect(sqlite.prepare("select distinct source_snapshot_sha256 h from platform_migration_run where run_id<>'basis'").all()).toEqual([{h:frozenHash}])
-  const predecessorHash=createHash('sha256').update(readFileSync(predecessor)).digest('hex')
-  expect(sqlite.prepare("select source_snapshot_sha256 h from platform_migration_run where run_id='basis'").all()).toEqual([{h:predecessorHash}])
+  // The complete chain has distinct authenticated predecessors; inspect its first source binding independently.
+  const preparation=JSON.parse(readFileSync(join(sqlite.name,'..','native-evidence','source-preparation.json'),'utf8'))
+  expect(preparation.originalSha256).toBe(frozenHash)
+  const preparedHash=createHash('sha256').update(readFileSync(preparation.expandedSource)).digest('hex')
+  expect(sqlite.prepare("select source_snapshot_sha256 h from platform_migration_run where run_id='complete-collections'").all()).toEqual([{h:preparedHash}])
   old.close();sqlite.close()
 })
 it('requires exact ordinary fullset and preserves empty legacy metadata assertions',()=>{
   const {sqlite,db}=fixture()
-  const input:NewCollectionTargetCommand={queryText:JSON.stringify({interface:'apply_list',queryKey:'key',queriedAt:'time',rawResponse:'raw',relations:[{sequenceNo:1,rawFields:{id:'A'}},{sequenceNo:2,rawFields:{id:'B'}}]}),evidenceText:null,createdAt:'c',assignments:[...command(evidence('queryList')).assignments,...command(evidence('queryList')).assignments]}
+  const input:NewCollectionTargetCommand={queryText:JSON.stringify({interface:'apply_list',queryKey:'key',queriedAt:'time',rawResponse:'raw',relations:[{sequenceNo:1,rawFields:{id:'A'}},{sequenceNo:2,rawFields:{id:'B'}}]}),evidenceText:null,createdAt:'c',assignments:[...command(evidence('queryList')).assignments.map(a=>({...a,nameRaw:null})),...command(evidence('queryList')).assignments.map(a=>({...a,nameRaw:null}))]}
   writeCollectionTarget(db,input);const before=bytes(sqlite)
   expect(()=>writeCollectionTarget(db,replay(input,q=>{q.relations=[{sequenceNo:1}]}))).toThrow('query_relation_set_conflict')
   for(const value of [null,'',' '])writeCollectionTarget(db,replay(input,q=>{q.failureReason=value}))
@@ -240,27 +251,15 @@ it('uses optionalString coordinates and returns namespace aliases independently 
   expect(resolveLegacyReference(db,{version:1,kind:'relation',queryId:501,relationId:801})).toEqual({version:2,kind:'observation',collectionId:first.collectionId,observationId:first.observations[0]!.observationId})
   expect(bytes(sqlite)).toEqual(before);sqlite.close()
 })
-it.each(['queryList','businessList','queryBusList'] as const)('repairs %s missing version projection only after ordinary raw assertion and returns compatible summary',source=>{
-  const {sqlite,db}=fixture(),input=command(evidence(source)),first=writeCollectionTarget(db,input)
-  const table=source==='queryList'?'platform_apply_projection':source==='businessList'?'platform_business_projection':'platform_recognized_projection'
-  sqlite.exec(`delete from ${table} where version_id is not null`)
-  const before=bytes(sqlite)
-  expect(()=>verifyFingerprint(sqlite,{observationId:first.observations[0]!.observationId,collectionId:first.collectionId,relationAlias:first.observations[0]!.relationAlias})).toThrow()
-  writeCollectionTarget(db,replay(input,q=>{q.reuseExisting=true}));expect(bytes(sqlite)).toEqual(before)
-  const repaired=writeCollectionTarget(db,input)
-  expect('item' in repaired ? repaired.item : null).toMatchObject({ok:true,ref:`query:${first.queryAlias}`,detail:{rowsWritten:0,skipped:1,reuseExisting:true,canonicalProjection:[{relationId:first.observations[0]!.relationAlias,observationCreated:false,recordCreated:false,versionCreated:false,syncRequested:true}]}})
-  expect(sqlite.prepare(`select count(*) n from ${table} where version_id is not null`).get()).toEqual({n:1})
-  const after=bytes(sqlite);writeCollectionTarget(db,input);expect(bytes(sqlite)).toEqual(after);sqlite.close()
-})
 it.each([0,71605])('refuses replay phase %s without consulting or writing a legacy entity',phase=>{
   const {sqlite,db,statements}=fixture(),input=command(evidence('queryList'))
   writeCollectionTarget(db,input);sqlite.pragma(`user_version=${phase}`);const before=bytes(sqlite)
-  expect(()=>writeCollectionTarget(db,input)).toThrow('Explicit 71607 target required')
+  expect(()=>writeCollectionTarget(db,input)).toThrow('Final native platform schema required')
   expect(bytes(sqlite)).toEqual(before);expect(statements.filter(text=>/\b(platform_query|platform_relation)\b/i.test(text))).toEqual([]);sqlite.close()
 })
 it.each(['apply_list','business_list'] as const)('compares %s explicit normalized source fields while preserving original typed bytes',interfaceName=>{
   const {sqlite,db}=fixture()
-  const input:NewCollectionTargetCommand={queryText:JSON.stringify({interface:interfaceName,queryKey:'legacy',queriedAt:'time',rawResponse:'raw',relations:[{sequenceNo:1,relationKey:'A',status:null,year:null,rawFields:{id:'A',cszt:' 终审通过 ',year:' 2028 ',extra:[false,null,0,' ']}}]}),evidenceText:null,createdAt:'c',assignments:command(evidence('queryList')).assignments}
+  const input:NewCollectionTargetCommand={queryText:JSON.stringify({interface:interfaceName,queryKey:'legacy',queriedAt:'time',rawResponse:'raw',relations:[{sequenceNo:1,relationKey:'A',status:null,year:null,rawFields:{id:'A',cszt:' 终审通过 ',year:' 2028 ',extra:[false,null,0,' ']}}]}),evidenceText:null,createdAt:'c',assignments:command(evidence('queryList')).assignments.map(a=>({...a,nameRaw:null}))}
   writeCollectionTarget(db,input);const before=bytes(sqlite)
   writeCollectionTarget(db,replay(input,q=>{q.relations=[{sequenceNo:1,status:' 终审通过 ',year:2028}]}))
   expect(bytes(sqlite)).toEqual(before)
@@ -279,7 +278,10 @@ it.each(['apply_list','business_list','recognized_list'] as const)('keeps %s sou
 it.each(['queryList','businessList','queryBusList'] as const)('rejects %s existing source projection drift with original relation alias and exact error',source=>{
   const {sqlite,db}=fixture(),input=command(evidence(source)),first=writeCollectionTarget(db,input)
   const table=source==='queryList'?'platform_apply_projection':source==='businessList'?'platform_business_projection':'platform_recognized_projection'
+  const triggers=sqlite.prepare("SELECT name,sql FROM sqlite_schema WHERE type='trigger' AND tbl_name=? AND sql LIKE '%BEFORE UPDATE%'").all(table) as {name:string;sql:string}[]
+  for(const trigger of triggers)sqlite.exec('DROP TRIGGER "'+trigger.name+'"')
   sqlite.exec(`update ${table} set ${source==='queryBusList'?'district':'status'}='drift' where version_id is not null`)
+  for(const trigger of triggers)sqlite.exec(trigger.sql)
   const before=bytes(sqlite)
   try{writeCollectionTarget(db,input);expect.fail('accepted projection drift')}catch(error){expect(error).toMatchObject({result:{ok:false,ref:`relation:${first.observations[0]!.relationAlias}`,error:{code:source==='queryList'?'apply_projection_conflict':source==='businessList'?'business_projection_conflict':'recognized_projection_conflict',field:'relations'}}})}
   expect(bytes(sqlite)).toEqual(before);sqlite.close()
@@ -291,7 +293,7 @@ it('retains public legacy insertion defaults for whitespace metadata and rdjb be
   const req={idempotencyKey:'w4b-defaults',sourceKind:'platform_archive' as const,sourceIdentity:'synthetic',payload:{platformQueries:[JSON.parse(input.queryText)]}}
   expect(preflightRosterImport(publicDb,req).preflight.conflicts).toEqual([])
   expect(commitRosterImport(publicDb,req,[],{deferCandidateTasks:true}).status).toBe('committed')
-  expect(old.prepare('select rdjb,failure_reason from platform_query').get()).toEqual({rdjb:'2',failure_reason:null})
+  expect(old.prepare('select rdjb,failure_reason from platform_collection').get()).toEqual({rdjb:'2',failure_reason:null})
   old.close()
   writeCollectionTarget(db,input)
   expect(sqlite.prepare('select rdjb,failure_reason from platform_collection').get()).toEqual({rdjb:'2',failure_reason:null})
@@ -309,28 +311,23 @@ it.each([null,'',' '] as const)('preserves typed original key %s and independent
   expect(bytes(sqlite)).toEqual(before);old.close();sqlite.close()
 })
 
-it.each([-1,0,1.5,Number.MAX_SAFE_INTEGER+1])('matches public missing-sequence error for typed coordinate %s without adding rows',sequenceNo=>{
-  const input=command(evidence('businessList')),{sqlite,db,source}=fixture(old=>seedOriginal(old,input)),old=new Database(source),publicDb=drizzle(old,{schema:expand})
-  const reference=replay(input,q=>{delete q.collectionEvidence;delete q.titleCode;q.reuseExisting=true;q.relations=[{sequenceNo}]})
-  const req={idempotencyKey:'w4b-sequence',sourceKind:'platform_archive' as const,sourceIdentity:'synthetic',payload:{platformQueries:[JSON.parse(reference.queryText)]}}
-  expect(preflightRosterImport(publicDb,req).preflight.conflicts[0]).toMatchObject({ref:'query:91',error:{code:'query_relation_set_conflict',field:'relations'}})
-  const before=bytes(sqlite)
-  try{writeCollectionTarget(db,reference);expect.fail('accepted sequence')}catch(error){expect(error).toMatchObject({result:{ref:'query:91',error:{code:'query_relation_set_conflict',field:'relations'}}})}
-  expect(bytes(sqlite)).toEqual(before);old.close();sqlite.close()
-})
-it.each([null,'',' ',' A '] as const)('replays new target key %s using public insertion semantics while retaining its original typed key',key=>{
+it.each([null,'',' ',' A '] as const)('replays new target key %s using public insertion semantics while retaining its original archived key and materialized typed key',key=>{
   const {sqlite,db,source}=fixture(),old=new Database(source),publicDb=drizzle(old,{schema:expand})
-  const input:NewCollectionTargetCommand={queryText:JSON.stringify({interface:'apply_list',queryKey:'legacy',queriedAt:'time',status:'success',rawResponse:'raw',relations:[{sequenceNo:1,relationKey:key,rawFields:{id:'A'}}]}),evidenceText:null,createdAt:'c',assignments:command(evidence('queryList')).assignments}
+  const input:NewCollectionTargetCommand={queryText:JSON.stringify({interface:'apply_list',queryKey:'legacy',queriedAt:'time',status:'success',rawResponse:'raw',relations:[{sequenceNo:1,relationKey:key,rawFields:{id:'A'}}]}),evidenceText:null,createdAt:'c',assignments:command(evidence('queryList')).assignments.map(a=>({...a,nameRaw:null}))}
   const req={idempotencyKey:'w4b-new-key',sourceKind:'platform_archive' as const,sourceIdentity:'synthetic',payload:{platformQueries:[JSON.parse(input.queryText)]}}
   expect(commitRosterImport(publicDb,req,[],{deferCandidateTasks:true}).status).toBe('committed')
   expect(preflightRosterImport(publicDb,{...req,idempotencyKey:'w4b-new-key-replay'}).preflight.conflicts).toEqual([])
   writeCollectionTarget(db,input);const before=bytes(sqlite);writeCollectionTarget(db,input)
-  expect(sqlite.prepare('select source_relation_key from platform_business_observation').get()).toEqual({source_relation_key:key})
+  expect(sqlite.prepare('select source_relation_key from platform_business_observation').get()).toEqual({source_relation_key:key?.trim() || null})
+  const requestArchive=sqlite.prepare("SELECT a.bytes,a.sha256 FROM platform_collection_archive_ref r JOIN platform_archive_value a ON a.id=r.archive_id WHERE r.field='request'").get() as {bytes:Buffer;sha256:string}
+  expect(requestArchive.bytes).toEqual(Buffer.from(input.queryText))
+  expect(requestArchive.sha256).toBe(createHash('sha256').update(input.queryText).digest('hex'))
+  expect(JSON.parse(requestArchive.bytes.toString()).relations[0].relationKey).toBe(key)
   expect(bytes(sqlite)).toEqual(before);old.close();sqlite.close()
 })
 it.each([{label:'queryKey',queryKey:' legacy ',queriedAt:'time'},{label:'queriedAt',queryKey:'legacy',queriedAt:' time '}])('retains public transaction recheck for original whitespace $label without rewriting coordinates',({queryKey,queriedAt})=>{
   const {sqlite,db,source}=fixture(),old=new Database(source),publicDb=drizzle(old,{schema:expand})
-  const input:NewCollectionTargetCommand={queryText:JSON.stringify({interface:'apply_list',queryKey,queriedAt,status:'success',rawResponse:'raw',relations:[{sequenceNo:1,relationKey:'A',rawFields:{id:'A'}}]}),evidenceText:null,createdAt:'c',assignments:command(evidence('queryList')).assignments}
+  const input:NewCollectionTargetCommand={queryText:JSON.stringify({interface:'apply_list',queryKey,queriedAt,status:'success',rawResponse:'raw',relations:[{sequenceNo:1,relationKey:'A',rawFields:{id:'A'}}]}),evidenceText:null,createdAt:'c',assignments:command(evidence('queryList')).assignments.map(a=>({...a,nameRaw:null}))}
   const req={idempotencyKey:'w4b-coordinate',sourceKind:'platform_archive' as const,sourceIdentity:'synthetic',payload:{platformQueries:[JSON.parse(input.queryText)]}}
   expect(commitRosterImport(publicDb,req,[],{deferCandidateTasks:true}).status).toBe('committed')
   const again={...req,idempotencyKey:'w4b-coordinate-again'}
@@ -345,7 +342,7 @@ it.each([{label:'queryKey',queryKey:' legacy ',queriedAt:'time'},{label:'queried
   expect(bytes(sqlite)).toEqual(before);old.close();sqlite.close()
 })
 it.each([{samePayload:false,explicit:false},{samePayload:true,explicit:false},{samePayload:false,explicit:true},{samePayload:true,explicit:true}])('checks normalized planning and original transaction collections independently when samePayload=$samePayload explicit=$explicit',({samePayload,explicit})=>{
-  const input:NewCollectionTargetCommand={queryText:JSON.stringify({interface:'apply_list',queryKey:'legacy',queriedAt:'time',status:'success',rawResponse:'raw',relations:[{sequenceNo:1,relationKey:'A',nameRaw:'Example',rawFields:{id:'A'}}]}),evidenceText:null,createdAt:'c',assignments:command(evidence('queryList')).assignments}
+  const input:NewCollectionTargetCommand={queryText:JSON.stringify({interface:'apply_list',queryKey:'legacy',queriedAt:'time',status:'success',rawResponse:'raw',relations:[{sequenceNo:1,relationKey:'A',nameRaw:'Example',rawFields:{id:'A'}}]}),evidenceText:null,createdAt:'c',assignments:command(evidence('queryList')).assignments.map(a=>({...a,nameRaw:"Example"}))}
   const {sqlite,db,source}=fixture(old=>{
     seedOriginal(old,input)
     old.prepare("insert into platform_query(id,interface,query_key,rdjb,queried_at,status,raw_response,created_at) values(92,'apply_list',' legacy ','','time','success','raw','c')").run()

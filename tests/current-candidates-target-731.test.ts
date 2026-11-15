@@ -1,3 +1,5 @@
+import { completePlatformMigration } from '../upgrade/complete-platform'
+import { mkdirSync } from 'node:fs'
 import { expect,it,vi } from 'vitest'
 import { targetCandidatesFixture, titles, literalCandidates } from './helpers/current-candidates-target-731'
 import { createTargetCurrentCandidateReader } from '../lib/roster/current-candidates-target'
@@ -96,7 +98,7 @@ it('candidate iterator early close and failed gates release only their own read 
     expect(reader.page('innovative_sme',0,1).rows).toEqual([{id:1}])
     f.sqlite.exec('COMMIT')
     f.sqlite.pragma('user_version=71608')
-    expect(()=>[...reader.iterate('innovative_sme')]).toThrow(/Explicit 71609/)
+    expect(()=>[...reader.iterate('innovative_sme')]).toThrow(/Completed runtime model/)
     expect(()=>reader.count('innovative_sme')).toThrow(TargetCurrentCandidateGap)
     expect(f.sqlite.inTransaction).toBe(false)
   }finally{if(f.sqlite.inTransaction)f.sqlite.exec('ROLLBACK');f.close()}
@@ -106,16 +108,27 @@ it('candidate SQL trace avoids legacy entities archive JSON and reports actual i
   const f=await targetCandidatesFixture()
   try{
     const reader=createTargetCurrentCandidateReader(f.db)
+    // An unmatched owner exposes repeated owner×observation normalization without
+    // changing any independent candidate membership. Each page has count+rows.
+    const unmatchedOwnerKey=' UNIQUE_TRACE_OWNER '
+    f.sqlite.prepare('INSERT INTO enterprise(id,name,name_norm,uscc_norm) VALUES(99,?,?,?)').run('unmatched owner','unmatchedowner',unmatchedOwnerKey)
+    let ownerNormalizations=0
+    f.sqlite.function('roster84_uscc',{deterministic:true},value=>{
+      if(value===unmatchedOwnerKey)ownerNormalizations++
+      return normalizeUscc(value as string|null)
+    })
     f.statements.length=0
     reader.page('specialized_sme',0,4,'name_asc')
+    expect(ownerNormalizations).toBe(2)
     const statements=[...f.statements]
     expect(statements.join('\n')).not.toMatch(/\bplatform_(?:query|relation)\b|\bjson\w*\s*\(|archive|projection|platform_collection/i)
     const plans=statements.filter(q=>/^select/i.test(q)).map(sql=>({sql,plan:f.sqlite.prepare('EXPLAIN QUERY PLAN '+sql).all()}))
-    expect(plans.length).toBe(3)
+    expect(plans.length).toBe(4)
     expect(JSON.stringify(plans)).toContain('platform_observation_assignment')
     writeFileSync(join(f.root,'reader-plans.json'),JSON.stringify(plans,null,2))
     f.statements.length=0
     expect([...reader.iterate('specialized_sme')]).toHaveLength(13)
+    expect(ownerNormalizations).toBe(3)
     const selects=f.statements.filter(q=>/^select/i.test(q)&&/\bunion\b/i.test(q))
     expect(selects).toHaveLength(1)
     writeFileSync(join(f.root,'reader-iterate-trace.json'),JSON.stringify(f.statements,null,2))
@@ -127,6 +140,7 @@ import { finalizeCandidateScopes } from '../upgrade/candidate-scope'
 it('candidate reader preserves native legacy errors even when no owner can resolve',async()=>{
   const f=await candidateFixture(s=>s.exec("INSERT INTO enterprise(id,name,name_norm,uscc_norm) VALUES(7,'E','E','U7'); INSERT INTO platform_query(id,interface,query_key,rdjb,queried_at,status,collection_evidence,created_at) VALUES(1,'recognized_list','Q','1,2','t','success','{\"pages\":[\"oops\"]}','c'); INSERT INTO platform_relation(id,query_id,sequence_no,uscc_raw,raw_fields,created_at) VALUES(1,1,1,'NO_MATCH','{}','c')"))
   finalizeCandidateScopes(f)
+  const native=join(f.root,'native-malformed.sqlite'),evidence=join(f.root,'native-malformed-evidence');mkdirSync(evidence);completePlatformMigration(f.legacySource,native,evidence);f.target=native
   const old=new Database(f.legacySource,{readonly:true});old.function('roster84_uscc',{deterministic:true},normalizeUscc)
   const t=new Database(f.target)
   try{
@@ -136,7 +150,7 @@ it('candidate reader preserves native legacy errors even when no owner can resol
   }finally{old.close();t.close()}
 },30000)
 
-it.each(['uncaptured','error','assignment_missing'] as const)('candidate reader reports %s explicitly without silently dropping potential owners',async mode=>{
+it.each(['uncaptured','error','assignment_missing'] as const)('candidate reader rejects incomplete %s migration targets before querying potential owners',async mode=>{
   const f=await candidateFixture(s=>{
     s.exec("INSERT INTO enterprise(id,name,name_norm,uscc_norm) VALUES(7,'E','E','U7'); INSERT INTO platform_query(id,interface,query_key,rdjb,queried_at,status,created_at) VALUES(1,'recognized_list','Q','1,2','t','success','c'); INSERT INTO platform_relation(id,query_id,sequence_no,enterprise_id,uscc_raw,raw_fields,created_at) VALUES(1,1,1,7,'U7','{}','c')")
     if(mode==='error')s.prepare('UPDATE platform_query SET collection_evidence=?').run('{"pages":["oops"]}')
@@ -150,11 +164,11 @@ it.each(['uncaptured','error','assignment_missing'] as const)('candidate reader 
   const t=new Database(f.target)
   try{
     const reader=createTargetCurrentCandidateReader(drizzle(t,{schema:targetSchema}))
-    expect(()=>reader.count('innovative_sme')).toThrow(mode==='uncaptured'?'uncaptured':mode==='error'?'malformed JSON':'assignment_missing')
+    expect(()=>reader.count('innovative_sme')).toThrow('Completed runtime model required')
     expect(()=>reader.page('innovative_sme',0,1)).toThrow(TargetCurrentCandidateGap)
     expect(()=>[...reader.iterate('innovative_sme')]).toThrow(TargetCurrentCandidateGap)
     expect(t.inTransaction).toBe(false)
-    if(mode==='assignment_missing')expect(reader.count('little_giant')).toBe(0)
+    if(mode==='assignment_missing')expect(()=>reader.count('little_giant')).toThrow(TargetCurrentCandidateGap)
   }finally{t.close()}
 },30000)
 

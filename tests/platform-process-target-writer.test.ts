@@ -1,31 +1,23 @@
+import { createRuntimeSchema } from '../db/create-runtime'
 import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
-import { migrate } from 'drizzle-orm/better-sqlite3/migrator'
-import { copyFileSync, mkdtempSync } from 'node:fs'
+import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createHash } from 'node:crypto'
 import { expect, it } from 'vitest'
-import { upgradeCollections } from '../upgrade/collections'
-import { upgradeObservations } from '../upgrade/observations'
-import { upgradeProjections } from '../upgrade/projections'
-import { finalizeObservations } from '../upgrade/finalize-observations'
 import { targetSchema } from '../lib/platform/target-schema'
 import { writeProcessTarget, type ProcessTargetInput } from '../lib/platform/process-target-writer'
 
 function fixture() {
   const root = mkdtempSync(join(process.env.W2A_EVIDENCE_DIR ?? tmpdir(), 'w2a-'))
-  const source = join(root, 'source.sqlite'), target = join(root, 'target.sqlite')
-  const sourceDb = new Database(source)
-  migrate(drizzle(sourceDb), { migrationsFolder: 'db/migrations' })
-  sourceDb.exec("insert into platform_query(id,interface,query_key,rdjb,queried_at,status,created_at) values(1,'apply_list','a','','t','success','c'),(2,'business_list','b','','t','success','c');")
-  sourceDb.close(); copyFileSync(source, target)
-  upgradeCollections({ source, target, runId: 'c', batchSize: 2 })
-  upgradeObservations({ source, target, runId: 'o', collectionRunId: 'c', batchSize: 2 })
-  upgradeProjections({ source, target, runId: 'p', observationRunId: 'o', collectionRunId: 'c', batchSize: 2 })
-  finalizeObservations({ source, target, runId: 'f', projectionRunId: 'p', observationRunId: 'o', collectionRunId: 'c' })
+  const target = join(root, 'target.sqlite')
   const statements: string[] = []
   const sqlite = new Database(target, { verbose: text => statements.push(String(text)) }); sqlite.pragma('foreign_keys=ON')
+  createRuntimeSchema(sqlite)
+  sqlite.exec("INSERT INTO platform_collection(id,interface,query_key,rdjb,queried_at,created_at,status,completeness,provenance_state,parse_state,rule_version) VALUES(1,'apply_list','a','','t','c','success','unknown','unknown','absent','fixture'),(2,'business_list','b','','t','c','success','unknown','unknown','absent','fixture')")
+  sqlite.exec("INSERT INTO platform_legacy_query_alias(old_id,collection_id) VALUES(1,1),(2,2); UPDATE platform_legacy_alias_sequence SET high_water=2 WHERE namespace='query'")
+  statements.length=0
   const db = drizzle(sqlite, { schema: targetSchema })
   const input: ProcessTargetInput = { collectionId: 2, position: { sequenceNo: 1, positionState: 'unknown' }, row: { sequenceNo: 1, relationKey: ' A ', status: '退回', rawFields: { year: ' 2028 ', id: 'A', cszt: '终审通过', rdjb: ' 2 ', personuuid: ' 第四批 ', whpc: ' 2026-2 ', sblx: ' 复核 ' }, sourceText: '原文\n\u0000' }, assignment: { enterpriseId: null, matchBasis: 'none', verificationStatus: 'pending', origin: 'command', actor: { type: 'agent', id: 'test' }, basis: 'explicit test observation', recordedAt: null } }
   return { sqlite, db, input, statements }
@@ -34,7 +26,7 @@ it('keeps business year whitespace unknown while preserving process fields and o
   const { db, sqlite, input } = fixture()
   const result = writeProcessTarget(db, input)
   expect(sqlite.prepare('select business_year,declare_kind,award_batch_label,batch,status from platform_business_projection where version_id=?').get(result.versionId)).toEqual({ business_year: null, declare_kind: 'review', award_batch_label: '第四批', batch: '2026-2', status: '终审通过' })
-  expect(sqlite.prepare('select parsed_year,reconciled_year,stored_status,parsed_status,status_conflict,reconciled_status,source_title_text from platform_business_projection where observation_id=?').get(result.observationId)).toEqual({ parsed_year: 2028, reconciled_year: 2028, stored_status: '退回', parsed_status: '终审通过', status_conflict: 1, reconciled_status: null, source_title_text: ' 2 ' })
+  expect(sqlite.prepare('select parsed_year,reconciled_year,stored_status,parsed_status,status_conflict,reconciled_status,source_title_text from platform_business_projection where observation_id=?').get(result.observationId)).toEqual({ parsed_year: 2028, reconciled_year: 2028, stored_status: null, parsed_status: '终审通过', status_conflict: 0, reconciled_status: '终审通过', source_title_text: ' 2 ' })
   sqlite.close()
 })
 it('rejects unsafe existing record identity without partial writes', () => {
@@ -62,7 +54,7 @@ it('reuses a version across independent observations and rejects changed payload
   }
   const second = writeProcessTarget(db, { ...input, position: { sequenceNo: 2, positionState: 'unknown' }, row: { ...input.row, sequenceNo: 2, status: '终审通过' } })
   expect(second.recordId).toBe(first.recordId); expect(second.versionId).toBe(first.versionId); expect(second.observationId).not.toBe(first.observationId)
-  expect(sqlite.prepare('select status_conflict,reconciled_status from platform_business_projection where observation_id is not null order by observation_id').all()).toEqual([{ status_conflict: 1, reconciled_status: null }, { status_conflict: 0, reconciled_status: '终审通过' }])
+  expect(sqlite.prepare('select status_conflict,reconciled_status from platform_business_projection where observation_id is not null order by observation_id').all()).toEqual([{ status_conflict: 0, reconciled_status: '终审通过' }, { status_conflict: 0, reconciled_status: '终审通过' }])
   expect(statements.filter(sql => /\b(?:platform_query|platform_relation)\b/i.test(sql))).toEqual([])
   expect(sqlite.pragma('foreign_key_check')).toEqual([]); sqlite.close()
 })
@@ -86,7 +78,7 @@ it.each([
   const { db, sqlite, input } = fixture()
   const r = writeProcessTarget(db, { ...input, row: { sequenceNo: 1, relationKey, rawFields: raw } })
   expect(r.recordId).toBeNull(); expect(r.versionId).toBeNull()
-  expect(sqlite.prepare('select identity_state,content_state,key_source,source_relation_key from platform_business_observation').get()).toEqual({ identity_state: identity, content_state: 'unverifiable', key_source: keySource, source_relation_key: relationKey })
+  expect(sqlite.prepare('select identity_state,content_state,key_source,source_relation_key from platform_business_observation').get()).toEqual({ identity_state: identity, content_state: 'unverifiable', key_source: keySource, source_relation_key: relationKey?.trim() ?? null })
   expect(sqlite.prepare('select business_year,parsed_year_kind,basis from platform_business_projection').get()).toEqual({ business_year: null, parsed_year_kind: 'boolean', basis: 'observation_reconciliation' }); sqlite.close()
 })
 it.each([
@@ -101,7 +93,7 @@ it.each([
   // Legacy process reconciliation cannot represent unsafe integer years; fail without normalization.
   const before = sqlite.serialize()
   if (name === 'unsafe') {
-    expect(() => writeProcessTarget(db, { ...input, row: { sequenceNo: 1, relationKey: 'A', rawFields: { id: 'A', year } } })).toThrow('Unrepresentable legacy process year')
+    expect(() => writeProcessTarget(db, { ...input, row: { sequenceNo: 1, relationKey: 'A', rawFields: { id: 'A', year } } })).toThrow('Unrepresentable reconcile integer')
     expect(sqlite.serialize()).toEqual(before)
   } else {
     writeProcessTarget(db, { ...input, row: { sequenceNo: 1, relationKey: 'A', rawFields: { id: 'A', year } } })
@@ -217,7 +209,13 @@ it('refuses different canonical bytes even when a stored hash is forged to match
 })
 it('accepts the last safe observation ID and atomically rejects observation exhaustion', () => {
   const { db, sqlite, input } = fixture()
-  sqlite.exec("insert into platform_business_observation(id,collection_id,sequence_no,position_state,identity_state,content_state,indexed_at) values(9007199254740990,2,100,'unknown','not_indexed','not_indexed',NULL)")
+  // Seed the allocation boundary through an unrelated native source writer.
+  sqlite.exec("INSERT INTO platform_collection(id,interface,query_key,rdjb,queried_at,created_at,status,completeness,provenance_state,parse_state,rule_version) VALUES(3,'recognized_list','boundary','','t','c','success','unknown','unknown','absent','fixture')")
+  // This deliberately preexisting unindexed boundary row only controls the next PK allocation.
+  const guards = sqlite.prepare("SELECT name,sql FROM sqlite_schema WHERE type='trigger' AND tbl_name='platform_business_observation' AND sql LIKE '%BEFORE INSERT%'").all() as {name:string;sql:string}[]
+  for(const guard of guards)sqlite.exec('DROP TRIGGER "'+guard.name+'"')
+  sqlite.exec("insert into platform_business_observation(id,collection_id,sequence_no,position_state,identity_state,content_state,indexed_at) values(9007199254740990,3,100,'unknown','not_indexed','not_indexed',NULL)")
+  for(const guard of guards)sqlite.exec(guard.sql)
   const r = writeProcessTarget(db, input)
   expect(r.observationId).toBe(Number.MAX_SAFE_INTEGER)
   const before = sqlite.serialize()

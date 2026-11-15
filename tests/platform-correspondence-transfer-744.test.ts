@@ -1,3 +1,5 @@
+import { finalEvidenceFixture } from './helpers/final-evidence-fixture'
+import { readPlatformQueryEvidence as readLegacyEvidence } from './helpers/legacy-evidence-oracle'
 import Database from 'better-sqlite3'
 import {execFileSync} from 'node:child_process'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
@@ -5,14 +7,14 @@ import { copyFileSync,readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { beforeAll,beforeEach,afterAll,expect,it } from 'vitest'
 import { processReaderFixture } from './helpers/process-target-734'
-import { writeProcessTarget } from '../lib/platform/process-target-writer'
-import { writeRecognizedTarget } from '../lib/platform/recognized-target-writer'
-import * as s from '../db/schema'
-import {getTargetBusinessProcess} from '../server/utils/platform-business-processes-target'
-import {getTargetRecognizedRecord} from '../server/utils/platform-recognized-target'
+import { writeProcessTarget } from '../upgrade/frozen/process-target-writer'
+import { writeRecognizedTarget } from '../upgrade/frozen/recognized-target-writer'
+import * as s from '../upgrade/legacy-schema'
+import {getTargetBusinessProcess} from '../upgrade/frozen/server/platform-business-processes-target'
+import {getTargetRecognizedRecord} from '../upgrade/frozen/server/platform-recognized-target'
 import {readTargetRelationEvidenceDisplay} from '../server/utils/platform-relation-evidence-display-target'
 import {readTargetPlatformEvidence} from '../lib/platform/target-evidence-read'
-import {targetSchema} from '../lib/platform/target-schema'
+import {targetSchema} from '../upgrade/target-schema'
 import {createOfflineSnapshot} from '../upgrade/offline-snapshot'
 import {projectionManifest} from '../upgrade/projections'
 import {emptyProcessReaderFixture} from './helpers/process-target-734'
@@ -115,17 +117,23 @@ it('transfers a normally empty target copy without manufacturing correspondence 
   try{expect(t.prepare('SELECT * FROM record_correspondence').all()).toEqual([]);expect(t.prepare('SELECT * FROM record_correspondence_audit').all()).toEqual([]);expect(t.pragma('foreign_key_check')).toEqual([])}finally{t.close()}
  }finally{empty.close()}
 })
-it('reads original evidence and display without source receipt proof while preserving missing and uncaptured facts',()=>{
- const before=readTargetRelationEvidenceDisplay(f.db,[1,7,8].map(relationId=>({relationId})))
- const evidence=readTargetPlatformEvidence(f.db,{queryId:11,field:'legacyProvenance'})
- transferCorrespondence({source,target,runId:'h1c'})
- const t=new Database(target),db=drizzle(t,{schema:targetSchema})
+it('reads original evidence and display without source receipt proof while preserving missing and uncaptured facts',async()=>{
+ const native=finalEvidenceFixture(await processReaderFixture())
+ const selections=[1,7,8].map(relationId=>({relationId}))
  try{
-  t.exec("DELETE FROM platform_migration_checkpoint WHERE run_id IN (SELECT run_id FROM platform_migration_run WHERE transform_version='t04-collection-v1'); DELETE FROM platform_migration_run WHERE transform_version='t04-collection-v1'")
-  expect(readTargetRelationEvidenceDisplay(db,[1,7,8].map(relationId=>({relationId})))).toEqual(before)
-  expect(readTargetPlatformEvidence(db,{queryId:11,field:'legacyProvenance'})).toEqual(evidence)
+  const before=readTargetRelationEvidenceDisplay(native.db,selections)
+  const evidence=readTargetPlatformEvidence(native.db,{queryId:11,field:'legacyProvenance'})
+  expect(evidence).toEqual(readLegacyEvidence(native.old,{queryId:11,field:'legacyProvenance'}))
+  const archives=native.t.prepare('SELECT id,storage_class,sha256,byte_length,hex(bytes) bytes FROM platform_archive_value ORDER BY id').all()
+  expect(native.t.prepare("SELECT count(*) n FROM platform_migration_run WHERE transform_version='t04-collection-reconcile-slot-v2'").get()).toEqual({n:1})
+  native.t.exec("DELETE FROM platform_migration_checkpoint WHERE run_id IN (SELECT run_id FROM platform_migration_run WHERE transform_version='t04-collection-reconcile-slot-v2'); DELETE FROM platform_migration_run WHERE transform_version='t04-collection-reconcile-slot-v2'")
+  expect(native.t.prepare("SELECT count(*) n FROM platform_migration_run WHERE transform_version='t04-collection-reconcile-slot-v2'").get()).toEqual({n:0})
+  expect(readTargetRelationEvidenceDisplay(native.db,selections)).toEqual(before)
+  expect(readTargetPlatformEvidence(native.db,{queryId:11,field:'legacyProvenance'})).toEqual(evidence)
   expect(before.sources.get(8)).toMatchObject({rawFields:null,sourceText:null})
- }finally{t.close()}
+  expect(native.t.prepare('SELECT id,storage_class,sha256,byte_length,hex(bytes) bytes FROM platform_archive_value ORDER BY id').all()).toEqual(archives)
+  expect(native.t.pragma('foreign_key_check')).toEqual([])
+ }finally{native.close()}
 })
 
 it('runs the offline command and saves the actual table catalog FK counts and completion receipt',()=>{

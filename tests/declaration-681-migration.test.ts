@@ -4,6 +4,8 @@ import { join } from 'node:path'
 import { createServer } from 'node:http'
 import { createApp, defineEventHandler, toNodeListener } from 'h3'
 import { initializeDb, schema } from '../upgrade/legacy-client'
+import { drizzle } from 'drizzle-orm/better-sqlite3'
+import * as currentSchema from '../db/schema'
 import { getParse105 } from '../server/utils/parse-maintenance-105'
 import { listStoredFiles } from '../server/utils/stored-files'
 
@@ -24,7 +26,8 @@ it('#681 migrates legacy descriptors additively and serves durable identities wi
   const db = initializeDb({ dbPath })
   const changes = () => db.$client.prepare('select total_changes() as n').get()
   const before = changes()
-  const server = createServer(toNodeListener(createApp().use(defineEventHandler(() => ({ state: getParse105(db, f.id), list: listStoredFiles(db, {}).rows })))) )
+  const currentDb = drizzle(db.$client, { schema: currentSchema })
+  const server = createServer(toNodeListener(createApp().use(defineEventHandler(() => ({ state: getParse105(currentDb, f.id), list: listStoredFiles(currentDb, {}).rows })))) )
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
   try {
     const address = server.address()

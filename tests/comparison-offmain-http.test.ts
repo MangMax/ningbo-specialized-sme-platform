@@ -30,7 +30,7 @@ it('whole summary keeps an independent HTTP probe responsive and preserves SQL f
 const require=createRequire(${JSON.stringify(resolve(root, 'package.json'))}),h=require('h3');
 Object.assign(globalThis,h,{defineRouteMeta:()=>{},defineNitroPlugin:f=>f,useRuntimeConfig:()=>({apiToken:'synthetic-m3',curatedPath:${JSON.stringify(curated)},reconcilePath:${JSON.stringify(reconcile)}})});
 const {createJiti}=require(${JSON.stringify(jiti)}),load=createJiti(${JSON.stringify(resolve(root, 'package.json'))},{alias:{'@db':${JSON.stringify(resolve(root, 'db/index.ts'))},'~~':${JSON.stringify(root)}}});
-const {initializeDb}=await load.import(${JSON.stringify(resolve(root, 'db/client.ts'))}),writer=initializeDb({readOnly:false});
+const {initializeDb}=await load.import(${JSON.stringify(resolve(root, 'db/client.ts'))}),writer=initializeDb({create:true,readOnly:false});
 const {startRosterApi}=await load.import(${JSON.stringify(resolve(root, 'tests/helpers/roster-http-server.ts'))}),imports=await startRosterApi({db:writer,apiToken:'synthetic-m3'});
 const hooks={};(await load.import(${JSON.stringify(resolve(root, 'server/plugins/enterprise-read.ts'))})).default({hooks:{hook:(n,f)=>hooks[n]=f}});
 const router=h.createRouter();for(const [path,file] of [['/api/comparison','comparison.get.ts'],['/api/platform/queries/:queryId/evidence','platform/queries/[queryId]/evidence.get.ts'],['/api/roster/recognitions','roster/recognitions.get.ts'],['/api/roster/differences','roster/differences.get.ts'],['/api/roster/enterprises','roster/enterprises.get.ts']])router.get(path,(await load.import(${JSON.stringify(resolve(root, 'server/api'))}+'/'+file)).default);
@@ -91,7 +91,7 @@ process.on('SIGTERM',async()=>{server.closeAllConnections();await new Promise(r=
     const holder = await lock(850)
     let complete = false
     const pending = read().then(r => { complete = true; return r })
-    await waitEntry('source')
+    await waitEntry('admission')
     // Production health itself reads this locked DB. Its existing smoke query
     // is not an independent event-loop probe; use an unchanged static resource
     // in the bundled lane. Source RED/GREEN retains the independent health route.
@@ -154,7 +154,10 @@ process.on('SIGTERM',async()=>{server.closeAllConnections();await new Promise(r=
     expect(entries().filter(e => e.kind === 'source')).toMatchObject([{ pid: native.pid }]); expect(entries().filter(e => e.kind === 'source')).toHaveLength(1)
     rmSync(join(dir, 'repair-curation')); rmSync(curated)
     clear(); const busy = await lock(5800); expect(await read()).toEqual(originalBusy); expect(existsSync(join(dir, 'released'))).toBe(false)
-    expect(entries().filter(e => e.kind === 'source')).toHaveLength(1); expect(entries().find(e => e.kind === 'source').pid).not.toBe(app.pid)
+    // Admission itself is the first native read blocked by the exclusive lock.
+    expect(entries().filter(e => e.kind === 'admission')).toHaveLength(1)
+    expect(entries().find(e => e.kind === 'admission').pid).not.toBe(app.pid)
+    expect(entries().filter(e => e.kind === 'source')).toHaveLength(0)
     if (busy.exitCode === null) await once(busy, 'exit')
     clear(); writeFileSync(join(dir, 'exit-on-read'), '')
     // Exit marker is observed before the native invocation, an infrastructure fault.
@@ -174,8 +177,8 @@ process.on('SIGTERM',async()=>{server.closeAllConnections();await new Promise(r=
     // native read, and subsequent recognition/REST/enterprise work survives.
     clear(); const cancelHolder = await lock(850), activeAbort = new AbortController(), queuedAbort = new AbortController()
     const cancelled = fetch(base + '/api/comparison?view=summary', { signal: activeAbort.signal }).then(() => null, error => error)
-    await waitEntry('source')
-    const activePid = entries().find(e => e.kind === 'source').pid
+    await waitEntry('admission')
+    const activePid = entries().find(e => e.kind === 'admission').pid
     const queuedCancel = fetch(base + '/api/comparison?view=summary', { signal: queuedAbort.signal }).then(() => null, error => error)
     const mixed = ['/api/roster/recognitions', '/api/roster/differences', '/api/roster/enterprises'].map(path => fetch(base + path))
     queuedAbort.abort(); activeAbort.abort()

@@ -44,7 +44,8 @@ function fixture() {
     }
     const native = submitNativePlatformQuery(db, input)
     const out = listPlatformQueries(db, { queryId: native.queryId, includeRawResponse: true }).rows[0]!
-    return { ...out.query, relations: out.relations.map(row => ({ ...row, queryId: native.queryId })) }
+    if (out.query.rawResponse === undefined || out.query.collectionEvidence === undefined) throw new Error('Fixture query omitted requested raw response')
+    return { ...out.query, rawResponse: out.query.rawResponse, collectionEvidence: out.query.collectionEvidence, interface: interfaceName, status, relations: out.relations.map(row => ({ ...row, queryId: native.queryId })) }
   }
   const save = (key: string, operations: CorrespondenceOperation[]) => {
     const request = { idempotencyKey: key, sourceIdentity: `synthetic/${key}`, actor: { type: 'user' as const, id: 'synthetic-reviewer' }, basis: 'specific original row checked', ruleId: 'manual', ruleVersion: '1', operations }
@@ -91,7 +92,7 @@ describe('record comparison public read service', () => {
     const unproved = getRecordComparison(f.db, input)
     expect(unproved.counts.platformWithoutOfficialRows).toBe(0)
     expect(unproved.currentSourceConsistency.recognizedObservations[0]?.qualification).toBe('not_comparable')
-    const proof = { officialScopes: [{ proofId: 'official-scope-1', sourceDocumentIds: [f.doc.id], titleCode: 'specialized_sme', fromYear: 2020, throughYear: 2026, enterpriseIds: [e.id], verifiedAt: '2026-10-18T01:00:00Z' }], currentScopes: [{ proofId: 'same-version-1', queryId: query.id, exportBatchId: batch.id, titleCode: 'specialized_sme', querySourceFingerprint: queryProofFingerprint(query), exportSha256: batch.sha256, scopeEquivalent: true as const, versionEquivalent: true as const, verifiedAt: '2026-10-18T01:00:00Z' }] }
+    const proof = { officialScopes: [{ proofId: 'official-scope-1', sourceDocumentIds: [f.doc.id], titleCode: 'specialized_sme', fromYear: 2020, throughYear: 2026, enterpriseIds: [e.id], verifiedAt: '2026-10-18T01:00:00Z' }], currentScopes: [{ proofId: 'same-version-1', queryId: query.id, exportBatchId: batch.id, titleCode: 'specialized_sme', querySourceFingerprint: queryProofFingerprint({...query,lastCollectedAt:null}), exportSha256: batch.sha256, scopeEquivalent: true as const, versionEquivalent: true as const, verifiedAt: '2026-10-18T01:00:00Z' }] }
     const out = getRecordComparison(f.db, input, proof)
     expect(out.counts.platformWithoutOfficialRows, JSON.stringify(out.platformWithoutOfficial)).toBe(1)
     expect(out.platformWithoutOfficial.rows.find(row => row.relation.id === positive.id)).toMatchObject({ relation: { id: positive.id }, qualification: 'platform_without_official', proofId: 'official-scope-1' })
@@ -109,7 +110,7 @@ describe('record comparison public read service', () => {
     const batch = f.db.insert(schema.platformExportBatch).values({ titleCode: 'specialized_sme', year: 2026, collectedOn: '2026-10-18', originalFilename: 'same-version.xlsx', sha256: 'd'.repeat(64), importStatus: 'imported' }).returning().get()
     const matching = f.db.insert(schema.platformExportRow).values({ batchId: batch.id, sourceRowNo: 1, usccRaw: e.usccNorm, nameRaw: 'Paired' }).returning().get()
     const extra = f.db.insert(schema.platformExportRow).values({ batchId: batch.id, sourceRowNo: 2, usccRaw: '91330211255994474B', nameRaw: 'Only export' }).returning().get()
-    const proof = { officialScopes: [], currentScopes: [{ proofId: 'same-version-2', queryId: q.id, exportBatchId: batch.id, titleCode: 'specialized_sme', querySourceFingerprint: queryProofFingerprint(q), exportSha256: batch.sha256, scopeEquivalent: true as const, versionEquivalent: true as const, verifiedAt: '2026-10-18T01:00:00Z' }] }
+    const proof = { officialScopes: [], currentScopes: [{ proofId: 'same-version-2', queryId: q.id, exportBatchId: batch.id, titleCode: 'specialized_sme', querySourceFingerprint: queryProofFingerprint({...q,lastCollectedAt:null}), exportSha256: batch.sha256, scopeEquivalent: true as const, versionEquivalent: true as const, verifiedAt: '2026-10-18T01:00:00Z' }] }
     const out = getRecordComparison(f.db, f.input([q.id], [batch.id]), proof)
     expect(out.currentSourceConsistency.recognizedObservations).toMatchObject([{ recognized: { id: recognized.id }, exportRows: [{ id: matching.id }], qualification: 'matched' }])
     expect(out.currentSourceConsistency.exportObservations).toMatchObject([{ exportRow: { id: matching.id }, qualification: 'matched' }, { exportRow: { id: extra.id }, qualification: 'export_only' }])
@@ -227,7 +228,7 @@ describe('record comparison public read service', () => {
   it('case 7 leaves missing event year and unverified identity unresolved without guessing from names', () => {
     const f = fixture(), e = f.makeEnterprise('Same Name', '91330211255994463V'), event = f.makeEvent(e.id, 'award', 2024, 1)
     f.db.update(schema.recordEvent).set({ year: null }).run()
-    const q = f.makeQuery('apply_list', e.usccNorm!, undefined, undefined, undefined, [{ sequenceNo: 1, enterpriseId: null, usccRaw: null, status: '终审通过', declareKind: null, year: 2024, rawFields: undefined, matchBasis: null ? 'uscc' : 'none', verificationStatus: null ? 'confirmed' : 'pending' }]), candidate = q.relations[0]!
+    const q = f.makeQuery('apply_list', e.usccNorm!, undefined, undefined, undefined, [{ sequenceNo: 1, enterpriseId: null, usccRaw: null, status: '终审通过', declareKind: null, year: 2024, rawFields: undefined, matchBasis: 'none', verificationStatus: 'pending' }]), candidate = q.relations[0]!
     const out = getRecordComparison(f.db, f.input([q.id]))
     expect(out.rows[0]).toMatchObject({ event: { id: event.id, year: null }, classification: 'unresolved' })
     expect(out.rows[0]?.reasons).toContain('official_event_year_unknown')
@@ -238,7 +239,7 @@ describe('record comparison public read service', () => {
   })
   it('pending business and apply rows remain visible at their original relation grain', () => {
     const f = fixture()
-    const business = f.makeQuery('business_list', 'unidentified', undefined, undefined, undefined, [{ sequenceNo: 1, enterpriseId: null, usccRaw: null, status: '终审通过', declareKind: 'apply', year: 2024, rawFields: undefined, matchBasis: null ? 'uscc' : 'none', verificationStatus: null ? 'confirmed' : 'pending' }]), apply = f.makeQuery('apply_list', 'unidentified', undefined, undefined, undefined, [{ sequenceNo: 1, enterpriseId: null, usccRaw: 'bad-uscc', status: '待审核', declareKind: 'apply', year: 2025, rawFields: undefined, matchBasis: null ? 'uscc' : 'none', verificationStatus: null ? 'confirmed' : 'pending' }])
+    const business = f.makeQuery('business_list', 'unidentified', undefined, undefined, undefined, [{ sequenceNo: 1, enterpriseId: null, usccRaw: null, status: '终审通过', declareKind: 'apply', year: 2024, rawFields: undefined, matchBasis: 'none', verificationStatus: 'pending' }]), apply = f.makeQuery('apply_list', 'unidentified', undefined, undefined, undefined, [{ sequenceNo: 1, enterpriseId: null, usccRaw: 'bad-uscc', status: '待审核', declareKind: 'apply', year: 2025, rawFields: undefined, matchBasis: 'none', verificationStatus: 'pending' }])
     const first = business.relations[0]!
     const second = apply.relations[0]!
     const out = getRecordComparison(f.db, f.input([business.id, apply.id]))

@@ -59,7 +59,11 @@ export function readImportReceipt(db: Db, action: ImportReceiptAction, args: Rec
     catch(error) {if(error instanceof ImportReceiptError) throw error; throw new ImportReceiptError(500,'internal_error','Exact snapshot read failed')}
   }
   const redact = importReceiptRedactor(db)
-  return db.transaction(() => redact(readImportReceiptSnapshot(db, action, args)))
+  return db.transaction(() => {
+    const result = redact(readImportReceiptSnapshot(db, action, args))
+    if (!qualificationObject(result)) throw new ImportReceiptError(500, 'internal_error', 'Receipt object unavailable')
+    return result
+  })
 }
 
 function qualificationObject(value: unknown): value is Record<string, unknown> {
@@ -338,6 +342,7 @@ function readMergeSnapshotProjection(db:Db,args:ImportItemsRead) {
   const bounded=z.object({snapshot:z.object({titleCode:z.string().refine(value=>value.length<=4000),source:z.string().refine(value=>value.length<=4000),nameRaw:z.string().refine(value=>value.length<=4000).nullable(),usccRaw:z.string().refine(value=>value.length<=4000).nullable(),district:z.string().refine(value=>value.length<=4000).nullable(),qualityFlags:z.array(z.string().refine(value=>value.length<=4000)).nullable()}).optional()}).safeParse(parsed)
   if(!bounded.success) throw new ImportReceiptError(413,'field_limit','Stored snapshot field exceeds 4000 UTF16 characters')
   const redacted=importReceiptRedactor(db)(parsed)
+  if(!qualificationObject(redacted)) throw new ImportReceiptError(500,'internal_error','Snapshot object unavailable')
   const finalBytes=Buffer.byteLength(JSON.stringify(redacted))
   if(finalBytes>maxBytes) throw new ImportReceiptError(413,'response_limit','Redacted snapshot projection exceeds maxBytes',finalBytes)
   return redacted

@@ -177,7 +177,7 @@ it('same natural identity replays idempotently, conflicting archive cannot mutat
   expect((await client.commit(conflicting as never)).status).toBe('failed')
   const failed = archive(); failed.queriedAt = '2025-06-01T00:00:00Z'; failed.completedAt = '2025-06-01T00:01:00Z'
   // Synthetic storage failure at the write boundary; outcome is checked through public reads.
-  db.$client.exec("CREATE TRIGGER synthetic_import_failure BEFORE INSERT ON platform_relation BEGIN SELECT RAISE(ABORT, 'synthetic transaction failure'); END")
+  db.$client.exec("CREATE TRIGGER synthetic_import_failure BEFORE INSERT ON platform_business_observation BEGIN SELECT RAISE(ABORT, 'synthetic transaction failure'); END")
   try { expect((await client.commit(request(failed, 'rollback') as never)).status).toBe('failed') }
   finally { db.$client.exec('DROP TRIGGER synthetic_import_failure') }
   const after = await (await fetch(`${api.baseUrl}/api/platform/queries?interface=recognized_list`)).json()
@@ -226,8 +226,9 @@ it('MCP history and enterprise detail match REST, preserve cross-source identica
   const comparisonQuery = comparison.rows.find((r: any) => r.enterpriseId === enterpriseId).platform.queries.find((q: any) => q.queriedAt === evidence.queriedAt)
   expect(comparisonQuery.collectionEvidence).toEqual(evidence)
   expect(comparisonQuery.relations[0]).toMatchObject({ rawFields: evidence.rows[0], sourceRdjb: '1', sourcePage: 1 })
-  const legacy = { ...request(evidence, 'legacy-same-id'), payload: { platformQueries: [{ interface: 'business_list' as const, queryKey: USCC, rdjb: '1', queriedAt: evidence.queriedAt, status: 'success' as const, relations: [{ sequenceNo: 1, relationKey: evidence.rows[0]!.id, usccRaw: USCC, nameRaw: '合成企业' }] }] } }
-  expect((await client.commit(legacy)).status).toBe('committed')
+  const legacy = { ...request(evidence, 'legacy-same-id'), payload: { platformQueries: [{ interface: 'business_list' as const, queryKey: USCC, rdjb: '1', queriedAt: evidence.queriedAt, status: 'success' as const, rawResponse: JSON.stringify(evidence.rows), relations: [{ sequenceNo: 1, relationKey: evidence.rows[0]!.id, usccRaw: USCC, nameRaw: '合成企业' }] }] } }
+  const legacySaved = await client.commit(legacy)
+  expect(legacySaved.status, JSON.stringify(legacySaved)).toBe('committed')
   const read = await (await fetch(`${api.baseUrl}/api/platform/queries?enterpriseId=${enterpriseId}`)).json()
   expect(read.rows.flatMap((q: any) => q.relations).filter((r: any) => r.relationKey === 'same-1')).toHaveLength(3)
   expect(new Set(read.rows.map((q: any) => q.query.interface))).toEqual(new Set(['business_list', 'recognized_list']))

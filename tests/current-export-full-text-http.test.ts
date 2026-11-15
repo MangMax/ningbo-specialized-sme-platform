@@ -1,11 +1,11 @@
-import { afterAll, beforeAll, expect, it } from 'vitest'
+import { afterAll, beforeAll, beforeEach, expect, it } from 'vitest'
 import { currentExport409Fixture } from './helpers/current-export-409'
 
 const f = currentExport409Fixture()
 beforeAll(() => f.start(), 60000)
 afterAll(() => f.close())
+beforeEach(() => f.resetBusiness(), 60000)
 it('publishes and downloads complete multiple-source text through the HTTP export job', async () => {
-  await f.resetBusiness()
   f.candidate('synthetic-full-text')
   const attachment = 'literal first source\n'.repeat(24) + 'literal second source😀'.repeat(90)
   f.db.$client.prepare('update record_evidence set attachment=?').run(attachment)

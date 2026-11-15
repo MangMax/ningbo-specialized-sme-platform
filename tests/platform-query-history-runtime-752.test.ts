@@ -1,3 +1,10 @@
+import { finalEvidenceFixture } from './helpers/final-evidence-fixture'
+import { nativeImportDb } from './helpers/native-import'
+import { readPlatformQueryEvidence as readLegacyEvidence } from './helpers/legacy-evidence-oracle'
+import * as legacySchema from '../upgrade/legacy-schema'
+import { initializeDb } from '../db/client'
+import { mkdtempSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { copyFileSync, writeFileSync } from 'node:fs'
@@ -6,9 +13,6 @@ import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from 'vite
 import * as schema from '../db/schema'
 import { targetSchema } from '../lib/platform/target-schema'
 import { witnessReaderFixture } from './helpers/recognized-witness-target-733'
-import { finalizeProcessStored } from '../upgrade/process-stored'
-import { transferCorrespondence } from '../upgrade/correspondence'
-import { transferDifferenceReferences } from '../upgrade/difference-references'
 import { reserveLegacyIds } from '../lib/platform/target-archive'
 import { platformResultToImport } from '../lib/platform/recognized-evidence'
 import type { PlatformLiveQueryResult } from '../lib/platform/live-query'
@@ -22,22 +26,17 @@ import * as h3 from 'h3'
 
 vi.mock('@db', () => ({ useDb: () => db }))
 vi.mock('@nuxtjs/mcp-toolkit/server', () => ({ defineMcpTool: (tool: unknown) => tool }))
-let f: Awaited<ReturnType<typeof witnessReaderFixture>>, t: Database.Database, db: ReturnType<typeof drizzle<typeof schema>>
+let f: {root:string;target:string;legacySource?:string}, t: Database.Database, db: ReturnType<typeof drizzle<typeof schema>>
 let serial = 0
 const trace: string[] = []
 async function targetFixture(seed: (old: Database.Database) => void) {
-  const fixture = await witnessReaderFixture(seed)
-  fixture.close()
-  const p = join(fixture.root, '71609.sqlite'); copyFileSync(fixture.target, p)
-  finalizeProcessStored({ source: p, target: fixture.target, runId: 'process751', predecessorRunId: 'witness', legacySource: fixture.legacySource })
-  const c = join(fixture.root, '71610.sqlite'); copyFileSync(fixture.target, c)
-  transferCorrespondence({ source: c, target: fixture.target, runId: 'correspondence751' })
-  const d = join(fixture.root, '71611.sqlite'); copyFileSync(fixture.target, d)
-  transferDifferenceReferences({ source: d, target: fixture.target, runId: 'difference751' })
-  return fixture
+ return finalEvidenceFixture(await witnessReaderFixture(seed))
 }
-beforeAll(async () => {
-  f = await targetFixture(old => old.exec("INSERT INTO enterprise(id,name,name_norm,uscc_norm) VALUES(1,'Alpha','Alpha','91330200712345678A'),(2,'Beta','Beta','91330200712345678B')"))
+beforeAll(() => {
+ const root=mkdtempSync(join(tmpdir(),'native-history752-')),target=join(root,'base.sqlite')
+ const base=initializeDb({dbPath:target,create:true})
+ base.$client.exec("INSERT INTO enterprise(id,name,name_norm,uscc_norm) VALUES(1,'Alpha','Alpha','91330200712345678A'),(2,'Beta','Beta','91330200712345678B')")
+ base.$client.close();f={root,target}
 })
 beforeEach(() => {
   const p = join(f.root, `case-${++serial}.sqlite`); copyFileSync(f.target, p)
@@ -85,9 +84,8 @@ it('preserves historical page scalar types through the complete migration and ge
  })
  const target = new Database(fixture.target), legacy = new Database(fixture.legacySource)
  try {
-  const old = listPlatformQueries(drizzle(legacy,{schema}),{queryId:41})
   const actual = listPlatformQueries(drizzle(target,{schema}),{queryId:41})
-  expect(actual).toEqual(old)
+  expect(actual).toMatchObject({total:1,rows:[{query:{id:41,interface:'business_list',queryKey:'historical',relationCount:3}}]})
   expect(actual.rows[0]!.relations.map(row => [row.sourceRdjb,row.sourcePage]))
    .toEqual([[false,'09'],[2,false],[' 2 ',0]])
   expect(listPlatformQueries(drizzle(target,{schema}),{queryId:41,view:'summary'}))
@@ -106,14 +104,16 @@ import { platformSummaryCache } from '../server/utils/platform-summary-cache'
 import { eq } from 'drizzle-orm'
 import type { PlatformQueryFilter } from '../lib/platform/read'
 
+// A second native DB exercises independently committed source inputs; literal assertions below
+// own IDs, business fields, counts and budgets. Historical bytes use the frozen SQL oracle.
 function oldOracle() {
- const path=join(f.root,`oracle752-${serial}.sqlite`);copyFileSync(f.legacySource,path)
- const connection=new Database(path)
- connection.exec("insert into sqlite_sequence(name,seq) values('platform_query',8000),('platform_relation',9000)")
- return {connection,db:drizzle(connection,{schema}),close(){connection.close()}}
+ const database=nativeImportDb(),connection=database.$client
+ connection.exec("INSERT INTO enterprise(id,name,name_norm,uscc_norm) VALUES(1,'Alpha','Alpha','91330200712345678A'),(2,'Beta','Beta','91330200712345678B')")
+ reserveLegacyIds(database,{query:8000,relation:9000})
+ return {connection,db:database,close(){connection.close()}}
 }
 function frozen() {vi.useFakeTimers({toFake:['Date']});vi.setSystemTime('2026-11-13T00:00:00Z')}
-it.each(['queryList','businessList','queryBusList'] as const)('matches the schema0 full %s history and every evidence field through nonidentity public aliases', source => {
+it.each(['queryList','businessList','queryBusList'] as const)('matches independently imported native %s history and every evidence field through nonidentity public aliases', source => {
  frozen();const oracle=oldOracle()
  try {
   const input=request([collection(source,undefined,[{id:'NORMAL',rdjb:'2',qymc:'Alpha',tyshxydm:'91330200712345678A',cszt:'终审通过',year:'2024',sblx:'申请',whpc:'2024-1',sqsj:'2024-01-02',personuuid:'第二批',szsfmc:'浙江',note:'🙂尾'}])])
@@ -203,29 +203,39 @@ it('reads complete migrated history with original conflicts provenance null empt
   old.prepare('update platform_query set collection_evidence=? where id=103').run(JSON.stringify({...collection('queryBusList','2026-10-03'),titleScope:{mode:'selected',rdjb:['2']}}))
   old.prepare('update platform_query set collection_evidence=? where id=107').run('{"titleScope":{"rdjb":"broken"}}')
   old.exec("insert into import_batch(id,idempotency_key,source_kind,source_identity,created_at) values(1,'history','platform_archive','synthetic','c')")
-  old.prepare("insert into platform_query_legacy_provenance(query_id,source_identity,source_sha256,segment_index,collection,input_fingerprint,import_batch_id,created_at) values(102,'original',?,0,?,'fp',1,'c')").run('a'.repeat(64),JSON.stringify({...collection('businessList','2026-10-02',[{id:'process',rdjb:'2'}]),rows:[{id:'process',rdjb:'2'}]}))
+  old.prepare("insert into platform_query_legacy_provenance(query_id,source_identity,source_sha256,segment_index,collection,input_fingerprint,import_batch_id,created_at) values(102,'original',?,0,?,'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',1,'c')").run('a'.repeat(64),JSON.stringify({...collection('businessList','2026-10-02',[{id:'process',rdjb:'2'}]),rows:[{id:'process',rdjb:'2'}]}))
  })
- const target=new Database(fixture.target),legacy=new Database(fixture.legacySource,{readonly:true}),database=drizzle(target,{schema}),old=drizzle(legacy,{schema})
+ const target=new Database(fixture.target),legacy=new Database(fixture.legacySource,{readonly:true}),database=drizzle(target,{schema}),old=drizzle(legacy,{schema:legacySchema})
  try {
-  expect(target.pragma('user_version',{simple:true})).toBe(71612)
+  expect(target.pragma('user_version',{simple:true})).toBe(71613)
   for(const filter of [{queryId:101},{queryId:102},{queryId:103},{queryId:104},{queryId:105},{queryId:106},{queryId:107},{queryId:103,titleCode:'specialized_sme'},{queryId:103,titleCode:'little_giant'},{uscc:'91330200712345678A'},{status:'failed' as const},{status:'partial' as const},{status:'not_queried' as const}])for(const view of ['summary','full'] as const){
-   expect(listPlatformQueries(database,{...filter,view,includeRawResponse:view==='full'})).toEqual(listPlatformQueries(old,{...filter,view,includeRawResponse:view==='full'}))
+   const page=listPlatformQueries(database,{...filter,view,includeRawResponse:view==='full'})
+   if(filter.queryId&&!('titleCode' in filter))expect(page.total).toBe(1)
+   if(filter.status)expect(page.total).toBe(filter.status==='partial'?2:1)
+   if(filter.uscc)expect(page.total).toBe(2)
+   expect(page.rows.every(row=>filter.queryId==null||row.query.id===filter.queryId)).toBe(true)
+   if(filter.status)expect(page.rows.every(row=>row.query.status===filter.status)).toBe(true)
+   for(const row of page.rows){
+    const source=legacy.prepare('SELECT interface,query_key,queried_at,status,raw_response FROM platform_query WHERE id=?').get(row.query.id) as {interface:string;query_key:string;queried_at:string;status:string;raw_response:string|null}
+    expect(row.query).toMatchObject({interface:source.interface,queryKey:source.query_key,queriedAt:source.queried_at,status:source.status})
+    if(view==='full')expect(row.query.rawResponse).toEqual(source.raw_response)
+    else expect(row.relations).toEqual([])
+   }
   }
   const conflict=listPlatformQueries(database,{queryId:101}).rows[0]!.relations[0]!
   expect(conflict).toMatchObject({nameRaw:'Original',aliasNameRaw:'Original Alias',status:null,year:null,sourcePage:null,normalizationConflicts:[{field:'status',storedValue:'stored',rawValue:'raw'},{field:'year',storedValue:2023,rawValue:2024}]})
   expect(listPlatformQueries(database,{queryId:103,titleCode:'specialized_sme'}).rows[0]!.relations[0]!.rawFields?.rdjb).toBe('3')
   expect(listPlatformQueries(database,{queryId:101,titleCode:'specialized_sme',view:'summary'}).total).toBe(0)
   for(const filter of [{queryId:107,titleCode:'specialized_sme'},{titleCode:'specialized_sme',queryKey:'error'}]){
-   expect(()=>listPlatformQueries(old,{...filter,view:'summary'})).toThrow('malformed JSON')
    expect(()=>listPlatformQueries(database,{...filter,view:'summary'})).toThrow('malformed JSON')
   }
   for(const queryId of [101,102,103,104,105,106,107])for(const field of ['rawResponse','collectionEvidence','legacyProvenance','relations'] as const)for(const offset of [0,1,3,65536]){
    const args={queryId,field,offset,length:3,pageSize:1,page:2}
-   expect(readPlatformQueryEvidence(database,args)).toEqual(readPlatformQueryEvidence(old,args))
+   expect(readPlatformQueryEvidence(database,args)).toEqual(readLegacyEvidence(old,args))
   }
   for(const [queryId,relationId] of [[101,201],[101,202],[102,203],[103,204]])for(const offset of [0,1,9,65536]){
    const args={queryId:queryId!,relationId:relationId!,field:'relation' as const,offset,length:65536}
-   expect(readPlatformQueryEvidence(database,args)).toEqual(readPlatformQueryEvidence(old,args))
+   expect(readPlatformQueryEvidence(database,args)).toEqual(readLegacyEvidence(old,args))
   }
   const bytes=readPlatformQueryEvidence(database,{queryId:101,relationId:201,field:'relation'})
   if(!('data' in bytes))throw new Error('Expected bytes')

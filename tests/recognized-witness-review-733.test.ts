@@ -4,8 +4,8 @@ import { join } from 'node:path'
 import { expect, it } from 'vitest'
 import { recognizedFixture } from './helpers/recognized-target-732'
 import { finalizeRecognizedWitness } from '../upgrade/recognized-witness'
-import { witnessInstalled } from '../lib/platform/recognized-witness-catalog'
-import { verifyWitnessCollection, verifyWitnessObservation } from '../lib/platform/recognized-witness-write'
+import { witnessInstalled } from '../upgrade/frozen/recognized-witness-catalog'
+import { verifyWitnessCollection, verifyWitnessObservation } from '../upgrade/frozen/recognized-witness-write'
 
 async function fixture(rdjb: unknown = '2') {
   const evidence = JSON.stringify({ source: 'queryBusList', status: 'success', completeness: 'complete', fullRange: 1, effectiveConditions: { combination: 'and', rddqrq: '2028' }, pages: [{ status: 'success', fetchedCount: 1, rdjb, page: 1 }] })

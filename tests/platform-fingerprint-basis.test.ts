@@ -305,13 +305,13 @@ it.each(['input','revision1','projection','version','alias','target','event-hash
   expect(()=>finalizeFingerprintBasis({source,target:f.target,runId:'basis',predecessorRunId:'scopes',eventSource})).toThrow()
   expect(readFileSync(f.target)).toEqual(before)
 })
-it('recovers the retained DCNXXw original-command counterexample rather than accepting its rejection',()=>{
-  const original='/Users/mang/.t3/acceptance/platform-complete-migration/fingerprint-schema/raw/sqlite-DCNXXw/target.sqlite'
-  const root=mkdtempSync(join(evidence,'retained-')),source=join(root,'predecessor.sqlite'),target=join(root,'target.sqlite')
-  copyFileSync(original+'.71606',source);copyFileSync(original,target)
-  const input:unknown=JSON.parse(readFileSync(original+'.original-command.json','utf8'))
-  const eventSource=eventEvidence(source,target,[{observationId:12,lifecycle:'command',originalInput:input}])
-  expect(finalizeFingerprintBasis({source,target,runId:'basis-continuation',predecessorRunId:'scopes',eventSource}).recoveryManifest).toContainEqual(expect.objectContaining({observationId:12,scheme:'target-command-v1',oldAlias:12}))
+it('recovers a synthetic original-command counterexample with omitted nullable own keys rather than accepting its rejection',()=>{
+  // The external DCNXXw artifact is not a portable fixture. Reproduce its command-presence class locally.
+  const f=fixture();f.t.close();const source=f.target+'.71606';copyFileSync(f.target,source)
+  const input={collectionId:1,position:{sequenceNo:2,positionState:'unknown' as const},row:{sequenceNo:2,rawFields:null},assignment:{matchBasis:'none' as const,verificationStatus:'pending' as const,origin:'command' as const,actor:{type:'agent' as const,id:'original'},basis:'omitted nullable own keys'}}
+  const t=new Database(f.target);t.pragma('foreign_keys=ON');const row=writeApplyTarget(drizzle(t),input);t.close()
+  const eventSource=eventEvidence(source,f.target,[{observationId:row.observationId,lifecycle:'command',originalInput:input}])
+  expect(finalizeFingerprintBasis({source,target:f.target,runId:'basis-continuation',predecessorRunId:'scopes',eventSource}).recoveryManifest).toContainEqual(expect.objectContaining({observationId:row.observationId,scheme:'target-command-v1',oldAlias:row.relationAlias}))
 })
 
 it('verifies revision1 while preserving later assignment revisions and input presence differences',()=>{

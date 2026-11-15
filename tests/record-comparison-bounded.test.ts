@@ -57,7 +57,7 @@ it('pages legacy decision originals while excluding future and unrelated decisio
   const owner = db.insert(schema.enterprise).values({ name: 'Selected', nameNorm: 'Selected' }).returning().get()
   const outside = db.insert(schema.enterprise).values({ name: 'Outside', nameNorm: 'Outside' }).returning().get()
   const q = submitNativePlatformQuery(db, { interface: 'business_list', queryKey: 'selected', rdjb: '2', queriedAt: '2026-10-18T00:00:00Z', rawResponse: '{}' })
-  const base = { titleCode: 'specialized_sme', direction: 'missing_in_miit', status: 'needs_review', recordedAt: '2026-10-18T01:00:00Z' }
+  const base = { titleCode: 'specialized_sme', direction: 'missing_in_miit', status: 'needs_review', recordedAt: '2026-10-18T01:00:00Z' } as const
   const included = db.insert(schema.differenceReason).values({ ...base, enterpriseId: owner.id, reasonNote: 'Original reviewed note' }).returning().get()
   db.insert(schema.differenceReason).values({ ...base, enterpriseId: owner.id, recordedAt: '2026-10-20T00:00:00Z' }).run()
   db.insert(schema.differenceReason).values({ ...base, enterpriseId: outside.id, reasonNote: 'UNRELATED_PRIVATE_NOTE' }).run()

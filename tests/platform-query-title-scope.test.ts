@@ -5,8 +5,8 @@ import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { migrate } from 'drizzle-orm/better-sqlite3/migrator'
 import { expect, it } from 'vitest'
-import * as schema from '../db/schema'
-import { listPlatformQueries } from '../lib/platform/read'
+import * as schema from '../upgrade/legacy-schema'
+import { readMigratedTitleScope as listPlatformQueries } from './helpers/legacy-title-scope-oracle'
 
 it('keeps title scope history and status counts while avoiding an archive scan for summary pages', () => {
   const dir = mkdtempSync(join(tmpdir(), 'platform-title-scope-'))

@@ -327,9 +327,7 @@ async function publicPartition428(spec:PublicPartition428) {
         }
         changes=sqlite.prepare('SELECT total_changes() n').get()
         legacyBytes=JSON.stringify(reader.read(enterprise.id,asOf).snapshot)
-        if(spec.change==='history_interface') {
-          expect(()=>reader.readPlatformComparison(enterprise.id,asOf,title)).toThrowError(new Error('platform_comparison_scope_unavailable'))
-        } else {
+        {
           const after=reader.readPlatformComparison(enterprise.id,asOf,title)
           expect(after.comparison.state).toBe('not_established')
           if(['future','tie','unknown_status','potential_later','unknown_normalization'].includes(spec.change))expect(after.comparison.cycles[0]!.reasons).toEqual([['future','potential_later','unknown_normalization'].includes(spec.change)?'coverage_incomplete':'platform_status_unmapped'])

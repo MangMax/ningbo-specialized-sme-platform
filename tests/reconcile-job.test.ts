@@ -1,9 +1,10 @@
-import {afterEach,afterAll,beforeAll,describe,expect,it,vi} from 'vitest'
+import {afterEach,afterAll,beforeAll,beforeEach,describe,expect,it,vi} from 'vitest'
 import {clearJobSpecs,getJobSpec,jobSpecs,type JobSpec,type JobContext} from '../server/utils/job-runner'
 import {registerJobSpecs} from '../server/utils/job-specs'
 import {reconcileSpec} from '../server/utils/jobs/reconcile'
 import {nativeImportDb} from './helpers/native-import'
 import * as schema from '../db/schema'
+import * as database from '../db'
 import {platformReplay,emptyReply} from './helpers/platform-replay'
 describe('参数校验:错参数在**提交那一刻**就被挡住', () => {
   let spec: JobSpec
@@ -71,9 +72,10 @@ describe('参数校验:错参数在**提交那一刻**就被挡住', () => {
 })
 
 afterAll(()=>clearJobSpecs())
-afterEach(()=>{vi.unstubAllEnvs();vi.unstubAllGlobals()})
+afterEach(()=>{vi.unstubAllEnvs();vi.unstubAllGlobals();vi.restoreAllMocks()})
 it('executes the current job with native read-only collection and reports actual progress',async()=>{
  const db=nativeImportDb()
+ vi.spyOn(database,'useDb').mockReturnValue(db)
  try{
  const e=db.insert(schema.enterprise).values({name:'Native job',nameNorm:'native job',usccNorm:'91330211255994457P'}).returning().get()
  db.insert(schema.record).values({enterpriseId:e.id,source:'miit',titleCode:'specialized_sme'}).run()

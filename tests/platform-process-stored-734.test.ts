@@ -14,7 +14,7 @@ import { rowSnapshot, schemaHash } from '../lib/platform/sqlite-row-cells'
 import { projectionManifest } from '../upgrade/projections'
 import { installProcessStoredSchema } from '../upgrade/process-stored-schema'
 import { writeProcessTarget } from '../upgrade/frozen/process-target-writer'
-import { targetSchema } from '../lib/platform/target-schema'
+import { targetSchema } from '../upgrade/target-schema'
 import { bootstrapFingerprint } from '../upgrade/frozen/fingerprint-bootstrap'
 import { verifyFingerprint } from '../upgrade/frozen/fingerprint-verifier'
 
@@ -263,23 +263,20 @@ it('executes the offline capture and fixed-source replay in fresh processes with
  }
 })
 
-it('rejects incomplete capture barriers even if a completion receipt is restamped to the partial catalog', async () => {
-  const f=await fixture();finalizeProcessStored(f)
-  const t=new Database(f.target)
-  try {
-    for(const sql of [
-      'DROP TRIGGER platform_process_stored_no_delete',
-      'ALTER TABLE platform_business_projection RENAME COLUMN exact_status TO broken_exact_status',
-      "DELETE FROM platform_migration_checkpoint WHERE run_id='process'",
-      "UPDATE platform_migration_run SET target_schema_version='wrong' WHERE run_id='witness'",
-      'PRAGMA user_version=71609',
-    ]){
-      t.exec('BEGIN');t.exec(sql)
-      t.prepare("UPDATE platform_migration_run SET target_schema_version=? WHERE run_id='process'").run(schemaHash(t))
-      expect(()=>processStoredInstalled(t),sql).toThrow()
-      t.exec('ROLLBACK');expect(processStoredInstalled(t)).toBe(true)
-    }
-  } finally {if(t.inTransaction)t.exec('ROLLBACK');t.close()}
+it.each([
+  'DROP TRIGGER platform_process_stored_no_delete',
+  'ALTER TABLE platform_business_projection RENAME COLUMN exact_status TO broken_exact_status',
+  "DELETE FROM platform_migration_checkpoint WHERE run_id='process'",
+  "UPDATE platform_migration_run SET target_schema_version='wrong' WHERE run_id='witness'",
+  'PRAGMA user_version=71609',
+])('offline replay authenticates catalog and receipt mutation %s',async sql=>{
+ const f=await fixture();finalizeProcessStored(f)
+ const target=join(f.root,'mutated.sqlite');copyFileSync(f.target,target)
+ const t=new Database(target)
+ try {t.exec(sql)} finally {t.close()}
+ const before=readFileSync(target)
+ expect(()=>finalizeProcessStored({...f,target})).toThrow()
+ expect(readFileSync(target)).toEqual(before)
 })
 
 it('preserves BOM-prefixed raw TEXT SQL semantics through full migration and replay', async () => {

@@ -12,7 +12,7 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import { schema, useDb } from '../db'
-import { sql } from 'drizzle-orm'
+import { eq, sql } from 'drizzle-orm'
 import type { PlatformLiveQueryResult } from '../lib/platform/live-query'
 import type { RosterImportPlatformQuery } from '../lib/roster-import-client'
 import { updateCredential } from '../server/utils/credential-state'
@@ -136,7 +136,8 @@ async function readSaved(saved: any, index = 0) {
   return { row: history.rows[0], projection: item.detail.canonicalProjection[0] }
 }
 function businessState() {
-  return Object.fromEntries(['platform_query', 'platform_relation', 'platform_business_record', 'platform_business_record_version', 'platform_business_observation', 'record_correspondence', 'record_correspondence_audit', 'difference_reason'].map(table => [table, db.$client.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all()]))
+  const tables = db.$client.prepare("SELECT name FROM sqlite_schema WHERE type='table' AND (name LIKE 'platform_%' OR name IN ('record_correspondence', 'record_correspondence_audit', 'difference_reason')) ORDER BY name").all() as { name: string }[]
+  return Object.fromEntries(tables.map(({ name }) => [name, db.$client.prepare(`SELECT * FROM "${name}" ORDER BY rowid`).all()]))
 }
 
 for (const transport of ['REST', 'MCP'] as const) {
@@ -258,7 +259,7 @@ for (const transport of ['REST', 'MCP'] as const) {
     const before = businessState()
     const saved = await submit(transport, 'commit', request([sibling, again]))
     expect(saved.status).toBe('failed')
-    expect(saved.items.some((i: any) => i.error?.code === 'platform_content_hash_conflict')).toBe(true)
+    expect(saved.items.some((i: any) => i.error?.code === 'platform_content_hash_conflict'), JSON.stringify(saved)).toBe(true)
     expect(businessState()).toEqual(before)
   })
 }
@@ -370,7 +371,8 @@ it('new typed observations leave old string hashes, IDs, explicit decisions and 
   const saved = await submit('REST', 'commit', request([recognizedResultToImport(old)]))
   expect(saved.status).toBe('committed')
   const { projection } = await readSaved(saved)
-  const edge = db.insert(schema.recordCorrespondence).values({ edgeKey: 'issue327-old-edge', type: 'event_recognized', role: 'context_only', relationId: projection.relationId, titleCode: 'specialized_sme', status: 'confirmed', revision: 1, targetIdentity: { synthetic: true }, provenance: { originalRelation: projection.relationId }, sourceFingerprint: 'synthetic-old-fingerprint', ruleId: 'manual', ruleVersion: '1', createdAt: '2026-01-01' }).returning().get()
+  const observation = db.select().from(schema.platformLegacyRelationAlias).where(eq(schema.platformLegacyRelationAlias.oldId, projection.relationId)).get()!
+  const edge = db.insert(schema.recordCorrespondence).values({ edgeKey: 'issue327-old-edge', type: 'event_recognized', role: 'context_only', observationId: observation.observationId, titleCode: 'specialized_sme', status: 'confirmed', revision: 1, targetIdentity: { synthetic: true }, provenance: { originalRelation: projection.relationId }, sourceFingerprint: 'synthetic-old-fingerprint', ruleId: 'manual', ruleVersion: '1', createdAt: '2026-01-01' }).returning().get()
   db.insert(schema.recordCorrespondenceAudit).values({ correspondenceId: edge.id, batchId: saved.batchId, idempotencyKey: 'issue327-old-audit', toStatus: 'confirmed', expectedRevision: 0, resultingRevision: 1, actorType: 'agent', actorId: 'issue327', basis: 'synthetic prior decision', ruleId: 'manual', ruleVersion: '1', evidence: { originalRelation: projection.relationId }, decidedAt: '2026-01-01' }).run()
   const before = businessState()
   const fresh = await collect(e.rawData!.rows[0]!)
@@ -380,7 +382,11 @@ it('new typed observations leave old string hashes, IDs, explicit decisions and 
   expect(newer.projection.recordId).toBe(projection.recordId)
   expect(newer.projection.versionId).not.toBe(projection.versionId)
   const after = businessState()
-  for (const table of Object.keys(before)) expect(after[table]).toEqual(expect.arrayContaining(before[table] as unknown[]))
+  for (const table of Object.keys(before).filter(name => name !== 'platform_legacy_alias_sequence')) expect(after[table]).toEqual(expect.arrayContaining(before[table] as unknown[]))
+  for (const row of before.platform_legacy_alias_sequence as { namespace: string; high_water: number }[]) {
+    const next = (after.platform_legacy_alias_sequence as { namespace: string; high_water: number }[]).find(value => value.namespace === row.namespace)
+    expect(next?.high_water).toBeGreaterThanOrEqual(row.high_water)
+  }
   expect(after.record_correspondence).toEqual(before.record_correspondence)
   expect(after.record_correspondence_audit).toEqual(before.record_correspondence_audit)
 })

@@ -3,6 +3,7 @@ import { withArchiveProcessFacts } from '../../../lib/platform/observation-facts
 import { and, eq, inArray, sql, type SQL } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../legacy-schema'
+type Db = BetterSQLite3Database<typeof schema>
 import { normalizeName, normalizeUscc } from '../../../lib/domain'
 import { normalizePlatformRelation } from '../../../lib/platform/normalization'
 import { legacyRowTitle, type PlatformObservationFact } from '../../../lib/platform/observation-facts'

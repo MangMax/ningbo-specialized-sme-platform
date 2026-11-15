@@ -73,7 +73,7 @@ it('preserves filters counts options pagination and export cells while batching 
   const { dataVersion: expectedVersion, ...expectedSummary } = expected
   expect(actualSummary).toEqual(expectedSummary)
   expect(actualVersion).not.toBe(expectedVersion)
-  const sheets = async (path: string) => { const wb = new ExcelJS.Workbook(); await wb.xlsx.load(readFileSync(path)); return wb.worksheets.map(sheet => ({ name:sheet.name, rows:sheet.getSheetValues() })) }
+  const sheets = async (path: string) => { const wb = new ExcelJS.Workbook(); await wb.xlsx.readFile(path); return wb.worksheets.map(sheet => ({ name:sheet.name, rows:sheet.getSheetValues() })) }
   expect(await sheets(file)).toEqual(await sheets(oracle))
   expect(ids).toHaveLength(140)
 })

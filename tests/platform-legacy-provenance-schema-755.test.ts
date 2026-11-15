@@ -1,3 +1,4 @@
+import { assertFinalPlatformRuntime } from '../db/schema-phase'
 import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { copyFileSync, readFileSync, writeFileSync } from 'node:fs'
@@ -6,13 +7,13 @@ import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { beforeAll, beforeEach, afterAll, expect, it } from 'vitest'
 import * as schema from '../upgrade/legacy-schema'
-import { targetSchema } from '../lib/platform/target-schema'
+import { targetSchema } from '../upgrade/target-schema'
 import { processReaderFixture } from './helpers/process-target-734'
 import { transferCorrespondence } from '../upgrade/correspondence'
 import { transferDifferenceReferences } from '../upgrade/difference-references'
 import { indexLegacyProvenance } from '../upgrade/legacy-provenance'
 import { installLegacyProvenance } from '../upgrade/legacy-provenance-schema'
-import { requireLegacyProvenanceReady } from '../lib/platform/legacy-provenance-catalog'
+import { requireLegacyProvenanceReady } from '../upgrade/legacy-provenance-catalog'
 import { legacyPlatformProvenanceSchema } from '../lib/platform/legacy-provenance'
 import { allocateLegacyAlias, bindArchive, sealArchiveOwner, insertArchiveValue, reserveLegacyIds } from '../upgrade/frozen/target-archive'
 import { writeNewCollectionTarget } from '../upgrade/frozen/collection-target-command'
@@ -153,7 +154,7 @@ it('retains normal new collection synthetic lawful supplement and receipt byte f
   complete('replay755')
   const t=new Database(target),db=drizzle(t,{schema:targetSchema})
   try {
-    expect(()=>ordinary(t,'successor-command-stays-closed')).toThrow('Explicit 71606 target required')
+    expect(()=>assertFinalPlatformRuntime(t)).toThrow('Platform runtime retirement incomplete')
     const added=syntheticOrdinaryOwner(t),id=batch(t,'after755')
     const supplementText=' { "source":"businessList", "status":"no_record", "effectiveConditions":{"uscc":"9133020078041158X6","combination":"and"}, "titleScope":{"mode":"selected","rdjb":["2"]}, "queriedAt":"2026-11-13T00:00:00Z", "completedAt":"2026-11-13T00:01:00Z", "rows":[], "pages":[{"source":"businessList","rdjb":"2","page":1,"status":"success","fetchedCount":0,"declaredTotal":0,"error":null}], "fetchedCount":0, "declaredTotal":0, "completeness":"complete", "fullRange":true, "unfinished":[], "error":null, "limits":{"maxRequests":100,"maxRows":5000,"maxDurationMs":60000,"pageSize":50} } '
     // The original public schema independently proves this is a valid empty

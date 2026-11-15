@@ -112,7 +112,7 @@ it('retains the global runtime guard and requires a distinct completed 71609 sou
  expect(()=>finalizeRecognizedStored(f)).toThrow('Unproven target facts/catalog')
  const after=new Database(f.target);expect(after.serialize()).toEqual(before);after.close()
  copyFileSync(f.source,f.target);finalizeRecognizedStored(f)
- const guarded=new Database(f.target);try{expect(()=>assertExpandRuntime(guarded)).toThrow('W/R cutover required')}finally{guarded.close()}
+ const guarded=new Database(f.target);try{expect(()=>assertExpandRuntime(guarded)).toThrow('Expected historical expand schema')}finally{guarded.close()}
 })
 it('refuses exact title drift during writer reuse and fingerprint certification without repairing it',async()=>{
  const f=await ready();finalizeRecognizedStored(f);const t=new Database(f.target);t.pragma('foreign_keys=ON');const db=drizzle(t,{schema:targetSchema})

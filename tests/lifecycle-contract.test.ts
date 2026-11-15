@@ -292,7 +292,7 @@ describe('平台接口关系记录', () => {
         queriedAt: '2026-10-14T05:01:00.000Z',
         status: 'no_record',
       },
-    ]) submitNativePlatformQuery(db, { ...query, rawResponse: 'Explicit synthetic query outcome' })
+    ] as const) submitNativePlatformQuery(db, { ...query, rawResponse: 'Explicit synthetic query outcome' })
     const rows = listPlatformQueries(db, { pageSize: 200 }).rows.map(item => item.query)
     const failed = rows.find((r) => r.queryKey === 'name:某企业')!
     const empty = rows.find((r) => r.queryKey === 'name:另一企业')!

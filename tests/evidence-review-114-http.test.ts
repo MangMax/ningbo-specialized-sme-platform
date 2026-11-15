@@ -32,7 +32,7 @@ async function decide(scope: ReturnType<typeof coord>, key: string, expectedCurr
   const r = await post(decisionPath, { ...scope, ...cmd(key), action:'replace', expectedCurrentId, ruleVersion:'manual-1',effectiveAt:'2026-10-19T00:00:00Z',decision:{status:'confirmed_reason',reasonCode:'other',reasonNote:'保留用户原始原因',measureCode:'keep_history',measureNote:'保留原措施',verificationStatus:'confirmed'} }); expect(r.status).toBe(200); return r.body
 }
 async function archive(e: ReturnType<typeof seed>, key: string, status = '新事实') {
-  const r = await client.commit({ idempotencyKey:key, sourceKind:'alias_evidence',sourceIdentity:'synthetic/' + key,payload:{platformQueries:[{interface:'business_list',queryKey:e.usccNorm ?? 'name:' + e.nameNorm,rdjb:'2',titleCode:'specialized_sme',queriedAt:new Date().toISOString(),status:'success',relations:[{sequenceNo:1,enterpriseId:e.id,nameRaw:e.name,status}]}]} }); expect(r.status,JSON.stringify(r)).toBe('committed')
+  const r = await client.commit({ idempotencyKey:key, sourceKind:'alias_evidence',sourceIdentity:'synthetic/' + key,payload:{platformQueries:[{interface:'business_list',queryKey:e.usccNorm ?? 'name:' + e.nameNorm,rdjb:'2',titleCode:'specialized_sme',queriedAt:new Date().toISOString(),status:'success',rawResponse:JSON.stringify([{name:e.name,status}]),relations:[{sequenceNo:1,enterpriseId:e.id,nameRaw:e.name,status}]}]} }); expect(r.status,JSON.stringify(r)).toBe('committed')
 }
 async function drain(key: string, limit = 100) { for(let i=0;i<30;i++){ const r = await post(workPath,{...cmd(key+'-'+i),action:'process',limit}); expect(r.status,JSON.stringify(r.body)).toBe(200); if(!r.body.unfinished)return r.body }; throw new Error('drain incomplete') }
 beforeAll(async()=>{
@@ -314,7 +314,7 @@ describe('ticket 114 public evidence review',()=>{
     expect((await get(listPath,{enterpriseId:e.id,titleCode:'specialized_sme',direction:'missing_in_miit'})).body.rows).toEqual([])
     const unknown=seed('未知查询主体')
     await decide(coord(unknown.id),'unknown-decision')
-    const result=await client.commit({idempotencyKey:'unknown-archive114',sourceKind:'alias_evidence',sourceIdentity:'synthetic-unknown',payload:{platformQueries:[{interface:'business_list',queryKey:'name:'+unknown.name,rdjb:'2',queriedAt:'2026-10-19T05:00:00Z',status:'no_record',relations:[]}]}});expect(result.status).toBe('committed');await drain('unknown-drain')
+    const result=await client.commit({idempotencyKey:'unknown-archive114',sourceKind:'alias_evidence',sourceIdentity:'synthetic-unknown',payload:{platformQueries:[{interface:'business_list',queryKey:'name:'+unknown.name,rdjb:'2',queriedAt:'2026-10-19T05:00:00Z',status:'no_record',rawResponse:'SYNTHETIC_EMPTY_RESPONSE',relations:[]}]}});expect(result.status).toBe('committed');await drain('unknown-drain')
     expect((await get(listPath,{enterpriseId:unknown.id})).body.rows).toEqual([])
     const unknownAssessment=(await get('/api/roster/enterprises/'+unknown.id)).body.titleAssessments.find((x:any)=>x.titleCode==='specialized_sme'&&x.direction==='missing_in_miit')
     expect(unknownAssessment).toMatchObject({queryCoverage:{status:'unknown',sources:[{subjectMatch:'name_only',outcome:'unknown'}]},explanationValidity:{status:'unknown',reasons:['no_evidence_baseline']}})
@@ -341,7 +341,7 @@ describe('ticket 114 public evidence review',()=>{
     const e=seed('未查询前提核验','REVIEW-114-PREMISE'),scope=coord(e.id)
     const old=db.insert(schema.differenceReason).values({...scope,direction:'missing_in_miit',status:'not_queried',measureCode:'manual_review',verificationStatus:'pending',recordedAt:'2026-10-01T00:00:00Z'}).returning().get()
     const confirmed=await decide(coord(e.id,'extra_in_miit'),'premise-confirmed')
-    const archiveResult=await client.commit({idempotencyKey:'premise-q',sourceKind:'alias_evidence',sourceIdentity:'synthetic-premise',payload:{platformQueries:[{interface:'business_list',queryKey:e.usccNorm!,titleCode:'specialized_sme',rdjb:'2',queriedAt:'2026-10-19T01:00:00Z',status:'no_record',relations:[]}]}});expect(archiveResult.status).toBe('committed');await drain('premise-drain')
+    const archiveResult=await client.commit({idempotencyKey:'premise-q',sourceKind:'alias_evidence',sourceIdentity:'synthetic-premise',payload:{platformQueries:[{interface:'business_list',queryKey:e.usccNorm!,titleCode:'specialized_sme',rdjb:'2',queriedAt:'2026-10-19T01:00:00Z',status:'no_record',rawResponse:'SYNTHETIC_EMPTY_RESPONSE',relations:[]}]}});expect(archiveResult.status).toBe('committed');await drain('premise-drain')
     const item=(await get(listPath,{enterpriseId:e.id})).body.rows[0]
     expect(item).toMatchObject({decisionId:old.id,classification:'premise_invalid'})
     const preview=(await get(listPath+'/preview',{revisionId:item.latestRevisionId,enterpriseId:e.id})).body.rows
@@ -356,10 +356,10 @@ describe('ticket 114 public evidence review',()=>{
     expect(current).toMatchObject({id:old.id,status:'not_queried',measureCode:'manual_review',reasonCode:null})
     const after=(await get('/api/roster/enterprises/'+e.id)).body.titleAssessments.find((a:any)=>a.direction==='missing_in_miit'&&a.titleCode==='specialized_sme')
     expect(after.explanationValidity).toMatchObject({status:'valid',reasons:[]})
-    const repeated=await client.commit({idempotencyKey:'premise-repeat',sourceKind:'alias_evidence',sourceIdentity:'synthetic-premise-repeat',payload:{platformQueries:[{interface:'business_list',queryKey:e.usccNorm!,titleCode:'specialized_sme',rdjb:'2',queriedAt:'2026-10-19T02:00:00Z',status:'no_record',relations:[]}]}});expect(repeated.status).toBe('committed');await drain('premise-repeat-drain')
+    const repeated=await client.commit({idempotencyKey:'premise-repeat',sourceKind:'alias_evidence',sourceIdentity:'synthetic-premise-repeat',payload:{platformQueries:[{interface:'business_list',queryKey:e.usccNorm!,titleCode:'specialized_sme',rdjb:'2',queriedAt:'2026-10-19T02:00:00Z',status:'no_record',rawResponse:'SYNTHETIC_EMPTY_RESPONSE',relations:[]}]}});expect(repeated.status).toBe('committed');await drain('premise-repeat-drain')
     expect((await get(listPath,{enterpriseId:e.id})).body.rows).toEqual([])
   })
-  it('retains merged legacy impact provenance and refuses completion on the removed owner while preserving the survivor scope',async()=>{
+  it('retains merged legacy impact provenance and refuses completion on the merged owner while preserving the survivor scope',async()=>{
     const from=seed('归并旧主体'),into=seed('归并现主体','REVIEW-114-MERGE'),scope=coord(from.id)
     const d=db.insert(schema.differenceReason).values({...scope,direction:'missing_in_miit',status:'confirmed_no_diff',measureCode:'none',verificationStatus:'confirmed',recordedAt:'2026-10-01T00:00:00Z'}).returning().get()
     db.insert(schema.differenceReason).values({...scope,direction:'extra_in_miit',status:'confirmed_no_diff',measureCode:'none',verificationStatus:'confirmed',recordedAt:'2026-10-01T00:00:00Z'}).run()
@@ -376,7 +376,9 @@ describe('ticket 114 public evidence review',()=>{
     expect((await get(listPath,{enterpriseId:from.id})).body.rows).toEqual([])
     expect((await get(listPath,{enterpriseId:from.id,view:'historical'})).body.rows).toEqual([expect.objectContaining({id:item.id,lineage:'merged'}),expect.objectContaining({lineage:'merged',direction:'extra_in_miit'})])
     const complete=await post(decisionPath,{...scope,...cmd('merge-stale-owner'),action:'maintain',expectedCurrentId:d.id,reviewedEvidence:{latestRevisionId:detail.evidenceToken.latestRevisionId,projectionReady:true},ruleVersion:'manual',effectiveAt:'2026-10-19T00:00:00Z'})
-    expect(complete.status).toBe(404)
+    // Native merges retain the historical identity row while moving the current
+    // decision coordinate, so the retained owner rejects its stale version.
+    expect(complete).toMatchObject({status:409,body:{error:{code:'stale_version'}}})
     expect((await get('/api/roster/decision-lifecycle/current',coord(into.id))).body.current).toMatchObject({id:d.id,status:'confirmed_no_diff'})
   })
 

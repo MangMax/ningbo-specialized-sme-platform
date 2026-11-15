@@ -125,6 +125,9 @@ it('public job retains both sources’ unique row 51 and exact page evidence; co
   expect((await api(`/api/task-center/${second.id}`)).reconcileCollection).toEqual(task.reconcileCollection)
 })
 
+// These multi-page/replay integration cases include native archive verification.
+// Their 30s runner budget stays below the source collection's 60s limit; it is
+// not an operation latency assertion. Scalar/invalid-metadata cases keep 5s.
 it('later-page inconsistency keeps first-page rows, original total, unfinished page and retries only incomplete slots', async () => {
   upstream()
   reply = (s, r, n) => s === 'businessList' && r === '3' && n === 2 ? page(s, n, 52) : normalReply(s, r, n)
@@ -143,7 +146,7 @@ it('later-page inconsistency keeps first-page rows, original total, unfinished p
   const after = await archives()
   expect(after.find(e => e.query.id === oldId).query.status).toBe('partial')
   expect(after.filter(e => e.query.interface === 'business_list' && e.query.rdjb === '3')).toHaveLength(2)
-})
+}, 30000)
 
 it('cancel between pages stops requests, returns unfinished position and atomically writes no partial batch; resubmission succeeds', async () => {
   upstream()
@@ -165,7 +168,7 @@ it('cancel between pages stops requests, returns unfinished position and atomica
   expect(db.select().from(schema.importBatch).all()).toHaveLength(0)
   reply = normalReply
   expect((await finish((await submit()).jobId)).result.relations).toBe(102)
-})
+}, 30000)
 
 it('historical success without page proof is preserved but never reused as complete', async () => {
   upstream()
@@ -205,7 +208,7 @@ it('later-page timeout exhausts bounded retries, retains 50 rows and the actual 
   expect(evidence).toMatchObject({ declaredTotal: 51, requestCount: 4, unfinished: [{ page: 2 }], failureReason: 'issue299 upstream timeout' })
   expect(evidence.pages[1].error.code).toBe('timeout')
   expect(done.result.collection.partial).toBe(1)
-})
+}, 30000)
 
 it('network retry and subsequent pages keep the submission credential snapshot after replacement', async () => {
   upstream()
@@ -223,7 +226,7 @@ it('network retry and subsequent pages keep the submission credential snapshot a
   expect(JSON.stringify({ done, stored })).not.toMatch(/issue299-original|issue299-replacement/)
   const evidence = JSON.parse(stored.find(e => e.query.rdjb === '3').query.rawResponse)
   expect(evidence.requestCount).toBe(3)
-})
+}, 30000)
 
 it('newer failed slot invalidates older complete cache without changing either historical query', async () => {
   upstream()
@@ -236,7 +239,7 @@ it('newer failed slot invalidates older complete cache without changing either h
   const after = await archives()
   expect(after.find(e => e.query.id === old.query.id)).toEqual(old)
   expect(after.find(e => e.query.id === failure.id).query.failureReason).toBe('newer synthetic failure')
-})
+}, 30000)
 
 it('archive failure on row 51 rolls back the whole query/relation/decision batch, then retry commits', async () => {
   upstream()
@@ -250,7 +253,7 @@ it('archive failure on row 51 rolls back the whole query/relation/decision batch
     expect(db.select().from(schema.importReceipt).all().length).toBeGreaterThan(0)
   } finally { db.$client.exec('DROP TRIGGER issue299_fail') }
   expect((await finish((await submit()).jobId)).result.relations).toBe(102)
-})
+}, 30000)
 
 it('missing later-page total cannot inherit earlier metadata and masquerade as complete', async () => {
   upstream()
@@ -260,7 +263,7 @@ it('missing later-page total cannot inherit earlier metadata and masquerade as c
   expect(entry.query.status).toBe('partial')
   expect(entry.relations).toHaveLength(50)
   expect(JSON.parse(entry.query.rawResponse)).toMatchObject({ completeness: 'partial', declaredTotal: 51, unfinished: [{ page: 2 }] })
-})
+}, 30000)
 
 it('immutable native archives reject a forged complete marker before cache replay', async () => {
   upstream()
@@ -275,7 +278,7 @@ it('immutable native archives reject a forged complete marker before cache repla
   const after = await archives()
   expect(after.find(e => e.query.id === original.query.id).query.rawResponse).toBe(original.query.rawResponse)
   expect(after.filter(e => e.query.rdjb === '3')).toHaveLength(1)
-})
+}, 30000)
 
 it('four failed slots remain four failed collection slots through public task list and detail, while report targets stay one', async () => {
   upstream(); upstreamStatus = 400; reply = () => 'synthetic upstream failure'

@@ -1,3 +1,5 @@
+import { submitSyntheticRecognizedCollection } from './helpers/qualification-native-source'
+import { submitNativePlatformQuery } from './helpers/native-platform-fixture'
 import { CURRENT_RULE_VERSION, QUALIFICATION_ASSESSMENT_VERSION } from '../lib/roster/current-qualification'
 import { afterAll, beforeAll, expect, it } from 'vitest'
 import { createHash } from 'node:crypto'
@@ -54,19 +56,22 @@ it('E409 full title exports retain platform failures missing records and unrecog
   const titlePaths = {little_giant:'little-giant',specialized_sme:'specialized-sme',innovative_sme:'innovative-sme'} as const
   for (const [title,path] of Object.entries(titlePaths)) {
     const valid=f.candidate('E409-'+title,undefined,title)
-    const failedQuery = f.db.$client.prepare(`insert into platform_query(interface,query_key,title_code,rdjb,queried_at,status,created_at) values('business_list',?,?,?,'2026-01-01T00:00:00Z','failed','2026-01-01T00:00:00Z')`).run('name:'+valid.enterprise.name,title,title==='innovative_sme'?'1':title==='specialized_sme'?'2':'3')
+    const failedQuery = submitNativePlatformQuery(f.db,{interface:'business_list',queryKey:'name:'+valid.enterprise.name,titleCode:title,rdjb:title==='innovative_sme'?'1':title==='specialized_sme'?'2':'3',queriedAt:'2026-01-01T00:00:00Z',status:'failed',rawResponse:'synthetic E409 failed platform response'})
     const pending=f.candidate('P409-'+title,[{eventType:'review',year:2022,batchSeq:1,decidedYear:null,reviewOutcome:null}],title)
     const failed=f.candidate('F409-'+title,[{eventType:'review',year:2022,batchSeq:1,decidedYear:2025,reviewOutcome:'failed'}],title)
     const absent=f.candidate('N409-'+title,undefined,title)
-    const missingQuery = f.db.$client.prepare(`insert into platform_query(interface,query_key,title_code,rdjb,queried_at,status,created_at) values('recognized_list',?,?,?,'2026-01-01T00:00:00Z','no_record','2026-01-01T00:00:00Z')`).run(absent.enterprise.usccNorm,title,title==='innovative_sme'?'1':title==='specialized_sme'?'2':'3')
-    for (const [enterprise, queryId, queryStatus] of [[valid.enterprise, Number(failedQuery.lastInsertRowid), 'failed'], [absent.enterprise, Number(missingQuery.lastInsertRowid), 'no_record']] as const) {
+    // The source USCC condition requires an 18-character original input.
+    absent.enterprise.usccNorm='SYNTHETIC'+String(absent.enterprise.id).padStart(9,'0')
+    f.db.$client.prepare('update enterprise set uscc_norm=? where id=?').run(absent.enterprise.usccNorm,absent.enterprise.id)
+    const missingQuery = submitSyntheticRecognizedCollection(f.db,{rdjb:title==='innovative_sme'?'1':title==='specialized_sme'?'2':'3',queriedAt:'2026-01-01T00:00:00Z',conditions:{uscc:absent.enterprise.usccNorm!},rows:[]})
+    for (const [enterprise, queryId, queryStatus] of [[valid.enterprise, failedQuery.queryId, 'failed'], [absent.enterprise, missingQuery.queryId, 'no_record']] as const) {
       const snapshot = readCurrentQualificationAssessment(f.db.$client, enterprise.id)
       expect(snapshot.enterpriseId).toBe(enterprise.id)
       expect(snapshot.titles.map(item => item.titleCode)).toEqual(['little_giant','specialized_sme','innovative_sme'])
       const selected = snapshot.titles.find(item => item.titleCode === title)!
       expect(selected).toMatchObject({ titleCode: title, group: 'eligible', officialQualification: { group: 'eligible' } })
       expect(selected.platform.observations).toContainEqual(expect.objectContaining({ queryId, queryStatus, titleCode: title, applicability: 'at_or_before_as_of' }))
-      expect(f.db.$client.prepare('select id,query_key as queryKey,title_code as titleCode,status from platform_query where id=?').get(queryId)).toEqual({ id: queryId, queryKey: queryStatus === 'failed' ? 'name:' + enterprise.name : enterprise.usccNorm, titleCode: title, status: queryStatus })
+      expect(f.db.$client.prepare('select id,query_key as queryKey,title_code as titleCode,status from platform_collection where id=?').get(queryId)).toEqual({ id: queryId, queryKey: queryStatus === 'failed' ? 'name:' + enterprise.name : enterprise.usccNorm, titleCode: title, status: queryStatus })
     }
     // The final candidate is beyond default query page size. Export accepts no page filters.
     for(let i=0;i<26;i++) f.candidate('Q409-'+title+'-'+i,undefined,title)
@@ -112,7 +117,7 @@ it('B409 separates formal title states and exhausts 201 public query and Excel m
   f.db.$client.pragma('query_only = ON')
   const literalSnapshot = readCurrentQualificationAssessment(f.db.$client, stable.enterprise.id, Date.parse(B409.asOf))
   expect(literalSnapshot.titles.map(title => [title.titleCode, title.group])).toEqual([
-    ['little_giant','eligible'], ['specialized_sme','excluded'], ['innovative_sme','excluded'],
+    ['little_giant','eligible'], ['specialized_sme','excluded'], ['innovative_sme','eligible'],
   ])
   expect(literalSnapshot.titles[0]!.evidence).toContainEqual(expect.objectContaining({ eventType: 'award', year: 2026, batchSeq: 1 }))
   expect(literalSnapshot.titles[1]!.completeness.fieldGaps).toEqual([
@@ -143,11 +148,13 @@ it('B409 separates formal title states and exhausts 201 public query and Excel m
   expect(unrequested.status).toBe(200)
   expect(await unrequested.json()).toMatchObject({ total: 0, rows: [], publishedPending: { requested: false, rows: [], total: 0 } })
 
-  // Original review-only records contain no award or passed review: neither establishes a current grant.
+  // Own review history stays unrecognized; a dated innovative history also activates the accepted local giant rule.
+  expect(literalSnapshot.titles[2]!.officialQualification.group).toBe('excluded')
+  expect(literalSnapshot.titles[2]!.effectiveQualification!.localRuleBasis!.join('\n')).toContain('按有效小巨人资格计入')
   const titleOracles = [
     {title:'little_giant',path:'little-giant',sheet:'有效企业',label:'专精特新“小巨人”',qualification:'2026年第1批认定',counts:{eligible:201,pending:0,excluded:0},statusCounts:{effective:201,expired:0,terminated:0,moved_out:0,unrecognized:0}},
     {title:'specialized_sme',path:'specialized-sme',sheet:'未认定',label:'专精特新中小企业',qualification:'2022年第1批原认定批次，结论年份待核复核结论待核',counts:{eligible:0,pending:0,excluded:1},statusCounts:{effective:0,expired:0,terminated:0,moved_out:0,unrecognized:1}},
-    {title:'innovative_sme',path:'innovative-sme',sheet:'未认定',label:'创新型中小企业',qualification:'2022年第1批原认定批次，2025年复核未通过',counts:{eligible:0,pending:0,excluded:1},statusCounts:{effective:0,expired:0,terminated:0,moved_out:0,unrecognized:1}},
+    {title:'innovative_sme',path:'innovative-sme',sheet:'有效企业',label:'创新型中小企业',qualification:'2022年第1批原认定批次，2025年复核未通过',counts:{eligible:1,pending:0,excluded:0},statusCounts:{effective:1,expired:0,terminated:0,moved_out:0,unrecognized:0}},
   ]
   for (const literal of titleOracles) {
     const accepted = await fetch(f.url('/api/roster/exports/current/' + literal.path), { method: 'POST', headers: f.headers, body: JSON.stringify({ clientRequestId: 'B409-' + literal.title }) })
@@ -172,7 +179,8 @@ it('B409 separates formal title states and exhausts 201 public query and Excel m
     }
     const targetRow = wb.getWorksheet(literal.sheet)!.getRow(2)
     expect(targetRow.getCell(7).value).toBe(literal.qualification)
-    if (literal.title !== 'little_giant') expect(targetRow.getCell(11).value).toContain('缺少已确认认定及资格依据')
+    if (literal.title === 'specialized_sme') expect(targetRow.getCell(11).value).toContain('缺少已确认认定及资格依据')
+    if (literal.title === 'innovative_sme') expect(targetRow.getCell(11).value).toContain('按有效小巨人资格计入')
     if (literal.title === 'specialized_sme') expect(targetRow.getCell(15).value).toContain('认定或复核周期资料不完整')
     expectIndependent409Digest(wb, job.result, literal.title, identityByName)
     expect(f.businessDigest()).toBe(businessBefore)
@@ -184,7 +192,7 @@ it('B409 separates formal title states and exhausts 201 public query and Excel m
 function expectIndependent409Digest(wb: ExcelJS.Workbook, result: { generatedAt: string; dataVersion: string }, title: string, identityByName: ReadonlyMap<string, number>) {
   const at = Date.parse(result.generatedAt)
   expect(new Date(at).getUTCFullYear()).toBe(2026)
-  const digest = createHash('sha256').update(JSON.stringify(['current-export-assessment-409-v2',QUALIFICATION_ASSESSMENT_VERSION,CURRENT_RULE_VERSION,2026,title]) + '\n')
+  const digest = createHash('sha256').update(JSON.stringify(['current-export-assessment-title-v3',QUALIFICATION_ASSESSMENT_VERSION,CURRENT_RULE_VERSION,2026,title]) + '\n')
   for (const [group, sheetName] of [['effective','有效企业'],['expired','已到期'],['terminated','已注销（吊销）'],['moved_out','已迁出'],['unrecognized','未认定']] as const) {
     const sheet = wb.getWorksheet(sheetName)!
     for (let rowIndex = 2; rowIndex <= sheet.rowCount; rowIndex++) {
@@ -198,7 +206,10 @@ function expectIndependent409Digest(wb: ExcelJS.Workbook, result: { generatedAt:
       expect(snapshot).toMatchObject({ enterpriseId: id, asOf: result.generatedAt, ruleVersion: CURRENT_RULE_VERSION, assessmentVersion: QUALIFICATION_ASSESSMENT_VERSION })
       const { titles, snapshotId, ...scope } = snapshot
       expect(snapshotId).toBe(createHash('sha256').update(JSON.stringify([scope,titles])).digest('hex'))
-      digest.update(JSON.stringify([group,id,scope,snapshotId,values]) + '\n')
+      const selectedTitles=titles.filter(item=>item.titleCode===title)
+      expect(selectedTitles).toHaveLength(1)
+      const titleSnapshotId=createHash('sha256').update(JSON.stringify([scope,selectedTitles])).digest('hex')
+      digest.update(JSON.stringify([group,id,scope,titleSnapshotId,values]) + '\n')
     }
   }
   expect(result.dataVersion).toBe('sha256:' + digest.digest('hex'))

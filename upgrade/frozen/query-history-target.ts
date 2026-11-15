@@ -1,7 +1,7 @@
 /** Offline historical oracle from ab503081dae3e24680afc9b07395a7e3ff21fc9f. */
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import { sqliteConnection } from '../../lib/platform/target-connection'
-import { requireLegacyProvenanceReady } from '../../lib/platform/legacy-provenance-catalog'
+import { requireLegacyProvenanceReady } from '../legacy-provenance-catalog'
 import { requireH1cReady } from '../h1c-catalog'
 
 /** Only explicitly injected, completed targets. Global expand/worker admission stays closed. */

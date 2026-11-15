@@ -12,5 +12,5 @@ it('native recognized MCP publishes literal source values and read-only annotati
  const tool=(await import('../server/mcp/tools/list_platform_recognized_directory')).default
  expect(tool.annotations).toMatchObject({readOnlyHint:true,destructiveHint:false})
  const result=await tool.handler({rddqrq:'2028/12/31'} as never,{} as never)
- expect(result.structuredContent).toEqual(f.list('recognized_list',{rddqrq:'2028/12/31'}));expect(JSON.stringify(result)).not.toContain('PRIVATE-MCP')
+ expect(typeof result === 'object' && result !== null && 'structuredContent' in result ? result.structuredContent : undefined).toEqual(f.list('recognized_list',{rddqrq:'2028/12/31'}));expect(JSON.stringify(result)).not.toContain('PRIVATE-MCP')
 })

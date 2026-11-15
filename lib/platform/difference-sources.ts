@@ -75,8 +75,17 @@ export function selectDifferenceCollectionsBatch(db: Db, inputs: readonly Differ
     .innerJoin(qa, eq(qa.collectionId, c.id))
   const related = db.select(candidateColumns).from(targets).innerJoin(a, eq(a.enterpriseId, targetRef.enterpriseId))
     .innerJoin(o, currentDifferenceAssignment(db)).innerJoin(c, eq(c.id, o.collectionId)).innerJoin(qa, eq(qa.collectionId, c.id))
-  const normalized = db.select(candidateColumns).from(targets).innerJoin(c,
-    and(sql`${targetRef.uscc} is not null`, sql`instr(${c.queryKey},':')=0`, eq(identityUsccSql(sql`${c.queryKey}`), targetRef.uscc)))
+  const distinctKeys = db.selectDistinct({ key: c.queryKey }).from(c).where(sql`instr(${c.queryKey},':')=0`)
+  // SQLite's MATERIALIZED fence is not exposed by Drizzle's $with builder.
+  // Keep this narrow SQL bridge: normalize each distinct original key once,
+  // before target joins or repeated retries can multiply UDF evaluations.
+  const normalizedKeys = db.$with('coverage_normalized_keys', {}).as(sql`
+    with raw_keys as materialized (${distinctKeys.getSQL()}), normalized_keys as materialized (
+      select query_key,${identityUsccSql(sql`query_key`)} as normalized_key from raw_keys
+    ) select query_key,normalized_key from normalized_keys`)
+  const normalized = db.select(candidateColumns).from(targets).innerJoin(normalizedKeys,
+    and(sql`${targetRef.uscc} is not null`, eq(sql`"coverage_normalized_keys"."normalized_key"`, targetRef.uscc)))
+    .innerJoin(c, eq(c.queryKey, sql`"coverage_normalized_keys"."query_key"`))
     .innerJoin(qa, eq(qa.collectionId, c.id))
   // UNION deduplicates collections observed more than once and overlapping keys.
   // Keep indexed key and ownership branches apart instead of a target×archive OR.
@@ -93,7 +102,7 @@ export function selectDifferenceCollectionsBatch(db: Db, inputs: readonly Differ
     or(eq(c.interface, 'apply_list'), eq(c.titleCode, targetRef.titleCode),
       sql`instr(','||${c.rdjb}||',',','||${targetRef.rdjb}||',')>0`, and(eq(c.rdjb, ''), sql`${c.titleCode} is null`)),
   ))
-  return db.with(targets, candidates, ranked).select({ slot: rankedRef.slot, collection: c, id: rankedRef.id, matched: rankedRef.matched })
+  return db.with(targets, ...(normalizeIdentity ? [normalizedKeys] : []), candidates, ranked).select({ slot: rankedRef.slot, collection: c, id: rankedRef.id, matched: rankedRef.matched })
     .from(ranked).innerJoin(c, eq(c.id, rankedRef.collectionId)).where(sql`${rankedRef.rank}<=51`)
     .orderBy(asc(rankedRef.slot), asc(rankedRef.rank)).all()
 }

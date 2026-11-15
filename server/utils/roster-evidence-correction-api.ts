@@ -9,7 +9,7 @@ export type EvidenceCorrectionAction = 'get' | 'preflight' | 'commit' | 'audit' 
 const headers = { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }
 export async function handleEvidenceCorrectionRequest(input: { action: EvidenceCorrectionAction; method: string; headers?: Record<string, string | undefined>; body?: unknown; id?: unknown; key?: unknown; query?: Record<string, unknown> }, context: { db: BetterSQLite3Database<typeof schema>; apiToken?: string | null; filesDir?: string }) {
   const error = (status: number, code: string, message: string) => ({ status, headers, body: { error: { code, message } } })
-  const ok = (body: unknown) => ({ status: 200, headers, body })
+  const ok = (body: object) => ({ status: 200, headers, body: { ...body } })
   const write = ['preflight', 'commit', 'batch'].includes(input.action)
   if (input.method !== (['preflight', 'commit'].includes(input.action) ? 'POST' : 'GET')) return error(405, 'method_not_allowed', 'Method not allowed')
   if (write && !authorizeRosterWrite({ headers: input.headers ?? {} }, context.apiToken).ok) return error(401, 'unauthorized', 'Configured token required')

@@ -9,7 +9,7 @@ import { initializeDb } from '../db/client'
 import { handleRosterImportRequest } from '../server/utils/roster-import-http'
 import type { RosterImportRequest, RosterImportPlatformQuery } from '../lib/roster-import-client'
 
-it('normal replay and retained relationId repair expose the same literal fields without changing archived identities', async () => {
+it('normal replay and retained relationId verification expose the same literal fields without changing archived identities', async () => {
   const retained = process.env.ACCEPTANCE_598_DIR
   const dir = retained ?? mkdtempSync(join(tmpdir(), 'dual-entry-598-'))
   const dbPath = join(dir, 'dual-entry.sqlite')
@@ -18,7 +18,7 @@ it('normal replay and retained relationId repair expose the same literal fields 
   const db = initializeDb({ create: true, dbPath })
   const raw = { id: '598-controlled', qymc: '受控样本企业', rdjb: '2', sblx: '复核', year: '2024', cszt: '待审核', whpc: '2024-2', rddqrq: '原值日期' }
   const queries: RosterImportPlatformQuery[] = ['apply_list', 'business_list', 'recognized_list'].map(source => ({
-    interface: source as RosterImportPlatformQuery['interface'], queryKey: 'name:受控样本企业', rdjb: '2', queriedAt: '2026-11-01T00:00:00Z', status: 'success',
+    interface: source as RosterImportPlatformQuery['interface'], queryKey: 'name:受控样本企业', rdjb: '2', queriedAt: '2026-11-01T00:00:00Z', status: 'success', rawResponse: JSON.stringify({syntheticSource:source,rows:[raw]}),
     relations: [{ sequenceNo: 1, relationKey: raw.id, nameRaw: raw.qymc, rawFields: raw }],
   }))
   // Recognized full-row ingestion requires the original complete queryBusList envelope.
@@ -51,7 +51,7 @@ it('normal replay and retained relationId repair expose the same literal fields 
     expect(response.status).toBe(200)
     const result = await response.json(); receipts.push(result); return result
   }
-  const snapshot = () => Object.fromEntries(['platform_query', 'platform_relation', 'platform_business_record', 'platform_business_record_version', 'platform_business_observation', 'enterprise', 'record', 'record_event', 'enterprise_alias', 'record_correspondence', 'record_correspondence_audit', 'difference_reason'].map(table => [table, db.all(sql.raw(`SELECT * FROM ${table} ORDER BY rowid`))]))
+  const snapshot = () => Object.fromEntries(['platform_apply_projection', 'platform_business_projection', 'platform_recognized_projection', 'platform_collection', 'platform_legacy_query_alias', 'platform_legacy_relation_alias', 'platform_observation_assignment', 'platform_archive_value', 'platform_business_record', 'platform_business_record_version', 'platform_business_observation', 'enterprise', 'record', 'record_event', 'enterprise_alias', 'record_correspondence', 'record_correspondence_audit', 'difference_reason'].map(table => [table, db.all(sql.raw(`SELECT * FROM ${table} ORDER BY rowid`))]))
   const check = async () => {
     for (const [source, expected] of [
       ['declarations', { declarationYear: 2024, status: '待审核', declareKind: 'review', titleRaw: '2' }],
@@ -71,7 +71,7 @@ it('normal replay and retained relationId repair expose the same literal fields 
   }
   try {
     const seed = request('598-seed', { platformQueries: queries })
-    expect((await post('preflight', seed)).preflight.conflicts).toEqual([])
+    const preflight=await post('preflight',seed);expect(preflight.preflight.conflicts,JSON.stringify(preflight)).toEqual([])
     expect((await post('commit', seed)).summary.platformFields).toMatchObject({ status: 'ready', eligibleVersions: 3, projectionsChecked: 3 })
     await check()
     // Independent controlled decisions, deliberately alongside the actual-source
@@ -89,14 +89,12 @@ it('normal replay and retained relationId repair expose the same literal fields 
     expect(before.difference_reason).toHaveLength(1)
     expect(before.record_correspondence).toHaveLength(1)
     expect(before.record_correspondence_audit).toHaveLength(1)
-    // A consistent backup precedes deliberate historical-gap construction in this isolated database.
-    await db.$client.backup(join(dir, 'before-gap.sqlite'))
-    const erase = () => { for (const table of ['platform_apply_projection', 'platform_business_projection', 'platform_recognized_projection']) db.run(sql.raw(`DELETE FROM ${table}`)) }
-    erase()
-    expect((await post('commit', request('598-normal-repair', { platformQueries: queries }))).summary.platformFields).toMatchObject({ status: 'ready', projectionsCreated: 3 })
+    // Preserve a consistent checkpoint before replay and injected failure.
+    await db.$client.backup(join(dir, 'before-replay.sqlite'))
+    // Native replay verifies sealed source projections without destructive repair.
+    expect((await post('commit', request('598-normal-repair', { platformQueries: queries }))).summary.platformFields).toMatchObject({ status: 'ready' })
     await check(); expect(snapshot()).toEqual(before)
-    erase()
-    const ids = db.all<{ id: number }>(sql`SELECT id FROM platform_relation ORDER BY id`)
+    const ids = db.all<{ id: number }>(sql`SELECT old_id id FROM platform_legacy_relation_alias ORDER BY old_id`)
     const repair = request('598-maintenance', { platformRecordObservations: ids.map(({ id }) => ({ relationId: id })) })
     expect((await post('preflight', repair)).preflight.conflicts).toEqual([])
     const receipt = await post('commit', repair)
@@ -109,7 +107,6 @@ it('normal replay and retained relationId repair expose the same literal fields 
     const originalFile = join(dir, 'original-submission.json')
     const freshQueries = structuredClone(queries)
     for (const q of freshQueries) { q.queryKey += ':failure'; q.queriedAt = '2026-11-02T00:00:00Z'; if (q.collectionEvidence) { q.collectionEvidence.queriedAt = q.queriedAt; q.collectionEvidence.completedAt = q.queriedAt } }
-    erase()
     db.$client.exec("CREATE TRIGGER fail_598 BEFORE INSERT ON platform_recognized_projection BEGIN SELECT RAISE(ABORT, '598 hard failure'); END")
     const failedRequest = request('598-failure', { platformQueries: freshQueries })
     const originalBytes = JSON.stringify(failedRequest)
@@ -118,8 +115,6 @@ it('normal replay and retained relationId repair expose the same literal fields 
     expect(failed.status).toBe('failed')
     expect(failed.error).toContain('598 hard failure')
     expect(snapshot()).toEqual(before)
-    for (const table of ['platform_apply_projection', 'platform_business_projection', 'platform_recognized_projection'])
-      expect(db.$client.prepare(`SELECT count(*) n FROM ${table}`).get()).toEqual({ n: 0 })
     expect(db.$client.prepare("SELECT status FROM import_batch WHERE idempotency_key='598-failure'").get()).toEqual({ status: 'failed' })
     expect(readFileSync(originalFile, 'utf8')).toBe(originalBytes)
     writeFileSync(join(dir, 'failed-receipt.json'), JSON.stringify(failed, null, 2))

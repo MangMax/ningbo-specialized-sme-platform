@@ -9,12 +9,16 @@ it('preserves coverage ordering deduplication truncation and noncanonical identi
   const c=f.candidate('Query lookup synthetic',[]),id=c.enterprise.id
   f.db.$client.prepare('update enterprise set uscc_norm=? where id=?').run('SYNTHETIC-LOOKUP',id)
   let serial=0
+  f.db.transaction(()=>{
   for(const key of ['SYNTHETIC-LOOKUP','synthetic-lookup',' \tSYNTHETIC-LOOKUP\u3000','name:'+c.enterprise.name,'UNRELATED']){
     for(let i=0;i<27;i++){
-      const relations = key === 'UNRELATED' ? Array.from({length:60}, (_,j) => ({ sequenceNo:j+1, enterpriseId:id, nameRaw:c.enterprise.name, usccRaw:'SYNTHETIC-LOOKUP', verificationStatus:'pending' as const, matchBasis:'manual' as const })) : []
+      // Two same-owner observations prove query deduplication; 135 histories
+      // independently exercise the exact 50-query coverage boundary.
+      const relations = key === 'UNRELATED' ? Array.from({length:2}, (_,j) => ({ sequenceNo:j+1, enterpriseId:id, nameRaw:c.enterprise.name, usccRaw:'SYNTHETIC-LOOKUP', verificationStatus:'pending' as const, matchBasis:'manual' as const })) : []
       submitNativePlatformQuery(f.db, {interface:'business_list',queryKey:key,titleCode:i%3===0?'little_giant':'specialized_sme',rdjb:i%3===0?'3':'2',queriedAt:new Date(1700000000000+(serial++)).toISOString(),status:i%2?'failed':'no_record',rawResponse:JSON.stringify({queryKey:key,rows:relations}),relations})
     }
   }
+  })
   const scope={enterpriseId:id,titleCode:'specialized_sme',direction:'extra_in_miit' as const}
   const expected=readQueryAssessment(f.db,scope)
   const variants=readTargetIdentityKeyVariants(f.db.$client,'queries')

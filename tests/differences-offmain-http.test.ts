@@ -22,14 +22,15 @@ it('REST differences native lock leaves health responsive before independent rel
     const req = createRequire(import.meta.url), driver = req.resolve('better-sqlite3')
     const jiti = createRequire(req.resolve('nuxt/package.json')).resolve('jiti')
     let output = ''
-    writeFileSync(preload, `const fs=require('node:fs'),D=require(${JSON.stringify(driver)}),p=D.prototype.prepare;
-      D.prototype.prepare=function(sql,...a){if(sql.includes('from "difference_reason" where not exists')){const entry=JSON.stringify({pid:process.pid,sql,at:Date.now()})+'\\n';fs.appendFileSync(${JSON.stringify(marker)},entry);fs.appendFileSync(${JSON.stringify(allNative)},entry);if(process.env.M2_APP_PID&&process.pid!==Number(process.env.M2_APP_PID)&&fs.existsSync(${JSON.stringify(fault)}))process.exit(97)}return p.call(this,sql,...a)};`)
+    writeFileSync(preload, `const fs=require('node:fs'),D=require(${JSON.stringify(driver)}),p=D.prototype.prepare,g=D.prototype.pragma;
+      D.prototype.pragma=function(sql,...a){if(sql==='user_version'){const entry=JSON.stringify({pid:process.pid,kind:'admission',sql,at:Date.now()})+'\\n';fs.appendFileSync(${JSON.stringify(marker)},entry);fs.appendFileSync(${JSON.stringify(allNative)},entry)}return g.call(this,sql,...a)};
+      D.prototype.prepare=function(sql,...a){if(sql.includes('from "difference_reason" where not exists')){const entry=JSON.stringify({pid:process.pid,kind:'source',sql,at:Date.now()})+'\\n';fs.appendFileSync(${JSON.stringify(marker)},entry);fs.appendFileSync(${JSON.stringify(allNative)},entry);if(process.env.M2_APP_PID&&process.pid!==Number(process.env.M2_APP_PID)&&fs.existsSync(${JSON.stringify(fault)}))process.exit(97)}return p.call(this,sql,...a)};`)
     writeFileSync(boot, `import {createRequire} from 'node:module';import {createServer} from 'node:http';
       const require=createRequire(${JSON.stringify(resolve(root, 'package.json'))}); const h=require('h3');
       Object.assign(globalThis,h,{defineRouteMeta:()=>{},defineNitroPlugin:f=>f,useRuntimeConfig:()=>({apiToken:'synthetic-m2'})});process.env.M2_APP_PID=String(process.pid);
       const {createJiti}=require(${JSON.stringify(jiti)});const load=createJiti(${JSON.stringify(resolve(root, 'package.json'))},{alias:{'@db':${JSON.stringify(resolve(root, 'db/index.ts'))},'~~':${JSON.stringify(root)}}});
       const {initializeDb}=await load.import(${JSON.stringify(resolve(root, 'db/client.ts'))});
-      const writer=initializeDb({readOnly:false});writer.$client.pragma('journal_mode=DELETE');
+      const writer=initializeDb({create:true,readOnly:false});writer.$client.pragma('journal_mode=DELETE');
       const {startRosterApi}=await load.import(${JSON.stringify(resolve(root, 'tests/helpers/roster-http-server.ts'))});
       const imports=await startRosterApi({db:writer,apiToken:'synthetic-m2'});
       process.env.NUXT_DB_READONLY='1';
@@ -74,7 +75,8 @@ it('REST differences native lock leaves health responsive before independent rel
     const pending = fetch(base+'/api/roster/differences?pageSize=1').then(r => { complete=true; return r })
     for (let i=0; i<200 && !readFileSync(marker,'utf8'); i++) await pause(2)
     const entries = readFileSync(marker,'utf8').trim().split('\n').map(x=>JSON.parse(x))
-    expect(entries[0].sql).toContain('from "difference_reason" where not exists')
+    // Final-schema admission is the first worker read under this exclusive lock.
+    expect(entries[0]).toMatchObject({kind:'admission',sql:'user_version'})
     const started=performance.now(), health=await fetch(base+'/api/health'), healthMs=performance.now()-started
     const beforeRelease=!existsSync(released), pendingAtHealth=!complete
     const response=await pending
@@ -114,9 +116,9 @@ it('REST differences native lock leaves health responsive before independent rel
     const recovered=await fetch(base+'/api/roster/differences?pageSize=999')
     expect(recovered.status).toBe(200);expect(await recovered.json()).toEqual(afterRollback)
     const recoveryEntries=readFileSync(marker,'utf8').trim().split('\n').map(x=>JSON.parse(x))
-    const mainEntries=recoveryEntries.filter(x=>x.pid===info!.pid)
+    const mainEntries=recoveryEntries.filter(x=>x.kind==='source'&&x.pid===info!.pid)
     expect(mainEntries).toHaveLength(1) // one whole original REST invocation
-    expect(recoveryEntries.filter(x=>x.pid!==info!.pid)).toHaveLength(1)
+    expect(recoveryEntries.filter(x=>x.kind==='source'&&x.pid!==info!.pid)).toHaveLength(1)
     rmSync(fault)
     const restarted=await fetch(base+'/api/roster/differences?pageSize=999')
     expect(await restarted.json()).toEqual(afterRollback)
@@ -162,6 +164,7 @@ it('REST differences native lock leaves health responsive before independent rel
       // Observation is diagnostic: a read/parse failure must not skip removal.
       try { nativePids=existsSync(allNative)?[...new Set(readFileSync(allNative,'utf8').trim().split('\n').filter(Boolean).map(x=>JSON.parse(x).pid as number))]:[] } catch {}
     } finally { rmSync(dir,{recursive:true,force:true}) }
+    for(let n=0;n<100&&nativePids.some(pid=>{try{process.kill(pid,0);return true}catch{return false}});n++)await pause(10)
     const remaining=[...children.map(x=>x.pid),...nativePids].filter(pid=>{if(!pid)return false;try{process.kill(pid,0);return true}catch{return false}})
     // Portable, best-effort diagnostics cannot mask a native assertion failure.
     try { process.stdout.write('M2 owned HTTP cleanup '+JSON.stringify({dir,pids:children.map(x=>x.pid),nativePids,remaining,removed:!existsSync(dir)})+'\n') } catch {}

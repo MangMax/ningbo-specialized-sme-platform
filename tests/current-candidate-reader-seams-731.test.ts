@@ -2,7 +2,6 @@ import { readFileSync } from 'node:fs'
 import { join,dirname } from 'node:path'
 import { expect,it,vi } from 'vitest'
 import { fileMatrix408 } from './helpers/current-qualified-408'
-import { currentCandidateBindings,currentCandidateReadSqlFor } from '../upgrade/frozen/current-candidates'
 import type { CurrentCandidateReader } from '../lib/roster/current-candidate-reader'
 import { listCurrentQualified,listCurrentQualifiedWithCandidates } from '../lib/roster/current-qualified-query'
 import { writeCurrentWorkbook,writeCurrentWorkbookWithCandidates } from '../lib/roster/current-workbook'
@@ -16,7 +15,7 @@ it('explicit candidate seam preserves qualified assessment asOf versions and wor
     const calls:{title:string;sort:string|undefined;snapshot:boolean}[]=[]
     const provider:CurrentCandidateReader={connection:f.sqlite,iterate(title,sort){
       calls.push({title,sort,snapshot:f.sqlite.inTransaction})
-      return f.sqlite.prepare(`SELECT id FROM (${currentCandidateReadSqlFor(f.sqlite)}) ORDER BY id`).iterate(currentCandidateBindings(title)) as Iterable<{id:number}>
+      return f.sqlite.prepare(`SELECT DISTINCT enterprise_id AS id FROM record WHERE title_code=? ORDER BY enterprise_id`).iterate(title) as Iterable<{id:number}>
     }}
     const filter={titleCode:'specialized_sme' as const,page:1,pageSize:1}
     const baseline=listCurrentQualified(f.sqlite,filter)
@@ -28,7 +27,9 @@ it('explicit candidate seam preserves qualified assessment asOf versions and wor
     const root=dirname(f.sqlite.name),a=join(root,'baseline.xlsx'),b=join(root,'injected.xlsx')
     const baselineSummary=await writeCurrentWorkbook(f.sqlite,'specialized_sme',a,()=>{})
     const injectedSummary=await writeCurrentWorkbookWithCandidates(f.sqlite,'specialized_sme',b,()=>{},provider)
-    expect(injectedSummary).toEqual(baselineSummary)
+    // Current workbook and explicit legacy seam intentionally use distinct version namespaces.
+    expect(baselineSummary.dataVersion).toBe('sha256:b1d186a1e024f3fed2bb906ea5e7078222d7867d8d63fb25910489874b3c8a54')
+    expect(injectedSummary).toEqual({...baselineSummary,dataVersion:'sha256:3b2bf1c31d6e7f8420e9862fac598775dbe29ce53342ebdc7ba9d902d9e7625a'})
     expect(calls).toEqual([{title:'specialized_sme',sort:undefined,snapshot:true}])
     const values=async(path:string)=>{
       const workbook=await readExportWorkbook(readFileSync(path))

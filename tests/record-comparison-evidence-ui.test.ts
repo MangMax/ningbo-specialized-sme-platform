@@ -43,11 +43,13 @@ it('keeps positive same-subject rows visible while qualification stays unknown',
 })
 
 it('links the actual stored PDF page and saves comparison scroll before detail navigation', async () => {
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(null, { status: 200 })))
   sessionStorage.clear()
   history.replaceState(null, '', '/comparison?mode=record&queryIds=7')
   Object.defineProperty(window, 'scrollY', { configurable: true, value: 380 })
   const wrapper = mount(ComparisonEventRow, { props: { row, returnTo: '/comparison?mode=record&queryIds=7' }, global: { stubs: { NuxtLink: { props: ['to'], template: '<a :href="typeof to === \'string\' ? to : to.path"><slot /></a>' }, SourceReader: true } } })
   mounted.push(wrapper)
+  await flushPromises()
   const pageLink = wrapper.findAll('a').find(link => link.text() === '第 3 页')
   expect(pageLink).toBeDefined()
   const target = pageLink!.attributes('href')!

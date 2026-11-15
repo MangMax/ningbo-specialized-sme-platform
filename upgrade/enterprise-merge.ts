@@ -1,7 +1,7 @@
 import { upgradeForeignKeyFailures } from './integrity-policy'
 /** Explicit offline composition for the final target; never imported by runtime initialization. */
 import type Database from 'better-sqlite3'
-import { requireLegacyProvenanceReady } from '../lib/platform/legacy-provenance-catalog'
+import { requireLegacyProvenanceReady } from './legacy-provenance-catalog'
 
 export function upgradeEnterpriseMergeIdentity(sqlite: Database.Database) {
   if (Number(sqlite.pragma('user_version', { simple: true })) !== 71613) throw new Error('Enterprise identity upgrade requires completed 71613 target')

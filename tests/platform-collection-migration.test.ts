@@ -7,7 +7,7 @@ import { getTableConfig } from 'drizzle-orm/sqlite-core'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { migrate } from 'drizzle-orm/better-sqlite3/migrator'
 import { expect, it } from 'vitest'
-import * as schema from '../db/schema'
+import * as schema from '../upgrade/legacy-schema'
 
 const folder = resolve('db/migrations')
 const journal = JSON.parse(readFileSync(join(folder, 'meta/_journal.json'), 'utf8'))

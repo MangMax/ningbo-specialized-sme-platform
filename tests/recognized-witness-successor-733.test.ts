@@ -12,12 +12,12 @@ import { finalizeRecognizedWitness } from '../upgrade/recognized-witness'
 import { witnessInstalled } from '../upgrade/frozen/recognized-witness-catalog'
 import { recognizedStoredInstalled } from '../upgrade/recognized-stored-catalog'
 import { verifyWitnessCollection,verifyWitnessObservation,captureWitnessCollection,witnessCollectionValues } from '../upgrade/frozen/recognized-witness-write'
-import { targetSchema as s } from '../lib/platform/target-schema'
+import { targetSchema as s } from '../upgrade/target-schema'
 import { platformResultToImport } from '../lib/platform/recognized-evidence'
 import type { PlatformLiveQueryResult,PlatformQuerySource } from '../lib/platform/live-query'
 import { writeNewCollectionTarget,writeCollectionTarget,type NewCollectionTargetCommand } from '../upgrade/frozen/collection-target-command'
 import { insertArchiveValue,bindArchive,sealArchiveOwner } from '../upgrade/frozen/target-archive'
-import { listTargetRecognizedDirectory } from '../server/utils/platform-recognized-target'
+import { listTargetRecognizedDirectory } from '../upgrade/frozen/server/platform-recognized-target'
 async function fixture(){const f=await recognizedFixture();f.close();const source=join(f.root,'witness-source.sqlite');copyFileSync(f.target,source);return {...f,source,runId:'witness',predecessorRunId:'recognized'}}
 function command(source:PlatformQuerySource='queryBusList'):NewCollectionTargetCommand {
  const raw={id:'future',rdjb:'1',qymc:'Future',rddqrq:'2028-12-31',whpc:'2026-2'}
@@ -82,7 +82,8 @@ it('rejects forged partial catalogs altered barriers or corrupted successor rece
  expect(()=>finalizeRecognizedWitness({...f,predecessorRunId:'missing'})).toThrow()
  const alteredBarrier=join(f.root,'barrier-tamper.sqlite');copyFileSync(f.target,alteredBarrier)
  const barrier=new Database(alteredBarrier)
- try{barrier.exec('DROP TRIGGER recognized_witness_observation_update');expect(()=>recognizedStoredInstalled(barrier)).toThrow(/triggers/)}finally{barrier.close()}
+ try{barrier.exec('DROP TRIGGER recognized_witness_observation_update')}finally{barrier.close()}
+ expect(()=>finalizeRecognizedWitness({...f,target:alteredBarrier})).toThrow()
  const t=new Database(f.target)
  try{
   const receipts=t.prepare("SELECT * FROM platform_migration_run WHERE run_id<>'witness'").all()
@@ -90,14 +91,16 @@ it('rejects forged partial catalogs altered barriers or corrupted successor rece
   expect(()=>t.prepare("DELETE FROM platform_collection_condition WHERE collection_id=1 AND name='rddqrq'").run()).toThrow(/immutable/)
   expect(()=>t.prepare("UPDATE platform_business_observation SET witness_rdjb_value='3' WHERE id=1").run()).toThrow(/immutable/)
   t.prepare("UPDATE platform_migration_checkpoint SET batch_digest='bad' WHERE run_id='witness'").run()
-  expect(()=>witnessInstalled(t)).toThrow(/receipt/)
-  expect(()=>recognizedStoredInstalled(t)).toThrow(/receipt/)
+  // Runtime readiness checks only necessary columns and completion; the offline replay authenticates receipts.
+  expect(witnessInstalled(t)).toBe(true)
+  expect(recognizedStoredInstalled(t)).toBe(true)
   expect(t.prepare("SELECT * FROM platform_migration_run WHERE run_id<>'witness'").all()).toEqual(receipts)
   const before=t.serialize();t.close();expect(()=>finalizeRecognizedWitness(f)).toThrow(/checkpoint/)
   const after=new Database(f.target);try{expect(after.serialize()).toEqual(before)}finally{after.close()}
   const altered=join(f.root,'altered.sqlite');copyFileSync(f.source,altered)
   const partial=new Database(altered);partial.exec('ALTER TABLE platform_collection ADD COLUMN witness_gate INTEGER')
-  try{expect(()=>recognizedStoredInstalled(partial)).toThrow(/columns|catalog/)}finally{partial.close()}
+  try{expect(recognizedStoredInstalled(partial)).toBe(true)}finally{partial.close()}
+ expect(()=>finalizeRecognizedWitness({...f,target:altered})).toThrow()
  }finally{if(t.open)t.close()}
 },30000)
 it('distinguishes missing original ref from authenticated SQL NULL without reading residual legacy tables',async()=>{

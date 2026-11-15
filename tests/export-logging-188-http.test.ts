@@ -66,8 +66,8 @@ async function original(path: string, name: string) {
 }
 function businessDigest() {
   const hash = createHash('sha256')
-  for (const table of ['enterprise', 'enterprise_alias', 'record', 'record_event', 'record_evidence', 'platform_query', 'platform_relation', 'difference_reason', 'record_correspondence']) {
-    for (const row of db.$client.prepare('select * from ' + table + ' order by id').iterate()) hash.update(JSON.stringify(row))
+  for (const table of ['enterprise', 'enterprise_alias', 'record', 'record_event', 'record_evidence', 'platform_collection', 'platform_business_observation', 'platform_observation_assignment', 'platform_archive_value', 'platform_collection_archive_ref', 'platform_observation_archive_ref', 'difference_reason', 'record_correspondence']) {
+    for (const row of db.$client.prepare('select * from ' + table + ' order by rowid').iterate()) hash.update(JSON.stringify(row))
   }
   return hash.digest('hex')
 }
@@ -307,10 +307,12 @@ it('returns independently readable originals when the real logging storage is un
   const expected = (await original(job.result.artifact.downloadUrl, 'fault-async-original')).wb
   expect(expected.getWorksheet('有效企业')!.getRow(2).getCell(2).value).toBe(privateText)
   const digest = businessDigest()
+  const expectedNames=(db.$client.prepare("select r.name_raw name from record r where r.title_code='specialized_sme' order by r.id").all() as {name:string}[]).map(row=>row.name)
   for (const [path, sheet] of [['/api/export?title=specialized_sme', '台账'], ['/api/roster/export?title=specialized_sme', '企业总表']] as const) {
     const { wb } = await original(path, 'fault-' + sheet)
     expect(wb.getWorksheet(sheet)!.getColumn(1).values).toContain(privateText)
-    expect(wb.getWorksheet(sheet)!.rowCount).toBe(4)
+    expect(wb.getWorksheet(sheet)!.rowCount).toBe(expectedNames.length+2)
+    for(const name of expectedNames) expect(wb.getWorksheet(sheet)!.getColumn(1).values).toContain(name)
   }
   expect(businessDigest()).toBe(digest)
   const response = await fetch(url('/api/logs'), { headers }); expect(response.status).toBe(503)

@@ -1,3 +1,4 @@
+import { whenIdle } from '../server/utils/job-runner'
 import { initializeDb } from '../db/client'
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
@@ -58,6 +59,8 @@ beforeEach(async () => {
   const dbPath = join(dir, `synthetic-${++fixture}.sqlite`)
   db = initializeDb({ create: true, dbPath })
   vi.stubEnv('NUXT_DB_PATH', dbPath)
+  // Complete application-open schema validation before measuring page reads.
+  expect(useDb()).toBe(db)
   vi.stubGlobal('defineEventHandler', defineEventHandler)
   vi.stubGlobal('getQuery', getQuery)
   vi.stubGlobal('createError', createError)
@@ -68,6 +71,7 @@ beforeEach(async () => {
   base = `http://127.0.0.1:${(server.address() as AddressInfo).port}/api/roster/recognitions`
 })
 afterEach(async () => {
+  await whenIdle()
   if (server) await new Promise<void>(resolve => server.close(() => resolve()))
   if (imports) await imports.close()
   vi.unstubAllGlobals(); vi.unstubAllEnvs(); db.$client.close()
@@ -96,6 +100,7 @@ it('public recognition pages exclude unrelated platform archive columns and byte
         rows: [{ sourceRowNo: 1, nameRaw: '无关合成企业', rawFields: { original: 'synthetic'.repeat(32768) } }],
       },
     })
+    await whenIdle()
     const meter = observeReads()
     try {
       const response = await fetch(base + '?pageSize=1')
@@ -184,6 +189,7 @@ it('public deep pages hydrate only selected evidence and keep the cross-title di
       { eventType: 'award' as const, year: 2022, evidence: [{ sourceFile: 'synthetic/130/paged.pdf', attachment: n === 0 || n === 59 ? '附件一' : largeAttachment, listNo: n + 1, page: n + 1 }] },
     ] })),
   ] } })
+  await whenIdle()
   const meter = observeReads()
   try {
     for (const page of [1, 60, 61]) {

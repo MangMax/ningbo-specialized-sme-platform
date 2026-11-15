@@ -41,8 +41,8 @@ it('finalizes a populated three-source target preserving literal IDs unknowns by
 it('refuses finalized targets in current runtime and initialization before journal changes',async()=>{
   const {useRuntimeDb,initializeDb}=await import('../db/client')
   const f=fixture();finalizeObservations(f)
-  for(const readOnly of [false,true])expect(()=>useRuntimeDb({dbPath:f.target,readOnly})).toThrow(/finalized/i)
-  expect(()=>initializeDb({dbPath:f.target})).toThrow(/finalized/i)
+  for(const readOnly of [false,true])expect(()=>useRuntimeDb({dbPath:f.target,readOnly})).toThrow(/final platform runtime schema/i)
+  expect(()=>initializeDb({dbPath:f.target})).toThrow(/final platform runtime schema/i)
   const t=new Database(f.target);expect(t.pragma('journal_mode',{simple:true})).toBe('delete');t.close()
 })
 
@@ -349,8 +349,8 @@ it.each([71605,71606])('runtime initialize and all three source workers reject p
   const f=scopeFixture();if(version===71606)finalizeCollectionScopes(f)
   const {useRuntimeDb,initializeDb}=await import('../db/client')
   const before=readFileSync(f.target)
-  for(const readOnly of [false,true])expect(()=>useRuntimeDb({dbPath:f.target,readOnly})).toThrow(/finalized/i)
-  expect(()=>initializeDb({dbPath:f.target})).toThrow(/finalized/i)
+  for(const readOnly of [false,true])expect(()=>useRuntimeDb({dbPath:f.target,readOnly})).toThrow(/final platform runtime schema/i)
+  expect(()=>initializeDb({dbPath:f.target})).toThrow(/final platform runtime schema/i)
   const {createImportExecutionWorker}=await import('../server/utils/import-execution-worker-location')
   const {createCurrentExportWorker}=await import('../server/utils/current-export-worker-location')
   const {createEnterpriseWorker}=await import('../server/utils/enterprise-read-worker-location')
@@ -365,7 +365,7 @@ it.each([71605,71606])('runtime initialize and all three source workers reject p
         w.on('message',(m:Record<string,unknown>)=>{if(m.type!=='ready'&&m.type!=='progress'){clearTimeout(timer);resolve(m)}})
         w.postMessage({dbPath:f.target,id:'guard',identity,readonly:false,action:'preflight',payload:serialize({}),operation:'list',filter:{},title:'specialized_sme',temporaryPath:join(f.root,'never.xlsx'),jobId:'guard'})
       })
-      if(kind==='import')expect(result).toMatchObject({type:'failure',error:{message:expect.stringMatching(/finalized/i)}})
+      if(kind==='import')expect(result).toMatchObject({type:'failure',error:{message:expect.stringMatching(/final platform runtime schema/i)}})
       if(kind==='export')expect(result).toEqual({type:'failure',message:'当前名录导出执行失败；请核对数据或资源限制后重新提交'})
       if(kind==='read')expect(result).toMatchObject({type:'failure',code:'enterprise_read_failed'})
     }finally{await w.terminate()}

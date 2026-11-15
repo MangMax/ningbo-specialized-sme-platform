@@ -13,7 +13,7 @@
     "preview": "nuxt preview",
     "postinstall": "nuxt prepare",
     "db:studio": "drizzle-kit studio",
-    "typecheck": "nuxt typecheck",
+    "typecheck": "nuxt typecheck && tsc --noEmit -p .nuxt/tsconfig.server.json",
     "check:doctor": "vite-doctor .",
     "check:doctor:json": "vite-doctor . --format json",
     "check:doctor:structure": "vite-doctor . --analyses dead-code,graph,dupes,health",

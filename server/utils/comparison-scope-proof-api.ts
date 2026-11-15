@@ -25,7 +25,7 @@ const paginate = <T>(rows: T[], paging: { page: number; pageSize: number }) => (
 
 export function handleComparisonScopeProofRequest(input: ProofApiInput, context: { db: Db; apiToken?: string | null }) {
   try {
-    const ok = (body: unknown) => ({ status: 200, headers, body: sanitizeEvidence(body, knownRedactors(context)) })
+    const ok = (body: object) => ({ status: 200, headers, body: sanitizeEvidence({ ...body }, knownRedactors(context)) })
     const write = ['preflight', 'commit', 'batch'].includes(input.action)
     if (write && !resolveApiAuth({ given: readApiToken(input.headers), configured: context.apiToken }).writeAuthorized) return fail(401, 'unauthorized', 'Configured API token required')
     const method = ['preflight', 'commit'].includes(input.action) ? 'POST' : 'GET'

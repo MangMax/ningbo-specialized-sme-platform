@@ -1,3 +1,5 @@
+import { createRuntimeSchema } from '../db/create-runtime'
+import * as nativeSchema from '../db/schema'
 import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { expect, it } from 'vitest'
@@ -5,9 +7,9 @@ import { eq } from 'drizzle-orm'
 import { candidateFixture } from './helpers/candidate-scope-target'
 import { finalizeCandidateScopes } from '../upgrade/candidate-scope'
 import { writeNewCollectionTarget, writeCollectionTarget, type NewCollectionTargetCommand } from '../lib/platform/collection-target-command'
-import { candidateScopeObservation as o } from '../lib/platform/candidate-scope-schema'
+import { candidateScopeObservation as o } from '../upgrade/frozen/candidate-scope-schema'
 import { listTargetDeclarations } from '../server/utils/platform-declarations-target'
-import { targetSchema } from '../lib/platform/target-schema'
+import { targetSchema } from '../upgrade/target-schema'
 import { platformResultToImport } from '../lib/platform/recognized-evidence'
 import type { PlatformQuerySource, PlatformLiveQueryResult } from '../lib/platform/live-query'
 
@@ -21,10 +23,9 @@ function command(source: PlatformQuerySource): NewCollectionTargetCommand {
   return {queryText:JSON.stringify(query),evidenceText:JSON.stringify(e),createdAt:'c',assignments:[{enterpriseId:null,nameRaw:'Example',usccRaw:null,matchBasis:'none',verificationStatus:'pending',origin:'command',actor:{type:'agent',id:'731'},basis:'explicit synthetic'}]}
 }
 it('new collection transactions and replay retain three-source masks without changing row titles fingerprints or captures', async () => {
-  const f=await candidateFixture();finalizeCandidateScopes(f)
-  const t=new Database(f.target);t.pragma('foreign_keys=ON');const db=drizzle(t,{schema:targetSchema})
+  const t=new Database(':memory:');t.pragma('foreign_keys=ON');createRuntimeSchema(t);const db=drizzle(t,{schema:nativeSchema})
   try {
-    expect(()=>listTargetDeclarations({},db)).toThrow(/71608/)
+    expect(()=>listTargetDeclarations({},db)).not.toThrow()
     for(const source of ['queryList','businessList','queryBusList'] as const){
       const input=command(source),result=writeNewCollectionTarget(db,input)
       const row=db.select().from(o).where(eq(o.id,result.observations[0]!.observationId)).get()!
@@ -41,8 +42,7 @@ it('new collection transactions and replay retain three-source masks without cha
 },30000)
 
 it('caller caught source failures roll back complete collection capture and all source writes',async()=>{
-  const f=await candidateFixture();finalizeCandidateScopes(f)
-  const t=new Database(f.target);t.pragma('foreign_keys=ON');const db=drizzle(t,{schema:targetSchema})
+  const t=new Database(':memory:');t.pragma('foreign_keys=ON');createRuntimeSchema(t);const db=drizzle(t,{schema:nativeSchema})
   try {
     for(const source of ['queryList','businessList','queryBusList'] as const){
       t.exec("CREATE TRIGGER inject_candidate BEFORE INSERT ON platform_legacy_relation_alias BEGIN SELECT RAISE(ABORT,'injected after capture'); END")

@@ -55,7 +55,7 @@ it('native raw-only process facts agree across HTTP, enterprise, source and cand
   expect(candidates.rows[0]).toMatchObject({ status: 'candidate', edge: { relationId, role: 'followup_review' }, evidence: { temporal: { relationYear: 2025, relationBatch: '2025-2' }, process: { declareKind: 'review', appliedAt: '2025-11-21 09:54:16', status: '终审通过' } } })
   expect(candidates.rows[0]!.conflicts).not.toContain('process_type_unknown')
   // Evidence reads retain the captured source facts and raw values.
-  expect(storedRelation(queryId, relationId)).toMatchObject({ id: relationId, ...expected, rawFields })
+  expect(storedRelation(queryId, relationId)).toMatchObject({ ...expected, rawFields })
 })
 
 it('new archives preserve matching explicit facts and reject contradictory nonempty facts atomically', async () => {

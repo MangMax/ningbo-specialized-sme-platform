@@ -205,7 +205,7 @@ it('independent review: readback retry preserves refresh reset intent', async ()
   expect(ids()).toHaveLength(100);
   expect(wrapper.text()).toContain('已读回当前年度过程、对应与审计');
   failRefresh = true;
-  await click('刷新年度过程');
+  await click('刷新并核对年度过程');
   expect(ids()).toHaveLength(100);
   expect(wrapper.text()).toContain('已提交，但同步读回失败');
   expect(wrapper.get('[data-annual-summary]').text()).toContain('尚无已确认最终结果');
@@ -268,7 +268,7 @@ it('keeps reset intent through repeated readback failures without submitting ano
     ? fail ? Promise.reject(new Error('reset still unavailable')) : Promise.resolve(page(7, 'scope-a', options.query.page)) : undefined)
   mountReview(7); await flushPromises(); await click('加载更多过程')
   expect(ids()).toHaveLength(100)
-  fail = true; await click('刷新年度过程'); await click('重试读回')
+  fail = true; await click('刷新并核对年度过程'); await click('重试读回')
   expect(ids()).toHaveLength(100)
   expect(wrapper.get('[data-annual-summary]').text()).toContain('尚无已确认最终结果')
   const beforeRetry = reads(fetch).length

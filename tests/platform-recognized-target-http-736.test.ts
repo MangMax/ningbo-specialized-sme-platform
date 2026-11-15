@@ -1,3 +1,4 @@
+import { finalEvidenceFixture } from './helpers/final-evidence-fixture'
 import { ensurePlatformObservation } from '../upgrade/frozen/server/platform-business-record'
 import * as legacySchema from '../upgrade/legacy-schema'
 import Database from 'better-sqlite3'
@@ -8,16 +9,16 @@ import { afterAll, beforeAll, expect, it, vi } from 'vitest'
 import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { recognizedHandlerFixture } from './helpers/recognized-handler-target-736'
-import { targetSchema } from '../upgrade/target-schema'
+import { targetSchema } from '../lib/platform/target-schema'
 import { listPlatformRecognizedDirectory, getPlatformRecognizedRecord } from '../upgrade/frozen/server/platform-recognized-directory'
 import { readPlatformFilterOptions } from '../upgrade/frozen/server/platform-filter-options'
 import { platformResultToImport } from '../lib/platform/recognized-evidence'
 import type { PlatformLiveQueryResult } from '../lib/platform/live-query'
-import { writeCollectionTarget } from '../upgrade/frozen/collection-target-command'
+import { writeCollectionTarget } from '../lib/platform/collection-target-command'
 
 const responses: unknown[] = []
 const statements: { sql: string; params: unknown[] }[] = []
-let fixture: Awaited<ReturnType<typeof recognizedHandlerFixture>>
+let fixture: ReturnType<typeof finalEvidenceFixture<Awaited<ReturnType<typeof recognizedHandlerFixture>>>>
 let request: ReturnType<typeof toWebHandler>
 let listTool: typeof import('../server/mcp/tools/list_platform_recognized_directory')['default']
 let detailTool: typeof import('../server/mcp/tools/get_platform_recognized_record')['default']
@@ -36,7 +37,7 @@ async function mcp(input: unknown, detail = false) {
   return json(result.structuredContent)
 }
 beforeAll(async () => {
-  fixture = await recognizedHandlerFixture(source => {
+  fixture = finalEvidenceFixture(await recognizedHandlerFixture(source => {
     const db = drizzle(source, { schema: legacySchema })
     for (let i = 0; i < 5; i++) {
       const r = db.insert(legacySchema.platformRelation).values({ queryId: 1, sequenceNo: i + 2, nameRaw: ' Cells ', rawFields: { rdjb: false } }).returning().get()
@@ -49,7 +50,7 @@ beforeAll(async () => {
       const r = db.insert(legacySchema.platformRelation).values({ queryId: 1, sequenceNo: i + 7, relationKey: key, rawFields: raw }).returning().get()
       ensurePlatformObservation(db, r.id)
     }
-  })
+  }))
   const db = drizzle(fixture.t, { schema: targetSchema, logger: { logQuery(sql, params) { statements.push({ sql, params }) } } })
   // Test application wiring only: actual handlers execute their actual ORM on this target.
   vi.doMock('@db', () => ({ useDb: () => db }))
@@ -178,8 +179,8 @@ it('public requests see current assignment corrections while preserving original
 it('public SQL avoids legacy and archive business reads and capture rejection preserves global guard', async () => {
   expect(statements.map(row => row.sql).join('\n')).not.toMatch(/\b(?:platform_query|platform_relation)\b|\bjson\w*\s*\(/i)
   expect(statements.map(row => row.sql).join('\n')).not.toMatch(/(?:from|join)\s+"?platform_archive/i)
-  expect(fixture.t.pragma('user_version', { simple: true })).toBe(71610)
-  expect(() => assertExpandRuntime(fixture.t)).toThrow(/finalized|phase|runtime/i)
+  expect(fixture.t.pragma('user_version', { simple: true })).toBe(71613)
+  expect(() => assertExpandRuntime(fixture.t)).toThrow(/historical|finalized|phase|runtime/i)
   expect(fixture.t.pragma('foreign_key_check')).toEqual([])
   expect(fixture.t.pragma('integrity_check', { simple: true })).toBe('ok')
   const trigger = fixture.t.prepare("SELECT sql FROM sqlite_schema WHERE name='recognized_stored_update'").get() as { sql: string }

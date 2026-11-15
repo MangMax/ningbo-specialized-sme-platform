@@ -52,7 +52,7 @@ function coverageFunctionMeter(db: ReturnType<typeof initializeDb>) {
     } : fn)) as typeof db.$client.function
   db.$client.prepare = ((...args: Parameters<typeof prepare>) => {
     const stmt = prepare(...args)
-    if (/with targets as materialized/i.test(stmt.source)) {
+    if (/with \"coverage_targets\" as/i.test(stmt.source)) {
       const all = stmt.all.bind(stmt)
       Object.defineProperty(stmt, 'all', { value: (...params: unknown[]) => {
         selects++; selectingCoverage = true
@@ -116,7 +116,7 @@ it('bounds assessment work for REST and MCP pages while keeping the current expl
 it('preserves REST filters counts deep pages evidence and the intentionally narrower MCP projection', async () => {
   const f = fixture(), api = await publicReads()
   const { listRosterDifferences: reference } = await import('../lib/roster/enterprise-roster')
-  f.write({ platformQueries: [{ interface: 'business_list', queryKey: 'name:合成差异00', rdjb: '2', titleCode: 'specialized_sme', queriedAt: '2026-10-19T00:00:00.000Z', status: 'failed', rawResponse: 'SYNTHETIC_RAW', failureReason: 'synthetic failure', relations: [{ sequenceNo: 2, nameRaw: 'unmatched synthetic' }, { sequenceNo: 1, nameRaw: '合成旧名称', usccRaw: '91330211255994457P', verificationStatus: 'confirmed' }] }],
+  f.write({ platformQueries: [{ interface: 'business_list', queryKey: 'name:合成差异00', rdjb: '2', titleCode: 'specialized_sme', queriedAt: '2026-10-19T00:00:00.000Z', status: 'failed', rawResponse: 'SYNTHETIC_RAW', failureReason: 'synthetic failure', relations: [{ sequenceNo: 1, nameRaw: '合成旧名称', usccRaw: '91330211255994457P', verificationStatus: 'confirmed' }, { sequenceNo: 2, nameRaw: 'unmatched synthetic' }] }],
     aliases: [{ enterpriseName: '合成差异00', name: '合成旧名称', sourceKind: 'platform_business', verificationStatus: 'confirmed', sourceRelationRef: { interface: 'business_list', queryKey: 'name:合成差异00', rdjb: '2', sequenceNo: 1 } }, { enterpriseName: '合成差异01', name: '合成旧名称', sourceKind: 'platform_apply', verificationStatus: 'pending' }],
     differences: [{ enterpriseName: '合成差异00', titleCode: 'specialized_sme', direction: 'missing_in_miit', status: 'confirmed_reason', reasonCode: 'pending_review', measureCode: 'follow_review', verificationStatus: 'confirmed', recordedAt: '2026-10-19T00:00:00.000Z', evidenceQueryRef: { interface: 'business_list', queryKey: 'name:合成差异00', rdjb: '2' } }, { enterpriseName: '合成差异01', titleCode: 'specialized_sme', direction: 'extra_in_miit', status: 'confirmed_no_diff', measureCode: 'none', verificationStatus: 'confirmed', recordedAt: '2026-10-19T00:00:00.000Z' }, { enterpriseName: '合成差异02', titleCode: 'little_giant', direction: 'missing_in_miit', status: 'needs_review', reasonCode: 'moved_in', measureCode: 'record_moved_in', movedIn: { city: '合成城市' }, recordedAt: '2026-10-19T00:00:00.000Z' }] })
   const { parseRosterDifferenceQuery } = await import('../server/utils/roster-read-query')
@@ -189,9 +189,9 @@ it('preserves exact identity title partitions source conditions and no record ou
   })
   f.write({ platformQueries: [
     { interface: 'recognized_list', queryKey: uscc, titleCode: 'specialized_sme', rdjb: '2', queriedAt: '2026-10-20T00:00:00.000Z', status: 'no_record', collectionEvidence: evidence('queryBusList', '2') },
-    { interface: 'business_list', queryKey: uscc.toLowerCase(), titleCode: 'specialized_sme', rdjb: '2', queriedAt: '2026-10-19T00:00:00.000Z', status: 'no_record' },
-    { interface: 'business_list', queryKey: uscc, titleCode: 'innovative_sme', rdjb: '1', queriedAt: '2026-10-20T00:00:01.000Z', status: 'no_record' },
-    { interface: 'apply_list', queryKey: uscc, rdjb: '', queriedAt: '2026-10-20T00:00:02.000Z', status: 'no_record' },
+    { interface: 'business_list', queryKey: uscc.toLowerCase(), titleCode: 'specialized_sme', rdjb: '2', queriedAt: '2026-10-19T00:00:00.000Z', status: 'no_record', rawResponse: 'SYNTHETIC_EMPTY_RESPONSE' },
+    { interface: 'business_list', queryKey: uscc, titleCode: 'innovative_sme', rdjb: '1', queriedAt: '2026-10-20T00:00:01.000Z', status: 'no_record', rawResponse: 'SYNTHETIC_EMPTY_RESPONSE' },
+    { interface: 'apply_list', queryKey: uscc, rdjb: '', queriedAt: '2026-10-20T00:00:02.000Z', status: 'no_record', rawResponse: 'SYNTHETIC_EMPTY_RESPONSE' },
     { interface: 'recognized_list', queryKey: uscc, titleCode: 'specialized_sme', rdjb: '2', queriedAt: '2026-10-20T00:00:03.000Z', status: 'no_record', collectionEvidence: { ...evidence('queryBusList', '2', { uscc, rddqrq: '2025', combination: 'and' }), queriedAt: '2026-10-20T00:00:03.000Z', completedAt: '2026-10-20T00:00:04.000Z' } },
   ] })
   const rest = await api.rest('?q=91330211255994457p')
@@ -230,7 +230,7 @@ it('bounds legacy key normalization by distinct raw keys while preserving public
   const names = ['name:合成差异00', 'name:合成差异01']
   const at = '2026-10-20T00:00:00.000Z', later = '2026-10-20T00:00:01.000Z'
   const attempt = (queryKey: string, status: 'no_record' | 'not_queried' | 'partial' | 'failed' = 'no_record', queriedAt = at) => ({
-    interface: 'business_list' as const, queryKey, rdjb: '2', titleCode: 'specialized_sme', queriedAt, status,
+    interface: 'business_list' as const, queryKey, rdjb: '2', titleCode: 'specialized_sme', queriedAt, status, rawResponse: 'SYNTHETIC_ATTEMPT_RESPONSE',
   })
   // Natural archive identities differ by interface/rdjb/time. Literal queryKey
   // strings are preserved by the application import API; no SQL fixture writes.
@@ -250,7 +250,9 @@ it('bounds legacy key normalization by distinct raw keys while preserving public
     // Actual SELECT execution and actual UDF inputs are both required: a fixed
     // expected count without this execution cannot satisfy the resource guard.
     expect(meter.read().selects).toBe(1)
-    expect.soft(meter.read().calls).toEqual(Object.fromEntries([...legacy, ...excluded, ...names].map(key => [key, 1])))
+    // Native SQL handles ASCII keys directly; only whitespace/non-ASCII keys
+    // enter the UDF, once per distinct stored spelling regardless of retries.
+    expect.soft(meter.read().calls).toEqual(Object.fromEntries([...legacy, ...excluded.slice(0, 2)].map(key => [key, 1])))
     expect(rest).toMatchObject({ total: 40, counts: { specialized_sme: { missing_in_miit: 20, extra_in_miit: 20 } } })
     const rows = rest.rows.filter((row: any) => row.name === '合成差异00')
     expect(rows.map((row: any) => row.direction).sort()).toEqual(['extra_in_miit', 'missing_in_miit'])
@@ -273,7 +275,7 @@ it('bounds legacy key normalization by distinct raw keys while preserving public
     meter.reset()
     const mcp = await api.mcp({ pageSize: 50 })
     expect(meter.read().selects).toBe(1)
-    expect.soft(meter.read().calls).toEqual(Object.fromEntries([...legacy, ...excluded, ...names].map(key => [key, 1])))
+    expect.soft(meter.read().calls).toEqual(Object.fromEntries([...legacy, ...excluded.slice(0, 2)].map(key => [key, 1])))
     expect(mcp.rows).toHaveLength(40)
     expect(mcp.counts).toEqual({ specialized_sme: { missing_in_miit: 20, extra_in_miit: 20 } })
     for (const row of rest.rows) {

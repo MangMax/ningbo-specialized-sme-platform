@@ -307,7 +307,7 @@ describe('提交：一次写入企业/事件/出处/别名/平台证据/快照/�
           enterpriseName: '甲企业有限公司',
           name: '甲企业旧名有限公司',
           sourceKind: 'platform_business',
-          sourceRelationRef: { rawResponse: 'Explicit synthetic original response',
+          sourceRelationRef: {
             interface: 'business_list',
             queryKey: '913302017133602847',
             rdjb: '3',
@@ -1089,7 +1089,7 @@ describe('API 写入边界：归并选择器与差异冲突', () => {
         name: '宁波未经返回的曾用名有限公司',
         sourceKind: 'platform_business',
         verificationStatus: 'confirmed',
-        sourceRelationRef: { rawResponse: 'Explicit synthetic original response',
+        sourceRelationRef: {
           interface: 'business_list',
           queryKey: TARGET_USCC,
           rdjb: '3',
@@ -1134,7 +1134,7 @@ describe('API 写入边界：归并选择器与差异冲突', () => {
         name: aliasName,
         sourceKind: 'platform_business',
         verificationStatus: 'confirmed',
-        sourceRelationRef: { rawResponse: 'Explicit synthetic original response',
+        sourceRelationRef: {
           interface: 'business_list',
           queryKey: TARGET_USCC,
           rdjb: '3',
@@ -2983,7 +2983,7 @@ describe('批内自然键引用：一批写完「查询 → 关系 → 别名 / 
           sourceKind: 'platform_business',
           verificationStatus: 'confirmed',
           // ★ 指向**本批新建**的关系行（第 2 条）；带 queriedAt 精确匹配。
-          sourceRelationRef: { rawResponse: 'Explicit synthetic original response', interface: 'business_list', queryKey: '91330211255994457P', rdjb: '3', queriedAt: '2026-10-16T03:00:00.000Z', sequenceNo: 2 },
+          sourceRelationRef: { interface: 'business_list', queryKey: '91330211255994457P', rdjb: '3', queriedAt: '2026-10-16T03:00:00.000Z', sequenceNo: 2 },
         },
       ],
       differences: [
@@ -3192,7 +3192,7 @@ describe('读面：list_enterprises / list_differences', () => {
               name: '宁波读面旧名',
               sourceKind: 'platform_business',
               verificationStatus: 'confirmed',
-              sourceRelationRef: { rawResponse: 'Explicit synthetic original response',
+              sourceRelationRef: {
                 interface: 'business_list',
                 queryKey: '913302110000000098',
                 rdjb: '3',

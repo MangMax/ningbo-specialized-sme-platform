@@ -124,7 +124,7 @@ it('identical full raw reuses a content version across stored synonyms while cha
   }
   const db = new Database(join(dir, 'roster.db'), { readonly: true, fileMustExist: true })
   try {
-    const versions = () => db.prepare('SELECT o.record_id, o.version_id FROM platform_business_observation o JOIN platform_relation r ON r.id = o.relation_id WHERE r.relation_key = ? ORDER BY r.id').all(raw.id)
+    const versions = () => db.prepare('SELECT o.record_id, o.version_id FROM platform_business_observation o JOIN platform_business_record r ON r.id = o.record_id WHERE r.platform_key = ? ORDER BY o.id').all(raw.id)
     const before = versions() as { record_id: number; version_id: number }[]
     expect(before).toHaveLength(3)
     expect(before[0]!.version_id).toBeGreaterThan(0)

@@ -12,6 +12,6 @@ it('native A B A history preserves versions and scoped observations through publ
 })
 it('native records retain separate identity namespaces across three platform interfaces',()=>{
  const f=fixture();for(const source of ['apply_list','business_list','recognized_list'] as const)f.seed(source,f.raw('SAME'))
- const ids=['apply_list','business_list','recognized_list'].map(source=>f.list(source as 'apply_list').rows[0]!.record.id)
+ const ids=['apply_list','business_list','recognized_list'].map(source=>f.list(source as 'apply_list').rows.filter(row=>row.kind==='record')[0]!.record.id)
  expect(new Set(ids).size).toBe(3)
 })

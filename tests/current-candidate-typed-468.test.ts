@@ -145,7 +145,7 @@ it.each(['innovative_sme', 'specialized_sme', 'little_giant'] as const)('native 
     const name = '候选企业' + id
     const enterprise = f.db.insert(nativeSchema.enterprise).values({ id, name, nameNorm: name, usccNorm: 'SYNTHETIC468-' + id }).returning().get()
     const stamp = '2026-10-01T00:00:00Z'
-    const rawFields = { id: 'native468-' + id, qymc: name, tyshxydm: enterprise.usccNorm, rdjb }
+    const rawFields = { id: 'native468-' + id, qymc: name, tyshxydm: enterprise.usccNorm!, rdjb }
     const collectionEvidence = {
       source: 'queryBusList' as const, status: 'success' as const,
       effectiveConditions: { combination: 'and' as const, name },

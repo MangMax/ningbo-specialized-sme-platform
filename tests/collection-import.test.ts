@@ -27,11 +27,18 @@ it('archives all three typed business sources without HTML and appends changed v
  }
  expect(db.$client.prepare('select count(*) n from platform_business_record').get()).toEqual({n:3})
  expect(db.$client.prepare('select count(*) n from platform_business_record_version').get()).toEqual({n:6})
- for(const table of ['platform_apply_projection','platform_business_projection','platform_recognized_projection'])expect(db.$client.prepare(`select count(*) n from ${table}`).get()).toEqual({n:2})
+ for(const table of ['platform_apply_projection','platform_business_projection','platform_recognized_projection']){
+  expect(db.$client.prepare(`select count(*) n from ${table} where observation_id is null`).get()).toEqual({n:2})
+  expect(db.$client.prepare(`select count(*) n from ${table} where observation_id is not null`).get()).toEqual({n:3})
+ }
  const versions=db.$client.prepare('select canonical_raw_json raw from platform_business_record_version').all() as {raw:string}[]
  expect(versions.every(v=>JSON.parse(v.raw).unknown.nested[0]===null&&JSON.parse(v.raw).empty===null)).toBe(true)
- const queries=db.$client.prepare('select collection_evidence evidence,raw_response raw from platform_query').all() as {evidence:string;raw:unknown}[]
- expect(queries.every(q=>q.raw===null&&!q.evidence.includes('rawData')&&!q.evidence.includes('body'))).toBe(true)
+ const queries=db.$client.prepare("select r.field,a.storage_class kind,cast(a.bytes as text) value from platform_collection_archive_ref r join platform_archive_value a on a.id=r.archive_id where r.field in ('collectionEvidence','rawResponse')").all() as {field:string;kind:string;value:string|null}[]
+ expect(queries.filter(q=>q.field==='rawResponse')).toHaveLength(9)
+ expect(queries.filter(q=>q.field==='rawResponse').every(q=>q.kind==='null')).toBe(true)
+ const evidenceArchives=queries.filter(q=>q.field==='collectionEvidence')
+ expect(evidenceArchives).toHaveLength(9)
+ expect(evidenceArchives.every(q=>q.kind==='text'&&!q.value!.includes('rawData')&&!q.value!.includes('body'))).toBe(true)
 })
 it('validates exact selected enterprise IDs and rejects empty or excessive scopes',()=>{
  expect(snapshotInput.safeParse({action:'create',clientRequestId:'x',enterpriseIds:[1,1,2]}).success).toBe(true)
@@ -51,7 +58,7 @@ it('reuses complete identical collections without adding queries relations obser
  const directory=mkdtempSync(join(tmpdir(),'collection-reuse-'));directories.push(directory)
  const db=initializeDb({create:true,dbPath:join(directory,'fixture.sqlite')});stores.push(db)
  const enterprise=db.$client.prepare('insert into enterprise(name,name_norm,uscc_norm) values(?,?,?) returning id').get('fixture','fixture','91330200123456789X') as {id:number}
- const tables=['platform_query','platform_relation','platform_business_observation','platform_business_record_version']
+ const tables=['platform_collection','platform_observation_assignment','platform_business_observation','platform_business_record_version']
  const counts=()=>tables.map(t=>(db.$client.prepare(`select count(*) n from ${t}`).get() as {n:number}).n)
  for(const source of ['queryList','businessList','queryBusList'] as const){
   const first=evidence(source)
@@ -61,15 +68,23 @@ it('reuses complete identical collections without adding queries relations obser
   const before=counts(),repeat=structuredClone(first);repeat.queriedAt='2026-11-06T00:00:10Z';repeat.completedAt='2026-11-06T00:00:11Z'
   expect(reuseCollectedPlatformResult(db,repeat,enterprise.id)).toBe(true)
   expect(counts()).toEqual(before)
-  const row=db.$client.prepare('select queried_at,last_collected_at from platform_query where interface=?').get({queryList:'apply_list',businessList:'business_list',queryBusList:'recognized_list'}[source])
+  const row=db.$client.prepare('select queried_at,last_collected_at from platform_collection where interface=?').get({queryList:'apply_list',businessList:'business_list',queryBusList:'recognized_list'}[source])
   expect(row).toEqual({queried_at:first.queriedAt,last_collected_at:repeat.queriedAt})
   expect(reuseCollectedPlatformResult(db,first,enterprise.id)).toBe(true)
-  expect(db.$client.prepare('select last_collected_at t from platform_query where interface=?').get({queryList:'apply_list',businessList:'business_list',queryBusList:'recognized_list'}[source])).toEqual({t:repeat.queriedAt})
+  expect(db.$client.prepare('select last_collected_at t from platform_collection where interface=?').get({queryList:'apply_list',businessList:'business_list',queryBusList:'recognized_list'}[source])).toEqual({t:repeat.queriedAt})
   expect(reuseCollectedPlatformResult(db,evidence(source,1),enterprise.id)).toBe(false)
   const partial={...repeat,completeness:'partial' as const,fullRange:false};expect(reuseCollectedPlatformResult(db,partial,enterprise.id)).toBe(false)
   expect(reuseCollectedPlatformResult(db,repeat,enterprise.id+1)).toBe(false)
   const table={queryList:'platform_apply_projection',businessList:'platform_business_projection',queryBusList:'platform_recognized_projection'}[source]
-  db.$client.prepare(`delete from ${table}`).run()
+  if(source!=='queryBusList') {
+   expect(()=>db.$client.prepare(`delete from ${table}`).run()).toThrow('immutable')
+   expect(reuseCollectedPlatformResult(db,repeat,enterprise.id)).toBe(true)
+   // Bypass only this isolated fixture's immutable deletion barrier to test a
+   // missing version projection. Other archive/observation guards stay active.
+   const trigger=(db.$client.prepare("select name from sqlite_schema where type='trigger' and tbl_name=? and lower(sql) like '%before delete%' and sql like '%immutable%'").get(table) as {name:string}).name
+   db.$client.exec(`drop trigger ${trigger}`)
+  }
+  db.$client.prepare(`delete from ${table} where observation_id is null`).run()
   expect(reuseCollectedPlatformResult(db,repeat,enterprise.id)).toBe(false)
  }
 })

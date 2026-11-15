@@ -31,7 +31,7 @@ function fixture(seed?:(s:Database.Database)=>void) {
 
 import { beforeAll } from 'vitest'
 import { installFingerprintBarrier } from '../upgrade/fingerprint-basis'
-import { targetSchema } from '../lib/platform/target-schema'
+import { targetSchema } from '../upgrade/target-schema'
 import { writeApplyTarget, type ApplyTargetInput } from '../upgrade/frozen/apply-target-writer'
 import { writeProcessTarget } from '../upgrade/frozen/process-target-writer'
 import { writeRecognizedTarget } from '../upgrade/frozen/recognized-target-writer'

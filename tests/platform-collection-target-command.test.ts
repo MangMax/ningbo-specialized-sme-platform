@@ -1,3 +1,6 @@
+import { createRuntimeSchema } from '../db/create-runtime'
+import { tmpdir } from 'node:os'
+import { rmSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { resolveLegacyReference } from '../lib/platform/target-archive'
 import Database from 'better-sqlite3'
@@ -5,26 +8,20 @@ import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { migrate } from 'drizzle-orm/better-sqlite3/migrator'
 import { copyFileSync, mkdtempSync } from 'node:fs'
 import { join } from 'node:path'
-import { expect, it } from 'vitest'
-import { upgradeCollections } from '../upgrade/collections'
-import { upgradeObservations } from '../upgrade/observations'
-import { upgradeProjections } from '../upgrade/projections'
-import { finalizeObservations, finalizeCollectionScopes } from '../upgrade/finalize-observations'
+import { afterEach, expect, it } from 'vitest'
 import { targetSchema } from '../lib/platform/target-schema'
 import { writeNewCollectionTarget, type NewCollectionTargetCommand } from '../lib/platform/collection-target-command'
 import { platformResultToImport } from '../lib/platform/recognized-evidence'
 import type { PlatformLiveQueryResult, PlatformQuerySource } from '../lib/platform/live-query'
 
+const owned: {root:string; sqlite:Database.Database}[]=[]
+afterEach(()=>{for(const f of owned.splice(0)){if(f.sqlite.open)f.sqlite.close();rmSync(f.root,{recursive:true,force:true})}})
 function fixture() {
-  const root = mkdtempSync(join(process.env.W4A_EVIDENCE_DIR ?? '/Users/mang/.t3/acceptance/platform-complete-migration/w4a/raw', 'fixture-'))
-  const source = join(root, 'source.sqlite'), target = join(root, 'target.sqlite')
-  const old = new Database(source)
-  migrate(drizzle(old), { migrationsFolder: 'db/migrations' }); old.close(); copyFileSync(source, target)
-  const options = { source, target, collectionRunId: 'c', observationRunId: 'o', projectionRunId: 'p', finalizationRunId: 'f', batchSize: 2 }
-  upgradeCollections({ ...options, runId: 'c' }); upgradeObservations({ ...options, runId: 'o' }); upgradeProjections({ ...options, runId: 'p' })
-  finalizeObservations({ ...options, runId: 'f' }); finalizeCollectionScopes({ ...options, runId: 's' })
+  const root = mkdtempSync(join(tmpdir(), 'w4a-fixture-'))
+  const target = join(root, 'target.sqlite')
   const statements: string[] = []
-  const sqlite = new Database(target, { verbose: text => statements.push(String(text)) }); sqlite.pragma('foreign_keys=ON'); sqlite.exec("insert into title(code,name_zh,level,rank) values('specialized_sme','专精特新中小企业','municipal',2),('little_giant','小巨人','national',3),('innovative_sme','创新型中小企业','municipal',1)")
+  const sqlite = new Database(target, { verbose: text => statements.push(String(text)) }); sqlite.pragma('foreign_keys=ON')
+  owned.push({root,sqlite});createRuntimeSchema(sqlite);statements.length=0
   return { sqlite, db: drizzle(sqlite, { schema: targetSchema }), statements }
 }
 function evidence(source: PlatformQuerySource): PlatformLiveQueryResult {
@@ -32,7 +29,7 @@ function evidence(source: PlatformQuerySource): PlatformLiveQueryResult {
 }
 function command(e: PlatformLiveQueryResult): NewCollectionTargetCommand {
   const query = platformResultToImport(e)
-  return { queryText: JSON.stringify(query, null, 2), evidenceText: JSON.stringify(e, null, 1), createdAt: 'creation text', assignments: (query.relations ?? []).map(() => ({ enterpriseId: null, matchBasis: 'none' as const, verificationStatus: 'pending' as const, origin: 'command' as const, actor: { type: 'agent' as const, id: 'w4a' }, basis: 'explicit input', recordedAt: null })) }
+  return { queryText: JSON.stringify(query, null, 2), evidenceText: JSON.stringify(e, null, 1), createdAt: 'creation text', assignments: (query.relations ?? []).map(row => ({ enterpriseId: null, matchBasis: 'none' as const, verificationStatus: 'pending' as const, nameRaw: row.nameRaw ?? null, origin: 'command' as const, actor: { type: 'agent' as const, id: 'w4a' }, basis: 'explicit input', recordedAt: null })) }
 }
 it.each(['queryList', 'businessList', 'queryBusList'] as const)('executes a complete new %s collection through its accepted source writer', source => {
   const { sqlite, db, statements } = fixture()
@@ -42,7 +39,7 @@ it.each(['queryList', 'businessList', 'queryBusList'] as const)('executes a comp
   expect(sqlite.prepare('select source,evidence_status,completeness,full_range,provenance_state,parse_state from platform_collection').get()).toEqual({ source, evidence_status: 'success', completeness: 'complete', full_range: 1, provenance_state: 'captured', parse_state: 'valid' })
   expect(sqlite.prepare('select sequence_no,page_row_no,position_state from platform_business_observation').all()).toEqual([{ sequence_no: 1, page_row_no: 1, position_state: 'verified' }])
   expect(statements.filter(text => /\b(platform_query|platform_relation)\b/i.test(text))).toEqual([])
-  expect(sqlite.pragma('user_version', { simple: true })).toBe(71606)
+  expect(sqlite.pragma('user_version', { simple: true })).toBe(71613)
   expect(sqlite.pragma('foreign_key_check')).toEqual([]); sqlite.close()
 })
 
@@ -59,8 +56,8 @@ function normalizedBytes(sqlite: Database.Database) {
 it('preserves complete PK metadata byte archives hashes seals and independent legacy scope SQL', () => {
   const { sqlite, db } = fixture(), input = command(evidence('businessList'))
   const r = writeNewCollectionTarget(db, input)
-  expect(sqlite.prepare('select * from platform_collection').get()).toEqual({ id: r.collectionId, interface: 'business_list', query_key: '91330200712345678A', rdjb: '2', title_code: 'specialized_sme', queried_at: '2026-11-11T00:00:00Z', created_at: 'creation text', last_collected_at: null, status: 'success', failure_reason: null, source: 'businessList', evidence_status: 'success', completed_at: '2026-11-11T00:01:00Z', completeness: 'complete', full_range: 1, fetched_count: 1, declared_total: 1, scope_mode: 'selected', provenance_state: 'captured', parse_state: 'valid', rule_version: 'w4a-new-collection-v1', error_code: null, error_message: null, max_requests: 100, max_rows: 5000, max_duration_ms: 60000, page_size: 50 })
-  expect(sqlite.prepare('select * from platform_collection_page').all()).toEqual([{ id: 1, collection_id: r.collectionId, ordinal: 0, source: 'businessList', rdjb: '2', page_no: 1, max_page: 1, fetched_count: 1, declared_total: 1, status: 'success', error_code: null, error_message: null, sequence_start: 1, sequence_end: 1, position_state: 'verified' }])
+  expect(sqlite.prepare('select * from platform_collection').get()).toEqual({ id: r.collectionId, interface: 'business_list', query_key: '91330200712345678A', rdjb: '2', title_code: 'specialized_sme', queried_at: '2026-11-11T00:00:00Z', created_at: 'creation text', last_collected_at: null, status: 'success', failure_reason: null, source: 'businessList', evidence_status: 'success', completed_at: '2026-11-11T00:01:00Z', completeness: 'complete', full_range: 1, fetched_count: 1, declared_total: 1, scope_mode: 'selected', provenance_state: 'captured', parse_state: 'valid', rule_version: 'w4a-new-collection-v1', error_code: null, error_message: null, max_requests: 100, max_rows: 5000, max_duration_ms: 60000, page_size: 50, reconcile_slot_state:'miss',reconcile_slot_rule:'legacy-reconcile-slot-v1',reconcile_slot_reason:'legacy_slot_not_complete',reconcile_slot_raw_archive_id:2,reconcile_slot_row_count:1,reconcile_slot_input_sha256:'84108a0279c3d843c8389e34a4a4c88b503d21652d53b41965f972d0f492131f',witness_state:'uncaptured',witness_rule:null,witness_gate:null,witness_archive_id:null,witness_sha256:null,witness_error:null,witness_error_name:null })
+  expect(sqlite.prepare('select * from platform_collection_page').all()).toEqual([{ id: 1, collection_id: r.collectionId, ordinal: 0, source: 'businessList', rdjb: '2', page_no: 1, max_page: 1, max_page_present: 1, fetched_count: 1, declared_total: 1, status: 'success', error_code: null, error_message: null, sequence_start: 1, sequence_end: 1, position_state: 'verified' }])
   expect(sqlite.prepare('select * from platform_query_title_scope').all()).toEqual([{ collection_id: r.collectionId, rdjb: '2' }])
   const old = new Database(':memory:')
   migrate(drizzle(old), { migrationsFolder: 'db/migrations' })
@@ -118,7 +115,7 @@ it('keeps multi title page ordinals zero pages and missing maxPage separately', 
 })
 it('preserves absent metadata as unknown and rawResponse bytes without inventing positions limits or completeness', () => {
   const { sqlite, db } = fixture()
-  const r = writeNewCollectionTarget(db, { queryText: '{"interface":"apply_list","queryKey":"legacy","queriedAt":"time","status":"success","rawResponse":"原文\\n ","relations":[{"sequenceNo":1,"rawFields":null}]}', evidenceText: null, createdAt: 'c', assignments: command(evidence('queryList')).assignments })
+  const r = writeNewCollectionTarget(db, { queryText: '{"interface":"apply_list","queryKey":"legacy","queriedAt":"time","status":"success","rawResponse":"原文\\n ","relations":[{"sequenceNo":1,"rawFields":null}]}', evidenceText: null, createdAt: 'c', assignments: command(evidence('queryList')).assignments.map(a=>({...a,nameRaw:null})) })
   expect(r.observations).toHaveLength(1)
   expect(sqlite.prepare('select source,completeness,provenance_state,parse_state,full_range,page_size,fetched_count from platform_collection').get()).toEqual({ source: null, completeness: 'unknown', provenance_state: 'unknown', parse_state: 'absent', full_range: null, page_size: null, fetched_count: null })
   expect(sqlite.prepare('select page_id,page_row_no,position_state from platform_business_observation').get()).toEqual({ page_id: null, page_row_no: null, position_state: 'unknown' })
@@ -165,16 +162,21 @@ it.each(['query','relation'] as const)('rejects exhausted %s namespace without p
 })
 it.each(['platform_collection','platform_collection_page','platform_archive_value','platform_business_observation','platform_business_record_version'] as const)('rejects exhausted generated %s ID atomically', table => {
   const { sqlite, db } = fixture()
-  if (table === 'platform_business_observation') sqlite.exec("insert into platform_collection(interface,query_key,rdjb,queried_at,created_at,status,completeness,provenance_state,parse_state,rule_version) values('apply_list','occupied','','t','c','success','unknown','unknown','absent','fixture'); insert into platform_business_observation(id,collection_id,sequence_no,identity_state,content_state,position_state) values(9007199254740991,1,1,'not_indexed','not_indexed','unknown')")
+  if (table === 'platform_business_observation') {
+    const guards=sqlite.prepare("SELECT name,sql FROM sqlite_schema WHERE type='trigger' AND tbl_name='platform_business_observation' AND sql LIKE '%BEFORE INSERT%'").all() as {name:string;sql:string}[]
+    for(const guard of guards)sqlite.exec('DROP TRIGGER "'+guard.name+'"')
+    sqlite.exec("insert into platform_collection(interface,query_key,rdjb,queried_at,created_at,status,completeness,provenance_state,parse_state,rule_version) values('apply_list','occupied','','t','c','success','unknown','unknown','absent','fixture'); insert into platform_business_observation(id,collection_id,sequence_no,identity_state,content_state,position_state) values(9007199254740991,1,1,'not_indexed','not_indexed','unknown')")
+    for(const guard of guards)sqlite.exec(guard.sql)
+  }
   else sqlite.prepare('insert into sqlite_sequence(name,seq) values(?,9007199254740991)').run(table)
   const before = normalizedBytes(sqlite)
   expect(() => writeNewCollectionTarget(db, command(evidence('queryList')))).toThrow()
   expect(normalizedBytes(sqlite)).toEqual(before); sqlite.close()
 })
-it.each([0,71605])('refuses non-71606 phase %s and preserves the target', phase => {
+it.each([0,71605])('refuses non-native phase %s and preserves the target', phase => {
   const { sqlite, db } = fixture(); sqlite.pragma(`user_version=${phase}`)
   const before = normalizedBytes(sqlite)
-  expect(() => writeNewCollectionTarget(db, command(evidence('queryList')))).toThrow('Explicit 71606 target required')
+  expect(() => writeNewCollectionTarget(db, command(evidence('queryList')))).toThrow('Final native platform schema required')
   expect(normalizedBytes(sqlite)).toEqual(before); sqlite.close()
 })
 it('rejects unsafe source projection IDs at command boundary after source writer insertion', () => {

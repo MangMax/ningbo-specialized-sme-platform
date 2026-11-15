@@ -126,7 +126,7 @@ describe('stored comparison scope proofs through real HTTP and MCP', () => {
     expect(beforeDecision.currentSourceConsistency.recognizedObservations.every((row: any) => row.qualification === 'not_comparable')).toBe(true)
   })
   it('retains candidate proof when REST confirmation omits IDs and rejects explicit empty IDs', async () => {
-    const candidate = { ...baseDecision('edge-candidate'), proofIds: [currentProofId], operations: [{ action: 'create', status: 'candidate', edge: { type: 'recognized_export', relationId: matchedRelation.id, exportRowId: matchedExport.id, role: 'same_current_row' } }] }
+    const candidate = { ...baseDecision('edge-candidate'), proofIds: [currentProofId], operations: [{ action: 'create', status: 'candidate', edge: { type: 'recognized_export', relationId: matchedRelation!.id, exportRowId: matchedExport.id, role: 'same_current_row' } }] }
     const plan = await json(await post('correspondences/preflight', candidate))
     const receipt = await json(await post('correspondences/commit', { request: candidate, planHash: plan.planHash }))
     const edgeId = receipt.correspondenceIds[0]
@@ -142,7 +142,7 @@ describe('stored comparison scope proofs through real HTTP and MCP', () => {
     expect((await json(await fetch(api(`correspondences/${edgeId}/audit`)))).rows.at(-1).evidence.comparisonProofIds).toEqual([currentProofId])
   })
   it('confirms another proof-backed candidate with explicit IDs over MCP', async () => {
-    const candidate = { ...baseDecision('mcp-edge-candidate'), proofIds: [currentProofId], operations: [{ action: 'create', status: 'candidate', edge: { type: 'recognized_export', relationId: otherRelation.id, exportRowId: otherExport.id, role: 'same_current_row' } }] }
+    const candidate = { ...baseDecision('mcp-edge-candidate'), proofIds: [currentProofId], operations: [{ action: 'create', status: 'candidate', edge: { type: 'recognized_export', relationId: otherRelation!.id, exportRowId: otherExport.id, role: 'same_current_row' } }] }
     const candidatePlan = mcpValue(await rpc('tools/call', { name: 'preflight_record_correspondences', arguments: candidate }, true))
     const edgeId = mcpValue(await rpc('tools/call', { name: 'save_record_correspondences', arguments: { request: candidate, planHash: candidatePlan.planHash } }, true)).correspondenceIds[0]
     const confirm = { ...baseDecision('mcp-edge-confirm'), proofIds: [currentProofId], operations: [{ action: 'decide', correspondenceId: edgeId, expectedRevision: 1, status: 'confirmed' }] }
@@ -152,7 +152,7 @@ describe('stored comparison scope proofs through real HTTP and MCP', () => {
     expect((await json(await fetch(api(`correspondences/${edgeId}/audit`)))).rows.at(-1).evidence.comparisonProofIds).toEqual([currentProofId])
   })
   it('confirms a proof-backed candidate with explicit IDs over REST', async () => {
-    const candidate = { ...baseDecision('rest-explicit-candidate'), proofIds: [currentProofId], operations: [{ action: 'create', status: 'candidate', edge: { type: 'recognized_export', relationId: restExplicitRelation.id, exportRowId: restExplicitExport.id, role: 'same_current_row' } }] }
+    const candidate = { ...baseDecision('rest-explicit-candidate'), proofIds: [currentProofId], operations: [{ action: 'create', status: 'candidate', edge: { type: 'recognized_export', relationId: restExplicitRelation!.id, exportRowId: restExplicitExport.id, role: 'same_current_row' } }] }
     const candidatePlan = await json(await post('correspondences/preflight', candidate))
     const edgeId = (await json(await post('correspondences/commit', { request: candidate, planHash: candidatePlan.planHash }))).correspondenceIds[0]
     const confirm = { ...baseDecision('rest-explicit-confirm'), proofIds: [currentProofId], operations: [{ action: 'decide', correspondenceId: edgeId, expectedRevision: 1, status: 'confirmed' }] }
@@ -162,7 +162,7 @@ describe('stored comparison scope proofs through real HTTP and MCP', () => {
     expect((await json(await fetch(api(`correspondences/${edgeId}/audit`)))).rows.at(-1).evidence.comparisonProofIds).toEqual([currentProofId])
   })
   it('confirms a proof-backed candidate with omitted IDs over MCP', async () => {
-    const candidate = { ...baseDecision('mcp-omitted-candidate'), proofIds: [currentProofId], operations: [{ action: 'create', status: 'candidate', edge: { type: 'recognized_export', relationId: mcpOmittedRelation.id, exportRowId: mcpOmittedExport.id, role: 'same_current_row' } }] }
+    const candidate = { ...baseDecision('mcp-omitted-candidate'), proofIds: [currentProofId], operations: [{ action: 'create', status: 'candidate', edge: { type: 'recognized_export', relationId: mcpOmittedRelation!.id, exportRowId: mcpOmittedExport.id, role: 'same_current_row' } }] }
     const candidatePlan = mcpValue(await rpc('tools/call', { name: 'preflight_record_correspondences', arguments: candidate }, true))
     const edgeId = mcpValue(await rpc('tools/call', { name: 'save_record_correspondences', arguments: { request: candidate, planHash: candidatePlan.planHash } }, true)).correspondenceIds[0]
     const confirm = { ...baseDecision('mcp-omitted-confirm'), operations: [{ action: 'decide', correspondenceId: edgeId, expectedRevision: 1, status: 'confirmed' }] }
