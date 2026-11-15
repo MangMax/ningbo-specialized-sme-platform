@@ -4,8 +4,6 @@ import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
 
 export default defineConfig({
-  // 只有组件用例(`tests/image-preview.test.ts`)需要它;它按扩展名只处理 `.vue`,
-  // 对既有的纯 node 用例没有任何影响(那些文件里没有 .vue 依赖)。
   plugins: [vue()],
   resolve: {
     alias: {
