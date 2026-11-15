@@ -1,3 +1,5 @@
+import { execFileSync } from 'node:child_process'
+import { existsSync, readFileSync, writeFileSync, renameSync } from 'node:fs'
 import { normalizeUscc } from '../../../../lib/domain'
 import { CURRENT_RULE_VERSION } from '../../../../lib/roster/current-qualification'
 import { mkdtempSync, rmSync } from 'node:fs'
@@ -116,12 +118,25 @@ export function expectCounts(wb: ExcelJS.Workbook, job: any, counts: {eligible:n
 }
 
 // Capture real development discovery separately from compiled business requests.
-export async function readDevelopmentDiscovery() {
+let discoveryPromise: Promise<any> | undefined
+export function readDevelopmentDiscovery() {
+  return discoveryPromise ??= captureDevelopmentDiscovery()
+}
+async function captureDevelopmentDiscovery() {
+  // Single-worker files share only immutable discovery JSON for this runner.
+  // Process start time prevents reuse after a PID is recycled.
+  const owner = execFileSync('ps', ['-p', String(process.ppid), '-o', 'lstart='], { encoding: 'utf8' })
+  const key = createHash('sha256').update(process.cwd() + process.ppid + owner).digest('hex')
+  const cache = join(tmpdir(), `native-discovery-${key}.json`)
+  if (existsSync(cache)) return JSON.parse(readFileSync(cache, 'utf8'))
   const discovery = specializedExportFixture({ discovery: true })
   try {
     await discovery.start()
     const response = await fetch(discovery.url('/_openapi.json'))
     expect(response.status).toBe(200)
-    return await response.json()
+    const spec = await response.json()
+    const pending = cache + `.${process.pid}`
+    writeFileSync(pending, JSON.stringify(spec)); renameSync(pending, cache)
+    return spec
   } finally { await discovery.close() }
 }

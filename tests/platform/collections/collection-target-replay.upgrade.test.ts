@@ -1,3 +1,4 @@
+import { createRuntimeSchema } from '../../../db/create-runtime'
 import { completePlatformMigration } from '../../../upgrade/complete-platform'
 import { tmpdir } from 'node:os'
 import { mkdirSync, rmSync } from 'node:fs'
@@ -36,10 +37,10 @@ function fixture(seed?: (old: Database.Database) => void) {
   const { source, target } = seed ? prepareTarget(root,seed) : {
     source: join(root,'source.sqlite'), target: join(root,'target.sqlite'),
   }
-  if (!seed) { copyFileSync(pristine.source,source); copyFileSync(pristine.target,target) }
+  if (!seed) { copyFileSync(pristine.source,source); const native = new Database(target); native.pragma('foreign_keys=ON'); createRuntimeSchema(native); native.close() }
   const predecessor=source
   const statements: string[] = []
-  const sqlite = new Database(target, { verbose: text => statements.push(String(text)) }); sqlite.pragma('foreign_keys=ON'); sqlite.exec("insert into title(code,name_zh,level,rank) values('specialized_sme','专精特新中小企业','municipal',2),('little_giant','小巨人','national',3),('innovative_sme','创新型中小企业','municipal',1)")
+  const sqlite = new Database(target, { verbose: text => statements.push(String(text)) }); sqlite.pragma('foreign_keys=ON'); if (seed) sqlite.exec("insert into title(code,name_zh,level,rank) values('specialized_sme','专精特新中小企业','municipal',2),('little_giant','小巨人','national',3),('innovative_sme','创新型中小企业','municipal',1)")
   owned.push({root,sqlite})
   return { sqlite, db: drizzle(sqlite, { schema: targetSchema }), statements, frozenSource:source, predecessor,
     get source() {

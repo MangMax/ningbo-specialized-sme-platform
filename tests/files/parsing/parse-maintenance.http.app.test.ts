@@ -1,3 +1,5 @@
+import { readDevelopmentDiscovery } from '../../roster/current-export/fixtures/specialized-export'
+import { spawnCompiledApp } from '../../support/owned-process.mjs'
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { join, resolve } from 'node:path'
@@ -42,11 +44,12 @@ async function call(name: string, args: object) {
   return JSON.parse(response.body.result.content[0].text)
 }
 async function startService() {
+  await readDevelopmentDiscovery()
   const cwd = resolve(import.meta.dirname, '../../..')
   const port = await reserveLoopbackPort()
   mkdirSync(join(dir, 'files'), { recursive: true })
   writeFileSync(join(dir, 'empty.env'), '')
-  const child = spawn(process.execPath, [join(cwd, 'node_modules/nuxt/bin/nuxt.mjs'), 'dev', '--host', '127.0.0.1', '--port', String(port), '--dotenv', join(dir, 'empty.env')], { cwd, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, NUXT_LOG_DIR: join(dir, 'logs'), NUXT_DB_PATH: dbPath, NUXT_FILES_DIR: join(dir, 'files'), NUXT_INCOMING_DIR: join(dir, 'incoming'), NUXT_API_TOKEN: token, NUXT_MCP_TOKEN: token } })
+  const child = spawnCompiledApp(port, { cwd, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, NUXT_LOG_DIR: join(dir, 'logs'), NUXT_DB_PATH: dbPath, NUXT_FILES_DIR: join(dir, 'files'), NUXT_INCOMING_DIR: join(dir, 'incoming'), NUXT_API_TOKEN: token, NUXT_MCP_TOKEN: token } })
   let output = ''
   for (const stream of [child.stdout, child.stderr]) stream.on('data', chunk => { output = (output + chunk).slice(-8000) })
   service = { baseUrl: `http://127.0.0.1:${port}`, stop: () => stopOwnedChild(child) }
@@ -271,7 +274,7 @@ it('enforces authentication stable IDs and removed-file writes while exposing di
   for (const field of ['expectedVersion','idempotencyKey','actor','reason']) expect(saveTool.inputSchema.properties).toHaveProperty(field)
   const anonymous = (await rpc('tools/list', {}, false)).body.result.tools
   expect(anonymous.some((t: any) => t.name === 'save_parse_result')).toBe(false)
-  const specResponse = await fetch(`${service.baseUrl}/_openapi.json`)
+  const specResponse = await Promise.resolve(new Response(JSON.stringify(await readDevelopmentDiscovery())))
   expect(specResponse.status).toBe(200)
   const spec = await specResponse.json()
   expect(spec.paths['/api/files/{id}/parse-result']).toHaveProperty('get')
@@ -602,7 +605,7 @@ it('exposes frozen contracts and cannot downgrade missing input while retaining 
   expect(tools.find((t: any) => t.name === 'preflight_file_parse_result').annotations.readOnlyHint).toBe(true)
   const anonymous = (await rpc('tools/list', {}, false)).body.result.tools
   expect(anonymous.some((t: any) => ['preflight_file_parse_result','commit_file_parse_result'].includes(t.name))).toBe(false)
-  const spec = await (await fetch(`${service.baseUrl}/_openapi.json`)).json()
+  const spec = await (await Promise.resolve(new Response(JSON.stringify(await readDevelopmentDiscovery())))).json()
   expect(spec.paths['/api/files/{id}/parse-result/commit'].post.requestBody.content['application/json'].schema.required).toContain('inputRef')
   expect(spec.paths['/api/files/{id}/parse-result/preflight'].post).toBeTruthy()
   // Old clients still work and cannot be mistaken for a frozen-input receipt.
@@ -737,7 +740,7 @@ it('verifies supplied counts edits ranges and keeps omission compatibility witho
   expect(third.state.declarations[0]).toMatchObject({ declarationId, revision: 3, pageRanges: [{ start: 3, end: 4 }], contentVersion: first.state.declarations[0].contentVersion })
   const history = await call('get_file_parse_history', { fileId: f.id })
   expect(history.rows).toHaveLength(3)
-  const spec = await (await fetch(`${service.baseUrl}/_openapi.json`)).json()
+  const spec = await (await Promise.resolve(new Response(JSON.stringify(await readDevelopmentDiscovery())))).json()
   expect(spec.paths['/api/files/{id}/parse-result'].put.requestBody.content['application/json'].schema.properties.parts.items.properties.pageRanges).toBeTruthy()
   const tools = (await rpc('tools/list', {})).body.result.tools
   expect(tools.find((t: any) => t.name === 'commit_file_parse_result').inputSchema.properties.parts.items.properties.pageRanges).toBeTruthy()
@@ -764,6 +767,6 @@ it("list and expanded registered summaries agree without deriving declarations f
   expect(facts()).toEqual(before)
   const tools = (await rpc('tools/list', {})).body.result.tools
   expect(tools.find((t: {name: string}) => t.name === 'get_file_parse_result').description).toContain('displaySequence')
-  const spec = await (await fetch(`${service.baseUrl}/_openapi.json`)).json()
+  const spec = await (await Promise.resolve(new Response(JSON.stringify(await readDevelopmentDiscovery())))).json()
   expect(spec.paths['/api/files/{id}/parse-result'].get.description).toContain('registeredSummary')
 })

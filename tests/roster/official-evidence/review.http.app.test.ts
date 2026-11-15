@@ -36,14 +36,15 @@ async function archive(e: ReturnType<typeof seed>, key: string, status = '新事
   const r = await client.commit({ idempotencyKey:key, sourceKind:'alias_evidence',sourceIdentity:'synthetic/' + key,payload:{platformQueries:[{interface:'business_list',queryKey:e.usccNorm ?? 'name:' + e.nameNorm,rdjb:'2',titleCode:'specialized_sme',queriedAt:new Date().toISOString(),status:'success',rawResponse:JSON.stringify([{name:e.name,status}]),relations:[{sequenceNo:1,enterpriseId:e.id,nameRaw:e.name,status}]}]} }); expect(r.status,JSON.stringify(r)).toBe('committed')
 }
 async function drain(key: string, limit = 100) { for(let i=0;i<30;i++){ const r = await post(workPath,{...cmd(key+'-'+i),action:'process',limit}); expect(r.status,JSON.stringify(r.body)).toBe(200); if(!r.body.unfinished)return r.body }; throw new Error('drain incomplete') }
-beforeAll(async()=>{
+async function startService(){
   const cwd = resolve(import.meta.dirname,'../../..'), port=await reserveLoopbackPort()
   const child=spawnCompiledApp(port, {cwd,stdio:['ignore','pipe','pipe'],env:{...process.env,NUXT_BUILD_DIR:join(dir,'build'),NUXT_DB_PATH:dbPath,NUXT_API_TOKEN:'synthetic-api',NUXT_CURATED_PATH:join(dir,'curated.json'),NUXT_MCP_TOKEN:'synthetic-mcp',NUXT_FILES_DIR:join(dir,'files'),NUXT_INCOMING_DIR:join(dir,'incoming')}})
   let output='';for(const stream of [child.stdout,child.stderr])stream.on('data',d=>{output=(output+d).slice(-8000)})
   base=`http://127.0.0.1:${port}`;stop=()=>stopOwnedChild(child)
   try{await waitForHttp(base+'/api/roster/differences',{timeoutMs:60000,child})}catch(e){await stop();throw new Error(String(e)+output)}
   client=createRosterImportClient({baseUrl:base,token:'synthetic-api'})
-},90000)
+}
+beforeAll(startService,90000)
 afterAll(async()=>{if(stop)await stop();rmSync(dir,{recursive:true,force:true})})
 describe('ticket 114 public evidence review',()=>{
   it('exposes bounded no-token HTTP and MCP lists without implicitly processing committed evidence',async()=>{
@@ -425,13 +426,18 @@ describe('ticket 114 public evidence review',()=>{
     const held=db.$client.pragma('wal_checkpoint(PASSIVE)') as Array<{busy:number;log:number;checkpointed:number}>
     expect(held[0]!.checkpointed).toBeLessThan(held[0]!.log)
     let latest=first
-    for(let i=0;i<64;i++)latest=(await get(listPath,input)).body
+    const heldCursors: string[] = []
+    for(let i=0;i<64;i++){latest=(await get(listPath,input)).body;heldCursors.push(latest.nextCursor)}
     expect((await get(listPath,{...input,cursor:first.nextCursor})).body.error.code).toBe('invalid_cursor')
     const advanced=db.$client.pragma('wal_checkpoint(PASSIVE)') as Array<{busy:number;log:number;checkpointed:number}>
     expect(advanced[0]!.busy).toBe(0);expect(advanced[0]!.checkpointed).toBe(advanced[0]!.log)
     const last=await rpc('list_evidence_impacts',{...input,cursor:latest.nextCursor})
     expect(last.status).toBe(200);expect(last.value.rows).toEqual([expect.objectContaining({direction:'extra_in_miit'})])
+    // Consume the other retained pages; the next case must not rely on TTL cleanup.
+    for(const cursor of heldCursors.slice(0,-1))expect((await get(listPath,{...input,cursor})).status).toBe(200)
   })
+  // The real-clock expiry case runs in the explicit deep lane; see testing.md.
+  if (process.env.RUN_REAL_TTL_DEEP === '1') {
   it('expires 120-second readonly snapshots releases WAL retention and rejects the expired cursor across transports',async()=>{
     const e=seed('读快照到期主体','REVIEW-114-TTL')
     await decide(coord(e.id),'ttl-first');await decide(coord(e.id,'extra_in_miit'),'ttl-second')
@@ -447,8 +453,11 @@ describe('ticket 114 public evidence review',()=>{
     const released=db.$client.pragma('wal_checkpoint(TRUNCATE)') as Array<{busy:number;log:number;checkpointed:number}>
     expect(released[0]).toMatchObject({busy:0,log:0,checkpointed:0})
   },140000)
+  }
 
   it('rolls back and releases a readonly snapshot immediately when public list hydration fails',async()=>{
+    // Isolate this failure's WAL ownership from cursors deliberately held by prior cases.
+    await stop(); await startService()
     const e=seed('读快照异常主体','REVIEW-114-READ-FAIL'),first=await decide(coord(e.id),'read-fail-first')
     await decide(coord(e.id,'extra_in_miit'),'read-fail-second');await archive(e,'read-fail-q');await drain('read-fail-drain')
     // Isolated fault only: error after anchor+impact reads have pinned the WAL snapshot.

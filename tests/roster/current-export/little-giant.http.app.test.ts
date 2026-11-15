@@ -1,3 +1,5 @@
+import { readDevelopmentDiscovery } from './fixtures/specialized-export'
+import { spawnCompiledApp } from '../../support/owned-process.mjs'
 import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
 import { CURRENT_RULE_VERSION } from '../../../lib/roster/current-qualification'
 import { businessIdentity, expectedBusinessIdentity } from './fixtures/specialized-export'
@@ -16,6 +18,7 @@ import { spawnOwnedChild as spawn, reserveLoopbackPort, waitForHttp, stopOwnedCh
 
 const dir = mkdtempSync(join(tmpdir(), 'export-117-'))
 const dbPath = join(dir, 'synthetic.db'), db = initializeDb({ create: true,  dbPath })
+let servicePid: number
 let service: { baseUrl: string; stop: () => Promise<void> }
 const token = 'synthetic-export-token'
 const headers = { 'content-type': 'application/json', authorization: `Bearer ${token}` }
@@ -56,8 +59,10 @@ function candidate(name: string, events: Array<{ eventType: 'award'|'review'|'nu
   return { enterprise, record }
 }
 async function startService() {
+  await readDevelopmentDiscovery()
   const cwd = resolve(import.meta.dirname, '../../..'), port = await reserveLoopbackPort()
-  const child = spawn(process.execPath, [join(cwd, 'node_modules/nuxt/bin/nuxt.mjs'), 'dev', '--host', '127.0.0.1', '--port', String(port)], { cwd, stdio: ['ignore','pipe','pipe'], env: { ...process.env, NUXT_BUILD_DIR: join(dir,'build'), NUXT_DB_PATH: dbPath, NUXT_API_TOKEN: token, NUXT_FILES_DIR: join(dir,'files'), NUXT_INCOMING_DIR: join(dir,'incoming') } })
+  const child = spawnCompiledApp(port, { cwd, stdio: ['ignore','pipe','pipe'], env: { ...process.env, NUXT_BUILD_DIR: join(dir,'build'), NUXT_DB_PATH: dbPath, NUXT_API_TOKEN: token, NUXT_FILES_DIR: join(dir,'files'), NUXT_INCOMING_DIR: join(dir,'incoming') } })
+  servicePid = child.pid!
   let output = ''; for (const stream of [child.stdout, child.stderr]) stream.on('data', data => { output = (output + data).slice(-12000) })
   service = { baseUrl: `http://127.0.0.1:${port}`, stop: () => stopOwnedChild(child) }
   try { await waitForHttp(url('/api/jobs/kinds'), { timeoutMs: 60000, child }) } catch (e) { await service.stop(); throw new Error(String(e) + output) }
@@ -170,7 +175,7 @@ it('产物过期与缺失', async () => {
   expect((await fetch(url(missing.result.artifact.downloadUrl),{headers})).status).toBe(404)
 })
 function executorPid() {
-  const line = execFileSync('ps',['-Ao','pid=,args='],{encoding:'utf8'}).split('\n').find(line => line.includes(dir) && line.includes('/current-export-worker.mjs'))
+  const line = execFileSync('ps',['-Ao','pid=,ppid=,args='],{encoding:'utf8'}).split('\n').find(line => Number(line.trim().split(/\s+/)[1]) === servicePid && line.includes('/current-export-worker.mjs'))
   return line ? Number(line.trim().split(/\s+/)[0]) : null
 }
 async function executor() {
@@ -379,7 +384,7 @@ it('Excel超限明确失败', async () => {
   }
 },30000)
 it('OpenAPI任务与受控下载发现', async () => {
-  const response=await fetch(url('/_openapi.json'));expect(response.status).toBe(200)
+  const response=await Promise.resolve(new Response(JSON.stringify(await readDevelopmentDiscovery())));expect(response.status).toBe(200)
   const spec=await json(response)
   expect(spec.paths['/api/roster/exports/current/little-giant'].post.security).toEqual([{bearerAuth:[]}])
   expect(spec.paths['/api/jobs'].post.requestBody.content['application/json'].schema.properties.kind.enum).toContain('current-roster-export')

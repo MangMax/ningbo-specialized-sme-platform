@@ -226,6 +226,7 @@ it('SIGKILL after a paid-page checkpoint preserves raw across restart and resume
   polls = 0
   api = await startMiniOcrApi({ pages: ['paid original'], waitForPoll: () => ++polls === 1 ? Promise.resolve() : second })
   vi.stubEnv('NUXT_OCR_BASE_URL', api.origin)
+  const childStart = children.length
   const first = await childHost()
   const savedBase = base
   try {
@@ -252,7 +253,17 @@ it('SIGKILL after a paid-page checkpoint preserves raw across restart and resume
     expect((await (await request(pagePath)).json()).markdown).toContain('paid original')
     expect((await status(id)).state).toBe('failed')
     restarted.child.kill('SIGKILL'); await once(restarted.child, 'exit')
-  } finally { releaseSecond(); base = savedBase }
+  } finally {
+    releaseSecond()
+    // A failed checkpoint assertion must not leave a second runner consuming
+    // subsequent tests' paid requests against the same database.
+    for (const child of children.slice(childStart)) {
+      if (child.exitCode === null && child.signalCode === null) {
+        child.kill('SIGKILL'); await once(child, 'exit')
+      }
+    }
+    base = savedBase
+  }
 })
 
 it('unknown submission is reported and explicit resume never repeats a possibly paid POST', async () => {

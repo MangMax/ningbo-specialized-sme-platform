@@ -1,3 +1,5 @@
+import { readDevelopmentDiscovery } from '../current-export/fixtures/specialized-export'
+import { spawnCompiledApp } from '../../support/owned-process.mjs'
 import { readOwnerArchive } from '../../../lib/platform/target-archive'
 import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
@@ -35,8 +37,9 @@ async function rpc(name: string, args: Record<string, unknown>, token = '') {
 const value = (r: any) => JSON.parse(r.body.result.content[0].text)
 const scope = new URLSearchParams(Object.entries(coordinate).map(([k,v]) => [k,String(v)])).toString()
 beforeAll(async () => {
+  await readDevelopmentDiscovery()
   const cwd = resolve(import.meta.dirname, '../../..'); const port = await reserveLoopbackPort()
-  const child = spawn(process.execPath, [join(cwd, 'node_modules/nuxt/bin/nuxt.mjs'), 'dev', '--host', '127.0.0.1', '--port', String(port)], { cwd, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, NUXT_BUILD_DIR: join(dir, 'build'), NUXT_DB_PATH: dbPath, NUXT_API_TOKEN: 'synthetic-api-token', NUXT_MCP_TOKEN: 'synthetic-mcp-token', NUXT_CURATED_PATH: curatedPath, NUXT_FILES_DIR: join(dir, 'files'), NUXT_INCOMING_DIR: join(dir, 'incoming') } })
+  const child = spawnCompiledApp(port, { cwd, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, NUXT_BUILD_DIR: join(dir, 'build'), NUXT_DB_PATH: dbPath, NUXT_API_TOKEN: 'synthetic-api-token', NUXT_MCP_TOKEN: 'synthetic-mcp-token', NUXT_CURATED_PATH: curatedPath, NUXT_FILES_DIR: join(dir, 'files'), NUXT_INCOMING_DIR: join(dir, 'incoming') } })
   let output = ''; for (const stream of [child.stdout,child.stderr]) stream.on('data', data => { output = (output + data).slice(-8000) })
   service = { baseUrl: `http://127.0.0.1:${port}`, stop: () => stopOwnedChild(child) }
   try { await waitForHttp(service.baseUrl + '/api/roster/differences', { timeoutMs: 60000, child }) } catch (e) { await service.stop(); throw new Error(String(e) + output) }
@@ -351,7 +354,7 @@ describe('ticket 102 public decision lifecycle', () => {
   })
 
   it('discovers full HTTP and MCP contracts and disables writes when tokens are unconfigured', async () => {
-    const spec = await json(await fetch(service.baseUrl + '/_openapi.json'))
+    const spec = await json(await Promise.resolve(new Response(JSON.stringify(await readDevelopmentDiscovery()))))
     const commandSchema = spec.paths['/api/roster/decision-lifecycle/commands'].post.requestBody.content['application/json'].schema
     expect(commandSchema.required).toEqual(expect.arrayContaining(['action','expectedCurrentId','actor','basis','ruleVersion','effectiveAt','idempotencyKey']))
     expect(commandSchema.properties.action.enum).toEqual(['replace','withdraw','maintain'])
@@ -371,7 +374,7 @@ describe('ticket 102 public decision lifecycle', () => {
     expect(review.oneOf[1].properties.scopes).toMatchObject({ minItems: 1, maxItems: 50 })
     expect(spec.paths['/api/roster/evidence-impacts'].get.parameters).toEqual(expect.arrayContaining([expect.objectContaining({ name: 'cursor' }),expect.objectContaining({ name: 'eventId' }),expect.objectContaining({ name: 'decisionId' })]))
     const cwd = resolve(import.meta.dirname, '../../..'); const port = await reserveLoopbackPort()
-    const child = spawn(process.execPath, [join(cwd, 'node_modules/nuxt/bin/nuxt.mjs'), 'dev', '--host', '127.0.0.1', '--port', String(port)], { cwd, stdio: ['ignore','pipe','pipe'], env: { ...process.env, NUXT_BUILD_DIR: join(dir,'no-token-build'), NUXT_DB_PATH: dbPath, NUXT_API_TOKEN: '', NUXT_MCP_TOKEN: '', NUXT_CURATED_PATH: curatedPath, NUXT_FILES_DIR: join(dir,'files'), NUXT_INCOMING_DIR: join(dir,'incoming') } })
+    const child = spawnCompiledApp(port, { cwd, stdio: ['ignore','pipe','pipe'], env: { ...process.env, NUXT_BUILD_DIR: join(dir,'no-token-build'), NUXT_DB_PATH: dbPath, NUXT_API_TOKEN: '', NUXT_MCP_TOKEN: '', NUXT_CURATED_PATH: curatedPath, NUXT_FILES_DIR: join(dir,'files'), NUXT_INCOMING_DIR: join(dir,'incoming') } })
     let output = ''; for (const stream of [child.stdout,child.stderr]) stream.on('data', data => { output = (output + data).slice(-4000) })
     const base = `http://127.0.0.1:${port}`
     try {

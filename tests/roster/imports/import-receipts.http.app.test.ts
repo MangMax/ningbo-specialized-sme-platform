@@ -1,3 +1,5 @@
+import { readDevelopmentDiscovery } from '../current-export/fixtures/specialized-export'
+import { spawnCompiledApp } from '../../support/owned-process.mjs'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -33,9 +35,10 @@ const value = (result: any) => JSON.parse(result.body.result.content[0].text)
 const request = (key: string) => ({ idempotencyKey: key, sourceKind: 'announcement', sourceIdentity: `synthetic/${key}`, payload: { announcement: { sourceDocument: { source: 'jxj', title: '合成回执公告' }, records: [{ enterprise: { name: '合成回执企业' }, titleCode: 'specialized_sme', events: [{ eventType: 'award', year: 2026 }] }] } } })
 
 async function startService(configured = true) {
+  await readDevelopmentDiscovery()
   const cwd = resolve(import.meta.dirname, '../../..')
   const port = await reserveLoopbackPort()
-  const child = spawn(process.execPath, [join(cwd, 'node_modules/nuxt/bin/nuxt.mjs'), 'dev', '--host', '127.0.0.1', '--port', String(port)], { cwd, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, NUXT_BUILD_DIR: join(dir, configured ? 'nuxt-build' : 'nuxt-unconfigured'), NUXT_DB_PATH: dbPath, NUXT_API_TOKEN: configured ? apiToken : '', NUXT_MCP_TOKEN: configured ? mcpToken : '', NUXT_FILES_DIR: join(dir, 'files'), NUXT_INCOMING_DIR: join(dir, 'incoming') } })
+  const child = spawnCompiledApp(port, { cwd, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, NUXT_BUILD_DIR: join(dir, configured ? 'nuxt-build' : 'nuxt-unconfigured'), NUXT_DB_PATH: dbPath, NUXT_API_TOKEN: configured ? apiToken : '', NUXT_MCP_TOKEN: configured ? mcpToken : '', NUXT_FILES_DIR: join(dir, 'files'), NUXT_INCOMING_DIR: join(dir, 'incoming') } })
   let output = ''
   for (const stream of [child.stdout, child.stderr]) stream.on('data', data => { output += data })
   service = { baseUrl: `http://127.0.0.1:${port}`, stop: () => stopOwnedChild(child) }
@@ -221,7 +224,7 @@ describe('import receipts through real HTTP and MCP on isolated SQLite', () => {
     expect((await rpc('get_roster_import_request', { batchId: legacy.id, maxBytes: 65537 })).body.result.isError).toBe(true)
   })
   it('exposes all receipt reads in OpenAPI without replacing the original-body commit schema', async () => {
-    const spec = await (await fetch(`${service.baseUrl}/_openapi.json`)).json()
+    const spec = await (await Promise.resolve(new Response(JSON.stringify(await readDevelopmentDiscovery())))).json()
     for (const suffix of ['', '/items', '/history', '/request']) expect(spec.paths[`/api/roster/import/receipts${suffix}`].get.security).toEqual([{ bearerAuth: [] }])
     const required = spec.paths['/api/roster/import/commit'].post.requestBody.content['application/json'].schema.required
     expect(required).toEqual(['idempotencyKey', 'sourceKind', 'sourceIdentity', 'payload'])

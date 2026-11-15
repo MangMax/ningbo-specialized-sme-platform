@@ -16,9 +16,8 @@ import { createReadTurns } from '../../../server/utils/read-turn'
 import { createEnterpriseReadExecutor } from '../../../server/utils/enterprise-read'
 import { createEnterpriseWorker } from '../../../server/utils/enterprise-read-worker-location'
 import { captureReaderError } from '../../../lib/roster/offmain-read-protocol'
-import { startRosterApi } from '../imports/fixtures/import-server'
+import { executeNativeImport, startRosterApi } from '../imports/fixtures/import-server'
 import { createRosterImportClient } from '../../../lib/roster-import-client'
-import { createImportExecutor } from '../../../server/utils/import-execution'
 
 const cleanup: Array<() => unknown|Promise<unknown>>=[]
 afterEach(async()=>{for(const close of cleanup.splice(0).reverse())await close()})
@@ -27,13 +26,9 @@ async function fixture(filename='fixture.db') {
   cleanup.push(()=>rmSync(dir,{recursive:true,force:true}))
   const writer=initializeDb({ create: true, dbPath:path})
   cleanup.push(()=>{if(writer.$client.open)writer.$client.close()})
-  // Seeding remains real HTTP/isolated core execution. This reader-owner fixture
-  // deliberately switches journal mode and must not retain an unrelated idle
-  // writer connection from its setup request. Drain each owned setup executor.
-  const api=await startRosterApi({db:writer,apiToken:'synthetic-m1',executeImport:async(...args)=>{
-    const executor=createImportExecutor()
-    try{return await executor.execute(...args)}finally{await executor.close()}
-  }});cleanup.push(()=>api.close())
+  // Seed through real HTTP and native import core. Reader workers remain real;
+  // setup must not retain an unrelated import worker when journal mode changes.
+  const api=await startRosterApi({db:writer,apiToken:'synthetic-m1',executeImport:executeNativeImport});cleanup.push(()=>api.close())
   const client=createRosterImportClient({baseUrl:api.baseUrl,token:'synthetic-m1'})
   const payload={announcement:{sourceDocument:{source:'jxj' as const,title:'合成 M1'},records:[{enterprise:{name:'合成M1企业'},titleCode:'specialized_sme',events:[{eventType:'award' as const,year:2021,evidence:[{sourceFile:'synthetic/m1.pdf',page:3}]}]}]}}
   expect((await client.commit({idempotencyKey:'seed',sourceIdentity:'synthetic/m1',sourceKind:'announcement',payload})).status).toBe('committed')

@@ -384,16 +384,18 @@ const invalidHistoricalCollections: { name: string; collection: unknown }[] = [
   { name: 'invalid range beyond preview', collection: { complete: 0, partial: 1, failed: 0, unknown: 0, positions: [{ unfinished: [...Array.from({ length: 51 }, () => pendingRange), 'x'] }] } },
 ]
 
-it.each(invalidHistoricalCollections)('historical $name stays unknown through public list and detail without filtering bad entries into completion', async ({ collection }) => {
+it('historical malformed collection matrix stays unknown through public list and detail without filtering bad entries into completion', async () => {
   upstream()
   const {job,done}=historicalSummaryJob()
+  for (const { name, collection } of invalidHistoricalCollections) {
   db.update(schema.job).set({ result: { ...done.result, collection } }).where(eq(schema.job.id, job.jobId)).run()
   const before = db.select({ result: schema.job.result }).from(schema.job).where(eq(schema.job.id, job.jobId)).get()?.result
   const detail = await publicSummaryPair(job.jobId)
-  expect(detail.reconcileCollection).toEqual(unknownCollection)
+  expect(detail.reconcileCollection, name).toEqual(unknownCollection)
   expect(detail.outcome).toBeNull()
   expect(detail.reconcile).toMatchObject({ targets: 1, needsReview: 1 })
   expect(db.select({ result: schema.job.result }).from(schema.job).where(eq(schema.job.id, job.jobId)).get()?.result).toEqual(before)
+  }
 })
 
 it.each([

@@ -1,6 +1,8 @@
 import Database from 'better-sqlite3';
 import { drizzle } from 'drizzle-orm/better-sqlite3';
-import { copyFileSync } from 'node:fs';
+import { copyFileSync, mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { afterAll } from 'vitest';
 import { join } from 'node:path';
 import { candidateFixture } from '../../fixtures/candidate-scope-upgrade';
 import { finalizeCandidateScopes } from '../../../../upgrade/candidate-scope';
@@ -8,7 +10,7 @@ import { finalizeRecognizedStored } from '../../../../upgrade/recognized-stored'
 import { ensurePlatformObservation } from '../../../../upgrade/frozen/server/platform-business-record';
 import * as schema from '../../../../upgrade/legacy-schema';
 import { targetSchema } from '../../../../upgrade/target-schema';
-export async function recognizedFixture(extra?: (old: Database.Database) => void) {
+async function buildRecognizedFixture(extra?: (old: Database.Database) => void) {
     const f = await candidateFixture(old => {
         const db = drizzle(old, { schema });
         for (const [id, name] of [[1, 'Alpha'], [2, 'Beta']] as const)
@@ -35,6 +37,17 @@ export async function recognizedFixture(extra?: (old: Database.Database) => void
     const source = join(f.root, '71609.sqlite');
     copyFileSync(f.target, source);
     finalizeRecognizedStored({ source, target: f.target, runId: 'recognized', predecessorRunId: 'candidate' });
+    return f;
+}
+let template: ReturnType<typeof buildRecognizedFixture> | undefined;
+const roots: string[] = [];
+afterAll(() => { for (const root of roots) rmSync(root, { recursive: true, force: true }); });
+export async function recognizedFixture(extra?: (old: Database.Database) => void) {
+    // Reuse only the closed default seed; every test receives independent files.
+    const pristine = extra ? await buildRecognizedFixture(extra) : await (template ??= buildRecognizedFixture());
+    const root = mkdtempSync(join(tmpdir(), 'recognized-reader-')); roots.push(root);
+    const f = { ...pristine, root, target: join(root, 'target.sqlite'), legacySource: join(root, 'legacy.sqlite') };
+    copyFileSync(pristine.target, f.target); copyFileSync(pristine.legacySource, f.legacySource);
     const statements: string[] = [];
     const t = new Database(f.target, { verbose: q => statements.push(String(q)) });
     t.pragma('foreign_keys=ON');
