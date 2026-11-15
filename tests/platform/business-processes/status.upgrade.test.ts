@@ -66,7 +66,7 @@ it('installs before T04 preserving populated versions, catalog, sequence and mig
   } finally { t.close() }
   const bytes = readFileSync(target)
   expect(() => withFrozenSource(source, frozen => installBusinessStatusPrerequisite(target, frozen, join(root, 'reinstall.json')))).toThrow('Fresh expand')
-  expect(readFileSync(target)).toEqual(bytes)
+  expect(readFileSync(target).equals(bytes)).toBe(true)
 })
 
 it.each(['dropped', 'created', 'restored', 'receipt'])('rolls back prerequisite failure at %s and retries on the same new target', stage => {
@@ -76,7 +76,7 @@ it.each(['dropped', 'created', 'restored', 'receipt'])('rolls back prerequisite 
   expect(() => withFrozenSource(source, frozen => installBusinessStatusPrerequisite(target, frozen, receipt, at => {
     if (at === stage) throw new Error('injected prerequisite ' + stage)
   }))).toThrow('injected prerequisite')
-  expect(readFileSync(target)).toEqual(bytes)
+  expect(readFileSync(target).equals(bytes)).toBe(true)
   expect(existsSync(receipt)).toBe(false)
   withFrozenSource(source, frozen => installBusinessStatusPrerequisite(target, frozen, receipt))
   const t = new Database(target, { readonly: true })
@@ -93,12 +93,12 @@ it('refuses begun migration, unknown incoming owners and receipt collisions with
     const t = new Database(target); t.exec(sql!); t.close()
     const bytes = readFileSync(target)
     expect(() => withFrozenSource(source, frozen => installBusinessStatusPrerequisite(target, frozen, join(root, label + '.json')))).toThrow()
-    expect(readFileSync(target)).toEqual(bytes)
+    expect(readFileSync(target).equals(bytes)).toBe(true)
   }
   const target = join(root, 'collision.sqlite')
   copyFileSync(source, target)
   const bytes = readFileSync(target), originalReceipt = readFileSync(join(root, 'installed.json'))
   expect(() => withFrozenSource(source, frozen => installBusinessStatusPrerequisite(target, frozen, join(root, 'installed.json')))).toThrow()
-  expect(readFileSync(target)).toEqual(bytes)
+  expect(readFileSync(target).equals(bytes)).toBe(true)
   expect(readFileSync(join(root, 'installed.json'))).toEqual(originalReceipt)
 })
