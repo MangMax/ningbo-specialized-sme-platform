@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { chooseCalendarSelect } from '../../helpers/calendar-select'
+import { chooseCalendarSelect } from '../../support/calendar-select'
 // Component/composable seam only: these are not actual Nuxt/browser evidence.
 import { DOMWrapper, mount, flushPromises } from '@vue/test-utils'
 import { defineComponent, h, ref } from 'vue'

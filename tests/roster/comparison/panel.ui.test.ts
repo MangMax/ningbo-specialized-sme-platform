@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { chooseCalendarSelect } from '../../helpers/calendar-select'
+import { chooseCalendarSelect } from '../../support/calendar-select'
 import { flushPromises, mount } from '@vue/test-utils'
 import { defineComponent, reactive } from 'vue'
 import ComparisonSourcePicker from '../../../components/record-correspondence/ComparisonSourcePicker.vue'

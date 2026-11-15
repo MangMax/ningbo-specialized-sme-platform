@@ -4,18 +4,18 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, it, vi } from 'vitest'
 import { initializeDb } from '../../../db/client'
-import { matrix408 } from '../../helpers/current-qualified-408'
-import { submitSyntheticRecognizedCollection } from '../../helpers/qualification-native-source'
+import { qualificationMatrix } from '../fixtures/qualification-matrix'
+import { submitSyntheticRecognizedCollection } from '../fixtures/recognized-source'
 import { preflightRecordCorrespondences, commitRecordCorrespondences } from '../../../server/utils/record-correspondence'
 import { listCurrentQualified, type CurrentQualifiedResult } from '../../../lib/roster/current-qualified-query'
 import { writeCurrentWorkbook } from '../../../lib/roster/current-workbook'
-import { readExportWorkbook } from '../../helpers/read-export-workbook'
+import { readExportWorkbook } from '../../support/read-workbook'
 vi.mock('@nuxtjs/mcp-toolkit/server', () => ({ defineMcpTool: (tool: unknown) => tool }))
 const cleanup: Array<() => void | Promise<void>>=[]
 afterEach(async()=>{for(const close of cleanup.splice(0).reverse())await close();vi.unstubAllEnvs();vi.unstubAllGlobals()})
 function setup(){
  const dir=mkdtempSync(join(tmpdir(),'native-recognized-468-')),dbPath=join(dir,'source.sqlite')
- const db=initializeDb({create:true,dbPath}),matrix=matrix408(db.$client)
+ const db=initializeDb({create:true,dbPath}),matrix=qualificationMatrix(db.$client)
  vi.stubEnv('NUXT_DB_PATH',dbPath)
  cleanup.push(()=>{db.$client.close();rmSync(dir,{recursive:true,force:true})})
  let serial=0

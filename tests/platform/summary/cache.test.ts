@@ -1,6 +1,6 @@
 import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
-import { submitNativePlatformQuery } from '../../helpers/native-platform-fixture'
+import { submitNativePlatformQuery } from '../fixtures/native-query'
 import { mkdtempSync, renameSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'

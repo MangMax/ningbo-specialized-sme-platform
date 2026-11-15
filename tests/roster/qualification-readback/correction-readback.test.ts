@@ -1,5 +1,5 @@
 import { initializeDb } from '../../../db/client'
-import { submitNativePlatformQuery } from '../../helpers/native-platform-fixture'
+import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
 /** #407 parent-frozen correction/readback cases.
  * Synthetic SQLite only. MCP dispatcher assertions do not stand for real SDK proof.
  * Budget tests deliberately fake only the reader output, never qualification policy.
@@ -22,7 +22,7 @@ import { dispatchEventCorrectionMcp } from '../../../server/utils/mcp-event-corr
 import { handleRosterImportRequest } from '../../../server/utils/roster-import-http'
 import { preflightRosterImport, commitRosterImport } from '../../../server/utils/roster-import'
 import { preflightRecordCorrespondences, commitRecordCorrespondences, type CorrespondenceRequest } from '../../../server/utils/record-correspondence'
-import { startHttpFixture, type HttpFixture } from '../../helpers/http-fixture'
+import { startHttpFixture, type HttpFixture } from '../../support/http'
 
 const NOW = Date.parse('2026-01-15T00:00:00.000Z')
 const TOKEN = 'synthetic-407-correction-token'

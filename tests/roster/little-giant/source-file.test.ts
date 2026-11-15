@@ -8,7 +8,7 @@ import {
   littleGiantSourcePath,
   loadLittleGiantSource,
   type LittleGiantSource,
-} from '../../helpers/little-giant-source'
+} from './fixtures/official-source'
 
 /**
  * RL-02 —— 源文件的**结构与逐行交代**(解析层)。

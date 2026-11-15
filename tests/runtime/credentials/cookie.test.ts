@@ -9,7 +9,7 @@ import { useDb } from '../../../db'
 import { credentialStatus, resolvePlatformCookie, updateCredential } from '../../../server/utils/credential-state'
 import { handleCredentialsRequest } from '../../../server/utils/credentials-http'
 import { queryAllRdjb } from '../../../lib/platform/client'
-import { EMPTY_APPLY_RESPONSE, platformFixture } from '../../helpers/platform-replay'
+import { EMPTY_APPLY_RESPONSE, platformFixture } from '../../platform/fixtures/source-replay'
 const dir = mkdtempSync(join(tmpdir(), 'cookie-credentials-'))
 let db: ReturnType<typeof useDb>
 let sequence = 0

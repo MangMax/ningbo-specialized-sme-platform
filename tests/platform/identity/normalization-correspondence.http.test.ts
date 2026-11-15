@@ -3,7 +3,7 @@ import * as schema from '../../../db/schema'
 import {relationSource} from '../../../server/utils/record-correspondence-read'
 import {preflightRecordCorrespondences,commitRecordCorrespondences} from '../../../server/utils/record-correspondence'
 import {listPlatformQueries} from '../../../lib/platform/read'
-import {nativeImportDb,businessSource,commitNativeSource} from '../../helpers/native-import'
+import {nativeImportDb,businessSource,commitNativeSource} from '../../roster/imports/fixtures/native-import'
 it('uses native normalized source facts for an explicit correspondence without changing original raw bytes',()=>{
  const db=nativeImportDb()
  try{

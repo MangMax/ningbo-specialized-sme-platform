@@ -94,7 +94,7 @@ it('withdraws declarations to reveal source-derived rows and preserves official 
   writeFileSync(join(root, f.relPath), 'changed')
   expect((await http(f.id, '/preflight', { expectedVersion: (await http(f.id)).body.state.version })).status).toBe(409)
 })
-it('retains #669 declaration identity and ranges when changing coordinates through the compatibility description payload', async () => {
+it("retains declaration identity and ranges when changing coordinates through the compatibility description payload", async () => {
   const f = fixture()
   const declared = { titleCode: 'specialized_sme', eventKind: 'award' as const, year: 2022, batch: 1, attachment: null, rowCount: 1 }
   // An existing saved range is fixture state owned by #669; this editor does
@@ -142,7 +142,7 @@ it('round trips disjoint ranges, rejects out of bounds atomically, edits and cle
   expect((await http(f.id)).body.state.declarations[0]).toMatchObject({ declarationId: id, part: { year: 2022, batch: 1 }, pageRanges: [] })
   expect(readFileSync(join(root, f.relPath), 'utf8')).toBe(pdf)
 })
-it('#681 persists display order across edits, reversed legacy payloads, deletion and append with shared summaries', async () => {
+it("persists display order across edits, reversed legacy payloads, deletion and append with shared summaries", async () => {
   const f = fixture()
   const save = async (parts: unknown[], key = crypto.randomUUID()) => {
     const state = (await http(f.id)).body.state

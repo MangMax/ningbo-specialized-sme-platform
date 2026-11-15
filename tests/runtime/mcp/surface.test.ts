@@ -665,7 +665,7 @@ describe('pageImagesForAgent 页图取值', () => {
   it('未渲染过的 PDF:如实报 rendered=0,不触发渲染', async () => {
     const root = mkdtempSync(join(tmpdir(), 'spztx-mcp-pdf2-'))
     // 造一份最小可打开的 PDF(与 pdf-pages 的夹具同一手法)。
-    const { minimalPdf } = await import('../../helpers/minimal-pdf')
+    const { minimalPdf } = await import('../../support/minimal-pdf')
     mkdirSync(join(root, 'jxj/announcement/2024/2'), { recursive: true })
     // Use a separately registered real PDF; the shared metadata-only fixture has a synthetic digest.
     const { registerStoredFile, parseUploadDeclaration } = await import('../../../server/utils/stored-files-upload')

@@ -201,7 +201,7 @@ it('public capabilities describe source differences and strict RPC validation re
   }
 })
 it('REST query works through HTTP and responds with no-store', async () => {
-  const { startHttpFixture } = await import('../../helpers/http-fixture')
+  const { startHttpFixture } = await import('../../support/http')
   const service = await startHttpFixture({ routes: { '/api/platform/query': async req => ({ status: 200, body: await query(req.body) }) } })
   fetcher.mockResolvedValue(response(page([], 0)))
   try {

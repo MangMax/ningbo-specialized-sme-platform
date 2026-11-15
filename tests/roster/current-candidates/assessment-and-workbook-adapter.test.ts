@@ -1,14 +1,14 @@
 import { readFileSync } from 'node:fs'
 import { join,dirname } from 'node:path'
 import { expect,it,vi } from 'vitest'
-import { fileMatrix408 } from '../../helpers/current-qualified-408'
+import { qualificationFileFixture } from '../fixtures/qualification-matrix'
 import type { CurrentCandidateReader } from '../../../lib/roster/current-candidate-reader'
 import { listCurrentQualified,listCurrentQualifiedWithCandidates } from '../../../lib/roster/current-qualified-query'
 import { writeCurrentWorkbook,writeCurrentWorkbookWithCandidates } from '../../../lib/roster/current-workbook'
-import { readExportWorkbook } from '../../helpers/read-export-workbook'
+import { readExportWorkbook } from '../../support/read-workbook'
 
 it('explicit candidate seam preserves qualified assessment asOf versions and workbook cells with one enumeration in the owner snapshot',async()=>{
-  const f=fileMatrix408()
+  const f=qualificationFileFixture()
   vi.useFakeTimers({toFake:['Date']});vi.setSystemTime(new Date('2026-11-12T00:00:00Z'))
   try{
     const formal=f.formal('Seam candidate',[{eventType:'award',year:2026,decidedYear:2026,batchSeq:1}],{title:'specialized_sme'})
@@ -37,7 +37,7 @@ it('explicit candidate seam preserves qualified assessment asOf versions and wor
     }
     expect(await values(b)).toEqual(await values(a))
     expect(f.sqlite.inTransaction).toBe(false)
-    const other=fileMatrix408()
+    const other=qualificationFileFixture()
     try {
       const mismatched={...provider,connection:other.sqlite}
       expect(()=>listCurrentQualifiedWithCandidates(f.sqlite,filter,mismatched)).toThrow('caller connection')

@@ -5,7 +5,7 @@ import {
   buildLittleGiantWorkbookBuffer,
   LITTLE_GIANT_HEADERS,
   LITTLE_GIANT_SHEET_NAME,
-} from '../../helpers/little-giant-workbook-fixture'
+} from './fixtures/workbook'
 
 /**
  * RL-02 —— 经信局历年小巨人工作簿的**解析面**。

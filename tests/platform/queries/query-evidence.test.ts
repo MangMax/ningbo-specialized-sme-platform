@@ -1,8 +1,8 @@
 import {afterEach,expect,it} from 'vitest'
 import {listPlatformQueries,MAX_FULL_QUERY_BYTES} from '../../../lib/platform/read'
 import {readPlatformQueryEvidence} from '../../../lib/platform/evidence-read'
-import {submitNativePlatformQuery} from '../../helpers/native-platform-fixture'
-import {nativeImportDb,businessSource} from '../../helpers/native-import'
+import {submitNativePlatformQuery} from '../fixtures/native-query'
+import {nativeImportDb,businessSource} from '../../roster/imports/fixtures/native-import'
 const handles:ReturnType<typeof nativeImportDb>[]=[]
 afterEach(()=>{for(const db of handles.splice(0))db.$client.close()})
 function fixture(){const db=nativeImportDb();handles.push(db);return db}

@@ -274,7 +274,7 @@ describe('缩放下限:普通预览 25% / 页图库 10%(作用域隔离)', () =>
     expect(zoomOut(wrapper)!.attributes('disabled')).toBeUndefined()
   })
 
-  it('页图库确实把 PAGE_IMAGE_ZOOM_MIN 传给了预览器(接线,不只是常数) ', async () => {
+  it("页图库确实把 PAGE_IMAGE_ZOOM_MIN 传给了预览器(接线,不只是常数)", async () => {
     // 组件的取图走全局 `$fetch`,测试环境没有 —— 给它一个最小桩,让单页视图能渲染出来。
     const state = {
       file: 'jxj/announcement/2022/公布.pdf',

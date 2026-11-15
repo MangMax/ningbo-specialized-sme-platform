@@ -12,8 +12,8 @@ import { handleStoredFilePatchRequest } from '../../../server/utils/stored-file-
 import { renderPdfPages } from '../../../server/utils/pdf-pages'
 import { listStoredFiles, resolveInsideRoot } from '../../../server/utils/stored-files'
 import { registerStoredFile } from '../../../server/utils/stored-files-upload'
-import { startHttpFixture, type HttpFixture } from '../../helpers/http-fixture'
-import { minimalPdf } from '../../helpers/minimal-pdf'
+import { startHttpFixture, type HttpFixture } from '../../support/http'
+import { minimalPdf } from '../../support/minimal-pdf'
 
 const tempRoot = mkdtempSync(join(tmpdir(), 'spztx-display-name-api-'))
 const filesRoot = join(tempRoot, 'files')

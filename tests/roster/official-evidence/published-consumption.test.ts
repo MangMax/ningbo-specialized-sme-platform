@@ -13,8 +13,8 @@ import { handleRosterImportRequest } from '../../../server/utils/roster-import-h
 import { handleEvidenceCorrectionRequest } from '../../../server/utils/roster-evidence-correction-api'
 import { readCurrentCandidate, readCurrentQualificationAssessment, type CurrentQualificationSnapshot, type CurrentTitle } from '../../../lib/roster/current-qualification'
 import { writeCurrentWorkbook } from '../../../lib/roster/current-workbook'
-import { startHttpFixture } from '../../helpers/http-fixture'
-import { minimalPdf } from '../../helpers/minimal-pdf'
+import { startHttpFixture } from '../../support/http'
+import { minimalPdf } from '../../support/minimal-pdf'
 import * as official from '../../../server/utils/official-evidence'
 import { assertOfficialPublishedBudget, readOfficialPublishedPresentation, OfficialPublishedPresentationError, type OfficialPublishedFact } from '../../../lib/roster/official-published-presentation'
 import { currentWorkbookValues } from '../../../lib/roster/current-workbook-presentation'
@@ -466,7 +466,7 @@ it('L303 actual legacy HTTP detail and sync XLSX retain a literal matrix with pe
   const detail = await response.json()
   expect(detail.publishedPresentation.facts).toEqual([minimal(1,1,'2021旧名'),minimal(2,2,'2024新名')])
   expect(detail.records.map((r: any) => [r.id, r.events.map((e: any) => [e.id,e.recordId,e.evidence.map((v: any) => [v.id,v.sourceFile,v.page])])])).toEqual([[1,[[1,1,[[1,'2021公布.pdf',1]]],[2,1,[[2,'2024公布.pdf',1]]]]]])
-  const { readExportWorkbook } = await import('../../helpers/read-export-workbook')
+  const { readExportWorkbook } = await import('../../support/read-workbook')
   const download = await fetch(baseUrl + '/api/export?eventType=award')
   expect(download.status).toBe(200)
   expect(download.headers.get('content-type')).toContain('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')

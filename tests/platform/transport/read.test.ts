@@ -1,7 +1,7 @@
 import {afterEach,expect,it} from 'vitest'
 import * as schema from '../../../db/schema'
 import {listPlatformQueries} from '../../../lib/platform/read'
-import {nativeImportDb,businessSource,commitNativeSource} from '../../helpers/native-import'
+import {nativeImportDb,businessSource,commitNativeSource} from '../../roster/imports/fixtures/native-import'
 const handles:ReturnType<typeof nativeImportDb>[]=[]
 afterEach(()=>{for(const db of handles.splice(0))db.$client.close()})
 function fixture(){const db=nativeImportDb();handles.push(db);return db}

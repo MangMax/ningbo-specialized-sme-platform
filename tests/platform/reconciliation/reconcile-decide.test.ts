@@ -9,7 +9,7 @@ import {
   decideDifference,
 } from '../../../lib/platform/reconcile'
 
-import { platformFixture as fixture } from '../../helpers/platform-replay'
+import { platformFixture as fixture } from '../fixtures/source-replay'
 
 const USCC = '91330211255994457P'
 const OLD_NAME = '宁波上航测绘有限公司'

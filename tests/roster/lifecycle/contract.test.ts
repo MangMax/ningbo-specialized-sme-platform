@@ -1,4 +1,4 @@
-import { submitNativePlatformQuery } from '../../helpers/native-platform-fixture'
+import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
 import { listPlatformQueries } from '../../../lib/platform/read'
 import { initializeDb } from '../../../db/client'
 /**

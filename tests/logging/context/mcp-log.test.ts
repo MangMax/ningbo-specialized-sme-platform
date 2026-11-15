@@ -5,7 +5,7 @@ import { mcpLogMetadata } from '../../../server/utils/mcp-log-context'
 
 const known = new Set(['get_platform_capabilities', 'list_files'])
 
-describe('#180 MCP module-entry metadata', () => {
+describe("MCP module-entry metadata", () => {
   it('tracks the installed SDK protocol-version set instead of a drifting regex', () => {
     expect(MCP_PROTOCOL_VERSIONS).toEqual(SUPPORTED_PROTOCOL_VERSIONS)
   })

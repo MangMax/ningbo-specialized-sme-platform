@@ -1,4 +1,4 @@
-import { submitNativePlatformQuery } from '../../helpers/native-platform-fixture'
+import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
 import { once } from 'node:events'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { createServer, get } from 'node:http'

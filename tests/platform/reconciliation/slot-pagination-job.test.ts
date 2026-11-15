@@ -1,6 +1,6 @@
 import {newJobId} from '../../../lib/job'
-import {submitNativePlatformQuery} from '../../helpers/native-platform-fixture'
-import { nativeRelationRows } from '../../helpers/native-platform-evidence'
+import {submitNativePlatformQuery} from '../fixtures/native-query'
+import { nativeRelationRows } from '../fixtures/native-evidence'
 import { initializeDb } from '../../../db/client'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'

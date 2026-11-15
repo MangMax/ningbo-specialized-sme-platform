@@ -4,13 +4,13 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, it } from 'vitest'
 import * as schema from '../../../db/schema'
-import { submitNativePlatformQuery } from '../../helpers/native-platform-fixture'
+import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
 import { generateCandidates } from '../../../server/utils/record-correspondence-candidates'
 import { readEventAnnualProcess } from '../../../server/utils/event-annual-process-read'
 import { handleEventAnnualProcessRequest, dispatchEventAnnualProcessMcp } from '../../../server/utils/event-annual-process-api'
 import { handleRecordCorrespondenceRequest } from '../../../server/utils/record-correspondence-api'
 import { dispatchRecordCorrespondenceMcp } from '../../../server/utils/mcp-record-correspondence'
-import { startHttpFixture } from '../../helpers/http-fixture'
+import { startHttpFixture } from '../../support/http'
 
 const cleanup: Array<() => void> = []
 afterEach(() => { for (const close of cleanup.splice(0).reverse()) close() })

@@ -1,5 +1,5 @@
 import { afterEach, expect, it } from 'vitest'
-import { nativeCatalogFixture } from '../../helpers/native-catalog-fixture'
+import { nativeCatalogFixture } from '../fixtures/native-catalog'
 import { listCurrentQualified } from '../../../lib/roster/current-qualified-query'
 import { schema } from '../../../db/client'
 const fixtures:ReturnType<typeof nativeCatalogFixture>[]=[]

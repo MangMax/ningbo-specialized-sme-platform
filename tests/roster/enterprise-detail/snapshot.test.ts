@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { describe, expect, it } from 'vitest'
-import { assertEnterpriseDetailSnapshotEqual } from '../../helpers/enterprise-detail-snapshot'
+import { assertEnterpriseDetailSnapshotEqual } from '../assertions/enterprise-detail-snapshot'
 
 // Literal business results: no production reader, qualification oracle, DB or HTTP.
 function detail(asOf = '2026-10-27T12:00:00.000Z') {

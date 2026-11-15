@@ -413,7 +413,7 @@ it('retains the explicitly requested append target after a later displayed-batch
   expect(reads(fetch).slice(retryStart).map(read => read.page)).toEqual([1, 2, 3])
 })
 
-it('R2 E08 failed append remains in the recovery plan after a later displayed page fails', async () => {
+it("E08 failed append remains in the recovery plan after a later displayed page fails", async () => {
   let stage: 'initial' | 'append-fails' | 'sweep-fails' | 'recover' = 'initial'
   const fetch = readonlyPages((id, number) => {
     if (stage === 'append-fails' && number === 2) return Promise.reject(new Error('explicit append unavailable'))

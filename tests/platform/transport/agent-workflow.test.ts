@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { initializeDb } from '../../../db/client'
 import { updateCredential } from '../../../server/utils/credential-state'
-import { startPlatformBatchApi } from '../../helpers/platform-batch-api'
+import { startPlatformBatchApi } from './fixtures/batch-api'
 import { whenIdle } from '../../../server/utils/job-runner'
 const dir = mkdtempSync(join(tmpdir(), 'platform-agent-'))
 const db = initializeDb({ create: true,  dbPath: join(dir, 'agent.sqlite') })

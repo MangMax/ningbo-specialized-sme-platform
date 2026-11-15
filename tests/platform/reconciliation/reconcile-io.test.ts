@@ -1,6 +1,6 @@
 import {readPlatformQueryEvidence} from '../../../lib/platform/evidence-read'
-import {submitNativePlatformQuery} from '../../helpers/native-platform-fixture'
-import { nativeQueryRows, nativeRelationRows } from '../../helpers/native-platform-evidence'
+import {submitNativePlatformQuery} from '../fixtures/native-query'
+import { nativeQueryRows, nativeRelationRows } from '../fixtures/native-evidence'
 import { initializeDb } from '../../../db/client'
 /**
  * 平台实查的**取数纪律** —— 并发上限、退避重试、会话过期、凭据缺失、新鲜复用。
@@ -19,7 +19,7 @@ import { afterAll, afterEach, describe, expect, it } from 'vitest'
 import { schema, useDb } from '../../../db'
 import { runPlatformReconcile } from '../../../server/utils/platform-reconcile'
 import { whenIdle } from '../../../server/utils/job-runner'
-import { emptyReply, platformFixture, platformReplay, type PlatformCall } from '../../helpers/platform-replay'
+import { emptyReply, platformFixture, platformReplay, type PlatformCall } from '../fixtures/source-replay'
 
 const fixture = platformFixture
 

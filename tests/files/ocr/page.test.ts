@@ -361,7 +361,7 @@ async function loadA(
 
 let harness: Harness | null = null
 
-describe('#308 校对页版本保护', () => {
+describe("校对页版本保护", () => {
   it('读取真实版本并用于保存，首次新增明确要求页不存在', async () => {
     const { wrapper, fetchMock, ocr } = await loadA()
     expect(fetchMock.mock.calls.find(([url]) => url === '/api/ocr-results')?.[1])
@@ -536,7 +536,7 @@ describe('B1 竞态：晚到的回包不许灌进新选的页面', () => {
   })
 })
 
-describe('R1 渲染回包：晚到也不许换掉页图', () => {
+describe("渲染回包：晚到也不许换掉页图", () => {
   it('★ 渲染 A 期间切到 B，A 的渲染结果晚到后页面仍是 B', async () => {
     harness = await mountPage()
     const { wrapper, pdf, ocr, render } = harness
@@ -1268,7 +1268,7 @@ describe('唯一翻页器与焦点', () => {
  * 覆盖对照弹窗安全渲染/精确复制、HTML 事件属性清洗、主题跟随、
  * 读回缺失的重试分派、键盘横向滚动、以及脏草稿取消确认。
  */
-describe('R2 复核回归', () => {
+describe("复核回归", () => {
   it('提交成功但读回缺少逐页正文：保留可选草稿，重试只发 GET，恢复后正常结束编辑', async () => {
     const { wrapper, fetchMock } = await loadA()
     const original = fetchMock.getMockImplementation()! as (
@@ -1687,7 +1687,7 @@ describe('编辑焦点所有权', () => {
   })
 })
 
-describe('R3 快速页面导航', () => {
+describe("快速页面导航", () => {
   it('入口直接列页：点第 3 页即跳转，当前页与三档状态可读', async () => {
     const { wrapper, router } = await loadA(12, '甲公司', '', [1, 2, 3])
     const panel = await openPageNav(wrapper)

@@ -1,4 +1,4 @@
-import { nativeQueryRows } from '../../helpers/native-platform-evidence'
+import { nativeQueryRows } from '../fixtures/native-evidence'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -10,7 +10,7 @@ import { buildPlatformWritePayload } from '../../../lib/platform/payload'
 import { commitRosterImport, preflightRosterImport } from '../../../server/utils/roster-import'
 import { runPlatformReconcile } from '../../../server/utils/platform-reconcile'
 import { whenIdle } from '../../../server/utils/job-runner'
-import { emptyReply, platformReplay } from '../../helpers/platform-replay'
+import { emptyReply, platformReplay } from '../fixtures/source-replay'
 import type { RosterImportRequest } from '../../../lib/roster-import-client'
 
 const dir = mkdtempSync(join(tmpdir(), 'reconcile-query-metadata-'))

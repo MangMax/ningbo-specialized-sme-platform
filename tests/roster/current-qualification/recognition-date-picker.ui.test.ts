@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { flushPromises, mount } from '@vue/test-utils'
 import { afterEach, expect, it } from 'vitest'
-import { calendarSelectValue, chooseCalendarSelect } from '../../helpers/calendar-select'
+import { calendarSelectValue, chooseCalendarSelect } from '../../support/calendar-select'
 import CurrentRecognitionDatePicker from '../../../components/CurrentRecognitionDatePicker.vue'
 
 let view: ReturnType<typeof mount>

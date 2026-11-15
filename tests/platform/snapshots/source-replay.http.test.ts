@@ -1,4 +1,4 @@
-import { nativeQueryRows } from '../../helpers/native-platform-evidence'
+import { nativeQueryRows } from '../fixtures/native-evidence'
 import { initializeDb } from '../../../db/client'
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'

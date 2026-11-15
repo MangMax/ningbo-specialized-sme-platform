@@ -1,4 +1,4 @@
-import { submitNativePlatformQuery } from '../../helpers/native-platform-fixture'
+import { submitNativePlatformQuery } from '../fixtures/native-query'
 import { initializeDb } from '../../../db/client'
 import { createServer } from 'node:http'
 import { mkdtempSync, rmSync } from 'node:fs'

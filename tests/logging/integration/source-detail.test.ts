@@ -28,7 +28,7 @@ it('classifies inherited object property names as unknown MCP clients', () => {
 const captured = (over: Partial<FieldCapturedLogEvent>): FieldCapturedLogEvent =>
   event(over as Partial<LogEvent>) as FieldCapturedLogEvent
 
-describe('#180 source-aware detail profile', () => {
+describe("source-aware detail profile", () => {
 
   it('selects only applicable targets for all eleven sources', () => {
     const samples = [
@@ -164,7 +164,7 @@ describe('#180 source-aware detail profile', () => {
   })
 })
 
-describe('#180 field capture omission in the detail profile', () => {
+describe("field capture omission in the detail profile", () => {
   it('reports a writer-disabled field as disabled and keeps a plain gap absent', () => {
     const row = captured({
       httpMethod: 'GET',
@@ -219,7 +219,7 @@ describe('#180 field capture omission in the detail profile', () => {
   })
 })
 
-describe('#180 safe source-specific projection', () => {
+describe("safe source-specific projection", () => {
   it('classifies a client without persisting raw name/version/session/tool text', () => {
     const safe = safeLogEvent({
       source: 'mcp', operation: 'mcp.request', outcome: 'success',

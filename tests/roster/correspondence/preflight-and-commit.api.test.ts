@@ -1,7 +1,7 @@
 import { afterEach, expect, it } from 'vitest'
 
 
-import { nativeCorrespondenceFixture } from '../../helpers/native-correspondence-fixture'
+import { nativeCorrespondenceFixture } from './fixtures/native-correspondence'
 import { getRecordCorrespondence, listRecordCorrespondences } from '../../../server/utils/record-correspondence'
 const fixtures: ReturnType<typeof nativeCorrespondenceFixture>[] = []
 const fixture = () => { const f = nativeCorrespondenceFixture(); fixtures.push(f); return f }

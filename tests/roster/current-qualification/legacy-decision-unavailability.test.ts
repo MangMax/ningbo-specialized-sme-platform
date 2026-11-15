@@ -1,7 +1,7 @@
 import { afterAll, expect, it } from 'vitest'
-import { currentExport409Fixture } from '../../helpers/current-export-409'
+import { qualificationExportFixture } from '../current-export/fixtures/qualification-export'
 import { createCurrentQualificationAssessmentReader, PREVIOUS_QUALIFICATION_ASSESSMENT_VERSION } from '../../../lib/roster/current-qualification'
-const f = currentExport409Fixture()
+const f = qualificationExportFixture()
 afterAll(() => f.close())
 it('default effective reader survives unavailable legacy decisions while explicit old versions remain readable', () => {
   const c = f.candidate('retired484', [{eventType:'award',year:2025,batchSeq:1}])

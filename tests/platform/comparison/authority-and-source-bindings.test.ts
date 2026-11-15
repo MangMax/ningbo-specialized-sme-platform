@@ -220,7 +220,7 @@ describe('platform comparison 426',()=>{
 })
 
 
-describe('PR429 R1 regression',()=>{
+describe("authority changes invalidate retained scope",()=>{
   it('S1_array_index_getter_is_rejected_without_execution',()=>{
     const i=z(),q=i.queries.sources[0]!;let calls=0
     Object.defineProperty(i.queries.sources,'0',{enumerable:true,configurable:true,get(){calls++;i.queries.truncated=true;return q}})
@@ -241,7 +241,7 @@ describe('PR429 R1 regression',()=>{
 })
 
 
-describe('PR429 R2 source binding',()=>{
+describe("source snapshots bind authority",()=>{
   it('F2_query_interface_cannot_be_borrowed_from_directory',()=>{
     const i=borrowedHistory(p()),q=i.queries.sources.find(q=>q.source.queryId===203)!
     q.source.interface='recognized_list';q.metadata!.source='queryBusList';for(const page of [...q.source.pages,...q.metadata!.pages])page.source='queryBusList'
@@ -616,7 +616,7 @@ function nullOrigin430(): Input {
 }
 `)
 }
-describe('issue430 origin authority join', () => {
+describe("origin authority join", () => {
   it('real_null_origin_without_queries_preserves_legacy', () => {
     const i=nullOrigin430(), before=JSON.stringify(i), l=i.legacy
     expect(l.snapshotId).toBe('c6f5dbbd184deaa354405b92176b0fc055d74e20c10e7a24c1d6fd481f70a110')
@@ -733,7 +733,7 @@ const issue433Cases: Issue433Case[] = JSON.parse(String.raw`[
 {"name":"issue433_unknown_origin_review_no_cycle","input":{"version":"platform-comparison-410-v1","legacy":{"enterpriseId":1,"asOf":"2026-06-01T00:00:00Z","ruleVersion":"current-roster-116-v8","assessmentVersion":"enterprise-qualification-407-v1","snapshotId":"a0e9a4b50f961a254eba89404999e0e144183b1919b88b5bb235a5f6e4b717fb","titles":[{"titleCode":"specialized_sme","group":"pending","cycles":[],"versions":{"facts":"facts-v1","sources":"sources-v1","decisions":"decisions-v1","observations":"observations-v1"},"officialQualification":{"group":"pending","message":"Gate2 independent synthetic literal","basis":"literal","notes":[]},"subject":{"status":"not_established","message":"未见终止","decisionIds":[]},"region":{"status":"not_established","message":"沿正式范围","decisionIds":[]},"platform":{"status":"not_queried","comparison":"not_established","message":"未查询","truncated":false,"observations":[]},"correspondence":{"status":"unmatched","message":"无对应","refs":[]},"completeness":{"status":"recorded","message":"独立比较输入","gaps":[],"eventIds":[],"publishedNames":[{"evidenceId":123,"availability":"captured","nameKnown":true}]},"evidence":[{"eventId":23,"revision":1,"eventType":"review","year":null,"batchSeq":null,"decidedYear":2025,"reviewOutcome":"failed","evidenceIds":[123]}],"sourceVersions":[{"evidenceId":123,"eventId":23,"sourceFile":"synthetic-433.pdf","storedFileId":91,"sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","bytes":10,"removedAt":null,"capturedRevision":1,"capturedSha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}],"references":[],"notes":[],"shadow":{"legacyGroup":"pending","difference":null}}]},"titleCode":"specialized_sme","formal":{"assessment":{"titleCode":"specialized_sme","group":"pending","officialQualification":{"group":"pending","message":"Gate2 independent synthetic literal","basis":"literal","notes":[]},"subject":{"status":"not_established","message":"未见终止","decisionIds":[]},"region":{"status":"not_established","message":"沿正式范围","decisionIds":[]},"cycles":[],"versions":{"facts":"facts-v1","sources":"sources-v1","decisions":"decisions-v1","observations":"observations-v1"},"evidence":[{"eventId":23,"revision":1,"eventType":"review","year":null,"batchSeq":null,"decidedYear":2025,"reviewOutcome":"failed","evidenceIds":[123]}],"sourceVersions":[{"evidenceId":123,"eventId":23,"sourceFile":"synthetic-433.pdf","storedFileId":91,"sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","bytes":10,"removedAt":null,"capturedRevision":1,"capturedSha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}],"completeness":{"status":"recorded","message":"独立比较输入","gaps":[],"eventIds":[],"publishedNames":[{"evidenceId":123,"availability":"captured","nameKnown":true}]},"correspondence":{"status":"unmatched","message":"无对应","refs":[]}},"cycles":[]},"queries":{"sources":[],"truncated":false},"processes":[]},"expected":{"version":"platform-comparison-410-v1","scope":{"enterpriseId":1,"titleCode":"specialized_sme","asOf":"2026-06-01T00:00:00Z","ruleVersion":"current-roster-116-v8","assessmentVersion":"enterprise-qualification-407-v1","legacySnapshotId":"a0e9a4b50f961a254eba89404999e0e144183b1919b88b5bb235a5f6e4b717fb"},"observation":{"state":"not_queried","sources":[]},"comparison":{"state":"not_established","cycles":[]},"inputDigest":"e620a67c89ca3d9541b6e630b914f5555f957bf8461119d5d61297203f0467c2","resultDigest":"cbf4e930bf55e8893fb88c2813b1b91db68f0b1e99b768d8d117e2f4de7c4670"}}
 ]`)
 
-describe('issue433 complete authority bindings', () => {
+describe("complete authority bindings", () => {
   for (const fixture of issue433Cases) it(fixture.name, () => {
     const i = structuredClone(fixture.input), before = JSON.stringify(i), l = i.legacy
     // These checks precede the old core failure for legal null-anchor/multiple-cycle RED.
@@ -744,7 +744,7 @@ describe('issue433 complete authority bindings', () => {
     else expect(comparePlatformComparison(i)).toEqual(fixture.expected)
     expect(JSON.stringify(i)).toBe(before)
   })
-  it('issue433_repeat_no_state_leak', () => {
+  it("repeated authority reads do not leak state", () => {
     for (const name of ['issue433_failed_only_null_anchor','issue433_two_unknown_grants','issue433_failed_only_null_anchor','issue433_unknown_grants_reverse']) {
       const f=issue433Cases.find(c=>c.name===name)!, i=freeze(structuredClone(f.input)), before=JSON.stringify(i)
       expect(comparePlatformComparison(i)).toEqual(f.expected)
@@ -804,7 +804,7 @@ describe('issue433 complete authority bindings', () => {
 })
 
 // PR434 F1: invalid provided sources must remain blockers after refs filtering.
-describe('issue433 provided source ownership', () => {
+describe("provided source ownership", () => {
   for (const eventId of [21, 24, 999]) for (const sourceHash of [null, aHash]) {
     it(`issue433_source_owner_${eventId}_${sourceHash === null ? 'null' : 'valid'}`, () => {
       const i = structuredClone(issue433Cases.find(c => c.name === 'issue433_latest_award_only')!.input)
@@ -856,7 +856,7 @@ function issue435Normalize(value: any, key = ''): any {
   if ('groups' in value && 'coverage' in value && 'event' in value && !('scopeGaps' in value)) out.scopeGaps = null
   return out
 }
-describe('issue435 frozen contract', () => {
+describe("frozen contract", () => {
   for (const fixture of issue435Cases) it(fixture.name, () => {
     const i = structuredClone(fixture.input), before = JSON.stringify(i), l = i.legacy
     const legacyHash = hash(JSON.stringify([{enterpriseId:l.enterpriseId,asOf:l.asOf,ruleVersion:l.ruleVersion,assessmentVersion:l.assessmentVersion},l.titles]))

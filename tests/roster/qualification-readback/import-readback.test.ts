@@ -17,7 +17,7 @@ import { getRosterEnterpriseDetail } from '../../../lib/roster/enterprise-roster
 import { handleRosterImportRequest } from '../../../server/utils/roster-import-http'
 import { commitRosterImport, preflightRosterImport } from '../../../server/utils/roster-import'
 import { readImportReceipt } from '../../../server/utils/import-receipts'
-import { startHttpFixture, type HttpFixture } from '../../helpers/http-fixture'
+import { startHttpFixture, type HttpFixture } from '../../support/http'
 
 const NOW = Date.parse('2026-01-15T00:00:00.000Z')
 const TOKEN = 'synthetic-407-import-token'

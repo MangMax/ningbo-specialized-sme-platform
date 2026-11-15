@@ -1,15 +1,15 @@
-import { submitNativePlatformQuery } from '../../helpers/native-platform-fixture'
+import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { listCurrentQualified } from '../../../lib/roster/current-qualified-query'
 import { readCurrentQualificationAssessment } from '../../../lib/roster/current-qualification'
-import { AS_OF_408, currentQualified408Fixture } from '../../helpers/current-qualified-408'
+import { AS_OF_408, currentQualificationFixture } from '../fixtures/qualification-matrix'
 
-let fixture: ReturnType<typeof currentQualified408Fixture>
+let fixture: ReturnType<typeof currentQualificationFixture>
 beforeEach(() => {
   // Only Date is frozen: SQL, transactions and the event loop remain real.
   vi.useFakeTimers({ toFake: ['Date'] })
   vi.setSystemTime(new Date(AS_OF_408))
-  fixture = currentQualified408Fixture()
+  fixture = currentQualificationFixture()
 })
 afterEach(() => {
   try { fixture?.close() } finally { vi.useRealTimers() }
@@ -99,7 +99,7 @@ import { createHash } from 'node:crypto'
 import { createCurrentQualificationAssessmentReader } from '../../../lib/roster/current-qualification'
 import type { CurrentQualifiedFilter } from '../../../lib/roster/current-qualified-query'
 import type { PlatformRow } from '../../../lib/platform/types'
-import { matrix408, fileMatrix408, type MatrixEvent408 } from '../../helpers/current-qualified-408'
+import { qualificationMatrix, qualificationFileFixture, type MatrixEvent408 } from '../fixtures/qualification-matrix'
 
 const pendingEvents408: MatrixEvent408[] = [
   { eventType: 'award', year: 2022, decidedYear: 2022, batchSeq: 1 },
@@ -128,7 +128,7 @@ it.each([
   { id: 'terminated_then_returned', state: 'terminated_then_returned', groups: ['excluded', 'excluded', 'eligible'] },
   { id: 'review_failed', state: 'review_failed', groups: ['excluded', 'excluded', 'excluded'] },
 ])('complete_t2_and_scan_parity_408_$id', ({ state, groups }) => {
-  const m = matrix408(fixture.sqlite)
+  const m = qualificationMatrix(fixture.sqlite)
   const events: MatrixEvent408[] = state === 'review_failed' ? [
     { eventType: 'award', year: 2022, decidedYear: 2022, batchSeq: 1 },
     { eventType: 'review', year: 2022, decidedYear: 2025, batchSeq: 1, reviewOutcome: 'failed' },
@@ -174,7 +174,7 @@ it.each([
   { id: 'identity', q: 'synthetic_408_q', requested: true },
   { id: 'absent', q: 'synthetic_408_missing', requested: true },
 ])('expired_cycles_keep_pending_channel_empty_with_request_scope_408_$id', ({ q, requested }) => {
-  const m = matrix408(fixture.sqlite)
+  const m = qualificationMatrix(fixture.sqlite)
   const a = m.formal('synthetic_408_q', pendingEvents408)
   const result = query408({ q })
   expect(result).toMatchObject({ rows: [], total: 0, uncertainTotal: 0 })
@@ -185,7 +185,7 @@ it.each([
 })
 
 it.each(['id_asc', 'name_asc', 'name_desc'] as const)('eligible_pages_keep_complete_counts_and_stable_ties_while_expired_rows_stay_out_408_%s', sort => {
-  const m = matrix408(fixture.sqlite)
+  const m = qualificationMatrix(fixture.sqlite)
   const e1 = m.formal('synthetic_408_tie'), p1 = m.formal('synthetic_408_tie', pendingEvents408)
   const e2 = m.formal('synthetic_408_tie'), p2 = m.formal('synthetic_408_tie', pendingEvents408)
   const eligible: number[] = [], pending: number[] = []
@@ -204,7 +204,7 @@ it.each(['id_asc', 'name_asc', 'name_desc'] as const)('eligible_pages_keep_compl
 })
 
 it('search_identity_alias_region_and_title_isolation_408', () => {
-  const m = matrix408(fixture.sqlite)
+  const m = qualificationMatrix(fixture.sqlite)
   // Checksum-valid synthetic literals, not a claim of registered real enterprises.
   const a = m.formal('synthetic_408_current', undefined, { uscc: '91330200000000408X' })
   const b = m.formal('synthetic_408_null_identity', undefined, { district: '海曙区' })
@@ -227,7 +227,7 @@ it.each([
   { id: 'partial_year', from: '2025-02-01', to: '2025-12-31', total: 0, uncertain: 1 },
   { id: 'disjoint_year', from: '2024-01-01', to: '2024-12-31', total: 0, uncertain: 0 },
 ])('recognition_precision_keeps_legacy_counts_408_$id', ({ from, to, total, uncertain }) => {
-  const m = matrix408(fixture.sqlite)
+  const m = qualificationMatrix(fixture.sqlite)
   const a = m.formal('synthetic_408_recognition')
   const result = query408({ recognitionFrom: from, recognitionTo: to })
   expect(result.total).toBe(total); expect(result.uncertainTotal).toBe(uncertain)
@@ -250,7 +250,7 @@ it.each<{ id: string; filter: Partial<CurrentQualifiedFilter>; raw: PlatformRow;
 ])('current_filter_checks_preserve_literal_witness_partitions_408_$id', ({ filter, raw, status }) => {
   // At 2024 the 2022 formal cycle is current; incomplete review fields remain diagnostics.
   vi.setSystemTime(new Date('2024-06-01T00:00:00.000Z'))
-  const m = matrix408(fixture.sqlite)
+  const m = qualificationMatrix(fixture.sqlite)
   const a = m.formal('synthetic_408_filter_current', pendingEvents408, { uscc: '91330200000000408X' })
   if (Object.keys(raw).length) m.recognized(a.enterprise.id, a.events[0]!.id, raw)
   const result = query408({ q: a.enterprise.name, ...filter })
@@ -269,7 +269,7 @@ it.each([
   { id: 'same_row', split: false },
   { id: 'different_rows', split: true },
 ])('source_row_and_witnesses_do_not_cross_join_408_$id', ({ split }) => {
-  const m = matrix408(fixture.sqlite)
+  const m = qualificationMatrix(fixture.sqlite)
   const a = m.formal('synthetic_408_and_pending', pendingEvents408, { uscc: '91330200000000408X' })
   const e = m.formal('synthetic_408_and_eligible', undefined, { uscc: '913302000000004091' })
   for (const item of [a, e]) {
@@ -289,7 +289,7 @@ it.each([
   { id: 'utc_previous_shanghai_next', iso: '2025-12-31T16:30:00.000Z', local: 2025, eligible: 0 },
   { id: 'utc_next_local_previous', iso: '2026-01-01T00:30:00.000Z', local: 2025, eligible: 0 },
 ])('evaluation_uses_shanghai_year_not_host_or_filter_year_408_$id', ({ iso, local, eligible }) => {
-  const m = matrix408(fixture.sqlite)
+  const m = qualificationMatrix(fixture.sqlite)
   const a = m.formal('synthetic_408_utc', [{ eventType: 'award', year: 2023, decidedYear: 2023, batchSeq: 1 }])
   vi.setSystemTime(new Date(iso))
   // Model either local offset without changing the host timezone or event loop.
@@ -306,7 +306,7 @@ it.each([
 })
 
 it('wal_writer_changes_are_visible_only_on_next_current_snapshot_408', () => {
-  const file = fileMatrix408()
+  const file = qualificationFileFixture()
   let injected = false
   let restore: (() => void) | undefined
   try {
@@ -344,7 +344,7 @@ it('wal_writer_changes_are_visible_only_on_next_current_snapshot_408', () => {
 })
 
 it('name_order_and_id_ties_apply_before_eligible_pages_with_expired_controls_408', () => {
-  const m = matrix408(fixture.sqlite)
+  const m = qualificationMatrix(fixture.sqlite)
   const ez = m.formal('synthetic_408_sort_z'), ea = m.formal('synthetic_408_sort_a')
   const pz = m.formal('synthetic_408_sort_z', pendingEvents408), pa = m.formal('synthetic_408_sort_a', pendingEvents408)
   for (const [sort, expectedEligible, expectedPending] of [
@@ -362,7 +362,7 @@ it('name_order_and_id_ties_apply_before_eligible_pages_with_expired_controls_408
 })
 
 it('old_cycle_and_other_title_cannot_supply_current_filter_facts_408', () => {
-  const m = matrix408(fixture.sqlite)
+  const m = qualificationMatrix(fixture.sqlite)
   const eligible = m.formal('synthetic_408_cycle_eligible', [
     { eventType: 'award', year: 2021, decidedYear: 2021, batchSeq: 1 },
     { eventType: 'award', year: 2025, decidedYear: 2025, batchSeq: 1 },
@@ -391,7 +391,7 @@ it('empty_dataset_is_a_successful_empty_scope_not_an_unrequested_census_408', ()
 })
 
 // Independent nonempty reference controls appended after the frozen 41-case prefix.
-import { refLiterals408 } from '../../helpers/current-qualified-408'
+import { qualificationReferenceLiterals } from '../fixtures/qualification-matrix'
 import { createEnterpriseTitleCorrespondenceRefsReader, listRecordCorrespondenceRefs } from '../../../server/utils/record-correspondence'
 
 type RefLiteral408 = { id: number; queryId: number; status: string | null; year: number | null; batch: string | null }
@@ -422,7 +422,7 @@ function assertRefSnapshot408(enterpriseId: number, refs: Record<'little_giant' 
 }
 
 it('prepared_refs_empty_and_alternating_bindings_preserve_nullable_projection_408', () => {
-  const m = matrix408(fixture.sqlite), r = refLiterals408(fixture.sqlite)
+  const m = qualificationMatrix(fixture.sqlite), r = qualificationReferenceLiterals(fixture.sqlite)
   const a = m.formal('synthetic_408_ref_binding_a'), b = m.formal('synthetic_408_ref_binding_b')
   const prepared = createEnterpriseTitleCorrespondenceRefsReader(m.db)
   expect(prepared(a.enterprise.id, 'innovative_sme')).toEqual([])
@@ -442,7 +442,7 @@ it('prepared_refs_empty_and_alternating_bindings_preserve_nullable_projection_40
 })
 
 it('prepared_refs_refresh_new_confirmed_edges_and_source_revision_validity_408', () => {
-  const m = matrix408(fixture.sqlite), r = refLiterals408(fixture.sqlite)
+  const m = qualificationMatrix(fixture.sqlite), r = qualificationReferenceLiterals(fixture.sqlite)
   const a = m.formal('synthetic_408_live_edges', undefined, { uscc: '91330200000000408X' })
   const file = r.officialFile()
   expect(file.sha256).toBe(createHash('sha256').update(Buffer.from('synthetic_408_formal_source_bytes')).digest('hex'))
@@ -467,7 +467,7 @@ it('prepared_refs_refresh_new_confirmed_edges_and_source_revision_validity_408',
 })
 
 // Independent JSON literals for the private cross-request assertion adapter.
-import { assertCurrentQualifiedRowsSnapshotEqual408 } from '../../helpers/current-qualified-408'
+import { assertQualificationRowsSnapshotEqual } from '../fixtures/qualification-matrix'
 import type { CurrentQualifiedRow } from '../../../lib/roster/current-qualified-query'
 import type { CurrentQualificationAssessment } from '../../../lib/roster/current-qualification'
 
@@ -513,7 +513,7 @@ function sealCrossRequestRows408(rows: CurrentQualifiedRow[]) {
 const crossRequestTimes408 = ['2026-06-01T00:00:00.000Z', '2026-06-01T00:00:00.027Z'] as const
 
 it('cross_request_rows_empty_arrays_remain_exact_408', () => {
-  expect(() => assertCurrentQualifiedRowsSnapshotEqual408([], [])).not.toThrow()
+  expect(() => assertQualificationRowsSnapshotEqual([], [])).not.toThrow()
 })
 
 it('cross_request_rows_validated_times_preserve_complete_input_408', () => {
@@ -521,7 +521,7 @@ it('cross_request_rows_validated_times_preserve_complete_input_408', () => {
   // Deliberate top-level collisions must remain nested, not be overwritten by wrapping.
   for (const rows of [actual, expected]) Object.assign(rows[0]!, { enterprise: { originalRowField: 'preserved' }, currentQualifiedRow: { originalRowField: 'preserved' }, futureField: { value: null } })
   const before = structuredClone({ actual, expected })
-  expect(() => assertCurrentQualifiedRowsSnapshotEqual408(actual, expected)).not.toThrow()
+  expect(() => assertQualificationRowsSnapshotEqual(actual, expected)).not.toThrow()
   expect({ actual, expected }).toStrictEqual(before)
 })
 
@@ -547,11 +547,11 @@ it.each<{ id: string; mutate: (rows: CurrentQualifiedRow[]) => void; seal?: bool
   mutate(invalidExpected)
   if (seal) sealCrossRequestRows408(invalidExpected)
   const before = JSON.stringify({ actual, expected, invalidExpected })
-  expect(() => assertCurrentQualifiedRowsSnapshotEqual408(actual, expected)).toThrow()
+  expect(() => assertQualificationRowsSnapshotEqual(actual, expected)).toThrow()
   // Symmetric validation: neither expected nor actual may contain an invalid T2.
-  expect(() => assertCurrentQualifiedRowsSnapshotEqual408(expected, actual)).toThrow()
+  expect(() => assertQualificationRowsSnapshotEqual(expected, actual)).toThrow()
   // Equally malformed inputs must also fail, rather than passing deep equality.
-  expect(() => assertCurrentQualifiedRowsSnapshotEqual408(actual, invalidExpected)).toThrow()
+  expect(() => assertQualificationRowsSnapshotEqual(actual, invalidExpected)).toThrow()
   expect(JSON.stringify({ actual, expected, invalidExpected })).toBe(before)
 })
 
@@ -583,7 +583,7 @@ it.each<{ id: string; mutate: (rows: CurrentQualifiedRow[]) => void }>([
   mutate(actual)
   sealCrossRequestRows408(actual)
   const before = structuredClone({ actual, expected })
-  expect(() => assertCurrentQualifiedRowsSnapshotEqual408(actual, expected)).toThrow()
+  expect(() => assertQualificationRowsSnapshotEqual(actual, expected)).toThrow()
   expect({ actual, expected }).toStrictEqual(before)
 })
 
@@ -595,12 +595,12 @@ it.each<{ id: string; mutate: (rows: CurrentQualifiedRow[]) => void }>([
   const actual = crossRequestLiteralRows408(crossRequestTimes408[1]), expected = crossRequestLiteralRows408(crossRequestTimes408[0])
   mutate(actual)
   const before = structuredClone({ actual, expected })
-  expect(() => assertCurrentQualifiedRowsSnapshotEqual408(actual, expected)).toThrow()
+  expect(() => assertQualificationRowsSnapshotEqual(actual, expected)).toThrow()
   expect({ actual, expected }).toStrictEqual(before)
 })
 
 it('prepared_refs_reuse_compilation_without_caching_source_validity_511', () => {
-  const m = matrix408(fixture.sqlite), r = refLiterals408(fixture.sqlite)
+  const m = qualificationMatrix(fixture.sqlite), r = qualificationReferenceLiterals(fixture.sqlite)
   const a = m.formal('statistics_compilation_budget', undefined, { uscc: '91330200000000408X' })
   r.officialFile()
   m.recognized(a.enterprise.id, a.events[0]!.id, { rddqrq: '2028-06-01' })
@@ -616,7 +616,7 @@ it('prepared_refs_reuse_compilation_without_caching_source_validity_511', () => 
 })
 
 it('effective_count_projection_preserves_status_and_basis_without_correspondence_reads_511', () => {
-  const m = matrix408(fixture.sqlite), r = refLiterals408(fixture.sqlite)
+  const m = qualificationMatrix(fixture.sqlite), r = qualificationReferenceLiterals(fixture.sqlite)
   const a = m.formal('statistics_effective_projection', undefined, { uscc: '91330200000000408X' })
   r.officialFile()
   m.recognized(a.enterprise.id, a.events[0]!.id, { rddqrq: '2028-06-01' })
@@ -643,7 +643,7 @@ it('effective_count_projection_preserves_status_and_basis_without_correspondence
 })
 
 it('native complete recognized collections keep each title and source row in its own scope', () => {
-  const m = matrix408(fixture.sqlite)
+  const m = qualificationMatrix(fixture.sqlite)
   const first = m.formal('native_three_title_source')
   const refs: Record<'little_giant' | 'specialized_sme' | 'innovative_sme', RefLiteral408[]> = { little_giant:[],specialized_sme:[],innovative_sme:[] }
   for (const title of ['little_giant','specialized_sme','innovative_sme'] as const) {
@@ -655,7 +655,7 @@ it('native complete recognized collections keep each title and source row in its
 })
 
 it('native recognized submission rejects ownership that conflicts with source identity atomically', () => {
-  const m=matrix408(fixture.sqlite), first=m.formal('native_source_owner'), other=m.formal('native_wrong_owner')
+  const m=qualificationMatrix(fixture.sqlite), first=m.formal('native_source_owner'), other=m.formal('native_wrong_owner')
   const raw={id:'native-owner-conflict',qymc:first.enterprise.name,tyshxydm:first.enterprise.usccNorm!,rdjb:'1',rddqrq:'2028-06-01'}
   const stamp='2026-05-20T00:00:00Z'
   const evidence={source:'queryBusList' as const,status:'success' as const,effectiveConditions:{uscc:first.enterprise.usccNorm!,combination:'and' as const},titleScope:{mode:'selected' as const,rdjb:['1']},queriedAt:stamp,completedAt:stamp,rows:[raw],pages:[{source:'queryBusList' as const,rdjb:'1',page:1,status:'success' as const,fetchedCount:1,declaredTotal:1,maxPage:1,error:null}],fetchedCount:1,declaredTotal:1,completeness:'complete' as const,fullRange:true,unfinished:[],error:null,limits:{maxRequests:1,maxRows:50,maxDurationMs:1000,pageSize:50}}

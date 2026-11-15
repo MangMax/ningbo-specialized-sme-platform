@@ -1,4 +1,4 @@
-import { submitNativePlatformQuery } from '../../helpers/native-platform-fixture'
+import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
 import { platformResultToImport } from '../../../lib/platform/recognized-evidence'
 import { it, expect, afterAll } from 'vitest'
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'

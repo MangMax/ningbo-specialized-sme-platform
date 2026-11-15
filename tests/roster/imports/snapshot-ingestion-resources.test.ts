@@ -9,7 +9,7 @@ import type { RosterImportRequest } from '../../../lib/roster-import-client'
 import { handleRosterImportRequest, type RosterHttpRequest } from '../../../server/utils/roster-import-http'
 import { preflightRosterImport, commitRosterImport } from '../../../server/utils/roster-import'
 import { handleRecordCorrespondenceRequest } from '../../../server/utils/record-correspondence-api'
-import { startHttpFixture } from '../../helpers/http-fixture'
+import { startHttpFixture } from '../../support/http'
 
 const MiB = 1024 * 1024
 const dirs: string[] = []

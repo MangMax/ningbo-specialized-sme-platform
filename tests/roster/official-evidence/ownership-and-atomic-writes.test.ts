@@ -1,5 +1,5 @@
 import { createRuntimeSchema } from '../../../db/create-runtime'
-import { submitNativePlatformQuery } from '../../helpers/native-platform-fixture'
+import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
 import { createHash } from 'node:crypto'
 import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -13,7 +13,7 @@ import { preflightRosterImport, commitRosterImport, readImportBatchOutcome } fro
 import { handleRosterImportRequest } from '../../../server/utils/roster-import-http'
 import { readExactEvidence } from '../../../server/utils/roster-evidence-correction'
 import { handleEvidenceCorrectionRequest } from '../../../server/utils/roster-evidence-correction-api'
-import { startHttpFixture } from '../../helpers/http-fixture'
+import { startHttpFixture } from '../../support/http'
 import type { OfficialPublishedRow, RosterImportRequest } from '../../../lib/roster-import-client'
 
 const closes: (() => Promise<void> | void)[] = []

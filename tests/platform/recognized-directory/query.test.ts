@@ -176,7 +176,7 @@ it('REST capabilities MCP discovery and OpenAPI advertise only verified recogniz
   expect(platformQueryRpcError({ method: 'tools/call', params: { name: 'query_platform', arguments: { source: 'queryBusList', name: '合成', rdjb: ['2'], whpcyear: '2023', whpc: '2' } } })).toBeNull()
 })
 it('recognized query works through HTTP and sets no-store', async () => {
-  const { startHttpFixture } = await import('../../helpers/http-fixture')
+  const { startHttpFixture } = await import('../../support/http')
   const service = await startHttpFixture({ routes: { '/api/platform/query': async req => ({ status: 200, body: await query(req.body) }) } })
   fetcher.mockResolvedValue(response(recognizedPage([], 0)))
   try {

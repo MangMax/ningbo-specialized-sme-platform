@@ -1,5 +1,5 @@
 import { afterEach, expect, it } from 'vitest'
-import { nativeCorrespondenceFixture } from '../../helpers/native-correspondence-fixture'
+import { nativeCorrespondenceFixture } from '../correspondence/fixtures/native-correspondence'
 import { readAnnualWriteScope } from '../../../server/utils/annual-correspondence-read'
 import { stageAnnualCorrespondence, activateAnnualCorrespondence, retryAnnualCorrespondence } from '../../../server/utils/jobs/annual-correspondence'
 import { getJob } from '../../../server/utils/job-store'

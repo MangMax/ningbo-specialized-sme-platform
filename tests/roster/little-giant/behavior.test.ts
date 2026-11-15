@@ -1,7 +1,7 @@
 import { afterAll, expect, it } from 'vitest'
-import { currentExport409Fixture } from '../../helpers/current-export-409'
+import { qualificationExportFixture } from '../current-export/fixtures/qualification-export'
 import { readCurrentQualificationAssessment } from '../../../lib/roster/current-qualification'
-const f = currentExport409Fixture()
+const f = qualificationExportFixture()
 const at = Date.parse('2026-06-01T00:00:00Z')
 afterAll(() => f.close())
 it('requires each lower title own applicable official history and preserves original facts', () => {
@@ -46,7 +46,7 @@ it.each([
  ['platform-only', [{eventType:'maintain',year:2025,batchSeq:1}]],
  ['pending', [{eventType:'review',year:null,decidedYear:null,reviewOutcome:null}]],
  ['failed', [{eventType:'award',year:2023,batchSeq:1},{eventType:'review',year:2023,decidedYear:2026,reviewOutcome:'failed',batchSeq:1}]],
-] satisfies [string, import('../../helpers/current-export-409').Event[]][])('does not inherit from %s giant and keeps own effective title', (name,events)=>{
+] satisfies [string, import('../current-export/fixtures/qualification-export').Event[]][])('does not inherit from %s giant and keeps own effective title', (name,events)=>{
  const c=f.candidate('negative-'+name,events,'little_giant')
  f.addRecord(c.enterprise.id,name,[{eventType:'award',year:2018,batchSeq:1}],'specialized_sme')
  f.addRecord(c.enterprise.id,name,[{eventType:'award',year:2025,batchSeq:1}],'innovative_sme')

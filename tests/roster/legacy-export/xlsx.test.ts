@@ -4,7 +4,7 @@ import { existsSync } from 'node:fs'
 import { Writable } from 'node:stream'
 import type { H3Event } from 'h3'
 import { afterEach, expect, it, vi } from 'vitest'
-import { readExportWorkbook } from '../../helpers/read-export-workbook'
+import { readExportWorkbook } from '../../support/read-workbook'
 
 const state = vi.hoisted(() => ({
   slow: false, failAfter: Infinity, openFailure: false,

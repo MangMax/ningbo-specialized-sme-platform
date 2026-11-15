@@ -1,5 +1,5 @@
 import { afterEach, expect, it } from 'vitest'
-import { nativeCatalogFixture } from '../../helpers/native-catalog-fixture'
+import { nativeCatalogFixture } from '../fixtures/native-catalog'
 const fixtures:ReturnType<typeof nativeCatalogFixture>[]=[]
 const fixture=()=>{const f=nativeCatalogFixture();fixtures.push(f);return f}
 afterEach(()=>{for(const f of fixtures.splice(0))f.close()})

@@ -1,4 +1,4 @@
-import { submitNativePlatformQuery } from '../../helpers/native-platform-fixture'
+import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
 import { listPlatformQueries } from '../../../lib/platform/read'
 import { platformResultToImport } from '../../../lib/platform/recognized-evidence'
 import type { RosterImportPlatformQuery, RosterImportRelation } from '../../../lib/roster-import-client'

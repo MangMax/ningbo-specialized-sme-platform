@@ -2,8 +2,8 @@ import {afterEach,expect,it} from 'vitest'
 import * as schema from '../../../db/schema'
 import {runPlatformReconcile} from '../../../server/utils/platform-reconcile'
 import {preflightRosterImport,commitRosterImport} from '../../../server/utils/roster-import'
-import {nativeImportDb} from '../../helpers/native-import'
-import {platformReplay,emptyReply} from '../../helpers/platform-replay'
+import {nativeImportDb} from '../../roster/imports/fixtures/native-import'
+import {platformReplay,emptyReply} from '../fixtures/source-replay'
 const handles:ReturnType<typeof nativeImportDb>[]=[]
 afterEach(()=>{for(const db of handles.splice(0))db.$client.close()})
 function fixture(){

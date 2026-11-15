@@ -15,7 +15,7 @@ it('uses case-sensitive interface keys without numeric or name identity guesses'
 })
 
 
-import { nativeCatalogFixture } from '../../helpers/native-catalog-fixture'
+import { nativeCatalogFixture } from '../fixtures/native-catalog'
 it('native missing business keys remain isolated observations without invented records',()=>{
  const f=nativeCatalogFixture()
  try{const seed=f.seed('business_list',f.raw('UNUSED',{id:null,sblx:'申请',year:2024}));expect(seed.observations[0]).toMatchObject({recordId:null,versionId:null});expect(f.list('business_list')).toMatchObject({total:0});expect(f.list('business_list',{view:'isolated'})).toMatchObject({total:1})}finally{f.close()}

@@ -1,4 +1,4 @@
-import {submitNativePlatformQuery} from '../../helpers/native-platform-fixture'
+import {submitNativePlatformQuery} from '../../platform/fixtures/native-query'
 import { initializeDb } from '../../../db/client'
 /**
  * RL-18 —— 写入侧**规模**用例：单批千条级平台查询不再随批内查询数平方增长。

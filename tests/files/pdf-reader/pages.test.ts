@@ -24,7 +24,7 @@ import {
   renderPdfPages,
   resolveWithinRoot,
 } from '../../../server/utils/pdf-pages'
-import { countDarkRuns, markBand, minimalPdf } from '../../helpers/minimal-pdf'
+import { countDarkRuns, markBand, minimalPdf } from '../../support/minimal-pdf'
 
 /**
  * 票 13 的页图渲染。分两层:

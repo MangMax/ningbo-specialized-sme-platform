@@ -1,4 +1,4 @@
-import { nativeQueryRows, nativeRelationRows } from '../../helpers/native-platform-evidence'
+import { nativeQueryRows, nativeRelationRows } from '../fixtures/native-evidence'
 /** #428 real public handler HTTP chain; does not claim compiled Nitro evidence. */
 import { CURRENT_RULE_VERSION, LEGACY_CURRENT_RULE_VERSION, LEGACY_QUALIFICATION_ASSESSMENT_VERSION, QUALIFICATION_ASSESSMENT_VERSION } from '../../../lib/roster/current-qualification'
 import { createHash } from 'node:crypto'
@@ -17,7 +17,7 @@ import { handleRosterImportRequest } from '../../../server/utils/roster-import-h
 import { preflightRosterImport, commitRosterImport } from '../../../server/utils/roster-import'
 import { handleRecordCorrespondenceRequest } from '../../../server/utils/record-correspondence-api'
 import { handleEventAnnualProcessRequest } from '../../../server/utils/event-annual-process-api'
-import { startHttpFixture, type HttpFixture, type FixtureRequest } from '../../helpers/http-fixture'
+import { startHttpFixture, type HttpFixture, type FixtureRequest } from '../../support/http'
 
 it('P_closed_public_award', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'issue428-public-'))

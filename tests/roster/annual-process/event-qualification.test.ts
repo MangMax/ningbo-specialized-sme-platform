@@ -8,7 +8,7 @@ import * as annualReader from '../../../server/utils/event-annual-process-read'
 import { enrichAnnualProcessFinalQualification, readAnnualWriteScope } from '../../../server/utils/annual-correspondence-read'
 import { reconcileAnnualStep } from '../../../server/utils/annual-correspondence'
 import { handleEventAnnualProcessRequest, dispatchEventAnnualProcessMcp } from '../../../server/utils/event-annual-process-api'
-import { submitNativePlatformQuery } from '../../helpers/native-platform-fixture'
+import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
 import { commitRecordCorrespondences, preflightRecordCorrespondences } from '../../../server/utils/record-correspondence'
 
 const fixtures: Array<{ dir: string; db: ReturnType<typeof initializeDb>; readonly?: ReturnType<typeof initializeDb> }> = []

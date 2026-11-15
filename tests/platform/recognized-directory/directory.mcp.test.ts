@@ -5,7 +5,7 @@ import { afterAll,beforeAll,expect,it,vi } from 'vitest'
 import { schema } from '../../../db'
 import { initializeDb } from '../../../db/client'
 import { getTargetRecognizedRecord,listTargetRecognizedDirectory } from '../../../server/utils/platform-recognized-target'
-import { submitNativePlatformQuery } from '../../helpers/native-platform-fixture'
+import { submitNativePlatformQuery } from '../fixtures/native-query'
 
 vi.mock('@nuxtjs/mcp-toolkit/server', () => ({ defineMcpTool: (tool: unknown) => tool }))
 

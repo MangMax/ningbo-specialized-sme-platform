@@ -39,7 +39,7 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true })
 })
 
-describe('#311 A registered content identity', () => {
+describe("A registered content identity", () => {
   it('size disagreement remains a conflict even when the supplied hash agrees', async () => {
     const { row } = await register()
     const registered = readStoredFileContentIdentity(db, row.id)!

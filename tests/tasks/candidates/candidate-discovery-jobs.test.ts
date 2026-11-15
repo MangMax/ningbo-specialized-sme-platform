@@ -1,4 +1,4 @@
-import { submitNativePlatformQuery } from '../../helpers/native-platform-fixture'
+import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -163,7 +163,7 @@ it('shares authenticated HTTP and MCP task semantics and task center event resul
   const f = fixture()
   const { handleCandidateJobRequest, dispatchCandidateJobMcp } =
     await import('../../../server/utils/candidate-job-api')
-  const { startHttpFixture } = await import('../../helpers/http-fixture')
+  const { startHttpFixture } = await import('../../support/http')
   const context = { db: f.db, filesDir: f.dir, apiToken: 'synthetic-task-key' }
   const api = await startHttpFixture({
     routes: {

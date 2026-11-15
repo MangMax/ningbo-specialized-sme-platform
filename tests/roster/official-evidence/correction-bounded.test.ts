@@ -1,4 +1,4 @@
-import { submitNativePlatformQuery } from '../../helpers/native-platform-fixture'
+import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
 import { createHash } from 'node:crypto'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -6,8 +6,8 @@ import { join } from 'node:path'
 import { expect, it } from 'vitest'
 import { initializeDb, schema } from '../../../db/client'
 import { handleEvidenceCorrectionRequest } from '../../../server/utils/roster-evidence-correction-api'
-import { startHttpFixture } from '../../helpers/http-fixture'
-import { minimalPdf } from '../../helpers/minimal-pdf'
+import { startHttpFixture } from '../../support/http'
+import { minimalPdf } from '../../support/minimal-pdf'
 
 it('bounds fixed evidence preflight and history materialization across unrelated source growth', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'evidence101-bounded-')), filesDir = join(dir, 'files')

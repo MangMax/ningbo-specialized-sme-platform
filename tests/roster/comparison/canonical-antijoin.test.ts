@@ -3,7 +3,7 @@ import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { expect, it } from 'vitest'
 import * as schema from '../../../db/schema'
 import { getComparison } from '../../../lib/comparison'
-import { getComparisonB42 } from '../../helpers/comparison-b42-reference'
+import { readBaselineComparison } from './oracles/enterprise-title-antijoin'
 import type { ComparisonRow } from '../../../lib/comparison'
 
 it('canonical same-enterprise matches avoid USCC equality probes while unmatched rows preserve exact DTOs', () => {
@@ -36,7 +36,7 @@ it('canonical same-enterprise matches avoid USCC equality probes while unmatched
       const result = read(db)
       return { result, calls: Object.fromEntries(reads) }
     }
-    const frozen = measure(getComparisonB42), actual = measure(getComparison)
+    const frozen = measure(readBaselineComparison), actual = measure(getComparison)
     expect(frozen.result).toEqual({ rows: [], counts: zeroCounts })
     expect(actual.result).toEqual(frozen.result)
     expect(frozen.calls).toEqual({ 1: 6 })
@@ -45,7 +45,7 @@ it('canonical same-enterprise matches avoid USCC equality probes while unmatched
       insert into enterprise_storage values(2, 'J only', 'J-ONLY', '宁波市', '存续'), (3, 'M only', 'M-ONLY', null, null);
       insert into record values(3, 2, 'specialized_sme', 'jxj', 'J district'), (4, 3, 'specialized_sme', 'miit', 'M district');
     `)
-    const mixedFrozen = measure(getComparisonB42), mixedActual = measure(getComparison)
+    const mixedFrozen = measure(readBaselineComparison), mixedActual = measure(getComparison)
     const expected = { rows: [
       { enterpriseId: 2, name: 'J only', uscc: 'J-ONLY', district: 'J district', titleCode: 'specialized_sme', direction: 'missing_in_miit', curated: false,
         evidence: { matchedBy: 'uscc', otherSideUscc: null, currentCity: '宁波市', regStatus: '存续' } },
@@ -123,7 +123,7 @@ it('preserves frozen bytes and literal DTOs for legacy binary identities, source
     } }
     expect(getComparison(db)).toEqual(expected)
     for (const options of [{}, { title: [] }, { title: ['specialized_sme'] }, { title: ['future_title'] }, { direction: 'missing_in_miit' as const }, { title: ['innovative_sme'], direction: 'extra_in_miit' as const }]) {
-      expect(JSON.stringify(getComparison(db, options))).toBe(JSON.stringify(getComparisonB42(db, options)))
+      expect(JSON.stringify(getComparison(db, options))).toBe(JSON.stringify(readBaselineComparison(db, options)))
       expect(getComparison(db, options).counts).toEqual(expected.counts)
     }
     // Semantic checks run on ordinary tables, without the counter view/UDF.
@@ -145,6 +145,6 @@ it('a same-enterprise miss still matches an opposite source on another enterpris
     expect(getComparison(db)).toEqual({ rows: [], counts: {
       little_giant: { missing_in_miit: 0, extra_in_miit: 0 }, specialized_sme: { missing_in_miit: 0, extra_in_miit: 0 }, innovative_sme: { missing_in_miit: 0, extra_in_miit: 0 },
     } })
-    expect(JSON.stringify(getComparison(db))).toBe(JSON.stringify(getComparisonB42(db)))
+    expect(JSON.stringify(getComparison(db))).toBe(JSON.stringify(readBaselineComparison(db)))
   } finally { sqlite.close() }
 })

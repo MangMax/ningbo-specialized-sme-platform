@@ -2,7 +2,7 @@ import {expect,it} from 'vitest'
 import {comparePlatformComparison,type CandidateComparisonInput} from '../../../lib/roster/platform-comparison'
 import {createCurrentQualificationAssessmentReader,QUALIFICATION_ASSESSMENT_VERSION} from '../../../lib/roster/current-qualification'
 import * as schema from '../../../db/schema'
-import {nativeImportDb,businessSource,commitNativeSource} from '../../helpers/native-import'
+import {nativeImportDb,businessSource,commitNativeSource} from '../../roster/imports/fixtures/native-import'
 
 const NULL_ORIGIN_ORACLE = {
   "version": "platform-comparison-410-v1",

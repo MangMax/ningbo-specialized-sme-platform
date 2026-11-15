@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { ocrImageFile } from '../../../server/utils/ocr-api'
-import { startMiniOcrApi, type MiniOcrApi } from '../../helpers/ocr-mini-api'
+import { startMiniOcrApi, type MiniOcrApi } from './fixtures/provider-api'
 
 let dir: string
 let imagePath: string
@@ -46,7 +46,7 @@ async function runImage(waits: number[]) {
 }
 
 describe('ocrImageFile 单张 PNG 重试', () => {
-  it('#309 never sends an echoed credential to the durable remote-ID callback', async () => {
+  it("never sends an echoed credential to the durable remote-ID callback", async () => {
     const saved: string[] = []
     await expect(ocrImageFile({
       token: 'synthetic-echo-secret', filePath: imagePath,
@@ -56,7 +56,7 @@ describe('ocrImageFile 单张 PNG 重试', () => {
     expect(saved).toEqual([])
   })
 
-  it('#309 versioned upload freezes the hashed bytes before the asynchronous POST', async () => {
+  it("versioned upload freezes the hashed bytes before the asynchronous POST", async () => {
     const original = await readFile(imagePath)
     const hash = createHash('sha256').update(original).digest('hex')
     api = await startMiniOcrApi({ pages: ['immutable upload'] })

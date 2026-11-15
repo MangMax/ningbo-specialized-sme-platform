@@ -147,7 +147,7 @@ for (const entry of ['import', 'standalone'] as const) for (const sameEvent of [
   expect(f.sqlite.prepare('SELECT * FROM evidence_revision_113 ORDER BY id').all()).toHaveLength(revisions.length + 1)
 })
 
-it('R3 S1 genuine append no-op reuses known association without propagating historical locator or unknown state', async () => {
+it("S1 genuine append no-op reuses known association without propagating historical locator or unknown state", async () => {
   const f = await fixture(), state = await f.setup(true, true), known = await f.exact(state.knownId), before = f.snapshot()
   const { result } = await f.commit(f.request({ officialEvidenceAppends: [{ eventId: known.eventId, recordId: known.recordId, enterpriseId: known.enterpriseId, expectedVersion: known.event.revision, evidence: { sourceFile: 'notice.txt', attachment: null, listNo: 10, page: null, publishedRow: state.publishedRow } }] }, 'append-noop'))
   expect(result.items).toEqual(expect.arrayContaining([expect.objectContaining({ detail: expect.objectContaining({ evidence: [{ evidenceId: state.knownId, eventId: known.eventId, unchanged: true }] }) })]))
@@ -267,7 +267,7 @@ for (const entry of ['import', 'standalone'] as const) for (const variant of ['s
   await submitFinalCorrections(f, entry, operations, 'rejected-final', variant === 'single-old-conflict' || variant === 'different-final-raw' ? 'source_row_conflict' : 'ambiguity')
 })
 
-it('R4 S1 true stored append no-op survives multiple planned mutations in the same batch', async () => {
+it("S1 true stored append no-op survives multiple planned mutations in the same batch", async () => {
   const { f, state, ids } = await setupFinalClaims('import', true), known = await f.exact(state.knownId)
   const row20 = { ...state.publishedRow, listNo: 20 }, row30 = { ...state.publishedRow, listNo: 30 }
   const mutation = await finalOperation(f, state.targetId, row20)
@@ -279,7 +279,7 @@ it('R4 S1 true stored append no-op survives multiple planned mutations in the sa
   expect(f.sqlite.prepare('SELECT * FROM official_evidence_row_revision WHERE evidence_id=? ORDER BY revision').all(state.knownId)).toEqual(original)
   expect(await f.exact(state.knownId)).toMatchObject({ coordinate: known.coordinate, event: { revision: known.event.revision + 1 } })
 })
-it('R4 S1 append reuses planned numeric final facts without reading old latest or swallowing correction', async () => {
+it("S1 append reuses planned numeric final facts without reading old latest or swallowing correction", async () => {
   const { f, next, ids, state } = await setupFinalClaims('import', true), known = await f.exact(state.knownId)
   const operations = await Promise.all(ids.map(id => finalOperation(f, id, next)))
   const { result } = await f.commit(f.request({ officialEvidenceCorrections: { actor: { type: 'agent', id: 'synthetic' }, basis: 'Explicit final corrections', operations }, officialEvidenceAppends: [{ eventId: known.eventId, recordId: known.recordId, enterpriseId: known.enterpriseId, expectedVersion: known.event.revision, evidence: { sourceFile: 'notice.txt', attachment: null, listNo: 10, page: null, publishedRow: next } }] }, 'planned-is-not-stored'))
@@ -287,7 +287,7 @@ it('R4 S1 append reuses planned numeric final facts without reading old latest o
   expect(result.items).toEqual(expect.arrayContaining([expect.objectContaining({ detail: expect.objectContaining({ evidence: expect.arrayContaining([expect.objectContaining({ evidenceId: state.knownId, unchanged: true })]) }) })]))
   for (const id of ids) expect(f.sqlite.prepare('SELECT revision,name_raw FROM official_evidence_row_revision WHERE evidence_id=? ORDER BY revision DESC LIMIT 1').get(id)).toEqual({ revision: 2, name_raw: 'Alpha corrected' })
 })
-it('R4 S1 two new append proposals cannot supply each other with a stable association', async () => {
+it("S1 two new append proposals cannot supply each other with a stable association", async () => {
   const { f, state } = await setupFinalClaims('import', false), known = await f.exact(state.knownId), row = { ...state.publishedRow, listNo: 30 }
   const append = { eventId: known.eventId, recordId: known.recordId, enterpriseId: known.enterpriseId, expectedVersion: known.event.revision, evidence: { sourceFile: 'notice.txt', attachment: null, listNo: 30, page: null, publishedRow: row } }
   const before = f.snapshot(), input = f.request({ officialEvidenceAppends: [append, append] }, 'new-appends-are-not-stored')
@@ -359,7 +359,7 @@ for (const entry of ['import', 'standalone'] as const) for (const variant of ['r
   const next = variant === 'raw-conflict' ? { ...row, nameRaw: 'Different printed name' } : variant === 'unknown-raw' ? { ...row, usccRaw: null } : variant === 'unknown-binding' ? { ...row, sourceBindingKnown: false } : { ...row, path: 'other.txt', storedFileId: 2 }
   await submitFinalCorrections(f, entry, [await finalOperation(f, knownId, next)], 'pair-negative', variant === 'raw-conflict' ? 'source_row_conflict' : 'ambiguity')
 })
-it('R5 S1 compatible append also preserves two accepted stored IDs across distinct events', async () => {
+it("S1 compatible append also preserves two accepted stored IDs across distinct events", async () => {
   const { f, row, knownId } = await acceptedStoredPair(false, false, true), owner = await f.exact(knownId), before = f.snapshot()
   await f.commit(f.request({ officialEvidenceAppends: [{ eventId: owner.eventId, recordId: owner.recordId, enterpriseId: owner.enterpriseId, expectedVersion: owner.event.revision, evidence: { ...publicLocator('notice.txt', 10), publishedRow: row } }] }, 'cross-stored-noop'))
   expect(f.snapshot()).toEqual(before)

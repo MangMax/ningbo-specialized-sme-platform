@@ -8,7 +8,7 @@ import { readWholeComparisonFull } from '../../../lib/comparison-full'
 import { readWholeComparisonSummary } from '../../../lib/comparison-summary-read'
 import { reconcileKey } from '../../../lib/reconcile'
 import { patchCuration } from '../../../lib/curation'
-import { submitNativePlatformQuery } from '../../helpers/native-platform-fixture'
+import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
 
 it('selects native full evidence after alias filtering and pagination while retaining global counts and summary page parity',()=>{
   const dir=mkdtempSync(join(tmpdir(),'comparison-full-page-')),path=join(dir,'native.sqlite')

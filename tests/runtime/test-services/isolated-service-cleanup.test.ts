@@ -2,7 +2,7 @@ import { type ChildProcess } from 'node:child_process'
 import { once } from 'node:events'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { expect, it } from 'vitest'
-import { spawnOwnedChild as spawn, forkOwnedChild as fork, stopOwnedChild, waitForHttp } from '../../helpers/isolated-local-services.mjs'
+import { spawnOwnedChild as spawn, forkOwnedChild as fork, stopOwnedChild, waitForHttp } from '../../support/owned-process.mjs'
 
 const alive = (pid: number) => { try { process.kill(pid, 0); return true } catch { return false } }
 it('stops native descendants after the launcher exits without stopping an unrelated service', async () => {

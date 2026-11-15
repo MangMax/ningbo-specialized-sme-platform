@@ -1,8 +1,8 @@
 import { afterAll, expect, it } from 'vitest'
-import { currentExport409Fixture } from '../../helpers/current-export-409'
+import { qualificationExportFixture } from '../current-export/fixtures/qualification-export'
 import { createCurrentQualificationAssessmentReader, PREVIOUS_QUALIFICATION_ASSESSMENT_VERSION } from '../../../lib/roster/current-qualification'
 import { schema } from '../../../db/client'
-const f = currentExport409Fixture()
+const f = qualificationExportFixture()
 afterAll(() => f.close())
 const asOf = Date.parse('2026-11-05T12:00:00Z')
 function read(id: number) { return createCurrentQualificationAssessmentReader(f.db.$client).read(id, asOf).snapshot.titles.find(t => t.titleCode === 'specialized_sme')! }

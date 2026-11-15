@@ -7,7 +7,7 @@ import { eq } from 'drizzle-orm'
 import { __resetJobRunner, clearJobSpecs, ensureJobRunnerReady, registerJob, submitJob, whenIdle } from '../../../server/utils/job-runner'
 import { newJobId } from '../../../lib/job'
 import { handleTaskCenterRequest } from '../../../server/utils/task-center-http'
-import { startHttpFixture, type HttpFixture, type FixtureRequest } from '../../helpers/http-fixture'
+import { startHttpFixture, type HttpFixture, type FixtureRequest } from '../../support/http'
 
 let dir: string
 let api: HttpFixture

@@ -5,7 +5,7 @@ import {
   LITTLE_GIANT_SOURCE_FILE,
 } from '../../../lib/roster/little-giant-import'
 import { parseLittleGiantWorkbook } from '../../../lib/roster/little-giant-workbook'
-import { buildLittleGiantWorkbookBuffer } from '../../helpers/little-giant-workbook-fixture'
+import { buildLittleGiantWorkbookBuffer } from './fixtures/workbook'
 
 /**
  * RL-02 —— 把解析结果拼成**契约 §8.3 的 payload**(以及给人看的报告)。

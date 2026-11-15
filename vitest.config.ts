@@ -23,5 +23,10 @@ export default defineConfig({
     // Nitro 的编译期宏(`defineRouteMeta`)在裸 node 里不存在,而有些用例会直接
     // import 路由文件 —— 垫片见 `tests/setup.ts`,只影响测试进程。
     setupFiles: ['tests/setup.ts'],
+    projects: [
+      { extends: true, test: { name: 'runtime', include: ['tests/**/*.test.ts'], exclude: ['tests/**/*.app.test.ts', 'tests/**/*.upgrade.test.ts'] } },
+      { extends: true, test: { name: 'upgrade', include: ['tests/**/*.upgrade.test.ts'] } },
+      { extends: true, test: { name: 'app', include: ['tests/**/*.app.test.ts'] } },
+    ],
   },
 })

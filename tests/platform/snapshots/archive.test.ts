@@ -5,7 +5,7 @@ import { afterEach, expect, it } from 'vitest'
 import { createRuntimeSchema } from '../../../db/create-runtime'
 import * as schema from '../../../db/schema'
 import { insertArchiveValue, readArchiveValue, readOwnerArchive, bindArchive, sealArchiveOwner, resolveLegacyReference } from '../../../lib/platform/immutable-archive'
-import { submitNativePlatformQuery } from '../../helpers/native-platform-fixture'
+import { submitNativePlatformQuery } from '../fixtures/native-query'
 const connections: Database.Database[] = []
 afterEach(() => { for (const s of connections.splice(0)) s.close() })
 function fixture() {

@@ -6,13 +6,13 @@ import {initializeDb} from '../../../db/client'
 import * as schema from '../../../db/schema'
 import {preflightRosterImport,commitRosterImport,planRosterImport} from '../../../server/utils/roster-import'
 import type {RosterImportRequest} from '../../../lib/roster-import-client'
-import {createSemanticRecorder} from '../../helpers/roster-import-semantics'
-import {businessSource} from '../../helpers/native-import'
+import {createSemanticRecorder} from './assertions/import-semantics'
+import {businessSource} from './fixtures/native-import'
 import {listPlatformQueries} from '../../../lib/platform/read'
 const dirs:string[]=[]
 function makeDb(){const dir=mkdtempSync(join(tmpdir(),'native-import-semantics-'));dirs.push(dir);return initializeDb({create:true,dbPath:join(dir,'native.sqlite')})}
 afterAll(()=>{for(const dir of dirs)rmSync(dir,{recursive:true,force:true})})
-describe('#386 readonly source count contract', () => {
+describe("readonly source count contract", () => {
   // Literal API expectations; batch/receipt bookkeeping and canonicalProjection
   // have separate ledgers. These fixtures never enter the original golden sequence.
   const zero = { add: 0, update: 0, remove: 0, review: 0, conflicts: [], evidenceRepoints: 0 }

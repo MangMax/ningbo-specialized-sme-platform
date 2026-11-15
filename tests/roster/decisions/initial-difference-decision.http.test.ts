@@ -1,5 +1,5 @@
 import { readOwnerArchive } from '../../../lib/platform/target-archive'
-import { submitNativePlatformQuery } from '../../helpers/native-platform-fixture'
+import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
 import { afterAll, beforeAll, expect, it, vi } from 'vitest'
 import { createApp, defineEventHandler, toNodeListener } from 'h3'
 import { createServer, type Server } from 'node:http'

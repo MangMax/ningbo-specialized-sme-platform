@@ -15,8 +15,8 @@ import {
 import { ocrPageCacheDirAbs, ocrPageCacheKey } from '../../../server/utils/ocr-page-cache'
 import { DEFAULT_DPI } from '../../../lib/pdf-page'
 import { renderPdfPages } from '../../../server/utils/pdf-pages'
-import { minimalPdf } from '../../helpers/minimal-pdf'
-import { startMiniOcrApi, type MiniOcrApi } from '../../helpers/ocr-mini-api'
+import { minimalPdf } from '../../support/minimal-pdf'
+import { startMiniOcrApi, type MiniOcrApi } from './fixtures/provider-api'
 import { createJob, markJobRunning } from '../../../server/utils/job-store'
 import { newJobId } from '../../../lib/job'
 

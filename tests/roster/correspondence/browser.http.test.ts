@@ -6,7 +6,7 @@ import type { AddressInfo } from 'node:net'
 import { createApp, toNodeListener, defineEventHandler } from 'h3'
 import { afterAll, expect, it, vi } from 'vitest'
 import { initializeDb, schema } from '../../../db/client'
-import { submitNativePlatformQuery } from '../../helpers/native-platform-fixture'
+import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
 import { browserCorrespondenceRoute } from '../../../server/utils/browser-correspondence'
 import { handleRecordCorrespondenceRequest } from '../../../server/utils/record-correspondence-api'
 

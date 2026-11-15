@@ -2,10 +2,10 @@ import {afterEach,afterAll,beforeAll,beforeEach,describe,expect,it,vi} from 'vit
 import {clearJobSpecs,getJobSpec,jobSpecs,type JobSpec,type JobContext} from '../../../server/utils/job-runner'
 import {registerJobSpecs} from '../../../server/utils/job-specs'
 import {reconcileSpec} from '../../../server/utils/jobs/reconcile'
-import {nativeImportDb} from '../../helpers/native-import'
+import {nativeImportDb} from '../../roster/imports/fixtures/native-import'
 import * as schema from '../../../db/schema'
 import * as database from '../../../db'
-import {platformReplay,emptyReply} from '../../helpers/platform-replay'
+import {platformReplay,emptyReply} from '../fixtures/source-replay'
 describe('参数校验:错参数在**提交那一刻**就被挡住', () => {
   let spec: JobSpec
 

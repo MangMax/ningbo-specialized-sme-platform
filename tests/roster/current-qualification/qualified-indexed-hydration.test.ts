@@ -1,9 +1,9 @@
 import { afterAll, expect, it } from 'vitest'
-import { currentExport118Fixture, year } from '../../helpers/current-export-118'
-import { submitNativePlatformQuery } from '../../helpers/native-platform-fixture'
+import { specializedExportFixture, year } from '../current-export/fixtures/specialized-export'
+import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
 import { listCurrentQualified } from '../../../lib/roster/current-qualified-query'
 import { readCurrentQualificationAssessment } from '../../../lib/roster/current-qualification'
-const f = currentExport118Fixture()
+const f = specializedExportFixture()
 afterAll(() => f.close())
 
 it.each([50, 51, 52])('preserves native observation ordering and the public 50-attempt boundary for %i collections', async count => {

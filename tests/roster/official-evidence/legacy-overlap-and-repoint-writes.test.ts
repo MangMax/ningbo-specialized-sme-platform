@@ -94,7 +94,7 @@ for (const reverse of [false, true]) it(`R1 F1 mixed new typed and legacy cross-
   expect(f.sqlite.prepare('SELECT count(*) n FROM record_evidence').get()).toEqual({ n: 1 })
   expect(f.sqlite.prepare('SELECT count(*) n FROM official_evidence_row_revision').get()).toEqual({ n: 0 })
 })
-it('R1 F1 persisted legacy overlap has the same ambiguity as same-batch overlap', async () => {
+it("F1 persisted legacy overlap has the same ambiguity as same-batch overlap", async () => {
   const f = await fixture(); await f.commit(f.request(f.announcement([f.record('Beta')]), 'legacy-first'))
   expect((await f.post('preflight', f.request(f.announcement([f.record('Alpha', f.evidence(f.row()))])))).preflight?.conflicts).toMatchObject([{ error: { code: 'ambiguity' } }])
 })
@@ -112,7 +112,7 @@ for (const kind of ['append', 'correction'] as const) for (const overlap of [tru
     expect(f.sqlite.prepare('SELECT count(*) n FROM record_event WHERE year=2023').get()).toEqual({ n: 1 })
   }
 })
-it('R1 F1 same-event grouped typed and distinct legacy coordinates commit without a fake legacy sidecar', async () => {
+it("F1 same-event grouped typed and distinct legacy coordinates commit without a fake legacy sidecar", async () => {
   const f = await fixture()
   await f.commit(f.request(f.announcement([f.record('Alpha', f.evidence(f.row())), f.record('Alpha', { ...f.evidence(), listNo: 20 })])))
   expect(f.sqlite.prepare('SELECT source_file,list_no FROM record_evidence WHERE record_event_id>2 ORDER BY list_no').all()).toEqual([{ source_file: 'notice.txt', list_no: 10 }, { source_file: 'notice.txt', list_no: 20 }])
@@ -125,7 +125,7 @@ for (const binding of ['section', 'declaration', 'compatible'] as const) it(`R1 
   expect(f.sqlite.prepare('SELECT count(*) n FROM official_evidence_row_revision').get()).toEqual({ n: 2 })
   expect(f.sqlite.prepare('SELECT count(*) n FROM source_document').get()).toEqual({ n: binding === 'declaration' ? 2 : 1 })
 })
-it('R1 F1 pure legacy cross-owner overlap keeps the old protocol', async () => {
+it("F1 pure legacy cross-owner overlap keeps the old protocol", async () => {
   const f = await fixture(); await f.commit(f.request(f.announcement([f.record('Alpha'), f.record('Beta')])))
   expect(f.sqlite.prepare('SELECT count(*) n FROM record_evidence').get()).toEqual({ n: 3 })
   expect(f.sqlite.prepare('SELECT count(*) n FROM official_evidence_row_revision').get()).toEqual({ n: 0 })
@@ -167,12 +167,12 @@ for (const grouped of [false, true]) it(`R1 F2 padded real file path keeps verif
   expect(f.sqlite.prepare('SELECT path,sha256,bytes FROM official_evidence_row_revision').all()).toEqual([{ path: ' notice.txt ', sha256: digest(readFileSync(join(f.filesDir, ' notice.txt '))), bytes: Buffer.byteLength(padded) }])
   expect(digest(readFileSync(join(f.filesDir, ' notice.txt ')))).not.toBe(digest(readFileSync(join(f.filesDir, 'notice.txt'))))
 })
-it('R1 F2 stable normal typed path and grouped legacy normalization remain compatible', async () => {
+it("F2 stable normal typed path and grouped legacy normalization remain compatible", async () => {
   const f = await fixture()
   await f.commit(f.request(f.announcement([f.record('Alpha', f.evidence(f.row())), f.record('Alpha', { ...f.evidence(), sourceFile: ' other.txt ', attachment: '', listNo: 20 })])))
   expect(f.sqlite.prepare('SELECT source_file,attachment FROM record_evidence WHERE list_no IN(10,20) ORDER BY list_no').all()).toEqual([{ source_file: 'notice.txt', attachment: null }, { source_file: 'other.txt', attachment: null }])
 })
-it('R1 F2 two explicitly typed real files retain their own paths and hashes after grouping', async () => {
+it("F2 two explicitly typed real files retain their own paths and hashes after grouping", async () => {
   const f = await fixture(), spaced = f.row({ path: ' notice.txt ', storedFileId: null, sha256: digest(padded), bytes: Buffer.byteLength(padded) })
   await f.commit(f.request(f.announcement([f.record('Alpha', f.evidence(spaced)), f.record('Alpha', f.evidence(f.row({ listNo: 20 })))])))
   expect(f.sqlite.prepare('SELECT source_file,list_no FROM record_evidence WHERE record_event_id>2 ORDER BY list_no').all()).toEqual([{ source_file: ' notice.txt ', list_no: 10 }, { source_file: 'notice.txt', list_no: 20 }])
@@ -243,7 +243,7 @@ for (const kind of ['capture', 'append', 'correction'] as const) {
     expect(businessSnapshot(f)).toEqual(before)
   })
 }
-it('R2 S1 sequential outgoing convergence then append permits the same final state', async () => {
+it("S1 sequential outgoing convergence then append permits the same final state", async () => {
   const f = await fixture(); seedRepoint(f, 'notice.txt')
   expect(repointCount(await f.commit(f.request(legacyRepoint(f, 'other.txt'), 'vacate-first')))).toBe(1)
   await f.commit(f.request({ officialEvidenceAppends: [f.append()] }, 'typed-after'))
@@ -258,7 +258,7 @@ for (const reverse of [false, true]) it(`R2 S1 two frozen repoints swap final lo
   expect(f.sqlite.prepare('SELECT id,source_file,list_no FROM record_evidence ORDER BY id').all()).toEqual([{ id: 1, source_file: 'other.txt', list_no: 10 }, { id: 2, source_file: 'notice.txt', list_no: 10 }, { id: 3, source_file: 'notice.txt', list_no: 30 }])
   expect(f.sqlite.prepare('SELECT id,revision FROM record_event ORDER BY id').all()).toEqual([{ id: 1, revision: 2 }, { id: 2, revision: 1 }])
 })
-it('R2 S1 repeated identical repoint uses the one original frozen target', async () => {
+it("S1 repeated identical repoint uses the one original frozen target", async () => {
   const f = await fixture(); seedRepoint(f)
   const record = f.record('Beta', f.evidence(), 2024)
   const saved = await f.commit(f.request({ ...f.announcement([record, structuredClone(record)]), officialEvidenceAppends: [f.append(f.row({ listNo: 30 }))] }))
@@ -270,13 +270,13 @@ function betaCorrection(f: OfficialFixture) {
   const before = readExactEvidence(f.db, 2), publishedRow = f.row({ nameRaw: 'Published Beta' })
   return { actor: { type: 'agent' as const, id: 'synthetic' }, basis: 'Verified exact row', operations: [{ evidenceId: 2, eventId: 2, recordId: 2, enterpriseId: 2, expectedVersion: before.version, expectedRowRevision: 0, coordinate: { sourceFile: 'notice.txt', attachment: null, listNo: 10, page: null }, publishedRow }] }
 }
-it('R2 S1 actual repoint and typed correction cannot change the same evidence twice', async () => {
+it("S1 actual repoint and typed correction cannot change the same evidence twice", async () => {
   const f = await fixture(); seedRepoint(f); const before = businessSnapshot(f)
   const { plan, saved } = await submitRepoint(f, f.request({ ...legacyRepoint(f, 'notice.txt'), officialEvidenceCorrections: betaCorrection(f) }))
   expect(plan.preflight?.conflicts).toMatchObject([{ error: { code: 'ambiguous_target' } }]); expect(saved.status).toBe('failed')
   expect(businessSnapshot(f)).toEqual(before)
 })
-it('R2 S1 same-path legacy noop does not falsely duplicate an exact correction target', async () => {
+it("S1 same-path legacy noop does not falsely duplicate an exact correction target", async () => {
   const f = await fixture(); seedRepoint(f)
   const saved = await f.commit(f.request({ ...legacyRepoint(f, 'other.txt'), officialEvidenceCorrections: betaCorrection(f) }))
   expect(repointCount(saved)).toBe(0)
@@ -289,19 +289,19 @@ for (const known of ['section', 'declaration'] as const) it(`R2 S1 repoint prese
   expect(f.sqlite.prepare('SELECT * FROM official_evidence_row_revision WHERE evidence_id=2').all()).toEqual(before)
   expect(f.sqlite.prepare('SELECT source_file FROM record_evidence WHERE id=2').get()).toEqual({ source_file: 'notice.txt' })
 })
-it('R2 S1 legal final merge cannot excuse an incoming unknown repoint', async () => {
+it("S1 legal final merge cannot excuse an incoming unknown repoint", async () => {
   const f = await fixture(); seedRepoint(f)
   const { plan, saved } = await submitRepoint(f, f.request({ ...mixedRepoint(f, 'append', 'notice.txt'), merges: [{ fromEnterpriseId: 1, intoUscc: '91330211255994457P', note: 'Verified legal identity merge' }] }))
   expect(plan.preflight?.conflicts).toMatchObject([{ error: { code: 'ambiguity' } }]); expect(saved.status).toBe('failed')
   expect(f.sqlite.prepare('SELECT count(*) n FROM enterprise').get()).toEqual({ n: 2 })
 })
-it('R2 S1 current same owner cannot excuse an incoming unknown repoint', async () => {
+it("S1 current same owner cannot excuse an incoming unknown repoint", async () => {
   const f = await fixture(); seedRepoint(f)
   f.sqlite.exec('UPDATE record_evidence SET list_no=10 WHERE id=1')
   const { plan, saved } = await submitRepoint(f, f.request({ ...f.announcement([f.record('Alpha', f.evidence(), 2021)]), officialEvidenceAppends: [f.append()] }))
   expect(plan.preflight?.conflicts).toMatchObject([{ error: { code: 'ambiguity' } }]); expect(saved.status).toBe('failed')
 })
-it('R2 S1 repoint locator drift after preflight invalidates the common locked plan hash', async () => {
+it("S1 repoint locator drift after preflight invalidates the common locked plan hash", async () => {
   const f = await fixture(); seedRepoint(f)
   const input = f.request({ ...legacyRepoint(f, 'notice.txt'), officialEvidenceAppends: [f.append(f.row({ listNo: 30 }))] })
   const plan = await f.post('preflight', input); expect(plan.preflight?.conflicts).toEqual([])
@@ -314,7 +314,7 @@ it('R2 S1 repoint locator drift after preflight invalidates the common locked pl
   expect(f.sqlite.prepare('SELECT source_file FROM record_evidence WHERE id=2').get()).toEqual({ source_file: 'third.txt' })
   expect(f.sqlite.prepare('SELECT count(*) n FROM official_evidence_row_revision').get()).toEqual({ n: 0 })
 })
-it('R2 S1 later SQLite failure rolls back an already executed legacy repoint', async () => {
+it("S1 later SQLite failure rolls back an already executed legacy repoint", async () => {
   const f = await fixture(); seedRepoint(f); const before = businessSnapshot(f)
   const input = f.request({ ...legacyRepoint(f, 'notice.txt'), officialEvidenceAppends: [f.append(f.row({ listNo: 30 }))] })
   const plan = await f.post('preflight', input); expect(plan.preflight?.conflicts).toEqual([])
@@ -322,7 +322,7 @@ it('R2 S1 later SQLite failure rolls back an already executed legacy repoint', a
   const saved = await f.post('commit', { ...input, payload: { ...input.payload, officialEvidencePlanHash: plan.preflight?.officialEvidencePlanHash } })
   expect(saved.status).toBe('failed'); expect(businessSnapshot(f)).toEqual(before)
 })
-it('R2 S1 historical known capture hash stays intact during a live equal-content locator move', async () => {
+it("S1 historical known capture hash stays intact during a live equal-content locator move", async () => {
   const f = await fixture(); seedRepoint(f, 'other.txt', 'section')
   const before = f.sqlite.prepare('SELECT * FROM official_evidence_row_revision WHERE evidence_id=2').all()
   // Historical capture is immutable even when the live catalog now has other

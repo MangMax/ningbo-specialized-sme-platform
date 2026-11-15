@@ -11,7 +11,7 @@ import * as schema from '../../../db/schema'
 import { readCurrentQualificationAssessment } from '../../../lib/roster/current-qualification'
 import { listCurrentQualified } from '../../../lib/roster/current-qualified-query'
 import { writeCurrentWorkbook } from '../../../lib/roster/current-workbook'
-import { reviewCurrentExportDecision } from '../../helpers/current-export-decisions'
+import { reviewCurrentExportDecision } from '../fixtures/qualification-decisions'
 
 const opened: Database.Database[] = []
 afterEach(() => { for (const db of opened.splice(0)) db.close(); vi.useRealTimers() })

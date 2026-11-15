@@ -48,7 +48,7 @@ import { parseCsvQuery } from '../../../lib/csv'
 import { parseRenderPagesParams } from '../../../server/utils/jobs/render-pages'
 import { shouldHideOpenApiPath } from '../../../server/utils/openapi-guard'
 import { registerJobSpecs } from '../../../server/utils/job-specs'
-import { minimalPdf } from '../../helpers/minimal-pdf'
+import { minimalPdf } from '../../support/minimal-pdf'
 import { parseUploadDeclaration, registerStoredFile } from '../../../server/utils/stored-files-upload'
 
 /**

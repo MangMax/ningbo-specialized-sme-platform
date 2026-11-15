@@ -9,7 +9,7 @@ import type { RosterImportPlatformQuery } from '../../../lib/roster-import-clien
 import { getRosterEnterpriseDetail } from '../../../lib/roster/enterprise-roster'
 import { commitComparisonScopeProofs,preflightComparisonScopeProofs,readComparisonScopeProof,type ProofRequest } from '../../../server/utils/comparison-scope-proof'
 import { commitRecordCorrespondences,getRecordCorrespondenceAudit,listRecordCorrespondences,preflightRecordCorrespondences,type CorrespondenceRequest } from '../../../server/utils/record-correspondence'
-import { submitNativePlatformQuery } from '../../helpers/native-platform-fixture'
+import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
 
 const cleanups: Array<() => void> = []
 afterEach(() => { for (const cleanup of cleanups.splice(0).reverse()) cleanup() })

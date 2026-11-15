@@ -1,8 +1,8 @@
 import { afterAll, expect, it } from 'vitest'
-import { currentExport118Fixture, year } from '../../helpers/current-export-118'
+import { specializedExportFixture, year } from '../current-export/fixtures/specialized-export'
 import { listCurrentQualified } from '../../../lib/roster/current-qualified-query'
 import { readCurrentQualificationAssessment } from '../../../lib/roster/current-qualification'
-const f = currentExport118Fixture()
+const f = specializedExportFixture()
 afterAll(() => f.close())
 
 it('pages a full candidate set while retaining source history and independent cross-title eligibility', async () => {
