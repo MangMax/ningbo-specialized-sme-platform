@@ -1,5 +1,7 @@
 import { executeNativeImport } from '../../roster/imports/fixtures/import-server'
 import { importExecutor } from '../../../server/utils/import-execution'
+import * as readerLocation from '../../../server/utils/enterprise-read-worker-location'
+import { createEnterpriseReadProcess } from '../../../server/utils/enterprise-read-process'
 import { enterpriseReads } from '../../../server/utils/enterprise-read'
 import { initializeDb } from '../../../db/client'
 import { assertEnterpriseDetailSnapshotEqual } from '../../roster/assertions/enterprise-detail-snapshot'
@@ -23,7 +25,9 @@ let api: Awaited<ReturnType<typeof startEvidenceServer>>
 let client: ReturnType<typeof createRosterImportClient>
 beforeAll(async () => {
   vi.spyOn(importExecutor, 'execute').mockImplementation(executeNativeImport)
-  await enterpriseReads.json(db.$client.name, { operation: 'detail', enterpriseId: Number.MAX_SAFE_INTEGER })
+  // Exercise the packaged real reader; source transpilation is not part of this business contract.
+  vi.spyOn(readerLocation, 'createEnterpriseWorker').mockImplementation(() => createEnterpriseReadProcess(new URL('../../../.output/server/enterprise-read-worker.mjs', import.meta.url)))
+  await enterpriseReads.start()
   vi.stubEnv('NUXT_DB_PATH', join(dir, 'test.sqlite'))
   vi.stubGlobal('setHeader', () => {})
   vi.stubGlobal('defineEventHandler', (fn: unknown) => fn)

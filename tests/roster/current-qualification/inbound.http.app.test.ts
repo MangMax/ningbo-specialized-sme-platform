@@ -1,3 +1,4 @@
+import '../../support/compiled-enterprise-reader'
 import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
 import { createServer } from 'node:http'
 import { mkdtempSync, rmSync } from 'node:fs'

@@ -117,11 +117,14 @@ it('keeps a healthy hot connection after real BUSY and never authorizes a locked
 
 it('discards partial open on real BUSY and retries complete initialization after release', async () => {
   const seed = fixture(); await seed.call('policy'); await seed.call('close')
-  const db = peer(seed.directory); db.exec('BEGIN IMMEDIATE')
+  const db = peer(seed.directory)
+  // A genuinely incomplete store still needs DDL and must fail closed on BUSY.
+  db.exec('DROP INDEX log_taskId; BEGIN IMMEDIATE')
   const cold = fixture(seed.directory)
   expect(await cold.call('policy')).toMatchObject({ ok: false, observation: { nativeCode: 'SQLITE_BUSY', opens: 1 } })
   db.exec('ROLLBACK')
   expect(await cold.call('policy')).toMatchObject({ ok: true, observation: { opens: 2, inTransaction: false } })
+  expect(db.prepare("SELECT name FROM sqlite_schema WHERE type='index' AND name='log_taskId'").get()).toEqual({ name: 'log_taskId' })
 })
 
 it('rolls back a failed read snapshot and fails closed under an exclusive lock', async () => {
@@ -172,4 +175,15 @@ it('discards a connection with a dangling transaction even for BUSY', async () =
   Atomics.store(f.barrier, 1, 1)
   expect((await f.call('policy')).ok).toBe(false)
   expect(await f.call('policy')).toMatchObject({ ok: true, observation: { opens: 2, inTransaction: false } })
+})
+
+it('opens a current store under another writer without taking an initialization write lock', async () => {
+  const first = fixture(); expect((await first.call('policy')).ok).toBe(true)
+  const db = peer(first.directory)
+  db.exec('BEGIN IMMEDIATE; UPDATE log_policy SET retentionDays=3')
+  const fresh = fixture(first.directory)
+  expect(await fresh.call('policy')).toMatchObject({ ok: true, result: { retentionDays: 7 }, observation: { opens: 1 } })
+  db.exec('COMMIT')
+  expect((await fresh.call('write', [event('startup.after.writer')])).result.stored).toBe(1)
+  expect(db.prepare('SELECT count(*) n FROM log_events').get()).toEqual({ n: 1 })
 })

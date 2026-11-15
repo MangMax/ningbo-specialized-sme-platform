@@ -24,10 +24,12 @@ async function json(response: Response) { return response.json() as Promise<any>
 // Event details are immutable. Poll only for new rows, rather than rereading
 // every previously observed detail over HTTP on every drain retry.
 const eventDetails = new Map<string, any>()
+let lastLogStatus: unknown
 async function logs(filter: Record<string, string> = {}) {
   const response = await fetch(url('/api/logs?' + new URLSearchParams({ limit: '100', ...filter })), { headers })
   expect(response.status, output.slice(-3000)).toBe(200)
   const listed = await json(response)
+  lastLogStatus = listed.status
   return Promise.all(listed.rows.map(async (row: any) => {
     if (eventDetails.has(row.id)) return eventDetails.get(row.id)
     const detail = await fetch(url('/api/logs/' + row.id), { headers })
@@ -39,12 +41,15 @@ async function logs(filter: Record<string, string> = {}) {
 }
 async function waitLogs(filter: Record<string, string>, check: (events: any[]) => void) {
   const deadline = Date.now() + 10000
-  let last: unknown
+  let last: unknown, observed: any[] = []
   while (Date.now() < deadline) {
-    try { const events = await logs(filter); check(events); return events } catch (error) { last = error }
+    try { const events = await logs(filter); observed = events; check(events); return events } catch (error) { last = error }
     await new Promise(resolve => setTimeout(resolve, 100))
   }
-  throw last
+  // Preserve evidence when best-effort worker logging loses a terminal event.
+  // Business completion and publish success do not prove the worker drain.
+  writeFileSync(join(root, 'missing-log-event.json'), JSON.stringify({ filter, observed, parentLogStatus: lastLogStatus, assertion: String(last), output }, null, 2))
+  throw new Error(`${String(last)}; diagnostics: ${join(root, 'missing-log-event.json')}`, { cause: last })
 }
 async function terminal(id: string, timeoutMs = 30000) {
   const deadline = Date.now() + timeoutMs

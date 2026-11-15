@@ -63,16 +63,18 @@ function open() {
   // auto_vacuum must precede even application_id: that pragma alone materializes page1.
   if (!existed) { db.pragma('auto_vacuum = FULL'); db.pragma('application_id = 1163283527'); chmodSync(path, 0o600) }
   db.pragma('journal_mode = DELETE')
-  db.pragma('auto_vacuum = FULL')
-  if(db.pragma('auto_vacuum',{simple:true})!==1) db.exec('VACUUM')
+  if(db.pragma('auto_vacuum',{simple:true})!==1) { db.pragma('auto_vacuum = FULL'); db.exec('VACUUM') }
   db.pragma('synchronous = FULL')
   db.exec('CREATE TABLE IF NOT EXISTS log_policy (id INTEGER PRIMARY KEY CHECK(id=1), retentionDays INTEGER NOT NULL, maxBytes INTEGER NOT NULL, pruned INTEGER NOT NULL DEFAULT 0, cleared INTEGER NOT NULL DEFAULT 0)')
-  db.prepare('INSERT OR IGNORE INTO log_policy(id,retentionDays,maxBytes) VALUES(1,?,?)').run(policy.retentionDays, policy.maxBytes)
+  if (!db.prepare('SELECT 1 FROM log_policy WHERE id=1').get()) db.prepare('INSERT OR IGNORE INTO log_policy(id,retentionDays,maxBytes) VALUES(1,?,?)').run(policy.retentionDays, policy.maxBytes)
   db.exec('CREATE TABLE IF NOT EXISTS log_collection (id INTEGER PRIMARY KEY CHECK(id=1), collection TEXT NOT NULL, revision INTEGER NOT NULL)')
-  db.prepare('INSERT OR IGNORE INTO log_collection(id,collection,revision) VALUES(1,?,0)').run(encodeCollection(initialCollection,defaultFieldControls(profiles)))
+  if (!db.prepare('SELECT 1 FROM log_collection WHERE id=1').get()) db.prepare('INSERT OR IGNORE INTO log_collection(id,collection,revision) VALUES(1,?,0)').run(encodeCollection(initialCollection,defaultFieldControls(profiles)))
   // Re-read under the writer lock: a concurrent opener/PATCH can never be overwritten
   // by a stale legacy snapshot. Migration preserves the shared observation revision.
-  db.transaction(() => {
+  // Current stores need no initialization writer lock. Only legacy payloads
+  // require the locked re-read/migration below.
+  const storedCollection = db.prepare('SELECT collection FROM log_collection WHERE id=1').get()
+  if (decodeCollection(JSON.parse(storedCollection.collection)).needsMigration) db.transaction(() => {
     const row = db.prepare('SELECT collection FROM log_collection WHERE id=1').get()
     const decoded = decodeCollection(JSON.parse(row.collection))
     policy = readPolicy()
@@ -80,6 +82,7 @@ function open() {
   }).immediate()
   db.exec('CREATE TABLE IF NOT EXISTS log_events (seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT NOT NULL UNIQUE, timestamp TEXT NOT NULL, level TEXT NOT NULL, source TEXT NOT NULL, operation TEXT NOT NULL, outcome TEXT NOT NULL, requestId TEXT, traceId TEXT, taskId TEXT, fileId INTEGER, batchId TEXT, resourceId TEXT, summary TEXT NOT NULL, detail TEXT NOT NULL)')
   for (const key of ['timestamp','level','source','operation','outcome','requestId','traceId','taskId','fileId','batchId','resourceId']) db.exec('CREATE INDEX IF NOT EXISTS log_' + key + ' ON log_events(' + key + ',seq)')
+  policy = readPolicy()
   cap()
   initialized = true
 }

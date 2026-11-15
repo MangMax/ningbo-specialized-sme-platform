@@ -1,3 +1,4 @@
+import '../../support/compiled-enterprise-reader'
 import { getEventListeners, once } from 'node:events'
 import { Worker } from 'node:worker_threads'
 import { createRequire } from 'node:module'

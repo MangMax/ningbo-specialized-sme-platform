@@ -1,10 +1,10 @@
 import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
-import { copyFileSync, readFileSync, writeFileSync } from 'node:fs'
+import { copyFileSync, readFileSync, writeFileSync, mkdtempSync, rmSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { spawnSync } from 'node:child_process'
 import { join } from 'node:path'
-import { expect, it } from 'vitest'
+import { afterAll, expect, it } from 'vitest'
 import * as schema from '../../../upgrade/legacy-schema'
 import { ensurePlatformObservation } from '../../../upgrade/frozen/server/platform-business-record'
 import { witnessReaderFixture } from '../fixtures/recognized-witness-upgrade'
@@ -18,7 +18,17 @@ import { targetSchema } from '../../../upgrade/target-schema'
 import { bootstrapFingerprint } from '../../../upgrade/frozen/fingerprint-bootstrap'
 import { verifyFingerprint } from '../../../upgrade/frozen/fingerprint-verifier'
 
+const prefixes = new Map<boolean, { source: string; target: string; legacySource: string }>()
+const copiedRoots: string[] = []
+afterAll(() => { for (const root of copiedRoots) rmSync(root, { recursive: true, force: true }) })
 async function fixture(indexed=true,extra?:(source:Database.Database)=>void) {
+  const template = !extra && prefixes.get(indexed)
+  if (template) {
+    const root = mkdtempSync('/tmp/process-prefix-'); copiedRoots.push(root)
+    const source = join(root, 'source.sqlite'), target = join(root, 'target.sqlite'), legacySource = join(root, 'legacy.sqlite')
+    copyFileSync(template.source, source); copyFileSync(template.target, target); copyFileSync(template.legacySource, legacySource)
+    return { root, source, target, legacySource, runId: 'process', predecessorRunId: 'witness' }
+  }
   const f = await witnessReaderFixture(source => {
     source.exec(`INSERT INTO platform_query(id,interface,query_key,rdjb,queried_at,status,created_at) VALUES(1,'business_list','Q','2,3','t','success','c');
     INSERT INTO platform_relation(id,query_id,sequence_no,name_raw,uscc_raw,raw_fields,created_at) VALUES
@@ -35,7 +45,14 @@ async function fixture(indexed=true,extra?:(source:Database.Database)=>void) {
   f.close()
   const source = join(f.root, 'process-source.sqlite')
   copyFileSync(f.target, source)
-  return { ...f, source, runId: 'process', predecessorRunId: 'witness' }
+  if (!extra) {
+    // Keep a closed immutable prefix; tests mutate only independent copies.
+    const root = mkdtempSync('/tmp/process-prefix-template-'); copiedRoots.push(root)
+    const frozen = { source: join(root, 'source.sqlite'), target: join(root, 'target.sqlite'), legacySource: join(root, 'legacy.sqlite') }
+    copyFileSync(source, frozen.source); copyFileSync(f.target, frozen.target); copyFileSync(f.legacySource, frozen.legacySource)
+    prefixes.set(indexed, frozen)
+  }
+  return { root: f.root, target: f.target, legacySource: f.legacySource, source, runId: 'process', predecessorRunId: 'witness' }
 }
 
 it('captures eight original process cells and independent SQL title without changing old receipts and replays exactly', async () => {

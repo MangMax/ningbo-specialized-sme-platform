@@ -226,9 +226,14 @@ export function createLogService(options: LogServiceOptions) {
       finally { inFlightEntries = 0; inFlightBytes = 0 }
     }
   }
-  function flush() {
-    if (!flushing) flushing = drain().finally(() => { flushing = undefined; if (queue.length) scheduleDrain() })
-    return flushing
+  async function flush() {
+    // A drain can have consumed its last row while its finalizer is still
+    // pending. Awaiting that promise alone would leave newly accepted rows
+    // behind the caller's subsequent read.
+    do {
+      if (!flushing) flushing = drain().finally(() => { flushing = undefined; if (queue.length) scheduleDrain() })
+      await flushing
+    } while ((inFlightEntries || queue.length) && !closed)
   }
   const timer = setInterval(() => { void flush() }, budget(options.flushIntervalMs, LOG_DEFAULTS.flushIntervalMs)); timer.unref()
   const maintenance = setInterval(() => { if (!closed && !closing) void call('maintain').catch(() => {}) }, 60000); maintenance.unref()

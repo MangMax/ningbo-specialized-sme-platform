@@ -1,3 +1,4 @@
+import '../../support/compiled-enterprise-reader'
 import { initializeDb } from '../../../db/client'
 import { decodeJsonRead } from '../../support/json-read'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'

@@ -1,3 +1,4 @@
+import '../../support/compiled-enterprise-reader'
 import { createServer } from 'node:http'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'

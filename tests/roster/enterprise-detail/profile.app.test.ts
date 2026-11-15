@@ -1,3 +1,4 @@
+import '../../support/compiled-enterprise-reader'
 import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
 import { initializeDb } from '../../../db/client'
 import { afterAll, beforeAll, expect, it, vi } from 'vitest'

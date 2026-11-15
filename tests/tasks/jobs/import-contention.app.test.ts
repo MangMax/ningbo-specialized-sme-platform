@@ -1,3 +1,4 @@
+import { createEnterpriseReadProcess } from '../../../server/utils/enterprise-read-process'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -17,7 +18,7 @@ it.each(['completion', 'candidate checkpoint'] as const)('persists %s after an a
   let started!: () => void, complete!: () => void
   const running = new Promise<void>(resolve => { started = resolve })
   const finish = new Promise<void>(resolve => { complete = resolve })
-  const executor = createImportExecutor()
+  const executor = createImportExecutor({ createWorker: () => createEnterpriseReadProcess(new URL('../../../.output/server/import-execution-worker.mjs', import.meta.url)) })
   const blocker = new Database(path)
   let timer: ReturnType<typeof setTimeout> | undefined
   try {

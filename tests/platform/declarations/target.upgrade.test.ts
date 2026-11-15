@@ -67,7 +67,18 @@ import { targetSchema } from '../../../upgrade/target-schema';
 import { writeApplyTarget, type ApplyTargetInput } from '../../../upgrade/frozen/apply-target-writer';
 import { verifyFingerprint } from '../../../upgrade/frozen/fingerprint-verifier';
 import { createHash } from 'node:crypto';
-function ready(seed?: Parameters<typeof fixture>[0]) { const f = fixture(seed); finalizeApplyStored(f); const t = new Database(f.target); t.pragma('foreign_keys=ON'); return { f, t, db: drizzle(t, { schema: targetSchema }) }; }
+const readyTemplates = new Map<Seed | undefined, string>();
+function ready(seed?: Parameters<typeof fixture>[0]) {
+    const f = fixture(seed), template = readyTemplates.get(seed);
+    if (template) copyFileSync(template, f.target);
+    else {
+        finalizeApplyStored(f);
+        const frozen = join(mkdtempSync(join(f.target, '..', 'ready-')), 'target.sqlite');
+        copyFileSync(f.target, frozen); readyTemplates.set(seed, frozen);
+    }
+    const t = new Database(f.target); t.pragma('foreign_keys=ON');
+    return { f, t, db: drizzle(t, { schema: targetSchema }) };
+}
 import { ensurePlatformObservation } from '../../../upgrade/frozen/server/platform-business-record';
 import * as legacySchema from '../../../upgrade/legacy-schema';
 import { listPlatformDeclarations } from '../../../upgrade/frozen/server/platform-declarations';

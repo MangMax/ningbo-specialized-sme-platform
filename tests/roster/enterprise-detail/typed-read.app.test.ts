@@ -1,3 +1,4 @@
+import '../../support/compiled-enterprise-reader'
 import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
 import { submitSyntheticRecognizedCollection } from '../fixtures/recognized-source'
 import type { RosterImportRelation } from '../../../lib/roster-import-client'

@@ -1,3 +1,4 @@
+import '../../support/compiled-enterprise-reader'
 import { afterAll, beforeAll, expect, it } from 'vitest'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'

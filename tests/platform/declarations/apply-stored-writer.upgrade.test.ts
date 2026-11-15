@@ -11,9 +11,15 @@ import { upgradeProjections } from '../../../upgrade/projections'
 import { finalizeObservations, finalizeCollectionScopes } from '../../../upgrade/finalize-observations'
 import { finalizeFingerprintBasis } from '../../../upgrade/fingerprint-basis'
 import { finalizeApplyStored } from '../../../upgrade/apply-stored'
+let prefixTemplate: { source: string; target: string; legacySource: string } | undefined
 function fixture() {
  const root=mkdtempSync(join(process.env.APPLY_STORED_EVIDENCE_DIR??tmpdir(),'apply-stored-'))
  const legacy=join(root,'legacy.sqlite'),target=join(root,'target.sqlite'),source=join(root,'71607.sqlite')
+ roots.push(root)
+ if (prefixTemplate) {
+  copyFileSync(prefixTemplate.source,source);copyFileSync(prefixTemplate.target,target);copyFileSync(prefixTemplate.legacySource,legacy)
+  return {source,target,legacySource:legacy,runId:'stored',predecessorRunId:'basis'}
+ }
  const s=new Database(legacy);migrate(drizzle(s),{migrationsFolder:'db/migrations'})
  s.exec(`INSERT INTO platform_query(id,interface,query_key,rdjb,queried_at,status,created_at) VALUES(1,'apply_list','Q','2','t','success','c');
  INSERT INTO platform_relation(id,query_id,sequence_no,status,raw_fields,created_at) VALUES(1,1,1,' pending ','{"rdjb":"2","rdjb":"3","cszt":"pending"}','c'),(2,1,2,'pending','{"rdjb":"1","rdjb":"3","cszt":"pending"}','c');
@@ -28,6 +34,10 @@ function fixture() {
  const p=join(root,'71606.sqlite');copyFileSync(target,p)
  finalizeFingerprintBasis({source:p,target,runId:'basis',predecessorRunId:'scopes',legacySource:legacy})
  copyFileSync(target,source)
+ // Freeze only the closed prerequisite; each caller owns independent writable files.
+ const frozen=mkdtempSync(join(root,'prefix-'))
+ prefixTemplate={source:join(frozen,'source.sqlite'),target:join(frozen,'target.sqlite'),legacySource:join(frozen,'legacy.sqlite')}
+ copyFileSync(source,prefixTemplate.source);copyFileSync(target,prefixTemplate.target);copyFileSync(legacy,prefixTemplate.legacySource)
  return {source,target,legacySource:legacy,runId:'stored',predecessorRunId:'basis'}
 }
 
