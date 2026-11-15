@@ -610,8 +610,11 @@ it("independent HTTP processes share SQLite claims and old parent results after 
     expect((await at(two.base, `/api/jobs/${parent}`)).status).toBe(200)
     const [a, b] = await Promise.all([submitAt(one.base, file, parent), submitAt(two.base, file, parent)])
     await bothPolling
-    const accepted = await Promise.all([at(one.base, `/api/jobs/${a}`).then(r => r.json()), at(two.base, `/api/jobs/${b}`).then(r => r.json())])
-    expect(accepted.every(row => row.state === 'failed' || Object.values(row.result?.publication.files[0].requests ?? {}).every((r: any) => r.state === 'accepted'))).toBe(true)
+    // Provider polling and each process's persisted job result are separate signals.
+    await vi.waitFor(async () => {
+      const accepted = await Promise.all([at(one.base, `/api/jobs/${a}`).then(r => r.json()), at(two.base, `/api/jobs/${b}`).then(r => r.json())])
+      expect(accepted.every(row => row.state === 'failed' || Object.values(row.result?.publication.files[0].requests ?? {}).every((r: any) => r.state === 'accepted')), JSON.stringify(accepted)).toBe(true)
+    }, { timeout: 5000 })
     expect(api!.stats.submits).toBe(4)
     release()
     const idle = await Promise.all([at(one.base, '/issue309/idle'), at(two.base, '/issue309/idle')])

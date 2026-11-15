@@ -140,3 +140,20 @@ it('still applies a later disable rule to an already prioritized queued failure'
   // its metadata no longer evicts a second diagnostic just to obtain a slot.
   expect(service.status()).toMatchObject({ filtered: 1, dropped: 1, overflow: 1, drainFailures: 0 })
 })
+
+it('drains a terminal queued behind a finishing flush before closing', async () => {
+  const service = fixture()
+  await service.policy()
+  const finishing = service.flush()
+  const id = service.emit({ source: 'export', operation: 'export.current.workbook', outcome: 'success', taskId: 'shutdown-terminal' })
+  expect(id).not.toBeNull()
+  await service.close()
+  await finishing
+  expect(service.status()).toMatchObject({ accepted: 1, stored: 1, queuedEntries: 0, dropped: 0, writeUnknown: 0, drainFailures: 0, closed: true })
+  const reader = createLogService({ directory: owned[owned.length - 1]!.root })
+  try {
+    expect((await reader.list({ taskId: 'shutdown-terminal' })).rows).toEqual([
+      expect.objectContaining({ id, operation: 'export.current.workbook', outcome: 'success' }),
+    ])
+  } finally { await reader.close() }
+})

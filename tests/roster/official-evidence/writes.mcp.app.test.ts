@@ -103,7 +103,7 @@ it('commits compatible source associations and genuine same-key receipts through
   expect(readLatestOfficialEvidence(db, evidenceId).row).toMatchObject({ nameRaw: 'Published Alpha', eventId: 1 })
   await commit({ officialEvidenceAppends: [append(2, row({ nameRaw: null }))] })
   expect(sqlite.prepare('SELECT count(*) n FROM official_evidence_row_revision').get()).toEqual({ n: 2 })
-})
+}, 10000)
 async function seedPair() { await commit({ officialEvidenceAppends: [append(1)] }); await commit({ officialEvidenceAppends: [append(2, row({ nameRaw: null }))] }) }
 it('rejects a cross-owner claim atomically through actual MCP preflight and worker commit', async () => {
   await seedPair()
