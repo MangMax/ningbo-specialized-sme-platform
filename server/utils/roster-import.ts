@@ -1,4 +1,6 @@
 import { collectionImportSource,collectionImportPreview,writeImportedCollection,verifyImportedCollectionFields,historicalObservationPlan,ensureHistoricalObservation } from './collection-import-target'
+import { withFingerprintVerificationSnapshot } from '../../lib/platform/fingerprint-verifier'
+import { sqliteConnection } from '../../lib/platform/target-connection'
 import { targetCandidateTables } from './candidate-target-sources'
 import { targetDifferenceReason } from '../../lib/platform/difference-reference-target'
 import { readDifferenceCollection,readDifferenceCollectionScope,readDifferenceObservation } from '../../lib/platform/difference-sources'
@@ -4587,15 +4589,15 @@ function replayRosterImportCore(db: Db, request: RosterImportRequest): RosterImp
 }
 
 export function preflightRosterImport(db: Db, request: RosterImportRequest, pageCountErrors: readonly RosterImportItemResult[] = [], context: import('../../lib/logging').LogContext & { filesDir?: string } = {}) {
-  return recordImportReceipt(db, 'preflight', request, () => preflightRosterImportCore(db, request, pageCountErrors, context.filesDir), context)
+  return recordImportReceipt(db, 'preflight', request, () => withFingerprintVerificationSnapshot(sqliteConnection(db), () => preflightRosterImportCore(db, request, pageCountErrors, context.filesDir)), context)
 }
 export function commitRosterImport(db: Db, request: RosterImportRequest, pageCountErrors: readonly RosterImportItemResult[] = [], options: import('../../lib/logging').LogContext & { deferCandidateTasks?: boolean; filesDir?: string } = {}) {
-  const result = recordImportReceipt(db, 'commit', request, () => db.transaction(() => {
+  const result = recordImportReceipt(db, 'commit', request, () => withFingerprintVerificationSnapshot(sqliteConnection(db), () => db.transaction(() => {
     const result = commitRosterImportCore(db, request, pageCountErrors, options.filesDir)
     const candidateTaskIds = result.status === 'committed'
       ? enqueueArchivedCandidates(db, request.payload.platformQueries ?? [], '', options.deferCandidateTasks, options) : []
     return { ...result, candidateTaskIds }
-  }), options)
+  })), options)
   // The ledger has saved its immutable internal summary. Expose the capture only once,
   // at the response root; duplicating it in the public summary would double its byte budget.
   const { qualificationReadback: _storedCapture, qualificationDiagnosticsByItem: _storedDiagnostics, ...summary } = result.summary

@@ -1,0 +1,227 @@
+import { resetExportRows } from './fixtures/reset-rows'
+import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
+import { CURRENT_RULE_VERSION } from '../../../lib/roster/current-qualification'
+import { readDevelopmentDiscovery, businessIdentity, expectedBusinessIdentity, matchesBusinessIdentity } from './fixtures/specialized-export'
+import { reviewCurrentExportDecision, confirmCurrentExportExclusion } from '../fixtures/qualification-decisions'
+import { createHash } from 'node:crypto'
+
+import { existsSync, mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join, resolve } from 'node:path'
+import ExcelJS from 'exceljs'
+import { eq } from 'drizzle-orm'
+import { afterAll, beforeAll, beforeEach, expect, it } from 'vitest'
+import { initializeDb, schema as s } from '../../../db/client'
+import { spawnCompiledApp, reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../../support/owned-process.mjs'
+
+// Only synthetic fixtures are written here. Assertions use real HTTP and XLSX bytes.
+const dir = mkdtempSync(join(tmpdir(), 'export-119-'))
+let generation=0
+let dbPath = join(dir, 'synthetic.db')
+let db = initializeDb({ create: true,  dbPath })
+const titleCode = 'innovative_sme'
+const endpoint = '/api/roster/exports/current/innovative-sme'
+const token = 'synthetic-export-119-token'
+const headers = { 'content-type': 'application/json', authorization: `Bearer ${token}` }
+const year = new Date().getFullYear()
+let service: { baseUrl: string; stop: () => Promise<void> } | undefined
+const url = (path: string) => service!.baseUrl + path
+const json = (response: Response): Promise<any> => response.json()
+const submit = (clientRequestId: string, extra = {}) => fetch(url(endpoint), {
+  method: 'POST', headers, body: JSON.stringify({ clientRequestId, ...extra }),
+})
+
+type Event = Pick<typeof s.recordEvent.$inferInsert, 'eventType' | 'year' | 'decidedYear' | 'reviewOutcome' | 'batchSeq'>
+const award: Event = { eventType: 'award', year, batchSeq: 1 }
+function record(enterpriseId: number, name: string, events: Event[] = [award], title = titleCode) {
+  const row = db.insert(s.record).values({ enterpriseId, titleCode: title, source: 'jxj', nameRaw: name }).returning().get()
+  const eventRows = events.map(event => {
+    const rowEvent = db.insert(s.recordEvent).values({ recordId: row.id, ...event }).returning().get()
+    db.insert(s.recordEvidence).values({ recordEventId: rowEvent.id, sourceFile: `jxj/announcement/${title}-synthetic.xlsx`, attachment: '合成名单', listNo: rowEvent.id }).run()
+    return rowEvent
+  })
+  return { record: row, events: eventRows }
+}
+function candidate(name: string, events: Event[] = [award], title = titleCode) {
+  const enterprise = db.insert(s.enterprise).values({ name, nameNorm: name, usccNorm: `TEST-119-${name}`, district: '鄞州区', city: '宁波市' }).returning().get()
+  return { enterprise, ...record(enterprise.id, name, events, title) }
+}
+async function terminal(id: string) {
+  const deadline = Date.now() + 30000
+  while (Date.now() < deadline) {
+    const response = await fetch(url('/api/jobs/' + id))
+    expect(response.status).toBe(200)
+    const job = await json(response)
+    if (['done', 'failed', 'cancelled'].includes(job.state)) return job
+    await new Promise(resolve => setTimeout(resolve, 30))
+  }
+  throw new Error('export did not finish: ' + id)
+}
+function rows(wb: ExcelJS.Workbook, sheet: string) {
+  const ws = wb.getWorksheet(sheet)!
+  return ws.getRows(2, Math.max(0, ws.rowCount - 1))?.map(row => row.values as any[]) ?? []
+}
+async function download(job: any) {
+  const response = await fetch(url(job.result.artifact.downloadUrl), { headers })
+  expect(response.status).toBe(200)
+  expect(response.headers.get('content-type')).toBe('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+  expect(response.headers.get('content-disposition')).toBe(`attachment; filename="current-${job.params.titleCode}.xlsx"`)
+  expect(response.headers.get('cache-control')).toBe('private, no-store')
+  const bytes = Buffer.from(await response.arrayBuffer())
+  expect(bytes.length).toBe(job.result.artifact.size)
+  expect(createHash('sha256').update(bytes).digest('hex')).toBe(job.result.artifact.sha256)
+  const wb = new ExcelJS.Workbook()
+  await wb.xlsx.load(bytes as any)
+  expect(wb.worksheets.map(sheet => sheet.name)).toEqual(['有效企业', '已到期', '已注销（吊销）', '已迁出', '未认定', '口径说明'])
+  const explanation = Object.fromEntries(rows(wb, '口径说明').map(row => [row[1], row[2]]))
+  for (const [sheet, key] of [['有效企业', 'effective'], ['已到期', 'expired'], ['已注销（吊销）', 'terminated'], ['已迁出', 'moved_out'], ['未认定', 'unrecognized']] as const) {
+    expect(rows(wb, sheet)).toHaveLength(job.result.statusCounts[key])
+    expect(explanation[sheet]).toBe(String(job.result.statusCounts[key]))
+  }
+  expect(explanation['规则版本']).toBeUndefined()
+  expect(explanation['数据版本']).toBeUndefined()
+  expect(job.result.ruleVersion).toBe(CURRENT_RULE_VERSION)
+  expect(explanation['范围']).toContain('未实时采集，不证明全市完整')
+  return { wb, bytes }
+}
+async function workbook(key: string, extra = {}) {
+  const response = await submit(key, extra)
+  expect(response.status).toBe(202)
+  const accepted = await json(response)
+  expect(response.headers.get('location')).toBe('/api/jobs/' + accepted.jobId)
+  expect(Object.keys(accepted).sort()).toEqual(['jobId', 'kind', 'state'])
+  expect(['queued', 'running']).toContain(accepted.state)
+  expect(accepted.kind).toBe('current-roster-export')
+  const job = await terminal(accepted.jobId)
+  expect(job.state, JSON.stringify(job)).toBe('done')
+  expect(job.params.titleCode).toBe(titleCode)
+  expect(job.result.snapshotId).toBe(job.id)
+  expect(job.result.executor.peakRssBytes).toBeGreaterThan(0)
+  expect(job.result.artifact.availability).toBe('available')
+  return { job, ...await download(job) }
+}
+async function startService() {
+  const cwd = resolve(import.meta.dirname, '../../..')
+  const port = await reserveLoopbackPort()
+  const child = spawnCompiledApp(port, {
+    cwd, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, NUXT_BUILD_DIR: join(dir, 'build'), NUXT_DB_PATH: dbPath, NUXT_API_TOKEN: token, NUXT_FILES_DIR: join(dir, 'files'), NUXT_INCOMING_DIR: join(dir, 'incoming') },
+  })
+  let output = ''
+  for (const stream of [child.stdout, child.stderr]) stream.on('data', data => { output = (output + data).slice(-12000) })
+  service = { baseUrl: `http://127.0.0.1:${port}`, stop: () => stopOwnedChild(child) }
+  try { await waitForHttp(url('/api/jobs/kinds'), { timeoutMs: 60000, child }) }
+  catch (error) { await service.stop(); throw new Error(String(error) + output) }
+}
+let discovery: any
+beforeAll(async () => { discovery = await readDevelopmentDiscovery(); await startService() }, 90000)
+beforeEach(() => resetExportRows(db.$client))
+
+
+afterAll(async () => {
+  await service?.stop()
+  db.$client.close()
+  rmSync(dir, { recursive: true, force: true })
+})
+
+it('创新型专用入口交付六表与共享任务产物', async () => {
+  const fresh = candidate('创新型新认定')
+  const { wb, job } = await workbook('119-fresh')
+  expect(job.result.counts).toEqual({ eligible: 1, pending: 0, excluded: 0 })
+  expect(rows(wb, '有效企业').map(row => [...businessIdentity(row),row[5]])).toEqual([[...expectedBusinessIdentity(db,fresh.enterprise.id), '创新型中小企业']])
+  expect(rows(wb, '有效企业')[0]![12]).toContain('innovative_sme-synthetic.xlsx')
+  expect(job.result.dataVersion).toMatch(/^sha256:[a-f0-9]{64}$/)
+})
+
+function decision(enterpriseId: number, reasonCode: 'moved_out' | 'moved_in' | 'deregistered' | 'pending_review' | 'other', extra = {}) {
+  const decision = db.insert(s.differenceReason).values({ enterpriseId, titleCode, direction: 'extra_in_miit', status: 'confirmed_reason', reasonCode, verificationStatus: 'confirmed', lifecycleAction: 'replace', basis: '合成已确认主体事实', effectiveAt: '2025-01-01T00:00:00Z', recordedAt: new Date().toISOString(), ...extra }).returning().get()
+  reviewCurrentExportDecision(db,decision)
+  return decision
+}
+
+it('创新型按稳定主体去重且多称号分别保留', async () => {
+  const twins = [candidate('同名主体甲'), candidate('同名主体乙')]
+  for (const twin of twins) {
+    db.update(s.enterprise).set({ name: '同名企业', nameNorm: '同名企业' }).where(eq(s.enterprise.id, twin.enterprise.id)).run()
+    db.update(s.record).set({ nameRaw: '同名企业' }).where(eq(s.record.id, twin.record.id)).run()
+  }
+  const multiple = candidate('多称号企业', [{ eventType: 'award', year: year - 5 }, award])
+  record(multiple.enterprise.id, '多称号企业', [award], 'little_giant')
+  record(multiple.enterprise.id, '多称号企业', [award], 'specialized_sme')
+  const giant = candidate('只有小巨人', [award], 'little_giant')
+  candidate('只有专精特新', [award], 'specialized_sme')
+  const noOwnAward = candidate('不得借用其他称号公布', [])
+  record(noOwnAward.enterprise.id, '不得借用其他称号公布', [award], 'little_giant')
+  const { wb, job } = await workbook('119-isolation')
+  expect(rows(wb, '有效企业').map(row => businessIdentity(row))).toEqual([...twins.map(twin => expectedBusinessIdentity(db,twin.enterprise.id)), expectedBusinessIdentity(db,multiple.enterprise.id)])
+  expect(rows(wb, '有效企业').filter(row => row[2] === '同名企业')).toHaveLength(2)
+  expect(rows(wb, '有效企业').filter(row => matchesBusinessIdentity(db, row, multiple.enterprise.id))).toHaveLength(1)
+  expect(rows(wb, '未认定').map(row => businessIdentity(row))).toEqual([expectedBusinessIdentity(db,noOwnAward.enterprise.id)])
+  expect(rows(wb, '未认定')[0]![8] ?? null).toBeNull()
+  expect(rows(wb, '未认定')[0]![10]).toBe('尚未完成公布匹配核实')
+  for (const row of [...rows(wb, '有效企业'), ...rows(wb, '未认定')]) {
+    expect(row[5]).toBe('创新型中小企业')
+    expect(row[12] ?? '').not.toContain('little_giant-synthetic.xlsx')
+    expect(row[12] ?? '').not.toContain('specialized_sme-synthetic.xlsx')
+  }
+  const generic = (title: string, key: string) => fetch(url('/api/jobs'), { method: 'POST', headers, body: JSON.stringify({ kind: 'current-roster-export', params: { titleCode: title, clientRequestId: key } }) })
+  const replay = await generic(titleCode, '119-isolation')
+  expect(replay.status).toBe(202)
+  expect((await json(replay)).jobId).toBe(job.id)
+  expect((await generic('little_giant', '119-isolation')).status).toBe(409)
+  for (const [title, path, expectedIds] of [
+    ['little_giant', '/api/roster/exports/current/little-giant', [multiple.enterprise.id, giant.enterprise.id, noOwnAward.enterprise.id]],
+    ['specialized_sme', '/api/jobs', [multiple.enterprise.id]],
+  ] as const) {
+    const response = path === '/api/jobs' ? await generic(title, '119-cross-' + title) : await fetch(url(path), { method: 'POST', headers, body: JSON.stringify({ clientRequestId: '119-cross-' + title }) })
+    expect(response.status).toBe(202)
+    const crossJob = await terminal((await json(response)).jobId)
+    expect(crossJob.state).toBe('done'); expect(crossJob.kind).toBe(job.kind)
+    const cross = await download(crossJob)
+    for (const id of expectedIds) expect(rows(cross.wb, '有效企业').some(row => matchesBusinessIdentity(db,row,id))).toBe(true)
+    expect(rows(cross.wb, '有效企业').filter(row => matchesBusinessIdentity(db, row, multiple.enterprise.id))).toHaveLength(1)
+  }
+})
+
+// Native source facts live in this case's independent database generation.
+function query(enterprise: typeof s.enterprise.$inferSelect, status: 'success' | 'failed' | 'no_record', key = enterprise.usccNorm!, rowStatus?: string) {
+  const native = submitNativePlatformQuery(db, { interface: 'business_list', queryKey: key, rdjb: '1', titleCode, queriedAt: new Date().toISOString(), status, rawResponse: JSON.stringify({ status, rowStatus: rowStatus ?? null }), relations: rowStatus == null ? [] : [{ sequenceNo: 1, enterpriseId: enterprise.id, nameRaw: enterprise.name, usccRaw: enterprise.usccNorm, status: rowStatus, declareKind: 'update', verificationStatus: 'confirmed', matchBasis: 'uscc' }] })
+  return { id: native.queryId, relationIds: native.relationIds }
+}
+
+it('创新型空集保留六表表头与真实零计数', async () => {
+  candidate('其他称号不污染空集', [award], 'specialized_sme')
+  const { wb, job } = await workbook('119-empty')
+  expect(job.result.counts).toEqual({ eligible: 0, pending: 0, excluded: 0 })
+  expect(job.result.total).toBe(0)
+  expect(job.progress).toEqual({ done: 0, total: 0 })
+  expect(job.percent).toBe(100)
+  for (const name of ['有效企业', '已到期', '已注销（吊销）', '已迁出', '未认定']) {
+    const ws = wb.getWorksheet(name)!
+    expect(ws.rowCount).toBe(1)
+    expect(ws.getRow(1).values).toEqual([undefined, '序号', '企业名称', '统一社会信用代码', '区县', '称号', '首次认定年份', '认定及复核情况', '公布名称', '已确认曾用名', '公布对应情况', '情况说明', '来源及页码', '有效状态', '有效期及排除依据', '资料缺口与来源备注'])
+  }
+})
+
+it('创新型入口鉴权参数边界与OpenAPI可发现', async () => {
+  const spec = discovery
+  const operation = spec.paths[endpoint].post
+  expect(operation.security).toEqual([{ bearerAuth: [] }])
+  expect(operation.requestBody.content['application/json'].schema.additionalProperties).toBe(false)
+  expect(operation.responses['202']).toBeDefined()
+  expect(spec.paths['/api/jobs'].post.requestBody.content['application/json'].schema.properties.kind.enum).toContain('current-roster-export')
+  expect(spec.paths['/api/job-artifacts/{id}'].get.security).toEqual([{ bearerAuth: [] }])
+  for (const body of [{}, [], null, { clientRequestId: '' }, { clientRequestId: ' ' }, { clientRequestId: 'x'.repeat(129) }, { clientRequestId: '119-invalid', titleCode }, { clientRequestId: '119-invalid', asOf: '2020-01-01' }, { clientRequestId: '119-invalid', unknown: true }]) {
+    expect((await fetch(url(endpoint), { method: 'POST', headers, body: JSON.stringify(body) })).status).toBe(400)
+  }
+  for (const queryString of ['?asOf=2020-01-01', '?titleCode=little_giant', '?unknown=1']) expect((await fetch(url(endpoint + queryString), { method: 'POST', headers, body: JSON.stringify({ clientRequestId: '119-invalid-query' }) })).status).toBe(400)
+  expect((await fetch(url(endpoint), { method: 'POST', headers, body: '{broken' })).status).toBe(400)
+  for (const authorization of ['', 'Bearer wrong']) expect((await fetch(url(endpoint), { method: 'POST', headers: { 'content-type': 'application/json', authorization }, body: JSON.stringify({ clientRequestId: '119-no-auth' }) })).status).toBe(401)
+  const { job, bytes } = await workbook('b'.repeat(128))
+  for (const authorization of ['', 'Bearer wrong']) expect((await fetch(url(job.result.artifact.downloadUrl), { headers: { authorization } })).status).toBe(401)
+  const alternate = await fetch(url(job.result.artifact.downloadUrl), { headers: { 'x-api-token': token } })
+  expect(alternate.status).toBe(200)
+  expect(Buffer.from(await alternate.arrayBuffer())).toEqual(bytes)
+  expect((await fetch(url('/api/job-artifacts/not-a-disk-path'), { headers })).status).toBe(400)
+  expect((await fetch(url('/api/job-artifacts/%2Ftmp%2Fsynthetic.xlsx'), { headers })).status).toBe(400)
+  expect(JSON.stringify(job)).not.toContain(dir)
+})

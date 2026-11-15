@@ -100,15 +100,16 @@ process.on('message', async (request: EnterpriseReadRequest) => {
     }
     const connectionMs = performance.now() - started
 
-    assertFinalPlatformRuntime(connection!)
     const db = drizzle(connection!, { schema, logger: createDrizzleLogger({ connection: 'enterprise_read', execution: 'worker', context: request.logContext }) })
     // Each whole reader owns one synchronous transaction across every statement. It
     // lives entirely off-thread, including native cursor drains and JS sorting.
     let result: unknown
     if (request.operation === 'recognitions' || request.operation === 'differences' || request.operation === 'summary') {
-      // Open/identity/IPC failures are outside this invocation boundary. Once
-      // the reader starts, every exception (including SQLite busy) is terminal.
+      // Open/identity/IPC failures remain outside this invocation boundary.
+      // Native admission reads can themselves block or fail; once they start,
+      // every SQLite/schema error is terminal and must not replay on the main owner.
       try {
+        assertFinalPlatformRuntime(connection!)
         result = request.operation === 'summary' ? readWholeComparisonSummary(db, request.options)
           : request.operation === 'recognitions' ? listRosterRecognitions(db, request.filter) : listRosterDifferences(db, request.filter)
       }
@@ -118,7 +119,10 @@ process.on('message', async (request: EnterpriseReadRequest) => {
         await send({ type: 'reader-error', id: request.id, error: captured })
         return
       }
-    } else result = request.operation === 'list' ? listRosterEnterprises(db, request.filter) : request.operation === 'detail' ? getRosterEnterpriseDetail(db, request.enterpriseId) : listCurrentQualified(connection!, request.filter)
+    } else {
+      assertFinalPlatformRuntime(connection!)
+      result = request.operation === 'list' ? listRosterEnterprises(db, request.filter) : request.operation === 'detail' ? getRosterEnterpriseDetail(db, request.enterpriseId) : listCurrentQualified(connection!, request.filter)
+    }
     const projectionMs = performance.now() - started - connectionMs
 
     const projectedHeap = process.memoryUsage().heapUsed

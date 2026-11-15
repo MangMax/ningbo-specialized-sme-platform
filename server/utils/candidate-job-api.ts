@@ -103,7 +103,7 @@ export async function dispatchCandidateJobMcp(
       { ...ctx, apiToken: 'internal-task-authorized', logContext: ctx.logContext ?? operationLogContext.getStore() },
     )
     return result.status < 300
-      ? result.body
+      ? { ...result.body }
       : {
           isError: true,
           content: [

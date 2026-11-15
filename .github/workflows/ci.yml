@@ -1,0 +1,254 @@
+name: 工程质量检查
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 18 * * *'
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: engineering-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  coverage:
+    name: 确定回归测试范围
+    runs-on: ubuntu-latest
+    outputs:
+      upgrade: ${{ steps.select.outputs.upgrade }}
+      ttl: ${{ steps.select.outputs.ttl }}
+      watcher: ${{ steps.select.outputs.watcher }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - id: select
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          watcher=1
+          ttl=1
+          upgrade=true
+          if [ "$EVENT" = pull_request ]; then
+            git diff --name-only "$BASE" HEAD > changed-paths.txt
+            watcher=0
+            if grep -qE "^(nuxt.config|package.json$|pnpm-lock.yaml$|vitest.config|tests/runtime/development/|tests/support/|.github/workflows/)" changed-paths.txt; then watcher=1; fi
+            ttl=0
+            if grep -qE "^(server/utils/.*(evidence|snapshot)|server/api/roster/|server/mcp/|tests/roster/official-evidence/|tests/support/|vitest.config|.github/workflows/)" changed-paths.txt; then ttl=1; fi
+            # Fail closed: only exclusively presentation/documentation changes may omit history.
+            if ! grep -q '^docs/adr/' changed-paths.txt && ! grep -qvE '^(app/|components/|pages/|assets/|public/|docs/|README[^/]*$)' changed-paths.txt; then
+              upgrade=false
+            fi
+          fi
+          echo "watcher=$watcher" >> "$GITHUB_OUTPUT"
+          echo "Development watcher coverage: $watcher (configuration/dependency paths or full run)." >> "$GITHUB_STEP_SUMMARY"
+          echo "ttl=$ttl" >> "$GITHUB_OUTPUT"
+          echo "upgrade=$upgrade" >> "$GITHUB_OUTPUT"
+          echo "Historical upgrade coverage: $upgrade. Runtime and app always run; main, nightly and manual runs require all projects." >> "$GITHUB_STEP_SUMMARY"
+
+  compile:
+    name: 类型与静态规则检查
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+        env:
+          NODE_OPTIONS: --max-old-space-size=6144
+      - run: pnpm verify:native-platform-boundary
+      - run: node scripts/generate-roster-import-discovery.mjs --check
+
+  build:
+    name: 构建应用产物
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - run: node scripts/generate-logging-route-templates.mjs --check
+      - run: tar -czf test-build.tar.gz .output
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: test-build
+          path: test-build.tar.gz
+          retention-days: 1
+
+  discovery:
+    name: 校验开发服务接口契约
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: node tests/support/development-discovery.mjs development-discovery.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: development-discovery
+          path: development-discovery.json
+          retention-days: 1
+
+  native:
+    needs: coverage
+    name: ${{ matrix.project == 'runtime' && '业务逻辑与组件测试' || '历史数据升级测试' }} · ${{ matrix.shard }}/6
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix:
+        project: ${{ needs.coverage.outputs.upgrade == 'true' && fromJSON('["runtime","upgrade"]') || fromJSON('["runtime"]') }}
+        shard: [1, 2, 3, 4, 5, 6]
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Run tests within the workflow time budget
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          run_started_at=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" --jq .run_started_at)
+          started=$(date -d "$run_started_at" +%s)
+          elapsed=$(( $(date +%s) - started ))
+          remaining=$(( 300 - elapsed ))
+          echo "Workflow elapsed: ${elapsed}s; remaining test budget: ${remaining}s" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$remaining" -le 0 ]; then
+            echo '::error::Workflow exceeded its five-minute budget before tests started'
+            exit 1
+          fi
+          result=0
+          timeout --signal=TERM --kill-after=5s "${remaining}s" pnpm test --project=${{ matrix.project }} --shard=${{ matrix.shard }}/6 --maxWorkers 1 --no-file-parallelism --reporter=default --reporter=json --outputFile=test-results.json || result=$?
+          elapsed=$(( $(date +%s) - started ))
+          echo "Workflow elapsed after tests: ${elapsed}s (exit ${result})" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$result" -eq 124 ] || [ "$result" -eq 137 ]; then
+            echo '::error::Five-minute workflow budget exceeded; optimize the slow suites before retrying'
+          fi
+          exit "$result"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: ${{ matrix.project }}-results-${{ matrix.shard }}
+          path: test-results.json
+          if-no-files-found: warn
+          retention-days: 7
+
+  app:
+    needs: [build, coverage, discovery]
+    name: ${{ matrix.shard == 'expiry' && '快照真实过期测试' || matrix.shard == 'watcher' && '开发服务热更新测试' || format('应用与独立进程测试 · {0}/6', matrix.shard) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ${{ fromJSON(format('[1,2,3,4,5,6{0}{1}]', needs.coverage.outputs.ttl == '1' && ',"expiry"' || '', needs.coverage.outputs.watcher == '1' && ',"watcher"' || '')) }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: test-build
+      - run: tar -xzf test-build.tar.gz
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: development-discovery
+      - name: Run tests within the workflow time budget
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_REAL_TTL_DEEP: ${{ matrix.shard == 'expiry' && '1' || '0' }}
+          TEST_DISCOVERY_ARTIFACT: ${{ github.workspace }}/development-discovery.json
+          APP_SHARD: ${{ matrix.shard }}
+        run: |
+          run_started_at=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" --jq .run_started_at)
+          started=$(date -d "$run_started_at" +%s)
+          elapsed=$(( $(date +%s) - started ))
+          remaining=$(( 300 - elapsed ))
+          echo "Workflow elapsed: ${elapsed}s; remaining test budget: ${remaining}s" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$remaining" -le 0 ]; then
+            echo '::error::Workflow exceeded its five-minute budget before tests started'
+            exit 1
+          fi
+          result=0
+          project=app
+          if [ "$APP_SHARD" = watcher ]; then
+            project=deep
+            args=()
+          elif [ "$APP_SHARD" = expiry ]; then
+            args=(tests/roster/official-evidence/review.http.app.test.ts -t 'expires 120-second readonly snapshots')
+          else
+            args=(--shard="$APP_SHARD/6")
+          fi
+          timeout --signal=TERM --kill-after=5s "${remaining}s" pnpm test --project="$project" "${args[@]}" --maxWorkers 1 --no-file-parallelism --reporter=default --reporter=json --outputFile=test-results.json || result=$?
+          elapsed=$(( $(date +%s) - started ))
+          echo "Workflow elapsed after tests: ${elapsed}s (exit ${result})" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$result" -eq 124 ] || [ "$result" -eq 137 ]; then
+            echo '::error::Five-minute workflow budget exceeded; optimize the slow suites before retrying'
+          fi
+          exit "$result"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: app-results-${{ matrix.shard }}
+          path: test-results.json
+          if-no-files-found: warn
+          retention-days: 7
+
+  check:
+    name: CI 总门禁
+    if: always()
+    needs: [coverage, compile, build, discovery, native, app]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every check
+        env:
+          COMPILE_RESULT: ${{ needs.compile.result }}
+          DISCOVERY_RESULT: ${{ needs.discovery.result }}
+          BUILD_RESULT: ${{ needs.build.result }}
+          COVERAGE_RESULT: ${{ needs.coverage.result }}
+          NATIVE_RESULT: ${{ needs.native.result }}
+          APP_RESULT: ${{ needs.app.result }}
+        run: test "$DISCOVERY_RESULT" = success && test "$COMPILE_RESULT" = success && test "$BUILD_RESULT" = success && test "$COVERAGE_RESULT" = success && test "$NATIVE_RESULT" = success && test "$APP_RESULT" = success

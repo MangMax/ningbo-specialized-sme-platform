@@ -11,6 +11,7 @@ import { ImportReceiptError } from './import-receipts'
 import { createImportExecutionWorker } from './import-execution-worker-location'
 import { appLog, type LogContext } from '../../lib/logging'
 import { logImportFailure } from './roster-import-logging'
+import { beginImportWrite } from './import-write-barrier'
 
 type Db = BetterSQLite3Database<typeof schema>
 type Action = 'preflight' | 'commit'
@@ -30,6 +31,8 @@ export function createImportExecutor(options: { createWorker?: () => Worker; max
   let worker: Worker | undefined, ready = false, active: Job | undefined, retainedBytes = 0, nextId = 0, closed = false
   let stopping: Promise<void> | undefined, startupTimer: ReturnType<typeof setTimeout> | undefined
   let closing: Promise<void> | undefined, finishClose: (() => void) | undefined
+  let endWrite: (() => void) | undefined
+  const releaseWriter = () => { endWrite?.(); endWrite = undefined }
   const settle = (job: Job, error?: Error, result?: Result) => {
     retainedBytes -= job.message.payload.byteLength
     if (error) { logImportFailure('import.execution', error, job.message.logContext); job.reject(error) }
@@ -63,7 +66,7 @@ export function createImportExecutor(options: { createWorker?: () => Worker; max
         if (active) { const job = active; active = undefined; settle(job, unavailable('import_outcome_unknown', 'Import outcome unknown; read its receipt and retry with the same idempotency key')) }
         // Do not replay a possibly committed command. A new process may serve only
         // later admitted requests, whose normal core checks the durable key.
-        stopping = owned.terminate().finally(() => { stopping = undefined; pump() })
+        stopping = owned.terminate().finally(() => { stopping = undefined; releaseWriter(); queueMicrotask(pump) })
       }
       owned.on('error', failed); owned.on('exit', failed)
       owned.on('message', message => {
@@ -73,15 +76,18 @@ export function createImportExecutor(options: { createWorker?: () => Worker; max
         const job = active; active = undefined
         if (message.type === 'failure') settle(job, message.error.known ? new ImportReceiptError(message.error.statusCode, message.error.code, message.error.message) : new Error(message.error.message))
         else settle(job, undefined, message.result)
-        pump()
+        // Let pending main-process checkpoints persist before the next writer starts.
+        releaseWriter()
+        queueMicrotask(pump)
       })
       startupTimer = setTimeout(failed, 5000); startupTimer.unref()
     }
     worker.ref()
     if (!ready) return
     active = queue.shift()!
+    endWrite = beginImportWrite()
     appLog({ source: 'import', operation: 'import.execution', outcome: 'started' }, active.message.logContext)
-    try { worker.postMessage(active.message) } catch { const owned = worker; worker = undefined; ready = false; const job = active; active = undefined; settle(job, unavailable('import_outcome_unknown', 'Import outcome unknown; read its receipt and retry with the same idempotency key')); stopping = owned.terminate().finally(() => { stopping = undefined; pump() }) }
+    try { worker.postMessage(active.message) } catch { const owned = worker; worker = undefined; ready = false; const job = active; active = undefined; settle(job, unavailable('import_outcome_unknown', 'Import outcome unknown; read its receipt and retry with the same idempotency key')); stopping = owned.terminate().finally(() => { stopping = undefined; releaseWriter(); queueMicrotask(pump) }) }
   }
   return {
     execute(db: Db, action: Action, request: RosterImportRequest, pageCountErrors: readonly RosterImportItemResult[] = [], context: LogContext = {}, source: { filesDir?: string } = {}): Promise<Result> {

@@ -283,7 +283,7 @@ function createCurrentQualificationAssessmentReaderBody(db:Database.Database,rec
         const options: QualificationAssessmentReadOptions = { coverageForTitle: titleCode => coverages.get(id)!.get(titleCode)! }
         const read = readSnapshot(id, asOf, options, undefined, undefined, title, undefined, scoped ? title : undefined)
         if (read.workbookPublished === undefined) throw new Error('Workbook published-name facts missing')
-        return read
+        return { ...read, workbookPublished: read.workbookPublished }
       })
     }, titles))
   }

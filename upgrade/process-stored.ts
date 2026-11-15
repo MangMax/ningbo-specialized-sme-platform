@@ -84,7 +84,8 @@ function recover(t:Database.Database,o:Owner,legacy?:Database.Database,custody?:
    if(!sameCell(cellShape.parse(before),cellShape.parse(after)))throw new Error('Legacy collection coordinate conflict '+o.id+':'+column)
   }
  }
- if(cells) {
+ // Command snapshots are command display evidence, not authenticated schema0 stored cells.
+ if(cells && o.scheme!=='target-command-v1') {
   const number=(name:string)=>{const c=cell(name);return c?.storageClass==='integer'?Number(decode(Buffer.from(c.hex,'hex'))):null}
   if(number('id')!==o.old_id||number('query_id')!==o.query_id||number('sequence_no')!==o.sequence_no)throw new Error('Legacy source/alias/sequence conflict '+o.id)
   for(const [source,table,key,column] of [['relation_key','platform_business_observation','id','source_relation_key'],['name_raw','platform_observation_assignment','observation_id','name_raw'],['uscc_raw','platform_observation_assignment','observation_id','uscc_raw']] as const) {

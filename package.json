@@ -13,14 +13,17 @@
     "preview": "nuxt preview",
     "postinstall": "nuxt prepare",
     "db:studio": "drizzle-kit studio",
-    "typecheck": "nuxt typecheck",
+    "typecheck": "nuxt typecheck && tsc --noEmit -p .nuxt/tsconfig.server.json",
     "check:doctor": "vite-doctor .",
     "check:doctor:json": "vite-doctor . --format json",
     "check:doctor:structure": "vite-doctor . --analyses dead-code,graph,dupes,health",
     "test": "vitest run",
     "test:watch": "vitest",
     "verify:native-platform-boundary": "node scripts/verify-native-platform-boundary.mjs",
-    "db:init": "node --env-file-if-exists=.env scripts/initialize-native-db.mjs"
+    "db:init": "node --env-file-if-exists=.env scripts/initialize-native-db.mjs",
+    "test:runtime": "vitest run --project runtime",
+    "test:upgrade": "vitest run --project upgrade",
+    "test:app": "vitest run --project app"
   },
   "dependencies": {
     "@embedpdf/core": "2.15.1",

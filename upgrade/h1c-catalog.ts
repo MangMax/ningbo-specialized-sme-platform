@@ -2,7 +2,7 @@
 import { hasColumns, migrationFinished } from '../lib/platform/migration-readiness'
 export { hasColumns, migrationFinished } from '../lib/platform/migration-readiness'
 import { requireDifferenceReferencesReady } from './difference-reference-catalog'
-import { requireLegacyProvenanceReady } from '../lib/platform/legacy-provenance-catalog'
+import { requireLegacyProvenanceReady } from './legacy-provenance-catalog'
 /** Internal target migration readiness; comprehensive validation belongs offline. */
 import type Database from 'better-sqlite3'
 export const H1C_CATALOG_VERSION = 71611

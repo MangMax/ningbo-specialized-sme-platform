@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import type { CorrespondenceDetail, CorrespondenceSummary } from '~~/lib/roster/correspondence-view'
+import type { PlatformObservationFact } from '~~/lib/platform/observation-facts'
 import { eventDecisionText } from '~~/lib/roster/correspondence-view'
 import { groupEventEdges } from '~~/lib/roster/record-ledger'
 import { PLATFORM_INTERFACES } from '~~/lib/labels'
@@ -39,7 +40,7 @@ const props = defineProps<{
   linksReady?: boolean
   detailsLoading?: boolean
   detailsError?: boolean
-  relationSummaries?: Record<number, { interface: string; status: string | null }>
+  relationSummaries?: Record<number, { interface: string; status: PlatformObservationFact['status'] }>
   back: string
   returnTo?: string | null
   open: boolean
@@ -65,11 +66,11 @@ const fileLines = computed(() => props.evidence.map(item => {
 }))
 /** 同名接口只写一次；原行定位在展开层按条列出，不合并原行。 */
 const interfaceSummary = computed(() => {
-  const rows = new Map<string, { count: number; statuses: Set<string> }>()
+  const rows = new Map<string, { count: number; statuses: Set<NonNullable<PlatformObservationFact['status']>> }>()
   for (const edge of groups.value.sources) {
     const relation = edge.relationId == null ? undefined : props.relationSummaries?.[edge.relationId]
     const key = edge.exportRowId != null ? '平台导出快照' : PLATFORM_INTERFACES[relation?.interface ?? ''] ?? (props.review ? '平台来源记录' : '平台接口记录')
-    const item = rows.get(key) ?? { count: 0, statuses: new Set<string>() }
+    const item = rows.get(key) ?? { count: 0, statuses: new Set<NonNullable<PlatformObservationFact['status']>>() }
     item.count++
     if (relation?.status) item.statuses.add(relation.status)
     rows.set(key, item)

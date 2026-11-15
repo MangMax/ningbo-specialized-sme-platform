@@ -266,8 +266,11 @@ export function createLogService(options: LogServiceOptions) {
       closing = true; clearInterval(timer); clearInterval(maintenance)
       if (scheduled) { clearImmediate(scheduled); scheduled = undefined }
       let deadline: ReturnType<typeof setTimeout> | undefined
+      // An existing drain may have finished consuming rows before its promise
+      // settles. Closing disables scheduleDrain, so explicitly drain any tail
+      // accepted in that window, within the same shutdown deadline.
       try {
-        await Promise.race([(async () => { await flush(); if (worker) await call('close').catch(() => {}) })(), new Promise<void>(resolve => { deadline = setTimeout(() => { counters.dropped += queue.length; queue = []; queryRows.clear(); queueBytes = 0; stopWorker('close_timeout'); resolve() }, LOG_DEFAULTS.closeTimeoutMs) })])
+        await Promise.race([(async () => { await flush(); while (queue.length && !closed) await flush(); if (worker) await call('close').catch(() => {}) })(), new Promise<void>(resolve => { deadline = setTimeout(() => { counters.dropped += queue.length; queue = []; queryRows.clear(); queueBytes = 0; stopWorker('close_timeout'); resolve() }, LOG_DEFAULTS.closeTimeoutMs) })])
       } finally { if (deadline) clearTimeout(deadline); closed = true; stopWorker('logging_closed'); stderr.close() }
     },
   }

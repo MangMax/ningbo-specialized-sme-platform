@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed, shallowRef, watch } from 'vue'
-import { createReusableTemplate, useMediaQuery, watchDebounced } from '@vueuse/core'
+import { computed, onScopeDispose, shallowRef, watch } from 'vue'
+import { createReusableTemplate, debounceFilter, useMediaQuery, watchWithFilter } from '@vueuse/core'
 import { useQuery } from '@pinia/colada'
 import { Search } from '@lucide/vue'
 import { CURRENT_STATUS_LABELS, type CurrentStatus } from '~~/lib/roster/current-status'
@@ -53,7 +53,10 @@ const search = shallowRef(q.value)
 const dateFrom = shallowRef(recognitionFrom.value), dateTo = shallowRef(recognitionTo.value)
 watch(q, value => { search.value = value })
 watch([recognitionFrom, recognitionTo], ([from,to]) => { dateFrom.value=from; dateTo.value=to })
-watchDebounced(search, value => { if (value.trim() !== q.value) update({ q: value.trim() || undefined, page: undefined }) }, { debounce: 300 })
+// A queued search must not navigate after this page's scope has been disposed.
+const searchDebounce = debounceFilter(300)
+onScopeDispose(() => searchDebounce.cancel())
+watchWithFilter(search, value => { if (value.trim() !== q.value) update({ q: value.trim() || undefined, page: undefined }) }, { eventFilter: searchDebounce })
 
 function update(changes: Record<string, string | undefined>) {
   const next: Record<string, string | undefined> = Object.fromEntries(Object.entries(route.query).filter((pair): pair is [string, string] => typeof pair[1] === 'string'))

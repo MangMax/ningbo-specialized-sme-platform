@@ -11,7 +11,7 @@ import { platformReconcileCapture } from './target-schema'
 import { captureReconcileSlot, RECONCILE_SLOT_T04, RECONCILE_SLOT_COMPLETION, slotFallbackColumns, type SlotInput, type SlotBytes, type ReconcileSlotCapture } from './frozen/reconcile-slot-capture'
 import { sourceFieldComparison } from './frozen/source-extraction'
 import { rowSnapshot, schemaHash } from '../lib/platform/sqlite-row-cells'
-import { requireLegacyProvenanceReady } from '../lib/platform/legacy-provenance-catalog'
+import { requireLegacyProvenanceReady } from './legacy-provenance-catalog'
 import { manifest, withFrozenSource, fileHash } from './collections'
 import { hasReconcileSlotCapture, requireReconcileSlotSchema } from './reconcile-slot-schema'
 

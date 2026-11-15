@@ -1,9 +1,11 @@
+import { applyMaterialization } from './apply-materialization';
+import { processMaterialization } from './process-materialization';
 import { ensureProcessStoredReady } from './process-stored-catalog';
 import { reconcileSlotWriteInstalled,verifyReconcileSlot } from './reconcile-slot-write';
 import { verifyWitnessCollection,verifyWitnessObservation } from './recognized-witness-write';
 import { verifyCandidateObservation } from './candidate-scope-write';
 import Database from 'better-sqlite3';
-import { verifyFingerprint,FingerprintVerificationError } from './fingerprint-verifier';
+import { verifyFingerprint,FingerprintVerificationError,withFingerprintVerificationSnapshot } from './fingerprint-verifier';
 import { bootstrapFingerprint } from './fingerprint-bootstrap';
 import { requireCaptureForeignKeys } from './fingerprint-capture';
 import { isDeepStrictEqual } from 'node:util';
@@ -159,7 +161,10 @@ export function targetReplaySource<S extends Record<string, unknown>>(tx: Better
             if ((values.sourceText ?? null) !== sourceText)
                 throw new PlatformProjectionError('projection_source_drift', 'Original source text differs');
             // Original command bytes remain authenticated separately from the stored key.
-            const originalKey = commandOriginal && collection.interface === 'business_list' && true ? optionalString(values.relationKey) : values.relationKey;
+            const originalKey = commandOriginal && collection.interface === 'apply_list'
+                ? applyMaterialization(tx,values,rawText).sourceRelationKey
+                : commandOriginal && collection.interface === 'business_list'
+                    ? processMaterialization(tx,values,rawText).sourceRelationKey : values.relationKey;
             if (platformObservationPayload({ interface: collection.interface, relationKey: originalKey, rawFields: values.rawFields }) !== platformObservationPayload({ interface: collection.interface, relationKey: o.sourceRelationKey, rawFields }))
                 throw new PlatformProjectionError('projection_source_drift', 'Original observation archive differs');
             // The typed row owns original position/key; archive data only supplies payload assertions.
@@ -195,7 +200,7 @@ export type CollectionTargetCommand = NewCollectionTargetCommand;
 export function writeCollectionTarget<S extends Record<string, unknown>>(db: BetterSQLite3Database<S>, input: CollectionTargetCommand) {
     requireCaptureForeignKeys(db);
     const sqlite = replayConnection(db);
-    return db.transaction(tx => {
+    return withFingerprintVerificationSnapshot(sqlite, () => db.transaction(tx => {
         ensureProcessStoredReady(sqlite);
         reconcileSlotWriteInstalled(sqlite);
         const q = originalQuery(input.queryText);
@@ -234,7 +239,13 @@ export function writeCollectionTarget<S extends Record<string, unknown>>(db: Bet
         if (!collection) {
             if (q.reuseExisting)
                 reject('platform_query', 'query:0', 'query_reuse_missing', 'No original collection exists at these coordinates', 'reuseExisting');
-            return { ...writeNewCollectionTarget(tx, input), reused: false };
+            try {
+                return { ...writeNewCollectionTarget(tx, input), reused: false };
+            } catch (error) {
+                if (error instanceof Error && ['apply_projection_conflict', 'business_projection_conflict', 'recognized_projection_conflict', 'platform_content_hash_conflict', 'projection_rule_conflict'].includes(error.message))
+                    reject('platform_query', 'query:0', error.message, error.message, 'relations');
+                throw error;
+            }
         }
         const actual = plannedCollection?.id === collection.id && planned ? planned : targetReplaySource(tx, sqlite, collection, 'after_assertions');
         const { source, alias, ref, observations } = actual;
@@ -297,5 +308,5 @@ export function writeCollectionTarget<S extends Record<string, unknown>>(db: Bet
         return { collectionId: collection.id, queryAlias: alias.oldId, observations: reused, reused: true,
             item: { ok: true, kind: 'platform_query', ref, detail: { relations: [], skipped: new Set((q.relations ?? []).map(r => r.sequenceNo)).size, canonicalProjection, rowsWritten: 0, reuseExisting: true } } satisfies RosterImportItemResult,
         };
-    });
+    }));
 }

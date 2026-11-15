@@ -6,7 +6,7 @@ import { targetSchema as s } from '../../lib/platform/target-schema'
 import { sqliteConnection } from '../../lib/platform/target-connection'
 import { targetReplaySource, writeCollectionTarget, CollectionReplayError } from '../../lib/platform/collection-target-replay'
 import { readDifferenceCollection } from '../../lib/platform/difference-sources'
-import { verifyFingerprint, legacyFingerprintInput, FingerprintVerificationError } from '../../lib/platform/fingerprint-verifier'
+import { verifyFingerprint, legacyFingerprintInput, FingerprintVerificationError, withFingerprintVerificationSnapshot } from '../../lib/platform/fingerprint-verifier'
 import { bootstrapFingerprint } from '../../lib/platform/fingerprint-bootstrap'
 import { RELATION_DECLARE_KIND_ORDER } from '../../lib/labels'
 import { normalizeUscc } from '../../lib/domain'
@@ -125,6 +125,9 @@ export function collectionImportPreview(db: Executor, relationId: number) {
   return { ...state, ...(fields ? { recognizedProjection: fields } : {}) }
 }
 export function writeImportedCollection(db: Executor, query: RosterImportPlatformQuery, batchId?: number): RosterImportItemResult {
+  return withFingerprintVerificationSnapshot(sqliteConnection(db), () => writeImportedCollectionInSnapshot(db, query, batchId))
+}
+function writeImportedCollectionInSnapshot(db: Executor, query: RosterImportPlatformQuery, batchId?: number): RosterImportItemResult {
   // Resolve command attribution once at the import boundary. Source fields remain
   // unchanged; later writes addressed to a historical identity use its current owner.
   query = { ...query, relations: query.relations?.map(row => typeof row.enterpriseId === 'number'

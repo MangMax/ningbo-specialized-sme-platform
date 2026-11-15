@@ -6,6 +6,7 @@
 - Keep business databases, source documents, uploaded files, and credentials outside Git commits.
 - For Vue UI changes, reuse the existing shared components and verify affected interactions on desktop and at 390px. Retain successful results when a later request fails, and provide an explicit retry.
 - Keep architectural decisions in `docs/adr/` and agent instructions in `AGENTS.md`, `docs/agents/`, or `.agents/`. Track specifications, plans, progress, reviews and follow-up work in GitHub Issues; keep generated reports, screenshots and logs outside Git.
+- For test changes, follow [test ownership and execution conventions](docs/agents/testing.md).
 
 ## Agent skills
 

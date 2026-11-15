@@ -9,6 +9,7 @@ import { reconcileSlotWriteInstalled, selectedReconcileCollectionInput, selected
 import { RECONCILE_SLOT_RULE, slotLegacyRow, slotPayloadRow } from '../../lib/platform/reconcile-slot-capture'
 import { platformNormalizationConflict } from '../../lib/platform/normalization'
 import { targetReplaySource } from '../../lib/platform/collection-target-replay'
+import { withFingerprintVerificationSnapshot } from '../../lib/platform/fingerprint-verifier'
 import { snapshotStoredReplayInput } from '../../lib/platform/reconcile-replay-input'
 import type { ReconcileQueryEvidence } from '../../lib/platform/reconcile'
 import type { StoredSlot, ReconcileRunOptions } from './platform-reconcile'
@@ -56,7 +57,7 @@ export function createReconcileTargetSlotReader(connection: Database.Database): 
   return {
     assertConnection,
     read(db, queryKey, cutoffIso) {
-      return db.transaction(tx => {
+      return withFingerprintVerificationSnapshot(connection, () => db.transaction(tx => {
         assertConnection(tx)
         const target = drizzle(connection), c = s.platformCollection, a = s.platformLegacyQueryAlias
         const candidates = target.select({ collection: c, id: a.oldId }).from(c)
@@ -118,7 +119,7 @@ export function createReconcileTargetSlotReader(connection: Database.Database): 
           })
         }
         return result
-      })
+      }))
     },
   }
 }
