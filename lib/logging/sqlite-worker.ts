@@ -57,7 +57,8 @@ function open() {
     try { if(readSync(fd,header,0,100,0)!==100 || header.readUInt32BE(68)!==1163283527) throw new Error('foreign_database') }
     finally { closeSync(fd) }
   }
-  db = new Database(path, { timeout: 100 })
+  // Allow ordinary peer commits within the service drain budget; no replay of writes.
+  db = new Database(path, { timeout: 500 })
   // Fail closed on an unrelated existing SQLite, including a symlink to a business database.
   const owner = db.pragma('application_id', { simple:true })
   if (existed && owner !== 1163283527) throw new Error('foreign_database')
@@ -124,6 +125,7 @@ function where(filter) {
   return { sql: terms.join(' AND '), params }
 }
 function execute(action, data) {
+  if (action === 'close') { db?.close(); db=undefined; initialized=false; stdout?.close(); return null }
   open()
   if (action === 'policy' && !data) {
     // A deferred read transaction pins all database fields to one committed
@@ -232,7 +234,6 @@ function execute(action, data) {
     return { deleted:n, hasMore:!!db.prepare('SELECT 1 FROM log_events WHERE ' + f.sql + ' LIMIT 1').get(...f.params) }
   }
   if (action === 'maintain') { maintain(); return null }
-  if (action === 'close') { db.close(); db=undefined; initialized=false; stdout?.close(); return null }
   throw new Error('unsupported')
 }
 parentPort.on('message', ({id,action,data,time}) => {
