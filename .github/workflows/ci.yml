@@ -21,11 +21,10 @@ jobs:
     name: 确定回归测试范围
     runs-on: ubuntu-latest
     outputs:
-      upgrade: ${{ steps.select.outputs.upgrade }}
       native: ${{ steps.select.outputs.native }}
       app: ${{ steps.select.outputs.app }}
-      ttl: ${{ steps.select.outputs.ttl }}
-      watcher: ${{ steps.select.outputs.watcher }}
+      native_count: ${{ steps.select.outputs.native_count }}
+      app_count: ${{ steps.select.outputs.app_count }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
@@ -36,24 +35,11 @@ jobs:
           EVENT: ${{ github.event_name }}
           BASE: ${{ github.event.pull_request.base.sha }}
         run: |
-          watcher=1
-          ttl=1
-          upgrade=true
+          : > changed-paths.txt
           if [ "$EVENT" = pull_request ]; then
-            git diff --name-only "$BASE" HEAD > changed-paths.txt
-            watcher=0
-            if grep -qE "^(nuxt.config|package.json$|pnpm-lock.yaml$|vitest.config|tests/runtime/development/|tests/support/|scripts/(business-test-groups|select-upgrade-tests)|.github/workflows/)" changed-paths.txt; then watcher=1; fi
-            ttl=0
-            if grep -qE "^(server/utils/.*(evidence|snapshot)|server/api/roster/|server/mcp/|tests/roster/official-evidence/|tests/support/|scripts/(business-test-groups|select-upgrade-tests)|vitest.config|.github/workflows/)" changed-paths.txt; then ttl=1; fi
-            upgrade=$(node scripts/select-upgrade-tests.mjs changed-paths.txt)
+            git diff --name-only --no-renames "$BASE" HEAD > changed-paths.txt
           fi
-          node scripts/business-test-groups.mjs matrix "$upgrade" > business-matrix.json
-          TTL="$ttl" WATCHER="$watcher" node --input-type=module -e 'import fs from "node:fs"; const m=JSON.parse(fs.readFileSync("business-matrix.json")); if(process.env.TTL==="1")m.app.push({group:"深度测试 · 名录 · 快照真实过期",project:"expiry"}); if(process.env.WATCHER==="1")m.app.push({group:"深度测试 · 运行环境 · 开发服务热更新",project:"watcher"}); for(const k of ["native","app"]) fs.appendFileSync(process.env.GITHUB_OUTPUT,`${k}=${JSON.stringify({include:m[k]})}\n`)'
-          echo "watcher=$watcher" >> "$GITHUB_OUTPUT"
-          echo "Development watcher coverage: $watcher (configuration/dependency paths or full run)." >> "$GITHUB_STEP_SUMMARY"
-          echo "ttl=$ttl" >> "$GITHUB_OUTPUT"
-          echo "upgrade=$upgrade" >> "$GITHUB_OUTPUT"
-          echo "Historical upgrade coverage: $upgrade. Runtime and app always run; main, nightly and manual runs require all projects." >> "$GITHUB_STEP_SUMMARY"
+          node scripts/select-business-tests.mjs changed-paths.txt
 
   compile:
     name: 类型与静态规则检查
@@ -122,6 +108,7 @@ jobs:
 
   native:
     needs: coverage
+    if: needs.coverage.outputs.native_count != '0'
     name: ${{ matrix.group }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -171,6 +158,7 @@ jobs:
 
   app:
     needs: [build, coverage, discovery]
+    if: needs.coverage.outputs.app_count != '0'
     name: ${{ matrix.group }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -259,4 +247,12 @@ jobs:
           COVERAGE_RESULT: ${{ needs.coverage.result }}
           NATIVE_RESULT: ${{ needs.native.result }}
           APP_RESULT: ${{ needs.app.result }}
-        run: test "$DISCOVERY_RESULT" = success && test "$COMPILE_RESULT" = success && test "$BUILD_RESULT" = success && test "$COVERAGE_RESULT" = success && test "$NATIVE_RESULT" = success && test "$APP_RESULT" = success
+          NATIVE_COUNT: ${{ needs.coverage.outputs.native_count }}
+          APP_COUNT: ${{ needs.coverage.outputs.app_count }}
+        run: |
+          test "$DISCOVERY_RESULT" = success
+          test "$COMPILE_RESULT" = success
+          test "$BUILD_RESULT" = success
+          test "$COVERAGE_RESULT" = success
+          if [ "$NATIVE_COUNT" = 0 ]; then test "$NATIVE_RESULT" = skipped; else test "$NATIVE_RESULT" = success; fi
+          if [ "$APP_COUNT" = 0 ]; then test "$APP_RESULT" = skipped; else test "$APP_RESULT" = success; fi
