@@ -551,13 +551,13 @@ it.each(strictInvalid399)('399 raw strict rejection $case', async ({ args }) => 
   expect(body).toMatchObject({ jsonrpc: '2.0', id: 399, error: { code: -32602 } })
   expect(body).not.toHaveProperty('result')
 })
-it('399 raw valid opt-in boundaries and domain cursor dispatch', async () => {
+it('raw valid opt-in boundaries and domain cursor dispatch', async () => {
   const { officialEvidenceRpcError } = await import('../../../server/utils/official-evidence-read')
   for (const args of [snapshot399, events399, { ...snapshot399, source: 'redacted_receipt', batchId: undefined, receiptId: 2 }, { ...events399, source: 'private_batch', receiptId: undefined, batchId: 1 }, { ...events399, pageSize: 1, maxBytes: 1 }, { ...events399, pageSize: 50, maxBytes: 65536, itemIndex: Number.MAX_SAFE_INTEGER - 1, oldRecordId: Number.MAX_SAFE_INTEGER, cursor: 'x'.repeat(512) }, { ...events399, cursor: 'not-base64' }, { ...events399, cursor: Buffer.from(JSON.stringify({ source: 'redacted_receipt', sourceId: 2, itemIndex: 0, oldRecordId: 1, afterIndex: 999999 })).toString('base64url') }]) {
     expect(officialEvidenceRpcError(rpc399(args), true)).toBeNull()
   }
 })
-it('399 raw auth precedes legacy strict malformed and batch dispatch', async () => {
+it('raw auth precedes legacy strict malformed and batch dispatch', async () => {
   const { officialEvidenceRpcError } = await import('../../../server/utils/official-evidence-read')
   const { resolveMcpAuth } = await import('../../../server/utils/mcp-auth')
   for (const auth of [{ given: null, configured: 'synthetic-399-mcp' }, { given: 'wrong', configured: 'synthetic-399-mcp' }, { given: 'synthetic-399-mcp', configured: '' }, { given: 'synthetic-399-api', configured: 'synthetic-399-mcp' }]) {
@@ -574,7 +574,7 @@ it('399 raw auth precedes legacy strict malformed and batch dispatch', async () 
   expect(await officialEvidenceRpcError([rpc399({}), invalid], true)!.json()).toMatchObject({ id: 2, error: { code: -32602 } })
   expect(await officialEvidenceRpcError([invalid, rpc399({})], true)!.json()).toMatchObject({ id: 2, error: { code: -32602 } })
 })
-it('399 raw other tools retain their original dispatch and strict opt-in', async () => {
+it('raw other tools retain their original dispatch and strict opt-in', async () => {
   const { officialEvidenceRpcError } = await import('../../../server/utils/official-evidence-read')
   for (const [name, args] of [['get_roster_evidence', { id: 1, legacyIgnored: 1 }], ['get_official_event', { eventId: 1 }], ['list_roster_import_receipts', { batchId: 1, pageSize: 51 }], ['get_roster_import_request', { batchId: 1, maxBytes: 65537 }]] as const) {
     expect(officialEvidenceRpcError({ ...rpc399(args), params: { name, arguments: args } }, false)).toBeNull()
@@ -617,7 +617,7 @@ it.each([...invalidFields399, ...strictInvalid399])('399 handler full schema rej
     expect(f.acquire).not.toHaveBeenCalled(); expect(f.read).not.toHaveBeenCalled()
   } finally { f.restore() }
 })
-it('399 handler preserves accepted selectors undefined normalization and content bytes', async () => {
+it('handler preserves accepted selectors undefined normalization and content bytes', async () => {
   const f = await handler399()
   try {
     for (const [args, expected] of [
@@ -643,7 +643,7 @@ it.each(invalidFields399)('399 SDK field schema rejects legacy $case', async ({ 
   // statically; HTTP/status/result.isError remains a separate UNRUN lane.
   expect((await safeParseAsync(objectFromShape(importItemsReadShape), args)).success).toBe(false)
 })
-it('399 SDK raw shape accepts selector combinations for handler validation', async () => {
+it('SDK raw shape accepts selector combinations for handler validation', async () => {
   const { importItemsReadShape } = await import('../../../server/utils/official-evidence-read')
   const { objectFromShape, safeParseAsync } = await import('@modelcontextprotocol/sdk/server/zod-compat.js')
   for (const args of [{}, { batchId: 1, receiptId: 2 }, { idempotencyKey: '   ' }]) expect((await safeParseAsync(objectFromShape(importItemsReadShape), args)).success).toBe(true)

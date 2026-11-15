@@ -487,7 +487,7 @@ async function ocr310(id: number, text: string) {
   return read.results.map((p: any) => ({ page: p.page, version: p.version }))
 }
 
-it('310 freezes actual file and observed OCR inputs with HTTP MCP parity and preserves formal evidence on drift', async () => {
+it('freezes actual file and observed OCR inputs with HTTP MCP parity and preserves formal evidence on drift', async () => {
   const f = inputFile310()
   const pages = await ocr310(f.id, 'first OCR input')
   const e = db.insert(schema.enterprise).values({ name: '人工确认310', nameNorm: '人工确认310' }).returning().get()
@@ -551,7 +551,7 @@ it('310 freezes actual file and observed OCR inputs with HTTP MCP parity and pre
   expect(await state(f.id)).toEqual(statusSaved.state)
 })
 
-it('310 keeps frozen receipts stable after disk drift and rolls back parse and audit on failure', async () => {
+it('keeps frozen receipts stable after disk drift and rolls back parse and audit on failure', async () => {
   const f = inputFile310()
   const plan = await call('preflight_file_parse_result', { fileId: f.id, kind: 'file' })
   const before = await state(f.id)
@@ -580,7 +580,7 @@ it('310 keeps frozen receipts stable after disk drift and rolls back parse and a
   expect((await http(f.id, 'POST', wrongInput, '/commit')).status).toBe(409)
 })
 
-it('310 exposes frozen contracts and cannot downgrade missing input while retaining explicit legacy unknown', async () => {
+it('exposes frozen contracts and cannot downgrade missing input while retaining explicit legacy unknown', async () => {
   const f = inputFile310()
   const before = await state(f.id)
   const body = write(before.version, '310-no-input', { parts: [part] })
@@ -630,7 +630,7 @@ async function rangePlan669(id: number) {
   expect(response.status).toBe(200)
   return response.json()
 }
-it('669 persists normalized physical ranges with stable declaration identity and immutable replay', async () => {
+it('persists normalized physical ranges with stable declaration identity and immutable replay', async () => {
   const f = rangeFile669()
   const plan = await rangePlan669(f.id)
   const body = { ...write(plan.expectedVersion, '669-create', { parts: [{ ...part, pageRanges: [{ start: 4, end: 4 }, { start: 1, end: 2 }, { start: 2, end: 2 }] }], parseState: 'unparsed' }), inputRef: plan.inputRef }
@@ -644,7 +644,7 @@ it('669 persists normalized physical ranges with stable declaration identity and
   expect((await call('get_file_parse_history', { fileId: f.id, receiptId: saved.receiptId })).after).toEqual(saved.state)
 })
 
-it('669 preserves omitted ranges across coordinate edits clears explicitly and invalidates ABA and withdrawal plans', async () => {
+it('preserves omitted ranges across coordinate edits clears explicitly and invalidates ABA and withdrawal plans', async () => {
   const f = rangeFile669()
   async function commit(key: string, parts: object[], plan?: any) {
     plan ??= await rangePlan669(f.id)
@@ -670,7 +670,7 @@ it('669 preserves omitted ranges across coordinate edits clears explicitly and i
   expect((await call('get_file_parse_history', { fileId: f.id, receiptId: first.receiptId })).after).toEqual(first.state)
 })
 
-it('669 rejects invalid unverified cross-file and removed ranges atomically without inventing OCR lineage', async () => {
+it('rejects invalid unverified cross-file and removed ranges atomically without inventing OCR lineage', async () => {
   const f = rangeFile669()
   const plan = await rangePlan669(f.id)
   expect(plan.inputRef).toMatchObject({ kind: 'file', pages: [], physicalSource: { pageCount: 4 } })
@@ -697,7 +697,7 @@ it('669 rejects invalid unverified cross-file and removed ranges atomically with
   expect((await call('get_file_parse_history', { fileId: other.id })).rows).toEqual([])
 })
 
-it('669 rejects physical content ABA and preserves frozen receipts after source replacement', async () => {
+it('rejects physical content ABA and preserves frozen receipts after source replacement', async () => {
   const f = rangeFile669()
   const plan = await rangePlan669(f.id)
   const body = { ...write(plan.expectedVersion, '669-before-disk-aba', { parts: [{ ...part, pageRanges: [{ start: 1, end: 2 }] }] }), inputRef: plan.inputRef }
@@ -714,7 +714,7 @@ it('669 rejects physical content ABA and preserves frozen receipts after source 
   expect(await state(f.id)).toEqual(saved.state)
 })
 
-it('669 verifies supplied counts edits ranges and keeps omission compatibility without false source rebinding', async () => {
+it('verifies supplied counts edits ranges and keeps omission compatibility without false source rebinding', async () => {
   const f = rangeFile669()
   const plan = await rangePlan669(f.id)
   const fields = { parts: [{ ...part, pageRanges: [{ start: 1, end: 2 }] }], parseState: 'unparsed' }

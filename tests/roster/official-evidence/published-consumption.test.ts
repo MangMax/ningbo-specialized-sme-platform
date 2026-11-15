@@ -413,7 +413,7 @@ it.each([{ case: 'escaped-below', repeats: 48, available: true }, { case: 'escap
   },
 )
 
-it('L303 detail and ledger preserve each published name and original coordinates after filtering', async () => {
+it('detail and ledger preserve each published name and original coordinates after filtering', async () => {
   const { getEnterpriseDetail, allRecords } = await import('../../../lib/query')
   const f = await paired()
   const detail = getEnterpriseDetail(f.db, 1)!
@@ -430,7 +430,7 @@ it('L303 detail and ledger preserve each published name and original coordinates
   }])
 })
 
-it('L303 uncaptured and captured unknown names stay distinct from unavailable', async () => {
+it('uncaptured and captured unknown names stay distinct from unavailable', async () => {
   const { getEnterpriseDetail, allRecords } = await import('../../../lib/query')
   const f = await fixture()
   await f.commit(f.announcement([f.record('specialized_sme', [{ eventType: 'award', year: 2024, batchSeq: 1, evidence: [
@@ -447,7 +447,7 @@ it('L303 uncaptured and captured unknown names stay distinct from unavailable', 
 
 })
 
-it('L303 actual legacy HTTP detail and sync XLSX retain a literal matrix with per-source names', async () => {
+it('actual legacy HTTP detail and sync XLSX retain a literal matrix with per-source names', async () => {
   const f = await paired()
   routeContext.db = f.db
   const { createServer } = await import('node:http')
@@ -478,7 +478,7 @@ it('L303 actual legacy HTTP detail and sync XLSX retain a literal matrix with pe
   expect(sheet.getRow(3).values).toEqual([, '现用名',uscc,'','专精特新中小企业','经信局','认定 2021-1; 复核 2021-1', '2021公布.pdf / 序号1 / 第1页 / 公布名称："2021旧名"; 2024公布.pdf / 序号1 / 第1页 / 公布名称："2024新名"'])
 })
 
-it('L303 ledger batches selected groups and isolates an unavailable group without changing rows', async () => {
+it('ledger batches selected groups and isolates an unavailable group without changing rows', async () => {
   const { allRecords } = await import('../../../lib/query')
   const f = await paired()
   await f.commit(f.announcement([f.record('specialized_sme', [{ eventType: 'award', year: 2024, batchSeq: 1, evidence: [
@@ -497,7 +497,7 @@ it('L303 ledger batches selected groups and isolates an unavailable group withou
   ])
 })
 
-it('L303 large display batches retain names in independently bounded groups', async () => {
+it('large display batches retain names in independently bounded groups', async () => {
   const { allRecords } = await import('../../../lib/query')
   const f = await fixture(), names = ['A'.repeat(1500), 'B'.repeat(1500)]
   await f.commit(f.announcement(names.map((name, index) => f.record('specialized_sme', [{

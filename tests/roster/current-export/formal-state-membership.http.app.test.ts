@@ -15,7 +15,7 @@ const headers409 = [...HEADERS_409,'有效状态','有效期及排除依据','�
 const sheets409 = ['有效企业','已到期','已注销（吊销）','已迁出','未认定','口径说明']
 beforeAll(() => f.start(), 60000)
 afterAll(() => f.close())
-it('X409 canonical termination overrides an independent unresolved subject fact in real Excel', async () => {
+it('canonical termination overrides an independent unresolved subject fact in real Excel', async () => {
   await f.resetBusiness()
   const target = f.candidate(X409.name)
   f.decision(target.enterprise.id, 'deregistered')
@@ -51,7 +51,7 @@ it('X409 canonical termination overrides an independent unresolved subject fact 
   expect(job.result.statusCounts).toEqual({effective:1,expired:1,terminated:1,moved_out:0,unrecognized:0})
 }, 30000)
 
-it('E409 full title exports retain platform failures missing records and unrecognized reviews beyond page one', async () => {
+it('full title exports retain platform failures missing records and unrecognized reviews beyond page one', async () => {
   await f.resetBusiness()
   const titlePaths = {little_giant:'little-giant',specialized_sme:'specialized-sme',innovative_sme:'innovative-sme'} as const
   for (const [title,path] of Object.entries(titlePaths)) {
@@ -92,7 +92,7 @@ it('E409 full title exports retain platform failures missing records and unrecog
   }
 },30000)
 
-it('L409 preserves idempotency rejected filters and authenticated artifact boundaries', async () => {
+it('preserves idempotency rejected filters and authenticated artifact boundaries', async () => {
   const response=await f.submit('L409-dedup'); expect(response.status).toBe(202)
   const id=(await response.json()).jobId
   expect((await (await f.submit('L409-dedup')).json()).jobId).toBe(id)
@@ -102,7 +102,7 @@ it('L409 preserves idempotency rejected filters and authenticated artifact bound
   expect((await fetch(f.url('/api/roster/exports/current/innovative-sme'),{method:'POST',headers:f.headers,body:JSON.stringify({clientRequestId:'L409-dedup'})})).status).toBe(409)
 },30000)
 
-it('B409 separates formal title states and exhausts 201 public query and Excel members', async () => {
+it('separates formal title states and exhausts 201 public query and Excel members', async () => {
   await f.resetBusiness()
   const stable = f.candidate(B409.name, B409.award.map(event => ({ ...event })), 'little_giant')
   f.addRecord(stable.enterprise.id, B409.name, B409.pending.map(event => ({ ...event })), 'specialized_sme')

@@ -751,7 +751,7 @@ describe("complete authority bindings", () => {
       expect(JSON.stringify(i)).toBe(before)
     }
   })
-  it('issue433_set_order_and_multiplicity', () => {
+  it('set_order_and_multiplicity', () => {
     for (const names of [['issue433_two_unknown_grants','issue433_unknown_grants_reverse'],['issue433_tied_latest_awards','issue433_direct_award_order']]) {
       const fixtures=names.map(name=>issue433Cases.find(c=>c.name===name)!)
       expect(fixtures[0]!.expected).toEqual(fixtures[1]!.expected)
@@ -760,7 +760,7 @@ describe("complete authority bindings", () => {
     const f=issue433Cases.find(c=>c.name==='issue433_duplicate_binding')!
     expect(()=>comparePlatformComparison(f.input)).toThrow(new Error('invalid_cycle_join'))
   })
-  it('issue433_legal_40_and_rejected_41_cycles', () => {
+  it('legal_40_and_rejected_41_cycles', () => {
     const i=structuredClone(issue433Cases.find(c=>c.name==='issue433_two_known_batches')!.input)
     const a=i.formal.assessment, binding=i.formal.cycles[0]!, event=a.evidence[0]!, source=a.sourceVersions[0]!
     i.formal.cycles=[];a.cycles=[];a.evidence=[];a.sourceVersions=[]
@@ -774,28 +774,28 @@ describe("complete authority bindings", () => {
     i.formal.cycles.push(structuredClone(i.formal.cycles[0]!));a.cycles.push(structuredClone(a.cycles[0]!))
     expect(()=>comparePlatformComparison(seal(i))).toThrow(new Error('invalid_cycle_join'))
   })
-  it('issue433_null_anchor_requires_direct_members', () => {
+  it('null_anchor_requires_direct_members', () => {
     const i=structuredClone(issue433Cases.find(c=>c.name==='issue433_failed_only_null_anchor')!.input)
     i.formal.cycles[0]!.eventIds=[]
     expect(()=>comparePlatformComparison(i)).toThrow(new Error('invalid_cycle_event'))
   })
-  for(const kind of ['nurture','without_evidence'] as const)it('issue433_nonformal_direct_'+kind,()=>{
+  for(const kind of ['nurture','without_evidence'] as const)it('nonformal_direct_'+kind,()=>{
     const i=structuredClone(issue433Cases.find(c=>c.name==='issue433_latest_award_only')!.input),e=i.formal.assessment.evidence[0]!
     i.formal.assessment.evidence.push({...e,eventId:99,eventType:kind==='nurture'?'nurture':'award',evidenceIds:kind==='nurture'?[199]:[]})
     i.formal.cycles[0]!.eventIds.push(99)
     expect(()=>comparePlatformComparison(seal(i))).toThrow(new Error('invalid_cycle_event'))
   })
-  it('issue433_legacy_error_precedes_binding_error',()=>{
+  it('legacy_error_precedes_binding_error',()=>{
     const i=structuredClone(issue433Cases.find(c=>c.name==='issue433_coarse_unknown_bucket')!.input)
     i.legacy.snapshotId='invalid'
     expect(()=>comparePlatformComparison(i)).toThrow(new Error('invalid_legacy_snapshot'))
   })
-  it('issue433_anchor_error_precedes_incomplete_set',()=>{
+  it('anchor_error_precedes_incomplete_set',()=>{
     const i=structuredClone(issue433Cases.find(c=>c.name==='issue433_missing_old_direct_event')!.input)
     i.formal.cycles[0]!.judgment.anchor!.decidedYear=2023
     expect(()=>comparePlatformComparison(i)).toThrow(new Error('invalid_cycle_anchor'))
   })
-  it('issue433_dependency_source_cannot_borrow_other_event',()=>{
+  it('dependency_source_cannot_borrow_other_event',()=>{
     const i=structuredClone(issue433Cases.find(c=>c.name==='issue433_resolved_ambiguous_dependency')!.input)
     i.formal.assessment.sourceVersions[1]!.eventId=999
     const result=comparePlatformComparison(seal(i))
@@ -806,7 +806,7 @@ describe("complete authority bindings", () => {
 // PR434 F1: invalid provided sources must remain blockers after refs filtering.
 describe("provided source ownership", () => {
   for (const eventId of [21, 24, 999]) for (const sourceHash of [null, aHash]) {
-    it(`issue433_source_owner_${eventId}_${sourceHash === null ? 'null' : 'valid'}`, () => {
+    it(`source_owner_${eventId}_${sourceHash === null ? 'null' : 'valid'}`, () => {
       const i = structuredClone(issue433Cases.find(c => c.name === 'issue433_latest_award_only')!.input)
       i.queries = structuredClone(z().queries)
       const source = i.formal.assessment.sourceVersions.find(s => s.evidenceId === 124)!

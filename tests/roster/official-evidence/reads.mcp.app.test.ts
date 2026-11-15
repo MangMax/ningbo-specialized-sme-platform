@@ -163,7 +163,7 @@ it('enforces the 300 and 301 event source boundary over real HTTP and MCP withou
 
 // #399: Nuxt dev + fetch regressions. Added for the parent's heavy lane;
 // these are not compiled-server/SDK-client evidence and are UNRUN in this change.
-it('399 transport legacy SDK field errors retain HTTP200 tool results', async () => {
+it('transport legacy SDK field errors retain HTTP200 tool results', async () => {
   for (const args of [{ batchId: 1, page: 0 }, { batchId: 1, page: 1000001 }, { batchId: 1, pageSize: 0 }, { batchId: 1, pageSize: 51 }, { batchId: 1, pageSize: 2.5 }, { batchId: null }, { batchId: '1' }, { batchId: 1, pageSize: null }, { batchId: 1, pageSize: true }]) {
     const result = await rpc('list_roster_import_items', args)
     expect(result.status).toBe(200)
@@ -173,14 +173,14 @@ it('399 transport legacy SDK field errors retain HTTP200 tool results', async ()
     expect(tool.content).toEqual([{ type: 'text', text: expect.stringContaining('Input validation error: Invalid arguments for tool list_roster_import_items:') }])
   }
 })
-it('399 transport legacy selectors retain original domain error results', async () => {
+it('transport legacy selectors retain original domain error results', async () => {
   for (const [args, message] of [[{}, 'Supply exactly one batchId, idempotencyKey or receiptId'], [{ batchId: 1, receiptId: 2 }, 'Supply exactly one batchId, idempotencyKey or receiptId'], [{ idempotencyKey: '   ' }, 'Invalid idempotencyKey']] as const) {
     const result = await rpc('list_roster_import_items', args)
     expect(result.status).toBe(200); expect(result.body).not.toHaveProperty('error')
     expect(rpcValue(result)).toEqual({ isError: true, body: { error: { code: 'invalid_query', message } } })
   }
 })
-it('399 transport auth and opt-in errors keep top-level envelopes', async () => {
+it('transport auth and opt-in errors keep top-level envelopes', async () => {
   for (const token of [null, 'wrong-399-token', apiToken]) {
     for (const args of [{ batchId: 1, pageSize: 51 }, {}, { projection: 'snapshot', source: 'private_batch', batchId: 1 }]) {
       const result = await rpc('list_roster_import_items', args, token)
@@ -192,7 +192,7 @@ it('399 transport auth and opt-in errors keep top-level envelopes', async () => 
     expect(result.status).toBe(400); expect(result.body).toMatchObject({ error: { code: -32602 } }); expect(result.body).not.toHaveProperty('result')
   }
 })
-it('399 transport three legacy selectors and explicit defaults preserve content bytes', async () => {
+it('transport three legacy selectors and explicit defaults preserve content bytes', async () => {
   // Reuse the existing public command/lifecycle without consuming the six
   // historical official-capture seed identities or changing their oracle.
   const key = '399-legacy-normal'
@@ -209,7 +209,7 @@ it('399 transport three legacy selectors and explicit defaults preserve content 
     expect(rpcValue(result)).toEqual({ isError: false, body: rest.body })
   }
 })
-it('399 transport other legacy receipt tools retain SDK field errors', async () => {
+it('transport other legacy receipt tools retain SDK field errors', async () => {
   for (const args of [{ batchId: 1, page: 0 }, { batchId: 1, page: 1000001 }, { batchId: 1, pageSize: 0 }, { batchId: 1, pageSize: 51 }, { batchId: 1, pageSize: 2.5 }]) {
     const result = await rpc('list_roster_import_receipts', args)
     expect(result.status).toBe(200); expect(result.body).not.toHaveProperty('error'); expect(rpcResult.parse(result.body).result.isError).toBe(true)

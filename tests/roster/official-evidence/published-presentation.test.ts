@@ -490,7 +490,7 @@ function secrets391(db: ReturnType<typeof fixture391>['db']) {
   closes.push(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs() })
 }
 
-it('391 factory_union_order preserves the complete context runtime env and credential set', () => {
+it('factory_union_order preserves the complete context runtime env and credential set', () => {
   const f = fixture391(); secrets391(f.db)
   const credentials = vi.spyOn(credentialState, 'resolveCredential')
   const redact = receiptRedaction.importReceiptRedactor(f.db, { additionalSecrets: ['cx391-only-A7mN5p9Q', null, '', 'cx391-only-A7mN5p9Q'] })
@@ -512,7 +512,7 @@ it('391 factory_union_order preserves the complete context runtime env and crede
   expect(Object.isFrozen(redact.knownRedactors)).toBe(true)
 })
 
-it('391 factory_default_compatibility keeps omitted and empty options equivalent without request cache', () => {
+it('factory_default_compatibility keeps omitted and empty options equivalent without request cache', () => {
   const f = fixture391(); secrets391(f.db)
   const input = { name: 'rt391-api-distinct saved391-cookie-distinct', raw: '{"password":"value","name":"env391-mcp-distinct"}' }
   const expected = { name: '[REDACTED] [REDACTED]', raw: '{"password":"[REDACTED]","name":"[REDACTED]"}' }
@@ -542,7 +542,7 @@ it.each([0, 1, 40, 41, 81])('391 batch_distinct reads all %i events in bounded c
   for (const call of pages.mock.calls) { expect(call[0]).toBe(f.db); expect(call[2]).toEqual({ pageSize: 50, maxBytes: 65536 }) }
 })
 
-it('391 active_cursor_waves shares one callback and only continues active events', () => {
+it('active_cursor_waves shares one callback and only continues active events', () => {
   const f = fixture391(); f.event(1); f.event(2)
   for (let i = 1; i <= 51; i++) f.capture(i, 1, 'cx391-only-A7mN5p9Q')
   f.capture(52, 2, null)
@@ -553,7 +553,7 @@ it('391 active_cursor_waves shares one callback and only continues active events
   expect(pages.mock.calls.map(call => call[1])).toEqual([[{ eventId: 1 }, { eventId: 2 }], [{ eventId: 1, afterEvidenceId: 50 }]])
 })
 
-it('391 event_scope_300_301 checks all legacy evidence beyond selected captures', () => {
+it('event_scope_300_301 checks all legacy evidence beyond selected captures', () => {
   const f = fixture391(); f.event(1); f.capture(1)
   for (let i = 2; i <= 300; i++) f.evidence(i)
   expect([...readOfficialPublishedPresentation(f.db, [{ eventId: 1, evidenceId: 1 }]).values()]).toEqual([literal391(1)])
@@ -561,7 +561,7 @@ it('391 event_scope_300_301 checks all legacy evidence beyond selected captures'
   expect(readPublicPublishedNames(f.db, [{ eventId: 1, evidenceId: 1 }])).toEqual({ availability: 'unavailable', error: 'source_limit', facts: [] })
 })
 
-it('391 latest_origin_owner retains latest raw-only values after owner links disappear', () => {
+it('latest_origin_owner retains latest raw-only values after owner links disappear', () => {
   const f = fixture391(); f.event(1); f.capture(1, 1, 'K-old'); f.capture(1, 1, 'K-new', 2); f.capture(1, 1, null, 3)
   f.sqlite.pragma('foreign_keys=OFF'); f.sqlite.prepare('DELETE FROM enterprise WHERE id=1').run()
   expect([...readOfficialPublishedPresentation(f.db, f.selected()).values()]).toEqual([literal391(1, 1, null, 3)])
@@ -578,7 +578,7 @@ it.each(['path', 'name_raw', 'actor'] as const)('391 unselected_full_field_gate 
   expect(() => readOfficialPublishedPresentation(f.db, [{ eventId: 1, evidenceId: 1 }])).toThrow('field_limit')
 })
 
-it('391 earlier_later_error_order prefers an earlier second-page field error', () => {
+it('earlier_later_error_order prefers an earlier second-page field error', () => {
   const f = fixture391(); f.event(1); f.event(2)
   for (let i = 1; i <= 51; i++) f.capture(i)
   f.sqlite.prepare('UPDATE official_evidence_row_revision SET path=? WHERE evidence_id=51').run('x'.repeat(4001))
@@ -588,7 +588,7 @@ it('391 earlier_later_error_order prefers an earlier second-page field error', (
   expect(pages.mock.calls.map(call => call[1])).toEqual([[{ eventId: 1 }, { eventId: 2 }], [{ eventId: 1, afterEvidenceId: 50 }]])
 })
 
-it('391 prefix_budget_error_order keeps earlier fact overflow ahead of a later page error', () => {
+it('prefix_budget_error_order keeps earlier fact overflow ahead of a later page error', () => {
   const f = fixture391(); f.event(1)
   for (let i = 1; i <= 51; i++) f.capture(i, 1, i <= 50 ? 'Q7 '.repeat(120) : 'last')
   f.sqlite.prepare('UPDATE official_evidence_row_revision SET path=? WHERE evidence_id=51').run('x'.repeat(4001))
@@ -596,7 +596,7 @@ it('391 prefix_budget_error_order keeps earlier fact overflow ahead of a later p
   expect(() => readOfficialPublishedPresentation(f.db, f.selected(), redact)).toThrow('response_limit')
 })
 
-it('391 late_batch_atomicity never publishes forty successful facts when event forty-one fails', () => {
+it('late_batch_atomicity never publishes forty successful facts when event forty-one fails', () => {
   const f = fixture391()
   for (let i = 1; i <= 41; i++) { f.event(i); f.capture(i, i) }
   f.sqlite.prepare('UPDATE official_evidence_row_revision SET path=? WHERE evidence_id=41').run('x'.repeat(4001))
@@ -605,7 +605,7 @@ it('391 late_batch_atomicity never publishes forty successful facts when event f
   expect(pages).toHaveBeenCalledTimes(2)
 })
 
-it('391 callback_failure_atomicity returns only a safe failure without partial facts', () => {
+it('callback_failure_atomicity returns only a safe failure without partial facts', () => {
   const f = fixture391(); f.event(1); f.capture(1); f.capture(2)
   const real = receiptRedaction.importReceiptRedactor(f.db)
   const callback = Object.assign(vi.fn((value: unknown, mode?: receiptRedaction.ReceiptRedactionMode) => { if ((value as { evidenceId: number }).evidenceId === 2) throw new Error('private SQL context391'); return real(value, mode) }), { knownRedactors: real.knownRedactors })
@@ -613,7 +613,7 @@ it('391 callback_failure_atomicity returns only a safe failure without partial f
   expect(callback).toHaveBeenCalledTimes(2)
 })
 
-it('391 caller_snapshot retains one snapshot across cursor waves and an independent commit', () => {
+it('caller_snapshot retains one snapshot across cursor waves and an independent commit', () => {
   const dir = mkdtempSync('/tmp/391-snapshot-'), f = fixture391(join(dir, 'own.sqlite'))
   f.sqlite.pragma('journal_mode=WAL'); f.event(1)
   for (let i = 1; i <= 51; i++) f.capture(i, 1, 'before')
@@ -655,7 +655,7 @@ it.each([65535, 65536, 65537])('391 final_current_bytes gates %i after context e
   expect(redact).toHaveBeenCalledTimes(3)
 })
 
-it('391 dto_text_bytes uses exact final escaped text boundaries including sixteen KiB', () => {
+it('dto_text_bytes uses exact final escaped text boundaries including sixteen KiB', () => {
   const fact = literal391(1, 1, '"\u0000🙂')
   const overhead = Buffer.byteLength(JSON.stringify([fact])) + 4
   expect(() => assertOfficialPublishedBudget([fact], ['x'.repeat(16384 - overhead)])).not.toThrow()
@@ -663,7 +663,7 @@ it('391 dto_text_bytes uses exact final escaped text boundaries including sixtee
   expect(() => assertOfficialPublishedBudget([fact], ['x'.repeat(65537 - overhead)])).toThrow('response_limit')
 })
 
-it('391 default_consumers preserve full secrets and qualifier inputs in detail current and workbook formatting', () => {
+it('default_consumers preserve full secrets and qualifier inputs in detail current and workbook formatting', () => {
   const f = fixture391(); secrets391(f.db); f.event(1)
   f.capture(1, 1, 'rt391-api-distinct env391-api-distinct saved391-cookie-distinct saved391-ocr-distinct')
   const before = JSON.stringify(readCurrentCandidate(f.sqlite, 1, 'specialized_sme', qualificationYear, executionTime))

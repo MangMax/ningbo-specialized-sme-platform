@@ -405,7 +405,7 @@ it('detail_snapshot_scope_and_field_gaps_407', () => {
 })
 
 
-it('427 explicit_prior_versions_preserve_frozen_legacy_and_current_consumers_share_default_without_core', async () => {
+it('explicit_prior_versions_preserve_frozen_legacy_and_current_consumers_share_default_without_core', async () => {
   const core = await import('../../../lib/roster/platform-comparison')
   const { createCurrentQualificationAssessmentReader } = await import('../../../lib/roster/current-qualification')
   const spy = vi.spyOn(core, 'comparePlatformComparison')

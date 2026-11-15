@@ -15,7 +15,7 @@ const finished = () => {
   return { promise: new Promise<{ finished: true }>(r => { resolve = r }), finish: () => resolve({ finished: true }) }
 }
 
-describe('445 independent runtime literals', () => {
+describe('independent runtime literals', () => {
   it('R_native_fixture_reopen_preserves_completion_and_rows', async () => {
     const { mkdtemp, rm } = await import('node:fs/promises')
     const { tmpdir } = await import('node:os')
@@ -171,7 +171,7 @@ describe.skipIf(!['control', 'baseline-red'].includes(process.env.ISSUE445_PHASE
 
 // Additional independent negatives. Original 12 test bodies/expectations above
 // remain byte-for-byte unchanged; no earlier PASS/FAIL is relabelled.
-describe('445 bridge helper negatives', () => {
+describe('bridge helper negatives', () => {
   it('N_failed_late_unknown_does_not_resolve_receipt', async () => {
     const runtime = createSessionRuntime(), owner = {}, event = {}
     runtime.claim(owner, () => event, 'owned')
