@@ -1,4 +1,4 @@
-import { finalEvidenceFixture } from '../fixtures/completed-upgrade'
+import { finalEvidenceFromSource } from '../fixtures/completed-upgrade'
 import { readPlatformQueryEvidence as readLegacyEvidence } from '../oracles/legacy-evidence'
 import Database from 'better-sqlite3'
 import {execFileSync} from 'node:child_process'
@@ -118,7 +118,7 @@ it('transfers a normally empty target copy without manufacturing correspondence 
  }finally{empty.close()}
 })
 it('reads original evidence and display without source receipt proof while preserving missing and uncaptured facts',async()=>{
- const native=finalEvidenceFixture(await processReaderFixture())
+ const native=finalEvidenceFromSource(f.root,f.legacySource)
  const selections=[1,7,8].map(relationId=>({relationId}))
  try{
   const before=readTargetRelationEvidenceDisplay(native.db,selections)
