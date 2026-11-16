@@ -173,3 +173,13 @@ it('R3 independent failed review cycle cannot recover through pass without a new
  ],'little_giant')
  expect(read(c.enterprise.id,'2026-06-02').group).toBe('excluded')
 })
+it('a new 2023 grant and its 2025 renewal survive a 2022 failure even with coarse shared coordinates',()=>{
+ const c=f.candidate('new grant renewed',[
+  {eventType:'review',year:2018,decidedYear:2022,batchSeq:1,reviewOutcome:'failed'},
+  {eventType:'award',year:2018,decidedYear:2023,batchSeq:1},
+  {eventType:'review',year:2018,decidedYear:2025,batchSeq:1,reviewOutcome:'passed'},
+ ],'little_giant')
+ const actual=read(c.enterprise.id,'2026-06-02')
+ expect(actual.group).toBe('eligible')
+ expect(actual.effectiveQualification!.presentationBasis).toContain('默认年度规则：最近一次认定或复核通过 2025 年 + 3 = 2028 年；自 2028 年起到期（仅年份精度）')
+})

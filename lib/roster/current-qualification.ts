@@ -541,6 +541,7 @@ function createCurrentCandidateEvaluationReader(db: Database.Database, receiptRu
     for (const award of formal) if (award.eventType === 'award' && (
       failure.formalValidity?.originAwardEventId === award.id ||
       !failure.formalValidity?.originAwardEventId && failure.year != null && failure.batchSeq != null && failure.year === award.year && failure.batchSeq === award.batchSeq &&
+      awardTime(award) != null && awardTime(award)! <= failure.decidedYear &&
       formal.filter(e => e.eventType === 'award' && e.year === failure.year && e.batchSeq === failure.batchSeq).length === 1
     )) disposedAwards.add(award.id)
   }
