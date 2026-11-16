@@ -63,7 +63,7 @@ it('formal failure of an older cycle cannot cancel a new award or become a re-aw
  append(c.record.id,{eventType:'award',year:2025,batchSeq:2})
  expect(read(c.enterprise.id,'2026-06-02').group).toBe('eligible')
 })
-it.each([2022,2024])('prior award %s supports unpublished failure only within its own annual period',year=>{
+it.each([2022,2024])('prior award %s remains valid until its linked failure is published',year=>{
  const c=f.candidate('future failed review '+year,[
   {eventType:'award',year,batchSeq:1},
   {eventType:'review',year,decidedYear:2026,batchSeq:1,reviewOutcome:'failed'},
@@ -74,11 +74,11 @@ it.each([2022,2024])('prior award %s supports unpublished failure only within it
  const file=f.db.insert(s.storedFile).values({relPath:'future-failed-review-'+year+'.pdf',filename:'future-failed-review.pdf',ext:'pdf',bytes:1,sha256:'c'.repeat(64)}).returning().get()
  f.db.update(s.recordEvidence).set({sourceFile:file.relPath,page:1}).where(eq(s.recordEvidence.id,evidence.id)).run()
  f.db.update(s.recordEvent).set({formalValidity:{evidenceId:evidence.id,sourceSha256:file.sha256,statementPages:[1],originAwardEventId:award.id,publishedOn:'2026-06-01',continuation:'until_this_review_results'}}).where(eq(s.recordEvent.id,review.id)).run()
- expect(read(c.enterprise.id,'2026-05-31').group).toBe(year===2022?'excluded':'eligible')
+ expect(read(c.enterprise.id,'2026-05-31').group).toBe('eligible')
  expect(read(c.enterprise.id,'2026-06-01').group).toBe('excluded')
  expect(read(c.enterprise.id,'2026-06-02').group).toBe('excluded')
  const reader=createCurrentQualificationAssessmentReader(f.db.$client)
- for(const [day,status] of [['2026-05-31',year===2022?'expired':'effective'],['2026-06-01','expired']] as const){
+ for(const [day,status] of [['2026-05-31','effective'],['2026-06-01','expired']] as const){
   const statuses=f.db.$client.transaction(()=>reader.readEffectiveTitles([c.enterprise.id],Date.parse(day+'T12:00:00Z'),'little_giant'))()
   expect(statuses.get(c.enterprise.id)).toBe(status)
  }
@@ -105,7 +105,7 @@ it('batched effective reads agree with full assessments at literal date boundari
 it('normal review pass supports its period without manufacturing an award',()=>{
  const c=f.candidate('orphan pass',[{eventType:'review',year:2024,decidedYear:2026,batchSeq:1,reviewOutcome:'passed'}],'little_giant')
  expect(read(c.enterprise.id,'2026-06-02').group).toBe('eligible')
- expect(read(c.enterprise.id,'2029-01-01').group).toBe('excluded')
+ expect(read(c.enterprise.id,'2029-01-01').group).toBe('eligible')
 })
 
 it('streamed XLSX retains stable identities source and effective day with the same common decision',async()=>{
@@ -130,15 +130,15 @@ it('failure with unknown original cycle cannot exclude a known award',()=>{
  expect(read(c.enterprise.id,'2026-06-02').group).toBe('eligible')
 })
 
-it('G normal known and unknown batch passes retain the 2025 renewal through 2027',()=>{
+it('normal known and unknown batch passes retain qualification without an age cutoff',()=>{
  const c=f.candidate('G normal passes',[
   {eventType:'review',year:2022,decidedYear:2025,batchSeq:1,reviewOutcome:'passed'},
   {eventType:'review',year:2022,decidedYear:2025,batchSeq:null,reviewOutcome:'passed'},
  ],'little_giant')
  const actual=read(c.enterprise.id,'2026-06-02')
  expect(actual.group).toBe('eligible')
- expect(actual.effectiveQualification!.presentationBasis).toContain('默认年度规则：最近一次认定或复核通过 2025 年 + 3 = 2028 年；自 2028 年起到期（仅年份精度）')
- expect(read(c.enterprise.id,'2028-01-01').group).toBe('excluded')
+ expect(actual.effectiveQualification!.presentationBasis).toContain('小巨人原认定或复核通过资格保留；不按认定年龄自动到期，适用正式期间、同周期失败及已确认处置另行裁定')
+ expect(read(c.enterprise.id,'2028-01-01').group).toBe('eligible')
 })
 it('C same-cycle failure cannot renew the 2018 award through a 2025 pass',()=>{
  const c=f.candidate('C failed pass',[
@@ -155,7 +155,7 @@ it('D independent 2022 cycle pass retains its 2025 period without an award row',
  ],'little_giant')
  const actual=read(c.enterprise.id,'2026-06-02')
  expect(actual.group).toBe('eligible')
- expect(actual.effectiveQualification!.presentationBasis).toContain('默认年度规则：最近一次认定或复核通过 2025 年 + 3 = 2028 年；自 2028 年起到期（仅年份精度）')
+ expect(actual.effectiveQualification!.presentationBasis).toContain('小巨人原认定或复核通过资格保留；不按认定年龄自动到期，适用正式期间、同周期失败及已确认处置另行裁定')
 })
 it('A failed second batch does not cancel the first batch 2025 renewal',()=>{
  const c=f.candidate('A two batches',[
@@ -165,13 +165,13 @@ it('A failed second batch does not cancel the first batch 2025 renewal',()=>{
  ],'little_giant')
  expect(read(c.enterprise.id,'2026-06-02').group).toBe('eligible')
 })
-it('R3 independent failed review cycle cannot recover through pass without a new award',()=>{
+it('an independent failed review cycle does not revoke an unrelated original award',()=>{
  const c=f.candidate('R3 independent failure',[
   {eventType:'award',year:2010,batchSeq:1},
   {eventType:'review',year:2018,decidedYear:2022,batchSeq:1,reviewOutcome:'failed'},
   {eventType:'review',year:2018,decidedYear:2025,batchSeq:1,reviewOutcome:'passed'},
  ],'little_giant')
- expect(read(c.enterprise.id,'2026-06-02').group).toBe('excluded')
+ expect(read(c.enterprise.id,'2026-06-02').group).toBe('eligible')
 })
 it('a new 2023 grant and its 2025 renewal survive a 2022 failure even with coarse shared coordinates',()=>{
  const c=f.candidate('new grant renewed',[
@@ -181,7 +181,7 @@ it('a new 2023 grant and its 2025 renewal survive a 2022 failure even with coars
  ],'little_giant')
  const actual=read(c.enterprise.id,'2026-06-02')
  expect(actual.group).toBe('eligible')
- expect(actual.effectiveQualification!.presentationBasis).toContain('默认年度规则：最近一次认定或复核通过 2025 年 + 3 = 2028 年；自 2028 年起到期（仅年份精度）')
+ expect(actual.effectiveQualification!.presentationBasis).toContain('小巨人原认定或复核通过资格保留；不按认定年龄自动到期，适用正式期间、同周期失败及已确认处置另行裁定')
 })
 it.each([
  {kind:'future-year',grantYear:2027,before:'2026-12-31',effective:'2027-01-01',after:'2027-01-02'},
@@ -256,4 +256,22 @@ it('retains the v4 local-history gate and v3 independence while default inherits
   expect(reader.read(c.enterprise.id,at,{assessmentVersion}).snapshot.titles.map(t=>t.group)).toEqual(['eligible','excluded','excluded'])
  }
  expect(reader.read(c.enterprise.id,at).snapshot.titles.map(t=>t.group)).toEqual(['eligible','eligible','eligible'])
+})
+
+it('retains an old giant award without a passed review and inherits it through the common batch reader',()=>{
+ const c=f.candidate('old giant no review',[{eventType:'award',year:2018,batchSeq:1}],'little_giant')
+ const reader=createCurrentQualificationAssessmentReader(f.db.$client), at=Date.parse('2026-06-02T12:00:00Z')
+ const snapshot=reader.read(c.enterprise.id,at).snapshot
+ expect(snapshot.titles.map(t=>t.group)).toEqual(['eligible','eligible','eligible'])
+ expect(snapshot.titles[0]!.effectiveQualification!.presentationBasis!.join(' ')).not.toContain('2018 年 + 3')
+ const statuses=f.db.$client.transaction(()=>reader.readEffectiveTitles([c.enterprise.id],at,'little_giant'))()
+ expect(statuses.get(c.enterprise.id)).toBe('effective')
+})
+
+it.each(['specialized_sme','innovative_sme'])('still expires an independent %s at business year plus three',title=>{
+ const c=f.candidate('annual '+title,[{eventType:'award',year:2023,batchSeq:1}],title)
+ const reader=createCurrentQualificationAssessmentReader(f.db.$client)
+ const readAt=(day:string)=>reader.read(c.enterprise.id,Date.parse(day+'T12:00:00Z')).snapshot.titles.find(t=>t.titleCode===title)!
+ expect(readAt('2025-12-31').group).toBe('eligible')
+ expect(readAt('2026-01-01').group).toBe('excluded')
 })

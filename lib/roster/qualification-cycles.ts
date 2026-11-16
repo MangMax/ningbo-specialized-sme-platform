@@ -75,7 +75,7 @@ function gapResolvedBy(gap: QualificationEvent, facts: CycleFacts, originYear: n
 }
 
 /** Adjudicate an originating cycle using only applicable, unresolved evidence. */
-function adjudicateCycle(events: QualificationEvent[], originYear: number, batch: number | null, year: number, ambiguous: QualificationEvent[] = [], day?: string, notesOnlyGaps = false, annualPeriod = false): CycleJudgment {
+function adjudicateCycle(events: QualificationEvent[], originYear: number, batch: number | null, year: number, ambiguous: QualificationEvent[] = [], day?: string, notesOnlyGaps = false, annualPeriod = false, retainAward = false): CycleJudgment {
   const facts = cycleFacts(notesOnlyGaps ? [...events,...ambiguous] : events,notesOnlyGaps ? [] : ambiguous,originYear,year,day,notesOnlyGaps)
   // Only the latest actual grant can support a restored qualification. Older
   // grants remain in the adjudication and evidence history, but not filters.
@@ -105,12 +105,14 @@ function adjudicateCycle(events: QualificationEvent[], originYear: number, batch
       ? `正式文件有效期：${fact.interval.validFrom} 至 ${fact.interval.validThrough}（含首尾）`
       : futureReviewGrace || !annualPeriod && fact?.continuation === 'until_next_review_results'
         ? '正式文件延续规则：至下次复核结果公布前有效'
+        : retainAward && anchor ? '小巨人原认定或复核通过资格保留；不按认定年龄自动到期，适用正式期间、同周期失败及已确认处置另行裁定'
         : dueYear != null ? `默认年度规则：最近一次认定或复核通过 ${factTime(anchor!)} 年 + 3 = ${dueYear} 年；自 ${dueYear} 年起到期（仅年份精度）` : '正式资格期间未记录'
     if (futureReviewGrace && !fact?.interval) result.group='eligible'
     else if (day && fact?.interval) {
       if (fact.interval.validFrom <= day && day <= fact.interval.validThrough) result.group='eligible'
       else { result.group='excluded'; result.notes.push('不在正式来源明确有效日期闭区间内') }
     } else if (!annualPeriod && day && fact?.continuation === 'until_next_review_results' && (!fact.publishedOn || fact.publishedOn <= day)) result.group='eligible'
+    else if (retainAward && anchor) result.group='eligible'
     else if (dueYear != null && (year === Infinity || dueYear > year)) result.group='eligible'
     else { result.group = day ? 'excluded' : 'pending'; result.notes.push(day ? '已到期，未见明确延续结果' : '已到复核年份，未见明确延续结果，待确认') }
   }
@@ -133,8 +135,10 @@ function hasUnresolvedRecovery(current: CycleJudgment[], history: CycleJudgment[
 /** #475 effective reads retain established periods when applicability metadata is missing.
  * Legacy callers keep the conservative pending policy by default.
  * annualPeriod is an opt-in for the unpublished current namespace only:
- * continuation text remains evidence, but cannot extend annual eligibility. */
-export function adjudicateQualificationCycles(formal: QualificationEvent[], year = Infinity, day?: string, notesOnlyGaps = false, disposedAwards: ReadonlySet<number> = new Set(), cycleScoped = false, evidencedEvents?: ReadonlySet<number>, annualPeriod = false): { group: CurrentGroup; notes: string[]; originYear: number; cycles: CycleJudgment[] } {
+ * continuation text remains evidence, but cannot extend annual eligibility.
+ * retainAward opts current Little Giant reads out of the age cutoff only;
+ * formal intervals, failed cycles and dispositions still take precedence. */
+export function adjudicateQualificationCycles(formal: QualificationEvent[], year = Infinity, day?: string, notesOnlyGaps = false, disposedAwards: ReadonlySet<number> = new Set(), cycleScoped = false, evidencedEvents?: ReadonlySet<number>, annualPeriod = false, retainAward = false): { group: CurrentGroup; notes: string[]; originYear: number; cycles: CycleJudgment[] } {
   // Dated current assessments ignore known future facts; undated legacy
   // receipts/planning keep their original input semantics. A linked upcoming
   // publication may still carry an explicit this-result continuation clause.
@@ -191,10 +195,10 @@ export function adjudicateQualificationCycles(formal: QualificationEvent[], year
     // or unresolved separate grant keeps its effect instead of vanishing in the
     // latest known grant. Unknown reviews remain applicability gaps.
     const possible = [
-      ...known.map(([batch,events]) => adjudicateCycle([...events,...linked.filter(e => events.some(a => a.id === e.formalValidity!.originAwardEventId))],origin,batch,year,reviews,day,notesOnlyGaps,annualPeriod)),
-      ...grants.map(grant => adjudicateCycle([grant,...linked.filter(e => e.formalValidity!.originAwardEventId === grant.id)],origin,null,year,reviews,day,notesOnlyGaps,annualPeriod)),
+      ...known.map(([batch,events]) => adjudicateCycle([...events,...linked.filter(e => events.some(a => a.id === e.formalValidity!.originAwardEventId))],origin,batch,year,reviews,day,notesOnlyGaps,annualPeriod,retainAward)),
+      ...grants.map(grant => adjudicateCycle([grant,...linked.filter(e => e.formalValidity!.originAwardEventId === grant.id)],origin,null,year,reviews,day,notesOnlyGaps,annualPeriod,retainAward)),
     ]
-    return possible.length ? possible : [adjudicateCycle(reviews,origin,null,year,[],day,notesOnlyGaps,annualPeriod)]
+    return possible.length ? possible : [adjudicateCycle(reviews,origin,null,year,[],day,notesOnlyGaps,annualPeriod,retainAward)]
   })
   for (const cycle of judgments) if (cycle.awardEventIds.some(id => disposedAwards.has(id))) {
     cycle.group = 'excluded'

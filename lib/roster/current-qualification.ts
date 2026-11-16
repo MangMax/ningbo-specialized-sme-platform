@@ -36,7 +36,7 @@ import { comparePlatformComparison, COMPARISON_VERSION, type CandidateComparison
 export { CURRENT_TITLES }
 export type { CurrentTitle }
 
-export const CURRENT_RULE_VERSION = 'current-roster-116-v12'
+export const CURRENT_RULE_VERSION = 'current-roster-116-v13'
 export const LEGACY_CURRENT_RULE_VERSION = 'current-roster-116-v8'
 export const LEGACY_QUALIFICATION_ASSESSMENT_VERSION = 'enterprise-qualification-407-v1'
 export function qualificationDay(time: number) { return new Date(time + 8 * 60 * 60 * 1000).toISOString().slice(0, 10) }
@@ -44,7 +44,7 @@ export type CurrentGroup = 'eligible' | 'pending' | 'excluded'
 export const PREVIOUS_QUALIFICATION_ASSESSMENT_VERSION = 'enterprise-qualification-407-v2'
 export const INDEPENDENT_QUALIFICATION_ASSESSMENT_VERSION = 'enterprise-qualification-478-v3'
 export const FROZEN_HIGHEST_HONOR_ASSESSMENT_VERSION = 'enterprise-qualification-687-v4'
-export const QUALIFICATION_ASSESSMENT_VERSION = 'enterprise-qualification-740-v5'
+export const QUALIFICATION_ASSESSMENT_VERSION = 'enterprise-qualification-740-v6'
 
 export interface OfficialEventFieldGap {
   field: 'year' | 'decidedYear' | 'batchSeq' | 'reviewOutcome'
@@ -551,7 +551,7 @@ function createCurrentCandidateEvaluationReader(db: Database.Database, receiptRu
     }
   }
   const qualification: ReturnType<typeof adjudicateQualificationCycles> = effectiveMode
-    ? adjudicateQualificationCycles(events.filter(e => e.source === 'jxj' && ['award','review'].includes(e.eventType)).map(e => ({...e, validityInvalid:false})), year, qualificationDay(executionTime), true, disposedAwards, currentRules && title === 'little_giant', new Set(formal.map(e => e.id)), currentRules)
+    ? adjudicateQualificationCycles(events.filter(e => e.source === 'jxj' && ['award','review'].includes(e.eventType)).map(e => ({...e, validityInvalid:false})), year, qualificationDay(executionTime), true, disposedAwards, currentRules && title === 'little_giant', new Set(formal.map(e => e.id)), currentRules && title !== 'little_giant', currentRules && title === 'little_giant')
     : adjudicate407Cycles(formal, year, legacy ? undefined : qualificationDay(executionTime))
   let qualificationSource: 'formal' | 'migration' = 'formal'
   let migrationAwardYears: number[] = []
