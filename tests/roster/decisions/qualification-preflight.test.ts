@@ -140,6 +140,24 @@ it('rejects a withdrawn fact reference and preserves the original qualification 
  expect((await post('commit', { command: input, planHash: plan.body.planHash })).body.error.code).toBe('fact_reference_mismatch')
  expect(db.select().from(s.differenceReason).all()).toEqual(before)
 })
+it('recomputes referenced qualification facts in single and batched reads without writes', async () => {
+ const fact = { enterpriseId: e.id, factId: 2, revision: 1, status: 'confirmed' as const, fact: { kind: 'moved_in', city: '南通' }, action: 'confirm', actor: { type: 'agent' as const, id: 'synthetic' }, basis: '明确迁入', createdAt: '2026-11-16T00:00:00Z' }
+ db.insert(s.enterpriseFactRevision).values(fact).run()
+ const latest = db.select().from(s.differenceReason).all().at(-1)!
+ const input = { ...command, expectedCurrentId: latest.id, idempotencyKey: 'referenced-reader', decision: { ...command.decision, factReferences: [{ enterpriseId: e.id, factId: 2, revision: 1, kind: 'moved_in' }] } }
+ const plan = await post('preflight', input)
+ expect(plan.status).toBe(200)
+ expect((await post('commit', { command: input, planHash: plan.body.planHash })).status).toBe(200)
+ const reader = createCurrentQualificationAssessmentReader(db.$client)
+ const status = () => reader.read(e.id, Date.parse('2026-11-16T00:00:00Z')).snapshot.titles.find(title => title.titleCode === 'specialized_sme')!.effectiveQualification!.status
+ expect(status()).toBe('effective')
+ expect(listCurrentQualified(db.$client,{titleCode:'specialized_sme'}).rows.map(row=>row.enterpriseId)).toEqual([e.id])
+ db.insert(s.enterpriseFactRevision).values({ ...fact, revision: 2, status: 'withdrawn', action: 'withdraw' }).run()
+ const before = db.$client.serialize()
+ expect(status()).toBe('unrecognized')
+ expect(listCurrentQualified(db.$client,{titleCode:'specialized_sme'}).rows).toEqual([])
+ expect(db.$client.serialize()).toEqual(before)
+})
 it('uses the same strict MCP handlers and guarded discovery classification', async () => {
  vi.doMock('@nuxtjs/mcp-toolkit/server', () => ({ defineMcpTool: (definition: unknown) => definition }))
  const preflight = (await import('../../../server/mcp/tools/preflight_qualification_decision')).default
