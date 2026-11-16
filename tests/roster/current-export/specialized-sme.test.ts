@@ -1,3 +1,4 @@
+import { readCurrentQualificationAssessment } from '../../../lib/roster/current-qualification'
 
 import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
 import { submitSyntheticRecognizedCollection } from '../fixtures/recognized-source'
@@ -32,9 +33,9 @@ it('本称号复核周期失败恢复及同年冲突准确分组', async () => {
   const ids = Object.fromEntries(fixtures.map(([name,events]) => [name,String(f.candidate(name,events).enterprise.id)]))
   const {wb,result} = await f.workbook('118-cycles')
   for (const [sheet,names] of [
-    ['有效企业',['新认定无需复核','复核延续','失败后重新认定']],
+    ['有效企业',['新认定无需复核','复核延续','失败后重新认定','旧周期晚失败']],
     ['未认定',['纯培育']],
-    ['已到期',['旧周期晚失败','本周期失败','已到复核年结果未知','复核结论年未知','同年通过失败冲突','同年恢复顺序未知','复核周期未知']],
+    ['已到期',['本周期失败','已到复核年结果未知','复核结论年未知','同年通过失败冲突','同年恢复顺序未知','复核周期未知']],
   ] as Array<[string,string[]]>) expect(rows(wb,sheet).map(row => businessIdentity(row))).toEqual(names.map(name => expectedBusinessIdentity(f.db,Number(ids[name]))))
   const restored = rows(wb,'有效企业').find(row => row[2] === '失败后重新认定')!
   expect(restored[6]).toBe(String(y-5))
@@ -43,7 +44,7 @@ it('本称号复核周期失败恢复及同年冲突准确分组', async () => {
   expect(rows(wb,'有效企业').find(row => row[2] === '复核延续')![7]).toContain((y-1) + '年复核通过')
   expect(rows(wb,'已到期').find(row => row[2] === '本周期失败')![15]).toContain('复核明确不通过')
   for (const name of ['同年通过失败冲突','同年恢复顺序未知']) expect(rows(wb,'已到期').find(row => row[2] === name)![15]).toContain('复核明确不通过')
-  expectCounts(wb,{result},{eligible:3,pending:0,excluded:8}, {effective:3,expired:7,terminated:0,moved_out:0,unrecognized:1})
+  expectCounts(wb,{result},{eligible:4,pending:0,excluded:7}, {effective:4,expired:6,terminated:0,moved_out:0,unrecognized:1})
 })
 it('迁入更名双备注及主体事实和公布缺口保留依据', async () => {
   // Historical case name retained; #355/#379 keep migration notes and aliases,
@@ -66,14 +67,14 @@ it('迁入更名双备注及主体事实和公布缺口保留依据', async () =
   const expectedDisplay = Object.freeze({
     8: `${y}年第1批认定，《synthetic-118.xlsx》：未逐出处核实`,
     9: '专精特新公布旧名',
-    11: '逐出处公布名见公布名称列；现用名见企业名称列；已确认曾用名仅见该列',
+    11: '历史诊断（不参与有效判定）：迁入资格来源版本或归属需重新核实（已存决定）；逐出处公布名见公布名称列；现用名见企业名称列；已确认曾用名仅见该列',
     12: `${y}年第1批认定：宁波市经信局公布资料\n《synthetic-118.xlsx》，附件：专精特新中小企业名单，名单序号${renamed.enterprise.id}，未逐出处核实`,
   })
   const {wb,result} = await f.workbook('118-identity')
   const eligible = rows(wb,'有效企业'), waiting = rows(wb,'未认定')
-  expect(eligible.map(row => businessIdentity(row))).toEqual([renamed,returned,out,gone,stale,unknown,pending,terminalGap,conflict].map(item => expectedBusinessIdentity(f.db,item.enterprise.id)))
+  expect(eligible.map(row => businessIdentity(row))).toEqual([renamed,returned,out,gone,stale,unknown,pending,terminalGap,otherPublication,conflict].map(item => expectedBusinessIdentity(f.db,item.enterprise.id)))
   expect(rows(wb,'已迁出')).toEqual([]); expect(rows(wb,'已注销（吊销）')).toEqual([])
-  expect(waiting.map(row => businessIdentity(row))).toEqual([migrant,otherPublication].map(item => expectedBusinessIdentity(f.db,item.enterprise.id)))
+  expect(waiting.map(row => businessIdentity(row))).toEqual([migrant].map(item => expectedBusinessIdentity(f.db,item.enterprise.id)))
   const rename = eligible.find(row => matchesBusinessIdentity(f.db, row, renamed.enterprise.id))!
   expect({ 8: rename[8], 9: rename[9], 11: rename[11], 12: rename[12] }).toEqual(expectedDisplay); expect(rename[9]).toBe('专精特新公布旧名')
   expect(rename[10]).toBe('已见本称号宁波公布记录')
@@ -86,13 +87,13 @@ it('迁入更名双备注及主体事实和公布缺口保留依据', async () =
   expect(f.db.$client.prepare('select enterprise_id,reason_code,basis from difference_reason where id=?').get(staleDecision.id)).toEqual({enterprise_id:stale.enterprise.id,reason_code:'moved_out',basis:null})
   expect(eligible.find(row => matchesBusinessIdentity(f.db, row, stale.enterprise.id))![11]).not.toContain('相关主体事实适用性未确认')
   expect(waiting.find(row => matchesBusinessIdentity(f.db, row, migrant.enterprise.id))![15]).toContain('缺少已确认认定及资格依据')
-  for (const item of [migrant,otherPublication]) {
+  for (const item of [migrant]) {
     const row = waiting.find(row => matchesBusinessIdentity(f.db, row, item.enterprise.id))!
-    expect(row[10]).toBe('尚未完成公布匹配核实'); expect(row[11] ?? null).toBeNull()
+    expect(row[10]).toBe('尚未完成公布匹配核实'); expect(row[11]).toBe('历史诊断（不参与有效判定）：迁入资格来源版本或归属需重新核实（已存决定）')
   }
-  expect(waiting.find(row => matchesBusinessIdentity(f.db, row, otherPublication.enterprise.id))![8] ?? null).toBeNull()
+  expect(eligible.find(row => matchesBusinessIdentity(f.db, row, otherPublication.enterprise.id))![11]).toContain('按有效小巨人资格计入')
   expect(eligible.find(row => matchesBusinessIdentity(f.db, row, conflict.enterprise.id))![11]).toContain('身份冲突')
-  expectCounts(wb,{result},{eligible:9,pending:0,excluded:2}, {effective:9,expired:0,terminated:0,moved_out:0,unrecognized:2})
+  expectCounts(wb,{result},{eligible:10,pending:0,excluded:1}, {effective:10,expired:0,terminated:0,moved_out:0,unrecognized:1})
 })
 it('超过最大列表页的全部主体和公式样式文本安全导出且业务只读', async () => {
   const candidates = Array.from({length:205},(_,index) => f.candidate('超页企业' + String(index).padStart(3,'0')))
@@ -147,4 +148,27 @@ it('查询失败零行退回待审不作废且部分依据候选显式待确认'
   expect(waiting[1]![12]).toContain('工信部已认定企业名单')
   expect(f.businessDigest()).toBe(digest)
   expectCounts(wb,{result},{eligible:5,pending:0,excluded:2}, {effective:5,expired:0,terminated:0,moved_out:0,unrecognized:2})
+})
+
+
+it('own effective period wins while upper-only identities inherit real source without fabricated history', () => {
+  const own = f.candidate('自身期间优先', [{eventType:'award',year:y-1,batchSeq:2}])
+  f.addRecord(own.enterprise.id, own.enterprise.name, [{eventType:'award',year:y,batchSeq:1}], 'little_giant')
+  const upper = f.candidate('仅上级无低梯度历史', [{eventType:'award',year:y,batchSeq:1}], 'little_giant')
+  const before = f.businessDigest()
+  const at = Date.parse(`${y}-06-01T00:00:00Z`)
+  const ownTitles = readCurrentQualificationAssessment(f.db.$client,own.enterprise.id,at).titles
+  const upperTitles = readCurrentQualificationAssessment(f.db.$client,upper.enterprise.id,at).titles
+  for (const title of ['specialized_sme','innovative_sme']) {
+    const inherited = upperTitles.find(t=>t.titleCode===title)!
+    expect(inherited).toMatchObject({group:'eligible',evidence:[],sourceVersions:[],cycles:[]})
+    expect(inherited.effectiveQualification!.localRuleBasis!.join(' ')).toContain('按有效小巨人资格计入')
+    expect(inherited.effectiveQualification!.localRuleBasis!.join(' ')).toContain('jxj/announcement/synthetic-118.xlsx')
+    expect(inherited.effectiveQualification!.presentationBasis!.join(' ')).toContain(`${y} 年 + 3 = ${y+3} 年`)
+  }
+  const ownSpecialized = ownTitles.find(t=>t.titleCode==='specialized_sme')!
+  expect(ownSpecialized.effectiveQualification!.localRuleBasis).toEqual([])
+  expect(ownSpecialized.effectiveQualification!.presentationBasis!.join(' ')).toContain(`${y-1} 年 + 3 = ${y+2} 年`)
+  expect(ownSpecialized.evidence).toContainEqual(expect.objectContaining({eventType:'award',year:y-1,batchSeq:2}))
+  expect(f.businessDigest()).toBe(before)
 })
