@@ -117,3 +117,66 @@ it('reads source-specific process projections in the same batch and preserves un
     ])
   } finally { sqlite.close() }
 })
+
+it('selects normalized raw keys across sources and suppresses old identity before restoring a reobserved version', () => {
+  const sqlite = new Database(':memory:')
+  try {
+    sqlite.pragma('foreign_keys=ON'); createRuntimeSchema(sqlite)
+    const db = drizzle(sqlite, { schema: targetSchema })
+    const subjects = [{ enterpriseId: 7, uscc: '91330110MA2GMDFH58' }]
+    const row = { id: 'identity-change', tyshxydm: ' 91330110ma2g\u200bdmfh58\u00a0', qymc: '原名', rdjb: '2', rdtime: '2023-12-28 08:50:25', rddqrq: '2026-12-28', sfyx: '1' }
+    const first = writeNewCollectionTarget(db, collectionCommand(row, '2026-11-16T00:00:00Z')).observations[0]!
+    const original = readPlatformQualificationFacts(db, subjects)
+    expect(original).toMatchObject([{ enterpriseId: 7, uscc: '91330110MA2GMDFH58', versionId: first.versionId, observationId: first.observationId, conclusion: 'passed' }])
+    // Same timestamp: observation id decides, even though the new identity is outside scope.
+    writeNewCollectionTarget(db, collectionCommand({ ...row, tyshxydm: '91310115MA1H7KUG93', rdjb: '3' }, '2026-11-16T00:00:00Z'))
+    expect(readPlatformQualificationFacts(db, subjects)).toEqual([])
+    const restored = writeNewCollectionTarget(db, collectionCommand(row, '2026-11-16T01:00:00Z')).observations[0]!
+    expect(restored.versionId).toBe(first.versionId)
+    expect(readPlatformQualificationFacts(db, subjects)).toEqual(original.map(f => ({ ...f, observationId: restored.observationId, collectedAt: '2026-11-16T01:00:00Z' })))
+    for (const source of ['businessList', 'queryList'] as const) {
+      writeNewCollectionTarget(db, collectionCommand({ ...row, id: source, sblx: '申请', cszt: '终审通过', year: '2021' }, '2026-11-16T02:00:00Z', source))
+    }
+    expect(readPlatformQualificationFacts(db, subjects).map(f => [f.source, f.uscc, f.conclusion])).toEqual([
+      ['recognized_list', '91330110MA2GMDFH58', 'passed'], ['business_list', '91330110MA2GMDFH58', 'passed'], ['apply_list', '91330110MA2GMDFH58', 'passed'],
+    ])
+  } finally { sqlite.close() }
+})
+
+it('uses actual Drizzle raw-key plans while unrelated observations leave typed results unchanged', () => {
+  const sqlite = new Database(':memory:')
+  try {
+    sqlite.pragma('foreign_keys=ON'); createRuntimeSchema(sqlite)
+    const queries: { sql: string; params: unknown[] }[] = []
+    const db = drizzle(sqlite, { schema: targetSchema, logger: { logQuery(sql, params) { queries.push({ sql, params }) } } })
+    const row = { id: 'scoped', tyshxydm: '91330110MA2GMDFH58', qymc: '原名', rdjb: '2', sfyx: '1' }
+    for (const source of ['queryBusList', 'businessList', 'queryList'] as const) {
+      writeNewCollectionTarget(db, collectionCommand(row, '2026-11-16T00:00:00Z', source))
+    }
+    const subjects = [{ enterpriseId: 7, uscc: row.tyshxydm }]
+    const before = readPlatformQualificationFacts(db, subjects)
+    expect(before.map(f => f.source)).toEqual(['recognized_list', 'business_list', 'apply_list'])
+    for (let i = 0; i < 40; i++) {
+      for (const source of ['queryBusList', 'businessList', 'queryList'] as const) {
+        writeNewCollectionTarget(db, collectionCommand({ ...row, id: `unrelated-${i}`, tyshxydm: '91310115MA1H7KUG93' }, `2026-11-16T00:01:${String(i).padStart(2, '0')}Z`, source))
+      }
+    }
+    queries.length = 0
+    expect(readPlatformQualificationFacts(db, subjects)).toEqual(before)
+    // EXPLAIN the SQL emitted by the real reader, never a manually rewritten equivalent.
+    const reads = queries.filter(q => q.sql.startsWith('select'))
+    expect(reads).toHaveLength(6)
+    for (const query of reads) {
+      const plan = sqlite.prepare(`EXPLAIN QUERY PLAN ${query.sql}`).all(...query.params) as { detail: string }[]
+      const details = plan.map(p => p.detail).join('\n')
+      if (query.sql.startsWith('select distinct')) {
+        expect(details).toMatch(/COVERING INDEX platform_.*_projection_uscc_idx/)
+        expect(details).not.toContain('TEMP B-TREE')
+      } else {
+        expect(query.params).toContain(row.tyshxydm)
+        expect(details).toMatch(/SEARCH .*USING INDEX platform_.*_projection_uscc_idx/)
+        expect(details).not.toMatch(/SCAN platform_business_observation/)
+      }
+    }
+  } finally { sqlite.close() }
+})
