@@ -1,6 +1,8 @@
 import { afterAll, beforeAll, expect, it } from 'vitest'
 import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { Client } from '@modelcontextprotocol/sdk/client/index.js'
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import { qualificationExportFixture } from '../current-export/fixtures/qualification-export'
 import { readDevelopmentDiscovery } from '../current-export/fixtures/specialized-export'
 import * as s from '../../../db/schema'
@@ -8,20 +10,25 @@ import * as s from '../../../db/schema'
 // Exact candidate build and process execution are owned by the parent merger.
 const f = qualificationExportFixture()
 const priorNodeOptions = process.env.NODE_OPTIONS
+const priorMcpToken = process.env.NUXT_MCP_TOKEN
+const client = new Client({name:'synthetic-disposition-consumers',version:'1'})
 beforeAll(async () => {
  const discovery = await readDevelopmentDiscovery()
  expect(JSON.stringify(discovery)).toContain('/api/roster/title-cycle-dispositions/preflight')
  const clock = join(f.dir,'clock.mjs')
  writeFileSync(clock, `const D=Date;globalThis.Date=class extends D{constructor(...a){super(...(a.length?a:['2026-06-01T00:00:00Z']))}static now(){return 1780272000000}}`)
  process.env.NODE_OPTIONS = `${priorNodeOptions ?? ''} --import=${clock}`
+ process.env.NUXT_MCP_TOKEN = f.token
  await f.start()
+ await client.connect(new StreamableHTTPClientTransport(new URL(f.url('/mcp')), {requestInit:{headers:{authorization:`Bearer ${f.token}`}}}))
+ const tools = await client.listTools()
+ for (const name of ['preflight_title_cycle_disposition','commit_title_cycle_disposition','get_current_title_cycle_dispositions','list_title_cycle_disposition_history']) expect(tools.tools.find(tool=>tool.name===name)).toBeDefined()
 },90000)
-afterAll(async () => { if(priorNodeOptions == null) delete process.env.NODE_OPTIONS; else process.env.NODE_OPTIONS=priorNodeOptions; await f.close() })
+afterAll(async () => { await client.close(); if(priorNodeOptions == null) delete process.env.NODE_OPTIONS; else process.env.NODE_OPTIONS=priorNodeOptions; if(priorMcpToken == null) delete process.env.NUXT_MCP_TOKEN; else process.env.NUXT_MCP_TOKEN=priorMcpToken; await f.close() })
 const get = async(path:string) => { const r=await fetch(f.url(path),{headers:f.headers});expect(r.status,await r.clone().text()).toBe(200);return r.json() }
 const post = async(path:string, body:unknown) => { const r=await fetch(f.url(path),{method:'POST',headers:f.headers,body:JSON.stringify(body)});expect(r.status,await r.clone().text()).toBe(200);return r.json() }
 it('confirmed cycle dispositions keep HTTP detail statistics filters and XLSX identities aligned across withdrawal and source replacement',async()=>{
- // Inspect the live isolated process contract before issuing business commands.
- expect(JSON.stringify(await get('/_openapi.json'))).toContain('title-cycle-dispositions')
+ // The live MCP contract was inspected before issuing business commands.
  const c=f.candidate('合成周期处置',[{eventType:'award',year:2025,batchSeq:1}],'little_giant')
  const event=f.db.select().from(s.recordEvent).all().find(e=>e.recordId===c.record.id)!
  const file=f.db.insert(s.storedFile).values({relPath:'synthetic-cycle.pdf',filename:'synthetic-cycle.pdf',ext:'pdf',sha256:'a'.repeat(64),bytes:1,createdAt:'2026-01-01'}).returning().get()
