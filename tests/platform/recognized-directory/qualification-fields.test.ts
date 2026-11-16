@@ -87,13 +87,13 @@ it('rejects conflicting retry content and rolls back an aborted collection trans
     const before = sqlite.serialize()
     command.row.rawFields = { ...command.row.rawFields, sfyx: '0' }
     expect(() => writeRecognizedTarget(db, command)).toThrow('observation_payload_conflict')
-    expect(sqlite.serialize()).toEqual(before)
+    expect(sqlite.serialize().equals(before), 'database bytes remain unchanged').toBe(true)
     const newCollection = collectionCommand({ ...raw, id: 'recognized-808-new', qymc: 'Example', rdjb: '2' }, '2026-11-16T01:00:00Z')
     expect(() => db.transaction(tx => {
       writeNewCollectionTarget(tx, newCollection)
       throw new Error('caller aborted transaction')
     })).toThrow('caller aborted transaction')
-    expect(sqlite.serialize()).toEqual(before)
+    expect(sqlite.serialize().equals(before), 'database bytes remain unchanged').toBe(true)
     expect(sqlite.prepare('SELECT COUNT(*) AS n FROM platform_business_record').get()).toEqual({ n: 1 })
     expect(sqlite.pragma('foreign_key_check')).toEqual([])
   } finally { sqlite.close() }
