@@ -2,6 +2,7 @@ import type Database from 'better-sqlite3'
 import { runtimeSchemaStatements, runtimeCapabilities, runtimeSchemaHash } from './runtime-schema.generated'
 import { assertFinalPlatformRuntime, PLATFORM_RETIREMENT_RULE, PLATFORM_RUNTIME_VERSION } from './schema-phase'
 import { TITLE_SEED } from './titles'
+import { upgradeTitleCycleDisposition } from './title-cycle-disposition'
 
 /** Native empty database creation. Historical migration records remain empty. */
 export function createRuntimeSchema(sqlite: Database.Database) {
@@ -9,6 +10,7 @@ export function createRuntimeSchema(sqlite: Database.Database) {
   if (sqlite.pragma('foreign_keys', { simple: true }) !== 1) throw new Error('Native initialization requires foreign_keys=ON')
   sqlite.transaction(() => {
     for (const statement of runtimeSchemaStatements) sqlite.exec(statement)
+    upgradeTitleCycleDisposition(sqlite)
     sqlite.exec('CREATE TABLE platform_runtime_capability(transform_version TEXT PRIMARY KEY)')
     for (const capability of runtimeCapabilities) sqlite.prepare('INSERT INTO platform_runtime_capability VALUES(?)').run(capability)
     for (const title of TITLE_SEED) sqlite.prepare('INSERT INTO title(code,name_zh,level,rank) VALUES(?,?,?,?)').run(title.code,title.nameZh,title.level,title.rank)
