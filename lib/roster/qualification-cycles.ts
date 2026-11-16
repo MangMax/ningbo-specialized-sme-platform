@@ -127,7 +127,16 @@ function hasUnresolvedRecovery(current: CycleJudgment[], history: CycleJudgment[
 
 /** #475 effective reads retain established periods when applicability metadata is missing.
  * Legacy callers keep the conservative pending policy by default. */
-export function adjudicateQualificationCycles(formal: QualificationEvent[], year = Infinity, day?: string, notesOnlyGaps = false): { group: CurrentGroup; notes: string[]; originYear: number; cycles: CycleJudgment[] } {
+export function adjudicateQualificationCycles(formal: QualificationEvent[], year = Infinity, day?: string, notesOnlyGaps = false, disposedAwards: ReadonlySet<number> = new Set(), cycleScoped = false): { group: CurrentGroup; notes: string[]; originYear: number; cycles: CycleJudgment[] } {
+  // Scoped failures are supplied as verified original award IDs by the caller.
+  // Do not let an unknown-cycle failure leak back through legacy gap grouping.
+  if (cycleScoped) formal = formal.filter(event => event.eventType !== 'review' || event.reviewOutcome !== 'failed')
+  if (cycleScoped) formal = formal.filter(event => event.eventType !== 'review' || event.reviewOutcome !== 'passed' ||
+    formal.some(award => award.eventType === 'award' && (
+      event.formalValidity?.originAwardEventId === award.id ||
+      !event.formalValidity?.originAwardEventId && event.year != null && event.batchSeq != null && event.year === award.year && event.batchSeq === award.batchSeq &&
+      formal.filter(e => e.eventType === 'award' && e.year === event.year && e.batchSeq === event.batchSeq).length === 1
+    )))
   const byYear = new Map<number, Map<number | null, QualificationEvent[]>>()
   const unknown: QualificationEvent[] = []
   // Dated current assessments ignore known future facts; undated legacy
@@ -166,11 +175,15 @@ export function adjudicateQualificationCycles(formal: QualificationEvent[], year
     ]
     return possible.length ? possible : [adjudicateCycle(reviews,origin,null,year,[],day,notesOnlyGaps)]
   })
+  for (const cycle of judgments) if (cycle.awardEventIds.some(id => disposedAwards.has(id))) {
+    cycle.group = 'excluded'
+    cycle.notes.push('本称号原认定周期已有生效的已确认处置；复核通过不构成新认定')
+  }
   // Selection follows adjudication, retains *every* batch of the current year,
   // and never uses the latest passed event to erase another batch or a failure.
   const originYear = Math.max(...judgments.map(c => c.originYear))
-  const latestRecovery = Math.max(...judgments.map(c => c.anchor ? factTime(c.anchor)! : -Infinity))
-  const current = notesOnlyGaps ? judgments.filter(c => c.anchor && factTime(c.anchor) === latestRecovery) : judgments.filter(c => c.originYear === originYear)
+  const latestRecovery = Math.max(...judgments.map(c => cycleScoped ? c.lastAwardYear : c.anchor ? factTime(c.anchor)! : -Infinity))
+  const current = notesOnlyGaps ? judgments.filter(c => c.anchor && (cycleScoped ? c.lastAwardYear : factTime(c.anchor)) === latestRecovery) : judgments.filter(c => c.originYear === originYear)
   const notes = current.flatMap(c => c.notes.map(note => `${c.originYear}年/批次${c.batch ?? '?'}：${note}`))
   let group: CurrentGroup = current[0]?.group ?? 'pending'
   if (!current.length) notes.push('缺少已确认认定及资格依据；平台状态或候选对应不能单独证明资格')
@@ -190,11 +203,11 @@ export function adjudicateQualificationCycles(formal: QualificationEvent[], year
     const applicable = formal.filter(e => factTime(e) != null && factTime(e)! <= year && (!day || !e.formalValidity?.publishedOn || e.formalValidity.publishedOn <= day))
     const lastFailure = Math.max(...applicable.filter(e => e.eventType === 'review' && e.reviewOutcome === 'failed').map(e => factTime(e)!))
     const lastRecovery = Math.max(...applicable.filter(e => e.eventType === 'award' || e.reviewOutcome === 'passed').map(e => factTime(e)!))
-    if (lastFailure >= lastRecovery && lastFailure !== -Infinity) { group='excluded'; notes.push('正式复核明确不通过，未见较晚通过或新认定恢复') }
+    if (!cycleScoped && lastFailure >= lastRecovery && lastFailure !== -Infinity) { group='excluded'; notes.push('正式复核明确不通过，未见较晚通过或新认定恢复') }
     else {
       // A dated official interval is independently usable when the recorded
       // business year is absent. Never invent origin coordinates to admit it.
-      const undatedPeriods = unknown.filter(e => (e.eventType === 'award' || e.reviewOutcome === 'passed') && e.formalValidity?.interval)
+      const undatedPeriods = unknown.filter(e => !disposedAwards.has(e.id) && (e.eventType === 'award' || e.reviewOutcome === 'passed') && e.formalValidity?.interval)
       const intervalEligible = undatedPeriods.some(e => e.formalValidity!.interval!.validFrom <= day! && day! <= e.formalValidity!.interval!.validThrough)
       group = intervalEligible || current.some(c => c.group === 'eligible') ? 'eligible' : 'excluded'
       for (const e of undatedPeriods) notes.push(`event:${e.id} 认定年份缺失，仅备注；正式文件有效期：${e.formalValidity!.interval!.validFrom} 至 ${e.formalValidity!.interval!.validThrough}（含首尾）`)
