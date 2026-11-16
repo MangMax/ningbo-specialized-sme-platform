@@ -1999,3 +1999,33 @@ function processStoredFields(){return {
  sqlFactTitle:text('sql_fact_title'),sqlFactTitleState:text('sql_fact_title_state',{enum:['captured','uncaptured']}),
  sqlFactTitleRule:text('sql_fact_title_rule'),sqlFactTitleReason:text('sql_fact_title_reason'),
 }}
+
+export const titleCycleDispositionRevision = sqliteTable('title_cycle_disposition_revision', {
+  revisionId: integer('revision_id').primaryKey(),
+  id: text('id').notNull(),
+  revision: integer('revision').notNull(),
+  enterpriseId: integer('enterprise_id').notNull().references(() => enterprise.id),
+  titleCode: text('title_code', { enum: ['little_giant'] }).notNull(),
+  cycleEventId: integer('cycle_event_id').references(() => recordEvent.id),
+  status: text('status', { enum: ['pending', 'confirmed', 'replaced', 'withdrawn'] }).notNull(),
+  kind: text('kind', { enum: ['not_applied', 'not_recommended', 'formal_failure'] }).notNull(),
+  sourceFileId: integer('source_file_id').notNull().references(() => storedFile.id),
+  sourceSha256: text('source_sha256').notNull(),
+  cycleRevision: integer('cycle_revision'),
+  effectivePrecision: text('effective_precision', { enum: ['unknown', 'year', 'month', 'day'] }).notNull(),
+  effectiveValue: text('effective_value'),
+  fact: text('fact', { mode: 'json' }).$type<import('../server/utils/title-cycle-disposition').DispositionFact>().notNull(),
+  audit: text('audit', { mode: 'json' }).$type<unknown>().notNull(),
+}, t => [
+  unique().on(t.id, t.revision),
+  index('title_cycle_disposition_scope').on(t.enterpriseId, t.titleCode, t.cycleEventId, t.id, t.revision),
+  index('title_cycle_disposition_source').on(t.sourceFileId, t.sourceSha256),
+  check('title_cycle_disposition_title', sql`${t.titleCode}='little_giant'`),
+  check('title_cycle_disposition_status', sql`${t.status} IN ('pending','confirmed','replaced','withdrawn')`),
+  check('title_cycle_disposition_kind', sql`${t.kind} IN ('not_applied','not_recommended','formal_failure')`),
+]);
+export const titleCycleDispositionReceipt = sqliteTable('title_cycle_disposition_receipt', {
+  key: text('key').primaryKey(),
+  requestHash: text('request_hash').notNull(),
+  receipt: text('receipt', { mode: 'json' }).$type<{ ids: string[]; version: string; committedAt: string }>().notNull(),
+});

@@ -2,7 +2,8 @@ import { createHash, randomUUID } from 'node:crypto';
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3';
 import { z } from 'zod';
 import * as s from '../../db/schema';
-import { eq } from 'drizzle-orm';
+import { and, desc, eq, gt, inArray, max, notExists } from 'drizzle-orm';
+import { alias } from 'drizzle-orm/sqlite-core';
 type Db = BetterSQLite3Database<typeof s>;
 const positive = z.number().int().positive();
 const text = z.string().min(1).max(4000);
@@ -36,35 +37,18 @@ export class DispositionError extends Error {
     constructor(readonly code: string) { super(code); }
 }
 const fail = (code: string): never => { throw new DispositionError(code); };
-type Row = {
-    revisionId: number;
-    id: string;
-    revision: number;
-    enterpriseId: number;
-    titleCode: 'little_giant';
-    cycleEventId: number | null;
-    status: 'pending' | 'confirmed' | 'replaced' | 'withdrawn';
-    kind: Fact['kind'];
-    fact: Fact;
-    audit: unknown;
-};
+const revisionTable = s.titleCycleDispositionRevision;
+type Row = typeof revisionTable.$inferSelect;
 function rows(db: Db, enterpriseIds?: number[], currentOnly = false): Row[] {
-    if (enterpriseIds)
-        z.array(positive).max(500).parse(enterpriseIds);
-    if (enterpriseIds?.length === 0)
-        return [];
-    const clauses: string[] = [];
-    if (enterpriseIds)
-        clauses.push(`enterprise_id IN (${enterpriseIds.map(() => '?').join(',')})`);
-    if (currentOnly)
-        clauses.push('NOT EXISTS (SELECT 1 FROM title_cycle_disposition_revision newer WHERE newer.id=outer_row.id AND newer.revision>outer_row.revision)');
-    const where = clauses.length ? ' WHERE ' + clauses.join(' AND ') : '';
-    return (db.$client.prepare(`SELECT revision_id revisionId,id,revision,enterprise_id enterpriseId,title_code titleCode,cycle_event_id cycleEventId,status,kind,fact,audit FROM title_cycle_disposition_revision outer_row${where} ORDER BY revision_id`).all(...enterpriseIds ?? []) as (Omit<Row, 'fact' | 'audit'> & {
-        fact: string;
-        audit: string;
-    })[]).map(r => ({ ...r, fact: JSON.parse(r.fact), audit: JSON.parse(r.audit) }));
+    if (enterpriseIds) z.array(positive).max(500).parse(enterpriseIds);
+    if (enterpriseIds?.length === 0) return [];
+    const newer = alias(revisionTable, 'newer');
+    return db.select().from(revisionTable).where(and(
+        enterpriseIds ? inArray(revisionTable.enterpriseId, enterpriseIds) : undefined,
+        currentOnly ? notExists(db.select().from(newer).where(and(eq(newer.id, revisionTable.id), gt(newer.revision, revisionTable.revision)))) : undefined,
+    )).orderBy(revisionTable.revisionId).all();
 }
-function head(db: Db) { return hash(db.$client.prepare('SELECT max(revision_id) n FROM title_cycle_disposition_revision').get()); }
+function head(db: Db) { return hash(db.select({ n: max(revisionTable.revisionId) }).from(revisionTable).get()); }
 function dependencies(db: Db, enterpriseId: number, f: Fact) {
     const enterprise = db.select().from(s.enterprise).where(eq(s.enterprise.id, enterpriseId)).get();
     if (!enterprise)
@@ -104,35 +88,53 @@ export function currentDispositions(db: Db, enterpriseIds: number[]) {
 function commandEnterprises(db: Db, request: z.infer<typeof dispositionRequestSchema>) {
     return [...new Set(request.operations.map(op => {
         if ('enterpriseId' in op) return op.enterpriseId;
-        const row = db.$client.prepare('SELECT enterprise_id enterpriseId FROM title_cycle_disposition_revision WHERE id=? ORDER BY revision DESC LIMIT 1').get(op.id) as { enterpriseId: number } | undefined;
+        const row = db.select().from(revisionTable).where(eq(revisionTable.id, op.id)).orderBy(desc(revisionTable.revision)).get();
         if (!row) fail('revision_conflict');
         return row!.enterpriseId;
     }))];
 }
+/** Ordered lifecycle simulation shared by preflight and transactional commit. */
+function simulate(db: Db, request: z.infer<typeof dispositionRequestSchema>, committedAt = '') {
+    const current = new Map(rows(db, commandEnterprises(db, request), true).map(r => [r.id, r]));
+    const appended: Omit<Row, 'revisionId'>[] = [], ids: string[] = [], deps: unknown[] = [];
+    const append = (r: Omit<Row, 'revisionId'>) => {
+        const { revisionId: _revisionId, ...value } = { ...r, revisionId: 0 };
+        appended.push(value);
+        current.set(r.id, { ...r, revisionId: 0 });
+    };
+    for (const op of request.operations) {
+        const old = 'id' in op ? current.get(op.id) : undefined;
+        if ('id' in op && (!old || old.revision !== op.revision || ['replaced', 'withdrawn'].includes(old.status))) fail('revision_conflict');
+        if (op.action === 'confirm' && old?.status !== 'pending') fail('revision_conflict');
+        const fact = 'fact' in op ? op.fact : old!.fact;
+        const enterpriseId = 'enterpriseId' in op ? op.enterpriseId : old!.enterpriseId;
+        if (op.action !== 'withdraw') deps.push(dependencies(db, enterpriseId, fact));
+        const audit = { actor: request.actor, basis: request.basis, action: op.action, committedAt, replaces: op.action === 'replace' ? old!.id : null };
+        if (op.action === 'assert' || op.action === 'replace') {
+            if (old) append({ ...old, revision: old.revision + 1, status: 'replaced', audit });
+            const id = randomUUID();
+            append({ id, revision: 1, enterpriseId, titleCode: 'little_giant', cycleEventId: fact.cycle?.eventId ?? null, status: 'pending', kind: fact.kind, fact, audit,
+                sourceFileId: fact.source.fileId, sourceSha256: fact.source.sha256, cycleRevision: fact.cycle?.revision ?? null,
+                effectivePrecision: fact.effective.precision, effectiveValue: fact.effective.value });
+            ids.push(id);
+        } else {
+            if (op.action === 'confirm' && [...current.values()].some(r => r.id !== old!.id && r.enterpriseId === enterpriseId && r.cycleEventId === old!.cycleEventId && r.status === 'confirmed' && r.kind !== old!.kind)) fail('contradiction');
+            append({ ...old!, revision: old!.revision + 1, status: op.action === 'confirm' ? 'confirmed' : 'withdrawn', audit });
+            ids.push(old!.id);
+        }
+    }
+    return { deps, appended, ids };
+}
 function prepare(db: Db, body: unknown) {
     const request = dispositionRequestSchema.parse(body), requestHash = hash(request);
-    const prior = db.$client.prepare('SELECT request_hash hash,receipt FROM title_cycle_disposition_receipt WHERE key=?').get(request.idempotencyKey) as {
-        hash: string;
-        receipt: string;
-    } | undefined;
-    if (prior && prior.hash !== requestHash)
+    const prior = db.select().from(s.titleCycleDispositionReceipt).where(eq(s.titleCycleDispositionReceipt.key, request.idempotencyKey)).get();
+    if (prior && prior.requestHash !== requestHash)
         fail('idempotency_conflict');
     if (prior)
         return { request, requestHash, prior, planHash: hash({ requestHash }) };
     if (head(db) !== request.expectedVersion)
         fail('version_conflict');
-    const current = rows(db, commandEnterprises(db, request), true);
-    const deps: unknown[] = [];
-    for (const op of request.operations) {
-        const old = 'id' in op ? current.find(r => r.id === op.id) : undefined;
-        if ('id' in op && (!old || old.revision !== op.revision || ['replaced', 'withdrawn'].includes(old.status)))
-            fail('revision_conflict');
-        if (op.action === 'confirm' && old?.status !== 'pending')
-            fail('revision_conflict');
-        const fact = 'fact' in op ? op.fact : old!.fact;
-        if (op.action !== 'withdraw')
-            deps.push(dependencies(db, 'enterpriseId' in op ? op.enterpriseId : old!.enterpriseId, fact));
-    }
+    const { deps } = simulate(db, request);
     return { request, requestHash, prior, planHash: hash({ requestHash, deps }) };
 }
 export function preflightDisposition(db: Db, body: unknown) { return db.$client.transaction(() => { const p = prepare(db, body); return { planHash: p.planHash, replay: !!p.prior }; })(); }
@@ -142,36 +144,14 @@ export function commitDisposition(db: Db, body: unknown) {
         const p = prepare(db, input.request);
         // Receipt replay precedes dependency revalidation: immutable successful command response.
         if (p.prior)
-            return JSON.parse(p.prior.receipt) as {
-                ids: string[];
-                version: string;
-                committedAt: string;
-            };
+            return p.prior.receipt;
         if (p.planHash !== input.planHash)
             fail('plan_conflict');
-        const ids: string[] = [], committedAt = new Date().toISOString();
-        const append = (r: Omit<Row, 'revisionId'>) => db.$client.prepare('INSERT INTO title_cycle_disposition_revision(id,revision,enterprise_id,title_code,cycle_event_id,status,kind,source_file_id,source_sha256,cycle_revision,effective_precision,effective_value,fact,audit) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)').run(r.id, r.revision, r.enterpriseId, r.titleCode, r.cycleEventId, r.status, r.kind, r.fact.source.fileId, r.fact.source.sha256, r.fact.cycle?.revision ?? null, r.fact.effective.precision, r.fact.effective.value, JSON.stringify(r.fact), JSON.stringify(r.audit));
-        for (const op of p.request.operations) {
-            const current = rows(db, commandEnterprises(db, p.request), true), old = 'id' in op ? current.find(r => r.id === op.id) : undefined;
-            if ('id' in op && (!old || old.revision !== op.revision || ['replaced', 'withdrawn'].includes(old.status)))
-                fail('revision_conflict');
-            const audit = { actor: p.request.actor, basis: p.request.basis, action: op.action, committedAt, replaces: op.action === 'replace' ? old!.id : null };
-            if (op.action === 'assert' || op.action === 'replace') {
-                if (old)
-                    append({ ...old, revision: old.revision + 1, status: 'replaced', audit });
-                const id = randomUUID(), fact = op.fact;
-                append({ id, revision: 1, enterpriseId: op.action === 'assert' ? op.enterpriseId : old!.enterpriseId, titleCode: 'little_giant', cycleEventId: fact.cycle?.eventId ?? null, status: 'pending', kind: fact.kind, fact, audit });
-                ids.push(id);
-            }
-            else {
-                if (op.action === 'confirm' && current.some(r => r.id !== old!.id && r.enterpriseId === old!.enterpriseId && r.cycleEventId === old!.cycleEventId && r.status === 'confirmed' && r.kind !== old!.kind))
-                    fail('contradiction');
-                append({ ...old!, revision: old!.revision + 1, status: op.action === 'confirm' ? 'confirmed' : 'withdrawn', audit });
-                ids.push(old!.id);
-            }
-        }
+        const committedAt = new Date().toISOString();
+        const { ids, appended } = simulate(db, p.request, committedAt);
+        for (const r of appended) db.insert(revisionTable).values(r).run();
         const receipt = { ids, version: head(db), committedAt };
-        db.$client.prepare('INSERT INTO title_cycle_disposition_receipt VALUES(?,?,?)').run(p.request.idempotencyKey, p.requestHash, JSON.stringify(receipt));
+        db.insert(s.titleCycleDispositionReceipt).values({ key: p.request.idempotencyKey, requestHash: p.requestHash, receipt }).run();
         return receipt;
     }).immediate();
 }

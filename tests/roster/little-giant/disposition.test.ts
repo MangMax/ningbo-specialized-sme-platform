@@ -89,3 +89,47 @@ it('rejects a stale head and a mismatched plan without recording new history', (
  expect(()=>commitDisposition(f.db,{request:current,planHash:'wrong'})).toThrow(/plan_conflict/);
  expect(historyDispositions(f.db,[f.enterprise.id])).toEqual(before);
 });
+it('rejects contradictory confirmation at preflight and commit without changing public history', () => {
+    const f = fixture();
+    const a = f.commit(f.request([{ action: 'assert', enterpriseId: f.enterprise.id, fact: f.fact }], 'a'));
+    f.commit(f.request([{ action: 'confirm', id: a.ids[0], revision: 1 }], 'b'));
+    const b = f.commit(f.request([{ action: 'assert', enterpriseId: f.enterprise.id, fact: { ...f.fact, kind: 'not_recommended' } }], 'c'));
+    const before = historyDispositions(f.db, [f.enterprise.id]);
+    const request = f.request([{ action: 'confirm', id: b.ids[0], revision: 1 }], 'contradict');
+    expect(() => preflightDisposition(f.db, request)).toThrow(/contradiction/);
+    expect(() => commitDisposition(f.db, { request, planHash: 'unusable' })).toThrow(/contradiction/);
+    expect(historyDispositions(f.db, [f.enterprise.id])).toEqual(before);
+});
+it('simulates ordered confirmation and withdrawal in one batch and replays its receipt', () => {
+    const f = fixture();
+    const a = f.commit(f.request([{ action: 'assert', enterpriseId: f.enterprise.id, fact: f.fact }], 'a'));
+    const request = f.request([{ action: 'confirm', id: a.ids[0], revision: 1 }, { action: 'withdraw', id: a.ids[0], revision: 2 }], 'batch');
+    const plan = preflightDisposition(f.db, request);
+    const receipt = commitDisposition(f.db, { request, planHash: plan.planHash });
+    expect(f.read().rows).toMatchObject([{ id: a.ids[0], revision: 3, status: 'withdrawn' }]);
+    expect(historyDispositions(f.db, [f.enterprise.id]).map(r => r.status)).toEqual(['pending', 'confirmed', 'withdrawn']);
+    expect(commitDisposition(f.db, { request, planHash: plan.planHash })).toEqual(receipt);
+});
+it('rejects two contradictory pending confirmations in the same preflight batch', () => {
+    const f = fixture();
+    const a = f.commit(f.request([{ action: 'assert', enterpriseId: f.enterprise.id, fact: f.fact }, { action: 'assert', enterpriseId: f.enterprise.id, fact: { ...f.fact, kind: 'not_recommended' } }], 'a'));
+    const request = f.request(a.ids.map(id => ({ action: 'confirm', id, revision: 1 })), 'batch');
+    const before = f.read();
+    expect(() => preflightDisposition(f.db, request)).toThrow(/contradiction/);
+    expect(() => commitDisposition(f.db, { request, planHash: 'unused' })).toThrow(/contradiction/);
+    expect(f.read()).toEqual(before);
+});
+it('rolls back revisions when receipt persistence fails and allows the unchanged plan to retry', () => {
+    const f = fixture();
+    const request = f.request([{ action: 'assert', enterpriseId: f.enterprise.id, fact: f.fact }], 'retry');
+    const plan = preflightDisposition(f.db, request), before = f.read();
+    // Infrastructure fault injection after revision inserts, through the real SQLite transaction.
+    f.db.$client.exec("CREATE TRIGGER reject_receipt BEFORE INSERT ON title_cycle_disposition_receipt BEGIN SELECT RAISE(ABORT, 'receipt unavailable'); END");
+    expect(() => commitDisposition(f.db, { request, planHash: plan.planHash })).toThrow(/receipt unavailable/);
+    expect(f.read()).toEqual(before);
+    expect(historyDispositions(f.db, [f.enterprise.id])).toEqual([]);
+    f.db.$client.exec('DROP TRIGGER reject_receipt');
+    const receipt = commitDisposition(f.db, { request, planHash: plan.planHash });
+    expect(f.read().rows).toMatchObject([{ id: receipt.ids[0], status: 'pending', revision: 1 }]);
+    expect(commitDisposition(f.db, { request, planHash: plan.planHash })).toEqual(receipt);
+});
