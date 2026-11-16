@@ -10,19 +10,22 @@ beforeEach(f.resetBusiness)
 afterAll(f.close)
 function query(params: CurrentQualifiedFilter) { return { body: listCurrentQualified(f.db.$client, params) } }
 
-it('pages each title by complete eligible count without borrowing another title', async () => {
+it('pages each title by complete eligible count including higher honors without duplicating identities', async () => {
   const a = f.candidate('甲企业')
   const b = f.candidate('乙企业')
   const c = f.candidate('丙企业', undefined, 'little_giant')
   f.addRecord(a.enterprise.id, '甲企业', undefined, 'little_giant')
   f.candidate('失败企业', [{ eventType: 'award', year: year - 4, batchSeq: 1 }, { eventType: 'review', year: year - 4, batchSeq: 1, decidedYear: year - 1, reviewOutcome: 'failed' }])
   const first = await query({ titleCode: 'specialized_sme', page: 1, pageSize: 1 })
-  expect(first.body).toMatchObject({ total: 2, page: 1, pageSize: 1, rows: [{ enterpriseId: a.enterprise.id, name: '甲企业', group: 'eligible' }] })
+  expect(first.body).toMatchObject({ total: 3, page: 1, pageSize: 1, rows: [{ enterpriseId: a.enterprise.id, name: '甲企业', group: 'eligible' }] })
   const deep = await query({ titleCode: 'specialized_sme', page: 2, pageSize: 1 })
   expect(deep.body.rows.map((row: any) => row.enterpriseId)).toEqual([b.enterprise.id])
+  const third = await query({ titleCode: 'specialized_sme', page: 3, pageSize: 1 })
+  expect(third.body.rows.map(row => row.enterpriseId)).toEqual([c.enterprise.id])
+  expect((await query({titleCode:'specialized_sme',page:4,pageSize:1})).body.rows).toEqual([])
   const little = await query({ titleCode: 'little_giant' })
   expect(little.body.rows.map((row: any) => row.enterpriseId)).toEqual([a.enterprise.id, c.enterprise.id])
-  expect((await query({ titleCode: 'innovative_sme' })).body).toMatchObject({ total: 0, rows: [] })
+  expect((await query({ titleCode: 'innovative_sme' })).body).toMatchObject({ total: 3, rows: [{enterpriseId:a.enterprise.id},{enterpriseId:b.enterprise.id},{enterpriseId:c.enterprise.id}] })
 })
 
 it('filters confirmed alias, USCC and district together and preserves qualification evidence', async () => {
