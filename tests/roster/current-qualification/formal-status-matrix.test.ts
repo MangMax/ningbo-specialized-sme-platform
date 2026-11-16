@@ -361,7 +361,7 @@ it("name_order_and_id_ties_apply_before_eligible_pages_with_expired_controls", (
   }
 })
 
-it("old_cycle_and_other_title_cannot_supply_current_filter_facts", () => {
+it("old_cycles_and_other_titles_do_not_supply_filter_facts_despite_inherited_qualification", () => {
   const m = qualificationMatrix(fixture.sqlite)
   const eligible = m.formal('synthetic_408_cycle_eligible', [
     { eventType: 'award', year: 2021, decidedYear: 2021, batchSeq: 1 },
@@ -378,7 +378,9 @@ it("old_cycle_and_other_title_cannot_supply_current_filter_facts", () => {
   m.recognized(pending.enterprise.id, specialized.events[0]!.id, { rddqrq: '2028-06-01', whpc: '2024-2' })
   const result = query({ q: 'synthetic_408_cycle', validYear: 2028, maintenanceYear: 2024 })
   expect(result).toMatchObject({ rows: [], total: 0, uncertainTotal: 0, publishedPending: { total: 0, rows: [] } })
-  expect.soft(readCurrentQualificationAssessment(fixture.sqlite, pending.enterprise.id).titles[2]!.effectiveQualification?.status).toBe('expired')
+  const inherited = readCurrentQualificationAssessment(fixture.sqlite, pending.enterprise.id).titles[2]!
+  expect(inherited.effectiveQualification?.status).toBe('effective')
+  expect(inherited.effectiveQualification!.localRuleBasis!.join(' ')).toContain('专精特新中小企业')
   expect(result.options.validYears).toEqual([])
   expect(result.options.maintenanceYears).toEqual([2024])
 })

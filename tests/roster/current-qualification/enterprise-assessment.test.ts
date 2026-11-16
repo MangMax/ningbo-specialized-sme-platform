@@ -446,7 +446,9 @@ it('explicit_prior_versions_preserve_frozen_legacy_and_current_consumers_share_d
   expect(reader.read(1, AS_OF, { assessmentVersion: 'enterprise-qualification-407-v2' }).snapshot).toEqual(expected)
   const current = reader.read(1, AS_OF).snapshot
   expect(current).toMatchObject({ ruleVersion: 'current-roster-116-v12', assessmentVersion: 'enterprise-qualification-740-v5' })
-  expect.soft(current.titles.map(t => [t.titleCode, t.group])).toEqual([['little_giant', 'excluded'], ['specialized_sme', 'eligible'], ['innovative_sme', 'excluded']])
+  expect(current.titles.map(t => [t.titleCode, t.group])).toEqual([['little_giant', 'excluded'], ['specialized_sme', 'eligible'], ['innovative_sme', 'eligible']])
+  expect(current.titles[2]!.effectiveQualification!.localRuleBasis!.join(' ')).toContain('专精特新中小企业')
+  expect(current.titles[2]!.evidence).toEqual([])
   expect(reader.readCurrent(1, AS_OF, 'specialized_sme').snapshot).toEqual(current)
   expect(reader.readWorkbook(1, AS_OF, 'specialized_sme').snapshot).toEqual(current)
   expect(reader.readTitle(1, 'specialized_sme', AS_OF).group).toBe('eligible')
