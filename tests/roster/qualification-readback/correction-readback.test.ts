@@ -411,7 +411,7 @@ it('public_safe_capture_keeps_complete_snapshot_and_digest', async () => {
   const detail = await get(`/api/roster/enterprises/${enterprise.id}`)
   expect(detail.status).toBe(200)
   expect(result.body.qualificationReadback.assessment).toEqual(qualification.readCurrentQualificationAssessment(db.$client, enterprise.id, Date.parse(detail.body.qualificationAssessment.asOf), { assessmentVersion: 'enterprise-qualification-407-v1' }))
-  expect(detail.body.qualificationAssessment.assessmentVersion).toBe('enterprise-qualification-740-v5')
+  expect(detail.body.qualificationAssessment.assessmentVersion).toBe('enterprise-qualification-740-v6')
 })
 
 it.each([

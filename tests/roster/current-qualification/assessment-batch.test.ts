@@ -57,7 +57,12 @@ it('keeps full three-title snapshots and workbook cells exact with bounded input
   const first = ids[1]!
   db.$client.prepare('UPDATE record_event SET year=2020 WHERE record_id IN (SELECT id FROM record WHERE enterprise_id=?)').run(first)
   db.$client.exec('BEGIN')
-  try { expect(reader.readEffectiveTitles([first], at, 'little_giant').get(first)).toBe('expired') } finally { db.$client.exec('ROLLBACK') }
+  // The changed 2020 award remains effective for giants; both lower titles inherit its retained qualification.
+  try {
+    expect(reader.readEffectiveTitles([first], at, 'little_giant').get(first)).toBe('effective')
+    expect(reader.readEffectiveTitles([first], at, 'specialized_sme').get(first)).toBe('effective')
+    expect(reader.readEffectiveTitles([first], at, 'innovative_sme').get(first)).toBe('effective')
+  } finally { db.$client.exec('ROLLBACK') }
 })
 it('preserves three-title filters counts options and pagination on a compact consumer matrix', () => {
   vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(at)
