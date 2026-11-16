@@ -76,8 +76,7 @@ const steps = computed(() => {
           <article v-for="assessment in detail.qualificationAssessment.titles" :key="assessment.titleCode">
             <h3 class="flex flex-wrap items-center gap-2"><TitleBadge :code="assessment.titleCode" /><span>{{ assessment.effectiveQualification ? CURRENT_STATUS_LABELS[assessment.effectiveQualification.status] : { eligible: '宁波当前可纳入', pending: '宁波当前待核', excluded: '不纳入宁波当前结果' }[assessment.group] }}</span></h3>
             <p v-for="basis in assessment.effectiveQualification?.presentationBasis ?? []" :key="basis">{{ basis }}</p>
-            <p v-for="note in assessment.effectiveQualification?.notes ?? []" :key="note">{{ note }}</p>
-            <p>公布依据：{{ assessment.officialQualification.message }}</p>
+            <p v-if="!assessment.effectiveQualification?.source">公布依据：{{ assessment.officialQualification.message }}</p>
             <p>主体：{{ assessment.subject.message }}；地域：{{ assessment.region.message }}</p>
           </article>
         </section>

@@ -387,14 +387,14 @@ function openPreview(e: Evidence) {
                 <p class="text-muted-foreground text-sm">评估时点：{{ data?.qualificationAssessment?.asOf }}。下次复核年份用于安排复核，当前资格以下列评估为准。</p>
                 <section v-for="item in qualificationRows" :key="item.titleCode" class="flex min-w-0 flex-col gap-2 break-words">
                   <h3 class="flex flex-wrap items-center gap-2"><TitleBadge :code="item.titleCode" /><span>{{ item.effectiveQualification ? CURRENT_STATUS_LABELS[item.effectiveQualification.status] : qualificationGroupLabel[item.group] }}</span></h3>
-                  <p v-if="item.effectiveQualification">当前有效状态：{{ CURRENT_STATUS_LABELS[item.effectiveQualification.status] }}；{{ item.officialQualification.message }}</p>
+                  <p v-if="item.effectiveQualification">当前有效状态：{{ CURRENT_STATUS_LABELS[item.effectiveQualification.status] }}</p>
                   <p v-for="basis in item.effectiveQualification?.presentationBasis ?? []" :key="basis">{{ basis }}</p>
-                  <p v-for="note in item.effectiveQualification?.notes ?? []" :key="note">资料与来源备注：{{ note }}</p>
-                  <p>正式资格：{{ item.officialQualification.message }}</p>
-                  <p v-for="note in item.officialQualification.notes" :key="note">{{ note }}</p>
+                  <template v-if="!item.effectiveQualification?.source">
+                    <p>公布资格：{{ item.officialQualification.message }}</p>
+                    <p v-for="note in item.officialQualification.notes" :key="note">{{ note }}</p>
+                  </template>
                   <p>主体：{{ item.subject.message }}</p>
                   <p>地域：{{ item.region.message }}</p>
-                  <p>平台同步：{{ item.platform.message }}</p>
                   <p v-for="(cycle, index) in item.cycles" :key="index">原认定周期 {{ cycle.originYear }} 年 · {{ cycle.batchSeq == null ? '原批次未记录，未推断数字批次' : `第 ${cycle.batchSeq} 批` }}（年份精度）</p>
                 </section>
               </div>

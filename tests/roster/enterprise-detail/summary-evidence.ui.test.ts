@@ -209,3 +209,18 @@ it('opens the published original file in the preview dialog', async () => {
   expect(dialog.props('open')).toBe(true)
   expect(dialog.props('src')).toBe('/api/files/jxj/source.pdf')
 })
+
+it('shows selected platform qualification without internal provenance or obsolete approval warnings', async () => {
+  const item = state.detail.qualificationAssessment.titles[0]
+  item.effectiveQualification = { status: 'effective', source: { source: 'recognized_list' }, presentationBasis: ['认定目录：上海原名；有效期间：2026-03-06 至 2029-03-05'], notes: ['recognized_list record:8520 version:8217 observation:59219', '缺少已确认认定及资格依据'] }
+  item.platform.message = '同主体、称号、周期、时点及覆盖尚需核实'
+  item.officialQualification.notes = ['缺少已确认认定及资格依据']
+  await openDetail()
+  const summary = view!.get('[aria-label="称号与复核安排"]')
+  await summary.findAll('button').find(button => button.text() === '资格依据')!.trigger('click')
+  await flushPromises()
+  expect(summary.text()).toContain('有效企业')
+  expect(summary.text()).toContain('认定目录：上海原名；有效期间：2026-03-06 至 2029-03-05')
+  expect(summary.text()).not.toMatch(/record:|version:|observation:|缺少已确认认定及资格依据|覆盖尚需核实/)
+  expect(summary.text()).not.toContain('当前有效状态：有效企业；正式资格已经结束')
+})

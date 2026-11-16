@@ -96,7 +96,7 @@ it('shows a known business year without deriving an unknown actual period', () =
 it('renders the backend qualification and business facts from the same detail snapshot', async () => {
   const { vi } = await import('vitest')
   const { flushPromises } = await import('@vue/test-utils')
-  vi.stubGlobal('$fetch', vi.fn(async () => ({ qualificationAssessment: { asOf: '2026-11-16', titles: [{ titleCode: 'specialized_sme', group: 'eligible', effectiveQualification: { status: 'effective', presentationBasis: ['目录明确有效至2029-03-05'], notes: [] }, officialQualification: { message: '无当前公布依据' }, subject: { message: '主体延续' }, region: { message: '宁波市' } }] }, businessTimeline: { asOf: '2026-11-16', sources: [] } })))
+  vi.stubGlobal('$fetch', vi.fn(async () => ({ qualificationAssessment: { asOf: '2026-11-16', titles: [{ titleCode: 'specialized_sme', group: 'eligible', effectiveQualification: { status: 'effective', presentationBasis: ['目录明确有效至2029-03-05'], notes: ['recognized_list record:8520 version:8217 observation:59219'] }, officialQualification: { message: '无当前公布依据' }, subject: { message: '主体延续' }, region: { message: '宁波市' } }] }, businessTimeline: { asOf: '2026-11-16', sources: [] } })))
   const wrapper = mount(CurrentQualificationTimeline, { props: { enterpriseId: 7 }, global: { stubs: { Dialog: { props: ['open'], template: '<div v-if="open"><slot /></div>' }, DialogContent: { template: '<div><slot /></div>' }, DialogHeader: { template: '<div><slot /></div>' }, DialogTitle: { template: '<h2><slot /></h2>' }, DialogDescription: { template: '<p><slot /></p>' } } } })
   try {
     await wrapper.get('button').trigger('click'); await flushPromises()
@@ -104,6 +104,7 @@ it('renders the backend qualification and business facts from the same detail sn
     expect(summary.text()).toContain('2026-11-16')
     expect(summary.text()).toContain('有效企业')
     expect(summary.text()).toContain('目录明确有效至2029-03-05')
+    expect(summary.text()).not.toMatch(/record:|version:|observation:/)
     expect(summary.text()).toContain('无当前公布依据')
     expect(summary.text()).toContain('宁波市')
     expect(wrapper.findComponent({ name: 'PlatformRecords' }).props('timeline')).toEqual({ asOf: '2026-11-16', sources: [] })
