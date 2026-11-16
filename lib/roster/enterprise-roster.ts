@@ -1,4 +1,4 @@
-import { currentDifferenceCoordinates } from './current-difference'
+import { explainCurrentDifferences, type DifferenceQualification } from './current-difference'
 import { readCorrespondenceTargetQueries,readCorrespondenceTargetSources,correspondenceQueryRelationIds } from '../../server/utils/record-correspondence-target-sources'
 import type { PlatformStoredQuery } from '../platform/read'
 import type { PlatformStoredRelation } from '../platform/read'
@@ -717,7 +717,7 @@ export interface MovedIn {
   complete: boolean
 }
 
-export interface RosterDifferenceRow extends LegacyRosterDifferenceRow, QueryAssessment {}
+export interface RosterDifferenceRow extends LegacyRosterDifferenceRow, QueryAssessment, DifferenceQualification {}
 
 interface LegacyRosterDifferenceRow {
   /** 存下来的解释行 id;**`null` = 还没有解释记录**(状态即状态机默认的 `not_queried`)。 */
@@ -851,7 +851,6 @@ function differenceKey(enterpriseId: number, titleCode: string, direction: strin
  * 永远筛不到它)。两边的来源由 `explanationId` 与 `inCurrentDifference` 分别说清。
  */
 function differenceUniverse(db: Db, snap: Snapshot, derived: Array<{ enterpriseId: number; titleCode: string; direction: ComparisonDirection }> = getComparison(db).rows, asOf = Date.now()): LegacyRosterDifferenceRow[] {
-  derived = currentDifferenceCoordinates(db, derived, asOf)
   const current = currentExplanations(snap)
   const names = new Map(snap.enterprises.map((e) => [e.id, e]))
   const recordDistrict = new Map<number, string | null>()
@@ -953,7 +952,7 @@ function enterpriseDetail(db: Db, id: number, asOf: number): RosterEnterpriseDet
     .filter((name, index, list) => list.indexOf(name) === index)
     .sort()
 
-  const differenceRows = differenceUniverse(db, snap, enterpriseComparisonCoordinates(db, id), asOf)
+  const differenceRows = explainCurrentDifferences(db, differenceUniverse(db, snap, enterpriseComparisonCoordinates(db, id), asOf), asOf)
   const difference = enterpriseDifferenceSummaries(differenceRows).get(id) ?? NO_DIFFERENCE
   const row = toRow(profile, aliasNames, deriveRosterState(profile, index), difference)
   const events = profile.records.flatMap((r) => profile.eventsByRecord.get(r.id) ?? [])
@@ -1196,7 +1195,7 @@ function rosterDifferences(db: Db, filter: RosterDifferenceFilter): RosterDiffer
   const selected = rows.slice((page - 1) * pageSize, page * pageSize)
   const hydrated = new Map(differenceUniverse(db, readDifferenceSnapshot(db, [...new Set(selected.map(r => r.enterpriseId))]), selected, asOf).map(r => [differenceKey(r.enterpriseId, r.titleCode, r.direction), r]))
   return {
-    rows: selected.map(row => ({ ...hydrated.get(differenceKey(row.enterpriseId, row.titleCode, row.direction))!, inCurrentDifference: row.inCurrentDifference, ...readQueryAssessment(db, row) })),
+    rows: explainCurrentDifferences(db, selected.map(row => ({ ...hydrated.get(differenceKey(row.enterpriseId, row.titleCode, row.direction))!, inCurrentDifference: row.inCurrentDifference, ...readQueryAssessment(db, row) })), asOf),
     counts,
     total: rows.length,
     page,
