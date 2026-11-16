@@ -1,3 +1,4 @@
+import { readManagedQualificationInputs, managedQualificationSourceValid } from './managed-qualification-inputs'
 import type { RecognizedWitnessReader } from './recognized-witness-reader'
 import { adjudicateQualificationCycles as adjudicate407Cycles } from './qualification-cycles-407'
 import { createCurrentAssessmentInputs, type CurrentAssessmentInputs } from './current-assessment-inputs'
@@ -409,6 +410,12 @@ function createCurrentQualificationAssessmentReaderBody(db:Database.Database,rec
         }), [title])
       })
     },
+    readEffectiveTitleSummaries(ids: readonly number[], asOf: number, title: CurrentTitle) {
+      return evaluate.withinBatch(ids, () => new Map(ids.map(id => {
+        const assessed = evaluate(id, title, Number(qualificationDay(asOf).slice(0,4)), asOf, undefined, false, false, undefined, false, undefined, () => [], undefined, undefined, { qualificationOnly: true })
+        return [id, { effectiveStatus: assessed.effectiveStatus, basis: assessed.row.basis }]
+      })))
+    },
     readEffectiveTitles(ids: readonly number[], asOf: number, title: CurrentTitle) {
       return evaluate.withinBatch(ids, () => new Map(ids.map(id => [id,
         evaluate(id, title, Number(qualificationDay(asOf).slice(0,4)), asOf, undefined, false, false, undefined, false, undefined, () => [], undefined, undefined, { qualificationOnly: true }).effectiveStatus,
@@ -587,6 +594,29 @@ function createCurrentCandidateEvaluationReader(db: Database.Database, receiptRu
     const parsed=currentQualification102.safeParse(f.currentQualification)
     return parsed.success && parsed.data.titleCode === title ? [{decision:f,qualification:parsed.data}] : []
   })
+  const managedInputs = effectiveMode ? (batch ? batch.qualifications : readManagedQualificationInputs(reader, [enterpriseId])).get(enterpriseId) ?? [] : []
+  const factRows = batch?.facts.get(enterpriseId) ?? []
+  for (const input of managedInputs) {
+    const d = input.decision
+    if (d.titleCode !== title || d.movedInTitleCode != null && d.movedInTitleCode !== title || d.lifecycleAction === 'withdraw' || d.reasonCode !== 'moved_in' || d.status !== 'confirmed_reason' || d.verificationStatus !== 'confirmed' || !d.basis || !d.effectiveAt || Date.parse(d.effectiveAt) > executionTime || !Number.isFinite(Date.parse(d.effectiveAt))) continue
+    if (!managedQualificationSourceValid(input, enterprise.uscc_norm)) { row.notes.push(`迁入资格来源版本或归属需重新核实（decision:${d.id}）`); continue }
+    const referencesValid = (d.factReferences ?? []).every(ref => {
+      if (ref.enterpriseId !== enterpriseId) return false
+      const facts = batch ? factRows : readEnterpriseFactRows()
+      const head = facts.filter(f => f.enterpriseId === ref.enterpriseId && f.factId === ref.factId).at(-1)
+      if (!head || head.status !== 'confirmed' || head.revision !== ref.revision) return false
+      try { return JSON.parse(head.fact).kind === ref.kind } catch { return false }
+    })
+    if (!referencesValid) continue
+    const parsed = currentQualification102.safeParse(d.currentQualification)
+    if (!parsed.success || parsed.data.titleCode !== title) continue
+    // A lifecycle qualification is not a diagnostic head. Only its own typed
+    // qualification and source admission join the existing interval adjudication.
+    attested.push({ decision: { ...d, queryId: null, relationId: null, movedTitle:d.movedInTitleCode, movedCity:d.movedInCity, movedYear:d.movedInYear, movedBatch:d.movedInBatch, evidenceQueryId:null,evidenceRelationId:null }, qualification: parsed.data })
+  }
+  function readEnterpriseFactRows() {
+    return statement('select enterprise_id as enterpriseId,fact_id as factId,revision,status,fact from enterprise_fact_revision where enterprise_id=? order by id').all(enterpriseId) as {enterpriseId:number;factId:number;revision:number;status:string;fact:string}[]
+  }
   const applicable = attested.filter(({qualification:q}) => Date.parse(q.validFrom) <= executionTime && executionTime < Date.parse(q.validUntil))
   const current = applicable.filter(a => {
     const q=a.qualification
@@ -660,7 +690,7 @@ function createCurrentCandidateEvaluationReader(db: Database.Database, receiptRu
   const effectiveFormal = qualification
   let effectiveStatus = exclusions?.terminated ? 'terminated' as const
     : exclusions?.region === 'outside_ningbo' ? 'moved_out' as const
-    : effectiveFormal.group === 'eligible' ? 'effective' as const
+    : effectiveFormal.group === 'eligible' || current.length > 0 ? 'effective' as const
     : events.some(e => e.source === 'jxj' && e.eventType === 'award') ? 'expired' as const : 'unrecognized' as const
   // #687: only the title's own evidenced, temporally applicable history opens
   // this local rule. The giant is evaluated independently, without inheritance.
@@ -695,7 +725,15 @@ function createCurrentCandidateEvaluationReader(db: Database.Database, receiptRu
     if (exclusions?.pending) row.notes.push('排除事实证据或生效时间不完整，仅备注，不改变正式资格')
     officialGroup = effectiveFormal.group === 'eligible' ? 'eligible' : 'excluded'
     row.group = effectiveStatus === 'effective' ? 'eligible' : 'excluded'
-    qualificationSource = 'formal'
+    qualificationSource = effectiveFormal.group === 'eligible' || !current.length ? 'formal' : 'migration'
+    if (qualificationSource === 'migration') migrationAwardYears = [...new Set(current.flatMap(a => a.qualification.awardYear == null ? [] : [a.qualification.awardYear]))]
+    if (current.length) {
+      row.notes.push('迁入资格已确认')
+      if (!formal.length) row.publication = '迁入；未见宁波该称号公布记录（限已核对范围）'
+      row.basis = [row.basis, ...current.map(a => `decision:${a.decision.id} ${a.qualification.basis} [${a.qualification.validFrom},${a.qualification.validUntil})`)].filter(Boolean).join('\n')
+      row.references.push(...current.map(a => `decision:${a.decision.id}`))
+      workbookMigration.push(...current.map(({qualification:q}) => ({basis:q.basis,awardYear:q.awardYear ?? null,validFrom:q.validFrom,validUntil:q.validUntil,publicationScope:q.publicationCheck.scope})))
+    }
   }
   row.notes.push(...localRuleBasis)
   if (includeFilterFacts && (row.group === 'eligible' || includePendingFilterFacts)) {
@@ -813,9 +851,9 @@ function createCurrentCandidateEvaluationReader(db: Database.Database, receiptRu
     const formalBasis = events.filter(e => e.source === 'jxj').map(e => `event:${e.id}@${e.revision}`).join('\n')
     row.assessment = {
       titleCode:title,group,
-      ...(effectiveMode ? {effectiveQualification:{status:effectiveStatus,localRuleBasis,presentationBasis:[...effectiveFormal.cycles.flatMap(c => { const validity = c.anchor?.formalValidity; const source = validity && evidence.find(e => e.id === validity.evidenceId); return c.periodBasis ? [c.periodBasis + (source ? `；正式来源：${source.sourceFile}；第 ${validity!.statementPages.join('、')} 页` : '')] : [] }),...(exclusions?.statements ?? [])],basis:[formalBasis,...localRuleBasis,...(exclusions?.refs ?? [])].filter(Boolean).join('\n'),notes:[...row.notes,...effectiveFormal.notes,...gaps.map(gap => ({missing_official_source:'正式公布出处缺失',missing_cycle_semantics:'认定或复核周期资料不完整',identity_unresolved:'主体身份对应尚未核实',published_name_not_retained:'公布名称未留档',published_name_unknown:'公布名称未知',published_name_read_unavailable:'公布名称读取不可用',source_version_unavailable:'来源文件版本不可用'}[gap] ?? '资料缺口待核实'))]}} : {}),
+      ...(effectiveMode ? {effectiveQualification:{status:effectiveStatus,localRuleBasis,presentationBasis:[...effectiveFormal.cycles.flatMap(c => { const validity = c.anchor?.formalValidity; const source = validity && evidence.find(e => e.id === validity.evidenceId); return c.periodBasis ? [c.periodBasis + (source ? `；正式来源：${source.sourceFile}；第 ${validity!.statementPages.join('、')} 页` : '')] : [] }),...current.map(a => `${a.qualification.basis} [${a.qualification.validFrom},${a.qualification.validUntil})`),...(exclusions?.statements ?? [])],basis:[formalBasis,...migrationBasis,...localRuleBasis,...(exclusions?.refs ?? [])].filter(Boolean).join('\n'),notes:[...row.notes,...effectiveFormal.notes,...gaps.map(gap => ({missing_official_source:'正式公布出处缺失',missing_cycle_semantics:'认定或复核周期资料不完整',identity_unresolved:'主体身份对应尚未核实',published_name_not_retained:'公布名称未留档',published_name_unknown:'公布名称未知',published_name_read_unavailable:'公布名称读取不可用',source_version_unavailable:'来源文件版本不可用'}[gap] ?? '资料缺口待核实'))]}} : {}),
       cycles:qualification.cycles.map(c => ({originYear:c.originYear,batchSeq:c.batch,precision:'year'})),
-      versions:{facts:assessmentDigest(independent ? [enterprise,events,aliases,independent] : [enterprise,events,aliases]),sources:assessmentDigest([evidence,sourceVersions,publishedNames]),decisions:assessmentDigest([versionHeads,decisionAssessments,correspondences]),observations:assessmentDigest([coverage,observedRows])},
+      versions:{facts:assessmentDigest(independent ? [enterprise,events,aliases,independent] : [enterprise,events,aliases]),sources:assessmentDigest([evidence,sourceVersions,publishedNames,...managedInputs.map(input => input.source)]),decisions:assessmentDigest([versionHeads,decisionAssessments,correspondences,...managedInputs]),observations:assessmentDigest([coverage,observedRows])},
       officialQualification:{group:officialGroup,message:officialGroup === 'eligible' ? '正式资格当前有效（按已录入的年份或已核实有效期间）' : officialGroup === 'excluded' ? '正式资格不纳入当前有效；历史依据保留' : '正式资格待核；已有公布及具体缺口保留',basis:effectiveMode ? formalBasis : [row.basis,...migrationBasis].filter(Boolean).join('\n'),notes:officialNotes},
       subject:{status:subjectStatus,message:subjectStatus === 'terminated' ? '已确认注销或主体终止，全部称号排除；迁回不恢复主体' : subjectStatus === 'unresolved' ? '主体事实适用性待核' : '未见可适用的已确认主体终止事实；不据此证明存续',decisionIds:terminations.map(d => d.id)},
       region:{status:regionStatus,message:regionStatus === 'outside_ningbo' ? '已确认迁出，不纳入宁波当前结果；不据此认定全国称号撤销' : regionStatus === 'ningbo' ? '已确认迁回或迁入宁波；主体及称号资格分别判断' : regionStatus === 'unresolved' ? '主体地域事实适用性或生效顺序待核' : '未见可适用的迁移决定；沿用正式公布地域范围',decisionIds:latest.map(d => d.id)},
