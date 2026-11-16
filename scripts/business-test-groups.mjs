@@ -91,6 +91,7 @@ const owners = {
   ],
   "名录 · 资格与认定读取": [
     "roster/current-qualification",
+    "roster/platform-qualification",
     "roster/current-candidates",
     "roster/little-giant",
     "roster/qualification-readback",
