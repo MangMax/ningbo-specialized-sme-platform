@@ -257,9 +257,18 @@ it("preserves enumerable qualification input exactly under an explicit sidecar-o
   expect(beforeQA.titles[1]!.completeness.publishedNames).toEqual(knownNames)
   expect(beforeQA.titles[0]!.sourceVersions).toEqual([])
   expect(beforeQA.titles[0]!.completeness.publishedNames).toEqual([])
-  const emptyGiantSources = createHash('sha256').update(JSON.stringify([[], [], []])).digest('hex')
-  const lowerSources = (own: string) => createHash('sha256').update(JSON.stringify([own, emptyGiantSources])).digest('hex')
-  expect(beforeQA.titles[1]!.versions.sources).toBe(lowerSources('4f5c00947fcde877a9d6c0fe6c35228182045c2a23083178b16e385ccc81893d'))
+  // Independent fixture coordinates; correction changes only capturedRevision.
+  const hashJSON = (input: unknown) => createHash('sha256').update(JSON.stringify(input)).digest('hex')
+  const emptyGiantSources = hashJSON([[], [], [], []])
+  const evidenceInputs = [
+    { id: 1, eventId: 1, sourceFile: '2021公布.pdf', attachment: null, listNo: 1, page: 1 },
+    { id: 2, eventId: 2, sourceFile: '2024公布.pdf', attachment: null, listNo: 1, page: 1 },
+  ]
+  const lowerSources = (revision: number) => hashJSON([
+    hashJSON([evidenceInputs, [originalSources[0], { ...originalSources[1], capturedRevision: revision }], knownNames, []]), emptyGiantSources,
+  ])
+  const innovativeSources = (revision: number) => hashJSON([hashJSON([emptyGiantSources, emptyGiantSources]), lowerSources(revision)])
+  expect(beforeQA.titles.map(title => title.versions.sources)).toEqual([emptyGiantSources, lowerSources(1), innovativeSources(1)])
   expect(beforeQA.titles[1]!.group).toBe('eligible')
   expect(beforeQA.titles[1]!.cycles).toEqual([{ originYear: 2021, batchSeq: 1, precision: 'year' }])
   const row = f.published('隔离变量公布名',2,1,{declaration:{kind:'existing',sourceDocumentId:exact.official.row.sourceDocumentId,basis:'同一公布事实'}})
@@ -271,16 +280,18 @@ it("preserves enumerable qualification input exactly under an explicit sidecar-o
   assertQA(afterQA)
   expect(afterQA.titles[1]!.sourceVersions).toEqual([originalSources[0], { ...originalSources[1], capturedRevision: 2 }])
   expect(afterQA.titles[1]!.completeness.publishedNames).toEqual(knownNames)
-  expect(afterQA.titles[1]!.versions.sources).toBe(lowerSources('6b237ce4671d559acbd79ad50cb0c4a7926e442363e339060399c091505b0155'))
+  expect(afterQA.titles[1]!.versions.sources).toBe(lowerSources(2))
   // Exactly these source changes are allowed. Everything else, including unknown
-  // added/deleted fields and both non-target titles, stays deeply equal.
+  // added/deleted fields, stays deeply equal except downstream source dependency.
   const expectedAfter = structuredClone(beforeQA)
   expectedAfter.titles[1]!.sourceVersions[1]!.capturedRevision = 2
-  expectedAfter.titles[1]!.versions.sources = lowerSources('6b237ce4671d559acbd79ad50cb0c4a7926e442363e339060399c091505b0155')
+  expectedAfter.titles[1]!.versions.sources = lowerSources(2)
+  expectedAfter.titles[2]!.versions.sources = innovativeSources(2)
   expectedAfter.snapshotId = createHash('sha256').update(JSON.stringify([scope, expectedAfter.titles])).digest('hex')
   expect(afterQA).toEqual(expectedAfter)
   expect(afterQA.snapshotId).not.toBe(beforeQA.snapshotId)
-  expect([afterQA.titles[0], afterQA.titles[2]]).toEqual([beforeQA.titles[0], beforeQA.titles[2]])
+  expect(afterQA.titles[0]).toEqual(beforeQA.titles[0])
+  expect({ ...afterQA.titles[2], versions: beforeQA.titles[2]!.versions }).toEqual(beforeQA.titles[2])
   // Only after the complete new object is validated, retain the old enumerable oracle.
   const strip = (v: CurrentQualifiedResult) => ({ ...v, rows: v.rows.map(({ publishedPresentation, qualificationAssessment, ...old }) => old) })
   expect(strip(after)).toEqual(strip(before))

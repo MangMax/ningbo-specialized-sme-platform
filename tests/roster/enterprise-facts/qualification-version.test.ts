@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { afterAll, expect, it } from 'vitest'
 import { initializeDb, schema } from '../../../db/client'
 import { createHash } from 'node:crypto'
-import { createCurrentQualificationAssessmentReader, PREVIOUS_QUALIFICATION_ASSESSMENT_VERSION, QUALIFICATION_ASSESSMENT_VERSION } from '../../../lib/roster/current-qualification'
+import { createCurrentQualificationAssessmentReader, PREVIOUS_QUALIFICATION_ASSESSMENT_VERSION } from '../../../lib/roster/current-qualification'
 
 const dir = mkdtempSync(join(tmpdir(), 'facts-qualification-version-307-'))
 const db = initializeDb({ create: true,  dbPath: join(dir, 'test.sqlite') })
@@ -57,10 +57,13 @@ it('default formal qualification versions exclude difference decisions and pinne
   const current = () => reader.read(1, Date.parse('2026-11-04T15:17:33.693Z')).snapshot
   const before = current(), legacy = read()
   // No formal event, correspondence, or subject fact is seeded. The default
-  // decision-version input is three empty lists, independently serialized here.
-  const emptyDecisions = createHash('sha256').update('[[],[],[]]').digest('hex')
-  expect(before.assessmentVersion).toBe(QUALIFICATION_ASSESSMENT_VERSION)
-  expect(before.titles.map(title => [title.group, title.versions.decisions])).toEqual(Array.from({ length: 3 }, () => ['excluded', emptyDecisions]))
+  // v5 adds disposition inputs and downward giant/specialized dependencies.
+  const hash = (input: unknown) => createHash('sha256').update(JSON.stringify(input)).digest('hex')
+  const giant = hash([[], [], [], []])
+  const specialized = hash([giant, giant])
+  const innovative = hash([hash([giant, giant]), specialized])
+  expect(before.assessmentVersion).toBe('enterprise-qualification-740-v5')
+  expect(before.titles.map(title => [title.group, title.versions.decisions])).toEqual([giant, specialized, innovative].map(decisions => ['excluded', decisions]))
   db.$client.exec('BEGIN')
   try {
     db.$client.prepare("update difference_reason set status='confirmed_reason',reason_code='moved_out',verification_status='confirmed',fact_references=? where id=1")
