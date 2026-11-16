@@ -164,7 +164,7 @@ it('own effective period wins while upper-only identities inherit real source wi
     expect(inherited).toMatchObject({group:'eligible',evidence:[],sourceVersions:[],cycles:[]})
     expect(inherited.effectiveQualification!.localRuleBasis!.join(' ')).toContain('按有效小巨人资格计入')
     expect(inherited.effectiveQualification!.localRuleBasis!.join(' ')).toContain('jxj/announcement/synthetic-118.xlsx')
-    expect(inherited.effectiveQualification!.presentationBasis!.join(' ')).toContain(`${y} 年 + 3 = ${y+3} 年`)
+    expect(inherited.effectiveQualification!.presentationBasis!.join(' ')).toBe('小巨人原认定或复核通过资格保留；不按认定年龄自动到期，适用正式期间、同周期失败及已确认处置另行裁定')
   }
   const ownSpecialized = ownTitles.find(t=>t.titleCode==='specialized_sme')!
   expect(ownSpecialized.effectiveQualification!.localRuleBasis).toEqual([])

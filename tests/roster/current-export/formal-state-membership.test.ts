@@ -166,7 +166,7 @@ it('separates formal title states and exhausts 201 public query and Excel member
     }
     const targetRow = wb.getWorksheet(literal.sheet)!.getRow(2)
     expect(targetRow.getCell(7).value).toBe(literal.qualification)
-    expect(targetRow.getCell(14).value).toContain('2026 年 + 3 = 2029 年')
+    expect(targetRow.getCell(14).value).toBe('小巨人原认定或复核通过资格保留；不按认定年龄自动到期，适用正式期间、同周期失败及已确认处置另行裁定')
     if (literal.title !== 'little_giant') {
       const tail = wb.getWorksheet(literal.sheet)!.getRow(202)
       expect(tail.getCell(6).value ?? null).toBeNull()
