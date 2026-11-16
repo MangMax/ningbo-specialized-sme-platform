@@ -33,9 +33,9 @@ it('本称号复核周期失败恢复及同年冲突准确分组', async () => {
   const ids = Object.fromEntries(fixtures.map(([name,events]) => [name,String(f.candidate(name,events).enterprise.id)]))
   const {wb,result} = await f.workbook('118-cycles')
   for (const [sheet,names] of [
-    ['有效企业',['新认定无需复核','复核延续','失败后重新认定','旧周期晚失败']],
+    ['有效企业',['新认定无需复核','复核延续','失败后重新认定']],
     ['未认定',['纯培育']],
-    ['已到期',['本周期失败','已到复核年结果未知','复核结论年未知','同年通过失败冲突','同年恢复顺序未知','复核周期未知']],
+    ['已到期',['旧周期晚失败','本周期失败','已到复核年结果未知','复核结论年未知','同年通过失败冲突','同年恢复顺序未知','复核周期未知']],
   ] as Array<[string,string[]]>) expect(rows(wb,sheet).map(row => businessIdentity(row))).toEqual(names.map(name => expectedBusinessIdentity(f.db,Number(ids[name]))))
   const restored = rows(wb,'有效企业').find(row => row[2] === '失败后重新认定')!
   expect(restored[6]).toBe(String(y-5))
@@ -44,7 +44,7 @@ it('本称号复核周期失败恢复及同年冲突准确分组', async () => {
   expect(rows(wb,'有效企业').find(row => row[2] === '复核延续')![7]).toContain((y-1) + '年复核通过')
   expect(rows(wb,'已到期').find(row => row[2] === '本周期失败')![15]).toContain('复核明确不通过')
   for (const name of ['同年通过失败冲突','同年恢复顺序未知']) expect(rows(wb,'已到期').find(row => row[2] === name)![15]).toContain('复核明确不通过')
-  expectCounts(wb,{result},{eligible:4,pending:0,excluded:7}, {effective:4,expired:6,terminated:0,moved_out:0,unrecognized:1})
+  expectCounts(wb,{result},{eligible:3,pending:0,excluded:8}, {effective:3,expired:7,terminated:0,moved_out:0,unrecognized:1})
 })
 it('迁入更名双备注及主体事实和公布缺口保留依据', async () => {
   // Historical case name retained; #355/#379 keep migration notes and aliases,

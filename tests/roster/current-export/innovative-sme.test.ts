@@ -64,10 +64,10 @@ it('创新型按自身认定周期复核并保留恢复与同年冲突', async (
   candidate('复核原周期未知', [{ eventType: 'award', year: year - 1 }, { eventType: 'review', year: null, decidedYear: year, reviewOutcome: 'failed' }])
   candidate('纯培育', [{ eventType: 'nurture', year }])
   const { wb, result } = await workbook('119-cycles')
-  expect(rows(wb, '有效企业').map(row => row[2])).toEqual(['新认定', '复核通过', '失败后恢复', '旧周期晚失败', '本周期失败'])
+  expect(rows(wb, '有效企业').map(row => row[2])).toEqual(['新认定', '复核通过', '失败后恢复', '本周期失败'])
   expect(rows(wb, '未认定').map(row => row[2])).toEqual(['纯培育'])
-  expect(rows(wb, '已到期').map(row => row[2])).toEqual(['到期结果未知', '复核缺结论年', '同年复核冲突', '同年恢复顺序未知', '复核原周期未知'])
-  expect(result.counts).toEqual({ eligible: 5, pending: 0, excluded: 6 })
+  expect(rows(wb, '已到期').map(row => row[2])).toEqual(['旧周期晚失败', '到期结果未知', '复核缺结论年', '同年复核冲突', '同年恢复顺序未知', '复核原周期未知'])
+  expect(result.counts).toEqual({ eligible: 4, pending: 0, excluded: 7 })
   const restoreRow = rows(wb, '有效企业').find(row => matchesBusinessIdentity(db, row, restored.enterprise.id))!
   expect(restoreRow[6]).toBe(String(year - 5))
   expect(restoreRow[7].split('\n')).toHaveLength(restored.events.length)
