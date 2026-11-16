@@ -565,7 +565,9 @@ it('global filter revalidates only recognition witnesses while full reads retain
     expect(full.titles.find(t=>t.titleCode==='innovative_sme')!.correspondence.refs).toHaveLength(41)
     expect(new Set(checked).size).toBe(41)
     const correction={idempotencyKey:'process-source-revision',sourceIdentity:'synthetic/official',actor:{type:'user' as const,id:'test'},basis:'Correct official award batch',operations:[{eventId:a.events[0]!.id,recordId:a.record.id,enterpriseId:a.enterprise.id,expectedRevision:1,patch:{batchSeq:2}}]}
-    commitEventCorrections(m.db,correction,preflightEventCorrections(m.db,correction).planHash)
+    const plan=preflightEventCorrections(m.db,correction)
+    if(!('planHash' in plan) || typeof plan.planHash!=='string') throw new Error('Fresh correction must return a bound plan')
+    commitEventCorrections(m.db,correction,plan.planHash)
     const detail=readCurrentQualificationAssessment(fixture.sqlite,a.enterprise.id,Date.parse(AS_OF))
     const reader=createCurrentQualificationAssessmentReader(fixture.sqlite)
     expect(reader.readWorkbook(a.enterprise.id,Date.parse(AS_OF),'innovative_sme').snapshot).toEqual(detail)
@@ -589,7 +591,9 @@ it.each(['source revision','assignment owner','withdraw','context role','candida
   const ref=refs(a.enterprise.id,'innovative_sme')[0]
   if(state==='source revision'){
     const request={idempotencyKey:'witness-source-correction',sourceIdentity:'synthetic/official-correction',actor:{type:'user' as const,id:'test'},basis:'Correct documented award batch',operations:[{eventId:a.events[0]!.id,recordId:a.record.id,enterpriseId:a.enterprise.id,expectedRevision:1,patch:{batchSeq:2}}]}
-    commitEventCorrections(m.db,request,preflightEventCorrections(m.db,request).planHash)
+    const plan=preflightEventCorrections(m.db,request)
+    if(!('planHash' in plan) || typeof plan.planHash!=='string') throw new Error('Fresh correction must return a bound plan')
+    commitEventCorrections(m.db,request,plan.planHash)
   }
   if(state==='assignment owner'){
     const original=m.db.select().from(filterSchema.platformObservationAssignment).get()!
