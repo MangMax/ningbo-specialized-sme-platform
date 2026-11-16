@@ -24,6 +24,7 @@ it('retains unknown source status and never renews from an update or submission 
   expect(platformBusinessFact('apply_list', { declareKind: '新事项', status: '新状态 ', year: null, appliedAt: '2026-01-01' })).toMatchObject({ matter: 'unknown', conclusion: 'unknown', statusRaw: '新状态 ', matterRaw: '新事项', businessYear: null })
 })
 
+import { normalizeUscc } from '../../../lib/domain'
 import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { createRuntimeSchema } from '../../../db/create-runtime'
@@ -36,7 +37,7 @@ import { processFactsFromRow } from '../../../lib/platform/identity'
 import { readPlatformQualificationFacts } from '../../../lib/roster/platform-qualification'
 function collectionCommand(row: PlatformRawRow, queriedAt: string, source: PlatformLiveQueryResult['source'] = 'queryBusList'): NewCollectionTargetCommand {
   const evidence: PlatformLiveQueryResult = {
-    source, status: 'success', effectiveConditions: source === 'businessList' ? { uscc: String(row.tyshxydm), combination: 'and' } : { name: 'Example', combination: 'and' },
+    source, status: 'success', effectiveConditions: source === 'businessList' ? { uscc: normalizeUscc(String(row.tyshxydm)), combination: 'and' } : { name: 'Example', combination: 'and' },
     titleScope: source === 'queryList' ? { mode: 'source_default', rdjb: [] } : { mode: 'selected', rdjb: [String(row.rdjb ?? '2')] }, queriedAt, completedAt: queriedAt,
     rows: [Object.fromEntries(Object.entries(row).map(([key, value]) => [key, value == null ? '' : typeof value === 'object' ? JSON.stringify(value) : String(value)]))], dataRows: [row], pages: [{ source, rdjb: source === 'queryList' ? null : String(row.rdjb ?? '2'), page: 1, maxPage: 1, status: 'success', fetchedCount: 1, declaredTotal: 1, error: null }],
     fetchedCount: 1, declaredTotal: 1, completeness: 'complete', fullRange: true, unfinished: [], error: null,
@@ -124,7 +125,7 @@ it('selects normalized raw keys across sources and suppresses old identity befor
     sqlite.pragma('foreign_keys=ON'); createRuntimeSchema(sqlite)
     const db = drizzle(sqlite, { schema: targetSchema })
     const subjects = [{ enterpriseId: 7, uscc: '91330110MA2GMDFH58' }]
-    const row = { id: 'identity-change', tyshxydm: ' 91330110ma2g\u200bdmfh58\u00a0', qymc: '原名', rdjb: '2', rdtime: '2023-12-28 08:50:25', rddqrq: '2026-12-28', sfyx: '1' }
+    const row = { id: 'identity-change', tyshxydm: ' 91330110ma2g\u200bmdfh58\u00a0', qymc: '原名', rdjb: '2', rdtime: '2023-12-28 08:50:25', rddqrq: '2026-12-28', sfyx: '1' }
     const first = writeNewCollectionTarget(db, collectionCommand(row, '2026-11-16T00:00:00Z')).observations[0]!
     const original = readPlatformQualificationFacts(db, subjects)
     expect(original).toMatchObject([{ enterpriseId: 7, uscc: '91330110MA2GMDFH58', versionId: first.versionId, observationId: first.observationId, conclusion: 'passed' }])
@@ -135,7 +136,7 @@ it('selects normalized raw keys across sources and suppresses old identity befor
     expect(restored.versionId).toBe(first.versionId)
     expect(readPlatformQualificationFacts(db, subjects)).toEqual(original.map(f => ({ ...f, observationId: restored.observationId, collectedAt: '2026-11-16T01:00:00Z' })))
     for (const source of ['businessList', 'queryList'] as const) {
-      writeNewCollectionTarget(db, collectionCommand({ ...row, id: source, sblx: '申请', cszt: '终审通过', year: '2021' }, '2026-11-16T02:00:00Z', source))
+      writeNewCollectionTarget(db, collectionCommand({ ...row, tyshxydm: row.tyshxydm.trim(), id: source, sblx: '申请', cszt: '终审通过', year: '2021' }, '2026-11-16T02:00:00Z', source))
     }
     expect(readPlatformQualificationFacts(db, subjects).map(f => [f.source, f.uscc, f.conclusion])).toEqual([
       ['recognized_list', '91330110MA2GMDFH58', 'passed'], ['business_list', '91330110MA2GMDFH58', 'passed'], ['apply_list', '91330110MA2GMDFH58', 'passed'],
