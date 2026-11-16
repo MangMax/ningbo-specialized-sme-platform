@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { afterEach, beforeAll, expect, it, vi } from 'vitest'
 import { initializeDb, useRuntimeDb, useApplicationDb } from '../../../db/client'
 import { assertFinalPlatformRuntime as assertApplicationRuntime } from '../../../db/schema-phase'
+import { upgradeTitleCycleDisposition } from '../../../db/title-cycle-disposition'
 import { retirePlatformModel } from '../../../upgrade/retire-platform-model'
 import { createHash } from 'node:crypto'
 import { getRosterEnterpriseDetail } from '../../../lib/roster/enterprise-roster'
@@ -49,6 +50,7 @@ function oldTables(db: Database.Database) {
 it('serves migrated enterprise details with the reconcile capture collection marker', () => {
   const f = target()
   retirePlatformModel(f.db)
+  upgradeTitleCycleDisposition(f.db)
   const owner = useApplicationDb({ dbPath:f.path })
   cleanup.push(() => { owner.$client.close() })
   const detail = getRosterEnterpriseDetail(owner, 1, Date.UTC(2026, 10, 14))!
@@ -117,6 +119,18 @@ it('preserves orphan body bytes and rolls back retirement', () => {
 import { createRuntimeSchema } from '../../../db/create-runtime'
 it('retired populated catalog matches native creation except the native capability receipt', () => {
  const f=target();retirePlatformModel(f.db)
+ // The completed historical migration is frozen. Current readers require this
+ // separate, explicit offline additive step before opening the current binary.
+ const retainedTables=f.db.prepare("SELECT name FROM sqlite_schema WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name").all() as {name:string}[]
+ const retained=()=>retainedTables.map(({name})=>({name,rows:f.db.prepare(`SELECT * FROM "${name}"`).all()}))
+ const before=retained()
+ expect(f.db.prepare("SELECT name FROM sqlite_schema WHERE name='title_cycle_disposition_revision'").get()).toBeUndefined()
+ upgradeTitleCycleDisposition(f.db)
+ expect(retained()).toEqual(before) // Includes original source IDs, BLOB bytes and stored hashes.
+ const upgraded=f.db.prepare('SELECT type,name,tbl_name,sql FROM sqlite_schema ORDER BY type,name').all()
+ upgradeTitleCycleDisposition(f.db)
+ expect(retained()).toEqual(before)
+ expect(f.db.prepare('SELECT type,name,tbl_name,sql FROM sqlite_schema ORDER BY type,name').all()).toEqual(upgraded)
  const native=new Database(':memory:')
  try {
   native.pragma('foreign_keys=ON');createRuntimeSchema(native)
@@ -124,6 +138,7 @@ it('retired populated catalog matches native creation except the native capabili
   // 0053 and the additive capture helper spell this same column differently.
   const columnSql='`max_page_present` integer DEFAULT 0 NOT NULL CHECK (`max_page_present` IN (0,1))'
   const actual=catalog(f.db),expected=catalog(native).map(row=>{const r=row as {sql:string|null};return {...r,sql:r.sql?.replace('max_page_present INTEGER NOT NULL DEFAULT 0 CHECK(max_page_present IN (0,1))',columnSql)??null}})
+  expect(actual.map(row=>{const {name,type}=row as {name:string,type:string};return {name,type}})).toEqual(expected.map(row=>{const {name,type}=row as {name:string,type:string};return {name,type}}))
   expect(actual.map((row,i)=>JSON.stringify(row)===JSON.stringify(expected[i])?null:{actual:row,expected:expected[i]}).filter(Boolean)).toEqual([])
   expect(f.db.pragma('foreign_key_check')).toEqual([])
  } finally {native.close()}
