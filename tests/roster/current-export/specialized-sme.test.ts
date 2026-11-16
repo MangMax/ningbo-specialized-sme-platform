@@ -67,7 +67,7 @@ it('迁入更名双备注及主体事实和公布缺口保留依据', async () =
   const expectedDisplay = Object.freeze({
     8: `${y}年第1批认定，《synthetic-118.xlsx》：未逐出处核实`,
     9: '专精特新公布旧名',
-    11: '历史诊断（不参与有效判定）：迁入资格来源版本或归属需重新核实（已存决定）；逐出处公布名见公布名称列；现用名见企业名称列；已确认曾用名仅见该列',
+    11: '逐出处公布名见公布名称列；现用名见企业名称列；已确认曾用名仅见该列',
     12: `${y}年第1批认定：宁波市经信局公布资料\n《synthetic-118.xlsx》，附件：专精特新中小企业名单，名单序号${renamed.enterprise.id}，未逐出处核实`,
   })
   const {wb,result} = await f.workbook('118-identity')
@@ -78,6 +78,10 @@ it('迁入更名双备注及主体事实和公布缺口保留依据', async () =
   const rename = eligible.find(row => matchesBusinessIdentity(f.db, row, renamed.enterprise.id))!
   expect({ 8: rename[8], 9: rename[9], 11: rename[11], 12: rename[12] }).toEqual(expectedDisplay); expect(rename[9]).toBe('专精特新公布旧名')
   expect(rename[10]).toBe('已见本称号宁波公布记录')
+  // Ordinary workbook notes must not revive the retired manual qualification review.
+  for (const sheet of ['有效企业', '未认定']) for (const row of rows(wb, sheet)) {
+    expect(row[11] ?? '').not.toContain('迁入资格来源版本或归属需重新核实')
+  }
   expect(rename[11]).not.toContain('已确认迁入宁波')
   expect(rename[11]).not.toContain('现已更名为')
   expect(rename[11]).not.toContain('未见宁波'); expect(rename[11]).not.toContain('原城市')
@@ -89,7 +93,7 @@ it('迁入更名双备注及主体事实和公布缺口保留依据', async () =
   expect(waiting.find(row => matchesBusinessIdentity(f.db, row, migrant.enterprise.id))![15]).toContain('缺少已确认认定及资格依据')
   for (const item of [migrant]) {
     const row = waiting.find(row => matchesBusinessIdentity(f.db, row, item.enterprise.id))!
-    expect(row[10]).toBe('尚未完成公布匹配核实'); expect(row[11]).toBe('历史诊断（不参与有效判定）：迁入资格来源版本或归属需重新核实（已存决定）')
+    expect(row[10]).toBe('尚未完成公布匹配核实'); expect(row[11] ?? null).toBeNull()
   }
   expect(eligible.find(row => matchesBusinessIdentity(f.db, row, otherPublication.enterprise.id))![11]).toContain('按有效小巨人资格计入')
   expect(eligible.find(row => matchesBusinessIdentity(f.db, row, conflict.enterprise.id))![11]).toContain('身份冲突')

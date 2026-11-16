@@ -105,13 +105,17 @@ it('迁入、更名与旧解释缺口', async () => {
   const expectedDisplay = Object.freeze({
     8: `${new Date().getFullYear()}年第1批认定，《synthetic.xlsx》：未逐出处核实`,
     9: '迁入更名旧名',
-    11: '历史诊断（不参与有效判定）：迁入资格来源版本或归属需重新核实（已存决定）；逐出处公布名见公布名称列；现用名见企业名称列；已确认曾用名仅见该列',
+    11: '逐出处公布名见公布名称列；现用名见企业名称列；已确认曾用名仅见该列',
     12: `${new Date().getFullYear()}年第1批认定：宁波经信来源资料\n《synthetic.xlsx》，附件：名单，名单序号${renamed.enterprise.id}，未逐出处核实`,
   })
   const {wb} = await workbook('identity')
   const eligible = rows(wb,'有效企业'), pending = rows(wb,'未认定')
   const rename = eligible.find(r => r[2] === '迁入更名现名')!
   expect({ 8: rename[8], 9: rename[9], 11: rename[11], 12: rename[12] }).toEqual(expectedDisplay); expect(rename[9]).toBe('迁入更名旧名')
+  // Ordinary workbook notes must not revive the retired manual qualification review.
+  for (const sheet of ['有效企业', '未认定']) for (const row of rows(wb, sheet)) {
+    expect(row[11] ?? '').not.toContain('迁入资格来源版本或归属需重新核实')
+  }
   expect(rename[11]).not.toContain('已确认迁入宁波'); expect(rename[11]).not.toContain('现已更名'); expect(rename[11]).not.toContain('未见宁波')
   expect(eligible.map(r => r[2])).toEqual(expect.arrayContaining(['迁出后迁回','更新待审核']))
   expect(eligible.filter(r => ['已确认外迁','已确认注销','旧缺码前提变化','未确认旧名链'].includes(r[2])).map(r => r[2])).toEqual(['已确认外迁','已确认注销','旧缺码前提变化','未确认旧名链'])

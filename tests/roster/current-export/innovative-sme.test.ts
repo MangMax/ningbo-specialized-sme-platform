@@ -103,7 +103,7 @@ it('创新型迁入更名双备注与主体排除不越过证据边界', async (
   const expectedDisplay = Object.freeze({
     8: `${year}年第1批认定，《innovative_sme-synthetic.xlsx》：未逐出处核实`,
     9: '公布旧名',
-    11: '历史诊断（不参与有效判定）：迁入资格来源版本或归属需重新核实（已存决定）；逐出处公布名见公布名称列；现用名见企业名称列；已确认曾用名仅见该列',
+    11: '逐出处公布名见公布名称列；现用名见企业名称列；已确认曾用名仅见该列',
     12: `${year}年第1批认定：宁波市经信局公布资料\n《innovative_sme-synthetic.xlsx》，附件：合成名单，名单序号${renamed.events[0]!.id}，未逐出处核实`,
   })
   const { wb, result } = await workbook('119-identity')
@@ -113,6 +113,10 @@ it('创新型迁入更名双备注与主体排除不越过证据边界', async (
   expect(result.counts).toEqual({ eligible: 10, pending: 0, excluded: 0 })
   const renameRow = rows(wb, '有效企业')[0]!
   expect({ 8: renameRow[8], 9: renameRow[9], 11: renameRow[11], 12: renameRow[12] }).toEqual(expectedDisplay); expect(renameRow[9]).toBe('公布旧名')
+  // Ordinary workbook notes must not revive the retired manual qualification review.
+  for (const sheet of ['有效企业', '未认定']) for (const row of rows(wb, sheet)) {
+    expect(row[11] ?? '').not.toContain('迁入资格来源版本或归属需重新核实')
+  }
   expect(renameRow[11]).not.toContain('已确认迁入宁波')
   expect(renameRow[11]).not.toContain('现已更名为')
   expect(renameRow[11]).not.toContain('未见宁波')
