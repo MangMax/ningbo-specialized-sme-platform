@@ -728,33 +728,38 @@ function createCurrentCandidateEvaluationReader(db: Database.Database, receiptRu
       const startYear = f.period.from.value ? Number(f.period.from.value.slice(0, 4)) : f.businessYear
       if (explicit === false || explicit == null && (f.period.from.raw != null || f.period.until.raw != null)) return false
       if (explicit == null && (f.matter === 'update' || startYear == null || startYear > year || title !== 'little_giant' && year >= startYear + 3)) return false
+      const independentGrantAfter = (boundary: string) => formal.some(award => award.eventType === 'award' &&
+        qualificationEventAppliesAt(award, year, day) && awardTime(award) != null &&
+        awardTime(award)! > Number(boundary.slice(0, 4)) && startYear != null &&
+        awardTime(award)! <= startYear && !disposedAwards.has(award.id)) || visible.some(grant => {
+          if (!['recognition','apply'].includes(grant.matter) || grant.conclusion !== 'passed') return false
+          if (grant.invalidatedAt.value && grant.invalidatedAt.value <= at) return false
+          if (grant.location.city ? !/^宁波(?:市)?$/.test(grant.location.city) : enterprise.city && !/^宁波(?:市)?$/.test(enterprise.city)) return false
+          const grantStart = grant.period.from.value ?? (grant.businessYear == null ? null : `${grant.businessYear}-01-01`)
+          return grantStart != null && grantStart > boundary && startYear != null && Number(grantStart.slice(0, 4)) <= startYear
+        })
       // Failures/dispositions belong to their originating cycle. Only an
       // independently later recognition/application can recover; a review cannot.
       const blockers = formal.filter(e => qualificationEventAppliesAt(e, year, day) && e.eventType === 'review' && e.reviewOutcome === 'failed')
       const disposed = formal.filter(e => disposedAwards.has(e.id))
       if ([...blockers, ...disposed].some(e => {
-        const blockedAt = factTime(e) ?? originTime(e)
+        const blockedAt = originTime(e) ?? factTime(e)
         if (blockedAt == null || startYear == null) return true
         if (['recognition','apply'].includes(f.matter)) return startYear <= blockedAt
         // A review can renew a later independent award, but cannot itself be
         // the grant that recovers the failed originating cycle. Future awards
         // cannot supply that new-cycle anchor.
-        const publishedGrant = formal.some(award => award.eventType === 'award' &&
-          qualificationEventAppliesAt(award, year, day) && awardTime(award) != null &&
-          awardTime(award)! > blockedAt && awardTime(award)! <= startYear && !disposedAwards.has(award.id))
-        const platformGrant = visible.some(grant => {
-          if (!['recognition','apply'].includes(grant.matter) || grant.conclusion !== 'passed') return false
-          if (grant.invalidatedAt.value && grant.invalidatedAt.value <= at) return false
-          if (grant.location.city ? !/^宁波(?:市)?$/.test(grant.location.city) : enterprise.city && !/^宁波(?:市)?$/.test(enterprise.city)) return false
-          const grantYear = grant.period.from.value ? Number(grant.period.from.value.slice(0, 4)) : grant.businessYear
-          return grantYear != null && grantYear > blockedAt && grantYear <= startYear
-        })
-        return f.matter !== 'review' || !(publishedGrant || platformGrant)
+        return f.matter !== 'review' || !independentGrantAfter(`${blockedAt}-12-31T23:59:59`)
       })) return false
       // An explicit negative from a higher-priority current source cannot be
       // bypassed by an older lower-priority pass. A later independent grant can.
-      if (visible.some(n => sourceOrder.indexOf(n.source) <= sourceOrder.indexOf(f.source) && n.conclusion === 'invalid' && (!n.invalidatedAt.value || n.invalidatedAt.value <= at) &&
-        (!['recognition','apply'].includes(f.matter) || !f.businessTime.value || !n.invalidatedAt.value || f.businessTime.value <= n.invalidatedAt.value))) return false
+      if (visible.some(n => {
+        if (sourceOrder.indexOf(n.source) > sourceOrder.indexOf(f.source) || n.conclusion !== 'invalid' || n.invalidatedAt.value && n.invalidatedAt.value > at) return false
+        const boundary = n.invalidatedAt.value ?? n.period.until.value
+        if (f.matter === 'review' && boundary) return !independentGrantAfter(boundary)
+        const grantStart = f.period.from.value ?? (f.businessYear == null ? null : `${f.businessYear}-01-01`)
+        return !['recognition','apply'].includes(f.matter) || !grantStart || !boundary || grantStart <= boundary
+      })) return false
       return true
     }).sort((a,b) => (b.period.from.value ?? String(b.businessYear ?? '')).localeCompare(a.period.from.value ?? String(a.businessYear ?? '')) || b.recordId-a.recordId)
   })[0]

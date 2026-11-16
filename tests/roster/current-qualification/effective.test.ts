@@ -178,3 +178,65 @@ it.each(['queryBusList', 'queryList'] as const)('renews an independent platform 
   expect(result).toMatchObject({group:'eligible',effectiveQualification:{status:'effective',source:{source:'business_list',matter:'review',businessYear:2026}}})
  } finally {await local.close()}
 })
+
+it.each([
+ {source:'queryBusList',grantYear:2023,expected:'eligible'},
+ {source:'queryList',grantYear:2023,expected:'eligible'},
+ {source:'queryBusList',grantYear:2019,expected:'excluded'},
+ {source:'queryBusList',grantYear:2027,expected:'excluded'},
+ {source:'queryBusList',grantYear:null,expected:'excluded'},
+] as const)('scopes a retained directory invalidation to its old cycle: $source $grantYear', async ({source,grantYear,expected}) => {
+ const local=qualificationExportFixture()
+ try {
+  const c=local.candidate('retained directory invalidation',[
+   {eventType:'award',year:2019,batchSeq:1},
+   {eventType:'review',year:2019,batchSeq:1,decidedYear:2022,reviewOutcome:'failed'},
+  ])
+  const identity={tyshxydm:'91310115MA1H7KUG93',qymc:'原名',rdjb:'2',szsmc:'宁波市'}
+  local.db.update(schema.enterprise).set({usccNorm:identity.tyshxydm}).where(eq(schema.enterprise.id,c.enterprise.id)).run()
+  writeNewCollectionTarget(local.db,collectionCommand({...identity,id:'old-invalid-cycle',rdtime:'2019-01-01',rddqrq:'2022-12-31',sfyx:'0',sxsj:'2022-06-01'},'2026-09-01T00:00:00Z'))
+  if(grantYear != null) {
+   const grant: PlatformRawRow = source === 'queryBusList'
+    ? {rdtime:`${grantYear}-01-01`,rddqrq:`${grantYear+3}-01-01`,sfyx:'1'}
+    : {sblx:'申请',cszt:'终审通过',year:String(grantYear)}
+   writeNewCollectionTarget(local.db,collectionCommand({...identity,id:'separate-independent-grant',...grant},'2026-10-01T00:00:00Z',source))
+  }
+  writeNewCollectionTarget(local.db,collectionCommand({...identity,id:'later-platform-review',sblx:'复核',cszt:'终审通过',year:'2026'},'2026-11-01T00:00:00Z','businessList'))
+  const own=createCurrentQualificationAssessmentReader(local.db.$client).read(c.enterprise.id,asOf).snapshot.titles.find(t=>t.titleCode==='specialized_sme')!
+  expect(own.group).toBe(expected)
+  if(expected==='eligible')expect(own.effectiveQualification?.source).toMatchObject({source:'business_list',matter:'review',businessYear:2026})
+ } finally {await local.close()}
+})
+
+it.each([
+ {failedYear:2022,invalidatedAt:null},
+ {failedYear:2026,invalidatedAt:'2022-06-01'},
+])('uses the original cycle instead of a late or undated negative: $failedYear $invalidatedAt',async ({failedYear,invalidatedAt})=>{
+ const local=qualificationExportFixture()
+ try {
+  const c=local.candidate('original negative cycle',[
+   {eventType:'award',year:2019,batchSeq:1},
+   {eventType:'review',year:2019,batchSeq:1,decidedYear:failedYear,reviewOutcome:'failed'},
+  ])
+  const identity={tyshxydm:'91310115MA1H7KUG93',qymc:'原名',rdjb:'2',szsmc:'宁波市'}
+  local.db.update(schema.enterprise).set({usccNorm:identity.tyshxydm}).where(eq(schema.enterprise.id,c.enterprise.id)).run()
+  writeNewCollectionTarget(local.db,collectionCommand({...identity,id:'old-known-cycle',rdtime:'2019-01-01',rddqrq:'2022-12-31',sfyx:'0',sxsj:invalidatedAt},'2026-09-01T00:00:00Z'))
+  writeNewCollectionTarget(local.db,collectionCommand({...identity,id:'new-known-cycle',rdtime:'2023-01-01',rddqrq:'2026-01-01',sfyx:'1'},'2026-10-01T00:00:00Z'))
+  writeNewCollectionTarget(local.db,collectionCommand({...identity,id:'new-cycle-review',sblx:'复核',cszt:'终审通过',year:'2026'},'2026-11-01T00:00:00Z','businessList'))
+  const own=createCurrentQualificationAssessmentReader(local.db.$client).read(c.enterprise.id,asOf).snapshot.titles.find(t=>t.titleCode==='specialized_sme')!
+  expect(own).toMatchObject({group:'eligible',effectiveQualification:{source:{source:'business_list',matter:'review',businessYear:2026}}})
+ } finally {await local.close()}
+})
+
+it('uses a later platform application business year without inventing a submission date',async()=>{
+ const local=qualificationExportFixture()
+ try {
+  const c=local.candidate('later platform application',[])
+  const identity={tyshxydm:'91310115MA1H7KUG93',qymc:'原名',rdjb:'2',szsmc:'宁波市'}
+  local.db.update(schema.enterprise).set({usccNorm:identity.tyshxydm}).where(eq(schema.enterprise.id,c.enterprise.id)).run()
+  writeNewCollectionTarget(local.db,collectionCommand({...identity,id:'expired-invalid-directory',rdtime:'2019-01-01',rddqrq:'2022-12-31',sfyx:'0'},'2026-09-01T00:00:00Z'))
+  writeNewCollectionTarget(local.db,collectionCommand({...identity,id:'later-application',sblx:'申请',cszt:'终审通过',year:'2025'},'2026-10-01T00:00:00Z','queryList'))
+  const own=createCurrentQualificationAssessmentReader(local.db.$client).read(c.enterprise.id,asOf).snapshot.titles.find(t=>t.titleCode==='specialized_sme')!
+  expect(own).toMatchObject({group:'eligible',effectiveQualification:{source:{source:'apply_list',matter:'apply',businessYear:2025}}})
+ } finally {await local.close()}
+})
