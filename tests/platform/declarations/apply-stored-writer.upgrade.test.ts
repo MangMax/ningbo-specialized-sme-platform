@@ -93,12 +93,24 @@ it('71608 rejects assignment provenance mismatch and existing REAL year predeces
  if (!actual.equals(before)) {
   let changed=0,bodyChanged=0
   const firstOffsets:number[]=[]
+  const changedPages=new Set<number>()
+  const storedPageSize=before.readUInt16BE(16),pageSize=storedPageSize===1?65536:storedPageSize
   const header:{offset:number;before:number|undefined;after:number|undefined}[]=[]
   for(let offset=0;offset<Math.max(before.length,actual.length);offset++)if(before[offset]!==actual[offset]) {
    changed++;if(offset>=100)bodyChanged++;if(firstOffsets.length<32)firstOffsets.push(offset)
+   changedPages.add(1+Math.floor(offset/pageSize))
    if(offset<100)header.push({offset,before:before[offset],after:actual[offset]})
   }
-  console.error('APPLY_REJECTION_BYTE_DELTA',JSON.stringify({beforeBytes:before.length,afterBytes:actual.length,changed,bodyChanged,firstOffsets,header}))
+  // Classify against the original image only; never normalize the assertion.
+  const freeLeaves=new Set<number>(),freeTrunks=new Set<number>()
+  for(let trunk=before.readUInt32BE(32);trunk;) {
+   freeTrunks.add(trunk)
+   const offset=(trunk-1)*pageSize,leafCount=before.readUInt32BE(offset+4)
+   for(let index=0;index<leafCount;index++)freeLeaves.add(before.readUInt32BE(offset+8+index*4))
+   trunk=before.readUInt32BE(offset)
+  }
+  const pages=[...changedPages],outsideFreeLeaves=pages.filter(page=>!freeLeaves.has(page))
+  console.error('APPLY_REJECTION_BYTE_DELTA',JSON.stringify({beforeBytes:before.length,afterBytes:actual.length,changed,bodyChanged,firstOffsets,header,pageSize,changedPageCount:pages.length,changedPages:pages.slice(0,32),originalFreeLeafCount:freeLeaves.size,originalFreeTrunkCount:freeTrunks.size,outsideFreeLeafCount:outsideFreeLeaves.length,outsideFreeLeaves:outsideFreeLeaves.slice(0,32)}))
  }
  expect(actual.equals(before), 'database bytes remain unchanged').toBe(true);t.close()
 })
