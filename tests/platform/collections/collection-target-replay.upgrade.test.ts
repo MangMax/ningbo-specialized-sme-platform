@@ -1,5 +1,6 @@
 import { createRuntimeSchema } from '../../../db/create-runtime'
 import { completePlatformMigration } from '../../../upgrade/complete-platform'
+import { upgradeRecognizedQualification } from '../../../upgrade/recognized-qualification'
 import { tmpdir } from 'node:os'
 import { mkdirSync, rmSync } from 'node:fs'
 import { createHash } from 'node:crypto'
@@ -99,9 +100,17 @@ function seedOriginal(old:Database.Database,input:NewCollectionTargetCommand){
   for(const r of q.relations)old.prepare('insert into platform_relation(id,query_id,sequence_no,relation_key,name_raw,uscc_raw,raw_fields,created_at) values(?,91,?,?,?,?,?,?)').run(100+r.sequenceNo,r.sequenceNo,r.relationKey,r.nameRaw ?? null,r.usccRaw ?? null,JSON.stringify(r.rawFields),input.createdAt)
 }
 it.each(['queryList','businessList','queryBusList'] as const)('replays migrated %s with original SQL aliases and immutable source binding',source=>{
-  const input=command(evidence(source))
+  const collected=evidence(source)
+  if(source==='queryBusList'){
+    const recognized={rdtime:' 2023-12-28 08:50:25 ',sfyx:0,sxsj:'2026-11-16 12:00:01',sxyy:' 取消 ',szsfmc:' 浙江省 ',szsmc:'宁波市',szqmc:'海曙区',szq:'133020300'}
+    Object.assign(collected.dataRows![0]!,recognized)
+    Object.assign(collected.rows[0]!,{...recognized,sfyx:'0'})
+  }
+  const input=command(collected)
   const {sqlite,db,statements,frozenSource}=fixture(old=>seedOriginal(old,input))
   const frozenHash=createHash('sha256').update(readFileSync(frozenSource)).digest('hex')
+  const originalArchives=sqlite.prepare('select r.field,a.* from platform_observation_archive_ref r join platform_archive_value a on a.id=r.archive_id where r.owner_id=101 order by r.field').all()
+  if(source==='queryBusList')expect(sqlite.prepare('select source_recognized_at,source_valid_flag,source_invalidated_at,source_invalidation_reason,source_province_name,source_city_name,source_district_name,qualification_fields_rule from platform_recognized_projection where observation_id=101').get()).toEqual({source_recognized_at:null,source_valid_flag:null,source_invalidated_at:null,source_invalidation_reason:null,source_province_name:null,source_city_name:null,source_district_name:null,qualification_fields_rule:null})
   const reference=replay(input,q=>{delete q.collectionEvidence;delete q.status;delete q.titleCode;delete q.rawResponse;q.reuseExisting=true;q.relations=[{sequenceNo:1}]})
   const before=bytes(sqlite), result=writeCollectionTarget(db,reference)
   expect(result.queryAlias).toBe(91);expect(result.observations).toEqual([{observationId:101,recordId:null,versionId:null,relationAlias:101,reused:true}])
@@ -115,6 +124,20 @@ it.each(['queryList','businessList','queryBusList'] as const)('replays migrated 
   expect('item' in targetFull ? targetFull.item?.detail : null).toMatchObject({canonicalProjection:[{relationId:101,recordCreated:true,versionCreated:true,observationCreated:true,syncRequested:true}]})
   expect(sqlite.prepare('select id,identity_state,content_state from platform_business_observation').all()).toEqual([{id:101,identity_state:'resolved',content_state:'verified'}])
   expect(sqlite.prepare('select * from platform_observation_assignment').all()).toEqual(assignment)
+  if(source==='queryBusList'){
+    const expectedQualification={source_recognized_at:' 2023-12-28 08:50:25 ',source_valid_flag:0,source_invalidated_at:'2026-11-16 12:00:01',source_invalidation_reason:' 取消 ',source_province_name:' 浙江省 ',source_city_name:'宁波市',source_district_name:'海曙区',qualification_fields_rule:'recognized-qualification-fields-v1'}
+    expect(sqlite.prepare('select source_recognized_at,source_valid_flag,source_invalidated_at,source_invalidation_reason,source_province_name,source_city_name,source_district_name,qualification_fields_rule from platform_recognized_projection where version_id is not null').get()).toEqual(expectedQualification)
+    const indexed=sqlite.prepare('select * from platform_business_observation').all()
+    const versions=sqlite.prepare('select * from platform_business_record_version').all()
+    expect(upgradeRecognizedQualification(sqlite,{batchSize:100})).toEqual({captured:1,unavailable:0})
+    expect(sqlite.prepare('select source_recognized_at,source_valid_flag,source_invalidated_at,source_invalidation_reason,source_province_name,source_city_name,source_district_name,qualification_fields_rule from platform_recognized_projection order by id').all()).toEqual([expectedQualification,expectedQualification])
+    expect(sqlite.prepare('select * from platform_business_observation').all()).toEqual(indexed)
+    expect(sqlite.prepare('select * from platform_business_record_version').all()).toEqual(versions)
+    const captured=bytes(sqlite)
+    expect(writeCollectionTarget(db,ordinary).observations).toEqual(targetFull.observations)
+    expect(bytes(sqlite).equals(captured), 'captured replay preserves database bytes').toBe(true)
+  }
+  expect(sqlite.prepare('select r.field,a.* from platform_observation_archive_ref r join platform_archive_value a on a.id=r.archive_id where r.owner_id=101 order by r.field').all()).toEqual(originalArchives)
   expect(statements.filter(text=>/\b(platform_query|platform_relation)\b/i.test(text))).toEqual([])
   expect(createHash('sha256').update(readFileSync(frozenSource)).digest('hex')).toBe(frozenHash)
   // The complete chain has distinct authenticated predecessors; inspect its first source binding independently.

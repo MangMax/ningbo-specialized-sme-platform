@@ -16,7 +16,7 @@ import { planPlatformObservation, PLATFORM_RAW_HASH_RULE, canonicalPlatformJson,
 import { sourceValueKind, sourceFieldComparison } from './source-extraction';
 import { parseApplyRecord } from './apply-record';
 import { parseBusinessProcess } from './business-projection';
-import { parseRecognizedRecord, parseRecognizedSourceFidelity } from './recognized-projection';
+import { parseRecognizedRecord, parseRecognizedSourceFidelity, parseRecognizedQualificationFields } from './recognized-projection';
 import { isDeepStrictEqual } from 'node:util';
 import { z } from 'zod';
 import { verifyOriginalCommand } from './fingerprint-command-facts';
@@ -250,7 +250,8 @@ export function verifyLegacyFacts(t: Database.Database, owner: FingerprintOwner,
     const state = raw.storageClass === 'null' ? 'absent' : row ? 'valid' : 'invalid', title = row?.rdjb;
     for (const [table, source, fields, rule] of [[s.platformApplyProjection, 'apply_list', parseApplyRecord(row), 'platform-apply-v1'], [storedProcessProjection, 'business_list', parseBusinessProcess(row), 'platform-business-v1'], [s.platformRecognizedProjection, 'recognized_list', parseRecognizedRecord(row), 'platform-recognized-v1']] as const) {
         const rows = db.select().from(table).where(eq(table.observationId, o.id)).all(), p = rows[0];
-        const wanted = { ...fields, createdAt, observationId: o.id, versionId: null, recordId: null, ruleVersion: rule, sourceArchiveId: raw.id, basis: state === 'valid' ? 'observation_reconciliation' : 'unavailable', parseState: state, sourceTitleKind: state === 'valid' ? sourceValueKind(title) : state === 'invalid' ? 'invalid' : 'absent', sourceTitleText: typeof title === 'string' ? title : null, sourceTitleNumberText: typeof title === 'number' ? String(title) : null, sourceTitleBoolean: typeof title === 'boolean' ? Number(title) : null, sourceTitleRuleVersion: c.interface === 'business_list' ? businessStatusRule(t) : 't05b-source-projections-v1', ...sourceFieldComparison(c.interface, stored, row, state) };
+        const qualification = source === 'recognized_list' && p && 'qualificationFieldsRule' in p && p.qualificationFieldsRule !== null ? parseRecognizedQualificationFields(row) : {};
+        const wanted = { ...fields, ...qualification, createdAt, observationId: o.id, versionId: null, recordId: null, ruleVersion: rule, sourceArchiveId: raw.id, basis: state === 'valid' ? 'observation_reconciliation' : 'unavailable', parseState: state, sourceTitleKind: state === 'valid' ? sourceValueKind(title) : state === 'invalid' ? 'invalid' : 'absent', sourceTitleText: typeof title === 'string' ? title : null, sourceTitleNumberText: typeof title === 'number' ? String(title) : null, sourceTitleBoolean: typeof title === 'boolean' ? Number(title) : null, sourceTitleRuleVersion: c.interface === 'business_list' ? businessStatusRule(t) : 't05b-source-projections-v1', ...sourceFieldComparison(c.interface, stored, row, state) };
         if (source === c.interface ? (rows.length !== 1 || !p || Object.entries(wanted).some(([k, v]) => !isDeepStrictEqual(Object.fromEntries(Object.entries(p))[k], v))) : rows.length !== 0)
             throw new Error('Legacy observation projection drift');
         if (p)
@@ -266,7 +267,10 @@ export function verifyLegacyFacts(t: Database.Database, owner: FingerprintOwner,
             }
         }
         const versions = o.versionId === null ? [] : db.select().from(table).where(eq(table.versionId, o.versionId)).all();
-        const vf = o.versionId !== null && source === c.interface ? source === 'apply_list' ? plan.applyRecord : source === 'business_list' ? plan.businessProjection : plan.recognizedProjection : null;
+        let vf = o.versionId !== null && source === c.interface ? source === 'apply_list' ? plan.applyRecord : source === 'business_list' ? plan.businessProjection : plan.recognizedProjection : null;
+        // The version's canonical JSON is bound to its sealed canonical archive above.
+        if (vf && source === 'recognized_list' && versions[0] && 'qualificationFieldsRule' in versions[0] && versions[0].qualificationFieldsRule !== null)
+            vf = { ...vf, ...parseRecognizedQualificationFields(JSON.parse(v!.canonicalRawJson!)) };
         if (versions[0]) {
             const current = versions[0];
             if (current.basis !== 'verified_raw' || current.observationId !== null)
