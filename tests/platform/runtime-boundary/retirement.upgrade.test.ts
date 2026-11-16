@@ -134,11 +134,11 @@ it('retired populated catalog matches native creation except the native capabili
  const native=new Database(':memory:')
  try {
   native.pragma('foreign_keys=ON');createRuntimeSchema(native)
-  const catalog=(db:Database.Database)=>db.prepare("SELECT type,name,tbl_name,sql FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%' AND name NOT LIKE 'platform_runtime_capability%' ORDER BY type,name").all()
+  const catalog=(db:Database.Database)=>db.prepare<[],{type:string;name:string;tbl_name:string;sql:string|null}>("SELECT type,name,tbl_name,sql FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%' AND name NOT LIKE 'platform_runtime_capability%' ORDER BY type,name").all()
   // 0053 and the additive capture helper spell this same column differently.
   const columnSql='`max_page_present` integer DEFAULT 0 NOT NULL CHECK (`max_page_present` IN (0,1))'
-  const actual=catalog(f.db),expected=catalog(native).map(row=>{const r=row as {sql:string|null};return {...r,sql:r.sql?.replace('max_page_present INTEGER NOT NULL DEFAULT 0 CHECK(max_page_present IN (0,1))',columnSql)??null}})
-  expect(actual.map(row=>{const {name,type}=row as {name:string,type:string};return {name,type}})).toEqual(expected.map(row=>{const {name,type}=row as {name:string,type:string};return {name,type}}))
+  const actual=catalog(f.db),expected=catalog(native).map(row=>({...row,sql:row.sql?.replace('max_page_present INTEGER NOT NULL DEFAULT 0 CHECK(max_page_present IN (0,1))',columnSql)??null}))
+  expect(actual.map(({name,type})=>({name,type}))).toEqual(expected.map(({name,type})=>({name,type})))
   expect(actual.map((row,i)=>JSON.stringify(row)===JSON.stringify(expected[i])?null:{actual:row,expected:expected[i]}).filter(Boolean)).toEqual([])
   expect(f.db.pragma('foreign_key_check')).toEqual([])
  } finally {native.close()}
