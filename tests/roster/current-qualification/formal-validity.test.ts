@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { createRuntimeSchema } from '../../../db/create-runtime'
 import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
@@ -69,14 +70,14 @@ it.each(['failed', null] as const)('does not turn review outcome %s into a pass 
   const f = fixture('yongchuang'); f.install(); f.db.update(schema.recordEvent).set({ reviewOutcome: outcome }).where(eq(schema.recordEvent.id, f.review!.id)).run()
   expect(f.selected().group).not.toBe('eligible')
 })
-it('limits the this-result grace to publication and does not promise an indefinite renewal', () => {
+it('does not revive an expired annual award before the linked result publication', () => {
   // Explicit synthetic publication day tests the clause boundary; no stamped date is inferred.
   const f = fixture('yongchuang'); f.install({ ...f.fact, publishedOn: '2026-02-27' })
-  expect(f.selected('2026-02-26').group).toBe('eligible')
+  expect(f.selected('2026-02-26').group).toBe('excluded')
   expect(f.selected('2026-02-27').group).toBe('eligible')
   expect(f.selected('2029-02-28').group).toBe('excluded')
   f.db.update(schema.recordEvent).set({ reviewOutcome: 'failed' }).where(eq(schema.recordEvent.id, f.review!.id)).run()
-  expect(f.selected('2026-02-26').group).toBe('eligible')
+  expect(f.selected('2026-02-26').group).toBe('excluded')
   expect(f.selected('2026-02-27').group).not.toBe('eligible')
 })
 it('next-result continuation ends on a later published failure and unknown results stay unresolved', () => {
@@ -168,4 +169,44 @@ it('explicit v2 retains interval continuation while v3 gives the interval priori
  const f=fixture();f.install({...f.fact,continuation:'until_next_review_results'})
  expect(f.read('2026-11-01',{assessmentVersion:'enterprise-qualification-407-v2'}).titles.find(t=>t.titleCode===f.title)!.group).toBe('eligible')
  expect(f.selected('2026-11-01').group).toBe('excluded')
+})
+
+
+it.each([2025, 2026])('uses passed business year %s while retaining publication, raw history and frozen versions', businessYear => {
+  const f = fixture('yongchuang')
+  f.db.update(schema.recordEvent).set({decidedYear: businessYear}).where(eq(schema.recordEvent.id,f.review!.id)).run()
+  f.install({...f.fact, publishedOn:'2026-02-27', continuation:'until_next_review_results'})
+  const before = f.sqlite.serialize()
+  const versions = ['enterprise-qualification-407-v1','enterprise-qualification-407-v2','enterprise-qualification-478-v3','enterprise-qualification-687-v4']
+  const frozen = versions.map(assessmentVersion => JSON.stringify(f.read('2029-01-01',{assessmentVersion})))
+  // Captured from baseline 2e069f1c, before enabling annual policy; ordered v1-v4.
+  expect(frozen.map(value => createHash('sha256').update(value).digest('hex'))).toEqual(businessYear === 2025 ? [
+    '819a2978a9f7a5c6929ef67f899f63faefc008dba4ebfcacd6c072bfef0d7253',
+    'da817d6cc93340b37548ad6cc3496280ced3f6437c87781435d3915c6bf9ba82',
+    '3ca9c12b52cc44bded06698191e91ee2371867aaf7adf8268f0edf0a633e6e3f',
+    'd360a7381b525aa09d6cff13f382eabfe59ccd28e2c009cae8b63945bf63eb3a',
+  ] : [
+    '137271c07b043b42db9a7b75f3ef089c23faaa021e6b42da1aa5280d1dadd802',
+    '8e8111d5e19e550ff6dfd9b7167d0f4b557c929b62dceb18f78c27a24895e2df',
+    '840bff82402c162e9346d5c89b50108bd19070f1da05c17bca42e77a6fad0072',
+    'f77bb1f582f81505430910c98e8052774b9b35574201c3b5e4d483340ffd9b32',
+  ])
+  expect(f.selected('2026-02-26').group).toBe('excluded')
+  expect(f.selected('2026-02-27').group).toBe('eligible')
+  const last = businessYear === 2025 ? '2027-12-31' : '2028-12-31'
+  const expired = businessYear === 2025 ? '2028-01-01' : '2029-01-01'
+  expect(f.selected(last).group).toBe('eligible')
+  expect(f.selected(expired).group).toBe('excluded')
+  const basis = f.selected(last).effectiveQualification!.presentationBasis!.join(' ')
+  expect(basis).toContain(businessYear === 2025 ? '2025 年 + 3 = 2028 年' : '2026 年 + 3 = 2029 年')
+  expect(basis).not.toContain('01-01')
+  expect(basis).toContain('第 2 页')
+  expect(versions.map(assessmentVersion => JSON.stringify(f.read('2029-01-01',{assessmentVersion})))).toEqual(frozen)
+  expect(f.sqlite.serialize()).toEqual(before)
+})
+it('does not infer a missing review business year from its origin or publication', () => {
+  const f=fixture('yongchuang')
+  f.install({...f.fact,publishedOn:'2026-02-27'})
+  f.db.update(schema.recordEvent).set({decidedYear:null}).where(eq(schema.recordEvent.id,f.review!.id)).run()
+  expect(f.selected('2026-02-27').group).toBe('excluded')
 })
