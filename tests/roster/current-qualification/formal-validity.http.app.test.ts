@@ -40,7 +40,7 @@ it('real current-qualified HTTP and export artifacts agree for interval and both
     expect(response.status).toBe(200)
     const result = await response.json()
     expect(result.total).toBe(1)
-    expect(result.rows[0].qualificationAssessment).toMatchObject({ ruleVersion: 'current-roster-116-v12', assessmentVersion: 'enterprise-qualification-740-v5' })
+    expect(result.rows[0].qualificationAssessment).toMatchObject({ ruleVersion: 'current-roster-116-v13', assessmentVersion: 'enterprise-qualification-740-v6' })
   }
   for (const title of ['specialized-sme','innovative-sme']) {
     const response = await fetch(f.url('/api/roster/exports/current/' + title), { method: 'POST', headers: f.headers, body: JSON.stringify({ clientRequestId: 'formal-validity-' + title }) })
@@ -100,7 +100,8 @@ it('annual expiry and title inheritance preserve literal HTTP and downloaded ide
   const valid = f.candidate('annual_valid_review', [{ eventType: 'award', year: year-6, batchSeq: 1 }], 'innovative_sme')
   continuation(valid.record.id, year-2, 'until_next_review_results')
   const inherited = f.candidate('annual_inherited_period', [{ eventType: 'award', year: year-1 }])
-  f.candidate('annual_inherited_giant', [{ eventType: 'award', year: year-2 }], 'little_giant')
+  // Eight-year-old original recognition remains eligible without a passed review.
+  f.candidate('annual_inherited_giant', [{ eventType: 'award', year: year-8 }], 'little_giant')
   const own = f.candidate('annual_own_period', [{ eventType: 'award', year: year-1 }])
   f.addRecord(own.enterprise.id, own.enterprise.name, [{ eventType: 'award', year: year-2 }], 'innovative_sme')
   // Include source bytes/hash/page/origin/publication and all raw event columns,
@@ -111,10 +112,11 @@ it('annual expiry and title inheritance preserve literal HTTP and downloaded ide
   await f.start() // Discovery was inspected before any synthetic setup in beforeAll.
   const annualReview = `默认年度规则：最近一次认定或复核通过 ${year-2} 年 + 3 = ${year+1} 年；自 ${year+1} 年起到期（仅年份精度）`
   const annualUpper = `默认年度规则：最近一次认定或复核通过 ${year-1} 年 + 3 = ${year+2} 年；自 ${year+2} 年起到期（仅年份精度）`
+  const retainedGiant = '小巨人原认定或复核通过资格保留；不按认定年龄自动到期，适用正式期间、同周期失败及已确认处置另行裁定'
   for (const [title, expected] of [
-    ['little_giant', [['annual_inherited_giant', annualReview]]],
-    ['specialized_sme', [['annual_inherited_giant', annualReview], ['annual_inherited_period', annualUpper], ['annual_own_period', annualUpper]]],
-    ['innovative_sme', [['annual_inherited_giant', annualReview], ['annual_inherited_period', annualUpper], ['annual_own_period', annualReview], ['annual_valid_review', annualReview]]],
+    ['little_giant', [['annual_inherited_giant', retainedGiant]]],
+    ['specialized_sme', [['annual_inherited_giant', retainedGiant], ['annual_inherited_period', annualUpper], ['annual_own_period', annualUpper]]],
+    ['innovative_sme', [['annual_inherited_giant', retainedGiant], ['annual_inherited_period', annualUpper], ['annual_own_period', annualReview], ['annual_valid_review', annualReview]]],
   ] as const) {
     const response = await fetch(f.url(`/api/roster/current-enterprises?titleCode=${title}`))
     expect(response.status).toBe(200)
