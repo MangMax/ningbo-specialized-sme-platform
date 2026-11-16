@@ -146,6 +146,8 @@ it('requires confirmed source ownership and preserves explicit prior-version int
 
 // Only the bound observation's latest confirmed ownership can qualify. A source
 // diagnostic does not revoke an independently current formal award.
+// Four source scenarios submit five real export jobs, using the same dedicated
+// process-test budget as the other cases in this file.
 it('recomputes bound source ownership without cancelling independent formal qualification', async () => {
   const expected: Array<{id:number; name:string; code:string; sheet:string}> = []
   for (const change of ['ownership','content'] as const) for (const formal of [false, true]) {
@@ -173,4 +175,4 @@ it('recomputes bound source ownership without cancelling independent formal qual
     expect(actual[0]!.row[3]).toBe(item.code)
     expect(actual[0]!.row[6]??'').toBe(item.sheet==='有效企业'?String(year):'')
   }
-})
+},60000)
