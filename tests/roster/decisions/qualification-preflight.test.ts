@@ -1,3 +1,4 @@
+import { submitSyntheticRecognizedCollection } from '../fixtures/recognized-source'
 import { createCurrentQualificationAssessmentReader } from '../../../lib/roster/current-qualification'
 import { readDistrictStatistics } from '../../../lib/roster/district-statistics'
 import { listCurrentQualified } from '../../../lib/roster/current-qualified-query'
@@ -55,34 +56,29 @@ it('preflights without writes and commits a bound qualification with original re
  expect(readback.status).toBe(200)
  expect((await readback.json()).current.currentQualification).toEqual(command.decision.currentQualification)
  const reader = createCurrentQualificationAssessmentReader(db.$client)
- for (const [instant, status] of [['2025-07-21T23:59:59.999Z', 'unrecognized'], ['2025-07-22T00:00:00Z', 'effective'], ['2026-11-16T00:00:00Z', 'effective'], ['2028-07-21T23:59:59.999Z', 'effective'], ['2028-07-22T00:00:00Z', 'unrecognized']]) {
+ for (const [instant, status] of [['2025-07-21T23:59:59.999Z', 'unrecognized'], ['2025-07-22T00:00:00Z', 'unrecognized'], ['2026-11-16T00:00:00Z', 'unrecognized'], ['2028-07-21T23:59:59.999Z', 'unrecognized'], ['2028-07-22T00:00:00Z', 'unrecognized']]) {
   const result = reader.read(e.id, Date.parse(instant!)).snapshot.titles.find(t => t.titleCode === 'specialized_sme')!
   expect(result.effectiveQualification?.status, instant).toBe(status)
-  if (status === 'effective') {
-   expect(result.effectiveQualification?.basis).toContain('独立期间')
-   expect(result.effectiveQualification?.presentationBasis).toContain('独立期间 [2025-07-22T00:00:00Z,2028-07-22T00:00:00Z)')
-   expect(result.evidence).toEqual([])
-  }
+
  }
  for (const filter of [{titleCode:'specialized_sme' as const}, {titleCode:'specialized_sme' as const,q:'91330211255994457P',recognitionFrom:'2025-01-01',recognitionTo:'2025-12-31'}]) {
   const listed = listCurrentQualified(db.$client,filter)
-  expect(listed.total).toBe(1)
-  expect(listed.rows.map(r=>r.uscc)).toEqual(['91330211255994457P'])
-  expect(listed.rows[0]!.firstYear).toBeNull()
+  expect(listed.total).toBe(0)
+  expect(listed.rows).toEqual([])
  }
  const stats = readDistrictStatistics(db, { title:'specialized_sme',page:1,pageSize:25 }, Date.parse('2026-11-16T00:00:00Z'))
- expect(stats.total).toBe(1)
- expect(stats.rows.map(r => r.uscc)).toEqual(['91330211255994457P'])
+ expect(stats.total).toBe(0)
+ expect(stats.rows).toEqual([])
  const path = join(dir,'synthetic-own-qualification.xlsx')
  await writeCurrentWorkbook(db.$client,'specialized_sme',path,()=>{})
  const workbook = new ExcelJS.Workbook(); await workbook.xlsx.readFile(path)
- const sheet = workbook.getWorksheet('有效企业')!
+ expect(workbook.getWorksheet('有效企业')!.rowCount).toBe(1)
+ const sheet = workbook.getWorksheet('未认定')!
  expect(sheet.rowCount).toBe(2)
  expect(sheet.getRow(2).getCell(2).value).toBe('合成迁入')
  expect(sheet.getRow(2).getCell(3).value).toBe('91330211255994457P')
  expect(sheet.getRow(2).getCell(6).value).toBeNull()
- expect(String(sheet.getRow(2).getCell(7).value)).toContain('核验有效期：2025-07-22至2028-07-22')
- expect(String(sheet.getRow(2).getCell(7).value)).toContain('独立期间')
+ expect(String(sheet.getRow(2).getCell(7).value)).not.toContain('独立期间')
  for (const [index,kind,status] of [[0,'cancelled','terminated'],[1,'moved_out','moved_out']] as const) {
   const fact = {enterpriseId:e.id,factId:9000+index,revision:1,status:'confirmed' as const,fact:{kind,source:{reference:'synthetic.pdf',statement:'合成明确主体事实'},effective:{precision:'day',value:'2026-01-01'},observed:{precision:'day',value:'2026-01-01'}},action:'assert',actor:{type:'agent' as const,id:'synthetic'},basis:'合成核实',createdAt:'2026-01-01T00:00:00Z'}
   db.insert(s.enterpriseFactRevision).values(fact).run()
@@ -150,8 +146,8 @@ it('recomputes referenced qualification facts in single and batched reads withou
  expect((await post('commit', { command: input, planHash: plan.body.planHash })).status).toBe(200)
  const reader = createCurrentQualificationAssessmentReader(db.$client)
  const status = () => reader.read(e.id, Date.parse('2026-11-16T00:00:00Z')).snapshot.titles.find(title => title.titleCode === 'specialized_sme')!.effectiveQualification!.status
- expect(status()).toBe('effective')
- expect(listCurrentQualified(db.$client,{titleCode:'specialized_sme'}).rows.map(row=>row.enterpriseId)).toEqual([e.id])
+ expect(status()).toBe('unrecognized')
+ expect(listCurrentQualified(db.$client,{titleCode:'specialized_sme'}).rows.map(row=>row.enterpriseId)).toEqual([])
  db.insert(s.enterpriseFactRevision).values({ ...fact, revision: 2, status: 'withdrawn', action: 'withdraw' }).run()
  const before = db.$client.serialize()
  expect(status()).toBe('unrecognized')
@@ -213,7 +209,7 @@ it('invalidates a pinned source plan when a new content version of that business
  expect(createCurrentQualificationAssessmentReader(db.$client).read(e.id,Date.parse('2026-11-18T00:00:00Z')).snapshot.titles.find(t=>t.titleCode==='specialized_sme')!.effectiveQualification?.status).toBe('unrecognized')
 })
 
-it('recomputes own and inherited lower qualification after source ownership changes without granting a higher title', async () => {
+it('keeps manual qualification ineffective before and after source ownership changes', async () => {
  const state = await fetch(base + '/current?' + new URLSearchParams({ enterpriseId: String(e.id), titleCode: 'specialized_sme', direction: 'extra_in_miit' })).then(r => r.json())
  const freshSource = submitNativePlatformQuery(db, { interface:'business_list',queryKey:e.usccNorm!,rdjb:'2',titleCode:'specialized_sme',queriedAt:'2026-11-18T00:00:00Z',status:'success',rawResponse:'{}',relations:[{sequenceNo:1,relationKey:'synthetic-record',rawFields:{id:'synthetic-record',qymc:e.name,tyshxydm:e.usccNorm,result:'changed'},enterpriseId:e.id,usccRaw:e.usccNorm!,nameRaw:e.name,verificationStatus:'confirmed',matchBasis:'uscc'}] })
  const input = {...command,expectedCurrentId:state.versionId,idempotencyKey:'independent-source-check',decision:{...command.decision,evidenceQueryId:freshSource.queryId,evidenceRelationId:freshSource.relationIds[0]}}
@@ -224,14 +220,36 @@ it('recomputes own and inherited lower qualification after source ownership chan
  const asOf = Date.parse('2026-11-16T00:00:00Z')
  const before = reader.read(e.id, asOf).snapshot
  const own = before.titles.find(t => t.titleCode === 'specialized_sme')!
- expect(own.effectiveQualification?.status).toBe('effective')
- expect(before.titles.filter(t => t.titleCode !== 'specialized_sme').map(t => [t.titleCode,t.effectiveQualification?.status])).toEqual([['little_giant','unrecognized'],['innovative_sme','effective']])
+ expect(own.effectiveQualification?.status).toBe('unrecognized')
+ expect(before.titles.filter(t => t.titleCode !== 'specialized_sme').map(t => [t.titleCode,t.effectiveQualification?.status])).toEqual([['little_giant','unrecognized'],['innovative_sme','unrecognized']])
  const assignment = db.select().from(s.platformObservationAssignment).all().at(-1)!
  db.insert(s.platformObservationAssignment).values({ ...assignment, revision: assignment.revision + 1, verificationStatus: 'pending' }).run()
  const changed = reader.read(e.id, asOf).snapshot
  const after = changed.titles.find(t => t.titleCode === 'specialized_sme')!
  expect(after.effectiveQualification?.status).toBe('unrecognized')
  expect(changed.titles.find(t => t.titleCode === 'innovative_sme')!.effectiveQualification?.status).toBe('unrecognized')
- expect(after.versions.decisions).not.toBe(own.versions.decisions)
+ // Current qualification digests source facts, not the manual assignment revision.
+ expect(after.versions.decisions).toBe(own.versions.decisions)
  expect(db.transaction(() => reader.readEffectiveTitles([e.id], asOf, 'specialized_sme').get(e.id))).toBe('unrecognized')
+})
+
+it('uses an unassigned same-code directory period without manual qualification and recomputes invalidation', () => {
+ const enterprise = db.insert(s.enterprise).values({name:'独立平台企业',nameNorm:'独立平台企业',usccNorm:'91310115MA1H7KUG93',city:'宁波市'}).returning().get()
+ const capture = (sfyx: string, queriedAt: string) => submitSyntheticRecognizedCollection(db,{rdjb:'2',queriedAt,rows:[{enterpriseId:null,raw:{id:'independent-directory',qymc:'平台原名',tyshxydm:'91310115MA1H7KUG93',rdjb:'2',rdtime:'2025-07-22',rddqrq:'2028-07-21',sfyx,szsmc:'宁波市'}}]})
+ capture('1','2026-11-16T00:00:00Z')
+ const reader = createCurrentQualificationAssessmentReader(db.$client)
+ const at = (instant: string) => reader.read(enterprise.id,Date.parse(instant)).snapshot
+ for (const [instant,status] of [['2025-07-21T15:59:59Z','unrecognized'],['2025-07-21T16:00:00Z','effective'],['2028-07-21T15:59:59Z','effective'],['2028-07-21T16:00:00Z','unrecognized']] as const) {
+  expect(at(instant).titles.find(t=>t.titleCode==='specialized_sme')!.effectiveQualification?.status,instant).toBe(status)
+ }
+ expect(at('2026-11-16T00:00:00Z').titles.map(t=>[t.titleCode,t.effectiveQualification?.status])).toEqual([['little_giant','unrecognized'],['specialized_sme','effective'],['innovative_sme','effective']])
+ const listed = listCurrentQualified(db.$client,{titleCode:'specialized_sme',q:'91310115MA1H7KUG93',recognitionFrom:'2025-01-01',recognitionTo:'2025-12-31'})
+ expect(listed.rows.map(row=>[row.name,row.uscc,row.firstYear])).toEqual([['独立平台企业','91310115MA1H7KUG93',null]])
+ expect(listCurrentQualified(db.$client,{titleCode:'specialized_sme',q:'91310115MA1H7KUG93',recognitionFrom:'2026-01-01',recognitionTo:'2026-12-31'}).rows).toEqual([])
+ expect(db.select().from(s.differenceReason).all().filter(row=>row.enterpriseId===enterprise.id)).toEqual([])
+ capture('0','2026-11-17T00:00:00Z')
+ const before = db.$client.serialize()
+ expect(at('2026-11-18T00:00:00Z').titles.map(t=>t.effectiveQualification?.status)).toEqual(['unrecognized','unrecognized','unrecognized'])
+ expect(db.transaction(()=>reader.readEffectiveTitles([enterprise.id],Date.parse('2026-11-18T00:00:00Z'),'specialized_sme').get(enterprise.id))).toBe('unrecognized')
+ expect(db.$client.serialize()).toEqual(before)
 })
