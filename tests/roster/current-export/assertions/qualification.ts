@@ -4,7 +4,7 @@ import { rows, businessIdentity, expectedBusinessIdentity, matchesBusinessIdenti
 import type { QualificationCase } from "../../current-qualification/fixtures/cycle-cases"
 
 type ExportFixture = ReturnType<typeof import('../fixtures/native-workbook').nativeWorkbookFixture>
-export type EffectiveQualificationCase = Omit<QualificationCase, 'sheet' | 'note'> & { sheet: '有效企业' | '已到期' | '未认定' }
+export type EffectiveQualificationCase = Omit<QualificationCase, 'sheet' | 'note'> & { sheet: '有效企业' | '已到期' | '未认定'; lowerSheet?: '有效企业' | '已到期' | '未认定' }
 type ExportCase = EffectiveQualificationCase & ReturnType<ExportFixture['candidate']>
 type ReferenceAssertion = (c: ExportCase, title: string, row: ReturnType<typeof rows>[number]) => void
 
@@ -17,7 +17,7 @@ const titles = [
 // at the native reader/writer seam while sharing the complete export driver.
 export function currentQualificationWorkbookAssertions(f: ExportFixture, assertReferences: ReferenceAssertion) {
   return async function assertCases(cases: EffectiveQualificationCase[], key: string, permute = false) {
-    const entries = cases.map(c => {
+    const storedEntries = cases.map(c => {
       const events = permute ? [...c.events].reverse() : c.events
       const candidate = f.candidate(key+'-'+c.id,events,'little_giant')
       for (const [title] of titles.slice(1)) f.addRecord(candidate.enterprise.id,candidate.enterprise.name,events,title)
@@ -39,6 +39,7 @@ export function currentQualificationWorkbookAssertions(f: ExportFixture, assertR
     }
     const before = f.businessDigest()
     for (const [title,,label] of titles) {
+      const entries = storedEntries.map(c => ({...c,sheet:title === 'little_giant' ? c.sheet : c.lowerSheet ?? c.sheet}))
       const { wb, result } = await f.workbook(key + '-' + title, title)
       expect(result.ruleVersion).toBe(CURRENT_RULE_VERSION)
       const explanation=Object.fromEntries(rows(wb,'口径说明').map(row=>[row[1],row[2]]))
