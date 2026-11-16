@@ -70,3 +70,17 @@ it('default formal qualification versions exclude difference decisions and pinne
   } finally { db.$client.exec('ROLLBACK') }
   expect(current()).toEqual(before)
 })
+
+it('isolates empty legacy serializers from the current namespace with independent bytes', () => {
+ db.insert(schema.enterprise).values({id:2,name:'空依赖版本矩阵',nameNorm:'空依赖版本矩阵',city:'宁波市'}).run()
+ const digest=(bytes:string)=>createHash('sha256').update(bytes).digest('hex')
+ for(const assessmentVersion of ['enterprise-qualification-407-v1','enterprise-qualification-407-v2','enterprise-qualification-478-v3','enterprise-qualification-687-v4'] as const){
+  const snapshot=reader.read(2,Date.parse('2026-11-04T15:17:33.693Z'),{assessmentVersion}).snapshot
+  expect(snapshot.titles[0]!.versions.sources).toBe(digest('[[],[],[]]'))
+  expect(snapshot.titles[0]!.versions.decisions).toBe(digest('[[],[],[]]'))
+ }
+ const current=reader.read(2,Date.parse('2026-11-04T15:17:33.693Z')).snapshot
+ expect(current).toMatchObject({assessmentVersion:'enterprise-qualification-740-v5',ruleVersion:'current-roster-116-v12'})
+ expect(current.titles[0]!.versions.sources).toBe(digest('[[],[],[],[]]'))
+ expect(current.titles[0]!.versions.decisions).toBe(digest('[[],[],[],[]]'))
+})
