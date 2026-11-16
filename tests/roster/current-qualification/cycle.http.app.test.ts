@@ -108,7 +108,7 @@ it('keeps current HTTP and MCP qualification equal to the five current status XL
     const rest = await get('/api/roster/current-enterprises?' + new URLSearchParams({ titleCode: title, pageSize: '200' }))
     const mcp = JSON.parse(await currentTool.handler({ titleCode: title, pageSize: 200 }))
     // Failed-pass cannot revive the original cycle; the distinct new award survives.
-    const currentEligible = ['reaward', 'cross-batch', 'missing-result', 'missing-date', 'missing-batch', 'unknown-origin', 'same-year-reaward', 'passed']
+    const currentEligible = ['reaward', 'cross-batch', 'missing-result', 'missing-date', 'missing-batch', 'unknown-origin', 'same-year-reaward', 'passed', 'overdue-plan']
     const supportingTitles = title === 'little_giant' ? ['little_giant'] : title === 'specialized_sme' ? ['little_giant', 'specialized_sme'] : [...titles]
     // #739 changes giant cycles only; province/innovative retain their own review rules.
     const ownEligible = (t: string) => t === 'little_giant' ? currentEligible : ['failed-pass', 'reaward', 'cross-batch', 'missing-result', 'missing-date', 'missing-batch', 'unknown-origin', 'passed']
@@ -118,15 +118,15 @@ it('keeps current HTTP and MCP qualification equal to the five current status XL
     expect(mcp.rows.map((r: any) => r.enterpriseId)).toEqual(expected)
     const file = join(dir, `issue305-${title}.xlsx`)
     const result = await writeCurrentWorkbook(db.$client, title, file, () => {})
-    expect(result.counts).toEqual({ eligible: 8 * supportingTitles.length, pending: 0, excluded: 3 * supportingTitles.length })
+    expect(result.counts).toEqual({ eligible: expectedNames.length, pending: 0, excluded: 11 * supportingTitles.length - expectedNames.length })
     const wb = new ExcelJS.Workbook(); await wb.xlsx.readFile(file)
     expect(wb.worksheets.map(sheet => sheet.name)).toEqual(['有效企业', '已到期', '已注销（吊销）', '已迁出', '未认定', '口径说明'])
     for (const sheet of ['有效企业', '已到期', '已注销（吊销）', '已迁出', '未认定']) {
       const names: unknown[] = []
       wb.getWorksheet(sheet)!.eachRow((row, index) => { if (index > 1) names.push(row.getCell(2).value) })
       const expectedSheet = sheet === '有效企业' ? expectedNames
-        : sheet === '已到期' ? [title === 'little_giant' ? 'failed-pass' : 'same-year-reaward', 'terminated', 'overdue-plan'].map(id => `issue305-${title}-${id}`)
-        : sheet === '未认定' ? supportingTitles.filter(t => t !== title).flatMap(t => [t === 'little_giant' ? 'failed-pass' : 'same-year-reaward', 'terminated', 'overdue-plan'].map(id => `issue305-${t}-${id}`)) : []
+        : sheet === '已到期' ? (title === 'little_giant' ? ['failed-pass', 'terminated'] : ['same-year-reaward', 'terminated', 'overdue-plan']).map(id => `issue305-${title}-${id}`)
+        : sheet === '未认定' ? supportingTitles.filter(t => t !== title).flatMap(t => (t === 'little_giant' ? ['failed-pass', 'terminated'] : ['same-year-reaward', 'terminated', 'overdue-plan']).map(id => `issue305-${t}-${id}`)) : []
       expect(names.sort()).toEqual(expectedSheet.sort())
     }
     const expired = wb.getWorksheet(title === 'little_giant' ? '已到期' : '有效企业')!.getRows(2, expectedNames.length)!.find(row => row.getCell(2).value === `issue305-${title}-failed-pass`)!
@@ -154,3 +154,41 @@ it('preserves the existing R4 and R5 qualification decisions with real SQLite fa
     if (c.note) expect.soft(actual.notes.join('\n'), name).toContain(c.note)
   }
 })
+
+it('retains an old giant award but honors a complete source bound formal interval over HTTP MCP and XLSX', async () => {
+  const controls = [
+    { id: 'retained-without-interval', through: null, status: 'effective', sheet: '有效企业' },
+    { id: 'sourced-current-interval', through: `${currentYear}-12-31`, status: 'effective', sheet: '有效企业' },
+    { id: 'sourced-expired-interval', through: `${currentYear - 1}-12-31`, status: 'expired', sheet: '已到期' },
+  ] as const
+  for (const c of controls) {
+    const name = `source-bound-giant-${c.id}`
+    const enterprise = db.insert(s.enterprise).values({ name, nameNorm: name, usccNorm: name, city: '宁波市' }).returning().get()
+    const record = db.insert(s.record).values({ enterpriseId: enterprise.id, titleCode: 'little_giant', source: 'jxj', nameRaw: name }).returning().get()
+    const event = db.insert(s.recordEvent).values({ recordId: record.id, ...award(2020) }).returning().get()
+    const file = db.insert(s.storedFile).values({ relPath: `${name}.pdf`, filename: `${name}.pdf`, ext: 'pdf', sha256: 'a'.repeat(64), bytes: 1 }).returning().get()
+    const evidence = db.insert(s.recordEvidence).values({ recordEventId: event.id, sourceFile: file.relPath, page: 2 }).returning().get()
+    if (c.through) db.$client.prepare('update record_event set formal_validity=? where id=?').run(JSON.stringify({ evidenceId: evidence.id, sourceSha256: file.sha256, statementPages: [2], interval: { validFrom: '2020-01-01', validThrough: c.through } }), event.id)
+    const detail = await get(`/api/roster/enterprises/${enterprise.id}`)
+    const giant = detail.qualificationAssessment.titles.find((t: any) => t.titleCode === 'little_giant')
+    expect(giant).toMatchObject({ group: c.status === 'effective' ? 'eligible' : 'excluded', effectiveQualification: { status: c.status } })
+    if (c.through) {
+      const basis = giant.effectiveQualification.presentationBasis.join(' ')
+      expect(basis).toContain(c.through)
+      expect(basis).toContain(file.relPath)
+      expect(basis).toContain('第 2 页')
+    }
+    const query = { titleCode: 'little_giant', status: c.status, pageSize: 200 }
+    const http = await get('/api/roster/current-enterprises?' + new URLSearchParams({ ...query, pageSize: '200' }))
+    const mcp = JSON.parse(await currentTool.handler(query))
+    for (const result of [http, mcp]) expect(result.rows.filter((r: any) => r.uscc === name).map((r: any) => r.enterpriseId)).toEqual([enterprise.id])
+    const path = join(dir, `${name}.xlsx`)
+    await writeCurrentWorkbook(db.$client, 'little_giant', path, () => {})
+    const wb = new ExcelJS.Workbook(); await wb.xlsx.readFile(path)
+    const appearances: string[] = []
+    for (const sheet of wb.worksheets.slice(0, 5)) sheet.eachRow((row, index) => {
+      if (index > 1 && row.getCell(3).text === name) appearances.push(sheet.name)
+    })
+    expect(appearances).toEqual([c.sheet])
+  }
+}, 30000)
