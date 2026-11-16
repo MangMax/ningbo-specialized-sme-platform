@@ -511,7 +511,8 @@ function createCurrentCandidateEvaluationReader(db: Database.Database, receiptRu
       else if (!event.validityInvalid) event.formalValidity=fact
     }
   }
-  const formal = events.filter(e => e.source === 'jxj' && ['award','review'].includes(e.eventType) && evidence.some(v => v.eventId === e.id))
+  const publicationEvents = events.filter(e => e.source === 'jxj' && ['award','review'].includes(e.eventType))
+  const formal = publicationEvents.filter(e => evidence.some(v => v.eventId === e.id))
   const lifecycle = computeTitleLifecycle(formal)
   const row: CurrentRow = { enterpriseId, name: enterprise.name, uscc: enterprise.uscc_norm, district: enterprise.district, publishedNames: [...new Set(formal.map(e => e.nameRaw).filter((n): n is string => !!n))], aliases: [], firstYear: lifecycle.firstRecognitionYear, basis: formal.map(e => `event:${e.id}@${e.revision} ${e.eventType} ${e.year ?? ''}/${e.batchSeq ?? ''} 结论年:${e.decidedYear ?? ''}`).join('\n'), reviews: formal.filter(e => e.eventType === 'review').map(e => `${e.year ?? '?'}年原认定批次；结论年${e.decidedYear ?? '?'}；${e.reviewOutcome ?? '未知'}`).join('\n'), publication: formal.length ? '已见本称号宁波公布记录' : '尚未完成公布匹配核实', notes: [], references: evidence.map(v => `evidence:${v.id} ${v.sourceFile} ${v.attachment ?? ''} 序号:${v.listNo ?? ''}`), group: 'pending' }
   const dispositionInputs = currentRules && title === 'little_giant'
@@ -552,7 +553,7 @@ function createCurrentCandidateEvaluationReader(db: Database.Database, receiptRu
     }
   }
   const qualification: ReturnType<typeof adjudicateQualificationCycles> = effectiveMode
-    ? adjudicateQualificationCycles(events.filter(e => e.source === 'jxj' && ['award','review'].includes(e.eventType)).map(e => ({...e, validityInvalid:false})), year, qualificationDay(executionTime), true, disposedAwards, currentRules && title === 'little_giant', new Set(formal.map(e => e.id)), currentRules && title !== 'little_giant', currentRules && title === 'little_giant')
+    ? adjudicateQualificationCycles(publicationEvents.map(e => ({...e, validityInvalid:false})), year, qualificationDay(executionTime), true, disposedAwards, currentRules && title === 'little_giant', new Set(formal.map(e => e.id)), currentRules && title !== 'little_giant', currentRules && title === 'little_giant')
     : adjudicate407Cycles(formal, year, legacy ? undefined : qualificationDay(executionTime))
   let qualificationSource: 'formal' | 'migration' = 'formal'
   let migrationAwardYears: number[] = []
@@ -716,28 +717,12 @@ function createCurrentCandidateEvaluationReader(db: Database.Database, receiptRu
   // grant or revoke a current period; unknown submission time is never a grant year.
   const visible = platformFacts.filter(f => !(f.businessTime.value && f.businessTime.value > at) && !(f.businessYear != null && f.businessYear > year))
   const sourceOrder = ['recognized_list', 'business_list', 'apply_list'] as const
-  // An in-period directory recognition or wholly contained application year
-  // belongs to the published cycle and cannot extend it. A year denotes all
-  // possible dates in that year, never a fabricated January first grant date.
-  // Reviews renew on their own explicit business year, not their submission date.
-  const publishedPeriods = formal.filter(event =>
-    qualificationEventAppliesAt(event, year, day) &&
-    (event.eventType === 'award' || event.reviewOutcome === 'passed') && event.formalValidity?.interval,
-  ).map(event => event.formalValidity!.interval!)
-  const samePublishedPeriod = (fact: PlatformQualificationFact) => publishedPeriods.some(interval => {
-    if (fact.matter === 'recognition' && fact.period.from.value) {
-      const startDay = fact.period.from.value.slice(0, 10)
-      return interval.validFrom <= startDay && startDay <= interval.validThrough
-    }
-    if (fact.matter === 'apply' && fact.businessYear != null) {
-      return interval.validFrom <= `${fact.businessYear}-01-01` && `${fact.businessYear}-12-31` <= interval.validThrough
-    }
-    return false
-  })
-  const platformSource = qualification.group === 'eligible' ? undefined : sourceOrder.flatMap(source => {
+  // Published facts govern this title, including an expired or failed result.
+  // Platform qualification is a fallback only while no publication applies.
+  const hasApplicablePublication = publicationEvents.some(event => qualificationEventAppliesAt(event, year, day))
+  const platformSource = hasApplicablePublication ? undefined : sourceOrder.flatMap(source => {
     const facts = visible.filter(f => f.source === source)
     return facts.filter(f => {
-      if (samePublishedPeriod(f)) return false
       const futureInvalidation = !!f.invalidatedAt.value && f.invalidatedAt.value > at
       if (f.conclusion !== 'passed' && !(f.conclusion === 'invalid' && futureInvalidation)) return false
       if (f.invalidatedAt.value && !futureInvalidation) return false
@@ -747,29 +732,13 @@ function createCurrentCandidateEvaluationReader(db: Database.Database, receiptRu
       const startYear = f.period.from.value ? Number(f.period.from.value.slice(0, 4)) : f.businessYear
       if (explicit === false || explicit == null && (f.period.from.raw != null || f.period.until.raw != null)) return false
       if (explicit == null && (f.matter === 'update' || startYear == null || startYear > year || title !== 'little_giant' && year >= startYear + 3)) return false
-      const independentGrantAfter = (boundary: string) => formal.some(award => award.eventType === 'award' &&
-        qualificationEventAppliesAt(award, year, day) && awardTime(award) != null &&
-        awardTime(award)! > Number(boundary.slice(0, 4)) && startYear != null &&
-        awardTime(award)! <= startYear && !disposedAwards.has(award.id)) || visible.some(grant => {
-          if (!['recognition','apply'].includes(grant.matter) || grant.conclusion !== 'passed' || samePublishedPeriod(grant)) return false
+      const independentGrantAfter = (boundary: string) => visible.some(grant => {
+          if (!['recognition','apply'].includes(grant.matter) || grant.conclusion !== 'passed') return false
           if (grant.invalidatedAt.value && grant.invalidatedAt.value <= at) return false
           if (grant.location.city ? !/^宁波(?:市)?$/.test(grant.location.city) : enterprise.city && !/^宁波(?:市)?$/.test(enterprise.city)) return false
           const grantStart = grant.period.from.value ?? (grant.businessYear == null ? null : `${grant.businessYear}-01-01`)
           return grantStart != null && grantStart > boundary && startYear != null && Number(grantStart.slice(0, 4)) <= startYear
         })
-      // Failures/dispositions belong to their originating cycle. Only an
-      // independently later recognition/application can recover; a review cannot.
-      const blockers = formal.filter(e => qualificationEventAppliesAt(e, year, day) && e.eventType === 'review' && e.reviewOutcome === 'failed')
-      const disposed = formal.filter(e => disposedAwards.has(e.id))
-      if ([...blockers, ...disposed].some(e => {
-        const blockedAt = originTime(e) ?? factTime(e)
-        if (blockedAt == null || startYear == null) return true
-        if (['recognition','apply'].includes(f.matter)) return startYear <= blockedAt
-        // A review can renew a later independent award, but cannot itself be
-        // the grant that recovers the failed originating cycle. Future awards
-        // cannot supply that new-cycle anchor.
-        return f.matter !== 'review' || !independentGrantAfter(`${blockedAt}-12-31T23:59:59`)
-      })) return false
       // An explicit negative from a higher-priority current source cannot be
       // bypassed by an older lower-priority pass. A later independent grant can.
       if (visible.some(n => {
