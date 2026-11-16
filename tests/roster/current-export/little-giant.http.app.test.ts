@@ -232,6 +232,7 @@ it('未知周期、同年恢复与执行版本', async () => {
   const y=new Date().getFullYear()
   candidate('未知复核周期',[{eventType:'award',year:y-1,batchSeq:1},{eventType:'review',year:null,decidedYear:y,reviewOutcome:'failed'}])
   candidate('同年恢复顺序不明',[{eventType:'award',year:y-4,batchSeq:1},{eventType:'review',year:y-4,batchSeq:1,decidedYear:y,reviewOutcome:'failed'},{eventType:'award',year:y,batchSeq:2}])
+  const before=businessDigest()
   const response=await submit('unknown-cycle'),id=(await json(response)).jobId
   let active:any
   for(let i=0;i<500;i++) {active=await json(await fetch(url('/api/jobs/'+id)));if(active.state==='running' && active.progress.done>=100)break;await new Promise(r=>setTimeout(r,10))}
@@ -249,8 +250,9 @@ it('未知周期、同年恢复与执行版本', async () => {
     expect(row[6]).toBe(String(firstYear))
     expect(String(row[14])).toContain(`${anchor} 年 + 3 = ${anchor+3} 年`)
     expect(String(row[7])).toContain('复核未通过')
-    expect(String(row[12])).toContain('jxj/announcement/synthetic.xlsx')
+    expect(String(row[12])).toContain('《synthetic.xlsx》，附件：名单')
   }
+  expect(businessDigest()).toBe(before)
   expect(job.result.snapshotId).toBe(id)
 },30000)
 it('OpenAPI任务与受控下载发现', async () => {
