@@ -1,5 +1,6 @@
 import { afterAll, expect, it, vi } from 'vitest'
 import { qualificationExportFixture } from '../current-export/fixtures/qualification-export'
+import { readCurrentQualificationAssessment } from '../../../lib/roster/current-qualification'
 import { getComparison } from '../../../lib/comparison'
 import { listRosterDifferences } from '../../../lib/roster/difference-list'
 import { getRosterEnterpriseDetail } from '../../../lib/roster/enterprise-roster'
@@ -30,16 +31,31 @@ it('removes inherited current extras but retains source coordinates and stored h
  expect(f.db.$client.prepare('select * from difference_reason').get()).toEqual(head)
 })
 
-it('keeps platform-only extras without a verified higher title and recomputes after upper source changes', () => {
+it('keeps platform-only extras without a verified higher title and recomputes source versions and restores extras after formal failure', () => {
  vi.setSystemTime(new Date('2026-06-01T00:00:00Z'))
  const c=f.candidate('source-withdrawal',[{eventType:'award',year:2025,batchSeq:1}],'little_giant')
  f.db.$client.prepare("insert into record (enterprise_id,title_code,source,name_raw) values (?,'innovative_sme','miit','source-withdrawal')").run(c.enterprise.id)
  const read=()=>listRosterDifferences(f.db,{q:'source-withdrawal',title:['innovative_sme'],direction:['extra_in_miit'],pageSize:1})
  expect(read()).toMatchObject({total:0,rows:[],counts:{innovative_sme:{extra_in_miit:0}}})
  const before=f.db.$client.prepare('select count(*) n from record_event').get()
+ const snapshot=()=>readCurrentQualificationAssessment(f.db.$client,c.enterprise.id,Date.now()).titles.find(t=>t.titleCode==='innovative_sme')!
+ const original=snapshot()
+ const award=f.db.$client.prepare('select id from record_event where record_id=?').get(c.record.id) as {id:number}
+ // Ordinary source metadata changes cannot cancel a retained official award.
  f.db.$client.prepare('update record_event set year=2018 where record_id=?').run(c.record.id)
- expect(read()).toMatchObject({total:1,rows:[{enterpriseId:c.enterprise.id,inCurrentDifference:true}],counts:{innovative_sme:{extra_in_miit:1}}})
+ expect(read()).toMatchObject({total:0,rows:[]})
+ f.db.$client.prepare('update record_evidence set source_file=? where record_event_id in (select id from record_event where record_id=?)').run('synthetic/replaced-source.pdf',c.record.id)
+ expect(read()).toMatchObject({total:0,rows:[]})
+ expect(snapshot().versions.sources).not.toBe(original.versions.sources)
+ // Source removal refreshes dependencies but does not delete the recorded award.
+ f.db.$client.prepare('delete from record_evidence where record_event_id in (select id from record_event where record_id=?)').run(c.record.id)
+ expect(read()).toMatchObject({total:0,rows:[]})
  expect(f.db.$client.prepare('select count(*) n from record_event').get()).toEqual(before)
+ // A real same-cycle formal failure, rather than age or path metadata, cancels inheritance.
+ f.db.$client.prepare('insert into record_evidence (record_event_id,source_file,page) values (?,?,1)').run(award.id,'synthetic/restored-award.pdf')
+ const failure=f.db.$client.prepare("insert into record_event (record_id,event_type,year,decided_year,batch_seq,review_outcome) values (?,'review',2018,2026,1,'failed') returning id").get(c.record.id) as {id:number}
+ f.db.$client.prepare('insert into record_evidence (record_event_id,source_file,page) values (?,?,1)').run(failure.id,'synthetic/formal-failed-review.pdf')
+ expect(read()).toMatchObject({total:1,rows:[{enterpriseId:c.enterprise.id,inCurrentDifference:true}],counts:{innovative_sme:{extra_in_miit:1}}})
 })
 
 it('retains an invalid own lower title as current extra without a higher basis',()=>{
