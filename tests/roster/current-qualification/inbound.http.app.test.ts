@@ -175,16 +175,24 @@ it('distinguishes retained local giant awards from accepted inbound grants and p
     const detail = await response.json()
     const giant = detail.qualificationAssessment.titles.find((t: any) => t.titleCode === 'little_giant')
     const presentation = giant.effectiveQualification.presentationBasis.join(' ')
-    if (positive.includes(c.id)) {
+    if (positive.includes(c.id) && !c.formalAward) {
       expect(presentation).toContain('Synthetic independently verified external qualification')
       expect(presentation).toContain(`${reawardYear}-01-01T00:00:00Z`)
       expect(presentation).toContain(`${year + 2}-01-01T00:00:00Z`)
     } else {
       expect(presentation).not.toContain('Synthetic independently verified external qualification')
     }
-    if (retainedGiant.includes(c.id)) {
+    if (retainedGiant.includes(c.id) || c.formalAward) {
       expect(giant).toMatchObject({ group: 'eligible', effectiveQualification: { status: 'effective' } })
       expect(presentation).toContain('不按认定年龄自动到期')
+    }
+    if (c.formalAward) {
+      // The same-year local reaward is the supporting formal qualification;
+      // the separately recorded inbound interval cannot supersede it.
+      expect(giant.evidence.map((e: any) => ({ eventType: e.eventType, year: e.year, batchSeq: e.batchSeq })))
+        .toEqual([{ eventType: 'award', year: 2020, batchSeq: 1 }, { eventType: 'award', year: reawardYear, batchSeq: 1 }])
+      expect(giant.sourceVersions.map((source: any) => source.sourceFile))
+        .toEqual(['issue305/inbound-history.pdf', 'issue305/inbound-history.pdf'])
     }
   }
 })
