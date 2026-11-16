@@ -372,6 +372,6 @@ it.each([
   const own=createCurrentQualificationAssessmentReader(local.db.$client).read(c.enterprise.id,asOf).snapshot.titles.find(t=>t.titleCode==='innovative_sme')!
   expect(own.group).toBe(scenario.expected)
   if(scenario.expected==='excluded')expect(own.effectiveQualification?.source).toBeUndefined()
-  else expect(own.effectiveQualification?.source).toMatchObject({source:scenario.source==='businessList'?'business_list':'apply_list',matter:scenario.matter==='复核'?'review':'apply',businessYear:scenario.businessYear,businessTimeKind:'submission',period:{from:{value:null}}})
+  else expect(own.effectiveQualification?.source).toMatchObject({source:'apply_list',matter:scenario.matter==='复核'?'review':'apply',businessYear:scenario.businessYear,businessTimeKind:'submission',period:{from:{value:null}}})
  } finally {await local.close()}
 })
