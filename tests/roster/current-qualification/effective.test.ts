@@ -267,3 +267,86 @@ it('uses a later platform application business year without inventing a submissi
   expect(own).toMatchObject({group:'eligible',effectiveQualification:{source:{source:'apply_list',matter:'apply',businessYear:2025}}})
  } finally {await local.close()}
 })
+
+function publishedInterval(local: ReturnType<typeof qualificationExportFixture>, recordId: number, interval: {validFrom:string;validThrough:string}, publishedOn?: string) {
+ const event=local.db.select().from(schema.recordEvent).where(eq(schema.recordEvent.recordId,recordId)).all().find(e=>e.eventType==='award')!
+ const evidence=local.db.select().from(schema.recordEvidence).where(eq(schema.recordEvidence.recordEventId,event.id)).get()!
+ const sha='a'.repeat(64)
+ local.db.insert(schema.storedFile).values({relPath:evidence.sourceFile,filename:'official.xlsx',ext:'xlsx',bytes:1,sha256:sha}).run()
+ local.db.update(schema.recordEvent).set({formalValidity:{evidenceId:evidence.id,sourceSha256:sha,statementPages:[1],interval,...(publishedOn?{publishedOn}:{})}}).where(eq(schema.recordEvent.id,event.id)).run()
+}
+
+it.each([
+ {from:'2023-11-01',through:'2026-10-31',recognized:'2024-02-04 09:47:52',until:'2027-02-04'},
+ {from:'2022-12-31',through:'2025-12-30',recognized:'2023-01-28 09:04:34',until:'2029-10-12'},
+ {from:'2023-11-01',through:'2026-10-31',recognized:'2023-11-01',until:'2027-02-04'},
+ {from:'2023-11-01',through:'2026-10-31',recognized:'2026-10-31 23:59:59',until:'2029-10-12'},
+])('does not extend a published cycle with an in-period directory date: $recognized',async ({from,through,recognized,until})=>{
+ const local=qualificationExportFixture()
+ try {
+  const c=local.candidate('same published cycle',[{eventType:'award',year:Number(from.slice(0,4)),batchSeq:1}],'innovative_sme')
+  publishedInterval(local,c.record.id,{validFrom:from,validThrough:through})
+  const code='91310115MA1H7KUG93'
+  local.db.update(schema.enterprise).set({usccNorm:code}).where(eq(schema.enterprise.id,c.enterprise.id)).run()
+  writeNewCollectionTarget(local.db,collectionCommand({id:'shifted-directory',tyshxydm:code,rdjb:'1',sfyx:'1',rdtime:recognized,rddqrq:until,szsmc:'宁波市'},'2026-11-01T00:00:00Z'))
+  const own=createCurrentQualificationAssessmentReader(local.db.$client).read(c.enterprise.id,asOf).snapshot.titles.find(t=>t.titleCode==='innovative_sme')!
+  expect(own).toMatchObject({group:'excluded',effectiveQualification:{status:'expired'}})
+  expect(own.effectiveQualification?.source).toBeUndefined()
+ } finally {await local.close()}
+})
+
+it('keeps the full published closed interval before considering its shifted directory record',async()=>{
+ const local=qualificationExportFixture()
+ try {
+  const c=local.candidate('published boundaries',[{eventType:'award',year:2023,batchSeq:1}])
+  publishedInterval(local,c.record.id,{validFrom:'2023-11-01',validThrough:'2026-10-31'})
+  local.db.update(schema.enterprise).set({usccNorm:'91310115MA1H7KUG93'}).where(eq(schema.enterprise.id,c.enterprise.id)).run()
+  writeNewCollectionTarget(local.db,collectionCommand({id:'boundary-directory',tyshxydm:'91310115MA1H7KUG93',rdjb:'2',sfyx:'1',rdtime:'2024-02-04',rddqrq:'2027-02-04',szsmc:'宁波市'},'2026-11-01T00:00:00Z'))
+  const reader=createCurrentQualificationAssessmentReader(local.db.$client)
+  for(const [instant,group] of [['2023-10-31T15:59:59Z','excluded'],['2023-10-31T16:00:00Z','eligible'],['2026-10-31T15:59:59Z','eligible'],['2026-10-31T16:00:00Z','excluded']] as const) {
+   const own=reader.read(c.enterprise.id,Date.parse(instant)).snapshot.titles.find(t=>t.titleCode==='specialized_sme')!
+   expect(own.group,instant).toBe(group)
+   expect(own.effectiveQualification?.source,instant).toBeUndefined()
+  }
+ } finally {await local.close()}
+})
+
+it.each([
+ {name:'independent later grant',recognized:'2026-11-01',publishedOn:undefined},
+ {name:'future publication',recognized:'2024-02-04',publishedOn:'2027-01-01'},
+])('allows a directory grant outside applicable published precedence: $name',async({recognized,publishedOn})=>{
+ const local=qualificationExportFixture()
+ try {
+  const c=local.candidate('separate grant',[{eventType:'award',year:2023,batchSeq:1}])
+  publishedInterval(local,c.record.id,{validFrom:'2023-11-01',validThrough:'2026-10-31'},publishedOn)
+  local.db.update(schema.enterprise).set({usccNorm:'91310115MA1H7KUG93'}).where(eq(schema.enterprise.id,c.enterprise.id)).run()
+  writeNewCollectionTarget(local.db,collectionCommand({id:'separate-directory',tyshxydm:'91310115MA1H7KUG93',rdjb:'2',sfyx:'1',rdtime:recognized,rddqrq:'2029-11-01',szsmc:'宁波市'},'2026-11-01T00:00:00Z'))
+  expect(createCurrentQualificationAssessmentReader(local.db.$client).read(c.enterprise.id,asOf).snapshot.titles.find(t=>t.titleCode==='specialized_sme')).toMatchObject({group:'eligible',effectiveQualification:{source:{source:'recognized_list'}}})
+ } finally {await local.close()}
+})
+
+it('renews an expired published award from an explicit review business year',async()=>{
+ const local=qualificationExportFixture()
+ try {
+  const c=local.candidate('review after original interval',[{eventType:'award',year:2021,batchSeq:1}])
+  publishedInterval(local,c.record.id,{validFrom:'2021-06-01',validThrough:'2024-05-31'})
+  local.db.update(schema.enterprise).set({usccNorm:'91310115MA1H7KUG93'}).where(eq(schema.enterprise.id,c.enterprise.id)).run()
+  writeNewCollectionTarget(local.db,collectionCommand({id:'explicit-review',tyshxydm:'91310115MA1H7KUG93',rdjb:'2',sblx:'复核',cszt:'终审通过',year:'2024',sqsj:'2024-08-30 09:03:05'},'2026-11-01T00:00:00Z','queryList'))
+  expect(createCurrentQualificationAssessmentReader(local.db.$client).read(c.enterprise.id,asOf).snapshot.titles.find(t=>t.titleCode==='specialized_sme')).toMatchObject({group:'eligible',effectiveQualification:{source:{source:'apply_list',matter:'review',businessYear:2024,businessTimeKind:'submission',businessTime:{raw:'2024-08-30 09:03:05'},period:{from:{value:null}}}}})
+ } finally {await local.close()}
+})
+
+it('does not use a shifted old directory record as an independent grant for a later review',async()=>{
+ const local=qualificationExportFixture()
+ try {
+  const c=local.candidate('no indirect recovery',[{eventType:'award',year:2023,batchSeq:1},{eventType:'review',year:2023,batchSeq:1,decidedYear:2026,reviewOutcome:'failed'}])
+  publishedInterval(local,c.record.id,{validFrom:'2023-11-01',validThrough:'2026-10-31'})
+  const identity={tyshxydm:'91310115MA1H7KUG93',rdjb:'2',szsmc:'宁波市'}
+  local.db.update(schema.enterprise).set({usccNorm:identity.tyshxydm}).where(eq(schema.enterprise.id,c.enterprise.id)).run()
+  writeNewCollectionTarget(local.db,collectionCommand({...identity,id:'old-shifted-grant',sfyx:'1',rdtime:'2024-02-04',rddqrq:'2027-02-04'},'2026-10-01T00:00:00Z'))
+  writeNewCollectionTarget(local.db,collectionCommand({...identity,id:'later-review',sblx:'复核',cszt:'终审通过',year:'2026'},'2026-11-01T00:00:00Z','businessList'))
+  const own=createCurrentQualificationAssessmentReader(local.db.$client).read(c.enterprise.id,asOf).snapshot.titles.find(t=>t.titleCode==='specialized_sme')!
+  expect(own.group).toBe('excluded')
+  expect(own.effectiveQualification?.source).toBeUndefined()
+ } finally {await local.close()}
+})
