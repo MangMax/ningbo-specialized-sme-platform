@@ -11,7 +11,7 @@ import type { ReceiptRuntimeContext } from '../../server/utils/receipt-runtime-c
 import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { createHash } from 'node:crypto'
 import { createDrizzleLogger } from '../logging/drizzle'
-import { sql } from 'drizzle-orm'
+import { eq, sql } from 'drizzle-orm'
 import * as schema from '../../db/schema'
 import { currentQualification102 } from '../../server/utils/decision-lifecycle-102'
 import { listRecordCorrespondenceRefs, createEnterpriseTitleCorrespondenceRefsReader } from '../../server/utils/record-correspondence'
@@ -638,15 +638,14 @@ function createCurrentCandidateEvaluationReader(db: Database.Database, receiptRu
     return parsed.success && parsed.data.titleCode === title ? [{decision:f,qualification:parsed.data}] : []
   })
   const managedInputs = currentRules ? (batch ? batch.qualifications : readManagedQualificationInputs(reader, [enterpriseId])).get(enterpriseId) ?? [] : []
-  const factRows = batch?.facts.get(enterpriseId) ?? []
+  const factRows = batch ? batch.facts.get(enterpriseId) ?? [] : managedInputs.some(input => input.decision.factReferences?.length) ? readEnterpriseFactRows() : []
   for (const input of managedInputs) {
     const d = input.decision
     if (d.titleCode !== title || d.movedInTitleCode != null && d.movedInTitleCode !== title || d.lifecycleAction === 'withdraw' || d.reasonCode !== 'moved_in' || d.status !== 'confirmed_reason' || d.verificationStatus !== 'confirmed' || !d.basis || !d.effectiveAt || Date.parse(d.effectiveAt) > executionTime || !Number.isFinite(Date.parse(d.effectiveAt))) continue
     if (!managedQualificationSourceValid(input, enterprise.uscc_norm)) { row.notes.push(`迁入资格来源版本或归属需重新核实（decision:${d.id}）`); continue }
     const referencesValid = (d.factReferences ?? []).every(ref => {
       if (ref.enterpriseId !== enterpriseId) return false
-      const facts = batch ? factRows : readEnterpriseFactRows()
-      const head = facts.filter(f => f.enterpriseId === ref.enterpriseId && f.factId === ref.factId).at(-1)
+      const head = factRows.filter(f => f.enterpriseId === ref.enterpriseId && f.factId === ref.factId).at(-1)
       if (!head || head.status !== 'confirmed' || head.revision !== ref.revision) return false
       try { return JSON.parse(head.fact).kind === ref.kind } catch { return false }
     })
@@ -658,7 +657,10 @@ function createCurrentCandidateEvaluationReader(db: Database.Database, receiptRu
     attested.push({ decision: { ...d, queryId: null, relationId: null, movedTitle:d.movedInTitleCode, movedCity:d.movedInCity, movedYear:d.movedInYear, movedBatch:d.movedInBatch, evidenceQueryId:null,evidenceRelationId:null }, qualification: parsed.data })
   }
   function readEnterpriseFactRows() {
-    return statement('select enterprise_id as enterpriseId,fact_id as factId,revision,status,fact from enterprise_fact_revision where enterprise_id=? order by id').all(enterpriseId) as {enterpriseId:number;factId:number;revision:number;status:string;fact:string}[]
+    const f = schema.enterpriseFactRevision
+    // Keep raw JSON text at this existing adapter boundary, matching batch reads.
+    return reader.select({enterpriseId:f.enterpriseId,factId:f.factId,revision:f.revision,status:f.status,fact:sql<string>`${f.fact}`})
+      .from(f).where(eq(f.enterpriseId,enterpriseId)).orderBy(f.id).all()
   }
   const applicable = attested.filter(({qualification:q}) => Date.parse(q.validFrom) <= executionTime && executionTime < Date.parse(q.validUntil))
   const current = applicable.filter(a => {

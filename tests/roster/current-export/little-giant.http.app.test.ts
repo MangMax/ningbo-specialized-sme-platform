@@ -239,8 +239,18 @@ it('未知周期、同年恢复与执行版本', async () => {
   expect(active.result.snapshotId).toBe(id)
   const job=await terminal(id);expect(job.state).toBe('done')
   const wb=new ExcelJS.Workbook();await wb.xlsx.load(Buffer.from(await (await fetch(url(job.result.artifact.downloadUrl),{headers})).arrayBuffer()) as any)
-  expect(rows(wb,'已到期').filter(r => ['未知复核周期','同年恢复顺序不明'].includes(r[2])).map(r => r[2])).toEqual(['未知复核周期','同年恢复顺序不明'])
-  expect(rows(wb,'已到期').find(r=>r[2]==='同年恢复顺序不明')![15]).toContain('复核明确不通过')
+  const effective = rows(wb,'有效企业')
+  expect(effective.map(r=>[r[2],r[3]]).sort()).toEqual([
+    ['未知复核周期','TEST-未知复核周期'],['同年恢复顺序不明','TEST-同年恢复顺序不明'],
+  ].sort())
+  expect(rows(wb,'已到期').map(r=>r[2])).toEqual([])
+  for (const [name,anchor,firstYear] of [['未知复核周期',y-1,y-1],['同年恢复顺序不明',y,y-4]] as const) {
+    const row=effective.find(r=>r[2]===name)!
+    expect(row[6]).toBe(String(firstYear))
+    expect(String(row[14])).toContain(`${anchor} 年 + 3 = ${anchor+3} 年`)
+    expect(String(row[7])).toContain('复核未通过')
+    expect(String(row[12])).toContain('jxj/announcement/synthetic.xlsx')
+  }
   expect(job.result.snapshotId).toBe(id)
 },30000)
 it('OpenAPI任务与受控下载发现', async () => {

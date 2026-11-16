@@ -66,8 +66,9 @@ it('downloaded three-title workbooks have literal five-state rowsets columns and
    expect(s.getRow(2).getCell(5).value).toBe(({little_giant:'专精特新“小巨人”',specialized_sme:'专精特新中小企业',innovative_sme:'创新型中小企业'} as Record<string,string>)[title])
   }
   const effective = wb.getWorksheet('有效企业')!.getRows(2,expectedNames[title]!.effective!.length)!.find(row=>row.getCell(2).value===`${title}-effective`)!
-  expect(String(effective.getCell(14).value)).toContain(title==='little_giant' ? '2026-01-01 至 2028-12-31（含首尾）' : title==='innovative_sme' ? '至下次复核结果公布前有效' : '2026 年 + 3 = 2029 年')
-  // Own innovative continuation and own province period take priority over inheritance.
+  expect(String(effective.getCell(14).value)).toContain(title==='little_giant' ? '2026-01-01 至 2028-12-31（含首尾）' : '2026 年 + 3 = 2029 年')
+  // Own innovative and province annual periods take priority over inheritance.
+  // The stored innovative continuation remains evidence, without extending expiry.
   // Upper-only rows retain null first-recognition/source columns and use actual giant period.
   for(const row of wb.getWorksheet('有效企业')!.getRows(2,expectedNames[title]!.effective!.length)!) {
    const name=String(row.getCell(2).value)
@@ -85,6 +86,8 @@ it('downloaded three-title workbooks have literal five-state rowsets columns and
   expect(job.result.total).toBe(title==='little_giant'?5:title==='specialized_sme'?10:15)
   expect(job.result.counts).toMatchObject({eligible:expectedNames[title]!.effective!.length,pending:0,excluded:title==='little_giant'?4:title==='specialized_sme'?8:12})
  }
+ const innovative = f.db.$client.prepare("select e.formal_validity from record_event e join record r on r.id=e.record_id join enterprise n on n.id=r.enterprise_id where n.name='innovative_sme-effective'").get() as {formal_validity:string}
+ expect(JSON.parse(innovative.formal_validity).continuation).toBe('until_next_review_results')
 },60000)
 
 it('public empty invalid and unauthorized outcomes remain distinct',async()=>{
