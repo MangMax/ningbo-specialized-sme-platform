@@ -405,10 +405,7 @@ it('detail_snapshot_scope_and_field_gaps_407', () => {
 })
 
 
-it('explicit_prior_versions_preserve_frozen_legacy_and_current_consumers_share_default_without_core', async () => {
-  const core = await import('../../../lib/roster/platform-comparison')
-  const { createCurrentQualificationAssessmentReader } = await import('../../../lib/roster/current-qualification')
-  const spy = vi.spyOn(core, 'comparePlatformComparison')
+function seedPublishedLegacyReceipt() {
   db.insert(schema.enterprise).values({ id: 1, name: '合成427', nameNorm: '合成427', usccNorm: '91330211255994457P' }).run()
   db.insert(schema.record).values({ id: 1, enterpriseId: 1, titleCode: 'specialized_sme', source: 'jxj', nameRaw: '合成427', usccRaw: '91330211255994457P' }).run()
   db.insert(schema.recordEvent).values({ id: 1, recordId: 1, eventType: 'award', year: 2024, batchSeq: 1 }).run()
@@ -423,6 +420,23 @@ it('explicit_prior_versions_preserve_frozen_legacy_and_current_consumers_share_d
     queriedAt: '2026-05-31T00:00:00Z', completedAt: '2026-05-31T00:00:01Z', rows: [], pages: [{ source: 'queryBusList', rdjb: '2', page: 1, status: 'success', fetchedCount: 0, declaredTotal: 0, error: null }], fetchedCount: 0, declaredTotal: 0, completeness: 'complete', fullRange: true, unfinished: [], error: null, limits: { maxRequests: 100, maxRows: 5000, maxDurationMs: 60000, pageSize: 50 },
   } })
   sqlite.pragma('query_only=ON')
+}
+
+it('explicit_407_receipts_preserve_frozen_literal_bytes', async () => {
+  const { createCurrentQualificationAssessmentReader } = await import('../../../lib/roster/current-qualification')
+  seedPublishedLegacyReceipt()
+  const reader = createCurrentQualificationAssessmentReader(sqlite)
+  expect(reader.read(1, AS_OF, { assessmentVersion: 'enterprise-qualification-407-v1' }).snapshot).toEqual(DEFAULT_427_LEGACY)
+  const scope = { enterpriseId: 1, asOf: DEFAULT_427_LEGACY.asOf, ruleVersion: 'current-roster-116-v9', assessmentVersion: 'enterprise-qualification-407-v2' }
+  const expected = { ...DEFAULT_427_LEGACY, ...scope, snapshotId: createHash('sha256').update(JSON.stringify([scope, DEFAULT_427_LEGACY.titles])).digest('hex') }
+  expect(reader.read(1, AS_OF, { assessmentVersion: 'enterprise-qualification-407-v2' }).snapshot).toEqual(expected)
+})
+
+it('explicit_prior_versions_preserve_frozen_legacy_and_current_consumers_share_default_without_core', async () => {
+  const core = await import('../../../lib/roster/platform-comparison')
+  const { createCurrentQualificationAssessmentReader } = await import('../../../lib/roster/current-qualification')
+  const spy = vi.spyOn(core, 'comparePlatformComparison')
+  seedPublishedLegacyReceipt()
   const changes = sqlite.prepare('select total_changes() as n').get()
   const reader = createCurrentQualificationAssessmentReader(sqlite)
   // Published receipts stay byte-reproducible under explicit prior versions.

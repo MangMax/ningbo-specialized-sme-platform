@@ -34,6 +34,9 @@ afterAll(async () => { if(server) await new Promise<void>(resolve => server.clos
 it('preflights without writes and commits a bound qualification with original replay and key conflict', async () => {
  const before = db.select().from(s.differenceReason).all()
  expect(listCurrentQualified(db.$client,{titleCode:'specialized_sme'}).rows).toEqual([])
+ const compatibilityReader = createCurrentQualificationAssessmentReader(db.$client)
+ const compatibilityVersions = ['enterprise-qualification-478-v3','enterprise-qualification-687-v4'] as const
+ const legacyBefore = compatibilityVersions.map(assessmentVersion => compatibilityReader.read(e.id,Date.parse('2026-11-16T00:00:00Z'),{assessmentVersion}).snapshot)
  const plan = await post('preflight', command)
  expect(plan.status).toBe(200)
  expect(plan.body.qualification).toEqual(command.decision.currentQualification)
@@ -43,6 +46,11 @@ it('preflights without writes and commits a bound qualification with original re
  const saved = await post('commit', envelope)
  expect(saved.status).toBe(200)
  expect(saved.body.versionId).toBeGreaterThan(0)
+ for (const [index,assessmentVersion] of compatibilityVersions.entries()) {
+  const after = compatibilityReader.read(e.id,Date.parse('2026-11-16T00:00:00Z'),{assessmentVersion}).snapshot
+  expect(after).toEqual(legacyBefore[index])
+  expect(after.titles.map(t=>t.group)).toEqual(['excluded','excluded','excluded'])
+ }
  const readback = await fetch(base + '/current?' + new URLSearchParams({ enterpriseId: String(e.id), titleCode: 'specialized_sme', direction: 'extra_in_miit' }))
  expect(readback.status).toBe(200)
  expect((await readback.json()).current.currentQualification).toEqual(command.decision.currentQualification)
