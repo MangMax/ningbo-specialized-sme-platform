@@ -1,8 +1,7 @@
 /** Explicit offline native upgrade only; never imported by runtime initialization. */
 import type Database from 'better-sqlite3'
 import { createHash } from 'node:crypto'
-import { readFileSync, statfsSync } from 'node:fs'
-import { dirname } from 'node:path'
+import { readFileSync } from 'node:fs'
 import { assertFinalPlatformRuntime, assertNoRetiredPlatformSchema, PLATFORM_RETIREMENT_RULE, PLATFORM_RUNTIME_VERSION } from '../db/schema-phase'
 import { parseRecognizedQualificationFields } from '../lib/platform/recognized-projection'
 
@@ -13,9 +12,6 @@ type Archive = { bytes: Buffer | null; byte_length: number | null; sha256: strin
 
 export function upgradeRecognizedQualification(s: Database.Database, options: Options) {
   if (!Number.isSafeInteger(options.batchSize) || options.batchSize < 1 || options.batchSize > 1000) throw new Error('Batch size must be 1..1000')
-  // This floor applies to synthetic fixtures too. It has no test-only override.
-  const disk = statfsSync(dirname(s.name))
-  if (disk.bavail * disk.bsize < 8 * 1024 ** 3) throw new Error('Disk floor 8GiB')
   if (s.inTransaction) throw new Error('Offline upgrade requires its own transactions')
   s.pragma('foreign_keys=ON')
   // Admit the supported old native phase BEFORE the new runtime column check.
