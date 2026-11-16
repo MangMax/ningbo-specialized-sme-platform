@@ -2,7 +2,7 @@ import { and, asc, eq, inArray, sql } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as s from '../../db/schema'
 import { readTitleCycleDispositionInputs } from './title-cycle-disposition-inputs'
-import { readManagedQualificationInputs } from './managed-qualification-inputs'
+import { readPlatformQualificationFacts } from './platform-qualification'
 import { hasEnterpriseMergeIdentity } from './enterprise-identity'
 import { CURRENT_TITLES, type CurrentTitle } from './current-titles'
 import type { EnterpriseFactEffectRow } from './enterprise-fact-effects'
@@ -102,6 +102,6 @@ export function createCurrentAssessmentInputs(db: Executor, ids: readonly number
     .from(s.enterpriseFactRevision).where(inArray(s.enterpriseFactRevision.enterpriseId, factIds))
     .orderBy(asc(s.enterpriseFactRevision.id)).all()
   const facts = new Map<number, EnterpriseFactEffectRow[]>(selected.map(id => [id, revisions.filter(row => members.get(id)!.has(row.enterpriseId))]))
-  return { canonical, enterprises, events, evidence, validityRows, aliases, files, facts, dispositions: readTitleCycleDispositionInputs(db, selected), qualifications: readManagedQualificationInputs(db, selected) }
+  return { canonical, enterprises, events, evidence, validityRows, aliases, files, facts, dispositions: readTitleCycleDispositionInputs(db, selected), platformFacts: readPlatformQualificationFacts(db as BetterSQLite3Database<typeof s>, [...enterprises.values()].map(e => ({ enterpriseId: e.id, uscc: e.uscc_norm ?? '' }))) }
 }
 export type CurrentAssessmentInputs = ReturnType<typeof createCurrentAssessmentInputs>

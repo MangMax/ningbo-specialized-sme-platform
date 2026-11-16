@@ -89,6 +89,11 @@ export function currentWorkbookValues(title: CurrentTitle, row: CurrentRow, seri
     addedText.push(label, text)
   }
   const qualifications = formal.map(event => eventLabel(event) + (evidenceByEvent.has(event.id) ? '' : '（正式出处待核）'))
+  if (facts.qualificationSource) {
+    const fact = facts.qualificationSource
+    qualifications.push([({recognized_list:'平台认定目录',business_list:'关联办理记录',apply_list:'申报记录'}[fact.source]),
+      fact.period.from.raw && fact.period.until.raw ? `有效期间：${fact.period.from.raw}至${fact.period.until.raw}` : `业务年度：${fact.businessYear ?? '未知'}`].join('，'))
+  }
   for (const fact of facts.migration) qualifications.push([
     row.notes.includes('迁入资格已确认') ? '已确认迁入资格' : '历史迁入资格依据',
     fact.awardYear == null ? null : `明确认定年份：${fact.awardYear}年`,

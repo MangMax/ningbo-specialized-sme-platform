@@ -28,7 +28,7 @@ async function read(query = '') { const response = await fetch(base + query); re
 it('uses Shanghai evaluation metadata and rejects future or invalid scopes', async () => {
   const { body, status } = await read()
   expect(status).toBe(200)
-  expect(body).toMatchObject({ evaluationDay: '2026-11-06', timeZone: 'Asia/Shanghai', ruleVersion: 'current-roster-116-v13', assessmentVersion: 'enterprise-qualification-740-v6', reconstruction: 'current_recorded_evidence', grain: 'enterprise_title', total: 0 })
+  expect(body).toMatchObject({ evaluationDay: '2026-11-06', timeZone: 'Asia/Shanghai', ruleVersion: 'current-roster-116-v14', assessmentVersion: 'enterprise-qualification-807-v7', reconstruction: 'current_recorded_evidence', grain: 'enterprise_title', total: 0 })
   expect(body.years).toEqual([{ year: 2026, evaluationDay: '2026-11-06', titles: [
     { titleCode: 'little_giant', effective: 0, pending: 0 }, { titleCode: 'specialized_sme', effective: 0, pending: 0 }, { titleCode: 'innovative_sme', effective: 0, pending: 0 },
   ] }])

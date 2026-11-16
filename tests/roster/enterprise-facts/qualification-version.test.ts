@@ -62,7 +62,7 @@ it('default formal qualification versions exclude difference decisions and pinne
   const giant = hash([[], [], [], []])
   const specialized = hash([giant, giant])
   const innovative = hash([hash([giant, giant]), specialized])
-  expect(before.assessmentVersion).toBe('enterprise-qualification-740-v6')
+  expect(before.assessmentVersion).toBe('enterprise-qualification-807-v7')
   expect(before.titles.map(title => [title.group, title.versions.decisions])).toEqual([giant, specialized, innovative].map(decisions => ['excluded', decisions]))
   db.$client.exec('BEGIN')
   try {
@@ -83,7 +83,7 @@ it('isolates empty legacy serializers from the current namespace with independen
   expect(snapshot.titles[0]!.versions.decisions).toBe(digest('[[],[],[]]'))
  }
  const current=reader.read(2,Date.parse('2026-11-04T15:17:33.693Z')).snapshot
- expect(current).toMatchObject({assessmentVersion:'enterprise-qualification-740-v6',ruleVersion:'current-roster-116-v13'})
+ expect(current).toMatchObject({assessmentVersion:'enterprise-qualification-807-v7',ruleVersion:'current-roster-116-v14'})
  expect(current.titles[0]!.versions.sources).toBe(digest('[[],[],[],[]]'))
  expect(current.titles[0]!.versions.decisions).toBe(digest('[[],[],[],[]]'))
 })
