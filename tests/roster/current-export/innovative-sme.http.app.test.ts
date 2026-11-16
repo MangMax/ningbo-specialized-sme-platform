@@ -237,17 +237,31 @@ it('上级继承仍受主体与事实时点边界约束并优先自身期间', a
   const own = candidate('自身期间优先', [{ eventType: 'award', year: year - 1, batchSeq: 1 }])
   record(own.enterprise.id, own.enterprise.name, [award], 'little_giant')
   candidate('未来上级不提前有效', [{ eventType: 'award', year: year + 1, batchSeq: 1 }], 'little_giant')
-  candidate('过期上级不带入', [{ eventType: 'award', year: year - 5, batchSeq: 1 }], 'little_giant')
+  candidate('旧上级不按年龄到期', [{ eventType: 'award', year: year - 5, batchSeq: 1 }], 'little_giant')
+  const expired = candidate('正式期间到期上级不带入', [{ eventType: 'award', year: year - 5, batchSeq: 1 }], 'little_giant')
+  // Same award age, different source fact: only the explicit formal interval expires.
+  // Bind the period to this event's evidence and source version, without a review fiction.
+  const evidence = db.select().from(s.recordEvidence).where(eq(s.recordEvidence.recordEventId, expired.events[0]!.id)).get()!
+  const sourceBytes = Buffer.from(`合成小巨人正式有效期：${year - 5}-01-01 至 ${year - 2}-12-31（含首尾）`)
+  const sourceSha256 = createHash('sha256').update(sourceBytes).digest('hex')
+  db.insert(s.storedFile).values({ relPath: evidence.sourceFile, filename: 'little_giant-synthetic.xlsx', ext: 'xlsx', bytes: sourceBytes.length, sha256: sourceSha256 }).run()
+  db.update(s.recordEvent).set({ formalValidity: {
+    evidenceId: evidence.id, sourceSha256, statementPages: [1],
+    interval: { validFrom: `${year - 5}-01-01`, validThrough: `${year - 2}-12-31` },
+  } }).where(eq(s.recordEvent.id, expired.events[0]!.id)).run()
   for (const [name, kind] of [['注销上级不带入', 'cancelled'], ['迁出上级不带入', 'moved_out']] as const) {
     const c = candidate(name, [award], 'little_giant')
     db.insert(s.enterpriseFactRevision).values({ enterpriseId: c.enterprise.id, factId: 1, revision: 1, status: 'confirmed', fact: { kind, source: { reference: 'synthetic-official', statement: 'verified' }, effective: { precision: 'day', value: '2025-01-01' }, observed: { precision: 'day', value: '2025-01-01' }, city: null }, action: 'assert', actor: { type: 'agent', id: 'synthetic' }, basis: 'verified', createdAt: '2025-01-01T00:00:00Z' }).run()
   }
   const expected: Record<string, string[]> = {
-    effective: ['自身期间优先'], expired: [], terminated: ['注销上级不带入'],
-    moved_out: ['迁出上级不带入'], unrecognized: ['未来上级不提前有效', '过期上级不带入'],
+    effective: ['自身期间优先', '旧上级不按年龄到期'], expired: [], terminated: ['注销上级不带入'],
+    moved_out: ['迁出上级不带入'], unrecognized: ['未来上级不提前有效', '正式期间到期上级不带入'],
   }
   const { wb, job } = await workbook('119-boundaries')
-  expect(job.result.counts).toEqual({ eligible: 1, pending: 0, excluded: 4 })
+  // Six identities: own + retained giant; future + formal-expired + cancelled + moved-out.
+  // An expired upper title does not create an innovative award or its expired history.
+  expect(job.result.counts).toEqual({ eligible: 2, pending: 0, excluded: 4 })
+  expect(job.result.total).toBe(6)
   for (const [state, sheet] of [['effective','有效企业'], ['expired','已到期'], ['terminated','已注销（吊销）'], ['moved_out','已迁出'], ['unrecognized','未认定']]) {
     const response = await fetch(url(`/api/roster/current-enterprises?titleCode=innovative_sme&status=${state}`))
     expect(response.status).toBe(200)
@@ -256,8 +270,13 @@ it('上级继承仍受主体与事实时点边界约束并优先自身期间', a
     expect(body.rows.map((r: any) => [r.name, r.uscc]).sort()).toEqual(expected[state!]!.map(name => [name, 'TEST-119-' + name]).sort())
     expect(rows(wb, sheet!).map(businessIdentity).sort()).toEqual(expected[state!]!.map(name => [name, 'TEST-119-' + name]).sort())
   }
-  const row = rows(wb, '有效企业')[0]!
+  const row = rows(wb, '有效企业').find(row => row[2] === '自身期间优先')!
   expect(row[6]).toBe(String(year - 1))
   expect(row[12]).toContain('innovative_sme-synthetic.xlsx')
   expect(row[14]).toContain(`${year - 1} 年 + 3 = ${year + 2} 年`)
+  const inherited = rows(wb, '有效企业').find(row => row[2] === '旧上级不按年龄到期')!
+  expect(inherited[5]).toBe('创新型中小企业')
+  expect(inherited[6] ?? null).toBeNull()
+  expect(inherited[12] ?? null).toBeNull()
+  expect(inherited[15]).toContain('little_giant-synthetic.xlsx')
 })
