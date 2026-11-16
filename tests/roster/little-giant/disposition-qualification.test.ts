@@ -102,9 +102,10 @@ it('batched effective reads agree with full assessments at literal date boundari
   expect(result.get(c.enterprise.id)).toBe(status)
  }
 })
-it('orphan review pass does not manufacture a little-giant award cycle',()=>{
+it('normal review pass supports its period without manufacturing an award',()=>{
  const c=f.candidate('orphan pass',[{eventType:'review',year:2024,decidedYear:2026,batchSeq:1,reviewOutcome:'passed'}],'little_giant')
- expect(read(c.enterprise.id,'2026-06-02').group).toBe('excluded')
+ expect(read(c.enterprise.id,'2026-06-02').group).toBe('eligible')
+ expect(read(c.enterprise.id,'2029-01-01').group).toBe('excluded')
 })
 
 it('streamed XLSX retains stable identities source and effective day with the same common decision',async()=>{
@@ -127,4 +128,48 @@ it('streamed XLSX retains stable identities source and effective day with the sa
 it('failure with unknown original cycle cannot exclude a known award',()=>{
  const c=f.candidate('unknown failure cycle',[{eventType:'award',year:2025,batchSeq:1},{eventType:'review',year:2025,decidedYear:2026,batchSeq:null,reviewOutcome:'failed'}],'little_giant')
  expect(read(c.enterprise.id,'2026-06-02').group).toBe('eligible')
+})
+
+it('G normal known and unknown batch passes retain the 2025 renewal through 2027',()=>{
+ const c=f.candidate('G normal passes',[
+  {eventType:'review',year:2022,decidedYear:2025,batchSeq:1,reviewOutcome:'passed'},
+  {eventType:'review',year:2022,decidedYear:2025,batchSeq:null,reviewOutcome:'passed'},
+ ],'little_giant')
+ const actual=read(c.enterprise.id,'2026-06-02')
+ expect(actual.group).toBe('eligible')
+ expect(actual.effectiveQualification!.presentationBasis).toContain('默认年度规则：最近一次认定或复核通过 2025 年 + 3 = 2028 年；自 2028 年起到期（仅年份精度）')
+ expect(read(c.enterprise.id,'2028-01-01').group).toBe('excluded')
+})
+it('C same-cycle failure cannot renew the 2018 award through a 2025 pass',()=>{
+ const c=f.candidate('C failed pass',[
+  {eventType:'award',year:2018,batchSeq:1},
+  {eventType:'review',year:2018,decidedYear:2022,batchSeq:1,reviewOutcome:'failed'},
+  {eventType:'review',year:2018,decidedYear:2025,batchSeq:1,reviewOutcome:'passed'},
+ ],'little_giant')
+ expect(read(c.enterprise.id,'2026-06-02').group).toBe('excluded')
+})
+it('D independent 2022 cycle pass retains its 2025 period without an award row',()=>{
+ const c=f.candidate('D renewal only',[
+  {eventType:'award',year:2018,batchSeq:1,decidedYear:2023},
+  {eventType:'review',year:2022,decidedYear:2025,batchSeq:1,reviewOutcome:'passed'},
+ ],'little_giant')
+ const actual=read(c.enterprise.id,'2026-06-02')
+ expect(actual.group).toBe('eligible')
+ expect(actual.effectiveQualification!.presentationBasis).toContain('默认年度规则：最近一次认定或复核通过 2025 年 + 3 = 2028 年；自 2028 年起到期（仅年份精度）')
+})
+it('A failed second batch does not cancel the first batch 2025 renewal',()=>{
+ const c=f.candidate('A two batches',[
+  {eventType:'award',year:2022,batchSeq:1},{eventType:'award',year:2022,batchSeq:2},
+  {eventType:'review',year:2022,decidedYear:2025,batchSeq:1,reviewOutcome:'passed'},
+  {eventType:'review',year:2022,decidedYear:2025,batchSeq:2,reviewOutcome:'failed'},
+ ],'little_giant')
+ expect(read(c.enterprise.id,'2026-06-02').group).toBe('eligible')
+})
+it('R3 independent failed review cycle cannot recover through pass without a new award',()=>{
+ const c=f.candidate('R3 independent failure',[
+  {eventType:'award',year:2010,batchSeq:1},
+  {eventType:'review',year:2018,decidedYear:2022,batchSeq:1,reviewOutcome:'failed'},
+  {eventType:'review',year:2018,decidedYear:2025,batchSeq:1,reviewOutcome:'passed'},
+ ],'little_giant')
+ expect(read(c.enterprise.id,'2026-06-02').group).toBe('excluded')
 })

@@ -127,21 +127,26 @@ function hasUnresolvedRecovery(current: CycleJudgment[], history: CycleJudgment[
 
 /** #475 effective reads retain established periods when applicability metadata is missing.
  * Legacy callers keep the conservative pending policy by default. */
-export function adjudicateQualificationCycles(formal: QualificationEvent[], year = Infinity, day?: string, notesOnlyGaps = false, disposedAwards: ReadonlySet<number> = new Set(), cycleScoped = false): { group: CurrentGroup; notes: string[]; originYear: number; cycles: CycleJudgment[] } {
+export function adjudicateQualificationCycles(formal: QualificationEvent[], year = Infinity, day?: string, notesOnlyGaps = false, disposedAwards: ReadonlySet<number> = new Set(), cycleScoped = false, evidencedEvents?: ReadonlySet<number>): { group: CurrentGroup; notes: string[]; originYear: number; cycles: CycleJudgment[] } {
   // Scoped failures are supplied as verified original award IDs by the caller.
   // Do not let an unknown-cycle failure leak back through legacy gap grouping.
+  const scopedFailures = cycleScoped ? formal.filter(e => e.eventType === 'review' && e.reviewOutcome === 'failed' &&
+    (!evidencedEvents || evidencedEvents.has(e.id)) && e.decidedYear != null && e.decidedYear <= year && (!day || !e.formalValidity?.publishedOn || e.formalValidity.publishedOn <= day)) : []
   if (cycleScoped) formal = formal.filter(event => event.eventType !== 'review' || event.reviewOutcome !== 'failed' ||
     // The result is not yet effective, but its explicit continuation still
     // supports the linked award until publication. cycleFacts skips its failure.
     !!(day && event.formalValidity?.originAwardEventId &&
       event.formalValidity.continuation === 'until_this_review_results' &&
       event.formalValidity.publishedOn && event.formalValidity.publishedOn > day))
+  // A normal renewal needs no synthetic award row. Only a proven failure of
+  // this original cycle prevents a pass from acting as a new grant. Unknown
+  // coordinates cannot establish that association.
   if (cycleScoped) formal = formal.filter(event => event.eventType !== 'review' || event.reviewOutcome !== 'passed' ||
-    formal.some(award => award.eventType === 'award' && (
-      event.formalValidity?.originAwardEventId === award.id ||
-      !event.formalValidity?.originAwardEventId && event.year != null && event.batchSeq != null && event.year === award.year && event.batchSeq === award.batchSeq &&
-      formal.filter(e => e.eventType === 'award' && e.year === event.year && e.batchSeq === event.batchSeq).length === 1
-    )))
+    !scopedFailures.some(failure =>
+      event.formalValidity?.originAwardEventId
+        ? failure.formalValidity?.originAwardEventId === event.formalValidity.originAwardEventId
+        : !failure.formalValidity?.originAwardEventId && event.year != null && event.batchSeq != null &&
+          event.year === failure.year && event.batchSeq === failure.batchSeq))
   const byYear = new Map<number, Map<number | null, QualificationEvent[]>>()
   const unknown: QualificationEvent[] = []
   // Dated current assessments ignore known future facts; undated legacy
@@ -187,8 +192,10 @@ export function adjudicateQualificationCycles(formal: QualificationEvent[], year
   // Selection follows adjudication, retains *every* batch of the current year,
   // and never uses the latest passed event to erase another batch or a failure.
   const originYear = Math.max(...judgments.map(c => c.originYear))
-  const latestRecovery = Math.max(...judgments.map(c => cycleScoped ? c.lastAwardYear : c.anchor ? factTime(c.anchor)! : -Infinity))
-  const current = notesOnlyGaps ? judgments.filter(c => c.anchor && (cycleScoped ? c.lastAwardYear : factTime(c.anchor)) === latestRecovery) : judgments.filter(c => c.originYear === originYear)
+  const supportTime = (c: CycleJudgment) => cycleScoped && c.awardEventIds.some(id => disposedAwards.has(id))
+    ? c.lastAwardYear : c.anchor ? factTime(c.anchor)! : -Infinity
+  const latestRecovery = Math.max(...judgments.map(supportTime))
+  const current = notesOnlyGaps ? judgments.filter(c => c.anchor && supportTime(c) === latestRecovery) : judgments.filter(c => c.originYear === originYear)
   const notes = current.flatMap(c => c.notes.map(note => `${c.originYear}年/批次${c.batch ?? '?'}：${note}`))
   let group: CurrentGroup = current[0]?.group ?? 'pending'
   if (!current.length) notes.push('缺少已确认认定及资格依据；平台状态或候选对应不能单独证明资格')
