@@ -28,7 +28,7 @@ async function read(query = '') { const response = await fetch(base + query); re
 it('uses Shanghai evaluation metadata and rejects future or invalid scopes', async () => {
   const { body, status } = await read()
   expect(status).toBe(200)
-  expect(body).toMatchObject({ evaluationDay: '2026-11-06', timeZone: 'Asia/Shanghai', ruleVersion: 'current-roster-116-v12', assessmentVersion: 'enterprise-qualification-740-v5', reconstruction: 'current_recorded_evidence', grain: 'enterprise_title', total: 0 })
+  expect(body).toMatchObject({ evaluationDay: '2026-11-06', timeZone: 'Asia/Shanghai', ruleVersion: 'current-roster-116-v13', assessmentVersion: 'enterprise-qualification-740-v6', reconstruction: 'current_recorded_evidence', grain: 'enterprise_title', total: 0 })
   expect(body.years).toEqual([{ year: 2026, evaluationDay: '2026-11-06', titles: [
     { titleCode: 'little_giant', effective: 0, pending: 0 }, { titleCode: 'specialized_sme', effective: 0, pending: 0 }, { titleCode: 'innovative_sme', effective: 0, pending: 0 },
   ] }])
@@ -78,7 +78,7 @@ it('reconstructs literal yearly stocks through renewal failure expiry reaward an
   validity(event(11, 'award', 2023), { interval: { validFrom: '2023-01-01', validThrough: '2028-12-31' } })
   fact(12, 'cancelled', 'year', '2024')
   // Historical year-end keeps annual-stock-514-v1 reconstruction. The current
-  // year uses v5: enterprise 9's 2022 award expired in 2025; a future linked
+  // year uses v6: enterprise 9's 2022 award expired in 2025; a future linked
   // continuation cannot revive it in 2026 under the business-year +3 rule.
   expect(await ids(2022)).toEqual([1, 2, 3, 4, 5, 8, 9, 10, 12])
   expect(await ids(2023)).toEqual([1, 2, 3, 4, 5, 8, 9, 10, 11, 12])

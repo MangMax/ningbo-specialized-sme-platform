@@ -20,6 +20,13 @@ beforeAll(async () => {
    const evidence = f.db.$client.prepare('select id from record_evidence where record_event_id=?').get(event.id) as {id:number}
    f.db.$client.prepare('update record_event set formal_validity=? where id=?').run(JSON.stringify({evidenceId:evidence.id,sourceSha256:'a'.repeat(64),statementPages:[1],interval:{validFrom:'2026-01-01',validThrough:'2028-12-31'}}),event.id)
   }
+  // An old giant award alone stays retained. This distinct expired partition
+  // has a sourced inclusive interval; lower titles still exercise year + 3.
+  if(state==='expired' && title==='little_giant') {
+   const event = f.db.$client.prepare('select id from record_event where record_id=?').get(c.record.id) as {id:number}
+   const evidence = f.db.$client.prepare('select id from record_evidence where record_event_id=?').get(event.id) as {id:number}
+   f.db.$client.prepare('update record_event set formal_validity=? where id=?').run(JSON.stringify({evidenceId:evidence.id,sourceSha256:'a'.repeat(64),statementPages:[1],interval:{validFrom:'2021-01-01',validThrough:'2023-12-31'}}),event.id)
+  }
   if(state==='effective' && title==='innovative_sme') {
    const event = f.db.$client.prepare('select id from record_event where record_id=?').get(c.record.id) as {id:number}
    const evidence = f.db.$client.prepare('select id from record_evidence where record_event_id=?').get(event.id) as {id:number}
@@ -38,6 +45,7 @@ it('HTTP selects all five statuses and defaults to effective without turning not
   expect(assessment.effectiveQualification.status).toBe(state)
   expect(assessment.effectiveQualification.notes).toContain('来源文件版本不可用')
   expect(assessment.effectiveQualification.basis).toContain('event:')
+  if(state==='expired' && title==='little_giant') expect(assessment.effectiveQualification.presentationBasis).toEqual(['正式文件有效期：2021-01-01 至 2023-12-31（含首尾）；正式来源：jxj/announcement/synthetic-118.xlsx；第 1 页'])
   if(state==='effective' && title==='little_giant') expect(assessment.effectiveQualification.presentationBasis).toEqual(['正式文件有效期：2026-01-01 至 2028-12-31（含首尾）；正式来源：jxj/announcement/synthetic-118.xlsx；第 1 页'])
  }
  const b=await fetch(f.url('/api/roster/current-enterprises?titleCode=specialized_sme')).then(r=>r.json())

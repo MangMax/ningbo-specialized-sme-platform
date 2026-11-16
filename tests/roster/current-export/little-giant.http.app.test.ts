@@ -245,10 +245,10 @@ it('未知周期、同年恢复与执行版本', async () => {
     ['未知复核周期','TEST-未知复核周期'],['同年恢复顺序不明','TEST-同年恢复顺序不明'],
   ].sort())
   expect(rows(wb,'已到期').map(r=>r[2])).toEqual([])
-  for (const [name,anchor,firstYear] of [['未知复核周期',y-1,y-1],['同年恢复顺序不明',y,y-4]] as const) {
+  for (const [name,firstYear] of [['未知复核周期',y-1],['同年恢复顺序不明',y-4]] as const) {
     const row=effective.find(r=>r[2]===name)!
     expect(row[6]).toBe(String(firstYear))
-    expect(String(row[14])).toContain(`${anchor} 年 + 3 = ${anchor+3} 年`)
+    expect(String(row[14])).toContain('小巨人原认定或复核通过资格保留；不按认定年龄自动到期，适用正式期间、同周期失败及已确认处置另行裁定')
     expect(String(row[7])).toContain('复核未通过')
     expect(String(row[12])).toContain('《synthetic.xlsx》，附件：名单')
   }
