@@ -147,15 +147,15 @@ export function createPlatformQualificationFactsReader(db: BetterSQLite3Database
       const businessScope = businessKeys.slice(offset, offset + 400)
       const applyScope = applyKeys.slice(offset, offset + 400)
       const common = { recordId: o.recordId, versionId: o.versionId, observationId: o.id, collectedAt: c.queriedAt }
-      const recognized = recognizedScope.length ? db.select({ ...common, p: s.platformRecognizedProjection }).from(o)
+      const recognized = recognizedScope.length ? db.select({ ...common, p: { usccRaw: s.platformRecognizedProjection.usccRaw, titleRaw: s.platformRecognizedProjection.titleRaw, nameRaw: s.platformRecognizedProjection.nameRaw, qualificationFieldsRule: s.platformRecognizedProjection.qualificationFieldsRule, sourceValidFlag: s.platformRecognizedProjection.sourceValidFlag, sourceRecognizedAt: s.platformRecognizedProjection.sourceRecognizedAt, sourceValidityDate: s.platformRecognizedProjection.sourceValidityDate, sourceProvinceName: s.platformRecognizedProjection.sourceProvinceName, sourceCityName: s.platformRecognizedProjection.sourceCityName, sourceDistrictName: s.platformRecognizedProjection.sourceDistrictName, sourceInvalidatedAt: s.platformRecognizedProjection.sourceInvalidatedAt, sourceInvalidationReason: s.platformRecognizedProjection.sourceInvalidationReason } }).from(o)
         .innerJoin(c, eq(c.id, o.collectionId))
         .innerJoin(s.platformRecognizedProjection, eq(s.platformRecognizedProjection.versionId, o.versionId))
         .where(and(latest, inArray(s.platformRecognizedProjection.usccRaw, recognizedScope))).all() : []
-      const business = businessScope.length ? db.select({ ...common, p: s.platformBusinessProjection }).from(o)
+      const business = businessScope.length ? db.select({ ...common, p: { usccRaw: s.platformBusinessProjection.usccRaw, titleRaw: s.platformBusinessProjection.titleRaw, nameRaw: s.platformBusinessProjection.nameRaw, declareKind: s.platformBusinessProjection.declareKind, status: s.platformBusinessProjection.status, businessYear: s.platformBusinessProjection.businessYear, appliedAt: s.platformBusinessProjection.appliedAt, province: s.platformBusinessProjection.province } }).from(o)
         .innerJoin(c, eq(c.id, o.collectionId))
         .innerJoin(s.platformBusinessProjection, eq(s.platformBusinessProjection.versionId, o.versionId))
         .where(and(latest, inArray(s.platformBusinessProjection.usccRaw, businessScope))).all() : []
-      const declarations = applyScope.length ? db.select({ ...common, p: s.platformApplyProjection }).from(o)
+      const declarations = applyScope.length ? db.select({ ...common, p: { usccRaw: s.platformApplyProjection.usccRaw, titleRaw: s.platformApplyProjection.titleRaw, nameRaw: s.platformApplyProjection.nameRaw, declareKind: s.platformApplyProjection.declareKind, status: s.platformApplyProjection.status, declarationYear: s.platformApplyProjection.declarationYear, appliedAt: s.platformApplyProjection.appliedAt } }).from(o)
         .innerJoin(c, eq(c.id, o.collectionId))
         .innerJoin(s.platformApplyProjection, eq(s.platformApplyProjection.versionId, o.versionId))
         .where(and(latest, inArray(s.platformApplyProjection.usccRaw, applyScope))).all() : []

@@ -1,4 +1,4 @@
-import { expect, it, vi } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { platformBusinessFact, sourceDate, periodContains } from '../../../lib/roster/platform-qualification'
 
 it('retains day boundaries and exact business timestamps without fabricating precision', () => {
@@ -177,6 +177,12 @@ it('uses actual Drizzle raw-key plans while unrelated observations leave typed r
     } finally { nativePrepare.mockRestore() }
     expect(keyReads).toHaveLength(3)
     expect(queries.filter(q => q.sql.startsWith('select'))).toHaveLength(3)
+    for (const query of queries.filter(q => q.sql.startsWith('select'))) {
+      const selected = query.sql.slice('select '.length, query.sql.indexOf(' from '))
+      // Four observation coordinates plus at most twelve consumed source fields.
+      expect(selected.split(',').length).toBeLessThanOrEqual(16)
+      expect(selected).not.toMatch(/"(?:exact_|stored_|reconciled_|source_archive_id|parse_state)/)
+    }
     // EXPLAIN the SQL emitted by the real reader, never a manually rewritten equivalent.
     const reads = [...keyReads, ...queries.filter(q => q.sql.startsWith('select'))]
     expect(reads).toHaveLength(6)
@@ -330,14 +336,19 @@ it('keeps a direct assessment reader fresh across independent caller snapshots',
   } finally { sqlite.close() }
 })
 
-it('reads all facts in raw-key chunks when one normalized identity has more than four hundred variants', () => {
-  const sqlite = new Database(':memory:')
-  try {
+describe('raw-key chunk boundaries', () => {
+  let sqlite: Database.Database
+  const queries: { sql: string; params: unknown[] }[] = []
+  let db: ReturnType<typeof drizzle<typeof targetSchema>>
+  const uscc = '91330110MA2GMDFH58'
+  const rows = Array.from({ length: 401 }, (_, i) => ({ id: `raw-chunk-${i}`, tyshxydm: uscc.slice(0, 3) + i.toString(2).padStart(9, '0').replaceAll('0', ' ').replaceAll('1', '\u200b') + uscc.slice(3), qymc: '原目录企业', rdjb: '2', sfyx: '1', rdtime: '2023-12-28', rddqrq: '2028-12-28', szsmc: '宁波市' }))
+  let receipt: ReturnType<typeof writeNewCollectionTarget>
+  // Preparing 401 archived observations exercises the collection writer. Keep
+  // that fixture setup separate from the reader's unchanged default test budget.
+  beforeAll(() => {
+    sqlite = new Database(':memory:')
+    db = drizzle(sqlite, { schema: targetSchema, logger: { logQuery(sql, params) { queries.push({ sql, params }) } } })
     sqlite.pragma('foreign_keys=ON'); createRuntimeSchema(sqlite)
-    const queries: { sql: string; params: unknown[] }[] = []
-    const db = drizzle(sqlite, { schema: targetSchema, logger: { logQuery(sql, params) { queries.push({ sql, params }) } } })
-    const uscc = '91330110MA2GMDFH58'
-    const rows = Array.from({ length: 401 }, (_, i) => ({ id: `raw-chunk-${i}`, tyshxydm: uscc.slice(0, 3) + ' '.repeat(i) + uscc.slice(3), qymc: '原目录企业', rdjb: '2', sfyx: '1', rdtime: '2023-12-28', rddqrq: '2028-12-28', szsmc: '宁波市' }))
     const seed = collectionCommand(rows[0]!, '2026-11-16T00:00:00Z')
     const evidence: PlatformLiveQueryResult = JSON.parse(seed.evidenceText!)
     evidence.rows = rows; evidence.dataRows = rows
@@ -345,8 +356,12 @@ it('reads all facts in raw-key chunks when one normalized identity has more than
     // Retain the ordinary source limit of 50 rows per page: eight full pages and one row.
     evidence.pages = Array.from({ length: 9 }, (_, i) => ({ source: 'queryBusList' as const, rdjb: '2', page: i + 1, maxPage: 9, status: 'success' as const, fetchedCount: i < 8 ? 50 : 1, declaredTotal: 401, error: null }))
     const query = platformResultToImport(evidence)
-    const receipt = writeNewCollectionTarget(db, { ...seed, queryText: JSON.stringify(query), evidenceText: JSON.stringify(evidence), assignments: (query.relations ?? []).map(row => ({ ...seed.assignments[0]!, nameRaw: row.nameRaw ?? null, usccRaw: row.usccRaw ?? null })) })
+    receipt = writeNewCollectionTarget(db, { ...seed, queryText: JSON.stringify(query), evidenceText: JSON.stringify(evidence), assignments: (query.relations ?? []).map(row => ({ ...seed.assignments[0]!, nameRaw: row.nameRaw ?? null, usccRaw: row.usccRaw ?? null })) })
     expect(receipt.observations).toHaveLength(401)
+  })
+  afterAll(() => sqlite?.close())
+
+  it('reads all facts in raw-key chunks when one normalized identity has more than four hundred variants', () => {
     queries.length = 0
     const facts = sqlite.transaction(() => platformQualification.createPlatformQualificationFactsReader(db)([{ enterpriseId: 7, uscc }]))()
     expect(facts).toEqual(receipt.observations.map(ref => ({
@@ -363,6 +378,7 @@ it('reads all facts in raw-key chunks when one normalized identity has more than
     expect(typedReads).toHaveLength(2)
     const boundRawKeys = typedReads.map(query => query.params.filter((value): value is string => typeof value === 'string' && rawSet.has(value)))
     expect(boundRawKeys.map(keys => keys.length)).toEqual([400, 1])
-    expect(boundRawKeys.flat()).toEqual([...rawKeys].reverse())
-  } finally { sqlite.close() }
+    // Fixed-width bits preserve BINARY order: space (0) sorts before zero-width (1).
+    expect(boundRawKeys.flat()).toEqual(rawKeys)
+  })
 })
