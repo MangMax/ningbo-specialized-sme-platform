@@ -1,3 +1,4 @@
+import { dispositionSchemas, dispositionToolActions } from '../utils/title-cycle-disposition-protocol'
 import toolkitConfig from '#nuxt-mcp-toolkit/config.mjs'
 import { useEvent } from 'nitropack/runtime'
 import { isSessionEvent } from '../utils/mcp-session-runtime'
@@ -55,6 +56,7 @@ export default defineMcpHandler({
   prompts: event => isSessionEvent(event) ? [] : getMcpPrompts({ event, orphansOnly: toolkitConfig.defaultHandlerStrategy === 'orphans' }),
   tools: async configuredEvent => (await getMcpTools()).filter(tool => !isSessionEvent(configuredEvent) || ['list_enterprises', 'get_enterprise_detail'].includes(tool.name ?? '')).map(tool => ({
     ...tool,
+    ...(tool.name && tool.name in dispositionToolActions ? { inputSchema: dispositionSchemas[dispositionToolActions[tool.name as keyof typeof dispositionToolActions]] as unknown as NonNullable<typeof tool.inputSchema> } : {}),
     // Toolkit 0.24 types expose only raw shapes, but its registration forwards
     // schemas unchanged to SDK 1.32, which accepts full Zod objects. Preserve
     // strict root keys/refinements for these two qualification protocols.
