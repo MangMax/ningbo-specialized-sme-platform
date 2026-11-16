@@ -82,5 +82,10 @@ it('detail shares the directory fact with qualification without publication or c
     expect(detail.businessTimeline.sources[1]!.events[0]).toMatchObject({ matter: 'recognition', conclusion: 'passed', businessTime: { value: '2026-03-06' }, period: { from: { value: '2026-03-06' }, until: { value: '2029-03-05' } }, collectedAt: '2026-11-15T00:00:00Z' })
     const summary = detail.qualificationAssessment.titles.find(t => t.titleCode === 'specialized_sme')!
     expect(summary.effectiveQualification).toMatchObject({ status: 'effective', source: { source: 'recognized_list', businessTime: { value: '2026-03-06' }, period: { from: { value: '2026-03-06' }, until: { value: '2029-03-05' } } } })
+    submitSyntheticRecognizedCollection(db, { rdjb: '2', queriedAt: '2026-11-16T01:00:00Z', conditions: { uscc: fact.uscc }, rows: [{ raw: { ...raw, qymc: '平台更正名称', rddqrq: '2030-03-05' }, enterpriseId: null }] })
+    const refreshed = getRosterEnterpriseDetail(db, enterprise.id, Date.parse('2026-11-16T00:00:00Z'))!
+    expect(refreshed.businessTimeline.sources[1]!.events[0]).toMatchObject({ platformName: '平台更正名称', period: { until: { value: '2030-03-05' } } })
+    expect(refreshed.qualificationAssessment.titles.find(t => t.titleCode === 'specialized_sme')!.effectiveQualification).toMatchObject({ status: 'effective', source: { platformName: '平台更正名称', period: { until: { value: '2030-03-05' } } } })
+    expect(detail.businessTimeline.sources[1]!.events[0]!.period.until.value).toBe('2029-03-05')
   } finally { db.$client.close(); rmSync(dir, { recursive: true, force: true }) }
 })

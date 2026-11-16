@@ -1,9 +1,9 @@
 import type Database from 'better-sqlite3'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import type * as schema from '../../db/schema'
-import { createCurrentQualificationAssessmentReader, CURRENT_TITLES, type CurrentQualificationAssessment } from './current-qualification'
+import { createCurrentQualificationAssessmentReader, CURRENT_TITLES, type CurrentQualificationAssessment, type CurrentQualificationSnapshot } from './current-qualification'
 
-import { readPlatformQualificationFacts } from './platform-qualification'
+import { readPlatformQualificationFacts, type PlatformQualificationFact } from './platform-qualification'
 
 type Coordinate = { enterpriseId: number; titleCode: string; inCurrentDifference: boolean }
 export interface DifferenceQualification {
@@ -13,16 +13,19 @@ export interface DifferenceQualification {
 }
 
 /** Enrich only selected differences. Qualification never changes source membership. */
-export function explainCurrentDifferences<T extends Coordinate>(db: BetterSQLite3Database<typeof schema>, rows: T[], asOf = Date.now()): (T & DifferenceQualification)[] {
+export function explainCurrentDifferences<T extends Coordinate>(db: BetterSQLite3Database<typeof schema>, rows: T[], asOf = Date.now(), detail?: { snapshot: CurrentQualificationSnapshot; platformFacts: readonly PlatformQualificationFact[] }): (T & DifferenceQualification)[] {
   if (!rows.length) return []
-  const reader = createCurrentQualificationAssessmentReader((db as BetterSQLite3Database<typeof schema> & { $client: Database.Database }).$client)
+  const reader = detail ? undefined : createCurrentQualificationAssessmentReader((db as BetterSQLite3Database<typeof schema> & { $client: Database.Database }).$client)
   const platformGaps = new Map<string, boolean>()
   const assessments = new Map<string, CurrentQualificationAssessment>()
+  if (detail && (detail.snapshot.asOf !== new Date(asOf).toISOString() || rows.some(row => row.enterpriseId !== detail.snapshot.enterpriseId))) {
+    throw new Error('Difference detail inputs require the same enterprise/asOf')
+  }
   for (const title of CURRENT_TITLES) {
     const ids = [...new Set(rows.filter(row => row.titleCode === title).map(row => row.enterpriseId))]
     for (let offset = 0; offset < ids.length; offset += 100) {
-      const snapshots = reader.readCurrentBatch(ids.slice(offset, offset + 100), asOf, title)
-      const facts = readPlatformQualificationFacts(db, snapshots.map(({ snapshot, rows }) => ({ enterpriseId: snapshot.enterpriseId, uscc: rows[0]?.uscc ?? '' })))
+      const snapshots = detail ? [{ snapshot: detail.snapshot, rows: [] as { uscc: string | null }[] }] : reader!.readCurrentBatch(ids.slice(offset, offset + 100), asOf, title)
+      const facts = detail ? detail.platformFacts : readPlatformQualificationFacts(db, snapshots.map(read => ({ enterpriseId: read.snapshot.enterpriseId, uscc: read.rows[0]?.uscc ?? '' })))
       for (const { snapshot } of snapshots) {
         const owned = facts.filter(fact => fact.enterpriseId === snapshot.enterpriseId && fact.title === title && (!fact.businessTime.value || fact.businessTime.value <= new Date(asOf + 8 * 60 * 60 * 1000).toISOString().slice(0, 19)))
         const source = (['recognized_list','business_list','apply_list'] as const).find(source => owned.some(fact => fact.source === source))

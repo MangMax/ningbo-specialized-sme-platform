@@ -375,6 +375,33 @@ function createCurrentQualificationAssessmentReaderBody(db:Database.Database,rec
     read(enterpriseId: number, asOf = Date.now(), options: QualificationAssessmentReadOptions = {}, filterTitle?: CurrentTitle) {
       return readSnapshot(enterpriseId, asOf, options, filterTitle)
     },
+    /** Detail composition only: caller owns the enterprise transaction/asOf.
+     * Complete verified inputs feed assessment; final display budgets run later.
+     * Neither results nor platform facts survive this invocation.
+     */
+    readDetail(enterpriseId: number, asOf: number, copies: readonly OfficialPublishedScope[], options: Pick<QualificationAssessmentReadOptions, 'ownQueryIds' | 'coverageForTitle'> = {}) {
+      return evaluate.withinBatch([enterpriseId], inputs => {
+        const evidence = [...(inputs.evidence.get(enterpriseId)?.values() ?? [])].flat().sort((a, b) => a.id - b.id)
+        const scope = evidence.map(row => ({ evidenceId: row.id, eventId: row.eventId }))
+        let publishedNames: PublishedNameAssessmentInput
+        let sourceError: unknown
+        try {
+          publishedNames = { availability: 'available', facts: [...readOfficialPublishedPresentation(prepareCurrentReader(db), scope, undefined, receiptRuntime).values()] }
+        } catch (error) {
+          sourceError = error
+          publishedNames = { availability: 'unavailable', facts: [] }
+        }
+        const { snapshot } = readSnapshot(enterpriseId, asOf, { ...options, publishedNames })
+        let publishedPresentation: PublishedPresentation
+        try {
+          if (sourceError !== undefined) throw sourceError
+          publishedPresentation = projectOfficialPublishedNames(publishedNames.facts, copies)
+        } catch (error) {
+          publishedPresentation = { availability: 'unavailable', error: error instanceof OfficialPublishedPresentationError ? error.code : 'read_failed', facts: [] }
+        }
+        return { snapshot, platformFacts: inputs.platformFacts, publishedPresentation }
+      })
+    },
     readCurrent(enterpriseId: number, asOf: number, title: CurrentTitle, queryKeys?: IdentityKeyVariants) {
       // Reuse this snapshot's complete key variants for indexed three-title coverage.
       const options: QualificationAssessmentReadOptions = queryKeys === undefined ? {} : {

@@ -1,11 +1,9 @@
 import { explainCurrentDifferences, type DifferenceQualification } from './current-difference'
 import { enterpriseBusinessTimeline } from './enterprise-business-timeline'
-import { readPlatformQualificationFacts } from './platform-qualification'
 import { readCorrespondenceTargetQueries,readCorrespondenceTargetSources,correspondenceQueryRelationIds } from '../../server/utils/record-correspondence-target-sources'
 import type { PlatformStoredQuery } from '../platform/read'
 import type { PlatformStoredRelation } from '../platform/read'
 import { differencePublicColumns } from '../platform/difference-reference-target'
-import { readPublicPublishedNames } from './official-published-presentation'
 import type { PublishedPresentation } from './correspondence-view'
 import { readQueryAssessment,readQueryCoverage,type QueryAssessment } from './query-assessment'
 import { sourcePositionForSequence } from '../platform/recognized-evidence'
@@ -13,7 +11,7 @@ import { legacySourcePositionForSequence,type LegacyProvenanceDisplay } from '..
 import { type PlatformNormalizationConflict } from '../platform/normalization'
 import { readEnterpriseSnapshot,readEnterpriseHistories,enterpriseComparisonCoordinates } from './enterprise-read-snapshot'
 import { readPlatformBusinessDetails,readPlatformDetailFacts } from '../../server/utils/platform-business-detail-read'
-import { readCurrentQualificationAssessment,type CurrentQualificationSnapshot } from './current-qualification'
+import { createCurrentQualificationAssessmentReader,type CurrentQualificationSnapshot } from './current-qualification'
 import type { PlatformBusinessDetail } from './platform-business-detail'
 export { readPublicPublishedNames } from './official-published-presentation'
 /**
@@ -955,9 +953,6 @@ function enterpriseDetail(db: Db, id: number, asOf: number): RosterEnterpriseDet
     .filter((name, index, list) => list.indexOf(name) === index)
     .sort()
 
-  const differenceRows = explainCurrentDifferences(db, differenceUniverse(db, snap, enterpriseComparisonCoordinates(db, id), asOf), asOf)
-  const difference = enterpriseDifferenceSummaries(differenceRows).get(id) ?? NO_DIFFERENCE
-  const row = toRow(profile, aliasNames, deriveRosterState(profile, index), difference)
   const events = profile.records.flatMap((r) => profile.eventsByRecord.get(r.id) ?? [])
   const eventIds = new Set(events.map((e) => e.id))
 
@@ -1012,10 +1007,14 @@ function enterpriseDetail(db: Db, id: number, asOf: number): RosterEnterpriseDet
     readQueryAssessment(db, scope, undefined, coverageForTitle(scope.titleCode))
 
   const selectedEvidence = snap.evidence.filter(v => eventIds.has(v.recordEventId))
-  const publishedPresentation = readPublicPublishedNames(db, selectedEvidence.map(v => ({ evidenceId: v.id, eventId: v.recordEventId })))
+  const detailRead = createCurrentQualificationAssessmentReader((db as Db & { $client: import('better-sqlite3').Database }).$client)
+    .readDetail(id, asOf, selectedEvidence.map(v => ({ evidenceId: v.id, eventId: v.recordEventId })), { ownQueryIds: enterpriseSnapshot.ownQueryIds, coverageForTitle })
+  const { snapshot: qualificationAssessment, publishedPresentation } = detailRead
+  const differenceRows = explainCurrentDifferences(db, differenceUniverse(db, snap, enterpriseComparisonCoordinates(db, id), asOf), asOf, detailRead)
+  const difference = enterpriseDifferenceSummaries(differenceRows).get(id) ?? NO_DIFFERENCE
+  const row = toRow(profile, aliasNames, deriveRosterState(profile, index), difference)
   const platformFacts = readPlatformDetailFacts(db, queries, relations)
-  const qualificationAssessment = readCurrentQualificationAssessment((db as Db & { $client: import('better-sqlite3').Database }).$client, id, asOf, {ownQueryIds:enterpriseSnapshot.ownQueryIds,publishedNames:publishedPresentation,coverageForTitle})
-  const businessTimeline = enterpriseBusinessTimeline(id, profile.records, events.filter(e => profile.records.some(r => r.id === e.recordId && r.source === 'jxj')), readPlatformQualificationFacts(db, [{enterpriseId: id, uscc: enterprise.usccNorm ?? ''}]), queries)
+  const businessTimeline = enterpriseBusinessTimeline(id, profile.records, events.filter(e => profile.records.some(r => r.id === e.recordId && r.source === 'jxj')), detailRead.platformFacts, queries)
   return {
     businessTimeline: { ...businessTimeline, asOf: qualificationAssessment.asOf },
     qualificationAssessment,
