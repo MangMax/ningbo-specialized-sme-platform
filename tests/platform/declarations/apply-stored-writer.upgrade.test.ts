@@ -70,6 +70,44 @@ it('71608 direct writer captures literal legacy materialization and preserves or
 import { writeCollectionTarget, type NewCollectionTargetCommand } from '../../../upgrade/frozen/collection-target-command'
 function command():NewCollectionTargetCommand{return {queryText:JSON.stringify({interface:'apply_list',queryKey:'new',queriedAt:'time',status:'success',rawResponse:'{}',relations:[{sequenceNo:1,status:' pending ',declareKind:'申请',rawFields:{rdjb:' 2 ',cszt:'pending',year:'2e3'}}]}),evidenceText:null,createdAt:'creation',assignments:[{matchBasis:'none',verificationStatus:'pending',origin:'command',actor:{type:'agent',id:'W'},basis:'explicit'}]}}
 function fileBytes(t:Database.Database){const b=t.serialize();for(const offset of [24,92])b.fill(0,offset,offset+4);return b}
+function rollbackBytes(original:Buffer,value:Buffer){
+ // SQLite does not journal free-leaf payload. Keep the original header, free
+ // list trunks, live pages and total image length exact (atomiccommit §7.3).
+ const result=Buffer.from(value),storedPageSize=original.readUInt16BE(16),pageSize=storedPageSize===1?65536:storedPageSize
+ for(let trunk=original.readUInt32BE(32);trunk;) {
+  const offset=(trunk-1)*pageSize,count=original.readUInt32BE(offset+4)
+  for(let index=0;index<count;index++) {
+   const leaf=original.readUInt32BE(offset+8+index*4),start=(leaf-1)*pageSize
+   result.fill(0,Math.min(start,result.length),Math.min(start+pageSize,result.length))
+  }
+  trunk=original.readUInt32BE(offset)
+ }
+ return result
+}
+it('compares rollback state without treating original free leaf payload as business data',()=>{
+ const t=new Database(':memory:');connections.push(t)
+ t.exec('CREATE TABLE rollback_probe(id INTEGER PRIMARY KEY,payload BLOB); PRAGMA secure_delete=OFF')
+ const marker=Buffer.from('LIVE-ROLLBACK-ORACLE-PAYLOAD')
+ t.prepare('INSERT INTO rollback_probe VALUES(1,?)').run(marker)
+ t.prepare('INSERT INTO rollback_probe VALUES(2,?)').run(Buffer.alloc(16000,65))
+ t.exec('DELETE FROM rollback_probe WHERE id=2')
+ const before=t.serialize(),pageSize=before.readUInt16BE(16),trunk=before.readUInt32BE(32)
+ expect(trunk).toBeGreaterThan(0)
+ const trunkOffset=(trunk-1)*pageSize
+ expect(before.readUInt32BE(trunkOffset+4)).toBeGreaterThan(0)
+ const leaf=before.readUInt32BE(trunkOffset+8),freePayload=Buffer.from(before)
+ freePayload[(leaf-1)*pageSize]!^=1
+ expect(rollbackBytes(before,freePayload)).toEqual(rollbackBytes(before,before))
+ expect(()=>t.transaction(()=>{t.prepare('INSERT INTO rollback_probe VALUES(2,?)').run(Buffer.alloc(16000,66));throw new Error('rollback control')})()).toThrow('rollback control')
+ expect(rollbackBytes(before,t.serialize())).toEqual(rollbackBytes(before,before))
+ expect(t.prepare('SELECT id,payload FROM rollback_probe').all()).toEqual([{id:1,payload:marker}])
+ const liveOffset=before.indexOf(marker);expect(liveOffset).toBeGreaterThan(100)
+ for(const offset of [liveOffset,24,trunkOffset]) {
+  const changed=Buffer.from(before);changed[offset]!^=1
+  expect(rollbackBytes(before,changed)).not.toEqual(rollbackBytes(before,before))
+ }
+ expect(rollbackBytes(before,before.subarray(0,before.length-pageSize))).not.toEqual(rollbackBytes(before,before))
+})
 it('71608 full command ordinary and explicit reference authenticate literal materialization without writes',()=>{
  const {t,db}=ready(),c=command(),r=writeCollectionTarget(db,c)
  expect(t.prepare('SELECT exact_status,exact_declare_kind,exact_year,exact_title_raw,sql_fact_title,declaration_year FROM platform_apply_projection WHERE observation_id=?').get(r.observations[0]!.observationId)).toEqual({exact_status:'pending',exact_declare_kind:'apply',exact_year:2000,exact_title_raw:'2',sql_fact_title:'2',declaration_year:null})
@@ -89,30 +127,7 @@ it('71608 rejects assignment provenance mismatch and existing REAL year predeces
  const {t,db}=ready(),v=input(),before=t.serialize()
  expect(()=>writeApplyTarget(db,{...v,assignment:{...v.assignment,nameRaw:' Old '}})).toThrow(/revision1/)
  expect(()=>writeApplyTarget(db,{...v,row:{...v.row,year:2024.5}})).toThrow(/Unrepresentable legacy process year/)
- const actual=t.serialize()
- if (!actual.equals(before)) {
-  let changed=0,bodyChanged=0
-  const firstOffsets:number[]=[]
-  const changedPages=new Set<number>()
-  const storedPageSize=before.readUInt16BE(16),pageSize=storedPageSize===1?65536:storedPageSize
-  const header:{offset:number;before:number|undefined;after:number|undefined}[]=[]
-  for(let offset=0;offset<Math.max(before.length,actual.length);offset++)if(before[offset]!==actual[offset]) {
-   changed++;if(offset>=100)bodyChanged++;if(firstOffsets.length<32)firstOffsets.push(offset)
-   changedPages.add(1+Math.floor(offset/pageSize))
-   if(offset<100)header.push({offset,before:before[offset],after:actual[offset]})
-  }
-  // Classify against the original image only; never normalize the assertion.
-  const freeLeaves=new Set<number>(),freeTrunks=new Set<number>()
-  for(let trunk=before.readUInt32BE(32);trunk;) {
-   freeTrunks.add(trunk)
-   const offset=(trunk-1)*pageSize,leafCount=before.readUInt32BE(offset+4)
-   for(let index=0;index<leafCount;index++)freeLeaves.add(before.readUInt32BE(offset+8+index*4))
-   trunk=before.readUInt32BE(offset)
-  }
-  const pages=[...changedPages],outsideFreeLeaves=pages.filter(page=>!freeLeaves.has(page))
-  console.error('APPLY_REJECTION_BYTE_DELTA',JSON.stringify({beforeBytes:before.length,afterBytes:actual.length,changed,bodyChanged,firstOffsets,header,pageSize,changedPageCount:pages.length,changedPages:pages.slice(0,32),originalFreeLeafCount:freeLeaves.size,originalFreeTrunkCount:freeTrunks.size,outsideFreeLeafCount:outsideFreeLeaves.length,outsideFreeLeaves:outsideFreeLeaves.slice(0,32)}))
- }
- expect(actual.equals(before), 'database bytes remain unchanged').toBe(true);t.close()
+ expect(rollbackBytes(before,t.serialize()), 'allocated database bytes remain unchanged').toEqual(rollbackBytes(before,before));t.close()
 })
 it('71608 same raw different stored input remains distinct and reused input conflict is atomic',()=>{
  const {t,db}=ready(),v=input(),a=writeApplyTarget(db,v),b=writeApplyTarget(db,{...v,position:{...v.position,sequenceNo:4},row:{...v.row,sequenceNo:4,status:'rejected'}})
