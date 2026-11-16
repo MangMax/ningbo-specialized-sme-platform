@@ -107,16 +107,21 @@ it('performs typed final target CRUD and archive alias ownership without old rel
 })
 it('preserves all incoming FK owners indexes triggers and physical target Drizzle constraints',()=>{
   const f=fixture(),before=new Database(f.target),catalog=finalizationCatalog(before)
+  const qualificationColumns=['source_recognized_at','source_valid_flag','source_invalidated_at','source_invalidation_reason','source_province_name','source_city_name','source_district_name','qualification_fields_rule']
+  const addedColumns=(t:Database.Database)=>(t.pragma('table_info(platform_recognized_projection)') as {name:string;type:string;notnull:number;dflt_value:unknown;pk:number}[]).filter(c=>qualificationColumns.includes(c.name)).map(({name,type,notnull,dflt_value,pk})=>({name,type,notnull,dflt_value,pk})).sort((a,b)=>a.name.localeCompare(b.name))
+  const addedBefore=addedColumns(before)
+  expect(addedBefore).toEqual(qualificationColumns.map(name=>({name,type:name==='source_valid_flag'?'BLOB':'TEXT',notnull:0,dflt_value:null,pk:0})).sort((a,b)=>a.name.localeCompare(b.name)))
   const snapshots=observationIncomingOwners.map(name=>({name,rows:before.prepare(`select * from ${name} order by rowid`).all()}))
   before.close();finalizeObservations(f)
   const t=new Database(f.target),after=finalizationCatalog(t)
+  expect(addedColumns(t)).toEqual(addedBefore)
   for(const {name,rows} of snapshots)expect(t.prepare(`select * from ${name} order by rowid`).all()).toEqual(rows)
   expect(after.filter(x=>x.type==='trigger').map(x=>x.name)).toEqual(catalog.filter(x=>x.type==='trigger').map(x=>x.name))
   expect(after.filter(x=>x.type==='index').map(x=>x.name)).toEqual(catalog.filter(x=>x.type==='index').map(x=>x.name))
   for(const table of [final.platformBusinessObservation,...observationIncomingOwners.map(name=>Object.values(final).find(v=>{try{return getTableConfig(v as typeof final.platformBusinessObservation).name===name}catch{return false}})!)]) {
     const config=getTableConfig(table as typeof final.platformBusinessObservation)
     const actual=t.pragma(`table_info(${config.name})`) as {name:string,notnull:number,pk:number}[]
-    expect(actual.map(c=>c.name).sort()).toEqual(config.columns.map(c=>c.name).sort())
+    expect(actual.map(c=>c.name).sort()).toEqual([...config.columns.map(c=>c.name),...(config.name==='platform_recognized_projection'?qualificationColumns:[])].sort())
     for(const c of config.columns)expect(actual.find(a=>a.name===c.name)?.notnull).toBe(Number(c.notNull))
     const foreign=t.pragma(`foreign_key_list(${config.name})`) as {table:string,to:string,from:string}[]
     for(const fk of config.foreignKeys){const r=fk.reference();for(let i=0;i<r.columns.length;i++)expect(foreign).toContainEqual(expect.objectContaining({table:getTableConfig(r.foreignTable).name,from:r.columns[i]!.name,to:r.foreignColumns[i]!.name}))}

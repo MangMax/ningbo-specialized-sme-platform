@@ -139,7 +139,19 @@ it('retired populated catalog matches native creation except the native capabili
   const columnSql='`max_page_present` integer DEFAULT 0 NOT NULL CHECK (`max_page_present` IN (0,1))'
   const actual=catalog(f.db),expected=catalog(native).map(row=>({...row,sql:row.sql?.replace('max_page_present INTEGER NOT NULL DEFAULT 0 CHECK(max_page_present IN (0,1))',columnSql)??null}))
   expect(actual.map(({name,type})=>({name,type}))).toEqual(expected.map(({name,type})=>({name,type})))
-  expect(actual.map((row,i)=>JSON.stringify(row)===JSON.stringify(expected[i])?null:{actual:row,expected:expected[i]}).filter(Boolean)).toEqual([])
+  const comparable=(db:Database.Database,row:typeof actual[number])=>{
+   if(row.type!=='table'||row.name!=='platform_recognized_projection')return row
+   const qualificationColumns=['source_recognized_at','source_valid_flag','source_invalidated_at','source_invalidation_reason','source_province_name','source_city_name','source_district_name','qualification_fields_rule']
+   const definitions=qualificationColumns.map(name=>({name,type:name==='source_valid_flag'?'BLOB':'TEXT',notnull:0,dflt_value:null,pk:0})).sort((a,b)=>a.name.localeCompare(b.name))
+   const columns=db.pragma('table_info(platform_recognized_projection)') as typeof definitions
+   expect(columns.filter(c=>qualificationColumns.includes(c.name)).map(({name,type,notnull,dflt_value,pk})=>({name,type,notnull,dflt_value,pk})).sort((a,b)=>a.name.localeCompare(b.name))).toEqual(definitions)
+   // 0054 appends these independent nullable columns; native creation declares
+   // them first. Preserve quoted CHECK literals and every other SQL token.
+   let sql=row.sql!.replace(/'(?:''|[^'])*'|\s+/g,token=>token.startsWith("'")?token:'')
+   for(const {name,type} of definitions){const declaration=name+type.toLowerCase()+',';expect(sql.split(declaration)).toHaveLength(2);sql=sql.replace(declaration,'')}
+   return {...row,sql}
+  }
+  expect(actual.map((row,i)=>({actual:comparable(f.db,row),expected:comparable(native,expected[i]!)})).filter(({actual,expected})=>JSON.stringify(actual)!==JSON.stringify(expected))).toEqual([])
   expect(f.db.pragma('foreign_key_check')).toEqual([])
  } finally {native.close()}
 })
