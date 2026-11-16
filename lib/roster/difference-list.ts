@@ -3,7 +3,7 @@ import { differencePublicColumns } from '../platform/difference-reference-target
 import { eq, inArray, sql } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as s from '../../db/schema'
-import { currentDifferenceCoordinates } from './current-difference'
+import { explainCurrentDifferences } from './current-difference'
 import { getComparison } from '../comparison'
 import { normalizeName } from '../domain'
 import { TITLE_ORDER } from '../labels'
@@ -22,13 +22,14 @@ const rank = (title: string) => { const i = TITLE_ORDER.indexOf(title); return i
  */
 export function listRosterDifferences(db: Db, filter: RosterDifferenceFilter = {}): RosterDifferencesResult {
   return db.transaction(() => {
+    const asOf = Date.now()
     const { q, r: relation } = targetCandidateTables(db)
     const d = s.differenceReason
     const heads = db.select({ id: d.id, enterpriseId: d.enterpriseId, titleCode: d.titleCode, direction: d.direction, status: d.status, reasonCode: d.reasonCode }).from(d)
       .where(sql`not exists (select 1 from difference_reason n where n.enterprise_id=${d.enterpriseId} and n.title_code=${d.titleCode} and n.direction=${d.direction} and (n.recorded_at>${d.recordedAt} or (n.recorded_at=${d.recordedAt} and n.id>${d.id})))`).all()
     const current = new Map(heads.map(r => [keyOf(r), r]))
     const enterprises = new Map(db.select({ id: s.enterprise.id, name: s.enterprise.name, uscc: s.enterprise.usccNorm }).from(s.enterprise).all().map(e => [e.id, e]))
-    const derived = currentDifferenceCoordinates(db, getComparison(db).rows)
+    const derived = getComparison(db).rows
     const derivedKeys = new Set(derived.map(keyOf))
     const coordinates = new Map([...derived, ...heads].map(r => [keyOf(r), { enterpriseId: r.enterpriseId, titleCode: r.titleCode, direction: r.direction }]))
     const needle = filter.q?.trim() ? normalizeName(filter.q) : null
@@ -54,7 +55,7 @@ export function listRosterDifferences(db: Db, filter: RosterDifferenceFilter = {
     for (const r of rows) { counts[r.titleCode] ??= { missing_in_miit: 0, extra_in_miit: 0 }; counts[r.titleCode]![r.direction]++ }
     const page = Number.isFinite(filter.page) && filter.page! >= 1 ? Math.floor(filter.page!) : 1
     const pageSize = Math.min(Number.isFinite(filter.pageSize) && filter.pageSize! >= 1 ? Math.floor(filter.pageSize!) : 50, MAX_PAGE_SIZE)
-    const selected = rows.slice((page - 1) * pageSize, page * pageSize)
+    const selected = explainCurrentDifferences(db, rows.slice((page - 1) * pageSize, page * pageSize), asOf)
     if (!selected.length) return { rows: [], counts, total: rows.length, page, pageSize }
     const selectedIds = selected.flatMap(r => r.explanationId == null ? [] : [r.explanationId])
     const explanations = new Map(db.select(differencePublicColumns(db)).from(d).where(inArray(d.id, selectedIds)).all().map(r => [r.id, r]))
