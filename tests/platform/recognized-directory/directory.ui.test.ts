@@ -3,9 +3,6 @@ import { DOMWrapper, flushPromises, mount } from '@vue/test-utils'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import PlatformRecognizedDirectoryTable from '../../../components/PlatformRecognizedDirectoryTable.vue'
 import PlatformRecognizedDirectoryDetailDialog from '../../../components/PlatformRecognizedDirectoryDetailDialog.vue'
-import PlatformRecords from '../../../components/PlatformRecords.vue'
-import { groupPlatformBusinessDetails } from '../../../lib/roster/platform-business-detail'
-import type { PlatformRecord, PlatformRecordQuery } from '../../../lib/roster/platform-records'
 import type { RecognizedDirectoryDetail, RecognizedDirectoryRow } from '../../../lib/platform/recognized-directory'
 
 const nativeAnimate = Object.getOwnPropertyDescriptor(Element.prototype, 'animate')
@@ -117,76 +114,6 @@ describe('平台认定目录表格', () => {
       expect(view.get('[data-testid="platform-recognized-directory-isolated-row"] a').attributes('href')).toBe('/platform-queries')
       expect(view.find('[data-testid="platform-recognized-directory-isolated-card"]').exists()).toBe(true)
     } finally { view.unmount() }
-  })
-})
-
-describe('真实消费者深链', () => {
-  it('links a recognized row of the platform evidence table to the local directory record by exact platform key', () => {
-    const query: PlatformRecordQuery = {
-      id: 60, interface: 'recognized_list', queryKey: '91330211AAAAAAAA1X', rdjb: '2',
-      queriedAt: '2026-10-01T00:00:00Z', status: 'success', relationCount: 1, failureReason: null,
-    }
-    const relation: PlatformRecord = {
-      id: 100, queryId: 60, sequenceNo: 1, relationKey: 'DIR-KEY', usccRaw: '91330211AAAAAAAA1X', nameRaw: '合成目录企业',
-      province: null, status: null, batch: null, declareKind: null, appliedAt: null, awardBatchLabel: null, year: null,
-      matchBasis: 'uscc', verificationStatus: 'confirmed', sourceRdjb: '2', sourcePage: 1,
-      rawFields: { id: 'DIR-KEY', qymc: '合成目录企业', tyshxydm: '91330211AAAAAAAA1X', rddqrq: '2027-12-31' },
-    }
-    const business = groupPlatformBusinessDetails([{
-      relationId: 100, queryId: 60, queriedAt: '2026-10-01T00:00:00Z',
-      businessRecord: {
-        recordId: 5, versionId: 9, interface: 'recognized_list', platformKey: 'DIR-KEY', groupState: 'verified',
-        identityState: 'resolved', contentState: 'verified', keySource: 'both', projectionRuleVersion: 'platform-observation-v1',
-        hashAlgorithm: 'platform-row-json-v1', contentHash: 'a'.repeat(64),
-      },
-      existingCorrespondenceIds: [], existingCorrespondences: [], conflicts: [],
-      titleCode: 'specialized_sme', enterpriseId: 3, usccRaw: '91330211AAAAAAAA1X', nameRaw: '合成目录企业',
-    }])[0]!
-    const view = mount(PlatformRecords, { props: { queries: [query], relations: [relation], businessRecords: [business] }, global: { stubs } })
-    try {
-      const section = view.get('[data-record-kind="recognized_list"]')
-      // The existing display, grouping and evidence reader stay in place.
-      expect(section.text()).toContain('合成目录企业')
-      expect(section.text()).toContain('2027-12-31')
-      expect(section.findAll('button').some(button => button.text().includes('对应事件/出处'))).toBe(true)
-      const link = section.get('[data-testid="platform-recognized-directory-link"]')
-      expect(link.text()).toBe('本地目录记录')
-      expect(JSON.parse(link.attributes('data-to')!)).toEqual({ path: '/platform-recognized-directory', query: { platformKey: 'DIR-KEY' } })
-      // The business_list deep link is untouched: no business link for a recognized row.
-      expect(section.findAll('a').some(anchor => anchor.text() === '本地办理记录')).toBe(false)
-    } finally { view.unmount() }
-  })
-
-  it('never links an unresolved recognized row without an exact directory business id', () => {
-    const query: PlatformRecordQuery = {
-      id: 61, interface: 'recognized_list', queryKey: 'name:缺编号目录企业', rdjb: '2',
-      queriedAt: '2026-10-01T00:00:00Z', status: 'success', relationCount: 1, failureReason: null,
-    }
-    const relation: PlatformRecord = {
-      id: 101, queryId: 61, sequenceNo: 1, relationKey: 'REL-NO-KEY', usccRaw: null, nameRaw: '缺编号目录企业',
-      province: null, status: null, batch: null, declareKind: null, appliedAt: null, awardBatchLabel: null, year: null,
-      matchBasis: 'manual', verificationStatus: 'pending', sourceRdjb: '2', sourcePage: 1,
-      rawFields: { qymc: '缺编号目录企业' },
-    }
-    for (const identityState of ['missing_key', 'conflict'] as const) {
-      const business = groupPlatformBusinessDetails([{
-        relationId: 101, queryId: 61, queriedAt: '2026-10-01T00:00:00Z',
-        businessRecord: {
-          recordId: null, versionId: null, interface: 'recognized_list', platformKey: null,
-          groupState: identityState, identityState, contentState: identityState === 'missing_key' ? 'unverifiable' : 'verified',
-          keySource: 'none', projectionRuleVersion: 'platform-observation-v1',
-          hashAlgorithm: null, contentHash: null,
-        },
-        existingCorrespondenceIds: [], existingCorrespondences: [], conflicts: [],
-        titleCode: 'specialized_sme', enterpriseId: null, usccRaw: null, nameRaw: '缺编号目录企业',
-      }])[0]!
-      const view = mount(PlatformRecords, { props: { queries: [query], relations: [relation], businessRecords: [business] }, global: { stubs } })
-      try {
-        const section = view.get('[data-record-kind="recognized_list"]')
-        expect(section.text()).toContain('缺编号目录企业')
-        expect(section.find('[data-testid="platform-recognized-directory-link"]').exists()).toBe(false)
-      } finally { view.unmount() }
-    }
   })
 })
 

@@ -3,7 +3,7 @@ import type { RosterEventRow, RosterPlatformQueryRow } from './enterprise-roster
 import type { FormalValidity } from './formal-validity'
 
 type PublicationEvent = RosterEventRow & { formalValidity?: FormalValidity | null }
-type BusinessEvent = Pick<PlatformQualificationFact, 'title' | 'matter' | 'matterRaw' | 'conclusion' | 'statusRaw' | 'businessTimeKind' | 'businessYear' | 'period'> & {
+type BusinessEvent = Pick<PlatformQualificationFact, 'platformName' | 'title' | 'matter' | 'matterRaw' | 'conclusion' | 'statusRaw' | 'businessTimeKind' | 'businessYear' | 'period'> & {
   collectedAt: string | null
   key: string
   cycleKey: string | null
@@ -26,7 +26,7 @@ export function enterpriseBusinessTimeline(
     const year = e.eventType === 'review' ? e.decidedYear : e.decidedYear ?? e.year
     const interval = e.formalValidity?.interval
     return {
-      key: `publication:${e.id}`, title, matter: e.eventType, matterRaw: e.eventType,
+      key: `publication:${e.id}`, platformName: null, title, matter: e.eventType, matterRaw: e.eventType,
       conclusion: e.eventType === 'award' || e.reviewOutcome === 'passed' ? 'passed' : e.reviewOutcome === 'failed' ? 'invalid' : 'unknown',
       statusRaw: e.reviewOutcome, businessTimeKind: 'recognition', businessYear: year,
       businessTime: year == null ? sourceDate(null) : { raw: String(year), value: String(year), precision: 'year' },
@@ -43,7 +43,7 @@ export function enterpriseBusinessTimeline(
   return { sources: (['publication', 'recognized_list', 'business_list', 'apply_list'] as const).map(source => {
     const query = queries.filter(q => q.interface === source).sort((a, b) => b.queriedAt.localeCompare(a.queriedAt) || b.id - a.id)[0]
     const events: BusinessEvent[] = source === 'publication' ? published : [...latest.values()].filter(f => f.source === source).map(f => ({
-      key: `${source}:${f.recordId}`, title: f.title, matter: f.matter, matterRaw: f.matterRaw, conclusion: f.conclusion, statusRaw: f.statusRaw,
+      key: `${source}:${f.recordId}`, platformName: f.platformName, title: f.title, matter: f.matter, matterRaw: f.matterRaw, conclusion: f.conclusion, statusRaw: f.statusRaw,
       businessTime: f.businessTime, businessTimeKind: f.businessTimeKind, businessYear: f.businessYear,
       period: f.period, collectedAt: f.collectedAt, cycleKey: cycle(f.title, f.period.from.value),
     }))

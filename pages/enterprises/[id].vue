@@ -16,7 +16,6 @@ import OfficialEvidenceView from '@/components/record-correspondence/OfficialEvi
 import { eventDecisionText } from '~~/lib/roster/correspondence-view'
 import TableFailureState from '@/components/TableFailureState.vue'
 import PlatformRecords from '@/components/PlatformRecords.vue'
-import { hasKnownPlatformBusiness } from '~~/lib/roster/platform-business-detail'
 import TitleBadge from '@/components/TitleBadge.vue'
 import { QUALITY_FLAGS, TITLE_ORDER } from '~~/lib/labels'
 import { fileUrl, fileNameOf } from '~~/lib/preview'
@@ -180,7 +179,7 @@ const ledgerEvents = computed<LedgerEvent[]>(() => {
 })
 
 const historySource = shallowRef('jxj')
-const historySources = [{ code: 'jxj', label: '经信局' }, { code: 'miit', label: '工信部' }]
+const historySources = [{ code: 'jxj', label: '公布资料' }]
 
 /** 来源分别展示；记录即使没有事件，也保留其称号空状态。 */
 const sourceHistories = computed(() => historySources.map(source => {
@@ -273,9 +272,6 @@ const usccMissing = computed(() => detail.value?.qualityFlags?.includes('uscc_mi
 const otherFlags = computed(() => (detail.value?.qualityFlags ?? []).filter((f) => f !== 'uscc_missing'))
 const recordCount = computed(() => detail.value?.records.length ?? 0)
 const eventCount = computed(() => ledgerEvents.value.length)
-const platformRowCount = computed(() => data.value?.platform.relations.length ?? 0)
-const platformBusinessCount = computed(() => data.value?.platform.businessRecords?.filter(b => hasKnownPlatformBusiness(b.businessRecord)).length ?? 0)
-const platformUnknownIdentityCount = computed(() => data.value?.platform.businessRecords?.filter(b => !hasKnownPlatformBusiness(b.businessRecord)).length ?? platformRowCount.value)
 
 const titleNames = computed(() => titleInfo.value.map(item => titleLabel(item.code)))
 const lastChecked = computed(() => latestQueryTime(assessments.value))
@@ -405,6 +401,8 @@ function openPreview(e: Evidence) {
             </DisclosurePanel>
           </section>
 
+          <PlatformRecords v-if="data" :key="id" :timeline="data.businessTimeline">
+            <template #publication="{ title: selectedBusinessTitle }">
           <section class="bg-card overflow-hidden rounded-lg border" aria-label="认定与复核记录">
             <header class="flex flex-wrap items-baseline gap-x-3 gap-y-1 border-b px-4 py-3">
               <h2 class="text-sm font-semibold">认定与复核记录</h2>
@@ -422,7 +420,7 @@ function openPreview(e: Evidence) {
               <section aria-label="记录台账">
               <p v-if="!source.histories.length" class="text-muted-foreground px-4 py-8 text-sm">该来源暂无记录。</p>
               <p class="text-muted-foreground border-b px-4 py-2 text-sm">按已知年份升序；同年及未知时点不表示精确先后。排列不代表当前有效资格。</p>
-              <section v-for="history in source.histories" :key="history.code" :aria-label="`${titleLabel(history.code)}历史`" class="min-w-0 border-b last:border-b-0">
+              <section v-for="history in source.histories.filter(h => selectedBusinessTitle === 'all' || h.code === selectedBusinessTitle)" :key="history.code" :aria-label="`${titleLabel(history.code)}历史`" class="min-w-0 border-b last:border-b-0">
                 <header class="bg-muted/40 flex flex-wrap items-baseline gap-3 border-b px-4 py-3">
                   <h3 class="text-sm font-semibold">{{ titleLabel(history.code) }}</h3>
                   <span class="text-muted-foreground text-sm">{{ history.events.length }} 条事件</span>
@@ -453,26 +451,9 @@ function openPreview(e: Evidence) {
               </TabsContent>
             </Tabs>
           </section>
-
-          <!-- 平台原行是辅助区，默认收起；它不参与上面的出处判定。 -->
-          <p v-if="platformRowCount === 0" class="text-muted-foreground px-1 text-[13px] leading-5">平台记录 0 条</p>
-          <DisclosurePanel v-else keep-mounted content-class="pb-0" trigger-class="px-4" class="bg-card overflow-hidden rounded-lg border">
-            <template #trigger>
-              <span class="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-                <span class="text-sm font-medium">平台记录</span>
-                <span class="text-muted-foreground text-[13px]">{{ platformBusinessCount }} 条已知业务 / {{ platformRowCount }} 次采集<template v-if="platformUnknownIdentityCount"> / {{ platformUnknownIdentityCount }} 条身份待核原行</template></span>
-              </span>
             </template>
-            <div class="min-w-0 border-t p-4">
-              <PlatformRecords
-                :queries="data?.platform.queries ?? []"
-                :relations="data?.platform.relations ?? []"
-                :business-records="data?.platform.businessRecords"
-                :return-to="sourceReturnTarget(route.query.returnTo)"
-                @event-navigate="arriveAtEvent"
-              />
-            </div>
-          </DisclosurePanel>
+          </PlatformRecords>
+
       </div>
     </template>
 

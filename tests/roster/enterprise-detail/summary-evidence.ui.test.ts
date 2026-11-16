@@ -27,6 +27,7 @@ beforeEach(() => {
   vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, status: 200 })))
   state.detail = {
     enterprise: { enterpriseId: 91, name: '资格出处验收企业', uscc: '913302001234567890', titles: ['specialized_sme'], firstRecognition: [{ titleCode: 'specialized_sme', year: 2021 }] },
+    businessTimeline: { asOf: '2026-11-06T00:00:00.000Z', sources: ['publication', 'recognized_list', 'business_list', 'apply_list'].map(source => ({ source, collectionStatus: 'not_collected', collectedAt: null, events: [] })) },
     aliases: [], records: [{ id: 1, titleCode: 'specialized_sme', source: 'jxj', district: null, lifecycle: { firstRecognitionYear: 2021, dueYear: 2027, needsReview: false } }],
     events: [{ id: 10, recordId: 1, eventType: 'award', year: 2021, batchSeq: 1, decidedYear: null, reviewOutcome: null }],
     evidence: [], platform: { queries: [], relations: [] },

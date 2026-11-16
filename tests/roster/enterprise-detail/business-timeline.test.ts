@@ -14,7 +14,8 @@ it('shows platform recognition without a published event or confirmed correspond
   const timeline = enterpriseBusinessTimeline(7, [], [], [fact, { ...fact, observationId: 4, collectedAt: '2026-11-17T00:00:00Z' }], [])
   expect(timeline.sources.map(s => [s.source, s.events.length])).toEqual([['publication', 0], ['recognized_list', 1], ['business_list', 0], ['apply_list', 0]])
   expect(timeline.sources[1]!.events[0]).toMatchObject({ title: 'specialized_sme', matter: 'recognition', businessTime: { value: '2026-03-06', precision: 'day' }, collectedAt: '2026-11-17T00:00:00Z', cycleKey: '7:specialized_sme:2026-03-06', period: { until: { value: '2029-03-05' } } })
-  expect(JSON.stringify(timeline)).not.toMatch(/versionId|observationId|uscc|platformName/)
+  expect(timeline.sources[1]!.events[0]!.platformName).toBe('平台名称')
+  expect(JSON.stringify(timeline)).not.toMatch(/versionId|observationId|uscc/)
 })
 it('keeps all source outcomes and failed collection separate from retained business facts', () => {
   const timeline = enterpriseBusinessTimeline(7, [], [], [fact,
