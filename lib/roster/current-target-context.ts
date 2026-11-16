@@ -6,6 +6,7 @@ import { createTargetCurrentCandidateReader } from './current-candidates-target'
 import { createCurrentQualificationAssessmentReaderWithWitnesses } from './current-qualification'
 import { readTargetIdentityKeyVariants } from './current-identity-keys'
 import { createTargetRecognizedWitnessReader } from './recognized-witness-target'
+import { createPlatformQualificationFactsReader } from './platform-qualification'
 
 /** Compose accepted readers only inside the consumer-owned transaction. This
  * context owns no transaction and never encloses a Promise in withinSnapshot.
@@ -15,7 +16,7 @@ export function createCurrentTargetContext(db: Database.Database, receiptRuntime
   const reader = drizzle(db, { schema: targetSchema })
   const candidates = createTargetCurrentCandidateReader(reader)
   const witnesses = createTargetRecognizedWitnessReader(reader)
-  const assessment = createCurrentQualificationAssessmentReaderWithWitnesses(db, witnesses, receiptRuntime)
+  const assessment = createCurrentQualificationAssessmentReaderWithWitnesses(db, witnesses, receiptRuntime, createPlatformQualificationFactsReader(reader))
   const keys = {
     queries: readTargetIdentityKeyVariants(db, 'queries'),
     relations: readTargetIdentityKeyVariants(db, 'unassignedRelations'),

@@ -35,6 +35,9 @@ import type { PlatformRawRow } from '../../../lib/platform/types'
 import type { PlatformLiveQueryResult } from '../../../lib/platform/live-query'
 import { processFactsFromRow } from '../../../lib/platform/identity'
 import { readPlatformQualificationFacts } from '../../../lib/roster/platform-qualification'
+import * as platformQualification from '../../../lib/roster/platform-qualification'
+import { createCurrentTargetContext } from '../../../lib/roster/current-target-context'
+import { createCurrentQualificationAssessmentReader } from '../../../lib/roster/current-qualification'
 function collectionCommand(row: PlatformRawRow, queriedAt: string, source: PlatformLiveQueryResult['source'] = 'queryBusList'): NewCollectionTargetCommand {
   const evidence: PlatformLiveQueryResult = {
     source, status: 'success', effectiveConditions: source === 'businessList' ? { uscc: normalizeUscc(String(row.tyshxydm)), combination: 'and' } : { name: 'Example', combination: 'and' },
@@ -189,5 +192,177 @@ it('uses actual Drizzle raw-key plans while unrelated observations leave typed r
         expect(details).not.toMatch(/SCAN platform_business_observation/)
       }
     }
+  } finally { sqlite.close() }
+})
+
+
+it('enumerates each source raw-key index once across assessment blocks in one target snapshot', () => {
+  const sqlite = new Database(':memory:')
+  try {
+    sqlite.pragma('foreign_keys=ON'); createRuntimeSchema(sqlite)
+    const db = drizzle(sqlite, { schema: targetSchema })
+    const ids = ['91330110MA2GMDFH58', '91310115MA1H7KUG93'].map((uscc, i) => {
+      const enterprise = db.insert(targetSchema.enterprise).values({ name: `索引范围企业${i}`, nameNorm: `索引范围企业${i}`, usccNorm: uscc }).returning().get()
+      writeNewCollectionTarget(db, collectionCommand({ id: `scope-${i}`, tyshxydm: uscc, qymc: enterprise.name, rdjb: '2', rdtime: '2023-12-28', rddqrq: '2028-12-28', sfyx: '1', szsmc: '宁波市' }, `2026-11-16T00:00:0${i}Z`))
+      return enterprise.id
+    })
+    sqlite.transaction(() => {
+      const context = createCurrentTargetContext(sqlite)
+      const prepare = vi.spyOn(sqlite, 'prepare')
+      try {
+        for (const id of ids) {
+          expect(context.assessment.readEffectiveTitles([id], Date.parse('2026-11-16T12:00:00Z'), 'specialized_sme')).toEqual(new Map([[id, 'effective']]))
+        }
+        const keyReads = prepare.mock.calls.map(([sql]) => sql).filter(sql => sql.startsWith('select distinct') && /platform_(recognized|business|apply)_projection/.test(sql))
+        // The old per-block reader performs six scans for these two blocks.
+        expect(keyReads).toHaveLength(3)
+        for (const source of ['recognized', 'business', 'apply']) expect(keyReads.filter(sql => sql.includes(`platform_${source}_projection`))).toHaveLength(1)
+      } finally { prepare.mockRestore() }
+    })()
+  } finally { sqlite.close() }
+})
+
+it('keeps same-code owners local to each fact read within a shared snapshot', () => {
+  const sqlite = new Database(':memory:')
+  try {
+    sqlite.pragma('foreign_keys=ON'); createRuntimeSchema(sqlite)
+    const db = drizzle(sqlite, { schema: targetSchema })
+    const uscc = '91330110MA2GMDFH58'
+    for (const source of ['queryBusList', 'businessList', 'queryList'] as const) {
+      writeNewCollectionTarget(db, collectionCommand({ id: 'local-owner', tyshxydm: uscc, rdjb: '2', sfyx: '1', sblx: '申请', cszt: '终审通过', year: '2025' }, '2026-11-16T00:00:00Z', source))
+    }
+    sqlite.transaction(() => {
+      const read = platformQualification.createPlatformQualificationFactsReader(db)
+      const first = read([{ enterpriseId: 7, uscc }])
+      expect(first.map(f => [f.source, f.enterpriseId])).toEqual([['recognized_list', 7], ['business_list', 7], ['apply_list', 7]])
+      expect(read([{ enterpriseId: 8, uscc }])).toEqual(first.map(f => ({ ...f, enterpriseId: 8 })))
+      const ambiguous = read([{ enterpriseId: 7, uscc }, { enterpriseId: 8, uscc }])
+      expect(ambiguous).toEqual(first.map(f => ({ ...f, enterpriseId: null, reasons: ['identity_ambiguous', ...f.reasons] })))
+      expect(read([{ enterpriseId: 7, uscc }, { enterpriseId: 7, uscc }])).toEqual(first)
+      expect(read([{ enterpriseId: 7, uscc }])).toEqual(first)
+    })()
+  } finally { sqlite.close() }
+})
+
+it('preserves source raw-key order when normalized subjects and variants are interleaved', () => {
+  const sqlite = new Database(':memory:')
+  try {
+    sqlite.pragma('foreign_keys=ON'); createRuntimeSchema(sqlite)
+    const queries: { sql: string; params: unknown[] }[] = []
+    const db = drizzle(sqlite, { schema: targetSchema, logger: { logQuery(sql, params) { queries.push({ sql, params }) } } })
+    // The covering indexes enumerate these literal raw keys in this binary order.
+    // Grouping by normalized identity alone would move the last variant ahead of B.
+    const raw = ['913 30110MA2GMDFH58', '91310115MA1H7KUG93', '91330110ma2g\u200bmdfh58']
+    for (const source of ['queryBusList', 'businessList', 'queryList'] as const) {
+      raw.forEach((uscc, i) => writeNewCollectionTarget(db, collectionCommand({ id: `raw-order-${i}`, tyshxydm: uscc, rdjb: '2', sfyx: '1', sblx: '申请', cszt: '终审通过', year: '2025' }, `2026-11-16T00:00:0${i}Z`, source)))
+    }
+    queries.length = 0
+    const facts = sqlite.transaction(() => platformQualification.createPlatformQualificationFactsReader(db)([
+      { enterpriseId: 7, uscc: '91330110MA2GMDFH58' }, { enterpriseId: 8, uscc: '91310115MA1H7KUG93' },
+    ]))()
+    expect(facts.map(f => [f.source, f.uscc, f.enterpriseId])).toEqual([
+      ['recognized_list', '91330110MA2GMDFH58', 7], ['recognized_list', '91310115MA1H7KUG93', 8], ['recognized_list', '91330110MA2GMDFH58', 7],
+      ['business_list', '91330110MA2GMDFH58', 7], ['business_list', '91310115MA1H7KUG93', 8], ['business_list', '91330110MA2GMDFH58', 7],
+      ['apply_list', '91330110MA2GMDFH58', 7], ['apply_list', '91310115MA1H7KUG93', 8], ['apply_list', '91330110MA2GMDFH58', 7],
+    ])
+    const typedReads = queries.filter(query => query.sql.startsWith('select'))
+    expect(typedReads).toHaveLength(3)
+    expect(typedReads.map(query => query.params.filter(value => raw.includes(String(value))))).toEqual([raw, raw, raw])
+  } finally { sqlite.close() }
+})
+
+it('sees new source keys and latest negative facts when a new snapshot reader is created', () => {
+  const sqlite = new Database(':memory:')
+  try {
+    sqlite.pragma('foreign_keys=ON'); createRuntimeSchema(sqlite)
+    const db = drizzle(sqlite, { schema: targetSchema })
+    const row = { id: 'fresh-scope', tyshxydm: '91330110MA2GMDFH58', rdjb: '2', sfyx: '1' }
+    writeNewCollectionTarget(db, collectionCommand(row, '2026-11-16T00:00:00Z'))
+    const subject = { enterpriseId: 7, uscc: row.tyshxydm }
+    const first = sqlite.transaction(() => platformQualification.createPlatformQualificationFactsReader(db)([subject]))()
+    expect(first).toMatchObject([{ enterpriseId: 7, conclusion: 'passed' }])
+    const changed = writeNewCollectionTarget(db, collectionCommand({ ...row, sfyx: '0' }, '2026-11-16T01:00:00Z')).observations[0]!
+    const added = writeNewCollectionTarget(db, collectionCommand({ ...row, id: 'added-key', tyshxydm: '91310115MA1H7KUG93' }, '2026-11-16T02:00:00Z')).observations[0]!
+    const next = sqlite.transaction(() => platformQualification.createPlatformQualificationFactsReader(db)([subject, { enterpriseId: 8, uscc: '91310115MA1H7KUG93' }]))()
+    expect(next).toEqual([
+      { ...first[0]!, versionId: changed.versionId, observationId: changed.observationId, collectedAt: '2026-11-16T01:00:00Z', conclusion: 'invalid', statusRaw: '0' },
+      { ...first[0]!, enterpriseId: 8, uscc: '91310115MA1H7KUG93', recordId: added.recordId, versionId: added.versionId, observationId: added.observationId, collectedAt: '2026-11-16T02:00:00Z' },
+    ])
+    expect(readPlatformQualificationFacts(db, [subject])).toEqual(next.slice(0, 1))
+  } finally { sqlite.close() }
+})
+
+it('does not enumerate raw keys for empty or invalid subjects in a new snapshot reader', () => {
+  const sqlite = new Database(':memory:')
+  try {
+    sqlite.pragma('foreign_keys=ON'); createRuntimeSchema(sqlite)
+    const queries: string[] = []
+    const db = drizzle(sqlite, { schema: targetSchema, logger: { logQuery(sql) { queries.push(sql) } } })
+    const prepare = vi.spyOn(sqlite, 'prepare')
+    try {
+      const read = platformQualification.createPlatformQualificationFactsReader(db)
+      expect(read([])).toEqual([])
+      expect(read([{ enterpriseId: 1, uscc: '' }, { enterpriseId: 2, uscc: 'INVALID' }])).toEqual([])
+      expect(prepare).not.toHaveBeenCalled()
+      expect(read([{ enterpriseId: 7, uscc: '91330110MA2GMDFH58' }])).toEqual([])
+      expect(prepare.mock.calls.map(([sql]) => sql).filter(sql => sql.startsWith('select distinct'))).toHaveLength(3)
+      expect(queries).toEqual([])
+    } finally { prepare.mockRestore() }
+  } finally { sqlite.close() }
+})
+
+it('keeps a direct assessment reader fresh across independent caller snapshots', () => {
+  const sqlite = new Database(':memory:')
+  try {
+    sqlite.pragma('foreign_keys=ON'); createRuntimeSchema(sqlite)
+    const db = drizzle(sqlite, { schema: targetSchema })
+    const uscc = '91330110MA2GMDFH58'
+    const enterprise = db.insert(targetSchema.enterprise).values({ name: '独立读取企业', nameNorm: '独立读取企业', usccNorm: uscc }).returning().get()
+    const reader = createCurrentQualificationAssessmentReader(sqlite)
+    const prepare = vi.spyOn(sqlite, 'prepare')
+    try {
+      expect(sqlite.transaction(() => reader.readEffectiveTitles([enterprise.id], Date.parse('2026-11-16T12:00:00Z'), 'specialized_sme'))()).toEqual(new Map([[enterprise.id, 'unrecognized']]))
+      writeNewCollectionTarget(db, collectionCommand({ id: 'new-direct-key', tyshxydm: uscc, rdjb: '2', rdtime: '2023-12-28', rddqrq: '2028-12-28', sfyx: '1', szsmc: '宁波市' }, '2026-11-16T00:00:00Z'))
+      expect(sqlite.transaction(() => reader.readEffectiveTitles([enterprise.id], Date.parse('2026-11-16T12:00:00Z'), 'specialized_sme'))()).toEqual(new Map([[enterprise.id, 'effective']]))
+      const keyReads = prepare.mock.calls.map(([sql]) => sql).filter(sql => sql.startsWith('select distinct') && /platform_(recognized|business|apply)_projection/.test(sql))
+      expect(keyReads).toHaveLength(6)
+    } finally { prepare.mockRestore() }
+  } finally { sqlite.close() }
+})
+
+it('reads all facts in raw-key chunks when one normalized identity has more than four hundred variants', () => {
+  const sqlite = new Database(':memory:')
+  try {
+    sqlite.pragma('foreign_keys=ON'); createRuntimeSchema(sqlite)
+    const queries: { sql: string; params: unknown[] }[] = []
+    const db = drizzle(sqlite, { schema: targetSchema, logger: { logQuery(sql, params) { queries.push({ sql, params }) } } })
+    const uscc = '91330110MA2GMDFH58'
+    const rows = Array.from({ length: 401 }, (_, i) => ({ id: `raw-chunk-${i}`, tyshxydm: uscc.slice(0, 3) + ' '.repeat(i) + uscc.slice(3), qymc: '原目录企业', rdjb: '2', sfyx: '1', rdtime: '2023-12-28', rddqrq: '2028-12-28', szsmc: '宁波市' }))
+    const seed = collectionCommand(rows[0]!, '2026-11-16T00:00:00Z')
+    const evidence: PlatformLiveQueryResult = JSON.parse(seed.evidenceText!)
+    evidence.rows = rows; evidence.dataRows = rows
+    evidence.fetchedCount = 401; evidence.declaredTotal = 401
+    // Retain the ordinary source limit of 50 rows per page: eight full pages and one row.
+    evidence.pages = Array.from({ length: 9 }, (_, i) => ({ source: 'queryBusList' as const, rdjb: '2', page: i + 1, maxPage: 9, status: 'success' as const, fetchedCount: i < 8 ? 50 : 1, declaredTotal: 401, error: null }))
+    const query = platformResultToImport(evidence)
+    const receipt = writeNewCollectionTarget(db, { ...seed, queryText: JSON.stringify(query), evidenceText: JSON.stringify(evidence), assignments: (query.relations ?? []).map(row => ({ ...seed.assignments[0]!, nameRaw: row.nameRaw ?? null, usccRaw: row.usccRaw ?? null })) })
+    expect(receipt.observations).toHaveLength(401)
+    queries.length = 0
+    const facts = sqlite.transaction(() => platformQualification.createPlatformQualificationFactsReader(db)([{ enterpriseId: 7, uscc }]))()
+    expect(facts).toEqual(receipt.observations.map(ref => ({
+      enterpriseId: 7, uscc, title: 'specialized_sme', source: 'recognized_list', platformName: '原目录企业',
+      recordId: ref.recordId, versionId: ref.versionId, observationId: ref.observationId, collectedAt: '2026-11-16T00:00:00Z',
+      matter: 'recognition', matterRaw: null, conclusion: 'passed', statusRaw: '1',
+      businessTime: { raw: '2023-12-28', value: '2023-12-28', precision: 'day' }, businessTimeKind: 'recognition', businessYear: null,
+      period: { from: { raw: '2023-12-28', value: '2023-12-28', precision: 'day' }, until: { raw: '2028-12-28', value: '2028-12-28', precision: 'day' } }, periodReason: 'explicit_period',
+      location: { province: null, city: '宁波市', district: null }, invalidatedAt: { raw: null, value: null, precision: 'unknown' }, invalidationReason: null, reasons: [],
+    })))
+    const rawKeys = rows.map(row => row.tyshxydm)
+    const rawSet = new Set(rawKeys)
+    const typedReads = queries.filter(query => query.sql.startsWith('select'))
+    expect(typedReads).toHaveLength(2)
+    const boundRawKeys = typedReads.map(query => query.params.filter((value): value is string => typeof value === 'string' && rawSet.has(value)))
+    expect(boundRawKeys.map(keys => keys.length)).toEqual([400, 1])
+    expect(boundRawKeys.flat()).toEqual([...rawKeys].reverse())
   } finally { sqlite.close() }
 })

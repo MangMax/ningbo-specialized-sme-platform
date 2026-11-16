@@ -1,5 +1,5 @@
 import { readTitleCycleDispositionInputs } from './title-cycle-disposition-inputs'
-import { readPlatformQualificationFacts, periodContains, type PlatformQualificationFact } from './platform-qualification'
+import { readPlatformQualificationFacts, periodContains, type PlatformQualificationFact, type PlatformQualificationFactsReader } from './platform-qualification'
 import type { RecognizedWitnessReader } from './recognized-witness-reader'
 import { adjudicateQualificationCycles as adjudicate407Cycles } from './qualification-cycles-407'
 import { createCurrentAssessmentInputs, type CurrentAssessmentInputs } from './current-assessment-inputs'
@@ -188,14 +188,14 @@ export function createCurrentQualificationAssessmentReader(db: Database.Database
   return createCurrentQualificationAssessmentReaderBody(db,receiptRuntime,createTargetRecognizedWitnessReader(drizzle(db,{schema:targetSchema})))
 }
 
-/** Explicit same-connection witness dependency. */
-export function createCurrentQualificationAssessmentReaderWithWitnesses(db:Database.Database,witnesses:RecognizedWitnessReader,receiptRuntime?:ReceiptRuntimeContext) {
+/** Explicit same-connection witnesses and optional caller-snapshot fact reader. */
+export function createCurrentQualificationAssessmentReaderWithWitnesses(db:Database.Database,witnesses:RecognizedWitnessReader,receiptRuntime?:ReceiptRuntimeContext,platformFactsReader?:PlatformQualificationFactsReader) {
   if(witnesses.connection!==db)throw new Error('Recognized witnesses require the same SQLite connection')
-  return createCurrentQualificationAssessmentReaderBody(db,receiptRuntime,witnesses)
+  return createCurrentQualificationAssessmentReaderBody(db,receiptRuntime,witnesses,platformFactsReader)
 }
 
-function createCurrentQualificationAssessmentReaderBody(db:Database.Database,receiptRuntime:ReceiptRuntimeContext|undefined,witnesses:RecognizedWitnessReader) {
-  const evaluate = createCurrentCandidateEvaluationReader(db, receiptRuntime, witnesses)
+function createCurrentQualificationAssessmentReaderBody(db:Database.Database,receiptRuntime:ReceiptRuntimeContext|undefined,witnesses:RecognizedWitnessReader,platformFactsReader?:PlatformQualificationFactsReader) {
+  const evaluate = createCurrentCandidateEvaluationReader(db, receiptRuntime, witnesses, platformFactsReader)
   // Resolve the fixed schema binding before a caller starts a candidate iterator.
   // Only prepared statements are retained; correspondence rows remain read-local.
   const correspondenceReader = createEnterpriseTitleCorrespondenceRefsReader(prepareCurrentReader(db))
@@ -514,8 +514,9 @@ export function createCurrentCandidateReader(db: Database.Database) {
   return (...args: [enterpriseId: number, title: CurrentTitle, year: number, executionTime?: number, keys?: { queries: IdentityKeyVariants; relations: IdentityKeyVariants }, includeFilterFacts?: boolean, includeReferences?: boolean, assessmentOptions?: QualificationAssessmentReadOptions, includePendingFilterFacts?: boolean, suppliedPlatformRefs?: readonly CurrentPlatformReference[], preparedCorrespondences?: (enterpriseId: number, titleCode: string) => ReturnType<ReturnType<typeof createEnterpriseTitleCorrespondenceRefsReader>>]) => evaluate(...args).row
 }
 
-function createCurrentCandidateEvaluationReader(db: Database.Database, receiptRuntime: ReceiptRuntimeContext | undefined, witnesses:RecognizedWitnessReader) {
+function createCurrentCandidateEvaluationReader(db: Database.Database, receiptRuntime: ReceiptRuntimeContext | undefined, witnesses:RecognizedWitnessReader, platformFactsReader?:PlatformQualificationFactsReader) {
   const reader=prepareCurrentReader(db)
+  const readPlatformFacts: PlatformQualificationFactsReader = platformFactsReader ?? (subjects => readPlatformQualificationFacts(reader, subjects))
   const mergedIdentities = hasEnterpriseMergeIdentity(reader)
   let batch: CurrentAssessmentInputs | undefined
   const statements = new Map<string, Database.Statement>()
@@ -764,7 +765,7 @@ function createCurrentCandidateEvaluationReader(db: Database.Database, receiptRu
   // supply eligibility. Only formal periods and complete typed exclusions enter.
   const exclusions = effectiveMode ? factEffects(true) : independent
   const effectiveFormal = qualification
-  const platformFacts = currentRules ? (batch ? batch.platformFacts : readPlatformQualificationFacts(reader, [{ enterpriseId, uscc: enterprise.uscc_norm ?? '' }])).filter(f => f.enterpriseId === enterpriseId && f.title === title) : []
+  const platformFacts = currentRules ? (batch ? batch.platformFacts : readPlatformFacts([{ enterpriseId, uscc: enterprise.uscc_norm ?? '' }])).filter(f => f.enterpriseId === enterpriseId && f.title === title) : []
   const at = new Date(executionTime + 8 * 60 * 60 * 1000).toISOString().slice(0, 19)
   const day = at.slice(0, 10)
   // Business time is independent of capture time. Future business facts do not
@@ -1043,7 +1044,7 @@ function createCurrentCandidateEvaluationReader(db: Database.Database, receiptRu
     withinBatch<T>(ids: readonly number[], read: (inputs: CurrentAssessmentInputs) => T): T {
       if (!db.inTransaction) throw new Error('Assessment batch requires the caller snapshot')
       const previous = batch
-      batch = createCurrentAssessmentInputs(reader, ids)
+      batch = createCurrentAssessmentInputs(reader, ids, readPlatformFacts)
       try { return read(batch) } finally { batch = previous }
     },
   })
