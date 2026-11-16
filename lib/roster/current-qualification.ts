@@ -204,9 +204,9 @@ function createCurrentQualificationAssessmentReaderBody(db:Database.Database,rec
     const rows = referenceBatch?.get(enterpriseId)
     return rows ? rows.filter(row => row.titleCode === titleCode) : correspondenceReader(enterpriseId, titleCode)
   }
-  const withinReferences = <T>(ids: readonly number[], read: () => T, titles?: readonly CurrentTitle[]): T => {
+  const withinReferences = <T>(ids: readonly number[], read: () => T, titles?: readonly CurrentTitle[], scope?: 'recognition-witnesses'): T => {
     const previous = referenceBatch
-    const refs = correspondenceReader.readBatch(ids, titles)
+    const refs = correspondenceReader.readBatch(ids, titles, scope)
     referenceBatch = new Map(ids.map(id => [id, refs.filter(row => row.enterpriseId === id)]))
     const relationIds = refs.flatMap(row => row.type === 'event_recognized' && row.role === 'recognized_corrob' && row.status === 'confirmed' && !row.requiresRevalidation && row.relationId != null ? [row.relationId] : [])
     try { return witnesses.withinBatch ? witnesses.withinBatch(relationIds, read) : read() }
@@ -412,7 +412,7 @@ function createCurrentQualificationAssessmentReaderBody(db:Database.Database,rec
             : item
           const { name, aliases, uscc, district, qualificationWitnesses } = assessed.row
           return { id: item.id, row: { name, aliases, uscc, district, qualificationWitnesses }, effectiveStatus: assessed.effectiveStatus }
-        }), [title])
+        }), [title], 'recognition-witnesses')
       })
     },
     readEffectiveTitleSummaries(ids: readonly number[], asOf: number, title: CurrentTitle) {

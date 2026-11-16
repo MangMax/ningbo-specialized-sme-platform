@@ -580,8 +580,11 @@ export function createEnterpriseTitleCorrespondenceRefsReader(db: Db) {
   let validity: ReturnType<typeof createCorrespondenceRefValidityReader> | undefined
   const readValidity = (ids: number[]) => (validity ??= createCorrespondenceRefValidityReader(db))(ids)
   return Object.assign((enterpriseId: number, titleCode: string) => refsWithCurrentValidity(db, prepared.all({ enterpriseId, titleCode }), readValidity), {
-    readBatch(enterpriseIds: readonly number[], titles?: readonly string[]) {
-      const rows = db.select(correspondenceRefColumns(db)).from(t).where(and(inArray(t.enterpriseId, enterpriseIds), titles ? inArray(t.titleCode, titles) : undefined)).orderBy(asc(t.id)).all()
+    readBatch(enterpriseIds: readonly number[], titles?: readonly string[], scope?: 'recognition-witnesses') {
+      const rows = db.select(correspondenceRefColumns(db)).from(t).where(and(inArray(t.enterpriseId, enterpriseIds), titles ? inArray(t.titleCode, titles) : undefined,
+        // Only the internal global filter projection consumes this subset. Full
+        // readers retain all refs and the identical source-validity algorithm.
+        scope === 'recognition-witnesses' ? and(eq(t.type, 'event_recognized'), eq(t.role, 'recognized_corrob'), eq(t.status, 'confirmed'), sql`${t.eventId} is not null`, sql`${externalRelationColumn(db)} is not null`) : undefined)).orderBy(asc(t.id)).all()
       return refsWithCurrentValidity(db, rows, readValidity)
     },
   })
