@@ -64,6 +64,33 @@ function collectionCommand(row: PlatformRawRow, queriedAt: string, source: Platf
   return { queryText: JSON.stringify(query), evidenceText: JSON.stringify(evidence), createdAt: queriedAt, assignments: (query.relations ?? []).map(r => ({ enterpriseId: null, matchBasis: 'none', verificationStatus: 'pending', nameRaw: r.nameRaw ?? null, usccRaw: r.usccRaw ?? null, origin: 'command', actor: { type: 'agent', id: 'fact-reader-test' }, basis: 'source capture', recordedAt: null })) }
 }
 
+it.each(['queryBusList','queryList'] as const)('presents the selected platform basis and its supported period for %s',async source=>{
+ const local=qualificationExportFixture()
+ try {
+  const c=local.candidate('selected platform summary',[])
+  local.db.update(schema.enterprise).set({usccNorm:'91310115MA1H7KUG93'}).where(eq(schema.enterprise.id,c.enterprise.id)).run()
+  const fields: PlatformRawRow = source==='queryBusList'
+   ? {rdtime:'2025-01-01',rddqrq:'2028-01-01',sfyx:'1'}
+   : {sblx:'复核',cszt:'终审通过',year:'2024',sqsj:'2024-08-30 09:03:05'}
+  writeNewCollectionTarget(local.db,collectionCommand({id:'selected-summary',tyshxydm:'91310115MA1H7KUG93',qymc:'平台摘要原名',rdjb:'2',szsmc:'宁波市',...fields},'2026-11-01T00:00:00Z',source))
+  const own=createCurrentQualificationAssessmentReader(local.db.$client).read(c.enterprise.id,asOf).snapshot.titles.find(t=>t.titleCode==='specialized_sme')!
+  expect(own.effectiveQualification?.status).toBe('effective')
+  const basis=own.effectiveQualification?.presentationBasis?.join('\n')??''
+  expect(basis).toContain(source==='queryBusList'?'认定目录':'申报记录')
+  expect(basis).toContain('平台摘要原名')
+  if(source==='queryBusList') {
+   expect(basis).toContain('认定')
+   expect(basis).toContain('2025-01-01')
+   expect(basis).toContain('2028-01-01')
+  } else {
+   expect(basis).toContain('复核')
+   expect(basis).toContain('业务年度：2024')
+   expect(basis).toContain('2024–2027')
+  }
+  expect(basis).not.toMatch(/record:|version:|observation:/)
+ } finally {await local.close()}
+})
+
 it('uses an ordinary same-code Ningbo recognized period despite stale Shanghai profile and no human gate', () => {
  const c=f.candidate('platform-only',[])
  f.db.update(schema.enterprise).set({usccNorm:'91330110MA2GMDFH58',city:'上海市',district:'上海市'}).where(eq(schema.enterprise.id,c.enterprise.id)).run()
