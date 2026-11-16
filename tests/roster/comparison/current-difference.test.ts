@@ -1,6 +1,5 @@
 import { afterAll, expect, it, vi } from 'vitest'
 import { qualificationExportFixture } from '../current-export/fixtures/qualification-export'
-import { readCurrentQualificationAssessment } from '../../../lib/roster/current-qualification'
 import { getComparison } from '../../../lib/comparison'
 import { listRosterDifferences } from '../../../lib/roster/difference-list'
 import { getRosterEnterpriseDetail } from '../../../lib/roster/enterprise-roster'
@@ -9,21 +8,21 @@ import { listRosterDifferences as legacyDifferences } from '../../../lib/roster/
 import { listDifferences } from '../../../server/utils/mcp-roster'
 const f = qualificationExportFixture()
 afterAll(() => { vi.useRealTimers(); return f.close() })
-it('removes inherited current extras but retains source coordinates and stored history through expiry', () => {
+it('retains raw extras alongside effective inherited qualification and stored history through expiry', () => {
  vi.useFakeTimers({toFake:['Date']});vi.setSystemTime(new Date('2026-06-01T00:00:00Z'))
  const c=f.candidate('current-overlay',[{eventType:'award',year:2025,batchSeq:1}],'specialized_sme')
  f.db.$client.prepare("insert into record (enterprise_id,title_code,source,name_raw) values (?,'innovative_sme','miit','current-overlay')").run(c.enterprise.id)
  const scope={title:['innovative_sme'],direction:['extra_in_miit'] as ['extra_in_miit']}
  expect(getComparison(f.db).rows).toContainEqual(expect.objectContaining({enterpriseId:c.enterprise.id,titleCode:'innovative_sme',direction:'extra_in_miit'}))
- expect(listRosterDifferences(f.db,scope).total).toBe(0)
- expect(legacyDifferences(f.db,scope).total).toBe(0)
- expect(selectEnterpriseCoordinates(f.db,{}).candidates.find(r=>r.id===c.enterprise.id)!.difference.count).toBe(1)
+ expect(listRosterDifferences(f.db,scope)).toMatchObject({total:1,rows:[{inCurrentDifference:true,qualification:{status:'effective'},suggestedAction:'none'}]})
+ expect(legacyDifferences(f.db,scope).total).toBe(1)
+ expect(selectEnterpriseCoordinates(f.db,{}).candidates.find(r=>r.id===c.enterprise.id)!.difference.count).toBe(2)
  const head=f.db.$client.prepare("insert into difference_reason (enterprise_id,title_code,direction,status,created_at,recorded_at) values (?,'innovative_sme','extra_in_miit','needs_review','2026-01-01','2026-01-01') returning *").get(c.enterprise.id)
- expect(listRosterDifferences(f.db,scope)).toMatchObject({total:1,counts:{innovative_sme:{extra_in_miit:1}},rows:[{inCurrentDifference:false,status:'needs_review'}]})
- expect(legacyDifferences(f.db,scope).rows[0]).toMatchObject({inCurrentDifference:false})
+ expect(listRosterDifferences(f.db,scope)).toMatchObject({total:1,counts:{innovative_sme:{extra_in_miit:1}},rows:[{inCurrentDifference:true,status:'needs_review'}]})
+ expect(legacyDifferences(f.db,scope).rows[0]).toMatchObject({inCurrentDifference:true})
  const stored=listDifferences(f.db,{title:'innovative_sme'})
  expect(stored.rows).toMatchObject([{enterpriseId:c.enterprise.id,status:'needs_review'}])
- expect(getRosterEnterpriseDetail(f.db,c.enterprise.id)!.differences.find(r=>r.titleCode==='innovative_sme')).toMatchObject({inCurrentDifference:false})
+ expect(getRosterEnterpriseDetail(f.db,c.enterprise.id)!.differences.find(r=>r.titleCode==='innovative_sme')).toMatchObject({inCurrentDifference:true})
  expect(selectEnterpriseCoordinates(f.db,{}).candidates.find(r=>r.id===c.enterprise.id)!.difference.count).toBe(2)
  vi.setSystemTime(new Date('2029-06-01T00:00:00Z'))
  expect(listRosterDifferences(f.db,scope).rows[0]).toMatchObject({inCurrentDifference:true})
@@ -31,31 +30,15 @@ it('removes inherited current extras but retains source coordinates and stored h
  expect(f.db.$client.prepare('select * from difference_reason').get()).toEqual(head)
 })
 
-it('keeps platform-only extras without a verified higher title and recomputes source versions and restores extras after formal failure', () => {
+it('retains raw extras when a same-cycle failure changes qualification and suggested action', () => {
  vi.setSystemTime(new Date('2026-06-01T00:00:00Z'))
  const c=f.candidate('source-withdrawal',[{eventType:'award',year:2025,batchSeq:1}],'little_giant')
  f.db.$client.prepare("insert into record (enterprise_id,title_code,source,name_raw) values (?,'innovative_sme','miit','source-withdrawal')").run(c.enterprise.id)
  const read=()=>listRosterDifferences(f.db,{q:'source-withdrawal',title:['innovative_sme'],direction:['extra_in_miit'],pageSize:1})
- expect(read()).toMatchObject({total:0,rows:[],counts:{innovative_sme:{extra_in_miit:0}}})
- const before=f.db.$client.prepare('select count(*) n from record_event').get()
- const snapshot=()=>readCurrentQualificationAssessment(f.db.$client,c.enterprise.id,Date.now()).titles.find(t=>t.titleCode==='innovative_sme')!
- const original=snapshot()
- const award=f.db.$client.prepare('select id from record_event where record_id=?').get(c.record.id) as {id:number}
- // Ordinary source metadata changes cannot cancel a retained official award.
- f.db.$client.prepare('update record_event set year=2018 where record_id=?').run(c.record.id)
- expect(read()).toMatchObject({total:0,rows:[]})
- f.db.$client.prepare('update record_evidence set source_file=? where record_event_id in (select id from record_event where record_id=?)').run('synthetic/replaced-source.pdf',c.record.id)
- expect(read()).toMatchObject({total:0,rows:[]})
- expect(snapshot().versions.sources).not.toBe(original.versions.sources)
- // Source removal refreshes dependencies but does not delete the recorded award.
- f.db.$client.prepare('delete from record_evidence where record_event_id in (select id from record_event where record_id=?)').run(c.record.id)
- expect(read()).toMatchObject({total:0,rows:[]})
- expect(f.db.$client.prepare('select count(*) n from record_event').get()).toEqual(before)
- // A real same-cycle formal failure, rather than age or path metadata, cancels inheritance.
- f.db.$client.prepare('insert into record_evidence (record_event_id,source_file,page) values (?,?,1)').run(award.id,'synthetic/restored-award.pdf')
- const failure=f.db.$client.prepare("insert into record_event (record_id,event_type,year,decided_year,batch_seq,review_outcome) values (?,'review',2018,2026,1,'failed') returning id").get(c.record.id) as {id:number}
+ expect(read()).toMatchObject({total:1,rows:[{qualification:{status:'effective'},suggestedAction:'none'}],counts:{innovative_sme:{extra_in_miit:1}}})
+ const failure=f.db.$client.prepare("insert into record_event (record_id,event_type,year,decided_year,batch_seq,review_outcome) values (?,'review',2025,2026,1,'failed') returning id").get(c.record.id) as {id:number}
  f.db.$client.prepare('insert into record_evidence (record_event_id,source_file,page) values (?,?,1)').run(failure.id,'synthetic/formal-failed-review.pdf')
- expect(read()).toMatchObject({total:1,rows:[{enterpriseId:c.enterprise.id,inCurrentDifference:true}],counts:{innovative_sme:{extra_in_miit:1}}})
+ expect(read()).toMatchObject({total:1,rows:[{enterpriseId:c.enterprise.id,inCurrentDifference:true,qualification:{status:'unrecognized'},suggestedAction:'collect_source_facts'}],counts:{innovative_sme:{extra_in_miit:1}}})
 })
 
 it('retains an invalid own lower title as current extra without a higher basis',()=>{
@@ -64,4 +47,61 @@ it('retains an invalid own lower title as current extra without a higher basis',
  f.db.$client.prepare('update enterprise set uscc_norm=null where id=?').run(c.enterprise.id)
  f.db.$client.prepare("insert into record (enterprise_id,title_code,source,name_raw) values (?,'innovative_sme','miit','invalid-own')").run(c.enterprise.id)
  expect(listRosterDifferences(f.db,{q:'invalid-own',direction:['extra_in_miit']})).toMatchObject({total:1,rows:[{enterpriseId:c.enterprise.id,inCurrentDifference:true}]})
+})
+
+it('keeps historical moved-in qualification readable without granting ordinary qualification', () => {
+ vi.setSystemTime(new Date('2026-06-01T00:00:00Z'))
+ const c=f.candidate('historical-explanation',[])
+ f.db.$client.prepare("insert into record (enterprise_id,title_code,source,name_raw) values (?,'innovative_sme','miit','historical-explanation')").run(c.enterprise.id)
+ f.decision(c.enterprise.id,'moved_in',{titleCode:'innovative_sme',currentQualification:{titleCode:'innovative_sme',validFrom:'2025-01-01',validUntil:'2028-01-01',basis:'Historical explanation only',publicationCheck:{status:'not_found',scope:'historical search'}}})
+ const row=listRosterDifferences(f.db,{q:'historical-explanation',title:['innovative_sme']}).rows[0]!
+ expect(row).toMatchObject({inCurrentDifference:true,reasonCode:'moved_in',qualification:{status:'unrecognized'},suggestedAction:'collect_source_facts'})
+ expect(row.currentDecision.current).toMatchObject({currentQualification:{basis:'Historical explanation only'}})
+})
+
+import { schema } from '../../../db/client'
+import { eq } from 'drizzle-orm'
+import { writeNewCollectionTarget, type NewCollectionTargetCommand } from '../../../lib/platform/collection-target-command'
+import { platformResultToImport } from '../../../lib/platform/recognized-evidence'
+import type { PlatformRawRow } from '../../../lib/platform/types'
+import type { PlatformLiveQueryResult } from '../../../lib/platform/live-query'
+import { processFactsFromRow } from '../../../lib/platform/identity'
+function collectionCommand(row: PlatformRawRow, queriedAt: string, source: PlatformLiveQueryResult['source'] = 'queryBusList'): NewCollectionTargetCommand {
+  const evidence: PlatformLiveQueryResult = {
+    source, status: 'success', effectiveConditions: source === 'businessList' ? { uscc: String(row.tyshxydm), combination: 'and' } : { name: 'Example', combination: 'and' },
+    titleScope: source === 'queryList' ? { mode: 'source_default', rdjb: [] } : { mode: 'selected', rdjb: [String(row.rdjb ?? '2')] }, queriedAt, completedAt: queriedAt,
+    rows: [Object.fromEntries(Object.entries(row).map(([key, value]) => [key, value == null ? '' : typeof value === 'object' ? JSON.stringify(value) : String(value)]))], dataRows: [row], pages: [{ source, rdjb: source === 'queryList' ? null : String(row.rdjb ?? '2'), page: 1, maxPage: 1, status: 'success', fetchedCount: 1, declaredTotal: 1, error: null }],
+    fetchedCount: 1, declaredTotal: 1, completeness: 'complete', fullRange: true, unfinished: [], error: null,
+    limits: { maxRequests: 100, maxRows: 5000, maxDurationMs: 60000, pageSize: 50 },
+  }
+  const query = platformResultToImport(evidence)
+  if (source !== 'queryBusList') query.relations = query.relations?.map(r => ({ ...r, ...processFactsFromRow(evidence.rows[0]!) }))
+  return { queryText: JSON.stringify(query), evidenceText: JSON.stringify(evidence), createdAt: queriedAt, assignments: (query.relations ?? []).map(r => ({ enterpriseId: null, matchBasis: 'none', verificationStatus: 'pending', nameRaw: r.nameRaw ?? null, usccRaw: r.usccRaw ?? null, origin: 'command', actor: { type: 'agent', id: 'fact-reader-test' }, basis: 'source capture', recordedAt: null })) }
+}
+
+it('retains platform-only source differences as targeted facts arrive and change', () => {
+ vi.setSystemTime(new Date('2026-06-01T00:00:00Z'))
+ const c=f.candidate('targeted-platform',[])
+ f.db.update(schema.enterprise).set({usccNorm:'91330110MA2GMDFH58'}).where(eq(schema.enterprise.id,c.enterprise.id)).run()
+ f.db.$client.prepare("insert into record (enterprise_id,title_code,source,name_raw) values (?,'innovative_sme','miit','targeted-platform')").run(c.enterprise.id)
+ const read=()=>listRosterDifferences(f.db,{q:'targeted-platform',title:['innovative_sme']})
+ expect(read()).toMatchObject({total:1,rows:[{qualification:{status:'unrecognized'}}]})
+ const row={id:'targeted-recognition',tyshxydm:'91330110MA2GMDFH58',qymc:'targeted-platform',rdjb:'3',rdtime:'2025-01-01',rddqrq:'2028-01-01',sfyx:'1',szsmc:'宁波市'}
+ writeNewCollectionTarget(f.db,collectionCommand(row,'2026-05-01T00:00:00Z'))
+ expect(read()).toMatchObject({total:1,rows:[{inCurrentDifference:true,qualification:{status:'effective',source:{source:'recognized_list'}},suggestedAction:'none'}]})
+ writeNewCollectionTarget(f.db,collectionCommand({...row,sfyx:'0',sxsj:'2026-05-10'},'2026-05-11T00:00:00Z'))
+ expect(read()).toMatchObject({total:1,rows:[{inCurrentDifference:true,qualification:{status:'unrecognized'},suggestedAction:'collect_source_facts'}]})
+ // The two comparison sides align when a published row arrives; stored history remains.
+ f.decision(c.enterprise.id,'other',{titleCode:'innovative_sme',reasonNote:'Retained source explanation'})
+ f.addRecord(c.enterprise.id,'targeted-platform',[{eventType:'award',year:2025,batchSeq:1}],'innovative_sme')
+ expect(read()).toMatchObject({total:1,rows:[{inCurrentDifference:false,reasonNote:'Retained source explanation',qualification:{status:'effective'},suggestedAction:'none'}]})
+})
+
+it('retains missing-platform coordinates and counts before pagination independently of qualification', () => {
+ vi.setSystemTime(new Date('2026-06-01T00:00:00Z'))
+ f.candidate('page-source-A',[{eventType:'award',year:2025,batchSeq:1}])
+ f.candidate('page-source-B',[{eventType:'award',year:2025,batchSeq:1}])
+ const result=listRosterDifferences(f.db,{q:'page-source-',title:['specialized_sme'],page:2,pageSize:1})
+ expect(result).toMatchObject({total:2,page:2,pageSize:1,counts:{specialized_sme:{missing_in_miit:2,extra_in_miit:0}},rows:[{name:'page-source-B',direction:'missing_in_miit',inCurrentDifference:true,qualification:{status:'effective'},suggestedAction:'none'}]})
+ expect(legacyDifferences(f.db,{q:'page-source-',title:['specialized_sme'],page:2,pageSize:1})).toEqual(result)
 })
