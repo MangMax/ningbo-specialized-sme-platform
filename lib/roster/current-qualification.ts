@@ -551,7 +551,7 @@ function createCurrentCandidateEvaluationReader(db: Database.Database, receiptRu
     }
   }
   const qualification: ReturnType<typeof adjudicateQualificationCycles> = effectiveMode
-    ? adjudicateQualificationCycles(events.filter(e => e.source === 'jxj' && ['award','review'].includes(e.eventType)).map(e => ({...e, validityInvalid:false})), year, qualificationDay(executionTime), true, disposedAwards, currentRules && title === 'little_giant', new Set(formal.map(e => e.id)))
+    ? adjudicateQualificationCycles(events.filter(e => e.source === 'jxj' && ['award','review'].includes(e.eventType)).map(e => ({...e, validityInvalid:false})), year, qualificationDay(executionTime), true, disposedAwards, currentRules && title === 'little_giant', new Set(formal.map(e => e.id)), currentRules)
     : adjudicate407Cycles(formal, year, legacy ? undefined : qualificationDay(executionTime))
   let qualificationSource: 'formal' | 'migration' = 'formal'
   let migrationAwardYears: number[] = []
