@@ -85,13 +85,23 @@ async function writeCurrentWorkbookBody(db: Database.Database, title: CurrentTit
         if (++overflowCount > 1048575) throw new CurrentWorkbookLimitError('Excel 全文附表超过行数上限，未发布文件')
         appendFileSync(overflowFile, JSON.stringify([sheet,address,String(++part),null,null,null,null,null,null,null,null,chunk]) + '\n')
       }
+      // Match split('\n') exactly: an empty segment is one line, CR is
+      // a width-one character, and astral characters are one width-two codepoint.
+      const capacity = widths[11]! - 2
+      let completedLines = 0, lineWidth = 0
+      const segmentLines = (width: number) => Math.max(1, Math.ceil(width / capacity))
       for (const char of value ?? '') {
-        const probe = Array<string | null>(widths.length).fill(null)
-        probe[11] = chunk + char
-        try { rowHeight(probe) } catch (error) {
-          if (!(error instanceof CurrentWorkbookLimitError)) throw error
+        const charWidth = char.codePointAt(0)! > 255 ? 2 : 1
+        let nextCompleted = completedLines, nextWidth = lineWidth
+        if (char === '\n') { nextCompleted += segmentLines(lineWidth); nextWidth = 0 }
+        else nextWidth += charWidth
+        if (Math.max(26, (nextCompleted + segmentLines(nextWidth)) * 17 + 8) > 409) {
           save(); chunk = ''
+          // The first overflowing character starts the next chunk, including LF.
+          nextCompleted = char === '\n' ? 1 : 0
+          nextWidth = char === '\n' ? 0 : charWidth
         }
+        completedLines = nextCompleted; lineWidth = nextWidth
         chunk += char
       }
       if (chunk) save()
