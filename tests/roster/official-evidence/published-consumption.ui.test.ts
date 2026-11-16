@@ -2,11 +2,13 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { parse } from 'vue/compiler-sfc'
-import { DOMWrapper, flushPromises, mount } from '@vue/test-utils'
+import { flushPromises, mount } from '@vue/test-utils'
 import { defineComponent, h, ref } from 'vue'
 import { createPinia } from 'pinia'
 import { PiniaColada } from '@pinia/colada'
 import { createMemoryHistory, createRouter, RouterLink, RouterView, useRoute as routerUseRoute } from 'vue-router'
+import type { RosterEnterpriseDetail } from '../../../lib/roster/enterprise-roster'
+import PageHeader from '../../../components/PageHeader.vue'
 import EnterprisePage from '../../../pages/enterprises/[id].vue'
 import CorrespondenceItem from '../../../components/record-correspondence/CorrespondenceItem.vue'
 import type { CorrespondenceDetail, EventSource, OfficialPublishedFact, SourceResponse } from '../../../lib/roster/correspondence-view'
@@ -239,8 +241,23 @@ describe("formal source consumer boundaries", () => {
     const payload = r4Source('confirmed'), event = payload.source as EventSource
     const record = { ...event.record, district: '鄞州区', nameRaw: null }
     const detail = { enterprise: { enterpriseId: 42, name: '合成企业', uscc: '91330211255994457P', district: '鄞州区' },
-      aliases: [], records: [record], events: [event, { ...event, id: 10 }], evidence: [{ ...event.evidence[0]!, eventId: 9 }],
+      aliases: [], records: [record], events: [event, { ...event, id: 10 }], evidence: [9, 10].map(eventId => ({ ...event.evidence[0]!, id: eventId === 9 ? 1 : 2, eventId })),
       recognitions: [], differences: [], titleAssessments: [], platform: { queries: [], relations: [], businessRecords: [] },
+      businessTimeline: {
+        asOf: '2026-11-16',
+        sources: [
+          { source: 'publication', collectionStatus: 'not_applicable', collectedAt: null, events: [9, 10].map(id => ({
+            key: `publication:${id}`, platformName: null, title: 'specialized_sme', matter: 'review', matterRaw: 'review',
+            conclusion: 'passed', statusRaw: 'passed', businessTimeKind: 'recognition', businessYear: 2024,
+            businessTime: { raw: '2024', value: '2024', precision: 'year' },
+            period: { from: { raw: null, value: null, precision: 'unknown' }, until: { raw: null, value: null, precision: 'unknown' } },
+            collectedAt: null, cycleKey: null,
+          })) },
+          { source: 'recognized_list', collectionStatus: 'not_collected', collectedAt: null, events: [] },
+          { source: 'business_list', collectionStatus: 'not_collected', collectedAt: null, events: [] },
+          { source: 'apply_list', collectionStatus: 'not_collected', collectedAt: null, events: [] },
+        ],
+      } satisfies RosterEnterpriseDetail['businessTimeline'],
       publishedPresentation: event.publishedPresentation }
     const api = vi.fn(async (url: string) => {
       if (url === '/api/roster/enterprises/42') return detail
@@ -257,33 +274,56 @@ describe("formal source consumer boundaries", () => {
     const query = context === 'current' ? { currentBack, back: ledgerBack, returnTo: comparison } : context === 'back' ? { back: ledgerBack } : { returnTo: comparison }
     await router.push({ path: '/enterprises/42', query: { ...query, eventId: String(initial) } })
     const wrapper = mount(defineComponent({ render: () => h(RouterView) }), { attachTo: document.body,
-      global: { plugins: [createPinia(), PiniaColada, router], components: { NuxtLink: RouterLink }, stubs: {
-        PageHeader: { template: '<header><slot name="breadcrumb" /></header>' }, FilePreviewDialog: true,
-        EnterpriseLaterProcesses: true, EnterpriseExplanations: true, PlatformRecords: true, EventCorrespondenceReview: true,
+      global: { plugins: [createPinia(), PiniaColada, router], components: { NuxtLink: RouterLink, PageHeader }, stubs: {
+        FilePreviewDialog: true,
+        EnterpriseLaterProcesses: true, EnterpriseExplanations: true, EventCorrespondenceReview: true,
         TitleBadge: true, SourceChip: true, EventChip: true,
       } } }); mounted.push(wrapper)
     await flushPromises()
-    const row = wrapper.get('#record-event-9')
-    const trigger = row.findAll('button').find(button => button.text() === '来源记录')!
-    if (trigger.attributes('aria-expanded') !== 'true') await trigger.trigger('click')
-    await flushPromises()
-    const owner = row.element.closest('li')
-    expect(owner).not.toBeNull()
-    const sourceButtons = new DOMWrapper(owner!).findAll('button').filter(button => button.text() === '查看正式来源')
-    expect(sourceButtons).toHaveLength(1)
-    await sourceButtons[0]!.trigger('click')
-    await flushPromises()
-    const dialogs = document.querySelectorAll('[role="dialog"] [data-testid="record-source-reader"]')
-    expect(dialogs).toHaveLength(1)
-    return { wrapper, router, reader: dialogs[0]!, api }
+    expect(wrapper.find('#record-event-9').exists()).toBe(true)
+    expect(wrapper.find('#record-event-10').exists()).toBe(true)
+    await vi.waitFor(() => expect(wrapper.get(`#record-event-${initial}`).attributes('data-highlighted')).toBe('true'))
+    return { wrapper, router, api }
   }
+
+  // The enterprise page no longer opens a correspondence dialog. Exercise the
+  // still-supported SourceReader interface directly, without inventing a page entry.
+  async function formalReader(initial: number, context: 'current' | 'back' | 'comparison') {
+    const result = await formal(initial, context)
+    const query = { ...result.router.currentRoute.value.query }
+    delete query.eventId
+    const readerWrapper = mount(SourceReader, { attachTo: document.body, props: { kind: 'event', id: 9, readOnly: true, returnTo: result.router.currentRoute.value.fullPath, eventReturnQuery: query },
+      global: { plugins: [result.router], components: { NuxtLink: RouterLink } } })
+    mounted.push(readerWrapper)
+    await flushPromises()
+    return { ...result, reader: readerWrapper.element, readerWrapper }
+  }
+
+  it.each((['current', 'back', 'comparison'] as const).flatMap(context => [9, 10].map(initial => ({ context, initial }))))("published PDF page returns to event $initial preserving $context", async ({ initial, context }) => {
+    const { wrapper, router } = await formal(initial, context)
+    const before = router.currentRoute.value.fullPath
+    const link = wrapper.get(`#record-event-${initial} [data-testid="official-evidence"] a`)
+    const file = new URL(link.attributes('href')!, 'http://local.invalid')
+    expect(file.pathname).toBe('/preview')
+    expect(file.searchParams.get('file')).toBe('synthetic.pdf')
+    expect(file.searchParams.get('page')).toBe('1')
+    const back = file.searchParams.get('back')!
+    expect(router.resolve(back).query).toEqual({ ...router.currentRoute.value.query, tab: 'records', eventId: String(initial) })
+    await link.trigger('click', { button: 0 }); await flushPromises()
+    expect(router.currentRoute.value.path).toBe('/preview')
+    // Preview rendering is outside this runtime owner; use its public back URL.
+    await router.push(back); await flushPromises()
+    expect(wrapper.find(`#record-event-${initial}`).exists()).toBe(true)
+    expect(router.currentRoute.value.query.eventId).toBe(String(initial))
+    expect(router.resolve(before).query).toEqual(context === 'current' ? { currentBack, back: ledgerBack, returnTo: comparison, eventId: String(initial) } : context === 'back' ? { back: ledgerBack, eventId: String(initial) } : { returnTo: comparison, eventId: String(initial) })
+  })
 
   const links = [
     { branch: 'sources', selector: '[aria-label="本记录的平台来源"] [data-correspondence-id="329"] a' },
     { branch: 'current', selector: '[aria-label="当前导出快照"] [data-correspondence-id="330"] a' },
   ]
   it.each(links.flatMap(link => (['current', 'back', 'comparison'] as const).flatMap(context => [9, 10].map(initial => ({ ...link, context, initial })))))("formal $branch returns from event $initial preserving $context and PDF back independently", async ({ selector, context, initial }) => {
-    const { wrapper, router, reader } = await formal(initial, context), departure = router.currentRoute.value.fullPath
+    const { wrapper, router, reader } = await formalReader(initial, context), departure = router.currentRoute.value.fullPath
     const file = new URL(reader.querySelector('[data-testid="official-evidence"] a')!.getAttribute('href')!, 'http://local.invalid')
     expect(file.pathname).toBe('/preview'); expect(file.searchParams.get('file')).toBe('synthetic.pdf'); expect(file.searchParams.get('page')).toBe('1'); expect(file.searchParams.get('back')).toBe(departure)
     const link = reader.querySelector(selector) as HTMLAnchorElement
@@ -293,7 +333,7 @@ describe("formal source consumer boundaries", () => {
     const expectedQuery = { ...(context === 'current' ? { currentBack, back: ledgerBack, returnTo: comparison } : context === 'back' ? { back: ledgerBack } : { returnTo: comparison }), eventId: '9' }
     expect(router.currentRoute.value.query).toEqual(expectedQuery)
     await vi.waitFor(() => expect(wrapper.get('#record-event-9').attributes('data-highlighted')).toBe('true'))
-    expect(document.querySelector('[role="dialog"]')).toBeNull()
+    expect(document.querySelector('[role="dialog"]')).toBeNull() // no retired detail dialog
     const breadcrumb = wrapper.get('header a')
     const expectedBack = context === 'current' ? { path: '/current-enterprises', query: { titleCode: 'specialized_sme', q: 'Acme', district: '鄞州区', page: '2' } } : context === 'back' ? { path: '/', query: { titleCode: 'specialized_sme', page: '4' } } : comparison
     expect(breadcrumb.attributes('href')).toBe(router.resolve(expectedBack).href)
@@ -302,13 +342,13 @@ describe("formal source consumer boundaries", () => {
   })
 
   it.each([{ name: 'ctrl', ctrlKey: true }, { name: 'meta', metaKey: true }, { name: 'shift', shiftKey: true }, { name: 'alt', altKey: true }, { name: 'middle', button: 1 }, { name: 'target', target: '_blank' }])("formal event link keeps NuxtLink modifier behavior for $name", async ({ name, target, ...options }) => {
-    const { router, reader } = await formal(10, 'current'), before = router.currentRoute.value.fullPath
+    const { router, reader } = await formalReader(10, 'current'), before = router.currentRoute.value.fullPath
     const link = reader.querySelector(links[0]!.selector) as HTMLAnchorElement
     if (target) link.setAttribute('target', target)
     link.dispatchEvent(new MouseEvent('click', { button: 0, bubbles: true, cancelable: true, ...options }))
     await flushPromises()
     expect(router.currentRoute.value.fullPath).toBe(before)
-    expect(document.querySelector('[role="dialog"]')).not.toBeNull()
+    expect(reader.querySelector('[data-testid="official-evidence"]')).not.toBeNull()
     expect(new URL(link.href).searchParams.get('currentBack')).toBe(currentBack)
   })
 

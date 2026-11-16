@@ -217,11 +217,12 @@ useEvidencePreviewScrollRestore(detailRendered, undefined, route.fullPath)
 
 /** 公布文件预览返回对应事件及原列表上下文。 */
 function previewReturnPath(eventId: number): string {
-  const [path, search = ''] = route.fullPath.split('?')
+  const queryStart = route.fullPath.indexOf('?')
+  const search = queryStart < 0 ? '' : route.fullPath.slice(queryStart + 1)
   const query = new URLSearchParams(search.split('#')[0])
   query.set('tab', 'records')
   query.set('eventId', String(eventId))
-  return `${path}?${query}`
+  return `${route.path}?${query}`
 }
 function rememberPagePreviewReturn(eventId: number, event: MouseEvent) {
   if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
