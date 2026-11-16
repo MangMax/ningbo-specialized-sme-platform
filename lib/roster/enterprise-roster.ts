@@ -1,3 +1,5 @@
+import { enterpriseBusinessTimeline } from './enterprise-business-timeline'
+import { readPlatformQualificationFacts } from './platform-qualification'
 import { currentDifferenceCoordinates } from './current-difference'
 import { readCorrespondenceTargetQueries,readCorrespondenceTargetSources,correspondenceQueryRelationIds } from '../../server/utils/record-correspondence-target-sources'
 import type { PlatformStoredQuery } from '../platform/read'
@@ -792,6 +794,7 @@ export interface RosterPlatformRelationRow {
 export interface RosterEnterpriseDetail {
   /** #406 additive snapshot; legacy titleAssessments and lifecycle retain their meaning. */
   qualificationAssessment: CurrentQualificationSnapshot
+  businessTimeline: ReturnType<typeof enterpriseBusinessTimeline> & { asOf: string }
   publishedPresentation: PublishedPresentation
   enterprise: RosterEnterpriseRow
   aliases: RosterAliasRow[]
@@ -1012,8 +1015,11 @@ function enterpriseDetail(db: Db, id: number, asOf: number): RosterEnterpriseDet
   const selectedEvidence = snap.evidence.filter(v => eventIds.has(v.recordEventId))
   const publishedPresentation = readPublicPublishedNames(db, selectedEvidence.map(v => ({ evidenceId: v.id, eventId: v.recordEventId })))
   const platformFacts = readPlatformDetailFacts(db, queries, relations)
+  const qualificationAssessment = readCurrentQualificationAssessment((db as Db & { $client: import('better-sqlite3').Database }).$client, id, asOf, {ownQueryIds:enterpriseSnapshot.ownQueryIds,publishedNames:publishedPresentation,coverageForTitle})
+  const businessTimeline = enterpriseBusinessTimeline(id, profile.records, events.filter(e => profile.records.some(r => r.id === e.recordId && r.source === 'jxj')), readPlatformQualificationFacts(db, [{enterpriseId: id, uscc: enterprise.usccNorm ?? ''}]), queries)
   return {
-    qualificationAssessment: readCurrentQualificationAssessment((db as Db & { $client: import('better-sqlite3').Database }).$client, id, asOf, {ownQueryIds:enterpriseSnapshot.ownQueryIds,publishedNames:publishedPresentation,coverageForTitle}),
+    businessTimeline: { ...businessTimeline, asOf: qualificationAssessment.asOf },
+    qualificationAssessment,
     publishedPresentation,
     enterprise: row,
     aliases: snap.aliases
