@@ -16,7 +16,7 @@ const samples = [
 beforeAll(async () => {
   const spec = await readDevelopmentDiscovery()
   expect(spec.paths['/api/roster/current-enterprises'].get).toBeDefined()
-  for (const title of ['specialized-sme', 'innovative-sme']) {
+  for (const title of ['specialized-sme', 'innovative-sme', 'little-giant']) {
     expect(spec.paths['/api/roster/exports/current/' + title].post).toBeDefined()
   }
   for (const sample of samples) {
@@ -100,6 +100,7 @@ it('annual expiry and title inheritance preserve literal HTTP and downloaded ide
   const valid = f.candidate('annual_valid_review', [{ eventType: 'award', year: year-6, batchSeq: 1 }], 'innovative_sme')
   continuation(valid.record.id, year-2, 'until_next_review_results')
   const inherited = f.candidate('annual_inherited_period', [{ eventType: 'award', year: year-1 }])
+  f.candidate('annual_inherited_giant', [{ eventType: 'award', year: year-2 }], 'little_giant')
   const own = f.candidate('annual_own_period', [{ eventType: 'award', year: year-1 }])
   f.addRecord(own.enterprise.id, own.enterprise.name, [{ eventType: 'award', year: year-2 }], 'innovative_sme')
   // Include source bytes/hash/page/origin/publication and all raw event columns,
@@ -111,8 +112,9 @@ it('annual expiry and title inheritance preserve literal HTTP and downloaded ide
   const annualReview = `默认年度规则：最近一次认定或复核通过 ${year-2} 年 + 3 = ${year+1} 年；自 ${year+1} 年起到期（仅年份精度）`
   const annualUpper = `默认年度规则：最近一次认定或复核通过 ${year-1} 年 + 3 = ${year+2} 年；自 ${year+2} 年起到期（仅年份精度）`
   for (const [title, expected] of [
-    ['specialized_sme', [['annual_inherited_period', annualUpper], ['annual_own_period', annualUpper]]],
-    ['innovative_sme', [['annual_inherited_period', annualUpper], ['annual_own_period', annualReview], ['annual_valid_review', annualReview]]],
+    ['little_giant', [['annual_inherited_giant', annualReview]]],
+    ['specialized_sme', [['annual_inherited_giant', annualReview], ['annual_inherited_period', annualUpper], ['annual_own_period', annualUpper]]],
+    ['innovative_sme', [['annual_inherited_giant', annualReview], ['annual_inherited_period', annualUpper], ['annual_own_period', annualReview], ['annual_valid_review', annualReview]]],
   ] as const) {
     const response = await fetch(f.url(`/api/roster/current-enterprises?titleCode=${title}`))
     expect(response.status).toBe(200)
@@ -134,12 +136,12 @@ it('annual expiry and title inheritance preserve literal HTTP and downloaded ide
     for (const [name, period] of expected) {
       const row = body.rows.find((r: any) => r.name === name)
       const assessment = row.qualificationAssessment.titles.find((t: any) => t.titleCode === title)
-      expect(assessment.effectiveQualification.presentationBasis).toContain(period)
+      expect(assessment.effectiveQualification.presentationBasis.join('\n'), name).toContain(period)
       const exported = rows.find(r => r.getCell(2).value === name)!
       const basis = String(exported.getCell(14).value)
       expect(basis).toContain(period)
       if (title === 'innovative_sme' && name === 'annual_own_period') {
-        expect(assessment.effectiveQualification.presentationBasis).not.toContain(annualUpper)
+        expect(assessment.effectiveQualification.presentationBasis.join('\n')).not.toContain(annualUpper)
         expect(basis).not.toContain(annualUpper)
       }
     }
