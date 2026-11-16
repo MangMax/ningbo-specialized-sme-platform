@@ -143,3 +143,19 @@ it('selects recognized then business then application among currently usable sou
   expect(selected()).toBe('recognized_list')
  } finally {await local.close()}
 })
+
+it.each([{newAward:2023,expected:'eligible'},{newAward:2027,expected:'excluded'},{newAward:null,expected:'excluded'}] as const)('reviews after a failed cycle require an effective independent award: $newAward',async({newAward,expected})=>{
+ const local=qualificationExportFixture()
+ try {
+  const c=local.candidate('independent cycle review',[
+   {eventType:'award',year:2019,batchSeq:1},
+   {eventType:'review',year:2019,batchSeq:1,decidedYear:2022,reviewOutcome:'failed'},
+   ...(newAward == null ? [] : [{eventType:'award' as const,year:newAward,batchSeq:2}]),
+  ])
+  local.db.update(schema.enterprise).set({usccNorm:'91310115MA1H7KUG93'}).where(eq(schema.enterprise.id,c.enterprise.id)).run()
+  writeNewCollectionTarget(local.db,collectionCommand({id:'new-cycle-review',tyshxydm:'91310115MA1H7KUG93',qymc:'原名',rdjb:'2',sblx:'复核',cszt:'终审通过',year:'2026'},'2026-11-01T00:00:00Z','businessList'))
+  const result=createCurrentQualificationAssessmentReader(local.db.$client).read(c.enterprise.id,asOf).snapshot.titles.find(t=>t.titleCode==='specialized_sme')!
+  expect(result.group).toBe(expected)
+  if (expected==='eligible') expect(result.effectiveQualification?.source).toMatchObject({source:'business_list',matter:'review',businessYear:2026})
+ } finally {await local.close()}
+})

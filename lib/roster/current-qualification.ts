@@ -732,7 +732,17 @@ function createCurrentCandidateEvaluationReader(db: Database.Database, receiptRu
       // independently later recognition/application can recover; a review cannot.
       const blockers = formal.filter(e => qualificationEventAppliesAt(e, year, day) && e.eventType === 'review' && e.reviewOutcome === 'failed')
       const disposed = formal.filter(e => disposedAwards.has(e.id))
-      if ([...blockers, ...disposed].some(e => !['recognition','apply'].includes(f.matter) || startYear == null || startYear <= (factTime(e) ?? originTime(e) ?? Infinity))) return false
+      if ([...blockers, ...disposed].some(e => {
+        const blockedAt = factTime(e) ?? originTime(e)
+        if (blockedAt == null || startYear == null) return true
+        if (['recognition','apply'].includes(f.matter)) return startYear <= blockedAt
+        // A review can renew a later independent award, but cannot itself be
+        // the grant that recovers the failed originating cycle. Future awards
+        // cannot supply that new-cycle anchor.
+        return f.matter !== 'review' || !formal.some(award => award.eventType === 'award' &&
+          qualificationEventAppliesAt(award, year, day) && awardTime(award) != null &&
+          awardTime(award)! > blockedAt && awardTime(award)! <= startYear && !disposedAwards.has(award.id))
+      })) return false
       // An explicit negative from a higher-priority current source cannot be
       // bypassed by an older lower-priority pass. A later independent grant can.
       if (visible.some(n => sourceOrder.indexOf(n.source) <= sourceOrder.indexOf(f.source) && n.conclusion === 'invalid' && (!n.invalidatedAt.value || n.invalidatedAt.value <= at) &&
