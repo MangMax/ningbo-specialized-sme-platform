@@ -1,3 +1,8 @@
+import { createCurrentQualificationAssessmentReader } from '../../../lib/roster/current-qualification'
+import { readDistrictStatistics } from '../../../lib/roster/district-statistics'
+import { listCurrentQualified } from '../../../lib/roster/current-qualified-query'
+import ExcelJS from 'exceljs'
+import { writeCurrentWorkbook } from '../../../lib/roster/current-workbook'
 import historicalReceipts from '../../fixtures/decision-102-pre-browser-receipts.json'
 import { createServer } from 'node:http'
 import { mkdtempSync, rmSync } from 'node:fs'
@@ -12,7 +17,7 @@ const dir = mkdtempSync(join(tmpdir(), 'qualification-preflight-'))
 const db = initializeDb({ create: true, dbPath: join(dir, 'synthetic.sqlite') })
 const e = db.insert(s.enterprise).values({ name: '合成迁入', nameNorm: '合成迁入', usccNorm: '91330211255994457P' }).returning().get()
 const source = submitNativePlatformQuery(db, { interface: 'business_list', queryKey: e.usccNorm!, rdjb: '2', titleCode: 'specialized_sme', queriedAt: '2026-11-16T00:00:00Z', status: 'success', rawResponse: '{}', relations: [{ sequenceNo: 1, relationKey: 'synthetic-record', rawFields: { id: 'synthetic-record', qymc: e.name, tyshxydm: e.usccNorm, result: 'first' }, enterpriseId: e.id, usccRaw: e.usccNorm!, nameRaw: e.name, verificationStatus: 'confirmed', matchBasis: 'uscc' }] })
-const command = { enterpriseId: e.id, titleCode: 'specialized_sme', direction: 'extra_in_miit', action: 'replace', expectedCurrentId: null, idempotencyKey: 'bound-confirm', actor: { type: 'agent', id: 'synthetic' }, basis: '独立核实', ruleVersion: 'manual', effectiveAt: '2026-11-16T00:00:00Z', decision: { status: 'confirmed_reason', reasonCode: 'moved_in', measureCode: 'record_moved_in', verificationStatus: 'confirmed', evidenceQueryId: source.queryId, evidenceRelationId: source.relationIds[0], movedIn: { city: '南通' }, currentQualification: { titleCode: 'specialized_sme', validFrom: '2025-07-22T00:00:00Z', validUntil: '2028-07-22T00:00:00Z', basis: '独立期间', publicationCheck: { status: 'not_found', scope: '宁波公布' } } } }
+const command = { enterpriseId: e.id, titleCode: 'specialized_sme', direction: 'extra_in_miit', action: 'replace', expectedCurrentId: null, idempotencyKey: 'bound-confirm', actor: { type: 'agent', id: 'synthetic' }, basis: '独立核实', ruleVersion: 'manual', effectiveAt: '2025-07-22T00:00:00Z', decision: { status: 'confirmed_reason', reasonCode: 'moved_in', measureCode: 'record_moved_in', verificationStatus: 'confirmed', evidenceQueryId: source.queryId, evidenceRelationId: source.relationIds[0], movedIn: { city: '南通' }, currentQualification: { titleCode: 'specialized_sme', awardYear: 2025, validFrom: '2025-07-22T00:00:00Z', validUntil: '2028-07-22T00:00:00Z', basis: '独立期间', publicationCheck: { status: 'not_found', scope: '宁波公布' } } } }
 let server: ReturnType<typeof createServer>, base: string
 async function post(path: string, body: unknown, token = 'synthetic') {
  const r = await fetch(base + '/' + path, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` }, body: JSON.stringify(body) }); return { status: r.status, body: await r.json() }
@@ -28,6 +33,7 @@ beforeAll(async () => {
 afterAll(async () => { if(server) await new Promise<void>(resolve => server.close(() => resolve())); db.$client.close(); vi.unstubAllGlobals(); rmSync(dir, { recursive: true, force: true }) })
 it('preflights without writes and commits a bound qualification with original replay and key conflict', async () => {
  const before = db.select().from(s.differenceReason).all()
+ expect(listCurrentQualified(db.$client,{titleCode:'specialized_sme'}).rows).toEqual([])
  const plan = await post('preflight', command)
  expect(plan.status).toBe(200)
  expect(plan.body.qualification).toEqual(command.decision.currentQualification)
@@ -40,6 +46,41 @@ it('preflights without writes and commits a bound qualification with original re
  const readback = await fetch(base + '/current?' + new URLSearchParams({ enterpriseId: String(e.id), titleCode: 'specialized_sme', direction: 'extra_in_miit' }))
  expect(readback.status).toBe(200)
  expect((await readback.json()).current.currentQualification).toEqual(command.decision.currentQualification)
+ const reader = createCurrentQualificationAssessmentReader(db.$client)
+ for (const [instant, status] of [['2025-07-21T23:59:59.999Z', 'unrecognized'], ['2025-07-22T00:00:00Z', 'effective'], ['2026-11-16T00:00:00Z', 'effective'], ['2028-07-21T23:59:59.999Z', 'effective'], ['2028-07-22T00:00:00Z', 'unrecognized']]) {
+  const result = reader.read(e.id, Date.parse(instant!)).snapshot.titles.find(t => t.titleCode === 'specialized_sme')!
+  expect(result.effectiveQualification?.status, instant).toBe(status)
+  if (status === 'effective') {
+   expect(result.effectiveQualification?.basis).toContain('独立期间')
+   expect(result.effectiveQualification?.presentationBasis).toContain('独立期间 [2025-07-22T00:00:00Z,2028-07-22T00:00:00Z)')
+   expect(result.evidence).toEqual([])
+  }
+ }
+ for (const filter of [{titleCode:'specialized_sme' as const}, {titleCode:'specialized_sme' as const,q:'91330211255994457P',recognitionFrom:'2025-01-01',recognitionTo:'2025-12-31'}]) {
+  const listed = listCurrentQualified(db.$client,filter)
+  expect(listed.total).toBe(1)
+  expect(listed.rows.map(r=>r.uscc)).toEqual(['91330211255994457P'])
+  expect(listed.rows[0]!.firstYear).toBeNull()
+ }
+ const stats = readDistrictStatistics(db, { title:'specialized_sme',page:1,pageSize:25 }, Date.parse('2026-11-16T00:00:00Z'))
+ expect(stats.total).toBe(1)
+ expect(stats.rows.map(r => r.uscc)).toEqual(['91330211255994457P'])
+ const path = join(dir,'synthetic-own-qualification.xlsx')
+ await writeCurrentWorkbook(db.$client,'specialized_sme',path,()=>{})
+ const workbook = new ExcelJS.Workbook(); await workbook.xlsx.readFile(path)
+ const sheet = workbook.getWorksheet('有效企业')!
+ expect(sheet.rowCount).toBe(2)
+ expect(sheet.getRow(2).getCell(2).value).toBe('合成迁入')
+ expect(sheet.getRow(2).getCell(3).value).toBe('91330211255994457P')
+ expect(sheet.getRow(2).getCell(6).value).toBeNull()
+ expect(String(sheet.getRow(2).getCell(7).value)).toContain('核验有效期：2025-07-22至2028-07-22')
+ expect(String(sheet.getRow(2).getCell(7).value)).toContain('独立期间')
+ for (const [index,kind,status] of [[0,'cancelled','terminated'],[1,'moved_out','moved_out']] as const) {
+  const fact = {enterpriseId:e.id,factId:9000+index,revision:1,status:'confirmed' as const,fact:{kind,source:{reference:'synthetic.pdf',statement:'合成明确主体事实'},effective:{precision:'day',value:'2026-01-01'},observed:{precision:'day',value:'2026-01-01'}},action:'assert',actor:{type:'agent' as const,id:'synthetic'},basis:'合成核实',createdAt:'2026-01-01T00:00:00Z'}
+  db.insert(s.enterpriseFactRevision).values(fact).run()
+  expect(reader.read(e.id,Date.parse('2026-11-16T00:00:00Z')).snapshot.titles.find(t=>t.titleCode==='specialized_sme')!.effectiveQualification?.status).toBe(status)
+  db.insert(s.enterpriseFactRevision).values({...fact,revision:2,status:'withdrawn',action:'withdraw'}).run()
+ }
  expect(await post('commit', envelope)).toEqual(saved)
  expect((await post('commit', { ...envelope, command: { ...command, basis: '不同' } })).body.error.code).toBe('idempotency_conflict')
 })
@@ -53,6 +94,7 @@ it('rejects altered plans and stale heads atomically, then allows a fresh plan a
  expect(db.select().from(s.differenceReason).all()).toEqual(before)
  const withdrawn = await post('commands', { ...command, action: 'withdraw', decision: undefined, expectedCurrentId: current.id, idempotencyKey: 'withdraw' })
  expect(withdrawn.status).toBe(200)
+ expect(createCurrentQualificationAssessmentReader(db.$client).read(e.id, Date.parse('2026-11-16T00:00:00Z')).snapshot.titles.find(t => t.titleCode === 'specialized_sme')!.effectiveQualification?.status).toBe('unrecognized')
  expect((await post('commit', { command: next, planHash: plan.body.planHash })).body.error.code).toBe('stale_version')
  const retry = { ...next, expectedCurrentId: withdrawn.body.versionId }
  const fresh = await post('preflight', retry)
@@ -142,4 +184,26 @@ it('invalidates a pinned source plan when a new content version of that business
  const before = db.select().from(s.differenceReason).all()
  expect((await post('commit', { command: input, planHash: plan.body.planHash })).body.error.code).toBe('stale_plan')
  expect(db.select().from(s.differenceReason).all()).toEqual(before)
+ expect(createCurrentQualificationAssessmentReader(db.$client).read(e.id,Date.parse('2026-11-18T00:00:00Z')).snapshot.titles.find(t=>t.titleCode==='specialized_sme')!.effectiveQualification?.status).toBe('unrecognized')
+})
+
+it('recomputes own qualification after source ownership changes and never grants other titles', async () => {
+ const state = await fetch(base + '/current?' + new URLSearchParams({ enterpriseId: String(e.id), titleCode: 'specialized_sme', direction: 'extra_in_miit' })).then(r => r.json())
+ const freshSource = submitNativePlatformQuery(db, { interface:'business_list',queryKey:e.usccNorm!,rdjb:'2',titleCode:'specialized_sme',queriedAt:'2026-11-18T00:00:00Z',status:'success',rawResponse:'{}',relations:[{sequenceNo:1,relationKey:'synthetic-record',rawFields:{id:'synthetic-record',qymc:e.name,tyshxydm:e.usccNorm,result:'changed'},enterpriseId:e.id,usccRaw:e.usccNorm!,nameRaw:e.name,verificationStatus:'confirmed',matchBasis:'uscc'}] })
+ const input = {...command,expectedCurrentId:state.versionId,idempotencyKey:'independent-source-check',decision:{...command.decision,evidenceQueryId:freshSource.queryId,evidenceRelationId:freshSource.relationIds[0]}}
+ const plan = await post('preflight', input)
+ expect(plan.status).toBe(200)
+ expect((await post('commit',{command:input,planHash:plan.body.planHash})).status).toBe(200)
+ const reader = createCurrentQualificationAssessmentReader(db.$client)
+ const asOf = Date.parse('2026-11-16T00:00:00Z')
+ const before = reader.read(e.id, asOf).snapshot
+ const own = before.titles.find(t => t.titleCode === 'specialized_sme')!
+ expect(own.effectiveQualification?.status).toBe('effective')
+ expect(before.titles.filter(t => t.titleCode !== 'specialized_sme').map(t => t.effectiveQualification?.status)).toEqual(['unrecognized', 'unrecognized'])
+ const assignment = db.select().from(s.platformObservationAssignment).all().at(-1)!
+ db.insert(s.platformObservationAssignment).values({ ...assignment, revision: assignment.revision + 1, verificationStatus: 'pending' }).run()
+ const after = reader.read(e.id, asOf).snapshot.titles.find(t => t.titleCode === 'specialized_sme')!
+ expect(after.effectiveQualification?.status).toBe('unrecognized')
+ expect(after.versions.decisions).not.toBe(own.versions.decisions)
+ expect(db.transaction(() => reader.readEffectiveTitles([e.id], asOf, 'specialized_sme').get(e.id))).toBe('unrecognized')
 })
