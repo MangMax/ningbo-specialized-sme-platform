@@ -12,6 +12,7 @@ import * as s from '../../../db/schema'
 import { listCurrentQualified } from '../../../lib/roster/current-qualified-query'
 import { writeCurrentWorkbook } from '../../../lib/roster/current-workbook'
 import ExcelJS from 'exceljs'
+import { readCurrentQualificationAssessment } from '../../../lib/roster/current-qualification'
 import * as candidates from '../../../upgrade/frozen/current-candidates'
 import { normalizeUscc } from '../../../lib/domain'
 
@@ -215,9 +216,18 @@ it('C05 both covering indexes appear in every list count and eligible plan', () 
     expect(plan.filter(line => /^(SCAN|SEARCH) [rq] /.test(line)).every(line => line.includes('USING COVERING INDEX'))).toBe(true)
   }
 })
+// Source ledger: each title owns four records; offsets 1/5/9 have awards
+// in 2026, +1 also awarded 2026, +2 expired 2020, +3 nurture only.
+// Downward inheritance admits only the first two per upper title.
+const consumerOracle = {
+  innovative_sme: { candidates: [1,2,3,4,5,6,7,8,9,10,11,12], eligible: [1,2,5,6,9,10], expired: [3], unrecognized: [4,7,8,11,12] },
+  specialized_sme: { candidates: [5,6,7,8,9,10,11,12], eligible: [5,6,9,10], expired: [7], unrecognized: [8,11,12] },
+  little_giant: { candidates: [9,10,11,12], eligible: [9,10], expired: [11], unrecognized: [12] },
+}
 it.each(titles)('C32 fixed-time list literals preserve qualification filters options witnesses basis and references for $title', ({ title }) => {
   vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(new Date('2026-10-26T00:00:00Z'))
   const f = consumerFixture(), first = title === 'innovative_sme' ? 1 : title === 'specialized_sme' ? 5 : 9
+  const oracle = consumerOracle[title], ids = oracle.eligible
   const filters = [
     {}, { page: 2, pageSize: 1 }, { q: '=1+1', district: '鄞州区' }, { q: String(first).padStart(18, '0') },
     { district: '不存在' }, { sort: 'name_desc' as const }, { sort: 'name_asc' as const }, { page: 4, pageSize: 1 },
@@ -228,19 +238,21 @@ it.each(titles)('C32 fixed-time list literals preserve qualification filters opt
   const read = () => filters.map(filter => listCurrentQualified(f.db, { titleCode: title, ...filter }))
   const covered = read()
   const all = covered[0]!
-  expect(all).toMatchObject({ total: 2, uncertainTotal: 0, titleCode: title, ruleVersion: 'current-roster-116-v11', snapshotStartedAt: '2026-10-26T00:00:00.000Z', options: { recognitionYears: [2026], validYears: [], maintenanceYears: [], maintenanceBatchesByYear: {} } })
-  expect(all.rows.map(row => row.enterpriseId)).toEqual([first, first + 1])
+  expect(all).toMatchObject({ total: ids.length, uncertainTotal: 0, titleCode: title, ruleVersion: 'current-roster-116-v12', snapshotStartedAt: '2026-10-26T00:00:00.000Z', options: { recognitionYears: [2026], validYears: [], maintenanceYears: [], maintenanceBatchesByYear: {} } })
+  expect(all.rows.map(row => row.enterpriseId)).toEqual(ids)
   expect(all.rows[0]).toMatchObject({ name: '=1+1', uscc: String(first).padStart(18, '0'), district: '鄞州区', group: 'eligible', firstYear: 2026, publishedNames: ['=1+1'], aliases: [], publication: '已见本称号宁波公布记录', basis: `event:${first}@1 award 2026/1 结论年:`, reviews: '', references: [`evidence:${first} jxj/announcement/synthetic363.pdf 名单\n附件 序号:${first}`], recognition: { precision: 'year', year: 2026 }, matchedValidYears: [], matchedMaintenance: [] })
   expect(all.rows[0]!.qualificationWitnesses).toEqual([{ cycle: { originYear: 2026, batchSeq: 1 }, awardEventId: first, recognition: { precision: 'year', year: 2026 }, matchedValidYear: null, matchedMaintenance: null, correspondenceId: null, conditionQueryId: null }])
-  expect(covered[1]).toMatchObject({ total: 2, page: 2, pageSize: 1, rows: [{ enterpriseId: first + 1 }] })
-  expect(covered[2]!.rows.map(row => row.enterpriseId)).toEqual([first])
+  expect(covered[1]).toMatchObject({ total: ids.length, page: 2, pageSize: 1, rows: [{ enterpriseId: first + 1 }] })
+  expect(covered[2]!.rows.map(row => row.enterpriseId)).toEqual(ids.filter(id => id % 4 === 1))
   expect(covered[3]!.rows.map(row => row.enterpriseId)).toEqual([first])
   expect(covered[4]).toMatchObject({ total: 0, rows: [] })
-  expect(covered[5]!.rows.map(row => row.enterpriseId)).toEqual([first + 1, first])
-  expect(covered[6]!.rows.map(row => row.enterpriseId)).toEqual([first, first + 1])
-  expect(covered[7]).toMatchObject({ total: 2, rows: [] })
-  expect(covered[8]).toMatchObject({ total: 2, uncertainTotal: 0 })
-  expect(covered[9]).toMatchObject({ total: 0, uncertainTotal: 2, rows: [] })
+  expect(covered[5]!.rows.map(row => row.enterpriseId)).toEqual([...ids.filter(id => id % 4 === 2), ...ids.filter(id => id % 4 === 1)])
+  expect(covered[6]!.rows.map(row => row.enterpriseId)).toEqual([...ids.filter(id => id % 4 === 1), ...ids.filter(id => id % 4 === 2)])
+  expect(covered[7]).toMatchObject({ total: ids.length, rows: ids.length > 3 ? [{ enterpriseId: ids[3] }] : [] })
+  // Recognition filters require own-title witnesses; inherited grants do not fabricate them.
+  expect(covered[8]).toMatchObject({ total: 2, uncertainTotal: ids.length - 2 })
+  expect(covered[8]!.rows.map(row => row.enterpriseId)).toEqual([first, first + 1])
+  expect(covered[9]).toMatchObject({ total: 0, uncertainTotal: ids.length, rows: [] })
   for (const result of covered.slice(10)) expect(result).toMatchObject({ total: 0, uncertainTotal: 0, rows: [] })
   expect(JSON.stringify(all)).not.toMatch(/rawFields|rawResponse|workbookFacts/)
 })
@@ -254,11 +266,42 @@ it.each(titles)('C33 fixed-time workbook literals preserve all sheets columns te
     return { result, progress, workbook }
   }
   const covered = await run('native.xlsx')
-  expect(covered.result).toMatchObject({ total: 4, counts: { eligible: 2, pending: 0, excluded: 2 }, generatedAt: '2026-10-26T00:00:00.000Z', snapshotStartedAt: '2026-10-26T00:00:00.000Z', ruleVersion: 'current-roster-116-v11' })
-  expect(covered.result.dataVersion).toMatch(/^sha256:[a-f0-9]{64}$/)
-  expect(covered.progress).toEqual([[0, 4, '2026-10-26T00:00:00.000Z']])
+  const oracle = consumerOracle[title]
+  expect(covered.result).toMatchObject({ total: oracle.candidates.length, counts: { eligible: oracle.eligible.length, pending: 0, excluded: oracle.candidates.length - oracle.eligible.length }, generatedAt: '2026-10-26T00:00:00.000Z', snapshotStartedAt: '2026-10-26T00:00:00.000Z', ruleVersion: 'current-roster-116-v12' })
+  // Hash independently from public full assessment scoped to the requested title
+  // and ExcelJS's real text cells, never from writer rows or its returned digest.
+  const hash = createHash('sha256').update(JSON.stringify(['current-export-assessment-title-v3', 'enterprise-qualification-740-v5', 'current-roster-116-v12', 2026, title]) + '\n')
+  for (const [group, sheetName, ids] of [['effective', '有效企业', oracle.eligible], ['expired', '已到期', oracle.expired], ['unrecognized', '未认定', oracle.unrecognized]] as const) {
+    const sheet = covered.workbook.getWorksheet(sheetName)!
+    expect(sheet.rowCount).toBe(ids.length + 1)
+    for (const [index, id] of ids.entries()) {
+      const full = readCurrentQualificationAssessment(f.db, id, Date.parse('2026-10-26T00:00:00Z'))
+      const { titles: allTitles, snapshotId: _fullDigest, ...scope } = full
+      const selected = allTitles.filter(item => item.titleCode === title)
+      expect(selected[0]!.effectiveQualification!.status).toBe(group)
+      expect(scope).toMatchObject({ enterpriseId: id, assessmentVersion: 'enterprise-qualification-740-v5', ruleVersion: 'current-roster-116-v12' })
+      const sourceTitle = id <= 4 ? 'innovative_sme' : id <= 8 ? 'specialized_sme' : 'little_giant'
+      const source = allTitles.find(item => item.titleCode === sourceTitle)!
+      expect(source.evidence).toEqual([{ eventId: id, revision: 1, eventType: id % 4 === 0 ? 'nurture' : 'award', year: id % 4 === 3 ? 2020 : 2026, batchSeq: 1, decidedYear: null, reviewOutcome: null, evidenceIds: [id] }])
+      expect(source.sourceVersions).toEqual([{ evidenceId: id, eventId: id, sourceFile: 'jxj/announcement/synthetic363.pdf', storedFileId: null, sha256: null, bytes: null, removedAt: null, capturedRevision: null, capturedSha256: null }])
+      if (group === 'effective' && sourceTitle !== title) {
+        expect(selected[0]!.evidence).toEqual([])
+        expect(selected[0]!.effectiveQualification!.localRuleBasis).toContain(sourceTitle === 'little_giant'
+          ? '按有效小巨人资格计入；实际支撑称号：小巨人'
+          : '按有效专精特新中小企业资格计入；实际支撑称号：专精特新中小企业')
+      }
+      const snapshotId = createHash('sha256').update(JSON.stringify([scope, selected])).digest('hex')
+      const values = Array.from({ length: 15 }, (_, column) => sheet.getRow(index + 2).getCell(column + 1).value)
+      expect(values[0]).toBe(String(index + 1))
+      expect(values[2]).toBe(String(id).padStart(18, '0'))
+      values[13] ??= ''; values[14] ??= ''
+      hash.update(JSON.stringify([group, id, scope, snapshotId, values]) + '\n')
+    }
+  }
+  expect(covered.result.dataVersion).toBe('sha256:' + hash.digest('hex'))
+  expect(covered.progress).toEqual([[0, oracle.candidates.length, '2026-10-26T00:00:00.000Z']])
   expect(covered.workbook.worksheets.map(sheet => sheet.name)).toEqual(['有效企业', '已到期', '已注销（吊销）', '已迁出', '未认定', '口径说明'])
-  expect(covered.workbook.worksheets.map(sheet => sheet.rowCount)).toEqual([3, 2, 1, 1, 2, 9])
+  expect(covered.workbook.worksheets.map(sheet => sheet.rowCount)).toEqual([oracle.eligible.length + 1, 2, 1, 1, oracle.unrecognized.length + 1, 9])
   const headers = ['序号', '企业名称', '统一社会信用代码', '区县', '称号', '首次认定年份', '认定及复核情况', '公布名称', '已确认曾用名', '公布对应情况', '情况说明', '来源及页码', '有效状态', '有效期及排除依据', '资料缺口与来源备注']
   for (const sheet of covered.workbook.worksheets.slice(0, 5)) {
     expect(sheet.getRow(1).values).toEqual([undefined, ...headers])
@@ -272,7 +315,8 @@ it.each(titles)('C33 fixed-time workbook literals preserve all sheets columns te
   expect(eligible.getCell('F2').value).toBe('2026')
   expect(eligible.getCell('L2').value).toContain('名单\n附件')
   expect(eligible.getCell('L2').value).toContain(`名单序号${first}`)
-  expect(eligible.autoFilter).toBe('A1:O3')
+  expect(eligible.getCell('L2').value).toContain('第7页')
+  expect(eligible.autoFilter).toBe(`A1:O${oracle.eligible.length + 1}`)
   expect(covered.workbook.getWorksheet('已到期')!.getCell('B2').value).toBe(`候选${first + 2}`)
   expect(covered.workbook.getWorksheet('未认定')!.getCell('B2').value).toBe(`候选${first + 3}`)
   expect(f.db.inTransaction).toBe(false)
@@ -282,8 +326,8 @@ it('C34 both consumers read a native readonly file without changing database byt
   const f = consumerFixture(), path = f.db.name
   f.db.close()
   const before = readFileSync(path), readonly = new Database(path, { readonly: true, fileMustExist: true }); handles.push(readonly)
-  expect(listCurrentQualified(readonly, { titleCode: 'innovative_sme' })).toMatchObject({ total: 2, rows: [{ enterpriseId: 1 }, { enterpriseId: 2 }] })
-  expect(await writeCurrentWorkbook(readonly, 'innovative_sme', join(f.dir, 'readonly.xlsx'), () => {})).toMatchObject({ total: 4, counts: { eligible: 2, pending: 0, excluded: 2 } })
+  expect(listCurrentQualified(readonly, { titleCode: 'innovative_sme' })).toMatchObject({ total: 6, rows: [1,2,5,6,9,10].map(enterpriseId => ({ enterpriseId })) })
+  expect(await writeCurrentWorkbook(readonly, 'innovative_sme', join(f.dir, 'readonly.xlsx'), () => {})).toMatchObject({ total: 12, counts: { eligible: 6, pending: 0, excluded: 6 } })
   expect(readFileSync(path).equals(before)).toBe(true)
 })
 it('C35 confirmed recognized witness preserves positive options filters and source pointers', () => {
@@ -303,7 +347,7 @@ it('C35 confirmed recognized witness preserves positive options filters and sour
   const filters = [{}, { validYear: 2028, maintenanceYear: 2025 }, { validYear: 2029 }, { maintenanceYear: 2025, maintenanceBatch: 2 }]
   const read = () => filters.map(filter => listCurrentQualified(f.db, { titleCode: 'innovative_sme', ...filter }))
   const covered = read()
-  expect(covered[0]).toMatchObject({ total: 2, options: { recognitionYears: [2026], validYears: [2028], maintenanceYears: [2025], maintenanceBatchesByYear: {} } })
+  expect(covered[0]).toMatchObject({ total: 6, options: { recognitionYears: [2026], validYears: [2028], maintenanceYears: [2025], maintenanceBatchesByYear: {} } })
   expect(covered[1]).toMatchObject({ total: 1, rows: [{ enterpriseId: 1, matchedValidYears: [2028], matchedMaintenance: [{ year: 2025, batch: null }] }] })
   expect(covered[1]!.rows[0]!.qualificationWitnesses).toEqual([{ cycle: { originYear: 2026, batchSeq: 1 }, awardEventId: 1, recognition: { precision: 'year', year: 2026 }, matchedValidYear: 2028, matchedMaintenance: { year: 2025, batch: null }, correspondenceId: 1, conditionQueryId: 1 }])
   expect(covered[1]!.rows[0]!.references).toEqual(['evidence:1 jxj/announcement/synthetic363.pdf 名单\n附件 序号:1', 'platform-relation:1 query:1', 'correspondence:1@2 confirmed'])
