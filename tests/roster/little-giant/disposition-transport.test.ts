@@ -29,9 +29,9 @@ beforeAll(async()=>{
  const router=createRouter()
  for(const action of ['preflight','commit','current','history'] as const){
   if(action==='preflight'||action==='commit')router.post('/'+action,dispositionRoute(action));else router.get('/'+action,dispositionRoute(action))
-  sdk.registerTool(action,{inputSchema:dispositionSchemas[action]},async input=>{
-   try{return {content:[{type:'text',text:JSON.stringify(dispositionOperation(db,action,input))}]}}
-   catch(e){return {isError:true,content:[{type:'text',text:JSON.stringify(dispositionFailure(e).body)}]}}
+  sdk.registerTool(action,{inputSchema:dispositionSchemas[action]},async (input: unknown)=>{
+   try{return {content:[{type:'text' as const,text:JSON.stringify(dispositionOperation(db,action,input))}]}}
+   catch(e){return {isError:true,content:[{type:'text' as const,text:JSON.stringify(dispositionFailure(e).body)}]}}
   })
  }
  server=createServer(toNodeListener(createApp().use(router)))

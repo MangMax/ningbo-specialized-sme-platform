@@ -33,13 +33,11 @@ defineRouteMeta({
             "properties": {
               "idempotencyKey": {
                 "type": "string",
-                "minLength": 1,
-                "maxLength": 4000
+                "description": "Runtime validation: minLength=1, maxLength=4000"
               },
               "expectedVersion": {
                 "type": "string",
-                "minLength": 1,
-                "maxLength": 4000
+                "description": "Runtime validation: minLength=1, maxLength=4000"
               },
               "actor": {
                 "type": "object",
@@ -53,8 +51,7 @@ defineRouteMeta({
                   },
                   "id": {
                     "type": "string",
-                    "minLength": 1,
-                    "maxLength": 4000
+                    "description": "Runtime validation: minLength=1, maxLength=4000"
                   }
                 },
                 "required": [
@@ -65,8 +62,7 @@ defineRouteMeta({
               },
               "basis": {
                 "type": "string",
-                "minLength": 1,
-                "maxLength": 4000
+                "description": "Runtime validation: minLength=1, maxLength=4000"
               },
               "operations": {
                 "minItems": 1,
@@ -83,8 +79,8 @@ defineRouteMeta({
                         },
                         "enterpriseId": {
                           "type": "integer",
-                          "exclusiveMinimum": 0,
-                          "maximum": 9007199254740991
+                          "maximum": 9007199254740991,
+                          "description": "Runtime validation: exclusiveMinimum=0"
                         },
                         "fact": {
                           "type": "object",
@@ -102,22 +98,20 @@ defineRouteMeta({
                               "properties": {
                                 "fileId": {
                                   "type": "integer",
-                                  "exclusiveMinimum": 0,
-                                  "maximum": 9007199254740991
+                                  "maximum": 9007199254740991,
+                                  "description": "Runtime validation: exclusiveMinimum=0"
                                 },
                                 "sha256": {
                                   "type": "string",
-                                  "pattern": "^[a-f0-9]{64}$"
+                                  "description": "Runtime validation: pattern=^[a-f0-9]{64}$"
                                 },
                                 "reference": {
                                   "type": "string",
-                                  "minLength": 1,
-                                  "maxLength": 4000
+                                  "description": "Runtime validation: minLength=1, maxLength=4000"
                                 },
                                 "statement": {
                                   "type": "string",
-                                  "minLength": 1,
-                                  "maxLength": 4000
+                                  "description": "Runtime validation: minLength=1, maxLength=4000"
                                 }
                               },
                               "required": [
@@ -135,13 +129,13 @@ defineRouteMeta({
                                   "properties": {
                                     "eventId": {
                                       "type": "integer",
-                                      "exclusiveMinimum": 0,
-                                      "maximum": 9007199254740991
+                                      "maximum": 9007199254740991,
+                                      "description": "Runtime validation: exclusiveMinimum=0"
                                     },
                                     "revision": {
                                       "type": "integer",
-                                      "exclusiveMinimum": 0,
-                                      "maximum": 9007199254740991
+                                      "maximum": 9007199254740991,
+                                      "description": "Runtime validation: exclusiveMinimum=0"
                                     }
                                   },
                                   "required": [
@@ -153,6 +147,10 @@ defineRouteMeta({
                                 {
                                   "type": "null"
                                 }
+                              ],
+                              "type": [
+                                "object",
+                                "null"
                               ]
                             },
                             "formalEvent": {
@@ -160,13 +158,13 @@ defineRouteMeta({
                               "properties": {
                                 "eventId": {
                                   "type": "integer",
-                                  "exclusiveMinimum": 0,
-                                  "maximum": 9007199254740991
+                                  "maximum": 9007199254740991,
+                                  "description": "Runtime validation: exclusiveMinimum=0"
                                 },
                                 "revision": {
                                   "type": "integer",
-                                  "exclusiveMinimum": 0,
-                                  "maximum": 9007199254740991
+                                  "maximum": 9007199254740991,
+                                  "description": "Runtime validation: exclusiveMinimum=0"
                                 }
                               },
                               "required": [
@@ -203,7 +201,7 @@ defineRouteMeta({
                                     },
                                     "value": {
                                       "type": "string",
-                                      "pattern": "^\\d{4}$"
+                                      "description": "Runtime validation: pattern=^\\d{4}$"
                                     }
                                   },
                                   "required": [
@@ -221,7 +219,7 @@ defineRouteMeta({
                                     },
                                     "value": {
                                       "type": "string",
-                                      "pattern": "^\\d{4}-(0[1-9]|1[0-2])$"
+                                      "description": "Runtime validation: pattern=^\\d{4}-(0[1-9]|1[0-2])$"
                                     }
                                   },
                                   "required": [
@@ -240,7 +238,7 @@ defineRouteMeta({
                                     "value": {
                                       "type": "string",
                                       "format": "date",
-                                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                                      "description": "Runtime validation: pattern=^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
                                     }
                                   },
                                   "required": [
@@ -249,7 +247,8 @@ defineRouteMeta({
                                   ],
                                   "additionalProperties": false
                                 }
-                              ]
+                              ],
+                              "type": "object"
                             },
                             "effective": {
                               "oneOf": [
@@ -279,7 +278,7 @@ defineRouteMeta({
                                     },
                                     "value": {
                                       "type": "string",
-                                      "pattern": "^\\d{4}$"
+                                      "description": "Runtime validation: pattern=^\\d{4}$"
                                     }
                                   },
                                   "required": [
@@ -297,7 +296,7 @@ defineRouteMeta({
                                     },
                                     "value": {
                                       "type": "string",
-                                      "pattern": "^\\d{4}-(0[1-9]|1[0-2])$"
+                                      "description": "Runtime validation: pattern=^\\d{4}-(0[1-9]|1[0-2])$"
                                     }
                                   },
                                   "required": [
@@ -316,7 +315,7 @@ defineRouteMeta({
                                     "value": {
                                       "type": "string",
                                       "format": "date",
-                                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                                      "description": "Runtime validation: pattern=^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
                                     }
                                   },
                                   "required": [
@@ -325,18 +324,22 @@ defineRouteMeta({
                                   ],
                                   "additionalProperties": false
                                 }
-                              ]
+                              ],
+                              "type": "object"
                             },
                             "effectiveBasis": {
                               "anyOf": [
                                 {
                                   "type": "string",
-                                  "minLength": 1,
-                                  "maxLength": 4000
+                                  "description": "Runtime validation: minLength=1, maxLength=4000"
                                 },
                                 {
                                   "type": "null"
                                 }
+                              ],
+                              "type": [
+                                "string",
+                                "null"
                               ]
                             }
                           },
@@ -367,13 +370,12 @@ defineRouteMeta({
                         },
                         "id": {
                           "type": "string",
-                          "minLength": 1,
-                          "maxLength": 4000
+                          "description": "Runtime validation: minLength=1, maxLength=4000"
                         },
                         "revision": {
                           "type": "integer",
-                          "exclusiveMinimum": 0,
-                          "maximum": 9007199254740991
+                          "maximum": 9007199254740991,
+                          "description": "Runtime validation: exclusiveMinimum=0"
                         },
                         "fact": {
                           "type": "object",
@@ -391,22 +393,20 @@ defineRouteMeta({
                               "properties": {
                                 "fileId": {
                                   "type": "integer",
-                                  "exclusiveMinimum": 0,
-                                  "maximum": 9007199254740991
+                                  "maximum": 9007199254740991,
+                                  "description": "Runtime validation: exclusiveMinimum=0"
                                 },
                                 "sha256": {
                                   "type": "string",
-                                  "pattern": "^[a-f0-9]{64}$"
+                                  "description": "Runtime validation: pattern=^[a-f0-9]{64}$"
                                 },
                                 "reference": {
                                   "type": "string",
-                                  "minLength": 1,
-                                  "maxLength": 4000
+                                  "description": "Runtime validation: minLength=1, maxLength=4000"
                                 },
                                 "statement": {
                                   "type": "string",
-                                  "minLength": 1,
-                                  "maxLength": 4000
+                                  "description": "Runtime validation: minLength=1, maxLength=4000"
                                 }
                               },
                               "required": [
@@ -424,13 +424,13 @@ defineRouteMeta({
                                   "properties": {
                                     "eventId": {
                                       "type": "integer",
-                                      "exclusiveMinimum": 0,
-                                      "maximum": 9007199254740991
+                                      "maximum": 9007199254740991,
+                                      "description": "Runtime validation: exclusiveMinimum=0"
                                     },
                                     "revision": {
                                       "type": "integer",
-                                      "exclusiveMinimum": 0,
-                                      "maximum": 9007199254740991
+                                      "maximum": 9007199254740991,
+                                      "description": "Runtime validation: exclusiveMinimum=0"
                                     }
                                   },
                                   "required": [
@@ -442,6 +442,10 @@ defineRouteMeta({
                                 {
                                   "type": "null"
                                 }
+                              ],
+                              "type": [
+                                "object",
+                                "null"
                               ]
                             },
                             "formalEvent": {
@@ -449,13 +453,13 @@ defineRouteMeta({
                               "properties": {
                                 "eventId": {
                                   "type": "integer",
-                                  "exclusiveMinimum": 0,
-                                  "maximum": 9007199254740991
+                                  "maximum": 9007199254740991,
+                                  "description": "Runtime validation: exclusiveMinimum=0"
                                 },
                                 "revision": {
                                   "type": "integer",
-                                  "exclusiveMinimum": 0,
-                                  "maximum": 9007199254740991
+                                  "maximum": 9007199254740991,
+                                  "description": "Runtime validation: exclusiveMinimum=0"
                                 }
                               },
                               "required": [
@@ -492,7 +496,7 @@ defineRouteMeta({
                                     },
                                     "value": {
                                       "type": "string",
-                                      "pattern": "^\\d{4}$"
+                                      "description": "Runtime validation: pattern=^\\d{4}$"
                                     }
                                   },
                                   "required": [
@@ -510,7 +514,7 @@ defineRouteMeta({
                                     },
                                     "value": {
                                       "type": "string",
-                                      "pattern": "^\\d{4}-(0[1-9]|1[0-2])$"
+                                      "description": "Runtime validation: pattern=^\\d{4}-(0[1-9]|1[0-2])$"
                                     }
                                   },
                                   "required": [
@@ -529,7 +533,7 @@ defineRouteMeta({
                                     "value": {
                                       "type": "string",
                                       "format": "date",
-                                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                                      "description": "Runtime validation: pattern=^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
                                     }
                                   },
                                   "required": [
@@ -538,7 +542,8 @@ defineRouteMeta({
                                   ],
                                   "additionalProperties": false
                                 }
-                              ]
+                              ],
+                              "type": "object"
                             },
                             "effective": {
                               "oneOf": [
@@ -568,7 +573,7 @@ defineRouteMeta({
                                     },
                                     "value": {
                                       "type": "string",
-                                      "pattern": "^\\d{4}$"
+                                      "description": "Runtime validation: pattern=^\\d{4}$"
                                     }
                                   },
                                   "required": [
@@ -586,7 +591,7 @@ defineRouteMeta({
                                     },
                                     "value": {
                                       "type": "string",
-                                      "pattern": "^\\d{4}-(0[1-9]|1[0-2])$"
+                                      "description": "Runtime validation: pattern=^\\d{4}-(0[1-9]|1[0-2])$"
                                     }
                                   },
                                   "required": [
@@ -605,7 +610,7 @@ defineRouteMeta({
                                     "value": {
                                       "type": "string",
                                       "format": "date",
-                                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                                      "description": "Runtime validation: pattern=^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
                                     }
                                   },
                                   "required": [
@@ -614,18 +619,22 @@ defineRouteMeta({
                                   ],
                                   "additionalProperties": false
                                 }
-                              ]
+                              ],
+                              "type": "object"
                             },
                             "effectiveBasis": {
                               "anyOf": [
                                 {
                                   "type": "string",
-                                  "minLength": 1,
-                                  "maxLength": 4000
+                                  "description": "Runtime validation: minLength=1, maxLength=4000"
                                 },
                                 {
                                   "type": "null"
                                 }
+                              ],
+                              "type": [
+                                "string",
+                                "null"
                               ]
                             }
                           },
@@ -657,13 +666,12 @@ defineRouteMeta({
                         },
                         "id": {
                           "type": "string",
-                          "minLength": 1,
-                          "maxLength": 4000
+                          "description": "Runtime validation: minLength=1, maxLength=4000"
                         },
                         "revision": {
                           "type": "integer",
-                          "exclusiveMinimum": 0,
-                          "maximum": 9007199254740991
+                          "maximum": 9007199254740991,
+                          "description": "Runtime validation: exclusiveMinimum=0"
                         }
                       },
                       "required": [
@@ -682,13 +690,12 @@ defineRouteMeta({
                         },
                         "id": {
                           "type": "string",
-                          "minLength": 1,
-                          "maxLength": 4000
+                          "description": "Runtime validation: minLength=1, maxLength=4000"
                         },
                         "revision": {
                           "type": "integer",
-                          "exclusiveMinimum": 0,
-                          "maximum": 9007199254740991
+                          "maximum": 9007199254740991,
+                          "description": "Runtime validation: exclusiveMinimum=0"
                         }
                       },
                       "required": [
@@ -698,7 +705,8 @@ defineRouteMeta({
                       ],
                       "additionalProperties": false
                     }
-                  ]
+                  ],
+                  "type": "object"
                 }
               }
             },

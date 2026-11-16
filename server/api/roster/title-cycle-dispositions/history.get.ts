@@ -32,7 +32,7 @@ defineRouteMeta({
         "description": "1 to 500 positive enterprise IDs, comma-separated. Other query fields rejected.",
         "schema": {
           "type": "string",
-          "pattern": "^[0-9]+(,[0-9]+)*$"
+          "description": "Runtime validation: pattern=^[0-9]+(,[0-9]+)*$"
         }
       }
     ]
