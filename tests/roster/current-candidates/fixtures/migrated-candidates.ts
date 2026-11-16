@@ -1,3 +1,4 @@
+import { upgradeTitleCycleDisposition } from '../../../../db/title-cycle-disposition'
 import { completePlatformMigration } from '../../../../upgrade/complete-platform'
 import { copyFileSync, mkdtempSync, rmSync, mkdirSync } from 'node:fs'
 import { join } from 'node:path'
@@ -58,6 +59,12 @@ async function buildTemplate() {
   } finally {old.close()}
   const runtimeTarget=join(root,'runtime.sqlite'),evidence=join(root,'complete-evidence');mkdirSync(evidence)
   completePlatformMigration(legacySource,runtimeTarget,evidence)
+  // Frozen historical completion precedes the current binary's additive schema.
+  const completed=new Database(runtimeTarget)
+  try {
+    completed.pragma('foreign_keys=ON')
+    upgradeTitleCycleDisposition(completed)
+  } finally {completed.close()}
   return {root,target:runtimeTarget,legacySource}
 }
 let template: ReturnType<typeof buildTemplate> | undefined
