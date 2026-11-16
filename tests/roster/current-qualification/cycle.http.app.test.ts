@@ -107,26 +107,32 @@ it('keeps current HTTP and MCP qualification equal to the five current status XL
   for (const title of titles) {
     const rest = await get('/api/roster/current-enterprises?' + new URLSearchParams({ titleCode: title, pageSize: '200' }))
     const mcp = JSON.parse(await currentTool.handler({ titleCode: title, pageSize: 200 }))
-    const currentEligible = ['failed-pass', 'reaward', 'cross-batch', 'missing-result', 'missing-date', 'missing-batch', 'unknown-origin', 'passed']
-    const expected = cases.filter(c => currentEligible.includes(c.id)).map(c => ids.get(`issue305-${title}-${c.id}`)).sort((a, b) => a! - b!)
+    // Failed-pass cannot revive the original cycle; the distinct new award survives.
+    const currentEligible = ['reaward', 'cross-batch', 'missing-result', 'missing-date', 'missing-batch', 'unknown-origin', 'same-year-reaward', 'passed']
+    const supportingTitles = title === 'little_giant' ? ['little_giant'] : title === 'specialized_sme' ? ['little_giant', 'specialized_sme'] : [...titles]
+    // #739 changes giant cycles only; province/innovative retain their own review rules.
+    const ownEligible = (t: string) => t === 'little_giant' ? currentEligible : ['failed-pass', 'reaward', 'cross-batch', 'missing-result', 'missing-date', 'missing-batch', 'unknown-origin', 'passed']
+    const expectedNames = supportingTitles.flatMap(t => ownEligible(t).map(id => `issue305-${t}-${id}`))
+    const expected = expectedNames.map(name => ids.get(name)).sort((a, b) => a! - b!)
     expect(rest.rows.map((r: any) => r.enterpriseId)).toEqual(expected)
     expect(mcp.rows.map((r: any) => r.enterpriseId)).toEqual(expected)
     const file = join(dir, `issue305-${title}.xlsx`)
     const result = await writeCurrentWorkbook(db.$client, title, file, () => {})
-    expect(result.counts).toEqual({ eligible: 8, pending: 0, excluded: 3 })
+    expect(result.counts).toEqual({ eligible: 8 * supportingTitles.length, pending: 0, excluded: 3 * supportingTitles.length })
     const wb = new ExcelJS.Workbook(); await wb.xlsx.readFile(file)
     expect(wb.worksheets.map(sheet => sheet.name)).toEqual(['有效企业', '已到期', '已注销（吊销）', '已迁出', '未认定', '口径说明'])
     for (const sheet of ['有效企业', '已到期', '已注销（吊销）', '已迁出', '未认定']) {
       const names: unknown[] = []
       wb.getWorksheet(sheet)!.eachRow((row, index) => { if (index > 1) names.push(row.getCell(2).value) })
-      const selected = sheet === '有效企业' ? cases.filter(c => currentEligible.includes(c.id))
-        : sheet === '已到期' ? cases.filter(c => !currentEligible.includes(c.id)) : []
-      expect(names.sort()).toEqual(selected.map(c => `issue305-${title}-${c.id}`).sort())
+      const expectedSheet = sheet === '有效企业' ? expectedNames
+        : sheet === '已到期' ? [title === 'little_giant' ? 'failed-pass' : 'same-year-reaward', 'terminated', 'overdue-plan'].map(id => `issue305-${title}-${id}`)
+        : sheet === '未认定' ? supportingTitles.filter(t => t !== title).flatMap(t => [t === 'little_giant' ? 'failed-pass' : 'same-year-reaward', 'terminated', 'overdue-plan'].map(id => `issue305-${t}-${id}`)) : []
+      expect(names.sort()).toEqual(expectedSheet.sort())
     }
-    const recovered = wb.getWorksheet('有效企业')!.getRows(2, 8)!.find(row => row.getCell(2).value === `issue305-${title}-failed-pass`)!
-    expect(recovered.getCell(7).text).toContain('2023')
-    expect(recovered.getCell(7).text).toContain('2024')
-    expect(recovered.getCell(13).text).toBe('有效企业')
+    const expired = wb.getWorksheet(title === 'little_giant' ? '已到期' : '有效企业')!.getRows(2, expectedNames.length)!.find(row => row.getCell(2).value === `issue305-${title}-failed-pass`)!
+    expect(expired.getCell(7).text).toContain('2023')
+    expect(expired.getCell(7).text).toContain('2024')
+    expect(expired.getCell(13).text).toBe(title === 'little_giant' ? '已到期' : '有效企业')
   }
 }, 30000)
 
