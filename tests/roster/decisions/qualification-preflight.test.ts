@@ -1,0 +1,145 @@
+import historicalReceipts from '../../fixtures/decision-102-pre-browser-receipts.json'
+import { createServer } from 'node:http'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import * as h3 from 'h3'
+import { afterAll, beforeAll, expect, it, vi } from 'vitest'
+import { initializeDb, schema as s } from '../../../db/client'
+import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
+vi.mock('@db', () => ({ useDb: () => db }))
+const dir = mkdtempSync(join(tmpdir(), 'qualification-preflight-'))
+const db = initializeDb({ create: true, dbPath: join(dir, 'synthetic.sqlite') })
+const e = db.insert(s.enterprise).values({ name: '合成迁入', nameNorm: '合成迁入', usccNorm: '91330211255994457P' }).returning().get()
+const source = submitNativePlatformQuery(db, { interface: 'business_list', queryKey: e.usccNorm!, rdjb: '2', titleCode: 'specialized_sme', queriedAt: '2026-11-16T00:00:00Z', status: 'success', rawResponse: '{}', relations: [{ sequenceNo: 1, relationKey: 'synthetic-record', rawFields: { id: 'synthetic-record', qymc: e.name, tyshxydm: e.usccNorm, result: 'first' }, enterpriseId: e.id, usccRaw: e.usccNorm!, nameRaw: e.name, verificationStatus: 'confirmed', matchBasis: 'uscc' }] })
+const command = { enterpriseId: e.id, titleCode: 'specialized_sme', direction: 'extra_in_miit', action: 'replace', expectedCurrentId: null, idempotencyKey: 'bound-confirm', actor: { type: 'agent', id: 'synthetic' }, basis: '独立核实', ruleVersion: 'manual', effectiveAt: '2026-11-16T00:00:00Z', decision: { status: 'confirmed_reason', reasonCode: 'moved_in', measureCode: 'record_moved_in', verificationStatus: 'confirmed', evidenceQueryId: source.queryId, evidenceRelationId: source.relationIds[0], movedIn: { city: '南通' }, currentQualification: { titleCode: 'specialized_sme', validFrom: '2025-07-22T00:00:00Z', validUntil: '2028-07-22T00:00:00Z', basis: '独立期间', publicationCheck: { status: 'not_found', scope: '宁波公布' } } } }
+let server: ReturnType<typeof createServer>, base: string
+async function post(path: string, body: unknown, token = 'synthetic') {
+ const r = await fetch(base + '/' + path, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` }, body: JSON.stringify(body) }); return { status: r.status, body: await r.json() }
+}
+beforeAll(async () => {
+ vi.stubGlobal('useRuntimeConfig', () => ({ apiToken: 'synthetic', filesDir: dir }))
+ const { decisionRoute102 } = await import('../../../server/utils/decision-lifecycle-102-route')
+ const preflight = (await import('../../../server/api/roster/decision-lifecycle/qualification-preflight.post')).default
+ const commit = (await import('../../../server/api/roster/decision-lifecycle/qualification-commit.post')).default
+ server = createServer(h3.toNodeListener(h3.createApp().use(h3.createRouter().post('/preflight', preflight).post('/commit', commit).post('/commands', decisionRoute102('commands')).get('/current', decisionRoute102('current')))))
+ await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve)); base = `http://127.0.0.1:${(server.address() as { port: number }).port}`
+})
+afterAll(async () => { if(server) await new Promise<void>(resolve => server.close(() => resolve())); db.$client.close(); vi.unstubAllGlobals(); rmSync(dir, { recursive: true, force: true }) })
+it('preflights without writes and commits a bound qualification with original replay and key conflict', async () => {
+ const before = db.select().from(s.differenceReason).all()
+ const plan = await post('preflight', command)
+ expect(plan.status).toBe(200)
+ expect(plan.body.qualification).toEqual(command.decision.currentQualification)
+ expect(plan.body.movedIn).toEqual({ city: '南通' })
+ expect(db.select().from(s.differenceReason).all()).toEqual(before)
+ const envelope = { command, planHash: plan.body.planHash }
+ const saved = await post('commit', envelope)
+ expect(saved.status).toBe(200)
+ expect(saved.body.versionId).toBeGreaterThan(0)
+ const readback = await fetch(base + '/current?' + new URLSearchParams({ enterpriseId: String(e.id), titleCode: 'specialized_sme', direction: 'extra_in_miit' }))
+ expect(readback.status).toBe(200)
+ expect((await readback.json()).current.currentQualification).toEqual(command.decision.currentQualification)
+ expect(await post('commit', envelope)).toEqual(saved)
+ expect((await post('commit', { ...envelope, command: { ...command, basis: '不同' } })).body.error.code).toBe('idempotency_conflict')
+})
+it('rejects altered plans and stale heads atomically, then allows a fresh plan after withdrawal', async () => {
+ const current = db.select().from(s.differenceReason).all().at(-1)!
+ const next = { ...command, expectedCurrentId: current.id, idempotencyKey: 'next' }
+ const plan = await post('preflight', next)
+ expect(plan.status).toBe(200)
+ const before = db.select().from(s.differenceReason).all()
+ expect((await post('commit', { command: next, planHash: '0'.repeat(64) })).body.error.code).toBe('stale_plan')
+ expect(db.select().from(s.differenceReason).all()).toEqual(before)
+ const withdrawn = await post('commands', { ...command, action: 'withdraw', decision: undefined, expectedCurrentId: current.id, idempotencyKey: 'withdraw' })
+ expect(withdrawn.status).toBe(200)
+ expect((await post('commit', { command: next, planHash: plan.body.planHash })).body.error.code).toBe('stale_version')
+ const retry = { ...next, expectedCurrentId: withdrawn.body.versionId }
+ const fresh = await post('preflight', retry)
+ expect((await post('commit', { command: retry, planHash: fresh.body.planHash })).status).toBe(200)
+})
+it('requires authorization and rejects unknown envelope and command fields', async () => {
+ expect((await post('preflight', command, '')).status).toBe(401)
+ expect((await post('commit', { command, planHash: '0'.repeat(64), extra: true })).status).toBe(400)
+ expect((await post('preflight', { ...command, extra: true })).status).toBe(400)
+})
+it('rejects changed source assignment revisions without partial writes', async () => {
+ const latest = db.select().from(s.differenceReason).all().at(-1)!
+ const input = { ...command, expectedCurrentId: latest.id, idempotencyKey: 'source-change' }
+ const plan = await post('preflight', input)
+ expect(plan.status).toBe(200)
+ const assignment = db.select().from(s.platformObservationAssignment).all()[0]!
+ // Independent source owner appends a new revision while the plan is in flight.
+ db.insert(s.platformObservationAssignment).values({ ...assignment, revision: 2, basis: '重新核实同一归属' }).run()
+ const before = db.select().from(s.differenceReason).all()
+ expect((await post('commit', { command: input, planHash: plan.body.planHash })).body.error.code).toBe('stale_plan')
+ expect(db.select().from(s.differenceReason).all()).toEqual(before)
+ const fresh = await post('preflight', input)
+ expect((await post('commit', { command: input, planHash: fresh.body.planHash })).status).toBe(200)
+})
+it('rejects a withdrawn fact reference and preserves the original qualification receipt', async () => {
+ const fact = { enterpriseId: e.id, factId: 1, revision: 1, status: 'confirmed' as const, fact: { kind: 'moved_in', city: '南通' }, action: 'confirm', actor: { type: 'agent' as const, id: 'synthetic' }, basis: '明确迁入', createdAt: '2026-11-16T00:00:00Z' }
+ db.insert(s.enterpriseFactRevision).values(fact).run()
+ const latest = db.select().from(s.differenceReason).all().at(-1)!
+ const input = { ...command, expectedCurrentId: latest.id, idempotencyKey: 'fact-change', decision: { ...command.decision, factReferences: [{ enterpriseId: e.id, factId: 1, revision: 1, kind: 'moved_in' }] } }
+ const plan = await post('preflight', input)
+ expect(plan.status).toBe(200)
+ expect(plan.body.facts).toMatchObject([{ revision: 1, fact: { kind: 'moved_in', city: '南通' } }])
+ db.insert(s.enterpriseFactRevision).values({ ...fact, revision: 2, status: 'withdrawn', action: 'withdraw' }).run()
+ const before = db.select().from(s.differenceReason).all()
+ expect((await post('commit', { command: input, planHash: plan.body.planHash })).body.error.code).toBe('fact_reference_mismatch')
+ expect(db.select().from(s.differenceReason).all()).toEqual(before)
+})
+it('uses the same strict MCP handlers and guarded discovery classification', async () => {
+ vi.doMock('@nuxtjs/mcp-toolkit/server', () => ({ defineMcpTool: (definition: unknown) => definition }))
+ const preflight = (await import('../../../server/mcp/tools/preflight_qualification_decision')).default
+ const commit = (await import('../../../server/mcp/tools/commit_qualification_decision')).default
+ expect(preflight.enabled!({ context: { mcpAuth: { writeAuthorized: false } } } as never)).toBe(false)
+ expect(commit.enabled!({ context: { mcpAuth: { writeAuthorized: true } } } as never)).toBe(true)
+ const latest = db.select().from(s.differenceReason).all().at(-1)!
+ const input = { ...command, expectedCurrentId: latest.id, idempotencyKey: 'mcp-confirm' }
+ const plan = await preflight.handler(input as never, {} as never) as any
+ expect(plan.qualification).toEqual(command.decision.currentQualification)
+ const saved = await commit.handler({ command: input, planHash: plan.planHash } as never, {} as never)
+ expect(saved).toMatchObject({ versionId: expect.any(Number) })
+ expect((await post('commit', { command: input, planHash: plan.planHash })).body).toEqual(saved)
+ const invalid = await commit.handler({ command: input, planHash: plan.planHash, extra: true } as never, {} as never) as any
+ expect(invalid.isError).toBe(true)
+ expect(JSON.parse(invalid.content[0].text).error.code).toBe('invalid_request')
+})
+
+it.each(historicalReceipts.fixtures)('preserves frozen legacy hash and original receipt: $name', async ({ name, command, hash }) => {
+    db.insert(s.enterprise).values({ id: command.enterpriseId, name, nameNorm: name }).run()
+    const review = 'reviewedEvidence' in command
+    const row = db.insert(s.differenceReason).values({
+      enterpriseId: command.enterpriseId, titleCode: command.titleCode, direction: 'missing_in_miit',
+      status: 'needs_review', measureCode: 'manual_review', verificationStatus: 'pending',
+      lifecycleAction: command.action === 'withdraw' ? 'withdraw' : 'replace',
+      recordedAt: '2026-10-19T01:00:00.000Z',
+      ...(!review ? { idempotencyKey: command.idempotencyKey, requestHash: hash } : {}),
+    }).returning().get()
+    const receipt = { versionId: row.id, currentId: command.action === 'withdraw' ? null : row.id, previousId: null, action: command.action, recordedAt: row.recordedAt,
+      ...(review ? { reviewedRevisionId: 98765 } : {}) }
+    if (review) db.insert(s.evidenceReviewReceipt114).values({
+      idempotencyKey: command.idempotencyKey, requestHash: hash, kind: command.action,
+      enterpriseId: command.enterpriseId, titleCode: command.titleCode, direction: command.direction,
+      decisionId: row.id, reviewedRevisionId: 98765, actor: command.actor as { type: 'agent'; id: string }, basis: command.basis,
+      ruleVersion: command.ruleVersion, effectiveAt: command.effectiveAt, response: receipt, recordedAt: row.recordedAt,
+    }).run()
+ const before = db.select().from(s.differenceReason).all()
+ const replay = await post('commands', command)
+ expect(replay.status).toBe(200)
+ expect(replay.body).toEqual(receipt)
+ expect(db.select().from(s.differenceReason).all()).toEqual(before)
+})
+it('invalidates a pinned source plan when a new content version of that business record is captured', async () => {
+ const latest = db.select().from(s.differenceReason).all().filter(row => row.enterpriseId === e.id).at(-1)!
+ const input = { ...command, expectedCurrentId: latest.id, idempotencyKey: 'new-content' }
+ const plan = await post('preflight', input)
+ expect(plan.status).toBe(200)
+ expect(plan.body.source.versionId).toBeGreaterThan(0)
+ submitNativePlatformQuery(db, { interface: 'business_list', queryKey: e.usccNorm!, rdjb: '2', titleCode: 'specialized_sme', queriedAt: '2026-11-17T00:00:00Z', status: 'success', rawResponse: '{}', relations: [{ sequenceNo: 1, relationKey: 'synthetic-record', rawFields: { id: 'synthetic-record', qymc: e.name, tyshxydm: e.usccNorm, result: 'changed' }, enterpriseId: e.id, usccRaw: e.usccNorm!, nameRaw: e.name, verificationStatus: 'confirmed', matchBasis: 'uscc' }] })
+ const before = db.select().from(s.differenceReason).all()
+ expect((await post('commit', { command: input, planHash: plan.body.planHash })).body.error.code).toBe('stale_plan')
+ expect(db.select().from(s.differenceReason).all()).toEqual(before)
+})
