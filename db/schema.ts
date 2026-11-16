@@ -1205,6 +1205,14 @@ export function recognizedProjectionFields(observationId: () => AnySQLiteColumn)
   /** Raw whpc (维护批次) after trimming. */
   maintenanceBatch: text('maintenance_batch'),
   /** Untrimmed strings for qualification's existing exact grammar; nonstrings are null. */
+  sourceRecognizedAt: text('source_recognized_at'),
+  sourceValidFlag: exactCell('source_valid_flag'),
+  sourceInvalidatedAt: text('source_invalidated_at'),
+  sourceInvalidationReason: text('source_invalidation_reason'),
+  sourceProvinceName: text('source_province_name'),
+  sourceCityName: text('source_city_name'),
+  sourceDistrictName: text('source_district_name'),
+  qualificationFieldsRule: text('qualification_fields_rule'),
   sourceValidityDate: text('source_validity_date'),
   sourceMaintenanceBatch: text('source_maintenance_batch'),
   /** null = uncaptured; true = original whpcyear missing/null/exact empty string. */
