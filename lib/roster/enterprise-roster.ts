@@ -1,3 +1,4 @@
+import { currentDifferenceCoordinates } from './current-difference'
 import { readCorrespondenceTargetQueries,readCorrespondenceTargetSources,correspondenceQueryRelationIds } from '../../server/utils/record-correspondence-target-sources'
 import type { PlatformStoredQuery } from '../platform/read'
 import type { PlatformStoredRelation } from '../platform/read'
@@ -849,7 +850,8 @@ function differenceKey(enterpriseId: number, titleCode: string, direction: strin
  * (例如两侧后来对齐了)。`confirmed_no_diff` 这类状态必须看得见(否则按 `status` 筛
  * 永远筛不到它)。两边的来源由 `explanationId` 与 `inCurrentDifference` 分别说清。
  */
-function differenceUniverse(db: Db, snap: Snapshot, derived: Array<{ enterpriseId: number; titleCode: string; direction: ComparisonDirection }> = getComparison(db).rows): LegacyRosterDifferenceRow[] {
+function differenceUniverse(db: Db, snap: Snapshot, derived: Array<{ enterpriseId: number; titleCode: string; direction: ComparisonDirection }> = getComparison(db).rows, asOf = Date.now()): LegacyRosterDifferenceRow[] {
+  derived = currentDifferenceCoordinates(db, derived, asOf)
   const current = currentExplanations(snap)
   const names = new Map(snap.enterprises.map((e) => [e.id, e]))
   const recordDistrict = new Map<number, string | null>()
@@ -951,7 +953,7 @@ function enterpriseDetail(db: Db, id: number, asOf: number): RosterEnterpriseDet
     .filter((name, index, list) => list.indexOf(name) === index)
     .sort()
 
-  const differenceRows = differenceUniverse(db, snap, enterpriseComparisonCoordinates(db, id))
+  const differenceRows = differenceUniverse(db, snap, enterpriseComparisonCoordinates(db, id), asOf)
   const difference = enterpriseDifferenceSummaries(differenceRows).get(id) ?? NO_DIFFERENCE
   const row = toRow(profile, aliasNames, deriveRosterState(profile, index), difference)
   const events = profile.records.flatMap((r) => profile.eventsByRecord.get(r.id) ?? [])
@@ -1141,8 +1143,9 @@ export function listRosterDifferences(db: Db, filter: RosterDifferenceFilter = {
 }
 
 function rosterDifferences(db: Db, filter: RosterDifferenceFilter): RosterDifferencesResult {
+  const asOf = Date.now()
   const snap = readDifferenceSnapshot(db)
-  const differenceRows = differenceUniverse(db, snap)
+  const differenceRows = differenceUniverse(db, snap, undefined, asOf)
 
   // 别名:只带 `confirmed`(契约 §1.2),与总表的搜索口径同一处规则。
   const confirmedAliases = new Map<number, string[]>()
@@ -1191,7 +1194,7 @@ function rosterDifferences(db: Db, filter: RosterDifferenceFilter): RosterDiffer
 
   const { page, pageSize } = pageOf(filter)
   const selected = rows.slice((page - 1) * pageSize, page * pageSize)
-  const hydrated = new Map(differenceUniverse(db, readDifferenceSnapshot(db, [...new Set(selected.map(r => r.enterpriseId))]), selected).map(r => [differenceKey(r.enterpriseId, r.titleCode, r.direction), r]))
+  const hydrated = new Map(differenceUniverse(db, readDifferenceSnapshot(db, [...new Set(selected.map(r => r.enterpriseId))]), selected, asOf).map(r => [differenceKey(r.enterpriseId, r.titleCode, r.direction), r]))
   return {
     rows: selected.map(row => ({ ...hydrated.get(differenceKey(row.enterpriseId, row.titleCode, row.direction))!, inCurrentDifference: row.inCurrentDifference, ...readQueryAssessment(db, row) })),
     counts,

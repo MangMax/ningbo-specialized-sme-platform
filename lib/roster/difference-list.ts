@@ -3,6 +3,7 @@ import { differencePublicColumns } from '../platform/difference-reference-target
 import { eq, inArray, sql } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as s from '../../db/schema'
+import { currentDifferenceCoordinates } from './current-difference'
 import { getComparison } from '../comparison'
 import { normalizeName } from '../domain'
 import { TITLE_ORDER } from '../labels'
@@ -27,7 +28,7 @@ export function listRosterDifferences(db: Db, filter: RosterDifferenceFilter = {
       .where(sql`not exists (select 1 from difference_reason n where n.enterprise_id=${d.enterpriseId} and n.title_code=${d.titleCode} and n.direction=${d.direction} and (n.recorded_at>${d.recordedAt} or (n.recorded_at=${d.recordedAt} and n.id>${d.id})))`).all()
     const current = new Map(heads.map(r => [keyOf(r), r]))
     const enterprises = new Map(db.select({ id: s.enterprise.id, name: s.enterprise.name, uscc: s.enterprise.usccNorm }).from(s.enterprise).all().map(e => [e.id, e]))
-    const derived = getComparison(db).rows
+    const derived = currentDifferenceCoordinates(db, getComparison(db).rows)
     const derivedKeys = new Set(derived.map(keyOf))
     const coordinates = new Map([...derived, ...heads].map(r => [keyOf(r), { enterpriseId: r.enterpriseId, titleCode: r.titleCode, direction: r.direction }]))
     const needle = filter.q?.trim() ? normalizeName(filter.q) : null

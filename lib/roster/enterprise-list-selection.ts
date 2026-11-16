@@ -1,3 +1,5 @@
+import { currentDifferenceCoordinates } from './current-difference'
+import { enterpriseComparisonCoordinates } from './enterprise-read-snapshot'
 /** SQL selection coordinates for the enterprise list, never a query-result cache.
  * Full lifecycle/evidence projections still use enterprise-roster's business rules.
  * The only JS-wide operation is the original localeCompare stable sort. */
@@ -45,11 +47,16 @@ export interface EnterpriseSelection {
 }
 
 export function selectEnterpriseCoordinates(db: Db, filter: RosterEnterpriseFilter, limit?: number) {
-  return selectCoordinates(db, filter, limit)
+  return db.transaction(() => selectCoordinates(db, filter, limit))
 }
 
 function selectCoordinates(db: Db, filter: RosterEnterpriseFilter, limit?: number, explainedOnly = false) {
   identityFunctions(db)
+  const rawCoordinates = enterpriseComparisonCoordinates(db)
+  const currentKeys = new Set(db.transaction(() => currentDifferenceCoordinates(db, rawCoordinates)).map(r => JSON.stringify([r.enterpriseId,r.titleCode,r.direction])))
+  const suppressed = rawCoordinates.filter(r => !currentKeys.has(JSON.stringify([r.enterpriseId,r.titleCode,r.direction])))
+  const suppressedByTitle = Map.groupBy(suppressed, row => row.titleCode)
+  const isSuppressed = (id: SQL, title: SQL) => suppressed.length ? sql`(${sql.join([...suppressedByTitle].map(([code, rows]) => sql`(${title}=${code} and ${id} in (select cast(value as integer) from json_each(${JSON.stringify(rows.map(r => r.enterpriseId))})))`),sql` or `)})` : sql`0`
   const needle = filter.q?.trim() ? normalizeName(filter.q) : null
   const usccNeedle = filter.q?.trim() ? filter.q.trim().toUpperCase() : null
   // Exact district equality cannot match a lone surrogate in stored UTF-8;
@@ -65,7 +72,7 @@ function selectCoordinates(db: Db, filter: RosterEnterpriseFilter, limit?: numbe
   const recordMatch = and(selected(sql`r.source`, filter.source), filter.eventType?.length || filter.year?.length
     ? sql`exists(select 1 from record_event v where v.record_id=r.id and ${selected(sql`v.event_type`, filter.eventType)} and ${selected(sql`v.year`, filter.year)})` : sql`1`)!
   const knownTitles = !db.get(sql`select 1 from title where ${sql`code`} not in (${sql.join(TITLE_ORDER.map(code => sql`${code}`), sql`,`)}) limit 1`)
-  const directHistory = !explainedOnly && knownTitles && !filter.rosterState && !filter.diffStatus?.length && ![filter.firstYear, filter.firstStatus, filter.source, filter.eventType, filter.year].some(values => values?.length)
+  const directHistory = !suppressed.length && !explainedOnly && knownTitles && !filter.rosterState && !filter.diffStatus?.length && ![filter.firstYear, filter.firstStatus, filter.source, filter.eventType, filter.year].some(values => values?.length)
   const entityId = sql`e.id`
   const entityName = sql`e.name`
   const entityUscc = sql`e.uscc_norm`
@@ -103,8 +110,8 @@ function selectCoordinates(db: Db, filter: RosterEnterpriseFilter, limit?: numbe
     ), history as (
       select f.enterprise_id,json_group_array(f.title_code) as titles,min(f.first_year) as first_year,
         min(${rank(sql`f.title_code`, TITLE_ORDER)}) as title_rank,max(f.official) as official,max(f.record_match) as record_match,
-        sum(case when f.title_code in ('little_giant','specialized_sme','innovative_sme') then f.official != f.platform else 0 end) as difference_count,
-        sum(case when f.title_code in ('little_giant','specialized_sme','innovative_sme') then f.official + f.platform else 0 end) as unkeyed_difference_count,
+        sum(case when f.title_code in ('little_giant','specialized_sme','innovative_sme') then (f.official != f.platform and not (f.platform and not f.official and ${isSuppressed(sql`f.enterprise_id`,sql`f.title_code`)})) else 0 end) as difference_count,
+        sum(case when f.title_code in ('little_giant','specialized_sme','innovative_sme') then f.official + f.platform - (f.platform and ${isSuppressed(sql`f.enterprise_id`,sql`f.title_code`)}) else 0 end) as unkeyed_difference_count,
         sum(case when f.awards>0 and ${recognitionMatch} then 1 else 0 end) as recognition_pairs,
         max(case when ${selected(sql`f.title_code`, filter.title)} then 1 else 0 end) as title_match
       from facts f group by f.enterprise_id
@@ -115,7 +122,7 @@ function selectCoordinates(db: Db, filter: RosterEnterpriseFilter, limit?: numbe
         where title_code in ('little_giant','specialized_sme','innovative_sme') and official and (uscc_norm is null or not platform)
           and enterprise_id in (select enterprise_id from explanations)
       union all select f.enterprise_id,f.title_code,'extra_in_miit' from fact_base f join enterprise e on e.id=f.enterprise_id
-        where title_code in ('little_giant','specialized_sme','innovative_sme') and platform and (uscc_norm is null or not official)
+        where title_code in ('little_giant','specialized_sme','innovative_sme') and platform and not ${isSuppressed(sql`f.enterprise_id`,sql`f.title_code`)} and (uscc_norm is null or not official)
           and enterprise_id in (select enterprise_id from explanations)
     ), explanation_versions as (
       select enterprise_id,title_code,direction,status,reason_code,recorded_at,id,row_number() over(partition by enterprise_id,title_code,direction order by recorded_at desc,id) as n
