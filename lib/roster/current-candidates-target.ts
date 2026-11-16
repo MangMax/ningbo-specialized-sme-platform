@@ -49,14 +49,15 @@ export function createTargetCurrentCandidateReader(db:BetterSQLite3Database<type
     if(gap)throw new TargetCurrentCandidateGap(gap.id,gap.state,gap.reason)
   }
   function candidates(title:CurrentTitle) {
+    const titles: CurrentTitle[] = title === 'innovative_sme' ? ['innovative_sme','specialized_sme','little_giant'] : title === 'specialized_sme' ? ['specialized_sme','little_giant'] : ['little_giant']
     const id=sql<number>`coalesce(${a.enterpriseId},${ownerId})`.as('id')
-    return db.with(owners).select({id:record.enterpriseId}).from(record).where(eq(record.titleCode,title))
-      .union(db.select({id:differenceReason.enterpriseId}).from(differenceReason).where(eq(differenceReason.titleCode,title)))
+    return db.with(owners).select({id:record.enterpriseId}).from(record).where(inArray(record.titleCode,titles))
+      .union(db.select({id:differenceReason.enterpriseId}).from(differenceReason).where(inArray(differenceReason.titleCode,titles)))
       .union(db.select({id:sql<number>`${recordCorrespondence.enterpriseId}`.as('id')}).from(recordCorrespondence)
-        .where(and(eq(recordCorrespondence.titleCode,title),isNotNull(recordCorrespondence.enterpriseId))))
+        .where(and(inArray(recordCorrespondence.titleCode,titles),isNotNull(recordCorrespondence.enterpriseId))))
       .union(db.select({id}).from(o).innerJoin(a,assignment())
         .leftJoin(owners,ownerJoin())
-        .where(and(sql`(${o.candidateScopeMask} & ${bits[title]})<>0`,isNotNull(sql`coalesce(${a.enterpriseId},${ownerId})`))))
+        .where(and(sql`(${o.candidateScopeMask} & ${titles.reduce((mask,t) => mask | bits[t], 0)})<>0`,isNotNull(sql`coalesce(${a.enterpriseId},${ownerId})`))))
       .as('current_candidates')
   }
   function ordered(title:CurrentTitle,sort?:'id_asc'|'name_asc'|'name_desc') {

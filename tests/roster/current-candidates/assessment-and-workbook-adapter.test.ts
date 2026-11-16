@@ -28,8 +28,8 @@ it('explicit candidate seam preserves qualified assessment asOf versions and wor
     const baselineSummary=await writeCurrentWorkbook(f.sqlite,'specialized_sme',a,()=>{})
     const injectedSummary=await writeCurrentWorkbookWithCandidates(f.sqlite,'specialized_sme',b,()=>{},provider)
     // Current workbook and explicit legacy seam intentionally use distinct version namespaces.
-    expect(baselineSummary.dataVersion).toBe('sha256:b1d186a1e024f3fed2bb906ea5e7078222d7867d8d63fb25910489874b3c8a54')
-    expect(injectedSummary).toEqual({...baselineSummary,dataVersion:'sha256:3b2bf1c31d6e7f8420e9862fac598775dbe29ce53342ebdc7ba9d902d9e7625a'})
+    expect(baselineSummary.dataVersion).toBe('sha256:9d24b633fdec3bd63dc4333b8e0c5dd5b0e31ee10a7cded25b7035b66fc46c44')
+    expect(injectedSummary).toEqual({...baselineSummary,dataVersion:'sha256:fff701a62afefe0878419b192a07f43aa716c19b9e615a9e7fcf60c58ffc76fc'})
     expect(calls).toEqual([{title:'specialized_sme',sort:undefined,snapshot:true}])
     const values=async(path:string)=>{
       const workbook=await readExportWorkbook(readFileSync(path))

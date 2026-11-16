@@ -36,14 +36,15 @@ import { comparePlatformComparison, COMPARISON_VERSION, type CandidateComparison
 export { CURRENT_TITLES }
 export type { CurrentTitle }
 
-export const CURRENT_RULE_VERSION = 'current-roster-116-v11'
+export const CURRENT_RULE_VERSION = 'current-roster-116-v12'
 export const LEGACY_CURRENT_RULE_VERSION = 'current-roster-116-v8'
 export const LEGACY_QUALIFICATION_ASSESSMENT_VERSION = 'enterprise-qualification-407-v1'
 export function qualificationDay(time: number) { return new Date(time + 8 * 60 * 60 * 1000).toISOString().slice(0, 10) }
 export type CurrentGroup = 'eligible' | 'pending' | 'excluded'
 export const PREVIOUS_QUALIFICATION_ASSESSMENT_VERSION = 'enterprise-qualification-407-v2'
 export const INDEPENDENT_QUALIFICATION_ASSESSMENT_VERSION = 'enterprise-qualification-478-v3'
-export const QUALIFICATION_ASSESSMENT_VERSION = 'enterprise-qualification-687-v4'
+export const FROZEN_HIGHEST_HONOR_ASSESSMENT_VERSION = 'enterprise-qualification-687-v4'
+export const QUALIFICATION_ASSESSMENT_VERSION = 'enterprise-qualification-740-v5'
 
 export interface OfficialEventFieldGap {
   field: 'year' | 'decidedYear' | 'batchSeq' | 'reviewOutcome'
@@ -81,7 +82,7 @@ type CurrentCycleObservation = (cycles: ReturnType<typeof adjudicateQualificatio
 type CurrentPublishedNameObservation = (scope: readonly OfficialPublishedScope[], presentationScope: readonly OfficialPublishedScope[], input: { readonly availability: 'available' | 'unavailable'; readonly facts: readonly OfficialPublishedFact[] }, sourceError?: unknown) => void
 export type QualificationAssessmentReadOptions = {
   /** Explicit compatibility boundary for published 407-v1 receipts. */
-  assessmentVersion?: typeof INDEPENDENT_QUALIFICATION_ASSESSMENT_VERSION | typeof QUALIFICATION_ASSESSMENT_VERSION | typeof PREVIOUS_QUALIFICATION_ASSESSMENT_VERSION | typeof LEGACY_QUALIFICATION_ASSESSMENT_VERSION
+  assessmentVersion?: typeof FROZEN_HIGHEST_HONOR_ASSESSMENT_VERSION | typeof INDEPENDENT_QUALIFICATION_ASSESSMENT_VERSION | typeof QUALIFICATION_ASSESSMENT_VERSION | typeof PREVIOUS_QUALIFICATION_ASSESSMENT_VERSION | typeof LEGACY_QUALIFICATION_ASSESSMENT_VERSION
   ownQueryIds?: readonly number[]
   publishedNames?: PublishedNameAssessmentInput
   coverageForTitle?: (title: CurrentTitle) => ReturnType<typeof readQueryCoverage>
@@ -255,9 +256,11 @@ function createCurrentQualificationAssessmentReaderBody(db:Database.Database,rec
     // The giant has no inherited dependency; its v4 and independent v3 facts
     // are identical. Preserve public title order while sharing the full result.
     let giant: CurrentRow | undefined
-    const evaluateTitle = (title: CurrentTitle) => evaluate(enterpriseId, title, (readOptions.assessmentVersion === LEGACY_QUALIFICATION_ASSESSMENT_VERSION ? new Date(asOf).getUTCFullYear() : Number(qualificationDay(asOf).slice(0,4))), asOf, undefined, title === filterTitle, true, readOptions, title === filterTitle, references?.get(title), references == null ? undefined : preparedCorrespondences, title === workbookTitle ? observePublishedForWorkbook : title === presentationTitle ? observePublishedForCurrent : undefined, comparisons?.get(title), { giant, platformEffects:hydration?.effects?.get(title) }).row
-    if (!readOptions.assessmentVersion || readOptions.assessmentVersion === QUALIFICATION_ASSESSMENT_VERSION) giant = evaluateTitle('little_giant')
-    const rows = (assessedTitle ? [assessedTitle] : CURRENT_TITLES).map(title => title === 'little_giant' && giant ? giant : evaluateTitle(title))
+    let specialized: CurrentRow | undefined
+    const evaluateTitle = (title: CurrentTitle) => evaluate(enterpriseId, title, (readOptions.assessmentVersion === LEGACY_QUALIFICATION_ASSESSMENT_VERSION ? new Date(asOf).getUTCFullYear() : Number(qualificationDay(asOf).slice(0,4))), asOf, undefined, title === filterTitle, true, readOptions, title === filterTitle, references?.get(title), references == null ? undefined : preparedCorrespondences, title === workbookTitle ? observePublishedForWorkbook : title === presentationTitle ? observePublishedForCurrent : undefined, comparisons?.get(title), { giant, specialized, platformEffects:hydration?.effects?.get(title) }).row
+    if (!readOptions.assessmentVersion || readOptions.assessmentVersion === QUALIFICATION_ASSESSMENT_VERSION || readOptions.assessmentVersion === FROZEN_HIGHEST_HONOR_ASSESSMENT_VERSION) giant = evaluateTitle('little_giant')
+    if ((!assessedTitle || assessedTitle !== 'little_giant') && (!readOptions.assessmentVersion || readOptions.assessmentVersion === QUALIFICATION_ASSESSMENT_VERSION)) specialized = evaluateTitle('specialized_sme')
+    const rows = (assessedTitle ? [assessedTitle] : CURRENT_TITLES).map(title => title === 'little_giant' && giant ? giant : title === 'specialized_sme' && specialized ? specialized : evaluateTitle(title))
     if (presentationTitle != null && publishedPresentation === undefined) {
       if (presentationScope === undefined) throw new Error('Current published-name scope was not evaluated')
       try {
@@ -273,13 +276,13 @@ function createCurrentQualificationAssessmentReaderBody(db:Database.Database,rec
       workbookPublished ??= readOfficialPublishedPresentation(prepareCurrentReader(db), workbookScope, undefined, receiptRuntime)
     }
     const titles = rows.map(row => row.assessment!)
-    const scope = { enterpriseId, asOf: new Date(asOf).toISOString(), ruleVersion: readOptions.assessmentVersion === LEGACY_QUALIFICATION_ASSESSMENT_VERSION ? LEGACY_CURRENT_RULE_VERSION : readOptions.assessmentVersion === PREVIOUS_QUALIFICATION_ASSESSMENT_VERSION ? 'current-roster-116-v9' : readOptions.assessmentVersion === INDEPENDENT_QUALIFICATION_ASSESSMENT_VERSION ? 'current-roster-116-v10' : CURRENT_RULE_VERSION, assessmentVersion: readOptions.assessmentVersion ?? QUALIFICATION_ASSESSMENT_VERSION }
+    const scope = { enterpriseId, asOf: new Date(asOf).toISOString(), ruleVersion: readOptions.assessmentVersion === LEGACY_QUALIFICATION_ASSESSMENT_VERSION ? LEGACY_CURRENT_RULE_VERSION : readOptions.assessmentVersion === PREVIOUS_QUALIFICATION_ASSESSMENT_VERSION ? 'current-roster-116-v9' : readOptions.assessmentVersion === INDEPENDENT_QUALIFICATION_ASSESSMENT_VERSION ? 'current-roster-116-v10' : readOptions.assessmentVersion === FROZEN_HIGHEST_HONOR_ASSESSMENT_VERSION ? 'current-roster-116-v11' : CURRENT_RULE_VERSION, assessmentVersion: readOptions.assessmentVersion ?? QUALIFICATION_ASSESSMENT_VERSION }
     return { rows, snapshot: { ...scope, snapshotId: assessmentDigest([scope, titles]), titles }, ...(publishedPresentation === undefined ? {} : { publishedPresentation }), ...(workbookPublished === undefined ? {} : { workbookPublished }) }
   }
   // Preserve the original default wrapper, including caller-owned SAVEPOINT semantics.
   const readSnapshot = db.transaction(readSnapshotBody)
   const readWorkbookBatch = (ids: readonly number[], asOf: number, title: CurrentTitle, queryKeys: IdentityKeyVariants | undefined, scoped: boolean) => {
-    const titles = scoped ? [...new Set<CurrentTitle>(['little_giant', title])] : CURRENT_TITLES
+    const titles = scoped ? [...new Set<CurrentTitle>(['little_giant', ...(title === 'innovative_sme' ? ['specialized_sme' as const] : []), title])] : CURRENT_TITLES
     return evaluate.withinBatch(ids, inputs => withinReferences([...inputs.canonical.values()], () => {
       const coverages = readQueryCoverageBatch(prepareCurrentReader(db), ids.flatMap(enterpriseId => titles.map(titleCode => ({ enterpriseId, titleCode, direction: 'missing_in_miit' as const }))), queryKeys)
       return ids.map(id => {
@@ -476,7 +479,7 @@ function createCurrentCandidateEvaluationReader(db: Database.Database, receiptRu
   const prepareLegacyHeads = () => reader.select(differencePublicColumns(reader)).from(d).where(sql`${d.id} in (${headIds})`).prepare()
   let headsQuery: ReturnType<typeof prepareLegacyHeads> | undefined
   const legacyHeads = () => headsQuery ??= prepareLegacyHeads()
-  function readCandidate(enterpriseId: number, title: CurrentTitle, year: number, executionTime = Date.now(), keys?: { queries: IdentityKeyVariants; relations: IdentityKeyVariants }, includeFilterFacts = false, includeReferences = true, assessmentOptions?: QualificationAssessmentReadOptions, includePendingFilterFacts = false, suppliedPlatformRefs?: readonly CurrentPlatformReference[], preparedCorrespondences?: (enterpriseId: number, titleCode: string) => ReturnType<ReturnType<typeof createEnterpriseTitleCorrespondenceRefsReader>>, observePublishedForCurrent?: CurrentPublishedNameObservation, observeCycles?: CurrentCycleObservation, detail: { expandAssessment?: boolean; giant?: CurrentRow; qualificationOnly?: boolean; platformEffects?: ReturnType<typeof readDifferencePlatformEffects> } = {}): { row: CurrentRow; group: CurrentGroup; effectiveStatus: import('./current-status').CurrentStatus } {
+  function readCandidate(enterpriseId: number, title: CurrentTitle, year: number, executionTime = Date.now(), keys?: { queries: IdentityKeyVariants; relations: IdentityKeyVariants }, includeFilterFacts = false, includeReferences = true, assessmentOptions?: QualificationAssessmentReadOptions, includePendingFilterFacts = false, suppliedPlatformRefs?: readonly CurrentPlatformReference[], preparedCorrespondences?: (enterpriseId: number, titleCode: string) => ReturnType<ReturnType<typeof createEnterpriseTitleCorrespondenceRefsReader>>, observePublishedForCurrent?: CurrentPublishedNameObservation, observeCycles?: CurrentCycleObservation, detail: { expandAssessment?: boolean; giant?: CurrentRow; specialized?: CurrentRow; qualificationOnly?: boolean; platformEffects?: ReturnType<typeof readDifferencePlatformEffects> } = {}): { row: CurrentRow; group: CurrentGroup; effectiveStatus: import('./current-status').CurrentStatus } {
   if (batch) enterpriseId = batch.canonical.get(enterpriseId) ?? enterpriseId
   else if (mergedIdentities) enterpriseId = canonicalEnterpriseId(reader, enterpriseId) ?? enterpriseId
   const expandAssessment = detail.expandAssessment ?? assessmentOptions != null
@@ -484,7 +487,7 @@ function createCurrentCandidateEvaluationReader(db: Database.Database, receiptRu
   const events = batch ? (batch.events.get(enterpriseId)?.get(title) ?? []).map(({ enterpriseId: _owner, titleCode: _title, ...event }) => event) as (LifecycleEvent & { batchSeq: number|null; nameRaw: string|null; usccRaw: string|null; source: string; revision: number; formalValidity?: FormalValidity; validityInvalid?: boolean; formalValidityInputHash?: string; recordId?: number })[] : statement(`select e.id,e.event_type as eventType,e.year,e.decided_year as decidedYear,e.batch_seq as batchSeq,e.review_outcome as reviewOutcome,e.revision,r.name_raw as nameRaw,r.uscc_raw as usccRaw,r.source from record r join record_event e on e.record_id=r.id where r.enterprise_id=? and r.title_code=? order by e.id`).all(enterpriseId,title) as (LifecycleEvent & { batchSeq: number|null; nameRaw: string|null; usccRaw: string|null; source: string; revision: number; formalValidity?: FormalValidity; validityInvalid?: boolean; formalValidityInputHash?: string; recordId?: number })[]
   const evidence = batch ? (batch.evidence.get(enterpriseId)?.get(title) ?? []).map(({ enterpriseId: _owner, titleCode: _title, ...row }) => row) : statement(`select v.id,v.record_event_id as eventId,v.source_file as sourceFile,v.attachment,v.list_no as listNo,v.page from record_evidence v join record_event e on e.id=v.record_event_id join record r on r.id=e.record_id where r.enterprise_id=? and r.title_code=? order by v.id`).all(enterpriseId,title) as (CurrentWorkbookFacts['evidence'][number] & {id:number})[]
   const legacy = assessmentOptions?.assessmentVersion === LEGACY_QUALIFICATION_ASSESSMENT_VERSION
-  const effectiveMode = !assessmentOptions?.assessmentVersion || assessmentOptions.assessmentVersion === QUALIFICATION_ASSESSMENT_VERSION || assessmentOptions.assessmentVersion === INDEPENDENT_QUALIFICATION_ASSESSMENT_VERSION
+  const effectiveMode = assessmentOptions?.assessmentVersion === FROZEN_HIGHEST_HONOR_ASSESSMENT_VERSION || !assessmentOptions?.assessmentVersion || assessmentOptions.assessmentVersion === QUALIFICATION_ASSESSMENT_VERSION || assessmentOptions.assessmentVersion === INDEPENDENT_QUALIFICATION_ASSESSMENT_VERSION
   if (!legacy) {
     const validityRows = batch ? batch.validityRows.get(enterpriseId)?.get(title) ?? [] : statement(`select e.id,e.record_id as recordId,e.formal_validity as value from record_event e join record r on r.id=e.record_id where r.enterprise_id=? and r.title_code=? order by e.id`).all(enterpriseId,title) as {id:number;recordId:number;value:string|null}[]
     for (const raw of validityRows) {
@@ -726,9 +729,10 @@ function createCurrentCandidateEvaluationReader(db: Database.Database, receiptRu
     : exclusions?.region === 'outside_ningbo' ? 'moved_out' as const
     : effectiveFormal.group === 'eligible' || current.length > 0 ? 'effective' as const
     : events.some(e => e.source === 'jxj' && e.eventType === 'award') ? 'expired' as const : 'unrecognized' as const
-  // #687: only the title's own evidenced, temporally applicable history opens
-  // this local rule. The giant is evaluated independently, without inheritance.
-  const inheritanceMode = !assessmentOptions?.assessmentVersion || assessmentOptions.assessmentVersion === QUALIFICATION_ASSESSMENT_VERSION
+  // Frozen v4 keeps its historical gate. Current inheritance flows only downward;
+  // each title keeps its own formal history and prefers its own effective period.
+  const frozenInheritance = assessmentOptions?.assessmentVersion === FROZEN_HIGHEST_HONOR_ASSESSMENT_VERSION
+  const inheritanceMode = frozenInheritance || !assessmentOptions?.assessmentVersion || assessmentOptions.assessmentVersion === QUALIFICATION_ASSESSMENT_VERSION
   const historyTimeKnown = (event: typeof formal[number]) => factTime(event) != null ||
     (!event.validityInvalid && event.formalValidity?.publishedOn != null)
   const history = formal.filter(event => {
@@ -737,19 +741,34 @@ function createCurrentCandidateEvaluationReader(db: Database.Database, receiptRu
     return (time != null ? time <= year : historyTimeKnown(event)) &&
       (!published || published <= qualificationDay(executionTime))
   })
-  if (inheritanceMode && title !== 'little_giant' && formal.some(event => !historyTimeKnown(event))) row.notes.push('本称号正式历史发生时点未知，不能用作小巨人规则前提')
+  if (frozenInheritance && title !== 'little_giant' && formal.some(event => !historyTimeKnown(event))) row.notes.push('本称号正式历史发生时点未知，不能用作小巨人规则前提')
   const localRuleBasis: string[] = []
+  let supportingTitle: CurrentRow | undefined
   let giant: CurrentRow | undefined
   const needsGiant = !detail.qualificationOnly || effectiveStatus === 'expired' || effectiveStatus === 'unrecognized'
-  if (inheritanceMode && title !== 'little_giant' && (history.length || expandAssessment) && needsGiant) {
+  if (inheritanceMode && title !== 'little_giant' && (!frozenInheritance || history.length || expandAssessment) && needsGiant) {
     giant = detail.giant ?? readCandidate(enterpriseId, 'little_giant', year, executionTime, keys, false, includeReferences,
       { ...assessmentOptions, assessmentVersion: INDEPENDENT_QUALIFICATION_ASSESSMENT_VERSION }, false, undefined, preparedCorrespondences, undefined, undefined, { expandAssessment }).row
-    if (history.length && giant.group === 'eligible' && effectiveStatus !== 'terminated' && effectiveStatus !== 'moved_out') {
+    if ((frozenInheritance ? history.length > 0 : effectiveStatus !== 'effective') && giant.group === 'eligible' && effectiveStatus !== 'terminated' && effectiveStatus !== 'moved_out') {
       effectiveStatus = 'effective'
-      const explanation = '按有效小巨人资格计入；本称号正式历史：' + history.map(e => `event:${e.id}`).join('、')
+      supportingTitle = giant
+      const explanation = frozenInheritance ? '按有效小巨人资格计入；本称号正式历史：' + history.map(e => `event:${e.id}`).join('、') : '按有效小巨人资格计入；实际支撑称号：小巨人'
       localRuleBasis.push(explanation, ...giant.references.map(ref => '小巨人实际来源：' + ref))
       row.basis += '\n' + explanation + '\n' + giant.basis
       row.references.push(...giant.references.map(ref => '小巨人依据：' + ref))
+    }
+  }
+  let specialized: CurrentRow | undefined
+  if (inheritanceMode && !frozenInheritance && title === 'innovative_sme') {
+    specialized = detail.specialized ?? readCandidate(enterpriseId, 'specialized_sme', year, executionTime, keys, false, includeReferences,
+      assessmentOptions, false, undefined, preparedCorrespondences, undefined, undefined, { expandAssessment, giant, qualificationOnly: detail.qualificationOnly }).row
+    if (effectiveStatus !== 'effective' && effectiveStatus !== 'terminated' && effectiveStatus !== 'moved_out' && specialized.group === 'eligible') {
+      effectiveStatus = 'effective'
+      supportingTitle = specialized
+      const explanation = '按有效专精特新中小企业资格计入；实际支撑称号：专精特新中小企业'
+      localRuleBasis.push(explanation, specialized.basis, ...specialized.references.map(ref => '省专实际来源：' + ref))
+      row.basis += '\n' + explanation + '\n' + specialized.basis
+      row.references.push(...specialized.references.map(ref => '省专依据：' + ref))
     }
   }
   const legacyGroup = row.group
@@ -887,7 +906,7 @@ function createCurrentCandidateEvaluationReader(db: Database.Database, receiptRu
     const formalBasis = events.filter(e => e.source === 'jxj').map(e => `event:${e.id}@${e.revision}`).join('\n')
     row.assessment = {
       titleCode:title,group,
-      ...(effectiveMode ? {effectiveQualification:{status:effectiveStatus,localRuleBasis,presentationBasis:[...dispositionBasis,...effectiveFormal.cycles.flatMap(c => { const validity = c.anchor?.formalValidity; const source = validity && evidence.find(e => e.id === validity.evidenceId); return c.periodBasis ? [c.periodBasis + (source ? `；正式来源：${source.sourceFile}；第 ${validity!.statementPages.join('、')} 页` : '')] : [] }),...current.map(a => `${a.qualification.basis} [${a.qualification.validFrom},${a.qualification.validUntil})`),...(exclusions?.statements ?? [])],basis:[formalBasis,...dispositionBasis,...migrationBasis,...localRuleBasis,...(exclusions?.refs ?? [])].filter(Boolean).join('\n'),notes:[...row.notes,...effectiveFormal.notes,...gaps.map(gap => ({missing_official_source:'正式公布出处缺失',missing_cycle_semantics:'认定或复核周期资料不完整',identity_unresolved:'主体身份对应尚未核实',published_name_not_retained:'公布名称未留档',published_name_unknown:'公布名称未知',published_name_read_unavailable:'公布名称读取不可用',source_version_unavailable:'来源文件版本不可用'}[gap] ?? '资料缺口待核实'))]}} : {}),
+      ...(effectiveMode ? {effectiveQualification:{status:effectiveStatus,localRuleBasis,presentationBasis:[...dispositionBasis,...(supportingTitle && !frozenInheritance ? [] : effectiveFormal.cycles).flatMap(c => { const validity = c.anchor?.formalValidity; const source = validity && evidence.find(e => e.id === validity.evidenceId); return c.periodBasis ? [c.periodBasis + (source ? `；正式来源：${source.sourceFile}；第 ${validity!.statementPages.join('、')} 页` : '')] : [] }),...current.map(a => `${a.qualification.basis} [${a.qualification.validFrom},${a.qualification.validUntil})`),...(exclusions?.statements ?? [])],basis:[formalBasis,...dispositionBasis,...migrationBasis,...localRuleBasis,...(exclusions?.refs ?? [])].filter(Boolean).join('\n'),notes:[...row.notes,...effectiveFormal.notes,...gaps.map(gap => ({missing_official_source:'正式公布出处缺失',missing_cycle_semantics:'认定或复核周期资料不完整',identity_unresolved:'主体身份对应尚未核实',published_name_not_retained:'公布名称未留档',published_name_unknown:'公布名称未知',published_name_read_unavailable:'公布名称读取不可用',source_version_unavailable:'来源文件版本不可用'}[gap] ?? '资料缺口待核实'))]}} : {}),
       cycles:qualification.cycles.map(c => ({originYear:c.originYear,batchSeq:c.batch,precision:'year'})),
       versions:{facts:assessmentDigest(independent ? [enterprise,events,aliases,independent] : [enterprise,events,aliases]),sources:assessmentDigest([evidence,sourceVersions,publishedNames,dispositionInputs,...managedInputs.map(input => input.source)]),decisions:assessmentDigest([versionHeads,decisionAssessments,correspondences,dispositionInputs,...managedInputs]),observations:assessmentDigest([coverage,observedRows])},
       officialQualification:{group:officialGroup,message:officialGroup === 'eligible' ? '正式资格当前有效（按已录入的年份或已核实有效期间）' : officialGroup === 'excluded' ? '正式资格不纳入当前有效；历史依据保留' : '正式资格待核；已有公布及具体缺口保留',basis:effectiveMode ? formalBasis : [row.basis,...migrationBasis].filter(Boolean).join('\n'),notes:officialNotes},
@@ -900,12 +919,16 @@ function createCurrentCandidateEvaluationReader(db: Database.Database, receiptRu
       shadow:{legacyGroup,difference:group === legacyGroup ? null : '已确认主体终止优先排除；旧投影的其它未决缺口保留'},
     }
   }
-  if (giant?.assessment && row.assessment) {
+  for (const upper of [giant, specialized]) if (upper?.assessment && row.assessment) {
     // Dependencies apply even while ineligible, so revocation/restoration changes
     // the lower title version without rewriting any formal history.
-    row.assessment.versions.facts = assessmentDigest([row.assessment.versions.facts, giant.assessment.versions.facts])
-    row.assessment.versions.sources = assessmentDigest([row.assessment.versions.sources, giant.assessment.versions.sources])
-    row.assessment.effectiveQualification?.presentationBasis?.push(...localRuleBasis)
+    row.assessment.versions.facts = assessmentDigest([row.assessment.versions.facts, upper.assessment.versions.facts])
+    row.assessment.versions.sources = assessmentDigest([row.assessment.versions.sources, upper.assessment.versions.sources])
+    if (frozenInheritance) row.assessment.effectiveQualification?.presentationBasis?.push(...localRuleBasis)
+    else {
+      row.assessment.versions.decisions = assessmentDigest([row.assessment.versions.decisions, upper.assessment.versions.decisions])
+      if (upper === supportingTitle && upper.assessment.effectiveQualification) row.assessment.effectiveQualification?.presentationBasis?.push(...upper.assessment.effectiveQualification.presentationBasis ?? [])
+    }
   }
   observeCycles?.(qualification.cycles, formal)
   return { row, group, effectiveStatus }
