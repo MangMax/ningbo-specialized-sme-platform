@@ -208,3 +208,22 @@ it.each([
   expect(statuses.get(c.enterprise.id)).toBe(status)
  }
 })
+it.each(['none','future-year','unpublished'] as const)('an inapplicable duplicate grant cannot hide a current failure: $0',kind=>{
+ const events:Parameters<typeof f.candidate>[1]=[
+  {eventType:'award',year:2025,batchSeq:1},
+  {eventType:'review',year:2025,decidedYear:2026,batchSeq:1,reviewOutcome:'failed'},
+ ]
+ if(kind!=='none') events.push({eventType:'award',year:2025,decidedYear:kind==='future-year'?2027:2026,batchSeq:1})
+ const c=f.candidate('current failure '+kind,events,'little_giant')
+ if(kind==='unpublished'){
+  const award=f.db.select().from(s.recordEvent).all().find(e=>e.recordId===c.record.id&&e.eventType==='award'&&e.decidedYear===2026)!
+  const evidence=f.db.select().from(s.recordEvidence).all().find(e=>e.recordEventId===award.id)!
+  const file=f.db.insert(s.storedFile).values({relPath:'unpublished-duplicate-grant.pdf',filename:'unpublished-duplicate-grant.pdf',ext:'pdf',bytes:1,sha256:'e'.repeat(64)}).returning().get()
+  f.db.update(s.recordEvidence).set({sourceFile:file.relPath,page:1}).where(eq(s.recordEvidence.id,evidence.id)).run()
+  f.db.update(s.recordEvent).set({formalValidity:{evidenceId:evidence.id,sourceSha256:file.sha256,statementPages:[1],publishedOn:'2026-07-01',interval:{validFrom:'2026-07-01',validThrough:'2029-06-30'}}}).where(eq(s.recordEvent.id,award.id)).run()
+ }
+ expect(read(c.enterprise.id,'2026-06-02').group).toBe('excluded')
+ const reader=createCurrentQualificationAssessmentReader(f.db.$client)
+ const statuses=f.db.$client.transaction(()=>reader.readEffectiveTitles([c.enterprise.id],Date.parse('2026-06-02T12:00:00Z'),'little_giant'))()
+ expect(statuses.get(c.enterprise.id)).toBe('expired')
+})

@@ -21,6 +21,11 @@ type EventTime = LifecycleEvent
 export const awardTime = (e: EventTime) => e.decidedYear ?? e.year
 export const originTime = (e: EventTime) => e.year ?? (e.eventType === 'award' ? awardTime(e) : null)
 export const factTime = (e: EventTime) => e.eventType === 'award' ? awardTime(e) : e.decidedYear
+/** Dated readers share one event visibility boundary; undated plans retain all facts. */
+export function qualificationEventAppliesAt(event: QualificationEvent, year: number, day?: string): boolean {
+  return !day || year === Infinity ||
+    ((factTime(event) == null || factTime(event)! <= year) && (!event.formalValidity?.publishedOn || event.formalValidity.publishedOn <= day))
+}
 interface CycleFacts {
   awards: QualificationEvent[]
   passed: QualificationEvent[]
@@ -134,7 +139,7 @@ export function adjudicateQualificationCycles(formal: QualificationEvent[], year
   if (day && year !== Infinity) formal = formal.filter(e => {
     const validity = e.formalValidity
     if (e.eventType === 'review' && validity?.originAwardEventId && validity.continuation === 'until_this_review_results' && validity.publishedOn && validity.publishedOn > day) return true
-    return (factTime(e) == null || factTime(e)! <= year) && (!validity?.publishedOn || validity.publishedOn <= day)
+    return qualificationEventAppliesAt(e, year, day)
   })
   // Only applicable grants may distinguish a new cycle from a failed one.
   // Scoped failures are supplied as verified original award IDs by the caller.

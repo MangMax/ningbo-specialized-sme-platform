@@ -26,7 +26,7 @@ import { readDifferencePlatformEffects, readDifferencePlatformEffectsByTitle } f
 import { normalizeName, normalizeUscc } from '../domain'
 import { type IdentityKeyVariants } from './current-identity-keys'
 import { computeTitleLifecycle, type LifecycleEvent } from './lifecycle'
-import { adjudicateQualificationCycles, awardTime, originTime, factTime, type QualificationEvent } from './qualification-cycles'
+import { adjudicateQualificationCycles, awardTime, originTime, factTime, qualificationEventAppliesAt, type QualificationEvent } from './qualification-cycles'
 import { RDJB_TITLE_CODES } from '../platform/recognized-evidence'
 import { recognizedFilterFacts } from './recognized-filter-facts'
 import { createTargetRecognizedWitnessReader } from './recognized-witness-target'
@@ -535,15 +535,19 @@ function createCurrentCandidateEvaluationReader(db: Database.Database, receiptRu
   }
   // Formal failures remain owned by their original events. Apply only an
   // evidenced same-title cycle; a later pass is not a new award.
-  if (effectiveMode && title === 'little_giant') for (const failure of formal) {
-    if (failure.eventType !== 'review' || failure.reviewOutcome !== 'failed' || failure.decidedYear == null || failure.decidedYear > year ||
-        failure.formalValidity?.publishedOn && failure.formalValidity.publishedOn > qualificationDay(executionTime)) continue
-    for (const award of formal) if (award.eventType === 'award' && (
-      failure.formalValidity?.originAwardEventId === award.id ||
-      !failure.formalValidity?.originAwardEventId && failure.year != null && failure.batchSeq != null && failure.year === award.year && failure.batchSeq === award.batchSeq &&
-      awardTime(award) != null && awardTime(award)! <= failure.decidedYear &&
-      formal.filter(e => e.eventType === 'award' && e.year === failure.year && e.batchSeq === failure.batchSeq).length === 1
-    )) disposedAwards.add(award.id)
+  if (effectiveMode && title === 'little_giant') {
+    const day = qualificationDay(executionTime)
+    const applicableAwards = formal.filter(e => e.eventType === 'award' && qualificationEventAppliesAt(e, year, day))
+    for (const failure of formal) {
+      if (failure.eventType !== 'review' || failure.reviewOutcome !== 'failed' || failure.decidedYear == null ||
+          !qualificationEventAppliesAt(failure, year, day)) continue
+      for (const award of applicableAwards) if (
+        failure.formalValidity?.originAwardEventId === award.id ||
+        !failure.formalValidity?.originAwardEventId && failure.year != null && failure.batchSeq != null && failure.year === award.year && failure.batchSeq === award.batchSeq &&
+        awardTime(award) != null && awardTime(award)! <= failure.decidedYear &&
+        applicableAwards.filter(e => e.year === failure.year && e.batchSeq === failure.batchSeq).length === 1
+      ) disposedAwards.add(award.id)
+    }
   }
   const qualification: ReturnType<typeof adjudicateQualificationCycles> = effectiveMode
     ? adjudicateQualificationCycles(events.filter(e => e.source === 'jxj' && ['award','review'].includes(e.eventType)).map(e => ({...e, validityInvalid:false})), year, qualificationDay(executionTime), true, disposedAwards, title === 'little_giant', new Set(formal.map(e => e.id)))
