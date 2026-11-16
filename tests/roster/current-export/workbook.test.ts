@@ -225,7 +225,7 @@ it('keeps technical audit values out of every visible workbook cell', async () =
   const {db,file} = fixture()
   candidate(db,'业务企业')
   const result = await writeCurrentWorkbook(db.$client,'little_giant',file,()=>{})
-  expect(result.ruleVersion).toBe('current-roster-116-v11')
+  expect(result.ruleVersion).toBe('current-roster-116-v12')
   expect(result.dataVersion).toMatch(/^sha256:[a-f0-9]{64}$/)
   const workbook = new ExcelJS.Workbook()
   await workbook.xlsx.readFile(file)
@@ -234,7 +234,7 @@ it('keeps technical audit values out of every visible workbook cell', async () =
     expect(sheet.state).toBe('visible')
     sheet.eachRow(row => row.eachCell(cell => {
       const value = String(cell.value ?? '')
-      expect(value).not.toMatch(/(?:event|evidence|decision|alias|correspondence|platform-relation|query):\d+|sha256:|current-roster-116-v11|jxj[\\/]announcement[\\/]|\b(?:award|review|passed|failed|evidence_changed)\b/)
+      expect(value).not.toMatch(/(?:event|evidence|decision|alias|correspondence|platform-relation|query):\d+|sha256:|current-roster-116-v12|jxj[\\/]announcement[\\/]|\b(?:award|review|passed|failed|evidence_changed)\b/)
       expect(cell.note ?? null).toBeNull()
     }))
   }
@@ -347,7 +347,7 @@ it('native workbook digest binds its title scope and actual worksheet text proje
   const values=Array.from({length:15},(_,i)=>wb.getWorksheet('有效企业')!.getRow(2).getCell(i+1).value)
   values[13] ??= ''; values[14] ??= ''
   const {titles:_titles,snapshotId,...scope}=snapshot
-  const expected=createHash('sha256').update(JSON.stringify(['current-export-assessment-title-v3','enterprise-qualification-687-v4','current-roster-116-v11',new Date(result.generatedAt).getUTCFullYear(),'little_giant'])+'\n')
+  const expected=createHash('sha256').update(JSON.stringify(['current-export-assessment-title-v3','enterprise-qualification-740-v5','current-roster-116-v12',new Date(result.generatedAt).getUTCFullYear(),'little_giant'])+'\n')
     .update(JSON.stringify(['effective',id,scope,snapshotId,values])+'\n').digest('hex')
   expect(result.dataVersion).toBe('sha256:'+expected)
   expect(result.counts).toEqual({eligible:1,pending:0,excluded:0})
@@ -364,10 +364,10 @@ it('native workbook digest hashes mixed groups in sheet order then stable identi
   const result=await writeCurrentWorkbook(db.$client,'little_giant',file,()=>{})
   expect(result.counts).toEqual({eligible:2,pending:0,excluded:2})
   const wb=new ExcelJS.Workbook();await wb.xlsx.readFile(file)
-  const hash=createHash('sha256').update(JSON.stringify(['current-export-assessment-title-v3','enterprise-qualification-687-v4','current-roster-116-v11',new Date(result.generatedAt).getUTCFullYear(),'little_giant'])+'\n')
+  const hash=createHash('sha256').update(JSON.stringify(['current-export-assessment-title-v3','enterprise-qualification-740-v5','current-roster-116-v12',new Date(result.generatedAt).getUTCFullYear(),'little_giant'])+'\n')
   for (const [group,sheet,ids] of [['effective','有效企业',[eligible,eligibleTail]],['expired','已到期',[pending]],['unrecognized','未认定',[excluded]]] as const) {
     for (const [index,id] of ids.entries()) {
-      const snapshot=nativeWorkbookSnapshot(db,id,Date.parse(result.generatedAt))
+      const snapshot=nativeWorkbookSnapshot(db,id,Date.parse(result.generatedAt),group !== 'unrecognized')
       expect(snapshot.titles.find(title=>title.titleCode==='little_giant')!.effectiveQualification!.status).toBe(group)
       const {titles:_titles,snapshotId,...scope}=snapshot
       const values=Array.from({length:15},(_,c)=>wb.getWorksheet(sheet)!.getRow(index+2).getCell(c+1).value)
@@ -389,13 +389,13 @@ it('default native export keeps its title digest and never invokes comparison', 
     const id = candidate(db, '427 default workbook')
     const result = await writeCurrentWorkbook(db.$client, 'little_giant', file, () => {})
     const snapshot = nativeWorkbookSnapshot(db,id,Date.parse(result.generatedAt))
-    expect(snapshot.assessmentVersion).toBe('enterprise-qualification-687-v4')
+    expect(snapshot.assessmentVersion).toBe('enterprise-qualification-740-v5')
     expect(snapshot.titles.every(t => t.platform.comparison === 'not_established')).toBe(true)
     const workbook = new ExcelJS.Workbook(); await workbook.xlsx.readFile(file)
     const values = Array.from({ length: 15 }, (_, i) => workbook.getWorksheet('有效企业')!.getRow(2).getCell(i + 1).value)
     values[13] ??= ''; values[14] ??= ''
     const { titles: _titles, snapshotId, ...scope } = snapshot
-    const digest = createHash('sha256').update(JSON.stringify(['current-export-assessment-title-v3', 'enterprise-qualification-687-v4', 'current-roster-116-v11', new Date(result.generatedAt).getUTCFullYear(), 'little_giant']) + '\n')
+    const digest = createHash('sha256').update(JSON.stringify(['current-export-assessment-title-v3', 'enterprise-qualification-740-v5', 'current-roster-116-v12', new Date(result.generatedAt).getUTCFullYear(), 'little_giant']) + '\n')
       .update(JSON.stringify(['effective', id, scope, snapshotId, values]) + '\n').digest('hex')
     expect(result.dataVersion).toBe('sha256:' + digest)
     expect(result.counts).toEqual({ eligible: 1, pending: 0, excluded: 0 })
@@ -440,9 +440,17 @@ it.each([23,24])('keeps 23 display lines inline and redirects 24 lines at the 40
 })
 
 /** Independent projection of the full public assessment into the exported title scope. */
-function nativeWorkbookSnapshot(db:ReturnType<typeof initializeDb>,id:number,at:number) {
+function nativeWorkbookSnapshot(db:ReturnType<typeof initializeDb>,id:number,at:number,formal = true) {
   const full=readCurrentQualificationAssessment(db.$client,id,at)
   const {titles:allTitles,snapshotId:_digest,...scope}=full
   const titles=allTitles.filter(title=>title.titleCode==='little_giant')
+  // candidate() seeds exactly one event/evidence per enterprise in these digest cases.
+  // No stored file, published row, disposition, correspondence or managed input exists.
+  const hash = (input: unknown) => createHash('sha256').update(JSON.stringify(input)).digest('hex')
+  const evidence = [{ id, eventId: id, sourceFile: 'jxj/announcement/synthetic-146.xlsx', attachment: '名单\n原始附件', listNo: id, page: null }]
+  const sourceVersions = [{ evidenceId: id, eventId: id, sourceFile: 'jxj/announcement/synthetic-146.xlsx', storedFileId: null, sha256: null, bytes: null, removedAt: null, capturedRevision: null, capturedSha256: null }]
+  const names = formal ? [{ evidenceId: id, availability: 'unknown_legacy', nameKnown: false }] : []
+  expect(titles[0]!.versions.sources).toBe(hash([evidence, sourceVersions, names, []]))
+  expect(titles[0]!.versions.decisions).toBe(hash([[], [], [], []]))
   return {...scope,titles,snapshotId:createHash('sha256').update(JSON.stringify([scope,titles])).digest('hex')}
 }
