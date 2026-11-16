@@ -130,7 +130,12 @@ function hasUnresolvedRecovery(current: CycleJudgment[], history: CycleJudgment[
 export function adjudicateQualificationCycles(formal: QualificationEvent[], year = Infinity, day?: string, notesOnlyGaps = false, disposedAwards: ReadonlySet<number> = new Set(), cycleScoped = false): { group: CurrentGroup; notes: string[]; originYear: number; cycles: CycleJudgment[] } {
   // Scoped failures are supplied as verified original award IDs by the caller.
   // Do not let an unknown-cycle failure leak back through legacy gap grouping.
-  if (cycleScoped) formal = formal.filter(event => event.eventType !== 'review' || event.reviewOutcome !== 'failed')
+  if (cycleScoped) formal = formal.filter(event => event.eventType !== 'review' || event.reviewOutcome !== 'failed' ||
+    // The result is not yet effective, but its explicit continuation still
+    // supports the linked award until publication. cycleFacts skips its failure.
+    !!(day && event.formalValidity?.originAwardEventId &&
+      event.formalValidity.continuation === 'until_this_review_results' &&
+      event.formalValidity.publishedOn && event.formalValidity.publishedOn > day))
   if (cycleScoped) formal = formal.filter(event => event.eventType !== 'review' || event.reviewOutcome !== 'passed' ||
     formal.some(award => award.eventType === 'award' && (
       event.formalValidity?.originAwardEventId === award.id ||

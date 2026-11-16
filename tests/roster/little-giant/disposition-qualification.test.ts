@@ -1,4 +1,5 @@
 import ExcelJS from 'exceljs'
+import { eq } from 'drizzle-orm'
 import { join } from 'node:path'
 import { writeCurrentWorkbook } from '../../../lib/roster/current-workbook'
 import { afterAll, expect, it, vi } from 'vitest'
@@ -61,6 +62,26 @@ it('formal failure of an older cycle cannot cancel a new award or become a re-aw
  expect(read(c.enterprise.id,'2027-06-02').group).toBe('excluded')
  append(c.record.id,{eventType:'award',year:2025,batchSeq:2})
  expect(read(c.enterprise.id,'2026-06-02').group).toBe('eligible')
+})
+it('retains an explicit continuation until the linked failed review is published',()=>{
+ const c=f.candidate('future failed review',[
+  {eventType:'award',year:2022,batchSeq:1},
+  {eventType:'review',year:2022,decidedYear:2026,batchSeq:1,reviewOutcome:'failed'},
+ ],'little_giant')
+ const events=f.db.select().from(s.recordEvent).all().filter(e=>e.recordId===c.record.id)
+ const award=events.find(e=>e.eventType==='award')!, review=events.find(e=>e.eventType==='review')!
+ const evidence=f.db.select().from(s.recordEvidence).all().find(e=>e.recordEventId===review.id)!
+ const file=f.db.insert(s.storedFile).values({relPath:'future-failed-review.pdf',filename:'future-failed-review.pdf',ext:'pdf',bytes:1,sha256:'c'.repeat(64)}).returning().get()
+ f.db.update(s.recordEvidence).set({sourceFile:file.relPath,page:1}).where(eq(s.recordEvidence.id,evidence.id)).run()
+ f.db.update(s.recordEvent).set({formalValidity:{evidenceId:evidence.id,sourceSha256:file.sha256,statementPages:[1],originAwardEventId:award.id,publishedOn:'2026-06-01',continuation:'until_this_review_results'}}).where(eq(s.recordEvent.id,review.id)).run()
+ expect(read(c.enterprise.id,'2026-05-31').group).toBe('eligible')
+ expect(read(c.enterprise.id,'2026-06-01').group).toBe('excluded')
+ expect(read(c.enterprise.id,'2026-06-02').group).toBe('excluded')
+ const reader=createCurrentQualificationAssessmentReader(f.db.$client)
+ for(const [day,status] of [['2026-05-31','effective'],['2026-06-01','expired']] as const){
+  const statuses=f.db.$client.transaction(()=>reader.readEffectiveTitles([c.enterprise.id],Date.parse(day+'T12:00:00Z'),'little_giant'))()
+  expect(statuses.get(c.enterprise.id)).toBe(status)
+ }
 })
 it('replacement retires the old exclusion while unconfirmed and coarse replacement facts remain observations',()=>{
  const c=setup('not_applied')
