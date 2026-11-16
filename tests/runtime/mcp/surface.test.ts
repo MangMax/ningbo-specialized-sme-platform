@@ -49,6 +49,8 @@ describe('mcp-auth 鉴权判据', () => {
       'set_runtime_log_policy',
       'clear_runtime_logs',
       'save_difference_decision',
+      'preflight_qualification_decision',
+      'commit_qualification_decision',
       'difference_snapshot',
       'refresh_enterprise_differences',
       'process_evidence_impacts',
