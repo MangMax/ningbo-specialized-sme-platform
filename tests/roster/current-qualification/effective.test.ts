@@ -37,3 +37,10 @@ it.each(['passed','failed',null] as const)('formal review-only %s preserves miss
  expect(result.group).toBe(outcome==='passed'?'eligible':'excluded')
  expect(result.evidence[0]).toMatchObject({year:null,batchSeq:null,decidedYear:2026,reviewOutcome:outcome})
 })
+it.each(['cancelled','moved_out'])('still excludes an old giant with a confirmed %s boundary',kind=>{
+ const c=f.candidate('old giant boundary '+kind,[{eventType:'award',year:2018,batchSeq:1}],'little_giant')
+ fact(c.enterprise.id,kind)
+ const result=createCurrentQualificationAssessmentReader(f.db.$client).read(c.enterprise.id,asOf).snapshot
+ expect(result.titles.map(t=>t.group)).toEqual(['excluded','excluded','excluded'])
+ expect(result.titles[0]!.effectiveQualification!.status).toBe(kind==='cancelled'?'terminated':'moved_out')
+})

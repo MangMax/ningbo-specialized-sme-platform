@@ -101,3 +101,10 @@ it.each([
   expect(result(last).group).toBe('eligible')
   expect(result(expired).group).toBe('excluded')
 })
+
+it('retained giant qualification still respects an explicit inclusive formal interval',()=>{
+ const event={...award,formalValidity:{...source,interval:{validFrom:'2025-04-01',validThrough:'2026-05-31'}}}
+ const read=(day:string)=>adjudicateQualificationCycles([event],Number(day.slice(0,4)),day,true,new Set(),true,undefined,false,true)
+ expect(['2025-03-31','2025-04-01','2026-05-31','2026-06-01'].map(day=>read(day).group)).toEqual(['excluded','eligible','eligible','excluded'])
+ expect(read('2026-05-31').cycles[0]!.periodBasis).toBe('正式文件有效期：2025-04-01 至 2026-05-31（含首尾）')
+})
