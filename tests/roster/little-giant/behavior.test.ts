@@ -27,13 +27,13 @@ it('inherits without lower official history and preserves original facts', () =>
     expect(f.businessDigest()).toBe(before)
   }
 })
-it('withdraws derived eligibility on giant expiry, keeps independent validity and frozen v3 semantics', () => {
+it('retains giant inheritance beyond award age and keeps frozen v3 semantics', () => {
   const c=f.candidate('expiry',[{eventType:'award',year:2025,batchSeq:1}],'little_giant')
   f.addRecord(c.enterprise.id,'expiry',[{eventType:'review',year:2018,decidedYear:2021,reviewOutcome:'failed',batchSeq:1}],'specialized_sme')
   f.addRecord(c.enterprise.id,'expiry',[{eventType:'award',year:2027,batchSeq:1}],'innovative_sme')
   const read=(date:string)=>readCurrentQualificationAssessment(f.db.$client,c.enterprise.id,Date.parse(date)).titles
   expect(read('2026-06-01')[1]!.group).toBe('eligible')
-  expect(read('2028-06-01').find(t=>t.titleCode==='specialized_sme')!.group).toBe('excluded')
+  expect(read('2028-06-01').find(t=>t.titleCode==='specialized_sme')!.group).toBe('eligible')
   expect(read('2028-06-01').find(t=>t.titleCode==='innovative_sme')!.group).toBe('eligible')
   expect(readCurrentQualificationAssessment(f.db.$client,c.enterprise.id,at,{assessmentVersion:'enterprise-qualification-478-v3'}).titles.find(t=>t.titleCode==='specialized_sme')!.group).toBe('excluded')
 })
@@ -49,7 +49,6 @@ it('retains lower raw history while upper changes refresh dependent versions', (
  for(const title of ['specialized_sme','innovative_sme']) expect(after.titles.find(t=>t.titleCode===title)!.versions.facts).not.toBe(before.titles.find(t=>t.titleCode===title)!.versions.facts)
 })
 it.each([
- ['expired', [{eventType:'award',year:2018,batchSeq:1}]],
  ['future', [{eventType:'award',year:2027,batchSeq:1}]],
  ['platform-only', [{eventType:'maintain',year:2025,batchSeq:1}]],
  ['pending', [{eventType:'review',year:null,decidedYear:null,reviewOutcome:null}]],
@@ -158,4 +157,34 @@ it('upper source changes recompute lower dependencies without borrowing platform
  expect(after.titles[2]!.versions.sources).not.toBe(before.titles[2]!.versions.sources)
  expect(after.titles[2]!.references.join(' ')).toContain('replaced-source.pdf')
  expect(after.titles[2]!.evidence).toEqual([])
+})
+
+it('retains an old giant award without fabricating lower official history', () => {
+ const c=f.candidate('retained-old-award',[{eventType:'award',year:2018,batchSeq:1}],'little_giant')
+ const before=f.businessDigest()
+ const snapshot=readCurrentQualificationAssessment(f.db.$client,c.enterprise.id,at)
+ expect(snapshot.titles.map(t=>[t.titleCode,t.group])).toEqual([['little_giant','eligible'],['specialized_sme','eligible'],['innovative_sme','eligible']])
+ expect(snapshot.titles.slice(1).map(t=>t.evidence)).toEqual([[],[]])
+ expect(f.businessDigest()).toBe(before)
+})
+it('honors source-bound formal giant interval endpoints and re-evaluates a changed source', () => {
+ const c=f.candidate('formal-period',[{eventType:'award',year:2018,batchSeq:1}],'little_giant')
+ const event=f.db.$client.prepare('select id from record_event where record_id=?').get(c.record.id) as {id:number}
+ const evidence=f.db.$client.prepare('select id from record_evidence where record_event_id=?').get(event.id) as {id:number}
+ const path='owned/giant-formal-period.pdf',sha='c'.repeat(64)
+ f.db.$client.prepare('update record_evidence set source_file=?,page=1 where id=?').run(path,evidence.id)
+ f.db.$client.prepare('insert into stored_file (rel_path,filename,ext,bytes,sha256,created_at) values (?,?,?,?,?,0)').run(path,'period.pdf','pdf',1,sha)
+ f.db.$client.prepare('update record_event set formal_validity=? where id=?').run(JSON.stringify({evidenceId:evidence.id,sourceSha256:sha,statementPages:[1],interval:{validFrom:'2026-05-01',validThrough:'2026-06-01'}}),event.id)
+ const read=(day:string)=>readCurrentQualificationAssessment(f.db.$client,c.enterprise.id,Date.parse(day+'T12:00:00Z'))
+ for(const [day,group] of [['2026-04-30','excluded'],['2026-05-01','eligible'],['2026-06-01','eligible'],['2026-06-02','excluded']] as const) {
+  expect(read(day).titles.map(t=>t.group),day).toEqual([group,group,group])
+ }
+ const expired=read('2026-06-02')
+ f.db.$client.prepare('update stored_file set sha256=? where rel_path=?').run('d'.repeat(64),path)
+ const changed=read('2026-06-02')
+ // Source drift is diagnostic: it neither erases the recorded interval nor revokes all titles.
+ expect(changed.titles.map(t=>t.group)).toEqual(['excluded','excluded','excluded'])
+ expect(read('2026-06-01').titles.map(t=>t.group)).toEqual(['eligible','eligible','eligible'])
+ expect(changed.titles[0]!.evidence[0]).toMatchObject({validityInvalid:true})
+ expect(changed.titles[0]!.versions.sources).not.toBe(expired.titles[0]!.versions.sources)
 })
