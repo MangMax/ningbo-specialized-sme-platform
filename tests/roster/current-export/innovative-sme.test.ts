@@ -55,7 +55,7 @@ it('创新型按自身认定周期复核并保留恢复与同年冲突', async (
   const restored = candidate('失败后恢复', [{ eventType: 'award', year: year - 5, batchSeq: 1 }, { eventType: 'review', year: year - 5, batchSeq: 1, decidedYear: year - 2, reviewOutcome: 'failed' }, { eventType: 'award', year: year - 1, batchSeq: 2 }])
   candidate('旧周期晚失败', [{ eventType: 'award', year: year - 5, batchSeq: 1 }, { eventType: 'award', year: year - 1, batchSeq: 2 }, { eventType: 'review', year: year - 5, batchSeq: 1, decidedYear: year, reviewOutcome: 'failed' }])
   const failed = candidate('本周期失败', [{ eventType: 'award', year: year - 4, batchSeq: 1 }, { eventType: 'review', year: year - 4, batchSeq: 1, decidedYear: year - 1, reviewOutcome: 'failed' }])
-  // A different title's passing review cannot rescue this title's failed cycle.
+  // Own failure remains history; valid specialized qualification independently includes innovative.
   record(failed.enterprise.id, '本周期失败', [{ eventType: 'award', year: year - 4, batchSeq: 1 }, { eventType: 'review', year: year - 4, batchSeq: 1, decidedYear: year - 1, reviewOutcome: 'passed' }], 'specialized_sme')
   candidate('到期结果未知', [{ eventType: 'award', year: year - 3, batchSeq: 1 }])
   candidate('复核缺结论年', [{ eventType: 'award', year: year - 4, batchSeq: 1 }, { eventType: 'review', year: year - 4, batchSeq: 1, reviewOutcome: 'passed' }])
@@ -64,10 +64,10 @@ it('创新型按自身认定周期复核并保留恢复与同年冲突', async (
   candidate('复核原周期未知', [{ eventType: 'award', year: year - 1 }, { eventType: 'review', year: null, decidedYear: year, reviewOutcome: 'failed' }])
   candidate('纯培育', [{ eventType: 'nurture', year }])
   const { wb, result } = await workbook('119-cycles')
-  expect(rows(wb, '有效企业').map(row => row[2])).toEqual(['新认定', '复核通过', '失败后恢复'])
+  expect(rows(wb, '有效企业').map(row => row[2])).toEqual(['新认定', '复核通过', '失败后恢复', '本周期失败'])
   expect(rows(wb, '未认定').map(row => row[2])).toEqual(['纯培育'])
-  expect(rows(wb, '已到期').map(row => row[2])).toEqual(['旧周期晚失败', '本周期失败', '到期结果未知', '复核缺结论年', '同年复核冲突', '同年恢复顺序未知', '复核原周期未知'])
-  expect(result.counts).toEqual({ eligible: 3, pending: 0, excluded: 8 })
+  expect(rows(wb, '已到期').map(row => row[2])).toEqual(['旧周期晚失败', '到期结果未知', '复核缺结论年', '同年复核冲突', '同年恢复顺序未知', '复核原周期未知'])
+  expect(result.counts).toEqual({ eligible: 4, pending: 0, excluded: 7 })
   const restoreRow = rows(wb, '有效企业').find(row => matchesBusinessIdentity(db, row, restored.enterprise.id))!
   expect(restoreRow[6]).toBe(String(year - 5))
   expect(restoreRow[7].split('\n')).toHaveLength(restored.events.length)
@@ -103,14 +103,14 @@ it('创新型迁入更名双备注与主体排除不越过证据边界', async (
   const expectedDisplay = Object.freeze({
     8: `${year}年第1批认定，《innovative_sme-synthetic.xlsx》：未逐出处核实`,
     9: '公布旧名',
-    11: '逐出处公布名见公布名称列；现用名见企业名称列；已确认曾用名仅见该列',
+    11: '历史诊断（不参与有效判定）：迁入资格来源版本或归属需重新核实（已存决定）；逐出处公布名见公布名称列；现用名见企业名称列；已确认曾用名仅见该列',
     12: `${year}年第1批认定：宁波市经信局公布资料\n《innovative_sme-synthetic.xlsx》，附件：合成名单，名单序号${renamed.events[0]!.id}，未逐出处核实`,
   })
   const { wb, result } = await workbook('119-identity')
-  expect(rows(wb, '有效企业').map(row => row[2])).toEqual(['迁入现名', '外迁排除', '注销排除', '迁出后迁回', '未确认旧名', '缺正式出处', '统代冲突', '旧解释前提未知', '终止周期未结构化'])
+  expect(rows(wb, '有效企业').map(row => row[2])).toEqual(['迁入现名', '外迁排除', '注销排除', '迁出后迁回', '迁入缺本称号资格', '未确认旧名', '缺正式出处', '统代冲突', '旧解释前提未知', '终止周期未结构化'])
   expect(rows(wb, '已迁出')).toEqual([]); expect(rows(wb, '已注销（吊销）')).toEqual([])
-  expect(rows(wb, '未认定').map(row => row[2])).toEqual(['迁入缺本称号资格'])
-  expect(result.counts).toEqual({ eligible: 9, pending: 0, excluded: 1 })
+  expect(rows(wb, '未认定').map(row => row[2])).toEqual([])
+  expect(result.counts).toEqual({ eligible: 10, pending: 0, excluded: 0 })
   const renameRow = rows(wb, '有效企业')[0]!
   expect({ 8: renameRow[8], 9: renameRow[9], 11: renameRow[11], 12: renameRow[12] }).toEqual(expectedDisplay); expect(renameRow[9]).toBe('公布旧名')
   expect(renameRow[11]).not.toContain('已确认迁入宁波')
@@ -120,12 +120,10 @@ it('创新型迁入更名双备注与主体排除不越过证据边界', async (
   expect(renameRow[9]).toBe(alias.name)
   expect(rows(wb, '有效企业').find(row => row[2] === '外迁排除')![13]).toBe('有效企业')
   expect(outDecision.id).toBeGreaterThan(0)
-  for (const name of ['迁入缺本称号资格']) {
-    const pending = rows(wb, '未认定').find(row => row[2] === name)!
-    expect(pending[10]).toBe('尚未完成公布匹配核实')
-    expect(pending[11] ?? null).toBeNull()
-  }
-  expect(rows(wb, '未认定').find(row => row[2] === '迁入缺本称号资格')![15]).toContain('缺少已确认认定及资格依据')
+  const inherited = rows(wb, '有效企业').find(row => row[2] === '迁入缺本称号资格')!
+  expect(inherited[6] ?? null).toBeNull()
+  expect(inherited[7] ?? null).toBeNull()
+  expect(inherited[11]).toContain('按有效小巨人资格计入')
   expect(rows(wb, '有效企业').find(row => row[2] === '旧解释前提未知')![13]).toBe('有效企业')
   expect(staleDecision.id).toBeGreaterThan(0)
   expect(rows(wb, '有效企业').find(row => row[2] === '统代冲突')![11]).toContain('身份冲突')
