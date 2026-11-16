@@ -43,5 +43,5 @@ defineRouteMeta({ openAPI: { tags: ['差异决定'], summary: '提交来源版�
                 },
               },
             },
-          }, planHash: { type: 'string', pattern: '^[a-f0-9]{64}$' } } } } } }, responses: { '200': { description: '成功' }, '400': { description: '严格输入错误' }, '401': { description: '需要授权' }, '409': { description: '版本或幂等冲突' }, '422': { description: '来源或事实不匹配' } } } })
+          }, planHash: { type: 'string', description: '预检返回的 SHA-256；必须为64个小写十六进制字符，由提交协议严格校验' } } } } } }, responses: { '200': { description: '成功' }, '400': { description: '严格输入错误' }, '401': { description: '需要授权' }, '409': { description: '版本或幂等冲突' }, '422': { description: '来源或事实不匹配' } } } })
 export default decisionRoute102('qualification-commit')
