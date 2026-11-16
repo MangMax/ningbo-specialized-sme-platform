@@ -107,39 +107,60 @@ afterAll(async () => {
   if (server) await new Promise<void>(resolve => server.close(() => resolve()))
   await enterpriseReads.close(); db.$client.close(); vi.unstubAllGlobals(); rmSync(dir, { recursive: true, force: true })
 })
-function assertFormalQualification(result: CurrentQualifiedResult, title: typeof titles[number]) {
-  // This positive control has a formal new award; the other six only have legacy intervals.
-  const formalId = ids.get(`issue305-inbound-${title}-formal-reaward-positive-control`)!
-  expect(result).toMatchObject({ total: 1, uncertainTotal: 0, responseVersion: 'current-qualified-478-v2',
-    rows: [{ enterpriseId: formalId, group: 'eligible', firstYear: 2020, recognition: { precision: 'year', year: reawardYear } }],
-    publishedPending: { rows: [], total: 0 } })
-  expect(result.rows.map(row => row.enterpriseId)).toEqual([formalId])
+// Literal partitions: only settled old history, strictly earlier failure followed
+// by an explicit external award, and the independent formal control qualify.
+const positive = ['settled-history-explicit-reaward', 'failed-history-later-explicit-reaward', 'formal-reaward-positive-control']
+const negative = ['same-year-failure-reaward', 'unknown-review-date', 'failed-history-interval-only', 'later-review-result-unknown']
+function supportingTitles(title: typeof titles[number]) {
+  return title === 'little_giant' ? ['little_giant'] : title === 'specialized_sme' ? ['little_giant', 'specialized_sme'] : ['little_giant', 'specialized_sme', 'innovative_sme']
 }
-it.each(titles)('keeps legacy inbound intervals from reviving expired formal cycles over current HTTP for %s', async title => {
+function eligibleNames(title: typeof titles[number]) {
+  return supportingTitles(title).flatMap(t => positive.map(id => `issue305-inbound-${t}-${id}`)).sort()
+}
+function assertFormalQualification(result: CurrentQualifiedResult, title: typeof titles[number]) {
+  expect(result).toMatchObject({ total: eligibleNames(title).length, uncertainTotal: 0, responseVersion: 'current-qualified-478-v2', publishedPending: { rows: [], total: 0 } })
+  expect(result.rows.map(row => row.enterpriseId).sort((a,b)=>a-b)).toEqual(eligibleNames(title).map(name=>ids.get(name)!).sort((a,b)=>a-b))
+  expect(result.rows.map(row => row.name).sort()).toEqual(eligibleNames(title))
+  for (const row of result.rows) {
+    const own = row.name.includes(`-${title}-`)
+    expect(row.firstYear).toBe(own ? 2020 : null)
+  }
+}
+it.each(titles)('admits confirmed current inbound qualifications and downward inheritance over HTTP for %s', async title => {
   const response = await fetch(base + '/api/roster/current-enterprises?' + new URLSearchParams({ titleCode: title, pageSize: '200' }))
   expect(response.status, await response.clone().text()).toBe(200)
   assertFormalQualification(await response.json(), title)
 })
-it.each(titles)('keeps legacy inbound intervals from reviving expired formal cycles over SDK MCP for %s', async title => {
+it.each(titles)('admits confirmed current inbound qualifications and downward inheritance over SDK MCP for %s', async title => {
   const response = await client.callTool({ name: 'list_current_qualified_enterprises', arguments: { titleCode: title, pageSize: 200 } })
   expect(response.isError).not.toBe(true)
   const content = response.content
   if (!Array.isArray(content) || content[0]?.type !== 'text') throw new Error('Expected MCP text result')
   assertFormalQualification(JSON.parse(content[0].text), title)
 })
-it.each(titles)('retains all six expired formal histories and first awards in current XLSX for %s', async title => {
+it.each(titles)('preserves literal five sheet identity partitions and local history in XLSX for %s', async title => {
   const file = join(dir, `issue305-inbound-${title}.xlsx`)
   const result = await writeCurrentWorkbook(db.$client, title, file, () => {})
-  expect(result.counts).toEqual({ eligible: 1, pending: 0, excluded: 6 })
+  const count = eligibleNames(title).length
+  expect(result.counts).toEqual({ eligible: count, pending: 0, excluded: supportingTitles(title).length * 4 })
   const workbook = new ExcelJS.Workbook(); await workbook.xlsx.readFile(file)
-  for (const sheet of ['有效企业', '已到期', '已注销（吊销）', '已迁出', '未认定'] as const) {
+  const partitions = { '有效企业': eligibleNames(title), '已到期': negative.map(id=>`issue305-inbound-${title}-${id}`).sort(), '已注销（吊销）': [], '已迁出': [], '未认定': supportingTitles(title).filter(t=>t!==title).flatMap(t=>negative.map(id=>`issue305-inbound-${t}-${id}`)).sort() }
+  for (const [sheet, expected] of Object.entries(partitions)) {
     const actual: string[] = []
     workbook.getWorksheet(sheet)!.eachRow((row, index) => {
       if (index === 1) return
-      actual.push(row.getCell(2).text); expect(row.getCell(6).text).toBe('2020')
-      expect(row.getCell(7).text).toContain('2020年')
+      const name = row.getCell(2).text
+      actual.push(name)
+      expect(row.getCell(3).text).toBe(name)
+      if (name.includes(`-${title}-`)) {
+        expect(row.getCell(6).text).toBe('2020')
+        expect(row.getCell(7).text).toContain('2020年')
+      } else {
+        expect(row.getCell(6).text).toBe('')
+        expect(row.getCell(7).text).toBe('')
+      }
     })
-    expect(actual.sort()).toEqual(cases.filter(c => sheet === '有效企业' ? c.formalAward : sheet === '已到期' ? !c.formalAward : false).map(c => `issue305-inbound-${title}-${c.id}`).sort())
+    expect(actual.sort()).toEqual(expected)
   }
 })
 it('preserves reviewed inbound historical outcomes through the explicit v1 compatibility reader', () => {

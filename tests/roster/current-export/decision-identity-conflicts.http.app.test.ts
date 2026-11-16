@@ -47,11 +47,11 @@ it('keeps later conflicting observations separate from retained decision audit',
   const before=f.db.$client.prepare('select * from difference_reason where id=?').get(result.body.versionId)
   const {wb}=await f.workbook('pr138-historical-conflict')
   const actual=occurrences(wb,c.enterprise.id)
-  expect(actual.map(x=>x.sheet)).toEqual(['未认定'])
+  expect(actual.map(x=>x.sheet)).toEqual(['有效企业'])
   expect(actual[0]!.row[12]).toContain('工信部企业信息查询')
   expect(f.db.$client.prepare('select * from difference_reason where id=?').get(result.body.versionId)).toEqual(before)
 },60000)
-it('does not let inbound assertions bypass missing or expired formal qualification',async()=>{
+it('admits independently confirmed inbound qualification despite unrelated diagnostic heads',async()=>{
   const ids:number[]=[]
   for(const kind of ['other','unknown','identity','subject'] as const){
     const c=f.candidate('Sticky inbound blocker '+kind,kind==='identity'?[{eventType:'award',year:year-6,batchSeq:1}]:[])
@@ -65,17 +65,17 @@ it('does not let inbound assertions bypass missing or expired formal qualificati
     ids.push(c.enterprise.id)
   }
   const {wb}=await f.workbook('pr138-sticky-blockers')
-  for(const [index,id] of ids.entries())expect.soft(occurrences(wb,id).map(x=>x.sheet),String(id)).toEqual([index===2?'已到期':'未认定'])
+  for(const [index,id] of ids.entries())expect.soft(occurrences(wb,id).map(x=>x.sheet),String(id)).toEqual(['有效企业'])
 },60000)
-it('preserves expired formal history without treating inbound assertions as a formal grant',async()=>{
+it('admits current inbound qualification while preserving expired formal grant history',async()=>{
   const c=f.candidate('Historical local returning enterprise',[{eventType:'award',year:year-6,batchSeq:1}])
   const {result}=await inbound(c.enterprise.id);expect(result.status).toBe(200);await review(c.enterprise.id,result.body.versionId)
   const {wb}=await f.workbook('pr138-returning-history'),actual=occurrences(wb,c.enterprise.id)
-  expect(actual.map(x=>x.sheet)).toEqual(['已到期'])
+  expect(actual.map(x=>x.sheet)).toEqual(['有效企业'])
   expect(actual[0]!.row[7]).toContain('年第1批认定')
-  expect(actual[0]!.row[7]).not.toContain('independently verified external qualification')
+  expect(actual[0]!.row[7]).toContain('independently verified external qualification')
   expect(actual[0]!.row[10]).toContain('已见本称号宁波公布')
-  expect(actual[0]!.row[11]??'').not.toContain('New grant publications only')
+  expect(actual[0]!.row[11]??'').toContain('New grant publications only')
   expect(actual[0]!.row[11]).not.toContain('已到复核年份')
   expect(readCurrentCandidate(f.db.$client,c.enterprise.id,'little_giant',year).group).toBe('excluded')
 },60000)
@@ -92,11 +92,11 @@ it('keeps formal failures and undated grants in the expired sheet despite inboun
   const {wb}=await f.workbook('pr138-formal-boundaries')
   for(const id of ids)expect.soft(occurrences(wb,id).map(x=>x.sheet)).toEqual(['已到期'])
 },60000)
-it('keeps external reaward assertions outside formal eligibility across temporal boundaries',async()=>{
+it('separates earlier failures from same year and later formal failure conflicts',async()=>{
   const expected:Array<[number,string]>=[]
   for(const [label,failureYear,awardYear] of [['later',year-2,year-1],['unknown-origin-later',year-2,year-1],['same-year',year-1,year-1],['later-failure',year,year-1]] as const){
     const c=f.candidate('Explicit external recovery '+label,[{eventType:'award',year:year-6,batchSeq:1},{eventType:'review',year:label==='unknown-origin-later'?null:year-6,decidedYear:failureYear,reviewOutcome:'failed',batchSeq:null}])
-    const {result}=await inbound(c.enterprise.id,{awardYear});expect(result.status,JSON.stringify(result.body)).toBe(200);await review(c.enterprise.id,result.body.versionId);expected.push([c.enterprise.id,'已到期'])
+    const {result}=await inbound(c.enterprise.id,{awardYear});expect(result.status,JSON.stringify(result.body)).toBe(200);await review(c.enterprise.id,result.body.versionId);expected.push([c.enterprise.id,label==='later'||label==='unknown-origin-later'?'有效企业':'已到期'])
   }
   const {wb}=await f.workbook('pr138-explicit-reaward')
   for(const [id,group] of expected)expect(occurrences(wb,id).map(x=>x.sheet)).toEqual([group])
@@ -121,7 +121,7 @@ it('rejects future reaward assertions and keeps unrelated title qualification ga
   expect(result.status).toBe(200);await review(c.enterprise.id,result.body.versionId)
   f.decision(c.enterprise.id,'other',{titleCode:'little_giant',direction:'missing_in_miit'})
   const {wb}=await f.workbook('pr138-title-gap-scope')
-  expect(occurrences(wb,c.enterprise.id).map(x=>x.sheet)).toEqual(['未认定'])
+  expect(occurrences(wb,c.enterprise.id).map(x=>x.sheet)).toEqual(['有效企业'])
 },60000)
 
 it('keeps later pending observations separate from reviewed inbound history',async()=>{
@@ -130,7 +130,7 @@ it('keeps later pending observations separate from reviewed inbound history',asy
   const next=source(c.enterprise.id,undefined,false)
   expect(next.r.id).not.toBe(r.id)
   const {wb}=await f.workbook('pr138-source-confirmation-defense')
-  expect(occurrences(wb,c.enterprise.id).map(x=>x.sheet)).toEqual(['未认定'])
+  expect(occurrences(wb,c.enterprise.id).map(x=>x.sheet)).toEqual(['有效企业'])
 },60000)
 it('preserves a later definite formal qualification when the inbound interval belongs to older history',async()=>{
   const c=f.candidate('Later definite local award',[{eventType:'award',year,batchSeq:1}])
@@ -165,7 +165,7 @@ it.each(CURRENT_TITLES)('keeps a later formal failure excluded after an expired 
   expect(actual[0]!.row[7]).toContain('年第1批认定')
   expect(actual[0]!.row[7]).not.toContain('Synthetic expired external grant retained for audit')
   expect(actual[0]!.row[7]).toContain('复核未通过')
-  expect(actual[0]!.row[11]).toContain('复核明确不通过')
+  expect(actual[0]!.row[11]).toContain(titleCode==='little_giant'?'本称号原认定周期已有生效的已确认处置':'复核明确不通过')
   expect(actual[0]!.row[11]).not.toContain('日期顺序尚未消解')
   expect(actual[0]!.row.join(' ')).not.toContain('decision:'+result.body.versionId)
   expect(actual[0]!.row[12]).toContain('synthetic-118.xlsx')

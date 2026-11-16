@@ -7,7 +7,14 @@ import { schema as s } from '../../../db/client'
 import { specializedExportFixture, rows, year } from './fixtures/specialized-export'
 import { readEvidenceToken113 } from '../../../server/utils/evidence-impact-113'
 import { readQueryAssessment } from '../../../lib/roster/query-assessment'
-const f = nativeWorkbookFixture()
+const native = nativeWorkbookFixture()
+const f = { ...native, get db() { return native.db }, async workbook(key: string, title = 'specialized_sme') {
+  if (title !== 'specialized_sme') return native.workbook(key, title as any)
+  const response = await native.submit(key); expect(response.status).toBe(202)
+  const accepted = await response.json() as { jobId: string }
+  const job = await native.terminal(accepted.jobId); expect(job.state, JSON.stringify(job)).toBe('done')
+  return { ...await native.download(job), result: job.result }
+} }
 beforeAll(() => f.start(), 90000)
 beforeEach(()=>f.resetBusiness())
 afterAll(() => f.close())
@@ -27,7 +34,7 @@ const occurrences = (wb:any,id:number): Array<{sheet:string;row:any[]}> => wb.wo
 function relation(id:number, rdjb='2', assigned=true) {
   const e=f.db.select().from(s.enterprise).all().find(e=>e.id===id)!
   const native=submitSyntheticRecognizedCollection(f.db,{rdjb,queriedAt:new Date(Date.now()+(++serial)).toISOString(),rows:[{enterpriseId:assigned?id:null,raw:{id:`PR126-${serial}`,qymc:e.name,tyshxydm:e.usccNorm,rdjb:'2'}}]})
-  return {q:{id:native.queryId},r:{id:native.relationIds[0]!}}
+  return {q:{id:native.queryId},r:{id:native.relationIds[0]!}, sourceKey:`PR126-${serial}`}
 }
 it('keeps explanation validity readable while legacy subject decisions do not alter formal eligibility', async () => {
   const c=f.candidate('Changed departure evidence'), legacy=f.candidate('Maintained legacy termination')
@@ -52,10 +59,10 @@ it('assigns multi title recognized candidates by original source page segments',
   relation(c.enterprise.id,'1,2,3')
   for(const [title,path] of [['specialized_sme','specialized-sme'],['little_giant','little-giant'],['innovative_sme','innovative-sme']] as const){
     const {wb}=await f.workbook('source-page-'+title,title as any)
-    expect(occurrences(wb,c.enterprise.id).map(x=>x.sheet)).toEqual(title==='specialized_sme'?['未认定']:[])
+    expect(occurrences(wb,c.enterprise.id).map(x=>x.sheet)).toEqual(title==='little_giant'?[]:['未认定'])
   }
 },60000)
-it('keeps reviewed inbound assertions outside formal eligibility while retaining confirmed aliases', async () => {
+it('admits reviewed inbound qualification without fabricating formal history and retains confirmed aliases', async () => {
   const c=f.candidate('Inbound renamed current enterprise',[])
   const {q,r}=relation(c.enterprise.id)
   f.db.insert(s.enterpriseAlias).values({enterpriseId:c.enterprise.id,name:'Confirmed old inbound name',nameNorm:'Confirmed old inbound name',verificationStatus:'confirmed',sourceKind:'manual'} as any).run()
@@ -64,33 +71,38 @@ it('keeps reviewed inbound assertions outside formal eligibility while retaining
   await maintain(c.enterprise.id,result.body.versionId)
   const {wb}=await f.workbook('pr126-qualified-inbound-http')
   const actual=occurrences(wb,c.enterprise.id)
-  expect(actual.map(x=>x.sheet)).toEqual(['未认定'])
+  expect(actual.map(x=>x.sheet)).toEqual(['有效企业'])
   expect(actual[0]!.row[6]??'').toBe('')
-  expect(actual[0]!.row[10]).toBe('尚未完成公布匹配核实')
-  expect(actual[0]!.row[11]??'').not.toContain('迁入')
+  expect(actual[0]!.row[10]).toContain('未见宁波该称号公布记录')
+  expect(actual[0]!.row[11]??'').toContain('迁入')
   expect(actual[0]!.row[9]).toBe('Confirmed old inbound name')
-  expect(actual[0]!.row[11]??'').not.toContain('All ingested Ningbo')
+  expect(actual[0]!.row[11]??'').toContain('All ingested Ningbo')
   expect(actual[0]!.row[11]??'').not.toContain('缺少已确认认定及资格依据')
   expect(actual[0]!.row[11]??'').not.toContain('需核实具体资格与公布匹配范围')
   expect(actual[0]!.row[12]).toContain('工信部已认定企业名单')
   expect(actual[0]!.row.join(' ')).not.toContain('decision:'+result.body.versionId)
 },60000)
 
-it('keeps inbound attestations unrecognized across expired future unreviewed and unchecked partitions and rejects wrong scope', async () => {
+it('separates confirmed commands from unconfirmed expired future and unchecked qualifications and rejects wrong scope', async () => {
   const decision=(queryId:number,relationId:number,qualification:any)=>({status:'confirmed_reason',reasonCode:'moved_in',measureCode:'record_moved_in',verificationStatus:'confirmed',evidenceQueryId:queryId,evidenceRelationId:relationId,currentQualification:qualification})
   const base={titleCode:'specialized_sme',validFrom:`${year-1}-01-01T00:00:00Z`,validUntil:`${year+1}-01-01T00:00:00Z`,basis:'Synthetic independently verified external qualification',publicationCheck:{status:'not_found',scope:'Ingested Ningbo announcements and all confirmed names'}}
   const pending:number[]=[]
   for(const [label,patch,review] of [
     ['expired',{validUntil:`${year}-01-01T00:00:00Z`},true],
     ['future',{validFrom:`${year+1}-01-01T00:00:00Z`,validUntil:`${year+2}-01-01T00:00:00Z`},true],
-    ['unreviewed',{},false],
+    ['confirmed without diagnostic review',{},false],
+    ['unconfirmed',{},false],
     ['publication unchecked',{publicationCheck:{status:'not_checked',scope:'No publication search completed'}},true],
   ] as const){
     const c=f.candidate('Inbound boundary '+label,[]),{q,r}=relation(c.enterprise.id)
-    const result=await api('/api/roster/decision-lifecycle/commands',{...scope(c.enterprise.id),action:'replace',expectedCurrentId:null,idempotencyKey:'pr126-boundary-'+label,actor,basis:'Synthetic explicit verification',ruleVersion:'synthetic-pr126',effectiveAt:'2025-01-01T00:00:00Z',decision:decision(q.id,r.id,{...base,...patch})})
+    const result=await api('/api/roster/decision-lifecycle/commands',{...scope(c.enterprise.id),action:'replace',expectedCurrentId:null,idempotencyKey:'pr126-boundary-'+label,actor,basis:'Synthetic explicit verification',ruleVersion:'synthetic-pr126',effectiveAt:'2025-01-01T00:00:00Z',decision:{...decision(q.id,r.id,{...base,...patch}),...(label==='unconfirmed'?{verificationStatus:'pending'}:{})}})
+    if(label==='unconfirmed') { expect(result.status).toBe(400); pending.push(c.enterprise.id); continue }
     expect(result.status,JSON.stringify(result.body)).toBe(200)
     if(review)await maintain(c.enterprise.id,result.body.versionId)
-    pending.push(c.enterprise.id)
+    if(label==='confirmed without diagnostic review') {
+      const {wb}=await f.workbook('confirmed-without-diagnostic-review')
+      expect(occurrences(wb,c.enterprise.id).map(x=>x.sheet)).toEqual(['有效企业'])
+    } else pending.push(c.enterprise.id)
   }
   const c=f.candidate('Invalid qualification scope',[]),{q,r}=relation(c.enterprise.id)
   for(const patch of [{titleCode:'little_giant'},{validUntil:base.validFrom},{basis:''}]){
@@ -119,8 +131,46 @@ it('requires confirmed source ownership and preserves explicit prior-version int
   expect(at(qualification.validFrom).group).toBe('eligible')
   expect(at('2026-12-31T23:59:59.999Z').group).toBe('eligible')
   expect(at(qualification.validUntil).group).toBe('pending')
+  // Default current interval is [from,until); no local grant is invented.
+  const currentAt=(instant:string)=>createCurrentCandidateReader(f.db.$client)(c.enterprise.id,'specialized_sme',new Date(instant).getUTCFullYear(),Date.parse(instant))
+  expect(currentAt('2025-12-31T23:59:59.999Z').group).toBe('excluded')
+  expect(currentAt(qualification.validFrom)).toMatchObject({group:'eligible',firstYear:null})
+  expect(currentAt('2026-12-31T23:59:59.999Z')).toMatchObject({group:'eligible',firstYear:null})
+  expect(currentAt(qualification.validUntil).group).toBe('excluded')
+  expect(f.db.$client.prepare('select count(*) n from record_event where record_id=?').get(c.record.id)).toEqual({n:0})
   const current=await f.workbook('pr126-prior-interval-default-consumer')
-  expect(occurrences(current.wb,c.enterprise.id).map(x=>x.sheet)).toEqual(['未认定'])
+  expect(occurrences(current.wb,c.enterprise.id).map(x=>x.sheet)).toEqual(['有效企业'])
   const changed=await api('/api/roster/decision-lifecycle/commands',{...command,idempotencyKey:'pr126-exact-interval',decision:{...command.decision,currentQualification:{...qualification,basis:'Changed attestation'}}})
   expect(changed.status).toBe(409)
 },60000)
+
+// Only the bound observation's latest confirmed ownership can qualify. A source
+// diagnostic does not revoke an independently current formal award.
+it('recomputes bound source ownership without cancelling independent formal qualification', async () => {
+  const expected: Array<{id:number; name:string; code:string; sheet:string}> = []
+  for (const change of ['ownership','content'] as const) for (const formal of [false, true]) {
+    const name = (formal ? 'Formal survives bound source ' : 'Inbound loses bound source ') + change
+    const c = f.candidate(name, formal ? [{eventType:'award',year,batchSeq:1}] : [])
+    const {q,r,sourceKey}=relation(c.enterprise.id)
+    const result=await api('/api/roster/decision-lifecycle/commands',{...scope(c.enterprise.id),action:'replace',expectedCurrentId:null,idempotencyKey:'bound-owner-'+change+'-'+formal,actor,basis:'Verified external qualification',ruleVersion:'synthetic',effectiveAt:`${year-1}-01-01T00:00:00Z`,decision:{status:'confirmed_reason',reasonCode:'moved_in',measureCode:'record_moved_in',verificationStatus:'confirmed',evidenceQueryId:q.id,evidenceRelationId:r.id,currentQualification:{titleCode:'specialized_sme',validFrom:`${year-1}-01-01T00:00:00Z`,validUntil:`${year+1}-01-01T00:00:00Z`,basis:'Independent external award',publicationCheck:{status:'not_found',scope:'All ingested specialized announcements and confirmed names'}}}})
+    expect(result.status,JSON.stringify(result.body)).toBe(200)
+    await maintain(c.enterprise.id,result.body.versionId)
+    const before=await f.workbook('bound-owner-before-'+change+'-'+formal)
+    expect(occurrences(before.wb,c.enterprise.id).map(x=>x.sheet)).toEqual(['有效企业'])
+    if(change==='content') {
+      submitSyntheticRecognizedCollection(f.db,{rdjb:'2',queriedAt:new Date(Date.now()+1000).toISOString(),rows:[{enterpriseId:c.enterprise.id,raw:{id:sourceKey,qymc:c.enterprise.name,tyshxydm:c.enterprise.usccNorm,rdjb:'2',rddqrq:'2030-12-31'}}]})
+    } else {
+    const assignment=f.db.select().from(s.platformObservationAssignment).all().at(-1)!
+    f.db.insert(s.platformObservationAssignment).values({...assignment,revision:assignment.revision+1,verificationStatus:'pending'}).run()
+    }
+    expected.push({id:c.enterprise.id,name,code:'SYNTHETIC-118-'+name.toUpperCase().replaceAll(' ',''),sheet:formal?'有效企业':'未认定'})
+  }
+  const {wb}=await f.workbook('bound-owner-after')
+  for (const item of expected) {
+    const actual=occurrences(wb,item.id)
+    expect(actual.map(x=>x.sheet)).toEqual([item.sheet])
+    expect(actual[0]!.row[2]).toBe(item.name)
+    expect(actual[0]!.row[3]).toBe(item.code)
+    expect(actual[0]!.row[6]??'').toBe(item.sheet==='有效企业'?String(year):'')
+  }
+})
