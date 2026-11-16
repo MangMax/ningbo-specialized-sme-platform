@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import { computed, ref, shallowRef, watch } from 'vue'
+import type { PlatformQualificationFact } from '~~/lib/roster/platform-qualification'
 import type { RosterEnterpriseDetail } from '~~/lib/roster/enterprise-roster'
 import PlatformRecords from './PlatformRecords.vue'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog'
 import { reviewOutcomeLabel, timelineEventIdentity, type TimelineEventFacts } from '~~/lib/roster/enterprise-timeline'
 
-const props = defineProps<{ events?: readonly TimelineEventFacts[]; enterpriseId?: number }>()
+const props = defineProps<{ events?: readonly TimelineEventFacts[]; enterpriseId?: number; source?: PlatformQualificationFact }>()
 const open = ref(false)
 const detail = shallowRef<RosterEnterpriseDetail | null>(null)
 const loading = ref(false)
@@ -53,7 +54,8 @@ const steps = computed(() => {
 </script>
 
 <template>
-  <ol v-if="steps.length" class="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm leading-6" aria-label="认定与复核时间线">
+  <p v-if="source" class="min-w-0 break-words text-sm leading-6 [overflow-wrap:anywhere]">{{ { recognized_list: '认定目录', business_list: '关联办理', apply_list: '申报记录' }[source.source] }} · {{ source.platformName ?? '来源原名未知' }}<br>业务时间：{{ source.businessTime.value ?? '未知' }}<br>实际期间：{{ source.period.from.value ?? '起始未知' }} 至 {{ source.period.until.value ?? '结束未知' }}</p>
+  <ol v-else-if="steps.length" class="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm leading-6" aria-label="认定与复核时间线">
     <li v-for="(step, index) in steps" :key="step.key" class="inline-flex items-center gap-2">
       <span v-if="index" class="text-muted-foreground" aria-hidden="true">→</span>
       <span><span class="tabular-nums">{{ step.year ?? '年份未记录' }}</span> {{ step.label }}</span>

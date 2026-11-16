@@ -291,25 +291,6 @@ const fullPageTo = computed(() => {
   return `/enterprises/${props.enterpriseId}${q}`
 })
 
-/**
- * 抽屉只回答“有没有要核对的范围、去哪里核对”。
- * 矩阵、证据和决定历史都在企业详情页，抽屉不重复铺开。
- */
-const reviewSummary = computed(() => {
-  const list = detail.value?.titleAssessments ?? []
-  if (!list.length) return '尚未读取核对范围。'
-  const decided = list.filter(item => item.assessment === 'decided').length
-  const queried = list.filter(item => item.assessment === 'queried_unjudged').length
-  const notQueried = list.filter(item => item.assessment === 'not_queried').length
-  return `${list.length} 个判断范围 · ${decided} 个已有决定 · ${queried} 个已查询待判断 · ${notQueried} 个尚未查询`
-})
-const reviewPageTo = computed(() => {
-  const params = new URLSearchParams()
-  if (props.backQuery) params.set('back', props.backQuery)
-  params.set('tab', 'review')
-  return `/enterprises/${props.enterpriseId}?${params.toString()}`
-})
-
 function rememberLedger(event: MouseEvent) {
   if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
   rememberEvidencePreviewReturn(props.backQuery ? `/?${props.backQuery}` : '/', document.querySelector('[data-testid="enterprise-table-scroll"]') ?? document.querySelector('[data-evidence-return-scroll-container]'))
@@ -431,15 +412,6 @@ function eventSuffix(item: TimelineItem): string {
             </li>
           </ol>
           <p v-else class="text-muted-foreground mt-3 text-[13px]">尚无称号历史。</p>
-
-          <!-- 核对摘要：只给范围和入口，矩阵与证据留在企业详情页。 -->
-          <section class="mt-5 border-t pt-4" data-testid="drawer-review-summary">
-            <div class="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
-              <h3 class="text-sm font-medium">称号核对</h3>
-              <NuxtLink :to="reviewPageTo" class="text-primary text-[13px] hover:underline" @click="rememberLedger">在企业详情中核对</NuxtLink>
-            </div>
-            <p class="text-muted-foreground mt-1 max-w-[46ch] text-[13px] leading-5">{{ reviewSummary }}</p>
-          </section>
 
           <DisclosurePanel v-if="evidenceItems.length" compact content-class="pb-0" class="mt-5 border-t pt-4" data-testid="enterprise-evidence" :title="`出处 · ${evidenceItems.length}`">
             <ul class="mt-2 flex flex-col gap-2">

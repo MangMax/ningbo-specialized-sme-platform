@@ -345,17 +345,15 @@ describe('企业详情抽屉的称号时间线', () => {
     expect(events[0]!.text()).toContain('认定')
   })
 
-  it('抽屉只给核对摘要与入口，不重复企业详情矩阵',()=>{
-    const assessments=[{assessment:'decided'},{assessment:'decided'},{assessment:'queried_unjudged'},{assessment:'not_queried'},{assessment:'not_queried'},{assessment:'not_queried'}]
-    queryData.value={...detailWithDifference(),titleAssessments:assessments}
-    queryLoading.value=false
-    const wrapper=mountDrawer()
-    const summary=wrapper.get('[data-testid="drawer-review-summary"]')
-    expect(summary.text()).toContain('6 个判断范围')
-    expect(summary.text()).toContain('2 个已有决定')
-    expect(summary.text()).toContain('3 个尚未查询')
-    expect(wrapper.find('section[aria-label="称号核对"]').exists()).toBe(false)
+  it('抽屉展示四个业务来源并卸载核对入口', () => {
+    queryData.value = detailWithDifference()
+    queryLoading.value = false
+    const wrapper = mountDrawer()
+    expect(wrapper.findAll('[role="tab"]').map(tab => tab.text())).toEqual(['公布资料', '认定目录', '关联办理', '申报记录'])
+    expect(wrapper.find('[data-testid="drawer-review-summary"]').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('在企业详情中核对')
   })
+
 })
 
 
