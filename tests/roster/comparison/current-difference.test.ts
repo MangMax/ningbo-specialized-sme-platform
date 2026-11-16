@@ -135,3 +135,20 @@ it('suggests source collection for a missing directory period and clears advice 
  writeNewCollectionTarget(f.db,collectionCommand({...row,rdtime:'2025-01-01',rddqrq:'2028-01-01'},'2026-05-04T00:00:00Z'))
  expect(read()).toMatchObject({total:1,rows:[{inCurrentDifference:true,qualification:{status:'effective'},suggestedAction:'none'}]})
 })
+
+it.each(['终审通过','未知状态'])('does not recollect a settled directory invalidation because an older process has %s',async status=>{
+ vi.setSystemTime(new Date('2026-06-01T00:00:00Z'))
+ const local=qualificationExportFixture()
+ try {
+  const c=local.candidate('settled-directory',[])
+  const identity={tyshxydm:'91310115MA1H7KUG93',qymc:'settled-directory',rdjb:'1',szsmc:'宁波市'}
+  local.db.update(schema.enterprise).set({usccNorm:identity.tyshxydm}).where(eq(schema.enterprise.id,c.enterprise.id)).run()
+  local.db.$client.prepare("insert into record (enterprise_id,title_code,source,name_raw) values (?,'innovative_sme','miit','settled-directory')").run(c.enterprise.id)
+  writeNewCollectionTarget(local.db,collectionCommand({...identity,id:'older-process',sblx:'申请',cszt:status},'2026-05-01T00:00:00Z','businessList'))
+  writeNewCollectionTarget(local.db,collectionCommand({...identity,id:'settled-invalid-directory',rdtime:'2025-01-01',rddqrq:'2028-01-01',sfyx:'0',sxsj:'2026-05-10'},'2026-05-12T00:00:00Z'))
+  const filter={q:'settled-directory',title:['innovative_sme']}
+  const result=listRosterDifferences(local.db,filter)
+  expect(result).toMatchObject({total:1,rows:[{enterpriseId:c.enterprise.id,inCurrentDifference:true,qualification:{status:'unrecognized'},suggestedAction:'none'}]})
+  expect(legacyDifferences(local.db,filter)).toEqual(result)
+ } finally {await local.close()}
+})
