@@ -86,11 +86,12 @@ it('retains platform-only source differences as targeted facts arrive and change
  f.db.$client.prepare("insert into record (enterprise_id,title_code,source,name_raw) values (?,'innovative_sme','miit','targeted-platform')").run(c.enterprise.id)
  const read=()=>listRosterDifferences(f.db,{q:'targeted-platform',title:['innovative_sme']})
  expect(read()).toMatchObject({total:1,rows:[{qualification:{status:'unrecognized'}}]})
- const row={id:'targeted-recognition',tyshxydm:'91330110MA2GMDFH58',qymc:'targeted-platform',rdjb:'3',rdtime:'2025-01-01',rddqrq:'2028-01-01',sfyx:'1',szsmc:'宁波市'}
+ const row={id:'targeted-recognition',tyshxydm:'91330110MA2GMDFH58',qymc:'targeted-platform',rdjb:'1',rdtime:'2025-01-01',rddqrq:'2028-01-01',sfyx:'1',szsmc:'宁波市'}
  writeNewCollectionTarget(f.db,collectionCommand(row,'2026-05-01T00:00:00Z'))
  expect(read()).toMatchObject({total:1,rows:[{inCurrentDifference:true,qualification:{status:'effective',source:{source:'recognized_list'}},suggestedAction:'none'}]})
  writeNewCollectionTarget(f.db,collectionCommand({...row,sfyx:'0',sxsj:'2026-05-10'},'2026-05-11T00:00:00Z'))
- expect(read()).toMatchObject({total:1,rows:[{inCurrentDifference:true,qualification:{status:'unrecognized'},suggestedAction:'collect_source_facts'}]})
+ // A captured explicit invalidation is already a source conclusion, not a collection gap.
+ expect(read()).toMatchObject({total:1,rows:[{inCurrentDifference:true,qualification:{status:'unrecognized'},suggestedAction:'none'}]})
  // The two comparison sides align when a published row arrives; stored history remains.
  f.decision(c.enterprise.id,'other',{titleCode:'innovative_sme',reasonNote:'Retained source explanation'})
  f.addRecord(c.enterprise.id,'targeted-platform',[{eventType:'award',year:2025,batchSeq:1}],'innovative_sme')
@@ -104,4 +105,33 @@ it('retains missing-platform coordinates and counts before pagination independen
  const result=listRosterDifferences(f.db,{q:'page-source-',title:['specialized_sme'],page:2,pageSize:1})
  expect(result).toMatchObject({total:2,page:2,pageSize:1,counts:{specialized_sme:{missing_in_miit:2,extra_in_miit:0}},rows:[{name:'page-source-B',direction:'missing_in_miit',inCurrentDifference:true,qualification:{status:'effective'},suggestedAction:'none'}]})
  expect(legacyDifferences(f.db,{q:'page-source-',title:['specialized_sme'],page:2,pageSize:1})).toEqual(result)
+})
+
+it.each([
+ { name:'expired', events:[{eventType:'award' as const,year:2020,batchSeq:1}], fact:null, status:'expired' },
+ { name:'terminated', events:[], fact:'cancelled', status:'terminated' },
+ { name:'moved-out', events:[], fact:'moved_out', status:'moved_out' },
+])('does not request collection for the established $name conclusion', ({name,events,fact,status}) => {
+ vi.setSystemTime(new Date('2026-06-01T00:00:00Z'))
+ const c=f.candidate('settled-'+name,events,'specialized_sme')
+ if(fact) f.db.insert(schema.enterpriseFactRevision).values({enterpriseId:c.enterprise.id,factId:1,revision:1,status:'confirmed',fact:{kind:fact,source:{reference:'official/settled-subject',statement:'Published subject conclusion'},effective:{precision:'day',value:'2026-01-01'},observed:{precision:'day',value:'2026-01-01'},city:null},action:'assert',actor:{type:'agent',id:'comparison-fixture'},basis:'Verified subject fact',createdAt:'2026-01-01T00:00:00Z'}).run()
+ f.decision(c.enterprise.id,'other',{direction:'missing_in_miit',reasonNote:'Retained explanation for settled conclusion'})
+ const read=()=>listRosterDifferences(f.db,{q:'settled-'+name,title:['specialized_sme']})
+ // A known end of qualification is a conclusion, not a missing source to collect.
+ expect(read()).toMatchObject({total:1,rows:[{inCurrentDifference:true,reasonNote:'Retained explanation for settled conclusion',qualification:{status},suggestedAction:'none'}]})
+ expect(legacyDifferences(f.db,{q:'settled-'+name,title:['specialized_sme']})).toEqual(read())
+})
+
+it('suggests source collection for a missing directory period and clears advice when the period is supplied', () => {
+ vi.setSystemTime(new Date('2026-06-01T00:00:00Z'))
+ const c=f.candidate('period-gap',[])
+ f.db.update(schema.enterprise).set({usccNorm:'91330201753252106U'}).where(eq(schema.enterprise.id,c.enterprise.id)).run()
+ f.db.$client.prepare("insert into record (enterprise_id,title_code,source,name_raw) values (?,'innovative_sme','miit','period-gap')").run(c.enterprise.id)
+ const row={id:'missing-period',tyshxydm:'91330201753252106U',qymc:'period-gap',rdjb:'1',sfyx:'1',szsmc:'宁波市'}
+ const read=()=>listRosterDifferences(f.db,{q:'period-gap',title:['innovative_sme']})
+ writeNewCollectionTarget(f.db,collectionCommand(row,'2026-05-03T00:00:00Z'))
+ // sfyx alone cannot establish a period: the missing source fields justify collection.
+ expect(read()).toMatchObject({total:1,rows:[{inCurrentDifference:true,qualification:{status:'unrecognized'},suggestedAction:'collect_source_facts'}]})
+ writeNewCollectionTarget(f.db,collectionCommand({...row,rdtime:'2025-01-01',rddqrq:'2028-01-01'},'2026-05-04T00:00:00Z'))
+ expect(read()).toMatchObject({total:1,rows:[{inCurrentDifference:true,qualification:{status:'effective'},suggestedAction:'none'}]})
 })
