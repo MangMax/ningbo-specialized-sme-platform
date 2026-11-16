@@ -1,4 +1,5 @@
-import { and,desc,eq,sql,type AnyColumn,type SQL } from 'drizzle-orm'
+import { alias } from 'drizzle-orm/sqlite-core'
+import { and,desc,eq,gt,inArray,notExists,or,sql,type AnyColumn,type SQL } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import { createHash } from 'node:crypto'
 import { z } from 'zod'
@@ -143,6 +144,35 @@ export function currentDecisionState102(db: DecisionDb, scope: Scope) {
   const row = db.select({ id: t.id, status: t.status, lifecycleAction: t.lifecycleAction }).from(t)
     .where(whereScope(scope)).orderBy(desc(t.recordedAt), desc(t.id)).limit(1).get()
   return decisionState102(row)
+}
+/** Internal page read on the caller's transaction. Return positions, including duplicates. */
+export function currentDecisionStates102(db: DecisionDb, scopes: readonly Scope[]) {
+  if (!scopes.length) return []
+  const ids = [...new Set(scopes.map(scope => scope.enterpriseId))]
+  const existing = new Set(db.select({ id: s.enterprise.id }).from(s.enterprise).where(inArray(s.enterprise.id, ids)).all().map(row => row.id))
+  if (ids.some(id => !existing.has(id))) throw new DecisionError102(404, 'not_found', 'Enterprise not found')
+  const unique = [...new Map(scopes.map(scope => [JSON.stringify([scope.enterpriseId, scope.titleCode, scope.direction]), scope])).values()]
+  const t = s.differenceReason, newer = alias(t, 'decision_page_newer')
+  // Filter heads in SQLite BEFORE any public body hydration. ID alone is not time.
+  const rows = db.select({ id: t.id, enterpriseId: t.enterpriseId, titleCode: t.titleCode, direction: t.direction, status: t.status, lifecycleAction: t.lifecycleAction }).from(t)
+    .where(and(or(...unique.map(whereScope)), notExists(db.select({ id: newer.id }).from(newer).where(and(
+      eq(newer.enterpriseId, t.enterpriseId), eq(newer.titleCode, t.titleCode), eq(newer.direction, t.direction),
+      or(gt(newer.recordedAt, t.recordedAt), and(eq(newer.recordedAt, t.recordedAt), gt(newer.id, t.id))),
+    ))))).all()
+  const heads = new Map(rows.map(row => [JSON.stringify([row.enterpriseId, row.titleCode, row.direction]), row]))
+  return scopes.map(scope => {
+    const row = heads.get(JSON.stringify([scope.enterpriseId, scope.titleCode, scope.direction]))
+    return decisionState102(row ? { id: row.id, status: row.status, lifecycleAction: row.lifecycleAction } : undefined)
+  })
+}
+/** Full public bodies only for active heads; withdrawal version IDs remain visible. */
+export function currentDecisions102(db: DecisionDb, scopes: readonly Scope[]) {
+  const states = currentDecisionStates102(db, scopes)
+  const ids = [...new Set(states.flatMap(state => state.current ? [state.current.id] : []))]
+  const rows = ids.length ? db.select(differencePublicColumns(db)).from(s.differenceReason).where(inArray(s.differenceReason.id, ids)).all() : []
+  const bodies = new Map(rows.map(row => [row.id, row]))
+  return states.map((state, index) => ({ ...scopes[index]!, versionId: state.versionId,
+    current: state.current ? publicVersion(bodies.get(state.current.id)!, state.current.id) : null }))
 }
 /** Shared read-only admission; optional pins bind the qualification confirmation plan. */
 function prepareDecision102(db: DecisionDb, command: DecisionCommand102, capturePins = false) {
