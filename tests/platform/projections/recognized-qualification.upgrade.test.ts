@@ -6,6 +6,7 @@ import { targetSchema } from '../../../lib/platform/target-schema'
 import { ensureRecognizedTargetContent } from '../../../lib/platform/recognized-target-writer'
 import { planPlatformObservation } from '../../../lib/platform/observation-plan'
 import { upgradeRecognizedQualification } from '../../../upgrade/recognized-qualification'
+import { captureFingerprintBasis } from '../../../lib/platform/fingerprint-capture'
 
 function fixture() {
   const s = new Database(':memory:')
@@ -86,15 +87,23 @@ it('reports an observation without archived raw and leaves its fields uncaptured
   const s = new Database(':memory:')
   try {
     s.pragma('foreign_keys=ON'); createRuntimeSchema(s)
-    const command = collectionCommand({ id: 'no-raw', qymc: 'Example', rdjb: '2' }, '2026-11-16T00:00:00Z')
-    const query = JSON.parse(command.queryText)
-    query.relations[0].rawFields = null
-    command.queryText = JSON.stringify(query)
-    const result = writeNewCollectionTarget(drizzle(s, { schema: targetSchema }), command).observations[0]!
-    s.exec('UPDATE platform_recognized_projection SET qualification_fields_rule=NULL')
+    // Explicit historical SQL fixture: normal collection commands require raw/evidence
+    // agreement and cannot manufacture a missing original archive.
+    s.transaction(() => {
+    const fingerprint = captureFingerprintBasis(drizzle(s, { schema: targetSchema }), 1, 'target-command-v1', Buffer.from('{"row":{"rawFields":null}}'))
+    s.exec(`INSERT INTO platform_collection(id,interface,query_key,rdjb,queried_at,created_at,status,completeness,provenance_state,parse_state,rule_version)
+      VALUES(1,'recognized_list','historical','2','old','old','success','unknown','unknown','absent','old');
+      INSERT INTO platform_business_observation(id,collection_id,sequence_no,position_state,identity_state,content_state,key_source,projection_rule_version,input_fingerprint,indexed_at)
+      VALUES(1,1,1,'unknown','not_indexed','not_indexed',NULL,NULL,NULL,NULL);
+      INSERT INTO platform_archive_value(id,storage_class,bytes,byte_length,sha256,created_at) VALUES(2,'null',NULL,NULL,NULL,'old');
+      INSERT INTO platform_observation_archive_ref(owner_id,field,archive_id,sealed) VALUES(1,'rawFields',2,1);`)
+    const fields: Record<string, unknown> = { observation_id: 1, basis: 'unavailable', source_archive_id: 2, parse_state: 'absent', source_title_kind: 'absent', source_title_rule_version: 'old', rule_version: 'old', created_at: 'old', exact_title_state: 'captured', exact_title_origin: 'commandInput', exact_title_archive_id: 1, exact_title_sha256: fingerprint }
+    for (const name of ['province','status','batch','declare_kind','applied_at','award_batch_label','year']) Object.assign(fields, { [`stored_${name}_kind`]: 'absent', [`parsed_${name}_kind`]: 'absent', [`${name}_conflict`]: 0 })
+    s.prepare(`INSERT INTO platform_recognized_projection(${Object.keys(fields).join(',')}) VALUES(${Object.keys(fields).map(() => '?').join(',')})`).run(...Object.values(fields))
+    })()
     const before = originals(s), gaps: unknown[] = []
     expect(upgradeRecognizedQualification(s, { batchSize: 1, onUnavailable(id, reason) { gaps.push({ id, reason }) } })).toEqual({ captured: 0, unavailable: 1 })
-    const projection = s.prepare('SELECT id,qualification_fields_rule FROM platform_recognized_projection WHERE observation_id=?').get(result.observationId) as {id:number;qualification_fields_rule:null}
+    const projection = s.prepare('SELECT id,qualification_fields_rule FROM platform_recognized_projection WHERE observation_id=1').get() as {id:number;qualification_fields_rule:null}
     expect(projection.qualification_fields_rule).toBeNull()
     expect(gaps).toEqual([{ id: projection.id, reason: 'archived_raw_unavailable' }])
     expect(upgradeRecognizedQualification(s, { batchSize: 1 })).toEqual({ captured: 0, unavailable: 1 })
