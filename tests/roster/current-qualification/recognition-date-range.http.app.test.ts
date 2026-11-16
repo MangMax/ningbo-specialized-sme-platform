@@ -1,3 +1,4 @@
+import { eq } from 'drizzle-orm'
 import { submitSyntheticRecognizedCollection } from '../fixtures/recognized-source'
 import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
 import { afterAll, beforeEach, expect, it } from 'vitest'
@@ -185,9 +186,13 @@ it('retains eligible rows with missing metadata until a related filter is reques
   expect(a.enterprise.id).toBeLessThan(b.enterprise.id)
 })
 
-it('includes a confirmed migrant without fabricating recognition from its validity interval', async () => {
+it('uses a source period without manual admission or fabricated publication recognition', async () => {
   const candidate=f.candidate('迁入仅有有效区间',[])
-  const native = submitNativePlatformQuery(f.db,{interface:'business_list',queryKey:candidate.enterprise.usccNorm!,rdjb:'1',titleCode:'innovative_sme',queriedAt:new Date().toISOString(),status:'success',rawResponse:'Synthetic assigned process',relations:[{enterpriseId:candidate.enterprise.id,sequenceNo:1,usccRaw:candidate.enterprise.usccNorm,nameRaw:candidate.enterprise.name,verificationStatus:'confirmed',matchBasis:'uscc'}]})
+  const code = '91310115MA1H7KUG93'
+  f.db.update(s.enterprise).set({usccNorm:code}).where(eq(s.enterprise.id,candidate.enterprise.id)).run()
+  const native = submitNativePlatformQuery(f.db,{interface:'business_list',queryKey:code,rdjb:'1',titleCode:'innovative_sme',queriedAt:new Date().toISOString(),status:'success',rawResponse:'Synthetic assigned process',relations:[{enterpriseId:candidate.enterprise.id,sequenceNo:1,usccRaw:code,nameRaw:candidate.enterprise.name,verificationStatus:'confirmed',matchBasis:'uscc'}]})
+  submitSyntheticRecognizedCollection(f.db,{rdjb:'1',queriedAt:new Date().toISOString(),rows:[{enterpriseId:null,raw:{id:'source-period-only',qymc:candidate.enterprise.name,tyshxydm:code,rdjb:'1',rdtime:`${year-1}-01-01`,rddqrq:`${year+1}-12-31`,sfyx:'1',szsmc:'宁波市'}}]})
+  expect((await query({})).body).toMatchObject({total:1,rows:[{enterpriseId:candidate.enterprise.id,firstYear:null,recognition:{precision:'year',year:year-1}}]})
   const source = {id:native.queryId}, relation={id:native.relationIds[0]!}
   const scope={enterpriseId:candidate.enterprise.id,titleCode:'innovative_sme',direction:'extra_in_miit'}
   const api=async (body:unknown) => {
@@ -200,11 +205,18 @@ it('includes a confirmed migrant without fabricating recognition from its validi
   const review=await api({...scope,action:'maintain',expectedCurrentId:command.body.versionId,idempotencyKey:'filter155-migrant-review',actor:{type:'agent',id:'synthetic-155'},basis:'Synthetic explicit review',ruleVersion:'synthetic-155',effectiveAt:`${year-1}-01-01T00:00:00Z`,reviewedEvidence:{latestRevisionId:token.latestRevisionId,projectionReady:true}})
   expect(review.status,JSON.stringify(review.body)).toBe(200)
   const unfiltered=await query({})
-  expect(unfiltered.body).toMatchObject({total:1,rows:[{enterpriseId:candidate.enterprise.id,firstYear:null,recognition:null,matchedValidYears:[],qualificationWitnesses:[]}],publishedPending:{rows:[],total:0}})
+  expect(unfiltered.body).toMatchObject({total:1,rows:[{enterpriseId:candidate.enterprise.id,firstYear:null,recognition:{precision:'year',year:year-1},matchedValidYears:[year+1],qualificationWitnesses:[{cycle:{originYear:year-1,batchSeq:null},awardEventId:null,recognition:{precision:'year',year:year-1},matchedValidYear:year+1,matchedMaintenance:null,correspondenceId:null,conditionQueryId:null}]}],publishedPending:{rows:[],total:0}})
   const unrecognized=await query({status:'unrecognized'})
   expect(unrecognized.body).toMatchObject({total:0,rows:[]})
   const dated=await query({recognitionFrom:`${year}-01-01`,recognitionTo:`${year}-12-31`})
-  expect(dated.body).toMatchObject({total:0,uncertainTotal:1,rows:[]})
+  expect(dated.body).toMatchObject({total:0,uncertainTotal:0,rows:[]})
+  const knownYear=await query({recognitionFrom:`${year-1}-01-01`,recognitionTo:`${year-1}-12-31`})
+  expect(knownYear.body).toMatchObject({total:1,uncertainTotal:0,rows:[{enterpriseId:candidate.enterprise.id,firstYear:null,recognition:{precision:'year',year:year-1}}]})
+  const partialYear=await query({recognitionFrom:`${year-1}-02-01`,recognitionTo:`${year-1}-12-31`})
+  expect(partialYear.body).toMatchObject({total:0,uncertainTotal:1,rows:[]})
+  const detail=await fetch(f.url(`/api/roster/enterprises/${candidate.enterprise.id}`)).then(r=>r.json())
+  expect(detail.events).toEqual([])
+  expect(detail.qualificationAssessment.titles.find((t:any)=>t.titleCode==='innovative_sme').evidence).toEqual([])
   expect((await query({status:'unrecognized',recognitionFrom:`${year}-01-01`,recognitionTo:`${year}-12-31`})).body).toMatchObject({total:0,uncertainTotal:0,rows:[]})
 })
 

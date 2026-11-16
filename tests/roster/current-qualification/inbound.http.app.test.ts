@@ -1,3 +1,4 @@
+import { submitSyntheticRecognizedCollection } from '../fixtures/recognized-source'
 import '../../support/compiled-enterprise-reader'
 import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
 import { createServer } from 'node:http'
@@ -39,6 +40,9 @@ const cases: { id: string; eligible: boolean; review?: Review; explicitAward: bo
 ]
 const actor = { type: 'agent', id: 'issue305-inbound' } as const
 const headers = { authorization: 'Bearer issue305-synthetic', 'content-type': 'application/json' }
+const sourceCodes = ['91330211100000000P', '91330211100000010Q', '91330211100000020R', '91330211100000030T', '91330211100000040U', '91330211100000050W', '91330211100000060X', '91330211100000070Y', '913302111000000800', '913302111000000901', '91330211100000100D', '91330211100000110E', '91330211100000120F', '91330211100000130G', '91330211100000140H', '91330211100000150J', '91330211100000160K', '91330211100000170L', '91330211100000180M', '91330211100000190N', '913302111000002003'] as const
+const codes = new Map<string, string>()
+let identityIndex = 0
 const ids = new Map<string, number>()
 let server: ReturnType<typeof createServer>, base: string
 const sdk = new McpServer({ name: 'issue305-inbound-read', version: '1' })
@@ -71,7 +75,9 @@ beforeAll(async () => {
     const name = `issue305-inbound-${title}-${c.id}`
     // Only immutable synthetic source facts are set up in SQLite. Qualification
     // and evidence review use the real public #102/#114 commands, as in PR138.
-    const enterprise = db.insert(s.enterprise).values({ name, nameNorm: name, usccNorm: name, city: '宁波市' }).returning().get()
+    const code = sourceCodes[identityIndex++]!
+    codes.set(name, code)
+    const enterprise = db.insert(s.enterprise).values({ name, nameNorm: name, usccNorm: code, city: '宁波市' }).returning().get()
     ids.set(name, enterprise.id)
     const record = db.insert(s.record).values({ enterpriseId: enterprise.id, titleCode: title, source: 'jxj', nameRaw: name }).returning().get()
     const events = [{ eventType: 'award' as const, year: 2020, decidedYear: 2020, batchSeq: 1 },
@@ -82,7 +88,9 @@ beforeAll(async () => {
       db.insert(s.recordEvidence).values({ recordEventId: event.id, sourceFile: 'issue305/inbound-history.pdf', attachment: c.id, listNo: event.id, page: 1 }).run()
     }
     const rdjb = { little_giant: '3', specialized_sme: '2', innovative_sme: '1' }[title]
-    const native = submitNativePlatformQuery(db, { interface: 'business_list', queryKey: name, rdjb, titleCode: title, queriedAt: new Date().toISOString(), status: 'success', rawResponse: JSON.stringify({ synthetic: name }), relations: [{ sequenceNo: 1, enterpriseId: enterprise.id, usccRaw: name, nameRaw: name, verificationStatus: 'confirmed', matchBasis: 'uscc' }] })
+    const native = submitNativePlatformQuery(db, { interface: 'business_list', queryKey: name, rdjb, titleCode: title, queriedAt: new Date().toISOString(), status: 'success', rawResponse: JSON.stringify({ synthetic: name }), relations: [{ sequenceNo: 1, enterpriseId: enterprise.id, usccRaw: code, nameRaw: name, verificationStatus: 'confirmed', matchBasis: 'uscc' }] })
+    // A real, current interface period must not override applicable publication.
+    submitSyntheticRecognizedCollection(db, { rdjb, queriedAt: new Date().toISOString(), rows: [{ enterpriseId: null, raw: { id: name, qymc: name, tyshxydm: code, rdjb, rdtime: `${reawardYear}-01-01`, rddqrq: `${year+2}-12-31`, sfyx: '1', szsmc: '宁波市' } }] })
     const query = { id: native.queryId }, relation = { id: native.relationIds[0]! }
     const scope = { enterpriseId: enterprise.id, titleCode: title, direction: 'extra_in_miit' as const }
     const qualification = { titleCode: title, validFrom: `${reawardYear}-01-01T00:00:00Z`, validUntil: `${year + 2}-01-01T00:00:00Z`,
@@ -107,14 +115,14 @@ afterAll(async () => {
   if (server) await new Promise<void>(resolve => server.close(() => resolve()))
   await enterpriseReads.close(); db.$client.close(); vi.unstubAllGlobals(); rmSync(dir, { recursive: true, force: true })
 })
-// Inbound grants keep their strict ordering gate. Independently, the giant
-// original award survives an undated failure or an unknown review result.
-// Neither observation establishes a new inbound award.
-const positive = ['settled-history-explicit-reaward', 'failed-history-later-explicit-reaward', 'formal-reaward-positive-control']
-const negative = ['same-year-failure-reaward', 'unknown-review-date', 'failed-history-interval-only', 'later-review-result-unknown']
+// Current publication governs even expired/failed cycles. v1 remains explicit below.
 const retainedGiant = ['unknown-review-date', 'later-review-result-unknown']
-const positiveFor = (title: string) => title === 'little_giant' ? [...positive, ...retainedGiant] : positive
-const negativeFor = (title: string) => title === 'little_giant' ? ['same-year-failure-reaward', 'failed-history-interval-only'] : negative
+const positiveFor = (title: string) => title === 'little_giant'
+  ? ['settled-history-explicit-reaward', 'unknown-review-date', 'later-review-result-unknown', 'formal-reaward-positive-control']
+  : ['formal-reaward-positive-control']
+const negativeFor = (title: string) => title === 'little_giant'
+  ? ['failed-history-later-explicit-reaward', 'same-year-failure-reaward', 'failed-history-interval-only']
+  : ['settled-history-explicit-reaward', 'failed-history-later-explicit-reaward', 'same-year-failure-reaward', 'unknown-review-date', 'failed-history-interval-only', 'later-review-result-unknown']
 function supportingTitles(title: typeof titles[number]) {
   return title === 'little_giant' ? ['little_giant'] : title === 'specialized_sme' ? ['little_giant', 'specialized_sme'] : ['little_giant', 'specialized_sme', 'innovative_sme']
 }
@@ -130,12 +138,12 @@ function assertFormalQualification(result: CurrentQualifiedResult, title: typeof
     expect(row.firstYear).toBe(own ? 2020 : null)
   }
 }
-it.each(titles)('admits confirmed current inbound qualifications and downward inheritance over HTTP for %s', async title => {
+it.each(titles)('uses publication over manual and interface periods with downward inheritance over HTTP for %s', async title => {
   const response = await fetch(base + '/api/roster/current-enterprises?' + new URLSearchParams({ titleCode: title, pageSize: '200' }))
   expect(response.status, await response.clone().text()).toBe(200)
   assertFormalQualification(await response.json(), title)
 })
-it.each(titles)('admits confirmed current inbound qualifications and downward inheritance over SDK MCP for %s', async title => {
+it.each(titles)('uses publication over manual and interface periods with downward inheritance over SDK MCP for %s', async title => {
   const response = await client.callTool({ name: 'list_current_qualified_enterprises', arguments: { titleCode: title, pageSize: 200 } })
   expect(response.isError).not.toBe(true)
   const content = response.content
@@ -155,7 +163,7 @@ it.each(titles)('preserves literal five sheet identity partitions and local hist
       if (index === 1) return
       const name = row.getCell(2).text
       actual.push(name)
-      expect(row.getCell(3).text).toBe(name)
+      expect(row.getCell(3).text).toBe(codes.get(name))
       if (name.includes(`-${title}-`)) {
         expect(row.getCell(6).text).toBe('2020')
         expect(row.getCell(7).text).toContain('2020年')
@@ -167,7 +175,7 @@ it.each(titles)('preserves literal five sheet identity partitions and local hist
     expect(actual.sort()).toEqual(expected)
   }
 })
-it('distinguishes retained local giant awards from accepted inbound grants and preserves source periods', async () => {
+it('keeps retained giant awards and failed publication independent of manual and interface periods', async () => {
   for (const c of cases) {
     const id = ids.get(`issue305-inbound-little_giant-${c.id}`)!
     const response = await fetch(base + `/api/roster/enterprises/${id}`)
@@ -175,13 +183,9 @@ it('distinguishes retained local giant awards from accepted inbound grants and p
     const detail = await response.json()
     const giant = detail.qualificationAssessment.titles.find((t: any) => t.titleCode === 'little_giant')
     const presentation = giant.effectiveQualification.presentationBasis.join(' ')
-    if (positive.includes(c.id) && !c.formalAward) {
-      expect(presentation).toContain('Synthetic independently verified external qualification')
-      expect(presentation).toContain(`${reawardYear}-01-01T00:00:00Z`)
-      expect(presentation).toContain(`${year + 2}-01-01T00:00:00Z`)
-    } else {
-      expect(presentation).not.toContain('Synthetic independently verified external qualification')
-    }
+    expect(presentation).not.toContain('Synthetic independently verified external qualification')
+    expect(giant.effectiveQualification).not.toHaveProperty('source')
+    expect(giant.effectiveQualification.status).toBe(positiveFor('little_giant').includes(c.id) ? 'effective' : 'expired')
     if (retainedGiant.includes(c.id) || c.formalAward) {
       expect(giant).toMatchObject({ group: 'eligible', effectiveQualification: { status: 'effective' } })
       expect(presentation).toContain('不按认定年龄自动到期')
