@@ -532,3 +532,98 @@ it('native recognized submission rejects ownership that conflicts with source id
   expect(()=>submitNativePlatformQuery(m.db,{interface:'recognized_list',queryKey:first.enterprise.usccNorm!,titleCode:'innovative_sme',rdjb:'1',queriedAt:stamp,status:'success',collectionEvidence:evidence,relations:[{sequenceNo:1,relationKey:raw.id,nameRaw:raw.qymc,usccRaw:raw.tyshxydm,rawFields:raw,enterpriseId:other.enterprise.id,matchBasis:'uscc',verificationStatus:'confirmed'}]})).toThrow('Explicit enterprise must match original row USCC')
   expect(fixture.sqlite.prepare('select count(*) n from platform_collection').get()).toEqual(before)
 })
+
+import { createCurrentTargetContext } from '../../../lib/roster/current-target-context'
+import { preflightRecordCorrespondences, commitRecordCorrespondences } from '../../../server/utils/record-correspondence'
+
+it('global filter revalidates only recognition witnesses while full reads retain process refs', () => {
+  const m = qualificationMatrix(fixture.sqlite)
+  const a = m.formal('filter witness workload', [{eventType:'award',year:2025,decidedYear:2025,batchSeq:1}])
+  const recognized = m.recognized(a.enterprise.id,a.events[0]!.id,{rddqrq:'2028-11-20',whpc:'2026-2'})
+  const native = submitNativePlatformQuery(m.db,{interface:'business_list',queryKey:a.enterprise.usccNorm!,titleCode:'innovative_sme',rdjb:'1',queriedAt:AS_OF,status:'success',rawResponse:'Synthetic process rows',relations:Array.from({length:40},(_,i)=>({sequenceNo:i+1,relationKey:'process-'+i,enterpriseId:a.enterprise.id,nameRaw:a.enterprise.name,usccRaw:a.enterprise.usccNorm,verificationStatus:'confirmed',matchBasis:'uscc',rawFields:{id:'process-'+i}}))})
+  const request={idempotencyKey:'filter-process-workload',sourceIdentity:'synthetic/workload',actor:{type:'agent' as const,id:'test'},basis:'Synthetic process context',ruleId:'manual',ruleVersion:'1',operations:native.relationIds.map(relationId=>({action:'create' as const,status:'confirmed' as const,edge:{type:'event_process' as const,eventId:a.events[0]!.id,relationId,role:'context_only' as const}}))}
+  commitRecordCorrespondences(m.db,request,preflightRecordCorrespondences(m.db,request).planHash)
+  const expected = m.db.$client.prepare("select id from record_correspondence where type='event_recognized'").get() as {id:number}
+  const checked:number[]=[]
+  const prepare=fixture.sqlite.prepare.bind(fixture.sqlite)
+  fixture.sqlite.prepare=((sql:string)=>{
+    const statement=prepare(sql)
+    // Observe actual native validity statement executions and their bound IDs,
+    // not a mocked validity helper or a wall-clock proxy.
+    if(sql.includes('ref_owner') && sql.includes('json_each')) {
+      const all=statement.all.bind(statement)
+      statement.all=((...args:unknown[])=>{for(const arg of args)if(typeof arg==='string'&&arg.startsWith('['))checked.push(...JSON.parse(arg));return all(...args)}) as typeof statement.all
+    }
+    return statement
+  }) as typeof fixture.sqlite.prepare
+  try {
+    const scan=fixture.sqlite.transaction(()=>{const c=createCurrentTargetContext(fixture.sqlite);return c.assessment.readFilterCandidates([a.enterprise.id],'innovative_sme',Date.parse(AS_OF),c.keys,'effective')})()
+    expect(scan[0]!.row.qualificationWitnesses).toEqual([expect.objectContaining({awardEventId:a.events[0]!.id,matchedValidYear:2028,matchedMaintenance:{year:2026,batch:null},conditionQueryId:recognized.queryId})])
+    expect(checked).toEqual([expected.id])
+    checked.length=0
+    const full=readCurrentQualificationAssessment(fixture.sqlite,a.enterprise.id,Date.parse(AS_OF))
+    expect(full.titles.find(t=>t.titleCode==='innovative_sme')!.correspondence.refs).toHaveLength(41)
+    expect(new Set(checked).size).toBe(41)
+    const correction={idempotencyKey:'process-source-revision',sourceIdentity:'synthetic/official',actor:{type:'user' as const,id:'test'},basis:'Correct official award batch',operations:[{eventId:a.events[0]!.id,recordId:a.record.id,enterpriseId:a.enterprise.id,expectedRevision:1,patch:{batchSeq:2}}]}
+    commitEventCorrections(m.db,correction,preflightEventCorrections(m.db,correction).planHash)
+    const detail=readCurrentQualificationAssessment(fixture.sqlite,a.enterprise.id,Date.parse(AS_OF))
+    const reader=createCurrentQualificationAssessmentReader(fixture.sqlite)
+    expect(reader.readWorkbook(a.enterprise.id,Date.parse(AS_OF),'innovative_sme').snapshot).toEqual(detail)
+    const page=listCurrentQualified(fixture.sqlite,{titleCode:'innovative_sme',q:a.enterprise.name})
+    expect(page.rows[0]!.qualificationAssessment).toEqual(detail)
+    expect(detail.titles.find(t=>t.titleCode==='innovative_sme')!.correspondence.refs.map(r=>r.requiresRevalidation)).toEqual(Array(41).fill(true))
+    expect(detail.snapshotId).toBe(independentDigest(detail))
+  } finally {fixture.sqlite.prepare=prepare}
+})
+
+import { submitSyntheticRecognizedCollection } from '../fixtures/recognized-source'
+import { schema as filterSchema } from '../../../db/client'
+import { preflightEventCorrections, commitEventCorrections } from '../../../server/utils/roster-event-correction'
+it.each(['source revision','assignment owner','withdraw','context role','candidate','cross title','canonical owner','no witness'] as const)('global witness filtering preserves %s boundary and complete refs', state => {
+  const m=qualificationMatrix(fixture.sqlite)
+  const a=m.formal('Witness owner',[{eventType:'award',year:2025,decidedYear:2025,batchSeq:1}])
+  const historical=m.formal('Historical identity',[{eventType:'award',year:2025,decidedYear:2025,batchSeq:1}])
+  m.alias(a.enterprise.id,'Confirmed prior name','confirmed')
+  const relation=state==='no witness'?null:m.recognized(a.enterprise.id,a.events[0]!.id,{rddqrq:'2028-11-20',whpc:'2026-2'})
+  const refs=createEnterpriseTitleCorrespondenceRefsReader(m.db)
+  const ref=refs(a.enterprise.id,'innovative_sme')[0]
+  if(state==='source revision'){
+    const request={idempotencyKey:'witness-source-correction',sourceIdentity:'synthetic/official-correction',actor:{type:'user' as const,id:'test'},basis:'Correct documented award batch',operations:[{eventId:a.events[0]!.id,recordId:a.record.id,enterpriseId:a.enterprise.id,expectedRevision:1,patch:{batchSeq:2}}]}
+    commitEventCorrections(m.db,request,preflightEventCorrections(m.db,request).planHash)
+  }
+  if(state==='assignment owner'){
+    const original=m.db.select().from(filterSchema.platformObservationAssignment).get()!
+    m.db.insert(filterSchema.platformObservationAssignment).values({...original,revision:original.revision+1,enterpriseId:historical.enterprise.id,origin:'command',actor:{type:'user',id:'test'},basis:'Explicit synthetic reassignment'}).run()
+  }
+  if(state==='withdraw'){
+    const request={idempotencyKey:'withdraw-witness',sourceIdentity:'synthetic/correspondence',actor:{type:'user' as const,id:'test'},basis:'Withdraw source correspondence',ruleId:'manual',ruleVersion:'1',operations:[{action:'decide' as const,correspondenceId:ref!.id,expectedRevision:ref!.revision,status:'unlinked' as const}]}
+    commitRecordCorrespondences(m.db,request,preflightRecordCorrespondences(m.db,request).planHash)
+  }
+  if(state==='context role'||state==='candidate'){
+    const request={idempotencyKey:'change-witness',sourceIdentity:'synthetic/correspondence',actor:{type:'user' as const,id:'test'},basis:'Use source as context only',ruleId:'manual',ruleVersion:'1',operations:[{action:'correct' as const,correspondenceId:ref!.id,expectedRevision:ref!.revision,edge:{type:'event_recognized' as const,eventId:a.events[0]!.id,relationId:relation!.id,role:'current_context' as const}}]}
+    if(state==='context role')commitRecordCorrespondences(m.db,request,preflightRecordCorrespondences(m.db,request).planHash)
+    else { // Reproposal uses the existing candidate lifecycle.
+      const unlink={...request,idempotencyKey:'candidate-unlink',operations:[{action:'decide' as const,correspondenceId:ref!.id,expectedRevision:ref!.revision,status:'unlinked' as const}]}
+      commitRecordCorrespondences(m.db,unlink,preflightRecordCorrespondences(m.db,unlink).planHash)
+      const native=submitSyntheticRecognizedCollection(m.db,{rdjb:'1',queriedAt:'2026-05-02T00:00:00Z',rows:[{enterpriseId:a.enterprise.id,raw:{id:'new-candidate',qymc:a.enterprise.name,tyshxydm:a.enterprise.usccNorm,rdjb:'1',rddqrq:'2028-11-20'}}]})
+      const candidate={...request,ruleVersion:'2',idempotencyKey:'candidate-reproposal',operations:[{action:'create' as const,status:'candidate' as const,edge:{type:'event_recognized' as const,eventId:a.events[0]!.id,relationId:native.relationIds[0]!,role:'recognized_corrob' as const}}]}
+      commitRecordCorrespondences(m.db,candidate,preflightRecordCorrespondences(m.db,candidate).planHash)
+      expect(refs(a.enterprise.id,'innovative_sme').map(r=>r.status)).toEqual(['unlinked','candidate'])
+    }
+  }
+  if(state==='canonical owner')m.db.insert(filterSchema.enterpriseMerge).values({fromEnterpriseId:historical.enterprise.id,intoEnterpriseId:a.enterprise.id,basis:'Synthetic confirmed identity merge',recordedAt:AS_OF}).run()
+  const title=state==='cross title'?'specialized_sme':'innovative_sme'
+  const id=state==='canonical owner'?historical.enterprise.id:a.enterprise.id
+  const scan=fixture.sqlite.transaction(()=>{const c=createCurrentTargetContext(fixture.sqlite);return c.assessment.readFilterCandidates([id],title,Date.parse(AS_OF),c.keys,'effective')})()[0]!
+  const supported=state==='canonical owner'
+  expect(scan.row.aliases).toContain('Confirmed prior name')
+  expect(scan.row.qualificationWitnesses?.flatMap(w=>w.matchedValidYear==null?[]:[w.matchedValidYear])??[]).toEqual(supported?[2028]:[])
+  if(state!=='cross title'){
+    expect(scan.row.qualificationWitnesses).toEqual([expect.objectContaining({recognition:{precision:'year',year:2025},awardEventId:a.events[0]!.id,...(supported?{matchedValidYear:2028}:{matchedValidYear:null})})])
+    const full=readCurrentQualificationAssessment(fixture.sqlite,id,Date.parse(AS_OF))
+    const fullRefs=full.titles.find(t=>t.titleCode==='innovative_sme')!.correspondence.refs
+    expect(fullRefs.length).toBe(state==='no witness'?0:state==='context role'||state==='candidate'?2:1)
+    if(state==='source revision'||state==='assignment owner')expect(fullRefs[0]!.requiresRevalidation).toBe(true)
+    expect(full.snapshotId).toBe(independentDigest(full))
+  }
+})
