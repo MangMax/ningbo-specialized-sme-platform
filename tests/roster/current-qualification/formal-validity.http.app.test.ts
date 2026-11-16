@@ -33,7 +33,7 @@ it('real current-qualified HTTP and export artifacts agree for interval and both
     expect(response.status).toBe(200)
     const result = await response.json()
     expect(result.total).toBe(1)
-    expect(result.rows[0].qualificationAssessment).toMatchObject({ ruleVersion: 'current-roster-116-v11', assessmentVersion: 'enterprise-qualification-687-v4' })
+    expect(result.rows[0].qualificationAssessment).toMatchObject({ ruleVersion: 'current-roster-116-v12', assessmentVersion: 'enterprise-qualification-740-v5' })
   }
   for (const title of ['specialized-sme','innovative-sme']) {
     const response = await fetch(f.url('/api/roster/exports/current/' + title), { method: 'POST', headers: f.headers, body: JSON.stringify({ clientRequestId: 'formal-validity-' + title }) })
@@ -41,9 +41,17 @@ it('real current-qualified HTTP and export artifacts agree for interval and both
     const job = await f.terminal((await response.json()).jobId)
     expect(job.state, JSON.stringify(job)).toBe('done')
     const { wb } = await f.download(job)
-    const expected = samples.filter(s => s.path === title).map(s => s.name)
+    const expected = title === 'innovative-sme'
+      ? ['owned_lanfan', 'owned_yayan', 'owned_yongchuang']
+      : ['owned_yayan', 'owned_yongchuang']
+    const listed = await fetch(f.url('/api/roster/current-enterprises?titleCode=' + title.replaceAll('-', '_')))
+    expect(listed.status).toBe(200)
+    const current = await listed.json()
+    expect(current.total).toBe(expected.length)
+    expect(current.rows.map((row: { name: string }) => row.name).sort()).toEqual([...expected].sort())
     expect(job.result.counts).toEqual({ eligible: expected.length, pending: 0, excluded: 0 })
     const sheet = wb.getWorksheet('有效企业')!
+    expect(sheet.rowCount).toBe(expected.length + 1)
     expect(sheet.getRows(2, expected.length)!.map(r => r.getCell(2).value).sort()).toEqual(expected.sort())
   }
 }, 60000)
