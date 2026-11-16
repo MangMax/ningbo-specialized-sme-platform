@@ -31,7 +31,7 @@ it('explicit candidate seam preserves qualified assessment asOf versions and wor
     const injectedSummary=await writeCurrentWorkbookWithCandidates(f.sqlite,'specialized_sme',b,()=>{},provider)
     // Independently serialize the documented hash envelope. No production digest
     // function, copied current hash, or version constant supplies the expectation.
-    const scope={enterpriseId:formal.enterprise.id,asOf:'2026-11-12T00:00:00.000Z',ruleVersion:'current-roster-116-v13',assessmentVersion:'enterprise-qualification-740-v6'}
+    const scope={enterpriseId:formal.enterprise.id,asOf:'2026-11-12T00:00:00.000Z',ruleVersion:'current-roster-116-v14',assessmentVersion:'enterprise-qualification-807-v7'}
     const assessment=readCurrentQualificationAssessment(f.sqlite,formal.enterprise.id,Date.parse(scope.asOf))
     expect(assessment).toMatchObject(scope)
     expect(assessment.titles.find(t=>t.titleCode==='specialized_sme')).toMatchObject({group:'eligible',effectiveQualification:{status:'effective'}})
@@ -44,7 +44,7 @@ it('explicit candidate seam preserves qualified assessment asOf versions and wor
       const cells=Array.from({length:15},(_,i)=>sheet.getRow(2).getCell(i+1).value)
       const titles=scoped?assessment.titles.filter(t=>t.titleCode==='specialized_sme'):assessment.titles
       const snapshotId=createHash('sha256').update(JSON.stringify([scope,titles])).digest('hex')
-      const lines=[JSON.stringify([namespace,'enterprise-qualification-740-v6','current-roster-116-v13',2026,'specialized_sme']),JSON.stringify(['effective',formal.enterprise.id,scope,snapshotId,cells]),'']
+      const lines=[JSON.stringify([namespace,'enterprise-qualification-807-v7','current-roster-116-v14',2026,'specialized_sme']),JSON.stringify(['effective',formal.enterprise.id,scope,snapshotId,cells]),'']
       return 'sha256:'+createHash('sha256').update(lines.join('\n')).digest('hex')
     }
     expect(baselineSummary.dataVersion).toBe(await digest(a,'current-export-assessment-title-v3',true))

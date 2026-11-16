@@ -32,7 +32,7 @@ it("expired_review_keeps_current_and_legacy_pending_totals_empty", () => {
   const shared = readCurrentQualificationAssessment(fixture.sqlite, enterprise.id, Date.parse(AS_OF))
   expect(shared).toMatchObject({
     enterpriseId: enterprise.id, asOf: AS_OF,
-    ruleVersion: 'current-roster-116-v13', assessmentVersion: 'enterprise-qualification-740-v6',
+    ruleVersion: 'current-roster-116-v14', assessmentVersion: 'enterprise-qualification-807-v7',
   })
   expect(shared.titles.map(title => title.titleCode).sort())
     .toEqual(['innovative_sme', 'little_giant', 'specialized_sme'])
@@ -115,7 +115,7 @@ function query(filter: Omit<CurrentQualifiedFilter, 'titleCode'> & { titleCode?:
 }
 function independentDigest(snapshot: ReturnType<typeof readCurrentQualificationAssessment>) {
   // Pin default namespace bytes independently; never accept a production version/hash as the oracle.
-  const scope = { enterpriseId: snapshot.enterpriseId, asOf: AS_OF, ruleVersion: 'current-roster-116-v13', assessmentVersion: 'enterprise-qualification-740-v6' }
+  const scope = { enterpriseId: snapshot.enterpriseId, asOf: AS_OF, ruleVersion: 'current-roster-116-v14', assessmentVersion: 'enterprise-qualification-807-v7' }
   return createHash('sha256').update(JSON.stringify([scope, snapshot.titles])).digest('hex')
 }
 
@@ -148,7 +148,7 @@ it.each([
   const factory = createCurrentQualificationAssessmentReader(fixture.sqlite)
   const optimized = factory.read(enterprise.id, Date.parse(AS_OF), {}, 'innovative_sme').snapshot
   expect(optimized).toEqual(defaults)
-  expect(defaults).toMatchObject({ enterpriseId: enterprise.id, asOf: AS_OF, ruleVersion: 'current-roster-116-v13', assessmentVersion: 'enterprise-qualification-740-v6' })
+  expect(defaults).toMatchObject({ enterpriseId: enterprise.id, asOf: AS_OF, ruleVersion: 'current-roster-116-v14', assessmentVersion: 'enterprise-qualification-807-v7' })
   expect(defaults.titles.map(t => t.titleCode)).toEqual(['little_giant', 'specialized_sme', 'innovative_sme'])
   expect(defaults.titles.map(t => t.group)).toEqual(groups)
   expect(defaults.snapshotId).toBe(independentDigest(defaults))
@@ -405,7 +405,7 @@ function assertRefSnapshot(enterpriseId: number, refs: Record<'little_giant' | '
   const defaults = readCurrentQualificationAssessment(fixture.sqlite, enterpriseId, Date.parse(AS_OF), options)
   const optimized = createCurrentQualificationAssessmentReader(fixture.sqlite).read(enterpriseId, Date.parse(AS_OF), options, 'innovative_sme').snapshot
   expect(optimized).toEqual(defaults)
-  expect(defaults).toMatchObject({ enterpriseId, asOf: AS_OF, ruleVersion: 'current-roster-116-v13', assessmentVersion: 'enterprise-qualification-740-v6' })
+  expect(defaults).toMatchObject({ enterpriseId, asOf: AS_OF, ruleVersion: 'current-roster-116-v14', assessmentVersion: 'enterprise-qualification-807-v7' })
   expect(defaults.titles.map(t => t.titleCode)).toEqual(['little_giant', 'specialized_sme', 'innovative_sme'])
   for (const title of defaults.titles) {
     const expected = refs[title.titleCode]

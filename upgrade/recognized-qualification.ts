@@ -53,6 +53,7 @@ export function upgradeRecognizedQualification(s: Database.Database, options: Op
     for (const gap of result.gaps) options.onUnavailable?.(gap.id, gap.reason)
     last = batch.at(-1)!.id
   }
-  if (s.pragma('foreign_key_check').length) throw new Error('Qualification upgrade foreign key conflict')
+  const foreignKeyViolations = s.pragma('foreign_key_check') as unknown[]
+  if (foreignKeyViolations.length) throw new Error('Qualification upgrade foreign key conflict')
   return { captured, unavailable }
 }

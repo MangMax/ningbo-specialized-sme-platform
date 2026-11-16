@@ -381,7 +381,7 @@ it('detail_snapshot_scope_and_field_gaps_407', () => {
   // Both are real API/MCP-shared function seams, not a started transport or historical-asOf API.
   const shared = readCurrentQualificationAssessment(sqlite, enterprise.id, AS_OF)
   const detail = getRosterEnterpriseDetail(db, enterprise.id, AS_OF)!
-  const scope = { enterpriseId: enterprise.id, asOf: '2026-06-01T00:00:00.000Z', ruleVersion: 'current-roster-116-v13', assessmentVersion: 'enterprise-qualification-740-v6' }
+  const scope = { enterpriseId: enterprise.id, asOf: '2026-06-01T00:00:00.000Z', ruleVersion: 'current-roster-116-v14', assessmentVersion: 'enterprise-qualification-807-v7' }
   expect(detail.qualificationAssessment).toEqual(shared)
   expect(shared).toMatchObject(scope)
   expect(shared.titles.map(title => title.titleCode).sort()).toEqual(['innovative_sme', 'little_giant', 'specialized_sme'])
@@ -445,9 +445,9 @@ it('explicit_prior_versions_preserve_frozen_legacy_and_current_consumers_share_d
   const expected = { ...DEFAULT_427_LEGACY, ...scope, snapshotId: createHash('sha256').update(JSON.stringify([scope, DEFAULT_427_LEGACY.titles])).digest('hex') }
   expect(reader.read(1, AS_OF, { assessmentVersion: 'enterprise-qualification-407-v2' }).snapshot).toEqual(expected)
   const current = reader.read(1, AS_OF).snapshot
-  expect(current).toMatchObject({ ruleVersion: 'current-roster-116-v13', assessmentVersion: 'enterprise-qualification-740-v6' })
+  expect(current).toMatchObject({ ruleVersion: 'current-roster-116-v14', assessmentVersion: 'enterprise-qualification-807-v7' })
   // Independent canonical scope order and literal namespace; hash the complete title bytes, not the returned digest.
-  const defaultScope = { enterpriseId: 1, asOf: '2026-06-01T00:00:00.000Z', ruleVersion: 'current-roster-116-v13', assessmentVersion: 'enterprise-qualification-740-v6' }
+  const defaultScope = { enterpriseId: 1, asOf: '2026-06-01T00:00:00.000Z', ruleVersion: 'current-roster-116-v14', assessmentVersion: 'enterprise-qualification-807-v7' }
   expect(current.snapshotId).toBe(createHash('sha256').update(JSON.stringify([defaultScope, current.titles])).digest('hex'))
   expect(current.titles.map(t => [t.titleCode, t.group])).toEqual([['little_giant', 'excluded'], ['specialized_sme', 'eligible'], ['innovative_sme', 'eligible']])
   expect(current.titles[2]!.effectiveQualification!.localRuleBasis!.join(' ')).toContain('专精特新中小企业')

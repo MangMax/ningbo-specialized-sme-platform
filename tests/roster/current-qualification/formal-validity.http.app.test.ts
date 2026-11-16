@@ -40,7 +40,7 @@ it('real current-qualified HTTP and export artifacts agree for interval and both
     expect(response.status).toBe(200)
     const result = await response.json()
     expect(result.total).toBe(1)
-    expect(result.rows[0].qualificationAssessment).toMatchObject({ ruleVersion: 'current-roster-116-v13', assessmentVersion: 'enterprise-qualification-740-v6' })
+    expect(result.rows[0].qualificationAssessment).toMatchObject({ ruleVersion: 'current-roster-116-v14', assessmentVersion: 'enterprise-qualification-807-v7' })
   }
   for (const title of ['specialized-sme','innovative-sme']) {
     const response = await fetch(f.url('/api/roster/exports/current/' + title), { method: 'POST', headers: f.headers, body: JSON.stringify({ clientRequestId: 'formal-validity-' + title }) })

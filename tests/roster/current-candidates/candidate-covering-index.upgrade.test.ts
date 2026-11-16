@@ -239,7 +239,7 @@ it.each(titles)('C32 fixed-time list literals preserve qualification filters opt
   const read = () => filters.map(filter => listCurrentQualified(f.db, { titleCode: title, ...filter }))
   const covered = read()
   const all = covered[0]!
-  expect(all).toMatchObject({ total: ids.length, uncertainTotal: 0, titleCode: title, ruleVersion: 'current-roster-116-v13', snapshotStartedAt: '2026-10-26T00:00:00.000Z', options: { recognitionYears: title === 'little_giant' ? [2020, 2026] : [2026], validYears: [], maintenanceYears: [], maintenanceBatchesByYear: {} } })
+  expect(all).toMatchObject({ total: ids.length, uncertainTotal: 0, titleCode: title, ruleVersion: 'current-roster-116-v14', snapshotStartedAt: '2026-10-26T00:00:00.000Z', options: { recognitionYears: title === 'little_giant' ? [2020, 2026] : [2026], validYears: [], maintenanceYears: [], maintenanceBatchesByYear: {} } })
   expect(all.rows.map(row => row.enterpriseId)).toEqual(ids)
   expect(all.rows[0]).toMatchObject({ name: '=1+1', uscc: String(first).padStart(18, '0'), district: '鄞州区', group: 'eligible', firstYear: 2026, publishedNames: ['=1+1'], aliases: [], publication: '已见本称号宁波公布记录', basis: `event:${first}@1 award 2026/1 结论年:`, reviews: '', references: [`evidence:${first} jxj/announcement/synthetic363.pdf 名单\n附件 序号:${first}`], recognition: { precision: 'year', year: 2026 }, matchedValidYears: [], matchedMaintenance: [] })
   expect(all.rows[0]!.qualificationWitnesses).toEqual([{ cycle: { originYear: 2026, batchSeq: 1 }, awardEventId: first, recognition: { precision: 'year', year: 2026 }, matchedValidYear: null, matchedMaintenance: null, correspondenceId: null, conditionQueryId: null }])
@@ -268,10 +268,10 @@ it.each(titles)('C33 fixed-time workbook literals preserve all sheets columns te
   }
   const covered = await run('native.xlsx')
   const oracle = consumerOracle[title]
-  expect(covered.result).toMatchObject({ total: oracle.candidates.length, counts: { eligible: oracle.eligible.length, pending: 0, excluded: oracle.candidates.length - oracle.eligible.length }, generatedAt: '2026-10-26T00:00:00.000Z', snapshotStartedAt: '2026-10-26T00:00:00.000Z', ruleVersion: 'current-roster-116-v13' })
+  expect(covered.result).toMatchObject({ total: oracle.candidates.length, counts: { eligible: oracle.eligible.length, pending: 0, excluded: oracle.candidates.length - oracle.eligible.length }, generatedAt: '2026-10-26T00:00:00.000Z', snapshotStartedAt: '2026-10-26T00:00:00.000Z', ruleVersion: 'current-roster-116-v14' })
   // Hash independently from public full assessment scoped to the requested title
   // and ExcelJS's real text cells, never from writer rows or its returned digest.
-  const hash = createHash('sha256').update(JSON.stringify(['current-export-assessment-title-v3', 'enterprise-qualification-740-v6', 'current-roster-116-v13', 2026, title]) + '\n')
+  const hash = createHash('sha256').update(JSON.stringify(['current-export-assessment-title-v3', 'enterprise-qualification-807-v7', 'current-roster-116-v14', 2026, title]) + '\n')
   for (const [group, sheetName, ids] of [['effective', '有效企业', oracle.eligible], ['expired', '已到期', oracle.expired], ['unrecognized', '未认定', oracle.unrecognized]] as const) {
     const sheet = covered.workbook.getWorksheet(sheetName)!
     expect(sheet.rowCount).toBe(ids.length + 1)
@@ -280,7 +280,7 @@ it.each(titles)('C33 fixed-time workbook literals preserve all sheets columns te
       const { titles: allTitles, snapshotId: _fullDigest, ...scope } = full
       const selected = allTitles.filter(item => item.titleCode === title)
       expect(selected[0]!.effectiveQualification!.status).toBe(group)
-      expect(scope).toMatchObject({ enterpriseId: id, assessmentVersion: 'enterprise-qualification-740-v6', ruleVersion: 'current-roster-116-v13' })
+      expect(scope).toMatchObject({ enterpriseId: id, assessmentVersion: 'enterprise-qualification-807-v7', ruleVersion: 'current-roster-116-v14' })
       const sourceTitle = id <= 4 ? 'innovative_sme' : id <= 8 ? 'specialized_sme' : 'little_giant'
       const source = allTitles.find(item => item.titleCode === sourceTitle)!
       expect(source.evidence).toEqual([{ eventId: id, revision: 1, eventType: id % 4 === 0 ? 'nurture' : 'award', year: id % 4 === 3 ? 2020 : 2026, batchSeq: 1, decidedYear: null, reviewOutcome: null, evidenceIds: [id] }])
