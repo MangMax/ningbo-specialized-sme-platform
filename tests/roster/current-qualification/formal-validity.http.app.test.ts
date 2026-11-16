@@ -34,6 +34,7 @@ beforeAll(async () => {
 }, 120000)
 afterAll(() => f.close())
 it('real current-qualified HTTP and export artifacts agree for interval and both continuation scopes', async () => {
+  const before = f.businessDigest()
   for (const sample of samples) {
     const response = await fetch(f.url(`/api/roster/current-enterprises?titleCode=${sample.title}&q=${sample.name}`))
     expect(response.status).toBe(200)
@@ -59,7 +60,14 @@ it('real current-qualified HTTP and export artifacts agree for interval and both
     const sheet = wb.getWorksheet('有效企业')!
     expect(sheet.rowCount).toBe(expected.length + 1)
     expect(sheet.getRows(2, expected.length)!.map(r => r.getCell(2).value).sort()).toEqual(expected.sort())
+    for (const row of sheet.getRows(2, expected.length)!) {
+      const name = String(row.getCell(2).value)
+      expect(String(row.getCell(14).value)).toContain(name === 'owned_lanfan'
+        ? `正式文件有效期：${year-3}-11-01 至 ${today}（含首尾）`
+        : `默认年度规则：最近一次认定或复核通过 ${year} 年 + 3 = ${year+3} 年；自 ${year+3} 年起到期（仅年份精度）`)
+    }
   }
+  expect(f.businessDigest()).toBe(before)
 }, 60000)
 
 // Expectations below are business literals, independent of production readers.
