@@ -72,9 +72,9 @@ function dependencies(db: Db, enterpriseId: number, f: Fact) {
         fail('cycle_conflict');
     return { enterprise, file, cycle, formal };
 }
-export function historyDispositions(db: Db, enterpriseIds: number[]) { return db.$client.transaction(() => rows(db, enterpriseIds))(); }
+export function historyDispositions(db: Db, enterpriseIds: number[]) { return db.transaction(() => rows(db, enterpriseIds)); }
 export function currentDispositions(db: Db, enterpriseIds: number[]) {
-    return db.$client.transaction(() => ({ version: head(db), rows: rows(db, enterpriseIds, true).map(r => {
+    return db.transaction(() => ({ version: head(db), rows: rows(db, enterpriseIds, true).map(r => {
             let sourceCurrent = true;
             try {
                 dependencies(db, r.enterpriseId, r.fact);
@@ -83,7 +83,7 @@ export function currentDispositions(db: Db, enterpriseIds: number[]) {
                 sourceCurrent = false;
             }
             return { ...r, sourceCurrent, effectReady: r.status === 'confirmed' && r.kind !== 'formal_failure' && sourceCurrent && !!r.fact.cycle && r.fact.effective.precision === 'day' && !!r.fact.effectiveBasis };
-        }) }))();
+        }) }));
 }
 function commandEnterprises(db: Db, request: z.infer<typeof dispositionRequestSchema>) {
     return [...new Set(request.operations.map(op => {
@@ -137,10 +137,10 @@ function prepare(db: Db, body: unknown) {
     const { deps } = simulate(db, request);
     return { request, requestHash, prior, planHash: hash({ requestHash, deps }) };
 }
-export function preflightDisposition(db: Db, body: unknown) { return db.$client.transaction(() => { const p = prepare(db, body); return { planHash: p.planHash, replay: !!p.prior }; })(); }
+export function preflightDisposition(db: Db, body: unknown) { return db.transaction(() => { const p = prepare(db, body); return { planHash: p.planHash, replay: !!p.prior }; }); }
 export function commitDisposition(db: Db, body: unknown) {
     const input = z.strictObject({ request: dispositionRequestSchema, planHash: text }).parse(body);
-    return db.$client.transaction(() => {
+    return db.transaction(() => {
         const p = prepare(db, input.request);
         // Receipt replay precedes dependency revalidation: immutable successful command response.
         if (p.prior)
@@ -153,5 +153,5 @@ export function commitDisposition(db: Db, body: unknown) {
         const receipt = { ids, version: head(db), committedAt };
         db.insert(s.titleCycleDispositionReceipt).values({ key: p.request.idempotencyKey, requestHash: p.requestHash, receipt }).run();
         return receipt;
-    }).immediate();
+    }, { behavior: 'immediate' });
 }
