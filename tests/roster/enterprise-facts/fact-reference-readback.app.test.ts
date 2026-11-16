@@ -113,23 +113,34 @@ it('null and empty legacy references remain absent on REST detail and MCP withou
   }
 })
 
-it('fact replacement and withdrawal retain pinned historical revisions and identical difference readback', async () => {
+it('fact replacement and withdrawal retain pinned history while recomputing current qualification', async () => {
   const { id } = seed()
   const refs = await confirmedReferences(id)
   const receipt = await pin(id, refs)
   const before = await readSurfaces(id)
+  const originalReceipt = await http(`/decisions/${receipt.versionId}`)
   const stored = db.select().from(s.differenceReason).all()
-  await factCommand(id, { action: 'replace', factId: refs[0]!.factId, fact: fact('cancelled') })
+  const replacement = await factCommand(id, { action: 'replace', factId: refs[0]!.factId, fact: fact('cancelled') })
   await factCommand(id, { action: 'withdraw', factId: refs[1]!.factId })
   const after = await readSurfaces(id)
-  expect(after.rest).toEqual(before.rest)
+  const missing = '缺少已确认认定及资格依据；平台状态或候选对应不能单独证明资格'
+  const current = {
+    status: 'unrecognized', basis: `enterprise:${id}/fact:${refs[0]!.factId}/revision:3\nenterprise:${id}/fact:${replacement.factId}/revision:1`,
+    localRuleBasis: [], presentationBasis: [], notes: ['排除事实证据或生效时间不完整，仅备注，不改变正式资格', missing],
+  }
+  const currentRows = (rows: any[]) => rows.map(row => row.enterpriseId === id && row.titleCode === 'specialized_sme' ? { ...row, qualification: current } : row)
+  const prior = before.rest.rows.filter((row: any) => row.enterpriseId === id && row.titleCode === 'specialized_sme')
+  expect(prior).toHaveLength(2)
+  for (const row of prior) expect(row.qualification).toEqual({ status: 'moved_out', basis: `enterprise:${id}/fact:${refs[0]!.factId}/revision:2`, localRuleBasis: [], notes: [missing], presentationBasis: ['迁出；生效：2024；来源：synthetic:official:307；独立事实原文；确认依据：合成独立事实依据'] })
+  expect(after.rest).toEqual({ ...before.rest, rows: currentRows(before.rest.rows) })
   expect(after.mcp).toEqual(before.mcp)
-  expect(after.detail.differences).toEqual(before.detail.differences)
+  expect(after.detail.differences).toEqual(currentRows(before.detail.differences))
   expect(db.select().from(s.differenceReason).all()).toEqual(stored)
   for (const row of referencedRows(after, id)) expect(row.factReferences).toEqual(refs)
   const history = await http(`/decisions/history?id=${receipt.versionId}`)
   expect(history.rows.map((row: any) => row.id)).toEqual([receipt.versionId])
   expect((await http(`/decisions/${history.rows[0].id}`)).factReferences).toEqual(refs)
+  expect(await http(`/decisions/${receipt.versionId}`)).toEqual(originalReceipt)
   const facts = await http(`/enterprises/${id}/facts`)
   expect(facts.facts.map((row: any) => [row.factId, row.revision, row.status])).toEqual([[refs[0]!.factId, 3, 'replaced'], [refs[1]!.factId, 3, 'withdrawn'], [3, 1, 'pending']])
   for (const ref of refs) expect(facts.history.find((row: any) => row.factId === ref.factId && row.revision === ref.revision)).toMatchObject({ enterpriseId: id, status: 'confirmed', fact: { kind: ref.kind } })
