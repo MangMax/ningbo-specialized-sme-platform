@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, createWriteStream, open, close, write } from 'node:fs'
+import { mkdtempSync, appendFileSync, writeFileSync, readFileSync, rmSync, createWriteStream, open, close, write } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { once } from 'node:events'
@@ -14,11 +14,11 @@ import { readOfficialPublishedPresentation } from '../../../lib/roster/official-
 
 vi.mock('node:fs', async importOriginal => {
   const filesystem = await importOriginal<typeof import('node:fs')>()
-  return { ...filesystem, createWriteStream: vi.fn(filesystem.createWriteStream) }
+  return { ...filesystem, appendFileSync: vi.fn(filesystem.appendFileSync), createWriteStream: vi.fn(filesystem.createWriteStream) }
 })
 
 const fixtures: Array<() => void> = []
-afterEach(() => { vi.mocked(createWriteStream).mockReset(); for (const close of fixtures.splice(0)) close() })
+afterEach(() => { vi.mocked(appendFileSync).mockClear(); vi.mocked(createWriteStream).mockReset(); for (const close of fixtures.splice(0)) close() })
 function fixture() {
   const dir = mkdtempSync(join(tmpdir(), 'current-workbook-146-'))
   const db = initializeDb({ dbPath: join(dir, 'synthetic.db'), create: true })
@@ -454,3 +454,49 @@ function nativeWorkbookSnapshot(db:ReturnType<typeof initializeDb>,id:number,at:
   expect(titles[0]!.versions.decisions).toBe(hash([[], [], [], []]))
   return {...scope,titles,snapshotId:createHash('sha256').update(JSON.stringify([scope,titles])).digest('hex')}
 }
+
+// Literal layout expectations: appendix width 45 leaves 43 units per line;
+// 23 lines fit (399pt), 24 do not (416pt). No layout algorithm oracle.
+it.each([
+  ['ASCII', 'a'.repeat(990), ['a'.repeat(989), 'a'], [399,42]],
+  ['wide', '界'.repeat(495), ['界'.repeat(494), '界'], [399,42]],
+  ['astral', '😀'.repeat(495), ['😀'.repeat(494), '😀'], [399,42]],
+  ['combining', 'a\u0301'.repeat(330), ['a\u0301'.repeat(329)+'a', '\u0301'], [399,42]],
+  ['empty lines', '\n'.repeat(24), ['\n'.repeat(22), '\n\n'], [399,59]],
+  ['CRLF', 'a\r\n'.repeat(24)+'z', ['a\n'.repeat(22)+'a\n', '\na\nz'], [399,59]],
+  ['multiple parts', 'a'.repeat(2000), ['a'.repeat(989),'a'.repeat(989),'a'.repeat(22)], [399,399,42]],
+])('preserves literal overflow chunks addresses parts and heights for %s', async (_label,text,chunks,heights) => {
+  vi.useFakeTimers({toFake:['Date']}); vi.setSystemTime(new Date('2026-11-16T06:00:00Z'))
+  try {
+    const {db,file}=fixture(); candidate(db,text,'eligible','LITERAL-LAYOUT')
+    candidate(db,'expired source period','pending','LITERAL-EXPIRED')
+    candidate(db,'unrecognized source','excluded','LITERAL-UNRECOGNIZED')
+    const result=await writeCurrentWorkbook(db.$client,'little_giant',file,()=>{})
+    const wb=new ExcelJS.Workbook(); await wb.xlsx.readFile(file)
+    expect(wb.getWorksheet('有效企业')!.getCell('B2').value).toBe('全文见「长文本全文」：有效企业!B2')
+    const parts:unknown[]=[]
+    wb.getWorksheet('长文本全文')!.eachRow((row,n)=>{if(n>1 && row.getCell(2).value==='B2') parts.push([row.getCell(1).value,row.getCell(2).value,row.getCell(3).value,row.getCell(12).value,row.height])})
+    const rawParts=vi.mocked(appendFileSync).mock.calls.map(call=>JSON.parse(String(call[1]))).filter(row=>row[0]==='有效企业' && row[1]==='B2')
+    const rawChunks=_label==='CRLF' ? ['a\r\n'.repeat(22)+'a\r', '\na\r\nz'] : chunks
+    expect(rawParts.map(row=>[row[2],row[11]])).toEqual(rawChunks.map((chunk,i)=>[String(i+1),chunk]))
+    expect(parts).toEqual(chunks.map((chunk,i)=>['有效企业','B2',String(i+1),chunk,heights[i]]))
+    // Optional external baseline capture/compare includes every cell and height,
+    // column widths, full result (including dataVersion), source and period text.
+    const control={result,rawParts,sheets:wb.worksheets.map(sheet=>({name:sheet.name,widths:sheet.columns.map(c=>c.width),rows:Array.from({length:sheet.rowCount},(_,i)=>({height:sheet.getRow(i+1).height,cells:Array.from({length:sheet.columnCount},(_,j)=>sheet.getRow(i+1).getCell(j+1).value)}))}))}
+    const path=process.env.WORKBOOK_LAYOUT_CONTROL
+    if(path){const target=join(path,String(_label)+'.json');if(process.env.CAPTURE_LAYOUT_CONTROL==='1')writeFileSync(target,JSON.stringify(control));else expect(control).toEqual(JSON.parse(readFileSync(target,'utf8')))}
+  } finally {vi.useRealTimers()}
+})
+
+it('bounds character width inspections for a public long-text workbook without repeated prefix scans', async () => {
+  const {db,file}=fixture(); candidate(db,'界'.repeat(1200),'eligible','SCAN-BOUND')
+  const original=String.prototype.codePointAt
+  let inspections=0
+  const spy=vi.spyOn(String.prototype,'codePointAt').mockImplementation(function(this:string,index:number){inspections++;return original.call(this,index)})
+  try {
+    await writeCurrentWorkbook(db.$client,'little_giant',file,()=>{})
+  } finally {spy.mockRestore()}
+  // Whole public writer budget, generously covers all source/heading/row passes.
+  // Counts actual width operations, not a private layout function's invocations.
+  expect(inspections).toBeLessThan(100000)
+})
