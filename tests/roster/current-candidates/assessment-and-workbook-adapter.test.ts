@@ -9,6 +9,26 @@ import { listCurrentQualified,listCurrentQualifiedWithCandidates } from '../../.
 import { writeCurrentWorkbook,writeCurrentWorkbookWithCandidates } from '../../../lib/roster/current-workbook'
 import { readExportWorkbook } from '../../support/read-workbook'
 
+it('lists and exports qualified enterprises across multiple native candidate blocks',async()=>{
+  const f=qualificationFileFixture()
+  vi.useFakeTimers({toFake:['Date']});vi.setSystemTime(new Date('2026-11-16T00:00:00Z'))
+  try {
+    const ids=Array.from({length:129},(_,i)=>f.formal(`Stream ${String(i).padStart(3,'0')}`,[{eventType:'award',year:2026,batchSeq:1}],{title:'specialized_sme'}).enterprise.id)
+    const page=listCurrentQualified(f.sqlite,{titleCode:'specialized_sme',page:1,pageSize:25})
+    expect(page.total).toBe(129)
+    expect(page.rows.map(row=>row.enterpriseId)).toEqual(ids.slice(0,25))
+    const last=listCurrentQualified(f.sqlite,{titleCode:'specialized_sme',page:6,pageSize:25})
+    expect(last.rows.map(row=>row.enterpriseId)).toEqual(ids.slice(125))
+    const path=join(dirname(f.sqlite.name),'streamed.xlsx')
+    await writeCurrentWorkbook(f.sqlite,'specialized_sme',path,()=>{})
+    const workbook=await readExportWorkbook(readFileSync(path))
+    const sheet=workbook.getWorksheet('有效企业')!
+    expect(sheet.rowCount).toBe(130)
+    expect(sheet.getRow(2).getCell(2).value).toBe('Stream 000')
+    expect(sheet.getRow(130).getCell(2).value).toBe('Stream 128')
+  } finally {vi.useRealTimers();f.close()}
+},30000)
+
 it('explicit candidate seam preserves qualified assessment asOf versions and workbook cells with one enumeration in the owner snapshot',async()=>{
   const f=qualificationFileFixture()
   vi.useFakeTimers({toFake:['Date']});vi.setSystemTime(new Date('2026-11-12T00:00:00Z'))

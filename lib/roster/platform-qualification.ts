@@ -4,7 +4,7 @@ import { and, eq, inArray, notExists, or, gt } from 'drizzle-orm'
 import { alias } from 'drizzle-orm/sqlite-core'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import { sql } from 'drizzle-orm'
-import { sqliteConnection } from '../platform/target-connection'
+import { identityFunctions, identityUsccSql } from './enterprise-read-snapshot'
 import { targetSchema as s } from '../platform/target-schema'
 import { normalizeUscc } from '../domain'
 import { isValidUscc } from './uscc-research'
@@ -86,7 +86,7 @@ export interface PlatformFactSubject { enterpriseId: number; uscc: string }
  * Re-observing an old content version makes that observed version current again.
  * Three set queries per bounded subject batch, never one query per enterprise. */
 export function readPlatformQualificationFacts(db: BetterSQLite3Database<typeof s>, subjects: readonly PlatformFactSubject[]): PlatformQualificationFact[] {
-  sqliteConnection(db).function('platform_qualification_uscc', { deterministic: true }, normalizeUscc)
+  identityFunctions(db)
   const owners = new Map<string, Set<number>>()
   for (const subject of subjects) {
     const code = normalizeUscc(subject.uscc)
@@ -110,15 +110,15 @@ export function readPlatformQualificationFacts(db: BetterSQLite3Database<typeof 
     const recognized = db.select({ ...common, p: s.platformRecognizedProjection }).from(o)
       .innerJoin(c, eq(c.id, o.collectionId))
       .innerJoin(s.platformRecognizedProjection, eq(s.platformRecognizedProjection.versionId, o.versionId))
-      .where(and(latest, inArray(sql`platform_qualification_uscc(${s.platformRecognizedProjection.usccRaw})`, scope))).all()
+      .where(and(latest, inArray(identityUsccSql(sql`${s.platformRecognizedProjection.usccRaw}`), scope))).all()
     const business = db.select({ ...common, p: s.platformBusinessProjection }).from(o)
       .innerJoin(c, eq(c.id, o.collectionId))
       .innerJoin(s.platformBusinessProjection, eq(s.platformBusinessProjection.versionId, o.versionId))
-      .where(and(latest, inArray(sql`platform_qualification_uscc(${s.platformBusinessProjection.usccRaw})`, scope))).all()
+      .where(and(latest, inArray(identityUsccSql(sql`${s.platformBusinessProjection.usccRaw}`), scope))).all()
     const declarations = db.select({ ...common, p: s.platformApplyProjection }).from(o)
       .innerJoin(c, eq(c.id, o.collectionId))
       .innerJoin(s.platformApplyProjection, eq(s.platformApplyProjection.versionId, o.versionId))
-      .where(and(latest, inArray(sql`platform_qualification_uscc(${s.platformApplyProjection.usccRaw})`, scope))).all()
+      .where(and(latest, inArray(identityUsccSql(sql`${s.platformApplyProjection.usccRaw}`), scope))).all()
     for (const row of [...recognized.map(r => ({ ...r, source: 'recognized_list' as const })), ...business.map(r => ({ ...r, source: 'business_list' as const })), ...declarations.map(r => ({ ...r, source: 'apply_list' as const }))]) {
       const p = row.p, uscc = normalizeUscc(p.usccRaw)
       const ids = owners.get(uscc)!
