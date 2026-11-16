@@ -85,7 +85,11 @@ it('serves native source read workers and commits an import through the actual s
   expect((await reads.list(path,{pageSize:5})).rows).toHaveLength(1)
   const current=await reads.currentQualifiedJson(path,{titleCode:'little_giant',pageSize:5})
   expect(current.found).toBe(true)
-  expect(JSON.parse(current.body.toString())).toMatchObject({total:1,rows:[{enterpriseId:entity.id}]})
+  const currentBody=JSON.parse(current.body.toString())
+  expect(currentBody).toMatchObject({total:1,rows:[{enterpriseId:entity.id}]})
+  const currentTitle=currentBody.rows[0].qualificationAssessment.titles.find((title:{titleCode:string})=>title.titleCode==='little_giant')
+  expect(currentTitle).toMatchObject({titleCode:'little_giant',effectiveQualification:{status:'effective'},evidence:[{eventType:'award',year:2025,batchSeq:1}]})
+  expect(currentTitle.versions.facts).toMatch(/^[a-f0-9]{64}$/)
   const stat=statSync(path),identity={dev:stat.dev,ino:stat.ino,schemaVersion:db.$client.pragma('schema_version',{simple:true}),migration:db.$client.prepare('SELECT hash,created_at FROM __drizzle_migrations ORDER BY created_at DESC LIMIT 1').get()}
   const worker=createImportExecutionWorker();cleanup.push(()=>worker.terminate())
   expect((await once(worker,'message'))[0]).toMatchObject({type:'ready'})
@@ -97,7 +101,16 @@ it('serves native source read workers and commits an import through the actual s
   expect(listTargetBusinessProcesses({},db).rows).toHaveLength(1)
   db.$client.prepare('UPDATE record_event SET year=1999 WHERE record_id=?').run(record.id)
   const fresh=await reads.currentQualifiedJson(path,{titleCode:'little_giant',pageSize:5})
-  expect(JSON.parse(fresh.body.toString())).toMatchObject({total:0,rows:[]})
+  expect(fresh.found).toBe(true)
+  const freshBody=JSON.parse(fresh.body.toString())
+  // Original little-giant awards do not expire by age; the worker must still
+  // reread the changed fact and expose a new content version, not a stale row.
+  expect(freshBody).toMatchObject({total:1})
+  expect(freshBody.rows.map((row:{enterpriseId:number})=>row.enterpriseId)).toEqual([entity.id])
+  const freshTitle=freshBody.rows[0].qualificationAssessment.titles.find((title:{titleCode:string})=>title.titleCode==='little_giant')
+  expect(freshTitle).toMatchObject({titleCode:'little_giant',effectiveQualification:{status:'effective'},evidence:[{eventType:'award',year:1999,batchSeq:1}]})
+  expect(freshTitle.versions.facts).toMatch(/^[a-f0-9]{64}$/)
+  expect(freshTitle.versions.facts).not.toBe(currentTitle.versions.facts)
   expectNative(db.$client)
 },30000)
 
