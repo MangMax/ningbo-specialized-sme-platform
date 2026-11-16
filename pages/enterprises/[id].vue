@@ -331,6 +331,7 @@ function openPreview(e: Evidence) {
     <template v-else-if="detail">
       <TableFailureState v-if="error" title="企业详情更新失败" description="保留上次成功的企业详情，请重试读取当前状态。" :pending="isLoading" @retry="refetch()" />
 
+      <section class="bg-card min-w-0 space-y-3 rounded-lg border p-4 sm:p-5" aria-label="企业概况">
       <PageHeader :title="detail.name" class="min-w-0 max-w-full [&_h1]:max-w-full [&_h1]:whitespace-normal [&_h1]:[overflow-wrap:anywhere]">
         <template #breadcrumb>
           <NuxtLink :to="backTo" class="hover:text-foreground hover:underline">{{ route.query.currentBack != null ? '优质中小企业查询' : sourceReturnTarget(route.query.returnTo) ? '记录级对比' : '企业列表' }}</NuxtLink>
@@ -348,7 +349,8 @@ function openPreview(e: Evidence) {
         </template>
       </PageHeader>
 
-      <p v-if="confirmedAliasNames.length" class="text-base leading-6">已确认曾用名：{{ confirmedAliasNames.join('、') }}</p>
+      <p v-if="confirmedAliasNames.length" class="text-muted-foreground border-t pt-3 text-sm leading-6">已确认曾用名：{{ confirmedAliasNames.join('、') }}</p>
+      </section>
 
       <Alert v-if="usccMissing" variant="destructive">
         <AlertTitle>缺统一社会信用代码,记录按企业名称归并</AlertTitle>

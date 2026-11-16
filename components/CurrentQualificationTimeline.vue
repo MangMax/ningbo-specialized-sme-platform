@@ -71,9 +71,9 @@ const steps = computed(() => {
       <p v-if="loading" role="status">正在读取业务记录</p>
       <div v-if="failure" role="alert"><p>业务记录读取失败，保留上次成功结果。</p><Button :disabled="loading" @click="load">重试读取业务记录</Button></div>
       <template v-if="detail">
-        <section aria-label="当前资格摘要" class="min-w-0 space-y-3 text-sm leading-6 break-words [overflow-wrap:anywhere]">
+        <section aria-label="当前资格摘要" class="bg-muted/30 min-w-0 space-y-3 rounded-lg border p-4 text-sm leading-6 break-words [overflow-wrap:anywhere]">
           <p>评估时点：{{ detail.qualificationAssessment.asOf }}</p>
-          <article v-for="assessment in detail.qualificationAssessment.titles" :key="assessment.titleCode">
+          <article v-for="assessment in detail.qualificationAssessment.titles" :key="assessment.titleCode" class="space-y-2 border-t pt-3">
             <h3 class="flex flex-wrap items-center gap-2"><TitleBadge :code="assessment.titleCode" /><span>{{ assessment.effectiveQualification ? CURRENT_STATUS_LABELS[assessment.effectiveQualification.status] : { eligible: '宁波当前可纳入', pending: '宁波当前待核', excluded: '不纳入宁波当前结果' }[assessment.group] }}</span></h3>
             <p v-for="basis in assessment.effectiveQualification?.presentationBasis ?? []" :key="basis">{{ basis }}</p>
             <p v-if="!assessment.effectiveQualification?.source">公布依据：{{ assessment.officialQualification.message }}</p>

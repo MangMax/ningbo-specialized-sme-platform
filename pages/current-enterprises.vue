@@ -161,6 +161,7 @@ useHead({ title: '优质中小企业查询' })
     <PageHeader title="优质中小企业查询" description="按本库资格判定查询当前有效企业。">
       <template #actions><CurrentRosterExportEntry :title-code="title" /></template>
     </PageHeader>
+    <section aria-label="名单查询条件" class="bg-card flex min-w-0 flex-col gap-4 rounded-lg border p-4">
     <Tabs v-model="titleModel">
       <TabsList class="h-auto max-w-full flex-wrap">
         <TabsTrigger v-for="code in CURRENT_TITLES" :key="code" :value="code">{{ TITLES[code] }}</TabsTrigger>
@@ -194,6 +195,7 @@ useHead({ title: '优质中小企业查询' })
       <Button v-if="maintenanceYear" variant="outline" size="sm" @click="update({maintenanceYear:undefined,maintenanceBatch:undefined,page:undefined})">维护年份：{{ maintenanceYear }} ×</Button>
       <Button v-if="maintenanceBatch" variant="outline" size="sm" @click="update({maintenanceBatch:undefined,page:undefined})">维护批次：第 {{ maintenanceBatch }} 批 ×</Button>
     </div>
+    </section>
     <p v-if="displayed" class="text-muted-foreground min-w-0 text-[13px] leading-5 [overflow-wrap:anywhere]" aria-live="polite">当前显示：{{ displayedDescription?.scope }}<span class="block sm:inline"><span class="hidden sm:inline">；</span>{{ displayedDescription?.order }}<span :class="{ invisible: !isShowingPrevious }">（上次成功结果）</span></span></p>
     <p v-if="displayed?.uncertainTotal && displayed.request.params.recognitionFrom" class="text-muted-foreground text-sm">另有 {{ displayed.uncertainTotal }} 家仅有年份精度，与所选时间部分重叠或缺少日期事实，未计入确定结果。</p>
     <Card class="gap-0 overflow-hidden py-0 shadow-none">
@@ -211,7 +213,7 @@ useHead({ title: '优质中小企业查询' })
                 <TableCell class="align-top break-all font-mono text-xs">{{ row.uscc ?? '未记录' }}</TableCell>
                 <TableCell class="align-top">{{ row.district ?? '未记录' }}</TableCell>
                 <TableCell class="align-top"><CurrentQualificationTimeline :source="selectedAssessment(row)?.effectiveQualification?.source" :events="selectedAssessment(row)?.evidence" :enterprise-id="row.enterpriseId" /><p v-if="localRuleBasis(row)" class="mt-2 break-words text-sm leading-6 [overflow-wrap:anywhere]">{{ localRuleBasis(row) }}</p></TableCell>
-                <TableCell class="align-top"><Button as-child variant="outline" size="sm"><NuxtLink :to="detailUrl(row.enterpriseId)">查看详情与出处</NuxtLink></Button></TableCell>
+                <TableCell class="align-top"><Button as-child variant="outline" size="sm" class="h-auto min-h-8 max-w-full whitespace-normal text-center"><NuxtLink :to="detailUrl(row.enterpriseId)">查看详情与出处</NuxtLink></Button></TableCell>
               </TableRow>
               <TableRow v-if="isLoading && !displayed"><TableCell v-for="n in 5" :key="n"><Skeleton class="h-3 w-full" /></TableCell></TableRow>
               <TableRow v-if="displayed && !rows.length"><TableCell colspan="5" class="p-0"><Empty class="border-0"><EmptyHeader><EmptyTitle>没有符合条件的企业</EmptyTitle></EmptyHeader></Empty></TableCell></TableRow>
