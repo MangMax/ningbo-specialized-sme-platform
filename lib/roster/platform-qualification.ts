@@ -3,6 +3,7 @@
 import { and, eq, inArray, notExists, or, gt } from 'drizzle-orm'
 import { alias } from 'drizzle-orm/sqlite-core'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
+import { sqliteConnection } from '../platform/target-connection'
 import { targetSchema as s } from '../platform/target-schema'
 import { normalizeUscc } from '../domain'
 import { isValidUscc } from './uscc-research'
@@ -101,16 +102,20 @@ export function readPlatformQualificationFacts(db: BetterSQLite3Database<typeof 
   const facts: PlatformQualificationFact[] = []
   // Keep raw values: SQL upper/trim is not equivalent to JS normalizeUscc.
   // Only keys are streamed; unrelated typed payloads and observations are not loaded.
-  function matchingKeys(rows: Iterable<{ raw: string | null }>) {
+  const sqlite = sqliteConnection(db)
+  function matchingKeys(query: { sql: string; params: unknown[] }) {
     const keys: string[] = []
-    for (const { raw } of rows) {
+    // Drizzle 0.45.4 SELECT has no iterator. Keep construction in the ORM;
+    // native raw execution streams the single selected column without mapping payloads.
+    const rows = sqlite.prepare(query.sql).raw().iterate(...query.params) as Iterable<[string | null]>
+    for (const [raw] of rows) {
       if (raw != null && owners.has(normalizeUscc(raw))) keys.push(raw)
     }
     return keys
   }
-  const recognizedKeys = matchingKeys(db.selectDistinct({ raw: s.platformRecognizedProjection.usccRaw }).from(s.platformRecognizedProjection).iterate())
-  const businessKeys = matchingKeys(db.selectDistinct({ raw: s.platformBusinessProjection.usccRaw }).from(s.platformBusinessProjection).iterate())
-  const applyKeys = matchingKeys(db.selectDistinct({ raw: s.platformApplyProjection.usccRaw }).from(s.platformApplyProjection).iterate())
+  const recognizedKeys = matchingKeys(db.selectDistinct({ raw: s.platformRecognizedProjection.usccRaw }).from(s.platformRecognizedProjection).toSQL())
+  const businessKeys = matchingKeys(db.selectDistinct({ raw: s.platformBusinessProjection.usccRaw }).from(s.platformBusinessProjection).toSQL())
+  const applyKeys = matchingKeys(db.selectDistinct({ raw: s.platformApplyProjection.usccRaw }).from(s.platformApplyProjection).toSQL())
   // Multiple raw spellings may normalize to one subject; chunk raw keys, not owners.
   for (let offset = 0; offset < Math.max(recognizedKeys.length, businessKeys.length, applyKeys.length); offset += 400) {
     const recognizedScope = recognizedKeys.slice(offset, offset + 400)

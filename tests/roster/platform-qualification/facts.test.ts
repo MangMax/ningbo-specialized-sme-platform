@@ -1,4 +1,4 @@
-import { expect, it } from 'vitest'
+import { expect, it, vi } from 'vitest'
 import { platformBusinessFact, sourceDate, periodContains } from '../../../lib/roster/platform-qualification'
 
 it('retains day boundaries and exact business timestamps without fabricating precision', () => {
@@ -162,9 +162,19 @@ it('uses actual Drizzle raw-key plans while unrelated observations leave typed r
       }
     }
     queries.length = 0
-    expect(readPlatformQualificationFacts(db, subjects)).toEqual(before)
+    const nativePrepare = vi.spyOn(sqlite, 'prepare')
+    let keyReads: { sql: string; params: unknown[] }[] = []
+    try {
+      expect(readPlatformQualificationFacts(db, subjects)).toEqual(before)
+      // Native key execution bypasses Drizzle's logger. Capture actual prepare calls.
+      // These DISTINCT column queries have no bound values; typed IN params come from the logger.
+      keyReads = nativePrepare.mock.calls.map(([sql]) => ({ sql, params: [] }))
+        .filter(q => q.sql.startsWith('select distinct'))
+    } finally { nativePrepare.mockRestore() }
+    expect(keyReads).toHaveLength(3)
+    expect(queries.filter(q => q.sql.startsWith('select'))).toHaveLength(3)
     // EXPLAIN the SQL emitted by the real reader, never a manually rewritten equivalent.
-    const reads = queries.filter(q => q.sql.startsWith('select'))
+    const reads = [...keyReads, ...queries.filter(q => q.sql.startsWith('select'))]
     expect(reads).toHaveLength(6)
     for (const query of reads) {
       const plan = sqlite.prepare(`EXPLAIN QUERY PLAN ${query.sql}`).all(...query.params) as { detail: string }[]
