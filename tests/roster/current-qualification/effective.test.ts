@@ -336,17 +336,42 @@ it('renews an expired published award from an explicit review business year',asy
  } finally {await local.close()}
 })
 
-it('does not use a shifted old directory record as an independent grant for a later review',async()=>{
+it.each(['queryBusList','queryList'] as const)('does not use an in-period platform grant as independent recovery through %s',async source=>{
  const local=qualificationExportFixture()
  try {
   const c=local.candidate('no indirect recovery',[{eventType:'award',year:2023,batchSeq:1},{eventType:'review',year:2023,batchSeq:1,decidedYear:2026,reviewOutcome:'failed'}])
   publishedInterval(local,c.record.id,{validFrom:'2023-11-01',validThrough:'2026-10-31'})
   const identity={tyshxydm:'91310115MA1H7KUG93',rdjb:'2',szsmc:'宁波市'}
   local.db.update(schema.enterprise).set({usccNorm:identity.tyshxydm}).where(eq(schema.enterprise.id,c.enterprise.id)).run()
-  writeNewCollectionTarget(local.db,collectionCommand({...identity,id:'old-shifted-grant',sfyx:'1',rdtime:'2024-02-04',rddqrq:'2027-02-04'},'2026-10-01T00:00:00Z'))
+  const grant: PlatformRawRow=source==='queryBusList'?{sfyx:'1',rdtime:'2024-02-04',rddqrq:'2027-02-04'}:{sblx:'申请',cszt:'终审通过',year:'2024'}
+  writeNewCollectionTarget(local.db,collectionCommand({...identity,id:'old-shifted-grant',...grant},'2026-10-01T00:00:00Z',source))
   writeNewCollectionTarget(local.db,collectionCommand({...identity,id:'later-review',sblx:'复核',cszt:'终审通过',year:'2026'},'2026-11-01T00:00:00Z','businessList'))
   const own=createCurrentQualificationAssessmentReader(local.db.$client).read(c.enterprise.id,asOf).snapshot.titles.find(t=>t.titleCode==='specialized_sme')!
   expect(own.group).toBe('excluded')
   expect(own.effectiveQualification?.source).toBeUndefined()
+ } finally {await local.close()}
+})
+
+it.each([
+ {name:'business application inside a published cycle',source:'businessList',from:'2023-11-01',through:'2026-10-31',businessYear:2024,matter:'申请',expected:'excluded'},
+ {name:'declaration application inside a published cycle',source:'queryList',from:'2023-11-01',through:'2026-10-31',businessYear:2024,matter:'申请',expected:'excluded'},
+ {name:'whole year including both boundary days',source:'queryList',from:'2024-01-01',through:'2024-12-31',businessYear:2024,matter:'申请',expected:'excluded'},
+ {name:'application year overlaps only after January first',source:'queryList',from:'2024-01-02',through:'2024-12-31',businessYear:2024,matter:'申请',expected:'eligible'},
+ {name:'application year overlaps only before December last',source:'queryList',from:'2024-01-01',through:'2024-12-30',businessYear:2024,matter:'申请',expected:'eligible'},
+ {name:'independent later application year',source:'queryList',from:'2023-01-01',through:'2024-12-31',businessYear:2025,matter:'申请',expected:'eligible'},
+ {name:'future publication does not govern an application year',source:'queryList',from:'2023-11-01',through:'2026-10-31',businessYear:2024,matter:'申请',publishedOn:'2027-01-01',expected:'eligible'},
+ {name:'later explicit review year renews an expired published interval',source:'queryList',from:'2022-12-31',through:'2025-12-30',businessYear:2026,matter:'复核',expected:'eligible'},
+] as const)('compares an application year at its recorded precision: $name',async scenario=>{
+ const local=qualificationExportFixture()
+ try {
+  const c=local.candidate(scenario.name,[{eventType:'award',year:Number(scenario.from.slice(0,4)),batchSeq:1}],'innovative_sme')
+  publishedInterval(local,c.record.id,{validFrom:scenario.from,validThrough:scenario.through},'publishedOn' in scenario?scenario.publishedOn:undefined)
+  const code='91310115MA1H7KUG93'
+  local.db.update(schema.enterprise).set({usccNorm:code}).where(eq(schema.enterprise.id,c.enterprise.id)).run()
+  writeNewCollectionTarget(local.db,collectionCommand({id:'year-precision-source',tyshxydm:code,rdjb:'1',sblx:scenario.matter,cszt:'终审通过',year:String(scenario.businessYear),sqsj:scenario.matter==='复核'?'2026-04-01 11:44:05':'2024-01-16 10:24:29'},'2026-11-01T00:00:00Z',scenario.source))
+  const own=createCurrentQualificationAssessmentReader(local.db.$client).read(c.enterprise.id,asOf).snapshot.titles.find(t=>t.titleCode==='innovative_sme')!
+  expect(own.group).toBe(scenario.expected)
+  if(scenario.expected==='excluded')expect(own.effectiveQualification?.source).toBeUndefined()
+  else expect(own.effectiveQualification?.source).toMatchObject({source:scenario.source==='businessList'?'business_list':'apply_list',matter:scenario.matter==='复核'?'review':'apply',businessYear:scenario.businessYear,businessTimeKind:'submission',period:{from:{value:null}}})
  } finally {await local.close()}
 })

@@ -716,17 +716,24 @@ function createCurrentCandidateEvaluationReader(db: Database.Database, receiptRu
   // grant or revoke a current period; unknown submission time is never a grant year.
   const visible = platformFacts.filter(f => !(f.businessTime.value && f.businessTime.value > at) && !(f.businessYear != null && f.businessYear > year))
   const sourceOrder = ['recognized_list', 'business_list', 'apply_list'] as const
-  // A directory recording date inside an explicit published interval belongs
-  // to that grant. Its later directory cutoff cannot extend the published cycle.
+  // An in-period directory recognition or wholly contained application year
+  // belongs to the published cycle and cannot extend it. A year denotes all
+  // possible dates in that year, never a fabricated January first grant date.
   // Reviews renew on their own explicit business year, not their submission date.
   const publishedPeriods = formal.filter(event =>
     qualificationEventAppliesAt(event, year, day) &&
     (event.eventType === 'award' || event.reviewOutcome === 'passed') && event.formalValidity?.interval,
   ).map(event => event.formalValidity!.interval!)
-  const samePublishedPeriod = (fact: PlatformQualificationFact) => fact.matter === 'recognition' &&
-    !!fact.period.from.value && publishedPeriods.some(interval =>
-      interval.validFrom <= fact.period.from.value!.slice(0, 10) &&
-      fact.period.from.value!.slice(0, 10) <= interval.validThrough)
+  const samePublishedPeriod = (fact: PlatformQualificationFact) => publishedPeriods.some(interval => {
+    if (fact.matter === 'recognition' && fact.period.from.value) {
+      const startDay = fact.period.from.value.slice(0, 10)
+      return interval.validFrom <= startDay && startDay <= interval.validThrough
+    }
+    if (fact.matter === 'apply' && fact.businessYear != null) {
+      return interval.validFrom <= `${fact.businessYear}-01-01` && `${fact.businessYear}-12-31` <= interval.validThrough
+    }
+    return false
+  })
   const platformSource = qualification.group === 'eligible' ? undefined : sourceOrder.flatMap(source => {
     const facts = visible.filter(f => f.source === source)
     return facts.filter(f => {
