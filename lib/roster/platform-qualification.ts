@@ -3,8 +3,7 @@
 import { and, eq, inArray, notExists, or, gt } from 'drizzle-orm'
 import { alias } from 'drizzle-orm/sqlite-core'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
-import { sql } from 'drizzle-orm'
-import { identityFunctions, identityUsccSql } from './enterprise-read-snapshot'
+import { sqliteConnection } from '../platform/target-connection'
 import { targetSchema as s } from '../platform/target-schema'
 import { normalizeUscc } from '../domain'
 import { isValidUscc } from './uscc-research'
@@ -84,9 +83,8 @@ export interface PlatformFactSubject { enterpriseId: number; uscc: string }
 /** Latest observed content per stable business record, before filtering identity/title.
  * A failed query with no observations cannot erase a previously captured fact.
  * Re-observing an old content version makes that observed version current again.
- * Three set queries per bounded subject batch, never one query per enterprise. */
+ * Enumerate raw identity keys through covering indexes, then read only matched typed rows. */
 export function readPlatformQualificationFacts(db: BetterSQLite3Database<typeof s>, subjects: readonly PlatformFactSubject[]): PlatformQualificationFact[] {
-  identityFunctions(db)
   const owners = new Map<string, Set<number>>()
   for (const subject of subjects) {
     const code = normalizeUscc(subject.uscc)
@@ -102,23 +100,40 @@ export function readPlatformQualificationFacts(db: BetterSQLite3Database<typeof 
     .innerJoin(collection, eq(collection.id, newer.collectionId))
     .where(and(eq(newer.recordId, o.recordId), eq(newer.contentState, 'verified'), or(gt(collection.queriedAt, c.queriedAt), and(eq(collection.queriedAt, c.queriedAt), gt(newer.id, o.id))))))
   const facts: PlatformQualificationFact[] = []
-  // Chunk only the subject set, keeping SQLite's parameter budget bounded.
-  const codes = [...owners.keys()]
-  for (let offset = 0; offset < codes.length; offset += 400) {
-    const scope = codes.slice(offset, offset + 400)
+  // Keep raw values: SQL upper/trim is not equivalent to JS normalizeUscc.
+  // Only keys are streamed; unrelated typed payloads and observations are not loaded.
+  const sqlite = sqliteConnection(db)
+  function matchingKeys(query: { sql: string; params: unknown[] }) {
+    const keys: string[] = []
+    // Drizzle 0.45.4 SELECT has no iterator. Keep construction in the ORM;
+    // native raw execution streams the single selected column without mapping payloads.
+    const rows = sqlite.prepare(query.sql).raw().iterate(...query.params) as Iterable<[string | null]>
+    for (const [raw] of rows) {
+      if (raw != null && owners.has(normalizeUscc(raw))) keys.push(raw)
+    }
+    return keys
+  }
+  const recognizedKeys = matchingKeys(db.selectDistinct({ raw: s.platformRecognizedProjection.usccRaw }).from(s.platformRecognizedProjection).toSQL())
+  const businessKeys = matchingKeys(db.selectDistinct({ raw: s.platformBusinessProjection.usccRaw }).from(s.platformBusinessProjection).toSQL())
+  const applyKeys = matchingKeys(db.selectDistinct({ raw: s.platformApplyProjection.usccRaw }).from(s.platformApplyProjection).toSQL())
+  // Multiple raw spellings may normalize to one subject; chunk raw keys, not owners.
+  for (let offset = 0; offset < Math.max(recognizedKeys.length, businessKeys.length, applyKeys.length); offset += 400) {
+    const recognizedScope = recognizedKeys.slice(offset, offset + 400)
+    const businessScope = businessKeys.slice(offset, offset + 400)
+    const applyScope = applyKeys.slice(offset, offset + 400)
     const common = { recordId: o.recordId, versionId: o.versionId, observationId: o.id, collectedAt: c.queriedAt }
-    const recognized = db.select({ ...common, p: s.platformRecognizedProjection }).from(o)
+    const recognized = recognizedScope.length ? db.select({ ...common, p: s.platformRecognizedProjection }).from(o)
       .innerJoin(c, eq(c.id, o.collectionId))
       .innerJoin(s.platformRecognizedProjection, eq(s.platformRecognizedProjection.versionId, o.versionId))
-      .where(and(latest, inArray(identityUsccSql(sql`${s.platformRecognizedProjection.usccRaw}`), scope))).all()
-    const business = db.select({ ...common, p: s.platformBusinessProjection }).from(o)
+      .where(and(latest, inArray(s.platformRecognizedProjection.usccRaw, recognizedScope))).all() : []
+    const business = businessScope.length ? db.select({ ...common, p: s.platformBusinessProjection }).from(o)
       .innerJoin(c, eq(c.id, o.collectionId))
       .innerJoin(s.platformBusinessProjection, eq(s.platformBusinessProjection.versionId, o.versionId))
-      .where(and(latest, inArray(identityUsccSql(sql`${s.platformBusinessProjection.usccRaw}`), scope))).all()
-    const declarations = db.select({ ...common, p: s.platformApplyProjection }).from(o)
+      .where(and(latest, inArray(s.platformBusinessProjection.usccRaw, businessScope))).all() : []
+    const declarations = applyScope.length ? db.select({ ...common, p: s.platformApplyProjection }).from(o)
       .innerJoin(c, eq(c.id, o.collectionId))
       .innerJoin(s.platformApplyProjection, eq(s.platformApplyProjection.versionId, o.versionId))
-      .where(and(latest, inArray(identityUsccSql(sql`${s.platformApplyProjection.usccRaw}`), scope))).all()
+      .where(and(latest, inArray(s.platformApplyProjection.usccRaw, applyScope))).all() : []
     for (const row of [...recognized.map(r => ({ ...r, source: 'recognized_list' as const })), ...business.map(r => ({ ...r, source: 'business_list' as const })), ...declarations.map(r => ({ ...r, source: 'apply_list' as const }))]) {
       const p = row.p, uscc = normalizeUscc(p.usccRaw)
       const ids = owners.get(uscc)!
