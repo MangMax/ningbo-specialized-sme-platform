@@ -63,3 +63,23 @@ it('detail binds the timeline and qualification summary to the requested snapsho
     expect(detail.businessTimeline.sources.slice(1).map(s => [s.collectionStatus, s.events])).toEqual([['not_collected', []], ['not_collected', []], ['not_collected', []]])
   } finally { db.$client.close(); rmSync(dir, { recursive: true, force: true }) }
 })
+
+import { submitSyntheticRecognizedCollection } from '../fixtures/recognized-source'
+it('detail shares the directory fact with qualification without publication or correspondence after repeated capture', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'detail-813-directory-'))
+  const db = initializeDb({ create: true, dbPath: join(dir, 'fixture.sqlite') })
+  try {
+    const enterprise = db.insert(schema.enterprise).values({ name: '目录独立企业', nameNorm: '目录独立企业', usccNorm: fact.uscc }).returning().get()
+    const raw = { id: 'DIR-813', tyshxydm: fact.uscc, qymc: '平台原名称', rdjb: '2', rdtime: '2026-03-06', rddqrq: '2029-03-05', sfyx: '1', szsmc: '宁波市' }
+    for (const queriedAt of ['2026-11-14T00:00:00Z', '2026-11-15T00:00:00Z']) {
+      submitSyntheticRecognizedCollection(db, { rdjb: '2', queriedAt, conditions: { uscc: fact.uscc }, rows: [{ raw, enterpriseId: null }] })
+    }
+    const detail = getRosterEnterpriseDetail(db, enterprise.id, Date.parse('2026-11-16T00:00:00Z'))!
+    expect(detail.events).toEqual([])
+    expect(detail.businessTimeline.asOf).toBe(detail.qualificationAssessment.asOf)
+    expect(detail.businessTimeline.sources.map(s => s.events.length)).toEqual([0, 1, 0, 0])
+    expect(detail.businessTimeline.sources[1]!.events[0]).toMatchObject({ matter: 'recognition', conclusion: 'passed', businessTime: { value: '2026-03-06' }, period: { from: { value: '2026-03-06' }, until: { value: '2029-03-05' } }, collectedAt: '2026-11-15T00:00:00Z' })
+    const summary = detail.qualificationAssessment.titles.find(t => t.titleCode === 'specialized_sme')!
+    expect(summary.effectiveQualification).toMatchObject({ status: 'effective', source: { source: 'recognized_list', businessTime: { value: '2026-03-06' }, period: { from: { value: '2026-03-06' }, until: { value: '2029-03-05' } } } })
+  } finally { db.$client.close(); rmSync(dir, { recursive: true, force: true }) }
+})
