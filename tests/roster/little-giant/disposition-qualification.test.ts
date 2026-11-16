@@ -227,3 +227,33 @@ it.each(['none','future-year','unpublished'] as const)('an inapplicable duplicat
  const statuses=f.db.$client.transaction(()=>reader.readEffectiveTitles([c.enterprise.id],Date.parse('2026-06-02T12:00:00Z'),'little_giant'))()
  expect(statuses.get(c.enterprise.id)).toBe('expired')
 })
+
+it.each(['enterprise-qualification-478-v3','enterprise-qualification-687-v4'] as const)('isolates %s from current disposition facts and source revisions', version => {
+ const c=setup('not_applied'), reader=createCurrentQualificationAssessmentReader(f.db.$client)
+ const legacy=()=>reader.read(c.enterprise.id,Date.parse('2026-06-02T12:00:00Z'),{assessmentVersion:version}).snapshot
+ const before=legacy()
+ expect(before.titles.find(t=>t.titleCode==='little_giant')!.group).toBe('eligible')
+ expect(read(c.enterprise.id,'2026-06-02').group).toBe('excluded')
+ const currentBefore=read(c.enterprise.id,'2026-06-02')
+ f.db.$client.prepare('update stored_file set removed_at=? where id=?').run('2026-06-02',c.file.id)
+ expect(legacy()).toEqual(before)
+ const currentAfter=read(c.enterprise.id,'2026-06-02')
+ expect(currentAfter.group).toBe('eligible')
+ expect(currentAfter.versions.sources).not.toBe(currentBefore.versions.sources)
+})
+
+it.each(['enterprise-qualification-478-v3','enterprise-qualification-687-v4'] as const)('preserves %s renewal recovery while default keeps failed-cycle exclusion',version=>{
+ const c=f.candidate('legacy recovery '+version,[{eventType:'award',year:2024,batchSeq:1},{eventType:'review',year:2024,decidedYear:2025,batchSeq:1,reviewOutcome:'failed'},{eventType:'review',year:2024,decidedYear:2026,batchSeq:1,reviewOutcome:'passed'}],'little_giant')
+ const result=createCurrentQualificationAssessmentReader(f.db.$client).read(c.enterprise.id,Date.parse('2026-06-02T12:00:00Z'),{assessmentVersion:version}).snapshot
+ expect(result.titles.find(t=>t.titleCode==='little_giant')!.group).toBe('eligible')
+ expect(read(c.enterprise.id,'2026-06-02').group).toBe('excluded')
+})
+
+it('retains the v4 local-history gate and v3 independence while default inherits without history',()=>{
+ const c=f.candidate('versioned inheritance',[{eventType:'award',year:2025,batchSeq:1}],'little_giant')
+ const reader=createCurrentQualificationAssessmentReader(f.db.$client), at=Date.parse('2026-06-02T12:00:00Z')
+ for(const assessmentVersion of ['enterprise-qualification-478-v3','enterprise-qualification-687-v4'] as const){
+  expect(reader.read(c.enterprise.id,at,{assessmentVersion}).snapshot.titles.map(t=>t.group)).toEqual(['eligible','excluded','excluded'])
+ }
+ expect(reader.read(c.enterprise.id,at).snapshot.titles.map(t=>t.group)).toEqual(['eligible','eligible','eligible'])
+})
