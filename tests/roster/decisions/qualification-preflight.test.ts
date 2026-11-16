@@ -187,7 +187,7 @@ it('invalidates a pinned source plan when a new content version of that business
  expect(createCurrentQualificationAssessmentReader(db.$client).read(e.id,Date.parse('2026-11-18T00:00:00Z')).snapshot.titles.find(t=>t.titleCode==='specialized_sme')!.effectiveQualification?.status).toBe('unrecognized')
 })
 
-it('recomputes own qualification after source ownership changes and never grants other titles', async () => {
+it('recomputes own and inherited lower qualification after source ownership changes without granting a higher title', async () => {
  const state = await fetch(base + '/current?' + new URLSearchParams({ enterpriseId: String(e.id), titleCode: 'specialized_sme', direction: 'extra_in_miit' })).then(r => r.json())
  const freshSource = submitNativePlatformQuery(db, { interface:'business_list',queryKey:e.usccNorm!,rdjb:'2',titleCode:'specialized_sme',queriedAt:'2026-11-18T00:00:00Z',status:'success',rawResponse:'{}',relations:[{sequenceNo:1,relationKey:'synthetic-record',rawFields:{id:'synthetic-record',qymc:e.name,tyshxydm:e.usccNorm,result:'changed'},enterpriseId:e.id,usccRaw:e.usccNorm!,nameRaw:e.name,verificationStatus:'confirmed',matchBasis:'uscc'}] })
  const input = {...command,expectedCurrentId:state.versionId,idempotencyKey:'independent-source-check',decision:{...command.decision,evidenceQueryId:freshSource.queryId,evidenceRelationId:freshSource.relationIds[0]}}
@@ -199,11 +199,13 @@ it('recomputes own qualification after source ownership changes and never grants
  const before = reader.read(e.id, asOf).snapshot
  const own = before.titles.find(t => t.titleCode === 'specialized_sme')!
  expect(own.effectiveQualification?.status).toBe('effective')
- expect(before.titles.filter(t => t.titleCode !== 'specialized_sme').map(t => t.effectiveQualification?.status)).toEqual(['unrecognized', 'unrecognized'])
+ expect(before.titles.filter(t => t.titleCode !== 'specialized_sme').map(t => [t.titleCode,t.effectiveQualification?.status])).toEqual([['little_giant','unrecognized'],['innovative_sme','effective']])
  const assignment = db.select().from(s.platformObservationAssignment).all().at(-1)!
  db.insert(s.platformObservationAssignment).values({ ...assignment, revision: assignment.revision + 1, verificationStatus: 'pending' }).run()
- const after = reader.read(e.id, asOf).snapshot.titles.find(t => t.titleCode === 'specialized_sme')!
+ const changed = reader.read(e.id, asOf).snapshot
+ const after = changed.titles.find(t => t.titleCode === 'specialized_sme')!
  expect(after.effectiveQualification?.status).toBe('unrecognized')
+ expect(changed.titles.find(t => t.titleCode === 'innovative_sme')!.effectiveQualification?.status).toBe('unrecognized')
  expect(after.versions.decisions).not.toBe(own.versions.decisions)
  expect(db.transaction(() => reader.readEffectiveTitles([e.id], asOf, 'specialized_sme').get(e.id))).toBe('unrecognized')
 })
