@@ -146,7 +146,10 @@ export function adjudicateQualificationCycles(formal: QualificationEvent[], year
       event.formalValidity?.originAwardEventId
         ? failure.formalValidity?.originAwardEventId === event.formalValidity.originAwardEventId
         : !failure.formalValidity?.originAwardEventId && event.year != null && event.batchSeq != null &&
-          event.year === failure.year && event.batchSeq === failure.batchSeq))
+          event.year === failure.year && event.batchSeq === failure.batchSeq &&
+          formal.filter(e => e.eventType === 'award' && e.year === event.year && e.batchSeq === event.batchSeq).length <= 1 &&
+          !formal.some(e => e.eventType === 'award' && e.year === event.year && e.batchSeq === event.batchSeq &&
+            awardTime(e) != null && awardTime(e)! > failure.decidedYear!)))
   const byYear = new Map<number, Map<number | null, QualificationEvent[]>>()
   const unknown: QualificationEvent[] = []
   // Dated current assessments ignore known future facts; undated legacy
