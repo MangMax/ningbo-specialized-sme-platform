@@ -183,3 +183,28 @@ it('a new 2023 grant and its 2025 renewal survive a 2022 failure even with coars
  expect(actual.group).toBe('eligible')
  expect(actual.effectiveQualification!.presentationBasis).toContain('默认年度规则：最近一次认定或复核通过 2025 年 + 3 = 2028 年；自 2028 年起到期（仅年份精度）')
 })
+it.each([
+ {kind:'future-year',grantYear:2027,before:'2026-12-31',effective:'2027-01-01',after:'2027-01-02'},
+ {kind:'unpublished',grantYear:2026,before:'2026-05-31',effective:'2026-06-01',after:'2026-06-02'},
+] as const)('does not use a $kind grant to restore a failed cycle before it applies',({kind,grantYear,before,effective,after})=>{
+ const c=f.candidate(kind+' new grant',[
+  {eventType:'review',year:2018,decidedYear:2022,batchSeq:1,reviewOutcome:'failed'},
+  {eventType:'review',year:2018,decidedYear:2025,batchSeq:1,reviewOutcome:'passed'},
+  {eventType:'award',year:2018,decidedYear:grantYear,batchSeq:1},
+ ],'little_giant')
+ if(kind==='unpublished'){
+  const award=f.db.select().from(s.recordEvent).all().find(e=>e.recordId===c.record.id&&e.eventType==='award')!
+  const evidence=f.db.select().from(s.recordEvidence).all().find(e=>e.recordEventId===award.id)!
+  const file=f.db.insert(s.storedFile).values({relPath:'unpublished-new-grant.pdf',filename:'unpublished-new-grant.pdf',ext:'pdf',bytes:1,sha256:'d'.repeat(64)}).returning().get()
+  f.db.update(s.recordEvidence).set({sourceFile:file.relPath,page:1}).where(eq(s.recordEvidence.id,evidence.id)).run()
+  f.db.update(s.recordEvent).set({formalValidity:{evidenceId:evidence.id,sourceSha256:file.sha256,statementPages:[1],publishedOn:effective,interval:{validFrom:effective,validThrough:'2029-05-31'}}}).where(eq(s.recordEvent.id,award.id)).run()
+ }
+ expect(read(c.enterprise.id,before).group).toBe('excluded')
+ expect(read(c.enterprise.id,effective).group).toBe('eligible')
+ expect(read(c.enterprise.id,after).group).toBe('eligible')
+ const reader=createCurrentQualificationAssessmentReader(f.db.$client)
+ for(const [day,status] of [[before,'expired'],[effective,'effective'],[after,'effective']] as const){
+  const statuses=f.db.$client.transaction(()=>reader.readEffectiveTitles([c.enterprise.id],Date.parse(day+'T12:00:00Z'),'little_giant'))()
+  expect(statuses.get(c.enterprise.id)).toBe(status)
+ }
+})

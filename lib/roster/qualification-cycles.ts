@@ -128,6 +128,15 @@ function hasUnresolvedRecovery(current: CycleJudgment[], history: CycleJudgment[
 /** #475 effective reads retain established periods when applicability metadata is missing.
  * Legacy callers keep the conservative pending policy by default. */
 export function adjudicateQualificationCycles(formal: QualificationEvent[], year = Infinity, day?: string, notesOnlyGaps = false, disposedAwards: ReadonlySet<number> = new Set(), cycleScoped = false, evidencedEvents?: ReadonlySet<number>): { group: CurrentGroup; notes: string[]; originYear: number; cycles: CycleJudgment[] } {
+  // Dated current assessments ignore known future facts; undated legacy
+  // receipts/planning keep their original input semantics. A linked upcoming
+  // publication may still carry an explicit this-result continuation clause.
+  if (day && year !== Infinity) formal = formal.filter(e => {
+    const validity = e.formalValidity
+    if (e.eventType === 'review' && validity?.originAwardEventId && validity.continuation === 'until_this_review_results' && validity.publishedOn && validity.publishedOn > day) return true
+    return (factTime(e) == null || factTime(e)! <= year) && (!validity?.publishedOn || validity.publishedOn <= day)
+  })
+  // Only applicable grants may distinguish a new cycle from a failed one.
   // Scoped failures are supplied as verified original award IDs by the caller.
   // Do not let an unknown-cycle failure leak back through legacy gap grouping.
   const scopedFailures = cycleScoped ? formal.filter(e => e.eventType === 'review' && e.reviewOutcome === 'failed' &&
@@ -152,14 +161,6 @@ export function adjudicateQualificationCycles(formal: QualificationEvent[], year
             awardTime(e) != null && awardTime(e)! > failure.decidedYear!)))
   const byYear = new Map<number, Map<number | null, QualificationEvent[]>>()
   const unknown: QualificationEvent[] = []
-  // Dated current assessments ignore known future facts; undated legacy
-  // receipts/planning keep their original input semantics. A linked upcoming
-  // publication may still carry an explicit this-result continuation clause.
-  if (day && year !== Infinity) formal = formal.filter(e => {
-    const validity = e.formalValidity
-    if (e.eventType === 'review' && validity?.originAwardEventId && validity.continuation === 'until_this_review_results' && validity.publishedOn && validity.publishedOn > day) return true
-    return (factTime(e) == null || factTime(e)! <= year) && (!validity?.publishedOn || validity.publishedOn <= day)
-  })
   const linked = day ? formal.filter(e => e.eventType === 'review' && e.formalValidity?.originAwardEventId) : []
   for (const event of formal) {
     if (linked.includes(event)) continue
