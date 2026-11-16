@@ -88,7 +88,8 @@ it.each([
  try {
   const c=local.candidate(scenario.name,scenario.events.map(e=>({...e})))
   local.db.update(schema.enterprise).set({usccNorm:'91310115MA1H7KUG93'}).where(eq(schema.enterprise.id,c.enterprise.id)).run()
-  writeNewCollectionTarget(local.db,collectionCommand({id:'scenario-source',tyshxydm:'91310115MA1H7KUG93',qymc:'平台原名',rdjb:'2',sfyx:'1',szsmc:'宁波市',...scenario.extra},'2026-11-01T00:00:00Z',scenario.source))
+  const extra: PlatformRawRow = Object.fromEntries(Object.entries(scenario.extra))
+  writeNewCollectionTarget(local.db,collectionCommand({id:'scenario-source',tyshxydm:'91310115MA1H7KUG93',qymc:'平台原名',rdjb:'2',sfyx:'1',szsmc:'宁波市',...extra},'2026-11-01T00:00:00Z',scenario.source))
   const result=createCurrentQualificationAssessmentReader(local.db.$client).read(c.enterprise.id,asOf).snapshot
   const own=result.titles.find(t=>t.titleCode==='specialized_sme')!
   expect(own.group).toBe(scenario.expected)
@@ -157,5 +158,23 @@ it.each([{newAward:2023,expected:'eligible'},{newAward:2027,expected:'excluded'}
   const result=createCurrentQualificationAssessmentReader(local.db.$client).read(c.enterprise.id,asOf).snapshot.titles.find(t=>t.titleCode==='specialized_sme')!
   expect(result.group).toBe(expected)
   if (expected==='eligible') expect(result.effectiveQualification?.source).toMatchObject({source:'business_list',matter:'review',businessYear:2026})
+ } finally {await local.close()}
+})
+
+it.each(['queryBusList', 'queryList'] as const)('renews an independent platform grant after an old failed cycle through %s', async source => {
+ const local=qualificationExportFixture()
+ try {
+  const c=local.candidate('platform independent cycle',[
+   {eventType:'award',year:2019,batchSeq:1},
+   {eventType:'review',year:2019,batchSeq:1,decidedYear:2022,reviewOutcome:'failed'},
+  ])
+  local.db.update(schema.enterprise).set({usccNorm:'91310115MA1H7KUG93'}).where(eq(schema.enterprise.id,c.enterprise.id)).run()
+  const grant: PlatformRawRow = source === 'queryBusList'
+   ? {rdtime:'2023-01-01',rddqrq:'2026-01-01',sfyx:'1'}
+   : {sblx:'申请',cszt:'终审通过',year:'2023'}
+  writeNewCollectionTarget(local.db,collectionCommand({id:'independent-platform-grant',tyshxydm:'91310115MA1H7KUG93',qymc:'原名',rdjb:'2',szsmc:'宁波市',...grant},'2026-10-01T00:00:00Z',source))
+  writeNewCollectionTarget(local.db,collectionCommand({id:'platform-renewal',tyshxydm:'91310115MA1H7KUG93',qymc:'原名',rdjb:'2',sblx:'复核',cszt:'终审通过',year:'2026'},'2026-11-01T00:00:00Z','businessList'))
+  const result=createCurrentQualificationAssessmentReader(local.db.$client).read(c.enterprise.id,asOf).snapshot.titles.find(t=>t.titleCode==='specialized_sme')!
+  expect(result).toMatchObject({group:'eligible',effectiveQualification:{status:'effective',source:{source:'business_list',matter:'review',businessYear:2026}}})
  } finally {await local.close()}
 })

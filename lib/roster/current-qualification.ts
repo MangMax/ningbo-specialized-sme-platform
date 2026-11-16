@@ -739,9 +739,17 @@ function createCurrentCandidateEvaluationReader(db: Database.Database, receiptRu
         // A review can renew a later independent award, but cannot itself be
         // the grant that recovers the failed originating cycle. Future awards
         // cannot supply that new-cycle anchor.
-        return f.matter !== 'review' || !formal.some(award => award.eventType === 'award' &&
+        const publishedGrant = formal.some(award => award.eventType === 'award' &&
           qualificationEventAppliesAt(award, year, day) && awardTime(award) != null &&
           awardTime(award)! > blockedAt && awardTime(award)! <= startYear && !disposedAwards.has(award.id))
+        const platformGrant = visible.some(grant => {
+          if (!['recognition','apply'].includes(grant.matter) || grant.conclusion !== 'passed') return false
+          if (grant.invalidatedAt.value && grant.invalidatedAt.value <= at) return false
+          if (grant.location.city ? !/^宁波(?:市)?$/.test(grant.location.city) : enterprise.city && !/^宁波(?:市)?$/.test(enterprise.city)) return false
+          const grantYear = grant.period.from.value ? Number(grant.period.from.value.slice(0, 4)) : grant.businessYear
+          return grantYear != null && grantYear > blockedAt && grantYear <= startYear
+        })
+        return f.matter !== 'review' || !(publishedGrant || platformGrant)
       })) return false
       // An explicit negative from a higher-priority current source cannot be
       // bypassed by an older lower-priority pass. A later independent grant can.

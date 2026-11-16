@@ -186,7 +186,7 @@ it('opens legacy review links as readonly detail without review requests or a le
   expect(view!.findAll('form')).toHaveLength(0)
   expect(view!.text()).not.toMatch(/称号核对|核对这一事项|来源变化处理|继续填写|切换并丢弃/)
   expect(vi.mocked($fetch)).not.toHaveBeenCalled()
-  vi.mocked($fetch).mockResolvedValueOnce(state.detail)
+  vi.mocked($fetch as (url: string) => Promise<unknown>).mockResolvedValueOnce(state.detail)
   await state.queryOptions.query()
   expect(vi.mocked($fetch).mock.calls).toEqual([['/api/roster/enterprises/91']])
   await router.push('/preview')
