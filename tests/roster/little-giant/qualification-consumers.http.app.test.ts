@@ -57,7 +57,7 @@ it('retains complete inherited evidence and versions across page sizes and later
   const small = await query(1)
   const large = await query(200)
   expect(large.total).toBe(5)
-  expect(large.rows.map((row: { name: string }) => row.name)).toEqual(['specialized', 'both'])
+  expect(large.rows.map((row: { name: string }) => row.name)).toEqual(['none','specialized','innovative','both','platform'])
   expect(small.rows[0]).toEqual(large.rows[0])
   for (const row of large.rows) {
     const detail = await fetch(f.url(`/api/roster/enterprises/${row.enterpriseId}`)).then(response => response.json())

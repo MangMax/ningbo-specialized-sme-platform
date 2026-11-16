@@ -64,5 +64,5 @@ it('conserves literal effective enterprise/title rowsets including unknown and i
   expect(first.total).toBe(2); expect(second.total).toBe(2)
   expect(first.rows.map((r:any)=>r.enterpriseId)).toEqual([2]); expect(second.rows.map((r:any)=>r.enterpriseId)).toEqual([4])
   expect(first.rows[0].evidence[0]).toMatchObject({sourceFile:'annual.pdf',page:2})
-  expect((await read('?district='+encodeURIComponent('大榭开发区'))).body.rows.map((r:any)=>r.titleCode)).toEqual(['little_giant','specialized_sme'])
+  expect((await read('?district='+encodeURIComponent('大榭开发区'))).body.rows.map((r:any)=>r.titleCode)).toEqual(['innovative_sme','little_giant','specialized_sme'])
 })
