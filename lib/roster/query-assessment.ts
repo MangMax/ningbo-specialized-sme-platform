@@ -197,8 +197,13 @@ export type QueryAssessmentSummary = {
   explanationValidity: Pick<QueryAssessment['explanationValidity'], 'status'>
 }
 
-export function readQueryAssessments(db: DecisionDb, scopes: AssessmentScope[]): QueryAssessment[] {
-  return readCoveragesForScopes(db, scopes).map((queryCoverage, index) => {
+export function readQueryAssessments(db: DecisionDb, scopes: AssessmentScope[], ownedCoverage?: ReturnType<typeof readQueryCoverageBatch>): QueryAssessment[] {
+  const coverages = ownedCoverage ? scopes.map(scope => {
+    const coverage = ownedCoverage.get(scope.enterpriseId)?.get(scope.titleCode)
+    if (!coverage) throw new Error('Query assessment coverage scope missing')
+    return coverage
+  }) : readCoveragesForScopes(db, scopes)
+  return coverages.map((queryCoverage, index) => {
     const { enterpriseId, titleCode, direction } = scopes[index]!
     return assessmentOf(db, { enterpriseId, titleCode, direction }, queryCoverage)
   })

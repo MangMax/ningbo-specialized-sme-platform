@@ -1,5 +1,6 @@
 import { afterAll, expect, it, vi } from 'vitest'
 import { qualificationExportFixture } from '../current-export/fixtures/qualification-export'
+import { createCurrentQualificationAssessmentReader, CURRENT_TITLES } from '../../../lib/roster/current-qualification'
 import { getComparison } from '../../../lib/comparison'
 import { listRosterDifferences } from '../../../lib/roster/difference-list'
 import { getRosterEnterpriseDetail } from '../../../lib/roster/enterprise-roster'
@@ -151,4 +152,23 @@ it.each(['终审通过','未知状态'])('does not recollect a settled directory
   expect(result).toMatchObject({total:1,rows:[{enterpriseId:c.enterprise.id,inCurrentDifference:true,qualification:{status:'unrecognized'},suggestedAction:'none'}]})
   expect(legacyDifferences(local.db,filter)).toEqual(result)
  } finally {await local.close()}
+})
+
+it('hydrates only requested difference titles while retaining full higher-title versions and default reads', () => {
+ const c=f.candidate('page-dependencies',[{eventType:'award',year:2025,batchSeq:1}],'little_giant')
+ const asOf=Date.parse('2026-06-01T00:00:00Z')
+ const reader=createCurrentQualificationAssessmentReader(f.db.$client)
+ f.db.transaction(()=>{
+  const full=reader.read(c.enterprise.id,asOf).snapshot
+  expect(full.titles.map(row=>row.titleCode)).toEqual([...CURRENT_TITLES])
+  const page=reader.readDifferenceBatch(CURRENT_TITLES.map(titleCode=>({enterpriseId:c.enterprise.id,titleCode})),asOf)
+  expect(page.snapshots).toHaveLength(3)
+  for(const {snapshot} of page.snapshots){
+   expect(snapshot.titles).toHaveLength(1)
+   const title=snapshot.titles[0]!.titleCode
+   const previous=reader.readCurrentBatch([c.enterprise.id],asOf,title)[0]!.snapshot.titles.find(row=>row.titleCode===title)
+   expect(snapshot.titles[0]).toEqual(previous)
+   expect(snapshot.titles[0]!.effectiveQualification).toMatchObject({status:'effective'})
+  }
+ })
 })

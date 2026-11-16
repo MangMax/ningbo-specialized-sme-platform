@@ -454,6 +454,33 @@ function createCurrentQualificationAssessmentReaderBody(db:Database.Database,rec
         evaluate(id, title, Number(qualificationDay(asOf).slice(0,4)), asOf, undefined, false, false, undefined, false, undefined, () => [], undefined, undefined, { qualificationOnly: true }).effectiveStatus,
       ])))
     },
+    /** One selected differences page, on the caller's transaction/asOf. Full
+     * coverage also serves cross-title subject decisions; assessment hydration
+     * is restricted to the requested title and its real inheritance dependencies. */
+    readDifferenceBatch(scopes: readonly { enterpriseId: number; titleCode: string }[], asOf: number) {
+      const ids = [...new Set(scopes.map(scope => scope.enterpriseId))]
+      const coverages = readQueryCoverageBatch(prepareCurrentReader(db), ids.flatMap(enterpriseId => CURRENT_TITLES.map(titleCode => ({ enterpriseId, titleCode, direction: 'missing_in_miit' as const }))))
+      const snapshots: { snapshot: CurrentQualificationSnapshot }[] = []
+      const platformFacts: PlatformQualificationFact[] = []
+      for (let offset = 0; offset < ids.length; offset += 100) {
+        const chunk = ids.slice(offset, offset + 100)
+        evaluate.withinBatch(chunk, inputs => withinReferences([...inputs.canonical.values()], () => {
+          platformFacts.push(...inputs.platformFacts)
+          for (const id of chunk) {
+            const titles = CURRENT_TITLES.filter(title => scopes.some(scope => scope.enterpriseId === id && scope.titleCode === title))
+            for (const title of titles) {
+              const read = readSnapshot(id, asOf, { coverageForTitle: titleCode => {
+                const coverage = coverages.get(id)?.get(titleCode)
+                if (!coverage) throw new Error('Difference coverage scope missing')
+                return coverage
+              } }, title, undefined, undefined, undefined, title)
+              snapshots.push({ snapshot: read.snapshot })
+            }
+          }
+        }))
+      }
+      return { snapshots, platformFacts, coverages }
+    },
     readCurrentBatch(ids: readonly number[], asOf: number, title: CurrentTitle, queryKeys?: IdentityKeyVariants) {
       return evaluate.withinBatch(ids, inputs => withinReferences([...inputs.canonical.values()], () => {
         const coverages = readQueryCoverageBatch(prepareCurrentReader(db), ids.flatMap(enterpriseId => CURRENT_TITLES.map(titleCode => ({ enterpriseId, titleCode, direction: 'missing_in_miit' as const }))), queryKeys)
