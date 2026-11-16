@@ -1,8 +1,40 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref, shallowRef, watch } from 'vue'
+import type { RosterEnterpriseDetail } from '~~/lib/roster/enterprise-roster'
+import PlatformRecords from './PlatformRecords.vue'
+import { Button } from '@/components/ui/button'
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog'
 import { reviewOutcomeLabel, timelineEventIdentity, type TimelineEventFacts } from '~~/lib/roster/enterprise-timeline'
 
-const props = defineProps<{ events?: readonly TimelineEventFacts[] }>()
+const props = defineProps<{ events?: readonly TimelineEventFacts[]; enterpriseId?: number }>()
+const open = ref(false)
+const detail = shallowRef<RosterEnterpriseDetail | null>(null)
+const loading = ref(false)
+const failure = ref(false)
+let generation = 0
+async function load() {
+  if (props.enterpriseId == null) return
+  const request = ++generation
+  const enterpriseId = props.enterpriseId
+  loading.value = true
+  failure.value = false
+  try {
+    const result = await $fetch<RosterEnterpriseDetail>(`/api/roster/enterprises/${enterpriseId}`)
+    if (request === generation) detail.value = result
+  } catch {
+    if (request === generation) failure.value = true
+  } finally {
+    if (request === generation) loading.value = false
+  }
+}
+watch(() => props.enterpriseId, () => {
+  generation++
+  detail.value = null
+  failure.value = false
+  loading.value = false
+  open.value = false
+})
+watch(open, value => { if (value) void load() })
 const steps = computed(() => {
   const seen = new Set<string>()
   return (props.events ?? []).flatMap(event => {
@@ -28,4 +60,16 @@ const steps = computed(() => {
     </li>
   </ol>
   <p v-else class="text-muted-foreground text-sm leading-6">{{ props.events === undefined ? '认定与复核记录请查看详情' : '暂无认定与复核记录' }}</p>
+  <Button v-if="enterpriseId != null" variant="outline" size="sm" class="mt-2 max-w-full whitespace-normal" @click="open = true">查看全部业务来源</Button>
+  <Dialog v-model:open="open">
+    <DialogContent class="max-h-[85dvh] min-w-0 overflow-y-auto sm:max-w-3xl">
+      <DialogHeader><DialogTitle>企业业务时间线</DialogTitle><DialogDescription>公布资料、认定目录、关联办理与申报记录；资格采用同一详情快照的后端评估。</DialogDescription></DialogHeader>
+      <p v-if="loading" role="status">正在读取业务记录</p>
+      <div v-if="failure" role="alert"><p>业务记录读取失败，保留上次成功结果。</p><Button :disabled="loading" @click="load">重试读取业务记录</Button></div>
+      <template v-if="detail">
+        <p>评估时点：{{ detail.qualificationAssessment.asOf }}</p>
+        <PlatformRecords :key="enterpriseId" :timeline="detail.businessTimeline" />
+      </template>
+    </DialogContent>
+  </Dialog>
 </template>

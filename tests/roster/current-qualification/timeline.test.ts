@@ -41,3 +41,42 @@ it('does not describe an old response without history fields as an empty history
   expect(wrapper.text()).not.toContain('暂无')
   wrapper.unmount()
 })
+
+it('loads all sources only on opening and isolates a later enterprise from a pending response', async () => {
+  const { vi } = await import('vitest')
+  const { flushPromises } = await import('@vue/test-utils')
+  let resolve!: (value: unknown) => void
+  const fetch = vi.fn(() => new Promise(r => { resolve = r }))
+  vi.stubGlobal('$fetch', fetch)
+  const wrapper = mount(CurrentQualificationTimeline, { props: { enterpriseId: 1, events: [] } })
+  try {
+    expect(fetch).not.toHaveBeenCalled()
+    await wrapper.get('button').trigger('click')
+    expect(fetch).toHaveBeenCalledWith('/api/roster/enterprises/1')
+    await wrapper.setProps({ enterpriseId: 2 })
+    resolve({ qualificationAssessment: { asOf: '2026-11-16' }, businessTimeline: { sources: [] } })
+    await flushPromises()
+    expect(wrapper.findComponent({ name: 'PlatformRecords' }).exists()).toBe(false)
+  } finally { wrapper.unmount(); vi.unstubAllGlobals() }
+})
+
+it('retains a successful timeline after refresh failure and offers explicit retry', async () => {
+  const { vi } = await import('vitest')
+  const { flushPromises, DOMWrapper } = await import('@vue/test-utils')
+  const fetch = vi.fn().mockResolvedValueOnce({ qualificationAssessment: { asOf: '2026-11-16' }, businessTimeline: { sources: [] } }).mockRejectedValueOnce(new Error('offline')).mockResolvedValue({ qualificationAssessment: { asOf: '2026-11-17' }, businessTimeline: { sources: [] } })
+  vi.stubGlobal('$fetch', fetch)
+  const wrapper = mount(CurrentQualificationTimeline, { attachTo: document.body, props: { enterpriseId: 1 }, global: { stubs: { Dialog: { props: ['open'], template: '<div v-if="open"><slot /></div>' }, DialogContent: { template: '<div><slot /></div>' }, DialogHeader: { template: '<div><slot /></div>' }, DialogTitle: { template: '<h2><slot /></h2>' }, DialogDescription: { template: '<p><slot /></p>' } } } })
+  try {
+    await wrapper.get('button').trigger('click'); await flushPromises()
+    expect(wrapper.text()).toContain('2026-11-16')
+    // Close and reopen through the public dialog model to request a fresh read.
+    wrapper.findComponent({ name: 'Dialog' }).vm.$emit('update:open', false)
+    await flushPromises()
+    await new DOMWrapper(wrapper.element).find('button').trigger('click'); await flushPromises()
+    expect(wrapper.text()).toContain('读取失败')
+    expect(wrapper.text()).toContain('2026-11-16')
+    const retry = wrapper.findAll('button').find(b => b.text() === '重试读取业务记录')!
+    await retry.trigger('click'); await flushPromises()
+    expect(wrapper.text()).toContain('2026-11-17')
+  } finally { wrapper.unmount(); vi.unstubAllGlobals() }
+})

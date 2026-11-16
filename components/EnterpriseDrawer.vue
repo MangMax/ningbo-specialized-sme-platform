@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import PlatformRecords from './PlatformRecords.vue'
+import type { RosterEnterpriseDetail } from '~~/lib/roster/enterprise-roster'
 import type { ReviewAssessment, ReviewScope } from '~~/lib/roster/evidence-review-ui'
 import { computed, watch } from 'vue'
 import { useQuery } from '@pinia/colada'
@@ -77,6 +79,8 @@ interface Difference {
   inCurrentDifference: boolean
 }
 interface Detail {
+  businessTimeline: RosterEnterpriseDetail['businessTimeline']
+  qualificationAssessment: RosterEnterpriseDetail['qualificationAssessment']
   enterprise: {
     enterpriseId: number
     name: string
@@ -145,7 +149,7 @@ const { data, isLoading, error, refetch } = useQuery({
   enabled: () => props.enterpriseId != null,
 })
 
-const detail = computed(() => data.value ?? null)
+const detail = computed(() => data.value?.enterprise.enterpriseId === props.enterpriseId ? data.value : null)
 /** 每个称号的复核安排使用后端生命周期；认定年份与批次必须来自对应事件。 */
 const nextReviews = computed(() => {
   if (!detail.value) return []
@@ -397,6 +401,8 @@ function eventSuffix(item: TimelineItem): string {
               <span v-else class="text-muted-foreground">—</span>
             </dd>
           </dl>
+
+          <PlatformRecords :key="detail.enterprise.enterpriseId" :timeline="detail.businessTimeline" />
 
           <!-- 称号历史：年份 + 事件；普通分隔线，不做节点/连线装饰。 -->
           <h3 class="text-muted-foreground mt-5 border-t pt-4 text-xs font-medium">称号历史</h3>

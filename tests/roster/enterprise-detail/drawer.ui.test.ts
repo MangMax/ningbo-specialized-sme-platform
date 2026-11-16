@@ -31,6 +31,7 @@ function detailWithDifference(patch: Record<string, unknown> = {}) {
       nextReviewYear: null,
       anchorNeedsReview: false,
     },
+    businessTimeline: { asOf: '2026-11-16', sources: ['publication', 'recognized_list', 'business_list', 'apply_list'].map(source => ({ source, collectionStatus: 'not_collected', collectedAt: null, events: [] })) },
     aliases: [],
     records: [],
     events: [],

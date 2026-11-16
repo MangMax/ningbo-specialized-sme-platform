@@ -1,46 +1,25 @@
 <script setup lang="ts">
-import { computed } from 'vue'
-import type { PlatformBusinessDetail, PlatformDetailObservation } from '~~/lib/roster/platform-business-detail'
-import type { PlatformRecord, PlatformRecordQuery } from '~~/lib/roster/platform-records'
-import { PLATFORM_HISTORY_CONFLICTS, PLATFORM_HISTORY_STATES } from '~~/lib/roster/platform-records'
-import { formatFetchTime } from '~~/lib/reconcile-time'
-import { PLATFORM_RDJBS } from '~~/lib/labels'
+import type { RosterEnterpriseDetail } from '~~/lib/roster/enterprise-roster'
+import TitleBadge from './TitleBadge.vue'
 import DisclosurePanel from './DisclosurePanel.vue'
-import PlatformRecordDetails from './PlatformRecordDetails.vue'
-import PlatformFieldConflicts from './PlatformFieldConflicts.vue'
-import { Button } from '@/components/ui/button'
-
-const props = defineProps<{ business: PlatformBusinessDetail; records: Map<number, PlatformRecord>; queries: Map<number, PlatformRecordQuery> }>()
-const emit = defineEmits<{ source: [relationId: number] }>()
-const sections = computed(() => [
-  ...props.business.versions,
-  ...props.business.observationRefs.filter(o => o.businessRecord.groupState !== 'verified' || o.businessRecord.versionId == null)
-    .map(o => ({ businessRecord: o.businessRecord, observationRefs: [o] })),
-])
-const decisionStatus: Record<string, string> = { candidate: '待核', confirmed: '已确认', rejected: '已否决', unlinked: '已解除' }
-const observationName = (observation: PlatformDetailObservation) => observation.typedFields ? observation.typedFields.nameRaw ?? '名称未提供' : props.records.get(observation.relationId)?.nameRaw ?? '名称未提供'
-const observationUscc = (observation: PlatformDetailObservation) => observation.typedFields ? observation.typedFields.usccRaw ?? '信用代码未提供' : props.records.get(observation.relationId)?.usccRaw ?? '信用代码未提供'
+import EventChip from './EventChip.vue'
+type BusinessEvent = RosterEnterpriseDetail['businessTimeline']['sources'][number]['events'][number]
+defineProps<{ event: BusinessEvent }>()
+const matters: Record<string, string> = { recognition: '认定', award: '认定', review: '复核', apply: '申报', update: '更新', cancel: '取消' }
+const conclusions = { passed: '通过', invalid: '无效', processing: '办理中', unknown: '结论未知' }
 </script>
+
 <template>
-  <DisclosurePanel compact :heading-level="4" :title="`版本与采集历史 · ${business.versionCount} 个内容版本 · ${business.observationCount} 次采集`" data-testid="platform-business-history">
-    <template #title><span class="flex min-w-0 flex-1 flex-col items-start text-left"><span>版本与采集历史 · {{ business.versionCount }} 个内容版本 · {{ business.observationCount }} 次采集</span><span class="text-muted-foreground font-normal">{{ business.versionCount }} 个已核实版本 · {{ business.unknownContentObservationCount }} 次内容未核实</span></span></template>
-    <div class="flex flex-col gap-3 px-3">
-      <p class="text-muted-foreground text-[13px]">表格展示最近实际采集的原行；版本编号不表示时间。内容未核实的观察逐次保留，不计作内容版本。每次观察的对应决定仅属于该原行。</p>
-      <section v-for="(section, index) in sections" :key="section.businessRecord.versionId ?? `unknown-${index}`" class="rounded-sm border p-3" :data-testid="section.businessRecord.groupState === 'verified' && section.businessRecord.versionId != null ? 'platform-content-version' : undefined">
-        <h5 class="text-sm font-medium">{{ section.businessRecord.groupState === 'verified' ? `内容版本 #${section.businessRecord.versionId}` : PLATFORM_HISTORY_STATES[section.businessRecord.groupState] ?? '内容未知' }} · {{ section.observationRefs.length }} 次采集</h5>
-        <div v-for="observation in section.observationRefs" :key="observation.relationId" class="mt-2 flex flex-col gap-1 border-t pt-2 text-[13px]" data-testid="platform-observation" :data-relation-id="observation.relationId">
-          <p>行 #{{ observation.relationId }} · 查询 #{{ observation.queryId }} · <time :datetime="observation.queriedAt">{{ formatFetchTime(observation.queriedAt) ?? observation.queriedAt }}</time></p>
-          <p class="text-muted-foreground">来源称号：{{ PLATFORM_RDJBS[records.get(observation.relationId)?.sourceRdjb ?? queries.get(observation.queryId)?.rdjb ?? ''] ?? '未标注' }} · {{ observationName(observation) }} · {{ observationUscc(observation) }}</p>
-          <PlatformFieldConflicts :conflicts="records.get(observation.relationId)?.normalizationConflicts" />
-          <p v-for="conflict in observation.conflicts" :key="conflict">{{ PLATFORM_HISTORY_CONFLICTS[conflict] ?? '原观察存在冲突，待核' }}</p>
-          <p v-if="!observation.existingCorrespondences.length" class="text-muted-foreground">此原行暂无对应决定</p>
-          <p v-for="decision in observation.existingCorrespondences" :key="decision.id">对应 #{{ decision.id }} · {{ decisionStatus[decision.status] ?? decision.status }}<template v-if="decision.eventId"> · 事件 #{{ decision.eventId }}</template></p>
-          <div class="flex flex-wrap gap-1">
-            <PlatformRecordDetails v-if="records.get(observation.relationId)" :record="records.get(observation.relationId)!" :query="queries.get(observation.queryId)" />
-            <Button variant="ghost" size="sm" @click="emit('source', observation.relationId)">对应事件/出处</Button>
-          </div>
-        </div>
-      </section>
-    </div>
-  </DisclosurePanel>
+  <article class="min-w-0 rounded-md border p-3 text-sm leading-6 break-words [overflow-wrap:anywhere]" data-testid="business-event">
+    <h4 class="flex flex-wrap items-center gap-2"><TitleBadge v-if="event.title" :code="event.title" /><span v-else>称号未知</span><EventChip v-if="event.matter === 'award' || event.matter === 'review'" :type="event.matter" hide-batch /><span v-else>{{ matters[event.matter] ?? event.matterRaw ?? '事项未知' }}</span></h4>
+    <p v-if="event.platformName">来源原名：{{ event.platformName }}</p>
+    <p>结论：{{ conclusions[event.conclusion] }}<template v-if="event.statusRaw != null">（{{ event.statusRaw }}）</template></p>
+    <p>{{ event.businessTimeKind === 'submission' ? '申报时间' : event.matter === 'review' ? '复核结论时间' : '业务时间' }}：{{ event.businessTime.value ?? '未知' }}</p>
+    <p>实际期间：{{ event.period.from.value ?? '起始未知' }} 至 {{ event.period.until.value ?? '结束未知' }}</p>
+    <DisclosurePanel title="业务详情" trigger-class="py-2" content-class="pb-1">
+      <p>原事项：{{ event.matterRaw ?? matters[event.matter] ?? '未知' }}</p>
+      <p>业务年度：{{ event.businessYear ?? '未知' }}</p>
+      <p class="text-muted-foreground">资料采集时间：{{ event.collectedAt ?? '未记录' }}（辅助信息）</p>
+    </DisclosurePanel>
+  </article>
 </template>
