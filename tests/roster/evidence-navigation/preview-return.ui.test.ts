@@ -10,6 +10,7 @@ import {
   shouldNuxtScrollToTop,
   useEvidencePreviewScrollRestore,
 } from '../../../lib/roster/evidence-preview-return'
+import type { RosterEnterpriseDetail } from '../../../lib/roster/enterprise-roster'
 import EnterprisePage from '../../../pages/enterprises/[id].vue'
 
 vi.mock('@tanstack/vue-virtual', async () => {
@@ -30,7 +31,6 @@ const mocks = vi.hoisted(() => ({
   setLoading: null as ((value: boolean) => void) | null,
 }))
 
-const DETAIL_OPEN_EVIDENCE_STATE_KEY = 'roster:enterprise-detail-open-evidence'
 
 vi.mock('@pinia/colada', async () => {
   const { ref } = await import('vue')
@@ -49,6 +49,16 @@ vi.mock('@pinia/colada', async () => {
 })
 
 const safeBack = '/?view=enterprise&q=%E5%BC%80%E8%AF%9A&page=2&expand=91'
+const businessTimeline = {
+  asOf: '2026-11-17',
+  sources: [
+    { source: 'publication', collectionStatus: 'not_applicable', collectedAt: null, events: [] },
+    { source: 'recognized_list', collectionStatus: 'not_collected', collectedAt: null, events: [] },
+    { source: 'business_list', collectionStatus: 'not_collected', collectedAt: null, events: [] },
+    { source: 'apply_list', collectionStatus: 'not_collected', collectedAt: null, events: [] },
+  ],
+} satisfies RosterEnterpriseDetail['businessTimeline']
+
 const detail = {
   enterprise: { name: '宁波开诚生态技术有限公司', uscc: null },
   aliases: [],
@@ -65,7 +75,8 @@ const detail = {
   evidence: [{ eventId: 10, sourceFile: 'jxj/announcement/test.pdf', attachment: '附件二', listNo: 6, page: 8 }],
   recognitions: [],
   differences: [],
-  platform: { queries: [], relations: [] },
+  businessTimeline,
+  platform: { queries: [], relations: [], businessRecords: [] },
 }
 
 const row: EnterpriseRow = {
@@ -96,7 +107,8 @@ const fullDetail = {
   ],
   events: [{ id: 10, recordId: 1, eventType: 'award', year: 2022, batchSeq: 1, decidedYear: null, reviewOutcome: null }],
   evidence: [{ eventId: 10, sourceFile: 'jxj/announcement/test.pdf', attachment: '附件二', listNo: 6, page: 8 }],
-  platform: { queries: [], relations: [] },
+  businessTimeline,
+  platform: { queries: [], relations: [], businessRecords: [] },
 }
 
 const titleRow: TitleRow = {
@@ -149,7 +161,6 @@ const globalStubs = {
   FilePreviewDialog: true,
   RecordSourceReader: true,
   EnterpriseLaterProcesses: true,
-  PlatformRecords: true,
   EventChip: true,
   SourceChip: true,
   TitleBadge: true,
@@ -235,7 +246,7 @@ describe('出处预览返回滚动恢复', () => {
     vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, status: 200 })))
     vi.stubGlobal('useHead', vi.fn())
     vi.stubGlobal('$fetch', vi.fn(async () => ({})))
-    currentRoute = { params: { id: '91' }, query: {}, fullPath: '/enterprises/91' }
+    currentRoute = { path: '/enterprises/91', params: { id: '91' }, query: {}, fullPath: '/enterprises/91' }
     capturedPageMeta = {}
     openedTitleRowPath = ''
     vi.stubGlobal('useRoute', () => currentRoute)
@@ -354,7 +365,7 @@ describe('出处预览返回滚动恢复', () => {
     await flushPromises()
     expect(page.text()).toContain('原认定 2021 年 · 复核结论 2024 年 · 复核不通过')
     expect(page.text()).not.toContain('failed')
-    expect(page.getComponent({ name: 'EventChip' }).attributes('hide-batch')).toBe('true')
+    expect(page.getComponent({ name: 'EventChip' }).props('hideBatch')).toBe(true)
     page.unmount()
   })
 
@@ -457,7 +468,7 @@ describe('出处预览返回滚动恢复', () => {
     history.pushState(null, '', detailPath)
     Object.defineProperty(window, 'scrollY', { configurable: true, value: detailWindowTop })
     currentRoute = {
-      params: { id: '91' },
+      path: '/enterprises/91', params: { id: '91' },
       query: { back: 'view=enterprise&q=%E5%BC%80%E8%AF%9A&page=2&expand=91' },
       fullPath: detailPath,
     }
@@ -618,7 +629,7 @@ describe('出处预览返回滚动恢复', () => {
     history.pushState(null, '', detailPath)
     Object.defineProperty(window, 'scrollY', { configurable: true, value: detailWindowTop })
     currentRoute = {
-      params: { id: '35' },
+      path: '/enterprises/35', params: { id: '35' },
       query: { back: backQuery },
       fullPath: detailPath,
     }
@@ -714,13 +725,14 @@ describe('出处预览返回滚动恢复', () => {
     { label: '桌面详情页', width: 1440, height: 900, windowTop: 90 },
     { label: '390×844 窄屏详情页', width: 390, height: 844, windowTop: 42 },
   ])('$label 从出处预览返回时在详情数据渲染后恢复页面位置', async ({ width, height, windowTop }) => {
-    const detailPath = '/enterprises/91?back=view%3Denterprise%26q%3D%E5%BC%80%E8%AF%9A%26page%3D2%26expand%3D91'
+    const nestedReturnTo = '/comparison?mode=record&queryIds=20&page=2&q=A%3FB&returnTo=%2Fcurrent-enterprises%3Fpage%3D4'
+    const detailPath = '/enterprises/91?back=view%3Denterprise%26q%3D%E5%BC%80%E8%AF%9A%26page%3D2%26expand%3D91&returnTo=%2Fcomparison%3Fmode%3Drecord%26queryIds%3D20%26page%3D2%26q%3DA%253FB%26returnTo%3D%252Fcurrent-enterprises%253Fpage%253D4'
     const returnPath = detailPath + '&tab=records&eventId=10'
     Object.defineProperty(window, 'innerWidth', { configurable: true, value: width })
     Object.defineProperty(window, 'innerHeight', { configurable: true, value: height })
     Object.defineProperty(window, 'scrollY', { configurable: true, value: windowTop })
     history.replaceState(null, '', detailPath)
-    currentRoute = { params: { id: '91' }, query: { back: 'view=enterprise&q=%E5%BC%80%E8%AF%9A&page=2&expand=91' }, fullPath: detailPath }
+    currentRoute = { path: '/enterprises/91', params: { id: '91' }, query: { back: 'view=enterprise&q=%E5%BC%80%E8%AF%9A&page=2&expand=91', returnTo: nestedReturnTo }, fullPath: detailPath }
     mocks.detail = fullDetail
     mocks.loading = false
 
@@ -733,17 +745,14 @@ describe('出处预览返回滚动恢复', () => {
     const previewUrl = new URL(sourceLink!.attributes('href')!, window.location.origin)
     expect(previewUrl.pathname).toBe('/preview')
     expect(previewUrl.searchParams.get('back')).toBe(returnPath)
+    expect(new URL(previewUrl.searchParams.get('back')!, window.location.origin).searchParams.get('returnTo')).toBe(nestedReturnTo)
     expect(sessionStorage.getItem('roster:evidence-preview-return')).toContain(`"back":"${returnPath}"`)
     expect(sessionStorage.getItem('roster:evidence-preview-return')).toContain(`"scrollY":${windowTop}`)
-    expect(JSON.parse(sessionStorage.getItem(DETAIL_OPEN_EVIDENCE_STATE_KEY)!)).toEqual({
-      back: returnPath,
-      keys: [],
-    })
     source.unmount()
 
     history.pushState(null, '', returnPath)
     Object.defineProperty(window, 'scrollY', { configurable: true, value: 0 })
-    currentRoute = { params: { id: '91' }, query: { tab: 'records', eventId: '10', back: 'view=enterprise&q=%E5%BC%80%E8%AF%9A&page=2&expand=91' }, fullPath: returnPath }
+    currentRoute = { path: '/enterprises/91', params: { id: '91' }, query: { tab: 'records', eventId: '10', back: 'view=enterprise&q=%E5%BC%80%E8%AF%9A&page=2&expand=91', returnTo: nestedReturnTo }, fullPath: returnPath }
     mocks.detail = null
     mocks.loading = true
     const frames: FrameRequestCallback[] = []
@@ -764,7 +773,7 @@ describe('出处预览返回滚动恢复', () => {
     expect(frames).toHaveLength(1)
     frames[0]!(0)
     expect(scrollTo).toHaveBeenCalledWith({ top: windowTop, behavior: 'instant' })
-    expect(returned.findAll('button').some((button) => button.text().includes('来源记录'))).toBe(true)
+    expect(returned.find('[aria-label="正式公布文件"]').exists()).toBe(true)
     await flushPromises()
     mocks.setDetail?.(structuredClone(fullDetail))
     await flushPromises()
@@ -772,13 +781,12 @@ describe('出处预览返回滚动恢复', () => {
     expect(document.activeElement?.textContent).toBe('第 8 页')
     expect(document.activeElement?.closest('[data-event-id]')?.getAttribute('data-event-id')).toBe('10')
     expect(sessionStorage.getItem('roster:evidence-preview-return')).toBeNull()
-    expect(sessionStorage.getItem(DETAIL_OPEN_EVIDENCE_STATE_KEY)).toBeNull()
     returned.unmount()
   })
 
-  it('waits for event source rows to settle before restoring an enterprise preview return', async () => {
+  it('restores the rendered publication without waiting for retired correspondence reads', async () => {
     history.replaceState(null, '', '/enterprises/91')
-    currentRoute = { params: { id: '91' }, query: {}, fullPath: '/enterprises/91' }
+    currentRoute = { path: '/enterprises/91', params: { id: '91' }, query: {}, fullPath: '/enterprises/91' }
     Object.defineProperty(window, 'scrollY', { configurable: true, value: 420 })
     rememberEvidencePreviewReturn(currentRoute.fullPath)
     mocks.detail = fullDetail
@@ -786,14 +794,12 @@ describe('出处预览返回滚动恢复', () => {
     const scrollTo = vi.fn()
     vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => { frames.push(callback); return frames.length })
     vi.stubGlobal('scrollTo', scrollTo)
-    let settle!: (value: unknown) => void
-    vi.stubGlobal('$fetch', vi.fn((url: string) => url === '/api/roster/correspondences'
-      ? new Promise(resolve => { settle = resolve }) : Promise.resolve({})))
+    const fetch = vi.fn(() => new Promise(() => {}))
+    vi.stubGlobal('$fetch', fetch)
     const page = mount(EnterprisePage, { attachTo: document.body, global: { stubs: globalStubs } })
     await flushPromises()
-    expect(frames).toHaveLength(0)
-    settle({ rows: [], total: 0, page: 1, pageSize: 200 })
-    await flushPromises()
+    expect(page.find('[aria-label="正式公布文件"]').exists()).toBe(true)
+    expect(fetch).not.toHaveBeenCalled()
     expect(frames).toHaveLength(1)
     frames[0]!(0)
     expect(scrollTo).toHaveBeenCalledExactlyOnceWith({ top: 420, behavior: 'instant' })
