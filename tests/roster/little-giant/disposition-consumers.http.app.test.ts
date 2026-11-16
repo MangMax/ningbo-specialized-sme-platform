@@ -55,10 +55,20 @@ it('confirmed cycle dispositions keep HTTP detail statistics filters and XLSX id
   const job=await f.terminal((await submitted.json()).jobId);expect(job.state,JSON.stringify(job)).toBe('done')
   const {wb,bytes}=await f.download(job), sheet=wb.getWorksheet('有效企业')!
   expect(Array.from({length:sheet.rowCount-1},(_,i)=>sheet.getRow(i+2).getCell(2).value)).toEqual(included?['合成周期处置']:[])
+  for (const [sheetName, expectedCodes] of Object.entries({
+   '有效企业': included ? [c.enterprise.usccNorm] : [],
+   '已到期': included ? [] : [c.enterprise.usccNorm],
+   '已注销（吊销）': [], '已迁出': [], '未认定': [],
+  })) {
+   const codes: string[] = []
+   wb.getWorksheet(sheetName)!.eachRow((row, index) => { if(index > 1) codes.push(row.getCell(3).text) })
+   expect(codes, sheetName).toEqual(expectedCodes)
+  }
   if(included){
    expect(JSON.stringify(sheet.getRow(2).values)).toContain(c.enterprise.usccNorm)
-   expect(JSON.stringify(sheet.getRow(2).values)).toContain('2028')
-   expect(giant.effectiveQualification.presentationBasis.join(' ')).toContain('2025 年 + 3 = 2028 年')
+   expect(JSON.stringify(sheet.getRow(2).values)).toContain('不按认定年龄自动到期')
+   expect(JSON.stringify(sheet.getRow(2).values)).not.toContain('2028')
+   expect(giant.effectiveQualification.presentationBasis.join(' ')).toContain('不按认定年龄自动到期')
   } else {
    const expired=wb.getWorksheet('已到期')!
    expect(expired.getRow(2).getCell(3).value).toBe(c.enterprise.usccNorm)
