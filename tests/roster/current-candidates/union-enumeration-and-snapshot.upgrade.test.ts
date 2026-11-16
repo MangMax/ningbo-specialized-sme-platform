@@ -1,17 +1,32 @@
 import { completePlatformMigration } from '../../../upgrade/complete-platform'
-import { mkdirSync } from 'node:fs'
+import { mkdirSync, readFileSync } from 'node:fs'
 import { expect,it,vi } from 'vitest'
 import { targetCandidatesFixture, titles, literalCandidates } from './fixtures/migrated-candidates'
 import { createTargetCurrentCandidateReader } from '../../../lib/roster/current-candidates-target'
+// Independent source ledger from migrated-candidates: 1 record, 2 decision,
+// 3 correspondence; q1: 4 specialized / 5 giant / 6 unknown; q2: 7,20
+// normalized owners; q3: 8 giant; q4: 9 innovative; q5: 10 specialized;
+// q6: 11 giant (never raw identity 12); q7: 13 specialized; q8: 16,17
+// innovative shared version; q10..13: 18 specialized,19 both,21 specialized,
+// 22 both. Empty normalized keys 23,24 retain historical fallback membership.
+// 14 unknown title and 15 unassigned are absent. No qualification inferred.
+const currentCandidates = {
+  innovative_sme: [1,2,3,4,5,6,7,8,9,10,11,13,16,17,18,19,20,21,22,23,24],
+  specialized_sme: [1,2,3,4,5,6,7,8,10,11,13,18,19,20,21,22],
+  little_giant: [1,2,3,5,6,7,8,11,20],
+}
 it('candidate union preserves independent old and literal PK sets for three titles across all sources and scope histories',async()=>{
   const f=await targetCandidatesFixture()
   try{
+    const before = readFileSync(f.target), sourceBefore = readFileSync(f.legacySource)
     const reader=createTargetCurrentCandidateReader(f.db)
     for(const title of titles){
-      const expected=literalCandidates[title].map(id=>({id}))
-      expect(f.oracle(title)).toEqual(expected)
+      const expected=currentCandidates[title].map(id=>({id}))
+      expect(f.oracle(title)).toEqual(literalCandidates[title].map(id=>({id})))
       expect([...reader.iterate(title)]).toEqual(expected)
     }
+    expect(readFileSync(f.target)).toEqual(before)
+    expect(readFileSync(f.legacySource)).toEqual(sourceBefore)
   }finally{f.close()}
 },30000)
 
@@ -30,14 +45,14 @@ it('candidate ORM count stable pages and name ties preserve the unique union and
   try{
     const reader=createTargetCurrentCandidateReader(f.db)
     for(const title of titles){
-      expect(reader.count(title)).toBe(literalCandidates[title].length)
+      expect(reader.count(title)).toBe(currentCandidates[title].length)
       const pages=[]
-      for(let offset=0;offset<literalCandidates[title].length;offset+=4){
+      for(let offset=0;offset<currentCandidates[title].length;offset+=4){
         const page=reader.page(title,offset,4)
-        expect(page.total).toBe(literalCandidates[title].length)
+        expect(page.total).toBe(currentCandidates[title].length)
         pages.push(...page.rows)
       }
-      expect(pages).toEqual(literalCandidates[title].map(id=>({id})))
+      expect(pages).toEqual(currentCandidates[title].map(id=>({id})))
       expect([...reader.iterate(title,'name_asc')]).toEqual([...reader.iterate(title,'name_desc')])
       expect(reader.page(title,100,2).rows).toEqual([])
     }
@@ -57,9 +72,9 @@ it('candidate scope retains unprojected unkeyed unassigned and shared-version ow
     f.sqlite.exec('DELETE FROM platform_recognized_projection WHERE observation_id=1')
     expect(f.sqlite.prepare('SELECT id FROM platform_recognized_projection WHERE observation_id=1').all()).toEqual([])
     const reader=createTargetCurrentCandidateReader(f.db)
-    for(const title of titles)expect([...reader.iterate(title)]).toEqual(f.oracle(title))
+    for(const title of titles)expect([...reader.iterate(title)]).toEqual(currentCandidates[title].map(id=>({id})))
     expect([...reader.iterate('little_giant')].map(r=>r.id)).not.toContain(12)
-    expect([...reader.iterate('innovative_sme')].map(r=>r.id)).toEqual(literalCandidates.innovative_sme)
+    expect([...reader.iterate('innovative_sme')].map(r=>r.id)).toEqual(currentCandidates.innovative_sme)
   }finally{f.close()}
 },30000)
 
@@ -128,7 +143,7 @@ it('candidate SQL trace excludes legacy and archive reads and normalizes owners 
     const statements=[...f.statements]
     expect(statements.join('\n')).not.toMatch(/\bplatform_(?:query|relation)\b|\bjson\w*\s*\(|archive|projection|platform_collection/i)
     f.statements.length=0
-    expect([...reader.iterate('specialized_sme')]).toHaveLength(13)
+    expect([...reader.iterate('specialized_sme')]).toHaveLength(16)
     expect(ownerNormalizations).toBe(3)
     const selects=f.statements.filter(q=>/^select/i.test(q)&&/\bunion\b/i.test(q))
     expect(selects).toHaveLength(1)
@@ -177,10 +192,10 @@ it('candidate name ordering uses SQLite nocase direction with ascending PK ties 
   try{
     f.sqlite.exec("UPDATE enterprise SET name='aaa' WHERE id=2; UPDATE enterprise SET name='ZZZ' WHERE id=3")
     const reader=createTargetCurrentCandidateReader(f.db)
-    const middle=[1,6,7,9,16,17,19,20,22,23,24]
+    const middle=[1,4,5,6,7,8,9,10,11,13,16,17,18,19,20,21,22,23,24]
     expect([...reader.iterate('innovative_sme','name_asc')]).toEqual([2,...middle,3].map(id=>({id})))
     expect([...reader.iterate('innovative_sme','name_desc')]).toEqual([3,...middle,2].map(id=>({id})))
-    expect(reader.page('innovative_sme',0,2,'name_asc')).toEqual({total:13,rows:[{id:2},{id:1}]})
+    expect(reader.page('innovative_sme',0,2,'name_asc')).toEqual({total:21,rows:[{id:2},{id:1}]})
   }finally{f.close()}
 },30000)
 
