@@ -89,7 +89,18 @@ it('71608 rejects assignment provenance mismatch and existing REAL year predeces
  const {t,db}=ready(),v=input(),before=t.serialize()
  expect(()=>writeApplyTarget(db,{...v,assignment:{...v.assignment,nameRaw:' Old '}})).toThrow(/revision1/)
  expect(()=>writeApplyTarget(db,{...v,row:{...v.row,year:2024.5}})).toThrow(/Unrepresentable legacy process year/)
- expect(t.serialize().equals(before), 'database bytes remain unchanged').toBe(true);t.close()
+ const actual=t.serialize()
+ if (!actual.equals(before)) {
+  let changed=0,bodyChanged=0
+  const firstOffsets:number[]=[]
+  const header:{offset:number;before:number|undefined;after:number|undefined}[]=[]
+  for(let offset=0;offset<Math.max(before.length,actual.length);offset++)if(before[offset]!==actual[offset]) {
+   changed++;if(offset>=100)bodyChanged++;if(firstOffsets.length<32)firstOffsets.push(offset)
+   if(offset<100)header.push({offset,before:before[offset],after:actual[offset]})
+  }
+  console.error('APPLY_REJECTION_BYTE_DELTA',JSON.stringify({beforeBytes:before.length,afterBytes:actual.length,changed,bodyChanged,firstOffsets,header}))
+ }
+ expect(actual.equals(before), 'database bytes remain unchanged').toBe(true);t.close()
 })
 it('71608 same raw different stored input remains distinct and reused input conflict is atomic',()=>{
  const {t,db}=ready(),v=input(),a=writeApplyTarget(db,v),b=writeApplyTarget(db,{...v,position:{...v.position,sequenceNo:4},row:{...v.row,sequenceNo:4,status:'rejected'}})
