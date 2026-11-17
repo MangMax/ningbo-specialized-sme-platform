@@ -103,6 +103,9 @@ export function createCurrentAssessmentInputs(db: Executor, ids: readonly number
     .from(s.enterpriseFactRevision).where(inArray(s.enterpriseFactRevision.enterpriseId, factIds))
     .orderBy(asc(s.enterpriseFactRevision.id)).all()
   const facts = new Map<number, EnterpriseFactEffectRow[]>(selected.map(id => [id, revisions.filter(row => members.get(id)!.has(row.enterpriseId))]))
-  return { canonical, enterprises, events, evidence, validityRows, aliases, files, facts, dispositions: readTitleCycleDispositionInputs(db, selected), platformFacts: readPlatformFacts([...enterprises.values()].map(e => ({ enterpriseId: e.id, uscc: e.uscc_norm ?? '' })), titles) }
+  const platformFacts = readPlatformFacts([...enterprises.values()].map(e => ({ enterpriseId: e.id, uscc: e.uscc_norm ?? '' })), titles)
+  // Keep the original ordered facts for complete output; select candidates from stable owner buckets.
+  const platformFactsByEnterprise = Map.groupBy(platformFacts, fact => fact.enterpriseId)
+  return { canonical, enterprises, events, evidence, validityRows, aliases, files, facts, dispositions: readTitleCycleDispositionInputs(db, selected), platformFacts, platformFactsByEnterprise }
 }
 export type CurrentAssessmentInputs = ReturnType<typeof createCurrentAssessmentInputs>

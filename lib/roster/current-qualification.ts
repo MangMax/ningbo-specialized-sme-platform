@@ -766,7 +766,7 @@ function createCurrentCandidateEvaluationReader(db: Database.Database, receiptRu
   // supply eligibility. Only formal periods and complete typed exclusions enter.
   const exclusions = effectiveMode ? factEffects(true) : independent
   const effectiveFormal = qualification
-  const platformFacts = currentRules ? (batch ? batch.platformFacts : readPlatformFacts([{ enterpriseId, uscc: enterprise.uscc_norm ?? '' }])).filter(f => f.enterpriseId === enterpriseId && f.title === title) : []
+  const platformFacts = currentRules ? (batch ? (batch.platformFactsByEnterprise.get(enterpriseId) ?? []) : readPlatformFacts([{ enterpriseId, uscc: enterprise.uscc_norm ?? '' }])).filter(f => f.enterpriseId === enterpriseId && f.title === title) : []
   const at = new Date(executionTime + 8 * 60 * 60 * 1000).toISOString().slice(0, 19)
   const day = at.slice(0, 10)
   // Business time is independent of capture time. Future business facts do not

@@ -214,3 +214,43 @@ it('scopes eligibility foundations to title dependencies while full snapshots re
     }
   } finally { db.$client.exec('ROLLBACK') }
 })
+
+it('indexes interleaved platform owners once per batch while preserving full snapshot bytes and fresh sources', () => {
+  const { db, ids } = fixture(24)
+  let ownerReads = 0
+  const facts = CURRENT_TITLES.flatMap(title => [...ids, ids[1]!].map((id, index) => {
+    const fact: platformQualification.PlatformQualificationFact = {
+      enterpriseId: id, uscc: 'SYNTHETIC-BATCH-'+ids.indexOf(id), title, source: 'recognized_list', platformName: '合成来源名称',
+      recordId: index+1, versionId: 1, observationId: index+1, collectedAt: '2026-01-01T00:00:00Z',
+      matter: 'recognition', matterRaw: null, conclusion: 'passed', statusRaw: '1',
+      businessTime: platformQualification.sourceDate('2025-01-01'), businessTimeKind: 'recognition', businessYear: null,
+      period: { from: platformQualification.sourceDate('2025-01-01'), until: platformQualification.sourceDate('2028-01-01') },
+      periodReason: 'explicit_period', location: { province: '浙江省', city: '宁波市', district: null },
+      invalidatedAt: platformQualification.sourceDate(null), invalidationReason: null, reasons: [],
+    }
+    Object.defineProperty(fact, 'enterpriseId', { enumerable: true, get() { ownerReads++; return id } })
+    return fact
+  }))
+  const sourceReader = vi.fn((subjects: readonly platformQualification.PlatformFactSubject[]) => {
+    const owners = new Set(subjects.map(s => s.enterpriseId))
+    return facts.filter(f => owners.has(f.enterpriseId!))
+  })
+  const reader = createCurrentQualificationAssessmentReaderWithWitnesses(db.$client, createTargetRecognizedWitnessReader(db), undefined, sourceReader)
+  db.$client.exec('BEGIN')
+  try {
+    const expected = ids.map(id => reader.readWorkbook(id, at, 'innovative_sme'))
+    sourceReader.mockClear(); ownerReads = 0
+    const actual = reader.readWorkbookBatch(ids, at, 'innovative_sme')
+    const scans = ownerReads
+    expect(sourceReader).toHaveBeenCalledTimes(1)
+    // Include source selection, partitioning and complete digest serialization;
+    // a per-candidate scan of every other owner's facts exceeds this linear budget.
+    expect(scans).toBeLessThanOrEqual(facts.length*8 + ids.length*20)
+    expect(actual).toEqual(expected)
+    expect(JSON.stringify(actual)).toBe(JSON.stringify(expected))
+    facts[1]!.versionId = 2
+    const fresh = reader.readWorkbookBatch(ids, at, 'innovative_sme')
+    expect(fresh[1]!.snapshot.snapshotId).not.toBe(actual[1]!.snapshot.snapshotId)
+    expect(fresh).toEqual(ids.map(id => reader.readWorkbook(id, at, 'innovative_sme')))
+  } finally { db.$client.exec('ROLLBACK') }
+})
