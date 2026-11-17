@@ -12,6 +12,7 @@ import { execFileSync } from 'node:child_process'
 import ExcelJS from 'exceljs'
 import { newJobId } from '../../../lib/job'
 import { createHash } from 'node:crypto'
+import { channel } from 'node:diagnostics_channel'
 import { eq } from 'drizzle-orm'
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from 'vitest'
 import { initializeDb, schema as s } from '../../../db/client'
@@ -20,7 +21,15 @@ import { spawnOwnedChild as spawn, reserveLoopbackPort, waitForHttp, stopOwnedCh
 const dir = mkdtempSync(join(tmpdir(), 'export-117-'))
 const dbPath = join(dir, 'synthetic.db'), db = initializeDb({ create: true,  dbPath })
 let servicePid: number
-let service: { baseUrl: string; stop: () => Promise<void> }
+let service: { baseUrl: string; stop: () => Promise<void>; diagnostics: () => unknown }
+const requestErrors = channel('undici:request:error')
+function logRequestError(message: unknown) {
+  const { request, error } = message as { request: { origin: string; path: string; method: string }; error: { code?: string; name: string } }
+  if (String(request.origin) === service?.baseUrl) {
+    console.error('little-giant request error', { method: request.method, path: request.path.split('?')[0], name: error.name, code: error.code })
+  }
+}
+requestErrors.subscribe(logRequestError)
 const token = 'synthetic-export-token'
 const headers = { 'content-type': 'application/json', authorization: `Bearer ${token}` }
 const url = (path: string) => service.baseUrl + path
@@ -65,7 +74,7 @@ async function startService() {
   const child = spawnCompiledApp(port, { cwd, stdio: ['ignore','pipe','pipe'], env: { ...process.env, NUXT_BUILD_DIR: join(dir,'build'), NUXT_DB_PATH: dbPath, NUXT_API_TOKEN: token, NUXT_FILES_DIR: join(dir,'files'), NUXT_INCOMING_DIR: join(dir,'incoming') } })
   servicePid = child.pid!
   let output = ''; for (const stream of [child.stdout, child.stderr]) stream.on('data', data => { output = (output + data).slice(-12000) })
-  service = { baseUrl: `http://127.0.0.1:${port}`, stop: () => stopOwnedChild(child) }
+  service = { baseUrl: `http://127.0.0.1:${port}`, stop: () => stopOwnedChild(child), diagnostics: () => ({ pid: child.pid, exitCode: child.exitCode, signalCode: child.signalCode, output }) }
   try { await waitForHttp(url('/api/jobs/kinds'), { timeoutMs: 60000, child }) } catch (e) { await service.stop(); throw new Error(String(e) + output) }
 }
 beforeAll(startService, 90000)
@@ -75,9 +84,10 @@ beforeEach(() => resetExportRows(db.$client))
 afterEach(context => {
   if (context.task.result?.state === 'fail') {
     console.error('little-giant immediate failure', context.task.name, context.task.result.errors)
+    console.error('little-giant app state', service.diagnostics())
   }
 })
-afterAll(async () => { if (service) await service.stop(); db.$client.close(); rmSync(dir, { recursive: true, force: true }) })
+afterAll(async () => { requestErrors.unsubscribe(logRequestError); if (service) await service.stop(); db.$client.close(); rmSync(dir, { recursive: true, force: true }) })
 it('HTTP提交到六表文件', async () => {
   const { enterprise } = candidate('新认定')
   const { wb, job, bytes } = await workbook('fresh')
