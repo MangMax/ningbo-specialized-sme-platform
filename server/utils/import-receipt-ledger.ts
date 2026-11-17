@@ -28,7 +28,7 @@ export function recordImportReceipt<T extends { status: string }>(db: Db, operat
   const attempt = db.transaction(() => {
     const existing = db.get<{ id: number; status: string; sourceKind: string; sourceIdentity: string; sourceSha256: string | null }>(sql`SELECT id, status, source_kind AS sourceKind, source_identity AS sourceIdentity, source_sha256 AS sourceSha256 FROM import_batch WHERE idempotency_key = ${batchRequest.idempotencyKey}`)
     if (existing && (existing.sourceKind !== request.sourceKind || existing.sourceIdentity !== request.sourceIdentity || existing.sourceSha256 !== (request.sourceSha256 ?? null))) throw new ImportReceiptError(409, 'idempotency_conflict', 'Idempotency key belongs to a different source')
-    const previous = existing ? db.get<{ id: number; status: string; requestHash: string; historical: number }>(sql`SELECT id, status, request_hash AS requestHash, CASE WHEN ${request.sourceKind} = 'platform_archive' THEN json_type(request_body, '$.payload.platformRecordObservations') IS NOT NULL ELSE 0 END AS historical FROM import_receipt WHERE batch_id = ${existing.id} ORDER BY id DESC LIMIT 1`) : undefined
+    const previous = existing ? db.get<{ id: number; status: string; requestHash: string; historical: number }>(sql`SELECT id, status, request_hash AS requestHash, CASE WHEN ${request.sourceKind} = 'platform_archive' THEN json_type(COALESCE((SELECT owner.request_body FROM import_receipt owner WHERE owner.id=import_receipt.body_receipt_id), request_body), '$.payload.platformRecordObservations') IS NOT NULL ELSE 0 END AS historical FROM import_receipt WHERE batch_id = ${existing.id} ORDER BY id DESC LIMIT 1`) : undefined
     // Historical projection preflight freezes server-read source inputs for this exact
     // command. A different command needs a new key, including after a failed attempt;
     // it must not erase the frozen source set and silently rebaseline changed raw.
@@ -38,7 +38,9 @@ export function recordImportReceipt<T extends { status: string }>(db: Db, operat
     if (operation !== 'replay' && previous && ['committed', 'processing'].includes(previous.status) && previous.requestHash !== hash) throw new ImportReceiptError(409, 'idempotency_conflict', 'Idempotency key belongs to a different request')
     if (existing?.status === 'committed' && operation !== 'replay') return { replayed: true as const, batchId: existing.id, receiptId: previous?.id }
     const batch = ensureBatchRow(db, batchRequest)
-    return db.insert(schema.importReceipt).values({ batchId: batch.id, operation, requestHash: hash, requestBody: JSON.stringify(redact(normalized)), status: 'processing', createdAt: new Date().toISOString() }).returning({ id: schema.importReceipt.id }).get()
+    const body = JSON.stringify(redact(normalized))
+    const owner = db.get<{ id: number }>(sql`SELECT id FROM import_receipt WHERE batch_id=${batch.id} AND request_hash=${hash} AND body_receipt_id IS NULL AND CAST(request_body AS BLOB)=CAST(${body} AS BLOB) ORDER BY id LIMIT 1`)
+    return db.insert(schema.importReceipt).values({ bodyReceiptId: owner?.id ?? null, batchId: batch.id, operation, requestHash: hash, requestBody: owner ? '' : body, status: 'processing', createdAt: new Date().toISOString() }).returning({ id: schema.importReceipt.id }).get()
   }, { behavior: 'immediate' })
   if ('replayed' in attempt) {
     const result = run()

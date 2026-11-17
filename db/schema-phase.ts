@@ -24,6 +24,7 @@ export function assertFinalPlatformRuntime(sqlite: Database.Database) {
   if (!marker || !sqlite.prepare('SELECT 1 FROM platform_runtime_completion WHERE id=1 AND rule=? AND schema_version=?').get(PLATFORM_RETIREMENT_RULE, PLATFORM_RUNTIME_VERSION)) {
     throw new Error('Platform runtime retirement incomplete; finish explicit offline retirement')
   }
+  sqlite.prepare('SELECT body_receipt_id FROM import_receipt LIMIT 0').all()
   assertNoRetiredPlatformSchema(sqlite)
   sqlite.prepare(`SELECT c.id,c.reconcile_slot_state,c.witness_state,o.id,o.collection_id,o.sequence_no,
     a.revision,r.observation_id,d.evidence_relation_id,p.collection_id,f.input_archive_id,
