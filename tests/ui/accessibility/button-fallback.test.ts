@@ -4,9 +4,9 @@ import { describe, expect, it } from 'vitest'
 // 兜底环是纯 CSS 契约:组件渲染测不出真实层叠,这里直接锁定样式表源码。
 const css = readFileSync('assets/css/tailwind.css', 'utf8')
 
-function layerBlock(name: string) {
+function layerBlock(name: string): string {
   const match = css.match(new RegExp(`@layer\\s+${name}\\s*\\{([\\s\\S]*?)\\n\\}`))
-  if (!match) throw new Error(`缺少 @layer ${name} 块`)
+  if (!match || match[1] === undefined) throw new Error(`缺少 @layer ${name} 块`)
   return match[1]
 }
 
