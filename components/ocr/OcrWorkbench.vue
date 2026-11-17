@@ -1164,7 +1164,7 @@ const fileSheetBlockedReason = computed(() =>
               </Button>
             </div>
           </div>
-          <DialogDescription class="text-muted-foreground text-[13px] leading-relaxed">
+          <DialogDescription class="text-muted-foreground text-table leading-relaxed">
             <span class="text-foreground font-medium sm:hidden"
               >{{ displayName }} · </span
             >{{ compareDescription }}
@@ -1299,7 +1299,7 @@ const fileSheetBlockedReason = computed(() =>
       <DialogContent class="sm:max-w-md" @close-auto-focus="preventAutoFocus">
         <div class="flex flex-col gap-1.5">
           <DialogTitle>放弃未保存的校对？</DialogTitle>
-          <DialogDescription class="text-[13px] leading-relaxed">
+          <DialogDescription class="text-table leading-relaxed">
             第 {{ currentPage ?? 1 }} 页还有未保存的修改。放弃后这次编辑的内容会被丢弃，且无法撤销。
           </DialogDescription>
         </div>

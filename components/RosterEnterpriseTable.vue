@@ -181,14 +181,13 @@ const TH_CLASS = 'bg-muted text-muted-foreground sticky top-0 z-20 h-9 text-xs f
         <TableRow class="[&>td]:py-1.5">
           <TableCell class="max-w-0">
             <div class="flex items-center gap-2">
-              <button
-                type="button"
-                class="hover:text-primary truncate text-left font-medium hover:underline"
-                :title="row.name"
+              <Button
+                variant="link"
+                class="block h-auto max-w-full min-w-0 rounded-sm p-0 text-left font-medium text-foreground hover:text-primary hover:underline"
                 @click="emit('toggle', row.enterpriseId)"
               >
-                {{ row.name }}
-              </button>
+                <span class="block truncate" :title="row.name">{{ row.name }}</span>
+              </Button>
               <Badge
                 v-if="row.rosterState !== 'current'"
                 variant="destructive"

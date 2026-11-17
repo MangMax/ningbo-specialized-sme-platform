@@ -252,13 +252,13 @@ const classificationEntries = computed(() => {
 <template>
   <div ref="panel" class="flex min-w-0 flex-col gap-3" data-testid="record-comparison-panel">
       <div v-if="displayed" class="flex min-w-0 flex-wrap items-center gap-1.5" aria-label="按分类查看结果">
-        <span class="text-muted-foreground mr-1 text-[13px]">{{ resultIsCurrent ? '对比结论' : '上次结论' }}：</span>
+        <span class="text-muted-foreground mr-1 text-table">{{ resultIsCurrent ? '对比结论' : '上次结论' }}：</span>
         <Button
           v-for="entry in classificationEntries"
           :key="entry.code"
           variant="outline"
           size="sm"
-          class="h-7 gap-1.5 px-2 text-[13px] tabular-nums transition-colors duration-150 ease-snap motion-reduce:transition-none"
+          class="h-7 gap-1.5 px-2 text-table tabular-nums transition-colors duration-150 ease-snap motion-reduce:transition-none"
           :class="[
             entry.code === 'historical_conflict' && 'border-destructive/40 text-destructive',
             entry.code === 'unresolved' && 'border-warning/50 text-warning',
@@ -273,7 +273,7 @@ const classificationEntries = computed(() => {
           {{ COMPARISON_CLASSES[entry.code] }}
           <span class="text-muted-foreground">{{ entry.count }}</span>
         </Button>
-        <Button v-if="committed.classification !== 'all'" variant="ghost" size="sm" class="h-7 px-2 text-[13px]" @click="setClassification('all')">查看全部</Button>
+        <Button v-if="committed.classification !== 'all'" variant="ghost" size="sm" class="h-7 px-2 text-table" @click="setClassification('all')">查看全部</Button>
       </div>
     <Card class="min-w-0 gap-0 py-0">
       <!-- 折叠只收高度，不卸载表单：显式选择、目录 hydration 与返回滚动都依赖这些实例。 -->
@@ -290,7 +290,7 @@ const classificationEntries = computed(() => {
         <template #trigger>
           <template v-if="submitted">
             <span class="shrink-0 text-sm font-medium">来源</span>
-            <span class="text-muted-foreground min-w-0 flex-1 text-[13px] leading-5">
+            <span class="text-muted-foreground min-w-0 flex-1 text-table leading-5">
               <span class="tabular-nums">{{ summaryCounts.official }} 份文件 · {{ summaryCounts.query }} 次查询</span>
               <span v-if="committed.asOf"> · 截止 {{ humanRecordTime(committed.asOf) }}</span>
               <span v-if="selectionChanged" class="text-warning"> · 选择已改，展开后重新对比</span>
@@ -299,14 +299,14 @@ const classificationEntries = computed(() => {
           <span v-else class="text-sm font-medium">选择两侧来源</span>
         </template>
         <CardContent class="flex min-w-0 flex-col gap-4 p-4 sm:p-5">
-            <p class="text-muted-foreground max-w-[70ch] text-[13px] leading-5">
+            <p class="text-muted-foreground max-w-[70ch] text-table leading-5">
               按正式事件与平台原行做记录级对照；两侧来源只限定本次分析范围，不表示文件覆盖完整或两个版本相同。
             </p>
             <div class="flex min-w-0 flex-col gap-3">
               <section class="flex min-w-0 flex-col gap-2" aria-label="左侧正式文件">
                 <header class="flex flex-wrap items-baseline justify-between gap-2">
                   <h3 class="text-sm font-medium">正式文件</h3>
-                  <span class="text-muted-foreground text-[13px] tabular-nums">已选 {{ selection.officialSourceDocumentIds.length }} / {{ catalogTotals.official_document ?? '—' }}</span>
+                  <span class="text-muted-foreground text-table tabular-nums">已选 {{ selection.officialSourceDocumentIds.length }} / {{ catalogTotals.official_document ?? '—' }}</span>
                 </header>
                 <ComparisonSourcePicker :kind="'official_document'" :selection="selection" @change="setSelection" @catalog="setCatalogTotal" @sources="rememberSources" @settled="(key, ready) => setSourceReady('official', key, ready)" />
               </section>
@@ -314,7 +314,7 @@ const classificationEntries = computed(() => {
               <section class="flex min-w-0 flex-col gap-2" aria-label="右侧平台查询">
                 <header class="flex flex-wrap items-baseline justify-between gap-2">
                   <h3 class="text-sm font-medium">平台查询</h3>
-                  <span class="text-muted-foreground text-[13px] tabular-nums">已选 {{ selection.queryIds.length }} / {{ catalogTotals.query ?? '—' }}</span>
+                  <span class="text-muted-foreground text-table tabular-nums">已选 {{ selection.queryIds.length }} / {{ catalogTotals.query ?? '—' }}</span>
                 </header>
                 <ComparisonSourcePicker :kind="'query'" :selection="selection" @change="setSelection" @catalog="setCatalogTotal" @sources="rememberSources" @settled="(key, ready) => setSourceReady('query', key, ready)" />
               </section>
@@ -325,7 +325,7 @@ const classificationEntries = computed(() => {
               -->
               <DisclosurePanel compact keep-mounted padded content-class="pb-0" class="min-w-0 rounded-sm border">
                 <template #trigger>
-                  <span class="shrink-0 whitespace-nowrap text-[13px] font-medium">更多选项</span>
+                  <span class="shrink-0 whitespace-nowrap text-table font-medium">更多选项</span>
                   <span class="text-muted-foreground min-w-0 text-xs font-normal">截止时点 · 范围依据 · 导出版本 · 分类筛选</span>
                 </template>
                 <div class="flex min-w-0 flex-col gap-3 border-t p-3">
@@ -338,9 +338,9 @@ const classificationEntries = computed(() => {
                   <section class="flex min-w-0 flex-col gap-2 rounded-sm border p-3" aria-label="可选导出版本">
                     <header class="flex flex-wrap items-baseline justify-between gap-2">
                       <h3 class="text-sm font-medium">导出版本（可选）</h3>
-                      <span class="text-muted-foreground text-[13px] tabular-nums">已选 {{ selection.exportBatchIds.length }} / {{ catalogTotals.export_batch ?? '—' }}</span>
+                      <span class="text-muted-foreground text-table tabular-nums">已选 {{ selection.exportBatchIds.length }} / {{ catalogTotals.export_batch ?? '—' }}</span>
                     </header>
-                    <p class="text-muted-foreground text-[13px]">导出版本只用于「已认定接口与导出版本」观察，不是开始对比的前提。</p>
+                    <p class="text-muted-foreground text-table">导出版本只用于「已认定接口与导出版本」观察，不是开始对比的前提。</p>
                     <ComparisonSourcePicker :kind="'export_batch'" :selection="selection" @change="setSelection" @catalog="setCatalogTotal" @sources="rememberSources" />
                   </section>
                   <div class="flex max-w-full flex-col gap-1">
@@ -365,12 +365,12 @@ const classificationEntries = computed(() => {
                 <RefreshCw v-if="loading" class="size-4 animate-spin motion-reduce:animate-none" aria-hidden="true" />
                 {{ loading ? '正在对比…' : '开始对比' }}
               </Button>
-              <p v-if="!asOfValid" class="text-destructive text-[13px]">请填写有效的截止时点。</p>
-              <p v-else-if="!canCompare" class="text-muted-foreground text-[13px]">{{ disabledReason }}</p>
-              <p v-else-if="loading" class="text-muted-foreground text-[13px]">正在读取对比结果，完成后会在下方更新。</p>
-              <p v-else-if="selectionChanged && displayed" class="text-muted-foreground text-[13px]">来源或截止时点已改，下方仍是上次结果；点「开始对比」更新。</p>
-              <p v-else-if="!displayed" class="text-muted-foreground text-[13px]">已选择来源，点「开始对比」。</p>
-              <p v-else-if="displayed" class="text-muted-foreground text-[13px]">结果已更新。</p>
+              <p v-if="!asOfValid" class="text-destructive text-table">请填写有效的截止时点。</p>
+              <p v-else-if="!canCompare" class="text-muted-foreground text-table">{{ disabledReason }}</p>
+              <p v-else-if="loading" class="text-muted-foreground text-table">正在读取对比结果，完成后会在下方更新。</p>
+              <p v-else-if="selectionChanged && displayed" class="text-muted-foreground text-table">来源或截止时点已改，下方仍是上次结果；点「开始对比」更新。</p>
+              <p v-else-if="!displayed" class="text-muted-foreground text-table">已选择来源，点「开始对比」。</p>
+              <p v-else-if="displayed" class="text-muted-foreground text-table">结果已更新。</p>
             </div>
         </CardContent>
       </DisclosurePanel>
@@ -378,7 +378,7 @@ const classificationEntries = computed(() => {
 
     <template v-if="submitted">
       <ComparisonResultScope v-if="loadedScope" aria-label="已加载结果范围" :scope="loadedScope" :labels="sourceLabels" :current="resultIsCurrent" :description="displayedScopeText" />
-      <p v-if="displayed && !displayedIsTarget" class="text-muted-foreground rounded-sm border border-warning/40 bg-warning/5 p-3 text-[13px]" aria-label="目标结果范围">
+      <p v-if="displayed && !displayedIsTarget" class="text-muted-foreground rounded-sm border border-warning/40 bg-warning/5 p-3 text-table" aria-label="目标结果范围">
         <strong class="text-foreground font-medium">当前目标范围：</strong>{{ targetScopeText }}。下方继续显示上次成功结果；目标加载成功后才替换。
       </p>
 
@@ -408,7 +408,7 @@ const classificationEntries = computed(() => {
 
       <DisclosurePanel v-if="displayed" compact padded content-class="pb-0" class="min-w-0 rounded-sm border bg-card" data-testid="comparison-details">
         <template #trigger>
-          <span class="text-[13px] font-medium">其他来源记录</span>
+          <span class="text-table font-medium">其他来源记录</span>
         </template>
         <div class="min-w-0 border-t p-3">
           <ComparisonEvidence :result="displayed" :return-to="returnTo" />

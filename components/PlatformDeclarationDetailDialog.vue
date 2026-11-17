@@ -54,7 +54,7 @@ const declareKind = (value: string | null) => value ? RELATION_DECLARE_KINDS[val
       <div v-else-if="data" class="flex min-w-0 flex-col gap-5">
         <section class="min-w-0">
           <h3 class="text-sm font-medium">记录身份</h3>
-          <dl class="mt-2 grid grid-cols-1 gap-x-3 gap-y-1 text-[13px] sm:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">
+          <dl class="mt-2 grid grid-cols-1 gap-x-3 gap-y-1 text-table sm:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">
             <dt class="text-muted-foreground">来源</dt><dd>{{ data.record.interface }}</dd>
             <dt class="text-muted-foreground">身份规则</dt><dd>{{ data.record.identityRuleVersion }}</dd>
             <dt class="text-muted-foreground">建立时间</dt><dd>{{ time(data.record.createdAt) }}</dd>
@@ -69,7 +69,7 @@ const declareKind = (value: string | null) => value ? RELATION_DECLARE_KINDS[val
                 <Badge variant="outline">{{ projectionDisplay(version, version.declareKind, declareKind) }}</Badge>
                 <span class="text-muted-foreground text-xs">年度 {{ projectionDisplay(version, version.declarationYear) }} · 状态 {{ projectionDisplay(version, version.status) }}</span>
               </div>
-              <dl class="mt-2 grid grid-cols-1 gap-x-3 gap-y-1 text-[13px] sm:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">
+              <dl class="mt-2 grid grid-cols-1 gap-x-3 gap-y-1 text-table sm:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">
                 <dt class="text-muted-foreground">称号</dt><dd>{{ projectionDisplay(version, version.titleRaw, projectionTitle) }}</dd>
                 <dt class="text-muted-foreground">企业原值</dt><dd>{{ projectionDisplay(version, version.nameRaw) }} · {{ projectionDisplay(version, version.usccRaw) }}</dd>
                 <dt class="text-muted-foreground">申报时间</dt><dd>{{ projectionDisplay(version, version.appliedAt, time) }}</dd>

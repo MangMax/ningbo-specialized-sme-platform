@@ -55,7 +55,7 @@ function onSizeInput(event: Event) {
 </script>
 
 <template>
-  <div data-table-pagination data-testid="table-pagination" class="flex flex-wrap items-center gap-x-4 gap-y-3 text-[13px] leading-5">
+  <div data-table-pagination data-testid="table-pagination" class="flex flex-wrap items-center gap-x-4 gap-y-3 text-table leading-5">
     <div class="flex items-center gap-2">
       <span class="text-muted-foreground">每页</span>
       <Select v-model="sizeModel">

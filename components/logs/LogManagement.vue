@@ -838,7 +838,7 @@ async function confirm() {
 <template>
   <div class="flex min-w-0 flex-col gap-5">
     <!-- 范围在 tab 内容里说明一次；保留策略与清理各自带后果，不再重复免责声明。 -->
-    <p class="text-muted-foreground text-[13px] leading-5" data-testid="log-settings-scope">
+    <p class="text-muted-foreground text-table leading-5" data-testid="log-settings-scope">
       只影响运行日志，不改动业务审计、回执与源文件。
     </p>
     <!-- 全局保存是唯一提交入口：这里只说明草稿归属，不提供第二个保存按钮。 -->
@@ -846,7 +846,7 @@ async function confirm() {
       v-if="data"
       data-testid="log-unsaved-summary"
       aria-live="polite"
-      class="text-[13px] leading-5"
+      class="text-table leading-5"
     >
       <template v-if="pending">正在提交，完成后会用真实响应回填。</template>
       <template v-else-if="dirtyModuleLabels.length"
@@ -882,7 +882,7 @@ async function confirm() {
                   {{ section.groups.reduce((sum, group) => sum + group.rows.length, 0) }} 项
                 </span>
               </div>
-              <p v-if="section.description" class="text-muted-foreground text-[13px] leading-5">
+              <p v-if="section.description" class="text-muted-foreground text-table leading-5">
                 {{ section.description }}
               </p>
             </div>
@@ -897,7 +897,7 @@ async function confirm() {
               <span class="text-muted-foreground inline-flex size-4 shrink-0 items-center justify-center">
                 <Icon :name="group.icon" class="size-4" aria-hidden="true" />
               </span>
-              <h3 class="text-muted-foreground text-[13px] leading-5 font-medium">{{ group.title }}</h3>
+              <h3 class="text-muted-foreground text-table leading-5 font-medium">{{ group.title }}</h3>
               <span v-if="group.note" class="text-muted-foreground text-[12px] leading-4">{{ group.note }}</span>
               <span class="text-muted-foreground ml-auto shrink-0 text-[12px] leading-4 tabular-nums">{{ group.rows.length }}</span>
             </div>
@@ -940,10 +940,10 @@ async function confirm() {
                 <Icon name="lucide:chevron-right" class="size-4" />
               </span>
             </template>
-            <p class="text-muted-foreground text-[13px] leading-5">
+            <p class="text-muted-foreground text-table leading-5">
               以下库尚未接入日志采集，列在这里只表示当前没有采集器，不能据此判断业务或部署已关闭。
             </p>
-            <ul class="mt-2 flex flex-col gap-1.5 text-[13px]">
+            <ul class="mt-2 flex flex-col gap-1.5 text-table">
               <li
                 v-for="row in unwiredIntegrations"
                 :key="row.key"
@@ -970,11 +970,11 @@ async function confirm() {
             </span>
             <h2 id="log-retention-heading" class="text-sm font-medium">保留策略</h2>
           </div>
-          <p class="text-muted-foreground text-[13px] leading-5">
+          <p class="text-muted-foreground text-table leading-5">
             取更严格者；缩短保留期或降低容量可能清理已有日志。
           </p>
         </div>
-        <dl class="grid min-w-0 gap-x-6 gap-y-1 text-[13px] leading-5 sm:grid-cols-2">
+        <dl class="grid min-w-0 gap-x-6 gap-y-1 text-table leading-5 sm:grid-cols-2">
           <div class="flex min-w-0 gap-2">
             <dt class="text-muted-foreground shrink-0">当前生效</dt>
             <dd class="min-w-0 break-words">
@@ -1008,7 +1008,7 @@ async function confirm() {
             </dd>
           </div>
         </dl>
-        <p class="text-muted-foreground text-[13px] leading-5">
+        <p class="text-muted-foreground text-table leading-5">
           用量含日志库与附属文件，不含文件系统与容器输出；进程计数自
           {{ data.status?.since ? local(data.status.since) : '本次进程启动' }} 起。
         </p>
@@ -1047,7 +1047,7 @@ async function confirm() {
                 >核对日志配置修改</Button
               >
               <!-- 后果写在按钮旁边，不做单独一段通栏说明；没有变化时说明为什么不能核对。 -->
-              <p class="text-muted-foreground text-[13px] leading-5">
+              <p class="text-muted-foreground text-table leading-5">
                 <template v-if="!hasChanges">当前配置与已生效配置相同，无需核对。</template>
                 <template v-else
                   >核对范围包括采集规则、记录内容与保留策略；只提交有差异的项，其余保持不变。保留策略调整可能触发轮转。</template
@@ -1061,7 +1061,7 @@ async function confirm() {
       <section aria-labelledby="log-clear-heading" class="flex min-w-0 flex-col gap-2">
         <div class="flex flex-col gap-1">
           <h2 id="log-clear-heading" class="text-sm font-medium">范围清理</h2>
-          <p class="text-muted-foreground text-[13px] leading-5">
+          <p class="text-muted-foreground text-table leading-5">
             沿用运行日志中已应用的筛选，只删除运行日志。
           </p>
         </div>
@@ -1072,7 +1072,7 @@ async function confirm() {
             @click="reviewClear"
             >清理当前筛选范围</Button
           >
-          <p class="text-muted-foreground text-[13px] leading-5">
+          <p class="text-muted-foreground text-table leading-5">
             请先在筛选中应用明确的开始和结束时间。每次最多清理 1000 条；所有已应用的筛选同时生效。
             业务审计、回执、源文件和任务产物不受影响。
           </p>
@@ -1128,7 +1128,7 @@ async function confirm() {
                 </TableRow>
               </TableBody>
             </Table>
-            <p class="text-muted-foreground text-[13px] leading-5">
+            <p class="text-muted-foreground text-table leading-5">
               其余项保持不变，不会被重置。
             </p>
           </div>
@@ -1152,12 +1152,12 @@ async function confirm() {
                 </TableRow>
               </TableBody>
             </Table>
-            <p class="text-muted-foreground text-[13px] leading-5">
+            <p class="text-muted-foreground text-table leading-5">
               只影响之后写入；恢复为保留也会作为改动提交。
             </p>
             <p
               v-if="reviewParentReasons.length"
-              class="text-muted-foreground text-[13px] leading-5"
+              class="text-muted-foreground text-table leading-5"
               data-testid="log-field-review-parent"
             >
               当前不采集：{{ reviewParentReasons.join('、') }}。保存不会重新开启采集。

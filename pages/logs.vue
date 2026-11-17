@@ -314,7 +314,7 @@ function restoreFocus(event: Event) {
         <!-- 存储状态属于这份列表，不属于筛选：压在卡片顶部，收起时也不单独占一段。 -->
         <p
           v-if="data?.status"
-          class="text-muted-foreground flex shrink-0 flex-wrap items-center gap-x-2 gap-y-0.5 border-b px-4 py-2 text-[13px] leading-5"
+          class="text-muted-foreground flex shrink-0 flex-wrap items-center gap-x-2 gap-y-0.5 border-b px-4 py-2 text-table leading-5"
         >
           <span :class="data.status.unavailable ? 'text-destructive' : ''">{{
             data.status.unavailable ? '日志存储不可用' : '日志存储可用'
@@ -353,7 +353,7 @@ function restoreFocus(event: Event) {
         <p
           v-else-if="stale && data"
           role="status"
-          class="text-muted-foreground shrink-0 border-b px-4 py-2 text-[13px] leading-5 break-all"
+          class="text-muted-foreground shrink-0 border-b px-4 py-2 text-table leading-5 break-all"
         >
           正在读取当前筛选。{{ retainedSummary }}。
         </p>
@@ -411,7 +411,7 @@ function restoreFocus(event: Event) {
                       <time
                         :datetime="item.row.timestamp"
                         :title="item.row.timestamp"
-                        class="block text-[13px] tabular-nums whitespace-normal"
+                        class="block text-table tabular-nums whitespace-normal"
                         >{{ dated(item.row.timestamp) }}</time
                       >
                     </TableCell>
@@ -425,7 +425,7 @@ function restoreFocus(event: Event) {
                     </TableCell>
                     <TableCell class="overflow-hidden">
                       <div class="flex min-w-0 flex-col leading-4">
-                        <span class="truncate text-[13px]" :title="item.view.sourceLabel">{{
+                        <span class="truncate text-table" :title="item.view.sourceLabel">{{
                           item.view.sourceLabel
                         }}</span>
                         <span
@@ -439,7 +439,7 @@ function restoreFocus(event: Event) {
                       <div class="flex min-w-0 flex-col leading-4">
                         <span
                           v-if="item.view.operationLabel"
-                          class="truncate text-[13px]"
+                          class="truncate text-table"
                           :title="item.view.operationLabel"
                           >{{ item.view.operationLabel }}</span
                         >
@@ -448,7 +448,7 @@ function restoreFocus(event: Event) {
                           :class="
                             item.view.operationLabel
                               ? 'text-muted-foreground text-xs'
-                              : 'text-[13px]'
+                              : 'text-table'
                           "
                           :title="item.view.operationCode"
                           >{{ item.view.operationCode }}</span
@@ -457,7 +457,7 @@ function restoreFocus(event: Event) {
                     </TableCell>
                     <TableCell class="overflow-hidden">
                       <span
-                        class="block min-w-0 truncate text-[13px]"
+                        class="block min-w-0 truncate text-table"
                         :class="item.view.target.missing ? 'text-muted-foreground' : ''"
                         :title="item.view.target.text"
                         >{{ item.view.target.text }}</span
@@ -486,7 +486,7 @@ function restoreFocus(event: Event) {
                     </TableCell>
                     <TableCell class="overflow-hidden">
                       <span
-                        class="block truncate text-[13px] tabular-nums"
+                        class="block truncate text-table tabular-nums"
                         :class="item.view.durationMissing ? 'text-muted-foreground' : ''"
                         :title="item.view.durationText"
                         >{{ item.view.durationText }}</span
@@ -494,7 +494,7 @@ function restoreFocus(event: Event) {
                     </TableCell>
                     <TableCell class="overflow-hidden">
                       <span
-                        class="block truncate text-[13px] tabular-nums"
+                        class="block truncate text-table tabular-nums"
                         :class="
                           item.view.statusMissing || !item.view.statusApplicable
                             ? 'text-muted-foreground'
@@ -582,13 +582,13 @@ function restoreFocus(event: Event) {
                       <time
                         :datetime="item.row.timestamp"
                         :title="item.row.timestamp"
-                        class="text-[13px] tabular-nums"
+                        class="text-table tabular-nums"
                         >{{ dated(item.row.timestamp) }}</time
                       >
                     </div>
                     <div class="flex min-w-0 items-baseline gap-1.5">
                       <span class="text-muted-foreground shrink-0 text-xs">操作</span>
-                      <span class="min-w-0 break-all text-[13px]"
+                      <span class="min-w-0 break-all text-table"
                         ><template v-if="item.view.operationLabel"
                           >{{ item.view.operationLabel }}<span class="text-muted-foreground">
                             · </span
@@ -607,7 +607,7 @@ function restoreFocus(event: Event) {
                     >查看</Button
                   >
                 </div>
-                <div class="flex min-w-0 flex-col gap-1 text-[13px]">
+                <div class="flex min-w-0 flex-col gap-1 text-table">
                   <div class="flex min-w-0 items-baseline gap-1.5">
                     <span class="text-muted-foreground shrink-0 text-xs">来源</span>
                     <span class="min-w-0 break-all"

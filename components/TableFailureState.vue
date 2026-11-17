@@ -25,14 +25,14 @@ defineEmits<{ retry: [] }>()
       <CircleAlert class="text-muted-foreground mt-0.5 size-5 shrink-0" aria-hidden="true" />
       <div class="min-w-0 flex-1">
         <p class="text-foreground text-sm leading-5 font-medium" data-testid="table-failure-title">{{ title }}</p>
-        <p class="text-muted-foreground mt-1 text-[13px] leading-5">
+        <p class="text-muted-foreground mt-1 text-table leading-5">
           {{ description ?? (compact ? '显示的是上次加载的结果。' : '筛选条件已保留，可以重新加载。') }}
         </p>
       </div>
       <Button
         variant="outline"
         size="sm"
-        class="bg-card min-w-24 shrink-0 self-start whitespace-nowrap text-[13px] shadow-none"
+        class="bg-card min-w-24 shrink-0 self-start whitespace-nowrap text-table shadow-none"
         :disabled="pending"
         data-testid="table-retry"
         @click="$emit('retry')"

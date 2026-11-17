@@ -12,7 +12,7 @@ const emit = defineEmits<{ 'open-source': [relationId: number] }>()
 </script>
 
 <template>
-  <li class="min-w-0 border-t pt-2 text-[13px] [overflow-wrap:anywhere]" data-testid="comparison-business-observation">
+  <li class="min-w-0 border-t pt-2 text-table [overflow-wrap:anywhere]" data-testid="comparison-business-observation">
     <div class="flex flex-wrap items-center gap-2"><strong>观察 #{{ observation.relation.id }} · {{ observation.relation.nameRaw ?? '企业原名未提供' }}</strong><Badge variant="outline">{{ linkText(observation.linkState) }}</Badge></div>
     <p>查询 #{{ observation.relation.queryId }} · 行 {{ observation.relation.sequenceNo }} · {{ humanRecordTime(observation.relation.queriedAt) }}</p>
     <p>{{ TITLES[observation.relation.titleCode ?? ''] ?? '称号未确定' }} · 原状态 {{ observation.relation.status ?? '未提供' }}</p>
