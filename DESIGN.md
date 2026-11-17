@@ -63,7 +63,11 @@
 ### 2.1 工作台规则
 
 - 筛选控件：单值用 `Select`、多值用 `MultiSelectFilter`，**不写原生 `<select>`**。已生效条件摊成一行 `FilterChip`，每项可单独撤掉，且必须包含「没有常驻控件」的静默筛选（如下钻带来的 source/event/rosterState）。
-- 表格：统一 `.data-table` 外壳——13px/20px 字距、吸顶表头 `--table-line`、`muted` 底表头；滚动预算用 `.data-table-scroll`（`max(320px, 100dvh - 17rem)`）。
+- 表格：统一 `.data-table` 外壳——13px/20px 字距、吸顶表头 `--table-line`、`muted` 底表头；滚动预算用 `.data-table-scroll`（`max(320px, 100dvh - var(--table-budget))`）。`--table-budget` 是从视口里给页头/筛选行/分页预留的高度 token，定义在 `@theme`；新列表页套 `.data-table-scroll` 即继承同一预算，不照抄数字。
+- **`min-w` 按列推导，不逐页拍**：`table-fixed` 表的最小宽度由各列内容下限之和决定。
+  - 逐列写 `w-*` 像素列的表，`min-w` = 各列像素之和（如 files：12 列求和得 1154px，多写少写都会与列宽脱节）。
+  - 百分比/弹性列的表，`min-w` 取「每列刚好放得下其不可再窄内容」的总宽——最长不可断字段、徽章、操作按钮的下限之和（logs 940、current-enterprises 850）。
+  - 宽屏再加宽的表用响应式 `min-w`（`lg:min-w-[980px]`、`2xl:min-w-[1080px]`），规则相同；窄屏没有列宽下限时用 `min-w-0` 让内容铺开（EnterpriseListTable）。
 - 取数：换条件留住上一批行（`placeholderData: previous`）；失败用 `TableFailureState`，成功结果保留并给显式重试。
 - 抽屉：业务侧抽屉经 `[data-floating-drawer]` 显式 opt-in（`EnterpriseDrawer` 用 `data-floating-drawer="detail"` + `data-drawer-side="right"`）。宽度档位：`compact` 360px / 默认 448px / `detail` 560px，含 8px（sm 以上 16px）视口 gutter 与宽度上限，消费者宽度类不能绕过。导航与顶/底 sheet 不挂这个属性。
 
