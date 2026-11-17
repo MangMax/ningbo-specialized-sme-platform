@@ -22,7 +22,7 @@ function byTitle<T extends { enterpriseId: number; titleCode: string }>(rows: T[
 }
 
 /** Caller-owned snapshot and bounded ID block; no rows survive this invocation. */
-export function createCurrentAssessmentInputs(db: Executor, ids: readonly number[], readPlatformFacts: PlatformQualificationFactsReader = (subjects, titles) => readPlatformQualificationFacts(db as BetterSQLite3Database<typeof s>, subjects, titles), titles?: readonly CurrentTitle[]) {
+export function createCurrentAssessmentInputs(db: Executor, ids: readonly number[], readPlatformFacts: PlatformQualificationFactsReader = subjects => readPlatformQualificationFacts(db as BetterSQLite3Database<typeof s>, subjects)) {
   const merged = hasEnterpriseMergeIdentity(db)
   const next = new Map<number, number>()
   if (merged) {
@@ -50,21 +50,20 @@ export function createCurrentAssessmentInputs(db: Executor, ids: readonly number
   const enterprises = new Map(db.select({ id: s.enterprise.id, name: s.enterprise.name, name_norm: s.enterprise.nameNorm,
     uscc_norm: s.enterprise.usccNorm, district: s.enterprise.district, city: s.enterprise.city }).from(s.enterprise)
     .where(inArray(s.enterprise.id, selected)).all().map(row => [row.id, row]))
-  const eventScope = and(inArray(s.record.enterpriseId, selected), titles && inArray(s.record.titleCode, titles))
   const scope = { enterpriseId: s.record.enterpriseId, titleCode: s.record.titleCode }
   const events = byTitle(db.select({ ...scope, id: s.recordEvent.id, eventType: s.recordEvent.eventType, year: s.recordEvent.year,
     decidedYear: s.recordEvent.decidedYear, batchSeq: s.recordEvent.batchSeq, reviewOutcome: s.recordEvent.reviewOutcome,
     revision: s.recordEvent.revision, nameRaw: s.record.nameRaw, usccRaw: s.record.usccRaw, source: s.record.source })
     .from(s.record).innerJoin(s.recordEvent, eq(s.recordEvent.recordId, s.record.id))
-    .where(eventScope).orderBy(asc(s.recordEvent.id)).all())
+    .where(inArray(s.record.enterpriseId, selected)).orderBy(asc(s.recordEvent.id)).all())
   const evidence = byTitle(db.select({ ...scope, id: s.recordEvidence.id, eventId: s.recordEvidence.recordEventId,
     sourceFile: s.recordEvidence.sourceFile, attachment: s.recordEvidence.attachment, listNo: s.recordEvidence.listNo, page: s.recordEvidence.page })
     .from(s.record).innerJoin(s.recordEvent, eq(s.recordEvent.recordId, s.record.id))
     .innerJoin(s.recordEvidence, eq(s.recordEvidence.recordEventId, s.recordEvent.id))
-    .where(eventScope).orderBy(asc(s.recordEvidence.id)).all())
+    .where(inArray(s.record.enterpriseId, selected)).orderBy(asc(s.recordEvidence.id)).all())
   const validityRows = byTitle(db.select({ ...scope, id: s.recordEvent.id, recordId: s.recordEvent.recordId,
     value: sql<string | null>`${s.recordEvent.formalValidity}` }).from(s.record)
-    .innerJoin(s.recordEvent, eq(s.recordEvent.recordId, s.record.id)).where(eventScope)
+    .innerJoin(s.recordEvent, eq(s.recordEvent.recordId, s.record.id)).where(inArray(s.record.enterpriseId, selected))
     .orderBy(asc(s.recordEvent.id)).all())
   const aliases = Map.groupBy(db.select({ enterpriseId: s.enterpriseAlias.enterpriseId, id: s.enterpriseAlias.id,
     name: s.enterpriseAlias.name, version: s.enterpriseAlias.version }).from(s.enterpriseAlias)
@@ -103,6 +102,6 @@ export function createCurrentAssessmentInputs(db: Executor, ids: readonly number
     .from(s.enterpriseFactRevision).where(inArray(s.enterpriseFactRevision.enterpriseId, factIds))
     .orderBy(asc(s.enterpriseFactRevision.id)).all()
   const facts = new Map<number, EnterpriseFactEffectRow[]>(selected.map(id => [id, revisions.filter(row => members.get(id)!.has(row.enterpriseId))]))
-  return { canonical, enterprises, events, evidence, validityRows, aliases, files, facts, dispositions: readTitleCycleDispositionInputs(db, selected), platformFacts: readPlatformFacts([...enterprises.values()].map(e => ({ enterpriseId: e.id, uscc: e.uscc_norm ?? '' })), titles) }
+  return { canonical, enterprises, events, evidence, validityRows, aliases, files, facts, dispositions: readTitleCycleDispositionInputs(db, selected), platformFacts: readPlatformFacts([...enterprises.values()].map(e => ({ enterpriseId: e.id, uscc: e.uscc_norm ?? '' }))) }
 }
 export type CurrentAssessmentInputs = ReturnType<typeof createCurrentAssessmentInputs>

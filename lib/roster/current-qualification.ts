@@ -196,7 +196,6 @@ export function createCurrentQualificationAssessmentReaderWithWitnesses(db:Datab
 
 function createCurrentQualificationAssessmentReaderBody(db:Database.Database,receiptRuntime:ReceiptRuntimeContext|undefined,witnesses:RecognizedWitnessReader,platformFactsReader?:PlatformQualificationFactsReader) {
   const evaluate = createCurrentCandidateEvaluationReader(db, receiptRuntime, witnesses, platformFactsReader)
-  const eligibilityTitles = (title: CurrentTitle) => CURRENT_TITLES.slice(0, CURRENT_TITLES.indexOf(title) + 1)
   // Resolve the fixed schema binding before a caller starts a candidate iterator.
   // Only prepared statements are retained; correspondence rows remain read-local.
   const correspondenceReader = createEnterpriseTitleCorrespondenceRefsReader(prepareCurrentReader(db))
@@ -442,18 +441,18 @@ function createCurrentQualificationAssessmentReaderBody(db:Database.Database,rec
           const { name, aliases, uscc, district, qualificationWitnesses } = assessed.row
           return { id: item.id, row: { name, aliases, uscc, district, qualificationWitnesses }, effectiveStatus: assessed.effectiveStatus }
         }), [title], 'recognition-witnesses')
-      }, eligibilityTitles(title))
+      })
     },
     readEffectiveTitleSummaries(ids: readonly number[], asOf: number, title: CurrentTitle) {
       return evaluate.withinBatch(ids, () => new Map(ids.map(id => {
         const assessed = evaluate(id, title, Number(qualificationDay(asOf).slice(0,4)), asOf, undefined, false, false, undefined, false, undefined, () => [], undefined, undefined, { qualificationOnly: true })
         return [id, { effectiveStatus: assessed.effectiveStatus, basis: assessed.row.basis }]
-      })), eligibilityTitles(title))
+      })))
     },
     readEffectiveTitles(ids: readonly number[], asOf: number, title: CurrentTitle) {
       return evaluate.withinBatch(ids, () => new Map(ids.map(id => [id,
         evaluate(id, title, Number(qualificationDay(asOf).slice(0,4)), asOf, undefined, false, false, undefined, false, undefined, () => [], undefined, undefined, { qualificationOnly: true }).effectiveStatus,
-      ])), eligibilityTitles(title))
+      ])))
     },
     /** One selected differences page, on the caller's transaction/asOf. Full
      * coverage also serves cross-title subject decisions; assessment hydration
@@ -517,7 +516,7 @@ export function createCurrentCandidateReader(db: Database.Database) {
 
 function createCurrentCandidateEvaluationReader(db: Database.Database, receiptRuntime: ReceiptRuntimeContext | undefined, witnesses:RecognizedWitnessReader, platformFactsReader?:PlatformQualificationFactsReader) {
   const reader=prepareCurrentReader(db)
-  const readPlatformFacts: PlatformQualificationFactsReader = platformFactsReader ?? ((subjects, titles) => readPlatformQualificationFacts(reader, subjects, titles))
+  const readPlatformFacts: PlatformQualificationFactsReader = platformFactsReader ?? (subjects => readPlatformQualificationFacts(reader, subjects))
   const mergedIdentities = hasEnterpriseMergeIdentity(reader)
   let batch: CurrentAssessmentInputs | undefined
   const statements = new Map<string, Database.Statement>()
@@ -1045,10 +1044,10 @@ function createCurrentCandidateEvaluationReader(db: Database.Database, receiptRu
   return { row, group, effectiveStatus }
 }
   return Object.assign(readCandidate, {
-    withinBatch<T>(ids: readonly number[], read: (inputs: CurrentAssessmentInputs) => T, titles?: readonly CurrentTitle[]): T {
+    withinBatch<T>(ids: readonly number[], read: (inputs: CurrentAssessmentInputs) => T): T {
       if (!db.inTransaction) throw new Error('Assessment batch requires the caller snapshot')
       const previous = batch
-      batch = createCurrentAssessmentInputs(reader, ids, readPlatformFacts, titles)
+      batch = createCurrentAssessmentInputs(reader, ids, readPlatformFacts)
       try { return read(batch) } finally { batch = previous }
     },
   })

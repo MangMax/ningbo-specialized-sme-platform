@@ -382,31 +382,3 @@ describe('raw-key chunk boundaries', () => {
     expect(boundRawKeys.flat()).toEqual(rawKeys)
   })
 })
-
-it('limits typed facts to requested titles without reviving an older title or changing owners', () => {
-  const sqlite = new Database(':memory:')
-  try {
-    sqlite.pragma('foreign_keys=ON'); createRuntimeSchema(sqlite)
-    const db = drizzle(sqlite, { schema: targetSchema }), code = '91330110MA2GMDFH58'
-    const sources = ['queryBusList', 'businessList', 'queryList'] as const
-    for (const source of sources) for (const rdjb of ['1', '2', '3']) {
-      writeNewCollectionTarget(db, collectionCommand({ id: 'title-scope-'+source+'-'+rdjb, tyshxydm: code, qymc: '来源范围企业', rdjb, sfyx: '1', rdtime: '2025-01-01', rddqrq: '2028-01-01', szsmc: '宁波市', sblx: '申请', cszt: '终审通过', year: '2025' }, '2026-11-16T0'+rdjb+':00:00Z', source))
-    }
-    const read = platformQualification.createPlatformQualificationFactsReader(db), subjects = [{ enterpriseId: 1, uscc: code }]
-    const full = read(subjects)
-    expect(full).toHaveLength(9)
-    expect(read(subjects, ['little_giant'])).toEqual(full.filter(f => f.title === 'little_giant'))
-    expect(read(subjects, ['little_giant', 'specialized_sme'])).toEqual(full.filter(f => f.title !== 'innovative_sme'))
-    for (const source of sources) writeNewCollectionTarget(db, collectionCommand({ id: 'title-scope-'+source+'-3', tyshxydm: code, rdjb: '2', sfyx: '0', sblx: '申请', cszt: '省已审', year: '2026' }, '2026-11-17T00:00:00Z', source))
-    // The latest version changed title: filtering must not revive the old giant.
-    expect(read(subjects, ['little_giant'])).toEqual([])
-    const current = read(subjects)
-    expect(read(subjects, ['specialized_sme'])).toEqual(current.filter(f => f.title === 'specialized_sme'))
-    expect(current.some(f => f.conclusion === 'invalid')).toBe(true)
-    expect(current.some(f => f.conclusion === 'processing')).toBe(true)
-    const ambiguous = read([...subjects, { enterpriseId: 2, uscc: code }], ['specialized_sme'])
-    expect(ambiguous).toHaveLength(6)
-    expect(ambiguous.every(f => f.enterpriseId === null && f.reasons.includes('identity_ambiguous'))).toBe(true)
-    expect(read(subjects)).toEqual(current)
-  } finally { sqlite.close() }
-})

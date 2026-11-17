@@ -1,6 +1,4 @@
 import { eq } from 'drizzle-orm'
-import { createCurrentAssessmentInputs } from '../../../lib/roster/current-assessment-inputs'
-import * as platformQualification from '../../../lib/roster/platform-qualification'
 import * as qualificationCycles from '../../../lib/roster/qualification-cycles'
 import { afterEach, expect, it, vi } from 'vitest'
 import { mkdtempSync, rmSync } from 'node:fs'
@@ -8,7 +6,7 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import ExcelJS from 'exceljs'
 import { initializeDb, schema as s } from '../../../db/client'
-import { CURRENT_TITLES, createCurrentQualificationAssessmentReader, createCurrentQualificationAssessmentReaderWithWitnesses } from '../../../lib/roster/current-qualification'
+import { CURRENT_TITLES, createCurrentQualificationAssessmentReader } from '../../../lib/roster/current-qualification'
 import { listCurrentQualified, listCurrentQualifiedWithCandidatesAndWitnesses } from '../../../lib/roster/current-qualified-query'
 import { createTargetCurrentCandidateReader } from '../../../lib/roster/current-candidates-target'
 import { createTargetRecognizedWitnessReader } from '../../../lib/roster/recognized-witness-target'
@@ -174,43 +172,5 @@ it('still evaluates higher qualifications when the innovative own period has exp
   try {
     expect(reader.readEffectiveTitles([id],at,'innovative_sme')).toEqual(new Map([[id,'effective']]))
     expect(reader.readCurrent(id,at,'innovative_sme').snapshot.titles.find(t => t.titleCode === 'innovative_sme')!.effectiveQualification?.status).toBe('effective')
-  } finally { db.$client.exec('ROLLBACK') }
-})
-
-it('scopes eligibility foundations to title dependencies while full snapshots retain every title', () => {
-  const { db, ids } = fixture(2), witness = createTargetRecognizedWitnessReader(db)
-  const facts = vi.fn(platformQualification.createPlatformQualificationFactsReader(db))
-  const reader = createCurrentQualificationAssessmentReaderWithWitnesses(db.$client, witness, undefined, facts)
-  db.$client.exec('BEGIN')
-  try {
-    for (const [title, dependencies] of [
-      ['little_giant', ['little_giant']],
-      ['specialized_sme', ['little_giant', 'specialized_sme']],
-      ['innovative_sme', ['little_giant', 'specialized_sme', 'innovative_sme']],
-    ] as const) {
-      const expected = new Map(ids.map(id => [id, reader.readEffectiveTitle(id, title, at).effectiveStatus]))
-      facts.mockClear()
-      expect(reader.readEffectiveTitles(ids, at, title)).toEqual(expected)
-      expect(facts).toHaveBeenCalledTimes(1)
-      expect(facts.mock.calls[0]?.[1]).toEqual(dependencies)
-      facts.mockClear()
-      const summaries = reader.readEffectiveTitleSummaries(ids, at, title)
-      expect(new Map([...summaries].map(([id, result]) => [id, result.effectiveStatus]))).toEqual(expected)
-      expect(facts.mock.calls[0]?.[1]).toEqual(dependencies)
-      facts.mockClear()
-      const filtered = reader.readFilterCandidates(ids, title, at, {
-        queries: readTargetIdentityKeyVariants(db.$client, 'queries'),
-        relations: readTargetIdentityKeyVariants(db.$client, 'unassignedRelations'),
-      }, 'effective')
-      expect(new Map(filtered.map(row => [row.id, row.effectiveStatus]))).toEqual(expected)
-      expect(facts.mock.calls[0]?.[1]).toEqual(dependencies)
-      const input = createCurrentAssessmentInputs(db, ids, facts, dependencies)
-      for (const group of [input.events, input.evidence, input.validityRows]) {
-        expect([...group.get(ids[1]!)!.keys()].sort()).toEqual([...dependencies].sort())
-      }
-      const full = reader.readCurrentBatch([ids[1]!], at, title)[0]!
-      expect(full.snapshot.titles.map(t => t.titleCode)).toEqual(CURRENT_TITLES)
-      expect(full).toEqual(reader.readCurrent(ids[1]!, at, title))
-    }
   } finally { db.$client.exec('ROLLBACK') }
 })
