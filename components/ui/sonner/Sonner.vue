@@ -89,4 +89,16 @@ const props = defineProps<ToasterProps>()
 .toaster[data-sonner-toaster] [data-sonner-toast][data-styled='true'] :is([data-button], [data-close-button]):focus-visible {
   box-shadow: 0 0 0 2px var(--ring);
 }
+
+/*
+ * 全站惯例(prefers-reduced-motion):不写新动画。sonner 自带的进出场/位移/翻转
+ * 只服务观感,没有信息;减少动效时全部停掉,toast 仍然原地出现、可交互、可关闭。
+ */
+@media (prefers-reduced-motion: reduce) {
+  .toaster[data-sonner-toaster] [data-sonner-toast],
+  .toaster[data-sonner-toaster] [data-sonner-toast] * {
+    animation: none !important;
+    transition: none !important;
+  }
+}
 </style>

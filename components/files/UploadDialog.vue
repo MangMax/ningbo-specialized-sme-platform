@@ -11,6 +11,8 @@ import {
 import { Button } from '@/components/ui/button'
 import UploadPanel from '@/components/upload/UploadPanel.vue'
 import { describeFetchError, toRegisterBody, type UploadedFile } from '@/lib/upload-register'
+import type { UploadFailure } from '@/lib/upload'
+import { useToastFeedback } from '~/composables/useToastFeedback'
 
 /**
  * 「上传文件」弹窗(票 10):把已打磨过的 `UploadPanel` 装进弹窗,并在 tus 传完之后
@@ -25,6 +27,7 @@ import { describeFetchError, toRegisterBody, type UploadedFile } from '@/lib/upl
  * 算不出来),这里一个字都不重推。
  */
 const open = defineModel<boolean>('open', { default: false })
+const feedback = useToastFeedback()
 
 const emit = defineEmits<{
   /** 一份文件已登记进库 —— 调用方据此刷新列表。 */
@@ -53,13 +56,27 @@ async function onUploaded(file: UploadedFile) {
     await $fetch('/api/files/register', { method: 'POST', body: toRegisterBody(file) })
     stranded.value = stranded.value.filter((p) => p !== file.relPath)
     delete retryFiles.value[file.relPath]
+    feedback.succeed('上传', `文件「${file.name}」`)
     emit('registered')
   } catch (error) {
     // 文件已落盘、库里没有 —— 不能假装成功,也不能把它藏起来。
     if (!stranded.value.includes(file.relPath)) stranded.value.push(file.relPath)
     retryFiles.value[file.relPath] = file
     failure.value = describeFetchError(error, '登记失败,请重试。')
+    feedback.fail('登记', `文件「${file.name}」`, failure.value, () => onUploaded(file))
   } finally { registering.value = registering.value.filter(path => path !== file.relPath) }
+}
+
+/**
+ * 传字节阶段失败:队列行里已有「重试」按钮(断点续传),toast 只负责告知并指回那一行,
+ * 不在 toast 上再放第二个重试入口 —— 两处重试跑同一条任务,重复点击会双倍入队。
+ * `invalid`(落位信息被拒)不能续传,指引用户改声明;其余失败都能从断点续。
+ */
+function onUploadError({ name, failure: uploadFailure }: { name: string; failure: UploadFailure }) {
+  const guidance = uploadFailure.kind === 'invalid'
+    ? '请修正落位信息后重新加入队列。'
+    : '可在下方队列中点「重试」从断点续传。'
+  feedback.fail('上传', `文件「${name}」`, `${uploadFailure.message}${guidance}`)
 }
 </script>
 
@@ -101,7 +118,7 @@ async function onUploaded(file: UploadedFile) {
       <Button v-for="file in Object.values(retryFiles)" :key="file.relPath" variant="outline" :disabled="registering.includes(file.relPath)" @click="onUploaded(file)">重试登记 {{ file.name }}</Button>
 
       <!-- 面板自带无外壳布局:弹窗已经有标题,再套一层卡片就成了卡片套卡片。 -->
-      <UploadPanel @uploaded="onUploaded" />
+      <UploadPanel @uploaded="onUploaded" @error="onUploadError" />
     </DialogContent>
   </Dialog>
 </template>

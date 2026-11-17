@@ -19,6 +19,7 @@ import { isPdfPath } from '~~/lib/pdf-page'
 import { joinSeries, partBatches, partYears } from '~~/lib/file-parts'
 import { captureQueryRequest, useRetainedQuerySnapshot } from '~/composables/useRetainedQuerySnapshot'
 import type { QueryRequestSnapshot } from '~/composables/useRetainedQuerySnapshot'
+import { useToastFeedback } from '~/composables/useToastFeedback'
 import type { StoredFileRow } from '~~/server/utils/stored-files'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -76,6 +77,7 @@ interface FilesResponse {
 }
 
 const queryCache = useQueryCache()
+const feedback = useToastFeedback()
 
 // —— 筛选(多选)——
 const sources = ref<string[]>([])
@@ -297,9 +299,11 @@ async function saveMetadata(form: MetadataForm) {
       },
     })
     editOpen.value = false
+    feedback.succeed('保存', '文件信息')
     await refresh()
   } catch (error) {
     editFailure.value = describeFetchError(error)
+    feedback.fail('保存', '文件信息', editFailure.value, () => saveMetadata(form))
   } finally {
     editPending.value = false
   }
@@ -316,9 +320,11 @@ async function saveDisplayName(displayName: string) {
       body: { displayName },
     })
     editing.value = { ...editing.value, displayName }
+    feedback.succeed('保存', '文件名称')
     await refresh()
   } catch (error) {
     renameFailure.value = describeFetchError(error)
+    feedback.fail('保存', '文件名称', renameFailure.value, () => saveDisplayName(displayName))
   } finally {
     renamePending.value = false
   }
@@ -333,9 +339,11 @@ async function confirmDelete(_deleteDisk: boolean) {
       method: 'DELETE',
     })
     deleteOpen.value = false
+    feedback.succeed('移出', '文件')
     await refresh()
   } catch (error) {
     deleteFailure.value = describeFetchError(error)
+    feedback.fail('移出', '文件', deleteFailure.value, () => confirmDelete(_deleteDisk))
   } finally {
     deletePending.value = false
   }

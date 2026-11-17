@@ -50,11 +50,14 @@ const owners = {
     "runtime/native-boundary",
     "runtime/read-scheduling",
     "runtime/test-services",
+    "ui/accessibility",
     "ui/disclosure",
+    "ui/feedback",
     "ui/navigation",
     "ui/scroll",
     "ui/settings",
-    "ui/tables"
+    "ui/tables",
+    "ui/theming"
   ],
   "平台 · 申报与办理": [
     "platform/declarations",
