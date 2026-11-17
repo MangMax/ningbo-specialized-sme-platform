@@ -153,11 +153,12 @@ it('创新型查询失败退回待审与旧决定不冒充资格失效', async (
   const edge = db.insert(s.recordCorrespondence).values({ edgeKey: 'candidate-119', type: 'event_process', role: 'award', eventId: unconfirmed.events[0]!.id, enterpriseId: unconfirmed.enterprise.id, titleCode, status: 'candidate', revision: 1, targetIdentity: {}, provenance: {}, sourceFingerprint: 'synthetic-119', ruleId: 'manual', ruleVersion: '1', createdAt: new Date().toISOString() }).returning().get()
   const { wb, result } = await workbook('119-platform-boundary')
   expect(rows(wb, '有效企业').map(row => row[2])).toEqual(['查询failed', '查询no_record', '更新退回', '更新待审核', '更新待审决定', '撤回旧外迁', '补码后旧按名证据'])
-  expect(rows(wb, '未认定').map(row => row[2])).toEqual(['仅平台通过', '候选对应非资格'])
-  expect(result.counts).toEqual({ eligible: 7, pending: 0, excluded: 2 })
+  // The scope-only row has no returned title and is no longer a title candidate.
+  expect(rows(wb, '未认定').map(row => row[2])).toEqual(['候选对应非资格'])
+  expect(result.counts).toEqual({ eligible: 7, pending: 0, excluded: 1 })
   expect(rows(wb, '有效企业').find(row => row[2] === '补码后旧按名证据')![13]).toBe('有效企业')
   expect(rows(wb, '未认定')[0]![15]).toContain('缺少已确认认定及资格依据')
-  expect(rows(wb, '未认定')[1]![13]).toBe('未认定'); expect(rows(wb, '未认定')[1]![15]).toContain('缺少已确认认定及资格依据')
+  expect(rows(wb, '未认定')[0]![13]).toBe('未认定'); expect(rows(wb, '未认定')[0]![15]).toContain('缺少已确认认定及资格依据')
   expect(staleDecision.id).toBeGreaterThan(0); expect(relation.id).toBeGreaterThan(0); expect(edge.id).toBeGreaterThan(0)
 })
 it('创新型超页全量文本安全与业务只读', async () => {
