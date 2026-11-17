@@ -11,7 +11,7 @@ import { and, eq } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import type { RosterImportRelation } from '../roster-import-client'
 import { targetSchema as s } from './target-schema'
-import { parseRecognizedRecord, parseRecognizedSourceFidelity, RECOGNIZED_PROJECTION_RULE } from './recognized-projection'
+import { parseRecognizedRecord, parseRecognizedSourceFidelity, parseRecognizedQualificationFields, RECOGNIZED_PROJECTION_RULE } from './recognized-projection'
 import { canonicalPlatformJson, planPlatformObservation, PLATFORM_PROJECTION_RULE, PLATFORM_RAW_HASH_RULE } from './observation-plan'
 import { sourceFieldComparison, sourceValueKind } from './source-extraction'
 import { allocateLegacyAlias, insertArchiveValue, bindArchive, sealArchiveOwner } from './target-archive'
@@ -66,6 +66,8 @@ export function writeRecognizedTarget<S extends Record<string, unknown>>(db: Bet
       verifyCandidateObservation(tx, existing.id)
       verifyWitnessObservation(sqliteConnection(tx),existing.id)
       verifyRecognizedStored(sqliteConnection(tx),existing.id)
+      ensureRecognizedTargetContent(tx, plan)
+      completeRecognizedQualificationFields(tx, { observationId: existing.id }, parseRecognizedQualificationFields(raw))
       positive(alias.oldId)
       return { observationId: existing.id, recordId: existing.recordId, versionId: existing.versionId, relationAlias: alias.oldId, reused: true }
     }
@@ -89,7 +91,7 @@ export function writeRecognizedTarget<S extends Record<string, unknown>>(db: Bet
     const exact = recognizedTitleEvidence(sqliteConnection(tx),observation.id)
     if(!exact) throw new Error('recognized_stored_uncaptured')
     const exactTitle = exact.cell.storageClass === 'null' ? null : Buffer.from(exact.cell.hex,'hex').toString('utf8')
-    const observationProjection = tx.insert(storedRecognizedProjection).values({ exactTitleRaw:exactTitle,exactTitleState:exact.exactTitleState,exactTitleOrigin:exact.exactTitleOrigin,exactTitleArchiveId:exact.exactTitleArchiveId,exactTitleSha256:exact.exactTitleSha256, observationId: observation.id, basis: raw === null ? 'unavailable' : 'observation_reconciliation', parseState: raw === null ? 'absent' : 'valid', sourceArchiveId: rawArchive, ...(plan.recognizedProjection ?? parseRecognizedRecord(raw)), ...(raw === null ? { sourceValidityDate: null, sourceMaintenanceBatch: null, sourceMaintenanceYearAbsent: null } : parseRecognizedSourceFidelity(raw)), ruleVersion: RECOGNIZED_PROJECTION_RULE, sourceTitleKind: sourceValueKind(title), sourceTitleText: typeof title === 'string' ? title : null, sourceTitleNumberText: typeof title === 'number' ? String(title) : null, sourceTitleBoolean: typeof title === 'boolean' ? Number(title) : null, sourceTitleRuleVersion: 't05b-source-projections-v1', ...sourceFieldComparison('recognized_list', { province: input.row.province ?? null, status: input.row.status ?? null, batch: input.row.batch ?? null, declareKind: input.row.declareKind ?? null, appliedAt: input.row.appliedAt ?? null, awardBatchLabel: input.row.awardBatchLabel ?? null, year: input.row.year ?? null }, raw, raw === null ? 'absent' : 'valid') }).returning({ id: s.platformRecognizedProjection.id }).get()
+    const observationProjection = tx.insert(storedRecognizedProjection).values({ exactTitleRaw:exactTitle,exactTitleState:exact.exactTitleState,exactTitleOrigin:exact.exactTitleOrigin,exactTitleArchiveId:exact.exactTitleArchiveId,exactTitleSha256:exact.exactTitleSha256, ...parseRecognizedQualificationFields(raw), observationId: observation.id, basis: raw === null ? 'unavailable' : 'observation_reconciliation', parseState: raw === null ? 'absent' : 'valid', sourceArchiveId: rawArchive, ...(plan.recognizedProjection ?? parseRecognizedRecord(raw)), ...(raw === null ? { sourceValidityDate: null, sourceMaintenanceBatch: null, sourceMaintenanceYearAbsent: null } : parseRecognizedSourceFidelity(raw)), ruleVersion: RECOGNIZED_PROJECTION_RULE, sourceTitleKind: sourceValueKind(title), sourceTitleText: typeof title === 'string' ? title : null, sourceTitleNumberText: typeof title === 'number' ? String(title) : null, sourceTitleBoolean: typeof title === 'boolean' ? Number(title) : null, sourceTitleRuleVersion: 't05b-source-projections-v1', ...sourceFieldComparison('recognized_list', { province: input.row.province ?? null, status: input.row.status ?? null, batch: input.row.batch ?? null, declareKind: input.row.declareKind ?? null, appliedAt: input.row.appliedAt ?? null, awardBatchLabel: input.row.awardBatchLabel ?? null, year: input.row.year ?? null }, raw, raw === null ? 'absent' : 'valid') }).returning({ id: s.platformRecognizedProjection.id }).get()
     positive(observationProjection.id)
     captureWitnessObservation(sqliteConnection(tx),observation.id)
     return { observationId: observation.id, recordId, versionId, relationAlias, reused: false }
@@ -124,6 +126,7 @@ export function ensureRecognizedTargetContent<S extends Record<string, unknown>>
         versionId = version.id
         const fields = plan.recognizedProjection!
         const fidelity = plan.recognizedSourceFidelity!
+        const qualification = parseRecognizedQualificationFields(JSON.parse(plan.canonicalRawJson))
         const projection = tx.select().from(s.platformRecognizedProjection).where(eq(s.platformRecognizedProjection.versionId, versionId)).get()
         if (projection) {
           positive(projection.id)
@@ -133,8 +136,24 @@ export function ensureRecognizedTargetContent<S extends Record<string, unknown>>
             // Legacy additive capture: normalized facts, version/hash and original bytes stay fixed.
             tx.update(s.platformRecognizedProjection).set(fidelity).where(eq(s.platformRecognizedProjection.id, projection.id)).run()
           } else if (projection.sourceValidityDate !== fidelity.sourceValidityDate || projection.sourceMaintenanceBatch !== fidelity.sourceMaintenanceBatch || projection.sourceMaintenanceYearAbsent !== fidelity.sourceMaintenanceYearAbsent) throw new Error('recognized_projection_conflict')
-        } else positive(tx.insert(s.platformRecognizedProjection).values({ versionId, recordId, ...fields, ...fidelity, ruleVersion: RECOGNIZED_PROJECTION_RULE }).returning({ id: s.platformRecognizedProjection.id }).get().id)
+          completeRecognizedQualificationFields(tx, { versionId }, qualification)
+        } else positive(tx.insert(s.platformRecognizedProjection).values({ versionId, recordId, ...fields, ...fidelity, ...qualification, ruleVersion: RECOGNIZED_PROJECTION_RULE }).returning({ id: s.platformRecognizedProjection.id }).get().id)
       }
     }
     return { recordId, versionId, now }
+}
+
+/** Complete only this additive capture; existing normalized facts and source bytes stay fixed. */
+function completeRecognizedQualificationFields<S extends Record<string, unknown>>(
+  tx: BetterSQLite3Database<S>, owner: { observationId: number } | { versionId: number },
+  fields: ReturnType<typeof parseRecognizedQualificationFields>,
+) {
+  const where = 'observationId' in owner ? eq(s.platformRecognizedProjection.observationId, owner.observationId) : eq(s.platformRecognizedProjection.versionId, owner.versionId)
+  const projection = tx.select().from(s.platformRecognizedProjection).where(where).get()
+  if (!projection) throw new Error('recognized_projection_missing')
+  if (projection.qualificationFieldsRule === null) {
+    tx.update(s.platformRecognizedProjection).set(fields).where(where).run()
+  } else if (Object.entries(fields).some(([key, value]) => projection[key as keyof typeof fields] !== value)) {
+    throw new Error('recognized_qualification_fields_conflict')
+  }
 }

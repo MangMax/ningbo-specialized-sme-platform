@@ -1,19 +1,17 @@
-/** Explicit completed target candidate domain. Qualification/identity coverage remains R5. */
-import { and, asc, count, desc, eq, inArray, isNotNull, isNull, max, sql } from 'drizzle-orm'
+/** Candidates have a local title link or an actual returned platform title row. */
+import { and, asc, count, desc, eq, inArray, isNotNull, isNull, max, or, sql } from 'drizzle-orm'
 import { alias } from 'drizzle-orm/sqlite-core'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import { enterprise, record, differenceReason, recordCorrespondence } from '../../db/schema'
-import { candidateScopeObservation as o } from '../platform/candidate-scope-schema'
-import { platformObservationAssignment as a } from '../platform/target-schema'
+import { platformObservationAssignment as a, platformBusinessObservation as o, targetSchema } from '../platform/target-schema'
 import { PLATFORM_RETIREMENT_RULE, PLATFORM_RUNTIME_VERSION } from '../../db/schema-phase'
 import { sqliteConnection } from '../platform/target-connection'
 import { normalizeUscc } from '../domain'
+import { TITLE_RDJB_CODES } from '../platform/recognized-evidence'
 import type { CurrentTitle } from './current-titles'
 import type { CurrentCandidateReader } from './current-candidate-reader'
-import { targetSchema } from '../platform/target-schema'
 
 const newer=alias(a,'candidate_newer_assignment')
-const bits={innovative_sme:1,specialized_sme:2,little_giant:4} satisfies Record<CurrentTitle,number>
 export class TargetCurrentCandidateGap extends Error {
   constructor(readonly observationId:number|null,readonly state:string,readonly reason:string|null) {
     super(`Current candidate gap: observation ${observationId ?? 'unknown'}, ${state}${reason ? ': '+reason : ''}`)
@@ -42,21 +40,28 @@ export function createTargetCurrentCandidateReader(db:BetterSQLite3Database<type
     if (sqlite.pragma('user_version',{simple:true})!==PLATFORM_RUNTIME_VERSION || !sqlite.prepare('SELECT 1 FROM platform_runtime_completion WHERE id=1 AND rule=? AND schema_version=?').get(PLATFORM_RETIREMENT_RULE, PLATFORM_RUNTIME_VERSION)) {
       throw new TargetCurrentCandidateGap(null,'completion','Completed runtime model required')
     }
-    // Completed migration can lawfully retain an unavailable or malformed source scope.
-    // Read only the first compact capture marker; never decode its archive at runtime.
-    const gap=db.select({id:o.id,state:o.candidateScopeState,reason:o.candidateScopeError}).from(o)
-      .where(inArray(o.candidateScopeState,['uncaptured','error'])).limit(1).get()
-    if(gap)throw new TargetCurrentCandidateGap(gap.id,gap.state,gap.reason)
   }
   function candidates(title:CurrentTitle) {
+    const titles: CurrentTitle[] = title === 'innovative_sme' ? ['innovative_sme','specialized_sme','little_giant'] : title === 'specialized_sme' ? ['specialized_sme','little_giant'] : ['little_giant']
     const id=sql<number>`coalesce(${a.enterpriseId},${ownerId})`.as('id')
-    return db.with(owners).select({id:record.enterpriseId}).from(record).where(eq(record.titleCode,title))
-      .union(db.select({id:differenceReason.enterpriseId}).from(differenceReason).where(eq(differenceReason.titleCode,title)))
+    const returnedTitles = titles.map(title => TITLE_RDJB_CODES[title]!)
+    type Projection = typeof targetSchema.platformRecognizedProjection | typeof targetSchema.platformBusinessProjection | typeof targetSchema.platformApplyProjection
+    const returnedObservations = (projection: Projection) => db.select({observationId:o.id}).from(projection)
+      .innerJoin(o,or(eq(projection.versionId,o.versionId),eq(projection.observationId,o.id)))
+      .where(inArray(projection.titleRaw,returnedTitles))
+    const returned = db.$with('candidate_returned_observations').as(
+      returnedObservations(targetSchema.platformRecognizedProjection)
+        .union(returnedObservations(targetSchema.platformBusinessProjection))
+        .union(returnedObservations(targetSchema.platformApplyProjection)))
+    // Requested query scope is not returned title data. Resolve owners once
+    // after collecting matching observations, preserving shared-version owners.
+    return db.with(owners,returned).select({id:record.enterpriseId}).from(record).where(inArray(record.titleCode,titles))
+      .union(db.select({id:differenceReason.enterpriseId}).from(differenceReason).where(inArray(differenceReason.titleCode,titles)))
       .union(db.select({id:sql<number>`${recordCorrespondence.enterpriseId}`.as('id')}).from(recordCorrespondence)
-        .where(and(eq(recordCorrespondence.titleCode,title),isNotNull(recordCorrespondence.enterpriseId))))
-      .union(db.select({id}).from(o).innerJoin(a,assignment())
-        .leftJoin(owners,ownerJoin())
-        .where(and(sql`(${o.candidateScopeMask} & ${bits[title]})<>0`,isNotNull(sql`coalesce(${a.enterpriseId},${ownerId})`))))
+        .where(and(inArray(recordCorrespondence.titleCode,titles),isNotNull(recordCorrespondence.enterpriseId))))
+      .union(db.select({id}).from(returned).innerJoin(o,eq(o.id,returned.observationId))
+        .innerJoin(a,assignment()).leftJoin(owners,ownerJoin())
+        .where(isNotNull(sql`coalesce(${a.enterpriseId},${ownerId})`)))
       .as('current_candidates')
   }
   function ordered(title:CurrentTitle,sort?:'id_asc'|'name_asc'|'name_desc') {

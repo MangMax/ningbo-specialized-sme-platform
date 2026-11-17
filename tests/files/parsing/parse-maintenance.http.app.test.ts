@@ -1,3 +1,4 @@
+import { assertEnterpriseDetailSnapshotEqual } from '../../roster/assertions/enterprise-detail-snapshot'
 import { readDevelopmentDiscovery } from '../../roster/current-export/fixtures/specialized-export'
 import { spawnCompiledApp } from '../../support/owned-process.mjs'
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
@@ -114,8 +115,7 @@ it('state-only PATCH preserves segments while empty replacement restores derived
   expect(await call('get_ocr_result', { fileId: f.id })).toEqual(ocrBefore)
   // Qualification scope carries a per-read execution asOf and its digest; the
   // stored facts around it must be unchanged.
-  const stableDetail = (detail: any) => { const copy = structuredClone(detail); delete copy.qualificationAssessment?.asOf; delete copy.qualificationAssessment?.snapshotId; return copy }
-  expect(stableDetail(await (await fetch(detailUrl)).json())).toEqual(stableDetail(enterpriseBefore))
+  assertEnterpriseDetailSnapshotEqual(await (await fetch(detailUrl)).json(), enterpriseBefore)
   const reverted = await call('save_parse_result', { fileId: f.id, ...write(cleared.state.version, 'unparsed-again', { parseState: 'unparsed' }) })
   expect(reverted.state.parts).toEqual(cleared.state.parts)
   expect(reverted.state.parseState).toBe('unparsed')

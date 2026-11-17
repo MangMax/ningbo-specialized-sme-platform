@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto'
+import { readCurrentQualificationAssessment } from '../../../lib/roster/current-qualification'
 import { readFileSync } from 'node:fs'
 import { join,dirname } from 'node:path'
 import { expect,it,vi } from 'vitest'
@@ -6,6 +8,26 @@ import type { CurrentCandidateReader } from '../../../lib/roster/current-candida
 import { listCurrentQualified,listCurrentQualifiedWithCandidates } from '../../../lib/roster/current-qualified-query'
 import { writeCurrentWorkbook,writeCurrentWorkbookWithCandidates } from '../../../lib/roster/current-workbook'
 import { readExportWorkbook } from '../../support/read-workbook'
+
+it('lists and exports qualified enterprises across multiple native candidate blocks',async()=>{
+  const f=qualificationFileFixture()
+  vi.useFakeTimers({toFake:['Date']});vi.setSystemTime(new Date('2026-11-16T00:00:00Z'))
+  try {
+    const ids=Array.from({length:129},(_,i)=>f.formal(`Stream ${String(i).padStart(3,'0')}`,[{eventType:'award',year:2026,batchSeq:1}],{title:'specialized_sme'}).enterprise.id)
+    const page=listCurrentQualified(f.sqlite,{titleCode:'specialized_sme',page:1,pageSize:25})
+    expect(page.total).toBe(129)
+    expect(page.rows.map(row=>row.enterpriseId)).toEqual(ids.slice(0,25))
+    const last=listCurrentQualified(f.sqlite,{titleCode:'specialized_sme',page:6,pageSize:25})
+    expect(last.rows.map(row=>row.enterpriseId)).toEqual(ids.slice(125))
+    const path=join(dirname(f.sqlite.name),'streamed.xlsx')
+    await writeCurrentWorkbook(f.sqlite,'specialized_sme',path,()=>{})
+    const workbook=await readExportWorkbook(readFileSync(path))
+    const sheet=workbook.getWorksheet('有效企业')!
+    expect(sheet.rowCount).toBe(130)
+    expect(sheet.getRow(2).getCell(2).value).toBe('Stream 000')
+    expect(sheet.getRow(130).getCell(2).value).toBe('Stream 128')
+  } finally {vi.useRealTimers();f.close()}
+},30000)
 
 it('explicit candidate seam preserves qualified assessment asOf versions and workbook cells with one enumeration in the owner snapshot',async()=>{
   const f=qualificationFileFixture()
@@ -27,9 +49,26 @@ it('explicit candidate seam preserves qualified assessment asOf versions and wor
     const root=dirname(f.sqlite.name),a=join(root,'baseline.xlsx'),b=join(root,'injected.xlsx')
     const baselineSummary=await writeCurrentWorkbook(f.sqlite,'specialized_sme',a,()=>{})
     const injectedSummary=await writeCurrentWorkbookWithCandidates(f.sqlite,'specialized_sme',b,()=>{},provider)
-    // Current workbook and explicit legacy seam intentionally use distinct version namespaces.
-    expect(baselineSummary.dataVersion).toBe('sha256:b1d186a1e024f3fed2bb906ea5e7078222d7867d8d63fb25910489874b3c8a54')
-    expect(injectedSummary).toEqual({...baselineSummary,dataVersion:'sha256:3b2bf1c31d6e7f8420e9862fac598775dbe29ce53342ebdc7ba9d902d9e7625a'})
+    // Independently serialize the documented hash envelope. No production digest
+    // function, copied current hash, or version constant supplies the expectation.
+    const scope={enterpriseId:formal.enterprise.id,asOf:'2026-11-12T00:00:00.000Z',ruleVersion:'current-roster-116-v14',assessmentVersion:'enterprise-qualification-807-v7'}
+    const assessment=readCurrentQualificationAssessment(f.sqlite,formal.enterprise.id,Date.parse(scope.asOf))
+    expect(assessment).toMatchObject(scope)
+    expect(assessment.titles.find(t=>t.titleCode==='specialized_sme')).toMatchObject({group:'eligible',effectiveQualification:{status:'effective'}})
+    const digest=async(path:string,namespace:string,scoped:boolean)=>{
+      const workbook=await readExportWorkbook(readFileSync(path))
+      const sheet=workbook.getWorksheet('有效企业')!
+      expect(sheet.rowCount).toBe(2)
+      expect(sheet.getRow(2).getCell(2).value).toBe('Seam candidate')
+      expect(sheet.getRow(2).getCell(3).value).toBe(formal.enterprise.usccNorm)
+      const cells=Array.from({length:15},(_,i)=>sheet.getRow(2).getCell(i+1).value)
+      const titles=scoped?assessment.titles.filter(t=>t.titleCode==='specialized_sme'):assessment.titles
+      const snapshotId=createHash('sha256').update(JSON.stringify([scope,titles])).digest('hex')
+      const lines=[JSON.stringify([namespace,'enterprise-qualification-807-v7','current-roster-116-v14',2026,'specialized_sme']),JSON.stringify(['effective',formal.enterprise.id,scope,snapshotId,cells]),'']
+      return 'sha256:'+createHash('sha256').update(lines.join('\n')).digest('hex')
+    }
+    expect(baselineSummary.dataVersion).toBe(await digest(a,'current-export-assessment-title-v3',true))
+    expect(injectedSummary).toEqual({...baselineSummary,dataVersion:await digest(b,'current-export-assessment-409-v2',false)})
     expect(calls).toEqual([{title:'specialized_sme',sort:undefined,snapshot:true}])
     const values=async(path:string)=>{
       const workbook=await readExportWorkbook(readFileSync(path))

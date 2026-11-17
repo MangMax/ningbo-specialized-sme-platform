@@ -3,6 +3,7 @@ import { differencePublicColumns } from '../platform/difference-reference-target
 import { eq, inArray, sql } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as s from '../../db/schema'
+import { explainCurrentDifferencePage } from './current-difference'
 import { getComparison } from '../comparison'
 import { normalizeName } from '../domain'
 import { TITLE_ORDER } from '../labels'
@@ -21,6 +22,7 @@ const rank = (title: string) => { const i = TITLE_ORDER.indexOf(title); return i
  */
 export function listRosterDifferences(db: Db, filter: RosterDifferenceFilter = {}): RosterDifferencesResult {
   return db.transaction(() => {
+    const asOf = Date.now()
     const { q, r: relation } = targetCandidateTables(db)
     const d = s.differenceReason
     const heads = db.select({ id: d.id, enterpriseId: d.enterpriseId, titleCode: d.titleCode, direction: d.direction, status: d.status, reasonCode: d.reasonCode }).from(d)
@@ -53,8 +55,10 @@ export function listRosterDifferences(db: Db, filter: RosterDifferenceFilter = {
     for (const r of rows) { counts[r.titleCode] ??= { missing_in_miit: 0, extra_in_miit: 0 }; counts[r.titleCode]![r.direction]++ }
     const page = Number.isFinite(filter.page) && filter.page! >= 1 ? Math.floor(filter.page!) : 1
     const pageSize = Math.min(Number.isFinite(filter.pageSize) && filter.pageSize! >= 1 ? Math.floor(filter.pageSize!) : 50, MAX_PAGE_SIZE)
-    const selected = rows.slice((page - 1) * pageSize, page * pageSize)
-    if (!selected.length) return { rows: [], counts, total: rows.length, page, pageSize }
+    const pageRows = rows.slice((page - 1) * pageSize, page * pageSize)
+    if (!pageRows.length) return { rows: [], counts, total: rows.length, page, pageSize }
+    const qualificationPage = explainCurrentDifferencePage(db, pageRows, asOf)
+    const selected = qualificationPage.rows
     const selectedIds = selected.flatMap(r => r.explanationId == null ? [] : [r.explanationId])
     const explanations = new Map(db.select(differencePublicColumns(db)).from(d).where(inArray(d.id, selectedIds)).all().map(r => [r.id, r]))
     const enterpriseIds = [...new Set(selected.map(r => r.enterpriseId))]
@@ -67,7 +71,7 @@ export function listRosterDifferences(db: Db, filter: RosterDifferenceFilter = {
     for (const r of db.select({ id: relation.id, queryId: relation.queryId }).from(relation).where(inArray(sql<number>`${relation.queryId}`, queryIds)).all()) {
       const ids = relations.get(r.queryId) ?? []; ids.push(r.id); relations.set(r.queryId, ids)
     }
-    const assessments = readQueryAssessments(db, selected)
+    const assessments = readQueryAssessments(db, selected, qualificationPage.coverages)
     return { counts, total: rows.length, page, pageSize, rows: selected.map((r, i) => {
       const explanation = r.explanationId == null ? null : explanations.get(r.explanationId)!
       const query = explanation?.evidenceQueryId == null ? null : queries.get(explanation.evidenceQueryId)

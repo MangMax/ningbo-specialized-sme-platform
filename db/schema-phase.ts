@@ -28,7 +28,7 @@ export function assertFinalPlatformRuntime(sqlite: Database.Database) {
   sqlite.prepare(`SELECT c.id,c.reconcile_slot_state,c.witness_state,o.id,o.collection_id,o.sequence_no,
     a.revision,r.observation_id,d.evidence_relation_id,p.collection_id,f.input_archive_id,
     s.collection_id,se.collection_id,e.from_enterprise_id,pa.exact_status,pb.exact_status,
-    pr.exact_title_raw,v.canonical_archive_id,cp.collection_id,cp.max_page_present,cu.collection_id,cc.collection_id
+    pr.exact_title_raw,pr.source_recognized_at,pr.source_valid_flag,pr.source_invalidated_at,pr.source_invalidation_reason,pr.source_province_name,pr.source_city_name,pr.source_district_name,pr.qualification_fields_rule,v.canonical_archive_id,cp.collection_id,cp.max_page_present,cu.collection_id,cc.collection_id
     FROM platform_collection c,platform_business_observation o,platform_observation_assignment a,
     record_correspondence r,difference_reason d,platform_collection_legacy_provenance p,
     platform_observation_fingerprint_basis f,platform_query_title_scope s,platform_query_title_scope_error se,

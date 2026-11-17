@@ -43,10 +43,22 @@ export function assertEnterpriseDetailSnapshotEqual(actual: unknown, expected: u
   const expectedDetail = object(expected, 'expected detail')
   const actualAssessment = checkedAssessment(actualDetail)
   const expectedAssessment = checkedAssessment(expectedDetail)
-  // Validate first, then replace only the two permitted execution identities.
+  const hasTimeline = (detail: Record<string, unknown>) => Object.hasOwn(detail, 'businessTimeline')
+  let actualTimeline: Record<string, unknown> | undefined
+  let expectedTimeline: Record<string, unknown> | undefined
+  if (hasTimeline(actualDetail) || hasTimeline(expectedDetail)) {
+    assert(hasTimeline(actualDetail) && hasTimeline(expectedDetail), 'both details must contain businessTimeline')
+    actualTimeline = object(actualDetail.businessTimeline, 'actual businessTimeline')
+    expectedTimeline = object(expectedDetail.businessTimeline, 'expected businessTimeline')
+    // checkedAssessment already requires canonical ISO. Exact equality binds each
+    // timeline to its own response before any execution identity is normalized.
+    assert.equal(actualTimeline.asOf, actualAssessment.asOf, 'actual businessTimeline.asOf must match qualificationAssessment.asOf')
+    assert.equal(expectedTimeline.asOf, expectedAssessment.asOf, 'expected businessTimeline.asOf must match qualificationAssessment.asOf')
+  }
+  // Validate first, then replace only the permitted execution identities.
   // Spreads retain all other own enumerable DTO fields, including unknown additions.
   assert.deepStrictEqual(
-    { ...actualDetail, qualificationAssessment: { ...actualAssessment, asOf: null, snapshotId: null } },
-    { ...expectedDetail, qualificationAssessment: { ...expectedAssessment, asOf: null, snapshotId: null } },
+    { ...actualDetail, ...(actualTimeline ? { businessTimeline: { ...actualTimeline, asOf: null } } : {}), qualificationAssessment: { ...actualAssessment, asOf: null, snapshotId: null } },
+    { ...expectedDetail, ...(expectedTimeline ? { businessTimeline: { ...expectedTimeline, asOf: null } } : {}), qualificationAssessment: { ...expectedAssessment, asOf: null, snapshotId: null } },
   )
 }

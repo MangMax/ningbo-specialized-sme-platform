@@ -1,8 +1,9 @@
+import { explainCurrentDifferences, type DifferenceQualification } from './current-difference'
+import { enterpriseBusinessTimeline } from './enterprise-business-timeline'
 import { readCorrespondenceTargetQueries,readCorrespondenceTargetSources,correspondenceQueryRelationIds } from '../../server/utils/record-correspondence-target-sources'
 import type { PlatformStoredQuery } from '../platform/read'
 import type { PlatformStoredRelation } from '../platform/read'
 import { differencePublicColumns } from '../platform/difference-reference-target'
-import { readPublicPublishedNames } from './official-published-presentation'
 import type { PublishedPresentation } from './correspondence-view'
 import { readQueryAssessment,readQueryCoverage,type QueryAssessment } from './query-assessment'
 import { sourcePositionForSequence } from '../platform/recognized-evidence'
@@ -10,7 +11,7 @@ import { legacySourcePositionForSequence,type LegacyProvenanceDisplay } from '..
 import { type PlatformNormalizationConflict } from '../platform/normalization'
 import { readEnterpriseSnapshot,readEnterpriseHistories,enterpriseComparisonCoordinates } from './enterprise-read-snapshot'
 import { readPlatformBusinessDetails,readPlatformDetailFacts } from '../../server/utils/platform-business-detail-read'
-import { readCurrentQualificationAssessment,type CurrentQualificationSnapshot } from './current-qualification'
+import { createCurrentQualificationAssessmentReader,type CurrentQualificationSnapshot } from './current-qualification'
 import type { PlatformBusinessDetail } from './platform-business-detail'
 export { readPublicPublishedNames } from './official-published-presentation'
 /**
@@ -716,7 +717,7 @@ export interface MovedIn {
   complete: boolean
 }
 
-export interface RosterDifferenceRow extends LegacyRosterDifferenceRow, QueryAssessment {}
+export interface RosterDifferenceRow extends LegacyRosterDifferenceRow, QueryAssessment, DifferenceQualification {}
 
 interface LegacyRosterDifferenceRow {
   /** 存下来的解释行 id;**`null` = 还没有解释记录**(状态即状态机默认的 `not_queried`)。 */
@@ -791,6 +792,7 @@ export interface RosterPlatformRelationRow {
 export interface RosterEnterpriseDetail {
   /** #406 additive snapshot; legacy titleAssessments and lifecycle retain their meaning. */
   qualificationAssessment: CurrentQualificationSnapshot
+  businessTimeline: ReturnType<typeof enterpriseBusinessTimeline> & { asOf: string }
   publishedPresentation: PublishedPresentation
   enterprise: RosterEnterpriseRow
   aliases: RosterAliasRow[]
@@ -849,7 +851,7 @@ function differenceKey(enterpriseId: number, titleCode: string, direction: strin
  * (例如两侧后来对齐了)。`confirmed_no_diff` 这类状态必须看得见(否则按 `status` 筛
  * 永远筛不到它)。两边的来源由 `explanationId` 与 `inCurrentDifference` 分别说清。
  */
-function differenceUniverse(db: Db, snap: Snapshot, derived: Array<{ enterpriseId: number; titleCode: string; direction: ComparisonDirection }> = getComparison(db).rows): LegacyRosterDifferenceRow[] {
+function differenceUniverse(db: Db, snap: Snapshot, derived: Array<{ enterpriseId: number; titleCode: string; direction: ComparisonDirection }> = getComparison(db).rows, asOf = Date.now()): LegacyRosterDifferenceRow[] {
   const current = currentExplanations(snap)
   const names = new Map(snap.enterprises.map((e) => [e.id, e]))
   const recordDistrict = new Map<number, string | null>()
@@ -951,9 +953,6 @@ function enterpriseDetail(db: Db, id: number, asOf: number): RosterEnterpriseDet
     .filter((name, index, list) => list.indexOf(name) === index)
     .sort()
 
-  const differenceRows = differenceUniverse(db, snap, enterpriseComparisonCoordinates(db, id))
-  const difference = enterpriseDifferenceSummaries(differenceRows).get(id) ?? NO_DIFFERENCE
-  const row = toRow(profile, aliasNames, deriveRosterState(profile, index), difference)
   const events = profile.records.flatMap((r) => profile.eventsByRecord.get(r.id) ?? [])
   const eventIds = new Set(events.map((e) => e.id))
 
@@ -1008,10 +1007,17 @@ function enterpriseDetail(db: Db, id: number, asOf: number): RosterEnterpriseDet
     readQueryAssessment(db, scope, undefined, coverageForTitle(scope.titleCode))
 
   const selectedEvidence = snap.evidence.filter(v => eventIds.has(v.recordEventId))
-  const publishedPresentation = readPublicPublishedNames(db, selectedEvidence.map(v => ({ evidenceId: v.id, eventId: v.recordEventId })))
+  const detailRead = createCurrentQualificationAssessmentReader((db as Db & { $client: import('better-sqlite3').Database }).$client)
+    .readDetail(id, asOf, selectedEvidence.map(v => ({ evidenceId: v.id, eventId: v.recordEventId })), { ownQueryIds: enterpriseSnapshot.ownQueryIds, coverageForTitle })
+  const { snapshot: qualificationAssessment, publishedPresentation } = detailRead
+  const differenceRows = explainCurrentDifferences(db, differenceUniverse(db, snap, enterpriseComparisonCoordinates(db, id), asOf), asOf, detailRead)
+  const difference = enterpriseDifferenceSummaries(differenceRows).get(id) ?? NO_DIFFERENCE
+  const row = toRow(profile, aliasNames, deriveRosterState(profile, index), difference)
   const platformFacts = readPlatformDetailFacts(db, queries, relations)
+  const businessTimeline = enterpriseBusinessTimeline(id, profile.records, events.filter(e => profile.records.some(r => r.id === e.recordId && r.source === 'jxj')), detailRead.platformFacts, queries)
   return {
-    qualificationAssessment: readCurrentQualificationAssessment((db as Db & { $client: import('better-sqlite3').Database }).$client, id, asOf, {ownQueryIds:enterpriseSnapshot.ownQueryIds,publishedNames:publishedPresentation,coverageForTitle}),
+    businessTimeline: { ...businessTimeline, asOf: qualificationAssessment.asOf },
+    qualificationAssessment,
     publishedPresentation,
     enterprise: row,
     aliases: snap.aliases
@@ -1141,8 +1147,9 @@ export function listRosterDifferences(db: Db, filter: RosterDifferenceFilter = {
 }
 
 function rosterDifferences(db: Db, filter: RosterDifferenceFilter): RosterDifferencesResult {
+  const asOf = Date.now()
   const snap = readDifferenceSnapshot(db)
-  const differenceRows = differenceUniverse(db, snap)
+  const differenceRows = differenceUniverse(db, snap, undefined, asOf)
 
   // 别名:只带 `confirmed`(契约 §1.2),与总表的搜索口径同一处规则。
   const confirmedAliases = new Map<number, string[]>()
@@ -1191,9 +1198,9 @@ function rosterDifferences(db: Db, filter: RosterDifferenceFilter): RosterDiffer
 
   const { page, pageSize } = pageOf(filter)
   const selected = rows.slice((page - 1) * pageSize, page * pageSize)
-  const hydrated = new Map(differenceUniverse(db, readDifferenceSnapshot(db, [...new Set(selected.map(r => r.enterpriseId))]), selected).map(r => [differenceKey(r.enterpriseId, r.titleCode, r.direction), r]))
+  const hydrated = new Map(differenceUniverse(db, readDifferenceSnapshot(db, [...new Set(selected.map(r => r.enterpriseId))]), selected, asOf).map(r => [differenceKey(r.enterpriseId, r.titleCode, r.direction), r]))
   return {
-    rows: selected.map(row => ({ ...hydrated.get(differenceKey(row.enterpriseId, row.titleCode, row.direction))!, inCurrentDifference: row.inCurrentDifference, ...readQueryAssessment(db, row) })),
+    rows: explainCurrentDifferences(db, selected.map(row => ({ ...hydrated.get(differenceKey(row.enterpriseId, row.titleCode, row.direction))!, inCurrentDifference: row.inCurrentDifference, ...readQueryAssessment(db, row) })), asOf),
     counts,
     total: rows.length,
     page,

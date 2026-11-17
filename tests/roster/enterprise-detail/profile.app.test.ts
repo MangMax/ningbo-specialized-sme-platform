@@ -154,7 +154,11 @@ it('PATCH preserves formal rows, source evidence, platform originals and readbac
   expect(updated.status).toBe(200)
   const detailAfter = (await request(`/api/roster/enterprises/${owner.id}`)).body
   for (const key of ['records', 'events', 'evidence', 'platform', 'recognitions']) expect(detailAfter[key]).toEqual(detailBefore[key])
-  expect(detailAfter.differences).toEqual(detailBefore.differences.map((row: any) => ({ ...row, name: '九六跨接缝新名', district: '鄞州区' })))
+  expect(detailBefore.differences).toHaveLength(1)
+  expect(detailAfter.differences).toEqual(detailBefore.differences.map((row: any) => ({ ...row, name: '九六跨接缝新名', district: '鄞州区', qualification: {
+    ...row.qualification,
+    notes: [`历史诊断（不参与有效判定）：已公布，公布名称为${owner.name}；现已更名为九六跨接缝新名`, ...row.qualification.notes],
+  } })))
   expect(detailAfter.enterprise).toMatchObject({ enterpriseId: owner.id, name: '九六跨接缝新名', district: '鄞州区', city: '宁波市' })
   for (const q of [owner.name, '九六跨接缝新名']) {
     const list = await request(`/api/roster/enterprises?q=${encodeURIComponent(q)}`)

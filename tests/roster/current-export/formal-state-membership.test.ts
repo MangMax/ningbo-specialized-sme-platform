@@ -28,6 +28,7 @@ const sheets409 = ['有效企业','已到期','已注销（吊销）','已迁出
 afterAll(() => f.close())
 it('canonical termination overrides an independent unresolved subject fact in real Excel', async () => {
   const target = f.candidate(X409.name)
+  f.addRecord(target.enterprise.id, X409.name, undefined, 'little_giant')
   f.decision(target.enterprise.id, 'deregistered')
   f.decision(target.enterprise.id, 'moved_out', { titleCode: 'innovative_sme', direction: 'missing_in_miit', basis: null })
   // Legacy decisions remain diagnostic; complete typed facts own current exclusion.
@@ -63,6 +64,7 @@ it('canonical termination overrides an independent unresolved subject fact in re
 
 it('full title exports retain platform failures missing records and unrecognized reviews beyond page one', async () => {
   const titlePaths = {little_giant:'little-giant',specialized_sme:'specialized-sme',innovative_sme:'innovative-sme'} as const
+  const priorEffective: string[] = [], priorUnrecognized: string[] = []
   for (const [title,path] of Object.entries(titlePaths)) {
     const valid=f.candidate('E409-'+title,undefined,title)
     const failedQuery = submitNativePlatformQuery(f.db,{interface:'business_list',queryKey:'name:'+valid.enterprise.name,titleCode:title,rdjb:title==='innovative_sme'?'1':title==='specialized_sme'?'2':'3',queriedAt:'2026-01-01T00:00:00Z',status:'failed',rawResponse:'synthetic E409 failed platform response'})
@@ -86,12 +88,14 @@ it('full title exports retain platform failures missing records and unrecognized
     for(let i=0;i<26;i++) f.candidate('Q409-'+title+'-'+i,undefined,title)
     const {wb,result}=await f.workbook('E409-'+title,title as CurrentTitle)
     const names=(sheet:string)=>wb.getWorksheet(sheet)!.getRows(2,Math.max(0,wb.getWorksheet(sheet)!.rowCount-1))?.map(r=>r.getCell(2).value)??[]
-    expect(names('有效企业')).toEqual([valid.enterprise.name,absent.enterprise.name,...Array.from({length:26},(_,i)=>'Q409-'+title+'-'+i)])
+    priorEffective.push(valid.enterprise.name,absent.enterprise.name,...Array.from({length:26},(_,i)=>'Q409-'+title+'-'+i))
+    priorUnrecognized.push(pending.enterprise.name,failed.enterprise.name)
+    expect(names('有效企业')).toEqual(priorEffective)
     for (const empty of ['已到期','已注销（吊销）','已迁出']) expect(names(empty)).toEqual([])
-    expect(names('未认定')).toEqual([pending.enterprise.name,failed.enterprise.name])
+    expect(names('未认定')).toEqual(priorUnrecognized)
     expect(wb.worksheets.map(sheet=>sheet.name)).toEqual(sheets409)
-    expect(result.counts).toEqual({eligible:28,pending:0,excluded:2})
-    expect(result.statusCounts).toEqual({effective:28,expired:0,terminated:0,moved_out:0,unrecognized:2})
+    expect(result.counts).toEqual({eligible:priorEffective.length,pending:0,excluded:priorUnrecognized.length})
+    expect(result.statusCounts).toEqual({effective:priorEffective.length,expired:0,terminated:0,moved_out:0,unrecognized:priorUnrecognized.length})
     expect(result.total).toBe(Object.values(result.counts).reduce((a:any,b:any)=>a+b,0))
     expect(wb.worksheets.slice(0,5).reduce((n,s)=>n+s.rowCount-1,0)).toBe(result.total)
     expect(wb.worksheets.slice(0,5).every(s=>s.getRow(1).cellCount===15)).toBe(true)
@@ -112,7 +116,7 @@ it('separates formal title states and exhausts 201 public query and Excel member
   f.db.$client.pragma('query_only = ON')
   const literalSnapshot = readCurrentQualificationAssessment(f.db.$client, stable.enterprise.id, Date.parse(B409.asOf))
   expect(literalSnapshot.titles.map(title => [title.titleCode, title.group])).toEqual([
-    ['little_giant','eligible'], ['specialized_sme','excluded'], ['innovative_sme','eligible'],
+    ['little_giant','eligible'], ['specialized_sme','eligible'], ['innovative_sme','eligible'],
   ])
   expect(literalSnapshot.titles[0]!.evidence).toContainEqual(expect.objectContaining({ eventType: 'award', year: 2026, batchSeq: 1 }))
   expect(literalSnapshot.titles[1]!.completeness.fieldGaps).toEqual([
@@ -131,30 +135,30 @@ it('separates formal title states and exhausts 201 public query and Excel member
     for (const row of result.rows) expect(row.qualificationAssessment).toEqual(readCurrentQualificationAssessment(f.db.$client, row.enterpriseId, Date.parse(result.snapshotStartedAt)))
   }
   expect(queryIds).toEqual(expectedIds)
-  const located=query({titleCode:'specialized_sme',status:'unrecognized',q:B409.name})
+  const located=query({titleCode:'specialized_sme',status:'effective',q:B409.name})
   expect(located).toMatchObject({ total: 1, publishedPending: { requested: true, total: 0, rows: [] } })
   expect(located.rows.map((row: { enterpriseId: number }) => row.enterpriseId)).toEqual([stable.enterprise.id])
   expect(located.rows[0]!.qualificationAssessment).toEqual(readCurrentQualificationAssessment(f.db.$client, stable.enterprise.id, Date.parse(located.snapshotStartedAt)))
-  expect(query({titleCode:'specialized_sme'})).toMatchObject({total:0,rows:[],publishedPending:{requested:false,rows:[],total:0}})
+  expect(query({titleCode:'specialized_sme'})).toMatchObject({total:201,publishedPending:{requested:false,rows:[],total:0}})
 
-  // Own review history stays unrecognized; a dated innovative history also activates the accepted local giant rule.
+  // Own review history stays unrecognized; upper qualification needs no lower history gate.
   expect(literalSnapshot.titles[2]!.officialQualification.group).toBe('excluded')
   expect(literalSnapshot.titles[2]!.effectiveQualification!.localRuleBasis!.join('\n')).toContain('按有效小巨人资格计入')
   const titleOracles = [
     {title:'little_giant',path:'little-giant',sheet:'有效企业',label:'专精特新“小巨人”',qualification:'2026年第1批认定',counts:{eligible:201,pending:0,excluded:0},statusCounts:{effective:201,expired:0,terminated:0,moved_out:0,unrecognized:0}},
-    {title:'specialized_sme',path:'specialized-sme',sheet:'未认定',label:'专精特新中小企业',qualification:'2022年第1批原认定批次，结论年份待核复核结论待核',counts:{eligible:0,pending:0,excluded:1},statusCounts:{effective:0,expired:0,terminated:0,moved_out:0,unrecognized:1}},
-    {title:'innovative_sme',path:'innovative-sme',sheet:'有效企业',label:'创新型中小企业',qualification:'2022年第1批原认定批次，2025年复核未通过',counts:{eligible:1,pending:0,excluded:0},statusCounts:{effective:1,expired:0,terminated:0,moved_out:0,unrecognized:0}},
+    {title:'specialized_sme',path:'specialized-sme',sheet:'有效企业',label:'专精特新中小企业',qualification:'2022年第1批原认定批次，结论年份待核复核结论待核',counts:{eligible:201,pending:0,excluded:0},statusCounts:{effective:201,expired:0,terminated:0,moved_out:0,unrecognized:0}},
+    {title:'innovative_sme',path:'innovative-sme',sheet:'有效企业',label:'创新型中小企业',qualification:'2022年第1批原认定批次，2025年复核未通过',counts:{eligible:201,pending:0,excluded:0},statusCounts:{effective:201,expired:0,terminated:0,moved_out:0,unrecognized:0}},
   ]
   for (const literal of titleOracles) {
     const {wb,result}=await f.workbook('B409-'+literal.title,literal.title as CurrentTitle)
     expect(wb.worksheets.map(sheet => sheet.name)).toEqual(sheets409)
     expect(result.counts).toEqual(literal.counts)
     expect(result.statusCounts).toEqual(literal.statusCounts)
-    expect(result.total).toBe(literal.title === 'little_giant' ? 201 : 1)
+    expect(result.total).toBe(201)
     for (const sheet of wb.worksheets.slice(0,5)) {
       expect(sheet.getRow(1).values).toEqual([undefined, ...headers409])
       const names = Array.from({ length: sheet.rowCount - 1 }, (_, i) => sheet.getRow(i + 2).getCell(2).value)
-      expect(names).toEqual(sheet.name === literal.sheet ? literal.title === 'little_giant' ? expectedNames : [B409.name] : [])
+      expect(names).toEqual(sheet.name === literal.sheet ? expectedNames : [])
       for (let i = 2; i <= sheet.rowCount; i++) {
         expect(sheet.getRow(i).cellCount).toBe(15)
         expect(sheet.getRow(i).getCell(5).value).toBe(literal.label)
@@ -162,7 +166,14 @@ it('separates formal title states and exhausts 201 public query and Excel member
     }
     const targetRow = wb.getWorksheet(literal.sheet)!.getRow(2)
     expect(targetRow.getCell(7).value).toBe(literal.qualification)
-    if (literal.title === 'specialized_sme') expect(targetRow.getCell(11).value).toContain('缺少已确认认定及资格依据')
+    expect(targetRow.getCell(14).value).toBe('小巨人原认定或复核通过资格保留；不按认定年龄自动到期，适用正式期间、同周期失败及已确认处置另行裁定')
+    if (literal.title !== 'little_giant') {
+      const tail = wb.getWorksheet(literal.sheet)!.getRow(202)
+      expect(tail.getCell(6).value ?? null).toBeNull()
+      expect(tail.getCell(7).value ?? null).toBeNull()
+      expect(tail.getCell(11).value).toContain('按有效小巨人资格计入')
+    }
+    if (literal.title === 'specialized_sme') expect(targetRow.getCell(11).value).toContain('按有效小巨人资格计入')
     if (literal.title === 'innovative_sme') expect(targetRow.getCell(11).value).toContain('按有效小巨人资格计入')
     if (literal.title === 'specialized_sme') expect(targetRow.getCell(15).value).toContain('认定或复核周期资料不完整')
     expectIndependent409Digest(wb, result, literal.title, identityByName)

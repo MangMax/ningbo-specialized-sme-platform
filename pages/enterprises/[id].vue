@@ -1,28 +1,21 @@
 <script setup lang="ts">
 import { CURRENT_STATUS_LABELS } from '~~/lib/roster/current-status'
 import { useQuery } from '@pinia/colada'
-import { computed, nextTick, onMounted, provide, ref, shallowRef, watch } from 'vue'
-import { onBeforeRouteLeave, onBeforeRouteUpdate, useRouter } from 'vue-router'
+import { computed, nextTick, ref, shallowRef, watch } from 'vue'
+import type { ReviewAssessment } from '~~/lib/roster/evidence-review-ui'
+import EventChip from '@/components/EventChip.vue'
 import type { RosterEnterpriseDetail } from '~~/lib/roster/enterprise-roster'
-import type { ImpactRow, ReviewAssessment, ReviewScope } from '~~/lib/roster/evidence-review-ui'
 import {
   headerCheckLabel,
-  impactOldDecisionText,
-  impactScopeLabel,
   latestQueryTime,
   officialTitlesLabel,
   titleLabel,
 } from '~~/lib/roster/review-display'
 import { sourceReturnTarget, type OfficialPublishedFact } from '~~/lib/roster/correspondence-view'
-import RecordEventRow from '@/components/record-correspondence/RecordEventRow.vue'
-import SourceReader from '@/components/record-correspondence/SourceReader.vue'
-import EventCorrespondenceReview from '@/components/record-correspondence/EventCorrespondenceReview.vue'
+import OfficialEvidenceView from '@/components/record-correspondence/OfficialEvidence.vue'
+import { eventDecisionText } from '~~/lib/roster/correspondence-view'
 import TableFailureState from '@/components/TableFailureState.vue'
-import AssessmentStatusBadge from '@/components/evidence-review/AssessmentStatusBadge.vue'
-import EnterpriseFacts from '@/components/enterprise/EnterpriseFacts.vue'
-import EnterpriseExplanations from '@/components/evidence-review/EnterpriseExplanations.vue'
 import PlatformRecords from '@/components/PlatformRecords.vue'
-import { hasKnownPlatformBusiness } from '~~/lib/roster/platform-business-detail'
 import TitleBadge from '@/components/TitleBadge.vue'
 import { QUALITY_FLAGS, TITLE_ORDER } from '~~/lib/labels'
 import { fileUrl, fileNameOf } from '~~/lib/preview'
@@ -32,15 +25,11 @@ import {
   shouldNuxtScrollToTop,
   useEvidencePreviewScrollRestore,
 } from '~~/lib/roster/evidence-preview-return'
-import { useEnterpriseCorrespondences } from '~/composables/useEnterpriseCorrespondences'
-import { useEnterprisePendingImpacts } from '~/composables/useEnterprisePendingImpacts'
-import { REVIEW_DRAFTS_KEY, useReviewDrafts } from '~/composables/useReviewDrafts'
 import FilePreviewDialog from '@/components/preview/FilePreviewDialog.vue'
 import DisclosurePanel from '@/components/DisclosurePanel.vue'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 
@@ -89,10 +78,7 @@ interface LedgerEvent extends DetailEvent {
   district: string | null
 }
 
-type DetailTab = 'records' | 'review'
-
 const route = useRoute()
-const router = useRouter()
 const id = computed(() => String(route.params.id ?? ''))
 
 /**
@@ -120,21 +106,6 @@ const backTo = computed(() => {
   return { path: '/', query }
 })
 
-// Event links retain only the existing return context; file links still use the
-// complete detail URL so PDF navigation returns to this exact source page.
-const formalSourceEventReturnQuery = computed(() => {
-  const query: { currentBack?: string; back?: string; returnTo?: string } = {}
-  if (typeof route.query.currentBack === 'string') query.currentBack = route.query.currentBack
-  if (typeof route.query.back === 'string') query.back = route.query.back
-  const comparison = sourceReturnTarget(route.query.returnTo)
-  if (comparison) query.returnTo = comparison
-  return query
-})
-
-const explanationTitle = computed(() => typeof route.query.titleCode === 'string' ? route.query.titleCode : undefined)
-const explanationDirection = computed(() => typeof route.query.direction === 'string' ? route.query.direction : undefined)
-const impactId = computed(() => typeof route.query.impactId === 'string' && /^[1-9]\d*$/.test(route.query.impactId) && Number.isSafeInteger(Number(route.query.impactId)) ? Number(route.query.impactId) : undefined)
-
 const apiGet = $fetch as unknown as <T>(url: string) => Promise<T>
 const { data, isLoading, error, refetch } = useQuery({
   key: () => ['roster-enterprise', id.value],
@@ -145,39 +116,10 @@ const { data, isLoading, error, refetch } = useQuery({
   },
 })
 
-/**
- * 待复核清单只用来回答“现在有没有要处理的事”和给出第一项的入口。
- * 读取失败时保持未知，不把 0 当作结论。
- */
-const {
-  data: pendingData,
-  isLoading: pendingLoading,
-  error: pendingError,
-  refetch: refetchPending,
-} = useEnterprisePendingImpacts(id)
-
-const assessments = computed<(ReviewAssessment & ReviewScope)[]>(() => (data.value?.titleAssessments ?? []) as unknown as (ReviewAssessment & ReviewScope)[])
+const assessments = computed(() => (data.value?.titleAssessments ?? []) as unknown as ReviewAssessment[])
 // Presentation only: all eligibility and applicability decisions come from the detail snapshot.
 const qualificationRows = computed(() => data.value?.qualificationAssessment?.titles ?? [])
 const qualificationGroupLabel = { eligible: '宁波当前可纳入', pending: '宁波当前待核', excluded: '不纳入宁波当前结果' }
-const qualificationGapLabel: Record<string, string> = {
-  missing_official_source: '正式出处待补', missing_cycle_semantics: '原周期、批次或复核结论待核',
-  identity_unresolved: '主体身份对应待核', published_name_not_retained: '逐出处公布名称尚未留档',
-  published_name_unknown: '已留档原行，公布名称仍未知',
-  published_name_read_unavailable: '本次逐出处名称读取未完成',
-  source_version_unavailable: '来源文件版本待核',
-}
-const pendingRows = computed(() => pendingData.value?.rows ?? [])
-const pendingHasMore = computed(() => !!pendingData.value?.nextCursor)
-const focusedImpactId = ref<number | undefined>()
-const openImpactRequest = ref<{ id: number; titleCode: string; direction: string } | null>(null)
-
-function onOpenImpact(row: ImpactRow) {
-  focusedImpactId.value = row.id
-  openImpactRequest.value = { id: row.id, titleCode: row.titleCode, direction: row.direction }
-  syncReviewDeepLink(row.titleCode, row.direction, row.id)
-}
-
 const detail = computed<EnterpriseDetail | null>(() => {
   const source = data.value
   if (!source) return null
@@ -215,7 +157,6 @@ const detail = computed<EnterpriseDetail | null>(() => {
 })
 
 const confirmedAliasNames = computed(() => data.value?.aliases.filter(alias => alias.verificationStatus === 'confirmed').map(alias => alias.name) ?? [])
-const formalSourceEventId = ref<number | null>(null)
 
 function historyYear(event: LedgerEvent): number | null {
   return event.type === 'review' ? event.decidedYear : event.year
@@ -238,7 +179,7 @@ const ledgerEvents = computed<LedgerEvent[]>(() => {
 })
 
 const historySource = shallowRef('jxj')
-const historySources = [{ code: 'jxj', label: '经信局' }, { code: 'miit', label: '工信部' }]
+const historySources = [{ code: 'jxj', label: '公布资料' }]
 
 /** 来源分别展示；记录即使没有事件，也保留其称号空状态。 */
 const sourceHistories = computed(() => historySources.map(source => {
@@ -269,201 +210,25 @@ const titleInfo = computed(() => {
 })
 
 const focusedEventId = computed(() => typeof route.query.eventId === 'string' && /^\d+$/.test(route.query.eventId) ? Number(route.query.eventId) : null)
-const reviewEventId = computed(() => typeof route.query.reviewEventId === 'string' && /^[1-9]\d*$/.test(route.query.reviewEventId) ? Number(route.query.reviewEventId) : null)
-function selectReviewEvent(eventId: number | null) {
-  bypassLeaveGuard.value = true
-  void router.replace({ path: route.path, query: { ...route.query, eventId: undefined, tab: 'review', reviewEventId: eventId == null ? undefined : String(eventId) } }).finally(() => { bypassLeaveGuard.value = false })
-}
-
-/* ------------------------------------------------------------------ *
- * 两个承载页：认定信息与记录（默认）/ 称号核对。
- *
- * 核对矩阵不再压在企业详情首屏：从台账来看企业的人先读认定与记录；
- * 需要逐项判断时再进核对页。抽屉只保留摘要与入口，不重复矩阵。
- * ------------------------------------------------------------------ */
-const routeTab = computed<DetailTab>(() => {
-  // 事件深链优先落在记录页：它要求展开并定位具体事件。
-  if (focusedEventId.value != null) return 'records'
-  if (route.query.tab === 'review' || route.query.tab === 'records') return route.query.tab
-  if (explanationTitle.value || explanationDirection.value || impactId.value) return 'review'
-  return 'records'
-})
-const tab = ref<DetailTab>(routeTab.value)
-watch(routeTab, value => { tab.value = value })
-
-const {
-  rows: correspondenceRows,
-  loading: correspondenceLoading,
-  error: correspondenceError,
-  ready: correspondenceReady,
-  reload: reloadCorrespondences,
-  detailsForEvent,
-  detailLoadingForEvent,
-  detailErrorForEvent,
-  loadEvent,
-} = useEnterpriseCorrespondences(computed(() => tab.value === 'records' ? detail.value?.id ?? null : null))
-
-/** 折叠标题用企业详情已读取的标量信息；完整对应出处只在展开时点读。 */
-const relationSummaries = computed(() => {
-  const queries = new Map((data.value?.platform.queries ?? []).map(query => [query.id, query]))
-  return Object.fromEntries((data.value?.platform.relations ?? []).map(relation => [relation.id, {
-    interface: queries.get(relation.queryId)?.interface ?? '', status: relation.status,
-  }]))
-})
-
-function edgesFor(eventId: number) {
-  return correspondenceRows.value.filter(edge => edge.eventId === eventId && edge.type !== 'later_process')
-}
-
-const EVIDENCE_DISCLOSURE_RETURN_KEY = 'roster:enterprise-detail-open-evidence'
-const openEvidenceKeys = ref<string[]>([])
-
-watch([correspondenceRows, openEvidenceKeys, correspondenceReady], () => {
-  if (!correspondenceReady.value) return
-  for (const event of ledgerEvents.value) {
-    if (evidenceDisclosureOpen(evidenceDisclosureKey(event.id))) void loadEvent(event.id)
-  }
-}, { immediate: true })
-
-function evidenceDisclosureKey(eventId: number): string {
-  return JSON.stringify([id.value, eventId])
-}
-
-function evidenceDisclosureOpen(key: string): boolean {
-  return openEvidenceKeys.value.includes(key)
-}
-
-// 原行摘要与展开的出处会改变页面高度，等它们成功或失败后再恢复预览前位置。
-const detailRendered = computed(() => (detail.value !== null || error.value != null) && !correspondenceLoading.value
-  && (correspondenceError.value || ledgerEvents.value.every(event => !evidenceDisclosureOpen(evidenceDisclosureKey(event.id))
-    || detailsForEvent(event.id) !== null || detailErrorForEvent(event.id))))
+const detailRendered = computed(() => detail.value !== null || error.value != null)
 // Cached detail can refresh again after focus restoration; do not steal source-link focus.
 let previewReturnEventId = hasEvidencePreviewReturn(route.fullPath) ? focusedEventId.value : null
 useEvidencePreviewScrollRestore(detailRendered, undefined, route.fullPath)
 
-function setEvidenceDisclosureOpen(key: string, open: boolean): void {
-  const next = new Set(openEvidenceKeys.value)
-  if (open) next.add(key)
-  else next.delete(key)
-  openEvidenceKeys.value = [...next]
-}
-
-onMounted(() => {
-  try {
-    const raw = window.sessionStorage.getItem(EVIDENCE_DISCLOSURE_RETURN_KEY)
-    window.sessionStorage.removeItem(EVIDENCE_DISCLOSURE_RETURN_KEY)
-    if (!raw) return
-    const state: unknown = JSON.parse(raw)
-    if (!state || typeof state !== 'object') return
-    const candidate = state as { back?: unknown; keys?: unknown }
-    if (
-      candidate.back === route.fullPath &&
-      Array.isArray(candidate.keys) &&
-      candidate.keys.every((key) => typeof key === 'string')
-    ) {
-      openEvidenceKeys.value = candidate.keys
-    }
-  } catch {
-    // Storage may be unavailable; the page remains usable without disclosure restoration.
-  }
-})
-
-/**
- * 出处预览保留原有展开状态和滚动位置；默认出处不强行展开平台详情。
- */
+/** 公布文件预览返回对应事件及原列表上下文。 */
 function previewReturnPath(eventId: number): string {
-  const [path, search = ''] = route.fullPath.split('?')
+  const queryStart = route.fullPath.indexOf('?')
+  const search = queryStart < 0 ? '' : route.fullPath.slice(queryStart + 1)
   const query = new URLSearchParams(search.split('#')[0])
   query.set('tab', 'records')
   query.set('eventId', String(eventId))
-  return `${path}?${query}`
+  return `${route.path}?${query}`
 }
 function rememberPagePreviewReturn(eventId: number, event: MouseEvent) {
   if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
-  const keys = new Set(openEvidenceKeys.value)
-  try {
-    window.sessionStorage.setItem(EVIDENCE_DISCLOSURE_RETURN_KEY, JSON.stringify({ back: previewReturnPath(eventId), keys: [...keys] }))
-  } catch {
-    // Storage may be unavailable; ordinary preview navigation still works.
-  }
   rememberEvidencePreviewReturn(previewReturnPath(eventId), event.currentTarget)
 }
 
-
-/**
- * 核对草稿由本页持有：切 tab、路由离开都只确认一次；继续填写留在原条目，
- * 明确丢弃才执行原动作。结构性收起/重选由子级自己的仓库处理。
- */
-const reviewDrafts = useReviewDrafts()
-provide(REVIEW_DRAFTS_KEY, reviewDrafts)
-// 旧的布尔契约仍保留给没有仓库的宿主组件。
-provide('enterprise-review-draft', computed(() => reviewDrafts.hasDirty.value))
-const pendingTab = ref<DetailTab | null>(null)
-const pendingLeave = ref<string | null>(null)
-const bypassLeaveGuard = ref(false)
-
-function requestTab(next: DetailTab) {
-  if (next === tab.value) return
-  if (tab.value === 'review' && reviewDrafts.hasDirty.value) {
-    pendingTab.value = next
-    return
-  }
-  applyTab(next)
-}
-
-function returnToRecord() {
-  if (reviewEventId.value == null) return
-  if (reviewDrafts.hasDirty.value) {
-    pendingTab.value = 'records'
-    return
-  }
-  applyTab('records')
-}
-
-function discardAndSwitchTab() {
-  if (reviewDrafts.hasLocked.value) return
-  const next = pendingTab.value
-  pendingTab.value = null
-  reviewDrafts.discardAll()
-  if (next) applyTab(next)
-}
-
-function guardLeave(to: { fullPath: string }) {
-  if (bypassLeaveGuard.value || !reviewDrafts.hasDirty.value) return true
-  // 已有 tab 确认框时不再叠第二个；先让用户处理当前确认。
-  if (pendingTab.value != null) return false
-  pendingLeave.value = to.fullPath
-  return false
-}
-onBeforeRouteLeave(guardLeave)
-onBeforeRouteUpdate(guardLeave)
-
-function discardAndLeave() {
-  if (reviewDrafts.hasLocked.value) return
-  const target = pendingLeave.value
-  pendingLeave.value = null
-  if (!target) return
-  reviewDrafts.discardAll()
-  bypassLeaveGuard.value = true
-  void router.push(target).finally(() => { bypassLeaveGuard.value = false })
-}
-
-function applyTab(next: DetailTab) {
-  pendingTab.value = null
-  tab.value = next
-  const query: Record<string, string> = {}
-  for (const [key, value] of Object.entries(route.query)) {
-    if (typeof value !== 'string') continue
-    if (key === 'titleCode' || key === 'direction' || key === 'impactId' || key === 'eventId') continue
-    query[key] = value
-  }
-  query.tab = next
-  if (next === 'records' && reviewEventId.value != null) query.eventId = String(reviewEventId.value)
-  // The controlled action already obtained consent. Retained initial receipts
-  // must not trigger a second route prompt while switching this page's tabs.
-  bypassLeaveGuard.value = true
-  void router.replace({ path: route.path, query }).finally(() => { bypassLeaveGuard.value = false })
-}
 
 /**
  * eventId 深链要落在具体那一行：多个事件同在记录页时，仅展开来源不足以说明
@@ -480,8 +245,6 @@ async function arriveAtEvent(eventId: number | null) {
   if (!record) return
   const enterpriseId = id.value
   historySource.value = record.source
-  tab.value = 'records'
-  setEvidenceDisclosureOpen(evidenceDisclosureKey(eventId), true)
   await nextTick()
   // Nuxt may still be restoring the page scroll after the route settles; wait two
   // frames and a short delay so the locate is the last scroll, not the first.
@@ -510,9 +273,6 @@ const usccMissing = computed(() => detail.value?.qualityFlags?.includes('uscc_mi
 const otherFlags = computed(() => (detail.value?.qualityFlags ?? []).filter((f) => f !== 'uscc_missing'))
 const recordCount = computed(() => detail.value?.records.length ?? 0)
 const eventCount = computed(() => ledgerEvents.value.length)
-const platformRowCount = computed(() => data.value?.platform.relations.length ?? 0)
-const platformBusinessCount = computed(() => data.value?.platform.businessRecords?.filter(b => hasKnownPlatformBusiness(b.businessRecord)).length ?? 0)
-const platformUnknownIdentityCount = computed(() => data.value?.platform.businessRecords?.filter(b => !hasKnownPlatformBusiness(b.businessRecord)).length ?? platformRowCount.value)
 
 const titleNames = computed(() => titleInfo.value.map(item => titleLabel(item.code)))
 const lastChecked = computed(() => latestQueryTime(assessments.value))
@@ -524,26 +284,8 @@ const lastChecked = computed(() => latestQueryTime(assessments.value))
 const lastCheckedLabel = computed(() => headerCheckLabel(lastChecked.value))
 const titlesLabel = computed(() => officialTitlesLabel(titleNames.value))
 
-async function onReviewSaved() {
-  await Promise.all([refetch(), refetchPending()])
-}
-
 function flagLabel(f: string) {
   return QUALITY_FLAGS[f] ?? f
-}
-
-function syncReviewDeepLink(titleCode: string, direction: string, impact?: number) {
-  if (tab.value !== 'review') tab.value = 'review'
-  const query: Record<string, string> = {}
-  for (const [key, value] of Object.entries(route.query)) {
-    if (typeof value === 'string') query[key] = value
-  }
-  query.tab = 'review'
-  query.titleCode = titleCode
-  query.direction = direction
-  if (impact != null) query.impactId = String(impact)
-  else delete query.impactId
-  void router.replace({ path: route.path, query })
 }
 
 /**
@@ -588,8 +330,9 @@ function openPreview(e: Evidence) {
     </Alert>
 
     <template v-else-if="detail">
-      <TableFailureState v-if="error" title="企业详情更新失败" description="保留上次成功的企业详情和决定，请重试读取当前状态。" :pending="isLoading" @retry="refetch()" />
+      <TableFailureState v-if="error" title="企业详情更新失败" description="保留上次成功的企业详情，请重试读取当前状态。" :pending="isLoading" @retry="refetch()" />
 
+      <section class="bg-card min-w-0 space-y-3 rounded-lg border p-4 sm:p-5" aria-label="企业概况">
       <PageHeader :title="detail.name" class="min-w-0 max-w-full [&_h1]:max-w-full [&_h1]:whitespace-normal [&_h1]:[overflow-wrap:anywhere]">
         <template #breadcrumb>
           <NuxtLink :to="backTo" class="hover:text-foreground hover:underline">{{ route.query.currentBack != null ? '优质中小企业查询' : sourceReturnTarget(route.query.returnTo) ? '记录级对比' : '企业列表' }}</NuxtLink>
@@ -607,7 +350,8 @@ function openPreview(e: Evidence) {
         </template>
       </PageHeader>
 
-      <p v-if="confirmedAliasNames.length" class="text-base leading-6">已确认曾用名：{{ confirmedAliasNames.join('、') }}</p>
+      <p v-if="confirmedAliasNames.length" class="text-muted-foreground border-t pt-3 text-sm leading-6">已确认曾用名：{{ confirmedAliasNames.join('、') }}</p>
+      </section>
 
       <Alert v-if="usccMissing" variant="destructive">
         <AlertTitle>缺统一社会信用代码,记录按企业名称归并</AlertTitle>
@@ -617,22 +361,7 @@ function openPreview(e: Evidence) {
         </AlertDescription>
       </Alert>
 
-      <Tabs :model-value="tab" class="gap-4" @update:model-value="requestTab($event as DetailTab)">
-        <TabsList class="h-auto w-full justify-start gap-1 sm:w-fit" aria-label="企业详情内容">
-          <TabsTrigger value="records" class="h-8 flex-none px-3 text-[13px]">
-            认定信息与记录
-            <span class="text-muted-foreground tabular-nums">{{ eventCount }}</span>
-          </TabsTrigger>
-          <TabsTrigger value="review" class="h-8 flex-none px-3 text-[13px]">
-            称号核对
-            <span
-              v-if="pendingRows.length"
-              class="bg-warning/15 text-warning inline-flex min-w-4 items-center justify-center rounded-sm px-1 text-xs tabular-nums"
-            >{{ pendingRows.length }}{{ pendingHasMore ? '+' : '' }}</span>
-          </TabsTrigger>
-        </TabsList>
-
-        <TabsContent value="records" class="flex min-w-0 flex-col gap-5">
+      <div class="flex min-w-0 flex-col gap-5">
           <!-- 称号与复核安排：只保留首屏需要的事实，不重复核对状态矩阵。 -->
           <section class="bg-card overflow-hidden rounded-lg border" aria-label="称号与复核安排">
             <header class="flex flex-wrap items-baseline gap-x-3 gap-y-1 border-b px-4 py-3">
@@ -661,26 +390,22 @@ function openPreview(e: Evidence) {
                 <p class="text-muted-foreground text-sm">评估时点：{{ data?.qualificationAssessment?.asOf }}。下次复核年份用于安排复核，当前资格以下列评估为准。</p>
                 <section v-for="item in qualificationRows" :key="item.titleCode" class="flex min-w-0 flex-col gap-2 break-words">
                   <h3 class="flex flex-wrap items-center gap-2"><TitleBadge :code="item.titleCode" /><span>{{ item.effectiveQualification ? CURRENT_STATUS_LABELS[item.effectiveQualification.status] : qualificationGroupLabel[item.group] }}</span></h3>
-                  <p v-if="item.effectiveQualification">当前有效状态：{{ CURRENT_STATUS_LABELS[item.effectiveQualification.status] }}；{{ item.officialQualification.message }}</p>
+                  <p v-if="item.effectiveQualification">当前有效状态：{{ CURRENT_STATUS_LABELS[item.effectiveQualification.status] }}</p>
                   <p v-for="basis in item.effectiveQualification?.presentationBasis ?? []" :key="basis">{{ basis }}</p>
-                  <p v-for="note in item.effectiveQualification?.notes ?? []" :key="note">资料与来源备注：{{ note }}</p>
-                  <p>正式资格：{{ item.officialQualification.message }}</p>
-                  <p v-for="note in item.officialQualification.notes" :key="note">{{ note }}</p>
+                  <template v-if="!item.effectiveQualification?.source">
+                    <p>公布资格：{{ item.officialQualification.message }}</p>
+                    <p v-for="note in item.officialQualification.notes" :key="note">{{ note }}</p>
+                  </template>
                   <p>主体：{{ item.subject.message }}</p>
                   <p>地域：{{ item.region.message }}</p>
-                  <p>平台同步：{{ item.platform.message }}</p>
-                  <p v-for="observation in item.platform.observations" :key="observation.queryId">
-                    <template v-if="observation.applicability === 'after_as_of'">评估时点后采集，保留追溯：</template><template v-else-if="observation.applicability === 'unknown_time'">采集时间待核：</template>
-                    {{ observation.queriedAt }}：{{ observation.queryStatus === 'no_record' ? '查询记录为无记录' : observation.queryStatus === 'failed' || observation.queryStatus === 'auth_failed' ? '查询失败' : '已保留平台观察' }}<template v-for="sourceRow in observation.rows" :key="sourceRow.relationId">；{{ sourceRow.status ?? '办理状态未记录' }}</template>。
-                  </p>
-                  <p>来源对应：{{ item.correspondence.message }}</p>
-                  <p>资料：{{ item.completeness.message }}<template v-for="gap in item.completeness.gaps" :key="gap">；{{ qualificationGapLabel[gap] ?? '资料待核' }}</template>。</p>
                   <p v-for="(cycle, index) in item.cycles" :key="index">原认定周期 {{ cycle.originYear }} 年 · {{ cycle.batchSeq == null ? '原批次未记录，未推断数字批次' : `第 ${cycle.batchSeq} 批` }}（年份精度）</p>
                 </section>
               </div>
             </DisclosurePanel>
           </section>
 
+          <PlatformRecords v-if="data" :key="id" :timeline="data.businessTimeline">
+            <template #publication="{ title: selectedBusinessTitle }">
           <section class="bg-card overflow-hidden rounded-lg border" aria-label="认定与复核记录">
             <header class="flex flex-wrap items-baseline gap-x-3 gap-y-1 border-b px-4 py-3">
               <h2 class="text-sm font-semibold">认定与复核记录</h2>
@@ -698,7 +423,7 @@ function openPreview(e: Evidence) {
               <section aria-label="记录台账">
               <p v-if="!source.histories.length" class="text-muted-foreground px-4 py-8 text-sm">该来源暂无记录。</p>
               <p class="text-muted-foreground border-b px-4 py-2 text-sm">按已知年份升序；同年及未知时点不表示精确先后。排列不代表当前有效资格。</p>
-              <section v-for="history in source.histories" :key="history.code" :aria-label="`${titleLabel(history.code)}历史`" class="min-w-0 border-b last:border-b-0">
+              <section v-for="history in source.histories.filter(h => selectedBusinessTitle === 'all' || h.code === selectedBusinessTitle)" :key="history.code" :aria-label="`${titleLabel(history.code)}历史`" class="min-w-0 border-b last:border-b-0">
                 <header class="bg-muted/40 flex flex-wrap items-baseline gap-3 border-b px-4 py-3">
                   <h3 class="text-sm font-semibold">{{ titleLabel(history.code) }}</h3>
                   <span class="text-muted-foreground text-sm">{{ history.events.length }} 条事件</span>
@@ -707,34 +432,21 @@ function openPreview(e: Evidence) {
                 <ol v-else :aria-label="`${titleLabel(history.code)}事件顺序`" class="divide-y">
                   <li v-for="(event, index) in history.events" :key="event.id" class="min-w-0">
                     <p v-if="historyYear(event) == null && (index === 0 || historyYear(history.events[index - 1]!) != null)" class="bg-muted/40 text-muted-foreground border-b px-4 py-2 text-sm">年份待核 · 未知时点</p>
-                    <RecordEventRow
-                      :event="event"
-                      :evidence="event.evidence"
-                      :edges="edgesFor(event.id)"
-                      :full-edges="detailsForEvent(event.id)"
-                      :links-ready="correspondenceReady"
-                      :details-loading="detailLoadingForEvent(event.id)"
-                      :details-error="detailErrorForEvent(event.id)"
-                      :relation-summaries="relationSummaries"
-                      :back="previewReturnPath(event.id)"
-                      :return-to="sourceReturnTarget(route.query.returnTo)"
-                      :open="evidenceDisclosureOpen(evidenceDisclosureKey(event.id))"
-                      :highlighted="highlightedEventId === event.id"
-                      @update:open="setEvidenceDisclosureOpen(evidenceDisclosureKey(event.id), $event)"
-                      @preview="openPreview"
-                      @event-navigate="arriveAtEvent"
-                      @page-open="rememberPagePreviewReturn"
-                      @retry-detail="loadEvent(event.id, true)"
-                      @review-event="selectReviewEvent"
-                    >
-                      <template #annual-summary>
-                        <p v-if="event.seq != null" class="text-muted-foreground mt-1 text-sm">{{ event.type === 'review' ? '原认定批次' : '批次' }}：第 {{ event.seq }} 批</p>
-                        <p v-if="event.type === 'nurture'" class="text-muted-foreground mt-1 text-sm">入库培育不表示已持有称号。</p>
-                      </template>
-                    </RecordEventRow>
-                    <div v-if="event.source === 'jxj' && ['award', 'review'].includes(event.type) && evidenceDisclosureOpen(evidenceDisclosureKey(event.id))" class="px-4 pb-3 sm:px-5">
-                      <Button variant="outline" size="sm" @click="formalSourceEventId = event.id">查看正式来源</Button>
-                    </div>
+                    <section :id="`record-event-${event.id}`" :data-event-id="event.id" tabindex="-1" class="scroll-mt-20 px-4 py-4 sm:px-5" :data-highlighted="highlightedEventId === event.id ? 'true' : undefined">
+                      <p class="flex flex-wrap items-center gap-2"><span class="font-semibold tabular-nums">{{ historyYear(event) ?? '年份待核' }}</span><EventChip :type="event.type" :hide-batch="true" /></p>
+                      <p v-if="event.type === 'review'" class="mt-2">{{ eventDecisionText({ eventType: event.type, year: event.year, decidedYear: event.decidedYear, reviewOutcome: event.reviewOutcome }) }}</p>
+                      <p v-if="event.seq != null" class="text-muted-foreground mt-1 text-sm">{{ event.type === 'review' ? '原认定批次' : '批次' }}：第 {{ event.seq }} 批</p>
+                      <p v-if="event.type === 'nurture'" class="text-muted-foreground mt-1 text-sm">入库培育不表示已持有称号。</p>
+                      <section aria-label="正式公布文件" class="mt-3 flex min-w-0 flex-col gap-3">
+                        <h4 class="text-sm font-medium">正式出处</h4>
+                        <p v-if="!event.evidence.length" class="text-muted-foreground text-sm">此事件未记录公布文件出处。</p>
+                        <ul v-else class="grid min-w-0 gap-3 xl:grid-cols-2">
+                          <li v-for="(item, index) in event.evidence" :key="item.id ?? index" class="min-w-0">
+                            <OfficialEvidenceView :evidence="item" :back="previewReturnPath(event.id)" preview-in-place @preview="openPreview(item)" @page-open="rememberPagePreviewReturn(event.id, $event)" />
+                          </li>
+                        </ul>
+                      </section>
+                    </section>
                   </li>
                 </ol>
               </section>
@@ -742,98 +454,10 @@ function openPreview(e: Evidence) {
               </TabsContent>
             </Tabs>
           </section>
-
-          <p v-if="correspondenceLoading" class="text-muted-foreground text-[13px]">正在读取每条记录的平台接口出处…</p>
-          <Alert v-else-if="correspondenceError" variant="destructive">
-            <AlertTitle>平台接口出处暂未读取</AlertTitle>
-            <AlertDescription class="flex flex-wrap items-center gap-2">
-              上方公布文件仍保留；已登记的接口对应暂时无法显示。
-              <Button variant="outline" size="sm" :disabled="correspondenceLoading" @click="reloadCorrespondences">重试读取</Button>
-            </AlertDescription>
-          </Alert>
-
-          <!-- 平台原行是辅助区，默认收起；它不参与上面的出处判定。 -->
-          <p v-if="platformRowCount === 0" class="text-muted-foreground px-1 text-[13px] leading-5">平台记录 0 条</p>
-          <DisclosurePanel v-else keep-mounted content-class="pb-0" trigger-class="px-4" class="bg-card overflow-hidden rounded-lg border">
-            <template #trigger>
-              <span class="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-                <span class="text-sm font-medium">平台记录</span>
-                <span class="text-muted-foreground text-[13px]">{{ platformBusinessCount }} 条已知业务 / {{ platformRowCount }} 次采集<template v-if="platformUnknownIdentityCount"> / {{ platformUnknownIdentityCount }} 条身份待核原行</template></span>
-              </span>
             </template>
-            <div class="min-w-0 border-t p-4">
-              <PlatformRecords
-                :queries="data?.platform.queries ?? []"
-                :relations="data?.platform.relations ?? []"
-                :business-records="data?.platform.businessRecords"
-                :return-to="sourceReturnTarget(route.query.returnTo)"
-                @event-navigate="arriveAtEvent"
-              />
-            </div>
-          </DisclosurePanel>
-        </TabsContent>
+          </PlatformRecords>
 
-        <TabsContent value="review" class="flex min-w-0 flex-col gap-5">
-          <Button v-if="reviewEventId != null" variant="outline" class="self-start" @click="returnToRecord">返回认定记录</Button>
-          <EventCorrespondenceReview
-            v-if="tab === 'review'" :key="detail.id" :enterprise-id="detail.id" :events="ledgerEvents"
-            :event-id="reviewEventId" :back="route.fullPath" @select="selectReviewEvent"
-            @preview="openPreview" @event-navigate="arriveAtEvent" @page-open="rememberPagePreviewReturn"
-          />
-          <!-- 待处理是核对页的入口摘要，不是企业结论卡；不使用彩色单侧边线。 -->
-          <section class="bg-card overflow-hidden rounded-lg border" aria-label="待处理证据变化">
-            <header class="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 border-b px-4 py-3">
-              <div class="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-                <h2 class="text-base font-semibold">来源变化处理</h2>
-                <span v-if="pendingData && (pendingRows.length || pendingData.projectionReady)" class="text-muted-foreground text-sm">{{ pendingRows.length }}{{ pendingHasMore ? '+' : '' }} 项</span>
-              </div>
-              <p class="text-base leading-6">核实变化依据后，维持或更正原差异决定；历史决定保留。</p>
-            </header>
-            <ul v-if="pendingRows.length" class="divide-y">
-              <li
-                v-for="row in pendingRows.slice(0, 3)"
-                :key="row.id"
-                class="flex min-w-0 flex-col gap-2 px-4 py-3 sm:flex-row sm:items-center sm:justify-between"
-              >
-                <div class="min-w-0">
-                  <div class="flex flex-wrap items-center gap-1.5">
-                    <span class="text-base font-medium">{{ impactScopeLabel(row) }}</span>
-                    <AssessmentStatusBadge kind="impact" :value="row.classification" />
-                    <span class="text-muted-foreground text-sm">{{ row.pending ? '待处理来源变化' : '已处理来源变化' }}</span>
-                  </div>
-                  <p class="mt-1 text-base leading-6">{{ impactOldDecisionText(row) }}</p>
-                </div>
-                <Button variant="outline" size="sm" class="shrink-0 self-start sm:self-center" @click="onOpenImpact(row)">
-                  处理这一来源变化
-                </Button>
-              </li>
-            </ul>
-            <p v-if="pendingHasMore || pendingRows.length > 3" class="text-muted-foreground border-t px-4 py-2 text-sm">
-              另有未显示的待处理项，可在复核队列中查看。
-            </p>
-            <TableFailureState v-if="pendingError" compact title="来源变化清单读取失败" :description="`读取目标：${detail.name}的待处理来源变化。保留上次成功清单；这不代表没有待处理项。`" :pending="pendingLoading" @retry="refetchPending()" />
-            <p v-else-if="pendingLoading" role="status" class="px-4 py-3 text-base leading-6">正在读取来源变化…</p>
-            <p v-else-if="!pendingData" class="px-4 py-3 text-base leading-6">来源变化尚未读取。</p>
-            <p v-else-if="!pendingData.projectionReady" class="px-4 py-3 text-base leading-6">来源变化尚未整理完成，当前清单不能代表全部待处理项。</p>
-            <p v-else-if="!pendingRows.length" class="px-4 py-3 text-base leading-6">暂无待处理来源变化。</p>
-          </section>
-
-          <EnterpriseFacts :key="`facts-${detail.id}`" :enterprise-id="detail.id" @saved="onReviewSaved" />
-
-          <EnterpriseExplanations
-            :key="detail.id"
-            :enterprise-id="detail.id"
-            :assessments="assessments"
-            :title-code="explanationTitle"
-            :direction="explanationDirection"
-            :impact-id="focusedImpactId ?? impactId"
-            :open-impact-request="openImpactRequest"
-            :pending="pendingRows"
-            :locate="focusedEventId == null && !correspondenceLoading"
-            @saved="onReviewSaved"
-          />
-        </TabsContent>
-      </Tabs>
+      </div>
     </template>
 
     <!--
@@ -841,43 +465,5 @@ function openPreview(e: Evidence) {
       放在卡片内只是让它跟着卡片重建,没必要。
     -->
     <FilePreviewDialog v-model:open="previewOpen" :src="previewSrc" :name="previewName" />
-
-    <Dialog :open="pendingTab !== null" @update:open="value => { if (!value) pendingTab = null }">
-      <DialogContent class="sm:max-w-md">
-        <DialogHeader>
-          <DialogTitle>切换会关闭核对面板</DialogTitle>
-          <DialogDescription>
-            复核依据或更正内容还没提交；离开这一页会丢失。
-          </DialogDescription>
-        </DialogHeader>
-        <DialogFooter>
-          <Button variant="outline" @click="pendingTab = null">继续填写</Button>
-          <p v-if="reviewDrafts.hasLocked.value" role="status">决定仍在提交或尚未确认结果，请继续核对并完成读回后再离开。</p>
-          <Button :disabled="reviewDrafts.hasLocked.value" @click="discardAndSwitchTab">切换并丢弃</Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-
-    <Dialog :open="pendingLeave !== null" @update:open="value => { if (!value) pendingLeave = null }">
-      <DialogContent class="sm:max-w-md">
-        <DialogHeader>
-          <DialogTitle>离开会丢弃未提交内容</DialogTitle>
-          <DialogDescription>
-            复核依据或更正内容还没提交；离开这一页会丢失。
-          </DialogDescription>
-        </DialogHeader>
-        <DialogFooter>
-          <Button variant="outline" @click="pendingLeave = null">继续填写</Button>
-          <p v-if="reviewDrafts.hasLocked.value" role="status">决定仍在提交或尚未确认结果，请继续核对并完成读回后再离开。</p>
-          <Button :disabled="reviewDrafts.hasLocked.value" @click="discardAndLeave">离开并丢弃</Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-    <Dialog :open="formalSourceEventId !== null" @update:open="!$event && (formalSourceEventId = null)">
-      <DialogContent class="max-h-[85dvh] min-w-0 overflow-y-auto sm:max-w-3xl">
-        <DialogHeader><DialogTitle>正式来源</DialogTitle><DialogDescription>逐出处公布名称与已登记文件位置。</DialogDescription></DialogHeader>
-        <SourceReader v-if="formalSourceEventId !== null" kind="event" :id="formalSourceEventId" :return-to="route.fullPath" :event-return-query="formalSourceEventReturnQuery" read-only @event-navigate="formalSourceEventId = null; arriveAtEvent($event)" />
-      </DialogContent>
-    </Dialog>
   </div>
 </template>

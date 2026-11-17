@@ -18,9 +18,9 @@ it('excludes explicit failure and permits a later passed review to restart valid
   expect(judge([award,review(2,2023,'failed'),review(3,2026)],2026)).toBe('eligible')
 })
 const source = { evidenceId: 1, sourceSha256: 'a'.repeat(64), statementPages: [1] }
-it('honors the inclusive document interval before annual defaults and continuation', () => {
+it.each([false,true])('honors the inclusive document interval before annual defaults and continuation (annual policy %s)', annualPeriod => {
   const event = { ...award, formalValidity: { ...source, interval: { validFrom: '2022-02-01', validThrough: '2025-04-30' }, continuation: 'until_next_review_results' as const } }
-  expect(['2022-01-31','2022-02-01','2025-04-30','2025-05-01'].map(day => judge([event],Number(day.slice(0,4)),day))).toEqual(['excluded','eligible','eligible','excluded'])
+  expect(['2022-01-31','2022-02-01','2025-04-30','2025-05-01'].map(day => adjudicateQualificationCycles([event],Number(day.slice(0,4)),day,true,new Set(),false,undefined,annualPeriod).group)).toEqual(['excluded','eligible','eligible','excluded'])
 })
 it('continues until the next result publication then applies that result', () => {
   const event = { ...award, formalValidity: { ...source, continuation: 'until_next_review_results' as const } }
@@ -81,4 +81,30 @@ it('effective mode honors an inclusive interval without fabricating missing awar
  const e={...award,year:null,decidedYear:null,formalValidity:{...source,interval:{validFrom:'2025-01-01',validThrough:'2028-12-31'}}}
  expect(['2024-12-31','2025-01-01','2026-06-01','2028-12-31','2029-01-01'].map(day=>adjudicateQualificationCycles([e],Number(day.slice(0,4)),day,true).group)).toEqual(['excluded','eligible','eligible','eligible','excluded'])
  expect(e.year).toBeNull()
+})
+
+it('annual policy expires continuation at the business-year boundary without changing legacy planning', () => {
+  const event = { ...award, year: 2025, decidedYear: 2025, formalValidity: { ...source, continuation: 'until_next_review_results' as const } }
+  const annual = (day: string) => adjudicateQualificationCycles([event], Number(day.slice(0,4)), day, true, new Set(), false, undefined, true)
+  expect(['2027-12-31','2028-01-01'].map(day => annual(day).group)).toEqual(['eligible','excluded'])
+  expect(annual('2027-12-31').cycles[0]!.periodBasis).toContain('2025 年 + 3 = 2028 年')
+  expect(judge([event],2028)).toBe('eligible')
+  expect(adjudicateQualificationCycles([event]).group).toBe('eligible')
+})
+
+it.each([
+  {year:2022,decidedYear:2025,last:'2027-12-31',expired:'2028-01-01'},
+  {year:2026,decidedYear:null,last:'2028-12-31',expired:'2029-01-01'},
+])('uses award business year with only the documented year fallback: $year/$decidedYear', ({year,decidedYear,last,expired}) => {
+  const event={...award,year,decidedYear,formalValidity:{...source,continuation:'until_next_review_results' as const}}
+  const result=(day:string)=>adjudicateQualificationCycles([event],Number(day.slice(0,4)),day,true,new Set(),false,undefined,true)
+  expect(result(last).group).toBe('eligible')
+  expect(result(expired).group).toBe('excluded')
+})
+
+it('retained giant qualification still respects an explicit inclusive formal interval',()=>{
+ const event={...award,formalValidity:{...source,interval:{validFrom:'2025-04-01',validThrough:'2026-05-31'}}}
+ const read=(day:string)=>adjudicateQualificationCycles([event],Number(day.slice(0,4)),day,true,new Set(),true,undefined,false,true)
+ expect(['2025-03-31','2025-04-01','2026-05-31','2026-06-01'].map(day=>read(day).group)).toEqual(['excluded','eligible','eligible','excluded'])
+ expect(read('2026-05-31').cycles[0]!.periodBasis).toBe('正式文件有效期：2025-04-01 至 2026-05-31（含首尾）')
 })

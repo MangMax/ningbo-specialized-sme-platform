@@ -39,6 +39,7 @@ docs/*
 *.rst
 !**/AGENTS.md
 !CLAUDE.md
+!GLOSSARY.md
 !docs/adr/**/*.md
 !docs/agents/**/*.md
 !.agents/**/*.md

@@ -12,6 +12,7 @@ import { execFileSync } from 'node:child_process'
 import ExcelJS from 'exceljs'
 import { newJobId } from '../../../lib/job'
 import { createHash } from 'node:crypto'
+import { channel } from 'node:diagnostics_channel'
 import { eq } from 'drizzle-orm'
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from 'vitest'
 import { initializeDb, schema as s } from '../../../db/client'
@@ -20,7 +21,15 @@ import { spawnOwnedChild as spawn, reserveLoopbackPort, waitForHttp, stopOwnedCh
 const dir = mkdtempSync(join(tmpdir(), 'export-117-'))
 const dbPath = join(dir, 'synthetic.db'), db = initializeDb({ create: true,  dbPath })
 let servicePid: number
-let service: { baseUrl: string; stop: () => Promise<void> }
+let service: { baseUrl: string; stop: () => Promise<void>; diagnostics: () => unknown }
+const requestErrors = channel('undici:request:error')
+function logRequestError(message: unknown) {
+  const { request, error } = message as { request: { origin: string; path: string; method: string }; error: { code?: string; name: string } }
+  if (String(request.origin) === service?.baseUrl) {
+    console.error('little-giant request error', { method: request.method, path: request.path.split('?')[0], name: error.name, code: error.code })
+  }
+}
+requestErrors.subscribe(logRequestError)
 const token = 'synthetic-export-token'
 const headers = { 'content-type': 'application/json', authorization: `Bearer ${token}` }
 const url = (path: string) => service.baseUrl + path
@@ -65,7 +74,7 @@ async function startService() {
   const child = spawnCompiledApp(port, { cwd, stdio: ['ignore','pipe','pipe'], env: { ...process.env, NUXT_BUILD_DIR: join(dir,'build'), NUXT_DB_PATH: dbPath, NUXT_API_TOKEN: token, NUXT_FILES_DIR: join(dir,'files'), NUXT_INCOMING_DIR: join(dir,'incoming') } })
   servicePid = child.pid!
   let output = ''; for (const stream of [child.stdout, child.stderr]) stream.on('data', data => { output = (output + data).slice(-12000) })
-  service = { baseUrl: `http://127.0.0.1:${port}`, stop: () => stopOwnedChild(child) }
+  service = { baseUrl: `http://127.0.0.1:${port}`, stop: () => stopOwnedChild(child), diagnostics: () => ({ pid: child.pid, exitCode: child.exitCode, signalCode: child.signalCode, output }) }
   try { await waitForHttp(url('/api/jobs/kinds'), { timeoutMs: 60000, child }) } catch (e) { await service.stop(); throw new Error(String(e) + output) }
 }
 beforeAll(startService, 90000)
@@ -75,9 +84,10 @@ beforeEach(() => resetExportRows(db.$client))
 afterEach(context => {
   if (context.task.result?.state === 'fail') {
     console.error('little-giant immediate failure', context.task.name, context.task.result.errors)
+    console.error('little-giant app state', service.diagnostics())
   }
 })
-afterAll(async () => { if (service) await service.stop(); db.$client.close(); rmSync(dir, { recursive: true, force: true }) })
+afterAll(async () => { requestErrors.unsubscribe(logRequestError); if (service) await service.stop(); db.$client.close(); rmSync(dir, { recursive: true, force: true }) })
 it('HTTP提交到六表文件', async () => {
   const { enterprise } = candidate('新认定')
   const { wb, job, bytes } = await workbook('fresh')
@@ -232,6 +242,7 @@ it('未知周期、同年恢复与执行版本', async () => {
   const y=new Date().getFullYear()
   candidate('未知复核周期',[{eventType:'award',year:y-1,batchSeq:1},{eventType:'review',year:null,decidedYear:y,reviewOutcome:'failed'}])
   candidate('同年恢复顺序不明',[{eventType:'award',year:y-4,batchSeq:1},{eventType:'review',year:y-4,batchSeq:1,decidedYear:y,reviewOutcome:'failed'},{eventType:'award',year:y,batchSeq:2}])
+  const before=businessDigest()
   const response=await submit('unknown-cycle'),id=(await json(response)).jobId
   let active:any
   for(let i=0;i<500;i++) {active=await json(await fetch(url('/api/jobs/'+id)));if(active.state==='running' && active.progress.done>=100)break;await new Promise(r=>setTimeout(r,10))}
@@ -239,8 +250,19 @@ it('未知周期、同年恢复与执行版本', async () => {
   expect(active.result.snapshotId).toBe(id)
   const job=await terminal(id);expect(job.state).toBe('done')
   const wb=new ExcelJS.Workbook();await wb.xlsx.load(Buffer.from(await (await fetch(url(job.result.artifact.downloadUrl),{headers})).arrayBuffer()) as any)
-  expect(rows(wb,'已到期').filter(r => ['未知复核周期','同年恢复顺序不明'].includes(r[2])).map(r => r[2])).toEqual(['未知复核周期','同年恢复顺序不明'])
-  expect(rows(wb,'已到期').find(r=>r[2]==='同年恢复顺序不明')![15]).toContain('复核明确不通过')
+  const effective = rows(wb,'有效企业')
+  expect(effective.map(r=>[r[2],r[3]]).sort()).toEqual([
+    ['未知复核周期','TEST-未知复核周期'],['同年恢复顺序不明','TEST-同年恢复顺序不明'],
+  ].sort())
+  expect(rows(wb,'已到期').map(r=>r[2])).toEqual([])
+  for (const [name,firstYear] of [['未知复核周期',y-1],['同年恢复顺序不明',y-4]] as const) {
+    const row=effective.find(r=>r[2]===name)!
+    expect(row[6]).toBe(String(firstYear))
+    expect(String(row[14])).toContain('小巨人原认定或复核通过资格保留；不按认定年龄自动到期，适用正式期间、同周期失败及已确认处置另行裁定')
+    expect(String(row[7])).toContain('复核未通过')
+    expect(String(row[12])).toContain('《synthetic.xlsx》，附件：名单')
+  }
+  expect(businessDigest()).toBe(before)
   expect(job.result.snapshotId).toBe(id)
 },30000)
 it('OpenAPI任务与受控下载发现', async () => {

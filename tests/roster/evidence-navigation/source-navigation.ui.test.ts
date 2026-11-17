@@ -3,6 +3,7 @@ import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { defineComponent, h, nextTick, ref } from 'vue'
 import { createMemoryHistory, createRouter, RouterLink, RouterView, useRoute, useRouter } from 'vue-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type { RosterEnterpriseDetail } from '../../../lib/roster/enterprise-roster'
 import EnterprisePage from '../../../pages/enterprises/[id].vue'
 import SourceChip from '../../../components/SourceChip.vue'
 import EventChip from '../../../components/EventChip.vue'
@@ -16,17 +17,25 @@ const relation = { id: 30, queryId: 20, enterpriseId: 91, sequenceNo: 1, nameRaw
 const record = { id: 1, enterpriseId: 91, titleCode: 'specialized_sme', source: 'jxj', district: null, nameRaw: '合成企业' }
 const event = { id: 10, recordId: 1, eventType: 'review', year: 2021, batchSeq: 1, decidedYear: 2024, reviewOutcome: 'failed', record, evidence: [], correspondences: [] }
 const edge = { id: 1, type: 'event_process', role: 'supports_review', status: 'confirmed', revision: 1, requiresRevalidation: false, eventId: 10, predecessorEventId: null, relationId: 30, exportRowId: null, enterpriseId: 91, titleCode: 'specialized_sme', ruleId: 'fixture', ruleVersion: '1', decidedAt: null, event, relation, exportRow: null }
-const detail = { enterprise: { enterpriseId: 91, name: '合成企业', uscc: null }, aliases: [], records: [record], events: [event, { ...event, id: 11 }], evidence: [], platform: { queries: [query], relations: [relation] } }
-const pendingState = { data: ref<any>(undefined), isLoading: ref(false), error: ref<Error | null>(null), refetch: vi.fn() }
-vi.mock('@pinia/colada', () => ({ useQuery: (options: any) => options.key()[0] === 'evidence-impacts' ? pendingState : ({ data: ref(detail), isLoading: ref(false), error: ref(null) }) }))
-const returnTo = '/comparison?mode=record&queryIds=20&exportBatchIds=6&page=2'
+const businessTimeline = {
+  asOf: '2026-11-17',
+  sources: [
+    { source: 'publication', collectionStatus: 'not_applicable', collectedAt: null, events: [] },
+    { source: 'recognized_list', collectionStatus: 'not_collected', collectedAt: null, events: [] },
+    { source: 'business_list', collectionStatus: 'not_collected', collectedAt: null, events: [] },
+    { source: 'apply_list', collectionStatus: 'not_collected', collectedAt: null, events: [] },
+  ],
+} satisfies RosterEnterpriseDetail['businessTimeline']
+const detail = { enterprise: { enterpriseId: 91, name: '合成企业', uscc: null }, aliases: [], records: [record], events: [event, { ...event, id: 11 }], evidence: [], businessTimeline, platform: { queries: [query], relations: [relation], businessRecords: [] } }
+vi.mock('@pinia/colada', () => ({ useQuery: () => ({ data: ref(detail), isLoading: ref(false), error: ref(null), refetch: vi.fn() }) }))
+const returnTo = '/comparison?mode=record&queryIds=20&exportBatchIds=6&page=2&q=A%3FB&returnTo=%2Fcurrent-enterprises%3FtitleCode%3Dspecialized_sme%26page%3D4'
 const startTo = (eventId: number, withReturn = true) => ({ path: '/enterprises/91', query: { eventId: String(eventId), ...(withReturn ? { returnTo } : {}) } })
 const stubs = { NuxtLink: RouterLink, PageHeader: { template: '<header><slot name="breadcrumb" /></header>' }, FilePreviewDialog: true, EnterpriseLaterProcesses: true, TitleBadge: true }
 const preventNativeNavigation = (event: Event) => event.preventDefault()
 let wrapper: VueWrapper | undefined
+let sourceOwner: VueWrapper | undefined
 let originalAnimate: PropertyDescriptor | undefined
 beforeEach(() => {
-  pendingState.data.value = undefined; pendingState.isLoading.value = false; pendingState.error.value = null; pendingState.refetch.mockReset()
   vi.stubGlobal('useState', () => ref(false))
   originalAnimate = Object.getOwnPropertyDescriptor(Element.prototype, 'animate')
   Reflect.deleteProperty(Element.prototype, 'animate')
@@ -39,27 +48,10 @@ beforeEach(() => {
   vi.stubGlobal('$fetch', vi.fn(async (url: string) => ({ source: url.includes('/events/') ? event : relation, correspondences: [edge] })))
 })
 
-it('keeps source-change loading empty and failed states distinct and retries only that list', async () => {
-  pendingState.isLoading.value = true
-  const router = await enterprise(10)
-  await router.push({ path: '/enterprises/91', query: { tab: 'review' } }); await flushPromises()
-  const sourceChanges = () => wrapper!.get('[aria-label="待处理证据变化"]')
-  expect(sourceChanges().text()).toContain('正在读取来源变化')
-  expect(sourceChanges().text()).not.toContain('暂无待处理来源变化')
-  pendingState.isLoading.value = false; pendingState.error.value = new Error('offline'); await flushPromises()
-  expect(sourceChanges().text()).toContain('来源变化清单读取失败')
-  expect(sourceChanges().text()).not.toContain('暂无待处理来源变化')
-  await sourceChanges().findAll('button').find(b => b.text() === '重新加载')!.trigger('click')
-  expect(pendingState.refetch).toHaveBeenCalledTimes(1)
-  pendingState.error.value = null; pendingState.data.value = { rows: [], nextCursor: null, projectionReady: false }; await flushPromises()
-  expect(sourceChanges().text()).toContain('来源变化尚未整理完成')
-  expect(sourceChanges().text()).not.toContain('暂无待处理来源变化')
-  pendingState.data.value = { rows: [], nextCursor: null, projectionReady: true }; await flushPromises()
-  expect(sourceChanges().text()).toContain('暂无待处理来源变化')
-  expect(sourceChanges().text()).not.toContain('核对这一项')
-})
 afterEach(async () => {
   document.removeEventListener('click', preventNativeNavigation)
+  sourceOwner?.unmount()
+  sourceOwner = undefined
   wrapper?.unmount()
   wrapper = undefined
   await flushPromises()
@@ -75,8 +67,13 @@ async function enterprise(eventId: number, withReturn = true) {
   await flushPromises()
   return router
 }
-async function openPlatformSource() {
-  const button = wrapper!.findAll('button').find(button => button.text() === '对应事件/出处')!
+// The normal enterprise route has no source dialog. The supported comparison
+// owner opens the actual SourceReader; it shares the router with the detail page.
+async function openPlatformSource(router: ReturnType<typeof createRouter>, withReturn = true) {
+  const row = { event, record, evidence: [], classification: 'historical_aligned', reasons: [], correspondences: [], platformRows: [{ ...relation, interface: 'business_list' }], laterProcesses: [] } as unknown as RecordComparisonResult['rows'][number]
+  sourceOwner = mount(ComparisonEventRow, { props: { row, returnTo: withReturn ? returnTo : '' }, attachTo: document.body,
+    global: { plugins: [router], components: { SourceChip, EventChip }, stubs } })
+  const button = sourceOwner.findAll('button').find(button => button.text() === '查看原始记录')!
   ;(button.element as HTMLButtonElement).focus()
   await button.trigger('click')
   await flushPromises()
@@ -114,50 +111,41 @@ describe('per-title complete history', () => {
     expect(history.get('#record-event-23').text()).toContain('第 1 批')
     expect(history.get('#record-event-22').text()).toContain('第 1 批')
     expect(history.find('#record-event-28').exists()).toBe(false)
-    expect(history.get('#record-event-23').text()).toContain('经信局')
     expect(history.get('#record-event-26').text()).toContain('不表示已持有称号')
     await vi.waitFor(() => expect(history.get('#record-event-25').attributes('data-highlighted')).toBe('true'))
     const sources = wrapper!.get('[aria-label="记录来源"]')
-    expect(sources.findAll('[role="tab"]').map(tab => tab.text())).toEqual(['经信局', '工信部'])
-    await sources.findAll('[role="tab"]')[1]!.trigger('mousedown', { button: 0 })
-    await flushPromises()
-    expect(wrapper!.find('#record-event-22').exists()).toBe(false)
-    expect(wrapper!.get('#record-event-28').text()).toContain('工信部')
-    expect(wrapper!.findAll('[aria-label="记录台账"] ol').length).toBe(1)
-    await router.push(startTo(28))
-    await flushPromises()
-    await vi.waitFor(() => expect(wrapper!.get('#record-event-28').attributes('data-highlighted')).toBe('true'))
+    expect(sources.findAll('[role="tab"]').map(tab => tab.text())).toEqual(['公布资料'])
+    expect(wrapper!.get('[aria-label="业务来源"]').findAll('[role="tab"]').map(tab => tab.text())).toEqual(['公布资料', '认定目录', '关联办理', '申报记录'])
     await router.push(startTo(23))
     await flushPromises()
     await vi.waitFor(() => expect(wrapper!.get('#record-event-23').attributes('data-highlighted')).toBe('true'))
     expect(sources.findAll('[role="tab"]')[0]!.attributes('aria-selected')).toBe('true')
   })
 
-  it('retains formal sources when a platform point fails and retries the selected event', async () => {
-    const { event: _event, relation: _relation, ...summary } = edge
-    let pointCalls = 0
+  it('retains formal sources and the last successful reader after failure and retries only its target', async () => {
+    const router = await enterprise(10)
+    let targetCalls = 0
     const fetch = vi.fn(async (url: string) => {
-      if (url === '/api/roster/correspondences') return { rows: [summary], total: 1, page: 1, pageSize: 200 }
-      if (url === '/api/roster/correspondences/1') {
-        if (++pointCalls === 1) throw new Error('offline')
-        return edge
-      }
-      return { source: event, correspondences: [edge] }
+      if (url.endsWith('/relations/31') && ++targetCalls === 1) throw new Error('offline')
+      return { source: relation, correspondences: [edge] }
     })
     vi.stubGlobal('$fetch', fetch)
-    await enterprise(10)
-    const row = wrapper!.get('#record-event-10')
-    expect(row.text()).toContain('不能据此判断没有来源')
-    expect(wrapper!.findAll('button').some(button => button.text() === '查看正式来源')).toBe(true)
-    await row.findAll('button').find(button => button.text() === '重试读取')!.trigger('click')
+    sourceOwner = mount(SourceReader, { props: { kind: 'relation', id: 30, readOnly: true, returnTo },
+      global: { plugins: [router], components: { NuxtLink: RouterLink, SourceChip, EventChip }, stubs } })
     await flushPromises()
-    expect(pointCalls).toBe(2)
-    expect(row.text()).not.toContain('不能据此判断没有来源')
-    expect(row.text()).toContain('原行 1 条')
-    await wrapper!.findAll('button').find(button => button.text() === '查看正式来源')!.trigger('click')
+    expect(sourceOwner.text()).toContain('合成企业')
+    await sourceOwner.setProps({ id: 31 }); await flushPromises()
+    expect(sourceOwner.text()).toContain('上次成功读取的出处保留在下方')
+    expect(sourceOwner.text()).toContain('合成企业')
+    expect(wrapper!.get('#record-event-10').text()).toContain('复核不通过')
+    await sourceOwner.findAll('button').find(button => button.text() === '重试读取')!.trigger('click')
     await flushPromises()
-    expect(document.querySelector('[role="dialog"]')).not.toBeNull()
-    expect(fetch).toHaveBeenCalledWith('/api/roster/correspondences/events/10')
+    expect(fetch.mock.calls.map(([url]) => url)).toEqual([
+      '/api/roster/correspondences/relations/30', '/api/roster/correspondences/relations/31', '/api/roster/correspondences/relations/31',
+    ])
+    expect(sourceOwner.text()).not.toContain('当前来源未更新')
+    expect(sourceOwner.text()).toContain('合成企业')
+    expect(router.currentRoute.value.query.returnTo).toBe(returnTo)
   })
 
   it('shows a record without events without inventing a step', async () => {
@@ -178,61 +166,63 @@ describe('per-title complete history', () => {
 })
 
 describe('enterprise detail information architecture', () => {
-  it('uses a summary list on the product route and opens the complete selected source after point hydration', async () => {
-    const { event: _event, relation: _relation, ...summary } = edge
-    const fetch = vi.fn(async (url: string, options?: { query?: Record<string, unknown> }) => {
-      if (url === '/api/roster/correspondences') return { rows: [summary], total: 1, page: 1, pageSize: 200 }
-      if (url === '/api/roster/correspondences/1') return edge
-      if (url === '/api/roster/correspondences/relations/30') return { source: relation, correspondences: [edge] }
-      return { source: event, correspondences: [edge] }
-    })
-    vi.stubGlobal('$fetch', fetch)
-    await enterprise(10)
-    expect(fetch).toHaveBeenCalledWith('/api/roster/correspondences', { query: { enterpriseId: 91, view: 'summary', page: 1, pageSize: 200 } })
-    expect(fetch).toHaveBeenCalledWith('/api/roster/correspondences/1')
-    expect(wrapper!.text()).toContain('已确认')
-    expect(wrapper!.text()).not.toContain('对应出处尚未读取')
-    await wrapper!.findAll('button').find(button => button.text() === '正式文件与已登记出处')!.trigger('click')
-    await flushPromises()
-    await wrapper!.findAll('button').find(button => button.text() === '查看平台业务详情')!.trigger('click')
-    await flushPromises()
-    expect(fetch).toHaveBeenCalledWith('/api/roster/correspondences/relations/30')
-    expect(document.querySelector('[role="dialog"]')?.textContent).toContain('合成企业')
-  })
-
-  it('defaults to records and keeps verification in a separate tab', async () => {
+  it('shows four business sources without a manual verification prerequisite', async () => {
     await enterprise(10, true)
-    const tabs = wrapper!.findAll('[aria-label="企业详情内容"] [role="tab"]')
-    expect(tabs.map(tab => tab.text())).toEqual(['认定信息与记录 2', '称号核对'])
-    expect(tabs.filter(tab => tab.attributes('aria-selected') === 'true').map(tab => tab.text()))
-      .toEqual(['认定信息与记录 2'])
-    expect(wrapper!.text()).toContain('称号与复核安排')
+    expect(wrapper!.findAll('[aria-label="业务来源"] [role="tab"]').map(tab => tab.text()))
+      .toEqual(['公布资料', '认定目录', '关联办理', '申报记录'])
+    expect(wrapper!.get('#record-event-10').text()).toContain('复核不通过')
+    expect(wrapper!.text()).not.toContain('核对这一事项')
+    expect(wrapper!.text()).not.toContain('称号核对')
   })
 })
 
 describe('source modal reverse event navigation', () => {
-  it.each([{ name: 'same event URL without return target', initial: 10, withReturn: false }, { name: 'same event URL with source query', initial: 10, withReturn: true }, { name: 'different event route reuse', initial: 11, withReturn: true }])('closes and arrives at the event for $name', async ({ initial, withReturn }) => {
-    const router = await enterprise(initial, withReturn)
-    const page = wrapper!.findComponent(EnterprisePage).vm.$.uid
-    const target = wrapper!.get('#record-event-10')
-    const collapsible = target.findComponent({ name: 'DisclosurePanel' })
-    // Same-URL navigation must also reopen an event the user has collapsed.
-    collapsible.vm.$emit('update:open', false)
-    await nextTick()
-    const scroll = vi.spyOn(target.element, 'scrollIntoView')
-    const link = await openPlatformSource()
+  it.each([false, true])('closes the source owner and emits its target for the same URL return=%s', async withReturn => {
+    const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/:pathMatch(.*)*', component: { template: '<div />' } }] })
+    await router.push(startTo(10, withReturn))
+    const before = router.currentRoute.value.fullPath
+    const link = await openPlatformSource(router, withReturn)
     expect(link.getAttribute('href')).toBe(router.resolve(startTo(10, withReturn)).href)
+    const reader = sourceOwner!.getComponent(SourceReader)
     link.dispatchEvent(new MouseEvent('click', { button: 0, bubbles: true, cancelable: true }))
     await settleDialog()
-    expect(router.currentRoute.value.fullPath).toBe(router.resolve(startTo(10, withReturn)).fullPath)
-    expect(wrapper!.findComponent(EnterprisePage).vm.$.uid).toBe(page)
+    expect(reader.emitted('event-navigate')).toEqual([[10]])
+    expect(router.currentRoute.value.fullPath).toBe(before)
     expect(document.querySelector('[role="dialog"]')).toBeNull()
-    expect(collapsible.props('open')).toBe(true)
-    // Expanded evidence can be taller than the viewport: keep the event heading in view.
-    // Event arrival waits two animation frames and the page-scroll restoration
-    // delay. flushPromises alone does not complete those browser tasks.
+  })
+
+  it('arrives from the real comparison source owner with the complete return context', async () => {
+    const row = { event, record, evidence: [], classification: 'historical_aligned', reasons: [], correspondences: [], platformRows: [{ ...relation, interface: 'business_list' }], laterProcesses: [] } as unknown as RecordComparisonResult['rows'][number]
+    const comparison = defineComponent({ render: () => h(ComparisonEventRow, { row, returnTo }) })
+    const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/comparison', component: comparison }, { path: '/enterprises/:id', component: EnterprisePage }] })
+    await router.push('/comparison')
+    wrapper = mount(defineComponent({ render: () => h(RouterView) }), { attachTo: document.body, global: { plugins: [router], components: { SourceChip, EventChip }, stubs } })
+    await wrapper.findAll('button').find(button => button.text() === '查看原始记录')!.trigger('click')
+    await flushPromises()
+    const link = document.querySelector('[role="dialog"] a') as HTMLAnchorElement
+    expect(link.getAttribute('href')).toBe(router.resolve(startTo(10)).href)
+    const scroll = vi.spyOn(HTMLElement.prototype, 'scrollIntoView')
+    link.dispatchEvent(new MouseEvent('click', { button: 0, bubbles: true, cancelable: true }))
+    await settleDialog()
+    expect(router.currentRoute.value.fullPath).toBe(router.resolve(startTo(10)).fullPath)
+    expect(document.querySelector('[role="dialog"]')).toBeNull()
+    expect(wrapper.find('#record-event-10 [aria-label="正式公布文件"]').exists()).toBe(true)
     await vi.waitFor(() => expect(scroll).toHaveBeenLastCalledWith({ block: 'start' }))
-    expect(router.currentRoute.value.query.returnTo).toBe(withReturn ? returnTo : undefined)
+    await vi.waitFor(() => expect(document.activeElement?.id).toBe('record-event-10'))
+  })
+
+  it('reuses the enterprise page and focuses a different event from a deep link', async () => {
+    const router = await enterprise(11)
+    const page = wrapper!.findComponent(EnterprisePage).vm.$.uid
+    await vi.waitFor(() => expect(document.activeElement?.id).toBe('record-event-11'))
+    const target = wrapper!.get('#record-event-10')
+    const scroll = vi.spyOn(target.element, 'scrollIntoView')
+    await router.push(startTo(10)); await flushPromises()
+    expect(wrapper!.findComponent(EnterprisePage).vm.$.uid).toBe(page)
+    expect(target.find('[aria-label="正式公布文件"]').exists()).toBe(true)
+    await vi.waitFor(() => expect(scroll).toHaveBeenLastCalledWith({ block: 'start' }))
+    await vi.waitFor(() => expect(document.activeElement?.id).toBe('record-event-10'))
+    expect(router.currentRoute.value.query.returnTo).toBe(returnTo)
   })
 
   it.each([
@@ -242,7 +232,7 @@ describe('source modal reverse event navigation', () => {
   ])('keeps the current source dialog for $name activation', async ({ options, target }) => {
     const router = await enterprise(11)
     const before = router.currentRoute.value.fullPath
-    const link = await openPlatformSource()
+    const link = await openPlatformSource(router)
     if (target) link.setAttribute('target', target)
     link.dispatchEvent(new MouseEvent('click', { button: 0, bubbles: true, cancelable: true, ...options }))
     await settleDialog()
@@ -286,111 +276,22 @@ describe('source modal reverse event navigation', () => {
   })
 })
 
-describe('single event verification workspace', () => {
-  it('opens the same review event from records and returns with its source context and focus', async () => {
-    const router = await enterprise(11)
-    expect(wrapper!.text()).not.toContain('人工核对平台候选')
-    const entry = wrapper!.get('#record-event-11').findAll('button').find(button => button.text() === '核对这一事项')
-    expect(entry).toBeDefined()
-    await entry!.trigger('click'); await flushPromises()
-    expect(router.currentRoute.value.query).toMatchObject({ tab: 'review', reviewEventId: '11', returnTo })
-    expect(router.currentRoute.value.query.eventId).toBeUndefined()
-    expect(wrapper!.findAll('[aria-label="查找平台对应候选"]')).toHaveLength(1)
-    expect(wrapper!.get('#review-event-11').text()).toContain('原认定 2021 年 · 复核结论 2024 年')
-    await vi.waitFor(() => expect(document.activeElement?.id).toBe('review-event-11'))
-    await wrapper!.findAll('button').find(button => button.text() === '返回认定记录')!.trigger('click')
-    await flushPromises()
-    expect(router.currentRoute.value.query).toMatchObject({ tab: 'records', eventId: '11', returnTo })
-    await vi.waitFor(() => expect(document.activeElement?.id).toBe('record-event-11'))
-    expect(wrapper!.text()).not.toContain('人工核对平台候选')
-  })
-})
 
-it('protects a correspondence basis on tab, event reselection and same-page navigation without duplicate prompts', async () => {
-  installCorrespondenceFixture()
-  const router = await enterprise(11)
-  const click = async (text: string) => {
-    const button = [...document.querySelectorAll('button')].find(b => b.textContent?.trim() === text)
-    expect(button, text).toBeDefined(); button!.click(); await flushPromises()
-  }
-  await wrapper!.get('#record-event-11').findAll('button').find(b => b.text() === '核对这一事项')!.trigger('click'); await flushPromises()
-  await click('人工核对平台候选'); await click('确认对应')
-  const textarea = document.querySelector('textarea')!
-  textarea.value = '核对同一复核事项的依据'; textarea.dispatchEvent(new Event('input', { bubbles: true })); await flushPromises()
-  await click('关闭')
-  await click('返回认定记录')
-  expect(document.body.textContent).toContain('切换会关闭核对面板')
-  expect(document.querySelectorAll('[role="dialog"]')).toHaveLength(1)
-  await click('继续填写')
-  await click('确认对应')
-  expect(document.querySelector('textarea')!.value).toBe('核对同一复核事项的依据')
-  await click('关闭')
-  await wrapper!.get('#review-event-10 button[aria-expanded]').trigger('click'); await flushPromises()
-  expect(wrapper!.get('#review-event-11 button[aria-expanded]').attributes('aria-expanded')).toBe('true')
-  expect(document.body.textContent).toContain('切换会丢弃未提交内容')
-  await click('继续填写')
-  await router.push(startTo(10)); await flushPromises()
-  expect(router.currentRoute.value.query.reviewEventId).toBe('11')
-  expect(document.querySelectorAll('[role="dialog"]')).toHaveLength(1)
-  await click('继续填写')
-  await click('返回认定记录'); await click('切换并丢弃')
-  expect(router.currentRoute.value.query.eventId).toBe('11')
-})
-
-function installCorrespondenceFixture() {
-  vi.stubGlobal('useState', () => ref(true))
-  vi.stubGlobal('$fetch', vi.fn(async (url: string, options?: any) => {
-    if (url.endsWith('/discover')) return { event: { ...event, id: options.body.eventId }, rows: [{ edge: { type: 'event_process', eventId: options.body.eventId, relationId: 30, role: 'supports_review' }, evidence: { identity: {}, title: { official: 'specialized_sme', row: 'specialized_sme' }, temporal: {}, process: {}, source: { interface: 'business_list' } }, conflicts: [], existingStatus: null }], total: 1, page: 1, pageSize: 50, coverage: { rows: [], total: 0, page: 1, pageSize: 25 }, interfaces: [] }
-    if (url.endsWith('/correspondences')) return { rows: [], total: 0, page: 1, pageSize: 200 }
-    if (url.endsWith('/browser-context')) return { writeEnabled: true }
-    return { source: url.includes('/relations/') ? relation : event, correspondences: [] }
-  }))
-}
-
-it('keeps an unresolved correspondence request bound when returning or leaving the enterprise', async () => {
-  installCorrespondenceFixture()
-  const original = globalThis.$fetch
-  vi.stubGlobal('$fetch', vi.fn(async (url: string, options?: any) => {
-    if (url.endsWith('browser-preflight')) return { planHash: 'a'.repeat(64), impact: { created: 1, unlinked: 0, audit: 1 } }
-    if (url.endsWith('browser-commit')) throw { statusCode: 503 }
-    return original(url, options)
-  }))
-  const router = await enterprise(11)
-  const button = (text: string) => [...document.querySelectorAll('button')].find(b => b.textContent?.trim() === text)!
-  const click = async (text: string) => { expect(button(text), text).toBeDefined(); button(text).click(); await flushPromises() }
-  await wrapper!.get('#record-event-11').findAll('button').find(b => b.text() === '核对这一事项')!.trigger('click'); await flushPromises()
-  await click('人工核对平台候选'); await click('确认对应')
-  const input = document.querySelector('textarea')!
-  input.value = '保留未知提交请求'; input.dispatchEvent(new Event('input', { bubbles: true })); await flushPromises()
-  await click('提交决定'); await click('关闭'); await click('返回认定记录')
-  expect(button('切换并丢弃').disabled).toBe(true)
-  expect(router.currentRoute.value.query.reviewEventId).toBe('11')
-  await click('继续填写'); await router.push('/'); await flushPromises()
-  expect(button('离开并丢弃').disabled).toBe(true)
-  await click('继续填写'); await click('确认对应')
-  expect(document.querySelector('textarea')!.value).toBe('保留未知提交请求')
-  expect(button('重试提交')).toBeDefined()
-})
-
-it('keeps unsupported events out of verification and shows its empty state', async () => {
-  const originalEvents = detail.events
-  try {
-    detail.events = [{ ...event, eventType: 'nurture' }]
-    const router = await enterprise(10)
-    expect(wrapper!.text()).not.toContain('核对这一事项')
-    await router.push({ path: '/enterprises/91', query: { tab: 'review' } }); await flushPromises()
-    expect(wrapper!.text()).toContain('尚无可核对平台对应的正式公布事件')
-    expect(wrapper!.find('[aria-label="查找平台对应候选"]').exists()).toBe(false)
-  } finally { detail.events = originalEvents }
-})
-
-it('retains the selected review fact and return target when correspondence reads fail', async () => {
-  vi.stubGlobal('$fetch', vi.fn(async () => { throw new Error('offline') }))
-  const router = await enterprise(11)
-  await wrapper!.get('#record-event-11').findAll('button').find(b => b.text() === '核对这一事项')!.trigger('click'); await flushPromises()
-  expect(wrapper!.text()).toContain('已登记对应读取失败')
-  expect(wrapper!.get('#review-event-11').text()).toContain('复核结论 2024 年')
-  expect(wrapper!.get('#review-event-11 button[aria-expanded]').attributes('aria-expanded')).toBe('true')
-  expect(router.currentRoute.value.query.returnTo).toBe(returnTo)
-  expect(wrapper!.findAll('button').some(b => b.text() === '返回认定记录')).toBe(true)
+it('ignores a late source success after switching enterprises and keeps the newer result', async () => {
+  let resolveOld!: (value: unknown) => void
+  const newer = { ...relation, id: 40, enterpriseId: 92, nameRaw: '新企业' }
+  vi.stubGlobal('$fetch', vi.fn((url: string) => url.endsWith('/relations/30')
+    ? new Promise(resolve => { resolveOld = resolve })
+    : Promise.resolve({ source: newer, correspondences: [] })))
+  const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/:pathMatch(.*)*', component: { template: '<div />' } }] })
+  await router.push('/enterprises/91')
+  wrapper = mount(SourceReader, { props: { kind: 'relation', id: 30, readOnly: true, returnTo },
+    global: { plugins: [router], components: { NuxtLink: RouterLink, SourceChip, EventChip }, stubs } })
+  await router.push('/enterprises/92')
+  await wrapper.setProps({ id: 40 }); await flushPromises()
+  expect(wrapper.text()).toContain('新企业')
+  resolveOld({ source: relation, correspondences: [edge] }); await flushPromises()
+  expect(wrapper.text()).toContain('新企业')
+  expect(wrapper.text()).not.toContain('合成企业')
+  expect(router.currentRoute.value.path).toBe('/enterprises/92')
 })

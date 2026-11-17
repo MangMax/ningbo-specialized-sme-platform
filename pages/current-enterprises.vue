@@ -85,10 +85,14 @@ const { data, isLoading, error, refetch } = useQuery<Result>({
   },
   placeholderData: previous => previous,
 })
-const { displayed, isShowingPrevious, paginationDisabled } = useRetainedQuerySnapshot(data, isLoading, error, activeRequest)
+const { displayed, paginationDisabled } = useRetainedQuerySnapshot(data, isLoading, error, activeRequest)
 const rows = computed(() => displayed.value?.rows ?? [])
 const selectedAssessment = (row: CurrentRow) => row.qualificationAssessment?.titles.find(item => item.titleCode === displayed.value?.request.params.titleCode)
-const localRuleBasis = (row: CurrentRow) => (selectedAssessment(row)?.effectiveQualification?.localRuleBasis ?? []).join('；')
+const timelineAssessment = (row: CurrentRow) => {
+  const assessment = selectedAssessment(row)
+  const supporting = assessment?.effectiveQualification?.supportingTitle
+  return supporting ? row.qualificationAssessment?.titles.find(item => item.titleCode === supporting) : assessment
+}
 function updatePagination(changes: Record<string, string | undefined>) {
   if (!displayed.value || paginationDisabled.value) return
   const query: Record<string, string | undefined> = Object.fromEntries(Object.entries(displayed.value.request.params).filter(([, value]) => value != null).map(([key, value]) => [key, String(value)]))
@@ -112,7 +116,6 @@ function describeRequest(request: typeof activeRequest.value) {
   const { scope, order } = describeRequestParts(request)
   return `${scope}；${order}`
 }
-const displayedDescription = computed(() => displayed.value ? describeRequestParts(displayed.value.request) : undefined)
 const failureDescription = computed(() => displayed.value
   ? `当前显示：${describeRequest(displayed.value.request)}。请求目标：${describeRequest(activeRequest.value)}未加载成功。`
   : undefined)
@@ -131,15 +134,15 @@ useHead({ title: '优质中小企业查询' })
         <SelectTrigger size="sm" class="bg-card w-32 shadow-none" aria-label="按区县筛选"><SelectValue /></SelectTrigger>
         <SelectContent><SelectGroup><SelectItem value="all">全部区县</SelectItem><SelectItem v-for="place in allDistricts" :key="place" :value="place">{{ place }}</SelectItem></SelectGroup></SelectContent>
       </Select>
-      <Select v-model="validYearModel">
+      <Select v-if="options.validYears.length || validYear" v-model="validYearModel">
         <SelectTrigger size="sm" class="bg-card w-36 shadow-none" aria-label="按有效年份筛选"><SelectValue placeholder="全部有效年份" /></SelectTrigger>
         <SelectContent><SelectGroup><SelectItem value="all">全部有效年份</SelectItem><SelectItem v-for="yearOption in yearOptions(options.validYears, validYear)" :key="yearOption" :value="String(yearOption)">{{ yearOption }} 年</SelectItem></SelectGroup></SelectContent>
       </Select>
-      <Select v-model="maintenanceYearModel">
+      <Select v-if="options.maintenanceYears.length || maintenanceYear" v-model="maintenanceYearModel">
         <SelectTrigger size="sm" class="bg-card w-36 shadow-none" aria-label="按维护年份筛选"><SelectValue placeholder="全部维护年份" /></SelectTrigger>
         <SelectContent><SelectGroup><SelectItem value="all">全部维护年份</SelectItem><SelectItem v-for="yearOption in yearOptions(options.maintenanceYears, maintenanceYear)" :key="yearOption" :value="String(yearOption)">{{ yearOption }} 年</SelectItem></SelectGroup></SelectContent>
       </Select>
-      <Select v-model="maintenanceBatchModel" :disabled="!maintenanceYear">
+      <Select v-if="maintenanceYear && batchOptions.length" v-model="maintenanceBatchModel">
         <SelectTrigger size="sm" class="bg-card w-36 shadow-none" aria-label="按维护批次筛选"><SelectValue placeholder="全部维护批次" /></SelectTrigger>
         <SelectContent><SelectGroup><SelectItem value="all">全部维护批次</SelectItem><SelectItem v-for="batch in batchOptions" :key="batch" :value="String(batch)">第 {{ batch }} 批</SelectItem></SelectGroup></SelectContent>
       </Select>
@@ -155,12 +158,12 @@ useHead({ title: '优质中小企业查询' })
         <Button variant="outline" size="sm" :disabled="!canApplyDate" @click="applyDate">应用时间</Button>
         <Button v-if="recognitionFrom || recognitionTo" variant="ghost" size="sm" @click="clearDate">清除时间</Button>
         <span v-if="dateError" class="text-destructive text-sm" role="alert">{{ dateError }}</span>
-        <span v-else class="text-muted-foreground text-[13px] leading-5">正式认定仅有年份时，时间范围须完整覆盖该年。</span>
       </div>
     </DefineDates>
-    <PageHeader title="优质中小企业查询" description="按本库资格判定查询当前有效企业。">
+    <PageHeader title="优质中小企业查询">
       <template #actions><CurrentRosterExportEntry :title-code="title" /></template>
     </PageHeader>
+    <section aria-label="名单查询条件" class="bg-card flex min-w-0 flex-col gap-4 rounded-lg border p-4">
     <Tabs v-model="titleModel">
       <TabsList class="h-auto max-w-full flex-wrap">
         <TabsTrigger v-for="code in CURRENT_TITLES" :key="code" :value="code">{{ TITLES[code] }}</TabsTrigger>
@@ -194,7 +197,7 @@ useHead({ title: '优质中小企业查询' })
       <Button v-if="maintenanceYear" variant="outline" size="sm" @click="update({maintenanceYear:undefined,maintenanceBatch:undefined,page:undefined})">维护年份：{{ maintenanceYear }} ×</Button>
       <Button v-if="maintenanceBatch" variant="outline" size="sm" @click="update({maintenanceBatch:undefined,page:undefined})">维护批次：第 {{ maintenanceBatch }} 批 ×</Button>
     </div>
-    <p v-if="displayed" class="text-muted-foreground min-w-0 text-[13px] leading-5 [overflow-wrap:anywhere]" aria-live="polite">当前显示：{{ displayedDescription?.scope }}<span class="block sm:inline"><span class="hidden sm:inline">；</span>{{ displayedDescription?.order }}<span :class="{ invisible: !isShowingPrevious }">（上次成功结果）</span></span></p>
+    </section>
     <p v-if="displayed?.uncertainTotal && displayed.request.params.recognitionFrom" class="text-muted-foreground text-sm">另有 {{ displayed.uncertainTotal }} 家仅有年份精度，与所选时间部分重叠或缺少日期事实，未计入确定结果。</p>
     <Card class="gap-0 overflow-hidden py-0 shadow-none">
       <CardContent class="relative p-0">
@@ -210,8 +213,8 @@ useHead({ title: '优质中小企业查询' })
                 <TableCell class="align-top whitespace-normal break-words [overflow-wrap:anywhere]"><span class="font-medium">{{ row.name }}</span><span v-if="row.aliases.length" class="text-muted-foreground mt-1 block text-xs">已确认曾用名：{{ row.aliases.join('、') }}</span></TableCell>
                 <TableCell class="align-top break-all font-mono text-xs">{{ row.uscc ?? '未记录' }}</TableCell>
                 <TableCell class="align-top">{{ row.district ?? '未记录' }}</TableCell>
-                <TableCell class="align-top"><CurrentQualificationTimeline :events="selectedAssessment(row)?.evidence" /><p v-if="localRuleBasis(row)" class="mt-2 break-words text-sm leading-6 [overflow-wrap:anywhere]">{{ localRuleBasis(row) }}</p></TableCell>
-                <TableCell class="align-top"><Button as-child variant="outline" size="sm"><NuxtLink :to="detailUrl(row.enterpriseId)">查看详情与出处</NuxtLink></Button></TableCell>
+                <TableCell class="align-top"><CurrentQualificationTimeline :source="timelineAssessment(row)?.effectiveQualification?.source" :events="timelineAssessment(row)?.evidence" :inherited-from="selectedAssessment(row)?.effectiveQualification?.supportingTitle" :enterprise-id="row.enterpriseId" /></TableCell>
+                <TableCell class="align-top"><Button as-child variant="outline" size="sm" class="h-auto min-h-8 max-w-full whitespace-normal text-center"><NuxtLink :to="detailUrl(row.enterpriseId)">查看详情与出处</NuxtLink></Button></TableCell>
               </TableRow>
               <TableRow v-if="isLoading && !displayed"><TableCell v-for="n in 5" :key="n"><Skeleton class="h-3 w-full" /></TableCell></TableRow>
               <TableRow v-if="displayed && !rows.length"><TableCell colspan="5" class="p-0"><Empty class="border-0"><EmptyHeader><EmptyTitle>没有符合条件的企业</EmptyTitle></EmptyHeader></Empty></TableCell></TableRow>
@@ -231,7 +234,7 @@ useHead({ title: '优质中小企业查询' })
               <Button as-child variant="outline" size="sm" class="min-h-11 shrink-0"><NuxtLink :to="detailUrl(row.enterpriseId)" :aria-label="`查看 ${row.name} 详情与出处`">详情与出处</NuxtLink></Button>
             </div>
             <p v-if="row.aliases.length" class="text-muted-foreground break-words text-sm leading-5">已确认曾用名：{{ row.aliases.join('、') }}</p>
-            <CurrentQualificationTimeline :events="selectedAssessment(row)?.evidence" /><p v-if="localRuleBasis(row)" class="mt-2 break-words text-sm leading-6 [overflow-wrap:anywhere]">{{ localRuleBasis(row) }}</p>
+            <CurrentQualificationTimeline :source="timelineAssessment(row)?.effectiveQualification?.source" :events="timelineAssessment(row)?.evidence" :inherited-from="selectedAssessment(row)?.effectiveQualification?.supportingTitle" :enterprise-id="row.enterpriseId" />
           </li>
         </ul>
         <Empty v-if="displayed && !rows.length" class="sm:hidden border-0"><EmptyHeader><EmptyTitle>没有符合条件的企业</EmptyTitle></EmptyHeader></Empty>

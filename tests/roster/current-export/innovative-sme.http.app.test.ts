@@ -148,20 +148,27 @@ it('创新型按稳定主体去重且多称号分别保留', async () => {
   record(multiple.enterprise.id, '多称号企业', [award], 'little_giant')
   record(multiple.enterprise.id, '多称号企业', [award], 'specialized_sme')
   const giant = candidate('只有小巨人', [award], 'little_giant')
-  candidate('只有专精特新', [award], 'specialized_sme')
+  const province = candidate('只有专精特新', [award], 'specialized_sme')
   const noOwnAward = candidate('不得借用其他称号公布', [])
   record(noOwnAward.enterprise.id, '不得借用其他称号公布', [award], 'little_giant')
   const { wb, job } = await workbook('119-isolation')
-  expect(rows(wb, '有效企业').map(row => businessIdentity(row))).toEqual([...twins.map(twin => expectedBusinessIdentity(db,twin.enterprise.id)), expectedBusinessIdentity(db,multiple.enterprise.id)])
+  // Original facts: three own awards, two upper-only identities and one empty-own + giant.
+  // #738 removes the lower-history gate; overlapping titles still count once.
+  expect(rows(wb, '有效企业').map(businessIdentity)).toEqual([
+    ['同名企业', 'TEST-119-同名主体甲'], ['同名企业', 'TEST-119-同名主体乙'],
+    ['多称号企业', 'TEST-119-多称号企业'], ['只有小巨人', 'TEST-119-只有小巨人'],
+    ['只有专精特新', 'TEST-119-只有专精特新'], ['不得借用其他称号公布', 'TEST-119-不得借用其他称号公布'],
+  ])
+  expect(job.result.counts).toEqual({ eligible: 6, pending: 0, excluded: 0 })
+  for (const sheet of ['已到期', '已注销（吊销）', '已迁出', '未认定']) expect(rows(wb, sheet)).toEqual([])
   expect(rows(wb, '有效企业').filter(row => row[2] === '同名企业')).toHaveLength(2)
   expect(rows(wb, '有效企业').filter(row => matchesBusinessIdentity(db, row, multiple.enterprise.id))).toHaveLength(1)
-  expect(rows(wb, '未认定').map(row => businessIdentity(row))).toEqual([expectedBusinessIdentity(db,noOwnAward.enterprise.id)])
-  expect(rows(wb, '未认定')[0]![8] ?? null).toBeNull()
-  expect(rows(wb, '未认定')[0]![10]).toBe('尚未完成公布匹配核实')
-  for (const row of [...rows(wb, '有效企业'), ...rows(wb, '未认定')]) {
+  for (const [name, source] of [['多称号企业', 'innovative_sme'], ['只有小巨人', 'little_giant'], ['只有专精特新', 'specialized_sme'], ['不得借用其他称号公布', 'little_giant']]) {
+    const row = rows(wb, '有效企业').find(row => row[2] === name)!
     expect(row[5]).toBe('创新型中小企业')
-    expect(row[12] ?? '').not.toContain('little_giant-synthetic.xlsx')
-    expect(row[12] ?? '').not.toContain('specialized_sme-synthetic.xlsx')
+    expect(source === 'innovative_sme' ? row[12] : row[15]).toContain(source + '-synthetic.xlsx')
+    if (source !== 'innovative_sme') expect(row[12] ?? null).toBeNull()
+    if (source !== 'innovative_sme') expect(row[6] ?? null).toBeNull()
   }
   const generic = (title: string, key: string) => fetch(url('/api/jobs'), { method: 'POST', headers, body: JSON.stringify({ kind: 'current-roster-export', params: { titleCode: title, clientRequestId: key } }) })
   const replay = await generic(titleCode, '119-isolation')
@@ -170,7 +177,7 @@ it('创新型按稳定主体去重且多称号分别保留', async () => {
   expect((await generic('little_giant', '119-isolation')).status).toBe(409)
   for (const [title, path, expectedIds] of [
     ['little_giant', '/api/roster/exports/current/little-giant', [multiple.enterprise.id, giant.enterprise.id, noOwnAward.enterprise.id]],
-    ['specialized_sme', '/api/jobs', [multiple.enterprise.id]],
+    ['specialized_sme', '/api/jobs', [multiple.enterprise.id, giant.enterprise.id, province.enterprise.id, noOwnAward.enterprise.id]],
   ] as const) {
     const response = path === '/api/jobs' ? await generic(title, '119-cross-' + title) : await fetch(url(path), { method: 'POST', headers, body: JSON.stringify({ clientRequestId: '119-cross-' + title }) })
     expect(response.status).toBe(202)
@@ -189,7 +196,7 @@ function query(enterprise: typeof s.enterprise.$inferSelect, status: 'success' |
 }
 
 it('创新型空集保留六表表头与真实零计数', async () => {
-  candidate('其他称号不污染空集', [award], 'specialized_sme')
+  // A true empty database: a valid province would inherit and is covered above.
   const { wb, job } = await workbook('119-empty')
   expect(job.result.counts).toEqual({ eligible: 0, pending: 0, excluded: 0 })
   expect(job.result.total).toBe(0)
@@ -224,4 +231,52 @@ it('创新型入口鉴权参数边界与OpenAPI可发现', async () => {
   expect((await fetch(url('/api/job-artifacts/not-a-disk-path'), { headers })).status).toBe(400)
   expect((await fetch(url('/api/job-artifacts/%2Ftmp%2Fsynthetic.xlsx'), { headers })).status).toBe(400)
   expect(JSON.stringify(job)).not.toContain(dir)
+})
+
+it('上级继承仍受主体与事实时点边界约束并优先自身期间', async () => {
+  const own = candidate('自身期间优先', [{ eventType: 'award', year: year - 1, batchSeq: 1 }])
+  record(own.enterprise.id, own.enterprise.name, [award], 'little_giant')
+  candidate('未来上级不提前有效', [{ eventType: 'award', year: year + 1, batchSeq: 1 }], 'little_giant')
+  candidate('旧上级不按年龄到期', [{ eventType: 'award', year: year - 5, batchSeq: 1 }], 'little_giant')
+  const expired = candidate('正式期间到期上级不带入', [{ eventType: 'award', year: year - 5, batchSeq: 1 }], 'little_giant')
+  // Same award age, different source fact: only the explicit formal interval expires.
+  // Bind the period to this event's evidence and source version, without a review fiction.
+  const evidence = db.select().from(s.recordEvidence).where(eq(s.recordEvidence.recordEventId, expired.events[0]!.id)).get()!
+  const sourceBytes = Buffer.from(`合成小巨人正式有效期：${year - 5}-01-01 至 ${year - 2}-12-31（含首尾）`)
+  const sourceSha256 = createHash('sha256').update(sourceBytes).digest('hex')
+  db.insert(s.storedFile).values({ relPath: evidence.sourceFile, filename: 'little_giant-synthetic.xlsx', ext: 'xlsx', bytes: sourceBytes.length, sha256: sourceSha256 }).run()
+  db.update(s.recordEvent).set({ formalValidity: {
+    evidenceId: evidence.id, sourceSha256, statementPages: [1],
+    interval: { validFrom: `${year - 5}-01-01`, validThrough: `${year - 2}-12-31` },
+  } }).where(eq(s.recordEvent.id, expired.events[0]!.id)).run()
+  for (const [name, kind] of [['注销上级不带入', 'cancelled'], ['迁出上级不带入', 'moved_out']] as const) {
+    const c = candidate(name, [award], 'little_giant')
+    db.insert(s.enterpriseFactRevision).values({ enterpriseId: c.enterprise.id, factId: 1, revision: 1, status: 'confirmed', fact: { kind, source: { reference: 'synthetic-official', statement: 'verified' }, effective: { precision: 'day', value: '2025-01-01' }, observed: { precision: 'day', value: '2025-01-01' }, city: null }, action: 'assert', actor: { type: 'agent', id: 'synthetic' }, basis: 'verified', createdAt: '2025-01-01T00:00:00Z' }).run()
+  }
+  const expected: Record<string, string[]> = {
+    effective: ['自身期间优先', '旧上级不按年龄到期'], expired: [], terminated: ['注销上级不带入'],
+    moved_out: ['迁出上级不带入'], unrecognized: ['未来上级不提前有效', '正式期间到期上级不带入'],
+  }
+  const { wb, job } = await workbook('119-boundaries')
+  // Six identities: own + retained giant; future + formal-expired + cancelled + moved-out.
+  // An expired upper title does not create an innovative award or its expired history.
+  expect(job.result.counts).toEqual({ eligible: 2, pending: 0, excluded: 4 })
+  expect(job.result.total).toBe(6)
+  for (const [state, sheet] of [['effective','有效企业'], ['expired','已到期'], ['terminated','已注销（吊销）'], ['moved_out','已迁出'], ['unrecognized','未认定']]) {
+    const response = await fetch(url(`/api/roster/current-enterprises?titleCode=innovative_sme&status=${state}`))
+    expect(response.status).toBe(200)
+    const body = await response.json()
+    expect(body.total).toBe(expected[state!]!.length)
+    expect(body.rows.map((r: any) => [r.name, r.uscc]).sort()).toEqual(expected[state!]!.map(name => [name, 'TEST-119-' + name]).sort())
+    expect(rows(wb, sheet!).map(businessIdentity).sort()).toEqual(expected[state!]!.map(name => [name, 'TEST-119-' + name]).sort())
+  }
+  const row = rows(wb, '有效企业').find(row => row[2] === '自身期间优先')!
+  expect(row[6]).toBe(String(year - 1))
+  expect(row[12]).toContain('innovative_sme-synthetic.xlsx')
+  expect(row[14]).toContain(`${year - 1} 年 + 3 = ${year + 2} 年`)
+  const inherited = rows(wb, '有效企业').find(row => row[2] === '旧上级不按年龄到期')!
+  expect(inherited[5]).toBe('创新型中小企业')
+  expect(inherited[6] ?? null).toBeNull()
+  expect(inherited[12] ?? null).toBeNull()
+  expect(inherited[15]).toContain('little_giant-synthetic.xlsx')
 })

@@ -89,12 +89,25 @@ export function currentWorkbookValues(title: CurrentTitle, row: CurrentRow, seri
     addedText.push(label, text)
   }
   const qualifications = formal.map(event => eventLabel(event) + (evidenceByEvent.has(event.id) ? '' : '（正式出处待核）'))
+  if (facts.qualificationSource) {
+    const fact = facts.qualificationSource
+    qualifications.push([({recognized_list:'平台认定目录',business_list:'关联办理记录',apply_list:'申报记录'}[fact.source]),
+      fact.period.from.raw && fact.period.until.raw ? `有效期间：${fact.period.from.raw}至${fact.period.until.raw}` : `业务年度：${fact.businessYear ?? '未知'}`].join('，'))
+  }
   for (const fact of facts.migration) qualifications.push([
     row.notes.includes('迁入资格已确认') ? '已确认迁入资格' : '历史迁入资格依据',
     fact.awardYear == null ? null : `明确认定年份：${fact.awardYear}年`,
     `核验有效期：${fact.validFrom.slice(0,10)}至${fact.validUntil.slice(0,10)}`,
     safeBusinessReason(fact.basis) ? `依据：${safeBusinessReason(fact.basis)}` : '依据文字含无法安全展示的追踪内容，原始依据请在系统内核对',
   ].filter(Boolean).join('，'))
+  const dispositions = (facts.dispositions ?? []).map(fact => [
+    ({not_applied:'未申请复核',not_recommended:'未获推荐',formal_failure:'正式复核未通过'}[fact.kind] ?? fact.kind),
+    `原认定周期：${fact.cycleYear ?? '未知'}年/批次${fact.cycleBatch ?? '未知'}`,
+    `生效日：${fact.effective ?? '未知'}；依据：${fact.effectiveBasis ?? '未知'}`,
+    `状态：${fact.status}；${fact.sourceCurrent ? '来源版本已核对' : '来源版本需重新核实'}`,
+    fact.source, fact.statement,
+  ].join('；'))
+  qualifications.push(...dispositions)
   const citations = events.flatMap(event => (evidenceByEvent.get(event.id) ?? []).map(item => [
     `${eventLabel(event)}：${event.source === 'jxj' ? title === 'little_giant' ? '宁波经信来源资料' : '宁波市经信局公布资料' : event.source === 'miit' ? '工信部平台导出快照' : '来源属性待核'}\n${documentName(item.sourceFile)}`,
     item.attachment ? `附件：${item.attachment}` : null,
@@ -104,7 +117,7 @@ export function currentWorkbookValues(title: CurrentTitle, row: CurrentRow, seri
   ].filter(Boolean).join('，')))
   const platform = facts.platform.map(item => `工信部${queryName[item.interface] ?? '平台查询'}，采集时间：${item.queriedAt}`)
   const missing = formal.filter(event => !evidenceByEvent.has(event.id))
-  const references = [...citations,...platform,...(missing.length ? [`${missing.length}条认定或复核记录正式出处待核`] : [])]
+  const references = [...citations,...dispositions,...platform,...(missing.length ? [`${missing.length}条认定或复核记录正式出处待核`] : [])]
   const legacyRenameNotes = new Set(row.publishedNames.map(name => '已公布，公布名称为' + name + '；现已更名为' + row.name))
   const notes = row.notes.filter(note => {
     const business = note.replace(/^历史诊断（不参与有效判定）：/, '')

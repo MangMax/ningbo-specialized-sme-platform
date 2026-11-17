@@ -1,3 +1,4 @@
+import { assertEnterpriseDetailSnapshotEqual } from '../../roster/assertions/enterprise-detail-snapshot'
 import { readDevelopmentDiscovery } from '../../roster/current-export/fixtures/specialized-export'
 import { initializeDb } from '../../../db/client'
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
@@ -204,8 +205,7 @@ it('page redo and deletion preserve source bytes, images, file parts, formal eve
   expect(await call('get_file', { fileId: file.id })).toEqual(fileBefore)
   // Detail must be unchanged apart from the qualification scope's execution-time
   // asOf and its snapshot digest, which are per-read timing, not stored facts.
-  const stable = (detail: any) => { const copy = structuredClone(detail); delete copy.qualificationAssessment?.asOf; delete copy.qualificationAssessment?.snapshotId; return copy }
-  expect(stable(await (await fetch(detailUrl)).json())).toEqual(stable(before))
+  assertEnterpriseDetailSnapshotEqual(await (await fetch(detailUrl)).json(), before)
   expect(Buffer.from(await (await fetch(`${app.baseUrl}/api/files/synthetic.pdf`)).arrayBuffer())).toEqual(minimalPdf({ pages: 6 }))
   expect(Buffer.from(await (await fetch(`${app.baseUrl}/api/files/.synthetic.pdf.pages/p001.png`)).arrayBuffer())).toEqual(png)
 })

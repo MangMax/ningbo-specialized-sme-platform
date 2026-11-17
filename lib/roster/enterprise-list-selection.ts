@@ -45,7 +45,7 @@ export interface EnterpriseSelection {
 }
 
 export function selectEnterpriseCoordinates(db: Db, filter: RosterEnterpriseFilter, limit?: number) {
-  return selectCoordinates(db, filter, limit)
+  return db.transaction(() => selectCoordinates(db, filter, limit))
 }
 
 function selectCoordinates(db: Db, filter: RosterEnterpriseFilter, limit?: number, explainedOnly = false) {
@@ -103,7 +103,7 @@ function selectCoordinates(db: Db, filter: RosterEnterpriseFilter, limit?: numbe
     ), history as (
       select f.enterprise_id,json_group_array(f.title_code) as titles,min(f.first_year) as first_year,
         min(${rank(sql`f.title_code`, TITLE_ORDER)}) as title_rank,max(f.official) as official,max(f.record_match) as record_match,
-        sum(case when f.title_code in ('little_giant','specialized_sme','innovative_sme') then f.official != f.platform else 0 end) as difference_count,
+        sum(case when f.title_code in ('little_giant','specialized_sme','innovative_sme') then (f.official != f.platform) else 0 end) as difference_count,
         sum(case when f.title_code in ('little_giant','specialized_sme','innovative_sme') then f.official + f.platform else 0 end) as unkeyed_difference_count,
         sum(case when f.awards>0 and ${recognitionMatch} then 1 else 0 end) as recognition_pairs,
         max(case when ${selected(sql`f.title_code`, filter.title)} then 1 else 0 end) as title_match

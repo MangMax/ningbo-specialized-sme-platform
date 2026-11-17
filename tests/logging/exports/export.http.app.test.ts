@@ -278,12 +278,15 @@ it('distinguishes actual HTTP disconnects for artifact and both legacy streams w
   // Exceed the OS socket buffers. A small XLSX can be fully sent before the
   // client's first data callback, in which case server-side success is correct.
   // Keep socket EOF/idle timers responsive while preparing the large fixture.
+  // The two existing same-year specialized grants also qualify as innovative.
+  // Keep this literal fixture oracle independent of the qualification reader.
+  const expectedNames = [privateText, 'PRIVATE_EXPORT188_TOO_LONG', ...Array.from({ length: 200 }, (_, i) => '合成断开' + i)]
   await seedDisconnectedExportFixture(dbPath)
   const response = await fetch(url('/api/roster/exports/current/innovative-sme'), { method: 'POST', headers, body: JSON.stringify({ clientRequestId: '188-disconnect' }) })
   expect(response.status).toBe(202)
   const job = await terminal((await json(response)).jobId, 90000)
   expect(job.state).toBe('done')
-  expect(job.result.counts).toEqual({ eligible: 200, pending: 0, excluded: 0 })
+  expect(job.result.counts).toEqual({ eligible: expectedNames.length, pending: 0, excluded: 0 })
   async function disconnect(path: string) {
     return new Promise<string>((resolve, reject) => {
       const request = get(url(path), { headers }, res => {
@@ -304,7 +307,9 @@ it('distinguishes actual HTTP disconnects for artifact and both legacy streams w
     })
   }
   const { bytes, wb } = await original(job.result.artifact.downloadUrl, 'after-disconnect-original')
-  expect(wb.getWorksheet('有效企业')!.rowCount).toBe(201)
+  const eligible = wb.getWorksheet('有效企业')!
+  expect(eligible.rowCount).toBe(expectedNames.length + 1)
+  expect(eligible.getRows(2, expectedNames.length)!.map(row => row.getCell(2).value).sort()).toEqual([...expectedNames].sort())
   expect(createHash('sha256').update(bytes).digest('hex')).toBe(job.result.artifact.sha256)
 }, 180000)
 

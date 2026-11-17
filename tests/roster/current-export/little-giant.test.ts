@@ -65,13 +65,23 @@ it('对应周期、复核年份与同年冲突', async () => {
   candidate('复核结论缺年',[{eventType:'award',year:y-4,batchSeq:1},{eventType:'review',year:y-4,batchSeq:1,reviewOutcome:'passed'}])
   candidate('同年冲突',[{eventType:'award',year:y-4,batchSeq:1},{eventType:'review',year:y-4,batchSeq:1,decidedYear:y-1,reviewOutcome:'failed'},{eventType:'review',year:y-4,batchSeq:1,decidedYear:y-1,reviewOutcome:'passed'}])
   candidate('培育非资格',[{eventType:'nurture',year:y}])
+  // Explicit source dates expire even though award age alone does not.
+  const dated = candidate('正式期间已到期',[{eventType:'award',year:y-3,batchSeq:1}])
+  const datedEvent = db.select().from(s.recordEvent).where(eq(s.recordEvent.recordId,dated.record.id)).get()!
+  const datedEvidence = db.select().from(s.recordEvidence).where(eq(s.recordEvidence.recordEventId,datedEvent.id)).get()!
+  const sha = 'a'.repeat(64)
+  db.insert(s.storedFile).values({relPath:datedEvidence.sourceFile,filename:'synthetic.xlsx',ext:'xlsx',bytes:1,sha256:sha}).run()
+  db.update(s.recordEvent).set({formalValidity:{evidenceId:datedEvidence.id,sourceSha256:sha,statementPages:[1],interval:{validFrom:`${y-3}-01-01`,validThrough:`${y-1}-12-31`}}}).where(eq(s.recordEvent.id,datedEvent.id)).run()
+  const before = businessDigest()
   const {wb} = await workbook('cycles')
+  expect(businessDigest()).toBe(before)
   const names = (sheet: string) => rows(wb,sheet).map(r => r[2])
-  expect(names('有效企业')).toEqual(['新认定','复核延续','失败恢复'])
+  expect(names('有效企业')).toEqual(['新认定','复核延续','失败恢复','旧周期晚失败','已到复核年','复核结论缺年'])
   expect(names('未认定')).toEqual(['培育非资格'])
-  expect(names('已到期')).toEqual(['旧周期晚失败','本周期失败','已到复核年','复核结论缺年','同年冲突'])
+  expect(names('已到期')).toEqual(['本周期失败','同年冲突','正式期间已到期'])
+  expect(rows(wb,'已到期').find(r => r[2] === '正式期间已到期')![14]).toBe(`正式文件有效期：${y-3}-01-01 至 ${y-1}-12-31（含首尾）；正式来源：jxj/announcement/synthetic.xlsx；第 1 页`)
   expect(rows(wb,'有效企业').find(r => r[2] === '失败恢复')![6]).toBe(String(y-5))
-  expect(rows(wb,'已到期').find(r => r[2] === '同年冲突')![15]).toContain('复核明确不通过')
+  expect(rows(wb,'已到期').find(r => r[2] === '同年冲突')![15]).toContain('本称号原认定周期已有生效的已确认处置；复核通过不构成新认定')
 })
 it('迁入、更名与旧解释缺口', async () => {
   candidate('培育非资格',[{eventType:'nurture',year:new Date().getFullYear()}])
@@ -102,6 +112,10 @@ it('迁入、更名与旧解释缺口', async () => {
   const eligible = rows(wb,'有效企业'), pending = rows(wb,'未认定')
   const rename = eligible.find(r => r[2] === '迁入更名现名')!
   expect({ 8: rename[8], 9: rename[9], 11: rename[11], 12: rename[12] }).toEqual(expectedDisplay); expect(rename[9]).toBe('迁入更名旧名')
+  // Ordinary workbook notes must not revive the retired manual qualification review.
+  for (const sheet of ['有效企业', '未认定']) for (const row of rows(wb, sheet)) {
+    expect(row[11] ?? '').not.toContain('迁入资格来源版本或归属需重新核实')
+  }
   expect(rename[11]).not.toContain('已确认迁入宁波'); expect(rename[11]).not.toContain('现已更名'); expect(rename[11]).not.toContain('未见宁波')
   expect(eligible.map(r => r[2])).toEqual(expect.arrayContaining(['迁出后迁回','更新待审核']))
   expect(eligible.filter(r => ['已确认外迁','已确认注销','旧缺码前提变化','未确认旧名链'].includes(r[2])).map(r => r[2])).toEqual(['已确认外迁','已确认注销','旧缺码前提变化','未确认旧名链'])

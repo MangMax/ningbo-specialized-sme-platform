@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import PlatformRecords from './PlatformRecords.vue'
+import type { RosterEnterpriseDetail } from '~~/lib/roster/enterprise-roster'
 import type { ReviewAssessment, ReviewScope } from '~~/lib/roster/evidence-review-ui'
 import { computed, watch } from 'vue'
 import { useQuery } from '@pinia/colada'
@@ -22,24 +24,6 @@ import TableFailureState from './TableFailureState.vue'
 import DisclosurePanel from '@/components/DisclosurePanel.vue'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
-
-/**
- * **企业抽屉**(RL-20)—— 方向卡里的「事实三行 + 竖向时间轴 + 差异块」。
- *
- * ── 为什么不是模态弹窗 ──────────────────────────────────────────────────
- * 企业抽屉按 #559 使用共享详情尺寸,**覆盖在表之上**,不挤压表格列宽,而设计稿里
- * 被选中那一行仍然高亮着、表格仍可读 —— 也就是说**开着抽屉还得能继续看表**。
- * 所以这里用 `DialogRoot :modal="false"`:没有遮罩层、不锁滚动、焦点不困在抽屉里,
- * 但**保留**了对话框该有的可达性(有标题、Esc 关闭、点关闭按钮回到原位)。
- *
- * ── 三块内容,都是实打实从 `/api/roster/enterprises/:id` 取的 ─────────────
- * 1. **事实三行**:属地 / 曾用名 / 差异状态;
- * 2. **竖向时间轴**:该企业**每个称号**的历次事件(认定 / 复核 / 维护),
- *    按「结论年份 → 称号先来后到 → 认定在复核维护前」排;每条事件都标出结论年份,
- *    同年事件共享年份值,但各自可直接核对;
- * 3. **差异块**:方向 · 原因 → 措施 的**可视化链**,外加依据原文与措施原文。
- *    这一块就是用户要求的「原因也要可视化」在行级之外的那一半(行级是那条 6px 状态条)。
- */
 
 interface Lifecycle {
   firstRecognitionYear: number | null
@@ -77,6 +61,8 @@ interface Difference {
   inCurrentDifference: boolean
 }
 interface Detail {
+  businessTimeline: RosterEnterpriseDetail['businessTimeline']
+  qualificationAssessment: RosterEnterpriseDetail['qualificationAssessment']
   enterprise: {
     enterpriseId: number
     name: string
@@ -145,7 +131,7 @@ const { data, isLoading, error, refetch } = useQuery({
   enabled: () => props.enterpriseId != null,
 })
 
-const detail = computed(() => data.value ?? null)
+const detail = computed(() => data.value?.enterprise.enterpriseId === props.enterpriseId ? data.value : null)
 /** 每个称号的复核安排使用后端生命周期；认定年份与批次必须来自对应事件。 */
 const nextReviews = computed(() => {
   if (!detail.value) return []
@@ -287,25 +273,6 @@ const fullPageTo = computed(() => {
   return `/enterprises/${props.enterpriseId}${q}`
 })
 
-/**
- * 抽屉只回答“有没有要核对的范围、去哪里核对”。
- * 矩阵、证据和决定历史都在企业详情页，抽屉不重复铺开。
- */
-const reviewSummary = computed(() => {
-  const list = detail.value?.titleAssessments ?? []
-  if (!list.length) return '尚未读取核对范围。'
-  const decided = list.filter(item => item.assessment === 'decided').length
-  const queried = list.filter(item => item.assessment === 'queried_unjudged').length
-  const notQueried = list.filter(item => item.assessment === 'not_queried').length
-  return `${list.length} 个判断范围 · ${decided} 个已有决定 · ${queried} 个已查询待判断 · ${notQueried} 个尚未查询`
-})
-const reviewPageTo = computed(() => {
-  const params = new URLSearchParams()
-  if (props.backQuery) params.set('back', props.backQuery)
-  params.set('tab', 'review')
-  return `/enterprises/${props.enterpriseId}?${params.toString()}`
-})
-
 function rememberLedger(event: MouseEvent) {
   if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
   rememberEvidencePreviewReturn(props.backQuery ? `/?${props.backQuery}` : '/', document.querySelector('[data-testid="enterprise-table-scroll"]') ?? document.querySelector('[data-evidence-return-scroll-container]'))
@@ -398,6 +365,8 @@ function eventSuffix(item: TimelineItem): string {
             </dd>
           </dl>
 
+          <PlatformRecords :key="detail.enterprise.enterpriseId" :timeline="detail.businessTimeline" />
+
           <!-- 称号历史：年份 + 事件；普通分隔线，不做节点/连线装饰。 -->
           <h3 class="text-muted-foreground mt-5 border-t pt-4 text-xs font-medium">称号历史</h3>
           <ol v-if="timeline.length" class="mt-3 divide-y rounded-lg border" data-testid="drawer-timeline">
@@ -425,15 +394,6 @@ function eventSuffix(item: TimelineItem): string {
             </li>
           </ol>
           <p v-else class="text-muted-foreground mt-3 text-[13px]">尚无称号历史。</p>
-
-          <!-- 核对摘要：只给范围和入口，矩阵与证据留在企业详情页。 -->
-          <section class="mt-5 border-t pt-4" data-testid="drawer-review-summary">
-            <div class="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
-              <h3 class="text-sm font-medium">称号核对</h3>
-              <NuxtLink :to="reviewPageTo" class="text-primary text-[13px] hover:underline" @click="rememberLedger">在企业详情中核对</NuxtLink>
-            </div>
-            <p class="text-muted-foreground mt-1 max-w-[46ch] text-[13px] leading-5">{{ reviewSummary }}</p>
-          </section>
 
           <DisclosurePanel v-if="evidenceItems.length" compact content-class="pb-0" class="mt-5 border-t pt-4" data-testid="enterprise-evidence" :title="`出处 · ${evidenceItems.length}`">
             <ul class="mt-2 flex flex-col gap-2">

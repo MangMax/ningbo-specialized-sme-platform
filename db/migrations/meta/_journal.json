@@ -379,6 +379,13 @@
       "when": 1794649000000,
       "tag": "0053_collection_page_presence",
       "breakpoints": true
+    },
+    {
+      "idx": 54,
+      "version": "6",
+      "when": 1794844800000,
+      "tag": "0054_recognized_qualification_fields",
+      "breakpoints": true
     }
   ]
 }

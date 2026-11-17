@@ -255,7 +255,15 @@ it('isolates sidecar-only changes from enumerable qualification and dataVersion 
   const giant = expectedT2.titles.find(item => item.titleCode === 'little_giant')!
   expect(giant.sourceVersions).toEqual([])
   expect(giant.completeness.publishedNames).toEqual([])
-  selected.versions.sources = hashJSON([hashJSON([beforeEvidence,selected.sourceVersions,selected.completeness.publishedNames]),hashJSON([[],[],[]])])
+  const evidenceInputs = [{ id: 1, eventId: 1, sourceFile: '2021公布.pdf', attachment: null, listNo: 1, page: 1 }]
+  const names = [{ evidenceId: 1, availability: 'captured', nameKnown: true }]
+  const sources = [{ evidenceId: 1, eventId: 1, sourceFile: '2021公布.pdf', storedFileId: 1, sha256: digest, bytes: Buffer.byteLength(sourceBytes), removedAt: null, capturedRevision: 2, capturedSha256: digest }]
+  expect(beforeEvidence).toEqual(evidenceInputs)
+  expect(selected.sourceVersions).toEqual(sources)
+  expect(selected.completeness.publishedNames).toEqual(names)
+  const emptySources = hashJSON([[], [], [], []])
+  selected.versions.sources = hashJSON([hashJSON([evidenceInputs, sources, names, []]), emptySources])
+  expectedT2.titles.find(item => item.titleCode === 'innovative_sme')!.versions.sources = hashJSON([hashJSON([emptySources, emptySources]), selected.versions.sources])
   const { snapshotId: _oldDigest, titles: expectedTitles, ...expectedScope } = expectedT2
   expectedT2.snapshotId = hashJSON([expectedScope,expectedTitles])
   expect(afterT2).toEqual(expectedT2) // Every unlisted full-T2 path stays byte/structurally equal.

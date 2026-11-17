@@ -148,3 +148,111 @@ describe('enterprise detail snapshot comparison', () => {
     expect(b).toStrictEqual(invalid)
   })
 })
+
+// Separate current-response literals keep historical no-timeline fixtures intact.
+function timelineDetail(asOf = '2026-10-27T12:00:00.000Z') {
+  return { ...detail(asOf), businessTimeline: { asOf, sources: [{
+    source: 'recognized_list', collectionStatus: 'success', collectedAt: '2026-10-26T09:00:00.000Z',
+    events: [{ key: 'recognized_list:41', platformName: '原始企业名', title: 'innovative_sme',
+      matter: 'recognition', matterRaw: '认定', conclusion: 'passed', statusRaw: '有效',
+      businessTimeKind: 'recognition', businessYear: 2024,
+      businessTime: { raw: '2024-01-01', value: '2024-01-01', precision: 'day' },
+      period: { from: { raw: '2024-01-01', value: '2024-01-01', precision: 'day' },
+        until: { raw: '2026-12-31', value: '2026-12-31', precision: 'day' } },
+      collectedAt: '2026-10-26T09:00:00.000Z',
+    }],
+  }] } }
+}
+
+describe('enterprise detail timeline snapshot comparison', () => {
+  it('T01 sequential response times preserve identical timeline business facts', () => {
+    const a = timelineDetail(), b = timelineDetail('2026-10-27T12:00:01.000Z')
+    expect(a.businessTimeline.asOf).not.toBe(b.businessTimeline.asOf)
+    expect(a.qualificationAssessment.snapshotId).not.toBe(b.qualificationAssessment.snapshotId)
+    expect(() => assertEnterpriseDetailSnapshotEqual(a, b)).not.toThrow()
+    expect(() => assertEnterpriseDetailSnapshotEqual(a, structuredClone(a))).not.toThrow()
+  })
+  it('T02 each timeline must match its own assessment before comparison', () => {
+    const a = timelineDetail(), b = timelineDetail('2026-10-27T12:00:01.000Z')
+    b.businessTimeline.asOf = a.businessTimeline.asOf
+    expect(() => assertEnterpriseDetailSnapshotEqual(a, b)).toThrow(/businessTimeline.asOf/)
+    expect(() => assertEnterpriseDetailSnapshotEqual(b, a)).toThrow(/businessTimeline.asOf/)
+    expect(() => assertEnterpriseDetailSnapshotEqual(b, structuredClone(b))).toThrow(/businessTimeline.asOf/)
+  })
+  it.each([
+    { id: 'T03 invalid execution text', time: 'not-a-time' },
+    { id: 'T04 noncanonical execution time', time: '2026-10-27T12:00:00Z' },
+    { id: 'T05 offset execution time', time: '2026-10-27T20:00:00.000+08:00' },
+  ])('$id', ({ time }) => {
+    const a = timelineDetail(), invalid = timelineDetail(time)
+    // Digest is valid for the malformed scope: format validation must reject it.
+    expect(() => assertEnterpriseDetailSnapshotEqual(a, invalid)).toThrow(/asOf/)
+    expect(() => assertEnterpriseDetailSnapshotEqual(invalid, a)).toThrow(/asOf/)
+    expect(() => assertEnterpriseDetailSnapshotEqual(invalid, structuredClone(invalid))).toThrow(/asOf/)
+    const timelineOnly = timelineDetail()
+    timelineOnly.businessTimeline.asOf = time
+    expect(() => assertEnterpriseDetailSnapshotEqual(a, timelineOnly)).toThrow(/businessTimeline.asOf/)
+  })
+  it('T06 missing or invalid timeline cannot become a historical fixture', () => {
+    const a = timelineDetail()
+    for (const value of [detail(), { ...detail(), businessTimeline: undefined },
+      { ...detail(), businessTimeline: null }, { ...detail(), businessTimeline: [] },
+      { ...detail(), businessTimeline: {} }]) {
+      expect(() => assertEnterpriseDetailSnapshotEqual(a, value)).toThrow()
+      expect(() => assertEnterpriseDetailSnapshotEqual(value, a)).toThrow()
+    }
+  })
+  it.each([
+    { id: 'T07 source status', change: (v: ReturnType<typeof timelineDetail>) => { v.businessTimeline.sources[0]!.collectionStatus = 'failed' } },
+    { id: 'T08 event conclusion', change: (v: ReturnType<typeof timelineDetail>) => { v.businessTimeline.sources[0]!.events[0]!.conclusion = 'invalid' } },
+    { id: 'T09 original name', change: (v: ReturnType<typeof timelineDetail>) => { v.businessTimeline.sources[0]!.events[0]!.platformName = '变更企业名' } },
+    { id: 'T10 period start', change: (v: ReturnType<typeof timelineDetail>) => { v.businessTimeline.sources[0]!.events[0]!.period.from.value = '2025-01-01' } },
+    { id: 'T11 period end', change: (v: ReturnType<typeof timelineDetail>) => { v.businessTimeline.sources[0]!.events[0]!.period.until.value = '2027-12-31' } },
+    { id: 'T12 event collection time', change: (v: ReturnType<typeof timelineDetail>) => { v.businessTimeline.sources[0]!.events[0]!.collectedAt = '2026-10-26T09:00:01.000Z' } },
+    { id: 'T13 source collection time', change: (v: ReturnType<typeof timelineDetail>) => { v.businessTimeline.sources[0]!.collectedAt = '2026-10-26T09:00:01.000Z' } },
+    { id: 'T14 missing event', change: (v: ReturnType<typeof timelineDetail>) => { v.businessTimeline.sources[0]!.events = [] } },
+    { id: 'T15 missing source', change: (v: ReturnType<typeof timelineDetail>) => { v.businessTimeline.sources = [] } },
+    { id: 'T18 business time', change: (v: ReturnType<typeof timelineDetail>) => { v.businessTimeline.sources[0]!.events[0]!.businessTime = { raw: '2024-01-02', value: '2024-01-02', precision: 'day' } } },
+  ])('$id', ({ change }) => {
+    const a = timelineDetail(), b = timelineDetail('2026-10-27T12:00:01.000Z')
+    change(b)
+    expect(() => assertEnterpriseDetailSnapshotEqual(a, b)).toThrow()
+    expect(() => assertEnterpriseDetailSnapshotEqual(b, a)).toThrow()
+  })
+  it('T16 unknown timeline source event and period fields remain strict', () => {
+    const a = timelineDetail()
+    for (const level of ['timeline', 'source', 'event', 'period'] as const) {
+      const b = timelineDetail('2026-10-27T12:00:01.000Z')
+      const source = b.businessTimeline.sources[0]!, event = source.events[0]!
+      const target = level === 'timeline' ? b.businessTimeline : level === 'source' ? source : level === 'event' ? event : event.period
+      Object.assign(target, { future: { asOf: '2026-10-27T12:00:00.000Z' } })
+      const same = structuredClone(b)
+      same.businessTimeline.asOf = a.businessTimeline.asOf
+      same.qualificationAssessment = structuredClone(a.qualificationAssessment)
+      expect(() => assertEnterpriseDetailSnapshotEqual(b, same)).not.toThrow()
+      Object.assign(target, { future: { asOf: '2026-10-27T12:00:01.000Z' } })
+      expect(() => assertEnterpriseDetailSnapshotEqual(b, same)).toThrow()
+      expect(() => assertEnterpriseDetailSnapshotEqual(same, b)).toThrow()
+      expect(() => assertEnterpriseDetailSnapshotEqual(a, b)).toThrow()
+      expect(() => assertEnterpriseDetailSnapshotEqual(b, a)).toThrow()
+    }
+  })
+  it('T17 timeline success and rejection preserve complete input bytes', () => {
+    const a = timelineDetail(), b = timelineDetail('2026-10-27T12:00:01.000Z')
+    const beforeA = JSON.stringify(a), beforeB = JSON.stringify(b)
+    assertEnterpriseDetailSnapshotEqual(a, b)
+    expect(JSON.stringify(a)).toBe(beforeA)
+    expect(JSON.stringify(b)).toBe(beforeB)
+    b.businessTimeline.asOf = a.businessTimeline.asOf
+    const invalid = JSON.stringify(b)
+    expect(() => assertEnterpriseDetailSnapshotEqual(a, b)).toThrow()
+    expect(JSON.stringify(a)).toBe(beforeA)
+    expect(JSON.stringify(b)).toBe(invalid)
+    b.businessTimeline.asOf = b.qualificationAssessment.asOf
+    b.businessTimeline.sources[0]!.events[0]!.period.until.value = '2027-12-31'
+    const changed = JSON.stringify(b)
+    expect(() => assertEnterpriseDetailSnapshotEqual(a, b)).toThrow()
+    expect(JSON.stringify(a)).toBe(beforeA)
+    expect(JSON.stringify(b)).toBe(changed)
+  })
+})

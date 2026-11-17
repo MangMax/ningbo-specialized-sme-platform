@@ -28,7 +28,7 @@ async function read(query = '') { const response = await fetch(base + query); re
 it('uses Shanghai evaluation metadata and rejects future or invalid scopes', async () => {
   const { body, status } = await read()
   expect(status).toBe(200)
-  expect(body).toMatchObject({ evaluationDay: '2026-11-06', timeZone: 'Asia/Shanghai', ruleVersion: 'current-roster-116-v11', assessmentVersion: 'enterprise-qualification-687-v4', reconstruction: 'current_recorded_evidence', grain: 'enterprise_title', total: 0 })
+  expect(body).toMatchObject({ evaluationDay: '2026-11-06', timeZone: 'Asia/Shanghai', ruleVersion: 'current-roster-116-v14', assessmentVersion: 'enterprise-qualification-807-v7', reconstruction: 'current_recorded_evidence', grain: 'enterprise_title', total: 0 })
   expect(body.years).toEqual([{ year: 2026, evaluationDay: '2026-11-06', titles: [
     { titleCode: 'little_giant', effective: 0, pending: 0 }, { titleCode: 'specialized_sme', effective: 0, pending: 0 }, { titleCode: 'innovative_sme', effective: 0, pending: 0 },
   ] }])
@@ -77,12 +77,14 @@ it('reconstructs literal yearly stocks through renewal failure expiry reaward an
   fact(10, 'moved_out', 'day', '2023-01-01'); fact(10, 'moved_out', 'day', '2023-01-01', { revision: 2, status: 'withdrawn' })
   validity(event(11, 'award', 2023), { interval: { validFrom: '2023-01-01', validThrough: '2028-12-31' } })
   fact(12, 'cancelled', 'year', '2024')
-  // Independent hand-worked rowsets, including cutoff-closed interval and v10 expiry.
+  // Historical year-end keeps annual-stock-514-v1 reconstruction. The current
+  // year uses v6: enterprise 9's 2022 award expired in 2025; a future linked
+  // continuation cannot revive it in 2026 under the business-year +3 rule.
   expect(await ids(2022)).toEqual([1, 2, 3, 4, 5, 8, 9, 10, 12])
   expect(await ids(2023)).toEqual([1, 2, 3, 4, 5, 8, 9, 10, 11, 12])
   expect(await ids(2024)).toEqual([1, 3, 4, 8, 9, 10, 11])
   expect(await ids(2025)).toEqual([1, 4, 9, 11])
-  expect(await ids(2026)).toEqual([1, 2, 4, 9, 11])
+  expect(await ids(2026)).toEqual([1, 2, 4, 11])
   for (const year of [2022, 2023, 2024, 2025, 2026]) expect(await ids(year, 'pending')).toEqual([7])
   const first = (await read('?year=2023&title=specialized_sme&pageSize=2')).body
   const second = (await read('?year=2023&title=specialized_sme&pageSize=2&page=2')).body
@@ -97,12 +99,12 @@ it('separates historical uncertainty from current v10 diagnostics and respects S
   fact(15, 'cancelled', 'day', '2026-11-06')
   expect(await ids(2025)).toEqual([1, 4, 9, 11, 13, 15])
   expect(await ids(2025, 'pending')).toEqual([7, 14])
-  expect(await ids(2026)).toEqual([1, 2, 4, 9, 11, 13, 14, 15])
+  expect(await ids(2026)).toEqual([1, 2, 4, 11, 13, 14, 15])
   vi.setSystemTime(new Date('2026-11-06T15:59:59Z'))
   expect((await read()).body.evaluationDay).toBe('2026-11-06')
   vi.setSystemTime(new Date('2026-11-06T16:00:00Z'))
   expect((await read()).body.evaluationDay).toBe('2026-11-07')
-  expect(await ids(2026)).toEqual([1, 2, 4, 9, 11, 13, 14])
+  expect(await ids(2026)).toEqual([1, 2, 4, 11, 13, 14])
   vi.setSystemTime(new Date('2026-11-06T00:00:00Z'))
 })
 it('keeps unresolved review conclusions pending without treating future-only reviews as uncertainty', async () => {
@@ -120,7 +122,7 @@ it('agrees with current effective HTTP while deduplicating titles and retaining 
   event(20, 'award', 2027) // future-only no pending and no grant
   const future = event(21, 'award', 2025)
   validity(future, { publishedOn: '2027-01-01', interval: { validFrom: '2025-01-01', validThrough: '2027-12-31' } })
-  expect(await ids(2026)).toEqual([1, 2, 4, 9, 11, 13, 14, 15, 18, 19])
+  expect(await ids(2026)).toEqual([1, 2, 4, 11, 13, 14, 15, 18, 19])
   expect(await ids(2025)).toEqual([1, 4, 9, 11, 13, 15, 18, 19])
   expect(await ids(2026, 'effective', 'little_giant')).toEqual([18])
   for (const title of ['specialized_sme', 'little_giant', 'innovative_sme']) {
@@ -149,7 +151,7 @@ it('does not revive expired cycles from legacy inbound qualification intervals',
   enterprise(23); event(23, 'award', 2022)
   db.insert(schema.differenceReason).values({ enterpriseId: 23, titleCode: 'specialized_sme', direction: 'extra_in_miit', status: 'confirmed_reason', reasonCode: 'moved_in', measureCode: 'record_moved_in', verificationStatus: 'confirmed', recordedAt: '2025-01-01T00:00:00Z', lifecycleAction: 'replace', basis: '保留旧迁入决定', ruleVersion: 'legacy-v1', effectiveAt: '2025-01-01T00:00:00Z', currentQualification: { titleCode: 'specialized_sme', validFrom: '2025-01-01T00:00:00Z', validUntil: '2028-01-01T00:00:00Z', basis: '旧规则独立期间', publicationCheck: { status: 'not_found', scope: '新认定公布范围' } } }).run()
   expect(await ids(2025)).toEqual([1, 4, 9, 11, 13, 15, 18, 19])
-  expect(await ids(2026)).toEqual([1, 2, 4, 9, 11, 13, 14, 15, 18, 19])
+  expect(await ids(2026)).toEqual([1, 2, 4, 11, 13, 14, 15, 18, 19])
   expect(await ids(2026, 'pending')).toEqual([7, 16])
 })
 it('retains moved-out exclusion after reentry even while formal qualification remains valid', async () => {
@@ -160,7 +162,7 @@ it('retains moved-out exclusion after reentry even while formal qualification re
   const platformOnly = db.insert(schema.record).values({ enterpriseId: 26, titleCode: 'specialized_sme', source: 'miit' }).returning().get()
   db.insert(schema.recordEvent).values({ recordId: platformOnly.id, eventType: 'maintain', year: 2025 }).run()
   fact(26, 'moved_in', 'day', '2026-01-01')
-  expect(await ids(2026)).toEqual([1, 2, 4, 9, 11, 13, 14, 15, 18, 19, 25])
+  expect(await ids(2026)).toEqual([1, 2, 4, 11, 13, 14, 15, 18, 19, 25])
   expect(await ids(2026, 'pending')).toEqual([7, 16])
   const response = await fetch(base.replace('/api/statistics/annual', '/api/roster/current-enterprises') + '?titleCode=specialized_sme&status=moved_out&pageSize=200')
   expect(response.status).toBe(200)
@@ -176,6 +178,6 @@ it('keeps resolved older unknown-origin reviews out of pending after definite ex
   expect(await ids(2024)).toEqual([1, 3, 4, 8, 9, 10, 11, 16, 17, 22, 23, 27])
   expect(await ids(2025)).toEqual([1, 4, 9, 11, 13, 15, 18, 19, 25])
   expect(await ids(2025, 'pending')).toEqual([7, 14, 16])
-  expect(await ids(2026)).toEqual([1, 2, 4, 9, 11, 13, 14, 15, 18, 19, 25])
+  expect(await ids(2026)).toEqual([1, 2, 4, 11, 13, 14, 15, 18, 19, 25])
   expect(await ids(2026, 'pending')).toEqual([7, 16])
 })

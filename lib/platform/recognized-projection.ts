@@ -78,3 +78,22 @@ export function parseRecognizedSourceFidelity(row: Record<string, unknown>): Rec
     sourceMaintenanceYearAbsent: row.whpcyear == null || row.whpcyear === '',
   }
 }
+
+/** Additive capture from queryBusList only. Empty text and date precision are source facts.
+ * The marker distinguishes an inspected missing value from a pre-upgrade uncaptured row.
+ * Geographic names are szsfmc / szsmc / szqmc, never inferred from region codes. */
+export const RECOGNIZED_QUALIFICATION_FIELDS_RULE = 'recognized-qualification-fields-v1'
+export function parseRecognizedQualificationFields(raw: unknown) {
+  const row = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw as Record<string, unknown> : {}
+  const originalText = (key: string) => typeof row[key] === 'string' ? row[key] as string : null
+  return {
+    sourceRecognizedAt: originalText('rdtime'),
+    sourceValidFlag: typeof row.sfyx === 'string' || (typeof row.sfyx === 'number' && Number.isFinite(row.sfyx)) ? row.sfyx : null,
+    sourceInvalidatedAt: originalText('sxsj'),
+    sourceInvalidationReason: originalText('sxyy'),
+    sourceProvinceName: originalText('szsfmc'),
+    sourceCityName: originalText('szsmc'),
+    sourceDistrictName: originalText('szqmc'),
+    qualificationFieldsRule: RECOGNIZED_QUALIFICATION_FIELDS_RULE,
+  }
+}

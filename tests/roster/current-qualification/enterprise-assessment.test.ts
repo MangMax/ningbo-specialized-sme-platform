@@ -276,13 +276,14 @@ it.each([
     ? { evidenceId: evidence.id, eventId: event.id, availability, revision: 1, nameRaw, sourceBindingKnown: true }
     : { evidenceId: evidence.id, eventId: event.id, availability, revision: null, nameRaw: null, sourceBindingKnown: null }
   // Isolate the completeness consumer; capture/SQL semantics have their own public tests.
-  vi.spyOn(publishedReads, 'readPublicPublishedNames').mockReturnValue({ availability: 'available', error: null, facts: [fact] })
+  const read = vi.spyOn(publishedReads, 'readOfficialPublishedPresentation').mockReturnValue(new Map([[evidence.id, fact]]))
   const detail = getRosterEnterpriseDetail(db, enterprise.id, AS_OF)!
   const value = detail.qualificationAssessment.titles.find(t => t.titleCode === 'innovative_sme')!
   expect(detail.publishedPresentation).toMatchObject({ availability: 'available', facts: [fact] })
   expect(value.completeness.publishedNames).toEqual([{ evidenceId: evidence.id, availability, nameKnown: nameRaw !== null }])
   if (gap) expect(value.completeness.gaps).toContain(gap)
   else expect(value.completeness.gaps).not.toContain('published_name_not_retained')
+  expect(read).toHaveBeenCalledTimes(1)
 })
 
 it.each([false, true])('keeps verified migration qualification independent of later location: movedOut=%s', movedOut => {
@@ -305,12 +306,27 @@ it.each([false, true])('keeps verified migration qualification independent of la
 
 it('keeps published-name read failure distinct from missing capture and reuses one read', () => {
   const { enterprise, evidence } = formalEnterprise()
-  const read = vi.spyOn(publishedReads, 'readPublicPublishedNames').mockReturnValue({ availability: 'unavailable', error: 'response_limit', facts: [] })
+  const read = vi.spyOn(publishedReads, 'readOfficialPublishedPresentation').mockImplementation(() => { throw new publishedReads.OfficialPublishedPresentationError('response_limit') })
   const detail = getRosterEnterpriseDetail(db, enterprise.id, AS_OF)!
   const value = detail.qualificationAssessment.titles.find(t => t.titleCode === 'innovative_sme')!
   expect(detail.publishedPresentation).toMatchObject({ availability: 'unavailable', error: 'response_limit' })
   expect(value.completeness.publishedNames).toEqual([{ evidenceId: evidence.id, availability: 'unavailable', nameKnown: false }])
   expect(value.completeness.gaps).toContain('published_name_read_unavailable')
+  expect(value.completeness.gaps).not.toContain('published_name_not_retained')
+  expect(value.group).toBe('eligible')
+  expect(read).toHaveBeenCalledTimes(1)
+})
+
+it('keeps final display failure separate from verified published-name completeness', () => {
+  const { enterprise, event, evidence } = formalEnterprise()
+  const fact: publishedReads.OfficialPublishedFact = { evidenceId: evidence.id, eventId: event.id, availability: 'captured', revision: 1, nameRaw: '实际公布名', sourceBindingKnown: true }
+  const read = vi.spyOn(publishedReads, 'readOfficialPublishedPresentation').mockReturnValue(new Map([[evidence.id, fact]]))
+  vi.spyOn(publishedReads, 'projectOfficialPublishedNames').mockImplementation(() => { throw new publishedReads.OfficialPublishedPresentationError('response_limit') })
+  const detail = getRosterEnterpriseDetail(db, enterprise.id, AS_OF)!
+  const value = detail.qualificationAssessment.titles.find(t => t.titleCode === 'innovative_sme')!
+  expect(detail.publishedPresentation).toEqual({ availability: 'unavailable', error: 'response_limit', facts: [] })
+  expect(value.completeness.publishedNames).toEqual([{ evidenceId: evidence.id, availability: 'captured', nameKnown: true }])
+  expect(value.completeness.gaps).not.toContain('published_name_read_unavailable')
   expect(value.completeness.gaps).not.toContain('published_name_not_retained')
   expect(value.group).toBe('eligible')
   expect(read).toHaveBeenCalledTimes(1)
@@ -381,7 +397,7 @@ it('detail_snapshot_scope_and_field_gaps_407', () => {
   // Both are real API/MCP-shared function seams, not a started transport or historical-asOf API.
   const shared = readCurrentQualificationAssessment(sqlite, enterprise.id, AS_OF)
   const detail = getRosterEnterpriseDetail(db, enterprise.id, AS_OF)!
-  const scope = { enterpriseId: enterprise.id, asOf: '2026-06-01T00:00:00.000Z', ruleVersion: 'current-roster-116-v11', assessmentVersion: 'enterprise-qualification-687-v4' }
+  const scope = { enterpriseId: enterprise.id, asOf: '2026-06-01T00:00:00.000Z', ruleVersion: 'current-roster-116-v14', assessmentVersion: 'enterprise-qualification-807-v7' }
   expect(detail.qualificationAssessment).toEqual(shared)
   expect(shared).toMatchObject(scope)
   expect(shared.titles.map(title => title.titleCode).sort()).toEqual(['innovative_sme', 'little_giant', 'specialized_sme'])
@@ -405,10 +421,7 @@ it('detail_snapshot_scope_and_field_gaps_407', () => {
 })
 
 
-it('explicit_prior_versions_preserve_frozen_legacy_and_current_consumers_share_default_without_core', async () => {
-  const core = await import('../../../lib/roster/platform-comparison')
-  const { createCurrentQualificationAssessmentReader } = await import('../../../lib/roster/current-qualification')
-  const spy = vi.spyOn(core, 'comparePlatformComparison')
+function seedPublishedLegacyReceipt() {
   db.insert(schema.enterprise).values({ id: 1, name: '合成427', nameNorm: '合成427', usccNorm: '91330211255994457P' }).run()
   db.insert(schema.record).values({ id: 1, enterpriseId: 1, titleCode: 'specialized_sme', source: 'jxj', nameRaw: '合成427', usccRaw: '91330211255994457P' }).run()
   db.insert(schema.recordEvent).values({ id: 1, recordId: 1, eventType: 'award', year: 2024, batchSeq: 1 }).run()
@@ -423,6 +436,23 @@ it('explicit_prior_versions_preserve_frozen_legacy_and_current_consumers_share_d
     queriedAt: '2026-05-31T00:00:00Z', completedAt: '2026-05-31T00:00:01Z', rows: [], pages: [{ source: 'queryBusList', rdjb: '2', page: 1, status: 'success', fetchedCount: 0, declaredTotal: 0, error: null }], fetchedCount: 0, declaredTotal: 0, completeness: 'complete', fullRange: true, unfinished: [], error: null, limits: { maxRequests: 100, maxRows: 5000, maxDurationMs: 60000, pageSize: 50 },
   } })
   sqlite.pragma('query_only=ON')
+}
+
+it('explicit_407_receipts_preserve_frozen_literal_bytes', async () => {
+  const { createCurrentQualificationAssessmentReader } = await import('../../../lib/roster/current-qualification')
+  seedPublishedLegacyReceipt()
+  const reader = createCurrentQualificationAssessmentReader(sqlite)
+  expect(reader.read(1, AS_OF, { assessmentVersion: 'enterprise-qualification-407-v1' }).snapshot).toEqual(DEFAULT_427_LEGACY)
+  const scope = { enterpriseId: 1, asOf: DEFAULT_427_LEGACY.asOf, ruleVersion: 'current-roster-116-v9', assessmentVersion: 'enterprise-qualification-407-v2' }
+  const expected = { ...DEFAULT_427_LEGACY, ...scope, snapshotId: createHash('sha256').update(JSON.stringify([scope, DEFAULT_427_LEGACY.titles])).digest('hex') }
+  expect(reader.read(1, AS_OF, { assessmentVersion: 'enterprise-qualification-407-v2' }).snapshot).toEqual(expected)
+})
+
+it('explicit_prior_versions_preserve_frozen_legacy_and_current_consumers_share_default_without_core', async () => {
+  const core = await import('../../../lib/roster/platform-comparison')
+  const { createCurrentQualificationAssessmentReader } = await import('../../../lib/roster/current-qualification')
+  const spy = vi.spyOn(core, 'comparePlatformComparison')
+  seedPublishedLegacyReceipt()
   const changes = sqlite.prepare('select total_changes() as n').get()
   const reader = createCurrentQualificationAssessmentReader(sqlite)
   // Published receipts stay byte-reproducible under explicit prior versions.
@@ -431,8 +461,15 @@ it('explicit_prior_versions_preserve_frozen_legacy_and_current_consumers_share_d
   const expected = { ...DEFAULT_427_LEGACY, ...scope, snapshotId: createHash('sha256').update(JSON.stringify([scope, DEFAULT_427_LEGACY.titles])).digest('hex') }
   expect(reader.read(1, AS_OF, { assessmentVersion: 'enterprise-qualification-407-v2' }).snapshot).toEqual(expected)
   const current = reader.read(1, AS_OF).snapshot
-  expect(current).toMatchObject({ ruleVersion: 'current-roster-116-v11', assessmentVersion: 'enterprise-qualification-687-v4' })
-  expect(current.titles.map(t => [t.titleCode, t.group])).toEqual([['little_giant', 'excluded'], ['specialized_sme', 'eligible'], ['innovative_sme', 'excluded']])
+  expect(current).toMatchObject({ ruleVersion: 'current-roster-116-v14', assessmentVersion: 'enterprise-qualification-807-v7' })
+  // Independent canonical scope order and literal namespace; hash the complete title bytes, not the returned digest.
+  const defaultScope = { enterpriseId: 1, asOf: '2026-06-01T00:00:00.000Z', ruleVersion: 'current-roster-116-v14', assessmentVersion: 'enterprise-qualification-807-v7' }
+  expect(current.snapshotId).toBe(createHash('sha256').update(JSON.stringify([defaultScope, current.titles])).digest('hex'))
+  expect(current.titles.map(t => [t.titleCode, t.group])).toEqual([['little_giant', 'excluded'], ['specialized_sme', 'eligible'], ['innovative_sme', 'eligible']])
+  expect(current.titles[2]!.effectiveQualification!.localRuleBasis!.join(' ')).toContain('专精特新中小企业')
+  expect(current.titles[2]!.evidence).toEqual([])
+  expect(current.titles[2]!.effectiveQualification?.supportingTitle).toBe('specialized_sme')
+  expect(current.titles[1]!.effectiveQualification?.supportingTitle).toBeUndefined()
   expect(reader.readCurrent(1, AS_OF, 'specialized_sme').snapshot).toEqual(current)
   expect(reader.readWorkbook(1, AS_OF, 'specialized_sme').snapshot).toEqual(current)
   expect(reader.readTitle(1, 'specialized_sme', AS_OF).group).toBe('eligible')

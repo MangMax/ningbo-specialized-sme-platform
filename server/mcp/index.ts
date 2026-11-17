@@ -1,9 +1,11 @@
+import { dispositionSchemas, dispositionToolActions } from '../utils/title-cycle-disposition-protocol'
 import toolkitConfig from '#nuxt-mcp-toolkit/config.mjs'
 import { useEvent } from 'nitropack/runtime'
 import { isSessionEvent } from '../utils/mcp-session-runtime'
 import { officialEvidenceRpcError } from '../utils/official-evidence-read'
 import { runtimeLogPolicyRpcError } from '../utils/logging-mcp'
 import { decisionRpcError102 } from '../utils/decision-lifecycle-102-mcp'
+import { qualificationPreflight102, qualificationCommit102 } from '../utils/decision-lifecycle-102'
 import { parseRpcError105 } from '../utils/parse-maintenance-105-rpc'
 import { admitEnterpriseResponse } from '../utils/enterprise-read-response'
 import { eventCorrectionRpcError } from '../utils/mcp-event-correction'
@@ -54,6 +56,12 @@ export default defineMcpHandler({
   prompts: event => isSessionEvent(event) ? [] : getMcpPrompts({ event, orphansOnly: toolkitConfig.defaultHandlerStrategy === 'orphans' }),
   tools: async configuredEvent => (await getMcpTools()).filter(tool => !isSessionEvent(configuredEvent) || ['list_enterprises', 'get_enterprise_detail'].includes(tool.name ?? '')).map(tool => ({
     ...tool,
+    ...(tool.name && tool.name in dispositionToolActions ? { inputSchema: dispositionSchemas[dispositionToolActions[tool.name as keyof typeof dispositionToolActions]] as unknown as NonNullable<typeof tool.inputSchema> } : {}),
+    // Toolkit 0.24 types expose only raw shapes, but its registration forwards
+    // schemas unchanged to SDK 1.32, which accepts full Zod objects. Preserve
+    // strict root keys/refinements for these two qualification protocols.
+    ...(tool.name === 'preflight_qualification_decision' ? { inputSchema: qualificationPreflight102 as unknown as NonNullable<typeof tool.inputSchema> }
+      : tool.name === 'commit_qualification_decision' ? { inputSchema: qualificationCommit102 as unknown as NonNullable<typeof tool.inputSchema> } : {}),
     handler: async (...args: Parameters<typeof tool.handler>) => {
       const event = isSessionEvent(configuredEvent) ? useEvent() : configuredEvent
       if (isSessionEvent(configuredEvent) && !isSessionEvent(event)) throw new Error('session_context_missing')

@@ -21,6 +21,11 @@ type EventTime = LifecycleEvent
 export const awardTime = (e: EventTime) => e.decidedYear ?? e.year
 export const originTime = (e: EventTime) => e.year ?? (e.eventType === 'award' ? awardTime(e) : null)
 export const factTime = (e: EventTime) => e.eventType === 'award' ? awardTime(e) : e.decidedYear
+/** Dated readers share one event visibility boundary; undated plans retain all facts. */
+export function qualificationEventAppliesAt(event: QualificationEvent, year: number, day?: string): boolean {
+  return !day || year === Infinity ||
+    ((factTime(event) == null || factTime(event)! <= year) && (!event.formalValidity?.publishedOn || event.formalValidity.publishedOn <= day))
+}
 interface CycleFacts {
   awards: QualificationEvent[]
   passed: QualificationEvent[]
@@ -70,7 +75,7 @@ function gapResolvedBy(gap: QualificationEvent, facts: CycleFacts, originYear: n
 }
 
 /** Adjudicate an originating cycle using only applicable, unresolved evidence. */
-function adjudicateCycle(events: QualificationEvent[], originYear: number, batch: number | null, year: number, ambiguous: QualificationEvent[] = [], day?: string, notesOnlyGaps = false): CycleJudgment {
+function adjudicateCycle(events: QualificationEvent[], originYear: number, batch: number | null, year: number, ambiguous: QualificationEvent[] = [], day?: string, notesOnlyGaps = false, annualPeriod = false, retainAward = false): CycleJudgment {
   const facts = cycleFacts(notesOnlyGaps ? [...events,...ambiguous] : events,notesOnlyGaps ? [] : ambiguous,originYear,year,day,notesOnlyGaps)
   // Only the latest actual grant can support a restored qualification. Older
   // grants remain in the adjudication and evidence history, but not filters.
@@ -95,17 +100,19 @@ function adjudicateCycle(events: QualificationEvent[], originYear: number, batch
     // Undated legacy receipts and planning retain their historical rules.
     const dueYear = anchor ? factTime(anchor)! + 3 : null
     const fact = day ? anchor?.formalValidity : undefined
-    const futureReviewGrace = day && anchor && events.some(e => e.eventType === 'review' && e.formalValidity?.continuation === 'until_this_review_results' && e.formalValidity.publishedOn && day < e.formalValidity.publishedOn && facts.awards.some(a => a.id === e.formalValidity!.originAwardEventId))
+    const futureReviewGrace = !annualPeriod && day && anchor && events.some(e => e.eventType === 'review' && e.formalValidity?.continuation === 'until_this_review_results' && e.formalValidity.publishedOn && day < e.formalValidity.publishedOn && facts.awards.some(a => a.id === e.formalValidity!.originAwardEventId))
     result.periodBasis = fact?.interval
       ? `正式文件有效期：${fact.interval.validFrom} 至 ${fact.interval.validThrough}（含首尾）`
-      : futureReviewGrace || fact?.continuation === 'until_next_review_results'
+      : futureReviewGrace || !annualPeriod && fact?.continuation === 'until_next_review_results'
         ? '正式文件延续规则：至下次复核结果公布前有效'
+        : retainAward && anchor ? '小巨人原认定或复核通过资格保留；不按认定年龄自动到期，适用正式期间、同周期失败及已确认处置另行裁定'
         : dueYear != null ? `默认年度规则：最近一次认定或复核通过 ${factTime(anchor!)} 年 + 3 = ${dueYear} 年；自 ${dueYear} 年起到期（仅年份精度）` : '正式资格期间未记录'
     if (futureReviewGrace && !fact?.interval) result.group='eligible'
     else if (day && fact?.interval) {
       if (fact.interval.validFrom <= day && day <= fact.interval.validThrough) result.group='eligible'
       else { result.group='excluded'; result.notes.push('不在正式来源明确有效日期闭区间内') }
-    } else if (day && fact?.continuation === 'until_next_review_results' && (!fact.publishedOn || fact.publishedOn <= day)) result.group='eligible'
+    } else if (!annualPeriod && day && fact?.continuation === 'until_next_review_results' && (!fact.publishedOn || fact.publishedOn <= day)) result.group='eligible'
+    else if (retainAward && anchor) result.group='eligible'
     else if (dueYear != null && (year === Infinity || dueYear > year)) result.group='eligible'
     else { result.group = day ? 'excluded' : 'pending'; result.notes.push(day ? '已到期，未见明确延续结果' : '已到复核年份，未见明确延续结果，待确认') }
   }
@@ -126,18 +133,45 @@ function hasUnresolvedRecovery(current: CycleJudgment[], history: CycleJudgment[
 }
 
 /** #475 effective reads retain established periods when applicability metadata is missing.
- * Legacy callers keep the conservative pending policy by default. */
-export function adjudicateQualificationCycles(formal: QualificationEvent[], year = Infinity, day?: string, notesOnlyGaps = false): { group: CurrentGroup; notes: string[]; originYear: number; cycles: CycleJudgment[] } {
-  const byYear = new Map<number, Map<number | null, QualificationEvent[]>>()
-  const unknown: QualificationEvent[] = []
+ * Legacy callers keep the conservative pending policy by default.
+ * annualPeriod is an opt-in for the unpublished current namespace only:
+ * continuation text remains evidence, but cannot extend annual eligibility.
+ * retainAward opts current Little Giant reads out of the age cutoff only;
+ * formal intervals, failed cycles and dispositions still take precedence. */
+export function adjudicateQualificationCycles(formal: QualificationEvent[], year = Infinity, day?: string, notesOnlyGaps = false, disposedAwards: ReadonlySet<number> = new Set(), cycleScoped = false, evidencedEvents?: ReadonlySet<number>, annualPeriod = false, retainAward = false): { group: CurrentGroup; notes: string[]; originYear: number; cycles: CycleJudgment[] } {
   // Dated current assessments ignore known future facts; undated legacy
   // receipts/planning keep their original input semantics. A linked upcoming
   // publication may still carry an explicit this-result continuation clause.
   if (day && year !== Infinity) formal = formal.filter(e => {
     const validity = e.formalValidity
     if (e.eventType === 'review' && validity?.originAwardEventId && validity.continuation === 'until_this_review_results' && validity.publishedOn && validity.publishedOn > day) return true
-    return (factTime(e) == null || factTime(e)! <= year) && (!validity?.publishedOn || validity.publishedOn <= day)
+    return qualificationEventAppliesAt(e, year, day)
   })
+  // Only applicable grants may distinguish a new cycle from a failed one.
+  // Scoped failures are supplied as verified original award IDs by the caller.
+  // Do not let an unknown-cycle failure leak back through legacy gap grouping.
+  const scopedFailures = cycleScoped ? formal.filter(e => e.eventType === 'review' && e.reviewOutcome === 'failed' &&
+    (!evidencedEvents || evidencedEvents.has(e.id)) && e.decidedYear != null && e.decidedYear <= year && (!day || !e.formalValidity?.publishedOn || e.formalValidity.publishedOn <= day)) : []
+  if (cycleScoped) formal = formal.filter(event => event.eventType !== 'review' || event.reviewOutcome !== 'failed' ||
+    // The result is not yet effective, but its explicit continuation still
+    // supports the linked award until publication. cycleFacts skips its failure.
+    !!(day && event.formalValidity?.originAwardEventId &&
+      event.formalValidity.continuation === 'until_this_review_results' &&
+      event.formalValidity.publishedOn && event.formalValidity.publishedOn > day))
+  // A normal renewal needs no synthetic award row. Only a proven failure of
+  // this original cycle prevents a pass from acting as a new grant. Unknown
+  // coordinates cannot establish that association.
+  if (cycleScoped) formal = formal.filter(event => event.eventType !== 'review' || event.reviewOutcome !== 'passed' ||
+    !scopedFailures.some(failure =>
+      event.formalValidity?.originAwardEventId
+        ? failure.formalValidity?.originAwardEventId === event.formalValidity.originAwardEventId
+        : !failure.formalValidity?.originAwardEventId && event.year != null && event.batchSeq != null &&
+          event.year === failure.year && event.batchSeq === failure.batchSeq &&
+          formal.filter(e => e.eventType === 'award' && e.year === event.year && e.batchSeq === event.batchSeq).length <= 1 &&
+          !formal.some(e => e.eventType === 'award' && e.year === event.year && e.batchSeq === event.batchSeq &&
+            awardTime(e) != null && awardTime(e)! > failure.decidedYear!)))
+  const byYear = new Map<number, Map<number | null, QualificationEvent[]>>()
+  const unknown: QualificationEvent[] = []
   const linked = day ? formal.filter(e => e.eventType === 'review' && e.formalValidity?.originAwardEventId) : []
   for (const event of formal) {
     if (linked.includes(event)) continue
@@ -161,16 +195,22 @@ export function adjudicateQualificationCycles(formal: QualificationEvent[], year
     // or unresolved separate grant keeps its effect instead of vanishing in the
     // latest known grant. Unknown reviews remain applicability gaps.
     const possible = [
-      ...known.map(([batch,events]) => adjudicateCycle([...events,...linked.filter(e => events.some(a => a.id === e.formalValidity!.originAwardEventId))],origin,batch,year,reviews,day,notesOnlyGaps)),
-      ...grants.map(grant => adjudicateCycle([grant,...linked.filter(e => e.formalValidity!.originAwardEventId === grant.id)],origin,null,year,reviews,day,notesOnlyGaps)),
+      ...known.map(([batch,events]) => adjudicateCycle([...events,...linked.filter(e => events.some(a => a.id === e.formalValidity!.originAwardEventId))],origin,batch,year,reviews,day,notesOnlyGaps,annualPeriod,retainAward)),
+      ...grants.map(grant => adjudicateCycle([grant,...linked.filter(e => e.formalValidity!.originAwardEventId === grant.id)],origin,null,year,reviews,day,notesOnlyGaps,annualPeriod,retainAward)),
     ]
-    return possible.length ? possible : [adjudicateCycle(reviews,origin,null,year,[],day,notesOnlyGaps)]
+    return possible.length ? possible : [adjudicateCycle(reviews,origin,null,year,[],day,notesOnlyGaps,annualPeriod,retainAward)]
   })
+  for (const cycle of judgments) if (cycle.awardEventIds.some(id => disposedAwards.has(id))) {
+    cycle.group = 'excluded'
+    cycle.notes.push('本称号原认定周期已有生效的已确认处置；复核通过不构成新认定')
+  }
   // Selection follows adjudication, retains *every* batch of the current year,
   // and never uses the latest passed event to erase another batch or a failure.
   const originYear = Math.max(...judgments.map(c => c.originYear))
-  const latestRecovery = Math.max(...judgments.map(c => c.anchor ? factTime(c.anchor)! : -Infinity))
-  const current = notesOnlyGaps ? judgments.filter(c => c.anchor && factTime(c.anchor) === latestRecovery) : judgments.filter(c => c.originYear === originYear)
+  const supportTime = (c: CycleJudgment) => cycleScoped && c.awardEventIds.some(id => disposedAwards.has(id))
+    ? c.lastAwardYear : c.anchor ? factTime(c.anchor)! : -Infinity
+  const latestRecovery = Math.max(...judgments.map(supportTime))
+  const current = notesOnlyGaps ? judgments.filter(c => c.anchor && supportTime(c) === latestRecovery) : judgments.filter(c => c.originYear === originYear)
   const notes = current.flatMap(c => c.notes.map(note => `${c.originYear}年/批次${c.batch ?? '?'}：${note}`))
   let group: CurrentGroup = current[0]?.group ?? 'pending'
   if (!current.length) notes.push('缺少已确认认定及资格依据；平台状态或候选对应不能单独证明资格')
@@ -190,11 +230,11 @@ export function adjudicateQualificationCycles(formal: QualificationEvent[], year
     const applicable = formal.filter(e => factTime(e) != null && factTime(e)! <= year && (!day || !e.formalValidity?.publishedOn || e.formalValidity.publishedOn <= day))
     const lastFailure = Math.max(...applicable.filter(e => e.eventType === 'review' && e.reviewOutcome === 'failed').map(e => factTime(e)!))
     const lastRecovery = Math.max(...applicable.filter(e => e.eventType === 'award' || e.reviewOutcome === 'passed').map(e => factTime(e)!))
-    if (lastFailure >= lastRecovery && lastFailure !== -Infinity) { group='excluded'; notes.push('正式复核明确不通过，未见较晚通过或新认定恢复') }
+    if (!cycleScoped && lastFailure >= lastRecovery && lastFailure !== -Infinity) { group='excluded'; notes.push('正式复核明确不通过，未见较晚通过或新认定恢复') }
     else {
       // A dated official interval is independently usable when the recorded
       // business year is absent. Never invent origin coordinates to admit it.
-      const undatedPeriods = unknown.filter(e => (e.eventType === 'award' || e.reviewOutcome === 'passed') && e.formalValidity?.interval)
+      const undatedPeriods = unknown.filter(e => !disposedAwards.has(e.id) && (e.eventType === 'award' || e.reviewOutcome === 'passed') && e.formalValidity?.interval)
       const intervalEligible = undatedPeriods.some(e => e.formalValidity!.interval!.validFrom <= day! && day! <= e.formalValidity!.interval!.validThrough)
       group = intervalEligible || current.some(c => c.group === 'eligible') ? 'eligible' : 'excluded'
       for (const e of undatedPeriods) notes.push(`event:${e.id} 认定年份缺失，仅备注；正式文件有效期：${e.formalValidity!.interval!.validFrom} 至 ${e.formalValidity!.interval!.validThrough}（含首尾）`)

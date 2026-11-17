@@ -1,9 +1,9 @@
-import { readEvidenceImpact113 } from '../../server/utils/evidence-impact-113'
+import { readEvidenceImpact113, readEvidenceImpacts113 } from '../../server/utils/evidence-impact-113'
 /** #108 additive read projection. Business decisions stay owned by #102. */
 import { inArray, sql } from 'drizzle-orm'
 import { z } from 'zod'
 import { enterprise } from '../../db/schema'
-import { currentDecision102, currentDecisionState102, type DecisionDb } from '../../server/utils/decision-lifecycle-102'
+import { currentDecision102, currentDecisionState102, currentDecisions102, currentDecisionStates102, type DecisionDb } from '../../server/utils/decision-lifecycle-102'
 import { normalizeUscc } from '../domain'
 import { identityFunctions } from './enterprise-read-snapshot'
 import { identityKeys, type IdentityKeyVariants } from './current-identity-keys'
@@ -178,9 +178,9 @@ function assessmentStatuses(scope: AssessmentScope, queryCoverage: ReturnType<ty
   const validity = !current ? 'not_applicable' : pending ? impact.state!.classification : changed ? 'evidence_changed' : reviewed != null ? 'valid' : invalid ? 'premise_invalid' : 'unknown'
   return { validity, invalid, executed, assessment: current ? 'decided' : currentDecision.versionId ? 'withdrawn' : queryCoverage.status === 'complete' ? 'queried_unjudged' : queryCoverage.status === 'not_queried' ? 'not_queried' : 'unknown' }
 }
-function assessmentOf(db: DecisionDb, scope: AssessmentScope, queryCoverage: ReturnType<typeof readQueryCoverage>, currentDecision = currentDecision102(db, scope)) {
+function assessmentOf(db: DecisionDb, scope: AssessmentScope, queryCoverage: ReturnType<typeof readQueryCoverage>, currentDecision = currentDecision102(db, scope), ownedImpact?: ReturnType<typeof readEvidenceImpact113>) {
   const current = currentDecision.current
-  const impact = readEvidenceImpact113(db, scope, current?.id ?? null)
+  const impact = ownedImpact ?? readEvidenceImpact113(db, scope, current?.id ?? null)
   const { validity, invalid, executed, assessment } = assessmentStatuses(scope, queryCoverage, currentDecision, impact)
   const reasons = validity === 'premise_invalid' ? ['query_executed'] : validity === 'evidence_changed' ? ['committed_evidence_changed'] : validity === 'unknown' ? ['no_evidence_baseline'] : []
   return {
@@ -197,20 +197,30 @@ export type QueryAssessmentSummary = {
   explanationValidity: Pick<QueryAssessment['explanationValidity'], 'status'>
 }
 
-export function readQueryAssessments(db: DecisionDb, scopes: AssessmentScope[]): QueryAssessment[] {
-  return readCoveragesForScopes(db, scopes).map((queryCoverage, index) => {
+export function readQueryAssessments(db: DecisionDb, scopes: AssessmentScope[], ownedCoverage?: ReturnType<typeof readQueryCoverageBatch>): QueryAssessment[] {
+  scopes = scopes.map(({ enterpriseId, titleCode, direction }) => ({ enterpriseId, titleCode, direction }))
+  const coverages = ownedCoverage ? scopes.map(scope => {
+    const coverage = ownedCoverage.get(scope.enterpriseId)?.get(scope.titleCode)
+    if (!coverage) throw new Error('Query assessment coverage scope missing')
+    return coverage
+  }) : readCoveragesForScopes(db, scopes)
+  const decisions = currentDecisions102(db, scopes)
+  const impacts = readEvidenceImpacts113(db, scopes.map((scope, index) => ({ scope, decisionId: decisions[index]!.current?.id ?? null, latestDecisionId: decisions[index]!.versionId })))
+  return coverages.map((queryCoverage, index) => {
     const { enterpriseId, titleCode, direction } = scopes[index]!
-    return assessmentOf(db, { enterpriseId, titleCode, direction }, queryCoverage)
+    return assessmentOf(db, { enterpriseId, titleCode, direction }, queryCoverage, decisions[index]!, impacts[index]!)
   })
 }
 
 /** Scalar-only list projection; no full decision is hydrated and then discarded. */
 export function readQueryAssessmentSummaries(db: DecisionDb, scopes: AssessmentScope[]): QueryAssessmentSummary[] {
+  const decisions = currentDecisionStates102(db, scopes)
+  const impacts = readEvidenceImpacts113(db, scopes.map((scope, index) => ({ scope, decisionId: decisions[index]!.current?.id ?? null, latestDecisionId: decisions[index]!.versionId })))
   return readCoveragesForScopes(db, scopes).map((queryCoverage, index) => {
     const { enterpriseId, titleCode, direction } = scopes[index]!
     const scope = { enterpriseId, titleCode, direction }
-    const decision = currentDecisionState102(db, scope)
-    const impact = readEvidenceImpact113(db, scope, decision.current?.id ?? null)
+    const decision = decisions[index]!
+    const impact = impacts[index]!
     const status = assessmentStatuses(scope, queryCoverage, decision, impact)
     return { queryCoverage: { status: queryCoverage.status }, assessment: status.assessment, explanationValidity: { status: status.validity } }
   })

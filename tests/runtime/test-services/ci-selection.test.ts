@@ -10,6 +10,13 @@ it('selects the owning business for a test without running unrelated groups', ()
   expect(result.upgrade).toBe(false)
 })
 
+it('keeps platform qualification facts in the existing qualification business group', () => {
+  const result = selectBusinessTests(['tests/roster/platform-qualification/facts.test.ts'])
+  expect(result.full).toBe(false)
+  expect(result.native.map(row => row.business)).toEqual(['名录 · 资格与认定读取'])
+  expect(result.app.map(row => row.business)).toEqual(['名录 · 资格与认定读取'])
+})
+
 it('keeps shared qualification consumers and unknown or deleted paths in full coverage', () => {
   for (const path of ['lib/roster/qualification-cycles.ts', 'db/schema.ts', 'tests/support/new-helper.ts', 'server/api/statistics/deleted.get.ts', 'new-module.ts', 'pnpm-lock.yaml']) {
     const result = selectBusinessTests([path])

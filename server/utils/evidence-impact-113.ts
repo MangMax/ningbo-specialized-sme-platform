@@ -1,5 +1,5 @@
 /** Durable, explicitly drained evidence work. Call capture functions inside the fact transaction. */
-import { and,asc,desc,eq,gt,inArray,sql } from 'drizzle-orm'
+import { and,asc,desc,eq,gt,inArray,or,sql } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import { createHash } from 'node:crypto'
 import * as s from '../../db/schema'
@@ -114,10 +114,31 @@ export function listEvidenceImpacts113(db: EvidenceExecutor113, input: { enterpr
   const t = s.explanationImpact113
   return db.select().from(t).where(and(input.enterpriseId == null ? undefined : eq(t.enterpriseId, input.enterpriseId), gt(t.id, input.afterId ?? 0))).orderBy(asc(t.id)).limit(bound(input.limit)).all()
 }
+function evidenceKeys113(scope: EvidenceScope113) {
+  return [scope.enterpriseId, null].flatMap(e => [scope.titleCode, null].flatMap(t => [scope.direction, null].map(d => scopeKey113(e, t, d))))
+}
+function evidenceToken113(scope: EvidenceScope113, decisionId: number | null, versions: Array<typeof s.evidenceScopeVersion113.$inferSelect>) {
+  return { ...scope, decisionId, latestRevisionId: Math.max(0, ...versions.map(v => v.latestRevisionId)), projectionReady: versions.every(v => v.pendingCount === 0) }
+}
+/** Trusted lifecycle heads from the same transaction; latest includes withdrawal. */
+export function readEvidenceImpacts113(db: EvidenceExecutor113, inputs: readonly { scope: EvidenceScope113; decisionId: number | null; latestDecisionId: number | null }[]) {
+  if (!inputs.length) return []
+  const keys = [...new Set(inputs.flatMap(input => evidenceKeys113(input.scope)))]
+  const versions = new Map(db.select().from(s.evidenceScopeVersion113).where(inArray(s.evidenceScopeVersion113.scopeKey, keys)).all().map(row => [row.scopeKey, row]))
+  const t = s.explanationImpact113
+  const active = [...new Map(inputs.filter(input => input.decisionId != null).map(input => [scopeKey113(input.scope.enterpriseId, input.scope.titleCode, input.scope.direction), input])).values()]
+  const rows = active.length ? db.select().from(t).where(or(...active.map(({ scope, decisionId }) => and(eq(t.enterpriseId, scope.enterpriseId), eq(t.titleCode, scope.titleCode), eq(t.direction, scope.direction), eq(t.decisionId, decisionId!))))).all() : []
+  const states = new Map(rows.map(row => [scopeKey113(row.enterpriseId, row.titleCode, row.direction), row]))
+  return inputs.map(({ scope, decisionId, latestDecisionId }) => {
+    const state = decisionId == null ? null : states.get(scopeKey113(scope.enterpriseId, scope.titleCode, scope.direction)) ?? null
+    const selected = evidenceKeys113(scope).flatMap(key => versions.has(key) ? [versions.get(key)!] : [])
+    return { state, token: evidenceToken113(scope, latestDecisionId, selected), hasReviewedBaseline: state?.reviewedRevisionId != null }
+  })
+}
 export function readEvidenceToken113(db: EvidenceExecutor113, scope: EvidenceScope113) {
-  const keys = [scope.enterpriseId, null].flatMap(e => [scope.titleCode, null].flatMap(t => [scope.direction, null].map(d => scopeKey113(e, t, d))))
+  const keys = evidenceKeys113(scope)
   const versions = db.select().from(s.evidenceScopeVersion113).where(inArray(s.evidenceScopeVersion113.scopeKey, keys)).all()
-  return { ...scope, decisionId: latestDecisionHead102(db, scope)?.id ?? null, latestRevisionId: Math.max(0, ...versions.map(v => v.latestRevisionId)), projectionReady: versions.every(v => v.pendingCount === 0) }
+  return evidenceToken113(scope, latestDecisionHead102(db, scope)?.id ?? null, versions)
 }
 
 /** Original archive projections, never raw_response, collection_evidence.rows or whole raw_fields. */

@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { qualificationExportFixture } from '../current-export/fixtures/qualification-export'
 const f=qualificationExportFixture()
 let digest=''
+const priorNodeOptions=process.env.NODE_OPTIONS
 beforeAll(async()=>{
   const clock=join(f.dir,'clock.mjs')
   writeFileSync(clock,`const RealDate=Date; globalThis.Date=class extends RealDate {constructor(...args){super(...(args.length?args:['2026-06-01T00:00:00Z']))} static now(){return 1780272000000}}`)
@@ -15,13 +16,13 @@ beforeAll(async()=>{
   digest=f.businessDigest()
   await f.start()
 },90000)
-afterAll(()=>f.close())
-it.each([['specialized_sme','specialized-sme',['specialized','both']],['innovative_sme','innovative-sme',['innovative','both']]] as const)('public HTTP MCP and downloaded workbook agree for %s',async(title,slug,names)=>{
+afterAll(async()=>{ if(priorNodeOptions == null) delete process.env.NODE_OPTIONS; else process.env.NODE_OPTIONS=priorNodeOptions; await f.close() })
+it.each([['specialized_sme','specialized-sme',['none','specialized','innovative','both','platform']],['innovative_sme','innovative-sme',['none','specialized','innovative','both','platform']]] as const)('public HTTP MCP and downloaded workbook agree for %s',async(title,slug,names)=>{
  const response=await fetch(f.url(`/api/roster/current-enterprises?titleCode=${title}`))
  expect(response.status).toBe(200)
  const body=await response.json()
  expect(body.snapshotStartedAt).toBe('2026-06-01T00:00:00.000Z')
- expect(body.total).toBe(2)
+ expect(body.total).toBe(5)
  expect(body.rows.map((r:{name:string})=>r.name)).toEqual(names)
  for(const row of body.rows) {
    expect(row.notes.join(' ')).toContain('按有效小巨人资格计入')
@@ -30,8 +31,8 @@ it.each([['specialized_sme','specialized-sme',['specialized','both']],['innovati
    expect(detail.qualificationAssessment.titles.find((t:{titleCode:string})=>t.titleCode===title).effectiveQualification.status).toBe('effective')
  }
  const page=await fetch(f.url(`/api/roster/current-enterprises?titleCode=${title}&pageSize=1&page=2`)).then(r=>r.json())
- expect(page.total).toBe(2)
- expect(page.rows.map((r:{name:string})=>r.name)).toEqual(['both'])
+ expect(page.total).toBe(5)
+ expect(page.rows.map((r:{name:string})=>r.name)).toEqual(['specialized'])
  const m=await fetch(f.url('/mcp'),{method:'POST',headers:{'content-type':'application/json',accept:'application/json, text/event-stream','mcp-protocol-version':'2025-06-18'},body:JSON.stringify({jsonrpc:'2.0',id:1,method:'tools/call',params:{name:'list_current_qualified_enterprises',arguments:{titleCode:title}}})})
  const raw=await m.text()
  const wire=JSON.parse(raw.startsWith('event:')?raw.split('\n').find(l=>l.startsWith('data: '))!.slice(6):raw)
@@ -55,8 +56,8 @@ it('retains complete inherited evidence and versions across page sizes and later
   }
   const small = await query(1)
   const large = await query(200)
-  expect(large.total).toBe(2)
-  expect(large.rows.map((row: { name: string }) => row.name)).toEqual(['specialized', 'both'])
+  expect(large.total).toBe(5)
+  expect(large.rows.map((row: { name: string }) => row.name)).toEqual(['none','specialized','innovative','both','platform'])
   expect(small.rows[0]).toEqual(large.rows[0])
   for (const row of large.rows) {
     const detail = await fetch(f.url(`/api/roster/enterprises/${row.enterpriseId}`)).then(response => response.json())
@@ -65,7 +66,7 @@ it('retains complete inherited evidence and versions across page sizes and later
     expect(titles).toHaveLength(3)
     const lower = titles.find((title: { titleCode: string }) => title.titleCode === 'specialized_sme')
     const giant = titles.find((title: { titleCode: string }) => title.titleCode === 'little_giant')
-    expect(lower.evidence).toEqual([expect.objectContaining({ eventType: 'award', year: 2018 })])
+    expect(lower.evidence).toEqual(row.name === 'none' || row.name === 'innovative' ? [] : row.name === 'platform' ? [expect.objectContaining({ eventType: 'maintain', year: 2018 })] : [expect.objectContaining({ eventType: 'award', year: 2018 })])
     expect(giant.evidence).toEqual([expect.objectContaining({ eventType: 'award', year: 2025 })])
     expect(lower.effectiveQualification.status).toBe('effective')
     expect(lower.references).toEqual(expect.arrayContaining(giant.references.map((reference: string) => '小巨人依据：' + reference)))
@@ -73,3 +74,26 @@ it('retains complete inherited evidence and versions across page sizes and later
   expect(await query(200)).toEqual(large)
   expect(f.businessDigest()).toBe(digest)
 }, 90000)
+
+it('specialized-only qualification enters innovative HTTP filters statistics and XLSX with its actual period and no invented history', async () => {
+ const c=f.candidate('specialized-only',[{eventType:'award',year:2025,batchSeq:1}],'specialized_sme')
+ const before=f.businessDigest()
+ const list=await fetch(f.url('/api/roster/current-enterprises?titleCode=innovative_sme&q=specialized-only&district=鄞州区')).then(r=>r.json())
+ expect(list.total).toBe(1)
+ expect(list.rows.map((r:any)=>r.uscc)).toEqual(['SYNTHETIC-118-specialized-only'])
+ const detail=await fetch(f.url(`/api/roster/enterprises/${c.enterprise.id}`)).then(r=>r.json())
+ const lower=detail.qualificationAssessment.titles.find((t:any)=>t.titleCode==='innovative_sme')
+ expect(lower.evidence).toEqual([]);expect(lower.cycles).toEqual([])
+ expect(lower.effectiveQualification.localRuleBasis.join(' ')).toContain('实际支撑称号：专精特新中小企业')
+ expect(lower.effectiveQualification.presentationBasis.join(' ')).toContain('2028')
+ const stats=await fetch(f.url('/api/statistics/districts?title=innovative_sme&district=鄞州区')).then(r=>r.json())
+ expect(stats.total).toBe(6)
+ const submitted=await fetch(f.url('/api/roster/exports/current/innovative-sme'),{method:'POST',headers:f.headers,body:JSON.stringify({clientRequestId:'specialized-only'})})
+ expect(submitted.status).toBe(202)
+ const job=await f.terminal((await submitted.json()).jobId);expect(job.state,JSON.stringify(job)).toBe('done')
+ const {wb}=await f.download(job), sheet=wb.getWorksheet('有效企业')!
+ expect(Array.from({length:sheet.rowCount-1},(_,i)=>sheet.getRow(i+2).getCell(3).value)).toEqual(['SYNTHETIC-118-none','SYNTHETIC-118-specialized','SYNTHETIC-118-innovative','SYNTHETIC-118-both','SYNTHETIC-118-platform','SYNTHETIC-118-specialized-only'])
+ expect(JSON.stringify(sheet.getRow(7).values)).toContain('2028')
+ expect(JSON.stringify(sheet.getRow(7).values)).toContain('专精特新中小企业')
+ expect(f.businessDigest()).toBe(before)
+},90000)

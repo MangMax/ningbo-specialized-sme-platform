@@ -51,16 +51,16 @@ it('称号隔离同名不同主体及多称号独立重复纳入', async () => {
   const reverse = f.candidate('本称号失败不借他称号恢复',[{eventType:'award',year:y-4,batchSeq:1},{eventType:'review',year:y-4,batchSeq:1,decidedYear:y-1,reviewOutcome:'failed'}])
   f.addRecord(reverse.enterprise.id,reverse.enterprise.name,undefined,'innovative_sme')
   const {wb,job} = await f.workbook('118-isolation')
-  expect(rows(wb,'有效企业').map(row => businessIdentity(row))).toEqual([multi,peerA,peerB,crossFailure].map(item => expectedBusinessIdentity(f.db,item.enterprise.id)))
+  expect(rows(wb,'有效企业').map(row => businessIdentity(row))).toEqual([multi,peerA,peerB,onlyLittle,crossFailure].map(item => expectedBusinessIdentity(f.db,item.enterprise.id)))
   expect(rows(wb,'已到期').map(row => businessIdentity(row))).toEqual([expectedBusinessIdentity(f.db,reverse.enterprise.id)])
   expect(rows(wb,'有效企业').filter(row => row[2] === '同名企业').map(row => [row[2],row[3]])).toEqual([
     ['同名企业','SYNTHETIC-118-同名主体甲'],['同名企业','SYNTHETIC-118-同名主体乙'],
   ])
-  expectCounts(wb,job,{eligible:4,pending:0,excluded:1})
+  expectCounts(wb,job,{eligible:5,pending:0,excluded:1})
   // Other titles use the very same public kind. Their independent sets must also retain multi.
   for (const [title,label,eligible,excluded] of [
     ['little_giant','专精特新“小巨人”',[multi,onlyLittle],[crossFailure]],
-    ['innovative_sme','创新型中小企业',[multi,onlyInnovative,reverse],[]],
+    ['innovative_sme','创新型中小企业',[multi,peerA,peerB,onlyLittle,onlyInnovative,crossFailure,reverse],[]],
   ] as const) {
     const response = await fetch(f.url('/api/jobs'),{method:'POST',headers:f.headers,body:JSON.stringify({kind:'current-roster-export',params:{titleCode:title,clientRequestId:'118-multi-' + title}})})
     expect(response.status).toBe(202)
@@ -115,7 +115,7 @@ it('专用入口鉴权去重重生成参数拒绝及OpenAPI共用kind', async ()
 })
 
 it('空集六表计数及产物过期缺失与成功历史分别可查', async () => {
-  f.candidate('只有其他称号',undefined,'little_giant')
+  // No valid own or upper candidate: the original giant-only seed is now effective.
   const empty = await f.workbook('118-empty')
   expectCounts(empty.wb,empty.job,{eligible:0,pending:0,excluded:0})
   for (const sheet of ['有效企业','已到期','已注销（吊销）','已迁出','未认定']) expect(empty.wb.getWorksheet(sheet)!.getRow(1).values).toEqual([undefined,'序号','企业名称','统一社会信用代码','区县','称号','首次认定年份','认定及复核情况','公布名称','已确认曾用名','公布对应情况','情况说明','来源及页码','有效状态','有效期及排除依据','资料缺口与来源备注'])

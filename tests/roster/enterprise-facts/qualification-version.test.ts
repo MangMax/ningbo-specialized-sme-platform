@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { afterAll, expect, it } from 'vitest'
 import { initializeDb, schema } from '../../../db/client'
 import { createHash } from 'node:crypto'
-import { createCurrentQualificationAssessmentReader, PREVIOUS_QUALIFICATION_ASSESSMENT_VERSION, QUALIFICATION_ASSESSMENT_VERSION } from '../../../lib/roster/current-qualification'
+import { createCurrentQualificationAssessmentReader, PREVIOUS_QUALIFICATION_ASSESSMENT_VERSION } from '../../../lib/roster/current-qualification'
 
 const dir = mkdtempSync(join(tmpdir(), 'facts-qualification-version-307-'))
 const db = initializeDb({ create: true,  dbPath: join(dir, 'test.sqlite') })
@@ -57,10 +57,13 @@ it('default formal qualification versions exclude difference decisions and pinne
   const current = () => reader.read(1, Date.parse('2026-11-04T15:17:33.693Z')).snapshot
   const before = current(), legacy = read()
   // No formal event, correspondence, or subject fact is seeded. The default
-  // decision-version input is three empty lists, independently serialized here.
-  const emptyDecisions = createHash('sha256').update('[[],[],[]]').digest('hex')
-  expect(before.assessmentVersion).toBe(QUALIFICATION_ASSESSMENT_VERSION)
-  expect(before.titles.map(title => [title.group, title.versions.decisions])).toEqual(Array.from({ length: 3 }, () => ['excluded', emptyDecisions]))
+  // v6 includes disposition inputs and downward giant/specialized dependencies.
+  const hash = (input: unknown) => createHash('sha256').update(JSON.stringify(input)).digest('hex')
+  const giant = hash([[], [], [], []])
+  const specialized = hash([giant, giant])
+  const innovative = hash([hash([giant, giant]), specialized])
+  expect(before.assessmentVersion).toBe('enterprise-qualification-807-v7')
+  expect(before.titles.map(title => [title.group, title.versions.decisions])).toEqual([giant, specialized, innovative].map(decisions => ['excluded', decisions]))
   db.$client.exec('BEGIN')
   try {
     db.$client.prepare("update difference_reason set status='confirmed_reason',reason_code='moved_out',verification_status='confirmed',fact_references=? where id=1")
@@ -69,4 +72,18 @@ it('default formal qualification versions exclude difference decisions and pinne
     expect(read().titles.map(title => title.versions.decisions)).not.toEqual(legacy.titles.map(title => title.versions.decisions))
   } finally { db.$client.exec('ROLLBACK') }
   expect(current()).toEqual(before)
+})
+
+it('isolates empty legacy serializers from the current namespace with independent bytes', () => {
+ db.insert(schema.enterprise).values({id:2,name:'空依赖版本矩阵',nameNorm:'空依赖版本矩阵',city:'宁波市'}).run()
+ const digest=(bytes:string)=>createHash('sha256').update(bytes).digest('hex')
+ for(const assessmentVersion of ['enterprise-qualification-407-v1','enterprise-qualification-407-v2','enterprise-qualification-478-v3','enterprise-qualification-687-v4'] as const){
+  const snapshot=reader.read(2,Date.parse('2026-11-04T15:17:33.693Z'),{assessmentVersion}).snapshot
+  expect(snapshot.titles[0]!.versions.sources).toBe(digest('[[],[],[]]'))
+  expect(snapshot.titles[0]!.versions.decisions).toBe(digest('[[],[],[]]'))
+ }
+ const current=reader.read(2,Date.parse('2026-11-04T15:17:33.693Z')).snapshot
+ expect(current).toMatchObject({assessmentVersion:'enterprise-qualification-807-v7',ruleVersion:'current-roster-116-v14'})
+ expect(current.titles[0]!.versions.sources).toBe(digest('[[],[],[],[]]'))
+ expect(current.titles[0]!.versions.decisions).toBe(digest('[[],[],[],[]]'))
 })

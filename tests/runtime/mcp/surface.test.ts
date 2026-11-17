@@ -49,6 +49,8 @@ describe('mcp-auth 鉴权判据', () => {
       'set_runtime_log_policy',
       'clear_runtime_logs',
       'save_difference_decision',
+      'preflight_qualification_decision',
+      'commit_qualification_decision',
       'difference_snapshot',
       'refresh_enterprise_differences',
       'process_evidence_impacts',
@@ -87,6 +89,8 @@ describe('mcp-auth 鉴权判据', () => {
       'list_roster_import_items',
       'get_roster_import_request',
       'patch_enterprise_profile',
+      'preflight_title_cycle_disposition',
+      'commit_title_cycle_disposition',
       'preflight_enterprise_fact',
       'commit_enterprise_fact',
 

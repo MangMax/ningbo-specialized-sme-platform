@@ -217,6 +217,7 @@ describe('GET /api/roster/enterprises/:id(契约 §7.2)', () => {
     const out = (await handlerDetail({})) as Record<string, unknown>
     expect(Object.keys(out).sort()).toEqual([
       'aliases',
+      'businessTimeline',
       'differences',
       'enterprise',
       'events',
@@ -228,6 +229,7 @@ describe('GET /api/roster/enterprises/:id(契约 §7.2)', () => {
       'records',
       'titleAssessments',
     ])
+    expect((out.businessTimeline as { asOf: string }).asOf).toBe((out.qualificationAssessment as { asOf: string }).asOf)
     expect((out.enterprise as { enterpriseId: number }).enterpriseId).toBe(enterpriseId)
     expect((out.aliases as unknown[]).length).toBe(1)
     expect((out.records as unknown[]).length).toBe(2)
