@@ -137,7 +137,7 @@ const emptyDescription = computed(() => view.value === 'records'
           </SelectContent>
         </Select>
         <Button v-if="hasFilters" variant="ghost" size="sm" @click="clearFilters">清除筛选</Button>
-        <span class="text-muted-foreground text-[13px] tabular-nums" aria-live="polite">共 {{ total.toLocaleString('zh-CN') }} {{ view === 'records' ? '条记录' : '条观察' }}</span>
+        <span class="text-muted-foreground text-table tabular-nums" aria-live="polite">共 {{ total.toLocaleString('zh-CN') }} {{ view === 'records' ? '条记录' : '条观察' }}</span>
       </div>
     </div>
 
