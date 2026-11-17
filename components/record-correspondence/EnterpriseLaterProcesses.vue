@@ -49,13 +49,13 @@ function setPageSize(value: number) { pageSize.value = value; page.value = 1 }
 
 <template>
   <Card class="gap-0 py-0" data-testid="enterprise-later-processes">
-    <CardHeader class="border-b px-5 py-4"><h2 class="text-sm font-medium">独立后续流程</h2><p class="text-muted-foreground text-[13px]">后续申请、更新与复核按具体原行展示，不覆盖既有正式事件。</p></CardHeader>
+    <CardHeader class="border-b px-5 py-4"><h2 class="text-sm font-medium">独立后续流程</h2><p class="text-muted-foreground text-table">后续申请、更新与复核按具体原行展示，不覆盖既有正式事件。</p></CardHeader>
     <CardContent class="min-w-0 p-5">
       <TableLoadingStatus kind="comparison" :loading="loading" label="正在读取后续流程…" />
       <TableFailureState v-if="error" title="后续流程读取失败" :compact="!!displayed" :pending="loading" :description="displayed ? '本次读取失败，保留上次成功的流程列表。' : '请重试读取后续流程。'" @retry="load" />
-      <p v-if="displayed && (displayed.page !== page || displayed.pageSize !== pageSize)" class="text-muted-foreground mb-2 text-[13px]">仍显示第 {{ displayed.page }} 页的已读取结果。</p>
+      <p v-if="displayed && (displayed.page !== page || displayed.pageSize !== pageSize)" class="text-muted-foreground mb-2 text-table">仍显示第 {{ displayed.page }} 页的已读取结果。</p>
       <ul v-if="displayed?.rows.length" class="flex min-w-0 flex-col gap-2">
-        <li v-for="edge in displayed.rows" :key="edge.id" class="min-w-0 border-t py-2 text-[13px]" :data-correspondence-id="edge.id">
+        <li v-for="edge in displayed.rows" :key="edge.id" class="min-w-0 border-t py-2 text-table" :data-correspondence-id="edge.id">
           <div class="flex flex-wrap items-center gap-2">
             <span>{{ CORRESPONDENCE_ROLES[edge.role] ?? '独立后续流程' }}</span>
             <Badge :variant="edge.status === 'confirmed' && !edge.requiresRevalidation ? 'secondary' : 'outline'">{{ correspondenceStatusText(edge) }}</Badge>
@@ -69,7 +69,7 @@ function setPageSize(value: number) { pageSize.value = value; page.value = 1 }
           <p v-if="edge.requiresRevalidation" class="text-warning mt-1">出处变更后需重新核验；当前不按已确认出处计。</p>
         </li>
       </ul>
-      <p v-else-if="!loading && !error" class="text-muted-foreground text-[13px]">尚无已登记的后续流程。此处不推断平台没有原行。</p>
+      <p v-else-if="!loading && !error" class="text-muted-foreground text-table">尚无已登记的后续流程。此处不推断平台没有原行。</p>
       <TablePagination v-if="displayed" class="mt-4" :page="displayed.page" :page-size="displayed.pageSize" :total="displayed.total" unit="条流程" :loading="loading || error" @update:page="setPage" @update:page-size="setPageSize" />
     </CardContent>
   </Card>

@@ -145,7 +145,7 @@ function differenceReason(row: EnterpriseListRow): string {
           <TableCell class="max-w-0 break-words [overflow-wrap:anywhere]">
             <Button
               variant="link"
-              class="block h-auto max-w-full rounded-sm p-0 whitespace-normal break-words text-left text-[13px] leading-4 font-medium text-foreground hover:underline sm:truncate"
+              class="block h-auto max-w-full rounded-sm p-0 whitespace-normal break-words text-left text-table leading-4 font-medium text-foreground hover:underline sm:truncate"
               data-testid="enterprise-name-trigger"
               :title="row.name"
               @click.stop="selectRow(row.enterpriseId, $event.currentTarget)"
@@ -155,7 +155,7 @@ function differenceReason(row: EnterpriseListRow): string {
             <EnterpriseAliasSummary :names="visibleAliasesByEnterpriseId.get(row.enterpriseId) ?? []" />
           </TableCell>
 
-          <TableCell class="text-[13px] whitespace-normal break-words leading-5 [overflow-wrap:anywhere] sm:whitespace-nowrap" data-testid="title-recognition-cell">
+          <TableCell class="text-table whitespace-normal break-words leading-5 [overflow-wrap:anywhere] sm:whitespace-nowrap" data-testid="title-recognition-cell">
             <EnterpriseTitleSummary :titles="row.titles" :first-recognition="row.firstRecognition" :awards="row.awards" />
           </TableCell>
 
@@ -163,9 +163,9 @@ function differenceReason(row: EnterpriseListRow): string {
             {{ row.uscc ?? '无统一社会信用代码' }}
           </TableCell>
 
-          <TableCell class="hidden text-[13px] lg:table-cell">{{ row.district ?? '属地未知' }}</TableCell>
+          <TableCell class="hidden text-table lg:table-cell">{{ row.district ?? '属地未知' }}</TableCell>
 
-          <TableCell class="text-[13px] whitespace-normal break-words leading-4 [overflow-wrap:anywhere] sm:whitespace-nowrap" data-testid="enterprise-difference-cell">
+          <TableCell class="text-table whitespace-normal break-words leading-4 [overflow-wrap:anywhere] sm:whitespace-nowrap" data-testid="enterprise-difference-cell">
             <span :class="row.difference.count ? '' : 'text-muted-foreground'">
               {{ differenceStatusText(row) }}
             </span>

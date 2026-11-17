@@ -158,35 +158,35 @@ watch(selectionKey, () => { void hydrateSelectedLabels() }, { immediate: true, f
 
 <template>
   <section class="flex min-w-0 flex-col gap-2" data-testid="record-comparison-source-picker" :aria-label="fixedKind ? `选择${groups.find(group => group.kind === activeKind)?.label ?? '来源'}` : '选择记录级对比来源'">
-    <p v-if="!fixedKind" class="text-muted-foreground text-[13px]">逐项选择正式文件、平台查询和导出版本。选择只限定本次分析范围，不表示文件覆盖完整或两个来源版本相同。</p>
+    <p v-if="!fixedKind" class="text-muted-foreground text-table">逐项选择正式文件、平台查询和导出版本。选择只限定本次分析范围，不表示文件覆盖完整或两个来源版本相同。</p>
     <Tabs v-if="!fixedKind" :model-value="activeKind" @update:model-value="activeKind = $event as ComparisonSourceKind">
       <TabsList class="h-auto w-full flex-wrap justify-start gap-1" aria-label="来源类别"><TabsTrigger v-for="group in groups" :key="group.kind" :value="group.kind">{{ group.label }} · {{ selection[sourceSelectionKey(group.kind)].length }}</TabsTrigger></TabsList>
     </Tabs>
     <TableLoadingStatus kind="comparison" :loading="loading" label="正在读取可选来源…" />
     <TableFailureState v-if="error" title="来源目录读取失败" :compact="!!displayed" :pending="loading" :description="displayed ? '仍显示上次成功的目录页，请重试当前目标。' : '请重试读取来源目录。'" @retry="load" />
-    <p v-if="displayed && (displayedKind !== activeKind || displayed.page !== page)" class="text-muted-foreground text-[13px]">目标目录尚未加载，下面保留上次成功的来源页。</p>
+    <p v-if="displayed && (displayedKind !== activeKind || displayed.page !== page)" class="text-muted-foreground text-table">目标目录尚未加载，下面保留上次成功的来源页。</p>
     <div v-if="shownRows.length" class="min-w-0 rounded-sm border" data-testid="source-catalog">
       <ul class="flex min-w-0 flex-col divide-y">
         <li v-for="source in shownRows" :key="keyOf(source)" class="flex min-w-0 items-start gap-3 p-2.5" :data-source-kind="source.kind" :data-source-id="source.id">
           <Checkbox :id="`source-${source.kind}-${source.id}`" :model-value="selected(source)" :disabled="!source.selectable" class="mt-0.5" :aria-label="`选择${sourceTitle(source)}`" @update:model-value="toggle(source, $event === true)" />
           <div class="min-w-0 flex-1">
             <label :for="`source-${source.kind}-${source.id}`" class="min-w-0 cursor-pointer break-words [overflow-wrap:anywhere]">
-              <span class="block text-[13px] font-medium">{{ sourceTitle(source) }}</span>
-              <span class="text-muted-foreground block text-[13px]" :title="sourceNote(source)">{{ observedAt(source) }}<span v-if="source.kind === 'query' && source.completeness === 'partial'"> · 部分采集</span><span v-else-if="source.kind === 'official_document' && source.subtitle"> · {{ source.subtitle }}</span></span>
+              <span class="block text-table font-medium">{{ sourceTitle(source) }}</span>
+              <span class="text-muted-foreground block text-table" :title="sourceNote(source)">{{ observedAt(source) }}<span v-if="source.kind === 'query' && source.completeness === 'partial'"> · 部分采集</span><span v-else-if="source.kind === 'official_document' && source.subtitle"> · {{ source.subtitle }}</span></span>
               <template v-if="source.kind === 'query'">
-                <span v-if="sourceEnterpriseLine(source)" class="block text-[13px]" data-testid="source-enterprise-identity">{{ sourceEnterpriseLine(source) }}</span>
-                <span v-if="sourceUnconfirmedLine(source)" class="text-muted-foreground block text-[13px]" data-testid="source-unconfirmed-name">{{ sourceUnconfirmedLine(source) }}</span>
-                <span v-if="sourceRawNameLine(source)" class="text-muted-foreground block text-[13px]" data-testid="source-raw-name">{{ sourceRawNameLine(source) }}</span>
+                <span v-if="sourceEnterpriseLine(source)" class="block text-table" data-testid="source-enterprise-identity">{{ sourceEnterpriseLine(source) }}</span>
+                <span v-if="sourceUnconfirmedLine(source)" class="text-muted-foreground block text-table" data-testid="source-unconfirmed-name">{{ sourceUnconfirmedLine(source) }}</span>
+                <span v-if="sourceRawNameLine(source)" class="text-muted-foreground block text-table" data-testid="source-raw-name">{{ sourceRawNameLine(source) }}</span>
               </template>
               <span v-if="sourceSecondaryIds(source).length" class="text-muted-foreground block font-mono text-xs">
                 {{ sourceSecondaryIds(source).join(' · ') }}
               </span>
             </label>
             <template v-if="source.kind === 'query' && enterpriseDetails(source).length > 3">
-              <Button variant="link" size="sm" class="h-6 self-start px-1 text-[13px]" :aria-expanded="identityExpanded(source)" @click="toggleIdentity(source)">
+              <Button variant="link" size="sm" class="h-6 self-start px-1 text-table" :aria-expanded="identityExpanded(source)" @click="toggleIdentity(source)">
                 {{ identityExpanded(source) ? '收起主体清单' : `查看全部 ${enterpriseDetails(source).length} 条主体信息` }}
               </Button>
-              <ul v-if="identityExpanded(source)" class="text-muted-foreground mt-1 flex flex-col gap-0.5 text-[13px] leading-5" data-testid="source-enterprise-details">
+              <ul v-if="identityExpanded(source)" class="text-muted-foreground mt-1 flex flex-col gap-0.5 text-table leading-5" data-testid="source-enterprise-details">
                 <li v-for="detail in enterpriseDetails(source)" :key="detail" class="break-words [overflow-wrap:anywhere]">{{ detail }}</li>
               </ul>
             </template>
@@ -195,14 +195,14 @@ watch(selectionKey, () => { void hydrateSelectedLabels() }, { immediate: true, f
         </li>
       </ul>
     </div>
-    <p v-else-if="!loading && !error" class="text-muted-foreground text-[13px]">此类别尚无可选来源。</p>
-    <Button v-if="remainingCount > 0 && !showAll" variant="link" size="sm" class="h-7 self-start px-1 text-[13px]" @click="showAll = true">{{ allLabel }}<span aria-hidden="true">（还有 {{ remainingCount }} 项）</span></Button>
-    <Button v-else-if="showAll && rows.length > COLLAPSED_ROWS" variant="link" size="sm" class="h-7 self-start px-1 text-[13px]" @click="showAll = false">收起，只看前 {{ COLLAPSED_ROWS }} 项</Button>
+    <p v-else-if="!loading && !error" class="text-muted-foreground text-table">此类别尚无可选来源。</p>
+    <Button v-if="remainingCount > 0 && !showAll" variant="link" size="sm" class="h-7 self-start px-1 text-table" @click="showAll = true">{{ allLabel }}<span aria-hidden="true">（还有 {{ remainingCount }} 项）</span></Button>
+    <Button v-else-if="showAll && rows.length > COLLAPSED_ROWS" variant="link" size="sm" class="h-7 self-start px-1 text-table" @click="showAll = false">收起，只看前 {{ COLLAPSED_ROWS }} 项</Button>
     <!-- 只有超过一页时才出现分页；目录本身不再使用内层滚动。 -->
     <TablePagination v-if="displayed && displayed.total > displayed.pageSize" :page="displayed.page" :page-size="displayed.pageSize" :total="displayed.total" unit="项来源" :loading="loading || error" @update:page="page = $event" @update:page-size="pageSize = $event; page = 1" />
-    <DisclosurePanel v-if="selectedItems.length" compact content-class="pb-0" aria-label="已选来源" class="text-[13px]">
+    <DisclosurePanel v-if="selectedItems.length" compact content-class="pb-0" aria-label="已选来源" class="text-table">
       <template #trigger>
-        <span class="text-muted-foreground text-[13px]">管理已选来源（{{ selectedItems.length }}）</span>
+        <span class="text-muted-foreground text-table">管理已选来源（{{ selectedItems.length }}）</span>
       </template>
       <div class="mt-2 flex flex-wrap gap-1.5">
         <Button v-for="item in selectedItems" :key="`${item.kind}:${item.id}`" variant="secondary" size="sm" class="h-auto max-w-full whitespace-normal text-left text-xs" :aria-label="`移除${item.source ? sourceTitle(item.source) : '已选来源'}`" @click="item.source ? toggle(item.source, false) : emit('change', { ...selection, [sourceSelectionKey(item.kind)]: selection[sourceSelectionKey(item.kind)].filter(id => id !== item.id) })">{{ item.source ? sourceTitle(item.source) : (selectedError ? '来源名称暂不可读' : '正在读取来源名称…') }} · 移除</Button>

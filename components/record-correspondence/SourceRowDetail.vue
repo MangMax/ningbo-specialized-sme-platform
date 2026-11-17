@@ -42,7 +42,7 @@ const completeRaw = computed(() => JSON.stringify(props.relation?.rawFields ?? n
 </script>
 
 <template>
-  <div class="min-w-0 rounded-sm border bg-card p-3" :class="presentation === 'business' && relation ? 'text-base leading-6' : 'text-[13px] leading-5'" data-testid="record-source-row">
+  <div class="min-w-0 rounded-sm border bg-card p-3" :class="presentation === 'business' && relation ? 'text-base leading-6' : 'text-table leading-5'" data-testid="record-source-row">
     <template v-if="relation && presentation === 'business'">
       <h4 class="text-sm font-medium">{{ PLATFORM_INTERFACES[source] ?? '平台接口记录' }}</h4>
       <p class="text-muted-foreground mt-1 text-sm">采集时间：{{ formatFetchTime(relation.query.queriedAt) ?? relation.query.queriedAt }} · {{ PLATFORM_QUERY_STATUSES[relation.query.status] ?? '状态待核' }}</p>

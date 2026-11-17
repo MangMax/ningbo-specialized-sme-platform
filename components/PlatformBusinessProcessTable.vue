@@ -33,7 +33,7 @@ const conflictLabel: Record<string, string> = {
 <template>
   <div class="min-w-0" data-testid="platform-business-process-table">
     <template v-if="view === 'records'">
-      <p v-if="records.length" class="text-muted-foreground mb-2 text-[13px] leading-5 sm:hidden">点开「版本详情」查看完整字段、内容版本。</p>
+      <p v-if="records.length" class="text-muted-foreground mb-2 text-table leading-5 sm:hidden">点开「版本详情」查看完整字段、内容版本。</p>
       <div v-if="records.length" class="data-table-scroll hidden sm:block [&_[data-slot=table-container]]:overflow-visible">
         <Table class="data-table min-w-[960px] table-fixed 2xl:min-w-[1080px]" aria-label="关联办理">
           <TableHeader>
@@ -91,7 +91,7 @@ const conflictLabel: Record<string, string> = {
     </template>
 
     <template v-else>
-      <p v-if="isolated.length" class="text-muted-foreground mb-2 text-[13px] leading-5 sm:hidden">缺编号或内容不可核实的观察逐条隔离；点开「查看原查询」核对来源。</p>
+      <p v-if="isolated.length" class="text-muted-foreground mb-2 text-table leading-5 sm:hidden">缺编号或内容不可核实的观察逐条隔离；点开「查看原查询」核对来源。</p>
       <div v-if="isolated.length" class="data-table-scroll hidden sm:block [&_[data-slot=table-container]]:overflow-visible">
         <Table class="data-table min-w-[960px] table-fixed 2xl:min-w-[1080px]" aria-label="缺编号办理观察">
           <TableHeader>

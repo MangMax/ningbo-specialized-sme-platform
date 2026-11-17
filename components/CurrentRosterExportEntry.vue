@@ -38,7 +38,7 @@ async function submit() {
     <Button size="sm" variant="outline" :disabled="submitting || !!disabledReason(titleCode)" :aria-label="`导出当前称号名单：${TITLES[titleCode]}`" :aria-describedby="disabledReason(titleCode) ? 'current-export-reason' : undefined" @click="submit">{{ submitting ? '正在提交…' : '导出当前称号名单' }}</Button>
     <Button v-if="accepted" as-child size="sm" variant="ghost"><NuxtLink :to="taskLocation(accepted)">查看本次导出</NuxtLink></Button>
     <Button v-if="discoveryFailed" size="sm" variant="outline" :disabled="discovering" @click="discoverExports">重新发现导出能力</Button>
-    <p v-if="disabledReason(titleCode)" id="current-export-reason" class="text-muted-foreground text-[13px] leading-5">{{ disabledReason(titleCode) }}</p>
+    <p v-if="disabledReason(titleCode)" id="current-export-reason" class="text-muted-foreground text-table leading-5">{{ disabledReason(titleCode) }}</p>
     <Alert v-if="error" variant="destructive" role="alert">{{ error }}</Alert>
   </div>
 </template>

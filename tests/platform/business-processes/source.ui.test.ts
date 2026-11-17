@@ -157,7 +157,7 @@ it('preserves different source and raw designations and the existing real field 
 it('keeps default source mode designation fields and original sizing unchanged', () => {
   const wrapper = mount(SourceRowDetail, { props: { relation: { ...relation, rawFields: { rdjb: '2' } } }, global: { stubs } })
   mounted.push(wrapper)
-  expect(wrapper.classes()).toContain('text-[13px]')
+  expect(wrapper.classes()).toContain('text-table')
   expect(wrapper.text()).toContain('称号原值（rdjb）2')
   expect(wrapper.text()).toContain('查询 #20')
 })

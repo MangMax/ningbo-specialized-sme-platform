@@ -368,13 +368,13 @@ async function copy() {
           >
         </div>
         <!-- 复制结果贴着触发它的按钮，不在详情底部另起一段。 -->
-        <p v-if="notice" role="status" class="text-muted-foreground text-[13px]">{{ notice }}</p>
+        <p v-if="notice" role="status" class="text-muted-foreground text-table">{{ notice }}</p>
       </div>
       <Alert v-if="data?.source === 'client'"><AlertDescription>
         客户端上报的上下文不可信，不代表服务端业务执行事实。
       </AlertDescription></Alert>
       <section v-for="group in groups" :key="group.title" class="flex min-w-0 flex-col gap-2">
-        <h3 class="text-muted-foreground text-[13px] leading-5 font-medium">{{ group.title }}</h3>
+        <h3 class="text-muted-foreground text-table leading-5 font-medium">{{ group.title }}</h3>
         <Table class="data-table table-fixed">
           <TableBody>
             <TableRow v-if="group.showTarget">
@@ -395,7 +395,7 @@ async function copy() {
               <TableCell class="text-muted-foreground w-[168px] align-top whitespace-normal"
                 >说明</TableCell
               >
-              <TableCell class="text-muted-foreground whitespace-normal text-[13px]">
+              <TableCell class="text-muted-foreground whitespace-normal text-table">
                 <p v-if="group.note">{{ group.note }}</p>
                 <p
                   v-if="group.disabledNote"
@@ -412,7 +412,7 @@ async function copy() {
               <!-- 「当时未启用采集」只说配置事实；没有 capture 的历史记录仍是「未记录」。 -->
               <TableCell
                 class="break-all whitespace-normal font-mono text-xs"
-                :class="row.present ? '' : 'text-muted-foreground font-sans text-[13px]'"
+                :class="row.present ? '' : 'text-muted-foreground font-sans text-table'"
                 :data-omission="row.present ? 'present' : row.disabled ? 'disabled' : 'absent'"
               >
                 {{ row.present ? row.text : row.disabled ? FIELD_DISABLED_LABEL : '未记录' }}
@@ -425,7 +425,7 @@ async function copy() {
       <p
         v-if="queryAttempts !== undefined"
         data-testid="log-query-attempt-note"
-        class="text-muted-foreground text-[13px] leading-5"
+        class="text-muted-foreground text-table leading-5"
       >
         排队期间查询尝试汇总，时间为首次尝试；不表示执行成功。
       </p>

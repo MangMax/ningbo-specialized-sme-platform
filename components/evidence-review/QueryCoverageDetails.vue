@@ -27,7 +27,7 @@ const pageStatus = (value: string) => PLATFORM_QUERY_STATUSES[value] ?? '状态�
 </script>
 
 <template>
-  <DisclosurePanel compact content-class="pb-0" class="min-w-0 text-[13px] leading-5" data-testid="coverage-details">
+  <DisclosurePanel compact content-class="pb-0" class="min-w-0 text-table leading-5" data-testid="coverage-details">
     <template #trigger>
       <span class="font-medium">核对范围与查询缺口 · {{ coverage.sources.length }} 次查询</span>
     </template>

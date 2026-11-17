@@ -366,7 +366,7 @@ function openPreview(e: Evidence) {
           <section class="bg-card overflow-hidden rounded-lg border" aria-label="称号与复核安排">
             <header class="flex flex-wrap items-baseline gap-x-3 gap-y-1 border-b px-4 py-3">
               <h2 class="text-sm font-semibold">称号与复核安排</h2>
-              <span class="text-muted-foreground text-[13px]">{{ titleInfo.length }} 个正式称号</span>
+              <span class="text-muted-foreground text-table">{{ titleInfo.length }} 个正式称号</span>
             </header>
             <dl v-if="titleInfo.length" class="divide-y">
               <div
@@ -383,7 +383,7 @@ function openPreview(e: Evidence) {
                 </dd>
               </div>
             </dl>
-            <p v-else class="text-muted-foreground px-4 py-6 text-[13px]">尚无正式称号记录。</p>
+            <p v-else class="text-muted-foreground px-4 py-6 text-table">尚无正式称号记录。</p>
             <DisclosurePanel v-if="qualificationRows.length" trigger-class="px-4" class="border-t">
               <template #title>资格依据</template>
               <div class="flex min-w-0 flex-col gap-4 px-4 pb-4 text-base leading-6">
@@ -409,8 +409,8 @@ function openPreview(e: Evidence) {
           <section class="bg-card overflow-hidden rounded-lg border" aria-label="认定与复核记录">
             <header class="flex flex-wrap items-baseline gap-x-3 gap-y-1 border-b px-4 py-3">
               <h2 class="text-sm font-semibold">认定与复核记录</h2>
-              <span class="text-muted-foreground text-[13px]">{{ eventCount }} 条</span>
-              <span class="text-muted-foreground text-[13px]">正式公布文件与复核结论</span>
+              <span class="text-muted-foreground text-table">{{ eventCount }} 条</span>
+              <span class="text-muted-foreground text-table">正式公布文件与复核结论</span>
             </header>
             <div v-if="recordCount === 0" class="text-muted-foreground py-12 text-center text-sm">
               该企业暂无记录。

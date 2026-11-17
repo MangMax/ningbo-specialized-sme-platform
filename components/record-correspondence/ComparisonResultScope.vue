@@ -11,7 +11,7 @@ defineProps<{
 </script>
 
 <template>
-  <DisclosurePanel compact content-class="pb-0" class="min-w-0 text-[13px]">
+  <DisclosurePanel compact content-class="pb-0" class="min-w-0 text-table">
     <template #trigger>
       <span class="font-medium">{{ current ? '本次结果所用来源' : '上次结果所用来源' }}</span>
       <span class="text-muted-foreground font-normal">查看明细</span>

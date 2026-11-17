@@ -66,7 +66,7 @@ const conflictLabel: Record<string, string> = {
                 <span class="text-sm font-medium">版本 #{{ version.versionId }}</span>
                 <Badge variant="outline">有效期 {{ projectionDisplay(version, version.validityDateRaw) }}</Badge>
               </div>
-              <dl class="mt-2 grid grid-cols-1 gap-x-3 gap-y-1 text-[13px] sm:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">
+              <dl class="mt-2 grid grid-cols-1 gap-x-3 gap-y-1 text-table sm:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">
                 <dt class="text-muted-foreground">有效期</dt><dd class="font-mono break-all">{{ projectionDisplay(version, version.validityDateRaw) }}</dd>
                 <dt class="text-muted-foreground">维护批次</dt><dd>{{ projectionDisplay(version, version.maintenanceBatch) }}</dd>
                 <dt class="text-muted-foreground">属地</dt><dd class="font-mono break-all">{{ projectionDisplay(version, version.district) }}</dd>

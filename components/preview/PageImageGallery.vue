@@ -448,7 +448,7 @@ watch(
            未渲染时不在这里重复一遍:那件事空态里说更完整(有图标、有解释)。 -->
       <span
         v-if="!renderFailed && status.tone !== 'empty'"
-        class="min-w-0 text-[13px] leading-relaxed"
+        class="min-w-0 text-table leading-relaxed"
       >
         {{ status.headline }}<span v-if="status.detail" class="text-muted-foreground">
           · {{ status.detail }}</span
@@ -511,7 +511,7 @@ watch(
           {{ failureMessage }}
         </AlertDescription>
       </Alert>
-      <p v-else class="text-muted-foreground text-[13px] leading-relaxed tabular-nums">
+      <p v-else class="text-muted-foreground text-table leading-relaxed tabular-nums">
         {{ summary }}
       </p>
     </div>
@@ -551,7 +551,7 @@ watch(
       aria-live="polite"
     >
       <Loader2 class="size-5 animate-spin" />
-      <span class="text-[13px]">正在渲染页图…</span>
+      <span class="text-table">正在渲染页图…</span>
       <span v-if="state?.pageCount" class="text-xs tabular-nums">
         共 {{ state.pageCount }} 页,大文件要几秒
       </span>

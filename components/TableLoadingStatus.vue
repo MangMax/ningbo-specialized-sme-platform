@@ -13,7 +13,7 @@ defineProps<{
     aria-live="polite"
   >
     <template v-if="loading">
-      <span class="bg-card text-muted-foreground absolute right-2 top-1 z-20 px-2 text-[13px] leading-5">{{ label }}</span>
+      <span class="bg-card text-muted-foreground absolute right-2 top-1 z-20 px-2 text-table leading-5">{{ label }}</span>
       <span class="bg-muted absolute inset-x-0 top-0 block h-0.5 overflow-hidden">
         <span :class="`${kind}-progress`" class="table-progress bg-primary block h-0.5 w-1/3" />
       </span>

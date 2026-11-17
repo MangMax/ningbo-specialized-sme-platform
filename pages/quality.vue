@@ -63,7 +63,7 @@ const TH_CLASS = 'bg-muted text-muted-foreground sticky top-0 z-10 h-9 text-xs f
 
     <div class="relative h-6 shrink-0" aria-live="polite" data-testid="quality-loading-status">
       <template v-if="isLoading">
-        <span class="text-muted-foreground absolute top-0.5 left-0 text-[13px]">正在加载质量清单…</span>
+        <span class="text-muted-foreground absolute top-0.5 left-0 text-table">正在加载质量清单…</span>
         <span class="bg-muted absolute inset-x-0 bottom-0 block h-0.5 rounded-full">
           <span class="bg-primary block h-0.5 w-1/3 rounded-full" />
         </span>

@@ -251,7 +251,7 @@ function onGridKeydown(event: KeyboardEvent) {
     >
       <p
         v-if="!pages.length"
-        class="text-muted-foreground px-2 py-6 text-center text-[13px] leading-relaxed"
+        class="text-muted-foreground px-2 py-6 text-center text-table leading-relaxed"
       >
         当前筛选没有命中页。清除页筛选后可浏览全部页。
       </p>

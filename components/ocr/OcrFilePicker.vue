@@ -260,13 +260,13 @@ function fileMeta(file: StoredFileRow) {
 
         <p
           v-if="!filesLoading && !fileMatches.length"
-          class="text-muted-foreground px-2 py-4 text-[13px] leading-relaxed"
+          class="text-muted-foreground px-2 py-4 text-table leading-relaxed"
         >
           没有匹配的 PDF。
         </p>
         <p
           v-else-if="selected && !otherFiles.length"
-          class="text-muted-foreground px-2 py-4 text-[13px] leading-relaxed"
+          class="text-muted-foreground px-2 py-4 text-table leading-relaxed"
         >
           没有其他匹配文件。
         </p>
@@ -276,7 +276,7 @@ function fileMeta(file: StoredFileRow) {
         <p
           v-if="blockedReason"
           role="status"
-          class="text-destructive text-[13px] leading-relaxed font-medium"
+          class="text-destructive text-table leading-relaxed font-medium"
         >
           {{ blockedReason }}
         </p>

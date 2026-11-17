@@ -28,12 +28,12 @@ const completenessText = (value: string) => ({ complete: '完整', partial: '部
 
 <template>
   <div class="flex min-w-0 flex-col gap-3" data-testid="record-comparison-evidence">
-    <p v-if="result.historicalDecisionUnavailable.length" class="text-muted-foreground border-t pt-2 text-[13px]">截止时点后有对应关系发生决定或修订，历史决定态无法从当前行还原；受影响事件与接口原行保持待核。</p>
+    <p v-if="result.historicalDecisionUnavailable.length" class="text-muted-foreground border-t pt-2 text-table">截止时点后有对应关系发生决定或修订，历史决定态无法从当前行还原；受影响事件与接口原行保持待核。</p>
 
     <DisclosurePanel
       compact
       content-class="pb-0"
-      class="min-w-0 border-t pt-2 text-[13px]"
+      class="min-w-0 border-t pt-2 text-table"
       data-testid="record-comparison-coverage"
       :title="`所选来源的查询覆盖 · ${result.coverage.length} 次`"
     >
@@ -51,7 +51,7 @@ const completenessText = (value: string) => ({ complete: '完整', partial: '部
     <DisclosurePanel
       compact
       content-class="pb-0"
-      class="min-w-0 border-t pt-2 text-[13px]"
+      class="min-w-0 border-t pt-2 text-table"
       data-testid="record-current-consistency"
       title="已认定接口与导出版本"
     >
@@ -64,13 +64,13 @@ const completenessText = (value: string) => ({ complete: '完整', partial: '部
             <Badge variant="outline">{{ qualificationText(observation.qualification) }}</Badge>
           </div>
           <p class="text-muted-foreground">原状态 {{ observation.recognized.status ?? '未提供' }} · 查询时点 {{ humanRecordTime(observation.recognized.queriedAt) }}</p>
-          <p v-if="observation.exportRows.length">同主体称号的导出版本原行：<Button v-for="exportRow in observation.exportRows" :key="exportRow.id" variant="link" size="sm" class="h-auto px-1 text-[13px]" @click="openSource('export_row', exportRow.id)">{{ exportRow.collectedOn }} · 源行 {{ exportRow.sourceRowNo }}</Button></p>
+          <p v-if="observation.exportRows.length">同主体称号的导出版本原行：<Button v-for="exportRow in observation.exportRows" :key="exportRow.id" variant="link" size="sm" class="h-auto px-1 text-table" @click="openSource('export_row', exportRow.id)">{{ exportRow.collectedOn }} · 源行 {{ exportRow.sourceRowNo }}</Button></p>
           <p v-else class="text-muted-foreground">所选导出版本无同主体称号的正向行观察；{{ qualificationText(observation.qualification) }}。</p>
           <DisclosurePanel compact content-class="pb-0" class="text-muted-foreground">
             <template #trigger><span>原行字段与查询条件</span></template>
             <p>查询 #{{ observation.recognized.queryId }} · 原行 {{ observation.recognized.sequenceNo }} · 记录 #{{ observation.recognized.id }}</p>
           </DisclosurePanel>
-          <Button variant="link" size="sm" class="h-auto px-1 text-[13px]" @click="openSource('relation', observation.recognized.id)">查看原始记录</Button>
+          <Button variant="link" size="sm" class="h-auto px-1 text-table" @click="openSource('relation', observation.recognized.id)">查看原始记录</Button>
         </li>
       </ul>
       <Button v-if="result.currentSourceConsistency.recognizedObservations.length > observationLimit" variant="outline" size="sm" class="mt-2" @click="observationLimit += 20">继续显示已认定接口原行</Button>
@@ -80,7 +80,7 @@ const completenessText = (value: string) => ({ complete: '完整', partial: '部
         <li v-for="item in result.currentSourceConsistency.exportObservations.slice(0, exportLimit)" :key="item.exportRow.id" class="flex flex-wrap items-center gap-1.5 border-t pt-1.5">
           <span>{{ item.exportRow.nameRaw ?? '企业原名未提供' }} · {{ TITLES[item.exportRow.titleCode] ?? item.exportRow.titleCode }} · {{ item.exportRow.collectedOn }} · 源行 {{ item.exportRow.sourceRowNo }}</span>
           <Badge variant="outline">{{ qualificationText(item.qualification) }}</Badge>
-          <Button variant="link" size="sm" class="h-auto px-1 text-[13px]" @click="openSource('export_row', item.exportRow.id)">查看原始记录</Button>
+          <Button variant="link" size="sm" class="h-auto px-1 text-table" @click="openSource('export_row', item.exportRow.id)">查看原始记录</Button>
         </li>
       </ul>
       <Button v-if="result.currentSourceConsistency.exportObservations.length > exportLimit" variant="outline" size="sm" class="mt-2" @click="exportLimit += 20">继续显示导出原行</Button>
@@ -89,7 +89,7 @@ const completenessText = (value: string) => ({ complete: '完整', partial: '部
     <DisclosurePanel
       compact
       content-class="pb-0"
-      class="min-w-0 border-t pt-2 text-[13px]"
+      class="min-w-0 border-t pt-2 text-table"
       data-testid="record-platform-unlinked"
       :title="`未对应正式事件的接口原行 · ${result.platformWithoutOfficial.total} 条`"
     >
@@ -102,7 +102,7 @@ const completenessText = (value: string) => ({ complete: '完整', partial: '部
             <template #trigger><span>原行字段与查询条件</span></template>
             <p>查询 #{{ item.relation.queryId }} · 原行 {{ item.relation.sequenceNo }} · 记录 #{{ item.relation.id }}</p>
           </DisclosurePanel>
-          <Button variant="link" size="sm" class="h-auto px-1 text-[13px]" @click="openSource('relation', item.relation.id)">查看原始记录</Button>
+          <Button variant="link" size="sm" class="h-auto px-1 text-table" @click="openSource('relation', item.relation.id)">查看原始记录</Button>
         </li>
       </ul>
       <Button v-if="result.platformWithoutOfficial.rows.length > unlinkedLimit" variant="outline" size="sm" class="mt-2" @click="unlinkedLimit += 20">继续显示接口原行</Button>
