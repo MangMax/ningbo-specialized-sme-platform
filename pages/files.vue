@@ -77,7 +77,6 @@ interface FilesResponse {
 }
 
 const queryCache = useQueryCache()
-// 写路径统一操作反馈(票 #866):成功短提示;失败除弹层内联说明外再给一条可重试的 toast。
 const feedback = useToastFeedback()
 
 // —— 筛选(多选)——
