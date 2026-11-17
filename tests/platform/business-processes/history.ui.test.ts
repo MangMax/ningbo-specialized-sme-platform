@@ -10,7 +10,7 @@ afterAll(() => { if (nativeAnimate) Object.defineProperty(Element.prototype, 'an
 const date = (value: string | null) => ({ value, raw: value, precision: value ? 'day' as const : 'unknown' as const })
 const timeline = { asOf: '2026-11-16', sources: [
   { source: 'publication', collectionStatus: 'not_applicable', collectedAt: null, events: [] },
-  { source: 'recognized_list', collectionStatus: 'failed', collectedAt: '2026-11-15', events: [{ key: 'recognized_list:1', platformName: '同码原名', title: 'specialized_sme', matter: 'recognition', matterRaw: null, conclusion: 'passed', statusRaw: null, businessTime: date('2026-03-06'), businessTimeKind: 'recognition', businessYear: 2026, period: { from: date('2026-03-06'), until: date('2029-03-05') }, collectedAt: '2026-11-14', cycleKey: null }] },
+  { source: 'recognized_list', collectionStatus: 'failed', collectedAt: '2026-11-15', events: [{ key: 'recognized_list:1', platformName: '同码原名', title: 'specialized_sme', matter: 'recognition', matterRaw: null, conclusion: 'passed', statusRaw: null, businessTime: date('2026-03-06'), businessTimeKind: 'recognition', businessYear: 2026, period: { from: date('2026-03-06'), until: date('2029-03-05') }, collectedAt: '2026-11-14' }] },
   { source: 'business_list', collectionStatus: 'not_collected', collectedAt: null, events: [] },
   { source: 'apply_list', collectionStatus: 'success', collectedAt: '2026-11-15', events: [] },
 ] } as RosterEnterpriseDetail['businessTimeline']
@@ -61,4 +61,17 @@ it('switches every peer source and filters same-enterprise titles without replac
     await view.findAll('[role="tab"]')[0]!.trigger('keydown', { key: 'Enter' })
     expect(view.text()).toContain('公布文件预览')
   } finally { view.unmount() }
+})
+
+it('uses the publication slot instead of rendering duplicate generic publication cards', () => {
+  const event = { ...timeline.sources[1]!.events[0]!, key: 'publication:1', platformName: null }
+  const input = { ...timeline, sources: timeline.sources.map(s => s.source === 'publication' ? { ...s, events: [event] } : s) }
+  const view = mount(PlatformRecords, { props: { timeline: input }, slots: { publication: '<p>正式认定及出处</p>' } })
+  try {
+    expect(view.text()).toContain('正式认定及出处')
+    expect(view.findAll('[data-testid="business-event"]')).toHaveLength(0)
+  } finally { view.unmount() }
+  const fallback = mount(PlatformRecords, { props: { timeline: input } })
+  try { expect(fallback.findAll('[data-testid="business-event"]')).toHaveLength(1) }
+  finally { fallback.unmount() }
 })

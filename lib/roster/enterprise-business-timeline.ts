@@ -6,12 +6,10 @@ type PublicationEvent = RosterEventRow & { formalValidity?: FormalValidity | nul
 type BusinessEvent = Pick<PlatformQualificationFact, 'platformName' | 'title' | 'matter' | 'matterRaw' | 'conclusion' | 'statusRaw' | 'businessTimeKind' | 'businessYear' | 'period'> & {
   collectedAt: string | null
   key: string
-  cycleKey: string | null
   businessTime: PlatformQualificationFact['businessTime'] | { value: string; precision: 'year'; raw: string }
 }
 
 /** Detail-only presentation: source facts remain owned by the qualification reader.
- * Only an explicit period start identifies a cross-source cycle; missing anchors stay unknown.
  * No observation/version or correspondence is a business event. */
 export function enterpriseBusinessTimeline(
   enterpriseId: number,
@@ -20,7 +18,6 @@ export function enterpriseBusinessTimeline(
   facts: readonly PlatformQualificationFact[],
   queries: readonly Pick<RosterPlatformQueryRow, 'interface' | 'status' | 'queriedAt' | 'id'>[],
 ) {
-  const cycle = (title: string | null, start: string | null) => title && start ? `${enterpriseId}:${title}:${start}` : null
   const published: BusinessEvent[] = publications.map(e => {
     const title = records.find(r => r.id === e.recordId)?.titleCode as PlatformQualificationFact['title'] ?? null
     const year = e.eventType === 'review' ? e.decidedYear : e.decidedYear ?? e.year
@@ -31,7 +28,7 @@ export function enterpriseBusinessTimeline(
       statusRaw: e.reviewOutcome, businessTimeKind: 'recognition', businessYear: year,
       businessTime: year == null ? sourceDate(null) : { raw: String(year), value: String(year), precision: 'year' },
       period: { from: sourceDate(interval?.validFrom ?? null), until: sourceDate(interval?.validThrough ?? null) },
-      collectedAt: null, cycleKey: cycle(title, interval?.validFrom ?? null),
+      collectedAt: null,
     }
   })
   const latest = new Map<number, PlatformQualificationFact>()
@@ -45,7 +42,7 @@ export function enterpriseBusinessTimeline(
     const events: BusinessEvent[] = source === 'publication' ? published : [...latest.values()].filter(f => f.source === source).map(f => ({
       key: `${source}:${f.recordId}`, platformName: f.platformName, title: f.title, matter: f.matter, matterRaw: f.matterRaw, conclusion: f.conclusion, statusRaw: f.statusRaw,
       businessTime: f.businessTime, businessTimeKind: f.businessTimeKind, businessYear: f.businessYear,
-      period: f.period, collectedAt: f.collectedAt, cycleKey: cycle(f.title, f.period.from.value),
+      period: f.period, collectedAt: f.collectedAt,
     }))
     events.sort((a, b) => (b.businessTime.value ?? '').localeCompare(a.businessTime.value ?? '') || a.key.localeCompare(b.key))
     return { source, collectionStatus: source === 'publication' ? 'not_applicable' : query?.status ?? 'not_collected', collectedAt: query?.queriedAt ?? null, events }

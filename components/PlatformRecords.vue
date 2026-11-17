@@ -27,10 +27,12 @@ const titles = computed(() => [...new Set(props.timeline.sources.flatMap(s => s.
     <TabsContent v-for="section in timeline.sources" :key="section.source" :value="section.source" class="min-w-0 space-y-3 p-4">
       <p v-if="statuses[section.collectionStatus]" role="status" class="mb-2 text-sm">{{ statuses[section.collectionStatus] }}</p>
       <p v-if="section.collectedAt" class="text-muted-foreground mb-2 text-xs">最近采集：{{ section.collectedAt }}（辅助信息）</p>
+      <template v-if="section.source !== 'publication' || !$slots.publication">
       <div class="grid min-w-0 gap-3">
         <PlatformBusinessHistory v-for="event in section.events.filter(e => title === 'all' || e.title === title)" :key="event.key" :event="event" />
       </div>
       <p v-if="!section.events.filter(e => title === 'all' || e.title === title).length" class="text-muted-foreground rounded-md bg-muted/40 px-4 py-6 text-center text-sm">暂无已知业务事件</p>
+      </template>
       <slot v-if="section.source === 'publication'" name="publication" :title="title" />
     </TabsContent>
   </Tabs>

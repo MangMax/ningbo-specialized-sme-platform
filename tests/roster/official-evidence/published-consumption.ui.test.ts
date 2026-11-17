@@ -276,7 +276,7 @@ describe("formal source consumer boundaries", () => {
     const wrapper = mount(defineComponent({ render: () => h(RouterView) }), { attachTo: document.body,
       global: { plugins: [createPinia(), PiniaColada, router], components: { NuxtLink: RouterLink, PageHeader }, stubs: {
         FilePreviewDialog: true,
-        EnterpriseLaterProcesses: true, EnterpriseExplanations: true, EventCorrespondenceReview: true,
+        EnterpriseLaterProcesses: true,
         TitleBadge: true, SourceChip: true, EventChip: true,
       } } }); mounted.push(wrapper)
     await flushPromises()

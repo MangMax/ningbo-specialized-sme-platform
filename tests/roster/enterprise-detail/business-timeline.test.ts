@@ -13,7 +13,7 @@ const fact: PlatformQualificationFact = {
 it('shows platform recognition without a published event or confirmed correspondence and collapses repeat collection', () => {
   const timeline = enterpriseBusinessTimeline(7, [], [], [fact, { ...fact, observationId: 4, collectedAt: '2026-11-17T00:00:00Z' }], [])
   expect(timeline.sources.map(s => [s.source, s.events.length])).toEqual([['publication', 0], ['recognized_list', 1], ['business_list', 0], ['apply_list', 0]])
-  expect(timeline.sources[1]!.events[0]).toMatchObject({ title: 'specialized_sme', matter: 'recognition', businessTime: { value: '2026-03-06', precision: 'day' }, collectedAt: '2026-11-17T00:00:00Z', cycleKey: '7:specialized_sme:2026-03-06', period: { until: { value: '2029-03-05' } } })
+  expect(timeline.sources[1]!.events[0]).toMatchObject({ title: 'specialized_sme', matter: 'recognition', businessTime: { value: '2026-03-06', precision: 'day' }, collectedAt: '2026-11-17T00:00:00Z', period: { until: { value: '2029-03-05' } } })
   expect(timeline.sources[1]!.events[0]!.platformName).toBe('平台名称')
   expect(JSON.stringify(timeline)).not.toMatch(/versionId|observationId|uscc/)
 })
@@ -25,7 +25,7 @@ it('keeps all source outcomes and failed collection separate from retained busin
   expect(timeline.sources.map(s => [s.source, s.collectionStatus, s.events.length])).toEqual([
     ['publication', 'not_applicable', 0], ['recognized_list', 'failed', 1], ['business_list', 'not_collected', 1], ['apply_list', 'not_collected', 1],
   ])
-  expect(timeline.sources[2]!.events[0]).toMatchObject({ conclusion: 'processing', businessTime: { value: null, precision: 'unknown' }, businessYear: null, cycleKey: null })
+  expect(timeline.sources[2]!.events[0]).toMatchObject({ conclusion: 'processing', businessTime: { value: null, precision: 'unknown' }, businessYear: null })
   expect(timeline.sources[1]!.events[0]!.businessTime.value).toBe('2026-03-06')
 })
 it('groups only explicit equal period starts and preserves original review year versus result year', () => {
@@ -34,9 +34,8 @@ it('groups only explicit equal period starts and preserves original review year 
       formalValidity: { evidenceId: 1, sourceSha256: 'a'.repeat(64), statementPages: [1], interval: { validFrom: '2026-03-06', validThrough: '2029-03-05' } } },
     { id: 12, recordId: 10, eventType: 'review', year: 2023, decidedYear: null, batchSeq: 1, reviewOutcome: 'failed' },
   ], [fact], [])
-  expect(timeline.sources[0]!.events[0]).toMatchObject({ key: 'publication:11', cycleKey: '7:specialized_sme:2026-03-06', businessTime: { value: '2026', precision: 'year' }, period: { until: { value: '2029-03-05', precision: 'day' } }, collectedAt: null })
-  expect(timeline.sources[0]!.events[1]).toMatchObject({ conclusion: 'invalid', businessTime: { value: null, precision: 'unknown' }, cycleKey: null })
-  expect(timeline.sources[1]!.events[0]!.cycleKey).toBe('7:specialized_sme:2026-03-06')
+  expect(timeline.sources[0]!.events[0]).toMatchObject({ key: 'publication:11', businessTime: { value: '2026', precision: 'year' }, period: { until: { value: '2029-03-05', precision: 'day' } }, collectedAt: null })
+  expect(timeline.sources[0]!.events[1]).toMatchObject({ conclusion: 'invalid', businessTime: { value: null, precision: 'unknown' } })
 })
 it('empty sources remain explicit and another enterprise cannot enter the timeline', () => {
   expect(enterpriseBusinessTimeline(7, [], [], [{ ...fact, enterpriseId: 8 }], []).sources.map(s => s.events)).toEqual([[], [], [], []])

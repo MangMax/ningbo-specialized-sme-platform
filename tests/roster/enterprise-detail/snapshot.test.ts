@@ -159,7 +159,7 @@ function timelineDetail(asOf = '2026-10-27T12:00:00.000Z') {
       businessTime: { raw: '2024-01-01', value: '2024-01-01', precision: 'day' },
       period: { from: { raw: '2024-01-01', value: '2024-01-01', precision: 'day' },
         until: { raw: '2026-12-31', value: '2026-12-31', precision: 'day' } },
-      collectedAt: '2026-10-26T09:00:00.000Z', cycleKey: '7:innovative_sme:2024-01-01',
+      collectedAt: '2026-10-26T09:00:00.000Z',
     }],
   }] } }
 }
