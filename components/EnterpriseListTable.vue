@@ -143,15 +143,15 @@ function differenceReason(row: EnterpriseListRow): string {
           @click="selectRow(row.enterpriseId, $event.currentTarget)"
         >
           <TableCell class="max-w-0 break-words [overflow-wrap:anywhere]">
-            <button
-              type="button"
-              class="block max-w-full whitespace-normal break-words text-left text-[13px] leading-4 font-medium hover:underline sm:truncate"
+            <Button
+              variant="link"
+              class="block h-auto max-w-full rounded-sm p-0 whitespace-normal break-words text-left text-[13px] leading-4 font-medium text-foreground hover:underline sm:truncate"
               data-testid="enterprise-name-trigger"
               :title="row.name"
               @click.stop="selectRow(row.enterpriseId, $event.currentTarget)"
             >
               {{ row.name }}
-            </button>
+            </Button>
             <EnterpriseAliasSummary :names="visibleAliasesByEnterpriseId.get(row.enterpriseId) ?? []" />
           </TableCell>
 
