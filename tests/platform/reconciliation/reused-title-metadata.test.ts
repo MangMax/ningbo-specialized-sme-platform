@@ -8,6 +8,7 @@ import * as schema from '../../../db/schema'
 import { queryPlatformSlots } from '../../../lib/platform/client'
 import { buildPlatformWritePayload } from '../../../lib/platform/payload'
 import { commitRosterImport, preflightRosterImport } from '../../../server/utils/roster-import'
+import { readImportReceipt } from '../../../server/utils/import-receipts'
 import { runPlatformReconcile } from '../../../server/utils/platform-reconcile'
 import { whenIdle } from '../../../server/utils/job-runner'
 import { emptyReply, platformReplay } from '../fixtures/source-replay'
@@ -45,7 +46,16 @@ async function seedSlots(uscc: string, slots: { interface: 'business_list' | 'ap
 }
 
 function requests(uscc: string) {
-  return db.select().from(schema.importReceipt).all().map(row => JSON.parse(row.requestBody) as RosterImportRequest)
+  return db.select().from(schema.importReceipt).all().map(row => {
+    const chunks: Buffer[] = []
+    let offset: number | null = 0
+    while (offset !== null) {
+      const chunk = readImportReceipt(db, 'request', { receiptId: row.id, offset, maxBytes: 65536 }) as { data: string; nextOffset: number | null }
+      chunks.push(Buffer.from(chunk.data, 'base64'))
+      offset = chunk.nextOffset
+    }
+    return JSON.parse(Buffer.concat(chunks).toString('utf8')) as RosterImportRequest
+  })
     .filter(row => row.sourceIdentity === 'platform/reconcile:specialized_sme' && row.payload.platformQueries?.some(q => q.queryKey === uscc))
 }
 
