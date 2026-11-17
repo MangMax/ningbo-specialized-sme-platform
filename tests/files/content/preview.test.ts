@@ -113,6 +113,24 @@ it('rejects dangerous link protocols and nested active markup without changing c
 })
 
 
+it('confines .preview-dark token overrides to the preview section so app theming cannot leak', async () => {
+  const wrapper = mount(ContentPreview, { attachTo: document.body, props: { source: '# 正文', theme: 'dark' } })
+  await flushPromises()
+  const section = wrapper.get('section.content-preview')
+  // The dark skin hangs on the component's own root section only — never on a
+  // shared ancestor where it would re-skin the whole app.
+  expect(section.classes()).toContain('preview-dark')
+  expect(section.attributes('data-theme')).toBe('dark')
+  expect(document.documentElement.classList.contains('preview-dark')).toBe(false)
+  expect(document.body.classList.contains('preview-dark')).toBe(false)
+  expect(document.documentElement.getAttribute('data-theme')).toBeNull()
+  expect(document.body.getAttribute('data-theme')).toBeNull()
+  // No element outside the section may carry the theme class or attribute.
+  const outside = Array.from(document.body.querySelectorAll('.preview-dark, [data-theme="dark"]'))
+  expect(outside.every(node => section.element.contains(node))).toBe(true)
+  wrapper.unmount()
+})
+
 it('shows caller context and keeps secondary preview actions reachable from the menu', async () => {
   const wrapper = mount(ContentPreview, { attachTo: document.body, props: {
     source: '# 正文', name: '第 7 页.md', context: '原始公告长文件名.pdf · 第 7 页',
