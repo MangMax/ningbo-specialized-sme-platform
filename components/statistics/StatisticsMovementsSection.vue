@@ -38,7 +38,7 @@ function select(k: MovementKind, s: string) { year.value = result.value?.year ??
     <article v-for="bucket in buckets" :key="bucket.kind" class="stats-movement-item">
       <div class="stats-movement-label"><span class="stats-movement-icon" :class="`stats-movement-icon--${bucket.kind}`" aria-hidden="true"><component :is="bucket.kind==='moved_in'?ArrowDownLeft:bucket.kind==='moved_out'?ArrowUpRight:Minus" class="size-4" /></span><span>{{ labels[bucket.kind] }}</span></div>
       <button class="stats-movement-number" :aria-label="`${labels[bucket.kind]}已确认明细`" :disabled="!result" @click="select(bucket.kind,'confirmed')">{{ bucket.confirmed ?? '—' }}<small>家</small></button>
-      <div class="stats-movement-foot"><button :aria-label="`${labels[bucket.kind]}发生年未知明细`" @click="select(bucket.kind,'unknown')">年份未知 {{ bucket.unknown ?? '—' }}</button><button :aria-label="`${labels[bucket.kind]}待核明细`" @click="select(bucket.kind,'pending')">待核 {{ bucket.pending ?? '—' }}</button></div>
+      <div class="stats-movement-foot"><button :aria-label="`${labels[bucket.kind]}发生年未知明细`" :disabled="!result" @click="select(bucket.kind,'unknown')">年份未知 {{ bucket.unknown ?? '—' }}</button><button :aria-label="`${labels[bucket.kind]}待核明细`" :disabled="!result" @click="select(bucket.kind,'pending')">待核 {{ bucket.pending ?? '—' }}</button></div>
     </article>
   </div>
   <div v-if="failed" class="stats-inline-failure"><TableFailureState :title="`${target}加载失败`" :compact="!!result" :pending="loading" :description="result ? `保留${yearLabel(result.year)}的上次结果，请重试。` : '尚未加载主体事实，请重试。'" @retry="load" /></div>

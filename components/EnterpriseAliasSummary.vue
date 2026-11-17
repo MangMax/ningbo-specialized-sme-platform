@@ -9,7 +9,13 @@ const open = ref(false)
 <template>
   <HoverCard v-if="names.length" v-model:open="open" :open-delay="120" :close-delay="120">
     <HoverCardTrigger as-child>
-      <button type="button" class="text-muted-foreground mt-0.5 flex max-w-full items-center gap-1 text-left text-table leading-4" data-testid="alias-summary" aria-label="查看全部曾用名" @click.stop="open = true">
+      <button
+        type="button"
+        class="text-muted-foreground hover:text-foreground focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-3 focus-visible:outline-none active:scale-[0.97] disabled:pointer-events-none disabled:opacity-50 motion-reduce:transition-none motion-reduce:active:scale-100 mt-0.5 flex max-w-full items-center gap-1 rounded-sm text-left text-table leading-4 transition-[color,background-color,transform] duration-150 ease-snap"
+        data-testid="alias-summary"
+        aria-label="查看全部曾用名"
+        @click.stop="open = true"
+      >
         <span class="truncate">原 {{ names[0] }}</span>
         <Badge v-if="names.length > 1" variant="quiet" class="shrink-0 py-0 text-table leading-[18px] tabular-nums" data-testid="alias-overflow-trigger">+{{ names.length - 1 }}</Badge>
       </button>

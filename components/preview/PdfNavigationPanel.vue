@@ -102,5 +102,6 @@ function choose(position: PdfReadingPosition) { emit('navigate', position) }
 <style scoped>
 .pdf-thumbnail[aria-current="page"] .pdf-thumbnail-image { outline-color: var(--primary); box-shadow: 0 0 0 2px var(--background), 0 0 0 4px var(--ring); }
 .pdf-thumbnail[aria-current="page"] { font-weight: 600; }
+.pdf-thumbnail:hover .pdf-thumbnail-image { outline-color: var(--ring); }
 @media (prefers-reduced-motion: no-preference) { .pdf-thumbnail { transition: transform 100ms ease-out; } .pdf-thumbnail:active { transform: scale(.98); } }
 </style>
