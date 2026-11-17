@@ -50,6 +50,7 @@ const owners = {
     "runtime/native-boundary",
     "runtime/read-scheduling",
     "runtime/test-services",
+    "ui/accessibility",
     "ui/disclosure",
     "ui/feedback",
     "ui/navigation",

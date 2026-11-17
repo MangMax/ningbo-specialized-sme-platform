@@ -4,7 +4,7 @@
 - Before writing to the app, inspect the running app's `/_openapi.json` or MCP `tools/list` contract.
 - Treat published announcement attachments as designation evidence and platform exports as current-state comparison snapshots. Keep all official roster rows, including rows unmatched to exports.
 - Keep business databases, source documents, uploaded files, and credentials outside Git commits.
-- For Vue UI changes, reuse the existing shared components and verify affected interactions on desktop and at 390px. Retain successful results when a later request fails, and provide an explicit retry.
+- For Vue UI changes, follow [DESIGN.md](DESIGN.md): reuse the shared components there and verify affected interactions on desktop and at 390px. Retain successful results when a later request fails, and provide an explicit retry.
 - Keep architectural decisions in `docs/adr/` and agent instructions in `AGENTS.md`, `docs/agents/`, or `.agents/`. Track specifications, plans, progress, reviews and follow-up work in GitHub Issues; keep generated reports, screenshots and logs outside Git.
 - For test changes, follow [test ownership and execution conventions](docs/agents/testing.md).
 
