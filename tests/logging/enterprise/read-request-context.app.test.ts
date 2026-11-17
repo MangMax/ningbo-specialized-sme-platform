@@ -79,17 +79,28 @@ it('real child readiness timeout produces one timeout terminal and retires its p
 },10000)
 it('late real child completion after cooperative cancellation never duplicates caller terminal',async()=>{
  const {getDbOwnerIdentity}=await import('../../../db/client')
- const reads=scripted(`process.send({type:'ready'});process.on('message',m=>{
-  if(m.operation==='summary')setTimeout(()=>process.send({type:'result',id:m.id,metrics:{heap:1,rss:1,bytes:0}}),100);
-  else {process.send({type:'chunk',id:m.id,payload:Buffer.from('{"ok":true}')});process.send({type:'result',id:m.id,metrics:{heap:1,rss:1}})}
- })`)
  const controller=new AbortController()
+ let completedAfterAbort=false
+ const reads=createEnterpriseReadExecutor({createWorker:()=>{
+  const child=createEnterpriseReadProcess(new URL('file:///unused184'),`process.send({type:'ready'});process.on('message',m=>{
+   if(m.operation==='summary'){
+    process.send({type:'chunk',id:m.id,payload:Buffer.alloc(0)});
+    process.send({type:'result',id:m.id,metrics:{heap:1,rss:1,bytes:0}});
+   }else{process.send({type:'chunk',id:m.id,payload:Buffer.from('{"ok":true}')});process.send({type:'result',id:m.id,metrics:{heap:1,rss:1}})}
+  })`)
+  // IPC order establishes cancellation before completion; durable log flush is
+  // not a scheduler barrier and may legitimately take longer than a child read.
+  child.on('message',message=>{
+   if(message.type==='chunk'&&Buffer.isBuffer(message.payload)&&message.payload.length===0)controller.abort()
+   if(message.type==='result'&&message.metrics?.bytes===0)completedAfterAbort=controller.signal.aborted
+  })
+  return child
+ }})
  try{
   const pending=reads.summary({operation:'summary',dbPath:path,owner:getDbOwnerIdentity(db)!,options:{curatedPath:join(root,'curated.json'),reconcilePath:join(root,'reconcile.json'),showCurated:false,page:1,pageSize:25}},controller.signal,{requestId:'late184'})
-  for(let i=0;i<50;i++){if((await logs('late184')).some(r=>r.operation==='enterprise_read.started'))break;await pause(10)}
-  controller.abort()
   expect(await pending).toEqual({type:'cancelled'})
   expect(await reads.list(path,{},undefined,{requestId:'afterlate184'})).toEqual({ok:true})
+  expect(completedAfterAbort).toBe(true)
  }finally{await reads.close()}
  expect((await logs('late184')).filter(r=>r.operation==='enterprise_read.finished')).toMatchObject([{outcome:'cancelled'}])
  expect((await logs('late184')).filter(r=>r.operation==='enterprise_read.finished')).toHaveLength(1)
