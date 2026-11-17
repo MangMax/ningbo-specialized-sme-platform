@@ -20,7 +20,7 @@ const row = {
   recognition: { precision: 'year', year: 2024 }, matchedValidYears: [2027], matchedMaintenance: [{ year: 2023, batch: 2 }],
   basis: 'event:21555@1 award 2024/6 结论年:2024', reviews: '', publication: '已见本称号宁波公布记录',
   notes: ['已确认迁入宁波；原城市：杭州'], references: ['evidence:1'], group: 'eligible',
-  qualificationAssessment: { titles: [{ titleCode: 'specialized_sme', evidence: [
+  qualificationAssessment: { titles: [{ titleCode: 'specialized_sme', effectiveQualification: { localRuleBasis: ['按有效小巨人资格计入；实际支撑称号：小巨人；evidence:15054；platform-relation:3178 query:2802'] }, evidence: [
     { eventId: 1, eventType: 'award', year: 2021, decidedYear: 2021, batchSeq: 1, reviewOutcome: null },
     { eventId: 2, eventType: 'review', year: 2021, decidedYear: 2024, batchSeq: 1, reviewOutcome: 'passed' },
   ] }] },
@@ -181,4 +181,13 @@ it('discloses mobile filters, applies date and option URLs, keeps chips on colla
   expect(router.currentRoute.value.query).toEqual({ titleCode: 'specialized_sme', sort: 'name_asc' })
   expect(wrapper.find('[aria-label="已选筛选条件"]').exists()).toBe(false)
   expect(advanced().text()).toContain('已选 0 项')
+})
+
+ it.each([false, true])('keeps technical qualification provenance out of list rows (narrow=%s)', async narrow => {
+  const { wrapper } = await setup({}, undefined, narrow)
+  expect(wrapper.text()).toContain('宁波现名企业')
+  expect(wrapper.text()).toContain('2024')
+  expect(wrapper.text()).not.toContain('evidence:15054')
+  expect(wrapper.text()).not.toContain('platform-relation:3178')
+  expect(wrapper.text()).not.toContain('实际支撑称号')
 })
