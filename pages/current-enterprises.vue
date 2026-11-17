@@ -85,7 +85,7 @@ const { data, isLoading, error, refetch } = useQuery<Result>({
   },
   placeholderData: previous => previous,
 })
-const { displayed, isShowingPrevious, paginationDisabled } = useRetainedQuerySnapshot(data, isLoading, error, activeRequest)
+const { displayed, paginationDisabled } = useRetainedQuerySnapshot(data, isLoading, error, activeRequest)
 const rows = computed(() => displayed.value?.rows ?? [])
 const selectedAssessment = (row: CurrentRow) => row.qualificationAssessment?.titles.find(item => item.titleCode === displayed.value?.request.params.titleCode)
 const timelineAssessment = (row: CurrentRow) => {
@@ -116,7 +116,6 @@ function describeRequest(request: typeof activeRequest.value) {
   const { scope, order } = describeRequestParts(request)
   return `${scope}；${order}`
 }
-const displayedDescription = computed(() => displayed.value ? describeRequestParts(displayed.value.request) : undefined)
 const failureDescription = computed(() => displayed.value
   ? `当前显示：${describeRequest(displayed.value.request)}。请求目标：${describeRequest(activeRequest.value)}未加载成功。`
   : undefined)
@@ -135,15 +134,15 @@ useHead({ title: '优质中小企业查询' })
         <SelectTrigger size="sm" class="bg-card w-32 shadow-none" aria-label="按区县筛选"><SelectValue /></SelectTrigger>
         <SelectContent><SelectGroup><SelectItem value="all">全部区县</SelectItem><SelectItem v-for="place in allDistricts" :key="place" :value="place">{{ place }}</SelectItem></SelectGroup></SelectContent>
       </Select>
-      <Select v-model="validYearModel">
+      <Select v-if="options.validYears.length || validYear" v-model="validYearModel">
         <SelectTrigger size="sm" class="bg-card w-36 shadow-none" aria-label="按有效年份筛选"><SelectValue placeholder="全部有效年份" /></SelectTrigger>
         <SelectContent><SelectGroup><SelectItem value="all">全部有效年份</SelectItem><SelectItem v-for="yearOption in yearOptions(options.validYears, validYear)" :key="yearOption" :value="String(yearOption)">{{ yearOption }} 年</SelectItem></SelectGroup></SelectContent>
       </Select>
-      <Select v-model="maintenanceYearModel">
+      <Select v-if="options.maintenanceYears.length || maintenanceYear" v-model="maintenanceYearModel">
         <SelectTrigger size="sm" class="bg-card w-36 shadow-none" aria-label="按维护年份筛选"><SelectValue placeholder="全部维护年份" /></SelectTrigger>
         <SelectContent><SelectGroup><SelectItem value="all">全部维护年份</SelectItem><SelectItem v-for="yearOption in yearOptions(options.maintenanceYears, maintenanceYear)" :key="yearOption" :value="String(yearOption)">{{ yearOption }} 年</SelectItem></SelectGroup></SelectContent>
       </Select>
-      <Select v-model="maintenanceBatchModel" :disabled="!maintenanceYear">
+      <Select v-if="maintenanceYear && batchOptions.length" v-model="maintenanceBatchModel">
         <SelectTrigger size="sm" class="bg-card w-36 shadow-none" aria-label="按维护批次筛选"><SelectValue placeholder="全部维护批次" /></SelectTrigger>
         <SelectContent><SelectGroup><SelectItem value="all">全部维护批次</SelectItem><SelectItem v-for="batch in batchOptions" :key="batch" :value="String(batch)">第 {{ batch }} 批</SelectItem></SelectGroup></SelectContent>
       </Select>
@@ -159,10 +158,9 @@ useHead({ title: '优质中小企业查询' })
         <Button variant="outline" size="sm" :disabled="!canApplyDate" @click="applyDate">应用时间</Button>
         <Button v-if="recognitionFrom || recognitionTo" variant="ghost" size="sm" @click="clearDate">清除时间</Button>
         <span v-if="dateError" class="text-destructive text-sm" role="alert">{{ dateError }}</span>
-        <span v-else class="text-muted-foreground text-[13px] leading-5">正式认定仅有年份时，时间范围须完整覆盖该年。</span>
       </div>
     </DefineDates>
-    <PageHeader title="优质中小企业查询" description="按本库资格判定查询当前有效企业。">
+    <PageHeader title="优质中小企业查询">
       <template #actions><CurrentRosterExportEntry :title-code="title" /></template>
     </PageHeader>
     <section aria-label="名单查询条件" class="bg-card flex min-w-0 flex-col gap-4 rounded-lg border p-4">
@@ -200,7 +198,6 @@ useHead({ title: '优质中小企业查询' })
       <Button v-if="maintenanceBatch" variant="outline" size="sm" @click="update({maintenanceBatch:undefined,page:undefined})">维护批次：第 {{ maintenanceBatch }} 批 ×</Button>
     </div>
     </section>
-    <p v-if="displayed" class="text-muted-foreground min-w-0 text-[13px] leading-5 [overflow-wrap:anywhere]" aria-live="polite">当前显示：{{ displayedDescription?.scope }}<span class="block sm:inline"><span class="hidden sm:inline">；</span>{{ displayedDescription?.order }}<span :class="{ invisible: !isShowingPrevious }">（上次成功结果）</span></span></p>
     <p v-if="displayed?.uncertainTotal && displayed.request.params.recognitionFrom" class="text-muted-foreground text-sm">另有 {{ displayed.uncertainTotal }} 家仅有年份精度，与所选时间部分重叠或缺少日期事实，未计入确定结果。</p>
     <Card class="gap-0 overflow-hidden py-0 shadow-none">
       <CardContent class="relative p-0">
