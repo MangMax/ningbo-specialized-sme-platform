@@ -48,14 +48,14 @@ function onEventClick(event: MouseEvent) {
       <span class="text-muted-foreground">{{ isCurrentContextEdge(edge) ? '快照与本记录的关联' : '匹配' }}</span>
       <Badge :variant="edge.status === 'confirmed' && !edge.requiresRevalidation ? 'secondary' : 'outline'">{{ correspondenceStatusText(edge) }}</Badge>
     </div>
-    <p v-if="targetEvent" class="mt-1 text-[13px]">
+    <p v-if="targetEvent" class="mt-1 text-table">
       <NuxtLink :to="eventTo" class="text-primary underline underline-offset-2 hover:no-underline" @click="onEventClick">查看{{ TITLES[targetEvent.record.titleCode] ?? '称号' }} · {{ eventDecisionText(targetEvent) }}</NuxtLink>
     </p>
     <EventCorrespondenceDecision v-if="!readOnly && edge.eventId && edge.relationId && ['event_process', 'event_recognized'].includes(edge.type)" :edge="{ type: edge.type, eventId: edge.eventId, relationId: edge.relationId, role: edge.role }" :existing="edge" />
-    <DisclosurePanel compact content-class="pb-0" class="text-muted-foreground mt-1 text-[13px]">
+    <DisclosurePanel compact content-class="pb-0" class="text-muted-foreground mt-1 text-table">
       <template #trigger><span>来源定位</span></template>
       <p>{{ locator }}</p>
     </DisclosurePanel>
-    <p v-if="edge.requiresRevalidation" class="text-warning mt-1 text-[13px]">出处变更后需重新核验；当前不按已确认出处计。</p>
+    <p v-if="edge.requiresRevalidation" class="text-warning mt-1 text-table">出处变更后需重新核验；当前不按已确认出处计。</p>
   </li>
 </template>

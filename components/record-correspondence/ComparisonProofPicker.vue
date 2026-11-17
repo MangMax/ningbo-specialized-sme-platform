@@ -111,19 +111,19 @@ watch([scopeKey, layoutReady], ([key, ready]) => emit('settled', key, ready), { 
 <template>
   <section class="flex min-w-0 flex-col gap-2 rounded-sm border p-3" data-testid="comparison-proof-picker" aria-label="已确认范围依据">
     <div class="flex flex-wrap items-baseline justify-between gap-2"><h3 class="text-sm font-medium">已确认范围依据（可选）</h3><span class="text-muted-foreground text-xs">仅显示已确认且当前来源有效的依据</span></div>
-    <p class="text-muted-foreground text-[13px]">证明必须覆盖本次所选正式文件或接口与导出版本。可用依据需明确勾选；未选择时范围或版本资格继续待核。</p>
-    <p v-if="selectedReadFailed" class="text-destructive text-[13px]">部分已选依据暂不可读；保留选择，比较服务会再次核验。</p>
+    <p class="text-muted-foreground text-table">证明必须覆盖本次所选正式文件或接口与导出版本。可用依据需明确勾选；未选择时范围或版本资格继续待核。</p>
+    <p v-if="selectedReadFailed" class="text-destructive text-table">部分已选依据暂不可读；保留选择，比较服务会再次核验。</p>
     <TableLoadingStatus kind="comparison" :loading="loading" label="正在读取已登记范围依据…" />
     <TableFailureState v-if="error" title="范围依据目录读取失败" :compact="!!displayed" :pending="loading" :description="displayed ? '保留上次成功的目录页；请重试当前目标。' : '仍可不选依据进行对比，范围资格会保持待核。'" @retry="load" />
-    <p v-if="displayed && displayed.page !== page" class="text-muted-foreground text-[13px]">目标目录尚未加载，下面保留上次成功的范围依据页。</p>
+    <p v-if="displayed && displayed.page !== page" class="text-muted-foreground text-table">目标目录尚未加载，下面保留上次成功的范围依据页。</p>
     <ul v-if="choices.length" class="flex min-w-0 flex-col gap-1.5">
       <li v-for="proof in choices" :key="proof.id" class="flex min-w-0 items-start gap-3 rounded-sm border p-2.5">
         <Checkbox :id="`proof-${proof.id}`" :model-value="selection.proofIds.includes(proof.id)" class="mt-0.5" :aria-label="`选择${title(proof)} · ${scopeText(proof)} · ${kindText(proof)}`" @update:model-value="toggle(proof, $event === true)" />
-        <label :for="`proof-${proof.id}`" class="min-w-0 flex-1 cursor-pointer break-words [overflow-wrap:anywhere]"><span class="block text-[13px] font-medium">{{ title(proof) }} · {{ kindText(proof) }}</span><span class="text-muted-foreground block text-xs">{{ scopeText(proof) }} · 确认于 {{ humanRecordTime(proof.decidedAt) }}</span><span class="text-muted-foreground block text-xs">登记依据：{{ basis[proof.id] ?? '正在读取…' }}</span></label>
+        <label :for="`proof-${proof.id}`" class="min-w-0 flex-1 cursor-pointer break-words [overflow-wrap:anywhere]"><span class="block text-table font-medium">{{ title(proof) }} · {{ kindText(proof) }}</span><span class="text-muted-foreground block text-xs">{{ scopeText(proof) }} · 确认于 {{ humanRecordTime(proof.decidedAt) }}</span><span class="text-muted-foreground block text-xs">登记依据：{{ basis[proof.id] ?? '正在读取…' }}</span></label>
         <Badge variant="outline">已确认有效</Badge>
       </li>
     </ul>
-    <p v-else-if="!loading && !error" class="text-muted-foreground text-[13px]">本页没有与所选来源、截止时点相符的有效依据；可继续翻页或调整来源。</p>
+    <p v-else-if="!loading && !error" class="text-muted-foreground text-table">本页没有与所选来源、截止时点相符的有效依据；可继续翻页或调整来源。</p>
     <TablePagination v-if="displayed" :page="displayed.page" :page-size="displayed.pageSize" :total="displayed.total" unit="项依据" :loading="loading || error" @update:page="page = $event" @update:page-size="pageSize = $event; page = 1" />
     <div v-if="selectedItems.length" class="flex flex-wrap gap-1.5" aria-label="已选范围依据"><Button v-for="proof in selectedItems" :key="proof.id" variant="secondary" size="sm" class="h-auto max-w-full whitespace-normal text-left text-xs" @click="toggle(proof, false)">{{ title(proof) }} · {{ kindText(proof) }} · 移除</Button></div>
   </section>
