@@ -130,7 +130,8 @@ it.each(states)("single_table_status_and_timeline_$id", async ({ id, label, time
   expect(view.findAll('tbody tr')).toHaveLength(1)
   expect(view.get('tbody tr').text()).toContain('synthetic_408_' + id)
   expect(view.get('[data-testid="current-enterprise-card"]').text()).toContain('synthetic_408_' + id)
-  expect(view.get('p[aria-live="polite"]').text()).toContain('创新型中小企业；' + label + '；搜索：synthetic_408')
+  expect(view.get('[aria-label="按有效状态筛选"]').text()).toContain(id === 'effective' ? '有效' : label)
+  expect(view.find('p[aria-live="polite"]').exists()).toBe(false)
   expect(view.find('[aria-label="已公布待核企业"]').exists()).toBe(false)
   const surfaces = [view.get('tbody tr'), view.get('[data-testid="current-enterprise-card"]')]
   for (const surface of surfaces) {
@@ -171,7 +172,7 @@ it("effective_row_with_review_gaps_keeps_unknown_timeline_facts_without_pending_
   response.rows[0]!.qualificationAssessment.snapshotId = digest([scope, titles])
   const before = JSON.stringify(response)
   requests[0]!.result.resolve(response); await flushPromises()
-  expect(view.get('p[aria-live="polite"]').text()).toContain('创新型中小企业；有效企业；搜索：synthetic_408')
+  expect(view.get('[aria-label="按有效状态筛选"]').text()).toContain('有效')
   for (const surface of [view.get('tbody tr'), view.get('[data-testid="current-enterprise-card"]')]) {
     expect(surface.findAll('ol li').map(step => step.text())).toEqual(['2025 认定', '→年份未记录 复核（结论待核）'])
     expect(surface.text()).not.toContain('2022 复核')
@@ -194,7 +195,7 @@ it.each([{ id: 'desktop', narrow: false }, { id: 'mobile', narrow: true }])("sin
   await router.replace({ path: '/current-enterprises', query: target }); await flushPromises()
   requests.at(-1)!.result.reject(new Error('synthetic failed target')); await flushPromises()
   expect(view.text()).toContain('当前有效企业查询失败')
-  const description = view.get('p[aria-live="polite"]').text()
+  const description = view.get('[data-testid="table-failure-state"]').text()
   expect(description).toContain('创新型中小企业；已到期；搜索：' + q + '；区县：鄞州区；认定时间：2025-01-01 至 2025-12-31')
   expect(description).toContain('第 2 页，每页 1 家')
   expect(view.text()).toContain('请求目标：专精特新中小企业；已注销（吊销）；搜索：synthetic_408_failed；有效年份：2028；维护年份：2024 第 2 批')
@@ -305,7 +306,7 @@ it.each([{ id: 'little_giant', label: '专精特新“小巨人”' }, { id: 'sp
   response.rows[0]!.qualificationAssessment.snapshotId = digest([scope, sealedTitles])
   const before = JSON.stringify(response)
   requests[0]!.result.resolve(response); await flushPromises()
-  expect(view.get('p[aria-live="polite"]').text()).toContain(label)
+  expect(view.findAll('[role="tab"]').find(tab => tab.attributes('aria-selected') === 'true')!.text()).toContain(label)
   for (const surface of [view.get('tbody tr'), view.get('[data-testid="current-enterprise-card"]')]) {
     expect(surface.findAll('ol li').map(step => step.text())).toEqual(['2021 认定', '→2024 复核'])
     expect(surface.text()).not.toContain('1999')
