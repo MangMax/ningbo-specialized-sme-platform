@@ -229,6 +229,11 @@
 @theme {
   --text-table: 0.8125rem; /* 13px */
   --text-table--line-height: 1.25rem; /* 20px */
+
+  /* 列表页表格的纵向滚动预算:从 100dvh 里为页头/筛选行/分页预留的空间。
+   * `.data-table-scroll` 经 `calc(100dvh - var(--table-budget))` 消费它;
+   * 新增列表页直接套 `.data-table-scroll`,不再各自照抄 17rem。 */
+  --table-budget: 17rem;
 }
 
 @layer base {
@@ -426,9 +431,11 @@ html.theme-transition::view-transition-new(root) {
   padding-block: 6px;
 }
 
-/* Keep all three list pages within the same viewport-based table budget. */
+/* Keep list pages within the same viewport-based table budget: from 100dvh
+ * reserve --table-budget for the page header / filter row / pagination.
+ * New list pages consume .data-table-scroll instead of copying the figure. */
 .data-table-scroll {
-  max-height: max(320px, calc(100dvh - 17rem));
+  max-height: max(320px, calc(100dvh - var(--table-budget)));
   overflow: auto;
 }
 
