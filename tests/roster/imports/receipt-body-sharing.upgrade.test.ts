@@ -9,11 +9,11 @@ it('resumes exact byte sharing without merging hash collisions or lexical varian
     const bodies = [' {"中文":1}\n', ' {"中文":1}\n', '{"中文":1}', ' {"中文":1}\n', '', '']
     bodies.forEach((body, i) => db.prepare('INSERT INTO import_receipt VALUES(?,1,?,?)').run(i+1, 'collision', body))
     const read = () => db.prepare(`SELECT CAST(COALESCE(o.request_body,r.request_body) AS BLOB) AS body FROM import_receipt r LEFT JOIN import_receipt o ON o.id=r.body_receipt_id ORDER BY r.id`).all().map(row => (row as { body: Buffer }).body)
-    expect(migrateImportReceiptBodies(db, 1)).toEqual({ migrated: 1, reclaimedBytes: 14 })
+    expect(migrateImportReceiptBodies(db, 1)).toEqual({ migrated: 1, reclaimedBytes: 14, totalReclaimedBytes: 14 })
     expect(read()).toEqual(bodies.map(body => Buffer.from(body)))
-    expect(migrateImportReceiptBodies(db)).toEqual({ migrated: 2, reclaimedBytes: 14 })
+    expect(migrateImportReceiptBodies(db)).toEqual({ migrated: 2, reclaimedBytes: 14, totalReclaimedBytes: 28 })
     expect(read()).toEqual(bodies.map(body => Buffer.from(body)))
-    expect(migrateImportReceiptBodies(db)).toEqual({ migrated: 0, reclaimedBytes: 0 })
+    expect(migrateImportReceiptBodies(db)).toEqual({ migrated: 0, reclaimedBytes: 0, totalReclaimedBytes: 28 })
     expect(db.pragma('foreign_key_check')).toEqual([])
   } finally { db.close() }
 })
@@ -26,7 +26,7 @@ it('keeps committed switches after interruption and resumes remaining receipts',
     expect(() => migrateImportReceiptBodies(db)).toThrow('interrupted')
     expect(db.prepare('SELECT request_body FROM import_receipt ORDER BY id').all()).toEqual([{request_body:'正文'},{request_body:''},{request_body:'正文'}])
     db.exec('DROP TRIGGER interrupt_switch')
-    expect(migrateImportReceiptBodies(db)).toEqual({ migrated: 1, reclaimedBytes: 6 })
-    expect(migrateImportReceiptBodies(db)).toEqual({ migrated: 0, reclaimedBytes: 0 })
+    expect(migrateImportReceiptBodies(db)).toEqual({ migrated: 1, reclaimedBytes: 6, totalReclaimedBytes: 12 })
+    expect(migrateImportReceiptBodies(db)).toEqual({ migrated: 0, reclaimedBytes: 0, totalReclaimedBytes: 12 })
   } finally { db.close() }
 })

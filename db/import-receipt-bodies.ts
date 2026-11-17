@@ -34,5 +34,9 @@ export function migrateImportReceiptBodies(db: Database.Database, limit = Number
     }).immediate()
     if (bytes !== undefined) { migrated++; reclaimedBytes += bytes }
   }
-  return { migrated, reclaimedBytes }
+  // Reconstruct from committed sharing, including switches from interrupted runs.
+  // This is logical duplicate-body storage saved, not SQLite file size reclaimed.
+  const { totalReclaimedBytes } = db.prepare(`SELECT COALESCE(SUM(length(CAST(owner.request_body AS BLOB))), 0) AS totalReclaimedBytes
+    FROM import_receipt shared JOIN import_receipt owner ON owner.id=shared.body_receipt_id`).get() as { totalReclaimedBytes: number }
+  return { migrated, reclaimedBytes, totalReclaimedBytes }
 }
