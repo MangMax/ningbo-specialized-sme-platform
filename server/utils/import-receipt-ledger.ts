@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { eq, sql } from 'drizzle-orm'
+import { and, asc, eq, isNull, sql } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../db/schema'
 import type { RosterImportRequest } from '../../lib/roster-import-client'
@@ -39,7 +39,12 @@ export function recordImportReceipt<T extends { status: string }>(db: Db, operat
     if (existing?.status === 'committed' && operation !== 'replay') return { replayed: true as const, batchId: existing.id, receiptId: previous?.id }
     const batch = ensureBatchRow(db, batchRequest)
     const body = JSON.stringify(redact(normalized))
-    const owner = db.get<{ id: number }>(sql`SELECT id FROM import_receipt WHERE batch_id=${batch.id} AND request_hash=${hash} AND body_receipt_id IS NULL AND CAST(request_body AS BLOB)=CAST(${body} AS BLOB) ORDER BY id LIMIT 1`)
+    const owner = db.select({ id: schema.importReceipt.id }).from(schema.importReceipt).where(and(
+      eq(schema.importReceipt.batchId, batch.id),
+      eq(schema.importReceipt.requestHash, hash),
+      isNull(schema.importReceipt.bodyReceiptId),
+      sql`CAST(${schema.importReceipt.requestBody} AS BLOB)=CAST(${body} AS BLOB)`,
+    )).orderBy(asc(schema.importReceipt.id)).limit(1).get()
     return db.insert(schema.importReceipt).values({ bodyReceiptId: owner?.id ?? null, batchId: batch.id, operation, requestHash: hash, requestBody: owner ? '' : body, status: 'processing', createdAt: new Date().toISOString() }).returning({ id: schema.importReceipt.id }).get()
   }, { behavior: 'immediate' })
   if ('replayed' in attempt) {
