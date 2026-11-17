@@ -1,4 +1,5 @@
-import { afterAll, expect, it } from 'vitest'
+import { afterAll, expect, it, vi } from 'vitest'
+import * as platformQualification from '../../../lib/roster/platform-qualification'
 import { qualificationExportFixture } from '../current-export/fixtures/qualification-export'
 import { createCurrentQualificationAssessmentReader, PREVIOUS_QUALIFICATION_ASSESSMENT_VERSION } from '../../../lib/roster/current-qualification'
 import { schema } from '../../../db/client'
@@ -311,4 +312,22 @@ it('keeps an imported publication authoritative when event evidence is omitted',
   expect(own.completeness.gaps).toContain('missing_official_source')
   expect(readImportReceipt(local.db,'get',{batchId:committed.batchId})).toEqual(receipt)
  } finally {await local.close()}
+})
+
+
+it('stops source eligibility evaluation after the first valid directory while retaining fallback behavior', () => {
+ const c=f.candidate('ordered source evaluation',[{eventType:'nurture',year:2025}]),code='913302125705899102'
+ f.db.update(schema.enterprise).set({usccNorm:code,city:'宁波市'}).where(eq(schema.enterprise.id,c.enterprise.id)).run()
+ for(const source of ['queryBusList','businessList','queryList'] as const)writeNewCollectionTarget(f.db,collectionCommand({id:'ordered-source-'+source,tyshxydm:code,qymc:c.enterprise.name,rdjb:'2',sfyx:'1',rdtime:'2025-02-01',rddqrq:'2028-02-01',szsmc:'宁波市',sblx:'申请',cszt:'终审通过',year:'2025'},'2026-10-01T00:00:00Z',source))
+ const contains=vi.spyOn(platformQualification,'periodContains')
+ const reader=createCurrentQualificationAssessmentReader(f.db.$client)
+ f.db.$client.exec('BEGIN')
+ try {
+  expect(reader.readEffectiveTitles([c.enterprise.id],asOf,'specialized_sme')).toEqual(new Map([[c.enterprise.id,'effective']]))
+  expect(contains).toHaveBeenCalledTimes(1)
+  expect(contains.mock.calls[0]![0].raw).toBe('2025-02-01')
+ }finally{f.db.$client.exec('ROLLBACK');contains.mockRestore()}
+ // The latest directory row is not a grant; a complete lower-priority application remains usable.
+ writeNewCollectionTarget(f.db,collectionCommand({id:'ordered-source-queryBusList',tyshxydm:code,qymc:c.enterprise.name,rdjb:'2',sfyx:'',szsmc:'宁波市'},'2026-10-02T00:00:00Z'))
+ expect(reader.readCurrent(c.enterprise.id,asOf,'specialized_sme').snapshot.titles.find(t=>t.titleCode==='specialized_sme')).toMatchObject({effectiveQualification:{status:'effective',source:{source:'business_list'}}})
 })

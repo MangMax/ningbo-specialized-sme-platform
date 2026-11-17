@@ -775,9 +775,10 @@ function createCurrentCandidateEvaluationReader(db: Database.Database, receiptRu
   // Published facts govern this title, including an expired or failed result.
   // Platform qualification is a fallback only while no publication applies.
   const hasApplicablePublication = publicationEvents.some(event => qualificationEventAppliesAt(event, year, day))
-  const platformSource = hasApplicablePublication ? undefined : sourceOrder.flatMap(source => {
+  let platformSource: PlatformQualificationFact | undefined
+  if (!hasApplicablePublication) for (const source of sourceOrder) {
     const facts = visible.filter(f => f.source === source)
-    return facts.filter(f => {
+    const selected = facts.filter(f => {
       const futureInvalidation = !!f.invalidatedAt.value && f.invalidatedAt.value > at
       if (f.conclusion !== 'passed' && !(f.conclusion === 'invalid' && futureInvalidation)) return false
       if (f.invalidatedAt.value && !futureInvalidation) return false
@@ -804,8 +805,9 @@ function createCurrentCandidateEvaluationReader(db: Database.Database, receiptRu
         return !['recognition','apply'].includes(f.matter) || !grantStart || !boundary || grantStart <= boundary
       })) return false
       return true
-    }).sort((a,b) => (b.period.from.value ?? String(b.businessYear ?? '')).localeCompare(a.period.from.value ?? String(a.businessYear ?? '')) || b.recordId-a.recordId)
-  })[0]
+    }).sort((a,b) => (b.period.from.value ?? String(b.businessYear ?? '')).localeCompare(a.period.from.value ?? String(a.businessYear ?? '')) || b.recordId-a.recordId)[0]
+    if (selected) { platformSource = selected; break }
+  }
   if (platformSource) {
     row.basis = [row.basis, `${platformSource.source} record:${platformSource.recordId} version:${platformSource.versionId} observation:${platformSource.observationId}`].filter(Boolean).join('\n')
     row.references.push(`platform-record:${platformSource.recordId}@${platformSource.versionId}`)
