@@ -6,7 +6,7 @@
 2. 按[负载编排](orchestration.md)把企业 ID/已确认代码分配给唯一负责人，跨文件复用。调查者数量与平台请求额度分开控制：所有工作者共用应用的平台请求上限，不各建请求池。
 3. 按来源要求设置应用查询条件，保留全部原行、候选、称号/页码、实际条件、`queriedAt`、`completedAt`。公开企业/登记资料的身份查证可独立推进。
 4. 对每个必需范围同时检查状态、完整性和未完成位置。失败、会话过期、页缺失、未查询不能当零记录。
-5. 候选身份经审阅后，再进行独立应用预检/写入。查询不自动入库、合并、更名、补码或生成称号事件；即使身份未确认也保留全部正式行。
+5. 单查与批量查询只返回查询结果，归档须另走应用预检/提交；`difference_snapshot` 则自行保存业务记录。两种路径均不自动合并企业、更名、补码或伪造公布事件。已入库且身份明确的平台事实可自动参与资格兜底，不以人工差异确认为前置；身份有歧义时具体记录缺口，仍保留全部正式行。
 
 平台凭据由服务端管理，不属于此流程可读取内容。调查代理不读/展示 Cookie、不查看凭据存储、不直调平台网址。会话过期由运维在服务端维护，再由代理明确重试未完成项。应用任务令牌只授权提交/重试，不含平台会话数据。
 
@@ -46,7 +46,15 @@
 
 存储支持 `business_list`、`apply_list` 和独立 `recognized_list`（仅 queryBusList）。用 `recognizedResultToImport` 将每个完整原结果/每个批量分段转换后，经统一预检/提交转存，保留原时间、条件、分页和原始行。元数据或结束证明不足继续待处理，不改标来源、不编完整性。通过 `GET /api/platform/queries` 或 `list_platform_queries` 读回历史，核对每个查询/行 ID。
 
-归档后另查本地业务状态：`GET /api/platform/business-processes` / `list_platform_business_processes` 只读 `business_list` 办理记录，`view=records` 与 `view=isolated` 分别核对业务及无法并入的观察。用 `GET /api/platform/business-processes/{recordId}` / `get_platform_business_process` 读实际版本/观察，保留全部版本/观察计数、冲突和 `counts.*Truncated`；详情版本最多100、观察最多200，截断不能当完整。这里不提供 queryList/queryBusList 同等 typed 业务搜索。查询归档成功（collected）、业务记录/版本实际可读与尚未完成的迁移分别报告，不用查询/行 ID 或 kind 汇总冒充 migrated。
+归档后另查本地业务状态，均不访问外部平台：
+
+| 来源 | REST 列表 / MCP | REST 详情 / MCP |
+|---|---|---|
+| business_list | `GET /api/platform/business-processes` / `list_platform_business_processes` | `GET /api/platform/business-processes/{recordId}` / `get_platform_business_process` |
+| apply_list | `GET /api/platform/declarations` / `list_platform_declarations` | `GET /api/platform/declarations/{recordId}` / `get_platform_declaration` |
+| recognized_list | `GET /api/platform/recognized-directory` / `list_platform_recognized_directory` | `GET /api/platform/recognized-directory/{recordId}` / `get_platform_recognized_record` |
+
+三者均有 typed 业务查询；具体筛选用各自契约，不混用字段。`view=records` 与 `view=isolated` 分别核对业务及无法并入的观察。详情保留版本/观察计数、冲突及截断标记，截断不能当完整；各上限从当前契约读取。查询归档成功（collected）、业务记录/版本实际可读与尚未完成的迁移分别报告，不用查询/行 ID 或 kind 汇总冒充 migrated。
 
 转存详见[归档转存契约](../../../../lib/platform/recognized-evidence.ts)；公开补充及 `cross_source` 当前条件见[身份查证](./uscc-recovery.md)。无凭据示例和行为校验见[示例说明](../examples/README.md)；完整 API 见[批量查询文档](../../../../server/api/platform/batches/index.post.ts)。
 
