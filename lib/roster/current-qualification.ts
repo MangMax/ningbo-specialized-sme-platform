@@ -88,7 +88,7 @@ export type QualificationAssessmentReadOptions = {
   coverageForTitle?: (title: CurrentTitle) => ReturnType<typeof readQueryCoverage>
 }
 export interface CurrentQualificationAssessment {
-  effectiveQualification?: { status: 'effective' | 'expired' | 'terminated' | 'moved_out' | 'unrecognized'; basis: string; presentationBasis?: string[]; localRuleBasis?: string[]; notes: string[]; source?: PlatformQualificationFact }
+  effectiveQualification?: { status: 'effective' | 'expired' | 'terminated' | 'moved_out' | 'unrecognized'; basis: string; presentationBasis?: string[]; localRuleBasis?: string[]; notes: string[]; source?: PlatformQualificationFact; supportingTitle?: CurrentTitle }
   titleCode: CurrentTitle
   group: CurrentGroup
   cycles: { originYear: number; batchSeq: number | null; precision: 'year' }[]
@@ -1034,9 +1034,10 @@ function createCurrentCandidateEvaluationReader(db: Database.Database, receiptRu
     if (frozenInheritance) row.assessment.effectiveQualification?.presentationBasis?.push(...localRuleBasis)
     else {
       row.assessment.versions.decisions = assessmentDigest([row.assessment.versions.decisions, upper.assessment.versions.decisions])
-      if (upper === supportingTitle && upper.assessment.effectiveQualification) {
-        row.assessment.effectiveQualification?.presentationBasis?.push(...upper.assessment.effectiveQualification.presentationBasis ?? [])
-        if (row.assessment.effectiveQualification && upper.assessment.effectiveQualification.source) row.assessment.effectiveQualification.source = upper.assessment.effectiveQualification.source
+      if (upper === supportingTitle && upper.assessment.effectiveQualification && row.assessment.effectiveQualification) {
+        row.assessment.effectiveQualification.supportingTitle = upper.assessment.titleCode
+        row.assessment.effectiveQualification.presentationBasis?.push(...upper.assessment.effectiveQualification.presentationBasis ?? [])
+        if (upper.assessment.effectiveQualification.source) row.assessment.effectiveQualification.source = upper.assessment.effectiveQualification.source
       }
     }
   }

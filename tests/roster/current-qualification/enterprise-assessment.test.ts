@@ -468,6 +468,8 @@ it('explicit_prior_versions_preserve_frozen_legacy_and_current_consumers_share_d
   expect(current.titles.map(t => [t.titleCode, t.group])).toEqual([['little_giant', 'excluded'], ['specialized_sme', 'eligible'], ['innovative_sme', 'eligible']])
   expect(current.titles[2]!.effectiveQualification!.localRuleBasis!.join(' ')).toContain('专精特新中小企业')
   expect(current.titles[2]!.evidence).toEqual([])
+  expect(current.titles[2]!.effectiveQualification?.supportingTitle).toBe('specialized_sme')
+  expect(current.titles[1]!.effectiveQualification?.supportingTitle).toBeUndefined()
   expect(reader.readCurrent(1, AS_OF, 'specialized_sme').snapshot).toEqual(current)
   expect(reader.readWorkbook(1, AS_OF, 'specialized_sme').snapshot).toEqual(current)
   expect(reader.readTitle(1, 'specialized_sme', AS_OF).group).toBe('eligible')

@@ -191,3 +191,19 @@ it('discloses mobile filters, applies date and option URLs, keeps chips on colla
   expect(wrapper.text()).not.toContain('platform-relation:3178')
   expect(wrapper.text()).not.toContain('实际支撑称号')
 })
+
+it.each([['little_giant', '小巨人', false], ['specialized_sme', '专精特新中小企业', true]] as const)('shows the actual %s supporting timeline for inherited qualification', async (title, label, narrow) => {
+  const original = row.qualificationAssessment.titles
+  Object.assign(row.qualificationAssessment, { titles: [
+    { titleCode: 'innovative_sme', evidence: [], effectiveQualification: { supportingTitle: title } },
+    { titleCode: title, evidence: original[0]!.evidence },
+  ] })
+  try {
+    const { wrapper } = await setup({ titleCode: 'innovative_sme' }, undefined, narrow)
+    expect(wrapper.text()).toContain(`按有效${label}资格计入`)
+    expect(wrapper.text()).toContain('2021 认定')
+    expect(wrapper.text()).toContain('2024 复核')
+    expect(wrapper.text()).not.toContain('暂无认定与复核记录')
+    expect(wrapper.text()).not.toContain('platform-relation:')
+  } finally { row.qualificationAssessment.titles = original }
+})
