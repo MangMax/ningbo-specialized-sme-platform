@@ -676,7 +676,7 @@ onBeforeUnmount(() => {
             <p class="text-foreground font-medium">
               {{ result ? STATE_WORD[state] : '这一页还没有识别文本' }}
             </p>
-            <p class="text-[13px] leading-relaxed">
+            <p class="text-table leading-relaxed">
               {{
                 result
                   ? '这一页的正文为空（已保存为空结果）。可以编辑、手工补录，或继续翻页。'

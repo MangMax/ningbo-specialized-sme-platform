@@ -110,7 +110,7 @@ function onUploadError({ name, failure: uploadFailure }: { name: string; failure
         <code
           v-for="path in stranded"
           :key="path"
-          class="font-mono text-[13px] leading-relaxed break-all"
+          class="font-mono text-table leading-relaxed break-all"
           >{{ path }}</code
         >
       </div>

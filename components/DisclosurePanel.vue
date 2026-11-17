@@ -69,7 +69,7 @@ const uncontrolledOpen = ref(false)
 const resolvedOpen = computed(() => props.open ?? uncontrolledOpen.value)
 
 const triggerClasses = computed(() => [
-  props.compact ? 'py-2 text-[13px]' : 'py-4 text-sm',
+  props.compact ? 'py-2 text-table' : 'py-4 text-sm',
   props.padded && 'px-3',
   props.triggerClass,
 ])
@@ -103,7 +103,7 @@ function onUpdate(value: string | string[] | undefined) {
             <slot name="title">
               <span class="min-w-0 flex-1 text-left">{{ title }}</span>
             </slot>
-            <span v-if="description" class="text-muted-foreground text-[13px] font-normal">{{ description }}</span>
+            <span v-if="description" class="text-muted-foreground text-table font-normal">{{ description }}</span>
           </slot>
         </span>
         <template v-if="$slots.chevron" #icon>

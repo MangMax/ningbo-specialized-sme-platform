@@ -29,7 +29,7 @@ const history = computed(() => [...props.queries].sort((a,b) => b.queriedAt.loca
 }))
 </script>
 <template>
-  <DisclosurePanel v-if="queries.length" compact padded content-class="px-3 pb-2" class="mb-2 min-w-0 rounded-sm border text-[13px] leading-5" data-testid="platform-query-history" :title="`查询出处与历史 · ${queries.length} 次`">
+  <DisclosurePanel v-if="queries.length" compact padded content-class="px-3 pb-2" class="mb-2 min-w-0 rounded-sm border text-table leading-5" data-testid="platform-query-history" :title="`查询出处与历史 · ${queries.length} 次`">
       <p v-if="queries.some(query => query.interface === 'recognized_list')" class="text-muted-foreground mt-3">原查询时点的历史证据，不代表当前正式名单。维护年份与批次不作为正式认定事件。</p>
       <article v-for="item in history" :key="item.query.id" class="mt-3 min-w-0 border-t pt-3 break-words [overflow-wrap:anywhere]" data-testid="platform-query-provenance">
         <p class="font-medium">查询 #{{ item.query.id }} · {{ sourceLabel }} · {{ PLATFORM_QUERY_STATUSES[item.query.status] ?? '状态待核' }} · {{ item.query.relationCount }} 条来源行</p>

@@ -161,7 +161,7 @@ const canSave = computed(
               placeholder="2024"
               :aria-invalid="yearInvalid || needsYear || undefined"
             />
-            <p class="text-muted-foreground text-[13px] leading-relaxed">
+            <p class="text-muted-foreground text-table leading-relaxed">
               这份文件的发布年份，不是认定或复核年份。
             </p>
           </div>
@@ -177,7 +177,7 @@ const canSave = computed(
               :aria-invalid="batchInvalid || needsYear || undefined"
             />
             <p
-              class="text-[13px] leading-relaxed"
+              class="text-table leading-relaxed"
               :class="needsYear ? 'text-destructive' : 'text-muted-foreground'"
             >
               {{ needsYear ? '填了批次就要同时填年份。' : '文件发布批次；内容批次请在分段中修改。' }}

@@ -340,16 +340,16 @@ function eventSuffix(item: TimelineItem): string {
           <!-- 事实三行 -->
           <dl class="grid grid-cols-[70px_minmax(0,1fr)] items-baseline gap-y-2">
             <dt class="text-muted-foreground text-xs">属地</dt>
-            <dd class="text-[13px]">{{ detail.enterprise.district ?? '属地未知' }}</dd>
+            <dd class="text-table">{{ detail.enterprise.district ?? '属地未知' }}</dd>
             <dt class="text-muted-foreground text-xs">曾用名</dt>
-            <dd class="text-[13px]">
+            <dd class="text-table">
               <template v-if="visibleHistoricalAliasNames.length">
                 {{ visibleHistoricalAliasNames.join('、') }}
               </template>
               <span v-else class="text-muted-foreground">—</span>
             </dd>
             <dt class="text-muted-foreground text-xs">下次复核</dt>
-            <dd data-testid="next-review-value" class="min-w-0 text-[13px] tabular-nums">
+            <dd data-testid="next-review-value" class="min-w-0 text-table tabular-nums">
               <ul v-if="nextReviews.length" class="space-y-2">
                 <li v-for="item in nextReviews" :key="item.titleCode" data-testid="next-review-item" :data-title-code="item.titleCode">
                   <div class="flex flex-wrap items-baseline gap-x-2">
@@ -383,7 +383,7 @@ function eventSuffix(item: TimelineItem): string {
               >
                 {{ item.yearUnknown || item.year == null ? '待核' : item.year }}
               </span>
-              <span class="text-[13px] leading-5">
+              <span class="text-table leading-5">
                 <span>{{ TITLES[item.titleCode] ?? item.titleCode }}</span>
                 <span class="text-muted-foreground ml-1.5 text-xs">
                   {{ eventLabel(item.eventType)
@@ -393,20 +393,20 @@ function eventSuffix(item: TimelineItem): string {
               </span>
             </li>
           </ol>
-          <p v-else class="text-muted-foreground mt-3 text-[13px]">尚无称号历史。</p>
+          <p v-else class="text-muted-foreground mt-3 text-table">尚无称号历史。</p>
 
           <DisclosurePanel v-if="evidenceItems.length" compact content-class="pb-0" class="mt-5 border-t pt-4" data-testid="enterprise-evidence" :title="`出处 · ${evidenceItems.length}`">
             <ul class="mt-2 flex flex-col gap-2">
               <li v-for="(item, index) in evidenceItems" :key="`${item.eventId}-${item.sourceFile}-${index}`" class="py-2 first:pt-0">
-                <p class="text-muted-foreground text-[13px] leading-5">
+                <p class="text-muted-foreground text-table leading-5">
                   <template v-if="item.year != null">{{ item.year }} · </template>
                   <template v-if="item.titleCode">{{ TITLES[item.titleCode] ?? item.titleCode }} · </template>
                   <template v-if="item.eventType">{{ eventLabel(item.eventType) }}</template>
                 </p>
-                <p class="break-words text-[13px] leading-5" :title="item.sourceFile">
+                <p class="break-words text-table leading-5" :title="item.sourceFile">
                   {{ item.sourceFile }}<template v-if="item.attachment"> · {{ item.attachment }}</template>
                 </p>
-                <p class="text-muted-foreground text-[13px] leading-5 tabular-nums">
+                <p class="text-muted-foreground text-table leading-5 tabular-nums">
                   <template v-if="item.listNo != null">序号 {{ item.listNo }} · </template>页码 {{ item.page ?? '—' }}
                 </p>
               </li>
@@ -417,12 +417,12 @@ function eventSuffix(item: TimelineItem): string {
           <template v-if="differences.length">
             <h3 class="text-muted-foreground mt-5 border-t pt-4 text-xs font-medium">差异</h3>
             <div v-for="d in differences" :key="`${d.titleCode}-${d.direction}`" class="mt-3">
-              <div class="flex flex-wrap items-baseline gap-x-2 gap-y-1 text-[13px] leading-5">
+              <div class="flex flex-wrap items-baseline gap-x-2 gap-y-1 text-table leading-5">
                 <span class="font-medium">{{ TITLES[d.titleCode] ?? d.titleCode }}</span>
                 <span data-testid="enterprise-difference-status" :class="statusTextClass(d.status)">{{ DIFFERENCE_STATUSES[d.status] ?? d.status }}</span>
                 <span v-if="!d.inCurrentDifference" class="text-muted-foreground">历史差异</span>
               </div>
-              <dl class="mt-2 grid grid-cols-[3.5rem_minmax(0,1fr)] gap-x-3 gap-y-1 border-t pt-2 text-[13px] leading-5" data-testid="difference-reason-chain">
+              <dl class="mt-2 grid grid-cols-[3.5rem_minmax(0,1fr)] gap-x-3 gap-y-1 border-t pt-2 text-table leading-5" data-testid="difference-reason-chain">
                 <dt class="text-muted-foreground">方向</dt>
                 <dd>{{ directionLabel(d.direction) }}</dd>
                 <dt class="text-muted-foreground">原因</dt>
@@ -451,7 +451,7 @@ function eventSuffix(item: TimelineItem): string {
       <!-- 取数中与失败时仍保留可见的关闭操作,窄屏上不能让用户等请求结束才能退出。 -->
       <div v-else class="flex min-h-0 flex-1 flex-col">
         <header class="flex items-center justify-between border-b px-5 py-4">
-          <DialogTitle class="text-[13px] leading-5 font-medium">企业详情</DialogTitle>
+          <DialogTitle class="text-table leading-5 font-medium">企业详情</DialogTitle>
           <Button variant="ghost" size="icon" class="size-7 shrink-0" aria-label="关闭" @click="emit('close')">
             <X class="size-4" />
           </Button>

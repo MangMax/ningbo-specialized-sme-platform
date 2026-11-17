@@ -9,9 +9,9 @@ const open = ref(false)
 <template>
   <HoverCard v-if="names.length" v-model:open="open" :open-delay="120" :close-delay="120">
     <HoverCardTrigger as-child>
-      <button type="button" class="text-muted-foreground mt-0.5 flex max-w-full items-center gap-1 text-left text-[13px] leading-4" data-testid="alias-summary" aria-label="查看全部曾用名" @click.stop="open = true">
+      <button type="button" class="text-muted-foreground mt-0.5 flex max-w-full items-center gap-1 text-left text-table leading-4" data-testid="alias-summary" aria-label="查看全部曾用名" @click.stop="open = true">
         <span class="truncate">原 {{ names[0] }}</span>
-        <Badge v-if="names.length > 1" variant="quiet" class="shrink-0 py-0 text-[13px] leading-[18px] tabular-nums" data-testid="alias-overflow-trigger">+{{ names.length - 1 }}</Badge>
+        <Badge v-if="names.length > 1" variant="quiet" class="shrink-0 py-0 text-table leading-[18px] tabular-nums" data-testid="alias-overflow-trigger">+{{ names.length - 1 }}</Badge>
       </button>
     </HoverCardTrigger>
     <TableHoverCardContent @click.stop>
