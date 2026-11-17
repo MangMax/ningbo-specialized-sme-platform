@@ -6,7 +6,7 @@ defineRouteMeta({
       "称号周期处置"
     ],
     "summary": "current title-cycle dispositions",
-    "description": "Little Giant revisions only. No current qualification consumer. Formal failures reference existing formal events; assert/replace starts pending. Confirm explicitly. Read enterpriseIds as comma-separated IDs.",
+    "description": "Little Giant revisions only. Formal failures reference existing formal events; assert/replace starts pending. Confirm explicitly. Read enterpriseIds as comma-separated IDs.",
     "responses": {
       "200": {
         "description": "Immutable receipt or revision readback"

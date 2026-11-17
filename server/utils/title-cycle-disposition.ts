@@ -62,7 +62,7 @@ function dependencies(db: Db, enterpriseId: number, f: Fact) {
     }, kind: 'award' | 'review') => {
         const e = db.select().from(s.recordEvent).where(eq(s.recordEvent.id, ref.eventId)).get();
         const r = e && db.select().from(s.record).where(eq(s.record.id, e.recordId)).get();
-        if (!e || e.revision !== ref.revision || e.eventType !== kind || r?.enterpriseId !== enterpriseId || r.titleCode !== 'little_giant' || (kind === 'review' && e.reviewOutcome !== 'failed'))
+        if (!e || e.revision !== ref.revision || e.eventType !== kind || r?.enterpriseId !== enterpriseId || r.titleCode !== 'little_giant' || r.source !== 'jxj' || (kind === 'review' && e.reviewOutcome !== 'failed'))
             fail('cycle_conflict');
         const evidence = db.select().from(s.recordEvidence).where(eq(s.recordEvidence.recordEventId, e!.id)).all();
         return { e, r, evidence };
@@ -79,7 +79,8 @@ export function currentDispositions(db: Db, enterpriseIds: number[]) {
             try {
                 dependencies(db, r.enterpriseId, r.fact);
             }
-            catch {
+            catch (error) {
+                if (!(error instanceof DispositionError)) throw error;
                 sourceCurrent = false;
             }
             return { ...r, sourceCurrent, effectReady: r.status === 'confirmed' && r.kind !== 'formal_failure' && sourceCurrent && !!r.fact.cycle && r.fact.effective.precision === 'day' && !!r.fact.effectiveBasis };

@@ -133,3 +133,26 @@ it('rolls back revisions when receipt persistence fails and allows the unchanged
     expect(f.read().rows).toMatchObject([{ id: receipt.ids[0], status: 'pending', revision: 1 }]);
     expect(commitDisposition(f.db, { request, planHash: plan.planHash })).toEqual(receipt);
 });
+
+it('rejects a platform snapshot award as a formal disposition cycle without writes', () => {
+    const f = fixture();
+    const record = f.db.insert(s.record).values({ enterpriseId: f.enterprise.id, titleCode: 'little_giant', source: 'miit' }).returning().get();
+    const event = f.db.insert(s.recordEvent).values({ recordId: record.id, eventType: 'award', year: 2021 }).returning().get();
+    const before = f.read();
+    const request = f.request([{ action: 'assert', enterpriseId: f.enterprise.id, fact: { ...f.fact, cycle: { eventId: event.id, revision: 1 } } }], 'platform-cycle');
+    expect(() => preflightDisposition(f.db, request)).toThrow(/cycle_conflict/);
+    expect(f.read()).toEqual(before);
+});
+
+it('propagates unexpected dependency read errors instead of reporting stale sources', async () => {
+    const { vi } = await import('vitest');
+    const f = fixture();
+    f.commit(f.request([{ action: 'assert', enterpriseId: f.enterprise.id, fact: f.fact }], 'a'));
+    const prepare = f.db.$client.prepare.bind(f.db.$client);
+    const spy = vi.spyOn(f.db.$client, 'prepare').mockImplementation((sql: string) => {
+        if (sql.includes('from "enterprise"')) throw new Error('dependency read exploded');
+        return prepare(sql);
+    });
+    try { expect(() => f.read()).toThrow('dependency read exploded'); }
+    finally { spy.mockRestore(); }
+});
