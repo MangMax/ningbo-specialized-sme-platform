@@ -44,11 +44,14 @@ describe('悬浮抽屉阴影（#865）', () => {
     expect(shadowValue).not.toMatch(/rgba?\(|#[0-9a-fA-F]{3,8}/)
   })
 
-  it('暗色主题覆写同一变量为更深阴影，保证暗底上仍读得出层次', () => {
-    // 浅色前景混合在暗底上读作光晕而非投影，故暗色覆写为深阴影；
-    // 关键是覆写的是同一个 --drawer-shadow，而非第二个 box-shadow 声明。
+  it('暗色主题覆写同一变量为更深阴影，且颜色仍随主题混合（非固定字面量）', () => {
+    // 浅色前景混合在暗底上读作光晕而非投影，故暗色把阴影从 --page 向黑色
+    // 混合；关键是覆写同一个 --drawer-shadow（而非第二个 box-shadow 声明），
+    // 且颜色仍由主题 token 经 color-mix 派生，不得退回固定 rgb()/hex 纯黑。
     const darkOverride = drawerSection.match(/\.dark \[data-floating-drawer\]\s*\{([^}]+)\}/)?.[1] ?? ''
     expect(darkOverride).toMatch(/--drawer-shadow\s*:/)
     expect(darkOverride).not.toMatch(/box-shadow\s*:/)
+    expect(darkOverride).toContain('color-mix')
+    expect(darkOverride).not.toMatch(/rgba?\(|#[0-9a-fA-F]{3,8}/)
   })
 })

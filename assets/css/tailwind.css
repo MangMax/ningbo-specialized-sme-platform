@@ -458,7 +458,10 @@ html.theme-transition::view-transition-new(root) {
 [data-floating-drawer='compact'] { --drawer-width: 360px; }
 [data-floating-drawer='detail'] { --drawer-width: 560px; }
 .dark [data-floating-drawer] {
-  --drawer-shadow: 0 8px 28px rgb(0 0 0 / 0.45);
+  /* 暗色下浅色 --foreground 混合会读成光晕而非投影;把阴影颜色从 --page 向
+   * 纯黑方向混合 —— 随主题切换(非固定字面量),同时保证比深色页面底更深,
+   * 读得出层次。仍是同一个 --drawer-shadow 变量。 */
+  --drawer-shadow: 0 8px 28px color-mix(in oklch, var(--page) 15%, black);
 }
 [data-floating-drawer][data-drawer-side='right'] {
   right: var(--drawer-gutter);
