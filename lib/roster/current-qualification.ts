@@ -845,7 +845,8 @@ function createCurrentCandidateEvaluationReader(db: Database.Database, receiptRu
     }
   }
   let specialized: CurrentRow | undefined
-  if (inheritanceMode && !frozenInheritance && title === 'innovative_sme') {
+  const needsSpecialized = !detail.qualificationOnly || effectiveStatus === 'expired' || effectiveStatus === 'unrecognized'
+  if (inheritanceMode && !frozenInheritance && title === 'innovative_sme' && needsSpecialized) {
     specialized = detail.specialized ?? readCandidate(enterpriseId, 'specialized_sme', year, executionTime, keys, false, includeReferences,
       assessmentOptions, false, undefined, preparedCorrespondences, undefined, undefined, { expandAssessment, giant, qualificationOnly: detail.qualificationOnly }).row
     if (effectiveStatus !== 'effective' && effectiveStatus !== 'terminated' && effectiveStatus !== 'moved_out' && specialized.group === 'eligible') {

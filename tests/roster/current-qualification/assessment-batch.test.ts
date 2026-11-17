@@ -1,3 +1,5 @@
+import { eq } from 'drizzle-orm'
+import * as qualificationCycles from '../../../lib/roster/qualification-cycles'
 import { afterEach, expect, it, vi } from 'vitest'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
@@ -138,4 +140,37 @@ it('bounds foundation SQL by block and retains merged ancestor exclusions withou
   trace.length = 0
   expect(listCurrentQualified(db.$client,{titleCode:'little_giant',pageSize:2}).rows.length).toBeGreaterThan(0)
   expect(trace.some(text => text.includes('candidate_scope_rdjb') && text.includes(' is not '))).toBe(false)
+})
+
+
+it.each(['effective', 'terminated', 'moved_out'] as const)('stops innovative eligibility inheritance after a decisive own %s result but retains full snapshots', status => {
+  const { db, ids } = fixture(2), id = ids[1]!
+  if (status !== 'effective') db.insert(s.enterpriseFactRevision).values({ enterpriseId:id, factId:1, revision:1, status:'confirmed', fact:{kind:status === 'terminated' ? 'cancelled':'moved_out',source:{reference:'合成正式来源',statement:'明确生效'},effective:{precision:'day',value:'2026-01-01'}},action:'assert',actor:{type:'agent',id:'batch-test'},basis:'合成确认依据',createdAt:'2026-01-02T00:00:00Z' }).run()
+  const events = db.select({id:s.recordEvent.id,title:s.record.titleCode}).from(s.recordEvent).innerJoin(s.record,eq(s.record.id,s.recordEvent.recordId)).where(eq(s.record.enterpriseId,id)).all()
+  const higherIds = new Set(events.filter(e => e.title !== 'innovative_sme').map(e => e.id))
+  const adjudicate = vi.spyOn(qualificationCycles,'adjudicateQualificationCycles')
+  const higherCalls = () => adjudicate.mock.calls.filter(([facts]) => facts.some(f => higherIds.has(f.id))).length
+  const reader = createCurrentQualificationAssessmentReader(db.$client)
+  db.$client.exec('BEGIN')
+  try {
+    expect(reader.readEffectiveTitles([id],at,'innovative_sme')).toEqual(new Map([[id,status]]))
+    expect(higherCalls()).toBe(0)
+    adjudicate.mockClear()
+    const full = reader.readCurrent(id,at,'innovative_sme')
+    expect(full.snapshot.titles.map(t => t.titleCode)).toEqual([...CURRENT_TITLES])
+    expect(full.snapshot.titles.find(t => t.titleCode === 'innovative_sme')!.effectiveQualification?.status).toBe(status)
+    expect(higherCalls()).toBeGreaterThan(0)
+  } finally { db.$client.exec('ROLLBACK') }
+})
+
+it('still evaluates higher qualifications when the innovative own period has expired', () => {
+  const { db, ids } = fixture(2), id = ids[1]!
+  const own = db.select().from(s.record).where(eq(s.record.enterpriseId,id)).all().find(r => r.titleCode === 'innovative_sme')!
+  db.update(s.recordEvent).set({year:2020}).where(eq(s.recordEvent.recordId,own.id)).run()
+  const reader = createCurrentQualificationAssessmentReader(db.$client)
+  db.$client.exec('BEGIN')
+  try {
+    expect(reader.readEffectiveTitles([id],at,'innovative_sme')).toEqual(new Map([[id,'effective']]))
+    expect(reader.readCurrent(id,at,'innovative_sme').snapshot.titles.find(t => t.titleCode === 'innovative_sme')!.effectiveQualification?.status).toBe('effective')
+  } finally { db.$client.exec('ROLLBACK') }
 })
