@@ -195,7 +195,7 @@ watch(
     :data-profile="profile.key"
   >
     <div class="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-1">
-      <h4 class="text-[13px] leading-5 font-medium">记录内容</h4>
+      <h4 class="text-table leading-5 font-medium">记录内容</h4>
       <span class="text-muted-foreground text-[12px] leading-4"
         >只决定每条日志留哪些字段，不决定哪些日志会被采集。</span
       >
@@ -224,7 +224,7 @@ watch(
             <div class="flex min-w-0 flex-col gap-0.5">
               <FieldLabel
                 :for="fieldAllId(field.key)"
-                class="min-w-0 text-[13px] leading-5 font-normal"
+                class="min-w-0 text-table leading-5 font-normal"
                 >{{ field.label
                 }}<span v-if="unit(field.description)" class="text-muted-foreground"
                   >（{{ unit(field.description) }}）</span
@@ -275,7 +275,7 @@ watch(
             v-for="tab in levelTabs"
             :key="tab.key"
             :value="tab.key"
-            class="min-w-0 flex-1 gap-1 px-2 text-[13px] sm:flex-none sm:px-3"
+            class="min-w-0 flex-1 gap-1 px-2 text-table sm:flex-none sm:px-3"
             :aria-label="tab.ariaLabel"
           >
             {{ tab.label }}
@@ -305,7 +305,7 @@ watch(
           >
             <FieldLabel
               :for="fieldLevelId(currentLevel, field.key)"
-              class="min-w-0 text-[13px] leading-5 font-normal"
+              class="min-w-0 text-table leading-5 font-normal"
               >{{ field.label
               }}<span v-if="unit(field.description)" class="text-muted-foreground"
                 >（{{ unit(field.description) }}）</span
@@ -347,7 +347,7 @@ watch(
         :data-testid="`log-field-copy-panel-${profile.key}`"
       >
         <FieldSet class="min-w-0 gap-2">
-          <FieldLegend variant="label" class="mb-1 text-[13px]"
+          <FieldLegend variant="label" class="mb-1 text-table"
             >把这 {{ profile.fields.length }} 项选择复制到其他级别</FieldLegend
           >
           <div class="flex min-w-0 flex-col gap-1.5">
@@ -366,10 +366,10 @@ watch(
               />
               <FieldLabel
                 :for="`log-field-copy-${profile.key}-${target.key}`"
-                class="min-w-0 text-[13px] leading-5 font-normal"
+                class="min-w-0 text-table leading-5 font-normal"
                 >{{ target.label }}</FieldLabel
               >
-              <span v-if="target.same" class="text-muted-foreground text-[13px] leading-5"
+              <span v-if="target.same" class="text-muted-foreground text-table leading-5"
                 >已相同</span
               >
             </Field>
@@ -399,7 +399,7 @@ watch(
         v-if="notice"
         role="status"
         aria-live="polite"
-        class="flex flex-wrap items-center gap-x-2 gap-y-1 text-[13px] leading-5"
+        class="flex flex-wrap items-center gap-x-2 gap-y-1 text-table leading-5"
       >
         <span>{{ notice.text }}</span>
         <Button
@@ -418,7 +418,7 @@ watch(
       <Button
         variant="link"
         size="sm"
-        class="h-auto justify-start p-0 text-[13px]"
+        class="h-auto justify-start p-0 text-table"
         :data-testid="`log-field-advanced-${profile.key}`"
         :aria-expanded="advanced ? 'true' : 'false'"
         @click="advanced = !advanced"

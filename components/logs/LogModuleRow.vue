@@ -166,7 +166,7 @@ const sourceFollow = computed(() => props.sourceFollowLabel ?? '')
         </span>
         <span class="flex min-w-0 flex-1 flex-col gap-0.5">
           <span class="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-            <span class="min-w-0 truncate text-[13px] leading-5 font-medium">{{
+            <span class="min-w-0 truncate text-table leading-5 font-medium">{{
               row.label
             }}</span>
             <span
@@ -217,7 +217,7 @@ const sourceFollow = computed(() => props.sourceFollowLabel ?? '')
           </span>
           <span class="min-w-0 wrap-anywhere">{{ row.label }}</span>
         </SheetTitle>
-        <SheetDescription class="text-[13px] leading-5" data-testid="log-module-sheet-summary">
+        <SheetDescription class="text-table leading-5" data-testid="log-module-sheet-summary">
           {{ summary }}
         </SheetDescription>
       </SheetHeader>
@@ -235,7 +235,7 @@ const sourceFollow = computed(() => props.sourceFollowLabel ?? '')
             >
               <FieldLabel
                 :for="enabledId"
-                class="text-[13px] leading-5 font-normal"
+                class="text-table leading-5 font-normal"
                 >采集开关</FieldLabel
               >
               <Switch
@@ -251,7 +251,7 @@ const sourceFollow = computed(() => props.sourceFollowLabel ?? '')
             >
               <FieldLabel
                 :for="levelId"
-                class="text-[13px] leading-5 font-normal"
+                class="text-table leading-5 font-normal"
                 >采集门槛</FieldLabel
               >
               <Select v-model="row.rule.minLevel">
@@ -291,7 +291,7 @@ const sourceFollow = computed(() => props.sourceFollowLabel ?? '')
             role="status"
             class="flex min-w-0 flex-col gap-1"
           >
-            <p class="flex flex-wrap items-center gap-x-2 gap-y-1 text-[13px] leading-5">
+            <p class="flex flex-wrap items-center gap-x-2 gap-y-1 text-table leading-5">
               <Badge variant="quiet" class="font-normal">当前不采集</Badge>
               <span class="text-muted-foreground">
                 {{ offReasons.join('、') }}；选择会保留，重新开启后按这里的设置记录。
@@ -327,7 +327,7 @@ const sourceFollow = computed(() => props.sourceFollowLabel ?? '')
             class="flex min-w-0 flex-col gap-1 border-t pt-3"
           >
             <span class="text-[12px] leading-4 font-medium">同时生效</span>
-            <p class="text-muted-foreground text-[13px] leading-5">
+            <p class="text-muted-foreground text-table leading-5">
               与「{{ counterpart.label }}」{{ counterpart.role }}同时生效；当前有效门槛：<strong class="text-foreground">{{ levelLabel(effectiveMin ?? 'debug') }}</strong>。
             </p>
           </div>
