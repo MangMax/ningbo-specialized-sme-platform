@@ -246,6 +246,14 @@
   ::selection {
     background-color: color-mix(in oklab, var(--primary) 22%, transparent);
   }
+
+  /* 手写 <button> 的兜底焦点环:与 stats-dashboard 的写法同款,作用域放到全站。
+   * components/ui 的按钮自带 data-slot 与焦点样式,:not([data-slot]) 防止双环。
+   * 只画静态 outline,不含 transition/animation,prefers-reduced-motion 下无差异。 */
+  button:not([data-slot]):focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 4px;
+  }
 }
 
 @layer components {
