@@ -3,6 +3,7 @@ import { computed, ref } from 'vue'
 import { TITLES, TITLE_SHORT, TITLE_RANK } from '~~/lib/labels'
 import { Badge, type BadgeVariants } from '@/components/ui/badge'
 import { HoverCard, HoverCardTrigger } from '@/components/ui/hover-card'
+import { interactiveTriggerState } from '@/lib/utils'
 import TableHoverCardContent from './TableHoverCardContent.vue'
 
 const props = defineProps<{
@@ -28,7 +29,7 @@ const variant = (code: string): BadgeVariants['variant'] => {
     <HoverCardTrigger as-child>
       <button
         type="button"
-        class="focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-3 focus-visible:outline-none active:scale-[0.97] disabled:pointer-events-none disabled:opacity-50 motion-reduce:transition-none motion-reduce:active:scale-100 flex max-w-full flex-wrap items-center gap-1 rounded-sm text-left transition-[color,background-color,transform] duration-150 ease-snap hover:opacity-80"
+        :class="`flex max-w-full flex-wrap items-center gap-1 rounded-sm text-left hover:opacity-80 ${interactiveTriggerState}`"
         data-testid="title-recognition-list"
         aria-label="查看全部称号年份批次"
         @click.stop="open = true"

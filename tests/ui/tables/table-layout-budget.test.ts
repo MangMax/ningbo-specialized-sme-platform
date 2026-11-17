@@ -44,7 +44,7 @@ function colWidthPx(token: string): number {
   return 0
 }
 
-describe('表格滚动预算 token（#868）', () => {
+describe('表格滚动预算 token', () => {
   it('--table-budget 在 @theme 里定义并落到 :root', () => {
     // 非 inline 的 @theme 会把 --table-budget 实体输出到 :root,普通规则才能 var()。
     const themeBlock = css.match(/@theme\s*\{(?!inline)([^}]*)\}/)
@@ -70,7 +70,7 @@ describe('表格滚动预算 token（#868）', () => {
   })
 })
 
-describe('列表页 min-w 收敛为推导值（#868）', () => {
+describe('列表页 min-w 收敛为推导值', () => {
   // files:逐列像素列的 table-fixed 表。规范:min-w = 表头各列 w-* 之和。
   it('files.vue 的 min-w 等于表头各列宽度之和', () => {
     const page = readPage('pages/files.vue')
@@ -80,7 +80,7 @@ describe('列表页 min-w 收敛为推导值（#868）', () => {
     // 只取表头行,逐列抓 w-* 宽度 token 求和 —— 这就是「按列内容推导」的算术结果。
     // token 可能混在多类字符串里（如 'w-[56px] pr-3 text-right'）,故按 w-* 词形抓。
     const header = page.slice(page.indexOf('<TableHeader'), page.indexOf('</TableHeader>'))
-    const tokens = [...header.matchAll(/\b(w-\d+|w-\[\d+px\])/g)].map((m) => m[1])
+    const tokens = [...header.matchAll(/\b(w-\d+|w-\[\d+px\])/g)].map((m) => m[1]!).filter(Boolean)
     // 操作列的宽度写在 ACTION_TH computed 里（表头只引用 [ACTION_TH]），单独解析补回。
     const actionW = page.match(/ACTION_TH[\s\S]*?w-\[(\d+)px\]/)?.[1]
     const derived = tokens.reduce((sum, t) => sum + colWidthPx(t), 0) + Number(actionW ?? 0)
