@@ -220,6 +220,17 @@
   --ease-snap: cubic-bezier(0.32, 0.72, 0, 1);
 }
 
+/* 工作台表格的事实标准字号:13px/20px,语义名 text-table。
+ * `.data-table` 与后续收敛的裸 `text-[13px]` 调用点共用这一个 token;
+ * text-sm(14px)/text-xs(12px) 是另一档,不在此列。
+ * 放在非 inline 的 @theme 里:值本身是字面量,需要把 --text-table 实体
+ * 输出到 :root,`.data-table` 与普通规则才能 var() 引用;inline 只会把
+ * 字面值内联进工具类,:root 里就没有这个 token 了。 */
+@theme {
+  --text-table: 0.8125rem; /* 13px */
+  --text-table--line-height: 1.25rem; /* 20px */
+}
+
 @layer base {
   * {
     border-color: var(--border);
@@ -391,17 +402,17 @@ html.theme-transition::view-transition-new(root) {
 
 /* Enterprise list, files and comparison share table typography and spacing. */
 .data-table {
-  font-size: 13px;
-  line-height: 20px;
+  font-size: var(--text-table);
+  line-height: var(--text-table--line-height);
 }
 .data-table > thead > tr > th {
   height: 36px;
   padding-inline: 12px;
   background: var(--muted);
   color: var(--muted-foreground);
-  font-size: 13px;
+  font-size: var(--text-table);
   font-weight: 600;
-  line-height: 20px;
+  line-height: var(--text-table--line-height);
 }
 .data-table > tbody > tr > td {
   padding-block: 6px;
