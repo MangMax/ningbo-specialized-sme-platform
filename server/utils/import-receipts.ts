@@ -245,7 +245,7 @@ function readImportReceiptSnapshot(db: Db, action: ImportReceiptAction, args: Re
     const offset = integer(args.offset, 'offset', 0, Number.MAX_SAFE_INTEGER - 1, 0)
     const maxBytes = integer(args.maxBytes, 'maxBytes', 16384, 65536)
     if (row.receiptId === null) throw new ImportReceiptError(404, 'not_retained', 'Original request was not retained')
-    const body = db.get<{ totalBytes: number; chunk: Buffer }>(sql`SELECT length(CAST(request_body AS BLOB)) AS totalBytes, substr(CAST(request_body AS BLOB), ${offset + 1}, ${maxBytes}) AS chunk FROM import_receipt WHERE id = ${row.receiptId}`)!
+    const body = db.get<{ totalBytes: number; chunk: Buffer }>(sql`SELECT length(CAST(COALESCE((SELECT owner.request_body FROM import_receipt owner WHERE owner.id=import_receipt.body_receipt_id), request_body) AS BLOB)) AS totalBytes, substr(CAST(COALESCE((SELECT owner.request_body FROM import_receipt owner WHERE owner.id=import_receipt.body_receipt_id), request_body) AS BLOB), ${offset + 1}, ${maxBytes}) AS chunk FROM import_receipt WHERE id = ${row.receiptId}`)!
     if (offset > body.totalBytes) invalid('offset exceeds request bytes')
     return { batchId: row.batchId, receiptId: row.receiptId, redacted: true, encoding: 'base64', contentType: 'application/json; charset=utf-8', offset, totalBytes: body.totalBytes, nextOffset: offset + body.chunk.length < body.totalBytes ? offset + body.chunk.length : null, data: body.chunk.toString('base64') }
   }

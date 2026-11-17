@@ -1,3 +1,4 @@
+import { expandImportReceiptBodies } from '../db/import-receipt-bodies'
 import { upgradeIntegrityGate } from './integrity-policy'
 /** Explicit offline finalization only. Never imported by runtime initialization. */
 import { createHash } from 'node:crypto'
@@ -143,6 +144,7 @@ export function retirePlatformModel(sqlite: Database.Database) {
   if (hasTable(sqlite, 'platform_runtime_completion')) {
     return sqlite.transaction(() => {
       captureCollectionPageShape(sqlite)
+      expandImportReceiptBodies(sqlite)
       assertFinalPlatformRuntime(sqlite)
       installPlatformArchiveLookupIndexes(sqlite)
       auditArchiveValues(sqlite)
@@ -181,6 +183,7 @@ export function retirePlatformModel(sqlite: Database.Database) {
     CREATE TRIGGER platform_runtime_completion_no_delete BEFORE DELETE ON platform_runtime_completion
       BEGIN SELECT RAISE(ABORT,'immutable platform runtime completion'); END;`)
     sqlite.prepare('INSERT INTO platform_runtime_completion(id,rule,schema_version,completed_at) VALUES(1,?,?,?)').run(PLATFORM_RETIREMENT_RULE, PLATFORM_RUNTIME_VERSION, new Date().toISOString())
+    expandImportReceiptBodies(sqlite)
     assertFinalPlatformRuntime(sqlite)
     return { state: 'complete' as const, version: PLATFORM_RUNTIME_VERSION }
   }).immediate()
