@@ -7,7 +7,7 @@ import { sqliteConnection } from '../platform/target-connection'
 import { targetSchema as s } from '../platform/target-schema'
 import { normalizeUscc } from '../domain'
 import { isValidUscc } from './uscc-research'
-import { RDJB_TITLE_CODES } from '../platform/recognized-evidence'
+import { RDJB_TITLE_CODES, TITLE_RDJB_CODES } from '../platform/recognized-evidence'
 import type { CurrentTitle } from './current-titles'
 
 export interface PlatformBusinessDate {
@@ -80,11 +80,11 @@ export interface PlatformQualificationFact {
 }
 export interface PlatformFactSubject { enterpriseId: number; uscc: string }
 
-export type PlatformQualificationFactsReader = (subjects: readonly PlatformFactSubject[]) => PlatformQualificationFact[]
+export type PlatformQualificationFactsReader = (subjects: readonly PlatformFactSubject[], titles?: readonly CurrentTitle[]) => PlatformQualificationFact[]
 
 /** Independent reads never retain keys from an earlier snapshot. */
-export function readPlatformQualificationFacts(db: BetterSQLite3Database<typeof s>, subjects: readonly PlatformFactSubject[]): PlatformQualificationFact[] {
-  return createPlatformQualificationFactsReader(db)(subjects)
+export function readPlatformQualificationFacts(db: BetterSQLite3Database<typeof s>, subjects: readonly PlatformFactSubject[], titles?: readonly CurrentTitle[]): PlatformQualificationFact[] {
+  return createPlatformQualificationFactsReader(db)(subjects, titles)
 }
 
 /** Caller-owned snapshot only. Retain O(K) narrow raw keys, never owners or typed
@@ -122,7 +122,8 @@ export function createPlatformQualificationFactsReader(db: BetterSQLite3Database
    * A failed query with no observations cannot erase a previously captured fact.
    * Re-observing an old content version makes that observed version current again.
    * Enumerate raw identity keys through covering indexes, then read only matched typed rows. */
-  function readFacts(subjects: readonly PlatformFactSubject[]): PlatformQualificationFact[] {
+  function readFacts(subjects: readonly PlatformFactSubject[], titles?: readonly CurrentTitle[]): PlatformQualificationFact[] {
+    const titleKeys = titles?.map(title => TITLE_RDJB_CODES[title]!)
     const owners = new Map<string, Set<number>>()
     for (const subject of subjects) {
       const code = normalizeUscc(subject.uscc)
@@ -150,15 +151,15 @@ export function createPlatformQualificationFactsReader(db: BetterSQLite3Database
       const recognized = recognizedScope.length ? db.select({ ...common, p: { usccRaw: s.platformRecognizedProjection.usccRaw, titleRaw: s.platformRecognizedProjection.titleRaw, nameRaw: s.platformRecognizedProjection.nameRaw, qualificationFieldsRule: s.platformRecognizedProjection.qualificationFieldsRule, sourceValidFlag: s.platformRecognizedProjection.sourceValidFlag, sourceRecognizedAt: s.platformRecognizedProjection.sourceRecognizedAt, sourceValidityDate: s.platformRecognizedProjection.sourceValidityDate, sourceProvinceName: s.platformRecognizedProjection.sourceProvinceName, sourceCityName: s.platformRecognizedProjection.sourceCityName, sourceDistrictName: s.platformRecognizedProjection.sourceDistrictName, sourceInvalidatedAt: s.platformRecognizedProjection.sourceInvalidatedAt, sourceInvalidationReason: s.platformRecognizedProjection.sourceInvalidationReason } }).from(o)
         .innerJoin(c, eq(c.id, o.collectionId))
         .innerJoin(s.platformRecognizedProjection, eq(s.platformRecognizedProjection.versionId, o.versionId))
-        .where(and(latest, inArray(s.platformRecognizedProjection.usccRaw, recognizedScope))).all() : []
+        .where(and(latest, inArray(s.platformRecognizedProjection.usccRaw, recognizedScope), titleKeys && inArray(s.platformRecognizedProjection.titleRaw, titleKeys))).all() : []
       const business = businessScope.length ? db.select({ ...common, p: { usccRaw: s.platformBusinessProjection.usccRaw, titleRaw: s.platformBusinessProjection.titleRaw, nameRaw: s.platformBusinessProjection.nameRaw, declareKind: s.platformBusinessProjection.declareKind, status: s.platformBusinessProjection.status, businessYear: s.platformBusinessProjection.businessYear, appliedAt: s.platformBusinessProjection.appliedAt, province: s.platformBusinessProjection.province } }).from(o)
         .innerJoin(c, eq(c.id, o.collectionId))
         .innerJoin(s.platformBusinessProjection, eq(s.platformBusinessProjection.versionId, o.versionId))
-        .where(and(latest, inArray(s.platformBusinessProjection.usccRaw, businessScope))).all() : []
+        .where(and(latest, inArray(s.platformBusinessProjection.usccRaw, businessScope), titleKeys && inArray(s.platformBusinessProjection.titleRaw, titleKeys))).all() : []
       const declarations = applyScope.length ? db.select({ ...common, p: { usccRaw: s.platformApplyProjection.usccRaw, titleRaw: s.platformApplyProjection.titleRaw, nameRaw: s.platformApplyProjection.nameRaw, declareKind: s.platformApplyProjection.declareKind, status: s.platformApplyProjection.status, declarationYear: s.platformApplyProjection.declarationYear, appliedAt: s.platformApplyProjection.appliedAt } }).from(o)
         .innerJoin(c, eq(c.id, o.collectionId))
         .innerJoin(s.platformApplyProjection, eq(s.platformApplyProjection.versionId, o.versionId))
-        .where(and(latest, inArray(s.platformApplyProjection.usccRaw, applyScope))).all() : []
+        .where(and(latest, inArray(s.platformApplyProjection.usccRaw, applyScope), titleKeys && inArray(s.platformApplyProjection.titleRaw, titleKeys))).all() : []
       for (const row of [...recognized.map(r => ({ ...r, source: 'recognized_list' as const })), ...business.map(r => ({ ...r, source: 'business_list' as const })), ...declarations.map(r => ({ ...r, source: 'apply_list' as const }))]) {
         const p = row.p, uscc = normalizeUscc(p.usccRaw)
         const ids = owners.get(uscc)!
