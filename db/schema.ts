@@ -536,6 +536,8 @@ export const importReceipt = sqliteTable('import_receipt', {
   requestHash: text('request_hash').notNull(),
   /** Canonical validated original-body protocol, with credentials removed before storage. */
   requestBody: text('request_body').notNull(),
+  /** Inline owner receipt; shared bodies never form chains. */
+  bodyReceiptId: integer('body_receipt_id').references((): AnySQLiteColumn => importReceipt.id),
   status: text('status', { enum: ['processing', 'preflight', 'committed', 'failed'] }).notNull(),
   summary: text('summary', { mode: 'json' }).$type<unknown>(),
   itemResults: text('item_results', { mode: 'json' }).$type<unknown>(),

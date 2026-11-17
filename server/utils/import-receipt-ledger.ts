@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { eq, sql } from 'drizzle-orm'
+import { and, asc, eq, isNull, sql } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../db/schema'
 import type { RosterImportRequest } from '../../lib/roster-import-client'
@@ -28,7 +28,7 @@ export function recordImportReceipt<T extends { status: string }>(db: Db, operat
   const attempt = db.transaction(() => {
     const existing = db.get<{ id: number; status: string; sourceKind: string; sourceIdentity: string; sourceSha256: string | null }>(sql`SELECT id, status, source_kind AS sourceKind, source_identity AS sourceIdentity, source_sha256 AS sourceSha256 FROM import_batch WHERE idempotency_key = ${batchRequest.idempotencyKey}`)
     if (existing && (existing.sourceKind !== request.sourceKind || existing.sourceIdentity !== request.sourceIdentity || existing.sourceSha256 !== (request.sourceSha256 ?? null))) throw new ImportReceiptError(409, 'idempotency_conflict', 'Idempotency key belongs to a different source')
-    const previous = existing ? db.get<{ id: number; status: string; requestHash: string; historical: number }>(sql`SELECT id, status, request_hash AS requestHash, CASE WHEN ${request.sourceKind} = 'platform_archive' THEN json_type(request_body, '$.payload.platformRecordObservations') IS NOT NULL ELSE 0 END AS historical FROM import_receipt WHERE batch_id = ${existing.id} ORDER BY id DESC LIMIT 1`) : undefined
+    const previous = existing ? db.get<{ id: number; status: string; requestHash: string; historical: number }>(sql`SELECT id, status, request_hash AS requestHash, CASE WHEN ${request.sourceKind} = 'platform_archive' THEN json_type(COALESCE((SELECT owner.request_body FROM import_receipt owner WHERE owner.id=import_receipt.body_receipt_id), request_body), '$.payload.platformRecordObservations') IS NOT NULL ELSE 0 END AS historical FROM import_receipt WHERE batch_id = ${existing.id} ORDER BY id DESC LIMIT 1`) : undefined
     // Historical projection preflight freezes server-read source inputs for this exact
     // command. A different command needs a new key, including after a failed attempt;
     // it must not erase the frozen source set and silently rebaseline changed raw.
@@ -38,7 +38,14 @@ export function recordImportReceipt<T extends { status: string }>(db: Db, operat
     if (operation !== 'replay' && previous && ['committed', 'processing'].includes(previous.status) && previous.requestHash !== hash) throw new ImportReceiptError(409, 'idempotency_conflict', 'Idempotency key belongs to a different request')
     if (existing?.status === 'committed' && operation !== 'replay') return { replayed: true as const, batchId: existing.id, receiptId: previous?.id }
     const batch = ensureBatchRow(db, batchRequest)
-    return db.insert(schema.importReceipt).values({ batchId: batch.id, operation, requestHash: hash, requestBody: JSON.stringify(redact(normalized)), status: 'processing', createdAt: new Date().toISOString() }).returning({ id: schema.importReceipt.id }).get()
+    const body = JSON.stringify(redact(normalized))
+    const owner = db.select({ id: schema.importReceipt.id }).from(schema.importReceipt).where(and(
+      eq(schema.importReceipt.batchId, batch.id),
+      eq(schema.importReceipt.requestHash, hash),
+      isNull(schema.importReceipt.bodyReceiptId),
+      sql`CAST(${schema.importReceipt.requestBody} AS BLOB)=CAST(${body} AS BLOB)`,
+    )).orderBy(asc(schema.importReceipt.id)).limit(1).get()
+    return db.insert(schema.importReceipt).values({ bodyReceiptId: owner?.id ?? null, batchId: batch.id, operation, requestHash: hash, requestBody: owner ? '' : body, status: 'processing', createdAt: new Date().toISOString() }).returning({ id: schema.importReceipt.id }).get()
   }, { behavior: 'immediate' })
   if ('replayed' in attempt) {
     const result = run()

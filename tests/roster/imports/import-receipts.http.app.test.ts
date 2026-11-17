@@ -141,8 +141,12 @@ describe('import receipts through real HTTP and MCP on isolated SQLite', () => {
   })
   it('reads only explicitly requested redacted UTF8 byte chunks and never defaults to the full request', async () => {
     const submitted = { ...request('raw-chunks'), payload: { ...request('raw-chunks').payload, externalRaw: { marker: 'RAW_ONLY_103_中文'.repeat(6000), Authorization: 'Bearer FAKE_AUTH_103', cookie: 'FAKE_COOKIE_103', api_key: 'FAKE_KEY_103', echo: apiToken, encoded: encodeURIComponent('{"session":"FAKE_SESSION_103"}'), nested: [{ password: 'FAKE_PASS_103', value: '{"access_token":"FAKE_JSON_TOKEN_103","name":"保留原事实"}' }] } } }
+    expect((await post('preflight', submitted)).status).toBe(200)
     const committed = await (await post('commit', submitted)).json()
     expect(committed.status).toBe('committed')
+    const shared = db.get<{ body: string; owner: number }>(sql`SELECT request_body AS body, body_receipt_id AS owner FROM import_receipt WHERE batch_id=${committed.batchId} ORDER BY id DESC LIMIT 1`)!
+    expect(shared.body).toBe('')
+    expect(shared.owner).toBeGreaterThan(0)
     const summary = await (await get(`?batchId=${committed.batchId}`)).json()
     expect(JSON.stringify(summary)).not.toContain('RAW_ONLY_103')
     expect(summary.originalRequest).toBe('redacted')
