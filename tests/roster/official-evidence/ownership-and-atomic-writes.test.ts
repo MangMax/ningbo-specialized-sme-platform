@@ -1,3 +1,4 @@
+import { createClassifiedFile } from '../../../server/utils/roster-file-classification'
 import { createRuntimeSchema } from '../../../db/create-runtime'
 import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
 import { createHash } from 'node:crypto'
@@ -31,7 +32,8 @@ async function fixture() {
     INSERT INTO record_event(id,record_id,event_type,year) VALUES(1,1,'award',2021),(2,2,'award',2024);
     INSERT INTO record_evidence(id,record_event_id,source_file,list_no) VALUES(1,1,'notice.txt',1),(2,2,'other.txt',2);
     INSERT INTO source_document(id,source,title,path) VALUES(1,'jxj','Declared publication','notice.txt');
-    INSERT INTO stored_file(id,rel_path,filename,ext,source,kind,title_code,bytes,sha256,created_at) VALUES(1,'notice.txt','notice.txt','txt','jxj','announcement','specialized_sme',${Buffer.byteLength(text)},'${sha256}','synthetic'),(2,'other.txt','other.txt','txt','jxj','announcement','specialized_sme',${Buffer.byteLength(text)},'${sha256}','synthetic');
+    INSERT INTO stored_file(id,rel_path,filename,ext,bytes,sha256,created_at) VALUES(1,'notice.txt','notice.txt','txt',${Buffer.byteLength(text)},'${sha256}','synthetic'),(2,'other.txt','other.txt','txt',${Buffer.byteLength(text)},'${sha256}','synthetic');
+    INSERT INTO roster_file_classification(file_id, source, kind, title_code) VALUES (1, 'jxj', 'announcement', 'specialized_sme'), (2, 'jxj', 'announcement', 'specialized_sme');
     INSERT INTO import_batch(id,idempotency_key,source_kind,source_identity,created_at) VALUES(1,'seed','announcement','synthetic','synthetic');`)
   const row = (over: Partial<OfficialPublishedRow> = {}): OfficialPublishedRow => ({ nameRaw: 'Published Alpha', usccRaw: null, districtRaw: 'Raw district', declaration: { kind: 'existing', sourceDocumentId: 1, basis: 'Verified actual declaration' }, storedFileId: 1, path: 'notice.txt', sha256, bytes: Buffer.byteLength(text), attachment: null, sectionKey: 'awards', listNo: 1, page: null, sourceBindingKnown: true, actor: { type: 'agent', id: 'synthetic' }, basis: 'Verified original row', ...over })
   const capture = (evidenceId = 1, eventId = 1, owner = 1, over: Partial<OfficialPublishedRow> = {}) => {
@@ -382,7 +384,7 @@ it('advances one event CAS for an opt-in append combined with legacy convergence
   const f = await fixture()
   const bytes = 'synthetic official source\n'
   writeFileSync(join(f.filesDir, 'old.pdf'), bytes)
-  f.db.insert(schema.storedFile).values({ id: 3, relPath: 'old.pdf', filename: 'old.pdf', ext: 'pdf', bytes: Buffer.byteLength(bytes), sha256: f.row().sha256!, source: 'jxj', kind: 'announcement', titleCode: 'specialized_sme' }).run()
+  createClassifiedFile(f.db, { id: 3, relPath: 'old.pdf', filename: 'old.pdf', ext: 'pdf', bytes: Buffer.byteLength(bytes), sha256: f.row().sha256! }, { source: 'jxj', kind: 'announcement', titleCode: 'specialized_sme' })
   f.sqlite.exec("UPDATE record_evidence SET source_file='old.pdf',page=1 WHERE id=1")
   f.capture(1, 1, 1, { path: 'old.pdf', storedFileId: 3, page: 1 })
   const publishedRow = f.row({ listNo: 10 })

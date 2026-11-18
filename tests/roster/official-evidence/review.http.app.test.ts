@@ -1,3 +1,4 @@
+import { createClassifiedFile } from '../../../server/utils/roster-file-classification'
 import { spawnCompiledApp } from '../../support/owned-process.mjs'
 import { assertEnterpriseDetailSnapshotEqual } from '../assertions/enterprise-detail-snapshot'
 import { createHash } from 'node:crypto'
@@ -283,7 +284,7 @@ describe("ticket public evidence review",()=>{
     const rec=db.insert(schema.record).values({enterpriseId:e.id,titleCode:'specialized_sme',source:'jxj'}).returning().get()
     const events=[2022,2023,2024].map(year=>db.insert(schema.recordEvent).values({recordId:rec.id,eventType:'award',year}).returning().get())
     const bytes=minimalPdf({pages:3});mkdirSync(join(dir,'files'),{recursive:true});writeFileSync(join(dir,'files/event114.pdf'),bytes)
-    db.insert(schema.storedFile).values({relPath:'event114.pdf',filename:'event114.pdf',ext:'pdf',source:'jxj',kind:'announcement',titleCode:'specialized_sme',bytes:bytes.length,sha256:createHash('sha256').update(bytes).digest('hex')}).run()
+    createClassifiedFile(db, { relPath:'event114.pdf', filename:'event114.pdf', ext:'pdf', bytes:bytes.length, sha256:createHash('sha256').update(bytes).digest('hex') }, { source:'jxj', kind:'announcement', titleCode:'specialized_sme' })
     db.insert(schema.recordEvidence).values({recordEventId:events[0]!.id,sourceFile:'event114.pdf',page:1,listNo:1}).run()
     const request={idempotencyKey:'event-correction114',sourceIdentity:'synthetic-event',actor,basis,operations:[{enterpriseId:e.id,recordId:rec.id,eventId:events[0]!.id,expectedRevision:1,patch:{year:2021}}]}
     const plan=(await rpc('preflight_event_corrections',request,'synthetic-mcp')).value

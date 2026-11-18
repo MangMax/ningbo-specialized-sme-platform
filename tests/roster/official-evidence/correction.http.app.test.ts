@@ -1,3 +1,4 @@
+import { createClassifiedFile } from '../../../server/utils/roster-file-classification'
 import { readDevelopmentDiscovery } from '../current-export/fixtures/specialized-export'
 import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
 import Database from 'better-sqlite3'
@@ -19,7 +20,7 @@ const bytes = minimalPdf({ pages: 3 })
 writeFileSync(join(filesDir, 'notice.pdf'), bytes)
 const sha256 = createHash('sha256').update(bytes).digest('hex')
 const db = initializeDb({ create: true,  dbPath })
-const file = db.insert(schema.storedFile).values({ relPath: 'notice.pdf', filename: 'notice.pdf', ext: 'pdf', bytes: Buffer.byteLength(bytes), sha256, source: 'jxj', kind: 'announcement' }).returning().get()
+const file = createClassifiedFile(db, { relPath: 'notice.pdf', filename: 'notice.pdf', ext: 'pdf', bytes: Buffer.byteLength(bytes), sha256 }, { source: 'jxj', kind: 'announcement' })
 const enterprise = db.insert(schema.enterprise).values({ name: '合成出处核对企业', nameNorm: '合成出处核对企业' }).returning().get()
 const record = db.insert(schema.record).values({ enterpriseId: enterprise.id, titleCode: 'specialized_sme', source: 'jxj' }).returning().get()
 const event = db.insert(schema.recordEvent).values({ recordId: record.id, eventType: 'award', year: 2022 }).returning().get()
@@ -141,7 +142,7 @@ describe("ticket exact evidence correction through HTTP and MCP", () => {
     const nextBytes = minimalPdf({ pages: 2 })
     writeFileSync(join(filesDir, 'corrected.pdf'), nextBytes)
     const nextHash = createHash('sha256').update(nextBytes).digest('hex')
-    const nextFile = db.insert(schema.storedFile).values({ relPath: 'corrected.pdf', filename: 'corrected.pdf', ext: 'pdf', bytes: Buffer.byteLength(nextBytes), sha256: nextHash, source: 'jxj', kind: 'announcement' }).returning().get()
+    const nextFile = createClassifiedFile(db, { relPath: 'corrected.pdf', filename: 'corrected.pdf', ext: 'pdf', bytes: Buffer.byteLength(nextBytes), sha256: nextHash }, { source: 'jxj', kind: 'announcement' })
     db.insert(schema.storedFilePart).values({ fileId: nextFile.id, titleCode: 'specialized_sme', eventKind: 'award', year: 2022, batch: null, attachment: '附件2', origin: 'agent' }).run()
     req.operations[0]!.coordinate = { sourceFile: 'corrected.pdf', attachment: '附件1', listNo: 22, page: 2 }
     expect(await json(await post('evidence/corrections/preflight', req))).toMatchObject({ error: { code: 'attachment_conflict' } })

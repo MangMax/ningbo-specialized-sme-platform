@@ -27,6 +27,7 @@ import {
 } from '../../lib/stored-file'
 import { scopeOf, siblingIndex, type StoreScopeReason } from '../../lib/file-store-scope'
 import type { StoredFilePart } from '../../lib/file-parts'
+import { createClassifiedFile, classificationColumns, fileClassificationJoin } from './roster-file-classification'
 import { listFileParts, type PartsBackfillStats } from './file-parts'
 import { compareFileContentIdentity, type FileContentConflict } from './file-content-identity'
 
@@ -271,20 +272,19 @@ export function backfillStoredFiles(
     }
     const row = existing.get(f.relPath)
     if (!row) {
-      db.insert(schema.storedFile)
-        .values({
-          relPath: f.relPath,
-          filename: f.filename,
-          ext: f.ext,
-          bytes: f.bytes,
-          sha256: f.sha256,
-          source: derived.source,
-          kind: derived.kind,
-          year: derived.year,
-          batch: derived.batch,
-          categoryState: derived.categoryState,
-        })
-        .run()
+      createClassifiedFile(db, {
+        relPath: f.relPath,
+        filename: f.filename,
+        ext: f.ext,
+        bytes: f.bytes,
+        sha256: f.sha256,
+      }, {
+        source: derived.source,
+        kind: derived.kind,
+        year: derived.year,
+        batch: derived.batch,
+        categoryState: derived.categoryState,
+      })
       stats.inserted += 1
       continue
     }
@@ -338,13 +338,7 @@ const fileColumns = {
   ext: schema.storedFile.ext,
   bytes: schema.storedFile.bytes,
   sha256: schema.storedFile.sha256,
-  source: schema.storedFile.source,
-  kind: schema.storedFile.kind,
-  year: schema.storedFile.year,
-  batch: schema.storedFile.batch,
-  titleCode: schema.storedFile.titleCode,
-  categoryState: schema.storedFile.categoryState,
-  parseState: schema.storedFile.parseState,
+  ...classificationColumns,
   createdAt: schema.storedFile.createdAt,
   removedAt: schema.storedFile.removedAt,
   referenceCount: referenceCountExpr(),
@@ -353,12 +347,12 @@ const fileColumns = {
 export function buildFileWhere(params: StoredFileQuery): SQL | undefined {
   const conds: (SQL | undefined)[] = []
   if (!params.includeRemoved) conds.push(isNull(schema.storedFile.removedAt))
-  if (params.source?.length) conds.push(inArray(schema.storedFile.source, params.source))
+  if (params.source?.length) conds.push(inArray(schema.rosterFileClassification.source, params.source))
   if (params.categoryState?.length) {
-    conds.push(inArray(schema.storedFile.categoryState, params.categoryState))
+    conds.push(inArray(schema.rosterFileClassification.categoryState, params.categoryState))
   }
   if (params.parseState?.length) {
-    conds.push(inArray(schema.storedFile.parseState, params.parseState))
+    conds.push(inArray(schema.rosterFileClassification.parseState, params.parseState))
   }
   if (params.q) {
     conds.push(
@@ -402,7 +396,7 @@ function withParts(db: Db, rows: StoredFileRow[]): StoredFileRow[] {
  * → **文件名**。同一年里新的批次在上;`null` 一律排在最后(SQLite 的 `IS NULL` 前置排序),
  * 免得「未分类」的文件插在年份中间。
  *
- * > 排序用**公布**年份/批次(`stored_file.year` / `batch`),不是文件内容的年份 ——
+ * > 排序用**公布**年份/批次(`roster_file_classification.year` / `batch`),不是文件内容的年份 ——
  * > 列表是「文件按批次的陈列」,内容的多年份在「年份」列上并排显示(票 17)。
  */
 export function listStoredFiles(
@@ -414,9 +408,10 @@ export function listStoredFiles(
   const pageSize = Math.min(MAX_PAGE_SIZE, Math.max(1, params.pageSize ?? 50))
 
   const total =
-    db.select({ n: sql<number>`count(*)` }).from(schema.storedFile).where(where).get()?.n ?? 0
+    db.select({ n: sql<number>`count(*)` }).from(schema.storedFile)
+      .innerJoin(schema.rosterFileClassification, fileClassificationJoin).where(where).get()?.n ?? 0
 
-  const sourceRank = sql`case ${schema.storedFile.source} ${sql.join(
+  const sourceRank = sql`case ${schema.rosterFileClassification.source} ${sql.join(
     SOURCE_ORDER.map((code, i) => sql`when ${code} then ${i}`),
     sql` `,
   )} else ${SOURCE_ORDER.length} end`
@@ -424,13 +419,14 @@ export function listStoredFiles(
   const rows = db
     .select(fileColumns)
     .from(schema.storedFile)
+    .innerJoin(schema.rosterFileClassification, fileClassificationJoin)
     .where(where)
     .orderBy(
       sourceRank,
-      sql`${schema.storedFile.year} is null`,
-      desc(schema.storedFile.year),
-      sql`${schema.storedFile.batch} is null`,
-      desc(schema.storedFile.batch),
+      sql`${schema.rosterFileClassification.year} is null`,
+      desc(schema.rosterFileClassification.year),
+      sql`${schema.rosterFileClassification.batch} is null`,
+      desc(schema.rosterFileClassification.batch),
       schema.storedFile.filename,
     )
     .limit(pageSize)
@@ -588,7 +584,8 @@ export function updateStoredFile(
   id: number,
   patch: FileMetadataPatch,
 ): StoredFileRow | null {
-  const current = db.select().from(schema.storedFile).where(eq(schema.storedFile.id, id)).get()
+  const current = db.select().from(schema.rosterFileClassification)
+    .where(eq(schema.rosterFileClassification.fileId, id)).get()
   if (!current) return null
 
   const next = {
@@ -623,7 +620,8 @@ export function updateStoredFile(
   }
 
   if (Object.keys(set).length) {
-    db.update(schema.storedFile).set(set).where(eq(schema.storedFile.id, id)).run()
+    db.update(schema.rosterFileClassification).set(set)
+      .where(eq(schema.rosterFileClassification.fileId, id)).run()
   }
 
   return getStoredFile(db, id)
@@ -634,6 +632,7 @@ export function getStoredFile(db: Db, id: number): StoredFileRow | null {
   const row = db
     .select(fileColumns)
     .from(schema.storedFile)
+    .innerJoin(schema.rosterFileClassification, fileClassificationJoin)
     .where(eq(schema.storedFile.id, id))
     .get()
   if (!row) return null

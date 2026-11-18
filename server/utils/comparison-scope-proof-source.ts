@@ -1,3 +1,4 @@
+import { fileClassificationJoin } from './roster-file-classification'
 import { and,between,eq,inArray,or } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import { createHash } from 'node:crypto'
@@ -41,7 +42,11 @@ export function officialSource(db: ProofExecutor, evidence: OfficialEvidence) {
   if (!evidence.fullRange || evidence.fromYear > evidence.throughYear || !evidence.sourceDocuments.length || evidence.enterpriseIds?.length === 0) fail('insufficient_evidence', 'Full official title/year/enterprise scope and source documents required')
   if (new Set(evidence.sourceDocuments.map(ref => ref.id)).size !== evidence.sourceDocuments.length) fail('insufficient_evidence', 'Duplicate source document')
   const documents = db.select().from(schema.sourceDocument).where(inArray(schema.sourceDocument.id, evidence.sourceDocuments.map(ref => ref.id))).all()
-  const files = db.select().from(schema.storedFile).where(inArray(schema.storedFile.id, evidence.sourceDocuments.map(ref => ref.fileId))).all()
+  const files = db.select({
+    id: schema.storedFile.id, relPath: schema.storedFile.relPath, bytes: schema.storedFile.bytes,
+    sha256: schema.storedFile.sha256, removedAt: schema.storedFile.removedAt,
+    source: schema.rosterFileClassification.source,
+  }).from(schema.storedFile).innerJoin(schema.rosterFileClassification, fileClassificationJoin).where(inArray(schema.storedFile.id, evidence.sourceDocuments.map(ref => ref.fileId))).all()
   const refs = evidence.sourceDocuments.map(ref => {
     const document = documents.find(row => row.id === ref.id)
     const file = files.find(row => row.id === ref.fileId)
@@ -87,7 +92,11 @@ export function currentSource(db: ProofExecutor, evidence: CurrentEvidence) {
   const narrowed = ['name', 'uscc', 'sqsj', 'rddqrq', 'whpcyear', 'whpc', 'szq'].some(key => Boolean(conditions[key]))
   if (narrowed) fail('insufficient_evidence', 'Current equivalence requires full title scope without narrowing conditions')
   const scope = evidence.scope
-  const freezeFile = db.select().from(schema.storedFile).where(eq(schema.storedFile.id, scope.freezeFileId)).get()
+  const freezeFile = db.select({
+    id: schema.storedFile.id, relPath: schema.storedFile.relPath, bytes: schema.storedFile.bytes,
+    sha256: schema.storedFile.sha256, removedAt: schema.storedFile.removedAt,
+    source: schema.rosterFileClassification.source,
+  }).from(schema.storedFile).innerJoin(schema.rosterFileClassification, fileClassificationJoin).where(eq(schema.storedFile.id, scope.freezeFileId)).get()
   if (!freezeFile || freezeFile.source !== 'miit' || freezeFile.removedAt || freezeFile.sha256 !== scope.freezeSha256 || freezeFile.relPath !== scope.freezeReference || !scope.freezeSha256) fail('source_mismatch', 'Archived platform freeze file reference/hash required')
   const start = Date.parse(scope.windowStart); const end = Date.parse(scope.windowEnd)
   const queried = Date.parse(target.collection.queriedAt); const completed = Date.parse(target.collection.completedAt ?? '')

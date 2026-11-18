@@ -1,3 +1,4 @@
+import { createClassifiedFile } from '../../../server/utils/roster-file-classification'
 import {differencePublicColumns} from '../../../lib/platform/difference-reference-target'
 import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
 import { nativeQueryRows, nativeRelationRows } from '../../platform/fixtures/native-evidence'
@@ -166,9 +167,7 @@ function seedEvent(
 function seedStoredFileHash(db: ReturnType<typeof makeDb>, relPath: string, sha256: string) {
   const filename = relPath.split('/').at(-1) ?? relPath
   const ext = filename.includes('.') ? filename.split('.').at(-1)!.toLowerCase() : ''
-  db.insert(schema.storedFile)
-    .values({ relPath, filename, ext, bytes: 1, sha256, categoryState: 'unset' })
-    .run()
+  createClassifiedFile(db, { relPath, filename, ext, bytes: 1, sha256 }, { categoryState: 'unset' })
 }
 
 async function withRosterHttp<T>(

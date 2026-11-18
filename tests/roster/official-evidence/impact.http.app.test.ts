@@ -1,3 +1,4 @@
+import { createClassifiedFile } from '../../../server/utils/roster-file-classification'
 import { spawnCompiledApp } from '../../support/owned-process.mjs'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -148,7 +149,7 @@ describe("ticket committed evidence impact substrate", () => {
     const evidence = db.insert(schema.recordEvidence).values({ recordEventId: event.id, sourceFile: 'synthetic-notice.pdf', page: 1, listNo: 1 }).returning().get()
     mkdirSync(join(dir, 'files'), { recursive: true }); const bytes = minimalPdf({ pages: 3 }); writeFileSync(join(dir, 'files/synthetic-notice.pdf'), bytes)
     const { createHash } = await import('node:crypto')
-    db.insert(schema.storedFile).values({ relPath: 'synthetic-notice.pdf', filename: 'synthetic-notice.pdf', ext: 'pdf', source: 'jxj', kind: 'announcement', titleCode: 'little_giant', bytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') }).run()
+    createClassifiedFile(db, { relPath: 'synthetic-notice.pdf', filename: 'synthetic-notice.pdf', ext: 'pdf', bytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') }, { source: 'jxj', kind: 'announcement', titleCode: 'little_giant' })
     const request = { idempotencyKey: 'official-event-113', sourceIdentity: 'synthetic-notice.pdf', actor, basis: '核对正式年份', operations: [{ enterpriseId: e.id, recordId: record.id, eventId: event.id, expectedRevision: 1, patch: { year: 2023 } }] }
     const plan = await rpc('preflight_event_corrections', request)
     await rpc('commit_event_corrections', { request, planHash: plan.planHash }); drain()

@@ -22,7 +22,8 @@ writeFileSync(join(filesDir,'notice.txt'),text)
 const sqlite=new Database(dbPath);sqlite.pragma('foreign_keys=ON')
 const db=drizzle(sqlite,{schema});createRuntimeSchema(sqlite)
 // Infrastructure catalog only; all business fixtures are formed through public commands.
-sqlite.prepare("INSERT INTO stored_file(id,rel_path,filename,ext,source,kind,title_code,bytes,sha256,created_at) VALUES(1,'notice.txt','notice.txt','txt','jxj','announcement','specialized_sme',?,?,'synthetic')").run(Buffer.byteLength(text),sha256)
+sqlite.prepare("INSERT INTO stored_file(id,rel_path,filename,ext,bytes,sha256,created_at) VALUES(1,'notice.txt','notice.txt','txt',?,?,'synthetic')").run(Buffer.byteLength(text),sha256)
+sqlite.exec("INSERT INTO roster_file_classification(file_id, source, kind, title_code) VALUES (1, 'jxj', 'announcement', 'specialized_sme')")
 const apiToken='synthetic-c-api',mcpToken='synthetic-c-mcp',trace:unknown[]=[]
 let discovery: unknown
 let base='',child:ReturnType<typeof spawnOwnedChild>|undefined,sequence=0,seedSequence=0

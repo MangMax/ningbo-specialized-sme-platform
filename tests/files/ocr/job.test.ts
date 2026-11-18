@@ -1,3 +1,4 @@
+import { createClassifiedFile } from '../../../server/utils/roster-file-classification'
 import { createHash } from 'node:crypto'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { mkdir, readdir, rm, writeFile } from 'node:fs/promises'
@@ -88,20 +89,7 @@ async function seedPdf(relPath: string, pages = 3): Promise<number> {
   const bytes = minimalPdf({ pages, widthPt: Math.max(120, 30 * pages + 20), heightPt: 60 })
   await writeFile(abs, bytes)
   const base = relPath.split('/').pop()!
-  return db
-    .insert(schema.storedFile)
-    .values({
-      relPath,
-      filename: base,
-      ext: 'pdf',
-      bytes: bytes.length,
-      sha256: createHash('sha256').update(bytes).digest('hex'),
-      source: 'jxj',
-      kind: 'announcement',
-      categoryState: 'set',
-    })
-    .returning({ id: schema.storedFile.id })
-    .get().id
+  return createClassifiedFile(db, { relPath, filename: base, ext: 'pdf', bytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') }, { source: 'jxj', kind: 'announcement', categoryState: 'set' }).id
 }
 
 /** 跑一次 ocr 任务,附上 ctx。 */

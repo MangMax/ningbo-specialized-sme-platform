@@ -1,3 +1,4 @@
+import { createClassifiedFile } from '../../../server/utils/roster-file-classification'
 import { initializeDb } from '../../../db/client'
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { mkdir, writeFile } from 'node:fs/promises'
@@ -10,6 +11,7 @@ import {
   backfillFromDisk,
   backfillStoredFiles,
   listStoredFiles,
+  getStoredFile,
   parseMetadataPatch,
   removeStoredFile,
   resolveInsideRoot,
@@ -199,7 +201,7 @@ describe('stored_file 回填', () => {
     expect(stats.inserted).toBe(4)
     expect(stats.skipped).toEqual([])
 
-    const rows = db.select().from(schema.storedFile).all()
+    const { rows } = listStoredFiles(db)
     expect(rows).toHaveLength(4)
     const notice = rows.find((r) => r.relPath.includes('72号'))!
     expect(notice).toMatchObject({
@@ -239,7 +241,7 @@ describe('stored_file 回填', () => {
     const stats = backfillStoredFiles(db, [
       { relPath: row.relPath, filename: row.filename, ext: row.ext, bytes: 999, sha256: 'x'.repeat(64) },
     ])
-    const after = db.select().from(schema.storedFile).all().find((r) => r.id === row.id)!
+    const after = getStoredFile(db, row.id)!
     expect(after.year).toBe(2019) // 分类保住了
     expect(after.bytes).toBe(row.bytes)
     expect(after.sha256).toBe(row.sha256)
@@ -323,7 +325,7 @@ describe('入库范围:不该入库的文件不进表,并带原因报出', () =>
 
 describe('PATCH 只改元数据', () => {
   it('拒绝当前未支持的展示名 PATCH 后既有出处仍按原 rel_path 解析到预览文件', () => {
-    const row = db.select().from(schema.storedFile).all().find((r) => r.relPath.includes('72号'))!
+    const row = listStoredFiles(db).rows.find((r) => r.relPath.includes('72号'))!
     const enterpriseId = db
       .insert(schema.enterprise)
       .values({ name: '预览路径稳定性测试', nameNorm: '预览路径稳定性测试' })
@@ -404,21 +406,7 @@ describe('PATCH 只改元数据', () => {
   })
 
   it('补齐分类后 unset 自动提升为 set;清空则退回 unset', () => {
-    const id = db
-      .insert(schema.storedFile)
-      .values({
-        relPath: 'jxj/announcement/2027/1/待定.pdf',
-        filename: '待定.pdf',
-        ext: 'pdf',
-        bytes: 10,
-        sha256: 'b'.repeat(64),
-        source: 'jxj',
-        kind: 'announcement',
-        year: null,
-        categoryState: 'unset',
-      })
-      .returning({ id: schema.storedFile.id })
-      .get().id
+    const id = createClassifiedFile(db, { relPath: 'jxj/announcement/2027/1/待定.pdf', filename: '待定.pdf', ext: 'pdf', bytes: 10, sha256: 'b'.repeat(64) }, { source: 'jxj', kind: 'announcement', year: null, categoryState: 'unset' }).id
 
     expect(updateStoredFile(db, id, { year: 2027 })!.categoryState).toBe('set')
     expect(updateStoredFile(db, id, { year: null })!.categoryState).toBe('unset')

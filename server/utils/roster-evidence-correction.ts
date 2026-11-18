@@ -1,3 +1,4 @@
+import { fileClassificationJoin } from './roster-file-classification'
 import { createHash } from 'node:crypto'
 import { createReadStream } from 'node:fs'
 import { realpath, stat } from 'node:fs/promises'
@@ -36,7 +37,7 @@ function fail(code: string, message: string, status = 422): never { throw new Ev
 const hash = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex')
 const coordinateOf = (row: typeof schema.recordEvidence.$inferSelect): EvidenceCoordinate => ({ sourceFile: row.sourceFile, attachment: row.attachment, listNo: row.listNo, page: row.page })
 function fileIdentity(db: Executor, sourceFile: string) {
-  return db.select({ id: schema.storedFile.id, relPath: schema.storedFile.relPath, sha256: schema.storedFile.sha256, bytes: schema.storedFile.bytes, removedAt: schema.storedFile.removedAt, source: schema.storedFile.source, kind: schema.storedFile.kind, titleCode: schema.storedFile.titleCode }).from(schema.storedFile).where(eq(schema.storedFile.relPath, sourceFile)).get() ?? null
+  return db.select({ id: schema.storedFile.id, relPath: schema.storedFile.relPath, sha256: schema.storedFile.sha256, bytes: schema.storedFile.bytes, removedAt: schema.storedFile.removedAt, source: schema.rosterFileClassification.source, kind: schema.rosterFileClassification.kind, titleCode: schema.rosterFileClassification.titleCode }).from(schema.storedFile).innerJoin(schema.rosterFileClassification, fileClassificationJoin).where(eq(schema.storedFile.relPath, sourceFile)).get() ?? null
 }
 export function readExactEvidence(db: Executor, evidenceId: number) {
   const row = db.select({ evidence: schema.recordEvidence, event: schema.recordEvent, recordId: schema.record.id, enterpriseId: schema.record.enterpriseId, titleCode: schema.record.titleCode, source: schema.record.source })

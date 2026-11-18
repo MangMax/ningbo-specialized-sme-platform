@@ -4,7 +4,7 @@ import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { createDrizzleLogger } from '../lib/logging/drizzle'
 import * as schema from './schema'
-import { assertFinalPlatformRuntime } from './schema-phase'
+import { assertApplicationSchema } from './schema-phase'
 import { createRuntimeSchema } from './create-runtime'
 import { readOwnerIdentity, sameReadOwner, type ReadOwnerIdentity } from '../lib/roster/offmain-read-protocol'
 
@@ -66,7 +66,7 @@ export function useRuntimeDb(opts: DbOptions = {}) {
 }
 
 function validateDatabase(sqlite: Database.Database) {
-  assertFinalPlatformRuntime(sqlite)
+  assertApplicationSchema(sqlite)
 }
 
 /** Public application entry accepts only a connection admitted at open.
@@ -88,7 +88,7 @@ export function initializeDb(opts: DbOptions & { create?: boolean } = {}) {
   try {
     sqlite.pragma('foreign_keys = ON')
     if (!beforeInitialization && opts.create) createRuntimeSchema(sqlite)
-    assertFinalPlatformRuntime(sqlite)
+    assertApplicationSchema(sqlite)
     sqlite.pragma('journal_mode = WAL')
   } finally { sqlite.close() }
   const runtime = useRuntimeDb(opts)

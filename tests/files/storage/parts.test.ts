@@ -1,3 +1,4 @@
+import { createClassifiedFile } from '../../../server/utils/roster-file-classification'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -201,22 +202,7 @@ let schema: typeof import('../../../db')['schema']
 function seedFile(relPath: string, over: Partial<{ year: number; batch: number }> = {}): number {
   const segments = relPath.split('/')
   const miit = relPath.startsWith('miit')
-  return db
-    .insert(schema.storedFile)
-    .values({
-      relPath,
-      filename: segments[segments.length - 1]!,
-      ext: miit ? 'xlsx' : 'pdf',
-      bytes: 1,
-      sha256: 'a'.repeat(64),
-      source: miit ? 'miit' : 'jxj',
-      kind: miit ? 'export' : 'announcement',
-      year: over.year ?? null,
-      batch: over.batch ?? null,
-      categoryState: 'set',
-    })
-    .returning({ id: schema.storedFile.id })
-    .get().id
+  return createClassifiedFile(db, { relPath, filename: segments[segments.length - 1]!, ext: miit ? 'xlsx' : 'pdf', bytes: 1, sha256: 'a'.repeat(64) }, { source: miit ? 'miit' : 'jxj', kind: miit ? 'export' : 'announcement', year: over.year ?? null, batch: over.batch ?? null, categoryState: 'set' }).id
 }
 
 let seq = 0

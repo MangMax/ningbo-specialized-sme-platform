@@ -7,6 +7,7 @@ import { initializeDb, useRuntimeDb, useApplicationDb } from '../../../db/client
 import { assertFinalPlatformRuntime as assertApplicationRuntime } from '../../../db/schema-phase'
 import { upgradeTitleCycleDisposition } from '../../../db/title-cycle-disposition'
 import { retirePlatformModel } from '../../../upgrade/retire-platform-model'
+import { upgradeRosterFileClassification } from '../../../upgrade/roster-file-classification'
 import { createHash } from 'node:crypto'
 import { getRosterEnterpriseDetail } from '../../../lib/roster/enterprise-roster'
 
@@ -51,6 +52,7 @@ it('serves migrated enterprise details with the reconcile capture collection mar
   const f = target()
   retirePlatformModel(f.db)
   upgradeTitleCycleDisposition(f.db)
+  upgradeRosterFileClassification(f.db)
   const owner = useApplicationDb({ dbPath:f.path })
   cleanup.push(() => { owner.$client.close() })
   const detail = getRosterEnterpriseDetail(owner, 1, Date.UTC(2026, 10, 14))!
@@ -85,6 +87,9 @@ it('retires historical tables atomically and opens the completed runtime without
   expect(f.db.pragma('foreign_key_check')).toEqual([])
   expect(f.db.pragma('integrity_check', { simple: true })).toBe('ok')
   expect(retirePlatformModel(f.db)).toEqual({ state: 'complete', version: 71613 })
+  expect(() => useRuntimeDb({ dbPath: f.path, readOnly: true })).toThrow('explicit offline file classification upgrade')
+  expect(() => initializeDb({ dbPath: f.path })).toThrow('explicit offline file classification upgrade')
+  upgradeRosterFileClassification(f.db)
   const runtime = useRuntimeDb({ dbPath: f.path, readOnly: true })
   cleanup.push(() => { runtime.$client.close() })
   expect(runtime.$client.prepare('SELECT count(*) n FROM platform_collection').get()).toEqual(f.db.prepare('SELECT count(*) n FROM platform_collection').get())
@@ -131,6 +136,7 @@ it('retired populated catalog matches native creation except the native capabili
  upgradeTitleCycleDisposition(f.db)
  expect(retained()).toEqual(before)
  expect(f.db.prepare('SELECT type,name,tbl_name,sql FROM sqlite_schema ORDER BY type,name').all()).toEqual(upgraded)
+ upgradeRosterFileClassification(f.db)
  const native=new Database(':memory:')
  try {
   native.pragma('foreign_keys=ON');createRuntimeSchema(native)

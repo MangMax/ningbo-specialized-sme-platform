@@ -1,3 +1,4 @@
+import { createClassifiedFile } from '../../../server/utils/roster-file-classification'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -48,7 +49,7 @@ describe('task center public HTTP', () => {
 })
 
 it('locates OCR results by registered file and reports safe platform item ranges', async () => {
-  db.insert(schema.storedFile).values({ id: 801, relPath: 'synthetic/roster.pdf', filename: 'roster.pdf', ext: 'pdf', bytes: 1, sha256: 'synthetic', source: 'jxj', kind: 'announcement' }).run()
+  createClassifiedFile(db, { id: 801, relPath: 'synthetic/roster.pdf', filename: 'roster.pdf', ext: 'pdf', bytes: 1, sha256: 'synthetic' }, { source: 'jxj', kind: 'announcement' })
   db.update(schema.job).set({ result: { files: [{ ok: true, fileId: 801, file: '/Users/private/wrong.pdf' }] } }).where(eq(schema.job.id, ids.ocr)).run()
   const detail = await (await fetch(`${api.baseUrl}/api/task-center/${ids.ocr}`)).json()
   expect(detail.links).toContainEqual({ label: '识别结果 #801', to: '/ocr?file=synthetic%2Froster.pdf' })

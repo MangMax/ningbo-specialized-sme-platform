@@ -1,3 +1,4 @@
+import { createClassifiedFile } from '../../../server/utils/roster-file-classification'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -414,20 +415,7 @@ function rawOf(
 function seedFile(relPath: string): number {
   const base = relPath.split('/').pop()!
   const dot = base.lastIndexOf('.')
-  return db
-    .insert(schema.storedFile)
-    .values({
-      relPath,
-      filename: base,
-      ext: dot > 0 ? base.slice(dot + 1).toLowerCase() : '',
-      bytes: 1,
-      sha256: '0'.repeat(64),
-      source: 'jxj',
-      kind: 'announcement',
-      categoryState: 'set',
-    })
-    .returning({ id: schema.storedFile.id })
-    .get().id
+  return createClassifiedFile(db, { relPath, filename: base, ext: dot > 0 ? base.slice(dot + 1).toLowerCase() : '', bytes: 1, sha256: '0'.repeat(64) }, { source: 'jxj', kind: 'announcement', categoryState: 'set' }).id
 }
 
 describe('逐页增删改查', () => {

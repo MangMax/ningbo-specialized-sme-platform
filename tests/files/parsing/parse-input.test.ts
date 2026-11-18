@@ -1,3 +1,4 @@
+import { createClassifiedFile } from '../../../server/utils/roster-file-classification'
 import { createHash } from 'node:crypto'
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, renameSync, unlinkSync, symlinkSync, realpathSync, statSync, fstatSync, openSync, writeSync, closeSync, readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
@@ -35,7 +36,7 @@ function fixture(bytes = Buffer.from('synthetic original bytes')) {
   const relPath = `input-${++serial}.pdf`
   writeFileSync(join(root, relPath), bytes)
   const sha256 = createHash('sha256').update(bytes).digest('hex')
-  const f = db.insert(schema.storedFile).values({ relPath, filename: relPath, ext: 'pdf', bytes: bytes.length, sha256 }).returning().get()
+  const f = createClassifiedFile(db, { relPath, filename: relPath, ext: 'pdf', bytes: bytes.length, sha256 }, {})
   const p = db.insert(schema.ocrResult).values({ fileId: f.id, pageNo: 1, markdown: 'original OCR', raw: { syntheticCapture310: true, content: ['original nonempty response'] }, channel: 'upload' }).returning().get()
   return { f, p, pages: [{ page: 1, version: `${p.id}:1` }] }
 }

@@ -23,6 +23,7 @@ import { transferDifferenceReferences } from './difference-references'
 import { indexLegacyProvenance } from './legacy-provenance'
 import { completeReconcileSlotCapture } from './reconcile-slot-capture'
 import { retirePlatformModel } from './retire-platform-model'
+import { upgradeRosterFileClassification } from './roster-file-classification'
 import { RECONCILE_SLOT_T04 } from './frozen/reconcile-slot-capture'
 import { BUSINESS_STATUS_V2 } from '../lib/platform/business-status'
 import { withFinalUpgradeIntegrity } from './integrity-policy'
@@ -120,6 +121,10 @@ export function completePlatformMigration(source: string, target: string, eviden
   run('retirement', () => {
     const db = new Database(target)
     try { db.pragma('foreign_keys=ON'); return retirePlatformModel(db) } finally { db.close() }
+  })
+  run('roster-file-classification', () => {
+    const db = new Database(target, { fileMustExist: true })
+    try { return upgradeRosterFileClassification(db) } finally { db.close() }
   })
   if (existsSync(checkpoint)) unlinkSync(checkpoint)
   return receipts

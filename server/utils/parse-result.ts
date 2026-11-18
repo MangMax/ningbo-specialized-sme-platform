@@ -16,7 +16,7 @@ type Db = BetterSQLite3Database<typeof schema>
  * ── 边界(硬约束,票 18 写死)──────────────────────────────────────────
  * 只写**文件级的解析产物**:
  *  - `stored_file_part`(这份文件里有哪些段)重建;
- *  - `stored_file.parse_state`(解析到哪一步了)。
+ *  - `roster_file_classification.parse_state`(解析到哪一步了)。
  *
  * **绝不**碰 `record` / `record_event` / `record_evidence` / `enterprise` —— 也就是说,
  * 它落的是「这份文件里**写了什么**」,不是「谁被认定了」。从文件到台账记录(以及
@@ -201,9 +201,9 @@ export function applyParseResult(
       }
     }
     if (rawState !== undefined || hasParts) {
-      tx.update(schema.storedFile)
+      tx.update(schema.rosterFileClassification)
         .set({ parseState })
-        .where(eq(schema.storedFile.id, fileId))
+        .where(eq(schema.rosterFileClassification.fileId, fileId))
         .run()
     }
   })

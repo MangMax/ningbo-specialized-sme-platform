@@ -1,3 +1,4 @@
+import { createClassifiedFile } from '../../../server/utils/roster-file-classification'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -223,23 +224,7 @@ function seedFile(
 ): number {
   const segments = relPath.split('/')
   const miit = relPath.startsWith('miit')
-  return db
-    .insert(schema.storedFile)
-    .values({
-      relPath,
-      filename: segments[segments.length - 1]!,
-      ext: miit ? 'xlsx' : 'pdf',
-      bytes: 1,
-      sha256: 'b'.repeat(64),
-      source: miit ? 'miit' : 'jxj',
-      kind: miit ? 'export' : 'announcement',
-      year: over.year ?? null,
-      batch: over.batch ?? null,
-      categoryState: (over.categoryState as 'set' | 'inferred' | 'unset') ?? 'set',
-      removedAt: over.removedAt ?? null,
-    })
-    .returning({ id: schema.storedFile.id })
-    .get().id
+  return createClassifiedFile(db, { relPath, filename: segments[segments.length - 1]!, ext: miit ? 'xlsx' : 'pdf', bytes: 1, sha256: 'b'.repeat(64), removedAt: over.removedAt ?? null }, { source: miit ? 'miit' : 'jxj', kind: miit ? 'export' : 'announcement', year: over.year ?? null, batch: over.batch ?? null, categoryState: (over.categoryState as 'set' | 'inferred' | 'unset') ?? 'set' }).id
 }
 
 let seq = 0

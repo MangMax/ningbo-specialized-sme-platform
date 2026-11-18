@@ -6,6 +6,7 @@ import { join, resolve } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { initializeDb, schema } from '../../../db/client'
 import { spawnCompiledApp, reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../../support/owned-process.mjs'
+import { minimalPdf } from '../../support/minimal-pdf'
 
 const dir = mkdtempSync(join(tmpdir(), 'file-maintenance-104-'))
 const root = join(dir, 'files')
@@ -60,6 +61,56 @@ beforeAll(async () => {
 afterAll(async () => { if (service) await service.stop(); rmSync(dir, { recursive: true, force: true }) })
 
 describe("file maintenance public transports", () => {
+  it('keeps registration, classification, parsing, preview and soft removal on one uploaded file ID', async () => {
+    const filename = 'classification-lifecycle.pdf'
+    const pdf = minimalPdf({ pages: 2 })
+    const meta = { filename, source: 'jxj', kind: 'announcement' }
+    const metadata = Object.entries(meta).map(([key, value]) => `${key} ${Buffer.from(value).toString('base64')}`).join(',')
+    const uploadHeaders = { 'Tus-Resumable': '1.0.0' }
+    const created = await fetch(service.baseUrl + '/api/uploads', {
+      method: 'POST',
+      headers: { ...uploadHeaders, 'Upload-Length': String(pdf.length), 'Upload-Metadata': metadata },
+    })
+    expect(created.status).toBe(201)
+    const landed = await fetch(new URL(created.headers.get('location')!, service.baseUrl), {
+      method: 'PATCH',
+      headers: { ...uploadHeaders, 'Upload-Offset': '0', 'Content-Type': 'application/offset+octet-stream' },
+      body: Uint8Array.from(pdf),
+    })
+    expect(landed.status).toBe(204)
+    const relPath = decodeURIComponent(landed.headers.get('x-upload-path')!)
+    expect(relPath).toBe(`jxj/announcement/${filename}`)
+
+    const registration = await rest('register', 'POST', { relPath, source: 'jxj', kind: 'announcement' })
+    expect(registration.status).toBe(201)
+    const { id } = registration.body
+    expect(registration.body).toMatchObject({ relPath, categoryState: 'unset', year: null, parseState: 'unparsed' })
+    const classified = await rest(String(id), 'PATCH', { year: 2024, batch: 1, titleCode: 'specialized_sme' })
+    expect(classified).toMatchObject({ status: 200, body: { id, categoryState: 'set', year: 2024, batch: 1 } })
+    const changed = await rpc('set_file_category', { fileId: id, year: 2025, batch: 2 })
+    expect(changed.value.file).toMatchObject({ id, relPath, year: 2025, batch: 2, titleCode: 'specialized_sme' })
+
+    const parse = await rest(`${id}/parse-result`, 'GET')
+    const saved = await rest(`${id}/parse-result`, 'PUT', {
+      expectedVersion: parse.body.version, idempotencyKey: 'uploaded-classification-parse',
+      actor: { type: 'agent', id: 'fixture' }, reason: 'Synthetic announcement',
+      parts: [{ titleCode: 'specialized_sme', eventKind: 'award', year: 2025, batch: 2, rowCount: 3 }],
+    })
+    expect(saved).toMatchObject({ status: 200, body: { state: { fileId: id, parseState: 'parsed', parts: [{ year: 2025, rowCount: 3 }] } } })
+    const filtered = await fetch(service.baseUrl + `/api/files?source=jxj&categoryState=set&parseState=parsed&q=${filename}`)
+    expect(await filtered.json()).toMatchObject({ total: 1, rows: [{ id, year: 2025, parseState: 'parsed' }] })
+
+    const removed = await rest(String(id), 'DELETE')
+    expect(removed).toMatchObject({ status: 200, body: { removed: true, diskDeleted: false } })
+    const listing = await fetch(service.baseUrl + `/api/files?q=${filename}`)
+    expect(await listing.json()).toEqual({ total: 0, rows: [] })
+    const after = await rest(`${id}/parse-result`)
+    expect(after.body).toMatchObject({ fileId: id, removedAt: expect.any(String), parseState: 'parsed' })
+    const preview = await fetch(service.baseUrl + `/api/files/${id}`)
+    expect(preview.status).toBe(200)
+    expect(Buffer.from(await preview.arrayBuffer())).toEqual(Buffer.from(pdf))
+  })
+
   it('accepts exact baseline REST and MCP payloads and invalidates modern revisions after legacy writes', async () => {
     const f = await file()
     expect((await rest(`${f.id}`, 'PATCH', { year: 2025 }, false)).status).toBe(200)

@@ -1,4 +1,4 @@
-import { assertFinalPlatformRuntime } from '../../db/schema-phase'
+import { assertApplicationSchema } from '../../db/schema-phase'
 import { appLog, initializeWorkerLogging, closeApplicationLogging, type LogContext, type LogInput } from '../logging/index'
 /** Dedicated native SQLite executor. This entry has no Nitro runtime dependency. */
 import { getHeapStatistics } from 'node:v8'
@@ -109,7 +109,7 @@ process.on('message', async (request: EnterpriseReadRequest) => {
       // Native admission reads can themselves block or fail; once they start,
       // every SQLite/schema error is terminal and must not replay on the main owner.
       try {
-        assertFinalPlatformRuntime(connection!)
+        assertApplicationSchema(connection!)
         result = request.operation === 'summary' ? readWholeComparisonSummary(db, request.options)
           : request.operation === 'recognitions' ? listRosterRecognitions(db, request.filter) : listRosterDifferences(db, request.filter)
       }
@@ -120,7 +120,7 @@ process.on('message', async (request: EnterpriseReadRequest) => {
         return
       }
     } else {
-      assertFinalPlatformRuntime(connection!)
+      assertApplicationSchema(connection!)
       result = request.operation === 'list' ? listRosterEnterprises(db, request.filter) : request.operation === 'detail' ? getRosterEnterpriseDetail(db, request.enterpriseId) : listCurrentQualified(connection!, request.filter)
     }
     const projectionMs = performance.now() - started - connectionMs

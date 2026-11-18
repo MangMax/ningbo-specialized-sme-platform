@@ -1,3 +1,4 @@
+import { fileClassificationJoin } from './roster-file-classification'
 import { createHash } from 'node:crypto'
 import { openSync, closeSync, readSync, realpathSync, statSync } from 'node:fs'
 import { isAbsolute, relative, resolve } from 'node:path'
@@ -123,7 +124,14 @@ export function planOfficialEvidenceChanges(db: Executor, changes: OfficialClaim
       if (row[field as 'path' | 'attachment' | 'listNo' | 'page'] !== value) failBinding(`publishedRow.${field} disagrees with outer coordinate`)
     }
     const source = declarationIdentity(db, row.declaration); sourceFor.set(change, source.id)
-    const file = row.storedFileId === null ? null : db.select().from(schema.storedFile).where(eq(schema.storedFile.id, row.storedFileId)).get()
+    const file = row.storedFileId === null ? null : db.select({
+      id: schema.storedFile.id, relPath: schema.storedFile.relPath, bytes: schema.storedFile.bytes,
+      sha256: schema.storedFile.sha256, removedAt: schema.storedFile.removedAt,
+      source: schema.rosterFileClassification.source,
+      kind: schema.rosterFileClassification.kind, titleCode: schema.rosterFileClassification.titleCode,
+    }).from(schema.storedFile)
+      .innerJoin(schema.rosterFileClassification, fileClassificationJoin)
+      .where(eq(schema.storedFile.id, row.storedFileId)).get()
     if (row.storedFileId !== null && (!file || file.removedAt || file.source !== 'jxj' || file.kind !== 'announcement' || file.titleCode && file.titleCode !== change.titleCode || file.relPath !== row.path)) failBinding('Selected storedFile must be the active official source of this title and path')
     const actual = readOfficialFile(filesDir, coordinate.sourceFile)
     if (file && (file.sha256 !== actual.sha256 || file.bytes !== actual.bytes) || row.sha256 !== null && row.sha256 !== actual.sha256 || row.bytes !== null && row.bytes !== actual.bytes) officialFactFailure('file_changed', 'Explicit and registered file identities must match actual bytes', 409)

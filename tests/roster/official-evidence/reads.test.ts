@@ -51,7 +51,10 @@ async function fixture() {
   closes.push(() => { expect(sqlite.pragma('foreign_keys', { simple: true })).toBe(1); sqlite.close() })
   const db = drizzle(sqlite, { schema }); createRuntimeSchema(sqlite)
   // Only infrastructure catalog uses SQL. Domain state is established through public commands below.
-  for (const [id, path, body] of [[1,'notice.txt',bytes],[2,'other.txt','different content\n']] as const) sqlite.prepare("INSERT INTO stored_file(id,rel_path,filename,ext,source,kind,title_code,bytes,sha256,created_at) VALUES(?,?,?,'txt','jxj','announcement','specialized_sme',?,?,'synthetic')").run(id,path,path,Buffer.byteLength(body),createHash('sha256').update(body).digest('hex'))
+  for (const [id, path, body] of [[1,'notice.txt',bytes],[2,'other.txt','different content\n']] as const) {
+    sqlite.prepare("INSERT INTO stored_file(id,rel_path,filename,ext,bytes,sha256,created_at) VALUES(?,?,?,'txt',?,?,'synthetic')").run(id,path,path,Buffer.byteLength(body),createHash('sha256').update(body).digest('hex'))
+    sqlite.prepare("INSERT INTO roster_file_classification(file_id, source, kind, title_code) VALUES (?, 'jxj', 'announcement', 'specialized_sme')").run(id)
+  }
   current.db = db; current.filesDir = filesDir
   const server = createServer(toNodeListener(createApp().use(router)))
   await new Promise<void>((resolve, reject) => { server.once('error', reject); server.listen(0,'127.0.0.1',resolve) })
@@ -292,7 +295,8 @@ it('redacts captured raw actor basis and path in the new projection while preser
 it('preserves a declared captured attachment section page and file ID without reading current file bytes',async()=>{
   const f=await fixture(),pdf=minimalPdf({pages:3}),sha256=createHash('sha256').update(pdf).digest('hex')
   writeFileSync(join(f.dir,'files','notice.pdf'),pdf)
-  f.sqlite.prepare("INSERT INTO stored_file(id,rel_path,filename,ext,source,kind,title_code,bytes,sha256,created_at) VALUES(3,'notice.pdf','notice.pdf','pdf','jxj','announcement','specialized_sme',?,?,'synthetic')").run(pdf.length,sha256)
+  f.sqlite.prepare("INSERT INTO stored_file(id,rel_path,filename,ext,bytes,sha256,created_at) VALUES(3,'notice.pdf','notice.pdf','pdf',?,?,'synthetic')").run(pdf.length,sha256)
+  f.sqlite.exec("INSERT INTO roster_file_classification(file_id, source, kind, title_code) VALUES (3, 'jxj', 'announcement', 'specialized_sme')")
   const published={...f.row(' 原名 '),storedFileId:3,path:'notice.pdf',sha256,bytes:pdf.length,attachment:'附件 二',sectionKey:'2021 认定名单',page:2,declaration:{kind:'independent' as const,sourceDocument:{source:'jxj' as const,title:'Declared publication',docNumber:null,issueDate:null,path:'notice.pdf'},basis:'Actual PDF publication'}}
   const record=f.record('Canonical',2021,published);record.events![0]!.evidence![0]={sourceFile:'notice.pdf',attachment:published.attachment,listNo:1,page:2,publishedRow:published}
   await f.commit(f.announcement([record]),'coordinates')
