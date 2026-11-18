@@ -9,7 +9,7 @@ import { createApp, createRouter, defineEventHandler, toNodeListener } from 'h3'
 import { afterAll, expect, it, vi } from 'vitest'
 import Database from 'better-sqlite3'
 import { initializeDb, schema } from '../../../db/client'
-import { readCurrentCandidate } from '../../../lib/roster/current-qualification'
+import { readCurrentCandidate } from '../../../layers/sme-roster/lib/roster/current-qualification'
 
 const dirs: string[] = []
 afterAll(() => { vi.unstubAllGlobals(); for (const dir of dirs) rmSync(dir, { recursive: true, force: true }) })

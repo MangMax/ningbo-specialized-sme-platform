@@ -1,6 +1,6 @@
 /** Client read shape of #66's sanitized correspondence source routes. */
 import { EVENTS, REVIEW_OUTCOMES } from '../../layers/sme-roster/lib/labels'
-import type { OfficialPublishedFact } from './official-published-presentation'
+import type { OfficialPublishedFact } from '../../layers/sme-roster/lib/roster/official-published-presentation'
 export type { OfficialPublishedFact }
 
 export type PublishedPresentationError = 'invalid_scope' | 'source_limit' | 'field_limit' | 'response_limit' | 'read_failed'

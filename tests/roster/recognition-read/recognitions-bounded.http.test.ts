@@ -9,7 +9,7 @@ import { createApp, createRouter, toNodeListener, getQuery, defineEventHandler, 
 import { afterAll, afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { useDb } from '../../../db'
 import { createRosterImportClient, type RosterImportPayload } from '../../../lib/roster-import-client'
-import type { RosterRecognitionsResult } from '../../../lib/roster/recognitions'
+import type { RosterRecognitionsResult } from '../../../layers/sme-roster/lib/roster/recognitions'
 import { startRosterApi, executeNativeImport } from '../imports/fixtures/import-server'
 
 const dir = mkdtempSync(join(tmpdir(), 'recognitions-130-'))

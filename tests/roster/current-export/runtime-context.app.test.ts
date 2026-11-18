@@ -1,5 +1,5 @@
 import { createClassifiedFile } from '../../../server/utils/roster-file-classification'
-import { CURRENT_RULE_VERSION, QUALIFICATION_ASSESSMENT_VERSION } from '../../../lib/roster/current-qualification'
+import { CURRENT_RULE_VERSION, QUALIFICATION_ASSESSMENT_VERSION } from '../../../layers/sme-roster/lib/roster/current-qualification'
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from 'vitest'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -7,15 +7,15 @@ import { join } from 'node:path'
 import { initializeDb, schema } from '../../../db/client'
 import { captureReceiptRuntimeContext, validateReceiptRuntimeContext } from '../../../server/utils/receipt-runtime-context'
 import { importReceiptRedactor } from '../../../server/utils/import-receipt-redaction'
-import { createCurrentQualificationAssessmentReader, readCurrentQualificationAssessment } from '../../../lib/roster/current-qualification'
-import { readOfficialPublishedPresentation } from '../../../lib/roster/official-published-presentation'
+import { createCurrentQualificationAssessmentReader, readCurrentQualificationAssessment } from '../../../layers/sme-roster/lib/roster/current-qualification'
+import { readOfficialPublishedPresentation } from '../../../layers/sme-roster/lib/roster/official-published-presentation'
 import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { pathToFileURL } from 'node:url'
 import { createRequire } from 'node:module'
 import { resolve } from 'node:path'
 import ExcelJS from 'exceljs'
-import { createCurrentExportWorker } from '../../../server/utils/current-export-worker-location'
+import { createCurrentExportWorker } from '../../../layers/sme-roster/server/utils/current-export-worker-location'
 import { createEnterpriseReadProcess } from '../../../layers/sme-roster/server/utils/enterprise-read-process'
 import { preflightRosterImport, commitRosterImport } from '../../../server/utils/roster-import'
 import type { RosterImportRequest } from '../../../lib/roster-import-client'
@@ -138,7 +138,7 @@ beforeAll(async () => {
   const require = createRequire(import.meta.resolve('nitropack/package.json'))
   const { build } = require('esbuild')
   symlinkSync(join(cwd,'node_modules'),join(workerArtifactRoot409,'node_modules'),'dir')
-  const result = await build({ absWorkingDir: cwd, entryPoints: ['lib/roster/current-export-worker.ts'], outfile: workerArtifactEntry409, bundle: true, packages: 'external', platform: 'node', format: 'esm', target: 'node24', sourcemap: true, metafile: true })
+  const result = await build({ absWorkingDir: cwd, entryPoints: ['layers/sme-roster/lib/roster/current-export-worker.ts'], outfile: workerArtifactEntry409, bundle: true, packages: 'external', platform: 'node', format: 'esm', target: 'node24', sourcemap: true, metafile: true })
   const hash = (path: string) => createHash('sha256').update(readFileSync(path)).digest('hex')
   const manifest = { inputs: Object.fromEntries(Object.keys(result.metafile!.inputs).map(path => [resolve(cwd,path),hash(resolve(cwd,path))])), outputs: Object.fromEntries([workerArtifactEntry409,workerArtifactEntry409 + '.map'].map(path => [path,hash(path)])) }
   const raw = JSON.stringify(manifest)
@@ -150,7 +150,7 @@ function assertWorkerArtifactPins409() {
   const raw = readFileSync(join(workerArtifactRoot409,'inventory.json'))
   expect(createHash('sha256').update(raw).digest('hex')).toBe(artifactManifestSha409)
   const inventory = JSON.parse(raw.toString()) as { inputs: Record<string,string>; outputs: Record<string,string> }
-  expect(Object.keys(inventory.inputs)).toContain(resolve(import.meta.dirname,'../../../lib/roster/current-export-worker.ts'))
+  expect(Object.keys(inventory.inputs)).toContain(resolve(import.meta.dirname,'../../../layers/sme-roster/lib/roster/current-export-worker.ts'))
   expect(Object.keys(inventory.outputs)).toEqual([workerArtifactEntry409,workerArtifactEntry409 + '.map'])
   for (const [path,sha256] of Object.entries({ ...inventory.inputs, ...inventory.outputs })) expect(createHash('sha256').update(readFileSync(path)).digest('hex'),path).toBe(sha256)
 }

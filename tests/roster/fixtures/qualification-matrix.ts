@@ -60,7 +60,7 @@ export function currentQualificationFixture() {
 
 // Native synthetic policy fixtures.
 import { eq } from 'drizzle-orm'
-import type { CurrentTitle } from '../../../lib/roster/current-titles'
+import type { CurrentTitle } from '../../../layers/sme-roster/lib/roster/current-titles'
 import type { PlatformRow } from '../../../lib/platform/types'
 import { reviewCurrentExportDecision } from './qualification-decisions'
 import { preflightRecordCorrespondences, commitRecordCorrespondences } from '../../../server/utils/record-correspondence'

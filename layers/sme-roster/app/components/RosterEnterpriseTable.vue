@@ -8,7 +8,7 @@ import {
 import {
   evidencePointerText,
   firstRecognitionYearText,
-} from '~~/lib/roster/first-recognition'
+} from '#sme-roster/lib/roster/first-recognition'
 import RosterEnterprisePanel from '#sme-roster/app/components/RosterEnterprisePanel.vue'
 import RosterTitleBadge from '#sme-roster/app/components/TitleBadge.vue'
 import { Badge } from '#core/app/components/ui/badge'

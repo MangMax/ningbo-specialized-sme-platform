@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os'
 import { createApp, createError, defineEventHandler, getQuery, setHeader, toNodeListener } from 'h3'
 import { afterAll, beforeAll, expect, it, vi } from 'vitest'
 import { useDb } from '../../../db'
-import { legacyExportSheet, writeLegacyXlsx } from '../../../server/utils/legacy-export-xlsx'
+import { legacyExportSheet, writeLegacyXlsx } from '../../../layers/sme-roster/server/utils/legacy-export-xlsx'
 import { applicationLogs, closeApplicationLogging, initializeWorkerLogging, newLogContext } from '../../../layers/core/lib/logging'
 
 const state = vi.hoisted(() => ({ fail: false, directories: [] as string[], slowRead: false, slowWrite: false, generationRows: 0, settledRequests: 0 }))

@@ -1,6 +1,6 @@
 import { businessStatusCell, businessStatusChecks } from '../lib/platform/business-status'
 import type { CredentialKey } from '../lib/app-modules'
-import type { FormalValidity } from '../lib/roster/formal-validity'
+import type { FormalValidity } from '../layers/sme-roster/lib/roster/formal-validity'
 import { sql } from 'drizzle-orm'
 import type { AnySQLiteColumn } from 'drizzle-orm/sqlite-core'
 import {

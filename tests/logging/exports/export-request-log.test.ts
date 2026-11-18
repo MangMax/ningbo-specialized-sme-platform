@@ -3,7 +3,7 @@ import { mount } from '@vue/test-utils'
 import { createSSRApp, defineComponent, h } from 'vue'
 import { renderToString } from 'vue/server-renderer'
 import { afterEach, expect, it, vi } from 'vitest'
-import { useExportRequestLog } from '../../../composables/useExportRequestLog'
+import { useExportRequestLog } from '../../../layers/sme-roster/app/composables/useExportRequestLog'
 
 const KEY = 'task-center-export-requests-v1'
 const REQUEST = '11111111-1111-4111-8111-111111111111'

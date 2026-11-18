@@ -1,6 +1,6 @@
 import { expect, it } from 'vitest'
 import { enterpriseBusinessTimeline } from '../../../layers/sme-roster/lib/roster/enterprise-business-timeline'
-import { sourceDate, type PlatformQualificationFact } from '../../../lib/roster/platform-qualification'
+import { sourceDate, type PlatformQualificationFact } from '../../../layers/sme-roster/lib/roster/platform-qualification'
 
 const fact: PlatformQualificationFact = {
   enterpriseId: 7, uscc: '91310115MA1H7KUG93', title: 'specialized_sme', source: 'recognized_list',

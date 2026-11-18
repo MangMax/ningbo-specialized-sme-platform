@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { shallowRef } from 'vue'
-import { TASK_EXPORTS } from '../../lib/sme-roster/task-exports'
+import { TASK_EXPORTS } from '../../layers/sme-roster/lib/sme-roster/task-exports'
 import { Button } from '#core/app/components/ui/button'
 import { Label } from '#core/app/components/ui/label'
 import {

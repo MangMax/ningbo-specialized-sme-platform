@@ -371,7 +371,7 @@ it.each([71605,71606])('runtime initialize and all three source workers reject p
   for(const readOnly of [false,true])expect(()=>useRuntimeDb({dbPath:f.target,readOnly})).toThrow(/final platform runtime schema/i)
   expect(()=>initializeDb({dbPath:f.target})).toThrow(/final platform runtime schema/i)
   const {createImportExecutionWorker}=await import('../../../server/utils/import-execution-worker-location')
-  const {createCurrentExportWorker}=await import('../../../server/utils/current-export-worker-location')
+  const {createCurrentExportWorker}=await import('../../../layers/sme-roster/server/utils/current-export-worker-location')
   const {createEnterpriseWorker}=await import('../../../layers/sme-roster/server/utils/enterprise-read-worker-location')
   const t=new Database(f.target),st=statSync(f.target)
   const identity={dev:st.dev,ino:st.ino,schemaVersion:t.pragma('schema_version',{simple:true}),migration:t.prepare('select hash,created_at from __drizzle_migrations order by created_at desc limit 1').get()};t.close()

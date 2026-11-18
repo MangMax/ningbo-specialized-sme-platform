@@ -1,7 +1,7 @@
 import { appLog, type LogContext } from '../../lib/logging'
 import { jobLogModule } from '../../lib/logging/module'
 import { hasImportWriter, whenImportWriterIdle } from '../../../../server/utils/import-write-barrier'
-import { cleanupCurrentExports } from '../../../../server/utils/current-export-artifact'
+import { cleanupCurrentExports } from '../../../sme-roster/server/utils/current-export-artifact'
 import { and, eq, sql } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../../../db/schema'

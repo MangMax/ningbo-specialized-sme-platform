@@ -1,7 +1,7 @@
 import { afterAll, expect, it, vi } from 'vitest'
-import * as platformQualification from '../../../lib/roster/platform-qualification'
+import * as platformQualification from '../../../layers/sme-roster/lib/roster/platform-qualification'
 import { qualificationExportFixture } from '../current-export/fixtures/qualification-export'
-import { createCurrentQualificationAssessmentReader, PREVIOUS_QUALIFICATION_ASSESSMENT_VERSION } from '../../../lib/roster/current-qualification'
+import { createCurrentQualificationAssessmentReader, PREVIOUS_QUALIFICATION_ASSESSMENT_VERSION } from '../../../layers/sme-roster/lib/roster/current-qualification'
 import { schema } from '../../../db/client'
 const f = qualificationExportFixture()
 afterAll(() => f.close())

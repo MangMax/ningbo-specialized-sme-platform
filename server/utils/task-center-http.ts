@@ -6,7 +6,7 @@ import { ANNUAL_CORRESPONDENCE_KIND } from '../../lib/roster/annual-corresponden
 import { and,eq,inArray,sql } from 'drizzle-orm'
 import { schema,type useApplicationDb } from '../../db/client'
 import { isJobId,JOB_STATES,type JobState } from '../../layers/core/lib/job'
-import { TASK_EXPORTS } from '../../lib/sme-roster/task-exports'
+import { TASK_EXPORTS } from '../../layers/sme-roster/lib/sme-roster/task-exports'
 import { type TaskList } from '../../layers/core/lib/task-center'
 import { getTaskFilterKinds, getTaskKind, resolveTaskFilters, taskTabs } from '../../layers/core/lib/task-catalog'
 import { readApiToken,resolveApiAuth } from '../../layers/core/server/utils/api-auth'

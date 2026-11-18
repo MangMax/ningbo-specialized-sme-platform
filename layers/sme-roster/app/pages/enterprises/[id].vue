@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ROSTER_LEDGER_PATH } from '#sme-roster/lib/sme-roster/routes'
-import { CURRENT_STATUS_LABELS } from '~~/lib/roster/current-status'
+import { CURRENT_STATUS_LABELS } from '#sme-roster/lib/roster/current-status'
 import { useQuery } from '@pinia/colada'
 import { computed, nextTick, ref, shallowRef, watch } from 'vue'
 import type { ReviewAssessment } from '~~/lib/roster/evidence-review-ui'

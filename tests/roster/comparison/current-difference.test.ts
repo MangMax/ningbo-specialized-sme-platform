@@ -1,6 +1,6 @@
 import { afterAll, expect, it, vi } from 'vitest'
 import { qualificationExportFixture } from '../current-export/fixtures/qualification-export'
-import { createCurrentQualificationAssessmentReader, CURRENT_TITLES } from '../../../lib/roster/current-qualification'
+import { createCurrentQualificationAssessmentReader, CURRENT_TITLES } from '../../../layers/sme-roster/lib/roster/current-qualification'
 import { getComparison } from '../../../lib/comparison'
 import { listRosterDifferences } from '../../../lib/roster/difference-list'
 import { getRosterEnterpriseDetail } from '../../../layers/sme-roster/lib/roster/enterprise-roster'

@@ -11,7 +11,7 @@ import { normalizeUscc } from '../../layers/sme-roster/lib/domain'
 import { RDJB_TITLE_CODES } from '../platform/recognized-evidence'
 import { candidateScopeObservation } from '../platform/candidate-scope-schema'
 import { CANDIDATE_SCOPE_RULE } from '../platform/candidate-scope-capture'
-import { CURRENT_TITLES, type CurrentTitle } from './current-titles'
+import { CURRENT_TITLES, type CurrentTitle } from '../../layers/sme-roster/lib/roster/current-titles'
 type Db = BetterSQLite3Database<typeof s>
 const o = candidateScopeObservation, a = targetSchema.platformObservationAssignment
 const original = alias(a, 'effect_original')

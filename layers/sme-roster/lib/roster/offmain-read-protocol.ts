@@ -1,6 +1,6 @@
 import { realpathSync, statSync } from 'node:fs'
 import type { RosterDifferenceFilter } from './enterprise-roster'
-import type { RosterRecognitionFilter } from '../../../../lib/roster/recognitions'
+import type { RosterRecognitionFilter } from './recognitions'
 import type { ComparisonSummaryOptions } from '../../../../lib/comparison-summary-read'
 
 /** Physical identity is conservative evidence, not an atomic ABA guarantee. */

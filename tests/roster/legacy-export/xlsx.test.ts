@@ -41,7 +41,7 @@ vi.mock('node:fs', async (original) => {
     },
   }
 })
-import { legacyExportSheet, writeLegacyXlsx } from '../../../server/utils/legacy-export-xlsx'
+import { legacyExportSheet, writeLegacyXlsx } from '../../../layers/sme-roster/server/utils/legacy-export-xlsx'
 
 afterEach(() => {
   expect(state.directories.every((dir) => !existsSync(dir))).toBe(true)

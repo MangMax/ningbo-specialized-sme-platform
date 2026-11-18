@@ -3,7 +3,7 @@ import { cookieRedactor } from '../../lib/platform/client'
 import { credentialContext, resolveCredential } from '../../layers/core/server/utils/credential-state'
 import { sanitizeEvidence } from './record-correspondence-read'
 import type { JobDto, JobRow } from '../../layers/core/server/utils/job-store'
-import { currentJobDto } from './current-export-artifact'
+import { currentJobDto } from '../../layers/sme-roster/server/utils/current-export-artifact'
 
 const sensitiveKey = /cookie|password|passwd|token|secret|credential|authorization|authentication|api.?key|session/i
 // Relative artifact references and HTTP URLs are public data; absolute host paths

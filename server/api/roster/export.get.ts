@@ -1,8 +1,8 @@
-import { legacyExportSheet, writeLegacyXlsx } from '../../utils/legacy-export-xlsx'
+import { legacyExportSheet, writeLegacyXlsx } from '../../../layers/sme-roster/server/utils/legacy-export-xlsx'
 import { useDb } from '@db'
 import { FIRST_RECOGNITION_REASONS, TITLES } from '#sme-roster/lib/labels'
 import { allRosterEnterprises, type RosterEnterpriseRow } from '#sme-roster/lib/roster/enterprise-roster'
-import { evidencePointerText, firstRecognitionYearText } from '~~/lib/roster/first-recognition'
+import { evidencePointerText, firstRecognitionYearText } from '#sme-roster/lib/roster/first-recognition'
 import { parseRosterEnterpriseQuery } from '../../../layers/sme-roster/server/utils/roster-read-query'
 import { appLog, requestLogContext } from '../../../layers/core/lib/logging'
 

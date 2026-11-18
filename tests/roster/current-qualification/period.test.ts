@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest'
-import { adjudicateQualificationCycles, type QualificationEvent } from '../../../lib/roster/qualification-cycles'
+import { adjudicateQualificationCycles, type QualificationEvent } from '../../../layers/sme-roster/lib/roster/qualification-cycles'
 const award: QualificationEvent = { id: 1, eventType: 'award', year: 2021, decidedYear: 2021, batchSeq: 1, reviewOutcome: null }
 const review = (id: number, decidedYear: number, reviewOutcome: 'passed'|'failed' = 'passed'): QualificationEvent => ({ id, eventType: 'review', year: 2021, decidedYear, batchSeq: 1, reviewOutcome })
 const judge = (events: QualificationEvent[], year: number, day = `${year}-06-01`) => adjudicateQualificationCycles(events, year, day).group

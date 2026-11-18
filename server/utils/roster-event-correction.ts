@@ -1,4 +1,4 @@
-import { formalValiditySchema } from '../../lib/roster/formal-validity'
+import { formalValiditySchema } from '../../layers/sme-roster/lib/roster/formal-validity'
 import { isDeepStrictEqual } from 'node:util'
 import { createHash } from 'node:crypto'
 import { and, asc, count, eq, inArray } from 'drizzle-orm'
@@ -9,7 +9,7 @@ import { computeTitleLifecycle } from '../../layers/sme-roster/lib/roster/lifecy
 import { advanceOfficialEventRevision } from './roster-event-version'
 import { ensureBatchRow } from './roster-batch-ledger'
 import { refreshDerivedFileParts } from './file-parts'
-import { CURRENT_TITLES, diagnoseOfficialEventFields, readCurrentQualificationAssessment } from '../../lib/roster/current-qualification'
+import { CURRENT_TITLES, diagnoseOfficialEventFields, readCurrentQualificationAssessment } from '../../layers/sme-roster/lib/roster/current-qualification'
 import type { RosterImportBeforeQualificationReadback, RosterImportAfterQualificationReadback } from '../../lib/roster-import-client'
 
 type Db = BetterSQLite3Database<typeof schema>

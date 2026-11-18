@@ -1,7 +1,7 @@
-import { statisticsInteger } from '../../utils/statistics-query'
+import { statisticsInteger } from '../../../layers/sme-roster/server/utils/statistics-query'
 import { useDb } from '@db'
 import { TITLE_ORDER } from '#sme-roster/lib/labels'
-import { readDistrictStatistics } from '~~/lib/roster/district-statistics'
+import { readDistrictStatistics } from '#sme-roster/lib/roster/district-statistics'
 
 
 defineRouteMeta({ openAPI: { tags: ['统计'], summary: '当前有效企业按当前属地分布及同口径分页明细', description: '每企业每称号一次；unknown 为缺失属地，省略 district 为全部；独立管理区保留。汇总和明细在同一读事务中共享上海评价日及现行有效规则。', parameters: [

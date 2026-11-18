@@ -1,9 +1,9 @@
 import type Database from 'better-sqlite3'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import type * as schema from '../../db/schema'
-import { createCurrentQualificationAssessmentReader, CURRENT_TITLES, type CurrentQualificationAssessment, type CurrentQualificationSnapshot } from './current-qualification'
+import { createCurrentQualificationAssessmentReader, CURRENT_TITLES, type CurrentQualificationAssessment, type CurrentQualificationSnapshot } from '../../layers/sme-roster/lib/roster/current-qualification'
 
-import { readPlatformQualificationFacts, type PlatformQualificationFact } from './platform-qualification'
+import { readPlatformQualificationFacts, type PlatformQualificationFact } from '../../layers/sme-roster/lib/roster/platform-qualification'
 
 type Coordinate = { enterpriseId: number; titleCode: string; inCurrentDifference: boolean }
 export interface DifferenceQualification {

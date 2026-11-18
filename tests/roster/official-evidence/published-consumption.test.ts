@@ -1,6 +1,6 @@
 import { createClassifiedFile } from '../../../server/utils/roster-file-classification'
 import { createRuntimeSchema } from '../../../db/create-runtime'
-import { CURRENT_RULE_VERSION, QUALIFICATION_ASSESSMENT_VERSION } from '../../../lib/roster/current-qualification'
+import { CURRENT_RULE_VERSION, QUALIFICATION_ASSESSMENT_VERSION } from '../../../layers/sme-roster/lib/roster/current-qualification'
 import { createHash } from 'node:crypto'
 import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -12,7 +12,7 @@ import type { OfficialPublishedRow, RosterImportPayload, RosterImportRecord } fr
 import { preflightRosterImport, commitRosterImport } from '../../../server/utils/roster-import'
 import { handleRosterImportRequest } from '../../../server/utils/roster-import-http'
 import { handleEvidenceCorrectionRequest } from '../../../server/utils/roster-evidence-correction-api'
-import { readCurrentCandidate, readCurrentQualificationAssessment, type CurrentQualificationSnapshot, type CurrentTitle } from '../../../lib/roster/current-qualification'
+import { readCurrentCandidate, readCurrentQualificationAssessment, type CurrentQualificationSnapshot, type CurrentTitle } from '../../../layers/sme-roster/lib/roster/current-qualification'
 
 import { startHttpFixture } from '../../support/http'
 import { minimalPdf } from '../../support/minimal-pdf'
@@ -21,7 +21,7 @@ import * as official from '../../../server/utils/official-evidence'
 
 
 import { getRosterEnterpriseDetail } from '../../../layers/sme-roster/lib/roster/enterprise-roster'
-import { listCurrentQualified, type CurrentQualifiedResult } from '../../../lib/roster/current-qualified-query'
+import { listCurrentQualified, type CurrentQualifiedResult } from '../../../layers/sme-roster/lib/roster/current-qualified-query'
 import { handleRecordCorrespondenceRequest } from '../../../server/utils/record-correspondence-api'
 
 const routeContext = vi.hoisted(() => ({ db: undefined as any }))

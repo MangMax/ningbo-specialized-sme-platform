@@ -14,11 +14,11 @@ import { afterAll, beforeAll, expect, it, vi } from 'vitest'
 import { initializeDb, schema as s } from '../../../db/client'
 import { enterpriseReads } from '../../../layers/sme-roster/server/utils/enterprise-read'
 import { readEvidenceToken113 } from '../../../server/utils/evidence-impact-113'
-import { writeCurrentWorkbook } from '../../../lib/roster/current-workbook'
-import { createCurrentCandidateReader } from '../../../lib/roster/current-qualification'
-import type { CurrentQualifiedResult } from '../../../lib/roster/current-qualified-query'
-import type { CurrentQualifiedFilter } from '../../../lib/roster/current-qualified-query'
-import type { currentQualifiedFilterSchema } from '../../../server/utils/current-qualified-filter'
+import { writeCurrentWorkbook } from '../../../layers/sme-roster/lib/roster/current-workbook'
+import { createCurrentCandidateReader } from '../../../layers/sme-roster/lib/roster/current-qualification'
+import type { CurrentQualifiedResult } from '../../../layers/sme-roster/lib/roster/current-qualified-query'
+import type { CurrentQualifiedFilter } from '../../../layers/sme-roster/lib/roster/current-qualified-query'
+import type { currentQualifiedFilterSchema } from '../../../layers/sme-roster/server/utils/current-qualified-filter'
 
 const active = vi.hoisted(() => ({ db: null as ReturnType<typeof initializeDb> | null }))
 vi.mock('@db', () => ({ useDb: () => active.db }))

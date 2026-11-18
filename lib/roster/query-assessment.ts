@@ -6,7 +6,7 @@ import { enterprise } from '../../db/schema'
 import { currentDecision102, currentDecisionState102, currentDecisions102, currentDecisionStates102, type DecisionDb } from '../../server/utils/decision-lifecycle-102'
 import { normalizeUscc } from '../../layers/sme-roster/lib/domain'
 import { identityFunctions } from '../../layers/sme-roster/lib/roster/enterprise-read-snapshot'
-import { identityKeys, type IdentityKeyVariants } from './current-identity-keys'
+import { identityKeys, type IdentityKeyVariants } from '../../layers/sme-roster/lib/roster/current-identity-keys'
 import { platformQueryResultShape, type PlatformQueryPage } from '../platform/live-query'
 import { readDifferenceCollectionScopes, selectDifferenceCollections, selectDifferenceCollectionsBatch } from '../platform/difference-sources'
 

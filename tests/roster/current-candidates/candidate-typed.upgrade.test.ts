@@ -15,10 +15,10 @@ import { qualificationFileFixture } from '../fixtures/qualification-matrix'
 import { readExportWorkbook } from '../../support/read-workbook'
 import { ensurePlatformObservation } from '../../../upgrade/frozen/server/platform-business-record'
 import { currentCandidateBindings, currentCandidateReadSqlFor } from '../../../upgrade/frozen/current-candidates'
-import { prepareCurrentReader } from '../../../lib/roster/current-qualification'
-import { listCurrentQualified } from '../../../lib/roster/current-qualified-query'
-import { writeCurrentWorkbook } from '../../../lib/roster/current-workbook'
-import type { CurrentTitle } from '../../../lib/roster/current-titles'
+import { prepareCurrentReader } from '../../../layers/sme-roster/lib/roster/current-qualification'
+import { listCurrentQualified } from '../../../layers/sme-roster/lib/roster/current-qualified-query'
+import { writeCurrentWorkbook } from '../../../layers/sme-roster/lib/roster/current-workbook'
+import type { CurrentTitle } from '../../../layers/sme-roster/lib/roster/current-titles'
 
 const fixtures: Array<{ close(): void }> = []
 afterEach(() => {

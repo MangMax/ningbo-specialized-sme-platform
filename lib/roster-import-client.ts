@@ -20,7 +20,7 @@
  * 同一来源重复调用不会重复写企业/事件。
  */
 import type { PlatformInterface } from '../layers/sme-roster/lib/labels'
-import type { CurrentQualificationSnapshot, OfficialEventFieldDiagnostics } from './roster/current-qualification'
+import type { CurrentQualificationSnapshot, OfficialEventFieldDiagnostics } from '../layers/sme-roster/lib/roster/current-qualification'
 
 export type OfficialDeclaration =
   | { kind: 'existing'; sourceDocumentId: number; basis: string }

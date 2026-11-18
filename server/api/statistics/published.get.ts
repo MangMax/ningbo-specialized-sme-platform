@@ -1,7 +1,7 @@
-import { statisticsInteger } from '../../utils/statistics-query'
+import { statisticsInteger } from '../../../layers/sme-roster/server/utils/statistics-query'
 import { useDb } from '@db'
 import { TITLE_ORDER } from '#sme-roster/lib/labels'
-import { readPublishedStatistics } from '~~/lib/roster/published-statistics'
+import { readPublishedStatistics } from '#sme-roster/lib/roster/published-statistics'
 
 defineRouteMeta({ openAPI: { tags: ['统计'], summary: '正式公布累计企业数与同口径明细', description: '每称号按企业去重；仅有正式认定出处的企业。身份歧义单列 pending，累计数不扣减失效、迁出或注销企业。', parameters: [
   { name: 'title', in: 'query', schema: { type: 'string', enum: TITLE_ORDER } },

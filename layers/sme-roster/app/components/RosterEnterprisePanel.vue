@@ -26,7 +26,7 @@ import {
 import { fileNameOf, fileUrl, isPreviewable } from '#core/lib/preview'
 import { EVIDENCE_PAGE_WORDS, evidencePageState, evidencePreviewHref } from '~~/lib/roster/evidence-page'
 import { rememberEvidencePreviewReturn } from '~~/lib/roster/evidence-preview-return'
-import { evidencePointerText } from '~~/lib/roster/first-recognition'
+import { evidencePointerText } from '#sme-roster/lib/roster/first-recognition'
 import FilePreviewDialog from '#core/app/components/preview/FilePreviewDialog.vue'
 import RosterEventChip from '#sme-roster/app/components/EventChip.vue'
 import RosterSourceChip from '#sme-roster/app/components/SourceChip.vue'

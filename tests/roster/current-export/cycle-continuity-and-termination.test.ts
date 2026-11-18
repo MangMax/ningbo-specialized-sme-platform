@@ -1,7 +1,7 @@
 import { afterAll, beforeEach, expect, it } from 'vitest'
 import ExcelJS from 'exceljs'
 import { join } from 'node:path'
-import { writeCurrentWorkbook } from '../../../lib/roster/current-workbook'
+import { writeCurrentWorkbook } from '../../../layers/sme-roster/lib/roster/current-workbook'
 import { specializedExportFixture, rows, year as y, type Event, businessIdentity, expectedBusinessIdentity, matchesBusinessIdentity } from './fixtures/specialized-export'
 // Full literal matrix and order/identity transformations run without HTTP or a worker.
 // The owning HTTP suite retains correction, provenance gaps and two cycle representatives.

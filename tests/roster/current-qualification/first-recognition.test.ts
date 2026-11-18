@@ -10,7 +10,7 @@ import {
   type FirstRecognitionEvidence,
   type RecognitionEntry,
   type RecognitionEvent,
-} from '../../../lib/roster/first-recognition'
+} from '../../../layers/sme-roster/lib/roster/first-recognition'
 import { computeFirstAward, computeTitleLifecycle } from '../../../layers/sme-roster/lib/roster/lifecycle'
 
 /**

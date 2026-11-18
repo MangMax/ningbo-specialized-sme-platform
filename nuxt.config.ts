@@ -5,7 +5,7 @@ import { defineNuxtConfig } from 'nuxt/config'
 import { addTypeTemplate } from 'nuxt/kit'
 import { actualSessionEntryProfile, configureSessionVirtuals, installSessionOverlay, registerSessionFrontend } from './layers/core/mcp-session-nuxt'
 import tailwindcss from '@tailwindcss/vite'
-import { TASK_EXPORTS } from './lib/sme-roster/task-exports'
+import { TASK_EXPORTS } from './layers/sme-roster/lib/sme-roster/task-exports'
 import { LOG_ICON_IDS } from './layers/core/app/components/logs/logIcons'
 import { getAppModules } from './lib/app-modules'
 import { validateAppModules } from './layers/core/lib/core/module-registry'
@@ -219,7 +219,7 @@ export default defineNuxtConfig({
         for (const worker of [
           { location: './layers/sme-roster/server/utils/enterprise-read-worker-location.ts', entry: './layers/sme-roster/lib/roster/enterprise-read-worker.ts', fileName: 'enterprise-read-worker.mjs', factory: 'createEnterpriseWorker', chunk: 'enterprise-read-model' },
           { location: './server/utils/import-execution-worker-location.ts', entry: './lib/roster/import-execution-worker.ts', fileName: 'import-execution-worker.mjs', factory: 'createImportExecutionWorker', chunk: 'import-execution-model' },
-          { location: './server/utils/current-export-worker-location.ts', entry: './lib/roster/current-export-worker.ts', fileName: 'current-export-worker.mjs', factory: 'createCurrentExportWorker', chunk: 'current-export-model' },
+          { location: './layers/sme-roster/server/utils/current-export-worker-location.ts', entry: './layers/sme-roster/lib/roster/current-export-worker.ts', fileName: 'current-export-worker.mjs', factory: 'createCurrentExportWorker', chunk: 'current-export-model' },
         ]) {
           const location = fileURLToPath(new URL(worker.location, import.meta.url))
           const entry = fileURLToPath(new URL(worker.entry, import.meta.url))

@@ -1,6 +1,6 @@
 import { afterEach, expect, it } from 'vitest'
 import { nativeCatalogFixture } from '../fixtures/native-catalog'
-import { listCurrentQualified } from '../../../lib/roster/current-qualified-query'
+import { listCurrentQualified } from '../../../layers/sme-roster/lib/roster/current-qualified-query'
 import { schema } from '../../../db/client'
 const fixtures:ReturnType<typeof nativeCatalogFixture>[]=[]
 const fixture=()=>{const f=nativeCatalogFixture();fixtures.push(f);return f}

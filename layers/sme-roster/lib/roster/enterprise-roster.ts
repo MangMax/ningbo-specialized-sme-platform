@@ -11,9 +11,9 @@ import { legacySourcePositionForSequence,type LegacyProvenanceDisplay } from '..
 import { type PlatformNormalizationConflict } from '../../../../lib/platform/normalization'
 import { readEnterpriseSnapshot,readEnterpriseHistories,enterpriseComparisonCoordinates } from './enterprise-read-snapshot'
 import { readPlatformBusinessDetails,readPlatformDetailFacts } from '../../../../server/utils/platform-business-detail-read'
-import { createCurrentQualificationAssessmentReader,type CurrentQualificationSnapshot } from '../../../../lib/roster/current-qualification'
+import { createCurrentQualificationAssessmentReader,type CurrentQualificationSnapshot } from './current-qualification'
 import type { PlatformBusinessDetail } from '../../../../lib/roster/platform-business-detail'
-export { readPublicPublishedNames } from '../../../../lib/roster/official-published-presentation'
+export { readPublicPublishedNames } from './official-published-presentation'
 /**
  * 跨称号去重企业总表 / 企业详情 / 差异与解释 —— 契约 §7.1 / §7.2 / §7.3 的**读模型**(RL-04)。
  *
@@ -49,7 +49,7 @@ judgeFirstRecognition,
 type FirstRecognitionEvidence,
 type RecognitionEntry,
 type RecognitionEvent,
-} from '../../../../lib/roster/first-recognition'
+} from './first-recognition'
 import { computeTitleLifecycle,type LifecycleEvent,type TitleLifecycle } from './lifecycle'
 
 type Db = BetterSQLite3Database<typeof schema>
@@ -426,7 +426,7 @@ function buildProfile(
 /**
  * 属地:企业自身属地优先,为空时退回它**最早那条带属地的记录**。
  *
- * 导出给 `lib/roster/recognitions.ts`(§7.5 的清单也带属地):「属地」只该有这一个判法 ——
+ * 导出给 `layers/sme-roster/lib/roster/recognitions.ts`(§7.5 的清单也带属地):「属地」只该有这一个判法 ——
  * 两处各写一遍,同一家企业在总表与首次认定清单上会显示成两个区县。
  */
 export function effectiveDistrict(profile: Profile): string | null {

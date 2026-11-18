@@ -1,6 +1,6 @@
 /** #426 pure comparison interface. Formal qualification and annual selection retain their existing authorities. */
-import type { CurrentQualificationAssessment as Assessment, CurrentQualificationSnapshot as Snapshot } from './current-qualification'
-import { adjudicateQualificationCycles, originTime, type CycleJudgment, type QualificationEvent } from './qualification-cycles'
+import type { CurrentQualificationAssessment as Assessment, CurrentQualificationSnapshot as Snapshot } from '../../layers/sme-roster/lib/roster/current-qualification'
+import { adjudicateQualificationCycles, originTime, type CycleJudgment, type QualificationEvent } from '../../layers/sme-roster/lib/roster/qualification-cycles'
 import type { AnnualProcessInput, AnnualProcessSourceRefs, EventAnnualProcessRead, AnnualFinalQualification } from './annual-process'
 import type { PlatformBusinessGroup, PlatformBusinessObservationRef } from '../platform/business-record'
 import type { RelationSource } from './correspondence-view'

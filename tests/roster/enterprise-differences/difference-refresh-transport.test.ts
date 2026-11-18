@@ -54,7 +54,7 @@ it('public refresh keeps frozen lower comparison when only higher qualification 
  const event=db.insert(schema.recordEvent).values({recordId:r.id,eventType:'award',year:2025,batchSeq:1}).returning().get()
  db.insert(schema.recordEvidence).values({recordEventId:event.id,sourceFile:'synthetic-refresh.pdf'}).run()
  db.insert(schema.record).values({enterpriseId:e.id,titleCode:'innovative_sme',source:'miit',nameRaw:e.name}).run()
- const {readCurrentQualificationAssessment}=await import('../../../lib/roster/current-qualification')
+ const {readCurrentQualificationAssessment}=await import('../../../layers/sme-roster/lib/roster/current-qualification')
  expect(readCurrentQualificationAssessment(sqlite,e.id,Date.parse('2026-06-01')).titles.find(t=>t.titleCode==='innovative_sme')!.group).toBe('eligible')
  const first=await (await request('POST',{enterpriseIds:[e.id]})).json()
  const lower=first.enterprises[0].comparisons.find((c:{titleCode:string})=>c.titleCode==='innovative_sme')

@@ -3,7 +3,7 @@ import { z } from 'zod'
 import { defineMcpTool } from '@nuxtjs/mcp-toolkit/server'
 import { useDb } from '@db'
 import { TITLE_ORDER } from '#sme-roster/lib/labels'
-import { FIRST_RECOGNITION_STATUS_VALUES } from '~~/lib/roster/first-recognition'
+import { FIRST_RECOGNITION_STATUS_VALUES } from '#sme-roster/lib/roster/first-recognition'
 import { enterpriseListFilter } from '../../utils/mcp-roster'
 import { enterpriseReads } from '../../../layers/sme-roster/server/utils/enterprise-read'
 

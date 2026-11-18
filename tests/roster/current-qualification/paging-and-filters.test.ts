@@ -1,7 +1,7 @@
 import { afterAll, beforeEach, expect, it } from 'vitest'
 import { eq } from 'drizzle-orm'
 import { schema as s } from '../../../db/client'
-import { listCurrentQualified, type CurrentQualifiedFilter } from '../../../lib/roster/current-qualified-query'
+import { listCurrentQualified, type CurrentQualifiedFilter } from '../../../layers/sme-roster/lib/roster/current-qualified-query'
 import { specializedExportFixture, year } from '../current-export/fixtures/specialized-export'
 
 // Use only its native seed and connection; never launch its app host.

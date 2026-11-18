@@ -1,8 +1,8 @@
-import { statisticsInteger } from '../../utils/statistics-query'
+import { statisticsInteger } from '../../../layers/sme-roster/server/utils/statistics-query'
 import { useDb } from '@db'
 import { TITLE_ORDER } from '#sme-roster/lib/labels'
-import { readAnnualStatistics } from '~~/lib/roster/annual-statistics'
-import { qualificationDay } from '~~/lib/roster/current-qualification'
+import { readAnnualStatistics } from '#sme-roster/lib/roster/annual-statistics'
+import { qualificationDay } from '#sme-roster/lib/roster/current-qualification'
 
 defineRouteMeta({ openAPI: { tags: ['统计'], summary: '年度有效存量和同口径有效/待核企业明细', description: '当前已录入证据重算，非当年归档；历史上海年末，本年评价日。v10 正式期间及排除规则，迁入不授予或恢复资格。', parameters: [
   { name: 'year', in: 'query', schema: { type: 'integer', minimum: 1900 } },

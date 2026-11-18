@@ -2,7 +2,7 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import { afterEach, expect, it } from 'vitest'
 import { calendarSelectValue, chooseCalendarSelect } from '../../support/calendar-select'
-import CurrentRecognitionDatePicker from '../../../components/CurrentRecognitionDatePicker.vue'
+import CurrentRecognitionDatePicker from '../../../layers/sme-roster/app/components/CurrentRecognitionDatePicker.vue'
 
 let view: ReturnType<typeof mount>
 afterEach(() => { view?.unmount(); document.body.innerHTML = '' })

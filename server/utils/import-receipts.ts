@@ -6,7 +6,7 @@ import type * as schema from '../../db/schema'
 import { importReceiptRedactor } from './import-receipt-redaction'
 import { createHash } from 'node:crypto'
 import { isDeepStrictEqual } from 'node:util'
-import { CURRENT_TITLES } from '../../lib/roster/current-titles'
+import { CURRENT_TITLES } from '../../layers/sme-roster/lib/roster/current-titles'
 import type { RosterImportHistoricalQualificationDiagnostics } from '../../lib/roster-import-client'
 
 type Db = BetterSQLite3Database<typeof schema>

@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
-import { platformBusinessFact, sourceDate, periodContains } from '../../../lib/roster/platform-qualification'
+import { platformBusinessFact, sourceDate, periodContains } from '../../../layers/sme-roster/lib/roster/platform-qualification'
 
 it('retains day boundaries and exact business timestamps without fabricating precision', () => {
   expect(sourceDate('2026-12-28')).toEqual({ raw: '2026-12-28', value: '2026-12-28', precision: 'day' })
@@ -34,10 +34,10 @@ import { platformResultToImport } from '../../../lib/platform/recognized-evidenc
 import type { PlatformRawRow } from '../../../lib/platform/types'
 import type { PlatformLiveQueryResult } from '../../../lib/platform/live-query'
 import { processFactsFromRow } from '../../../lib/platform/identity'
-import { readPlatformQualificationFacts } from '../../../lib/roster/platform-qualification'
-import * as platformQualification from '../../../lib/roster/platform-qualification'
-import { createCurrentTargetContext } from '../../../lib/roster/current-target-context'
-import { createCurrentQualificationAssessmentReader } from '../../../lib/roster/current-qualification'
+import { readPlatformQualificationFacts } from '../../../layers/sme-roster/lib/roster/platform-qualification'
+import * as platformQualification from '../../../layers/sme-roster/lib/roster/platform-qualification'
+import { createCurrentTargetContext } from '../../../layers/sme-roster/lib/roster/current-target-context'
+import { createCurrentQualificationAssessmentReader } from '../../../layers/sme-roster/lib/roster/current-qualification'
 function collectionCommand(row: PlatformRawRow, queriedAt: string, source: PlatformLiveQueryResult['source'] = 'queryBusList'): NewCollectionTargetCommand {
   const evidence: PlatformLiveQueryResult = {
     source, status: 'success', effectiveConditions: source === 'businessList' ? { uscc: normalizeUscc(String(row.tyshxydm)), combination: 'and' } : { name: 'Example', combination: 'and' },

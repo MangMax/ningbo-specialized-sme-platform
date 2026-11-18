@@ -1,6 +1,6 @@
 import { requestLogContext } from '../../../layers/core/lib/logging'
 import { withEnterpriseReadSignal } from '../../../layers/core/server/utils/enterprise-read-signal'
-import { readRecognitions } from '../../utils/recognition-read'
+import { readRecognitions } from '../../../layers/sme-roster/server/utils/recognition-read'
 import { useDb } from '@db'
 import { setHeader } from 'h3'
 import { parseRosterRecognitionQuery } from '../../../layers/sme-roster/server/utils/roster-read-query'

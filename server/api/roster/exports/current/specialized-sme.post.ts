@@ -1,4 +1,4 @@
-import { currentExportRoute } from '../../../../utils/current-export-route'
+import { currentExportRoute } from '../../../../../layers/sme-roster/server/utils/current-export-route'
 defineRouteMeta({ openAPI: {
   tags:['当前名录导出'], summary:'提交专精特新中小企业当前有效名录后台导出', security:[{bearerAuth:[]}],
   description:'返回202及Location，使用GET /api/jobs/{id}查询。完成后按同一请求校验边界下载 /api/job-artifacts/{id}；保留7天。按clientRequestId去重，重新生成需新标识并给regenerateOf。不接收历史日期。同源页面请求通过浏览器标记、Fetch Metadata 及 Origin/Referer 校验后可直接操作，POST 还需 JSON；其他请求仍需 API token。此检查不识别用户。',

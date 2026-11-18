@@ -1,4 +1,4 @@
-import { legacyExportSheet, writeLegacyXlsx } from '../utils/legacy-export-xlsx'
+import { legacyExportSheet, writeLegacyXlsx } from '../../layers/sme-roster/server/utils/legacy-export-xlsx'
 import { appLog, requestLogContext } from '../../layers/core/lib/logging'
 import { useDb } from '@db'
 import { allRecords, type EventType } from '#sme-roster/lib/query'

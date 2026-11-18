@@ -138,7 +138,7 @@ it('preserves historical qualification command validation without granting curre
 },60000)
 
 it('preserves historical source ownership commands and explicit prior-version interval boundaries', async () => {
-  const {createCurrentCandidateReader,PREVIOUS_QUALIFICATION_ASSESSMENT_VERSION}=await import('../../../lib/roster/current-qualification')
+  const {createCurrentCandidateReader,PREVIOUS_QUALIFICATION_ASSESSMENT_VERSION}=await import('../../../layers/sme-roster/lib/roster/current-qualification')
   const c=f.candidate('Exact inbound interval',[]),{q,r}=relation(c.enterprise.id)
   const qualification={titleCode:'specialized_sme',validFrom:'2026-01-01T00:00:00Z',validUntil:'2027-01-01T00:00:00Z',basis:'Verified external award',publicationCheck:{status:'not_found',scope:'Ingested Ningbo announcements including confirmed former names'}}
   const command={...scope(c.enterprise.id),action:'replace',expectedCurrentId:null,actor,basis:'Synthetic independent qualification verification',ruleVersion:'synthetic-pr126',effectiveAt:'2025-01-01T00:00:00Z',decision:{status:'confirmed_reason',reasonCode:'moved_in',measureCode:'record_moved_in',verificationStatus:'confirmed',evidenceQueryId:q.id,evidenceRelationId:r.id,currentQualification:qualification}}

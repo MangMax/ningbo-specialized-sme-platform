@@ -1,6 +1,6 @@
-import { statisticsInteger } from '../../utils/statistics-query'
+import { statisticsInteger } from '../../../layers/sme-roster/server/utils/statistics-query'
 import { useDb } from '@db'
-import { MOVEMENT_KINDS, type MovementKind, readMovementStatistics } from '~~/lib/roster/movement-statistics'
+import { MOVEMENT_KINDS, type MovementKind, readMovementStatistics } from '#sme-roster/lib/roster/movement-statistics'
 
 defineRouteMeta({ openAPI: { tags: ['统计'], summary: '全部已录入企业的迁入迁出注销发生事实统计', description: '当前修订、证据完整且已确认；按企业和事实种类去重。year 为发生年或 unknown；status 为 confirmed、unknown（已确认但发生年未知）或 pending。非互斥当前状态。', parameters: [
   { name: 'kind', in: 'query', schema: { type: 'string', enum: [...MOVEMENT_KINDS] } },

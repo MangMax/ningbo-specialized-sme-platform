@@ -24,8 +24,8 @@ import {
   type RosterEnterpriseFilter,
   type RosterState,
 } from '../../lib/roster/enterprise-roster'
-import { FIRST_RECOGNITION_STATUS_VALUES } from '../../../../lib/roster/first-recognition'
-import type { RosterRecognitionFilter } from '../../../../lib/roster/recognitions'
+import { FIRST_RECOGNITION_STATUS_VALUES } from '../../lib/roster/first-recognition'
+import type { RosterRecognitionFilter } from '../../lib/roster/recognitions'
 import {
   DEFAULT_ROSTER_ENTERPRISE_SORT,
   ROSTER_DIFFERENCE_FILTER_VALUES,

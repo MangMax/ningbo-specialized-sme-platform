@@ -1,4 +1,4 @@
-import { adjudicateQualificationCycles } from '../../../../lib/roster/qualification-cycles'
+import { adjudicateQualificationCycles } from './qualification-cycles'
 
 /**
  * 名录**生命周期**的判定(契约 §6)——纯函数,不碰库。

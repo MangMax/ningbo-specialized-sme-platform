@@ -14,7 +14,7 @@ const entryDirs = [
   ...appEntryDirs.flatMap(dir => [dir, `layers/core/app/${dir}`]),
 ]
 const entries = entryDirs.flatMap(path => walk(root + '/' + path)).filter(moduleFile)
-entries.push(...['db/client.ts', 'lib/roster/import-execution-worker.ts', 'layers/sme-roster/lib/roster/enterprise-read-worker.ts', 'lib/roster/current-export-worker.ts', 'nuxt.config.ts', 'layers/core/nuxt.config.ts', 'layers/core/app/app.vue'].map(path => root + '/' + path))
+entries.push(...['db/client.ts', 'lib/roster/import-execution-worker.ts', 'layers/sme-roster/lib/roster/enterprise-read-worker.ts', 'layers/sme-roster/lib/roster/current-export-worker.ts', 'nuxt.config.ts', 'layers/core/nuxt.config.ts', 'layers/core/app/app.vue'].map(path => root + '/' + path))
 const retired = ['platform_query', 'platform_relation', 'platform_query_legacy_provenance', 'platform_relation_body_ref', 'platform_query_body_ref', 'platform_version_body_ref', 'platform_body_part', 'platform_body_root', 'platform_body_leaf']
 const retiredSql = new RegExp('\\b(?:from|join|into|update|table)\\s+["`]?(' + retired.join('|') + ')\\b', 'i')
 const removedSelectors = /\b(?:ROSTER_COMPARISON_TYPED_READ|ROSTER_ENTERPRISE_DETAIL_TYPED_READ|ROSTER_RECOGNIZED_FILTER_SOURCE|ENTERPRISE_FACT_CONSUMER_SOURCE|LEGACY_LEDGER_PRESENTATION_SOURCE|PLATFORM_DETAIL_TYPED_READ)\b/

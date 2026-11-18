@@ -2,7 +2,7 @@ import { appLog, type LogContext, type LogInput } from '../../../core/lib/loggin
 import { channel } from 'node:diagnostics_channel'
 import type { RosterEnterpriseFilter, RosterEnterprisesResult } from '../../lib/roster/enterprise-roster'
 import type { EnterpriseReadRequest } from '../../lib/roster/enterprise-read-worker'
-import type { CurrentQualifiedFilter } from '../../../../lib/roster/current-qualified-query'
+import type { CurrentQualifiedFilter } from '../../lib/roster/current-qualified-query'
 import { createEnterpriseWorker } from './enterprise-read-worker-location'
 import type { RecognitionReadInput, DifferenceReadInput, SummaryReadInput, OffmainReadOutcome } from '../../lib/roster/offmain-read-protocol'
 

@@ -1,8 +1,8 @@
 // @vitest-environment happy-dom
 import { mount } from '@vue/test-utils'
 import { expect, it } from 'vitest'
-import CurrentQualificationTimeline from '../../../components/CurrentQualificationTimeline.vue'
-import type { PlatformQualificationFact } from '../../../lib/roster/platform-qualification'
+import CurrentQualificationTimeline from '../../../layers/sme-roster/app/components/CurrentQualificationTimeline.vue'
+import type { PlatformQualificationFact } from '../../../layers/sme-roster/lib/roster/platform-qualification'
 import type { TimelineEventFacts } from '../../../layers/sme-roster/lib/roster/enterprise-timeline'
 
 const award = (year: number | null): TimelineEventFacts => ({ eventType: 'award', year, decidedYear: year, batchSeq: 1, reviewOutcome: null })

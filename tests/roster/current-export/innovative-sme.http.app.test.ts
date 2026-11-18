@@ -1,6 +1,6 @@
 import { resetExportRows } from './fixtures/reset-rows'
 import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
-import { CURRENT_RULE_VERSION } from '../../../lib/roster/current-qualification'
+import { CURRENT_RULE_VERSION } from '../../../layers/sme-roster/lib/roster/current-qualification'
 import { readDevelopmentDiscovery, businessIdentity, expectedBusinessIdentity, matchesBusinessIdentity } from './fixtures/specialized-export'
 import { reviewCurrentExportDecision, confirmCurrentExportExclusion } from '../fixtures/qualification-decisions'
 import { createHash } from 'node:crypto'

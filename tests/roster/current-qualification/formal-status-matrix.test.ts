@@ -1,7 +1,7 @@
 import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
-import { listCurrentQualified } from '../../../lib/roster/current-qualified-query'
-import { readCurrentQualificationAssessment } from '../../../lib/roster/current-qualification'
+import { listCurrentQualified } from '../../../layers/sme-roster/lib/roster/current-qualified-query'
+import { readCurrentQualificationAssessment } from '../../../layers/sme-roster/lib/roster/current-qualification'
 import { AS_OF_408 as AS_OF, currentQualificationFixture } from '../fixtures/qualification-matrix'
 
 let fixture: ReturnType<typeof currentQualificationFixture>
@@ -96,8 +96,8 @@ it("formal_eligible_survives_platform_query_failure", () => {
 
 // Current-contract matrix controls retain the original source facts.
 import { createHash } from 'node:crypto'
-import { createCurrentQualificationAssessmentReader } from '../../../lib/roster/current-qualification'
-import type { CurrentQualifiedFilter } from '../../../lib/roster/current-qualified-query'
+import { createCurrentQualificationAssessmentReader } from '../../../layers/sme-roster/lib/roster/current-qualification'
+import type { CurrentQualifiedFilter } from '../../../layers/sme-roster/lib/roster/current-qualified-query'
 import type { PlatformRow } from '../../../lib/platform/types'
 import { qualificationMatrix, qualificationFileFixture, type MatrixEvent408 as MatrixEvent } from '../fixtures/qualification-matrix'
 
@@ -534,7 +534,7 @@ it('native recognized submission rejects ownership that conflicts with source id
   expect(fixture.sqlite.prepare('select count(*) n from platform_collection').get()).toEqual(before)
 })
 
-import { createCurrentTargetContext } from '../../../lib/roster/current-target-context'
+import { createCurrentTargetContext } from '../../../layers/sme-roster/lib/roster/current-target-context'
 import { preflightRecordCorrespondences, commitRecordCorrespondences } from '../../../server/utils/record-correspondence'
 
 it('global filter revalidates only recognition witnesses while full reads retain process refs', () => {

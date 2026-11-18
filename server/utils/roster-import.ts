@@ -41,7 +41,7 @@ import { isPageCapable } from '../../lib/roster/evidence-page'
 import { normalizeName,normalizeUscc } from '../../layers/sme-roster/lib/domain'
 import { duplicateTwinKey } from '../../layers/sme-roster/lib/roster/duplicate-merge'
 import { missingUsccSourceFields,usccFormatVerdict } from '../../layers/sme-roster/lib/roster/uscc-research'
-import { diagnoseOfficialEventFields,readCurrentQualificationAssessment } from '../../lib/roster/current-qualification'
+import { diagnoseOfficialEventFields,readCurrentQualificationAssessment } from '../../layers/sme-roster/lib/roster/current-qualification'
 import { PLATFORM_INTERFACE_VALUES,TITLE_ORDER,type PlatformInterface } from '../../layers/sme-roster/lib/labels'
 import type {
 DuplicateNameCandidate,

@@ -3,8 +3,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { expect, it } from 'vitest'
 import { initializeDb, schema as s } from '../../../db/client'
-import { readAnnualStatistics } from '../../../lib/roster/annual-statistics'
-import { readDistrictStatistics } from '../../../lib/roster/district-statistics'
+import { readAnnualStatistics } from '../../../layers/sme-roster/lib/roster/annual-statistics'
+import { readDistrictStatistics } from '../../../layers/sme-roster/lib/roster/district-statistics'
 
 it.each(['annual', 'district'] as const)('reads %s chart summaries and evidence details with retired platform tables absent', kind => {
   const dir = mkdtempSync(join(tmpdir(), 'statistics-retired-'))

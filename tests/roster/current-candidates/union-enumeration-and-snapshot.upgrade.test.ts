@@ -2,7 +2,7 @@ import { completePlatformMigration } from '../../../upgrade/complete-platform'
 import { mkdirSync, readFileSync } from 'node:fs'
 import { expect,it,vi } from 'vitest'
 import { targetCandidatesFixture, titles, literalCandidates } from './fixtures/migrated-candidates'
-import { createTargetCurrentCandidateReader } from '../../../lib/roster/current-candidates-target'
+import { createTargetCurrentCandidateReader } from '../../../layers/sme-roster/lib/roster/current-candidates-target'
 // Frozen source/SQL literals remain below as historical migration evidence.
 // Current returned rows say title 1 for all resolved platform owners; q6's
 // actual title 3 row has NO_MATCH ownership. Query scope is not a current title.
@@ -35,7 +35,7 @@ import { candidateScopeObservation as observation } from '../../../lib/platform/
 import { currentCandidateSql,currentCandidateBindings } from '../../../upgrade/frozen/current-candidates'
 import { normalizeUscc } from '../../../layers/sme-roster/lib/domain'
 import { captureReturnedTitles } from './fixtures/returned-titles'
-import { TargetCurrentCandidateGap } from '../../../lib/roster/current-candidates-target'
+import { TargetCurrentCandidateGap } from '../../../layers/sme-roster/lib/roster/current-candidates-target'
 
 it('candidate ORM count stable pages and name ties preserve the unique union and reject invalid paging',async()=>{
   const f=await targetCandidatesFixture()
@@ -224,8 +224,8 @@ it('candidate page count and selected IDs share a snapshot when assignment chang
   }finally{spy.mockRestore();second.close();f.close()}
 },30000)
 
-import { createCurrentQualificationAssessmentReaderWithWitnesses } from '../../../lib/roster/current-qualification'
-import { createTargetRecognizedWitnessReader } from '../../../lib/roster/recognized-witness-target'
+import { createCurrentQualificationAssessmentReaderWithWitnesses } from '../../../layers/sme-roster/lib/roster/current-qualification'
+import { createTargetRecognizedWitnessReader } from '../../../layers/sme-roster/lib/roster/recognized-witness-target'
 it('hydrates selected candidates into current and workbook snapshots with public aliases and caller transaction ownership', async()=>{
   const f=await targetCandidatesFixture()
   try{

@@ -19,7 +19,7 @@ listRosterEnterprises,
 type RosterEnterpriseRow,
 type RosterEnterprisesResult,
 } from '../../layers/sme-roster/lib/roster/enterprise-roster'
-import type { FirstRecognitionStatus } from '../../lib/roster/first-recognition'
+import type { FirstRecognitionStatus } from '../../layers/sme-roster/lib/roster/first-recognition'
 
 type Db = BetterSQLite3Database<typeof schema>
 

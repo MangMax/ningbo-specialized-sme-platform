@@ -2,7 +2,7 @@ import { z } from 'zod'
 import { defineMcpTool } from '@nuxtjs/mcp-toolkit/server'
 import { useDb } from '@db'
 import { EVENT_ORDER, SOURCE_ORDER, TITLE_ORDER } from '#sme-roster/lib/labels'
-import { FIRST_RECOGNITION_STATUS_VALUES } from '~~/lib/roster/first-recognition'
+import { FIRST_RECOGNITION_STATUS_VALUES } from '#sme-roster/lib/roster/first-recognition'
 import { listRecords } from '#sme-roster/lib/query'
 import { parseRecordQuery } from '../../../layers/sme-roster/server/utils/roster-read-query'
 

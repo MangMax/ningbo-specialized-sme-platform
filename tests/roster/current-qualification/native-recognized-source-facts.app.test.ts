@@ -9,8 +9,8 @@ import { initializeDb } from '../../../db/client'
 import { qualificationMatrix } from '../fixtures/qualification-matrix'
 import { submitSyntheticRecognizedCollection } from '../fixtures/recognized-source'
 import { preflightRecordCorrespondences, commitRecordCorrespondences } from '../../../server/utils/record-correspondence'
-import { listCurrentQualified, type CurrentQualifiedResult } from '../../../lib/roster/current-qualified-query'
-import { writeCurrentWorkbook } from '../../../lib/roster/current-workbook'
+import { listCurrentQualified, type CurrentQualifiedResult } from '../../../layers/sme-roster/lib/roster/current-qualified-query'
+import { writeCurrentWorkbook } from '../../../layers/sme-roster/lib/roster/current-workbook'
 import { readExportWorkbook } from '../../support/read-workbook'
 vi.mock('@nuxtjs/mcp-toolkit/server', () => ({ defineMcpTool: (tool: unknown) => tool }))
 // Real current-qualified reader startup belongs to setup, outside case budgets.

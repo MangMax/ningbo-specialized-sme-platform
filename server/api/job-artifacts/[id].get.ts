@@ -3,7 +3,7 @@ import { useDb } from '@db'
 import { isJobId } from '../../../layers/core/lib/job'
 import { requireTaskCenterAccess } from '../../../layers/core/server/utils/task-center-access'
 import { getJob } from '../../../layers/core/server/utils/job-store'
-import { artifactStream, currentArtifact, EXPORT_MIME } from '../../utils/current-export-artifact'
+import { artifactStream, currentArtifact, EXPORT_MIME } from '../../../layers/sme-roster/server/utils/current-export-artifact'
 import { appLog, requestLogContext } from '../../../layers/core/lib/logging'
 defineRouteMeta({openAPI:{tags:['当前名录导出'],summary:'下载后台导出产物',security:[{bearerAuth:[]}],description:'与提交同一API token边界。只接受受控产物ULID；不接受文件路径。保留7天，过期410，缺失404，任务历史保留。同源页面请求通过浏览器标记、Fetch Metadata 及 Origin/Referer 校验后可直接操作，POST 还需 JSON；其他请求仍需 API token。此检查不识别用户。',parameters:[{in:'path',name:'id',required:true,schema:{type:'string'}}],responses:{200:{description:'Excel字节',content:{'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet':{schema:{type:'string',format:'binary'}}}},401:{description:'需要token'},404:{description:'无可用产物'},410:{description:'已过期，请重新导出'}}}})
 export default defineEventHandler(async event => {

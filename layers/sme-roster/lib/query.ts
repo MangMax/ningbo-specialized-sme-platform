@@ -1,5 +1,5 @@
 import { MAX_PAGE_SIZE } from './query-limits'
-import { readPublicPublishedNames,type OfficialPublishedFact } from '../../../lib/roster/official-published-presentation'
+import { readPublicPublishedNames,type OfficialPublishedFact } from './roster/official-published-presentation'
 import { publishedNameText,type PublishedPresentation } from '../../../lib/roster/correspondence-view'
 import { and,desc,eq,exists,inArray,isNull,like,or,sql,type SQL } from 'drizzle-orm'
 import type { AnySQLiteColumn } from 'drizzle-orm/sqlite-core'
@@ -13,7 +13,7 @@ import {
 judgeFirstRecognition,
 matchesRecognitionQuery,
 type FirstRecognitionStatus,
-} from '../../../lib/roster/first-recognition'
+} from './roster/first-recognition'
 import {
 computeTitleLifecycle,
 effectiveYear,

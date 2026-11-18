@@ -8,8 +8,8 @@ import ExcelJS from 'exceljs'
 import { afterAll, beforeAll, expect, it, vi } from 'vitest'
 import { initializeDb, schema as s } from '../../../db/client'
 import { enterpriseReads } from '../../../layers/sme-roster/server/utils/enterprise-read'
-import { writeCurrentWorkbook } from '../../../lib/roster/current-workbook'
-import { createCurrentCandidateReader } from '../../../lib/roster/current-qualification'
+import { writeCurrentWorkbook } from '../../../layers/sme-roster/lib/roster/current-workbook'
+import { createCurrentCandidateReader } from '../../../layers/sme-roster/lib/roster/current-qualification'
 import { qualificationCycleCases } from "./fixtures/cycle-cases"
 import { qualificationReferenceCases } from "./fixtures/reference-cases"
 

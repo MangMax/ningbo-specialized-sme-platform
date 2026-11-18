@@ -1,6 +1,6 @@
 import { useDb } from '@db'
 import { readRosterStatistics } from '#sme-roster/public'
-import { getFirstRecognitionYearBuckets } from '~~/lib/roster/recognitions'
+import { getFirstRecognitionYearBuckets } from '#sme-roster/lib/roster/recognitions'
 
 /** 统计聚合,可按标题 / 区县 / 来源过滤(与 SPEC 契约一致)。 */
 defineRouteMeta({

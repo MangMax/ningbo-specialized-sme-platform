@@ -11,7 +11,7 @@ import { candidateFixture } from '../fixtures/candidate-scope-upgrade'
 import { finalizeCandidateScopes } from '../../../upgrade/candidate-scope'
 import { finalizeRecognizedStored } from '../../../upgrade/recognized-stored'
 import { ensurePlatformObservation } from '../../../upgrade/frozen/server/platform-business-record'
-import { recognizedFilterFacts } from '../../../lib/roster/recognized-filter-facts'
+import { recognizedFilterFacts } from '../../../layers/sme-roster/lib/roster/recognized-filter-facts'
 import { createRecognizedFilterSourceReader } from '../../../upgrade/frozen/recognized-filter-source'
 import { sourcePositionForSequence, RDJB_TITLE_CODES } from '../../../lib/platform/recognized-evidence'
 

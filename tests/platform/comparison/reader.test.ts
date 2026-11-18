@@ -1,6 +1,6 @@
 import {expect,it} from 'vitest'
 import {comparePlatformComparison,type CandidateComparisonInput} from '../../../lib/roster/platform-comparison'
-import {createCurrentQualificationAssessmentReader,QUALIFICATION_ASSESSMENT_VERSION} from '../../../lib/roster/current-qualification'
+import {createCurrentQualificationAssessmentReader,QUALIFICATION_ASSESSMENT_VERSION} from '../../../layers/sme-roster/lib/roster/current-qualification'
 import * as schema from '../../../db/schema'
 import {nativeImportDb,businessSource,commitNativeSource} from '../../roster/imports/fixtures/native-import'
 

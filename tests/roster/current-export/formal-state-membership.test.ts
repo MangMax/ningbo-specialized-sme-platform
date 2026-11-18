@@ -1,12 +1,12 @@
 
 import { join } from 'node:path'
-import { writeCurrentWorkbook } from '../../../lib/roster/current-workbook'
-import type { CurrentTitle } from '../../../lib/roster/current-qualification'
-import { listCurrentQualified } from '../../../lib/roster/current-qualified-query'
-import { parseCurrentQualifiedQuery } from '../../../server/utils/current-qualified-filter'
+import { writeCurrentWorkbook } from '../../../layers/sme-roster/lib/roster/current-workbook'
+import type { CurrentTitle } from '../../../layers/sme-roster/lib/roster/current-qualification'
+import { listCurrentQualified } from '../../../layers/sme-roster/lib/roster/current-qualified-query'
+import { parseCurrentQualifiedQuery } from '../../../layers/sme-roster/server/utils/current-qualified-filter'
 import { submitSyntheticRecognizedCollection } from '../fixtures/recognized-source'
 import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
-import { CURRENT_RULE_VERSION, QUALIFICATION_ASSESSMENT_VERSION } from '../../../lib/roster/current-qualification'
+import { CURRENT_RULE_VERSION, QUALIFICATION_ASSESSMENT_VERSION } from '../../../layers/sme-roster/lib/roster/current-qualification'
 import { afterAll, beforeEach, expect, it } from 'vitest'
 import { createHash } from 'node:crypto'
 import { existsSync, statSync } from 'node:fs'
@@ -14,7 +14,7 @@ import ExcelJS from 'exceljs'
 import { schema } from '../../../db/client'
 import { qualificationExportFixture } from './fixtures/qualification-export'
 import { B409, B409_TAIL_NAMES, HEADERS_409, X409 } from '../../fixtures/current-export-409'
-import { readCurrentQualificationAssessment } from '../../../lib/roster/current-qualification'
+import { readCurrentQualificationAssessment } from '../../../layers/sme-roster/lib/roster/current-qualification'
 
 const base = qualificationExportFixture()
 const f = { ...base, get db(){return base.db}, get dbPath(){return base.dbPath},

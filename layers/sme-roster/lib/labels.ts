@@ -466,7 +466,7 @@ export const COMPARISON_DIRECTION_NOTES: Record<string, string> = {
 /**
  * 首次认定的两态(RL-08,契约 §7.5 增量)。
  *
- * 取值本身定义在 `lib/roster/first-recognition.ts`(判定与取值同处),这里只放**中文标签与
+ * 取值本身定义在 `layers/sme-roster/lib/roster/first-recognition.ts`(判定与取值同处),这里只放**中文标签与
  * 展示顺序** —— 与全仓别的枚举同一分法(`*_ORDER` + 标签表),页面不再各写一份。
  */
 export const FIRST_RECOGNITION_STATUSES: Record<string, string> = {

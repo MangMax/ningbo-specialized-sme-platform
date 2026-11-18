@@ -2,7 +2,7 @@
  * Original db/schema.ts SHA256: 9287138f2170847771f08f5529fd7c77e2363d53a5885f0770bdce304269e13c.
  * Declarations preserved for offline migration and historical oracles only. */
 import { businessStatusCell, businessStatusChecks } from '../lib/platform/business-status'
-import type { FormalValidity } from '../lib/roster/formal-validity'
+import type { FormalValidity } from '../layers/sme-roster/lib/roster/formal-validity'
 import { sql } from 'drizzle-orm'
 import type { AnySQLiteColumn } from 'drizzle-orm/sqlite-core'
 import {

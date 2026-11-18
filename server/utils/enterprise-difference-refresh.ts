@@ -7,9 +7,9 @@ import type { useApplicationDb } from '../../db/client'
 import { readDifferenceRefreshMetadata,readDifferenceRefreshRows } from '../../lib/platform/difference-hash-inputs'
 import { selectDifferenceCollections } from '../../lib/platform/difference-sources'
 import { targetSchema } from '../../lib/platform/target-schema'
-import { createCurrentQualificationAssessmentReaderWithWitnesses } from '../../lib/roster/current-qualification'
-import { CURRENT_TITLES } from '../../lib/roster/current-titles'
-import { createTargetRecognizedWitnessReader } from '../../lib/roster/recognized-witness-target'
+import { createCurrentQualificationAssessmentReaderWithWitnesses } from '../../layers/sme-roster/lib/roster/current-qualification'
+import { CURRENT_TITLES } from '../../layers/sme-roster/lib/roster/current-titles'
+import { createTargetRecognizedWitnessReader } from '../../layers/sme-roster/lib/roster/recognized-witness-target'
 
 type Db = ReturnType<typeof useApplicationDb>
 export const enterpriseDifferenceRefreshInput = z.strictObject({ enterpriseIds: z.array(z.number().int().positive().max(Number.MAX_SAFE_INTEGER)).min(1).max(10000).refine(ids => new Set(ids).size === ids.length, 'Duplicate enterprise IDs').optional() })

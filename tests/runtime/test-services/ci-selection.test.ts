@@ -18,7 +18,7 @@ it('keeps platform qualification facts in the existing qualification business gr
 })
 
 it('keeps shared qualification consumers and unknown or deleted paths in full coverage', () => {
-  for (const path of ['lib/roster/qualification-cycles.ts', 'db/schema.ts', 'tests/support/new-helper.ts', 'server/api/statistics/deleted.get.ts', 'new-module.ts', 'pnpm-lock.yaml']) {
+  for (const path of ['layers/sme-roster/lib/roster/qualification-cycles.ts', 'db/schema.ts', 'tests/support/new-helper.ts', 'server/api/statistics/deleted.get.ts', 'new-module.ts', 'pnpm-lock.yaml']) {
     const result = selectBusinessTests([path])
     expect(result.full, path).toBe(true)
     expect(result.native).toEqual(matrices(true).native)
