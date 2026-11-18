@@ -9,7 +9,7 @@ import { readMigrationFiles } from 'drizzle-orm/migrator'
 import * as schema from './legacy-schema'
 import { assertApplicationRuntime, assertFinalPlatformRuntime, PLATFORM_RUNTIME_VERSION } from './schema-phase'
 import { TITLE_SEED } from '../db/titles'
-import { readOwnerIdentity, sameReadOwner, type ReadOwnerIdentity } from '../layers/sme-roster/lib/roster/offmain-read-protocol'
+import { readOwnerIdentity, sameReadOwner, type ReadOwnerIdentity } from '../db/read-owner-identity'
 
 export interface DbOptions {
   /** SQLite 文件路径。默认 `NUXT_DB_PATH` → `<cwd>/data/roster.db`。 */

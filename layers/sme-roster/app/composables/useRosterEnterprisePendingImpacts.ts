@@ -2,7 +2,7 @@ import { computed, toValue, type MaybeRefOrGetter } from 'vue'
 import { useQuery } from '@pinia/colada'
 import type { CursorPage, ImpactRow } from '#sme-roster/lib/roster/evidence-review-ui'
 
-export const enterprisePendingImpactParams = (enterpriseId: number) => ({
+export const rosterEnterprisePendingImpactParams = (enterpriseId: number) => ({
   enterpriseId,
   view: 'current' as const,
   state: 'pending' as const,
@@ -16,8 +16,8 @@ export const enterprisePendingImpactParams = (enterpriseId: number) => ({
  * `request` / `pageNumber`，否则展开清单时会读到缺少 `request` 的原始分页，
  * 在 `request.state` 处抛异常。查询函数只保留一份，避免两边再次漂移。
  */
-export function useEnterprisePendingImpacts(enterpriseId: MaybeRefOrGetter<number | string>) {
-  const pendingParams = computed(() => enterprisePendingImpactParams(Number(toValue(enterpriseId))))
+export function useRosterEnterprisePendingImpacts(enterpriseId: MaybeRefOrGetter<number | string>) {
+  const pendingParams = computed(() => rosterEnterprisePendingImpactParams(Number(toValue(enterpriseId))))
   const query = useQuery({
     key: () => ['evidence-impacts', pendingParams.value],
     query: async ({ entry }) => {

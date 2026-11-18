@@ -4,7 +4,7 @@ import { GitCompareArrows, RefreshCw } from '@lucide/vue'
 import { COMPARISON_CLASSES, comparisonRequest, comparisonRouteFromQuery, comparisonRouteKey, comparisonRouteQuery, comparisonSelectionQuery, instantFromLocalDateTime, localDateTimeForInstant, type ComparisonRouteState, type ComparisonSelection, type ComparisonSource, type RecordComparisonResult } from '#sme-roster/lib/roster/record-comparison-view'
 import { useEvidencePreviewScrollRestore } from '#sme-roster/lib/roster/evidence-preview-return'
 import { humanRecordTime } from '#sme-roster/lib/roster/record-ledger'
-import { useCorrespondenceReadback } from '#sme-roster/app/composables/useCorrespondenceReadback'
+import { useRosterCorrespondenceReadback } from '#sme-roster/app/composables/useRosterCorrespondenceReadback'
 import RosterComparisonSourcePicker from './ComparisonSourcePicker.vue'
 import RosterComparisonProofPicker from './ComparisonProofPicker.vue'
 import RosterComparisonBusinessGroups from './ComparisonBusinessGroups.vue'
@@ -126,7 +126,7 @@ function scrollToResults(instant = false) {
   resultsHeader.value?.scrollIntoView?.({ block: 'start', behavior: instant || reduced ? 'auto' : 'smooth' })
 }
 
-useCorrespondenceReadback(async () => { await load(true); return !error.value })
+useRosterCorrespondenceReadback(async () => { await load(true); return !error.value })
 async function load(preserveOpenSources = false) {
   const current = ++requestId
   const target = committed.value

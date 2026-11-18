@@ -3,7 +3,7 @@
 import type * as schema from '../legacy-schema'
 import { processFactsFromRow } from '../../layers/sme-roster/lib/platform/identity'
 import { normalizePlatformRelation } from '../../layers/sme-roster/lib/platform/normalization'
-import { checkedBusinessStatus } from '../../layers/sme-roster/lib/platform/business-status'
+import { checkedBusinessStatus } from '../../db/business-status'
 import type { PlatformRow } from '../../layers/sme-roster/lib/platform/types'
 type Kind=NonNullable<typeof schema.platformApplyProjection.$inferInsert.sourceTitleKind>
 export function sourceValueKind(v:unknown):Kind {

@@ -1,20 +1,9 @@
-import { realpathSync, statSync } from 'node:fs'
+import type { ReadOwnerIdentity } from '../../../../db/read-owner-identity'
 import type { RosterDifferenceFilter } from './enterprise-roster'
 import type { RosterRecognitionFilter } from './recognitions'
 import type { ComparisonSummaryOptions } from '../comparison-summary-read'
 
-/** Physical identity is conservative evidence, not an atomic ABA guarantee. */
-export interface ReadOwnerIdentity { dbPath: string; realpath: string; dev: number; ino: number }
-export function readOwnerIdentity(dbPath: string): ReadOwnerIdentity | undefined {
-  try {
-    const realpath = realpathSync(dbPath), stat = statSync(realpath)
-    if (!stat.isFile() || !Number.isSafeInteger(stat.dev) || !Number.isSafeInteger(stat.ino)) return
-    return { dbPath, realpath, dev: stat.dev, ino: stat.ino }
-  } catch { return }
-}
-export function sameReadOwner(a: ReadOwnerIdentity | undefined, b: ReadOwnerIdentity | undefined): boolean {
-  return !!a && !!b && a.realpath === b.realpath && a.dev === b.dev && a.ino === b.ino
-}
+
 export type RecognitionReadInput = { operation: 'recognitions'; dbPath: string; owner: ReadOwnerIdentity; filter: RosterRecognitionFilter }
 export type DifferenceReadInput = { operation: 'differences'; dbPath: string; owner: ReadOwnerIdentity; filter: RosterDifferenceFilter }
 export type SummaryReadInput = { operation: 'summary'; dbPath: string; owner: ReadOwnerIdentity; options: ComparisonSummaryOptions }

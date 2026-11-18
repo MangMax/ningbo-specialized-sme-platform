@@ -1,5 +1,5 @@
 import { processFactsFromRow, type PlatformRelationRecord } from './identity'
-import type { BusinessStatusValue } from './business-status'
+import type { BusinessStatusValue } from '../../../../db/business-status'
 import type { PlatformRow } from './types'
 
 /** Allowlist for readers that must avoid materializing unrelated archived payloads. */

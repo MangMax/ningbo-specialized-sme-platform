@@ -2,13 +2,11 @@
 import { useQuery } from '@pinia/colada'
 import TableFailureState from '#core/app/components/TableFailureState.vue'
 
-import type { RosterStatistics } from '../../public'
-
-type RosterStats = Pick<RosterStatistics, 'totalRecords' | 'totalEnterprises'>
+import type { RosterWorkbenchCounts } from '../../public'
 
 const { data, error, isLoading, refetch } = useQuery({
   key: () => ['stats'],
-  query: () => $fetch<RosterStats>('/api/stats'),
+  query: () => $fetch<RosterWorkbenchCounts>('/api/stats'),
 })
 </script>
 

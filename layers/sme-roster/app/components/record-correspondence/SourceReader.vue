@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { useRecordSource } from '#sme-roster/app/composables/useRecordSource'
+import { useRosterRecordSource } from '#sme-roster/app/composables/useRosterRecordSource'
 import { eventDecisionText, type EventSource, type ExportRowSource, type RelationSource, type SourceKind } from '#sme-roster/lib/roster/correspondence-view'
 import { isCurrentContextEdge } from '#sme-roster/lib/roster/record-ledger'
 import { TITLES } from '#sme-roster/lib/labels'
@@ -14,7 +14,7 @@ import { Skeleton } from '#core/app/components/ui/skeleton'
 
 const props = defineProps<{ kind: SourceKind; id: number; returnTo?: string | null; compact?: boolean; readOnly?: boolean; presentation?: 'source' | 'business'; eventReturnQuery?: { currentBack?: string; back?: string; returnTo?: string } }>()
 const emit = defineEmits<{ 'event-navigate': [eventId: number] }>()
-const { displayed, displayedKey, requestedKey, loading, error, retry } = useRecordSource(() => props.kind, () => props.id)
+const { displayed, displayedKey, requestedKey, loading, error, retry } = useRosterRecordSource(() => props.kind, () => props.id)
 const current = computed(() => displayedKey.value === requestedKey() ? displayed.value : null)
 const visible = computed(() => current.value ?? displayed.value)
 const event = computed(() => displayedKey.value.startsWith('event:') ? visible.value?.source as EventSource | undefined : undefined)

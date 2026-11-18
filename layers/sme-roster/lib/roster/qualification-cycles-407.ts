@@ -1,4 +1,4 @@
-import type { FormalValidity } from './formal-validity'
+import type { FormalValidity } from '../../../../db/record-event-formal-validity'
 import type { LifecycleEvent } from './lifecycle'
 
 /** Original-award cycle adjudication shared by planning and current eligibility.

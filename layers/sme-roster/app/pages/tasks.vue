@@ -8,7 +8,7 @@ import { TASK_STATES, type TaskList, type TaskSummary } from '#core/lib/task-cen
 import { getTaskGroups, resolveTaskFilters, taskTabs } from '#core/lib/task-catalog'
 import { JOB_STATES, type JobState } from '#core/lib/job'
 import { useTaskPolling } from '#core/app/composables/useTaskPolling'
-import { useCurrentRosterExport, taskBrowserHeaders } from '#sme-roster/app/composables/useCurrentRosterExport'
+import { useRosterCurrentExport, rosterTaskBrowserHeaders } from '#sme-roster/app/composables/useRosterCurrentExport'
 import { Button } from '#core/app/components/ui/button'
 import { Label } from '#core/app/components/ui/label'
 import { Tabs, TabsList, TabsTrigger } from '#core/app/components/ui/tabs'
@@ -31,7 +31,7 @@ const page = computed(() => positive(route.query.page, 1, 1000000)), pageSize = 
 const job = computed(() => scalar(route.query.job))
 const titleCode = computed(() => showsExportFilter.value && TASK_EXPORTS.some(t => t.titleCode === route.query.titleCode) ? scalar(route.query.titleCode) : 'all')
 
-const browserHeaders = taskBrowserHeaders
+const browserHeaders = rosterTaskBrowserHeaders
 const params = computed(() => ({ tab: tab.value, group: group.value, state: state.value === 'all' ? undefined : state.value, titleCode: titleCode.value === 'all' ? undefined : titleCode.value, page: page.value, pageSize: pageSize.value }))
 const key = computed(() => JSON.stringify([params.value]))
 const { data, sourceKey, loading, failed, retryIn, refresh } = useTaskPolling<TaskList>(key, signal =>
@@ -65,7 +65,7 @@ function regenerate(task: TaskSummary) {
   const code = task.export?.titleCode as TaskExportTitle | null | undefined
   if (code) void submitExport(code, task.id)
 }
-const { exportRequests, submitting, disabledReason: exportDisabledReason, submitExport: requestExport, discovering, discoveryFailed, discoverExports } = useCurrentRosterExport(readOnlyReason)
+const { exportRequests, submitting, disabledReason: exportDisabledReason, submitExport: requestExport, discovering, discoveryFailed, discoverExports } = useRosterCurrentExport(readOnlyReason)
 const { $clientErrors } = useNuxtApp()
 const downloading = ref(false)
 // `exportNotice` is the page's **only** live region: whether an export request

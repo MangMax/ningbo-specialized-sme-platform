@@ -1,9 +1,9 @@
-import { useCorrespondenceReadback } from './useCorrespondenceReadback'
+import { useRosterCorrespondenceReadback } from './useRosterCorrespondenceReadback'
 import { ref, watch, type MaybeRefOrGetter, toValue } from 'vue'
 import { sourcePublishedNamesUnavailable, correspondenceSourceUrl, type SourceKind, type SourceResponse } from '#sme-roster/lib/roster/correspondence-view'
 
 /** Keeps the last successful source visible while a retry or target request fails. */
-export function useRecordSource(kind: MaybeRefOrGetter<SourceKind>, id: MaybeRefOrGetter<number>, active: MaybeRefOrGetter<boolean> = true) {
+export function useRosterRecordSource(kind: MaybeRefOrGetter<SourceKind>, id: MaybeRefOrGetter<number>, active: MaybeRefOrGetter<boolean> = true) {
   const displayed = ref<SourceResponse | null>(null)
   const displayedKey = ref('')
   const loading = ref(false)
@@ -28,7 +28,7 @@ export function useRecordSource(kind: MaybeRefOrGetter<SourceKind>, id: MaybeRef
       if (request === serial) loading.value = false
     }
   }
-  useCorrespondenceReadback(async () => { await load(); return !error.value })
+  useRosterCorrespondenceReadback(async () => { await load(); return !error.value })
   watch([() => toValue(kind), () => toValue(id), () => toValue(active)], ([,, enabled]) => {
     if (enabled) void load()
     else serial++

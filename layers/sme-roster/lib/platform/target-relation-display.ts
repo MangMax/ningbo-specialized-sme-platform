@@ -1,4 +1,4 @@
-import { BUSINESS_STATUS_V1,BUSINESS_STATUS_V2 } from './business-status'
+import { BUSINESS_STATUS_V1,BUSINESS_STATUS_V2 } from '../../../../db/business-status'
 /** Explicit target evidence DISPLAY only. Never import into candidate membership/count/filter/sort,
  * correspondence decisions/roles/authorization/validity, qualification, annual closure or proof.
  * Selection and attribution use structured owners; archives are decoded only after selection.

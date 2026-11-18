@@ -3,7 +3,7 @@ import { mount } from '@vue/test-utils'
 import { createSSRApp, defineComponent, h } from 'vue'
 import { renderToString } from 'vue/server-renderer'
 import { afterEach, expect, it, vi } from 'vitest'
-import { useExportRequestLog } from '../../../layers/sme-roster/app/composables/useExportRequestLog'
+import { useRosterExportRequestLog } from '../../../layers/sme-roster/app/composables/useRosterExportRequestLog'
 
 const KEY = 'task-center-export-requests-v1'
 const REQUEST = '11111111-1111-4111-8111-111111111111'
@@ -12,8 +12,8 @@ const JOB = '01M5BEPVCXD5619ZW4C6CATRET'
 const mounted: ReturnType<typeof mount>[] = []
 afterEach(() => { mounted.splice(0).forEach(w => w.unmount()); vi.unstubAllGlobals(); vi.restoreAllMocks(); sessionStorage.clear() })
 function log() {
-  let requestLog!: ReturnType<typeof useExportRequestLog>
-  const wrapper = mount(defineComponent({ setup() { requestLog = useExportRequestLog(); return () => h('div') } }))
+  let requestLog!: ReturnType<typeof useRosterExportRequestLog>
+  const wrapper = mount(defineComponent({ setup() { requestLog = useRosterExportRequestLog(); return () => h('div') } }))
   mounted.push(wrapper)
   return requestLog
 }
@@ -44,7 +44,7 @@ it('SSR requests start empty without accessing browser storage or sharing a moun
   const read = vi.fn(() => { throw new Error('browser storage on server') })
   vi.stubGlobal('sessionStorage', { getItem: read })
   const App = defineComponent({ setup() {
-    const requests = useExportRequestLog()
+    const requests = useRosterExportRequestLog()
     return () => h('p', JSON.stringify(requests.entries.value))
   } })
   expect(await Promise.all([renderToString(createSSRApp(App)), renderToString(createSSRApp(App))])).toEqual(['<p>{}</p>', '<p>{}</p>'])

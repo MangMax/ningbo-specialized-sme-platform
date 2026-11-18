@@ -1,6 +1,7 @@
-import { businessStatusCell, businessStatusChecks } from '../layers/sme-roster/lib/platform/business-status'
-import type { CredentialKey } from '../lib/app-modules'
-import type { FormalValidity } from '../layers/sme-roster/lib/roster/formal-validity'
+import { businessStatusCell, businessStatusChecks } from './business-status'
+import type { FilePart } from './file-part'
+import type { FormalValidity } from './record-event-formal-validity'
+import type { DispositionFact } from './title-cycle-disposition'
 import { sql } from 'drizzle-orm'
 import type { AnySQLiteColumn } from 'drizzle-orm/sqlite-core'
 import {
@@ -23,7 +24,7 @@ const exactCell = customType<{ data: unknown; driverData: unknown }>({ dataType:
 
 /** 后台外部服务凭据。仅配置服务读取，不加入台账导出或任务历史。 */
 export const serviceCredential = sqliteTable('service_credential', {
-  key: text('key').$type<CredentialKey>().primaryKey(),
+  key: text('key').primaryKey(),
   value: text('value').notNull(),
   updatedAt: text('updated_at').notNull(),
 })
@@ -1893,7 +1894,7 @@ export const fileDeclaration669 = sqliteTable('file_declaration_669', {
   active: integer('active', { mode: 'boolean' }).notNull(),
   sha256: text('sha256').notNull(),
   contentVersion: text('content_version'),
-  part: text('part', { mode: 'json' }).$type<import('../layers/sme-roster/lib/file-parts').FilePart>().notNull(),
+  part: text('part', { mode: 'json' }).$type<FilePart>().notNull(),
   pageRanges: text('page_ranges', { mode: 'json' }).$type<{ start: number; end: number }[] | null>(),
 }, t => [index('file_declaration_669_file_idx').on(t.fileId)])
 
@@ -2034,7 +2035,7 @@ export const titleCycleDispositionRevision = sqliteTable('title_cycle_dispositio
   cycleRevision: integer('cycle_revision'),
   effectivePrecision: text('effective_precision', { enum: ['unknown', 'year', 'month', 'day'] }).notNull(),
   effectiveValue: text('effective_value'),
-  fact: text('fact', { mode: 'json' }).$type<import('../layers/sme-roster/server/utils/title-cycle-disposition').DispositionFact>().notNull(),
+  fact: text('fact', { mode: 'json' }).$type<DispositionFact>().notNull(),
   audit: text('audit', { mode: 'json' }).$type<unknown>().notNull(),
 }, t => [
   unique().on(t.id, t.revision),

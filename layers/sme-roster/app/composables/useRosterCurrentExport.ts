@@ -1,13 +1,13 @@
 import { onMounted, ref, type Ref } from 'vue'
 import { TASK_EXPORTS, type TaskExportTitle } from '../../lib/sme-roster/task-exports'
 import { isJobId } from '#core/lib/job'
-import { useExportRequestLog } from './useExportRequestLog'
+import { useRosterExportRequestLog } from './useRosterExportRequestLog'
 
-export const taskBrowserHeaders = { 'x-task-center-browser': '1' }
+export const rosterTaskBrowserHeaders = { 'x-task-center-browser': '1' }
 
 /** Shared full-title protocol. Query filters deliberately have no input here. */
-export function useCurrentRosterExport(readOnlyReason?: Readonly<Ref<string>>) {
-  const requestLog = useExportRequestLog()
+export function useRosterCurrentExport(readOnlyReason?: Readonly<Ref<string>>) {
+  const requestLog = useRosterExportRequestLog()
   const exportRoutes = ref<Partial<Record<TaskExportTitle, boolean>>>({})
   const discovering = ref(false), discoveryFailed = ref(false), submitting = ref(false)
   async function discoverExports() {
@@ -38,7 +38,7 @@ export function useCurrentRosterExport(readOnlyReason?: Readonly<Ref<string>>) {
       }
       catch { return { error: '无法保存请求标识，本次未发送导出请求。请恢复浏览器会话存储后重试。' } }
       const response = await $fetch.raw<{ jobId: string }>(entry.path, {
-        method: 'POST', headers: taskBrowserHeaders,
+        method: 'POST', headers: rosterTaskBrowserHeaders,
         body: { clientRequestId: intent.clientRequestId, ...(regenerateOf ? { regenerateOf } : {}) }, retry: 0,
       })
       if (response.status !== 202 || !isJobId(response._data?.jobId)) throw new Error('Unconfirmed acceptance')

@@ -1,4 +1,4 @@
-import { BUSINESS_STATUS_V1, BUSINESS_STATUS_V2 } from '../layers/sme-roster/lib/platform/business-status'
+import { BUSINESS_STATUS_V1, BUSINESS_STATUS_V2 } from '../db/business-status'
 import { businessStatusRule } from './business-status-catalog'
 import { RECONCILE_SLOT_T04 } from './frozen/reconcile-slot-capture'
 /** Source-only recovery from operator-owned fixed artifacts. Tokens prove source binding,

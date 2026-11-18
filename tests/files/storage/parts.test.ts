@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { eq } from 'drizzle-orm'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { normalizeAttachment } from '../../../layers/sme-roster/lib/attachment'
+import type { FilePart } from '../../../db/file-part'
 import {
   aggregateParts,
   compareParts,
@@ -13,7 +14,6 @@ import {
   partKey,
   partYears,
   seriesLabel,
-  type FilePart,
 } from '../../../layers/sme-roster/lib/file-parts'
 import { backfillFileParts, listFileParts } from '../../../layers/sme-roster/server/utils/file-parts'
 import { applyParseResult } from '../../../layers/sme-roster/server/utils/parse-result'

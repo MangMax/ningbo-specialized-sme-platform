@@ -1,6 +1,6 @@
 import { sourceDate, type PlatformQualificationFact } from './platform-qualification'
 import type { RosterEventRow, RosterPlatformQueryRow } from './enterprise-roster'
-import type { FormalValidity } from './formal-validity'
+import type { FormalValidity } from '../../../../db/record-event-formal-validity'
 
 type PublicationEvent = RosterEventRow & { formalValidity?: FormalValidity | null }
 type BusinessEvent = Pick<PlatformQualificationFact, 'platformName' | 'title' | 'matter' | 'matterRaw' | 'conclusion' | 'statusRaw' | 'businessTimeKind' | 'businessYear' | 'period'> & {

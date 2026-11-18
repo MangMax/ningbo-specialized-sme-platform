@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import type { TaskExportTitle } from '../../lib/sme-roster/task-exports'
-import { useCurrentRosterExport } from '#sme-roster/app/composables/useCurrentRosterExport'
+import { useRosterCurrentExport } from '#sme-roster/app/composables/useRosterCurrentExport'
 import { Button } from '#core/app/components/ui/button'
 import { Alert } from '#core/app/components/ui/alert'
 import { TITLES } from '#sme-roster/lib/labels'
@@ -18,7 +18,7 @@ let active = true, contextVersion = 0
 const routeTitle = computed(() => CURRENT_TITLES.find(code => code === router.currentRoute.value.query.titleCode) ?? 'little_giant')
 watch([() => props.titleCode, () => router.currentRoute.value.path, routeTitle], () => { contextVersion++ }, { flush: 'sync' })
 onBeforeUnmount(() => { active = false })
-const { exportRequests, submitting, discovering, discoveryFailed, disabledReason, discoverExports, submitExport } = useCurrentRosterExport()
+const { exportRequests, submitting, discovering, discoveryFailed, disabledReason, discoverExports, submitExport } = useRosterCurrentExport()
 const error = ref('')
 const accepted = computed(() => exportRequests.value[`${props.titleCode}:initial`]?.jobId)
 const taskLocation = (job: string, code = props.titleCode) => ({ path: '/tasks', query: { tab: 'sme-roster', group: 'export', titleCode: code, page: '1', job } })

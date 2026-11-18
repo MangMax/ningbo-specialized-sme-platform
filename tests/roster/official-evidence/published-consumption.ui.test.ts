@@ -16,8 +16,8 @@ import CurrentPage from '../../../layers/sme-roster/app/pages/current-enterprise
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import SourceReader from '../../../layers/sme-roster/app/components/record-correspondence/SourceReader.vue'
 import OfficialEvidence from '../../../layers/sme-roster/app/components/record-correspondence/OfficialEvidence.vue'
-import { useRecordSource } from '../../../layers/sme-roster/app/composables/useRecordSource'
-import { refreshCorrespondenceViews } from '../../../layers/sme-roster/app/composables/useCorrespondenceReadback'
+import { useRosterRecordSource } from '../../../layers/sme-roster/app/composables/useRosterRecordSource'
+import { rosterRefreshCorrespondenceViews } from '../../../layers/sme-roster/app/composables/useRosterCorrespondenceReadback'
 
 const mounted: ReturnType<typeof mount>[] = []
 const stubs = { NuxtLink: { props: ['to'], template: '<a :href="typeof to === \'string\' ? to : to.path"><slot /></a>' } }
@@ -90,17 +90,17 @@ it("reports failed explicit readback and recovers without replacing retained suc
   const fetch = vi.fn().mockResolvedValueOnce(source('保留公布名')).mockResolvedValueOnce(unavailable()).mockResolvedValueOnce(source('恢复公布名'))
   vi.stubGlobal('$fetch', fetch)
   const wrapper = render(); await flushPromises()
-  await expect(refreshCorrespondenceViews()).rejects.toThrow('readback_failed'); await flushPromises()
+  await expect(rosterRefreshCorrespondenceViews()).rejects.toThrow('readback_failed'); await flushPromises()
   expect(wrapper.text()).toContain('保留公布名')
-  await expect(refreshCorrespondenceViews()).resolves.toBeUndefined(); await flushPromises()
+  await expect(rosterRefreshCorrespondenceViews()).resolves.toBeUndefined(); await flushPromises()
   expect(wrapper.text()).toContain('恢复公布名')
 })
 
 it("accepts old responses and platform raw unavailable strings without guessing typed failure", async () => {
   const payload = { source: { id: 1, nameRaw: 'unavailable', rawFields: { publishedPresentation: { availability: 'unavailable' } } }, correspondences: [] }
   vi.stubGlobal('$fetch', vi.fn(async () => payload))
-  let reader!: ReturnType<typeof useRecordSource>
-  const wrapper = mount(defineComponent({ setup() { reader = useRecordSource('relation', 1); return () => null } })); mounted.push(wrapper)
+  let reader!: ReturnType<typeof useRosterRecordSource>
+  const wrapper = mount(defineComponent({ setup() { reader = useRosterRecordSource('relation', 1); return () => null } })); mounted.push(wrapper)
   await flushPromises(); expect(reader.displayed.value).toEqual(payload); expect(reader.error.value).toBe(false)
 })
 

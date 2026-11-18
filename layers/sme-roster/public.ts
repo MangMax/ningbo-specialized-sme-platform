@@ -1,8 +1,7 @@
 import type Database from 'better-sqlite3'
 import { readCurrentQualificationAssessment, type CurrentTitle } from './lib/roster/current-qualification'
 
-export { getStats as readRosterStatistics } from './lib/query'
-export type { Stats as RosterStatistics } from './lib/query'
+export { readRosterWorkbenchCounts, type RosterWorkbenchCounts } from './lib/query'
 
 export interface EffectiveQualification {
   titleCode: CurrentTitle

@@ -3,8 +3,8 @@ import { computed, inject, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { EventArchiveCandidate, EventArchivePage } from '#sme-roster/lib/roster/event-archive-candidates'
 import { CORRESPONDENCE_ROLES, eventDecisionText, type CorrespondenceDetail, type EventSource } from '#sme-roster/lib/roster/correspondence-view'
 import { TITLES } from '#sme-roster/lib/labels'
-import { REVIEW_DRAFTS_KEY } from '#sme-roster/app/composables/useReviewDrafts'
-import { refreshCorrespondenceViews } from '#sme-roster/app/composables/useCorrespondenceReadback'
+import { ROSTER_REVIEW_DRAFTS_KEY } from '#sme-roster/app/composables/useRosterReviewDrafts'
+import { rosterRefreshCorrespondenceViews } from '#sme-roster/app/composables/useRosterCorrespondenceReadback'
 import { DECISION_EFFECTS, platformDecisionSummary, replacementDecisionOptions } from './event-correspondence-presentation'
 import RosterSourceReader from './SourceReader.vue'
 import RosterEventCandidateComparison from './EventCandidateComparison.vue'
@@ -68,7 +68,7 @@ const official = computed(() => point.value && 'event' in point.value ? (point.v
 const candidate = computed(() => action.value === 'correct' ? target.value : props.candidate)
 const supportRole = computed(() => action.value === 'correct' ? target.value?.edge.role : point.value?.role ?? props.edge.role)
 const title = computed(() => ({ confirm: '确认对应', reject: '不对应', unlink: '取消对应', correct: '改选记录', revalidate: '重新核验对应' })[action.value ?? 'confirm'])
-const draftStore = inject(REVIEW_DRAFTS_KEY, null)
+const draftStore = inject(ROSTER_REVIEW_DRAFTS_KEY, null)
 const protectedDraft = computed(() => !success.value && (!!basis.value.trim() || !!selected.value || pending.value || attempted.value))
 watch(protectedDraft, value => emit('protected', value), { immediate: true, flush: 'sync' })
 const unregisterDraft = draftStore?.register({
@@ -217,7 +217,7 @@ async function readback(token: number, committed: { correspondenceIds: number[] 
   }))
   if (!points.length) throw new Error('receipt_empty')
   if (token !== generation) return
-  await refreshCorrespondenceViews()
+  await rosterRefreshCorrespondenceViews()
   if (token !== generation) return
   if (action.value === 'revalidate' && points[0]?.status === 'candidate') { point.value = points[0]; blockedCandidateRevision.value = null; revalidationRequired.value = false }
   success.value = (action.value === 'revalidate' && points[0]?.status === 'candidate' ? '候选来源已重新核验，仍待确认；请关闭后选择确认对应或不对应。' : '') + '已保存平台对应决定。已提交并读回对应与审计；详情、对比和原行按当前来源重新读取。年度最终结果与来源变化处理仍需分别核对。'
@@ -256,7 +256,7 @@ async function revalidateCandidate() {
 async function refreshConflict() {
   const token = generation
   pending.value = true
-  try { await loadPoint(token); if (token !== generation) return; await refreshCorrespondenceViews(); if (token !== generation) return; request.value = null; plan.value = null; attempted.value = false; conflict.value = false; error.value = ''; if (action.value === 'correct') await loadReplacements(replacementPage.value) }
+  try { await loadPoint(token); if (token !== generation) return; await rosterRefreshCorrespondenceViews(); if (token !== generation) return; request.value = null; plan.value = null; attempted.value = false; conflict.value = false; error.value = ''; if (action.value === 'correct') await loadReplacements(replacementPage.value) }
   catch { if (token === generation) error.value = '刷新失败，草稿保留，请重试刷新。' }
   finally { if (token === generation) pending.value = false }
 }

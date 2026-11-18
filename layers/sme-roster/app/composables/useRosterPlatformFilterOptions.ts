@@ -1,7 +1,7 @@
 import { onBeforeUnmount, ref, shallowRef, watch, type Ref } from 'vue'
 import type { PlatformFilterOptions, PlatformFilterOptionsQuery } from '../../lib/platform/filter-options'
 
-export function usePlatformFilterOptions(source: PlatformFilterOptionsQuery['source'], view: Ref<'records' | 'isolated'>) {
+export function useRosterPlatformFilterOptions(source: PlatformFilterOptionsQuery['source'], view: Ref<'records' | 'isolated'>) {
   const options = shallowRef<PlatformFilterOptions>({ titles: [], declareKinds: [], years: [], statuses: [], batches: [], districts: [], validityDates: [] })
   const loading = ref(false)
   const error = ref(false)

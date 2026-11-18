@@ -11,22 +11,7 @@
  *
  */
 import { EVENT_ORDER, TITLE_ORDER, TITLE_RANK } from './labels'
-
-/** 事件类型。与 `record_event.event_type`、`stored_file_part.event_kind` 同一套取值。 */
-export type EventKind = 'award' | 'review' | 'maintain' | 'nurture'
-
-/** 一个段。`year` / `batch` / `attachment` 都可空(导出表无附件;部分维护批次无年份)。 */
-export interface FilePart {
-  titleCode: string
-  eventKind: EventKind
-  /** **内容**年份(复核段是**被复核的原始认定年份**,不是公布年份)。 */
-  year: number | null
-  batch: number | null
-  /** 归一后的附件名(`附件` / `附件N`),见 `layers/sme-roster/lib/attachment.ts`。 */
-  attachment: string | null
-  /** 该段的行数(这一份文件里这一段名单有多少条被台账引用)。 */
-  rowCount: number
-}
+import type { EventKind, FilePart } from '../../../db/file-part'
 
 /** 段的持久化来源。 */
 export type FilePartOrigin = 'derived' | 'agent' | 'legacy'

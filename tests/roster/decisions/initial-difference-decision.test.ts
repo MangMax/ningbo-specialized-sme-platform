@@ -1,11 +1,11 @@
 // @vitest-environment happy-dom
 import { effectScope } from 'vue'
 import { afterEach, expect, it, vi } from 'vitest'
-import { useInitialDifferenceDecision } from '../../../layers/sme-roster/app/composables/useInitialDifferenceDecision'
+import { useRosterInitialDifferenceDecision } from '../../../layers/sme-roster/app/composables/useRosterInitialDifferenceDecision'
 
 const coordinate = { enterpriseId: 7, titleCode: 'specialized_sme', direction: 'missing_in_miit' }
 const current = (id: number | null) => ({ ...coordinate, versionId: id, current: id ? { ...coordinate, id, status: 'confirmed_reason', reasonCode: 'other', measureCode: 'keep_history' } : null })
-const valid = (c: ReturnType<typeof useInitialDifferenceDecision>) => {
+const valid = (c: ReturnType<typeof useRosterInitialDifferenceDecision>) => {
   c.basis.value = '核对指定公布材料与平台原行'
   Object.assign(c.draft.value, { status: 'confirmed_reason', reasonCode: 'other', measureCode: 'keep_history' })
 }
@@ -15,7 +15,7 @@ function setup(post = vi.fn().mockResolvedValue({ versionId: 9 }), patch: Record
   let head = current(null)
   const api = { context: vi.fn().mockResolvedValue({ writeEnabled: true }), current: vi.fn(async () => head), post, ...patch }
   const scope = effectScope(); scopes.push(scope)
-  const c = scope.run(() => useInitialDifferenceDecision(coordinate, api as any))!
+  const c = scope.run(() => useRosterInitialDifferenceDecision(coordinate, api as any))!
   return { c, api, setHead: (id: number | null) => { head = current(id) } }
 }
 it('requires explicit conclusion reason measure and basis before the first exact-scope command', async () => {

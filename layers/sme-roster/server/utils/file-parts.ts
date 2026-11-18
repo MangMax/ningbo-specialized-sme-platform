@@ -1,12 +1,12 @@
 import { and, eq, inArray } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../../../db/schema'
+import type { FilePart } from '../../../../db/file-part'
 import { normalizeAttachment } from '../../lib/attachment'
 import {
   aggregateParts,
   compareParts,
   partKey,
-  type FilePart,
   type PartEvidence,
   type StoredFilePart,
 } from '../../lib/file-parts'

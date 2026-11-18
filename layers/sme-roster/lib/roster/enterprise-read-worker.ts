@@ -13,7 +13,8 @@ import { listCurrentQualified, type CurrentQualifiedFilter } from './current-qua
 import { listRosterRecognitions } from './recognitions'
 import { listRosterDifferences } from './difference-list'
 import { readWholeComparisonSummary } from '../comparison-summary-read'
-import { captureReaderError, readOwnerIdentity, sameReadOwner, type RecognitionReadInput, type DifferenceReadInput, type SummaryReadInput } from './offmain-read-protocol'
+import { captureReaderError, type RecognitionReadInput, type DifferenceReadInput, type SummaryReadInput } from './offmain-read-protocol'
+import { readOwnerIdentity, sameReadOwner } from '../../../../db/read-owner-identity'
 
 export type EnterpriseReadRequest = { id: number; dbPath: string; logContext?: LogContext } & (
   { operation: 'list'; filter: RosterEnterpriseFilter } | { operation: 'detail'; enterpriseId: number } | { operation: 'current-qualified'; filter: CurrentQualifiedFilter } | RecognitionReadInput | DifferenceReadInput | SummaryReadInput

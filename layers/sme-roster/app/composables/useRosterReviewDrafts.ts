@@ -1,4 +1,4 @@
-import { createInitialDecisionState, initialDecisionNeedsGuard, type InitialDecisionState } from './useInitialDifferenceDecision'
+import { rosterCreateInitialDecisionState, rosterInitialDecisionNeedsGuard, type RosterInitialDecisionState } from './useRosterInitialDifferenceDecision'
 import type { ReviewDecisionDraft, ReviewScope } from '#sme-roster/lib/roster/evidence-review-ui'
 import { computed, onBeforeUnmount, reactive, type ComputedRef, type InjectionKey } from 'vue'
 
@@ -10,9 +10,9 @@ import { computed, onBeforeUnmount, reactive, type ComputedRef, type InjectionKe
  * “丢弃”动作清理；首次登记的请求/回执在收起、切换或丢弃时保留到宿主页面卸载。
  * 只含业务内容与提交进度，不含凭证、操作人或规则版本。
  */
-export type ReviewDraftDecision = ReviewDecisionDraft
+export type RosterReviewDraftDecision = ReviewDecisionDraft
 
-export interface EvidenceReviewSubmission {
+export interface RosterEvidenceReviewSubmission {
   retry: { signature: string; body: Record<string, unknown> } | null
   pending: boolean
   unknown: boolean
@@ -21,31 +21,31 @@ export interface EvidenceReviewSubmission {
   conflict: boolean
 }
 
-export interface ReviewDraft {
-  reviewSubmission?: EvidenceReviewSubmission
+export interface RosterReviewDraft {
+  reviewSubmission?: RosterEvidenceReviewSubmission
   /** Initial registration only: host-memory business command/receipt, never credentials. */
-  initialSubmission?: InitialDecisionState
+  initialSubmission?: RosterInitialDecisionState
   basis: string
   mode: 'maintain' | 'replace'
-  decision: ReviewDraftDecision
+  decision: RosterReviewDraftDecision
 }
 
-export interface ReviewDraftStore {
+export interface RosterReviewDraftStore {
   register: (source: { dirty: () => boolean; locked: () => boolean; discard: () => void }) => () => void
   hasLocked: ComputedRef<boolean>
-  drafts: Record<string, ReviewDraft>
-  draftFor: (impactId: number) => ReviewDraft
+  drafts: Record<string, RosterReviewDraft>
+  draftFor: (impactId: number) => RosterReviewDraft
   hasDraft: (impactId: number) => boolean
   hasDirty: ComputedRef<boolean>
   discard: (impactId: number | string) => void
   discardAll: () => void
-  initialFor: (scope: ReviewScope) => InitialDecisionState
-  ownsInitial: (scope: ReviewScope, session: InitialDecisionState) => boolean
+  initialFor: (scope: ReviewScope) => RosterInitialDecisionState
+  ownsInitial: (scope: ReviewScope, session: RosterInitialDecisionState) => boolean
 }
 
-export const REVIEW_DRAFTS_KEY: InjectionKey<ReviewDraftStore> = Symbol('review-drafts')
+export const ROSTER_REVIEW_DRAFTS_KEY: InjectionKey<RosterReviewDraftStore> = Symbol('review-drafts')
 
-export function emptyReviewDraftDecision(): ReviewDraftDecision {
+export function rosterEmptyReviewDraftDecision(): RosterReviewDraftDecision {
   return {
     status: 'confirmed_reason',
     reasonCode: '',
@@ -57,18 +57,18 @@ export function emptyReviewDraftDecision(): ReviewDraftDecision {
   }
 }
 
-export function emptyReviewDraft(): ReviewDraft {
+export function rosterEmptyReviewDraft(): RosterReviewDraft {
   return {
     basis: '',
     mode: 'maintain',
-    decision: emptyReviewDraftDecision(),
+    decision: rosterEmptyReviewDraftDecision(),
   }
 }
 
-export function reviewDraftIsDirty(draft: ReviewDraft): boolean {
+export function rosterReviewDraftIsDirty(draft: RosterReviewDraft): boolean {
   if (draft.reviewSubmission?.committed) return false
   if (draft.reviewSubmission?.unknown || draft.reviewSubmission?.pending) return true
-  if (draft.initialSubmission) return initialDecisionNeedsGuard(draft.initialSubmission)
+  if (draft.initialSubmission) return rosterInitialDecisionNeedsGuard(draft.initialSubmission)
   if (draft.basis.trim()) return true
   if (draft.mode !== 'maintain') return true
   return Object.entries(draft.decision).some(([key, value]) => key !== 'status' && key !== 'factReferences' && String(value).trim() !== '')
@@ -79,8 +79,8 @@ export function reviewDraftIsDirty(draft: ReviewDraft): boolean {
  *
  * 页面/列表卸载时清空草稿；没有需要随页面隐藏而清理的秘密。
  */
-export function useReviewDrafts(): ReviewDraftStore {
-  const drafts = reactive<Record<string, ReviewDraft>>({})
+export function useRosterReviewDrafts(): RosterReviewDraftStore {
+  const drafts = reactive<Record<string, RosterReviewDraft>>({})
   const sources = reactive(new Set<{ dirty: () => boolean; locked: () => boolean; discard: () => void }>())
   function register(source: { dirty: () => boolean; locked: () => boolean; discard: () => void }) {
     sources.add(source)
@@ -89,28 +89,28 @@ export function useReviewDrafts(): ReviewDraftStore {
   const hasLocked = computed(() => [...sources].some(source => source.locked()) || Object.values(drafts).some(draft => draft.reviewSubmission?.pending || draft.reviewSubmission?.unknown))
   let alive = true
   const initialKey = (scope: ReviewScope) => `initial:${scope.enterpriseId}:${scope.titleCode}:${scope.direction}`
-  function initialFor(scope: ReviewScope): InitialDecisionState {
+  function initialFor(scope: ReviewScope): RosterInitialDecisionState {
     const key = initialKey(scope), retained = drafts[key]
-    const session = retained?.initialSubmission ?? createInitialDecisionState(scope)
+    const session = retained?.initialSubmission ?? rosterCreateInitialDecisionState(scope)
     if (retained && !retained.initialSubmission) { session.basis = retained.basis; session.draft = { ...retained.decision } }
     if (!alive) throw new Error('Review draft host has ended')
     // Even a clean session has an owner; dirty remains based only on business/request state.
     drafts[key] = { basis: session.basis, mode: 'replace', decision: { ...session.draft }, initialSubmission: session }
     return drafts[key]!.initialSubmission!
   }
-  function ownsInitial(scope: ReviewScope, session: InitialDecisionState): boolean {
+  function ownsInitial(scope: ReviewScope, session: RosterInitialDecisionState): boolean {
     return alive && drafts[initialKey(scope)]?.initialSubmission === session
   }
 
-  function draftFor(impactId: number): ReviewDraft {
+  function draftFor(impactId: number): RosterReviewDraft {
     const key = String(impactId)
-    if (!drafts[key]) drafts[key] = emptyReviewDraft()
+    if (!drafts[key]) drafts[key] = rosterEmptyReviewDraft()
     return drafts[key]!
   }
 
   function hasDraft(impactId: number): boolean {
     const draft = drafts[String(impactId)]
-    return !!draft && reviewDraftIsDirty(draft)
+    return !!draft && rosterReviewDraftIsDirty(draft)
   }
 
   function discard(impactId: number | string) {
@@ -126,7 +126,7 @@ export function useReviewDrafts(): ReviewDraftStore {
     for (const key of Object.keys(drafts)) discard(key)
   }
 
-  const hasDirty = computed(() => Object.values(drafts).some(reviewDraftIsDirty) || [...sources].some(source => source.dirty()))
+  const hasDirty = computed(() => Object.values(drafts).some(rosterReviewDraftIsDirty) || [...sources].some(source => source.dirty()))
 
   // The owner page is the lifetime boundary; no localStorage/sessionStorage or credential persistence.
   onBeforeUnmount(() => { alive = false; sources.clear(); for (const key of Object.keys(drafts)) delete drafts[key] })

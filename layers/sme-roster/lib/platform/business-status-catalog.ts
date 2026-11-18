@@ -1,6 +1,6 @@
 import type Database from 'better-sqlite3'
 import { z } from 'zod'
-import { BUSINESS_STATUS_V2, businessStatusChecks } from './business-status'
+import { BUSINESS_STATUS_V2, businessStatusChecks } from '../../../../db/business-status'
 
 const normalized = (sql: string) => sql.replace(/["`][^"`]+["`]\./g, '').replace(/["`]/g, '').replace(/\s+/g, '').toLowerCase()
 

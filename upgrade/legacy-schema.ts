@@ -1,8 +1,9 @@
 /** Frozen expand schema from HEAD ab503081dae3e24680afc9b07395a7e3ff21fc9f.
  * Original db/schema.ts SHA256: 9287138f2170847771f08f5529fd7c77e2363d53a5885f0770bdce304269e13c.
  * Declarations preserved for offline migration and historical oracles only. */
-import { businessStatusCell, businessStatusChecks } from '../layers/sme-roster/lib/platform/business-status'
-import type { FormalValidity } from '../layers/sme-roster/lib/roster/formal-validity'
+import { businessStatusCell, businessStatusChecks } from '../db/business-status'
+import type { FormalValidity } from '../db/record-event-formal-validity'
+import type { FilePart } from '../db/file-part'
 import { sql } from 'drizzle-orm'
 import type { AnySQLiteColumn } from 'drizzle-orm/sqlite-core'
 import {
@@ -2043,7 +2044,7 @@ export const fileDeclaration669 = sqliteTable('file_declaration_669', {
   active: integer('active', { mode: 'boolean' }).notNull(),
   sha256: text('sha256').notNull(),
   contentVersion: text('content_version'),
-  part: text('part', { mode: 'json' }).$type<import('../layers/sme-roster/lib/file-parts').FilePart>().notNull(),
+  part: text('part', { mode: 'json' }).$type<FilePart>().notNull(),
   pageRanges: text('page_ranges', { mode: 'json' }).$type<{ start: number; end: number }[] | null>(),
 }, t => [index('file_declaration_669_file_idx').on(t.fileId)])
 

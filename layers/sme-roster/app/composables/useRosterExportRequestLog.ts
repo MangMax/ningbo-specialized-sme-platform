@@ -5,7 +5,7 @@ const KEY_PATTERN = /^(little_giant|specialized_sme|innovative_sme):(initial|[0-
 const UUID_PATTERN = /^[a-f0-9-]{36}$/
 const ULID_PATTERN = /^[0-9A-HJKMNP-TV-Z]{26}$/
 
-export type ExportRequest = { clientRequestId: string; jobId?: string }
+export type RosterExportRequest = { clientRequestId: string; jobId?: string }
 
 /**
  * 本次会话里“我发起的导出请求”。
@@ -17,13 +17,13 @@ export type ExportRequest = { clientRequestId: string; jobId?: string }
  * 生命周期 = 一个标签页会话（sessionStorage）：切 Tab、页面内跳转、刷新都还在；
  * 关掉标签页即消失。
  */
-export function useExportRequestLog() {
+export function useRosterExportRequestLog() {
   const storageKey = 'task-center-export-requests-v1'
-  const entries = shallowRef<Record<string, ExportRequest>>({})
+  const entries = shallowRef<Record<string, RosterExportRequest>>({})
 
   function read() {
-    const saved = JSON.parse(sessionStorage.getItem(storageKey) || '{}') as Record<string, ExportRequest>
-    const restored: Record<string, ExportRequest> = {}
+    const saved = JSON.parse(sessionStorage.getItem(storageKey) || '{}') as Record<string, RosterExportRequest>
+    const restored: Record<string, RosterExportRequest> = {}
     for (const [key, value] of Object.entries(saved)) {
       if (!KEY_PATTERN.test(key)) continue
       if (typeof value?.clientRequestId !== 'string' || !UUID_PATTERN.test(value.clientRequestId)) continue
@@ -41,14 +41,14 @@ export function useExportRequestLog() {
     return entries.value[key]
   }
 
-  function persist(next: Record<string, ExportRequest>) {
+  function persist(next: Record<string, RosterExportRequest>) {
     // Commit memory only after storage succeeds. In particular, a failed forget
     // must leave the original UUID available for retry.
     sessionStorage.setItem(storageKey, JSON.stringify(next))
     entries.value = next
   }
 
-  function remember(key: string, request: ExportRequest) {
+  function remember(key: string, request: RosterExportRequest) {
     const latest = read()
     const current = latest[key]
     // An old receipt cannot replace a newer identity (or erase its job receipt).
@@ -59,7 +59,7 @@ export function useExportRequestLog() {
   }
 
   /** Only the consumer's validated 202 receipt may correct a current identity's job. */
-  function accept(key: string, receipt: Required<ExportRequest>) {
+  function accept(key: string, receipt: Required<RosterExportRequest>) {
     const latest = read()
     if (latest[key]?.clientRequestId === receipt.clientRequestId) {
       latest[key] = { clientRequestId: receipt.clientRequestId, jobId: receipt.jobId }

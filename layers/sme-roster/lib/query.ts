@@ -598,9 +598,12 @@ function enterpriseDetailSnapshot(db: Db, id: number): EnterpriseDetail | null {
 // 统计
 // ---------------------------------------------------------------------------
 
-export interface Stats {
+export interface RosterWorkbenchCounts {
   totalRecords: number
   totalEnterprises: number
+}
+
+export interface Stats extends RosterWorkbenchCounts {
   byTitle: { key: string; n: number }[]
   bySource: { key: string; n: number }[]
   byEvent: { key: string; n: number }[]
@@ -613,6 +616,30 @@ export interface StatsFilter {
   title?: string
   district?: string
   source?: string
+}
+
+/** 组合键:企业 × 称号。 */
+const statsGroupKey = sql`${schema.record.enterpriseId} || '/' || ${schema.record.titleCode}`
+
+function countRosterRecords(db: Db, where?: SQL): RosterWorkbenchCounts {
+  const totalRecords = db
+    .select({ n: sql<number>`count(distinct ${statsGroupKey})` })
+    .from(schema.record)
+    .innerJoin(schema.enterprise, eq(schema.enterprise.id, schema.record.enterpriseId))
+    .where(where)
+    .get()?.n ?? 0
+
+  const totalEnterprises = db
+    .select({ n: sql<number>`count(distinct ${schema.record.enterpriseId})` })
+    .from(schema.record)
+    .where(where)
+    .get()?.n ?? 0
+
+  return { totalRecords, totalEnterprises }
+}
+
+export function readRosterWorkbenchCounts(db: Db): RosterWorkbenchCounts {
+  return countRosterRecords(db)
 }
 
 /**
@@ -640,23 +667,11 @@ export function getStats(db: Db, filter: StatsFilter = {}): Stats {
   if (filter.district) conds.push(eq(schema.record.district, filter.district))
   const where = conds.length ? and(...conds) : undefined
 
-  /** 组合键:企业 × 称号。 */
-  const groupKey = sql`${schema.record.enterpriseId} || '/' || ${schema.record.titleCode}`
-
-  /** 组合数(去重企业×称号)。 */
-  const countGroups = (): number =>
-    db
-      .select({ n: sql<number>`count(distinct ${groupKey})` })
-      .from(schema.record)
-      .innerJoin(schema.enterprise, eq(schema.enterprise.id, schema.record.enterpriseId))
-      .where(where)
-      .get()?.n ?? 0
-
   /** 按 record 的某列分组,数组合数(称号 / 来源 / 区县)。 */
   const groupsByRecordColumn = (column: AnySQLiteColumn) =>
     (
       db
-        .select({ key: column, n: sql<number>`count(distinct ${groupKey})` })
+        .select({ key: column, n: sql<number>`count(distinct ${statsGroupKey})` })
         .from(schema.record)
         .innerJoin(schema.enterprise, eq(schema.enterprise.id, schema.record.enterpriseId))
         .where(where)
@@ -668,7 +683,7 @@ export function getStats(db: Db, filter: StatsFilter = {}): Stats {
   const groupsByEventColumn = (column: AnySQLiteColumn) =>
     (
       db
-        .select({ key: column, n: sql<number>`count(distinct ${groupKey})` })
+        .select({ key: column, n: sql<number>`count(distinct ${statsGroupKey})` })
         .from(schema.recordEvent)
         .innerJoin(schema.record, eq(schema.record.id, schema.recordEvent.recordId))
         .innerJoin(schema.enterprise, eq(schema.enterprise.id, schema.record.enterpriseId))
@@ -677,16 +692,8 @@ export function getStats(db: Db, filter: StatsFilter = {}): Stats {
         .all() as { key: unknown; n: number }[]
     ).map((r) => ({ key: String(r.key ?? '—'), n: r.n }))
 
-  const totalEnterprises =
-    db
-      .select({ n: sql<number>`count(distinct ${schema.record.enterpriseId})` })
-      .from(schema.record)
-      .where(where)
-      .get()?.n ?? 0
-
   return {
-    totalRecords: countGroups(),
-    totalEnterprises,
+    ...countRosterRecords(db, where),
     byTitle: groupsByRecordColumn(schema.record.titleCode),
     bySource: groupsByRecordColumn(schema.record.source),
     byEvent: groupsByEventColumn(schema.recordEvent.eventType),

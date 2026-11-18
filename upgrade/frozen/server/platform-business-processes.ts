@@ -1,5 +1,5 @@
 /** Offline historical oracle from ab503081dae3e24680afc9b07395a7e3ff21fc9f. */
-import { checkedBusinessStatus } from '../../../layers/sme-roster/lib/platform/business-status'
+import { checkedBusinessStatus } from '../../../db/business-status'
 import { withArchiveProcessFacts } from '../../../layers/sme-roster/lib/platform/observation-facts'
 import { and, eq, inArray, sql, type SQL } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'

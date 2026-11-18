@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3';
 import { z } from 'zod';
 import * as s from '../../../../db/schema';
+import type { DispositionFact as Fact } from '../../../../db/title-cycle-disposition';
 import { and, desc, eq, gt, inArray, max, notExists } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/sqlite-core';
 type Db = BetterSQLite3Database<typeof s>;
@@ -19,9 +20,7 @@ export const dispositionFactSchema = z.strictObject({
     cycle: z.strictObject({ eventId: positive, revision: positive }).nullable(),
     formalEvent: z.strictObject({ eventId: positive, revision: positive }).optional(),
     observed: point, effective: point, effectiveBasis: text.nullable(),
-}).refine(f => f.kind === 'formal_failure' ? !!f.formalEvent : !f.formalEvent, 'Formal failure must reference its existing owner');
-export type DispositionFact = z.infer<typeof dispositionFactSchema>;
-type Fact = DispositionFact;
+}).refine(f => f.kind === 'formal_failure' ? !!f.formalEvent : !f.formalEvent, 'Formal failure must reference its existing owner') satisfies z.ZodType<Fact>;
 const target = { id: text, revision: positive };
 export const dispositionRequestSchema = z.strictObject({
     idempotencyKey: text, expectedVersion: text, actor: z.strictObject({ type: z.enum(['user', 'agent']), id: text }), basis: text,

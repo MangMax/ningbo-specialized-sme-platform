@@ -1,6 +1,6 @@
 import type { PlatformStoredQuery, PlatformStoredRelation } from '../platform/read'
 import { sourceRelationFields } from '../platform/source-snapshot-fields'
-import { checkedBusinessStatus } from '../platform/business-status'
+import { checkedBusinessStatus } from '../../../../db/business-status'
 /** Enterprise history membership is structured. Archives attach only after selection.
  * Qualification, coverage and business grouping continue to consume original facts.
  */

@@ -2,37 +2,37 @@ import { computed, reactive, ref, toRefs } from 'vue'
 import type { DecisionVersion, ReviewDecisionDraft, ReviewScope } from '#sme-roster/lib/roster/evidence-review-ui'
 import { DIFFERENCE_MEASURES, DIFFERENCE_REASONS } from '#sme-roster/lib/labels'
 
-export interface InitialDecisionHead extends ReviewScope { versionId: number | null; current: DecisionVersion | null }
-export interface InitialDecisionReceipt { versionId: number; currentId?: number | null; previousId?: number | null; action?: string | null; recordedAt?: string }
+export interface RosterInitialDecisionHead extends ReviewScope { versionId: number | null; current: DecisionVersion | null }
+export interface RosterInitialDecisionReceipt { versionId: number; currentId?: number | null; previousId?: number | null; action?: string | null; recordedAt?: string }
 interface InitialDecisionApi {
   context: () => Promise<{ writeEnabled?: boolean }>
-  current: () => Promise<InitialDecisionHead>
+  current: () => Promise<RosterInitialDecisionHead>
   version?: (id: number) => Promise<DecisionVersion>
-  post: (body: Record<string, unknown>) => Promise<InitialDecisionReceipt>
+  post: (body: Record<string, unknown>) => Promise<RosterInitialDecisionReceipt>
 }
-export function emptyInitialDecisionDraft(): ReviewDecisionDraft {
+export function rosterEmptyInitialDecisionDraft(): ReviewDecisionDraft {
   return { status: '', reasonCode: '', reasonNote: '', measureCode: '', measureNote: '', evidenceQueryId: '', evidenceRelationId: '' }
 }
 /** One ordinary browser command, retained only for the lifetime of its exact-scope host. No credentials. */
-export function createInitialDecisionState(scope: ReviewScope) {
+export function rosterCreateInitialDecisionState(scope: ReviewScope) {
   return reactive({
-    scope: { ...scope }, basis: '', draft: emptyInitialDecisionDraft(), head: null as InitialDecisionHead | null,
+    scope: { ...scope }, basis: '', draft: rosterEmptyInitialDecisionDraft(), head: null as RosterInitialDecisionHead | null,
     writeState: 'loading' as 'loading' | 'ready' | 'readonly' | 'unavailable',
     phase: 'loading' as 'loading' | 'ready' | 'saving' | 'conflict' | 'unknown' | 'readback' | 'saved' | 'superseded' | 'error',
     message: '', correctionAccepted: false, busy: false, notified: false,
-    request: null as Record<string, unknown> | null, receipt: null as InitialDecisionReceipt | null,
+    request: null as Record<string, unknown> | null, receipt: null as RosterInitialDecisionReceipt | null,
     submittedVersion: null as DecisionVersion | null,
   })
 }
-export type InitialDecisionState = ReturnType<typeof createInitialDecisionState>
-export function initialDecisionNeedsGuard(state: InitialDecisionState): boolean {
+export type RosterInitialDecisionState = ReturnType<typeof rosterCreateInitialDecisionState>
+export function rosterInitialDecisionNeedsGuard(state: RosterInitialDecisionState): boolean {
   if (state.request) return state.phase !== 'saved' && state.phase !== 'superseded'
   return !!state.basis || Object.values(state.draft).some(value => Array.isArray(value) ? value.length > 0 : Boolean(value))
 }
 const sameScope = (a: ReviewScope, b: ReviewScope) => a.enterpriseId === b.enterpriseId && a.titleCode === b.titleCode && a.direction === b.direction
 
 /** References a host-owned session, so late completion and structural remount share the same request/receipt. */
-export function useInitialDifferenceDecision(scope: ReviewScope, api: InitialDecisionApi, state = createInitialDecisionState(scope), ownsSession: () => boolean = () => true) {
+export function useRosterInitialDifferenceDecision(scope: ReviewScope, api: InitialDecisionApi, state = rosterCreateInitialDecisionState(scope), ownsSession: () => boolean = () => true) {
   if (!sameScope(scope, state.scope)) throw new Error('Initial decision host scope mismatch')
   const { basis, draft, head, writeState, phase, message, correctionAccepted, receipt, submittedVersion } = toRefs(state)
   // #274 invariants: unsent intent is revocable; the complete request belongs to the
@@ -59,7 +59,7 @@ export function useInitialDifferenceDecision(scope: ReviewScope, api: InitialDec
       if (ownsSession()) state.busy = false
     }
   }
-  const dirty = computed(() => initialDecisionNeedsGuard(state))
+  const dirty = computed(() => rosterInitialDecisionNeedsGuard(state))
   const locked = computed(() => !!state.receipt || ['saving', 'unknown', 'loading'].includes(state.phase))
   const validId = (id: string) => !id || /^[1-9]\d*$/.test(id) && Number.isSafeInteger(Number(id))
   const decisionReady = computed(() => {
@@ -96,7 +96,7 @@ export function useInitialDifferenceDecision(scope: ReviewScope, api: InitialDec
         if (phase.value === 'saved' || phase.value === 'superseded') {
           // Only a fresh capability and explicit human action may end the verified submission.
           state.request = null; state.receipt = null; state.submittedVersion = null; state.notified = false
-          basis.value = ''; draft.value = emptyInitialDecisionDraft(); phase.value = 'ready'; message.value = ''
+          basis.value = ''; draft.value = rosterEmptyInitialDecisionDraft(); phase.value = 'ready'; message.value = ''
         }
         correctionAccepted.value = true
         return true

@@ -12,7 +12,7 @@ import { Skeleton } from '#core/app/components/ui/skeleton'
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '#core/app/components/ui/empty'
 import PageHeader from '#core/app/components/PageHeader.vue'
 import RosterPlatformFilterSelect from '#sme-roster/app/components/PlatformFilterSelect.vue'
-import { usePlatformFilterOptions } from '#sme-roster/app/composables/usePlatformFilterOptions'
+import { useRosterPlatformFilterOptions } from '#sme-roster/app/composables/useRosterPlatformFilterOptions'
 import TableFailureState from '#core/app/components/TableFailureState.vue'
 import TableLoadingStatus from '#core/app/components/TableLoadingStatus.vue'
 import TablePagination from '#core/app/components/TablePagination.vue'
@@ -22,7 +22,7 @@ import RosterPlatformDeclarationDetailDialog from '#sme-roster/app/components/Pl
 useHead({ title: '申报记录 · 专精特新' })
 
 const view = ref<'records' | 'isolated'>('records')
-const { options: filterOptions, loading: optionsLoading, error: optionsError, reload: reloadOptions } = usePlatformFilterOptions('declarations', view)
+const { options: filterOptions, loading: optionsLoading, error: optionsError, reload: reloadOptions } = useRosterPlatformFilterOptions('declarations', view)
 const declareKindLabel = (value: string) => RELATION_DECLARE_KINDS[value] ?? value
 const titleRaw = ref('')
 const titleLabel = (value: string) => PLATFORM_RDJBS[value] ?? value
